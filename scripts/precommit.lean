@@ -557,11 +557,13 @@ def backendFiles : List String :=
    "LeanTex/Core/PdfStruct.lean", "LeanTex/Core/Html.lean", "LeanTex/Core/HtmlDoc.lean",
    "LeanTex/Core/MathMl.lean"]
 
-/-- `IO` as a code token, using the same string and line-comment boundary as
-the banned-keyword gate. A block comment's continuation still looks like
-code; the shared string scanner's stated limitations apply here too. -/
+/-- `IO`, or a name that runs effects without it (`BaseIO`, `EIO`, and the
+escapes that run either from pure code), as a code token, using the same
+string and line-comment boundary as the banned-keyword gate. A block
+comment's continuation still looks like code; the shared string scanner's
+stated limitations apply here too. -/
 def ioInCore (l : String) : Bool :=
-  bannedWord "IO" l
+  ["IO", "BaseIO", "EIO", "unsafeBaseIO", "unsafeIO", "unsafeEIO"].any (bannedWord · l)
 
 def surfaceMods : List String := ["Lex", "Parse", "Elab", "Compat"]
 
@@ -1945,7 +1947,11 @@ def selftest : IO UInt32 := do
     ("  let label := \"quoted \\\"IO\\\"\"", false),
     ("  let label := \"--\"; let bytes ← IO.FS.readBinFile path", true),
     ("  let label := \"IO\"; IO.println label", true),
-    ("  let priority := ioPriority.toNat", false)]
+    ("  let priority := ioPriority.toNat", false),
+    ("def ask : BaseIO Unit := pure ()", true),
+    ("def go : EIO String Unit := pure ()", true),
+    ("  let x := unsafeBaseIO (pure 1)", true),
+    ("  let tag := baseIOTag", false)]
 
   expect "surfaceReach" surfaceReach [
     ("import LeanTex.Core.Parse", true),

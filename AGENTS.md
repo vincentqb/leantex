@@ -202,7 +202,11 @@ is skipped.
   (every write an action declares is one the state it was proposed from
   owns — a shape of its own because the conclusion is about *where* an
   output writes, not what it names: `step_writes_owned`,
-  `trace_writes_owned`). A new
+  `trace_writes_owned`), `_only` (every question a host program can ask,
+  whatever the replies before it, satisfies a predicate — `located_only`
+  is the shape; a shape of its own because it speaks of the program's
+  questions on every path, which is what lets it hold of every
+  interpreter through `Prog.runM_only_exact`, not of a value). A new
   property instantiates a
   suffix, or the review says why
   it is a new shape; the first three are what the hook's walk gate looks
@@ -236,7 +240,7 @@ is skipped.
   read, a listing, a bounded tool run, an atomic write, a directory tree),
   a `World.Prog` over them is a value, `World.lean` does no IO (hook), and
   `Host.answer` is the one interpreter — a `BaseIO` action, so every
-  failure is reply data. New host access is a question added there, not
+  `IO.Error` is reply data. New host access is a question added there, not
   another `IO.FS`/`IO.Process` call site: a program's result is then the
   replay of its trace (`Host.record_replay_exact`, which
   `Host.recordIO_fst_exact` carries to the shipped `runIO`), a property of

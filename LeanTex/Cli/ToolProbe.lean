@@ -18,7 +18,7 @@ open LeanTex.Cli.World
 
 /-- The first regular file the command name reaches on PATH
 (`ToolPath.select_exact`), relative and empty entries anchored to the working
-directory and a name with a slash taken as itself; no process is started
+directory and a name with a slash taken as itself; it asks the host no run
 (`Host.resolve_runless_exact`). Mode bits are not readable here, so a regular
 file the OS refuses to execute may still be the answer: a caller that runs
 the tool runs `ToolPath.probe`, which passes over such a file as execvp does.
@@ -36,7 +36,7 @@ any moves the witness; with exactly one, it is that file's stamp, the
 spelling earlier memos and slots were keyed by. Empty when PATH reaches
 nothing or is unset, which is a witness no memo matches, so a machine with
 no tool asks again on every build and installing the tool takes effect at
-once. It is taken from stats alone (`Host.witness_runless_exact`). -/
+once. It asks the host no run (`Host.witness_runless_exact`). -/
 public def witness (tool : String) : IO String :=
   Host.runIO (ToolPath.witness tool)
 

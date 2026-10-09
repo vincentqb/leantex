@@ -74,13 +74,52 @@ private def scratchName (name : String) : Bool :=
   !name.isEmpty && !name.startsWith "/" &&
     (name.splitOn "/").all fun part => !part.isEmpty && part != "." && part != ".."
 
+/-- Where scratch directories are made: the first of TMPDIR, TMP, TEMP and
+TEMPDIR that is set and not empty, else /tmp, the order
+`IO.FS.createTempDir` reads them in. -/
+private def scratchRoot : BaseIO System.FilePath := do
+  for name in ["TMPDIR", "TMP", "TEMP", "TEMPDIR"] do
+    if let some dir ← IO.getEnv name then
+      unless dir.isEmpty do return dir
+  return "/tmp"
+
+private def hex (bytes : ByteArray) : String :=
+  bytes.foldl (fun s b => s ++ (if b < 16 then "0" else "") ++ String.ofList (Nat.toDigits 16 b.toNat)) ""
+
+/-- A fresh directory only this user can enter. Not `IO.FS.createTempDir`:
+on Lean v4.34.1 a `mkdtemp` that fails with ENOENT, under a temporary root
+that is missing or that holds no directories, ends the process with a
+segmentation fault instead of raising. `createDir` refuses a name that
+exists, so the directory is this run's own. -/
+private def scratchDir : IO System.FilePath := do
+  let root ← scratchRoot
+  for _ in [0:16] do
+    let dir := root / ("leantex-" ++ hex (← IO.getRandomBytes 8))
+    match ← (IO.FS.createDir dir).toBaseIO with
+    | .ok () =>
+      IO.setAccessRights dir { user := ⟨true, true, true⟩ }
+      return dir
+    | .error (.alreadyExists ..) => continue
+    | .error e => throw e
+  throw (IO.userError s!"no fresh scratch directory could be made under {root}")
+
+/-- A declared output, when it is a regular file inside the scratch
+directory once every link is followed, so a tool cannot hand back a file
+elsewhere through a link it left there. `dir` is the directory's real path. -/
+private def ownOutput (dir : System.FilePath) (name : String) : BaseIO (Option ByteArray) := do
+  match ← caught (IO.FS.realPath (dir / name)) with
+  | .ok real =>
+    if real.toString.startsWith (dir.toString ++ "/") then return (← readRegular real.toString).toOption
+    else return none
+  | .error _ => return none
+
 private def runCall (call : ToolCall) : BaseIO Ended := do
   let unstarted (why : String) : Ended :=
     { ran := .unstarted why, out := "", err := "", complete := false,
       outputs := call.outputs.map (·, none) }
   unless call.inputs.all (scratchName ·.1) && call.outputs.all scratchName do
     return unstarted "a run reads and writes only names inside its scratch directory"
-  match ← IO.FS.createTempDir.toBaseIO with
+  match ← scratchDir.toBaseIO with
   | .error e => return unstarted (toString e)
   | .ok dir =>
     let attempt : IO Ended := do
@@ -90,9 +129,10 @@ private def runCall (call : ToolCall) : BaseIO Ended := do
         IO.FS.writeBinFile file bytes
       let got ← RunBounded.runBounded call.tool call.args dir call.budgetMs call.graceMs
         call.captureLimit call.env
+      let real ← IO.FS.realPath dir
       let mut outputs := #[]
       for name in call.outputs do
-        outputs := outputs.push (name, (← readRegular (dir / name).toString).toOption)
+        outputs := outputs.push (name, ← ownOutput real name)
       return { ran := got.ran, out := got.out, err := got.err, complete := got.complete, outputs }
     let result ← attempt.toBaseIO
     discard <| (IO.FS.removeDirAll dir).toBaseIO
@@ -115,8 +155,8 @@ public def runIO {α : Type} (p : Prog α) : BaseIO α := p.runM answer
 
 public def recordIO {α : Type} (p : Prog α) : BaseIO (α × List Fact) := p.record answer
 
-/-- The host with no way to start a process: a run is answered as one that
-never started, and every other question as `answer` answers it. -/
+/-- The host with every run refused: a run is answered as one that never
+started, and every other question as `answer` answers it. -/
 public def answerRunless : (q : Ask) → BaseIO (Reply q)
   | .run call => pure {
       ran := .unstarted "no process starts here", out := "", err := "", complete := false
@@ -141,18 +181,20 @@ public theorem record_replay_exact {α : Type} (p : Prog α) :
 public theorem recordIO_fst_exact {α : Type} (p : Prog α) : Prod.fst <$> recordIO p = runIO p :=
   Prog.record_fst_exact answer p
 
-/-- **Taking the stat-only lookup starts no process**: the host's run of it is
-the run of an interpreter that cannot start one. -/
+/-- **The stat-only lookup asks the host no run**: the host's run of it is its
+run by an interpreter that refuses every run. That `answer`'s environment,
+working-directory and stat arms start no process is read in their code, not
+proved here. -/
 public theorem located_runless_exact (tool : String) :
     runIO (ToolPath.located tool) = (ToolPath.located tool).runM answerRunless :=
   Prog.runM_only_exact (ToolPath.located_only tool) answer answerRunless answer_runless_exact
 
-/-- **Resolving starts no process**, for the same reason. -/
+/-- **Resolving asks no run**, for the same reason. -/
 public theorem resolve_runless_exact (tool : String) :
     runIO (ToolPath.resolve tool) = (ToolPath.resolve tool).runM answerRunless :=
   Prog.runM_only_exact (ToolPath.resolve_only tool) answer answerRunless answer_runless_exact
 
-/-- **Taking a witness starts no process**, for the same reason. -/
+/-- **Taking a witness asks no run**, for the same reason. -/
 public theorem witness_runless_exact (tool : String) :
     runIO (ToolPath.witness tool) = (ToolPath.witness tool).runM answerRunless :=
   Prog.runM_only_exact (ToolPath.witness_only tool) answer answerRunless answer_runless_exact

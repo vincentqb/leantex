@@ -203,6 +203,15 @@ def faultChecks (ref : IO.Ref (List String)) (dir : System.FilePath) : IO Unit :
     inputs := #[("../escaped", "x".toUTF8)] })
   t "world/host: a run never writes outside its scratch directory"
     (match escaped.ran with | .unstarted _ => true | _ => false)
+  let secret := dir / "outside-secret"
+  IO.FS.writeFile secret "not the tool's"
+  let linked ← Host.answer (.run { call "/bin/sh"
+      #["-c", "ln -s \"$1\" out.txt; mkdir sub; ln -s \"$2\" sub/up", "sh", secret.toString, dir.toString]
+      10000 with
+    outputs := #["out.txt", "sub/up/outside-secret"] })
+  t "world/host: a declared output that links outside the scratch directory is no output"
+    (linked.complete && linked.ran == .exited 0 &&
+      linked.outputs == #[("out.txt", none), ("sub/up/outside-secret", none)])
   let target := (dir / "published").toString
   t "world/host: an atomic write is read back whole"
     (match ← Host.answer (.writeAtomic target "whole".toUTF8),
@@ -335,12 +344,38 @@ def probeChildChecks (ref : IO.Ref (List String)) (dir : System.FilePath) : IO U
   check ref s!"world/path: the driver's version probe ends a tool that hangs: {result.out}{result.err}"
     (result.complete && result.ran == .exited 0)
 
+/-- A run under a temporary root that cannot hold its scratch directory, in a
+child whose TMPDIR names a missing directory: the reply is a run that never
+started. `IO.FS.createTempDir` ends such a process with a segmentation fault
+on Lean v4.34.1. -/
+def scratchChildChecks (ref : IO.Ref (List String)) (dir : System.FilePath) : IO Unit := do
+  let some lean ← ToolProbe.onPath "lean" |
+    throw <| IO.userError "world checks require the Lean interpreter on PATH"
+  let libraries ← IO.FS.realPath ".lake/build/lib/lean"
+  let leanPath := libraries.toString ++ ":" ++ (← IO.getEnv "LEAN_PATH").getD ""
+  let driver := dir / "scratch.lean"
+  IO.FS.writeFile driver <|
+    "import LeanTex.Cli.Host\n" ++
+    "def main : IO UInt32 := do\n" ++
+    "  let call : LeanTex.Cli.World.ToolCall :=\n" ++
+    "    { tool := \"/bin/sh\", args := #[\"-c\", \"true\"], budgetMs := 5000, graceMs := 100, captureLimit := 1024 }\n" ++
+    "  let e ← LeanTex.Cli.Host.answer (.run call)\n" ++
+    "  IO.println s!\"ran {repr e.ran}\"\n" ++
+    "  return match e.ran with\n" ++
+    "    | .unstarted _ => 0\n" ++
+    "    | _ => 1\n"
+  let result ← RunBounded.runBounded lean.toString #["--run", driver.toString] dir 20000 100
+    (env := #[("TMPDIR", some (dir / "no-such-root").toString), ("LEAN_PATH", some leanPath)])
+  check ref s!"world/host: a run under a missing temporary root never starts, and the host answers ({repr result.ran}): {result.out}{result.err}"
+    (result.complete && result.ran == .exited 0)
+
 def checks (ref : IO.Ref (List String)) : IO Unit :=
   IO.FS.withTempDir fun dir => do
-    for part in ["replay", "faults", "path", "child"] do IO.FS.createDirAll (dir / part)
+    for part in ["replay", "faults", "path", "child", "scratch"] do IO.FS.createDirAll (dir / part)
     replayChecks ref (dir / "replay")
     faultChecks ref (dir / "faults")
     pathChecks ref (dir / "path")
     probeChildChecks ref (dir / "child")
+    scratchChildChecks ref (dir / "scratch")
 
 end Tests.World

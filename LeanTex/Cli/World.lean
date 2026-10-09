@@ -51,8 +51,9 @@ public structure ToolCall where
   deriving DecidableEq
 
 /-- How a run ended, what it printed, and each declared output (`none`
-when it is not a regular file). `complete` is a run that exited within its
-budget with both streams read to their end. -/
+when it is not a regular file inside the run's scratch directory once its
+links are followed). `complete` is a run that exited within its budget with
+both streams read to their end. -/
 public structure Ended where
   ran : PicCache.Ran
   out : String
@@ -327,7 +328,7 @@ program for an unset PATH. -/
 
 /-- Every regular file the command name reaches, in PATH order: the files
 execvp could start. Mode bits are not readable here, so which of them starts
-is `probe`'s question, and taking these starts no process
+is `probe`'s question, and taking these asks the host no run
 (`Host.located_runless_exact`). -/
 @[expose] public def located (tool : String) : Prog (List (String × Stat)) :=
   (·.toList) <$> lookup tool (.pure #[]) (regularGo #[])
