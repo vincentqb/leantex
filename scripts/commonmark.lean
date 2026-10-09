@@ -971,7 +971,18 @@ dropping its description: on both sides, the description of a PDF image is not \
 compared"),
    ("highlighted code", "the door's page marks a listing's tokens by its highlighting \
 style, which a reader's tree has no word for: on the door's side a code block's text \
-alone is compared")]
+alone is compared"),
+   ("item paragraph", "the door's page wraps the paragraph of a list item that holds a \
+nested list in `<p>`, tight or loose, since the IR records no tightness: on the door's \
+side such an item's leading paragraph is unwrapped, where a tight list's reader writes \
+none, and on both sides the space before a nested list, which no page renders, is not \
+compared"),
+   ("undescribed image", "the door's page names an image with no description by the \
+locale's figure word (`HtmlDoc.figureWord`), where a reader writes an empty alternative: \
+on the door's side that word as an alternative is compared as none"),
+   ("space before a break", "pandoc's writer drops the space before a backslash hard \
+break, which the door and the reference renderer keep: on both sides a space directly \
+before `<br>` is not compared")]
 
 /-- Does an image's source name a PDF? -/
 def pdfSource (attrs : Array (String × String)) : Bool :=
@@ -1019,6 +1030,14 @@ def textOnlyList (acc : String) : List Html.Node → String
 
 end
 
+/-- A list item's children as a tight list's reader writes them: a leading
+paragraph before a nested list, unwrapped. -/
+def tightItem (kids : Array Html.Node) : Array Html.Node :=
+  match kids.toList with
+  | [.elem "p" _ para, l] =>
+    if l matches .elem "ul" .. || l matches .elem "ol" .. then para.push l else kids
+  | _ => kids
+
 mutual
 
 /-- The door's side of the conventions that concern it: a PDF image's
@@ -1026,7 +1045,10 @@ description is not compared, and a highlighted code block is its text. -/
 def bareDoor (n : Html.Node) : Html.Node :=
   match n with
   | .elem "img" attrs kids =>
+    let attrs := attrs.map fun a =>
+      if a.1 == "alt" && a.2 == HtmlDoc.figureWord Locale.en then ("alt", "") else a
     .elem "img" (if pdfSource attrs then attrs.filter (·.1 != "alt") else attrs) kids
+  | .elem "li" attrs kids => .elem "li" attrs (tightItem (bareDoorList #[] kids.toList))
   | .elem "pre" attrs kids =>
     match kids.toList with
     | [.elem "code" cattrs ckids] =>
@@ -1067,9 +1089,11 @@ structure HopRead where
 reading of the same text, and whether the text is the twin of an example the
 door already reads otherwise. -/
 def hopRead (md html : String) (classified : Bool := false) : HopRead :=
-  let want := canonList false "" (fromPandocList #[] (hParse html).toList).toList
+  let breakSpace (s : String) :=
+    ((s.replace " <br>" "<br>").replace " <ul>" "<ul>").replace " <ol>" "<ol>"
+  let want := breakSpace (canonList false "" (fromPandocList #[] (hParse html).toList).toList)
   let (ns, diags) := engineFragment md
-  let got := canonList false "" (bareDoorList #[] ns.toList).toList
+  let got := breakSpace (canonList false "" (bareDoorList #[] ns.toList).toList)
   let routes := routesOf diags
   let verdict :=
     if want == got then .agree
@@ -1100,8 +1124,9 @@ def hopArgs (file : String) : Array String :=
   #["-f", "commonmark", "-t", "html", "--syntax-highlighting=none", file]
 
 /-- Every twin the report reads, with the example it is the twin of: each
-corpus document's, run as the driver runs it, and each CommonMark example's
-the door accepts, read back from the document the example elaborates to. -/
+corpus document's, its includes fulfilled and elaborated in process, and
+each CommonMark example's the door accepts, read back from the document the
+example elaborates to. -/
 def hopTwins (exs : Array Example) : IO (Array (String × String × Option Nat)) := do
   let mut paths : Array String := #[]
   for f in ← System.FilePath.readDir "testdata/corpus" do
@@ -1717,7 +1742,19 @@ def selftest : IO UInt32 := do
   unless hopJudge "```python\ndef f(): pass\n```\n"
       "<pre class=\"python\"><code>def g(): pass</code></pre>\n" == .differ do
     bad := bad.push "reader hop: another code block's text was agreed"
-  unless hopConventions.length == 5 do
+  for (what, md, html, want) in [
+      ("item paragraph", "- a\n  - b\n", "<ul>\n<li>a\n<ul>\n<li>b</li>\n</ul></li>\n</ul>\n",
+        Hop.agree),
+      ("item paragraph, another nested item", "- a\n  - b\n",
+        "<ul>\n<li>a\n<ul>\n<li>c</li>\n</ul></li>\n</ul>\n", .differ),
+      ("undescribed image", "![](/u.png)\n", "<p><img src=\"/u.png\" alt=\"\" /></p>\n", .agree),
+      ("undescribed image, another source", "![](/u.png)\n",
+        "<p><img src=\"/v.png\" alt=\"\" /></p>\n", .differ),
+      ("space before a break", "a \\\nb\n", "<p>a<br />\nb</p>\n", .agree),
+      ("space before a break, another line", "a \\\nb\n", "<p>a<br />\nc</p>\n", .differ)] do
+    unless hopJudge md html == want do
+      bad := bad.push s!"reader hop: the door's {what} read as {repr (hopJudge md html)}, want {repr want}"
+  unless hopConventions.length == 8 do
     bad := bad.push "reader hop: a convention changed without its selftest row"
   if bad.isEmpty then
     IO.println "commonmark --selftest: ok"
