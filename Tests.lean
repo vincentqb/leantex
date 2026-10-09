@@ -491,6 +491,8 @@ def layoutSuiteChecks (ref : IO.Ref (List String)) : IO Unit := do
   Tests.FrameArea.classAlignChecks ref
   Tests.FrameArea.openingChecks ref
   Tests.FrameArea.footWeightChecks ref
+  Tests.FrameArea.trivlistOpeningChecks ref
+  Tests.FrameArea.standoutAlignNoteChecks ref
   topskipChecks ref oneFace
   labelBaselineChecks ref oneFace
   boundaryFitChecks ref oneFace

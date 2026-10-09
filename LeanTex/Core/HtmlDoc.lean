@@ -1452,6 +1452,20 @@ public def parskipVar (page : Ir.PageSpec) : String :=
   | none => ""
   | some g => s!"    --parskip: {milliRem (screenMilli page.fontSize g.width.sp)};\n"
 
+/-- In beamer's lineage, the trivlist's and the float's spaces the page
+spends (`Ir.trivlistSkipFor`, `Ir.floatSpaceFor`): `--topsep` the
+trivlist's, and `--floatsep` that space with the paragraph gap on top, a
+figure being the `{center}` it opens. A declared token overrides either
+(`tokenVars`, later in the cascade). -/
+private def lineageSkipVars (doc : Doc) : String :=
+  match doc.docClass.record.lists with
+  | .beamer =>
+    let size := doc.page.fontSize
+    let t := (Ir.trivlistSkipFor .beamer doc.tokens size).width.sp
+    s!"    --{Ir.trivlistSkipName}: {milliRem (screenMilli size t)};\n" ++
+    s!"    --floatsep: calc(var(--{Ir.trivlistSkipName}) + var(--parskip, 0rem));\n"
+  | .sizeFile | .web => ""
+
 /-- The PDF backend's shipped default gap at a boundary kind: the values
 placement realizes 1:1 — the peer token (`flushGap_default_exact` pays it
 at an undeclared boundary), twice it above a heading (the walk's
@@ -3513,15 +3527,21 @@ private def frameOpeningCss (doc : Doc) : String :=
   let l := doc.docClass.record.lists
   let size := doc.page.fontSize
   let item := "section.slide > :is(ul, ol:not(.algorithm)).frame-body-start > li:first-child"
+  let triv := s!"section.slide > .{roleClass Ir.trivlistRole}.frame-body-start"
+  let float := "section.slide > figure.float.frame-body-start"
   (match Ir.listSkips l size 1 with
    | some sk =>
      let opened := sk.topsep.width.sp + (Ir.partopsepFor l size 1 doc.tokens).width.sp
      s!"section.slide > :is({", ".intercalate listElems}).frame-body-start \{ \
 --frame-body-open: {stageVh doc.page opened}; }\n"
    | none => "") ++
+  s!"{triv} \{ --frame-body-open: {stageVh doc.page (Ir.trivlistSkipFor l doc.tokens size).width.sp}; }\n" ++
+  s!"{float} \{ --frame-body-open: {stageVh doc.page (Ir.floatSpaceFor l doc.tokens size).1.width.sp}; }\n" ++
   "section.slide > :is(p, ul, ol, dl, blockquote, .centered, .ragged, .ragged-right)\
 .frame-body-end { text-box: trim-end text alphabetic; }\n" ++
   "section.slide > p.frame-body-start::before,\n" ++
+  s!"{triv} > p:first-child::before, {float} > :is(p, figcaption):first-child::before,\n" ++
+  "section.slide > dl.frame-body-start > :is(dt:first-child, dt:first-child + dd)::before,\n" ++
   s!"{item}:not(:has(> :is(p, div, ul, ol, dl, pre, table, figure, blockquote)))::before,\n" ++
   s!"{item} > p:first-child::before \{ content: \"\"; display: inline-block;\n" ++
   s!"  height: {decMilli (Ir.leadingFor 1000 doc.page.leading)}em; }\n"
@@ -4795,6 +4815,7 @@ public def baseCss (cfg : Config) (doc : Doc) : String :=
   (if dual then "    color-scheme: light dark;\n" else "    color-scheme: light;\n") ++
   s!"    --measure: {measureEm doc.page};\n" ++
   parskip ++
+  lineageSkipVars doc ++
   s!"    --ink: {cssColor lt.ink};\n" ++
   s!"    --surface: {cssColor lt.surface};\n" ++
   s!"    --muted: {cssColor lt.muted};\n" ++

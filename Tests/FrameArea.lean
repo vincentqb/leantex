@@ -277,6 +277,123 @@ def openingChecks (ref : IO.Ref (List String)) : IO Unit := do
      (cssBlocksFor css ":where(section.slide > .frame-body-start)").any
       (hasStr · "var(--frame-body-open, 0pt)"))
 
+/-- An invented deck whose frames open on beamer's trivlists: `[t]`
+untitled, a `{center}`, a `{flushleft}` and a `{flushright}` on a line, a
+`{figure}` and a `{center}` on an image taller than the body's
+`\baselineskip`, a `{description}`, and a `{center}` between two
+paragraphs. -/
+private def trivDeck : String :=
+  "\\documentclass[10pt]{beamer}\n\\usetheme{moloch}\n\\begin{document}\n" ++
+  "\\begin{frame}[t]\n\\begin{center}\nKilo words.\n\\end{center}\n\\end{frame}\n" ++
+  "\\begin{frame}[t]\n\\begin{flushleft}\nKilo words.\n\\end{flushleft}\n\\end{frame}\n" ++
+  "\\begin{frame}[t]\n\\begin{flushright}\nKilo words.\n\\end{flushright}\n\\end{frame}\n" ++
+  "\\begin{frame}[t]\n\\begin{figure}\n\\includegraphics[width=60pt,height=40pt]{tall.png}\n" ++
+  "\\end{figure}\n\\end{frame}\n" ++
+  "\\begin{frame}[t]\n\\begin{center}\n\\includegraphics[width=60pt,height=40pt]{tall.png}\n" ++
+  "\\end{center}\n\\end{frame}\n" ++
+  "\\begin{frame}[t]\n\\begin{description}\n\\item[Kilo] words.\n\\end{description}\n" ++
+  "\\end{frame}\n" ++
+  "\\begin{frame}[t]\nKilo words.\n\\begin{center}\nLima words.\n\\end{center}\n" ++
+  "Mike words.\n\\end{frame}\n\\end{document}\n"
+
+/-- **A frame opening on a trivlist opens as TeX opens it, on both
+artifacts**: a `{center}`, `{flushleft}` or `{flushright}` — and beamer's
+`{figure}`, which is a `{center}` (beamerbaselocalstructure.sty:550-553) —
+spends its `\topsep` below the opening, LaTeX's own top-level one in a
+frame (`Ir.trivlistSkipFor`: size10.clo's `8pt plus 2pt minus 4pt`, which
+beamer leaves in force outside a list), and its first line stands one
+`\baselineskip` below that, an image `\lineskip` below its own height; the
+same space stands above and below a `{center}` between paragraphs, with
+the paragraph gap on top. Over `Layout.Out` against lualatex on `trivDeck`
+(4:3, the shipped Fira Sans for every face): the three lines at 25.59 bp,
+both images' tops at 14.64, the description's item at 20.61, and the
+paragraphs around the `{center}` at 17.62, 37.55 and 57.48; over the
+stylesheet the deck ships, the opening space of a trivlist and of a figure
+is the stage's share of the page's, their first lines and a description's
+take the first-line strut, and the root declares beamer's spaces. Before
+this, the page spent the rhythm's 6 pt quantum for the `\topsep` and a
+float's text gap for a figure — the lines 1.93 bp high and the figure's
+image 4.03 bp low — and the web deck dropped the trivlist's opening space
+and its strut: the lines 9.35 bp high, both images 8.97. Invented words. -/
+def trivlistOpeningChecks (ref : IO.Ref (List String)) : IO Unit := do
+  let t := check ref
+  let some fira ← shippedFira | t "trivlist opening: the shipped Fira Sans parses" false
+  let (doc, _) := elabStr trivDeck
+  let out := layoutOf fira doc (Layout.Geom.ofPage doc.page)
+  let near := withinSp (ptMilli 500)
+  let size := doc.page.fontSize
+  let lists := doc.docClass.record.lists
+  let lead := Ir.leadingFor size doc.page.leading
+  let skip := (Ir.frameBodySkip false .top).resolve size 0
+  let topsep := (Ir.trivlistSkipFor lists doc.tokens size).width.sp
+  let lineY (page : Nat) (word : String) : Option Dim.Sp :=
+    (out.pages[page]?.bind fun p => p.lines.find? fun l =>
+      !l.furniture && hasStr (lineText l) word).map (·.y)
+  let imageY (page : Nat) : Option Dim.Sp :=
+    (out.pages[page]?.bind fun p => p.lines.find? fun l =>
+      l.segs.any (· matches .image ..)).map (·.y)
+  t "trivlist opening: a frame's trivlist spends LaTeX's top-level topsep, size10's 8pt"
+    (topsep == Dim.pt 8 && (Ir.floatSpaceFor lists doc.tokens size).1.width.sp == topsep)
+  t "trivlist opening: a center, flushleft or flushright line stands its topsep and a baselineskip below the opening, as lualatex's"
+    ([0, 1, 2].all fun pg => (lineY pg "Kilo").any fun y =>
+      y == skip + topsep + lead && near y (ptMilli 25594))
+  t "trivlist opening: a figure's and a center's image stand their topsep and lineskip below the opening, as lualatex's"
+    ([3, 4].all fun pg => (imageY pg).any fun y =>
+      y == skip + topsep + Layout.inkClearance + Dim.pt 40 && near (y - Dim.pt 40) (ptMilli 14635))
+  t "trivlist opening: a description's item stands its topsep below the opening, as lualatex's"
+    ((lineY 5 "Kilo").any fun y => near y (ptMilli 20613))
+  t "trivlist opening: a center between paragraphs stands its topsep above and below, as lualatex's"
+    ((lineY 6 "Kilo").any (near · (ptMilli 17624)) && (lineY 6 "Lima").any (near · (ptMilli 37550)) &&
+     (lineY 6 "Mike").any (near · (ptMilli 57475)))
+  let (head, body, _) := HtmlDoc.emitTree {} doc
+  let css := treeCssList "" head.toList
+  let blocks := artCssBlocks css
+  let opens (sel : String) : Bool := (blocks.filter (·.1 == sel)).any fun (_, d) =>
+    cssStageLength d "--frame-body-open" topsep doc.page.height
+  t "trivlist opening html: a trivlist and a figure ride their topsep on the opening, the stage's share"
+    (opens s!"section.slide > .{HtmlDoc.roleClass Ir.trivlistRole}.frame-body-start" &&
+     opens "section.slide > figure.float.frame-body-start")
+  let strut := blocks.filter fun (sel, _) => hasStr sel "p.frame-body-start::before"
+  t "trivlist opening html: a trivlist's, a figure's and a description's first line take the strut"
+    (strut.size == 1 && strut.all fun (sel, _) =>
+      hasStr sel s!".{HtmlDoc.roleClass Ir.trivlistRole}.frame-body-start > p:first-child::before" &&
+      hasStr sel "figure.float.frame-body-start > :is(p, figcaption):first-child::before" &&
+      hasStr sel "dl.frame-body-start > :is(dt:first-child, dt:first-child + dd)::before")
+  let root := (cssBlocksFor css ":root").foldl (· ++ ";" ++ ·) ""
+  t "trivlist opening html: the deck declares beamer's trivlist and float spaces"
+    ((cssDeclOf root "--topsep").any (·.endsWith "rem") &&
+     cssDeclOf root "--floatsep" == some "calc(var(--topsep) + var(--parskip, 0rem))")
+  let classes := attrValuesOf (fun _ => true) "class" (Html.elem "body" body #[])
+  t "trivlist opening html: every trivlist frame opens on its trivlist or its figure"
+    ((classes.filter fun c => (c.splitOn " ").contains "frame-body-start" &&
+      ((c.splitOn " ").contains (HtmlDoc.roleClass Ir.trivlistRole) ||
+       (c.splitOn " ").contains "float")).size == 5)
+
+/-- **An alignment a standout frame discards is named** (`Elab.frameOpts`):
+moloch's `standout` key opens with `\setkeys{beamerframe}{c}`, so `b` before
+it is overridden and `t` after it is an undefined key lualatex steps over;
+either way the frame centres, and here one note names the alignment it
+lost. `[standout]` and `[c,standout]`, which lose nothing, raise none. At
+`7600baa5` the alignment was dropped unnamed. Invented words. -/
+def standoutAlignNoteChecks (ref : IO.Ref (List String)) : IO Unit := do
+  let t := check ref
+  let deckOf (opts : String) : String :=
+    "\\documentclass[10pt]{beamer}\n\\usetheme{moloch}\n\\begin{document}\n" ++
+    s!"\\begin\{frame}[{opts}]\nKilo words.\n\\end\{frame}\n\\end\{document}\n"
+  let notes (opts : String) : Array Diag := (elabStr (deckOf opts)).2.filter fun d =>
+    d.kind == .N0102 && hasStr d.message "standout"
+  let centred (opts : String) : Bool := (elabStr (deckOf opts)).1.body.any fun b =>
+    match b with
+    | .frame _ true v _ _ => (v matches .center)
+    | _ => false
+  t "standout alignment: an alignment before or after standout is named once, by its letter"
+    ((notes "b,standout").size == 1 && (notes "b,standout").all (hasStr ·.message "'b'") &&
+     (notes "standout,t").size == 1 && (notes "standout,t").all (hasStr ·.message "'t'"))
+  t "standout alignment: a standout frame that loses no alignment raises no note"
+    ((notes "standout").isEmpty && (notes "c,standout").isEmpty)
+  t "standout alignment: every standout frame centres"
+    (["b,standout", "standout,t", "standout", "c,standout"].all centred)
+
 /-- **The deck stands every frame in beamer's text area too**, the PDF's
 (`checks`): the stage opens at its top edge and its text area ends
 `\footheight` above its bottom edge — the 4 pt gap the frame's end spacer,

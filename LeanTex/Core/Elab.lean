@@ -11091,12 +11091,15 @@ continues (beamer user guide §8.1; the layout's spill account reads it), and
 moloch's `standout` key opens with `\setkeys{beamerframe}{c}`
 (beamerinnerthememoloch.sty:465), so an alignment before it is overridden,
 and the nested `\setkeys` leaves an alignment after it undefined, an error
-lualatex steps over. Outside the elaboration knot on purpose: its loop state
-is what pushed the knot's compile over the heartbeat wall. -/
+lualatex steps over; a note names the alignment either way. Outside the
+elaboration knot on purpose: its loop state is what pushed the knot's compile
+over the heartbeat wall. -/
 private structure FrameOpts where
   standout : Bool := false
   breakable : Bool := false
   valign : VAlign := .center
+  /-- The alignment options the frame names, in order. -/
+  aligns : Array String := #[]
   /-- The index past the last bracket group read. -/
   next : Nat := 0
 
@@ -11121,9 +11124,9 @@ private def frameOpts (ctx : Ctx) (body : Array Raw) (pos : Pos) : EM FrameOpts 
         | "fragile" | "fragile=true" => pure ()
         | "standout" => o := { o with standout := true }
         | "allowframebreaks" => o := { o with breakable := true }
-        | "t" => o := { o with valign := .top }
-        | "c" => o := { o with valign := .center }
-        | "b" => o := { o with valign := .bottom }
+        | "t" => o := { o with valign := .top, aligns := o.aligns.push opt }
+        | "c" => o := { o with valign := .center, aligns := o.aligns.push opt }
+        | "b" => o := { o with valign := .bottom, aligns := o.aligns.push opt }
         | other =>
           -- plain and friends say how beamer should cope, not what to
           -- say: registered, never silent.
@@ -11135,7 +11138,13 @@ private def frameOpts (ctx : Ctx) (body : Array Raw) (pos : Pos) : EM FrameOpts 
       warnUnclosed ctx "'\\begin{frame}'" bpos
       break
     | .content => break
-  return if o.standout then { o with valign := .center } else o
+  if o.standout then
+    for a in o.aligns do
+      unless a == "c" do
+        warnOnce ctx ("frame:opt:standout:" ++ a) .N0102
+          s!"frame option '{a}' does not apply to a standout frame, which is centred; ignored" pos
+    return { o with valign := .center }
+  return o
 
 /-- A box's optional arguments from the start of `body`: `[pos]`
 (`boxPosOf`), then `[height]` and `[inner-pos]`, which size and fill a box

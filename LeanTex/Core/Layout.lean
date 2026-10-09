@@ -13189,7 +13189,7 @@ private def collectBlock (r : Rd) (a : Acc)
     -- A trivlist environment's scope (`Ir.trivlistRole`): its `\topsep`
     -- stands above and below it, on top of the peer gap (`Spacing.Pending.trivSpace`).
     if n == Ir.trivlistRole then
-      let g := r.resolve (Ir.trivlistSkip a.tokens r.geom.fontSize)
+      let g := r.resolve (Ir.trivlistSkipFor r.lists a.tokens r.geom.fontSize)
       (collectBlocks r (a.trivSpace g) body indent).trivSpace g
     -- A list or quote opened inside an open paragraph: its arm reads the
     -- mode (`Spacing.Context.inPar`) and spends no `\partopsep`.
@@ -13207,7 +13207,7 @@ private def collectBlock (r : Rd) (a : Acc)
           else if sk.parskipAbove then a.listSpace above else a.addvspace above
         (collectBlocks { r with inPar := false } a body indent).listSpace (r.resolve sk.below)
       | none =>
-        let g := r.resolve (Ir.trivlistSkip a.tokens r.geom.fontSize)
+        let g := r.resolve (Ir.trivlistSkipFor r.lists a.tokens r.geom.fontSize)
         (collectBlocks r (a.trivSpace g) body indent).trivSpace g
     -- The page-model marks: `\vspace*`'s rule stands before the glue owed
     -- next (`Spacing.Pending.flushAnchored`), and `\nointerlineskip` is the next box's.
@@ -13254,7 +13254,7 @@ private def collectBlock (r : Rd) (a : Acc)
     | none =>
       -- The web's lineage: the quote is the trivlist block the HTML sheet
       -- sets, its `\topsep` over the peer gap.
-      let g := r.resolve (Ir.trivlistSkip a.tokens r.geom.fontSize)
+      let g := r.resolve (Ir.trivlistSkipFor r.lists a.tokens r.geom.fontSize)
       let sub := collectBlocks { r with inPar := false }
         { a.trivSpace g with measure := narrow, quoteDepth := a.quoteDepth + 1 } body (indent + lm)
       { sub.trivSpace g with measure := saved, quoteDepth := a.quoteDepth }
@@ -13450,8 +13450,8 @@ private def collectBlock (r : Rd) (a : Acc)
     -- The declared caption is marked as the block's content so its atoms
     -- take their leaves and the prefix is the caption's `.block`.
     let caption := Ir.numberedCaption r.locale kind num (markContent caption)
-    let floatSep := r.resolve ((a.tokens.find? "floatsep").getD
-      (Ir.floatSepDefault r.geom.fontSize))
+    let (floatSep, floatTriv) := Ir.floatSpaceFor r.lists a.tokens r.geom.fontSize
+    let floatSep := r.resolve floatSep
     -- The caption's two skips: the one facing the object and the one on
     -- its text side, as its side and declared position place them.
     let skip (s : Ir.CaptionSkip) : Glue :=
@@ -13464,9 +13464,13 @@ private def collectBlock (r : Rd) (a : Acc)
     -- sub-walk runs under a marked reader so no line of them is counted
     -- by the line-number census (`Spacing.Context.inFloat`).
     let rf := { r with inFloat := true }
-    let a := (floatPlan capAbove (!caption.isEmpty) floatSep capSep farSep).foldl
-      (fun a slot => match slot with
-        | .gap g => a.addvspace g
+    -- The text-side gaps stand first and last; in beamer's lineage they are
+    -- the trivlist's, the paragraph gap on top (`Ir.floatSpaceFor`).
+    let plan := floatPlan capAbove (!caption.isEmpty) floatSep capSep farSep
+    let a := plan.zipIdx.foldl
+      (fun a (slot, i) => match slot with
+        | .gap g =>
+          if floatTriv && (i == 0 || i + 1 == plan.length) then a.trivSpace g else a.addvspace g
         | .caption => collectFloatCaption r rf a kind caption capLeaf capSpan indent
         | .object => collectCentered rf a body.toList indent false) a
     a.pushOp .floatClose
