@@ -1,6 +1,10 @@
-import Tests.Support
-import scripts.Rung
-import Tests.TitleTemplateScan
+module
+
+public import Tests.Support
+public import scripts.Rung
+public import Tests.TitleTemplateScan
+
+public section
 
 open LeanTex.Core LeanTex.Core.Utf8 LeanTex.Cli
 

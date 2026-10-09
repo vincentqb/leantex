@@ -1,4 +1,8 @@
-import Tests.Markdown
+module
+
+public import Tests.Markdown
+
+public section
 
 open LeanTex.Core LeanTex.Cli
 

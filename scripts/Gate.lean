@@ -1,6 +1,10 @@
+module
+
 /- Shared lexical conventions for source checks. The compiler and axiom
 audit remain authoritative for proof completeness; this scanner provides
 earlier feedback on a staged diff. -/
+
+public section
 
 def isWordChar (c : Char) : Bool := c.isAlphanum || c == '_'
 

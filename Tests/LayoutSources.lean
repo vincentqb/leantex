@@ -1,6 +1,10 @@
-import Tests.Support
-import Tests.LayoutProvenance
-import Tests.LayoutContracts
+module
+
+public import Tests.Support
+public import Tests.LayoutProvenance
+public import Tests.LayoutContracts
+
+public section
 
 open LeanTex.Core LeanTex.Cli
 

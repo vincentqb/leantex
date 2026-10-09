@@ -1,5 +1,9 @@
-import Tests.Support
-import Tests.DriverAssets
+module
+
+public import Tests.Support
+public import Tests.DriverAssets
+
+public section
 
 open LeanTex.Core
 

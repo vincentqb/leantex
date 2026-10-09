@@ -573,8 +573,24 @@ def irDumpUnmarked (l : String) : Bool :=
 knob — the tree holds zero. Composed self-diff-safe, like the keywords. -/
 def kwMaxHeartbeats : String := "maxHeart" ++ "beats"
 
+/-- Lean's own heartbeat budget. A literal bound under it is no raise: it
+holds a proof's cost below the default, and the kernel honours it too. -/
+def defaultHeartbeats : Nat := 200000
+
+/-- Any heartbeat setting but one: the bare option, alone on its line, set to
+a literal bound under the default. A larger value, zero (no limit at all), a
+value not spelled as a literal, and every other heartbeat option are raises:
+`synthInstance`'s budget defaults to 20000, so a value under the bare
+option's default can still raise it fivefold. -/
 def heartbeatRaise (l : String) : Bool :=
-  containsSub (stripLineComment (stripStrings l)) kwMaxHeartbeats
+  match (stripLineComment (stripStrings l)).splitOn kwMaxHeartbeats with
+  | [_] => false
+  | [before, after] =>
+    !(before.endsWith "set_option " &&
+      match after.trimAscii.toString.splitOn " " with
+      | n :: _ => n.toNat?.any fun v => v != 0 && v ≤ defaultHeartbeats
+      | [] => false)
+  | _ => true
 
 /-- Handed by impl-shapes: a catch-all arm that ships its scrutinee or an
 accumulator through unchanged (`| _ => out`, `| other => other`) — in an IR
@@ -1807,6 +1823,14 @@ def selftest : IO UInt32 := do
     -- the raise shapes, standalone and scoped
     ("set_option " ++ kwMaxHeartbeats ++ " 400000", true),
     ("  set_option " ++ kwMaxHeartbeats ++ " 1000000 in", true),
+    ("set_option " ++ kwMaxHeartbeats ++ " 0 in", true),
+    ("  withOptions (" ++ kwMaxHeartbeats ++ ".set · 2000)", true),
+    -- another heartbeat option, under the bare default and over its own
+    ("set_option synthInstance." ++ kwMaxHeartbeats ++ " 100000 in", true),
+    ("set_option " ++ kwMaxHeartbeats ++ " 2000 in set_option synthInstance." ++
+      kwMaxHeartbeats ++ " 100000 in", true),
+    -- a literal bound under the default holds a cost: no raise
+    ("set_option " ++ kwMaxHeartbeats ++ " 2000 in", false),
     -- a comment, a string, and the other budget option stay legal
     ("-- " ++ kwMaxHeartbeats ++ ": zero sites in the tree", false),
     ("  say s!\"raise " ++ kwMaxHeartbeats ++ "\"", false),

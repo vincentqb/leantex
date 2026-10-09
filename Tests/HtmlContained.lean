@@ -1,5 +1,10 @@
-import Tests.Support
-import LeanTex.Cli.Publication
+module
+
+public import Tests.Support
+public import LeanTex.Cli.Publication
+public import LeanTex.Cli.ImageAssets
+
+public section
 
 open LeanTex.Core LeanTex.Cli.Publication
 

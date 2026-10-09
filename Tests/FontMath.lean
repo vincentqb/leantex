@@ -1,8 +1,13 @@
-import Tests.NfcBoundary
-import LeanTex.Cli.FontDiscovery
-import Tests.SlotLossWording
-import Tests.Support
-import Tests.Artifact
+module
+
+public import Tests.NfcBoundary
+public import LeanTex.Cli.FontDiscovery
+public import Tests.SlotLossWording
+public import Tests.Support
+public import Tests.Artifact
+public import LeanTex.Core.FontSubset
+
+public section
 
 open LeanTex.Core LeanTex.Core.Utf8 LeanTex.Cli
 open LeanTex.Core.PdfRead (Obj)

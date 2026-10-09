@@ -1,6 +1,10 @@
-import LeanTex.Cli.DriverDiag
-import Tests.Images
-import Lean.Data.Json
+module
+
+public import LeanTex.Cli.DriverDiag
+public import Tests.Images
+public import Lean.Data.Json
+
+public section
 
 namespace Tests
 

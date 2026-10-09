@@ -1,4 +1,8 @@
-import Tests.OverlayStyles
+module
+
+public import Tests.OverlayStyles
+
+public section
 
 open LeanTex.Core
 

@@ -1,4 +1,8 @@
-import LeanTex.Core.TitleContract
+module
+
+public import LeanTex.Core.TitleContract
+
+public section
 
 open LeanTex.Core
 

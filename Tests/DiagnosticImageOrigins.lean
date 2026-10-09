@@ -1,8 +1,13 @@
-import Tests.NfcBoundary
-import LeanTex.Core.Elab
-import LeanTex.Core.MdDesugar
-import LeanTex.Cli.Render
-import Lean.Data.Json
+module
+
+public import Tests.NfcBoundary
+public import LeanTex.Core.Elab
+public import LeanTex.Core.MdDesugar
+public import LeanTex.Cli.Render
+public import Lean.Data.Json
+public import LeanTex.Core.Nfc
+
+public section
 
 open LeanTex.Core LeanTex.Cli
 

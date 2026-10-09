@@ -1,4 +1,8 @@
-import Tests.Backends
+module
+
+public import Tests.Backends
+
+public section
 
 /-!
 # Guards for reported breakages that shipped without one

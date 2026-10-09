@@ -1,7 +1,11 @@
-import Tests.DriverAssets
-import LeanTex.Cli.Publication
-import LeanTex.Cli.ImageAssets
-import Tests.Support
+module
+
+public import Tests.DriverAssets
+public import LeanTex.Cli.Publication
+public import LeanTex.Cli.ImageAssets
+public import Tests.Support
+
+public section
 
 namespace Tests
 

@@ -1,5 +1,9 @@
-import Tests.RegressionDecks
-import Tests.RegressionDiagrams
+module
+
+public import Tests.RegressionDecks
+public import Tests.RegressionDiagrams
+
+public section
 
 open LeanTex.Core
 

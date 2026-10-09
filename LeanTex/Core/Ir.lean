@@ -60,7 +60,7 @@ uniform `\page{ fontsize }` scale the whole design (`\linespread` moves
 the lines it declares, not the default gaps: the gap quantizes on the
 base rhythm). A document declares its own through
 `\page{ parskip = ... }`. -/
-public def parskipDefault (size : Sp) : SymGlue :=
+@[expose] public def parskipDefault (size : Sp) : SymGlue :=
   { width := Dim.Length.ofSp (rhythmQuantum size) }
 
 /-- The rhythm quantum is positive at any body size of at least 1pt: the
@@ -103,7 +103,7 @@ backends read — the PDF lowers a strike segment at this weight
 (`Layout.lineThroughThickness` aliases this), and the HTML derives its
 `text-decoration-thickness` from the same value (`HtmlDoc`), so a strike
 is one weight on either artifact. -/
-public def lineThroughThickness : Sp := pt 2 / 5
+@[expose] public def lineThroughThickness : Sp := pt 2 / 5
 
 /-- One rule a document draws on every page from a shipout hook
 (`\AddToHook{shipout/background}{\put(x,y){\rule{w}{h}}}`, the kernel's
@@ -282,8 +282,8 @@ not chosen: two lines of the slides context's own rhythm (its earlier
 spelling, 9 mm, missed that by 0.888 pt — a free scalar for no reason).
 The lines-per-slide theorem in Layout is what holds these numbers
 together. -/
-public def slidesStage43 : Sp × Sp := (Dim.mm 128, Dim.mm 96)
-public def slidesStage169 : Sp × Sp := (Dim.mm 160, Dim.mm 90)
+@[expose] public def slidesStage43 : Sp × Sp := (Dim.mm 128, Dim.mm 96)
+@[expose] public def slidesStage169 : Sp × Sp := (Dim.mm 160, Dim.mm 90)
 
 /-- The slides stages, beamer's `aspectratio` table entire (beamer user
 guide §8.1, the `aspectratio=` class option; the millimetre pairs are
@@ -294,7 +294,7 @@ own digits `141` — and `slidesStageNamed` matches with the colon elided,
 so `aspectratio=169` and the native `16:9` select one row. The lines-fit
 contract (`Layout.slides_lines_in_band`) quantifies over every row:
 adding a stage is entering that contract. -/
-public def slidesStages : Array (String × Sp × Sp) :=
+@[expose] public def slidesStages : Array (String × Sp × Sp) :=
   #[("4:3", slidesStage43),
     ("16:9", slidesStage169),
     ("16:10", Dim.mm 160, Dim.mm 100),
@@ -310,8 +310,8 @@ public def slidesStageNamed (name : String) : Option (Sp × Sp) :=
   (slidesStages.find? fun r => strip r.1 == strip name).map (·.2)
 
 public def slidesHMargin : Sp := Dim.mm 10
-public def slidesFontSize : Sp := Dim.pt 11
-public def slidesVMargin : Sp := 2 * leadingFor slidesFontSize
+@[expose] public def slidesFontSize : Sp := Dim.pt 11
+@[expose] public def slidesVMargin : Sp := 2 * leadingFor slidesFontSize
 
 /-- The article page's vertical inch, restated as rhythm: the letter-paper
 office convention (`PageSpec.vmargin`'s docstring) happens to be exactly
@@ -364,7 +364,7 @@ public theorem Color.sameSource_pdfModel_exact (a b : Color) :
     a.sameSource b = true → (a.pdfModel == b.pdfModel) = true := by
   simp [Color.sameSource]
 
-public def Color.black : Color := { r := 0, g := 0, b := 0 }
+@[expose] public def Color.black : Color := { r := 0, g := 0, b := 0 }
 
 /-- xcolor's screen projection of one CMYK channel: `1 - min(1, c+k)`,
 then the package's TeX-scaled conversion to an HTML byte. -/
@@ -447,7 +447,7 @@ public def Color.ofCmykSource (c m y k : Decl.ColorComponent) : Color :=
     cmyk := some (c.milli, m.milli, y.milli, k.milli) }
 
 /-- PDF wants components in 0–1; three decimals is finer than 8-bit input. -/
-public def Color.pdfComponents (c : Color) : String :=
+@[expose] public def Color.pdfComponents (c : Color) : String :=
   pdfMilli (milli c.r) ++ " " ++ pdfMilli (milli c.g) ++ " " ++ pdfMilli (milli c.b)
 
 /-- The fill-colour operation for this colour. Explicit source models keep
@@ -818,11 +818,11 @@ public theorem rule_seps_ordered : 0 < aboveRuleSep.ex ∧ aboveRuleSep.ex < bel
 the caption's text side is `floatSepDefault` (the sourcing note above).
 One rhythm quantum of the governing size. Overridable as
 `\tokens{ captionsep = ... }` or the caption package's `skip=` key. -/
-public def captionSepDefault (size : Sp) : SymGlue :=
+@[expose] public def captionSepDefault (size : Sp) : SymGlue :=
   { width := { sp := rhythmQuantum size } }
 /-- Gap between a float and the text around it: one full rhythm unit of
 the governing size. Overridable as `\tokens{ floatsep = ... }`. -/
-public def floatSepDefault (size : Sp) : SymGlue :=
+@[expose] public def floatSepDefault (size : Sp) : SymGlue :=
   { width := { sp := 2 * rhythmQuantum size } }
 
 /-- Gap between the last body line and the footnote region: `\skip\footins`
@@ -860,7 +860,7 @@ proportions (a fifth of the body stretch, two fifths shrink). `\partopsep`
 paragraph; lists and quotes spend it (`partopsepFor`, `inParagraphRole`),
 and this quantized space does not.
 Overridable as `\tokens{ topsep = ... }` or `\setlength{\topsep}{...}`. -/
-public def trivlistSkipDefault (size : Sp) : SymGlue :=
+@[expose] public def trivlistSkipDefault (size : Sp) : SymGlue :=
   { width := { sp := rhythmQuantum size }
     stretch := { sp := size / 5 }
     shrink := { sp := size * 2 / 5 } }
@@ -1125,6 +1125,11 @@ public def listSkips (l : ListLineage) (size : Sp) (level : Nat) : Option ListSk
                 parsep := s.parsep.scale size base.toNat
                 partopsep := s.partopsep.map (·.scale size base.toNat) }
 
+/-- The web's lineage sets no list skips, at any size or level. -/
+public theorem listSkips_web_exact (size : Sp) (level : Nat) :
+    listSkips .web size level = none := by
+  simp only [listSkips]
+
 /-- The class's `\partopsep`, the value in force where no list level sets
 its own: size10.clo:215 `2pt plus 1pt minus 1pt`, size11.clo:215
 `3pt plus 1pt minus 1pt`, size12.clo:215 `3pt plus 2pt minus 2pt`, scaled
@@ -1216,6 +1221,11 @@ public def displaySkipsAt (size : Sp) : DisplaySkips :=
 
 /-- `\abovedisplayskip` at a body size, the long skip. -/
 public def displaySkipDefault (size : Sp) : SymGlue := (displaySkipsAt size).above
+
+/-- `\abovedisplayskip` at the base size: size10.clo's 10 pt. -/
+public theorem displaySkipDefault_base_exact :
+    (displaySkipDefault baseFontSize).width.sp = Dim.pt 10 := by
+  decide
 
 /-- The four display-skip token names, as `\tokens` and `\setlength` spell
 them. -/
@@ -1630,7 +1640,7 @@ the screen leading), which is exactly the statement: a boundary's multiple
 is declared once; each backend realizes it in its own context's unit.
 A display is not a row: its space is TeX's, measured from the baselines
 (`displaySkipsFor` and the page's interline rule), never a multiple. -/
-public def rhythmGapQuanta : List (String × Nat) :=
+@[expose] public def rhythmGapQuanta : List (String × Nat) :=
   [("peer", 1), ("heading", 2), ("caption", 1), ("float", 2), ("trivlist", 2)]
 
 /-- The table and the tokens agree: each declared default gap is its row's
@@ -1848,7 +1858,7 @@ public theorem declare_decorative_names (p : Palette) (k : String) (c : Color) :
   simp only [Palette.declare, ite_true]
   by_cases h : k ∈ p.decorative <;> simp [h]
 
-public def Color.white : Color := { r := 255, g := 255, b := 255 }
+@[expose] public def Color.white : Color := { r := 255, g := 255, b := 255 }
 
 /-- `pct`% of `x` over the rest of `y`, rounded half up — the one mixing
 step, in whichever unit the model's components come in. -/
@@ -2333,6 +2343,11 @@ public def OutputContract.unmet (c : OutputContract) (r : Realization) : Array U
         | some .none, _ => true
         | some .embedded, .embeds => true
         | some .embedded, .ships => true)].filterMap id
+
+/-- The undeclared contract asks nothing of any realization. -/
+public theorem OutputContract.unmet_default_exact (r : Realization) :
+    ({} : OutputContract).unmet r = #[] := by
+  simp [unmet, judge]
 
 /-- Every unmet fact names a key of the closed list (`_covers`): a
 diagnostic's `subject` is always one of the keys `\output` accepts. -/
@@ -2918,7 +2933,7 @@ function rather than each naming a step. A flow page takes `LARGE`
 beamerfontthememoloch.sty re-declares for its own lineage). Reading the
 flow step on a deck set its title 20% large, enough to re-flow a title
 line whose breaks the author declared. -/
-public def titleSize (base : Sp) (slides : Bool) : Sp :=
+@[expose] public def titleSize (base : Sp) (slides : Bool) : Sp :=
   scaleStep base (if slides then "Large" else "LARGE")
 
 /-- Adjacent steps of the scale, in order: what the scale theorems below
@@ -3224,7 +3239,7 @@ public structure OverlaySpec where
 
 namespace OverlaySpec
 
-public def ranges (s : OverlaySpec) : List (Nat × Option Nat) :=
+@[expose] public def ranges (s : OverlaySpec) : List (Nat × Option Nat) :=
   (s.first, s.last) :: s.more
 
 /-- Membership is disjunction, not the hull of the declared intervals. -/
@@ -3603,13 +3618,13 @@ numbers, and *not* the page's distribution: the template sets its glue
 inside a frame that contributes centring glue of its own, and the two
 lists are one vertical list, so the units add (`golden_composes_center`).
 -/
-public def titlePageTemplateGlue : Nat × Nat := (2618, 1000)
+@[expose] public def titlePageTemplateGlue : Nat × Nat := (2618, 1000)
 
 /-- A frame's own distribution composed with a template's glue, both
 first-order fil in one vertical list: the units add, at the template's
 thousandths. What a page-opening path's declared distribution is — a
 template's ratio is never the page's on its own. -/
-public def composeGlue (frame template : Nat × Nat) : Nat × Nat :=
+@[expose] public def composeGlue (frame template : Nat × Nat) : Nat × Nat :=
   (frame.1 * 1000 + template.1, frame.2 * 1000 + template.2)
 
 /-- The shares of a page's leftover vertical space above and below its
@@ -3621,7 +3636,7 @@ guide §8.1: `c` is the default), bottom-flush 1:0, and the title page's
 must honour: `Layout.VDist.of` projects it onto the PDF page,
 `HtmlDoc.vdistShares` onto the deck's flex spacers, and
 `vdist_shares_agree` in Tests states the agreement. -/
-public def VAlign.shares : VAlign → Nat × Nat
+@[expose] public def VAlign.shares : VAlign → Nat × Nat
   | .top => (0, 1)
   | .center => (1, 1)
   | .bottom => (1, 0)
@@ -4619,7 +4634,7 @@ public inductive HAlign where
   deriving Repr, BEq, Inhabited
 
 /-- The side as the `text-align` keyword the scope rules print. -/
-public def HAlign.align : HAlign → String
+@[expose] public def HAlign.align : HAlign → String
   | .left => "left"
   | .center => "center"
   | .right => "right"
@@ -4632,7 +4647,7 @@ flush right. TeX sets such a box in a line like a word, so the scope's
 `flushright` sets `\leftskip` alone). Both backends read the side through
 this one value: the page's offset (`boxOffset`) and the stylesheet's
 margins (`HtmlDoc.box_margins_agree`). -/
-public def HAlign.slackHalves : HAlign → Nat
+@[expose] public def HAlign.slackHalves : HAlign → Nat
   | .left => 0
   | .center => 1
   | .right => 2
@@ -4663,7 +4678,7 @@ public inductive FlushSide where
 already read — one resolving site, so the page's origin and the
 stylesheet's `text-align` cannot name different edges from one IR value
 (`ragged_sides_agree`). -/
-public def FlushSide.align : FlushSide → String
+@[expose] public def FlushSide.align : FlushSide → String
   | .left => "left"
   | .right => "right"
 
@@ -4686,7 +4701,7 @@ public theorem ragged_sides_agree (s : FlushSide) :
   cases s <;> simp [FlushSide.flushRight, FlushSide.align]
 
 /-- The declared side as the side its boxes stand on. -/
-public def FlushSide.halign : FlushSide → HAlign
+@[expose] public def FlushSide.halign : FlushSide → HAlign
   | .left => .left
   | .right => .right
 
@@ -7879,7 +7894,7 @@ genre's own contract (the reason one asks for a résumé and not a CV);
 `webpage`'s build intent is html plus the markdown twin, the llms.txt
 convention (llmstxt.org), with the print twin opt-in — the class carries
 what to build the way `\documentclass` already carries the page model. -/
-public def DocClass.record : DocClass → ClassRecord
+@[expose] public def DocClass.record : DocClass → ClassRecord
   | .article =>
     { model := .flow
       numberHeadings := true
@@ -8215,7 +8230,7 @@ public theorem Doc.fontPolicy_exact (doc : Doc) (h : doc.output.contract.fonts =
 document's own `\page{ numbers = ... }` wins; an undeclared document takes
 its class record's default (`ClassRecord.pageNumbers`). One resolving site,
 read by layout's furniture pass and the driver's glyph precompute alike. -/
-public def Doc.pageNumbersOn (doc : Doc) : Bool :=
+@[expose] public def Doc.pageNumbersOn (doc : Doc) : Bool :=
   doc.page.numbers.getD doc.docClass.record.pageNumbers
 
 /-- Whether counted body lines carry margin line numbers: the document's
@@ -8223,7 +8238,7 @@ own declaration and nothing else — no class default turns line numbers
 on (the page key is a declared flag, never a default). One resolving
 site, read by layout's furniture pass and the driver's glyph precompute
 alike. -/
-public def Doc.lineNumbersOn (doc : Doc) : Bool :=
+@[expose] public def Doc.lineNumbersOn (doc : Doc) : Bool :=
   doc.page.linenumbers.getD false
 
 /-- The line-number modulus in force: 1 — every counted line — unless
@@ -9492,7 +9507,7 @@ mutual
 called once that content is read. A `.bibliography`'s items are the style's
 renderings, not authored content, so the walk reads the marker and does not
 descend — the same line `foldBlock` draws. -/
-public def foldCtxBlock (w : CtxFold γ α) (ctx : γ) (acc : α) (b : Block) : α :=
+@[expose] public def foldCtxBlock (w : CtxFold γ α) (ctx : γ) (acc : α) (b : Block) : α :=
   match b with
   | .para content =>
     let r := w.openBlock ctx acc b
@@ -9861,7 +9876,7 @@ public theorem foldCtxBlocks_covers (fb : α → Block → α) (fi : α → Inli
 /-- Does any node of the inline content satisfy `p`? The Bool face of the
 fold — the trigger census the conditional-identity schema
 (`mapInlines_id`) and `hasPhysicalPage` read. -/
-public def anyInline (p : Inline → Bool) (xs : Array Inline) : Bool :=
+@[expose] public def anyInline (p : Inline → Bool) (xs : Array Inline) : Bool :=
   foldInlines (fun b x => b || p x) false xs
 
 /-- An inline that emits an HTML anchor now or after reference/citation
@@ -12338,14 +12353,14 @@ mixed with silently (`footerSequenceDiags`). The descent that carries the
 question over content is the fold's, declared once (`hasPhysicalPage`);
 this leaf answers for one node, and any constructor that is not one of
 the two spellings is not a placeholder. -/
-public def isPhysicalPage : Inline → Bool
+@[expose] public def isPhysicalPage : Inline → Bool
   | .pageNumber => true
   | .pageCount => true
   | _ => false
 
 /-- Does this inline content carry a physical-page placeholder anywhere?
 `anyInline` over the one leaf predicate. -/
-public def hasPhysicalPage (xs : Array Inline) : Bool :=
+@[expose] public def hasPhysicalPage (xs : Array Inline) : Bool :=
   anyInline isPhysicalPage xs
 
 /-- Is this slot the frame sequence's? The counting model keeps two distinct
@@ -13590,7 +13605,7 @@ mirrors this list, and each backend passes its own entry to `keepFor`). -/
 public def backendNames : List String := ["pdf", "html", "md"]
 
 /-- Does backend `t` keep this block? Only a conditional can exclude one. -/
-public def keptBy (t : String) : Block → Bool
+@[expose] public def keptBy (t : String) : Block → Bool
   | .only targets _ => targets.contains t
   | .para _ | .equation _ _ | .section _ _ _ _ | .list _ _ | .center _ | .ragged _ _
   | .quote _ | .abstract _
@@ -13611,7 +13626,7 @@ into every body so a nested conditional resolves against its own targets.
 Each backend applies this once at its entry, with its own name — the drop
 decision lives here and nowhere else, so no backend can improvise a
 different reading of the same target set. -/
-public def keepForOne (t : String) : Block → Block
+@[expose] public def keepForOne (t : String) : Block → Block
   | .only targets body => .only targets (keepForList t body.toList).toArray
   | .nav spec body => .nav spec (keepForList t body.toList).toArray
   | .list o items => .list o (keepForItems t items.toList).toArray
@@ -13649,7 +13664,7 @@ public def keepForOne (t : String) : Block → Block
   -- Entries hold inlines: no conditional can nest in a reference list.
   | .bibliography src style items => .bibliography src style items
 
-public def keepForList (t : String) : List Block → List Block
+@[expose] public def keepForList (t : String) : List Block → List Block
   | [] => []
   | b :: rest =>
     match keptBy t b with
@@ -14358,7 +14373,7 @@ public def onlyFreeColumns : List (BoxWidth × Array Block) → Bool
 
 end
 
-public def onlyFree (xs : Array Block) : Bool := onlyFreeList xs.toList
+@[expose] public def onlyFree (xs : Array Block) : Bool := onlyFreeList xs.toList
 
 mutual
 

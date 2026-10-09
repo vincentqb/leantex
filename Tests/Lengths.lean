@@ -1,4 +1,8 @@
-import Tests.Layout
+module
+
+public import Tests.Layout
+
+public section
 
 open LeanTex.Core LeanTex.Core.Utf8 LeanTex.Cli
 

@@ -1,7 +1,6 @@
 module
 
 public import LeanTex.Core.Ir
-import all LeanTex.Core.Ir
 
 /-!
 Oklab as pure integer arithmetic over the engine's 8-bit `Color`, for one

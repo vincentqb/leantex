@@ -313,6 +313,34 @@ in this repo; refer to the private reference corpus abstractly.
   captured by one `find?` held `lake test` for 25 minutes instead of 3. A
   large value in a check block depends on a runtime read (a ref, an
   argument) before any closure captures it (`pdfBoundsChecks`).
+- A module's private part — private declarations, unexposed bodies,
+  proofs, comments — reaches another file's build only through
+  `import all`, or through a file outside the module system, which reads
+  every transitive import whole; a private edit rebuilds exactly those
+  readers. So a consumer reads public interfaces: a proof that must unfold
+  a body reads an `@[expose]`d definition or a public lemma beside it, and
+  `import all` is for small readers whose rebuild costs seconds, such as a
+  proof or contract companion beside what it reads. Private reads chain:
+  ContrastContract and ElabRegistryContract read Theme whole and, through
+  Theme's `import all Ir`, Ir's private part, which their kernel `decide`s
+  evaluate, so a 28-second contract rebuilds on every Ir edit — the
+  standing exception. Every library and test file is a `module` but the
+  declared shims (`buildGraphChecks` reads each header with Lake's own
+  reader and holds to declared lists the shims, each large file's private
+  reads, and each large file's private readers). One comment line
+  appended to Ir once rebuilt 184 modules in 6½ minutes, through Layout's
+  and HtmlDoc's `import all` and 172 test files outside the module
+  system. Order matters inside a large module too: a `structure`,
+  `inductive` or multi-definition `mutual` block is added synchronously
+  and waits for the elaboration and kernel check of every theorem before
+  it (Layout loses about 100 of its 136 seconds this way), and a kernel
+  check over a few seconds is a factorization finding —
+  `emitTree_resolve_agree` cost 73 s while `emitTree` destructured its
+  emitter's result, and a fraction of a second once it returned
+  projections. The kernel honours `maxHeartbeats`, so a bound beside such
+  a theorem holds its cost deterministically. A list literal's elaboration
+  cost grows faster than linearly in its elements: the census rows stand
+  in parts of at most `censusPartRows`.
 - The inline elaboration knot compiles at its heartbeat budget (more than
   198k of 200k on 2026-09-27), and its cost grows with `ESt`'s top-level
   fields: state the knot never reads goes in a record of its own

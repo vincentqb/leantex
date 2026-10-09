@@ -1,5 +1,9 @@
-import Tests.Artifact
-import LeanTex.Core.Layout.MathRhythm
+module
+
+public import Tests.Artifact
+public import LeanTex.Core.Layout.MathRhythm
+
+public section
 
 open LeanTex.Core
 open LeanTex.Core.Dim (Sp pt)

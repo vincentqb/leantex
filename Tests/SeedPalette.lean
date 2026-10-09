@@ -1,5 +1,9 @@
-import Tests.Support
-import LeanTex.Core.SeedPalette
+module
+
+public import Tests.Support
+public import LeanTex.Core.SeedPalette
+
+public section
 
 open LeanTex.Core
 

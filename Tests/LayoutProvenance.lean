@@ -1,4 +1,8 @@
-import LeanTex.Core.Layout
+module
+
+public import LeanTex.Core.Layout
+
+public section
 
 namespace LeanTex.Tests.LayoutProvenance
 

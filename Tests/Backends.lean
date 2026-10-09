@@ -1,5 +1,9 @@
-import Tests.Support
-import scripts.Gate
+module
+
+public import Tests.Support
+public import scripts.Gate
+
+public section
 
 open LeanTex.Core LeanTex.Core.Utf8 LeanTex.Cli
 

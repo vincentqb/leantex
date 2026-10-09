@@ -1,4 +1,8 @@
-import LeanTex.Core.Pdf
+module
+
+public import LeanTex.Core.Pdf
+
+public section
 
 open LeanTex.Core
 open LeanTex.Core.Dim

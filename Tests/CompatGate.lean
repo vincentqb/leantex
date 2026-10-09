@@ -1,4 +1,8 @@
-import Tests.Artifact
+module
+
+public import Tests.Artifact
+
+public section
 
 open LeanTex.Core LeanTex.Core.Utf8 LeanTex.Cli
 

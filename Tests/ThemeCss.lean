@@ -1,6 +1,10 @@
-import LeanTex.Core.HtmlDoc
-import LeanTex.Core.Theme
-import Tests.Support
+module
+
+public import LeanTex.Core.HtmlDoc
+public import LeanTex.Core.Theme
+public import Tests.Support
+
+public section
 
 open LeanTex.Core
 

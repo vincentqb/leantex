@@ -1,5 +1,9 @@
-import LeanTex.Cli.FontDiscovery
-import Tests.Support
+module
+
+public import LeanTex.Cli.FontDiscovery
+public import Tests.Support
+
+public section
 
 open LeanTex.Core LeanTex.Core.Utf8 LeanTex.Cli
 

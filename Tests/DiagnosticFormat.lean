@@ -1,5 +1,10 @@
-import Tests.Support
-import Lean.Data.Json.Parser
+module
+
+public import Tests.Support
+public import Lean.Data.Json.Parser
+public import Lean.Data.Json
+
+public section
 
 open LeanTex.Core LeanTex.Cli
 

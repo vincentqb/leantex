@@ -9,11 +9,7 @@ public import LeanTex.Core.Contrast
 public import LeanTex.Core.Font
 import LeanTex.Core.Listing
 import LeanTex.Core.TitleTemplate
-import all LeanTex.Core.Html
-import all LeanTex.Core.MathMl
-import all LeanTex.Core.Ir
-import all LeanTex.Core.Contrast
-import all LeanTex.Core.ListMark
+import LeanTex.Core.ListMark
 import Std.Http.Data.URI.Encoding
 
 namespace LeanTex.Core.HtmlDoc
@@ -161,7 +157,7 @@ context because only the child's configuration changes. -/
 public def Config.atMeasure (cfg : Config) (width : Sp) : Config :=
   { cfg with measures := some (MeasureValues.horizontal width cfg.measureValues.textHeight) }
 
-public def cssColor (c : Color) : String := c.css
+@[expose] public def cssColor (c : Color) : String := c.css
 
 /-- What a formula's cancel marks read from the math face, in thousandths
 of an em — its overbar rule and clearance, the two quantities the PDF lays
@@ -1059,6 +1055,7 @@ private theorem blockGap_kinds_covers :
     (blockGapKinds.all fun e => 0 < gapK e.2) = true ∧ 0 < gapK "float" ∧
     0 < gapK "caption" ∧ 0 < gapK "trivlist" ∧
     0 < screenMilli Ir.baseFontSize (Ir.displaySkipDefault Ir.baseFontSize).width.sp := by
+  rw [Ir.displaySkipDefault_base_exact]
   decide
 
 /-- One rule of the block-boundary sheet. `reset` states an element's own
@@ -1383,7 +1380,9 @@ public theorem listGaps_agree (size : Int) (sk : Ir.ListSkips) (pt : SymGlue)
 /-- The web's lineage owes no list space: a webpage's lists keep the peer
 gap and its items a leading apart, where its print twin sets them. -/
 public theorem listRules_web_exact (size : Int) (tokens : Ir.Tokens) :
-    listRules .web size tokens = [] := by rfl
+    listRules .web size tokens = [] := by
+  simp only [listRules, Ir.listSkips_web_exact]
+  rfl
 
 /-- A declared `\parskip`'s natural width in sp, at the body it was set
 under: TeX evaluates `\setlength{\parskip}{0.5em}` once, in the font in
@@ -2001,8 +2000,8 @@ public def profile : Ir.Realization :=
 
 /-- The undeclared contract is met by this emitter (`_exact`): a document
 that declares no contract key gets no W0701 from its page. -/
-public theorem html_default_contract_exact : ({} : Ir.OutputContract).unmet profile = #[] := by
-  decide
+public theorem html_default_contract_exact : ({} : Ir.OutputContract).unmet profile = #[] :=
+  Ir.OutputContract.unmet_default_exact profile
 
 /-- Every face declared in CSS embeds a captured font program from the
 resolved set. This is an artifact resource fact; the shared face-coverage
@@ -5011,7 +5010,7 @@ table (`Ir.VAlign.shares` carries the sourcing) exactly as
 another backend, so each projects the IR and `vdist_shares_agree` in
 Tests states the agreement. A page-opening path owes a declared
 distribution, never a default (the obligation table). -/
-public def vdistShares : Ir.VAlign → Nat × Nat := Ir.VAlign.shares
+@[expose] public def vdistShares : Ir.VAlign → Nat × Nat := Ir.VAlign.shares
 
 /-- The overlay attributes a step's wrapper carries: its range as data, and
 the `--step` index the uncover reads. -/
@@ -5956,7 +5955,7 @@ private def splitAtFills (xs : Array Inline) : Array (Array Inline) := Id.run do
 (`Ir.headingRank`, which carries the sourcing), so the tag and the
 markdown marker cannot drift; `heading_renderings_agree` in Tests states
 the agreement over every level. -/
-public def headingTag (level : Ir.HeadingLevel) : String :=
+@[expose] public def headingTag (level : Ir.HeadingLevel) : String :=
   s!"h{Ir.headingRank level}"
 
 private def fillRow (cfg : Config) (tag baseClass : String) (xs : Array Inline) : Node :=
@@ -6666,7 +6665,7 @@ public theorem labelFormula_glyphs_agree (f : LabelFace) (cfg : Config)
       (labelNodesOne f #[] (.formula display src body) (some cfg)).toList =
         MathMl.listChars #[] body := by
   simpa only [labelNodesOne, Array.toList_push, List.nil_append,
-    Array.toList_empty, MathMl.nodeListChars] using
+    Array.toList_empty, MathMl.nodeListChars_cons, MathMl.nodeListChars_nil] using
       MathMl.formulaRow_glyphs_agree display _ body (mathMarks cfg)
 
 private theorem labelRun_mathFree (f : LabelFace) (s : String) (native : Bool) :
@@ -8415,15 +8414,20 @@ public def emitTree (cfg : Config) (doc : Doc) :
   let coverage := cfg.fonts.map (·.mathAlphabets) |>.getD {}
   let family := cfg.fonts.bind (fun fs => fs.math.bind (fs.fonts[·]?))
     |>.map (·.family) |>.getD "math face"
-  let (doc, diags) := Ir.resolveMathAlphas coverage family doc
+  let resolved := Ir.resolveMathAlphas coverage family doc
   -- Rendering reads the canonical source-free shape: locations must not
   -- hide a display formula, a description label, or a flex-row separator
   -- from the backend's structural classifiers. The caller's spanned IR
   -- remains available for diagnostics.
-  let (head, body, backendDiags) :=
-    emitTreeCore cfg (Ir.eraseLocations doc) (styleRules doc)
-  (head, body, diags ++ backendDiags)
+  let tree := emitTreeCore cfg (Ir.eraseLocations resolved.1) (styleRules resolved.1)
+  -- Projections, not a destructuring `let`: matching the emitter's result
+  -- made the kernel evaluate the whole emitter to check
+  -- `emitTree_resolve_agree` (73 s of every HtmlDoc build).
+  (tree.1, tree.2.1, resolved.2 ++ tree.2.2)
 
+-- A bound, not a budget: the check needs under 300 heartbeats over the
+-- projections, and the destructuring form exceeds 2000 in the kernel.
+set_option maxHeartbeats 2000 in
 /-- Both tree projections read the IR resolver's one fixed point. -/
 public theorem emitTree_resolve_agree (cfg : Config) (doc : Doc) :
     let coverage := cfg.fonts.map (·.mathAlphabets) |>.getD {}
@@ -8432,8 +8436,7 @@ public theorem emitTree_resolve_agree (cfg : Config) (doc : Doc) :
     let resolved := (Ir.resolveMathAlphas coverage family doc).1
     (emitTree cfg resolved).1 = (emitTree cfg doc).1 ∧
       (emitTree cfg resolved).2.1 = (emitTree cfg doc).2.1 := by
-  dsimp only
-  simp [emitTree, Ir.resolveMathAlphas_fixed_point]
+  simp only [emitTree, Ir.resolveMathAlphas_fixed_point, and_self]
 
 /-- Emit a document. Returns the file and any diagnostics the backend itself
 raises — running content is the notable one: page furniture cannot be honoured

@@ -1,4 +1,8 @@
-import Tests.PictureKeys
+module
+
+public import Tests.PictureKeys
+
+public section
 
 open LeanTex.Core
 

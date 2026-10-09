@@ -1,5 +1,10 @@
-import LeanTex.Cli.ImageAssets
-import Tests.Support
+module
+
+public import LeanTex.Cli.ImageAssets
+public import Tests.Support
+public import LeanTex.Cli.RunBounded
+
+public section
 
 open LeanTex.Cli
 

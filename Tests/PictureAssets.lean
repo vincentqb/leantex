@@ -1,5 +1,9 @@
-import LeanTex.Cli.PictureAssets
-import Tests.Support
+module
+
+public import LeanTex.Cli.PictureAssets
+public import Tests.Support
+
+public section
 
 namespace Tests
 

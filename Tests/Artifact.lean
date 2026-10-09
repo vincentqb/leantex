@@ -1,5 +1,9 @@
-import LeanTex.Cli.FontDiscovery
-import Tests.Backends
+module
+
+public import LeanTex.Cli.FontDiscovery
+public import Tests.Backends
+
+public section
 
 open LeanTex.Core LeanTex.Core.Utf8 LeanTex.Cli
 open LeanTex.Core.PdfRead (Obj Entry)

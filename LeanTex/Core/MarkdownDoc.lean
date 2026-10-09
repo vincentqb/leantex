@@ -1,7 +1,6 @@
 module
 
 public import LeanTex.Core.Ir
-import all LeanTex.Core.Ir
 
 /-! The markdown backend. A web page today publishes a plain-text twin — the
 llms.txt convention (llmstxt.org): `# title`, a `> summary`, then sections —
@@ -140,7 +139,7 @@ private def bibItemsText (ind : String) (items : Array Ir.BibItem) : String := I
 rank (`Ir.headingRank`, whose type bounds it to six), so the
 marker and the HTML tag cannot drift; `heading_renderings_agree` in Tests
 states the agreement over every level. -/
-public def headingMarker (level : Ir.HeadingLevel) : String :=
+@[expose] public def headingMarker (level : Ir.HeadingLevel) : String :=
   String.ofList (List.replicate (Ir.headingRank level) '#')
 
 mutual

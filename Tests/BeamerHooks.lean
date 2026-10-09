@@ -1,5 +1,9 @@
-import Tests.Support
-import Tests.StandoutPalette
+module
+
+public import Tests.Support
+public import Tests.StandoutPalette
+
+public section
 
 open LeanTex.Core
 

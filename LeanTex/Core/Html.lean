@@ -204,15 +204,15 @@ def phrasingTags : List String :=
    "code", "u", "s", "figcaption", "dt", "dd", "th", "td", "title", "caption", "label",
    "text", "tspan"]
 
-public def elem (tag : String) (kids : Array Node := #[])
+@[expose] public def elem (tag : String) (kids : Array Node := #[])
     (attrs : Array (String × String) := #[]) : Node :=
   .elem tag attrs kids
 
-public def text (s : String) : Node := .text s
+@[expose] public def text (s : String) : Node := .text s
 
 /-- The tag of an element node; `none` for text, style, and script. What a
 statement about which element a tree ships at a position reads. -/
-public def Node.tag? : Node → Option String
+@[expose] public def Node.tag? : Node → Option String
   | .elem tag _ _ => some tag
   | .text _ => none
   | .style _ => none
