@@ -251,12 +251,14 @@ in this repo; refer to the private reference corpus abstractly.
   concatenating tag strings. Any new node type goes through the escaper by
   construction; if you find yourself writing `"<" ++ …`, stop.
 - A default LaTeX assigns as a `\dimen` when a class or package loads —
-  booktabs' `.65ex`, its `.08em` — is that dimen, and so is a `\setlength`
-  the preamble makes: its em and ex are the preamble font's at the class's
-  `\normalsize` (`Ir.PreambleFace`, `Ir.optionNormalSize`: 10.95pt under
-  `11pt`; measured under lualatex), never the face or size where it is used.
-  Read where it was used, booktabs' seps stood 18% wide in a deck whose face
-  has a tall x-height (`tableLengthChecks`).
+  booktabs' `.65ex`, its `.08em` — is that dimen, and so is a table length
+  the preamble's `\setlength` declares (`Ir.PreambleFace.fixTableLengths`):
+  its em and ex are the preamble font's at the class's `\normalsize`
+  (`Ir.PreambleFace`, `Ir.optionNormalSize`: 10.95pt under `11pt`; measured
+  under lualatex), never the face or size where it is used. Read where it
+  was used, booktabs' seps stood 18% wide in a deck whose face has a tall
+  x-height (`tableLengthChecks`). Other preamble lengths still resolve where
+  they are read; fixing them the same way is pending work.
 - A distance LaTeX prints is a sum, and matching one of its terms is not
   matching the distance: booktabs' seps made lualatex's took the printed rule
   gaps further from lualatex's, because the rows beside the rules stood on
