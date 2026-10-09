@@ -10,30 +10,34 @@ The engine reads two surfaces, and each has exactly one door into the one
 surface AST: tex through its lexer and parser, markdown through its reader
 and desugaring. Past the door the elaborator reads raws, never the surface
 that wrote them; what a document's surface may still decide is its own
-defaults — how its content sets, never what is set. The CLI reads a
-surface only here (`surfaceDoorBypasses` in `scripts/precommit.lean`
-holds it to that). Inside the core, three places read tex text the way the
-tex door does without going through it: the elaborator's whole-document
-entry (`Elab.run`, which tests elaborate a string with), a setting's tex
-value (`Data.valParsed`), and the compatibility layer's synthesized source
-(`Compat.synth`).
+defaults — how its content sets, never what is set. The door is this
+file's definition, and the hook holds the CLI to it: a CLI source reads a
+surface only through `read` and `fragment` (`surfaceDoorBypasses` in
+`scripts/precommit.lean`). Inside the core no rule holds yet, and six
+places lex and parse tex text the way the tex door does without going
+through it, each over text the engine itself holds rather than a file:
+the elaborator's whole-document entry (`Elab.run`, which tests elaborate a
+string with), a style declaration's value (`Elab.applyStyle`), a setting's
+tex value (`Data.valParsed`), the compatibility layer's synthesized source
+(`Compat.synth`), a picture's macro definition (`Picture.readMacro`) and a
+bibliography style's formula (`BibStyle.formulaOf`).
 
 A file read for an include goes through the same door and comes back in the
 one wrapper the elaborator knows a file by (`Parse.inputEnv`), so an
 included file's diagnostics name the file and line that hold the construct.
 The wrapper means nothing but the file's name: an include standing as its
-block sequence elaborates exactly as the file alone does
-(`Elab.elabBlocks_input_exact`; at any block accumulator, a frame's content
-among them, `Elab.elabBlockScope_input_exact`), and a markdown file meets
-that statement's hypotheses by construction once it has content
-(`Elab.markdownInput_blocks_exact`). -/
+block sequence, with only blank source around the call, elaborates exactly
+as the file alone does (`Elab.elabBlocks_input_exact`; at any block
+accumulator, a frame's content among them, `Elab.elabBlockScope_input_exact`),
+and a markdown file meets that statement's hypotheses by construction once
+it has content (`Elab.markdownInput_blocks_exact`). -/
 
 namespace LeanTex.Core
 
 /-- The surfaces a document or an included file can be written in. -/
 public inductive Surface where
   | tex
-  | md
+  | markdown
   deriving Repr, BEq, DecidableEq
 
 namespace Surface
@@ -41,7 +45,7 @@ namespace Surface
 /-- The surface a path's extension selects for a document: `.md` reads as
 markdown, everything else as tex. -/
 public def ofPath (file : String) : Surface :=
-  if file.endsWith ".md" then .md else .tex
+  if file.endsWith ".md" then .markdown else .tex
 
 /-- The tex door's first stage, the lexer, for a caller that reports each
 stage on its own (the driver's `-v` phases). -/
@@ -60,11 +64,11 @@ then the desugaring, which lowers into the AST without generating tex text
     let (toks, lexDs) := Lex.lex file text
     let (raws, parseDs) := Parse.parse file toks
     (raws, lexDs ++ parseDs)
-  | .md, file, text => Md.read file text
+  | .markdown, file, text => Md.read file text
 
 /-- The tex door is its two stages, one after the other: a caller that
 reports them apart reads what `read` reads. -/
-public theorem read_tex_stages (file text : String) :
+public theorem read_tex_exact (file text : String) :
     read .tex file text =
       ((texParse file (texLex file text).1).1,
         (texLex file text).2 ++ (texParse file (texLex file text).1).2) := rfl

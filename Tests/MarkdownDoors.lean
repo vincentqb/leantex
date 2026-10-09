@@ -21,7 +21,8 @@ synthetic family that reaches every markdown block and inline node to depth
 two:
 
 * D1 — under the host's surface: the neutral host's document is the file
-  alone as a document named as the host (`aloneDoc`), whole.
+  alone as a document named as the host (`aloneDoc`), whole, written tight
+  and written as a source usually is, each command on a line of its own.
 * D1′ — under the markdown surface: the markdown door's document is its own
   include, the file alone as a document of its own name, whole and with the
   same diagnostics. Between D1 and D1′ the raws are one array and only the
@@ -41,8 +42,12 @@ two:
 * D6 — named as the file, an include is nothing: where the included file
   and the including document share a name, a document body or a frame's
   content that is the include is the same document with the file's raws in
-  the call's place. This is `Elab.elabBlockScope_input_exact`'s accumulator
-  at a frame, composed with the rest of the frame arm, end to end.
+  the call's place, with the call written tight and on a line of its own,
+  and a frame whose call stands on a line of its own is the tight frame.
+  This is `Elab.elabBlockScope_input_exact`'s accumulator at a frame,
+  composed with the rest of the frame arm, end to end. The shapes a source
+  writes — the hosts here and the corpus deck — are held to the theorems'
+  domain (`includeStands`): one wrapper, blank source either side.
 
 Every family carries a planted divergence that must fail. -/
 
@@ -172,8 +177,9 @@ end
 reader: the hinge, at document level. -/
 def splicedDoc (host src : String) : Ir.Doc × Array Diag :=
   let (raws, ds) := Surface.read .tex hostFile host
-  let fds := (Surface.read .md mdName src).2
-  let raws := spliceList mdName (fun p => (Surface.fragment .md mdName src p).1) #[] raws.toList
+  let fds := (Surface.read .markdown mdName src).2
+  let raws := spliceList mdName (fun p => (Surface.fragment .markdown mdName src p).1) #[]
+    raws.toList
   Elab.runExecuted hostFile (Elab.executeInputs nullReader hostFile raws) (ds ++ fds)
 
 /-- D6's right side: the host with the file's raws — read under the host's
@@ -181,7 +187,7 @@ own name, no wrapper written — standing where each call stood, executed
 with no reader. -/
 def unwrappedDoc (host src : String) : Ir.Doc × Array Diag :=
   let (raws, ds) := Surface.read .tex hostFile host
-  let (sub, fds) := Surface.read .md hostFile src
+  let (sub, fds) := Surface.read .markdown hostFile src
   let raws := spliceList mdName (fun _ => sub) #[] raws.toList
   Elab.runExecuted hostFile (Elab.executeInputs nullReader hostFile raws) (ds ++ fds)
 
@@ -194,7 +200,7 @@ def selfNamedDoc (host src : String) : Ir.Doc × Array Diag :=
 standing where the include stood: D6 must see it. -/
 def quotedDoc (host src : String) : Ir.Doc × Array Diag :=
   let (raws, ds) := Surface.read .tex hostFile host
-  let (sub, fds) := Surface.read .md hostFile src
+  let (sub, fds) := Surface.read .markdown hostFile src
   let raws := spliceList mdName (fun p => #[.env "quote" sub p]) #[] raws.toList
   Elab.runExecuted hostFile (Elab.executeInputs nullReader hostFile raws) (ds ++ fds)
 
@@ -207,6 +213,49 @@ def hostWith (pre : String) : String :=
 def frameHost : String :=
   "\\documentclass{slides}\\usepackage{markdown}\\begin{document}\\begin{frame}{Frame title}" ++
     "\\markdownInput{" ++ mdName ++ "}\\end{frame}\\end{document}"
+
+/-- The frame host as a source is usually written: each command on a line
+of its own, the call among the frame's blank source. -/
+def spacedFrameHost : String :=
+  "\\documentclass{slides}\n\\usepackage{markdown}\n\n\\begin{document}\n\n" ++
+    "\\begin{frame}{Frame title}\n\\markdownInput{" ++ mdName ++ "}\n\\end{frame}\n\n" ++
+    "\\end{document}\n"
+
+/-- Is an accumulator in the include theorems' domain — one include
+wrapper, blank source before and after it (`Elab.sourceBlank`)? -/
+def includeStands (raws : Array Raw) : Bool :=
+  let isWrapper (r : Raw) : Bool := match r with
+    | .env n _ _ => (Parse.inputEnvFile? n).isSome
+    | _ => false
+  match raws.findIdx? isWrapper with
+  | some i => (raws.extract 0 i).all Elab.sourceBlank &&
+      (raws.extract (i + 1) raws.size).all Elab.sourceBlank
+  | none => false
+
+/-- The raws the document body runs, through the real pipeline: the host's
+door, the included door's reader, preparation — the accumulator
+`Elab.runDocBody_input_exact` reads. -/
+def planRaws (host src : String) : Array Raw :=
+  let (raws, _) := Surface.read .tex hostFile host
+  let (executed, _) := (Elab.executeInputs (mdFileReader [(mdName, mdName, src)]) hostFile
+    raws).run #[]
+  (Elab.preparedBody hostFile (Elab.prepareExecuted hostFile executed)).1.raws
+
+/-- The same for a corpus fixture, its includes read as the driver reads
+them. -/
+def fixturePlanRaws (n : String) : IO (Array Raw) := do
+  let file := s!"{n}.tex"
+  let (raws, _) := Surface.read .tex file (← IO.FS.readFile s!"testdata/corpus/{n}.tex")
+  let (executed, _, _) ← Input.expandInputs file raws (dir := "testdata/corpus")
+  return (Elab.preparedBody file (Elab.prepareExecuted file executed)).1.raws
+
+/-- Each frame's content as the frame arm hands it to its content scope:
+what follows the frame's title group. -/
+def frameContents (raws : Array Raw) : Array (Array Raw) :=
+  raws.filterMap fun r => match r with
+    | .env "frame" body _ =>
+      if body[0]? matches some (Raw.group ..) then some (body.extract 1 body.size) else none
+    | _ => none
 
 /-- A fragment that spells every ordinary control of the vocabulary. -/
 def captureFragment : String :=
@@ -227,7 +276,7 @@ def markdownDoorChecks (ref : IO.Ref (List String)) : IO Unit := do
   -- The vocabulary judge, as a test's assertion and as a judge that can say no.
   for src in family do
     t s!"doors: the desugaring of {repr src} lies in the vocabulary"
-      (Md.vocabulary.admitsList (Surface.read .md mdName src).1.toList)
+      (Md.vocabulary.admitsList (Surface.read .markdown mdName src).1.toList)
   t "doors: the vocabulary judge refuses math and an unlisted control"
     (!Md.vocabulary.admits (.math false #[] {}) && !Md.vocabulary.admits (.ctrl "section" {}))
   -- D1, D1′ and D4 over the family.
@@ -245,6 +294,10 @@ def markdownDoorChecks (ref : IO.Ref (List String)) : IO Unit := do
     t s!"doors D1: the content census agrees across the surfaces for {repr src}"
       (Ir.blocksText aDoc.body == Ir.blocksText hDoc.body)
     t s!"doors D4: one accounting for {repr src}" (accounted hDs iDs)
+    let (wDoc, wDs) := includedDoc hostFile (spacedNeutralHost mdName) [(mdName, mdName, src)]
+    t s!"doors D1: the neutral host on lines of its own is the file alone for {repr src}"
+      (wDoc == hDoc)
+    t s!"doors D4: one accounting on lines of its own for {repr src}" (accounted hDs wDs)
     if (plantedTexDoor src).1 != hDoc then plantedTex := plantedTex + 1
     if !accounted hDs (plantedRenamedDoor src).2 then plantedRenamed := plantedRenamed + 1
   t s!"doors D1: a door reading markdown as tex is seen ({plantedTex} of {family.length})"
@@ -290,18 +343,42 @@ def markdownDoorChecks (ref : IO.Ref (List String)) : IO Unit := do
         censusText (censusOf #[] (layoutOf fonts iDoc)))
   -- D6: named as the file, an include is nothing, at a body and at a frame.
   let mut quotedSeen := 0
+  let mut quotedSpaced := 0
   for src in family do
-    for (site, host) in [("body", neutralHost mdName), ("frame", frameHost)] do
+    for (site, host) in [("body", neutralHost mdName), ("frame", frameHost),
+        ("body on lines of its own", spacedNeutralHost mdName),
+        ("frame on lines of its own", spacedFrameHost)] do
       t s!"doors D6: named as the file, a {site} that is the include is its raws for {repr src}"
         ((selfNamedDoc host src).1 == (unwrappedDoc host src).1)
+    t s!"doors D6: a frame whose call stands on a line of its own is the tight frame for {repr src}"
+      ((selfNamedDoc spacedFrameHost src).1 == (selfNamedDoc frameHost src).1)
     if (selfNamedDoc frameHost src).1 != (quotedDoc frameHost src).1 then
       quotedSeen := quotedSeen + 1
+    if (selfNamedDoc spacedFrameHost src).1 != (quotedDoc spacedFrameHost src).1 then
+      quotedSpaced := quotedSpaced + 1
   t s!"doors D6: a wrapper that means more than a name is seen ({quotedSeen} of {family.length})"
     (quotedSeen * 2 > family.length)
+  t s!"doors D6: so it is on lines of its own ({quotedSpaced} of {family.length})"
+    (quotedSpaced * 2 > family.length)
   t "doors D6: raws standing at the wrong place in a frame are seen"
     ((selfNamedDoc frameHost captureFragment).1 !=
       (unwrappedDoc (frameHost.replace "{Frame title}" "{Frame title}Lead words")
         captureFragment).1)
+  -- The include theorems' domain at the shapes a source writes, read from
+  -- the real pipeline: one wrapper among blank source.
+  for (site, host) in [("tight", neutralHost mdName),
+      ("on lines of its own", spacedNeutralHost mdName)] do
+    t s!"doors D6: a body whose call stands {site} is in the include theorems' domain"
+      (includeStands (planRaws host captureFragment))
+  for (site, host) in [("tight", frameHost), ("on lines of its own", spacedFrameHost)] do
+    let contents := frameContents (planRaws host captureFragment)
+    t s!"doors D6: a frame whose call stands {site} has its content in the domain"
+      (contents.size == 1 && contents.all includeStands)
+  let deck := frameContents (← fixturePlanRaws "md-include-deck")
+  t "doors D6: the corpus deck's included frame has its content in the domain"
+    (deck.size == 1 && deck.all includeStands)
+  t "doors D6: the domain judge refuses an include beside text (the corpus article)"
+    (!includeStands (← fixturePlanRaws "md-include"))
 
 /-- The neutral host through the driver's own reader, against the pure
 door: the pure reader is held to the one the driver runs. -/

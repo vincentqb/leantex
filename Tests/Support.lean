@@ -208,7 +208,7 @@ def firstFormula (d : Ir.Doc) : Option Math.MList :=
 (`Surface.read`), then `Elab.runRaws` — the same path `leantex doc.md`
 takes. -/
 def elabMd (s : String) : Ir.Doc × Array Diag :=
-  let (raws, ds) := Surface.read .md "t.md" s
+  let (raws, ds) := Surface.read .markdown "t.md" s
   Elab.runRaws "t.md" raws ds
 
 /-- Diagnostics of a markdown source. -/
@@ -229,7 +229,7 @@ elaboration as the driver runs a document. The null reader is exact here:
 a markdown file's raws lie in a vocabulary that holds no input or package
 request (`Md.desugar_vocabulary_mem`), so no request reaches a reader. -/
 def standaloneDoc (f t : String) : Ir.Doc × Array Diag :=
-  let (raws, ds) := Surface.read .md f t
+  let (raws, ds) := Surface.read .markdown f t
   Elab.runExecuted f (Elab.executeInputs nullReader f raws) ds
 
 /-- The included door's reader, pure: `\markdownInput{name}` is answered
@@ -243,7 +243,7 @@ def mdFileReader (files : List (String × String × String)) :
   match files.find? (·.1 == request.name.trimAscii.toString) with
   | none => return (none, context)
   | some (_, path, text) =>
-    let (sub, ds) := Surface.fragment .md path text request.pos
+    let (sub, ds) := Surface.fragment .markdown path text request.pos
     modify (· ++ ds)
     let (answer, context) := Elab.resumeInput nullReader context request.file sub
     return (some answer, context)
@@ -262,7 +262,7 @@ host, it is the file alone under that host's surface, the document the
 neutral host's is held to; named as the file itself, it is the markdown
 door's own document with its raws wrapped as the file they came from. -/
 def aloneDoc (docFile f t : String) : Ir.Doc × Array Diag :=
-  let (raws, ds) := Surface.fragment .md f t {}
+  let (raws, ds) := Surface.fragment .markdown f t {}
   Elab.runExecuted docFile (Elab.executeInputs nullReader docFile raws) ds
 
 /-- The neutral host: an article whose body is one `\markdownInput` and
@@ -270,6 +270,14 @@ nothing else, so the include stands as the body's block sequence. -/
 def neutralHost (name : String) : String :=
   "\\documentclass{article}\\usepackage{markdown}\\begin{document}\\markdownInput{" ++ name ++
     "}\\end{document}"
+
+/-- The neutral host as a source is usually written: each command on a line
+of its own and a blank line either side of the include, so the include
+stands among the blank source the include theorems allow
+(`Elab.sourceBlank`). -/
+def spacedNeutralHost (name : String) : String :=
+  "\\documentclass{article}\n\\usepackage{markdown}\n\n\\begin{document}\n\n\\markdownInput{" ++
+    name ++ "}\n\n\\end{document}\n"
 
 mutual
 

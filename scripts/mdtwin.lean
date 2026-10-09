@@ -132,14 +132,18 @@ lost escape loses. -/
 def droppedEscapes (d : Ir.Doc) : String := (MarkdownDoc.emit d).replace "\\*" "*"
 
 def mdtwinSelftest : IO UInt32 := tierSelftest "mdtwin" fun no => do
-  -- The blind-spot pair: italic and emphasis write one spelling, so the
-  -- byte level sees one twin where the IR level sees two documents.
+  -- The blind-spot pair, measured as each level measures it: italic writes
+  -- the spelling emphasis writes, so italic's twin re-reads as emphasis.
+  -- The byte level sees a fixed point where the IR level sees the body change.
   let italic : Ir.Doc := { body := #[.para #[.styled .italic #[.text "x"]]] }
   let emph : Ir.Doc := { body := #[.para #[.styled .emph #[.text "x"]]] }
-  no "blind spot: twin-stable reads italic and emphasis as one twin"
+  let back := (reread MarkdownDoc.emit italic).1
+  no "blind spot: italic and emphasis write one twin"
     (MarkdownDoc.emit italic == MarkdownDoc.emit emph)
-  no "blind spot: reread-exact tells italic from emphasis"
-    (italic.body != emph.body)
+  no "blind spot: twin-stable is blind to it, the re-read italic writing the same twin"
+    (MarkdownDoc.emit back == MarkdownDoc.emit italic)
+  no "blind spot: reread-exact sees it, the re-read italic being another body"
+    (back.body != italic.body)
   -- A writer that drops escapes is seen: its literal asterisks read back as
   -- emphasis.
   let cases : Array Case := #[{ section_ := "S", md := "\\*a\\* b\n" },

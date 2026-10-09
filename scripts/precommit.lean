@@ -569,10 +569,19 @@ def ioInCore (l : String) : Bool :=
   ["IO", "BaseIO", "EIO", "unsafeBaseIO", "unsafeIO", "unsafeEIO"].any (bannedWord · l)
 
 /-- Both surfaces: tex's lexer, parser, elaborator and compatibility layer,
-markdown's reader and desugaring (`Md` is the namespace both of its modules
-declare), and the door that reads either (`Surface`). -/
+and markdown's reader and desugaring (`Md` is the namespace both of its
+modules declare). -/
 def surfaceMods : List String :=
-  ["Lex", "Parse", "Elab", "Compat", "MdParse", "MdDesugar", "Md", "Surface"]
+  ["Lex", "Parse", "Elab", "Compat", "MdParse", "MdDesugar", "Md"]
+
+/-- The door that reads either surface (LeanTex/Core/Surface.lean), and the
+names it reads one by. Importing the door, opening it or calling one of
+these reads a surface; naming a document's surface — the type, which the IR
+may carry for a backend to read — reads the IR, so the module's other names
+are no reach. -/
+def doorModule : String := "LeanTex.Core.Surface"
+def doorReads : List String :=
+  ["Surface.read", "Surface.fragment", "Surface.texLex", "Surface.texParse"]
 
 /-- Composed like the banned keywords: the gate scans this file's own staged
 diff, and the pattern must not read as a violation where it is defined. -/
@@ -693,16 +702,38 @@ def: a comment line carrying `conserves: none` and the reason. -/
 def conservesNone (l : String) : Bool :=
   containsSub l "conserves: none"
 
+/-- `pat` spelled as a whole name: no identifier character before it and none
+after, so `Lex.lex` matches `LeanTex.Core.Lex.lex` but not `myLex.lex` or
+`Lex.lexWith`, and `Parse.inputEnv` does not match `Parse.inputEnvFile?`. -/
+def spellsName (line pat : String) : Bool :=
+  let parts := line.splitOn pat
+  (parts.zip parts.tail).any fun (before, after) =>
+    (match before.toList.getLast? with
+     | none => true
+     | some c => !isWordChar c)
+    && (match after.toList.head? with
+     | none => true
+     | some c => !isWordChar c)
+
+/-- The namespaces an `open` line opens, `in` aside. -/
+def openedNames (t : String) : List String :=
+  if t.startsWith "open " then
+    (((t.drop 5).toString.splitOn " ").filter (fun w => !w.isEmpty && w != "in"))
+  else []
+
 /-- A backend reaching into the surface: an import, an `open`, or a
-qualified use of a surface module, comments aside. An alias
-(`abbrev P := LeanTex.Core.Parse` elsewhere) would not be seen — the same
-line-scanner limitation as `ioInCore`, stated, not claimed away. -/
+qualified use of a surface module, or the door read by import, `open` or
+call, comments aside. An alias (`abbrev P := LeanTex.Core.Parse` elsewhere)
+would not be seen — the same line-scanner limitation as `ioInCore`, stated,
+not claimed away. -/
 def surfaceReach (l : String) : Bool :=
   let l := stripLineComment l
   let t := l.trimAscii.toString
-  (importedModule t).any (surfaceModules.contains ·)
+  (importedModule t).any (fun m => surfaceModules.contains m || m == doorModule)
     || (t.startsWith "open " && surfaceMods.any (hasWord t ·))
+    || (openedNames t).any (fun n => n == "Surface" || n == "Core.Surface" || n == doorModule)
     || surfaceMods.any (usesQualified l ·)
+    || doorReads.any (spellsName l ·)
 
 /-- The modules that judge a PDF's bytes and must never see the writer:
 the census, and the conformance contract that reads it. -/
@@ -1471,19 +1502,6 @@ def codeOnly (lines : Array String) : Array String := Id.run do
     out := out.push code
   return out
 
-/-- `pat` spelled as a whole name: no identifier character before it and none
-after, so `Lex.lex` matches `LeanTex.Core.Lex.lex` but not `myLex.lex` or
-`Lex.lexWith`, and `Parse.inputEnv` does not match `Parse.inputEnvFile?`. -/
-def spellsName (line pat : String) : Bool :=
-  let parts := line.splitOn pat
-  (parts.zip parts.tail).any fun (before, after) =>
-    (match before.toList.getLast? with
-     | none => true
-     | some c => !isWordChar c)
-    && (match after.toList.head? with
-     | none => true
-     | some c => !isWordChar c)
-
 /-- The surface reads the CLI spells only through the one door per surface
 (`Surface.read`, `Surface.fragment`, LeanTex/Core/Surface.lean): the tex
 lexer and parser, the markdown reader and desugaring, and the include
@@ -1492,14 +1510,39 @@ meanings would start to drift, file by file. -/
 def surfaceDoorCalls : List String :=
   ["Lex.lex", "Parse.parse", "Md.read", "Md.desugar", "Parse.inputEnv"]
 
-/-- The rows of a CLI source that reach a surface around its door, each with
-the call it spells. Comments and strings aside (`codeOnly`). -/
+/-- The core's own tex readers around the door, by file and the definition
+that holds the read. Each reads text the engine holds — a string a test
+elaborates, a style declaration's value, a setting's value, synthesized
+compatibility source, a picture's macro definition, a bibliography style's
+formula — and never a file. The list is closed: a new reader is named here,
+with its reason, or reads through `Surface.read`. -/
+def coreTexReaders : List (String × String) :=
+  [("LeanTex/Core/Elab.lean", "run"), ("LeanTex/Core/Elab.lean", "applyStyle"),
+   ("LeanTex/Core/Data.lean", "valParsed"), ("LeanTex/Core/Compat.lean", "synth"),
+   ("LeanTex/Core/Picture.lean", "readMacro"), ("LeanTex/Core/BibStyle.lean", "formulaOf")]
+
+/-- The tex door's own stages and the door: where the lexer and the parser
+are defined and composed. -/
+def texDoorFiles : List String :=
+  ["LeanTex/Core/Lex.lean", "LeanTex/Core/Parse.lean", "LeanTex/Core/Surface.lean"]
+
+/-- The rows of a source that reach a surface around its door, each with the
+call it spells, comments and strings aside (`codeOnly`). A CLI source spells
+no reader of a surface at all; a core source lexes and parses tex text only
+in a declared reader (`coreTexReaders`). -/
 def surfaceDoorBypasses (file : String) (lines : Array String) : Array (Nat × String) := Id.run do
-  unless file == "Main.lean" || file.startsWith "LeanTex/Cli/" do return #[]
   let mut out := #[]
-  for (code, row) in (codeOnly lines).zipIdx do
-    for call in surfaceDoorCalls do
-      if spellsName code call then out := out.push (row + 1, call)
+  if file == "Main.lean" || file.startsWith "LeanTex/Cli/" then
+    for (code, row) in (codeOnly lines).zipIdx do
+      for call in surfaceDoorCalls do
+        if spellsName code call then out := out.push (row + 1, call)
+  else if file.startsWith "LeanTex/Core/" && !texDoorFiles.contains file then
+    let mut current := ""
+    for (code, row) in (codeOnly lines).zipIdx do
+      if let some name := topLevelDefName code then current := name
+      for call in ["Lex.lex", "Parse.parse"] do
+        if spellsName code call && !coreTexReaders.contains (file, current) then
+          out := out.push (row + 1, call)
   return out
 
 /-- CLI terminal output has a small, audited boundary. Document diagnostics
@@ -2090,6 +2133,17 @@ def selftest : IO UInt32 := do
     ("open LeanTex.Core.Md", true),
     ("  let (raws, ds) := Md.read file text", true),
     ("  let (raws, ds) := LeanTex.Core.Md.desugar file text", true),
+    -- the door: imported, opened or called it reads a surface; the type a
+    -- document's surface is named by is the IR's to carry
+    ("import LeanTex.Core.Surface", true),
+    ("public import LeanTex.Core.Surface", true),
+    ("open LeanTex.Core.Surface in", true),
+    ("  let (raws, ds) := Surface.read .tex file text", true),
+    ("  let (raws, ds) := LeanTex.Core.Surface.fragment .markdown f t p", true),
+    ("  | Ir.Surface.markdown => doc.surface", false),
+    ("  let w := Ir.Surface.textBlock s", false),
+    ("open Ir.Surface in", false),
+    ("  let r := Surface.readers", false),
     ("import LeanTex.Core.Ir", false),
     ("public import LeanTex.Core.Ir", false),
     ("import LeanTex.Core.ParseCache", false),
@@ -2547,7 +2601,19 @@ those whose name says their text is compressed" :: ·)
       ("a message", "LeanTex/Cli/Input.lean", ["  let name := \"Md.read\""], false),
       ("a longer name", "LeanTex/Cli/Input.lean", ["  if (Parse.inputEnvFile? n).isSome then x"], false),
       ("the door", "LeanTex/Cli/Input.lean", ["  let (raws, ds) := Surface.read .tex file text"], false),
-      ("the core", "LeanTex/Core/Elab.lean", ["  let (toks, ds) := Lex.lex file input"], false)] do
+      ("a declared core reader", "LeanTex/Core/Data.lean",
+        ["def valParsed (src text : String) : Array Raw × Array Diag :=",
+          "  let (toks, lexDiags) := Lex.lex src text"], false),
+      ("an undeclared core reader", "LeanTex/Core/Elab.lean",
+        ["private def reread (s : String) : Array Raw :=", "  (Parse.parse \"\" (Lex.lex \"\" s).1).1"],
+        true),
+      ("a declared name in another file", "LeanTex/Core/Ir.lean",
+        ["def valParsed (src text : String) : Array Raw :=", "  (Parse.parse src (Lex.lex src text).1).1"],
+        true),
+      ("the core reading a wrapper's name", "LeanTex/Core/Elab.lean",
+        ["private def other (s : String) := Parse.inputEnvFile? s"], false),
+      ("the door's own stage", "LeanTex/Core/Surface.lean",
+        ["@[expose] public def texLex (file text : String) := Lex.lex file text"], false)] do
     let got := !(surfaceDoorBypasses file source.toArray).isEmpty
     if got != bad then
       fails.modify (s!"surfaceDoorBypasses {what}: got {got}, want {bad}" :: ·)
@@ -2869,7 +2935,8 @@ the privacy check is skipped."
   Each surface has one door into the surface AST, Surface.read, and an
   included file one wrapper, Surface.fragment (LeanTex/Core/Surface.lean);
   a second spelling of either is where two readings of one file drift apart.
-  Fix: read through Surface.read or Surface.fragment."
+  Fix: read through Surface.read or Surface.fragment — or, for tex text the
+  core itself holds, name the reader in coreTexReaders with its reason."
   let mut testDefs : List String := []
   let mut testText := ""
   for f in (#["Tests.lean"] : Array String) ++ (← System.FilePath.walkDir "Tests").filterMap

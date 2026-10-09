@@ -6,6 +6,7 @@ every one of the 652 spec examples. Run from the repository root after
   lake env lean --run scripts/commonmark.lean              regenerate the verdicts and the tier, then check
   lake env lean --run scripts/commonmark.lean --check      check the committed verdicts and tier only
   lake env lean --run scripts/commonmark.lean --selftest   the reader, the comparison and the ratchet, on hand-written inputs
+  lake env lean --run scripts/commonmark.lean --reader-hop the markdown twin through an external reader: a report
 
 **A classifier, not a gate.** Every case carries a committed verdict and an
 unclassified deviation fails. Four verdicts:
@@ -649,7 +650,7 @@ def fragmentOf (body : Array Html.Node) : Array Html.Node :=
 /-- One markdown source through the reader, the desugaring, the one
 elaborator and the HTML backend: the fragment tree and the diagnostics. -/
 def engineFragment (src : String) : Array Html.Node × Array Diag :=
-  let (raws, readDiags) := Surface.read .md "case.md" src
+  let (raws, readDiags) := Surface.read .markdown "case.md" src
   let (doc, diags) := Elab.runRaws "case.md" raws readDiags
   let (_, body, htmlDiags) := HtmlDoc.emitTree {} doc
   (fragmentOf body, diags ++ htmlDiags)
@@ -660,6 +661,11 @@ def engineFragment (src : String) : Array Html.Node × Array Diag :=
 driver's own is held to (`Tests/MarkdownDoors.lean`). -/
 def caseIncluded (src : String) : Ir.Doc × Array Diag :=
   includedDoc "host.tex" (neutralHost "case.md") [("case.md", "case.md", src)]
+
+/-- The same, the host written as a source usually is: each command on a
+line of its own, the include among blank lines. -/
+def caseIncludedSpaced (src : String) : Ir.Doc × Array Diag :=
+  includedDoc "host.tex" (spacedNeutralHost "case.md") [("case.md", "case.md", src)]
 
 /-- The case as a document of its own, as the driver runs one. -/
 def caseAlone (src : String) : Ir.Doc × Array Diag := standaloneDoc "case.md" src
@@ -943,6 +949,216 @@ def verdictText (rows : Array Row) : String := Id.run do
     s := s ++ toString r.id ++ "\t" ++ r.section_ ++ "\t" ++ r.verdict.name
       ++ (if r.note.isEmpty then "" else "\t" ++ r.note) ++ "\n"
   return s
+
+-- ## The reader hop
+
+/-- The writers' conventions the hop reads through before it compares, each
+with what it hides: pandoc's HTML writer against the reference renderer the
+spec's HTML comes from, and the door's own page. They are the writers', not
+the readers' — the reader under test is pandoc's CommonMark reader — and
+`--selftest` holds each in both directions. -/
+def hopConventions : List (String × String) :=
+  [("ordered type", "the writer states `type=\"1\"` on every ordered list, the one \
+style CommonMark has: hides nothing"),
+   ("code language", "with highlighting off, the writer puts a fence's info word on \
+`<pre>` as its class, where the reference renderer writes `language-` and the word on \
+`<code>`: hides nothing the info word does not say"),
+   ("empty alternative", "the writer omits the `alt=\"\"` the reference renderer writes \
+for an image with no description: hides nothing"),
+   ("pdf image", "the writer sets an image whose source is a PDF as `<embed>`, \
+dropping its description: on both sides, the description of a PDF image is not \
+compared"),
+   ("highlighted code", "the door's page marks a listing's tokens by its highlighting \
+style, which a reader's tree has no word for: on the door's side a code block's text \
+alone is compared")]
+
+/-- Does an image's source name a PDF? -/
+def pdfSource (attrs : Array (String × String)) : Bool :=
+  attrs.any fun a => a.1 == "src" && a.2.endsWith ".pdf"
+
+mutual
+
+/-- pandoc's HTML read back toward the reference renderer's conventions
+(`hopConventions`). -/
+def fromPandoc (n : Html.Node) : Html.Node :=
+  match n with
+  | .elem "ol" attrs kids =>
+    .elem "ol" (attrs.filter (· != ("type", "1"))) (fromPandocList #[] kids.toList)
+  | .elem "pre" attrs kids =>
+    match attrs.find? (·.1 == "class"), kids.toList with
+    | some (_, word), [.elem "code" cattrs ckids] =>
+      .elem "pre" (attrs.filter (·.1 != "class"))
+        #[.elem "code" (cattrs.push ("class", "language-" ++ word)) ckids]
+    | _, _ => .elem "pre" attrs (fromPandocList #[] kids.toList)
+  | .elem "img" attrs kids =>
+    let attrs := if attrs.any (·.1 == "alt") then attrs else attrs.push ("alt", "")
+    .elem "img" (if pdfSource attrs then attrs.filter (·.1 != "alt") else attrs) kids
+  | .elem "embed" attrs kids => .elem "img" (attrs.filter (·.1 == "src")) kids
+  | .elem tag attrs kids => .elem tag attrs (fromPandocList #[] kids.toList)
+  | n => n
+
+def fromPandocList (acc : Array Html.Node) : List Html.Node → Array Html.Node
+  | [] => acc
+  | k :: rest => fromPandocList (acc.push (fromPandoc k)) rest
+
+end
+
+mutual
+
+/-- A node's text alone, its markup dropped. -/
+def textOnly (n : Html.Node) : String :=
+  match n with
+  | .text s => s
+  | .elem _ _ kids => textOnlyList "" kids.toList
+  | _ => ""
+
+def textOnlyList (acc : String) : List Html.Node → String
+  | [] => acc
+  | k :: rest => textOnlyList (acc ++ textOnly k) rest
+
+end
+
+mutual
+
+/-- The door's side of the conventions that concern it: a PDF image's
+description is not compared, and a highlighted code block is its text. -/
+def bareDoor (n : Html.Node) : Html.Node :=
+  match n with
+  | .elem "img" attrs kids =>
+    .elem "img" (if pdfSource attrs then attrs.filter (·.1 != "alt") else attrs) kids
+  | .elem "pre" attrs kids =>
+    match kids.toList with
+    | [.elem "code" cattrs ckids] =>
+      .elem "pre" attrs #[.elem "code" cattrs #[.text (textOnlyList "" ckids.toList)]]
+    | _ => .elem "pre" attrs (bareDoorList #[] kids.toList)
+  | .elem tag attrs kids => .elem tag attrs (bareDoorList #[] kids.toList)
+  | n => n
+
+def bareDoorList (acc : Array Html.Node) : List Html.Node → Array Html.Node
+  | [] => acc
+  | k :: rest => bareDoorList (acc.push (bareDoor k)) rest
+
+end
+
+/-- What an external CommonMark reader and the markdown door make of one
+markdown text, at the classifier's own comparison: the same tree; trees that
+differ only by the door's typographic punctuation (`unsmarten`, a dialect
+decision the user owns); different trees where the door names a loss of its
+own for the text (a route, `routesOf`); different trees for a CommonMark
+example whose own committed verdict is not a match, so the door already
+reads the example otherwise; or different trees nothing accounts for. -/
+inductive Hop where
+  | agree
+  | smartOnly
+  | namedLoss
+  | classified
+  | differ
+  deriving BEq, Repr
+
+/-- One reading of the hop: its verdict and the two canonical trees. -/
+structure HopRead where
+  verdict : Hop
+  want : String
+  got : String
+  routes : Array String
+
+/-- The hop's judge, pure: the external reader's HTML for a text, the door's
+reading of the same text, and whether the text is the twin of an example the
+door already reads otherwise. -/
+def hopRead (md html : String) (classified : Bool := false) : HopRead :=
+  let want := canonList false "" (fromPandocList #[] (hParse html).toList).toList
+  let (ns, diags) := engineFragment md
+  let got := canonList false "" (bareDoorList #[] ns.toList).toList
+  let routes := routesOf diags
+  let verdict :=
+    if want == got then .agree
+    else if unsmarten got == unsmarten want then .smartOnly
+    else if !routes.isEmpty then .namedLoss
+    else if classified then .classified
+    else .differ
+  { verdict, want, got, routes }
+
+def hopJudge (md html : String) (classified : Bool := false) : Hop :=
+  (hopRead md html classified).verdict
+
+/-- Where two canonical trees first part, with a little context either
+side: what the report prints for a hop nothing accounts for. -/
+def partAt (a b : String) : String × String := Id.run do
+  let xs := a.toList.toArray
+  let ys := b.toList.toArray
+  let mut i := 0
+  while i < xs.size && i < ys.size && xs[i]? == ys[i]? do i := i + 1
+  let cut (zs : Array Char) := String.ofList (zs.extract (i - min i 40) (i + 60)).toList
+  return (cut xs, cut ys)
+
+/-- The external reader the report runs: pandoc's CommonMark reader, strict
+CommonMark with no extension, through its HTML writer with highlighting off.
+A premise about a tool is checked with one. -/
+def hopTool : String := "pandoc"
+def hopArgs (file : String) : Array String :=
+  #["-f", "commonmark", "-t", "html", "--syntax-highlighting=none", file]
+
+/-- Every twin the report reads, with the example it is the twin of: each
+corpus document's, run as the driver runs it, and each CommonMark example's
+the door accepts, read back from the document the example elaborates to. -/
+def hopTwins (exs : Array Example) : IO (Array (String × String × Option Nat)) := do
+  let mut paths : Array String := #[]
+  for f in ← System.FilePath.readDir "testdata/corpus" do
+    if f.fileName.endsWith ".tex" then paths := paths.push f.path.toString
+  let mut out : Array (String × String × Option Nat) := #[]
+  for p in paths.qsort (· < ·) do
+    let (d, _) ← elabInputSrc p (← IO.FS.readFile p)
+    out := out.push (p, MarkdownDoc.emit d, none)
+  for ex in exs do
+    let (raws, readDiags) := Surface.read .markdown "case.md" ex.md
+    let (d, ds) := Elab.runRaws "case.md" raws readDiags
+    unless ds.any (·.severity == .error) do
+      out := out.push (s!"example {ex.id} ({ex.section_})", MarkdownDoc.emit d, some ex.id)
+  return out
+
+/-- The reader hop, reported: `MarkdownDoc`'s external premise — a
+CommonMark reader parses every spelling the twin writes as the markdown door
+does — measured over every twin `hopTwins` reads, against the committed
+verdicts. A report, never a gate: it needs the tool, and its exit says only
+whether the tool ran. -/
+def readerHop (exs : Array Example) (rows : Array Row) : IO UInt32 := do
+  let twins ← hopTwins exs
+  let results ← IO.FS.withTempDir fun dir => do
+    let file := (dir / "twin.md").toString
+    let mut out : Array (String × Option HopRead) := #[]
+    for (name, twin, ex?) in twins do
+      IO.FS.writeFile file twin
+      let classified := ex?.any fun id => rows.any fun r => r.id == id && r.verdict != .match_
+      let r ← (IO.Process.output { cmd := hopTool, args := hopArgs file }).toBaseIO
+      match r with
+      | .ok o =>
+        out := out.push (name,
+          if o.exitCode == 0 then some (hopRead twin o.stdout classified) else none)
+      | .error _ => out := out.push (name, none)
+    return out
+  let ran := results.filterMap fun (name, r) => r.map (name, ·)
+  if ran.isEmpty then
+    IO.eprintln s!"commonmark --reader-hop: {hopTool} did not run; nothing measured"
+    return 2
+  let count (h : Hop) := (ran.filter (·.2.verdict == h)).size
+  IO.println s!"reader hop ({hopTool} -f commonmark): {ran.size} twins read; \
+{count .agree} agree with the door; {count .smartOnly} differ only by typographic punctuation; \
+{count .namedLoss} differ where the door names a loss; {count .classified} differ on an example \
+the door already reads otherwise; {count .differ} differ unaccounted"
+  for (name, r) in ran do
+    if r.verdict == .namedLoss then
+      IO.println s!"  named loss: {name} {r.routes.toList}"
+  for (name, r) in ran do
+    if r.verdict == .classified then IO.println s!"  classified: {name}"
+  -- Where each unaccounted pair first parts once the door's typographic
+  -- punctuation is read back, so the difference shown is never only that.
+  for (name, r) in ran do
+    if r.verdict == .differ then
+      let (w, g) := partAt (unsmarten r.want) (unsmarten r.got)
+      IO.println s!"  differs: {name}\n    external: {repr w}\n    door:     {repr g}"
+  let failed := results.size - ran.size
+  if failed > 0 then IO.println s!"  {failed} twins the tool did not read"
+  return 0
 
 -- ## The modes
 
@@ -1390,10 +1606,41 @@ def selftest : IO UInt32 := do
     ({ d with body := d.body.pop }, ds)
   unless doorsAgree caseIncluded caseAloneInHost caseAlone "*a* b\n\n- c\n" do
     bad := bad.push "doors: a case the two doors read alike was split"
+  unless doorsAgree caseIncludedSpaced caseAloneInHost caseAlone "*a* b\n\n- c\n" do
+    bad := bad.push "doors: a case the two doors read alike was split under a spaced host"
   if doorsAgree dropsBlock caseAloneInHost caseAlone "*a* b\n\n- c\n" then
     bad := bad.push "doors: a planted included door that drops a block was not seen"
   if doorsAgree caseIncluded caseAloneInHost dropsBlock "*a* b\n\n- c\n" then
     bad := bad.push "doors: a planted standalone door that drops a block was not seen"
+  -- The reader hop's judge, without the tool: an external reading it agrees
+  -- with, one that reads emphasis as text, and one that keeps straight quotes.
+  unless hopJudge "*a* b\n" "<p><em>a</em> b</p>\n" == .agree do
+    bad := bad.push "reader hop: an external reading of the door's own tree was not agreed"
+  unless hopJudge "*a* b\n" "<p>*a* b</p>\n" == .differ do
+    bad := bad.push "reader hop: an external reading that lost emphasis was agreed"
+  unless hopJudge "say \"hi\"\n" "<p>say &quot;hi&quot;</p>\n" == .smartOnly do
+    bad := bad.push "reader hop: straight quotes against the door's curly ones were not told apart"
+  -- Each of pandoc's writer conventions read through, and the difference
+  -- beside it still seen.
+  for (what, md, html, want) in [
+      ("ordered type", "1. a\n", "<ol type=\"1\">\n<li>a</li>\n</ol>\n", Hop.agree),
+      ("ordered type, another start", "1. a\n", "<ol start=\"2\" type=\"1\">\n<li>a</li>\n</ol>\n", .differ),
+      ("code language", "```ruby\nx\n```\n", "<pre class=\"ruby\"><code>x</code></pre>\n", .agree),
+      ("code language, another word", "```ruby\nx\n```\n", "<pre class=\"rust\"><code>x</code></pre>\n", .differ),
+      ("empty alternative", "![](/u.png)\n", "<p><img src=\"/u.png\" /></p>\n", .agree),
+      ("empty alternative, a described one", "![a](/u.png)\n", "<p><img src=\"/u.png\" /></p>\n", .differ),
+      ("pdf image", "![a](/u.pdf)\n", "<p><embed src=\"/u.pdf\" /></p>\n", .agree),
+      ("pdf image, another source", "![a](/u.pdf)\n", "<p><embed src=\"/v.pdf\" /></p>\n", .differ)] do
+    unless hopJudge md html == want do
+      bad := bad.push s!"reader hop: pandoc's {what} read as {repr (hopJudge md html)}, want {repr want}"
+  unless hopJudge "```python\ndef f(): pass\n```\n"
+      "<pre class=\"python\"><code>def f(): pass</code></pre>\n" == .agree do
+    bad := bad.push "reader hop: a highlighted code block was not read as its text"
+  unless hopJudge "```python\ndef f(): pass\n```\n"
+      "<pre class=\"python\"><code>def g(): pass</code></pre>\n" == .differ do
+    bad := bad.push "reader hop: another code block's text was agreed"
+  unless hopConventions.length == 5 do
+    bad := bad.push "reader hop: a convention changed without its selftest row"
   if bad.isEmpty then
     IO.println "commonmark --selftest: ok"
     return 0
@@ -1445,7 +1692,9 @@ def run (args : List String) : IO UInt32 := do
     | .error e => return ← die 1 e
   -- The two markdown doors read every case alike, before any case is
   -- judged: a verdict must not depend on which door read the case.
-  let split := exs.filter fun ex => !doorsAgree caseIncluded caseAloneInHost caseAlone ex.md
+  let split := exs.filter fun ex =>
+    !(doorsAgree caseIncluded caseAloneInHost caseAlone ex.md &&
+      doorsAgree caseIncludedSpaced caseAloneInHost caseAlone ex.md)
   for ex in split do
     IO.eprintln s!"commonmark: case {ex.id} ({ex.section_}) reads differently included in tex"
   unless split.isEmpty do
@@ -1718,7 +1967,16 @@ def main (argv : List String) : IO UInt32 := do
     for (ex, j) in exs.zip js do
       unless j.refusals.isEmpty && j.routes.isEmpty do explainOne ex j
     return 0
+  | ["--reader-hop"] =>
+    -- The twin through an external reader. A report mode; writes nothing.
+    let (exs, _) ← match ← loadInputs with
+      | .ok v => pure v
+      | .error e => return ← die 1 e
+    let rows ← match parseVerdicts (← IO.FS.readFile verdictPath) with
+      | .ok rs => pure rs
+      | .error e => return ← die 1 s!"commonmark: {verdictPath}: {e}"
+    readerHop exs rows
   | [] => run []
   | _ =>
-    IO.eprintln "usage: commonmark [--check | --selftest | --scaling [shape] | --explain <case> | --audit]"
+    IO.eprintln "usage: commonmark [--check | --selftest | --scaling [shape] | --explain <case> | --audit | --reader-hop]"
     return 2

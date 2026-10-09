@@ -29,13 +29,15 @@ the same IR, and `Tests/MarkdownTwin.lean` pins each spelling class.
 
 **External premise — the reader hop.** What a twin means to the world is
 what a CommonMark reader makes of it; this module claims that a CommonMark
-reader parses every spelling the twin writes as the markdown door does.
-Evidence,
-not proof: the commonmark tier's `match` verdicts, ratcheted, in the
-sections those spellings live in — ATX headings, lists, list items, fenced
-code, code spans, emphasis, links, images, autolinks, block quotes, hard
-breaks, backslash escapes. A report from an external reader over the
-corpus twins is the direct check, and stays a report. -/
+reader parses every spelling the twin writes as the markdown door does. A
+premise about a tool, held by evidence and never proved: the commonmark
+tier's `match` verdicts, ratcheted, in the sections those spellings live in
+— ATX headings, lists, list items, fenced code, code spans, emphasis,
+links, images, autolinks, block quotes, hard breaks, backslash escapes —
+and the direct check, `scripts/commonmark.lean --reader-hop`, which reads
+every corpus document's twin and every accepted CommonMark example's twin
+with an external CommonMark reader and with the door, at the classifier's
+comparison. It needs the tool, so it is a report and never a gate. -/
 
 namespace LeanTex.Core.MarkdownDoc
 

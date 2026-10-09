@@ -556,7 +556,7 @@ def frontend (ui : Ui) (file : String) : IO (Option Front) := do
     -- The markdown door hands back the same surface AST the tex door does —
     -- one elaborator, one place where meaning lives — so everything past
     -- this point reads raws, never the surface that wrote them. The tex
-    -- door's two stages report apart (`Surface.read_tex_stages`).
+    -- door's two stages report apart (`Surface.read_tex_exact`).
     let (raws, frontDiags) ← match Surface.ofPath file with
       | .tex => do
         let (toks, lexDiags) := Surface.texLex file input
@@ -565,8 +565,8 @@ def frontend (ui : Ui) (file : String) : IO (Option Front) := do
         let (raws, parseDiags) := Surface.texParse file toks
         ui.phase "parse" s!"{raws.size} top-level nodes" (← since t)
         pure (raws, lexDiags ++ parseDiags)
-      | .md => do
-        let (raws, ds) := Surface.read .md file input
+      | .markdown => do
+        let (raws, ds) := Surface.read .markdown file input
         ui.phase "md" s!"{raws.size} top-level nodes" (← since t)
         pure (raws, ds)
     let t ← IO.monoMsNow
