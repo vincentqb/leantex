@@ -217,8 +217,10 @@ public theorem dependentBoundary : False := exportedBoundary
     if (out.exitCode == 0) != okay then IO.eprint (out.stdout ++ out.stderr)
   -- A failed compiler is an audit result, not an exception that skips the
   -- remaining sources. Exercise real compiler jobs through the same executor.
-  let batchCases := #[("Valid", true), ("Hidden", false), ("Foundation", true)]
-  -- Costs reverse the job order, so results must be put back in it.
+  -- The queue runs Foundation, Hidden, Valid by cost: an executor answering
+  -- in queue order, or in reverse job order, reads true, false, true or
+  -- false, true, true, not the true, true, false of job order.
+  let batchCases := #[("Valid", true), ("Foundation", true), ("Hidden", false)]
   let batched ← auditBatch batchCases (·.1.length) fun index (name, _) => do
     let file := dir / s!"BatchAudit{index}.lean"
     IO.FS.writeFile file (wrapper dir #[name] allFixtures)
@@ -228,6 +230,13 @@ public theorem dependentBoundary : False := exportedBoundary
   (_, failures) ← (expect "parallel audit hid an unused private unfinished proof"
     (batched.any fun out => out.exitCode != 0 &&
       (out.stdout ++ out.stderr).contains "sorryAx")).run failures
+  -- Each job's own answer in its own slot: the queue reverses job order and
+  -- the workers finish out of both orders.
+  let tagged ← auditBatch (Array.range 24) id fun index job => do
+    IO.sleep (UInt32.ofNat (job * 7 % 5))
+    return { exitCode := 0, stdout := s!"{index}:{job}", stderr := "" }
+  (_, failures) ← (expect "parallel audit results left their jobs' slots"
+    (tagged.map (·.stdout) == (Array.range 24).map fun i => s!"{i}:{i}")).run failures
   let modernAudit := dir / "ModernAudit.lean"
   IO.FS.writeFile modernAudit ("module\n" ++ wrapper dir #["Hidden"] allFixtures)
   let modernOut ← compile modernAudit #["-R", dir.toString] (some dir)

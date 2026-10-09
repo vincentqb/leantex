@@ -577,14 +577,20 @@ def kwMaxHeartbeats : String := "maxHeart" ++ "beats"
 holds a proof's cost below the default, and the kernel honours it too. -/
 def defaultHeartbeats : Nat := 200000
 
-/-- A heartbeat setting that is not a literal bound under the default: a
-larger value, zero (no limit at all), or one not spelled as a literal. -/
+/-- Any heartbeat setting but one: the bare option, alone on its line, set to
+a literal bound under the default. A larger value, zero (no limit at all), a
+value not spelled as a literal, and every other heartbeat option are raises:
+`synthInstance`'s budget defaults to 20000, so a value under the bare
+option's default can still raise it fivefold. -/
 def heartbeatRaise (l : String) : Bool :=
-  let code := stripLineComment (stripStrings l)
-  containsSub code kwMaxHeartbeats &&
-    match ((code.splitOn kwMaxHeartbeats).getLast?.getD "").trimAscii.toString.splitOn " " with
-    | n :: _ => n.toNat?.all fun v => v == 0 || v > defaultHeartbeats
-    | [] => true
+  match (stripLineComment (stripStrings l)).splitOn kwMaxHeartbeats with
+  | [_] => false
+  | [before, after] =>
+    !(before.endsWith "set_option " &&
+      match after.trimAscii.toString.splitOn " " with
+      | n :: _ => n.toNat?.any fun v => v != 0 && v ≤ defaultHeartbeats
+      | [] => false)
+  | _ => true
 
 /-- Handed by impl-shapes: a catch-all arm that ships its scrutinee or an
 accumulator through unchanged (`| _ => out`, `| other => other`) — in an IR
@@ -1819,6 +1825,10 @@ def selftest : IO UInt32 := do
     ("  set_option " ++ kwMaxHeartbeats ++ " 1000000 in", true),
     ("set_option " ++ kwMaxHeartbeats ++ " 0 in", true),
     ("  withOptions (" ++ kwMaxHeartbeats ++ ".set · 2000)", true),
+    -- another heartbeat option, under the bare default and over its own
+    ("set_option synthInstance." ++ kwMaxHeartbeats ++ " 100000 in", true),
+    ("set_option " ++ kwMaxHeartbeats ++ " 2000 in set_option synthInstance." ++
+      kwMaxHeartbeats ++ " 100000 in", true),
     -- a literal bound under the default holds a cost: no raise
     ("set_option " ++ kwMaxHeartbeats ++ " 2000 in", false),
     -- a comment, a string, and the other budget option stay legal

@@ -318,14 +318,19 @@ in this repo; refer to the private reference corpus abstractly.
   `import all`, or through a file outside the module system, which reads
   every transitive import whole; a private edit rebuilds exactly those
   readers. So a consumer reads public interfaces: a proof that must unfold
-  a body reads an `@[expose]`d definition or a public lemma beside it,
-  `import all` is for a module's own proof companions, and every library
-  and test file is a `module` but the declared shims (`buildGraphChecks`
-  reads each header with Lake's own reader and holds the shims and each
-  large file's private reads to declared lists). One comment line
-  appended to Ir once rebuilt 184 modules in 6½ minutes, through Layout's
-  and HtmlDoc's `import all` and 172 test files outside the module
-  system. Order matters inside a large module too: a `structure`,
+  a body reads an `@[expose]`d definition or a public lemma beside it, and
+  `import all` is for small readers whose rebuild costs seconds, such as a
+  proof or contract companion beside what it reads. Private reads chain:
+  ContrastContract reads Theme whole and, through Theme's `import all Ir`,
+  Ir's private part, so a 28-second contract rebuilds on every Ir edit —
+  the standing exception, while Theme's contracts and install proofs
+  unfold lookups Ir does not expose. Every library and test file is a
+  `module` but the declared shims (`buildGraphChecks` reads each header
+  with Lake's own reader and holds the shims and each large file's
+  private reads to declared lists). One comment line appended to Ir once
+  rebuilt 184 modules in 6½ minutes, through Layout's and HtmlDoc's
+  `import all` and 172 test files outside the module system. Order
+  matters inside a large module too: a `structure`,
   `inductive` or multi-definition `mutual` block is added synchronously
   and waits for the elaboration and kernel check of every theorem before
   it (Layout loses about 100 of its 136 seconds this way), and a kernel
@@ -333,9 +338,9 @@ in this repo; refer to the private reference corpus abstractly.
   `emitTree_resolve_agree` cost 73 s while `emitTree` destructured its
   emitter's result, and a fraction of a second once it returned
   projections. The kernel honours `maxHeartbeats`, so a bound beside such
-  a theorem holds its cost deterministically. A list literal elaborates
-  faster than linearly in its elements: the census rows stand in parts of
-  at most `censusPartRows`.
+  a theorem holds its cost deterministically. A list literal's elaboration
+  cost grows faster than linearly in its elements: the census rows stand
+  in parts of at most `censusPartRows`.
 - The inline elaboration knot compiles at its heartbeat budget (more than
   198k of 200k on 2026-09-27), and its cost grows with `ESt`'s top-level
   fields: state the knot never reads goes in a record of its own
