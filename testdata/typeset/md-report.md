@@ -94,6 +94,25 @@ north ≤ south for two months running means the grille needs clearing; the
 work log writes the rule as ∀ m ∈ months: north(m) ≤ south(m) ⇒ clear,
 and marks each cleared month with a ✓ beside its row.
 
+<details>
+<summary>Monthly readings for the first year</summary>
+
+The depth at each post, in centimetres, on the first Saturday of the month:
+
+- January: north 42, centre 55, south 38.
+- April: north 47, centre 61, south 44.
+- July: north 35, centre 52, south 33.
+- October: north 49, centre 66, south 46.
+
+**Raw log.**
+
+```
+2091-01-07  north 42  centre 55  south 38  ice at the margins, grille clear
+2091-04-01  north 47  centre 61  south 44  marsh marigold in flower
+```
+
+</details>
+
 ## Next steps
 
 The work is not finished. The deep end still holds most of the old silt,

@@ -34,7 +34,7 @@ import LeanTex.Cli.Input
 import LeanTex.Cli.FontEnv
 import LeanTex.Cli.FontAssembly
 import LeanTex.Cli.FontFix
-import LeanTex.Cli.SlotLoss
+import LeanTex.Cli.PlanLoss
 import LeanTex.Cli.Boundary
 import LeanTex.Cli.Batch
 import LeanTex.Cli.Compression
@@ -424,11 +424,7 @@ def loadImages (file : String) (doc : Ir.Doc) (pics : Array PicResult := #[])
     fetched := fetched.push (req, f)
   let (store, diags) := Image.fulfilRequests fetched
   let store := Boundary.markUnplanned stopped store
-  let mut diags := diags
-  for en in store.entries do
-    if let some pl := en.info then
-      diags := diags ++ Image.lossDiags en.src pl
-  diags := diags.map fun d =>
+  let diags := (diags ++ PlanLoss.ledger store).map fun d =>
     match d.subject with
     | some src => DriverDiag.atImageRequest imageSpans src d
     | none => d
@@ -739,13 +735,7 @@ def build (ui : Ui) (file : String) : IO UInt32 := do
         pure ((Ir.resolveMathAlphas fs.mathAlphabets family doc2).1, spans2)
       let t ← IO.monoMsNow
       let (imgs, imgDiags, imgHits) ← loadImages file doc pics refused reqSpans.images
-      -- The alt judge's picture face, after fulfilment: a picture the
-      -- tool failed on ships a placeholder box, not an image, and E0382
-      -- has named that loss — one loss, named once.
-      let picAlts := Ir.picAltDiags doc
-        (fun src => (reqSpans.images.find? (·.1 == src)).map (·.2))
-        (fun src => imgs.entries.any fun en => en.src == src && en.info.isSome)
-      let imgDiags := (imgDiags ++ picAlts).map sourceDiag
+      let imgDiags := (imgDiags ++ PlanLoss.pictureAlts doc reqSpans.images imgs).map sourceDiag
       resolved := resolved.append (← ui.resolve doc.allow allowAll (outputs := outputs) imgDiags)
       unless imgs.entries.isEmpty do
         let cached := if imgHits == 0 then "" else s!", {imgHits} cached"
@@ -809,34 +799,13 @@ def build (ui : Ui) (file : String) : IO UInt32 := do
       let shipFonts := doc.fontPolicy == .embedded
       -- **A slot that fell to the body face is named here**, and not in the
       -- assembly: the loss is about a face a reader receives, so the
-      -- decision has to see what this run emits. The PDF embeds the
-      -- resolved set; an HTML page does so only under `fontPolicy =
-      -- embedded`. A page declaring `css = own` ships no face and styles
-      -- code from its own monospace stack, and a report there names a file
-      -- nobody receives (`Cli.SlotLoss.carries`). The set here is the
+      -- decision has to see what this run emits. The set here is the
       -- settled one — `build` holds no other — so no assembly gate is
-      -- needed on top.
-      -- premise: slotLossChecks — one document, one index, two values of
-      -- the gate's own condition: carrying a face reports the lost slot,
-      -- carrying none reports nothing. The gate is load-bearing rather
-      -- than decorative.
-      let slotDiags := SlotLoss.diags doc.fonts fs doc
-        (SlotLoss.carries emit doc.fontPolicy)
-      resolved := resolved.append
-        (← ui.resolve doc.allow allowAll (outputs := outputs) (slotDiags.map sourceDiag))
-      -- The declared contract, held against each emitted artifact's
-      -- realization record: a fact the artifact cannot yet realize is one
-      -- W0701 per artifact, per fact — warnings, resolved before the gate
-      -- and never gating (`Ir.contract_accounts`).
-      let mut contractWarnings : Array Diag := #[]
-      if emit.contains .pdf then
-        contractWarnings := contractWarnings ++
-          Ir.contractDiags (doc.output.contract.unmet Pdf.profile)
-      if emit.contains .html then
-        contractWarnings := contractWarnings ++
-          Ir.contractDiags (doc.output.contract.unmet HtmlDoc.profile)
-      resolved := resolved.append
-        (← ui.resolve doc.allow allowAll (outputs := outputs) (contractWarnings.map sourceDiag))
+      -- needed on top. The declared contract is held against each emitted
+      -- artifact's realization record beside it: warnings, resolved before
+      -- the gate and never gating (`PlanLoss.ofPlan`).
+      resolved := resolved.append (← ui.resolve doc.allow allowAll (outputs := outputs)
+        ((PlanLoss.ofPlan emit fs doc).map sourceDiag))
       let mut htmlBuilt : Option HtmlArtifact := none
       if emit.contains .html then
         let t ← IO.monoMsNow

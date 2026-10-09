@@ -7,9 +7,10 @@ public import LeanTex.Core.Html
 /-! # Typographic quality, read off the shipped pages
 
 Judges of what a reader sees on `Layout.Out`: lines past the text area or
-off the medium, a paragraph's single line stranded at a page boundary, a
+ink off the medium, a paragraph's single line stranded at a page boundary, a
 hyphen carried over a page turn, a one-word last line, a table row or an
-unbreakable block cut by a page break, glyphs set in a fallback face, a
+unbreakable block cut by a page break, a heading or a lead-in left at a
+page's foot, a page the flow leaves short, glyphs set in a fallback face, a
 left edge that steps where protrusion should hang it, and, on the typed
 HTML tree, a font program shipped twice. Every judge reads the artifact
 alone, so a diagnostic that names a defect never excuses it.
@@ -28,11 +29,14 @@ open LeanTex.Core LeanTex.Core.Dim
 block-level structure kind (inline wrappers looked through; a formula is
 its holder's when inline, its own when displayed); `row` names the table
 row and `group` the unbreakable unit (heading, title, caption, figure,
-display formula) holding the leaf, by node number. -/
+display formula) holding the leaf, and `display` the nearest display block
+around it (a list, a table, a listing, a figure, a quotation, a display
+formula), by node number. -/
 public structure LeafRole where
   kind : Struct.Kind
   row : Option Nat
   group : Option Nat
+  display : Option Nat
   deriving Repr, BEq, Inhabited
 
 /-- Inline wrappers: a link, a language span, a reference. A leaf inside
@@ -58,6 +62,13 @@ is set inline, and belongs to it. -/
   | .cell | .formula | .code | .quote | .note | .aside | .nav | .bibEntry | .link _
   | .span _ | .reference _ | .artifact => false
 
+/-- Kinds set apart from running prose: what a lead-in introduces. -/
+@[expose] public def displays : Struct.Kind → Bool
+  | .list _ | .table | .code | .figure | .quote => true
+  | .document | .section | .title | .heading _ | .paragraph | .item | .label | .body | .row
+  | .cell | .caption | .formula | .note | .aside | .nav | .bibEntry | .link _ | .span _
+  | .reference _ | .artifact => false
+
 /-- The block kind of a leaf from its enclosing kinds, innermost first. -/
 public def roleKind (kinds : List Struct.Kind) : Struct.Kind :=
   match kinds.filter (!transparent ·) with
@@ -71,6 +82,7 @@ structure Ctx where
   kinds : List Struct.Kind := []
   row : Option Nat := none
   group : Option Nat := none
+  display : Option Nat := none
 
 /-- Enter node `id` of `kind`. A formula is a group only when displayed:
 its nearest non-wrapper holder takes no inline content. -/
@@ -79,7 +91,8 @@ def Ctx.enter (c : Ctx) (kind : Struct.Kind) (id : Nat) : Ctx :=
     !((c.kinds.filter (!transparent ·)).head?.map holdsInlines).getD false
   { kinds := kind :: c.kinds
     row := if kind == .row then some id else c.row
-    group := if unbreakable kind || displayed then some id else c.group }
+    group := if unbreakable kind || displayed then some id else c.group
+    display := if displays kind || displayed then some id else c.display }
 
 structure Roles where
   roles : Array LeafRole := #[]
@@ -96,7 +109,9 @@ def rolesList (c : Ctx) (acc : Roles) : List Struct.Node → Roles
 
 def rolesOne (c : Ctx) (acc : Roles) : Struct.Node → Roles
   | .leaf _ _ =>
-    { acc with roles := acc.roles.push { kind := roleKind c.kinds, row := c.row, group := c.group } }
+    let role : LeafRole :=
+      { kind := roleKind c.kinds, row := c.row, group := c.group, display := c.display }
+    { acc with roles := acc.roles.push role }
   | .node kind kids =>
     rolesList (c.enter kind acc.nodes) { acc with nodes := acc.nodes + 1 } kids.toList
 
@@ -253,10 +268,22 @@ public def pathOffMedium (geom : Geom) (p : PathOut) : Bool :=
   x0 < -geom.bleed || y0 < -geom.bleed || x1 > geom.pageW + geom.bleed ||
     y1 > geom.pageH + geom.bleed
 
-/-- Lines and paths with ink off the medium, every page. -/
+/-- Does a filled rectangle reach off the medium? A page ground covers the
+medium exactly, and is on it. -/
+public def fillOffMedium (geom : Geom) (f : Fill) : Bool :=
+  f.x < -geom.bleed || f.y < -geom.bleed || f.x + f.w > geom.pageW + geom.bleed ||
+    f.y + f.h > geom.pageH + geom.bleed
+
+/-- Lines, paths and fills with ink off the medium, every page. -/
 public def offMediumCount (geom : Geom) (fs : Font.FontSet) (pages : Array PageOut) : Nat :=
   pages.foldl (fun n p =>
-    n + (p.lines.filter (offMedium geom fs)).size + (p.paths.filter (pathOffMedium geom)).size) 0
+    n + (p.lines.filter (offMedium geom fs)).size + (p.paths.filter (pathOffMedium geom)).size +
+      (p.fills.filter (fillOffMedium geom)).size) 0
+
+/-- The largest overflow any body line runs past the text area, in whole
+points, rounding up: a hair over the edge is a point. -/
+public def maxOverflowPt (geom : Geom) (pages : Array PageOut) : Nat :=
+  (((overflows geom pages).foldl max 0 + 65535) / 65536).toNat
 
 /-- The role of a line's block, if it names a leaf the tree holds. -/
 def roleOf (roles : Array LeafRole) (l : LineOut) : Option LeafRole :=
@@ -398,6 +425,117 @@ public def splitRows (roles : Array LeafRole) (pages : Array PageOut) : Nat :=
 cuts. -/
 public def splitBlocks (roles : Array LeafRole) (pages : Array PageOut) : Nat :=
   splitKeys (fun l => (roleOf roles l).bind (·.group)) pages
+
+/-! ## What a page boundary leaves behind -/
+
+/-- A page's body lines: neither furniture nor the note apparatus. -/
+def bodyLines (p : PageOut) : Array LineOut :=
+  p.lines.filter fun l => !l.furniture && !l.note
+
+/-- The first and the last structure leaf a page's body sets, in the
+preorder `LineOut.leaf` counts, which is reading order. -/
+def leafSpan (p : PageOut) : Option (Nat × Nat) :=
+  (bodyLines p).foldl (fun acc l => match l.leaf, acc with
+    | some k, some (a, b) => some (min a k, max b k)
+    | some k, none => some (k, k)
+    | none, acc => acc) none
+
+/-- The leaves a declared boundary opens a page on (`\newpage`,
+`\pagebreak`): the leaf count of the page view's blocks ahead of each of its
+top-level `.pagebreak`s, the counter `LineOut.leaf` reads
+(`Struct.leafCountBlocks`). -/
+public def declaredOpenings (doc : Ir.Doc) : Array Nat :=
+  ((pdfView doc).body.foldl (fun (acc : Array Nat × Nat) b => match b with
+    | .pagebreak => (acc.1.push acc.2, acc.2)
+    | _ => (acc.1, acc.2 + Struct.leafCountBlocks #[b])) (#[], 0)).1
+
+/-- Does the flow run from page `a` into page `b` with nothing declared
+between them: one flow or one frame step's spill (`continues`), and no
+declared boundary after everything `a` sets and no later than what `b`
+opens on? -/
+public def flowsAcross (opens : Array Nat) (a b : PageOut) : Bool :=
+  continues a b && match leafSpan a, leafSpan b with
+    | some (_, last), some (first, _) => !opens.any fun o => last < o && o ≤ first
+    | _, _ => false
+
+/-- Is a line set wholly in bold: every glyph run in a face of weight 600 or
+more? -/
+def boldLine (fs : Font.FontSet) (l : LineOut) : Bool :=
+  let weights := l.segs.filterMap fun s => match s with
+    | .run idx _ _ _ gs .. => if gs.isEmpty then none else some ((fs.fonts[idx]?).map (·.weight))
+    | .gap .. | .decoratedGap .. | .decoration .. | .rule .. | .image .. | .poly .. => none
+  !weights.isEmpty && weights.all fun w => (w.map fun v => decide (600 ≤ v)).getD false
+
+/-- Does the boundary from `a` to `b` strand a heading or a lead-in: the
+last block `a`'s body sets, whole on `a`, is a heading, or a paragraph of one
+line that is set wholly in bold (a heading in all but name) or is followed
+by the display block `b` opens on (the line that introduces it), while the
+flow carries what it introduces onto `b`? `pages` is the document, which
+says whether the paragraph has lines elsewhere. -/
+public def strandedAt (fs : Font.FontSet) (roles : Array LeafRole) (opens : Array Nat)
+    (pages : Array PageOut) (a b : PageOut) : Bool :=
+  flowsAcross opens a b && match leafSpan a, leafSpan b with
+    | some (_, k), some (first, _) =>
+      !(bodyLines b).any (·.leaf == some k) && match ((roles[k]?).map (·.kind) : Option Struct.Kind) with
+        | some (.heading _) => true
+        | some .paragraph =>
+          let own := pages.foldl (fun acc p => acc ++ (bodyLines p).filter (·.leaf == some k)) #[]
+          own.size == 1 && (own.all (boldLine fs) || ((roles[first]?).bind (·.display)).isSome)
+        | _ => false
+    | _, _ => false
+
+/-- Headings and lead-ins a page boundary strands (`strandedAt`). -/
+public def strandedHeads (fs : Font.FontSet) (roles : Array LeafRole) (opens : Array Nat)
+    (pages : Array PageOut) : Nat :=
+  ((pages.toList.zip (pages.toList.drop 1)).filter fun (a, b) =>
+    strandedAt fs roles opens pages a b).length
+
+/-- The pitch of running prose: the smallest gap between two consecutive
+lines of one paragraph on one page. -/
+public def linePitch (roles : Array LeafRole) (pages : Array PageOut) : Option Sp :=
+  pages.foldl (fun acc p =>
+    let ls := p.lines.filter (prose roles)
+    (ls.toList.zip (ls.toList.drop 1)).foldl (fun acc (x, y) =>
+      if x.leaf == y.leaf && y.y > x.y then
+        some (match acc with
+          | some m => min m (y.y - x.y)
+          | none => y.y - x.y)
+      else acc) acc) none
+
+/-- The room a page leaves under its body: from its lowest body baseline to
+its floor — the text area's bottom, or a pitch above the top of its
+footnotes. -/
+public def roomAt (geom : Geom) (pitch : Sp) (a : PageOut) : Option Sp :=
+  let low (ls : Array LineOut) (pick : Sp → Sp → Sp) : Option Sp :=
+    ls.foldl (fun m l => some (match m with
+      | some y => pick y l.y
+      | none => l.y)) none
+  (low (bodyLines a) max).map fun last =>
+    (match low (a.lines.filter (·.note)) min with
+      | some top => min geom.bodyBottom (top - pitch)
+      | none => geom.bodyBottom) - last
+
+/-- How many lines of room a page may leave at its foot before it reads as
+short: a line or two is a ragged bottom's slack or a widow kept; more than
+three is room the content did not fill. -/
+public def shortPageLines : Nat := 3
+
+/-- Is the boundary from `a` to `b` a short page: the flow continues
+(`flowsAcross`) from a page whose body ends more than `shortPageLines` lines
+of prose above its floor, leaving room the next page's content did not take? -/
+public def shortAt (geom : Geom) (opens : Array Nat) (pitch : Sp) (a b : PageOut) : Bool :=
+  flowsAcross opens a b && ((roomAt geom pitch a).map fun r =>
+    decide (r > (shortPageLines : Int) * pitch)).getD false
+
+/-- Short pages (`shortAt`), at the document's own prose pitch; a document
+with no paragraph of two lines has no pitch to read a page by. -/
+public def shortPages (geom : Geom) (roles : Array LeafRole) (opens : Array Nat)
+    (pages : Array PageOut) : Nat :=
+  match linePitch roles pages with
+  | none => 0
+  | some pitch =>
+    ((pages.toList.zip (pages.toList.drop 1)).filter fun (a, b) =>
+      shortAt geom opens pitch a b).length
 
 /-- Is `c` a private-use scalar? An icon face's code points: no text sets
 one, so a face chosen for it by coverage is the icon's declared face, not a
