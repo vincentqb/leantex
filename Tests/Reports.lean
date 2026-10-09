@@ -1031,6 +1031,7 @@ def reports : List Report := [
       "one comment line appended to the layout module rebuilt 171 modules in 230 seconds before and 9 in 146 seconds after",
       "the HTML backend builds in 40 seconds instead of 105: the kernel checks its emitter agreement in under a tenth of a second, under a heartbeat bound the destructuring form exceeds",
       "the census module builds in 7 seconds instead of 69, its rows in parts the census check caps",
+      "the lint stage of each commit's gate took about 17 minutes and takes about 4: the source audit's compilers draw from one queue, not batches that waited for their slowest member, and its checks run at once",
       "still slow: the layout module waits about 100 of its 136 seconds behind earlier proofs, the IR module elaborates in 60, and the lint audit elaborates every source again on each commit"]
     state := .owed "a follow-up once the concurrent branches land: large-module declarations ahead of the proofs they wait behind, proof companions, and a lint audit read from the build" ["declBarrierChecks"] }
 ]

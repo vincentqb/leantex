@@ -1,6 +1,5 @@
 import scripts.ProofSources
 import scripts.ProofAudit
-import LeanTex.Cli.Batch
 
 namespace ProofCheck
 
@@ -69,33 +68,64 @@ so eight stay under 20 GB. At two, re-elaborating 481 sources held
 def auditWidth : Nat := 8
 
 /-- Compiler audits read already-built dependencies and own distinct temporary
-wrappers, at most `auditWidth` at a time. The shared executor joins every
-started process and retains source order. -/
-def auditBatch (jobs : Array α) (run : Nat → α → IO IO.Process.Output) :
-    IO (Array IO.Process.Output) :=
-  LeanTex.Cli.Batch.map auditWidth Prod.snd (fun (job, index) => run index job) jobs.zipIdx
+wrappers. `auditWidth` workers draw them from one queue, costliest first:
+batches of eight waited for their slowest member, so seven compilers idled
+behind every large module. Every started job is joined, a failed one is
+rethrown, and results keep job order. -/
+def auditBatch (jobs : Array α) (cost : α → Nat) (run : Nat → α → IO IO.Process.Output) :
+    IO (Array IO.Process.Output) := do
+  let queue := jobs.zipIdx.qsort fun a b => cost a.1 > cost b.1
+  let next ← IO.mkRef 0
+  let done ← IO.mkRef (#[] : Array (Nat × IO.Process.Output))
+  let worker : IO Unit := do
+    for _ in [0:queue.size] do
+      let some (job, index) := queue[← next.modifyGet fun k => (k, k + 1)]? | return
+      let out ← run index job
+      done.modify (·.push (index, out))
+  let workers ← (List.range (min auditWidth queue.size)).mapM fun _ =>
+    IO.asTask worker .dedicated
+  let mut failure : Option IO.Error := none
+  for task in workers do
+    if let .error e := task.get then
+      if failure.isNone then failure := some e
+  if let some e := failure then throw e
+  let outs := (← done.get).qsort (·.1 < ·.1)
+  unless outs.size == jobs.size do
+    throw <| IO.userError s!"proof audit: {jobs.size - outs.size} jobs left no result"
+  return outs.map (·.2)
+
+/-- What the audits read: every maintained source compiled, and the plugin. -/
+def buildSources (files : Array System.FilePath) : IO (Except UInt32 System.FilePath) := do
+  let targets := files.map fun file => "+" ++ importName (moduleName file) ++ ":olean"
+  let built ← IO.Process.output { cmd := "lake", args := #["build", "--wfail"] ++ targets }
+  if built.exitCode != 0 then
+    IO.eprint (built.stdout ++ built.stderr)
+    return .error built.exitCode
+  return .ok (← sourcePlugin)
 
 def verify : IO UInt32 := do
   let files ← sources "."
   if files.isEmpty then
     throw <| IO.userError "proof audit: no source modules found"
-  let targets := files.map fun file => "+" ++ importName (moduleName file) ++ ":olean"
-  let built ← IO.Process.output { cmd := "lake", args := #["build", "--wfail"] ++ targets }
-  if built.exitCode != 0 then
-    IO.eprint (built.stdout ++ built.stderr)
-    return built.exitCode
-  let plugin ← sourcePlugin
+  let plugin ← match ← buildSources files with
+    | .ok plugin => pure plugin
+    | .error code => return code
+  let sizes : Std.HashMap String Nat ← files.foldlM (init := {}) fun m file => do
+    return m.insert (moduleName file) (← file.metadata).byteSize.toNat
   IO.FS.withTempDir fun dir => do
     let manifest := files.map moduleName
-    let compiled ← auditBatch (groups files) fun index names =>
-      checkGroup dir index names manifest
-    let elaborated ← auditBatch files fun _ file => checkSource plugin file
+    let jobs := (groups files).map Sum.inl ++ files.map Sum.inr
+    let cost : Sum (Array String) System.FilePath → Nat
+      | .inl names => names.foldl (fun n name => n + sizes.getD name 0) 0
+      | .inr file => sizes.getD (moduleName file) 0
+    let outs ← auditBatch jobs cost fun index job => match job with
+      | .inl names => checkGroup dir index names manifest
+      | .inr file => checkSource plugin file
     let mut passed := true
-    for results in #[compiled, elaborated] do
-      for out in results do
-        if out.exitCode != 0 then
-          IO.eprint (out.stdout ++ out.stderr)
-          passed := false
+    for out in outs do
+      if out.exitCode != 0 then
+        IO.eprint (out.stdout ++ out.stderr)
+        passed := false
     if passed then
       IO.println s!"proof audit: {files.size} source modules; no unfinished proofs or project axioms"
     return if passed then 0 else 1
@@ -187,7 +217,8 @@ public theorem dependentBoundary : False := exportedBoundary
   -- A failed compiler is an audit result, not an exception that skips the
   -- remaining sources. Exercise real compiler jobs through the same executor.
   let batchCases := #[("Valid", true), ("Hidden", false), ("Foundation", true)]
-  let batched ← auditBatch batchCases fun index (name, _) => do
+  -- Costs reverse the job order, so results must be put back in it.
+  let batched ← auditBatch batchCases (·.1.length) fun index (name, _) => do
     let file := dir / s!"BatchAudit{index}.lean"
     IO.FS.writeFile file (wrapper dir #[name] allFixtures)
     compile file #["-R", dir.toString] (some dir)
@@ -361,6 +392,10 @@ end ProofCheck
 def main (args : List String) : IO UInt32 :=
   if args == ["--selftest"] then ProofCheck.selftest
   else if args.isEmpty || args == ["--check"] then ProofCheck.verify
+  else if args == ["--build"] then do
+    match ← ProofCheck.buildSources (← ProofSources.sources ".") with
+    | .ok _ => return 0
+    | .error code => return code
   else do
-    IO.eprintln "usage: proofcheck [--check | --selftest]"
+    IO.eprintln "usage: proofcheck [--check | --selftest | --build]"
     return 2
