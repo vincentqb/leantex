@@ -89,20 +89,6 @@ public theorem prepare_ids_exact (geom : Layout.Geom) (fs : Font.FontSet)
   rw [prepare_table_exact]
   exact objTable_ids_exact ..
 
-/-- The writer always has the catalog to compress, so it always writes at
-least one object stream. -/
-public theorem prepare_compressed_ne_nil (geom : Layout.Geom) (fs : Font.FontSet)
-    (pages : Array Layout.PageOut) (info : Ir.Meta) (imgs : Image.Store)
-    (outline : Array Layout.OutlineEntry)
-    (streams : Array (ByteArray × Option ByteArray)) (tree : Struct.Tree)
-    (ops : Array (Array ContentOp)) (programs : Array (ByteArray × Bool)) :
-    (prepare geom fs pages info imgs outline streams tree ops programs).compressed ≠ [] := by
-  intro h
-  have hc := prepare_compressed_ids_exact geom fs pages info imgs outline streams tree ops programs
-  dsimp only at hc
-  rw [h] at hc
-  simp at hc
-
 /-- The production emissions themselves have unique ids; this is
 stronger than allocation coverage and prevents last-write-wins aliases. -/
 public theorem prepare_emission_inj (geom : Layout.Geom) (fs : Font.FontSet)

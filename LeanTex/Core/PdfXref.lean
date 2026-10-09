@@ -188,8 +188,9 @@ public theorem width_between (n : Nat) :
         have := (Nat.div_lt_iff_lt_mul (by decide : 0 < 256)).mp hhi
         omega
 
-/-- No width of at least one byte that holds `n` is narrower than `width n`. -/
-public theorem width_least (n k : Nat) (hk : 1 ≤ k) (h : n < 256 ^ k) : width n ≤ k := by
+/-- `width_between`'s lower bound read the other way: a field of at least
+one byte that holds `n` is at least `width n` wide. -/
+private theorem width_le_of_lt (n k : Nat) (hk : 1 ≤ k) (h : n < 256 ^ k) : width n ≤ k := by
   obtain ⟨_, hlo, _⟩ := width_between n
   rcases hlo with hw | hw
   · omega
@@ -243,14 +244,17 @@ public theorem widthsOf_fits (es : Array Entry) : ∀ e ∈ es, e.Fits (widthsOf
     Nat.lt_of_le_of_lt ((foldl_max_ge (fun e : Entry => e.fields.2.2) es.toList 0).2 e hm)
       (width_between _).2.2⟩
 
-/-- The computed widths are the narrowest any fitting `/W` of nonzero widths
-could declare: the maxima, and nothing wider. -/
-public theorem widthsOf_least (es : Array Entry) (w : Widths) (h1 : 1 ≤ w.first)
+/-- **`widthsOf_between`**: each computed width lies between one byte and
+the width of any `/W` of nonzero widths that every row fits — the computed
+widths are the narrowest a fitting `/W` could declare. -/
+public theorem widthsOf_between (es : Array Entry) (w : Widths) (h1 : 1 ≤ w.first)
     (h2 : 1 ≤ w.second) (hw : ∀ e ∈ es, e.Fits w) :
-    (widthsOf es).first ≤ w.first ∧ (widthsOf es).second ≤ w.second := by
+    (1 ≤ (widthsOf es).first ∧ (widthsOf es).first ≤ w.first) ∧
+      (1 ≤ (widthsOf es).second ∧ (widthsOf es).second ≤ w.second) := by
   have hpos (k : Nat) : 0 < 256 ^ k := Nat.pow_pos (by decide)
   simp only [widthsOf, maxFirst, maxSecond, ← Array.foldl_toList]
-  refine ⟨width_least _ _ h1 ?_, width_least _ _ h2 ?_⟩
+  refine ⟨⟨(width_between _).1, width_le_of_lt _ _ h1 ?_⟩,
+    ⟨(width_between _).1, width_le_of_lt _ _ h2 ?_⟩⟩
   · exact foldl_max_lt (fun e : Entry => e.fields.2.1) es.toList 0 _ (hpos _)
       (fun e he => (hw e (Array.mem_toList_iff.mp he)).1)
   · exact foldl_max_lt (fun e : Entry => e.fields.2.2) es.toList 0 _ (hpos _)

@@ -210,8 +210,8 @@
   suggestion: use readable local image, font and stylesheet files; remove CSS `@import` and external `url(...)` dependencies
 ── E0607 (dropped) the PDF cannot be represented within supported spelling or storage limits; publication is refused
 ✖ [E0607]
-  the PDF object stream needs 67108865 decoded bytes; the supported limit is 67108864
-  suggestion: split the document into smaller files and compile each with `leantex <file>.tex`
+  the largest PDF object stream needs 67108865 decoded bytes; the supported limit is 67108864
+  suggestion: objects that index the whole document grow with it: split the document into smaller files and compile each with `leantex <file>.tex`
 ✖ [E0607]
   the PDF object 4 contains a spelling the writer cannot represent
   suggestion: use nonempty Latin-1 font and PDF resource names, such as 'ExampleFont'

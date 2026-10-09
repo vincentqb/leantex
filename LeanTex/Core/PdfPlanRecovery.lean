@@ -21,20 +21,27 @@ a parser result. -/
 
 /-- The source transcripts partition the consecutive allocation: the
 compressed objects, the direct rows, one id per object stream the plan
-fills, and the xref. -/
+fills, and the xref. The compressed transcript is never empty — the
+catalog is always in it — so the plan fills at least one object stream. -/
 public structure WritePlan.Allocated (p : WritePlan) : Prop where
   ids : p.table.ids.toList = List.range' 1 (p.table.size - 1)
   chunks : p.chunks.length = p.table.nStm
   sources : (p.compressed.map Prod.fst ++ p.direct.toList.map Row.id ++
     (List.range p.table.nStm).map p.table.objStmId ++ [p.table.xrefId]).Perm p.table.ids.toList
+  catalog : p.compressed ≠ []
 
 public theorem prepare_allocated_exact (geom : Layout.Geom) (fs : Font.FontSet)
     (pages : Array Layout.PageOut) (info : Ir.Meta) (imgs : Image.Store)
     (outline : Array Layout.OutlineEntry)
     (streams : Array (ByteArray × Option ByteArray)) (tree : Struct.Tree)
     (ops : Array (Array ContentOp)) (programs : Array (ByteArray × Bool)) :
-    (prepare geom fs pages info imgs outline streams tree ops programs).Allocated :=
-  ⟨prepare_ids_exact .., prepare_chunks_exact .., prepare_allocation_exact ..⟩
+    (prepare geom fs pages info imgs outline streams tree ops programs).Allocated := by
+  refine ⟨prepare_ids_exact .., prepare_chunks_exact .., prepare_allocation_exact .., ?_⟩
+  intro h
+  have hc := prepare_compressed_ids_exact geom fs pages info imgs outline streams tree ops programs
+  dsimp only at hc
+  rw [h] at hc
+  simp at hc
 
 private theorem WritePlan.Allocated.nodup {p : WritePlan} (h : p.Allocated) :
     (p.compressed.map Prod.fst ++ p.direct.toList.map Row.id ++
@@ -349,7 +356,7 @@ codecs, object-stream lookup, key enumeration, and object reader. -/
 public theorem WritePlan.objects_recovered_exact (p : WritePlan)
     (hb : p.WithinBounds) (ha : p.Allocated)
     (hc : ∀ e ∈ p.compressed, e.2.Representable)
-    (hn : ∀ r ∈ p.direct, r.body.Native) (hne : p.compressed ≠ []) :
+    (hn : ∀ r ∈ p.direct, r.body.Native) :
     ∃ es, objectsOf p.bytes p.readback = .ok es ∧
       (∀ e ∈ es.val, PdfCensus.kindOf e.val = .font →
         (e.num, e.val) ∈ p.compressed) ∧
@@ -374,7 +381,7 @@ public theorem WritePlan.objects_recovered_exact (p : WritePlan)
     rw [hloc]
     rfl
   obtain ⟨es, he, hem⟩ := objectsOf_reads_exact p.bytes p.readback model
-    (p.start_boundary hne) (by
+    (p.start_boundary ha.catalog) (by
       intro id hi size hs
       rw [p.readback_metadata.2] at hs
       have hsize := (xrefStreamDict_fields_exact p.table.size p.table.infoId p.measure.widths

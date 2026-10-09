@@ -66,7 +66,6 @@ public theorem write_fonts_embedded_exact (geom : Layout.Geom) (fs : Font.FontSe
   have ha := prepare_allocated_exact geom fs pages info {} outline streams tree ops programs
   obtain ⟨es, he, hf, href⟩ :=
     p.objects_recovered_exact h.1 ha (p.encodable_contract h.2) hn
-      (prepare_compressed_ne_nil geom fs pages info {} outline streams tree ops programs)
   have hh := prepare_header_exact geom fs pages info {} outline streams tree ops programs
   change (p.bytes[0]? == some 37 && p.bytes[1]? == some 80 &&
     p.bytes[2]? == some 68 && p.bytes[3]? == some 70) = true at hh

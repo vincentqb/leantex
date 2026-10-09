@@ -7,9 +7,11 @@ open LeanTex.Core
 /-- The writer's storage domain past the ceiling the fixed `/W [1 4 2]`
 layout once imposed: one object stream indexed by two bytes refused a
 file needing more than 65536 compressed objects. The large input uses
-only invented outline titles and no external fonts or resources. These
-executable witnesses supplement the universal field theorems; they are
-not proof premises. Parent registration calls this block. -/
+only invented outline titles and no external fonts or resources; the
+refusal the CLI reports as E0607 is the producer's own, on an invented
+face name. These executable witnesses supplement the universal field
+theorems; they are not proof premises. Parent registration calls this
+block. -/
 def pdfBoundsChecks (failures : IO.Ref (List String)) : IO Unit := do
   let check (name : String) (ok : Bool) : IO Unit := do
     unless ok do failures.modify (name :: ·)
@@ -39,7 +41,8 @@ def pdfBoundsChecks (failures : IO.Ref (List String)) : IO Unit := do
     (large.chunks.length == Pdf.objStmCount large.compressed.length &&
       large.chunks.length == large.table.nStm &&
       large.chunks.all (fun c => 0 < c.length && c.length ≤ Pdf.objStmCapacity))
-  match large.checked with
+  let largeChecked := large.checked
+  match largeChecked with
   | .error _ => check "PDF bounds: a file past 65536 compressed objects builds" false
   | .ok bytes =>
     check "PDF bounds: the large file is the actual writer's bytes" (bytes == large.bytes)
@@ -66,10 +69,24 @@ def pdfBoundsChecks (failures : IO.Ref (List String)) : IO Unit := do
     check "PDF bounds: the font census reads the large file"
       ((PdfCensus.census bytes).toOption.any (·.fontsEmbedded))
   check "PDF bounds: positioned-page producer builds the large outline"
-    (match Pdf.writeChecked {} fs #[] {} {} outline, large.checked with
+    (match Pdf.writeChecked {} fs #[] {} {} outline, largeChecked with
       | .ok a, .ok b => a == b
       | _, _ => false)
-  check "PDF bounds: a refusal reaches the diagnostic registry"
+  -- A real refusal, through the producer and the registry: a face whose
+  -- name no PDF name spells is outside the writer's domain, and the CLI
+  -- reports the producer's own error as E0607.
+  let bad : Font.FontSet := { fonts := #[{ (default : Font.Font) with
+    psName := "λ", unitsPerEm := 1000, numGlyphs := 2, widths := #[500, 500] }] }
+  match Pdf.writeChecked {} bad #[] {} {} #[] #[] ⟨#[]⟩ #[] #[("invented program".toUTF8, false)] with
+  | .ok _ => check "PDF bounds: the producer refuses an unspellable face name" false
+  | .error e =>
+    check "PDF bounds: the producer's refusal names the face's first object"
+      (match e with
+        | .objectSpelling id => id == Pdf.ObjTable.type0Id 0
+        | _ => false)
+    check "PDF bounds: the producer's refusal reaches the registry as E0607"
+      ((LeanTex.Cli.DriverDiag.pdfWriteRefused e).code == DiagCode.E0607.code)
+  check "PDF bounds: a storage refusal reaches the registry as E0607"
     ((LeanTex.Cli.DriverDiag.pdfWriteRefused (.objectStreamSize (PdfRead.maxDecoded + 1))).code ==
       DiagCode.E0607.code)
   check "PDF bounds: a one-byte index field wraps at 256, so its width is computed"

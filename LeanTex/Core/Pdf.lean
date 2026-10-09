@@ -949,9 +949,7 @@ public theorem xrefEntries_second_between (t : ObjTable) (compressedIdx offset :
     split
     · simp [Xref.Entry.fields]
     · split
-      · simp only [Xref.Entry.fields]
-        have := Nat.mod_lt (id : Nat) (show 0 < objStmCapacity by decide)
-        simp only [objStmCapacity] at this ⊢
+      · simp only [Xref.Entry.fields, objStmCapacity]
         omega
       · split <;> simp [Xref.Entry.fields]
 
@@ -1446,12 +1444,11 @@ and a field is never narrower than one byte. -/
 public theorem writerXrefWidths_second_exact (t : ObjTable) (locs : Array (Nat × Nat))
     (objects : List (Nat × PdfRead.Obj)) (xrefOff : Nat) :
     (Xref.widthsOf (writerXrefEntries t locs objects xrefOff)).second = 1 := by
-  have hw := Xref.widthsOf_least (writerXrefEntries t locs objects xrefOff) ⟨_, 1⟩
+  obtain ⟨hlo, hhi⟩ := (Xref.widthsOf_between (writerXrefEntries t locs objects xrefOff) ⟨_, 1⟩
     (Xref.width_between (Xref.maxFirst (writerXrefEntries t locs objects xrefOff))).1
     (Nat.le_refl 1) (fun e he => ⟨(Xref.widthsOf_fits _ e he).1,
-      by simpa using xrefEntries_second_between _ _ _ _ e he⟩)
-  have := (Xref.width_between (Xref.maxSecond (writerXrefEntries t locs objects xrefOff))).1
-  simp only [Xref.widthsOf] at hw this ⊢
+      by simpa using xrefEntries_second_between _ _ _ _ e he⟩)).2
+  change _ ≤ 1 at hhi
   omega
 
 /-- Every field in the actual xref payload reads back at its row's offset,
