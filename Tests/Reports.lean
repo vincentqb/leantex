@@ -1180,7 +1180,7 @@ def reports : List Report := [
       "one more fails with a tex ragged p column set unhyphenated, as a narrowed markdown cell sets: its words packed onto one line over the next column, where main's setting wraps them",
       "a results table of single figures too wide for the measure sets a size step smaller, its figures whole and inside the measure, the HTML stating the same step; one too wide even at the smallest step stands centred across both margins, on paper while no wider than the measure and both margins, and is named, with a remedy markdown can write",
       "on the branch before cells measured their code as they set it and the decision read the table's own measure, invented probes ran off the paper or out of their container: a table whose code holds hyphens kept its body size with its last column past the paper edge, a table in a quotation and one in a list item kept a size their measure could not hold, and a sixteen-column table of figures lost its edge columns; on this tree each fits its measure at the step both artifacts state, or stands centred on the paper at the last step"]
-    state := .guarded "e36565a8" .revert .author },
+    state := .guarded "df7d97f4" .revert .author },
   { id := "R129", date := "2026-10-08"
     what := "A markdown document took the article's narrow measure, leaving two-inch margins on a letter page"
     pins := [check% Tests.MarkdownPage.markdownPageChecks,
