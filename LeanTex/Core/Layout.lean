@@ -10008,7 +10008,7 @@ public structure Spacing.Pending where
   /-- A frame's body just opened (`Op.bodyOpen`): beamer's `\vskip-\parskip`
   stands before its `\vbox{}`, which the first paragraph's own `\parskip`
   cancels (no peer gap is paid) and a block, spending none, still pays
-  (`Ir.blockSkipAbove`). Cleared by the next line's gap. -/
+  (its `\medskipamount`). Cleared by the next line's gap. -/
   private frameTop : Bool := false
   /-- `\vspace*`'s rule stands in the owed glue, before `owed[k]`
   (`Ir.pageAnchorRole`): the boundary ships around it
@@ -12998,9 +12998,10 @@ private def collectBlock (r : Rd) (a : Acc)
     let x := r.geom.hmargin + indent - pad
     let w := (a.measure.getD r.geom.textWidth) - indent + 2 * pad
     let bs := Ir.leadingFor r.geom.fontSize r.geom.leading
-    -- `\par\vskip\medskipamount`: a box spends no `\parskip`, so at a
-    -- frame's opening the frame's `\vskip-\parskip` stands too.
-    let above := r.resolve Ir.blockSkipAbove
+    -- `\par\vskip\medskipamount`, the register in force: a box spends no
+    -- `\parskip`, so at a frame's opening the frame's `\vskip-\parskip`
+    -- stands too.
+    let above := r.resolve (Ir.skipAmount a.tokens "medskipamount")
     let above := if a.frameTop then
         { above with width := above.width - (r.resolve r.geom.texParskip).width }
       else above
@@ -13033,7 +13034,8 @@ private def collectBlock (r : Rd) (a : Acc)
                 bodyInk := if done.paletteEpoch == a.paletteEpoch then a.bodyInk else none
                 fg := if done.paletteEpoch == a.paletteEpoch then a.fg else fgOf done.pal
                 ground := if done.paletteEpoch == a.paletteEpoch then a.ground
-                  else a.bodyGround.or (done.pal.find? "bg") }.vskip (r.resolve Ir.blockSkipBelow)
+                  else a.bodyGround.or (done.pal.find? "bg") }.vskip
+      (r.resolve (Ir.skipAmount done.tokens "smallskipamount"))
   | .abstract body =>
     -- article.cls §abstract: `\small`, a centred `{\bfseries\abstractname}`
     -- heading (`collectAbstractHead`), then the body on quotation margins.

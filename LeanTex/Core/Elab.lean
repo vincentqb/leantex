@@ -15596,6 +15596,9 @@ the built-in's heading and margins stand{replaced}"
         modify fun st => { st with
           declaredKeys := st.declaredKeys.filter (fun e => !installed.contains e) }
         let ds := Theme.apply th before
+        -- The bundle's colour theme declares its own relationships under the
+        -- document's (`BeamerColor.themeElement`).
+        modify fun st => { st with flowPalette := { st.flowPalette with theme := tname } }
         for (key, c) in th.palette.entries do
           recordColorDeclaration key c (s.ctx.sourceSpan pos)
           modify fun st => { st with flowPalette := st.flowPalette.native key c }

@@ -6427,10 +6427,13 @@ private def molochOptions (cmd src : String) (pos : Pos) : M (Array Raw) := do
         for (element, body) in decls do
           out := out ++ #[.ctrl BeamerColor.marker pos, .group (← synthAt element pos) pos,
             .group (← synthAt body pos) pos]
+      | "block", none =>
+        sayOnce ("moloch:" ++ key) .W0104
+          s!"'{cmd}' option '{key}={value}' is moloch configuration the engine does not have; skipped" pos
+          (help := "moloch's block option takes fill or transparent")
       | _, _ =>
         sayOnce ("moloch:" ++ key) .W0104
           s!"'{cmd}' option '{key}={value}' is moloch configuration the engine does not have; skipped" pos
-          (help := "moloch's block option takes fill or transparent; \\palette and \\setbeamercolor declare colours directly")
     | none =>
       unless entry.trimAscii.toString.isEmpty do
         sayOnce ("moloch:" ++ entry.trimAscii.toString) .W0104

@@ -776,7 +776,7 @@ def reports : List Report := [
       thm% Layout.Spacing.Tail.join_boxDepth_exact,
       thm% SeedPalette.generated_beamer_contract]
     accept := ["eighteen artifact assertions and forty-eight generated-palette assertions failed before the body renderer, covering normal, alert and example blocks with and without titles",
-      "independent rendered review checks local colour changes, nested insets, empty filled bodies and page continuations against native ink and rendered browser pages",
+      "independent rendered review checks local colour changes, nested boxes, empty filled bodies and page continuations against native ink and rendered browser pages",
       "reference presentations use six title and body colour pairs derived from their common theme palette in both renderers",
       "one hundred forty-nine source and artifact assertions cover command availability, guarded defaults and explicit overrides; four mutations remove, truncate or mispaint the body and each is rejected",
       "twelve typed HTML controls check actual declaration ownership and nesting; six malformed variants accepted by the earlier assertions are now rejected",
@@ -1046,7 +1046,6 @@ def reports : List Report := [
   { id := "R117", date := "2026-10-08"
     what := "The space between a slide block's heading and its body was far too large"
     pins := [check% Tests.BlockGeometry.blockGeometryChecks,
-      thm% Layout.texBoxTop_between, thm% Layout.frame_opening_paint_covers,
       thm% Ir.titledPadding_contract]
     accept := ["thirty-five distances the reference engine measures on an invented probe fail before the block template's two colour boxes and hold within 0.02 points after, across painted, transparent, title-only and body-only blocks, titled and untitled; the heading-to-body distance was 22 points against 17.6",
       "a wrapped heading painted only behind its last line, and heading and body text inset half an em from the measure, fail before; the paint now covers every heading line and reaches 0.75 ex beyond the measure, the text standing on it",
@@ -1058,7 +1057,8 @@ def reports : List Report := [
       thm% HtmlDoc.blockGap_owner_contract]
     accept := ["consecutive painted blocks stood one paragraph skip apart, or touched where the page declared none, against the reference's 10 points; they now stand the template's small and medium skips and line skip apart, and a paragraph after a block spends its own skip",
       "on a presentation deck consecutive blocks stand exactly the reference engine's 10 points apart",
-      "in the browser consecutive blocks shared one box; each block now owns its boundary in the shared gap sheet and keeps its children's margins inside its box"]
+      "in the browser consecutive blocks shared one box; each block now owns its boundary in the shared gap sheet and keeps its children's margins inside its box",
+      "review of the first fix: the space around a block held the kernel's values whatever the document set the two skip registers to, and a block after a paused step lost its space above in the browser; three distances the reference engine measures and four sheet values fail on the first fix, and both artifacts now spend the registers in force, the browser's step carrier owning the boundary its block meets"]
     state := .guarded "fa516a828a2a36549fc2a56f1e1cb4d138b3b934" .before .author },
   { id := "R119", date := "2026-10-08"
     what := "Block colours did not look adjusted and their surface was a dull grey"
@@ -1066,7 +1066,8 @@ def reports : List Report := [
     accept := ["the grey surface was the deck's own declared colour, which the reference engine paints too; with the decks' current declarations both engines paint every block bar and body in the same colours",
       "nine shipped-colour assertions fail before: an empty colour value was refused, the theme's fill option was ignored in all three spellings, the alerted and example bodies did not inherit the block body, and a heading given only a bar took the page colour as ink",
       "a covered block on a stepped frame kept its full bars under faded text; its bars and heading now take the step's cover, as the reference fades them",
-      "the theme's fill option now paints the reference engine's heading bar exactly and its bodies within one unit per channel"]
+      "the theme's fill option now paints the reference engine's heading bar exactly and its bodies within one unit per channel",
+      "review of the first fix: it gave every theme one theme's relationships, so under the default theme the alerted and example bodies took the block body's fill, under the inheriting theme the block title took the structure colour, and a block an overlay item opens shipped at full ink on the steps hiding the item; six assertions fail on the first fix, against the reference engine's one body fill, three bodies, title inks and covered bars"]
     state := .guarded "fa516a828a2a36549fc2a56f1e1cb4d138b3b934" .before .author }
 ]
 

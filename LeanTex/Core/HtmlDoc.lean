@@ -1269,20 +1269,37 @@ private def gapAfterLists : List GapRule :=
       "calc(var(--frame-body-skip) + var(--frame-body-before, 0pt))",
     .boundary ":is(h1, h2, h3, h4, h5, h6) + *" "0"]
 
+/-- A skip register in force for the sheet (`Ir.skipAmount`, the site the
+PDF walk spends), as a print length: its `em` part at the body size; an
+`ex` part has no face to resolve against here and stands at zero. -/
+private def skipSp (size : Int) (tokens : Ir.Tokens) (name : String) : Int :=
+  (Ir.skipAmount tokens name).width.resolve size 0
+
 /-- A block's own space above it (beamerinnerthemedefault.sty):
 `\medskipamount` and TeX's `\lineskip` between its title box and what
 stands above, the print length's screen multiple (`screenMilli`). -/
-private def blockAboveMilli (size : Int) : Nat :=
-  screenMilli size (Ir.blockSkipAbove.width.sp + Layout.inkClearance)
+private def blockAboveMilli (size : Int) (tokens : Ir.Tokens) : Nat :=
+  screenMilli size (skipSp size tokens "medskipamount" + Layout.inkClearance)
+
+/-- What stands for a block at a boundary: the block, or the overlay step
+carrier (`overlayNode`: `.step` or `.step-set`, a range's end nested in it)
+the block opens (`edge` is `first-child`) or closes (`last-child`). The
+carrier is the sibling of what stands beside the block, so it owns the
+boundary the block would; the block inside meets no sibling. -/
+private def blockAt (edge : String) : String :=
+  s!":is(section.block, :is(.step, .step-set):has(> section.block:{edge}), " ++
+    s!":is(.step, .step-set):has(> .step-end > section.block:{edge}))"
 
 /-- A block's boundaries: its space above, `\smallskipamount` below its
-body box — a paragraph after it spends its own `\parskip` too — and no
-`\parskip` inside the boxes (`\@arrayparboxrestore`). -/
-private def blockRules (size : Int) : List GapRule :=
-  let below := screenMilli size Ir.blockSkipBelow.width.sp
-  [.boundary "* + section.block" (milliRem (blockAboveMilli size)),
-   .boundary "section.block + *" s!"calc({milliRem below} + {peerGap})",
-   .boundary "section.block + section.block" (milliRem (below + blockAboveMilli size)),
+body box — a paragraph after it spends its own `\parskip` too — both the
+registers in force, and no `\parskip` inside the boxes
+(`\@arrayparboxrestore`). -/
+private def blockRules (size : Int) (tokens : Ir.Tokens) : List GapRule :=
+  let above := blockAboveMilli size tokens
+  let below := screenMilli size (skipSp size tokens "smallskipamount")
+  [.boundary s!"* + {blockAt "first-child"}" (milliRem above),
+   .boundary s!"{blockAt "last-child"} + *" s!"calc({milliRem below} + {peerGap})",
+   .boundary s!"{blockAt "last-child"} + {blockAt "first-child"}" (milliRem (below + above)),
    .parskip "section.block > *" "0rem"]
 
 /-- The block-boundary sheet, the one emitter of every vertical margin a
@@ -1304,8 +1321,8 @@ consumer rule — a declared `\style` on the bare element or a reader
 stylesheet owning a container's spacing with `gap` — wins without a
 specificity fight, which is the HTML backend's override contract. -/
 public def blockGapRules (l : Ir.ListLineage) (size : Int) (tokens : Ir.Tokens) : List GapRule :=
-  gapResets ++ gapBeforeLists ++ blockRules size ++ thmRules l size ++ listRules l size tokens ++
-    gapAfterLists
+  gapResets ++ gapBeforeLists ++ blockRules size tokens ++ thmRules l size ++
+    listRules l size tokens ++ gapAfterLists
 
 public def blockGapCss (l : Ir.ListLineage) (size : Int) (tokens : Ir.Tokens) : String :=
   String.join ((blockGapRules l size tokens).map GapRule.render)
@@ -1356,9 +1373,9 @@ public theorem blockGap_owner_contract (l : Ir.ListLineage) (size : Int) (tokens
     (blockGapRules l size tokens).getLast? = some (.boundary ":is(h1, h2, h3, h4, h5, h6) + *" "0") := by
   have hbefore : gapBeforeLists.all (fun r => !r.isReset) = true := by decide
   have hafter : gapAfterLists.all (fun r => !r.isReset) = true := by decide
-  have hblock : (blockRules size).all (fun r => !r.isReset) = true := by
+  have hblock : (blockRules size tokens).all (fun r => !r.isReset) = true := by
     simp [blockRules, GapRule.isReset]
-  have hall : (gapBeforeLists ++ blockRules size ++ thmRules l size ++ listRules l size tokens ++
+  have hall : (gapBeforeLists ++ blockRules size tokens ++ thmRules l size ++ listRules l size tokens ++
       gapAfterLists).all (fun r => !r.isReset) = true := by
     simp only [List.all_append, hbefore, hafter, hblock, thmRules_noReset,
       listRules_noReset, Bool.and_self]
@@ -1670,7 +1687,7 @@ public def themeCss (doc : Doc) : String :=
   -- block spends its own space above at the frame's opening, where the
   -- frame's `\vskip-\parskip` stands too: the opening's authored addend.
   "section.block, section.block > .block-body { display: flow-root; }\n" ++
-  s!"section.block \{ --frame-body-before: calc({milliFactor (blockAboveMilli doc.page.fontSize)}rem - var(--parskip, 0rem)); }\n" ++
+  s!"section.block \{ --frame-body-before: calc({milliFactor (blockAboveMilli doc.page.fontSize doc.tokens)}rem - var(--parskip, 0rem)); }\n" ++
   (if d.frametitle.isSome then
     "section.slide > header { background: var(--frametitlebg);\n" ++
     "  color: var(--frametitlefg, var(--bg, #fff));\n" ++

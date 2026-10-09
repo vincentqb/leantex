@@ -54,7 +54,9 @@ def beamerColorOriginChecks (ref : IO.Ref (List String)) : IO Unit := do
       ("implicit cycle with an unrelated channel", "\n\\setbeamercolor{frametitle}{parent=framesubtitle}\n" ++
         "\\setbeamercolor{framesubtitle}{fg=red}", [2]),
       ("implicit cycle through a use edge", "\n\\setbeamercolor{frametitle}{use=framesubtitle}", [2]),
-      ("implicit section chain cycle", "\n\\setbeamercolor{normal text}{parent=section title}", [2])] do
+      -- beamer's default theme hangs `section title` on `titlelike` and
+      -- `titlelike` on `structure` (beamercolorthemedefault.sty).
+      ("implicit section chain cycle", "\n\\setbeamercolor{structure}{parent=section title}", [2])] do
     let raws := parse "root.tex" "\\documentclass{beamer}\n" ++
       #[Parse.Raw.env (Parse.inputEnv child) (parse child source) {}] ++
       parse "root.tex" "\\begin{document}\\begin{frame}{Heading}Body\\end{frame}\\end{document}"

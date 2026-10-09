@@ -263,8 +263,8 @@ def censusRows1 :
           decide (ty < by_)).getD false &&
       hasStr (censusText c) "The alert body stands under its own title." &&
       hasStr (censusText c) "The example body stands under its own title."),
-    ("the untitled block ships its body alone",
-      hasStr (censusText c) "An untitled block keeps its body and draws no bar."),
+    ("the untitled block ships its body under its empty title band",
+      hasStr (censusText c) "An untitled block keeps its body under an empty title band."),
     -- Only `blocktitlebg` is declared, so exactly the plain kind draws a
     -- bar: alert and example take their content colours barless. beamer
     -- keeps an untitled block's empty title box, so the untitled plain

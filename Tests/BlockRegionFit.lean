@@ -295,9 +295,7 @@ public def closedColumnRuleChecks (ref : IO.Ref (List String))
         check ref (label ++ ": all three words survive once in order on one page")
           (out.pages.size == 1 && bodyText out == words)
         -- A colour box aligns by its TeX reference, its bottom edge at `[b]`
-        -- (a box of depth zero), as lualatex places it. At `[t]` a minipage
-        -- opening on the block's `\medskipamount` aligns its top in TeX; the
-        -- engine aligns the box's first band, so only order is held there.
+        -- (a box of depth zero), as lualatex places it.
         let pad := Layout.titledPaddingOf fonts geom
         let outer := fills.filter (·.color == outerColor)
         check ref (label ++ ": column order and requested alignment survive")
@@ -305,6 +303,15 @@ public def closedColumnRuleChecks (ref : IO.Ref (List String))
             bodies.all fun body =>
               (pos != "b" || outer.any (fun f => f.y + f.h == peer.y)) &&
               (if boxFirst then body.x < peer.x else peer.x < body.x))
+        -- Owed, both ways: a `[t]` minipage that opens on the block's
+        -- `\par\vskip\medskipamount` is a `\vtop` whose first item is glue,
+        -- so TeX puts its reference at its top and the box stands that skip
+        -- and `\lineskip` below the peer's baseline (lualatex: a beamer
+        -- block's bar top 5.96 bp below it). The engine stands the box's top
+        -- on the peer's baseline. Fixing either side alone fails here.
+        if pos == "t" then
+          check ref (label ++ ": owed: a [t] box's top stands on the peer's baseline")
+            (peers.all fun peer => outer.any (fun f => f.y == peer.y))
         check ref (label ++ ": every closed surface survives once inside the medium")
           ((fills.filter isSurface).size == colors.size && colors.all fun color =>
             let surfaces := fills.filter (·.color == color)

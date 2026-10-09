@@ -204,6 +204,16 @@ mutual
     | node :: rest => listStyles (nodeStyles acc node) rest
 end
 
+/-- The `margin-top` of the gap sheet's first rule whose selector holds
+every fragment. -/
+private def ruleValue (sheet : String) (frags : List String) : Option String :=
+  (sheet.splitOn "\n").findSome? fun l =>
+    if l.startsWith ":where(" && frags.all (hasStr l ·) then
+      match l.splitOn "{ margin-top: " with
+      | [_, v] => some ((v.splitOn ";").headD "")
+      | _ => none
+    else none
+
 /-- The browser twin: the same insets and skips as CSS on the typed tree. -/
 private def htmlChecks (ref : IO.Ref (List String)) : IO Unit := do
   let (doc, _) := Elab.run "block-geometry.tex" source
@@ -221,7 +231,7 @@ private def htmlChecks (ref : IO.Ref (List String)) : IO Unit := do
   check ref "block geometry HTML: an untitled transparent block keeps its empty line"
     (inline.any (· == "min-height: 1lh;"))
   check ref "block geometry HTML: consecutive blocks stand apart"
-    (hasStr sheet ":where(section.block + section.block) { margin-top:")
+    ((ruleValue sheet ["section.block:last-child)) + :is(section.block"]).isSome)
   check ref "block geometry HTML: a block's paragraphs spend no parskip"
     (hasStr sheet ":where(section.block > *) { --parskip: 0rem; }")
 
@@ -288,6 +298,185 @@ private def colorChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO
   check ref "block colours: the alerted and example bodies inherit the block body"
     (inherited.size == 3 && inherited.all (· == inherited[0]!))
 
+/-- Each colour theme's own relationships, and only its own. beamer's
+default colour theme (beamercolorthemedefault.sty) leaves the alerted and
+example bodies empty and hangs the block title on `structure`, the frame
+title on `titlelike` and `titlelike` on `structure`; moloch's
+(beamercolorthememoloch.sty, `\moloch@setup@block@colors`) gives the block
+title normal text's ink and no fill whatever `structure` holds, and the
+alerted and example bodies the block body's colours. lualatex on these
+frames: one body fill under the default theme and three under moloch; the
+plain title and the frame title in `structure`'s colour under the default
+theme, the plain title in normal text's under moloch. -/
+private def parentChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit := do
+  let frame := "\\begin{document}\\begin{frame}[t]{Kinds}\\begin{block}{Plain}P\\end{block}" ++
+    "\\begin{alertblock}{Loud}A\\end{alertblock}" ++
+    "\\begin{exampleblock}{Shown}E\\end{exampleblock}\\end{frame}\\end{document}\n"
+  let plain := "\\documentclass{beamer}\n"
+  let moloch := "\\documentclass{beamer}\n\\usetheme{moloch}\n"
+  let surface : Ir.Color := { r := 0xE8, g := 0xEE, b := 0xF6 }
+  let accent : Ir.Color := { r := 0x7A, g := 0x3E, b := 0x9D }
+  let body := "\\definecolor{probeSurface}{HTML}{E8EEF6}\n" ++
+    "\\setbeamercolor{block body}{bg=probeSurface}\n"
+  let accentDecl := "\\definecolor{probeAccent}{HTML}{7A3E9D}\n" ++
+    "\\setbeamercolor{structure}{fg=probeAccent}\n"
+  let (plainBodies, _, _) := blockPaint fonts (plain ++ body ++ frame)
+  check ref "block parents: under beamer's default theme only the plain body is painted"
+    (plainBodies == #[surface])
+  let (molochBodies, _, _) := blockPaint fonts (moloch ++ body ++ frame)
+  check ref "block parents: under moloch the alerted and example bodies inherit the block body"
+    (molochBodies == #[surface, surface, surface])
+  let (plainDoc, _) := Elab.run "block-parents.tex" (plain ++ frame)
+  let (_, plainInk, _) := blockPaint fonts (plain ++ accentDecl ++ frame)
+  check ref "block parents: the default theme's block title takes structure's ink"
+    (plainInk == #[some accent, plainDoc.palette.find? "alert", plainDoc.palette.find? "example"])
+  let (out, _) := layout fonts (plain ++ accentDecl ++ frame)
+  let page := out.pages[0]?.getD {}
+  let titleInk := (page.lines.find? (lineText · false == "Kinds")).bind fun l =>
+    l.segs.findSome? fun
+      | .run _ c _ _ _ _ _ _ _ _ _ => some c
+      | _ => none
+  check ref "block parents: the default theme's frame title takes structure's ink"
+    (titleInk == some accent)
+  let bundle := (Theme.find? "moloch").map (·.palette)
+  let (_, molochInk, _) := blockPaint fonts (moloch ++ accentDecl ++ frame)
+  check ref "block parents: moloch's block title keeps normal text's ink whatever structure holds"
+    (molochInk == #[bundle.bind (·.find? "fg"), bundle.bind (·.find? "alert"),
+      bundle.bind (·.find? "example")])
+
+/-- A block an overlay item holds is covered with its item, whether it
+opens the item or follows the item's paragraph: on the steps before the
+item's, its boxes and heading ink ship at their cover, on the item's step
+and after at their own colours, and no step moves a box (cover, not hide).
+lualatex on this frame covers both blocks' bars and bodies on every step
+that does not show their item. -/
+private def coveredItemChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit := do
+  let src := "\\documentclass{beamer}\n\\usetheme{moloch}\n\\setbeamercovered{transparent}\n" ++
+    "\\definecolor{probeInk}{HTML}{1F2A44}\n\\definecolor{probeSurface}{HTML}{E8EEF6}\n" ++
+    "\\setbeamercolor{block title}{fg=white,bg=probeInk}\n" ++
+    "\\setbeamercolor{block body}{fg=probeInk,bg=probeSurface}\n\\begin{document}\n" ++
+    "\\begin{frame}[t]{Items}\n\\begin{itemize}\n\\item<1-> First item words.\n" ++
+    "\\item<2-> \\begin{block}{Inside}Item block words.\\end{block}\n" ++
+    "\\item<3-> Lead item words.\n\\begin{block}{After}Trailing block words.\\end{block}\n" ++
+    "\\end{itemize}\n\\end{frame}\n\\end{document}\n"
+  let (doc, _) := Elab.run "block-covered-items.tex" src
+  let out := Layout.run (Layout.Geom.ofPage doc.page) fonts none doc
+  let cover := (Ir.Design.ofDoc doc).cover
+  let ink : Ir.Color := { r := 0x1F, g := 0x2A, b := 0x44 }
+  let surface : Ir.Color := { r := 0xE8, g := 0xEE, b := 0xF6 }
+  let boxes (p : Nat) : Array Layout.Fill :=
+    ((out.pages[p]?.getD {}).fills.filter fun f => f.x != 0).qsort (·.y < ·.y)
+  let headingInk (p : Nat) (title : String) : Option Ir.Color :=
+    ((out.pages[p]?.getD {}).lines.find? (lineText · false == title)).bind fun l =>
+      l.segs.findSome? fun
+        | .run _ c _ _ _ _ _ _ _ _ _ => some c
+        | _ => none
+  let shown := #[ink, surface]
+  let covered := #[cover.of ink, cover.of surface]
+  check ref "block covered items: one page per step" (out.pages.size == 3)
+  check ref "block covered items: the first step covers both items' blocks"
+    ((boxes 0).map (·.color) == covered ++ covered)
+  check ref "block covered items: the second step shows the block its item opens"
+    ((boxes 1).map (·.color) == shown ++ covered)
+  check ref "block covered items: the third step shows both"
+    ((boxes 2).map (·.color) == shown ++ shown)
+  check ref "block covered items: a covered heading ships at its cover"
+    (headingInk 0 "Inside" == some (cover.of Ir.Color.white) &&
+      headingInk 1 "Inside" == some Ir.Color.white &&
+      headingInk 1 "After" == some (cover.of Ir.Color.white) &&
+      headingInk 2 "After" == some Ir.Color.white)
+  let place (p : Nat) := (boxes p).map fun f => (f.x, f.y, f.w, f.h)
+  check ref "block covered items: no step moves a box"
+    ((boxes 0).size == 4 && place 0 == place 1 && place 1 == place 2)
+
+/-- The block template spends the registers in force, never their kernel
+values: `\vskip\medskipamount` above the title box and `\vskip
+\smallskipamount` below the body box (beamerinnerthemedefault.sty) take the
+document's 20 pt and 15 pt as `\medskip` does. lualatex's distances on this
+source, in thousandths of a TeX point. -/
+private def skipSource : String :=
+  "\\documentclass[10pt,aspectratio=169]{beamer}\n\\usetheme{moloch}\n" ++
+  "\\definecolor{probeInk}{HTML}{1F2A44}\n\\definecolor{probeTitle}{HTML}{C9D6E8}\n" ++
+  "\\definecolor{probeSurface}{HTML}{E8EEF6}\n" ++
+  "\\setbeamercolor{normal text}{fg=probeInk,bg=white}\n" ++
+  "\\setbeamercolor{block title}{fg=probeInk,bg=probeTitle}\n" ++
+  "\\setbeamercolor{block body}{fg=probeInk,bg=probeSurface}\n" ++
+  "\\setlength{\\medskipamount}{20pt}\n\\setlength{\\smallskipamount}{15pt}\n" ++
+  "\\begin{document}\n\\begin{frame}[t]{Skips}\nLead paragraph above.\n" ++
+  "\\begin{block}{Alpha title words}Body words here.\\end{block}\n" ++
+  "\\begin{block}{Beta title words}Third body words.\\end{block}\n" ++
+  "Trailing paragraph below.\n\n\\medskip\n\nAfter the medium skip.\n\\end{frame}\n\\end{document}\n"
+
+private def skipMeasured : Array (Mark × Mark × Int) := #[
+  (.base "Lead paragraph above.", .top titleColor 0, 23402),
+  (.top titleColor 0, .base "Alpha title words", 11611),
+  (.bottom bodyColor 0, .top titleColor 1, 36000),
+  (.bottom bodyColor 1, .base "Trailing paragraph below.", 27000),
+  (.base "Trailing paragraph below.", .base "After the medium skip.", 32001)]
+
+/-- `m` thousandths as `HtmlDoc`'s rem text. -/
+private def remText (m : Nat) : String :=
+  let frac := toString (m % 1000)
+  s!"{m / 1000}.{"".pushn '0' (3 - frac.length) ++ frac}rem"
+
+private def skipChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit := do
+  let (out, _) := layout fonts skipSource
+  for (a, b, want) in skipMeasured do
+    match out.pages[0]?.bind (fun p => (markY p a).bind fun ya => (markY p b).map (· - ya)) with
+    | some d =>
+      check ref s!"block skips: distance {want} (lualatex) got {milliOf d}"
+        ((milliOf d - want).natAbs ≤ tolerance.toNat)
+    | none => check ref s!"block skips: marks for {want} ship" false
+  let (doc, _) := Elab.run "block-skips.tex" skipSource
+  let (head, body, _) := HtmlDoc.emitTree {} doc
+  let (_, sheet) := listStyles (#[], "") (head.toList ++ body.toList)
+  let size := doc.page.fontSize
+  let above := remText (HtmlDoc.screenMilli size (Dim.pt 20 + Layout.inkClearance))
+  let below := remText (HtmlDoc.screenMilli size (Dim.pt 15))
+  check ref s!"block skips HTML: a block's space above is the document's medium skip ({above})"
+    (ruleValue sheet ["* + ", "section.block"] == some above)
+  check ref s!"block skips HTML: a block's space below is the document's small skip ({below})"
+    (((ruleValue sheet ["section.block", " + *)"]).map (·.startsWith s!"calc({below} + ")) ==
+      some true)
+  -- The kernel's registers are written once: the compatibility layer's
+  -- spellings parse to the values both backends read, `\smallskip` and its
+  -- kin spend them, and a register the document sets reaches the rewrite
+  -- and the block alike.
+  for (cmd, reg) in #[("smallskip", "smallskipamount"), ("medskip", "medskipamount"),
+      ("bigskip", "bigskipamount")] do
+    check ref s!"kernel skips: {reg}'s compatibility spelling is its kernel value"
+      ((Ir.kernelSkip reg).isSome && ((Compat.kernelSkip reg).bind Decl.parseGlue) == Ir.kernelSkip reg)
+    let spent (src : String) : Option Dim.SymGlue :=
+      (Elab.run "kernel-skip.tex" src).1.body.findSome? fun
+        | .spaced g body => if body.isEmpty then some g.value else none
+        | _ => none
+    let src (pre : String) : String :=
+      "\\documentclass{article}\n" ++ pre ++ "\\begin{document}\nAlpha.\n\n\\" ++ cmd ++
+        "\n\nBravo.\n\\end{document}\n"
+    check ref s!"kernel skips: \\{cmd} spends the kernel's {reg}"
+      (spent (src "") == Ir.kernelSkip reg)
+    let set := s!"\\setlength\{\\{reg}}\{7pt}\n"
+    let (setDoc, _) := Elab.run "kernel-skip-set.tex" (src set)
+    check ref s!"kernel skips: \\{cmd} and the blocks spend the {reg} the document sets"
+      (spent (src set) == some { width := .ofSp (Dim.pt 7) } &&
+        Ir.skipAmount setDoc.tokens reg == { width := .ofSp (Dim.pt 7) })
+
+/-- A block an overlay step wraps (`HtmlDoc.overlayNode`) owns its
+boundaries through the wrapper: the step's carrier takes the block's space
+above where the block opens it and passes the space below on where the block
+closes it, so a block after `\pause` stands the space an unwrapped one does. -/
+private def stepWrapChecks (ref : IO.Ref (List String)) : IO Unit := do
+  let src := "\\documentclass{beamer}\n\\begin{document}\n\\begin{frame}[t]{Steps}\n" ++
+    "\\begin{block}{Plain}Early words.\\end{block}\n\\pause\n" ++
+    "\\begin{block}{Later}Late words.\\end{block}\n\\end{frame}\n\\end{document}\n"
+  let (doc, _) := Elab.run "block-steps.tex" src
+  let (head, body, _) := HtmlDoc.emitTree {} doc
+  let (_, sheet) := listStyles (#[], "") (head.toList ++ body.toList)
+  check ref "block step wrappers HTML: a wrapper a block opens takes the block's space above"
+    (hasStr sheet ":is(.step, .step-set):has(> section.block:first-child)")
+  check ref "block step wrappers HTML: a wrapper a block closes passes its space below on"
+    (hasStr sheet ":is(.step, .step-set):has(> section.block:last-child)")
+
 /-- beamer's transparent covering mixes every colour a covered step uses
 with the page (`\opaqueness`, beamerbaseoverlay.sty), a block's colour
 boxes and heading ink included: on the step that does not show it, a block
@@ -342,7 +531,11 @@ def blockGeometryChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO
   shapeChecks ref fonts out
   htmlChecks ref
   colorChecks ref fonts
+  parentChecks ref fonts
   coveredChecks ref fonts
+  coveredItemChecks ref fonts
+  skipChecks ref fonts
+  stepWrapChecks ref
   let transparent := out.pages[1]?.getD {}
   check ref "block geometry: empty colour values clear the transparent frame's boxes"
     (transparent.fills.all fun f => f.color != titleColor && f.color != bodyColor)

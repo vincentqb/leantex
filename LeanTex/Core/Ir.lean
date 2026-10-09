@@ -765,6 +765,28 @@ public def tableLengths : List (String × Dim.Length) :=
 public def tableLengthDefault (name : String) : Dim.Length :=
   (tableLengths.lookup name).getD {}
 
+/-- latex.ltx's three vertical skip registers at their kernel values, the
+same in every class (ltspace.dtx, as plain.tex sets them): what `\smallskip`,
+`\medskip` and `\bigskip` spend, and beamer's block template above its title
+box and below its body box (beamerinnerthemedefault.sty, `\medskipamount`
+and `\smallskipamount`), where the document never sets them. -/
+public def kernelSkip : String → Option SymGlue
+  | "smallskipamount" =>
+    some { width := .ofSp (Dim.pt 3), stretch := .ofSp (Dim.pt 1), shrink := .ofSp (Dim.pt 1) }
+  | "medskipamount" =>
+    some { width := .ofSp (Dim.pt 6), stretch := .ofSp (Dim.pt 2), shrink := .ofSp (Dim.pt 2) }
+  | "bigskipamount" =>
+    some { width := .ofSp (Dim.pt 12), stretch := .ofSp (Dim.pt 4), shrink := .ofSp (Dim.pt 4) }
+  | _ => none
+
+/-- The one resolving site for a skip register: the value the document set
+it to (`\setlength{\medskipamount}`, a token of the register's name), else
+the kernel's. Both backends read it — the PDF walk around a block, the HTML
+gap sheet's block boundaries — as TeX's `\vskip\medskipamount` reads the
+register in force. -/
+public def skipAmount (tokens : Tokens) (name : String) : SymGlue :=
+  (tokens.find? name).getD ((kernelSkip name).getD {})
+
 /-- The three rule weights are a hierarchy, not three loose numbers: "the
 top and bottom rules are heavier than the middle rule, which is in turn
 heavier than the subrule" (booktabs.dtx §Introduction, of its own first
@@ -10552,15 +10574,6 @@ public theorem titledPadding_contract (fontSize xHeight : Sp) :
   rw [h, show (1000 : Int) = 250 * 4 by decide]
   exact Int.mul_ediv_mul_of_pos _ _ (by decide)
 
-/-- The block template's own skips (beamerinnerthemedefault.sty): `\par\vskip
-\medskipamount` before the title box and `\vskip\smallskipamount` after the
-body box, latex.ltx's two amounts. -/
-public def blockSkipAbove : SymGlue :=
-  { width := .ofSp (Dim.pt 6), stretch := .ofSp (Dim.pt 2), shrink := .ofSp (Dim.pt 2) }
-
-public def blockSkipBelow : SymGlue :=
-  { width := .ofSp (Dim.pt 3), stretch := .ofSp (Dim.pt 1), shrink := .ofSp (Dim.pt 1) }
-
 /-- A painted title meeting a painted body: `\nointerlineskip\vskip-0.5pt`,
 the body box overlapping the title box by half a point. -/
 public def blockSeam : Sp := Dim.pt 1 / 2
@@ -11398,12 +11411,31 @@ entry, `pending` off. -/
 public def dimBlocks (cover : Cover) (k : Nat) (xs : Array Block) : Array Block :=
   dimBlockList cover k false #[] xs.toList
 
-/-- The item flatten itself: a leading `.step` wrapper opens into its item,
-the body standing where the wrapper stood. Named so its text conservation
-is one lemma, not a case buried inside the walk. -/
+/-- The item flatten itself: a leading `.step` wrapper that opens on a
+paragraph gives the item that paragraph, where the marker attaches, and
+keeps the rest of its body under the wrapper; a wrapper opening on anything
+else stands whole, and an empty one goes. The wrapper must reach what
+follows the paragraph: a block's boxes and heading ink resolve at layout and
+take the step's cover there (`Layout`'s `.onSteps` arm), and flattened they
+shipped at full ink on the steps that do not show their item. Named so its
+text conservation is one lemma, not a case buried inside the walk. -/
 public def flattenLeadStep (item : Array Block) : Array Block :=
   match item[0]? with
-  | some (Block.onSteps _ body) => body ++ item.extract 1 item.size
+  | some (Block.onSteps spec body) =>
+    match (body[0]? : Option Block) with
+    | some (.para p) =>
+      #[.para p] ++
+        (if body.size ≤ 1 then #[] else #[Block.onSteps spec (body.extract 1 body.size)]) ++
+        item.extract 1 item.size
+    | none => item.extract 1 item.size
+    | some (.onSteps _ _) | some (.section _ _ _ _) | some (.list _ _) | some (.center _)
+    | some (.ragged _ _) | some (.spaced _ _) | some (.role _ _) | some (.link _ _)
+    | some (.quote _) | some (.abstract _) | some (.titled _ _ _) | some (.equation _ _)
+    | some (.verbatim _ _ _) | some (.algorithm _ _ _) | some (.columns _)
+    | some (.altSteps _ _ _) | some (.note _) | some (.only _ _) | some (.nav _ _)
+    | some (.logo _) | some .pagebreak | some (.frame _ _ _ _ _) | some (.framefoot _)
+    | some (.setPalette _) | some (.setTokens _) | some (.rule _ _ _) | some (.picture _)
+    | some (.table _ _ _ _ _ _) | some (.float _ _ _ _ _) | some (.bibliography _ _ _) => item
   | none => item
   | some (.para _) | some (.section _ _ _ _) | some (.list _ _) | some (.center _)
   | some (.ragged _ _) | some (.spaced _ _) | some (.role _ _) | some (.link _ _)
@@ -12572,9 +12604,9 @@ public theorem algorithm_text (numbered semis : Bool) (lines : Array AlgLine) :
       = algLineText "" lines.toList := by rfl
 
 -- The item-step flatten: unwrapping loses no text. A leading `\item<2->`
--- wrapper opens into its item, nothing recoloured, nothing reordered, so
--- the block census is fixed. Same accumulator-lemma-then-mutual-induction
--- shape as the dim walk above.
+-- wrapper gives its item its paragraph, nothing recoloured, nothing
+-- reordered, so the block census is fixed. Same
+-- accumulator-lemma-then-mutual-induction shape as the dim walk above.
 
 private theorem flattenLeadStep_text (item : Array Block) (acc : String) :
     blockTextList acc (flattenLeadStep item).toList
@@ -12593,7 +12625,37 @@ private theorem flattenLeadStep_text (item : Array Block) (acc : String) :
         have h1 := congrArg List.length wl
         simp at h1
         omega
-      simp [wl, hlen, blockTextList, blockTextList_chain, blockTextOne]
+      split
+      next p hb =>
+        have hb0 : body.toList[0]? = some (Block.para p) := by simpa using hb
+        cases wb : body.toList with
+        | nil => simp [wb] at hb0
+        | cons z more =>
+          rw [wb] at hb0
+          simp only [List.getElem?_cons_zero, Option.some.injEq] at hb0
+          subst hb0
+          have hblen : body.size - 1 = more.length := by
+            have h1 := congrArg List.length wb
+            simp at h1
+            omega
+          by_cases hs : body.size ≤ 1
+          · have hm : more = [] := by
+              have h1 := congrArg List.length wb
+              simp at h1
+              cases more with
+              | nil => rfl
+              | cons _ _ => simp at h1; omega
+            subst hm
+            simp [hs, wl, wb, hlen, blockTextList, blockTextOne]
+          · simp [hs, wl, wb, hlen, hblen, blockTextList, blockTextOne]
+      next hb =>
+        have hb0 : body.toList = [] := by
+          rcases body with ⟨l⟩
+          cases l with
+          | nil => rfl
+          | cons z more => simp at hb
+        simp [wl, hb0, hlen, blockTextList, blockTextOne]
+      all_goals simp [wl]
   all_goals rfl
 
 mutual
