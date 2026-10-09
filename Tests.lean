@@ -493,6 +493,7 @@ def layoutSuiteChecks (ref : IO.Ref (List String)) : IO Unit := do
   Tests.FrameArea.footWeightChecks ref
   Tests.FrameArea.trivlistOpeningChecks ref
   Tests.FrameArea.standoutAlignNoteChecks ref
+  Tests.FrameArea.floatLevelChecks ref
   topskipChecks ref oneFace
   labelBaselineChecks ref oneFace
   boundaryFitChecks ref oneFace

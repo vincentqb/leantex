@@ -1106,7 +1106,7 @@ def reports : List Report := [
       "a presentation deck's web title bars match its shipped pages' height, and on the page a short frame's first line stands within a fifth of a point of its reference typesetting",
       "an untitled frame's opening paragraph and opening list stand their first lines within a tenth of a point of their reference typesetting on the page and in the web deck, and an opening image within a sixth on the page",
       "an untitled frame opening on a center, a flushleft, a flushright, a figure, a centred image or a description stands its first line or image within a tenth of a point of its reference typesetting on the page, and a top-aligned one its lines within a tenth in the web deck too, its images a point high there",
-      "on the page a center inside a list item and the lines after it stand within a quarter of a point of their reference typesetting, a captioned figure's next line within an eighth of its distance from the caption, and a 9pt deck's center within a third"]
+      "on the page a center inside a first-level list item and the lines after it stand within a quarter of a point of their reference typesetting, a captioned figure's next line within an eighth of its distance from the caption, and a 9pt deck's center within a third"]
     state := .guarded "f516d0dc" .revert .author }
 ]
 

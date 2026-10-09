@@ -1137,6 +1137,13 @@ public theorem listSkips_web_exact (size : Sp) (level : Nat) :
     listSkips .web size level = none := by
   simp only [listSkips]
 
+/-- The class options a display's size file is read from, each with the
+`\normalsize` its file sets (`\@xipt` is 10.95 pt, `\@xivpt` 14.4 pt,
+`\@xviipt` 17.28 pt, `\@xxpt` 20.74 pt: ltplain's values). -/
+private def displayOptions : List (Nat × Sp) :=
+  [(8, Dim.pt 8), (9, Dim.pt 9), (10, Dim.pt 10), (11, Dim.pt 1095 / 100), (12, Dim.pt 12),
+   (14, Dim.pt 144 / 10), (17, Dim.pt 1728 / 100), (20, Dim.pt 2074 / 100)]
+
 /-- The top-level `\topsep` the size file of each beamer class option
 leaves in force as it loads, running its `\@listi`: size8.clo and
 size9.clo:145 `6pt plus 2pt minus 3pt` (extsizes' files, which beamer.cls
@@ -1155,10 +1162,7 @@ body; otherwise beamer's documented default, `11pt` — a poster's body is
 beamerposter's scaled type over beamer's own size file, whose skips the
 package leaves in force. -/
 private def beamerOptionOf (size : Sp) : Nat :=
-  let opts : List (Nat × Sp) := [(8, Dim.pt 8), (9, Dim.pt 9), (10, Dim.pt 10),
-    (11, Dim.pt 1095 / 100), (12, Dim.pt 12), (14, Dim.pt 144 / 10),
-    (17, Dim.pt 1728 / 100), (20, Dim.pt 2074 / 100)]
-  ((opts.find? fun o => Dim.pt o.1 == size || o.2 == size).map (·.1)).getD 11
+  ((displayOptions.find? fun o => Dim.pt o.1 == size || o.2 == size).map (·.1)).getD 11
 
 /-- **The one resolving site for a trivlist's space in a lineage**, at the
 list depth it stands in. In beamer's lineage, outside a list, the document's
@@ -1258,13 +1262,6 @@ private def displaySkipsTable : Nat → DisplaySkips
   | 14 => ⟨ptsGlue 1400 300 700, ptsGlue 1400 300 700, ptsGlue 0 400 0, ptsGlue 700 400 300⟩
   | 17 => ⟨ptsGlue 1500 400 800, ptsGlue 1500 400 800, ptsGlue 0 400 0, ptsGlue 800 400 300⟩
   | _ => ⟨ptsGlue 1700 500 800, ptsGlue 1700 500 800, ptsGlue 0 500 0, ptsGlue 1000 500 400⟩
-
-/-- The class options a display's size file is read from, each with the
-`\normalsize` its file sets (`\@xipt` is 10.95 pt, `\@xivpt` 14.4 pt,
-`\@xviipt` 17.28 pt, `\@xxpt` 20.74 pt: ltplain's values). -/
-private def displayOptions : List (Nat × Sp) :=
-  [(8, Dim.pt 8), (9, Dim.pt 9), (10, Dim.pt 10), (11, Dim.pt 1095 / 100), (12, Dim.pt 12),
-   (14, Dim.pt 144 / 10), (17, Dim.pt 1728 / 100), (20, Dim.pt 2074 / 100)]
 
 /-- The `\normalsize` a class option's size file sets, for a body declared
 at that option's point size: `11pt` sets 10.95 pt (size11.clo's `\@xipt`),
@@ -6775,6 +6772,20 @@ declaration (`\captionsetup[table]{position=…}`, `tableposition=`), else
 the document's (`\captionsetup{position=…}`, keyed `""`), else `auto`. -/
 public def captionPosOf (decl : Array (String × CaptionPos)) (kind : FloatKind) : CaptionPos :=
   (((decl.find? (·.1 == kind.captionScope)) <|> (decl.find? (·.1 == ""))).map (·.2)).getD .auto
+
+/-- The position a float kind's captions are placed for in a class's
+lineage, where the document declares none: beamer's own `\caption`
+(`\beamer@makecaption`, beamerbaselocalstructure.sty:589-601) spends
+`\abovecaptionskip` above the caption and `\belowcaptionskip` below it
+whichever side of its object it stands, the kernel's `bottom` order;
+elsewhere the caption package's `auto` (`captionPosOf`). Both backends
+read it. -/
+public def captionPosFor (l : ListLineage) (decl : Array (String × CaptionPos))
+    (kind : FloatKind) : CaptionPos :=
+  match (decl.find? (·.1 == kind.captionScope)) <|> (decl.find? (·.1 == "")), l with
+  | some (_, p), _ => p
+  | none, .beamer => .bottom
+  | none, .sizeFile | none, .web => .auto
 
 /-- LaTeX's two caption skips (article.cls §\@makecaption, which sets
 `\abovecaptionskip` above a caption and `\belowcaptionskip` below it):

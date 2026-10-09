@@ -13460,7 +13460,7 @@ private def collectBlock (r : Rd) (a : Acc)
     -- its text side, as its side and declared position place them.
     let skip (s : Ir.CaptionSkip) : Glue :=
       r.resolve ((s.find? a.tokens kind).getD (s.defaultFor r.lists r.geom.fontSize))
-    let (objSkip, farSkip) := Ir.captionSides (Ir.captionPosOf r.captionPos kind) capAbove
+    let (objSkip, farSkip) := Ir.captionSides (Ir.captionPosFor r.lists r.captionPos kind) capAbove
     let capSep := skip objSkip
     let farSep := skip farSkip
     let a := a.pushOp .floatOpen

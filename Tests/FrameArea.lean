@@ -281,7 +281,8 @@ def openingChecks (ref : IO.Ref (List String)) : IO Unit := do
 untitled, a `{center}`, a `{flushleft}` and a `{flushright}` on a line, a
 `{figure}` and a `{center}` on an image taller than the body's
 `\baselineskip`, a `{description}`, a `{center}` between two paragraphs,
-a `{center}` inside a list item, and a captioned `{figure}`. -/
+a `{center}` inside a list item, a captioned `{figure}`, and a `{figure}`
+inside a list item. -/
 private def trivDeck : String :=
   "\\documentclass[10pt]{beamer}\n\\usetheme{moloch}\n\\begin{document}\n" ++
   "\\begin{frame}[t]\n\\begin{center}\nKilo words.\n\\end{center}\n\\end{frame}\n" ++
@@ -298,7 +299,10 @@ private def trivDeck : String :=
   "\\begin{frame}[t]\n\\begin{itemize}\n\\item Kilo words.\n\\begin{center}\nLima words.\n" ++
   "\\end{center}\nMike words.\n\\item November words.\n\\end{itemize}\n\\end{frame}\n" ++
   "\\begin{frame}[t]\n\\begin{figure}\n\\includegraphics[width=60pt,height=40pt]{tall.png}\n" ++
-  "\\caption{Lima words.}\n\\end{figure}\nMike words.\n\\end{frame}\n\\end{document}\n"
+  "\\caption{Lima words.}\n\\end{figure}\nMike words.\n\\end{frame}\n" ++
+  "\\begin{frame}[t]\n\\begin{itemize}\n\\item Kilo words.\n\\begin{figure}\n" ++
+  "\\includegraphics[width=60pt,height=40pt]{tall.png}\n\\end{figure}\nMike words.\n" ++
+  "\\end{itemize}\n\\end{frame}\n\\end{document}\n"
 
 /-- **A frame's trivlists open and stand apart as TeX sets them, on both
 artifacts**: a `{center}`, `{flushleft}` or `{flushright}` — and beamer's
@@ -377,7 +381,9 @@ def trivlistOpeningChecks (ref : IO.Ref (List String)) : IO Unit := do
      (Ir.trivlistSkipFor lists {} Ir.posterFontSize 0).width.sp == Dim.pt 9 &&
      (Ir.trivlistSkipFor lists {} (Dim.pt 10) 2).width.sp == Dim.pt 2 &&
      (Ir.trivlistSkipFor lists { entries := #[(Ir.trivlistSkipName, { width := { sp := Dim.pt 20 } })] } (Dim.pt 10) 1).width.sp
-       == Dim.pt 3)
+       == Dim.pt 3 &&
+     (Ir.floatSpaceFor lists doc.tokens size 1).1.width.sp == Dim.pt 3 &&
+     Ir.captionPosFor lists #[] .figure == .bottom)
   let (head, body, _) := HtmlDoc.emitTree {} doc
   let css := treeCssList "" head.toList
   let blocks := artCssBlocks css
@@ -397,9 +403,10 @@ def trivlistOpeningChecks (ref : IO.Ref (List String)) : IO Unit := do
     (cssStageLength root "--topsep" topsep doc.page.height &&
      cssDeclOf root "--floatsep" == some "calc(var(--topsep) + var(--parskip, 0rem))")
   t "trivlist opening html: each list level declares its own topsep, the stage's share"
-    ((cssBlocksFor css ":where(:is(li, dd, blockquote))").any (cssStageLength · "--topsep"
+    ((cssBlocksFor css "li, dd, blockquote").any (cssStageLength · "--topsep"
         (Ir.trivlistSkipFor lists doc.tokens size 1).width.sp doc.page.height) &&
-     (cssBlocksFor css ":where(:is(li, dd, blockquote) :is(li, dd, blockquote))").any
+     (cssBlocksFor css ("li li, li dd, li blockquote, dd li, dd dd, dd blockquote, " ++
+        "blockquote li, blockquote dd, blockquote blockquote")).any
        (cssStageLength · "--topsep" (Ir.trivlistSkipFor lists doc.tokens size 2).width.sp
          doc.page.height))
   -- The caption skips' undeclared value is the chain's innermost fallback.
@@ -555,20 +562,20 @@ where
 
 mutual
 
-/-- Every footer's ancestor path, root first, as the selector judge reads
-elements (`ArtElem`: tag and classes). -/
-private def footPathsOne (path : Array ArtElem) (acc : Array (Array ArtElem)) :
+/-- Every `want` element's ancestor path, root first, as the selector judge
+reads elements (`ArtElem`: tag and classes). -/
+private def tagPathsOne (want : String) (path : Array ArtElem) (acc : Array (Array ArtElem)) :
     Html.Node → Array (Array ArtElem)
   | .elem tag attrs kids =>
     let cls := ((attrs.find? (·.1 == "class")).map (·.2)).getD ""
     let here := path.push (tag, ((cls.splitOn " ").filter (!·.isEmpty)).toArray)
-    footPathsList here (if tag == "footer" then acc.push here else acc) kids.toList
+    tagPathsList want here (if tag == want then acc.push here else acc) kids.toList
   | .text _ | .style _ | .script .. => acc
 
-private def footPathsList (path : Array ArtElem) (acc : Array (Array ArtElem)) :
+private def tagPathsList (want : String) (path : Array ArtElem) (acc : Array (Array ArtElem)) :
     List Html.Node → Array (Array ArtElem)
   | [] => acc
-  | k :: rest => footPathsList path (footPathsOne path acc k) rest
+  | k :: rest => tagPathsList want path (tagPathsOne want path acc k) rest
 
 end
 
@@ -610,6 +617,46 @@ private def computedOn (css key : String) (path : Array ArtElem) : Option String
       | [] => v
     else v
 
+/-- **A figure inside a list item reads its own level's float space in the
+web deck** (`HtmlDoc.lineageLevelRules`): `--floatsep`'s `var(--topsep)`
+resolves where the property is declared, so each list level declares it
+beside its own `--topsep` — the nearest ancestor of a figure in an item that
+declares the one is the item, and declares the other at the level's 3 pt,
+the stage's share, the space the page spends there (`Ir.floatSpaceFor` at
+depth one). Declared on the root alone, a figure in an item spent the top
+level's 8 pt in the web deck, 5 bp low above and below at 10 pt. Read by a
+cascade over the shipped stylesheet and the typed tree's paths
+(`declaredOn`). Invented words. -/
+def floatLevelChecks (ref : IO.Ref (List String)) : IO Unit := do
+  let t := check ref
+  let (doc, _) := elabStr trivDeck
+  let (head, body, _) := HtmlDoc.emitTree {} doc
+  let css := treeCssList "" head.toList
+  let level := (Ir.trivlistSkipFor doc.docClass.record.lists doc.tokens doc.page.fontSize 1).width.sp
+  let figs := (tagPathsList "figure" artBodyPath #[] body.toList).filter (·.any (·.1 == "li"))
+  let owner (path : Array ArtElem) : Option (Array ArtElem) :=
+    ((List.range path.size).reverse.map (fun k => path.extract 0 (k + 1))).find? fun pre =>
+      (declaredOn css "--floatsep" pre).isSome
+  t "float level: a figure in a list item reads the float space its item declares beside its own topsep"
+    (!figs.isEmpty && figs.all fun p => match owner p with
+      | some o =>
+        o.back?.any (·.1 == "li") &&
+        declaredOn css "--floatsep" o == some "calc(var(--topsep) + var(--parskip, 0rem))" &&
+        (declaredOn css "--topsep" o).any fun v =>
+          cssStageLength ("--c: " ++ v) "--c" level doc.page.height
+      | none => false)
+  -- A preamble `\topsep` is the top level's alone: the deck states it as
+  -- the stage's share, and a note says the lists set their own.
+  let (ddoc, dds) := elabStr ("\\documentclass[10pt]{beamer}\n\\usetheme{moloch}\n" ++
+    "\\setlength{\\topsep}{20pt}\n\\begin{document}\n\\begin{frame}[t]\n" ++
+    "\\begin{center}\nKilo words.\n\\end{center}\n\\end{frame}\n\\end{document}\n")
+  let (dhead, _, _) := HtmlDoc.emitTree {} ddoc
+  let roots := cssBlocksFor (treeCssList "" dhead.toList) ":root"
+  t "float level: a declared topsep reaches the deck as the stage's share and is noted as the top level's"
+    ((roots.any fun d => cssStageLength d "--topsep" (Dim.pt 20) ddoc.page.height) &&
+     !(roots.any fun d => (cssDeclOf d "--topsep").any (·.endsWith "pt")) &&
+     dds.any fun d => hasStr d.message "which a trivlist outside a list reads")
+
 /-- A Light family's set: the shipped Fira Sans's outlines as a 300 in the
 regular slot and as a 400 in the bold one, the shape of a deck that sets a
 Light family with its Regular for bold. -/
@@ -629,15 +676,11 @@ paths (`computedOn`), which a footer rule naming `normal` again breaks. At
 the deck's bold, where the PDF and lualatex set the Light. Invented words. -/
 def footWeightChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
-  let some f ← (do
-      match Font.parse (← IO.FS.readBinFile (testFonts ++ "/FiraSans-Regular.otf")) with
-      | .ok f => pure (some f)
-      | .error _ => pure none : IO (Option Font.Font))
-    | t "footline weight: the shipped Fira Sans parses" false
+  let some f ← shippedFiraFont | t "footline weight: the shipped Fira Sans parses" false
   let (doc, _) := elabStr deck
   let (head, body, _) := HtmlDoc.emitTree { fonts := some (lightSet f) } doc
   let css := treeCssList "" head.toList
-  let feet := footPathsList artBodyPath #[] body.toList
+  let feet := tagPathsList "footer" artBodyPath #[] body.toList
   let weights (css : String) := feet.map (computedOn css "font-weight")
   t "footline weight: the body resolves the regular face's 300"
     (computedOn css "font-weight" artBodyPath == some "300")

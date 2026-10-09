@@ -1725,35 +1725,40 @@ private def lineageLength (doc : Doc) (x : Sp) : String :=
   if doc.docClass.record.model == .frame then stageVh doc.page x
   else milliRem (screenMilli doc.page.fontSize x)
 
-/-- In beamer's lineage, the trivlist's and the float's spaces the page
-spends, at the list depth they stand in (`Ir.trivlistSkipFor`,
-`Ir.floatSpaceFor`): `--topsep` the top level's on the root and each list
-level's inside it (a list item, a description's body, a quotation, the
-`\@list⟨n⟩` beamer runs), and `--floatsep` that space with the paragraph
-gap on top, a figure being the `{center}` it opens. A declared `\topsep`
-overrides the root's (`tokenVars`, later in the cascade) and reaches no
-list, as `\@listi` sets the length again there. -/
+/-- The trivlist's and the float's spaces at a list depth in beamer's
+lineage (`Ir.trivlistSkipFor`, `Ir.floatSpaceFor`), in the page's unit:
+`--topsep` the trivlist's, and `--floatsep` that space with the paragraph
+gap on top, a figure being the `{center}` it opens — a declared
+`\floatsep` alone. Declared where its `--topsep` is, so each level's float
+reads its own level's space. -/
+private def lineageSkipDecls (doc : Doc) (depth : Nat) : String :=
+  let size := doc.page.fontSize
+  let t := (Ir.trivlistSkipFor .beamer doc.tokens size depth).width.resolve size 0
+  let float := match Ir.floatSpaceFor .beamer doc.tokens size depth with
+    | (_, true) => s!"calc(var(--{Ir.trivlistSkipName}) + var(--parskip, 0rem))"
+    | (g, false) => lineageLength doc (g.width.resolve size 0)
+  s!"--{Ir.trivlistSkipName}: {lineageLength doc t}; --floatsep: {float};"
+
+/-- In beamer's lineage, the top level's trivlist and float spaces on the
+root (`lineageSkipDecls`). A declared `\topsep` or `\floatsep` is stated
+here in the page's unit, and `tokenVars` leaves both to this site. -/
 private def lineageSkipVars (doc : Doc) : String :=
   match doc.docClass.record.lists with
-  | .beamer =>
-    let t := (Ir.trivlistSkipFor .beamer doc.tokens doc.page.fontSize 0).width.sp
-    let float := match Ir.floatSpaceFor .beamer doc.tokens doc.page.fontSize 0 with
-      | (_, true) => s!"calc(var(--{Ir.trivlistSkipName}) + var(--parskip, 0rem))"
-      | (g, false) => lineageLength doc g.width.sp
-    s!"    --{Ir.trivlistSkipName}: {lineageLength doc t};\n" ++
-    s!"    --floatsep: {float};\n"
+  | .beamer => s!"    {lineageSkipDecls doc 0}\n"
   | .sizeFile | .web => ""
 
-/-- Each list level's `--topsep` in beamer's lineage (`lineageSkipVars`):
-level one inside one enclosing list, the deeper levels inside two. -/
+/-- Each list level's spaces in beamer's lineage (`lineageSkipDecls`): level
+one inside one enclosing list (a list item, a description's body, a
+quotation, the `\@list⟨n⟩` beamer runs), the deeper levels inside two,
+where `\@listi` has set `\topsep` again and no preamble declaration
+reaches. -/
 private def lineageLevelRules (doc : Doc) : String :=
   match doc.docClass.record.lists with
   | .beamer =>
-    let atDepth (depth : Nat) : String :=
-      lineageLength doc (Ir.trivlistSkipFor .beamer doc.tokens doc.page.fontSize depth).width.sp
-    let within := ":is(li, dd, blockquote)"
-    s!":where({within}) \{ --{Ir.trivlistSkipName}: {atDepth 1}; }\n" ++
-    s!":where({within} {within}) \{ --{Ir.trivlistSkipName}: {atDepth 2}; }\n"
+    let within := ["li", "dd", "blockquote"]
+    let deep := within.flatMap fun o => within.map (o ++ " " ++ ·)
+    s!"{", ".intercalate within} \{ {lineageSkipDecls doc 1} }\n" ++
+    s!"{", ".intercalate deep} \{ {lineageSkipDecls doc 2} }\n"
   | .sizeFile | .web => ""
 
 /-- The footline band's box as the stage lengths `footlineCss` reads: its
@@ -2575,7 +2580,11 @@ generic), exactly the faces the sibling directory ships; without one they
 name the declared families against the platform, today's degraded state. -/
 private def tokenVars (cfg : Config) (doc : Doc) : String :=
   let palette := paletteVars doc.palette
-  let tokens := doc.tokens.entries.toList.map fun (n, g) =>
+  -- beamer's lineage states its trivlist and float spaces in the page's
+  -- unit (`lineageSkipVars`).
+  let stated (n : String) : Bool :=
+    doc.docClass.record.lists == .beamer && (n == Ir.trivlistSkipName || n == "floatsep")
+  let tokens := (doc.tokens.entries.toList.filter (!stated ·.1)).map fun (n, g) =>
     s!"    --{n}: {tokenCss (lengthBasisOf doc) n g.width};"
   let fonts := match cfg.fonts with
     | some fs =>
@@ -3560,8 +3569,8 @@ private def frameOpeningCss (doc : Doc) : String :=
      s!"section.slide > :is({", ".intercalate listElems}).frame-body-start \{ \
 --frame-body-open: {stageVh doc.page opened}; }\n"
    | none => "") ++
-  s!"{triv} \{ --frame-body-open: {stageVh doc.page (Ir.trivlistSkipFor l doc.tokens size 0).width.sp}; }\n" ++
-  s!"{float} \{ --frame-body-open: {stageVh doc.page (Ir.floatSpaceFor l doc.tokens size 0).1.width.sp}; }\n" ++
+  s!"{triv} \{ --frame-body-open: {stageVh doc.page ((Ir.trivlistSkipFor l doc.tokens size 0).width.resolve size 0)}; }\n" ++
+  s!"{float} \{ --frame-body-open: {stageVh doc.page ((Ir.floatSpaceFor l doc.tokens size 0).1.width.resolve size 0)}; }\n" ++
   "section.slide > :is(p, ul, ol, dl, blockquote, .centered, .ragged, .ragged-right)\
 .frame-body-end { text-box: trim-end text alphabetic; }\n" ++
   "section.slide > p.frame-body-start::before,\n" ++
@@ -4803,7 +4812,7 @@ private def captionScopeCss (doc : Doc) : String :=
       | _, .below => "0px"
     (s.keys k).foldr (fun key acc => s!"var(--{key}, {acc})") dflt
   String.join ([Ir.FloatKind.figure, .table, .sub, .algorithm].map fun k =>
-    let p := Ir.captionPosOf pos k
+    let p := Ir.captionPosFor doc.docClass.record.lists pos k
     let (obj, far) := Ir.captionSides p false
     let (objTop, farTop) := Ir.captionSides p true
     let s := k.captionScope

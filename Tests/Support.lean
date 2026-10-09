@@ -1641,6 +1641,13 @@ def shippedFira : IO (Option Font.FontSet) := do
   | .ok f => pure (some (oneFaceOf f))
   | .error _ => pure none
 
+/-- The shipped Fira Sans as the one face it is, for a check that builds its
+own set from it; `none` where it does not parse. -/
+def shippedFiraFont : IO (Option Font.Font) := do
+  match Font.parse (← IO.FS.readBinFile (testFonts ++ "/FiraSans-Regular.otf")) with
+  | .ok f => pure (some f)
+  | .error _ => pure none
+
 /-- A measurement in thousandths of a point, as the frame checks write
 lualatex's baselines and their tolerances. -/
 def ptMilli (milli : Int) : Dim.Sp := Dim.pt 1 * milli / 1000
