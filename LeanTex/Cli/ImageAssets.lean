@@ -1,6 +1,7 @@
 module
 
 public import LeanTex.Core.Image
+public import LeanTex.Cli.PicCache
 import LeanTex.Core.PdfCensus
 import LeanTex.Cli.SvgPoster
 import LeanTex.Cli.ConvCache
@@ -250,14 +251,14 @@ private def finishSvg (tool : String) (stretch : Bool) (bytes : ByteArray) :
 /-- Convert one captured input. A failed spawn, nonzero exit or absent
 output is an error, including when a failed process left an output file.
 SVG inputs pass the support boundary before librsvg sees them. -/
-private def convert (op : Op) (bytes : ByteArray)
+private def convertResult (op : Op) (bytes : ByteArray)
     (runner : Option (IO.Process.SpawnArgs → IO IO.Process.Output) := none) :
-    IO (Except String ByteArray) := do
+    IO ConvCache.Result := do
   let spec := op.spec
   let eligible := runner.isNone && (spec.inputExt != "pdf" ||
     (PdfCensus.census bytes).toOption.any (·.fontsEmbedded))
   let runTool := runner.getD RunBounded.output
-  ConvCache.cached bytes spec.recipe spec.tools eligible do
+  ConvCache.cachedResult bytes spec.recipe spec.tools eligible do
     let independent ← IO.mkRef true
     let result ← try IO.FS.withTempDir fun dir => do
         let attempt : ExceptT PicCache.Outcome IO ByteArray := do
@@ -296,6 +297,11 @@ private def convert (op : Op) (bytes : ByteArray)
       catch e => pure { outcome := .inconclusive e.toString }
     return (result, ← independent.get)
 
+private def convert (op : Op) (bytes : ByteArray)
+    (runner : Option (IO.Process.SpawnArgs → IO IO.Process.Output) := none) :
+    IO (Except String ByteArray) :=
+  ConvCache.Result.answer <$> convertResult op bytes runner
+
 /-- Validate captured SVG bytes before accepting a browser companion. An
 error lets the caller fall back to converting its selected PDF page.
 Success includes a usable static PDF plan; retain the original bytes for
@@ -305,6 +311,17 @@ public def validateSvg (bytes : ByteArray) (params : Image.PlanParams := .defaul
     IO (Except String Image.Plan) := do
   let pdf ← convert (.svgPdf false) bytes
   return pdf >>= fun b => Image.probe b >>= Image.plan params
+
+/-- `validateSvg`'s judgement with the converter's outcome kept: a check
+that never finished stays `inconclusive`, apart from the boundary's own
+refusal, so a caller can omit what this machine could not check. -/
+public def validateSvgResult (bytes : ByteArray) (params : Image.PlanParams := .default) :
+    IO PicCache.Outcome := do
+  let r ← convertResult (.svgPdf false) bytes
+  if let .inconclusive _ := r.outcome then return r.outcome
+  return match r.answer >>= fun b => Image.probe b >>= Image.plan params with
+    | .ok _ => .drawn
+    | .error why => .refused why
 
 /-- First reads the authored base drawing; last projects the final declared
 values of one synchronized animation cycle. Later numbered frames need a sequence. -/

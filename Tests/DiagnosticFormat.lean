@@ -252,7 +252,7 @@ def diagnosticRecordChecks (ref : IO.Ref (List String)) : IO Unit := do
     t "diagnostic record: census preserves the entire payload"
       ({ counted with sites := raw.sites } == raw)
   t "diagnostic record: HTML driver failures are scoped to HTML"
-    ((DriverDiag.boundarySvgMissing "unavailable").output == some .html &&
+    ((DriverDiag.boundarySvgMissing "leantex-pic:probe" "unavailable").output == some .html &&
       (DriverDiag.htmlResourceUnavailable "missing resource").output == some .html)
 
 /-- Exercise the emitted stderr, stream routing and exits of the built CLI.

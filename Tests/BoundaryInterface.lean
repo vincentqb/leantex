@@ -30,6 +30,21 @@ example : String → Array String → Array (String × Span) →
 example : String → Array String → Array (String × Undrawn) →
     Array (String × Span) → Withdrawal := withdraw
 example : Array String → Array String → Array String := htmlWithdraw
+example : String := facelessReason
+example : Image.Loaded → Bool := faceless
+example : Image.Store → Image.Store := markFaceless
+
+example (s : Image.Store) :
+    ∀ en ∈ (markFaceless s).entries, en.src.startsWith Ir.picSrcPrefix = true →
+      en.webSvg.isSome = true ∨ en.webError.isSome = true :=
+  markFaceless_covers s
+example (s : Image.Store) :
+    (markFaceless s).entries.map (fun en => { en with webError := none }) =
+      s.entries.map (fun en => { en with webError := none }) :=
+  markFaceless_info_exact s
+example (s : Image.Store) (k : Nat) (en : Image.Loaded) (h : s.get? k = some en)
+    (hface : faceless en = false) : (markFaceless s).get? k = some en :=
+  markFaceless_face_exact s k en h hface
 
 example (tool : String) (fallbacks : Array String) (spans : Array (String × Span))
     (w : Withdrawal) (src : String) (d : Diag) :
@@ -39,6 +54,7 @@ example (tool : String) (fallbacks : Array String) (spans : Array (String × Spa
 
 example : True := by
   fail_if_success have := Boundary.Undrawn.why
+  fail_if_success have := Boundary.markOne
   trivial
 
 end Tests.BoundaryInterface

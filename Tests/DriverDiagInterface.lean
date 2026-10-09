@@ -30,7 +30,14 @@ example : String → String → Option Span → Diag := @DriverDiag.boundaryFail
 example : String → String → Option Span → Diag := @DriverDiag.boundaryUnfinished
 example : String → Option String → String → Option Span → Diag :=
   @DriverDiag.boundaryWithdrawn
-example : String → Diag := DriverDiag.boundarySvgMissing
+example : String → String → Diag := DriverDiag.boundarySvgMissing
+example : String → String → Diag := DriverDiag.pageIconOmitted
+example (src err : String) : (DriverDiag.boundarySvgMissing src err).kind = .W0378 ∧
+    (DriverDiag.boundarySvgMissing src err).subject = some src :=
+  DriverDiag.boundarySvgMissing_subject src err
+example (name why : String) : (DriverDiag.pageIconOmitted name why).kind = .W0605 ∧
+    (DriverDiag.pageIconOmitted name why).subject = some name :=
+  DriverDiag.pageIconOmitted_subject name why
 example : String → String → Diag := DriverDiag.listingHighlightUnavailable
 example : String → Diag := DriverDiag.htmlResourceUnavailable
 example : String → Option Span → String → Diag := @DriverDiag.inputMissing

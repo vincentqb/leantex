@@ -1,10 +1,10 @@
 module
 
 public import LeanTex.Core.Diag
+public import LeanTex.Core.Ir
 public import LeanTex.Cli.PicCache
 import LeanTex.Cli.DriverDiag
 import LeanTex.Cli.PictureAssets
-import LeanTex.Core.Ir
 
 /-! The boundary's host-free decisions. Whether a tool is runnable is a fact
 about the machine, and what a tool that ran said is that tool's own words —
@@ -14,9 +14,10 @@ request serves, and where none exists the placeholder ships and the loss is
 named (`coldPicture`). When a request was refused either way, a picture the
 rendered subset draws in part is withdrawn from the boundary and drawn by
 the subset (`withdraw`); an attempt that never reached an answer is no
-refusal, and stands. Each decision returns its diagnostics, so a test
-can run it rather than restate it, and a driver that stopped naming the
-loss fails the suite instead of passing it. -/
+refusal, and stands. A picture the HTML page has no face for ships the
+page's labelled placeholder (`markFaceless`). Each decision returns its
+diagnostics, so a test can run it rather than restate it, and a driver that
+stopped naming the loss fails the suite instead of passing it. -/
 
 namespace LeanTex.Cli.Boundary
 
@@ -117,5 +118,71 @@ PDF keeps the boundary's drawing. The ids, by picture: those among the
 fallbacks whose image source converted to no SVG (`unconverted`). -/
 public def htmlWithdraw (fallbacks unconverted : Array String) : Array String :=
   fallbacks.filter fun id => unconverted.contains (Ir.picSrcPrefix ++ id)
+
+/-- A boundary picture's HTML face is missing whatever the cause — no tool
+drew it (W0379), the tool drew nothing (E0382, accepted), or its conversion
+did not finish (W0378) — and that loss was named where it happened, so the
+reason the page records is this constant and adds no diagnostic. -/
+public def facelessReason : String :=
+  "the boundary picture has no browser face"
+
+/-- A boundary-picture entry the HTML page holds neither a face nor a
+reason for: its image would keep the request key as its `src`, which no
+resource answers. -/
+public def faceless (en : Image.Loaded) : Bool :=
+  en.src.startsWith Ir.picSrcPrefix && en.webSvg.isNone && en.webError.isNone
+
+private def markOne (en : Image.Loaded) : Image.Loaded :=
+  if faceless en then { en with webError := some facelessReason } else en
+
+/-- **A missing face degrades the page instead of refusing it.** The closure
+check refused the whole HTML artifact (E0606) for a boundary picture with no
+face — the store kept its request key as the image's `src`, which resolves
+to no resource — although the PDF shipped its placeholder and the loss was
+already named. Marked, the entry takes the page's existing failed-face arm:
+a placeholder that keeps the picture's box and its text alternative. That
+the marked page closes is evidence, not a theorem: `machineLossChecks`
+closes it over the fixture's IR and through the built binary. -/
+public def markFaceless (s : Image.Store) : Image.Store :=
+  { entries := s.entries.map markOne }
+
+/-- **Every boundary picture has a face or a reason** (`_covers`). -/
+public theorem markFaceless_covers (s : Image.Store) :
+    ∀ en ∈ (markFaceless s).entries, en.src.startsWith Ir.picSrcPrefix = true →
+      en.webSvg.isSome = true ∨ en.webError.isSome = true := by
+  intro en hen hsrc
+  simp only [markFaceless, Array.mem_map] at hen
+  obtain ⟨e, -, rfl⟩ := hen
+  unfold markOne at hsrc ⊢
+  cases hf : faceless e with
+  | true => simp
+  | false =>
+    simp only [hf, Bool.false_eq_true, ↓reduceIte] at hsrc ⊢
+    cases hs : e.webSvg with
+    | some _ => exact .inl rfl
+    | none =>
+      cases hw : e.webError with
+      | some _ => exact .inr rfl
+      | none => simp [faceless, hsrc, hs, hw] at hf
+
+/-- **Only the HTML face's reason changes** (`_exact`): with `webError`
+erased, the marked store is the store — every native plan, request, size and
+captured byte. Only the HTML backend reads `webError`; the layout and the
+PDF writer read the rest, which this holds fixed. -/
+public theorem markFaceless_info_exact (s : Image.Store) :
+    (markFaceless s).entries.map (fun en => { en with webError := none }) =
+      s.entries.map (fun en => { en with webError := none }) := by
+  simp only [markFaceless, Array.map_map]
+  congr 1
+  funext en
+  simp only [Function.comp, markOne]
+  split <;> rfl
+
+/-- **An entry with a face, or a reason, or no picture is unchanged** (`_exact`). -/
+public theorem markFaceless_face_exact (s : Image.Store) (k : Nat) (en : Image.Loaded)
+    (h : s.get? k = some en) (hface : faceless en = false) :
+    (markFaceless s).get? k = some en := by
+  simp only [Image.Store.get?, markFaceless, Array.getElem?_map] at h ⊢
+  simp [h, markOne, hface]
 
 end LeanTex.Cli.Boundary

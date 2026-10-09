@@ -692,8 +692,8 @@
   suggestion: give the link visible text — \href{...}{words} — or an image with alt inside it
 ── W0378 (degraded) the PDF-to-SVG converter for boundary pictures is not runnable; the page shows their text alternatives
 ⚠ [W0378]
-  cannot run 'pdftocairo' to convert boundary pictures for the HTML artifact: not found (error code: 2)
-  suggestion: install poppler's pdftocairo, or \allow{W0378} accepts the loss
+  this boundary picture has no browser face for the HTML artifact: not found (error code: 2)
+  suggestion: install poppler's pdftocairo, libxml2's xmllint and librsvg's rsvg-convert, or \allow{W0378} accepts the loss
 ── W0379 (degraded) no boundary tool available for a picture outside the rendered subset; a placeholder box marks the picture
 ⚠ [W0379]
   no boundary tool is available for this picture outside the rendered subset
@@ -785,6 +785,9 @@
 ⚠ [W0605]
   image 'figures/box.pdf' is a PDF page no browser decodes; the web page shows a placeholder box instead
   suggestion: for the web page, \includegraphics a PNG export inside \begin{ifbackend}{html}, and move this include inside \begin{ifbackend}{pdf}
+⚠ [W0605]
+  favicon 'favicon.svg' could not produce its browser face: xmllint did not finish; the page ships without it
+  suggestion: install the tool it names, or \pdfmeta{ favicon = "icon.png" } declares a PNG icon
 ── W0701 (pending) an output contract fact this artifact does not yet realize
 ⚠ [W0701]
   output contract: 'alternatives = required' is declared and this artifact carries no alternative channel

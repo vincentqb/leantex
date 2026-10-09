@@ -451,9 +451,9 @@ def picsToSvg (pics : Array PicResult) (imgs : Image.Store)
       entries := entries.map fun en =>
         if en.src == r.src then { en with webSvg := some bytes } else en
     | .error why =>
-      diags := diags.push (DriverDiag.atImageRequest imageSpans r.src (DriverDiag.boundarySvgMissing why))
+      diags := diags.push (DriverDiag.atImageRequest imageSpans r.src (DriverDiag.boundarySvgMissing r.src why))
       unconverted := unconverted.push r.src
-  return ({ entries }, diags, unconverted)
+  return (Boundary.markFaceless { entries }, diags, unconverted)
 
 /-- **Elaborate, against whatever face the caller has.** Everything from the
 elaborator on is a function of the prepared source and one measurement

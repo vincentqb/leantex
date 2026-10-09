@@ -13,6 +13,17 @@ namespace Tests.CacheInterface
 example : ConvCache.Result → Except String ByteArray := ConvCache.Result.answer
 example : Except String ByteArray → ByteArray := ConvCache.encode
 example : ByteArray → Option (Except String ByteArray) := ConvCache.decode
+example : Except String ByteArray → ConvCache.Result := ConvCache.Result.replay
+example : ByteArray → String → Array String → Bool → IO (ConvCache.Result × Bool) →
+    IO ConvCache.Result := ConvCache.cachedResult
+
+example (bytes : ByteArray) (a : Except String ByteArray) (h : ConvCache.decode bytes = some a) :
+    (ConvCache.Result.replay a).answer = a :=
+  ConvCache.replay_decode_exact bytes a h
+example (r : ConvCache.Result) (a : Except String ByteArray) (h : r.record? = some a) :
+    (ConvCache.Result.replay a).outcome = r.outcome ∧
+      (ConvCache.Result.replay a).answer = r.answer :=
+  ConvCache.replay_record_exact r a h
 
 example (why : String) (bytes : ByteArray) :
     ConvCache.Result.record? ⟨.inconclusive why, bytes⟩ = none :=
