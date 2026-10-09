@@ -1075,29 +1075,35 @@ def reports : List Report := [
       "review of the second fix: the inheriting theme's model claimed a block option it does not load, so a fill declared on a text role no longer painted the alerted and example bars; a declared structure colour that reached no paint went unnamed while the shipped pages stayed byte-identical; and a guard testing for the theme's own setter read it as undefined; nine assertions fail on the second fix, and a premise check two builds apart now holds every modelled colour element, under both colour themes, to being named unused exactly when the shipped pages do not change"]
     state := .guarded "fa516a828a2a36549fc2a56f1e1cb4d138b3b934" .before .author },
   { id := "R120", date := "2026-10-08"
-    what := "Slide content was not centred in the slide's text area as the slide class centres it: standout frames, untitled frames and section pages stood against the slides margins on the page and inside a safe area in the web deck, and a restored standout note pushed its frame down"
+    what := "Slide content was not centred in the slide's text area as the slide class centres it: standout frames, untitled frames and section pages stood against the slides margins on the page and inside a safe area in the web deck, a restored standout note pushed its frame down, a standout frame naming an alignment took it, the class options' top alignment was dropped, and the web deck centred a frame on its screen line boxes rather than its glyphs"
     pins := [check% Tests.FrameArea.checks, check% Tests.FrameArea.htmlChecks,
+      check% Tests.FrameArea.classAlignChecks, check% Tests.FrameArea.openingChecks,
       check% vdistChecks, check% faceCentreChecks, thm% Layout.frameFloor_exact,
-      thm% frame_area_agree]
-    accept := ["nine shipped layout assertions fail with the fixes reverted, five of them against lualatex measurements, and the web deck's stage and opening assertions with them",
+      thm% frame_area_agree, thm% Ir.sectionPageStrut_between]
+    accept := ["five assertions fail with the second review's fixes reverted onto the recorded commit: a standout frame naming an alignment, on the page and in the elaborated frame, the class options' top alignment twice, and the web deck's last-line trim; the earlier guards failed with their fixes reverted onto dbaea645",
       "a presentation deck's quote frame stands within a tenth of a point of its reference typesetting on the page, and its section pages within a quarter",
       "a section page that follows a templated title page opens where every other section page does",
-      "a title with no bar opens in the web deck where its page sets it, within a tenth of a point"]
-    state := .guarded "dbaea645" .revert .author },
+      "a title with no bar opens in the web deck where its page sets it, within a tenth of a point",
+      "the web deck's standout frames in both presentation decks stand within a point and a fifth of their reference typesetting, where they stood up to five points high"]
+    state := .guarded "5a7802b8" .revert .author },
   { id := "R121", date := "2026-10-08"
-    what := "Slide footers in the web deck did not set at the footline's own size and place: a standout frame's restored note took the frame's enlarged type, and every footline stood a safe area above the slide's edge"
+    what := "Slide footers in the web deck did not set at the footline's own size, weight and place: a standout frame's restored note took the frame's enlarged type, every footline stood a safe area above the slide's edge, a light body's footline set in the family's regular face, and a frame whose content overran it pushed its footline off the slide"
     pins := [check% Tests.FrameArea.htmlChecks, check% Tests.FrameArea.footBoxChecks,
-      .tier "htmlreader" "feature.chromium.pass"]
-    accept := ["eight typed stylesheet and band box assertions fail with the fixes reverted: the footline's place, box, slots, size and weight, its box against the shipped page's, and its keeping with its frame's content on paper",
+      check% Tests.FrameArea.footWeightChecks, .tier "htmlreader" "feature.chromium.pass"]
+    accept := ["two assertions fail with the second review's fixes reverted onto the recorded commit: the footline's weight under a light body, read by a cascade over the shipped stylesheet, and its place on an overrun stage; the earlier eight footline assertions failed with their fixes reverted onto dbaea645",
       "a presentation deck's web footline notes and frame numbers stand within three hundredths of a point of its reference typesetting's, its quote frame's note at the footline's own size and colour",
+      "every web footline of both presentation decks sets in the body's light face, as the page and the reference typesetting do",
+      "an overrunning frame's web footline stays on the slide's edge, within a hundredth of a point of its reference",
       "both presentation decks print each frame on sheets that hold its content, never a footline alone"]
-    state := .guarded "dbaea645" .revert .author },
+    state := .guarded "5a7802b8" .revert .author },
   { id := "R122", date := "2026-10-08"
-    what := "The space between a slide's title bar and its first line differed from the slide class's: the web deck padded the bar below its line box, untitled frames paid a paragraph gap at their top, and a first line larger than the body stood too close to the opening"
-    pins := [check% Tests.FrameArea.htmlChecks, check% Tests.FrameArea.checks, check% vdistChecks]
-    accept := ["the bar's strut box, every frame's body opening and a bar-less title's top margin fail as typed stylesheet and attribute assertions with the fixes reverted, with the page's top-aligned opening",
-      "a presentation deck's web title bars match its shipped pages' height, and on the page a short frame's first line stands within a fifth of a point of its reference typesetting"]
-    state := .guarded "dbaea645" .revert .author }
+    what := "The space between a slide's title bar and its first line differed from the slide class's: the web deck padded the bar below its line box, untitled frames paid a paragraph gap at their top, a first line larger than the body stood too close to the opening, a first line in the web deck stood on its screen line box, an opening list lost its top separation there, and an opening image stood flush on the opening on the page"
+    pins := [check% Tests.FrameArea.htmlChecks, check% Tests.FrameArea.checks,
+      check% Tests.FrameArea.openingChecks, check% vdistChecks]
+    accept := ["three assertions fail with the second review's fixes reverted onto the recorded commit: the web deck's first-line strut and opening list space, and the page's opening image; the bar's strut box, every frame's body opening and a bar-less title's top margin failed with their fixes reverted onto dbaea645",
+      "a presentation deck's web title bars match its shipped pages' height, and on the page a short frame's first line stands within a fifth of a point of its reference typesetting",
+      "an untitled frame's opening paragraph and opening list stand their first lines within a tenth of a point of their reference typesetting on the page and in the web deck, and an opening image within a sixth on the page"]
+    state := .guarded "5a7802b8" .revert .author }
 ]
 
 /-- The reports guarded but never seen failing: a count that may fall and
