@@ -965,10 +965,13 @@ emitting is a row the matrix must carry, red until the readers pass it.
 `copiedGraph` stands where a placed PDF page's own resource streams ride
 verbatim: their filters are theirs, not this writer's, and the census
 does not read them — the graph census will name them; until then the
-whole graph is one feature the readers must pass. -/
+whole graph is one feature the readers must pass. `objStmMulti` is a file
+whose compressed objects fill more than one object stream: a reader must
+find each one in the stream its cross-reference row names. -/
 public inductive Feature where
   | xrefStream
   | objStm
+  | objStmMulti
   | flatePredictor15
   | dct
   | smask
@@ -993,7 +996,7 @@ public inductive Feature where
 /-- How many features the census names: the one number a new constructor
 bumps (`all_complete` fails on an undercount, `all_nodup` on an overcount,
 `ofNat` clamping the excess onto the last constructor). -/
-public def Feature.count : Nat := 21
+public def Feature.count : Nat := 22
 
 /-- Every feature, in declaration order — derived from the type through
 the `ofNat` that `deriving DecidableEq` synthesises, never hand-kept. -/
@@ -1008,6 +1011,7 @@ public theorem Feature.all_nodup : Feature.all.Nodup := by decide
 public def Feature.name : Feature → String
   | .xrefStream => "xref-stream"
   | .objStm => "objstm"
+  | .objStmMulti => "objstm-multi"
   | .flatePredictor15 => "flate-predictor15"
   | .dct => "dct"
   | .smask => "smask"
@@ -1040,13 +1044,15 @@ table's slots say what was allocated (a soft mask, a copied graph, an
 outline, the colour and structure families); the kept faces say which CID
 subtype; each placed image its declared filter; the pages their link
 annotations and the outline its URI targets; the content operators whether
-a marked sequence opens. The four the writer cannot emit yet (`tabs`,
-`transparencyGroup`, `brotli`, `jpx`) are `false` here and rows the matrix
-already carries, so the day one is emitted the census says so. -/
+a marked sequence opens; the table with the structure tree's elements,
+how many object streams it fills. The four the writer cannot emit yet
+(`tabs`, `transparencyGroup`, `brotli`, `jpx`) are `false` here and rows the
+matrix already carries, so the day one is emitted the census says so. -/
 private def reaches (geom : Geom) (fs : FontSet) (pages : Array PageOut) (imgs : Image.Store)
-    (outline : Array OutlineEntry) : Feature → Bool
+    (outline : Array OutlineEntry) (tree : Struct.Tree) : Feature → Bool
   | .xrefStream => true
   | .objStm => true
+  | .objStmMulti => 1 < (tableOf fs pages imgs outline tree).nStm
   | .flatePredictor15 =>
     (placedImages imgs pages).any (fun i => i.form.isNone && i.filter == .flatePredictor)
       || (tableOf fs pages imgs outline).smaskIds.any Option.isSome
@@ -1082,14 +1088,15 @@ the closed census the reader matrix's rows are checked against, computed
 by the test and the oracle script from the same inputs `write` reads,
 never from the bytes. -/
 public def features (geom : Geom) (fs : FontSet) (pages : Array PageOut) (imgs : Image.Store := {})
-    (outline : Array OutlineEntry := #[]) : Array Feature :=
-  (Feature.all.filter (reaches geom fs pages imgs outline)).toArray
+    (outline : Array OutlineEntry := #[]) (tree : Struct.Tree := ⟨#[]⟩) : Array Feature :=
+  (Feature.all.filter (reaches geom fs pages imgs outline tree)).toArray
 
 /-- **`features_mem`** (the `_mem` statement): every feature the census
 reports is drawn from `Feature.all` — the row set is closed, so a matrix
 carrying a row per `Feature.all` has a row for whatever a fixture emits. -/
 public theorem features_mem (geom : Geom) (fs : FontSet) (pages : Array PageOut) (imgs : Image.Store)
-    (outline : Array OutlineEntry) (f : Feature) (h : f ∈ features geom fs pages imgs outline) :
+    (outline : Array OutlineEntry) (tree : Struct.Tree) (f : Feature)
+    (h : f ∈ features geom fs pages imgs outline tree) :
     f ∈ Feature.all := by
   unfold features at h
   exact (List.mem_filter.1 (List.mem_toArray.1 h)).1
@@ -1098,8 +1105,8 @@ public theorem features_mem (geom : Geom) (fs : FontSet) (pages : Array PageOut)
 `smask` exactly when the table allocated a soft-mask id — the same slot
 `write` reads to emit `/SMask`. -/
 public theorem features_smask_iff (geom : Geom) (fs : FontSet) (pages : Array PageOut)
-    (imgs : Image.Store) (outline : Array OutlineEntry) :
-    .smask ∈ features geom fs pages imgs outline ↔
+    (imgs : Image.Store) (outline : Array OutlineEntry) (tree : Struct.Tree) :
+    .smask ∈ features geom fs pages imgs outline tree ↔
       ∃ k, ∃ h : k < (tableOf fs pages imgs outline).smaskIds.size,
         ((tableOf fs pages imgs outline).smaskIds[k]).isSome = true := by
   unfold features
@@ -2599,6 +2606,20 @@ public theorem prepare_chunks_exact (geom : Geom) (fs : FontSet) (pages : Array 
   chunks_count_exact _
     (prepare_compressed_ids_exact geom fs pages info imgs outline streams tree ops programs)
     (by rw [prepare_table_exact]; rfl)
+
+/-- **`features_objStmMulti_exact`**: the census says `objStmMulti` exactly
+when the writer fills more than one object stream — the streams `prepare`
+writes, for every input and cache argument. -/
+public theorem features_objStmMulti_exact (geom : Geom) (fs : FontSet) (pages : Array PageOut)
+    (info : Ir.Meta) (imgs : Image.Store) (outline : Array OutlineEntry)
+    (streams : Array (ByteArray × Option ByteArray)) (tree : Struct.Tree)
+    (ops : Array (Array ContentOp)) (programs : Array (ByteArray × Bool)) :
+    .objStmMulti ∈ features geom fs pages imgs outline tree ↔
+      1 < (prepare geom fs pages info imgs outline streams tree ops programs).chunks.length := by
+  rw [prepare_chunks_exact, prepare_table_exact]
+  unfold features
+  rw [List.mem_toArray, List.mem_filter]
+  simp only [Feature.all_complete, true_and, reaches, decide_eq_true_eq]
 
 /-- Every allocated object is emitted by the production writer: as the
 xref itself, a direct row, an object stream, or a value in one. This

@@ -311,9 +311,10 @@ def Matrix.profile (m : Matrix) (profile fixture : String) : Option Verdict :=
 /-- The features a produced file spells for itself (raw bytes with every
 flate stream inflated beside them, `pdfText`): the spelled oracle of the
 typed census. `copiedGraph` has no spelling of its own — its objects are
-another producer's — and the four the writer never emits (`tabs`,
-`transparencyGroup`, `brotli`, `jpx`) have none yet; `emittedFeatures`
-covers what is listed here, and the parsed reading below the rest. -/
+another producer's — `objStmMulti` is a count of streams, not a spelling,
+and the four the writer never emits (`tabs`, `transparencyGroup`, `brotli`,
+`jpx`) have none yet; `emittedFeatures` covers what is listed here, and the
+parsed reading below the rest. -/
 def featureSpellings : List (Pdf.Feature × String) := [
   (.xrefStream, "/Type /XRef"),
   (.objStm, "/Type /ObjStm"),
@@ -409,6 +410,7 @@ def featuresOfEntries (es : Array Entry) : List Pdf.Feature := Id.run do
   let feats : List (Pdf.Feature × Bool) := [
     (.xrefStream, has .xref),
     (.objStm, has .objStm),
+    (.objStmMulti, (kinds.filter (· == .objStm)).size > 1),
     (.flatePredictor15, anyVal predictor15),
     (.dct, es.any fun e => (PdfCensus.filtersOf e.val).contains "DCTDecode"),
     (.smask, anyVal fun o => (o.get? "SMask").isSome),
@@ -568,8 +570,8 @@ def pdfConformanceChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet)
     let gaps := featureGate m reached.toList
     t s!"reader matrix gate: every feature the golden set reaches passes every target reader: {gaps}"
       gaps.isEmpty
-  t s!"pdf features: the golden set reaches marked content, a soft mask, a copied graph, a DCT image"
-    (["marked-content", "smask", "copied-graph", "dct"].all reached.contains)
+  t s!"pdf features: the golden set reaches marked content, a soft mask, a copied graph, a DCT image, several object streams"
+    (["marked-content", "smask", "copied-graph", "dct", "objstm-multi"].all reached.contains)
   -- The mutants, through the walk: one corpus document with images.
   let src ← IO.FS.readFile "testdata/corpus/images.tex"
   let (doc, _) ← elabFixture "images" src

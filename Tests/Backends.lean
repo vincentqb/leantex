@@ -2891,6 +2891,7 @@ def pdfCensusTable :
   ("outline", (1, 1, 0, 0, 0, 0, 0, none, ["FlateDecode"])),
   ("outline-gap", (1, 1, 0, 0, 0, 0, 0, none, ["FlateDecode"])),
   ("webnav", (1, 1, 0, 0, 0, 0, 3, none, ["FlateDecode"])),
+  ("nav-directory", (1, 1, 0, 0, 0, 0, 300, none, ["FlateDecode"])),
   ("bibliography", (1, 1, 0, 0, 0, 9, 0, none, ["FlateDecode"])),
   ("resume-data", (1, 1, 0, 0, 0, 0, 0, none, ["FlateDecode"])),
   ("icons", (1, 1, 0, 0, 0, 2, 0, none, ["FlateDecode"])),
@@ -3524,7 +3525,8 @@ each row — a soft-mask image says `smask`, a plain one does not, a copied
 page says `formXObject` and `copiedGraph`, a JPEG says `dct` — and, over
 every corpus fixture, the four unemitted features stay unreached while
 the bookkeeping five — the structure tree among them — are always
-reached. -/
+reached; and `objStmMulti` turns on with the second object stream, at the
+boundary exactly. -/
 def featureCensusChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit := do
   let t := check ref
   t "features: the registry counts its constructors"
@@ -3584,6 +3586,19 @@ def featureCensusChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : 
     (let o := Pdf.features geom oneFace #[] {} #[{ title := "a", page := some 0 }]
      let u := Pdf.features geom oneFace #[] {} #[{ title := "a", url := some "https://example.org" }]
      o.contains .outlines && !o.contains .linkURI && u.contains .outlines && u.contains .linkURI)
+  -- Several object streams, at the boundary: each outline entry is one
+  -- more compressed object, so the entry that takes the count past the
+  -- capacity opens a second stream, and the census says so then, not before.
+  let outlineOf (n : Nat) : Array Layout.OutlineEntry := Array.replicate n { title := "a" }
+  let planAt (n : Nat) := Pdf.prepare geom oneFace #[] {} {} (outlineOf n)
+  let multiAt (n : Nat) : Bool :=
+    (Pdf.features geom oneFace #[] {} (outlineOf n)).contains .objStmMulti
+  let full := Pdf.objStmCapacity + 1 - (planAt 1).compressed.length
+  t s!"features: {full} entries fill one object stream exactly, one more opens a second"
+    ((planAt full).compressed.length == Pdf.objStmCapacity && (planAt full).chunks.length == 1 &&
+      (planAt (full + 1)).chunks.length == 2)
+  t "features: objstm-multi exactly when a second object stream opens"
+    (!bare.contains .objStmMulti && !multiAt full && multiAt (full + 1))
   -- The census over the corpus: the four unemitted features never, the
   -- bookkeeping five always, and the census is in registry order.
   for n in goldenNames do

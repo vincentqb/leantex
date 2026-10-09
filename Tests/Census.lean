@@ -701,6 +701,13 @@ def censusTable :
       hasStr (censusText c) "This sentence is set only on the printed page."),
     ("the unwrapped menu nav ships no body ink",
       !hasStr (censusText c) "Back to top")]),
+  ("nav-directory", fun _ c => [
+    ("one page", c.size == 1),
+    ("the title, its author line and the paragraph ship",
+      hasStr (censusText c) "An Invented Directory" && hasStr (censusText c) "Alex Doe" &&
+        hasStr (censusText c) "An invented page"),
+    ("the three-hundred-entry menu ships no body ink: it is the outline",
+      !hasStr (censusText c) "Entry")]),
   ("icons", fun _ c => [
     ("one page", c.size == 1),
     ("the contact words ship", hasStr (censusText c) "Email"),
@@ -1100,7 +1107,13 @@ def censusOutlineTable :
       (o.filter (·.title != "Back to top")).all (·.page == some 0)),
     ("the #top target stands bare: no heading anchors it",
       (o.find? (·.title == "Back to top")).map
-        (fun e => e.page.isNone && e.url.isNone) == some true)])]
+        (fun e => e.page.isNone && e.url.isNone) == some true)]),
+  ("nav-directory", fun o => [
+    ("one entry per menu link, in order",
+      o.map (·.title) == (Array.range 300).map fun i => s!"Entry {i + 1}"),
+    ("every entry rides its own address, with no page",
+      o.zipIdx.all fun (e, i) =>
+        e.page.isNone && e.url == some s!"https://example.org/entries/{i + 1}")])]
 
 /-- The phrase a corpus file writes in its own header to declare itself out
 of the golden set: the convention PLAN records for a design sketch whose
