@@ -8,7 +8,6 @@ public import LeanTex.Core.MdDesugarContract
 import all LeanTex.Core.Elab
 import all LeanTex.Core.Compat
 import all LeanTex.Core.Parse
-import all LeanTex.Core.Ir
 
 namespace LeanTex.Core.CompatContract
 
@@ -405,7 +404,7 @@ private theorem elabBlocksGo_input_at (ctx : Ctx) (st : ESt) (raws : Array Raw) 
     rw [hr] at heq
     cases heq
     simp [inputEnv_ne_linkedBoxRowMark, inputEnvFile?_inputEnv, hb, pictureInSentence_input,
-      flushPara_empty ctx _ hm, Ir.flushedText, Ir.markInParagraph]
+      flushPara_empty ctx _ hm, Ir.flushedText_empty_exact, Ir.markInParagraph_false_id]
   · rename_i heq; rw [hr] at heq; cases heq
   · rename_i _ _ _ _ henv _
     exact absurd hr (henv _ _ _)
