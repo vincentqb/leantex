@@ -58,8 +58,27 @@ private def readLines (path : System.FilePath) : IO (List String) := do
   return ((← (IO.FS.readFile path).toBaseIO).toOption.getD "").splitOn "\n"
     |>.filter (!·.isEmpty)
 
+private def answerCount (dir : System.FilePath) : IO Nat := do
+  let cache ← (dir / "cache" / "leantex" / "convs").readDir.toBaseIO
+  return ((cache.toOption.getD #[]).filter (·.fileName.endsWith ".answer")).size
+
+/-- The exit of a run the host denied a tool identity: its census is not
+judged, and the suite runs it again. -/
+private def deniedExit : UInt32 := 2
+
+/-- The limit whose first run's xmllint answers its first version probe
+past the probe's budget. -/
+private def slowProbeLimit : Nat := 4
+
 /-- Called in a child with its own PATH and cache, so the suite never mutates
-process-global environment while other IO tests may be running. -/
+process-global environment while other IO tests may be running.
+
+Tool identity rests on spawns held to wall-clock budgets (the PATH lookup,
+the version probe); one answered past its budget identifies no tool, so that
+conversion runs uncached by design and the census would count the host's
+speed as a sharing failure. The census is judged only when every cold call
+recorded its answer and no warm pass converted without adding a slot: every
+other contract is judged on every run. -/
 def runChild (args : List String) : IO UInt32 := do
   let limit := (args.headD "4").toNat?.getD 4
   let some root ← IO.getEnv "LEANTEX_FACE_BATCH_ROOT" |
@@ -70,6 +89,8 @@ def runChild (args : List String) : IO UInt32 := do
   let input ← entries
   let actual ← BrowserFaces.prepareAll input limit
   let calls ← readLines (dir / "calls")
+  let recorded ← answerCount dir
+  let identified := calls.length == recorded
   let events ← readLines (dir / "events")
   let mut active := 0
   let mut peak := 0
@@ -92,13 +113,14 @@ def runChild (args : List String) : IO UInt32 := do
     (!(← (dir / "collision").pathExists))
   t "browser batch: all primary work finishes before companion validation"
     (!(← (dir / "early-companion").pathExists))
-  for key in ["pdf-page-1:a", "pdf-page-2:b", "pdf-page-1:c",
-      "pdf-page-1:fallback", "pdf-page-1:failed", "pdf-page-1:fallback-again",
-      "svg-poster:web-only", "validate:shared", "validate:bad"] do
-    t s!"browser batch: one cold attempt for {key}" (calls.count key == 1)
-  t "browser batch: equivalent SVG page spellings share their answer"
-    (calls.count "svg-poster:moving" == 2)
-  t "browser batch: only eligible primary/companion conversions run" (calls.length == 11)
+  if identified then
+    for key in ["pdf-page-1:a", "pdf-page-2:b", "pdf-page-1:c",
+        "pdf-page-1:fallback", "pdf-page-1:failed", "pdf-page-1:fallback-again",
+        "svg-poster:web-only", "validate:shared", "validate:bad"] do
+      t s!"browser batch: one cold attempt for {key}" (calls.count key == 1)
+    t "browser batch: equivalent SVG page spellings share their answer"
+      (calls.count "svg-poster:moving" == 2)
+    t "browser batch: only eligible primary/companion conversions run" (calls.length == 11)
   t "browser batch: a valid companion keeps the captured animation and poster"
     (actual[1]!.webSvg == some (capturedSvg "shared") && actual[1]!.posterSvg.isSome)
   t "browser batch: a refused companion falls back to the selected static face"
@@ -118,13 +140,16 @@ def runChild (args : List String) : IO UInt32 := do
   let again ← BrowserFaces.prepareAll actual limit
   t "browser batch: repeated preparation preserves published assets"
     (HtmlDoc.imageAssets { entries := again } == HtmlDoc.imageAssets { entries := actual })
-  t "browser batch: warm successes and refusals perform no conversion"
-    ((← readLines (dir / "calls")) == calls)
+  let warm := (← readLines (dir / "calls")).drop calls.length
+  let judged := identified && (warm.isEmpty || (← answerCount dir) > recorded)
+  if judged then
+    t "browser batch: warm successes and refusals perform no conversion" warm.isEmpty
   t "browser batch: an empty input starts no work" ((← BrowserFaces.prepareAll #[] limit).isEmpty)
   let cache ← (dir / "cache" / "leantex" / "convs").readDir
-  t "browser batch: one whole answer per cold conversion and no staging residue"
-    ((cache.filter (·.fileName.endsWith ".answer")).size == 11 &&
-      cache.all (fun e => !e.fileName.endsWith ".part"))
+  t "browser batch: no staging residue" (cache.all (fun e => !e.fileName.endsWith ".part"))
+  if judged then
+    t "browser batch: one whole answer per cold conversion"
+      ((cache.filter (·.fileName.endsWith ".answer")).size == 11)
   for entry in cache do
     if entry.fileName.endsWith ".answer" then
       t "browser batch: persisted answer checksum is valid"
@@ -135,12 +160,23 @@ def runChild (args : List String) : IO UInt32 := do
           !stamp.isEmpty && version == "browser-face test 1")
   let failed ← ref.get
   for message in failed.reverse do IO.eprintln message
+  unless judged do
+    IO.println s!"browser batch limit={limit}: the host denied a tool identity \
+({calls.length} cold calls, {recorded} answers recorded, {warm.length} warm calls); \
+census not judged"
   IO.println s!"browser batch limit={limit}: {failed.length} failures"
-  return if failed.isEmpty then 0 else 1
+  return if !failed.isEmpty then 1 else if judged then 0 else deniedExit
 
-private def versionStub : String :=
+-- A slow stub sleeps through its first version answer; a probe that kills
+-- it at its budget leaves no answered marker.
+private def versionStub (slow : Bool := false) : String :=
   "#!/bin/sh\n\
-case \"$1\" in -v|--version) printf '%s\\n' 'browser-face test 1'; exit 0;; esac\n"
+case \"$1\" in -v|--version)\n" ++
+  (if slow then
+    "  if /bin/mkdir \"$LEANTEX_FACE_BATCH_ROOT/slow-probe\" 2>/dev/null; then\n\
+    /bin/sleep 10; : > \"$LEANTEX_FACE_BATCH_ROOT/slow-probe-answered\"\n\
+  fi\n" else "") ++
+  "  printf '%s\\n' 'browser-face test 1'; exit 0;; esac\n"
 
 -- The converter witnesses real overlap via a handshake, not an elapsed-time
 -- assertion. Its source lock and event log cover the actual process boundary.
@@ -194,39 +230,55 @@ namespace Tests
 open LeanTex.Cli
 
 /-- Real preparation, cache reads/writes and child processes under isolated
-synthetic tools. No installed vector converter or shared user cache is used. -/
+synthetic tools. No installed vector converter or shared user cache is used.
+A run the host denied a tool identity runs again, three runs per limit at
+most; the first run at `slowProbeLimit` is denied on purpose. -/
 def browserFaceBatchChecks (ref : IO.Ref (List String)) : IO Unit := do
   let some lean ← ToolProbe.onPath "lean" |
     throw <| IO.userError "browser batch checks require the Lean interpreter"
   let cwd ← IO.currentDir
   let libraries ← IO.FS.realPath ".lake/build/lib/lean"
   let leanPath := libraries.toString ++ ":" ++ (← IO.getEnv "LEAN_PATH").getD ""
+  let denied := PicCache.Ran.exited BrowserFaceBatch.deniedExit.toNat
   for limit in #[0, 1, 2, 4] do
-    IO.FS.withTempDir fun dir => do
-      for name in ["bin", "active", "primaries", "started", "done"] do IO.FS.createDir (dir / name)
-      IO.FS.writeBinFile (dir / "canvas.pdf") svgCanvasPdf
-      BrowserFaceBatch.writeTool (dir / "bin" / "pdftocairo")
-        (BrowserFaceBatch.converterStub true)
-      BrowserFaceBatch.writeTool (dir / "bin" / "rsvg-convert")
-        (BrowserFaceBatch.converterStub false)
-      BrowserFaceBatch.writeTool (dir / "bin" / "xsltproc")
-        (BrowserFaceBatch.versionStub ++
-          "for input in \"$@\"; do :; done\n/bin/cat \"$input\"\n")
-      BrowserFaceBatch.writeTool (dir / "bin" / "xmllint")
-        (BrowserFaceBatch.versionStub ++
-          "case \"$3\" in --sax) printf 'SAX.startDocument()\\nSAX.endDocument()\\n';;\n\
-           --xpath) printf 'true\\n';; *) exit 3;; esac\n")
-      let probe := dir / "probe.lean"
-      IO.FS.writeFile probe
-        "import Tests.BrowserFaceBatch\n\
-         def main (args : List String) : IO UInt32 := Tests.BrowserFaceBatch.runChild args\n"
-      let result ← RunBounded.runBounded lean.toString #["--run", probe.toString, toString limit]
-        cwd 30000 100 (env := #[
-          ("PATH", some (dir / "bin").toString), ("LEAN_PATH", some leanPath),
-          ("XDG_CACHE_HOME", some (dir / "cache").toString),
-          ("LEANTEX_FACE_BATCH_ROOT", some dir.toString),
-          ("LEANTEX_FACE_BATCH_LIMIT", some (toString limit))])
-      check ref s!"browser batch limit={limit}: isolated IO contracts\n{result.out}{result.err}"
-        (result.complete && result.ran == .exited 0)
+    let mut runs : Array (RunBounded.Ended × Bool) := #[]
+    for attempt in [:3] do
+      let slow := limit == BrowserFaceBatch.slowProbeLimit && attempt == 0
+      let run ← IO.FS.withTempDir fun dir => do
+        for name in ["bin", "active", "primaries", "started", "done"] do
+          IO.FS.createDir (dir / name)
+        IO.FS.writeBinFile (dir / "canvas.pdf") svgCanvasPdf
+        BrowserFaceBatch.writeTool (dir / "bin" / "pdftocairo")
+          (BrowserFaceBatch.converterStub true)
+        BrowserFaceBatch.writeTool (dir / "bin" / "rsvg-convert")
+          (BrowserFaceBatch.converterStub false)
+        BrowserFaceBatch.writeTool (dir / "bin" / "xsltproc")
+          (BrowserFaceBatch.versionStub ++
+            "for input in \"$@\"; do :; done\n/bin/cat \"$input\"\n")
+        BrowserFaceBatch.writeTool (dir / "bin" / "xmllint")
+          (BrowserFaceBatch.versionStub slow ++
+            "case \"$3\" in --sax) printf 'SAX.startDocument()\\nSAX.endDocument()\\n';;\n\
+             --xpath) printf 'true\\n';; *) exit 3;; esac\n")
+        let probe := dir / "probe.lean"
+        IO.FS.writeFile probe
+          "import Tests.BrowserFaceBatch\n\
+           def main (args : List String) : IO UInt32 := Tests.BrowserFaceBatch.runChild args\n"
+        let result ← RunBounded.runBounded lean.toString
+          #["--run", probe.toString, toString limit] cwd 30000 100 (env := #[
+            ("PATH", some (dir / "bin").toString), ("LEAN_PATH", some leanPath),
+            ("XDG_CACHE_HOME", some (dir / "cache").toString),
+            ("LEANTEX_FACE_BATCH_ROOT", some dir.toString),
+            ("LEANTEX_FACE_BATCH_LIMIT", some (toString limit))])
+        let killed := (← (dir / "slow-probe").pathExists) &&
+          !(← (dir / "slow-probe-answered").pathExists)
+        return (result, killed)
+      runs := runs.push run
+      unless run.1.complete && run.1.ran == denied do break
+    let some (result, _) := runs.back? | continue
+    check ref s!"browser batch limit={limit}: isolated IO contracts\n{result.out}{result.err}"
+      (result.complete && result.ran == .exited 0)
+    if limit == BrowserFaceBatch.slowProbeLimit then
+      check ref "browser batch: a run denied a tool identity runs again, unjudged"
+        (runs[0]?.any fun (first, killed) => killed && first.ran == denied)
 
 end Tests
