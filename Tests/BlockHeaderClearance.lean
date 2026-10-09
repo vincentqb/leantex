@@ -144,7 +144,8 @@ private def winningMargin (css : String) (stage node : Html.Node)
           rank := next
   return (marginTop (styleOf node)).or winner
 
-private def openingMargin := "calc(var(--frame-body-skip) + var(--frame-body-before, 0pt))"
+private def openingMargin :=
+  "calc(var(--frame-body-skip) + var(--frame-body-before, 0pt) + var(--frame-body-open, 0pt))"
 
 /-- Read the first participating box and its winning margin, including
 resets, class specificity and inline precedence. Authored leading space

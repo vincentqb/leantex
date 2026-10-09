@@ -1632,6 +1632,22 @@ def oneFaceOf (font : Font.Font) : Font.FontSet := {
      ((slot, 400, true), 0), ((slot, 700, true), 0)]).toArray
 }
 
+/-- The shipped Fira Sans as a one-face set (`oneFaceOf`): the face the
+frame and footline checks lay their invented decks out in, as their
+lualatex measurements loaded it for every face; `none` where it does not
+parse. -/
+def shippedFira : IO (Option Font.FontSet) := do
+  match Font.parse (← IO.FS.readBinFile (testFonts ++ "/FiraSans-Regular.otf")) with
+  | .ok f => pure (some (oneFaceOf f))
+  | .error _ => pure none
+
+/-- A measurement in thousandths of a point, as the frame checks write
+lualatex's baselines and their tolerances. -/
+def ptMilli (milli : Int) : Dim.Sp := Dim.pt 1 * milli / 1000
+
+/-- Two lengths within `slack` of each other. -/
+def withinSp (slack a b : Dim.Sp) : Bool := a - b ≤ slack && b - a ≤ slack
+
 /-- Two faces in two slots: the roman slot (0) and the sans slot (1) hold
 different files, so a claim about *which family* ink set in has something
 to read. `oneFaceOf` maps every slot to one file and cannot tell a serif
@@ -1796,6 +1812,21 @@ def cssDeclOf (decls key : String) : Option String :=
       if name.trimAscii.toString == key then some (":".intercalate rest).trimAscii.toString
       else none
     | [] => none
+
+/-- A selector list's top-level parts, a comma inside a parenthesized
+argument (`:is(h1, h2)`) kept in its part. -/
+def cssSelectorParts (sel : String) : List String := Id.run do
+  let mut parts : Array String := #[]
+  let mut cur := ""
+  let mut depth := 0
+  for c in sel.toList do
+    if c == '(' then depth := depth + 1
+    if c == ')' then depth := depth - 1
+    if c == ',' && depth == 0 then
+      parts := parts.push cur.trimAscii.toString
+      cur := ""
+    else cur := cur.push c
+  return (parts.push cur.trimAscii.toString).toList
 
 
 /-! ### The natbib fixtures the bibliography check blocks share -/

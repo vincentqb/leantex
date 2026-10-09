@@ -298,6 +298,11 @@ public structure Ctx where
   stepBase : Nat := 0
   /-- The document class is `slides`: `\maketitle` makes a title frame. -/
   slides : Bool := false
+  /-- The vertical distribution a frame takes when its options name none:
+  beamer's class options `t` and `c` (beamer.cls: `\ExecuteOptionsBeamer{c}`
+  then the document's options in order, the last winning; `slidestop` and
+  `slidescentered` are their obsolete spellings), read by `frameOpts`. -/
+  frameAlign : VAlign := .center
   /-- The page model is `face` (card, poster's trimmed faces): one face of
   display text with no note apparatus — where `\footnote` is refused by
   name (W0374). -/
@@ -11081,8 +11086,13 @@ how beamer should cope, not what to say), except `standout`, which says what the
 frame IS, `allowframebreaks`, which declares that content taller than one page
 continues (beamer user guide §8.1; the layout's spill account reads it), and
 `t`/`c`/`b`, which say how the frame distributes its leftover vertical space
-(`c` is beamer's default). Outside the elaboration knot on purpose: its loop
-state is what pushed the knot's compile over the heartbeat wall. -/
+(`c` is beamer's default, the class options' `t` the deck's other,
+`Ctx.frameAlign`). A standout frame is centred whatever its options say:
+moloch's `standout` key opens with `\setkeys{beamerframe}{c}`
+(beamerinnerthememoloch.sty:465), so an alignment before it is overridden,
+and the nested `\setkeys` leaves an alignment after it undefined, an error
+lualatex steps over. Outside the elaboration knot on purpose: its loop state
+is what pushed the knot's compile over the heartbeat wall. -/
 private structure FrameOpts where
   standout : Bool := false
   breakable : Bool := false
@@ -11090,8 +11100,15 @@ private structure FrameOpts where
   /-- The index past the last bracket group read. -/
   next : Nat := 0
 
+/-- The deck's frame alignment its class options declare (`Ctx.frameAlign`). -/
+private def classFrameAlign (opts : List String) : VAlign :=
+  opts.foldl (fun v o =>
+    if o == "t" || o == "slidestop" then .top
+    else if o == "c" || o == "slidescentered" then .center
+    else v) .center
+
 private def frameOpts (ctx : Ctx) (body : Array Raw) (pos : Pos) : EM FrameOpts := do
-  let mut o : FrameOpts := {}
+  let mut o : FrameOpts := { valign := ctx.frameAlign }
   for _ in [0:body.size] do
     let j0 := skipSpaces body o.next
     match scanBracketArg body o.next pos with
@@ -11118,7 +11135,7 @@ private def frameOpts (ctx : Ctx) (body : Array Raw) (pos : Pos) : EM FrameOpts 
       warnUnclosed ctx "'\\begin{frame}'" bpos
       break
     | .content => break
-  return o
+  return if o.standout then { o with valign := .center } else o
 
 /-- A box's optional arguments from the start of `body`: `[pos]`
 (`boxPosOf`), then `[height]` and `[inner-pos]`, which size and fill a box
@@ -16869,6 +16886,7 @@ private def prepareStyledBody (file : String) (decls : Array PDecl)
   -- the body's token state starts from the fixed values.
   let tokens := (Ir.PreambleFace.ofClass record page.fontSize).fixTableLengths tokens
   ctx := { ctx with slides := record.model == .frame
+                    frameAlign := classFrameAlign classOpts
                     face := record.model == .face
                     numberHeadings := record.numberHeadings, styles := styles
                     page := page, tokens := tokens

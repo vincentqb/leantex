@@ -948,7 +948,7 @@ def chromeFooterChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : I
   t "html footer carries the stepped frame's one number"
     ((html.splitOn ">2</span>").length == 2)
   t "html footer styling comes from the tokens"
-    ((html.splitOn "section.slide > footer.slide-foot").length == 2 &&
+    ((html.splitOn "section.slide > footer.slide-foot { position: relative;").length == 2 &&
      (((html.splitOn "footer.slide-foot {")[1]?.getD "").splitOn
        "var(--muted)").length == 2)
   let (rHtml, _) := HtmlDoc.emit {} rDoc
@@ -2754,8 +2754,11 @@ def deckStepChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Un
   t "frames_sections: one section per frame, the PDF's page count less step duplicates"
     (slideSections == frames &&
      slideSections + stepDup + count "<section class=\"section-page\"" == out.pages.size)
+  let classTokens := (attrValuesOf (fun _ => true) "class" (Html.elem "body" body #[])).map
+    (·.splitOn " ")
   t "every step is visible and carries its index, nothing covered or hidden"
-    (count "class=\"step\"" == 2 && count "class=\"step covered\"" == 0 &&
+    ((classTokens.filter (·.contains "step")).size == 2 &&
+     (classTokens.filter (·.contains "covered")).size == 0 &&
      count "--step: 2" == 1 && count "--step: 3" == 1 &&
      count " hidden=\"hidden\"" == 0)
   t "the label anchor has its single site"

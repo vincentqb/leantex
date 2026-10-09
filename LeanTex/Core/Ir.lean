@@ -2775,6 +2775,34 @@ line whose breaks the author declared. -/
 @[expose] public def titleSize (base : Sp) (slides : Bool) : Sp :=
   scaleStep base (if slides then "Large" else "LARGE")
 
+/-- The reach below its bar's top of moloch's section-page template's last
+line, the subsection title's strut (`\strut` before
+`\ifx\insertsubsectionhead\@empty`, beamerinnerthememoloch.dtx): its baseline
+one `\baselineskip` of the subsection title's `\large` under the bar's top,
+its depth three tenths of that below — where the content box beamer centres
+ends. The one value both backends read: the PDF's skip after the bar
+(`Layout.collectSection`) and the web section page's closing box, at the
+body's em (`HtmlDoc.themeCss`, `sectionPageStrut_between`). -/
+public def sectionPageStrut (size : Int) (factor : Nat := 1000) : Int :=
+  leadingFor (scaleStep size "large") factor * 13 / 10
+
+/-- **The web's em of the section-page strut is the page's, at every body**
+(`_between`): at the engine's leading the strut the PDF sets at a body of
+`size` stands within four sp under that body's share of the strut at the
+milli-em the web emits (`sectionPageStrut 1000`, an em of the section
+page's body) — the floors of the three steps, no more. -/
+public theorem sectionPageStrut_between (size : Int) :
+    size * sectionPageStrut 1000 / 1000 - 4 ≤ sectionPageStrut size ∧
+      sectionPageStrut size ≤ size * sectionPageStrut 1000 / 1000 := by
+  have hL : ((sizeScale.lookup "large").getD 1000 : Int) = 1200 := by decide
+  -- Spelled `Int`, not `Sp`, so `omega` reads the unfolded steps.
+  have hs : ∀ x : Int, sectionPageStrut x = x * 1200 / 1000 * 1200 / 1000 * 1000 / 1000 * 13 / 10 := by
+    intro x
+    simp only [sectionPageStrut, leadingFor, scaleStep, leadingMilli, hL]
+    rfl
+  rw [hs, hs]
+  omega
+
 /-- Adjacent steps of the scale, in order: what the scale theorems below
 quantify over. -/
 public def sizeScaleSteps : List (Nat × Nat) :=

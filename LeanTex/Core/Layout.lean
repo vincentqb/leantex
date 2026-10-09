@@ -1237,8 +1237,10 @@ bottom edge (`frameFloor`), footline or none. `paper` is a plain frame's:
 beamer omits its footline and its exit code takes `\footheight` back
 (`\vspace*{-\footheight}`, beamerbaseframe.sty:781-783), so its content
 centres on the whole paper, and the content's first box stands flush on its
-`\vbox{}` (`\nointerlineskip`, :116) — moloch's section page is one
-(`\frame[plain,c,noframenumbering]`, beamerinnerthememoloch.sty). -/
+`\vbox{}` (`\nointerlineskip`, :116). moloch's section page is the one
+plain frame the engine sets (`\frame[plain,c,noframenumbering]`,
+beamerinnerthememoloch.sty): a document's own `[plain]` option is not
+modelled — named (N0102), its frame keeps `text` and its footline. -/
 public inductive FrameArea where
   | margins
   | text
@@ -9348,6 +9350,7 @@ private def Spacing.Page.placeLine (fs : FontSet) (b : B) (x : Sp) (size : Sp) (
     { x := x, y := y, size := size, segs := segs, setWidth := w
       regionExtent := some tex
       hang := hang, expand := expand, counted := counted, leaf := leaf, anchors := anchors }
+  let lead := Ir.leadingFor (if size == 0 then b.geom.fontSize else size) b.geom.leading
   -- The distance from the band above: TeX's interline glue on either side
   -- of display math (`texBaselineGap`), over the empty line amsmath's `$$`
   -- sets first where it opens a paragraph; the metric rule everywhere else.
@@ -9364,10 +9367,14 @@ private def Spacing.Page.placeLine (fs : FontSet) (b : B) (x : Sp) (size : Sp) (
       else texBaselineGap bs b.boxDepth tex.1
     | none, _, _ =>
       if b.texAfter || display.isSome then texBaselineGap bs b.boxDepth tex.1
-      -- Below a frame's opening box the line's own `\baselineskip` is its
-      -- leaded box, whatever size its runs set at.
+      -- Below a frame's opening box the line takes TeX's interline glue
+      -- at its `\baselineskip`: a line of type the leaded box its runs set
+      -- at — a standout frame's at its template's size, a listing's at its
+      -- own leading — and a line of boxes alone, an image, its paragraph's,
+      -- so a box taller than the skip stands `\lineskip` below the opening.
       else if b.opening then
-        texBaselineGap (box.above + box.below) b.boxDepth tex.1
+        texBaselineGap (if segs.any (· matches .run ..) then box.above + box.below else lead)
+          b.boxDepth tex.1
       else peer b
   -- The first baseline is the body top plus the first line's rise
   -- (`firstRise`: TeX's `\topskip` rule, or the metric one on a frame),
@@ -9376,7 +9383,6 @@ private def Spacing.Page.placeLine (fs : FontSet) (b : B) (x : Sp) (size : Sp) (
   -- `\nointerlineskip` the line takes no interline glue: its box stands on
   -- the last box's (`Spacing.Page.ignoreDepth`). The peer gap is the display-aware
   -- one (`gap`), which reduces to the metric interline off a display.
-  let lead := Ir.leadingFor (if size == 0 then b.geom.fontSize else size) b.geom.leading
   ((b.fitCommit mk
     (fun b => b.geom.bodyTop + b.firstRise ink.1 box lead + b.topKept)
     (fun b => b.y + b.skip.width
@@ -12188,13 +12194,11 @@ private def collectSection (r : Rd) (a : Acc) (level : Ir.HeadingLevel) (num : O
           (r.geom.hmargin + indent) mp) }
       | none => a
     -- The template's last line: the subsection title's strut, set below the
-    -- bar whether or not a subsection is in force (`\strut` before
-    -- `\ifx\insertsubsectionhead\@empty`), its baseline one `\baselineskip`
-    -- of the subsection title's `\large` under the bar's top and its depth
-    -- three tenths of it — the content box beamer centres ends there.
-    let sub := Ir.leadingFor (Ir.scaleStep r.geom.fontSize "large") r.geom.leading
+    -- bar whether or not a subsection is in force — the content box beamer
+    -- centres ends there (`Ir.sectionPageStrut`).
     let a := if area == .paper then
-        { a with ops := a.ops.push (.skip { width := sub * 13 / 10 - thick }) }
+        { a with ops := a.ops.push (.skip
+          { width := Ir.sectionPageStrut r.geom.fontSize r.geom.leading - thick }) }
       else a
     (a.pageBreak).pushOp .frameClose
   else

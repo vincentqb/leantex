@@ -2638,9 +2638,10 @@ def vdistChecks (ref : IO.Ref (List String)) (geom : Layout.Geom)
   t "[b] parses to bottom"
     ((elabStr (deck169Body "\\begin{frame}[b]\nx\n\\end{frame}")).1.body ==
       #[.frame #[] false .bottom false #[.para #[.text "x"]]])
-  t "[t,standout] keeps both"
+  -- moloch's `standout` key sets `c` after any alignment before it.
+  t "[t,standout] is a standout frame, centred as moloch's key centres it"
     ((elabStr (deck169Body "\\begin{frame}[t,standout]\nx\n\\end{frame}")).1.body ==
-      #[.frame #[] true .top false #[.para #[.text "x"]]])
+      #[.frame #[] true .center false #[.para #[.text "x"]]])
   -- A titled frame's title is page-top chrome: distributing the body must
   -- not move the title line, and the title bar keeps its height.
   let titled (opt : String) : String :=
@@ -5316,11 +5317,7 @@ size-ladder difference and its last line's depth, inside 1.5 bp. At
 up, and the `[c]` line 7.311 bp high. Invented words. -/
 def footlineChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
-  let some fira ← (do
-      match Font.parse (← IO.FS.readBinFile (testFonts ++ "/FiraSans-Regular.otf")) with
-      | .ok f => pure (some (oneFaceOf f))
-      | .error _ => pure none : IO (Option Font.FontSet))
-    | t "footline: the shipped Fira Sans parses" false
+  let some fira ← shippedFira | t "footline: the shipped Fira Sans parses" false
   let tol : Dim.Sp := Dim.pt 3 / 2
   let near (a b slack : Dim.Sp) : Bool := a - b ≤ slack && b - a ≤ slack
   let bp (milli : Int) : Dim.Sp := Dim.pt 1 * milli / 1000

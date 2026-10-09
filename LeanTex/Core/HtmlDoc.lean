@@ -279,7 +279,8 @@ public def engineClasses : List String :=
    "band-left", "band-right", "booktabs", "bt-center", "bt-cmid", "bt-heavy-above", "bt-left",
    "bt-light-above", "bt-nowrap", "bt-right", "cell-measure", "centered", "ragged", "ragged-right", "column", "columns", "content",
    "deck-progress", "entry",
-   "entry-pair", "entry-row", "entry-rows", "fill", "float", "frame-body-start", "group", "icon",
+   "entry-pair", "entry-row", "entry-rows", "fill", "float", "frame-body-end",
+   "frame-body-start", "group", "icon",
    "math", "math-display", "nopadl", "nopadr", "note", "picture", "progress",
    "reveal-scroll", "ruled", "section-page", "separator", "slide",
    "slide-foot", "slide-logo", "slide-track", "slides", "snap", "spaced",
@@ -1276,9 +1277,10 @@ private def gapAfterLists : List GapRule :=
     .boundary "figure.float > figcaption:first-child + *" "0",
     -- The first body element owns the frame opening, including a filled
     -- block with no paragraph margin. A fil spacer cannot pay this fixed
-    -- skip when the frame has no spare space.
+    -- skip when the frame has no spare space. A list's own space above
+    -- its first item rides on top (`frameOpeningCss`).
     .boundary "section.slide > .frame-body-start"
-      "calc(var(--frame-body-skip) + var(--frame-body-before, 0pt))",
+      "calc(var(--frame-body-skip) + var(--frame-body-before, 0pt) + var(--frame-body-open, 0pt))",
     .boundary ":is(h1, h2, h3, h4, h5, h6) + *" "0"]
 
 /-- A skip register in force for the sheet (`Ir.skipAmount`, the site the
@@ -1733,11 +1735,13 @@ private def frameTitleStep (doc : Doc) : String :=
 (`Layout.frameBarHeight`): the title's first baseline `frametitlepadding`
 plus the title's strut (`Ir.frameTitleStrut`, seven tenths of its leading)
 below the bar's top, its last `frametitlepadding` above the bar's bottom —
-two struts no font's metrics enter, on the lines' own leading. -/
+two struts no font's metrics enter, on the lines' own leading. Each length
+is the PDF's own at an em of the title's size: the token's resolved value
+(`Ir.frameTitlePadding`) and the strut at a 1000 sp title, its milli-em. -/
 private def frameTitleStrutCss : String :=
-  let pad := s!"var(--frametitlepadding, {decMilli (7 * Ir.leadingMilli / 10)}em)"
+  let pad := s!"var(--frametitlepadding, {cssLength Ir.frameTitlePadding.width})"
   "section.slide > header h2::before { content: \"\"; display: inline-block;\n" ++
-  s!"  height: calc({pad} + {decMilli (7 * Ir.leadingMilli / 10)}em); }\n" ++
+  s!"  height: calc({pad} + {decMilli (Ir.frameTitleStrut 1000)}em); }\n" ++
   "section.slide > header h2::after { content: \"\"; display: inline-block;\n" ++
   s!"  vertical-align: calc(-1 * {pad}); }\n"
 
@@ -1754,12 +1758,15 @@ environment the cap height of its tallest slot's type (`--foot-cap`, per
 `footCapDecl`) stands for the height and the depth is none. The band sets at
 its own step of the body and at the body's weight whatever frame it closes,
 as the page sets it (`setBandSlot`'s own style): a standout frame's type is
-the whole frame's, so its footline undoes that step for its own. -/
+the whole frame's, so its footline undoes that step for its own, and takes
+the weight the body resolved (`fontCss`'s `--ltx-body-weight`) — `normal`
+only where no face ships, where the body's weight is the platform's. -/
 private def footlineCss (page : PageSpec) : String :=
   let raise := stageVh page Ir.footline.raise
   let step := milliFactor (Ir.scaleStepIn page.scale 1000 Ir.footline.step).toNat
   "section.slide > footer.slide-foot { position: relative; order: 1;\n" ++
-  s!"  margin: 0 calc(-1 * {safeareaVar}); line-height: 0; font-weight: normal;\n" ++
+  s!"  margin: 0 calc(-1 * {safeareaVar}); line-height: 0;\n" ++
+  "  font-weight: var(--ltx-body-weight, normal);\n" ++
   "  color: var(--muted); background: var(--footlinebg, transparent); }\n" ++
   s!"section.slide.standout > footer.slide-foot \{ font-size: calc({step}em / \
 {stepFactor standoutStep}); }\n" ++
@@ -1771,7 +1778,13 @@ private def footlineCss (page : PageSpec) : String :=
   "  bottom: 0; white-space: nowrap; }\n" ++
   "footer.slide-foot > :is(.band-left, .band-right)::before { content: \"\";\n" ++
   s!"  display: inline-block; height: calc(1cap + {raise} + var(--foot-d, 0px));\n" ++
-  s!"  vertical-align: calc(-1 * ({raise} + var(--foot-d, 0px))); }\n"
+  s!"  vertical-align: calc(-1 * ({raise} + var(--foot-d, 0px))); }\n" ++
+  -- On screen the band stays on the stage's edge however far a frame's
+  -- content runs past its text area, as beamer's footline stays on the
+  -- page the content overruns: the stage scrolls, and a sticky band is
+  -- its flow position where the content fits (CSS Positioned Layout 3
+  -- §3.4). Paper keeps the flow, which keeps the band with the content.
+  "@media screen { section.slide > footer.slide-foot { position: sticky; bottom: 0; } }\n"
 
 /-- Furniture the semantic palette keys turn on — one shared rule set for
 every theme, so a theme stays a table of values. The conditions read the
@@ -1835,7 +1848,7 @@ public def themeCss (doc : Doc) : String :=
       (if doc.chromeAllowed then s!"  margin: 0 calc(-1 * {safeareaVar}) 0;\n"
        else s!"  margin: calc(-1 * {safeareaVar}) calc(-1 * {safeareaVar}) 0;\n") ++
       (if doc.chromeAllowed && (doc.tokens.find? "frametitlepadding").isSome then
-        s!"  padding: 0 {safeareaVar}; line-height: {decMilli Ir.leadingMilli}; } }\n" ++
+        s!"  padding: 0 {safeareaVar}; line-height: {decMilli (Ir.leadingFor 1000)}; } }\n" ++
         frameTitleStrutCss
        else s!"  padding: var(--frametitlepadding, {quantaRem 1}) {safeareaVar}; } }\n")
      else "") else
@@ -1925,12 +1938,11 @@ public def themeCss (doc : Doc) : String :=
     ".progress > div { background: var(--sectionprogressfg, var(--progressfg)); height: 100%; }\n" ++
     -- moloch's section page closes on the subsection title's strut below
     -- its bar, a subsection in force or not, and centres that whole box as
-    -- the PDF does (`Layout.collectSection`): the strut's baseline one
-    -- `\large` leading under the bar's top, its depth three tenths of it.
+    -- the PDF does (`Layout.collectSection`): the one value, at the body's
+    -- em (`Ir.sectionPageStrut_between`).
     (if doc.chromeAllowed then
-      let sub := 13 * Ir.leadingMilli * (Ir.scaleStep (1000 : Dim.Sp) "large").toNat / 10000
       s!"section.section-page::after \{ content: \"\"; flex: none; \
-height: calc({decMilli sub}em - var(--progressheight, 1pt)); }\n"
+height: calc({decMilli (Ir.sectionPageStrut 1000 doc.page.leading)}em - var(--progressheight, 1pt)); }\n"
      else "") ++
     -- The paged deck's own progress: a hairline across the viewport top,
     -- scaled by how far the reader has paged through the deck —
@@ -2494,10 +2506,14 @@ or stays upright (`FontSet.lookup`), in both backends — so synthesis is
 limited to small caps, which both backends do synthesise (CSS Fonts 4
 §font-synthesis; the PDF's is Layout's own, from its GSUB read). Without
 this line a title asking for 600 over a 300/400 family renders faux-bold
-where the PDF sets the family's real Regular. -/
+where the PDF sets the family's real Regular. The weight is also the
+custom property `--ltx-body-weight`, so furniture set outside the frame
+it stands in (the footline, `footlineCss`) restores the body's weight by
+name: a keyword `normal` is 400, the family's Regular again. -/
 private def fontCss (fs : Font.FontSet) : String :=
+  let w := (fs.get (fs.lookup 0 400 false)).weight
   fontFaceCss fs ++
-  s!"body \{ font-weight: {(fs.get (fs.lookup 0 400 false)).weight}; " ++
+  s!"body \{ font-weight: {w}; --ltx-body-weight: {w}; " ++
   "font-synthesis: small-caps; }\n"
 
 /-- The generic family closing a slot's stack — what a reader sees only if
@@ -3468,6 +3484,47 @@ private def deckAreaCss (doc : Doc) : String :=
     "@media print { section.slide > :is(.fill, footer.slide-foot), section.slide::after {\n" ++
     "  break-before: avoid; } }\n"
   else ""
+
+/-- A frame's content as TeX opens it below its `\vbox{}`
+(beamerbaseframe.sty:115). The first line's baseline stands one
+`\baselineskip` below the opening — the paragraph's leading at its own size
+under the page's `\linespread`, `Ir.leadingFor`, the value the page's
+opening rule reads (`Layout.Spacing.Page.placeLine`) — whatever leading the
+screen gives the line box: an empty inline box that tall on the baseline
+holds the line box's top there (CSS 2.1 §10.8.1), on an opening paragraph
+and on an opening list's first item (its text, or its first paragraph where
+it holds blocks); a line taller than the skip stands on its own box, as TeX's
+`\lineskip` rule stands it. A list opening the content first spends its
+`\@topsepadd` — the box leaves the page in vertical mode, so the level's
+`\partopsep` joins its `\topsep` (latex.ltx `\@trivlist`), the one resolving
+site the page spends (`Ir.listSkips`, `Ir.partopsepFor`) — while the
+`\parskip` the list's boundary adds is the one the opening's
+`\vskip-\parskip` takes back: the stage's share of that length rides on the
+opening's own (`--frame-body-open`). The content ends where its last line's
+glyphs do, not where the screen's line box does: beamer distributes the box
+whose bottom is the last line's depth (`\vskip\beamer@framebottomskip`
+follows it, so the depth stays inside), and the last element's last line is
+trimmed to its baseline (CSS Inline 3 `text-box`), the depth of a line with
+no descender — a paragraph's, a list's, an alignment scope's; a box that
+paints or scrolls (a listing, a block, a figure) ends where its box does, as
+TeX's does, and a trimmed scroll box would hide what it trims. Where the
+feature is missing the line box stands, the floor. -/
+private def frameOpeningCss (doc : Doc) : String :=
+  let l := doc.docClass.record.lists
+  let size := doc.page.fontSize
+  let item := "section.slide > :is(ul, ol:not(.algorithm)).frame-body-start > li:first-child"
+  (match Ir.listSkips l size 1 with
+   | some sk =>
+     let opened := sk.topsep.width.sp + (Ir.partopsepFor l size 1 doc.tokens).width.sp
+     s!"section.slide > :is({", ".intercalate listElems}).frame-body-start \{ \
+--frame-body-open: {stageVh doc.page opened}; }\n"
+   | none => "") ++
+  "section.slide > :is(p, ul, ol, dl, blockquote, .centered, .ragged, .ragged-right)\
+.frame-body-end { text-box: trim-end text alphabetic; }\n" ++
+  "section.slide > p.frame-body-start::before,\n" ++
+  s!"{item}:not(:has(> :is(p, div, ul, ol, dl, pre, table, figure, blockquote)))::before,\n" ++
+  s!"{item} > p:first-child::before \{ content: \"\"; display: inline-block;\n" ++
+  s!"  height: {decMilli (Ir.leadingFor 1000 doc.page.leading)}em; }\n"
 
 /-- The print rules every deck carries, steps aside. -/
 private def printPaged : List DeckRule := [printStageRule, printSheetGround] ++ printFrameEnd
@@ -5011,6 +5068,7 @@ public def baseCss (cfg : Config) (doc : Doc) : String :=
   s!"  font-size: {scaleSize standoutStep "em"}; font-weight: 600;\n" ++
   "  display: flex; flex-direction: column; justify-content: center; }\n" ++
   deckAreaCss doc ++
+  (if doc.docClass == .slides then frameOpeningCss doc else "") ++
   sizeRules doc.page.scale ++
   -- The math face the document resolved, through its token — the `math`
   -- element selector reaches native MathML, whose engine default is the
@@ -6218,6 +6276,18 @@ private def frameBodyStart (kids : Array Node) : Array Node :=
         .elem tag (attrs.map fun (key, value) =>
           (key, if key == "style" then frameBodyBefore value else value)) body
       | .text _ | .style _ | .script .. => node)
+  | none => kids
+
+/-- Mark a frame's last participating body element: the box whose last line
+ends the content the deck's frame distributes (`frameOpeningCss`) — every
+frame's but the title page's, whose template places its own furniture.
+State, text and hidden speaker notes do not take it. -/
+private def frameBodyEnd (kids : Array Node) : Array Node :=
+  let ends (node : Node) : Bool := match node with
+    | .elem _ attrs _ => !(attrs.any (·.1 == "hidden"))
+    | .text _ | .style _ | .script .. => false
+  match (List.range kids.size).reverse.find? (fun i => (kids[i]?.map ends).getD false) with
+  | some i => kids.modify i (withClass "frame-body-end")
   | none => kids
 
 /-- Whether a frame's first body element owns the frame opening
@@ -7429,6 +7499,7 @@ public def blockNode (cfg : Config) (b : Block) : Node :=
     let hasTitle := !standout && !title.isEmpty
     let opening := frameOpensBody cfg.chromeAllowed hasTitle valign
     let kids := if opening then frameBodyStart kids else kids
+    let kids := if cfg.deck && !(valign matches .golden) then frameBodyEnd kids else kids
     let openingAttrs := if opening then
         let length := if cfg.deck then
             s!"{decMilli (frameBodySkipMilli hasTitle valign cfg.page.fontSize cfg.page.height)}vh"
