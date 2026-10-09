@@ -8676,6 +8676,7 @@ public def blockNode (cfg : Config) (b : Block) : Node :=
     -- IR projection the markdown fence reads too (`listing_language_agree`);
     -- the attribute value goes through the escaper as every attribute does.
     let lines := spec.tokenLines s
+    let brushes := Listing.brushes cfg.pal cfg.listingGround covered spec.style lines
     let codeAttrs : Array (String × String) := match spec.htmlClass with
       | some c => #[("class", c)]
       | none => #[]
@@ -8684,8 +8685,8 @@ public def blockNode (cfg : Config) (b : Block) : Node :=
       for i in [:lines.size] do
         if i > 0 then kids := kids.push (Html.text "\n")
         let line := inlines cfg
-          (lines[i]!.map (Listing.tokenInline cfg.pal cfg.listingGround covered
-            (style := spec.style)))
+          (lines[i]!.map (Listing.paintToken cfg.pal cfg.listingGround covered spec.style
+            brushes))
         kids := if spec.numbers then
           kids.push (Html.elem "span" line #[("class", "line")])
           else kids ++ line

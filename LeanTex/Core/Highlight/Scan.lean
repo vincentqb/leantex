@@ -120,8 +120,8 @@ private def inRanges (rs : Array UInt32) (v : UInt32) : Bool := Id.run do
   for _ in [0:rs.size + 1] do
     if lo < hi then
       let mid := (lo + hi) / 2
-      if v < rs[2 * mid]?.getD 0 then hi := mid
-      else if rs[2 * mid + 1]?.getD 0 < v then lo := mid + 1
+      if v < rs.getD (2 * mid) 0 then hi := mid
+      else if rs.getD (2 * mid + 1) 0 < v then lo := mid + 1
       else return true
     else break
   return false
@@ -177,13 +177,12 @@ public def ofString (s : String) : Src :=
 
 @[inline] public def size (s : Src) : Nat := s.chars.size
 
-@[inline] public def is (s : Src) (i : Nat) (c : Char) : Bool := s.chars[i]? == some c
+@[inline] public def is (s : Src) (i : Nat) (c : Char) : Bool :=
+  if h : i < s.chars.size then s.chars[i] == c else false
 
 /-- The scalar at `i` satisfies `p`; nothing past the end does. -/
 @[inline] public def sat (s : Src) (i : Nat) (p : Char → Bool) : Bool :=
-  match s.chars[i]? with
-  | some c => p c
-  | none => false
+  if h : i < s.chars.size then p s.chars[i] else false
 
 @[inline] public def word (s : Src) (i : Nat) : Bool := s.sat i wordChar
 @[inline] public def space (s : Src) (i : Nat) : Bool := s.sat i spaceChar
@@ -217,17 +216,19 @@ public def runTo (s : Src) (i lim : Nat) (p : Char → Bool) : Nat := Id.run do
 public def lit (s : Src) (i : Nat) (w : Array Char) : Bool := Id.run do
   if i + w.size > s.chars.size then return false
   for h : k in [0:w.size] do
-    if s.chars[i + k]? != some w[k] then return false
+    if s.chars.getD (i + k) w[k] != w[k] then return false
   return true
 
 /-- The first occurrence of `w`'s first `k` scalars starting at or after
 `from`: a backreference's search. -/
 public def find (s : Src) (fromPos : Nat) (w : Array Char) (k : Nat) : Option Nat := Id.run do
   if k == 0 then return some fromPos
+  if k > w.size then return none
   for j in [fromPos:s.chars.size + 1 - min k (s.chars.size + 1)] do
     let mut hit := true
-    for t in [0:k] do
-      if s.chars[j + t]? != w[t]? then
+    for h : t in [0:min k w.size] do
+      have : t < w.size := Nat.lt_of_lt_of_le h.upper (Nat.min_le_right _ _)
+      if j + t ≥ s.chars.size || s.chars.getD (j + t) w[t] != w[t] then
         hit := false
         break
     if hit then return some j
@@ -254,10 +255,11 @@ public def WordSet.of (ws : Array String) : WordSet := Id.run do
 a Pygments `words` pattern after its prefix assertion. -/
 public def WordSet.longest (ws : WordSet) (s : Src) (i : Nat) (suffix : Nat → Bool) :
     Option Nat := Id.run do
-  let some c := s.chars[i]? | return none
-  let b := if c.val < 0x80 then c.val.toNat else 128
-  for w in ws.buckets[b]?.getD #[] do
-    if s.lit i w && suffix (i + w.size) then return some (i + w.size)
+  if h : i < s.chars.size then
+    let c := s.chars[i]
+    let b := if c.val < 0x80 then c.val.toNat else 128
+    for w in ws.buckets.getD b #[] do
+      if s.lit i w && suffix (i + w.size) then return some (i + w.size)
   return none
 
 /-- A regex alternation's words, in its order. -/
@@ -310,13 +312,17 @@ public def fallback (m : Machine σ) (s : Src) (root : σ) : Machine σ :=
 end Machine
 
 /-- Run a lexer whose every step consumes a scalar or pops a state no
-consuming step had not pushed: at most `2n + 1` steps for `n` scalars. -/
+consuming step had not pushed: at most `2n + 1` steps for `n` scalars. A step
+starts from an empty token array, so the machine it holds back for the
+fallback costs nothing to share, and its tokens join the stream after it. -/
 public def drive {σ : Type} (root : σ) (step : Src → Machine σ → Machine σ) (s : Src) :
     Array Raw := Id.run do
+  let mut out : Array Raw := #[]
   let mut m : Machine σ := { out := #[], pos := 0, stack := #[root] }
   for _ in [0:2 * s.size + 1] do
     if m.pos ≥ s.size then break
-    m := step s m
-  return m.out
+    m := step s { m with out := #[] }
+    out := out ++ m.out
+  return out
 
 end LeanTex.Core.Highlight

@@ -144,7 +144,9 @@ private def step (s : Src) (m : M) : M :=
     | some .comment => comment s m
     | some .docstring => docstring s m
     | some .string => string s m
-  next.getD (m.fallback s .root)
+  match next with
+  | some m' => m'
+  | none => m.fallback s .root
 
 /-- The raw token stream Pygments' `Lean4Lexer` writes. -/
 public def lex (s : Src) : Array Raw := drive .root step s

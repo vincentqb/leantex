@@ -30,6 +30,8 @@ on the same fixtures and requires identical artifacts and diagnostics.
 `--slides-selftest` tests those judges without compiling any documents.
 `--decode-only` measures the decode phase alone over invented 3 MiB
 documents: ASCII or accented words, LF or CR LF line ends.
+`--listings-only` measures a build of the invented highlight snippets as
+minted listings, one copy and eight.
 The slide run also needs sha256sum, pdftocairo and xmllint.
 For before/after runs use this same driver, N, font/tool environment and an
 otherwise idle host; shared-host timings are provisional. Redirect stdout
@@ -188,6 +190,31 @@ def benchDecode (n : Nat) : IO Unit := do
     IO.println s!"{padRight s!"leantex  decode 3 MiB, {label}" 42} \
 {padLeft (toString (median times)) 6} ms (median of {n})"
   IO.FS.removeDirAll dir
+
+/-- Listings in every natively lexed language: the invented highlight
+snippets (testdata/highlight/snippets/<language>/), each a minted listing,
+`copies` times over. A build of these spawns no provider; a compiler whose
+lexers do not cover a language pays the provider's process and a second
+elaboration for it, which is what a before/after run of this row measures. -/
+def benchListings (n copies : Nat) : IO Unit := do
+  let leantex ← compiler
+  let root : System.FilePath := "testdata/highlight/snippets"
+  let mut body := ""
+  for k in [0:copies] do
+    body := body ++ s!"\\section\{Listings, copy {k}}\n"
+    for d in (← root.readDir).qsort (·.fileName < ·.fileName) do
+      for f in (← d.path.readDir).qsort (·.fileName < ·.fileName) do
+        let src ← IO.FS.readFile f.path
+        body := body ++ "\\begin{minted}{" ++ d.fileName ++ "}\n" ++ src
+        body := body ++ "\\end{minted}\n"
+  IO.FS.withTempDir fun dir => do
+    let input := dir / "listings.tex"
+    IO.FS.writeFile input ("\\documentclass{article}\n\\usepackage{minted}\n" ++
+      "\\setminted{style=friendly}\n\\begin{document}\n" ++ body ++ "\\end{document}\n")
+    bench n s!"leantex  listings, {copies} copies (PDF)" leantex
+      #["-q", "build", input.toString, "-o", (dir / "listings.pdf").toString]
+    bench n s!"leantex  listings, {copies} copies (HTML)" leantex
+      #["-q", "build", input.toString, "-o", (dir / "listings.html").toString]
 
 /-- A repeated image must not repeatedly encode the embedded font programs
 while checking HTML resource closure. Both sizes use the same captured assets. -/
@@ -834,6 +861,10 @@ def main (args : List String) : IO UInt32 := do
   if args == ["--slides-compressed-only"] then
     Slides.run n true
     return 0
+  if args == ["--listings-only"] then
+    benchListings n 1
+    benchListings n 8
+    return 0
   if args == ["--boundary-only"] then
     unless ← hasCmd "lualatex" do die "picture benchmark needs lualatex"
     benchPictures n 8
@@ -888,6 +919,7 @@ def main (args : List String) : IO UInt32 := do
   benchImageDeck n 32
   benchImageDeck n 128
   benchDecode n
+  benchListings n 8
   -- The reference list's growth: a thesis-sized .bib under \nocite{*} is
   -- thousands of entries, and a phase quadratic in them (75 s at 1600)
   -- passed every row above. Four times the entries may cost at most eight

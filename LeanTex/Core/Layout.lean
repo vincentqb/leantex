@@ -13070,6 +13070,7 @@ private def collectVerbatim (r : Rd) (a : Acc) (covered : Option Ir.Color) (s : 
   -- held to their line by no-break spaces.
   let inner : Array Ir.Inline := Id.run do
       let lines := spec.tokenLines s
+      let brushes := Listing.brushes a.pal a.ground covered spec.style lines
       let w := (toString lines.size).length
       let mut out : Array Ir.Inline := #[]
       let mut i := 0
@@ -13138,7 +13139,7 @@ private def collectVerbatim (r : Rd) (a : Acc) (covered : Option Ir.Color) (s : 
               out := out.push (.hspace (.lit { width := .ofSp hang }) true)
             j := j + 1
             for (piece, sourceColumn, text) in pieces do
-              let inline := Listing.tokenInline a.pal a.ground covered piece (style := spec.style)
+              let inline := Listing.paintToken a.pal a.ground covered spec.style brushes piece
               let source := codeSource i sourceColumn text
               out := out.push (source.map (fun span => .located span #[inline]) |>.getD inline)
       pure #[.styled .mono out]

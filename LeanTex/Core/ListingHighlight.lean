@@ -75,7 +75,7 @@ private def runsGo (kinds : Array String) : Nat → List Char → String → Str
     Array Token → Array Token
   | _, [], kind, cur, acc => if cur.isEmpty then acc else acc.push { kind := ⟨kind⟩, text := cur }
   | i, c :: cs, kind, cur, acc =>
-    let k := kinds[i]?.getD Highlight.Ty.text
+    let k := kinds.getD i Highlight.Ty.text
     if cur.isEmpty || k == kind then runsGo kinds (i + 1) cs k (cur.push c) acc
     else runsGo kinds (i + 1) cs k (String.singleton c) (acc.push { kind := ⟨kind⟩, text := cur })
 

@@ -142,25 +142,40 @@ private theorem weighted_text (look : Look) (text : String) :
   unfold weighted
   split <;> split <;> split <;> simp [plainTextOne, plainTextList]
 
-/-- A classified source token as ordinary typed inlines. Both backends consume
-this projection. Covering acts on each token's own colour; an outer colour
-alone would be overridden by the token's inner colour during flattening. -/
-public def tokenInline (pal : Palette) (ground covered : Option Color) (t : Token)
-    (style : ListingStyle := .default) : Inline :=
-  let body := weighted ((table style).lookOf t.kind) t.text
-  match ink pal ground t.kind (style := style) with
+/-- What every token of one type ships as: its style's weights, and its ink
+and role on the listing's ground under its overlay. Covering acts on the
+type's own colour; an outer colour alone would be overridden by the token's
+inner colour during flattening. -/
+public structure Brush where
+  look : Look
+  ink : Option Color
+  role : Option String
+  deriving Repr, BEq
+
+public def brush (pal : Palette) (ground covered : Option Color) (style : ListingStyle)
+    (k : Kind) : Brush :=
+  let look := (table style).lookOf k
+  match ink pal ground k (style := style) with
   | some c =>
     let c := if covered.isSome then
         ({ Design.ofPalette pal with bg := ground.getD (Design.ofPalette pal).bg }).cover.of c
       else c
-    let role := (paint (Design.ofPalette pal) style t.kind).bind (·.role)
     -- Like `Ir.dimInline`, covered ink is literal: a CSS role would replace
     -- the per-token mixture with the one declared `covered` colour.
-    .colored c (if covered.isSome then none else role) #[body]
-  | none =>
-    match covered with
-    | some c => .colored c none #[body]
-    | none => body
+    { look, ink := some c
+      role := if covered.isSome then none else (paint (Design.ofPalette pal) style k).bind (·.role) }
+  | none => { look, ink := covered, role := none }
+
+public def Brush.inline (b : Brush) (text : String) : Inline :=
+  match b.ink with
+  | some c => .colored c b.role #[weighted b.look text]
+  | none => weighted b.look text
+
+/-- A classified source token as ordinary typed inlines. Both backends consume
+this projection. -/
+public def tokenInline (pal : Palette) (ground covered : Option Color) (t : Token)
+    (style : ListingStyle := .default) : Inline :=
+  (brush pal ground covered style t.kind).inline t.text
 
 /-- Painting a classified token conserves its exact scalar sequence, under
 every palette, ground, overlay and style. Together with
@@ -169,12 +184,41 @@ artifact projections consume. -/
 public theorem token_inline_source_exact (pal : Palette) (ground covered : Option Color)
     (t : Token) (style : ListingStyle := .default) :
     plainTextOne (tokenInline pal ground covered t (style := style)) = t.text := by
-  unfold tokenInline
+  unfold tokenInline Brush.inline
   split
   · simp [plainTextOne, plainTextList, weighted_text]
-  · split
-    · simp [plainTextOne, plainTextList, weighted_text]
-    · exact weighted_text _ _
+  · exact weighted_text _ _
+
+/-- One brush per type the lines hold, for a listing painted on one ground. -/
+public def brushes (pal : Palette) (ground covered : Option Color) (style : ListingStyle)
+    (lines : Array (Array Token)) : Array (Kind × Brush) :=
+  let kinds := lines.foldl (fun acc line => line.foldl (fun acc t =>
+    if acc.contains t.kind then acc else acc.push t.kind) acc) #[]
+  kinds.map fun k => (k, brush pal ground covered style k)
+
+/-- A token painted with its type's brush: what a listing's tokens share is
+decided once, not once per token. -/
+public def paintToken (pal : Palette) (ground covered : Option Color) (style : ListingStyle)
+    (table : Array (Kind × Brush)) (t : Token) : Inline :=
+  match table.find? (fun e => decide (e.1 = t.kind)) with
+  | some (_, b) => b.inline t.text
+  | none => tokenInline pal ground covered t (style := style)
+
+/-- A listing painted from its brushes is the listing painted token by token,
+for any lines the brushes were drawn from and any token. -/
+public theorem paintToken_exact (pal : Palette) (ground covered : Option Color)
+    (style : ListingStyle) (lines : Array (Array Token)) (t : Token) :
+    paintToken pal ground covered style (brushes pal ground covered style lines) t =
+      tokenInline pal ground covered t (style := style) := by
+  unfold paintToken
+  split
+  · rename_i k b found
+    have hk : k = t.kind := by simpa using Array.find?_some found
+    obtain ⟨k', _, he⟩ := Array.mem_map.mp (Array.mem_of_find?_eq_some found)
+    cases he
+    subst hk
+    rfl
+  · rfl
 
 /-- The box the style draws around a token of type `k`, which the typed
 inlines cannot carry: the elaborator names it (W0397). -/

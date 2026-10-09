@@ -905,9 +905,9 @@ private def usesBlock (cx : UseCx) (acc : UseAcc) : Block → UseAcc
     let ground := cx.ground.orElse fun _ => some (Design.ofPalette acc.pal).bg
     let codeCx := { cx.style spec.fontSize with ground }
     (spec.tokenLines source).foldl (fun acc line =>
+      let brushes := Listing.brushes acc.pal ground covered spec.style #[line]
       usesInlines codeCx acc
-        (line.map (Listing.tokenInline acc.pal ground covered
-          (style := spec.style))).toList) acc
+        (line.map (Listing.paintToken acc.pal ground covered spec.style brushes)).toList) acc
   | .note _ | .rule _ _ _ | .logo _ | .picture _
   | .pagebreak => acc
 

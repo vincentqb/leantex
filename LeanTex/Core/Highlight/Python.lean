@@ -461,7 +461,9 @@ private def step (inner : Src → Array Raw) (s : Src) (m : M) : M :=
     | some .imports => imports s m
     | some .fromimport => fromimport s m
     | some (.str esc q) => strState esc q s m
-  next.getD (m.fallback s .root)
+  match next with
+  | some m' => m'
+  | none => m.fallback s .root
 
 /-- The raw token stream Pygments' `PythonLexer` writes. -/
 public def lex (s : Src) : Array Raw :=

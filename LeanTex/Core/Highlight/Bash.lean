@@ -201,7 +201,9 @@ private def step (s : Src) (m : M) : M :=
     | some .paren => paren s m
     | some .math => math s m
     | some .backticks => backticks s m
-  next.getD (m.fallback s .root)
+  match next with
+  | some m' => m'
+  | none => m.fallback s .root
 
 /-- The raw token stream Pygments' `BashLexer` writes. -/
 public def lex (s : Src) : Array Raw := drive .root step s
