@@ -195,6 +195,22 @@ def twinBlockChecks (ref : IO.Ref (List String)) : IO Unit := do
     let (tw, back, ds) := roundTrip doc
     t s!"twin: {what} reads back as written and tight ({repr tw})"
       (back.body == doc.body && !ds.any (·.subject == some "md:loose-list"))
+  -- A wrapper the twin writes as its body — a resolved step, a role — is
+  -- opened inside an item, so the item's paragraph and the list nested under
+  -- it stay tight; and a first block that writes nothing leaves the marker to
+  -- the next one, which would otherwise stand after an empty item.
+  for (what, doc, want) in [
+      ("a stepped item's paragraph and its nested list",
+        ({ body := #[.list false #[#[.onSteps { first := 2, last := none } #[.para #[.text "first"],
+          .role "in-paragraph" #[inner "a"]]]]] } : Ir.Doc),
+        #[Ir.Block.list false #[#[.para #[.text "first"], inner "a"]]]),
+      ("an item opening with a note",
+        { body := #[.list false #[#[.note #[.para #[.text "aside"]], .para #[.text "x"]]]] },
+        #[Ir.Block.list false #[#[.para #[.text "x"]]]])] do
+    let (tw, back, ds) := roundTrip doc
+    t s!"twin: {what} reads back tight, its blocks at the item's level ({repr tw})"
+      (back.body == want && !ds.any (·.subject == some "md:loose-list") &&
+        MarkdownDoc.emit back == tw)
   -- An empty quotation is still there.
   let (tw, back, _) := roundTrip { body := #[.quote #[]] }
   t s!"twin: an empty quotation reads back ({repr tw})"

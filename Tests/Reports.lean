@@ -1123,7 +1123,8 @@ def reports : List Report := [
       "the seventh added row, a code-set URL, holds a face the base twin kept and the first fix lost: it passes on the base tree and fails on that fix's tree, with four of the other six",
       "the theorems pinned here did not exist on the base tree, where the agreement between the surfaces and what an include means was prose",
       "the door checks are a measurement, not a guard seen failing: the elaborator they measure is the base tree's, unchanged here, and each fails on a planted divergent door; under one surface at a time, over a synthetic family reaching every markdown node to depth two and over every CommonMark example, the neutral host's whole document is the file alone under the host's surface, and a frame whose content is the include is the frame with the file's raws in its place, with the call written tight and on a line of its own",
-      "a host's redefinition of each ordinary vocabulary control reaches the included file as it reaches the same raws spliced at the call"]
+      "a host's redefinition of each ordinary vocabulary control reaches the included file as it reaches the same raws spliced at the call",
+      "two rows added in the third review round fail on the second round's twin: an item whose paragraph and nested list sit in a resolved step wrote a blank line between them, which a CommonMark reader reads as a loose list, and an item opening with a block that writes nothing wrote an empty item before its text"]
     state := .guarded "fa516a82" .before .author }
 ]
 

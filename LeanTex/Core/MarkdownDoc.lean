@@ -525,6 +525,29 @@ private def leadsWithListColumns : List (BoxWidth × Array Block) → Bool
 
 end
 
+/-- Where an item's writing stands: the text so far; the marker's line,
+while no block has written anything to take it; and the list written last,
+with whether it took the other marker, as `blocksInto` tracks it. -/
+private structure ItemPen where
+  acc : String
+  first : Option String
+  prev : Option (Bool × Bool)
+
+/-- An item's block written: the first block that writes anything takes the
+marker's line (`itemHead`); a later one stands on its own lines under the
+content column, a blank line before it — a paragraph after a paragraph is a
+second paragraph, not its continuation — unless it opens with a list, which
+nests under what precedes it with none. Each block stands with its own
+trailing blank lines off, so an item ends on its last line: a sibling marker
+needs no blank line to open, and a blank line before it would make the list
+loose. A block that writes nothing leaves the pen where it was. -/
+private def itemPut (cont : String) (pen : ItemPen) (leadsList : Bool) (s : String) : ItemPen :=
+  let s := trimBlank s
+  if s.isEmpty then pen
+  else match pen.first with
+    | some first => { acc := pen.acc ++ itemHead first cont s ++ "\n", first := none, prev := none }
+    | none => { pen with acc := pen.acc ++ (if leadsList then "" else "\n") ++ s ++ "\n", prev := none }
+
 mutual
 
 /-- One block onto `acc`. `ind` is the current line prefix (list nesting,
@@ -658,6 +681,7 @@ private def blockInto (loc : Locale) (summary ind acc : String) : Block → Stri
   | .bibliography _ _ items =>
     let entries := bibItemsText ind items
     acc ++ entries
+termination_by structural b => b
 
 /-- A block sequence. Two lists of one kind side by side are two lists in
 the IR, and markdown reads them as one unless their markers differ (§5.3),
@@ -671,58 +695,100 @@ private def blocksInto (loc : Locale) (summary ind acc : String)
     let text := itemsInto loc summary ind ordered alt 1 "" items.toList
     blocksInto loc summary ind (acc ++ text ++ "\n") (some (ordered, alt)) rest
   | b :: rest => blocksInto loc summary ind (blockInto loc summary ind acc b) none rest
+termination_by structural bs => bs
 
 private def columnsInto (loc : Locale) (summary ind acc : String) :
     List (BoxWidth × Array Block) → String
   | [] => acc
   | (_, body) :: rest => columnsInto loc summary ind (blocksInto loc summary ind acc none body.toList) rest
+termination_by structural cols => cols
 
 /-- List items: `- ` or `k. `, a first paragraph on the marker's line, and
 every further line of the item indented by the marker's width — the
-content column CommonMark reads a list item's continuation at (§5.2). -/
+content column CommonMark reads a list item's continuation at (§5.2). An
+item no block writes anything for is its marker alone. -/
 private def itemsInto (loc : Locale) (summary ind : String) (ordered alt : Bool) (k : Nat)
     (acc : String) : List (Array Block) → String
   | [] => acc
   | item :: rest =>
     let marker := if ordered then s!"{k}{if alt then ")" else "."} " else if alt then "+ " else "- "
     let cont := ind ++ String.ofList (List.replicate marker.length ' ')
-    let acc := itemInto loc summary (ind ++ marker) cont acc item.toList
+    let pen := itemSeq loc summary cont { acc, first := some (ind ++ marker), prev := none }
+      item.toList
+    let acc := match pen.first with
+      | some m => pen.acc ++ m ++ "\n"
+      | none => pen.acc
     itemsInto loc summary ind ordered alt (k + 1) acc rest
+termination_by structural items => items
 
-/-- One item: its first block's first line on the marker's line — any
-block may open there (§5.2) — every other line under the content column,
-then the rest. A first block that writes nothing leaves the marker alone.
-A list the item opens with is the list its rest's next list follows. -/
-private def itemInto (loc : Locale) (summary first cont acc : String) : List Block → String
-  | [] => acc ++ first ++ "\n"
-  | .list ordered items :: rest =>
-    -- the list as `blockInto` writes one, under the content column
-    let head := itemHead first cont (itemsInto loc summary cont ordered false 1 "" items.toList)
-    itemRestInto loc summary cont (acc ++ head ++ "\n") (some (ordered, false)) rest
-  | b :: rest =>
-    let head := itemHead first cont (blockInto loc summary cont "" b)
-    itemRestInto loc summary cont (acc ++ head ++ "\n") none rest
-
-/-- An item's blocks after its first, a blank line before each — a
-paragraph after a paragraph is a second paragraph, not its continuation —
-except one that opens with a list, which nests under what precedes it with
-none. Each block stands with its own trailing blank lines off, so an item
-ends on its last line: a sibling marker needs no blank line to open, and a
-blank line before it would make the list loose. A list after a list of its
+/-- An item's blocks, in order, from where the pen stands (`itemPut`). The
+wrappers the twin writes as their bodies — a role, a spacing scope, a
+backend conditional, a resolved step, an alignment, a block link, columns —
+are opened rather than written, so their blocks stand at the item's own
+level: a paragraph and the list nested under it keep no blank line between
+them, as the tight item the IR holds is written. A list after a list of its
 kind takes the other marker, as in a block sequence: the marker alone makes
-it a list of its own (§5.3). A block that writes nothing leaves no line. -/
-private def itemRestInto (loc : Locale) (summary cont acc : String)
-    (prev : Option (Bool × Bool)) : List Block → String
-  | [] => acc
-  | .list ordered items :: rest =>
-    let alt := listAlt prev ordered
-    let text := itemsInto loc summary cont ordered alt 1 "" items.toList
-    itemRestInto loc summary cont (acc ++ text) (some (ordered, alt)) rest
+it a list of its own (§5.3). -/
+private def itemSeq (loc : Locale) (summary cont : String) (pen : ItemPen) :
+    List Block → ItemPen
+  | [] => pen
   | b :: rest =>
-    let s := trimBlank (blockInto loc summary cont "" b)
-    let acc := if s.isEmpty then acc
-      else acc ++ (if leadsWithList b then "" else "\n") ++ s ++ "\n"
-    itemRestInto loc summary cont acc none rest
+    -- `b` stays the list's own element in every arm, the argument the
+    -- writer's structural recursion descends through
+    let write (_ : Unit) := itemPut cont pen (leadsWithList b) (blockInto loc summary cont "" b)
+    let pen := match (generalizing := false) b with
+      | .list ordered items =>
+        match pen.first with
+        | some first =>
+          -- the list as `blockInto` writes one, under the content column
+          let head := itemHead first cont (itemsInto loc summary cont ordered false 1 "" items.toList)
+          { acc := pen.acc ++ head ++ "\n", first := none, prev := some (ordered, false) }
+        | none =>
+          let alt := listAlt pen.prev ordered
+          { pen with acc := pen.acc ++ itemsInto loc summary cont ordered alt 1 "" items.toList,
+                     prev := some (ordered, alt) }
+      | .role _ body => itemSeq loc summary cont pen body.toList
+      | .spaced _ body => itemSeq loc summary cont pen body.toList
+      | .only _ body => itemSeq loc summary cont pen body.toList
+      | .onSteps _ body => itemSeq loc summary cont pen body.toList
+      | .altSteps _ active otherwise =>
+        itemSeq loc summary cont (itemSeq loc summary cont pen active.toList) otherwise.toList
+      | .center body => itemSeq loc summary cont pen body.toList
+      | .ragged _ body => itemSeq loc summary cont pen body.toList
+      | .link _ body => itemSeq loc summary cont pen body.toList
+      | .columns cols => itemColumns loc summary cont pen cols.toList
+      | .para _ => write ()
+      | .equation _ _ => write ()
+      | .section _ _ _ _ => write ()
+      | .quote _ => write ()
+      | .abstract _ => write ()
+      | .titled _ _ _ => write ()
+      | .bibliography _ _ _ => write ()
+      | .verbatim _ _ _ => write ()
+      | .algorithm _ _ _ => write ()
+      | .nav _ _ => write ()
+      | .note _ => write ()
+      | .framefoot _ => write ()
+      | .setPalette _ => write ()
+      | .setTokens _ => write ()
+      | .pagebreak => write ()
+      | .logo _ => write ()
+      | .rule _ _ _ => write ()
+      | .picture _ => write ()
+      | .frame _ _ _ _ _ => write ()
+      | .table _ _ _ _ _ _ => write ()
+      | .float _ _ _ _ _ => write ()
+    itemSeq loc summary cont pen rest
+termination_by structural bs => bs
+
+/-- Columns inside an item, opened as `columnsInto` writes them: each
+column's blocks in turn. -/
+private def itemColumns (loc : Locale) (summary cont : String) (pen : ItemPen) :
+    List (BoxWidth × Array Block) → ItemPen
+  | [] => pen
+  | (_, body) :: rest =>
+    itemColumns loc summary cont (itemSeq loc summary cont pen body.toList) rest
+termination_by structural cols => cols
 
 end
 
