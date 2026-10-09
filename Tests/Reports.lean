@@ -145,7 +145,7 @@ promoted.
 open LeanTex.Core
 open DiagAudit (Pin suiteText)
 open Tests (mintedSettingsChecks listingHighlightChecks listingPaletteContinuationChecks
-  shellReplyChecks listingProviderChecks listingStyleTableChecks publicationPathChecks
+  shellReplyChecks shellHighlightChecks listingProviderChecks listingStyleTableChecks publicationPathChecks
   htmlContainedChecks htmlContainedRawContextChecks htmlContainedPublicationChecks htmlContainedSvgColorChecks
   htmlContainedCliChecks htmlContainedCorpusChecks
   listingPaletteAuditChecks listingRoleEpochChecks svgAssetChecks animatedGraphicsChecks
@@ -624,7 +624,7 @@ def reports : List Report := [
     state := .guarded "75c71d1e" .before .author },
   { id := "R77", date := "2026-10-02"
     what := "shell listings retained their text but lacked language classification and the resulting syntax colors in both artifacts"
-    pins := [check% shellReplyChecks, check% listingProviderChecks,
+    pins := [check% shellReplyChecks, check% listingProviderChecks, check% shellHighlightChecks,
       thm% ListingReply.lookup_source_exact, thm% ListingReply.plainAnswer_source_exact]
     accept := ["disabling consumption of checked replies fails 36 actual PDF and typed HTML paint assertions; installed language accuracy is checked separately"]
     state := .guarded "07e3714e" .before .author },
@@ -761,7 +761,7 @@ def reports : List Report := [
     state := .guarded "45f6ec8a" .before .author },
   { id := "R90", date := "2026-10-06"
     what := "a shell comment on the last source line used plain text ink instead of the colour of earlier comments"
-    pins := [check% shellReplyChecks, check% listingProviderChecks,
+    pins := [check% shellReplyChecks, check% listingProviderChecks, check% shellHighlightChecks,
       thm% ListingReply.ofTokens_source_exact]
     accept := ["sixty-three artifact assertions failed before the lexer boundary supplied a terminal newline, covering shell aliases, both listing styles and both source surfaces",
       "the repaired path paints final and earlier comments alike in native glyphs, emitted PDF commands and typed HTML; validation preserves all authored whitespace and the original content key",

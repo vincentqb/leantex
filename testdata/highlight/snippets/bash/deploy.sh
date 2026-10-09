@@ -24,6 +24,7 @@ build() {
 case "${1:-all}" in
   all|full) build all ;;
   quick) build quick && echo done ;;
+  dry) echo do-nothing then-wait in#place if$x; done=1 ;;
   *) echo "unknown target: $1"; exit 2 ;;
 esac
 

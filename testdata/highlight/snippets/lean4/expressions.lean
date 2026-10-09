@@ -10,6 +10,8 @@ def greet (name : String) : String :=
 
 def pick (xs : Array Nat) (i : Nat) : Nat := xs[i]! + xs[0]?.getD 7
 
+def third (xs : Array Nat) (h : 2 < xs.size) : Nat := xs[2]'h + xs[1]!
+
 def shapes : List (ℕ × ℝ) := [(1, 2.5), (2, 3.0e2), (3, .5)]
 
 instance : ToString Unit := ⟨fun _ => "()"⟩

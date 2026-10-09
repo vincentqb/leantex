@@ -6,14 +6,15 @@ import LeanTex.Core.PygmentsLexData
 What the native lexers share: the text they read, the Unicode classes
 their patterns name, word lists, and the raw token stream they write.
 
-Each lexer mirrors one Pygments `RegexLexer` (pygments/lexer.py): at every
+Each lexer mirrors one Pygments `RegexLexer` (pygments/lexer.py, BSD-licensed:
+testdata/highlight/LICENSE-Pygments): at every
 position the current state's rules are tried in order and the first match
 wins; `#pop` keeps the root state; when nothing matches, a newline resets
 the stack to the root and is whitespace, and any other scalar is one
 `Error` token. A Python `re` pattern's semantics is what a rule's code
 reproduces, so a class it names is Python's: `\w`, `\s` and `\d` are the
-installed Python's Unicode answers, generated into `PygmentsLexData` with
-the rest of the lexers' data. A `words` list matches its longest listed
+Unicode answers of the Python the data was generated under, written into
+`PygmentsLexData` with the rest of the lexers' data. A `words` list matches its longest listed
 word that the suffix admits, which the generator checks against Pygments'
 own compiled pattern before writing the list.
 -/
@@ -309,20 +310,51 @@ public def fallback (m : Machine σ) (s : Src) (root : σ) : Machine σ :=
   if s.is p '\n' then { m.tok p (p + 1) Ty.whitespace with stack := #[root] }
   else m.tok p (p + 1) Ty.error
 
+private theorem fallback_pos (m : Machine σ) (s : Src) (root : σ) :
+    (m.fallback s root).pos = m.pos + 1 := by
+  simp only [fallback]
+  split <;> simp [tok]
+
+/-- Whether a step from `m` to `next` read a scalar or popped a state:
+what every rule of a terminating Pygments lexer does. -/
+private def advanced (m next : Machine σ) : Prop :=
+  m.pos < next.pos ∨ (next.pos = m.pos ∧ next.stack.size < m.stack.size)
+
+private instance (m next : Machine σ) : Decidable (advanced m next) :=
+  inferInstanceAs (Decidable (m.pos < next.pos ∨ (next.pos = m.pos ∧ next.stack.size < m.stack.size)))
+
+/-- One step from `m`, starting from an empty token array; where the step
+would not advance, the fallback's instead. -/
+private def advance (root : σ) (step : Src → Machine σ → Machine σ) (s : Src)
+    (m : Machine σ) : { next : Machine σ // m.advanced next } :=
+  let m0 : Machine σ := { m with out := #[] }
+  let next := step s m0
+  if h : m0.advanced next then ⟨next, h⟩
+  else ⟨m0.fallback s root, Or.inl (by
+    show m.pos < (m0.fallback s root).pos
+    rw [fallback_pos]
+    exact Nat.lt_succ_self _)⟩
+
 end Machine
 
-/-- Run a lexer whose every step consumes a scalar or pops a state no
-consuming step had not pushed: at most `2n + 1` steps for `n` scalars. A step
-starts from an empty token array, so the machine it holds back for the
-fallback costs nothing to share, and its tokens join the stream after it. -/
+/-- Run a lexer from its root state to the end of the text. A step that
+neither reads a scalar nor pops a state is a rule Pygments would apply
+forever; it is read as no match, and the fallback takes the scalar, so the
+run ends by well-founded recursion on the unread scalars, then the stack's
+depth. Each step's tokens join the stream after it. -/
 public def drive {σ : Type} (root : σ) (step : Src → Machine σ → Machine σ) (s : Src) :
-    Array Raw := Id.run do
-  let mut out : Array Raw := #[]
-  let mut m : Machine σ := { out := #[], pos := 0, stack := #[root] }
-  for _ in [0:2 * s.size + 1] do
-    if m.pos ≥ s.size then break
-    m := step s { m with out := #[] }
-    out := out ++ m.out
-  return out
+    Array Raw :=
+  go { out := #[], pos := 0, stack := #[root] } #[]
+where
+  go (m : Machine σ) (out : Array Raw) : Array Raw :=
+    if _hlt : m.pos < s.size then
+      match m.advance root step s with
+      | ⟨next, _h⟩ => go next (out ++ next.out)
+    else out
+  termination_by (s.size - m.pos, m.stack.size)
+  decreasing_by
+    simp only [Machine.advanced] at *
+    rw [Prod.lex_def]
+    omega
 
 end LeanTex.Core.Highlight

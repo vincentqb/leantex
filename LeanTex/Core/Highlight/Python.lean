@@ -5,7 +5,8 @@ import LeanTex.Core.PygmentsLexData
 
 /-!
 Pygments' `PythonLexer` (pygments/lexers/python.py), rule for rule; the rule
-structure it mirrors is testdata/highlight/pygments-rules.txt.
+structure it mirrors is testdata/highlight/pygments-rules.txt. A port of
+BSD-licensed code: Pygments' licence is testdata/highlight/LICENSE-Pygments.
 
 A string state is one of Pygments' combined states: the escape rules its
 prefix selects (`Esc`), then its quote's own rules, then the formatting
@@ -134,10 +135,11 @@ private def quoteAt (s : Src) (e : Nat) : Option (Quote × Nat) :=
 /-- `expr`'s twenty string openings, in their order: the prefix's end, the
 escapes it selects, the quote and the quote's end. Within one prefix
 pattern only one alternative can stand before a quote, so the order of
-its quote rules is `quoteAt`'s. -/
+its quote rules is `quoteAt`'s. A template string (`t`) opens as an
+f-string does. -/
 private def stringStart (s : Src) (p : Nat) : Option (Nat × Esc × Quote × Nat) := Id.run do
   let r (i : Nat) := s.is i 'r' || s.is i 'R'
-  let f (i : Nat) := s.is i 'f' || s.is i 'F'
+  let f (i : Nat) := s.is i 'f' || s.is i 'F' || s.is i 't' || s.is i 'T'
   let b (i : Nat) := s.is i 'b' || s.is i 'B'
   let u (i : Nat) := s.is i 'u' || s.is i 'U'
   let opening (e : Nat) (esc : Esc) := (quoteAt s e).map fun (q, qe) => (e, esc, q, qe)
@@ -244,16 +246,28 @@ private def root (s : Src) (m : M) : Option M := Id.run do
     return some (m.tok p e Ty.keywordConstant)
   if let some (w, e) := softKeyword s p then
     return some (((m.tok p w Ty.text).tok w e Ty.keyword).push .softInner)
-  let openers : List (Array Char × String × St) :=
-    [(#['d', 'e', 'f'], Ty.keyword, .funcname), (#['c', 'l', 'a', 's', 's'], Ty.keyword, .classname),
-     (#['f', 'r', 'o', 'm'], Ty.keywordNamespace, .fromimport),
-     (#['i', 'm', 'p', 'o', 'r', 't'], Ty.keywordNamespace, .imports)]
-  for (word, kind, st) in openers do
+  let opener (word : Array Char) (kind : String) (st : St) : Option M :=
     if s.lit p word then
       let e := p + word.size
       let w := blanksEnd s e
-      if w > e then return some (((m.tok p e kind).tok e w Ty.whitespace).push st)
-  return expr s m
+      if w > e then some (((m.tok p e kind).tok e w Ty.whitespace).push st) else none
+    else none
+  let fromWord := #['f', 'r', 'o', 'm']
+  let importWord := #['i', 'm', 'p', 'o', 'r', 't']
+  let lazy (word : Array Char) (st : St) : Option M := Id.run do
+    if !(s.lineStart p && s.lit p #['l', 'a', 'z', 'y']) then return none
+    let w := blanksEnd s (p + 4)
+    if w == p + 4 || !s.lit w word then return none
+    let e := w + word.size
+    let w2 := blanksEnd s e
+    if w2 == e then return none
+    return some (((((m.tok p (p + 4) Ty.keywordNamespace).tok (p + 4) w Ty.whitespace).tok w e
+      Ty.keywordNamespace).tok e w2 Ty.whitespace).push st)
+  return opener #['d', 'e', 'f'] Ty.keyword .funcname <|>
+    opener #['c', 'l', 'a', 's', 's'] Ty.keyword .classname <|>
+    lazy fromWord .fromimport <|> lazy importWord .imports <|>
+    opener fromWord Ty.keywordNamespace .fromimport <|>
+    opener importWord Ty.keywordNamespace .imports <|> expr s m
 
 /-- `(=\s*)?(\![sraf])?` from `p`, before the `}` or `:` that closes a
 replacement field. -/

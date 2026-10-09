@@ -9,8 +9,9 @@ import LeanTex.Core.PygmentsLexData
 
 /-!
 The native listing lexers: Pygments' own, for the languages documents in
-use write, mirrored rule for rule so a listing's token types are the ones
-the installed provider would answer, with no process and no Python on the
+use write, mirrored rule for rule from one release
+(`PygmentsLexData.pygmentsVersion`), so a listing's token types are the
+ones that release's lexers write, with no process and no Python on the
 render path. A language with no lexer here still reaches the provider.
 
 The mirror is held to Pygments three ways: the rule structure it implements
@@ -58,7 +59,7 @@ public def Lexer.pygmentsAlias : Lexer → String
 holds it equal to `PygmentsLexData.rulesDigest`; a regeneration from a
 Pygments whose rules moved breaks that until the mirror follows. -/
 public def mirrorsRules : String :=
-  "e16708cbf88fea57808fb8615c1de976772fa8ea7240fac3feec3208925ee1f5"
+  "b84faed2c9d54c80a464be2a057f2bf7700eb9c4e64fa56e1f800bd032ca3256"
 
 /-- The raw token stream the mirrored Pygments lexer writes for the whole
 text, before any filter. -/

@@ -8,6 +8,7 @@ fmt = "{0} and {name!r:>10} and {{literal}} and {:,.2f}".format(1, name=2, x=3)
 old = "%(count)05d items, %-8s|%%" % {"count": 3}
 fs = f"total={total:>{width}} {value!s} {d['key']} {{braces}}"
 rfs = rf"\d{count}+" + fr'{x}\n'
+tpl = t"Hello {name}!" + Tr'{path}\d' + rt"""{x!r}""" + T'{{}}'
 nested = f"{', '.join(f'{k}={v}' for k, v in items)}"
 multi = f"""
     {header}

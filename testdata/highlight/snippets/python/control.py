@@ -29,6 +29,7 @@ finally:
     del cache[key]
 global counter
 assert isinstance(obj, (int, float)), "number expected"
+frozen = frozendict(tray=1) or sentinel
 yield from generator()
 while True:
     break

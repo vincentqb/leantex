@@ -5,7 +5,8 @@ import LeanTex.Core.PygmentsLexData
 
 /-!
 Pygments' `Lean4Lexer` (pygments/lexers/lean.py), rule for rule; the rule
-structure it mirrors is testdata/highlight/pygments-rules.txt. Every state
+structure it mirrors is testdata/highlight/pygments-rules.txt. A port of
+BSD-licensed code: Pygments' licence is testdata/highlight/LICENSE-Pygments. Every state
 falls through to a rule that consumes, except `string`, whose unlisted
 escapes take the shared fallback.
 -/

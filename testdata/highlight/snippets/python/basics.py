@@ -5,6 +5,9 @@ from __future__ import annotations
 import json, os.path as osp
 from collections import defaultdict
 from . import sibling
+lazy import tomllib
+lazy from typing import Final
+  lazy import indented
 
 @dataclass(frozen=True)
 class Seedling(Base):

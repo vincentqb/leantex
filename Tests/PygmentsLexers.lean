@@ -83,6 +83,10 @@ def pygmentsLexerChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "pygments lexers: a Lean proof hole is Generic.Error, as Pygments' Lean 4 lexer types it"
     ((PygmentsLexers.native .lean4 "theorem t : p := sorry").any fun (_, k, text) =>
       k == Ty.genericError && text == "sorry")
+  t "pygments lexers: a step that neither reads nor pops still ends, the fallback taking each scalar"
+    (drive () (fun _ m => m) (Src.ofString "a\nb") ==
+        #[⟨0, 1, Ty.error⟩, ⟨1, 2, Ty.whitespace⟩, ⟨2, 3, Ty.error⟩] &&
+      drive () (fun _ m => m.push ()) (Src.ofString "ab") == #[⟨0, 1, Ty.error⟩, ⟨1, 2, Ty.error⟩])
   t "pygments lexers: the ASCII fast paths answer as the class tables do"
     ((List.range 128).all fun n => asciiAgrees (Char.ofNat n))
   t "pygments lexers: every alias selects its lexer, in any case, and no other"

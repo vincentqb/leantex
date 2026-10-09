@@ -5,7 +5,8 @@ import LeanTex.Core.Highlight.Bash
 
 /-!
 Pygments' `BashSessionLexer` (`ShellSessionBaseLexer`,
-pygments/lexers/shell.py): each line is a prompt and the code after it, a
+pygments/lexers/shell.py; BSD-licensed, its licence is
+testdata/highlight/LICENSE-Pygments): each line is a prompt and the code after it, a
 continuation of a backslash-ended command, or output. A block of prompted
 lines lexes as one Bash text, the prompts inserted back where they stood
 (do_insertions in pygments/lexer.py).
@@ -68,7 +69,7 @@ private def alts : List Re → Re
 
 /-- `_ps1rgx` without its final `\s*` and rest-of-line group, which always
 match: `(?:\[.*?\]|(?:\(\S+\))?(?:| |sh\S*?|\w+\S+[@:]\S+(?:\s+\S+)?|
-\[\S+[@:][^\n]+\].+))\s*[$#%]`. -/
+\[\S+[@:][^\n]+\].+))\s*[$#%❯]`. -/
 private def ps1 : Re :=
   let dot := Re.cls (· != '\n')
   let nonSpace := Re.cls (fun c => !spaceChar c)
@@ -82,7 +83,7 @@ private def ps1 : Re :=
   let bracketHost := seqs [lit '[', plus nonSpace, atColon, plus (.cls (· != '\n')), lit ']',
     plus dot]
   seqs [.alt bracketed (.seq venv (alts [.empty, lit ' ', shell, userHost, bracketHost])),
-    .star space true, .cls (fun c => c == '$' || c == '#' || c == '%')]
+    .star space true, .cls (fun c => c == '$' || c == '#' || c == '%' || c == '❯')]
 
 /-- What the session lexer writes: a type and a length, at the running
 position. -/

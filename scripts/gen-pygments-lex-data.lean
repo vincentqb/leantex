@@ -8,8 +8,12 @@ the repository root with:
 
 The interpreter defaults to `python3`. Pygments is the module it imports,
 or else the wheel TeX Live installs beside its `latexminted` launcher: the
-two places the listing provider reads it from (LeanTex/Cli/ListingHighlight.lean),
-and the second is the one a lualatex build's minted runs.
+two places the listing provider reads it from (LeanTex/Cli/ListingHighlight.lean).
+Which Pygments a lualatex build's minted runs is the build's own choice
+(a project may pin one in a virtual environment ahead of TeX Live's), so
+the mirror tracks one release, the one the data names, and regenerating
+for another is a deliberate step: an interpreter that imports it, such as
+a virtual environment holding `pygments==<version>`, passed as `--python`.
 
 The native lexers (LeanTex/Core/Highlight/) mirror Pygments' Lean 4,
 Python, Bash and Bash-session lexers rule by rule. What they read as data
@@ -128,7 +132,7 @@ expected_ascii = {
 for name, want in expected_ascii.items():
     if ascii_members(name) != want:
         raise SystemExit(f'the ASCII members of \\{name} are not the fast path\'s')
-for letter in 'rfbu':
+for letter in 'rfbtu':
     folded = {chr(c) for c in range(0x110000) if re.fullmatch('(?i)' + letter, chr(c))}
     if folded != {letter, letter.upper()}:
         raise SystemExit(f'(?i){letter} matches more than its two ASCII cases')
@@ -149,7 +153,7 @@ def alternation(state_rules, index, shape, key):
 
 
 bash = BashLexer.tokens
-alternation(bash['basic'], 0, r'\\b\(([a-z|]+)\)\(\\s\*\)\\b', 'bashKeywords')
+alternation(bash['basic'], 0, r'\\b\(([a-z|]+)\)\(\?!\[\\w#\$\?!\*@-\]\)\(\\s\*\)', 'bashKeywords')
 alternation(bash['basic'], 1, r'\\b\(([a-z|]+)\)\(\?=\[\\s\)`\]\)', 'bashBuiltins')
 py = PythonLexer.tokens
 alternation(py['builtins'], 1, r'\(\?<!\\\.\)\(([A-Za-z|]+)\)\\b', 'pythonPseudo')

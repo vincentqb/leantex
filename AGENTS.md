@@ -60,7 +60,12 @@ is skipped.
   `--pages <fixture>`) when touching line breaking, pagination, protrusion
   or font fallback: the typeset tier's counts per `testdata/typeset` fixture
   and the lines and page turns behind them (the tier itself gates in
-  `scoreboard --check`).
+  `scoreboard --check`), and `scripts/highlight-diff.lean` when touching
+  the native lexers (`LeanTex/Core/Highlight/`) or their data — Pygments
+  against the mirrors, token for token, over the snippets, seeded fuzz and
+  local documents' listings; `--python` names an interpreter that imports
+  the release `PygmentsLexData.pygmentsVersion` records, and `--record`
+  regenerates the hermetic fixtures `lake test` holds them to.
 - `scripts/html-oracle.lean` when touching what a deck stage holds (type,
   leading, gaps, tables): its `stage-fit` row holds every frame the PDF
   page holds to its stage at the deck's own aspect in Chromium, not a pixel

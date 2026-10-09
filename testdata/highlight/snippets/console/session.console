@@ -16,3 +16,5 @@ dry run complete
 root
 % git status
 nothing to commit
+❯ ls beds
+north south

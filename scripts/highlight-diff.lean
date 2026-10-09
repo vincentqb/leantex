@@ -3,8 +3,8 @@ Differential test: the native listing lexers against the installed
 Pygments. Run from the repository root, after `lake build LeanTex`, with:
 
   lake env lean --run scripts/highlight-diff.lean [--fuzz N] [--seed S]
-      [--lexer NAME] [--python P] [--docs FILE...]
-  lake env lean --run scripts/highlight-diff.lean --record
+      [--lexer NAME] [--python P] [--any-version] [--docs FILE...]
+  lake env lean --run scripts/highlight-diff.lean --record [--python P]
   lake env lean --run scripts/highlight-diff.lean --selftest
 
 Kept out of `lake test` because it needs Python and Pygments: the suite
@@ -12,18 +12,22 @@ holds the lexers to the token streams `--record` writes instead
 (testdata/highlight/pygments-tokens.json, from the invented snippets in
 testdata/highlight/snippets/<alias>/).
 
-Pygments is the module `python3 -I` imports, or else the wheel TeX Live
-installs beside `latexminted`, as the listing provider and the data
-generator read it. Each listing is lexed with the trailing newline the
-provider adds, through the lexer the alias selects; `lean`, which Pygments
-registers for its Lean 3 lexer, is compared with its Lean 4 lexer (see
-`Highlight.leanIsLean4`).
+Pygments is the module `python3 -I` (or `--python P`) imports, or else
+the wheel TeX Live installs beside `latexminted`, as the listing provider
+and the data generator read it. It must be the release the lexers mirror
+(`PygmentsLexData.pygmentsVersion`): another release's differences are
+its rules', not the mirror's, so the run refuses it unless `--any-version`
+asks for that drift as a report. Each listing is lexed with the trailing
+newline the provider adds, through the lexer the alias selects; `lean`,
+which Pygments registers for its Lean 3 lexer, is compared with its Lean 4
+lexer (see `Highlight.leanIsLean4`).
 
 Corpora: the invented snippets; `--fuzz N` random texts per lexer (default
 2000), drawn from each language's fragments with seed `--seed`; and the
 listings of every `--docs` file, a LaTeX source's minted and lstlisting
-environments or a markdown file's fences, read where they stand and never
-copied.
+environments (an lstlisting's language from its own options or the last
+`\lstset` before it) or a markdown file's fences, read where they stand and
+never copied.
 
 Three comparison levels, each failing on its first difference:
 - `raw`: the token stream, every token's start, end and type;
@@ -53,6 +57,7 @@ import json
 import pathlib
 import shutil
 import sys
+import unicodedata
 
 try:
     import pygments
@@ -113,6 +118,7 @@ for name in batch['styles']:
     style = get_style_by_name(name)
     colours[name] = {t: colour(style, t) for t in sorted(seen)}
 json.dump({'pygments': pygments.__version__, 'python': sys.version.split()[0],
+           'unicode': unicodedata.unidata_version,
            'answers': answers, 'colours': colours}, sys.stdout, ensure_ascii=True)
 "#
 
@@ -241,7 +247,8 @@ def fragments : Lexer → Array String
       "!=", "=", "+", "-", "*", "/", "#", "#print", "attribute", "where", "in", "with",
       "match", "do", "let", "if", "then", "else", "by", "at", "calc", "show", "from",
       "obtain", "namespace", "end", "open", "instance", "structure", "inductive", "xs[i]!",
-      "⁻¹", "▸", "⦃", "⦄", "↦", "⌞", "⬝", "٣", "x.٣"]
+      "⁻¹", "▸", "⦃", "⦄", "↦", "⌞", "⬝", "٣", "x.٣", "]!", "]?", "]'", "xs[0]?", "a[i]'h",
+      "]'h", "] !", "]]!"]
   | .python =>
     #["def ", "class ", "import ", "from ", " as ", "@decorator", "@", "#", "# comment",
       "#!/usr/bin/env python", "#!", "\\", "\\\n", "\n", "\n", "    ", " ", "\t", "r", "R",
@@ -258,7 +265,8 @@ def fragments : Lexer → Array String
       "is", "not", "and", "or", "éa", "α", "x1", "def", "class", "import", "from", "if",
       "else", "elif", "while", "for", "return", "pass", "with", "try", "except", "raise",
       "global", "nonlocal", "del", "assert", "match x:", "case _:", "case 1 | _:",
-      "match = 1", "obj.print", ".len", "self.x", "__import__", "Ellipsis", "x.self"]
+      "match = 1", "obj.print", ".len", "self.x", "__import__", "Ellipsis", "x.self", "t", "T",
+      "rt", "tr", "Rt", "tR", "lazy import ", "lazy from ", "lazy", "frozendict", "sentinel"]
   | .bash =>
     #["if", "then", "else", "elif", "fi", "for", "in", "do", "done", "while", "until",
       "case", "esac", "function", "select", "break", "continue", "return", "echo", "cd",
@@ -269,12 +277,14 @@ def fragments : Lexer → Array String
       ">>", "&&", "||", "|", "&", ";", ";;", "[", "]", "[[", "]]", "{", "}", "=", "1", "42",
       "2#101", "16#ff", "3# ", "0x1F", "x", "-n", "--flag", "file.txt", "*", "**", "+", "-",
       "/", "%", "^", " ", "  ", "\n", "\n", "\t", "a\\ b", "\"$x\"", "'a b'", "\"a\\\"b\"",
-      "$'a\\'b'", ":-", ":", "é", "x1", "_y", "done2", "ifx", "echo2", "if;", "do\n"]
+      "$'a\\'b'", ":-", ":", "é", "x1", "_y", "done2", "ifx", "echo2", "if;", "do\n", "do-",
+      "fi#", "in$x", "then?", "done!", "else*", "esac@", "for-each", "if é"]
   | .console =>
     #["$ ", "# ", "% ", "> ", "user@host:~$ ", "[user@host dir]$ ", "(venv) $ ", "(venv) ",
       "(venv)", "sh-5.1$ ", "root@box:/# ", "ls -la", "echo hi", "cat <<EOF", "EOF", "\\",
       "output text", "error: x", "  indented", "\n", "\n", "\n", " ", "x=1", "$x", "| grep a",
-      "&& make", "# comment", "[1] done", "user@host ~ % ", "$", "#", "%"]
+      "&& make", "# comment", "[1] done", "user@host ~ % ", "$", "#", "%", "❯ ", "❯", "~ ❯ ",
+      "(venv) ❯ "]
   | .text => #["plain", " ", "\n", "\t", "é", "{}", "\\"]
 
 /-- The scalars a language's patterns divide on, for texts drawn scalar
@@ -282,9 +292,9 @@ by scalar: where fragments exercise rule order, these reach the corners
 of single patterns (a format spec's alternatives, an escape's length). -/
 def alphabet : Lexer → String
   | .lean4 => "abxyzT_'!?.0123456789eE+-\"\\n/-`@[]{}()~:=<>|&λΠΣα₁ℕ→⟨⟩ \n\t"
-  | .python => "\"'{}%:!.[]()<>=^,-+ #0123456789xXeEjoObBrRfFuUNsadgn_\\\n\t@*hlL"
+  | .python => "\"'{}%:!.[]()<>=^,-+ #0123456789xXeEjoObBrRfFtTuUNsadgn_\\\n\t@*hlL"
   | .bash => "$\"'`(){}[]<>|&;=#:-+*/\\\nabefinortuxEOF019_ \t!?@"
-  | .console => "$#%> ()[]@:~/\\\nabuserhost019 \t-|"
+  | .console => "$#%> ()[]@:~/\\\nabuserhost019 \t-|❯"
   | .text => "ab \n\t"
 
 /-- A seeded draw: the state threads through every choice. -/
@@ -358,7 +368,7 @@ def pyQuotes : Array String := #["'", "\"", "'''", "\"\"\""]
 
 def pyString (d : Draw) : Draw :=
   let d := d.oneOf #["", "", "r", "R", "u", "U", "b", "B", "f", "F", "rb", "bR", "Rb", "fr",
-    "rF", "ur", "bu"]
+    "rF", "ur", "bu", "t", "T", "rt", "tR", "Rt", "tr", "bt", "ft"]
   let (q, d) := d.nat pyQuotes.size
   let quote := pyQuotes[q]?.getD "'"
   let d := (d.add quote).times 6 pyStringPart
@@ -375,7 +385,8 @@ def pyLine (d : Draw) : Draw :=
     | 0 => (d.oneOf #["match ", "case ", "match", "case\t"]).times 3 fun d =>
         d.oneOf #["x", "_", " ", "(", "[a, _]", ":", "=", ".y", "if", "_x", "a_", "None", "|", ")"]
     | 1 => (d.oneOf #["def ", "def\\\n ", "class ", "class\t"]).oneOf #["f", "__init__", "1x", "é", "(", ""]
-    | 2 => (d.oneOf #["import ", "from "]).times 5 fun d =>
+    | 2 => (d.oneOf #["import ", "from ", "lazy import ", "lazy from ", "lazy\\\n import ",
+        "lazy  from\t", "lazy import", "lazyimport ", "lazy  x"]).times 5 fun d =>
         d.oneOf #["os", ".", " ", "as", " as ", " as", " asx", " as\n", ",", " , ", "import",
           " import ", " importx", "None", " None", "x.y", "\n"]
     | 3 => d.oneOf #["\"\"\"doc\"\"\"", "r'''doc'''", "\"\"\"open", "ub\"\"\"x\"\"\"", "  \n  \"\"\"x\"\"\""]
@@ -385,7 +396,7 @@ def pyLine (d : Draw) : Draw :=
         "__init__", "ValueError", "async for", "yield from", "yield", "await", "not", "in", "is",
         "isinstance", "True", "None", "lambda", "@", "@deco", "!=", ":=", "**", "->", "$", "?"]
     | 7 => d.oneOf #["#!/usr/bin/env python", "# note", "\\", "\\\n", "#", "#!"]
-    | 8 => (d.add "f\"").times 3 (fun d => d.oneOf #["{", "}", "{x", "{x!r}", "{x!f}", "{x!z}",
+    | 8 => (d.oneOf #["f\"", "t\"", "rt\"", "T\""]).times 3 (fun d => d.oneOf #["{", "}", "{x", "{x!r}", "{x!f}", "{x!z}",
         "{x!}", "{x=!s}", "{x = !a:>3}", "{x:>{y}}", "{(a, b)}", "{[1]}", "{ {1} }", "{x = }",
         "{'s'}", "{\"d\"}", "text", "\n"]) |>.add "\""
     | _ => d.times 3 fun d => d.oneOf #["x", " ", "(", ")", "[", "]", "{", "}", ",", ":", ";"]
@@ -404,7 +415,7 @@ def bashPart (d : Draw) : Draw :=
       "\\\"", "\\0", "\\12", "$x", "$(y)", "\n", " "])).oneOf #["'", "\"", ""]
   | 4 => (d.oneOf #["if", "fi", "then", "done", "do", "in", "case", "esac", "elif", "function",
       "until", "select", "for", "while", "return", "break", "continue"]).oneOf #["", " ", "  x",
-      ";", "\n", "x", "2", "-", "#", "$", ")", "  ;", " \n"]
+      ";", "\n", "x", "2", "-", "#", "$", ")", "  ;", " \n", "!", "?", "*", "@", "#x", "=1", "é"]
   | 5 => (d.oneOf #["echo", "cd", "type", "typeset", "test", "time", "times", "true", "exit",
       "read", "readonly", "export", "local", "set", "unset"]).oneOf #["", " ", ")", "`", "x", "2",
       "\n", "-", "("]
@@ -421,7 +432,8 @@ def consoleLine (d : Draw) : Draw :=
   let d := match k with
     | 0 => (d.oneOf #["$ ", "# ", "% ", "$", "user@host:~$ ", "[user@host dir]$ ", "sh-5.1$ ",
         "root@box:/# ", "(x) $ ", "[a]$", "u@h ~ % ", "a@b:c d $ ", "sh$x@y:z # ", "sh$ ",
-        "shell@h:~% ", "sh@x $ ", "[a@b c]d]$ ", "[x]y$ ", "(v)sh$ ", "(v)u@h:~# "]).times 4 bashPart
+        "shell@h:~% ", "sh@x $ ", "[a@b c]d]$ ", "[x]y$ ", "(v)sh$ ", "(v)u@h:~# ", "❯ ", "~ ❯ ",
+        "(v) ❯ ", "u@h:~❯ "]).times 4 bashPart
     | 1 => (d.oneOf #["> ", ">", "> x"]).times 2 bashPart
     | 2 => d.oneOf #["output", "  out", "", "error: $x", "100%", "a # b", "x $ y"]
     | _ => ((d.oneOf #["$ ", "# "]).times 2 bashPart).add "\\"
@@ -440,6 +452,7 @@ def leanPart (d : Draw) : Draw :=
   | 5 => (d.oneOf #["@[", "@[simp", "@[inline]"]).times 2 (fun d =>
       d.oneOf #["x", ",", "]", " ", "def", "inline"])
   | _ => d.oneOf #["#eval", "x#eval", "#check", "sorry", "sorry'", "admit", "Type", "Typeα",
+      "xs[i]!", "xs[i]?", "xs[i]'h", "]!", "]?", "]'", "@[a]!",
       "Sort*", "λ", "Π", "Σ", "α", "πx", "ℕ", "𝒜x", "x₁", "aⁿ", "_x", "x!", "x?", "def", "fun",
       "at", "in"]
 
@@ -512,8 +525,8 @@ def between (s : String) (start stop : String) : Option (String × String) :=
     | _ => none
   | _ => none
 
-/-- minted's `{lang}` (after its options) and lstlisting's `language=`. -/
-def texListings (path : String) (text : String) : Array Case := Id.run do
+/-- minted's `{lang}`, after its options. -/
+def mintedListings (path : String) (text : String) : Array Case := Id.run do
   let mut out := #[]
   let mut rest := text
   for k in [0:text.length] do
@@ -536,6 +549,50 @@ def texListings (path : String) (text : String) : Array Case := Id.run do
                               lexer, source := req.source }
         | [] => pure ()
   return out
+
+/-- The value a listings option list gives `key`, its braces dropped. -/
+def optionValue (opts key : String) : Option String :=
+  (opts.splitOn ",").findSome? fun entry =>
+    match entry.splitOn "=" with
+    | k :: v :: more =>
+      if k.trimAscii.toString != key then none
+      else
+        let v := ("=".intercalate (v :: more)).trimAscii.toString
+        some (if v.startsWith "{" && v.endsWith "}" then ((v.drop 1).dropEnd 1).toString else v)
+    | _ => none
+
+/-- The language `\lstset` lists last in `text`, if any. -/
+def lstsetLanguage (text : String) (current : Option String) : Option String :=
+  ((text.splitOn "\\lstset{").drop 1).foldl (fun lang setting =>
+    (optionValue ((setting.splitOn "}").headD "") "language").orElse fun _ => lang) current
+
+/-- lstlisting's `language=`, from its own options or the `\lstset` in
+force where it stands. -/
+def lstListings (path : String) (text : String) : Array Case := Id.run do
+  let mut out := #[]
+  let pieces := text.splitOn "\\begin{lstlisting}"
+  let mut lang := lstsetLanguage (pieces.headD "") none
+  for (piece, k) in pieces.drop 1 |>.zipIdx do
+    match piece.splitOn "\\end{lstlisting}" with
+    | body :: after@(_ :: _) =>
+      let (opts, src) := if body.startsWith "[" then
+          match body.splitOn "]" with
+          | o :: more => ((o.drop 1).toString, "]".intercalate more)
+          | [] => ("", body)
+        else ("", body)
+      if let some l := (optionValue opts "language").orElse fun _ => lang then
+        let req := ListingReply.Request.ofSource l src
+        if let some lexer := Lexer.ofName? req.language then
+          out := out.push { corpus := "docs", label := s!"{path}#lst{k}", alias := req.language,
+                            lexer, source := req.source }
+      lang := lstsetLanguage ("\\end{lstlisting}".intercalate after) lang
+    | _ => pure ()
+  return out
+
+def texListings (path : String) (text : String) : Array Case :=
+  let minted := mintedListings path text
+  let lst := lstListings path text
+  minted ++ lst
 
 def mdListings (path : String) (text : String) : Array Case := Id.run do
   let mut out := #[]
@@ -575,6 +632,7 @@ def pygmentsName (c : Case) : String :=
 structure Reply where
   version : String
   python : String
+  unicode : String
   answers : Array (Array Tok × Bool)
   colours : Std.HashMap (String × String) String
 
@@ -594,6 +652,7 @@ def runPygments (python : String) (cases : Array Case) : IO Reply := do
       | .error e => die s!"the Pygments reply is not JSON: {e}"
     let version := (json.getObjValAs? String "pygments").toOption.getD "?"
     let py := (json.getObjValAs? String "python").toOption.getD "?"
+    let unicode := (json.getObjValAs? String "unicode").toOption.getD "?"
     let some answers := (json.getObjVal? "answers").toOption.bind (·.getArr?.toOption)
       | die "the reply has no answers"
     let answers ← answers.mapM fun a => match theirTokens a with
@@ -606,7 +665,7 @@ def runPygments (python : String) (cases : Array Case) : IO Reply := do
       let .obj kvs := table | die s!"the {st} colours are not an object"
       for (k, v) in kvs.toArray do
         colours := colours.insert (st, k) ((v.getStr?).toOption.getD "")
-    return { version, python := py, answers, colours }
+    return { version, python := py, unicode, answers, colours }
 
 /-! The levels' blind spots, in both directions. -/
 
@@ -638,6 +697,8 @@ def jsonStr (s : String) : String := (Json.str s).compress
 def record (python : String) : IO UInt32 := do
   let cases ← snippetCases
   let reply ← runPygments python cases
+  if reply.version != PygmentsLexData.pygmentsVersion then
+    die s!"Pygments {reply.version} answers, but the lexers mirror {PygmentsLexData.pygmentsVersion}: record with --python naming an interpreter that imports it"
   let mut out := "{\n  \"pygments\": " ++ jsonStr reply.version ++ ",\n  \"python\": " ++
     jsonStr reply.python ++ ",\n  \"cases\": ["
   for (c, k) in cases.zipIdx do
@@ -662,6 +723,7 @@ structure Opts where
   seed : UInt64 := 20261008
   lexers : List Lexer := Lexer.all
   python : String := "python3"
+  anyVersion : Bool := false
   docs : List String := []
   shown : Nat := 3
 
@@ -677,6 +739,7 @@ def parse : List String → Opts → Except String Opts
     | some l => parse rest { o with lexers := [l] }
     | none => .error s!"no native lexer is named {n}"
   | "--python" :: p :: rest, o => parse rest { o with python := p }
+  | "--any-version" :: rest, o => parse rest { o with anyVersion := true }
   | "--docs" :: rest, o => .ok { o with docs := o.docs ++ rest }
   | a :: _, _ => .error s!"unknown argument {a}"
 
@@ -693,7 +756,12 @@ def main (args : List String) : IO UInt32 := do
   cases := cases ++ (← docCases o.docs).filter fun c => o.lexers.contains c.lexer
   let reply ← runPygments o.python cases
   if reply.version != PygmentsLexData.pygmentsVersion then
-    IO.println s!"highlight-diff: Pygments {reply.version} installed; the lexers mirror {PygmentsLexData.pygmentsVersion}"
+    if o.anyVersion then
+      IO.println s!"highlight-diff: Pygments {reply.version} answers and the lexers mirror {PygmentsLexData.pygmentsVersion}: the differences below are a drift report"
+    else
+      die s!"Pygments {reply.version} answers, but the lexers mirror {PygmentsLexData.pygmentsVersion}: pass --python with an interpreter that imports {PygmentsLexData.pygmentsVersion}, or --any-version for a drift report"
+  if reply.unicode != PygmentsLexData.unicodeVersion then
+    IO.println s!"highlight-diff: this Python's Unicode is {reply.unicode} and the class tables' {PygmentsLexData.unicodeVersion}: scalars either version alone assigns may differ"
   let colourOf := fun (st k : String) => reply.colours.getD (st, k) "?"
   let mut tally : Std.HashMap (String × Lexer) (Nat × Nat × Nat × Nat) := {}
   let mut shown := 0

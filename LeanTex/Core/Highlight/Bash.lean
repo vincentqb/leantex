@@ -5,7 +5,8 @@ import LeanTex.Core.PygmentsLexData
 
 /-!
 Pygments' `BashLexer` (pygments/lexers/shell.py), rule for rule; the rule
-structure it mirrors is testdata/highlight/pygments-rules.txt. Every state
+structure it mirrors is testdata/highlight/pygments-rules.txt. A port of
+BSD-licensed code: Pygments' licence is testdata/highlight/LICENSE-Pygments. Every state
 but `string` ends in the root's rules, so the shared fallback is reached
 only by a quote the data rules leave unclosed.
 -/
@@ -75,9 +76,8 @@ private def basic (s : Src) (m : M) : Option M := Id.run do
   let t := sets.get
   if s.boundary p then
     let afterKeyword (e : Nat) : Option (Nat × Nat) :=
-      let w := s.run e spaceChar
-      if w > e then some (e, if s.word w then w else e)
-      else if s.boundary e then some (e, e) else none
+      if s.sat e (fun c => wordChar c || "#$?!*@-".contains c) then none
+      else some (e, s.run e spaceChar)
     if let some (e, w) := firstAlt t.keywords s p afterKeyword then
       return some ((m.tok p e Ty.keyword).tok e w Ty.whitespace)
     let before (e : Nat) : Option Nat :=
