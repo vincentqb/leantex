@@ -6973,6 +6973,30 @@ and patterns stand in" pos
       return some (#[.ctrl vspaceAnchorMark pos] ++ (← synthAt native pos), k)
     became "\\vspace" native pos
     return some (← synthAt native pos, k)
+  | "vskip" =>
+    -- TeX's primitive reads its glue unbraced (TeXbook ch. 12) and puts it
+    -- on the vertical list where it stands, as `\vspace` does. The one
+    -- difference, `\vspace`'s closing `\vskip\z@skip`, lets an `\addvspace`
+    -- after it add where after `\vskip` it takes the larger; the skip adds
+    -- here after both. A glue the native reader reads, or `\vfill`'s own
+    -- spelling; a register or an expression stays the unknown command. In
+    -- a definition's body it means what its use makes it mean.
+    if (← get).inDef then return none
+    let v0 := skipSpaces raws start
+    let e := glueEnd raws v0
+    let src := lengthSrc (raws.extract v0 e)
+    let value? : Option String :=
+      if e ≤ v0 then none
+      else if (Decl.parseGlue src).isSome then some src
+      else match src.splitOn " plus " with
+        | [w, s] =>
+          if Decl.parseLength w == some {} && (Decl.filFactor? s).isSome then some "fill"
+          else none
+        | _ => none
+    let some value := value? | return none
+    let native := s!"\\block[before = {value}]\{}"
+    became "\\vskip" native pos
+    return some (← synthAt native pos, e)
   | "newpage" | "clearpage" =>
     -- One page model: with no floats to flush, \clearpage and \newpage are
     -- the declared boundary \pagebreak names.

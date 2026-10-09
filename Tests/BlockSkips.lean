@@ -226,6 +226,42 @@ private def pdfChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO U
         ((milliOf (t - b) - want).natAbs ≤ tolerance.toNat)
     | _, _ => check ref s!"block skips: the '{skip}' blocks ship their boxes" false
 
+/-- TeX's primitive `\vskip` reads its glue unbraced. lualatex moves what
+follows it exactly as `\vspace` moves it — 7 pt between paragraphs and
+mid-paragraph alike, since a vertical command ends the paragraph, and -3 pt
+for a negative skip — and `\vskip 0pt plus 1fill` is `\vfill`. One
+difference stays owed: an `\addvspace` after `\vskip` takes the larger, so
+lualatex moves a centred block after `\vskip 12pt` by 4 pt (its `\topsep`
+is 8 pt) where the engine adds the skip whole. -/
+private def vskipChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit := do
+  let para := above "paragraph"
+  let cases := [("between paragraphs", "\n\n\\vskip 7pt\n\n", 7),
+    ("mid-paragraph", "\n\\vskip 7pt\n", 7), ("negative", "\n\n\\vskip -3pt\n\n", -3)]
+  for (name, skip, pts) in cases do
+    let src := document "" [frame (para ++ "\n\n" ++ below "paragraph"),
+      frame (para ++ skip ++ below "paragraph")]
+    let (doc, diags) := Elab.run "block-skips-vskip.tex" src
+    let pages := (Layout.run (Layout.Geom.ofPage doc.page) fonts none doc).pages
+    match (pages[0]?.bind span), (pages[1]?.bind span) with
+    | some d0, some d1 =>
+      check ref s!"block skips: \\vskip {name} moves what follows {pts} pt (lualatex), got {milliOf (d1 - d0)}"
+        (d1 - d0 == Dim.pt pts)
+    | _, _ => check ref s!"block skips: the \\vskip {name} probe ships its marks" false
+    check ref s!"block skips: \\vskip {name} is a skip, never text"
+      (diags.all (·.code != "W0301") &&
+        pages.all fun p => p.lines.all fun l => !hasStr (lineText l) "pt")
+  let fillOf (skip : String) : Option Dim.Sp :=
+    let (doc, _) := Elab.run "block-skips-fill.tex"
+      (document "" [frame (para ++ "\n\n" ++ skip ++ "\n\n" ++ below "paragraph")])
+    ((Layout.run (Layout.Geom.ofPage doc.page) fonts none doc).pages[0]?).bind (lineY · "omega")
+  check ref "block skips: \\vskip 0pt plus 1fill stands where \\vfill stands"
+    ((fillOf "\\vskip 0pt plus 1fill").isSome && fillOf "\\vskip 0pt plus 1fill" == fillOf "\\vfill")
+  let centred := document "" [frame (para ++ "\n\n" ++ below "centred"),
+    frame (para ++ "\n\n\\vskip 12pt\n\n" ++ below "centred")]
+  let (pages, _) := pagesOf fonts centred
+  check ref "owed: \\vskip before a centred block adds 12 pt where TeX takes the larger, 4 pt"
+    (((pages[0]?.bind span).bind fun d0 => (pages[1]?.bind span).map (· - d0)) == some (Dim.pt 12))
+
 /-- A skip box's natural width in milli-rem, read off its style: the
 `--skip` the sheet turns into its height or, negative, its bottom margin;
 nothing declared is zero. -/
@@ -328,6 +364,7 @@ private def htmlChecks (ref : IO.Ref (List String)) : IO Unit := do
 
 def blockSkipChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit := do
   pdfChecks ref fonts
+  vskipChecks ref fonts
   htmlChecks ref
 
 end Tests.BlockSkips

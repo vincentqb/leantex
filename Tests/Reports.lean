@@ -1137,8 +1137,9 @@ def reports : List Report := [
     accept := ["in the browser a skip was an empty box whose margin collapsed into the next element's in block flow and overrode the space the element above leaves below it, and was written in print points where every other gap is in the screen's unit: a big skip between two blocks stood 15.3 points apart against the page's 22, and on an invented probe matrix of paragraphs, blocks, lists, centred blocks, displays and listings a big skip moved what follows by 0.69 of itself after a paragraph, 0.44 after a block, 0.19 after a centred block and by less than nothing after a display",
       "the skip is now a box of its own as tall as the skip in the screen unit, the element above owning its space below before it: every skip box of the probe matrix realizes the sum of the three addends in a browser, and two blocks across a big skip stand the page's 22 points",
       "with a document paragraph skip, a skip opening a frame moved its first paragraph or list 16 points against the reference engine's 12, the frame's own negative paragraph skip lost; it now moves it 12",
-      "seventy-two assertions fail on the tree before the fix and hold after; a presentation deck's PDF is byte-identical, its block gaps match the reference engine's within 0.002 points wherever both set the same content height, and its browser deck stands each skip whole at every skip site"]
-    state := .guarded "1b366d18" .before .author }
+      "seventy-nine assertions fail on the tree before the fix and hold after; a presentation deck's PDF is byte-identical, its block gaps match the reference engine's within 0.002 points wherever both set the same content height, and its browser deck stands each skip whole at every skip site",
+      "the primitive vertical skip, its glue unbraced, was an unknown command whose value shipped as a line of text; it now moves what follows as the reference engine does, by 7 and by -3 points, and its infinite spelling stands where the fill command stands; seven assertions fail before and hold after"]
+    state := .guarded "7284e33a" .before .author }
 ]
 
 /-- The reports guarded but never seen failing: a count that may fall and
