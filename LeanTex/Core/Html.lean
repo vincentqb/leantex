@@ -208,7 +208,7 @@ def phrasingTags : List String :=
     (attrs : Array (String × String) := #[]) : Node :=
   .elem tag attrs kids
 
-public def text (s : String) : Node := .text s
+@[expose] public def text (s : String) : Node := .text s
 
 /-- The tag of an element node; `none` for text, style, and script. What a
 statement about which element a tree ships at a position reads. -/
