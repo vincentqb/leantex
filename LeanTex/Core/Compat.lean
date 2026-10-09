@@ -776,6 +776,10 @@ private structure St where
   where the artifact is the presentation it addresses — beamer's article mode
   keeps exactly those frames, so a class-blind reading deletes content. -/
   deck : Bool := false
+  /-- The font slots (`body`, `sans`, `mono`) a fontspec or babel declaration
+  has named so far, in preamble order: whether a package that measures its
+  lengths as it loads measured them in Latin Modern or in a declared face. -/
+  facesDeclared : Array String := #[]
   /-- The main language's BCP 47 tag, from babel's package options (last
   language option = main, babel's rule): what `\enquote` reads its quote
   delimiters through. A `\selectlanguage` outside the body leaves it:
@@ -7975,6 +7979,21 @@ no package options are supported by the strict native Markdown dialect" pos
       say .W0103 "package 'ulem' without only the 'normalem' option changes \\emph; skipped"
         pos (help := "use \\usepackage[normalem]{ulem} for native \\sout")
         (refused := some p)
+  -- premise: tableFaceOrderChecks — the face declared before the load and
+  -- after it ship byte-identical pages and only the warning below moves, so
+  -- nothing else measures the declared face
+  else if p == "booktabs" && (← get).facesDeclared.contains
+      (if (← get).deck then "sans" else "body") then
+    -- booktabs fixes its rule weights and paddings in the font current where
+    -- it loads (`Ir.PreambleFace`): after the preamble family's face is
+    -- declared, that face, which the engine does not measure. The load is
+    -- the site of the loss, so its one accounting is this warning.
+    let (face, cmd) := if (← get).deck then ("sans", "\\setsansfont")
+      else ("main", "\\setmainfont")
+    say .W0398 s!"'\\{name}\{booktabs}' follows the {face} face's declaration; \
+its rule paddings are measured in Latin Modern" pos
+      (help := some s!"load booktabs before '{cmd}', where LaTeX measures them in Latin Modern too")
+      (subject := some "package:booktabs")
   else if nativePackages.contains p then
     discard s!"\\{name}\{{p}}" "the engine does this itself" s!"{name}:{p}" pos
   else if boundaryPkgs.contains p && (← get).boundaryOpen then
@@ -8291,6 +8310,7 @@ face serves every language, so the binding is dropped" pos
         return some (#[], k)
     let native := s!"\\fonts\{ {dirPart}{String.intercalate ", " parts.toList} }"
     became s!"\\{name}" native pos
+    write fun st => { st with facesDeclared := st.facesDeclared.push slot }
     return some (← synthAt native pos, k)
   | "definecolor" =>
     let (args, k) := takeGroups raws start 3

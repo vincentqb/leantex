@@ -2,8 +2,8 @@
 target: chromium
 tools: node v26.10.0  chromium 151.0.7922.34 (playwright 1.62.0)  firefox untested (browserType.launch: Failed to launch the browser process.)  xmllint: using libxml version 21504  Using libxml 21504, libxslt 10145 and libexslt 825  rsvg-convert version 2.63.2  pdftocairo version 26.09.0  pdftotext version 26.09.0
 date: 2026-10-09
-src-key: d5ca455a1d7a413c
-browser-face-src-key: 6126a0076b77f5a3
+src-key: 56ea4aaad8bb092c
+browser-face-src-key: 1a1fce99009ac031
 browser-face-key: 94c5f08ab85c7a80
 browser-face: diagram-boundary diagram-boundary/i0-ebb51696f3335a2ca0f2739c01b2fefce339661a01c1a7608b124f72b01022dc.svg ok:13063:328976cbf658118181147f45593c0ec33aa06f3e7e67863203ca47dabe30637f
 browser-face: figures figures/i0-e0f0aa06d41410cda8846c8a7a7a6495a190e8c095ad947e4a5107d4d1134af1.svg ok:12919:c76f219716524e5acf842093f32db92567ca2fa9e79b8383859edaf707f4a932

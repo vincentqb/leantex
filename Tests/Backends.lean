@@ -2628,8 +2628,9 @@ def tableHtmlChecks (ref : IO.Ref (List String)) : IO Unit := do
     (cmidCells.size == 9 && cmidCells.all (fun c => c.tag == "td" && c.group == "tbody"))
   t "the cmid cells carry bt-cmid and every natural cell carries bt-nowrap"
     (cmidCells.map (·.cls) ==
-      #["bt-nowrap", "bt-nowrap", "bt-nowrap", "bt-cmid bt-nowrap", "bt-cmid bt-nowrap",
-        "bt-nowrap", "bt-nowrap", "bt-nowrap", "bt-nowrap"])
+      #["bt-left bt-nowrap", "bt-center bt-nowrap", "bt-right bt-nowrap",
+        "bt-left bt-cmid bt-nowrap", "bt-center bt-cmid bt-nowrap",
+        "bt-right bt-nowrap", "bt-left bt-nowrap", "bt-center bt-nowrap", "bt-right bt-nowrap"])
   t "no header: colgroup and tbody only"
     (tableGroupsOne #[] cmid == #[#["colgroup", "tbody"]])
   -- Bare tabular, no rules at all.
@@ -2655,10 +2656,10 @@ def tableHtmlChecks (ref : IO.Ref (List String)) : IO Unit := do
      | .elem _ _ kids => (kids.toList.findSome? fun k => match k with
          | .elem "thead" _ rs => rs.toList.findSome? fun r => match r with
              | .elem "tr" _ cs => cs[1]?.bind fun c => match c with
-                 | .elem _ attrs _ => attrs.find? (·.1 == "style")
+                 | .elem _ attrs _ => attrs.find? (·.1 == "class")
                  | _ => none
              | _ => none
-         | _ => none) == some ("style", "text-align: center")
+         | _ => none) == some ("class", "bt-center bt-nowrap")
      | _ => false)
   -- The empty table: nothing to group.
   let empty := HtmlDoc.blockNode {} (.table #[default, default] true true #[] #[(0, .mid)] #[])

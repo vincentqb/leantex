@@ -1,6 +1,7 @@
 # source: array manual §1-2 — colspec letters are read at the tabular; the
-# >{...} pre and <{...} post modifiers select a column's alignment
-# (\raggedright, \raggedleft, \centering), \arraybackslash is inert, and an
+# >{...} pre and <{...} post modifiers select a wrapping column's alignment
+# (\raggedright, \raggedleft, \centering) and leave an l, c or r column on
+# its letter's side, as lualatex does; \arraybackslash is inert, and an
 # unmodelled effect is named once (W0104); \newcolumntype is not read.
 pre refuse:W0301 \newcolumntype{Y}{c}
 body refuse:W0104 \begin{tabular}{>{\bfseries}c}a\end{tabular}

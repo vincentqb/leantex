@@ -2816,9 +2816,12 @@ alignment", "")
 (and `m`/`b`, set as `p`: the engine has no per-cell vertical alignment),
 `@{}` deleting the outer pad on its edge, `|` warned and never drawn —
 "Never, ever use vertical rules" (booktabs.dtx §The layout of formal
-tables), and the array `>{decl}`/`<{decl}` modifiers selecting a column's
-alignment. Returns the columns, the outer-pad flags, and warnings as
-(key, message, help) for the caller's `warnOnce`. -/
+tables), and the array `>{decl}`/`<{decl}` modifiers selecting a wrapping
+column's alignment (`Ir.ColSpec.ragged`). On an `l`, `c` or `r` column a
+side declaration changes nothing: the cell sets no paragraph, so the skips
+`\raggedleft` and `\centering` set are read by none, and lualatex leaves
+`>{\raggedleft}l` flush left. Returns the columns, the outer-pad flags, and
+warnings as (key, message, help) for the caller's `warnOnce`. -/
 private def parseColSpec (ctx : Ctx) (spec : Array Raw)
     (flexTarget : Option Ir.TableTarget := none) :
     Array Ir.ColSpec × Bool × Bool × Array (String × String × String) := Id.run do
@@ -2859,16 +2862,17 @@ only the empty '@{}' deleting an outer pad is",
           match c with
           | 'l' | 'c' | 'r' =>
             let align := if c == 'c' then .center else if c == 'r' then .right else .left
-            cols := cols.push { width := .natural, align := pendingAlign.getD align }
+            cols := cols.push { width := .natural, align := align }
             pendingAlign := none
           | 'X' =>
             match flexTarget with
             | some target =>
-              cols := cols.push { width := .flex target, align := pendingAlign.getD .left }
+              cols := cols.push { width := .flex target, align := pendingAlign.getD .left
+                                  ragged := pendingAlign.isSome }
             | none =>
               warns := warns.push ("colspec",
                 "unsupported column type 'X'; set as 'l'", "load tabularx and use its environment")
-              cols := cols.push { width := .natural, align := pendingAlign.getD .left }
+              cols := cols.push { width := .natural, align := .left }
             pendingAlign := none
           | 'p' | 'm' | 'b' =>
             let widthGroup := if ci == last then
@@ -2891,7 +2895,8 @@ the full measure",
               warns := warns.push ("mb",
                 s!"'{c}\{...}' vertical cell alignment is not modelled; set \
 as 'p'", "")
-            cols := cols.push { width := width, align := pendingAlign.getD .left }
+            cols := cols.push { width := width, align := pendingAlign.getD .left
+                                ragged := pendingAlign.isSome }
             pendingAlign := none
           | '>' | '<' =>
             -- The same declaration decoder serves the next column (`>`) and
@@ -2904,12 +2909,13 @@ as 'p'", "")
               if let some a := align then
                 if c == '>' then pendingAlign := some a
                 else if cols.size > 0 then
-                  cols := cols.modify (cols.size - 1) (fun col => { col with align := a })
+                  cols := cols.modify (cols.size - 1) fun col =>
+                    if col.width matches .natural then col else { col with align := a, ragged := true }
               warns := warns ++ ws
             | _ =>
               warns := warns.push ("colspec",
                 s!"unsupported column type '{c}'; set as 'l'", "")
-              cols := cols.push { width := .natural, align := pendingAlign.getD .left }
+              cols := cols.push { width := .natural, align := .left }
               pendingAlign := none
           | '@' =>
             -- `@{...}` lexes as a word character with the group beside it:
@@ -2933,7 +2939,7 @@ is too small")
             if !c.isWhitespace then
               warns := warns.push ("colspec",
                 s!"unsupported column type '{c}'; set as 'l'", "")
-              cols := cols.push { width := .natural, align := pendingAlign.getD .left }
+              cols := cols.push { width := .natural, align := .left }
               pendingAlign := none
           ci := ci + 1
         i := i + (if tookGroup then 2 else 1)
@@ -16847,10 +16853,14 @@ private def prepareStyledBody (file : String) (decls : Array PDecl)
       output := output.addFormat f
   if output.md.isNone then
     output := { output with md := record.mdName }
+  -- A table length the preamble declares is fixed there, in the preamble's
+  -- font, as `\setlength` evaluates it (`Ir.PreambleFace.fixTableLengths`):
+  -- the body's token state starts from the fixed values.
+  let tokens := (Ir.PreambleFace.ofClass record page.fontSize).fixTableLengths tokens
   ctx := { ctx with slides := record.model == .frame
                     face := record.model == .face
                     numberHeadings := record.numberHeadings, styles := styles
-                    page := page
+                    page := page, tokens := tokens
                     engineTokens := engineLengthTokensOfPage page }
   -- Numbering is a property of the finished document, not of any one
   -- elaboration site: `Ir.numberFloats` fills every captioned float's

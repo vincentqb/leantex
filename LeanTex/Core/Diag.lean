@@ -283,6 +283,7 @@ public inductive DiagCode where
   | W0393
   | W0394 | E0395 | W0396
   | W0397
+  | W0398
   | E0606
   | E0607
   deriving Repr, BEq, DecidableEq
@@ -476,6 +477,7 @@ private def DiagCode.spec : DiagCode → String × Loss × String
   | .E0395 => ("0395", .dropped, "picture label produced no line")
   | .W0396 => ("0396", .degraded, "picture label extends beyond its reserved glyph box")
   | .W0397 => ("0397", .degraded, "a listing token sets without the frame or background its highlighting style draws around it; its text and colour still set")
+  | .W0398 => ("0398", .degraded, "booktabs loads after a face is declared; its rule paddings are measured in Latin Modern, not in that face")
   | .E0606 => ("0606", .dropped, "the HTML page has unresolved rendering resources; publication is refused")
   | .E0607 => ("0607", .dropped, "the PDF cannot be represented within supported spelling or storage limits; publication is refused")
 

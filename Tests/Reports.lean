@@ -1002,13 +1002,15 @@ def reports : List Report := [
     state := .guarded "c95d78db" .revert .author },
   { id := "R113", date := "2026-10-08"
     what := "a slide's formal table ran past the foot of its browser stage while its printed page held it, and its text column took the centring of its scope in the browser where the column spec sets it flush left"
-    pins := [check% Tests.tableSideChecks, check% Tests.tableLeadingChecks,
-      check% Tests.tableLengthChecks, check% censusChecks,
+    pins := [check% Tests.tableSideChecks, check% Tests.tableRaggedChecks,
+      check% Tests.tableLeadingChecks, check% Tests.tableLengthChecks,
+      check% Tests.tableStrutChecks, check% Tests.tableFaceOrderChecks, check% censusChecks,
       thm% HtmlDoc.tableCellNode_align_projects, thm% Pdf.table_cell_side_agree,
-      thm% Pdf.table_length_agree, thm% HtmlDoc.printLeading_exact]
+      thm% Pdf.table_length_agree, thm% HtmlDoc.printLeading_exact,
+      thm% Layout.strutBox_exact, thm% Layout.tableStrut_exact]
     accept := ["the browser oracle's stage-fit row fails on the invented table deck, one stage 53 px past its foot, before table rows take the print leading, and passes after at the deck's own aspect with no stage a pixel past its foot",
-      "twenty typed tree, stylesheet and shipped page assertions fail before every cell states its spec's side and its rows the print leading, four of them the page's own text column set flush right under a right-set scope; twenty-one more fail before a wrapped p cell justifies under a ragged or right-set scope and an undeclared table's rule gaps, rule weights and deck column gap are the lengths lualatex sets, on the page and in the stylesheet",
-      "a table that fills one frame of a presentation deck fits its stage at 1280 by 720 with no scrollbar and room to spare, its text column flush left and its rule and column gaps lualatex's"]
+      "twenty typed tree, stylesheet and shipped page assertions fail on the base before every cell states its spec's side and its rows the print leading, four of them the page's own text column set flush right under a right-set scope",
+      "a table that fills one frame of a presentation deck fits its stage at 1280 by 720 with no scrollbar and room to spare, its text column flush left and its rule and column gaps lualatex's; on its printed pages each row stands as far from the rule beside it as lualatex sets it, to the raster's 0.12 pt"]
     state := .guarded "fa516a82" .before .author },
   { id := "R114", date := "2026-10-08"
     what := "a slide whose title changes colour by overlay step was anchored and named by both alternatives of its title, each word doubled in its fragment and its accessible name"

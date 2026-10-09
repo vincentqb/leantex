@@ -8656,6 +8656,37 @@ private theorem reserveLineBox_covers (box : LineBox) (extent : Sp × Sp) :
       extent.2 ≤ (reserveLineBox box extent).below :=
   ⟨Int.le_max_right .., Int.le_max_right ..⟩
 
+/-- A line's glyph box raised to a table row's strut: the strut or the
+glyphs, whichever reaches further above and below. -/
+public def strutInk (ink : Sp × Sp) (s : Sp × Sp) : Sp × Sp :=
+  (max ink.1 s.1, max ink.2 s.2)
+
+/-- TeX's box of a table row. Every row of an array carries latex.ltx's
+`\@arstrut` (`\@arstrutbox`: 0.7 and 0.3 of the `\baselineskip` in force
+where the table opens, `tableStrut`), and `\@array` zeroes `\baselineskip`
+and `\lineskip`, so a row stacks flush on its neighbours by its own height
+and depth — the strut's or its glyphs', whichever reaches further — and no
+leading enters. Every term the interline rule reads is that box: a row under
+a rule stands the strut's height below the rule's sep (`interlineFor`'s
+`.rule` arm reads `inkAbove`), a rule under a row stands the strut's depth
+below its baseline, and two plain rows stand the strut's full height apart.
+Read as a line of prose, a row stood on its glyphs beside a rule, and a
+booktabs rule's padding came out a point and a half short of lualatex's.
+Off a table the line keeps its own box. -/
+public def strutBox (ink : Sp × Sp) (s : Sp × Sp) : LineBox :=
+  let k := strutInk ink s
+  { above := k.1, below := k.2, inkAbove := k.1, inkBelow := k.2 }
+
+/-- **A row its strut covers is its strut** (`_exact`): when no glyph of a
+table row reaches past the strut, every term of the row's box is the
+strut's — the height above the baseline, the depth below it, whatever the
+face's leading would have made of the line. -/
+public theorem strutBox_exact (ink : Sp × Sp) (h d : Sp)
+    (hh : ink.1 ≤ h) (hd : ink.2 ≤ d) :
+    strutBox ink (h, d) = { above := h, below := d, inkAbove := h, inkBelow := d } := by
+  simp only [strutBox, strutInk]
+  rw [Int.max_eq_right hh, Int.max_eq_right hd]
+
 /-- CSS 2.1 §10.8.1's half-leading over one (ascent, descent, leading)
 triple: the leading less the metric extent, split into integer halves
 that sum back exactly, half above the ascent and half below the descent.
@@ -9156,12 +9187,20 @@ private def Spacing.Page.placeLine (fs : FontSet) (b : B) (x : Sp) (size : Sp) (
     (notes : Array NoteBlock := #[]) (counted : Bool := false)
     (leaf : Option Nat := none) (firstBaseline : Option Sp := none)
     (display : Option DisplayJob := none) (opens : Bool := false)
-    (anchors : Array String := #[]) (paintPadding : Option Sp := none) : B :=
+    (anchors : Array String := #[]) (paintPadding : Option Sp := none)
+    (rowStrut : Option (Sp × Sp) := none) : B :=
   let box := lineExtent fs b.geom.fontSize b.ascent b.capHeight b.descent
     b.geom.leading size segs
   -- TeX's box of the line, from its glyphs — a zero-width strut counts, as
   -- it does in TeX's hbox, so it is read before the filter below.
   let ink := segsInk fs segs
+  -- A table row is TeX's row box, strut and glyphs, with no leading.
+  let box := match rowStrut with
+    | some s => strutBox ink s
+    | none => box
+  let ink := match rowStrut with
+    | some s => strutInk ink s
+    | none => ink
   -- A painted rider must be fitted before its line commits: adding the
   -- bar afterwards cannot recover an off-page top or an unpaid depth.
   let extent := paddedLineExtent
@@ -9286,10 +9325,11 @@ private theorem sourceBound_displayState {n : Nat} (b : B) (tex : Bool)
 private theorem sourceBound_placeLine {n : Nat} (fs : FontSet) (b : B) (x size : Sp)
     (segs : Array Seg) (w hang : Sp) (ex : Int) (counted : Bool)
     (leaf : Option Nat) (firstBaseline : Option Sp) (display : Option DisplayJob)
-    (opens : Bool) (anchors : Array String) (paintPadding : Option Sp) (hb : b.SourceBound n)
+    (opens : Bool) (anchors : Array String) (paintPadding : Option Sp)
+    (rs : Option (Sp × Sp)) (hb : b.SourceBound n)
     (hl : (∃ k, leaf = some k ∧ k < n) ∨ ∀ s ∈ segs, s.NoGlyph) :
     (b.placeLine fs x size segs w hang ex #[] counted leaf firstBaseline display opens
-      anchors paintPadding).SourceBound n := by
+      anchors paintPadding rs).SourceBound n := by
   simp only [Spacing.Page.placeLine]
   apply sourceBound_displayState
   apply sourceBound_keepInk
@@ -9615,6 +9655,9 @@ public structure Spacing.Paragraph where
   /-- A bar painted behind the paragraph's final line reserves its full
   extent at that line's fit, before the rider is emitted. -/
   private paintPadding : Option Sp := none
+  /-- A table row's strut, height and depth (`tableStrut`): every line placed
+  from the job is TeX's row box (`strutBox`). `none` off a table. -/
+  private rowStrut : Option (Sp × Sp) := none
 
 private abbrev ParaJob := Spacing.Paragraph
 
@@ -10310,7 +10353,8 @@ private def collectPara (r : Rd) (a : Acc)
     (display : Bool := false)
     (leaf : Option Nat := none) (span : Nat := 0) (keepNext : Sp := 0)
     (hangIndent : Sp := 0) (literalLines : Bool := false)
-    (dispJob : Option DisplayJob := none) (paintPadding : Option Sp := none) : Acc :=
+    (dispJob : Option DisplayJob := none) (paintPadding : Option Sp := none)
+    (rowStrut : Option (Sp × Sp) := none) : Acc :=
   let a := a.flushGap r
   let indent := indent + hangIndent
   -- The measure the paragraph sets against — and what a fraction-of-
@@ -10453,7 +10497,8 @@ private def collectPara (r : Rd) (a : Acc)
       inFloat := r.inFloat
       leaf := leaf
       keepNext := keepNext
-      display := dispJob }) }
+      display := dispJob
+      rowStrut := rowStrut }) }
 
 /-- The weight of a heading's declared rule: 0.06 em of the base — the
 0.6 pt the engine shipped at the 10 pt base where it was picked, now
@@ -10794,11 +10839,39 @@ public theorem table_natural_width_exact (colsep total fontSize : Sp) (cols : Ar
 
 /-- The side a cell's lines set on in its column box: its spec's
 (`Ir.cellSpec`), whatever scope the table stands in. The HTML states the
-same value as the cell's `text-align` (`HtmlDoc.cellAlignAttr`;
+same value as the cell's side class (`HtmlDoc.cellSideClassOf`;
 `Pdf.table_cell_side_agree`). -/
 @[expose] public def cellSide (cols : Array Ir.ColSpec) (spans : Array Ir.ColSpan) (i j : Nat) :
     Ir.HAlign :=
   (Ir.cellSpec cols spans i j).align
+
+/-- How a wrapping cell's paragraph sets in its column box, from its spec
+alone (`Ir.cellSpec`): `(justify, flushRight, center)`. A bare `p` (or `X`)
+justifies, as `\@arrayparboxrestore` leaves it; a `>{\raggedright}`,
+`>{\raggedleft}` or `>{\centering}` modifier (`Ir.ColSpec.ragged`) sets its
+lines ragged on the side the spec names — the same side the HTML cell
+states (`HtmlDoc.cellSideClassOf`). -/
+@[expose] public def cellParagraph (spec : Ir.ColSpec) : Bool × Bool × Bool :=
+  (!spec.ragged, spec.ragged && spec.align == .right, spec.ragged && spec.align == .center)
+
+/-- The strut every row of a table stands on: latex.ltx's `\@arstrutbox`,
+0.7 of the `\baselineskip` in force where the table opens above the
+baseline and the rest below it (`\strutbox`'s 0.3, so the two make the
+whole skip), at the table's size and the page's `\linespread`. -/
+@[expose] public def tableStrut (size : Sp) (leading : Nat) : Sp × Sp :=
+  let bs := Ir.leadingFor size leading
+  (bs * 7 / 10, bs - bs * 7 / 10)
+
+/-- **Two plain rows stand one baseline skip apart** (`_exact`): the strut's
+height and depth make exactly the `\baselineskip` it was cut from, so rows
+the strut covers keep the print leading `HtmlDoc.printLeadingMilli` states
+for the stylesheet's rows. -/
+public theorem tableStrut_exact (size : Int) (leading : Nat) :
+    (tableStrut size leading).1 + (tableStrut size leading).2 = Ir.leadingFor size leading := by
+  simp only [tableStrut]
+  -- `Sp`-typed arithmetic is invisible to omega; the identity is over `Int`.
+  have h : ∀ a b : Int, a + (b - a) = b := by intro a b; omega
+  exact h _ _
 
 /-- A table length as the page sets it: the declared token, resolved where
 the table stands, else the name's default as LaTeX fixed it when the package
@@ -10873,6 +10946,8 @@ private def collectTable (r : Rd) (a0 : Acc)
   -- table leaves a wrapped cell justified.
   let rc := { r with centreBoxes := false
                      geom := { r.geom with flushRight := false, justify := true } }
+  -- Every row stands on the table's strut (`tableStrut`, `strutBox`).
+  let strut := some (tableStrut size r.geom.leading)
   -- The left edge of column j's cell box.
   let colX (j : Nat) : Sp := Id.run do
     let mut x := x0 + lead
@@ -10997,13 +11072,21 @@ private def collectTable (r : Rd) (a0 : Acc)
             dispAlt := none }
           let (sub, leaf) := sub.leafRange (leafCount cell)
           let span := leafCount cell
-          let sub := match cellSide cols spans i j with
-            | .center => collectPara rc sub cell x true size (leaf := leaf) (span := span)
+          -- A wrapping cell is a paragraph its spec sets (`cellParagraph`);
+          -- a natural one is a single line its side places in the box.
+          let sub := if !(spec.width matches .natural) then
+              let (justify, flushRight, center) := cellParagraph spec
+              collectPara { rc with geom := { rc.geom with justify, flushRight } } sub cell x
+                center size (leaf := leaf) (span := span) (rowStrut := strut)
+            else match cellSide cols spans i j with
+            | .center =>
+              collectPara rc sub cell x true size (leaf := leaf) (span := span) (rowStrut := strut)
             | .right =>
               let nat := ((nats[i]?).bind (·[j]?)).getD 0
               collectPara rc sub cell (x + max 0 (wj - nat)) false size
-                (leaf := leaf) (span := span)
-            | .left => collectPara rc sub cell x false size (leaf := leaf) (span := span)
+                (leaf := leaf) (span := span) (rowStrut := strut)
+            | .left =>
+              collectPara rc sub cell x false size (leaf := leaf) (span := span) (rowStrut := strut)
           a := { a with
             ops := a.ops ++ sub.ops
             hyphCache := sub.hyphCache
@@ -13979,7 +14062,8 @@ private def placeParaLine (fs : FontSet) (j : ParaJob)
       (counted := !j.inFloat) (leaf := j.leaf) (firstBaseline := firstBaseline)
       (display := j.display) (opens := st.2.2)
       (anchors := lineAnchors j.anchors st.2.1 brk st.2.2 (brk + 1 == j.items.size))
-      (paintPadding := if brk + 1 == j.items.size then j.paintPadding else none)),
+      (paintPadding := if brk + 1 == j.items.size then j.paintPadding else none)
+      (rowStrut := j.rowStrut)),
     brk, false)
 
 /-- The breaker may choose the end-fill immediately before a forced
@@ -14637,10 +14721,10 @@ private theorem census_placeLine {n : Nat} (pick : Option Nat → Bool → Bool)
     (fs : FontSet) (b : B) (x size : Sp) (segs : Array Seg) (w hang : Sp) (ex : Int)
     (counted : Bool) (leaf : Option Nat) (firstBaseline : Option Sp)
     (display : Option DisplayJob) (opens : Bool) (anchors : Array String)
-    (paintPadding : Option Sp)
+    (paintPadding : Option Sp) (rs : Option (Sp × Sp))
     (hb : Spacing.Page.SourceBound n b) :
     Spacing.Page.census pick (Spacing.Page.placeLine fs b x size segs w hang ex #[] counted leaf
-      firstBaseline display opens anchors paintPadding) =
+      firstBaseline display opens anchors paintPadding rs) =
       Spacing.Page.census pick b ++ (if pick leaf counted then segs.toList.flatMap Seg.glyphChars else []) := by
   simp only [Spacing.Page.placeLine]
   rw [census_displayState, census_keepInk]
@@ -15913,9 +15997,9 @@ private theorem placePicture_noBreak (fs : FontSet) (imgs : Image.Store)
 private theorem placeLine_extends (fs : FontSet) (b : B) (x size : Sp)
     (segs : Array Seg) (w hang : Sp) (ex : Int) (ns : Array NoteBlock) (c : Bool)
     (lf : Option Nat) (firstBaseline : Option Sp) (dj : Option DisplayJob) (op : Bool)
-    (anchors : Array String) (paintPadding : Option Sp) :
+    (anchors : Array String) (paintPadding : Option Sp) (rs : Option (Sp × Sp)) :
     PagesExtend b
-      (b.placeLine fs x size segs w hang ex ns c lf firstBaseline dj op anchors paintPadding) := by
+      (b.placeLine fs x size segs w hang ex ns c lf firstBaseline dj op anchors paintPadding rs) := by
   simp only [Spacing.Page.placeLine, PagesExtend, displayState_pages, keepInk_pages]
   exact fitCommit_extends ..
 
@@ -15924,9 +16008,9 @@ the flag: the group's one legal position has already been decided. -/
 private theorem placeLine_pages_noBreak (fs : FontSet) (b : B) (x size : Sp)
     (segs : Array Seg) (w hang : Sp) (ex : Int) (ns : Array NoteBlock) (c : Bool)
     (lf : Option Nat) (firstBaseline : Option Sp) (dj : Option DisplayJob) (op : Bool)
-    (anchors : Array String) (paintPadding : Option Sp)
+    (anchors : Array String) (paintPadding : Option Sp) (rs : Option (Sp × Sp))
     (h : b.noBreak = true) :
-    (b.placeLine fs x size segs w hang ex ns c lf firstBaseline dj op anchors paintPadding).pages =
+    (b.placeLine fs x size segs w hang ex ns c lf firstBaseline dj op anchors paintPadding rs).pages =
       b.pages := by
   simp only [Spacing.Page.placeLine, displayState_pages, keepInk_pages]
   exact fitCommit_pages_noBreak (h := h) ..
@@ -15934,9 +16018,9 @@ private theorem placeLine_pages_noBreak (fs : FontSet) (b : B) (x size : Sp)
 private theorem placeLine_keeps_noBreak (fs : FontSet) (b : B) (x size : Sp)
     (segs : Array Seg) (w hang : Sp) (ex : Int) (ns : Array NoteBlock) (c : Bool)
     (lf : Option Nat) (firstBaseline : Option Sp) (dj : Option DisplayJob) (op : Bool)
-    (anchors : Array String) (paintPadding : Option Sp)
+    (anchors : Array String) (paintPadding : Option Sp) (rs : Option (Sp × Sp))
     (h : b.noBreak = true) :
-    (b.placeLine fs x size segs w hang ex ns c lf firstBaseline dj op anchors paintPadding).noBreak =
+    (b.placeLine fs x size segs w hang ex ns c lf firstBaseline dj op anchors paintPadding rs).noBreak =
       true := by
   simp only [Spacing.Page.placeLine, displayState_noBreak, keepInk_noBreak]
   exact fitCommit_keeps_noBreak (h := h) ..
@@ -15959,9 +16043,9 @@ private theorem placeLine_extends' (fs : FontSet) (b0 b1 : B)
     (hp : b1.pages = b0.pages) (x size : Sp) (segs : Array Seg) (w hang : Sp)
     (ex : Int) (ns : Array NoteBlock) (c : Bool) (lf : Option Nat)
     (firstBaseline : Option Sp) (dj : Option DisplayJob) (op : Bool) (anchors : Array String)
-    (paintPadding : Option Sp) :
+    (paintPadding : Option Sp) (rs : Option (Sp × Sp)) :
     PagesExtend b0
-      (b1.placeLine fs x size segs w hang ex ns c lf firstBaseline dj op anchors paintPadding) :=
+      (b1.placeLine fs x size segs w hang ex ns c lf firstBaseline dj op anchors paintPadding rs) :=
   pagesExtend_trans (pagesExtend_of_eq hp) (placeLine_extends ..)
 
 private theorem placeParaLine_extends (fs : FontSet) (j : ParaJob)
@@ -16067,14 +16151,14 @@ private theorem fitCommit_noBreak (b : B) (mk : Sp → LineOut)
 private theorem placeLine_noBreak (fs : FontSet) (b : B) (x size : Sp)
     (segs : Array Seg) (w hang : Sp) (ex : Int) (ns : Array NoteBlock) (c : Bool)
     (lf : Option Nat) (firstBaseline : Option Sp) (dj : Option DisplayJob) (op : Bool)
-    (anchors : Array String) (paintPadding : Option Sp)
+    (anchors : Array String) (paintPadding : Option Sp) (rs : Option (Sp × Sp))
     (h : b.noBreak = true) :
-    (b.placeLine fs x size segs w hang ex ns c lf firstBaseline dj op anchors paintPadding).pages =
+    (b.placeLine fs x size segs w hang ex ns c lf firstBaseline dj op anchors paintPadding rs).pages =
       b.pages ∧
-    (b.placeLine fs x size segs w hang ex ns c lf firstBaseline dj op anchors paintPadding).noBreak =
+    (b.placeLine fs x size segs w hang ex ns c lf firstBaseline dj op anchors paintPadding rs).noBreak =
       true :=
-  ⟨placeLine_pages_noBreak fs b x size segs w hang ex ns c lf firstBaseline dj op anchors paintPadding h,
-   placeLine_keeps_noBreak fs b x size segs w hang ex ns c lf firstBaseline dj op anchors paintPadding h⟩
+  ⟨placeLine_pages_noBreak fs b x size segs w hang ex ns c lf firstBaseline dj op anchors paintPadding rs h,
+   placeLine_keeps_noBreak fs b x size segs w hang ex ns c lf firstBaseline dj op anchors paintPadding rs h⟩
 
 /-- `alignRow` keeps both the shipped pages and the `noBreak` flag. -/
 private theorem alignRow_pages_noBreak (b : B) (save : ColSave) (h : b.noBreak = true) :
@@ -16265,9 +16349,9 @@ private theorem bgStep_fitCommit (b : B) (mk : Sp → LineOut)
 private theorem bgStep_placeLine (fs : FontSet) (b : B) (x size : Sp)
     (segs : Array Seg) (w hang : Sp) (ex : Int) (ns : Array NoteBlock) (c : Bool)
     (lf : Option Nat) (firstBaseline : Option Sp) (dj : Option DisplayJob) (op : Bool)
-    (anchors : Array String) (paintPadding : Option Sp) :
+    (anchors : Array String) (paintPadding : Option Sp) (rs : Option (Sp × Sp)) :
     BgStep b
-      (b.placeLine fs x size segs w hang ex ns c lf firstBaseline dj op anchors paintPadding) := by
+      (b.placeLine fs x size segs w hang ex ns c lf firstBaseline dj op anchors paintPadding rs) := by
   simp only [Spacing.Page.placeLine]
   apply BgStep.displayState
   apply BgStep.keepInk
@@ -16964,9 +17048,9 @@ private theorem frameStep_fitCommit (b : B) (mk : Sp → LineOut)
 private theorem frameStep_placeLine (fs : FontSet) (b : B) (x size : Sp)
     (segs : Array Seg) (w hang : Sp) (ex : Int) (ns : Array NoteBlock) (c : Bool)
     (lf : Option Nat) (firstBaseline : Option Sp) (dj : Option DisplayJob) (op : Bool)
-    (anchors : Array String) (paintPadding : Option Sp) :
+    (anchors : Array String) (paintPadding : Option Sp) (rs : Option (Sp × Sp)) :
     FrameStep b
-      (b.placeLine fs x size segs w hang ex ns c lf firstBaseline dj op anchors paintPadding) := by
+      (b.placeLine fs x size segs w hang ex ns c lf firstBaseline dj op anchors paintPadding rs) := by
   simp only [Spacing.Page.placeLine]
   apply FrameStep.displayState
   apply FrameStep.keepInk
@@ -17419,9 +17503,9 @@ private theorem reflowStep_fitCommit (b : B) (mk : Sp → LineOut)
 private theorem reflowStep_placeLine (fs : FontSet) (b : B) (x size : Sp)
     (segs : Array Seg) (w hang : Sp) (ex : Int) (ns : Array NoteBlock) (c : Bool)
     (lf : Option Nat) (firstBaseline : Option Sp) (dj : Option DisplayJob) (op : Bool)
-    (anchors : Array String) (paintPadding : Option Sp) :
+    (anchors : Array String) (paintPadding : Option Sp) (rs : Option (Sp × Sp)) :
     ReflowStep b
-      (b.placeLine fs x size segs w hang ex ns c lf firstBaseline dj op anchors paintPadding) := by
+      (b.placeLine fs x size segs w hang ex ns c lf firstBaseline dj op anchors paintPadding rs) := by
   simp only [Spacing.Page.placeLine]
   apply ReflowStep.displayState
   apply ReflowStep.keepInk
@@ -20859,7 +20943,7 @@ private theorem line_rise (fs : FontSet) (a b : B) (x size : Sp)
 
 private def ParaFits (fs : FontSet) (j : ParaJob) (s : B × Nat × Bool) (brk : Nat) : Prop :=
   let g := paraLineGeom fs j s.1 s.2.2 s.2.1 brk
-  j.paintPadding = none ∧
+  j.paintPadding = none ∧ j.rowStrut = none ∧
     Ready s.1 g.1 ∧ LineFits fs s.1 j.size g.1 (if s.2.2 then j.firstBaseline else none)
 
 private theorem trailer_rise (fs : FontSet) (j : ParaJob) (brk : Nat)
@@ -20885,11 +20969,12 @@ private theorem paragraph_step (fs : FontSet) (j : ParaJob)
   unfold ParaFits at ha hb
   simp only [hg] at ha
   have hp := ha.1
-  have ha := ha.2
-  have hb := hb.2
+  have hr := ha.2.1
+  have ha := ha.2.2
+  have hb := hb.2.2
   unfold placeParaLine
   dsimp only
-  simp only [hg, hn, ite_true, Spacing.Page.openDisplayAt, hj, hp, ite_self]
+  simp only [hg, hn, ite_true, Spacing.Page.openDisplayAt, hj, hp, hr, ite_self]
   apply trailer_rise
   split
   · exact line_rise fs _ _ _ _ _ _ _ _ _ _ _ _ _ _

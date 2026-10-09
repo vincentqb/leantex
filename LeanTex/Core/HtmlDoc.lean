@@ -33,6 +33,15 @@ public inductive CssMode where
   | none
   deriving Repr, BEq
 
+/-- What a document's table lengths are a share of in the stylesheet, so a
+length keeps on screen the proportion to the type it has on the page: a
+deck's stage height (`vh`, the unit its type is set in), and on every other
+page its class size (`rem`, the size its body text is set at). -/
+public inductive LengthBasis where
+  | stage (height : Sp)
+  | classSize (size : Sp)
+  deriving Repr, BEq, Inhabited
+
 public structure Config where
   css : CssMode := .own
   /-- The document's resolved main locale, set from the document at
@@ -80,6 +89,10 @@ public structure Config where
   every dimension as a share of the stage (`deckStageMilli`), never a
   print length on a screen. -/
   page : Ir.PageSpec := {}
+  /-- The document's length basis (`lengthBasisOf`), from the document at
+  `emitTree`'s entry: what a table length a body `\tokens` declares is spelled
+  against, as `tokenVars` spells the preamble's. -/
+  lengthBasis : LengthBasis := .classSize Ir.baseFontSize
   /-- The resolved local measurement context. A box replaces the horizontal
   measures while retaining the page's text height; outside a box, `none`
   reads the document's text area. Providers share the native vocabulary. -/
@@ -255,8 +268,8 @@ builders, `styleClass`, and the `size-` names `styleClass` derives from
 public def engineClasses : List String :=
   ["abstract", "b", "i", "mono", "sc", "em", "sans", "normal", "rm", "md", "up",
    "section-number", "display", "equation", "eqnum",
-   "band-left", "band-right", "booktabs", "bt-cmid", "bt-heavy-above",
-   "bt-light-above", "bt-nowrap", "cell-measure", "centered", "ragged", "ragged-right", "column", "columns", "content",
+   "band-left", "band-right", "booktabs", "bt-center", "bt-cmid", "bt-heavy-above", "bt-left",
+   "bt-light-above", "bt-nowrap", "bt-right", "cell-measure", "centered", "ragged", "ragged-right", "column", "columns", "content",
    "deck-progress", "entry",
    "entry-pair", "entry-row", "entry-rows", "fill", "float", "frame-body-start", "group", "icon",
    "math", "math-display", "nopadl", "nopadr", "note", "picture", "progress",
@@ -356,25 +369,42 @@ points put it at less than half that share of a 1280 by 720 stage. -/
 public def stageLengthCss (stage : Sp) (l : Length) : String :=
   cssLengthIn (fun sp => s!"{decMilli (deckStageMilli sp stage)}vh") l
 
-/-- A table length (`Ir.tableLengths`) as the stylesheet states it: on a deck
-(`stage`, the stage height) its share of the stage, elsewhere `cssLength`.
-A declared token and the default it stands in for take the one spelling, so
-a deck that declares a table length its default already holds ships the
-stylesheet it shipped without the declaration. -/
-public def tableLengthCss (stage : Option Sp) (l : Length) : String :=
-  match stage with
-  | some h => stageLengthCss h l
-  | none => cssLength l
+/-- A length's share of the class size, in milli-rem: the projection a
+table length rides on a page whose body text is set at 1 rem. `Int`
+binders, as `deckStageMilli`'s. -/
+public def classShareMilli (x size : Int) : Int :=
+  x * 1000 / size
+
+/-- A length on a page whose body text is 1 rem: its absolute part as its
+share of the class size (`classShareMilli`, in `rem`), its `em`/`ex` as
+`cssLength` states them. A table length LaTeX fixed at the class size
+keeps its proportion to the body text it pads, as on the page, and stays
+fixed where a table sets smaller, as `rem` stays fixed where `em` would
+not: in points, a 10pt article's rule gap was 0.23 of the body text and a
+12pt one's 0.28, where the page sets both at 0.28. -/
+public def classLengthCss (size : Sp) (l : Length) : String :=
+  if size ≤ 0 then cssLength l
+  else cssLengthIn (fun sp => s!"{decMilli (classShareMilli sp size)}rem") l
+
+/-- The one resolving site for a document's length basis: a frame-model
+document's stage height, every other document's class size. -/
+public def lengthBasisOf (doc : Doc) : LengthBasis :=
+  if doc.docClass.record.model == .frame then .stage doc.page.height
+  else .classSize doc.page.fontSize
+
+/-- A table length (`Ir.tableLengths`) as the stylesheet states it, as its
+share of the document's basis (`lengthBasisOf`): the stage on a deck, the
+class size elsewhere. A declared token and the default it stands in for take
+the one spelling, so a document that declares a table length its default
+already holds ships the stylesheet it shipped without the declaration. -/
+public def tableLengthCss : LengthBasis → Length → String
+  | .stage h, l => stageLengthCss h l
+  | .classSize size, l => classLengthCss size l
 
 /-- A design token's value as a custom property: a table length through
 `tableLengthCss`, every other token as `cssLength` states it. -/
-public def tokenCss (stage : Option Sp) (name : String) (l : Length) : String :=
-  if (Ir.tableLengths.lookup name).isSome then tableLengthCss stage l else cssLength l
-
-/-- The stage a document's lengths project onto: a deck's page height, or
-none for a flow, a face or a poster, whose lengths keep their points. -/
-public def docStage? (doc : Doc) : Option Sp :=
-  if doc.docClass.record.model == .frame then some doc.page.height else none
+public def tokenCss (basis : LengthBasis) (name : String) (l : Length) : String :=
+  if (Ir.tableLengths.lookup name).isSome then tableLengthCss basis l else cssLength l
 
 /-- A table length's fallback in the stylesheet: the default the page sets
 an undeclared table by — booktabs' lengths in the preamble's font, as LaTeX
@@ -382,8 +412,20 @@ fixed them when the package loaded (`Ir.PreambleFace`) — through
 `tableLengthCss`. The page reads the same value (`Layout.tableLength`;
 `Pdf.table_length_agree`). -/
 @[expose] public def tableLengthFallback (doc : Doc) (name : String) : String :=
-  tableLengthCss (docStage? doc)
+  tableLengthCss (lengthBasisOf doc)
     (Length.ofSp (doc.preambleFace.resolve (Ir.tableLengthDefault name)))
+
+/-- The class a table cell states its side by: one per side, so the side is
+a declaration a reader's own sheet can address, never an inline style it
+cannot override. -/
+public def cellSideClass (h : Ir.HAlign) : String := "bt-" ++ h.align
+
+/-- A side class's rule: the side's `text-align` on every cell carrying it,
+at a table cell's own specificity, so neither the UA's centred `th` nor the
+scope's inherited `text-align` reaches a cell. -/
+public def cellSideRule (h : Ir.HAlign) : String :=
+  "table.booktabs td." ++ cellSideClass h ++ ", table.booktabs th." ++ cellSideClass h ++
+    " { text-align: " ++ h.align ++ "; }\n"
 
 /-- A sourced length in CSS: the custom property the value was declared
 under, with the resolved length as its fallback. This is the whole reason
@@ -2293,7 +2335,7 @@ name the declared families against the platform, today's degraded state. -/
 private def tokenVars (cfg : Config) (doc : Doc) : String :=
   let palette := paletteVars doc.palette
   let tokens := doc.tokens.entries.toList.map fun (n, g) =>
-    s!"    --{n}: {tokenCss (docStage? doc) n g.width};"
+    s!"    --{n}: {tokenCss (lengthBasisOf doc) n g.width};"
   let fonts := match cfg.fonts with
     | some fs =>
       -- The declared kind per slot: in the slides class the text slot is
@@ -4674,13 +4716,14 @@ public def baseCss (cfg : Config) (doc : Doc) : String :=
   -- cell rule addresses both tags, and the UA's bold `th` is inherited
   -- away so the head sets exactly as its `td` did — the authored `\textbf`
   -- is what makes a head bold, in both backends. Every cell states its own
-  -- side (`cellAlignAttr`), so neither the UA's centred `th` nor the
-  -- scope's `text-align` reaches one. The rows stand the print leading
+  -- side (`cellSideClassOf`, `cellSideRule`), so neither the UA's centred
+  -- `th` nor the scope's `text-align` reaches one. The rows stand the print leading
   -- apart (`printLeadingMilli`), as the PDF's do.
   s!"table.booktabs \{ border-collapse: collapse; line-height: {decMilli (printLeadingMilli doc.page)}; }\n" ++
   s!"table.booktabs td, table.booktabs th \{ padding: 0 var(--tabcolsep, {tl "tabcolsep"});\n" ++
   "  vertical-align: top; }\n" ++
   "table.booktabs th { font-weight: inherit; }\n" ++
+  cellSideRule .left ++ cellSideRule .center ++ cellSideRule .right ++
   "table.booktabs.nopadl tr > td:first-child,\n" ++
   "table.booktabs.nopadl tr > th:first-child { padding-left: 0; }\n" ++
   "table.booktabs.nopadr tr > td:last-child,\n" ++
@@ -5427,19 +5470,30 @@ private def contextUnitLeaf (found : Bool) : Inline → Bool
 private def usesContextUnit (xs : Array Inline) : Bool :=
   Ir.foldInlines contextUnitLeaf false xs
 
-/-- A cell's side as the inline style it carries: its spec's
-(`Ir.cellSpec`, the value the page's `Layout.cellSide` reads), on every cell
-— `left` included. A cell that stated only `center` and `right` inherited
-its scope's `text-align`, so a text column under `\centering` centred in
-HTML where the PDF set it flush left. -/
-@[expose] public def cellAlignAttr (cols : Array Ir.ColSpec) (spans : Array Ir.ColSpan) (i j : Nat) :
-    String × String :=
-  ("style", "text-align: " ++ (Ir.cellSpec cols spans i j).align.align)
+/-- A cell's side class: its spec's side (`Ir.cellSpec`, the value the
+page's `Layout.cellSide` reads), on every cell — `left` included. A cell
+that stated only `center` and `right` inherited its scope's `text-align`, so
+a text column under `\centering` centred in HTML where the PDF set it flush
+left. -/
+@[expose] public def cellSideClassOf (cols : Array Ir.ColSpec) (spans : Array Ir.ColSpan)
+    (i j : Nat) : String :=
+  cellSideClass (Ir.cellSpec cols spans i j).align
 
-/-- One table cell: its side as inline style (`cellAlignAttr`), the
-`bt-cmid` class when a `\cmidrule` spans its column, and — for a header cell
-— `scope=col`, the one scope a booktabs head declares (HTML §4.9.10: a `th`
-heading the cells below it). A `\multicolumn` head sets by its own spec
+/-- A cell's classes, its side first (`cellSideClassOf`): `bt-cmid` when a
+`\cmidrule` spans its column, and `bt-nowrap` on a natural column's cell, so
+auto table layout cannot squeeze the column to min-content (the
+`:where(... td.bt-nowrap ...)` rule). `white-space` on the `<col>` itself would
+do nothing (CSS Tables §17.3), so the class lands on the cell. One `class`
+attribute carries them all. -/
+@[expose] public def cellClasses (cols : Array Ir.ColSpec) (cmids : Array (Nat × Nat))
+    (spans : Array Ir.ColSpan) (i j : Nat) : List String :=
+  cellSideClassOf cols spans i j ::
+    ((if cmids.any (fun (a, b) => a ≤ j + 1 && j + 1 ≤ b) then ["bt-cmid"] else []) ++
+      (if (Ir.cellSpec cols spans i j).width matches .natural then ["bt-nowrap"] else []))
+
+/-- One table cell: its classes (`cellClasses`, its side first) and — for a
+header cell — `scope=col`, the one scope a booktabs head declares (HTML
+§4.9.10: a `th` heading the cells below it). A `\multicolumn` head sets by its own spec
 (`Ir.cellSpec`) and takes `colspan` for the columns it covers (HTML
 §4.9.11), the layout's `spanBox`. Plain cells carry the same `inlines` a
 `td` carried; a cell whose emitted dimensions read `cqi` puts those inlines
@@ -5450,20 +5504,8 @@ public def tableCellNode (cfg : Config) (cols : Array Ir.ColSpec) (cmids : Array
   let span : Array (String × String) := match Ir.cellSpan? spans i j with
     | some s => if 2 ≤ s.n then #[("colspan", toString s.n)] else #[]
     | none => #[]
-  -- A natural `l`/`c`/`r` column is left to CSS `auto`; its cells carry
-  -- `bt-nowrap` so auto table layout cannot squeeze the column to
-  -- min-content (the `:where(... td.bt-nowrap ...)` rule above). `white-space`
-  -- on the `<col>` itself would do nothing (CSS Tables §17.3), so the class
-  -- lands here, on the cell. Combined with `bt-cmid` into one class value, as
-  -- a cell carries at most one `class` attribute.
-  let isNatural : Bool := spec.width matches .natural
-  let cmid := cmids.any (fun (a, b) => a ≤ j + 1 && j + 1 ≤ b)
-  let classes : Array String :=
-    (if cmid then #["bt-cmid"] else #[]) ++ (if isNatural then #["bt-nowrap"] else #[])
-  let cls : Array (String × String) :=
-    if classes.isEmpty then #[] else #[("class", " ".intercalate classes.toList)]
   let scope : Array (String × String) := if i < headerRows then #[("scope", "col")] else #[]
-  let attrs := #[cellAlignAttr cols spans i j] ++ (span ++ cls ++ scope)
+  let attrs := #[("class", " ".intercalate (cellClasses cols cmids spans i j))] ++ (span ++ scope)
   let child := match spec.width with
     | .sized e => cfg.atMeasure
       (e.resolveWidth (MeasureValues.horizontal cfg.measureValues.lineWidth 0))
@@ -5511,18 +5553,19 @@ public theorem th_iff_header_row (cfg : Config) (cols : Array Ir.ColSpec)
     exact tableCellTag_th_iff headerRows i
 
 /-- **Every cell states its spec's side** (`_projects`): whatever its row,
-column, span, `\cmidrule` or head, a cell element's first attribute is
-`cellAlignAttr` — the `text-align` of `Ir.cellSpec`, the value the page's
-`Layout.cellSide` sets the cell's lines by (`Pdf.table_cell_side_agree`) —
-`left` included, so no cell inherits the side of the scope its table stands
-in. -/
+column, span, `\cmidrule` or head, a cell element's first attribute is its
+classes (`cellClasses`), the first of them `cellSideClassOf` — the side of
+`Ir.cellSpec`, the value the page's `Layout.cellSide` sets the cell's lines
+by (`Pdf.table_cell_side_agree`) — `left` included, so no cell inherits the
+side of the scope its table stands in. -/
 public theorem tableCellNode_align_projects (cfg : Config) (cols : Array Ir.ColSpec)
     (cmids : Array (Nat × Nat)) (spans : Array Ir.ColSpan) (headerRows i j : Nat)
     (cell : Array Inline) :
     ∃ attrs kids, tableCellNode cfg cols cmids spans headerRows i j cell =
       .elem (tableCellTag headerRows i) attrs kids ∧
-      attrs[0]? = some (cellAlignAttr cols spans i j) :=
-  ⟨_, _, rfl, by rw [Array.getElem?_append_left (by simp)]; rfl⟩
+      attrs[0]? = some ("class", " ".intercalate (cellClasses cols cmids spans i j)) ∧
+      (cellClasses cols cmids spans i j).head? = some (cellSideClassOf cols spans i j) :=
+  ⟨_, _, rfl, by rw [Array.getElem?_append_left (by simp)]; rfl, rfl⟩
 
 /-- Project a relative track hint to CSS, falling back to the declared affine
 width or natural sizing. CSS table layout still measures content and padding. -/
@@ -5808,9 +5851,9 @@ public def epochPaletteDiff (before after : Ir.Palette) : PaletteDiff :=
   { entries := changed ++ removed }
 
 /-- The redefinitions a body `\tokens` makes, same diff. -/
-public def epochTokenStyle (stage : Option Sp) (before after : Ir.Tokens) : String :=
+public def epochTokenStyle (basis : LengthBasis) (before after : Ir.Tokens) : String :=
   String.intercalate "; " ((after.entries.filter fun (n, g) =>
-    before.find? n != some g).toList.map fun (n, g) => s!"--{n}: {tokenCss stage n g.width}")
+    before.find? n != some g).toList.map fun (n, g) => s!"--{n}: {tokenCss basis n g.width}")
 
 /-- Advance the palette tokens and the ordinary flow's default ink
 separately. A surrounding painted body keeps its surface; outside one,
@@ -5839,12 +5882,12 @@ public theorem Config.advancePalette_ink_projects (cfg : Config) (p : Ir.Palette
   rfl
 
 /-- Token declarations have the same sibling flow as palette declarations;
-a table length among them is spelled as `tokenVars` spells it, on the stage
-`docStage?` names (`cfg.deck` and `cfg.page` are the document's by then). -/
+a table length among them is spelled as `tokenVars` spells it, against the
+document's basis (`Config.lengthBasis`, `lengthBasisOf`). -/
 private def Config.advanceTokens (cfg : Config) (tk : Ir.Tokens) : Config :=
   { cfg with tokens := tk
              epochStyle := joinStyles cfg.epochStyle
-               (epochTokenStyle (if cfg.deck then some cfg.page.height else none) cfg.tokens tk) }
+               (epochTokenStyle cfg.lengthBasis cfg.tokens tk) }
 
 /-- The outgoing declarations of ordinary containers continue in source
 order. Columns, notes and navigation are independent content scopes, as
@@ -7829,7 +7872,8 @@ private def emitTreeCore (cfg : Config) (doc : Doc) (styles : String × Array Di
                         pal := doc.palette
                         tokens := doc.tokens
                         deck := doc.docClass.record.model == .frame
-                        page := doc.page }
+                        page := doc.page
+                        lengthBasis := lengthBasisOf doc }
   -- The chrome footer: every frame section closes with the section in
   -- force and its own frame number, in the muted key at the scale's small
   -- step — the same declarations the PDF path reads. A `\framefoot` note

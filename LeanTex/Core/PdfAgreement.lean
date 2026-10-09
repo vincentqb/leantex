@@ -46,26 +46,33 @@ public theorem features_agree (features : Ir.Features) :
   cases features with
   | mk kern => cases kern <;> simp [HtmlDoc.kernCssFor, Layout.kernEnabled]
 
-/-- **Both artifacts set a table cell on one side** (`_agree`): the
-`text-align` every HTML cell states (`HtmlDoc.cellAlignAttr`,
-`HtmlDoc.tableCellNode_align_projects`) is the side the page sets that
-cell's lines on (`Layout.cellSide`), both the one IR value `Ir.cellSpec`
-resolves — so the side of the scope the table stands in reaches neither. -/
+/-- **Both artifacts set a table cell on one side** (`_agree`): the side
+class every HTML cell carries first (`HtmlDoc.cellSideClassOf`,
+`HtmlDoc.tableCellNode_align_projects`) is the class of the side the page
+sets that cell's lines on (`Layout.cellSide`), and the stylesheet's rule for
+that class declares that side's `text-align` — both the one IR value
+`Ir.cellSpec` resolves, so the side of the scope the table stands in reaches
+neither. -/
 public theorem table_cell_side_agree (cols : Array Ir.ColSpec) (spans : Array Ir.ColSpan)
     (i j : Nat) :
-    HtmlDoc.cellAlignAttr cols spans i j =
-      ("style", "text-align: " ++ (Layout.cellSide cols spans i j).align) := rfl
+    HtmlDoc.cellSideClassOf cols spans i j = HtmlDoc.cellSideClass (Layout.cellSide cols spans i j) ∧
+      HtmlDoc.cellSideRule (Layout.cellSide cols spans i j) =
+        "table.booktabs td." ++ HtmlDoc.cellSideClassOf cols spans i j ++
+          ", table.booktabs th." ++ HtmlDoc.cellSideClassOf cols spans i j ++
+          " { text-align: " ++ (Layout.cellSide cols spans i j).align ++ "; }\n" :=
+  ⟨rfl, rfl⟩
 
 /-- **Both artifacts set an undeclared table by one length** (`_agree`): the
 stylesheet's fallback for each of a table's lengths (`Ir.tableLengths`) is
-the spelling (`HtmlDoc.tableLengthCss`: on a deck its share of the stage) of
+the spelling (`HtmlDoc.tableLengthCss`: its share of the document's basis,
+`HtmlDoc.lengthBasisOf` — the stage on a deck, the class size elsewhere) of
 the very length the page sets the table by when the document declares none
 (`Layout.tableLength none`) — booktabs' default as LaTeX fixes it at load,
 in the document's preamble font (`Ir.Doc.preambleFace`), never the table's
 own face or size. -/
 public theorem table_length_agree (doc : Ir.Doc) (name : String) :
     HtmlDoc.tableLengthFallback doc name =
-      HtmlDoc.tableLengthCss (HtmlDoc.docStage? doc)
+      HtmlDoc.tableLengthCss (HtmlDoc.lengthBasisOf doc)
         (Dim.Length.ofSp (Layout.tableLength none doc.preambleFace name)) := rfl
 
 /-- **Both artifacts size a picture by one IR box** (`_agree`). The PDF

@@ -515,6 +515,7 @@ def diagWitness (one mapped withMath : Font.FontSet)
   -- A provider's `Token.Error`, which the default style frames; the
   -- emission path is `listingStyleTableChecks`'.
   | .W0397 => (Tests.ListingStyleTable.boxedDoc .default 1).2.filter (·.kind == .W0397)
+  | .W0398 => dvE (dvDoc "\\setmainfont{Demo Serif}\n\\usepackage{booktabs}\n" "x")
   | .E0606 => #[DriverDiag.htmlResourceUnavailable "an image still names 'figures/plot.svg'"]
   | .E0607 => #[DriverDiag.pdfWriteRefused (.objectStreamSize 67108865),
       DriverDiag.pdfWriteRefused (.objectSpelling 4)]

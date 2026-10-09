@@ -619,7 +619,7 @@
   suggestion: \define \name(...) {body} declares typed commands
 ── W0358 (degraded) a float taller than the text block overruns its page
 ⚠ [W0358]
-  a figure or table is 287.93pt taller than the text block; it overruns its page
+  a figure or table is 289.409pt taller than the text block; it overruns its page
   suggestion: shrink the float's content, or raise the text height (\page{ vmargin = ... })
 ── W0361 (config) a built-in is not replaced by a redefinition the engine cannot run
 ⚠ [W0361] - \newcommand
@@ -756,6 +756,10 @@
 ── W0397 (degraded) a listing token sets without the frame or background its highlighting style draws around it; its text and colour still set
 ⚠ [W0397] - \begin
   the frame the 'default' highlighting style draws around 'Error' tokens is not drawn; their text and colour still set
+── W0398 (degraded) booktabs loads after a face is declared; its rule paddings are measured in Latin Modern, not in that face
+⚠ [W0398] - \usepackage
+  '\usepackage{booktabs}' follows the main face's declaration; its rule paddings are measured in Latin Modern
+  suggestion: load booktabs before '\setmainfont', where LaTeX measures them in Latin Modern too
 ── W0435 (degraded) a \qedhere whose QED this engine cannot set where amsthm sets it; the QED stands on a line of its own after the display
 ⚠ [W0435] - \qedhere
   '\qedhere' in '{align*}' does not set its QED where amsthm sets it; the QED stands on a line of its own after the display

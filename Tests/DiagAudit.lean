@@ -8,6 +8,7 @@ import Tests.ListingProvider
 import Tests.ListingStyleTable
 import Tests.PublicationPaths
 import Tests.HtmlContained
+import Tests.TableSide
 import Tests.PdfBounds
 import scripts.Rung
 
@@ -146,6 +147,9 @@ def registry : List AuditRow :=
    -- A token box (a frame or background) the typed inlines cannot carry
    -- yet: drawing it in both artifacts retires the code.
    ⟨.W0397, .native, .native, check% listingStyleTableChecks⟩,
+   -- A face declared before booktabs loads: measuring that face's ex at
+   -- the class size (the driver holds the font environment) retires it.
+   ⟨.W0398, .native, .native, check% Tests.tableFaceOrderChecks⟩,
    -- Unknown outline data, an absent result and a reservation mismatch
    -- are separate losses. The check mutates each guard's own input and
    -- holds the actual emitted diagnostics to the label and full source.

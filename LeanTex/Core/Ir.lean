@@ -1173,6 +1173,15 @@ private def displayOptions : List (Nat × Sp) :=
   [(8, Dim.pt 8), (9, Dim.pt 9), (10, Dim.pt 10), (11, Dim.pt 1095 / 100), (12, Dim.pt 12),
    (14, Dim.pt 144 / 10), (17, Dim.pt 1728 / 100), (20, Dim.pt 2074 / 100)]
 
+/-- The `\normalsize` a class option's size file sets, for a body declared
+at that option's point size: `11pt` sets 10.95 pt (size11.clo's `\@xipt`),
+`14pt` 14.4 pt; a size that is no option's point size is its own. What a
+package measures in the preamble is measured at this size
+(`PreambleFace.ofClass`): booktabs under `11pt` fixes `\heavyrulewidth` at
+0.876 pt, .08 of 10.95 pt (lualatex). -/
+public def optionNormalSize (size : Sp) : Sp :=
+  ((displayOptions.find? fun o => Dim.pt o.1 == size).map (·.2)).getD size
+
 /-- The option whose point size stands nearest a body size. -/
 private def displaySizeFileOf (size : Sp) : Nat :=
   (displayOptions.foldl (fun (best : Nat × Sp) (o : Nat × Sp) =>
@@ -4746,6 +4755,13 @@ unbreakable line. -/
 public structure ColSpec where
   width : ColWidth
   align : HAlign
+  /-- A wrapping column's paragraphs set ragged on `align`'s side: its
+  `>{…}`/`<{…}` modifier declared `\raggedright`, `\raggedleft` or
+  `\centering` (array manual §1). A bare `p` cell justifies — its `\vtop`
+  runs `\@arrayparboxrestore`, which zeroes `\leftskip` and `\rightskip`
+  (latex.ltx) — and a declaration in the modifier sets those skips again
+  inside the cell, so `>{\raggedright}p` sets ragged where `p` justifies. -/
+  ragged : Bool := false
   deriving Repr, BEq, Inhabited
 
 /-- Relative table-track hints, in permille of the flexible target. Natural
@@ -4838,7 +4854,7 @@ public def cellSpan? (spans : Array ColSpan) (i j : Nat) : Option ColSpan :=
   spans.find? fun s => s.row == i && s.col == j
 
 /-- The spec a cell sets by, the one resolving site both backends read
-(`Layout.cellSide`, `HtmlDoc.cellAlignAttr`): a `\multicolumn` head's own
+(`Layout.cellSide`, `HtmlDoc.cellSideClassOf`): a `\multicolumn` head's own
 spec, else its column's, else — a cell past the declared columns — a
 natural left one. The spec alone decides: a tabular sets each entry in a box
 of its own — an `l`/`c`/`r` entry an `\hfil`-padded `\hbox`, a `p` entry a
@@ -7728,26 +7744,41 @@ printed, trimmed surface — by the record, definitionally. -/
 public theorem poster_model_face : (DocClass.poster).record.model = .face := by rfl
 
 /-- The font a package measures its lengths in as it loads: the preamble's
-current font, which is Latin Modern at the class size — its sans under
-beamer (`ClassRecord.preambleSans`), its roman under the standard classes
-and moderncv — whatever face the document goes on to declare. booktabs
-assigns its `\dimen`s once, there (`\heavyrulewidth=.08em …
-\belowrulesep=.65ex`, booktabs.dtx), so its em and ex are this face's and
-never a table's own. The x-heights are lualatex's `\fontdimen5` of
-lmsans10 (4.44pt at 10pt) and lmroman10 (4.31pt), per mille of the size. -/
+current font, which is Latin Modern at the class's `\normalsize`
+(`optionNormalSize`: 10.95 pt under `11pt`) — its sans under beamer
+(`ClassRecord.preambleSans`), its roman under the standard classes and
+moderncv. booktabs assigns its `\dimen`s once, there (`\heavyrulewidth=.08em
+… \belowrulesep=.65ex`, booktabs.dtx), so its em and ex are this face's and
+never a table's own. The x-heights are lualatex's `\fontdimen5` of lmsans10
+(4.44pt at 10pt) and lmroman10 (4.31pt), per mille of the size. A face the
+document declares before booktabs loads would be the preamble's font
+instead; the engine does not measure that one and names the loss (W0398). -/
 public structure PreambleFace where
   size : Sp
   xHeight : Sp
   deriving Repr, BEq, Inhabited
 
-/-- A class's preamble font at the document's class size. -/
+/-- A class's preamble font at the `\normalsize` its size option sets. -/
 public def PreambleFace.ofClass (rec : ClassRecord) (size : Sp) : PreambleFace :=
+  let size := optionNormalSize size
   { size, xHeight := size * (if rec.preambleSans then 444 else 431) / 1000 }
 
 /-- A length as the preamble font fixes it: its em at the class size, its ex
 at Latin Modern's x-height there. -/
 public def PreambleFace.resolve (face : PreambleFace) (l : Dim.Length) : Sp :=
   l.resolve face.size face.xHeight
+
+/-- The table lengths a preamble declares (`tableLengths`' names), as LaTeX
+assigns them: `\setlength` evaluates its em and ex where it stands, which in
+the preamble is the preamble's font (`PreambleFace`), so
+`\setlength{\belowrulesep}{1ex}` is 4.31pt in a 10pt article whatever face
+and size its tables set in. Every other token is left as declared, and so
+is a table length a body declares: it resolves where the table reads it. -/
+public def PreambleFace.fixTableLengths (face : PreambleFace) (tk : Tokens) : Tokens :=
+  { entries := tk.entries.map fun (n, g) =>
+      if (tableLengths.lookup n).isSome then
+        (n, { g with width := Dim.Length.ofSp (face.resolve g.width) })
+      else (n, g) }
 
 /-- The poster's headline band: title, authors, institute — the `\title`
 family read as class furniture, the way the gemini lineage's headline
@@ -10196,12 +10227,14 @@ end
 
 /-- One column spec, for the dump: the align letter, then the declared
 width. `l:310/1000` is a left `p{.31\linewidth}`; a bare letter is a
-natural column. -/
+natural column; `~` after the letter marks a ragged one (`ColSpec.ragged`),
+`l~:310/1000` a `>{\raggedright}p{.31\linewidth}`. -/
 private def dumpColSpec (c : ColSpec) : String :=
   let al := match c.align with
     | .left => "l"
     | .center => "c"
     | .right => "r"
+  let al := if c.ragged then al ++ "~" else al
   match c.width with
   | .natural => al
   | .sized e =>
