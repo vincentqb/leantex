@@ -31,7 +31,8 @@ on the same fixtures and requires identical artifacts and diagnostics.
 `--decode-only` measures the decode phase alone over invented 3 MiB
 documents: ASCII or accented words, LF or CR LF line ends.
 `--listings-only` measures a build of the invented highlight snippets as
-minted listings, one copy and eight.
+minted listings, one copy and eight, and holds a listing's elaboration
+linear in its length.
 The slide run also needs sha256sum, pdftocairo and xmllint.
 For before/after runs use this same driver, N, font/tool environment and an
 otherwise idle host; shared-host timings are provisional. Redirect stdout
@@ -114,10 +115,12 @@ def bibOf (n : Nat) : String := Id.run do
 /-- The milliseconds `-v` reports for its `bib` phase: reading the `.bib`,
 ordering and lettering the list, formatting every entry, resolving every
 citation. -/
-def bibPhaseMs (log : String) : Option Nat :=
+def phaseMs (phase log : String) : Option Nat :=
   (log.splitOn "\n").findSome? fun l =>
-    if l.startsWith "bib: " then ((l.splitOn "(").getLast?.bind fun t =>
+    if l.startsWith (phase ++ ": ") then ((l.splitOn "(").getLast?.bind fun t =>
       ((t.splitOn " ms").head?).bind (·.trimAscii.toString.toNat?)) else none
+
+def bibPhaseMs (log : String) : Option Nat := phaseMs "bib" log
 
 /-- The reference-list phase over `entries` invented entries, every one
 listed (`\nocite{*}` under plainnat, which sorts and letters them): the
@@ -215,6 +218,34 @@ def benchListings (n copies : Nat) : IO Unit := do
       #["-q", "build", input.toString, "-o", (dir / "listings.pdf").toString]
     bench n s!"leantex  listings, {copies} copies (HTML)" leantex
       #["-q", "build", input.toString, "-o", (dir / "listings.html").toString]
+
+/-- The `elab` phase of a document holding one Python listing of `lines`
+lines, drawn in turn from the invented snippets: the median of `n` runs. -/
+def listingElabMs (n lines : Nat) : IO Nat := do
+  let leantex ← compiler
+  let mut pool : Array String := #[]
+  let dir : System.FilePath := "testdata/highlight/snippets/python"
+  for f in (← dir.readDir).qsort (·.fileName < ·.fileName) do
+    pool := pool ++ ((← IO.FS.readFile f.path).splitOn "\n").toArray
+  let mut body := ""
+  for i in [0:lines] do
+    body := body ++ (pool.getD (i % max pool.size 1) "").trimAscii.toString
+    body := body ++ "\n"
+  IO.FS.withTempDir fun tmp => do
+    let src := tmp / "long.tex"
+    IO.FS.writeFile src ("\\documentclass{article}\n\\usepackage{minted}\n\\begin{document}\n" ++
+      "\\begin{minted}{python}\n" ++ body ++ "\\end{minted}\n\\end{document}\n")
+    let mut times : Array Nat := #[]
+    for _ in [0:n] do
+      let out ← IO.Process.output
+        { cmd := leantex, args := #["-v", "build", src.toString, "-o", (tmp / "long.pdf").toString] }
+      if out.exitCode != 0 then die s!"benchmark command failed: {leantex} on a {lines}-line listing"
+      match phaseMs "elab" (out.stdout ++ out.stderr) with
+      | some ms => times := times.push ms
+      | none => die "no elab phase in the -v report"
+    let ms := median times
+    IO.println s!"{padRight s!"leantex  elab, one {lines}-line listing" 42} {padLeft (toString ms) 6} ms (median of {n})"
+    return ms
 
 /-- A repeated image must not repeatedly encode the embedded font programs
 while checking HTML resource closure. Both sizes use the same captured assets. -/
@@ -847,6 +878,17 @@ def run (n : Nat) (compressed : Bool := false) : IO Unit := do
 
 end Slides
 
+/-- A listing's lexing is linear in its length: four times the lines may
+cost at most eight times the phase (linear is 4, quadratic 16). A lexer
+step that copied its token array on every token once made it quadratic. -/
+def listingGrowth (n : Nat) : IO Unit := do
+  let small ← listingElabMs n 2000
+  let big ← listingElabMs n 8000
+  let ratio := (big * 10 + max small 1 / 2) / max small 1
+  IO.println s!"{padRight "leantex  listing growth, 8000 / 2000 lines" 42} {padLeft s!"{ratio / 10}.{ratio % 10}" 6} ×  (bound 8.0)"
+  if big > 8 * max small 1 then
+    die s!"a listing's elaboration grew {ratio / 10}.{ratio % 10}× for 4× the lines (bound 8)"
+
 def main (args : List String) : IO UInt32 := do
   if args.head? == some "--doc-cost" then return ← docCost args.tail
   if args == ["--slides-selftest"] then
@@ -864,6 +906,7 @@ def main (args : List String) : IO UInt32 := do
   if args == ["--listings-only"] then
     benchListings n 1
     benchListings n 8
+    listingGrowth n
     return 0
   if args == ["--boundary-only"] then
     unless ← hasCmd "lualatex" do die "picture benchmark needs lualatex"
@@ -920,6 +963,7 @@ def main (args : List String) : IO UInt32 := do
   benchImageDeck n 128
   benchDecode n
   benchListings n 8
+  listingGrowth n
   -- The reference list's growth: a thesis-sized .bib under \nocite{*} is
   -- thousands of entries, and a phase quadratic in them (75 s at 1600)
   -- passed every row above. Four times the entries may cost at most eight

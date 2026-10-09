@@ -576,6 +576,9 @@ def listingHighlightChecks (ref : IO.Ref (List String)) : IO Unit := do
     let spans := ListingHighlight.coloredSpansList #[] codes.toList
     t s!"highlight {language}: typed HTML ships colored code spans"
       (spans.size ≥ 3)
+    -- White space lays down no ink: its type's colour would only cost a span.
+    t s!"highlight {language}: no coloured span holds only white space"
+      (spans.all fun (text, _) => !text.all Char.isWhitespace)
     let out := layoutOf fonts doc
     let colored := (ListingHighlight.glyphColors out).filter fun p =>
       p.2 != (Ir.Design.ofDoc doc).fg

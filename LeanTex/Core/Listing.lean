@@ -166,9 +166,14 @@ public def brush (pal : Palette) (ground covered : Option Color) (style : Listin
       role := if covered.isSome then none else (paint (Design.ofPalette pal) style k).bind (·.role) }
   | none => { look, ink := covered, role := none }
 
+/-- A token's text in its brush. Text that lays down no ink (white space,
+not underlined) takes no colour: it paints nothing, and its colour would
+only cost the artifact a span or a colour change. -/
 public def Brush.inline (b : Brush) (text : String) : Inline :=
   match b.ink with
-  | some c => .colored c b.role #[weighted b.look text]
+  | some c =>
+    if b.look.underline || !text.all Char.isWhitespace then .colored c b.role #[weighted b.look text]
+    else weighted b.look text
   | none => weighted b.look text
 
 /-- A classified source token as ordinary typed inlines. Both backends consume
@@ -186,7 +191,9 @@ public theorem token_inline_source_exact (pal : Palette) (ground covered : Optio
     plainTextOne (tokenInline pal ground covered t (style := style)) = t.text := by
   unfold tokenInline Brush.inline
   split
-  · simp [plainTextOne, plainTextList, weighted_text]
+  · split
+    · simp [plainTextOne, plainTextList, weighted_text]
+    · exact weighted_text _ _
   · exact weighted_text _ _
 
 /-- One brush per type the lines hold, for a listing painted on one ground. -/
