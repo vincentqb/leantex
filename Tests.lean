@@ -53,6 +53,7 @@ import Tests.BrowserFaceBatch
 import Tests.CacheIO
 import Tests.PictureAssets
 import Tests.ToolMemo
+import Tests.World
 import Tests.Surface
 import Tests.ElabContracts
 import Tests.FrontendContracts
@@ -158,6 +159,7 @@ import Tests.CompatGate
 import Tests.CompatExecution
 import Tests.HtmlTokens
 import Tests.HtmlContained
+import Tests.MachineLoss
 import Tests.HtmlA11y
 import Tests.Conditionals
 import Tests.StringConditionals
@@ -294,6 +296,7 @@ def backendSuiteChecks (ref : IO.Ref (List String)) : IO Unit := do
   htmlContainedPublicationChecks ref
   htmlContainedSvgColorChecks ref
   htmlContainedCliChecks ref
+  Tests.machineLossChecks ref
   htmlContainedCorpusChecks ref
   publicationPathChecks ref
   anchorCostChecks ref
@@ -708,6 +711,7 @@ def surfaceSuiteChecks (ref : IO.Ref (List String)) : IO Unit := do
   Tests.cacheIdentityChecks ref
   Tests.pictureAssetsChecks ref
   Tests.toolMemoChecks ref
+  Tests.World.checks ref
   toolProbeChecks ref
   posterChromeCompatChecks ref
   keyedLookupChecks ref

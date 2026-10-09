@@ -511,7 +511,8 @@ def diagWitness (one mapped withMath : Font.FontSet)
   -- The HTML page's own image face: a decoded PDF page, which the PDF
   -- artifact embeds as vectors and no browser decodes in an <img>. The
   -- emission path is `htmlA11yChecks`' (the figures fixture fires it).
-  | .W0605 => #[HtmlDoc.undecodableDiag "figures/box.pdf"]
+  | .W0605 => #[HtmlDoc.undecodableDiag "figures/box.pdf",
+      DriverDiag.pageIconOmitted "favicon.svg" "xmllint did not finish"]
   | .W0393 => #[DriverDiag.listingHighlightUnavailable "bash" "Pygments is unavailable"]
   | .W0394 => Tests.LayoutInkContracts.boundaryWitness one .W0394
   | .E0395 => Tests.LayoutInkContracts.boundaryWitness one .E0395
@@ -546,7 +547,8 @@ def diagWitness (one mapped withMath : Font.FontSet)
   | .E0382 => #[DriverDiag.boundaryFailed "lualatex"
       "! Undefined control sequence. · l.7 \\nope",
     DriverDiag.boundaryUnfinished "lualatex" "exit code 3"]
-  | .W0378 => #[DriverDiag.boundarySvgMissing "not found (error code: 2)"]
+  | .W0378 => #[DriverDiag.boundarySvgMissing "leantex-pic:0123456789abcdef"
+      "not found (error code: 2)"]
   | .W0349 => dvE "\\ref{nowhere}"
   | .W0350 => dvE "\\section{A}\\label{twice}\\label{twice}"
   | .W0380 => dvE "\\refstepcounter{section}\n\\label{stepped} see \\cref{stepped}"
@@ -1239,7 +1241,7 @@ def subjectDebt : List String :=
    "W0321", "W0325", "W0326", "W0327", "W0328", "W0330", "W0331", "W0332",
    "W0333", "W0335", "W0336", "W0338", "W0342", "W0352",
    "W0353", "W0356", "W0358", "W0364", "W0366", "W0368", "W0369", "W0372",
-   "W0377", "W0378", "W0379", "W0380", "W0381", "W0388"]
+   "W0377", "W0379", "W0380", "W0381", "W0388"]
 
 /-- **Every counted loss can be counted.** A `degraded` or `pending` code
 says content did not reach the page as declared, and a reader sizing that

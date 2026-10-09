@@ -226,17 +226,39 @@ public def boundaryWithdrawn (tool : String) (said : Option String) (src : Strin
       | none => s!"install {tool} to draw it whole, and a warm cache needs no tool; " ++ direct))
     (subject := some src)
 
-/-- W0378: the PDF→SVG converter for the HTML artifact is not runnable;
-the page shows the rendered subset's drawing of each picture the subset
-draws in part (`Boundary.htmlWithdraw`), and every other picture's text
-alternative. -/
-public def boundarySvgMissing (err : String) : Diag :=
+/-- W0378: a boundary picture has no checked SVG face for the HTML artifact
+— its PDF→SVG conversion failed, or the check its SVG must pass did not
+finish (`Boundary.htmlFace`) — so the page shows the rendered subset's
+drawing where the subset draws the picture in part (`Boundary.htmlWithdraw`),
+and otherwise a placeholder labelled with the picture's text alternative.
+One per picture, under its image source. -/
+public def boundarySvgMissing (src err : String) : Diag :=
   Diag.of .W0378
-    s!"cannot run 'pdftocairo' to convert boundary pictures for the HTML \
-artifact: {err}"
-    (help := "install poppler's pdftocairo, or \\allow{W0378} accepts the \
-loss")
+    s!"this boundary picture has no browser face for the HTML artifact: {err}"
+    (help := "install the tool the reason names (poppler's pdftocairo, libxml2's xmllint, \
+librsvg's rsvg-convert), rebuild if it was interrupted, or \\allow{W0378} accepts the loss")
+    (subject := some src)
     (output := some .html)
+
+public theorem boundarySvgMissing_subject (src err : String) :
+    (boundarySvgMissing src err).kind = .W0378 ∧
+      (boundarySvgMissing src err).subject = some src := by
+  simp [boundarySvgMissing, Diag.of_record_exact]
+
+/-- W0605: the declared page icon is an SVG whose check did not finish on
+this machine, so the page ships without the icon instead of refusing. -/
+public def pageIconOmitted (name why : String) : Diag :=
+  Diag.of .W0605
+    s!"favicon '{name}' could not be checked for the web page: {why}; \
+the page ships without it"
+    (help := "install the tool the reason names, rebuild if it was interrupted, or \
+\\pdfmeta{ favicon = \"icon.png\" } declares a PNG icon, which needs no tool")
+    (subject := some name)
+    (output := some .html)
+
+public theorem pageIconOmitted_subject (name why : String) :
+    (pageIconOmitted name why).kind = .W0605 ∧ (pageIconOmitted name why).subject = some name := by
+  simp [pageIconOmitted, Diag.of_record_exact]
 
 /-- W0393: the external classifier supplied no usable answer. The source
 still ships, and the language is the key for counting repeated refusals. -/

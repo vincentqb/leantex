@@ -15,12 +15,9 @@ private def pictureAssetWrapped : String :=
 private def pictureAssetPdf (label : String) : ByteArray :=
   svgCanvasPdf ++ ("\n% synthetic picture tool: " ++ label ++ "\n").toUTF8
 
-private def pictureAssetQuote (text : String) : String :=
-  "'" ++ text.replace "'" "'\\''" ++ "'"
-
 private def pictureAssetToolBody (root : System.FilePath) (label : String) : String :=
-  "#!/bin/sh\nset -eu\nroot=" ++ pictureAssetQuote root.toString ++
-  "\nlabel=" ++ pictureAssetQuote label ++ "\n" ++
+  "#!/bin/sh\nset -eu\nroot=" ++ shQuote root.toString ++
+  "\nlabel=" ++ shQuote label ++ "\n" ++
   "if [ \"$1\" = --version ]; then\n\
   printf '%s\\n' version >> \"$root/$label.calls\"\n\
   printf '%s\\n' 'synthetic picture renderer 1'\n\
@@ -213,10 +210,9 @@ def pictureAssetsChecks (ref : IO.Ref (List String)) : IO Unit :=
     -- TeX engines select their format from the invoked name. Resolving a
     -- symlink for identity must not replace that name when executing it.
     let aliasPath := root / "renderer-format"
-    let linked ← IO.Process.output {
-      cmd := "ln", args := #["-s", tool, aliasPath.toString] }
+    symlink tool aliasPath
     t "picture assets: the synthetic format alias is a working symlink"
-      (linked.exitCode == 0 && (← IO.FS.realPath aliasPath).toString == tool)
+      ((← IO.FS.realPath aliasPath).toString == tool)
     let aliased ← PictureAssets.fulfil none aliasPath.toString "" "" pictureAssetWrapped
     t "picture assets: an executable alias keeps its invocation name in owned scratch"
       (pictureAssetDrawn aliased expected false &&

@@ -34,16 +34,20 @@ def runCacheCwdChild (args : List String) : IO UInt32 := do
   check ref s!"cache identity/{stage}: the working directory was actually removed"
     (match ← IO.currentDir.toBaseIO with | .error _ => true | .ok _ => false)
   let stamp ← (ToolProbe.witness "cache-identity-tool").toBaseIO
-  check ref s!"cache identity/{stage}: an unavailable cwd supplies no witness"
-    (match stamp with | .ok "" => true | _ => false)
+  check ref s!"cache identity/{stage}: an unavailable cwd still resolves an absolute PATH entry"
+    (match stamp with | .ok s => !s.isEmpty | .error _ => false)
+  let relative ← (World.ToolPath.witness "cache-identity-tool").runM (m := BaseIO) fun q =>
+    match q with | .env "PATH" => pure (some "../bin") | q => Host.answer q
+  check ref s!"cache identity/{stage}: an unavailable cwd gives a relative PATH entry no witness"
+    relative.isEmpty
   let validated ← (ImageAssets.validateSvg (svgDocument "")).toBaseIO
   check ref s!"cache identity/{stage}: SVG validation returns an inner error"
     (match validated with | .ok (.error why) => !why.isEmpty | _ => false)
   let some cache ← IO.getEnv "XDG_CACHE_HOME" |
     throw <| IO.userError "missing isolated cache root"
   let entries ← (System.FilePath.mk cache / "leantex" / "convs").readDir
-  check ref s!"cache identity/{stage}: an unavailable identity publishes no answer"
-    (entries.all fun entry => !entry.fileName.endsWith ".answer")
+  check ref s!"cache identity/{stage}: an answer is published exactly when its identity held across the attempt"
+    ((entries.any fun entry => entry.fileName.endsWith ".answer") == (stage == "after"))
   let failed ← ref.get
   for message in failed.reverse do IO.eprintln message
   IO.println s!"cache identity/{stage}: {failed.length} failures"
@@ -52,10 +56,7 @@ def runCacheCwdChild (args : List String) : IO UInt32 := do
 /-- Optional identity IO may prevent caching, but must neither bypass the
 producer nor turn its answer into an IO exception. -/
 def cacheIdentityChecks (ref : IO.Ref (List String)) : IO Unit := do
-  let some lean ← ToolProbe.onPath "lean" |
-    throw <| IO.userError "cache identity checks require the Lean interpreter"
-  let libraries ← IO.FS.realPath ".lake/build/lib/lean"
-  let leanPath := libraries.toString ++ ":" ++ (← IO.getEnv "LEAN_PATH").getD ""
+  let (lean, leanPath) ← leanChild "cache identity checks"
   for stage in #["before", "after"] do
     IO.FS.withTempDir fun dir => do
       let cwd := dir / "cwd"

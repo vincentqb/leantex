@@ -112,6 +112,7 @@ is skipped.
   | a furniture element | a declared alignment, never a hard-coded `.center` (`align` on `ElementStyle` carries it) |
   | an `AssertKind` | its judge in `Check.one` (exhaustive match) and a test that breaks it once |
   | a cached external answer | the *failure* cached too, under the same content key, replayed as the identical diagnostic — and an attempt with no evidence the tool ran (kill, failed spawn, nonzero exit with no log) cached not at all (`Cli/PicCache.lean` holds the policy as values; `step_cold_exact`, `remembers_verdict_exact`, `unlogged_retried_exact`, `picCacheChecks`) |
+  | a path on which a fact about the machine — a tool absent, killed or unable to start, a check that did not finish — stops a conversion, a face or a check | a degraded artifact, never a refused one: the page ships a labelled placeholder or the rendered subset's drawing where the face is missing, and a page icon leaves the head, the loss is named once under its subject, the PDF is unchanged, and nothing is remembered (`machineLossChecks`). A tool that cannot start fails at exec (Lean's exit 255, a missing loader or interpreter among them), or, on glibc, exits 127 when the dynamic loader lacks a shared library or a shell wrapper lacks its command, and 126 when the file or the wrapper's command cannot be executed. A boundary render that did not finish — killed, a spawn that raised, or a nonzero exit with no log, a renderer that cannot start after naming its version among them — is the one remainder: it stays E0382 and fails the run (`boundaryUnfinishedChecks`). Four such paths once refused the HTML page while the PDF shipped |
   | a document class | sourced defaults, and its contract as implied assertions |
   | a `nativePackages` entry | `testdata/compat-index/<pkg>.txt` covering the package's *documented* command list — the manual section named in its header, one row per command, `impl` proved by no W0301/W0302 — nor W0012, under which a formula is its own source text and differs from the renamed call by spelling alone — and `refuse:<code>` by the code firing (`lake test` probes every row; the hook rejects an entry without its file) |
   | a math symbol | a row `scripts/gen-mathsym-data.lean` derives from its declaring file (class) and unicode-math's table (scalar), not a hand row: a hand row of `MathParse.ctrlAtom` that shadows a generated one says the same or is a `handDivergences` entry; a declared command with no scalar of its own is a refused row naming the glyph it lacks; its glyph is in the shipped math face or a `firaGaps` entry, both ways; and its line in a parity fixture holds its scalar to lualatex's (`mathSymChecks`, parity `amssymb`/`mathsym`) |
@@ -213,7 +214,11 @@ is skipped.
   (every write an action declares is one the state it was proposed from
   owns — a shape of its own because the conclusion is about *where* an
   output writes, not what it names: `step_writes_owned`,
-  `trace_writes_owned`). A new
+  `trace_writes_owned`), `_only` (every question a host program can ask,
+  whatever the replies before it, satisfies a predicate — `located_only`
+  is the shape; a shape of its own because it speaks of the program's
+  questions on every path, which is what lets it hold of every
+  interpreter through `Prog.runM_only_exact`, not of a value). A new
   property instantiates a
   suffix, or the review says why
   it is a new shape; the first three are what the hook's walk gate looks
@@ -242,6 +247,21 @@ is skipped.
   pre-commit hook enforces the boundary). Files, fonts,
   anything external surfaces as request values the CLI driver fulfills
   (effects as data).
+- The driver's own host access is a vocabulary too: `World.Ask` names the
+  questions (an environment variable, the working directory, a stat, a
+  read, a listing, a bounded tool run, an atomic write, a directory tree),
+  a `World.Prog` over them is a value, `World.lean` does no IO (hook), and
+  `Host.answer` is the one interpreter — a `BaseIO` action, so every
+  `IO.Error` is reply data. New host access is a question added there, not
+  another `IO.FS`/`IO.Process` call site: a program's result is then the
+  replay of its trace (`Host.record_replay_exact`, which
+  `Host.recordIO_fst_exact` carries to the shipped `runIO`), a property of
+  every path through a program holds of every interpreter
+  (`Prog.runM_only_exact`), and a world assumption is a theorem's
+  hypothesis about replies, never an axiom. The call sites still outside
+  it — the driver, the conversion and picture caches, the image and font
+  readers, the TeX-roots lookup — are ports owed to the waves that follow,
+  not precedents.
 - The artifact is a function of the document and the font environment;
   flags are not arguments to it. What to build is the document's to declare
   (`\output`); a flag says where output lands (`-o`), when (`--watch`), how
@@ -383,8 +403,10 @@ is skipped.
   nonzero exit that left no log are all facts about the machine, not the
   request, and caching one would let a busy minute — or a missing
   install — permanently condemn a picture that renders. An exit code alone
-  cannot make that call: a missing tool still reaches `exec` and returns
-  127, so the evidence is that the tool left a log. The policy lives as
+  cannot make that call: a missing tool still reaches `exec` and comes
+  back as an exit code — 255 from Lean's spawn, whose forked child reports
+  the failed `exec` and exits — so the evidence is that the tool left a
+  log. The policy lives as
   values in the driver (`Cli/PicCache.lean`) precisely so it is checkable
   with no tool installed.
 - Theorems only where they pay (parser totality, elaboration termination and

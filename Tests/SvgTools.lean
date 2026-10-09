@@ -54,12 +54,19 @@ def svgToolChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit 
       ("xmllint", "libxml2", #["xmllint"]),
       ("xsltproc", "libxslt", #["xmllint", "xmllint", "xsltproc"]),
       ("rsvg-convert", "librsvg", healthy)] do
-    for thrown in [false, true] do
-      let label := s!"SVG tools {tool} (exception={thrown})"
-      let missing : Except IO.Error IO.Process.Output :=
-        if thrown then .error (IO.Error.noFileOrDirectory tool 2 "missing executable")
-        else .ok { exitCode := 255, stdout := ""
-                   stderr := s!"could not execute external process '{tool}'\n" }
+    -- A tool that cannot start: Lean's exec failure, a spawn that raised, a
+    -- shared library the loader cannot find (127), and a wrapper whose
+    -- command cannot run (126).
+    let exited (code : UInt32) (stderr : String) : Except IO.Error IO.Process.Output :=
+      .ok { exitCode := code, stdout := "", stderr }
+    let unstarted : List (String × Except IO.Error IO.Process.Output) := [
+      ("exec failure", exited 255 s!"could not execute external process '{tool}'\n"),
+      ("exception", .error (IO.Error.noFileOrDirectory tool 2 "missing executable")),
+      ("missing library", exited 127
+        s!"{tool}: error while loading shared libraries: libsynthetic.so.0: cannot open shared object file\n"),
+      ("wrapper", exited 126 s!"/bin/sh: {tool}-real: Permission denied\n")]
+    for (shape, missing) in unstarted do
+      let label := s!"SVG tools {tool} ({shape})"
       let failure ← IO.mkRef (some missing)
       let calls ← IO.mkRef #[]
       let runTool := svgToolRunner calls tool failure source

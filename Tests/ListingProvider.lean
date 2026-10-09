@@ -73,23 +73,21 @@ end Tests.ListingProvider
 namespace Tests
 
 /-- Invocation spelling selects the provider environment even when several
-paths resolve to one executable. Fresh fulfilments must observe environment
+paths resolve to one executable, and a python3 the OS refuses to execute is
+passed over as execvp passes it. Fresh fulfilments must observe environment
 and interpreter changes, including recovery after an unavailable provider. -/
 def listingProviderInvocationChecks (ref : IO.Ref (List String)) : IO Unit := do
   let some lean ← ToolProbe.onPath "lean" |
     throw <| IO.userError "listing invocation checks require the Lean interpreter"
   let lean := (← IO.currentDir) / lean
-  for mode in ["absolute", "relative", "empty"] do
+  for mode in ["absolute", "relative", "empty", "decoy"] do
     IO.FS.withTempDir fun dir => do
       let selected := dir / "selected environment"
       IO.FS.createDir selected
-      IO.FS.writeFile (dir / "base-python") (ListingProvider.invocationStub "reply.json")
-      discard <| IO.Process.run {
-        cmd := "/bin/chmod",
-        args := #["+x", (dir / "base-python").toString] }
-      discard <| IO.Process.run {
-        cmd := "/bin/ln",
-        args := #["-s", (dir / "base-python").toString, (selected / "python3").toString] }
+      writeScript (dir / "base-python") (ListingProvider.invocationStub "reply.json")
+      symlink (dir / "base-python") (selected / "python3")
+      if mode == "decoy" then
+        writeScript (dir / "decoy" / "python3") "#!/bin/sh\nexit 9\n" (exec := false)
       IO.FS.writeFile (selected / "reply.json")
         (ListingProvider.invocationReply "Token.Keyword")
       IO.FS.writeFile (selected / "replacement.json")
@@ -103,7 +101,8 @@ def main (args : List String) : IO UInt32 := do\n\
   for failure in failures do IO.println failure\n\
   return if failures.isEmpty then 0 else 1\n"
       let path := if mode == "absolute" then selected.toString
-        else if mode == "relative" then "selected environment" else ""
+        else if mode == "relative" then "selected environment"
+        else if mode == "decoy" then s!"{dir / "decoy"}:{selected}" else ""
       let result ← RunBounded.output {
         cmd := lean.toString, args := #["--run", driver.toString, dir.toString],
         cwd := if mode == "empty" then selected else dir,

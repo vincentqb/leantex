@@ -3,8 +3,8 @@ module
 public import LeanTex.Core.ListingReply
 public import LeanTex.Core.Diag
 import LeanTex.Cli.DriverDiag
+import LeanTex.Cli.Host
 import LeanTex.Cli.RunBounded
-import LeanTex.Cli.ToolProbe
 
 /-!
 The installed Pygments boundary. One isolated Python process classifies a
@@ -101,8 +101,9 @@ private def failed (requests : Array ListingReply.Request)
     (failure : ListingReply.Failure) : Array ListingReply.Answer × Array Diag :=
   (#[], requests.map fun request => diagnostic request failure)
 
-/-- Fulfil content-keyed requests through the installed provider, in one bounded
-process. Its elapsed time and captured bytes are limited by `RunBounded`; source,
+/-- Fulfil content-keyed requests through the installed provider — the first
+python3 on PATH the OS starts, as execvp chooses it (`ToolPath.probeGo_exact`) —
+in one bounded process. Its elapsed time and captured bytes are limited by `RunBounded`; source,
 request and token ceilings are shared with the pure protocol validator. An empty
 batch starts no tool. No external output becomes diagnostic prose or authored
 code, and no answer is returned before exact reconstruction is checked. -/
@@ -110,32 +111,29 @@ public def fulfil (_file : String) (requests : Array ListingReply.Request) :
     IO (Array ListingReply.Answer × Array Diag) := do
   if requests.isEmpty then return (#[], #[])
   if !ListingReply.withinBudget requests then return failed requests .budget
-  try
-    let some python ← ToolProbe.onPath "python3"
-      | return failed requests .unavailable
-    -- Python finds its virtual environment from the invocation spelling.
-    -- Anchor relative PATH entries before changing the child's directory.
-    let python := (← IO.currentDir) / python
-    IO.FS.withTempDir fun dir => do
-      let input := dir / "requests.json"
-      IO.FS.writeFile input (ListingReply.encode requests)
-      let got ← RunBounded.runBounded python.toString
-        #["-I", "-B", "-c", bridge, input.toString, toString ListingReply.maxTokens] dir
-        (captureLimit := ListingReply.maxReplyBytes)
-      if !got.complete then
-        return failed requests (match got.ran with
-          | .unstarted _ => .unavailable
-          | _ => .budget)
-      match got.ran with
-      | .exited 0 =>
-        match ListingReply.decode requests got.out (terminalLf := true) with
-        | .ok (answers, failures) =>
-          return (answers, failures.map fun (request, failure) => diagnostic request failure)
-        | .error _ => return failed requests .invalidReply
-      | .exited 3 => return failed requests .unavailable
-      | .exited 4 | .overran _ => return failed requests .budget
-      | .exited _ => return failed requests .rejected
-      | .unstarted _ => return failed requests .unavailable
-  catch _ => return failed requests .unavailable
+  -- Python finds its virtual environment from the invocation spelling, which
+  -- each candidate keeps: its PATH entry, anchored, joined to the name.
+  let call (python : String) : World.ToolCall :=
+    { tool := python
+      args := #["-I", "-B", "-c", bridge, "requests.json", toString ListingReply.maxTokens]
+      inputs := #[("requests.json", (ListingReply.encode requests).toUTF8)]
+      budgetMs := RunBounded.convBudgetMs, graceMs := RunBounded.convGraceMs
+      captureLimit := ListingReply.maxReplyBytes }
+  let some (_, got) ← Host.runIO (World.ToolPath.probe "python3" call)
+    | return failed requests .unavailable
+  if !got.complete then
+    return failed requests (match got.ran with
+      | .unstarted _ => .unavailable
+      | _ => .budget)
+  match got.ran with
+  | .exited 0 =>
+    match ListingReply.decode requests got.out (terminalLf := true) with
+    | .ok (answers, failures) =>
+      return (answers, failures.map fun (request, failure) => diagnostic request failure)
+    | .error _ => return failed requests .invalidReply
+  | .exited 3 => return failed requests .unavailable
+  | .exited 4 | .overran _ => return failed requests .budget
+  | .exited _ => return failed requests .rejected
+  | .unstarted _ => return failed requests .unavailable
 
 end LeanTex.Cli.ListingHighlight

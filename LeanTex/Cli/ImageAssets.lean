@@ -1,6 +1,7 @@
 module
 
 public import LeanTex.Core.Image
+public import LeanTex.Cli.PicCache
 import LeanTex.Core.PdfCensus
 import LeanTex.Cli.SvgPoster
 import LeanTex.Cli.ConvCache
@@ -169,16 +170,24 @@ private def runChecked (runTool : IO.Process.SpawnArgs → IO IO.Process.Output)
         | _ => detail)
   if ran.exitCode != 0 then
     let stderr := ran.stderr.trimAscii.toString
-    -- Lean's POSIX exec failure has this exact exit and stderr pair.
-    -- A converter's own exit 255 is not evidence that it failed to start.
-    let unstarted := ran.exitCode == 255 &&
-        stderr == s!"could not execute external process '{tool}'"
-    let detail := s!"{tool} exited {ran.exitCode}: {stderr}" ++
-      (if stderr.isEmpty then ran.stdout.trimAscii.toString else "") ++
+    -- Lean's POSIX exec failure has this exact exit and stderr pair, and
+    -- 127 is what the dynamic loader exits with when a shared library is
+    -- missing, and a shell when the command it was asked for is (126 when
+    -- that command cannot run). A converter's own exit 255 is not evidence
+    -- that it failed to start.
+    let unstarted := (ran.exitCode == 255 &&
+        stderr == s!"could not execute external process '{tool}'") ||
+      ran.exitCode == 126 || ran.exitCode == 127
+    let said := if stderr.isEmpty then ran.stdout.trimAscii.toString else stderr
+    let detail := s!"{tool} exited {ran.exitCode}" ++ (if said.isEmpty then "" else ": " ++ said) ++
       (if unstarted then "; " ++ recovery else "")
     -- The process API encodes signals as 128 + signal. High exits are
-    -- ambiguous even when the child logged before termination.
-    throw <| if ran.exitCode >= 128 || (stderr.isEmpty && ran.stdout.trimAscii.isEmpty)
+    -- ambiguous even when the child logged before termination, and a run
+    -- that never started said nothing of its own, whatever its stderr holds:
+    -- neither is a verdict to remember.
+    -- premise: none — xmllint (0–11), xsltproc (0–11) and pdftocairo (0–4, 99) document
+    -- their exits, none at or above 126, and rsvg-convert documents none and exits 1 or 2
+    throw <| if ran.exitCode >= 126 || (stderr.isEmpty && ran.stdout.trimAscii.isEmpty)
       then .inconclusive detail else .refused detail
   return ran.stdout
 
@@ -250,14 +259,14 @@ private def finishSvg (tool : String) (stretch : Bool) (bytes : ByteArray) :
 /-- Convert one captured input. A failed spawn, nonzero exit or absent
 output is an error, including when a failed process left an output file.
 SVG inputs pass the support boundary before librsvg sees them. -/
-private def convert (op : Op) (bytes : ByteArray)
+private def convertResult (op : Op) (bytes : ByteArray)
     (runner : Option (IO.Process.SpawnArgs → IO IO.Process.Output) := none) :
-    IO (Except String ByteArray) := do
+    IO ConvCache.Result := do
   let spec := op.spec
   let eligible := runner.isNone && (spec.inputExt != "pdf" ||
     (PdfCensus.census bytes).toOption.any (·.fontsEmbedded))
   let runTool := runner.getD RunBounded.output
-  ConvCache.cached bytes spec.recipe spec.tools eligible do
+  ConvCache.cachedResult bytes spec.recipe spec.tools eligible do
     let independent ← IO.mkRef true
     let result ← try IO.FS.withTempDir fun dir => do
         let attempt : ExceptT PicCache.Outcome IO ByteArray := do
@@ -296,6 +305,11 @@ private def convert (op : Op) (bytes : ByteArray)
       catch e => pure { outcome := .inconclusive e.toString }
     return (result, ← independent.get)
 
+private def convert (op : Op) (bytes : ByteArray)
+    (runner : Option (IO.Process.SpawnArgs → IO IO.Process.Output) := none) :
+    IO (Except String ByteArray) :=
+  ConvCache.Result.answer <$> convertResult op bytes runner
+
 /-- Validate captured SVG bytes before accepting a browser companion. An
 error lets the caller fall back to converting its selected PDF page.
 Success includes a usable static PDF plan; retain the original bytes for
@@ -306,6 +320,17 @@ public def validateSvg (bytes : ByteArray) (params : Image.PlanParams := .defaul
   let pdf ← convert (.svgPdf false) bytes
   return pdf >>= fun b => Image.probe b >>= Image.plan params
 
+/-- `validateSvg`'s judgement with the converter's outcome kept: a check
+that never finished stays `inconclusive`, apart from the boundary's own
+refusal, so a caller can omit what this machine could not check. -/
+public def validateSvgResult (bytes : ByteArray) (params : Image.PlanParams := .default) :
+    IO PicCache.Outcome := do
+  let r ← convertResult (.svgPdf false) bytes
+  if let .inconclusive _ := r.outcome then return r.outcome
+  return match r.answer >>= fun b => Image.probe b >>= Image.plan params with
+    | .ok _ => .drawn
+    | .error why => .refused why
+
 /-- First reads the authored base drawing; last projects the final declared
 values of one synchronized animation cycle. Later numbered frames need a sequence. -/
 public def svgPosterAtEnd : PdfRead.PageSelection → Except String Bool
@@ -313,18 +338,30 @@ public def svgPosterAtEnd : PdfRead.PageSelection → Except String Bool
   | .last => .ok true
   | .number _ => .error "a numbered SVG poster requires a PDF frame sequence"
 
+/-- `svgPlan`, with whether a fact about the machine stopped it: a
+conversion that never reached an answer — a tool missing, killed or out of
+time — says nothing about the bytes. -/
+public def svgPlanResult (params : Image.PlanParams) (bytes : ByteArray)
+    (page : PdfRead.PageSelection := .first)
+    (runTool : Option (IO.Process.SpawnArgs → IO IO.Process.Output) := none) :
+    IO (Except String Image.Plan × Bool) := do
+  match svgPosterAtEnd page with
+  | .error err => return (.error err, false)
+  | .ok terminal =>
+    let r ← convertResult (.svgPdf terminal) bytes runTool
+    let unfinished := match r.outcome with
+      | .inconclusive _ => true
+      | .drawn | .refused _ => false
+    return (r.answer >>= fun b => Image.probe b >>= Image.plan params, unfinished)
+
 /-- librsvg's vector reading of a self-contained SVG, optionally after a
 terminal-value projection. The caller retains the captured SVG unchanged
 for the browser. Unsupported timelines fail rather than paint the base. -/
 public def svgPlan (params : Image.PlanParams) (bytes : ByteArray)
     (page : PdfRead.PageSelection := .first)
     (runTool : Option (IO.Process.SpawnArgs → IO IO.Process.Output) := none) :
-    IO (Except String Image.Plan) := do
-  match svgPosterAtEnd page with
-  | .error err => return .error err
-  | .ok terminal =>
-    let pdf ← convert (.svgPdf terminal) bytes runTool
-    return pdf >>= fun b => Image.probe b >>= Image.plan params
+    IO (Except String Image.Plan) :=
+  Prod.fst <$> svgPlanResult params bytes page runTool
 
 /-- Cairo's static SVG face for print and reduced motion. Use `pdfSvg` on
 the selected page instead when a companion PDF supplies a chosen frame. -/

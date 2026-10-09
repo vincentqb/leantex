@@ -224,10 +224,6 @@ if [ \"$kind\" = validate ]; then /bin/cat \"$root/canvas.pdf\" > \"$output\"\n\
 else printf '<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"20\" height=\"20\"><desc>%s</desc><path d=\"M0 0L20 20\"/></svg>' \"$key\" > \"$output\"\n\
 fi\n"
 
-private def writeTool (path : System.FilePath) (body : String) : IO Unit := do
-  IO.FS.writeFile path body
-  IO.setAccessRights path { user := ⟨true, true, true⟩ }
-
 end Tests.BrowserFaceBatch
 
 namespace Tests
@@ -239,11 +235,8 @@ synthetic tools. No installed vector converter or shared user cache is used.
 A run the host denied a tool identity runs again, three runs per limit at
 most; the first run at `slowProbeLimit` is denied on purpose. -/
 def browserFaceBatchChecks (ref : IO.Ref (List String)) : IO Unit := do
-  let some lean ← ToolProbe.onPath "lean" |
-    throw <| IO.userError "browser batch checks require the Lean interpreter"
+  let (lean, leanPath) ← leanChild "browser batch checks"
   let cwd ← IO.currentDir
-  let libraries ← IO.FS.realPath ".lake/build/lib/lean"
-  let leanPath := libraries.toString ++ ":" ++ (← IO.getEnv "LEAN_PATH").getD ""
   let denied := PicCache.Ran.exited BrowserFaceBatch.deniedExit.toNat
   for limit in #[0, 1, 2, 4] do
     let mut runs : Array (RunBounded.Ended × Bool) := #[]
@@ -253,14 +246,14 @@ def browserFaceBatchChecks (ref : IO.Ref (List String)) : IO Unit := do
         for name in ["bin", "active", "primaries", "started", "done"] do
           IO.FS.createDir (dir / name)
         IO.FS.writeBinFile (dir / "canvas.pdf") svgCanvasPdf
-        BrowserFaceBatch.writeTool (dir / "bin" / "pdftocairo")
+        writeScript (dir / "bin" / "pdftocairo")
           (BrowserFaceBatch.converterStub true)
-        BrowserFaceBatch.writeTool (dir / "bin" / "rsvg-convert")
+        writeScript (dir / "bin" / "rsvg-convert")
           (BrowserFaceBatch.converterStub false)
-        BrowserFaceBatch.writeTool (dir / "bin" / "xsltproc")
+        writeScript (dir / "bin" / "xsltproc")
           (BrowserFaceBatch.versionStub ++
             "for input in \"$@\"; do :; done\n/bin/cat \"$input\"\n")
-        BrowserFaceBatch.writeTool (dir / "bin" / "xmllint")
+        writeScript (dir / "bin" / "xmllint")
           (BrowserFaceBatch.versionStub slow ++
             "case \"$3\" in --sax) printf 'SAX.startDocument()\\nSAX.endDocument()\\n';;\n\
              --xpath) printf 'true\\n';; *) exit 3;; esac\n")
