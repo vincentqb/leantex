@@ -1,0 +1,106 @@
+% Invented text. A representative deck: a title frame, stepped bullets,
+% nested lists, a table, columns, a formula, an image, a code block whose
+% longest line does not fit, and a frame with more prose than a slide holds
+% — the frames a talk sets.
+\documentclass[aspectratio=169]{beamer}
+\usepackage{booktabs}
+\usepackage{graphicx}
+\fonts{ dir = "../corpus/fonts", sans = "Fira Sans", mono = "Source Code Pro",
+  math = "Fira Math" }
+
+\title{Bread at Altitude}
+\subtitle{Notes from a village bakery}
+\author{A. Placeholder}
+\date{}
+
+\begin{document}
+
+\maketitle
+
+\begin{frame}{Why altitude matters}
+  \begin{itemize}
+    \item<1-> Water boils at a lower temperature, so steam forms sooner.
+    \item<2-> Dough rises faster in thinner air, then collapses.
+    \item<3-> Flour dries out: the same recipe needs more water.
+  \end{itemize}
+\end{frame}
+
+\begin{frame}{Adjusting a recipe}
+  \begin{enumerate}
+    \item Reduce the yeast by a quarter.
+    \item Add water a spoonful at a time:
+    \begin{itemize}
+      \item until the dough is tacky, not sticky;
+      \item more in winter, when the air is driest.
+    \end{itemize}
+    \item Bake hotter and shorter.
+  \end{enumerate}
+\end{frame}
+
+\begin{frame}{Three loaves compared}
+  \centering
+  \begin{tabular}{@{}lrrl@{}}
+    \toprule
+    \textbf{Loaf} & \textbf{Rise (min)} & \textbf{Bake (min)} & \textbf{Crumb} \\
+    \midrule
+    Plain white & 45 & 30 & open, even \\
+    Rye blend & 70 & 40 & dense, moist \\
+    Seeded wholemeal & 60 & 35 & tight, nutty \\
+    \bottomrule
+  \end{tabular}
+\end{frame}
+
+\begin{frame}{Two methods side by side}
+  \begin{columns}
+    \begin{column}{0.48\textwidth}
+      \textbf{Straight dough}
+      \begin{itemize}
+        \item one mixing, one rise
+        \item quick, but less flavour
+      \end{itemize}
+    \end{column}
+    \begin{column}{0.48\textwidth}
+      \textbf{Sponge and dough}
+      \begin{itemize}
+        \item a starter rests overnight
+        \item slower, with a deeper flavour
+      \end{itemize}
+    \end{column}
+  \end{columns}
+\end{frame}
+
+\begin{frame}{How much water}
+  The water a dough needs grows with the dryness of the flour:
+  \[
+    w = w_0 \left( 1 + \frac{h_0 - h}{100} \right)
+  \]
+  where $w_0$ is the recipe's water, $h_0$ the humidity it was written
+  for, and $h$ the humidity in the bakery today.
+\end{frame}
+
+\begin{frame}{The proving shelf}
+  \centering
+  \includegraphics[width=0.4\textwidth, alt={Three coloured rectangles for
+  three proving trays}]{../corpus/rects.png}
+\end{frame}
+
+\begin{frame}[fragile]{The oven timer}
+\begin{verbatim}
+def bake_minutes(base, altitude_m):
+    return base - altitude_m // 500 if altitude_m > 1000 else base  # shorter bakes high up, longer bakes in the valley
+\end{verbatim}
+\end{frame}
+
+\begin{frame}{What the bakers said}
+  Every baker interviewed had learnt the adjustments by trial rather than
+  from a book, and most had kept notes of their failures longer than of
+  their successes. The oldest kept a ledger of every batch for thirty years,
+  with the weather, the flour and the result written beside each one. Read
+  in order, the ledger shows the recipes drifting slowly towards less yeast
+  and more water, a season at a time, until they settled. Nobody had planned
+  the change; it accumulated from one small correction after another,
+  each made because yesterday's loaf had been a little too flat or a little
+  too dry, and each kept because the next loaf was better.
+\end{frame}
+
+\end{document}

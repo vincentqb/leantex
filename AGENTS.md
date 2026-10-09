@@ -53,7 +53,10 @@ is skipped.
   pristine fixtures decoding to their known sizes), and
   `scripts/fontcache-check.lean` when touching the font scan or its cache
   (it replaces a font under the same name and checks the answer follows
-  the file).
+  the file), and `scripts/typeset.lean --report` (or `--lines <fixture>`)
+  when touching line breaking, pagination, protrusion or font fallback:
+  the typeset tier's counts per `testdata/typeset` fixture and the lines
+  behind them (the tier itself gates in `scoreboard --check`).
 - `scripts/html-oracle.lean` when touching what a deck stage holds (type,
   leading, gaps, tables): its `stage-fit` row holds every frame the PDF
   page holds to its stage at the deck's own aspect in Chromium, not a pixel
