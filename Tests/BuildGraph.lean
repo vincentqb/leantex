@@ -1,6 +1,7 @@
 module
 
 public import Tests.Support
+import Lean.Elab.ParseImportsFast
 
 public section
 
@@ -23,40 +24,26 @@ structure Import where
   all : Bool
   deriving BEq, Repr
 
-/-- A source file's header: its module name, whether it opens with `module`,
-and its imports. -/
+/-- A source file's header: its module name, whether it is a `module`, and
+its imports. -/
 structure Header where
   name : String
   isModule : Bool
   imports : Array Import
   deriving Repr
 
-/-- The import a header line spells, if it spells one: `import M`,
-`public import M`, `meta import M`, `import all M`, in any of their
-combinations. -/
-def importOf (line : String) : Option Import :=
-  match (line.splitOn " ").filter (!·.isEmpty) with
-  | ws =>
-    match ws.dropWhile (fun w => w == "public" || w == "meta") with
-    | "import" :: "all" :: [m] => some { mod := m, all := true }
-    | "import" :: [m] => some { mod := m, all := false }
-    | _ => none
-
-/-- Read a header: `module` and import lines, with blank lines and line
-comments between them; the first other line ends it. -/
-def parseHeader (name text : String) : Header := Id.run do
-  let mut isModule := false
-  let mut imports : Array Import := #[]
-  for raw in text.splitOn "\n" do
-    let l := raw.trimAscii.toString
-    if l.isEmpty || l.startsWith "--" then continue
-    if l == "module" then
-      isModule := true
-      continue
-    match importOf l with
-    | some i => imports := imports.push i
-    | none => break
-  return { name, isModule, imports }
+/-- A source file's header as Lake reads it — `Lean.parseImports'`, the
+reader Lake builds its import graph from, so a comment or a modifier
+anywhere in a header is read as the build reads it — or the error Lake
+raises on a header it refuses. -/
+def parseHeader (name text : String) : IO (Except String Header) := do
+  try
+    let h ← Lean.parseImports' text name
+    return .ok {
+      name, isModule := h.isModule
+      imports := h.imports.map fun i =>
+        { mod := i.module.toString (escape := false), all := i.importAll } }
+  catch e => return .error e.toString
 
 /-- The modules whose private part `h`'s build reads, among those in
 `graph`. A file outside the module system reads every transitive import
@@ -121,13 +108,19 @@ def sources : IO (Array (String × String)) := do
   return named
 
 /-- The verdicts over one tree, as named facts. -/
-def judge (files : Array (String × String)) : List (String × Bool) := Id.run do
-  let headers := files.map fun (n, t) => parseHeader n t
+def judge (files : Array (String × String)) : IO (List (String × Bool)) := do
+  let mut headers : Array Header := #[]
+  let mut refused : Array String := #[]
+  for (n, t) in files do
+    match ← parseHeader n t with
+    | .ok h => headers := headers.push h
+    | .error e => refused := refused.push e
   let graph : Std.HashMap String Header :=
     headers.foldl (fun g h => g.insert h.name h) {}
   let legacy := (headers.filter (!·.isModule)).map (·.name)
   let mut facts : List (String × Bool) :=
-    [(s!"the files outside the module system are exactly {legacyFiles} (found {legacy.toList})",
+    [(s!"every header reads as Lake reads it (refused: {refused.toList})", refused.isEmpty),
+     (s!"the files outside the module system are exactly {legacyFiles} (found {legacy.toList})",
       legacy.toList.mergeSort (· ≤ ·) == legacyFiles.mergeSort (· ≤ ·)),
      ("every declared large file exists",
       largeReads.all fun (n, _) => graph.contains n)]
@@ -148,36 +141,53 @@ def judge (files : Array (String × String)) : List (String × Bool) := Id.run d
 
 /-- The model on an invented graph, both ways: a legacy file reads its whole
 closure, a module reads only through `import all`, and `import all` is
-transitive only through further `import all`; and the table both ways: a
-large file needs a row, and a row needs a large file. -/
-def selfTest : List (String × Bool) :=
+transitive only through further `import all`; the header as Lake reads it —
+a comment anywhere in it, a nested one, one ending an import line, one
+before `module` — and a header Lake refuses is a failing fact, never a
+skipped file; and the table both ways: a large file needs a row, and a row
+needs a large file. -/
+def selfTest : IO (List (String × Bool)) := do
   let g : List (String × String) :=
-    [("A", "module\n\nimport all B\nimport C\n\nnamespace A"),
+    [("A", "module\n\nimport all B\nimport C\n\nnamespace A\n\nimport all G"),
      ("B", "module\n\npublic import all D\nimport E\n"),
      ("C", "module\n\nimport all F\n"),
-     ("D", "module\n"), ("E", "module\n"), ("F", "module\n"),
-     ("L", "-- a legacy file\nimport C\n\ndef x := 1")]
-  let hs := g.map fun (n, t) => parseHeader n t
-  let graph : Std.HashMap String Header := hs.foldl (fun m h => m.insert h.name h) {}
+     ("D", "module\n"), ("E", "module\n"), ("F", "module\n"), ("G", "module\n"),
+     ("L", "-- a legacy file\nimport C\n\ndef x := 1"),
+     ("K1", "module\n\n/- generated; do not edit -/\nimport all G\n"),
+     ("K2", "module\n\nimport C -- a trailing comment\nimport all G\n"),
+     ("K3", "module\n/- outer /- inner -/ outer again -/\nimport all G\n"),
+     ("K4", "/- a header comment before the keyword -/\nmodule\nimport all G\n")]
+  let mut graph : Std.HashMap String Header := {}
+  for (n, t) in g do
+    if let .ok h ← parseHeader n t then graph := graph.insert n h
   let reads (n : String) := (graph.get? n).map (privateReads graph) |>.getD #[]
-  [("an import all reads through further import all, never through a plain import",
+  let big := "module\n" ++ "\n".intercalate (List.replicate largeLines "-- line")
+  let unrowed ← judge #[("Synthetic.Big", big)]
+  let smallRow ← judge #[("LeanTex.Core.Compat", "module\n")]
+  let refused ← judge #[("Synthetic.Bad", "import all G\n")]
+  return [("an import all reads through further import all, never through a plain import",
      reads "A" == #["B", "D"]),
    ("a plain import reads no private part", reads "D" == #[]),
    ("a legacy file reads its whole closure", reads "L" == #["C", "F"]),
-   ("a header ends at its first other line",
-     (graph.get? "A").map (·.imports.size) == some 2),
+   ("an import after the first command is not the header's",
+     (graph.get? "A").map (·.imports.any (·.mod == "G")) == some false),
+   ("an import all after a block comment is read", reads "K1" == #["G"]),
+   ("an import all after a commented import line is read", reads "K2" == #["G"]),
+   ("an import all after a nested block comment is read", reads "K3" == #["G"]),
+   ("a comment before `module` leaves the file a module",
+     (graph.get? "K4").map (·.isModule) == some true && reads "K4" == #["G"]),
+   ("a header Lake refuses fails, naming its file",
+     refused.any fun (n, ok) => !ok && hasStr n "as Lake reads it" && hasStr n "Synthetic.Bad"),
    ("a large file without a declared row fails",
-     let big := "module\n" ++ "\n".intercalate (List.replicate largeLines "-- line")
-     (judge #[("Synthetic.Big", big)]).any fun (n, ok) => !ok && hasStr n "Synthetic.Big"),
+     unrowed.any fun (n, ok) => !ok && hasStr n "Synthetic.Big"),
    ("a declared row on a small file fails",
-     (judge #[("LeanTex.Core.Compat", "module\n")]).any fun (n, ok) =>
-       !ok && hasStr n "keeps a largeReads row")]
+     smallRow.any fun (n, ok) => !ok && hasStr n "keeps a largeReads row")]
 
 end Tests.BuildGraph
 
 /-- The build graph's private reads over the maintained tree. -/
 def buildGraphChecks (ref : IO.Ref (List String)) : IO Unit := do
-  for (name, ok) in Tests.BuildGraph.selfTest do
+  for (name, ok) in ← Tests.BuildGraph.selfTest do
     check ref s!"build graph model: {name}" ok
-  for (name, ok) in Tests.BuildGraph.judge (← Tests.BuildGraph.sources) do
+  for (name, ok) in ← Tests.BuildGraph.judge (← Tests.BuildGraph.sources) do
     check ref s!"build graph: {name}" ok

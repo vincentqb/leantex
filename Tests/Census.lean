@@ -1135,13 +1135,20 @@ def censusRows7 :
   ("cond-loaded", condBranchRow ["Loaded branch ships.", "Unloaded branch ships."]
     ["Loaded branch hidden.", "Unloaded branch hidden."])]
 
-/-- The census rows, in parts: one list literal's elaboration grows faster
-than its rows (all 86 as one literal took 23 s, the eight parts together
-under 5 s), and the suite's build waits on this module. -/
+/-- The census rows, in parts of at most `censusPartRows`: one list
+literal's elaboration grows faster than its rows (all 86 as one literal
+took 23 s, the eight parts together under 5 s), and the suite's build
+waits on this module. A new row joins a part with room, or starts one. -/
+def censusParts :
+    List (List (String × (Layout.Geom → Array CensusPage → List (String × Bool)))) :=
+  [censusRows0, censusRows1, censusRows2, censusRows3, censusRows4, censusRows5,
+    censusRows6, censusRows7]
+
+def censusPartRows : Nat := 16
+
 def censusTable :
     List (String × (Layout.Geom → Array CensusPage → List (String × Bool))) :=
-  censusRows0 ++ censusRows1 ++ censusRows2 ++ censusRows3 ++
-    censusRows4 ++ censusRows5 ++ censusRows6 ++ censusRows7
+  censusParts.flatten
 
 /-- The outline tier of the census: the PDF document outline is backend
 emission (an unpinned nav's paged rendering, ISO 32000-2 §12.3.3), so a
@@ -1274,6 +1281,9 @@ glyphs are exactly what `oneFace` alone could never witness. -/
 def censusChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet)
     (pats : Hyphen.Patterns) : IO Unit := do
   let mathSet ← mathSetOf oneFace
+  for (part, i) in censusParts.zipIdx do
+    check ref s!"census part {i} holds {part.length} rows, at most {censusPartRows}"
+      (part.length ≤ censusPartRows)
   for n in goldenNames do
     check ref s!"census covers {n}" (censusTable.any (·.1 == n))
   for (n, _) in censusTable do

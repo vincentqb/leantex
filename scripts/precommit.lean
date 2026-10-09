@@ -573,8 +573,18 @@ def irDumpUnmarked (l : String) : Bool :=
 knob — the tree holds zero. Composed self-diff-safe, like the keywords. -/
 def kwMaxHeartbeats : String := "maxHeart" ++ "beats"
 
+/-- Lean's own heartbeat budget. A literal bound under it is no raise: it
+holds a proof's cost below the default, and the kernel honours it too. -/
+def defaultHeartbeats : Nat := 200000
+
+/-- A heartbeat setting that is not a literal bound under the default: a
+larger value, zero (no limit at all), or one not spelled as a literal. -/
 def heartbeatRaise (l : String) : Bool :=
-  containsSub (stripLineComment (stripStrings l)) kwMaxHeartbeats
+  let code := stripLineComment (stripStrings l)
+  containsSub code kwMaxHeartbeats &&
+    match ((code.splitOn kwMaxHeartbeats).getLast?.getD "").trimAscii.toString.splitOn " " with
+    | n :: _ => n.toNat?.all fun v => v == 0 || v > defaultHeartbeats
+    | [] => true
 
 /-- Handed by impl-shapes: a catch-all arm that ships its scrutinee or an
 accumulator through unchanged (`| _ => out`, `| other => other`) — in an IR
@@ -1807,6 +1817,10 @@ def selftest : IO UInt32 := do
     -- the raise shapes, standalone and scoped
     ("set_option " ++ kwMaxHeartbeats ++ " 400000", true),
     ("  set_option " ++ kwMaxHeartbeats ++ " 1000000 in", true),
+    ("set_option " ++ kwMaxHeartbeats ++ " 0 in", true),
+    ("  withOptions (" ++ kwMaxHeartbeats ++ ".set · 2000)", true),
+    -- a literal bound under the default holds a cost: no raise
+    ("set_option " ++ kwMaxHeartbeats ++ " 2000 in", false),
     -- a comment, a string, and the other budget option stay legal
     ("-- " ++ kwMaxHeartbeats ++ ": zero sites in the tree", false),
     ("  say s!\"raise " ++ kwMaxHeartbeats ++ "\"", false),

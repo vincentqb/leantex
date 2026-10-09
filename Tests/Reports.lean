@@ -1023,14 +1023,16 @@ def reports : List Report := [
       "a presentation deck's doubled anchors read once, a repeated title numbered rather than doubled"]
     state := .guarded "e7ba68fd" .revert .author },
   { id := "R115", date := "2026-10-08"
-    what := "A one-line comment in the IR module cost over six minutes of rebuilding: both backends and every test module elaborated again"
-    pins := [check% buildGraphChecks]
+    what := "building the engine had become very slow: one comment line in the IR module cost over six minutes, both backends and every test module elaborating again, and one edit to a large module still costs over a minute"
+    pins := [check% buildGraphChecks, check% censusChecks, thm% HtmlDoc.emitTree_resolve_agree]
     accept := ["on the base tree the build-graph check fails five ways: one hundred seventy-two test files outside the module system, both backends reading the IR's private part, and the two largest test files reading every module",
+      "the check reads each header with the build tool's own reader: its model cases fail five ways under the line-by-line reader it replaced, which a comment in a header blinded",
       "one comment line appended to the IR module rebuilt 184 modules in 386 seconds before and 12 in 101 seconds after",
       "one comment line appended to the layout module rebuilt 171 modules in 230 seconds before and 9 in 146 seconds after",
-      "the HTML backend builds in 40 seconds instead of 105, its emitter agreement no longer evaluated by the kernel",
-      "the census module builds in 7 seconds instead of 69, its rows elaborated in eight parts"]
-    state := .guarded "fa516a82" .before .author }
+      "the HTML backend builds in 40 seconds instead of 105: the kernel checks its emitter agreement in under a tenth of a second, under a heartbeat bound the destructuring form exceeds",
+      "the census module builds in 7 seconds instead of 69, its rows in parts the census check caps",
+      "still slow: the layout module waits about 100 of its 136 seconds behind earlier proofs, the IR module elaborates in 60, and the lint audit elaborates every source again on each commit"]
+    state := .owed "a follow-up once the concurrent branches land: large-module declarations ahead of the proofs they wait behind, proof companions, and a lint audit read from the build" ["declBarrierChecks"] }
 ]
 
 /-- The reports guarded but never seen failing: a count that may fall and
@@ -1038,7 +1040,7 @@ never rise, and falls only when this line does. -/
 def unwitnessedBaseline : Nat := 10
 
 /-- The reports not closed, the same way. -/
-def owedBaseline : Nat := 1
+def owedBaseline : Nat := 2
 
 def Report.unwitnessed (r : Report) : Bool := r.state matches .unwitnessed
 

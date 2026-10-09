@@ -8219,6 +8219,9 @@ public def emitTree (cfg : Config) (doc : Doc) :
   -- `emitTree_resolve_agree` (73 s of every HtmlDoc build).
   (tree.1, tree.2.1, resolved.2 ++ tree.2.2)
 
+-- A bound, not a budget: the check needs under 300 heartbeats over the
+-- projections, and the destructuring form exceeds 2000 in the kernel.
+set_option maxHeartbeats 2000 in
 /-- Both tree projections read the IR resolver's one fixed point. -/
 public theorem emitTree_resolve_agree (cfg : Config) (doc : Doc) :
     let coverage := cfg.fonts.map (·.mathAlphabets) |>.getD {}
