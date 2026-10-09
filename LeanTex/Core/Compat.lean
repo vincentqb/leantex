@@ -6990,10 +6990,22 @@ and patterns stand in" pos
       else if (Decl.parseGlue src).isSome then some src
       else match src.splitOn " plus " with
         | [w, s] =>
-          if Decl.parseLength w == some {} && (Decl.filFactor? s).isSome then some "fill"
-          else none
+          match Decl.parseLength w, Decl.filFactor? s with
+          | some l, some ((m, sc), order) =>
+            -- `\vfill`'s own glue is the engine's one infinite stretch. A
+            -- stretch of another order or factor ranks against the page's
+            -- other infinite glues, which the engine does not tell apart:
+            -- it sets at its natural width, named.
+            if l == {} && order == 2 && m == (sc : Int) then some "fill"
+            else some (w.trimAscii.toString)
+          | _, _ => none
         | _ => none
     let some value := value? | return none
+    if value != "fill" && (Decl.parseGlue src).isNone then
+      sayOnce "ctrl:vskip:fil" .W0104
+        s!"'\\vskip {src}' has an infinite stretch of an order or factor other than \\vfill's; \
+fills here have one order, so the skip sets at its natural width" pos
+        (help := "write \\vfill for the page's leftover")
     let native := s!"\\block[before = {value}]\{}"
     became "\\vskip" native pos
     return some (← synthAt native pos, e)

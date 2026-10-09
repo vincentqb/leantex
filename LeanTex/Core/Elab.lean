@@ -4324,7 +4324,28 @@ from where it stands"
 /-- The reserved-control skip warning, outside the knot. -/
 private def warnReservedCtrl (ctx : Ctx) (name : String) (code : DiagCode)
     (pos : Pos) : EM Unit :=
-  warnOnce ctx ("ctrl:" ++ name) code s!"'\\{name}' is not implemented yet; skipped" pos
+  if name == "block" then
+    warnOnce ctx "ctrl:block:inline" code
+      "a vertical skip inside a paragraph, a table cell or an argument is not set here; skipped"
+      pos (help := "put the skip between paragraphs")
+  else
+    warnOnce ctx ("ctrl:" ++ name) code s!"'\\{name}' is not implemented yet; skipped" pos
+
+/-- The reserved control a name stands for at `i` in inline content: the
+table's (`reservedCtrl`), and an empty `\block` with its option — a
+document skip (`\vspace`, `\vskip`, a skip macro) met inside inline content,
+a table cell or an argument, where the engine sets no vertical glue. The
+skip is layout alone, so it is skipped with W0329, its option and empty
+group with it, and none of it is set as text. Outside the inline knot, so
+the knot's arm reads one lookup, as it did. -/
+private def reservedCtrlAt (raws : Array Raw) (i : Nat) (name : String) (pos : Pos) :
+    Option DiagCode :=
+  if blockOnly.contains name && name == "block" then
+    let (k, unclosed) := skipOptionRuns raws (i + 1) pos
+    match unclosed, raws[skipSpaces raws k]? with
+    | none, some (.group body _) => if body.isEmpty && i + 1 < k then some .W0329 else none
+    | _, _ => none
+  else reservedCtrl.lookup name
 
 private inductive ColorRead where
   | resolved (color : Color) (token : Option String)
@@ -5833,7 +5854,7 @@ a side channel, never slide content" pos
     | _ =>
       noteNeedsGroup ctx "thanks" pos
       elabInlinesFrom ctx raws (i + 1) acc sb
-  else if let some code := reservedCtrl.lookup name then
+  else if let some code := reservedCtrlAt raws i name pos then
     warnReservedCtrl ctx name code pos
     let jr := skipReservedArgs raws (i + 1) pos
     if let some bpos := jr.2 then
@@ -6012,7 +6033,8 @@ private theorem elabInlinesCtrl2_unknown (ctx : Ctx) (raws : Array Raw) (i : Nat
     Option.isNone_iff_eq_none, List.contains_cons, List.contains_nil,
     Bool.or_eq_false_iff, Bool.or_false] at hn
   rw [elabInlinesCtrl2]
-  simp only [hn, Bool.false_eq_true, ↓reduceIte, pure_bind, Option.isSome_none, Bool.false_or]
+  simp only [hn, reservedCtrlAt, Bool.false_and, Bool.false_eq_true, ↓reduceIte, pure_bind,
+    Option.isSome_none, Bool.false_or]
 
 private theorem recoversInlineName_title (ctx : Ctx) (name : String)
     (hn : recoversInlineName ctx name = true) (st : ESt) :

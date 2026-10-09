@@ -1782,6 +1782,25 @@ def cssRulesOf (css sel : String) : List String :=
 exactly: the text between its braces. -/
 def cssRuleOf (css sel : String) : Option String := (cssRulesOf css sel).head?
 
+/-- A length in sp as thousandths of a point, rounded to nearest: what the
+layout checks print and compare against a reference's three decimals. -/
+def spMilli (d : Dim.Sp) : Int := (d * 1000 + 32768) / 65536
+
+/-- A selector list's parts, split at its top-level commas (a comma inside
+`:is(…)` or `:has(…)` belongs to its part). -/
+def cssSelParts (sel : String) : List String := Id.run do
+  let mut parts : Array String := #[]
+  let mut cur := ""
+  let mut depth := 0
+  for c in sel.toList do
+    if c == '(' then depth := depth + 1
+    if c == ')' then depth := depth - 1
+    if c == ',' && depth == 0 then
+      parts := parts.push cur.trimAscii.toString
+      cur := ""
+    else cur := cur.push c
+  return (parts.push cur.trimAscii.toString).toList
+
 /-- A CSS length in `rem` as thousandths of a rem — the unit every boundary
 of the gap sheet is written in (`HtmlDoc.screenMilli`) — or nothing for any
 other spelling. -/

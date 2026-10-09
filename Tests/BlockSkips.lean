@@ -123,8 +123,6 @@ private def blockGaps : List (String × Int) :=
 conversion to TeX points. -/
 private def tolerance : Int := 2
 
-private def milliOf (d : Dim.Sp) : Int := (d * 1000 + 32768) / 65536
-
 /-- TeX points in thousandths, in the engine's point (PostScript's): a
 centimetre is 28.453 TeX points and 28.346 of the engine's. -/
 private def bpMilli (texMilli : Int) : Int := (texMilli * 7200 + 3613) / 7227
@@ -163,7 +161,7 @@ private def pdfChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO U
       match (pages[2 * i]?.bind span), (pages[2 * i + 1]?.bind span) with
       | some d0, some d1 =>
         let want := (lua + 500) / 1000
-        check ref s!"block skips ({label}): \\bigskip between {x} and {y} moves it {lua} (lualatex), got {milliOf (d1 - d0)}"
+        check ref s!"block skips ({label}): \\bigskip between {x} and {y} moves it {lua} (lualatex), got {spMilli (d1 - d0)}"
           (d1 - d0 == Dim.pt want && (lua - 1000 * want).natAbs ≤ tolerance.toNat)
       | _, _ => check ref s!"block skips ({label}): the {x}/{y} probe's marks ship" false
     -- Every skip spelling, between blocks and paragraphs.
@@ -179,11 +177,11 @@ private def pdfChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO U
       let width := (skipsOf doc).foldl (fun s g => s + (g.value.resolve size (size / 2)).width) (0 : Dim.Sp)
       let width := width / pairs.length
       check ref s!"block skips ({label}): {name} resolves to lualatex's {lua} TeX points"
-        ((milliOf width - (if physical then bpMilli lua else lua)).natAbs ≤ tolerance.toNat)
+        ((spMilli width - (if physical then bpMilli lua else lua)).natAbs ≤ tolerance.toNat)
       for ((x, y), i) in pairs.zipIdx do
         match (pages[2 * i]?.bind span), (pages[2 * i + 1]?.bind span) with
         | some d0, some d1 =>
-          check ref s!"block skips ({label}): {name} between {x} and {y} moves it by its width, got {milliOf (d1 - d0)}"
+          check ref s!"block skips ({label}): {name} between {x} and {y} moves it by its width, got {spMilli (d1 - d0)}"
             (d1 - d0 == width)
         | _, _ => check ref s!"block skips ({label}): the {name} {x}/{y} probe's marks ship" false
     -- At a frame's top the skip stands under the opening; the first
@@ -194,7 +192,7 @@ private def pdfChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO U
     for (y, i) in tops.zipIdx do
       match (pages[2 * i]?.bind (lineY · "omega")), (pages[2 * i + 1]?.bind (lineY · "omega")) with
       | some y0, some y1 =>
-        check ref s!"block skips ({label}): \\bigskip at a frame's top moves its first {y} 12000 (lualatex), got {milliOf (y1 - y0)}"
+        check ref s!"block skips ({label}): \\bigskip at a frame's top moves its first {y} 12000 (lualatex), got {spMilli (y1 - y0)}"
           (y1 - y0 == Dim.pt 12)
       | _, _ => check ref s!"block skips ({label}): the frame-top {y} probe's marks ship" false
     -- Inside a block's body, before its end, and before `\pause`.
@@ -208,7 +206,7 @@ private def pdfChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO U
       let step := if stepped then 1 else 0
       match (pages[step]?.bind span), (pages[2 * step + 1]?.bind span) with
       | some d0, some d1 =>
-        check ref s!"block skips ({label}): \\bigskip {name} moves what follows 12000 (lualatex), got {milliOf (d1 - d0)}"
+        check ref s!"block skips ({label}): \\bigskip {name} moves what follows 12000 (lualatex), got {spMilli (d1 - d0)}"
           (d1 - d0 == Dim.pt 12)
       | _, _ => check ref s!"block skips ({label}): the probe {name} ships its marks" false
   -- The distance between two painted blocks, body box to title box.
@@ -222,8 +220,8 @@ private def pdfChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO U
     match bodyBottom, nextTop with
     | some b, some t =>
       let want := if skip.startsWith "\\vspace" then 10000 + bpMilli (lua - 10000) else lua
-      check ref s!"block skips: '{skip}' sets two blocks {lua} apart (lualatex), got {milliOf (t - b)}"
-        ((milliOf (t - b) - want).natAbs ≤ tolerance.toNat)
+      check ref s!"block skips: '{skip}' sets two blocks {lua} apart (lualatex), got {spMilli (t - b)}"
+        ((spMilli (t - b) - want).natAbs ≤ tolerance.toNat)
     | _, _ => check ref s!"block skips: the '{skip}' blocks ship their boxes" false
 
 /-- TeX's primitive `\vskip` reads its glue unbraced. lualatex moves what
@@ -244,7 +242,7 @@ private def vskipChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO
     let pages := (Layout.run (Layout.Geom.ofPage doc.page) fonts none doc).pages
     match (pages[0]?.bind span), (pages[1]?.bind span) with
     | some d0, some d1 =>
-      check ref s!"block skips: \\vskip {name} moves what follows {pts} pt (lualatex), got {milliOf (d1 - d0)}"
+      check ref s!"block skips: \\vskip {name} moves what follows {pts} pt (lualatex), got {spMilli (d1 - d0)}"
         (d1 - d0 == Dim.pt pts)
     | _, _ => check ref s!"block skips: the \\vskip {name} probe ships its marks" false
     check ref s!"block skips: \\vskip {name} is a skip, never text"
@@ -276,20 +274,6 @@ private def boxMilli (style : String) : Option Int :=
 private def hasClassTok (attrs : Array (String × String)) (c : String) : Bool :=
   ((HtmlDoc.attrOf? attrs "class").getD "").splitOn " " |>.contains c
 
-/-- A selector list's parts, split at its top-level commas. -/
-private def selParts (sel : String) : List String := Id.run do
-  let mut out := []
-  let mut part := ""
-  let mut depth := 0
-  for c in sel.toList do
-    if c == '(' then depth := depth + 1
-    if c == ')' then depth := depth - 1
-    if c == ',' && depth == 0 then
-      out := part.trimAscii.toString :: out
-      part := ""
-    else part := part.push c
-  return (part.trimAscii.toString :: out).reverse
-
 private def htmlChecks (ref : IO.Ref (List String)) : IO Unit := do
   let skips := ["\\smallskip", "\\medskip", "\\bigskip", "\\vspace{1cm}", "\\vspace{-4pt}"]
   let src := document "\\setlength{\\parskip}{4pt}\n"
@@ -309,7 +293,7 @@ private def htmlChecks (ref : IO.Ref (List String)) : IO Unit := do
     let style := (HtmlDoc.attrOf? attrs "style").getD ""
     let want : Int := if v < 0 then -(HtmlDoc.screenMilli size (-v) : Int)
       else (HtmlDoc.screenMilli size v : Int)
-    check ref s!"block skips HTML: a {milliOf v} thousandths skip is a box of {want} milli-rem, not a margin ('{style}')"
+    check ref s!"block skips HTML: a {spMilli v} thousandths skip is a box of {want} milli-rem, not a margin ('{style}')"
       (boxMilli style == some want && !hasStr style "margin")
   -- The frame-top box takes the frame's opening and pays beamer's
   -- `\vskip-\parskip`, which the paragraph after it cancels by its own.
@@ -336,11 +320,12 @@ private def htmlChecks (ref : IO.Ref (List String)) : IO Unit := do
         | .boundary sel v => some (sel, v)
         | _ => none
       for ((sel, v), i) in bounds.zipIdx do
-        let parts := selParts sel
+        let parts := cssSelParts sel
         if parts.all (·.endsWith " + *") && v != "0" then
-          let want := ", ".intercalate (parts.map fun p => (p.dropEnd 1).toString ++ ".vskip")
+          let want := ", ".intercalate (parts.map fun p =>
+            (p.dropEnd 1).toString ++ s!":is(.vskip, {HtmlDoc.skipCarrier})")
           let companion := (bounds.drop (i + 1)).find? (·.1 == want)
-          check ref s!"block skips HTML ({lname}, {milliOf sz}): '{sel}' owns its space before a skip, without the follower's gap"
+          check ref s!"block skips HTML ({lname}, {spMilli sz}): '{sel}' owns its space before a skip, without the follower's gap"
             ((companion.map fun (_, own) =>
               !hasStr own "+ var(--parskip" && (own == v || hasStr v own || hasStr own v)).getD false)
   -- The boundary the three addends make, block to block across
@@ -351,7 +336,7 @@ private def htmlChecks (ref : IO.Ref (List String)) : IO Unit := do
   let valueOf (p : String → Bool) : Option Int := rules.findSome? fun
     | .boundary sel v => if p sel then remMilliOf v else none
     | _ => none
-  let below := valueOf fun s => s.startsWith ":is(section.block" && s.endsWith "+ .vskip"
+  let below := valueOf fun s => s.startsWith ":is(section.block" && s.endsWith s!"+ :is(.vskip, {HtmlDoc.skipCarrier})"
   let aboveNext := valueOf fun s => s.startsWith "* + :is(section.block"
   let skip := (boxes[2]?.bind fun attrs => boxMilli ((HtmlDoc.attrOf? attrs "style").getD ""))
   match below, aboveNext, skip with
@@ -362,9 +347,89 @@ private def htmlChecks (ref : IO.Ref (List String)) : IO Unit := do
       ((b + s + a - want).natAbs ≤ 3)
   | _, _, _ => check ref "block skips HTML: the block boundary's three addends are in the sheet" false
 
+/-- A skip met inside inline content — a table cell, a bold run, a
+footnote, a frame or block title — has no vertical glue to stand in: it is
+skipped with one W0329, the document builds, and none of its native
+spelling reaches the page as text. lualatex accepts every one. -/
+private def inlineChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit := do
+  let sites := [("a table cell", "\\begin{tabular}{p{3cm}}cell words \\vskip 3pt more\\end{tabular}"),
+    ("a bold run", "\\textbf{bold \\vskip 3pt words}"),
+    ("a footnote", "Words\\footnote{note \\vspace{3pt} words}."),
+    ("a block title", "\\begin{block}{Title \\vskip 3pt words}Body words.\\end{block}")]
+  for (name, body) in sites do
+    let src := document "" [frame body]
+    let (doc, diags) := Elab.run "block-skips-inline.tex" src
+    let pages := (Layout.run (Layout.Geom.ofPage doc.page) fonts none doc).pages
+    check ref s!"block skips: a skip inside {name} builds, got {(diags.filter (·.severity == .error)).map (·.code)}"
+      (diags.all (·.severity != .error))
+    check ref s!"block skips: a skip inside {name} is named once, W0329"
+      ((diags.filter (·.code == "W0329")).size == 1)
+    check ref s!"block skips: a skip inside {name} sets none of its spelling as text"
+      (pages.all fun p => p.lines.all fun l => !hasStr (lineText l) "before")
+  let titled := document "" ["\\begin{frame}[t]{Frame \\vskip 3pt title}Words.\\end{frame}\n"]
+  let (_, diags) := Elab.run "block-skips-inline-title.tex" titled
+  check ref "block skips: a skip inside a frame title builds" (diags.all (·.severity != .error))
+
+/-- An infinite stretch other than `\\vfill`'s ranks against the page's other
+infinite glues, which the engine does not tell apart: lualatex leaves what
+follows `\\vskip 0pt plus 1fil` in place on a `[t]` frame, whose own bottom
+glue outranks it. The engine sets the skip at its natural width and names
+it once (W0104); `\\vskip 0pt plus 1fill` stays `\\vfill`. -/
+private def filOrderChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit := do
+  let para := above "paragraph"
+  let pageOf (skip : String) : Option Dim.Sp × Array Diag :=
+    let (doc, diags) := Elab.run "block-skips-fil.tex"
+      (document "" [frame (para ++ "\n\n" ++ skip ++ "\n\n" ++ below "paragraph")])
+    (((Layout.run (Layout.Geom.ofPage doc.page) fonts none doc).pages[0]?).bind (lineY · "omega"), diags)
+  let (natural, _) := pageOf "\\vskip 0pt"
+  for skip in ["\\vskip 0pt plus 1fil", "\\vskip 0pt plus 2fill", "\\vskip 0pt plus 1filll"] do
+    let (y, diags) := pageOf skip
+    check ref s!"block skips: '{skip}' sets at its natural width" (y.isSome && y == natural)
+    check ref s!"block skips: '{skip}' is named once, W0104"
+      ((diags.filter (·.code == "W0104")).size == 1)
+  let (fill, diags) := pageOf "\\vskip 0pt plus 1fill"
+  check ref "block skips: \\vskip 0pt plus 1fill is \\vfill, unnamed"
+    (fill.isSome && fill != natural && diags.all (·.code != "W0104"))
+
+/-- The sheet's rules for a skip box where its follower's term is not the
+one the generic boundary assumes: a skip opening an untitled frame pays the
+frame's `\\vskip-\\parskip`, a step carrier opening on a skip box owns the
+box's boundaries and opening, the paragraph past a box after a list pays
+TeX's `\\parskip` (the list's own term) rather than the sheet's peer gap, and
+a rule's `<hr>` carries no margin of its own, as TeX's `\\hrule` has none. -/
+private def sheetChecks (ref : IO.Ref (List String)) : IO Unit := do
+  for (lineage, lname) in [(Ir.ListLineage.sizeFile, "size file"), (.beamer, "beamer")] do
+    let rules := HtmlDoc.blockGapRules lineage (Dim.pt 10) {}
+    let has (p : String → String → Bool) : Bool := rules.any fun
+      | .boundary sel v => p sel v
+      | _ => false
+    check ref s!"block skips HTML ({lname}): a skip opening an untitled frame pays the frame's \\vskip-\\parskip"
+      (has fun sel v => hasStr sel "section.slide > :is(.vskip" && hasStr sel ":first-child" &&
+        v == "calc(0rem - var(--parskip, 0rem))")
+    check ref s!"block skips HTML ({lname}): a list owns its space before a carrier opening on a skip"
+      (has fun sel v => hasStr sel "ul:not(.bibliography) + :is(.vskip, " && hasStr sel HtmlDoc.skipCarrier &&
+        !hasStr v "var(--parskip")
+    check ref s!"block skips HTML ({lname}): the paragraph past a skip after a list pays TeX's \\parskip"
+      (has fun sel v => hasStr sel "ul:not(.bibliography) + .vskip + p" && v == "var(--parskip, 0rem)")
+    check ref s!"block skips HTML ({lname}): the paragraph past a skip opening an item pays no gap again"
+      (has fun sel v => sel == ":is(li, dd) > .vskip:first-child + p" && v == "0")
+    check ref s!"block skips HTML ({lname}): a title under a title bar stands on the bar's skip alone"
+      (has fun sel v => sel == "hr.separator + .vskip + h1:not(.body-heading)" && v == "0")
+    check ref s!"block skips HTML ({lname}): a title over a title bar's skip has no band below"
+      (rules.any fun
+        | .reset sel m => sel == "h1:not(.body-heading):has(+ .vskip + hr.separator)" && m == "0"
+        | _ => false)
+    check ref s!"block skips HTML ({lname}): a rule's <hr> carries no margin"
+      (rules.any fun
+        | .reset sel m => hasStr sel "hr" && m == "0"
+        | _ => false)
+
 def blockSkipChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit := do
   pdfChecks ref fonts
   vskipChecks ref fonts
+  inlineChecks ref fonts
+  filOrderChecks ref fonts
+  sheetChecks ref
   htmlChecks ref
 
 end Tests.BlockSkips
