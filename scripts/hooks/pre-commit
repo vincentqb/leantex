@@ -6,7 +6,8 @@
 # when the commit adds any path (the debris and case-collision gates read
 # every added path, whatever its extension; renames count as additions), or
 # when an added line may name a home directory (the gate judges it; LC_ALL=C
-# so the classes are ASCII).
+# so the classes are ASCII), or whenever this clone keeps a denylist (the
+# privacy gate reads every added line and path).
 # The compiled gate runs when current; a stale or missing binary is rebuilt
 # first (the gate's own build step keeps it current otherwise).
 git diff --cached --name-only | grep -qE '\.lean$|^lakefile\.(toml|lean)$|^lean-toolchain$|^testdata/golden/|^PLAN\.md$' \
@@ -14,9 +15,11 @@ git diff --cached --name-only | grep -qE '\.lean$|^lakefile\.(toml|lean)$|^lean-
   || git diff --cached --name-only --no-renames --diff-filter=A | grep -q . \
   || git diff --cached --no-color --unified=0 | LC_ALL=C grep -E '^\+' \
      | LC_ALL=C grep -qE '(^|[^A-Za-z0-9._-])/(local/home|home|Users)/[A-Za-z0-9_]' \
+  || [ -f "$(git rev-parse --git-common-dir)/info/private-terms" ] \
   || exit 0
 b=.lake/build/bin/precommit
-[ -x "$b" ] && [ ! scripts/precommit.lean -nt "$b" ] && [ ! scripts/Gate.lean -nt "$b" ] && exec "$b"
+[ -x "$b" ] && [ ! scripts/precommit.lean -nt "$b" ] && [ ! scripts/Gate.lean -nt "$b" ] \
+  && [ ! scripts/Privacy.lean -nt "$b" ] && exec "$b"
 [ -z "$LEAN_CC" ] && [ -x /home/linuxbrew/.linuxbrew/bin/clang ] \
   && export LEAN_CC=/home/linuxbrew/.linuxbrew/bin/clang LIBRARY_PATH="$(lean --print-prefix)/lib:$(lean --print-prefix)/lib/lean"
 lake build precommit --wfail -q >&2 && exec "$b"

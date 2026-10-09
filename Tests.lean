@@ -213,6 +213,7 @@ import Tests.RegressionCorpus
 import Tests.Reports
 import Tests.Natbib
 import Tests.LinkColor
+import Tests.Privacy
 
 open LeanTex.Core LeanTex.Core.Utf8 LeanTex.Cli
 open Tests (mintedSettingsChecks listingHighlightChecks svgAssetChecks svgToolChecks
@@ -694,6 +695,8 @@ def surfaceSuiteChecks (ref : IO.Ref (List String)) : IO Unit := do
   posterChromeCompatChecks ref
   keyedLookupChecks ref
   compatAccountingChecks ref
+  privacyMatcherChecks ref
+  privacyGateChecks ref
 
 /-- The theme, palette, and role blocks (Tests/Themes.lean), dispatched
 together so each stays a leaf and `main`'s spent elaboration budget stays

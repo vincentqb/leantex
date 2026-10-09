@@ -6,6 +6,13 @@ HTML). Keep README.md focused on end users; git history records completed
 work. Never record personal information (names, emails, and
 the text or topics of private documents) or local paths to private documents
 in this repo; refer to the private reference corpus abstractly.
+A local denylist, `info/private-terms` in the git common directory (never
+committed; format and readings in `scripts/Privacy.lean`), holds this: the
+hook checks what a commit adds (lines, paths, binaries), and `lake lint`, the
+landing's gate, the staged tree and, outside the hook, every commit not on
+`refs/remotes/origin/main` and its message (refused when that ref is
+missing). A finding names a location, never the term; with no list the check
+is skipped.
 
 ## Setup
 

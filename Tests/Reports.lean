@@ -102,6 +102,7 @@ import Tests.FontDefaults
 import Tests.Batch
 import Tests.ElabFrameSources
 import Tests.LayoutSources
+import Tests.Privacy
 import scripts.LandCore
 
 /-!
@@ -1033,7 +1034,14 @@ def reports : List Report := [
       "the census module builds in 7 seconds instead of 69, its rows in parts the census check caps",
       "the lint stage of each commit's gate took about 17 minutes and takes about 4: the source audit's compilers draw from one queue, not batches that waited for their slowest member, and its checks run at once",
       "still slow: the layout module waits about 100 of its 136 seconds behind earlier proofs, the IR module elaborates in 60, and the lint audit elaborates every source again on each commit"]
-    state := .owed "a follow-up once the concurrent branches land: large-module declarations ahead of the proofs they wait behind, proof companions, and a lint audit read from the build" ["declBarrierChecks"] }
+    state := .owed "a follow-up once the concurrent branches land: large-module declarations ahead of the proofs they wait behind, proof companions, and a lint audit read from the build" ["declBarrierChecks"] },
+  { id := "R116", date := "2026-10-08"
+    what := "personal identifiers and material from private documents reached the tree"
+    pins := [check% privacyMatcherChecks, check% privacyGateChecks]
+    accept := ["the lint gate's check of the staged tree against the clone's local denylist names locations at the broken commit and none after the scrub",
+      "a scratch repository and a scratch clone with an invented denylist: the commit gate refuses an added line in UTF-8, Latin-1 or Windows-1252, a wrapped phrase, an accent command before a blank, an added or renamed path, and a binary naming a listed term in its own bytes or in what it inflates to (a PDF's stream or string, a PNG's compressed text, a gzip or zip member), under the default, no-prefix and mnemonic-prefix diff settings alike; the lint gate refuses an unpushed commit adding a term that a later commit removes, a message naming one in either encoding, and a clone keeping the list without the remote ref that bounds its unpushed commits; every finding prints a location, a path masked where it holds the term, and never the term",
+      "an out-of-repo comparison with the private reference corpus finds none of its distinctive text, names or design values in the tree"]
+    state := .guarded "fa516a828a2a36549fc2a56f1e1cb4d138b3b934" .before .author }
 ]
 
 /-- The reports guarded but never seen failing: a count that may fall and
