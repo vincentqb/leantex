@@ -1009,16 +1009,18 @@ def reports : List Report := [
       thm% Pdf.table_length_agree, thm% HtmlDoc.printLeading_exact,
       thm% Layout.strutBox_exact, thm% Layout.tableStrut_exact]
     accept := ["the browser oracle's stage-fit row fails on the invented table deck, one stage 53 px past its foot, before table rows take the print leading, and passes after at the deck's own aspect with no stage a pixel past its foot",
-      "twenty typed tree, stylesheet and shipped page assertions fail on the base before every cell states its spec's side and its rows the print leading, four of them the page's own text column set flush right under a right-set scope",
+      "ninety-seven guard assertions fail with every fix this row pins reverted and the guards kept: cells stating no left side and taking their scope's, the scope's side reaching a cell's lines, modified columns justified flush left or moved off their letter's side, rows at the prose leading in the stylesheet and on their glyphs beside a rule on the page, booktabs measured in the body face and at a nominal 11pt, a preamble's ex resolved in the table's face, stylesheet lengths in points, and no warning for booktabs loaded after its face",
+      "twenty of them failed on the base before any fix, the guards as they then stood, four of them the page's own text column set flush right under a right-set scope",
       "a table that fills one frame of a presentation deck fits its stage at 1280 by 720 with no scrollbar and room to spare, its text column flush left and its rule and column gaps lualatex's; on its printed pages each row stands as far from the rule beside it as lualatex sets it, to the raster's 0.12 pt"]
-    state := .guarded "fa516a82" .before .author },
+    state := .guarded "e7ba68fd" .revert .author },
   { id := "R114", date := "2026-10-08"
     what := "a slide whose title changes colour by overlay step was anchored and named by both alternatives of its title, each word doubled in its fragment and its accessible name"
     pins := [check% Tests.frameAnchorChecks, thm% Ir.slug_altSteps_exact]
-    accept := ["four anchor and name assertions fail before a title's anchor reads its first page, alternation, colour, alert and cover steps among them; two more fail before an image's alternative from its caption and the title metadata read their first page too",
+    accept := ["six anchor, name, caption-alternative and title-metadata assertions fail with the first-page reading reverted and the guards kept, and the anchor theorem no longer holds",
+      "four of them failed on the base before any fix, the guard as it then stood: alternation, colour, alert and cover steps among them",
       "every titled stage of the corpus decks is anchored and named by the words its title shows, every id held by one element",
       "a presentation deck's doubled anchors read once, a repeated title numbered rather than doubled"]
-    state := .guarded "fa516a82" .before .author }
+    state := .guarded "e7ba68fd" .revert .author }
 ]
 
 /-- The reports guarded but never seen failing: a count that may fall and
