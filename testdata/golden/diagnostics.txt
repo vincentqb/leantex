@@ -676,7 +676,7 @@
   suggestion: a footnote is one paragraph; split a long note into two \footnote calls
 ── W0372 (degraded) a footnote taller than the text block overruns its page
 ⚠ [W0372]
-  a footnote is 63.088pt taller than the text block; it overruns its page
+  a footnote is 63.053pt taller than the text block; it overruns its page
   suggestion: shorten the note, or raise the text height (\page{ vmargin = ... })
 ── W0373 (degraded) \thanks is kept inline in the title block
 ⚠ [W0373] - \thanks

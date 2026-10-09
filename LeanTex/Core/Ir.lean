@@ -135,8 +135,18 @@ public structure PageSpec where
   `baseFontSize`. -/
   fontSize : Sp := baseFontSize
   /-- Line spacing as a factor over the default 1.2, in thousandths, so
-  `\linespread{1.04}` has a home. -/
+  `\linespread{1.04}` has a home: what every line's leading reads. A
+  `\page` declaration composes it from `spread` and `bodySkip`, as LaTeX's
+  `\selectfont` stretches the `\baselineskip` a size command sets. -/
   leading : Nat := 1000
+  /-- `\linespread` (`\page{ leading = … }`), in thousandths: the stretch
+  over whatever `\baselineskip` the body's size sets. -/
+  spread : Nat := 1000
+  /-- The body's `\baselineskip` as a class's `\normalsize` declares it
+  (`\page{ baselineskip = … }`): `leading` is then its share of the 6⁄5
+  rule at the body size, times `spread`, resolved at the body size the
+  declaration ends on. `none` keeps the 6⁄5 rule. -/
+  bodySkip : Option Sp := none
   /-- The gap between peer paragraphs, with its rubber; `none` is the
   engine's default. LaTeX classes declare `0pt`, `\parskip` and the parskip
   package their own. -/
@@ -2807,6 +2817,71 @@ command left. -/
 /-- A run under no size command sets at the 6⁄5 rule of its own size. -/
 @[simp] public theorem stepSkip_none_exact (size : Sp) (factor : Nat) :
     stepSkip none size factor = leadingFor size factor := rfl
+
+/-- **The leading a run's line box takes**: its paragraph's leading — the
+step the paragraph is set at (`lead`, `stepLead` at its base) over its
+nominal size — in the run's proportion to that size; under no step, the
+6⁄5 rule of the run's own size, which is the same proportion. LaTeX reads
+`\baselineskip` once, at `\par`, and a run adds only its ink, so a run never
+carries a leading of its own: a `{\small …}` run inside a body paragraph
+leads in the body's proportion to its smaller type, and its box stays inside
+the paragraph's strut whatever skip column the page reads
+(`runLead_between`). A unitless CSS line height is the same rule — the one
+an inline element inherits from the block it stands in, so the HTML's runs
+read this proportion too. -/
+@[expose] public def runLead (lead : Option Sp) (nominal size : Sp) (factor : Nat := 1000) :
+    Sp :=
+  match lead with
+  | some l => l * size / max nominal 1 * factor / 1000
+  | none => leadingFor size factor
+
+/-- A run at its paragraph's own size leads at the paragraph's leading,
+exactly (`_exact`). -/
+public theorem runLead_exact (lead : Option Int) (nominal : Int) (h : 0 < nominal)
+    (factor : Nat) : runLead lead nominal nominal factor = stepSkip lead nominal factor := by
+  cases lead with
+  | none => rfl
+  | some l =>
+    have hm : max nominal 1 = nominal := by omega
+    simp only [runLead, stepSkip, hm]
+    rw [Int.mul_ediv_cancel _ (by omega)]
+
+/-- A larger run never leads less than a smaller one (`_monotone`), under any
+step's leading the paragraph carries. -/
+public theorem runLead_monotone (lead : Option Int) (nominal : Int) (factor : Nat) (a b : Int)
+    (hl : ∀ l, lead = some l → 0 ≤ l) (hab : a ≤ b) :
+    runLead lead nominal a factor ≤ runLead lead nominal b factor := by
+  have hf : (0 : Int) ≤ (factor : Int) := Int.natCast_nonneg _
+  cases lead with
+  | none =>
+    simp only [runLead, leadingFor]
+    apply Int.ediv_le_ediv (by decide)
+    apply Int.mul_le_mul_of_nonneg_right _ hf
+    apply Int.ediv_le_ediv (by decide)
+    exact Int.mul_le_mul_of_nonneg_right hab (by decide)
+  | some l =>
+    have h0 := hl l rfl
+    simp only [runLead]
+    apply Int.ediv_le_ediv (by decide)
+    apply Int.mul_le_mul_of_nonneg_right _ hf
+    apply Int.ediv_le_ediv (by omega)
+    exact Int.mul_le_mul_of_nonneg_left hab h0
+
+/-- **A run no larger than its paragraph leads within its paragraph's
+leading** (`_between`): between nothing and the leading the paragraph's own
+lines stand at (`stepSkip`), so a smaller run's box never reaches past the
+paragraph's strut by a leading of its own, under any step, column or factor. -/
+public theorem runLead_between (lead : Option Int) (nominal : Int) (factor : Nat) (s : Int)
+    (hn : 0 < nominal) (hl : ∀ l, lead = some l → 0 ≤ l) (hs : 0 ≤ s) (hsn : s ≤ nominal) :
+    0 ≤ runLead lead nominal s factor ∧
+      runLead lead nominal s factor ≤ stepSkip lead nominal factor := by
+  have h0 : runLead lead nominal 0 factor = 0 := by
+    cases lead <;> simp [runLead, leadingFor]
+  refine ⟨?_, ?_⟩
+  · rw [← h0]
+    exact runLead_monotone lead nominal factor 0 s hl hs
+  · rw [← runLead_exact lead nominal hn factor]
+    exact runLead_monotone lead nominal factor s nominal hl hsn
 
 /-- The size file's two columns — each row's size (`sizeScale`) and its
 leading (`sizeSkipScale`) — name the same steps in the same order: a step
@@ -17214,27 +17289,27 @@ reading, the run's own leading or the body's then governing. A hand-rolled
 walk, not `foldInlines`: it descends only the chain of single wrappers and
 stops at the first size scope. -/
 -- conserves: none — a classifier over the wrapper chain; emits no document text.
-public def paraStepIn (acc : Option String) (xs : List Inline) : Option String :=
+public def paraStepIn (xs : List Inline) : Option String :=
   match xs with
-  | [x] => paraStepOne acc x
-  | [] => acc
-  | _ :: _ :: _ => acc
+  | [x] => paraStepOne x
+  | [] => none
+  | _ :: _ :: _ => none
 
 -- conserves: none — the one-node face of paraStepIn's classifier.
-public def paraStepOne (acc : Option String) (x : Inline) : Option String :=
+public def paraStepOne (x : Inline) : Option String :=
   match x with
   | .styled (.size n) _ => some n
   | .styled (.fontSize _ _) _ | .styled .normal _ => none
   | .styled .bold body | .styled .italic body | .styled .mono body
   | .styled .smallcaps body | .styled .emph body | .styled .sans body
   | .styled .roman body | .styled .medium body | .styled (.series _) body
-  | .styled .upright body | .styled (.lang _) body => paraStepIn acc body.toList
-  | .colored _ _ body => paraStepIn acc body.toList
-  | .located _ body => paraStepIn acc body.toList
+  | .styled .upright body | .styled (.lang _) body => paraStepIn body.toList
+  | .colored _ _ body => paraStepIn body.toList
+  | .located _ body => paraStepIn body.toList
   | .text _ | .math _ _ | .formula _ _ _ | .role _ _ | .link _ _ | .label _
   | .ref _ _ _ _ | .decorated _ _ | .fill | .hspace _ _ | .rule _ _ _ | .pageNumber
   | .pageCount | .linebreak _ | .strut _ | .italicCorr _ | .onSteps _ _
-  | .altSteps _ _ _ | .image _ _ _ | .icon _ _ | .cite _ _ | .footnote _ _ => acc
+  | .altSteps _ _ _ | .image _ _ _ | .icon _ _ | .cite _ _ | .footnote _ _ => none
 
 end
 
@@ -17248,7 +17323,7 @@ the body's own `\normalsize`, as LaTeX reads `\baselineskip` at `\par`.
 with a small run inside it) or no size scope wraps it. The one resolving
 site: the page sets the paragraph's strut at this step, the HTML gives the
 paragraph element the step's class (`liftParaStep`). -/
-public def paraStep? (xs : Array Inline) : Option String := paraStepIn none xs.toList
+public def paraStep? (xs : Array Inline) : Option String := paraStepIn xs.toList
 
 mutual
 

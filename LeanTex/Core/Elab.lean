@@ -4026,8 +4026,8 @@ private def unknownCmdHelp (name : String) (optionRun : Bool) : String :=
       "a hook body cannot be interpreted; \\page{ marks = cut } declares \
 printer's cut marks, derived from the trim and bleed"
     else if raggedTwoE.contains name then
-      "the text keeps its page's setting, a slide's ragged right; \
-\\page{ justify = on } or \\page{ justify = off } sets the whole document's"
+      "the text keeps its page's own setting; \\page{ justify = on } or \
+\\page{ justify = off } sets the whole document's"
     else "\\define \\name(...) {body} declares it"
   s!"{route}{optionRunAdvice optionRun}"
 
@@ -13784,6 +13784,27 @@ their layering mechanism, not a conflict. -/
 private def noteScalar (ctx : Ctx) (decl key value : String) (pos : Pos) : EM Unit :=
   modify fun st => applyEvent ctx st (.scalar decl key value pos)
 
+/-- The page's leading factor as LaTeX's `\selectfont` sets the body's
+`\baselineskip`: the skip the body's size declares (`bodySkip`, a class's
+`\normalsize` — the 6⁄5 rule where none is declared) stretched by
+`\linespread` (`spread`). The declared skip lands as its share of the 6⁄5
+rule at the body size, at milli-point precision (the arithmetic a class's
+`\@setfontsize` arguments are read at), and as the skip column's
+`\normalsize` row, so a named step the document does not declare keeps
+size10.clo's own length (`Ir.stepLead`). Read at the end of each `\page`
+block, so neither the order of its keys nor which of the two came first
+changes the page; they compose, never overwrite. -/
+private def composeLeading (spec : PageSpec) : PageSpec :=
+  match spec.bodySkip with
+  | none => { spec with leading := spec.spread }
+  | some d =>
+    let body := spec.fontSize
+    let ld := (d * 1000 + Dim.pt 1 / 2) / Dim.pt 1
+    let sz := max 1 ((body * 1000 + Dim.pt 1 / 2) / Dim.pt 1)
+    { spec with
+      leading := ((ld * (spec.spread : Int) * 1000 + sz * 600) / (sz * 1200)).toNat
+      skips := some (Ir.setSkip spec.skipScale "normalsize" (Ir.skipRowOf (d * 1000) body)) }
+
 private def applyPage (ctx : Ctx) (spec : PageSpec) (entries : Array Decl.Entry)
     (pos : Pos) (tokens : Array (String × SymGlue) := #[]) : PageSpec × Array PEvent := Id.run do
   -- A page dimension may be a declared token or an expression over them
@@ -13859,32 +13880,25 @@ private def applyPage (ctx : Ctx) (spec : PageSpec) (entries : Array Decl.Entry)
           evs := say evs .E0323
             "'textheight' in '\\page' expects a dimension between zero and the page height"
       else evs := evs.push (.say (Decl.wrongType ctx.file "page" "textheight" "a dimension" v pos))
-    | "leading", .int n => spec := { spec with leading := n.toNat * 1000 }
+    -- `leading` is `\linespread`'s stretch, composed with the body's
+    -- declared skip once the block ends (`composeLeading`).
+    | "leading", .int n => spec := { spec with spread := n.toNat * 1000 }
     | "leading", .dim d =>
       -- A bare decimal like 1.04 reads as a dimension in points; the factor
       -- is what was meant.
-      spec := { spec with leading := (d * 1000 / pt 1).toNat }
+      spec := { spec with spread := (d * 1000 / pt 1).toNat }
     | "leading", .ident f =>
       -- ...and one without a unit reaches here as a name.
       match Decl.parseDecimal f with
-      | some (m, s) => spec := { spec with leading := (m * 1000 / s).toNat }
+      | some (m, s) => spec := { spec with spread := (m * 1000 / s).toNat }
       | none => evs := say evs .E0323 s!"'leading' in '\\page' expects a factor like 1.04, got '{f}'"
     -- The body's `\baselineskip` as a class's `\normalsize` declares it
-    -- (`\@setfontsize`'s third argument, fntguide): the page's factor over
-    -- the 6⁄5 rule at the body size in force where the entry stands, and
-    -- the skip column's `\normalsize` row, so a named step the document
-    -- does not declare keeps size10.clo's own length (`Ir.stepLead`).
+    -- (`\@setfontsize`'s third argument, fntguide), resolved at the body
+    -- size the block ends on (`composeLeading`), whatever order its keys
+    -- stand in.
     | "baselineskip", v =>
       if let some d := asDim v then
-        if 0 < d then
-          let body := spec.fontSize
-          -- The factor at milli-point precision, the arithmetic a class's
-          -- `\@setfontsize` arguments are read at.
-          let ld := (d * 1000 + Dim.pt 1 / 2) / Dim.pt 1
-          let sz := max 1 ((body * 1000 + Dim.pt 1 / 2) / Dim.pt 1)
-          spec := { spec with
-            leading := ((ld * 1000000 + sz * 600) / (sz * 1200)).toNat
-            skips := some (Ir.setSkip spec.skipScale "normalsize" (Ir.skipRowOf (d * 1000) body)) }
+        if 0 < d then spec := { spec with bodySkip := some d }
         else
           evs := say evs .E0323 "'baselineskip' in '\\page' expects a positive dimension"
       else evs := evs.push (.say (Decl.wrongType ctx.file "page" "baselineskip" "a dimension" v pos))
@@ -14053,7 +14067,7 @@ private def applyPage (ctx : Ctx) (spec : PageSpec) (entries : Array Decl.Entry)
     -- overwrites nothing.
     if evs.size == before && e.key != "rule" then
       evs := evs.push (.scalar "page" e.key (renderValue e.value) pos)
-  return (spec, evs)
+  return (composeLeading spec, evs)
 
 private def fontSlot? (name : String) : Option Nat :=
   match name with

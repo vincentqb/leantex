@@ -272,7 +272,7 @@ public def engineClasses : List String :=
    "reveal-scroll", "ruled", "section-page", "separator", "slide",
    "slide-foot", "slide-logo", "slide-track", "slides", "snap", "spaced",
    "standout", "step", "table-float"] ++
-  Ir.sizeScale.map (fun p => "size-" ++ p.1)
+  Ir.sizeScale.map (fun p => "size-" ++ p.1) ++ Ir.sizeScale.map (fun p => "lead-" ++ p.1)
 
 private theorem engineClasses_no_u_prefix :
     (engineClasses.all fun c => decide (c.toList.take 2 ≠ ['u', '-'])) = true := by
@@ -1290,8 +1290,203 @@ specificity fight, which is the HTML backend's override contract. -/
 public def blockGapRules (l : Ir.ListLineage) (size : Int) (tokens : Ir.Tokens) : List GapRule :=
   gapResets ++ gapBeforeLists ++ thmRules l size ++ listRules l size tokens ++ gapAfterLists
 
-public def blockGapCss (l : Ir.ListLineage) (size : Int) (tokens : Ir.Tokens) : String :=
-  String.join ((blockGapRules l size tokens).map GapRule.render)
+/-! ### Overlay carriers
+
+A block overlay (`Ir.Block.onSteps`, `Ir.Block.altSteps`) ships its blocks
+inside carrier elements — one element animates one opacity, so a range's
+start and its declared end each need one (`overlayNode`, `stepEndNodes`,
+`overlayAlternatives`) — and a backend group (`Ir.Block.only`) ships its
+blocks inside a transparent one. A carrier is no block of the flow: the page
+sets the gap between a carrier's first block and the block before it, and
+between its last block and the one after it, as it would with no carrier
+there. The boundaries are adjacent-sibling rules, which a carrier hides —
+its first block has no previous sibling, and the block after it follows the
+carrier, not the block the carrier ended on — so every boundary also reads
+through the carriers, down the chains of first and last children as deep as
+the document's carriers nest (`carrierDepths`): `X + Y` holds too where `Y`
+opens a chain of carriers after `X`, and where `X` closes one before `Y`.
+Each variant stands in its boundary's own rule, so it ranks where the
+boundary ranks (`blockGapThrough_owner_contract`). -/
+
+/-- How a block stands in its flow on the HTML tree: a state change or a
+page-only fact ships no element (`blockNodesInto` skips it, or its arm ships
+an empty text, which no sibling combinator sees), a carrier ships its blocks
+one element down, and every other block is an element of the flow. -/
+private inductive FlowSlot where
+  | silent
+  | carrier
+  | element
+
+private def flowSlot : Block → FlowSlot
+  | .para _ | .section .. | .list .. | .center _ | .ragged .. | .link .. | .quote _
+  | .titled .. | .equation .. | .abstract _ | .columns _ | .note _ | .spaced ..
+  | .verbatim .. | .algorithm .. | .rule .. | .frame .. | .nav .. | .picture _
+  | .table .. | .float .. | .bibliography .. => .element
+  | .role n _ => if Ir.pageMarkerRole n then .silent else .element
+  | .onSteps .. | .altSteps .. | .only .. => .carrier
+  | .pagebreak | .framefoot _ | .setPalette _ | .setTokens _ | .logo _ => .silent
+
+mutual
+
+/-- How many carriers deep the first element a block list ships stands. -/
+-- conserves: none — a depth of the tree a block list ships; it emits nothing.
+private def firstCarrierDepth : List Block → Nat
+  | [] => 0
+  | b :: rest => match flowSlot b with
+    | .silent => firstCarrierDepth rest
+    | .element => 0
+    | .carrier => carrierFirstDepth b
+
+/-- A carrier's depth down its first children: its one element — two for a
+range's declared end (`stepEndNodes`) and for an alternation's pair and
+group — over the carriers its first block opens. -/
+-- conserves: none — the one-block face of `firstCarrierDepth`.
+private def carrierFirstDepth : Block → Nat
+  | .onSteps spec body =>
+    1 + (if spec.last.isSome then 1 else 0) + firstCarrierDepth body.toList
+  | .altSteps _ firstPage otherPage =>
+    2 + max (firstCarrierDepth firstPage.toList) (firstCarrierDepth otherPage.toList)
+  | .only _ body => 1 + firstCarrierDepth body.toList
+  | .para _ | .section .. | .list .. | .center _ | .ragged .. | .role .. | .link ..
+  | .quote _ | .abstract _ | .titled .. | .equation .. | .verbatim .. | .algorithm ..
+  | .columns _ | .note _ | .nav .. | .logo _ | .pagebreak | .frame .. | .framefoot _
+  | .setPalette _ | .setTokens _ | .rule .. | .picture _ | .table .. | .float ..
+  | .bibliography .. | .spaced .. => 0
+
+end
+
+mutual
+
+/-- How many carriers deep the last element a block list ships stands, `acc`
+for the elements before. -/
+-- conserves: none — a depth of the tree a block list ships; it emits nothing.
+private def lastCarrierDepth (acc : Nat) : List Block → Nat
+  | [] => acc
+  | b :: rest => match flowSlot b with
+    | .silent => lastCarrierDepth acc rest
+    | .element => lastCarrierDepth 0 rest
+    | .carrier => lastCarrierDepth (carrierLastDepth b) rest
+
+/-- A carrier's depth down its last children, as `carrierFirstDepth` reads
+its first. -/
+-- conserves: none — the one-block face of `lastCarrierDepth`.
+private def carrierLastDepth : Block → Nat
+  | .onSteps spec body =>
+    1 + (if spec.last.isSome then 1 else 0) + lastCarrierDepth 0 body.toList
+  | .altSteps _ firstPage otherPage =>
+    2 + max (lastCarrierDepth 0 firstPage.toList) (lastCarrierDepth 0 otherPage.toList)
+  | .only _ body => 1 + lastCarrierDepth 0 body.toList
+  | .para _ | .section .. | .list .. | .center _ | .ragged .. | .role .. | .link ..
+  | .quote _ | .abstract _ | .titled .. | .equation .. | .verbatim .. | .algorithm ..
+  | .columns _ | .note _ | .nav .. | .logo _ | .pagebreak | .frame .. | .framefoot _
+  | .setPalette _ | .setTokens _ | .rule .. | .picture _ | .table .. | .float ..
+  | .bibliography .. | .spaced .. => 0
+
+end
+
+/-- The deepest chains of carriers a document's blocks open (down their
+first children) and close (down their last): how deep its sheet's
+boundaries read (`GapRule.throughCarriers`). A document with no overlay and
+no backend group reads none, and its sheet is the boundaries alone. -/
+public def carrierDepths (body : Array Block) : Nat × Nat :=
+  Ir.foldBlocks (fun d b => (max d.1 (carrierFirstDepth b), max d.2 (carrierLastDepth b)))
+    (fun d _ => d) (0, 0) body
+
+/-- The carriers a top-level boundary reads through: an overlay's step, its
+set, an alternation's pair, and a backend's transparent group. -/
+private def carrierTop : String := "div:is(.step, .step-set, .alt-pair, [data-backend])"
+
+/-- A carrier one element further down a chain of first children: any
+carrier standing first in the one above it, a range's declared end among
+them, and either group of an alternation, one of which is hidden. -/
+private def carrierFirstLink : String :=
+  ":is(div:is(.step, .step-set, .step-end, .alt-pair, [data-backend]):first-child, div.alt)"
+
+/-- `carrierFirstLink` down a chain of last children. -/
+private def carrierLastLink : String :=
+  ":is(div:is(.step, .step-set, .step-end, .alt-pair, [data-backend]):last-child, div.alt)"
+
+/-- `sel`'s parts at the separators `sep` no parenthesis encloses. -/
+private def splitTop (sep : Char) (sel : String) : List String := Id.run do
+  let mut out : Array String := #[]
+  let mut cur := ""
+  let mut depth : Nat := 0
+  for c in sel.toList do
+    if c == sep && depth == 0 then
+      out := out.push cur.trimAscii.toString
+      cur := ""
+    else
+      if c == '(' then depth := depth + 1
+      if c == ')' then depth := depth - 1
+      cur := cur.push c
+  return (out.push cur.trimAscii.toString).toList
+
+/-- A boundary member `X + Y` as its descendant prefix and its two
+compounds — the last three words, `+` between two compounds, no combinator
+before them — when neither compound is a list's own item, which no carrier
+stands between. Any other member, `none`. -/
+private def siblingMember? (m : String) : Option (String × String × String) :=
+  let comb (w : String) : Bool := w == "+" || w == ">" || w == "~"
+  let item (w : String) : Bool := w.startsWith "li" || w.startsWith "dd" || w.startsWith "dt"
+  match ((splitTop ' ' m).filter (!·.isEmpty)).reverse with
+  | y :: "+" :: x :: pre =>
+    if comb y || comb x || item x || item y || pre.any comb then none
+    else some (String.join (pre.reverse.map (· ++ " ")), x, y)
+  | _ => none
+
+/-- A boundary member `X + Y` read through carriers of depth at most
+`(dr, dl)`: itself, with `Y` first in a chain of `k ≤ dr` carriers standing
+after `X` — save a frame's opening carrier, whose first block opens the frame
+— `X` last in a chain of `j ≤ dl` carriers standing before `Y`, and both. A
+lower side that is any element is no carrier: the carrier's first block takes
+the boundary, and a gap on both would stack in a flex column. An upper side
+that is any element already meets the carrier itself, and `:has()` does not
+nest. A document with no carriers keeps its member as written. -/
+private def throughMembers (dr dl : Nat) (m : String) : List String :=
+  match siblingMember? m with
+  | none => [m]
+  | some (pre, x, y) =>
+    if dr == 0 && dl == 0 then [m] else
+    let y := if y == "*" then s!"*:not({carrierTop})" else y
+    let down (k : Nat) : String :=
+      carrierTop ++ ":not(.frame-body-start)" ++
+        String.join (List.replicate (k - 1) (" > " ++ carrierFirstLink)) ++
+        " > " ++ y ++ ":first-child"
+    let up (j : Nat) : String :=
+      carrierTop ++ ":has(> " ++
+        String.join (List.replicate (j - 1) (carrierLastLink ++ " > ")) ++ x ++ ":last-child)"
+    let ks := (List.range dr).map (· + 1)
+    let js := if x == "*" || (x.splitOn ":has(").length > 1 then []
+      else (List.range dl).map (· + 1)
+    (pre ++ x ++ " + " ++ y) :: (ks.map (fun k => pre ++ x ++ " + " ++ down k) ++
+      js.map (fun j => pre ++ up j ++ " + " ++ y) ++
+      js.flatMap (fun j => ks.map fun k => pre ++ up j ++ " + " ++ down k))
+
+/-- A boundary read through `d`'s carriers (`throughMembers`): the same value
+over its members read through; a reset and a parskip rule stand as they are,
+and so does every rule of a document with no carriers. -/
+public def GapRule.throughCarriers (d : Nat × Nat) : GapRule → GapRule
+  | .boundary sel v =>
+    if d.1 == 0 && d.2 == 0 then .boundary sel v
+    else .boundary (", ".intercalate ((splitTop ',' sel).flatMap (throughMembers d.1 d.2))) v
+  | .reset sel m => .reset sel m
+  | .parskip sel v => .parskip sel v
+
+/-- Reading through carriers turns no rule into a reset and no reset into
+anything else. -/
+public theorem GapRule.throughCarriers_isReset (d : Nat × Nat) (r : GapRule) :
+    (r.throughCarriers d).isReset = r.isReset := by
+  cases r with
+  | boundary sel v =>
+    simp only [GapRule.throughCarriers]
+    split <;> rfl
+  | reset _ _ => rfl
+  | parskip _ _ => rfl
+
+/-- The block-boundary sheet read through `d`'s carriers. -/
+public def blockGapCss (l : Ir.ListLineage) (size : Int) (tokens : Ir.Tokens)
+    (d : Nat × Nat := (0, 0)) : String :=
+  String.join ((blockGapRules l size tokens).map fun r => (r.throughCarriers d).render)
 
 private theorem dropWhile_append_all {α : Type} (p : α → Bool) (xs ys : List α)
     (h : xs.all p = true) : (xs ++ ys).dropWhile p = ys.dropWhile p := by
@@ -1349,6 +1544,29 @@ public theorem blockGap_owner_contract (l : Ir.ListLineage) (size : Int) (tokens
   · have hlast : gapAfterLists.getLast? = some (.boundary ":is(h1, h2, h3, h4, h5, h6) + *" "0") := by
       decide
     simp only [blockGapRules, List.getLast?_append, hlast, Option.some_or]
+
+/-- **Reading through carriers keeps each boundary's emitter** (`_contract`):
+the sheet read through any carrier depths still stands its resets first and
+alone and its heading's follower last, so every carrier variant ranks where
+its boundary ranks — each rides inside its boundary's own rule. -/
+public theorem blockGapThrough_owner_contract (l : Ir.ListLineage) (size : Int)
+    (tokens : Ir.Tokens) (d : Nat × Nat) :
+    (((blockGapRules l size tokens).map (GapRule.throughCarriers d)).dropWhile
+        GapRule.isReset).all (fun r => !r.isReset) = true ∧
+      ((blockGapRules l size tokens).map (GapRule.throughCarriers d)).getLast? =
+        some ((GapRule.boundary ":is(h1, h2, h3, h4, h5, h6) + *" "0").throughCarriers d) := by
+  have hc := blockGap_owner_contract l size tokens
+  have hp : (GapRule.isReset ∘ GapRule.throughCarriers d) = GapRule.isReset := by
+    funext r
+    exact GapRule.throughCarriers_isReset d r
+  have hn : ((fun r => !r.isReset) ∘ GapRule.throughCarriers d) = (fun r => !r.isReset) := by
+    funext r
+    simp [GapRule.throughCarriers_isReset]
+  refine ⟨?_, ?_⟩
+  · rw [List.dropWhile_map, hp, List.all_map, hn]
+    exact hc.1
+  · rw [List.getLast?_map, hc.2]
+    rfl
 
 /-- **A list's spaces are LaTeX's `\@list⟨n⟩` on both artifacts** (`_agree`):
 for any level's spaces — so at every lineage, body size and level
@@ -2418,20 +2636,26 @@ public theorem stepLineHeight_between (skips : List (String × Nat)) (factor : N
 /-- Size rules generated from the document's ladder (`Ir.PageSpec.scale`),
 so the two backends cannot drift apart on what `\Huge` means — the PDF
 resolves the same runs through the same ladder (`Layout`'s flatten state).
-`em` rather than `rem`: sizes nest. On a deck each step also states its
-leading (`stepLineHeightMilli`, over the document's skip column, factor and
-body), and a heading or title set in a step takes that leading over its own
-size through `lead-<step>`, as the page leads a display's lines on the base
-the step scales. -/
+`em` rather than `rem`: sizes nest. On a deck a step's leading
+(`stepLineHeightMilli`, over the document's skip column, factor and body) is
+a class of its own, `lead-<step>`, carried by the block whose lines lead at
+the step: a heading or title the step sets, over the element's own size —
+the base the step scales — and a paragraph, item or cell set wholly in the
+step, which carries the step's size too and so takes the leading over that
+size (`.size-<step>.lead-<step>`). A size span states no line height: it
+inherits its block's unitless one, as the page leads a run at its
+paragraph's leading in its proportion to the paragraph's size
+(`Ir.runLead`), so a smaller span never moves its line. -/
 private def sizeRules (scale : List (String × Nat))
     (deck : Option (List (String × Nat) × Nat × Dim.Sp) := none) : String :=
   String.join (scale.map fun (name, k) =>
     match deck with
     | some (skips, factor, body) =>
-      s!".size-{name} \{ font-size: {milliFactor k}em; line-height: " ++
-        s!"{milliFactor (stepLineHeightMilli skips factor body name k)}; }\n" ++
+      s!".size-{name} \{ font-size: {milliFactor k}em; }\n" ++
       s!".lead-{name} \{ line-height: " ++
-        s!"{milliFactor (stepLineHeightMilli skips factor body name 1000)}; }\n"
+        s!"{milliFactor (stepLineHeightMilli skips factor body name 1000)}; }\n" ++
+      s!".size-{name}.lead-{name} \{ line-height: " ++
+        s!"{milliFactor (stepLineHeightMilli skips factor body name k)}; }\n"
     | none => s!".size-{name} \{ font-size: {milliFactor k}em; }\n")
 
 /-! ### The deck stylesheet, as typed rules
@@ -4931,7 +5155,7 @@ public def baseCss (cfg : Config) (doc : Doc) : String :=
   "figure.float > figcaption:first-child { margin-top: 0;\n" ++
   "  padding-top: var(--ltx-capfar-top); padding-bottom: 0;\n" ++
   "  margin-bottom: var(--ltx-capsep-top); }\n" ++
-  blockGapCss doc.docClass.record.lists doc.page.fontSize doc.tokens ++
+  blockGapCss doc.docClass.record.lists doc.page.fontSize doc.tokens (carrierDepths doc.body) ++
   -- Slides: the class-split deck/handout rules, header type included
   -- (`slideCss`); the standout rule below holds on both media.
   slideCss doc ++
@@ -5656,15 +5880,21 @@ attribute carries them all. -/
     ((if cmids.any (fun (a, b) => a ≤ j + 1 && j + 1 ≤ b) then ["bt-cmid"] else []) ++
       (if (Ir.cellSpec cols spans i j).width matches .natural then ["bt-nowrap"] else []))
 
-/-- The class a cell set under one named size carries for it, as a paragraph
+/-- The classes a block set wholly in the named step `n` carries: the step's
+size, and on a deck its leading over that size (`sizeRules`), as the page
+sets the block's strut at the step. -/
+public def stepClasses (deck : Bool) (n : String) : List String :=
+  ("size-" ++ n) :: (if deck then ["lead-" ++ n] else [])
+
+/-- The classes a cell set under one named size carries for it, as a paragraph
 does (`stepNode`): the step of the size declaration standing over the cell
 (`Ir.paraStep?`) — the size in force where the table began, whose strut the
 page stands the row on (`Layout`'s `cellStrut`); a size command inside the
 cell is a scope there (`Ir.paraAt`) and keeps its span. -/
-public def cellStepClasses (cell : Array Inline) : List String :=
+public def cellStepClasses (deck : Bool) (cell : Array Inline) : List String :=
   match Ir.paraStep? cell with
   | some "normalsize" | none => []
-  | some n => ["size-" ++ n]
+  | some n => stepClasses deck n
 
 /-- One table cell: its classes (`cellClasses`, its side first) and — for a
 header cell — `scope=col`, the one scope a booktabs head declares (HTML
@@ -5681,7 +5911,7 @@ public def tableCellNode (cfg : Config) (cols : Array Ir.ColSpec) (cmids : Array
     | none => #[]
   let scope : Array (String × String) := if i < headerRows then #[("scope", "col")] else #[]
   let attrs := #[("class", " ".intercalate (cellClasses cols cmids spans i j ++
-    cellStepClasses cell))] ++ (span ++ scope)
+    cellStepClasses cfg.deck cell))] ++ (span ++ scope)
   let child := match spec.width with
     | .sized e => cfg.atMeasure
       (e.resolveWidth (MeasureValues.horizontal cfg.measureValues.lineWidth 0))
@@ -5743,7 +5973,7 @@ public theorem tableCellNode_align_projects (cfg : Config) (cols : Array Ir.ColS
     ∃ attrs kids, tableCellNode cfg cols cmids spans headerRows i j cell =
       .elem (tableCellTag headerRows i) attrs kids ∧
       attrs[0]? = some ("class", " ".intercalate (cellClasses cols cmids spans i j ++
-        cellStepClasses cell)) ∧
+        cellStepClasses cfg.deck cell)) ∧
       (cellClasses cols cmids spans i j).head? = some (cellSideClassOf cols spans i j) :=
   ⟨_, _, rfl, by rw [Array.getElem?_append_left (by simp)]; rfl, rfl⟩
 
@@ -7063,7 +7293,8 @@ element would leave the body's strut, and its leading, under every line. -/
 private def stepNode (cfg : Config) (tag : String) (content : Array Inline) : Node :=
   match Ir.paraStep? content with
   | some "normalsize" => Html.elem tag (inlines cfg (Ir.liftParaStep content))
-  | some n => Html.elem tag (inlines cfg (Ir.liftParaStep content)) #[("class", "size-" ++ n)]
+  | some n => Html.elem tag (inlines cfg (Ir.liftParaStep content))
+      #[("class", " ".intercalate (stepClasses cfg.deck n))]
   | none => Html.elem tag (inlines cfg content)
 
 /-- A deck's heading or title set in one named size (`Ir.paraStep?`) takes

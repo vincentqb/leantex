@@ -2075,8 +2075,7 @@ def spacingChecks (ref : IO.Ref (List String)) (geom : Layout.Geom)
   let mixed := ysOf geom ("{\\Huge M} " ++
     String.intercalate " " (List.replicate 60 "grid"))
   t "a size change displaces by the metric rule and leaves the grid"
-    (mixed.size ≥ 3 &&
-     mixed[1]! - mixed[0]! == (leadedAt hugeSize (some "Huge")).2 + (leadedAt body).1 &&
+    (mixed.size ≥ 3 && mixed[1]! - mixed[0]! == (leadedAt hugeSize).2 + (leadedAt body).1 &&
      mixed[1]! - mixed[0]! != leading && mixed[2]! - mixed[1]! == leading)
   -- The heading rule is raised half the x-height of the heading's own
   -- face at the heading's size — never the body's — asserted over

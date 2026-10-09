@@ -68,10 +68,12 @@ private def withClassIn (nodes : Array Html.Node) (c : String) : Array Html.Node
 
 /-- **The HTML sets a paragraph's named size where the page does**: the
 step's class on the paragraph element itself, so the element's own line
-box is the step's, and on a deck each step's leading as a line height —
-the page's projection, where a reading page keeps the screen's one line
-height. A span inside the element left the body's strut under every
-line. -/
+box is the step's, and on a deck the step's leading as that element's line
+height — the page's projection, where a reading page keeps the screen's one
+line height. A span inside the element left the body's strut under every
+line. A size span states no line height of its own: it inherits its
+block's, as the page leads a run in its paragraph's proportion
+(`Ir.runLead`), so a smaller span never moves its line. -/
 def htmlStepChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
   let (_, body, _) := HtmlDoc.emitTree {} (elabStr (metricDoc (stepPara "small"))).1
@@ -89,10 +91,25 @@ def htmlStepChecks (ref : IO.Ref (List String)) : IO Unit := do
   let deckDoc := (elabStr ("\\documentclass[10pt]{beamer}\n\\begin{document}\n" ++
     "\\begin{frame}[t]\nOpening.\n\n" ++ stepPara "small" ++ "\n\\end{frame}\n\\end{document}")).1
   let deck := (HtmlDoc.emit {} deckDoc).1
-  t "a deck's steps set their own leading as line heights"
-    (hasStr deck ".size-small { font-size: 0.900em; line-height: 1.222; }" &&
-      hasStr deck ".size-footnotesize { font-size: 0.800em; line-height: 1.188; }" &&
-      hasStr deck ".size-LARGE { font-size: 1.728em; line-height: 1.273; }")
+  t "a deck's steps set their own leading as line heights of the blocks they set"
+    (hasStr deck ".size-small.lead-small { line-height: 1.222; }" &&
+      hasStr deck ".size-footnotesize.lead-footnotesize { line-height: 1.188; }" &&
+      hasStr deck ".size-LARGE.lead-LARGE { line-height: 1.273; }")
+  t "a deck's size class states no line height of its own"
+    (hasStr deck ".size-small { font-size: 0.900em; }" &&
+      !hasStr deck ".size-small { font-size: 0.900em; line-height")
+  let (_, deckNodes, _) := HtmlDoc.emitTree {} deckDoc
+  t "a deck's paragraph set wholly in a step carries the step's leading"
+    ((withClassIn deckNodes "lead-small").size == 1 &&
+      (withClassIn deckNodes "lead-small").all fun n =>
+        (n matches .elem "p" _ _) && (withClassIn #[n] "size-small").size == 1)
+  let (_, deckMixed, _) := HtmlDoc.emitTree {} (elabStr ("\\documentclass[10pt]{beamer}\n" ++
+    "\\begin{document}\n\\begin{frame}[t]\nAlpha one {\\small Charlie} one\\\\Bravo two\\par\n" ++
+    "\\end{frame}\n\\end{document}")).1
+  t "a deck's small run inside a body paragraph is a span with no leading of its own"
+    ((withClassIn deckMixed "size-small").size == 1 &&
+      (withClassIn deckMixed "size-small").all (· matches .elem "span" _ _) &&
+      (withClassIn deckMixed "lead-small").isEmpty)
   -- The 4:3 stage is 96 mm (272.126 pt) high: the 10 pt body is 3.674% of
   -- it, and the root — the body at 12/14.5 — 3.041%, so the sheet's
   -- quantum `0.725rem` is the page's 6 pt on the stage.
@@ -435,6 +452,33 @@ def venueLadderChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO
     (doc.page.skipScale.lookup "footnotesize" == some 1000 &&
       doc.page.skipScale.lookup "normalsize" == some 1095 &&
       doc.page.skipScale.lookup "small" == some 1100)
+  -- A footnote sets in the document's own `\footnotesize`, its size and its
+  -- skip from the one ladder and column: lualatex sets the venue's notes at
+  -- 8.97 bp type on a 9.96 bp pitch. Before, the note took the engine's 8 pt
+  -- type on the venue's 10 pt skip.
+  let notes := (layoutOf oneFace (elabStr (dvDoc venuePre
+      "Alpha words.\\footnote{Bravo note\\\\Charlie note}")).1).pages.flatMap
+        (·.lines.filter fun l => l.note && !(lineText l).isEmpty)
+  let noteSizes := notes.flatMap fun l => l.segs.filterMap fun sg => match sg with
+    | .run _ _ _ _ _ sz _ _ _ _ _ => some sz
+    | _ => none
+  t "a footnote under a declared ladder sets at its declared footnotesize and skip"
+    (notes.size == 2 && near (notes[1]!.y - notes[0]!.y) (pt 10) &&
+      noteSizes.contains (pt 9) && !noteSizes.contains (pt 8))
+  -- The body's skip and `\linespread` compose, as `\selectfont` stretches the
+  -- skip a size command sets, whatever order a block or two blocks state
+  -- them in: 11 pt stretched 1.5 is 16.5. Before, the skip was read at the
+  -- size in force where its key stood, and each overwrote the other.
+  let skipped (pre : String) : Array Sp := pitchesOf oneFace (dvDoc pre (stepPara "normalsize"))
+  for (name, pre, want) in [
+      ("before the size", "\\page{ baselineskip = 14pt, fontsize = 12pt }\n", pt 14),
+      ("after the size", "\\page{ fontsize = 12pt, baselineskip = 14pt }\n", pt 14),
+      ("before the stretch", "\\page{ baselineskip = 11pt }\n\\linespread{1.5}\n", pt 165 / 10),
+      ("after the stretch", "\\linespread{1.5}\n\\page{ baselineskip = 11pt }\n", pt 165 / 10),
+      ("beside the stretch", "\\page{ leading = 1.5, baselineskip = 11pt }\n", pt 165 / 10)] do
+    let ps := skipped pre
+    t s!"a declared body skip {name} sets the body's lines at its stretched length"
+      (ps.size == 1 && near ps[0]! want)
 
 /-- **A deck's heading set in a named size takes the step's leading over its
 own size**, as the page leads a display's lines at the step's
@@ -456,5 +500,466 @@ def headingLeadChecks (ref : IO.Ref (List String)) : IO Unit := do
     (hasStr css ".lead-small { line-height: 1.100; }")
   t "a frame title under no size command keeps the heading's leading"
     ((elemNodesList (· == "h2") #[] nodes.toList).size == 2)
+
+/-- A paragraph holding smaller inline runs on every line — a small, a
+footnotesize and a scriptsize word, a formula — between forced breaks:
+invented words only. -/
+private def mixedRuns : String :=
+  "Alpha one {\\small Charlie} one\\\\Bravo {\\footnotesize two} words\\\\" ++
+    "Delta {\\scriptsize three} $x$ four\\\\Echo five\\par"
+
+/-- **A smaller inline run never moves its line** (`Ir.runLead`), under every
+skip column the page reads: size10.clo's, a body skip the document declares
+tighter than its 6⁄5 (`\page{ baselineskip = 11pt }`), and a venue's
+`\normalsize` of 10/10.95 that leaves `\small` undeclared. LaTeX reads one
+`\baselineskip` at a paragraph's `\par`, and a run adds only its ink:
+lualatex stands every line of such a paragraph at the body's skip, the closed
+`{\small A\\B}\par` group's included (10.91 bp under the venue's 10.95 pt).
+Before, each run carried its own step's leading into its line box: under the
+tighter columns every line holding a small run stood about 0.35 pt low, and
+the closed group led at the step's skip. -/
+def inlineRunChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit := do
+  let t := check ref
+  let near (a b : Sp) : Bool := (a - b).natAbs ≤ (pt 1 / 100).natAbs
+  let venueBody := "\\makeatletter\n" ++
+    "\\renewcommand{\\normalsize}{\\@setfontsize\\normalsize\\@xpt\\@xipt}\n\\makeatother\n"
+  for (name, pre, lead) in [("size10.clo's column", "", pt 12),
+      ("a declared body skip", "\\page{ fontsize = 10pt, baselineskip = 11pt }\n", pt 11),
+      ("a venue's body", venueBody, pt 1095 / 100)] do
+    let ps := pitchesOf oneFace (dvDoc pre mixedRuns)
+    t s!"under {name} every line with a smaller run stands at the body's leading"
+      (ps.size == 3 && ps.all (near · lead))
+    let closed := pitchesOf oneFace (dvDoc pre "{\\small Alpha one\\\\Bravo two}\\par")
+    t s!"under {name} a closed small group leads at the body's leading"
+      (closed.size == 1 && closed.all (near · lead))
+
+/-! ### The gap sheet's cascade on the typed tree
+
+What a browser's cascade gives an element's `margin-top`, read off the
+emitted tree and its sheet with no browser: compounds of type, class and
+attribute selectors (presence, `=`, `~=`), `:first-child`, `:last-child`,
+`:not()`, `:is()`, `:where()` and `:has()` with relative selectors, the four
+combinators, specificity, source order, and the element's own `style`. A rule
+inside an `@media` block or an `@supports not` block is not the screen's
+default and is skipped. The subset the engine's sheets are written in, read
+as a browser reads it — never the generator's own patterns. -/
+
+/-- One element of a flattened tree. -/
+private structure CEl where
+  tag : String := ""
+  attrs : Array (String × String) := #[]
+  parent : Option Nat := none
+  text : String := ""
+  deriving Inhabited
+
+mutual
+
+private def flatOne (parent : Option Nat) (acc : Array CEl) : Html.Node → Array CEl
+  | .elem tag attrs kids =>
+    flatList (some acc.size)
+      (acc.push { tag, attrs, parent, text := nodeTextList "" kids.toList }) kids.toList
+  | .text _ | .style _ | .script _ _ => acc
+
+private def flatList (parent : Option Nat) (acc : Array CEl) : List Html.Node → Array CEl
+  | [] => acc
+  | n :: rest => flatList parent (flatOne parent acc n) rest
+
+end
+
+/-- A flattened tree: its elements in document order, each one's element
+children, and the roots. -/
+private structure CTree where
+  els : Array CEl
+  kids : Array (Array Nat)
+  roots : Array Nat
+
+private def CTree.of (nodes : Array Html.Node) : CTree := Id.run do
+  let els := flatList none #[] nodes.toList
+  let mut kids : Array (Array Nat) := Array.replicate els.size #[]
+  let mut roots : Array Nat := #[]
+  for i in [0:els.size] do
+    match (els[i]?.bind (·.parent)) with
+    | some p => kids := kids.modify p (·.push i)
+    | none => roots := roots.push i
+  return { els, kids, roots }
+
+private def CTree.el (t : CTree) (i : Nat) : CEl := t.els[i]?.getD default
+
+private def CTree.siblings (t : CTree) (i : Nat) : Array Nat :=
+  match (t.el i).parent with
+  | some p => t.kids[p]?.getD #[]
+  | none => t.roots
+
+/-- The element siblings before `i`, nearest first. -/
+private def CTree.before (t : CTree) (i : Nat) : List Nat :=
+  ((t.siblings i).toList.takeWhile (· != i)).reverse
+
+/-- The element siblings after `i`. -/
+private def CTree.after (t : CTree) (i : Nat) : List Nat :=
+  ((t.siblings i).toList.dropWhile (· != i)).drop 1
+
+/-- `i`'s ancestors, nearest first. -/
+private def CTree.ancestors (t : CTree) (i : Nat) : List Nat := Id.run do
+  let mut out : Array Nat := #[]
+  let mut cur := (t.el i).parent
+  for _ in [0:t.els.size] do
+    match cur with
+    | some p =>
+      out := out.push p
+      cur := (t.el p).parent
+    | none => break
+  return out.toList
+
+private def CTree.descendants (t : CTree) (i : Nat) : List Nat :=
+  ((List.range t.els.size).filter fun j => (t.ancestors j).contains i)
+
+private def CTree.attr? (t : CTree) (i : Nat) (k : String) : Option String :=
+  ((t.el i).attrs.find? (·.1 == k)).map (·.2)
+
+/-- `s`'s parts at the separators `sep` no parenthesis or bracket encloses. -/
+private def cssSplit (sep : Char) (s : String) : List String := Id.run do
+  let mut out : Array String := #[]
+  let mut cur := ""
+  let mut depth : Nat := 0
+  for c in s.toList do
+    if c == sep && depth == 0 then
+      out := out.push cur.trimAscii.toString
+      cur := ""
+    else
+      if c == '(' || c == '[' then depth := depth + 1
+      if c == ')' || c == ']' then depth := depth - 1
+      cur := cur.push c
+  return ((out.push cur.trimAscii.toString).filter (!·.isEmpty)).toList
+
+/-- One simple selector of a compound. -/
+private inductive CPart where
+  | type (t : String)
+  | cls (c : String)
+  | attr (name op value : String)
+  | pseudo (name arg : String)
+
+private def cssIdent (c : Char) : Bool := c.isAlphanum || c == '-' || c == '_'
+
+/-- The identifier starting at `j`, and where it ends. -/
+private def cssIdentAt (cs : Array Char) (j : Nat) : String × Nat := Id.run do
+  let mut k := j
+  let mut s := ""
+  for _ in [0:cs.size] do
+    match cs[k]? with
+    | some ch =>
+      if cssIdent ch then
+        s := s.push ch
+        k := k + 1
+      else break
+    | none => break
+  return (s, k)
+
+/-- `s` without the double quotes around it. -/
+private def cssUnquote (s : String) : String :=
+  String.ofList ((s.trimAscii.toString.toList.dropWhile (· == '"')).reverse.dropWhile
+    (· == '"')).reverse
+
+/-- A compound's simple selectors, scanned left to right. -/
+private def cssCompound (c : String) : List CPart := Id.run do
+  let cs := c.toList.toArray
+  let mut out : Array CPart := #[]
+  let mut i := 0
+  -- the type, or the universal selector
+  if cs[0]? == some '*' then
+    out := out.push (.type "*")
+    i := 1
+  else
+    let (s, j) := cssIdentAt cs 0
+    if !s.isEmpty then
+      out := out.push (.type s)
+      i := j
+  for _ in [0:cs.size] do
+    match cs[i]? with
+    | some '.' =>
+      let (s, j) := cssIdentAt cs (i + 1)
+      out := out.push (.cls s)
+      i := j
+    | some '[' =>
+      let close := ((List.range cs.size).find? fun k => i < k && cs[k]? == some ']').getD cs.size
+      let body := String.ofList (cs.extract (i + 1) close).toList
+      let (name, op, value) := match body.splitOn "~=" with
+        | [n, v] => (n, "~=", v)
+        | _ => match body.splitOn "=" with
+          | [n, v] => (n, "=", v)
+          | _ => (body, "", "")
+      out := out.push (.attr name.trimAscii.toString op (cssUnquote value))
+      i := close + 1
+    | some ':' =>
+      let (name, j) := cssIdentAt cs (i + 1)
+      if cs[j]? == some '(' then
+        -- the argument runs to the parenthesis that closes this one
+        let mut depth : Nat := 0
+        let mut k := j
+        for _ in [0:cs.size] do
+          match cs[k]? with
+          | some '(' => depth := depth + 1
+          | some ')' => depth := depth - 1
+          | _ => pure ()
+          if depth == 0 then break
+          k := k + 1
+        out := out.push (.pseudo name (String.ofList (cs.extract (j + 1) k).toList))
+        i := k + 1
+      else
+        out := out.push (.pseudo name "")
+        i := j
+    | _ => break
+  return out.toList
+
+/-- A complex selector's compounds and combinators, right to left: subject
+first, each combinator before the compound it reaches. -/
+private def cssChain (m : String) : List String :=
+  let words := cssSplit ' ' m
+  let comb (w : String) : Bool := w == ">" || w == "+" || w == "~"
+  let spaced := words.foldl (fun (acc : List String) w =>
+    match acc.head? with
+    | some prev => if comb w || comb prev then w :: acc else w :: " " :: acc
+    | none => [w]) []
+  spaced
+
+mutual
+
+/-- Whether element `i` matches the selector list `sel`, `scope` the element
+a `:has()` argument is relative to. -/
+private def cssMatchList (fuel : Nat) (t : CTree) (scope : Option Nat) (sel : String)
+    (i : Nat) : Bool :=
+  match fuel with
+  | 0 => false
+  | f + 1 => (cssSplit ',' sel).any fun m => cssMatchChain f t scope (cssChain m) i
+
+private def cssMatchChain (fuel : Nat) (t : CTree) (scope : Option Nat) (chain : List String)
+    (i : Nat) : Bool :=
+  match fuel, chain with
+  | 0, _ => false
+  | _, [] => true
+  | f + 1, c :: rest =>
+    cssMatchParts f t scope (cssCompound c) i && match rest with
+      | [] => true
+      | op :: rest' =>
+        let cands : List Nat := match op with
+          | ">" => (t.el i).parent.toList
+          | "+" => (t.before i).take 1
+          | "~" => t.before i
+          | _ => t.ancestors i
+        cands.any (cssMatchChain f t scope rest')
+
+private def cssMatchParts (fuel : Nat) (t : CTree) (scope : Option Nat) (ps : List CPart)
+    (i : Nat) : Bool :=
+  match fuel with
+  | 0 => false
+  | f + 1 => ps.all fun p => match p with
+    | .type ty => ty == "*" || (t.el i).tag == ty
+    | .cls c => (((t.attr? i "class").getD "").splitOn " ").contains c
+    | .attr n op v => match t.attr? i n with
+      | none => false
+      | some a => op == "" || (op == "=" && a == v) || (op == "~=" && (a.splitOn " ").contains v)
+    | .pseudo "first-child" _ => (t.before i).isEmpty
+    | .pseudo "last-child" _ => (t.after i).isEmpty
+    | .pseudo "scope" _ => scope == some i
+    | .pseudo "not" a => !cssMatchList f t scope a i
+    | .pseudo "is" a | .pseudo "where" a => cssMatchList f t scope a i
+    | .pseudo "has" a =>
+      let rel := ", ".intercalate ((cssSplit ',' a).map (":scope " ++ ·))
+      (t.descendants i).any (cssMatchList f t (some i) rel)
+    | .pseudo _ _ => false
+
+end
+
+/-- A specificity triple's order, as the cascade compares. -/
+private def specLe (a b : Nat × Nat × Nat) : Bool :=
+  a.1 < b.1 || (a.1 == b.1 && (a.2.1 < b.2.1 || (a.2.1 == b.2.1 && a.2.2 ≤ b.2.2)))
+
+private def specAdd (a b : Nat × Nat × Nat) : Nat × Nat × Nat :=
+  (a.1 + b.1, a.2.1 + b.2.1, a.2.2 + b.2.2)
+
+mutual
+
+/-- A complex selector's specificity: `:where()` none, `:is()`, `:not()` and
+`:has()` their most specific argument's. -/
+private def cssSpec (fuel : Nat) (m : String) : Nat × Nat × Nat :=
+  match fuel with
+  | 0 => (0, 0, 0)
+  | f + 1 => ((cssChain m).filter (fun w => w != " " && w != ">" && w != "+" && w != "~")).foldl
+      (fun acc c => specAdd acc (cssPartsSpec f (cssCompound c))) (0, 0, 0)
+
+private def cssPartsSpec (fuel : Nat) (ps : List CPart) : Nat × Nat × Nat :=
+  match fuel with
+  | 0 => (0, 0, 0)
+  | f + 1 => ps.foldl (fun acc p => specAdd acc (match p with
+    | .type ty => if ty == "*" then (0, 0, 0) else (0, 0, 1)
+    | .cls _ | .attr .. => (0, 1, 0)
+    | .pseudo "where" _ => (0, 0, 0)
+    | .pseudo "is" a | .pseudo "not" a | .pseudo "has" a =>
+      (cssSplit ',' a).foldl (fun best m =>
+        let s := cssSpec f m
+        if specLe best s then s else best) (0, 0, 0)
+    | .pseudo _ _ => (0, 1, 0))) (0, 0, 0)
+
+end
+
+/-- A sheet's rules in source order with the at-rules around each: the
+screen's default reads a rule inside no `@media` and no `@supports not`. -/
+private def cssRules (css : String) : Array (String × String) := Id.run do
+  let mut out : Array (String × String) := #[]
+  let mut heads : Array String := #[]
+  let mut cur := ""
+  for c in css.toList do
+    if c == '{' then
+      heads := heads.push cur.trimAscii.toString
+      cur := ""
+    else if c == '}' then
+      let decls := cur.trimAscii.toString
+      let screen := (heads.pop).all fun h =>
+        !h.startsWith "@media" && !h.startsWith "@supports not" && !h.startsWith "@keyframes"
+      if decls.contains ':' && screen && !(heads.back?.getD "").startsWith "@" then
+        out := out.push ((heads.back?.getD "").trimAscii.toString, decls)
+      heads := heads.pop
+      cur := ""
+    else
+      cur := cur.push c
+  return out
+
+/-- The `margin-top` a declaration block states, the shorthand's first value
+included. -/
+private def marginTopOf (decls : String) : Option String :=
+  (decls.splitOn ";").foldl (fun acc d =>
+    match d.splitOn ":" with
+    | k :: v :: more =>
+      let value := (":".intercalate (v :: more)).trimAscii.toString
+      match k.trimAscii.toString with
+      | "margin-top" => some value
+      | "margin" => (cssSplit ' ' value).head?
+      | _ => acc
+    | _ => acc) none
+
+/-- The `margin-top` the cascade gives element `i`: its own `style` first,
+then the matching rule of highest specificity, the later of equals. -/
+private def cascadeMarginTop (t : CTree) (rules : Array (String × String)) (i : Nat) :
+    Option String := Id.run do
+  if let some own := (t.attr? i "style").bind marginTopOf then return some own
+  let mut best : Option ((Nat × Nat × Nat) × String) := none
+  for (sel, decls) in rules do
+    if let some v := marginTopOf decls then
+      let matched := (cssSplit ',' sel).filter fun m => cssMatchChain 64 t none (cssChain m) i
+      unless matched.isEmpty do
+        let s := matched.foldl (fun b m =>
+          let s := cssSpec 64 m
+          if specLe b s then s else b) (0, 0, 0)
+        best := match best with
+          | some (bs, bv) => if specLe bs s then some (s, v) else some (bs, bv)
+          | none => some (s, v)
+  return best.map (·.2)
+
+/-- The flow blocks of each frame a deck's tree ships, seeing through overlay
+carriers and skipping the frame's furniture, each block's tag, its text and
+the `margin-top` the cascade gives it. -/
+private def frameFlow (nodes : Array Html.Node) (css : String) :
+    Array (String × String × Option String) := Id.run do
+  let t := CTree.of nodes
+  let rules := cssRules css
+  let classes (i : Nat) : List String := ((t.attr? i "class").getD "").splitOn " "
+  let carrier (i : Nat) : Bool :=
+    (t.el i).tag == "div" && ((t.attr? i "data-backend").isSome ||
+      ["step", "step-set", "step-end", "alt-pair", "alt"].any (classes i).contains)
+  let furniture (i : Nat) : Bool :=
+    ["header", "footer", "aside"].contains (t.el i).tag || (t.attr? i "hidden").isSome ||
+      ["fill", "slide-logo", "snap"].any (classes i).contains
+  let mut out : Array (String × String × Option String) := #[]
+  for s in [0:t.els.size] do
+    if (t.el s).tag == "section" &&
+        (((t.attr? s "class").getD "").splitOn " ").contains "slide" then
+      -- the frame's children, carriers opened in place, in document order
+      let mut stack : List Nat := (t.kids[s]?.getD #[]).toList
+      for _ in [0:t.els.size] do
+        match stack with
+        | [] => break
+        | k :: rest =>
+          if furniture k then stack := rest
+          else if carrier k then stack := (t.kids[k]?.getD #[]).toList ++ rest
+          else
+            out := out.push ((t.el k).tag, (t.el k).text.trimAscii.toString,
+              cascadeMarginTop t rules k)
+            stack := rest
+  return out
+
+/-- Overlay content as the page shows it at its last step, paragraph by
+paragraph: invented words in paragraphs, a list, a quotation and a display. -/
+private def gapBlocks : List String :=
+  ["Alder words open the frame.", "Birch words follow it.",
+   "Cedar words stand after a pause.",
+   "\\begin{itemize}\n\\item Dogwood item\n\\item Elm item\n\\end{itemize}",
+   "Fir words follow the list.", "\\begin{quote}\nHazel words quoted.\n\\end{quote}",
+   "Juniper words open the range.", "\\[ x + y = z \\]", "Larch words end the frame."]
+
+/-- The same blocks with overlays between them: `\pause` twice, an open
+`\uncover` holding a paragraph and a quotation, a closed range's
+`\uncover<2-3>` (its declared end a second carrier) holding a paragraph, a
+display and a paragraph. lualatex stands every line of its last step where
+the flat frame stands it. -/
+private def gapOverlaid : String :=
+  match gapBlocks with
+  | [a, b, c, l, f, q, j, d, e] =>
+    a ++ "\n\n" ++ b ++ "\n\\pause\n\n" ++ c ++ "\n\n\\pause\n" ++ l ++ "\n\n" ++
+      "\\uncover<3->{" ++ f ++ "\n\n" ++ q ++ "}\n\n" ++
+      "\\uncover<2-3>{" ++ j ++ "\n\n" ++ d ++ "\n\n" ++ e ++ "}"
+  | _ => ""
+
+/-- One frame of a deck whose paragraphs stand a declared `\parskip` apart. -/
+private def gapDeck (body : String) : String :=
+  "\\documentclass{beamer}\n\\setlength{\\parskip}{6pt}\n\\begin{document}\n" ++
+    "\\begin{frame}{Overlay gaps}\n" ++ body ++ "\n\\end{frame}\n\\end{document}"
+
+/-- **An overlay changes no gap between the blocks it carries**: built with
+and without its `\pause`, `\uncover` and closed-range carriers, every flow
+block of the frame takes the same `margin-top` in the cascade — the
+declared `\parskip` between paragraphs, a list's and a quotation's space,
+the display's skip — and the page's last step stands every line where the
+flat frame does. A carrier is an element of its own (one element animates
+one opacity), so the sheet's sibling boundaries read through it
+(`HtmlDoc.GapRule.throughCarriers`, `HtmlDoc.blockGapThrough_owner_contract`);
+before, the first block in each carrier took no margin and the declared gap
+vanished at every step (measured in Chromium: 14.1 px gaps with holes of 0).
+The judge itself is checked to see the hole: the same tree under the sheet
+read through no carriers differs. -/
+def overlayGapChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit := do
+  let t := check ref
+  let (flatDoc, _) := elabStr (gapDeck ("\n\n".intercalate gapBlocks))
+  let (ovDoc, _) := elabStr (gapDeck gapOverlaid)
+  let (fh, fn, _) := HtmlDoc.emitTree {} flatDoc
+  let (oh, on, _) := HtmlDoc.emitTree {} ovDoc
+  let flat := frameFlow fn (treeCssList "" fh.toList)
+  let ovCss := treeCssList "" oh.toList
+  let ov := frameFlow on ovCss
+  let agree (a b : Array (String × String × Option String)) : Bool :=
+    a.size == b.size && a.size == gapBlocks.length &&
+      (a.zip b).all fun (x, y) => x == y
+  t "the frame's blocks stand in the same order with and without overlays"
+    (flat.map (·.2.1) == ov.map (·.2.1) && flat.size == gapBlocks.length)
+  t "every block keeps its gap through the overlay carriers" (agree flat ov)
+  t "the paragraphs after a step take the declared parskip"
+    ((ov.filter fun (tag, _, _) => tag == "p").all fun (_, _, m) => m.isSome)
+  -- the judge sees the hole the carriers left: the same tree under the
+  -- sheet read through no carriers
+  let d := HtmlDoc.carrierDepths ovDoc.body
+  let lists := ovDoc.docClass.record.lists
+  let through := HtmlDoc.blockGapCss lists ovDoc.page.fontSize ovDoc.tokens d
+  let plain := HtmlDoc.blockGapCss lists ovDoc.page.fontSize ovDoc.tokens
+  t "the overlay deck's carriers nest, so its sheet reads through them"
+    (0 < d.1 && hasStr ovCss through && through != plain)
+  t "without reading through carriers the judge finds the gaps that vanish"
+    (!agree flat (frameFlow on (ovCss.replace through plain)))
+  -- the page: the last step of the overlaid frame is the flat frame
+  let lastPage (doc : Ir.Doc) : Array (String × Sp) :=
+    match (layoutOf oneFace doc).pages.back? with
+    | some p => (p.lines.filter (!·.furniture)).map fun l => (lineText l, l.y)
+    | none => #[]
+  t "the page's last step stands every line where the flat frame does"
+    (let a := lastPage flatDoc
+     let b := lastPage ovDoc
+     !a.isEmpty && a == b)
 
 end Tests.LineRhythm
