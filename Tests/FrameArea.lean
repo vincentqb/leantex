@@ -161,7 +161,7 @@ naming `c` still centres and a standout frame still centres. Against
 lualatex on the `t` deck (4:3, the shipped Fira Sans for every face): the
 untitled frame's line at 17.62 bp, the standout's at 142.95. At
 `5e6eedf5` the option was dropped unnamed and every bare frame centred, the
-untitled one's line 135.7 bp low. Invented words. -/
+untitled one's line 118.7 bp low. Invented words. -/
 def classAlignChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
   let some fira ← shippedFira | t "class t: the shipped Fira Sans parses" false
@@ -211,9 +211,9 @@ line at 17.62 bp, the itemize's and the enumerate's first items at 20.61,
 the tall image's bottom at 46.52 and the short one's at 17.62;
 and over the stylesheet the deck ships, each web length the PDF's own. At
 `5e6eedf5` the web set a frame's first line on its screen line box, the
-half-leading and the face's ascent below the opening, and dropped an
-opening list's `\topsep`: an opening list's first item stood 3.72 bp above
-lualatex's; and the page stood an opening image flush on the opening, a
+half-leading and the face's ascent below the opening (1.37 bp above
+lualatex's), and dropped an opening list's `\topsep`: an opening list's
+first item stood 4.36 bp above lualatex's; and the page stood an opening image flush on the opening, a
 short one 4 pt above lualatex's, a tall one the 1 pt of `\lineskip`. The
 trim reaches a paragraph's, a list's and an alignment scope's last line,
 never a box that paints or scrolls: a trimmed listing hid the last of its

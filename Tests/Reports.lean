@@ -1092,7 +1092,7 @@ def reports : List Report := [
       check% Tests.FrameArea.footWeightChecks, .tier "htmlreader" "feature.chromium.pass"]
     accept := ["two assertions fail with the second review's fixes reverted onto the recorded commit: the footline's weight under a light body, read by a cascade over the shipped stylesheet, and its place on an overrun stage; the earlier eight footline assertions failed with their fixes reverted onto dbaea645",
       "a presentation deck's web footline notes and frame numbers stand within three hundredths of a point of its reference typesetting's, its quote frame's note at the footline's own size and colour",
-      "every web footline of both presentation decks sets in the body's light face, as the page and the reference typesetting do",
+      "every web footline's text in both presentation decks sets in the body's light face, as the page and the reference typesetting do, its formulas in the math face",
       "an overrunning frame's web footline stays on the slide's edge, within a hundredth of a point of its reference",
       "both presentation decks print each frame on sheets that hold its content, never a footline alone"]
     state := .guarded "5a7802b8" .revert .author },
