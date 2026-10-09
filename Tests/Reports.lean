@@ -23,6 +23,10 @@ import Tests.ParagraphMathRhythm
 import Tests.BeamerProof
 import Tests.MarkdownHtml
 import Tests.MarkdownHeadings
+import Tests.MarkdownTables
+import Tests.MarkdownPage
+import Tests.MarkdownWarnings
+import Tests.MarkdownCode
 import Tests.Artifact
 import Tests.UnderlineSpacing
 import Tests.HtmlTokens
@@ -1162,7 +1166,37 @@ def reports : List Report := [
     accept := ["measured against lualatex in one shared face at ten points on a raster at 1200 dpi, the ink centre from a rule at the anchor: a word of capitals 1.71 points high before and 0.99 after, a word of x-height letters 0.75 and 0.03, one with a descender 0.51 high and 0.21 low, one with an ascender 2.01 and 1.29; the seat is now pgf's own mid anchor, and what remains is the wobble lualatex's centre anchor adds",
       "over the labels of a presentation deck's diagrams in its own face, measured as lualatex boxes, the mean departure from lualatex fell from 0.94 to 0.55 points and the largest from 1.72 to 1.21",
       "with the band split at the face's baseline restored and the guards kept, six assertions fail: the seat, a word of x-height letters on lualatex's baseline against a rule on the page and in the browser, and the declared bound for a word of capitals, one with an ascender and one of figures"]
-    state := .guarded "269bd628" .revert .author }
+    state := .guarded "269bd628" .revert .author },
+  { id := "R128", date := "2026-10-08"
+    what := "A markdown pipe table shipped as one run-on paragraph, its delimiter row set as dashes"
+    pins := [check% Tests.MarkdownTables.markdownTableChecks,
+      thm% LeanTex.Core.Md.tableRaws_contract]
+    accept := ["twenty-two typed HTML and shipped layout assertions fail before the reader reads pipe tables",
+      "the GFM specification's eight table examples are classified: seven match and one waits on the smart punctuation decision",
+      "a long markdown report's summary table renders under booktabs' three rules in both artifacts"]
+    state := .guarded "fa516a82" .before .author },
+  { id := "R129", date := "2026-10-08"
+    what := "A markdown document took the article's narrow measure, leaving two-inch margins on a letter page"
+    pins := [check% Tests.MarkdownPage.markdownPageChecks,
+      check% Tests.MarkdownCode.markdownCodeChecks]
+    accept := ["eight shipped layout and HTML measure assertions fail before markdown pages take their own text block",
+      "eight listing and shipped layout assertions fail before markdown code sets small and wraps as listings wraps",
+      "every shipped text face sets the markdown measure between seventy and ninety characters with the readable band judge quiet",
+      "a long markdown report's side margins narrow from about two inches to about one and a half, and none of its code runs past its measure or off the page, where two hundred twenty-two lines ran off before"]
+    state := .guarded "fa516a82" .before .author },
+  { id := "R130", date := "2026-10-08"
+    what := "A markdown document with no preamble set its code in the proportional text face, hyphenated it, and printed every repeat of a loss as its own warning"
+    pins := [check% Tests.MarkdownWarnings.markdownWarningChecks,
+      check% Tests.MarkdownWarnings.markdownMonoChecks,
+      thm% Diag.foldRepeats_sum_exact,
+      thm% Diag.foldRepeats_error_exact,
+      thm% FontDb.monoCompanion_fixed]
+    accept := ["five assertions over the typewriter face, code line ends and the default log fail before markdown code takes its designed typewriter companion and repeated warnings fold",
+      "a long markdown report's two thousand four hundred sixty-six warning lines become six, each carrying its site count",
+      "with no DejaVu installed a markdown document's code sets in the URW typewriter face beside the URW sans, with no warning",
+      "a tex document that declares no typewriter face keeps the body family and the one warning that names it",
+      "two presentation decks render pixel-identical, their logs only folding a repeated glyph fallback"]
+    state := .guarded "fa516a82" .before .author }
 ]
 
 /-- The reports guarded but never seen failing: a count that may fall and
