@@ -20,10 +20,11 @@ the lines every backend shows (`verbatimLines`), blank lines included; a
 container's prefix stands on every line of its blocks; a link's destination
 reads back as it stands, a link whose text is its plain destination is an
 autolink, and a link in code-set text keeps its destination and its face.
-A heading and a pipe table's cell each stand on one line
-(`headingText_contract`, `cellText_contract`), and a row reads as exactly
-its cells under GFM's row grammar (`rowLine_cells_exact`), every pipe a
-cell holds escaped. Where markdown has no spelling for what the IR holds —
+A heading, a pipe table's cell and the llms.txt title and summary each
+stand on one line (`headingText_contract`, `cellText_contract`,
+`titleLine_contract`, `summaryLine_contract`), the metadata written as text
+as the body's text is, and a row reads as exactly its cells under GFM's row
+grammar (`rowLine_cells_exact`), every pipe a cell holds escaped. Where markdown has no spelling for what the IR holds —
 a formula, a footnote, an overlay, a table the reader does not read yet, a
 hard break inside a heading or a cell, which is written as a space — the
 twin writes the nearest one, and the difference is a loss, not a spelling.
@@ -58,16 +59,56 @@ valid backslash escape (§2.4: any ASCII punctuation). A line ending inside
 text is the one character it spells as a numeric reference, since it has no
 other spelling. What opens a block only at a line's start is the line's
 business (`escapeLineStart`). -/
-private def escapeText (pipes : Bool) (s : String) : String :=
-  s.foldl (init := "") fun acc c =>
+private def escapeChars (pipes : Bool) : List Char → List Char
+  | [] => []
+  | c :: rest =>
     if c == '\\' || c == '`' || c == '*' || c == '_' || c == '[' || c == ']'
         || (pipes && c == '|') || c == '<' || c == '&' then
-      (acc.push '\\').push c
+      '\\' :: c :: escapeChars pipes rest
     -- a line ending inside text has no other spelling: a newline would end
     -- the line, and a paragraph's text cannot hold one
-    else if c == '\n' then acc ++ "&#10;"
-    else if c == '\r' then acc ++ "&#13;"
-    else acc.push c
+    else if c == '\n' then '&' :: '#' :: '1' :: '0' :: ';' :: escapeChars pipes rest
+    else if c == '\r' then '&' :: '#' :: '1' :: '3' :: ';' :: escapeChars pipes rest
+    else c :: escapeChars pipes rest
+
+private def escapeText (pipes : Bool) (s : String) : String :=
+  String.ofList (escapeChars pipes s.toList)
+
+/-- Escaped text holds no line ending. -/
+private theorem escapeChars_line (pipes : Bool) :
+    (l : List Char) → ∀ x ∈ escapeChars pipes l, x ≠ '\n' ∧ x ≠ '\r'
+  | [], x, hx => by simp [escapeChars] at hx
+  | c :: rest, x, hx => by
+    have ih := escapeChars_line pipes rest x
+    by_cases hn : c = '\n'
+    · subst hn
+      simp [escapeChars] at hx
+      rcases hx with rfl | rfl | rfl | rfl | rfl | hx
+      all_goals first | decide | exact ih hx
+    · by_cases hr : c = '\r'
+      · subst hr
+        simp [escapeChars] at hx
+        rcases hx with rfl | rfl | rfl | rfl | rfl | hx
+        all_goals first | decide | exact ih hx
+      · have hn' : (c == '\n') = false := by simpa using hn
+        have hr' : (c == '\r') = false := by simpa using hr
+        have hmem : x = '\\' ∨ x = c ∨ x ∈ escapeChars pipes rest := by
+          unfold escapeChars at hx
+          simp only [hn', hr', Bool.false_eq_true, ↓reduceIte] at hx
+          split at hx
+          · simp only [List.mem_cons] at hx
+            rcases hx with h | h | h
+            · exact Or.inl h
+            · exact Or.inr (Or.inl h)
+            · exact Or.inr (Or.inr h)
+          · simp only [List.mem_cons] at hx
+            rcases hx with h | h
+            · exact Or.inr (Or.inl h)
+            · exact Or.inr (Or.inr h)
+        rcases hmem with rfl | rfl | hx
+        · decide
+        · exact ⟨hn, hr⟩
+        · exact ih hx
 
 /-- Is the rest of a line a space, a tab or nothing — what must follow a
 list marker or an ATX opening sequence for it to open a block? -/
@@ -643,7 +684,7 @@ end
 /-- A trailing `#` escaped, so a heading's text never reads as its closing
 sequence (§4.2). -/
 private def closeHash (s : String) : String :=
-  match s.toList.reverse with
+  match s.toList.reverse.dropWhile (fun c => c == ' ' || c == '\t') with
   | '#' :: rest => String.ofList (rest.reverse ++ ['\\', '#'])
   | _ => s
 
@@ -690,10 +731,10 @@ private theorem closeHash_mem (s : String) (x : Char) (hx : x ∈ (closeHash s).
       or_false] at hx
     rcases hx with hx | hx
     · left
-      have : x ∈ s.toList.reverse := by
+      have : x ∈ s.toList.reverse.dropWhile (fun c => c == ' ' || c == '\t') := by
         rw [heq]
         exact List.mem_cons_of_mem _ (List.mem_reverse.mp hx)
-      exact List.mem_reverse.mp this
+      exact List.mem_reverse.mp ((List.dropWhile_sublist _).subset this)
     · right
       exact hx
   · exact Or.inl hx
@@ -715,6 +756,59 @@ holds it is one row (`rowLine_contract`). -/
 public theorem cellText_contract (xs : Array Inline) :
     ∀ x ∈ (cellText xs).toList, x ≠ '\n' ∧ x ≠ '\r' :=
   oneLine_mem _
+
+/-- The llms.txt title line's text: the metadata title written as a
+heading's text — markup, raw HTML and character references read back as
+the title's own characters — its trailing `#` its own (`closeHash`). -/
+public def titleLine (t : String) : String := closeHash (escapeText true t)
+
+/-- The llms.txt summary line's text inside its quotation: written as
+text, and its start escaped so it opens no block there (`escapeLineStart`).
+-/
+public def summaryLine (s : String) : String := escapeLineStart (escapeText true s)
+
+/-- Escaping a line's start writes only the line's characters and a
+backslash. -/
+private theorem escapeLineStart_mem (s : String) (x : Char)
+    (hx : x ∈ (escapeLineStart s).toList) : x ∈ s.toList ∨ x = '\\' := by
+  unfold escapeLineStart at hx
+  generalize hcs : s.toList.dropWhile (fun c => c == ' ' || c == '\t') = cs at hx
+  have hsub : ∀ y ∈ cs, y ∈ s.toList := fun y hy =>
+    (hcs ▸ List.dropWhile_sublist _).subset hy
+  simp only at hx
+  split at hx
+  · exact Or.inl (hsub x (by simpa using hx))
+  · split at hx
+    · simp at hx
+    · next c rest _ =>
+      split at hx
+      · simp only [String.toList_ofList, List.mem_append, List.mem_cons] at hx
+        rcases hx with hx | rfl | hx
+        · exact Or.inl (hsub x ((List.takeWhile_sublist _).subset hx))
+        · exact Or.inr rfl
+        · exact Or.inl (hsub x ((List.drop_sublist _ _).subset hx))
+      · rw [String.toList_ofList, List.mem_cons] at hx
+        rcases hx with rfl | hx
+        · exact Or.inr rfl
+        · exact Or.inl (hsub x hx)
+
+/-- **The llms.txt head lines are lines**: whatever the metadata title and
+summary hold, line endings included, each is written on one line. -/
+public theorem titleLine_contract (t : String) :
+    ∀ x ∈ (titleLine t).toList, x ≠ '\n' ∧ x ≠ '\r' := by
+  intro x hx
+  rcases closeHash_mem _ x hx with hx | rfl | rfl
+  · exact escapeChars_line true t.toList x (by simpa [escapeText] using hx)
+  · decide
+  · decide
+
+/-- The summary line is a line, as the title line is. -/
+public theorem summaryLine_contract (s : String) :
+    ∀ x ∈ (summaryLine s).toList, x ≠ '\n' ∧ x ≠ '\r' := by
+  intro x hx
+  rcases escapeLineStart_mem _ x hx with hx | rfl
+  · exact escapeChars_line true s.toList x (by simpa [escapeText] using hx)
+  · decide
 
 /-- A paragraph's lines under their container: each line — the first, and
 each after a hard break — escaped at its start (`escapeLineStart`) and set
@@ -910,7 +1004,7 @@ private def blockInto (loc : Locale) (summary ind acc : String) : Block → Stri
   -- title as its own bold paragraph, then the body plain.
   | .titled _ title body =>
     let head := if title.isEmpty then "" else
-      paraText ind ind ("**" ++ inlineText title ++ "**") ++ "\n\n"
+      paraText ind ind (inlineText #[.styled .bold title]) ++ "\n\n"
     blocksInto loc summary ind (acc ++ head) none body.toList
   -- the role's class is a web styling hook; the twin keeps the content
   | .role _ body => blocksInto loc summary ind acc none body.toList
@@ -1125,6 +1219,13 @@ private def tighten (s : String) : String :=
   let trimmed := String.ofList ((tightenGo 0 [] s.toList).dropWhile (· == '\n')).reverse
   if trimmed.isEmpty then trimmed else trimmed ++ "\n"
 
+/-- The twin's view of a document's body: its source locations erased, as
+the HTML backend erases them before it writes (`Ir.eraseLocations`), so the
+twin writes the IR both artifacts read; and backend conditionals resolved
+for markdown (`Ir.keepFor`, whose `_covers` is why dropping cannot lose
+content). -/
+public def twinBody (doc : Doc) : Array Block := Ir.keepFor "md" (Ir.eraseLocations doc).body
+
 /-- The `[^k]: …` definitions, one per footnote in flow order — the
 markdown twin of the endnotes section, after the body. Empty when the
 document has no notes, so an unnoted document emits exactly what it always
@@ -1135,7 +1236,7 @@ private def noteDefs (_loc : Locale) (body : Array Block) : String := Id.run do
   if notes.isEmpty then return ""
   let mut out := ""
   for (num, content) in notes do
-    out := out ++ "\n" ++ s!"[^{num.getD 0}]: " ++ inlineText content ++ "\n"
+    out := out ++ "\n" ++ paraText s!"[^{num.getD 0}]: " "    " (inlineText content) ++ "\n"
   return out
 
 /-- Emit the document. Small caps land as their text with the authored
@@ -1153,16 +1254,14 @@ both title sources (`emit_meta_title_first`, `emit_body_title_first`); the
 titleless remainder — summary first, nothing for it to follow — is pinned by
 test. -/
 public def emit (doc : Doc) : String :=
-  -- The twin's view of the document: backend conditionals resolve here, at
-  -- the backend's entry (`Ir.keepFor_covers` is why dropping cannot lose
-  -- content).
-  let doc := { doc with body := Ir.keepFor "md" doc.body }
+  -- The twin's view of the document, at the backend's entry (`twinBody`).
+  let doc := { doc with body := twinBody doc }
   let summary := match doc.info.subject with
-    | some s => "> " ++ s ++ "\n\n"
+    | some s => "> " ++ summaryLine s ++ "\n\n"
     | none => ""
   let bodyTitled := (headingLevels doc.body).contains 0
   let title := match doc.info.title with
-    | some t => if bodyTitled then "" else "# " ++ t ++ "\n\n"
+    | some t => if bodyTitled then "" else "# " ++ titleLine t ++ "\n\n"
     | none => ""
   let preamble := title ++ (if bodyTitled then "" else summary)
   tighten (preamble ++ blocksInto doc.info.locale summary "" "" none doc.body.toList)
@@ -1254,7 +1353,7 @@ private theorem blockInto_extends (loc : Locale) (summary ind acc : String) :
   | .titled _ title body =>
     extends_comp ⟨_, rfl⟩ (blocksInto_extends loc summary ind
       (acc ++ if title.isEmpty then "" else
-        paraText ind ind ("**" ++ inlineText title ++ "**") ++ "\n\n")
+        paraText ind ind (inlineText #[.styled .bold title]) ++ "\n\n")
       none body.toList)
   | .spaced _ body => blocksInto_extends loc summary ind acc none body.toList
   | .bibliography _ _ items => ⟨bibItemsText ind items, rfl⟩
@@ -1540,19 +1639,19 @@ end
 the `> summary` blockquote. Title from the metadata — the body carries no
 level-0 heading — so the preamble states both lines, in that order: the
 summary can never precede the title line, and nothing the body emits can
-move either. The newline-free hypotheses say the metadata strings are
-lines. -/
+move either. Each metadata string is written as text (`titleLine`,
+`summaryLine`), a line whatever it holds. -/
 public theorem emit_meta_title_first (doc : Doc) (t s : String)
     (ht : doc.info.title = some t) (hs : doc.info.subject = some s)
-    (hbody : ((Ir.headingLevels (Ir.keepFor "md" doc.body)).contains 0) = false)
-    (htn : ∀ c ∈ t.toList, c ≠ '\n') (hsn : ∀ c ∈ s.toList, c ≠ '\n') :
-    ∃ q, emit doc = "# " ++ t ++ "\n\n" ++ "> " ++ s ++ q := by
-  obtain ⟨q, hq⟩ := tighten_head t s
-    (blocksInto doc.info.locale ("> " ++ s ++ "\n\n") "" "" none (Ir.keepFor "md" doc.body).toList)
-    htn hsn
-  refine ⟨q ++ noteDefs doc.info.locale (Ir.keepFor "md" doc.body), ?_⟩
+    (hbody : ((Ir.headingLevels (twinBody doc)).contains 0) = false) :
+    ∃ q, emit doc = "# " ++ titleLine t ++ "\n\n" ++ "> " ++ summaryLine s ++ q := by
+  obtain ⟨q, hq⟩ := tighten_head (titleLine t) (summaryLine s)
+    (blocksInto doc.info.locale ("> " ++ summaryLine s ++ "\n\n") "" "" none
+      (twinBody doc).toList)
+    (fun c hc => (titleLine_contract t c hc).1) (fun c hc => (summaryLine_contract s c hc).1)
+  refine ⟨q ++ noteDefs doc.info.locale (twinBody doc), ?_⟩
   simp only [emit, ht, hs, hbody]
-  exact (congrArg (· ++ noteDefs doc.info.locale (Ir.keepFor "md" doc.body)) hq).trans
+  exact (congrArg (· ++ noteDefs doc.info.locale (twinBody doc)) hq).trans
     (String.append_assoc ..)
 
 /-- Title from the body: when the twin's view of the body opens with its own
@@ -1560,43 +1659,43 @@ level-0 heading (`\maketitle`), the preamble yields — no second `#` line, no
 summary above the body — and the summary lands immediately after the body's
 title line, whatever the rest of the body emits and whether or not the
 metadata also declares a title. This is the defect's contrapositive: the
-summary follows the title, wherever the title came from. The title is a
-line whatever it holds (`headingText_contract`). -/
+summary follows the title, wherever the title came from. The title and the
+summary are lines whatever they hold (`headingText_contract`,
+`summaryLine_contract`). -/
 public theorem emit_body_title_first (doc : Doc) (s : String) (st : Bool)
     (ttl : Array Inline) (rest : List Block)
     (hs : doc.info.subject = some s)
-    (hbody : (Ir.keepFor "md" doc.body).toList = .section 0 st none ttl :: rest)
-    (hsn : ∀ c ∈ s.toList, c ≠ '\n') :
-    ∃ q, emit doc = "# " ++ headingText ttl ++ "\n\n" ++ "> " ++ s ++ q := by
-  have h0 : (0 : Ir.HeadingLevel) ∈ Ir.headingLevels (Ir.keepFor "md" doc.body) := by
-    show (0 : Ir.HeadingLevel) ∈ Ir.headingLevelList #[] (Ir.keepFor "md" doc.body).toList
+    (hbody : (twinBody doc).toList = .section 0 st none ttl :: rest) :
+    ∃ q, emit doc = "# " ++ headingText ttl ++ "\n\n" ++ "> " ++ summaryLine s ++ q := by
+  have h0 : (0 : Ir.HeadingLevel) ∈ Ir.headingLevels (twinBody doc) := by
+    show (0 : Ir.HeadingLevel) ∈ Ir.headingLevelList #[] (twinBody doc).toList
     rw [hbody]
     exact headingLevelList_mem 0 rest _ (by
       show (0 : Ir.HeadingLevel) ∈ (#[] : Array Ir.HeadingLevel).push 0
       simp)
-  have hbt : (Ir.headingLevels (Ir.keepFor "md" doc.body)).contains 0 = true :=
+  have hbt : (Ir.headingLevels (twinBody doc)).contains 0 = true :=
     Array.contains_eq_true_of_mem h0
-  have hfirst : blocksInto doc.info.locale ("> " ++ s ++ "\n\n") "" "" none
-      (Ir.keepFor "md" doc.body).toList =
-      blocksInto doc.info.locale ("> " ++ s ++ "\n\n") ""
-        ("# " ++ headingText ttl ++ "\n\n" ++ ("> " ++ s ++ "\n\n")) none rest := by
+  have hfirst : blocksInto doc.info.locale ("> " ++ summaryLine s ++ "\n\n") "" "" none
+      (twinBody doc).toList =
+      blocksInto doc.info.locale ("> " ++ summaryLine s ++ "\n\n") ""
+        ("# " ++ headingText ttl ++ "\n\n" ++ ("> " ++ summaryLine s ++ "\n\n")) none rest := by
     rw [hbody]
     simp [blocksInto, blockInto, headingMarker, Ir.headingRank]
-  obtain ⟨w, hw⟩ := blocksInto_extends doc.info.locale ("> " ++ s ++ "\n\n") ""
-    ("# " ++ headingText ttl ++ "\n\n" ++ ("> " ++ s ++ "\n\n")) none rest
-  obtain ⟨q, hq⟩ := tighten_head (headingText ttl) s w
-    (fun c hc => (headingText_contract ttl c hc).1) hsn
-  refine ⟨q ++ noteDefs doc.info.locale (Ir.keepFor "md" doc.body), ?_⟩
+  obtain ⟨w, hw⟩ := blocksInto_extends doc.info.locale ("> " ++ summaryLine s ++ "\n\n") ""
+    ("# " ++ headingText ttl ++ "\n\n" ++ ("> " ++ summaryLine s ++ "\n\n")) none rest
+  obtain ⟨q, hq⟩ := tighten_head (headingText ttl) (summaryLine s) w
+    (fun c hc => (headingText_contract ttl c hc).1) (fun c hc => (summaryLine_contract s c hc).1)
+  refine ⟨q ++ noteDefs doc.info.locale (twinBody doc), ?_⟩
   cases hT : doc.info.title with
   | some t =>
     simp only [emit, hs, hbt, hT, ite_true, String.empty_append]
     rw [hfirst, hw]
-    exact (congrArg (· ++ noteDefs doc.info.locale (Ir.keepFor "md" doc.body)) hq).trans
+    exact (congrArg (· ++ noteDefs doc.info.locale (twinBody doc)) hq).trans
       (String.append_assoc ..)
   | none =>
     simp only [emit, hs, hbt, hT, ite_true, String.empty_append]
     rw [hfirst, hw]
-    exact (congrArg (· ++ noteDefs doc.info.locale (Ir.keepFor "md" doc.body)) hq).trans
+    exact (congrArg (· ++ noteDefs doc.info.locale (twinBody doc)) hq).trans
       (String.append_assoc ..)
 
 end LeanTex.Core.MarkdownDoc

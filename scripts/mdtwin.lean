@@ -15,8 +15,10 @@ Three measurements, each a level with its own blind spot:
   accepts (no error), how many re-read from their own twin to the same IR
   body. Per section, so one section's fall cannot hide behind another's
   rise.
-* `corpus.reread-clean` — of the tex corpus, run as the driver runs it,
-  how many twins re-read with no error.
+* `corpus.reread-clean` — of the tex corpus, its includes fulfilled and
+  elaborated in process, how many twins re-read with no error. The twin
+  erases source locations at its entry, so this is the twin the driver
+  writes from the same document.
 * `corpus.twin-stable` — how many twins are a fixed point of the round
   trip: emitting the re-read document writes the same bytes.
 
@@ -105,8 +107,8 @@ def corpusRows (emit : Ir.Doc → String) (docs : Array Ir.Doc) : Array Row × N
   return (#[{ item := "corpus.reread-clean", value := (clean : Int) },
     { item := "corpus.twin-stable", value := (stable : Int) }], clean, stable)
 
-/-- Every tex fixture of the corpus, run as the driver runs it: its includes
-fulfilled at their use, then elaboration. -/
+/-- Every tex fixture of the corpus as the suite runs it: its includes
+fulfilled at their use, then elaboration in process. -/
 def corpusDocs : IO (Array (String × Ir.Doc)) := do
   let mut paths : Array String := #[]
   for f in ← System.FilePath.readDir "testdata/corpus" do

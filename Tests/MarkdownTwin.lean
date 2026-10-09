@@ -327,11 +327,80 @@ def twinHeadingChecks (ref : IO.Ref (List String)) : IO Unit := do
       | .section _ _ _ xs => Ir.plainText xs == "Elm Fir"
       | _ => false)
 
+/-- The llms.txt head: the metadata title and summary are written as text,
+so markup, raw HTML, references, a closing `#` and a block marker at the
+summary's start read back as their own characters, and neither line
+breaks. -/
+def twinHeadChecks (ref : IO.Ref (List String)) : IO Unit := do
+  let t := check ref
+  for (ttl, summ) in [("Tips <and> & *stars* for C_x #", "- a bullet, # a hash, <b> and * stars"),
+      ("1. Numbered <title>", "> quoted &amp; text"), ("Two\nlines", "Also\ntwo")] do
+    let info : Ir.Meta := { title := some ttl, subject := some summ }
+    let doc : Ir.Doc := { body := #[.para #[.text "Body."]], info }
+    let (tw, back, ds) := roundTrip doc
+    t s!"twin: the metadata title {repr ttl} and summary {repr summ} read back ({repr tw})"
+      (!hasError ds && match back.body.toList with
+        | [.section _ _ _ xs, .quote qs, .para _] =>
+          Ir.plainText xs == ttl && (match qs.toList with
+            | [.para ys] => Ir.plainText ys == summ
+            | _ => false)
+        | _ => false)
+
+/-- A tex body's document as the driver elaborates one: prepared and run
+with its source locations kept, where the suite's other paths erase them. -/
+def driverDoc (body : String) : Ir.Doc :=
+  let src := dvDoc "" body
+  (Elab.runPrepared "t.tex" (Elab.prepare "t.tex" (Surface.read .tex "t.tex" src).1)).1
+
+/-- The twin the driver ships is the twin these rows measure: from the
+driver's document, source locations and all, the twin is the one written
+from the document with them erased. -/
+def twinDriverChecks (ref : IO.Ref (List String)) : IO Unit := do
+  let t := check ref
+  for body in ["\\href{http://example.org/x}{http://example.org/x} and \\url{http://example.org/u}",
+      "\\textbf{a}\\textbf{b} after \\emph{c} \\texttt{d|e}",
+      "\\begin{itemize}\\item one\n\\item two \\textbf{bold}\\end{itemize}",
+      "\\section{Head \\# }\nText.\\footnote{A note.}"] do
+    let shipped := MarkdownDoc.emit (driverDoc body)
+    let measured := MarkdownDoc.emit (elabStr (dvDoc "" body)).1
+    t s!"twin: the driver's twin of {repr body} is the measured one ({repr shipped} vs {repr measured})"
+      (shipped == measured)
+  t "twin: the driver's twin writes a bare link as an autolink"
+    (hasStr (MarkdownDoc.emit (driverDoc "\\href{http://example.org/x}{http://example.org/x}"))
+      "<http://example.org/x>")
+
+/-- Spellings the second review found: a heading's `#` before trailing
+space, a titled block's title with spaces at either end, and a footnote
+whose text holds a hard break before a line that would open a block. -/
+def twinEdgeChecks (ref : IO.Ref (List String)) : IO Unit := do
+  let t := check ref
+  let (tw, back, _) := roundTrip { body := #[.section 1 true none #[.text "Issue # "]] }
+  t s!"twin: a heading's hash before trailing space is its text ({repr tw})"
+    (back.body.any fun b => match b with
+      | .section _ _ _ xs => Ir.plainText xs == "Issue #"
+      | _ => false)
+  let (tw, back, _) := roundTrip { body := #[.titled .block #[.text " Edge title "]
+    #[.para #[.text "Inside."]]] }
+  t s!"twin: a titled block's title with spaces at its ends is bold ({repr tw})"
+    (hasStr tw "**Edge title**" && back.body.any fun b => match b with
+      | .para xs => xs.any fun x => match x with
+        | .styled .bold ys => Ir.plainText ys == "Edge title"
+        | _ => false
+      | _ => false)
+  let doc : Ir.Doc := { body := #[.para #[.text "Text", .footnote (some 1)
+    #[.text "Note", .linebreak default, .text "# not a heading"]]] }
+  let tw := MarkdownDoc.emit doc
+  t s!"twin: a footnote's lines stay its own ({repr tw})"
+    (hasStr tw "[^1]: Note\\\n    \\# not a heading")
+
 def markdownTwinChecks (ref : IO.Ref (List String)) : IO Unit := do
   twinInlineChecks ref
   twinBlockChecks ref
   twinLineStartChecks ref
   twinTableChecks ref
   twinHeadingChecks ref
+  twinHeadChecks ref
+  twinDriverChecks ref
+  twinEdgeChecks ref
 
 end Tests.MarkdownTwin
