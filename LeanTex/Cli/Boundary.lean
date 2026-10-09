@@ -29,13 +29,14 @@ namespace LeanTex.Cli.Boundary
 open LeanTex.Core
 
 /-- With no tool, a complete checked drawing of the same request can serve.
-Otherwise W0379 names the missing drawing at its source span. Refusals are
-not replayed here: without the tool, its identity cannot be established. -/
+Otherwise W0379 names the missing drawing at its source span, with `why`,
+how the tool's version question ended. Refusals are not replayed here:
+without the tool, its identity cannot be established. -/
 public def coldPicture (picDir : System.FilePath) (tool key : String)
-    (span : Option Span := none) : IO (Except Diag ByteArray) := do
+    (span : Option Span := none) (why : String := "") : IO (Except Diag ByteArray) := do
   match ← PictureAssets.previous picDir key with
   | some bytes => return .ok bytes
-  | none => return .error (DriverDiag.boundaryToolUnavailable tool span)
+  | none => return .error (DriverDiag.boundaryToolUnavailable tool span why)
 
 /-- What the boundary's refusals leave standing, once the rendered subset
 has been asked to stand in: the picture ids whose requests are withdrawn,

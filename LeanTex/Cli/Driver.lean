@@ -255,8 +255,8 @@ def resolvePictures (ui : Ui) (doc : Ir.Doc)
       -- render of this request serves, and where none exists W0379 names
       -- the loss it returns.
       let earlier ← match picDir with
-        | some dir => Boundary.coldPicture dir tool key (spanFor id)
-        | none => pure (.error (DriverDiag.boundaryToolUnavailable tool (spanFor id)))
+        | some dir => Boundary.coldPicture dir tool key (spanFor id) why
+        | none => pure (.error (DriverDiag.boundaryToolUnavailable tool (spanFor id) why))
       match earlier with
       | .ok bytes =>
         return {
@@ -966,8 +966,14 @@ in the HTML" (← since t)
         ui.accepted resolved.accepted
         ui.summary file failures.size (← since t0)
         return exitFor 0 failures.size resolved.warnings ui.cfg.werror
-      let written ← publish outDir (htmlBuilt.map (htmlPath, ·))
+      let (written, unwritten) ← publish outDir (htmlBuilt.map (htmlPath, ·))
         (mdBuilt.map (mdPath, ·)) (pdfBuilt.map (pdfPath, ·))
+      unless unwritten.isEmpty do
+        for d in unwritten do
+          ui.diag d
+        ui.accepted resolved.accepted
+        ui.summary file unwritten.size (← since t0)
+        return exitFor unwritten.size 0 resolved.warnings ui.cfg.werror
       -- The hatch's other teeth: an `\allow` that never fired is stale
       -- acceptance and warns; what was accepted always prints.
       resolved := resolved.append (← ui.resolve doc.allow allowAll (outputs := outputs)

@@ -376,10 +376,10 @@ def htmlContainedPublicationChecks (ref : IO.Ref (List String)) : IO Unit := do
       IO.FS.writeFile (dir / "icon.svg") "<svg><image href='outside.png'/></svg>"
       IO.FS.removeFile (dir / "figure.svg")
       let target := output / "page.html"
-      let written ← publish none (some (target.toString, page)) none none
+      let (written, unwritten) ← publish none (some (target.toString, page)) none none
       let html ← IO.FS.readFile target
       t "contained publication: writes the checked serialization byte for byte"
-        (html == page.render && written == #[target.toString])
+        (html == page.render && written == #[target.toString] && unwritten.isEmpty)
       t "contained publication: retains captured stylesheet and image/icon bytes"
         (hasStr html css && !hasStr html "outside.css" && !hasStr html "outside.png" &&
           hasStr html ("src=\"" ++ expected ++ "\"") &&

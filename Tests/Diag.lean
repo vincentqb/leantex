@@ -131,7 +131,7 @@ def driverProbes : Array (DiagCode × DriverProbe) :=
       return (← FontEnv.resolveDocDirs "doc.tex" doc.fonts.dirs).2),
     (.W0379, fun dir => do
       match ← Boundary.coldPicture dir "lualatex"
-          (Ir.picHash "\\draw (0,0) circle (1);") with
+          (Ir.picHash "\\draw (0,0) circle (1);") (why := "no executable file by this name on PATH") with
       | .error d => return #[d]
       | .ok _ => return #[]),
     -- The withdrawal chain as the driver runs it: the cold decision's own
@@ -186,6 +186,7 @@ def diagWitness (one mapped withMath : Font.FontSet)
     | some e => #[e.toDiag "doc.tex"]
     | none => #[]
   | .E0003 => #[DriverDiag.outputPathsConflict "HTML and Markdown both name 'out.html'"]
+  | .E0004 => #[DriverDiag.outputUnwritable "site/out.pdf" "permission denied"]
   | .E0101 => dvE "a\\"
   | .E0102 => dvE "\\begin{verbatim}\nx"
   | .E0111 => dvE (dvDeck "" ("\\setbeamertemplate{footline}{\\insertframenumber}\n" ++

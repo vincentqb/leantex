@@ -15,7 +15,7 @@ example : HtmlDoc.ClosedPage → HtmlArtifact := HtmlArtifact.ofPage
 example : String → HtmlDoc.Config → Ir.Doc →
     IO (Except String HtmlArtifact × Array Diag) := prepareHtml
 example : Option String → Option (String × HtmlArtifact) →
-    Option (String × String) → Option (String × ByteArray) → IO (Array String) :=
+    Option (String × String) → Option (String × ByteArray) → IO (Array String × Array Diag) :=
   publish
 example (page : HtmlDoc.ClosedPage) : HtmlArtifact :=
   { render := page.render, render_exact := ⟨page, rfl⟩ }

@@ -10,7 +10,7 @@ open LeanTex.Cli.Boundary
 
 namespace Tests.BoundaryInterface
 
-example : System.FilePath → String → String → Option Span → IO (Except Diag ByteArray) :=
+example : System.FilePath → String → String → Option Span → String → IO (Except Diag ByteArray) :=
   @coldPicture
 example : Repr Withdrawal := inferInstance
 example : Repr Undrawn := inferInstance

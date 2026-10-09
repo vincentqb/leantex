@@ -442,6 +442,43 @@ def machineLossChecks (ref : IO.Ref (List String))
       let tags := placeholderTags html
       t "machine loss CLI accepted refusal: one labelled placeholder, and no image names a request key"
         (tags.length == 1 && tags.all labelled && !hasStr html (" src=\"" ++ Ir.picSrcPrefix))
+    -- A temporary root in which no directory can be made is a fact about
+    -- the machine: the converters' and the renderer's scratch directories
+    -- cannot be made, so the include degrades and an accepted render ships
+    -- its placeholder, where IO.FS.withTempDir ended the process with a
+    -- segmentation fault (exit 139).
+    let rootless (doc path : System.FilePath) (cache : String) (out : System.FilePath) :=
+      IO.Process.output {
+        cmd := binary.toString, cwd := some dir
+        args := #[doc.toString, "-o", out.toString, "--porcelain"]
+        env := #[("PATH", some path.toString),
+          ("XDG_CACHE_HOME", some (dir / ("cache-" ++ cache)).toString),
+          ("LEANTEX_FONT", some font.toString), ("TMPDIR", some (dir / "no-such-root").toString)] }
+    let codeOf (j : Lean.Json) := (j.getObjValAs? String "code").toOption
+    let included ← rootless svgInclude loader "rootless-include" (dir / "rootless-include" / "page.html")
+    let namesRoot (j : Lean.Json) := (j.getObjValAs? String "message").toOption.any fun m =>
+      hasStr m "no-such-root" && hasStr m "(TMPDIR)" && !hasStr m "leantex-"
+    t s!"machine loss CLI no scratch root: an SVG include degrades under W0602, naming the root and not the image (exit {included.exitCode})"
+      (included.exitCode == 0 && (recordsOf included).any fun j => codeOf j == some "W0602" && namesRoot j)
+    let asked ← rootless boundary renderer "rootless-version" (dir / "rootless-version" / "page.html")
+    t s!"machine loss CLI no scratch root: W0379 says the version could not be asked, naming the root (exit {asked.exitCode})"
+      (asked.exitCode == 0 && (recordsOf asked).any fun j => codeOf j == some "W0379" && namesRoot j)
+    -- The renderer's version is remembered under a root that works, so a
+    -- picture no build has drawn meets the missing root at its render.
+    discard <| build boundary renderer "rootless-picture" (dir / "rootless-warm" / "page.html")
+    let unseen := dir / "unseen.tex"
+    IO.FS.writeFile unseen ((acceptedSource (corpus / "fonts")).replace "(2,1)" "(3,1)")
+    let picture ← rootless unseen renderer "rootless-picture" (dir / "rootless-picture" / "page.html")
+    t s!"machine loss CLI no scratch root: a render that cannot start is accepted, never a crash (exit {picture.exitCode})"
+      (picture.exitCode == 0 && (recordsOf picture).any fun j => event j == some "accepted")
+    -- A renderer whose version question never ends: the help says so, rather
+    -- than only telling the user to install a tool that is there.
+    let hanging := dir / "hanging"
+    writeScript (hanging / "lualatex") "#!/bin/sh\nexec /bin/sleep 30\n"
+    let slow ← build boundary hanging "hanging" (dir / "hanging-out" / "page.html")
+    t s!"machine loss CLI killed version question: W0379 names how the question ended (exit {slow.exitCode})"
+      (slow.exitCode == 0 && (recordsOf slow).any fun j => codeOf j == some "W0379" &&
+        ((j.getObjValAs? String "message").toOption.any (hasStr · "version was not read (no version within")))
   legacySlotChecks ref
 
 end Tests
