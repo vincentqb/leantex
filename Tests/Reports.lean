@@ -1049,25 +1049,29 @@ def reports : List Report := [
       thm% Ir.titledPadding_contract]
     accept := ["thirty-five distances the reference engine measures on an invented probe fail before the block template's two colour boxes and hold within 0.02 points after, across painted, transparent, title-only and body-only blocks, titled and untitled; the heading-to-body distance was 22 points against 17.6",
       "a wrapped heading painted only behind its last line, and heading and body text inset half an em from the measure, fail before; the paint now covers every heading line and reaches 0.75 ex beyond the measure, the text standing on it",
-      "two presentation decks built fresh by both engines keep the reference's page counts, which one overran before; their text-bodied blocks' bars and bodies match the reference within 0.1 points, and a code-bodied block's bar and seam match while its body differs by the code listing's own spacing"]
+      "two presentation decks built fresh by both engines keep the reference's page counts, which one overran before; their text-bodied blocks' bars and bodies match the reference within 0.1 points, and a code-bodied block's bar and seam match while its body differs by the code listing's own spacing",
+      "beamer's nested colour boxes share their parent's reach, so the earlier body report's nested-inset guard now holds a nested box at its parent's width, the parent keeping its inset and the child's skips around it",
+      "review of the second fix: the body box painted under its heading's bar where the two overlap, wrapped code ended its box on its last line's letters rather than the strut each such line carries, a frame opening on a stepped block lost the block's space above in the browser, and a tcolorbox took the slide block's geometry, an untitled one shipping an empty heading line; three assertions fail on the second fix, and a tcolorbox now stands as its package sets it, seven baseline distances the reference engine measures on an invented article holding within 0.02 points where the second fix stood as much as nine points off"]
     state := .guarded "fa516a828a2a36549fc2a56f1e1cb4d138b3b934" .before .author },
   { id := "R118", date := "2026-10-08"
     what := "Consecutive slide blocks ran together as one box with no space around them"
     pins := [check% Tests.BlockGeometry.blockGeometryChecks,
       thm% HtmlDoc.blockGap_owner_contract]
     accept := ["consecutive painted blocks stood one paragraph skip apart, or touched where the page declared none, against the reference's 10 points; they now stand the template's small and medium skips and line skip apart, and a paragraph after a block spends its own skip",
-      "on a presentation deck consecutive blocks stand exactly the reference engine's 10 points apart",
+      "on a presentation deck consecutive blocks stand the reference engine's 10 points apart wherever the frame has room; where the reference overfills a frame it shrinks those skips, to 6.8 points on one, which the engine does not",
       "in the browser consecutive blocks shared one box; each block now owns its boundary in the shared gap sheet and keeps its children's margins inside its box",
       "review of the first fix: the space around a block held the kernel's values whatever the document set the two skip registers to, and a block after a paused step lost its space above in the browser; three distances the reference engine measures and four sheet values fail on the first fix, and both artifacts now spend the registers in force, the browser's step carrier owning the boundary its block meets"]
     state := .guarded "fa516a828a2a36549fc2a56f1e1cb4d138b3b934" .before .author },
   { id := "R119", date := "2026-10-08"
     what := "Block colours did not look adjusted and their surface was a dull grey"
-    pins := [check% Tests.BlockGeometry.blockGeometryChecks, check% Tests.BlockBody.checks]
+    pins := [check% Tests.BlockGeometry.blockGeometryChecks, check% Tests.BlockBody.checks,
+      check% beamerReachChecks]
     accept := ["the grey surface was the deck's own declared colour, which the reference engine paints too; with the decks' current declarations both engines paint every block bar and body in the same colours",
       "nine shipped-colour assertions fail before: an empty colour value was refused, the theme's fill option was ignored in all three spellings, the alerted and example bodies did not inherit the block body, and a heading given only a bar took the page colour as ink",
       "a covered block on a stepped frame kept its full bars under faded text; its bars and heading now take the step's cover, as the reference fades them",
       "the theme's fill option now paints the reference engine's heading bar exactly and its bodies within one unit per channel",
-      "review of the first fix: it gave every theme one theme's relationships, so under the default theme the alerted and example bodies took the block body's fill, under the inheriting theme the block title took the structure colour, and a block an overlay item opens shipped at full ink on the steps hiding the item; six assertions fail on the first fix, against the reference engine's one body fill, three bodies, title inks and covered bars"]
+      "review of the first fix: it gave every theme one theme's relationships, so under the default theme the alerted and example bodies took the block body's fill, under the inheriting theme the block title took the structure colour, and a block an overlay item opens shipped at full ink on the steps hiding the item; six assertions fail on the first fix, against the reference engine's one body fill, three bodies, title inks and covered bars",
+      "review of the second fix: the inheriting theme's model claimed a block option it does not load, so a fill declared on a text role no longer painted the alerted and example bars; a declared structure colour that reached no paint went unnamed while the shipped pages stayed byte-identical; and a guard testing for the theme's own setter read it as undefined; nine assertions fail on the second fix, and a premise check two builds apart now holds every modelled colour element, under both colour themes, to being named unused exactly when the shipped pages do not change"]
     state := .guarded "fa516a828a2a36549fc2a56f1e1cb4d138b3b934" .before .author }
 ]
 
