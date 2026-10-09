@@ -10925,8 +10925,8 @@ private def collectTable (r : Rd) (a0 : Acc)
   -- A table wider than the measure stays its declared width and is named,
   -- never squeezed to fit: `\tabcolsep` is a rigid kern (classes.dtx sets
   -- it as a dimen, no rubber), so TeX itself sets the same source overfull
-  -- and says so — the deck's `p{0.31}p{0.57}p{0.07}` tables are 4.09 pt
-  -- overfull under lualatex too. Shrinking the gaps would fit a box TeX
+  -- and says so: a table whose `p{}` widths and gaps sum past the measure
+  -- is overfull under lualatex too. Shrinking the gaps would fit a box TeX
   -- does not fit and silently change every gap to hide an error in the
   -- declared column widths; the honest fix is the author's, and the help
   -- names it. (The KP breaker's own rule is the same: shrink is spent only

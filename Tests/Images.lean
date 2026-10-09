@@ -302,9 +302,9 @@ def imageChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit 
   let expectW := geom.textWidth * 800 / 1000
   t "layout width fraction of the measure"
     (imageSegs outTw == #[(some 0, expectW, expectW * Dim.pt 40 / Dim.pt 64)])
-  let affineSrc := "\\includegraphics[width=0.334\\dimexpr \\textwidth +28mm\\relax]{rects.png}"
+  let affineSrc := "\\includegraphics[width=0.315\\dimexpr \\textwidth +36mm\\relax]{rects.png}"
   let outAffine := layoutSrc affineSrc
-  let affineW := ((geom.textWidth + Dim.mm 28) * 334).tdiv 1000
+  let affineW := ((geom.textWidth + Dim.mm 36) * 315).tdiv 1000
   t "layout resolves an affine image width against the local measure"
     (imageSegs outAffine == #[(some 0, affineW, affineW * Dim.pt 40 / Dim.pt 64)])
   t "an affine image width emits no length error"
@@ -444,7 +444,7 @@ def imageChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit 
   let (affineDoc, _) := Elab.run "t" affineSrc
   let (affineHtml, _) := HtmlDoc.emit hcfg affineDoc
   t "html emits a mixed affine image width as calc"
-    (hasStr affineHtml "style=\"width: calc(33.4% + " && hasStr affineHtml "pt); height: auto\"")
+    (hasStr affineHtml "style=\"width: calc(31.5% + " && hasStr affineHtml "pt); height: auto\"")
   let (missHtml, _) := HtmlDoc.emit hcfg
     ((Elab.run "t" "\\includegraphics{missing.png}").1)
   t "html missing image still emits the img with alt"

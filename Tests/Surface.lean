@@ -270,20 +270,20 @@ r = w / 2.5, neg = 0pt - 3sp, negh = neg / 2 }")
   -- The wrapper is grouping, and an omitted trailing \relax closes at the
   -- argument boundary. These equivalent families are the normalization
   -- property; no consumer gets to rewrite the sample separately.
-  let normalized := Decl.parseLengthSyntax "0.334 * (textwidth + 28mm)"
+  let normalized := Decl.parseLengthSyntax "0.315 * (textwidth + 36mm)"
   t "raw \\dimexpr normalizes to the ordinary affine grammar"
-    (Decl.parseLengthSyntax "0.334\\dimexpr \\textwidth +28mm\\relax" == normalized)
+    (Decl.parseLengthSyntax "0.315\\dimexpr \\textwidth +36mm\\relax" == normalized)
   t "an omitted \\relax closes at the length boundary"
-    (Decl.parseLengthSyntax "0.334\\dimexpr \\textwidth +28mm" == normalized)
+    (Decl.parseLengthSyntax "0.315\\dimexpr \\textwidth +36mm" == normalized)
   t "space and explicit multiplication normalize alike"
     (Decl.parseLengthSyntax "2 \\linewidth - 3pt" ==
       Decl.parseLengthSyntax "2 * linewidth - 3pt")
   let affine := Decl.parseAffineLengthExpr #[]
-    "0.334\\dimexpr \\textwidth +28mm\\relax"
+    "0.315\\dimexpr \\textwidth +36mm\\relax"
   let env := Dim.MeasureValues.horizontal (Dim.pt 345) 0
   let expected : Dim.SymGlue :=
     (({ width := .ofSp (Dim.pt 345) } : Dim.SymGlue).add
-      { width := .ofSp (Dim.mm 28) }).scale 334 1000
+      { width := .ofSp (Dim.mm 36) }).scale 315 1000
   t "a typed local measure resolves in its supplied context"
     (match affine with
      | .ok e => e.eval env.find == expected

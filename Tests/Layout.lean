@@ -595,9 +595,9 @@ def boxWidthChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Un
   t "an absolute box width is no longer a named loss"
     (!(warnCodes (boxDoc "" "90pt")).contains "W0314")
   -- One grammar carries an affine local width all the way to this box.
-  let affineSrc := "0.334\\dimexpr \\textwidth +28mm\\relax"
+  let affineSrc := "0.315\\dimexpr \\textwidth +36mm\\relax"
   let affine := widest (boxDoc "" affineSrc)
-  let affineBound := ((geom.textWidth + Dim.mm 28) * 334).tdiv 1000
+  let affineBound := ((geom.textWidth + Dim.mm 36) * 315).tdiv 1000
   t "an affine box width resolves against its enclosing measure"
     (decide (affine ≤ affineBound) && decide (affine > geom.textWidth / 3))
   t "an affine box width has one successful reading"
@@ -3369,7 +3369,7 @@ def tableChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit 
     (!(layoutDiags (wrap "\\begin{tabular}{ll}a & b \\\\\\end{tabular}")).any
       (·.code == "W0338"))
   let affineTable := wrap
-    "\\begin{tabular}{p{0.334\\dimexpr \\linewidth +28mm\\relax}}word word word word word word word word \\\\\\end{tabular}"
+    "\\begin{tabular}{p{0.315\\dimexpr \\linewidth +36mm\\relax}}word word word word word word word word \\\\\\end{tabular}"
   t "an affine table column width parses once without a fallback"
     ((elabStr affineTable).2.all fun d =>
       d.severity != .error && d.code != "W0104" && d.code != "W0314")

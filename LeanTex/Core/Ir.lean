@@ -10238,9 +10238,9 @@ private def dumpInline (ind : String) (x : Inline) : String :=
 end
 
 /-- One column spec, for the dump: the align letter, then the declared
-width. `l:310/1000` is a left `p{.31\linewidth}`; a bare letter is a
+width. `l:400/1000` is a left `p{.4\linewidth}`; a bare letter is a
 natural column; `~` after the letter marks a ragged one (`ColSpec.ragged`),
-`l~:310/1000` a `>{\raggedright}p{.31\linewidth}`. -/
+`l~:400/1000` a `>{\raggedright}p{.4\linewidth}`. -/
 private def dumpColSpec (c : ColSpec) : String :=
   let al := match c.align with
     | .left => "l"

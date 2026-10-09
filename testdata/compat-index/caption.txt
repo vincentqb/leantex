@@ -2,7 +2,7 @@
 # An option the engine does not honour is W0354, named and ignored.
 body impl \begin{figure}\caption{x}\end{figure}
 pre refuse:W0354 \captionsetup{font=small}
-pre impl \captionsetup{margin=0.33in}
+pre impl \captionsetup{margin=0.6in}
 pre impl \captionsetup{skip=6pt}
 pre impl \captionsetup{aboveskip=6pt}
 pre impl \captionsetup{belowskip=6pt}
