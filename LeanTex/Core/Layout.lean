@@ -69,7 +69,7 @@ public structure Geom where
   `parskip` only where nothing is declared: there `parskip` is the engine's
   paragraph mark, a skip standing in for the `\parindent` the engine does
   not set, and TeX spends no indent at a list's edge. -/
-  texParskip : SymGlue := { stretch := Dim.Length.ofSp (pt 1) } -- classes.dtx: \parskip 0pt plus 1pt
+  texParskip : SymGlue := Ir.texParskipDefault
   /-- The list indent of a lineage whose class declares no `\leftmargin`
   stack — the web's (`Ir.leftMargin` answers the standard classes' and
   beamer's, per level): `listIndentFor`'s 1.5 em, the engine's own choice,

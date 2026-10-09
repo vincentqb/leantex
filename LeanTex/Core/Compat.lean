@@ -6512,6 +6512,22 @@ puts a zero rule there, which keeps the space at a page's top
 word, so no document spells the mark, as `frameRestartMark`'s is. -/
 public def vspaceAnchorMark : String := "vspace anchor"
 
+/-- A document skip's value as the native `before` spells it, and whether
+it carried an infinite stretch the engine cannot rank: TeX's `\vfill` glue,
+`0pt plus 1fill` (latex.ltx's `\fill`), is the native `fill`; a stretch of
+another order or factor ranks against the page's other infinite glues, which
+the engine does not tell apart, so the skip sets at its natural width; any
+other value stands as written. -/
+private def skipSrc (src : String) : String × Bool :=
+  match src.splitOn " plus " with
+  | [w, st] =>
+    match Decl.parseLength w, Decl.filFactor? st with
+    | some l, some ((m, sc), order) =>
+      if l == {} && order == 2 && m == (sc : Int) then ("fill", false)
+      else (w.trimAscii.toString, true)
+    | _, _ => (src, false)
+  | _ => (src, false)
+
 /-- Commands whose whole meaning is one fixed native spelling, synthesised
 in place with a `became` note: each row is an argument-free rewrite.
 `\vfill` is `\vspace{\fill}` (ltspace.dtx): fil glue between blocks. The
@@ -7199,7 +7215,14 @@ and patterns stand in" pos
     let start := skipStar raws start
     let (_, j) := takeOpt raws start
     let (args, k) := takeGroups raws j 1
-    let native := s!"\\block[before = {lengthSrc (args.getD 0 #[])}]\{}"
+    let src := lengthSrc (args.getD 0 #[])
+    let (value, unranked) := skipSrc src
+    if unranked then
+      sayOnce "ctrl:vspace:fil" .W0104
+        s!"'\\vspace\{{src}}' has an infinite stretch of an order or factor other than \\fill's; \
+fills here have one order, so the skip sets at its natural width" pos
+        (help := "write \\vfill or \\vspace{\\fill} for the page's leftover")
+    let native := s!"\\block[before = {value}]\{}"
     if starred then
       became "\\vspace*" s!"a page-top anchor, then {native}" pos
       return some (#[.ctrl vspaceAnchorMark pos] ++ (← synthAt native pos), k)

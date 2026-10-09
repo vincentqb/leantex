@@ -7450,7 +7450,9 @@ private def engineLengthTokensOfPage (page : PageSpec) :
     ("paperheight", { width := Dim.Length.ofSp page.height }),
     ("textwidth", { width := Dim.Length.ofSp page.textWidth }),
     ("textheight", { width := Dim.Length.ofSp page.textHeight }),
-    ("columnsep", { width := Ir.columnSep })]
+    ("columnsep", { width := Ir.columnSep }),
+    ("baselineskip", { width := Dim.Length.ofSp (Ir.baselineSkipOf page) }),
+    ("parskip", Ir.texParskipOf page)]
 
 /-- The engine's own length tokens, LaTeX's page dimen parameters read
 onto the token namespace: `paperwidth`/`paperheight` (the physical page),
@@ -7490,6 +7492,9 @@ private def engineLengthTokens (docClass : Ir.DocClass) (classOptions : String)
     | "textwidth" => whKnown && hmKnown
     | "textheight" => whKnown && vmKnown
     | "columnsep" => true
+    -- The body size and the declared `\parskip` may still change in the
+    -- preamble; the body reads both off the finished page.
+    | "baselineskip" | "parskip" => false
     | _ => false
   (engineLengthTokensOfPage (classPageDefaults record opts page)).filter
     (fun kv => offered kv.1)
@@ -11375,6 +11380,14 @@ private def flowDecl? (ctx : Ctx) (n : String) (next : Nat) : Option (ESt → ES
     some fun st => { st with ctr := { st.ctr with inAppendix := true, secNums := (0, 0, 0) } }
   else none
 
+/-- What a `\block`'s `before` reads: the document's tokens, then the
+engine's own over the finished page (`engineLengthTokensOfPage`) — the
+lookup a body `\setlength` reads — so `\vspace{\baselineskip}`,
+`\vspace{-\parskip}` and `\vspace{0.1\textheight}` read the registers
+LaTeX reads there. Outside the elaboration knot, as `pageMark?` is. -/
+private def blockSkipTokens (ctx : Ctx) : Array (String × Dim.SymGlue) :=
+  ctx.tokens.entries ++ ctx.engineTokens
+
 /-- The page-model marks a control word stands for between blocks: the
 declared boundary `\pagebreak` names, `\vspace*`'s anchor
 (`Compat.vspaceAnchorMark`, which no document spells) and
@@ -13051,7 +13064,7 @@ a side channel, never slide content" cpos
               | none => ⟨(raws.extract (j0 + 1) raws.size, raws.size), by omega⟩
             have hk2 : i + 1 ≤ k := hk
             let (opts, ds) := Decl.parseBlock ctx'.file (rawSrc optSrc) cpos
-              "block" ctx'.tokens.entries
+              "block" (blockSkipTokens ctx')
             modify fun st => { st with diags := st.diags ++ ds }
             let mut before : SymGlue := {}
             for e in opts do

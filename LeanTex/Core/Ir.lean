@@ -64,6 +64,14 @@ base rhythm). A document declares its own through
 @[expose] public def parskipDefault (size : Sp) : SymGlue :=
   { width := Dim.Length.ofSp (rhythmQuantum size) }
 
+/-- TeX's own `\parskip` where nothing declares one: latex.ltx's
+`\parskip 0pt plus 1pt`, which the standard classes keep. What `\@trivlist`
+and `\@item` spend at a list's edge (`Layout.Geom.texParskip`), and what a
+document's `\vspace{\parskip}` reads (`texParskipOf`), as against the
+engine's own paragraph mark (`parskipDefault`), which stands in for an
+indent TeX sets nowhere there. -/
+public def texParskipDefault : SymGlue := { stretch := Dim.Length.ofSp (Dim.pt 1) }
+
 /-- The rhythm quantum is positive at any body size of at least 1pt: the
 one key fact every default-gap theorem consumes, proved once over the
 arithmetic (`omega` over bare `Int`, the `slides_lines_survive_bands`
@@ -264,6 +272,15 @@ public structure PageSpec where
   medium. Natively `\page{ trim = marks }`. -/
   trimMarked : Bool := false
   deriving Repr, BEq, Inhabited
+
+/-- The `\parskip` TeX spends on a page: the one the document or its class
+declares, else the kernel's (`texParskipDefault`). -/
+public def texParskipOf (spec : PageSpec) : SymGlue := spec.parskip.getD texParskipDefault
+
+/-- The `\baselineskip` in force at a page's body size: the engine's one
+leading (`leadingFor` at the body size, under the page's `\linespread`
+factor), the distance two lines of body text stand apart. -/
+public def baselineSkipOf (spec : PageSpec) : Sp := leadingFor spec.fontSize spec.leading
 
 /-- The text block of an undeclared letter page: 26 picas (312 pt).
 Bringhurst's copy-fitting table sets a text face whose lowercase alphabet
@@ -1013,6 +1030,7 @@ public def pageAnchorRole : String := "page-anchor"
 {\prevdepth-\@m\p@}`), so the next box on the vertical list takes no
 interline glue (TeXbook ch. 12). A fact of the paged artifact alone. -/
 public def noInterlineRole : String := "no-interline"
+
 
 /-- A declaration at a page boundary, independent of the page's ground and
 vertical distribution. `empty` suppresses running furniture on one shipped

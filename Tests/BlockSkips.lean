@@ -274,6 +274,46 @@ private def styleDecl (style name : String) : Option String :=
     let [n, value] := decl.splitOn ":" | none
     if n.trimAscii.toString == name then some value.trimAscii.toString else none
 
+/-- A skip spelled through a register LaTeX keeps: `\baselineskip`, the
+`\parskip` in force, a multiple or a negative of either. lualatex moves what
+follows by these thousandths of a TeX point on the probes below (beamer,
+moloch, 10 pt, `\parskip` 0 and 4 pt declared in the preamble), against the
+same frame without the skip. -/
+private def registerMoves : List (String × Int × Int) :=
+  [("\\vspace{\\baselineskip}", 12000, 12000), ("\\vspace{2\\baselineskip}", 24000, 24001),
+   ("\\vspace{-\\baselineskip}", -12000, -12000), ("\\vspace{0.5\\baselineskip}", 6001, 6000),
+   ("\\vspace{\\parskip}", 0, 4000), ("\\vspace{-\\parskip}", 0, -4000)]
+
+/-- The registers a document's skip reads elaborate to their values, with
+no diagnostic, and move what follows as lualatex moves it; TeX's own
+spelling of an infinite stretch, `\vspace{0pt plus 1fill}`, stands where
+`\vfill` stands. -/
+private def registerChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit := do
+  let para := above "paragraph"
+  for (pre, label, col) in [("", "parskip 0", 0), ("\\setlength{\\parskip}{4pt}\n", "parskip 4pt", 1)] do
+    let frames := registerMoves.flatMap fun (skip, _, _) =>
+      [frame (para ++ "\n\n" ++ below "paragraph"),
+       frame (para ++ "\n\n" ++ skip ++ "\n\n" ++ below "paragraph")]
+    let src := document pre frames
+    let (doc, diags) := Elab.run "block-skips-registers.tex" src
+    check ref s!"block skips ({label}): register skips elaborate with no error, got {(diags.filter (·.severity == .error)).map (·.code)}"
+      (diags.all (·.severity != .error))
+    let pages := (Layout.run (Layout.Geom.ofPage doc.page) fonts none doc).pages
+    for ((skip, lua0, lua4), i) in registerMoves.zipIdx do
+      let lua := if col == 0 then lua0 else lua4
+      match (pages[2 * i]?.bind span), (pages[2 * i + 1]?.bind span) with
+      | some d0, some d1 =>
+        check ref s!"block skips ({label}): {skip} moves what follows {lua} (lualatex), got {spMilli (d1 - d0)}"
+          ((spMilli (d1 - d0) - lua).natAbs ≤ tolerance.toNat)
+      | _, _ => check ref s!"block skips ({label}): the {skip} probe ships its marks" false
+  let fillOf (skip : String) : Option Dim.Sp :=
+    let (doc, _) := Elab.run "block-skips-fill.tex"
+      (document "" [frame (para ++ "\n\n" ++ skip ++ "\n\n" ++ below "paragraph")])
+    ((Layout.run (Layout.Geom.ofPage doc.page) fonts none doc).pages[0]?).bind (lineY · "omega")
+  check ref "block skips: \\vspace{0pt plus 1fill} stands where \\vfill stands"
+    ((fillOf "\\vspace{0pt plus 1fill}").isSome &&
+      fillOf "\\vspace{0pt plus 1fill}" == fillOf "\\vfill")
+
 /-- A skip box's natural width in milli-rem, read off its style: the
 `--skip` the sheet turns into its height or, negative, its bottom margin;
 nothing declared is zero. -/
@@ -480,6 +520,7 @@ def blockSkipChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Uni
   inlineChecks ref fonts
   filOrderChecks ref fonts
   sheetChecks ref
+  registerChecks ref fonts
   htmlChecks ref
 
 end Tests.BlockSkips
