@@ -12048,6 +12048,11 @@ private def collectVerbatim (r : Rd) (a : Acc) (covered : Option Ir.Color) (s : 
       a.addvspace (r.resolve ((a.tokens.find? "captionsep").getD
         (Ir.captionSepDefault r.geom.fontSize)))
     | none => a
+  -- A source line's end takes the package's own space after it
+  -- (`Ir.ListingSpec.lineOverlap`), never a wrapped line's; an explicit
+  -- `\fontsize` skip is the document's own and stands as declared.
+  let sty := applyStyle r.geom.scale {} spec.fontSize
+  let overlap := if sty.leading.isSome then 0 else spec.lineOverlap
   -- Declared line numbers are furniture beside each line — generated
   -- ink, like a list's markers: right-aligned digits in the mono face,
   -- held to their line by no-break spaces.
@@ -12059,7 +12064,7 @@ private def collectVerbatim (r : Rd) (a : Acc) (covered : Option Ir.Color) (s : 
       for line in lines do
         i := i + 1
         unless out.isEmpty do
-          out := out.push (.linebreak {})
+          out := out.push (.linebreak { width := Dim.Length.ofSp (-overlap) })
         if spec.numbers then
           let numStr := toString i
           let pad := String.ofList (List.replicate (w - numStr.length) '\u00a0')
@@ -12092,9 +12097,9 @@ private def collectVerbatim (r : Rd) (a : Acc) (covered : Option Ir.Color) (s : 
   -- Resolve once against the body/local measure, then give collectPara
   -- that size and an explicit skip: its ordinary mixed-size paragraph
   -- strut would otherwise hold 8pt code on 12pt body baselines.
-  let (size, leading) := (applyStyle r.geom.scale {} spec.fontSize).metrics
+  let (size, leading) := sty.metrics
     r.geom.fontSize r.xHeight ((a.measure.getD r.geom.textWidth) - indent) r.geom.textHeight
-  let leading := leading.getD (Ir.leadingFor size r.geom.leading)
+  let leading := leading.getD (Ir.stepSkip r.geom.fontSize sty.step size r.geom.leading)
   -- the code is one leaf, its whole content; line numbers are generated
   let (a, leaf) := a.leafRange 1
   collectPara { r with pats := none, geom := { r.geom with justify := false } }

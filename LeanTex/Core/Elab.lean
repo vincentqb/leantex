@@ -9288,6 +9288,7 @@ size commands; the current style stands" (some pos)
     fontSize := fontSize
     tabSize := tabSize
     breakLines := breakLines
+    lineOverlap := if env == "minted" then Ir.fvextraLineOverlap else 0
     source := some (ctx.sourceSpan contentPos) }
   let spec ← match caption with
     | some cap => do

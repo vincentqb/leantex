@@ -155,4 +155,25 @@ def raggedFrameChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO
   t "an article's paragraphs keep the browser's hyphenation"
     (hasStr (HtmlDoc.emit {} art).1 "p { hyphens: auto; }")
 
+/-- **A listing's lines stand at its size's leading, less what its package
+takes off each line**: a bare `verbatim` under `\\footnotesize` at the
+step's 9.5 pt, as lualatex sets it (9.464 bp), and a minted listing 0.25 pt
+tighter, fvextra's overlap after every line (lualatex: 9.215 bp); the
+HTML `pre` states the same pitch over its font size. Before, both stood at
+6⁄5 of 8 pt, 9.6 pt, on both artifacts. -/
+def listingPitchChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit := do
+  let t := check ref
+  let code := "alpha = 1\nbravo = 2\ncharlie = 3\n"
+  let verbatim := dvDoc "" ("{\\footnotesize\n\\begin{verbatim}\n" ++ code ++ "\\end{verbatim}\n}")
+  let minted := dvDoc "\\usepackage{minted}\n\\setminted{fontsize=\\footnotesize}\n"
+    ("\\begin{minted}{python}\n" ++ code ++ "\\end{minted}")
+  t "a footnotesize verbatim's lines stand at the step's 9.5 pt"
+    (pitches (baselines oneFace verbatim) == #[pt 95 / 10, pt 95 / 10])
+  t "a minted listing's lines stand fvextra's 0.25 pt under the step"
+    (pitches (baselines oneFace minted) == #[pt 925 / 100, pt 925 / 100])
+  t "the HTML sets a verbatim's pitch over its size"
+    (hasStr (HtmlDoc.emit {} (elabStr verbatim).1).1 "line-height: 1.187;")
+  t "the HTML sets a minted listing's pitch over its size"
+    (hasStr (HtmlDoc.emit {} (elabStr minted).1).1 "line-height: 1.156;")
+
 end Tests.LineRhythm

@@ -5290,7 +5290,21 @@ public structure ListingSpec where
   tabSize : Nat := 8
   /-- FancyVerb/listings default: source lines do not wrap. -/
   breakLines : Bool := false
+  /-- What the listing's package takes off the space after each source
+  line: fvextra's `fvextraLineOverlap` for a minted listing, zero for a
+  bare `verbatim` and for listings' own. -/
+  lineOverlap : Sp := 0
   deriving Repr, BEq, Inhabited
+
+/-- fvextra's `backgroundcolorboxoverlap`, 0.25 pt (fvextra.sty,
+`\fvset{backgroundcolorboxoverlap=0.25pt}`): the `\vspace{-0.25pt}` its
+`\FV@bgcoloroverlap` sets after every source line it processes, a
+background colour declared or not. minted 3 sets its code through
+fvextra, so a minted listing's source lines stand this much under their
+size's `\baselineskip` — measured under lualatex at 9.215 bp for
+`\footnotesize`'s 9.5 pt, where a bare `verbatim` stands 9.464 — while
+the lines one wrapped source line breaks into keep the skip itself. -/
+public def fvextraLineOverlap : Sp := Dim.pt 1 / 4
 
 /-- The declared language as the bare token, `none` when none is declared:
 the one IR fact both text projections below read. -/

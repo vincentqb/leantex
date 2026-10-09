@@ -5095,6 +5095,19 @@ public def pictureAltAttrs (floor : String) : Ir.Alt → Array (String × String
   | .decorative => #[("aria-hidden", "true")]
   | .undeclared => #[("role", "img"), ("aria-label", floor)]
 
+/-- A listing's line height over its own font size: the pitch its source
+lines stand at on the page, the step's leading (`Ir.stepSkip` of a
+per-mille body) less the package's space after each source line
+(`Ir.ListingSpec.lineOverlap`). A `pre` has one line height, so a wrapped
+source line's continuation stands at it too, where the page keeps the
+step's own. -/
+private def listingLineHeight (page : PageSpec) (spec : Ir.ListingSpec) (step : String) :
+    String :=
+  let k := (page.scale.lookup step).getD 1000
+  let overlap := spec.lineOverlap * 1000 / max page.fontSize 1
+  let pitch := Ir.stepSkip 1000 (some step) 1000 page.leading - overlap
+  decMilli (pitch * 1000 / max (k : Int) 1)
+
 /-- Absolute font size and leading keep their physical lengths in the IR;
 on a deck they use the body's stage-height share (`deck_type_is_stage_ratio`),
 so they scale with its named size ladder. Context-dependent expressions keep
@@ -7010,6 +7023,7 @@ public def blockNode (cfg : Config) (b : Block) : Node :=
       (((fontStyleDecls cfg.page.scale spec.fontSize (fontLengthCss cfg)).getD #[]).toList) ++
       (match spec.fontSize with
         | .fontSize .. => ""
+        | .size n => s!" line-height: {listingLineHeight cfg.page spec n};"
         | _ => s!" line-height: {decMilli (Ir.leadingMilli * cfg.page.leading / 1000)};") ++
       s!" tab-size: {spec.tabSize};" ++
       (if spec.breakLines then " white-space: pre-wrap;" else "") ++

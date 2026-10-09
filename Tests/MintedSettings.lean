@@ -130,21 +130,22 @@ def mintedSettingsChecks (ref : IO.Ref (List String)) : IO Unit := do
     (hasSize (dvDoc "" ("{\\small\n" ++ code "fontsize=auto" "text" simple ++ "}")) 9)
 
   -- LuaLaTeX/FancyVerb selects the listing's own size and baseline skip:
-  -- at the article 10pt base, footnotesize is 8/9.5pt. Native named steps
-  -- use Ir.leadingFor (8/9.6pt); a 10pt body strut must not hold these
-  -- lines at 12pt. Explicit \fontsize keeps its declared skip exactly.
-  for (step, pt) in [("normalsize", 10), ("small", 9),
-      ("footnotesize", 8), ("scriptsize", 7)] do
+  -- at the article 10pt base, footnotesize is 8/9.5pt, and minted's fvextra
+  -- takes 0.25pt off the space after every source line (`Ir.fvextraLineOverlap`:
+  -- 9.215bp measured); a 10pt body strut must not hold these lines at 12pt.
+  -- Explicit \fontsize keeps its declared skip exactly.
+  for (step, pt, ratio) in [("normalsize", 10, "1.175"), ("small", 9, "1.194"),
+      ("footnotesize", 8, "1.156"), ("scriptsize", 7, "1.107")] do
     let src := dvDoc "" (code ("fontsize=\\" ++ step) "text"
       "Alpha Bravo\n\nAlpha Bravo\nAlpha Bravo")
     let out := rendered src
     let gaps := MintedSettings.baselineGaps out
     t s!"minted rhythm: {step} owns its line box, including a blank line"
       (hasSize src pt && gaps.size == 3 &&
-        gaps.all (· == Ir.leadingFor (Dim.pt pt)))
+        gaps.all (· == Ir.stepSkip (Dim.pt 10) (some step) 0 - Ir.fvextraLineOverlap))
     t s!"minted rhythm: {step} has an explicit typed HTML baseline ratio"
       ((MintedSettings.html src).1.any fun n =>
-        hasStr (MintedSettings.preStyle n) "line-height:1.2;")
+        hasStr (MintedSettings.preStyle n) s!"line-height:{ratio};")
   let explicit := dvDoc ""
     ("{\\fontsize{8pt}{13pt}\\selectfont\n" ++
       code "" "text" "Alpha Bravo\nAlpha Bravo\nAlpha Bravo" ++ "}")
@@ -202,12 +203,17 @@ def mintedSettingsChecks (ref : IO.Ref (List String)) : IO Unit := do
   let lst (opts : String) :=
     "\\begin{lstlisting}[" ++ opts ++ "]\n" ++ simple ++ "\n\\end{lstlisting}\n"
   let lstDefaults := "\\lstset{basicstyle=\\ttfamily\\small,tabsize=3,breaklines=true}"
+  -- Listings sets its lines at the size's own skip, minted at fvextra's
+  -- overlap under it, so the comparison is listing against listing.
   t "listing defaults: basicstyle size/tab/wrap reach both artifacts"
-    (same (dvDoc lstDefaults (lst "")) globalDoc &&
+    (same (dvDoc lstDefaults (lst ""))
+        (dvDoc "" (lst "basicstyle=\\ttfamily\\small,tabsize=3,breaklines=true")) &&
+      hasSize (dvDoc lstDefaults (lst "")) 9 &&
       !(warnCodes (dvDoc lstDefaults (lst ""))).contains "W0110")
   t "listing defaults: local keys override global keys"
     (same (dvDoc lstDefaults (lst "basicstyle=\\ttfamily\\large,tabsize=5,breaklines=false"))
-      (dvDoc "" (code "fontsize=\\large,tabsize=5,breaklines=false" "text" simple)))
+      (dvDoc "" (lst "basicstyle=\\ttfamily\\large,tabsize=5,breaklines=false")) &&
+      hasSize (dvDoc lstDefaults (lst "basicstyle=\\ttfamily\\large,tabsize=5,breaklines=false")) 12)
   t "listing scope: lstset restores after a brace group"
     (same (dvDoc lstDefaults
       ("{\\lstset{basicstyle=\\ttfamily\\scriptsize,tabsize=4}" ++ lst "" ++ "}\n" ++ lst ""))
@@ -273,8 +279,13 @@ def mintedSettingsChecks (ref : IO.Ref (List String)) : IO Unit := do
   let realWrap := rendered (narrowLines "Alpha Bravo Charlie Delta Echo\nFoxtrot\nGolf")
   t "minted breaks: a genuinely split declared line still raises W0386"
     ((bodyLines realWrap).size > 3 && realWrap.diags.any fun d => d.kind == .W0386)
+  -- A wrapped source line's continuation keeps the step's own skip; fvextra
+  -- takes its overlap after each source line only.
   t "minted wrapping: continuation baselines use the selected listing size"
-    (MintedSettings.baselineGaps realWrap |>.all (· == Ir.leadingFor (Dim.pt 8)))
+    (let skip := Ir.stepSkip (Dim.pt 10) (some "footnotesize") 0
+     let gaps := MintedSettings.baselineGaps realWrap
+     gaps.contains skip && gaps.contains (skip - Ir.fvextraLineOverlap) &&
+       gaps.all fun g => g == skip || g == skip - Ir.fvextraLineOverlap)
   for wrap in ["true", "false"] do
     let identifier := "alpha-bravo-charlie-delta-echo"
     let literal := dvDoc "" ("\\begin{minipage}{96pt}" ++
