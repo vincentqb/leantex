@@ -10412,11 +10412,13 @@ private def collectPara (r : Rd) (a : Acc)
     let mut ds := ds
     let mut cache := cache
     -- The note sets in `\footnotesize` of the body, as `\@footnotetext`
-    -- declares it: the step's size and leading, and a size command inside
-    -- the note names its own step of the body, as LaTeX's are absolute.
-    let noteStyle := applyStyle r.geom.scale { color := a.fg, ground := a.ground }
+    -- declares it: the step's size and leading, at the engine's own scale
+    -- (an engine default, `Geom.scale`'s split), while a size command inside
+    -- the note names its own step of the body through the document's
+    -- ladder, as LaTeX's are absolute.
+    let noteStyle := applyStyle Ir.sizeScale { color := a.fg, ground := a.ground }
       (.size "footnotesize")
-    let noteSize := Ir.scaleStepIn r.geom.scale r.geom.fontSize "footnotesize"
+    let noteSize := Ir.scaleStep r.geom.fontSize "footnotesize"
     let noteLead := Ir.stepLead "footnotesize" r.geom.fontSize
     let sep := r.geom.fontSize * 665 / 1000
     let bodyFont := r.fs.get (r.fs.lookup 0 400 false)
