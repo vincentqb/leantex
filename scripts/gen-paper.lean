@@ -12,10 +12,10 @@ Fonts and images come from testdata/corpus, so the run is hermetic. Run with:
 -/
 
 def words : Array String := #[
-  "estimation", "placement", "inventory", "simulation", "counterfactual",
-  "regression", "coefficient", "distribution", "convergence", "gradient",
-  "stochastic", "optimization", "benchmark", "throughput", "latency",
-  "allocation", "propagation", "evaluation", "calibration", "residual"]
+  "escarpment", "sandstone", "tributary", "glaciation", "stratification",
+  "permafrost", "archipelago", "metamorphism", "watercourse", "riverbed",
+  "floodplain", "conglomerate", "limestone", "headwaters", "estuary",
+  "topography", "groundwater", "riverbanks", "cartography", "alluvium"]
 
 def sentence (seed len : Nat) : String := Id.run do
   let mut s := "The"

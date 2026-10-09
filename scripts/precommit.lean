@@ -17,21 +17,59 @@ working tree; CI checks the committed tree.
 -/
 
 import scripts.Gate
+import scripts.Privacy
+
+open Privacy (addedLines addedRuns splitFirst)
+
+/-- A command's exit code and its two output streams as bytes, both read
+by tasks of their own so neither pipe can fill and stall the other.
+Output is never read as UTF-8 here: a staged Latin-1 file reaches a diff
+as its own bytes, and a reader that insists on UTF-8 throws on it. -/
+def runBytes (cmd : String) (args : Array String)
+    (env : Array (String × Option String) := #[]) : IO (UInt32 × ByteArray × ByteArray) := do
+  let child ← IO.Process.spawn
+    { cmd, args, env, stdin := .null, stdout := .piped, stderr := .piped }
+  let out ← IO.asTask child.stdout.readBinToEnd Task.Priority.dedicated
+  let err ← IO.asTask child.stderr.readBinToEnd Task.Priority.dedicated
+  let o ← IO.ofExcept out.get
+  let e ← IO.ofExcept err.get
+  let code ← child.wait
+  return (code, o, e)
+
+/-- A git query's output as bytes; a failure stops the run. The privacy
+gate reads these bytes in more than one encoding
+(`Privacy.segmentReadings`), the other gates as their UTF-8 text (`git`). -/
+def gitBytes (args : Array String) : IO ByteArray := do
+  let (code, out, err) ← runBytes "git" args
+  if code != 0 then
+    IO.eprintln s!"pre-commit: git {String.intercalate " " args.toList} failed:\n{Privacy.textOfBytes err}"
+    IO.Process.exit 1
+  return out
 
 def git (args : Array String) : IO String := do
-  let out ← IO.Process.output { cmd := "git", args }
-  if out.exitCode != 0 then
-    IO.eprintln s!"pre-commit: git {String.intercalate " " args.toList} failed:\n{out.stderr}"
-    IO.Process.exit 1
-  return out.stdout
+  return Privacy.textOfBytes (← gitBytes args)
 
 /-- A git query whose failure is an answer rather than an abort. The
 merge-base lookups read it: in a CI checkout the trunk exists only as
 `origin/main` (actions/checkout creates the one local branch it checked
 out), and a shallow clone may hold neither ref. -/
 def gitOpt (args : Array String) : IO (Option String) := do
-  let out ← IO.Process.output { cmd := "git", args }
-  return if out.exitCode == 0 then some out.stdout else none
+  let (code, out, _) ← runBytes "git" args
+  return if code == 0 then some (Privacy.textOfBytes out) else none
+
+/-- The options every patch the gate reads is asked for with, whatever this
+clone's configuration says: no colour, external driver or text conversion,
+the `a/`/`b/` prefixes the header reader expects (`diff.noprefix` and
+`diff.mnemonicPrefix` otherwise rename them, and a header without `b/` drops
+its file's lines), the whole tree rather than the current directory,
+renames read as renames, no context, and paths unquoted where git allows. -/
+def pinnedPatch : Array String :=
+  #["--no-color", "--no-ext-diff", "--no-textconv", "--no-relative", "--src-prefix=a/",
+    "--dst-prefix=b/", "-M", "--unified=0"]
+
+/-- `git diff` over `sel` as the gate reads one: `pinnedPatch`. -/
+def pinnedDiff (sel : Array String) : IO ByteArray :=
+  gitBytes (#["-c", "core.quotePath=false", "diff"] ++ pinnedPatch ++ sel)
 
 /-- The merge base with the trunk, under either spelling — a local `main`
 first, then `origin/main`. `none` when neither ref resolves. -/
@@ -251,31 +289,6 @@ def homePaths (l : String) : Array String := Id.run do
             if let some h := hit dirUsers [] then out := out.push h
   return out
 
-/-- Added lines of a unified=0 diff, with file and new-file line number. A
-`+++ ` line is a file header only between a `diff --git` line and the first
-hunk after it: inside a hunk it is an added line whose own text begins
-`++ `, and reading it as a header once dropped the rest of that hunk, home
-path and all. -/
-def addedLines (diff : String) : Array (String × Nat × String) := Id.run do
-  let mut out : Array (String × Nat × String) := #[]
-  let mut file := ""
-  let mut line := 0
-  let mut inHunk := false
-  for l in diff.splitOn "\n" do
-    if l.startsWith "diff --git " then
-      inHunk := false
-      file := ""
-    else if !inHunk && l.startsWith "+++ " then
-      file := if l.startsWith "+++ b/" then (l.drop "+++ b/".length).toString else ""
-    else if l.startsWith "@@" then
-      inHunk := true
-      let plus := ((l.splitOn "+").getD 1 "").takeWhile Char.isDigit
-      line := (plus.toString.toNat?).getD 0
-    else if inHunk && l.startsWith "+" then
-      if !file.isEmpty then out := out.push (file, line, (l.drop 1).toString)
-      line := line + 1
-  return out
-
 /-- Records of `git grep -n -z`: `path NUL line NUL content`, one per line. -/
 def grepRecords (out : String) : Array (String × Nat × String) := Id.run do
   let mut recs : Array (String × Nat × String) := #[]
@@ -289,6 +302,159 @@ def grepRecords (out : String) : Array (String × Nat × String) := Id.run do
 def homePathHits (lines : Array (String × Nat × String)) : Array (String × Nat × String) :=
   lines.foldl (init := #[]) fun acc (f, n, l) =>
     (homePaths l).foldl (init := acc) fun acc h => acc.push (f, n, h)
+
+/-- The kind of home a hit names, its login dropped: what the gate prints,
+since a login names a person. -/
+def homeKind (h : String) : String :=
+  if h.startsWith dirLocalHome then dirLocalHome
+  else if h.startsWith dirUsers then dirUsers
+  else dirHome
+
+/-- The objects `git cat-file --batch` answered, one per request in order:
+a found object's content, empty content for a name git could not resolve. -/
+def parseBatch (out : ByteArray) (n : Nat) : Array ByteArray := Id.run do
+  let mut res : Array ByteArray := #[]
+  let mut p := 0
+  for _ in [0:n] do
+    let mut q := p
+    for _ in [p:out.size] do
+      if out[q]? == some 10 then break
+      q := q + 1
+    let header := (String.fromUTF8? (out.extract p q)).getD ""
+    match ((header.splitOn " ")[2]?).bind String.toNat? with
+    | some size =>
+      res := res.push (out.extract (q + 1) (q + 1 + size))
+      p := q + 2 + size
+    | none =>
+      res := res.push ByteArray.empty
+      p := q + 1
+  return res
+
+/-- The content of each named object, through one `git cat-file --batch`.
+A dedicated task reads the answers while the requests are written, so
+neither pipe can fill and stall the other. -/
+def catBlobs (names : Array String) : IO (Array ByteArray) := do
+  if names.isEmpty then return #[]
+  let child ← IO.Process.spawn
+    { cmd := "git", args := #["cat-file", "--batch"],
+      stdin := .piped, stdout := .piped, stderr := .null }
+  let (stdin, child) ← child.takeStdin
+  let reader ← IO.asTask child.stdout.readBinToEnd Task.Priority.dedicated
+  stdin.putStr (String.join (names.toList.map (· ++ "\n")))
+  stdin.flush
+  let out ← IO.ofExcept reader.get
+  let code ← child.wait
+  if code != 0 then
+    IO.eprintln s!"pre-commit: git cat-file --batch exited {code}"
+    IO.Process.exit 1
+  return parseBatch out names.size
+
+/-- This clone's denylist, compiled: `info/private-terms` in the git common
+directory, which every worktree shares and no commit carries. `none` when
+the file is absent: another machine, or CI. -/
+def denylist : IO (Option Privacy.Matcher) := do
+  let some dir ← gitOpt #["rev-parse", "--path-format=absolute", "--git-common-dir"]
+    | return none
+  let path := System.FilePath.mk dir.trimAscii.toString / "info" / "private-terms"
+  unless ← path.pathExists do return none
+  let text := Privacy.textOfBytes (← IO.FS.readBinFile path)
+  return some (Privacy.Matcher.ofTerms (Privacy.parseTerms text))
+
+/-- The paths of a `-z` numstat answer whose content the privacy gate reads
+as a blob (`Privacy.blobRow`): those git counted no lines in — the content
+it reads as binary, an attribute's `-diff` included — and those whose name
+says their text is stored compressed. -/
+def binaryPaths (numstat : String) : Array String :=
+  Privacy.uniq ((numstat.splitOn "\x00").toArray.filterMap Privacy.blobRow)
+
+/-- The paths of a `-z` name list given as bytes, from each of its readings
+(`Privacy.segmentReadings`). -/
+def zPaths (names : ByteArray) : Array String :=
+  Privacy.uniq ((Privacy.segmentReadings names).foldl
+    (fun acc r => acc.append ((r.splitOn "\x00").filter (!·.isEmpty)).toArray) #[])
+
+/-- Where the staged changes add a denylisted term: an added line of
+`diff` (the staged patch, `pinnedDiff`, in each of its readings), an added,
+copied or renamed path, or the staged content of an added or modified file
+git reads as binary or whose name says its text is compressed — its lines
+when it is text all the same, its bytes and what they decompress to
+otherwise. Each finding is a location, a path masked where it holds the
+term, never the term. -/
+def privacyStaged (m : Privacy.Matcher) (diff : ByteArray) : IO (Array String) := do
+  let mut out := m.diffFindings diff ""
+  let names ← gitBytes #["diff", "--cached", "--name-only", "-z", "--no-relative",
+    "--diff-filter=ACR", "-M"]
+  out := out.append (m.pathFindings (zPaths names) "" "its path")
+  let binaries := binaryPaths (← git #["diff", "--cached", "--numstat", "-z", "--no-relative",
+    "--no-renames", "--diff-filter=AM"])
+  let blobs ← catBlobs (binaries.map (":" ++ ·))
+  for (p, bs) in binaries.zip blobs do
+    out := out.append (m.blobFindings p bs "")
+  return Privacy.uniq out
+
+/-- Set by the commit hook for the stages it runs, `lake lint` among them. -/
+def hookVar : String := "LEANTEX_PRECOMMIT_HOOK"
+
+/-- The revisions a landing would publish: reachable from HEAD and not from
+`refs/remotes/origin/main`. -/
+def unpushedRange : Array String := #["HEAD", "--not", "refs/remotes/origin/main"]
+
+/-- Where an unpushed commit adds a denylisted term — an added line, an
+added, copied or renamed path, an added or changed binary blob — or its
+message names one. Every commit is read, not only the tip's tree: a term one
+commit adds and a later one removes is gone from the tree and still in the
+history a push publishes. Merges are read against their first parent. -/
+def privacyCommits (m : Privacy.Matcher) : IO (Array String) := do
+  let mergesFirst := "--diff-merges=first-parent"
+  let patches ← gitBytes (#["-c", "core.quotePath=false", "log"] ++ pinnedPatch ++
+    #[mergesFirst, "-p", "--format=%x00%H"] ++ unpushedRange)
+  let paths ← gitBytes (#["log", "--format=%x00%H", "--name-only", "-z", "--diff-filter=ACR",
+    "-M", mergesFirst] ++ unpushedRange)
+  let numstat ← git (#["log", "--format=%x00%H", "--numstat", "-z", "--no-renames",
+    "--diff-filter=AM", mergesFirst] ++ unpushedRange)
+  let binaries := (Privacy.logRecords numstat).filterMap fun (sha, row) =>
+    (Privacy.blobRow row).bind fun p => if p.contains '\n' then none else some (sha, p)
+  let blobs ← catBlobs (binaries.map fun (sha, p) => s!"{sha}:{p}")
+  let found := m.commitFindings (Privacy.logPatchesOf patches) (Privacy.logRecordsOf paths)
+    (binaries.zip blobs)
+  let log ← gitBytes (#["log", "-z", "--format=%H%n%B"] ++ unpushedRange)
+  return Privacy.uniq (found.append (m.messageFindingsOf log))
+
+/-- Where the tree the next commit carries names a denylisted term, and,
+outside the commit hook, where an unpushed commit does (`privacyCommits`).
+The tree is the index: every staged path and blob, which in a clean checkout
+such as the landing's gate tree is HEAD's tree, and which a commit scrubbing
+a term already carries scrubbed, so the fix is never refused by its own
+gate. The commits are left to a run outside the hook, the landing's lint
+above all: every way of rewriting one (an amend, a rebase's reword or
+squash) runs the hook while the old commit is still HEAD's, and the hook
+already reads what the commit being made adds. Each finding is a location,
+never the term. With the list present and no `refs/remotes/origin/main` to
+bound the unpushed commits, the run is refused (the second component says
+why): skipping the commits there would pass a landing nothing had read. -/
+def privacyTree (m : Privacy.Matcher) : IO (Array String × Option String) := do
+  let staged ← gitBytes #["ls-files", "--stage", "-z"]
+  let entriesOf (r : String) : Array (String × String) :=
+    (r.splitOn "\x00").toArray.filterMap fun rec =>
+      match splitFirst rec "\t" with
+      | some (info, path) =>
+        match info.splitOn " " with
+        | [mode, oid, _] => if mode == "160000" then none else some (oid, path)
+        | _ => none
+      | none => none
+  let readings := Privacy.segmentReadings staged
+  let entries := entriesOf (readings[0]?.getD "")
+  let paths := Privacy.uniq (readings.foldl (fun acc r => acc.append ((entriesOf r).map (·.2))) #[])
+  let mut out := m.pathFindings paths "" "its path"
+  let blobs ← catBlobs (entries.map (·.1))
+  for ((_, p), bs) in entries.zip blobs do
+    out := out.append (m.blobFindings p bs "")
+  if (← IO.getEnv hookVar).isSome then return (out, none)
+  if (← gitOpt #["rev-parse", "--verify", "--quiet", "refs/remotes/origin/main"]).isNone then
+    return (out, some "this clone keeps a denylist but no refs/remotes/origin/main, so \
+which commits are unpushed is unknown and none was checked against it.
+  Fix: git fetch origin, so refs/remotes/origin/main names what the remote holds, then re-run.")
+  return (out.append (← privacyCommits m), none)
 
 def tokens (s : String) : List String :=
   (s.split Char.isWhitespace).toList.map (·.toString) |>.filter (!·.isEmpty)
@@ -2180,6 +2346,29 @@ def selftest : IO UInt32 := do
   unless (diagnosticOutputBypasses "LeanTex/Cli/Driver.lean" escapedWriter).map (·.1) == #[2] do
     fails.modify ("diagnosticOutputBypasses: public helper inherited an allowed writer" :: ·)
 
+  -- The privacy gate's plumbing (the matcher's own selftest runs in lake
+  -- test): added lines join into runs by file and consecutive line, and a
+  -- batch answer splits into its objects, a missing one empty.
+  let runs := addedRuns #[("a", 3, "x"), ("a", 4, "y"), ("a", 7, "z"), ("b", 8, "w")]
+  unless runs == #[("a", 3, "x\ny"), ("a", 7, "z"), ("b", 8, "w")] && addedRuns #[] == #[] do
+    fails.modify ("addedRuns did not join consecutive lines of one file, and only those" :: ·)
+  let batch := "0a1b blob 3\nabc\nnope missing\n0c2d blob 0\n\n".toUTF8
+  unless (parseBatch batch 3).map (·.toList) == #["abc".toUTF8.toList, [], []] do
+    fails.modify ("parseBatch did not split a batch answer into its objects" :: ·)
+  unless splitFirst "a\tb\tc" "\t" == some ("a", "b\tc") && splitFirst "abc" "\t" == none do
+    fails.modify ("splitFirst did not cut at the first separator alone" :: ·)
+  -- A home hit prints its kind, never the login after it.
+  unless homeKind (dirLocalHome ++ "dave") == dirLocalHome && homeKind (dirHome ++ "dave") == dirHome &&
+      homeKind (dirUsers ++ "dave") == dirUsers do
+    fails.modify ("homeKind did not keep the kind of home and drop the login" :: ·)
+  unless binaryPaths "-\t-\tfig.bin\x003\t1\tnotes.md\x00-\t-\ta\tb.pdf\x002\t0\tdoc.PDF\x00" ==
+      #["fig.bin", "a\tb.pdf", "doc.PDF"] do
+    fails.modify ("binaryPaths did not keep exactly the rows git counted no lines in and \
+those whose name says their text is compressed" :: ·)
+  let legacyNames : ByteArray := ⟨"a.md\x00caf".toUTF8.data ++ #[0xE9] ++ ".md\x00".toUTF8.data⟩
+  unless zPaths legacyNames == #["a.md", "caf\uFFFD.md", "caf\u00E9.md"] do
+    fails.modify ("zPaths did not read a -z name list in each of its encodings" :: ·)
+
   let failed := (← fails.get).reverse
   if failed.isEmpty then
     IO.println "precommit selftest: all passed"
@@ -2190,20 +2379,23 @@ def selftest : IO UInt32 := do
 
 /-- The compiled part of the hook. Build all prerequisites together, then
 run the standard drivers in order. A failing stage stops the run and keeps
-its exit code; no later stage may turn an incomplete proof into a pass. -/
-def checkCompiledTree (env : Array (String × Option String) := #[]) : IO UInt32 := do
+its exit code; no later stage may turn an incomplete proof into a pass.
+What a failing stage printed passes through `redact` (the denylist's
+masking, where this clone keeps one) before it is shown. -/
+def checkCompiledTree (env : Array (String × Option String) := #[])
+    (redact : String → String := id) : IO UInt32 := do
   let stages := #[
     ("lake", #["build", "--wfail", "LeanTex", "leantex", "Tests",
       "precommit", "proofcheck", "lint", "cites", "land"]),
     ("lake", #["test"]),
     ("lake", #["lint"])]
   for (cmd, args) in stages do
-    let out ← IO.Process.output { cmd, args, env }
-    if out.exitCode != 0 then
+    let (code, out, err) ← runBytes cmd args env
+    if code != 0 then
       IO.eprintln s!"pre-commit: {cmd} {String.intercalate " " args.toList} failed:"
-      IO.eprint out.stdout
-      IO.eprint out.stderr
-      return out.exitCode
+      IO.eprint (redact (Privacy.textOfBytes out))
+      IO.eprint (redact (Privacy.textOfBytes err))
+      return code
   return 0
 
 def main (args : List String) : IO UInt32 := do
@@ -2224,17 +2416,25 @@ def main (args : List String) : IO UInt32 := do
   if src == .index && staged.isEmpty then
     return 0
 
+  -- The denylist, read first: every message below passes through its
+  -- masking, so no gate prints a listed term — a home path's login, a
+  -- debris file's name — while it reports something else.
+  let privacy ← denylist
+  let redact : String → String := fun msg => match privacy with
+    | some m => m.redact msg
+    | none => msg
   let failed ← IO.mkRef false
   let say (msg : String) : IO Unit := do
-    IO.eprintln msg
+    IO.eprintln (redact msg)
     failed.set true
 
   -- Checked in every staged file whatever its extension — the two markers
   -- that once landed were in PLAN.md prose — and before the relevance
   -- gate, which would otherwise skip a prose-only commit.
-  let fullDiff ← match sel with
-    | none => pure ""
-    | some s => git (#["diff", "--no-color", "--unified=0"] ++ s)
+  let fullDiffBytes ← match sel with
+    | none => pure ByteArray.empty
+    | some s => pinnedDiff s
+  let fullDiff := Privacy.textOfBytes fullDiffBytes
   let bad := conflictMarkers fullDiff
   if !bad.isEmpty then
     let hits := String.intercalate "\n" (bad.toList.map fun (f, n, l) => s!"  {f}:{n}: {l}")
@@ -2285,12 +2485,42 @@ def main (args : List String) : IO UInt32 := do
       IO.Process.exit 1
   let homeHits := homePathHits homeLines
   if !homeHits.isEmpty then
-    let hits := String.intercalate "\n" (homeHits.toList.map fun (f, n, h) => s!"  {f}:{n}: {h}")
+    -- The location and the kind of home, never the login after it.
+    let hits := String.intercalate "\n" (homeHits.toList.map fun (f, n, h) =>
+      s!"  {f}:{n}: {homeKind h}…")
     say s!"pre-commit: a home directory path in a tracked text file:
 {hits}
   A home directory names a person and a machine; neither belongs in this tree.
   Fix: refer to the private reference corpus abstractly, write a placeholder,
   or give the path relative to the repository."
+
+  -- Personal and private-document terms (AGENTS.md, opening paragraph), by
+  -- the denylist this clone keeps outside the tree: the hook reads every line,
+  -- path and binary the commit adds, whatever its extension; --tree and
+  -- --range read the whole staged tree and, outside the hook, every unpushed
+  -- commit and its message, which is what the landing's lint gate runs. With
+  -- no list (another machine, CI) the check says so and passes.
+  match privacy with
+  | none =>
+    IO.println "pre-commit: this clone keeps no info/private-terms in its git directory; \
+the privacy check is skipped."
+  | some m =>
+    let (hits, refused) ← if src == .index then pure ((← privacyStaged m fullDiffBytes), none)
+      else privacyTree m
+    if let some why := refused then say s!"pre-commit: {why}"
+    unless hits.isEmpty do
+      let scope := if src == .index then "in the staged changes"
+        else "in the staged tree or an unpushed commit"
+      say s!"pre-commit: a denylisted term {scope}, at:
+{String.intercalate "\n" hits.toList}
+  The local denylist (info/private-terms in the git common directory) holds
+  personal and private-document terms; none may enter the tree, a commit or
+  a commit message. The term is never printed, and a path holding it is
+  shown with that part as …; git ls-files or git show --stat names it.
+  Fix: replace the text with invented words that exercise the same property,
+  then re-stage. A term in an unpushed commit stays in what a push publishes
+  even after a later commit removes it: rewrite that commit (amend, or
+  squash it with the fix) before landing."
 
   if src == .index && !staged.any relevant then
     return (if ← failed.get then 1 else 0)
@@ -2691,5 +2921,6 @@ def main (args : List String) : IO UInt32 := do
     let prefixOut ← IO.Process.output { cmd := "lean", args := #["--print-prefix"] }
     let pre := prefixOut.stdout.trimAscii.toString
     env := #[("LEAN_CC", some clang), ("LIBRARY_PATH", some s!"{pre}/lib:{pre}/lib/lean")]
+  if src == .index then env := env.push (hookVar, some "1")
 
-  checkCompiledTree env
+  checkCompiledTree env redact

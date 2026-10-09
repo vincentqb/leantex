@@ -2,88 +2,86 @@
 % this preamble is an idiom the compat layer rewrites into a native declaration;
 % `leantex -v` lists each one with its shorter spelling. Invented content.
 
-\documentclass[paper=letter,fontsize=10pt]{scrartcl}
+\documentclass[paper=a5,fontsize=11pt]{scrartcl}
+
+\usepackage{xcolor}
+\definecolor{deepwater}{HTML}{1F4E5F}
+\definecolor{driftwood}{rgb}{0.47,0.41,0.33}
+\definecolor{foam}{HTML}{B8D8CF}
+\colorlet{oarblade}{driftwood}
 
 \usepackage[english]{babel}
 \babelfont{rm}[Path=fonts/]{SourceSerifPro-Regular.otf}
 \babelfont{sf}[Path=fonts/]{OpenSans-Regular.ttf}
+\usepackage[a5paper, vmargin=14mm, hmargin=17mm, headsep=5mm]{geometry}
 \usepackage{microtype}
-\usepackage{xcolor}
-\usepackage[letterpaper, vmargin=0.5in, hmargin=0.75in, headsep=0.25in]{geometry}
-\usepackage{scrlayer-scrpage}
-\pagestyle{scrheadings}
-\clearpairofpagestyles
-\ihead{\sffamily\scshape Alex Doe}
-\ohead{\thepage}
 
-\newlength{\rhythm}
-\setlength{\rhythm}{1.8ex plus 0.8ex minus 0.4ex\relax}
-\newlength{\sepunit}
-\setlength{\sepunit}{0.5\rhythm}
-\linespread{1.04}
+\newlength{\beat}
+\setlength{\beat}{2.2ex plus 0.6ex minus 0.3ex\relax}
+\newlength{\stroke}
+\setlength{\stroke}{0.75\beat}
+\linespread{1.12}
+
+\usepackage{scrlayer-scrpage}
+\clearpairofpagestyles
+\ihead{\itshape Harbour Rowing Club}
+\ohead{\thepage}
+\pagestyle{scrheadings}
+
+% Element styling the KOMA and enumitem way; each becomes one \style{...}.
+\makeatletter
+\renewcommand\sectionlinesformat[4]{#3#4\quad\textcolor{foam}{\leaders\hrule height 1.1pt\hfill}}
+\makeatother
+\RedeclareSectionCommand[beforeskip=2\stroke,afterskip=1\stroke]{section}
+\setkomafont{section}{\Large\sffamily\itshape\color{deepwater}}
+\setlist[itemize]{label={\textcolor{oarblade}{\footnotesize\textbullet}}, leftmargin=1.6em, itemsep=\stroke, topsep=\stroke}
+
+\newcommand{\boat}[2]{\textit{#1}: #2.\par}
+\NewDocumentCommand{\boatsep}{}{\ \textbullet\ }
+\NewDocumentCommand{\fixture}{m m m o}{%
+    \textsc{#3}\quad\textbf{#1}, #2\IfValueT{#4}{ (\textit{#4})}\par
+}
 
 \usepackage{hyperref}
 \usepackage{soul}
 \hypersetup{
-    pdfauthor={Alex Doe},
-    pdftitle={Alex Doe},
-    pdfborder=0 0 0,
-    colorlinks=false
+    pdftitle={Spring Bulletin},
+    pdfauthor={Harbour Rowing Club},
+    colorlinks=false,
+    pdfborder={0 0 0}
 }
-
-\definecolor{primary}{HTML}{0F766E}
-\definecolor{muted}{rgb}{0.45,0.45,0.5}
-\definecolor{rulecolor}{HTML}{99F6E4}
-\colorlet{bulletcolor}{muted}
-
-% Element styling the KOMA and enumitem way; each becomes one \style{...}.
-\setkomafont{section}{\large\sffamily\bfseries\color{primary}}
-\RedeclareSectionCommand[beforeskip=3\sepunit,afterskip=1\sepunit]{section}
-\makeatletter
-\renewcommand\sectionlinesformat[4]{\hskip#2#3#4\ \textcolor{rulecolor}{\leaders\hrule height 0.6pt\hfill\kern\z@}}
-\makeatother
-\setlist[itemize]{leftmargin=1.2em, label={\textcolor{bulletcolor}{\small\textendash}}, topsep=\sepunit, itemsep=\sepunit}
 \thispagestyle{empty}
 
-\NewDocumentCommand{\dotsep}{}{\ \textperiodcentered\ }
-\NewDocumentCommand{\role}{m m m o}{%
-    \noindent\textbf{#1} \textbar\ \textbf{#2} \hfill {\color{muted}#3}\par
-    \IfValueT{#4}{\noindent{\color{muted}\textit{#4}}\par}%
-}
-\newcommand{\degree}[2]{\noindent\textbf{#1}, #2\par}
-\makeatletter
-\makeatother
-
 \begin{document}
-\color{primary}
+\color{deepwater}
 
 \begin{center}
-    {\sffamily\bfseries\Huge \textcolor{primary}{Alex} Doe \par}
-    \vspace{2\sepunit}
-    {\color{muted} alex@example.org\dotsep example.org}
+    {\LARGE\sffamily\bfseries Spring \textcolor{driftwood}{Bulletin}\par}
+    \vspace{2\stroke}
+    {\color{driftwood} crew@example.org\boatsep example.org/harbour}
 \end{center}
 
-\section*{Experience}
+\section*{Fixtures}
 
-\role{Example Corp}{Staff Engineer}{2021--present}[Platform]
+\fixture{Upper Reach}{coxed fours}{Sat 09:30}[novices welcome]
 
 \begin{itemize}
-    \item Made a slow thing 10\% faster and proved it stayed correct.
+    \item Launch from the north pontoon; the tide turns at ten.
 \end{itemize}
 
-\vspace{2\sepunit}
-\role{Widgets Ltd}{Engineer}{2017--2021}
+\vspace{2\stroke}
+\fixture{Lower Reach}{single sculls}{Sun 15:00}
 
-\section*{Education}
+\section*{Boats}
 
-\degree{PhD Applied Mathematics}{Example University}
+\boat{Kestrel}{a coxed four rigged for bow side}
 
-% The hand-aligned pair: `Awards` carries no descender, so its box is
-% shallower than `Judged`'s and the two would sit on different baselines.
+% The hand-aligned pair: `Novice` carries no descender, so its box is
+% shallower than `Trophy`'s and the two would sit on different baselines.
 % \vphantom props the depth by hand — the idiom this line exists to keep
 % working, argument and all, without that argument ever reaching the page.
-\noindent\textbf{Awards\vphantom{qy}} \textbar\ \textbf{Judged} \hfill {\color{muted}2019}\par
+\noindent\textbf{Novice\vphantom{gj}} and \textbf{Trophy} share the shelf this season.\par
 
-\ul{Selected honours} follow, judged \varul<5>[0.2ex][0.1ex]{genuinely groundbreaking} by a jury.
+\ul{Race reports} follow, rowed \varul<3>[0.25ex][0.08ex]{remarkably steadily} into a headwind.
 
 \end{document}

@@ -211,7 +211,7 @@ def styleChecks (ref : IO.Ref (List String)) : IO Unit := do
   let styled := elabStr ("\\documentclass{article}\\palette{ink = #112233}" ++
     "\\tokens{ sep = 3pt }" ++
     "\\style{section}{ font = {\\large\\sffamily\\ink}, before = 2 * sep, after = sep, rule = ink }" ++
-    "\\style{itemize}{ indent = 1.2em, gap = sep, marker = {\\ink\\textendash} }" ++
+    "\\style{itemize}{ indent = 1.5em, gap = sep, marker = {\\ink\\textbullet} }" ++
     "\\begin{document}\\section{Head}\\begin{itemize}\\item a\\end{itemize}\\end{document}")
   t "style source clean" (styled.2.all (·.severity == .note))
   let secStyle := styled.1.styles.find? "section"
@@ -225,17 +225,17 @@ def styleChecks (ref : IO.Ref (List String)) : IO Unit := do
     ((secStyle.bind (·.rule)).map (·.2) == some (some "ink"))
   let listStyle := styled.1.styles.find? "itemize"
   t "style itemize marker is content"
-    ((listStyle.bind (·.marker)) == some #[.colored { r := 0x11, g := 0x22, b := 0x33 } (some "ink") #[.text "–"]])
+    ((listStyle.bind (·.marker)) == some #[.colored { r := 0x11, g := 0x22, b := 0x33 } (some "ink") #[.text "•"]])
   -- A declared marker either reaches HTML as declared or the substitution
-  -- is named (W0331): the résumé's colour-and-size shape is expressible in
+  -- is named (W0331): a glyph in a colour and a size is expressible in
   -- a ::marker rule (CSS Pseudo-Elements 4 §4.1), arbitrary inline content
   -- is not. `markerCss?_text` is the theorem that the expressed content is
   -- exactly the declared characters.
-  let dash : Ir.Color := { r := 0x20, g := 0x5E, b := 0x3B }
+  let markInk : Ir.Color := { r := 0x20, g := 0x5E, b := 0x3B }
   t "markerCss? expresses colour and size around text"
-    (HtmlDoc.markerCss? #[.colored dash (some "markerink")
-        #[.styled (.size "small") #[.text "–"]]] ==
-      some { text := "–"
+    (HtmlDoc.markerCss? #[.colored markInk (some "markerink")
+        #[.styled (.size "small") #[.text "•"]]] ==
+      some { text := "•"
              decls := #["color: var(--markerink, #205e3b);", "font-size: 0.9em;"] })
   t "markerCss? expresses bold plain text"
     (HtmlDoc.markerCss? #[.styled .bold #[.text "»"]] ==
@@ -251,10 +251,10 @@ def styleChecks (ref : IO.Ref (List String)) : IO Unit := do
       s!"\\style\{itemize}\{ marker = \{{m}} }" ++
       "\\begin{document}\\begin{itemize}\\item a\\end{itemize}\\end{document}")).1
   let (styledMarkerPage, styledMarkerDs) :=
-    HtmlDoc.emit {} (markerDoc "\\textcolor{markerink}{\\small\\endash}")
+    HtmlDoc.emit {} (markerDoc "\\textcolor{markerink}{\\small\\textbullet}")
   t "html styled marker reaches ::marker with its colour and size"
     ((styledMarkerPage.splitOn
-      "{ content: \"–  \"; color: var(--markerink, #205e3b); font-size: 0.9em; }").length == 2)
+      "{ content: \"•  \"; color: var(--markerink, #205e3b); font-size: 0.9em; }").length == 2)
   t "html styled marker is clean" (styledMarkerDs.all (·.code != "W0331"))
   let (nestedMarkerPage, nestedMarkerDs) :=
     HtmlDoc.emit {} (markerDoc "\\textbf{\\textit{»}}")
@@ -308,11 +308,12 @@ def styleChecks (ref : IO.Ref (List String)) : IO Unit := do
      (stylePage.splitOn "<h2 class=\"ruled\"><span class=\"section-number\">").length == 2)
   t "html styled heading spacing" ((stylePage.splitOn "h2 { margin-top: 6pt; margin-bottom: 3pt;").length == 2)
   t "html styled list indent and gap"
-    ((stylePage.splitOn "ul { padding-left: 1.2em; }").length == 2 &&
+    ((stylePage.splitOn "ul { padding-left: 1.5em; }").length == 2 &&
      (stylePage.splitOn "ul > li { margin-top: 3pt; }").length == 2)
-  -- Font-relative lengths keep their unit. `1.2em` once became `120%`, which
-  -- for padding is a fraction of the container: every styled list left the page.
-  t "css em keeps its unit" (HtmlDoc.cssLength { em := 1200 } == "1.2em")
+  -- Font-relative lengths keep their unit. An em length once became a
+  -- percentage, which for padding is a fraction of the container: every
+  -- styled list left the page.
+  t "css em keeps its unit" (HtmlDoc.cssLength { em := 1500 } == "1.5em")
   t "css ex keeps its unit" (HtmlDoc.cssLength { ex := 1500 } == "1.5ex")
   t "css whole em has no fraction" (HtmlDoc.cssLength { em := 2000 } == "2em")
   t "css mixed length sums" (HtmlDoc.cssLength { sp := Dim.pt 3, em := 500 } == "calc(3pt + 0.5em)")
@@ -343,7 +344,7 @@ def htmlLayoutChecks (ref : IO.Ref (List String)) : IO Unit := do
     attrs.any fun (key, value) =>
       key == "class" && (value.splitOn " ").contains name
   let (entryDoc, _) := elabStr ("\\documentclass{article}\\begin{document}" ++
-    "left label \\hfill 2021\\end{document}")
+    "left label \\hfill 1987\\end{document}")
   let entryTree := HtmlDoc.blockNode {} entryDoc.body[0]!
   let entryPage := (HtmlDoc.emit {} entryDoc).1
   t "html two-group fill row selects the pair contract"
@@ -687,7 +688,7 @@ def htmlListGapChecks (ref : IO.Ref (List String)) : IO Unit := do
     (hasStr deck s!":where({lastList 1 ""}) \{ margin-top: {space "0.219"}; }")
   let web := page "{webpage}"
   t "html a webpage's lists keep the peer gap and its items a leading"
-    (!hasStr web "li + li:" && !hasStr web "--parskip:" &&
+    (!hasStr web "li + li:" && !hasStr web "dl > *) { --parskip:" &&
      hasStr web ":where(* + ul) { margin-top: var(--parskip, 0.725rem); }" &&
      hasStr web ":where(* + .u-trivlist-env, * + blockquote) { margin-top: ")
   -- The reference list's entries are the paragraphs the PDF walk sets a
@@ -919,23 +920,23 @@ text, and a speaker note stays a side channel. Invented content. -/
 def markdownChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
   let (doc, ds) := elabStr ("\\documentclass{article}" ++
-    "\\pdfmeta{ title = \"Alex Doe, PhD\", subject = \"An invented person.\" }" ++
+    "\\pdfmeta{ title = \"Alex Doe, Cartographer\", subject = \"An invented person.\" }" ++
     "\\begin{document}" ++
     "Intro with \\textbf{weight} and \\href{https://example.org}{a link}." ++
     "\\section*{Field Notes}" ++
-    "Label \\hfill 2021\\par" ++
+    "Label \\hfill 1987\\par" ++
     "\\begin{itemize}\\item One thing\\item Another\\end{itemize}" ++
     "\\end{document}")
   let md := (MarkdownDoc.emit doc)
   t "markdown source is clean" ds.isEmpty
   t "markdown metadata renders as the llms.txt preamble"
-    (md.startsWith "# Alex Doe, PhD\n\n> An invented person.\n\n")
+    (md.startsWith "# Alex Doe, Cartographer\n\n> An invented person.\n\n")
   t "markdown keeps meaning and degrades decoration"
     ((md.splitOn "Intro with **weight** and [a link](https://example.org).").length == 2)
   t "markdown reserves # for the title"
     ((md.splitOn "\n## Field Notes\n").length == 2 && (md.splitOn "\n# ").length == 1)
   t "markdown fill separates as an em dash"
-    ((md.splitOn "Label — 2021").length == 2)
+    ((md.splitOn "Label — 1987").length == 2)
   t "markdown lists are lists"
     ((md.splitOn "- One thing\n- Another\n").length == 2)
   t "markdown ends with exactly one newline"
@@ -1020,9 +1021,9 @@ def mdPreambleChecks (ref : IO.Ref (List String)) : IO Unit := do
   -- back when uniform small caps required writing the casing wrong; it
   -- retired with the workaround.)
   let (sc, _) := elabStr ("\\documentclass{article}\\begin{document}" ++
-    "{\\scshape PhD}\\end{document}")
+    "{\\scshape NaCl}\\end{document}")
   t "the twin of a mixed-case small-caps run carries the authored casing"
-    ((MarkdownDoc.emit sc) == "PhD\n")
+    ((MarkdownDoc.emit sc) == "NaCl\n")
   -- A `|` in prose is `\|` in the twin — CommonMark §2.4 escapes any ASCII
   -- punctuation — so a table cell containing one keeps its row instead of
   -- splitting it at the pipe.
@@ -1725,7 +1726,7 @@ def webMetaChecks (ref : IO.Ref (List String)) (geom : Layout.Geom)
     (oneFace : Font.FontSet) : IO Unit := do
   let t := check ref
   let (doc, ds) := elabStr ("\\documentclass{article}" ++
-    "\\pdfmeta{ title = \"Alex Doe, PhD\", subject = \"An invented person.\"," ++
+    "\\pdfmeta{ title = \"Alex Doe, Cartographer\", subject = \"An invented person.\"," ++
     " author = \"Alex Doe\", url = \"https://example.org/alex\"," ++
     " image = \"https://example.org/alex/card.png\", favicon = \"favicon.svg\" }" ++
     "\\begin{document}Body text.\\end{document}")
@@ -1740,7 +1741,7 @@ def webMetaChecks (ref : IO.Ref (List String)) (geom : Layout.Geom)
     (has "<link rel=\"canonical\" href=\"https://example.org/alex\">")
   t "html head links the favicon" (has "<link rel=\"icon\" href=\"favicon.svg\">")
   t "html og facts derive from the one record"
-    (has "<meta property=\"og:title\" content=\"Alex Doe, PhD\">" &&
+    (has "<meta property=\"og:title\" content=\"Alex Doe, Cartographer\">" &&
      has "<meta property=\"og:description\" content=\"An invented person.\">" &&
      has "<meta property=\"og:url\" content=\"https://example.org/alex\">" &&
      has "<meta property=\"og:image\" content=\"https://example.org/alex/card.png\">" &&
@@ -1758,19 +1759,19 @@ def webMetaChecks (ref : IO.Ref (List String)) (geom : Layout.Geom)
   let md := (MarkdownDoc.emit doc)
   let pdf := pdfText (Pdf.write geom oneFace (layoutOf oneFace doc geom).pages doc.info)
   t "the one declared title reaches all three surfaces"
-    (has "<title>Alex Doe, PhD</title>" &&
-     md.startsWith "# Alex Doe, PhD\n" &&
-     bytesContain pdf "/Title (Alex Doe, PhD)")
+    (has "<title>Alex Doe, Cartographer</title>" &&
+     md.startsWith "# Alex Doe, Cartographer\n" &&
+     bytesContain pdf "/Title (Alex Doe, Cartographer)")
   t "the one declared url reaches the pdf as XMP dc:identifier"
     (bytesContain pdf "<dc:identifier>https://example.org/alex</dc:identifier>")
   -- A text string past ASCII is UTF-16BE with the byte-order mark
   -- (ISO 32000-2 §7.9.2.2): raw UTF-8 in an Info string is read as
   -- PDFDocEncoding, and an 'é' displayed as 'Ã©' in the document panel.
-  let accDoc := { doc with info := { doc.info with title := some "Bélair Résumé" } }
+  let accDoc := { doc with info := { doc.info with title := some "Café Crème" } }
   let accPdf := pdfText (Pdf.write geom oneFace (layoutOf oneFace accDoc geom).pages accDoc.info)
   t "an accented Info title is a UTF-16BE hex string with the BOM"
     (bytesContain accPdf
-      "/Title <FEFF004200E9006C0061006900720020005200E900730075006D00E9>")
+      "/Title <FEFF00430061006600E900200043007200E8006D0065>")
   t "the ascii entries beside it keep the literal spelling"
     (bytesContain accPdf "/Author (Alex Doe)")
   -- Both artifacts declare the document's language everywhere text
@@ -1803,7 +1804,7 @@ def webMetaChecks (ref : IO.Ref (List String)) (geom : Layout.Geom)
   t "html json-ld derives from the one record"
     (has "<script type=\"application/ld+json\">" &&
      has "\"@type\": \"WebPage\"" &&
-     has "\"name\": \"Alex Doe, PhD\"" &&
+     has "\"name\": \"Alex Doe, Cartographer\"" &&
      has "\"url\": \"https://example.org/alex\"" &&
      has "\"author\": {\"@type\": \"Person\", \"name\": \"Alex Doe\"}")
   let hostile := { bare with info := { bare.info with
@@ -2906,7 +2907,7 @@ def pdfCensusTable :
   ("diagram-boundary", (1, 1, 0, 0, 0, 0, 0, none, ["FlateDecode"])),
   ("diagram-overflow", (1, 1, 0, 0, 0, 0, 0, none, ["FlateDecode"])),
   ("diagram-refused", (1, 1, 0, 0, 0, 0, 0, none, ["FlateDecode"])),
-  ("diagram-scm", (1, 1, 0, 0, 0, 0, 0, none, ["FlateDecode"])),
+  ("diagram-shapes", (1, 1, 0, 0, 0, 0, 0, none, ["FlateDecode"])),
   ("diagram-tikzset", (1, 1, 0, 0, 0, 0, 0, none, ["FlateDecode"])),
   ("tables", (1, 1, 0, 0, 0, 0, 0, none, ["FlateDecode"])),
   ("tables-deck", (3, 1, 0, 0, 0, 0, 0, none, ["FlateDecode"])),

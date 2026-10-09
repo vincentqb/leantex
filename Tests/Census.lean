@@ -263,17 +263,16 @@ def censusRows1 :
           decide (ty < by_)).getD false &&
       hasStr (censusText c) "The alert body stands under its own title." &&
       hasStr (censusText c) "The example body stands under its own title."),
-    ("the untitled block ships its body alone",
-      hasStr (censusText c) "An untitled block keeps its body and draws no bar."),
-    -- Only `blocktitlebg` is declared, so exactly the plain titled
-    -- block draws a bar: alert and example take their content colours
-    -- barless, and the untitled block and the bare default theme add
-    -- no fill.
-    ("the one declared title bar ships as a fill",
-      (c[0]?.map (·.fills)).getD 0 == 1),
-    ("a filled title uses the shared surface inset",
-      lineXOf c 0 "A Plain Statement" ==
-        some (geom.hmargin + Ir.titledPadding.resolve geom.fontSize 0)),
+    ("the untitled block ships its body under its empty title band",
+      hasStr (censusText c) "An untitled block keeps its body under an empty title band."),
+    -- Only `blocktitlebg` is declared, so exactly the plain kind draws a
+    -- bar: alert and example take their content colours barless. beamer
+    -- keeps an untitled block's empty title box, so the untitled plain
+    -- block paints its 1.5ex band too, and the bare theme adds no fill.
+    ("the declared title bar ships on both plain blocks",
+      (c[0]?.map (·.fills)).getD 0 == 2),
+    ("a filled title stands on the measure, its paint reaching beyond it",
+      lineXOf c 0 "A Plain Statement" == some geom.hmargin),
     ("unfilled titles stand on the measure",
       lineXOf c 0 "A Loud Statement" == some geom.hmargin &&
       lineXOf c 0 "A Worked Instance" == some geom.hmargin)]),
@@ -452,15 +451,15 @@ def censusRows2 :
     ("the contact line ships", hasStr (censusText c) "alex@example.org")]),
   ("resume-data", fun _ c => [
     ("one page", c.size == 1),
-    ("the first record's company ships", hasStr (censusText c) "Example Corp"),
+    ("the first record's employer ships", hasStr (censusText c) "Example Corp"),
     ("the record without an end ships the else branch",
-      hasStr (censusText c) "2021–present"),
-    ("a bounded record ships both years", hasStr (censusText c) "2017–2021"),
-    ("an achievements item ships with a marker",
-      hasStr (censusText c) "• Measured the widgets"),
+      hasStr (censusText c) "1996–present"),
+    ("a bounded record ships both years", hasStr (censusText c) "1989–1996"),
+    ("a highlights item ships with a marker",
+      hasStr (censusText c) "• Measured the bulbs"),
     ("the tie inside a value holds its words on one line",
       (c[0]?.map fun p => p.lines.any fun l =>
-        hasStr l.text "widget" && hasStr l.text "pipeline,").getD false),
+        hasStr l.text "potting" && hasStr l.text "shed,").getD false),
     ("the records ship in file order",
       ((censusText c).splitOn "Example Corp").length > 1 &&
         hasStr (((censusText c).splitOn "Example Corp").getLast? |>.getD "")
@@ -551,18 +550,19 @@ def censusRows2 :
     ("the accent beats ship", pageHas c 2 "azure emphasis" && pageHas c 2 "green example")]),
   ("latex-idioms", fun _ c => [
     ("one page", c.size == 1),
-    ("the running head ships", hasStr (censusText c) "Alex Doe"),
+    ("the opening title ships", hasStr (censusText c) "Spring Bulletin"),
     ("the section rules draw", c.any fun p => decide (p.rules ≥ 1)),
-    ("thispagestyle empty keeps the opening page bare of the page number",
-      (c[0]?.map fun p => p.lines.all (·.text.trimAscii.toString != "1")).getD false),
+    ("thispagestyle empty keeps the opening page bare of the running head and its number",
+      (c[0]?.map fun p => p.lines.all fun l =>
+        l.text.trimAscii.toString != "1" && !hasStr l.text "Harbour Rowing Club").getD false),
     -- The hand-aligned pair, through the whole driver: a phantom props a
     -- descender-less word's depth so it shares its neighbour's baseline. The
     -- argument is sizing, never ink — this fixture is the corpus's witness
     -- that no page ships it.
     ("the hand-aligned pair ships both its words",
-      hasStr (censusText c) "Awards" && hasStr (censusText c) "Judged"),
+      hasStr (censusText c) "Novice" && hasStr (censusText c) "Trophy"),
     ("and the phantom's argument reaches no page",
-      !hasStr (censusText c) "qy")]),
+      !hasStr (censusText c) "gj")]),
   ("headroom", fun geom c => [
     ("one page", c.size == 1),
     ("the head ships with its page number", hasStr (censusText c) "Invented Field Notes"),
@@ -722,7 +722,7 @@ def censusRows4 :
     ("one page", c.size == 1),
     ("the name ships", hasStr (censusText c) "Doe"),
     ("the section headings ship",
-      hasStr (censusText c) "Experience" && hasStr (censusText c) "Education")]),
+      hasStr (censusText c) "Work" && hasStr (censusText c) "Training")]),
   ("webnav", fun _ c => [
     ("one page", c.size == 1),
     ("the shared content ships", hasStr (censusText c) "appears on every surface"),
@@ -776,13 +776,13 @@ def censusRows4 :
     ("the prose around the placeholder ships",
       hasStr (censusText c) "constructs outside the rendered subset" &&
         hasStr (censusText c) "Text resumes after the placeholder")]),
-  ("diagram-scm", fun _ c => [
+  ("diagram-shapes", fun _ c => [
     ("one page", c.size == 1),
     -- three outlines + four edges + one arrow-tip triangle
     ("the node outlines, edges, and tip ship as page paths",
       (c[0]?.map (·.paths == 8)).getD false),
-    ("the text node body ships", hasStr (censusText c) "out"),
-    ("the curve's mid-path label ships", hasStr (censusText c) "lift"),
+    ("the text node body ships", hasStr (censusText c) "tile"),
+    ("the curve's mid-path label ships", hasStr (censusText c) "bend"),
     -- A label's alphabet resolves as a paragraph's: upright letters, never
     -- the source italic an unresolved alphabet node set (𝑟𝑑).
     ("the alphabet edge label ships upright",
@@ -1102,9 +1102,9 @@ def censusRows7 :
     ("two faces, two pages", c.size == 2),
     ("the front ships the name", pageHas c 0 "Pat Placeholder"),
     ("the back ships the contact", pageHas c 1 "press@example.org"),
-    -- The declared cut marks, judged from the shipped fills: ink exactly
-    -- on the eight marks and none in the gap or on the trim corner —
-    -- the print-shop check, now the engine's.
+    -- The declared cut marks, judged from the shipped fills: those eight
+    -- are a face's only ink, each outside the trim and inside the medium,
+    -- and none reaches within the declared gap of a trim corner.
     ("each face ships exactly the eight cut marks and no other fill",
       c.all fun p => p.fills == 8),
     ("every mark stands in the bleed strip: outside the trim, inside the medium",

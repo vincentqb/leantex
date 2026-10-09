@@ -54,7 +54,9 @@ def beamerColorOriginChecks (ref : IO.Ref (List String)) : IO Unit := do
       ("implicit cycle with an unrelated channel", "\n\\setbeamercolor{frametitle}{parent=framesubtitle}\n" ++
         "\\setbeamercolor{framesubtitle}{fg=red}", [2]),
       ("implicit cycle through a use edge", "\n\\setbeamercolor{frametitle}{use=framesubtitle}", [2]),
-      ("implicit section chain cycle", "\n\\setbeamercolor{normal text}{parent=section title}", [2])] do
+      -- beamer's default theme hangs `section title` on `titlelike` and
+      -- `titlelike` on `structure` (beamercolorthemedefault.sty).
+      ("implicit section chain cycle", "\n\\setbeamercolor{structure}{parent=section title}", [2])] do
     let raws := parse "root.tex" "\\documentclass{beamer}\n" ++
       #[Parse.Raw.env (Parse.inputEnv child) (parse child source) {}] ++
       parse "root.tex" "\\begin{document}\\begin{frame}{Heading}Body\\end{frame}\\end{document}"
@@ -66,6 +68,48 @@ def beamerColorOriginChecks (ref : IO.Ref (List String)) : IO Unit := do
       (ds.all fun d => d.span.any fun span =>
         span.file == child && lines.contains span.pos.line && span.pos.col == 1)
 
+/-- A deck holding every native paint site a colour element can reach: a
+title page's separator, a titled frame with a subtitle and an alert, the
+three block kinds, a section page, a standout frame and the footline. -/
+private def siteDeck (theme decl : String) : String :=
+  "\\documentclass{beamer}" ++ theme ++
+    "\\definecolor{ProbeInk}{HTML}{173B58}\\definecolor{ProbePaper}{HTML}{E8EDF3}" ++ decl ++
+    "\\title{Synthetic Deck}\\begin{document}\\maketitle" ++
+    "\\begin{frame}{Heading}\\framesubtitle{Subheading}Body \\alert{loud} words." ++
+    "\\begin{block}{Plain}P\\end{block}\\begin{alertblock}{Loud}A\\end{alertblock}" ++
+    "\\begin{exampleblock}{Shown}E\\end{exampleblock}\\end{frame}" ++
+    "\\section{Middle}\\begin{frame}{Later}omega\\end{frame}" ++
+    "\\begin{frame}[standout]Aside\\end{frame}\\end{document}"
+
+/-- **The unused-element loss names exactly the declarations that change
+no paint.** `finishBeamerColors` names a declared element no supported site
+reaches (W0104); its premise, checked here two builds apart under beamer's
+default colour theme and moloch: for every element the engine models a site
+or a relationship of — and two it models neither of — a declaration of
+both channels is named unused if and only if the shipped pages are the
+pages without it, and a named one leaves the HTML as it was too. moloch's
+block title overrides both channels of its `structure` parent, so there a
+`structure` declaration reaches nothing and is named; under the default
+theme it paints the frame and block titles. -/
+def beamerReachChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit := do
+  let t := check ref
+  let artifacts (src : String) : String × String × Array Diag :=
+    let (doc, ds) := elabStr src
+    let (head, body, _) := HtmlDoc.emitTree {} doc
+    (reprStr (layoutOf fonts doc).pages, Html.document "en" head body, ds)
+  let elements := (BeamerColor.roles.map (·.1)) ++
+    ["structure", "titlelike", "item", "palette primary"]
+  for (themeName, theme) in [("the default theme", ""), ("moloch", "\\usetheme{moloch}")] do
+    let (pages, html, _) := artifacts (siteDeck theme "")
+    for element in elements do
+      let (p, h, ds) := artifacts (siteDeck theme
+        s!"\\setbeamercolor\{{element}}\{fg=ProbeInk,bg=ProbePaper}")
+      let named := colorLoss ds s!"element '{element}' has no supported paint site"
+      t s!"beamer reach: under {themeName}, '{element}' is named unused exactly when the shipped pages do not change ({named}, {p == pages})"
+        (named == (p == pages))
+      t s!"beamer reach: under {themeName}, a named '{element}' changes no HTML either"
+        (!named || h == html)
+
 /-- Source-based paint invariants for Beamer colour inheritance and the
 bounded native furniture sites. The synthetic LuaLaTeX oracle uses
 beamerbasecolor.sty's parent order, independent channels, late lookup,
@@ -74,6 +118,7 @@ fixtures. Both the supported effect and the unsupported no-effect are
 judged on shipped layout or the typed HTML tree. -/
 def beamerColorsChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit := do
   beamerColorOriginChecks ref
+  beamerReachChecks ref fonts
   let t := check ref
   let ink : Ir.Color := { r := 0x17, g := 0x3B, b := 0x58 }
   let other : Ir.Color := { r := 0x58, g := 0x23, b := 0x47 }

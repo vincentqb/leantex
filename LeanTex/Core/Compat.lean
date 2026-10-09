@@ -2864,6 +2864,11 @@ private def nativeStandoutDefined (st : St) : Bool :=
     ["beamerthememoloch", "beamerthememetropolis", "beamerthemem",
      "beamerinnerthememoloch", "beamerinnerthememetropolis"].contains name
 
+/-- A theme's own setter, which the engine implements (`molochOptions`), is
+defined once the theme loads: beamerthememoloch.sty's `\molochset`. -/
+private def nativeSetterDefined (st : St) (n : String) : Bool :=
+  n == "molochset" && st.loads.pkgs.any (·.1 == "beamerthememoloch")
+
 /-- Read the head `h` at `raws[i]` against the state in force there. `neg`:
 an `\unless` stands before it, which reverses a two-way test (e-TeX) and is
 refused before `\ifcase`. -/
@@ -2891,9 +2896,12 @@ private def readHead (st : St) (raws : Array Raw) (i : Nat) (h : String) (neg : 
     | some (.ctrl n _) =>
       if st.picBound.contains n then return undecided
       -- premise: standoutPaletteChecks — inherited, absent and later-loaded
-      -- hooks take different branches and ship the corresponding colours.
+      -- hooks take different branches and ship the corresponding colours;
+      -- blockFillConditionalChecks holds the setter's guard to the
+      -- unguarded setter's artifact.
       let v := st.binds.contains n ||
-        (n == "KV@beamerframe@standout" && nativeStandoutDefined st)
+        (n == "KV@beamerframe@standout" && nativeStandoutDefined st) ||
+        nativeSetterDefined st n
       if neg then return two v s!"\\{n}" "" (toString v) (k - i) none
       return { frame := .decided v, used := k - i,
                note := some (s!"ifdefined:{n}:{v}", condMsg n v) }
@@ -4972,7 +4980,7 @@ private theorem condDocument_package_failed_exact (reader : InputReader Id)
       hc hp hd hflags hi hsettling hv hr) hdeferred]
   simp [packageFailed, packageLoaded, Nat.add_assoc, hdeferred]
 
-/-- A TeX length in the native spelling: `0.5\rhythm` is `0.5 * rhythm`,
+/-- A TeX length in the native spelling: `0.75\beat` is `0.75 * beat`,
 `\relax` vanishes. Each control word goes through `ref`, told whether an
 argument group follows it; `none` from `ref` makes the whole value
 unreadable. `\dimexpr … \relax` is its parenthesized expression. -/
@@ -5573,7 +5581,7 @@ private def flushListLevels : M (Array Raw) := do
         out := out ++ (← synthAt native pos)
   return out
 
-/-- A TeX length from option text: `3\\sepunit` is `3 * sepunit`, `\\x` is `x`. -/
+/-- A TeX length from option text: `3\\gapunit` is `3 * gapunit`, `\\x` is `x`. -/
 private def lengthOfTeX (v : String) : String :=
   let t := v.trimAscii.toString
   match t.splitOn "\\" with
@@ -6397,6 +6405,50 @@ private def simpleNative : List (String × String) :=
    ("raggedbottom", "\\page{ bottom = ragged }"),
    ("onehalfspacing", "\\page{ leading = 1.25 }"),
    ("doublespacing", "\\page{ leading = 1.667 }")]
+
+/-- moloch's `block` option (beamercolorthememoloch.sty, `/moloch/color/block`):
+`fill` paints the boxes from the page's own colours and `transparent`
+clears them — the theme's own declarations, `\moloch@block@fill` and
+`\moloch@block@transparent`, spelled as it spells them and resolved like
+any `\setbeamercolor`: each keeps the `use` the theme declared at load
+(`BeamerColor.themeElement`) where it names none. -/
+private def molochBlockColors : String → Option (List (String × String))
+  | "fill" => some [("block title", "bg=normal text.bg!80!fg"),
+      ("block body", "use=block title,bg=block title.bg!50!normal text.bg"),
+      ("block title alerted", "bg=block title.bg"),
+      ("block title example", "bg=block title.bg")]
+  | "transparent" => some [("block title", "bg="), ("block body", "bg="),
+      ("block title alerted", "bg="), ("block title example", "bg=")]
+  | _ => none
+
+/-- moloch's options (`\molochset` keys, `\usetheme[...]{moloch}`): the
+`block` option declares the theme's block colours, as the
+`setbeamercolor` arm hands them to the elaborator; every other key is
+theme configuration the engine does not have, named once. -/
+private def molochOptions (cmd src : String) (pos : Pos) : M (Array Raw) := do
+  let mut out := #[]
+  for entry in Decl.splitEntries src do
+    match Decl.splitEntry entry with
+    | some (key, value) =>
+      let value := value.trimAscii.toString
+      match key, molochBlockColors value with
+      | "block", some decls =>
+        became s!"{cmd} block={value}" "moloch's block colours, declared with \\setbeamercolor" pos
+        for (element, body) in decls do
+          out := out ++ #[.ctrl BeamerColor.marker pos, .group (← synthAt element pos) pos,
+            .group (← synthAt body pos) pos]
+      | "block", none =>
+        sayOnce ("moloch:" ++ key) .W0104
+          s!"'{cmd}' option '{key}={value}' is moloch configuration the engine does not have; skipped" pos
+          (help := "moloch's block option takes fill or transparent")
+      | _, _ =>
+        sayOnce ("moloch:" ++ key) .W0104
+          s!"'{cmd}' option '{key}={value}' is moloch configuration the engine does not have; skipped" pos
+    | none =>
+      unless entry.trimAscii.toString.isEmpty do
+        sayOnce ("moloch:" ++ entry.trimAscii.toString) .W0104
+          s!"'{cmd}' option '{entry.trimAscii.toString}' is moloch configuration the engine does not have; skipped" pos
+  return out
 
 /-- The finite block-hook grammar: whitespace and the three standard skip
 commands, each read through its existing native translation. Unknown raws
@@ -7554,7 +7606,7 @@ its value is skipped" pos
     became "\\footercontent" "\\runningfoot{...}" pos
     return some (← synthAt "\\runningfoot" pos, start)
   | "usetheme" =>
-    let (_, j) := takeOpt raws start
+    let (opt, j) := takeOpt raws start
     let (args, k) := takeGroups raws j 1
     let tname := (rawSrc (args.getD 0 #[])).trimAscii.toString
     let tname := themeAlias tname
@@ -7565,7 +7617,14 @@ its value is skipped" pos
     -- \alert keeps its unthemed bold stand-in.
     if (Theme.find? tname).isSome then
       write fun st => { st with themed := true }
-    return some (← synthAt native pos, k)
+    let options ← if tname == "moloch" then molochOptions "\\usetheme" (opt.getD "") pos
+      else pure #[]
+    return some ((← synthAt native pos) ++ options, k)
+  | "molochset" =>
+    let (args, k) := takeGroups raws start 1
+    if h : args.size = 1 then
+      return some (← molochOptions s!"\\{name}" (rawSrc args[0]) pos, k)
+    else return none
   | "titlegraphic" =>
     -- Declared visual content for the title page, not configuration: the
     -- engine has nowhere to place it yet, so a non-empty declaration is a
@@ -8287,7 +8346,7 @@ private def rewriteCtrlNamed (name : String) (pos : Pos) (raws : Array Raw)
       if let some f := feature opt then
         -- fontspec's `*` stands for the family name (fontspec manual,
         -- "Choosing additional fonts": "may be replaced by *"):
-        -- `UprightFont = *-Medium` under `{Inter}` names "Inter-Medium".
+        -- `UprightFont = *-Semibold` under `{Ordwick}` names "Ordwick-Semibold".
         let f := if f.startsWith "*" then family ++ (f.drop 1).toString else f
         parts := parts.push s!"{slot}.{variant} = \"{f}\""
     -- fontspec's `FontFace = {series}{shape}{font}`: one declared face per

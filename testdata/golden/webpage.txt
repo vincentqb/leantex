@@ -1,10 +1,10 @@
 class webpage
 page 612x792 vmargin 72 hmargin 150
 palette accent #B22222
-palette muted #71717A
-meta title "Alex Doe, PhD"
+palette muted #66707A
+meta title "Alex Doe"
 meta author "Alex Doe"
-meta subject "Alex Doe, PhD, Example Scientist."
+meta subject "Alex Doe keeps an invented orchard."
 meta url "https://example.org/alex"
 meta image "https://example.org/alex/card.png"
 meta favicon "favicon.svg"
@@ -14,17 +14,12 @@ output stylesheet "webpage.css"
 role trivlist-env
   center
     para
-      styled sans
-        styled smallcaps
-          styled bold
-            styled size:Huge
-              color accent #B22222
-                text "Alex"
-              text " Doe, "
-              color accent #B22222
-                text "phd"
+      styled size:Huge
+        styled sans
+          text "Alex Doe"
       linebreak
-      text "Example Scientist"
+      color accent #B22222
+        text "Keeper of an invented orchard"
     para
       link "mailto:alex@example.org"
         text "Email"
@@ -35,51 +30,51 @@ role trivlist-env
       link "https://example.org/code"
         text "Code"
     para
-      link "#experience"
-        text "Experience"
+      link "#work"
+        text "Work"
       text " · "
-      link "#education"
-        text "Education"
+      link "#training"
+        text "Training"
       text " · "
-      link "#profile"
-        text "Profile"
+      link "#about"
+        text "About"
 section* 1
-  text "Experience"
+  text "Work"
 para
   styled bold
     italicCorr maybe
-    text "Example Scientist"
+    text "Head Gardener"
   italicCorr maybe
   text " "
   fill
-  text "2021 – Present"
+  text "1996 – Present"
 para
-  color muted #71717A
+  color muted #66707A
     styled italic
       italicCorr maybe
-      text "Invented Laboratory"
+      text "Invented Orchard"
     italicCorr maybe
 role in-paragraph
   list unordered
     item
       para
-        text "Studied an invented phenomenon and wrote it down."
+        text "Tended an invented orchard and wrote it down."
     item
       para
-        text "Simplified a made-up pipeline until it fit on one page."
+        text "Simplified a made-up planting plan until it fit on one page."
 para
   styled bold
     italicCorr maybe
-    text "Assistant Example"
+    text "Assistant Gardener"
   italicCorr maybe
   text " "
   fill
-  text "2017 – 2021"
+  text "1989 – 1996"
 para
-  color muted #71717A
+  color muted #66707A
     styled italic
       italicCorr maybe
-      text "Fictional Institute"
+      text "Fictional Nursery"
     italicCorr maybe
 role in-paragraph
   list unordered
@@ -87,25 +82,25 @@ role in-paragraph
       para
         text "Assisted with examples of every kind."
 section* 1
-  text "Education"
+  text "Training"
 para
   styled bold
     italicCorr maybe
-    text "PhD Example Studies"
+    text "BA Example Studies"
   text ", University of Examples"
 para
-  color muted #71717A
+  color muted #66707A
     styled italic
       italicCorr maybe
-      text "Invented Fellowship, Fictional Scholarship"
+      text "Invented Prize, Fictional Bursary"
     italicCorr maybe
 para
   styled bold
     italicCorr maybe
-    text "BSc Examples"
+    text "Certificate in Examples"
   text ", Example College"
 section* 1
-  text "Profile"
+  text "About"
 para
   text "Alex Doe is an entirely invented person who exists to exercise a document engine, and enjoys it."
 -- diagnostics

@@ -356,7 +356,7 @@ private def unitScaleBase : String → Option (Int × Nat)
 unit, you can say `true`" and true dimensions stay constant whatever `\mag`
 is (TeXbook ch. 10). This engine has no magnification — every dimension is
 already true — so the prefix denotes the identity. Reading it as part of a
-unit *name* was the defect: `1.75truein` parsed as a name and E0323 said
+unit *name* was the defect: `2.25truein` parsed as a name and E0323 said
 "expects a length … got a name". A unit added to the base table gets its
 `true` twin here, or `unitScale_true` below fails to extend. -/
 private def unitScale : String → Option (Int × Nat)
@@ -472,9 +472,9 @@ subtracted, a term scaled by a numeric factor, parentheses for grouping
 more terms … to be added or subtracted; a term … consists of a factor …
 optionally multiplied and/or divided by numeric factors; a factor … is
 either a parenthesized subexpression or a quantity"). TeX's coefficient
-form rides along: `2\cardbleed` is a ⟨factor⟩ before an internal dimen
-(TeXbook ch. 24, ⟨dimen⟩ syntax), so `cardheight + 2 cardbleed` reads as
-`cardheight + 2 * cardbleed`. Division by a numeric factor folds into the
+form rides along: `2\gutter` is a ⟨factor⟩ before an internal dimen
+(TeXbook ch. 24, ⟨dimen⟩ syntax), so `boxheight + 2 gutter` reads as
+`boxheight + 2 * gutter`. Division by a numeric factor folds into the
 same scaling (`a / n` is `.scale 1 n a`), and a parenthesized numeric
 subexpression such as `(3+1)` evaluates as a scalar before it scales or
 divides. One rounding rule for the whole language, TeX's: `\divide`
@@ -730,7 +730,7 @@ private def pushOp (vals : Array EVal) (ops : Array Char) (c : Char) :
   return (vals, ops.push c)
 
 /-- Parse a token stream into an expression: shunting-yard with unary
-minus, the implicit coefficient (`2 cardbleed`), and units bound where
+minus, the implicit coefficient (`2 gutter`), and units bound where
 their number stands (`1.5ex`, spaces allowed as in TeX's `2.5 \x`). Loops
 are bounded by the token count — termination by construction. -/
 private def exprParse (toks : Array ETok) : Except String LenExpr := do
@@ -889,7 +889,7 @@ public def readsAsLengthExpr (s : String) : Bool :=
 
 /-- Whether a string looks like a length expression rather than a single
 value: an operator or a parenthesis somewhere, or a coefficient directly
-against a name (`2cardbleed`). Routing, not validation — the parser has
+against a name (`2gutter`). Routing, not validation — the parser has
 the final say. -/
 public def looksLikeExpr (s : String) : Bool := Id.run do
   let cs := s.toList

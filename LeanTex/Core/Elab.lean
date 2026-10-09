@@ -353,7 +353,7 @@ public inductive SecNumStyle where
   deriving Repr, BEq
 
 /-- One piece of a heading-number format — what `\renewcommand
-{\thesubsection}{FAQ \arabic{subsection}.}` declares (classes.dtx
+{\thesubsection}{Item \arabic{subsection}.}` declares (classes.dtx
 §Sectioning: `\the<counter>` is the counter's printed format, not a
 macro): literal text, a numeral over a section counter, or another
 level's own format (`\thesection` inside a subsection format). -/
@@ -1369,7 +1369,7 @@ public def accentBase (d : String) : Option Char :=
     | _ => none
 
 /-- The composed text of an accent command applied to what follows: the
-first letter of an adjacent word (`\'elair` → "élair"), a one-letter group
+first letter of an adjacent word (`\'ecole` → "école"), a one-letter group
 (`\'{e}`), a command base (`\'{\i}`, `\'\AE`), or an empty group (`\^{}` →
 "^", TU's empty-base composite). `none` — a shape or a pair with no
 precomposed scalar — falls through to the ordinary dispatch, so nothing new
@@ -3734,7 +3734,7 @@ private def secFmtOfBody (body : Array Raw) : Option (Array SecPart) := Id.run d
 /-- A definition that is a heading-number format: parameterless, named
 `\the<section counter>`, its body readable as a format. classes.dtx
 §Sectioning: `\the<counter>` is the counter's printed format, so
-`\renewcommand{\thesubsection}{FAQ \arabic{subsection}.}` — which the
+`\renewcommand{\thesubsection}{Item \arabic{subsection}.}` — which the
 definer rewrite spells `\define \thesubsection() {...}` — restyles the
 heading numbers; binding it as a macro instead left every such document
 with dead `\arabic` text and E0312 where the renew stood inline. -/
@@ -4596,7 +4596,7 @@ seal theCounterLevel? sectionLevel
 mutual
 /-- A pure declaration chain: an inline that is nothing but nested style
 wrappers around emptiness — what a 0-ary definition whose body *ends* in
-declarations (`\newcommand{\cardlight}{\fontseries{l}\selectfont}`,
+declarations (`\newcommand{\featherweight}{\fontseries{l}\selectfont}`,
 `\newcommand{\strong}{\bfseries}`) elaborates to in isolation. Outermost
 style first. `none` when any real content is present. -/
 -- conserves: none — a census, not a rewrite: it reads a shape and returns
@@ -4616,8 +4616,8 @@ end
 ends with, if any. Expansion is token replacement, so a trailing
 declaration must style the rest of the *enclosing* group, exactly as the
 same declaration written directly would — elaborating the body in
-isolation had it styling the empty rest of the body instead, and the
-card's `{\cardlight …}` runs rendered in the upright face while an empty
+isolation had it styling the empty rest of the body instead, and a
+document's `{\featherweight …}` runs rendered in the upright face while an empty
 `<strong></strong>` marked where the style went. The chain is outermost
 style first. -/
 private def splitTrailingDecls (xs : Array Ir.Inline) :
@@ -6425,6 +6425,14 @@ private def blockEnvs : List String :=
    "thebibliography", "abstract", "ifbackend",
    "nav", "minipage", "block", "alertblock", "exampleblock", "appendices"]
 
+/-- The titled block an environment opens: beamer's three, and tcolorbox's
+box, which its lowering hands the same surface (`Tcolorbox.boxEnv`). -/
+private def titledKind? : String → Option Ir.TitledKind
+  | "block" => some .block
+  | "alertblock" => some .alert
+  | "exampleblock" => some .example
+  | n => if n == Tcolorbox.boxEnv then some .box else none
+
 /-- Environment names a document cannot redefine, the environment mirror of
 `builtinNames`: everything the engine gives a meaning of its own. -/
 public def builtinEnvNames : List String :=
@@ -6573,7 +6581,7 @@ private def bodyIsBlockOne : Raw → Bool
   | .env n body _ =>
     if (Parse.inputEnvFile? n).isSome then bodyIsBlockList body.toList
     else
-      blockEnvs.contains n || isMathEnv n
+      blockEnvs.contains n || isMathEnv n || n == Tcolorbox.boxEnv
         || n == "tabular" || n == "tabular*"
         || n == "algorithm" || n == "algorithm*" || n == "algorithm2e"
         || n == "algorithmic"
@@ -7581,8 +7589,10 @@ own. Refuse it only when no supported site resolves through it. -/
 private def finishBeamerColors (ctx : Ctx) : EM Unit := do
   let colors := (← get).flowPalette
   for e in colors.elements do
-    -- premise: beamerColorsChecks — changing a consumed parent changes
-    -- heading ink on Layout.Out; an unsupported placement changes none.
+    -- premise: beamerReachChecks — under both colour themes an element is
+    -- named here exactly when declaring it leaves both artifacts unchanged:
+    -- a reached element (`BeamerColor.reach`) changes paint, an element no
+    -- open channel reaches changes none.
     if e.declared && !(colors.reached.contains e.name) then
       let origin := { ctx with file := e.span.file, callSite := none }
       warnOnce origin ("beamercolor:element:" ++ e.name) .W0104
@@ -9341,6 +9351,7 @@ size commands; the current style stands" (some pos)
     tabSize := tabSize
     breakLines := breakLines
     lineOverlap := if env == "minted" then Ir.fvextraLineOverlap else 0
+    lineStrut := env == "minted" && breakLines
     source := some (ctx.sourceSpan contentPos) }
   let spec ← match caption with
     | some cap => do
@@ -11867,16 +11878,13 @@ the text width; the box takes the whole measure" pos
         = nestedParsList (body.extract m2 body.size).toList := slicePars_zero _
     blocks := blocks.push
       (.columns #[({ width with pos := boxPos }, ← elabBlockScope ctx (body.extract m2 body.size))])
-  else if n == "block" || n == "alertblock" || n == "exampleblock" then
+  else if let some kind := titledKind? n then
     -- beamer's titled blocks (user guide §12.3): the {title} group on
     -- the `\begin` line is the title — beamer's own mandatory argument,
-    -- so an empty group is the documented untitled block (no title bar)
-    -- and a missing group is named (E0304). A paragraph break before a
-    -- group makes it content, as the frame's title rule reads it.
-    let kind : Ir.TitledKind :=
-      if n == "alertblock" then .alert
-      else if n == "exampleblock" then .example
-      else .block
+    -- so an empty group is the documented untitled block, whose title box
+    -- beamer still sets, empty, and a missing group is named (E0304). A
+    -- paragraph break before a group makes it content, as the frame's
+    -- title rule reads it. A lowered tcolorbox arrives the same way.
     let (head, k) := selectorHead body 0
     let spec ← selectorSpec ctx head pos
     let mut title : Array Inline := #[]
@@ -12565,7 +12573,7 @@ private def elabBlocksGo (ctx : Ctx) (raws : Array Raw) (i : Nat)
       let isB : Bool :=
         if (Parse.inputEnvFile? n).isSome then bodyIsBlock body
         else
-          blockEnvs.contains n || isMathEnv n
+          blockEnvs.contains n || isMathEnv n || n == Tcolorbox.boxEnv
             || n == "tabular" || n == "tabular*"
             || n == "algorithm" || n == "algorithm*" || n == "algorithm2e"
             || n == "algorithmic"
@@ -13808,7 +13816,7 @@ private def composeLeading (spec : PageSpec) : PageSpec :=
 private def applyPage (ctx : Ctx) (spec : PageSpec) (entries : Array Decl.Entry)
     (pos : Pos) (tokens : Array (String × SymGlue) := #[]) : PageSpec × Array PEvent := Id.run do
   -- A page dimension may be a declared token or an expression over them
-  -- (`\geometry{paperheight=\bleedingheight}`), which parses as glue: it
+  -- (`\geometry{paperheight=\sheetheight}`), which parses as glue: it
   -- is a dimension when nothing font-relative or infinite rides in it —
   -- the page exists before any font is chosen.
   let asDim : Decl.Value → Option Sp
@@ -13884,14 +13892,14 @@ private def applyPage (ctx : Ctx) (spec : PageSpec) (entries : Array Decl.Entry)
     -- declared skip once the block ends (`composeLeading`).
     | "leading", .int n => spec := { spec with spread := n.toNat * 1000 }
     | "leading", .dim d =>
-      -- A bare decimal like 1.04 reads as a dimension in points; the factor
+      -- A bare decimal like 1.15 reads as a dimension in points; the factor
       -- is what was meant.
       spec := { spec with spread := (d * 1000 / pt 1).toNat }
     | "leading", .ident f =>
       -- ...and one without a unit reaches here as a name.
       match Decl.parseDecimal f with
       | some (m, s) => spec := { spec with spread := (m * 1000 / s).toNat }
-      | none => evs := say evs .E0323 s!"'leading' in '\\page' expects a factor like 1.04, got '{f}'"
+      | none => evs := say evs .E0323 s!"'leading' in '\\page' expects a factor like 1.15, got '{f}'"
     -- The body's `\baselineskip` as a class's `\normalsize` declares it
     -- (`\@setfontsize`'s third argument, fntguide), resolved at the body
     -- size the block ends on (`composeLeading`), whatever order its keys
@@ -15679,6 +15687,9 @@ the built-in's heading and margins stand{replaced}"
         modify fun st => { st with
           declaredKeys := st.declaredKeys.filter (fun e => !installed.contains e) }
         let ds := Theme.apply th before
+        -- The bundle's colour theme declares its own relationships under the
+        -- document's (`BeamerColor.themeElement`).
+        modify fun st => { st with flowPalette := { st.flowPalette with theme := tname } }
         for (key, c) in th.palette.entries do
           recordColorDeclaration key c (s.ctx.sourceSpan pos)
           modify fun st => { st with flowPalette := st.flowPalette.native key c }

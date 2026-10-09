@@ -887,24 +887,27 @@ private def frameFlow (nodes : Array Html.Node) (css : String) :
   return out
 
 /-- Overlay content as the page shows it at its last step, paragraph by
-paragraph: invented words in paragraphs, a list, a quotation and a display. -/
+paragraph: invented words in paragraphs, two beamer blocks, a list, a
+quotation and a display. -/
 private def gapBlocks : List String :=
   ["Alder words open the frame.", "Birch words follow it.",
    "Cedar words stand after a pause.",
+   "\\begin{block}{Kilo}Kilo words in a block.\\end{block}",
    "\\begin{itemize}\n\\item Dogwood item\n\\item Elm item\n\\end{itemize}",
    "Fir words follow the list.", "\\begin{quote}\nHazel words quoted.\n\\end{quote}",
+   "\\begin{block}{Lima}Lima words close a step.\\end{block}",
    "Juniper words open the range.", "\\[ x + y = z \\]", "Larch words end the frame."]
 
-/-- The same blocks with overlays between them: `\pause` twice, an open
-`\uncover` holding a paragraph and a quotation, a closed range's
-`\uncover<2-3>` (its declared end a second carrier) holding a paragraph, a
-display and a paragraph. lualatex stands every line of its last step where
-the flat frame stands it. -/
+/-- The same blocks with overlays between them: `\pause` twice, the second
+opening on a block, an open `\uncover` holding a paragraph, a quotation and a
+block it closes on, a closed range's `\uncover<2-3>` (its declared end a
+second carrier) holding a paragraph, a display and a paragraph. lualatex
+stands every line of its last step where the flat frame stands it. -/
 private def gapOverlaid : String :=
   match gapBlocks with
-  | [a, b, c, l, f, q, j, d, e] =>
-    a ++ "\n\n" ++ b ++ "\n\\pause\n\n" ++ c ++ "\n\n\\pause\n" ++ l ++ "\n\n" ++
-      "\\uncover<3->{" ++ f ++ "\n\n" ++ q ++ "}\n\n" ++
+  | [a, b, c, k, l, f, q, m, j, d, e] =>
+    a ++ "\n\n" ++ b ++ "\n\\pause\n\n" ++ c ++ "\n\n\\pause\n" ++ k ++ "\n\n" ++ l ++ "\n\n" ++
+      "\\uncover<3->{" ++ f ++ "\n\n" ++ q ++ "\n\n" ++ m ++ "}\n\n" ++
       "\\uncover<2-3>{" ++ j ++ "\n\n" ++ d ++ "\n\n" ++ e ++ "}"
   | _ => ""
 

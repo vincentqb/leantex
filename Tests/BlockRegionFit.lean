@@ -33,9 +33,11 @@ private def insideMedium (geom : Layout.Geom) (fill : Layout.Fill) : Bool :=
   0 < fill.w && 0 < fill.h && 0 ≤ fill.x && 0 ≤ fill.y &&
     fill.x + fill.w ≤ geom.pageW && fill.y + fill.h ≤ geom.pageH
 
+/-- beamer's colour boxes are `\textwidth` wide at every depth: a child
+shares its parent's reach and stands at least the parent's inset inside it
+above and below. -/
 private def encloses (pad : Dim.Sp) (outer inner : Layout.Fill) : Bool :=
-  outer.x + pad ≤ inner.x && outer.y + pad ≤ inner.y &&
-    inner.x + inner.w + pad ≤ outer.x + outer.w &&
+  0 < pad && outer.x == inner.x && outer.w == inner.w && outer.y + pad ≤ inner.y &&
     inner.y + inner.h + pad ≤ outer.y + outer.h
 
 /-- Judge the child's entire painted extent, including its title bar.
@@ -47,12 +49,15 @@ private def parentInsets (page : Layout.PageOut) (pad : Dim.Sp)
       page.fills.any fun outer => outer.color == outerColor && encloses pad outer child
     else true
 
+/-- A painted title meets its painted body through `\nointerlineskip
+\vskip-0.5pt` (beamerinnerthemedefault.sty): the body overlaps it by half
+a point. -/
 private def titleJoins (page : Layout.PageOut) (bodyColor barColor : Ir.Color) : Bool :=
   page.fills.all fun bar =>
     if bar.color == barColor then
       page.fills.any fun body =>
         body.color == bodyColor && bar.x == body.x && bar.w == body.w &&
-          bar.y + bar.h == body.y
+          bar.y + bar.h == body.y + Ir.blockSeam
     else true
 
 /-- Invented feasible two-line counterexample: a titleless parent at a
@@ -158,7 +163,7 @@ public def titleChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO 
   let geom := Layout.Geom.ofPage doc.page
   let out := Layout.run geom fonts none doc
   let fills := out.pages.flatMap (·.fills)
-  let pad := Ir.titledPadding.resolve doc.page.fontSize 0
+  let pad := Layout.titledPaddingOf fonts geom
   check ref "block region title: source and layout have no loss"
     ((diags ++ out.diags).all (·.severity == .note))
   check ref "block region title: feasible title and body survive on one page"
@@ -183,7 +188,7 @@ public def closedFlushChecks (ref : IO.Ref (List String))
   let geom := Layout.Geom.ofPage doc.page
   let out := Layout.run geom fonts none doc
   let floor := (Layout.ship geom fonts none doc).geom.bodyBottom
-  let pad := Ir.titledPadding.resolve doc.page.fontSize 0
+  let pad := Layout.titledPaddingOf fonts geom
   let fills := out.pages.flatMap (·.fills)
   let surfacePages := out.pages.filter fun page => page.fills.any (·.color == outerColor)
   check ref "block region flush: source and layout have no loss"
@@ -289,10 +294,24 @@ public def closedColumnRuleChecks (ref : IO.Ref (List String))
           ((diags ++ out.diags).all (·.severity == .note))
         check ref (label ++ ": all three words survive once in order on one page")
           (out.pages.size == 1 && bodyText out == words)
-        check ref (label ++ ": column order and requested baseline alignment survive")
+        -- A colour box aligns by its TeX reference, its bottom edge at `[b]`
+        -- (a box of depth zero), as lualatex places it.
+        let pad := Layout.titledPaddingOf fonts geom
+        let outer := fills.filter (·.color == outerColor)
+        check ref (label ++ ": column order and requested alignment survive")
           (peers.size == 1 && bodies.size == 1 && peers.all fun peer =>
-            bodies.all fun body => (pos.isEmpty || peer.y == body.y) &&
+            bodies.all fun body =>
+              (pos != "b" || outer.any (fun f => f.y + f.h == peer.y)) &&
               (if boxFirst then body.x < peer.x else peer.x < body.x))
+        -- Owed, both ways: a `[t]` minipage that opens on the block's
+        -- `\par\vskip\medskipamount` is a `\vtop` whose first item is glue,
+        -- so TeX puts its reference at its top and the box stands that skip
+        -- and `\lineskip` below the peer's baseline (lualatex: a beamer
+        -- block's bar top 5.96 bp below it). The engine stands the box's top
+        -- on the peer's baseline. Fixing either side alone fails here.
+        if pos == "t" then
+          check ref (label ++ ": owed: a [t] box's top stands on the peer's baseline")
+            (peers.all fun peer => outer.any (fun f => f.y == peer.y))
         check ref (label ++ ": every closed surface survives once inside the medium")
           ((fills.filter isSurface).size == colors.size && colors.all fun color =>
             let surfaces := fills.filter (·.color == color)
@@ -303,7 +322,7 @@ public def closedColumnRuleChecks (ref : IO.Ref (List String))
               | .rule w thickness raise _ =>
                 w == Dim.pt 200 && thickness == Dim.pt 1 && raise == 0 &&
                   (fills.filter isSurface).all fun fill =>
-                    line.x ≤ fill.x && fill.x + fill.w ≤ line.x + w
+                    line.x - pad ≤ fill.x && fill.x + fill.w ≤ line.x + w + pad
               | _ => false)
         check ref (label ++ ": following rule starts below every closed surface")
           (out.pages.all fun page => page.lines.all fun line =>
@@ -348,7 +367,7 @@ public def emptyColumnChecks (ref : IO.Ref (List String))
         let surfaces := reference.pages.flatMap (·.fills) |>.filter (·.color == outerColor)
         check ref s!"empty column/{posName}: deliberately empty body retains padding"
           (surfaces.size == 1 && surfaces.all fun fill =>
-            fill.h ≥ 2 * Ir.titledPadding.resolve (Dim.pt 10) 0)
+            fill.h == Layout.titledPaddingOf fonts { fontSize := Dim.pt 10 })
       if kind == "strut" then
         check ref s!"empty column/{posName}: nonpainting strut reserves declared height"
           (reference.pages.any fun page => page.lines.any fun line =>

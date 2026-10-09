@@ -165,8 +165,8 @@ def weightResolveChecks (ref : IO.Ref (List String)) : IO Unit := do
   -- A 0-ary definition ending in a declaration styles the rest of the
   -- enclosing group — expansion is token replacement, so the declaration
   -- must take the same scope written directly. The invariant whose absence
-  -- was the card defect: the body elaborated in isolation left the style
-  -- wrapping the empty rest of the body, and every {\cardlight …} run
+  -- was the defect: the body elaborated in isolation left the style
+  -- wrapping the empty rest of the body, and every {\featherweight …} run
   -- rendered upright beside an empty styled node.
   let seriesText (doc : Ir.Doc) : List String :=
     doc.body.toList.flatMap fun b => match b with
@@ -213,8 +213,8 @@ def declaredFaceChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "fonts variant wrong type" (errCodes (pre ++ "\\fonts{ body.bold = 12 }" ++ post)
     == ["E0323"])
   -- fontspec's `*` in a per-variant name stands for the family name.
-  let d4 := (elabStr (pre ++ "\\setsansfont[UprightFont=*-Medium]{Inter}" ++ post)).1.fonts
-  t "fontspec * expands to the family name" (d4.faceFor 1 400 false == some "Inter-Medium")
+  let d4 := (elabStr (pre ++ "\\setsansfont[UprightFont=*-Semibold]{Ordwick}" ++ post)).1.fonts
+  t "fontspec * expands to the family name" (d4.faceFor 1 400 false == some "Ordwick-Semibold")
   -- Resolution: the declared face wins over the family's own variant.
   let subMsg : Option FontDb.Substituted → Option String
     | some s => some (DriverDiag.substituted s).message
@@ -449,21 +449,21 @@ def smallCapsGsubChecks (ref : IO.Ref (List String)) : IO Unit := do
         | _ => none)
   let ink (rs : Array (Array (Nat × Char × Dim.Sp) × Dim.Sp)) : Array (Nat × Dim.Sp) :=
     rs.flatMap fun (glyphs, size) => glyphs.map fun (g, _) => (g, size)
-  let scSerif := drawn (set serif) "{\\scshape PhD}"
-  t "gsub small caps draw the same ink for PhD, phd, and PHD"
-    (ink scSerif == ink (drawn (set serif) "{\\scshape phd}") &&
-     ink scSerif == ink (drawn (set serif) "{\\scshape PHD}") &&
-     ink scSerif != ink (drawn (set serif) "PhD"))
+  let scSerif := drawn (set serif) "{\\scshape NaCl}"
+  t "gsub small caps draw the same ink for NaCl, nacl, and NACL"
+    (ink scSerif == ink (drawn (set serif) "{\\scshape nacl}") &&
+     ink scSerif == ink (drawn (set serif) "{\\scshape NACL}") &&
+     ink scSerif != ink (drawn (set serif) "NaCl"))
   t "gsub small caps set at full size with substituted glyphs, text as typed"
     (scSerif.all (·.2 == geom.fontSize) &&
-     (scSerif.flatMap (·.1.map (·.2.1))) == #['P', 'h', 'D'] &&
+     (scSerif.flatMap (·.1.map (·.2.1))) == #['N', 'a', 'C', 'l'] &&
      scSerif.all fun (glyphs, _) => glyphs.all fun (g, c, _) =>
        some g == (serif.gid c).map serif.smallCapGid)
-  let scSans := drawn (set sans) "{\\scshape PhD}"
-  t "synthesised small caps draw the same ink for PhD, phd, and PHD"
-    (ink scSans == ink (drawn (set sans) "{\\scshape phd}") &&
-     ink scSans == ink (drawn (set sans) "{\\scshape PHD}") &&
-     ink scSans != ink (drawn (set sans) "PhD"))
+  let scSans := drawn (set sans) "{\\scshape NaCl}"
+  t "synthesised small caps draw the same ink for NaCl, nacl, and NACL"
+    (ink scSans == ink (drawn (set sans) "{\\scshape nacl}") &&
+     ink scSans == ink (drawn (set sans) "{\\scshape NACL}") &&
+     ink scSans != ink (drawn (set sans) "NaCl"))
   t "synthesised small caps set every letter at one reduced size"
     (!scSans.isEmpty &&
      scSans.all (·.2 == geom.fontSize * Layout.smallCapScaleFor sans / 1000))
@@ -472,13 +472,13 @@ def smallCapsGsubChecks (ref : IO.Ref (List String)) : IO Unit := do
   -- asks for uniform small caps (CSS Fonts 4: `all-small-caps` is c2sc +
   -- smcp, the same pair the PDF path reads).
   let (scDoc, scDs) := elabStr ("\\documentclass{article}\\begin{document}" ++
-    "{\\scshape PhD}\\end{document}")
+    "{\\scshape NaCl}\\end{document}")
   t "small caps html source clean" scDs.isEmpty
   let scTree := HtmlDoc.blockNode {} scDoc.body[0]!
   let scText : Html.Node → Bool
     | .elem _ attrs kids => attrs.contains ("class", "sc") && kids.any fun k =>
         match k with
-        | .text s => s == "PhD"
+        | .text s => s == "NaCl"
         | _ => false
     | _ => false
   let hasScText : Html.Node → Bool
@@ -567,7 +567,7 @@ def fallbackChecks (ref : IO.Ref (List String)) : IO Unit := do
   -- remains of the old loss class: a face that lacks the *composed* form
   -- falls back (W0009) or drops loudly naming the scalar (E0405) — never
   -- silently.
-  let (accDoc, accDs) := Elab.run "t" "Be\u0301lair and \\textbf{Be\u0301lair}"
+  let (accDoc, accDs) := Elab.run "t" "Cafe\u0301 and \\textbf{Cafe\u0301}"
   t "combining source clean" accDs.isEmpty
   let accOut := layoutOf mapped accDoc geom
   let accGlyphs := ((accOut.pages.flatMap (·.lines)).flatMap (·.segs)).flatMap
@@ -577,7 +577,7 @@ def fallbackChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "a combining sequence ships composed, no mark machinery"
     (accGlyphs.contains 'é' && !accGlyphs.contains '\u0301' &&
       !accOut.diags.any fun d => d.code == "W0009" || d.code == "E0405")
-  t "the base letters survive whatever the mark does" (accGlyphs.contains 'B')
+  t "the base letters survive whatever the mark does" (accGlyphs.contains 'C')
   let icons ← load "ExampleIcons-Regular.ttf"
   t "premise: the icon face lacks the composed form"
     ((icons.gid 'é').isNone)

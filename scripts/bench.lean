@@ -77,7 +77,7 @@ the letters plainnat gives entries that share a label are in play. -/
 def bibOf (n : Nat) : String := Id.run do
   let mut out := ""
   for i in [0:n] do
-    let (au, yr) := if i % 2 == 0 then ("Alex Placeholder and Blair Example", 2019)
+    let (au, yr) := if i % 2 == 0 then ("Alex Placeholder and Bryn Example", 2019)
       else (s!"Casey Invented{i} and Drew Sample{i}", 2000 + i % 20)
     out := out ++ s!"@misc\{k{i}, author = \{{au}}, title = \{Invented entry number {i}},\n\
       year = \{{yr}}}\n"

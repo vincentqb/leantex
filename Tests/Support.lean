@@ -329,7 +329,7 @@ def goldenNames : List String :=
    "webpage", "quotes", "quote-deck", "outline", "outline-gap", "webnav", "nav-directory",
    "bibliography", "resume-data",
    "icons",
-   "diagram", "diagram-boundary", "diagram-overflow", "diagram-refused", "diagram-scm",
+   "diagram", "diagram-boundary", "diagram-overflow", "diagram-refused", "diagram-shapes",
    "diagram-tikzset",
    "tables", "tables-ragged", "tables-deck", "subfigures", "float-center", "box-sides",
    "math-companion", "math-first", "math-text", "math-alpha", "math-cancel", "greek-literal", "abstract", "crossref", "eqnum", "footnotes",
@@ -1478,6 +1478,41 @@ positions, paragraph boundaries, attributes and whitespace observable. -/
 def sourceArtifacts (fonts : Font.FontSet) (source : String) :
     Array Diag × Layout.Out × String × String :=
   let (doc, ds) := elabStr source
+  let out := layoutOf fonts doc
+  let (head, tree, hds) := HtmlDoc.emitTree {} doc
+  (ds ++ out.diags ++ hds, out, Html.document "en" head tree,
+    shownTextList "" tree.toList)
+
+mutual
+/-- A control's `{block}`s spelled as the box a tcolorbox lowers to
+(`Tcolorbox.boxEnv`): the native block surface, in the environment only the
+lowering opens, so a lowered box compares against the block it is written
+as. -/
+-- conserves: none — renames an environment in a test's control raws.
+def boxedRaw : Parse.Raw → Parse.Raw
+  | .env n body p =>
+    .env (if n == "block" then Tcolorbox.boxEnv else n) (boxedRaws #[] body.toList) p
+  | .group body p => .group (boxedRaws #[] body.toList) p
+  | .math d body p => .math d (boxedRaws #[] body.toList) p
+  | .word s p => .word s p
+  | .space => .space
+  | .par p => .par p
+  | .ctrl n p => .ctrl n p
+  | .sym c p => .sym c p
+  | .verb e s p => .verb e s p
+
+def boxedRaws (acc : Array Parse.Raw) : List Parse.Raw → Array Parse.Raw
+  | [] => acc
+  | r :: rest => boxedRaws (acc.push (boxedRaw r)) rest
+end
+
+/-- `sourceArtifacts` of a control whose `{block}`s stand for lowered boxes
+(`boxedRaw`). -/
+def boxedSourceArtifacts (fonts : Font.FontSet) (source : String) :
+    Array Diag × Layout.Out × String × String :=
+  let (toks, lexDiags) := Lex.lex "t" source
+  let (raws, parseDiags) := Parse.parse "t" toks
+  let (doc, ds) := Elab.runRaws "t" (boxedRaws #[] raws.toList) (lexDiags ++ parseDiags)
   let out := layoutOf fonts doc
   let (head, tree, hds) := HtmlDoc.emitTree {} doc
   (ds ++ out.diags ++ hds, out, Html.document "en" head tree,

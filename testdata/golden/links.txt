@@ -4,8 +4,8 @@ font dir "fonts"
 font body "Source Serif Pro"
 font sans "Open Sans"
 palette accent #1D4ED8
-palette muted #71717A
-token rhythm 1600/1000ex plus 400/1000ex
+palette muted #6A6F66
+token unit 1600/1000ex plus 400/1000ex
 token sep 1600/1000ex plus 400/1000ex
 runninghead
   styled sans
@@ -14,7 +14,7 @@ runninghead
       fill
       pagenumber
 runningfoot
-  color muted #71717A
+  color muted #6A6F66
     styled sans
       text "page "
       pagenumber
@@ -43,22 +43,20 @@ role entry
     para
       styled bold
         italicCorr maybe
-        text "Example Corp"
-      italicCorr maybe
-      text "  |  Staff Engineer"
+        text "Spring regatta"
+      text ", Upper Reach"
       fill
-      color muted #71717A
-        text "2021–present"
+      color muted #6A6F66
+        text "May"
 role entry
   block before 1600/1000ex plus 400/1000ex
     para
       styled bold
         italicCorr maybe
-        text "Widgets Ltd"
-      italicCorr maybe
-      text "  |  Engineer"
+        text "Autumn head race"
+      text ", Lower Reach"
       fill
-      color muted #71717A
-        text "2017–2021"
+      color muted #6A6F66
+        text "October"
 -- diagnostics
 (none)

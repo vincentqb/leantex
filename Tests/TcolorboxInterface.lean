@@ -47,7 +47,7 @@ example (options body : Array Raw) (pos : Pos) :
 
 -- A client can read the contract's witness without unfolding the lowerer.
 example (options body : Array Raw) (pos : Pos) :
-    ∃ title decls, Raw.env "block"
+    ∃ title decls, Raw.env boxEnv
       #[.group title pos, .group (decls ++ body) pos] pos ∈
         (lower options body pos).raws.toList := by
   obtain ⟨title, decls, h⟩ := lower_body_covers options body pos

@@ -271,7 +271,7 @@ public def engineClasses : List String :=
    "math", "math-display", "nopadl", "nopadr", "note", "picture", "progress",
    "reveal-scroll", "ruled", "section-page", "separator", "slide",
    "slide-foot", "slide-logo", "slide-track", "slides", "snap", "spaced",
-   "standout", "step", "table-float"] ++
+   "standout", "step", "table-float", "tcolorbox", "tcolorbox-body"] ++
   Ir.sizeScale.map (fun p => "size-" ++ p.1) ++ Ir.sizeScale.map (fun p => "lead-" ++ p.1)
 
 private theorem engineClasses_no_u_prefix :
@@ -1269,6 +1269,50 @@ private def gapAfterLists : List GapRule :=
       "calc(var(--frame-body-skip) + var(--frame-body-before, 0pt))",
     .boundary ":is(h1, h2, h3, h4, h5, h6) + *" "0"]
 
+/-- A skip register in force for the sheet (`Ir.skipAmount`, the site the
+PDF walk spends), as a print length: its `em` part at the body size; an
+`ex` part has no face to resolve against here and stands at zero. -/
+private def skipSp (size : Int) (tokens : Ir.Tokens) (name : String) : Int :=
+  (Ir.skipAmount tokens name).width.resolve size 0
+
+/-- A block's own space above it (beamerinnerthemedefault.sty):
+`\medskipamount` and TeX's `\lineskip` between its title box and what
+stands above, the print length's screen multiple (`screenMilli`). -/
+private def blockAboveMilli (size : Int) (tokens : Ir.Tokens) : Nat :=
+  screenMilli size (skipSp size tokens "medskipamount" + Layout.inkClearance)
+
+/-- What stands for a block at a frame's opening: the block, or the overlay
+step carrier (`overlayNode`: `.step` or `.step-set`, a range's end nested in
+it) the block opens (`edge` is `first-child`). The frame's first body element
+is that carrier, and a custom property reaches only down the tree, so the
+carrier declares the opening's authored addend the opening rule reads there
+(`--frame-body-before`); the block's margins meet the carrier through the
+sheet's see-through (`GapRule.throughCarriers`). -/
+private def blockAt (edge : String) : String :=
+  s!":is(section.block, :is(.step, .step-set):has(> section.block:{edge}), " ++
+    s!":is(.step, .step-set):has(> .step-end > section.block:{edge}))"
+
+/-- A block's boundaries: its space above, `\smallskipamount` below its
+body box — a paragraph after it spends its own `\parskip` too — both the
+registers in force, and no `\parskip` inside the boxes
+(`\@arrayparboxrestore`). A block an overlay step wraps meets its
+neighbours through the step's carrier as every block does
+(`GapRule.throughCarriers`): the block owns its boundary inside the
+carrier, as it would with no carrier there. -/
+private def blockRules (size : Int) (tokens : Ir.Tokens) : List GapRule :=
+  let above := blockAboveMilli size tokens
+  let below := screenMilli size (skipSp size tokens "smallskipamount")
+  -- tcolorbox's `beforeafter skip balanced=0.5\baselineskip`: half a leading
+  -- between the box and the line boxes beside it, `\parskip` taken in.
+  let balanced := milliRem (screenMilli size (Ir.rhythmQuantum size))
+  [.boundary "* + section.block" (milliRem above),
+   .boundary "section.block + *" s!"calc({milliRem below} + {peerGap})",
+   .boundary "section.block + section.block" (milliRem (below + above)),
+   .parskip "section.block > *" "0rem",
+   .boundary "* + section.tcolorbox" balanced,
+   .boundary "section.tcolorbox + *" balanced,
+   .parskip "section.tcolorbox > *" "0rem"]
+
 /-- The block-boundary sheet, the one emitter of every vertical margin a
 block element carries. The resets come first: the element's own margins
 at zero specificity, so no element rule stands above a boundary rule —
@@ -1288,7 +1332,8 @@ consumer rule — a declared `\style` on the bare element or a reader
 stylesheet owning a container's spacing with `gap` — wins without a
 specificity fight, which is the HTML backend's override contract. -/
 public def blockGapRules (l : Ir.ListLineage) (size : Int) (tokens : Ir.Tokens) : List GapRule :=
-  gapResets ++ gapBeforeLists ++ thmRules l size ++ listRules l size tokens ++ gapAfterLists
+  gapResets ++ gapBeforeLists ++ blockRules size tokens ++ thmRules l size ++
+    listRules l size tokens ++ gapAfterLists
 
 /-! ### Overlay carriers
 
@@ -1532,11 +1577,14 @@ margin on an element it spaces is the text's to show, and
 public theorem blockGap_owner_contract (l : Ir.ListLineage) (size : Int) (tokens : Ir.Tokens) :
     ((blockGapRules l size tokens).dropWhile GapRule.isReset).all (fun r => !r.isReset) = true ∧
     (blockGapRules l size tokens).getLast? = some (.boundary ":is(h1, h2, h3, h4, h5, h6) + *" "0") := by
-  have hall : (gapBeforeLists ++ thmRules l size ++ listRules l size tokens ++ gapAfterLists).all
-      (fun r => !r.isReset) = true := by
-    simp only [List.all_append, thmRules_noReset, listRules_noReset, Bool.and_true,
-      Bool.and_eq_true]
-    exact ⟨by decide, by decide⟩
+  have hbefore : gapBeforeLists.all (fun r => !r.isReset) = true := by decide
+  have hafter : gapAfterLists.all (fun r => !r.isReset) = true := by decide
+  have hblock : (blockRules size tokens).all (fun r => !r.isReset) = true := by
+    simp [blockRules, GapRule.isReset]
+  have hall : (gapBeforeLists ++ blockRules size tokens ++ thmRules l size ++ listRules l size tokens ++
+      gapAfterLists).all (fun r => !r.isReset) = true := by
+    simp only [List.all_append, hbefore, hafter, hblock, thmRules_noReset,
+      listRules_noReset, Bool.and_self]
   refine ⟨?_, ?_⟩
   · simp only [blockGapRules, List.append_assoc] at hall ⊢
     rw [dropWhile_append_all _ _ _ (by decide), dropWhile_none _ _ hall]
@@ -1708,9 +1756,10 @@ private def inkScopes (d : Design) : List (String × Ir.Color) :=
     (d.footline.bar.map fun bg => ("footer.slide-foot", bg)).toList ++
     [("section.slide.standout", d.standout.bg)] ++
     (d.titlepage.map fun p => ("section.slide.title-page", p.bg)).toList ++
-    ([(Ir.TitledKind.block, d.blockTitle), (.alert, d.alertTitle),
+    (([(Ir.TitledKind.block, d.blockTitle), (.alert, d.alertTitle),
         (.example, d.exampleTitle)] : List (Ir.TitledKind × Ir.TitledLook)).filterMap
-      fun (k, look) => look.bar.map fun bar => (s!"section.block-{k.name} > header", bar)
+      fun (k, look) => look.bar.map fun bar => (s!"section.block-{k.name} > header", bar)) ++
+    (d.blockTitle.bar.map fun bar => ("section.tcolorbox > header", bar)).toList
 
 /-- One recorded ink as the scoped custom property that re-points its role's
 token on its ground: a run's `var(--role)` there resolves to the ink the PDF
@@ -1754,6 +1803,18 @@ font size, its length is exactly the PDF inset, independent of leading. -/
 
 public theorem titledPadding_agree (fontSize xHeight : Sp) :
     titledPadding.resolve fontSize xHeight = Layout.titledPadding fontSize xHeight := by rfl
+
+/-- A painted block colour box as CSS, `titledPadding` on every side and
+reaching it beyond the measure, so the text stays on the measure. A body
+box opens flush on its top, where its `\vbox{}` stands — beamer's
+`\vskip-.75ex` cancels that inset. `titledPadding` is one `ex` term, so
+its negation is a single length. -/
+public def titledBoxPaint : String :=
+  s!"padding: {cssLength titledPadding}; margin-inline: -{cssLength titledPadding};"
+
+public def titledBodyBoxPaint : String :=
+  s!"padding: 0 {cssLength titledPadding} {cssLength titledPadding}; " ++
+    s!"margin-inline: -{cssLength titledPadding};"
 
 /-- **The HTML declares every recorded ink on the ground it was realized
 for.** For every scope the stylesheet paints on an ink's ground, the
@@ -1844,6 +1905,12 @@ public def titleSlotCss (doc : Doc) : String :=
   "  font-size: 1em; font-weight: inherit; margin: 0; }\n" ++
   "section.slide.title-page > [class^=\"u-titlepage-slot-\"] p { margin: 0; } }\n"
 
+/-- A tcolorbox length (`Ir.tcb…`, TeX millimetres) as CSS: its print
+length at the body size, as the print walk spends it — millimetres the
+screen keeps in proportion to the type, through the stylesheet's own
+print-to-screen projection (`screenMilli`). -/
+private def tcbLength (v : Int) : String := milliRem (screenMilli Ir.baseFontSize v)
+
 /-- Furniture the semantic palette keys turn on — one shared rule set for
 every theme, so a theme stays a table of values. The conditions read the
 resolved `Design`, the same record the PDF path consumes; a rule fires only
@@ -1860,6 +1927,23 @@ public def themeCss (doc : Doc) : String :=
   -- Paint is carried by each block's palette epoch. A document-level
   -- condition would miss body declarations that add or remove a bar.
   "section.block > header { font-weight: bold; }\n" ++
+  -- A colour box keeps the glue its list holds: no margin collapses
+  -- through its edge (beamer's boxes are TeX boxes). A frame's first
+  -- block spends its own space above at the frame's opening, where the
+  -- frame's `\vskip-\parskip` stands too: the opening's authored addend,
+  -- declared where the opening rule reads it — on the block, or on the
+  -- overlay step's carrier the block opens (`blockAt`).
+  "section.block, section.block > .block-body { display: flow-root; }\n" ++
+  -- tcolorbox's box (`Ir.tcb…`): the title's rule and `boxsep` above it,
+  -- `boxsep` and the title rule below; the upper part's `boxsep` and `top`
+  -- above its text (the frame's rule too, untitled), `bottom`, `boxsep`
+  -- and the rule below; the text the rule, `boxsep` and `left`/`right`
+  -- inside the box's edges.
+  "section.tcolorbox, section.tcolorbox > .tcolorbox-body { display: flow-root; }\n" ++
+  s!"section.tcolorbox > header \{ padding: {tcbLength (Ir.tcbRule + Ir.tcbBoxsep)} {tcbLength Ir.tcbInset}; }\n" ++
+  s!"section.tcolorbox > .tcolorbox-body \{ padding: {tcbLength (Ir.tcbBoxsep + Ir.tcbTop)} {tcbLength Ir.tcbInset} {tcbLength (Ir.tcbBottom + Ir.tcbBoxsep + Ir.tcbRule)}; }\n" ++
+  s!"section.tcolorbox > .tcolorbox-body:first-child \{ padding-top: {tcbLength (Ir.tcbRule + Ir.tcbBoxsep + Ir.tcbTop)}; }\n" ++
+  s!"{blockAt "first-child"} \{ --frame-body-before: calc({milliFactor (blockAboveMilli doc.page.fontSize doc.tokens)}rem - var(--parskip, 0rem)); }\n" ++
   (if d.frametitle.isSome then
     "section.slide > header { background: var(--frametitlebg);\n" ++
     "  color: var(--frametitlefg, var(--bg, #fff));\n" ++
@@ -7414,8 +7498,9 @@ public def blockNode (cfg : Config) (b : Block) : Node :=
     Html.elem "blockquote" (blockNodesInto cfg.into #[] body.toList)
   -- beamer's titled block: a <section> with its header, through the typed
   -- tree and the escaper; the kind rides as a class so the stylesheet (a
-  -- reader's own included) can address each. An untitled block keeps its
-  -- section and drops the header, as the PDF drops the bar.
+  -- reader's own included) can address each. Its two colour boxes stand
+  -- as on the page (`titledBoxPaint`): an untitled block keeps its empty
+  -- header, a painted band or one empty line, as beamer keeps the box.
   | .titled kind title body =>
     let d := Design.ofPalette cfg.pal
     let look := d.titledBody kind
@@ -7423,27 +7508,43 @@ public def blockNode (cfg : Config) (b : Block) : Node :=
     let parent : Ir.ColorPair :=
       { fg := inherited.2, bg := cfg.listingGround.getD d.bg }
     let paint := titledBodyPaint cfg.pal kind parent inherited.1
-    let role := if look.fg.isSome then kind.name ++ "bodyfg" else inherited.1
+    let role := if look.fg.isSome then kind.roleStem ++ "bodyfg" else inherited.1
     let titleLook := Ir.titledLook cfg.pal kind
     let titleGround := titleLook.bar.getD parent.bg
-    let titleInk := (d.inkOn (kind.name ++ "titlefg")
+    let titleInk := (d.inkOn (kind.roleStem ++ "titlefg")
       { fg := titleLook.fg, bg := titleGround }).fg
+    let barStyle := (titleLook.bar.map fun c => s!"background: {cssColor c}; {titledBoxPaint}").getD ""
     let titleStyle := s!"color: {cssColor titleInk};" ++ surfaceInkDecls cfg.pal titleGround ++
-      (titleLook.bar.map fun c =>
-        s!"background: {cssColor c}; padding: {cssLength titledPadding};").getD ""
-    let head : Array Html.Node := if title.isEmpty then #[] else
-      #[Html.elem "header" (inlines cfg title) #[("style", titleStyle)]]
+      barStyle
+    let head : Array Html.Node :=
+      if title.isEmpty then
+        #[Html.elem "header" #[] #[("style", if barStyle.isEmpty then "min-height: 1lh;" else barStyle)]]
+      else #[Html.elem "header" (inlines cfg title) #[("style", titleStyle)]]
     let bodyCfg := { cfg.into with
       listingFg := some paint.fg, listingGround := look.bg.or cfg.listingGround
       bodyGround := look.bg.or cfg.bodyGround
       bodyInk := some (role, (look.resolve parent).fg) }
     let kids := blockNodesInto bodyCfg #[] body.toList
     let bodyStyle := s!"color: {cssColor paint.fg};" ++ surfaceInkDecls cfg.pal paint.bg
+    if kind == .box then
+      -- tcolorbox's box: its title and upper part are its own segments, each
+      -- padded by the stylesheet (`themeCss`) and painted from the plain
+      -- block's roles, an untitled box no title at all.
+      let barStyle := (titleLook.bar.map fun c => s!"background: {cssColor c};").getD ""
+      let head : Array Html.Node := if title.isEmpty then #[] else
+        #[Html.elem "header" (inlines cfg title)
+          #[("style", s!"color: {cssColor titleInk};" ++ surfaceInkDecls cfg.pal titleGround ++
+            barStyle)]]
+      let bodyPaint := (look.bg.map fun bg => s!"background: {cssColor bg};").getD ""
+      Html.elem "section" (head.push (Html.elem "div" kids
+          #[("class", "tcolorbox-body"), ("style", bodyStyle ++ bodyPaint)]))
+        #[("class", "tcolorbox")]
+    else
     -- A painted region owns a box, distinct from its independently painted
     -- title. Unfilled bodies keep their original child structure.
     let kids := match look.bg with
       | some bg => #[Html.elem "div" kids #[("class", "block-body"), ("style",
-          bodyStyle ++ s!"background: {cssColor bg}; padding: {cssLength titledPadding};")]]
+          bodyStyle ++ s!"background: {cssColor bg}; {titledBodyBoxPaint}")]]
       | none => kids
     let attrs := #[("class", s!"block block-{kind.name}")]
     let attrs := if look.bg.isNone && look.fg.isSome then attrs.push ("style", bodyStyle) else attrs

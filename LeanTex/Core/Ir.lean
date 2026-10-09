@@ -82,17 +82,14 @@ public theorem rhythmQuantum_lt_double (size : Int) (h : Dim.pt 1 ≤ size) :
     < 2 * (size * 1200 / 1000 * 1000 / 1000 / 2)
   omega
 
-/-- The default clearance between a cut mark's inward end and the trim
-line it stops short of: 0.075 in. The industry guillotine tolerance is
-1/32–1/16 in (PrintNinja's pre-press guide and Smartpress's cutting
-tolerance both publish the 1/16 in outer bound), so 0.075 in beats a
-spec-limit drift with 0.0125 in to spare — the mirror of the 1/8 in safe
-zone type keeps inside the trim. `\page{ mark-gap = ... }` overrides. -/
+/-- The default space between a cut mark's inner end and the trimmed page:
+0.075 in, wider than the 1/16 in that published guillotine cutting
+tolerances give as their outer bound (PrintNinja's pre-press guide,
+Smartpress's cutting tolerance), so a cut within tolerance never meets a
+mark. `\page{ mark-gap = ... }` overrides. -/
 public def cutMarkGap : Sp := inch 3 / 40
 
-/-- The default cut-mark thickness: 0.5 bp, a print shop's floor for a
-hairline that prints legibly on digital stock and twice the 0.25 bp
-offset floor, so the mark survives either process. This engine reads
+/-- The default cut-mark thickness: a 0.5 bp hairline. This engine reads
 `bp` as `pt` (`Decl.unitScaleBase`), so the value is 0.5 pt in sp.
 `\page{ mark-thickness = ... }` overrides. -/
 public def cutMarkThickness : Sp := pt 1 / 2
@@ -135,7 +132,7 @@ public structure PageSpec where
   `baseFontSize`. -/
   fontSize : Sp := baseFontSize
   /-- Line spacing as a factor over the default 1.2, in thousandths, so
-  `\linespread{1.04}` has a home: what every line's leading reads. A
+  `\linespread{1.15}` has a home: what every line's leading reads. A
   `\page` declaration composes it from `spread` and `bodySkip`, as LaTeX's
   `\selectfont` stretches the `\baselineskip` a size command sets. -/
   leading : Nat := 1000
@@ -789,6 +786,28 @@ public def tableLengths : List (String × Dim.Length) :=
 /-- A table length's default (`tableLengths`); zero for a name it lacks. -/
 public def tableLengthDefault (name : String) : Dim.Length :=
   (tableLengths.lookup name).getD {}
+
+/-- latex.ltx's three vertical skip registers at their kernel values, the
+same in every class (ltspace.dtx, as plain.tex sets them): what `\smallskip`,
+`\medskip` and `\bigskip` spend, and beamer's block template above its title
+box and below its body box (beamerinnerthemedefault.sty, `\medskipamount`
+and `\smallskipamount`), where the document never sets them. -/
+public def kernelSkip : String → Option SymGlue
+  | "smallskipamount" =>
+    some { width := .ofSp (Dim.pt 3), stretch := .ofSp (Dim.pt 1), shrink := .ofSp (Dim.pt 1) }
+  | "medskipamount" =>
+    some { width := .ofSp (Dim.pt 6), stretch := .ofSp (Dim.pt 2), shrink := .ofSp (Dim.pt 2) }
+  | "bigskipamount" =>
+    some { width := .ofSp (Dim.pt 12), stretch := .ofSp (Dim.pt 4), shrink := .ofSp (Dim.pt 4) }
+  | _ => none
+
+/-- The one resolving site for a skip register: the value the document set
+it to (`\setlength{\medskipamount}`, a token of the register's name), else
+the kernel's. Both backends read it — the PDF walk around a block, the HTML
+gap sheet's block boundaries — as TeX's `\vskip\medskipamount` reads the
+register in force. -/
+public def skipAmount (tokens : Tokens) (name : String) : SymGlue :=
+  (tokens.find? name).getD ((kernelSkip name).getD {})
 
 /-- The three rule weights are a hierarchy, not three loose numbers: "the
 top and bottom rules are heavier than the middle rule, which is in turn
@@ -3997,8 +4016,8 @@ picture reserves and the baseline a line is set on cannot disagree.
 
 This is the number the wobble is about. Under TeX's node centring the
 baseline is `−(ht − dp)/2` of the *measured* box, so depth enters with
-slope ½ and a word with a descender floats up: 1.155 pt between `value`
-and `inventory` in Computer Modern at 10 pt (pgf manual §17.5.1 calls it
+slope ½ and a word with a descender floats up: 1.155 pt between `candle`
+and `misty` in Latin Modern at 10 pt (pgf manual §17.5.1 calls it
 "wobbles" and offers `anchor=mid` against it). Here `height` and `depth`
 are the face's declared cap height and descent at the run's size, never the
 glyphs present (`Layout.label_centre_glyph_free`), so the same arithmetic
@@ -5520,19 +5539,32 @@ public structure BibItem where
 
 /-- The titled block's kind, closed: beamer's three block environments
 (`{block}`, `{alertblock}`, `{exampleblock}` — beamer user guide §12.3,
-"Highlighting"). The kind selects the role pair the title resolves
-through (`titledLook`); nothing else about the node differs per kind —
-a poster and a deck set the same node at different base sizes. -/
+"Highlighting"), and tcolorbox's box, which its lowering sets through the
+same surface (`Tcolorbox.lower`). The kind selects the role pair the title
+resolves through (`titledLook`, the box the plain block's: `roleStem`)
+and the box the block stands in: beamer's two colour boxes for the three,
+tcolorbox's frame for the box — a poster and a deck set the same node at
+different base sizes. -/
 public inductive TitledKind where
   | block
   | alert
   | example
+  | box
   deriving Repr, BEq, DecidableEq, Inhabited
 
-/-- The kind's one spelling: the HTML class suffix and the role-key stem
-(`alerttitlefg`), one naming site for both backends. -/
+/-- The kind's one spelling: the HTML class suffix, one naming site for both
+backends and the dump. -/
 public def TitledKind.name : TitledKind → String
   | .block => "block"
+  | .alert => "alert"
+  | .example => "example"
+  | .box => "box"
+
+/-- The role-key stem the kind's colours resolve through (`alerttitlefg`):
+tcolorbox's box takes the plain block's roles, where its lowering declares
+its colours. -/
+public def TitledKind.roleStem : TitledKind → String
+  | .block | .box => "block"
   | .alert => "alert"
   | .example => "example"
 
@@ -5631,6 +5663,13 @@ public structure ListingSpec where
   line: fvextra's `fvextraLineOverlap` for a minted listing, zero for a
   bare `verbatim` and for listings' own. -/
   lineOverlap : Sp := 0
+  /-- Every code line carries a `\strut`, so its box is that strut's at
+  least, whatever its glyphs: minted's lines under `breaklines`, which
+  fvextra sets each as `\parbox[t]{…}{\noindent\strut … \strut}`
+  (`\FV@ListProcessLine@Break`). Its unbroken lines are bare `\hbox`es,
+  their glyphs' boxes, as verbatim's are. A colour box around the code ends
+  on the last line's box. -/
+  lineStrut : Bool := false
   deriving Repr, BEq, Inhabited
 
 /-- fvextra's `backgroundcolorboxoverlap`, 0.25 pt (fvextra.sty,
@@ -10518,9 +10557,9 @@ private def dumpInline (ind : String) (x : Inline) : String :=
 end
 
 /-- One column spec, for the dump: the align letter, then the declared
-width. `l:310/1000` is a left `p{.31\linewidth}`; a bare letter is a
+width. `l:400/1000` is a left `p{.4\linewidth}`; a bare letter is a
 natural column; `~` after the letter marks a ragged one (`ColSpec.ragged`),
-`l~:310/1000` a `>{\raggedright}p{.31\linewidth}`. -/
+`l~:400/1000` a `>{\raggedright}p{.4\linewidth}`. -/
 private def dumpColSpec (c : ColSpec) : String :=
   let al := match c.align with
     | .left => "l"
@@ -10818,29 +10857,55 @@ public theorem SurfaceLook.resolve_contract (look : SurfaceLook) (parent : Color
 public theorem SurfaceLook.undeclared_exact (parent : ColorPair) :
     (SurfaceLook.mk none none).resolve parent = parent := by rfl
 
-/-- The native block bar's existing half-body-em inset, shared by a filled
-title and body. This measures against the body font, not a leading quantum:
-PDF resolves the length in sp and HTML retains its em unit. Keeping the
-font-relative length here makes the inset independent of either renderer's
-line-spacing policy. -/
-@[expose] public def titledPadding : Length := { em := 500 }
+/-- beamer's block colour boxes' `colsep*=.75ex` (beamerinnerthemedefault.sty,
+`block begin`), shared by a painted title and body: such a box stands this
+far above and below its lines, and its paint reaches this far beyond the
+text measure on both sides while the text stays on the measure. The PDF
+resolves it against the face's x-height; HTML keeps the `ex`. -/
+@[expose] public def titledPadding : Length := { ex := 750 }
 
 public theorem titledPadding_contract (fontSize xHeight : Sp) :
-    titledPadding.resolve fontSize xHeight = fontSize / 2 := by
-  simp only [titledPadding, Length.resolve, Int.zero_add, Int.zero_mul, Int.zero_ediv,
-    Int.add_zero]
-  change (500 * fontSize) / (500 * 2) = fontSize / 2
+    titledPadding.resolve fontSize xHeight = 3 * xHeight / 4 := by
+  simp only [titledPadding, Length.resolve, Int.zero_add, Int.zero_mul, Int.zero_ediv]
+  have h : (750 : Int) * xHeight = 250 * (3 * xHeight) := by omega
+  rw [h, show (1000 : Int) = 250 * 4 by decide]
   exact Int.mul_ediv_mul_of_pos _ _ (by decide)
+
+/-- A painted title meeting a painted body: `\nointerlineskip\vskip-0.5pt`,
+the body box overlapping the title box by half a point. -/
+public def blockSeam : Sp := Dim.pt 1 / 2
+
+/-- `n` tenths of TeX's millimetre, 7227⁄2540 of the point this engine's
+`pt` is numerically: tcolorbox's lengths (tcolorbox.sty) are TeX's. -/
+public def texMmTenths (n : Int) : Sp := n * 7227 * Dim.spPerPt / 25400
+
+/-- tcolorbox's box under its reset style, `size=normal` (tcolorbox.sty,
+`size/normal`): the frame's rule (`boxrule=0.5mm`, the title rule the
+same), `boxsep=1mm`, `left=right=4mm`, `top=bottom=2mm`, the title's own
+`toptitle` and `bottomtitle` zero. Both backends read these. -/
+public def tcbRule : Sp := texMmTenths 5
+public def tcbBoxsep : Sp := texMmTenths 10
+public def tcbSide : Sp := texMmTenths 40
+public def tcbTop : Sp := texMmTenths 20
+public def tcbBottom : Sp := texMmTenths 20
+
+/-- How far a box's text stands inside its edges, on both sides: the rule,
+`boxsep` and `left` (`right`), 5.5 mm. -/
+public def tcbInset : Sp := tcbRule + tcbBoxsep + tcbSide
+
+/-- An unpainted body box opens on `\vskip-.25ex\vbox{}`: its first line is
+spaced from a box standing a quarter ex above the body box's own top. -/
+public def blockBodyRaise : Length := { ex := 250 }
 
 /-- Beamer's three body elements (`beamercolorthemedefault.sty`) start
 empty. Themes such as Moloch declare their fills and inheritance through
 the palette bindings; no title or accent role implies a body fill. -/
 @[expose] public def titledBodyLook (pal : Palette) (kind : TitledKind) : SurfaceLook :=
-  { fg := pal.find? (kind.name ++ "bodyfg"), bg := pal.find? (kind.name ++ "bodybg") }
+  { fg := pal.find? (kind.roleStem ++ "bodyfg"), bg := pal.find? (kind.roleStem ++ "bodybg") }
 
 public theorem titledBodyLook_exact (pal : Palette) (kind : TitledKind) :
-    (titledBodyLook pal kind).fg = pal.find? (kind.name ++ "bodyfg") ∧
-    (titledBodyLook pal kind).bg = pal.find? (kind.name ++ "bodybg") := by
+    (titledBodyLook pal kind).fg = pal.find? (kind.roleStem ++ "bodyfg") ∧
+    (titledBodyLook pal kind).bg = pal.find? (kind.roleStem ++ "bodybg") := by
   exact ⟨rfl, rfl⟩
 
 /-- A titled block's resolved look: the title's ink, and the bar behind it
@@ -10861,7 +10926,7 @@ ink is the page colour, as the frame-title bar's is. Layout reads it with
 the palette in force at the block; `Design.ofDoc` reads it for the
 contrast contract. -/
 public def titledLook (pal : Palette) : TitledKind → TitledLook
-  | .block =>
+  | .block | .box =>
     let bar := pal.find? "blocktitlebg"
     { fg := (pal.find? "blocktitlefg").getD
         (if bar.isSome then (pal.find? "bg").getD Color.white
@@ -11046,7 +11111,7 @@ the document's declarations. -/
 
 /-- The body's declaration projected from the resolved design. -/
 @[expose] public def Design.titledBody (d : Design) : TitledKind → SurfaceLook
-  | .block => d.blockBody
+  | .block | .box => d.blockBody
   | .alert => d.alertBody
   | .example => d.exampleBody
 
@@ -11066,7 +11131,7 @@ so a nested background-only body reads the correction for its own ground. -/
 @[expose] public def Design.titledBodyPaint (d : Design) (kind : TitledKind)
     (parent : ColorPair) (parentRole : String) : ColorPair :=
   let look := d.titledBody kind
-  d.inkOn (if look.fg.isSome then kind.name ++ "bodyfg" else parentRole) (look.resolve parent)
+  d.inkOn (if look.fg.isSome then kind.roleStem ++ "bodyfg" else parentRole) (look.resolve parent)
 
 /-- Ground selection and ink realization share one resolved body value;
 realization can change its ink only, never introduce a new ground. -/
@@ -11474,10 +11539,13 @@ palette name) is covered too, exactly as beamer's transparent covering
 mutes coloured text — but covered means *the same colour, quieter*: each
 coloured run takes its own cover (`cover.of`), never a repaint to one
 constant that would make a covered alert and a covered example the same
-grey. Runs with no colour of their own take `cover.plain`; verbatim dims
-through its own `covered` field; section blocks carry no colour and stay
-(recorded in PLAN). Only colours change in either mode, so no step can
-reflow the slide — the cover-not-hide invariant, by construction. -/
+grey. Runs with no colour of their own take `cover.plain`; a titled
+block's heading has one, the block title's ink, which resolves at layout
+from the palette in force and takes its cover there with the block's
+boxes; verbatim dims through its own `covered` field; section blocks carry
+no colour and stay (recorded in PLAN). Only colours change in either mode,
+so no step can reflow the slide — the cover-not-hide invariant, by
+construction. -/
 private def dimBlockList (cover : Cover) (k : Nat) (pending : Bool) (out : Array Block) :
     List Block → Array Block
   | [] => out
@@ -11499,11 +11567,7 @@ private def dimBlock (cover : Cover) (k : Nat) (pending : Bool) : Block → Bloc
   | .quote body => .quote (dimBlockList cover k pending #[] body.toList)
   | .abstract body => .abstract (dimBlockList cover k pending #[] body.toList)
   | .titled kind title body =>
-    .titled kind
-      (if pending then
-        if title.isEmpty then title
-        else #[.colored cover.plain none (dimInlineList cover k true #[] title.toList)]
-       else dimInlineList cover k false #[] title.toList)
+    .titled kind (dimInlineList cover k pending #[] title.toList)
       (dimBlockList cover k pending #[] body.toList)
   | .role n body => .role n (dimBlockList cover k pending #[] body.toList)
   | .link target body => .link target (dimBlockList cover k pending #[] body.toList)
@@ -11662,12 +11726,31 @@ entry, `pending` off. -/
 public def dimBlocks (cover : Cover) (k : Nat) (xs : Array Block) : Array Block :=
   dimBlockList cover k false #[] xs.toList
 
-/-- The item flatten itself: a leading `.step` wrapper opens into its item,
-the body standing where the wrapper stood. Named so its text conservation
-is one lemma, not a case buried inside the walk. -/
+/-- The item flatten itself: a leading `.step` wrapper that opens on a
+paragraph gives the item that paragraph, where the marker attaches, and
+keeps the rest of its body under the wrapper; a wrapper opening on anything
+else stands whole, and an empty one goes. The wrapper must reach what
+follows the paragraph: a block's boxes and heading ink resolve at layout and
+take the step's cover there (`Layout`'s `.onSteps` arm), and flattened they
+shipped at full ink on the steps that do not show their item. Named so its
+text conservation is one lemma, not a case buried inside the walk. -/
 public def flattenLeadStep (item : Array Block) : Array Block :=
   match item[0]? with
-  | some (Block.onSteps _ body) => body ++ item.extract 1 item.size
+  | some (Block.onSteps spec body) =>
+    match (body[0]? : Option Block) with
+    | some (.para p) =>
+      #[.para p] ++
+        (if body.size ≤ 1 then #[] else #[Block.onSteps spec (body.extract 1 body.size)]) ++
+        item.extract 1 item.size
+    | none => item.extract 1 item.size
+    | some (.onSteps _ _) | some (.section _ _ _ _) | some (.list _ _) | some (.center _)
+    | some (.ragged _ _) | some (.spaced _ _) | some (.role _ _) | some (.link _ _)
+    | some (.quote _) | some (.abstract _) | some (.titled _ _ _) | some (.equation _ _)
+    | some (.verbatim _ _ _) | some (.algorithm _ _ _) | some (.columns _)
+    | some (.altSteps _ _ _) | some (.note _) | some (.only _ _) | some (.nav _ _)
+    | some (.logo _) | some .pagebreak | some (.frame _ _ _ _ _) | some (.framefoot _)
+    | some (.setPalette _) | some (.setTokens _) | some (.rule _ _ _) | some (.picture _)
+    | some (.table _ _ _ _ _ _) | some (.float _ _ _ _ _) | some (.bibliography _ _ _) => item
   | none => item
   | some (.para _) | some (.section _ _ _ _) | some (.list _ _) | some (.center _)
   | some (.ragged _ _) | some (.spaced _ _) | some (.role _ _) | some (.link _ _)
@@ -12722,16 +12805,9 @@ private theorem dimBlock_text (cover : Cover) (k : Nat) (pending : Bool) (b : Bl
     simp [blockTextOne, dimBlockList_text cover k pending body.toList #[] acc, blockTextList]
   | .titled kind title body =>
     rw [dimBlock]
-    by_cases h : pending = true
-    · by_cases ht : title.isEmpty
-      · simp [h, ht, blockTextOne,
-          dimBlockList_text cover k true body.toList #[] _, blockTextList]
-      · simp [h, ht, blockTextOne, plainText, plainTextList, plainTextOne,
-          dimInlineList_text cover k true title.toList #[],
-          dimBlockList_text cover k true body.toList #[] _, blockTextList]
-    · simp [h, blockTextOne, plainText,
-        dimInlineList_text cover k false title.toList #[], plainTextList,
-        dimBlockList_text cover k false body.toList #[] _, blockTextList]
+    simp [blockTextOne, plainText,
+      dimInlineList_text cover k pending title.toList #[], plainTextList,
+      dimBlockList_text cover k pending body.toList #[] _, blockTextList]
   | .role n body =>
     rw [dimBlock]
     simp [blockTextOne, dimBlockList_text cover k pending body.toList #[] acc, blockTextList]
@@ -12843,9 +12919,9 @@ public theorem algorithm_text (numbered semis : Bool) (lines : Array AlgLine) :
       = algLineText "" lines.toList := by rfl
 
 -- The item-step flatten: unwrapping loses no text. A leading `\item<2->`
--- wrapper opens into its item, nothing recoloured, nothing reordered, so
--- the block census is fixed. Same accumulator-lemma-then-mutual-induction
--- shape as the dim walk above.
+-- wrapper gives its item its paragraph, nothing recoloured, nothing
+-- reordered, so the block census is fixed. Same
+-- accumulator-lemma-then-mutual-induction shape as the dim walk above.
 
 private theorem flattenLeadStep_text (item : Array Block) (acc : String) :
     blockTextList acc (flattenLeadStep item).toList
@@ -12864,7 +12940,37 @@ private theorem flattenLeadStep_text (item : Array Block) (acc : String) :
         have h1 := congrArg List.length wl
         simp at h1
         omega
-      simp [wl, hlen, blockTextList, blockTextList_chain, blockTextOne]
+      split
+      next p hb =>
+        have hb0 : body.toList[0]? = some (Block.para p) := by simpa using hb
+        cases wb : body.toList with
+        | nil => simp [wb] at hb0
+        | cons z more =>
+          rw [wb] at hb0
+          simp only [List.getElem?_cons_zero, Option.some.injEq] at hb0
+          subst hb0
+          have hblen : body.size - 1 = more.length := by
+            have h1 := congrArg List.length wb
+            simp at h1
+            omega
+          by_cases hs : body.size ≤ 1
+          · have hm : more = [] := by
+              have h1 := congrArg List.length wb
+              simp at h1
+              cases more with
+              | nil => rfl
+              | cons _ _ => simp at h1; omega
+            subst hm
+            simp [hs, wl, wb, hlen, blockTextList, blockTextOne]
+          · simp [hs, wl, wb, hlen, hblen, blockTextList, blockTextOne]
+      next hb =>
+        have hb0 : body.toList = [] := by
+          rcases body with ⟨l⟩
+          cases l with
+          | nil => rfl
+          | cons z more => simp at hb
+        simp [wl, hb0, hlen, blockTextList, blockTextOne]
+      all_goals simp [wl]
   all_goals rfl
 
 mutual
@@ -17699,7 +17805,7 @@ public theorem decl_spellings_agree (s : Style) (xs : Array Inline) :
     wrapDecls [.style s] xs = #[.styled s xs] := by rfl
 
 /-- One character of a label's anchor: Unicode characters, ASCII word
-characters and the punctuation label keys conventionally carry (`fig:scm`,
+characters and the punctuation label keys conventionally carry (`fig:flow`,
 `eq.1`, `a-b`, `x_y`) survive verbatim. HTML ids permit non-ASCII characters;
 folding them would collapse distinct authored targets. Other ASCII
 characters — whitespace included — fold to a hyphen. -/

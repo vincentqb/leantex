@@ -249,6 +249,6 @@ def macroPhaseChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) :
       definer ++ r"\style{itemize}{marker={" ++ marker ++ "}}"
     let body := r"\begin{itemize}\item Tail\end{itemize}"
     same ("macro kernel space style shadow " ++ definer)
-      (article (style r"A\space B") body) (article (style "AQB") body)
+      (article (style r"A\space Z") body) (article (style "AQZ") body)
 
 end Tests

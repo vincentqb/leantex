@@ -595,9 +595,9 @@ def boxWidthChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Un
   t "an absolute box width is no longer a named loss"
     (!(warnCodes (boxDoc "" "90pt")).contains "W0314")
   -- One grammar carries an affine local width all the way to this box.
-  let affineSrc := "0.334\\dimexpr \\textwidth +28mm\\relax"
+  let affineSrc := "0.315\\dimexpr \\textwidth +36mm\\relax"
   let affine := widest (boxDoc "" affineSrc)
-  let affineBound := ((geom.textWidth + Dim.mm 28) * 334).tdiv 1000
+  let affineBound := ((geom.textWidth + Dim.mm 36) * 315).tdiv 1000
   t "an affine box width resolves against its enclosing measure"
     (decide (affine ≤ affineBound) && decide (affine > geom.textWidth / 3))
   t "an affine box width has one successful reading"
@@ -1266,21 +1266,21 @@ def filChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit :=
   -- with the exact source components; the screen preview is xcolor's own
   -- cmyk-to-rgb projection, pinned against the differential probe.
   let (cdoc, cds) := elabStr
-    "\\documentclass{article}\\definecolor{ink}{cmyk}{0,.83,.76,.07}\
+    "\\documentclass{article}\\definecolor{ink}{cmyk}{0,.6,.4,.2}\
 \\begin{document}\\textcolor{ink}{x}\\end{document}"
   t "a cmyk definecolor lands in the palette with its components"
     (cds.all (·.severity != .error) && cds.all (·.code != "W0102") &&
-      cdoc.palette.find? "ink" == some (Ir.Color.ofCmyk 0 830 760 70))
+      cdoc.palette.find? "ink" == some (Ir.Color.ofCmyk 0 600 400 200))
   t "the cmyk screen preview follows xcolor's cmyk-to-rgb conversion"
-    (Ir.Color.ofCmyk 0 830 760 70 ==
-      { r := 237, g := 26, b := 43, cmyk := some (0, 830, 760, 70) })
+    (Ir.Color.ofCmyk 0 600 400 200 ==
+      { r := 204, g := 51, b := 102, cmyk := some (0, 600, 400, 200) })
   let cpdf := pdfText (Pdf.write geom oneFace (layoutOf oneFace cdoc geom).pages cdoc.info)
   t "the pdf paints a cmyk colour in DeviceCMYK, components as declared"
-    (bytesContain cpdf "0 0.83 0.76 0.07 k")
+    (bytesContain cpdf "0 0.6 0.4 0.2 k")
   t "the html backend converts, explicitly, to the preview"
     (((HtmlDoc.emit {} cdoc).1.splitOn
-        (HtmlDoc.cssColor (Ir.Color.ofCmyk 0 830 760 70))).length ≥ 2 &&
-      HtmlDoc.cssColor (Ir.Color.ofCmyk 0 830 760 70) == "#ed1a2b")
+        (HtmlDoc.cssColor (Ir.Color.ofCmyk 0 600 400 200))).length ≥ 2 &&
+      HtmlDoc.cssColor (Ir.Color.ofCmyk 0 600 400 200) == "#cc3366")
   -- A colour expression keeps its model (xcolor §2.3.2: evaluated in the
   -- first colour's model). Before `mix` dispatched on the model, a
   -- CMYK-first mix was repainted as DeviceRGB — `0 0.502 0.502 rg` for
@@ -3371,7 +3371,7 @@ def tableChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit 
     (!(layoutDiags (wrap "\\begin{tabular}{ll}a & b \\\\\\end{tabular}")).any
       (·.code == "W0338"))
   let affineTable := wrap
-    "\\begin{tabular}{p{0.334\\dimexpr \\linewidth +28mm\\relax}}word word word word word word word word \\\\\\end{tabular}"
+    "\\begin{tabular}{p{0.315\\dimexpr \\linewidth +36mm\\relax}}word word word word word word word word \\\\\\end{tabular}"
   t "an affine table column width parses once without a fallback"
     ((elabStr affineTable).2.all fun d =>
       d.severity != .error && d.code != "W0104" && d.code != "W0314")
@@ -3833,7 +3833,7 @@ def hyphenChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "hyphen fr déclaration" (hyphFr "déclaration" == "dé-cla-ra-tion")
   -- The word boundary is Unicode (Nfc.isLetter/toLower): an accented word
   -- hyphenates whole, capitalized included.
-  t "hyphen fr accented capital folds" (hyphFr "Bélair" == "Bé-lair")
+  t "hyphen fr accented capital folds" (hyphFr "Électricité" == "Élec-tri-cité")
   -- German (hyph-de-1996.tex, hyphenmins 2/2 from the locale record).
   -- Verified against luatex loading the same file: hyphen-diff --lang de,
   -- 2800 words, exact.
@@ -4230,8 +4230,8 @@ def drawnMarkChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO U
     hmark "\\dimexpr\\paperw-\\stub\\relax" "\\dimexpr\\paperh-\\bl-0.5\\hair\\relax" ++
     "\\end{picture}}" ++
     "\\AddToHook{shipout/background}{\\put(0pt,-\\paperh){\\color{allplates}\\drawmarks}}"
-  -- The boxes the card declares at shipout, as a page attribute: values the
-  -- engine does not evaluate, a declaration all the same.
+  -- Page boxes a document declares at shipout, as a page attribute: values
+  -- the engine does not evaluate, a declaration all the same.
   let boxes := "\\AddToHook{shipout/before}{\\pdfvariable pageattr{/TrimBox [8.5 8.5 260.5 152.5]}}"
   let (doc, ds) := elabStr (pre (marks ++ boxes))
   let geom := Layout.Geom.ofPage doc.page
@@ -4280,7 +4280,7 @@ def drawnMarkChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO U
     ((layoutOf oneFace lone loneGeom).pages.all fun p => p.fills.any fun f =>
       f.x == bl && f.w == Dim.mm 1 && f.h == hair && f.y == lone.page.height - bl - hair)
   -- review CF-3: xcolor's own names reach a drawn rule through the one
-  -- resolving site, and a name that resolves to nothing is named — never a
+  -- resolving site, and a name no colour answers to is named — never a
   -- silent black.
   let stub (ink : String) : String := pre ("\\AddToHook{shipout/background}" ++
     s!"\{\\put(0pt,-\\paperh)\{\\color\{{ink}}\\put(\\bl,\\bl)\{\\rule\{\\stub}\{\\hair}}}}")
@@ -5484,8 +5484,8 @@ def pictureBoxChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO 
 
 /-- **The wobble, and the three constraints on correcting it.** TeX centres
 a node on `(ht − dp)/2` of its *measured* box, so depth enters at slope one
-half and a word with a descender floats up — 1.155 pt between `value` and
-`inventory` in Computer Modern at 10 pt, the effect this pins the absence of.
+half and a word with a descender floats up — 1.155 pt between `candle` and
+`misty` in Latin Modern at 10 pt, the effect this pins the absence of.
 
 Asserted over `Layout.Out` (the baselines two sibling labels are actually
 set on) and over the exported measurement, never over an IR dump. Three
@@ -5509,9 +5509,9 @@ def labelBaselineChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : 
     ((run #[.picture p]).pages[0]?.map fun pg =>
       (pg.lines.filter (!·.furniture)).toList.map (·.y)).getD []
   t "two sibling labels ship two lines"
-    ((baselines (pair "value" "inventory")).length == 2)
+    ((baselines (pair "candle" "misty")).length == 2)
   t "a descender does not lift a label off its neighbour's baseline"
-    (match baselines (pair "value" "inventory") with
+    (match baselines (pair "candle" "misty") with
      | [p, q] => p == q
      | _ => false)
   t "nor does a word of nothing but descenders"
@@ -5527,9 +5527,9 @@ def labelBaselineChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : 
   -- label passes the two equalities above and fails here.
   let m := Layout.labelMetric geom oneFace
   let solo : Ir.Pic.Picture := { shapes := #[
-    .label (Dim.pt 10) (Dim.pt 5) #[.text "value"] Ir.Color.black 1000 .center] }
+    .label (Dim.pt 10) (Dim.pt 5) #[.text "candle"] Ir.Color.black 1000 .center] }
   let hull := solo.inkBbox m
-  let inkS := m #[.text "value"] 1000
+  let inkS := m #[.text "candle"] 1000
   t "the shipped baseline is the one the IR predicts"
     (((run #[.picture solo]).pages[0]?.bind fun pg =>
       (pg.lines.filter (!·.furniture))[0]?.map fun l =>
@@ -5538,8 +5538,8 @@ def labelBaselineChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : 
   -- The same fact at the measurement, where the reason is visible: the band
   -- is the face's declared cap height and descent, so it cannot vary with
   -- the text, while the set width must and does.
-  let inkV := m #[.text "value"] 1000
-  let inkI := m #[.text "inventory"] 1000
+  let inkV := m #[.text "candle"] 1000
+  let inkI := m #[.text "misty"] 1000
   t "the declared band is one number per face, whatever the word"
     (inkV.height == inkI.height && inkV.depth == inkI.depth)
   t "the set width still follows the glyphs"
@@ -5854,13 +5854,13 @@ shipped as #000000. -/
 def bodyColorChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) :
     IO Unit := do
   let t := check ref
-  let (d, _) := elabStr ("\\palette{ charcoal = #18181B }\n\\begin{document}\n" ++
-    "\\color{charcoal}\nBody words here.\n\\end{document}")
+  let (d, _) := elabStr ("\\palette{ graphite = #2A2C30 }\n\\begin{document}\n" ++
+    "\\color{graphite}\nBody words here.\n\\end{document}")
   let out := layoutOf oneFace d
-  let charcoal : Ir.Color := { r := 0x18, g := 0x18, b := 0x1B }
+  let graphite : Ir.Color := { r := 0x2A, g := 0x2C, b := 0x30 }
   t "the declared body colour reaches the shipped runs"
     ((out.pages.flatMap (·.lines)).any fun l => l.segs.any fun s => match s with
-      | .run _ c _ _ glyphs _ _ _ _ _ _ => c == charcoal && !glyphs.isEmpty
+      | .run _ c _ _ glyphs _ _ _ _ _ _ => c == graphite && !glyphs.isEmpty
       | _ => false)
   t "no body run stayed silently pure black"
     ((bodyLines out).all fun l => l.segs.all fun s => match s with

@@ -54,6 +54,7 @@ import Tests.Tcolorbox
 import Tests.TcolorboxColors
 import Tests.BlockBar
 import Tests.BlockBody
+import Tests.BlockGeometry
 import Tests.BlockFillConditionals
 import Tests.BlockRegionFit
 import Tests.BlockHeaderClearance
@@ -103,6 +104,7 @@ import Tests.Batch
 import Tests.ElabFrameSources
 import Tests.LayoutSources
 import Tests.LineRhythm
+import Tests.Privacy
 import scripts.LandCore
 
 /-!
@@ -348,7 +350,7 @@ def reports : List Report := [
     what := "a business card rendered wrong: its page boxes, bleed, marks, lengths and faces"
     pins := [check% filChecks, check% driverOptionChecks, check% drawnMarkChecks,
       check% pdfVersionChecks]
-    accept := ["the card's own print check recipe — page boxes, cut marks, fonts, exact strings — against the engine's PDF"]
+    accept := ["an out-of-repo print check of the engine's PDF: page boxes, cut marks, embedded faces and set text"]
     state := .guarded "da9b049d" .before .author },
   { id := "R38", date := "2026-09-27"
     what := "a website broke: every centred environment gained a wrapper element"
@@ -364,7 +366,7 @@ def reports : List Report := [
   { id := "R40", date := "2026-09-27"
     what := "a business card's text did not stand vertically centred on its faces: the gaps above and below its block differed"
     pins := [check% faceCentreChecks]
-    accept := ["the card's own print check recipe, against its lualatex build"]
+    accept := ["an out-of-repo print check of both faces, against the lualatex build of the same source"]
     state := .guarded "f16b1321" .before .author },
   { id := "R41", date := "2026-09-28"
     what := "a slide's rows of images, two to a row parted by a fill, stood clumped at the middle and too small where TeX sets them at the measure's two edges: a centred line gave its fill no share of the slack, and a text-height fraction sized against the engine's own margins rather than the frame's text area"
@@ -1036,6 +1038,43 @@ def reports : List Report := [
       "still slow: the layout module waits about 100 of its 136 seconds behind earlier proofs, the IR module elaborates in 60, and the lint audit elaborates every source again on each commit"]
     state := .owed "a follow-up once the concurrent branches land: large-module declarations ahead of the proofs they wait behind, proof companions, and a lint audit read from the build" ["declBarrierChecks"] },
   { id := "R116", date := "2026-10-08"
+    what := "personal identifiers and material from private documents reached the tree"
+    pins := [check% privacyMatcherChecks, check% privacyGateChecks]
+    accept := ["the lint gate's check of the staged tree against the clone's local denylist names locations at the broken commit and none after the scrub",
+      "a scratch repository and a scratch clone with an invented denylist: the commit gate refuses an added line in UTF-8, Latin-1 or Windows-1252, a wrapped phrase, an accent command before a blank, an added or renamed path, and a binary naming a listed term in its own bytes or in what it inflates to (a PDF's stream or string, a PNG's compressed text, a gzip or zip member), under the default, no-prefix and mnemonic-prefix diff settings alike; the lint gate refuses an unpushed commit adding a term that a later commit removes, a message naming one in either encoding, and a clone keeping the list without the remote ref that bounds its unpushed commits; every finding prints a location, a path masked where it holds the term, and never the term",
+      "an out-of-repo comparison with the private reference corpus finds none of its distinctive text, names or design values in the tree"]
+    state := .guarded "fa516a828a2a36549fc2a56f1e1cb4d138b3b934" .before .author },
+  { id := "R117", date := "2026-10-08"
+    what := "The space between a slide block's heading and its body was far too large"
+    pins := [check% Tests.BlockGeometry.blockGeometryChecks,
+      thm% Ir.titledPadding_contract]
+    accept := ["thirty-five distances the reference engine measures on an invented probe fail before the block template's two colour boxes and hold within 0.02 points after, across painted, transparent, title-only and body-only blocks, titled and untitled; the heading-to-body distance was 22 points against 17.6",
+      "a wrapped heading painted only behind its last line, and heading and body text inset half an em from the measure, fail before; the paint now covers every heading line and reaches 0.75 ex beyond the measure, the text standing on it",
+      "two presentation decks built fresh by both engines keep the reference's page counts, which one overran before; their text-bodied blocks' bars and bodies match the reference within 0.1 points, and a code-bodied block's bar and seam match while its body differs by the code listing's own spacing",
+      "beamer's nested colour boxes share their parent's reach, so the earlier body report's nested-inset guard now holds a nested box at its parent's width, the parent keeping its inset and the child's skips around it",
+      "review of the second fix: the body box painted under its heading's bar where the two overlap, wrapped code ended its box on its last line's letters rather than the strut each such line carries, a frame opening on a stepped block lost the block's space above in the browser, and a tcolorbox took the slide block's geometry, an untitled one shipping an empty heading line; three assertions fail on the second fix, and a tcolorbox now stands as its package sets it, seven baseline distances the reference engine measures on an invented article holding within 0.02 points where the second fix stood as much as nine points off"]
+    state := .guarded "fa516a828a2a36549fc2a56f1e1cb4d138b3b934" .before .author },
+  { id := "R118", date := "2026-10-08"
+    what := "Consecutive slide blocks ran together as one box with no space around them"
+    pins := [check% Tests.BlockGeometry.blockGeometryChecks,
+      thm% HtmlDoc.blockGap_owner_contract]
+    accept := ["consecutive painted blocks stood one paragraph skip apart, or touched where the page declared none, against the reference's 10 points; they now stand the template's small and medium skips and line skip apart, and a paragraph after a block spends its own skip",
+      "on a presentation deck consecutive blocks stand the reference engine's 10 points apart wherever the frame has room, and where a frame overfills both engines shrink those skips",
+      "in the browser consecutive blocks shared one box; each block now owns its boundary in the shared gap sheet and keeps its children's margins inside its box",
+      "review of the first fix: the space around a block held the kernel's values whatever the document set the two skip registers to, and a block after a paused step lost its space above in the browser; three distances the reference engine measures and four sheet values fail on the first fix, and both artifacts now spend the registers in force, the browser's step carrier owning the boundary its block meets"]
+    state := .guarded "fa516a828a2a36549fc2a56f1e1cb4d138b3b934" .before .author },
+  { id := "R119", date := "2026-10-08"
+    what := "Block colours did not look adjusted and their surface was a dull grey"
+    pins := [check% Tests.BlockGeometry.blockGeometryChecks, check% Tests.BlockBody.checks,
+      check% beamerReachChecks]
+    accept := ["the grey surface was the deck's own declared colour, which the reference engine paints too; with the decks' current declarations both engines paint every block bar and body in the same colours",
+      "nine shipped-colour assertions fail before: an empty colour value was refused, the theme's fill option was ignored in all three spellings, the alerted and example bodies did not inherit the block body, and a heading given only a bar took the page colour as ink",
+      "a covered block on a stepped frame kept its full bars under faded text; its bars and heading now take the step's cover, as the reference fades them",
+      "the theme's fill option now paints the reference engine's heading bar exactly and its bodies within one unit per channel",
+      "review of the first fix: it gave every theme one theme's relationships, so under the default theme the alerted and example bodies took the block body's fill, under the inheriting theme the block title took the structure colour, and a block an overlay item opens shipped at full ink on the steps hiding the item; six assertions fail on the first fix, against the reference engine's one body fill, three bodies, title inks and covered bars",
+      "review of the second fix: the inheriting theme's model claimed a block option it does not load, so a fill declared on a text role no longer painted the alerted and example bars; a declared structure colour that reached no paint went unnamed while the shipped pages stayed byte-identical; and a guard testing for the theme's own setter read it as undefined; nine assertions fail on the second fix, and a premise check two builds apart now holds every modelled colour element, under both colour themes, to being named unused exactly when the shipped pages do not change"]
+    state := .guarded "fa516a828a2a36549fc2a56f1e1cb4d138b3b934" .before .author },
+  { id := "R120", date := "2026-10-08"
     what := "Inter-line spacing came out wider than the reference engine's: a paragraph in a named size stood on the body's leading, the larger sizes and code listings at six fifths of their type, and a slide's lines and gaps on screen at the screen's prose rhythm instead of the page's"
     pins := [check% Tests.LineRhythm.stepLeadingChecks, check% Tests.LineRhythm.htmlStepChecks,
       check% Tests.LineRhythm.htmlGapChecks, check% Tests.LineRhythm.listingPitchChecks,
@@ -1057,7 +1096,7 @@ def reports : List Report := [
       "a venue style's own size ladder: each declared step's lines at the leading it declares, beside the reference engine's",
       "the same deck's slides with pauses measured in a browser: every paragraph gap the declared one through each step, as on the page"]
     state := .guarded "fa516a828a2a36549fc2a56f1e1cb4d138b3b934" .before .author },
-  { id := "R117", date := "2026-10-08"
+  { id := "R121", date := "2026-10-08"
     what := "A slide of running prose read worse than the reference engine's: justified and hyphenated where the slide class sets its text ragged right"
     pins := [check% Tests.LineRhythm.raggedFrameChecks]
     accept := ["a ten-point deck's closing prose slide beside the reference engine's page in both artifacts: ragged right, unhyphenated, at its leading",

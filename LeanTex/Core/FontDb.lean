@@ -216,8 +216,9 @@ public inductive Substituted where
 not what the document asked for. A face the document declared (fontspec's
 `BoldFont=` and siblings) wins over the family's own variant and is met by
 definition; a declared face the host lacks degrades — through the nearest
-installed weight when the name asks for one ("Inter-Medium" with no Medium
-installed), else to the family's best variant — saying so either way.
+installed weight when the name asks for one ("Ordwick-Semibold" with no
+Semibold installed), else to the family's best variant — saying so either
+way.
 `none` only when the family itself has no face at all — the caller's
 E0403. -/
 public def resolveVariant (faces : Array Face) (family : String) (declared : Option String)

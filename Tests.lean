@@ -84,6 +84,7 @@ import Tests.BlockBar
 import Tests.BlockBody
 import Tests.BlockRegionFit
 import Tests.BlockHeaderClearance
+import Tests.BlockGeometry
 import Tests.BlockFillConditionals
 import Tests.PaletteTextEpoch
 import Tests.MintedSettings
@@ -214,6 +215,7 @@ import Tests.RegressionCorpus
 import Tests.Reports
 import Tests.Natbib
 import Tests.LinkColor
+import Tests.Privacy
 
 open LeanTex.Core LeanTex.Core.Utf8 LeanTex.Cli
 open Tests (mintedSettingsChecks listingHighlightChecks svgAssetChecks svgToolChecks
@@ -352,6 +354,7 @@ def layoutSuiteChecks (ref : IO.Ref (List String)) : IO Unit := do
   Tests.BlockBody.checks ref oneFace
   Tests.BlockRegionFit.checks ref oneFace
   Tests.BlockHeaderClearance.checks ref oneFace
+  Tests.BlockGeometry.blockGeometryChecks ref oneFace
   Tests.BlockFillConditionals.blockFillConditionalChecks ref oneFace
   Tests.PaletteTextEpoch.paletteTextEpochChecks ref oneFace
   Tests.ThemeCss.epochChecks ref oneFace
@@ -708,6 +711,8 @@ def surfaceSuiteChecks (ref : IO.Ref (List String)) : IO Unit := do
   posterChromeCompatChecks ref
   keyedLookupChecks ref
   compatAccountingChecks ref
+  privacyMatcherChecks ref
+  privacyGateChecks ref
 
 /-- The theme, palette, and role blocks (Tests/Themes.lean), dispatched
 together so each stays a leaf and `main`'s spent elaboration budget stays

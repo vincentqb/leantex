@@ -137,7 +137,7 @@ public def buildFontSet (doc : Ir.Doc) (scan : FaceScan)
     -- slot-0 entry every text lookup fell through to font 0, the sans
     -- regular — but as an accident of load order that no weight or
     -- variant could refine; naming it makes the sans's declared faces
-    -- (its Medium upright, its Light) reach the text the card sets.
+    -- (an upright of another weight, a light one) reach the text.
     | 0 => if slides then spec.sans.orElse fun _ => spec.body
       else spec.body.orElse fun _ => spec.sans
     | 1 => spec.sans.orElse fun _ => spec.body

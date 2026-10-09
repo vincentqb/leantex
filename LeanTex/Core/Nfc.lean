@@ -236,4 +236,17 @@ public def toLower (c : Char) : Char :=
   if c.toNat < 0x80 then c.toLower
   else tables.get.lower.getD c.val c
 
+/-- One scalar's full canonical decomposition (UAX #15, D68), unreordered:
+a precomposed letter comes apart into its base and its marks, a Hangul
+syllable into its jamo by arithmetic, and any other scalar is itself. Below
+U+00C0 nothing decomposes, the bound `normalizeChars` passes through on. -/
+public def decompose (c : Char) : Array Char :=
+  if c.toNat < 0xC0 then #[c] else decomposeInto tables.get #[] c
+
+/-- The canonical combining class (UnicodeData field 3): zero for a starter,
+which is every scalar the generated table does not list. No scalar below
+U+0300 carries a nonzero class. -/
+public def combiningClass (c : Char) : Nat :=
+  if c.toNat < 0x300 then 0 else cccOf tables.get c
+
 end LeanTex.Core.Nfc
