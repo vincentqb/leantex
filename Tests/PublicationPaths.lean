@@ -60,8 +60,7 @@ def publicationPathChecks (ref : IO.Ref (List String)) : IO Unit := do
       else
         let (linkSource, linkTarget) := if name == "directory alias" then (output, input / "alias")
           else (original, output / "alias.html")
-        let linked ← IO.Process.output { cmd := "ln", args := #["-s", linkSource.toString, linkTarget.toString] }
-        if linked.exitCode != 0 then throw <| IO.userError ("symlink probe failed: " ++ linked.stderr)
+        symlink linkSource linkTarget
       let result ← run input output
       let present ← original.pathExists
       let bytes ← if present then IO.FS.readBinFile original else pure ByteArray.empty

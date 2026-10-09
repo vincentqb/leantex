@@ -16,29 +16,37 @@ namespace LeanTex.Cli.ToolProbe
 open LeanTex.Core
 open LeanTex.Cli.World
 
-/-- The first regular file the command name reaches on PATH, including
-relative and empty (working-directory) entries; a name with a slash is
-itself (`ToolPath.select_exact`), and no process is started
-(`ToolPath.resolve_asks_mem`). An unset PATH has a platform-defined
-fallback, so supplies no identity. -/
+/-- The first regular file the command name reaches on PATH
+(`ToolPath.select_exact`), relative and empty entries anchored to the working
+directory and a name with a slash taken as itself; no process is started
+(`Host.resolve_runless_exact`). Mode bits are not readable here, so a regular
+file the OS refuses to execute may still be the answer: a caller that runs
+the tool runs `ToolPath.probe`, which passes over such a file as execvp does.
+An unset PATH reaches nothing here (`ToolPath.candidates`). -/
 public def onPath (tool : String) : IO (Option System.FilePath) := do
   return (← Host.runIO (ToolPath.resolve tool)).map System.FilePath.mk
 
-/-- The witness of the executable selected above: the resolved path
-(a distribution that versions its install directory changes it), the size
-and the modification time (a distribution that replaces the binary in place
-changes those) — the three facts the font cache already keys a face on.
-Empty when PATH reaches nothing, which is a witness no memo matches, so a
-machine with no tool asks again on every build and installing the tool takes
-effect at once. It is taken from stats alone (`ToolPath.witness_asks_mem`). -/
+/-- The identity of whichever file runs: the stamp of every regular file
+the name reaches on PATH, in order — resolved path (a distribution that
+versions its install directory changes it), size and modification time (a
+distribution that replaces the binary in place changes those), the three
+facts the font cache keys a face on (`ToolPath.witness_exact`). Any of them
+may be the one execvp starts (`ToolPath.probe_located_mem`), so a change to
+any moves the witness; with exactly one, it is that file's stamp, the
+spelling earlier memos and slots were keyed by. Empty when PATH reaches
+nothing or is unset, which is a witness no memo matches, so a machine with
+no tool asks again on every build and installing the tool takes effect at
+once. It is taken from stats alone (`Host.witness_runless_exact`). -/
 public def witness (tool : String) : IO String :=
   Host.runIO (ToolPath.witness tool)
 
 /-- Ask the tool, bounded (`ToolPath.versionBudgetMs`) and with no input.
 A candidate the OS refuses to execute is passed over for the next one on
-PATH, as execvp passes it (`ToolPath.probeGo_exact`). Only the exit code
-decides whether there is an answer to read: a spawn that fails at `exec`
-returns nonzero with whatever the forked child inherited on its stdout. -/
+PATH, as execvp passes it (`ToolPath.probeGo_exact`), and with PATH unset
+the bare name runs, so execvp's own default search path decides
+(`ToolPath.probe_unset_exact`). Only the exit code decides whether there is
+an answer to read: a spawn that fails at `exec` returns nonzero with
+whatever the forked child inherited on its stdout. -/
 public def probeVersion (tool : String) : IO PicCache.Tool :=
   Host.runIO (ToolPath.version tool)
 

@@ -351,6 +351,18 @@ def findFont : IO (Option ByteArray) := do
     return some (← IO.FS.readBinFile p)
   return none
 
+/-- A script fixture its owner may run, or with `exec := false` one no one
+may: the same regular file with no execute bit. -/
+def writeScript (path : System.FilePath) (body : String) (exec : Bool := true) : IO Unit := do
+  if let some parent := path.parent then IO.FS.createDirAll parent
+  IO.FS.writeFile path body
+  IO.setAccessRights path { user := ⟨true, true, exec⟩ }
+
+/-- A symbolic link at `link` naming `target`: Lean has no call that makes one. -/
+def symlink (target link : System.FilePath) : IO Unit := do
+  let out ← IO.Process.output { cmd := "ln", args := #["-s", target.toString, link.toString] }
+  unless out.exitCode == 0 do throw <| IO.userError s!"ln -s failed: {out.stderr}"
+
 /-- Does a produced file contain this ASCII run? PDF content streams are the
 only witness that a face or a size reached the output, and the file as a whole
 is not valid UTF-8, so the search is over bytes. -/

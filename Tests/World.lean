@@ -56,13 +56,13 @@ def sizes (dir : String) : Prog String := do
 
 /-- The host with PATH and the working directory replaced: every other
 question is the machine's. -/
-def hybrid (path : String) (cwd : Except Failure String) : (q : Ask) → BaseIO (Reply q)
-  | .env "PATH" => pure (some path)
+def hybrid (path : Option String) (cwd : Except Failure String) : (q : Ask) → BaseIO (Reply q)
+  | .env "PATH" => pure path
   | .cwd => pure cwd
   | q => Host.answer q
 
 def under {α : Type} (path : String) (cwd : Except Failure String) (p : Prog α) : BaseIO α :=
-  p.runM (hybrid path cwd)
+  p.runM (hybrid (some path) cwd)
 
 /-- One spelling per directory entry: `.` components and repeated
 separators name the same place. -/
@@ -70,25 +70,26 @@ def normalPath (p : String) : String :=
   let parts := (p.splitOn "/").filter fun s => !s.isEmpty && s != "."
   (if p.startsWith "/" then "/" else "") ++ String.intercalate "/" parts
 
-/-- POSIX's own answer: the shell's `command -v` under that PATH, from that
-directory (removed first when `remove` is set). -/
-def commandV (path : String) (cwd : System.FilePath) (remove : Bool) (tool : String) :
+/-- A fixture tool: its version line, then the path it was started by. -/
+def tool (path : System.FilePath) (label : String) (exec : Bool := true) : IO Unit :=
+  writeScript path s!"#!/bin/sh\nprintf '%s\\n' '{label} 1.0' \"$0\"\n" exec
+
+/-- execvp's own choice, the oracle every PATH row is held to: the command
+name spawned by Lean's runtime, which calls execvp, under that PATH from that
+directory. The kernel hands a script the path execve was given, so a
+fixture's `$0` is the candidate execvp started, read back absolute. -/
+def execvpChoice (path : String) (cwd : System.FilePath) (name : String) :
     IO (Option String) := do
-  let script := (if remove then "command -p rmdir \"$PWD\" || exit 3\n" else "") ++ "command -v \"$1\""
-  let out ← IO.Process.output {
-    cmd := "/bin/sh", args := #["-c", script, "sh", tool], cwd := some cwd,
-    env := #[("PATH", some path), ("PWD", none)] }
-  return if out.exitCode == 0 then some out.stdout.trimAscii.toString else none
+  let got ← RunBounded.runBounded name #[] cwd 10000 100 (env := #[("PATH", some path)])
+  unless got.complete && got.ran == .exited 0 do return none
+  let some started := (got.out.splitOn "\n")[1]? | return none
+  return some (if started.startsWith "/" then started else ToolPath.join cwd.toString started)
 
-def symlink (target link : System.FilePath) : IO Unit := do
-  let out ← IO.Process.output { cmd := "ln", args := #["-s", target.toString, link.toString] }
-  unless out.exitCode == 0 do throw <| IO.userError s!"ln -s failed: {out.stderr}"
-
-def script (path : System.FilePath) (body : String) (exec : Bool := true) : IO Unit := do
-  if let some parent := path.parent then IO.FS.createDirAll parent
-  IO.FS.writeFile path ("#!/bin/sh\n" ++ body ++ "\n")
-  IO.setAccessRights path
-    { user := ⟨true, true, exec⟩, group := ⟨true, false, exec⟩, other := ⟨true, false, exec⟩ }
+/-- A file's identity as every earlier memo and slot spelled it. -/
+def legacyStamp (p : System.FilePath) : IO String := do
+  let md ← p.metadata
+  return String.intercalate "\t" [(← IO.FS.realPath p).toString, toString md.byteSize,
+    toString md.modified.sec, toString md.modified.nsec]
 
 /-- A recorded program is the replay of its trace, and a world that differs
 only where the program never asked gives the same answer. -/
@@ -105,6 +106,8 @@ def replayChecks (ref : IO.Ref (List String)) (dir : System.FilePath) : IO Unit 
     (answer == "a.txt=1,b.txt=2,c.txt=3;false")
   t "world/replay: the recorded run is the replay of its trace"
     (prog.replay trace == some answer)
+  t "world/replay: the shipped interpreter returns the recorded run's result"
+    ((← Host.runIO prog) == answer)
   t "world/replay: the trace holds exactly the questions the program asked"
     (trace.map (·.1) == prog.asks (traceWorld trace quiet))
   t "world/replay: replies the program never read change nothing"
@@ -219,74 +222,125 @@ def faultChecks (ref : IO.Ref (List String)) (dir : System.FilePath) : IO Unit :
       | .ok d => d == here.toString
       | .error _ => false) && (← Host.answer (.env "PATH")).isSome)
 
-/-- Resolution agrees with POSIX's `command -v` on every PATH spelling that
-names a different rule, the decoy through the probe's fall-through. -/
+/-- Every PATH spelling that names a different rule, held to the path the
+fixture determines and to execvp itself, never to a shell's `command -v`,
+whose answers differ between shells. A deleted working directory is empty,
+so execvp finds nothing under a relative entry that stays inside it; the
+cache identity child checks a really removed one. -/
 def pathChecks (ref : IO.Ref (List String)) (dir : System.FilePath) : IO Unit := do
   let t := check ref
   let root ← IO.FS.realPath dir
   let r := root.toString
-  script (root / "abs" / "tool") "echo abs 1.0"
-  script (root / "rel" / "bin" / "tool") "echo rel 1.0"
-  script (root / "tool") "echo here 1.0"
-  script (root / "real" / "tool") "echo real 1.0"
-  script (root / "decoy" / "tool") "echo decoy 1.0" (exec := false)
+  tool (root / "abs" / "tool") "abs"
+  tool (root / "rel" / "bin" / "tool") "rel"
+  tool (root / "tool") "here"
+  tool (root / "real" / "tool") "real"
+  tool (root / "decoy" / "tool") "decoy" (exec := false)
   IO.FS.createDirAll (root / "lnk")
   symlink (root / "abs" / "tool") (root / "lnk" / "tool")
   IO.FS.createDirAll (root / "dirtool" / "tool")
-  let rows : List (String × String × Bool) := [
-    ("absolute entry", s!"{r}/abs", false),
-    ("relative entry", "rel/bin", false),
-    ("empty entry", ":/nonexistent-leantex-entry", false),
-    ("empty last entry", "/nonexistent-leantex-entry:", false),
-    ("trailing slash", s!"{r}/abs/", false),
-    ("symlink", s!"{r}/lnk", false),
-    ("a directory named like the tool", s!"{r}/dirtool:{r}/abs", false),
-    ("a removed cwd with a relative entry", s!"rel/bin:{r}/abs", true)]
-  for (label, path, remove) in rows do
-    let cwdDir := if remove then root / "gone" else root
-    if remove then IO.FS.createDirAll cwdDir
-    let oracle ← commandV path cwdDir remove "tool"
-    let cwd : Except Failure String := if remove then .error .absent else .ok cwdDir.toString
-    let ours ← under path cwd (ToolPath.resolve "tool")
-    t s!"world/path {label}: resolution {ours} agrees with command -v {oracle}"
-      (oracle.isSome && ours.map normalPath == oracle.map normalPath)
+  let call := ToolPath.versionCall 10000
+  let rows : List (String × String × String × String) := [
+    ("absolute entry", s!"{r}/abs", s!"{r}/abs/tool", s!"{r}/abs/tool"),
+    ("relative entry", "rel/bin", s!"{r}/rel/bin/tool", s!"{r}/rel/bin/tool"),
+    ("empty entry", ":/nonexistent-leantex-entry", s!"{r}/tool", s!"{r}/tool"),
+    ("empty last entry", "/nonexistent-leantex-entry:", s!"{r}/tool", s!"{r}/tool"),
+    ("trailing slash", s!"{r}/abs/", s!"{r}/abs/tool", s!"{r}/abs/tool"),
+    ("symlink", s!"{r}/lnk", s!"{r}/lnk/tool", s!"{r}/lnk/tool"),
+    ("a directory named like the tool", s!"{r}/dirtool:{r}/abs", s!"{r}/abs/tool",
+      s!"{r}/abs/tool"),
+    ("a decoy the OS refuses", s!"{r}/decoy:{r}/real", s!"{r}/real/tool", s!"{r}/decoy/tool")]
+  for (label, path, started, first) in rows do
+    let oracle ← execvpChoice path root "tool"
+    let probed ← under path (.ok r) (ToolPath.probe "tool" call)
+    let resolved ← under path (.ok r) (ToolPath.resolve "tool")
+    t s!"world/path {label}: execvp starts {oracle}, the fixture's {started}"
+      (oracle.map normalPath == some (normalPath started))
+    t s!"world/path {label}: the probe starts {probed.map (·.1)}, as execvp does"
+      (probed.map (normalPath ·.1) == some (normalPath started))
+    t s!"world/path {label}: stats alone take the first regular file {resolved}"
+      (resolved.map normalPath == some (normalPath first))
+  let gonePath := s!"rel/bin:{r}/abs"
+  t "world/path a removed cwd with a relative entry: only the absolute entry is a candidate"
+    ((← under gonePath (.error .absent) (ToolPath.resolve "tool")) == some s!"{r}/abs/tool" &&
+      ((← under gonePath (.error .absent) (ToolPath.probe "tool" call)).map (·.1)) ==
+        some s!"{r}/abs/tool")
   let decoyPath := s!"{r}/decoy:{r}/real"
-  let oracle ← commandV decoyPath root false "tool"
-  let statOnly ← under decoyPath (.ok r) (ToolPath.resolve "tool")
-  let probed ← under decoyPath (.ok r) (ToolPath.probe "tool" (ToolPath.versionCall 10000))
-  t s!"world/path decoy: stats alone take the first regular file {statOnly}"
-    (statOnly == some s!"{r}/decoy/tool")
-  t s!"world/path decoy: the probe falls through to {probed.map (·.1)}, as command -v {oracle}"
-    (oracle == some s!"{r}/real/tool" && probed.map (·.1) == oracle)
-  let version ← under decoyPath (.ok r) (ToolPath.version "tool")
   t "world/path decoy: the version is the tool that started"
-    (version == .present "real 1.0")
-  let refused ← under s!"{r}/decoy" (.ok r) (ToolPath.version "tool")
+    ((← under decoyPath (.ok r) (ToolPath.version "tool")) == .present "real 1.0")
   t "world/path decoy: a PATH of only refused candidates identifies no tool"
-    (match refused with | .absent _ => true | .present _ => false)
-  t "world/path: an unset PATH resolves nothing"
-    ((← (ToolPath.resolve "tool").runM (m := BaseIO) fun q => match q with
-      | .env "PATH" => pure none
-      | q => Host.answer q) == none)
-  script (root / "hang" / "tool") "sleep 30"
+    (match ← under s!"{r}/decoy" (.ok r) (ToolPath.version "tool") with
+      | .absent _ => true
+      | .present _ => false)
+  t "world/path: one regular file's witness keeps the spelling earlier memos and slots were keyed by"
+    ((← under s!"{r}/abs" (.ok r) (ToolPath.witness "tool")) == (← legacyStamp (root / "abs" / "tool")))
+  t "world/path decoy: the witness stamps every regular file the name reaches"
+    ((← under decoyPath (.ok r) (ToolPath.witness "tool")) ==
+      (← legacyStamp (root / "decoy" / "tool")) ++ "\t" ++ (← legacyStamp (root / "real" / "tool")))
+  let memo := root / "tool.ver"
+  let identifyNow (probe : IO PicCache.Tool) : IO PicCache.Tool := do
+    ToolProbe.identify memo (← under decoyPath (.ok r) (ToolPath.witness "tool")) probe
+  let probe : IO PicCache.Tool := under decoyPath (.ok r) (ToolPath.version "tool")
+  let cold ← identifyNow probe
+  let warm ← identifyNow (pure (.absent "unexpected probe"))
+  writeScript (root / "real" / "tool") "#!/bin/sh\nprintf '%s\\n' 'real 2.0 upgraded' \"$0\"\n"
+  let upgraded ← identifyNow probe
+  t "world/path decoy: an upgrade of the file that runs behind a decoy is probed again"
+    (cold == .present "real 1.0" && warm == .present "real 1.0" &&
+      upgraded == .present "real 2.0 upgraded")
+  let unset {α : Type} (p : Prog α) : BaseIO α := p.runM (hybrid none (.ok r))
+  t "world/path: an unset PATH resolves nothing and gives no witness"
+    ((← unset (ToolPath.resolve "tool")) == none && (← unset (ToolPath.witness "tool")) == "")
+  let bareCall (exe : String) : ToolCall :=
+    { tool := exe, args := #[], budgetMs := 10000, graceMs := 100, captureLimit := 65536,
+      env := #[("PATH", none)] }
+  let started ← unset (ToolPath.probe "sh" bareCall)
+  t s!"world/path: with PATH unset the probe runs the bare name and execvp's default path finds it ({started.map (·.1)})"
+    (match started with
+      | some (exe, e) => exe == "sh" && e.complete && e.ran == .exited 0
+      | none => false)
+  t "world/path: with PATH unset a name the default path lacks starts nothing"
+    ((← unset (ToolPath.probe "leantex-no-such-tool" bareCall)).isNone)
+  writeScript (root / "hang" / "tool") "#!/bin/sh\nexec sleep 30\n"
   let start ← IO.monoMsNow
   let hung ← under s!"{r}/hang" (.ok r) (ToolPath.version "tool" (budgetMs := 300))
   let spent := (← IO.monoMsNow) - start
   t s!"world/path: a version question that hangs is killed within its budget ({spent} ms)"
     ((match hung with | .absent _ => true | .present _ => false) && spent < 4000)
+
+/-- The driver's own entry point, `ToolProbe.probeVersion` at its default
+budget, under a version question that never ends: a child whose PATH starts
+with a shim that sleeps. An unbounded probe holds the child past the
+parent's budget. -/
+def probeChildChecks (ref : IO.Ref (List String)) (dir : System.FilePath) : IO Unit := do
   let some lean ← ToolProbe.onPath "lean" |
     throw <| IO.userError "world checks require the Lean interpreter on PATH"
-  let md ← lean.metadata
-  let legacy := String.intercalate "\t" [(← IO.FS.realPath lean).toString,
-    toString md.byteSize, toString md.modified.sec, toString md.modified.nsec]
-  t "world/path: the witness keeps the spelling every existing memo and slot was keyed by"
-    ((← ToolProbe.witness "lean") == legacy)
+  let libraries ← IO.FS.realPath ".lake/build/lib/lean"
+  let leanPath := libraries.toString ++ ":" ++ (← IO.getEnv "LEAN_PATH").getD ""
+  writeScript (dir / "hang" / "leantex-hang-probe") "#!/bin/sh\nexec sleep 30\n"
+  let driver := dir / "probe.lean"
+  IO.FS.writeFile driver <|
+    "import LeanTex.Cli.ToolProbe\n" ++
+    "def main : IO UInt32 := do\n" ++
+    "  let start ← IO.monoMsNow\n" ++
+    "  let got ← LeanTex.Cli.ToolProbe.probeVersion \"leantex-hang-probe\"\n" ++
+    "  let spent := (← IO.monoMsNow) - start\n" ++
+    "  IO.println s!\"probe ended after {spent} ms\"\n" ++
+    "  return match got with\n" ++
+    "    | .absent _ => if spent < 5000 then 0 else 2\n" ++
+    "    | .present _ => 1\n"
+  let path := s!"{dir / "hang"}:{(← IO.getEnv "PATH").getD ""}"
+  let result ← RunBounded.runBounded lean.toString #["--run", driver.toString] dir 20000 100
+    (env := #[("PATH", some path), ("LEAN_PATH", some leanPath)])
+  check ref s!"world/path: the driver's version probe ends a tool that hangs: {result.out}{result.err}"
+    (result.complete && result.ran == .exited 0)
 
 def checks (ref : IO.Ref (List String)) : IO Unit :=
   IO.FS.withTempDir fun dir => do
-    for part in ["replay", "faults", "path"] do IO.FS.createDirAll (dir / part)
+    for part in ["replay", "faults", "path", "child"] do IO.FS.createDirAll (dir / part)
     replayChecks ref (dir / "replay")
     faultChecks ref (dir / "faults")
     pathChecks ref (dir / "path")
+    probeChildChecks ref (dir / "child")
 
 end Tests.World

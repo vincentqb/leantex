@@ -16,8 +16,10 @@ namespace LeanTex.Cli.Host
 
 open LeanTex.Cli.World
 
-/-- `BaseIO` is `ST IO.RealWorld`, whose definition Lean exposes: a state
-transition over an opaque world token, so the monad laws hold of it. -/
+/-- `BaseIO` is `ST IO.RealWorld`, a state transition over an opaque world
+token, so the monad laws hold of it. Core does not expose `ST.bind` to
+module importers, so this module reads it through `import all`: a toolchain
+that made it opaque would fail this proof at build time, never silently. -/
 public instance : LawfulMonad BaseIO := LawfulMonad.mk'
   (id_map := fun _ => rfl)
   (pure_bind := fun _ _ => rfl)
@@ -113,6 +115,18 @@ public def runIO {α : Type} (p : Prog α) : BaseIO α := p.runM answer
 
 public def recordIO {α : Type} (p : Prog α) : BaseIO (α × List Fact) := p.record answer
 
+/-- The host with no way to start a process: a run is answered as one that
+never started, and every other question as `answer` answers it. -/
+public def answerRunless : (q : Ask) → BaseIO (Reply q)
+  | .run call => pure {
+      ran := .unstarted "no process starts here", out := "", err := "", complete := false
+      outputs := call.outputs.map (·, none) }
+  | q => answer q
+
+public theorem answer_runless_exact (q : Ask) (h : ToolPath.Lookup q) :
+    answer q = answerRunless q := by
+  cases q <;> first | rfl | exact absurd h id
+
 /-- **The host's result is the replay of its own trace.** `record_replay_exact`
 at `BaseIO` with the shipped interpreter: whatever the machine answered, the
 program's result is what its recorded facts give back. -/
@@ -120,5 +134,27 @@ public theorem record_replay_exact {α : Type} (p : Prog α) :
     (fun x => (x, p.replay x.2 = some x.1)) <$> recordIO p =
       (fun x => (x, True)) <$> recordIO p :=
   Prog.record_replay_exact answer p
+
+/-- **The shipped interpreter's result is the recorded run's**, so what
+`runIO` returns is the replay of the trace `recordIO` keeps of the same run
+(`record_replay_exact`). -/
+public theorem recordIO_fst_exact {α : Type} (p : Prog α) : Prod.fst <$> recordIO p = runIO p :=
+  Prog.record_fst_exact answer p
+
+/-- **Taking the stat-only lookup starts no process**: the host's run of it is
+the run of an interpreter that cannot start one. -/
+public theorem located_runless_exact (tool : String) :
+    runIO (ToolPath.located tool) = (ToolPath.located tool).runM answerRunless :=
+  Prog.runM_only_exact (ToolPath.located_only tool) answer answerRunless answer_runless_exact
+
+/-- **Resolving starts no process**, for the same reason. -/
+public theorem resolve_runless_exact (tool : String) :
+    runIO (ToolPath.resolve tool) = (ToolPath.resolve tool).runM answerRunless :=
+  Prog.runM_only_exact (ToolPath.resolve_only tool) answer answerRunless answer_runless_exact
+
+/-- **Taking a witness starts no process**, for the same reason. -/
+public theorem witness_runless_exact (tool : String) :
+    runIO (ToolPath.witness tool) = (ToolPath.witness tool).runM answerRunless :=
+  Prog.runM_only_exact (ToolPath.witness_only tool) answer answerRunless answer_runless_exact
 
 end LeanTex.Cli.Host

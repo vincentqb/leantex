@@ -232,13 +232,20 @@ is skipped.
   anything external surfaces as request values the CLI driver fulfills
   (effects as data).
 - The driver's own host access is a vocabulary too: `World.Ask` names the
-  questions (environment, stat, read, listing, bounded tool run, atomic
-  write), a `World.Prog` over them is a value, `World.lean` does no IO
-  (hook), and `Host.answer` is the one interpreter — a `BaseIO` action, so
-  every failure is reply data. New host access is a question added there,
-  not another `IO.FS`/`IO.Process` call site: a program's result is then
-  the replay of its trace (`Host.record_replay_exact`) and a world
-  assumption is a theorem's hypothesis about replies, never an axiom.
+  questions (an environment variable, the working directory, a stat, a
+  read, a listing, a bounded tool run, an atomic write, a directory tree),
+  a `World.Prog` over them is a value, `World.lean` does no IO (hook), and
+  `Host.answer` is the one interpreter — a `BaseIO` action, so every
+  failure is reply data. New host access is a question added there, not
+  another `IO.FS`/`IO.Process` call site: a program's result is then the
+  replay of its trace (`Host.record_replay_exact`, which
+  `Host.recordIO_fst_exact` carries to the shipped `runIO`), a property of
+  every path through a program holds of every interpreter
+  (`Prog.runM_only_exact`), and a world assumption is a theorem's
+  hypothesis about replies, never an axiom. The call sites still outside
+  it — the driver, the conversion and picture caches, the image and font
+  readers, the TeX-roots lookup — are ports owed to the waves that follow,
+  not precedents.
 - The artifact is a function of the document and the font environment;
   flags are not arguments to it. What to build is the document's to declare
   (`\output`); a flag says where output lands (`-o`), when (`--watch`), how
@@ -380,8 +387,10 @@ is skipped.
   nonzero exit that left no log are all facts about the machine, not the
   request, and caching one would let a busy minute — or a missing
   install — permanently condemn a picture that renders. An exit code alone
-  cannot make that call: a missing tool still reaches `exec` and returns
-  127, so the evidence is that the tool left a log. The policy lives as
+  cannot make that call: a missing tool still reaches `exec` and comes
+  back as an exit code — 255 from Lean's spawn, whose forked child reports
+  the failed `exec` and exits — so the evidence is that the tool left a
+  log. The policy lives as
   values in the driver (`Cli/PicCache.lean`) precisely so it is checkable
   with no tool installed.
 - Theorems only where they pay (parser totality, elaboration termination and
