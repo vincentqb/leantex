@@ -185,6 +185,70 @@ def censusMdRows :
     ("an escaped pipe's row ships its meaning", hasStr (censusText c) "a literal pipe"),
     ("prose after a table ships", hasStr (censusText c) "A paragraph after the table")])]
 
+/-- A loss a markdown golden ships with no diagnostic naming it: a construct
+markdown writes that the page sets as its own source text, or sets without
+part of its meaning. `shows` reads one golden's document, pages, census and
+diagnostics, and holds while the loss ships. Every row's judge runs over
+every markdown golden in both directions: a golden it fires on must be
+listed (the loss is recorded wherever it shows), and a listed golden it no
+longer fires on fails until the row goes, so the change that reads the
+construct takes the row out and leaves its own guard in its place. `owner`
+says what that change is. -/
+structure SilentLoss where
+  what : String
+  owner : String
+  fixtures : List String
+  shows : Ir.Doc → Layout.Out → Array CensusPage → Array Diag → Bool
+
+/-- The link targets of every link that wraps an image, document order. -/
+def imageLinkTargets (doc : Ir.Doc) : Array String :=
+  Ir.foldDoc (fun acc i => match i with
+    | .link url body => if body.any (fun b => b matches .image ..) then acc.push url else acc
+    | _ => acc) #[] doc
+
+/-- Every link target the pages carry: a linked run's, or a link
+rectangle's. -/
+def pageLinkTargets (out : Layout.Out) : Array String :=
+  out.pages.foldl (fun acc p =>
+    p.lines.foldl (fun acc l => l.segs.foldl (fun acc s => match s with
+      | .run _ _ (some url) .. => acc.push url
+      | _ => acc) acc) (acc ++ p.links.map (·.target))) #[]
+
+/-- The silent losses the markdown goldens ship today. -/
+def silentLosses : List SilentLoss := [
+  { what := "a pipe table ships as one run-on paragraph, its delimiter row set as dashes"
+    owner := "the markdown reader reading GFM pipe tables as tables (markdownTableChecks)"
+    fixtures := ["md-readme", "md-table"]
+    shows := fun _ _ c _ => hasStr (censusText c) "| |" },
+  { what := "a task list item ships its checkbox as bracket text"
+    owner := "list items that carry a task state, set as a box in both artifacts"
+    fixtures := ["md-readme"]
+    shows := fun _ _ c _ => hasStr (censusText c) "[ ] " || hasStr (censusText c) "[x] " },
+  { what := "a reference link ships its brackets, and its definition ships as a paragraph"
+    owner := "link reference definitions, resolved by the markdown reader"
+    fixtures := ["md-links"]
+    shows := fun _ _ c _ => hasStr (censusText c) "][" && hasStr (censusText c) "]: https://" },
+  { what := "an image a link wraps ships without its link: no linked run or link rectangle carries its target"
+    owner := "a link annotation over a linked image"
+    fixtures := ["md-images"]
+    shows := fun doc out _ _ =>
+      (imageLinkTargets doc).any fun t => !(pageLinkTargets out).contains t }]
+
+/-- Each silent loss's judge over every markdown golden, both ways. -/
+def silentLossChecks (ref : IO.Ref (List String))
+    (seen : Array (String × Ir.Doc × Layout.Out × Array CensusPage × Array Diag)) : IO Unit := do
+  for row in silentLosses do
+    check ref s!"silent loss '{row.what}': names its owner and a golden" (!row.owner.isEmpty && !row.fixtures.isEmpty)
+    for n in row.fixtures do
+      check ref s!"silent loss '{row.what}': {n} is a markdown golden" (mdGoldenNames.contains n)
+    for (n, doc, out, c, ds) in seen do
+      let fires := row.shows doc out c ds
+      if row.fixtures.contains n then
+        check ref s!"silent loss '{row.what}': {n} still ships it — if it no longer does, \
+take {n} out of the row, or the row out, and leave the guard that keeps it read" fires
+      else
+        check ref s!"silent loss '{row.what}': {n} ships it unrecorded — list {n} under the row" (!fires)
+
 /-- Census assertions, one row per golden fixture: what each fixture's
 shipped pages must show, judged from `Layout.Out` — never from the IR dump,
 which witnesses elaboration only. `censusChecks` fails when a fixture in
@@ -1399,12 +1463,14 @@ def censusChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet)
   -- way the driver does (FontDiscovery.pickMathFace over the shipped faces), so
   -- the census exercises the same decision a build runs.
   let shipped ← FontDiscovery.scanRoots [testFonts]
+  let mut seen := #[]
   for (n, facts) in censusTable do
-    let (doc, _) ← goldenDoc n
+    let (doc, diags) ← goldenDoc n
     let geom := Layout.Geom.ofPage doc.page
     let fs ← fixtureFontSet oneFace mathSet shipped doc
     let out := layoutOf fs doc geom (some pats)
     let c := censusOf (coveredColorsOf doc) out
+    if mdGoldenNames.contains n then seen := seen.push (n, doc, out, c, diags)
     inkMarkupChecks ref n c
     for (label, ok) in facts geom c do
       check ref s!"census {n}: {label}" ok
@@ -1415,6 +1481,7 @@ def censusChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet)
         ((censusOutlineTable.lookup n).isSome)
     for (label, ok) in ((censusOutlineTable.lookup n).map (· out.outline)).getD [] do
       check ref s!"census {n} outline: {label}" ok
+  silentLossChecks ref seen
 
 
 /-- The rendered half of `Ir.refs_agree_with_numbering`: the table's float

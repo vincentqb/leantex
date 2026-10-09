@@ -2939,7 +2939,8 @@ def pdfCensusTable :
   ("md-code", (1, 1, 0, 0, 0, 0, 0, none, ["FlateDecode"])),
   ("md-emphasis", (1, 1, 0, 0, 0, 0, 0, none, ["FlateDecode"])),
   ("md-headings", (1, 1, 0, 0, 0, 0, 0, none, ["FlateDecode"])),
-  -- no link annotation: the image a link wraps ships without its link (a gap)
+  -- no link annotation: the image a link wraps ships without its link, the
+  -- loss `silentLosses` records; this row follows the fix that closes it
   ("md-images", (1, 1, 4, 0, 1, 0, 0, none, ["DCTDecode", "FlateDecode"])),
   ("md-links", (1, 1, 0, 0, 0, 4, 0, none, ["FlateDecode"])),
   ("md-lists", (1, 1, 0, 0, 0, 0, 0, none, ["FlateDecode"])),

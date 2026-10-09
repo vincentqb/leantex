@@ -854,6 +854,13 @@ def driverConfigReads : List String :=
   ["cmd", "verbosity", "quiet", "porcelain", "color", "output", "watch",
    "bestEffort", "werror", "fontDirs", "mathBoundary", "effectiveEmit"]
 
+/-- A change a golden's regeneration may travel with: Lean source, or a
+golden fixture under `testdata/corpus`, in either surface the golden set
+reads (`.tex`, `.md`). -/
+def goldenSource (f : String) : Bool :=
+  f.endsWith ".lean" ||
+    (f.startsWith "testdata/corpus/" && (f.endsWith ".tex" || f.endsWith ".md"))
+
 /-- A `cfg.<name>` read whose name is not on `driverConfigReads`, comments
 and strings aside. This is how a new flag would reach a backend from the
 driver — the thread starts as exactly this token in `Main.build` — so the
@@ -1555,6 +1562,13 @@ def selftest : IO UInt32 := do
     for (line, want) in cases do
       if p line != want then
         fails.modify (s!"{name} {if want then "missed" else "fired on"}: {line}" :: ·)
+
+  expect "goldenSource" goldenSource [
+    ("Tests/Census.lean", true),
+    ("testdata/corpus/md-table.md", true),
+    ("testdata/corpus/tables.tex", true),
+    ("testdata/golden/md-table.txt", false),
+    ("testdata/typeset/md-report.md", false)]
 
   expect "computedDemote" computedDemote [
     -- the proxy defect's spelling: a demotion decided by a predicate over
@@ -2554,10 +2568,8 @@ the privacy check is skipped."
         pure (((← git #["diff", "--name-only", b ++ "..HEAD"]).splitOn "\n").filter
           (!·.isEmpty)).toArray
       | none => pure #[]
-    let isSource (f : String) : Bool :=
-      f.endsWith ".lean" || (f.startsWith "testdata/corpus/" && f.endsWith ".tex")
-    if !staged.any isSource && !branchTouched.any isSource then
-      say "pre-commit: testdata/golden/** changed without a .lean or testdata/corpus/*.tex change.
+    if !staged.any goldenSource && !branchTouched.any goldenSource then
+      say "pre-commit: testdata/golden/** changed without a .lean or testdata/corpus/*.tex or *.md change.
   Goldens are regenerated through the harness, never hand-edited (AGENTS.md, Don't touch).
   Fix: revert the golden files, or regenerate with: lake exe Tests --update"
 

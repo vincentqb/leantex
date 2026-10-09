@@ -1657,18 +1657,50 @@ structure PageOutput where
   browserSources : Array (String × ByteArray)
   expectedFaces : Array (String × String)
 
+/-- The phrase a corpus document writes in its own header to declare itself
+no fixture (`Tests.corpusExcludeMarker`). -/
+def excludeMarker : String := "excluded from the golden set"
+
+/-- Does a corpus document's header declare it no fixture: the marker within
+its opening sixteen lines, read as one run of prose with comment markers
+dropped, as the suite reads it (`Tests.declaresExcluded`)? -/
+def declaresExcluded (text : String) : Bool :=
+  let header := ((text.splitOn "\n").take 16).map fun line =>
+    let l := line.trimAscii.toString
+    if l.startsWith "%" then (l.drop 1).toString.trimAscii.toString else l
+  ((" ".intercalate header).splitOn excludeMarker).length > 1
+
+/-- The corpus's documents, in name order: every top-level `.tex` and `.md`
+file whose header does not declare it no fixture, with its name. The suite
+holds this to its golden set (`svgBrowserSourceChecks`). -/
+def corpusDocs (corpus : System.FilePath) : IO (Array (String × System.FilePath)) := do
+  let mut out : Array (String × System.FilePath) := #[]
+  for e in ← corpus.readDir do
+    let some ext := [".tex", ".md"].find? (e.fileName.endsWith ·) | continue
+    if ← e.path.isDir then continue
+    if declaresExcluded (← IO.FS.readFile e.path) then continue
+    out := out.push ((e.fileName.dropEnd ext.length).toString, e.path)
+  return out.qsort (·.1 < ·.1)
+
 /-- One fixture's page, or `none` where the driver would refuse to write one
 (an error its `\allow` does not accept). The sequence is `Main.frontend`'s:
-lex, parse, `\input` and `\data` fulfilled beside the file, one preparation,
-a picture label measured against the preamble's set, the bibliography
-fulfilled; then the emission configured as the driver configures it. -/
+the reader the file's extension selects, `\input` and `\data` fulfilled
+beside the file, one preparation, a picture label measured against the
+preamble's set, the bibliography fulfilled; then the emission configured as
+the driver configures it. -/
 def pageFor (cache : IO.Ref (Array (String × Font.Font))) (oneFace : Font.FontSet)
-    (faces : Array FontDb.Face) (corpus fontsDir : System.FilePath) (name : String) :
-    IO (Option PageOutput) := do
-  let file := (corpus / s!"{name}.tex").toString
+    (faces : Array FontDb.Face) (fontsDir : System.FilePath) (name : String)
+    (path : System.FilePath) : IO (Option PageOutput) := do
+  let corpus := path.parent.getD "."
+  let file := path.toString
   let src ← IO.FS.readFile file
-  let (toks, lexDiags) := Lex.lex file src
-  let (raws, parseDiags) := Parse.parse file toks
+  let (raws, lexDiags, parseDiags) := if file.endsWith ".md" then
+      let (raws, ds) := Md.read file src
+      (raws, ds, #[])
+    else
+      let (toks, lexDiags) := Lex.lex file src
+      let (raws, parseDiags) := Parse.parse file toks
+      (raws, lexDiags, parseDiags)
   let (executed, inputDiags, _) ← Input.expandInputs file raws
   let (raws, dataDiags) ← Input.resolveData file executed.raws
   let prepared := Elab.prepareExecuted file (executed.withRaws raws)
@@ -1722,18 +1754,16 @@ def corpusKeys (corpus : System.FilePath) : IO (Except String CorpusKeys) := do
     #[("conversion-contract", ImageAssets.browserFaceContract.toUTF8)]
   let mut unbuilt : Array String := #[]
   let mut expectedFaces : Array (String × String) := #[]
-  for e in (← corpus.readDir).qsort (·.fileName < ·.fileName) do
-    if e.fileName.endsWith ".tex" then
-      let name := (e.fileName.dropEnd ".tex".length).toString
-      let page ← try pageFor cache oneFace faces corpus fontsDir name catch _ => pure none
-      match page with
-      | some page =>
-        blobs := blobs.push (s!"{name}.html", page.html.toUTF8)
-        for (cand, bytes) in page.read do
-          blobs := blobs.push (s!"{name}.assets/{cand}", bytes)
-        browserSources := browserSources ++ page.browserSources
-        expectedFaces := expectedFaces ++ page.expectedFaces
-      | none => unbuilt := unbuilt.push name
+  for (name, path) in ← corpusDocs corpus do
+    let page ← try pageFor cache oneFace faces fontsDir name path catch _ => pure none
+    match page with
+    | some page =>
+      blobs := blobs.push (s!"{name}.html", page.html.toUTF8)
+      for (cand, bytes) in page.read do
+        blobs := blobs.push (s!"{name}.assets/{cand}", bytes)
+      browserSources := browserSources ++ page.browserSources
+      expectedFaces := expectedFaces ++ page.expectedFaces
+    | none => unbuilt := unbuilt.push name
   if blobs.isEmpty then return .error "no corpus fixture built to HTML"
   for e in (← fontsDir.readDir).qsort (·.fileName < ·.fileName) do
     if isFaceFile e.fileName then

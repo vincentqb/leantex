@@ -6,7 +6,8 @@ from the repository root after `lake build`:
   lake env lean --run scripts/html-oracle.lean --check [path]    check the checked-in matrix (or another file) only
   lake env lean --run scripts/html-oracle.lean --selftest        the checker against hand-written matrices
 
-Builds every `testdata/corpus/*.tex` to HTML in a scratch copy of the corpus
+Builds every corpus document (`Scoreboard.Hermetic.corpusDocs`: each
+`testdata/corpus/*.tex` and `*.md` that is a fixture) to HTML in a scratch copy of the corpus
 (so a page sits beside the files it names, as `leantex doc.tex` leaves it),
 drives the host's cached Playwright Chromium over each page, and writes
 `testdata/oracles/html-reader-matrix.txt`: target readers, host-tool versions and
@@ -1124,21 +1125,21 @@ so the matrix would describe pages nothing ties to this tree; nothing written")
     let mut fixtures : Array String := #[]
     let mut unbuilt : Array String := #[]
     let mut faceFailures : Array Scoreboard.BrowserFace := #[]
-    for e in (← (work / "corpus").readDir).qsort (·.fileName < ·.fileName) do
-      if e.fileName.endsWith ".tex" then
-        let name := (e.fileName.dropEnd ".tex".length).toString
-        let r ← IO.Process.output
-          { cmd := leantexBin
-            args := #["-q", "--porcelain", "build", e.path.toString,
-              "-o", (work / "corpus" / (name ++ ".html")).toString] }
-        let log := r.stdout ++ r.stderr
-        faceFailures := faceFailures ++ Scoreboard.browserFaceFailures name log
-        if r.exitCode == 0 then fixtures := fixtures.push name else unbuilt := unbuilt.push name
-        -- A deck's stage premise: what its PDF build does not vouch for.
-        if let some breakable ← breakableFrames e.path then
+    for (name, path) in ← Scoreboard.Hermetic.corpusDocs (work / "corpus") do
+      let r ← IO.Process.output
+        { cmd := leantexBin
+          args := #["-q", "--porcelain", "build", path.toString,
+            "-o", (work / "corpus" / (name ++ ".html")).toString] }
+      let log := r.stdout ++ r.stderr
+      faceFailures := faceFailures ++ Scoreboard.browserFaceFailures name log
+      if r.exitCode == 0 then fixtures := fixtures.push name else unbuilt := unbuilt.push name
+      -- A deck's stage premise: what its PDF build does not vouch for. It
+      -- is read off TeX source; the markdown reader sets no deck.
+      if path.extension == some "tex" then
+        if let some breakable ← breakableFrames path then
           let pdf ← IO.Process.output
             { cmd := leantexBin
-              args := #["-q", "--porcelain", "build", e.path.toString,
+              args := #["-q", "--porcelain", "build", path.toString,
                 "-o", (work / "corpus" / (name ++ ".pdf")).toString] }
           IO.FS.writeFile (work / "corpus" / (name ++ ".unfit"))
             (String.intercalate " " (spilledFrames pdf.stdout ++ breakable).toList)

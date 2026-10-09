@@ -773,7 +773,9 @@ def artSpellSlack : Dim.Sp := Dim.pt 1 / 100
 vocabulary so a recorded offence names the property it breaks and cannot
 silently move to another. -/
 inductive ArtProp where
-  /-- Every mark the file paints lies inside the page's own `/MediaBox`. -/
+  /-- Every mark the file paints lies inside the page's own `/MediaBox`,
+  whatever the build names: a viewer clips ink off the medium, so no
+  diagnostic accounts for it. -/
   | pageBox
   /-- Every content-marked mark lies inside the declared body area, a
   painted band, or is accounted for by a named loss. -/
@@ -803,17 +805,19 @@ def artProps : List ArtProp :=
   [.pageBox, .bodyArea, .bandFree, .markupInk, .pageBytes, .glyphNames]
 
 /-- The diagnostic codes whose declared meaning accounts for ink that did
-not fit where it was asked to go: `W0005` (overfull line, no feasible
+not fit the text area (`bodyArea`): `W0005` (overfull line, no feasible
 break), `W0335` (picture larger than the text area; it may overrun the
 page), and `W0388` (ink painted off the medium, which a viewer clips). A
 document that ships ink outside its own area and says one of these has
 reported the loss; one that says nothing has not.
 
-`W0388` is the page box's own account, and it arrived with this tier: a
-band slot sets one line at a fixed position and at a width it does not
-control, so a token with no legal break reached 140 pt past the right page
-edge and no registered code said so. That was the offence recorded here
-until the code existed. -/
+None of them accounts for ink off the page box (`pageBox`): a reader never
+sees it, whatever the log says, so the claim holds on every fixture but the
+routed defects of `artKnownOffences`. `W0388` still names that loss for the
+reader; it arrived with this tier, when a band slot set a token with no
+legal break 140 pt past the right page edge and no registered code said so,
+and the claim counted it accounted until ink off the medium was held at
+zero on the corpus. -/
 def artOverflowCodes : List String := ["W0005", "W0335", "W0388"]
 
 /-- A fixture's reading, with the two facts a claim needs beside it: the
@@ -836,11 +840,11 @@ def artOffences (r : ArtReading) : ArtProp → Array String
       let p := r.pages[i]
       let box := p.box
       for run in p.runs do
-        unless box.holds artSpellSlack artSpellSlack run.x run.bottom run.x1 run.top || r.accounted do
+        unless box.holds artSpellSlack artSpellSlack run.x run.bottom run.x1 run.top do
           out := out.push s!"p{i + 1} glyph run [{run.x.toPtString} {run.bottom.toPtString} \
 {run.x1.toPtString} {run.top.toPtString}] outside {box.render}: {run.text}"
       for b in p.boxes do
-        unless box.holds artSpellSlack artSpellSlack b.x0 b.y0 b.x1 b.y1 || r.accounted do
+        unless box.holds artSpellSlack artSpellSlack b.x0 b.y0 b.x1 b.y1 do
           out := out.push s!"p{i + 1} {b.kind} [{b.x0.toPtString} {b.y0.toPtString} \
 {b.x1.toPtString} {b.y1.toPtString}] outside {box.render}"
     return out
@@ -915,7 +919,13 @@ they are routed defects, recorded so the claim stays armed on the other
 seventy-odd fixtures instead of being weakened for these. The ratchet:
 `artifactChecks` fails a row whose offence has stopped firing, so the
 table can only shrink, and a fix must delete its row in the same commit. -/
-def artKnownOffences : List (String × ArtProp × String) := []
+def artKnownOffences : List (String × ArtProp × String) := [
+  ("diagram-overflow", .pageBox, "a picture wider than the page paints its fill past the \
+page edge; W0335 names it, and a picture should fit the medium or be clipped to it"),
+  ("footer-collide", .pageBox, "a footline token with no legal break paints past the page \
+edge; W0388 names it, and a footline should break or shrink what it cannot fit"),
+  ("md-code", .pageBox, "a fenced code line with no break opportunity paints past the page \
+edge; W0005 names it, and a listing should wrap what the measure cannot hold")]
 
 
 /-! ## The mutants: each claim broken once, on real bytes
@@ -1268,6 +1278,11 @@ def artifactMutantChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet)
     artWriteWith f g d o s (artOnPage page (artMoveList onlyContent dx dy #[] ·.toList))
   judge "every Tm 200pt left of the page" .pageBox geom
     (moved false (-(Dim.pt 200)) 0 0 fs geom doc out store) true
+  match artReadingOf geom true (moved false (-(Dim.pt 200)) 0 0 fs geom doc out store) with
+  | .error e => t s!"artifact mutant ink off the page in a build that names it: reads back: {e}" false
+  | .ok rd =>
+    t "artifact mutant: ink off the page box is refused even where the build names the loss"
+      (!(artOffences rd .pageBox).isEmpty)
   judge "paragraphs untouched" .pageBox geom plain false
   judge "content Tm 30pt into the margin" .bodyArea geom
     (moved true (-(Dim.pt 30)) 0 0 fs geom doc out store) true
