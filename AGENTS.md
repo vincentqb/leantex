@@ -46,6 +46,12 @@ in this repo; refer to the private reference corpus abstractly.
   `scripts/fontcache-check.lean` when touching the font scan or its cache
   (it replaces a font under the same name and checks the answer follows
   the file).
+- `scripts/html-oracle.lean` when touching what a deck stage holds (type,
+  leading, gaps, tables): its `stage-fit` row holds every frame the PDF
+  page holds to its stage at the deck's own aspect in Chromium, not a pixel
+  past its foot (one pixel is a scrollbar on a classic-scrollbar platform),
+  the premise — which frames continue on a further page (W0384) or declare
+  `[allowframebreaks]` — read off the PDF build and the source.
 - `scripts/cancel-diff.lean` when touching the cancellation geometry
   (`Math.cancelGeom` and the marks it lays) — an external LuaLaTeX
   (cancel.sty over FiraMath) vs leantex placement differential over an
@@ -244,6 +250,27 @@ in this repo; refer to the private reference corpus abstractly.
 - HTML is built as a typed tree with a certified escaper, never by
   concatenating tag strings. Any new node type goes through the escaper by
   construction; if you find yourself writing `"<" ++ …`, stop.
+- A default LaTeX assigns as a `\dimen` when a class or package loads —
+  booktabs' `.65ex`, its `.08em` — is that dimen, and so is a table length
+  the preamble's `\setlength` declares (`Ir.PreambleFace.fixTableLengths`):
+  its em and ex are the preamble font's at the class's `\normalsize`
+  (`Ir.PreambleFace`, `Ir.optionNormalSize`: 10.95pt under `11pt`; measured
+  under lualatex), never the face or size where it is used. Read where it
+  was used, booktabs' seps stood 18% wide in a deck whose face has a tall
+  x-height (`tableLengthChecks`). Other preamble lengths still resolve where
+  they are read; fixing them the same way is pending work.
+- A distance LaTeX prints is a sum, and matching one of its terms is not
+  matching the distance: booktabs' seps made lualatex's took the printed rule
+  gaps further from lualatex's, because the rows beside the rules stood on
+  their glyphs where every array row stands on `\@arstrut`
+  (`tableStrutChecks`). Judge a term's fix by the printed distance, against
+  a synthetic lualatex probe whose `\showbox` lists every term.
+- A name read off a title or a caption — a slide's or a section's anchor
+  and accessible name, an image's alternative from its caption, the title
+  metadata — is one page's reading (`Ir.firstPageText`), never the census
+  (`plainText`), which carries both groups of every overlay alternation
+  because both ship: read as the census, `\textcolor<2>{c}{Word}` anchored
+  its frame `wordword` (`frameAnchorChecks`).
 - No backend emits script to compensate for a platform. Say what the page
   means, declaratively, and let the platform — or the stylesheet framework a
   document chooses — decide how widely it works. Where a declarative feature
@@ -281,6 +308,11 @@ in this repo; refer to the private reference corpus abstractly.
   module downstream. A zero-argument `def` is evaluated when its module
   initializes, in every process; take `Unit` to defer the cost to first
   use.
+- A closed term a loop's closure captures can be copied into the loop's
+  specialized body and rebuilt once per element: a 65,536-entry PDF plan
+  captured by one `find?` held `lake test` for 25 minutes instead of 3. A
+  large value in a check block depends on a runtime read (a ref, an
+  argument) before any closure captures it (`pdfBoundsChecks`).
 - The inline elaboration knot compiles at its heartbeat budget (more than
   198k of 200k on 2026-09-27), and its cost grows with `ESt`'s top-level
   fields: state the knot never reads goes in a record of its own

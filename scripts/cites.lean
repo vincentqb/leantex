@@ -100,9 +100,11 @@ rows were once confused with -- a name that IS this tree's and that a text
 scan could not see. -/
 def citeForeign : List String :=
   ["default_rule_thickness",   -- TeX's math fontdimen (TeXbook, Appendix G)
+   "format_unencoded",         -- Pygments' LaTeX formatter pass (formatters/latex.py)
    "good_length",              -- zlib's deflate configuration field
    "headless_shell",           -- Chrome's own binary name
    "mlist_to_hlist",           -- TeX's math-list conversion pass
+   "style_for_token",          -- Pygments' resolved style lookup (pygments/style.py)
    "x_y",                      -- an example label key, quoted as prose
    "xn_over_d"]                -- TeX's scaled-integer routine (TeX §107)
 

@@ -13,11 +13,11 @@ open LeanTex.Core Parse Ir
 /-- An unread setting from the actual prepared configuration, with all
 earlier definitions in force. The prefix is input provenance, not a list
 of reporting events. Empty, repeated and shadowed definitions are allowed. -/
-@[expose] public def UnreadPictureSetting (sets : Array (Pos × Array Raw)) (key : String) : Prop :=
+@[expose] public def UnreadPictureSetting (sets : Array (Span × Array Raw)) (key : String) : Prop :=
   ∃ before setting after,
     sets.toList = before ++ setting :: after ∧
     key ∈ Picture.unreadKeys (before.foldl pictureSettingStyles [])
-      (Picture.ofRaws setting.2)
+      (Picture.ofSetting setting)
 
 /-- The diagnostic identity the picture loss census reads. -/
 @[expose] public def PictureKeyNamed (ds : Array Diag) (key : String) : Prop :=
@@ -26,59 +26,59 @@ of reporting events. Empty, repeated and shadowed definitions are allowed. -/
 /-- Reading the actual loop as a fold is a proof equation; the production
 operation remains the loop over the setting's unread keys. -/
 private theorem pictureSettingState_run_exact (ctx : Ctx)
-    (acc : List (String × Array Picture.Tok) × ESt) (setting : Pos × Array Raw) :
+    (acc : List (String × Array Picture.Tok) × ESt) (setting : Span × Array Raw) :
     pictureSettingState ctx acc setting =
       (pictureSettingStyles acc.1 setting,
-       (Picture.unreadKeys acc.1 (Picture.ofRaws setting.2)).foldl
+       (Picture.unreadKeys acc.1 (Picture.ofSetting setting)).foldl
          (pictureKeyState ctx setting.1) acc.2) := by
   simp [pictureSettingState, Array.forIn_pure_yield_eq_foldl]
 
-private theorem reportPictureKeys_run_exact (ctx : Ctx) (sets : Array (Pos × Array Raw))
+private theorem reportPictureKeys_run_exact (ctx : Ctx) (sets : Array (Span × Array Raw))
     (st : ESt) :
     reportPictureKeys ctx sets st = (sets.foldl (pictureSettingState ctx) ([], st)).2 := by
   simp [reportPictureKeys, Array.forIn_pure_yield_eq_foldl]
 
 /-- The reporting prefix interprets exactly the style table the drawing
 starts from; it does not approximate or reset earlier definitions. -/
-private theorem pictureSettingStyles_drawer_agree (before : List (Pos × Array Raw)) :
+private theorem pictureSettingStyles_drawer_agree (before : List (Span × Array Raw)) :
     before.foldl pictureSettingStyles [] =
-      Picture.documentStyles (before.toArray.map (fun setting => Picture.ofRaws setting.2)) := by
+      Picture.documentStyles (before.toArray.map Picture.ofSetting) := by
   simp [Picture.documentStyles, Array.forIn_pure_yield_eq_foldl, List.foldl_map]
   rfl
 
-private theorem keyState_preserves (ctx : Ctx) (pos : Pos) (st : ESt)
+private theorem keyState_preserves (ctx : Ctx) (site : Span) (st : ESt)
     (key old : String) (h : PictureKeyNamed st.diags old) :
-    PictureKeyNamed (pictureKeyState ctx pos st key).diags old := by
+    PictureKeyNamed (pictureKeyState ctx site st key).diags old := by
   rcases h with ⟨d, hd, hk, hs⟩
   refine ⟨d, ?_, hk, hs⟩
   rw [pictureKeyState, warnOnceState_diags_exact]
   exact Array.mem_push.mpr (Or.inl hd)
 
-private theorem keyState_names (ctx : Ctx) (pos : Pos) (st : ESt) (key : String) :
-    PictureKeyNamed (pictureKeyState ctx pos st key).diags key := by
+private theorem keyState_names (ctx : Ctx) (site : Span) (st : ESt) (key : String) :
+    PictureKeyNamed (pictureKeyState ctx site st key).diags key := by
   unfold PictureKeyNamed
   rw [pictureKeyState, warnOnceState_diags_exact]
   exact ⟨_, Array.mem_push_self, warnOnceDiag_kind_exact .., warnOnceDiag_subject_exact ..⟩
 
-private theorem keyFold_preserves (ctx : Ctx) (pos : Pos) (keys : List String)
+private theorem keyFold_preserves (ctx : Ctx) (site : Span) (keys : List String)
     (st : ESt) (key : String) (h : PictureKeyNamed st.diags key) :
-    PictureKeyNamed (keys.foldl (pictureKeyState ctx pos) st).diags key := by
+    PictureKeyNamed (keys.foldl (pictureKeyState ctx site) st).diags key := by
   induction keys generalizing st with
   | nil => exact h
-  | cons k rest ih => exact ih _ (keyState_preserves ctx pos st k key h)
+  | cons k rest ih => exact ih _ (keyState_preserves ctx site st k key h)
 
-private theorem keyFold_names (ctx : Ctx) (pos : Pos) (keys : List String)
+private theorem keyFold_names (ctx : Ctx) (site : Span) (keys : List String)
     (st : ESt) (key : String) (h : key ∈ keys) :
-    PictureKeyNamed (keys.foldl (pictureKeyState ctx pos) st).diags key := by
+    PictureKeyNamed (keys.foldl (pictureKeyState ctx site) st).diags key := by
   induction keys generalizing st with
   | nil => simp at h
   | cons k rest ih =>
     rcases List.mem_cons.mp h with rfl | h
-    · exact keyFold_preserves ctx pos rest _ key (keyState_names ctx pos st key)
+    · exact keyFold_preserves ctx site rest _ key (keyState_names ctx site st key)
     · exact ih _ h
 
 private theorem settingState_preserves (ctx : Ctx)
-    (acc : List (String × Array Picture.Tok) × ESt) (setting : Pos × Array Raw)
+    (acc : List (String × Array Picture.Tok) × ESt) (setting : Span × Array Raw)
     (key : String) (h : PictureKeyNamed acc.2.diags key) :
     PictureKeyNamed (pictureSettingState ctx acc setting).2.diags key := by
   rw [pictureSettingState_run_exact]
@@ -86,14 +86,14 @@ private theorem settingState_preserves (ctx : Ctx)
   exact keyFold_preserves ctx setting.1 _ acc.2 key h
 
 private theorem settingState_names (ctx : Ctx)
-    (acc : List (String × Array Picture.Tok) × ESt) (setting : Pos × Array Raw)
-    (key : String) (h : key ∈ Picture.unreadKeys acc.1 (Picture.ofRaws setting.2)) :
+    (acc : List (String × Array Picture.Tok) × ESt) (setting : Span × Array Raw)
+    (key : String) (h : key ∈ Picture.unreadKeys acc.1 (Picture.ofSetting setting)) :
     PictureKeyNamed (pictureSettingState ctx acc setting).2.diags key := by
   rw [pictureSettingState_run_exact]
   rw [← Array.foldl_toList]
   exact keyFold_names ctx setting.1 _ acc.2 key (Array.mem_toList_iff.mpr h)
 
-private theorem settingFold_preserves (ctx : Ctx) (sets : List (Pos × Array Raw))
+private theorem settingFold_preserves (ctx : Ctx) (sets : List (Span × Array Raw))
     (acc : List (String × Array Picture.Tok) × ESt)
     (key : String) (h : PictureKeyNamed acc.2.diags key) :
     PictureKeyNamed (sets.foldl (pictureSettingState ctx) acc).2.diags key := by
@@ -103,7 +103,7 @@ private theorem settingFold_preserves (ctx : Ctx) (sets : List (Pos × Array Raw
 
 /-- Progress-indexed state equation: after this exact input prefix, the
 reporter holds the interpretation of that prefix and no later definition. -/
-private theorem settingFold_styles (ctx : Ctx) (sets : List (Pos × Array Raw))
+private theorem settingFold_styles (ctx : Ctx) (sets : List (Span × Array Raw))
     (acc : List (String × Array Picture.Tok) × ESt) :
     (sets.foldl (pictureSettingState ctx) acc).1 =
       sets.foldl pictureSettingStyles acc.1 := by
@@ -115,7 +115,7 @@ private theorem settingFold_styles (ctx : Ctx) (sets : List (Pos × Array Raw))
 /-- Every unread key from every prepared setting is named, with the same
 earlier style environment the renderer uses. Repetition only demotes a
 site; it never removes the site's structured identity. -/
-public theorem reportPictureKeys_named (ctx : Ctx) (sets : Array (Pos × Array Raw))
+public theorem reportPictureKeys_named (ctx : Ctx) (sets : Array (Span × Array Raw))
     (st : ESt) (key : String) (h : UnreadPictureSetting sets key) :
     PictureKeyNamed (reportPictureKeys ctx sets st).diags key := by
   rcases h with ⟨before, setting, after, hsets, hkey⟩
@@ -126,7 +126,7 @@ public theorem reportPictureKeys_named (ctx : Ctx) (sets : Array (Pos × Array R
   simpa only [settingFold_styles] using hkey
 
 public theorem finishPictureKeys_named (report : PictureReportContext) (doc : Doc)
-    (sets : Array (Pos × Array Raw)) (st : ESt) (key : String)
+    (sets : Array (Span × Array Raw)) (st : ESt) (key : String)
     (hdrew : 0 < enginePictures doc.body) (h : UnreadPictureSetting sets key) :
     PictureKeyNamed (finishPictureKeys report doc sets st).diags key := by
   rcases reportPictureKeys_named report.ctx sets { st with diags := #[] } key h with

@@ -18,6 +18,7 @@ import LeanTex.Core.FaIcons
 import LeanTex.Core.Bib
 import LeanTex.Core.PdfContract
 public import LeanTex.Core.ListingReply
+import LeanTex.Core.Listing
 public import LeanTex.Core.BeamerColor
 
 namespace LeanTex.Core.Elab
@@ -157,11 +158,12 @@ public structure PicCtx where
   subset a picture body reaches. -/
   macros : Array (String × String) := #[]
   /-- The key lists the document's `\tikzset` lines wrote, in source order
-  and wherever they stood (`Compat.tikzsetKeys`). Their `/.style`
-  definitions are what every picture's own option block starts from, so a
-  style reaches its picture whether it was declared in the preamble or
-  beside the figure. Set once by the elaborator, as `preamble` is. -/
-  sets : Array (Array Raw) := #[]
+  and wherever they stood, each beside the span of its line in the file
+  that holds it (`Compat.tikzsetKeys`). Their `/.style` definitions are
+  what every picture's own option block starts from, so a style reaches its
+  picture whether it was declared in the preamble or beside the figure.
+  Set once by the elaborator, as `preamble` is. -/
+  sets : Array (Span × Array Raw) := #[]
   /-- How a node label's content measures at a per-mille size: the face,
   arriving as a function rather than a font set, because the elaborator has
   no face of its own and does not acquire one by knowing this. The driver
@@ -2814,9 +2816,12 @@ alignment", "")
 (and `m`/`b`, set as `p`: the engine has no per-cell vertical alignment),
 `@{}` deleting the outer pad on its edge, `|` warned and never drawn —
 "Never, ever use vertical rules" (booktabs.dtx §The layout of formal
-tables), and the array `>{decl}`/`<{decl}` modifiers selecting a column's
-alignment. Returns the columns, the outer-pad flags, and warnings as
-(key, message, help) for the caller's `warnOnce`. -/
+tables), and the array `>{decl}`/`<{decl}` modifiers selecting a wrapping
+column's alignment (`Ir.ColSpec.ragged`). On an `l`, `c` or `r` column a
+side declaration changes nothing: the cell sets no paragraph, so the skips
+`\raggedleft` and `\centering` set are read by none, and lualatex leaves
+`>{\raggedleft}l` flush left. Returns the columns, the outer-pad flags, and
+warnings as (key, message, help) for the caller's `warnOnce`. -/
 private def parseColSpec (ctx : Ctx) (spec : Array Raw)
     (flexTarget : Option Ir.TableTarget := none) :
     Array Ir.ColSpec × Bool × Bool × Array (String × String × String) := Id.run do
@@ -2857,16 +2862,17 @@ only the empty '@{}' deleting an outer pad is",
           match c with
           | 'l' | 'c' | 'r' =>
             let align := if c == 'c' then .center else if c == 'r' then .right else .left
-            cols := cols.push { width := .natural, align := pendingAlign.getD align }
+            cols := cols.push { width := .natural, align := align }
             pendingAlign := none
           | 'X' =>
             match flexTarget with
             | some target =>
-              cols := cols.push { width := .flex target, align := pendingAlign.getD .left }
+              cols := cols.push { width := .flex target, align := pendingAlign.getD .left
+                                  ragged := pendingAlign.isSome }
             | none =>
               warns := warns.push ("colspec",
                 "unsupported column type 'X'; set as 'l'", "load tabularx and use its environment")
-              cols := cols.push { width := .natural, align := pendingAlign.getD .left }
+              cols := cols.push { width := .natural, align := .left }
             pendingAlign := none
           | 'p' | 'm' | 'b' =>
             let widthGroup := if ci == last then
@@ -2889,7 +2895,8 @@ the full measure",
               warns := warns.push ("mb",
                 s!"'{c}\{...}' vertical cell alignment is not modelled; set \
 as 'p'", "")
-            cols := cols.push { width := width, align := pendingAlign.getD .left }
+            cols := cols.push { width := width, align := pendingAlign.getD .left
+                                ragged := pendingAlign.isSome }
             pendingAlign := none
           | '>' | '<' =>
             -- The same declaration decoder serves the next column (`>`) and
@@ -2902,12 +2909,13 @@ as 'p'", "")
               if let some a := align then
                 if c == '>' then pendingAlign := some a
                 else if cols.size > 0 then
-                  cols := cols.modify (cols.size - 1) (fun col => { col with align := a })
+                  cols := cols.modify (cols.size - 1) fun col =>
+                    if col.width matches .natural then col else { col with align := a, ragged := true }
               warns := warns ++ ws
             | _ =>
               warns := warns.push ("colspec",
                 s!"unsupported column type '{c}'; set as 'l'", "")
-              cols := cols.push { width := .natural, align := pendingAlign.getD .left }
+              cols := cols.push { width := .natural, align := .left }
               pendingAlign := none
           | '@' =>
             -- `@{...}` lexes as a word character with the group beside it:
@@ -2931,7 +2939,7 @@ is too small")
             if !c.isWhitespace then
               warns := warns.push ("colspec",
                 s!"unsupported column type '{c}'; set as 'l'", "")
-              cols := cols.push { width := .natural, align := pendingAlign.getD .left }
+              cols := cols.push { width := .natural, align := .left }
               pendingAlign := none
           ci := ci + 1
         i := i + (if tookGroup then 2 else 1)
@@ -4512,7 +4520,11 @@ private def splitPictureAlt (body : Array Raw) (pos0 : Pos) : Ir.Alt × Array Ra
 
 /-- The rendered subset's drawing of one picture body, with what it names:
 the one elaboration both the block arm and the in-line arm read, so the
-two cannot disagree about what the subset draws. -/
+two cannot disagree about what the subset draws. A label's formula is
+located at its opener, as `sourceInline` locates a paragraph's, so the notes
+the formula census raises after elaboration name the label; one a document
+style sets is located in the file that wrote the style
+(`Picture.ofSetting`). -/
 private def subsetPicture (ctx : Ctx) (body : Array Raw) :
     Ir.Pic.Picture × Array Picture.PDiag :=
   let mathOf (d : Bool) (raws : Array Parse.Raw) :
@@ -4525,6 +4537,7 @@ private def subsetPicture (ctx : Ctx) (body : Array Raw) :
 formula {floorWording (Parse.rawSrc raws)}")])
   Picture.elabPicture ctx.palette body mathOf ctx.pic.sets ctx.pic.metric
     ctx.pic.macros argStyles ctx.page.scale declStyles ctx.page.fontSize
+    (locate := fun pos => some (ctx.sourceSpan pos))
 
 /-- One picture sent to the boundary: its request stated once, a picture
 the subset draws in part recorded as a fallback the driver may withdraw
@@ -9166,6 +9179,15 @@ private def tabularArm (ctx : Ctx) (n : String) (body : Array Raw)
   blocks := blocks.push (.table cols padL padR rows rules spans)
   return blocks
 
+/-- The distinct token types of a listing whose style draws a box around
+them, first appearance first: what the typed inlines cannot carry. -/
+private def boxedKinds (style : Ir.ListingStyle) (lines : Array (Array ListingHighlight.Token)) :
+    Array (ListingHighlight.Kind × PygmentsStyle.Box) :=
+  lines.foldl (fun acc line => line.foldl (fun acc t =>
+    match Listing.box? style t.kind with
+    | some box => if acc.any (·.1 == t.kind) then acc else acc.push (t.kind, box)
+    | none => acc) acc) #[]
+
 /-- One listing block from a lexically blind capture. `{verbatim}` is the
 default spec, as always. `{lstlisting}` reads listings' per-environment
 keys from its option head, `{minted}` its option head and its mandatory
@@ -9173,7 +9195,7 @@ language argument. Honoured keys: `caption` (numbered in flow order — the
 listing counter steps exactly as the equation counter does), `label`
 (bound to the caption's number), `numbers=left`/`none` and minted's
 `linenos`, `language` (normalized through `Ir.listingLang?` to the token
-both text artifacts carry; Lean and Python receive native lexical classes,
+both text artifacts carry; Lean and Python receive native token types,
 other names consume source-checked driver replies or remain plain, and a
 spelling outside the token grammar is named W0110 and carries nothing), minted's
 `fontsize` (a named size command or `auto`) and `style` (`default` or
@@ -9184,8 +9206,10 @@ tabs, no wrapping. Bare fontsize names are text in FancyVerb, not size
 commands; name that unsupported spelling with its correction.
 Every other key, and a value
 asking for what the engine does not draw, is named W0110 — never a
-silent drop. The caption is kept as its literal text: a listing caption
-is plain prose; markup inside one is out of the blind capture's reach. -/
+silent drop; so is a token type whose style draws a frame or background
+around it, W0397 keyed by the type. The caption is kept as its literal
+text: a listing caption is plain prose; markup inside one is out of the
+blind capture's reach. -/
 private def listingBlock (ctx : Ctx) (env s : String) (pos : Pos) : EM Block := do
   -- The size in force where the environment stands, resolved once through
   -- the ordinary declaration scope (`blockDecls`), defaulting to the body
@@ -9341,6 +9365,13 @@ size commands; the current style stands" (some pos)
     | some language => ListingHighlight.tokenize language (Ir.verbatimLines content)
     | none => (spec.langToken.bind fun language =>
         ListingReply.lookup ctx.listingReplies language content).getD #[]
+  for (kind, box) in boxedKinds spec.style highlight do
+    let drawn := match box with
+      | .frame .. => "frame"
+      | .fill _ => "background"
+    warnOnce ctx ("listing-token:" ++ kind.path) .W0397
+      s!"the {drawn} the '{spec.style.name}' highlighting style draws around '{kind.path}' \
+tokens is not drawn; their text and colour still set" pos
   return .verbatim none content { spec with highlight }
 
 /-- `(t)`: amsmath's `\tagform@` (`\maketag@@@{(\ignorespaces#1\unskip…)}`)
@@ -10184,6 +10215,8 @@ private def thmClose (ctx : Ctx) (n : String) (o : ThmOpen) (inner : Array Block
       let set : Inline := match shown with
         | #[x] => x
         | xs => .role "qedsymbol" xs
+      -- No picture label holds the marker: the label reader refuses
+      -- `\qedhere` (`Picture.salCtrl`).
       let inner := if here then
           Ir.mapBlocks (fun x => if x == .label qedHereKey then set else x) inner
         else inner
@@ -11517,7 +11550,7 @@ text width; the box shares the leftover" spos
           slicePars_zero _
         let mut sInner ← elabBlockScope ctx sRest
         unless sCaption.isEmpty do
-          sInner := Ir.setAltBlocks (Ir.plainText sCaption) sInner
+          sInner := Ir.captionAltBlocks sCaption sInner
         figureGo ctx n kind body pos (j + 1) innerBlocks
           (cols.push ({ width with pos := subPos }, #[.float .sub none sCapAbove sInner sCaption]))
           #[] caption capAbove blocks
@@ -11557,7 +11590,7 @@ text width; the box shares the leftover" spos
     let rb ← elabBlockScope ctx rest
     let mut inner := innerBlocks ++ rb
     unless caption.isEmpty do
-      inner := Ir.setAltBlocks (Ir.plainText caption) inner
+      inner := Ir.captionAltBlocks caption inner
     return blocks.push (.float kind none capAbove inner caption)
 termination_by (ctx.envLimit, noteFlag ctx,
   visParsGo ctx.user ctx.limit + nestedParsList body.toList,
@@ -16525,28 +16558,29 @@ public def macroScan (raws : Array Raw) : Array (String × String) := Id.run do
 /-- The style table before the next picture setting. This is the same
 one-pass interpretation used by the drawing's `Picture.documentStyles`. -/
 public def pictureSettingStyles (styles : List (String × Array Picture.Tok))
-    (setting : Pos × Array Raw) : List (String × Array Picture.Tok) :=
-  (Picture.readStyleList styles (Picture.ofRaws setting.2)).1
+    (setting : Span × Array Raw) : List (String × Array Picture.Tok) :=
+  (Picture.readStyleList styles (Picture.ofSetting setting)).1
 
-/-- Account for a key at the setting that declares it. -/
-private def pictureKeyState (ctx : Ctx) (pos : Pos) (st : ESt) (key : String) : ESt :=
-  warnOnceState ctx ("picture:set:" ++ key) .W0334
-    s!"picture key {key} is outside the rendered picture subset; the key is dropped"
-    pos (some "the rendered subset reads 'name/.style={...}' definitions") false st
+/-- Account for a key at the setting that declares it, in the file that
+holds the setting's line. -/
+private def pictureKeyState (ctx : Ctx) (span : Span) (st : ESt) (key : String) : ESt :=
+  warnOnceState { ctx with file := span.file, callSite := none } ("picture:set:" ++ key)
+    .W0334 s!"picture key {key} is outside the rendered picture subset; the key is dropped"
+    span.pos (some "the rendered subset reads 'name/.style={...}' definitions") false st
 
 /-- One real reporting loop, over the keys this setting leaves unread.
 The style table is advanced only after the setting has been interpreted. -/
 private def pictureSettingState (ctx : Ctx)
     (acc : List (String × Array Picture.Tok) × ESt)
-    (setting : Pos × Array Raw) : List (String × Array Picture.Tok) × ESt := Id.run do
+    (setting : Span × Array Raw) : List (String × Array Picture.Tok) × ESt := Id.run do
   let mut st := acc.2
-  for key in Picture.unreadKeys acc.1 (Picture.ofRaws setting.2) do
+  for key in Picture.unreadKeys acc.1 (Picture.ofSetting setting) do
     st := pictureKeyState ctx setting.1 st key
   return (pictureSettingStyles acc.1 setting, st)
 
 /-- Interpret and report every prepared picture setting, in declaration
 order, carrying the earlier style definitions into each later setting. -/
-public def reportPictureKeys (ctx : Ctx) (sets : Array (Pos × Array Raw)) (st : ESt) : ESt :=
+public def reportPictureKeys (ctx : Ctx) (sets : Array (Span × Array Raw)) (st : ESt) : ESt :=
   Id.run do
     let mut acc := (([] : List (String × Array Picture.Tok)), st)
     for setting in sets do
@@ -16564,7 +16598,7 @@ public structure PictureReportContext where
 Later document judges keep their diagnostic order: picture losses are
 inserted at the position captured immediately after body elaboration. -/
 public def finishPictureKeys (report : PictureReportContext) (doc : Doc)
-    (sets : Array (Pos × Array Raw)) (st : ESt) : ESt :=
+    (sets : Array (Span × Array Raw)) (st : ESt) : ESt :=
   -- premise: pictureKeyGateChecks — only an engine-rendered picture loses
   -- these keys; a configured boundary alone cannot silence that loss.
   if 0 < enginePictures doc.body then
@@ -16725,7 +16759,7 @@ public theorem runDocBody_recovered_word_exact (plan : DocBodyPlan) (st : ESt) (
   · exact recovered_para_census plan.ctx wordPos word lang ds
 
 private def beginDoc (file : String) (raws : Array Raw) (picPre : String := "")
-    (picSets : Array (Pos × Array Raw) := #[])
+    (picSets : Array (Span × Array Raw) := #[])
     (picMacros : Array (String × String) := #[])
     (picMetric : Ir.Pic.LabelMetric := fun _ _ => {})
     (picWithdrawn : Array String := #[])
@@ -16784,7 +16818,7 @@ private def beginDoc (file : String) (raws : Array Raw) (picPre : String := "")
     { ctx := { file := file, listingReplies := listingReplies
                pic := { tool := picTool0, preamble := picPre, metric := picMetric
                         withdrawn := picWithdrawn, macros := picMacros
-                        sets := picSets.map (·.2) } } }
+                        sets := picSets } } }
   return { state := s, decls, body, trailing }
 
 private def prepareStyledBody (file : String) (decls : Array PDecl)
@@ -16902,10 +16936,14 @@ private def prepareStyledBody (file : String) (decls : Array PDecl)
       output := output.addFormat f
   if output.md.isNone then
     output := { output with md := record.mdName }
+  -- A table length the preamble declares is fixed there, in the preamble's
+  -- font, as `\setlength` evaluates it (`Ir.PreambleFace.fixTableLengths`):
+  -- the body's token state starts from the fixed values.
+  let tokens := (Ir.PreambleFace.ofClass record page.fontSize).fixTableLengths tokens
   ctx := { ctx with slides := record.model == .frame
                     face := record.model == .face
                     numberHeadings := record.numberHeadings, styles := styles
-                    page := page
+                    page := page, tokens := tokens
                     engineTokens := engineLengthTokensOfPage page }
   -- Numbering is a property of the finished document, not of any one
   -- elaboration site: `Ir.numberFloats` fills every captioned float's
@@ -17087,14 +17125,15 @@ private def prepareStyledBody (file : String) (decls : Array PDecl)
     if trailing.any (!isSpaceOrPar ·) then
       diag ctx .W0001 "content after '\\end{document}' is ignored" none
     -- PDF metadata falls back to the title declarations: a deck that says
-    -- \title deserves an Info dictionary without saying it twice.
+    -- \title deserves an Info dictionary without saying it twice. A name,
+    -- so the words the title's first page shows (`Ir.firstPageText`).
     let st ← get
     let fallback (cur : Option String) (src : Option (Array Inline)) : Option String :=
       match cur with
       | some s => some s
       | none =>
         src.bind fun xs =>
-          let t := Ir.plainText xs
+          let t := Ir.firstPageText xs
           if t.isEmpty then none else some t
     info := { info with
       title := fallback info.title st.title
@@ -17173,7 +17212,7 @@ public theorem finishPreamble_run_congr (file : String) (preamble : DocPreamble)
   rw [h]
 
 private def elabDocCore (file : String) (raws : Array Raw) (picPre : String := "")
-    (picSets : Array (Pos × Array Raw) := #[])
+    (picSets : Array (Span × Array Raw) := #[])
     (picMacros : Array (String × String) := #[])
     (picMetric : Ir.Pic.LabelMetric := fun _ _ => {})
     (picWithdrawn : Array String := #[])
@@ -17185,7 +17224,7 @@ private def elabDocCore (file : String) (raws : Array Raw) (picPre : String := "
 /-- Elaborate a document and account for every unread setting of its
 engine pictures. The output gate is read from the completed body. -/
 public def elabDoc (file : String) (raws : Array Raw) (picPre : String := "")
-    (picSets : Array (Pos × Array Raw) := #[])
+    (picSets : Array (Span × Array Raw) := #[])
     (picMacros : Array (String × String) := #[])
     (picMetric : Ir.Pic.LabelMetric := fun _ _ => {})
     (picWithdrawn : Array String := #[])
@@ -17236,7 +17275,7 @@ sources, and nothing would state they agree. -/
 public structure Prepared where
   raws : Array Raw
   picPre : String
-  picSets : Array (Pos × Array Raw)
+  picSets : Array (Span × Array Raw)
   picMacros : Array (String × String)
   warned : Array String
   compatDiags : Array Diag
@@ -17367,7 +17406,7 @@ public def prepareRewritten (file : String) (picScan : Compat.BoundaryScan)
 see the fulfilled surface, and compatibility translation continues from
 that execution's state rather than replaying any effects. -/
 public def prepareExecuted (file : String) (executed : Compat.Executed) : Prepared :=
-  let picScan := Compat.boundaryScan executed.raws
+  let picScan := Compat.boundaryScan file executed.raws
   let picMacros := macroScan executed.raws
   prepareRewritten file picScan picMacros executed.sourceTriggers #[]
     (Compat.rewriteExecuted executed) executed.inputAttempts
@@ -17417,7 +17456,7 @@ option, a beamer font theme — is nonetheless a declaration the preamble
 carries by the time anything reads it. -/
 public def prepare (file : String) (raws : Array Raw) : Prepared :=
   let (raws, splitDiags) := settleSplits file raws
-  let picScan := Compat.boundaryScan raws
+  let picScan := Compat.boundaryScan file raws
   let picMacros := macroScan raws
   let executed := Compat.execute file raws
     (provideKeeps := renderedBuiltins ++ structuralNames ++

@@ -358,9 +358,6 @@ def recipeTabularxSharesChecks (ref : IO.Ref (List String)) : IO Unit := do
     doc.body.map (HtmlDoc.blockNode {})
   let colStylesOf := fun (src : String) =>
     (render src).foldl (fun acc n => acc ++ attrValuesOf (· == "col") "style" n) #[]
-  let cellStylesOf := fun (src : String) =>
-    (render src).foldl
-      (fun acc n => acc ++ attrValuesOf (fun x => x == "td" || x == "th") "style" n) #[]
   let cellClassesOf := fun (src : String) =>
     (render src).foldl
       (fun acc n => acc ++ attrValuesOf (fun x => x == "td" || x == "th") "class" n) #[]
@@ -374,11 +371,12 @@ def recipeTabularxSharesChecks (ref : IO.Ref (List String)) : IO Unit := do
     (colStylesOf "\\begin{tabularx}{\\linewidth}{lX}A & B\\end{tabularx}"
       == #["width: 100%"])
   t "a natural column's cells carry the nowrap class"
-    ((cellClassesOf "\\begin{tabularx}{\\linewidth}{lX}A & B\\end{tabularx}").contains "bt-nowrap")
+    ((cellClassesOf "\\begin{tabularx}{\\linewidth}{lX}A & B\\end{tabularx}").any
+      (hasStr · "bt-nowrap"))
   t "an array alignment modifier reaches the X cells"
-    ((cellStylesOf
-        "\\begin{tabularx}{\\linewidth}{>{\\raggedleft\\arraybackslash}X}A\\end{tabularx}").contains
-      "text-align: right")
+    ((cellClassesOf
+        "\\begin{tabularx}{\\linewidth}{>{\\raggedleft\\arraybackslash}X}A\\end{tabularx}").any
+      (hasStr · "bt-right"))
 
 /-- **Array `>{decl}` and `<{decl}` column modifiers set a column's
 alignment.** The array package reads a `>{...}` group before a column and a

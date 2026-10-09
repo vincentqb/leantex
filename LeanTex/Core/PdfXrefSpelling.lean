@@ -1,6 +1,7 @@
 module
 
 public import LeanTex.Core.PdfReadProof
+public import LeanTex.Core.PdfXref
 public import LeanTex.Core.Flate
 import all LeanTex.Core.PdfObj
 import all LeanTex.Core.PdfLex
@@ -63,11 +64,12 @@ public theorem hex16_string_exact (x : UInt64) :
   exact Or.inl (hx d hd).1
 
 /-- The typed value of the xref dictionary the writer spells. The hashes
-are the same 64-bit values used for the two file identifiers. -/
-public def xrefStreamDict (count info : Nat) (idA idB : UInt64) (filtered : Bool)
-    (len : Nat) : Obj :=
+are the same 64-bit values used for the two file identifiers; `w` is the
+row layout the payload was encoded in. -/
+public def xrefStreamDict (count info : Nat) (w : Xref.Widths) (idA idB : UInt64)
+    (filtered : Bool) (len : Nat) : Obj :=
   .dict (#[ ("Type", .name "XRef"), ("Size", .int count),
-    ("W", .arr #[.int 1, .int 4, .int 2]),
+    ("W", .arr #[.int 1, .int w.first, .int w.second]),
     ("Index", .arr #[.int 0, .int count]), ("Root", .ref 1 0),
     ("Info", .ref info 0),
     ("ID", .arr #[.str (("<" ++ Flate.hex16 idA ++ ">").toUTF8),
@@ -75,11 +77,11 @@ public def xrefStreamDict (count info : Nat) (idA idB : UInt64) (filtered : Bool
     (if filtered then #[("Filter", .name "FlateDecode")] else #[]) ++
     #[("Length", .int len)])
 
-public theorem xrefStreamDict_fields_exact (count info : Nat) (idA idB : UInt64)
-    (filtered : Bool) (len : Nat) :
-    let d := xrefStreamDict count info idA idB filtered len
+public theorem xrefStreamDict_fields_exact (count info : Nat) (w : Xref.Widths)
+    (idA idB : UInt64) (filtered : Bool) (len : Nat) :
+    let d := xrefStreamDict count info w idA idB filtered len
     d.get? "Length" = some (.int len) ∧
-    d.get? "W" = some (.arr #[.int 1, .int 4, .int 2]) ∧
+    d.get? "W" = some (.arr #[.int 1, .int w.first, .int w.second]) ∧
     d.get? "Size" = some (.int count) ∧
     d.get? "Index" = some (.arr #[.int 0, .int count]) ∧
     d.get? "Prev" = none ∧ d.get? "Root" = some (.ref 1 0) ∧
@@ -87,9 +89,9 @@ public theorem xrefStreamDict_fields_exact (count info : Nat) (idA idB : UInt64)
     d.get? "DL" = none ∧ d.get? "DecodeParms" = none := by
   cases filtered <;> simp [xrefStreamDict, Obj.get?]
 
-public theorem xrefStreamDict_representable_exact (count info : Nat) (idA idB : UInt64)
-    (filtered : Bool) (len : Nat) :
-    (xrefStreamDict count info idA idB filtered len).Representable := by
+public theorem xrefStreamDict_representable_exact (count info : Nat) (w : Xref.Widths)
+    (idA idB : UInt64) (filtered : Bool) (len : Nat) :
+    (xrefStreamDict count info w idA idB filtered len).Representable := by
   cases filtered <;> unfold xrefStreamDict <;>
     apply Obj.Representable.dict
   all_goals intro e he
@@ -118,10 +120,10 @@ private theorem push_append (b : ByteArray) (c : UInt8) :
   exact Array.push_eq_append
 
 set_option maxRecDepth 4096 in
-public theorem xrefStreamDict_render_exact (count info : Nat) (idA idB : UInt64)
-    (filtered : Bool) (len : Nat) :
-    (xrefStreamDict count info idA idB filtered len).render =
-      (s!"<< /Type /XRef /Size {count} /W [1 4 2] /Index [0 {count}] /Root 1 0 R /Info {info} 0 R /ID [<{Flate.hex16 idA}> <{Flate.hex16 idB}>]" ++
+public theorem xrefStreamDict_render_exact (count info : Nat) (w : Xref.Widths)
+    (idA idB : UInt64) (filtered : Bool) (len : Nat) :
+    (xrefStreamDict count info w idA idB filtered len).render =
+      (s!"<< /Type /XRef /Size {count} /W [1 {w.first} {w.second}] /Index [0 {count}] /Root 1 0 R /Info {info} 0 R /ID [<{Flate.hex16 idA}> <{Flate.hex16 idB}>]" ++
         (if filtered then " /Filter /FlateDecode" else "") ++
         s!" /Length {len} >>").toUTF8 := by
   cases filtered <;>
@@ -136,14 +138,10 @@ public theorem xrefStreamDict_render_exact (count info : Nat) (idA idB : UInt64)
   all_goals simp only [String.toUTF8_eq_toByteArray, Int.toString_eq_repr,
     Int.repr_eq_ite, Int.natCast_nonneg, ↓reduceIte, Int.toNat_natCast]
   all_goals simp only [show (0 : Int) ≤ 0 from by omega, show (0 : Int) ≤ 1 from by omega,
-    show (0 : Int) ≤ 2 from by omega, show (0 : Int) ≤ 4 from by omega, ↓reduceIte,
-    show (0 : Int).toNat = 0 from by omega, show (1 : Int).toNat = 1 from by omega,
-    show (2 : Int).toNat = 2 from by omega, show (4 : Int).toNat = 4 from by omega]
+    ↓reduceIte, show (0 : Int).toNat = 0 from by omega, show (1 : Int).toNat = 1 from by omega]
   all_goals simp only [Nat.toString_eq_repr, Nat.repr_of_lt (n := 0) (by omega),
-    Nat.repr_of_lt (n := 1) (by omega), Nat.repr_of_lt (n := 2) (by omega),
-    Nat.repr_of_lt (n := 4) (by omega),
+    Nat.repr_of_lt (n := 1) (by omega),
     Nat.digitChar_eq_zero.mpr rfl, Nat.digitChar_eq_one.mpr rfl,
-    Nat.digitChar_eq_two.mpr rfl, Nat.digitChar_eq_four.mpr rfl,
     String.singleton_eq_ofList]
   all_goals rfl
 

@@ -1689,13 +1689,14 @@ public def paletteContract (pal : Palette) : Bool :=
   text "alert" && text "example"
     && designContract (Design.ofDoc { palette := pal })
 
-/-- Every native lexical ink is text-AA on every listing ground of a bundle:
-the page, its standout inversion, and its title page when declared. The
-shared painter chooses undeclared defaults on that ground; declared colours
-are judged by `usesBlock`, through the usual bounded realization policy. -/
+/-- Every listing ink of every shipped style is text-AA on every listing
+ground of a bundle: the page, its standout inversion, and its title page
+when declared. The shared painter adapts style colours on that ground;
+declared colours are judged by `usesBlock`, through the usual bounded
+realization policy. -/
 public def listingContract (pal : Palette) : Bool :=
   let d := Design.ofPalette pal
-  ([ListingStyle.default, .friendly] : List ListingStyle).all fun style =>
+  ListingStyle.all.all fun style =>
     Listing.contract pal none style && Listing.contract pal (some d.standout.bg) style
       && (match d.titlepage with
           | some p => Listing.contract pal (some p.bg) style

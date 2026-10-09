@@ -4,7 +4,7 @@ font dir "fonts"
 font body "Source Serif Pro"
 section 1 number "1"
   text "Shaped nodes"
-picture 11 shapes
+picture 12 shapes
   border -6.945 -6.945 6.945 6.945
   border 32.74 12.898 46.63 26.787
   border 70.441 -5.953 88.299 5.953
@@ -22,6 +22,9 @@ picture 11 shapes
   edge (6.391,3.195)--(27.713,13.857) stroke #000000 0.8 tip
   edge (46.076,16.647)--(70.041,4.665) stroke #808080 0.4 dashed
   edge (7.145,0)--(70.041,0) stroke #000000 0.4
+  label 38.593 0 #000000 630
+    formula inline "\\mathrm {rd}"
+      ord:alpha:rm{ord:𝑟 ord:𝑑}
   edge (0,7.145)~(32.54,19.843) stroke #000000 0.4 dotted
   label 11.142 18.622 #000000 630
     text "lift"

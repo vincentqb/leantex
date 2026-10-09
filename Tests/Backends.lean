@@ -2630,8 +2630,9 @@ def tableHtmlChecks (ref : IO.Ref (List String)) : IO Unit := do
     (cmidCells.size == 9 && cmidCells.all (fun c => c.tag == "td" && c.group == "tbody"))
   t "the cmid cells carry bt-cmid and every natural cell carries bt-nowrap"
     (cmidCells.map (·.cls) ==
-      #["bt-nowrap", "bt-nowrap", "bt-nowrap", "bt-cmid bt-nowrap", "bt-cmid bt-nowrap",
-        "bt-nowrap", "bt-nowrap", "bt-nowrap", "bt-nowrap"])
+      #["bt-left bt-nowrap", "bt-center bt-nowrap", "bt-right bt-nowrap",
+        "bt-left bt-cmid bt-nowrap", "bt-center bt-cmid bt-nowrap",
+        "bt-right bt-nowrap", "bt-left bt-nowrap", "bt-center bt-nowrap", "bt-right bt-nowrap"])
   t "no header: colgroup and tbody only"
     (tableGroupsOne #[] cmid == #[#["colgroup", "tbody"]])
   -- Bare tabular, no rules at all.
@@ -2657,10 +2658,10 @@ def tableHtmlChecks (ref : IO.Ref (List String)) : IO Unit := do
      | .elem _ _ kids => (kids.toList.findSome? fun k => match k with
          | .elem "thead" _ rs => rs.toList.findSome? fun r => match r with
              | .elem "tr" _ cs => cs[1]?.bind fun c => match c with
-                 | .elem _ attrs _ => attrs.find? (·.1 == "style")
+                 | .elem _ attrs _ => attrs.find? (·.1 == "class")
                  | _ => none
              | _ => none
-         | _ => none) == some ("style", "text-align: center")
+         | _ => none) == some ("class", "bt-center bt-nowrap")
      | _ => false)
   -- The empty table: nothing to group.
   let empty := HtmlDoc.blockNode {} (.table #[default, default] true true #[] #[(0, .mid)] #[])
@@ -2893,6 +2894,7 @@ def pdfCensusTable :
   ("outline", (1, 1, 0, 0, 0, 0, 0, none, ["FlateDecode"])),
   ("outline-gap", (1, 1, 0, 0, 0, 0, 0, none, ["FlateDecode"])),
   ("webnav", (1, 1, 0, 0, 0, 0, 3, none, ["FlateDecode"])),
+  ("nav-directory", (1, 1, 0, 0, 0, 0, 300, none, ["FlateDecode"])),
   ("bibliography", (1, 1, 0, 0, 0, 9, 0, none, ["FlateDecode"])),
   ("resume-data", (1, 1, 0, 0, 0, 0, 0, none, ["FlateDecode"])),
   ("icons", (1, 1, 0, 0, 0, 2, 0, none, ["FlateDecode"])),
@@ -2903,6 +2905,7 @@ def pdfCensusTable :
   ("diagram-scm", (1, 1, 0, 0, 0, 0, 0, none, ["FlateDecode"])),
   ("diagram-tikzset", (1, 1, 0, 0, 0, 0, 0, none, ["FlateDecode"])),
   ("tables", (1, 1, 0, 0, 0, 0, 0, none, ["FlateDecode"])),
+  ("tables-deck", (3, 1, 0, 0, 0, 0, 0, none, ["FlateDecode"])),
   ("tables-ragged", (1, 1, 0, 0, 0, 0, 0, none, ["FlateDecode"])),
   ("subfigures", (1, 1, 0, 0, 0, 0, 0, none, ["FlateDecode"])),
   ("float-center", (1, 1, 0, 0, 0, 0, 0, none, ["FlateDecode"])),
@@ -3438,7 +3441,8 @@ def objTableChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Un
   t "table: one face, one page, no outline, one structure element"
     (t0.pageId 0 == 8 && t0.contentId 0 == 9 && t0.infoId == 10 && t0.structTreeRoot == 11 &&
      t0.parentTree == 12 && t0.namespaceId == 13 && t0.structElemId 0 == 14 && t0.xmpId == 15 &&
-     t0.objStmId == 16 && t0.xrefId == 17 && t0.size == 18 && t0.nf == 1 && t0.np == 1)
+     t0.objStmId 0 == 16 && t0.nStm == 1 && t0.xrefId == 17 && t0.size == 18 && t0.nf == 1 &&
+     t0.np == 1)
   t "table: the conditional families allocate nothing yet"
     (t0.outputIntent.isNone && t0.icc.isNone)
   -- Two faces, three pages, a two-item outline: the root then its items
@@ -3474,8 +3478,15 @@ def objTableChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Un
   t "table: the pages follow the last image block"
     (ti.pageId 0 == 13 + formN && ti.contentId 1 == 16 + formN && ti.infoId == 17 + formN &&
      ti.size == 24 + formN)
+  -- 600 outline items make 612 compressed objects: three object streams,
+  -- their ids after XMP and before the xref.
+  let tl := Pdf.objTable #[0] {} #[] 1 600 1
+  t "table: one object stream per capacity of compressed objects"
+    (Pdf.compressedCount tl.nf tl.np tl.nOut tl.nElems == 612 && tl.nStm == 3 &&
+     tl.objStmId 0 == tl.xmpId + 1 && tl.objStmId 2 == tl.xmpId + 3 &&
+     tl.xrefId == tl.xmpId + 4 && tl.size == tl.xmpId + 5)
   -- The executable twin of `objTable_ids_set_eq`, on the shapes above.
-  for (name, tb) in [("plain", t0), ("outline", t1), ("images", ti)] do
+  for (name, tb) in [("plain", t0), ("outline", t1), ("images", ti), ("streams", tl)] do
     t s!"table {name}: the ids are exactly [1, size)"
       (tb.ids.toList == List.range' 1 (tb.size - 1))
   -- The row kind is a function of the table and the object stream's index.
@@ -3518,7 +3529,8 @@ each row — a soft-mask image says `smask`, a plain one does not, a copied
 page says `formXObject` and `copiedGraph`, a JPEG says `dct` — and, over
 every corpus fixture, the four unemitted features stay unreached while
 the bookkeeping five — the structure tree among them — are always
-reached. -/
+reached; and `objStmMulti` turns on with the second object stream, at the
+boundary exactly. -/
 def featureCensusChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit := do
   let t := check ref
   t "features: the registry counts its constructors"
@@ -3578,6 +3590,19 @@ def featureCensusChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : 
     (let o := Pdf.features geom oneFace #[] {} #[{ title := "a", page := some 0 }]
      let u := Pdf.features geom oneFace #[] {} #[{ title := "a", url := some "https://example.org" }]
      o.contains .outlines && !o.contains .linkURI && u.contains .outlines && u.contains .linkURI)
+  -- Several object streams, at the boundary: each outline entry is one
+  -- more compressed object, so the entry that takes the count past the
+  -- capacity opens a second stream, and the census says so then, not before.
+  let outlineOf (n : Nat) : Array Layout.OutlineEntry := Array.replicate n { title := "a" }
+  let planAt (n : Nat) := Pdf.prepare geom oneFace #[] {} {} (outlineOf n)
+  let multiAt (n : Nat) : Bool :=
+    (Pdf.features geom oneFace #[] {} (outlineOf n)).contains .objStmMulti
+  let full := Pdf.objStmCapacity + 1 - (planAt 1).compressed.length
+  t s!"features: {full} entries fill one object stream exactly, one more opens a second"
+    ((planAt full).compressed.length == Pdf.objStmCapacity && (planAt full).chunks.length == 1 &&
+      (planAt (full + 1)).chunks.length == 2)
+  t "features: objstm-multi exactly when a second object stream opens"
+    (!bare.contains .objStmMulti && !multiAt full && multiAt (full + 1))
   -- The census over the corpus: the four unemitted features never, the
   -- bookkeeping five always, and the census is in registry order.
   for n in goldenNames do

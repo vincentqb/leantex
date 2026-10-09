@@ -210,8 +210,8 @@
   suggestion: use readable local image, font and stylesheet files; remove CSS `@import` and external `url(...)` dependencies
 ── E0607 (dropped) the PDF cannot be represented within supported spelling or storage limits; publication is refused
 ✖ [E0607]
-  the PDF needs 65537 compressed objects; the supported limit is 65536
-  suggestion: split the document into smaller files and compile each with `leantex <file>.tex`
+  the largest PDF object stream needs 67108865 decoded bytes; the supported limit is 67108864
+  suggestion: objects that index the whole document grow with it: split the document into smaller files and compile each with `leantex <file>.tex`
 ✖ [E0607]
   the PDF object 4 contains a spelling the writer cannot represent
   suggestion: use nonempty Latin-1 font and PDF resource names, such as 'ExampleFont'
@@ -619,7 +619,7 @@
   suggestion: \define \name(...) {body} declares typed commands
 ── W0358 (degraded) a float taller than the text block overruns its page
 ⚠ [W0358]
-  a figure or table is 287.93pt taller than the text block; it overruns its page
+  a figure or table is 289.409pt taller than the text block; it overruns its page
   suggestion: shrink the float's content, or raise the text height (\page{ vmargin = ... })
 ── W0361 (config) a built-in is not replaced by a redefinition the engine cannot run
 ⚠ [W0361] - \newcommand
@@ -753,6 +753,13 @@
 ── W0396 (degraded) picture label extends beyond its reserved glyph box
 ⚠ [W0396]
   picture label extends beyond its reserved glyph box
+── W0397 (degraded) a listing token sets without the frame or background its highlighting style draws around it; its text and colour still set
+⚠ [W0397] - \begin
+  the frame the 'default' highlighting style draws around 'Error' tokens is not drawn; their text and colour still set
+── W0398 (degraded) booktabs loads after a face is declared; its rule paddings are measured in Latin Modern, not in that face
+⚠ [W0398] - \usepackage
+  '\usepackage{booktabs}' follows the main face's declaration; its rule paddings are measured in Latin Modern
+  suggestion: load booktabs before '\setmainfont', where LaTeX measures them in Latin Modern too
 ── W0435 (degraded) a \qedhere whose QED this engine cannot set where amsthm sets it; the QED stands on a line of its own after the display
 ⚠ [W0435] - \qedhere
   '\qedhere' in '{align*}' does not set its QED where amsthm sets it; the QED stands on a line of its own after the display

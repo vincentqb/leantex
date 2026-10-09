@@ -4,13 +4,15 @@ open LeanTex.Core
 
 namespace Tests
 
-private def formulaTrees (doc : Ir.Doc) : Array String :=
+/-- Every formula an emitted tree carries — the elements holding their
+source in `data-tex` — as its tag and the rendering of its content: a
+paragraph's formula is a `math` root, a label's a row inside its carrier,
+which is already the label's root. -/
+private def formulaTrees (doc : Ir.Doc) : Array (String × String) :=
   let (_, body, _) := HtmlDoc.emitTree {} doc
-  (elemNodesList (· == "math") #[] body.toList).filterMap fun node =>
+  (formulaElems body).filterMap fun node =>
     match node with
-    | .elem _ attrs _ =>
-      if (HtmlDoc.attrOf? attrs "data-tex").isSome then some (Html.render node 0)
-      else none
+    | .elem tag _ kids => some (tag, String.join (kids.toList.map (Html.render · 0)))
     | _ => none
 
 /-- A formula's plaintext reading must retain operation and operand
@@ -45,7 +47,8 @@ def formulaFloorChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO 
     let proseMath := formulaTrees doc
     let labelMath := formulaTrees (elabStr labelDoc).1
     check ref s!"formula diagram HTML retains the complete prose math tree: {source}"
-      (proseMath.size == 1 && labelMath == proseMath)
+      (proseMath.size == 1 && labelMath.map (·.2) == proseMath.map (·.2) &&
+        proseMath.map (·.1) == #["math"] && labelMath.map (·.1) == #["mrow"])
   -- Invisible delimiters and layout parameters are valid nonprinting
   -- syntax. Raw-source punctuation is not a sound content premise.
   for source in ["\\big.", "\\left.\\right.", "\\quad", "{}",

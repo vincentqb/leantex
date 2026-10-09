@@ -1,0 +1,40 @@
+% Invented deck fixture: a formal table that fills most of a 16:9 frame,
+% its later columns uncovered on the second step. Every word and number is
+% invented. The table's rows stand the print leading apart in both
+% artifacts, so the frame that fits its PDF page fits its HTML stage too;
+% its text column is `l` under \centering and sets flush left in both.
+\documentclass[aspectratio=169]{beamer}
+\usepackage{booktabs}
+\fonts{ dir = "fonts", body = "Open Sans" }
+\newcommand{\later}[1]{\uncover<2->{#1}}
+
+\title{An Invented Table Deck}
+\author{Pat Placeholder}
+\date{}
+
+\begin{document}
+
+\maketitle
+
+\begin{frame}{Invented Measurements}
+\centering
+\begin{tabular}{lrrr}
+  \toprule
+  & Count & Early & Late \\
+  \midrule
+  A placeholder row with a longer label & 1,204 & \later{0.01} & \later{0.02} \\
+  Short label & 1,311 & \later{0.03} & \later{0.05} \\
+  Another invented entry & 1,418 & \later{0.08} & \later{0.13} \\
+  Sample row & 1,525 & \later{0.21} & \later{0.34} \\
+  Fifth invented row & 1,632 & \later{0.55} & \later{0.89} \\
+  Placeholder & 1,739 & \later{1.44} & \later{2.33} \\
+  A plain row & 1,846 & \later{3.77} & \later{6.10} \\
+  An entry with a longer label still & 1,953 & \later{9.87} & \later{15.97} \\
+  Ninth invented row & 2,060 & \later{0.12} & \later{0.23} \\
+  \textbf{A row in bold} & 2,167 & \later{0.34} & \later{0.45} \\
+  \textbf{Last row} & 2,274 & \later{0.56} & \later{0.67} \\
+  \bottomrule
+\end{tabular}
+\end{frame}
+
+\end{document}

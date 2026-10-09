@@ -87,6 +87,7 @@ import Tests.BlockFillConditionals
 import Tests.PaletteTextEpoch
 import Tests.MintedSettings
 import Tests.ListingHighlight
+import Tests.ListingStyleTable
 import Tests.ListingProvider
 import Tests.PublicationPaths
 import Tests.Markdown
@@ -173,6 +174,8 @@ import Tests.RecipeStructure
 import Tests.PdfDestination
 import Tests.TableContext
 import Tests.TableFlex
+import Tests.TableSide
+import Tests.FrameAnchors
 import Tests.ColumnFlow
 import Tests.ColumnGeometry
 import Tests.TitlePageLifecycle
@@ -213,7 +216,7 @@ import Tests.LinkColor
 
 open LeanTex.Core LeanTex.Core.Utf8 LeanTex.Cli
 open Tests (mintedSettingsChecks listingHighlightChecks svgAssetChecks svgToolChecks
-  shellReplyChecks listingProviderChecks publicationPathChecks
+  shellReplyChecks listingProviderChecks listingStyleTableChecks publicationPathChecks
   htmlContainedChecks htmlContainedPublicationChecks htmlContainedSvgColorChecks
   htmlContainedCliChecks htmlContainedCorpusChecks
   animatedGraphicsChecks animatedFacesChecks markdownInputChecks xparseProvideChecks
@@ -261,6 +264,7 @@ def backendSuiteChecks (ref : IO.Ref (List String)) : IO Unit := do
   listingHighlightChecks ref
   shellReplyChecks ref
   listingProviderChecks ref
+  listingStyleTableChecks ref
   mdPreambleChecks ref
   markdownInputChecks ref
   inputUseChecks ref
@@ -294,6 +298,7 @@ def backendSuiteChecks (ref : IO.Ref (List String)) : IO Unit := do
   htmlTokenClosureChecks ref
   htmlSourcedGapChecks ref
   htmlA11yChecks ref
+  htmlMathChecks ref
 
 /-- The layout, census, theme, and chrome blocks all read the same shipped
 face; dispatched together so each stays a leaf the module split can place.
@@ -376,6 +381,12 @@ def layoutSuiteChecks (ref : IO.Ref (List String)) : IO Unit := do
   recipeColModChecks ref
   tableContextChecks ref oneFace
   tableFlexChecks ref oneFace
+  Tests.tableSideChecks ref oneFace
+  Tests.tableRaggedChecks ref oneFace
+  Tests.tableLeadingChecks ref oneFace
+  Tests.tableLengthChecks ref oneFace
+  Tests.tableStrutChecks ref oneFace
+  Tests.tableFaceOrderChecks ref oneFace
   tableFlexOverflowChecks ref oneFace
   columnFlowChecks ref oneFace
   columnGeometryChecks ref oneFace
@@ -458,6 +469,8 @@ def layoutSuiteChecks (ref : IO.Ref (List String)) : IO Unit := do
   PictureLabelSpacing.checks ref oneFace
   pictureHtmlBaselineChecks ref oneFace
   pictureMathLabelChecks ref oneFace
+  pictureAlphabetLabelChecks ref oneFace
+  labelSettleChecks ref oneFace
   boundaryUnfinishedChecks ref
   pictureHtmlFaceChecks ref
   pictureInlineLineChecks ref oneFace
@@ -550,6 +563,7 @@ def layoutSuiteChecks (ref : IO.Ref (List String)) : IO Unit := do
   chromeFooterChecks ref oneFace
   numberingChecks ref oneFace
   slideLabelChecks ref oneFace
+  Tests.frameAnchorChecks ref
   composeChecks ref oneFace
   frameFootChecks ref oneFace
   scannerChecks ref

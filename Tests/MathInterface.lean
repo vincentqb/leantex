@@ -32,6 +32,8 @@ example : MathAlphabetCoverage → MList → MList := resolveMathAlphas
 example : MathAlphabetCoverage → MList → Array MathAlphabet := missingMathAlphas
 example : Bool → Array (String × String) → MList → MathMl.Marks → Html.Node :=
   fun display extra body marks => MathMl.formula display extra body marks
+example : Bool → Array (String × String) → MList → MathMl.Marks → Html.Node :=
+  fun display extra body marks => MathMl.formulaRow display extra body marks
 example : List (String × MathClass × Char) := MathSymData.rows
 example : List String := MathSymData.amsfonts
 example : List String := MathSymData.amssymb
@@ -73,6 +75,13 @@ example (display : Bool) (extra : Array (String × String)) (body : MList)
     MathMl.nodeChars #[] (MathMl.formula display extra body marks) =
       MathMl.listChars #[] body :=
   MathMl.mathml_glyphs_agree display extra body marks
+
+example (display : Bool) (extra : Array (String × String)) (body : MList)
+    (marks : MathMl.Marks) :
+    MathMl.unnested (MathMl.formula display extra body marks) = true ∧
+      MathMl.tagFree (· == "math") (MathMl.formulaRow display extra body marks) = true :=
+  ⟨MathMl.formula_unnested_contract display extra body marks,
+    MathMl.formulaRow_mathFree_contract display extra body marks⟩
 
 example : True := by
   fail_if_success have := Math.alphaHoles

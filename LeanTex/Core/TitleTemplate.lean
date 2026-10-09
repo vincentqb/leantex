@@ -126,7 +126,7 @@ private def srcOneInto (acc : String) : Tok → String
   | .sym c => acc.push c
   | .space => acc ++ " "
   | .group body => srcListInto (acc ++ "{") body ++ "}"
-  | .math _ _ => acc ++ "$...$"
+  | .math _ _ _ => acc ++ "$...$"
   | .other what => acc ++ what
 
 end

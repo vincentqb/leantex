@@ -21,9 +21,9 @@ structure Probe where
 https://pubs.opengroup.org/onlinepubs/9799919799/utilities/V3_chap02.html
 and Bash 5.3 manual §3.1.2, §3.5.3–3.5.4, §3.6.6,
 https://www.gnu.org/software/bash/manual/bash.html.
-The simple colour pins use the existing Default/Friendly shared classes.
-Variables must differ from literal strings without fixing a Pygments subtype
-to the coarse `name` colour. Complex constructs owe conservation here. -/
+The simple colour pins read a family's ink, which every subtype inherits in
+the shipped styles. Variables must differ from literal strings without
+fixing a Pygments subtype's colour. Complex constructs owe conservation here. -/
 def shellProbes : Array Probe := #[
   -- EOF and LF must give comments the same class ink in both artifacts.
   -- The trailing spaces and tab remain authored source, even at EOF.
@@ -35,20 +35,20 @@ def shellProbes : Array Probe := #[
     pins := #[("# heading", .ink .comment), ("# ending", .ink .comment)] },
   { name := "final-hash-context",
     source := "echo '# quoted' word#hash \\#literal  # trailing",
-    pins := #[("# quoted", .ink .string), ("word#hash", .ink .plain),
-      ("literal", .ink .plain), ("# trailing", .ink .comment)] },
+    pins := #[("# quoted", .ink .string), ("word#hash", .ink .text),
+      ("literal", .ink .text), ("# trailing", .ink .comment)] },
   { name := "basic",
     source := "if test -n \"$VALUE\"; then\n\techo '<ready>&' && printf 42\nfi\n# boundary comment\npwd",
     pins := #[("if", .ink .keyword), ("then", .ink .keyword),
-      ("fi", .ink .keyword), ("echo", .ink .builtin),
+      ("fi", .ink .keyword), ("echo", .ink .nameBuiltin),
       ("<ready>&", .ink .string), ("42", .ink .number),
       ("&&", .ink .operator), ("# boundary comment", .ink .comment),
       ("$VALUE", .variable)] },
   { name := "quoting",
     source := "echo '$SINGLE' \"$DOUBLE \\$QUOTED\" \\$ESCAPED x#y\n# real comment\nprintf done",
     pins := #[("$SINGLE", .ink .string), ("$DOUBLE", .variable),
-      ("QUOTED", .ink .string), ("ESCAPED", .ink .plain),
-      ("x#y", .ink .plain), ("# real comment", .ink .comment)] },
+      ("QUOTED", .ink .string), ("ESCAPED", .ink .text),
+      ("x#y", .ink .text), ("# real comment", .ink .comment)] },
   { name := "parameters",
     source := "printf '%s' \"$1\" \"$?\" \"${HOME:-fallback}\"",
     pins := #[("$1", .variable), ("$?", .variable), ("HOME", .variable)] },
@@ -148,18 +148,26 @@ inject markup or paint, and neither token offsets nor text may change source.
 No installed Python module or document code runs in this check. -/
 def shellReplyChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
-  let project := ListingReply.projectKind
-  for (name, kind) in [
-      ("Token.Keyword.Reserved", .keyword), ("Token.Comment.Hashbang", .comment),
-      ("Token.Literal.String.Double", .string), ("Token.Literal.Number.Hex", .number),
-      ("Token.Name.Builtin.Pseudo", .builtin), ("Token.Name.Variable.Global", .name),
-      ("Token.Operator.Word", .operator), ("Token.Name.Builtinish", .name),
-      ("Token.Punctuation", .plain), ("Token.Error", .plain),
-      ("Token.Text.Whitespace", .plain), ("Token.Generic.Deleted", .plain),
-      ("Token.Names.Builtin", .plain), ("Token.Keywordish", .plain),
-      ("Other.Keyword", .plain), ("color:red", .plain), ("<script>", .plain),
-      ("", .plain)] do
-    t s!"listing reply: whole token ancestry {name}" (project name == kind)
+  let project := LeanTex.Core.ListingHighlight.Kind.ofPygments
+  for (name, path) in [
+      ("Token.Keyword.Reserved", "Keyword.Reserved"), ("Token.Comment.Hashbang", "Comment.Hashbang"),
+      ("Token.Literal.String.Double", "Literal.String.Double"),
+      ("Token.Literal.Number.Hex", "Literal.Number.Hex"),
+      ("Token.Name.Builtin.Pseudo", "Name.Builtin.Pseudo"),
+      ("Token.Name.Variable.Global", "Name.Variable.Global"),
+      ("Token.Operator.Word", "Operator.Word"), ("Token.Name.Builtinish", "Name.Builtinish"),
+      ("Token.Punctuation", "Punctuation"), ("Token.Error", "Error"),
+      ("Token.Text.Whitespace", "Text.Whitespace"), ("Token.Generic.Deleted", "Generic.Deleted"),
+      ("Token.Names.Builtin", "Names.Builtin"), ("Token.Keywordish", "Keywordish"), ("Token", ""),
+      ("Other.Keyword", "Text"), ("color:red", "Text"), ("<script>", "Text"),
+      ("Token.keyword", "Text"), ("Token..Name", "Text"), ("Token.Name.", "Text"),
+      ("", "Text")] do
+    t s!"listing reply: a class name is its token type {name}" (project name == ⟨path⟩)
+  t "listing reply: a type paints through its own ancestors and nothing else"
+    (Listing.ink {} none ⟨"Name.Builtinish"⟩ == Listing.ink {} none ⟨"Name"⟩ &&
+      Listing.ink {} none ⟨"Name.Builtin.Pseudo"⟩ == Listing.ink {} none .nameBuiltin &&
+      (Listing.ink {} none ⟨"Names.Builtin"⟩).isNone &&
+      (Listing.ink {} none ⟨"Keywordish"⟩).isNone && (Listing.ink {} none ⟨""⟩).isNone)
   let normalized := ListingReply.Request.ofSource " BaSh " "\r\n\n\techo λ\r\n  \r\n"
   t "listing reply: normalize once, retaining the second leading blank"
     (normalized == { language := "bash", source := "\n\techo λ" } &&
@@ -180,7 +188,8 @@ def shellReplyChecks (ref : IO.Ref (List String)) : IO Unit := do
     (ds.isEmpty && answers.size == 1 && answers.all fun a =>
       a.request == request && a.tokens.map LeanTex.Core.ListingHighlight.lineText ==
         #["echo\t\"λ😀\"", "", "$HOME"] &&
-      a.tokens.flatten.map (·.kind) == #[.builtin, .plain, .string, .name])
+      a.tokens.flatten.map (·.kind) ==
+        #[.nameBuiltin, .text, ⟨"Literal.String.Double"⟩, ⟨"Name.Variable"⟩])
   t "listing reply: lookup validates the original raw source"
     ((ListingReply.lookup answers " BASH " ("\n" ++ request.source ++ "\n")).isSome &&
       (ListingReply.lookup answers "sh" request.source).isNone &&
@@ -202,8 +211,9 @@ def shellReplyChecks (ref : IO.Ref (List String)) : IO Unit := do
       | failures ref "listing reply: source-conserving plain classification rejected"
     t "listing reply: empty, unclosed and multiline content survives exactly"
       (as.all fun a => a.tokens.map LeanTex.Core.ListingHighlight.lineText == r.lines)
-    t "listing reply: unknown token classes leave plain paint"
-      (as.all fun a => a.tokens.flatten.all (·.kind == .plain))
+    t "listing reply: unknown token classes carry no paint"
+      (as.all fun a => a.tokens.flatten.all fun token =>
+        (Listing.ink {} none token.kind).isNone && (Listing.box? .friendly token.kind).isNone)
   -- The lexer boundary may be part of the final token or a separate token.
   -- Deliberately bypass normalization here to include authored trailing LFs.
   for source in ["", "\n", "\n\n", "\n\techo λ😀  ", "echo x\n\n", "# tail\t  "] do
@@ -383,12 +393,12 @@ def shellHighlightChecks (ref : IO.Ref (List String))
               (laid.any fun colors => !colors.isEmpty && colors.all (· == ink))
             -- Black may be the PDF graphics state's initial ink: an
             -- unpainted plain run owes no redundant colour operator.
-            if kind != .plain then
+            if kind != .text then
               t s!"{label}/{needle}: emitted PDF contains its class paint"
                 (bytesContain pdf ink.pdfFill)
             t s!"{label}/{needle}: typed HTML ships its class ink"
               (typed.any fun colors => !colors.isEmpty && colors.all fun color =>
-                if kind == .plain then color.isNone
+                if kind == .text then color.isNone
                 else color.any fun css => hasStr css (HtmlDoc.cssColor ink))
           | .variable =>
             let ink := laid.bind (·[0]?)

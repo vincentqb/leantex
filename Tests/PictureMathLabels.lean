@@ -1,4 +1,5 @@
 import Tests.Support
+import Tests.DriverAssets
 
 open LeanTex.Core
 
@@ -14,16 +15,6 @@ def mathLabelCases : Array (String × String × String) := #[
   ("Elm$^{2}$", "Elm2", "msup"),
   ("Ash$\\frac{3}{7}$", "Ash37", "mfrac"),
   ("Pine$\\sqrt{z}$", "Pine𝑧", "msqrt")]
-
-def mathLabelSource (label opts : String) : String :=
-  "\\documentclass{article}\\pictures{tool=none}\\begin{document}\n" ++
-  "\\begin{tikzpicture}\n\\node[" ++ opts ++ "] at (-1,1) {" ++ label ++
-  "};\n\\end{tikzpicture}\n\\end{document}"
-
-def pictures (doc : Ir.Doc) : Array Ir.Pic.Picture :=
-  Ir.foldBlocks (fun acc b => match b with
-    | .picture p => acc.push p
-    | _ => acc) (fun acc _ => acc) #[] doc.body
 
 end PictureMathLabels
 
@@ -45,8 +36,8 @@ def pictureMathLabelChecks (ref : IO.Ref (List String))
   let fs ← mathSetOf oneFace
   t "picture mathematics: the bundled math face loads" fs.math.isSome
   for (label, leaves, schema) in PictureMathLabels.mathLabelCases do
-    let (base, ds) := elabMeasured fs (PictureMathLabels.mathLabelSource label "")
-    let pics := PictureMathLabels.pictures base
+    let (base, ds) := elabMeasured fs (mathLabelSource label "")
+    let pics := docPictures base
     t s!"picture mathematics: {label} parses one picture without loss"
       (pics.size == 1 &&
         !ds.any fun d => ["W0012", "W0334", "E0333", "W0335"].contains d.code)
@@ -130,7 +121,7 @@ def pictureMathLabelChecks (ref : IO.Ref (List String))
   -- mathematical structure under face resets, nested emphasis and colour.
   for label in #["\\textbf{Maple$'$}", "\\textit{\\emph{Maple}$'$}",
       "\\textbf{\\textnormal{Maple}$'$}", "\\textcolor{red}{Maple$'$}"] do
-    let (doc, _) := elabMeasured fs (PictureMathLabels.mathLabelSource label "")
+    let (doc, _) := elabMeasured fs (mathLabelSource label "")
     let cfg : HtmlDoc.Config := {
       fonts := some fs, labelMetric := Layout.labelMetric (Layout.Geom.ofPage doc.page) fs }
     let svgs := elemNodesList (· == "svg") #[] (HtmlDoc.emitTree cfg doc).2.1.toList
@@ -157,3 +148,144 @@ def pictureMathLabelChecks (ref : IO.Ref (List String))
       (!(admits (carrier #[] #[child])))
   t "picture mathematics: the carrier's own attributes are checked"
     (!(admits (carrier #[("onload", "alert(1)")] #[])))
+
+namespace PictureMathLabels
+
+/-- Invented contents a picture label and a paragraph both set: a math
+alphabet from each family the resolver distinguishes — text-sourced
+upright, bold, sans, italic and mono, symbol-sourced double-struck and
+script — and an alphabet under a colour and inside a text style. -/
+def alphabetLabelCases : Array String := #[
+  "$\\mathrm{Fir}$", "$\\mathbf{v}$", "$\\mathsf{Q}$", "$\\mathit{ab}$", "$\\mathtt{k}$",
+  "$\\mathbb{R}$", "$\\mathcal{A}$", "\\textcolor{red}{$\\mathrm{Fir}$}",
+  "\\textbf{Elm $\\mathrm{Fir}$}"]
+
+/-- The same content as a paragraph. -/
+def paragraphSource (content : String) : String :=
+  "\\documentclass{article}\\begin{document}\n" ++ content ++ "\n\\end{document}"
+
+/-- On the shipped page of a document drawing one outlined node: the gaps
+from the outline the layout strokes to the label line it sets, left and
+right. The outline was placed at elaboration; the line is the label as the
+page paints it. -/
+def outlineGaps (out : Layout.Out) : Option (Dim.Sp × Dim.Sp) := do
+  let page ← out.pages[0]?
+  let (x, w) ← page.paths.findSome? fun q => match q.path with
+    | .rect x _ w _ => some (x, w)
+    | _ => none
+  let line ← (page.lines.filter (!·.furniture))[0]?
+  return (line.x - x, x + w - (line.x + line.setWidth))
+
+end PictureMathLabels
+
+/-- **A label's formula paints what the same formula paints in a
+paragraph**, on both artifacts. A math alphabet resolves in a picture label
+exactly as it resolves in prose: the typed HTML tree carries the paragraph's
+MathML glyph text and no `merror`, the native page ships the paragraph's
+scalars, and every shipped `math` element is its tree's only root. Before
+alphabet resolution reached picture labels, a label's alphabet shipped as an
+unresolved node — an `merror` around the source glyphs in HTML, which a
+browser frames in red on yellow, and the source italic on the page — and the
+label's carrier nested each formula's own `math` root. A drawn outline,
+placed at elaboration, stands a text node's inner sep clear of the label
+line the page sets (the measure behind it is `Layout.labelMetric_resolve_id`).
+Reads `Layout.Out` and the emitted HTML tree, never an IR dump. Invented
+content. -/
+def pictureAlphabetLabelChecks (ref : IO.Ref (List String))
+    (oneFace : Font.FontSet) : IO Unit := do
+  let t := check ref
+  let fs ← mathSetOf oneFace
+  let cfgOf := fun (doc : Ir.Doc) => ({
+    fonts := some fs, page := doc.page
+    labelMetric := Layout.labelMetric (Layout.Geom.ofPage doc.page) fs } : HtmlDoc.Config)
+  let scalars := fun (out : Layout.Out) => String.ofList (shippedBodyGlyphs out |>.map (·.scalar)).toList
+  for content in PictureMathLabels.alphabetLabelCases do
+    let name := s!"picture alphabet: {content}"
+    let (prose, _) := elabMeasured fs (PictureMathLabels.paragraphSource content)
+    let (label, _) := elabMeasured fs (mathLabelSource content "")
+    t (name ++ " elaborates one picture")
+      ((docPictures label).size == 1)
+    let (_, proseBody, _) := HtmlDoc.emitTree (cfgOf prose) prose
+    let (_, labelBody, _) := HtmlDoc.emitTree (cfgOf label) label
+    let proseFormulas := formulaElems proseBody
+    let labelFormulas := formulaElems labelBody
+    t (name ++ " paints the paragraph's MathML glyphs in its label")
+      (!proseFormulas.isEmpty && proseFormulas.size == labelFormulas.size &&
+        MathMl.nodeListChars #[] labelFormulas.toList ==
+          MathMl.nodeListChars #[] proseFormulas.toList)
+    t (name ++ s!" ships no merror \
+({(elemNodesList (· == "merror") #[] labelBody.toList).size})")
+      (MathMl.tagFreeList (· == "merror") labelBody.toList)
+    t (name ++ s!" ships one math root, unnested \
+({(elemNodesList (· == "math") #[] labelBody.toList).size} math elements)")
+      (MathMl.unnestedList labelBody.toList &&
+        (elemNodesList (· == "math") #[] labelBody.toList).size == 1)
+    let proseOut := layoutOf fs prose
+    let labelOut := layoutOf fs label
+    t (name ++ s!" sets the paragraph's scalars on the page \
+({scalars labelOut} against {scalars proseOut})")
+      (!(scalars proseOut).isEmpty && scalars labelOut == scalars proseOut)
+  -- **A drawn outline stands its inner sep clear of the label the page
+  -- sets.** The outline is placed at elaboration; the line is the label the
+  -- page paints, its alphabet resolved. Against a plain-text node, each gap
+  -- is the same, to the rounding of a halved width.
+  let gapsOf := fun (content : String) =>
+    let (doc, _) := elabMeasured fs (drawnNodeSource content)
+    PictureMathLabels.outlineGaps (layoutOf fs doc)
+  let plain := gapsOf "W"
+  t s!"picture alphabet: a text node ships its outline and label line ({plain})" plain.isSome
+  for content in #["$\\mathbf{W}$", "$\\mathrm{Fir}$", "$\\mathsf{Q}$", "$\\mathtt{k}$"] do
+    let alphabet := gapsOf content
+    t s!"picture alphabet: a drawn node around {content} stands a text node's inner sep \
+clear of its shipped label ({alphabet} against {plain})"
+      (match plain, alphabet with
+       | some (l, r), some (l', r') => (l - l').natAbs ≤ 2 && (r - r').natAbs ≤ 2
+       | _, _ => false)
+  -- A display formula set in a carrier keeps its display style on the row:
+  -- the display root's children, `displaystyle` where the root declares
+  -- `display="block"`, and nothing for an inline row.
+  let (displayDoc, _) := elabStr (PictureMathLabels.paragraphSource "\\[\\frac{1}{2}\\]")
+  let displayBody := firstFormula displayDoc
+  t "picture alphabet: a display formula parses for the row probe" displayBody.isSome
+  if let some body := displayBody then
+    let render := fun (kids : Array Html.Node) => String.join (kids.toList.map (Html.render · 0))
+    t "picture alphabet: a display row carries the display root's children and style"
+      (match MathMl.formula true #[] body, MathMl.formulaRow true #[] body,
+          MathMl.formulaRow false #[] body with
+       | .elem "math" rootAttrs rootKids, .elem "mrow" rowAttrs rowKids,
+           .elem "mrow" inlineAttrs _ =>
+         HtmlDoc.attrOf? rootAttrs "display" == some "block" &&
+           HtmlDoc.attrOf? rowAttrs "displaystyle" == some "true" &&
+           (HtmlDoc.attrOf? inlineAttrs "displaystyle").isNone &&
+           render rowKids == render rootKids
+       | _, _, _ => false)
+
+/-- **The driver settles on the labels elaboration measured.** A document
+elaborated against a provisional face stands only where the settled face
+measures every label elaboration measured as the provisional face did. Font
+assembly returns the document resolved against the settled face's coverage,
+whose labels are not those calls: where the settled face lacks an alphabet
+the provisional face carries, the resolved label sets the source glyphs,
+which both faces measure alike, while the label elaboration measured — the
+alphabet — measures differently, so the drawn outline around it would stand
+sized for glyphs the page never sets. Invented content. -/
+def labelSettleChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit := do
+  let t := check ref
+  let carried ← mathSetOf oneFace
+  let lacking : Font.FontSet := { carried with mathAlphabets := {} }
+  -- A symbol-sourced alphabet: the math face's own coverage decides it.
+  let src := drawnNodeSource "$\\mathbb{R}$"
+  let (elaborated, _) := elabMeasured carried src
+  let geom := Layout.Geom.ofPage elaborated.page
+  let pre := Layout.labelMetric geom carried
+  let resolvedBy := fun (fs : Font.FontSet) =>
+    (Ir.resolveMathAlphas fs.mathAlphabets "math face" elaborated).1
+  t "label settle: the provisional face, settled on, holds"
+    (← Tests.DriverAssets.settles elaborated (some pre) carried (resolvedBy carried))
+  t "label settle: a settled face lacking the label's alphabet supersedes it"
+    !(← Tests.DriverAssets.settles elaborated (some pre) lacking (resolvedBy lacking))
+  t "label settle: the resolved labels would hide that, measuring alike under both"
+    (LeanTex.Cli.FontFix.agree pre (Layout.labelMetric geom lacking)
+      (LeanTex.Cli.FontFix.probes (resolvedBy lacking).body))
+  t "label settle: with no provisional face, a drawn picture is elaborated again"
+    !(← Tests.DriverAssets.settles elaborated none carried (resolvedBy carried))

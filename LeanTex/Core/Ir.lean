@@ -719,9 +719,13 @@ public theorem Tokens.declare_keeps_others (t : Tokens) (k k' : String) (g : Sym
 -- table layout, not a package: "what distinguishes these from plain LaTeX
 -- tables is the default use of additional space above and below rules, and
 -- rules of varying 'thickness'" (booktabs.dtx §Introduction) — the padding
--- is part of the rule, never left to the author. Em/ex-relative, resolved
--- at the table's own size like every token; each is overridable through
--- `\tokens{ <latex name> = ... }` under its LaTeX name.
+-- is part of the rule, never left to the author. Em/ex-relative as the
+-- package spells them, and resolved as it assigns them: once, in the
+-- preamble's font (`PreambleFace`), so a table at any size, in any face,
+-- keeps the lengths lualatex gives it (2.88597pt of `\belowrulesep` in a
+-- 10pt deck, 2.80147pt in a 10pt article). Each is overridable through
+-- `\tokens{ <latex name> = ... }` under its LaTeX name, which resolves where
+-- the table stands, as a `\setlength` in the body does.
 
 /-- `\toprule`/`\bottomrule` weight: booktabs `\heavyrulewidth` (.08em). -/
 public def heavyRuleWidth : Dim.Length := { em := 80 }
@@ -759,6 +763,22 @@ public def columnSep : Dim.Length := { sp := Dim.pt 10 }
 (classes.dtx §Array and tabular) — drawn, but warned: "never use double
 rules" (booktabs.dtx §The layout of formal tables). -/
 public def doubleRuleSep : Dim.Length := { sp := Dim.pt 2 }
+
+/-- The lengths a formal table reads, under their LaTeX names, each with the
+default it takes undeclared. One table both backends read — the layout's
+rows and rules (`Layout.tableLength`), the stylesheet's fallbacks
+(`HtmlDoc.tableLengthFallback`) — so the length a page sets its table by is
+the length the stage states. -/
+public def tableLengths : List (String × Dim.Length) :=
+  [("tabcolsep", tabColSep), ("doublerulesep", doubleRuleSep),
+   ("heavyrulewidth", heavyRuleWidth), ("lightrulewidth", lightRuleWidth),
+   ("cmidrulewidth", cmidRuleWidth), ("cmidrulekern", cmidRuleKern),
+   ("aboverulesep", aboveRuleSep), ("belowrulesep", belowRuleSep),
+   ("abovetopsep", aboveTopSep), ("belowbottomsep", belowBottomSep)]
+
+/-- A table length's default (`tableLengths`); zero for a name it lacks. -/
+public def tableLengthDefault (name : String) : Dim.Length :=
+  (tableLengths.lookup name).getD {}
 
 /-- The three rule weights are a hierarchy, not three loose numbers: "the
 top and bottom rules are heavier than the middle rule, which is in turn
@@ -1164,6 +1184,15 @@ private def displaySkipsTable : Nat → DisplaySkips
 private def displayOptions : List (Nat × Sp) :=
   [(8, Dim.pt 8), (9, Dim.pt 9), (10, Dim.pt 10), (11, Dim.pt 1095 / 100), (12, Dim.pt 12),
    (14, Dim.pt 144 / 10), (17, Dim.pt 1728 / 100), (20, Dim.pt 2074 / 100)]
+
+/-- The `\normalsize` a class option's size file sets, for a body declared
+at that option's point size: `11pt` sets 10.95 pt (size11.clo's `\@xipt`),
+`14pt` 14.4 pt; a size that is no option's point size is its own. What a
+package measures in the preamble is measured at this size
+(`PreambleFace.ofClass`): booktabs under `11pt` fixes `\heavyrulewidth` at
+0.876 pt, .08 of 10.95 pt (lualatex). -/
+public def optionNormalSize (size : Sp) : Sp :=
+  ((displayOptions.find? fun o => Dim.pt o.1 == size).map (·.2)).getD size
 
 /-- The option whose point size stands nearest a body size. -/
 private def displaySizeFileOf (size : Sp) : Nat :=
@@ -4126,6 +4155,39 @@ public def Picture.labelContents (p : Picture) : Array (Array Inline) :=
     | .frame _ _ _ _ _ _ => none
     | .edge _ _ _ => none
 
+/-- A shape with its label content through `f`; geometry, colour and every
+other shape stay. -/
+@[expose] public def Shape.mapLabel (f : Array Inline → Array Inline) : Shape → Shape
+  | .label x y content c scale align => .label x y (f content) c scale align
+  | .rect x y w h c => .rect x y w h c
+  | .circle x y r stroke fill => .circle x y r stroke fill
+  | .frame x y w h stroke fill => .frame x y w h stroke fill
+  | .edge segs stroke tip => .edge segs stroke tip
+
+/-- Every label's content through one inline rewrite: the picture face of
+the generic maps (`mapBlocksPic`), for a pass that must reach the text a
+label paints as it reaches a caption's. -/
+@[expose] public def Picture.mapLabels (f : Array Inline → Array Inline) (p : Picture) :
+    Picture :=
+  { p with shapes := p.shapes.map (·.mapLabel f) }
+
+/-- A label rewrite rewrites exactly the label contents, in order. -/
+private theorem Picture.labelContents_mapLabels (f : Array Inline → Array Inline)
+    (p : Picture) : (p.mapLabels f).labelContents = p.labelContents.map f := by
+  simp only [Picture.mapLabels, Picture.labelContents, Array.filterMap_map,
+    Array.map_filterMap]
+  congr 1
+  funext s
+  cases s <;> rfl
+
+/-- Two label rewrites compose into one. -/
+private theorem Picture.mapLabels_comp (f g : Array Inline → Array Inline) (p : Picture) :
+    (p.mapLabels g).mapLabels f = p.mapLabels (f ∘ g) := by
+  simp only [Picture.mapLabels, Array.map_map]
+  congr 2
+  funext s
+  cases s <;> rfl
+
 /-- The box a shape's **ink** occupies, given a measurement. Every arm but
 the label's is the declared box: a fill, an outline and a stroked edge are
 their own geometry, and only text has an extent the IR cannot compute — the
@@ -4425,6 +4487,21 @@ it, off-centre when the box extends past the ink. -/
 public theorem Picture.box_declared_exact (p : Picture) (m : LabelMetric) (b : Box)
     (h : p.declared = some b) : p.box m = b := by
   simp [Picture.box, h]
+
+/-- **A label rewrite its measurement cannot see moves no box** (`_id`):
+every ink box, the natural box and so the picture's box stay where they
+were. What lets a pass rewrite label content after elaboration placed the
+picture — alphabet resolution does — without moving the box placement read. -/
+public theorem Picture.mapLabels_box_id (m : LabelMetric) (f : Array Inline → Array Inline)
+    (hm : ∀ content scale, m (f content) scale = m content scale) (p : Picture) :
+    (p.mapLabels f).box m = p.box m := by
+  have hboxes : (p.mapLabels f).inkBoxes m = p.inkBoxes m := by
+    simp only [Picture.inkBoxes, Picture.mapLabels, Array.map_map]
+    congr 1
+    funext s
+    cases s <;> simp [Shape.mapLabel, Shape.inkBox, hm]
+  simp only [Picture.box, Picture.natural, hboxes]
+  rfl
 
 /-- **Where a picture stands on its line**: how far above its box's bottom
 edge the declared baseline runs (pgf manual §12.2.1), held inside the box;
@@ -4864,6 +4941,13 @@ unbreakable line. -/
 public structure ColSpec where
   width : ColWidth
   align : HAlign
+  /-- A wrapping column's paragraphs set ragged on `align`'s side: its
+  `>{…}`/`<{…}` modifier declared `\raggedright`, `\raggedleft` or
+  `\centering` (array manual §1). A bare `p` cell justifies — its `\vtop`
+  runs `\@arrayparboxrestore`, which zeroes `\leftskip` and `\rightskip`
+  (latex.ltx) — and a declaration in the modifier sets those skips again
+  inside the cell, so `>{\raggedright}p` sets ragged where `p` justifies. -/
+  ragged : Bool := false
   deriving Repr, BEq, Inhabited
 
 /-- Relative table-track hints, in permille of the flexible target. Natural
@@ -4950,6 +5034,23 @@ public structure ColSpan where
   n : Nat
   spec : ColSpec
   deriving Repr, BEq, Inhabited
+
+/-- The `\multicolumn` head standing at cell `(i, j)`, if any. -/
+public def cellSpan? (spans : Array ColSpan) (i j : Nat) : Option ColSpan :=
+  spans.find? fun s => s.row == i && s.col == j
+
+/-- The spec a cell sets by, the one resolving site both backends read
+(`Layout.cellSide`, `HtmlDoc.cellSideClassOf`): a `\multicolumn` head's own
+spec, else its column's, else — a cell past the declared columns — a
+natural left one. The spec alone decides: a tabular sets each entry in a box
+of its own — an `l`/`c`/`r` entry an `\hfil`-padded `\hbox`, a `p` entry a
+`\vtop` whose `\@arrayparboxrestore` zeroes `\leftskip` and `\rightskip`
+(latex.ltx) — so the side of the scope the table stands in never reaches a
+cell. -/
+public def cellSpec (cols : Array ColSpec) (spans : Array ColSpan) (i j : Nat) : ColSpec :=
+  match cellSpan? spans i j with
+  | some s => s.spec
+  | none => cols[j]?.getD { width := .natural, align := .left }
 
 /-- The row index of the first `mid` rule in document order, if any: the
 List companion of the header scan below, so the two facts about it are
@@ -5372,19 +5473,29 @@ public def listingLang? (raw : String) : Option ListingLang :=
   let s := raw.trimAscii.toString.toLower
   if h : listingLangOk s = true then some ⟨s, h⟩ else none
 
-/-- The native style choices, independent of lexical classification.
-Pygments style names are case-sensitive; unsupported names remain a
-frontend option diagnostic, never an implicit default selection. -/
+/-- The Pygments styles a listing may select, each painted from its own
+table (`PygmentsStyleData`, resolved by `PygmentsStyle`), independent of
+lexical classification. Pygments style names are case-sensitive;
+unsupported names remain a frontend option diagnostic, never an implicit
+default selection. -/
 public inductive ListingStyle where
   | default
   | friendly
   deriving Repr, BEq, Inhabited
 
+/-- The style's Pygments name, the one spelling a document selects it by. -/
+public def ListingStyle.name : ListingStyle → String
+  | .default => "default"
+  | .friendly => "friendly"
+
+public def ListingStyle.all : List ListingStyle := [.default, .friendly]
+
+public theorem ListingStyle.all_complete (s : ListingStyle) : s ∈ ListingStyle.all := by
+  cases s <;> simp [ListingStyle.all]
+
 public def ListingStyle.ofName? (name : String) : Option ListingStyle :=
-  match name.trimAscii.toString with
-  | "default" => some .default
-  | "friendly" => some .friendly
-  | _ => none
+  let name := name.trimAscii.toString
+  ListingStyle.all.find? (·.name == name)
 
 /-- What a code listing declares beside its content — the delta between
 `{verbatim}` and listings' `{lstlisting}` / minted's `{minted}` (listings
@@ -5400,8 +5511,8 @@ furniture beside it, generated ink outside the census as a list's markers
 are. `language` is listings' `language=` key or minted's mandatory
 argument, normalized (`listingLang?`): one fact the HTML `code` element's
 class and the markdown fence's info string both project (`htmlClass`,
-`fenceInfo`, `listing_language_agree`). `highlight` holds native lexical
-classes, assigned once during elaboration; both backends consume the same
+`fenceInfo`, `listing_language_agree`). `highlight` holds Pygments token
+types, assigned once during elaboration; both backends consume the same
 segments. A bare `{verbatim}` is the default value everywhere. -/
 public structure ListingSpec where
   /-- Authentic source start for diagnostics on listing lines and tokens.
@@ -7643,6 +7754,11 @@ public structure ClassRecord where
   file of the standard classes, or beamer's own list family for a deck
   and a poster (beamerposter loads beamer). -/
   lists : ListLineage := .sizeFile
+  /-- The preamble sets text in the sans family: beamer's `\familydefault`
+  is `\sfdefault`, so a package loaded with a deck or a poster measures its
+  lengths in Latin Modern Sans, where the standard classes' and moderncv's
+  preambles set Latin Modern Roman (`PreambleFace`). -/
+  preambleSans : Bool := false
   /-- Headings number by default; `\section*` opts out either way.
   `article` numbers (classes.dtx `\@startsection` with counters); a résumé
   is scanned, not cross-referenced, so `resume` does not (moderncv.cls
@@ -7774,6 +7890,7 @@ public def DocClass.record : DocClass → ClassRecord
       fontSize := some slidesFontSize
       parskip := some {}
       lists := .beamer
+      preambleSans := true
       chrome := true }
   | .card =>
     { model := .face
@@ -7808,6 +7925,7 @@ distance (Legge & Bigelow 2011); declare \\assert{ text.xheight >= ... } to take
     { model := .face
       fontSize := some posterFontSize
       lists := .beamer
+      preambleSans := true
       headline := true
       pagesBound := some .faces
       inkInArea := some "the margins are the print safe zone: ink past them risks \
@@ -7826,6 +7944,43 @@ calibration reads fluently; declare \
 /-- The class fixes the page model: a poster is a face — one fixed,
 printed, trimmed surface — by the record, definitionally. -/
 public theorem poster_model_face : (DocClass.poster).record.model = .face := by rfl
+
+/-- The font a package measures its lengths in as it loads: the preamble's
+current font, which is Latin Modern at the class's `\normalsize`
+(`optionNormalSize`: 10.95 pt under `11pt`) — its sans under beamer
+(`ClassRecord.preambleSans`), its roman under the standard classes and
+moderncv. booktabs assigns its `\dimen`s once, there (`\heavyrulewidth=.08em
+… \belowrulesep=.65ex`, booktabs.dtx), so its em and ex are this face's and
+never a table's own. The x-heights are lualatex's `\fontdimen5` of lmsans10
+(4.44pt at 10pt) and lmroman10 (4.31pt), per mille of the size. A face the
+document declares before booktabs loads would be the preamble's font
+instead; the engine does not measure that one and names the loss (W0398). -/
+public structure PreambleFace where
+  size : Sp
+  xHeight : Sp
+  deriving Repr, BEq, Inhabited
+
+/-- A class's preamble font at the `\normalsize` its size option sets. -/
+public def PreambleFace.ofClass (rec : ClassRecord) (size : Sp) : PreambleFace :=
+  let size := optionNormalSize size
+  { size, xHeight := size * (if rec.preambleSans then 444 else 431) / 1000 }
+
+/-- A length as the preamble font fixes it: its em at the class size, its ex
+at Latin Modern's x-height there. -/
+public def PreambleFace.resolve (face : PreambleFace) (l : Dim.Length) : Sp :=
+  l.resolve face.size face.xHeight
+
+/-- The table lengths a preamble declares (`tableLengths`' names), as LaTeX
+assigns them: `\setlength` evaluates its em and ex where it stands, which in
+the preamble is the preamble's font (`PreambleFace`), so
+`\setlength{\belowrulesep}{1ex}` is 4.31pt in a 10pt article whatever face
+and size its tables set in. Every other token is left as declared, and so
+is a table length a body declares: it resolves where the table reads it. -/
+public def PreambleFace.fixTableLengths (face : PreambleFace) (tk : Tokens) : Tokens :=
+  { entries := tk.entries.map fun (n, g) =>
+      if (tableLengths.lookup n).isSome then
+        (n, { g with width := Dim.Length.ofSp (face.resolve g.width) })
+      else (n, g) }
 
 /-- The poster's headline band: title, authors, institute — the `\title`
 family read as class furniture, the way the gemini lineage's headline
@@ -8011,6 +8166,12 @@ public def Doc.frameCountAt (doc : Doc) (i : Nat) : Nat :=
 /-- The numbering's denominator where the document starts. -/
 public def Doc.frameCount (doc : Doc) : Nat :=
   doc.frameCountAt 0
+
+/-- The document's preamble font: its class's (`PreambleFace.ofClass`) at
+its class size. The one resolving site both backends read a table's
+undeclared lengths from (`Layout.tableLength`, `HtmlDoc.tableLengthFallback`). -/
+public def Doc.preambleFace (doc : Doc) : PreambleFace :=
+  PreambleFace.ofClass doc.docClass.record doc.page.fontSize
 
 /-- appendixnumberbeamer's numbering, exactly: split at the restart, the
 main part numbers `1, …, M` and the appendix `1, …, A`, each gapless — T3
@@ -9031,6 +9192,39 @@ a palette key built from a parameter is worth as text. -/
 
 end
 
+mutual
+
+/-- The text the first page of an overlay sequence shows, onto `acc`:
+`plainText`'s reading, except that an alternation contributes only the group
+stored first — the one step 1 inks (`OverlaySpec.showsFirst_id`). Covered
+content still reads, since it dims on the page and never hides. A name is
+one page's reading: a frame's anchor and its accessible name read this,
+while the census (`plainText`) carries both groups because both ship — read
+as the census, `\textcolor<2>{c}{Word}` named its frame "WordWord".
+Hand-rolled because the generic fold visits both groups. -/
+-- conserves: none — one page's reading: an alternation's other group ships
+-- on the other pages, and the census (`plainText`) counts it there.
+public def firstPageTextOne (acc : String) (x : Inline) : String :=
+  match x with
+  | .altSteps _ firstPage _ => firstPageTextList acc firstPage.toList
+  | .styled _ body | .colored _ _ body | .located _ body | .role _ body
+  | .link _ body | .decorated _ body | .onSteps _ body | .footnote _ body =>
+    firstPageTextList acc body.toList
+  | .text _ | .math _ _ | .formula _ _ _ | .image _ _ _ | .icon _ _ | .label _
+  | .ref _ _ _ _ | .cite _ _ | .fill | .hspace _ _ | .rule _ _ _ | .strut _
+  | .italicCorr _ | .pageNumber | .pageCount | .linebreak _ =>
+    String.append acc (plainTextOne x)
+
+public def firstPageTextList (acc : String) : List Inline → String
+  | [] => acc
+  | x :: rest => firstPageTextList (firstPageTextOne acc x) rest
+
+end
+
+/-- The text the first page of an overlay sequence shows
+(`firstPageTextOne`), from nothing. -/
+public def firstPageText (xs : Array Inline) : String := firstPageTextList "" xs.toList
+
 /-- The words a picture's labels set, in shape order, joined: what a sighted
 reader reads in the drawing. The one reading a picture's name takes, whoever
 draws it — the SVG's accessible name (`HtmlDoc.pictureName`), and the text
@@ -9819,13 +10013,16 @@ private def slugGo (acc : Array Char) (sep : Bool) : List Char → Array Char
 
 /-- An anchor id from a title's own text. Every static site generator derives
 ids this way, so an in-page `\href{#experience}` has a target by construction
-rather than by a label the author must remember to declare. Non-emptiness —
-the other half of HTML §3.2.6's requirement — is `sectionize`'s job: an
-all-separator title takes the id `section`. Not done, stated rather than
-hidden: Unicode normalisation (UAX #15 NFC) — a composed and a decomposed
-`é` make two different anchors; PLAN carries the debt. -/
+rather than by a label the author must remember to declare. The text is the
+title as its first page shows it (`firstPageText`): an overlay alternation
+names its title once, by the group step 1 inks — the census reading spelled
+both groups into one anchor. Non-emptiness — the other half of HTML §3.2.6's
+requirement — is `sectionize`'s job: an all-separator title takes the id
+`section`. Not done, stated rather than hidden: Unicode normalisation (UAX
+#15 NFC) — a composed and a decomposed `é` make two different anchors; PLAN
+carries the debt. -/
 public def slug (title : Array Inline) : String :=
-  String.ofList (slugGo #[] false (plainText title).toList).toList
+  String.ofList (slugGo #[] false (firstPageText title).toList).toList
 
 private theorem slugCharKeep_not_whitespace (k k' : Char) (h : slugCharKeep k = some k') :
     isWhiteSpaceUni k' = false := by
@@ -9871,6 +10068,14 @@ public theorem slug_no_whitespace (title : Array Inline) :
   intro c hc
   simp only [slug, String.toList_ofList] at hc
   exact slugGo_no_whitespace _ _ _ (by simp) c hc
+
+/-- **An alternating title anchors by the group its first page shows**
+(`_exact`): a title that is one overlay alternation takes the anchor of its
+first-page group alone, never of both groups — read as the census, a
+`\textcolor<2>{c}{Word}` title anchored its frame `wordword`. -/
+public theorem slug_altSteps_exact (spec : OverlaySpec) (firstPage otherPage : Array Inline) :
+    slug #[.altSteps spec firstPage otherPage] = slug firstPage := by
+  simp [slug, firstPageText, firstPageTextList, firstPageTextOne]
 
 -- Navigation links: what a paged surface renders an unpinned nav as — the
 -- document outline. Structural recursion through `List`, as the walks above.
@@ -10224,12 +10429,14 @@ end
 
 /-- One column spec, for the dump: the align letter, then the declared
 width. `l:310/1000` is a left `p{.31\linewidth}`; a bare letter is a
-natural column. -/
+natural column; `~` after the letter marks a ragged one (`ColSpec.ragged`),
+`l~:310/1000` a `>{\raggedright}p{.31\linewidth}`. -/
 private def dumpColSpec (c : ColSpec) : String :=
   let al := match c.align with
     | .left => "l"
     | .center => "c"
     | .right => "r"
+  let al := if c.ragged then al ++ "~" else al
   match c.width with
   | .natural => al
   | .sized e =>
@@ -10584,16 +10791,21 @@ public def titledLook (pal : Palette) : TitledKind → TitledLook
       bar := bar }
 
 
-/-- The lexical inks a design resolves once for both artifacts. The unstyled
-class inherits its enclosing foreground, so it needs no palette entry. -/
-public structure ListingColors where
-  keyword : Color
-  string : Color
-  number : Color
-  comment : Color
-  builtin : Color
-  name : Color
-  operator : Color
+/-- The palette roles that declare a listing colour, each for one Pygments
+token type: the role reads as that type's colour declaration in the
+listing's style, inherited by every descendant that declares none of its
+own (`Listing.paint`). -/
+public def listingRoles : List (String × ListingHighlight.Kind) :=
+  [("codekeyword", .keyword), ("codestring", .string), ("codenumber", .number),
+   ("codecomment", .comment), ("codebuiltin", .nameBuiltin), ("codename", .nameFunction),
+   ("codeoperator", .operator)]
+
+/-- A listing colour a palette declares: the role, the token type whose
+colour it declares, and the colour. -/
+public structure ListingRole where
+  role : String
+  kind : ListingHighlight.Kind
+  color : Color
   deriving Repr, BEq
 
 /-- The document's resolved design: every semantic role the backends read,
@@ -10622,10 +10834,11 @@ public structure Design where
   /-- Quieted secondary furniture — the chrome footer's small text draws in
   it; the body ink when undeclared. -/
   muted : Color
-  /-- Native listing colours, resolved from `code…` roles. The shared listing
-  painter chooses a legible default on the actual ground; authored palette
-  entries instead pass through the ordinary contrast judge. -/
-  listing : ListingColors
+  /-- The listing colours the palette declares (`code…` roles). Every other
+  token colour is the listing's style's, which the shared painter keeps
+  legible on the actual ground; declared ones pass through the ordinary
+  contrast judge. -/
+  listing : Array ListingRole
   /-- The frame-title bar, when the design has one. -/
   frametitle : Option ColorPair
   /-- The title's ink when no bar is declared, and the subtitle's ink on
@@ -10693,31 +10906,9 @@ chain behind it is not, and it was written out a second time in
 The two fields a palette cannot answer — the progress bar's thickness and
 the style table — take their undeclared values here, and `ofDoc` overlays
 the document's declarations. -/
-@[expose] public def Design.ofPalette (pal : Palette) (style : ListingStyle := .default) : Design :=
+@[expose] public def Design.ofPalette (pal : Palette) : Design :=
   let fg := (pal.find? "fg").getD Color.black
   let bg := (pal.find? "bg").getD Color.white
-  -- Pygments 2.20.0 DefaultStyle / FriendlyStyle:
-  -- https://github.com/pygments/pygments/blob/2.20.0/pygments/styles/default.py
-  -- https://github.com/pygments/pygments/blob/2.20.0/pygments/styles/friendly.py
-  -- Native classes project Keyword, String, Number, Comment, Name.Builtin,
-  -- Name.Function and Operator. Authored roles override these defaults below.
-  let listing : ListingColors := match style with
-    | .default => {
-        keyword := { r := 0, g := 128, b := 0 }
-        string := { r := 186, g := 33, b := 33 }
-        number := { r := 102, g := 102, b := 102 }
-        comment := { r := 61, g := 123, b := 123 }
-        builtin := { r := 0, g := 128, b := 0 }
-        name := { r := 0, g := 0, b := 255 }
-        operator := { r := 102, g := 102, b := 102 } }
-    | .friendly => {
-        keyword := { r := 0, g := 112, b := 32 }
-        string := { r := 64, g := 112, b := 160 }
-        number := { r := 64, g := 160, b := 112 }
-        comment := { r := 96, g := 160, b := 176 }
-        builtin := { r := 0, g := 112, b := 32 }
-        name := { r := 6, g := 40, b := 126 }
-        operator := { r := 102, g := 102, b := 102 } }
   let frameTitleFg := (pal.find? "frametitlefg").getD fg
   let frametitle := (pal.find? "frametitlebg").map fun barBg =>
     { fg := (pal.find? "frametitlefg").getD bg, bg := barBg : ColorPair }
@@ -10733,14 +10924,8 @@ the document's declarations. -/
     coveredFraction := pal.coveredFraction.getD coveredFractionDefault
     covered := pal.find? "covered"
     muted := muted
-    listing := {
-      keyword := (pal.find? "codekeyword").getD listing.keyword
-      string := (pal.find? "codestring").getD listing.string
-      number := (pal.find? "codenumber").getD listing.number
-      comment := (pal.find? "codecomment").getD listing.comment
-      builtin := (pal.find? "codebuiltin").getD listing.builtin
-      name := (pal.find? "codename").getD listing.name
-      operator := (pal.find? "codeoperator").getD listing.operator }
+    listing := (listingRoles.filterMap fun (role, kind) =>
+      (pal.find? role).map fun color => { role, kind, color }).toArray
     frametitle := frametitle
     frameTitleFg := frameTitleFg
     framesubtitle := (pal.find? "framesubtitlefg").getD
@@ -10930,11 +11115,10 @@ public def Design.consumedRoles : List String :=
    "titlepagefg", "titlepagebg",      -- Layout.titleGround / collectBlock frame
                                       -- arm, HtmlDoc.themeCss, Contrast's
                                       -- titlePageStep
-   "codekeyword", "codestring", "codenumber", "codecomment",
-   "codebuiltin", "codename", "codeoperator", -- Listing.tokenInline, both backends
-   "separator"]                       -- the title-page rule (Elab.titleBlocks
+   "separator"] ++                    -- the title-page rule (Elab.titleBlocks
                                       -- via the titlepage style; Layout .rule,
                                       -- HtmlDoc's <hr class="separator">)
+  listingRoles.map (·.1)              -- Listing.tokenInline, both backends
 
 
 /-- How covering paints: the colour of a covered run that had none of its
@@ -15203,6 +15387,10 @@ defaults; annotation erasure uses the same descent. -/
     (listing : ListingSpec → ListingSpec := id) : Array Block :=
   mapBlockList gp f #[] xs.toList finish listing
 
+/-- The generic map with every picture passed through untouched: a label's
+inlines are not this map's leaves. A rewrite that must reach the text a
+label paints — alphabet resolution, location erasure — maps labels through
+`mapBlocksPic`; each caller of this one says why its rewrite need not. -/
 @[expose] public def mapBlocks (f : Inline → Inline) (xs : Array Block)
     (finish : Array Inline → Array Inline := id)
     (listing : ListingSpec → ListingSpec := id) : Array Block :=
@@ -15322,38 +15510,13 @@ public theorem resolveMathAlphaInline_fixed_point (coverage : Math.MathAlphabetC
       resolveMathAlphaInline coverage x := by
   cases x <;> simp only [resolveMathAlphaInline, Math.resolveMathAlphas_fixed_point]
 
-private def mathAlphaMissingStep (coverage : Math.MathAlphabetCoverage)
-    (out : Array Math.MathAlphabet) (x : Inline) : Array Math.MathAlphabet :=
-  match x with
-  | .formula _ _ body =>
-    (Math.missingMathAlphas coverage body).foldl (fun out a =>
-      if out.contains a then out else out.push a) out
-  | _ => out
-
-/-- `foldBlock` leaves listing captions and formatted references to its
-block visitor. Their formulas are rewritten by `mapBlock`, so this census
-reads them through the same inline fold as every other formula region. -/
-private def mathAlphaMissingBlock (coverage : Math.MathAlphabetCoverage)
-    (out : Array Math.MathAlphabet) : Block → Array Math.MathAlphabet
-  | .verbatim _ _ spec =>
-    match spec.caption with
-    | some (_, caption) => foldInlines (mathAlphaMissingStep coverage) out caption
-    | none => out
-  | .bibliography _ _ items =>
-    items.foldl (fun acc item => foldInlines (mathAlphaMissingStep coverage) acc item.content) out
-  | .para _ | .equation _ _ | .section _ _ _ _ | .list _ _ | .center _
-  | .ragged _ _ | .quote _ | .abstract _ | .titled _ _ _ | .role _ _
-  | .link _ _ | .spaced _ _ | .columns _ | .onSteps _ _ | .altSteps _ _ _
-  | .only _ _ | .nav _ _ | .note _ | .frame _ _ _ _ _ | .framefoot _
-  | .float _ _ _ _ _ | .table _ _ _ _ _ _ | .algorithm _ _ _ | .logo _
-  | .setPalette _ | .setTokens _ | .pagebreak | .rule _ _ _ | .picture _ => out
-
-/-- Every alphabet whose used range the selected symbol face lacks,
-deduplicated in first-use order across the body and furniture, including
-the listing captions and formatted reference content that `mapBlock` resolves. -/
-public def missingMathAlphas (coverage : Math.MathAlphabetCoverage)
-    (doc : Doc) : Array Math.MathAlphabet :=
-  foldDoc (mathAlphaMissingStep coverage) #[] doc (mathAlphaMissingBlock coverage)
+/-- The picture face of alphabet resolution. A label paints its formulas in
+both backends — the face census asks glyphs for them — so they resolve as a
+caption's do; skipping them shipped an unresolved alphabet node, which MathML
+frames as an error and the page sets in the source glyphs. -/
+@[expose] public def resolveMathAlphaPicture (coverage : Math.MathAlphabetCoverage)
+    (pic : Pic.Picture) : Pic.Picture :=
+  pic.mapLabels (mapInlines (resolveMathAlphaInline coverage))
 
 /-- A formula and the authored location enclosing it. The canonical formula
 text is not source evidence: the lexical trigger lives on the stored span. -/
@@ -15363,7 +15526,8 @@ public structure MathRequest where
 
 /-- The two existing consumers read different regions: alphabet resolution
 rewrites notes and style templates, whereas face loading follows the painted
-scalar census, which excludes them and includes picture labels. -/
+scalar census, which excludes them. Both read picture labels, whose formulas
+both backends paint (`mathRequests_resolve_covers`). -/
 public inductive MathRequestScope where
   | alphabets
   | face
@@ -15383,35 +15547,45 @@ private def mathRequestInlines : CtxFold (Option Span × Bool) (Array MathReques
     | .pageNumber | .pageCount | .linebreak _ => (out, ctx)
   closeInline := fun _ out _ => out
 
+/-- Entering a block for the request census: a note closes the face scope
+over its content, and the block-owned regions `foldCtxBlock` does not descend
+into — a listing caption, formatted references, picture labels — are read
+here, under the block's context. -/
+private def mathRequestOpen (scope : MathRequestScope) (ctx : Option Span × Bool)
+    (out : Array MathRequest) (b : Block) : Array MathRequest × (Option Span × Bool) :=
+  let read := foldCtxInlines mathRequestInlines ctx
+  match b with
+  | .note _ => (out, (ctx.1, ctx.2 && scope == .alphabets))
+  | .verbatim _ _ spec =>
+    (match spec.caption with
+      | some (_, caption) => read out caption
+      | none => out, ctx)
+  | .bibliography _ _ items =>
+    (items.foldl (fun acc item => read acc item.content) out, ctx)
+  | .picture pic => (pic.labelContents.foldl read out, ctx)
+  | .para _ | .equation _ _ | .section _ _ _ _ | .list _ _ | .center _
+  | .ragged _ _ | .quote _ | .abstract _ | .titled _ _ _ | .role _ _
+  | .link _ _ | .spaced _ _ | .columns _ | .onSteps _ _ | .altSteps _ _ _
+  | .only _ _ | .nav _ _ | .frame _ _ _ _ _ | .framefoot _
+  | .float _ _ _ _ _ | .table _ _ _ _ _ _ | .algorithm _ _ _ | .logo _
+  | .setPalette _ | .setTokens _ | .pagebreak | .rule _ _ _ => (out, ctx)
+
 private def mathRequestFold (scope : MathRequestScope) :
     CtxFold (Option Span × Bool) (Array MathRequest) :=
-  { mathRequestInlines with
-    openBlock := fun ctx out b =>
-      let read := foldCtxInlines mathRequestInlines ctx
-      match b with
-      | .note _ => (out, (ctx.1, ctx.2 && scope == .alphabets))
-      | .verbatim _ _ spec =>
-        (match spec.caption with
-          | some (_, caption) => read out caption
-          | none => out, ctx)
-      | .bibliography _ _ items =>
-        (items.foldl (fun acc item => read acc item.content) out, ctx)
-      | .picture pic =>
-        (if scope == .face then pic.labelContents.foldl read out else out, ctx)
-      | .para _ | .equation _ _ | .section _ _ _ _ | .list _ _ | .center _
-      | .ragged _ _ | .quote _ | .abstract _ | .titled _ _ _ | .role _ _
-      | .link _ _ | .spaced _ _ | .columns _ | .onSteps _ _ | .altSteps _ _ _
-      | .only _ _ | .nav _ _ | .frame _ _ _ _ _ | .framefoot _
-      | .float _ _ _ _ _ | .table _ _ _ _ _ _ | .algorithm _ _ _ | .logo _
-      | .setPalette _ | .setTokens _ | .pagebreak | .rule _ _ _ => (out, ctx) }
+  { mathRequestInlines with openBlock := mathRequestOpen scope }
 
 /-- Formula requests in the shared context fold's document order.
 A location binds only its own descendants; siblings cannot
 borrow it. Outermost locations retain a macro's authored call site.
 
-The face scope matches the regions of `Layout.docMathScalars`; the alphabet
-scope matches `missingMathAlphas`, including block-owned captions and
-references. Neither changes which formulas are resolved or request a face. -/
+The face scope reads the regions of `Layout.docMathScalars` — a corpus check
+holds the two to one scalar set (`mathCensusRegionChecks`); the alphabet
+scope is the regions `resolveMathAlphas` rewrites — body, furniture, notes,
+style templates, listing captions, formatted references and picture labels
+— and `missingMathAlphas` is defined over it. Holding the scope to the
+rewrite is `mathRequests_resolve_covers` in one direction only: a region
+the rewrite reaches and this fold misses resolves without a note. Neither
+scope changes which formulas are resolved or request a face. -/
 public def mathRequests (scope : MathRequestScope) (doc : Doc) : Array MathRequest :=
   let body := foldCtxBlocks (mathRequestFold scope) (none, true) #[] doc.body
   let furniture := match scope with
@@ -15423,6 +15597,28 @@ public def mathRequests (scope : MathRequestScope) (doc : Doc) : Array MathReque
           | none => #[]) ++
         furnitureInlines.optRegion doc.logoLeft ++ furnitureInlines.optRegion doc.logoRight
   furniture.foldl (fun out xs => foldCtxInlines mathRequestInlines (none, true) out xs) body
+
+/-- One request's missing alphabets onto a census that keeps first use
+and drops repeats. -/
+private def noteRequestAlphas (coverage : Math.MathAlphabetCoverage)
+    (out : Array Math.MathAlphabet) (r : MathRequest) : Array Math.MathAlphabet :=
+  (Math.missingMathAlphas coverage r.body).foldl (fun out a =>
+    if out.contains a then out else out.push a) out
+
+/-- Every alphabet whose used range the selected symbol face lacks over a
+request census, deduplicated in first-use order. -/
+public def missingAlphasOf (coverage : Math.MathAlphabetCoverage)
+    (requests : Array MathRequest) : Array Math.MathAlphabet :=
+  requests.foldl (noteRequestAlphas coverage) #[]
+
+/-- Every alphabet whose used range the selected symbol face lacks,
+deduplicated in first-use order over the alphabet census's requests — the
+body and furniture, notes, style templates, listing captions, formatted
+references and picture labels: the requests each note takes its source
+from, so which alphabets are named and where cannot read two region lists. -/
+public def missingMathAlphas (coverage : Math.MathAlphabetCoverage)
+    (doc : Doc) : Array Math.MathAlphabet :=
+  missingAlphasOf coverage (mathRequests .alphabets doc)
 
 /-- The first actual formula needing glyphs, before a face is selected.
 An unsourced request stays unsourced rather than borrowing a later site. -/
@@ -15445,9 +15641,10 @@ mapped and therefore keep the ordinary per-character fallback path. -/
 @[expose] public def resolveMathAlphas (coverage : Math.MathAlphabetCoverage) (family : String)
     (doc : Doc) : Doc × Array Diag :=
   let leaf := resolveMathAlphaInline coverage
-  let resolved := mapDoc (mapInlines leaf) (mapBlocks leaf) doc
+  let resolved := mapDoc (mapInlines leaf)
+    (mapBlocksPic (resolveMathAlphaPicture coverage) leaf) doc
   let requests := mathRequests .alphabets doc
-  let diags := (missingMathAlphas coverage doc).map fun a =>
+  let diags := (missingAlphasOf coverage requests).map fun a =>
     let source := (requests.find? fun r =>
       (Math.missingMathAlphas coverage r.body).contains a).bind (·.source)
     Diag.of .N0018
@@ -15490,7 +15687,7 @@ public theorem resolveMathAlphas_named (coverage : Math.MathAlphabetCoverage)
     (resolveMathAlphas coverage family doc).2.map (·.subject) =
       (missingMathAlphas coverage doc).map
         (fun a => some ("math-alpha:" ++ a.name)) := by
-  simp [resolveMathAlphas, Diag.of_subject, Array.map_map, Function.comp]
+  simp [resolveMathAlphas, missingMathAlphas, Diag.of_subject, Array.map_map, Function.comp]
 
 /-- Expose the completed-region combiner without changing the generic map's walk. -/
 public theorem mapInlineList_finish_exact (f : Inline → Inline) (out : Array Inline)
@@ -15545,7 +15742,9 @@ private theorem mapMathInlineElems_fixed_point (coverage : Math.MathAlphabetCove
 
 end
 
-private theorem mapMathInlines_fixed_point (coverage : Math.MathAlphabetCoverage) (xs : Array Inline) :
+/-- Resolving an inline region twice resolves it once. -/
+public theorem mapMathInlines_fixed_point (coverage : Math.MathAlphabetCoverage)
+    (xs : Array Inline) :
     mapInlines (resolveMathAlphaInline coverage)
         (mapInlines (resolveMathAlphaInline coverage) xs)
       = mapInlines (resolveMathAlphaInline coverage) xs := by
@@ -15620,6 +15819,14 @@ public theorem mapBibItems_toList (f : Inline → Inline) :
     rw [mapBibItems, mapBibItems_toList f (out.push { i with content := mapInlines f i.content }) rest]
     simp [Array.toList_push, List.append_assoc]
 
+private theorem resolveMathAlphaPicture_fixed_point (coverage : Math.MathAlphabetCoverage)
+    (pic : Pic.Picture) :
+    resolveMathAlphaPicture coverage (resolveMathAlphaPicture coverage pic)
+      = resolveMathAlphaPicture coverage pic := by
+  simp only [resolveMathAlphaPicture, Pic.Picture.mapLabels_comp]
+  congr 1
+  exact funext (mapMathInlines_fixed_point coverage)
+
 private theorem mapMathTableCells_fixed_point (coverage : Math.MathAlphabetCoverage)
     (cells : List (Array Inline)) :
     mapTableCells (resolveMathAlphaInline coverage) #[]
@@ -15669,9 +15876,9 @@ private theorem mapMathBibItems_fixed_point (coverage : Math.MathAlphabetCoverag
 mutual
 
 private theorem mapMathBlock_fixed_point (coverage : Math.MathAlphabetCoverage) (b : Block) :
-    mapBlock id (resolveMathAlphaInline coverage)
-        (mapBlock id (resolveMathAlphaInline coverage) b)
-      = mapBlock id (resolveMathAlphaInline coverage) b := by
+    mapBlock (resolveMathAlphaPicture coverage) (resolveMathAlphaInline coverage)
+        (mapBlock (resolveMathAlphaPicture coverage) (resolveMathAlphaInline coverage) b)
+      = mapBlock (resolveMathAlphaPicture coverage) (resolveMathAlphaInline coverage) b := by
   match b with
   | .para content => simp only [mapBlock, mapMathInlines_fixed_point coverage]
   | .equation n content => simp only [mapBlock, mapMathInlines_fixed_point coverage]
@@ -15733,14 +15940,15 @@ private theorem mapMathBlock_fixed_point (coverage : Math.MathAlphabetCoverage) 
     cases hc : spec.caption with
     | none => simp [mapBlock, hc]
     | some pr => simp [mapBlock, hc, mapMathInlines_fixed_point coverage]
-  | .setPalette _ | .setTokens _ | .pagebreak | .rule _ _ _ | .picture _ =>
-    simp only [mapBlock, id_eq]
+  | .picture pic => simp only [mapBlock, resolveMathAlphaPicture_fixed_point coverage pic]
+  | .setPalette _ | .setTokens _ | .pagebreak | .rule _ _ _ =>
+    simp only [mapBlock]
 
 private theorem mapMathBlockElems_fixed_point (coverage : Math.MathAlphabetCoverage) :
     ∀ bs : List Block,
-      ((bs.map (mapBlock id (resolveMathAlphaInline coverage))).map
-        (mapBlock id (resolveMathAlphaInline coverage)))
-        = bs.map (mapBlock id (resolveMathAlphaInline coverage))
+      ((bs.map (mapBlock (resolveMathAlphaPicture coverage) (resolveMathAlphaInline coverage))).map
+        (mapBlock (resolveMathAlphaPicture coverage) (resolveMathAlphaInline coverage)))
+        = bs.map (mapBlock (resolveMathAlphaPicture coverage) (resolveMathAlphaInline coverage))
   | [] => rfl
   | b :: rest => by
     simp only [List.map_cons]
@@ -15748,14 +15956,14 @@ private theorem mapMathBlockElems_fixed_point (coverage : Math.MathAlphabetCover
 
 private theorem mapMathBlockItemsElems_fixed_point (coverage : Math.MathAlphabetCoverage) :
     ∀ its : List (Array Block),
-      ((its.map (fun it => mapBlockList id (resolveMathAlphaInline coverage) #[] it.toList)).map
-        (fun it => mapBlockList id (resolveMathAlphaInline coverage) #[] it.toList))
-        = its.map (fun it => mapBlockList id (resolveMathAlphaInline coverage) #[] it.toList)
+      ((its.map (fun it => mapBlockList (resolveMathAlphaPicture coverage) (resolveMathAlphaInline coverage) #[] it.toList)).map
+        (fun it => mapBlockList (resolveMathAlphaPicture coverage) (resolveMathAlphaInline coverage) #[] it.toList))
+        = its.map (fun it => mapBlockList (resolveMathAlphaPicture coverage) (resolveMathAlphaInline coverage) #[] it.toList)
   | [] => rfl
   | it :: rest => by
-    have h : mapBlockList id (resolveMathAlphaInline coverage) #[]
-        (mapBlockList id (resolveMathAlphaInline coverage) #[] it.toList).toList
-        = mapBlockList id (resolveMathAlphaInline coverage) #[] it.toList := by
+    have h : mapBlockList (resolveMathAlphaPicture coverage) (resolveMathAlphaInline coverage) #[]
+        (mapBlockList (resolveMathAlphaPicture coverage) (resolveMathAlphaInline coverage) #[] it.toList).toList
+        = mapBlockList (resolveMathAlphaPicture coverage) (resolveMathAlphaInline coverage) #[] it.toList := by
       apply Array.toList_inj.mp
       simp only [mapBlockList_toList, List.nil_append]
       exact mapMathBlockElems_fixed_point coverage it.toList
@@ -15764,14 +15972,14 @@ private theorem mapMathBlockItemsElems_fixed_point (coverage : Math.MathAlphabet
 
 private theorem mapMathBlockColsElems_fixed_point (coverage : Math.MathAlphabetCoverage) :
     ∀ cols : List (BoxWidth × Array Block),
-      ((cols.map (fun c => (c.1, mapBlockList id (resolveMathAlphaInline coverage) #[] c.2.toList))).map
-        (fun c => (c.1, mapBlockList id (resolveMathAlphaInline coverage) #[] c.2.toList)))
-        = cols.map (fun c => (c.1, mapBlockList id (resolveMathAlphaInline coverage) #[] c.2.toList))
+      ((cols.map (fun c => (c.1, mapBlockList (resolveMathAlphaPicture coverage) (resolveMathAlphaInline coverage) #[] c.2.toList))).map
+        (fun c => (c.1, mapBlockList (resolveMathAlphaPicture coverage) (resolveMathAlphaInline coverage) #[] c.2.toList)))
+        = cols.map (fun c => (c.1, mapBlockList (resolveMathAlphaPicture coverage) (resolveMathAlphaInline coverage) #[] c.2.toList))
   | [] => rfl
   | c :: rest => by
-    have h : mapBlockList id (resolveMathAlphaInline coverage) #[]
-        (mapBlockList id (resolveMathAlphaInline coverage) #[] c.2.toList).toList
-        = mapBlockList id (resolveMathAlphaInline coverage) #[] c.2.toList := by
+    have h : mapBlockList (resolveMathAlphaPicture coverage) (resolveMathAlphaInline coverage) #[]
+        (mapBlockList (resolveMathAlphaPicture coverage) (resolveMathAlphaInline coverage) #[] c.2.toList).toList
+        = mapBlockList (resolveMathAlphaPicture coverage) (resolveMathAlphaInline coverage) #[] c.2.toList := by
       apply Array.toList_inj.mp
       simp only [mapBlockList_toList, List.nil_append]
       exact mapMathBlockElems_fixed_point coverage c.2.toList
@@ -15781,10 +15989,10 @@ private theorem mapMathBlockColsElems_fixed_point (coverage : Math.MathAlphabetC
 end
 
 private theorem mapMathBlocks_fixed_point (coverage : Math.MathAlphabetCoverage) (xs : Array Block) :
-    mapBlocks (resolveMathAlphaInline coverage) (mapBlocks (resolveMathAlphaInline coverage) xs)
-      = mapBlocks (resolveMathAlphaInline coverage) xs := by
+    mapBlocksPic (resolveMathAlphaPicture coverage) (resolveMathAlphaInline coverage) (mapBlocksPic (resolveMathAlphaPicture coverage) (resolveMathAlphaInline coverage) xs)
+      = mapBlocksPic (resolveMathAlphaPicture coverage) (resolveMathAlphaInline coverage) xs := by
   apply Array.toList_inj.mp
-  simp only [mapBlocks, mapBlocksPic, mapBlockList_toList, List.nil_append]
+  simp only [mapBlocksPic, mapBlockList_toList, List.nil_append]
   exact mapMathBlockElems_fixed_point coverage xs.toList
 
 /-- Document mapping composes region by region, including style templates. -/
@@ -15796,17 +16004,17 @@ private theorem mapDoc_comp (fi fi' : Array Inline → Array Inline)
 
 private theorem mapMathDoc_fixed_point (coverage : Math.MathAlphabetCoverage) (doc : Doc) :
     mapDoc (mapInlines (resolveMathAlphaInline coverage))
-        (mapBlocks (resolveMathAlphaInline coverage))
+        (mapBlocksPic (resolveMathAlphaPicture coverage) (resolveMathAlphaInline coverage))
         (mapDoc (mapInlines (resolveMathAlphaInline coverage))
-          (mapBlocks (resolveMathAlphaInline coverage)) doc)
+          (mapBlocksPic (resolveMathAlphaPicture coverage) (resolveMathAlphaInline coverage)) doc)
       = mapDoc (mapInlines (resolveMathAlphaInline coverage))
-          (mapBlocks (resolveMathAlphaInline coverage)) doc := by
+          (mapBlocksPic (resolveMathAlphaPicture coverage) (resolveMathAlphaInline coverage)) doc := by
   have hfi : (mapInlines (resolveMathAlphaInline coverage))
       ∘ (mapInlines (resolveMathAlphaInline coverage))
       = mapInlines (resolveMathAlphaInline coverage) := funext (mapMathInlines_fixed_point coverage)
-  have hfb : (mapBlocks (resolveMathAlphaInline coverage))
-      ∘ (mapBlocks (resolveMathAlphaInline coverage))
-      = mapBlocks (resolveMathAlphaInline coverage) := funext (mapMathBlocks_fixed_point coverage)
+  have hfb : (mapBlocksPic (resolveMathAlphaPicture coverage) (resolveMathAlphaInline coverage))
+      ∘ (mapBlocksPic (resolveMathAlphaPicture coverage) (resolveMathAlphaInline coverage))
+      = mapBlocksPic (resolveMathAlphaPicture coverage) (resolveMathAlphaInline coverage) := funext (mapMathBlocks_fixed_point coverage)
   rw [mapDoc_comp, hfi, hfb]
 
 /-- The shared IR is unchanged by a second alphabet resolution, including
@@ -15818,190 +16026,325 @@ public theorem resolveMathAlphas_fixed_point (coverage : Math.MathAlphabetCovera
   simp only [resolveMathAlphas]
   exact mapMathDoc_fixed_point coverage doc
 
+/-- Every request a census holds asks for an alphabet-free formula. -/
+private def RequestsFree (out : Array MathRequest) : Prop :=
+  ∀ r ∈ out, r.body.alphaFree = true
+
+private theorem requestsFree_push {out : Array MathRequest} {r : MathRequest}
+    (h : RequestsFree out) (hr : r.body.alphaFree = true) : RequestsFree (out.push r) := by
+  intro q hq
+  rcases Array.mem_push.mp hq with hq | hq
+  · exact h q hq
+  · exact hq ▸ hr
+
+private theorem mathRequestFold_openBlock (scope : MathRequestScope)
+    (ctx : Option Span × Bool) (out : Array MathRequest) (b : Block) :
+    (mathRequestFold scope).openBlock ctx out b = mathRequestOpen scope ctx out b := rfl
+
+private theorem mathRequestFold_closeBlock (scope : MathRequestScope)
+    (ctx : Option Span × Bool) (out : Array MathRequest) (b : Block) :
+    (mathRequestFold scope).closeBlock ctx out b = out := rfl
+
 mutual
 
-private theorem foldMapMathInline_id (coverage : Math.MathAlphabetCoverage)
-    (acc : Array Math.MathAlphabet) (x : Inline) :
-    foldInline (mathAlphaMissingStep coverage) acc
-      (mapInline (resolveMathAlphaInline coverage) x) = acc := by
+/-- A walk with the request census's inline events, over a resolved inline,
+pushes only resolved formulas — whatever context it is read under. -/
+private theorem requestsInline_resolve_covers (coverage : Math.MathAlphabetCoverage)
+    (w : CtxFold (Option Span × Bool) (Array MathRequest))
+    (ho : ∀ ctx out x, w.openInline ctx out x = mathRequestInlines.openInline ctx out x)
+    (hc : ∀ ctx out x, w.closeInline ctx out x = out)
+    (ctx : Option Span × Bool) (out : Array MathRequest) (x : Inline) (h : RequestsFree out) :
+    RequestsFree (foldCtxInline w ctx out (mapInline (resolveMathAlphaInline coverage) x)) := by
   match x with
   | .styled _ body | .colored _ _ body | .located _ body | .role _ body | .link _ body
   | .decorated _ body | .onSteps _ body | .footnote _ body =>
-    simp only [mapInline, foldInline, mathAlphaMissingStep,
-      mapInlineList_toList, List.nil_append]
-    exact foldMapMathInlineList_id coverage acc body.toList
-  | .altSteps _ active otherwise =>
-    simp only [mapInline, foldInline, mathAlphaMissingStep,
-      mapInlineList_toList, List.nil_append]
-    rw [foldMapMathInlineList_id coverage acc active.toList,
-      foldMapMathInlineList_id coverage acc otherwise.toList]
-  | .formula _ _ _ =>
-    simp only [mapInline, resolveMathAlphaInline, foldInline, mathAlphaMissingStep,
-      Math.missingMathAlphas_resolve_exact, Array.foldl_empty]
-  | .text _ | .math _ _ | .image _ _ _ | .icon _ _ | .label _
-  | .ref _ _ _ _ | .cite _ _ | .fill | .hspace _ _ | .rule _ _ _
-  | .strut _ | .italicCorr _ | .pageNumber | .pageCount | .linebreak _ => rfl
+    simp only [mapInline, foldCtxInline, ho, hc, mathRequestInlines, mapInlineList_toList,
+      List.nil_append]
+    exact requestsInlineList_resolve_covers coverage w ho hc _ out body.toList h
+  | .altSteps _ firstPage otherPage =>
+    simp only [mapInline, foldCtxInline, ho, hc, mathRequestInlines, mapInlineList_toList,
+      List.nil_append]
+    exact requestsInlineList_resolve_covers coverage w ho hc _ _ otherPage.toList
+      (requestsInlineList_resolve_covers coverage w ho hc _ out firstPage.toList h)
+  | .formula _ _ body =>
+    simp only [mapInline, resolveMathAlphaInline, foldCtxInline, ho, hc, mathRequestInlines]
+    split
+    · exact requestsFree_push h (Math.resolveMathAlphas_covers coverage body)
+    · exact h
+  | .text _ | .math _ _ | .image _ _ _ | .icon _ _ | .label _ | .ref _ _ _ _ | .cite _ _
+  | .fill | .hspace _ _ | .rule _ _ _ | .strut _ | .italicCorr _ | .pageNumber | .pageCount
+  | .linebreak _ =>
+    simpa only [mapInline, resolveMathAlphaInline, foldCtxInline, ho, hc, mathRequestInlines]
+      using h
 
-private theorem foldMapMathInlineList_id (coverage : Math.MathAlphabetCoverage)
-    (acc : Array Math.MathAlphabet) (xs : List Inline) :
-    foldInlineList (mathAlphaMissingStep coverage) acc
-      (xs.map (mapInline (resolveMathAlphaInline coverage))) = acc := by
-  match xs with
-  | [] => rfl
-  | x :: rest =>
-    rw [List.map_cons, foldInlineList, foldMapMathInline_id coverage acc x,
-      foldMapMathInlineList_id coverage acc rest]
+private theorem requestsInlineList_resolve_covers (coverage : Math.MathAlphabetCoverage)
+    (w : CtxFold (Option Span × Bool) (Array MathRequest))
+    (ho : ∀ ctx out x, w.openInline ctx out x = mathRequestInlines.openInline ctx out x)
+    (hc : ∀ ctx out x, w.closeInline ctx out x = out)
+    (ctx : Option Span × Bool) (out : Array MathRequest) :
+    ∀ xs : List Inline, RequestsFree out →
+      RequestsFree (foldCtxInlineList w ctx out
+        (xs.map (mapInline (resolveMathAlphaInline coverage))))
+  | [], h => h
+  | x :: rest, h => by
+    rw [List.map_cons, foldCtxInlineList]
+    exact requestsInlineList_resolve_covers coverage w ho hc ctx _ rest
+      (requestsInline_resolve_covers coverage w ho hc ctx out x h)
 
 end
 
-private theorem foldMapMathInlines_id (coverage : Math.MathAlphabetCoverage)
-    (acc : Array Math.MathAlphabet) (xs : Array Inline) :
-    foldInlineList (mathAlphaMissingStep coverage) acc
-      (mapInlines (resolveMathAlphaInline coverage) xs).toList = acc := by
+/-- The block census's own inline events are the request fold's. -/
+private theorem requestsFoldInlines_resolve_covers (scope : MathRequestScope)
+    (coverage : Math.MathAlphabetCoverage) (ctx : Option Span × Bool)
+    (out : Array MathRequest) (xs : Array Inline) (h : RequestsFree out) :
+    RequestsFree (foldCtxInlineList (mathRequestFold scope) ctx out
+      (mapInlines (resolveMathAlphaInline coverage) xs).toList) := by
   simp only [mapInlines, mapInlineList_toList, List.nil_append]
-  exact foldMapMathInlineList_id coverage acc xs.toList
+  exact requestsInlineList_resolve_covers coverage (mathRequestFold scope) (fun _ _ _ => rfl)
+    (fun _ _ _ => rfl) ctx out xs.toList h
 
-private theorem foldMapMathCells_id (coverage : Math.MathAlphabetCoverage)
-    (acc : Array Math.MathAlphabet) (cells : List (Array Inline)) :
-    foldTableCells (mathAlphaMissingStep coverage) acc
-      (cells.map (mapInlines (resolveMathAlphaInline coverage))) = acc := by
-  induction cells generalizing acc with
-  | nil => rfl
-  | cons cell rest ih =>
-    rw [List.map_cons, foldTableCells, foldMapMathInlines_id, ih]
+/-- A run of resolved inline regions, each read by the request fold. -/
+private theorem requestsRegions_resolve_covers (coverage : Math.MathAlphabetCoverage)
+    (ctx : Option Span × Bool) :
+    ∀ (regions : List (Array Inline)) (out : Array MathRequest), RequestsFree out →
+      RequestsFree ((regions.map (mapInlines (resolveMathAlphaInline coverage))).foldl
+        (fun acc xs => foldCtxInlines mathRequestInlines ctx acc xs) out)
+  | [], _, h => h
+  | xs :: rest, out, h => by
+    rw [List.map_cons, List.foldl_cons]
+    apply requestsRegions_resolve_covers coverage ctx rest
+    simp only [foldCtxInlines, mapInlines, mapInlineList_toList, List.nil_append]
+    exact requestsInlineList_resolve_covers coverage _ (fun _ _ _ => rfl) (fun _ _ _ => rfl)
+      ctx out xs.toList h
 
-private theorem foldMapMathRows_id (coverage : Math.MathAlphabetCoverage)
-    (acc : Array Math.MathAlphabet) (rows : List (Array (Array Inline))) :
-    foldTableRows (mathAlphaMissingStep coverage) acc
-      (rows.map (fun row => mapTableCells (resolveMathAlphaInline coverage) #[] row.toList)) = acc := by
-  induction rows generalizing acc with
-  | nil => rfl
-  | cons row rest ih =>
-    simp only [List.map_cons, foldTableRows, mapTableCells_toList, List.nil_append]
-    rw [foldMapMathCells_id, ih]
+private theorem requestsCells_resolve_covers (scope : MathRequestScope)
+    (coverage : Math.MathAlphabetCoverage) (ctx : Option Span × Bool) :
+    ∀ (cells : List (Array Inline)) (out : Array MathRequest), RequestsFree out →
+      RequestsFree (foldCtxTableCells (mathRequestFold scope) ctx out
+        (cells.map (mapInlines (resolveMathAlphaInline coverage))))
+  | [], _, h => h
+  | cell :: rest, out, h => by
+    rw [List.map_cons, foldCtxTableCells]
+    exact requestsCells_resolve_covers scope coverage ctx rest _
+      (requestsFoldInlines_resolve_covers scope coverage ctx out cell h)
 
-private theorem foldMapMathAlgLines_id (coverage : Math.MathAlphabetCoverage)
-    (acc : Array Math.MathAlphabet) (lines : List AlgLine) :
-    foldAlgLines (mathAlphaMissingStep coverage) acc
-      (mapAlgLines (resolveMathAlphaInline coverage) #[] lines).toList = acc := by
-  simp only [mapAlgLines_toList, List.nil_append]
-  induction lines generalizing acc with
-  | nil => rfl
-  | cons line rest ih =>
-    cases hc : line.comment <;>
-      simp only [List.map_cons, foldAlgLines, hc, Option.map_none, Option.map_some,
-        foldMapMathInlines_id, ih]
+private theorem requestsRows_resolve_covers (scope : MathRequestScope)
+    (coverage : Math.MathAlphabetCoverage) (ctx : Option Span × Bool) :
+    ∀ (rows : List (Array (Array Inline))) (out : Array MathRequest), RequestsFree out →
+      RequestsFree (foldCtxTableRows (mathRequestFold scope) ctx out
+        (rows.map fun row => mapTableCells (resolveMathAlphaInline coverage) #[] row.toList))
+  | [], _, h => h
+  | row :: rest, out, h => by
+    rw [List.map_cons, foldCtxTableRows, mapTableCells_toList, List.nil_append]
+    exact requestsRows_resolve_covers scope coverage ctx rest _
+      (requestsCells_resolve_covers scope coverage ctx row.toList out h)
 
-private theorem foldMapMathBibItems_id (coverage : Math.MathAlphabetCoverage)
-    (acc : Array Math.MathAlphabet) (items : List BibItem) :
-    (mapBibItems (resolveMathAlphaInline coverage) #[] items).foldl
-      (fun out item => foldInlines (mathAlphaMissingStep coverage) out item.content) acc = acc := by
-  rw [← Array.foldl_toList, mapBibItems_toList]
-  simp only [List.nil_append, List.foldl_map, foldInlines, foldMapMathInlines_id]
-  induction items with
-  | nil => rfl
-  | cons _ _ ih => exact ih
+private theorem requestsAlgLines_resolve_covers (scope : MathRequestScope)
+    (coverage : Math.MathAlphabetCoverage) (ctx : Option Span × Bool) :
+    ∀ (lines : List AlgLine) (out : Array MathRequest), RequestsFree out →
+      RequestsFree (foldCtxAlgLines (mathRequestFold scope) ctx out
+        (mapAlgLines (resolveMathAlphaInline coverage) #[] lines).toList)
+  | [], _, h => h
+  | line :: rest, out, h => by
+    have step := requestsAlgLines_resolve_covers scope coverage ctx rest
+    simp only [mapAlgLines_toList, List.nil_append] at step ⊢
+    rw [List.map_cons, foldCtxAlgLines]
+    apply step
+    cases hc : line.comment with
+    | none =>
+      simpa only [Option.map_none] using
+        requestsFoldInlines_resolve_covers scope coverage ctx out line.content h
+    | some c =>
+      simp only [Option.map_some]
+      exact requestsFoldInlines_resolve_covers scope coverage ctx _ c
+        (requestsFoldInlines_resolve_covers scope coverage ctx out line.content h)
 
 mutual
 
-private theorem foldMapMathBlock_id (coverage : Math.MathAlphabetCoverage)
-    (acc : Array Math.MathAlphabet) (b : Block) :
-    foldBlock (mathAlphaMissingBlock coverage) (mathAlphaMissingStep coverage) acc
-      (mapBlock id (resolveMathAlphaInline coverage) b) = acc := by
+/-- The request census over a resolved block reads only resolved formulas:
+its descent through every region `foldCtxBlock` walks, and the block-owned
+regions `mathRequestOpen` reads — captions, references, picture labels. -/
+private theorem requestsBlock_resolve_covers (scope : MathRequestScope)
+    (coverage : Math.MathAlphabetCoverage) (ctx : Option Span × Bool)
+    (out : Array MathRequest) (b : Block) (h : RequestsFree out) :
+    RequestsFree (foldCtxBlock (mathRequestFold scope) ctx out
+      (mapBlock (resolveMathAlphaPicture coverage) (resolveMathAlphaInline coverage) b)) := by
   match b with
-  | .para _ | .equation _ _ | .section _ _ _ _ | .framefoot _ | .logo _ =>
-    simp only [mapBlock, foldBlock, mathAlphaMissingBlock, foldMapMathInlines_id]
+  | .para content | .section _ _ _ content | .framefoot content | .logo content =>
+    simp only [mapBlock, foldCtxBlock, mathRequestFold_openBlock, mathRequestOpen,
+      mathRequestFold_closeBlock]
+    exact requestsFoldInlines_resolve_covers scope coverage ctx out content h
+  | .equation number content =>
+    simp only [mapBlock, foldCtxBlock, mathRequestFold_openBlock, mathRequestOpen,
+      mathRequestFold_closeBlock]
+    exact requestsFoldInlines_resolve_covers scope coverage ctx _ number
+      (requestsFoldInlines_resolve_covers scope coverage ctx out content h)
   | .list _ items =>
-    simp only [mapBlock, foldBlock, mathAlphaMissingBlock, mapBlockItems_toList, List.nil_append]
-    exact foldMapMathItems_id coverage acc items.toList
+    simp only [mapBlock, foldCtxBlock, mathRequestFold_openBlock, mathRequestOpen,
+      mathRequestFold_closeBlock, mapBlockItems_toList, List.nil_append]
+    exact requestsItems_resolve_covers scope coverage ctx out items.toList h
   | .columns cols =>
-    simp only [mapBlock, foldBlock, mathAlphaMissingBlock, mapBlockCols_toList, List.nil_append]
-    exact foldMapMathCols_id coverage acc cols.toList
-  | .center body | .ragged _ body | .quote body | .abstract body
-  | .role _ body | .link _ body | .spaced _ body | .onSteps _ body
-  | .only _ body | .nav _ body | .note body
-  | .titled _ _ body | .frame _ _ _ _ body | .float _ _ _ body _ =>
-    simp only [mapBlock, foldBlock, mathAlphaMissingBlock, foldMapMathInlines_id,
-      mapBlockList_toList, List.nil_append]
-    exact foldMapMathBlockList_id coverage acc body.toList
-  | .altSteps _ active otherwise =>
-    simp only [mapBlock, foldBlock, mathAlphaMissingBlock, mapBlockList_toList, List.nil_append]
-    rw [foldMapMathBlockList_id coverage acc active.toList,
-      foldMapMathBlockList_id coverage acc otherwise.toList]
+    simp only [mapBlock, foldCtxBlock, mathRequestFold_openBlock, mathRequestOpen,
+      mathRequestFold_closeBlock, mapBlockCols_toList, List.nil_append]
+    exact requestsCols_resolve_covers scope coverage ctx out cols.toList h
+  | .center body | .ragged _ body | .quote body | .abstract body | .role _ body
+  | .link _ body | .spaced _ body | .onSteps _ body | .only _ body | .nav _ body =>
+    simp only [mapBlock, foldCtxBlock, mathRequestFold_openBlock, mathRequestOpen,
+      mathRequestFold_closeBlock, mapBlockList_toList, List.nil_append]
+    exact requestsBlockList_resolve_covers scope coverage ctx out body.toList h
+  | .note body =>
+    simp only [mapBlock, foldCtxBlock, mathRequestFold_openBlock, mathRequestOpen,
+      mathRequestFold_closeBlock, mapBlockList_toList, List.nil_append]
+    exact requestsBlockList_resolve_covers scope coverage _ out body.toList h
+  | .titled _ title body | .frame title _ _ _ body | .float _ _ _ body title =>
+    simp only [mapBlock, foldCtxBlock, mathRequestFold_openBlock, mathRequestOpen,
+      mathRequestFold_closeBlock, mapBlockList_toList, List.nil_append]
+    exact requestsBlockList_resolve_covers scope coverage ctx _ body.toList
+      (requestsFoldInlines_resolve_covers scope coverage ctx out title h)
+  | .altSteps _ firstPage otherPage =>
+    simp only [mapBlock, foldCtxBlock, mathRequestFold_openBlock, mathRequestOpen,
+      mathRequestFold_closeBlock, mapBlockList_toList, List.nil_append]
+    exact requestsBlockList_resolve_covers scope coverage ctx _ otherPage.toList
+      (requestsBlockList_resolve_covers scope coverage ctx out firstPage.toList h)
   | .table _ _ _ rows _ _ =>
-    simp only [mapBlock, foldBlock, mathAlphaMissingBlock, mapTableRows_toList, List.nil_append]
-    exact foldMapMathRows_id coverage acc rows.toList
+    simp only [mapBlock, foldCtxBlock, mathRequestFold_openBlock, mathRequestOpen,
+      mathRequestFold_closeBlock, mapTableRows_toList, List.nil_append]
+    exact requestsRows_resolve_covers scope coverage ctx rows.toList out h
   | .algorithm _ _ lines =>
-    simp only [mapBlock, foldBlock, mathAlphaMissingBlock]
-    exact foldMapMathAlgLines_id coverage acc lines.toList
+    simp only [mapBlock, foldCtxBlock, mathRequestFold_openBlock, mathRequestOpen,
+      mathRequestFold_closeBlock]
+    exact requestsAlgLines_resolve_covers scope coverage ctx lines.toList out h
   | .verbatim _ _ spec =>
-    cases hc : spec.caption <;>
-      simp [mapBlock, foldBlock, mathAlphaMissingBlock, hc, foldInlines, foldMapMathInlines_id]
+    cases hc : spec.caption with
+    | none =>
+      simpa only [mapBlock, foldCtxBlock, mathRequestFold_openBlock, mathRequestOpen,
+        mathRequestFold_closeBlock, hc, Option.map_none, id_eq] using h
+    | some caption =>
+      simp only [mapBlock, foldCtxBlock, mathRequestFold_openBlock, mathRequestOpen,
+        mathRequestFold_closeBlock, hc, Option.map_some, id_eq]
+      exact requestsRegions_resolve_covers coverage ctx [caption.2] out h
   | .bibliography _ _ items =>
-    simp only [mapBlock, foldBlock, mathAlphaMissingBlock]
-    exact foldMapMathBibItems_id coverage acc items.toList
-  | .setPalette _ | .setTokens _ | .pagebreak | .rule _ _ _ | .picture _ => rfl
+    simp only [mapBlock, foldCtxBlock, mathRequestFold_openBlock, mathRequestOpen,
+      mathRequestFold_closeBlock]
+    rw [← Array.foldl_toList, mapBibItems_toList, List.nil_append, List.foldl_map]
+    have := requestsRegions_resolve_covers coverage ctx (items.toList.map (·.content)) out h
+    simpa only [List.map_map, List.foldl_map, Function.comp_def] using this
+  | .picture pic =>
+    simp only [mapBlock, foldCtxBlock, mathRequestFold_openBlock, mathRequestOpen,
+      mathRequestFold_closeBlock, resolveMathAlphaPicture, Pic.Picture.labelContents_mapLabels]
+    rw [← Array.foldl_toList, Array.toList_map]
+    exact requestsRegions_resolve_covers coverage ctx pic.labelContents.toList out h
+  | .setPalette _ | .setTokens _ | .pagebreak | .rule _ _ _ =>
+    simpa only [mapBlock, foldCtxBlock, mathRequestFold_openBlock, mathRequestOpen,
+      mathRequestFold_closeBlock] using h
 
-private theorem foldMapMathBlockList_id (coverage : Math.MathAlphabetCoverage)
-    (acc : Array Math.MathAlphabet) (xs : List Block) :
-    foldBlockList (mathAlphaMissingBlock coverage) (mathAlphaMissingStep coverage) acc
-      (xs.map (mapBlock id (resolveMathAlphaInline coverage))) = acc := by
-  match xs with
-  | [] => rfl
-  | x :: rest =>
-    rw [List.map_cons, foldBlockList, foldMapMathBlock_id coverage acc x,
-      foldMapMathBlockList_id coverage acc rest]
+private theorem requestsBlockList_resolve_covers (scope : MathRequestScope)
+    (coverage : Math.MathAlphabetCoverage) (ctx : Option Span × Bool)
+    (out : Array MathRequest) :
+    ∀ bs : List Block, RequestsFree out →
+      RequestsFree (foldCtxBlockList (mathRequestFold scope) ctx out
+        (bs.map (mapBlock (resolveMathAlphaPicture coverage) (resolveMathAlphaInline coverage))))
+  | [], h => h
+  | b :: rest, h => by
+    rw [List.map_cons, foldCtxBlockList]
+    exact requestsBlockList_resolve_covers scope coverage ctx _ rest
+      (requestsBlock_resolve_covers scope coverage ctx out b h)
 
-private theorem foldMapMathItems_id (coverage : Math.MathAlphabetCoverage)
-    (acc : Array Math.MathAlphabet) (items : List (Array Block)) :
-    foldBlockItems (mathAlphaMissingBlock coverage) (mathAlphaMissingStep coverage) acc
-      (items.map (fun item => mapBlockList id (resolveMathAlphaInline coverage) #[] item.toList))
-      = acc := by
-  match items with
-  | [] => rfl
-  | item :: rest =>
-    simp only [List.map_cons, foldBlockItems, mapBlockList_toList, List.nil_append]
-    rw [foldMapMathBlockList_id coverage acc item.toList,
-      foldMapMathItems_id coverage acc rest]
+private theorem requestsItems_resolve_covers (scope : MathRequestScope)
+    (coverage : Math.MathAlphabetCoverage) (ctx : Option Span × Bool)
+    (out : Array MathRequest) :
+    ∀ items : List (Array Block), RequestsFree out →
+      RequestsFree (foldCtxBlockItems (mathRequestFold scope) ctx out
+        (items.map fun item => mapBlockList (resolveMathAlphaPicture coverage)
+          (resolveMathAlphaInline coverage) #[] item.toList))
+  | [], h => h
+  | item :: rest, h => by
+    rw [List.map_cons, foldCtxBlockItems, mapBlockList_toList, List.nil_append]
+    exact requestsItems_resolve_covers scope coverage ctx _ rest
+      (requestsBlockList_resolve_covers scope coverage ctx out item.toList h)
 
-private theorem foldMapMathCols_id (coverage : Math.MathAlphabetCoverage)
-    (acc : Array Math.MathAlphabet) (cols : List (BoxWidth × Array Block)) :
-    foldBlockCols (mathAlphaMissingBlock coverage) (mathAlphaMissingStep coverage) acc
-      (cols.map (fun c => (c.1, mapBlockList id (resolveMathAlphaInline coverage) #[] c.2.toList)))
-      = acc := by
-  match cols with
-  | [] => rfl
-  | (_, body) :: rest =>
-    simp only [List.map_cons, foldBlockCols, mapBlockList_toList, List.nil_append]
-    rw [foldMapMathBlockList_id coverage acc body.toList,
-      foldMapMathCols_id coverage acc rest]
+private theorem requestsCols_resolve_covers (scope : MathRequestScope)
+    (coverage : Math.MathAlphabetCoverage) (ctx : Option Span × Bool)
+    (out : Array MathRequest) :
+    ∀ cols : List (BoxWidth × Array Block), RequestsFree out →
+      RequestsFree (foldCtxBlockCols (mathRequestFold scope) ctx out
+        (cols.map fun c => (c.1, mapBlockList (resolveMathAlphaPicture coverage)
+          (resolveMathAlphaInline coverage) #[] c.2.toList)))
+  | [], h => h
+  | (_, body) :: rest, h => by
+    rw [List.map_cons, foldCtxBlockCols, mapBlockList_toList, List.nil_append]
+    exact requestsCols_resolve_covers scope coverage ctx _ rest
+      (requestsBlockList_resolve_covers scope coverage ctx out body.toList h)
 
 end
 
-/-- Resolution empties the alphabet census for every document and coverage,
-including listing captions, formatted references and running furniture. -/
+/-- **Alphabet resolution reaches every formula either census reads**
+(`_covers`): after `resolveMathAlphas`, every request of the painted census —
+the regions the face is loaded for and both backends set, picture labels
+included — and of the alphabet census asks for an alphabet-free formula, for
+every document, coverage and family. The painted census reads
+`Layout.docMathScalars`' regions (a corpus check, not a theorem, holds the
+two to one scalar set), so a region a backend paints and the resolver skips
+breaks this statement: picture labels once shipped their
+alphabets unresolved, which MathML framed as an error and the page set in the
+source glyphs. -/
+public theorem mathRequests_resolve_covers (scope : MathRequestScope)
+    (coverage : Math.MathAlphabetCoverage) (family : String) (doc : Doc) :
+    ∀ r ∈ mathRequests scope (resolveMathAlphas coverage family doc).1,
+      r.body.alphaFree = true := by
+  have body : RequestsFree (foldCtxBlocks (mathRequestFold scope) (none, true) #[]
+      (mapBlocksPic (resolveMathAlphaPicture coverage) (resolveMathAlphaInline coverage)
+        doc.body)) := by
+    simp only [foldCtxBlocks, mapBlocksPic, mapBlockList_toList, List.nil_append]
+    exact requestsBlockList_resolve_covers scope coverage (none, true) #[] doc.body.toList
+      (fun _ h => by simp at h)
+  have furniture : ∀ (regions : Array (Array Inline)) (out : Array MathRequest),
+      RequestsFree out →
+        RequestsFree ((regions.map (mapInlines (resolveMathAlphaInline coverage))).foldl
+          (fun acc xs => foldCtxInlines mathRequestInlines (none, true) acc xs) out) := by
+    intro regions out h
+    rw [← Array.foldl_toList, Array.toList_map]
+    exact requestsRegions_resolve_covers coverage (none, true) regions.toList out h
+  cases scope with
+  | alphabets =>
+    simp only [mathRequests, resolveMathAlphas, furnitureInlines_mapDoc]
+    exact furniture _ _ body
+  | face =>
+    simp only [mathRequests, resolveMathAlphas]
+    cases hh : doc.headline with
+    | none =>
+      have := furniture (furnitureInlines.optRegion doc.head ++
+        furnitureInlines.optRegion doc.foot ++ #[] ++
+        furnitureInlines.optRegion doc.logoLeft ++ furnitureInlines.optRegion doc.logoRight)
+        _ body
+      simp only [RequestsFree] at this
+      simpa [mapDoc, hh, optRegion_map, Array.map_append] using this
+    | some hl =>
+      have := furniture (furnitureInlines.optRegion doc.head ++
+        furnitureInlines.optRegion doc.foot ++ #[hl.title, hl.author, hl.institute] ++
+        furnitureInlines.optRegion doc.logoLeft ++ furnitureInlines.optRegion doc.logoRight)
+        _ body
+      simp only [RequestsFree] at this
+      simpa [mapDoc, hh, optRegion_map, Array.map_append] using this
+
+/-- Resolution empties the alphabet census for every document and coverage:
+the census reads the alphabet requests, and every one of them is
+alphabet-free after resolution (`mathRequests_resolve_covers`). -/
 public theorem missingMathAlphas_resolve_exact (coverage : Math.MathAlphabetCoverage)
     (family : String) (doc : Doc) :
     missingMathAlphas coverage (resolveMathAlphas coverage family doc).1 = #[] := by
-  change foldDoc (mathAlphaMissingStep coverage) #[]
-    (mapDoc (mapInlines (resolveMathAlphaInline coverage))
-      (mapBlocks (resolveMathAlphaInline coverage)) doc) (mathAlphaMissingBlock coverage) = #[]
-  unfold foldDoc
-  rw [furnitureInlines_mapDoc, Array.foldl_map]
-  simp only [foldInlines, foldMapMathInlines_id]
-  change (furnitureInlines doc).foldl (fun acc _ => acc)
-    (foldBlockList (mathAlphaMissingBlock coverage) (mathAlphaMissingStep coverage) #[]
-      (mapBlockList id (resolveMathAlphaInline coverage) #[] doc.body.toList).toList) = #[]
-  rw [mapBlockList_toList, List.nil_append,
-    foldMapMathBlockList_id coverage #[] doc.body.toList]
-  rw [← Array.foldl_toList]
-  have empty : ∀ xs : List (Array Inline),
-      xs.foldl (fun acc _ => acc) (#[] : Array Math.MathAlphabet) = #[] := by
-    intro xs
-    induction xs with
+  have spent : ∀ rs : List MathRequest, (∀ r ∈ rs, r.body.alphaFree = true) →
+      rs.foldl (noteRequestAlphas coverage) #[] = #[] := by
+    intro rs hrs
+    induction rs with
     | nil => rfl
-    | cons _ _ ih => exact ih
-  exact empty _
+    | cons r rest ih =>
+      simp only [List.foldl_cons, noteRequestAlphas,
+        Math.missingMathAlphas_alphaFree_exact coverage _ (hrs r (by simp)), Array.foldl_empty]
+      exact ih fun q hq => hrs q (by simp [hq])
+  rw [missingMathAlphas, missingAlphasOf, ← Array.foldl_toList]
+  exact spent _ fun r hr =>
+    mathRequests_resolve_covers .alphabets coverage family doc r (by simpa using hr)
 
 /-- Entry normalization can repeat without repeating N0018 diagnostics. -/
 public theorem resolveMathAlphas_diags_exact (coverage : Math.MathAlphabetCoverage)
@@ -16030,6 +16373,8 @@ Both backends read this one afforded body: `Layout`'s `.decorated`/`.colored`
 arms lower it to a PDF underline fill and coloured glyphs, HtmlDoc's to a
 `<u>` and an ink span. -/
 public def Styles.linkBodyAfford (s : Styles) (kind : String) (xs : Array Block) : Array Block :=
+  -- A picture's labels are the diagram's text, not the link's: they keep
+  -- their own ink and are never underlined.
   mapBlocks (s.linkLeafAfford kind) xs
 
 mutual
@@ -16694,14 +17039,7 @@ public theorem eraseLocationInlines_located_exact (span : Span)
     spliceLocations, spliceLocationOne, joinLocationBody_splice, List.reverse_nil, joinLocationBody]
 
 private def eraseLocationPicture (pic : Pic.Picture) : Pic.Picture :=
-  { pic with shapes := pic.shapes.map fun shape =>
-    match shape with
-    | .label x y content c scale align =>
-      .label x y (eraseLocationInlines content) c scale align
-    | .rect x y w h c => .rect x y w h c
-    | .circle x y r stroke fill => .circle x y r stroke fill
-    | .frame x y w h stroke fill => .frame x y w h stroke fill
-    | .edge segs stroke tip => .edge segs stroke tip }
+  pic.mapLabels eraseLocationInlines
 
 private def eraseListingSource (spec : ListingSpec) : ListingSpec :=
   { spec with source := none }
@@ -16786,6 +17124,18 @@ text census the body had. -/
 public theorem setAltBlocks_text (alt : String) :
     Conserves blocksText (setAltBlocks alt) :=
   mapBlocksPic_text _ _ (fun x => by cases x <;> rfl)
+
+/-- A caption as the alternative of what it captions (`setAltBlocks`): the
+words its first page shows (`firstPageText`), the reading a frame's name
+takes — an overlay alternation in the caption names the object once, never
+by both of its groups as the census would. -/
+public def captionAltBlocks (caption : Array Inline) (xs : Array Block) : Array Block :=
+  setAltBlocks (firstPageText caption) xs
+
+/-- Naming an object by its caption ships the census the body had. -/
+public theorem captionAltBlocks_text (caption : Array Inline) :
+    Conserves blocksText (captionAltBlocks caption) :=
+  setAltBlocks_text _
 
 /-- A declaration met between blocks: `\footnotesize`, `\bfseries`, or a
 bare palette name standing where a block could, with no argument. It
@@ -17567,6 +17917,8 @@ it replaced. -/
 private def resolveRefsIdx (loc : Locale)
     (idx : Std.HashMap String (String × Option RefBinding))
     (xs : Array Block) : Array Block :=
+  -- No label holds a reference: the label reader refuses `\ref` and drops
+  -- its key (`Picture.salCtrl`).
   mapBlocks (resolveRefLeaf loc (fun k => idx[k]?)) xs
 
 private def resolveRefInlinesIdx (loc : Locale)

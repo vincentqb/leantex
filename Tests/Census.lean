@@ -466,6 +466,19 @@ def censusTable :
     ("the title frame ships the title", pageHas c 0 "A Certified Deck"),
     ("the standout frame fills its background", (c[7]?.map (·.fills == 1)).getD false),
     ("the standout content ships", pageHas c 7 "Questions?")]),
+  ("tables-deck", fun _ c => [
+    ("the title page, then a page per step of the table frame: no continuation page",
+      c.size == 3 && pageHas c 0 "An Invented Table Deck"),
+    ("the table frame's first page ships its head, first and last row",
+      pageHas c 1 "Count" && pageHas c 1 "A placeholder row with a longer label" &&
+        pageHas c 1 "Last row"),
+    ("the text column's cells start at one left edge under the centred scope",
+      (lineXOf c 1 "Short label").isSome &&
+        lineXOf c 1 "Short label" == lineXOf c 1 "A placeholder row with a longer label"),
+    ("the count column's cells end at one right edge",
+      (lineRightOf c 1 "1,204").isSome && lineRightOf c 1 "1,204" == lineRightOf c 1 "2,274"),
+    ("the later columns ship covered on the first step and revealed on the second",
+      pageCovered c 1 "15.97" && pageHas c 2 "15.97" && pageAllRevealed c 2)]),
   ("deck1610", fun geom c => [
     ("one page, the frame", c.size == 1),
     -- The stage a class option declares is the stage the pages ship on:
@@ -701,6 +714,13 @@ def censusTable :
       hasStr (censusText c) "This sentence is set only on the printed page."),
     ("the unwrapped menu nav ships no body ink",
       !hasStr (censusText c) "Back to top")]),
+  ("nav-directory", fun _ c => [
+    ("one page", c.size == 1),
+    ("the title, its author line and the paragraph ship",
+      hasStr (censusText c) "An Invented Directory" && hasStr (censusText c) "Alex Doe" &&
+        hasStr (censusText c) "An invented page"),
+    ("the three-hundred-entry menu ships no body ink: it is the outline",
+      !hasStr (censusText c) "Entry")]),
   ("icons", fun _ c => [
     ("one page", c.size == 1),
     ("the contact words ship", hasStr (censusText c) "Email"),
@@ -747,6 +767,10 @@ def censusTable :
       (c[0]?.map (·.paths == 8)).getD false),
     ("the text node body ships", hasStr (censusText c) "out"),
     ("the curve's mid-path label ships", hasStr (censusText c) "lift"),
+    -- A label's alphabet resolves as a paragraph's: upright letters, never
+    -- the source italic an unresolved alphabet node set (𝑟𝑑).
+    ("the alphabet edge label ships upright",
+      hasStr (censusText c) "rd" && !hasStr (censusText c) "𝑟𝑑"),
     ("every node ships a glyph line",
       (c[0]?.map fun p => decide (p.lines.size ≥ 3)).getD false)]),
   -- **A style reaches its picture wherever it was declared.** `ball` comes
@@ -1100,7 +1124,13 @@ def censusOutlineTable :
       (o.filter (·.title != "Back to top")).all (·.page == some 0)),
     ("the #top target stands bare: no heading anchors it",
       (o.find? (·.title == "Back to top")).map
-        (fun e => e.page.isNone && e.url.isNone) == some true)])]
+        (fun e => e.page.isNone && e.url.isNone) == some true)]),
+  ("nav-directory", fun o => [
+    ("one entry per menu link, in order",
+      o.map (·.title) == (Array.range 300).map fun i => s!"Entry {i + 1}"),
+    ("every entry rides its own address, with no page",
+      o.zipIdx.all fun (e, i) =>
+        e.page.isNone && e.url == some s!"https://example.org/entries/{i + 1}")])]
 
 /-- The phrase a corpus file writes in its own header to declare itself out
 of the golden set: the convention PLAN records for a design sketch whose

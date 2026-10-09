@@ -8,6 +8,9 @@ import Tests.BoxRow
 import Tests.RecipeStructure
 import Tests.PdfDestination
 import Tests.TableContext
+import Tests.TableSide
+import Tests.FrameAnchors
+import LeanTex.Core.PdfAgreement
 import Tests.TableFlex
 import Tests.ColumnFlow
 import Tests.ColumnGeometry
@@ -59,6 +62,7 @@ import Tests.ThemeCss
 import Tests.MintedSettings
 import Tests.ListingHighlight
 import Tests.ListingProvider
+import Tests.ListingStyleTable
 import Tests.PublicationPaths
 import Tests.MarkdownInput
 import Tests.InputUse
@@ -88,6 +92,8 @@ import Tests.SlideLabels
 import Tests.PictureLabelSpacing
 import Tests.PictureHtmlBaseline
 import Tests.PictureMathLabels
+import Tests.HtmlA11y
+import Tests.FormulaFloor
 import Tests.PicturePathSyntax
 import Tests.PictureShrink
 import Tests.PictureBoundary
@@ -124,7 +130,7 @@ promoted.
 open LeanTex.Core
 open DiagAudit (Pin suiteText)
 open Tests (mintedSettingsChecks listingHighlightChecks listingPaletteContinuationChecks
-  shellReplyChecks listingProviderChecks publicationPathChecks
+  shellReplyChecks listingProviderChecks listingStyleTableChecks publicationPathChecks
   htmlContainedChecks htmlContainedRawContextChecks htmlContainedPublicationChecks htmlContainedSvgColorChecks
   htmlContainedCliChecks htmlContainedCorpusChecks
   listingPaletteAuditChecks listingRoleEpochChecks svgAssetChecks animatedGraphicsChecks
@@ -957,6 +963,66 @@ def reports : List Report := [
       "unsupported callback content remains diagnosed"]
     state := .guarded "45c57eb94d1db0b99054f0f50932e6d9cfde6fef" .before .author },
   { id := "R110", date := "2026-10-08"
+    what := "A proof hole in a highlighted listing shipped as a bold keyword instead of its highlighting style's error red, and every token type the style styles beyond a few coarse classes lost its colour and weight, in both artifacts"
+    pins := [check% listingStyleTableChecks, check% shellReplyChecks,
+      thm% Listing.paint_declared_mem, thm% Listing.paint_style_exact,
+      thm% Listing.token_inline_source_exact]
+    accept := ["a presentation deck's proof-hole slide against its lualatex build, in PDF and HTML: the hole sets in the style's red at regular weight and no other page changes",
+      "one hundred thirty-seven guard assertions fail with the fix reverted: the hole lexed as a keyword, weights composed as the resolved style rather than the lualatex chain, style colours beyond seven classes dropped, and the token-box diagnostic absent",
+      "eight assertions fail with the hole lexing alone reverted: the hole as a bold keyword in both styles and both artifacts",
+      "every standard token type of both shipped styles resolves and composes as the installed highlighter answers, from a table its generator regenerates"]
+    state := .guarded "9db3a0ec" .revert .author },
+  { id := "R111", date := "2026-10-08"
+    what := "A math alphabet in a picture label shipped unresolved: an error element framed in red on yellow in HTML, and the source italic on the page"
+    pins := [check% pictureAlphabetLabelChecks,
+      check% htmlMathChecks,
+      check% censusChecks,
+      check% labelSettleChecks,
+      check% mathDiagnosticOriginChecks,
+      thm% Compat.tikzsetKeys_input_exact,
+      thm% Ir.mathRequests_resolve_covers,
+      thm% MathMl.formula_merrorFree_contract,
+      thm% Layout.labelMetric_resolve_id,
+      thm% Layout.resolveMathAlphaPicture_box_id]
+    accept := ["in a run with the fix reverted — the alphabet pass skipping picture labels, the label measure reading source glyphs, and each label formula its own math root — fifty-four assertions fail, thirty-four of them this report's: label glyphs, error elements and page scalars against the same formula in a paragraph over nine invented alphabet labels, the corpus error census, the diagram fixture's upright label, the alphabet note a label's formula owes in both text families, and the driver taking a face that lacks a label's alphabet for one that measures it",
+      "on the same tree, five assertions fail with the label measure alone reverted: four drawn outlines on the shipped page, each up to half a point off a text node's inner sep around the glyphs the page sets, and the settle check",
+      "on the same tree, nine assertions fail with the driver probing the resolved document's labels and label formulas left unlocated: the settle check, and in both text families the face and alphabet notes of a label's formula naming no source",
+      "on 40c926f8, before a label's formula was sited where its opener was written, twenty-five assertions fail: twenty in both text families, a formula the picture walk read out of a macro's definition text naming a position that text invents in the picture's file; four, a formula a style sets naming the file that includes the style or the picture rather than the file that wrote the style; and one, a setting's unread key named at the including file's line of that number",
+      "a fresh build of a presentation deck ships no error element, and its alphabet edge label sets upright in both artifacts as the reference build does"]
+    state := .guarded "c95d78db" .revert .author },
+  { id := "R112", date := "2026-10-08"
+    what := "Formulas in picture labels nested a second MathML root inside the label's own"
+    pins := [check% htmlMathChecks,
+      check% pictureAlphabetLabelChecks,
+      check% Tests.formulaFloorChecks,
+      thm% HtmlDoc.pictureKids_unnested_contract,
+      thm% HtmlDoc.labelNodesList_mathFree_contract,
+      thm% MathMl.formula_unnested_contract]
+    accept := ["in the run that reverts R111's fix with this one, twenty of the fifty-four failing assertions are this report's: one root per label over nine invented labels, the corpus nesting census and ten structured label formulas",
+      "a fresh build of a presentation deck ships no math element inside another, where the base build shipped seven"]
+    state := .guarded "c95d78db" .revert .author },
+  { id := "R113", date := "2026-10-08"
+    what := "a slide's formal table ran past the foot of its browser stage while its printed page held it, and its text column took the centring of its scope in the browser where the column spec sets it flush left"
+    pins := [check% Tests.tableSideChecks, check% Tests.tableRaggedChecks,
+      check% Tests.tableLeadingChecks, check% Tests.tableLengthChecks,
+      check% Tests.tableStrutChecks, check% Tests.tableFaceOrderChecks, check% censusChecks,
+      thm% HtmlDoc.tableCellNode_align_projects, thm% Pdf.table_cell_side_agree,
+      thm% Pdf.table_length_agree, thm% HtmlDoc.printLeading_exact,
+      thm% Layout.strutBox_exact, thm% Layout.tableStrut_exact]
+    accept := ["the browser oracle's stage-fit row fails on the invented table deck, one stage 53 px past its foot, before table rows take the print leading, and passes after at the deck's own aspect with no stage a pixel past its foot",
+      "ninety-seven guard assertions fail with every fix this row pins reverted and the guards kept: cells stating no left side and taking their scope's, the scope's side reaching a cell's lines, modified columns justified flush left or moved off their letter's side, rows at the prose leading in the stylesheet and on their glyphs beside a rule on the page, booktabs measured in the body face and at a nominal 11pt, a preamble's ex resolved in the table's face, stylesheet lengths in points, and no warning for booktabs loaded after its face",
+      "twenty of them failed on the base before any fix, the guards as they then stood, four of them the page's own text column set flush right under a right-set scope",
+      "a table that fills one frame of a presentation deck fits its stage at 1280 by 720 with no scrollbar and room to spare, its text column flush left and its rule and column gaps lualatex's; on its printed pages each row stands as far from the rule beside it as lualatex sets it, to the raster's 0.12 pt"]
+    state := .guarded "e7ba68fd" .revert .author },
+  { id := "R114", date := "2026-10-08"
+    what := "a slide whose title changes colour by overlay step was anchored and named by both alternatives of its title, each word doubled in its fragment and its accessible name"
+    pins := [check% Tests.frameAnchorChecks, thm% Ir.slug_altSteps_exact]
+    accept := ["six anchor, name, caption-alternative and title-metadata assertions fail with the first-page reading reverted and the guards kept, and the anchor theorem no longer holds",
+      "four of them failed on the base before any fix, the guard as it then stood: alternation, colour, alert and cover steps among them",
+      "every titled stage of the corpus decks is anchored and named by the words its title shows, every id held by one element",
+      "a presentation deck's doubled anchors read once, a repeated title numbered rather than doubled"]
+    state := .guarded "e7ba68fd" .revert .author },
+  { id := "R115", date := "2026-10-08"
     what := "Inter-line spacing came out wider than the reference engine's: a paragraph in a named size stood on the body's leading, the larger sizes and code listings at six fifths of their type, and a slide's lines and gaps on screen at the screen's prose rhythm instead of the page's"
     pins := [check% Tests.LineRhythm.stepLeadingChecks, check% Tests.LineRhythm.htmlStepChecks,
       check% Tests.LineRhythm.htmlGapChecks, check% Tests.LineRhythm.listingPitchChecks,
@@ -975,7 +1041,7 @@ def reports : List Report := [
       "a heading, a document title and a frame title set in a named size, wrapped across lines: their lines in the size's own proportion to their type, none solid",
       "a venue style's own size ladder: each declared step's lines at the leading it declares, beside the reference engine's"]
     state := .guarded "fa516a828a2a36549fc2a56f1e1cb4d138b3b934" .before .author },
-  { id := "R111", date := "2026-10-08"
+  { id := "R116", date := "2026-10-08"
     what := "A slide of running prose read worse than the reference engine's: justified and hyphenated where the slide class sets its text ragged right"
     pins := [check% Tests.LineRhythm.raggedFrameChecks]
     accept := ["a ten-point deck's closing prose slide beside the reference engine's page in both artifacts: ragged right, unhyphenated, at its leading",

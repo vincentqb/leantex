@@ -10,9 +10,9 @@ never HTML, colours, font names, code to evaluate, or a document replacement.
 
 Pygments' token hierarchy and unprocessed-token interface are documented at
 https://pygments.org/docs/tokens/ and https://pygments.org/docs/api/#lexers.
-Projection follows whole dotted ancestors, most specific first. Our existing
-Default/Friendly painter chooses the colours; these are not arbitrary
-Pygments style definitions.
+A class name is carried as its token type (`Kind.ofPygments`); the shipped
+style tables paint it through its ancestors (`PygmentsStyle`), never through
+anything the provider sends besides the name.
 -/
 namespace LeanTex.Core.ListingReply
 
@@ -117,21 +117,6 @@ public theorem plainAnswer_source_exact (request : Request) :
     (plainAnswer request).tokens.map lineText = request.lines := by
   simp [plainAnswer, Array.map_map, Function.comp_def, lineText]
 
-/-- Unrecognized namespaces, error tokens and punctuation stay plain.
-`Name.Builtinish` is a Name, but never a Builtin; `Names` is not a Name. -/
-public def projectKind (tokenClass : String) : Kind :=
-  let parts := tokenClass.splitOn "."
-  let parts := if parts.head? == some "Token" then parts.drop 1 else parts
-  match parts with
-  | "Keyword" :: _ => .keyword
-  | "Comment" :: _ => .comment
-  | "Literal" :: "String" :: _ => .string
-  | "Literal" :: "Number" :: _ => .number
-  | "Name" :: "Builtin" :: _ => .builtin
-  | "Name" :: _ => .name
-  | "Operator" :: _ => .operator
-  | _ => .plain
-
 public structure Classified where
   offset : Nat
   tokenClass : String
@@ -150,7 +135,7 @@ private def splitTokens (tokens : Array Classified) : Array (Array Token) := Id.
       if !part.isEmpty then
         let last := lines.back!
         lines := lines.set! (lines.size - 1)
-          (last.push { kind := projectKind token.tokenClass, text := part })
+          (last.push { kind := Kind.ofPygments token.tokenClass, text := part })
   return lines
 
 /-- Offsets count Unicode characters, as Pygments does. Every token starts

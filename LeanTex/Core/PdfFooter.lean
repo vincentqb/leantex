@@ -71,14 +71,14 @@ private theorem findStartxref_last_exact (b : ByteArray) (pos : Nat)
   change (forIn (List.range' lo (b.size-lo)) none (scanStep b f) : Id (Option Nat)).run = _
   exact law
 
-private theorem nat_size (n : Nat) (hn : n < 256^4) :
-    (toString n).toUTF8.size ≤ 10 := by
+private theorem nat_size (n : Nat) (hn : n < 2^64) :
+    (toString n).toUTF8.size ≤ 20 := by
   rw [numeric_size _ (nat_numeric n), Nat.toString_eq_ofList_toDigits,
     String.toList_ofList]
-  exact (Nat.length_toDigits_le_iff (by decide : 1 < 10) (by decide : 0 < 10)).2
+  exact (Nat.length_toDigits_le_iff (by decide : 1 < 10) (by decide : 0 < 20)).2
     (by omega)
 
-private theorem findStartxref_footer_exact (pre : ByteArray) (n : Nat) (hn : n < 256^4) :
+private theorem findStartxref_footer_exact (pre : ByteArray) (n : Nat) (hn : n < 2^64) :
     findStartxref (pre ++ (s!"startxref\n{n}\n%%EOF\n").toUTF8) = some pre.size := by
   have hf : (s!"startxref\n{n}\n%%EOF\n").toUTF8 =
       "startxref\n".toUTF8 ++ (toString n).toUTF8 ++ "\n%%EOF\n".toUTF8 := by
@@ -121,7 +121,7 @@ private theorem findStartxref_footer_exact (pre : ByteArray) (n : Nat) (hn : n <
       String.toUTF8_eq_toByteArray]
     change pre.size+(10+(toString n).toByteArray.size+7) = _
     omega
-  have hlen : digits.length ≤ 10 := by simpa [digits] using nat_size n hn
+  have hlen : digits.length ≤ 20 := by simpa [digits] using nat_size n hn
   apply findStartxref_last_exact
   · rw [size]
     omega
@@ -227,10 +227,10 @@ private theorem footer_number (pre : ByteArray) (n : Nat) :
   rw [hskip]
   exact parse_nat hn (Or.inr (Or.inl (by rw [hend]; rfl)))
 
-/-- Every 32-bit writer offset is recovered from its exact decimal footer,
+/-- Every 64-bit writer offset is recovered from its exact decimal footer,
 regardless of the preceding bytes. The numeric bound implies the whole
 footer fits in the reader's search window; it is not a parser premise. -/
-public theorem readStartxref_footer_exact (pre : ByteArray) (n : Nat) (hn : n < 256^4) :
+public theorem readStartxref_footer_exact (pre : ByteArray) (n : Nat) (hn : n < 2^64) :
     readStartxref (pre ++ (s!"startxref\n{n}\n%%EOF\n").toUTF8) = .ok n := by
   simp only [readStartxref, findStartxref_footer_exact pre n hn, footer_number]
   rfl

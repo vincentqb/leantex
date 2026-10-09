@@ -49,8 +49,24 @@ def frontendPictureCompositionChecks (ref : IO.Ref (List String)) : IO Unit := d
   let settled ← pure (Elab.prepare "picture-contract.tex" unsettled)
   let result ← pure (Elab.runRaws "picture-contract.tex" unsettled)
   t "raw singleton setting census can be discarded by preparation"
-    (Compat.tikzsetKeys unsettled == #[(pos, keys)] && settled.picSets.isEmpty)
+    (Compat.tikzsetKeys "picture-contract.tex" unsettled ==
+        #[(⟨"picture-contract.tex", pos⟩, keys)] && settled.picSets.isEmpty)
   t "raw-census naming claim is false even with an engine picture"
     (Elab.enginePictures result.1.body > 0 &&
       !(Picture.unreadKeys [] (Picture.ofRaws keys)).isEmpty &&
       !(result.2.any (·.kind == .W0334)))
+  -- A setting line is named in the file that wrote it, at its own token:
+  -- never at the root's line of the same number, whose token there the
+  -- note would otherwise take as its trigger.
+  let keyFile := "synthetic/picture-keys.tex"
+  let keyRoot := (Parse.parse "picture-contract.tex" (Lex.lex "picture-contract.tex"
+    ("\\pictures{tool=none}\n\\begin{document}\n" ++
+      "\\begin{tikzpicture}\\draw (0,0) -- (1,0);\\end{tikzpicture}\n\\end{document}")).1).1
+  let keyChild := (Parse.parse keyFile (Lex.lex keyFile "% keys\n\\tikzset{sloped}").1).1
+  let keyed ← pure (Elab.runRaws "picture-contract.tex"
+    (#[.env (Parse.inputEnv keyFile) keyChild {}] ++ keyRoot))
+  let sloped := keyed.2.filter (·.subject == some "picture:set:'sloped'")
+  t "a setting line an included file wrote is named in that file, at its own token"
+    (!sloped.isEmpty && sloped.all fun d =>
+      d.span.any (fun s => s.file == keyFile && s.pos.line == 2 && s.pos.col == 1) &&
+        d.trigger == some "\\tikzset")

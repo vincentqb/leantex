@@ -677,7 +677,11 @@ def main : IO Unit := do
     let store ← corpusStore doc
     let geom := Layout.Geom.ofPage doc.page
     let out := layoutOf fs doc geom (some pats) store
-    let features := (Pdf.features geom fs out.pages store out.outline).toList.map Pdf.Feature.name
+    -- The structure tree the driver writes, so the census counts its
+    -- elements among the compressed objects (`objstm-multi`).
+    let tree := Struct.ofDoc (Layout.pdfView doc)
+    let features := (Pdf.features geom fs out.pages store out.outline tree).toList.map
+      Pdf.Feature.name
     -- The census against the built bytes: the same rows, or the run says
     -- where they part. One parting is expected: a boundary picture the
     -- driver had TeX render arrives as a copied page, where this harness

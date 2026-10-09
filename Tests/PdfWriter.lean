@@ -3,36 +3,54 @@ import LeanTex.Core.PdfFontContract
 
 open LeanTex.Core
 
-private def fieldFile (row : ByteArray) : ByteArray :=
+private def fieldFile (w : Pdf.Xref.Widths) (row : ByteArray) : ByteArray :=
   let head := "%PDF-2.0\n".toUTF8
-  let data := Pdf.Xref.row 0 0 65535 ++ row
+  let data := Pdf.Xref.row w 0 0 255 ++ row
   let out := Pdf.rowInto head 2
-    (.stream "/Type /XRef /Size 2 /W [1 4 2] /Index [0 2] /Root 1 0 R" data)
+    (.stream s!"/Type /XRef /Size 2 /W [1 {w.first} {w.second}] /Index [0 2] /Root 1 0 R" data)
   out ++ s!"startxref\n{head.size}\n%%EOF\n".toUTF8
 
-/-- The reader consumes the fields the PDF writer declares, including the
-last representable byte offset and object-stream index. The out-of-domain
-case witnesses why the universal field law requires a width bound. -/
+/-- The reader consumes the fields at the widths the PDF writer declares,
+including offsets past 4 GiB and stream indices past one byte once a
+width holds them. The out-of-domain case witnesses why the universal
+field law requires each value to fit its declared width. -/
 def pdfWriterChecks (ref : IO.Ref (List String)) (fs : Font.FontSet) : IO Unit := do
   let t := check ref
+  let w142 : Pdf.Xref.Widths := ⟨4, 2⟩
   t "PDF xref: persisted direct-row bytes"
-    (Pdf.Xref.row 1 16909060 0 == bytes [1, 1, 2, 3, 4, 0, 0])
+    (Pdf.Xref.row w142 1 16909060 0 == bytes [1, 1, 2, 3, 4, 0, 0])
   t "PDF xref: persisted compressed-row bytes"
-    (Pdf.Xref.row 2 16909060 1286 == bytes [2, 1, 2, 3, 4, 5, 6])
+    (Pdf.Xref.row w142 2 16909060 1286 == bytes [2, 1, 2, 3, 4, 5, 6])
+  t "PDF xref: a five-byte offset field spells past 4 GiB"
+    (Pdf.Xref.row ⟨5, 1⟩ 1 (256 ^ 4 + 2) 0 == bytes [1, 1, 0, 0, 0, 2, 0])
   let entries : Array Pdf.Xref.Entry :=
-    #[.free 0 65535, .direct 4294967295 0, .compressed 16909060 65535,
+    #[.free 0 255, .direct 4294967295 0, .compressed 16909060 99,
       .direct 256 0, .compressed 1 0]
-  let encoded := Pdf.Xref.encode entries
-  t "PDF xref: every payload row has seven bytes" (encoded.size == 7 * entries.size)
+  let w := Pdf.Xref.widthsOf entries
+  t "PDF xref: widths are the maxima's, a four-byte offset and a one-byte index"
+    (w == ⟨4, 1⟩)
+  t "PDF xref: one more byte of offset widens only the offset field"
+    (Pdf.Xref.widthsOf (entries.push (.direct (256 ^ 4) 0)) == ⟨5, 1⟩)
+  t "PDF xref: an index past 255 widens only the index field"
+    (Pdf.Xref.widthsOf (entries.push (.compressed 1 256)) == ⟨4, 2⟩)
+  t "PDF xref: a file of zeros still declares one byte per field"
+    (Pdf.Xref.widthsOf #[.free 0 0] == ⟨1, 1⟩)
+  let encoded := Pdf.Xref.encode w entries
+  t "PDF xref: every payload row has the declared width" (encoded.size == w.row * entries.size)
   for (e, i) in entries.zipIdx do
     t "PDF xref: fields at their actual row position"
-      (Binary.readNatBE 1 encoded (7 * i) == some e.fields.1.toNat &&
-        Binary.readNatBE 4 encoded (7 * i + 1) == some e.fields.2.1 &&
-        Binary.readNatBE 2 encoded (7 * i + 5) == some e.fields.2.2)
+      (Binary.readNatBE 1 encoded (w.row * i) == some e.fields.1.toNat &&
+        Binary.readNatBE w.first encoded (w.row * i + 1) == some e.fields.2.1 &&
+        Binary.readNatBE w.second encoded (w.row * i + 1 + w.first) == some e.fields.2.2)
+  t "PDF xref: the free-list head is the one-byte all-ones generation"
+    (Pdf.freeHead == .free 0 255)
   let table := Pdf.objTable #[] {} #[] 0 0 0
   let select := Pdf.xrefEntry table (fun _ => some 23) (fun _ => some 99) 177
   t "PDF xref: its own direct row takes priority over the compressed index"
-    (select table.xrefId == .direct 177 0 && select 1 == .compressed table.objStmId 23)
+    (select table.xrefId == .direct 177 0 && select 1 == .compressed (table.objStmId 0) 23)
+  t "PDF xref: one capacity past index 23 is index 23 of the second object stream"
+    (Pdf.xrefEntry table (fun _ => some (Pdf.objStmCapacity + 23)) (fun _ => none) 177 1 ==
+      .compressed (table.objStmId 1) 23)
   t "PDF xref: absent direct objects are free"
     (Pdf.xrefEntry table (fun _ => none) (fun _ => none) 177 1 == .free 0 0)
   t "PDF xref: allocation count includes the free-list head"
@@ -59,8 +77,9 @@ def pdfWriterChecks (ref : IO.Ref (List String)) (fs : Font.FontSet) : IO Unit :
         fun (actual, _) => actual == value)
   t "PDF object stream: omitting First changes the parsed object"
     ((PdfRead.parseVal packed.bytes 0).toOption.any fun (actual, _) => actual != .int 7)
-  for off in [0, 255, 256, 65535, 65536, 4294967295] do
-    match PdfRead.readXref (fieldFile (Pdf.Xref.row 1 off 0)) with
+  for off in [0, 255, 256, 65535, 65536, 4294967295, 4294967296, 256 ^ 6 - 1] do
+    let wf : Pdf.Xref.Widths := ⟨Pdf.Xref.width off, 2⟩
+    match PdfRead.readXref (fieldFile wf (Pdf.Xref.row wf 1 off 0)) with
     | .error _ => t "PDF xref: a representable direct row reads" false
     | .ok x =>
       t "PDF xref: declared trailer and count"
@@ -70,13 +89,13 @@ def pdfWriterChecks (ref : IO.Ref (List String)) (fs : Font.FontSet) : IO Unit :
         | some (.direct actual) => actual == off
         | _ => false)
     for idx in [0, 255, 256, 65535] do
-      match PdfRead.readXref (fieldFile (Pdf.Xref.row 2 off idx)) with
+      match PdfRead.readXref (fieldFile wf (Pdf.Xref.row wf 2 off idx)) with
       | .error _ => t "PDF xref: a representable compressed row reads" false
       | .ok x =>
         t "PDF xref: stream id and index read exactly" (match x.locs.get? 1 with
           | some (.inStm actual index) => actual == off && index == idx
           | _ => false)
-  match PdfRead.readXref (fieldFile (Pdf.Xref.row 2 1 65536)) with
+  match PdfRead.readXref (fieldFile ⟨4, 1⟩ (Pdf.Xref.row ⟨4, 1⟩ 2 1 256)) with
   | .error _ => t "PDF xref: index width bound is necessary" false
   | .ok x =>
     t "PDF xref: index width bound is necessary" (match x.locs.get? 1 with

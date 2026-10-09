@@ -90,33 +90,41 @@ example {b raw : ByteArray} {i p : Nat} (o : Obj) (h : o.Spelling raw)
   parseVal_spelling_span_exact o h hs he hw
 
 example : ByteArray → Except String Nat := readStartxref
-example : UInt8 → Nat → Nat → ByteArray := Xref.row
-example : Xref.Entry → ByteArray := Xref.Entry.bytes
-example : Array Xref.Entry → ByteArray := Xref.encode
+example : Xref.Widths → UInt8 → Nat → Nat → ByteArray := Xref.row
+example : Xref.Widths → Xref.Entry → ByteArray := Xref.Entry.bytes
+example : Xref.Widths → Array Xref.Entry → ByteArray := Xref.encode
+example : Array Xref.Entry → Xref.Widths := Xref.widthsOf
 
 example (offset gen : Nat) :
     (Xref.Entry.direct offset gen).fields = (1, offset, gen) := rfl
 
-example (e : Xref.Entry) :
-    e.Fits ↔ e.fields.2.1 < 256^4 ∧ e.fields.2.2 < 256^2 := Iff.rfl
+example (w : Xref.Widths) (e : Xref.Entry) :
+    e.Fits w ↔ e.fields.2.1 < 256^w.first ∧ e.fields.2.2 < 256^w.second := Iff.rfl
 
-example (kind : UInt8) (first second : Nat)
-    (hf : first < 256^4) (hs : second < 256^2) (pre post : ByteArray) :
-    LeanTex.Core.Binary.readNatBE 4 (pre ++ Xref.row kind first second ++ post)
+example (w : Xref.Widths) (kind : UInt8) (first second : Nat)
+    (hf : first < 256^w.first) (hs : second < 256^w.second) (pre post : ByteArray) :
+    LeanTex.Core.Binary.readNatBE w.first (pre ++ Xref.row w kind first second ++ post)
       (pre.size+1) = some first :=
-  (Xref.row_fields_exact kind first second hf hs pre post).2.1
+  (Xref.row_fields_exact w kind first second hf hs pre post).2.1
 
-example (pre : ByteArray) (offset : Nat) (h : offset < 256^4) :
+example (es : Array Xref.Entry) : ∀ e ∈ es, e.Fits (Xref.widthsOf es) :=
+  Xref.widthsOf_fits es
+
+example (n : Nat) : 1 ≤ Xref.width n ∧ (Xref.width n = 1 ∨ 256 ^ (Xref.width n - 1) ≤ n) ∧
+    n < 256 ^ Xref.width n :=
+  Xref.width_between n
+
+example (pre : ByteArray) (offset : Nat) (h : offset < 2^64) :
     readStartxref (pre ++ (s!"startxref\n{offset}\n%%EOF\n").toUTF8) = .ok offset :=
   readStartxref_footer_exact pre offset h
 
-example (count info : Nat) (idA idB : UInt64) (filtered : Bool) (len : Nat) :
-    (xrefStreamDict count info idA idB filtered len).Representable :=
-  xrefStreamDict_representable_exact count info idA idB filtered len
+example (count info : Nat) (w : Xref.Widths) (idA idB : UInt64) (filtered : Bool) (len : Nat) :
+    (xrefStreamDict count info w idA idB filtered len).Representable :=
+  xrefStreamDict_representable_exact count info w idA idB filtered len
 
-example (count info : Nat) (idA idB : UInt64) (filtered : Bool) (len : Nat) :
-    (xrefStreamDict count info idA idB filtered len).get? "Length" = some (.int len) :=
-  (xrefStreamDict_fields_exact count info idA idB filtered len).1
+example (count info : Nat) (w : Xref.Widths) (idA idB : UInt64) (filtered : Bool) (len : Nat) :
+    (xrefStreamDict count info w idA idB filtered len).get? "Length" = some (.int len) :=
+  (xrefStreamDict_fields_exact count info w idA idB filtered len).1
 
 example : Obj → Option LeanTex.Core.Dim.Sp := PdfRead.Obj.sp?
 example : Obj → ByteArray → Except String ByteArray := PdfRead.decodeStream
@@ -143,11 +151,11 @@ example (es : { es : Array PdfRead.Entry // PdfRead.entriesWf es }) :
 example (f : { f : PdfRead.Form // f.wf }) : f.val.wf = true :=
   PdfRead.resources_closed f
 
-example (es : Array Xref.Entry) (i : Nat) (e : Xref.Entry)
-    (hi : es[i]? = some e) (he : e.Fits) (pre post : ByteArray) :
-    PdfRead.readXrefRow (pre ++ Xref.encode es ++ post) (pre.size + 7*i) 1 4 2 =
-      PdfRead.xrefEntryLocation e :=
-  PdfRead.readXrefRow_encode_exact es i e hi he pre post
+example (w : Xref.Widths) (es : Array Xref.Entry) (i : Nat) (e : Xref.Entry)
+    (hi : es[i]? = some e) (he : e.Fits w) (pre post : ByteArray) :
+    PdfRead.readXrefRow (pre ++ Xref.encode w es ++ post) (pre.size + w.row * i) 1 w.first
+      w.second = PdfRead.xrefEntryLocation e :=
+  PdfRead.readXrefRow_encode_exact w es i e hi he pre post
 
 example (data : ByteArray) (w0 w1 w2 start count row0 : Nat) (x : PdfRead.Xref) :
     (PdfRead.readXrefSubsection data w0 w1 w2 start count row0 x).2 = row0 + count :=
@@ -217,14 +225,16 @@ public def checks : Array (String × Bool) := #[
     "malformed PDF: unreadable startxref offset"),
   ("footer keyword prefix refused", footerRefuses "startxrefs\n1\n%%EOF\n"
     "malformed PDF: no startxref"),
-  ("xref direct row spelling", (Xref.Entry.direct 258 3).bytes ==
+  ("xref direct row spelling", (Xref.Entry.direct 258 3).bytes ⟨4, 2⟩ ==
     ([1,0,0,1,2,0,3] : List UInt8).toByteArray),
-  ("xref compressed row spelling", (Xref.Entry.compressed 4 5).bytes ==
-    ([2,0,0,0,4,0,5] : List UInt8).toByteArray),
-  ("xref out-of-domain fields retain truncation", Xref.row 1 (256^4+2) (256^2+3) ==
+  ("xref compressed row spelling", (Xref.Entry.compressed 4 5).bytes ⟨3, 1⟩ ==
+    ([2,0,0,4,5] : List UInt8).toByteArray),
+  ("xref out-of-domain fields retain truncation", Xref.row ⟨4, 2⟩ 1 (256^4+2) (256^2+3) ==
     ([1,0,0,0,2,0,3] : List UInt8).toByteArray),
-  ("xref row array order", Xref.encode #[.free 0 65535, .direct 12 0] ==
-    ([0,0,0,0,0,255,255,1,0,0,0,12,0,0] : List UInt8).toByteArray),
+  ("xref row array order", Xref.encode ⟨2, 1⟩ #[.free 0 255, .direct 12 0] ==
+    ([0,0,0,255,1,0,12,0] : List UInt8).toByteArray),
+  ("xref widths from the largest fields", Xref.widthsOf #[.free 0 255, .direct 65536 0,
+    .compressed 9 99] == ⟨3, 1⟩),
   ("reader unfiltered stream retained", match PdfRead.decodeStream (.dict #[]) "raw".toUTF8 with
     | .ok actual => actual == "raw".toUTF8
     | .error _ => false),
@@ -238,13 +248,13 @@ public def checks : Array (String × Bool) := #[
   ("reader truncated object stream header refused", match PdfRead.readObjectStreamHeader "7".toUTF8 1 with
     | .error message => message == "malformed PDF: unreadable object stream header"
     | .ok _ => false),
-  ("reader encoded direct row", match PdfRead.readXrefRow (Xref.Entry.direct 258 3).bytes 0 1 4 2 with
+  ("reader encoded direct row", match PdfRead.readXrefRow ((Xref.Entry.direct 258 3).bytes ⟨4, 2⟩) 0 1 4 2 with
     | some (.direct off) => off == 258
     | _ => false),
-  ("reader encoded compressed row", match PdfRead.readXrefRow (Xref.Entry.compressed 4 5).bytes 0 1 4 2 with
+  ("reader encoded compressed row", match PdfRead.readXrefRow ((Xref.Entry.compressed 4 5).bytes ⟨3, 1⟩) 0 1 3 1 with
     | some (.inStm stm idx) => stm == 4 && idx == 5
     | _ => false),
-  ("reader free row has no location", (PdfRead.readXrefRow (Xref.Entry.free 0 65535).bytes 0 1 4 2).isNone),
+  ("reader free row has no location", (PdfRead.readXrefRow ((Xref.Entry.free 0 255).bytes ⟨4, 2⟩) 0 1 4 2).isNone),
   ("reader truncated row has no location", (PdfRead.readXrefRow ByteArray.empty 0 1 4 2).isNone),
   ("reader malformed header refused", match PdfRead.objects ByteArray.empty with
     | .error message => message == "not a PDF file (no %PDF header)"

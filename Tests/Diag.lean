@@ -1,6 +1,7 @@
 import LeanTex.Cli.FontDiscovery
 import Tests.Support
 import Tests.LayoutInkContracts
+import Tests.ListingStyleTable
 
 open LeanTex.Core LeanTex.Core.Utf8 LeanTex.Cli
 
@@ -511,8 +512,12 @@ def diagWitness (one mapped withMath : Font.FontSet)
   | .W0394 => Tests.LayoutInkContracts.boundaryWitness one .W0394
   | .E0395 => Tests.LayoutInkContracts.boundaryWitness one .E0395
   | .W0396 => Tests.LayoutInkContracts.boundaryWitness one .W0396
+  -- A provider's `Token.Error`, which the default style frames; the
+  -- emission path is `listingStyleTableChecks`'.
+  | .W0397 => (Tests.ListingStyleTable.boxedDoc .default 1).2.filter (·.kind == .W0397)
+  | .W0398 => dvE (dvDoc "\\setmainfont{Demo Serif}\n\\usepackage{booktabs}\n" "x")
   | .E0606 => #[DriverDiag.htmlResourceUnavailable "an image still names 'figures/plot.svg'"]
-  | .E0607 => #[DriverDiag.pdfWriteRefused (.objectIndex 65537),
+  | .E0607 => #[DriverDiag.pdfWriteRefused (.objectStreamSize 67108865),
       DriverDiag.pdfWriteRefused (.objectSpelling 4)]
   -- The boundary is open by default: no declaration, and the picture
   -- routes; the trust label names it.
