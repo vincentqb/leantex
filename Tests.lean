@@ -379,6 +379,7 @@ def layoutSuiteChecks (ref : IO.Ref (List String)) : IO Unit := do
   tableFlexChecks ref oneFace
   Tests.tableSideChecks ref oneFace
   Tests.tableLeadingChecks ref oneFace
+  Tests.tableLengthChecks ref oneFace
   tableFlexOverflowChecks ref oneFace
   columnFlowChecks ref oneFace
   columnGeometryChecks ref oneFace

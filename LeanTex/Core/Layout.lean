@@ -9790,6 +9790,10 @@ public structure Spacing.Context where
   private mk ::
   private geom : Geom
   private xHeight : Sp
+  /-- The font the class's preamble set, where a package's em and ex were
+  fixed as it loaded (`Ir.PreambleFace`): what a table's undeclared rule
+  weights and seps resolve in (`tableLength`). -/
+  private preamble : Ir.PreambleFace
   /-- Hyphenation patterns; a path that must never hyphenate (display
   type, verbatim) passes the sub-walk a reader with `none`. -/
   private pats : Option Hyphen.Patterns := none
@@ -10796,6 +10800,15 @@ same value as the cell's `text-align` (`HtmlDoc.cellAlignAttr`;
     Ir.HAlign :=
   (Ir.cellSpec cols spans i j).align
 
+/-- A table length as the page sets it: the declared token, resolved where
+the table stands, else the name's default as LaTeX fixed it when the package
+loaded — in the preamble's font (`Ir.PreambleFace.resolve`, `Ir.tableLengths`),
+never the table's own face or size. The stylesheet states the same default
+(`HtmlDoc.tableLengthFallback`; `Pdf.table_length_agree`). -/
+@[expose] public def tableLength (declared : Option Sp) (face : Ir.PreambleFace)
+    (name : String) : Sp :=
+  declared.getD (face.resolve (Ir.tableLengthDefault name))
+
 /-- Lay out a `.table`: booktabs' formal table. Columns take their declared
 fraction of the measure (or their widest cell), separated by `2·tabcolsep`
 (classes.dtx) with the outer pads under `@{}`'s control; each row places
@@ -10812,11 +10825,9 @@ private def collectTable (r : Rd) (a0 : Acc)
     return a0
   let mut a := a0.flushGap r
   let size := r.geom.fontSize
-  let tok (name : String) (dflt : Dim.Length) : Sp :=
-    match a.tokens.find? name with
-    | some g => (r.resolve g).width
-    | none => dflt.resolve size r.xHeight
-  let colsep := tok "tabcolsep" Ir.tabColSep
+  let tok (name : String) : Sp :=
+    tableLength ((a.tokens.find? name).map fun g => (r.resolve g).width) r.preamble name
+  let colsep := tok "tabcolsep"
   let total := (a.measure.getD r.geom.textWidth) - indent
   -- Natural widths, measured per cell (needed for `l`/`c`/`r` column
   -- widths and for right-aligned placement). The measuring pass drops its
@@ -10856,9 +10867,12 @@ private def collectTable (r : Rd) (a0 : Acc)
   let side : Ir.HAlign := if center then .center else if r.geom.flushRight then .right else .left
   let x0 : Sp := indent + side.boxOffset (max 0 (total - tableW))
   -- The scope's side places the table box and stops there: a cell sets by
-  -- its own spec (`cellSide`), from no side of the scope's, as a minipage's
-  -- content does (`\@arrayparboxrestore`, `\@parboxrestore`).
-  let rc := { r with geom := { r.geom with flushRight := false } }
+  -- its own spec (`cellSide`), from none of the scope's side, justification
+  -- or box centring — `\@arrayparboxrestore` (latex.ltx) zeroes `\leftskip`
+  -- and `\rightskip` in every `p` cell, so a `\raggedright` around the
+  -- table leaves a wrapped cell justified.
+  let rc := { r with centreBoxes := false
+                     geom := { r.geom with flushRight := false, justify := true } }
   -- The left edge of column j's cell box.
   let colX (j : Nat) : Sp := Id.run do
     let mut x := x0 + lead
@@ -10866,15 +10880,15 @@ private def collectTable (r : Rd) (a0 : Acc)
       x := x + widths[i]! + 2 * colsep
     return x
   let fg := a.fg
-  let heavy := tok "heavyrulewidth" Ir.heavyRuleWidth
-  let light := tok "lightrulewidth" Ir.lightRuleWidth
-  let cmidW := tok "cmidrulewidth" Ir.cmidRuleWidth
-  let aboveSep := tok "aboverulesep" Ir.aboveRuleSep
-  let belowSep := tok "belowrulesep" Ir.belowRuleSep
-  let aboveTop := tok "abovetopsep" Ir.aboveTopSep
-  let belowBottom := tok "belowbottomsep" Ir.belowBottomSep
-  let kern := tok "cmidrulekern" Ir.cmidRuleKern
-  let dbl := tok "doublerulesep" Ir.doubleRuleSep
+  let heavy := tok "heavyrulewidth"
+  let light := tok "lightrulewidth"
+  let cmidW := tok "cmidrulewidth"
+  let aboveSep := tok "aboverulesep"
+  let belowSep := tok "belowrulesep"
+  let aboveTop := tok "abovetopsep"
+  let belowBottom := tok "belowbottomsep"
+  let kern := tok "cmidrulekern"
+  let dbl := tok "doublerulesep"
   -- The extent of a `\cmidrule{a-b}`: the cells' span pads included, as
   -- LaTeX's `\multispan` draws it, each end kerned in when trimmed.
   let cmidSeg (ca cb : Nat) (tl tr : Bool) : Sp × Sp :=
@@ -19258,6 +19272,7 @@ private def withLayoutOps {α : Type} (geom : Geom) (fs : FontSet)
   let cover := design.cover
   let footGap := doc.page.furnitureGap.getD Ir.footline.sep
   let rd : Rd := { geom := geom, xHeight := xHeight, pats := pats, fs := fs
+                   preamble := doc.preambleFace
                    styles := doc.styles
                    captionPos := doc.captionPos
                    locale := doc.info.locale

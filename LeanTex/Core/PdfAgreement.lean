@@ -56,6 +56,18 @@ public theorem table_cell_side_agree (cols : Array Ir.ColSpec) (spans : Array Ir
     HtmlDoc.cellAlignAttr cols spans i j =
       ("style", "text-align: " ++ (Layout.cellSide cols spans i j).align) := rfl
 
+/-- **Both artifacts set an undeclared table by one length** (`_agree`): the
+stylesheet's fallback for each of a table's lengths (`Ir.tableLengths`) is
+the spelling (`HtmlDoc.tableLengthCss`: on a deck its share of the stage) of
+the very length the page sets the table by when the document declares none
+(`Layout.tableLength none`) — booktabs' default as LaTeX fixes it at load,
+in the document's preamble font (`Ir.Doc.preambleFace`), never the table's
+own face or size. -/
+public theorem table_length_agree (doc : Ir.Doc) (name : String) :
+    HtmlDoc.tableLengthFallback doc name =
+      HtmlDoc.tableLengthCss (HtmlDoc.docStage? doc)
+        (Dim.Length.ofSp (Layout.tableLength none doc.preambleFace name)) := rfl
+
 /-- **Both artifacts size a picture by one IR box** (`_agree`). The PDF
 reserves and places a picture by `Layout.pictureBox`, and the SVG's
 `viewBox` is `HtmlDoc.pictureBoxOf` (`HtmlDoc.pictureViewBox_projects`);

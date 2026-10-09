@@ -707,9 +707,13 @@ public theorem Tokens.declare_keeps_others (t : Tokens) (k k' : String) (g : Sym
 -- table layout, not a package: "what distinguishes these from plain LaTeX
 -- tables is the default use of additional space above and below rules, and
 -- rules of varying 'thickness'" (booktabs.dtx §Introduction) — the padding
--- is part of the rule, never left to the author. Em/ex-relative, resolved
--- at the table's own size like every token; each is overridable through
--- `\tokens{ <latex name> = ... }` under its LaTeX name.
+-- is part of the rule, never left to the author. Em/ex-relative as the
+-- package spells them, and resolved as it assigns them: once, in the
+-- preamble's font (`PreambleFace`), so a table at any size, in any face,
+-- keeps the lengths lualatex gives it (2.88597pt of `\belowrulesep` in a
+-- 10pt deck, 2.80147pt in a 10pt article). Each is overridable through
+-- `\tokens{ <latex name> = ... }` under its LaTeX name, which resolves where
+-- the table stands, as a `\setlength` in the body does.
 
 /-- `\toprule`/`\bottomrule` weight: booktabs `\heavyrulewidth` (.08em). -/
 public def heavyRuleWidth : Dim.Length := { em := 80 }
@@ -747,6 +751,22 @@ public def columnSep : Dim.Length := { sp := Dim.pt 10 }
 (classes.dtx §Array and tabular) — drawn, but warned: "never use double
 rules" (booktabs.dtx §The layout of formal tables). -/
 public def doubleRuleSep : Dim.Length := { sp := Dim.pt 2 }
+
+/-- The lengths a formal table reads, under their LaTeX names, each with the
+default it takes undeclared. One table both backends read — the layout's
+rows and rules (`Layout.tableLength`), the stylesheet's fallbacks
+(`HtmlDoc.tableLengthFallback`) — so the length a page sets its table by is
+the length the stage states. -/
+public def tableLengths : List (String × Dim.Length) :=
+  [("tabcolsep", tabColSep), ("doublerulesep", doubleRuleSep),
+   ("heavyrulewidth", heavyRuleWidth), ("lightrulewidth", lightRuleWidth),
+   ("cmidrulewidth", cmidRuleWidth), ("cmidrulekern", cmidRuleKern),
+   ("aboverulesep", aboveRuleSep), ("belowrulesep", belowRuleSep),
+   ("abovetopsep", aboveTopSep), ("belowbottomsep", belowBottomSep)]
+
+/-- A table length's default (`tableLengths`); zero for a name it lacks. -/
+public def tableLengthDefault (name : String) : Dim.Length :=
+  (tableLengths.lookup name).getD {}
 
 /-- The three rule weights are a hierarchy, not three loose numbers: "the
 top and bottom rules are heavier than the middle rule, which is in turn
@@ -7516,6 +7536,11 @@ public structure ClassRecord where
   file of the standard classes, or beamer's own list family for a deck
   and a poster (beamerposter loads beamer). -/
   lists : ListLineage := .sizeFile
+  /-- The preamble sets text in the sans family: beamer's `\familydefault`
+  is `\sfdefault`, so a package loaded with a deck or a poster measures its
+  lengths in Latin Modern Sans, where the standard classes' and moderncv's
+  preambles set Latin Modern Roman (`PreambleFace`). -/
+  preambleSans : Bool := false
   /-- Headings number by default; `\section*` opts out either way.
   `article` numbers (classes.dtx `\@startsection` with counters); a résumé
   is scanned, not cross-referenced, so `resume` does not (moderncv.cls
@@ -7647,6 +7672,7 @@ public def DocClass.record : DocClass → ClassRecord
       fontSize := some slidesFontSize
       parskip := some {}
       lists := .beamer
+      preambleSans := true
       chrome := true }
   | .card =>
     { model := .face
@@ -7681,6 +7707,7 @@ distance (Legge & Bigelow 2011); declare \\assert{ text.xheight >= ... } to take
     { model := .face
       fontSize := some posterFontSize
       lists := .beamer
+      preambleSans := true
       headline := true
       pagesBound := some .faces
       inkInArea := some "the margins are the print safe zone: ink past them risks \
@@ -7699,6 +7726,28 @@ calibration reads fluently; declare \
 /-- The class fixes the page model: a poster is a face — one fixed,
 printed, trimmed surface — by the record, definitionally. -/
 public theorem poster_model_face : (DocClass.poster).record.model = .face := by rfl
+
+/-- The font a package measures its lengths in as it loads: the preamble's
+current font, which is Latin Modern at the class size — its sans under
+beamer (`ClassRecord.preambleSans`), its roman under the standard classes
+and moderncv — whatever face the document goes on to declare. booktabs
+assigns its `\dimen`s once, there (`\heavyrulewidth=.08em …
+\belowrulesep=.65ex`, booktabs.dtx), so its em and ex are this face's and
+never a table's own. The x-heights are lualatex's `\fontdimen5` of
+lmsans10 (4.44pt at 10pt) and lmroman10 (4.31pt), per mille of the size. -/
+public structure PreambleFace where
+  size : Sp
+  xHeight : Sp
+  deriving Repr, BEq, Inhabited
+
+/-- A class's preamble font at the document's class size. -/
+public def PreambleFace.ofClass (rec : ClassRecord) (size : Sp) : PreambleFace :=
+  { size, xHeight := size * (if rec.preambleSans then 444 else 431) / 1000 }
+
+/-- A length as the preamble font fixes it: its em at the class size, its ex
+at Latin Modern's x-height there. -/
+public def PreambleFace.resolve (face : PreambleFace) (l : Dim.Length) : Sp :=
+  l.resolve face.size face.xHeight
 
 /-- The poster's headline band: title, authors, institute — the `\title`
 family read as class furniture, the way the gemini lineage's headline
@@ -7884,6 +7933,12 @@ public def Doc.frameCountAt (doc : Doc) (i : Nat) : Nat :=
 /-- The numbering's denominator where the document starts. -/
 public def Doc.frameCount (doc : Doc) : Nat :=
   doc.frameCountAt 0
+
+/-- The document's preamble font: its class's (`PreambleFace.ofClass`) at
+its class size. The one resolving site both backends read a table's
+undeclared lengths from (`Layout.tableLength`, `HtmlDoc.tableLengthFallback`). -/
+public def Doc.preambleFace (doc : Doc) : PreambleFace :=
+  PreambleFace.ofClass doc.docClass.record doc.page.fontSize
 
 /-- appendixnumberbeamer's numbering, exactly: split at the restart, the
 main part numbers `1, …, M` and the appendix `1, …, A`, each gapless — T3
@@ -9780,6 +9835,14 @@ public theorem slug_no_whitespace (title : Array Inline) :
   intro c hc
   simp only [slug, String.toList_ofList] at hc
   exact slugGo_no_whitespace _ _ _ (by simp) c hc
+
+/-- **An alternating title anchors by the group its first page shows**
+(`_exact`): a title that is one overlay alternation takes the anchor of its
+first-page group alone, never of both groups — read as the census, a
+`\textcolor<2>{c}{Word}` title anchored its frame `wordword`. -/
+public theorem slug_altSteps_exact (spec : OverlaySpec) (firstPage otherPage : Array Inline) :
+    slug #[.altSteps spec firstPage otherPage] = slug firstPage := by
+  simp [slug, firstPageText, firstPageTextList, firstPageTextOne]
 
 -- Navigation links: what a paged surface renders an unpinned nav as — the
 -- document outline. Structural recursion through `List`, as the walks above.
@@ -16826,6 +16889,18 @@ text census the body had. -/
 public theorem setAltBlocks_text (alt : String) :
     Conserves blocksText (setAltBlocks alt) :=
   mapBlocksPic_text _ _ (fun x => by cases x <;> rfl)
+
+/-- A caption as the alternative of what it captions (`setAltBlocks`): the
+words its first page shows (`firstPageText`), the reading a frame's name
+takes — an overlay alternation in the caption names the object once, never
+by both of its groups as the census would. -/
+public def captionAltBlocks (caption : Array Inline) (xs : Array Block) : Array Block :=
+  setAltBlocks (firstPageText caption) xs
+
+/-- Naming an object by its caption ships the census the body had. -/
+public theorem captionAltBlocks_text (caption : Array Inline) :
+    Conserves blocksText (captionAltBlocks caption) :=
+  setAltBlocks_text _
 
 /-- A declaration met between blocks: `\footnotesize`, `\bfseries`, or a
 bare palette name standing where a block could, with no argument. It

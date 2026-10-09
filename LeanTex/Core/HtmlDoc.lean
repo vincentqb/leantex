@@ -313,14 +313,15 @@ private def decMilli (n : Int) : String :=
   let frac := String.ofList (frac.toList.reverse.dropWhile (· == '0')).reverse
   s!"{sign}{a / 1000}" ++ (if frac.isEmpty then "" else "." ++ frac)
 
-/-- A length in CSS. `em`/`ex` survive as their CSS equivalents rather than
-being resolved, so the browser scales them with the reader's font size — the
-one place HTML should *not* copy what the PDF path does. Zero retains its
-length unit so it composes with other lengths in `calc()`:
+/-- A length in CSS, its absolute part spelled by `absolute`. `em`/`ex`
+survive as their CSS equivalents rather than being resolved, so the browser
+scales them with the reader's font size — the one place HTML should *not*
+copy what the PDF path does. Zero retains its length unit so it composes
+with other lengths in `calc()`:
 https://www.w3.org/TR/css-values-4/#calc-type-checking. -/
-public def cssLength (l : Length) : String :=
+public def cssLengthIn (absolute : Sp → String) (l : Length) : String :=
   let parts :=
-    (if l.sp != 0 then [s!"{l.sp.toPtString}pt"] else []) ++
+    (if l.sp != 0 then [absolute l.sp] else []) ++
     (if l.em != 0 then [s!"{decMilli l.em}em"] else []) ++
     -- CSS has an `ex` unit of its own; the browser measures the real font.
     (if l.ex != 0 then [s!"{decMilli l.ex}ex"] else [])
@@ -329,10 +330,60 @@ public def cssLength (l : Length) : String :=
   | [one] => one
   | many => "calc(" ++ String.intercalate " + " many ++ ")"
 
+/-- A length in CSS, its absolute part in points: paper is paper. -/
+public def cssLength (l : Length) : String :=
+  cssLengthIn (fun sp => s!"{sp.toPtString}pt") l
+
 /-- The zero source length keeps its dimension in the artifact spelling,
 including when a custom property substitutes it into a length sum. -/
 public theorem cssLength_zero_exact : cssLength ({} : Length) = "0pt" := by
-  simp [cssLength]
+  simp [cssLength, cssLengthIn]
+
+/-- A length's share of the deck stage, in milli-percent: the one
+projection every deck emission rides when it states a PDF stage length
+against the viewport — the type size over the stage height, an image
+dimension over the stage width or height. `Int` binders, not `Sp`, so
+`omega` can read the ratio statements below. -/
+public def deckStageMilli (x stage : Int) : Int :=
+  x * 100000 / stage
+
+/-- A length on a deck's stage: its absolute part as its share of the stage
+height (`deckStageMilli`, in `vh`, the unit the deck's type is set in, so the
+length keeps its proportion to the type at every viewport), its `em`/`ex`
+as `cssLength` states them. The stage is the page: 6pt of `\tabcolsep` is
+6pt of the PDF page's height in both artifacts, where `cssLength`'s paper
+points put it at less than half that share of a 1280 by 720 stage. -/
+public def stageLengthCss (stage : Sp) (l : Length) : String :=
+  cssLengthIn (fun sp => s!"{decMilli (deckStageMilli sp stage)}vh") l
+
+/-- A table length (`Ir.tableLengths`) as the stylesheet states it: on a deck
+(`stage`, the stage height) its share of the stage, elsewhere `cssLength`.
+A declared token and the default it stands in for take the one spelling, so
+a deck that declares a table length its default already holds ships the
+stylesheet it shipped without the declaration. -/
+public def tableLengthCss (stage : Option Sp) (l : Length) : String :=
+  match stage with
+  | some h => stageLengthCss h l
+  | none => cssLength l
+
+/-- A design token's value as a custom property: a table length through
+`tableLengthCss`, every other token as `cssLength` states it. -/
+public def tokenCss (stage : Option Sp) (name : String) (l : Length) : String :=
+  if (Ir.tableLengths.lookup name).isSome then tableLengthCss stage l else cssLength l
+
+/-- The stage a document's lengths project onto: a deck's page height, or
+none for a flow, a face or a poster, whose lengths keep their points. -/
+public def docStage? (doc : Doc) : Option Sp :=
+  if doc.docClass.record.model == .frame then some doc.page.height else none
+
+/-- A table length's fallback in the stylesheet: the default the page sets
+an undeclared table by — booktabs' lengths in the preamble's font, as LaTeX
+fixed them when the package loaded (`Ir.PreambleFace`) — through
+`tableLengthCss`. The page reads the same value (`Layout.tableLength`;
+`Pdf.table_length_agree`). -/
+@[expose] public def tableLengthFallback (doc : Doc) (name : String) : String :=
+  tableLengthCss (docStage? doc)
+    (Length.ofSp (doc.preambleFace.resolve (Ir.tableLengthDefault name)))
 
 /-- A sourced length in CSS: the custom property the value was declared
 under, with the resolved length as its fallback. This is the whole reason
@@ -2242,7 +2293,7 @@ name the declared families against the platform, today's degraded state. -/
 private def tokenVars (cfg : Config) (doc : Doc) : String :=
   let palette := paletteVars doc.palette
   let tokens := doc.tokens.entries.toList.map fun (n, g) =>
-    s!"    --{n}: {cssLength g.width};"
+    s!"    --{n}: {tokenCss (docStage? doc) n g.width};"
   let fonts := match cfg.fonts with
     | some fs =>
       -- The declared kind per slot: in the slides class the text slot is
@@ -3885,14 +3936,6 @@ public theorem deck_text_path_free (v pg : String) (cp ms : Nat) :
     (setRules_cases rfl rfl (fun _ => rfl) (fun _ => rfl) (fun _ => rfl)
       (fun _ => rfl)) (fun _ => rfl) (by decide)
 
-/-- A length's share of the deck stage, in milli-percent: the one
-projection every deck emission rides when it states a PDF stage length
-against the viewport — the type size over the stage height, an image
-dimension over the stage width or height. `Int` binders, not `Sp`, so
-`omega` can read the ratio statements below. -/
-public def deckStageMilli (x stage : Int) : Int :=
-  x * 100000 / stage
-
 /-- The projection is the ratio, exact up to the printed milli: the
 emitted value times the stage never exceeds the length (at the 100000
 scale) and falls short by less than one stage. The fact both ratio
@@ -4438,6 +4481,7 @@ public def baseCss (cfg : Config) (doc : Doc) : String :=
   let defaults := Design.ofPalette {}
   let parskip := parskipVar doc.page
   let dual := dualScheme cfg.imgs doc
+  let tl := tableLengthFallback doc
   ":root {\n" ++
   (if dual then "    color-scheme: light dark;\n" else "    color-scheme: light;\n") ++
   s!"    --measure: {measureEm doc.page};\n" ++
@@ -4619,10 +4663,12 @@ public def baseCss (cfg : Config) (doc : Doc) : String :=
   -- of the two mechanisms; the PDF path does the same from its own GSUB
   -- read, so the two backends agree on what \scshape means.
   ".sc { font-variant-caps: all-small-caps; }\n" ++
-  -- booktabs' formal table: the three rule weights and their paddings come
-  -- from the sourced constants in Ir (booktabs.dtx §The code), emitted
-  -- here so the two backends cannot drift; each is overridable through
-  -- its token (`--heavyrulewidth` etc. land in `tokenVars` when declared).
+  -- booktabs' formal table: the three rule weights, their paddings and the
+  -- column gap are the lengths the page sets an undeclared table by
+  -- (`tableLengthFallback`: booktabs' defaults as LaTeX fixes them at load,
+  -- a deck's as their share of the stage), so the two backends cannot
+  -- drift; each is overridable through its token (`--heavyrulewidth` etc.
+  -- land in `tokenVars` when declared, spelled as the fallback is).
   -- Borders take `currentColor`, as the PDF path draws rules in `fg`. A
   -- header cell is a `th` for meaning only (`Ir.tableHeaderRows`): every
   -- cell rule addresses both tags, and the UA's bold `th` is inherited
@@ -4632,24 +4678,24 @@ public def baseCss (cfg : Config) (doc : Doc) : String :=
   -- scope's `text-align` reaches one. The rows stand the print leading
   -- apart (`printLeadingMilli`), as the PDF's do.
   s!"table.booktabs \{ border-collapse: collapse; line-height: {decMilli (printLeadingMilli doc.page)}; }\n" ++
-  s!"table.booktabs td, table.booktabs th \{ padding: 0 var(--tabcolsep, {cssLength Ir.tabColSep});\n" ++
+  s!"table.booktabs td, table.booktabs th \{ padding: 0 var(--tabcolsep, {tl "tabcolsep"});\n" ++
   "  vertical-align: top; }\n" ++
   "table.booktabs th { font-weight: inherit; }\n" ++
   "table.booktabs.nopadl tr > td:first-child,\n" ++
   "table.booktabs.nopadl tr > th:first-child { padding-left: 0; }\n" ++
   "table.booktabs.nopadr tr > td:last-child,\n" ++
   "table.booktabs.nopadr tr > th:last-child { padding-right: 0; }\n" ++
-  s!"tr.bt-heavy-above > td, tr.bt-heavy-above > th \{ border-top: var(--heavyrulewidth, {cssLength Ir.heavyRuleWidth}) solid;\n" ++
-  s!"  padding-top: var(--belowrulesep, {cssLength Ir.belowRuleSep}); }\n" ++
-  s!"tr.bt-light-above > td, tr.bt-light-above > th \{ border-top: var(--lightrulewidth, {cssLength Ir.lightRuleWidth}) solid;\n" ++
-  s!"  padding-top: var(--belowrulesep, {cssLength Ir.belowRuleSep}); }\n" ++
-  s!"tr.bt-heavy-below > td, tr.bt-heavy-below > th \{ border-bottom: var(--heavyrulewidth, {cssLength Ir.heavyRuleWidth}) solid;\n" ++
-  s!"  padding-bottom: var(--aboverulesep, {cssLength Ir.aboveRuleSep}); }\n" ++
-  s!"tr.bt-light-below > td, tr.bt-light-below > th \{ border-bottom: var(--lightrulewidth, {cssLength Ir.lightRuleWidth}) solid;\n" ++
-  s!"  padding-bottom: var(--aboverulesep, {cssLength Ir.aboveRuleSep}); }\n" ++
-  s!"tr.bt-pre > td, tr.bt-pre > th \{ padding-bottom: var(--aboverulesep, {cssLength Ir.aboveRuleSep}); }\n" ++
-  s!"td.bt-cmid, th.bt-cmid \{ border-top: var(--cmidrulewidth, {cssLength Ir.cmidRuleWidth}) solid;\n" ++
-  s!"  padding-top: var(--belowrulesep, {cssLength Ir.belowRuleSep}); }\n" ++
+  s!"tr.bt-heavy-above > td, tr.bt-heavy-above > th \{ border-top: var(--heavyrulewidth, {tl "heavyrulewidth"}) solid;\n" ++
+  s!"  padding-top: var(--belowrulesep, {tl "belowrulesep"}); }\n" ++
+  s!"tr.bt-light-above > td, tr.bt-light-above > th \{ border-top: var(--lightrulewidth, {tl "lightrulewidth"}) solid;\n" ++
+  s!"  padding-top: var(--belowrulesep, {tl "belowrulesep"}); }\n" ++
+  s!"tr.bt-heavy-below > td, tr.bt-heavy-below > th \{ border-bottom: var(--heavyrulewidth, {tl "heavyrulewidth"}) solid;\n" ++
+  s!"  padding-bottom: var(--aboverulesep, {tl "aboverulesep"}); }\n" ++
+  s!"tr.bt-light-below > td, tr.bt-light-below > th \{ border-bottom: var(--lightrulewidth, {tl "lightrulewidth"}) solid;\n" ++
+  s!"  padding-bottom: var(--aboverulesep, {tl "aboverulesep"}); }\n" ++
+  s!"tr.bt-pre > td, tr.bt-pre > th \{ padding-bottom: var(--aboverulesep, {tl "aboverulesep"}); }\n" ++
+  s!"td.bt-cmid, th.bt-cmid \{ border-top: var(--cmidrulewidth, {tl "cmidrulewidth"}) solid;\n" ++
+  s!"  padding-top: var(--belowrulesep, {tl "belowrulesep"}); }\n" ++
   -- A natural `l`/`c`/`r` column is left to `auto`: the browser measures it,
   -- as the PDF path measures it from the fonts. CSS reality: `white-space`
   -- set on a `<col>` has no effect — only `width`, `background`, `border`
@@ -5762,9 +5808,9 @@ public def epochPaletteDiff (before after : Ir.Palette) : PaletteDiff :=
   { entries := changed ++ removed }
 
 /-- The redefinitions a body `\tokens` makes, same diff. -/
-public def epochTokenStyle (before after : Ir.Tokens) : String :=
+public def epochTokenStyle (stage : Option Sp) (before after : Ir.Tokens) : String :=
   String.intercalate "; " ((after.entries.filter fun (n, g) =>
-    before.find? n != some g).toList.map fun (n, g) => s!"--{n}: {cssLength g.width}")
+    before.find? n != some g).toList.map fun (n, g) => s!"--{n}: {tokenCss stage n g.width}")
 
 /-- Advance the palette tokens and the ordinary flow's default ink
 separately. A surrounding painted body keeps its surface; outside one,
@@ -5792,10 +5838,13 @@ public theorem Config.advancePalette_ink_projects (cfg : Config) (p : Ir.Palette
           bg := cfg.bodyGround.getD (Design.ofPalette p).bg }).fg := by
   rfl
 
-/-- Token declarations have the same sibling flow as palette declarations. -/
+/-- Token declarations have the same sibling flow as palette declarations;
+a table length among them is spelled as `tokenVars` spells it, on the stage
+`docStage?` names (`cfg.deck` and `cfg.page` are the document's by then). -/
 private def Config.advanceTokens (cfg : Config) (tk : Ir.Tokens) : Config :=
   { cfg with tokens := tk
-             epochStyle := joinStyles cfg.epochStyle (epochTokenStyle cfg.tokens tk) }
+             epochStyle := joinStyles cfg.epochStyle
+               (epochTokenStyle (if cfg.deck then some cfg.page.height else none) cfg.tokens tk) }
 
 /-- The outgoing declarations of ordinary containers continue in source
 order. Columns, notes and navigation are independent content scopes, as

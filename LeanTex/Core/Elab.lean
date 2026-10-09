@@ -11508,7 +11508,7 @@ text width; the box shares the leftover" spos
           slicePars_zero _
         let mut sInner ← elabBlockScope ctx sRest
         unless sCaption.isEmpty do
-          sInner := Ir.setAltBlocks (Ir.plainText sCaption) sInner
+          sInner := Ir.captionAltBlocks sCaption sInner
         figureGo ctx n kind body pos (j + 1) innerBlocks
           (cols.push ({ width with pos := subPos }, #[.float .sub none sCapAbove sInner sCaption]))
           #[] caption capAbove blocks
@@ -11548,7 +11548,7 @@ text width; the box shares the leftover" spos
     let rb ← elabBlockScope ctx rest
     let mut inner := innerBlocks ++ rb
     unless caption.isEmpty do
-      inner := Ir.setAltBlocks (Ir.plainText caption) inner
+      inner := Ir.captionAltBlocks caption inner
     return blocks.push (.float kind none capAbove inner caption)
 termination_by (ctx.envLimit, noteFlag ctx,
   visParsGo ctx.user ctx.limit + nestedParsList body.toList,
@@ -17032,14 +17032,15 @@ private def prepareStyledBody (file : String) (decls : Array PDecl)
     if trailing.any (!isSpaceOrPar ·) then
       diag ctx .W0001 "content after '\\end{document}' is ignored" none
     -- PDF metadata falls back to the title declarations: a deck that says
-    -- \title deserves an Info dictionary without saying it twice.
+    -- \title deserves an Info dictionary without saying it twice. A name,
+    -- so the words the title's first page shows (`Ir.firstPageText`).
     let st ← get
     let fallback (cur : Option String) (src : Option (Array Inline)) : Option String :=
       match cur with
       | some s => some s
       | none =>
         src.bind fun xs =>
-          let t := Ir.plainText xs
+          let t := Ir.firstPageText xs
           if t.isEmpty then none else some t
     info := { info with
       title := fallback info.title st.title

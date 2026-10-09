@@ -552,8 +552,10 @@ const printDeck = async (page, name, fx) => {
 
 // A frame its PDF page holds is held by its stage: at the deck's own aspect
 // (1280 CSS px wide, the height the PDF page's ratio gives), no stage's
-// content runs past its foot — the stage scrolls (`overflow-y: auto`), so a
-// spill is invisible until a reader scrolls a slide. The premise comes from
+// content runs past its foot, by as much as one pixel — the stage scrolls
+// (`overflow-y: auto`), so a spill hides the content below the foot until a
+// reader scrolls the slide, and a platform with classic scrollbars draws a
+// bar across the stage for a single pixel of it. The premise comes from
 // the PDF build of the same source, written beside the page as
 // `<fixture>.unfit`: the frames that continue on a further page (W0384,
 // named by frame number) and the frames that declare `[allowframebreaks]`;
@@ -585,7 +587,7 @@ const stageFit = async (page, fx) => {
       if (num && exempt.includes(num)) continue;
       n++;
       const spill = s.scrollHeight - s.clientHeight;
-      if (spill > 1) over.push(`${s.id || (track && track.id) || num} by ${spill}px`);
+      if (spill > 0) over.push(`${s.id || (track && track.id) || num} by ${spill}px`);
     }
     return { n, over };
   }, exempt);
