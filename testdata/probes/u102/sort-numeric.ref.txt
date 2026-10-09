@@ -1,0 +1,63 @@
+# options: style=numeric
+# What lualatex sets for sort.body.tex's citations and sort.bib's list under \usepackage[options]{biblatex}:
+# TeX Live 2026 (LuaHBTeX 1.24.0, biblatex 3.21, biber 2.22), a 120 cm page so no line breaks,
+# read back with pdftotext -layout 26.09.0, one citation line then one entry per line.
+C01 [27] end.
+C02 [8] end.
+C03 [21] end.
+C04 [22] end.
+C05 [1] end.
+C06 [28] end.
+C07 [6] end.
+C08 [7] end.
+C09 [29] end.
+C10 [13] end.
+C11 [10] end.
+C12 [9] end.
+C13 [11] end.
+C14 [12] end.
+C15 [19] end.
+C16 [18] end.
+C17 [17] end.
+C18 [14] end.
+C19 [15] end.
+C20 [2] end.
+C21 [16] end.
+C22 [20] end.
+C23 [] end.
+C24 [5] end.
+C25 [4] end.
+C26 [3] end.
+C27 [25] end.
+C28 [24] end.
+C29 [23] end.
+C30 [26] end.
+References
+[1] Ann Example. Sorted By Key. 2005.
+[2] Mo Ehm. Legacy Key. 2013.
+[3] Ola Arnason. Uppercase Family. 2017.
+[4] Ola arnason. Lowercase Family. 2017.
+[5] Ola Ärnason and Pia Ébert. Accented Names. 2017.
+[6] Cy Example. Zebra. 2007.
+[7] Cy Example. Middle. 2007.
+[8] Ed von Example. Prefix Book Two. 2002.
+[9] Fy Example. Volume Ten. Vol. 9. 2010.
+[10] Fy Example. Volume Ten. Vol. 10. 2010.
+[11] Gil Example. Year Sorted. 2011.
+[12] Gil Example. Year Sorted Two. 1950.
+[14] Kai Łask. Barred L. 2012.
+[15] Lu Lask. Plain L. 2012.
+[16] No Author Here. 2014.
+[17] Jo Ølsen. Slashed O. 2012.
+[18] Ivy Ölund. Umlaut O. 2012.
+[19] Hal Oz. Plain O. 2012.
+[20] Ned de Pome. Particle Without Prefix. 2015.
+[21] Zed Smith. Padding One. 2000.
+[22] Al Smith Jones. Padding Two. 2000.
+[23] Ru Vale. Volumes. Vol. 2. 2018.
+[24] Ru Vale. Volumes. Vol. IV. 2018.
+[25] Ru Vale. Volumes. Vol. 10. 2018.
+[26] Ru Vale. Volumes. Vol. xii. 2018.
+[27] Ed von Example. Prefix Book. 2001.
+[28] Bea Example. Sorted By Name. 2006.
+[29] Di Example. Presorted. 2008.

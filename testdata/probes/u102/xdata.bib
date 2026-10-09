@@ -1,0 +1,19 @@
+@xdata{dpress, publisher = {Example Press}, location = {Exampleville}, editor = {Una Editor and Vic Iota}}
+@xdata{dyear, xdata = {dpress}, date = {2011}, publisher = {Later Press}}
+@xdata{dnote, note = {A shared note}}
+@book{x01, author = {Ann Alpha}, title = {Nested Data}, xdata = {dyear}}
+@book{x02, author = {Bo Beta}, title = {Own Field Yields}, xdata = {dpress}, publisher = {Own Press}, date = {2014}}
+@book{x03, author = {Cy Gamma}, title = {Later Data Wins}, xdata = {dpress, dyear}, date = {2015}}
+@book{x04, author = {Di Delta}, title = {Missing Data}, xdata = {nosuch}, date = {2013}, publisher = {Sample House}}
+@book{xreal, author = {Ed Epsilon}, title = {A Real Book}, publisher = {Real Press}, date = {2001}}
+@book{x05, author = {Flo Zeta}, title = {Not Data}, xdata = {xreal}, date = {2016}}
+@book{x06, author = {Gus Eta}, title = {Granular Publisher}, publisher = {xdata=dpress-publisher}, date = {2012}}
+@book{x07, author = {Hal Theta and xdata=dpress-editor-2}, title = {Granular Name}, date = {2017}, publisher = {Own Press}}
+@book{x08, author = {xdata=dpress-editor}, title = {Granular Names All}, date = {2018}, publisher = {Own Press}}
+@book{x09, author = {Ivy Iota}, title = {Granular Missing Field}, note = {xdata=dpress-note}, date = {2019}, publisher = {Own Press}}
+@book{x10, author = {Jo Kappa}, title = {Granular Missing Entry}, note = {xdata=nobody-note}, date = {2020}, publisher = {Own Press}}
+@book{x11, author = {Kim Lambda}, title = {Granular Position Missing}, editor = {xdata=dpress-editor-5}, date = {2021}, publisher = {Own Press}}
+@book{x12, author = {Lee Mu}, title = {Granular Kind Mismatch}, note = {xdata=dpress-publisher}, date = {2022}, publisher = {Own Press}}
+@book{x13, author = {Max Nu}, title = {Granular Literal}, note = {xdata=dnote-note}, date = {2023}, publisher = {Own Press}}
+@book{x14, author = {Ola Omicron}, title = {Literal Marker}, note = {xdata=see the manual}, date = {2024}, publisher = {Own Press}}
+@book{x15, author = {Pat Pi}, title = {Self Data}, xdata = {x15}, date = {2025}, publisher = {Own Press}}

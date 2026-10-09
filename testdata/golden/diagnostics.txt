@@ -244,6 +244,13 @@
 ℹ [N0025]
   '\usepackage[latin1]{inputenc}': 'doc.tex' reads as Windows-1252 (Latin-1)
   suggestion: save 'doc.tex' as UTF-8 (`iconv -f WINDOWS-1252 -t UTF-8`), then delete the declaration
+── N0029 (info) a .bib field the bibliography style prints nowhere for its entry's type; the reference list is the style's own
+ℹ [N0029]
+  the bibliography style 'plain' prints no 'url' field in @misc entries; 1 entry keeps one (k)
+── N0030 (info) a character TeX reserves, in a .bib field, set as the character it is where LaTeX reads it as markup or a comment
+ℹ [N0030]
+  '&' in a .bib field sets as the character; LaTeX reads it as an alignment tab outside a table and stops there
+  suggestion: write it '\&' if the .bib must also build with LaTeX
 ── N0100 (info) LaTeX idiom translated to its native declaration
 ℹ [N0100] - \usepackage
   '\usepackage{geometry}' → \page{ margin = 1in }
@@ -594,11 +601,11 @@
   suggestion: the document declares no bibliography; \bibliography{file} names the .bib file
 ── W0352 (degraded) a malformed .bib entry is skipped; the rest of the file is kept
 ⚠ [W0352]
-  malformed .bib entry: in 'broken': unreadable value for 'year'; the entry is skipped and the rest of 'refs' is kept
+  malformed .bib entry: in 'broken': unreadable value for 'year'; the entry is skipped and the rest of 'refs.bib' is kept
 ── W0353 (degraded) an unknown bibliography style; the reference list is set as unsrtnat
 ⚠ [W0353]
   bibliography style 'mystery' is not one the engine knows; the reference list is set as 'unsrtnat'
-  suggestion: styles known: unsrtnat, unsrt, plainnat, plain, abbrvnat, abbrv
+  suggestion: styles known: unsrtnat, unsrt, plainnat, plain, abbrvnat, abbrv, alpha
 ── W0354 (config) a caption option the engine does not honour; named and ignored
 ⚠ [W0354] - \captionsetup
   '\captionsetup[table]' key 'labelfont' is not honoured; the caption keeps its declared layout
@@ -783,6 +790,60 @@
   the rendered subset draws this picture in part: '\shade' is outside the rendered picture subset; not drawn
   replaced by: the rendered subset's drawing
   suggestion: install lualatex to draw it whole, and a warm cache needs no tool; \pictures{ tool = none } draws every picture this way, asking no tool
+── W0420 (degraded) a .bib date or month biber does not read; it prints as written
+⚠ [W0420]
+  the date 'Spring 2020' of 'k' is not one biblatex reads; it prints as written
+  suggestion: write it as YYYY, YYYY-MM or YYYY-MM-DD, a range with '/': 'date = {2020-03}'
+── W0421 (degraded) a biblatex reference list worded in a language the engine has no bibliography strings for; English ones stand in
+⚠ [W0421]
+  biblatex words this reference list's strings and dates in 'ngerman'; the engine sets the English ones
+  suggestion: load biblatex with 'language=english' and 'autolang=hyphen' to word the list in English, as biblatex then does
+── W0422 (degraded) a biblatex @set entry; its members are listed each as an entry of its own
+⚠ [W0422]
+  biblatex sets the @set entry 's' as one entry of its members; the engine lists its 2 members each as an entry of its own
+── W0423 (degraded) a biblatex entry's related entries, which its style sets after it; the engine does not set them
+⚠ [W0423]
+  biblatex sets the entries 'r' that 'k' names as related after it; the engine does not set related entries
+── W0424 (degraded) a .bib file among the bibliography's is not there; the list holds the other files' entries
+⚠ [W0424]
+  '\bibliography' file 'references' is not there; the reference list holds the entries of the other files
+  suggestion: put the file at ./references.bib, or drop 'references' from the list of files
+── W0425 (degraded) a .bib entry's crossref or xdata reference biber does not resolve: no such entry, no @xdata entry, no such field, or a cycle; the entry is set without what it would inherit
+⚠ [W0425]
+  the crossref 'nowhere' that 'k' names is no entry of the bibliography; 'k' is set without the fields it would inherit
+  suggestion: add an entry with key 'nowhere' to the .bib file, or fix the spelling in 'crossref'
+⚠ [W0425]
+  the xdata 'd' that 'e' names closes a cycle ('k' → 'd' → 'e' → 'd'), where biber stops; the engine skips it
+  suggestion: remove the reference to 'd' from the xdata of 'e'
+⚠ [W0425]
+  the xdata 'r' that 'k' names is no @xdata entry, which biber refuses; 'k' is set without its fields
+  suggestion: make 'r' an @xdata entry, or name the data 'k' needs in 'xdata'
+⚠ [W0425]
+  the note of 'k' takes the note of 'd', which 'd' does not hold; 'k' is set without it
+  suggestion: add 'note' to 'd', or write the note of 'k' out
+⚠ [W0425]
+  the editor of 'k' takes the publisher of 'd', a field of another kind, which biber refuses; 'k' is set without it
+  suggestion: take a field of the kind 'editor' is, or write the editor of 'k' out
+⚠ [W0425]
+  the origlocation of 'k' takes item 3 of the location of 'd', which has no item 3; 'k' is set without it
+  suggestion: name an item 'd' holds, or write the origlocation of 'k' out
+⚠ [W0425]
+  the addendum of 'k' is 'xdata=d', an xdata reference naming no field to take; 'k' is set without it
+  suggestion: write it 'xdata=<key>-<field>', or write the addendum of 'k' out
+── W0426 (degraded) a .bib value names an @string no file defines before it; the name prints in its place
+⚠ [W0426]
+  the string 'undefinedjt' that 'k' uses is defined by no @string read before it; its name prints in its place
+  suggestion: define it before its first use: '@string{undefinedjt = "..."}', in the .bib file named first
+── W0427 (degraded) a biblatex list sorted by a locale whose collation of its script the engine does not carry; the default collation sorts it
+⚠ [W0427]
+  biber sorts this reference list by the 'ja' collation, which the engine does not carry; it is sorted by the default one
+  suggestion: load biblatex with 'sortlocale=en_US' to sort the list by the default collation
+── W0428 (degraded) a biblatex \supercite sets as \cite, in brackets on the line; the style's superscript is not carried
+⚠ [W0428] - \supercite
+  '\supercite' sets its citation as '\cite' does, in brackets on the line, where the style sets it as a superscript
+── W0429 (degraded) a .bib field the document's elaborator refuses where an entry stands; the field sets as its text
+⚠ [W0429] - \section{S}
+  the 'note' field of 'k' holds markup this engine sets only between paragraphs; it sets as its text, run into the entry
 ── W0435 (degraded) a \qedhere whose QED this engine cannot set where amsthm sets it; the QED stands on a line of its own after the display
 ⚠ [W0435] - \qedhere
   '\qedhere' in '{align*}' does not set its QED where amsthm sets it; the QED stands on a line of its own after the display

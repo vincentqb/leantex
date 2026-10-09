@@ -1,0 +1,23 @@
+# options: style=numeric
+# What lualatex sets for ltitle.body.tex's citations and ltitle.bib's list under \usepackage[options]{biblatex}:
+# TeX Live 2026 (LuaHBTeX 1.24.0, biblatex 3.21, biber 2.22), a 60 cm page so no line breaks,
+# read back with pdftotext -layout 26.09.0, one citation line then one entry per line.
+A [7] Manual: The foo Package [7] end.
+B [9] [9] end.
+C [8] Café [8] end.
+D [3] “An Anonymous Article” [3] end.
+E [2] Website [2] end.
+F [4] end.
+G [6] Labelled Entry [6] end.
+H [1] The Main Work [1] end.
+I [5] “An Unsigned Thesis” [5] end.
+References
+[1] The Main Work. Vol. 2. P, 2022.
+[2] A Website Without Author. 2019. url: https://example.org.
+[3] “An Anonymous Article”. In: Journal (2018).
+[4] An Anonymous Book. P, 2020.
+[5] “An Unsigned Thesis”. PhD thesis. Example University, 2023.
+[6] Labelled Entry. 2021.
+[7] Manual: The foo Package. The Example Group. 2015.
+[8] The Café Problem. 2017.
+[9] Über Alles and α-Rays. 2016.

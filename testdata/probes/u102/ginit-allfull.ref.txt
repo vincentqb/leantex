@@ -1,0 +1,14 @@
+# options: style=authoryear,firstinits=true,uniquename=allfull
+# What lualatex sets for ginit.body.tex's citations and ginit.bib's list under \usepackage[options]{biblatex}:
+# TeX Live 2026 (LuaHBTeX 1.24.0, biblatex 3.21, biber 2.22), a 60cm page so no line breaks,
+# read back with pdftotext -layout 26.09.0, one citation line then one entry per line.
+C01 (Alpha and Beta 2021) end.
+C02 (Alpha 2020) end.
+C03 Gamma and Delta (2019) end.
+C04 Gamma (2018) end.
+References
+Alpha, A. and B. Beta (2021). First Book.
+Alpha, A. (2020). Second Book.
+Gamma, C. (2018). Fourth Book.
+Gamma, C. and D. Delta (2019). Third Book.
+

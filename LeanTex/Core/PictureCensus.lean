@@ -52,6 +52,12 @@ private theorem rowsPictureCount_id (n : Nat) (xs : List (Array (Array Inline)))
   | nil => rfl
   | cons _ _ ih => simpa only [foldTableRows, cellsPictureCount_id] using ih
 
+private theorem bibPictureCount_id (n : Nat) (xs : List BibItem) :
+    foldBibItems (fun n _ => n) n xs = n := by
+  induction xs with
+  | nil => rfl
+  | cons _ _ ih => simpa only [foldBibItems, inlineListPictureCount_id] using ih
+
 private theorem algPictureCount_id (n : Nat) (xs : List AlgLine) :
     foldAlgLines (fun n _ => n) n xs = n := by
   induction xs with
@@ -120,7 +126,9 @@ private theorem mapBlock_pictureCount (gp : Pic.Picture → Pic.Picture)
     simp only [mapBlock, foldBlock, pictureCountStep, rowsPictureCount_id]
   | .algorithm _ _ _ =>
     simp only [mapBlock, foldBlock, pictureCountStep, algPictureCount_id]
-  | .verbatim _ _ _ | .bibliography _ _ _ | .setPalette _ | .setTokens _
+  | .bibliography _ _ _ =>
+    simp only [mapBlock, foldBlock, pictureCountStep, bibPictureCount_id]
+  | .verbatim _ _ _ | .setPalette _ | .setTokens _
   | .pagebreak | .rule _ _ _ | .picture _ => rfl
 
 private theorem mapList_pictureCount (gp : Pic.Picture → Pic.Picture)

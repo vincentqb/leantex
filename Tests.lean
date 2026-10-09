@@ -238,6 +238,7 @@ import Tests.RegressionCorpus
 import Tests.Reports
 import Tests.Premises
 import Tests.Natbib
+import Tests.BibModel
 import Tests.LinkColor
 import Tests.Privacy
 
@@ -744,6 +745,7 @@ def layoutSuiteChecks (ref : IO.Ref (List String)) : IO Unit := do
   natbibSortChecks ref oneFace
   biblatexChecks ref oneFace
   natbibCiteStyleChecks ref oneFace
+  bibModelChecks ref oneFace
   hspaceAffineChecks ref oneFace
   inlineRuleChecks ref oneFace
   fontSizeAffineChecks ref oneFace
@@ -872,6 +874,8 @@ def main (args : List String) : IO UInt32 := do
   diagnosticAggregationOriginChecks ref
   diagnosticPipelineOriginChecks ref
   pictureShipChecks ref
+  bibFieldShipChecks ref
+  bibFuzzShipChecks ref
   sourceAnnotationChecks ref
   buildGraphChecks ref
   inputOriginsChecks ref

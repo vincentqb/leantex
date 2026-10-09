@@ -1,0 +1,55 @@
+# options: style=authoryear,maxnames=2
+# What lualatex sets for uniq.body.tex's citations and uniq.bib's list under \usepackage[options]{biblatex}:
+# TeX Live 2026 (LuaHBTeX 1.24.0, biblatex 3.21, biber 2.22), a 60 cm page so no line breaks,
+# read back with pdftotext -layout 26.09.0, one citation line then one entry per line.
+C01 Kim Speaker (2018) (Kim Speaker 2018) end.
+C02 L. Speaker (2018) (L. Speaker 2018) end.
+C03 Kim Speaker and Alpha (2019) (Kim Speaker and Alpha 2019) end.
+C04 Kai Speaker (2017) Kai Speaker end.
+C05 Beta (2016a) and Beta (2016b) (Beta 2016a; Beta 2016b) end.
+C06 Kim Speaker, Alpha, et al. (2015) (Kim Speaker, Alpha, et al. 2015) end.
+C07 J.-P. Hyphen (2014) J.-L. Hyphen (2014) end.
+C08 Y. v. d. Prefix (2013) Z. Prefix (2013) end.
+C09 Z. Smith J. (2012) A. Smith (2012) end.
+C10 Doe, Roe, et al. (2020) Doe, Moe, et al. (2020) Doe, Roe, et al. (2021) end.
+C11 Max Editor (2012) Mia Editor (2012) end.
+C12 One, Two, et al. (2011) One, Five, et al. (2011) end.
+C13 Solo (2011) R. Solo (2011) end.
+C14 K. Other et al. (2010) K. Other, N. Other, et al. (2010) end.
+C15 Tru (2021) Tru et al. (2020) end.
+C16 LON (2019) (LON 2019) end.
+C17 EL (2017) (EL 2017) end.
+C18 Hand (SH) (SH) SH end.
+C19 Anonymous Work (2009a) (Anonymous Work 2009b) end.
+References
+Anonymous Work (2009a).
+Anonymous Work (2009b).
+Beta, Bo (2016a). “Five”. In: J.
+— (2016b). “Six”. In: J.
+Doe, Ada, Eli Moe, et al. (2020). “U2”. In: J.
+Doe, Ada, Bea Roe, et al. (2020). “U1”. In: J.
+— (2021). “U3”. In: J.
+Editor, Max, ed. (2012). E1.
+Editor, Mia (2012). “E2”. In: J.
+Hand, Pat (2018). “SH1”. In: J.
+Hyphen, Jean-Luc (2014). “H2”. In: J.
+Hyphen, Jean-Paul (2014). “H1”. In: J.
+Lead, Eve, ed. (2017). SE1.
+Long Organization Name (2019). “SA1”. In: J.
+One, Eda, Ian Five, et al., eds. (2011). C2.
+One, Eda, Fay Two, et al., eds. (2011). C1.
+Other, Kim et al. (2010). “O1”. In: J.
+Other, Kim, Ned Other, et al. (2010). “O2”. In: J.
+Prefix, Yan van der (2013). “P1”. In: J.
+Prefix, Zed (2013). “P2”. In: J.
+Smith, Ann (2012). “J2”. In: J.
+Smith Jr., Zed (2012). “J1”. In: J.
+Solo (2011). “F1”. In: J.
+Solo, Ray (2011). “F2”. In: J.
+Speaker, Kai (2017). “Four”. In: J.
+Speaker, Kim (2018). “One”. In: J.
+Speaker, Kim and Ann Alpha (2019). “Three”. In: J.
+Speaker, Kim, Ann Alpha, et al. (2015). “Seven”. In: J.
+Speaker, Lee (2018). “Two”. In: J.
+Tru, Ann (2021). “T1”. In: J.
+Tru, Ann et al. (2020). “T2”. In: J.

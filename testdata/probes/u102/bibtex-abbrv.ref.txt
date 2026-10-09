@@ -1,0 +1,15 @@
+# The reference list lualatex sets for bibtex.bib under \bibliographystyle{abbrv}, one entry per line:
+# TeX Live 2026 (LuaHBTeX 1.24.0, bibtex 0.99e, natbib 8.31b), a 60 cm page so no entry breaks,
+# read back with pdftotext -layout 26.09.0. Cited: \nocite of the keys in bibtex.keys.
+[1] R. Casey. Measured Nothing. PhD thesis, Example University, 2015.
+[2] J. Doe et al. A web page about URLs. https://example.org/a_b?x=1&y=2, 2024. Accessed 2024-01-02.
+[3] E. Editor, editor. Proceedings of the Placeholder Workshop. Workshop Press, 2018.
+[4] A. Fox. A report on samples. Technical Report 42, Example Labs, 2014.
+[5] G. Gamma. A note with Emphasis. Online, 2017.
+[6] J. Müller. An earlier result. Journal of Invented Results, 2:11–19, 2019.
+[7] J. Müller and Example Consortium. Results with BERT and α-values. Journal of Invented Results, 3(2):1–9, Mar. 2020.
+[8] J.-P. Placeholder. The Collected Volume, chapter 3, pages 10–20. Example Press, Sampletown, 2001.
+[9] K. Speaker. First invented talk. In Editor [3], pages 1–4.
+[10] L. Speaker. Second invented talk. In Editor [3], pages 5–8.
+[11] L. van der Sample and J. Smith, Jr. The Placeholder Handbook. Example Press, Exampleville, second edition, 2019.
+

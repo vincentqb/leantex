@@ -1,0 +1,23 @@
+# options: style=authoryear
+# What lualatex sets for ltitle.body.tex's citations and ltitle.bib's list under \usepackage[options]{biblatex}:
+# TeX Live 2026 (LuaHBTeX 1.24.0, biblatex 3.21, biber 2.22), a 60 cm page so no line breaks,
+# read back with pdftotext -layout 26.09.0, one citation line then one entry per line.
+A Manual: The foo Package 2015 Manual: The foo Package (2015) end.
+B Über Alles and α-Rays 2016 (Über Alles and α-Rays 2016) end.
+C Café 2017 Café (2017) end.
+D “An Anonymous Article” 2018 “An Anonymous Article” (2018) end.
+E Website 2019 Website (2019) end.
+F (An Anonymous Book 2020) end.
+G Lbl 2021 Lbl (2021) end.
+H The Main Work 2022 The Main Work (2022) end.
+I “An Unsigned Thesis” 2023 “An Unsigned Thesis” (2023) end.
+References
+(2022). The Main Work. Vol. 2. P.
+Website (2019). A Website Without Author. url: https://example.org.
+“An Anonymous Article” (2018). In: Journal.
+An Anonymous Book (2020). P.
+“An Unsigned Thesis” (2023). PhD thesis. Example University.
+Lbl (2021). Labelled Entry.
+Manual: The foo Package (2015). The Example Group.
+Café (2017). The Café Problem.
+Über Alles and α-Rays (2016).

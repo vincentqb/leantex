@@ -1,0 +1,30 @@
+# options: style=numeric
+# What lualatex sets for cmdcite.body.tex's citations and cmdcite.bib's list under \usepackage[options]{biblatex}:
+# TeX Live 2026 (LuaHBTeX 1.24.0, biblatex 3.21, biber 2.22), a 60cm page so no line breaks,
+# read back with pdftotext -layout 26.09.0, one citation line then one entry per line.
+C01 Delta [3] end.
+C02 [3] end.
+C03 [3] end.
+C04 [3] end.
+C05 [1] end.
+C06 [1, 2] end.
+C07 [1, 2] end.
+C08 [see 1, p. 5, 2, p. 7] end.
+C09 Alpha [1] and Beta and Gamma [2] end.
+C10 Delta [3] and Alpha [1] end.
+C11 First Book end.
+C12 “Second Paper” end.
+C13 Fourth end.
+C14 Fourth Book end.
+C15 https://example.org/a1 end.
+C16 June 15, 2021 end.
+C17 Ann Alpha. First Book. Pub, 2020. url: https://example.org/a1 end.
+C18 Alpha [1] end.
+C20 2020 end.
+C26 [1, 2] end.
+C27 [3, 1] end.
+References
+[1] Ann Alpha. First Book. Pub, 2020. url: https://example.org/a1.
+[2] Bo Beta and Cy Gamma. “Second Paper”. In: Journal (June 15, 2021).
+[3] Di van der Delta. Fourth Book. Pub, 2023.
+

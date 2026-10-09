@@ -114,6 +114,56 @@ def bibOf (n : Nat) : String := Id.run do
       year = \{{yr}}}\n"
   return out
 
+/-- An invented `.bib` of `n` entries written as a real one is: accented
+names (`M{\"u}ller`), case-protected words, a formula and a dash ligature
+in the titles, page ranges, DOIs, a journal of a handful, and a third
+sharing their authors and year — every field text the document's own
+elaborator reads rather than the plain fast path. -/
+def bibRichOf (n : Nat) : String := Id.run do
+  let mut out := ""
+  for i in [0:n] do
+    let au := if i % 3 == 0 then "M{\\\"u}ller, Ada and {\\'E}tienne Placeholder"
+      else s!"Casey Invented{i} and de la Sample{i}, Drew"
+    let yr := if i % 3 == 0 then 2019 else 1990 + i % 30
+    out := out ++ s!"@article\{r{i}, author = \{{au}}, title = \{The \{DNA} of $\\alpha$-values \
+      --- part {i}}, journal = \{Journal of Invented Results {i % 7}}, year = \{{yr}},\n\
+      volume = \{{i % 40}}, pages = \{{i}--{i + 9}}, doi = \{10.0000/example.{i}}}\n"
+  return out
+
+/-- An invented `.bib` of `n` entries whose every field the document's own
+elaborator reads, through the commands a real `.bib` writes most: an
+`\emph` and a formula in each title, an accented letter, a `\url`, a
+`\textit` and an escaped `\&` in the notes, a braced capital in a journal,
+over four entry types. -/
+def bibHeavyOf (n : Nat) : String := Id.run do
+  let given := #["Ann", "Bo", "Cy", "Di", "Ed", "Flo", "Gil", "Ray"]
+  let family := #["Alpha", "Beta", "Gamma", "Delta", "Iota", "Sigma", "Theta", "Xi"]
+  let mut out := ""
+  for i in [0:n] do
+    let au := s!"{given[i % 8]!} {family[(i / 8) % 8]!} and {given[(i + 3) % 8]!} {family[(i + 5) % 8]!}"
+    let head := s!"author = \{{au}}, title = \{On \\emph\{Placeholder} Number {i} and \{\\'E}tudes \
+      with $x^\{{i}}$}, year = \{{1990 + i % 30}}"
+    let note := "note = {See also \\textit{notes} \\& more}"
+    out := out ++ match i % 4 with
+      | 0 => s!"@misc\{h{i}, {head}, howpublished = \{\\url\{https://example.org/item{i}}}, {note}}\n"
+      | 1 => s!"@book\{h{i}, {head}, publisher = \{Example Press}, address = \{Exampleville}, {note}}\n"
+      | 2 => s!"@inproceedings\{h{i}, {head}, booktitle = \{Proceedings of the Invented Workshop}, \
+          pages = \{{i}--{i + 5}}, {note}}\n"
+      | _ => s!"@article\{h{i}, {head}, journal = \{Journal of Invented \{R}esults}, \
+          volume = \{{i % 40}}, number = \{{i % 12}}, pages = \{{i}--{i + 10}}, {note}}\n"
+  return out
+
+/-- An invented `.bib` of `n` entries each citing the next in its `note`:
+the list a body citation of the first completes entry by entry, as the
+rerun cycle of LaTeX and BibTeX would. -/
+def bibChainOf (n : Nat) : String := Id.run do
+  let mut out := ""
+  for i in [0:n] do
+    let next := if i + 1 < n then s!" Continued in \\cite\{c{i + 1}}." else ""
+    out := out ++ s!"@misc\{c{i}, author = \{Ann Invented{i}}, title = \{Part {i}},\n\
+      year = \{{2000 + i % 20}}, note = \{Note {i}.{next}}}\n"
+  return out
+
 /-- The milliseconds `-v` reports for its `bib` phase: reading the `.bib`,
 ordering and lettering the list, formatting every entry, resolving every
 citation. -/
@@ -127,14 +177,15 @@ def bibPhaseMs (log : String) : Option Nat := phaseMs "bib" log
 /-- The reference-list phase over `entries` invented entries, every one
 listed (`\nocite{*}` under plainnat, which sorts and letters them): the
 median of `n` runs' `bib` phase. -/
-def benchBib (n : Nat) (entries : Nat) : IO Nat := do
+def benchBib (n : Nat) (entries : Nat) (label : String := "plainnat")
+    (bib : Nat → String := bibOf)
+    (doc : String := "\\documentclass{article}\n\\usepackage{natbib}\n\\bibliographystyle{plainnat}\n\
+      \\begin{document}\nAlpha words \\citep{k0}.\n\\nocite{*}\n\\bibliography{refs}\n\
+      \\end{document}\n") : IO Nat := do
   let leantex ← compiler
   let dir ← IO.FS.createTempDir
-  IO.FS.writeFile (dir / "refs.bib") (bibOf entries)
-  IO.FS.writeFile (dir / "scale.tex")
-    "\\documentclass{article}\n\\usepackage{natbib}\n\\bibliographystyle{plainnat}\n\
-    \\begin{document}\nAlpha words \\citep{k0}.\n\\nocite{*}\n\\bibliography{refs}\n\
-    \\end{document}\n"
+  IO.FS.writeFile (dir / "refs.bib") (bib entries)
+  IO.FS.writeFile (dir / "scale.tex") doc
   let mut times : Array Nat := #[]
   let src := (dir / "scale.tex").toString
   let pdf := (dir / "scale.pdf").toString
@@ -146,7 +197,7 @@ def benchBib (n : Nat) (entries : Nat) : IO Nat := do
     | none => die "no bib phase in the -v report"
   IO.FS.removeDirAll dir
   let ms := median times
-  IO.println s!"{padRight s!"leantex  bib phase, {entries} entries" 42} {padLeft (toString ms) 6} ms (median of {n})"
+  IO.println s!"{padRight s!"leantex  bib phase, {label}, {entries} entries" 42} {padLeft (toString ms) 6} ms (median of {n})"
   return ms
 
 /-- An invented document of about `mib` MiB, its words ASCII or accented and
@@ -953,6 +1004,46 @@ def listingGrowth (n : Nat) : IO Unit := do
     growthBound s!"{lang} {what}, 8000 / 2000" smallElab bigElab
     growthBound s!"layout, {lang} {what}, 8000 / 2000" smallLayout bigLayout
 
+/-- The reference list's growth rows, which `--bib-only` runs alone. -/
+def benchBibGrowth (n : Nat) : IO Unit := do
+  -- The reference list's growth: a thesis-sized .bib under \nocite{*} is
+  -- thousands of entries, and a phase quadratic in them (75 s at 1600)
+  -- passed every row above. Four times the entries may cost at most eight
+  -- times the phase: linear is 4, n log n about 4.6, quadratic 16.
+  -- The same bound over the field text a real `.bib` writes, which the
+  -- document's own elaborator reads, under BibTeX's plainnat and both of
+  -- biblatex's standard families.
+  let biblatexDoc (style : String) (key : String := "r0") : String :=
+    s!"\\documentclass\{article}\n\\usepackage[style={style}]\{biblatex}\n\
+      \\addbibresource\{refs.bib}\n\\begin\{document}\nAlpha words \\parencite\{{key}}.\n\
+      \\nocite\{*}\n\\printbibliography\n\\end\{document}\n"
+  let richNat := "\\documentclass{article}\n\\usepackage{natbib}\n\\bibliographystyle{plainnat}\n\
+    \\begin{document}\nAlpha words \\citep{r0}.\n\\nocite{*}\n\\bibliography{refs}\n\
+    \\end{document}\n"
+  let heavyNat := "\\documentclass{article}\n\\usepackage{natbib}\n\\bibliographystyle{plainnat}\n\
+    \\begin{document}\nAlpha words \\citep{h0}.\n\\nocite{*}\n\\bibliography{refs}\n\
+    \\end{document}\n"
+  let chainNat := "\\documentclass{article}\n\\usepackage{natbib}\n\\bibliographystyle{plainnat}\n\
+    \\begin{document}\nAlpha words \\citep{c0}.\n\\bibliography{refs}\n\\end{document}\n"
+  -- A field citation chain is the list completing itself entry by entry, a
+  -- round per link; it runs last, at a quarter of the sizes, as a list
+  -- that grows with the square of its chain fails its bound there too.
+  let rows : List (String × (Nat → String) × String × Nat) :=
+    [("plainnat", bibOf, "", 400), ("plainnat, TeX fields", bibRichOf, richNat, 400),
+     ("plainnat, TeX-heavy fields", bibHeavyOf, heavyNat, 400),
+     ("biblatex numeric", bibRichOf, biblatexDoc "numeric", 400),
+     ("biblatex authoryear", bibRichOf, biblatexDoc "authoryear", 400),
+     ("biblatex authoryear, TeX-heavy fields", bibHeavyOf, biblatexDoc "authoryear" "h0", 400),
+     ("plainnat, field citation chain", bibChainOf, chainNat, 100)]
+  for (label, bib, doc, size) in rows do
+    let small ← if doc.isEmpty then benchBib n size label bib else benchBib n size label bib doc
+    let big ← if doc.isEmpty then benchBib n (4 * size) label bib
+      else benchBib n (4 * size) label bib doc
+    let ratio := (big * 10 + max small 1 / 2) / max small 1
+    IO.println s!"{padRight s!"leantex  bib growth, {label}, {4 * size} / {size}" 42} {padLeft s!"{ratio / 10}.{ratio % 10}" 6} ×  (bound 8.0)"
+    if big > 8 * max small 1 then
+      die s!"the reference-list phase ({label}) grew {ratio / 10}.{ratio % 10}× for 4× the entries (bound 8)"
+
 def main (args : List String) : IO UInt32 := do
   if args.head? == some "--doc-cost" then return ← docCost args.tail
   if args == ["--slides-selftest"] then
@@ -961,6 +1052,9 @@ def main (args : List String) : IO UInt32 := do
   let leantex ← compiler
   let n := ((← IO.getEnv "N").bind (·.toNat?)).getD 5
   if n == 0 then die "N must be positive"
+  if args == ["--bib-only"] then
+    benchBibGrowth n
+    return 0
   if args == ["--slides-only"] then
     Slides.run n
     return 0
@@ -1028,14 +1122,5 @@ def main (args : List String) : IO UInt32 := do
   benchDecode n
   benchListings n 8
   listingGrowth n
-  -- The reference list's growth: a thesis-sized .bib under \nocite{*} is
-  -- thousands of entries, and a phase quadratic in them (75 s at 1600)
-  -- passed every row above. Four times the entries may cost at most eight
-  -- times the phase: linear is 4, n log n about 4.6, quadratic 16.
-  let small ← benchBib n 400
-  let big ← benchBib n 1600
-  let ratio := (big * 10 + max small 1 / 2) / max small 1
-  IO.println s!"{padRight "leantex  bib growth, 1600 / 400 entries" 42} {padLeft s!"{ratio / 10}.{ratio % 10}" 6} ×  (bound 8.0)"
-  if big > 8 * max small 1 then
-    die s!"the reference-list phase grew {ratio / 10}.{ratio % 10}× for 4× the entries (bound 8)"
+  benchBibGrowth n
   return 0

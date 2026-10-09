@@ -1,0 +1,17 @@
+# options: style=authoryear,giveninits=true
+# What lualatex sets for xname.body.tex's citations and xname.bib's list under \usepackage[options]{biblatex}:
+# TeX Live 2026 (LuaHBTeX 1.24.0, biblatex 3.21, biber 2.22), a 60 cm page so no line breaks,
+# read back with pdftotext -layout 26.09.0, one citation line then one entry per line.
+X1 van Doe (2003) (van Doe 2003) end.
+X2 Roe and Poe (2004) end.
+X3 Example Org (2006) end.
+X4 Zed (2007) end.
+X5 Doe (2008) end.
+X6 Alpha and Beta (2009) end.
+References
+Alpha, A. and B. Beta (2009). “Mixed”. In: J.
+Doe, J. van (2008). “Extended Five”. In: J.
+Example Org (2006). “Extended Org”. In: J.
+Roe, K. and L. Poe (2004). “Extended Two”. In: J.
+Van Doe, J. (2003). “Extended”. In: J.
+Zed Jr., A. (2007). “Extended Four”. In: J.

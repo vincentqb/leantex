@@ -1,0 +1,8 @@
+# options: style=numeric,clearlang=false
+# What lualatex sets for lang.body.tex's citations and lang.bib's list under \usepackage[options]{biblatex}:
+# TeX Live 2026 (LuaHBTeX 1.24.0, biblatex 3.21, biber 2.22), a 60cm page so no line breaks,
+# read back with pdftotext -layout 26.09.0, one citation line then one entry per line.
+References
+[1] Ann Alpha. Plain Words. English. Pub, 2001.
+[2] Bo Beta. Other Words. German. Pub, 2002.
+

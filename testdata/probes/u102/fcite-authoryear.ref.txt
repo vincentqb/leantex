@@ -1,0 +1,12 @@
+# options: style=authoryear
+# What lualatex sets for fcite.body.tex's citations and fcite.bib's list under \usepackage[options]{biblatex}:
+# TeX Live 2026 (LuaHBTeX 1.24.0, biblatex 3.21, biber 2.22), latex and biber rerun until the .bbl holds, a 60cm page so no line breaks,
+# read back with pdftotext -layout 26.09.0, one citation line then one entry per line.
+C01 Alpha 2020 end.
+C02 Delta 2023 end.
+References
+Alpha, Ann (2020). First. Reprinted as Beta 2021.
+Beta, Bo (2021). Second. See also Gamma 2022.
+Delta, Di (2023). Fourth.
+Gamma, Cy (2022). Third.
+

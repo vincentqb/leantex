@@ -32,6 +32,31 @@ eight times the phase (linear is 4, quadratic 16). Before the phase was made
 linear it measured 4,470 ms and 75,195 ms (16.8×); after, 24 ms and 97 ms
 (4.0×), with every other row unchanged.
 
+## Reference-list fields and field citations — 2026-10-10
+
+Rows over field text the document's own elaborator reads — TeX fields
+(accented names, a formula and a dash in each title) and TeX-heavy fields
+(an `\emph`, a formula, an accent, a `\url`, a `\textit` and an `\&` in every
+entry) — and a chain of field citations, each entry's `note` citing the
+next, at 100 and 400 links. Median of 5 per row, two interleaved rounds,
+before and after the field reading's context was built once per document,
+the compatibility pass skipped for fields it leaves as they stand, the
+database prepared once for every round, the chain followed entry by entry,
+and a collation tailoring decoded only for the locale that sorts by it:
+
+| row | 400 entries | 1600 entries |
+|---|---|---|
+| plainnat, TeX fields | 146, 143 → 53, 55 ms | 556, 569 → 212, 216 ms |
+| plainnat, TeX-heavy fields | 144, 147 → 52, 53 ms | 579, 603 → 205, 209 ms |
+| biblatex numeric | 173, 182 → 75, 78 ms | 680, 725 → 297, 292 ms |
+| biblatex authoryear | 171, 195 → 74, 74 ms | 670, 758 → 299, 298 ms |
+| biblatex authoryear, TeX-heavy fields | 163, 175 → 70, 67 ms | 635, 654 → 268, 262 ms |
+
+The chain took 924 and 934 ms at 100 links and 14,521 and 14,854 ms at 400
+(15.7×, past the bound); after, 20 and 21 ms and 84 and 82 ms (4.2×). The
+artifacts are byte-identical before and after, on the corpus and on the
+rows' own documents.
+
 ## Document cost
 
 `lake env lean --run scripts/bench.lean --doc-cost` reports what the invented

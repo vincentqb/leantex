@@ -1,0 +1,6 @@
+# The reference list lualatex sets for labeltex.bib under \bibliographystyle{alpha}, one entry per line:
+# TeX Live 2026 (LuaHBTeX 1.24.0, bibtex 0.99e), a 60 cm page so no entry breaks,
+# read back with pdftotext -layout 26.09.0. Cited: \nocite{lt1,lt3,lt4}.
+[Chri05] Ana Christie. Digraph Names. P, 2005.
+[Thor02] Cy Thorn. Relaxed Family. P, 2002.
+[Zedov03] Keyed note, 2003.

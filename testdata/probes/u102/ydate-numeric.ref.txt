@@ -1,0 +1,63 @@
+# options: style=numeric
+# What lualatex sets for ydate.body.tex's citations and ydate.bib's list under \usepackage[options]{biblatex}:
+# TeX Live 2026 (LuaHBTeX 1.24.0, biblatex 3.21, biber 2.22), a 120 cm page so no line breaks,
+# read back with pdftotext -layout 26.09.0, one citation line then one entry per line.
+C01 [2] end.
+C02 [3] end.
+C03 [8] end.
+C04 [5] end.
+C05 [6] end.
+C06 [29] end.
+C07 [7] end.
+C08 [23] end.
+C09 [24] end.
+C10 [22] end.
+C11 [10] end.
+C12 [9] end.
+C13 [11] end.
+C14 [13] end.
+C15 [14] end.
+C16 [12] end.
+C17 [15] end.
+C18 [28] end.
+C19 [16] end.
+C20 [18] end.
+C21 [20] end.
+C22 [21] end.
+C23 [1] end.
+C24 [27] end.
+C25 [17] end.
+C26 [4] end.
+C27 [19] end.
+C28 [25] end.
+C29 [26] end.
+References
+[1] Ann Alpha. “Forthcoming Again”. In: Example Letters (forthcoming).
+[2] Ann Alpha. “Forthcoming Year”. In: Example Letters (forthcoming).
+[3] Bo Beta. “In Press Year”. In: Example Letters (in press).
+[4] Val Chi. “Uncertain”. In: Example Letters (2004).
+[5] Di Delta. “Lettered Year”. In: Example Letters (2020a).
+[6] Ed Epsilon. Visited Only. url: https://example.org/v (visited on 07/08/2022).
+[7] Gil Eta. Original Date Only.
+[8] Cy Gamma. “Circa Year”. In: Example Letters (c. 1850).
+[9] Ivy Iota. “Century”. In: Example Letters (1900–1999).
+[10] Ivy Iota. “Decade”. In: Example Letters (1990–1999).
+[11] Ivy Iota. “Month Unknown”. In: Example Letters (Jan.–Dec. 1999).
+[12] Jo Kappa. “Open End”. In: Example Letters (2017–).
+[13] Jo Kappa. “Open Start”. In: Example Letters (–2015).
+[14] Jo Kappa. “Slash Start”. In: Example Letters (–2016).
+[15] Kai Lambda. “Before the Era”. In: Example Letters (Mar. 15, −44).
+[16] Ola Omicron. “Approximate”. In: Example Letters (1990).
+[17] Uma Phi. “Big Year”. In: Example Letters (−12000).
+[18] Pia Pi. “Legacy Short Year”. In: Example Letters (98).
+[19] Wes Psi. “Month Field”. In: Example Letters (Nov. 2003).
+[20] Ray Sigma. “Month Range”. In: Example Letters (Mar.–May 2019).
+[21] Sam Tau. “Cross Year”. In: Example Letters (Dec. 30, 2019–Jan. 2, 2020).
+[22] Hal Theta. “Quarter”. In: Example Letters (Q3 2020).
+[23] Hal Theta. “Spring”. In: Example Letters (Spr. 2020).
+[24] Hal Theta. “Winter”. In: Example Letters (Win. 2020).
+[25] Zed Undated. First Undated.
+[26] Zed Undated. Second Undated.
+[27] Tia Ups. “Spring Range”. In: Example Letters (Spr.–Aut. 2019).
+[28] Nia Xi. “With Time”. In: Example Letters (Feb. 29, 2020).
+[29] Fy Zeta. “Event Only”. In: Invented Meeting Notes (Oct. 11, 2019).

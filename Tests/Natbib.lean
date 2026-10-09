@@ -13,8 +13,7 @@ gets, and the diagnostics of both passes. -/
 def natbibShip (oneFace : Font.FontSet) (bib pre style : String) (calls : List String) :
     Array String × Array String × String × Array Diag :=
   let geometry := "\n\\usepackage[paperwidth=40cm,paperheight=60cm,margin=1cm]{geometry}"
-  let (doc, eds) := elabStr (natbibSrc (pre ++ geometry) style calls)
-  let (doc, ds) := Bib.apply #[("refs", bib)] doc
+  let (doc, eds, ds) := bibResolve (natbibSrc (pre ++ geometry) style calls) #[("refs", bib)]
   let lines := bodyLines (layoutOf oneFace doc)
   (lines.map lineInk,
     (bibEntryLines lines).map fun e => String.intercalate " " (e.toList.map lineInk),
@@ -51,9 +50,8 @@ either gap representation must retain natbibRows' TeX-referenced
 distinguishable. -/
 def citationInkChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit := do
   let t := check ref
-  let (doc, _) := elabStr (natbibSrc "\\usepackage{natbib}" "unsrtnat"
-    ["\\citep[see][p.~5]{alpha2019}"])
-  let (doc, _) := Bib.apply #[("refs", natbibBib)] doc
+  let (doc, _) := bibBuild (natbibSrc "\\usepackage{natbib}" "unsrtnat"
+    ["\\citep[see][p.~5]{alpha2019}"]) #[("refs", natbibBib)]
   let some line := (bodyLines (layoutOf oneFace doc)).find?
       (fun l => (lineText l).startsWith "L1 ") |
     t "citation ink: the probe ships its citation line" false
@@ -121,10 +119,9 @@ still enter the list. -/
 def nocitePlaceChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit := do
   let t := check ref
   let build (body : String) : Array Layout.LineOut × String × Array Diag :=
-    let (doc, eds) := elabStr s!"\\documentclass\{article}\n\\usepackage\{natbib}\n\
+    let (doc, eds, ds) := bibResolve s!"\\documentclass\{article}\n\\usepackage\{natbib}\n\
       \\bibliographystyle\{plainnat}\n\\begin\{document}\n{body}\\bibliography\{refs}\n\
-      \\end\{document}\n"
-    let (doc, ds) := Bib.apply #[("refs", natbibBib)] doc
+      \\end\{document}\n" #[("refs", natbibBib)]
     (bodyLines (layoutOf oneFace doc), (HtmlDoc.emit {} doc).1, eds ++ ds)
   let step (lines : Array Layout.LineOut) (next : String) : Option Dim.Sp :=
     match lines.find? (lineInk · |>.startsWith "First paragraph"),
@@ -299,11 +296,10 @@ def biblatexChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Un
   for (opts, bib, calls, want) in letters :: biblatexModes.map fun (o, w) =>
       (o, natbibBib, biblatexCalls, w) do
     let body := String.join (calls.zipIdx.map fun (c, k) => s!"L{k + 1} {c} end.\n\n")
-    let (doc, eds) := elabStr s!"\\documentclass\{article}\n\
+    let (doc, eds, ds) := bibResolve s!"\\documentclass\{article}\n\
       \\usepackage[paperwidth=40cm,paperheight=60cm,margin=1cm]\{geometry}\n\
       \\usepackage[{opts}]\{biblatex}\n\\addbibresource\{refs.bib}\n\\begin\{document}\n\
-      {body}\\printbibliography\n\\end\{document}\n"
-    let (doc, ds) := Bib.apply ((Ir.bibRefs doc).map (·, bib)) doc
+      {body}\\printbibliography\n\\end\{document}\n" #[("refs", bib), ("refs.bib", bib)]
     let page := (bodyLines (layoutOf oneFace doc)).map lineInk
     let html := htmlVisibleText (HtmlDoc.emit {} doc).1
     let tag := s!"biblatex {opts}"

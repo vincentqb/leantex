@@ -1,0 +1,16 @@
+# options: style=numeric
+# What lualatex sets for cmdfoot.body.tex's citations and cmdfoot.bib's list under \usepackage[options]{biblatex}:
+# TeX Live 2026 (LuaHBTeX 1.24.0, biblatex 3.21, biber 2.22), a 60cm page so no line breaks,
+# read back with pdftotext -layout 26.09.0, one citation line then one entry per line.
+C21 x1 end.
+C22 x2 end.
+C23 x3 end.
+C24 x4 end.
+References
+[1] Ann Alpha. First Book. Pub, 2020. url: https://example.org/a1.
+[2] Bo Beta and Cy Gamma. “Second Paper”. In: Journal (June 15, 2021).
+1 1.
+2 see 2, p. 5.
+3 1.
+4 1, 2.
+

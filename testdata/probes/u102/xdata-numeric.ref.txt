@@ -1,0 +1,21 @@
+# options: style=numeric,sorting=none
+# What lualatex sets for xdata.body.tex's citations and xdata.bib's list under \usepackage[options]{biblatex}:
+# TeX Live 2026 (LuaHBTeX 1.24.0, biblatex 3.21, biber 2.22), a 60cm page so no line breaks,
+# read back with pdftotext -layout 26.09.0, one citation line then one entry per line.
+References
+[1] Ann Alpha. Nested Data. Ed. by Una Editor and Vic Iota. Exampleville: Example Press, 2011.
+[2] Bo Beta. Own Field Yields. Ed. by Una Editor and Vic Iota. Exampleville: Example Press, 2014.
+[3] Cy Gamma. Later Data Wins. Ed. by Una Editor and Vic Iota. Exampleville: Example Press, 2011.
+[4] Di Delta. Missing Data. Sample House, 2013.
+[5] Flo Zeta. Not Data. 2016.
+[6] Gus Eta. Granular Publisher. Example Press, 2012.
+[7] Hal Theta and Vic Iota. Granular Name. Own Press, 2017.
+[8] Una Editor and Vic Iota. Granular Names All. Own Press, 2018.
+[9] Ivy Iota. Granular Missing Field. xdata=dpress-note. Own Press, 2019.
+[10] Jo Kappa. Granular Missing Entry. xdata=nobody-note. Own Press, 2020.
+[11] Kim Lambda. Granular Position Missing. Ed. by. Own Press, 2021.
+[12] Lee Mu. Granular Kind Mismatch. xdata=dpress-publisher. Own Press, 2022.
+[13] Max Nu. Granular Literal. A shared note. Own Press, 2023.
+[14] Ola Omicron. Literal Marker. xdata=see the manual. Own Press, 2024.
+[15] Pat Pi. Self Data. Own Press, 2025.
+

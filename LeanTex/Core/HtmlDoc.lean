@@ -5612,7 +5612,8 @@ private def docHasBibliography (doc : Doc) : Bool :=
 /-- The reference list as the page sets it (`Layout.collectBibliography`),
 from the same resolving sites: author-year entries hang their continuation
 lines `\bibhang` in; numbered entries hang their labels right-aligned in a
-column as wide as the widest label — a grid whose rows share its columns
+column as wide as the widest label, a label the style writes flush left in it
+(`Ir.BibItem.labelFlush`) — a grid whose rows share its columns
 (`subgrid`), since only the browser can measure a label — `\labelsep`
 (.5em, article.cls:338) before the text; `\bibsep` between entries, its
 default the page's value over the page's size, in `em` so it follows the
@@ -5622,13 +5623,17 @@ private def bibCss (doc : Doc) : String :=
   let size := doc.page.fontSize
   let sepMilli := (Ir.bibSepDefault size).width.sp * 1000 / (max size 1)
   let sep := s!"var(--{Ir.bibSepName}, {decMilli sepMilli}em)"
+  let flush := Ir.foldBlocks (fun b bl => b || match bl with
+    | .bibliography _ _ items => items.any (·.labelFlush)
+    | _ => false) (fun b _ => b) false doc.body
   s!"ul.bibliography \{ display: grid; row-gap: {sep}; padding: 0; list-style: none; }\n" ++
   s!"ul.bibliography.unmarked > li \{ padding-left: {hang}; text-indent: calc(-1 * {hang}); }\n" ++
   "ul.bibliography:not(.unmarked) { grid-template-columns: max-content minmax(0, 1fr);\n" ++
   "  column-gap: 0.5em; }\n" ++
   "ul.bibliography:not(.unmarked) > li { display: grid; grid-column: 1 / -1;\n" ++
   "  grid-template-columns: subgrid; }\n" ++
-  ".bib-marker { text-align: right; }\n"
+  ".bib-marker { text-align: right; }\n" ++
+  (if flush then ".bib-marker.flush { text-align: left; }\n" else "")
 
 /-- The HTML projection of an OpenType feature record. Parameterized so
 the backend agreement theorem ranges over the same value the live
@@ -7491,7 +7496,8 @@ element beside its label, so the list's grid can hang the labels in one
 column (`bibCss`); an author-year entry is its content alone. -/
 private def bibItemNode (cfg : Config) (item : Ir.BibItem) : Node :=
   let kids : Array Node := match item.marker with
-    | some m => #[Html.elem "span" #[Html.text s!"[{m}]"] #[("class", "bib-marker")],
+    | some m => #[Html.elem "span" #[Html.text s!"[{m}]"]
+          #[("class", if item.labelFlush then "bib-marker flush" else "bib-marker")],
         Html.text " ", Html.elem "span" (inlines cfg item.content) #[("class", "bib-entry")]]
     | none => inlines cfg item.content
   Html.elem "li" kids #[("id", Ir.bibAnchor item.key)]

@@ -1,0 +1,8 @@
+@xdata{yp, author = {Ann Alpha and Bo Beta}, editor = {Cy Gamma and Di Delta}, publisher = {Pub One and Pub Two}}
+@xdata{yq, publisher = {Pub Three}}
+@book{ypar, editor = {Pat Parent}, title = {Parent Volume}, publisher = {Parent Press}, location = {Parent Town}, date = {1990}}
+@xdata{yc, crossref = {ypar}, note = {Lent with a crossref}}
+@book{y1, title = {Lent Crossref}, author = {Flo Zeta}, xdata = {yc}, date = {2004}}
+@book{y2, title = {Two in One List}, author = {xdata=yp-author and xdata=yp-editor-2}, date = {2001}}
+@book{y3, title = {List Then Item}, author = {Hal Theta}, publisher = {xdata=yp-publisher and xdata=yq-publisher}, date = {2006}}
+@book{y4, title = {Granular Date}, author = {Ivy Iota}, date = {xdata=yp-date}}

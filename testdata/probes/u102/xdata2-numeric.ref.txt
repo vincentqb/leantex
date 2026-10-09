@@ -1,0 +1,9 @@
+# options: style=numeric,sorting=none
+# What lualatex sets for xdata2.body.tex's citations and xdata2.bib's list under \usepackage[options]{biblatex}:
+# TeX Live 2026 (LuaHBTeX 1.24.0, biblatex 3.21, biber 2.22), a 60cm page so no line breaks,
+# read back with pdftotext -layout 26.09.0, one citation line then one entry per line.
+References
+[1] Flo Zeta. Lent Crossref. Ed. by Pat Parent. Lent with a crossref. Parent Town: Parent Press, 2004.
+[2] Ann Alpha, Di Delta, and. Two in One List. 2001.
+[3] Hal Theta. List Then Item. Pub One, Pub Three, and xdata=yq-publisher, 2006.
+[4] Ivy Iota. Granular Date.

@@ -1,0 +1,9 @@
+# The reference list lualatex sets for dates.bib under \usepackage[style=numeric]{biblatex}, \nocite{*}, one entry per line:
+# TeX Live 2026 (LuaHBTeX 1.24.0, biblatex 3.21, biber 2.22), a 60 cm page so no entry breaks,
+# read back with pdftotext -layout 26.09.0.
+[1] Ann Alpha. Five. Dec. 30, 2019–.
+[2] Ann Alpha. Four. Dec. 2019–Feb. 2020.
+[3] Ann Alpha. One. June 10–July 2, 2012.
+[4] Ann Alpha. Six. May 3, 2019. (Visited on 07/2020).
+[5] Ann Alpha. Three. Dec. 30, 2019–Jan. 2, 2020.
+[6] Ann Alpha. Two. Mar.–May 2019.

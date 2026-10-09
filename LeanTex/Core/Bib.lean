@@ -2,15 +2,16 @@ module
 
 public import LeanTex.Core.Diag
 public import LeanTex.Core.LocaleData
+public import LeanTex.Core.BibAccent
+public import Std.Data.HashMap
 import LeanTex.Core.Nfc
-import LeanTex.Core.TextSymData
 
 /-! BibTeX bibliography files, parsed in the pure core. The grammar is the
 one btxdoc.tex and "Tame the BeaST" §2 document: `@type{key, field = value,
 …}` entries whose values are `{…}`-balanced groups, `"…"` strings, or bare
-numbers and `@string` macro names, concatenated with `#`; `@comment` and
-`@preamble` are skipped; everything between entries is comment text by
-definition. Reading the file is the driver's effect (`Ir.bibRefs`, the
+numbers and `@string` macro names, concatenated with `#`; `@comment` is
+skipped and `@preamble` kept; everything between entries is comment text
+by definition. Reading the file is the driver's effect (`Ir.bibRefs`, the
 `imageRefs` shape); this module only ever sees the text. -/
 
 namespace LeanTex.Core.Bib
@@ -42,7 +43,7 @@ public instance : Inhabited Entry :=
      fields := #[]
      pos := {} }⟩
 
-public def Entry.field? (e : Entry) (name : String) : Option String :=
+@[expose] public def Entry.field? (e : Entry) (name : String) : Option String :=
   (e.fields.find? (·.1 == name)).map (·.2)
 
 /-- The parse keeps what it can: a malformed entry is recorded with its
@@ -51,7 +52,17 @@ never takes the bibliography down (W0352's contract). -/
 public structure Parsed where
   entries : Array Entry := #[]
   errors : Array (Pos × String) := #[]
-  deriving Repr, Inhabited
+  /-- The `@preamble`s' texts, in order: what the list's fields are typeset
+  under (`Bib.preambleMacros`). -/
+  preambles : Array String := #[]
+  /-- The `@string` store after the file: what the next file of the same
+  bibliography reads its values against, as BibTeX and biber read every
+  file of a list in turn into one store. -/
+  macros : Std.HashMap String String := {}
+  /-- Each value part naming a macro no `@string` has defined by then: the
+  entry's key and the name, which the value keeps as its text. -/
+  undefined : Array (String × String) := #[]
+  deriving Inhabited
 
 private def Parsed.err (out : Parsed) (p : Pos) (msg : String) : Parsed :=
   { out with errors := out.errors.push (p, msg) }
@@ -66,8 +77,8 @@ private def monthKeys : Array String :=
   #["jan", "feb", "mar", "apr", "may", "jun",
     "jul", "aug", "sep", "oct", "nov", "dec"]
 
-public def monthMacros (months : Array String) : Array (String × String) :=
-  monthKeys.zip months
+public def monthMacros (months : Array String) : Std.HashMap String String :=
+  (monthKeys.zip months).foldl (fun m (k, v) => m.insert k v) {}
 
 private def isWs (c : Char) : Bool :=
   c == ' ' || c == '\t' || c == '\n' || c == '\r'
@@ -167,57 +178,65 @@ private def readQuoted (cs : Array Char) (start : Nat) : Option (String × Nat) 
   return none
 
 /-- One `#`-concatenation part: a braced group, a quoted string, a bare
-number, or a macro name resolved against the `@string` store (an unknown
-macro keeps its name as text — visible, never silently empty). -/
+number, or a macro name resolved against the `@string` store, case
+insensitively. An unknown macro keeps its name as text — visible, never
+silently empty as BibTeX and biber leave it — and is returned so the parse
+can name it. -/
 private def readValuePart (cs : Array Char) (start : Nat)
-    (macros : Array (String × String)) : Option (String × Nat) := Id.run do
+    (macros : Std.HashMap String String) : Option (String × Nat × Option String) := Id.run do
   if h : start < cs.size then
     let c := cs[start]
-    if c == '{' then return readBraced cs start
-    if c == '"' then return readQuoted cs start
+    if c == '{' then return (readBraced cs start).map fun (v, j) => (v, j, none)
+    if c == '"' then return (readQuoted cs start).map fun (v, j) => (v, j, none)
     if c.isDigit then
       let (n, j) := readWhile cs start Char.isDigit
-      return some (n, j)
+      return some (n, j, none)
     if identChar c then
       let (name, j) := readWhile cs start identChar
-      let v := ((macros.find? (·.1 == name.toLower)).map (·.2)).getD name
-      return some (v, j)
+      return match macros.get? name.toLower with
+        | some v => some (v, j, none)
+        | none => some (name, j, some name)
     return none
   return none
 
-/-- A field value: parts joined by `#`. -/
+/-- A field value: parts joined by `#`, with the macro names among them no
+`@string` defines. -/
 private def readValue (cs : Array Char) (start : Nat)
-    (macros : Array (String × String)) : Option (String × Nat) := Id.run do
+    (macros : Std.HashMap String String) : Option (String × Nat × Array String) := Id.run do
   match readValuePart cs start macros with
   | none => return none
-  | some (v, j0) =>
+  | some (v, j0, u0) =>
     let mut out := v
+    let mut undef : Array String := u0.toArray
     let mut j := skipWs cs j0
     for _ in [j0:cs.size] do
       if h : j < cs.size then
         if cs[j] == '#' then
           let k := skipWs cs (j + 1)
           match readValuePart cs k macros with
-          | some (v', j') =>
+          | some (v', j', u') =>
             out := out ++ v'
+            undef := undef ++ u'.toArray
             j := skipWs cs j'
-          | none => return some (out, j)
+          | none => return some (out, j, undef)
         else break
       else break
-    return some (out, j)
+    return some (out, j, undef)
 
 /-- The fields of one entry body, `i` past the key's comma: `name = value`
-pairs to the closing delimiter. Returns the fields and the index past the
-closer, or an error message with its index. -/
+pairs to the closing delimiter. Returns the fields, the macro names their
+values use that no `@string` defines, and the index past the closer, or an
+error message with its index. -/
 private def readFields (cs : Array Char) (start : Nat) (closer : Char)
-    (macros : Array (String × String)) :
-    Except (Nat × String) (Array (String × String) × Nat) := Id.run do
+    (macros : Std.HashMap String String) :
+    Except (Nat × String) (Array (String × String) × Array String × Nat) := Id.run do
   let mut fields : Array (String × String) := #[]
+  let mut undef : Array String := #[]
   let mut j := skipWs cs start
   for _ in [start:cs.size] do
     if h : j < cs.size then
       if cs[j] == closer then
-        return .ok (fields, j + 1)
+        return .ok (fields, undef, j + 1)
       let (name, j1) := readWhile cs j identChar
       if name.isEmpty then
         return .error (j, s!"expected a field name or '{closer}'")
@@ -229,14 +248,15 @@ private def readFields (cs : Array Char) (start : Nat) (closer : Char)
         return .error (j2, "the file ends inside an entry")
       match readValue cs (skipWs cs (j2 + 1)) macros with
       | none => return .error (j2 + 1, s!"unreadable value for '{name}'")
-      | some (v, j3) =>
+      | some (v, j3, u) =>
         fields := fields.push (name.toLower, v)
+        undef := undef ++ u
         let j4 := skipWs cs j3
         if h4 : j4 < cs.size then
           if cs[j4] == ',' then
             j := skipWs cs (j4 + 1)
           else if cs[j4] == closer then
-            return .ok (fields, j4 + 1)
+            return .ok (fields, undef, j4 + 1)
           else
             return .error (j4, s!"expected ',' or '{closer}' after a field")
         else
@@ -258,14 +278,16 @@ private def nextAt (cs : Array Char) (start : Nat) : Nat := Id.run do
 
 /-- Parse a `.bib` file's text. Total by construction: every loop is bounded
 by the input length and the cursor only moves forward. Everything outside
-`@…{…}` entries is comment text, as BibTeX defines it; `@comment` and
-`@preamble` are consumed and dropped; `@string` feeds the macro store the
-later values read. A malformed entry is recorded at its position and
+`@…{…}` entries is comment text, as BibTeX defines it; `@comment` is
+consumed and dropped — under `biber`, its delimited body with it, as biber's
+reader (btparse) takes the block for a comment where BibTeX reads on, an
+entry inside it included — `@preamble` kept as its text (`Parsed.preambles`);
+`@string` feeds the macro store the later values read. A malformed entry is recorded at its position and
 skipped, and the parse continues at the next `@` — one bad entry costs
 itself, never the file (W0352). -/
 public def parse (src : String)
-    (macros0 : Array (String × String) := monthMacros Locale.en.months) :
-    Parsed := Id.run do
+    (macros0 : Std.HashMap String String := monthMacros Locale.en.months)
+    (biber : Bool := false) : Parsed := Id.run do
   let cs := src.toList.toArray
   let mut out : Parsed := {}
   let mut macros := macros0
@@ -287,6 +309,14 @@ public def parse (src : String)
     if kind == "comment" then
       -- BibTeX treats @comment as ordinary inter-entry text: nothing to read.
       i := j1
+      if biber then
+        match cs[j2]? with
+        | some '{' =>
+          match readBraced cs j2 with
+          | some (_, j) => i := j
+          | none => i := cs.size
+        | some '(' => i := ((cs.extract (j2 + 1) cs.size).findIdx? (· == ')')).elim cs.size (j2 + 2 + ·)
+        | _ => pure ()
       continue
     let opener := if h : j2 < cs.size then cs[j2] else ' '
     if opener != '{' && opener != '(' then
@@ -295,17 +325,29 @@ public def parse (src : String)
       continue
     let closer := if opener == '(' then ')' else '}'
     if kind == "preamble" then
-      match readBraced cs j2 with
-      | some (_, j) => i := j
+      -- one value, its parts joined by `#` as a field's are
+      let k := skipWs cs (j2 + 1)
+      match readValue cs k macros with
+      | some (v, j3, _) =>
+        let j4 := skipWs cs j3
+        if cs[j4]? == some closer then
+          out := { out with preambles := out.preambles.push v }
+          i := j4 + 1
+        else
+          out := out.err atLine "'@preamble' holds more than one value"
+          i := j4
       | none =>
-        out := out.err atLine "'@preamble' never closes"
-        i := cs.size
+        match readBraced cs j2 with
+        | some (_, j) => i := j
+        | none =>
+          out := out.err atLine "'@preamble' never closes"
+          i := cs.size
       continue
     if kind == "string" then
       match readFields cs (skipWs cs (j2 + 1)) closer macros with
-      | .ok (defs, j) =>
+      | .ok (defs, _, j) =>
         for (n, v) in defs do
-          macros := macros.push (n, v)
+          macros := macros.insert n v
         i := j
       | .error (j, msg) =>
         out := out.err (posOf cs j) s!"@string: {msg}"
@@ -333,50 +375,31 @@ public def parse (src : String)
       i := j5
       continue
     match readFields cs (j5 + 1) closer macros with
-    | .ok (fields, j) =>
+    | .ok (fields, undef, j) =>
       out := out.entry
         { kind
           key
           fields
           pos := atLine }
+      out := { out with undefined := undef.foldl (fun us n => us.push (key, n)) out.undefined }
       i := j
     | .error (j, msg) =>
       out := out.err (posOf cs j) s!"in '{key}': {msg}"
       i := j
-  return out
+  return { out with macros }
 
 /-! ## Value text
 
 A stored value is TeX-flavoured: brace groups, `\'{e}` accents, `~` ties,
 `--` dashes. `text` renders it as the plain scalars the IR carries. -/
 
-/-- Word commands that are one character. -/
-public def charCommands : Array (String × String) :=
-  #[("ss", "ß"), ("o", "ø"), ("O", "Ø"), ("ae", "æ"), ("AE", "Æ"),
-    ("aa", "å"), ("AA", "Å"), ("l", "ł"), ("L", "Ł"), ("i", "ı")]
-
-/-- An accent's combining mark over a base letter, as the one scalar NFC
-composes the pair to: the scalar lualatex sets under TU, whose composites
-are each such a canonical composition (`textSymChecks` holds all of them).
-A pair with no precomposed form has none. -/
-public def composeAccent (mark base : Char) : Option Char :=
-  match (Nfc.normalize (String.ofList [base, mark])).toList with
-  | [c] => if c != base then some c else none
-  | _ => none
-
-/-- TeX's accent `\<mark>` over a base letter (`\'e`, `\"{o}`, `\c{c}`,
-`\v{c}`), through TU's accent table and NFC, so a name renders identically
-in text and in a bibliography entry. A pair with no precomposed form keeps
-its base letter: a name never loses a character to an accent. -/
-public def accentOf (mark base : Char) : Char :=
-  ((TextSymData.accents.lookup (String.ofList [mark])).bind (composeAccent · base)).getD base
-
 private def isAccentMark (c : Char) : Bool :=
   c == '\'' || c == '`' || c == '"' || c == '^' || c == '~'
 
 /-- `text` without the trim: a span of a value that math interrupts keeps the
 space it opens or closes with — `lead` keeps a leading one too. -/
-public def textSpan (v : String) (lead : Bool := false) : String := Id.run do
+public def textSpan (v : String) (lead : Bool := false) (keepUnknown : Bool := true) : String :=
+    Id.run do
   let cs := v.toList.toArray
   let mut out := ""
   let mut i := 0
@@ -447,8 +470,9 @@ public def textSpan (v : String) (lead : Bool := false) : String := Id.run do
                 | none => pure ()
                 i := j2
               else
-                -- Unknown command: its name stays visible as text.
-                out := out ++ name
+                -- Unknown command: its name stays visible as text, unless
+                -- the reading drops it.
+                if keepUnknown then out := out ++ name
                 i := j
           else
             -- \&, \%, \_ …: the escaped character itself.
@@ -468,9 +492,16 @@ composed, one-character word commands replaced, `~` a space (the tie is not
 modelled — stated, not hidden), `---`/`--` the em and en dash, whitespace
 runs one space. An unknown `\command` keeps its name as text, so nothing a
 value spells goes silently missing. Math and TeX's quote ligatures are the
-reference list's to set (`BibStyle.fieldInlines`); accents outside
-`accentTable` keep their base letter. -/
+reference list's to set (`BibText.fieldInlines`, or the document's own
+elaborator where a build reads the fields, `Bib.FieldDoor.read`); accents
+outside `accentTable` keep their base letter. -/
 public def text (v : String) : String := (textSpan v).trimAscii.toString
+
+/-- A value as biber's sort strings read it (Biber::Utils
+`normalise_string_sort`): `text`'s reading, every command's name dropped —
+biber decodes the accents and symbols it knows when it reads the file, then
+removes each remaining `\\[A-Za-z]+` and every brace. -/
+public def sortPlainText (v : String) : String := (textSpan v (keepUnknown := false)).trimAscii.toString
 
 /-- BibTeX's `change.case$` lowering a value (bibtex.web's change-case
 procedure): `"t"` (`title`) is the sentence case plainnat's `format.title`
@@ -480,9 +511,11 @@ and white space; a closing brace forgets the colon. A brace group stays as
 written, except a special character — a group opening `{\` — which
 lowercases its letters outside its control words and turns the five
 foreign-letter words (`\AA`, `\AE`, `\L`, `\O`, `\OE`) into their
-lowercase words, unless it stands where a kept letter would. Only ASCII
-letters change, as in bibtex 0.99d. The value is read as BibTeX's `.bib`
-reader leaves it: surrounding white space trimmed. -/
+lowercase words, unless it stands where a kept letter would. Every letter
+changes by its Unicode case (`Nfc.toLower`) — a departure from bibtex
+0.99, which reads UTF-8 as bytes and changes only ASCII, so `Ärger` kept
+its capital there where `Error` lost its own. The value is read as
+BibTeX's `.bib` reader leaves it: surrounding white space trimmed. -/
 public def lowerCase (title : Bool) (v : String) : String := Id.run do
   let cs := v.trimAscii.toString.toList.toArray
   let mut out := ""
@@ -507,7 +540,7 @@ public def lowerCase (title : Bool) (v : String) : String := Id.run do
         out := out.push c
         i := i + 1
       else if depth == 0 then
-        out := out.push (if kept then c else c.toLower)
+        out := out.push (if kept then c else Nfc.toLower c)
         if c == ':' then prevColon := true
         else if !isWs c then prevColon := false
         i := i + 1
@@ -517,7 +550,65 @@ public def lowerCase (title : Bool) (v : String) : String := Id.run do
         out := out.push '\\' ++ word
         i := if word.isEmpty then i + 1 else j
       else
-        out := out.push (if special then c.toLower else c)
+        out := out.push (if special then Nfc.toLower c else c)
+        i := i + 1
+    else break
+  return out
+
+/-- bibtex.web's foreign-letter control words, lowercase ones first: what a
+special character's case and its purified letters are read from. -/
+private def lowerForeign : List String := ["i", "j", "oe", "ae", "aa", "o", "l", "ss"]
+private def upperForeign : List String := ["OE", "AE", "AA", "O", "L"]
+
+/-- BibTeX's `purify$` (bibtex.web): what a sort key or a label reads of a
+value — ASCII letters and digits kept, white space, hyphens and ties as one
+space each, everything else dropped; a special character `{\\…}` keeps
+its own letters, and a foreign letter its control word's (`{\\ss}` is
+`ss`, `{\\o}` is `o`, `{\\OE}` is `OE`; `{\\aa}` keeps one `a`). A
+letter outside ASCII, which bibtex reads as bytes, is kept as the letter it
+is. -/
+public def purify (v : String) : String := Id.run do
+  let cs := v.toList.toArray
+  let mut out := ""
+  let mut depth : Nat := 0
+  let mut i := 0
+  for _ in [0:cs.size + 1] do
+    if h : i < cs.size then
+      let c := cs[i]
+      if isWs c || c == '-' || c == '~' then
+        out := out.push ' '
+        i := i + 1
+      else if c.isAlphanum || (c.toNat > 127 && Nfc.isLetter c) then
+        out := out.push c
+        i := i + 1
+      else if c == '{' then
+        depth := depth + 1
+        if depth == 1 && cs[i + 1]? == some '\\' then
+          -- a special character: read to its closing brace
+          let mut level : Nat := 1
+          let mut k := i + 1
+          for _ in [i + 1:cs.size] do
+            if hk : k < cs.size then
+              if level == 0 then break
+              let d := cs[k]
+              if d == '\\' then
+                let (word, j) := readWhile cs (k + 1) Char.isAlpha
+                if (lowerForeign ++ upperForeign).contains word then
+                  out := out ++ (if ["oe", "OE", "ae", "AE", "ss"].contains word then word
+                    else String.ofList (word.toList.take 1))
+                k := if word.isEmpty then k + 1 else j
+              else
+                if d.isAlphanum || (d.toNat > 127 && Nfc.isLetter d) then out := out.push d
+                else if d == '}' then level := level - 1
+                else if d == '{' then level := level + 1
+                k := k + 1
+            else break
+          depth := 0
+          i := k
+        else
+          i := i + 1
+      else
+        if c == '}' && depth > 0 then depth := depth - 1
         i := i + 1
     else break
   return out
@@ -536,6 +627,9 @@ public structure Name where
   von : String := ""
   last : String := ""
   jr : String := ""
+  /-- A per-name `useprefix` (biber's extended name format), over the
+  option a document loads biblatex with. -/
+  useprefix : Option Bool := none
   deriving Repr, BEq, Inhabited
 
 /-- Split a value on a depth-0 separator word (` and `, `,`): brace groups
@@ -596,65 +690,343 @@ at brace depth 0. -/
 public def splitNames (v : String) : Array String :=
   (splitTop v andAt).map (·.trimAscii.toString) |>.filter (!·.isEmpty)
 
-/-- Does a name token start lowercase? A brace-opening token counts as
-caseless and attaches to the Last part, which is where `{van den Berg}`
-wants to be. -/
-private def startsLower (tok : String) : Bool :=
-  match tok.toList.find? Char.isAlpha with
-  | some c => c.isLower
-  | none => false
+/-- The name parts biber's extended name format spells out (biblatex manual
+§3.4). -/
+private def xnameParts : List String := ["family", "given", "prefix", "suffix"]
+
+/-- A name in biber's extended name format (Biber's parsename_x): `key=value`
+items split at commas outside braces — the four name parts and a per-name
+`useprefix`; explicit initials and the other per-name options read as
+nothing — or `none` for a name in BibTeX's own format, which is any name no
+part's key opens an item of with `=`. -/
+public def parseNameX? (s : String) : Option Name := Id.run do
+  let mut n : Name := {}
+  let mut extended := false
+  for item in splitTop s commaAt do
+    match item.splitOn "=" with
+    | k :: v :: rest =>
+      let key := k.trimAscii.toString.toLower
+      let value := ("=".intercalate (v :: rest)).trimAscii.toString
+      if xnameParts.contains key || xnameParts.any (key == · ++ "-i") then extended := true
+      if key == "family" then n := { n with last := value }
+      else if key == "given" then n := { n with first := value }
+      else if key == "prefix" then n := { n with von := value }
+      else if key == "suffix" then n := { n with jr := value }
+      else if key == "useprefix" then
+        n := { n with useprefix := some (value == "true" || value == "1") }
+    | _ => pure ()
+  return if extended then some n else none
+
+/-- One name's tokens as bibtex.web reads them (§"Break up the name into
+tokens"): white space, a hyphen and a tie separate tokens at brace depth 0,
+a brace group belongs to the token it opens or continues, and a comma ends
+the token before it and splits the name into its parts. Each token carries
+the separator before it — the first separator after the previous token, as
+bibtex records it — and the commas are the token counts where they stand.
+bibtex reads a third comma as an error and goes on; here it ends its token
+and splits nothing. -/
+private def nameTokens (s : String) : Array (String × Char) × Array Nat := Id.run do
+  let mut toks : Array (String × Char) := #[]
+  let mut commas : Array Nat := #[]
+  let mut cur := ""
+  let mut inTok := false
+  let mut sep : Char := ' '
+  let mut depth : Nat := 0
+  for c in s.toList do
+    if depth > 0 then
+      cur := cur.push c
+      if c == '{' then depth := depth + 1
+      else if c == '}' then depth := depth - 1
+    else if c == '{' then
+      inTok := true
+      cur := cur.push c
+      depth := 1
+    else if c == '}' then
+      pure ()
+    else if c == ',' then
+      if inTok then
+        toks := toks.push (cur, sep)
+        cur := ""
+        inTok := false
+      if commas.size < 2 then commas := commas.push toks.size
+      sep := ','
+    else if isWs c || c == '-' || c == '~' then
+      if inTok then
+        toks := toks.push (cur, sep)
+        cur := ""
+        inTok := false
+        sep := if isWs c then ' ' else c
+    else
+      inTok := true
+      cur := cur.push c
+  if inTok then toks := toks.push (cur, sep)
+  return (toks, commas)
+
+/-- The case of a brace group's letters from index `start`, at brace level
+`level` inside it: the first letter decides, and the group's end without
+one is uppercase (not a von token). -/
+private def groupLower (cs : Array Char) (start : Nat) : Bool := Id.run do
+  let mut level : Nat := 1
+  let mut k := start
+  for _ in [start:cs.size] do
+    if h : k < cs.size then
+      if level == 0 then return false
+      let d := cs[k]
+      if Nfc.isLower d then return true
+      if Nfc.isLetter d then return false
+      if d == '}' then level := level - 1
+      else if d == '{' then level := level + 1
+      k := k + 1
+    else break
+  return false
+
+/-- bibtex.web's `von_token_found`: a token is a von token when its first
+letter at brace depth 0 is lowercase. A brace group that is no special
+character is skipped whole; a special character — a group whose first
+character is a backslash, `{\'e}` — answers for the token, by its
+foreign-letter control word (`{\o}` is lowercase, `{\O}` uppercase) or
+else by its first letter. A token with no letter is not a von token, which
+is where `{Example Consortium}` and `{van den Berg}` stand: whole, in the
+last name. A letter outside ASCII decides by its Unicode case, as biber
+reads it — bibtex 0.99 reads UTF-8 as bytes and skips them, so it took
+`Élodie` in `Élodie Durand` for a particle by its second letter; a letter
+of a script without case is no particle. -/
+public def vonToken (tok : String) : Bool := Id.run do
+  let cs := tok.toList.toArray
+  let mut i := 0
+  for _ in [0:cs.size + 1] do
+    if h : i < cs.size then
+      let c := cs[i]
+      if Nfc.isLower c then return true
+      if Nfc.isLetter c then return false
+      if c == '{' then
+        if i + 3 < cs.size && cs[i + 1]? == some '\\' then
+          let (name, j) := readWhile cs (i + 2) Char.isAlpha
+          if lowerForeign.contains name then return true
+          if upperForeign.contains name then return false
+          return groupLower cs j
+        -- an ordinary group: skip it whole and read on after it
+        let mut level : Nat := 1
+        let mut k := i + 1
+        for _ in [i + 1:cs.size] do
+          if hk : k < cs.size then
+            if level == 0 then break
+            if cs[k] == '}' then level := level - 1
+            else if cs[k] == '{' then level := level + 1
+            k := k + 1
+          else break
+        i := k
+      else
+        i := i + 1
+    else break
+  return false
+
+/-- Tokens `a` to `b` (exclusive) of a name, each after the separator it
+was written with — a hyphen or a tie as written, a space for white space. -/
+private def joinToks (toks : Array (String × Char)) (a b : Nat) : String := Id.run do
+  let mut out := ""
+  for k in [a:b] do
+    match toks[k]? with
+    | some (t, sep) =>
+      unless k == a do
+        out := out.push (if sep == '-' || sep == '~' then sep else ' ')
+      out := out ++ t
+    | none => pure ()
+  return out
+
+/-- The end of a von part that starts at `start` and stops before the last
+name's last token `lastEnd - 1` (bibtex.web's
+`von_name_ends_and_last_name_starts_stuff`): one past the last von token,
+or `start` when there is none. -/
+private def vonEnd (toks : Array (String × Char)) (start lastEnd : Nat) : Nat := Id.run do
+  let mut e := lastEnd - 1
+  for _ in [0:lastEnd] do
+    if e > start then
+      if vonToken ((toks[e - 1]?.map (·.1)).getD "") then return e
+      e := e - 1
+    else break
+  return (if lastEnd == 0 then 0 else e)
+
+/-- One name, split into BibTeX's four parts exactly as bibtex.web splits
+it. `First von Last`: the von part runs from the first von token
+(`vonToken`) before the last token to the last such token, and every token
+between them is von too; with no von token the last name is the last token
+and the tokens a hyphen joins to it (`Jean-Paul Sartre-Smith`). `von Last,
+First` and `von Last, Jr, First`: the von part is everything before the
+comma up to its last von token, the last name keeping at least one token.
+A part keeps each token's separator — a hyphen or a tie as written — so
+`Jean-Paul` abbreviates to `J.-P.` (`initials`). -/
+public def parseName (s : String) : Name := Id.run do
+  let (toks, commas) := nameTokens s
+  let n := toks.size
+  match commas.toList with
+  | [] =>
+    let lastEnd := n
+    let firstVon := (List.range (n - 1)).find? fun k => vonToken ((toks[k]?.map (·.1)).getD "")
+    match firstVon with
+    | some vs =>
+      let ve := vonEnd toks vs lastEnd
+      return { first := joinToks toks 0 vs, von := joinToks toks vs ve,
+               last := joinToks toks ve lastEnd }
+    | none =>
+      -- no von part: the last token, with the tokens a hyphen joins to it
+      let mut vs := n - 1
+      for _ in [0:n] do
+        if vs > 0 && ((toks[vs]?.map (·.2)).getD ' ') == '-' then vs := vs - 1
+        else break
+      return { first := joinToks toks 0 vs, last := joinToks toks vs n }
+  | [c1] =>
+    let ve := vonEnd toks 0 c1
+    return { first := joinToks toks c1 n, von := joinToks toks 0 ve,
+             last := joinToks toks ve c1 }
+  | c1 :: c2 :: _ =>
+    let ve := vonEnd toks 0 c1
+    return { first := joinToks toks c2 n, von := joinToks toks 0 ve,
+             last := joinToks toks ve c1, jr := joinToks toks c1 c2 }
+
+/-- A name as biber reads it: in the extended format where it is written in
+it, else as bibtex.web splits it. -/
+public def parseNameBiber (s : String) : Name := (parseNameX? s).getD (parseName s)
+
+/-- A token's first letter, with the marks a decomposed spelling sets on it
+(`E` and U+0301 are `É`): what an abbreviation keeps of the token, any
+script's letter counting — bibtex 0.99 took the first byte of `Émile`,
+half a character. A token with no letter keeps its first character. -/
+private def firstLetter (cs : List Char) : String :=
+  match cs.dropWhile (!Nfc.isLetter ·) with
+  | c :: rest => String.ofList (c :: rest.takeWhile (Nfc.combiningClass · != 0))
+  | [] => String.ofList (cs.take 1)
+
+/-- BibTeX's `{f.}` abbreviation of a name part: each token's first letter
+and a period, the tokens joined by their own separators — a hyphen kept,
+so `Jean-Paul` is `J.-P.` — a token that opens with a special character
+(`{\'E}mile`) abbreviated to that whole group, and one that opens with an
+ordinary brace group (`{Ann Marie}`) to the group's first letter
+(`firstLetter`). -/
+public def initials (part : String) : String := Id.run do
+  let (toks, _) := nameTokens part
+  let mut out := ""
+  for k in [0:toks.size] do
+    match toks[k]? with
+    | some (t, sep) =>
+      unless k == 0 do out := out.push (if sep == '-' then '-' else ' ')
+      let cs := t.toList
+      let head : String :=
+        if cs.head? == some '{' && cs[1]? == some '\\' then Id.run do
+          let mut level : Nat := 0
+          let mut acc := ""
+          for c in cs do
+            acc := acc.push c
+            if c == '{' then level := level + 1
+            else if c == '}' then
+              level := level - 1
+              if level == 0 then return acc
+          return acc
+        else firstLetter cs
+      out := out ++ head ++ "."
+    | none => pure ()
+  return out
 
 private def joinSp (toks : List String) : String :=
   String.intercalate " " toks
 
-/-- Split `von Last`: the von part is the leading run of lowercase-starting
-tokens, and Last keeps at least the final token. -/
-private def vonLast (toks : List String) : String × String := Id.run do
-  let mut von : List String := []
-  let mut rest := toks
-  for _ in [0:toks.length] do
-    match rest with
-    | t :: (r₁ :: rs) =>
-      if startsLower t then
-        von := von ++ [t]
-        rest := r₁ :: rs
-      else break
-    | _ => break
-  return (joinSp von, joinSp rest)
+/-- BibTeX's abbreviation of a name part without periods or separators
+(`{v{}}`, `{l{}}`): each token's first letter — a special character
+`{\\…}` whole, an ordinary brace group's first letter. -/
+public def tokenLetters (part : String) : String := Id.run do
+  let (toks, _) := nameTokens part
+  let mut out := ""
+  for (t, _) in toks do
+    let cs := t.toList
+    match cs with
+    | '{' :: '\\' :: _ =>
+      let mut level : Nat := 0
+      let mut acc := ""
+      for c in cs do
+        acc := acc.push c
+        if c == '{' then level := level + 1
+        else if c == '}' then
+          level := level - 1
+          if level == 0 then break
+      out := out ++ acc
+    | _ =>
+      if cs.any Nfc.isLetter then out := out ++ firstLetter cs
+  return out
 
-/-- One name, split into BibTeX's four parts (btxdoc §Names). The comma
-forms are exact; the `First von Last` form takes First as the longest
-prefix of uppercase-starting tokens that leaves a Last. Not handled,
-stated: pathological mixed-case von parts (`Maria de la Cruz Perez` keeps
-`Cruz Perez` whole) and case analysis of brace-opening tokens beyond
-"caseless attaches to Last". -/
-public def parseName (s : String) : Name := Id.run do
-  let sections := (splitTop s commaAt).map (·.trimAscii.toString)
-  let toks (t : String) : List String :=
-    ((splitTop t (fun cs i => Id.run do
-      if h : i < cs.size then
-        if isWs cs[i] then return some (skipWs cs i)
-      return none)).map (·.trimAscii.toString)).toList.filter (!·.isEmpty)
-  if sections.size ≥ 2 then
-    let (von, last) := vonLast (toks (sections[0]?.getD ""))
-    let (jr, first) :=
-      if sections.size ≥ 3 then
-        (sections[1]?.getD "", sections[2]?.getD "")
-      else ("", sections[1]?.getD "")
-    return { first := first.trimAscii.toString, von, last, jr }
-  let ts := toks s
-  let mut first : List String := []
-  let mut rest := ts
-  for _ in [0:ts.length] do
-    match rest with
-    | t :: (r₁ :: rs) =>
-      if !startsLower t then
-        first := first ++ [t]
-        rest := r₁ :: rs
-      else break
-    | _ => break
-  let (von, last) := vonLast rest
-  return { first := joinSp first, von, last }
+/-- BibTeX's `text.length$`: a value's characters, a special character
+`{\\…}` counting as one and braces as none (bibtex.web, "Count the
+text characters"). -/
+public def textLength (v : String) : Nat := Id.run do
+  let cs := v.toList.toArray
+  let mut count := 0
+  let mut depth : Nat := 0
+  let mut i := 0
+  for _ in [0:cs.size + 1] do
+    if h : i < cs.size then
+      let c := cs[i]
+      if c == '{' && depth == 0 && cs[i + 1]? == some '\\' then
+        -- a special character: passed over whole, one character
+        let mut level : Nat := 0
+        for _ in [i:cs.size] do
+          if hk : i < cs.size then
+            let d := cs[i]
+            i := i + 1
+            if d == '{' then level := level + 1
+            else if d == '}' then
+              level := level - 1
+              if level == 0 then break
+          else break
+        count := count + 1
+      else
+        if c == '{' then depth := depth + 1
+        else if c == '}' then depth := depth - 1
+        else count := count + 1
+        i := i + 1
+    else break
+  return count
+
+/-- BibTeX's `text.prefix$`: the first `n` characters of a value, a
+special character `{\\…}` counting as one and braces as none, the groups
+it opens closed. -/
+public def textPrefix (v : String) (n : Nat) : String := Id.run do
+  let cs := v.toList.toArray
+  let mut out := ""
+  let mut count := 0
+  let mut depth : Nat := 0
+  let mut i := 0
+  for _ in [0:cs.size + 1] do
+    if h : i < cs.size then
+      if count ≥ n then break
+      let c := cs[i]
+      if c == '{' && depth == 0 && cs[i + 1]? == some '\\' then
+        -- a special character: copied whole, one character
+        let mut level : Nat := 0
+        for _ in [i:cs.size] do
+          if hk : i < cs.size then
+            let d := cs[i]
+            out := out.push d
+            i := i + 1
+            if d == '{' then level := level + 1
+            else if d == '}' then
+              level := level - 1
+              if level == 0 then break
+          else break
+        count := count + 1
+      else if c == '{' then
+        depth := depth + 1
+        out := out.push c
+        i := i + 1
+      else if c == '}' then
+        if depth > 0 then
+          depth := depth - 1
+          out := out.push c
+        i := i + 1
+      else
+        out := out.push c
+        count := count + 1
+        i := i + 1
+    else break
+  return out ++ String.ofList (List.replicate depth '}')
 
 /-- `{ff }{vv }{ll}{, jj}`: the full-name order plainnat's `format.names`
 prints in the reference list (plainnat.bst FUNCTION {format.names}). -/
@@ -693,6 +1065,19 @@ public def labelNames (v : String) (upTo : Nat := 2) (withVon : Bool := true) : 
   let short (s : String) : String :=
     let n := parseName s
     text (if withVon then n.short else n.last)
+  if ns.size ≤ upTo then andJoin (ns.toList.map fun s => if s == "others" then s else short s)
+  else match ns.toList with
+    | a :: _ => s!"{short a} et al."
+    | [] => ""
+
+/-- `labelNames` in TeX, each name as the `.bib` spells it: what a sort key
+reads (`purify`), where `{\\"u}` sorts as `u` — the reading `labelNames`'
+composed letters cannot give back. -/
+public def labelNamesTeX (v : String) (upTo : Nat := 2) (withVon : Bool := true) : String :=
+  let ns := splitNames v
+  let short (s : String) : String :=
+    let n := parseName s
+    if withVon then n.short else n.last
   if ns.size ≤ upTo then andJoin (ns.toList.map fun s => if s == "others" then s else short s)
   else match ns.toList with
     | a :: _ => s!"{short a} et al."

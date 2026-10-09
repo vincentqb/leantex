@@ -13,6 +13,7 @@ import Tests.HtmlContained
 import Tests.TableSide
 import Tests.PdfBounds
 import Tests.InputDecoding
+import Tests.BibModel
 import scripts.Rung
 
 /-!
@@ -186,7 +187,37 @@ def registry : List AuditRow :=
    -- declaration's one note says how each file read.
    ⟨.W0002, .keep, .degraded, check% inputDecodingChecks⟩,
    ⟨.W0004, .keep, .degraded, check% inputDecodingChecks⟩,
-   ⟨.N0025, .divergence, .native, check% inputDecodingChecks⟩]
+   ⟨.N0025, .divergence, .native, check% inputDecodingChecks⟩,
+   -- A field the style itself prints nowhere: the list is the style's own,
+   -- and the note names what the .bib keeps that the page does not.
+   ⟨.N0029, .keep, .rewritten, check% bibNamedChecks⟩,
+   -- A date outside biblatex's grammar prints as written, named.
+   ⟨.W0420, .keep, .degraded, check% bibNamedChecks⟩,
+   -- A list biblatex words in another language is set in English, named.
+   ⟨.W0421, .keep, .degraded, check% bibLanguageChecks⟩,
+   -- A cited @set's members are listed each as an entry, named.
+   ⟨.W0422, .keep, .degraded, check% bibSetChecks⟩,
+   -- An entry's related entries are not set after it, named.
+   ⟨.W0423, .keep, .degraded, check% bibRelatedChecks⟩,
+   -- A missing .bib among several: the list holds the others' entries.
+   ⟨.W0424, .keep, .degraded, check% bibSourcesChecks⟩,
+   -- A crossref or xdata reference biber does not resolve: the entry is set
+   -- without what it would inherit, named.
+   ⟨.W0425, .keep, .degraded, check% biblatexXdataChecks⟩,
+   -- A macro no @string defines before its use: its name prints, named.
+   ⟨.W0426, .keep, .degraded, check% bibStringStoreChecks⟩,
+   -- A sort locale whose tailoring is of another script: the default
+   -- collation sorts the list, named.
+   ⟨.W0427, .keep, .degraded, check% biblatexLocaleSortChecks⟩,
+   -- A character TeX reserves in a .bib field, set as the character where
+   -- LaTeX stops at it: a decided divergence, named.
+   ⟨.N0030, .divergence, .rewritten, check% bibReservedChecks⟩,
+   -- A numeric style's superscript citation: set as \cite, its keys listed
+   -- and numbered, the superscript named.
+   ⟨.W0428, .keep, .degraded, check% biblatexSuperciteChecks⟩,
+   -- A field the inline reading refuses where LaTeX sets it: set as its
+   -- text, run into the entry, the build shipping, named.
+   ⟨.W0429, .keep, .degraded, check% bibFieldBackstopChecks⟩]
 
 /-- An engine source's tier item: `LeanTex/Core/Elab.lean` is `Core.Elab`,
 `Main.lean` is `Main`. -/

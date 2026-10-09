@@ -1,0 +1,12 @@
+# The reference list lualatex sets for alphakey.bib under \bibliographystyle{alpha}, one entry per line:
+# TeX Live 2026 (LuaHBTeX 1.24.0, bibtex 0.99e), a 60 cm page so no entry breaks,
+# read back with pdftotext -layout 26.09.0. Cited: \nocite of every entry.
+[Alp98] Alpha Org. Proceedings Two, 1998.
+[Bet02] Beta Org. Manual Two, 2002.
+[Boo06] Book No Author. P, 2006.
+[Exa03] Erin Example, editor. Proceedings Three. Gamma Org, 2003.
+[Kap99] The Organizing Group. Proceedings One, 1999.
+[Mis07] Misc no author, 2007.
+[Muk01] Manual Org. Manual One, 2001.
+[Sam04] Max Sample. Manual Three. Delta Org, 2004.
+[x208] Misc no key, 2008.

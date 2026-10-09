@@ -1,0 +1,25 @@
+# options: style=authoryear
+# What lualatex sets for cite.body.tex's citations and cite.bib's list under \usepackage[options]{biblatex}:
+# TeX Live 2026 (LuaHBTeX 1.24.0, biblatex 3.21, biber 2.22), a 120 cm page so no line breaks,
+# read back with pdftotext -layout 26.09.0, one citation line then one entry per line.
+P01 (Alpha 2001, p. 12) end.
+P02 (Alpha 2001, pp. 12–15) end.
+P03 (Alpha 2001, pp. 12–15) end.
+P04 (Alpha 2001, chap. 3) end.
+P05 (Alpha 2001, e1001) end.
+P06 (Alpha 2001, p. xii) end.
+P07 (see Alpha 2001, p. 12) end.
+P08 Alpha (2001, p. 45) end.
+P09 Alpha 2001, pp. 7, 9 end.
+P10 (Beta 2002, col. 12) end.
+P11 (Beta 2002, cols. 12–13) end.
+P12 (Gamma 2003, 12) end.
+P13 (Delta 2004, § 3) end.
+P14 Alpha (2001) and Beta (2002, col. 45) end.
+P15 (Alpha 2001, 12f.) end.
+P16 (Alpha 2001, pp. 12, 14) end.
+References
+Alpha, Ann (2001). Cited With Notes.
+Beta, Bo (2002). Columns.
+Delta, Di (2004). Sections.
+Gamma, Cy (2003). No Pagination.

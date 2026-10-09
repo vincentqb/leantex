@@ -1,0 +1,11 @@
+# The page lualatex sets for fcite.body.tex's citations and fcite.bib's list under \bibliographystyle{unsrt}, one citation line then one entry per line:
+# TeX Live 2026 (LuaHBTeX 1.24.0, bibtex 0.99e), latex and bibtex rerun until the .bbl holds, a 60 cm page so no entry breaks,
+# read back with pdftotext -layout 26.09.0.
+C01 [1] end.
+C02 [2] end.
+References
+[1] Ann Alpha. First, 2020. Reprinted as [3].
+[2] Di Delta. Fourth, 2023.
+[3] Bo Beta. Second, 2021. See also [4].
+[4] Cy Gamma. Third, 2022.
+

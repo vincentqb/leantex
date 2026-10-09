@@ -260,7 +260,8 @@ def registry : List Premise := [
     owed := some "Compare each fallback picture with the same picture in the document's own lualatex build." },
   { name := "kpsewhich", residue := .oracle "kpsewhich", reach := .oracle
     statement := "kpsewhich prints, for --show-path=.otf and --show-path=.ttf, the directories where lualatex finds fonts, which the TeX font report holds the engine's own directories to, and names the files of the TeX tree the generators read."
-    sites := [("scripts/texfonts-report.lean", "kpsewhichRoots"), ("scripts/gen-hyphen-data.lean", "main")]
+    sites := [("scripts/texfonts-report.lean", "kpsewhichRoots"), ("scripts/gen-hyphen-data.lean", "main"),
+      ("scripts/gen-bibstrings-data.lean", "locate")]
     tools := ["kpsewhich"]
     owed := some "Compare kpsewhich's font directories with the directories lualatex opens a font from." },
   { name := "python3", residue := .tool "python3", reach := .render
@@ -326,15 +327,20 @@ def registry : List Premise := [
     sites := [("scripts/flate-fuzz.lean", "main")]
     unchecked := some "It is the reference implementation the compressor is held to, so nothing in the tree stands above it." },
   { name := "tex-tree", residue := .dev "TeX tree", reach := .dev
-    statement := "The host's TeX tree holds the declaring files the generators read, unicode-math's table, tuenc.def, latex.ltx and the hyphenation patterns, so a regenerated data module is what that TeX distribution ships."
+    statement := "The host's TeX tree holds the declaring files the generators read, unicode-math's table, tuenc.def, latex.ltx, the hyphenation patterns and biblatex's english.lbx, so a regenerated data module is what that TeX distribution ships."
     sites := [("scripts/gen-mathsym-data.lean", "main"), ("scripts/gen-textsym-data.lean", "main"),
-      ("scripts/gen-hyphen-data.lean", "main")]
+      ("scripts/gen-hyphen-data.lean", "main"), ("scripts/gen-bibstrings-data.lean", "main")]
     owed := some "Regenerate every data module from the host's TeX tree and require each committed module unchanged." },
   { name := "iconv-tables", residue := .dev "iconv", reach := .dev
     statement := "The host's iconv decodes one byte of WINDOWS-1252, ISO-8859-15 and MACINTOSH as the mapping tables it carries do, so the generated encoding tables are those tables, apart from the two Mac OS Roman rows the generator takes from Apple's own table."
     sites := [("scripts/gen-encoding-data.lean", "iconvByte")]
     tools := ["iconv"]
     owed := some "Regenerate the encoding tables from the host's iconv and require the committed module unchanged." },
+  { name := "unicode-collation", residue := .dev "Unicode::Collate", reach := .dev
+    statement := "The host perl's Unicode::Collate weighs each character as the default collation table it carries does, Unicode::Collate::Locale tailors a locale as its locale files do, and the biber Homebrew installs names its language map and version in its own modules, so the generated collation tables are what those modules ship."
+    sites := [("scripts/gen-collate-data.lean", "main")]
+    tools := ["perl", "brew"]
+    owed := some "Regenerate the collation tables from the host's perl and biber and require the committed module unchanged." },
   { name := "pygments-tables", residue := .dev "Pygments", reach := .dev
     statement := "The installed Pygments answers style queries as a lualatex build's minted reads them, so the generated style table and its oracle file are the reference's own."
     sites := [("scripts/gen-pygments-style-data.lean", "main")]
@@ -376,7 +382,7 @@ def registry : List Premise := [
 check: counts that fall and rise only when this file says so. -/
 def renderToolBaseline : Nat := 5
 def uncheckedBaseline : Nat := 8
-def owedBaseline : Nat := 21
+def owedBaseline : Nat := 22
 
 /-- The spawns that are the budget. -/
 def budgetSites : List (String × String) := [("LeanTex/Cli/RunBounded.lean", "runBounded")]

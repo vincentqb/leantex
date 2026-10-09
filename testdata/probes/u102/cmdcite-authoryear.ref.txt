@@ -1,0 +1,30 @@
+# options: style=authoryear
+# What lualatex sets for cmdcite.body.tex's citations and cmdcite.bib's list under \usepackage[options]{biblatex}:
+# TeX Live 2026 (LuaHBTeX 1.24.0, biblatex 3.21, biber 2.22), a 60cm page so no line breaks,
+# read back with pdftotext -layout 26.09.0, one citation line then one entry per line.
+C01 Delta (2023) end.
+C02 (Delta 2023) end.
+C03 Delta 2023 end.
+C04 (Delta 2023) end.
+C05 (2020) end.
+C06 Alpha 2020; Beta and Gamma 2021 end.
+C07 (Alpha 2020; Beta and Gamma 2021) end.
+C08 (see Alpha 2020, p. 5; Beta and Gamma 2021, p. 7) end.
+C09 Alpha (2020) and Beta and Gamma (2021) end.
+C10 Delta (2023) and Alpha (2020) end.
+C11 First Book end.
+C12 “Second Paper” end.
+C13 Fourth end.
+C14 Fourth Book end.
+C15 https://example.org/a1 end.
+C16 June 15, 2021 end.
+C17 Ann Alpha (2020). First Book. Pub. url: https://example.org/a1 end.
+C18 Alpha (2020) end.
+C20 2020 end.
+C26 (Alpha 2020; Beta and Gamma 2021) end.
+C27 (Delta 2023; Alpha 2020) end.
+References
+Alpha, Ann (2020). First Book. Pub. url: https://example.org/a1.
+Beta, Bo and Cy Gamma (June 15, 2021). “Second Paper”. In: Journal.
+Delta, Di van der (2023). Fourth Book. Pub.
+

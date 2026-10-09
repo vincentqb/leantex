@@ -1,0 +1,7 @@
+# The reference list lualatex sets for strings-a.bib, strings-b.bib and strings-c.bib, read in that order, under \bibliographystyle{plain}, one entry per line:
+# TeX Live 2026 (LuaHBTeX 1.24.0, bibtex 0.99e), a 60 cm page so no entry breaks, read back with pdftotext -layout 26.09.0. Cited: \nocite{a1,b1,b2}.
+References
+[1] Ann Alpha. First. Journal of Shared Strings, 2001.
+[2] Bo Beta. Second. Journal of Shared Strings, 2002.
+[3] Cy Gamma. Third, pages 1–2. Pub, 2003.
+

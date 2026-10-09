@@ -272,7 +272,12 @@ is skipped.
   hand-rolled mutual walk states its reason beside the def. Ten copies of
   the two generic shapes accumulated before the walks were factored — two
   of the three wildcards among them hid real gaps (a footnote's image
-  shipped a silent placeholder).
+  shipped a silent placeholder). The fold reads every inline region a
+  backend sets, and content the engine builds from authored text is
+  authored: a reference list's fields go through the inline elaborator, so
+  its entries are read (`foldBlock_bibliography_exact`). Skipped as
+  "formatted renderings", they hid a field's image, picture and footnote
+  from the requests and the endnotes: an empty box, and a page refused.
 
 - A generated module (`*Data.lean`) carries only data; contracts and
   lookups over it live in a hand-owned module (`LocaleContract.lean` is

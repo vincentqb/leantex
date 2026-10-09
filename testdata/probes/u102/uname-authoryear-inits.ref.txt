@@ -1,0 +1,21 @@
+# options: style=authoryear,giveninits=true
+# What lualatex sets for uname.body.tex's citations and uname.bib's list under \usepackage[options]{biblatex}:
+# TeX Live 2026 (LuaHBTeX 1.24.0, biblatex 3.21, biber 2.22), a 120 cm page so no line breaks,
+# read back with pdftotext -layout 26.09.0, one citation line then one entry per line.
+U1 Quill and Pell (2001) end.
+U2 Varden and Hollin (2002) end.
+U3 Marne (2003) end.
+U4 Ärnhelm and Ístvik (2004) end.
+U5 Zorvik (2005) end.
+U6 Ångvik (2006) end.
+U7 Ostrow (2007) end.
+U8 Ervin (2008) end.
+References
+Ångvik, A. (2006). “Ring Above”. In: Example Letters.
+Ärnhelm, Ö. and Í. Ístvik (2004). “Accented Capitals”. In: Example Letters.
+Ervin, O. ébauche (2008). “Lowercase Accent Family”. In: Example Letters.
+Marne, É. de la (2003). “Accent Before a Particle”. In: Example Letters.
+Ostrow, É. (2007). “Braced Accent”. In: Example Letters.
+Quill, É. and Ø. Pell (2001). “Accented Given Names”. In: Example Letters.
+Varden, É. and Ł. Hollin (2002). “Accented First Names First”. In: Example Letters.
+Zorvik, A. (2005). “Plain Last”. In: Example Letters.

@@ -15,13 +15,15 @@ file's definition, and the hook holds the CLI to it: a CLI source reads a
 surface only through `read`, `fragment` and the tex door's two stages
 `texLex` and `texParse`, which compose to `read` (`read_tex_exact`), and a
 core source lexes and parses tex text only inside a declared reader
-(`surfaceDoorBypasses` and `coreTexReaders` in `scripts/precommit.lean`). The six declared readers
+(`surfaceDoorBypasses` and `coreTexReaders` in `scripts/precommit.lean`). The seven declared readers
 each read text the engine itself holds rather than a file: the elaborator's
 whole-document entry (`Elab.run`, which tests elaborate a string with), a
 style declaration's value (`Elab.applyStyle`), a setting's tex value
 (`Data.valParsed`), the compatibility layer's synthesized source
-(`Compat.synth`), a picture's macro definition (`Picture.readMacro`) and a
-bibliography style's formula (`BibStyle.formulaOf`).
+(`Compat.synth`), a picture's macro definition (`Picture.readMacro`), a
+reference-list field's formula (`BibText.formulaOf`), and a field's text as
+the document's own elaborator reads it, its reserved characters marked
+between the door's two stages (`Bib.FieldDoor.readWith`).
 
 A file read for an include goes through the same door and comes back in the
 one wrapper the elaborator knows a file by (`Parse.inputEnv`), so an

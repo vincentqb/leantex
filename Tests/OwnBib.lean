@@ -22,7 +22,7 @@ def ownBibChecks (ref : IO.Ref (List String)) : IO Unit := do
 \\bibitem[X]{b} B. Author. Title two.\n\n\\bibitem{c} C. Author.\n\\end{thebibliography}"
   let src := doc "" s!"Citing \\cite\{a} and \\cite\{b,c}.\n\n{list}"
   let (d0, ds0) := elabStr src
-  let (d, ds) := Bib.apply #[] d0
+  let (d, ds) := Bib.apply #[] d0 Bib.plainReading
   let paraText (b : Ir.Block) : String := match b with
     | .para xs => Ir.plainText xs
     | _ => ""
@@ -45,18 +45,18 @@ def ownBibChecks (ref : IO.Ref (List String)) : IO Unit := do
 D. Knuth. The book.\n\\bibitem[Knuth and Plass(1981)]{p} D. Knuth and M. Plass. Breaking.\n\
 \\end{thebibliography}")
   let (e0, _) := elabStr ay
-  let (e, es) := Bib.apply #[] e0
+  let (e, es) := Bib.apply #[] e0 Bib.plainReading
   t "natbib author-year labels cite as names and year"
     ((e.body[0]?.map paraText) == some "Knuth (1984) and (Knuth and Plass, 1981)." &&
       es.isEmpty)
   let (m0, _) := elabStr (doc "" s!"See \\cite\{zz}.\n\n{list}")
-  let (_, ms) := Bib.apply #[] m0
+  let (_, ms) := Bib.apply #[] m0 Bib.plainReading
   t "a key no entry answers is W0351, named by its key"
     (ms.map (·.code) == #["W0351"] && ms.all (·.subject == some "zz"))
   match ← serifFacesSet with
   | none => failures ref "own bibliography: the shipped serif faces did not load"
   | some fonts =>
-    let (pd, _) := Bib.apply #[] d0
+    let (pd, _) := Bib.apply #[] d0 Bib.plainReading
     let shipped := String.join ((bodyLines (layoutOf fonts pd)).toList.map (lineText ·))
     t "the page ships the heading, the marks and the entries"
       (hasStr shipped "References" && hasStr shipped "[X]" && hasStr shipped "Title two." &&

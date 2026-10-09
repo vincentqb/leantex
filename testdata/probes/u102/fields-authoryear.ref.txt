@@ -1,0 +1,33 @@
+# options: style=authoryear
+# What lualatex sets for fields.body.tex's citations and fields.bib's list under \usepackage[options]{biblatex}:
+# TeX Live 2026 (LuaHBTeX 1.24.0, biblatex 3.21, biber 2.22), a 120 cm page so no line breaks,
+# read back with pdftotext -layout 26.09.0, one citation line then one entry per line.
+References
+Alpha, Ada, red. (May 2021). “An Article With Every Field”. French. Trans. from the German by Bo Beta. Version 2.1. In: Journal of Invented Results 12.3, e45 (Spring): A Themed Issue. On Placeholders. Ed. by Cy Gamma. Comp. by Di Delta. Invited paper, pp. 45–67. issn: 0000-0000. doi: 10.0000/example.0001. arXiv: 2101.00001 [cs.DL]. url: https://example.org/article (visited on 01/02/2022). With an erratum. Submitted.
+Beta, Zed (2011). A Miscellaneous Item. Distributed by hand. Leaflet. Version 1. Undated reprint. Exampleville: Example Club.
+Delta, Ben (2010). A Report. Tech. rep. TR-7. Version 2. Sampletown: Example Institute. 42 pp. isrn: EX-TR–10/7–SE.
+Epsilon, Cara (2009). “A Thesis”. PhD thesis. Exampleville: Example University. 150 pp.
+Epsilon, Ed (2015). The Collected Placeholders. In Three Parts. Vol. 2.1: A Book With Every Field. And Its Subtitle. Annotated. Org. by Fy Zeta. With a comment. by Gil Eta. With annots. by Hal Theta. With an intro. by Ivy Iota. With a forew. by Jo Kappa. With an afterw. by Kai Lambda. 3rd ed. 3 vols. Invented Series 9. A note. Exampleville: Example Press. Chap. 4, pp. 50–60. 320 pp. isbn: 978-0-00-000000-0.
+Eta, Eve (2007). A Booklet. Printed locally. Pamphlet. Exampleville. 12 pp.
+Gamma, Ana (Mar. 4, 2023). A Web Page. Version 3. Example Network. url: https://example.org/page (visited on 04/05/2023).
+Iota, Gus, ed. (2005). Example Periodical 12.3: On Placeholders. issn: 1111-1111.
+Kappa, Hana (2004). An Invented Dataset. Survey data. 2nd ed. Version 1.1. Data Series 4. Example Archive. Exampleville: Example Data House.
+Lambda, Ian (2003). An Invented Program. Version 0.9. url: https://example.org/program.
+Mu, Jan, ed. (1990–1995). A Multi-Volume Work. 4 vols. Example Press.
+Mu, Lu (2016). A Book Its Author Edits and Translates. Ed. and trans. from the Latin by Lu Mu. Example Press.
+Nu, Kim (2002a). “Eprint Kinds”. In: Example Letters. JSTOR: 123456.
+— (2002b). “Eprint Kinds Five”. In: Example Letters. Invented Archive: X-99 (sec. 2).
+— (2002c). “Eprint Kinds Four”. In: Example Letters. Google Books: AbCdEf.
+— (2002d). “Eprint Kinds Three”. In: Example Letters. PMID: 12345678.
+— (2002e). “Eprint Kinds Two”. In: Example Letters. HDL: 1234/5678.
+Nu, Max and Nia Xi, eds. and trans. (2013). A Collection Its Editors Translate. Sampletown: Sample House.
+Omega, Xu (2020). A Manual. Ed. by Yan Alpha. 2nd ed. Manual Series 3. Reference guide. Version 4.0. Example Foundation. Exampleville: Example Press. 80 pp.
+Omicron, Mo (Jan. 2018). “A Legacy Month”. In: Example Letters.
+Omicron, Ola (2014). “A Chapter Within”. In: Pi, Pia. The Series of Works. Vol. 4: The Larger Work. Its Subtitle. Ed. by Qi Rho. Trans. by Ray Sigma. Example Press, pp. 10–20.
+Phi, Uma (2019). “A Talk”. In: Proceedings of the Invented Meeting. Invented Meeting. Satellite Session (Exampleville, June 4–8, 2018). Ed. by Val Chi. Vol. 5. Meeting Series 12. Example Society. Sampletown: Sample House, pp. 5–9.
+Psi, Wes, ed. (2017). Proceedings of Another Meeting. Another Meeting (Sampletown, 2017). Example Society. Example Press. 200 pp.
+Tau, Sam (2012). “A Contribution”. In: An Edited Collection. Comp. by Tia Upsilon. Sample House, pp. 101–120.
+Theta, Fay (Feb. 3, 2006). “A Placeholder Device”. U.S. pat. 123456 (US, DE). Example Holding.
+Xi, Lea (2001a). “Pages That Are Not Numbers”. In: Example Letters, e1001.
+— (2001b). “Roman Pages”. In: Example Letters, pp. xii–xv.
+Zeta, Dan (2008). “A Draft”. Circulated draft. Invented Workshop (Sampletown, Sept. 2008). Exampleville.

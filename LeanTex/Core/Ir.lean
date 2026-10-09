@@ -3423,6 +3423,16 @@ public inductive RefForm where
   | name (cap : Bool)
   deriving Repr, BEq
 
+/-- What a field citation prints of its entry instead of its label
+(biblatex manual §3.8.4): its title (`\citetitle`), its URL (`\citeurl`),
+its date (`\citedate`), or the whole entry (`\fullcite`). -/
+public inductive CiteField where
+  | title
+  | url
+  | date
+  | full
+  deriving Repr, BEq, Inhabited
+
 /-- The natbib command a citation was written with — natbib.sty's command
 table (`\DeclareRobustCommand\citet` and its siblings), each one setting
 which parts print and whether brackets wrap them: `\citet` (textual),
@@ -3450,6 +3460,8 @@ public inductive CiteCmd where
   /-- One citation bracket, natbib's `\NAT@open` when `opening` and its
   `\NAT@close` otherwise: the marks `\citetext` sets around its body. -/
   | bracket (opening : Bool)
+  /-- A field of the entry in place of its label (`CiteField`). -/
+  | field (f : CiteField)
   deriving Repr, BEq, Inhabited
 
 /-- What a citation declares beside its keys: the command, the starred
@@ -3469,9 +3481,10 @@ public structure CiteForm where
 /-- natbib's citation commands (natbib.sty's command table), each with the
 form it selects: `\citefullauthor` is `\citeauthor*` there, and the
 capitalized five are the only ones natbib defines; the kernel's `\cite` and
-`\nocite` are read through the same rows, with natbib or without it. The
-one naming site — the elaborator reads a command through it and the dump
-spells a form back through it. -/
+`\nocite` are read through the same rows, with natbib or without it, and so
+are biblatex's field citations (`CiteField`; a star is `\citetitle*`'s full
+title). The one naming site — the elaborator reads a command through it and
+the dump spells a form back through it. -/
 public def natbibCites : List (String × CiteForm) :=
   [("citet", { cmd := .textual }), ("citep", { cmd := .paren }),
    ("cite", { cmd := .auto }), ("citealt", { cmd := .alt }),
@@ -3482,7 +3495,9 @@ public def natbibCites : List (String × CiteForm) :=
    ("nocite", { cmd := .nocite }),
    ("Citet", { cmd := .textual, up := true }), ("Citep", { cmd := .paren, up := true }),
    ("Citealt", { cmd := .alt, up := true }), ("Citealp", { cmd := .alp, up := true }),
-   ("Citeauthor", { cmd := .author, up := true })]
+   ("Citeauthor", { cmd := .author, up := true }),
+   ("citetitle", { cmd := .field .title }), ("citeurl", { cmd := .field .url }),
+   ("citedate", { cmd := .field .date }), ("fullcite", { cmd := .field .full })]
 
 /-- The command a form spells back as; a bracket mark as the natbib macro it
 is. -/
@@ -5800,6 +5815,12 @@ public structure BibItem where
   key : String
   marker : Option String
   content : Array Inline
+  /-- The label is one a BibTeX style writes (`\bibitem[label]`, `alpha`'s
+  `[Eps20]`): LaTeX sets it flush left in the label column (latex.ltx
+  `\@lbibitem`, `\item[\@biblabel{#1}\hfill]`), where a number takes the
+  list's right-aligned `\makelabel`, and so do biblatex's labels, a
+  shorthand among them (`\hss` before each). Both backends read it. -/
+  labelFlush : Bool := false
   deriving Repr, BEq, Inhabited
 
 /-- The titled block's kind, closed: beamer's three block environments
@@ -9307,6 +9328,11 @@ public structure Doc where
   `framenumber` to 0 (`appendixnumberbeamer.sty`). `none` numbers the body
   whole. -/
   frameRestart : Option Nat := none
+  /-- Where each `\bibliography` list's footnotes number from, in document
+  order: the footnote counter where its marker stands, and the notes its
+  fields set — numbered from there, in the order the list sets them, as
+  LaTeX's reading of the `.bbl` numbers them (`Bib.apply`). -/
+  listNotes : Array (Nat × Nat) := #[]
   body : Array Block := #[]
   deriving Repr, BEq, Inhabited
 
@@ -10539,13 +10565,23 @@ can disagree on what an algorithm declares. -/
   | [] => acc
   | row :: rest => foldTableRows fi (foldTableCells fi acc row.toList) rest
 
+/-- `foldInline` over a reference list's items: each entry's content, in
+list order. A field is read by the document's own inline elaborator, so an
+entry holds what the body's text holds — an image, a boundary picture, a
+footnote, a reference — and a collector reads it as it reads the body's. -/
+@[expose] public def foldBibItems (fi : α → Inline → α) (acc : α) : List BibItem → α
+  | [] => acc
+  | it :: rest => foldBibItems fi (foldInlineList fi acc it.content.toList) rest
+
 mutual
 
 /-- The block face of the fold: `fb` reads each block, `fi` each inline —
 the node first, a frame's title and a float's caption before their bodies,
 as the collectors this fold hosts always read them. A `.bibliography`'s
-items are formatted renderings, not authored content, so the fold reads
-the marker itself and does not descend into them. -/
+items are read after the marker, entry by entry (`foldBibItems`): their
+fields went through the inline elaborator the body's text goes through, so
+an image, a picture or a footnote a field sets is the document's as the
+body's are, and every collector that reads authored content sees it. -/
 @[expose] public def foldBlock (fb : α → Block → α) (fi : α → Inline → α) (acc : α) (b : Block) : α :=
   match b with
   | .para content => foldInlineList fi (fb acc b) content.toList
@@ -10578,8 +10614,9 @@ the marker itself and does not descend into them. -/
   | .table _ _ _ rows _ _ => foldTableRows fi (fb acc b) rows.toList
   | .algorithm _ _ lines => foldAlgLines fi (fb acc b) lines.toList
   | .logo content => foldInlineList fi (fb acc b) content.toList
+  | .bibliography _ _ items => foldBibItems fi (fb acc b) items.toList
   | .verbatim _ _ _ | .setPalette _ | .setTokens _ | .pagebreak
-  | .rule _ _ _ | .picture _ | .bibliography _ _ _ => fb acc b
+  | .rule _ _ _ | .picture _ => fb acc b
 
 @[expose] public def foldBlockList (fb : α → Block → α) (fi : α → Inline → α) (acc : α) :
     List Block → α
@@ -10697,13 +10734,18 @@ public def foldCtxAlgLines (w : CtxFold γ α) (ctx : γ) (acc : α) : List AlgL
       | some c => foldCtxInlineList w ctx (foldCtxInlineList w ctx acc l.content.toList) c.toList
       | none => foldCtxInlineList w ctx acc l.content.toList) rest
 
+/-- `foldCtxInline` over a reference list's items, entry by entry: the
+reading order `foldBibItems` declares. -/
+public def foldCtxBibItems (w : CtxFold γ α) (ctx : γ) (acc : α) : List BibItem → α
+  | [] => acc
+  | it :: rest => foldCtxBibItems w ctx (foldCtxInlineList w ctx acc it.content.toList) rest
+
 mutual
 
 /-- The block face: `foldBlock`'s descent, arm for arm, with the context
 `openBlock` returns in force over the node's content and `closeBlock`
-called once that content is read. A `.bibliography`'s items are the style's
-renderings, not authored content, so the walk reads the marker and does not
-descend — the same line `foldBlock` draws. -/
+called once that content is read — a `.bibliography`'s entries among that
+content, as `foldBlock` reads them. -/
 @[expose] public def foldCtxBlock (w : CtxFold γ α) (ctx : γ) (acc : α) (b : Block) : α :=
   match b with
   | .para content =>
@@ -10784,8 +10826,11 @@ descend — the same line `foldBlock` draws. -/
   | .logo content =>
     let r := w.openBlock ctx acc b
     w.closeBlock ctx (foldCtxInlineList w r.2 r.1 content.toList) b
+  | .bibliography _ _ items =>
+    let r := w.openBlock ctx acc b
+    w.closeBlock ctx (foldCtxBibItems w r.2 r.1 items.toList) b
   | .verbatim _ _ _ | .setPalette _ | .setTokens _ | .pagebreak
-  | .rule _ _ _ | .picture _ | .bibliography _ _ _ =>
+  | .rule _ _ _ | .picture _ =>
     w.closeBlock ctx (w.openBlock ctx acc b).1 b
 
 public def foldCtxBlockList (w : CtxFold γ α) (ctx : γ) (acc : α) : List Block → α
@@ -10904,6 +10949,13 @@ public theorem foldCtxTableRows_covers (fb : α → Block → α) (fi : α → I
   | nil => rfl
   | cons row rest ih =>
     rw [foldCtxTableRows, foldTableRows, foldCtxTableCells_covers, ih]
+
+public theorem foldCtxBibItems_covers (fb : α → Block → α) (fi : α → Inline → α) (acc : α)
+    (items : List BibItem) :
+    foldCtxBibItems (CtxFold.ofFold fb fi) () acc items = foldBibItems fi acc items := by
+  induction items generalizing acc with
+  | nil => rfl
+  | cons it rest ih => rw [foldCtxBibItems, foldBibItems, foldCtxInlineList_covers, ih]
 
 public theorem foldCtxAlgLines_covers (fb : α → Block → α) (fi : α → Inline → α) (acc : α)
     (lines : List AlgLine) :
@@ -11029,8 +11081,12 @@ public theorem foldCtxBlock_covers (fb : α → Block → α) (fi : α → Inlin
     simp only [foldCtxBlock, foldBlock, CtxFold.ofFold_openBlock,
       CtxFold.ofFold_closeBlock]
     exact foldCtxInlineList_covers fb fi _ content.toList
+  | .bibliography _ _ items =>
+    simp only [foldCtxBlock, foldBlock, CtxFold.ofFold_openBlock,
+      CtxFold.ofFold_closeBlock]
+    exact foldCtxBibItems_covers fb fi _ items.toList
   | .verbatim _ _ _ | .setPalette _ | .setTokens _ | .pagebreak
-  | .rule _ _ _ | .picture _ | .bibliography _ _ _ =>
+  | .rule _ _ _ | .picture _ =>
     simp only [foldCtxBlock, foldBlock, CtxFold.ofFold_openBlock,
       CtxFold.ofFold_closeBlock]
 
@@ -11171,8 +11227,8 @@ private def blockLinkBlockReading (acc : String) (b : Block) : String :=
       | none => ""
     String.append (String.append acc caption) content
   | .picture pic => String.append acc pic.alternative.text
-  | .bibliography _ _ items =>
-    items.foldl (fun s item => String.append s (plainText item.content)) acc
+  -- a reference list's entries are the fold's own descent, read leaf by leaf
+  | .bibliography _ _ _
   | .para _ | .section _ _ _ _ | .list _ _ | .center _ | .ragged _ _ | .spaced _ _
   | .role _ _ | .link _ _ | .quote _ | .abstract _ | .titled _ _ _ | .equation _ _
   | .algorithm _ _ _ | .columns _ | .onSteps _ _ | .altSteps _ _ _ | .note _ | .only _ _
@@ -13458,7 +13514,13 @@ private def footnoteBlockOne (out : Array (Option Nat × Array Inline)) :
   -- the caption counts with its float, before the body, as its text does
   | .float _ _ _ body caption =>
     footnoteBlockList (footnoteInlineList out caption.toList) body.toList
-  | .bibliography _ _ _ => out
+  -- a field's note is set where its entry stands, as the body's notes are
+  | .bibliography _ _ items => footnoteBibItems out items.toList
+
+private def footnoteBibItems (out : Array (Option Nat × Array Inline)) :
+    List BibItem → Array (Option Nat × Array Inline)
+  | [] => out
+  | it :: rest => footnoteBibItems (footnoteInlineList out it.content.toList) rest
 
 private def footnoteTableRows (out : Array (Option Nat × Array Inline)) :
     List (Array (Array Inline)) → Array (Option Nat × Array Inline)
@@ -13513,6 +13575,76 @@ private def footnoteInlineOne (out : Array (Option Nat × Array Inline)) :
   | .fill | .hspace _ _ | .rule _ _ _ | .strut _ | .italicCorr _ | .pageNumber | .pageCount | .linebreak _ => out
 
 end
+
+mutual
+
+/-- A field's notes numbered in reading order from `k + 1`: each
+`.footnote none` — a mark a field's reading left to its list
+(`Elab.Counters.fnDefer`) — takes the next number, a note inside a note's
+body after its host, as `footnotesOf` reads them; a note the author
+numbered keeps its number. Returns the counter past them. -/
+-- conserves: none — it sets marks only, digits the census leaves out
+-- (`footnoteWrap_text`); every other node is returned as it stands.
+public def numberNotesInline (k : Nat) (x : Inline) : Nat × Inline :=
+  match x with
+  | .footnote none body =>
+    let r := numberNotesList (k + 1) #[] body.toList
+    (r.1, .footnote (some (k + 1)) r.2)
+  | .footnote (some n) body =>
+    let r := numberNotesList k #[] body.toList
+    (r.1, .footnote (some n) r.2)
+  | .styled s body =>
+    let r := numberNotesList k #[] body.toList
+    (r.1, .styled s r.2)
+  | .colored c n body =>
+    let r := numberNotesList k #[] body.toList
+    (r.1, .colored c n r.2)
+  | .located sp body =>
+    let r := numberNotesList k #[] body.toList
+    (r.1, .located sp r.2)
+  | .role nm body =>
+    let r := numberNotesList k #[] body.toList
+    (r.1, .role nm r.2)
+  | .link t body =>
+    let r := numberNotesList k #[] body.toList
+    (r.1, .link t r.2)
+  | .decorated d body =>
+    let r := numberNotesList k #[] body.toList
+    (r.1, .decorated d r.2)
+  | .onSteps spec body =>
+    let r := numberNotesList k #[] body.toList
+    (r.1, .onSteps spec r.2)
+  | .altSteps spec firstPage otherPage =>
+    let a := numberNotesList k #[] firstPage.toList
+    let o := numberNotesList a.1 #[] otherPage.toList
+    (o.1, .altSteps spec a.2 o.2)
+  | .text _ | .math _ _ | .formula _ _ _ | .image _ _ _ | .icon _ _ | .label _
+  | .ref _ _ _ _ | .cite _ _ | .fill | .hspace _ _ | .rule _ _ _ | .strut _
+  | .italicCorr _ | .pageNumber | .pageCount | .linebreak _ => (k, x)
+
+public def numberNotesList (k : Nat) (out : Array Inline) : List Inline → Nat × Array Inline
+  | [] => (k, out)
+  | x :: rest =>
+    let r := numberNotesInline k x
+    numberNotesList r.1 (out.push r.2) rest
+
+end
+
+/-- A reference list's notes numbered from `k + 1`, entry by entry, in the
+order the list sets them (`numberNotesInline`), and the counter past them. -/
+public def numberNotesItems (k : Nat) (items : Array BibItem) : Nat × Array BibItem :=
+  items.foldl (init := (k, #[])) fun (k, out) it =>
+    let r := numberNotesList k #[] it.content.toList
+    (r.1, out.push { it with content := r.2 })
+
+/-- Whether inline content holds a note its reading left to the list. -/
+public def hasListNote (xs : Array Inline) : Bool :=
+  anyInline (fun x => x matches .footnote none _) xs
+
+/-- The document with each `\bibliography` list's note count set to `m`:
+the notes its fields set, numbered where it stands (`Bib.apply`). -/
+@[expose] public def Doc.withListNotes (doc : Doc) (m : Nat) : Doc :=
+  { doc with listNotes := doc.listNotes.map fun (k, _) => (k, m) }
 
 /-- A heading level in the author's own vocabulary. -/
 private def levelName : HeadingLevel → String
@@ -15815,12 +15947,19 @@ public theorem keepFor_id (t : String) (xs : Array Block) (h : onlyFree xs = tru
   rw [keepFor, keepForList_id t xs.toList h]
 
 
+/-- The `.bib` files one `\bibliography` marker names: its argument split at
+its commas, each name trimmed — BibTeX's `\bibdata` list, and the resources
+biblatex's `\addbibresource` declarations add up to. -/
+public def bibSourceNames (src : String) : Array String :=
+  ((src.splitOn ",").map (·.trimAscii.toString) |>.filter (!·.isEmpty)).toArray
+
 /-- The block face of `bibRefs`: the same leaf over a body not yet
 assembled onto a `Doc` — the no-bibliography citation judge (Elab) reads
 it where only the blocks exist. -/
 public def bibRefsBlocks (blocks : Array Block) : Array String :=
   foldBlocks (fun out b => match b with
-    | .bibliography src _ _ => if src.isEmpty || out.contains src then out else out.push src
+    | .bibliography src _ _ => (bibSourceNames src).foldl (init := out) fun out s =>
+        if out.contains s then out else out.push s
     | _ => out) (fun out _ => out) #[] blocks
 
 /-- The document's own reference list: the items of every `thebibliography`
@@ -15865,9 +16004,8 @@ placement did not. -/
 public def imageSrcsInlines (out : Array String) (xs : Array Inline) : Array String :=
   foldInlines imageSrcPush out xs
 
-/-- The block face: `foldBlocks` with the same leaf. A `.bibliography`'s
-items are formatted renderings and `Bib.apply` builds no image node, so
-the fold's refusal to descend them loses nothing. -/
+/-- The block face: `foldBlocks` with the same leaf, a reference list's
+entries among what it reads — a field's `\includegraphics` is the body's. -/
 public def imageSrcsBlocks (out : Array String) (xs : Array Block) : Array String :=
   foldBlocks (fun out _ => out) imageSrcPush out xs
 
@@ -15970,6 +16108,25 @@ public theorem foldBlockCols_append (fb : α → Block → α) (fi : α → Inli
   | cons b rest ih =>
     obtain ⟨w, body⟩ := b
     rw [List.cons_append, foldBlockCols, foldBlockCols, ih]
+
+/-- `foldBibItems` is the entries' contents folded in turn. -/
+private theorem foldBibItems_foldl (fi : α → Inline → α) (acc : α) (items : List BibItem) :
+    foldBibItems fi acc items = items.foldl (fun acc it => foldInlines fi acc it.content) acc := by
+  induction items generalizing acc with
+  | nil => rfl
+  | cons it rest ih => rw [foldBibItems, ih, List.foldl_cons]; rfl
+
+/-- **A reference list's entries are the fold's**: folding a `.bibliography`
+block reads the marker, then each entry's content in list order — the
+equation every collector over `foldBlocks` and `foldDoc` inherits (the
+image and picture requests, the pending census, the alternatives), so a
+field's image, picture or reference is collected as the body's are. -/
+public theorem foldBlock_bibliography_exact (fb : α → Block → α) (fi : α → Inline → α) (acc : α)
+    (src : String) (style : Option String) (items : Array BibItem) :
+    foldBlock fb fi acc (.bibliography src style items) =
+      items.foldl (fun acc it => foldInlines fi acc it.content)
+        (fb acc (.bibliography src style items)) := by
+  simp only [foldBlock, foldBibItems_foldl, Array.foldl_toList]
 
 /-- Folding a pushed block: the array first, then the block. -/
 public theorem foldBlockList_push (fb : α → Block → α) (fi : α → Inline → α) (acc : α)
@@ -16192,6 +16349,13 @@ public def pictureRequest (doc : Doc) (body : String) : String :=
   let macros := macroDecls doc.pictureMacros roots
   wrapStandalone doc.picturePreamble (fontLines doc.fonts)
     (paletteDecls doc.palette (macroDeclLines macros ++ roots)) macros body
+
+/-- The document with boundary pictures `more` added to its request, each id
+once, its own first: what a reference list's fields set (`Bib.apply`), as
+the body's are recorded where they stand. -/
+@[expose] public def Doc.addPictures (doc : Doc) (more : Array (String × String)) : Doc :=
+  { doc with pictureSrcs := more.foldl (init := doc.pictureSrcs) fun acc (h, b) =>
+      if acc.any (·.1 == h) then acc else acc.push (h, b) }
 
 /-- The boundary requests the shipped tree actually states: `pictureSrcs`
 filtered to the ids an `.image` node still references — a picture pruned
@@ -16901,8 +17065,8 @@ private def mathRequestInlines : CtxFold (Option Span × Bool) (Array MathReques
 
 /-- Entering a block for the request census: a note closes the face scope
 over its content, and the block-owned regions `foldCtxBlock` does not descend
-into — a listing caption, formatted references, picture labels — are read
-here, under the block's context. -/
+into — a listing caption, picture labels — are read here, under the block's
+context. A reference list's entries are the fold's own descent. -/
 private def mathRequestOpen (scope : MathRequestScope) (ctx : Option Span × Bool)
     (out : Array MathRequest) (b : Block) : Array MathRequest × (Option Span × Bool) :=
   let read := foldCtxInlines mathRequestInlines ctx
@@ -16912,14 +17076,13 @@ private def mathRequestOpen (scope : MathRequestScope) (ctx : Option Span × Boo
     (match spec.caption with
       | some (_, caption) => read out caption
       | none => out, ctx)
-  | .bibliography _ _ items =>
-    (items.foldl (fun acc item => read acc item.content) out, ctx)
   | .picture pic => (pic.labelContents.foldl read out, ctx)
   | .para _ | .equation _ _ | .section _ _ _ _ | .list _ _ | .center _
   | .ragged _ _ | .quote _ | .abstract _ | .titled _ _ _ | .role _ _
   | .link _ _ | .spaced _ _ | .columns _ | .onSteps _ _ | .altSteps _ _ _
   | .only _ _ | .nav _ _ | .frame _ _ _ _ _ | .framefoot _
   | .float _ _ _ _ _ | .table _ _ _ _ _ _ | .algorithm _ _ _ | .logo _
+  | .bibliography _ _ _
   | .setPalette _ | .setTokens _ | .pagebreak | .rule _ _ _ => (out, ctx)
 
 private def mathRequestFold (scope : MathRequestScope) :
@@ -17511,11 +17674,23 @@ private theorem requestsAlgLines_resolve_covers (scope : MathRequestScope)
       exact requestsFoldInlines_resolve_covers scope coverage ctx _ c
         (requestsFoldInlines_resolve_covers scope coverage ctx out line.content h)
 
+private theorem requestsBibItems_resolve_covers (scope : MathRequestScope)
+    (coverage : Math.MathAlphabetCoverage) (ctx : Option Span × Bool) :
+    ∀ (items : List BibItem) (out : Array MathRequest), RequestsFree out →
+      RequestsFree (foldCtxBibItems (mathRequestFold scope) ctx out
+        (items.map fun i => { i with content := mapInlines (resolveMathAlphaInline coverage) i.content }))
+  | [], _, h => h
+  | it :: rest, out, h => by
+    rw [List.map_cons, foldCtxBibItems]
+    exact requestsBibItems_resolve_covers scope coverage ctx rest _
+      (requestsFoldInlines_resolve_covers scope coverage ctx out it.content h)
+
 mutual
 
 /-- The request census over a resolved block reads only resolved formulas:
-its descent through every region `foldCtxBlock` walks, and the block-owned
-regions `mathRequestOpen` reads — captions, references, picture labels. -/
+its descent through every region `foldCtxBlock` walks — a reference list's
+entries among them — and the block-owned regions `mathRequestOpen` reads —
+captions and picture labels. -/
 private theorem requestsBlock_resolve_covers (scope : MathRequestScope)
     (coverage : Math.MathAlphabetCoverage) (ctx : Option Span × Bool)
     (out : Array MathRequest) (b : Block) (h : RequestsFree out) :
@@ -17577,10 +17752,8 @@ private theorem requestsBlock_resolve_covers (scope : MathRequestScope)
       exact requestsRegions_resolve_covers coverage ctx [caption.2] out h
   | .bibliography _ _ items =>
     simp only [mapBlock, foldCtxBlock, mathRequestFold_openBlock, mathRequestOpen,
-      mathRequestFold_closeBlock]
-    rw [← Array.foldl_toList, mapBibItems_toList, List.nil_append, List.foldl_map]
-    have := requestsRegions_resolve_covers coverage ctx (items.toList.map (·.content)) out h
-    simpa only [List.map_map, List.foldl_map, Function.comp_def] using this
+      mathRequestFold_closeBlock, mapBibItems_toList, List.nil_append]
+    exact requestsBibItems_resolve_covers scope coverage ctx items.toList out h
   | .picture pic =>
     simp only [mapBlock, foldCtxBlock, mathRequestFold_openBlock, mathRequestOpen,
       mathRequestFold_closeBlock, resolveMathAlphaPicture, Pic.Picture.labelContents_mapLabels]
@@ -19430,6 +19603,16 @@ name keys. -/
 in document order — a `foldDoc` leaf, so the descent is the fold's. -/
 @[expose] public def pendingNodes (doc : Doc) : Array Unresolved :=
   foldDoc pendingStep #[] doc
+
+/-- The lists' note counts change no census the regions carry. -/
+public theorem pendingNodes_withListNotes (doc : Doc) (m : Nat) :
+    pendingNodes (doc.withListNotes m) = pendingNodes doc := by
+  simp only [pendingNodes, foldDoc, furnitureInlines, Doc.withListNotes]
+
+/-- A picture request added changes no census the regions carry. -/
+public theorem pendingNodes_addPictures (doc : Doc) (more : Array (String × String)) :
+    pendingNodes (doc.addPictures more) = pendingNodes doc := by
+  simp only [pendingNodes, foldDoc, furnitureInlines, Doc.addPictures]
 
 /-- Every image source the document names that the store holds no payload
 for — the placeholder boxes every consumer places. -/

@@ -1,36 +1,100 @@
 # source: biblatex manual §3.1.1 (the standard styles; style defaults to
 # numeric, sorting to nty), §3.1.2.1 (maxcitenames, useprefix, sorting),
 # §3.7.1 (\addbibresource), §3.7.2 (\printbibliography), §3.8.2 (the
-# citation commands). The spellings land on the natbib door: styles onto
-# the four-axis record (numeric→plain, numeric+sorting=none→unsrt,
-# authoryear→plainnat; alphabetic labels are outside the record set,
-# W0353 with unsrtnat standing in), \parencite/\autocite onto \citep,
-# \textcite onto \citet, authoryear's bare \cite onto \citealp, the
-# resource onto \bibliography at the \printbibliography site. Every
-# style load also declares biblatex's citation defaults
-# (Bib.CitePunct.biblatex): up to three label names, no von part, a
-# textual list's last key after "and", no same-name compression, and the
-# list in biblatex's nty (numeric) or nyt (authoryear) order; authoryear
-# takes natbib's round brackets and semicolons with a space between name
-# and year (\nameyeardelim). So each style load is impl. The reference
-# list's entries keep the record's formatting (plainnat's or plain's
-# fields and punctuation, not standard.bbx's), which the load's note names.
-# \printbibliography with no file declared draws nothing and says so.
-# The drawn evidence is biblatexChecks' lines, measured with biber.
+# citation commands). A style load keeps the one entry model, read through
+# biber (Bib.Processor.biber: journaltitle, location, date, urldate, doi,
+# eprint, crossref and xdata), and sets the reference list by standard.bbx's
+# drivers under its family, numeric or authoryear (Bib.renderBbl, held to
+# biber's lines by biblatexOracleChecks); alphabetic and the other families
+# are W0353, their list set by the numeric drivers. The citations land on
+# the natbib door: \parencite/\autocite onto \citep, \textcite onto
+# \citet, authoryear's bare \cite onto \citealp, a capitalized spelling
+# onto its capitalized form, authoryear's \parencite* onto \citeyearpar,
+# the multicite commands (\cites, \parencites, \textcites, ...) onto one
+# citation per key joined by the family's delimiter, and the footnote
+# citations (\footcite, \smartcite, \footcites) onto a footnote holding
+# the bare citation and its period; \footcitetext is \footnotetext's W0370,
+# numeric's superscript \supercite is \cite of its keys with the
+# superscript named (W0428), as a style without one falls back to \cite,
+# and the field citations (\citetitle, \citeurl, \citedate, \fullcite)
+# print the entry's field as biblatex.def formats it. With biblatex's citation
+# defaults (Bib.CitePunct.biblatex): up to maxcitenames label names, no von
+# part, a textual list's last key after "and", names and lists told apart
+# as biber's uniqueness tells them (Bib.uniqueness: uniquename and
+# uniquelist, on under authoryear), shortauthor and shorteditor as the
+# label names, a shorthand in place of the label, a numeric textual
+# citation's keys by one list of names in one bracket, and the list in
+# biblatex's nty (numeric) or nyt (authoryear) order; authoryear takes
+# natbib's round brackets and semicolons with a space between name and year
+# (\nameyeardelim). So each style load is impl; uniquename's and
+# uniquelist's per-list variants (mininit, minfull, minyear) are W0101,
+# read as their every-list namesakes. Names in biber's extended format
+# (family=, given=, prefix=, suffix=, a per-name useprefix) are read as
+# biber reads them. A list biblatex words in a language other than
+# english.lbx's (babel's main language, language=, autolang's entry
+# languages) is set in English and is W0421; a cited @set is W0422, its
+# members listed one by one; an entry's related entries are not set and are
+# W0423. A citation's post-note takes biblatex's page prefix (p., pp., or
+# the entry's pagination). The list sorts by biblatex's nty, nyt, nyvt, ynt
+# and ydnt templates (presort, sortkey, sortname, sorttitle, sortyear),
+# collated under the sortlocale biber reads (babel's main language under
+# auto): a Latin-script tailoring as Unicode::Collate::Locale weighs it, one
+# of another script W0427;
+# an entry's options (useprefix, skipbib, dataonly, the name counts, the
+# use and identifier options) and the load's useauthor, useeditor,
+# usetranslator, abbreviate, datecirca and dateuncertain are read; a
+# mergedate other than compact is W0101. A remote or non-BibTeX resource
+# is W0104, skipped; the legacy preamble \bibliography{refs} is
+# \addbibresource{refs.bib}. The resources land on \bibliography, as
+# BibTeX's list of files, at the \printbibliography site; \printbibliography
+# with no file declared
+# draws nothing and says so. The drawn evidence is biblatexChecks',
+# biblatexOracleChecks' and biblatexUniqueChecks' lines, measured with
+# biber.
 pre impl \usepackage[style=numeric]{biblatex}
 pre impl \usepackage[style=numeric,sorting=none]{biblatex}
+pre impl \usepackage[style=numeric,sorting=ydnt]{biblatex}
+pre impl \usepackage[style=authoryear,abbreviate=false,usetranslator=true]{biblatex}
+pre refuse:W0101 \usepackage[style=authoryear,mergedate=basic]{biblatex}
+pre refuse:W0104 \addbibresource[location=remote]{https://example.org/refs.bib}
 pre impl \usepackage[style=authoryear]{biblatex}
+pre impl \usepackage[style=authoryear,uniquename=init,uniquelist=false,maxnames=2]{biblatex}
+pre refuse:W0101 \usepackage[style=authoryear,uniquename=mininit]{biblatex}
 pre refuse:W0353 \usepackage[style=alphabetic]{biblatex}
 pre inert:binds \addbibresource{refs.bib}
 body inert:no-bib-file \printbibliography
+pre inert:binds \bibliography{refs}
 body impl \autocite{k}
+body impl \Autocite{k}
 body impl \parencite{k}
+body impl \Parencite{k}
+body impl \parencite*{k}
 body impl \textcite{k}
+body impl \Textcite{k}
 body impl \cite{k}
-body refuse:W0301 \Textcite{k}
-body refuse:W0301 \footcite{k}
-body refuse:W0301 \fullcite{k}
+body impl \Cite{k}
+body impl \footcite{k}
+body impl \Footcite{k}
+body impl \smartcite{k}
+body impl \Smartcite{k}
+body refuse:W0370 \footcitetext{k}
+body refuse:W0428 \supercite{k}
+body impl \cites{a}{b}
+body impl \Cites{a}{b}
+body impl \parencites{a}{b}
+body impl \Parencites{a}{b}
+body impl \textcites{a}{b}
+body impl \Textcites{a}{b}
+body impl \autocites{a}{b}
+body impl \Autocites{a}{b}
+body impl \footcites{a}{b}
+body impl \smartcites{a}{b}
+body impl \fullcite{k}
+body impl \footfullcite{k}
 body impl \citeauthor{k}
 body impl \citeyear{k}
 body impl \nocite{k}
-body refuse:W0301 \citetitle{k}
+body impl \citetitle{k}
+body impl \citetitle*{k}
+body impl \citeurl{k}
+body impl \citedate{k}

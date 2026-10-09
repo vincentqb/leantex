@@ -311,6 +311,15 @@ public def bibMissing (name looked : String) (span : Option Span) : Diag :=
   Diag.of .E0503 s!"'\\bibliography' file '{name}' is not there; the reference list is empty"
     span (help := s!"looked at: {looked}; \\allow\{E0503} accepts the loss")
 
+/-- W0424: one `.bib` file of several a bibliography names is not there;
+the list holds the entries of the files that are, and every citation of
+an entry only the missing file holds shows `?`, named (W0351). -/
+public def bibMissingAmong (name looked : String) (span : Option Span) : Diag :=
+  Diag.of .W0424 s!"'\\bibliography' file '{name}' is not there; the reference list holds the \
+entries of the other files" span
+    (help := s!"put the file at {looked}, or drop '{name}' from the list of files")
+    (subject := some ("bibfile:" ++ name))
+
 /-- E0365: a `.bib` file named by `\data` is not there; its records are
 absent, and every read of them stays unresolved. The `\input` shape
 (E0502), its own code: one code, one meaning. -/

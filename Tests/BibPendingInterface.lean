@@ -69,7 +69,7 @@ example : Bib.Entry → Array Bib.Step := Bib.plainnatSteps
 example : String → Option Bib.Style := Bib.Style.named
 example : Array Bib.Style :=
   #[Bib.Style.unsrtnat, Bib.Style.plainnat, Bib.Style.plain, Bib.Style.unsrt,
-    Bib.Style.abbrvnat, Bib.Style.abbrv]
+    Bib.Style.abbrvnat, Bib.Style.abbrv, Bib.Style.alpha]
 
 example (key : String) (entry : Bib.Entry) : Bib.Resolved :=
   { key, entry, position := 1, extra := "", label := none }
@@ -96,21 +96,32 @@ example : Bib.Style → Array String → (String → Option Bib.Entry) → Bool 
   fun style cited find biblatex => Bib.resolveEntries style cited find biblatex
 example : Bib.CitePunct → Bib.Style → Array Bib.Resolved → Array Ir.BibItem := Bib.bibItems
 example : Bib.CitePunct → Bib.Resolver → Array Ir.BibItem → Ir.Doc → Ir.Doc := Bib.resolveDoc
-example : Array (String × String) → Ir.Doc → Ir.Doc × Array Diag := Bib.apply
+example : Array (String × String) → Ir.Doc → Bib.FieldReading → Ir.Doc × Array Diag :=
+  fun sources doc rd => Bib.apply sources doc rd
+example : String → Array Ir.Inline × Bib.FieldReport := Bib.plainField
+example : Span → String → Array Ir.Inline × Bib.FieldReport := Bib.plainReading
 example : Ir.Block → Bool := Bib.keepsBlock
 example {α : Type} : Ir.Doc → Array (Nat × α) → Array (Nat × α) := Bib.remapSources
 
-example (p : Bib.CitePunct) (style : Bib.Style) (resolved : Array Bib.Resolved)
-    (h : p.numbers = true) (i : Nat) (hi : i < resolved.size) :
-    (Bib.bibItems p style resolved)[i]?.bind (·.marker) =
-      some (toString resolved[i].position) :=
-  Bib.bibItems_marker_exact p style resolved h i hi
+example (cvOf : String → Bib.FieldText) (p : Bib.CitePunct) (style : Bib.Style)
+    (resolved : Array Bib.Resolved) (h : p.numbers = true) (i : Nat) (hi : i < resolved.size) :
+    (Bib.bibItemsWith cvOf p style resolved)[i]?.bind (·.1.marker) =
+      some (resolved[i].label.getD (toString resolved[i].position)) :=
+  Bib.bibItems_marker_exact cvOf p style resolved h i hi
+
+example (o : Bib.BblOptions) (cvOf : String → Bib.FieldText) (p : Bib.CitePunct)
+    (resolved : Array Bib.Resolved) (months : Array String) (h : p.numbers = true) (i : Nat)
+    (hi : i < (Bib.bblListed resolved).size) :
+    (Bib.bblItems o cvOf p resolved months)[i]?.bind (·.1.1.marker) =
+      some ((Bib.bblListed resolved)[i].label.getD (toString (Bib.bblListed resolved)[i].position)) :=
+  Bib.bblItems_marker_exact o cvOf p resolved months h i hi
 
 example (style : Bib.Style) (cited : Array String)
-    (find : String → Option Bib.Entry) (i : Nat)
-    (hi : i < (Bib.resolveEntries style cited find).size) :
-    (Bib.resolveEntries style cited find)[i].position = i + 1 :=
-  Bib.positions_exact style cited find i hi
+    (find : String → Option Bib.Entry) (biblatex : Bool) (bbl : Option (Bib.BblOptions × Bool))
+    (months : Array String) (findRaw : String → Option Bib.Entry)
+    (i : Nat) (hi : i < (Bib.resolveEntries style cited find biblatex bbl months findRaw).size) :
+    (Bib.resolveEntries style cited find biblatex bbl months findRaw)[i].position = i + 1 :=
+  Bib.positions_exact style cited find biblatex bbl months findRaw i hi
 
 example (order : Bib.SortOrder) (xs : List Bib.Resolved) (r : Bib.Resolved) :
     r ∈ Bib.sortResolved order xs ↔ r ∈ xs := Bib.sortResolved_mem order xs r
@@ -137,18 +148,18 @@ example (p : Bib.CitePunct) (find : Bib.Resolver) (items : Array Ir.BibItem)
     ∀ u ∈ Ir.pendingNodes (Bib.resolveDoc p find items doc), u.isCite = false :=
   Bib.resolveDoc_no_cite p find items doc
 
-example (sources : Array (String × String)) (doc : Ir.Doc) :
-    ∀ u ∈ Ir.pendingNodes (Bib.apply sources doc).1, u.isCite = false :=
-  Bib.apply_no_cite sources doc
+example (sources : Array (String × String)) (doc : Ir.Doc) (cv : Bib.FieldReading) :
+    ∀ u ∈ Ir.pendingNodes (Bib.apply sources doc cv).1, u.isCite = false :=
+  Bib.apply_no_cite sources doc cv
 
 example (table : Ir.RefTable) (spanOf : String → Option Span)
-    (sources : Array (String × String)) (doc : Ir.Doc)
+    (sources : Array (String × String)) (doc : Ir.Doc) (cv : Bib.FieldReading)
     (fetched : Array (Image.Request × Image.Fetch))
-    (hcov : fetched.map (·.1) = Ir.imageRequests (Bib.apply sources doc).1) :
-    ∀ p ∈ Ir.pending (Bib.apply sources doc).1 (Image.fulfilRequests fetched).1,
-      ∃ d ∈ Ir.refDiags table spanOf (Bib.apply sources doc).1 ++
+    (hcov : fetched.map (·.1) = Ir.imageRequests (Bib.apply sources doc cv).1) :
+    ∀ p ∈ Ir.pending (Bib.apply sources doc cv).1 (Image.fulfilRequests fetched).1,
+      ∃ d ∈ Ir.refDiags table spanOf (Bib.apply sources doc cv).1 ++
         (Image.fulfilRequests fetched).2, d.mentions p = true :=
-  pending_named table spanOf sources doc fetched hcov
+  pending_named table spanOf sources doc cv fetched hcov
 
 example : True := by
   fail_if_success have := Bib.citeKeywords

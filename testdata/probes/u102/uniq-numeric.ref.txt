@@ -1,0 +1,55 @@
+# options: style=numeric
+# What lualatex sets for uniq.body.tex's citations and uniq.bib's list under \usepackage[options]{biblatex}:
+# TeX Live 2026 (LuaHBTeX 1.24.0, biblatex 3.21, biber 2.22), a 60 cm page so no line breaks,
+# read back with pdftotext -layout 26.09.0, one citation line then one entry per line.
+C01 Speaker [25] [25] end.
+C02 Speaker [28] [28] end.
+C03 Speaker and Alpha [26] [26] end.
+C04 Speaker [24] Speaker end.
+C05 Beta [3, 4] [3, 4] end.
+C06 Speaker et al. [27] [27] end.
+C07 Hyphen [11] Hyphen [10] end.
+C08 Prefix [18] Prefix [19] end.
+C09 Smith [21] Smith [20] end.
+C10 Doe et al. [5] Doe et al. [6] Doe et al. [7] end.
+C11 Editor [8] Editor [9] end.
+C12 One et al. [14] One et al. [15] end.
+C13 Solo [22] Solo [23] end.
+C14 Other et al. [16] Other, Other, et al. [17] end.
+C15 Tru [29] Tru et al. [30] end.
+C16 LON [13] [13] end.
+C17 EL [12] [12] end.
+C18 Hand [SH] [SH] [SH] end.
+C19 Anonymous Work [1] [2] end.
+References
+[1]   Anonymous Work. 2009.
+[2]   Anonymous Work. 2009.
+[3]   Bo Beta. “Five”. In: J (2016).
+[4]   Bo Beta. “Six”. In: J (2016).
+[5]   Ada Doe et al. “U1”. In: J (2020).
+[6]   Ada Doe et al. “U2”. In: J (2020).
+[7]   Ada Doe et al. “U3”. In: J (2021).
+[8]   Max Editor, ed. E1. 2012.
+[9]   Mia Editor. “E2”. In: J (2012).
+[SH]   Pat Hand. “SH1”. In: J (2018).
+[10]   Jean-Luc Hyphen. “H2”. In: J (2014).
+[11]   Jean-Paul Hyphen. “H1”. In: J (2014).
+[12]   Eve Lead, ed. SE1. 2017.
+[13]   Long Organization Name. “SA1”. In: J (2019).
+[14]   Eda One et al., eds. C1. 2011.
+[15]   Eda One et al., eds. C2. 2011.
+[16]   Kim Other et al. “O1”. In: J (2010).
+[17]   Kim Other, Ned Other, et al. “O2”. In: J (2010).
+[18]   Yan van der Prefix. “P1”. In: J (2013).
+[19]   Zed Prefix. “P2”. In: J (2013).
+[20]   Ann Smith. “J2”. In: J (2012).
+[21]   Zed Smith Jr. “J1”. In: J (2012).
+[22]   Solo. “F1”. In: J (2011).
+[23]   Ray Solo. “F2”. In: J (2011).
+[24]   Kai Speaker. “Four”. In: J (2017).
+[25]   Kim Speaker. “One”. In: J (2018).
+[26]   Kim Speaker and Ann Alpha. “Three”. In: J (2019).
+[27]   Kim Speaker et al. “Seven”. In: J (2015).
+[28]   Lee Speaker. “Two”. In: J (2018).
+[29]   Ann Tru. “T1”. In: J (2021).
+[30]   Ann Tru et al. “T2”. In: J (2020).

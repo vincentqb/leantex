@@ -3575,8 +3575,12 @@ private def weightKeysBlock (acc : Array (Nat × Nat × Bool)) :
   | .logo content => weightKeysInlineList acc {} content.toList
   | .picture pic =>
     pic.labelContents.foldl (fun a c => weightKeysInlineList a {} c.toList) acc
+  -- A field is body text, set at the base style: its `\fontseries` asks
+  -- the faces the body's would.
+  | .bibliography _ _ items =>
+    items.foldl (fun a it => weightKeysInlineList a {} it.content.toList) acc
   | .verbatim _ _ _ | .setPalette _ | .setTokens _ | .pagebreak
-  | .rule _ _ _ | .bibliography _ _ _ => acc
+  | .rule _ _ _ => acc
 
 private def weightKeysBlockList (acc : Array (Nat × Nat × Bool)) :
     List Ir.Block → Array (Nat × Nat × Bool)
@@ -10099,6 +10103,11 @@ public structure Spacing.Paragraph where
   numbers keep one column whatever each line's depth. `none` hangs the
   marker off the indent, the list-bullet shape. -/
   private markerIndent : Option Sp := none
+  /-- Where a flush-left marker starts, as an offset from the margin: the
+  marker sets there and the gap after it reaches the line's own start — a
+  bibliography label a style writes (`Ir.BibItem.labelFlush`). Read
+  before `markerIndent`. -/
+  private markerLeft : Option Sp := none
   /-- TeX's `\hangindent`, the list's `\itemindent` negated: every line but
   the first stands this far in from `indent`, which already includes it.
   The items then open with a `-hangIndent` kern, so the breaker prices the
@@ -10952,6 +10961,7 @@ private def collectPara (r : Rd) (a : Acc)
     (baseStyle : TextStyle := {})
     (marker : Option (Array Inline) := none)
     (markerIndent : Option Sp := none)
+    (markerLeft : Option Sp := none)
     (rule : Option HeadingRule := none)
     (display : Bool := false)
     (leaf : Option Nat := none) (span : Nat := 0) (keepNext : Sp := 0)
@@ -11129,7 +11139,8 @@ private def collectPara (r : Rd) (a : Acc)
       rightFil := rightFil
       protrude := r.geom.protrude
       expand := r.geom.expand
-      markerSegs := markerSegs, markerIndent := markerIndent, hangIndent := hangIndent
+      markerSegs := markerSegs, markerIndent := markerIndent, markerLeft := markerLeft
+      hangIndent := hangIndent
       rule := rule
       notes := noteBlocks
       inFloat := r.inFloat
@@ -13006,32 +13017,40 @@ private def collectSection (r : Rd) (a : Acc) (level : Ir.HeadingLevel) (num : O
 
 private def collectBibliography (r : Rd) (a : Acc) (items : Array Ir.BibItem) (indent : Sp) : Acc :=
   -- The reference list is natbib's `thebibliography` list (`\NAT@bibsetnum`,
-  -- `\NAT@bibsetup`, natbib.sty:627–644). Numbered entries set their `[n]`
-  -- right-aligned in a column as wide as the widest label — `[N]` for N
-  -- entries, the argument the style writes into `\begin{thebibliography}` —
-  -- `\labelsep` before the text; author-year entries hang their continuation
-  -- lines `\bibhang` in; `\bibsep` stands between entries, `\parsep` being
-  -- zero. An unfilled marker ships nothing; the diagnostic that left it
-  -- empty already said why.
+  -- `\NAT@bibsetup`, natbib.sty:627–644). Labelled entries set their
+  -- `[label]` right-aligned in a column as wide as the widest label the list
+  -- sets — what `\settowidth\labelwidth` measures of the label the style
+  -- names widest (`longest.label`) and biblatex's `\labelnumberwidth` of
+  -- every label, measured here in the face that sets them, so no label
+  -- reaches into the margin — `\labelsep` before the text, a label the
+  -- style writes flush left in the column (`Ir.BibItem.labelFlush`); author-year
+  -- entries hang their continuation lines `\bibhang` in; `\bibsep` stands
+  -- between entries, `\parsep` being zero. An unfilled marker ships
+  -- nothing; the diagnostic that left it empty already said why.
   let size := r.geom.fontSize
   let numbered := items.any (·.marker.isSome)
   let (labelW, a) : Sp × Acc := if !numbered then (0, a) else
-    -- measured only (how wide is the widest label?), never shipped
-    let (li, _, cache, _, _) :=
-      itemsOfInlines r.pats size r.xHeight r.fs { color := a.fg, ground := a.ground }
-        #[.text s!"[{items.size}]"] a.hyphCache (.fixed .unattributed) r.imgs
-        r.geom.textWidth r.geom.textHeight (ladder := r.geom.scale) (step := r.step)
-    (itemsNaturalWidth li, { a with hyphCache := cache })
+    -- measured only (how wide is each label?), never shipped
+    items.foldl (init := ((0 : Sp), a)) fun (w, a) item =>
+      match item.marker with
+      | none => (w, a)
+      | some m =>
+        let (li, _, cache, _, _) :=
+          itemsOfInlines r.pats size r.xHeight r.fs { color := a.fg, ground := a.ground }
+            #[.text s!"[{m}]"] a.hyphCache (.fixed .unattributed) r.imgs
+            r.geom.textWidth r.geom.textHeight (ladder := r.geom.scale) (step := r.step)
+        (max w (itemsNaturalWidth li), { a with hyphCache := cache })
   let hang := if numbered then 0 else (r.resolve (Ir.bibHang a.tokens)).width
   let textIndent := if numbered then indent + labelW + size / 2 else indent
   let sep := r.resolve (Ir.bibSep a.tokens size)
   items.zipIdx.foldl (init := a) fun a (item, i) =>
     let marker := item.marker.map fun m => #[Ir.Inline.text s!"[{m}]"]
-    -- one leaf per entry, its whole text (`Struct.bibRaw`); the label is
-    -- generated marker ink
-    let (a, leaf) := a.leafRange 1
+    -- the entry's leaves are its inline content's, as a paragraph's are
+    -- (`Struct.bibRaw`); the label is generated marker ink
+    let (a, leaf) := a.leafRange (leafCount item.content)
     let a := collectPara r a item.content textIndent false size (marker := marker)
-      (leaf := leaf) (span := 1) (hangIndent := hang)
+      (markerLeft := if item.labelFlush then some indent else none)
+      (leaf := leaf) (span := leafCount item.content) (hangIndent := hang)
     if i + 1 == items.size then a.wantGap else a.addvspace sep
 
 private def collectNav (a : Acc) (spec : Ir.NavSpec) (body : Array Block) : Acc :=
@@ -15392,14 +15411,19 @@ private def paraLineGeom (fs : FontSet) (j : ParaJob) (b : B) (first : Bool)
     if first then
       match j.markerSegs with
       | some (ms, mw) =>
-        match j.markerIndent with
-        | some mi =>
+        match j.markerLeft, j.markerIndent with
+        | some ml, _ =>
+          -- Flush left in its column: the gap after the marker absorbs
+          -- what the column's widest label leaves of it.
+          let x1 := b.geom.hmargin + ml
+          (ms ++ #[Seg.gap (x0 - x1 - mw) false] ++ segs0, x1, w0 + (x0 - x1))
+        | none, some mi =>
           -- One marker column for the whole block: the gap absorbs the
           -- line's own depth indent on top of `\labelsep`.
           let base := b.geom.hmargin + mi
           let x1 := base - mw - sep
           (ms ++ #[Seg.gap (x0 - base + sep) false] ++ segs0, x1, w0 + (x0 - x1))
-        | none => (ms ++ #[Seg.gap sep false] ++ segs0, x0 - mw - sep, w0 + mw + sep)
+        | none, none => (ms ++ #[Seg.gap sep false] ++ segs0, x0 - mw - sep, w0 + mw + sep)
       | none => (segs0, x0, w0)
     else (segs0, x0, w0)
   -- The rule fills what the heading left of its line, a word-space away

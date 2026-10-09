@@ -15,7 +15,7 @@ import LeanTex.Core.Contrast
 public import LeanTex.Core.Picture
 import LeanTex.Core.PictureCensus
 import LeanTex.Core.FaIcons
-import LeanTex.Core.Bib
+import LeanTex.Core.BibAccent
 import LeanTex.Core.PdfContract
 public import LeanTex.Core.ListingReply
 import LeanTex.Core.Listing
@@ -575,6 +575,19 @@ public structure Counters where
   Per-chapter numbering waits for a real report class (a `ClassRecord`
   field then). -/
   fnNum : Nat := 0
+  /-- A field's reading (`Bib.FieldDoor`): an unoverridden `\footnote` is
+  numbered where its reference list stands, after the notes before the list
+  (`Ir.numberListNotes`), so its mark is left to the list (`none`). -/
+  fnDefer : Bool := false
+  /-- The notes each `\bibliography` list's fields set, in document order —
+  a resolution's answer (`Prepared.listNotes`): the counter steps by them
+  where each list stands, as LaTeX's reading of the `.bbl` there steps it,
+  so a note after the list numbers after the list's. -/
+  listNotes : Array Nat := #[]
+  /-- The footnote counter where each `\bibliography` list stands, in
+  document order: the number its fields' notes continue from
+  (`Ir.Doc.listNotes`). -/
+  notesAt : Array Nat := #[]
   /-- The theorem-like environments (`\newtheorem`, `\theoremstyle`) and
   their counters in flow order. -/
   thm : ThmDecls := {}
@@ -1213,10 +1226,17 @@ public def colorSiteOf (colors : Array (Palette × String × Color × Bool × Sp
   (used.map fun (_, e, _, _, sp) => (e, sp)).orElse fun _ =>
     (declarations.find? matchesSite).map fun (e, _, _, sp) => (e, sp)
 
-/-- Record a `\bibliography` marker's span: E0503's `-->` (ReqSpans.bib). -/
+/-- A `\bibliography` list stands here: its span, E0503's `-->`
+(`ReqSpans.bib`), the footnote counter its
+fields' notes continue from, and the counter stepped by the notes a
+resolution found the list sets (`Counters.listNotes`), as LaTeX's reading of
+the `.bbl` there steps it. -/
 private def recordBibSpan (ctx : Ctx) (src : String) (pos : Pos) : EM Unit :=
-  modify fun st => { st with spans :=
-    { st.spans with bib := st.spans.bib.push (src, ctx.sourceSpan pos) } }
+  modify fun st =>
+    let c := st.ctr
+    let step := c.listNotes[c.notesAt.size]?.getD 0
+    { st with spans := { st.spans with bib := st.spans.bib.push (src, ctx.sourceSpan pos) }
+              ctr := { c with notesAt := c.notesAt.push c.fnNum, fnNum := c.fnNum + step } }
 
 /-- **url.sty's `\urlstyle` values, as the family each names.** `tt`, `rm`
 and `sf` name the mono, roman and sans families; `same` asks for the face in
@@ -4127,12 +4147,15 @@ private def thanksWarn (ctx : Ctx) (pos : Pos) : EM Unit :=
     (help := "a plain \\footnote in the body text renders as a page footnote")
 
 /-- Step the footnote counter through `Ir.footnoteMark` and return the
-mark's number: an override is itself and steps nothing. -/
-private def footnoteStepNum (override : Option Nat) : EM Nat := do
-  let k0 := (← get).ctr.fnNum
-  let (num, fn) := Ir.footnoteMark k0 override
+mark's number: an override is itself and steps nothing. In a field's
+reading (`Counters.fnDefer`) an unoverridden mark is left to the list,
+which numbers it where it stands (`none`), and steps nothing here. -/
+private def footnoteStepNum (override : Option Nat) : EM (Option Nat) := do
+  let c := (← get).ctr
+  if override.isNone && c.fnDefer then return none
+  let (num, fn) := Ir.footnoteMark c.fnNum override
   modify fun st => { st with ctr := { st.ctr with fnNum := fn } }
-  return num
+  return some num
 
 /-- The missing-group diagnostic the two note arms share, outside the knot. -/
 private def noteNeedsGroup (ctx : Ctx) (name : String) (pos : Pos) : EM Unit :=
@@ -6006,7 +6029,7 @@ a side channel, never slide content" pos
         elabInlinesFrom ctx raws (j + 1) (acc ++ inner) ""
       else
         let num ← footnoteStepNum override
-        elabInlinesFrom ctx raws (j + 1) (acc.push (.footnote (some num) inner)) ""
+        elabInlinesFrom ctx raws (j + 1) (acc.push (.footnote num inner)) ""
     | _ =>
       noteNeedsGroup ctx "footnote" pos
       elabInlinesFrom ctx raws (i + 1) acc sb
@@ -18079,6 +18102,7 @@ private def prepareStyledBody (file : String) (decls : Array PDecl)
       pictureMacros := if (← get).pictures.isEmpty then #[] else ctx.pic.macros
       salvage := (← get).salvage
       frameRestart := (← get).frameRestart
+      listNotes := (← get).ctr.notesAt.map (·, 0)
     }
     -- Cross-references resolve here, once, against the whole document's
     -- labels — every region a backend reads (`Ir.mapDoc`), so a `\ref` in a
@@ -18199,6 +18223,11 @@ public structure Prepared where
   /-- One external highlighter snapshot for every elaboration of this input.
   Pure callers need no provider; unsupported languages keep their source. -/
   listingReplies : Array ListingReply.Answer := #[]
+  /-- The notes each `\bibliography` list's fields set, in document order,
+  as a resolution of the lists found them (`Ir.Doc.listNotes`): an
+  elaboration given them steps the footnote counter by them where each list
+  stands (`Counters.listNotes`). Empty on a first elaboration. -/
+  listNotes : Array Nat := #[]
 
 /-- The name a definer's head binds, when its next item (past spaces and a
 `*`) is a one-word group. -/
@@ -18602,7 +18631,7 @@ public def preparedPreamble (file : String) (p : Prepared)
   -- fires keys this walk also fires (`spec:overlay`), so the elaborator
   -- starts from what the document has already been told, not from empty.
   (beginDoc file p.raws p.picPre p.picSets p.picMacros picMetric picWithdrawn
-    p.listingReplies).run { warnedUnknown := p.warned }
+    p.listingReplies).run { warnedUnknown := p.warned, ctr := { listNotes := p.listNotes } }
 
 /-- The actual block-entry state, after execution, the declaration fold,
 refused declarative bodies and class defaults. Withdrawal prepares this

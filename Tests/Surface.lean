@@ -2264,14 +2264,16 @@ def compatConservationChecks (ref : IO.Ref (List String)) : IO Unit := do
       wrap "\\fonts{ body = \"Alpha Serif\", body.l = \"Alpha Serif Light\" }" "x")]
   for (nm, latex, native) in pairs do
     t s!"conserves {nm}" ((elabStr latex).1 == (elabStr native).1)
-  -- biblatex's load is the native reference list and one fact beside it: its
-  -- citations are biblatex's (`Bib.CitePunct.biblatex`), which no natbib-free
-  -- native spelling declares.
+  -- biblatex's load is the native reference list and the facts beside it:
+  -- its citations are biblatex's (`Bib.CitePunct.biblatex`), and its list is
+  -- biblatex's numeric family in nty order (`Bib.BblOptions.ofDecls`), which
+  -- no natbib-free native spelling declares.
   let bl := (elabStr (wrap "\\usepackage[style=numeric]{biblatex}\\addbibresource{refs.bib}"
     "\\autocite{k}\n\n\\printbibliography")).1
   let nat := (elabStr (wrap "" "\\citep{k}\n\n\\bibliographystyle{plain}\\bibliography{refs}")).1
-  t "conserves biblatex, but for its citation style"
-    ({ bl with natbib := none } == nat && bl.natbib == some #["biblatex"])
+  t "conserves biblatex, but for its citation and list style"
+    ({ bl with natbib := none } == nat &&
+      bl.natbib == some #["biblatex", "bbx=numeric", "cbx=numeric", "sorting=nty"])
 
 /-- Dimension evidence beyond the fixed vectors in `main`.
 
@@ -2934,9 +2936,9 @@ def localeChecks (ref : IO.Ref (List String)) : IO Unit := do
     (((HtmlDoc.emit {} dab).1.splitOn ">Résumé<").length == 2)
   -- Bibliography months come from the locale (BibTeX's jan..dec macros).
   let bib := "@article{k, author={A B}, title={T}, journal={J}, year={2020}, month=jan}"
-  let (dcite, _) := elabStr
+  let (applied, _) := bibBuild
     "\\documentclass{article}\n\\usepackage[french]{babel}\n\\begin{document}\n\\cite{k}\n\n\\bibliography{refs}\n\\end{document}"
-  let (applied, _) := Bib.apply #[("refs", bib)] dcite
+    #[("refs", bib)]
   let bibText := applied.body.foldl (init := "") fun acc b => match b with
     | .bibliography _ _ items =>
       items.foldl (init := acc) fun acc i => acc ++ Ir.plainText i.content
@@ -4199,7 +4201,7 @@ def bibStyleChecks (ref : IO.Ref (List String)) : IO Unit := do
       ((Bib.Style.named "plainnat").map (fun s => (s.labels, s.sort)))
         == some (true, .authorYear) &&
       ((Bib.Style.named "plain").map (fun s => (s.labels, s.sort)))
-        == some (false, .authorYear) &&
+        == some (false, .plain) &&
       ((Bib.Style.named "unsrt").map (fun s => (s.labels, s.sort)))
         == some (false, .citation) &&
       (Bib.Style.named "mystery").isNone)
@@ -4207,14 +4209,14 @@ def bibStyleChecks (ref : IO.Ref (List String)) : IO Unit := do
     (["plainnat", "unsrtnat", "abbrvnat"].all (Bib.natbibRows.lookup · == some Bib.natPunct) &&
       ["plain", "unsrt", "abbrv", "alpha"].all (Bib.natbibRows.lookup · == some Bib.latexPunct) &&
       (Bib.natbibRows.lookup "apalike").isNone)
-  -- abbrvnat/abbrv: plainnat/plain with only the abbreviation axis set
+  -- abbrvnat/abbrv: plainnat/plain with the abbreviation axes set
   -- (abbrvnat.bst and abbrv.bst FUNCTION {format.names}: `{f.~}{vv~}{ll}{, jj}`
-  -- where the plain pair has `{ff~}` — the one designator that differs).
-  t "bibstyle: abbrv styles differ from the plain pair only in the name axis"
-    (((Bib.Style.named "abbrvnat").map (fun s => (s.labels, s.sort, s.names)))
-        == some (true, .authorYear, { initials := true }) &&
-      ((Bib.Style.named "abbrv").map (fun s => (s.labels, s.sort, s.names)))
-        == some (false, .authorYear, { initials := true }))
+  -- where the plain pair has `{ff~}`, and their month macros, `"Mar."`).
+  t "bibstyle: abbrv styles differ from the plain pair only in the abbreviation axes"
+    (((Bib.Style.named "abbrvnat").map (fun s => (s.labels, s.sort, s.names, s.shortMonths)))
+        == some (true, .authorYear, { initials := true }, true) &&
+      ((Bib.Style.named "abbrv").map (fun s => (s.labels, s.sort, s.names, s.shortMonths)))
+        == some (false, .plain, { initials := true }, true))
   t "bibstyle: abbrv names are J. Smith, never Smith, J."
     (Bib.abbrvNames.render (Bib.parseName "Smith, Jane") == "J. Smith" &&
       Bib.abbrvNames.renderList "Smith, Jane and Doe, Alex B." ==
@@ -4263,7 +4265,7 @@ def bibApplyChecks (ref : IO.Ref (List String)) : IO Unit := do
         .para #[.cite { cmd := .paren } #["c", "b"]],
         .bibliography "refs" style #[]] }
   let run (style : Option String) (natbib : Option (Array String) := none) :=
-    Bib.apply #[("refs", bib)] (doc style natbib)
+    Bib.apply #[("refs", bib)] (doc style natbib) Bib.plainReading
   let (outU, dsU) := run (some "unsrtnat")
   t "apply: no diagnostics on a clean resolution" dsU.isEmpty
   let itemsOf (d : Ir.Doc) : Array Ir.BibItem :=
@@ -4306,14 +4308,15 @@ def bibApplyChecks (ref : IO.Ref (List String)) : IO Unit := do
   -- The three diagnostics, each with its contract.
   let (outG, dsG) := Bib.apply #[("refs", bib)]
     { body := #[.para #[.cite { cmd := .paren } #["ghost", "a"]],
-        .bibliography "refs" none #[]] }
+        .bibliography "refs" none #[]] } Bib.plainReading
   t "apply: an unknown key warns W0351 and shows ? beside its neighbours"
     ((dsG.map (·.code)) == #["W0351"] && paraText outG 0 == "[?, 1]")
   let (outB, dsB) := Bib.apply #[("refs", "@misc{broken, year = ?}\n" ++ bib)]
     { body := #[.para #[.cite { cmd := .paren } #["a"]], .bibliography "refs" none #[]] }
-  t "apply: a malformed entry warns W0352 at its .bib position, rest kept"
+    Bib.plainReading
+  t "apply: a malformed entry warns W0352 at its place in its .bib file, rest kept"
     (dsB.map (·.code) == #["W0352"] &&
-      (dsB[0]?.bind (·.span)).map (·.file) == some "refs" &&
+      (dsB[0]?.bind (·.span)).map (·.file) == some "refs.bib" &&
       (itemsOf outB).map (·.key) == #["a"])
   let (_, dsM) := run (some "mystery")
   t "apply: an unknown style warns W0353 and falls back to the record"
@@ -4322,6 +4325,7 @@ def bibApplyChecks (ref : IO.Ref (List String)) : IO Unit := do
   -- no `.cite` node survives; the elaborator named the loss at the site
   -- (W0351, the no-bibliography cause), so `apply` says nothing here.
   let (outN, dsN) := Bib.apply #[] { body := #[.para #[.cite { cmd := .paren } #["a"]]] }
+    Bib.plainReading
   t "apply: a document with no bibliography marker resolves every mark to [?], silently"
     (dsN == #[] && paraText outN 0 == "[?]" && (Ir.pendingNodes outN).isEmpty)
 
@@ -4453,8 +4457,7 @@ the engine prints `[?]` with the separators a resolved key would have. -/
 def natbibChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit := do
   let t := check ref
   let shipped (pre style : String) (calls : List String) : Array String × String × Bool :=
-    let (doc, _) := elabStr (natbibSrc pre style calls)
-    let (doc, bibDiags) := Bib.apply #[("refs", natbibBib)] doc
+    let (doc, _, bibDiags) := bibResolve (natbibSrc pre style calls) #[("refs", natbibBib)]
     ((bodyLines (layoutOf oneFace doc)).map lineInk, htmlVisibleText (HtmlDoc.emit {} doc).1,
       bibDiags.isEmpty)
   let calls := natbibRows.map (·.1)
@@ -4541,10 +4544,9 @@ under lualatex over the same shapes in TeX Gyre Termes at 10 pt: a hang of
 def natbibListChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit := do
   let t := check ref
   let build (pre : String) (keys : String) : Ir.Doc × Layout.Out × String :=
-    let (doc, _) := elabStr s!"\\documentclass\{article}\n{pre}\n\
+    let (doc, _) := bibBuild s!"\\documentclass\{article}\n{pre}\n\
       \\bibliographystyle\{unsrtnat}\n\\begin\{document}\nL1 \\citep\{{keys}} end.\n\n\
-      \\bibliography\{refs}\n\\end\{document}\n"
-    let (doc, _) := Bib.apply #[("refs", natbibListBib)] doc
+      \\bibliography\{refs}\n\\end\{document}\n" #[("refs", natbibListBib)]
     (doc, layoutOf oneFace doc, (HtmlDoc.emit {} doc).1)
   let edge (l : Layout.LineOut) : Dim.Sp := l.x + l.hang
   let step (a b : Layout.LineOut) : Dim.Sp := b.y - a.y
@@ -4672,10 +4674,9 @@ def bibTextChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Uni
     (Bib.fieldInlines "costs \\$5, or $x" == #[.text "costs $5, or $x"])
   let bib := "@article{q1, author = {Ann Author}, title = {On {\\'E}tudes of $(a, B)$ \
     and ``Quoted'' Things}, journal = {Journal of Examples}, year = {2020}}\n"
-  let (doc, _) := elabStr "\\documentclass{article}\n\\usepackage{natbib}\n\
+  let (doc, _, ds) := bibResolve "\\documentclass{article}\n\\usepackage{natbib}\n\
     \\bibliographystyle{unsrtnat}\n\\begin{document}\nL1 \\citep{q1} end.\n\n\
-    \\bibliography{refs}\n\\end{document}\n"
-  let (doc, ds) := Bib.apply #[("refs", bib)] doc
+    \\bibliography{refs}\n\\end{document}\n" #[("refs", bib)]
   let fs ← mathSetOf oneFace
   let out := layoutOf fs doc
   let entry := (bibEntryLines (bodyLines out)).foldl (fun s e =>
@@ -4787,11 +4788,11 @@ def plainnatChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Un
   let keys := (plainnatBib.splitOn "\n").filterMap fun l =>
     let l := l.trimAscii.toString
     if l.startsWith "@" then ((l.splitOn "{")[1]?).bind (·.splitOn "," |>.head?) else none
-  let (doc, _) := elabStr s!"\\documentclass\{article}\n\\usepackage[numbers]\{natbib}\n\
+  let (doc, _, ds) := bibResolve s!"\\documentclass\{article}\n\\usepackage[numbers]\{natbib}\n\
     \\usepackage[paperwidth=40cm,paperheight=60cm,margin=1cm]\{geometry}\n\
     \\bibliographystyle\{unsrtnat}\n\\begin\{document}\n\
     L1 \\citep\{{String.intercalate "," keys}} end.\n\n\\bibliography\{refs}\n\\end\{document}\n"
-  let (doc, ds) := Bib.apply #[("refs", plainnatBib)] doc
+    #[("refs", plainnatBib)]
   let shipped := (bibEntryLines (bodyLines (layoutOf oneFace doc))).map fun e =>
     String.intercalate " " (e.toList.map lineInk)
   t s!"plainnat: every entry resolves, one per key ({shipped.size} of {keys.length})"
@@ -4847,10 +4848,9 @@ the letters stay out. -/
 def natbibLabelChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit := do
   let t := check ref
   for (pre, style, calls, list) in natbibLabelModes do
-    let (doc, _) := elabStr (natbibSrc
+    let (doc, _, ds) := bibResolve (natbibSrc
       (pre ++ "\n\\usepackage[paperwidth=40cm,paperheight=60cm,margin=1cm]{geometry}") style
-      natbibLabelCalls)
-    let (doc, ds) := Bib.apply #[("refs", natbibLabelBib)] doc
+      natbibLabelCalls) #[("refs", natbibLabelBib)]
     let lines := bodyLines (layoutOf oneFace doc)
     let page := lines.map lineInk
     let entries := (bibEntryLines lines).map fun e => String.intercalate " " (e.toList.map lineInk)
@@ -4905,8 +4905,8 @@ def nociteChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit
   let t := check ref
   let geometry := "\n\\usepackage[paperwidth=40cm,paperheight=60cm,margin=1cm]{geometry}"
   for (pre, style, calls, lines, list) in nociteModes do
-    let (doc, eds) := elabStr (natbibSrc (pre ++ geometry) style calls)
-    let (doc, ds) := Bib.apply #[("refs", natbibLabelBib)] doc
+    let (doc, eds, ds) := bibResolve (natbibSrc (pre ++ geometry) style calls)
+      #[("refs", natbibLabelBib)]
     let out := bodyLines (layoutOf oneFace doc)
     let page := out.map lineInk
     let entries := (bibEntryLines out).map fun e => String.intercalate " " (e.toList.map lineInk)
@@ -4919,9 +4919,8 @@ def nociteChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit
     t s!"{tag}: the list is lualatex's ({entries.toList})" (entries.toList == list)
     for want in list do
       t s!"{tag}: the html list reads '{want}'" (hasStr html want)
-  let (doc, _) := elabStr (natbibSrc "\\usepackage[numbers]{natbib}" "unsrtnat"
-    ["\\nocite{missing2000}"])
-  let (doc, ds) := Bib.apply #[("refs", natbibLabelBib)] doc
+  let (doc, _, ds) := bibResolve (natbibSrc "\\usepackage[numbers]{natbib}" "unsrtnat"
+    ["\\nocite{missing2000}"]) #[("refs", natbibLabelBib)]
   t "nocite: a key no entry answers is named once, keyed to it, and prints nothing"
     ((ds.filter (·.code == "W0351")).map (·.subject) == #[some "missing2000"] &&
       ((bodyLines (layoutOf oneFace doc)).map lineInk).contains "L1 end.")

@@ -9,6 +9,7 @@ import LeanTex.Core.Elab
 import LeanTex.Core.Surface
 import LeanTex.Core.Bib
 import LeanTex.Core.BibStyle
+public import LeanTex.Core.BibText
 import LeanTex.Core.Data
 import LeanTex.Cli.DriverDiag
 
@@ -268,23 +269,31 @@ public def expandInputs (file : String) (raws : Array Parse.Raw)
 fulfilled: each named `.bib` resolves beside the document, like `\input`,
 and its text goes to the pure core (`Bib.apply`) — parsing, ordering,
 formatting, and the citation rewrite all happen there, on every document
-(`Bib.apply_no_cite`: no `.cite` node reaches a backend). A missing file is
-E0503 naming the path; the marker stays empty and the citations' `?`
-marks say so on the page. Each `.bib` is read under the declaration the
-ledger holds, and joins its reads. -/
-public def resolveBibliography (file : String) (doc : Ir.Doc)
-    (bibSpans : Array (String × Span) := #[]) (ledger : Encoding.Ledger := {}) :
+(`Bib.apply_no_cite`: no `.cite` node reaches a backend), each field read
+through `cv` — the driver passes the document's own elaborator
+(`Bib.FieldDoor.read`). A missing file is E0503 naming the path where no
+named file is there — the marker stays empty and the citations' `?` marks
+say so on the page — and W0424 where others are, whose entries the list
+holds. Each `.bib` is read under the declaration the ledger holds, and
+joins its reads. The list's own references resolve against the document's
+labels (`labels`, `Bib.resolveListRefs`), as the body's did; the one judge
+of what stays `??` is the document's (`Bib.refJudge`). -/
+public def resolveBibliography (file : String) (doc : Ir.Doc) (cv : Bib.FieldReading)
+    (labels : Ir.RefTable) (bibSpans : Array (String × Span) := #[])
+    (ledger : Encoding.Ledger := {}) :
     IO (Ir.Doc × Array Diag × Encoding.Ledger) := do
   let requested := Ir.bibRefs doc
   let dir := (System.FilePath.mk file).parent.getD "."
+  let spanOf (src : String) : Option Span :=
+    (bibSpans.find? fun (r, _) => (Ir.bibSourceNames r).contains src).map (·.2)
   let mut sources : Array (String × String) := #[]
   let mut diags : Array Diag := #[]
+  let mut missing : Array (String × String) := #[]
   let mut ledger := ledger
   for src in requested do
     let name := Bib.sourceName src
     let path := if (System.FilePath.mk name).isAbsolute then System.FilePath.mk name
       else dir / name
-    let span := (bibSpans.find? (·.1 == src)).map (·.2)
     if ← path.pathExists then
       match ← readSource path.toString with
       | .ok bytes =>
@@ -292,11 +301,16 @@ public def resolveBibliography (file : String) (doc : Ir.Doc)
         sources := sources.push (src, read.text)
         diags := diags ++ read.diags
         ledger := ledger.record (read.read path.toString ledger.declared)
-      | .error d => diags := diags.push { d with span := span }
+      | .error d => diags := diags.push { d with span := spanOf src }
     else
-      diags := diags.push (DriverDiag.bibMissing src path.toString span)
-  let (doc, applyDiags) := Bib.apply sources doc
-  return (doc, diags ++ applyDiags, ledger)
+      missing := missing.push (src, path.toString)
+  -- A list with no file read is empty (E0503); one that read some of its
+  -- files holds their entries, the missing one named (W0424).
+  let missingDiags := missing.map fun (src, looked) =>
+    if sources.isEmpty then DriverDiag.bibMissing src looked (spanOf src)
+    else DriverDiag.bibMissingAmong src looked (spanOf src)
+  let (doc, applyDiags) := Bib.apply sources doc cv
+  return (Bib.resolveListRefs labels doc, diags ++ missingDiags ++ applyDiags, ledger)
 
 /-- The data request a parsed document states (`Data.fileRefsAt`), fulfilled
 before elaboration — the expansion needs the records where

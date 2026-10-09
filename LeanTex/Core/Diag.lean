@@ -294,6 +294,18 @@ public inductive DiagCode where
   | W0399
   | E0606
   | E0607
+  | N0029
+  | W0420
+  | W0421
+  | W0422
+  | W0423
+  | W0424
+  | W0425
+  | W0426
+  | W0427
+  | N0030
+  | W0428
+  | W0429
   deriving Repr, BEq, DecidableEq
 
 /-- The registry: each code's digits, its declared `Loss`, and its one
@@ -492,6 +504,18 @@ private def DiagCode.spec : DiagCode → String × Loss × String
   | .W0399 => ("0399", .degraded, "a fill the web slide cannot grow where it stands spaces nothing; the slide sets its frame as if it were absent")
   | .E0606 => ("0606", .dropped, "the HTML page has unresolved rendering resources; publication is refused")
   | .E0607 => ("0607", .dropped, "the PDF cannot be represented within supported spelling or storage limits; publication is refused")
+  | .N0029 => ("0029", .info, "a .bib field the bibliography style prints nowhere for its entry's type; the reference list is the style's own")
+  | .W0420 => ("0420", .degraded, "a .bib date or month biber does not read; it prints as written")
+  | .W0421 => ("0421", .degraded, "a biblatex reference list worded in a language the engine has no bibliography strings for; English ones stand in")
+  | .W0422 => ("0422", .degraded, "a biblatex @set entry; its members are listed each as an entry of its own")
+  | .W0423 => ("0423", .degraded, "a biblatex entry's related entries, which its style sets after it; the engine does not set them")
+  | .W0424 => ("0424", .degraded, "a .bib file among the bibliography's is not there; the list holds the other files' entries")
+  | .W0425 => ("0425", .degraded, "a .bib entry's crossref or xdata reference biber does not resolve: no such entry, no @xdata entry, no such field, or a cycle; the entry is set without what it would inherit")
+  | .W0426 => ("0426", .degraded, "a .bib value names an @string no file defines before it; the name prints in its place")
+  | .W0427 => ("0427", .degraded, "a biblatex list sorted by a locale whose collation of its script the engine does not carry; the default collation sorts it")
+  | .W0428 => ("0428", .degraded, "a biblatex \\supercite sets as \\cite, in brackets on the line; the style's superscript is not carried")
+  | .W0429 => ("0429", .degraded, "a .bib field the document's elaborator refuses where an entry stands; the field sets as its text")
+  | .N0030 => ("0030", .info, "a character TeX reserves, in a .bib field, set as the character it is where LaTeX reads it as markup or a comment")
 
 public def DiagCode.digits (c : DiagCode) : String := c.spec.1
 
@@ -794,6 +818,22 @@ cannot make it false anywhere, not only at construction. -/
 public theorem Diag.of_severity (c : DiagCode) (message : String) (span : Option Span)
     (help : Option String) (subject : Option String) :
     (Diag.of c message span help subject).severity = c.loss.severity := by rfl
+
+/-- `of_severity` over every argument the door takes. -/
+public theorem Diag.of_severity_full (c : DiagCode) (message : String) (span : Option Span)
+    (help subject refused trigger : Option String) (recovery : Option Diag.Recovery)
+    (output : Option Diag.Output) :
+    (Diag.of c message span help subject refused trigger recovery output).severity =
+      c.loss.severity := by rfl
+
+/-- The codes a `.bib` field's reading names its own losses by — a field it
+refuses (W0429), a formula's floor (W0012), a character TeX reserves
+(N0030) — none an error, so a field's reading fails no build by them
+(`Bib.FieldDoor.readWith_ships_contract`). -/
+public theorem DiagCode.fieldReading_ships :
+    (DiagCode.W0429.loss.severity == .error) = false ∧
+      (DiagCode.W0012.loss.severity == .error) = false ∧
+      (DiagCode.N0030.loss.severity == .error) = false := ⟨rfl, rfl, rfl⟩
 
 /-- At construction, severity and code letter both come from the code's
 `Loss`. A caller cannot choose them independently. -/

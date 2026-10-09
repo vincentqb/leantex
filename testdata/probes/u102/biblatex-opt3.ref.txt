@@ -1,0 +1,40 @@
+# options: style=numeric,sorting=none,isbn=false,url=false,doi=false,eprint=false
+# The reference list lualatex sets for biblatex.bib under \usepackage[options]{biblatex}, one entry per line:
+# TeX Live 2026 (LuaHBTeX 1.24.0, biblatex 3.21, biber 2.22), a 60 cm page so no entry breaks,
+# read back with pdftotext -layout 26.09.0. Cited: \nocite of the keys in biblatex.keys.
+[1] Ada Alpha and Bo Beta. “A Study of Placeholders. Notes from the Field”. Extended Version. In: Journal of Invented Results. Series B. 2nd ser. 12.3, e45 (Spring May 2021). Invited paper, pp. 45–67. With an erratum. In press.
+[2] Cy Gamma et al. “What Is a Placeholder?” In: Example Letters (2019–2020), p. 7.
+[3] Gil Eta. “Ends with a period.” In: Example Letters (Mar. 1–5, 2018).
+[4] Hal Theta. Collected Placeholders. Vol. 2.1: The Placeholder Compendium. Trans. by Ivy Iota. Revised. 3 vols. Invented Series 7. Exampleville and Sampletown: Example Press and Sample House, 2015. 320 pp.
+[5] Hal Theta. A Second Compendium. Example Press, 2015.
+[6] Hal Theta. A Third Compendium. Example Press, 2017.
+[7] Jo Kappa. “A Chapter Within”. In: Kai Lambda. The Larger Work. Exampleville: Example Press, 2014. Chap. 4, pp. 50–60.
+[8] Lu Mu. “A Contribution”. In: An Edited Collection. Ed. by Max Nu and Nia Xi. Sample House, 2013, pp. 101–120.
+[9] Ola Omicron. “A Talk”. In: Proceedings of the Invented Conference. Invented Conference (Exampleville, June 10–12, 2012). Ed. by Pia Pi. Example Society. Sampletown: Example Press, 2012, pp. 1–10.
+[10] An Unsigned Web Resource. Version 1.2. Example Organization. Jan. 15, 2023. url: https://example.org/resource (visited on 11/30/2023).
+[11] Ray Rho. An Invented Report. Tech. rep. TR-9. Exampleville: Example Labs, 2011.
+[12] Sal Sigma. “A Master’s Placeholder”. MA thesis. Example University, 2010.
+[13] Tia Tau. “An Unpublished Draft”. Manuscript. In preparation. 2009.
+[14] The Invented Manual. 3rd ed. Example Software Group. 2008.
+[15] Uma Upsilon, ed. An Edited Miscellany. Online collection. 2007.
+[16] Vic Phi. A Small Booklet. Distributed privately. Exampleville, 2006.
+[17] Wes Chi, ed. A Collection of Placeholders. Sampletown: Example Press, 2005.
+[18] Xia Psi, ed. Proceedings of the Second Invented Workshop. Example Society. Workshop Press, 2004.
+[19] Yan van der Example, Zed Smith Jr., and Example Working Group. “Names of Every Kind”. In: Example Letters (2003).
+[20] Zed Smith Jr. “First of Two”. In: Example Letters (2002).
+[21] Zed Smith Jr. “Second of Two”. In: Example Letters (2002).
+[22] Nil Undated. Undated Thing.
+[23] Jane Doe and Richard Roe. “An Invented Study of DNA Widgets”. In: Invented Letters 12.3 (May 3, 2021), pp. 45–67.
+[24] Kim Speaker. “First Invented Talk”. In: Proceedings of the Placeholder Workshop. Ed. by Eve Editor. Workshop Press, 2018, pp. 1–4.
+[25] Lee Speaker. “Second Invented Talk”. In: Proceedings of the Placeholder Workshop. Ed. by Eve Editor. Workshop Press, 2018, pp. 5–8.
+[26] Jane Doe et al. A Web Page. 2024. url: https://example.org/a_b?x=1&y=2 (visited on 01/02/2024).
+[27] Hal Eta. “A Preprint”. In: Invented Letters (2022).
+[28] Ivy Iota. A Book with Shared Data. Shared City: Shared Press, 2013.
+[29] Ann Alpha. “Range Pages”. In: Example Letters (1996), pp. 3–7, 9.
+[30] Ann Alpha et al. “And Others”. In: Example Letters (1993).
+[31] Jean-Paul Hyphen. Hyphenated Given. 11th ed. 1991.
+[32] Ann Alpha. “Open Range”. In: Example Letters (1989–).
+[33] Ann Alpha. “Year Month Legacy”. In: Example Letters (June 1988).
+[34] Ed Itor, ed. Edited Book. 1998.
+[35] A Book Nobody Wrote. Example Press, 1999.
+[36] Eve Editor, ed. Proceedings of the Placeholder Workshop. Workshop Press, 2018.

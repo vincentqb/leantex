@@ -12,7 +12,7 @@ namespace Tests.UmbrellaInterface
 
 example (p : Pos) (body : Array Parse.Raw) : Parse.Raw := .group body p
 example : String → Array Lex.Token → Array Parse.Raw × Array Diag := Parse.parse
-example : Array (String × String) → Ir.Doc → Ir.Doc × Array Diag := Bib.apply
+example : Array (String × String) → Ir.Doc → Bib.FieldReading → Ir.Doc × Array Diag := Bib.apply
 example : String → IO (Except Diag ByteArray) := Input.readSource
 example : String → Array Parse.Raw →
     IO (Compat.Executed × Array Diag × Array (String × Option String × Pos)) :=

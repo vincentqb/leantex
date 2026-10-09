@@ -40,12 +40,23 @@ firing input per code — an exhaustive match, so a new `DiagCode`
 constructor does not build until it names the input that fires it, and the
 coverage check holds each witness to actually firing its code. -/
 
-/-- Diagnostics of resolving a hand-built document against `.bib` text:
-`Bib.apply` is pure, so the witness needs no driver. -/
+/-- The reference list's diagnostics for a document citing `cite` against
+`.bib` text, resolved the way a build resolves it (`bibResolve`): the
+resolution is pure, so the witness needs no driver. -/
 def dvBib (bib : String) (cite : String) (style : Option String) : Array Diag :=
-  (Bib.apply #[("refs", bib)]
-    { body := #[.para #[.cite { cmd := .paren } #[cite]],
-        .bibliography "refs" style #[]] }).2
+  let decl := match style with
+    | some s => s!"\\bibliographystyle\{{s}}\n"
+    | none => ""
+  (bibResolve s!"\\documentclass\{article}\n\\begin\{document}\nx \\cite\{{cite}}\n\n\
+    {decl}\\bibliography\{refs}\n\\end\{document}\n" #[("refs", bib)]).2.2
+
+/-- `dvBib` under biblatex's numeric style, `pre` before its load and
+`opts` its options. -/
+def dvBbl (bib cite : String) (pre : String := "") (opts : String := "style=numeric") :
+    Array Diag :=
+  (bibResolve s!"\\documentclass\{article}\n{pre}\\usepackage[{opts}]\{biblatex}\n\
+    \\addbibresource\{refs.bib}\n\\begin\{document}\nx \\parencite\{{cite}}\n\n\
+    \\printbibliography\n\\end\{document}\n" #[("refs.bib", bib), ("refs", bib)]).2.2
 
 /-- Diagnostics of the data-expansion pass over a source: the pass runs
 before elaboration and is pure over inline records, so the witness lexes
@@ -131,7 +142,14 @@ def driverProbes : Array (DiagCode × DriverProbe) :=
     (.E0503, fun _ => do
       let doc := (elabStr ("\\documentclass{article}\n\\begin{document}\n" ++
         "A claim\\cite{k}.\n\\bibliography{references}\n\\end{document}\n")).1
-      return (← Input.resolveBibliography "doc.tex" doc).2.1),
+      return (← Input.resolveBibliography "doc.tex" doc Bib.plainReading #[]).2.1),
+    (.W0424, fun dir => do
+      -- a file the run reads by its absolute path beside one that is not there
+      IO.FS.writeFile (dir / "kept.bib") "@misc{k, title = {T}, year = 2024}\n"
+      let kept := (dir / "kept").toString
+      let doc := (elabStr ("\\documentclass{article}\n\\begin{document}\n" ++
+        "A claim\\cite{k}.\n\\bibliography{" ++ kept ++ ", references}\n\\end{document}\n")).1
+      return (← Input.resolveBibliography "doc.tex" doc Bib.plainReading #[]).2.1),
     (.E0365, fun _ => do
       let src := "\\documentclass{article}\n\\data{ file = \"records\" }\n" ++
         "\\begin{document}\n\\begin{foreach}{j}{job}\\val{j.role}\\end{foreach}\n" ++
@@ -424,6 +442,43 @@ def diagWitness (one mapped withMath : Font.FontSet)
       dvE (dvDoc "" "x \\cite{ghost}")
   | .W0352 => dvBib "@misc{broken, year = ?}\n@misc{kept, year = 2024}" "kept" none
   | .W0353 => dvBib "@misc{k, year = 2024}" "k" (some "mystery")
+  -- plain.bst prints no URL; the entry keeps one.
+  | .N0029 => dvBib "@misc{k, title = {T}, url = {https://example.org/k}, year = 2024}" "k"
+      (some "plain")
+  -- A season is no date biblatex reads; it prints as written.
+  | .W0420 => dvBib "@misc{k, title = {T}, date = {Spring 2020}}" "k" (some "plainnat")
+  -- biblatex words its list in babel's main language; the engine's strings
+  -- are English.
+  | .W0421 => dvBbl "@misc{k, title = {T}, date = {2020}}" "k" "\\usepackage[ngerman]{babel}\n"
+  -- A cited @set: its members are listed each as an entry of its own.
+  | .W0422 => dvBbl "@set{s, entryset = {a,b}}\n@misc{a, title = {A}, date = {2020}}\n\
+      @misc{b, title = {B}, date = {2021}}" "s"
+  -- An entry's related entries, which biblatex sets after it.
+  | .W0423 => dvBbl "@misc{k, title = {T}, date = {2020}, related = {r}}\n\
+      @misc{r, title = {R}, date = {2019}}" "k"
+  | .W0424 => probed .W0424
+  -- A crossref naming no entry: the child is set without what it inherits.
+  -- An xdata reference biber does not resolve: a data entry that names its
+  -- reader, an entry that is no @xdata, a granular field, item or kind the
+  -- data entry lacks, and a reference naming no field.
+  | .W0425 => dvBib "@inbook{k, title = {T}, crossref = {nowhere}, year = 2024}" "k" none ++
+      dvBbl "@xdata{d, publisher = {P}, location = {L}, xdata = {e}}\n@xdata{e, xdata = {d}}\n\
+        @book{r, title = {R}, date = {2001}}\n@book{k, title = {T}, date = {2020}, xdata = {d, r}, \
+        note = {xdata=d-note}, editor = {xdata=d-publisher}, origlocation = {xdata=d-location-3}, \
+        addendum = {xdata=d}}" "k"
+  -- A macro no @string defines: its name prints where its value would.
+  | .W0426 => dvBib "@article{k, title = {T}, journal = undefinedjt, year = 2024}" "k" none
+  -- A sort locale whose tailoring is of another script: the default
+  -- collation sorts the list.
+  | .W0427 => dvBbl "@misc{k, title = {T}, date = {2020}}" "k" (opts := "style=numeric,sortlocale=ja_JP")
+  -- A character TeX reserves in a field: set as the character, and named.
+  | .N0030 => dvBib "@misc{k, title = {T}, note = {R & D}, year = 2024}" "k" none
+  -- A superscript citation under a numeric style: set as \cite, named.
+  | .W0428 => dvE "\\documentclass{article}\n\\usepackage{biblatex}\n\\addbibresource{refs.bib}\n\
+      \\begin{document}\nx\\supercite{k}\n\\end{document}\n"
+  -- A heading in a field, which the inline reading refuses: set as its
+  -- text, run into the entry, and named.
+  | .W0429 => dvBib "@misc{k, title = {T}, note = {\\section{S}}, year = 2024}" "k" none
   | .W0332 => dvE (dvDeck "\\theme{moloch}\n"
       "\\framefoot{p. \\pagenumber}\n\\begin{frame}{T}\nx\n\\end{frame}")
   | .W0333 => dvL one (dvDeck "\\theme{moloch}\\title{T}\\author{A}\n"
@@ -1717,12 +1772,12 @@ def pendingChecks (ref : IO.Ref (List String)) : IO Unit := do
      (ds.filter fun d => d.code == "W0349" && d.subject == some "none").size == 1 &&
      (ds.filter fun d => d.code == "W0351" && d.subject == some "none").size == 1)
   -- The bibliography resolver leaves no citation node, with or without sources.
-  let (doc', bibDs) := Bib.apply #[] doc
+  let (doc', bibDs) := Bib.apply #[] doc Bib.plainReading
   t "apply_no_cite: no .cite node survives resolution (no bibliography)"
     (bibDs.isEmpty && (Ir.pendingNodes doc').all (!·.isCite) &&
      (Ir.pendingNodes doc').contains (.ref "none"))
   let withBib := Bib.apply #[("refs", "@misc{other, year = 2024}")]
-    { doc with body := doc.body.push (.bibliography "refs" none #[]) }
+    { doc with body := doc.body.push (.bibliography "refs" none #[]) } Bib.plainReading
   t "apply_no_cite: no .cite node survives resolution (a bibliography without the key)"
     ((Ir.pendingNodes withBib.1).all (!·.isCite) &&
      (withBib.2.filter fun d => d.code == "W0351" && d.subject == some "none").size == 1)

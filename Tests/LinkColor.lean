@@ -23,7 +23,7 @@ def linkColorChecks (ref : IO.Ref (List String)) (fs : Font.FontSet) : IO Unit :
     "\\end{thebibliography}\n\\end{document}"
   -- The ink each glyph ships in, on the body line that holds the links.
   let inks (pre : String) : List (Char × Ir.Color) :=
-    let (d, _) := Bib.apply #[] (elabStr (doc pre)).1
+    let (d, _) := Bib.apply #[] (elabStr (doc pre)).1 Bib.plainReading
     let lines := (bodyLines (layoutOf fs d)).toList.filter fun l =>
       l.segs.any fun s => match s with
         | .run _ _ _ _ gs _ _ _ _ _ _ => gs.any (·.2.1 == 'S')
@@ -64,7 +64,7 @@ def linkColorChecks (ref : IO.Ref (List String)) (fs : Font.FontSet) : IO Unit :
     t s!"no colorlinks, no link ink: {pre}" (xs.all (·.2 == black) && !xs.isEmpty)
   -- HTML: the same ink, inside the link, on the link's own text.
   let html := (HtmlDoc.emit {} (Bib.apply #[] (elabStr (doc
-    "\\usepackage[colorlinks]{hyperref}")).1).1).1
+    "\\usepackage[colorlinks]{hyperref}")).1 Bib.plainReading).1).1
   t "colorlinks: the HTML links carry their kinds' ink"
     (hasStr html (HtmlDoc.cssColor red) && hasStr html (HtmlDoc.cssColor magenta) &&
       hasStr html (HtmlDoc.cssColor green))

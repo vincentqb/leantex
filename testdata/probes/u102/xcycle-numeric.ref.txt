@@ -1,0 +1,9 @@
+# options: style=numeric,sorting=none
+# What lualatex sets for xcycle.body.tex's citations and xcycle.bib's list under \usepackage[options]{biblatex}:
+# TeX Live 2026 (LuaHBTeX 1.24.0, biblatex 3.21, biber 2.22, biber --nodieonerror), a 60cm page so no line breaks,
+# biber reports 'Circular XDATA inheritance' and, without --nodieonerror, writes no .bbl;
+# read back with pdftotext -layout 26.09.0, one citation line then one entry per line.
+References
+[1] Ann Alpha. Cyclic Data. From loop one. Sample House, 2012. From loop two.
+[2] Bo Beta. Plain Entry. Sample House, 2013.
+

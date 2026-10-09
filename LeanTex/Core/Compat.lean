@@ -9,7 +9,7 @@ public import LeanTex.Core.Ir
 import LeanTex.Core.BeamerColor
 import LeanTex.Core.TitleTemplate
 import LeanTex.Core.BlockTemplate
-import LeanTex.Core.BibStyle
+import LeanTex.Core.BibPunct
 public import LeanTex.Core.Tcolorbox
 import LeanTex.Core.LoopProgress
 import LeanTex.Core.EncodingOption
@@ -815,6 +815,11 @@ private structure St where
   /-- The option the first `inputenc` load names, the encoding every file
   reads in: what an `\inputencoding` names again, or switches from. -/
   inputenc : Option String := none
+  /-- babel's main language as its options spell it (`ngerman`, `british`):
+  what biblatex's `language=autodetect` words its reference list in. -/
+  babelMain : Option String := none
+  /-- biblatex is loaded: a babel load after it hands it the main language. -/
+  biblatexLoaded : Bool := false
   /-- Inside the document environment: where a preamble declaration —
   `\usepackage` first among them — is a placement defect (W0340), never
   a support question (W0103). -/
@@ -2496,6 +2501,66 @@ private def natbibDefer (decls : Array String) (pos : Pos) : M Unit :=
   write fun st => { st with deferred := st.deferred.push (.beginDocument, st.file, pos,
     #[.ctrl "@natbib" pos, .group (decls.map (.word · pos)) pos]) }
 
+/-- biblatex's punctuation and format macros (biblatex manual §3.12.1–3.12.3,
+§4.10): what a document redefines to restyle the list and its citations. -/
+private def biblatexMacros : List String :=
+  ["nameyeardelim", "multicitedelim", "postnotedelim", "prenotedelim", "multinamedelim",
+   "finalnamedelim", "revsdnamepunct", "andothersdelim", "multilistdelim", "finallistdelim",
+   "andmoredelim", "nametitledelim", "namelabeldelim", "nonameyeardelim", "extradatedelim",
+   "textcitedelim", "finaltextcitedelim", "compcitedelim", "labelnamepunct", "subtitlepunct",
+   "intitlepunct", "bibpagespunct", "bibpagerefpunct", "newunitpunct", "finentrypunct",
+   "entrysetpunct", "bibnamedash", "bibfont", "citesetup", "bibsetup", "bibnamedelima",
+   "bibnamedelimb", "bibnamedelimc", "bibnamedelimd", "bibnamedelimi", "bibinitperiod",
+   "bibinitdelim", "bibinithyphendelim", "mkbibnamefamily", "mkbibnamegiven",
+   "mkbibnameprefix", "mkbibnamesuffix", "mkbibdatelong", "mkbibdateshort"]
+
+/-- A delimiter's definition as the text it prints, when it is only
+biblatex's punctuation commands and text: `\addcomma\space` is `, `. -/
+private def punctText (body : Array Raw) : Option String :=
+  body.foldl (init := some "") fun acc r => acc.bind fun out =>
+    match r with
+    | .ctrl "addcomma" _ => some (out ++ ",")
+    | .ctrl "addsemicolon" _ => some (out ++ ";")
+    | .ctrl "addcolon" _ => some (out ++ ":")
+    | .ctrl "addperiod" _ | .ctrl "adddot" _ => some (out ++ ".")
+    | .ctrl "space" _ | .ctrl "addspace" _ | .ctrl "addnbspace" _ | .ctrl "nobreakspace" _
+    | .ctrl " " _ | .space => some (out ++ " ")
+    | .word w _ => some (out ++ (if w == "~" then " " else w))
+    | .sym c _ => some (out.push c)
+    | _ => none
+
+/-- A redefinition of one of biblatex's macros (`biblatexMacros`). Under the
+author-year citations, whose punctuation natbib's door takes as
+declarations, the name–year, multicite and postnote delimiters read as
+natbib's `aysep`, `citesep` and `notesep` where they are punctuation and a
+space; anything else is named, the list and citations setting biblatex's
+own. -/
+private def biblatexMacroDef (definer cmd : String) (body : Array Raw) (pos : Pos) : M (Array Raw) := do
+  let authoryear := (← get).bibStyle == some "plainnat"
+  let slot := match cmd with
+    | "nameyeardelim" => some "aysep"
+    | "multicitedelim" => some "citesep"
+    | "postnotedelim" => some "notesep"
+    | _ => none
+  let value := (punctText body).bind fun t =>
+    if slot == some "notesep" then (if t.isEmpty then none else some t)
+    else if t.endsWith " " && !(t.dropEnd 1).toString.endsWith " " then some (t.dropEnd 1).toString
+    else none
+  match slot, value with
+  | some key, some v =>
+    if authoryear then
+      natbibDefer #[s!"{key}={v}"] pos
+      became s!"\\{definer}\{\\{cmd}}" s!"the author-year citations' '{v}'" pos
+      return #[]
+    else pure ()
+  | _, _ => pure ()
+  say .W0104 s!"biblatex's '\\{cmd}' is redefined; the engine's reference list and \
+citations keep biblatex's default in its place" pos
+    (help := "under author-year citations, redefine '\\nameyeardelim', '\\multicitedelim' or \
+'\\postnotedelim' as punctuation and a space, such as '\\addcomma\\space'")
+    (subject := some s!"biblatexmacro:{cmd}")
+  return #[]
+
 /-- `\usepackage[...]{natbib}`: the load, its options as declarations in
 natbib's order. An option outside the punctuation vocabulary (`sort`,
 `compress`, `super`, `longnamesfirst`, …) is named and dropped. -/
@@ -2511,6 +2576,126 @@ private def natbibLoad (name opt : String) (pos : Pos) : M (Array Raw) := do
     "natbib's citation punctuation, read at \\begin{document}" pos
   natbibDefer decls pos
   return #[]
+
+/-- biblatex's options the reference list and citations read (biblatex
+manual §3.1.2), carried to the bibliography as declarations (`bbx=`,
+`sorting=`, …; `Bib.BblOptions.ofDecls`). -/
+private def biblatexRead : List String :=
+  ["style", "bibstyle", "citestyle", "sorting", "maxnames", "minnames", "maxbibnames",
+   "minbibnames", "maxcitenames", "mincitenames", "maxsortnames", "minsortnames", "maxitems",
+   "minitems", "giveninits", "firstinits", "useprefix", "dashed", "isbn", "url", "doi",
+   "eprint", "uniquename", "uniquelist", "language", "autolang", "babel", "useauthor",
+   "useeditor", "usetranslator", "abbreviate", "datecirca", "dateuncertain", "sortlocale",
+   "clearlang"]
+
+/-- The option keys a biblatex load carries to the bibliography as
+`key=value` declarations (`Bib.BblOptions.ofDecls`). -/
+private def biblatexCarried : List String :=
+  ["maxnames", "minnames", "maxbibnames", "minbibnames", "maxcitenames", "mincitenames",
+   "maxsortnames", "minsortnames", "maxitems", "minitems", "giveninits", "firstinits",
+   "useprefix", "dashed", "isbn", "url", "doi", "eprint", "uniquename", "uniquelist", "language",
+   "autolang", "babel", "useauthor", "useeditor", "usetranslator", "abbreviate", "datecirca",
+   "dateuncertain", "sortlocale", "clearlang"]
+
+/-- biblatex's options that change nothing the engine sets: the backend that
+reads the data (the engine reads it), hyperref's links (the engine links
+every citation), the natbib-compatible commands (the engine's citations
+answer to both spellings), and the encodings (the engine reads UTF-8). -/
+private def biblatexInert : List String :=
+  ["backend", "hyperref", "natbib", "bibencoding", "texencoding", "safeinputenc",
+   "bibwarn", "bibtexcaseprotection", "noerroretextools"]
+
+/-- The style family a biblatex style name belongs to: the standard numeric
+and author-year styles and their compact and ibid variants. -/
+private def biblatexFamily (style : String) : Option String :=
+  if style.startsWith "numeric" then some "numeric"
+  else if style.startsWith "authoryear" then some "authoryear"
+  else none
+
+/-- `\usepackage[...]{biblatex}`: the reference list biblatex's standard
+styles set (`Bib.renderBbl`) over the one entry model, read through biber
+(`Bib.Processor.biber`). The list's family is its `bibstyle` (or `style`),
+the citations' its `citestyle` (or `style`): numeric citations are the
+plain row through natbib's open door, author-year ones natbib's load
+values — round brackets, semicolons — with the name and year apart by a
+space alone (`\nameyeardelim`). A style outside the two families is W0353's
+meaning, its list set by the numeric drivers. Every option is read
+(`biblatexRead`), inert (`biblatexInert`), or named by W0101. -/
+private def biblatexLoad (name opt : String) (pos : Pos) : M Unit := do
+  let opts := (opt.splitOn ",").map (·.trimAscii.toString) |>.filter (!·.isEmpty)
+  let kv (o : String) : String × String :=
+    match o.splitOn "=" with
+    | [k] => (k.trimAscii.toString, "true")
+    | k :: rest => (k.trimAscii.toString, (String.intercalate "=" rest).trimAscii.toString)
+    | [] => ("", "")
+  let pairs := opts.map kv
+  let pick (key dflt : String) : String := pairs.foldl (init := dflt) fun acc (k, v) =>
+    if k == key then v else acc
+  let bbx := pick "bibstyle" (pick "style" "numeric")
+  let cbx := pick "citestyle" (pick "style" "numeric")
+  let dropped := pairs.filter fun (k, _) => !biblatexRead.contains k && !biblatexInert.contains k
+  unless dropped.isEmpty do
+    say .W0101 s!"'biblatex' options without a native equivalent were dropped: \
+{String.intercalate ", " (dropped.map fun (k, v) => if v == "true" then k else s!"{k}={v}")}" pos
+      (subject := some "usepackage:biblatex")
+  -- A family the engine does not know falls back to numeric, the list's
+  -- and the citations' each, and the fallback is named as what it sets.
+  let what := match biblatexFamily bbx, biblatexFamily cbx with
+    | none, none => some (if bbx == cbx then s!"style '{bbx}'" else s!"styles '{bbx}' and '{cbx}'",
+        "its reference list and its citations are set as biblatex's numeric ones")
+    | none, some _ => some (s!"bibliography style '{bbx}'",
+        "its reference list is set as biblatex's numeric one")
+    | some _, none => some (s!"citation style '{cbx}'",
+        "its citations are set as biblatex's numeric ones")
+    | some _, some _ => none
+  if let some (name, loss) := what then
+    say .W0353 s!"biblatex {name} is not one the engine knows; {loss}" pos
+      (help := "styles known: numeric, authoryear and their -comp variants")
+  let listFamily := (biblatexFamily bbx).getD "numeric"
+  let citeFamily := (biblatexFamily cbx).getD "numeric"
+  -- A citation variant (`-comp`, `-ibid`, `-icomp`, `-verb`, `-terse`)
+  -- compacts or repeats what its family's citations print; the family's
+  -- citations stand, and the variant's difference is named.
+  if (biblatexFamily cbx).isSome && cbx != citeFamily then
+    say .W0101 s!"'biblatex' style '{cbx}' is read as '{citeFamily}': its citations' own \
+compaction and repetition rules are dropped" pos (subject := some "usepackage:biblatex")
+  let defaultSorting := if listFamily == "authoryear" then "nyt" else "nty"
+  let declaredSorting := pick "sorting" defaultSorting
+  let sorting ← if ["nty", "nyt", "nyvt", "ynt", "ydnt", "none"].contains declaredSorting then
+      pure declaredSorting
+    else do
+      say .W0101 s!"'biblatex' option 'sorting={declaredSorting}' is not a scheme the engine \
+sorts by; the list is sorted '{defaultSorting}'" pos (subject := some "usepackage:biblatex")
+        (help := "the schemes sorted: nty, nyt, nyvt, ynt, ydnt, none")
+      pure defaultSorting
+  let record :=
+    if citeFamily == "authoryear" then "plainnat" else if sorting == "none" then "unsrt" else "plain"
+  became (if opt.isEmpty then s!"\\{name}\{biblatex}" else s!"\\{name}[{opt}]\{biblatex}")
+    s!"biblatex's {listFamily} reference list and {citeFamily} citations" pos
+  write fun st => { st with bibStyle := some record }
+  -- biber's uniqueness reads every name of a list or a year's lists under
+  -- the `min` variants, which the engine does not compute; their citations
+  -- are told apart as under the variant without the restriction.
+  let mut carried : Array String := #[]
+  for (k, v) in pairs do
+    if !biblatexCarried.contains k then continue
+    if k == "uniquename" && ["mininit", "minfull", "minyearinit", "minyearfull"].contains v then
+      say .W0101 s!"'biblatex' option 'uniquename={v}' is read as 'uniquename={if v.endsWith "init" then "init" else "full"}': \
+a shared family is told apart wherever it appears, not only where whole lists coincide" pos
+        (subject := some "usepackage:biblatex")
+      carried := carried.push s!"uniquename={if v.endsWith "init" then "init" else "full"}"
+    else if k == "uniquelist" && v == "minyear" then
+      say .W0101 s!"'biblatex' option 'uniquelist=minyear' is read as 'uniquelist=true': lists \
+are told apart whatever their year" pos (subject := some "usepackage:biblatex")
+      carried := carried.push "uniquelist=true"
+    -- `babel=` is `autolang=`'s former name (biblatex manual §3.1.2.1)
+    else if k == "babel" then carried := carried.push s!"autolang={v}"
+    else carried := carried.push s!"{k}={v}"
+  let mainLang := (← get).babelMain
+  write fun st => { st with biblatexLoaded := true }
+  natbibDefer ((if record == "plainnat" then #["nobibstyle", "aysep=", "biblatex"]
+    else #["biblatex"]) ++ #[s!"bbx={listFamily}", s!"cbx={citeFamily}", s!"sorting={sorting}"] ++
+    carried ++ (mainLang.map (s!"mainlang={·}")).toArray) pos
 
 /-- `\setcitestyle{…}` and `\bibpunct[notesep]{open}{close}{sep}{mode}{aysep}{yysep}`
 (natbib manual §2.5): in the preamble, natbib's declarations with its
@@ -6534,16 +6719,7 @@ private def literalReplace : List (String × (Pos → Raw)) :=
    ("textendash", fun p => .ctrl "endash" p),
    ("textemdash", fun p => .ctrl "emdash" p),
    ("textbackslash", fun p => .word "\\" p),
-   ("textasciitilde", fun p => .word "~" p),
-   -- biblatex's citation spellings are natbib's by other names (biblatex
-   -- manual §3.8.2: \parencite is the parenthetical cite, \textcite the
-   -- textual, \autocite the context-dependent one that resolves to the
-   -- parenthetical in the shipped styles): the rename is the whole
-   -- translation, and the natbib door treats notes and stars identically
-   -- for both spellings.
-   ("autocite", fun p => .ctrl "citep" p),
-   ("parencite", fun p => .ctrl "citep" p),
-   ("textcite", fun p => .ctrl "citet" p)]
+   ("textasciitilde", fun p => .word "~" p)]
 
 /-- The mark the rewrite sets before `\vspace*`'s space: LaTeX's `\@vspacer`
 puts a zero rule there, which keeps the space at a page's top
@@ -7065,6 +7241,102 @@ private def paracolFactor (p : Nat) : String :=
   let digits := toString (p % 1000)
   "0." ++ "".pushn '0' (3 - digits.length) ++ digits
 
+/-- One citation's arguments as written after its command: a star, the
+optional notes, the keys' group — the raws to hand the natbib door, and the
+index past them. -/
+private def citeArgs (raws : Array Raw) (start : Nat) : Bool × Array Raw × Nat :=
+  let j0 := skipSpaces raws start
+  let star := raws[j0]? matches some (.word "*" _) || raws[j0]? matches some (.sym '*' _)
+  let j1 := if star then j0 + 1 else start
+  let (_, j2) := takeRawOpt raws j1
+  let (_, j3) := takeRawOpt raws j2
+  let (_, j4) := takeGroups raws j3 1
+  (star, raws.extract j1 j4, j4)
+
+/-- biblatex's citation commands on the natbib door (biblatex manual §3.8):
+the parenthetical `\parencite` and `\autocite` (the shipped styles'
+`autocite=inline`) are `\citep`, the textual `\textcite` is `\citet`, a
+capitalized spelling the capitalized form; the starred `\parencite*` of an
+author-year style prints the year alone, natbib's `\citeyearpar`, and the
+starred textual citation is the unstarred one; the footnote citations —
+`\footcite`, and `\smartcite` in body text — are a footnote holding the bare
+citation, closed by its period (`\bibfootnotewrapper`: `\addperiod`), and
+`\footcitetext` the same footnote's text alone; `\footfullcite` is the
+footnote of `\fullcite`. `\supercite` is numeric.cbx's superscript
+citation, its notes ignored: it sets as `\cite` of its keys, named (W0428),
+the superscript not carried; a style that defines none falls back to its
+bare `\cite`, notes and all (biblatex.sty `\blx@warn@citecmd`), author-year's
+`\citealp`. -/
+private def biblatexCiteArm (name : String) (pos : Pos) (raws : Array Raw) (start : Nat) :
+    M (Option (Array Raw × Nat)) := do
+  let authoryear := (← get).bibStyle == some "plainnat"
+  -- premise: biblatexSuperciteChecks — without biblatex this arm reads neither: `\supercite`
+  -- is then no command the document loads, which the unknown-command path names (W0301),
+  -- and `\Cite` goes on to the doors after this one
+  if (name == "Cite" || name == "supercite") && !(← get).loads.pkgs.any (·.1 == "biblatex") then
+    return none
+  let (star, args, k) := citeArgs raws start
+  let to (cmd : String) : Option (Array Raw × Nat) := some (#[.ctrl cmd pos] ++ args, k)
+  match name with
+  | "supercite" =>
+    if authoryear then return to "citealp"
+    say .W0428 "'\\supercite' sets its citation as '\\cite' does, in brackets on the line, \
+      where the style sets it as a superscript" pos (subject := some "citecmd:supercite")
+    let keys := (args.filter (· matches .group ..)).back?
+    return some (#[.ctrl "cite" pos] ++ keys.toArray, k)
+  | "autocite" | "parencite" =>
+    return to (if star && authoryear then "citeyearpar" else "citep")
+  | "Autocite" | "Parencite" => return to "Citep"
+  | "textcite" => return to "citet"
+  | "Textcite" => return to "Citet"
+  | "Cite" => return to (if authoryear then "Citealp" else "Citep")
+  | _ =>
+    let note := if name == "footcitetext" then "footnotetext" else "footnote"
+    let cmd := if name == "Footcite" || name == "Smartcite" then "Citealp"
+      else if name == "footfullcite" then "fullcite" else "citealp"
+    return some (#[.ctrl note pos, .group (#[.ctrl cmd pos] ++ args ++ #[.word "." pos]) pos], k)
+
+/-- biblatex's multicite commands (biblatex manual §3.8.3): a run of
+citations, each with its own notes, as the family prints a list of keys —
+author-year's bare and parenthetical lists joined by `\multicitedelim`'s
+semicolon, the parenthetical one in one pair of brackets; numeric's in one
+pair of brackets, joined by a comma; a textual list's last citation after
+`and`, the others after a comma; the footnote forms a footnote holding the
+bare list, closed by its period. -/
+private def biblatexMulticiteArm (name : String) (pos : Pos) (raws : Array Raw) (start : Nat) :
+    M (Option (Array Raw × Nat)) := do
+  let authoryear := (← get).bibStyle == some "plainnat"
+  let mut parts : Array (Array Raw) := #[]
+  let mut j := start
+  for _ in [0:raws.size] do
+    let (_, j1) := takeRawOpt raws j
+    let (_, j2) := takeRawOpt raws j1
+    let (gs, j3) := takeGroups raws j2 1
+    if gs.isEmpty then break
+    parts := parts.push (raws.extract (skipSpaces raws j) j3)
+    j := j3
+  if parts.isEmpty then return none
+  let textual := name == "textcites" || name == "Textcites"
+  let foot := name == "footcites" || name == "smartcites" || name == "Smartcites"
+  let up := name.front.isUpper
+  let cmdOf (i : Nat) : String :=
+    if textual then (if up && i == 0 then "Citet" else "citet")
+    else if up && i == 0 then "Citealp" else "citealp"
+  let sepBefore (i : Nat) : Array Raw :=
+    if textual then
+      (if i + 1 == parts.size then #[.space, .word "and" pos, .space] else #[.word "," pos, .space])
+    else #[.word (if authoryear then ";" else ",") pos, .space]
+  let mut body : Array Raw := #[]
+  for (p, i) in parts.zipIdx do
+    if i > 0 then body := body ++ sepBefore i
+    body := body ++ #[.ctrl (cmdOf i) pos] ++ p
+  let bare := (name == "cites" || name == "Cites") && authoryear
+  let out : Array Raw :=
+    if foot then #[.ctrl "footnote" pos, .group (body.push (.word "." pos)) pos]
+    else if textual || bare then body
+    else #[.ctrl "citetext" pos, .group body pos]
+  return some (out, j)
+
 /-- Named arms of the later dispatcher. The wrapper handles local style
 option requests first; keeping that guard outside the match exposes the
 actual routing equation without unfolding unrelated command bodies. -/
@@ -7101,25 +7373,61 @@ private def rewriteCtrlLaterNamed (name : String) (pos : Pos) (raws : Array Raw)
       | _ => false
     return some (if noSpace then #[] else #[.ctrl " " pos], start)
   | "addbibresource" =>
-    -- biblatex's resource declaration (biblatex manual §3.7.1): the .bib
-    -- file, named at load time, that \printbibliography later prints. The
-    -- name rides the walk's state to that site; the natbib door
-    -- (\bibliography) takes its file where the list prints. The engine
-    -- reads one .bib per document, so a second resource is skipped named.
-    let (_, j) := takeOpt raws start
+    -- biblatex's resource declaration (biblatex manual §3.7.1): a .bib
+    -- file, named at load time, that \printbibliography later prints with
+    -- the others declared. The names ride the walk's state to that site;
+    -- the natbib door (\bibliography) takes them, as BibTeX's list of
+    -- files, where the list prints.
+    -- A resource biblatex fetches (`location=remote`) or reads in another
+    -- format (`datatype=`) is no local .bib: it is named and skipped, and
+    -- the citations of its entries show '?' named.
+    let (opt, j) := takeOpt raws start
     let (args, k) := takeGroups raws j 1
     if h : args.size = 1 then
       let src := (rawSrc args[0]).trimAscii.toString
+      let opts := ((opt.getD "").splitOn ",").map (·.trimAscii.toString)
+      let val (key : String) : Option String := opts.findSome? fun o =>
+        match o.splitOn "=" with
+        | [k, v] => if k.trimAscii.toString == key then some v.trimAscii.toString else none
+        | _ => none
+      let remote := val "location" == some "remote"
+      let format := (val "datatype").filter (· != "bibtex")
+      if remote || format.isSome then
+        let what := if remote then "a remote resource" else s!"a '{format.getD ""}' resource"
+        say .W0104 s!"'\\addbibresource' names {what} '{src}'; the engine reads local \
+.bib files only, so it is skipped" pos
+          (help := "save the entries as a .bib file beside the document and name it")
+          (subject := some "addbibresource")
+        return some (#[], k)
       let src := if src.endsWith ".bib" then (src.dropEnd 4).toString else src
-      if (← get).bibResources.isEmpty then
+      unless (← get).bibResources.contains src do
         write fun st => { st with bibResources := st.bibResources.push src }
-        became "\\addbibresource" s!"\\bibliography\{{src}}, at \\printbibliography" pos
-      else
-        say .W0104 s!"'\\addbibresource' names a second resource '{src}'; the \
-engine reads one .bib per document, so it is skipped" pos
-          (help := "merge the entries into the first .bib file")
+      became "\\addbibresource" s!"\\bibliography\{{src}}, at \\printbibliography" pos
       return some (#[], k)
     else return none
+  | "autocite" | "Autocite" | "parencite" | "Parencite" | "textcite" | "Textcite" | "Cite"
+  | "footcite" | "Footcite" | "smartcite" | "Smartcite" | "footcitetext" | "footfullcite"
+  | "supercite" =>
+    biblatexCiteArm name pos raws start
+  | "cites" | "Cites" | "parencites" | "Parencites" | "textcites" | "Textcites"
+  | "autocites" | "Autocites" | "footcites" | "smartcites" | "Smartcites" =>
+    biblatexMulticiteArm name pos raws start
+  | "bibliography" =>
+    -- biblatex's legacy spelling of `\addbibresource` (biblatex manual
+    -- §3.7.1: `\bibliography{refs}` in the preamble adds `refs.bib`):
+    -- each name a resource, read where `\printbibliography` prints.
+    if (← get).inDoc || !(← get).loads.pkgs.any (·.1 == "biblatex") then return none
+    let (args, k) := takeGroups raws start 1
+    match args[0]? with
+    | some g =>
+      for part in (rawSrc g).splitOn "," do
+        let src := part.trimAscii.toString
+        let src := if src.endsWith ".bib" then (src.dropEnd 4).toString else src
+        unless src.isEmpty || (← get).bibResources.contains src do
+          write fun st => { st with bibResources := st.bibResources.push src }
+      became "\\bibliography" "biblatex's \\addbibresource, at \\printbibliography" pos
+      return some (#[], k)
+    | none => return none
   | "setcitestyle" | "bibpunct" | "citestyle" => natbibStyleArm name pos raws start
   | "bibliographystyle" =>
     -- LaTeX reads the style anywhere before the `.aux` is written, and
@@ -7146,18 +7454,18 @@ engine reads one .bib per document, so it is skipped" pos
       unless o.trimAscii.toString.isEmpty do
         say .W0101 s!"\\printbibliography options without a native equivalent \
 were dropped: {o}" pos
-    match (← get).bibResources[0]? with
-    | some src =>
-      let stylePart := match (← get).bibStyle with
-        | some s => s!"\\bibliographystyle\{{s}}"
-        | none => ""
-      let native := s!"{stylePart}\\bibliography\{{src}}"
-      became "\\printbibliography" native pos
-      return some (← synthAt native pos, k)
-    | none =>
+    let srcs := (← get).bibResources
+    if srcs.isEmpty then
       discard "\\printbibliography" "no \\addbibresource declared a file"
         "printbibliography" pos
       return some (#[], k)
+    let stylePart := match (← get).bibStyle with
+      | some s => s!"\\bibliographystyle\{{s}}"
+      | none => ""
+    let native := s!"{stylePart}\\bibliography\{{",".intercalate srcs.toList}}"
+    became "\\printbibliography"
+      s!"biblatex's reference list of '{"', '".intercalate srcs.toList}'" pos
+    return some (← synthAt native pos, k)
   | "crefrange" | "Crefrange" =>
     -- cleveref's range form: desugared by `crefRangeArm` (its docstring
     -- carries the shape and the source).
@@ -8372,6 +8680,8 @@ private def rewritePackageBody (name p : String) (opt : Option String) (pos : Po
     match names.reverse.head? with
     | some main =>
       let tag := Locale.babelTagOf main
+      write fun st => { st with babelMain := some main }
+      if (← get).biblatexLoaded then natbibDefer #[s!"mainlang={main}"] pos
       if (Locale.forTag tag).isSome then
         let native := s!"\\pdfmeta\{ language = \"{tag}\" }"
         became s!"\\usepackage[{main}]\{babel}" native pos
@@ -8386,42 +8696,7 @@ captions and patterns stand in" pos
   else if p == "natbib" then
     out := out ++ (← natbibLoad name (opt.getD "") pos)
   else if p == "biblatex" then
-    -- biblatex's style options (biblatex manual §3.1.1: style defaults
-    -- to numeric, sorting to nty — name-title-year) select onto the
-    -- same four-axis record door natbib's \bibliographystyle opens:
-    -- numeric over a name-sorted list is `plain`, numeric over
-    -- citation order (sorting=none) is `unsrt`, authoryear is
-    -- `plainnat`. A style outside the record set (alphabetic labels)
-    -- is W0353's meaning, judged here where the author wrote the
-    -- name, with unsrtnat standing in.
-    let opts := ((opt.getD "").splitOn ",").map (·.trimAscii.toString)
-    let pick (key dflt : String) : String := opts.foldl (init := dflt) fun acc kv =>
-      match (kv.splitOn "=").map (·.trimAscii.toString) with
-      | [k, v] => if k == key then v else acc
-      | _ => acc
-    let style := pick "citestyle" (pick "style" "numeric")
-    let mapped :=
-      if style.startsWith "numeric" then
-        some (if pick "sorting" "nty" == "none" then "unsrt" else "plain")
-      else if style.startsWith "authoryear" then some "plainnat"
-      else none
-    match mapped with
-    | some s =>
-      became s!"\\usepackage[style={style}]\{biblatex}"
-        s!"\\bibliographystyle\{{s}}, at \\printbibliography" pos
-      write fun st => { st with bibStyle := some s }
-      -- The citations are biblatex's (`Bib.CitePunct.biblatex`). The numeric
-      -- styles take the plain row through the open door; authoryear's
-      -- round brackets and semicolons are natbib's own load values, the
-      -- style's square-bracket row shut out, and its name and year stand
-      -- apart by a space alone (`\nameyeardelim`).
-      natbibDefer (if s == "plainnat" then #["nobibstyle", "aysep=", "biblatex"]
-        else #["biblatex"]) pos
-    | none =>
-      say .W0353 s!"bibliography style '{style}' is not one the engine \
-knows; the reference list is set as 'unsrtnat'" pos
-        (help := "styles known: unsrtnat, unsrt, plainnat, plain, abbrvnat, abbrv")
-      write fun st => { st with bibStyle := some "unsrtnat" }
+    biblatexLoad name (opt.getD "") pos
   else if let some spec := fontPackages.lookup p then
     -- carlito's `sfdefault` promotes its sans face to the body slot
     -- (carlito README); every other option (psnfss's `scaled=`) asks
@@ -9213,6 +9488,12 @@ skipped, and the length keeps its value" pos
         let (_, k) := takeGroups raws j 1
         nameParam cmd why pos
         return some (#[], k)
+    -- premise: biblatexPunctChecks — the delimiters read set the citations biber sets; any other redefinition is named
+    if !xparse && st.biblatexLoaded && biblatexMacros.contains cmd then
+      let (_, j) := takeOpt raws j
+      let (_, j) := takeOpt raws j
+      let (args, k) := takeGroups raws j 1
+      return some (← biblatexMacroDef name cmd (args.getD 0 #[]) pos, k)
     if !xparse && cmd == "sectionlinesformat" then
       -- `\renewcommand\sectionlinesformat[4]{...}` is the spelling KOMA
       -- documents: the rule idiom, not a definition.

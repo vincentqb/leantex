@@ -1584,13 +1584,16 @@ def surfaceDoorCalls : List String :=
 /-- The core's own tex readers around the door, by file and the definition
 that holds the read. Each reads text the engine holds — a string a test
 elaborates, a style declaration's value, a setting's value, synthesized
-compatibility source, a picture's macro definition, a bibliography style's
-formula — and never a file. The list is closed: a new reader is named here,
-with its reason, or reads through `Surface.read`. -/
+compatibility source, a picture's macro definition, a reference-list
+field's formula, and a field's text the document's own elaborator reads,
+its reserved characters marked between the door's two stages — and never a
+file. The list is closed: a new reader is named here, with its reason, or
+reads through `Surface.read`. -/
 def coreTexReaders : List (String × String) :=
   [("LeanTex/Core/Elab.lean", "run"), ("LeanTex/Core/Elab.lean", "applyStyle"),
    ("LeanTex/Core/Data.lean", "valParsed"), ("LeanTex/Core/Compat.lean", "synth"),
-   ("LeanTex/Core/Picture.lean", "readMacro"), ("LeanTex/Core/BibStyle.lean", "formulaOf")]
+   ("LeanTex/Core/Picture.lean", "readMacro"), ("LeanTex/Core/BibText.lean", "formulaOf"),
+   ("LeanTex/Core/BibElab.lean", "FieldDoor.readWith")]
 
 /-- The tex door's own stages and the door: where the lexer and the parser
 are defined and composed. -/

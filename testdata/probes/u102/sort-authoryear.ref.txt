@@ -1,0 +1,63 @@
+# options: style=authoryear
+# What lualatex sets for sort.body.tex's citations and sort.bib's list under \usepackage[options]{biblatex}:
+# TeX Live 2026 (LuaHBTeX 1.24.0, biblatex 3.21, biber 2.22), a 120 cm page so no line breaks,
+# read back with pdftotext -layout 26.09.0, one citation line then one entry per line.
+C01 von Example 2001 end.
+C02 E. v. Example 2002 end.
+C03 Smith 2000 end.
+C04 Smith Jones 2000 end.
+C05 A. Example 2005 end.
+C06 B. Example 2006 end.
+C07 C. Example 2007a end.
+C08 C. Example 2007b end.
+C09 D. Example 2008 end.
+C10 Fox 2009 end.
+C11 F. Example 2010b end.
+C12 F. Example 2010a end.
+C13 G. Example 2011 end.
+C14 G. Example 1950 end.
+C15 Oz 2012 end.
+C16 Ölund 2012 end.
+C17 Ølsen 2012 end.
+C18 Łask 2012 end.
+C19 Lask 2012 end.
+C20 Ehm 2013 end.
+C21 No Author Here 2014 end.
+C22 Pome 2015 end.
+C23 Xample 2016 end.
+C24 Ärnason and Ébert 2017 end.
+C25 arnason 2017 end.
+C26 Arnason 2017 end.
+C27 Vale 2018c end.
+C28 Vale 2018b end.
+C29 Vale 2018a end.
+C30 Vale 2018d end.
+References
+Example, Ann (2005). Sorted By Key.
+Ehm, Mo (2013). Legacy Key.
+Arnason, Ola (2017). Uppercase Family.
+arnason, Ola (2017). Lowercase Family.
+Ärnason, Ola and Pia Ébert (2017). Accented Names.
+Example, Cy (2007a). Zebra.
+— (2007b). Middle.
+Example, Ed von (2002). Prefix Book Two.
+Example, Fy (2010a). Volume Ten. Vol. 9.
+— (2010b). Volume Ten. Vol. 10.
+Example, Gil (2011). Year Sorted.
+— (1950). Year Sorted Two.
+Łask, Kai (2012). Barred L.
+Lask, Lu (2012). Plain L.
+No Author Here (2014).
+Ølsen, Jo (2012). Slashed O.
+Ölund, Ivy (2012). Umlaut O.
+Oz, Hal (2012). Plain O.
+Pome, Ned de (2015). Particle Without Prefix.
+Smith, Zed (2000). Padding One.
+Smith Jones, Al (2000). Padding Two.
+Vale, Ru (2018a). Volumes. Vol. 2.
+— (2018b). Volumes. Vol. IV.
+— (2018c). Volumes. Vol. 10.
+— (2018d). Volumes. Vol. xii.
+Von Example, Ed (2001). Prefix Book.
+Example, Bea (2006). Sorted By Name.
+Example, Di (2008). Presorted.

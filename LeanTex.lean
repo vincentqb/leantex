@@ -31,8 +31,13 @@ public import LeanTex.Core.Ir
 public import LeanTex.Core.ColorContract
 public import LeanTex.Core.TextSymData
 public import LeanTex.Core.Bib
+public import LeanTex.Core.BibModel
 public import LeanTex.Core.BibStyle
 public import LeanTex.Core.BibContract
+public import LeanTex.Core.BibText
+public import LeanTex.Core.BibLatex
+public import LeanTex.Core.BibUnique
+public import LeanTex.Core.BibElab
 public import LeanTex.Core.Pending
 public import LeanTex.Core.Struct
 public import LeanTex.Core.Data

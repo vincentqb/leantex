@@ -1,0 +1,8 @@
+# options: style=numeric
+# The reference list lualatex sets for strings-a.bib, strings-b.bib and strings-c.bib, added in that order, under \usepackage[options]{biblatex}:
+# TeX Live 2026 (LuaHBTeX 1.24.0, biblatex 3.21, biber 2.22), a 60cm page so no line breaks, read back with pdftotext -layout 26.09.0. Cited: \nocite{a1,b1,b2}.
+References
+[1] Ann Alpha. “First”. In: Journal of Shared Strings (2001).
+[2] Bo Beta. “Second”. In: Journal of Shared Strings (2002).
+[3] Cy Gamma. “Third”. In: Parent in Another File. Ed. by Di Delta. Pub, 2003, pp. 1–2.
+

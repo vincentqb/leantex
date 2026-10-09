@@ -1,0 +1,10 @@
+# The page lualatex sets for labeltex-nat.body.tex's citations and labeltex.bib's list under \usepackage{natbib} and \bibliographystyle{plainnat}, one citation line then one entry per line:
+# TeX Live 2026 (LuaHBTeX 1.24.0, bibtex 0.99e), latex and bibtex rerun until the .bbl holds, a 60 cm page so no entry breaks,
+# read back with pdftotext -layout 26.09.0.
+A Brandt [2001] [Brandt, 2001] end.
+B Thorn [2002] Thorn end.
+C Christie [2005] [Christie, 2005] end.
+References
+Ana Christie. Digraph Names. P, 2005.
+Bo Brandt. Bold Family. P, 2001.
+Cy Thorn. Relaxed Family. P, 2002.

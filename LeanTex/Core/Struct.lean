@@ -239,13 +239,14 @@ public def rowsRaw (out : Array Node) : List (Array (Array Inline)) → Array No
   | [] => out
   | row :: rest => rowsRaw (out.push (.node .row (cellsRaw #[] row.toList))) rest
 
-/-- Reference-list entries: one leaf each, the entry's whole text, as
-`textLeaves` reads them — the entries are the style's renderings, not
-authored content, and no walk descends them. -/
+/-- Reference-list entries, each its own `.bibEntry` over its inline
+content, as a cell is: a field is read by the document's own elaborator, so
+an entry's link, image, picture and note are the tree's as the body's are
+— the walks that census the body descend the entries (`Ir.foldBibItems`). -/
 public def bibRaw (out : Array Node) : List BibItem → Array Node
   | [] => out
   | item :: rest =>
-    bibRaw (out.push (.node .bibEntry #[.leaf 0 (.text (plainText item.content))])) rest
+    bibRaw (out.push (.node .bibEntry (inlinesRaw #[] item.content.toList))) rest
 
 /-- Pseudocode lines: each line's content then its comment, in reading
 order — the order `algLineText` and `foldAlgLines` both read. -/
@@ -866,8 +867,8 @@ theorem bibRaw_text (acc : String) (out : Array Node) (items : List BibItem) :
   | nil => rfl
   | cons item rest ih =>
     rw [bibRaw, ih, leafTextList_push, blockTextBibItems]
-    simp [leafTextOne_leaf_exact, leafTextOne_node_exact, leafTextList_nil_exact,
-      leafTextList_cons_exact, Leaf.census]
+    simp only [leafTextOne_node_exact]
+    rw [inlinesRaw_text_nil]
 
 theorem algRaw_text (acc : String) (out : Array Node) (lines : List AlgLine) :
     leafTextList acc (algRaw out lines).toList
@@ -1195,8 +1196,8 @@ theorem bibRaw_headings (hs : Array Ir.HeadingLevel) (out : Array Node) (items :
   | nil => rfl
   | cons item rest ih =>
     rw [bibRaw, ih, headingsList_push]
-    simp [headingsOne_leaf_exact, headingsOne_node_exact, Kind.outlineDescends, Kind.outlineEmit,
-      headingsList_nil_exact, headingsList_cons_exact]
+    simp only [headingsOne_node_exact, Kind.outlineDescends, Kind.outlineEmit]
+    rw [inlinesRaw_headings_nil]
 
 theorem algRaw_headings (hs : Array Ir.HeadingLevel) (out : Array Node) (lines : List AlgLine) :
     headingsList hs (algRaw out lines).toList = headingsList hs out.toList := by
@@ -1525,13 +1526,13 @@ theorem rowsRaw_alts (is : Array (Option String × Alt)) (out : Array Node)
     rfl
 
 theorem bibRaw_alts (is : Array (Option String × Alt)) (out : Array Node) (items : List BibItem) :
-    altsList is (bibRaw out items).toList = altsList is out.toList := by
+    altsList is (bibRaw out items).toList = foldBibItems altPush (altsList is out.toList) items := by
   induction items generalizing out with
   | nil => rfl
   | cons item rest ih =>
-    rw [bibRaw, ih, altsList_push]
-    simp [altsOne_leaf_exact, altsOne_node_exact, Leaf.altCensus, altsList_nil_exact,
-      altsList_cons_exact]
+    rw [bibRaw, ih, altsList_push, foldBibItems]
+    simp only [altsOne_node_exact]
+    rw [inlinesRaw_alts_nil]
 
 theorem algRaw_alts (is : Array (Option String × Alt)) (out : Array Node) (lines : List AlgLine) :
     altsList is (algRaw out lines).toList

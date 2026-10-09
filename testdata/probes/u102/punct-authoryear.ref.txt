@@ -1,0 +1,16 @@
+# options: style=authoryear
+# What lualatex sets for punct.body.tex's citations under \usepackage[options]{biblatex} with \nameyeardelim,
+# \multicitedelim and \postnotedelim redefined (\renewcommand*: \addcomma\space, \addcomma\space, \addcolon\space):
+# TeX Live 2026 (LuaHBTeX 1.24.0, biblatex 3.21, biber 2.22), a 60cm page so no line breaks,
+# read back with pdftotext -layout 26.09.0, one citation line then one entry per line.
+C01 (Alpha, 2020) end.
+C02 Beta and Gamma, 2021 end.
+C03 Delta (2023) end.
+C04 (Alpha, 2020, Beta and Gamma, 2021) end.
+C05 (Alpha, 2020: p. 5) end.
+C06 (see Beta and Gamma, 2021: p. 5) end.
+References
+Alpha, Ann (2020). First Book. Pub. url: https://example.org/a1.
+Beta, Bo and Cy Gamma (June 15, 2021). “Second Paper”. In: Journal.
+Delta, Di van der (2023). Fourth Book. Pub.
+

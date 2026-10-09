@@ -12,18 +12,6 @@ open LeanTex.Core LeanTex.Cli
 
 namespace Tests
 
-/-- A boundary renderer that names its version and draws by copying a
-committed PDF beside a log. Shell builtins and `/bin/cp` alone, so a PATH
-holding nothing else still runs it. -/
-private def fakeRenderer (pdf : System.FilePath) : String :=
-  "#!/bin/sh\n" ++
-  "if [ \"$1\" = --version ]; then\n" ++
-  "  printf '%s\\n' 'synthetic boundary renderer 1'\n" ++
-  "  exit 0\n" ++
-  "fi\n" ++
-  "/bin/cp " ++ shQuote pdf.toString ++ " pic.pdf || exit 3\n" ++
-  "printf '%s\\n' 'Output written on pic.pdf (1 page).' > pic.log\n"
-
 /-- The boundary renderer, its terminal output ending in bytes that are no
 UTF-8, as a TeX engine's line breaking can split a character. -/
 private def noisyRenderer (pdf : System.FilePath) : String :=
@@ -32,16 +20,6 @@ private def noisyRenderer (pdf : System.FilePath) : String :=
 /-- The boundary renderer, its log ending in a character a line break split. -/
 private def splitLogRenderer (pdf : System.FilePath) : String :=
   fakeRenderer pdf ++ "printf 'Transcript of an invented run \\303\\n' >> pic.log\n"
-
-/-- A PDF-to-SVG converter that names its version and converts by copying
-one SVG to the output it is given (`-svg <input> <output>`). -/
-private def fakeConverter (svg : System.FilePath) : String :=
-  "#!/bin/sh\n" ++
-  "if [ \"$1\" = -v ]; then\n" ++
-  "  printf '%s\\n' 'synthetic converter 1' >&2\n" ++
-  "  exit 0\n" ++
-  "fi\n" ++
-  "/bin/cp " ++ shQuote svg.toString ++ " \"$3\" || exit 3\n"
 
 /-- An SVG validator the machine kills before it answers. -/
 private def killedValidator : String :=

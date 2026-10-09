@@ -503,6 +503,28 @@ def leanChild (what : String) : IO (System.FilePath × String) := do
 def shQuote (text : String) : String :=
   "'" ++ text.replace "'" "'\\''" ++ "'"
 
+/-- A boundary renderer that names its version and draws by copying a
+committed PDF beside a log. Shell builtins and `/bin/cp` alone, so a PATH
+holding nothing else still runs it. -/
+def fakeRenderer (pdf : System.FilePath) : String :=
+  "#!/bin/sh\n" ++
+  "if [ \"$1\" = --version ]; then\n" ++
+  "  printf '%s\\n' 'synthetic boundary renderer 1'\n" ++
+  "  exit 0\n" ++
+  "fi\n" ++
+  "/bin/cp " ++ shQuote pdf.toString ++ " pic.pdf || exit 3\n" ++
+  "printf '%s\\n' 'Output written on pic.pdf (1 page).' > pic.log\n"
+
+/-- A PDF-to-SVG converter that names its version and converts by copying
+one SVG to the output it is given (`-svg <input> <output>`). -/
+def fakeConverter (svg : System.FilePath) : String :=
+  "#!/bin/sh\n" ++
+  "if [ \"$1\" = -v ]; then\n" ++
+  "  printf '%s\\n' 'synthetic converter 1' >&2\n" ++
+  "  exit 0\n" ++
+  "fi\n" ++
+  "/bin/cp " ++ shQuote svg.toString ++ " \"$3\" || exit 3\n"
+
 /-- One of the suite's shipped faces by file name, parsed; `none` when the
 file is missing or does not parse. -/
 def loadTestFont (file : String) : IO (Option Font.Font) := do
@@ -641,8 +663,9 @@ def elabFixture (n src : String) : IO (Ir.Doc × Array Diag) := do
     if ← System.FilePath.pathExists path then
       dataSources := dataSources.push (srcName, ← fixtureText path)
   let (raws, dataDiags) := Data.expandData file dataSources executed.raws
-  let (doc, diags) := Elab.runExecuted file (executed.withRaws raws)
-    (readDiags ++ inputDiags ++ dataDiags)
+  let prepared := Elab.prepareExecuted file (executed.withRaws raws)
+  let (doc, diags) := Elab.runPreparedFinal file prepared
+    (readDiags ++ inputDiags ++ dataDiags) (fun _ _ => {})
   let requested := Ir.bibRefs doc
   if requested.isEmpty then return (doc, diags)
   let mut sources : Array (String × String) := #[]
@@ -651,8 +674,62 @@ def elabFixture (n src : String) : IO (Ir.Doc × Array Diag) := do
     let path := s!"testdata/corpus/{name}"
     if ← System.FilePath.pathExists path then
       sources := sources.push (srcName, ← fixtureText path)
-  let (doc, bibDiags) := Bib.apply sources doc
-  return (doc, diags ++ bibDiags)
+  let (doc, bibDiags) := Bib.resolve file prepared sources doc
+  -- The fixture's document is the source-free view `runPreparedFinal`
+  -- returns, the reference list's entries included.
+  return (Ir.eraseLocations doc, diags ++ bibDiags)
+
+/-- A document elaborated and its bibliography resolved the way a build
+resolves them (`Cli.Driver.elaborate`), its `.bib` sources the named texts,
+in the driver's four parts: the result, the document's diagnostics as
+elaboration reports them, the reference list's, and the reference judge's
+over the result (`Bib.refJudge`), none tallied. The source is read through
+its door, executed and prepared as the driver prepares a document
+(`Elab.prepareExecuted`); every field is read by the document's own
+elaborator over that one preparation (`Bib.resolve`), and the list's
+references resolve against the document's labels (`Bib.resolveListRefs`).
+The document returned is the source-free view; resolution reads the located
+one, as the driver's does, and where a list's fields set notes the document
+is elaborated once more knowing how many (`Prepared.listNotes`), as the
+driver elaborates it. -/
+def bibBuildRun (src : String) (bibs : Array (String × String)) :
+    Ir.Doc × Array Diag × Array Diag × Array Diag :=
+  let file := "t.tex"
+  let (raws, readDs) := Surface.read .tex file src
+  let prepared := Elab.prepareExecuted file (Elab.executeInputs nullReader file raws)
+  let pass (prepared : Elab.Prepared) : Ir.Doc × Array Diag × Array Diag × Array Diag :=
+    let (doc, ds, spans) := Elab.runPrepared file prepared readDs (fun _ _ => {})
+    let sources := (Ir.bibRefs doc).filterMap fun r => bibs.find? (·.1 == r)
+    let (doc, bds) := Bib.resolve file prepared sources doc
+    let doc := Bib.resolveListRefs spans.labels doc
+    (doc, ds, bds, Bib.refJudge spans doc)
+  let first := pass prepared
+  let counts := first.1.listNotes.map (·.2)
+  let (doc, ds, bds, refs) := if counts.all (· == 0) then first
+    else pass { prepared with listNotes := counts }
+  (Ir.eraseLocations doc, ds, bds, refs)
+
+/-- `bibBuildRun` with the reference judge's diagnostics among the
+document's, and the reference list's apart. -/
+def bibBuildParts (src : String) (bibs : Array (String × String)) :
+    Ir.Doc × Array Diag × Array Diag :=
+  let (doc, ds, bds, refs) := bibBuildRun src bibs
+  (doc, ds ++ refs, bds)
+
+/-- `bibBuildParts` with the document's diagnostics tallied, as `elabStr`
+reports them, and the reference list's apart, as `Bib.apply` reports them. -/
+def bibResolve (src : String) (bibs : Array (String × String)) :
+    Ir.Doc × Array Diag × Array Diag :=
+  let (doc, ds, bds) := bibBuildParts src bibs
+  (doc, Diag.tallySites ds, bds)
+
+/-- `bibBuildRun` with the run's losses accounted once, by the driver's own
+accounting (`Bib.accountFront`): a loss the list repeats after the body
+named it is a note, the reference judge reads after both, and every site is
+tallied together. -/
+def bibBuild (src : String) (bibs : Array (String × String)) : Ir.Doc × Array Diag :=
+  let (doc, ds, bds, refs) := bibBuildRun src bibs
+  (doc, Bib.accountFront ds bds #[] refs)
 
 /-- A golden fixture's source file: its surface's extension under
 `testdata/corpus`. -/

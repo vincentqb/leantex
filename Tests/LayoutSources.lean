@@ -37,7 +37,7 @@ def layoutSourceChecks (ref : IO.Ref (List String)) (fs : Font.FontSet) : IO Uni
     hyphenate := false, justify := false }
   for withdrawn in [#[], #["unused-picture"]] do
     let (doc, _, sites) := Elab.runPrepared file prepared (picWithdrawn := withdrawn)
-    let (resolved, _) := Bib.apply #[] doc
+    let (resolved, _) := Bib.apply #[] doc Bib.plainReading
     let remapped := Bib.remapSources doc sites.frames
     let out := Layout.run geom fs none resolved
       (frameSpans := Layout.frameSpansForPdf resolved remapped)

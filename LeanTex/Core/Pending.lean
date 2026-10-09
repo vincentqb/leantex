@@ -20,7 +20,8 @@ diagnostics, assembled from each resolver's own lemma:
   has an entry per fetched source.
 
 The driver (`Main.frontend`, `Main.build`) is the statement's shape:
-`Bib.apply` on the elaborated document, `Ir.refDiags` over its output,
+`Bib.apply` on the elaborated document, whatever field reading it is given
+(the build gives the document's own elaborator, `Bib.FieldDoor.read`), `Ir.refDiags` over its output,
 then `Image.fulfilRequests` over one read per `Ir.imageRequests` entry — which is the
 hypothesis `hcov`, the one fact the driver contributes. -/
 
@@ -33,11 +34,11 @@ open Ir
 element of the pending census has a diagnostic in the run's output whose
 structured subject is its key. -/
 public theorem pending_named (table : RefTable) (spanOf : String → Option Span)
-    (sources : Array (String × String)) (doc : Doc)
+    (sources : Array (String × String)) (doc : Doc) (cv : Bib.FieldReading)
     (fetched : Array (Image.Request × Image.Fetch))
-    (hcov : fetched.map (·.1) = imageRequests (Bib.apply sources doc).1) :
-    ∀ p ∈ pending (Bib.apply sources doc).1 (Image.fulfilRequests fetched).1,
-      ∃ d ∈ refDiags table spanOf (Bib.apply sources doc).1 ++ (Image.fulfilRequests fetched).2,
+    (hcov : fetched.map (·.1) = imageRequests (Bib.apply sources doc cv).1) :
+    ∀ p ∈ pending (Bib.apply sources doc cv).1 (Image.fulfilRequests fetched).1,
+      ∃ d ∈ refDiags table spanOf (Bib.apply sources doc cv).1 ++ (Image.fulfilRequests fetched).2,
         d.mentions p = true := by
   intro p hp
   unfold pending at hp
@@ -45,7 +46,7 @@ public theorem pending_named (table : RefTable) (spanOf : String → Option Span
   rcases hp with hn | hi
   · rw [Array.mem_map] at hn
     obtain ⟨u, hu, rfl⟩ := hn
-    have hnc := Bib.apply_no_cite sources doc u hu
+    have hnc := Bib.apply_no_cite sources doc cv u hu
     cases u with
     | cite k => simp [Unresolved.isCite] at hnc
     | ref k =>

@@ -99,12 +99,25 @@ here and will not become one. What the resolver removed is the class these
 rows were once confused with -- a name that IS this tree's and that a text
 scan could not see. -/
 def citeForeign : List String :=
-  ["default_rule_thickness",   -- TeX's math fontdimen (TeXbook, Appendix G)
+  ["add_xdata_ref",            -- biber's xdata-reference reader (Biber::Entry)
+   "collate_options",          -- biber's collation settings (Biber::Config)
+   "default_rule_thickness",   -- TeX's math fontdimen (TeXbook, Appendix G)
    "format_unencoded",         -- Pygments' LaTeX formatter pass (formatters/latex.py)
    "good_length",              -- zlib's deflate configuration field
    "headless_shell",           -- Chrome's own binary name
+   "min_crossrefs",            -- BibTeX's cross-reference threshold (btxdoc, bibtex.web)
    "mlist_to_hlist",           -- TeX's math-list conversion pass
+   "normalise_string_sort",    -- biber's sort-string normaliser (Biber::Utils)
+   "np_length",                -- biber's name-part widths (Biber::Section)
+   "parse_date",               -- biber's one-sided date reader (Biber::Utils)
+   "parse_date_range",         -- biber's date-range reader (Biber::Utils)
+   "parse_date_unspecified",   -- biber's unspecified-digit reader (Biber::Utils)
+   "process_visible_names",    -- biber's name-visibility pass (Biber.pm)
+   "resolve_xdata",            -- biber's xdata resolution (Biber::Entry)
+   "sort_list",                -- biber's list sort (Biber.pm)
    "style_for_token",          -- Pygments' resolved style lookup (pygments/style.py)
+   "von_name_ends_and_last_name_starts_stuff", -- bibtex.web's name-splitting module
+   "von_token_found",          -- bibtex.web's von-token test
    "x_y",                      -- an example label key, quoted as prose
    "xn_over_d"]                -- TeX's scaled-integer routine (TeX §107)
 

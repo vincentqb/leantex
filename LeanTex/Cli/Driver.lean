@@ -16,6 +16,7 @@ import LeanTex.Core.Theme
 import LeanTex.Core.Compat
 import LeanTex.Core.Elab
 import LeanTex.Core.BibStyle
+import LeanTex.Core.BibElab
 import LeanTex.Core.PictureCensus
 import LeanTex.Core.Font
 import LeanTex.Core.FontDb
@@ -485,29 +486,44 @@ def elaborate (ui : Ui) (file : String) (prepared : Elab.Prepared)
     (metric : Ir.Pic.LabelMetric) (phases : Bool := true)
     (withdrawn : Array String := #[]) (ledger : Encoding.Ledger := {}) :
     IO (Ir.Doc × Array Diag × Elab.ReqSpans) := do
+  let pass (prepared : Elab.Prepared) (phases : Bool) :
+      IO (Ir.Doc × Array Diag × Elab.ReqSpans) := do
+    let t ← IO.monoMsNow
+    let (doc, elabDiags, reqSpans) := Elab.runPrepared file prepared earlier metric withdrawn
+    -- N0020 says a `.sty` was read and how much of it took; its counts
+    -- are read off the elaborated diagnostics, so it is built after them.
+    -- A record from inside an `\input` wrapper names that file, not the
+    -- document: the `\RequirePackage` lives there.
+    let elabDiags := elabDiags ++
+      spliced.map fun (sty, src, pos) =>
+        Compat.styRead (src.getD file) sty pos elabDiags
+    if phases then ui.phase "elab" s!"{doc.body.size} blocks" (← since t)
+    let t ← IO.monoMsNow
+    let reqSpans := { reqSpans with frames := Bib.remapSources doc reqSpans.frames }
+    let (doc, bibDiags, ledger) ← Input.resolveBibliography file doc
+      (Bib.FieldDoor.of file prepared).read reqSpans.labels reqSpans.bib ledger
+    unless bibDiags.isEmpty && (Ir.bibRefs doc).isEmpty || !phases do
+      ui.phase "bib" s!"{(Ir.bibRefs doc).size} sources" (← since t)
+    -- The unresolved-reference judge, over the document the backends read,
+    -- a list's entries with the body (`Bib.refJudge`): with the images
+    -- fulfilled below, this is the tail `pending_named` quantifies over.
+    let refDiags := Bib.refJudge reqSpans doc
+    -- One accounting for the run's losses (`Bib.accountFront`): a loss the
+    -- reference list's fields raise at many sites counts with the body's
+    -- sites of it, and the bibliography, the last file a document reads,
+    -- lets the input encoding's one note name every file.
+    return (doc, Bib.accountFront elabDiags bibDiags ledger.notes refDiags, reqSpans)
+  let first ← pass prepared phases
+  -- A list whose fields set notes steps the footnote counter where it
+  -- stands, as LaTeX's reading of the `.bbl` there steps it: the document is
+  -- elaborated once more knowing how many (`Prepared.listNotes`), so a note
+  -- after the list numbers after the list's.
+  let counts := first.1.listNotes.map (·.2)
+  if !prepared.listNotes.isEmpty || counts.all (· == 0) then return first
   let t ← IO.monoMsNow
-  let (doc, elabDiags, reqSpans) := Elab.runPrepared file prepared earlier metric withdrawn
-  -- N0020 says a `.sty` was read and how much of it took; its counts
-  -- are read off the elaborated diagnostics, so it is built after them.
-  -- A record from inside an `\input` wrapper names that file, not the
-  -- document: the `\RequirePackage` lives there.
-  let elabDiags := elabDiags ++
-    spliced.map fun (sty, src, pos) =>
-      Compat.styRead (src.getD file) sty pos elabDiags
-  if phases then ui.phase "elab" s!"{doc.body.size} blocks" (← since t)
-  let t ← IO.monoMsNow
-  let reqSpans := { reqSpans with frames := Bib.remapSources doc reqSpans.frames }
-  let (doc, bibDiags, ledger) ← Input.resolveBibliography file doc reqSpans.bib ledger
-  unless bibDiags.isEmpty && (Ir.bibRefs doc).isEmpty || !phases do
-    ui.phase "bib" s!"{(Ir.bibRefs doc).size} sources" (← since t)
-  -- The bibliography is the last file a document reads, so the input
-  -- encoding's one note can name every file now.
-  let bibDiags := bibDiags ++ ledger.notes
-  -- The unresolved-reference judge, over the document the backends read
-  -- (`Ir.refDiags`): with the images fulfilled below, this is the tail
-  -- `pending_named` quantifies over.
-  let refDiags := Ir.refDiags reqSpans.labels (Elab.ReqSpans.spanOf reqSpans.refs) doc
-  return (doc, elabDiags ++ bibDiags ++ refDiags, reqSpans)
+  let second ← pass { prepared with listNotes := counts } false
+  if phases then ui.phase "notes" s!"{counts.foldl (· + ·) 0} list notes" (← since t)
+  return second
 
 /-- What the front end hands the driver: the document, and everything a
 second elaboration would need if the face this one was measured against

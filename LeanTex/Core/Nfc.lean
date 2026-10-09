@@ -1,6 +1,7 @@
 module
 
 import Std.Data.HashMap
+import Std.Data.HashSet
 import LeanTex.Core.NfcData
 
 /-!
@@ -30,6 +31,9 @@ private structure Tables where
   /-- Merged codepoint ranges of general category L*, sorted. -/
   letters : Array (UInt32 × UInt32)
   lower : HashMap UInt32 Char
+  /-- The letters some letter lowercases to: the lowercase half of every
+  case pair. -/
+  lowered : HashSet UInt32
 
 /-- A hex digit's value. The generator emits `[0-9a-f]` only, so the two
 ranges are the whole domain. -/
@@ -76,10 +80,12 @@ private def load (_ : Unit) : Tables := Id.run do
       (UInt32.ofNat (field lb (i * 12) 6), UInt32.ofNat (field lb (i * 12 + 6) 6))
   let wb := NfcData.lower.toUTF8
   let mut lower : HashMap UInt32 Char := {}
+  let mut lowered : HashSet UInt32 := {}
   for i in [0:wb.size / 12] do
-    lower := lower.insert (UInt32.ofNat (field wb (i * 12) 6))
-      (Char.ofNat (field wb (i * 12 + 6) 6))
-  return { ccc, decomp, comp, letters, lower }
+    let lc := Char.ofNat (field wb (i * 12 + 6) 6)
+    lower := lower.insert (UInt32.ofNat (field wb (i * 12) 6)) lc
+    lowered := lowered.insert lc.val
+  return { ccc, decomp, comp, letters, lower, lowered }
 
 /-- The tables, built once per process, on first use. `load` takes a `Unit`
 because a zero-argument definition is a closed term the code generator
@@ -248,5 +254,17 @@ which is every scalar the generated table does not list. No scalar below
 U+0300 carries a nonzero class. -/
 public def combiningClass (c : Char) : Nat :=
   if c.toNat < 0x300 then 0 else cccOf tables.get c
+
+/-- An uppercase letter: one with a lowercase other than itself (É, Ø, Ł),
+by the same simple mapping `toLower` reads. -/
+public def isUpper (c : Char) : Bool :=
+  if c.toNat < 0x80 then 'A' ≤ c && c ≤ 'Z'
+  else (tables.get.lower.get? c.val).any (· != c)
+
+/-- A lowercase letter: the lowercase of some letter (é, ø, ł, ß). A letter
+of a script without case is neither upper nor lower. -/
+public def isLower (c : Char) : Bool :=
+  if c.toNat < 0x80 then 'a' ≤ c && c ≤ 'z'
+  else tables.get.lowered.contains c.val
 
 end LeanTex.Core.Nfc

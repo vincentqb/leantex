@@ -1,0 +1,64 @@
+# options: style=numeric,sortlocale=es_ES
+# What lualatex sets for loc.body.tex's citations and loc.bib's list under \usepackage[options]{biblatex}:
+# TeX Live 2026 (LuaHBTeX 1.24.0, biblatex 3.21, biber 2.22), a 60cm page so no line breaks,
+# read back with pdftotext -layout 26.09.0, one citation line then one entry per line.
+References
+[1] Pat Aavo. T48. 2001.
+[2] Pat Ævo. T05. 2001.
+[3] Pat Avo. T01. 2001.
+[4] Pat Åvo. T03. 2001.
+[5] Pat Ävo. T04. 2001.
+[6] Pat Ąvo. T23. 2001.
+[7] Pat Azu. T02. 2001.
+[8] Pat Ćavo. T19. 2001.
+[9] Pat Čavo. T18. 2001.
+[10] Pat Çavo. T41. 2001.
+[11] Pat Chavo. T16. 2001.
+[12] Pat Cote. T50. 2001.
+[13] Pat Coté. T52. 2001.
+[14] Pat Côte. T51. 2001.
+[15] Pat Côté. T53. 2001.
+[16] Pat Csavo. T42. 2001.
+[17] Pat Cyvo. T17. 2001.
+[18] Pat Davo. T30. 2001.
+[19] Pat Đavo. T31. 2001.
+[20] Pat Ðavo. T29. 2001.
+[21] Pat Ddavo. T46. 2001.
+[22] Pat Dzsavo. T43. 2001.
+[23] Pat Evo. T24. 2001.
+[24] Pat Ęvo. T25. 2001.
+[25] Pat Gavo. T36. 2001.
+[26] Pat Ğavo. T35. 2001.
+[27] Pat Gyavo. T44. 2001.
+[28] Pat Hzvo. T49. 2001.
+[29] Pat Ivo. T37. 2001.
+[30] Pat Ivo. T38. 2001.
+[31] Pat İvo. T39. 2001.
+[32] Pat Łavo. T22. 2001.
+[33] Pat Llavo. T20. 2001.
+[34] Pat Lzvo. T21. 2001.
+[35] Pat Navo. T14. 2001.
+[36] Pat Ngavo. T47. 2001.
+[37] Pat Nyavo. T45. 2001.
+[38] Pat Nzvo. T15. 2001.
+[39] Pat Ñavo. T13. 2001.
+[40] Pat Ŋavo. T54. 2001.
+[41] Pat Ořa. T55. 2001.
+[42] Pat Orza. T56. 2001.
+[43] Pat Övo. T06. 2001.
+[44] Pat Øvo. T07. 2001.
+[45] Pat Ŕavo. T58. 2001.
+[46] Pat Řavo. T57. 2001.
+[47] Pat Şavo. T40. 2001.
+[48] Pat Ševo. T26. 2001.
+[49] Pat Svo. T27. 2001.
+[50] Pat Szavo. T28. 2001.
+[51] Pat Tavo. T33. 2001.
+[52] Pat Thavo. T34. 2001.
+[53] Pat Übo. T11. 2001.
+[54] Pat Vavo. T08. 2001.
+[55] Pat Wavo. T09. 2001.
+[56] Pat Ybo. T10. 2001.
+[57] Pat Zbo. T12. 2001.
+[58] Pat Þavo. T32. 2001.
+

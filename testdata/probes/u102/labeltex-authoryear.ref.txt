@@ -1,0 +1,11 @@
+# options: style=authoryear
+# What lualatex sets for labeltex.body.tex's citations and labeltex.bib's list under \usepackage[options]{biblatex}:
+# TeX Live 2026 (LuaHBTeX 1.24.0, biblatex 3.21, biber 2.22), a 60 cm page so no line breaks,
+# read back with pdftotext -layout 26.09.0, one citation line then one entry per line.
+A Brandt 2001 Brandt (2001) end.
+B Thorn 2002 Thorn end.
+C AbC Avery (AbC) end.
+References
+Avery, Ann (1781). Abbreviated Classic. P.
+Brandt, Bo (2001). Bold Family. P.
+Thorn, Cy (2002). Relaxed Family. P.
