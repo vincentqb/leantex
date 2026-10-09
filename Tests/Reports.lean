@@ -973,14 +973,17 @@ def reports : List Report := [
     pins := [check% pictureAlphabetLabelChecks,
       check% htmlMathChecks,
       check% censusChecks,
+      check% labelSettleChecks,
+      check% mathDiagnosticOriginChecks,
       thm% Ir.mathRequests_resolve_covers,
       thm% MathMl.formula_merrorFree_contract,
       thm% Layout.labelMetric_resolve_id,
       thm% Layout.resolveMathAlphaPicture_box_id]
-    accept := ["twenty-seven assertions fail with the fix reverted: label glyphs, error elements and page scalars against the same formula in a paragraph over nine invented alphabet labels, the corpus error census and the diagram fixture's upright label",
-      "the label-measure guards landed in a follow-up to that commit, whose first form resolved labels after elaboration had measured their source glyphs: four drawn-outline assertions failed there, up to nine tenths of a point off a text node's margin, and pass after",
+    accept := ["in a run with the fix reverted — the alphabet pass skipping picture labels, the label measure reading source glyphs, and each label formula its own math root — fifty-four assertions fail, thirty-four of them this report's: label glyphs, error elements and page scalars against the same formula in a paragraph over nine invented alphabet labels, the corpus error census, the diagram fixture's upright label, the alphabet note a label's formula owes in both text families, and the driver taking a face that lacks a label's alphabet for one that measures it",
+      "on the same tree, five assertions fail with the label measure alone reverted: four drawn outlines on the shipped page, each up to half a point off a text node's inner sep around the glyphs the page sets, and the settle check",
+      "on the same tree, nine assertions fail with the driver probing the resolved document's labels and label formulas left unlocated: the settle check, and in both text families the face and alphabet notes of a label's formula naming no source",
       "a fresh build of a presentation deck ships no error element, and its alphabet edge label sets upright in both artifacts as the reference build does"]
-    state := .guarded "04b2c321" .revert .author },
+    state := .guarded "c95d78db" .revert .author },
   { id := "R112", date := "2026-10-08"
     what := "Formulas in picture labels nested a second MathML root inside the label's own"
     pins := [check% htmlMathChecks,
@@ -989,9 +992,9 @@ def reports : List Report := [
       thm% HtmlDoc.pictureKids_unnested_contract,
       thm% HtmlDoc.labelNodesList_mathFree_contract,
       thm% MathMl.formula_unnested_contract]
-    accept := ["twenty assertions fail with the fix reverted: one root per label over nine invented labels, the corpus nesting census and ten structured label formulas",
+    accept := ["in the run that reverts R111's fix with this one, twenty of the fifty-four failing assertions are this report's: one root per label over nine invented labels, the corpus nesting census and ten structured label formulas",
       "a fresh build of a presentation deck ships no math element inside another, where the base build shipped seven"]
-    state := .guarded "04b2c321" .revert .author }
+    state := .guarded "c95d78db" .revert .author }
 ]
 
 /-- The reports guarded but never seen failing: a count that may fall and
