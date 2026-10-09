@@ -135,7 +135,7 @@ face is (W0378). An omitted icon leaves the head, named by its path (W0605). -/
 public def omitFaces (omitted : Array (ByteArray × String)) (cfg : HtmlDoc.Config)
     (doc : Ir.Doc) : HtmlDoc.Config × Ir.Doc × Array Diag :=
   let marked := cfg.imgs.entries.map (omitEntry omitted)
-  let faced := { cfg with imgs := { entries := marked.map (·.1) } }
+  let faced := { cfg with imgs := { cfg.imgs with entries := marked.map (·.1) } }
   let named := marked.filterMap (·.2)
   -- premise: machineLossChecks — the omitted icon is named once, here, and leaves the head
   match cfg.favicon.bind fun (name, icon) => (omittedWhy omitted icon).map (name, ·) with

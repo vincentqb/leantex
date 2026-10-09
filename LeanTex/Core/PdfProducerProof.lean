@@ -174,7 +174,7 @@ public theorem write_readXref_exact (geom : Layout.Geom) (fs : Font.FontSet)
       he.2.1 he.2.2 p.table.size (by omega) x0 rfl
   have hp : 0 < p.table.size := by
     have ht := prepare_table_exact geom fs pages info imgs outline streams tree ops programs
-    change p.table = tableOf fs pages imgs outline tree at ht
+    change p.table = tableOf geom fs pages imgs outline tree at ht
     rw [ht]
     simp only [tableOf, objTable]
     omega
@@ -194,7 +194,7 @@ public theorem writeChecked_readXref_exact (geom : Layout.Geom) (fs : Font.FontS
     (h : writeChecked geom fs pages info imgs outline streams tree ops programs = .ok b) :
     ∃ x, readXref b = .ok x ∧ x.root = some 1 ∧
       (x.trailer.bind (·.get? "Size")).bind Obj.int? = some (x.locs.size + 1) := by
-  obtain ⟨bounds, hb⟩ := (writeChecked_exact geom fs pages info imgs outline streams
+  obtain ⟨_, bounds, hb⟩ := (writeChecked_exact geom fs pages info imgs outline streams
     tree ops programs b).mp h
   rw [← hb]
   exact write_readXref_exact geom fs pages info imgs outline streams tree ops programs bounds.1

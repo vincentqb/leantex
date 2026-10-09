@@ -55,12 +55,15 @@ public def pdfWriteRefused (error : Pdf.WriteError) : Diag :=
       s!"the PDF cross-reference stream needs {bytes} decoded bytes; the supported limit is {PdfRead.maxDecoded}"
     | .objectSpelling id =>
       s!"the PDF object {id} contains a spelling the writer cannot represent"
+    | .inkRaster page =>
+      s!"a picture on page {page + 1} paints a raster image the PDF writer cannot place"
   let split := "split the document into smaller files and compile each with `leantex <file>.tex`"
   let help := match error with
     | .objectSpelling _ =>
       "use nonempty Latin-1 font and PDF resource names, such as 'ExampleFont'"
     | .objectStreamSize _ => "objects that index the whole document grow with it: " ++ split
     | .byteOffset _ | .xrefStreamSize _ => split
+    | .inkRaster _ => "draw the picture without an embedded raster, or include the image with \\includegraphics"
   Diag.of .E0607 message
     (help := help)
 

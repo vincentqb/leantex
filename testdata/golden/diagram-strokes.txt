@@ -1,0 +1,25 @@
+class article
+page 612x792 vmargin 72 hmargin 150
+font dir "fonts"
+font body "Source Serif Pro"
+meta title "Joined Strokes"
+meta author "Pat Placeholder"
+center
+  section* 0
+    text "Joined Strokes"
+  para
+    text "Pat Placeholder"
+section 1 number "1"
+  text "A chain, a hairline, a dashed corner"
+para
+  text "Before the strokes, a chain of segments turns its corner as one path."
+role trivlist-env
+  center
+    picture 3 shapes
+      edge (0,0)--(56.693,0) (56.693,0)--(56.693,42.52) stroke #000000 3
+      edge (0,-17.008)--(113.386,-17.008) stroke #000000 0
+      edge (79.37,0)--(96.378,42.52) (96.378,42.52)--(113.386,0) stroke #000000 1 dashed
+para
+  text "After the strokes, the prose resumes."
+-- diagnostics
+note[N0376] 24:1 this picture ships no text alternative; assistive technology reads nothing in its place (WCAG 2.2 SC 1.1.1) | help: describe the picture — \begin{tikzpicture}[alt={...}] — mark it decorative with [artifact], or caption a figure around it; an empty alt= says nothing

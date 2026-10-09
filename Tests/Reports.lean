@@ -824,8 +824,8 @@ def reports : List Report := [
     state := .guarded "2a9f1cf8" .before .author },
   { id := "R97", date := "2026-10-07"
     what := "page compression moved diagram labels without their boxes and arrows"
-    pins := [check% pictureShrinkChecks, thm% Layout.PagePath.shiftY_zero_id,
-      thm% Layout.PagePath.shiftY_add_exact, thm% Layout.PagePath.shiftY_cancel_id]
+    pins := [check% pictureShrinkChecks, thm% Layout.InkOut.shiftY_zero_id,
+      thm% Layout.InkOut.shiftY_add_exact, thm% Layout.InkOut.shiftY_cancel_id]
     accept := ["ten artifact assertions fail before repair when three pictures follow different amounts of shrinkable space",
       "emitted PDF coordinates and native layout now translate labels, fills, arrowheads and cubic control points by the same displacement",
       "a page requiring no compression keeps byte-identical PDF output"]

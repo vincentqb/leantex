@@ -48,7 +48,7 @@ def pdfWriterChecks (ref : IO.Ref (List String)) (fs : Font.FontSet) : IO Unit :
         Binary.readNatBE w.second encoded (w.row * i + 1 + w.first) == some e.fields.2.2)
   t "PDF xref: the free-list head is the one-byte all-ones generation"
     (Pdf.freeHead == .free 0 255)
-  let table := Pdf.objTable #[] {} #[] 0 0 0
+  let table := Pdf.objTable #[] {} #[] 0 0 0 0 0
   let select := Pdf.xrefEntry table (fun _ => some 23) (fun _ => some 99) 177
   t "PDF xref: its own direct row takes priority over the compressed index"
     (select table.xrefId == .direct 177 0 && select 1 == .compressed (table.objStmId 0) 23)
@@ -125,7 +125,7 @@ def pdfWriterChecks (ref : IO.Ref (List String)) (fs : Font.FontSet) : IO Unit :
       let es := objects.val
       let entry? n := es.find? (·.num == n)
       let obj n := ((entry? n).map (·.val)).getD .null
-      let table := Pdf.tableOf fs pages {} #[]
+      let table := Pdf.tableOf {} fs pages {} #[]
       let programs := Pdf.facePrograms fs (Pdf.usedAll fs pages)
       for (face, k) in (Pdf.keepFaces fs pages).zipIdx do
         let key := if (fs.get face).isCff then "FontFile3" else "FontFile2"

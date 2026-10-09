@@ -27,10 +27,12 @@ private theorem allocation_perm (t : ObjTable) :
         (List.range t.nOut).map t.outlineItemId) ++
       (List.range t.np).map t.pageId ++
       [t.structTreeRoot, t.parentTree, t.namespaceId] ++
-      (List.range t.nElems).map t.structElemId) ++
+      (List.range t.nElems).map t.structElemId ++
+      [t.resId] ++ (List.range t.nFigDict).map t.figDictId) ++
       ((List.range t.np).map t.contentId ++
         ((t.imgIds.zip t.imgSpans).toList.flatMap fun p : Nat × Nat =>
           List.range' p.1 p.2) ++
+        (List.range t.nFigForm).map t.figFormId ++
         (List.range t.nf).flatMap (fun k => [ObjTable.toUniId k, t.fileId k]) ++
         [t.xmpId]) ++ (List.range t.nStm).map t.objStmId ++ [t.xrefId]).Perm t.ids.toList := by
   apply List.perm_iff_count.mpr

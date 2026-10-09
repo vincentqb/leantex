@@ -8,6 +8,7 @@ public import LeanTex.Core.Dim
 public import LeanTex.Core.Font
 public import LeanTex.Core.Hyphen
 public import LeanTex.Core.Ir
+public import LeanTex.Core.GfxPicture
 import LeanTex.Core.Oklab
 import LeanTex.Core.Listing
 import LeanTex.Core.ListMark
@@ -1145,71 +1146,57 @@ public def Geom.ofPage (spec : Ir.PageSpec) (base : Geom := {}) : Geom :=
     trimInset := ((drawnTrim spec).map (·.1)).getD 0
     scale := spec.scale }
 
-/-- A path on the page, in layout coordinates (y down): what a picture's
-node outlines — and, as the subset grows, its edges — become. The
-placement transform is affine (translate + y flip), so a circle stays a
-circle and an axis-aligned rectangle a rectangle; the PDF writer turns
-the circle into its Bézier arcs, SVG keeps it native. -/
-public inductive PagePath where
-  /-- A circle: centre and radius. -/
-  | circle (cx cy r : Sp)
-  /-- An axis-aligned rectangle: top-left corner and non-negative extents. -/
-  | rect (x y w h : Sp)
-  /-- An edge's segments, endpoints already in page coordinates. -/
-  | segs (segs : Array Ir.Pic.PathSeg)
-  /-- A filled triangle: an arrow tip. -/
-  | tri (x1 y1 x2 y2 x3 y3 : Sp)
-  deriving Repr, Inhabited
-
-/-- A placed path moved down the page by `d`, including every Bézier
-control point. Page shrink, vertical distribution and row alignment use
-this same translation. -/
-public def PagePath.shiftY (d : Sp) : PagePath → PagePath
-  | .circle cx cy r => .circle cx (cy + d) r
-  | .rect x y w h => .rect x (y + d) w h
-  | .segs ss => .segs (ss.map fun s => match s with
-    | .line x1 y1 x2 y2 => .line x1 (y1 + d) x2 (y2 + d)
-    | .cubic x1 y1 a1 b1 a2 b2 x2 y2 => .cubic x1 (y1 + d) a1 (b1 + d) a2 (b2 + d) x2 (y2 + d))
-  | .tri x1 y1 x2 y2 x3 y3 => .tri x1 (y1 + d) x2 (y2 + d) x3 (y3 + d)
-
-/-- No displacement preserves every path coordinate and dimension. A
-layout-coordinate fact: this helper acts after the IR's affine placement. -/
-public theorem PagePath.shiftY_zero_id (p : PagePath) : p.shiftY 0 = p := by
-  cases p <;> simp only [shiftY, Int.add_zero]
-  congr 1
-  apply Array.map_id''
-  intro s
-  cases s <;> simp
-
-/-- Translations compose by addition for every placed path, including
-curved edges. Shrink followed by distribution or alignment is one rigid
-translation, never a deformation of endpoints or control points. -/
-public theorem PagePath.shiftY_add_exact (p : PagePath) (a b : Sp) :
-    (p.shiftY a).shiftY b = p.shiftY (a + b) := by
-  cases p <;> simp only [shiftY, Int.add_assoc]
-  congr 1
-  rw [Array.map_map]
-  apply Array.map_congr_left
-  intro s _
-  cases s <;> simp [Int.add_assoc]
-
-/-- Reversing a translation recovers the entire placed path, so applying
-page shrink loses no geometry. -/
-public theorem PagePath.shiftY_cancel_id (p : PagePath) (d : Sp) :
-    (p.shiftY d).shiftY (-d) = p := by
-  rw [shiftY_add_exact, Int.add_right_neg, shiftY_zero_id]
-
-/-- A placed path with its declared paint: stroke and/or fill, exactly as
-the picture shape carried them. -/
-public structure PathOut where
-  path : PagePath
-  stroke : Option Ir.Pic.Stroke := none
-  fill : Option Ir.Color := none
-  /-- The picture leaf this path paints (`LineOut.leaf`'s contract, on
-  ink): a picture's paths all carry its leaf, so the PDF writer groups
-  them under one figure. `none` only where no picture placed the path. -/
+/-- A picture's ink on the page: its figure with the labels taken out —
+they are the page's lines (`emitLabel`) — the isometry placing picture
+coordinates (y up) in layout coordinates (y down), and the picture leaf it
+paints (`LineOut.leaf`'s contract, on ink), so the PDF writer groups it
+under its figure. One per picture, its marks in source order, a rectangle
+fill among them where the source put it. -/
+public structure InkOut where
+  fig : Gfx.Figure Empty
+  place : Gfx.Iso
   leaf : Option Nat := none
   deriving Repr, Inhabited
+
+/-- A placed ink moved down the page by `d`: page shrink, vertical
+distribution, row alignment and a title slot use this one translation, which
+moves the placement and nothing the figure says. -/
+@[expose] public def InkOut.shiftY (d : Sp) (k : InkOut) : InkOut :=
+  { k with place := { k.place with dy := k.place.dy + d } }
+
+/-- A placed ink moved right by `d`. -/
+@[expose] public def InkOut.shiftX (d : Sp) (k : InkOut) : InkOut :=
+  { k with place := { k.place with dx := k.place.dx + d } }
+
+/-- No displacement keeps the ink where it stands (`_id`). -/
+public theorem InkOut.shiftY_zero_id (k : InkOut) : k.shiftY 0 = k := by
+  simp [InkOut.shiftY]
+
+/-- Translations compose by addition (`_exact`): shrink followed by
+distribution or alignment is one rigid translation of every mark, never a
+deformation. -/
+public theorem InkOut.shiftY_add_exact (k : InkOut) (a b : Sp) :
+    (k.shiftY a).shiftY b = k.shiftY (a + b) := by
+  simp [InkOut.shiftY, Int.add_assoc]
+
+/-- Reversing a translation recovers the placed ink (`_id`), so applying
+page shrink loses no geometry. -/
+public theorem InkOut.shiftY_cancel_id (k : InkOut) (d : Sp) :
+    (k.shiftY d).shiftY (-d) = k := by
+  rw [shiftY_add_exact, Int.add_right_neg, shiftY_zero_id]
+
+/-- The page boxes an ink's marks claim, mark by mark: each geometry's
+control hull through its frame and the placement, half its stroke's width
+out — a centred stroke's reach past a straight edge, the claim a surface and
+a link read. Miter excess at corners is not claimed. -/
+public def InkOut.claims (k : InkOut) : Array Gfx.Box :=
+  k.fig.marks.filterMap fun mk => match mk with
+    | .paint ctm g _ st _ _ =>
+      g.hull.map fun b =>
+        let b := if ctm == Gfx.Affine.unit then b else Gfx.Box.image ctm b
+        Gfx.Box.dilate (k.place.box b) ((st.map (·.width / 2)).getD 0)
+    | .raster ctm _ _ _ => some (k.place.box (Gfx.Box.image ctm Gfx.rasterUnit))
+    | .shading _ _ _ => none
 
 public structure LinkRect where
   x : Sp
@@ -1347,9 +1334,9 @@ public structure PageOut where
   fills : Array Fill := #[]
   /-- One placed rectangle per page segment of a block link. -/
   links : Array LinkRect := #[]
-  /-- Picture paths, painted after the fills and before the text, so a
-  node's own fill sits under its label. -/
-  paths : Array PathOut := #[]
+  /-- Picture ink, one per picture, painted after the fills and before the
+  text, so a node's own fill sits under its label. -/
+  inks : Array InkOut := #[]
   /-- The chrome footer this page carries, resolved at collection time (the
   frame's own number, the section in force): the band of slots the final
   pass lays into the margin once the page count is known. `none` on section
@@ -4774,7 +4761,7 @@ private def itemsOfTok (pats : Option Hyphen.Patterns) (size xHeight : Sp)
       let acc := { acc with origins := sites }
       -- The substitutions the chain made, named like text's (W0009):
       -- a scalar the math face lacks that a fallback face set. One the
-      -- assembly paths recorded missing was never substituted — a grown
+      -- assembly inks recorded missing was never substituted — a grown
       -- construction is one face — so `m` excludes it here. A math
       -- alphabet's scalar no face covers rendered as its stand-in base
       -- letter (`layMathNucleus`): W0016 names the styling difference.
@@ -7354,7 +7341,7 @@ private structure RegionStart where
   first : Bool := true
   lines : Nat
   fills : Nat
-  paths : Nat
+  inks : Nat
 
 private structure RegionSpan where
   kind : RegionKind
@@ -7367,17 +7354,17 @@ private structure RegionSpan where
   lineEnd : Nat
   fillStart : Nat
   fillEnd : Nat
-  pathStart : Nat
-  pathEnd : Nat
+  inkStart : Nat
+  inkEnd : Nat
 
 private def RegionStart.close (s : RegionStart) (p : PageOut) (tail : Sp := 0) : RegionSpan :=
   { kind := s.kind, depth := s.depth, first := s.first, tail := tail
     lineStart := s.lines, lineEnd := p.lines.size
     fillStart := s.fills, fillEnd := p.fills.size
-    pathStart := s.paths, pathEnd := p.paths.size }
+    inkStart := s.inks, inkEnd := p.inks.size }
 
 private def RegionStart.nextPage (s : RegionStart) : RegionStart :=
-  { s with lines := 0, fills := 0, paths := 0, first := false, begun := false }
+  { s with lines := 0, fills := 0, inks := 0, first := false, begun := false }
 
 private structure RegionBox where
   x0 : Sp
@@ -7390,10 +7377,6 @@ private def addRegionBox (box : Option RegionBox) (x0 y0 x1 y1 : Sp) : Option Re
   | none => some { x0 := min x0 x1, y0 := min y0 y1, x1 := max x0 x1, y1 := max y0 y1 }
   | some b => some { x0 := min b.x0 (min x0 x1), y0 := min b.y0 (min y0 y1),
                      x1 := max b.x1 (max x0 x1), y1 := max b.y1 (max y0 y1) }
-
-private def padRegionBox (box : Option RegionBox) (p : Sp) : Option RegionBox :=
-  box.map fun b => { x0 := b.x0 - p, y0 := b.y0 - p,
-                     x1 := b.x1 + p, y1 := b.y1 + p }
 
 private def lineRegionBox (box : Option RegionBox) (l : LineOut) : Option RegionBox := Id.run do
   let mut out := box
@@ -7420,25 +7403,11 @@ private def lineRegionBox (box : Option RegionBox) (l : LineOut) : Option Region
         out := addRegionBox out (x + px) (l.y - py) (x + px) (l.y - py)
   return out
 
-private def pathRegionBox (box : Option RegionBox) (p : PathOut) : Option RegionBox :=
-  let pad := (p.stroke.map (·.width / 2)).getD 0
-  match p.path with
-  | .circle x y r => addRegionBox box (x - r - pad) (y - r - pad) (x + r + pad) (y + r + pad)
-  | .rect x y w h => addRegionBox box (x - pad) (y - pad) (x + w + pad) (y + h + pad)
-  | .tri x1 y1 x2 y2 x3 y3 =>
-    padRegionBox (addRegionBox (addRegionBox box x1 y1 x2 y2) x3 y3 x3 y3) pad
-  | .segs segs =>
-    let points := segs.foldl (fun out seg => match seg with
-      | .line x1 y1 x2 y2 => addRegionBox out x1 y1 x2 y2
-      | .cubic x1 y1 c1x c1y c2x c2y x2 y2 =>
-        addRegionBox (addRegionBox (addRegionBox out x1 y1 c1x c1y) c2x c2y c2x c2y)
-          x2 y2 x2 y2) none
-    match points with
-    | none => box
-    | some p => addRegionBox box (p.x0 - pad) (p.y0 - pad) (p.x1 + pad) (p.y1 + pad)
+private def inkRegionBox (box : Option RegionBox) (k : InkOut) : Option RegionBox :=
+  k.claims.foldl (fun box b => addRegionBox box b.1.1 b.1.2 b.2.1 b.2.2) box
 
 private def RegionSpan.box (s : RegionSpan) (lines : Array LineOut)
-    (fills : Array Fill) (paths : Array PathOut) : Option RegionBox := Id.run do
+    (fills : Array Fill) (inks : Array InkOut) : Option RegionBox := Id.run do
   let mut box : Option RegionBox := none
   for l in lines.extract s.lineStart s.lineEnd do
     box := match s.kind, l.regionExtent with
@@ -7447,14 +7416,14 @@ private def RegionSpan.box (s : RegionSpan) (lines : Array LineOut)
       | _, _ => lineRegionBox box l
   for f in fills.extract s.fillStart s.fillEnd do
     box := addRegionBox box f.x f.y (f.x + f.w) (f.y + f.h)
-  for p in paths.extract s.pathStart s.pathEnd do
-    box := pathRegionBox box p
+  for k in inks.extract s.inkStart s.inkEnd do
+    box := inkRegionBox box k
   return box
 
 private def RegionSpan.linkRect (s : RegionSpan) (lines : Array LineOut)
-    (fills : Array Fill) (paths : Array PathOut) : Option LinkRect :=
+    (fills : Array Fill) (inks : Array InkOut) : Option LinkRect :=
   match s.kind with
-  | .link target => (s.box lines fills paths).map fun b =>
+  | .link target => (s.box lines fills inks).map fun b =>
       { x := b.x0, y := b.y0, w := max 0 (b.x1 - b.x0), h := max 0 (b.y1 - b.y0),
         target := target }
   | .surface _ _ _ _ _ => none
@@ -7464,7 +7433,7 @@ and vertical distribution: the box's lines (`LineOut.regionExtent`, TeX's
 box of each), its children's paint and the glue it ends on, `pad` beyond
 them — above only where the fragment does not open on its anchor. -/
 private def RegionSpan.fill (s : RegionSpan) (lines : Array LineOut)
-    (fills : Array Fill) (paths : Array PathOut)
+    (fills : Array Fill) (inks : Array InkOut)
     (children : Array (RegionSpan × Fill) := #[]) : Option Fill :=
   match s.kind with
   | .link _ => none
@@ -7472,9 +7441,9 @@ private def RegionSpan.fill (s : RegionSpan) (lines : Array LineOut)
     let box := children.foldl (fun box (child, f) =>
       if s.depth < child.depth && s.lineStart ≤ child.lineStart && child.lineEnd ≤ s.lineEnd &&
           s.fillStart ≤ child.fillStart && child.fillEnd ≤ s.fillEnd &&
-          s.pathStart ≤ child.pathStart && child.pathEnd ≤ s.pathEnd then
+          s.inkStart ≤ child.inkStart && child.inkEnd ≤ s.inkEnd then
         addRegionBox box f.x f.y (f.x + f.w) (f.y + f.h)
-      else box) (s.box lines fills paths)
+      else box) (s.box lines fills inks)
     box.map fun b =>
       let y := if anchored && s.first then b.y0 else b.y0 - pad
       { x := x, y := y, w := w, h := max 0 (b.y1 + s.tail + pad - y), color := color }
@@ -7486,11 +7455,11 @@ order they stand — TeX ships a later box over an earlier one, so a block's
 body box covers the half point of its title box it overlaps
 (`Ir.blockSeam`). -/
 private def regionFills (spans : Array RegionSpan) (lines : Array LineOut)
-    (fills : Array Fill) (paths : Array PathOut) : Array (RegionSpan × Fill) :=
+    (fills : Array Fill) (inks : Array InkOut) : Array (RegionSpan × Fill) :=
   let order := spans.zipIdx.qsort fun (a, i) (b, j) =>
     b.depth < a.depth || (b.depth == a.depth && j < i)
   order.foldl (fun out (span, _) =>
-    match span.fill lines fills paths out with
+    match span.fill lines fills inks out with
     | some fill => out.push (span, fill)
     | none => out) #[]
 
@@ -7690,11 +7659,11 @@ public structure Spacing.Page where
   the content each rider belongs to. A title bar follows its title line,
   even when later lines consume different shares of the page's glue. -/
   private fillShrinkAbove : Array Sp := #[]
-  private pathShrinkAbove : Array Sp := #[]
+  private inkShrinkAbove : Array Sp := #[]
   private fillStretchAbove : Array Sp := #[]
-  private pathStretchAbove : Array Sp := #[]
+  private inkStretchAbove : Array Sp := #[]
   private fillFilsAbove : Array Nat := #[]
-  private pathFilsAbove : Array Nat := #[]
+  private inkFilsAbove : Array Nat := #[]
   /-- Total shrink in the glue laid on the current page. -/
   private pageShrink : Sp := 0
   /-- Per line of the current page: total finite stretch in the glue above
@@ -7803,6 +7772,7 @@ public structure Spacing.Page where
   chrome (the frame title and its bar) the distribution never moves. -/
   private pinnedLines : Nat := 0
   private pinnedFills : Nat := 0
+  private pinnedInks : Nat := 0
   /-- The frame's page-top chrome, snapshotted at `.pin`: the title lines
   and bar fills with the baseline and depth content resumes below —
   repeated on every continuation page the frame spills onto (`spillPage`),
@@ -8154,9 +8124,9 @@ public theorem regionContentEnd_covers (ordinary painted : Sp) :
 /-- Measure the same open and closed fragments that page close will
 paint, after shrink and before distributing the remaining space. -/
 private def Spacing.Page.surfaceEnd (b : B) (lines : Array LineOut)
-    (fills : Array Fill) (paths : Array PathOut) : Option Sp :=
+    (fills : Array Fill) (inks : Array InkOut) : Option Sp :=
   let spans := b.closedRegions ++ b.openRegions.map (fun start => start.close b.cur)
-  (regionFills spans lines fills paths).foldl (fun edge (_, f) =>
+  (regionFills spans lines fills inks).foldl (fun edge (_, f) =>
     some (max (edge.getD (f.y + f.h)) (f.y + f.h))) none
 
 /-- Close the current page. A page that overflowed at natural size within
@@ -8179,10 +8149,10 @@ private def Spacing.Page.finishPage (b : B) (owed : Sp := 0) (flush : Bool := fa
       b.cur.fills.mapIdx fun i f =>
         { f with y := f.y - b.fillShrinkAbove.getD i 0 * b.needed / b.pageShrink }
     else b.cur.fills
-  let paths := if b.needed > 0 && b.pageShrink > 0 then
-      b.cur.paths.mapIdx fun i p =>
-        { p with path := p.path.shiftY (-(b.pathShrinkAbove.getD i 0 * b.needed / b.pageShrink)) }
-    else b.cur.paths
+  let inks := if b.needed > 0 && b.pageShrink > 0 then
+      b.cur.inks.mapIdx fun i k =>
+        k.shiftY (-(b.inkShrinkAbove.getD i 0 * b.needed / b.pageShrink))
+    else b.cur.inks
   let diags := if b.needed > 0 then b.diags.push (Diag.of .N0200
       (s!"page {b.pages.size + 1} set {b.needed / 65536}pt short: its skips gave " ++
         s!"{b.needed * 100 / b.pageShrink}% of their {b.pageShrink / 65536}pt of shrink")
@@ -8194,10 +8164,10 @@ private def Spacing.Page.finishPage (b : B) (owed : Sp := 0) (flush : Bool := fa
   -- \vfill bottom-flushes, exactly TeX's infinite-glue model. A trailing
   -- pending fil (a \vfill nothing follows) joins the denominator. With no
   -- fil, the page's declared ratio (`VDist`) splits it as before. Only
-  -- what follows the `.pin` mark moves. Lines, fills and paths read
+  -- what follows the `.pin` mark moves. Lines, fills and inks read
   -- their own glue shares, so a bar and its title stay attached.
   let pageFils := b.pageFils + (if b.skip.fil then 1 else 0)
-  let paintedEnd := b.surfaceEnd lines fills paths
+  let paintedEnd := b.surfaceEnd lines fills inks
   let leftover := if lines.size > b.pinnedLines then
       -- the vertical distribution fills down to the note block's top, so
       -- flush or centred bottoms never move a note (they are appended
@@ -8246,17 +8216,16 @@ private def Spacing.Page.finishPage (b : B) (owed : Sp := 0) (flush : Bool := fa
       let y := footBaseline b.geom.pageH d - h
       #[{ x := 0, y := y, w := b.geom.pageW, h := b.geom.pageH - y, color := c : Fill }]
     | _, _, _ => #[]
-  -- Picture paths carry the picture's shares, including pictures with
-  -- no labels. Chrome never draws a path, so no path pin is needed.
-  let paths := paths.mapIdx fun i p =>
-    { p with
-      path := p.path.shiftY
-        (riderShift (b.pathStretchAbove.getD i 0) (b.pathFilsAbove.getD i 0)) }
+  -- Picture ink carries the picture's shares, including pictures with
+  -- no labels; ink placed in a title slot is pinned with the slot's lines.
+  let inks := inks.mapIdx fun i k =>
+    if i < b.pinnedInks then k
+    else k.shiftY (riderShift (b.inkStretchAbove.getD i 0) (b.inkFilsAbove.getD i 0))
   let openSpans := b.openRegions.map fun start => start.close b.cur
   let spans := b.closedRegions ++ openSpans
-  let links := spans.filterMap fun span => span.linkRect lines bodyFills paths
+  let links := spans.filterMap fun span => span.linkRect lines bodyFills inks
   -- Outer grounds precede inner ones; all precede the content they enclose.
-  let surfaces := (regionFills spans lines bodyFills paths).reverse.map (·.2)
+  let surfaces := (regionFills spans lines bodyFills inks).reverse.map (·.2)
   let fills := surfaces ++ bodyFills ++ footerFills
   let fills := match effectivePageGround b.pageBg b.docBg with
     | some c => #[b.geom.ground c] ++ fills
@@ -8266,20 +8235,20 @@ private def Spacing.Page.finishPage (b : B) (owed : Sp := 0) (flush : Bool := fa
   -- the distribution can never move a note.
   { b with pages := b.pages.push { pageState := b.pageState,
                                    lines := lines ++ b.noteLines, fills := fills,
-                                   links := links, paths := paths, foot := b.curFoot,
+                                   links := links, inks := inks, foot := b.curFoot,
                                    footBox := b.footBox,
                                    frameArea := b.frameArea,
                                    footLook := b.curFootLook,
                                    frame := b.curFrame, frameOrigin := b.curFrameOrigin,
                                    band := b.curBand },
            cur := {}, curBand := none, pageState := b.pageState.ship,
-           shrinkAbove := #[], fillShrinkAbove := #[], pathShrinkAbove := #[],
-           fillStretchAbove := #[], pathStretchAbove := #[],
-           fillFilsAbove := #[], pathFilsAbove := #[],
+           shrinkAbove := #[], fillShrinkAbove := #[], inkShrinkAbove := #[],
+           fillStretchAbove := #[], inkStretchAbove := #[],
+           fillFilsAbove := #[], inkFilsAbove := #[],
            pageShrink := 0, stretchAbove := #[], pageStretch := 0,
            needed := 0, neededSource := none, lastSource := none, skip := {},
            pageBg := none, vdist := .top, pageFils := 0, filsAbove := #[],
-           pinnedLines := 0, pinnedFills := 0, anchored := false,
+           pinnedLines := 0, pinnedFills := 0, pinnedInks := 0, anchored := false,
            openRegions := b.openRegions.map RegionStart.nextPage, closedRegions := #[],
            pendingNotes := #[], notesH := 0, notesDepth := 0, opened := false, freshStart := false,
            diags := diags }
@@ -8457,16 +8426,17 @@ private def Spacing.Page.reopenChrome (b : B) : B :=
   | some c =>
     { b with cur := { lines := c.lines, fills := c.fills }
              openRegions := b.openRegions.map fun s =>
-               { s with lines := c.lines.size, fills := c.fills.size, paths := 0, first := false }
+               { s with lines := c.lines.size, fills := c.fills.size, inks := 0, first := false }
              pinnedLines := c.lines.size
              pinnedFills := c.fills.size
+             pinnedInks := 0
              shrinkAbove := .replicate c.lines.size 0
              fillShrinkAbove := .replicate c.fills.size 0
-             pathShrinkAbove := #[]
+             inkShrinkAbove := #[]
              fillStretchAbove := .replicate c.fills.size 0
-             pathStretchAbove := #[]
+             inkStretchAbove := #[]
              fillFilsAbove := .replicate c.fills.size 0
-             pathFilsAbove := #[]
+             inkFilsAbove := #[]
              stretchAbove := .replicate c.lines.size 0
              filsAbove := .replicate c.lines.size 0
              y := c.y
@@ -8610,14 +8580,14 @@ label) and rides with it when the page is set short: its shares of the
 page's shrink and fils are the last line's unless the rider declares its
 own (`shrink`, `fils` — a picture's label rides the picture's), so every
 line holds one entry of each, which is how `finishPage` reads them.
-`fills` and `paths` paint behind what already stands (a title or block
+`fills` and `inks` paint behind what already stands (a title or block
 bar, a progress track, a picture's shapes). With `commit` and
 `finishPage` this is the third and last writer of the page being built:
-`cur.lines`, `cur.fills`, and `cur.paths` grow nowhere else
+`cur.lines`, `cur.fills`, and `cur.inks` grow nowhere else
 (`reopenChrome` seeds a fresh page's repeated chrome whole; it appends
 to nothing). -/
 private def Spacing.Page.pushSibling (b : B) (line : Option LineOut := none)
-    (fills : Array Fill := #[]) (paths : Array PathOut := #[])
+    (fills : Array Fill := #[]) (inks : Array InkOut := #[])
     (shrink : Option Sp := none) (fils : Option Nat := none) : B :=
   let b := match line with
     | some l =>
@@ -8630,17 +8600,17 @@ private def Spacing.Page.pushSibling (b : B) (line : Option LineOut := none)
                filsAbove := b.filsAbove.push (fils.getD (b.filsAbove.back?.getD 0))
                lastInk := none }
     | none => b
-  if fills.isEmpty && paths.isEmpty then b
+  if fills.isEmpty && inks.isEmpty then b
   else { b with cur := { b.cur with fills := b.cur.fills ++ fills,
-                                    paths := b.cur.paths ++ paths }
+                                    inks := b.cur.inks ++ inks }
                 fillShrinkAbove := b.fillShrinkAbove ++
                   .replicate fills.size (shrink.getD b.pageShrink)
-                pathShrinkAbove := b.pathShrinkAbove ++
-                  .replicate paths.size (shrink.getD b.pageShrink)
+                inkShrinkAbove := b.inkShrinkAbove ++
+                  .replicate inks.size (shrink.getD b.pageShrink)
                 fillStretchAbove := b.fillStretchAbove ++ .replicate fills.size b.pageStretch
-                pathStretchAbove := b.pathStretchAbove ++ .replicate paths.size b.pageStretch
+                inkStretchAbove := b.inkStretchAbove ++ .replicate inks.size b.pageStretch
                 fillFilsAbove := b.fillFilsAbove ++ .replicate fills.size (fils.getD b.pageFils)
-                pathFilsAbove := b.pathFilsAbove ++ .replicate paths.size (fils.getD b.pageFils) }
+                inkFilsAbove := b.inkFilsAbove ++ .replicate inks.size (fils.getD b.pageFils) }
 
 /-- Push a picture's label lines: each a rider on the picture's own
 shrink and fil count, through the one rider door. -/
@@ -9608,7 +9578,7 @@ private theorem finishPage_shift_uniform (b : B) (owed : Sp)
     Nat.lt_irrefl, Array.back?_push, Option.bind_some]
   refine ⟨b.vdist.aboveShare (if b.cur.lines.size > b.pinnedLines then
       noteFloor b.bottom b.noteGap b.notesH b.noteHang -
-        regionContentEnd (b.contentEnd owed) (b.surfaceEnd b.cur.lines b.cur.fills b.cur.paths)
+        regionContentEnd (b.contentEnd owed) (b.surfaceEnd b.cur.lines b.cur.fills b.cur.inks)
     else 0), fun i hi => ?_⟩
   split <;> split <;>
     simp_all [Array.getElem?_mapIdx, Option.map_map, Function.comp_def,
@@ -9630,24 +9600,24 @@ private theorem finishPage_center_exact (b : B) (owed : Sp)
     (hfil : b.pageFils = 0) (hsf : b.skip.fil = false)
     (hpn : b.pendingNotes.isEmpty = true) (hc : b.pinnedLines < b.cur.lines.size)
     (hl : 0 ≤ noteFloor b.bottom b.noteGap b.notesH b.noteHang -
-        regionContentEnd (b.contentEnd owed) (b.surfaceEnd b.cur.lines b.cur.fills b.cur.paths)) :
+        regionContentEnd (b.contentEnd owed) (b.surfaceEnd b.cur.lines b.cur.fills b.cur.inks)) :
     (∀ i, b.pinnedLines ≤ i →
       ((b.finishPage owed).pages.back?.bind fun p => p.lines[i]?.map (·.y)) =
         (b.cur.lines[i]?.map fun l => l.y +
           VDist.center.aboveShare (noteFloor b.bottom b.noteGap b.notesH b.noteHang -
-        regionContentEnd (b.contentEnd owed) (b.surfaceEnd b.cur.lines b.cur.fills b.cur.paths)))) ∧
+        regionContentEnd (b.contentEnd owed) (b.surfaceEnd b.cur.lines b.cur.fills b.cur.inks)))) ∧
     VDist.center.aboveShare (noteFloor b.bottom b.noteGap b.notesH b.noteHang -
-        regionContentEnd (b.contentEnd owed) (b.surfaceEnd b.cur.lines b.cur.fills b.cur.paths))
+        regionContentEnd (b.contentEnd owed) (b.surfaceEnd b.cur.lines b.cur.fills b.cur.inks))
       ≤ (noteFloor b.bottom b.noteGap b.notesH b.noteHang -
-        regionContentEnd (b.contentEnd owed) (b.surfaceEnd b.cur.lines b.cur.fills b.cur.paths))
+        regionContentEnd (b.contentEnd owed) (b.surfaceEnd b.cur.lines b.cur.fills b.cur.inks))
         - VDist.center.aboveShare (noteFloor b.bottom b.noteGap b.notesH b.noteHang -
-        regionContentEnd (b.contentEnd owed) (b.surfaceEnd b.cur.lines b.cur.fills b.cur.paths)) ∧
+        regionContentEnd (b.contentEnd owed) (b.surfaceEnd b.cur.lines b.cur.fills b.cur.inks)) ∧
     (noteFloor b.bottom b.noteGap b.notesH b.noteHang -
-        regionContentEnd (b.contentEnd owed) (b.surfaceEnd b.cur.lines b.cur.fills b.cur.paths))
+        regionContentEnd (b.contentEnd owed) (b.surfaceEnd b.cur.lines b.cur.fills b.cur.inks))
         - VDist.center.aboveShare (noteFloor b.bottom b.noteGap b.notesH b.noteHang -
-        regionContentEnd (b.contentEnd owed) (b.surfaceEnd b.cur.lines b.cur.fills b.cur.paths))
+        regionContentEnd (b.contentEnd owed) (b.surfaceEnd b.cur.lines b.cur.fills b.cur.inks))
       ≤ VDist.center.aboveShare (noteFloor b.bottom b.noteGap b.notesH b.noteHang -
-        regionContentEnd (b.contentEnd owed) (b.surfaceEnd b.cur.lines b.cur.fills b.cur.paths))
+        regionContentEnd (b.contentEnd owed) (b.surfaceEnd b.cur.lines b.cur.fills b.cur.inks))
         + 1 := by
   refine ⟨fun i hi => ?_, VDist.center_split_exact _ hl⟩
   have hcond : (decide (b.needed > 0) && decide (b.pageShrink > 0)) = false := by
@@ -9679,24 +9649,24 @@ private theorem finishPage_fill_centre_exact (b : B) (owed : Sp)
     (h1 : ∀ i, b.pinnedLines ≤ i → b.filsAbove.getD i 0 = 1)
     (hpn : b.pendingNotes.isEmpty = true) (hc : b.pinnedLines < b.cur.lines.size)
     (hl : 0 ≤ noteFloor b.bottom b.noteGap b.notesH b.noteHang -
-        regionContentEnd (b.contentEnd owed) (b.surfaceEnd b.cur.lines b.cur.fills b.cur.paths)) :
+        regionContentEnd (b.contentEnd owed) (b.surfaceEnd b.cur.lines b.cur.fills b.cur.inks)) :
     (∀ i, b.pinnedLines ≤ i →
       ((b.finishPage owed).pages.back?.bind fun p => p.lines[i]?.map (·.y)) =
         (b.cur.lines[i]?.map fun l => l.y +
           filShare (noteFloor b.bottom b.noteGap b.notesH b.noteHang -
-        regionContentEnd (b.contentEnd owed) (b.surfaceEnd b.cur.lines b.cur.fills b.cur.paths)) 1 2)) ∧
+        regionContentEnd (b.contentEnd owed) (b.surfaceEnd b.cur.lines b.cur.fills b.cur.inks)) 1 2)) ∧
     filShare (noteFloor b.bottom b.noteGap b.notesH b.noteHang -
-        regionContentEnd (b.contentEnd owed) (b.surfaceEnd b.cur.lines b.cur.fills b.cur.paths)) 1 2
+        regionContentEnd (b.contentEnd owed) (b.surfaceEnd b.cur.lines b.cur.fills b.cur.inks)) 1 2
       ≤ (noteFloor b.bottom b.noteGap b.notesH b.noteHang -
-        regionContentEnd (b.contentEnd owed) (b.surfaceEnd b.cur.lines b.cur.fills b.cur.paths))
+        regionContentEnd (b.contentEnd owed) (b.surfaceEnd b.cur.lines b.cur.fills b.cur.inks))
         - filShare (noteFloor b.bottom b.noteGap b.notesH b.noteHang -
-        regionContentEnd (b.contentEnd owed) (b.surfaceEnd b.cur.lines b.cur.fills b.cur.paths)) 1 2 ∧
+        regionContentEnd (b.contentEnd owed) (b.surfaceEnd b.cur.lines b.cur.fills b.cur.inks)) 1 2 ∧
     (noteFloor b.bottom b.noteGap b.notesH b.noteHang -
-        regionContentEnd (b.contentEnd owed) (b.surfaceEnd b.cur.lines b.cur.fills b.cur.paths))
+        regionContentEnd (b.contentEnd owed) (b.surfaceEnd b.cur.lines b.cur.fills b.cur.inks))
         - filShare (noteFloor b.bottom b.noteGap b.notesH b.noteHang -
-        regionContentEnd (b.contentEnd owed) (b.surfaceEnd b.cur.lines b.cur.fills b.cur.paths)) 1 2
+        regionContentEnd (b.contentEnd owed) (b.surfaceEnd b.cur.lines b.cur.fills b.cur.inks)) 1 2
       ≤ filShare (noteFloor b.bottom b.noteGap b.notesH b.noteHang -
-        regionContentEnd (b.contentEnd owed) (b.surfaceEnd b.cur.lines b.cur.fills b.cur.paths)) 1 2 + 1 := by
+        regionContentEnd (b.contentEnd owed) (b.surfaceEnd b.cur.lines b.cur.fills b.cur.inks)) 1 2 + 1 := by
   refine ⟨fun i hi => ?_, VDist.center_split_exact _ hl⟩
   have hcond : (decide (b.needed > 0) && decide (b.pageShrink > 0)) = false := by
     rcases hsh with h | h <;> simp [Int.not_lt.mpr h]
@@ -15341,7 +15311,7 @@ the column's last baseline, a picture's own included. -/
 private structure ColMark where
   lines : Nat
   fills : Nat
-  paths : Nat
+  inks : Nat
   /-- The column produced a box or moved the cursor; inherited spacing
   alone contributes neither an alignment reference nor a lower bound. -/
   contributes : Bool := false
@@ -15412,8 +15382,8 @@ private structure StepSt where
   b : B
   colSaves : Array ColSave := #[]
   /-- An open title slot: where it started (the column save its neighbours
-  restart from) and the first line and fill it placed. -/
-  slotSaves : Array (ColSave × Nat × Nat) := #[]
+  restart from) and the first line, fill and ink it placed. -/
+  slotSaves : Array (ColSave × Nat × Nat × Nat) := #[]
   logoSpans : Array (Nat × Array Ir.Inline) := #[]
   prose : Nat := 0
 
@@ -15435,55 +15405,24 @@ private def Spacing.Page.keepHeading (b : B) (j : ParaJob) (n : Nat) : B :=
     b.spillPage
   else b
 
-/-- All marks emitted by the actual picture shape fold. Label diagnostics
-travel with the same result as the lines they describe. -/
+/-- The label lines and diagnostics of the actual picture shape fold. A
+picture's ink is not per shape: it is one `InkOut` (`pictureInk`). -/
 public structure PictureEmission where
-  fills : Array Fill := #[]
   lines : Array LineOut := #[]
-  paths : Array PathOut := #[]
   diags : Array Diag := #[]
 
-/-- One production shape step. It appends only the marks of this shape;
-label shaping and diagnostic accounting share the `emitLabel` result. -/
+/-- One production shape step. A label sets its line through `emitLabel`,
+whose diagnostics travel with it; every other shape is ink, which the
+picture's one `InkOut` carries. -/
 public def emitPictureShape (fs : FontSet) (imgs : Image.Store) (geom : Geom)
     (xHeight : Sp) (leaf : Option Nat) (place : Ir.Pic.Place)
     (out : PictureEmission) (shape : Ir.Pic.Shape)
-    (origin : Option (Nat × Nat) := none) : PictureEmission := Id.run do
+    (origin : Option (Nat × Nat) := none) : PictureEmission :=
   match shape with
-  | .rect rx ry rw rh color =>
-    let (fx, fy) := place.toPage (min rx (rx + rw), max ry (ry + rh))
-    return { out with fills := out.fills.push { x := fx, y := fy, w := max rw (-rw), h := max rh (-rh), color := color } }
-  | .circle sx sy r st fl =>
-    let (pcx, pcy) := place.toPage (sx, sy)
-    return { out with paths := out.paths.push { path := .circle pcx pcy (max r (-r)), stroke := st, fill := fl, leaf := leaf } }
-  | .frame fx fy fw fh st fl =>
-    let (qx, qy) := place.toPage (min fx (fx + fw), max fy (fy + fh))
-    let path : PathOut := {
-      path := .rect qx qy (max fw (-fw)) (max fh (-fh))
-      stroke := st, fill := fl, leaf := leaf }
-    return { out with paths := out.paths.push path }
-  | .edge segs st tip =>
-    let pt := place.toPage
-    let mapped := segs.map fun sg => match sg with
-      | .line x1 y1 x2 y2 =>
-        let (a1, b1) := pt (x1, y1)
-        let (a2, b2) := pt (x2, y2)
-        Ir.Pic.PathSeg.line a1 b1 a2 b2
-      | .cubic x1 y1 c1x c1y c2x c2y x2 y2 =>
-        let (a1, b1) := pt (x1, y1)
-        let (u1, v1) := pt (c1x, c1y)
-        let (u2, v2) := pt (c2x, c2y)
-        let (a2, b2) := pt (x2, y2)
-        Ir.Pic.PathSeg.cubic a1 b1 u1 v1 u2 v2 a2 b2
-    let paths := out.paths.push { path := .segs mapped, stroke := some st, leaf := leaf }
-    let paths := match tip with
-      | none => paths
-      | some t =>
-        let (a1, b1) := pt (t.x1, t.y1)
-        let (a2, b2) := pt (t.x2, t.y2)
-        let (a3, b3) := pt (t.x3, t.y3)
-        paths.push { path := .tri a1 b1 a2 b2 a3 b3, fill := some st.color, leaf := leaf }
-    return { out with paths := paths }
+  | .rect _ _ _ _ _ => out
+  | .circle _ _ _ _ _ => out
+  | .frame _ _ _ _ _ _ => out
+  | .edge _ _ _ => out
   | .label lx ly content color scale align =>
     let label := emitLabel fs imgs geom xHeight leaf place lx ly content color scale align
     let lines := match label.line? with
@@ -15499,7 +15438,17 @@ public def emitPictureShape (fs : FontSet) (imgs : Image.Store) (geom : Geom)
               below := (place.toPage label.reserved.1).2 - line.y
               lineCount := label.lineCount } }
         out.lines.push line
-    return { out with lines := lines, diags := out.diags ++ label.diags }
+    { out with lines := lines, diags := out.diags ++ label.diags }
+
+/-- **A picture's ink is its lowered figure** (`Gfx.ofPicture`) with the
+labels taken out, placed by the picture's isometry (`Ir.Pic.Place.toIso`)
+and stamped with its leaf: one ink, its marks in source order, a rectangle
+fill among them where the source put it. `none` when the picture is labels
+only. `box` is the box placement already measured. -/
+public def pictureInk (box : Gfx.Box) (pic : Ir.Pic.Picture) (place : Ir.Pic.Place)
+    (leaf : Option Nat) : Option InkOut :=
+  let fig := (Gfx.ofPictureIn box pic).dropLabels
+  if fig.nodes.isEmpty then none else some { fig := fig, place := place.toIso, leaf := leaf }
 
 /-- The actual picture emitter in source-shape order. Its fold state keeps
 label lines and their diagnostic account together. -/
@@ -15516,7 +15465,7 @@ public def emitPicture (fs : FontSet) (imgs : Image.Store) (geom : Geom)
 
 /-- Fit and place one picture: `placeLine`'s fit-or-spill for a box of
 the picture's height, then every shape through one affine transform —
-fills and paths as riders, label lines riding the picture's own shrink
+fills and inks as riders, label lines riding the picture's own shrink
 (`pushSibling`, `pushLabels`). Its own definition so the placement-step
 case analysis stays inside the elaboration budget and the page facts
 (`placePicture_extends`, `bgStep_placePicture`) cost one unfold each. -/
@@ -15532,7 +15481,8 @@ private def placePicture (fs : FontSet) (imgs : Image.Store) (b0 : B)
   -- `h` and no depth: at the top of a fresh page, else below the last
   -- line's depth, breaking to a new page when even the shrink above
   -- cannot absorb the overflow.
-  let ((px0, py0), (_px1, py1)) := pictureBox b.geom fs imgs b.xHeight pic
+  let box := pictureBox b.geom fs imgs b.xHeight pic
+  let ((px0, py0), (_px1, py1)) := box
   let h := py1 - py0
   -- A declared baseline (`Ir.Pic.Picture.rise`) is where the line stands:
   -- the part of the picture below it is the line's depth, as a box's is.
@@ -15577,9 +15527,10 @@ private def placePicture (fs : FontSet) (imgs : Image.Store) (b0 : B)
   -- affine map the invertibility and containment theorems range over.
   let place : Ir.Pic.Place := { x0 := x, yTop := yTop, xmin := px0, ymax := py1 }
   let emitted := emitPicture fs imgs b.geom b.xHeight leaf place pic (some origin)
+  let ink := pictureInk box pic place leaf
   b := ({ b with pageStretch := stretch
                  diags := b.diags ++ emitted.diags }.pushSibling
-    (fills := emitted.fills) (paths := emitted.paths)
+    (inks := ink.toArray)
     (shrink := some above) (fils := some fils)).pushLabels emitted.lines above fils
   b := { b with
     openRegions := b.openRegions.map fun s => { s with begun := true }
@@ -15605,9 +15556,9 @@ distribution moves nothing placed), and the next slot starts where this one
 did — a slot is an overlay node, never a neighbour's spill. The text extent
 is the shipped lines' glyph ink (`segsInk`), not the face's nominal ascent
 and descent: TikZ anchors the TeX box that the node body actually built. -/
-private def Spacing.Page.placeSlot (fs : FontSet) (b : B) (save : ColSave × Nat × Nat)
+private def Spacing.Page.placeSlot (fs : FontSet) (b : B) (save : ColSave × Nat × Nat × Nat)
     (spec : SlotSpec) : B :=
-  let (col, l0, f0) := save
+  let (col, l0, f0, k0) := save
   let group := b.cur.lines.extract l0 b.cur.lines.size
   let restored := { b with y := col.y, prevDepth := col.prevDepth
                            prevBelow := col.prevBelow, prevBand := col.prevBand
@@ -15630,25 +15581,26 @@ private def Spacing.Page.placeSlot (fs : FontSet) (b : B) (save : ColSave × Nat
       if i < l0 then l else { l with x := l.x + dx, y := l.y + dy }
     let fills := b.cur.fills.mapIdx fun i f =>
       if i < f0 then f else { f with x := f.x + dx, y := f.y + dy }
-    { restored with cur := { b.cur with lines := lines, fills := fills }
-                    pinnedLines := lines.size, pinnedFills := fills.size }
+    let inks := b.cur.inks.mapIdx fun i k => if i < k0 then k else (k.shiftX dx).shiftY dy
+    { restored with cur := { b.cur with lines := lines, fills := fills, inks := inks }
+                    pinnedLines := lines.size, pinnedFills := fills.size, pinnedInks := inks.size }
 
 /-- A slot moves ink inside the page being built and nothing else: the
 shipped pages, the geometry, the document's ground and the break flag
 stand — what the page-step facts below read. -/
-private theorem placeSlot_keeps (fs : FontSet) (b : B) (save : ColSave × Nat × Nat)
+private theorem placeSlot_keeps (fs : FontSet) (b : B) (save : ColSave × Nat × Nat × Nat)
     (spec : SlotSpec) :
     (b.placeSlot fs save spec).pages = b.pages ∧
     (b.placeSlot fs save spec).geom = b.geom ∧
     (b.placeSlot fs save spec).docBg = b.docBg ∧
     (b.placeSlot fs save spec).noBreak = b.noBreak := by
-  obtain ⟨col, l0, f0⟩ := save
+  obtain ⟨col, l0, f0, k0⟩ := save
   simp only [Spacing.Page.placeSlot]
   split <;> exact ⟨rfl, rfl, rfl, rfl⟩
 
 /-- Where the next column's ink starts: the page's arrays as they stand. -/
 private def Spacing.Page.colMark (b : B) : ColMark :=
-  { lines := b.cur.lines.size, fills := b.cur.fills.size, paths := b.cur.paths.size }
+  { lines := b.cur.lines.size, fills := b.cur.fills.size, inks := b.cur.inks.size }
 
 /-- A column ends where the builder stands. Count boxes before asking
 whether they paint: a zero-width strut still owns its measured height.
@@ -15658,7 +15610,7 @@ private def ColMark.finish (m : ColMark) (save : ColSave) (b : B) : ColMark :=
            boxDepth := b.boxDepth
            contributes := b.pages.size != save.page ||
              m.lines != b.cur.lines.size || m.fills != b.cur.fills.size ||
-             m.paths != b.cur.paths.size || b.y != save.y ||
+             m.inks != b.cur.inks.size || b.y != save.y ||
              b.prevDepth != save.prevDepth || b.prevBelow != save.prevBelow ||
              b.boxDepth != save.boxDepth
            source := b.lastSource }
@@ -15668,7 +15620,7 @@ This is the premise consumed by both joins' empty-column identity. -/
 private theorem ColMark.finish_unchanged (m : ColMark) (save : ColSave) (b : B)
     (hp : b.pages.size = save.page)
     (hl : m.lines = b.cur.lines.size) (hf : m.fills = b.cur.fills.size)
-    (hs : m.paths = b.cur.paths.size) (hy : b.y = save.y)
+    (hs : m.inks = b.cur.inks.size) (hy : b.y = save.y)
     (hd : b.prevDepth = save.prevDepth) (hb : b.prevBelow = save.prevBelow)
     (hi : b.boxDepth = save.boxDepth) :
     (m.finish save b).contributes = false := by
@@ -15685,7 +15637,7 @@ private def ColSave.finish (save : ColSave) (b : B) : ColSave :=
 (latex.ltx `\@iiiparbox`: `t` its first baseline, `b` its last, `c` its
 middle; `Ir.BoxPos`). Every column was set from the row's start; the one
 whose point stands lowest stays, and each other moves down by the
-difference, its lines, fills and paths together. A `top` box's point is the
+difference, its lines, fills and inks together. A `top` box's point is the
 row's start, so a row of undeclared boxes moves nothing. The row then ends
 at the joined baseline, clearance, leading and measured box bottom. -/
 private def Spacing.Page.alignRow (b : B) (save : ColSave) : B :=
@@ -15711,7 +15663,7 @@ private def Spacing.Page.alignRow (b : B) (save : ColSave) : B :=
     return d
   let lines := b.cur.lines.mapIdx fun i l => { l with y := l.y + dyAt (·.lines) i }
   let fills := b.cur.fills.mapIdx fun i f => { f with y := f.y + dyAt (·.fills) i }
-  let paths := b.cur.paths.mapIdx fun i p => { p with path := p.path.shiftY (dyAt (·.paths) i) }
+  let inks := b.cur.inks.mapIdx fun i k => k.shiftY (dyAt (·.inks) i)
   let ending := (save.marks.zip refs).foldl
     (fun (acc : Option ColEnd) (m, r) =>
       let last : ColEnd := {
@@ -15722,7 +15674,7 @@ private def Spacing.Page.alignRow (b : B) (save : ColSave) : B :=
   let contributed := ending.isSome
   let ending := ending.getD save.opening
   let tail := ending.tail
-  { b with cur := { b.cur with lines := lines, fills := fills, paths := paths }
+  { b with cur := { b.cur with lines := lines, fills := fills, inks := inks }
            y := tail.y, prevDepth := tail.depth, prevBelow := tail.below, prevBand := tail.band
            lastSource := ending.source, lastInk := some (tail.y, tail.depth, tail.boxDepth)
            skip := if contributed then {} else save.skip
@@ -15770,10 +15722,10 @@ private def Spacing.Page.closeRegion (fs : FontSet) (b : B) : B :=
   let closing := b.openRegions.back?.map fun start =>
     let span := start.close b.cur b.skip.width
     let empty := span.lineStart == span.lineEnd && span.fillStart == span.fillEnd &&
-      span.pathStart == span.pathEnd
+      span.inkStart == span.inkEnd
     let regions := if empty then b.closedRegions else b.closedRegions.push span
-    let children := regionFills regions b.cur.lines b.cur.fills b.cur.paths
-    let bottom := (span.fill b.cur.lines b.cur.fills b.cur.paths children).map (fun f => f.y + f.h)
+    let children := regionFills regions b.cur.lines b.cur.fills b.cur.inks
+    let bottom := (span.fill b.cur.lines b.cur.fills b.cur.inks children).map (fun f => f.y + f.h)
     (regions, bottom)
   let closed := { b with
     openRegions := b.openRegions.pop
@@ -15801,7 +15753,7 @@ private def stepStaged (fs : FontSet) (imgs : Image.Store) (st : StepSt)
       { kind := kind, depth := b.openRegions.size
         begun := kind matches .surface _ _ _ _ true
         lines := b.cur.lines.size,
-        fills := b.cur.fills.size, paths := b.cur.paths.size }
+        fills := b.cur.fills.size, inks := b.cur.inks.size }
     b := { b with openRegions := b.openRegions.push start }
   | .regionClose => b := b.closeRegion fs
   | .setLogo c =>
@@ -15837,7 +15789,7 @@ private def stepStaged (fs : FontSet) (imgs : Image.Store) (st : StepSt)
                chrome := none, frameBreak := none, frameSource := none, spillWarned := false }
     else
       b := { b with pageBg := none, vdist := .top, pageFils := 0, filsAbove := #[],
-                    pinnedLines := 0, pinnedFills := 0, chrome := none,
+                    pinnedLines := 0, pinnedFills := 0, pinnedInks := 0, chrome := none,
                     openRegions := b.openRegions.map RegionStart.nextPage, closedRegions := #[],
                     frameBreak := none, frameSource := none, spillWarned := false, opened := false,
                     freshStart := false }
@@ -15866,6 +15818,7 @@ private def stepStaged (fs : FontSet) (imgs : Image.Store) (st : StepSt)
     b := { b with
       pinnedLines := b.cur.lines.size
       pinnedFills := b.cur.fills.size
+      pinnedInks := b.cur.inks.size
       chrome := some {
         lines := b.cur.lines
         fills := b.cur.fills
@@ -16001,7 +15954,8 @@ private def stepStaged (fs : FontSet) (imgs : Image.Store) (st : StepSt)
       y := b.y, prevDepth := b.prevDepth, prevBelow := b.prevBelow
       boxDepth := b.boxDepth
       prevBand := b.prevBand, skip := b.skip
-      fresh := b.fresh, source := b.lastSource }, b.cur.lines.size, b.cur.fills.size)
+      fresh := b.fresh, source := b.lastSource }, b.cur.lines.size, b.cur.fills.size,
+      b.cur.inks.size)
   | .slotClose spec =>
     if let some save := slotSaves.back? then
       slotSaves := slotSaves.pop
@@ -16192,14 +16146,14 @@ private theorem pagesExtend_congr {b b' c : B} (h : c.pages = b'.pages)
 @[simp] private theorem warnOverfull_noBreak (b : B) (source : Option Span) :
     (b.warnOverfull source).noBreak = b.noBreak := rfl
 @[simp] private theorem pushSibling_pages (b : B) (l? : Option LineOut)
-    (fills : Array Fill) (paths : Array PathOut) (shrink : Option Sp)
+    (fills : Array Fill) (inks : Array InkOut) (shrink : Option Sp)
     (fl : Option Nat) :
-    (b.pushSibling l? fills paths shrink fl).pages = b.pages := by
+    (b.pushSibling l? fills inks shrink fl).pages = b.pages := by
   cases l? <;> simp only [Spacing.Page.pushSibling] <;> split <;> rfl
 @[simp] private theorem pushSibling_noBreak (b : B) (l? : Option LineOut)
-    (fills : Array Fill) (paths : Array PathOut) (shrink : Option Sp)
+    (fills : Array Fill) (inks : Array InkOut) (shrink : Option Sp)
     (fl : Option Nat) :
-    (b.pushSibling l? fills paths shrink fl).noBreak = b.noBreak := by
+    (b.pushSibling l? fills inks shrink fl).noBreak = b.noBreak := by
   cases l? <;> simp only [Spacing.Page.pushSibling] <;> split <;> rfl
 @[simp] private theorem pushLabels_pages (b : B) (ls : Array LineOut) (sh : Sp) (fl : Nat) :
     (b.pushLabels ls sh fl).pages = b.pages := by
@@ -16217,14 +16171,14 @@ private theorem pagesExtend_congr {b b' c : B} (h : c.pages = b'.pages)
 @[simp] private theorem commit_docBg (b : B) (l : LineOut) (d bl : Sp)
     (r c : Bool) (o : Sp) : (b.commit l d bl r c o).docBg = b.docBg := rfl
 @[simp] private theorem pushSibling_geom (b : B) (l? : Option LineOut)
-    (fills : Array Fill) (paths : Array PathOut) (shrink : Option Sp)
+    (fills : Array Fill) (inks : Array InkOut) (shrink : Option Sp)
     (fl : Option Nat) :
-    (b.pushSibling l? fills paths shrink fl).geom = b.geom := by
+    (b.pushSibling l? fills inks shrink fl).geom = b.geom := by
   cases l? <;> simp only [Spacing.Page.pushSibling] <;> split <;> rfl
 @[simp] private theorem pushSibling_docBg (b : B) (l? : Option LineOut)
-    (fills : Array Fill) (paths : Array PathOut) (shrink : Option Sp)
+    (fills : Array Fill) (inks : Array InkOut) (shrink : Option Sp)
     (fl : Option Nat) :
-    (b.pushSibling l? fills paths shrink fl).docBg = b.docBg := by
+    (b.pushSibling l? fills inks shrink fl).docBg = b.docBg := by
   cases l? <;> simp only [Spacing.Page.pushSibling] <;> split <;> rfl
 @[simp] private theorem pushLabels_geom (b : B) (ls : Array LineOut) (sh : Sp) (fl : Nat) :
     (b.pushLabels ls sh fl).geom = b.geom := by
@@ -16568,7 +16522,7 @@ private theorem alignRow_pages_noBreak (b : B) (save : ColSave) (h : b.noBreak =
   ⟨p.1, p.2.2.2.trans h⟩
 
 /-- `placeSlot` keeps both the shipped pages and the `noBreak` flag. -/
-private theorem placeSlot_noBreak (fs : FontSet) (b : B) (save : ColSave × Nat × Nat)
+private theorem placeSlot_noBreak (fs : FontSet) (b : B) (save : ColSave × Nat × Nat × Nat)
     (spec : SlotSpec) (h : b.noBreak = true) :
     (b.placeSlot fs save spec).pages = b.pages ∧ (b.placeSlot fs save spec).noBreak = true :=
   let p := placeSlot_keeps fs b save spec
@@ -16984,11 +16938,11 @@ private structure FlowSt where
 /-- The next column owns new ink, starting at the row's original cursor.
 The first flow already owns the page prefix and its pending notes. -/
 private def restartColumn (start latest : B) : B :=
-  { start with cur := {}, shrinkAbove := #[], fillShrinkAbove := #[], pathShrinkAbove := #[]
-               fillStretchAbove := #[], pathStretchAbove := #[]
-               fillFilsAbove := #[], pathFilsAbove := #[]
+  { start with cur := {}, shrinkAbove := #[], fillShrinkAbove := #[], inkShrinkAbove := #[]
+               fillStretchAbove := #[], inkStretchAbove := #[]
+               fillFilsAbove := #[], inkFilsAbove := #[]
                stretchAbove := #[], filsAbove := #[]
-               pinnedLines := 0, pinnedFills := 0, pendingNotes := #[]
+               pinnedLines := 0, pinnedFills := 0, pinnedInks := 0, pendingNotes := #[]
                opened := !start.fresh, freshStart := start.fresh
                openRegions := start.openRegions.map RegionStart.nextPage, closedRegions := #[]
                diags := latest.diags
@@ -17002,7 +16956,7 @@ private def mergeColumnPage (g : Geom) (a b : PageOut) : PageOut :=
     | some f => if f.x == -g.bleed && f.y == -g.bleed &&
         f.w == g.pageW + 2 * g.bleed && f.h == g.pageH + 2 * g.bleed then 1 else 0
     | none => 0
-  { a with lines := a.lines ++ b.lines, paths := a.paths ++ b.paths
+  { a with lines := a.lines ++ b.lines, inks := a.inks ++ b.inks
            links := a.links ++ b.links
            fills := b.fills.extract 0 ground ++ a.fills ++ b.fills.extract ground b.fills.size }
 
@@ -17018,7 +16972,7 @@ private def mergeColumnPages (g : Geom) (first : Nat)
 private def RegionSpan.afterPage (s : RegionSpan) (p : PageOut) : RegionSpan :=
   { s with lineStart := p.lines.size + s.lineStart, lineEnd := p.lines.size + s.lineEnd
            fillStart := p.fills.size + s.fillStart, fillEnd := p.fills.size + s.fillEnd
-           pathStart := p.paths.size + s.pathStart, pathEnd := p.paths.size + s.pathEnd }
+           inkStart := p.inks.size + s.inkStart, inkEnd := p.inks.size + s.inkEnd }
 
 /-- Two unfinished columns on the same page retain their line ledgers
 and link ranges. Clearance, leading and measured lower bounds survive
@@ -17029,7 +16983,7 @@ private def joinColumnCurrent (a b : B) : B :=
   let cur := { a.cur with
     lines := a.cur.lines ++ b.cur.lines
     fills := a.cur.fills ++ b.cur.fills
-    paths := a.cur.paths ++ b.cur.paths }
+    inks := a.cur.inks ++ b.cur.inks }
   { endCursor with
     cur := cur
     y := ending.tail.y, prevDepth := ending.tail.depth
@@ -17038,11 +16992,11 @@ private def joinColumnCurrent (a b : B) : B :=
     lastInk := some (ending.tail.y, ending.tail.depth, ending.tail.boxDepth)
     shrinkAbove := a.shrinkAbove ++ b.shrinkAbove, pageShrink := max a.pageShrink b.pageShrink
     fillShrinkAbove := a.fillShrinkAbove ++ b.fillShrinkAbove
-    pathShrinkAbove := a.pathShrinkAbove ++ b.pathShrinkAbove
+    inkShrinkAbove := a.inkShrinkAbove ++ b.inkShrinkAbove
     fillStretchAbove := a.fillStretchAbove ++ b.fillStretchAbove
-    pathStretchAbove := a.pathStretchAbove ++ b.pathStretchAbove
+    inkStretchAbove := a.inkStretchAbove ++ b.inkStretchAbove
     fillFilsAbove := a.fillFilsAbove ++ b.fillFilsAbove
-    pathFilsAbove := a.pathFilsAbove ++ b.pathFilsAbove
+    inkFilsAbove := a.inkFilsAbove ++ b.inkFilsAbove
     stretchAbove := a.stretchAbove ++ b.stretchAbove, pageStretch := max a.pageStretch b.pageStretch
     filsAbove := a.filsAbove ++ b.filsAbove, pageFils := max a.pageFils b.pageFils
     needed := max a.needed b.needed
@@ -17053,7 +17007,7 @@ private def joinColumnCurrent (a b : B) : B :=
     closedRegions := a.closedRegions ++ a.openRegions.map (·.close a.cur) ++
       (b.closedRegions ++ b.openRegions.map (·.close b.cur)).map (·.afterPage a.cur)
     openRegions := b.openRegions.map (fun s =>
-      { s with lines := cur.lines.size, fills := cur.fills.size, paths := cur.paths.size,
+      { s with lines := cur.lines.size, fills := cur.fills.size, inks := cur.inks.size,
                first := false }) }
 
 /-- Completed pages join by physical index; a shorter flow's last page
@@ -17067,7 +17021,7 @@ private def joinColumn (first : Nat) (a b : B) : B :=
       { a with closedRegions := a.closedRegions ++ a.openRegions.map (·.close a.cur)
                openRegions := b.openRegions.map (fun s =>
                  { s with lines := a.cur.lines.size, fills := a.cur.fills.size,
-                          paths := a.cur.paths.size, first := false }) }
+                          inks := a.cur.inks.size, first := false }) }
     else joinColumnCurrent a b
   { endCursor with
     pages := mergeColumnPages b.geom first left.pages right.pages
@@ -17404,8 +17358,8 @@ private theorem frameStep_spillPage (b : B) (over : Sp) :
       rfl (fun _ _ h => h)
 
 @[simp] private theorem pushSibling_frameStamp (b : B) (l : Option LineOut)
-    (fills : Array Fill) (paths : Array PathOut) (shrink : Option Sp) (fils : Option Nat) :
-    (b.pushSibling l fills paths shrink fils).frameStamp = b.frameStamp := by
+    (fills : Array Fill) (inks : Array InkOut) (shrink : Option Sp) (fils : Option Nat) :
+    (b.pushSibling l fills inks shrink fils).frameStamp = b.frameStamp := by
   cases l <;> simp only [Spacing.Page.pushSibling] <;> split <;> rfl
 
 @[simp] private theorem pushLabels_frameStamp (b : B) (ls : Array LineOut)
@@ -17417,11 +17371,11 @@ private theorem frameStep_spillPage (b : B) (over : Sp) :
     rfl (fun _ _ h => by rw [pushSibling_frameStamp]; exact h)
 
 @[simp] private theorem pushSibling_frame_fields (b : B) (l : Option LineOut)
-    (fills : Array Fill) (paths : Array PathOut) (shrink : Option Sp) (fils : Option Nat) :
-    (b.pushSibling l fills paths shrink fils).curFrameOrigin = b.curFrameOrigin ∧
-    (b.pushSibling l fills paths shrink fils).curFrame = b.curFrame ∧
-    (b.pushSibling l fills paths shrink fils).curFoot = b.curFoot := by
-  have h := pushSibling_frameStamp b l fills paths shrink fils
+    (fills : Array Fill) (inks : Array InkOut) (shrink : Option Sp) (fils : Option Nat) :
+    (b.pushSibling l fills inks shrink fils).curFrameOrigin = b.curFrameOrigin ∧
+    (b.pushSibling l fills inks shrink fils).curFrame = b.curFrame ∧
+    (b.pushSibling l fills inks shrink fils).curFoot = b.curFoot := by
+  have h := pushSibling_frameStamp b l fills inks shrink fils
   simpa only [Spacing.Page.frameStamp, Prod.mk.injEq] using h
 
 @[simp] private theorem pushLabels_frame_fields (b : B) (ls : Array LineOut)
@@ -17538,9 +17492,9 @@ private theorem frameStep_keepHeading (b : B) (j : ParaJob) (n : Nat) :
   · exact frameStep_spillPage b 0
   · exact FrameStep.refl b
 
-private theorem frameStep_placeSlot (fs : FontSet) (b : B) (save : ColSave × Nat × Nat)
+private theorem frameStep_placeSlot (fs : FontSet) (b : B) (save : ColSave × Nat × Nat × Nat)
     (spec : SlotSpec) : FrameStep b (b.placeSlot fs save spec) := by
-  obtain ⟨col, l0, f0⟩ := save
+  obtain ⟨col, l0, f0, k0⟩ := save
   simp only [Spacing.Page.placeSlot]
   split <;> exact FrameStep.of_eq rfl rfl
 
@@ -17878,13 +17832,13 @@ private theorem reflowStep_spillPage (b : B) (over : Sp) :
       ((reflowStep_warnSpill ..).trans (ReflowStep.of_eq rfl rfl)))
 
 @[simp] private theorem pushSibling_paragraphBreaks (b : B) (l : Option LineOut)
-    (fills : Array Fill) (paths : Array PathOut) (shrink : Option Sp) (fils : Option Nat) :
-    (b.pushSibling l fills paths shrink fils).paragraphBreaks = b.paragraphBreaks := by
+    (fills : Array Fill) (inks : Array InkOut) (shrink : Option Sp) (fils : Option Nat) :
+    (b.pushSibling l fills inks shrink fils).paragraphBreaks = b.paragraphBreaks := by
   cases l <;> simp only [Spacing.Page.pushSibling] <;> split <;> rfl
 
 @[simp] private theorem pushSibling_diags (b : B) (l : Option LineOut)
-    (fills : Array Fill) (paths : Array PathOut) (shrink : Option Sp) (fils : Option Nat) :
-    (b.pushSibling l fills paths shrink fils).diags = b.diags := by
+    (fills : Array Fill) (inks : Array InkOut) (shrink : Option Sp) (fils : Option Nat) :
+    (b.pushSibling l fills inks shrink fils).diags = b.diags := by
   cases l <;> simp only [Spacing.Page.pushSibling] <;> split <;> rfl
 
 @[simp] private theorem pushLabels_paragraphBreaks (b : B) (ls : Array LineOut)
@@ -18065,9 +18019,9 @@ private theorem reflowStep_keepHeading (b : B) (j : ParaJob) (n : Nat) :
   · exact reflowStep_spillPage b 0
   · exact ReflowStep.refl b
 
-private theorem reflowStep_placeSlot (fs : FontSet) (b : B) (save : ColSave × Nat × Nat)
+private theorem reflowStep_placeSlot (fs : FontSet) (b : B) (save : ColSave × Nat × Nat × Nat)
     (spec : SlotSpec) : ReflowStep b (b.placeSlot fs save spec) := by
-  obtain ⟨col, l0, f0⟩ := save
+  obtain ⟨col, l0, f0, k0⟩ := save
   simp only [Spacing.Page.placeSlot]
   split <;> exact ReflowStep.of_eq rfl rfl
 
@@ -18282,7 +18236,7 @@ public structure Shipped where
 
 /-- The furniture pass's spine: page `i` gains the running lines its
 step computes — and only lines. Everything else on the page (fills,
-paths, the foot band, the frame attribution) rides through untouched,
+inks, the foot band, the frame attribution) rides through untouched,
 which is what lets a page fact proved at `finishPage` survive to `Out`
 (`furnishFrom_keeps`). Explicit index recursion, the elabBlocks knot;
 `σ` threads the diagnostics and the hyphenation cache. -/
@@ -18352,10 +18306,10 @@ private theorem furnishFrom_keeps {σ : Type}
     (f : Nat → PageOut → σ → Array LineOut × σ)
     (pages : Array PageOut) (s : σ) (i : Nat) :
     ∀ p ∈ (furnishFrom f pages s i).1, ∃ q ∈ pages,
-      p.fills = q.fills ∧ p.links = q.links ∧ p.paths = q.paths ∧ p.foot = q.foot ∧
+      p.fills = q.fills ∧ p.links = q.links ∧ p.inks = q.inks ∧ p.foot = q.foot ∧
         p.frame = q.frame := by
   intro p hp
-  let read := fun p : PageOut => (p.fills, p.links, p.paths, p.foot, p.frame)
+  let read := fun p : PageOut => (p.fills, p.links, p.inks, p.foot, p.frame)
   have h := furnishFrom_projects f read (fun _ _ => rfl) pages s i
   have hm : read p ∈ pages.map read := h ▸ Array.mem_map_of_mem hp
   obtain ⟨q, hq, heq⟩ := Array.mem_map.mp hm
@@ -18836,12 +18790,12 @@ public theorem runPost_diags_covers (sh : Shipped) :
   · exact hd
 
 /-- The postlude only adds furniture lines: every page of `runPost`'s
-output carries the fills, paths, foot band, and frame attribution of a
+output carries the fills, inks, foot band, and frame attribution of a
 page the builder shipped — `furnishFrom_keeps` lifted over the whole
 postlude, the seam a builder invariant crosses into `Out` through. -/
 public theorem runPost_pages (sh : Shipped) :
     ∀ p ∈ (runPost sh).pages, ∃ q ∈ sh.pages,
-      p.fills = q.fills ∧ p.links = q.links ∧ p.paths = q.paths ∧ p.foot = q.foot ∧
+      p.fills = q.fills ∧ p.links = q.links ∧ p.inks = q.inks ∧ p.foot = q.foot ∧
         p.frame = q.frame := by
   intro p hp
   unfold runPost at hp

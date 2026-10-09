@@ -7,6 +7,8 @@ public import LeanTex.Core.Ir
 public import LeanTex.Core.Dim
 public import LeanTex.Core.Contrast
 public import LeanTex.Core.Font
+public import LeanTex.Core.GfxSvg
+public import LeanTex.Core.GfxPicture
 import LeanTex.Core.Listing
 import LeanTex.Core.TitleTemplate
 import LeanTex.Core.ListMark
@@ -5395,7 +5397,10 @@ mutual
 
 private def anchorIdsOne (acc : Array String) : Node → Array String
   | .elem _ attrs kids =>
-    let ids := attrs.filterMap fun (key, value) => if key == "id" then some value else none
+    -- A figure's own definitions are no anchors: the page numbers each
+    -- rendered figure apart afterwards (`numberFiguresList`).
+    let ids := attrs.filterMap fun (key, value) =>
+      if key == "id" && (GfxSvg.parseId value).isNone then some value else none
     anchorIdsList (acc ++ ids) kids.toList
   | .text _ | .style _ | .script _ _ => acc
 
@@ -7026,152 +7031,249 @@ public theorem labelNodesList_mathFree_contract (f : LabelFace) (acc : Array Nod
 
 end
 
-/-- The shapes of a picture as SVG children, in the box `((px0, py0), (px1,
-py1))` the viewBox declares: the same evaluated shapes the PDF paints,
-through the typed tree so every label passes the escaper. SVG's y grows
-downward, so the transform is the PDF path's: flip against the box's top.
-Labels use the same metric as that box. Without a font environment the
-zero metric leaves the source anchor as the alphabetic baseline. -/
-public def pictureKids (pic : Ir.Pic.Picture) (px0 py1 : Dim.Sp)
+/-- A picture label as SVG: `<text>` runs, or one MathML carrier when it
+holds a formula, its alphabetic baseline at the IR's measured band
+(`Ir.Pic.labelBaseline`), its anchor's side as `text-anchor`. Placed by the
+frame it stands in: at the root the picture's isometry carries its anchor
+exactly; inside a transform the label stands in the figure's own y-up frame,
+so it is set upright about its baseline. The label measures with the same
+metric as the picture's box; without a font environment the zero metric
+leaves the source anchor as the baseline. -/
+public def pictureLabelNode (metric : Ir.Pic.LabelMetric) (cfg : Config) (fr : GfxSvg.SFrame)
+    (l : Gfx.LabelSpec) : Node :=
+  let anchor := match l.align with
+    | .center | .south | .north => "middle"
+    | .west => "start"
+    | .east => "end"
+  let baseline := Ir.Pic.labelBaseline l.y l.align (metric l.content l.scale)
+  let size := (Ir.baseFontSize * (l.scale : Int) / 1000).toPtString
+  let (px, py) : Dim.Sp × Dim.Sp := match fr.iso with
+    | some t => t.apply (l.x, baseline)
+    | none => (l.x, -baseline)
+  let placed := #[
+    ("x", px.toPtString),
+    ("y", py.toPtString),
+    ("dominant-baseline", "alphabetic")]
+  let node :=
+    if Ir.anyInline (fun x => match x with | .formula _ _ _ => true | _ => false) l.content then
+      let shift := match l.align with
+        | .center | .south | .north => "-50%"
+        | .west => "0%"
+        | .east => "-100%"
+      let nodes := labelNodesList {} #[] l.content.toList (some { cfg with mathStyles := #[] })
+      -- MathML Core §3.3.6: zero height/depth preserve the baseline and
+      -- all ink. Zero-size XHTML and outer math fonts remove both
+      -- formatting contexts' struts; only the inner row takes the label
+      -- size. This places its natural alphabetic baseline at the SVG y.
+      -- Max-content and translation implement text-anchor.
+      -- SVG 2 §12.5 requires a positive foreignObject viewport to paint.
+      -- Its 1×1 box is only a carrier: both viewports allow all overflow.
+      Html.elem "foreignObject" #[
+        Html.elem "div" #[
+          Html.elem "math" #[
+            Html.elem "mpadded"
+              #[Html.elem "mrow" nodes #[("style", s!"font-size: {size}px")]]
+              #[("height", "0px"), ("depth", "0px")]]
+            #[("style", "font-size: 0; font-family: inherit")]]
+          #[("xmlns", "http://www.w3.org/1999/xhtml"),
+            ("style", s!"font-size: 0; line-height: 0; width: max-content; \
+transform: translateX({shift}); color: {cssColor l.color}")]]
+        (placed ++ #[("width", "1"), ("height", "1"), ("overflow", "visible")])
+    else
+      Html.elem "text" (labelNodesList {} #[] l.content.toList)
+        (placed ++ #[("fill", cssColor l.color), ("font-size", size), ("text-anchor", anchor)])
+  match fr.iso with
+  | some _ => node
+  | none => Html.elem "g" #[node] #[GfxSvg.transformAttr ⟨1, 0, 0, -1, 0, 0⟩]
+
+/-- The isometry from picture coordinates (y up) into the SVG's frame: the
+box's left edge at x = 0, its top at y = 0, y down. -/
+@[expose] public def pictureIso (box : Ir.Pic.Box) : Gfx.Iso :=
+  { flipY := true, dx := -box.1.1, dy := box.2.2 }
+
+/-- A picture's typed SVG tree in its box: the lowered figure (`Gfx.ofPicture`)
+through the SVG emitter, labels through `pictureLabelNode` — the same
+figure the PDF paints, so the two artifacts' marks agree
+(`Gfx.picture_marks_agree`). -/
+public def pictureTree (pic : Ir.Pic.Picture) (box : Ir.Pic.Box)
+    (metric : Ir.Pic.LabelMetric := fun _ _ => {}) (cfg : Config := {}) : Array GfxSvg.El :=
+  GfxSvg.tree (pictureLabelNode metric cfg) #[] (pictureIso box) (Gfx.ofPictureIn box pic)
+
+/-- The shapes of a picture as SVG children, in the box the viewBox
+declares: the typed tree spelled through the escaper. -/
+public def pictureKids (pic : Ir.Pic.Picture) (box : Ir.Pic.Box)
     (metric : Ir.Pic.LabelMetric := fun _ _ => {}) (cfg : Config := {}) : Array Node :=
-  pic.shapes.map fun shape =>
-    -- The paint attributes of a stroked/filled shape: fill (or none —
-    -- SVG's default is black, not TikZ's), then stroke colour, width,
-    -- and pgf's dash rhythms (§15.3.2: dashed on 3pt off 3pt, dotted
-    -- on the line width off 1pt).
-    let paint := fun (st : Option Ir.Pic.Stroke) (fl : Option Ir.Color) =>
-      let fillA := #[("fill", (fl.map cssColor).getD "none")]
-      match st with
-      | none => fillA
-      | some k =>
-        let dashA : Array (String × String) := match k.dash with
-          | .solid => #[]
-          | .dashed => #[("stroke-dasharray", "3 3")]
-          | .dotted => #[("stroke-dasharray", s!"{k.width.toPtString} 1")]
-        fillA ++ #[("stroke", cssColor k.color),
-          ("stroke-width", k.width.toPtString)] ++ dashA
-    match shape with
-    | .rect rx ry rw rh color =>
-      Html.elem "rect" #[] #[
-        ("x", (min rx (rx + rw) - px0).toPtString),
-        ("y", (py1 - max ry (ry + rh)).toPtString),
-        ("width", (max rw (-rw)).toPtString),
-        ("height", (max rh (-rh)).toPtString),
-        ("fill", cssColor color)]
-    | .label lx ly content color scale align =>
-      let anchor := match align with
-        | .center | .south | .north => "middle"
-        | .west => "start"
-        | .east => "end"
-      let baseline := Ir.Pic.labelBaseline ly align (metric content scale)
-      let size := (Ir.baseFontSize * (scale : Int) / 1000).toPtString
-      let placed := #[
-        ("x", (lx - px0).toPtString),
-        ("y", (py1 - baseline).toPtString),
-        ("dominant-baseline", "alphabetic")]
-      if Ir.anyInline (fun x => match x with | .formula _ _ _ => true | _ => false) content then
-        let shift := match align with
-          | .center | .south | .north => "-50%"
-          | .west => "0%"
-          | .east => "-100%"
-        let nodes := labelNodesList {} #[] content.toList (some { cfg with mathStyles := #[] })
-        -- MathML Core §3.3.6: zero height/depth preserve the baseline and
-        -- all ink. Zero-size XHTML and outer math fonts remove both
-        -- formatting contexts' struts; only the inner row takes the label
-        -- size. This places its natural alphabetic baseline at the SVG y.
-        -- Max-content and translation implement text-anchor.
-        -- SVG 2 §12.5 requires a positive foreignObject viewport to paint.
-        -- Its 1×1 box is only a carrier: both viewports allow all overflow.
-        Html.elem "foreignObject" #[
-          Html.elem "div" #[
-            Html.elem "math" #[
-              Html.elem "mpadded"
-                #[Html.elem "mrow" nodes #[("style", s!"font-size: {size}px")]]
-                #[("height", "0px"), ("depth", "0px")]]
-              #[("style", "font-size: 0; font-family: inherit")]]
-            #[("xmlns", "http://www.w3.org/1999/xhtml"),
-              ("style", s!"font-size: 0; line-height: 0; width: max-content; \
-transform: translateX({shift}); color: {cssColor color}")]]
-          (placed ++ #[("width", "1"), ("height", "1"), ("overflow", "visible")])
-      else
-        Html.elem "text" (labelNodesList {} #[] content.toList)
-          (placed ++ #[("fill", cssColor color), ("font-size", size), ("text-anchor", anchor)])
-    | .circle sx sy r st fl =>
-      Html.elem "circle" #[] (#[
-        ("cx", (sx - px0).toPtString),
-        ("cy", (py1 - sy).toPtString),
-        ("r", (max r (-r)).toPtString)] ++ paint st fl)
-    | .frame fx fy fw fh st fl =>
-      Html.elem "rect" #[] (#[
-        ("x", (min fx (fx + fw) - px0).toPtString),
-        ("y", (py1 - max fy (fy + fh)).toPtString),
-        ("width", (max fw (-fw)).toPtString),
-        ("height", (max fh (-fh)).toPtString)] ++ paint st fl)
-    | .edge segs st tip =>
-      let px (v : Dim.Sp) : String := (v - px0).toPtString
-      let py (v : Dim.Sp) : String := (py1 - v).toPtString
-      let d := String.join (segs.toList.map fun sg => match sg with
-        | .line x1 y1 x2 y2 =>
-          s!"M {px x1} {py y1} L {px x2} {py y2} "
-        | .cubic x1 y1 c1x c1y c2x c2y x2 y2 =>
-          s!"M {px x1} {py y1} C {px c1x} {py c1y}, {px c2x} {py c2y}, \
-{px x2} {py y2} ")
-      let tipNodes : Array Node := match tip with
-        | some t => #[Html.elem "path" #[] #[
-            ("d", s!"M {px t.x1} {py t.y1} L {px t.x2} {py t.y2} \
-L {px t.x3} {py t.y3} Z"),
-            ("fill", cssColor st.color)]]
-        | none => #[]
-      Html.elem "g" (#[Html.elem "path" #[] ((#[("d", d)] : Array (String × String))
-        ++ paint (some st) none)] ++ tipNodes) #[]
+  GfxSvg.spell 0 (pictureTree pic box metric cfg)
+
+/-- A label placed at a picture's root declares the alphabetic baseline at
+the IR's measured band, carried by the picture's isometry. -/
+private theorem pictureLabelNode_baseline (box : Ir.Pic.Box) (metric : Ir.Pic.LabelMetric)
+    (cfg : Config) (l : Gfx.LabelSpec) :
+    (match pictureLabelNode metric cfg { iso := some (pictureIso box) } l with
+      | .elem _ attrs _ => (attrOf? attrs "y", attrOf? attrs "dominant-baseline")
+      | _ => (none, none)) =
+      (some (box.2.2 - Ir.Pic.labelBaseline l.y l.align (metric l.content l.scale)).toPtString,
+        some "alphabetic") := by
+  by_cases hm : Ir.anyInline
+      (fun x => match x with | .formula _ _ _ => true | _ => false) l.content = true <;>
+    simp only [pictureLabelNode, hm, ite_true, pictureIso, Gfx.Iso.apply] <;>
+    rfl
+
+/-- A picture shape's node lowers, at the picture's root, to exactly one
+element that names no definition — a label's to its node, and no other
+shape's to anything that carries a raw node. -/
+private theorem pictureShape_tree (metric : Ir.Pic.LabelMetric) (cfg : Config) (box : Ir.Pic.Box)
+    (s : Ir.Pic.Shape) :
+    ∃ e, GfxSvg.treeOne (pictureLabelNode metric cfg) #[] #[] #[] { iso := some (pictureIso box) } #[]
+        (Gfx.ofShape s) = #[e] ∧ e.plain = true ∧
+      (∀ l, Gfx.labelOf? s = some l →
+        e = GfxSvg.El.raw (pictureLabelNode metric cfg { iso := some (pictureIso box) } l)) ∧
+      ∀ q : Node → Bool,
+        (∀ l, q (pictureLabelNode metric cfg { iso := some (pictureIso box) } l) = true) →
+          e.rawsAll q = true := by
+  cases s with
+  | rect x y w h c => exact ⟨_, rfl, rfl, fun l hl => by simp [Gfx.labelOf?] at hl, fun _ _ => rfl⟩
+  | label x y content color scale align =>
+    refine ⟨_, rfl, rfl, fun l hl => ?_, fun q hq => hq _⟩
+    simp only [Gfx.labelOf?, Option.some.injEq] at hl
+    subst hl
+    rfl
+  | circle x y r st fl =>
+    cases st <;> cases fl <;>
+      exact ⟨_, rfl, rfl, fun l hl => by simp [Gfx.labelOf?] at hl, fun _ _ => rfl⟩
+  | frame x y w h st fl =>
+    cases st <;> cases fl <;>
+      exact ⟨_, rfl, rfl, fun l hl => by simp [Gfx.labelOf?] at hl, fun _ _ => rfl⟩
+  | edge segs st tip =>
+    cases tip <;> exact ⟨_, rfl, rfl, fun l hl => by simp [Gfx.labelOf?] at hl, fun _ _ => rfl⟩
+
+private theorem pictureShapes_tree (metric : Ir.Pic.LabelMetric) (cfg : Config) (box : Ir.Pic.Box) :
+    ∀ ss : List Ir.Pic.Shape,
+      let t := GfxSvg.treeList (pictureLabelNode metric cfg) #[] #[] #[] { iso := some (pictureIso box) }
+        #[] (ss.map Gfx.ofShape)
+      GfxSvg.El.plainList t.toList = true ∧
+        (∀ (i : Nat) (l : Gfx.LabelSpec), (ss[i]?.bind Gfx.labelOf?) = some l →
+          t[i]? = some (GfxSvg.El.raw (pictureLabelNode metric cfg { iso := some (pictureIso box) } l))) ∧
+        ∀ q : Node → Bool,
+          (∀ l, q (pictureLabelNode metric cfg { iso := some (pictureIso box) } l) = true) →
+            GfxSvg.El.rawsAllList q t.toList = true
+  | [] => ⟨rfl, fun i l hl => by simp at hl, fun _ _ => rfl⟩
+  | s :: rest => by
+    obtain ⟨e, he, hp, hl, hr⟩ := pictureShape_tree metric cfg box s
+    obtain ⟨ih1, ih2, ih3⟩ := pictureShapes_tree metric cfg box rest
+    simp only [List.map_cons, GfxSvg.treeList]
+    rw [GfxSvg.treeList_acc, he]
+    refine ⟨?_, fun i l h => ?_, fun q hq => ?_⟩
+    · simp only [Array.toList_append, List.cons_append, List.nil_append, GfxSvg.El.plainList, hp,
+        Bool.true_and]
+      simpa using ih1
+    · cases i with
+      | zero =>
+        simp only [List.getElem?_cons_zero, Option.bind_some] at h
+        rw [Array.getElem?_append_left (by simp), hl l h]
+        rfl
+      | succ i =>
+        simp only [List.getElem?_cons_succ] at h
+        rw [Array.getElem?_append_right (by simp)]
+        simpa using ih2 i l h
+    · simp only [Array.toList_append, List.cons_append, List.nil_append, GfxSvg.El.rawsAllList,
+        hr q hq, Bool.true_and]
+      simpa using ih3 q hq
+
+/-- A picture's tree is its shapes' elements at the root, one per shape. -/
+private theorem pictureTree_shapes (pic : Ir.Pic.Picture) (box : Ir.Pic.Box)
+    (metric : Ir.Pic.LabelMetric) (cfg : Config) :
+    pictureTree pic box metric cfg = GfxSvg.treeList (pictureLabelNode metric cfg) #[] #[] #[]
+      { iso := some (pictureIso box) } #[] (pic.shapes.toList.map Gfx.ofShape) := by
+  simp [pictureTree, GfxSvg.tree, Gfx.ofPictureIn, GfxSvg.bodyEls, Gfx.Figure.bodies]
+
+/-- A label's node holds one MathML root at most: a formula's carrier is
+the label's only root (`labelNodesList_mathFree_contract`), a text label
+holds none, and the upright wrapper inside a transform adds none. -/
+private theorem pictureLabelNode_unnested (metric : Ir.Pic.LabelMetric) (cfg : Config)
+    (fr : GfxSvg.SFrame) (l : Gfx.LabelSpec) :
+    MathMl.unnested (pictureLabelNode metric cfg fr l) = true := by
+  have hm := labelNodesList_mathFree_contract {} #[] l.content.toList
+    (some { cfg with mathStyles := #[] }) rfl
+  have ht := labelNodesList_mathFree_contract {} #[] l.content.toList none rfl
+  obtain ⟨iso⟩ := fr
+  cases iso <;> simp only [pictureLabelNode] <;> split <;>
+    simp [Html.elem, MathMl.unnested, MathMl.unnestedList, MathMl.tagFree, MathMl.tagFreeList,
+      hm, ht, MathMl.unnestedList_of_mathFree]
+
+/-- `MathMl.unnested` is a property every plain SVG element has once its
+children have it: none of their names is `math`. -/
+private theorem unnested_plainClosed : GfxSvg.PlainClosed MathMl.unnested := by
+  intro t ht attrs kids hk
+  have hne : (t == "math") = false := by
+    simp only [GfxSvg.plainTags, List.mem_cons, List.not_mem_nil, or_false] at ht
+    rcases ht with rfl | rfl | rfl | rfl | rfl | rfl <;> decide
+  have hl : ∀ ns : List Node, (∀ k ∈ ns, MathMl.unnested k = true) → MathMl.unnestedList ns = true := by
+    intro ns
+    induction ns with
+    | nil => intro _; rfl
+    | cons n rest ih =>
+      intro h
+      simp only [MathMl.unnestedList, h n (List.mem_cons_self ..), Bool.true_and]
+      exact ih fun k hk => h k (List.mem_cons_of_mem _ hk)
+  simp only [Html.elem, MathMl.unnested, hne, Bool.false_eq_true, ↓reduceIte]
+  exact hl kids.toList fun k hk' => hk k (Array.mem_toList_iff.mp hk')
 
 /-- **A picture ships one MathML root per label** (`_contract`): no `math`
-element `pictureKids` emits stands inside another, for every picture,
+element `pictureKids` emits stands inside another, for every picture, box,
 measure and configuration. A label holding a formula is one carrier whose
-`math` is the label's only root (`labelNodesList_mathFree_contract`); every
-other shape carries no MathML. The carrier once wrapped each formula's own
-root, a second root no engine defines the layout of. A fact of the artifact,
-as `MathMl.formula_unnested_contract` is. -/
-public theorem pictureKids_unnested_contract (pic : Ir.Pic.Picture) (px0 py1 : Dim.Sp)
+`math` is the label's only root (`labelNodesList_mathFree_contract`), and
+the spelled tree wraps a picture's labels in plain SVG and adds no MathML
+of its own (`GfxSvg.spell_plain_contract`). The carrier once wrapped each
+formula's own root, a second root no engine defines the layout of. A fact
+of the artifact, as `MathMl.formula_unnested_contract` is. -/
+public theorem pictureKids_unnested_contract (pic : Ir.Pic.Picture) (box : Ir.Pic.Box)
     (metric : Ir.Pic.LabelMetric) (cfg : Config) :
-    ∀ n ∈ pictureKids pic px0 py1 metric cfg, MathMl.unnested n = true := by
-  intro n hn
-  simp only [pictureKids, Array.mem_map] at hn
-  obtain ⟨shape, _, rfl⟩ := hn
-  cases shape with
-  | label lx ly content color scale align =>
-    simp only []
-    split
-    · simp [Html.elem, MathMl.unnested, MathMl.unnestedList, MathMl.tagFree,
-        MathMl.tagFreeList, labelNodesList_mathFree_contract _ #[] content.toList _ rfl]
-    · apply MathMl.unnested_of_mathFree
-      simp [Html.elem, MathMl.tagFree, labelNodesList_mathFree_contract _ #[] content.toList _ rfl]
-  | edge segs st tip =>
-    apply MathMl.unnested_of_mathFree
-    cases tip <;> simp [Html.elem, MathMl.tagFree, MathMl.tagFreeList]
-  | rect _ _ _ _ _ | circle _ _ _ _ _ | frame _ _ _ _ _ _ =>
-    apply MathMl.unnested_of_mathFree
-    simp [Html.elem, MathMl.tagFree, MathMl.tagFreeList]
+    ∀ n ∈ pictureKids pic box metric cfg, MathMl.unnested n = true := by
+  obtain ⟨hp, _, hr⟩ := pictureShapes_tree metric cfg box pic.shapes.toList
+  unfold pictureKids
+  rw [pictureTree_shapes]
+  exact GfxSvg.spell_plain_contract MathMl.unnested unnested_plainClosed 0 _ hp
+    (hr _ fun l => pictureLabelNode_unnested metric cfg _ l)
 
-/-- **Every emitted label baseline projects the IR's measured band**
-(`_projects`): SVG declares the alphabetic baseline at `labelBaseline`,
-whose `Ir.Pic.labelBaseline_box_exact` also identifies the native page's
-box-top-plus-height placement after its y flip. This holds at every label
-index, independent of alignment, font, scale and the surrounding shapes. -/
-public theorem pictureLabelBaseline_projects (pic : Ir.Pic.Picture) (px0 py1 : Dim.Sp)
+/-- **Every shipped label baseline projects the IR's measured band**
+(`_projects`): the node a picture's label shape ships at its index in the
+picture's SVG children — the spelled tree, its elements naming no
+definition, one node per shape — declares the alphabetic baseline at
+`labelBaseline` carried by the picture's isometry, whose
+`Ir.Pic.labelBaseline_box_exact` also identifies the native page's
+box-top-plus-height placement after its y flip — independent of alignment,
+font, scale and the surrounding shapes. -/
+public theorem pictureLabelBaseline_projects (pic : Ir.Pic.Picture) (box : Ir.Pic.Box)
     (metric : Ir.Pic.LabelMetric) (i : Nat) (x y : Dim.Sp)
     (content : Array Inline) (color : Ir.Color) (scale : Nat) (align : Ir.Pic.LabelAlign)
     (h : pic.shapes[i]? = some (.label x y content color scale align)) (cfg : Config := {}) :
-    (match (pictureKids pic px0 py1 metric cfg)[i]? with
-      | some (.elem _ attrs _) =>
-        (attrOf? attrs "y", attrOf? attrs "dominant-baseline")
+    (match (pictureKids pic box metric cfg)[i]? with
+      | some (.elem _ attrs _) => (attrOf? attrs "y", attrOf? attrs "dominant-baseline")
       | _ => (none, none)) =
-      (some (py1 - Ir.Pic.labelBaseline y align (metric content scale)).toPtString,
+      (some (box.2.2 - Ir.Pic.labelBaseline y align (metric content scale)).toPtString,
         some "alphabetic") := by
-  by_cases hm : Ir.anyInline
-      (fun x => match x with | .formula _ _ _ => true | _ => false) content = true <;>
-    simp only [pictureKids, Array.getElem?_map, h, Option.map_some, hm, ite_true] <;>
+  obtain ⟨hp, hi, _⟩ := pictureShapes_tree metric cfg box pic.shapes.toList
+  let l : Gfx.LabelSpec :=
+    { x := x, y := y, content := content, color := color, scale := scale, align := align }
+  have hl : pic.shapes.toList[i]?.bind Gfx.labelOf? = some l := by
+    simp only [Array.getElem?_toList, h, Option.bind_some, Gfx.labelOf?]
     rfl
+  have hk : (pictureKids pic box metric cfg)[i]? =
+      some (pictureLabelNode metric cfg { iso := some (pictureIso box) } l) := by
+    unfold pictureKids
+    rw [pictureTree_shapes]
+    exact GfxSvg.spell_plain_exact 0 _ hp i _ (hi i l hl)
+  rw [hk]
+  have hb := pictureLabelNode_baseline box metric cfg l
+  revert hb
+  generalize pictureLabelNode metric cfg { iso := some (pictureIso box) } l = n
+  intro hb
+  cases n with
+  | elem tag attrs kids => simpa using hb
+  | text _ => simp at hb
+  | style _ => simp at hb
+  | script _ _ => simp at hb
 
 /-- The picture's box as the element's own size. Lengths are pt, the unit
 the viewBox declares — and in flow classes the element's own size too:
@@ -7302,34 +7404,49 @@ public def pictureSvg (cfg : Config) (pic : Ir.Pic.Picture) : Node :=
   let ((px0, py0), (px1, py1)) := pictureBoxOf cfg pic
   -- The declared baseline is where the line stands (`Ir.Pic.Picture.rise`),
   -- the value the PDF sets the picture's depth by.
-  Html.elem "svg" (pictureKids pic px0 py1 cfg.labelMetric cfg)
+  Html.elem "svg" (pictureKids pic ((px0, py0), (px1, py1)) cfg.labelMetric cfg)
     (pictureBox cfg (px1 - px0) (py1 - py0) (pic.rise cfg.labelMetric) ++
       pictureRole cfg.locale pic ++ #[("overflow", "visible")])
 
-/-- **A picture's SVG never clips its ink** (`_contract`): every picture
-ships `overflow="visible"`, the HTML half of the IR's "ink may stand
-outside it, and nothing is clipped". -/
+/-- **A picture as a standalone SVG document**: the same lowered figure and
+labels the inline SVG carries (`pictureTree`), in the box the inline SVG
+declares, under the XML declaration in the SVG namespace — a picture
+shipped as its own file. -/
+public def pictureDocument (cfg : Config) (pic : Ir.Pic.Picture) : String :=
+  let box := pictureBoxOf cfg pic
+  "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n" ++
+    Html.render (GfxSvg.documentRoot box false
+      (GfxSvg.spell 0 (pictureTree pic box cfg.labelMetric cfg))) 0
+
+/-- **A picture's SVG never clips its ink** (`_contract`): the lowered
+figure declares no clip to its box (pgf §15.8), and every picture ships
+`overflow="visible"` — the HTML half of the IR's "ink may stand outside it,
+and nothing is clipped". -/
 public theorem pictureSvg_overflow_contract (cfg : Config) (pic : Ir.Pic.Picture) :
+    (Gfx.ofPicture cfg.labelMetric pic).clipToBox = false ∧
     (match pictureSvg cfg pic with
       | .elem _ attrs _ => attrOf? attrs "overflow"
       | _ => none) = some "visible" := by
+  refine ⟨rfl, ?_⟩
   rcases h : pic.box cfg.labelMetric with ⟨⟨x0, y0⟩, ⟨x1, y1⟩⟩
   rcases ha : pic.alternative with _ | _ | t <;>
     simp [pictureSvg, pictureBoxOf, h, ha, Html.elem, pictureBox, pictureRole, pictureAltAttrs,
       attrOf?] <;>
     split <;> (try split) <;> simp
 
-/-- **The SVG's box is the IR's box** (`_projects`): the `viewBox` a
-picture's SVG declares spans `Ir.Pic.Picture.box` under the configured
-measurement, width by height — the value the PDF reserves
+/-- **The SVG's box is the figure's box** (`_projects`): the `viewBox` a
+picture's SVG declares spans the lowered figure's box under the configured
+measurement, width by height — `Ir.Pic.Picture.box`
+(`Gfx.ofPicture_box_exact`), the value the PDF reserves
 (`Layout.pictureBox`), never a second hull. The HTML half of
 `Pdf.picture_box_agree`. -/
 public theorem pictureViewBox_projects (cfg : Config) (pic : Ir.Pic.Picture) :
     (match pictureSvg cfg pic with
       | .elem _ attrs _ => attrOf? attrs "viewBox"
       | _ => none) =
-      some s!"0 0 {((pic.box cfg.labelMetric).2.1 - (pic.box cfg.labelMetric).1.1).toPtString} \
-{((pic.box cfg.labelMetric).2.2 - (pic.box cfg.labelMetric).1.2).toPtString}" := by
+      (let b := (Gfx.ofPicture cfg.labelMetric pic).box
+       some s!"0 0 {(b.2.1 - b.1.1).toPtString} {(b.2.2 - b.1.2).toPtString}") := by
+  simp only [Gfx.ofPicture_box_exact]
   rcases h : pic.box cfg.labelMetric with ⟨⟨x0, y0⟩, ⟨x1, y1⟩⟩
   simp [pictureSvg, pictureBoxOf, h, Html.elem, pictureBox, attrOf?]
 
@@ -7913,6 +8030,47 @@ private def pageFactsList (stage : Option String) (acc : PageFacts) : List Node 
   | k :: rest => pageFactsList stage (pageFactsOne stage acc k) rest
 
 end
+
+/-- Whether an `svg`'s children open with the definitions a figure's
+spelling writes first (`GfxSvg.spell`): a figure that names an id. -/
+private def definesFigure (kids : Array Node) : Bool :=
+  match (kids[0]? : Option Node) with
+  | some (Node.elem tag _ _) => tag == "defs"
+  | some (Node.text _) => false
+  | some (Node.style _) => false
+  | some (Node.script _ _) => false
+  | none => false
+
+mutual
+
+-- conserves: none — a renaming of figure ids; text, tags and every other
+-- attribute stay (`figureNumberingChecks`).
+/-- Every figure that names an id numbered apart, in document order: the
+`k`-th such `svg` renumbered to figure `k` (`GfxSvg.renumberList`), so no two
+figures on a page share an id and each reference resolves inside its own
+figure — a figure the page renders twice included, since this reads the
+rendered page, not the IR. Run before the page's anchors are judged. -/
+private def numberFiguresOne (n : Nat) : Node → Node × Nat
+  | .elem tag attrs kids =>
+    if tag == "svg" && definesFigure kids then
+      (.elem tag attrs (GfxSvg.renumberList n #[] kids.toList), n + 1)
+    else
+      let r := numberFiguresList n #[] kids.toList
+      (.elem tag attrs r.1, r.2)
+  | .text s => (.text s, n)
+  | .style s => (.style s, n)
+  | .script a s => (.script a s, n)
+
+private def numberFiguresList (n : Nat) (acc : Array Node) : List Node → Array Node × Nat
+  | [] => (acc, n)
+  | x :: rest =>
+    let r := numberFiguresOne n x
+    numberFiguresList r.2 (acc.push r.1) rest
+
+end
+
+/-- A page's figures numbered apart (`numberFiguresOne`). -/
+public def numberFigures (body : Array Node) : Array Node := (numberFiguresList 0 #[] body.toList).1
 
 /-- The first free anchor among `taken` (`base`, `base-2`, `base-3`, …),
 plus the holder's title when a *different* title collides — the W0327
@@ -8628,6 +8786,8 @@ first; retitle one frame, or link to '#{id}'"))
   if let some tool := cfg.mathBoundary then
     body := body.push (Html.elem "script" #[]
       #[("data-math-boundary", tool), ("src", tool)])
+  -- Figures named apart before the anchors are judged.
+  body := numberFigures body
   -- The landmark and anchor contracts, judged over the emitted tree.
   let facts := pageFactsList none {} body.toList
   -- premise: slideLabelChecks — these routes ship with the constant script;

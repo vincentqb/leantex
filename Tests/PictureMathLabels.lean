@@ -102,8 +102,7 @@ def pictureMathLabelChecks (ref : IO.Ref (List String))
           match shape with
           | .label x y content color size align =>
             let metric := Layout.labelMetric geom fs
-            let emitted := HtmlDoc.pictureKids pic (pic.box metric).1.1
-              (pic.box metric).2.2 metric
+            let emitted := HtmlDoc.pictureKids pic (pic.box metric) metric
             let baselines := emitted.filterMap fun n =>
               attr n "y"
             let baseline := (pic.box metric).2.2 -
@@ -174,9 +173,9 @@ right. The outline was placed at elaboration; the line is the label as the
 page paints it. -/
 def outlineGaps (out : Layout.Out) : Option (Dim.Sp × Dim.Sp) := do
   let page ← out.pages[0]?
-  let (x, w) ← page.paths.findSome? fun q => match q.path with
-    | .rect x _ w _ => some (x, w)
-    | _ => none
+  let (x, w) ← (pageDraws page).findSome? fun (g, _, st) => match g, st with
+    | .rect x _ w _, some _ => some (x, w)
+    | _, _ => none
   let line ← (page.lines.filter (!·.furniture))[0]?
   return (line.x - x, x + w - (line.x + line.setWidth))
 

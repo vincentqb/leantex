@@ -43,15 +43,17 @@ example (left right : Array Nat)
   Pdf.glyphs_inj hl hr h
 
 example (geom : Layout.Geom) (remap : Array Nat) (widths : Array (Array Int))
-    (images : Array (Option Nat)) (tags : Array (Option String)) (page : Layout.PageOut) :
-    Pdf.runsOf (Pdf.contentOps geom remap widths images tags page) = Pdf.pageRuns page :=
-  Pdf.contentOps_text geom remap widths images tags page
+    (images : Array (Option Nat)) (tags : Array (Option String))
+    (ix : GfxPdf.Request → Nat) (page : Layout.PageOut) :
+    Pdf.runsOf (Pdf.contentOps geom remap widths images tags ix page) = Pdf.pageRuns page :=
+  Pdf.contentOps_text geom remap widths images tags ix page
 
 example (geom : Layout.Geom) (remap : Array Nat) (widths : Array (Array Int))
-    (images : Array (Option Nat)) (tags : Array (Option String)) (page : Layout.PageOut) :
-    Pdf.inkOps (Pdf.contentOps geom remap widths images tags page) =
-      Pdf.contentOpsPlain geom remap widths images tags page :=
-  Pdf.mark_ink_exact geom remap widths images tags page
+    (images : Array (Option Nat)) (tags : Array (Option String))
+    (ix : GfxPdf.Request → Nat) (page : Layout.PageOut) :
+    Pdf.inkOps (Pdf.contentOps geom remap widths images tags ix page) =
+      Pdf.contentOpsPlain geom remap widths images tags ix page :=
+  Pdf.mark_ink_exact geom remap widths images tags ix page
 
 example (plan : Pdf.WritePlan) (before after : List Pdf.Row) (row : Pdf.Row)
     (h : plan.direct.toList = before ++ row :: after) :
@@ -86,6 +88,7 @@ example (geom : Layout.Geom) (fonts : Font.FontSet) (pages : Array Layout.PageOu
     (bytes : ByteArray) :
     Pdf.writeChecked geom fonts pages info images outline streams tree operations programs =
         .ok bytes ↔
+      Pdf.inkRasterPage? pages = none ∧
       (Pdf.prepare geom fonts pages info images outline streams tree operations programs).WithinDomain ∧
       Pdf.write geom fonts pages info images outline streams tree operations programs = bytes :=
   Pdf.writeChecked_exact geom fonts pages info images outline streams tree operations programs bytes
@@ -97,6 +100,7 @@ example (error : Pdf.WriteError) : Nat :=
   | .objectStreamSize bytes => bytes
   | .xrefStreamSize bytes => bytes
   | .objectSpelling id => id
+  | .inkRaster page => page
 
 example (fonts : Font.FontSet) (pages : Array Layout.PageOut)
     (h : 0 < fonts.fonts.size) :

@@ -246,27 +246,10 @@ public def offMedium (geom : Geom) (fs : Font.FontSet) (l : LineOut) : Bool :=
     let (up, down) := segsInk fs l.segs
     !geom.onMedium a (b - a) || l.y - up < -geom.bleed || l.y + down > geom.pageH + geom.bleed
 
-/-- A path's box: its geometry widened by half its stroke. -/
-def pathBox (p : PathOut) : (Sp × Sp) × (Sp × Sp) :=
-  let pad := (p.stroke.map (·.width / 2)).getD 0
-  let ((x0, y0), (x1, y1)) := match p.path with
-    | .circle cx cy r => ((cx - r, cy - r), (cx + r, cy + r))
-    | .rect x y w h => ((x, y), (x + w, y + h))
-    | .tri x1 y1 x2 y2 x3 y3 =>
-      ((min x1 (min x2 x3), min y1 (min y2 y3)), (max x1 (max x2 x3), max y1 (max y2 y3)))
-    | .segs ss =>
-      match ss[0]? with
-      | none => ((0, 0), (0, 0))
-      | some s0 => ss.foldl (fun ((a, b), (c, d)) s =>
-          let ((e, f), (g, h)) := s.box
-          ((min a e, min b f), (max c g, max d h))) s0.box
-  ((x0 - pad, y0 - pad), (x1 + pad, y1 + pad))
-
-/-- Does a picture path reach off the medium? -/
-public def pathOffMedium (geom : Geom) (p : PathOut) : Bool :=
-  let ((x0, y0), (x1, y1)) := pathBox p
-  x0 < -geom.bleed || y0 < -geom.bleed || x1 > geom.pageW + geom.bleed ||
-    y1 > geom.pageH + geom.bleed
+/-- Does a mark's claimed page box (`InkOut.claims`) reach off the medium? -/
+public def claimOffMedium (geom : Geom) (b : Gfx.Box) : Bool :=
+  b.1.1 < -geom.bleed || b.1.2 < -geom.bleed || b.2.1 > geom.pageW + geom.bleed ||
+    b.2.2 > geom.pageH + geom.bleed
 
 /-- Does a filled rectangle reach off the medium? A page ground covers the
 medium exactly, and is on it. -/
@@ -274,10 +257,11 @@ public def fillOffMedium (geom : Geom) (f : Fill) : Bool :=
   f.x < -geom.bleed || f.y < -geom.bleed || f.x + f.w > geom.pageW + geom.bleed ||
     f.y + f.h > geom.pageH + geom.bleed
 
-/-- Lines, paths and fills with ink off the medium, every page. -/
+/-- Lines, picture marks and fills with ink off the medium, every page. -/
 public def offMediumCount (geom : Geom) (fs : Font.FontSet) (pages : Array PageOut) : Nat :=
   pages.foldl (fun n p =>
-    n + (p.lines.filter (offMedium geom fs)).size + (p.paths.filter (pathOffMedium geom)).size +
+    n + (p.lines.filter (offMedium geom fs)).size +
+      p.inks.foldl (fun m k => m + (k.claims.filter (claimOffMedium geom)).size) 0 +
       (p.fills.filter (fillOffMedium geom)).size) 0
 
 /-- The largest overflow any body line runs past the text area, in whole

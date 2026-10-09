@@ -80,6 +80,28 @@ public def Sp.toPtString (x : Sp) : String :=
 example : mm 254 = inch 10 := by decide
 example : (pt 10).toPtString = "10" := by rfl
 
+/-- A rational `p / q` (`q > 0`) as a decimal, rounded once at the ninth
+digit, half away from zero: the one printer for a matrix entry in both
+artifacts — a PDF form's `/Matrix` and `cm`, an SVG `matrix()` — its scale
+entries the reciprocal of a box in points, where one rounding at 1e-9 lands
+a placed corner within a nanometre of the exact rational. -/
+public def ratString (p q : Int) : String :=
+  let neg := p < 0
+  let v := (p.natAbs * 1000000000 + q.natAbs / 2) / max 1 q.natAbs
+  let ip := v / 1000000000
+  let fr := v % 1000000000
+  let sign := if neg && v != 0 then "-" else ""
+  if fr == 0 then
+    s!"{sign}{ip}"
+  else
+    let frs := toString fr
+    let frs := ("".pushn '0' (9 - frs.length)) ++ frs
+    let frs := (frs.dropEndWhile (· == '0')).toString
+    s!"{sign}{ip}.{frs}"
+
+/-- An exact rational at nine decimals (`ratString`). -/
+public def ratDecimal (r : Rat) : String := ratString r.num r.den
+
 public structure Glue where
   width : Sp := 0
   stretch : Sp := 0

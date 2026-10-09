@@ -369,17 +369,11 @@ def ofOut (out : Layout.Out) : Array MPage :=
       if !(text.trimAscii.isEmpty) then
         lines := lines.push { y := l.y, text, leaf := l.leaf, furniture := l.furniture }
     for f in p.fills do marks := marks.push (f.y, f.y + f.h)
-    for q in p.paths do
-      let (t, b) : Int × Int := match q.path with
-        | .circle _ cy r => (cy - r.natAbs, cy + r.natAbs)
-        | .rect _ y _ h => (y, y + h)
-        | .tri _ y1 _ y2 _ y3 => (min y1 (min y2 y3), max y1 (max y2 y3))
-        | .segs segs =>
-          let ys := segs.flatMap fun s => match s with
-            | .line _ y1 _ y2 => #[y1, y2]
-            | .cubic _ y1 _ ya _ yb _ y2 => #[y1, ya, yb, y2]
-          (ys.foldl min (ys[0]?.getD 0), ys.foldl max (ys[0]?.getD 0))
-      marks := marks.push (t, b)
+    for q in p.inks do
+      for mk in q.fig.marks do
+        if let some b := Gfx.Mark.geomBox Gfx.rasterUnit mk then
+          let pb := q.place.box b
+          marks := marks.push (pb.1.2, pb.2.2)
     return { lines := lines.qsort (·.y < ·.y), marks }
 
 /-- A 2×3 affine matrix in fixed point (65536 = 1), PDF's `[a b c d e f]`. -/

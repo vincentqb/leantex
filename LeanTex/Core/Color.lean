@@ -15,7 +15,7 @@ public inductive PdfColor where
   | rgb (r g b : String)
   | gray (v : String)
   | cmyk (c m y k : String)
-  deriving Repr, BEq
+  deriving Repr, BEq, DecidableEq
 
 /-- A source colour's screen preview plus its exact PDF device-model rider.
 `r g b` are always populated for HTML, contrast judgement, and dimming.
@@ -30,7 +30,7 @@ public structure Color where
   mix arithmetic. Exact source components live in `pdfModel` and reach PDF. -/
   cmyk : Option (Nat × Nat × Nat × Nat) := none
   pdfModel : Option PdfColor := none
-  deriving Repr, Inhabited
+  deriving Repr, Inhabited, DecidableEq
 
 /-- Colour equality is screen-and-mix equality. `pdfModel` is source
 projection provenance: PDF emission reads it directly, while contrast,

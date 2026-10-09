@@ -1979,11 +1979,11 @@ is a lemma over bare `Int` binders applied to the fields, because `omega`
 does not read an `Sp`-typed structure field. -/
 public theorem anchorPoint_between (g : NodeGeom) (ha : 0 ≤ g.a) (hb : 0 ≤ g.b)
     (an : NodeAnchor) :
-    Ir.Pic.Box.le (g.anchorPoint an, g.anchorPoint an)
+    Gfx.Box.le (g.anchorPoint an, g.anchorPoint an)
       (Ir.Pic.nodeExtentBox g.x g.y g.a g.b) := by
   have key : ∀ p : Sp × Sp, g.x - g.a ≤ p.1 → p.1 ≤ g.x + g.a →
       g.y - g.b ≤ p.2 → p.2 ≤ g.y + g.b →
-      Ir.Pic.Box.le ((p, p)) (Ir.Pic.nodeExtentBox g.x g.y g.a g.b) :=
+      Gfx.Box.le ((p, p)) (Ir.Pic.nodeExtentBox g.x g.y g.a g.b) :=
     fun _ h1 h2 h3 h4 => ⟨h1, h3, h2, h4⟩
   have mid : ∀ v d : Int, 0 ≤ d → v - d ≤ v ∧ v ≤ v + d := by intro v d h; omega
   have hi : ∀ v d : Int, 0 ≤ d → v - d ≤ v + d ∧ v + d ≤ v + d := by intro v d h; omega
@@ -2082,10 +2082,10 @@ public theorem Ev.labelExtent_covers (ev : Ev) (m : Ir.Pic.LabelMetric)
     (scale : Nat) (align : Ir.Pic.LabelAlign) (baseline : Option Sp)
     (hs : Ir.Pic.Shape.label x y content color scale align ∈ ev.shapes)
     (hd : ev.declared = none) :
-    Ir.Pic.Box.le (Ir.Pic.labelTextBox x y align (m content scale))
+    Gfx.Box.le (Ir.Pic.labelTextBox x y align (m content scale))
       ((ev.toPicture baseline).box m) := by
   have cover := (Ir.Pic.Picture.box_covers (ev.toPicture baseline) m hd).1 _ hs
-  apply Ir.Pic.Box.le_trans (b := Ir.Pic.labelGlyphBox x y align (m content scale)) _ cover
+  apply Gfx.Box.le_trans (b := Ir.Pic.labelGlyphBox x y align (m content scale)) _ cover
   exact ⟨Int.le_refl _, Int.min_le_right _ _, Int.le_refl _, Int.le_max_right _ _⟩
 
 /-- `(x,y) rectangle (x',y')` (or `++(dx,dy)`, relative) from token `i` to
@@ -4064,7 +4064,7 @@ outside the rendered picture subset; the label is not drawn")
     let bands := shapes0.filterMap fun s => match s with
       | .label lx ly content _ sz al => some (Ir.Pic.labelInkBox lx ly al (cx.metric content sz))
       | .rect .. | .circle .. | .frame .. | .edge .. => none
-    let ((bx0, by0), (bx1, by1)) := Ir.Pic.Box.hull bands
+    let ((bx0, by0), (bx1, by1)) := Gfx.Box.hull bands
     (max (-bx0) bx1, max (-by0) by1)
   -- Each line's baseline and measurement. The label's *first* line is the
   -- node's baseline, as it is for any TeX box: what the `base` family of
@@ -4674,13 +4674,13 @@ private def EdgeLabel.place (label : EdgeLabel) (cx : Cx) (width : Sp)
   let offset := match direction with
     | none => anchor
     | some dir =>
-      let box := Ir.Pic.Box.hull (lines.filterMap fun (shape : Ir.Pic.Shape) => match shape with
+      let box := Gfx.Box.hull (lines.filterMap fun (shape : Ir.Pic.Shape) => match shape with
         | .label x y content _ size align =>
           some (Ir.Pic.labelTextBox x y align (cx.metric content size))
         | .rect .. | .circle .. | .frame .. | .edge .. => none)
       let gap := (label.inner.1 + label.outer.1.getD (width / 2),
                   label.inner.2 + label.outer.2.getD (width / 2))
-      box.attachOffset anchor (dir.offset (1, 1)) gap
+      Ir.Pic.Box.attachOffset box anchor (dir.offset (1, 1)) gap
   lines.map (translateLabel offset)
 
 private def readEdgeLabel (cx : Cx) (env : List (String × Val))
@@ -5403,9 +5403,9 @@ rendered picture subset; the keys are dropped")
       -- marks before the declaration reached stays inside it, and a
       -- second declaration joins the first.
       let before := ev.shapes.map (Ir.Pic.Shape.inkBox cx.metric) ++ ev.borders
-      let b := if before.isEmpty then b else Ir.Pic.Box.join (Ir.Pic.Box.hull before) b
+      let b := if before.isEmpty then b else Gfx.Box.join (Gfx.Box.hull before) b
       let b := match ev.declared with
-        | some d => Ir.Pic.Box.join d b
+        | some d => Gfx.Box.join d b
         | none => b
       (env, { ev with declared := some b })
     | .error d => (env, ev.diag d)
@@ -5566,7 +5566,7 @@ public theorem nodeExtent_covers (cx : Cx) (sts : List Stmt)
     (scale : Nat) (align : Ir.Pic.LabelAlign) (baseline : Option Sp)
     (hs : Ir.Pic.Shape.label x y content color scale align ∈ (evalFixed cx sts).shapes)
     (hd : (evalFixed cx sts).declared = none) :
-    Ir.Pic.Box.le (Ir.Pic.labelTextBox x y align (cx.metric content scale))
+    Gfx.Box.le (Ir.Pic.labelTextBox x y align (cx.metric content scale))
       (((evalFixed cx sts).toPicture baseline).box cx.metric) :=
   Ev.labelExtent_covers _ _ _ _ _ _ _ _ _ hs hd
 

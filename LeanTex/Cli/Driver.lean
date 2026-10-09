@@ -890,6 +890,9 @@ in the HTML" (← since t)
         let tree := Struct.ofDoc (Layout.pdfView doc)
         let ops := Pdf.pageOps geom fs out.pages imgs tree keep
         let streams ← Compression.pageStreams cache (ops.map fun o => (Pdf.render o).toUTF8)
+        -- A copied page's content deflates through the same cache.
+        let imgs := { imgs with
+          formZ := ← Compression.formZdata cache (Pdf.copiedFormContents imgs out.pages) }
         match Pdf.writeChecked geom fs out.pages doc.info imgs out.outline streams tree ops programs with
         | .error error =>
           ui.diag (DriverDiag.pdfWriteRefused error)

@@ -6788,7 +6788,7 @@ def tikzInlineChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO 
     let (c, ds) := pageOf body
     t s!"\\tikz with {form} ships a picture, not its path code"
       (noCode (shipped c) && hasStr (shipped c) "Words before" && hasStr (shipped c) "words after" &&
-       c.any (·.fills ≥ 1) && ds.all (·.code != "W0301"))
+       c.any (·.paths ≥ 1) && ds.all (·.code != "W0301"))
   -- A command's `;` ends it mid-word: what follows in that word is text.
   let (c, _) := pageOf "Tail \\tikz \\fill (0,0) rectangle (0.2,0.2);kept here."
   t "the text after a command's semicolon sets as text"
@@ -8497,8 +8497,8 @@ def pictureHyphenKeyChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet)
   -- `/.append style` on the same hyphenated name composes onto it: the
   -- edge is green *and* dashed, which is two handlers reading one name.
   t "'/.append style' on a hyphenated name composes onto it"
-    ((out.pages[0]?.bind fun p => (p.paths[2]?).bind (·.stroke)).map
-      (·.dash == .dashed) == some true)
+    ((out.pages[0]?.bind fun p => ((pageDraws p)[2]?).bind (·.2.2)).map
+      (·.dash == #[Dim.pt 3, Dim.pt 3]) == some true)
   -- **Every bracket, not most of them.** An `edge`/`to` operation carries
   -- its own bracket and read it raw, so a bundle applied there reached no
   -- reader at all — the last place the use side of `styleName_agree` was
@@ -8512,8 +8512,8 @@ def pictureHyphenKeyChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet)
   let (opDoc, opDs) := elabStr opSrc
   let opOut := layoutOf oneFace opDoc
   t "an edge operation's own bracket expands a hyphenated bundle"
-    ((opOut.pages[0]?.bind fun p => (p.paths[2]?).bind (·.stroke)).map
-      (fun s => s.dash == .dashed && s.color == { r := 0, g := 255, b := 0 })
+    ((opOut.pages[0]?.bind fun p => ((pageDraws p)[2]?).bind (·.2.2)).map
+      (fun s => s.dash == #[Dim.pt 3, Dim.pt 3] && strokeColor? s == some { r := 0, g := 255, b := 0 })
       == some true)
   t "a bundle on an edge operation is not named as a dropped option"
     (!opDs.any fun d => d.code == DiagCode.W0334.code && hasStr d.message "edge-muted")

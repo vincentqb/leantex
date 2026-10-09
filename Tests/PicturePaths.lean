@@ -41,10 +41,7 @@ def pictureBendChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO
     "\\node[draw, minimum width=2cm, minimum height=1cm] (b) at (6,0) {B};\n" ++
     body ++ "\n\\end{tikzpicture}\n\\end{document}"
   let edges (body : String) : Array Ir.Pic.PathSeg :=
-    ((layoutOf oneFace (elabStr (src body)).1).pages[0]?.map fun p =>
-      p.paths.foldl (fun acc q => match q.path with
-        | .segs ss => acc ++ ss
-        | _ => acc) #[]).getD #[]
+    ((layoutOf oneFace (elabStr (src body)).1).pages[0]?.map edgeSegs).getD #[]
   let cubics (body : String) : Array (Int × Int × Int × Int × Int × Int × Int × Int) :=
     (edges body).filterMap fun s => match s with
       | .cubic x1 y1 c1x c1y c2x c2y x2 y2 => some (x1, y1, c1x, c1y, c2x, c2y, x2, y2)
@@ -115,11 +112,11 @@ def pictureInlineChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : 
   t "a picture inside a paragraph names its block placement"
     (named mid && named ("Words before it " ++ mark) && named (mark ++ " words after it."))
   -- What the name says is what the page ships: the paragraph's text stands
-  -- on either side of the picture's fill, as two lines.
+  -- on either side of the picture's fill mark, as two lines.
   let c := censusOfSrc oneFace (doc mid)
   t "the named placement is what ships: text above the picture, text below it"
     (match lineYOf c 0 "Some running words", lineYOf c 0 "and more running words",
-        (c[0]?.bind (·.fillRects[0]?)) with
+        (c[0]?.bind (·.pathBoxes[0]?)) with
      | some a, some b, some (_, fy, _, fh) => decide (a < fy ∧ fy + fh < b)
      | _, _, _ => false)
   t "a picture alone, or under a declaration, names nothing"

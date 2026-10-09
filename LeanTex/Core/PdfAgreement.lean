@@ -75,19 +75,23 @@ public theorem table_length_agree (doc : Ir.Doc) (name : String) :
       HtmlDoc.tableLengthCss (HtmlDoc.lengthBasisOf doc)
         (Dim.Length.ofSp (Layout.tableLength none doc.preambleFace name)) := rfl
 
-/-- **Both artifacts size a picture by one IR box** (`_agree`). The PDF
+/-- **Both artifacts size a picture by one figure box** (`_agree`). The PDF
 reserves and places a picture by `Layout.pictureBox`, and the SVG's
 `viewBox` is `HtmlDoc.pictureBoxOf` (`HtmlDoc.pictureViewBox_projects`);
 under the measurement the driver hands both — `Layout.labelMetric` over the
-one face set, the x-height the layout resolves — the two are the one value
+one face set, the x-height the layout resolves — each is the box of the
+picture lowered onto the vector model (`Gfx.ofPicture`), which is
 `Ir.Pic.Picture.box`: the declared box exactly (`box_declared_exact`), else
 every mark's ink and every node's border (`box_covers`). Before, the SVG
 read the hull of label *anchors* while the page read the ink, so one
 picture had two sizes. -/
 public theorem picture_box_agree (geom : Layout.Geom) (fs : FontSet) (pic : Ir.Pic.Picture) :
     Layout.pictureBox geom fs {} (fs.body.xHeight * geom.fontSize / fs.body.unitsPerEm) pic =
-      HtmlDoc.pictureBoxOf { labelMetric := Layout.labelMetric geom fs } pic := by
-  simpa only [HtmlDoc.pictureBoxOf] using Layout.pictureBox_projects geom fs {} pic
+      (Gfx.ofPicture (Layout.labelMetric geom fs) pic).box ∧
+    (Gfx.ofPicture (Layout.labelMetric geom fs) pic).box =
+      HtmlDoc.pictureBoxOf { labelMetric := Layout.labelMetric geom fs } pic :=
+  ⟨(Layout.pictureBox_projects geom fs {} pic).trans (Gfx.ofPicture_box_exact _ pic).symm,
+    Gfx.ofPicture_box_exact _ pic⟩
 
 /-- **The two artifacts carry one text for a non-text object** (`_agree`):
 whatever text a `Figure` carries as `/Alt` (`altElem`, the PDF's projection

@@ -112,6 +112,10 @@ import Tests.OverlaySingleton
 import Tests.OverlaySingletonHtml
 import Tests.FrameHeadingScope
 import Tests.Census
+import Tests.GfxRegression
+import Tests.GfxMatrix
+import Tests.PdfFigures
+import Tests.GfxPaint
 import Tests.Backends
 import Tests.Images
 import Tests.ImageCodec
@@ -295,6 +299,12 @@ def backendSuiteChecks (ref : IO.Ref (List String)) : IO Unit := do
   linkHtmlChecks ref
   tableHtmlChecks ref
   contentOpsChecks ref
+  gfxMatrixChecks ref
+  gfxGradientFrameChecks ref
+  gfxIdChecks ref
+  gfxStampChecks ref
+  gfxKitChecks ref
+  pdfFiguresChecks ref
   outputContractChecks ref
   htmlAssetChecks ref
   htmlContainedPublicationChecks ref
@@ -453,6 +463,12 @@ def layoutSuiteChecks (ref : IO.Ref (List String)) : IO Unit := do
   bandChecks ref oneFace
   agreeChecks ref oneFace pats
   artifactMarkChecks ref oneFace pats
+  gfxDefectChecks ref oneFace
+  pdfFigureWriterChecks ref oneFace
+  gfxInkRasterChecks ref oneFace
+  gfxAgreementChecks ref oneFace arts
+  gfxStrokeCensusChecks ref arts
+  copiedFormChecks ref arts
   structTreeChecks ref oneFace arts
   pictureLayoutChecks ref oneFace
   picturePathSyntaxChecks ref oneFace

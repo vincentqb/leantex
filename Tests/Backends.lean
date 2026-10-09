@@ -2900,6 +2900,7 @@ def pdfCensusTable :
   ("diagram-refused", (1, 1, 0, 0, 0, 0, 0, none, ["FlateDecode"])),
   ("diagram-shapes", (1, 1, 0, 0, 0, 0, 0, none, ["FlateDecode"])),
   ("diagram-tikzset", (1, 1, 0, 0, 0, 0, 0, none, ["FlateDecode"])),
+  ("diagram-strokes", (1, 1, 0, 0, 0, 0, 0, none, ["FlateDecode"])),
   ("tables", (1, 1, 0, 0, 0, 0, 0, none, ["FlateDecode"])),
   ("tables-deck", (3, 1, 0, 0, 0, 0, 0, none, ["FlateDecode"])),
   ("tables-ragged", (1, 1, 0, 0, 0, 0, 0, none, ["FlateDecode"])),
@@ -3156,22 +3157,44 @@ def contentOpsTextPage : Layout.PageOut := {
   fills := #[{ x := 0, y := 0, w := Dim.pt 200, h := Dim.pt 100, color := contentOpsGrey },
              { x := Dim.pt 5, y := Dim.pt 5, w := Dim.pt 50, h := Dim.pt 10, color := contentOpsCyan }] }
 
-/-- Two pictures' paths: the first three stamped with leaf 0, the last two
-with leaf 1 (`contentOpsTags` gives both a holder), so the writer groups
-them as two figures. -/
+/-- A synthetic figure of plain draws, its frame y up. -/
+def contentOpsFigure (nodes : Array (Gfx.Node Empty)) : Gfx.Figure Empty :=
+  { box := ((0, 0), (0, 0)), clipToBox := false, nodes := nodes, outlines := #[], symbols := #[]
+    rasters := #[], title := none, losses := #[] }
+
+/-- The placement a synthetic page's pictures stand under: picture y up
+from the 100pt page's bottom, so picture and PDF coordinates coincide. -/
+def contentOpsPlace : Gfx.Iso := { flipY := true, dx := 0, dy := Dim.pt 100 }
+
+/-- Two pictures' ink: the first's three marks stamped with leaf 0, the
+second's two with leaf 1 (`contentOpsTags` gives both a holder), so the
+writer groups them as two figures: a dashed circle, a dotted filled frame,
+an edge whose four segments make two subpaths, a filled tip, a bare
+rectangle. -/
 def contentOpsPathPage : Layout.PageOut := {
-  paths := #[
-    { path := .circle (Dim.pt 50) (Dim.pt 50) (Dim.pt 20),
-      stroke := some { color := contentOpsRed, dash := .dashed }, leaf := some 0 },
-    { path := .rect (Dim.pt 10) (Dim.pt 10) (Dim.pt 30) (Dim.pt 20), stroke := some { dash := .dotted, width := Dim.pt 1 },
-      fill := some contentOpsGrey, leaf := some 0 },
-    { path := .segs #[.line (Dim.pt 1) (Dim.pt 2) (Dim.pt 3) (Dim.pt 4), .line (Dim.pt 3) (Dim.pt 4) (Dim.pt 5) (Dim.pt 6),
-        .cubic (Dim.pt 7) (Dim.pt 8) (Dim.pt 9) (Dim.pt 10) (Dim.pt 11) (Dim.pt 12) (Dim.pt 13) (Dim.pt 14),
-        .cubic (Dim.pt 13) (Dim.pt 14) (Dim.pt 1) (Dim.pt 1) (Dim.pt 2) (Dim.pt 2) (Dim.pt 3) (Dim.pt 3)],
-      stroke := some {}, leaf := some 0 },
-    { path := .tri (Dim.pt 1) (Dim.pt 2) (Dim.pt 3) (Dim.pt 4) (Dim.pt 5) (Dim.pt 6), fill := some contentOpsRed,
-      leaf := some 1 },
-    { path := .rect (Dim.pt 1) (Dim.pt 1) (Dim.pt 2) (Dim.pt 2), leaf := some 1 } ] }
+  inks := #[
+    { fig := contentOpsFigure #[
+        .draw (.ellipse (Dim.pt 50) (Dim.pt 50) (Dim.pt 20) (Dim.pt 20)) none
+          (some (Gfx.strokeOf { color := contentOpsRed, dash := .dashed })),
+        .draw (.rect (Dim.pt 10) (Dim.pt 70) (Dim.pt 30) (Dim.pt 20))
+          (some (Gfx.solidFill contentOpsGrey))
+          (some (Gfx.strokeOf { dash := .dotted, width := Dim.pt 1 })),
+        .draw (.path (Gfx.edgeSubpaths #[
+            .line (Dim.pt 1) (Dim.pt 98) (Dim.pt 3) (Dim.pt 96),
+            .line (Dim.pt 3) (Dim.pt 96) (Dim.pt 5) (Dim.pt 94),
+            .cubic (Dim.pt 7) (Dim.pt 92) (Dim.pt 9) (Dim.pt 90) (Dim.pt 11) (Dim.pt 88) (Dim.pt 13)
+              (Dim.pt 86),
+            .cubic (Dim.pt 13) (Dim.pt 86) (Dim.pt 1) (Dim.pt 99) (Dim.pt 2) (Dim.pt 98) (Dim.pt 3)
+              (Dim.pt 97)]))
+          none (some (Gfx.strokeOf {}))]
+      place := contentOpsPlace, leaf := some 0 },
+    { fig := contentOpsFigure #[
+        .draw (.path #[{ start := (Dim.pt 1, Dim.pt 98)
+                         segs := #[.line (Dim.pt 3, Dim.pt 96), .line (Dim.pt 5, Dim.pt 94)]
+                         closed := true }])
+          (some (Gfx.solidFill contentOpsRed)) none,
+        .draw (.rect (Dim.pt 1) (Dim.pt 97) (Dim.pt 2) (Dim.pt 2)) none none]
+      place := contentOpsPlace, leaf := some 1 } ] }
 
 /-- The streams the writer produced for these pages before the typed
 layer existed — captured from `Pdf.pageStreams`, and the spelling the
@@ -3242,11 +3265,11 @@ def contentOpsChecks (ref : IO.Ref (List String)) : IO Unit := do
   let imgMap : Array (Option Nat) := #[some 0, none]
   let tags := contentOpsTags
   let plain (g : Layout.Geom) (p : Layout.PageOut) : String :=
-    Pdf.render (Pdf.contentOpsPlain g remap (contentOpsWidths ()) imgMap tags p)
+    Pdf.render (Pdf.contentOpsPlain g remap (contentOpsWidths ()) imgMap tags Pdf.figureNames p)
   let stripped (g : Layout.Geom) (p : Layout.PageOut) : String :=
-    stripMarkLines (Pdf.render (Pdf.contentOps g remap (contentOpsWidths ()) imgMap tags p))
+    stripMarkLines (Pdf.render (Pdf.contentOps g remap (contentOpsWidths ()) imgMap tags Pdf.figureNames p))
   let ink (g : Layout.Geom) (p : Layout.PageOut) : String :=
-    Pdf.render (Pdf.inkOps (Pdf.contentOps g remap (contentOpsWidths ()) imgMap tags p))
+    Pdf.render (Pdf.inkOps (Pdf.contentOps g remap (contentOpsWidths ()) imgMap tags Pdf.figureNames p))
   t "content ops: text, fills, images and rules render to the recorded stream"
     (plain geom contentOpsTextPage == contentOpsTextExpected)
   t "content ops: every path shape and paint renders to the recorded stream"
@@ -3265,12 +3288,14 @@ def contentOpsChecks (ref : IO.Ref (List String)) : IO Unit := do
       && ink bleed contentOpsTextPage == contentOpsBleedExpected)
   -- The executable twin of `contentOps_text`, on the synthetic pages.
   t "content ops: the glyph census is the page's runs"
-    (Pdf.runsOf (Pdf.contentOps geom remap (contentOpsWidths ()) imgMap tags contentOpsTextPage)
+    (Pdf.runsOf (Pdf.contentOps geom remap (contentOpsWidths ()) imgMap tags Pdf.figureNames
+        contentOpsTextPage)
       == Pdf.pageRuns contentOpsTextPage)
   -- Two spellings that coincide: the honest bound on injectivity.
   t "content ops: a fill and a fill-only rectangle path spell the same"
     (Pdf.render #[.fill contentOpsRed 1 2 3 4]
-      == Pdf.render #[.path (some contentOpsRed) none #[.rect 1 2 3 4]])
+      == Pdf.render #[.paint (some { paint := .solid contentOpsRed, evenOdd := false }) none none
+        #[.rect 1 2 3 4]])
   -- `write` and `pageStreams` read the typed layer: the public entry
   -- yields the same bytes for the same pages.
   let some fontData ← findFont | return ()
@@ -3282,7 +3307,7 @@ def contentOpsChecks (ref : IO.Ref (List String)) : IO Unit := do
   let streams := Pdf.pageStreams geom twoFace #[contentOpsTextPage, contentOpsPathPage] store
   let typed (p : Layout.PageOut) : String :=
     stripMarkLines (Pdf.render (Pdf.contentOps geom remap
-      (Pdf.widthTable twoFace.fonts #[0, 1]) imgMap (Pdf.tagsOf ⟨#[]⟩) p))
+      (Pdf.widthTable twoFace.fonts #[0, 1]) imgMap (Pdf.tagsOf ⟨#[]⟩) Pdf.figureNames p))
   t "content ops: pageStreams is the typed render under the faces' own widths"
     (streams.map (stripMarkLines <| String.fromUTF8! ·)
       == #[typed contentOpsTextPage, typed contentOpsPathPage])
@@ -3426,13 +3451,13 @@ def outputContractChecks (ref : IO.Ref (List String)) : IO Unit := do
 object table exists for: the ids are pairwise distinct (`objTable_inj`)
 and are exactly `[1, size)` (`objTable_covers` with `objTable_between`). -/
 theorem objTable_ids_set_eq (keep : Array Nat) (imgs : Image.Store) (usedImgs : Array Nat)
-    (np nOut nElems : Nat) :
-    (Pdf.objTable keep imgs usedImgs np nOut nElems).ids.toList.Nodup ∧
-    ∀ id, id ∈ (Pdf.objTable keep imgs usedImgs np nOut nElems).ids ↔
-      1 ≤ id ∧ id < (Pdf.objTable keep imgs usedImgs np nOut nElems).size :=
-  ⟨Pdf.objTable_inj keep imgs usedImgs np nOut nElems, fun id =>
-    ⟨Pdf.objTable_between keep imgs usedImgs np nOut nElems id,
-     fun h => Pdf.objTable_covers keep imgs usedImgs np nOut nElems id h.1 h.2⟩⟩
+    (np nOut nElems nFigDict nFigForm : Nat) :
+    (Pdf.objTable keep imgs usedImgs np nOut nElems nFigDict nFigForm).ids.toList.Nodup ∧
+    ∀ id, id ∈ (Pdf.objTable keep imgs usedImgs np nOut nElems nFigDict nFigForm).ids ↔
+      1 ≤ id ∧ id < (Pdf.objTable keep imgs usedImgs np nOut nElems nFigDict nFigForm).size :=
+  ⟨Pdf.objTable_inj keep imgs usedImgs np nOut nElems nFigDict nFigForm, fun id =>
+    ⟨Pdf.objTable_between keep imgs usedImgs np nOut nElems nFigDict nFigForm id,
+     fun h => Pdf.objTable_covers keep imgs usedImgs np nOut nElems nFigDict nFigForm id h.1 h.2⟩⟩
 
 /-- Every object id the writer's cross-reference lists is allocated by one
 table (`Pdf.objTable`), read back through the engine's own reader: the
@@ -3441,27 +3466,33 @@ and the row kind of an id is `kindOf`'s answer, never a default. -/
 def objTableChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit := do
   let t := check ref
   -- One face, one page, nothing else: 1 catalog, 2 pages, four font ids,
-  -- the file, the page pair, then Info, XMP, the object stream, the xref.
-  -- The structure block sits between the outline and XMP: root, parent
-  -- tree, namespace, then one id per element (here the `Document` alone).
-  let t0 := Pdf.objTable #[0] {} #[] 1 0 1
+  -- the file, the page pair, then Info, the resources dictionary, XMP, the
+  -- object stream, the xref. The structure block sits between the outline
+  -- and the resources: root, parent tree, namespace, then one id per
+  -- element (here the `Document` alone).
+  let t0 := Pdf.objTable #[0] {} #[] 1 0 1 0 0
   t "table: the font block is four ids then the file"
     (Pdf.ObjTable.type0Id 0 == 3 && Pdf.ObjTable.cidId 0 == 4 && Pdf.ObjTable.fdId 0 == 5 &&
      Pdf.ObjTable.toUniId 0 == 6 && t0.fileId 0 == 7)
   t "table: one face, one page, no outline, one structure element"
     (t0.pageId 0 == 8 && t0.contentId 0 == 9 && t0.infoId == 10 && t0.structTreeRoot == 11 &&
-     t0.parentTree == 12 && t0.namespaceId == 13 && t0.structElemId 0 == 14 && t0.xmpId == 15 &&
-     t0.objStmId 0 == 16 && t0.nStm == 1 && t0.xrefId == 17 && t0.size == 18 && t0.nf == 1 &&
-     t0.np == 1)
+     t0.parentTree == 12 && t0.namespaceId == 13 && t0.structElemId 0 == 14 && t0.resId == 15 &&
+     t0.xmpId == 16 && t0.objStmId 0 == 17 && t0.nStm == 1 && t0.xrefId == 18 && t0.size == 19 &&
+     t0.nf == 1 && t0.np == 1)
   t "table: the conditional families allocate nothing yet"
     (t0.outputIntent.isNone && t0.icc.isNone)
   -- Two faces, three pages, a two-item outline: the root then its items
   -- sit between Info and the structure block.
-  let t1 := Pdf.objTable #[0, 2] {} #[] 3 2 0
+  let t1 := Pdf.objTable #[0, 2] {} #[] 3 2 0 0 0
   t "table: two faces, three pages, an outline"
     (t1.fileId 1 == 12 && t1.pageId 2 == 17 && t1.contentId 2 == 18 && t1.infoId == 19 &&
      t1.outlineRootId == 20 && t1.outlineItemId 1 == 22 && t1.structTreeRoot == 23 &&
-     t1.structBase == 26 && t1.xmpId == 26 && t1.xrefId == 28 && t1.size == 29)
+     t1.structBase == 26 && t1.resId == 26 && t1.xmpId == 27 && t1.xrefId == 29 && t1.size == 30)
+  -- The figure table's dictionaries, then its forms, after the resources.
+  let t2 := Pdf.objTable #[0] {} #[] 1 0 1 2 3
+  t "table: two figure dictionaries then three figure forms"
+    (t2.resId == 15 && t2.figDictId 0 == 16 && t2.figDictId 1 == 17 && t2.figFormId 0 == 18 &&
+     t2.figFormId 2 == 20 && t2.xmpId == 21 && t2.size == 24)
   -- Images: a plain raster is one id; an alpha raster brings its SMask; a
   -- copied page brings its resource graph, one id per object; a placeholder
   -- (no info) brings nothing beyond its own slot.
@@ -3480,23 +3511,24 @@ def objTableChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Un
       | none => 0
     | none => 0
   t "table: the copied page brings its font dictionary" (formN == 1)
-  let ti := Pdf.objTable #[0] store #[0, 1, 2, 3] 2 0 0
+  let ti := Pdf.objTable #[0] store #[0, 1, 2, 3] 2 0 0 0 0
   t "table: an XObject per image, then what it brings"
     (ti.imgIds == #[8, 9, 11, 12 + formN] && ti.smaskIds == #[none, some 10, none, none] &&
      ti.formBases == #[none, none, some 12, none] && ti.formSizes == #[0, 0, formN, 0] &&
      ti.ni == 4)
   t "table: the pages follow the last image block"
     (ti.pageId 0 == 13 + formN && ti.contentId 1 == 16 + formN && ti.infoId == 17 + formN &&
-     ti.size == 24 + formN)
-  -- 600 outline items make 612 compressed objects: three object streams,
+     ti.size == 25 + formN)
+  -- 600 outline items make 613 compressed objects: three object streams,
   -- their ids after XMP and before the xref.
-  let tl := Pdf.objTable #[0] {} #[] 1 600 1
+  let tl := Pdf.objTable #[0] {} #[] 1 600 1 0 0
   t "table: one object stream per capacity of compressed objects"
-    (Pdf.compressedCount tl.nf tl.np tl.nOut tl.nElems == 612 && tl.nStm == 3 &&
+    (Pdf.compressedCount tl.nf tl.np tl.nOut tl.nElems tl.nFigDict == 613 && tl.nStm == 3 &&
      tl.objStmId 0 == tl.xmpId + 1 && tl.objStmId 2 == tl.xmpId + 3 &&
      tl.xrefId == tl.xmpId + 4 && tl.size == tl.xmpId + 5)
   -- The executable twin of `objTable_ids_set_eq`, on the shapes above.
-  for (name, tb) in [("plain", t0), ("outline", t1), ("images", ti), ("streams", tl)] do
+  for (name, tb) in [("plain", t0), ("outline", t1), ("figures", t2), ("images", ti),
+      ("streams", tl)] do
     t s!"table {name}: the ids are exactly [1, size)"
       (tb.ids.toList == List.range' 1 (tb.size - 1))
   -- The row kind is a function of the table and the object stream's index.
@@ -3513,7 +3545,7 @@ def objTableChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Un
     let store ← corpusStore doc
     let out := layoutOf oneFace doc geom none store
     let tree := Struct.ofDoc (Layout.pdfView doc)
-    let tb := Pdf.tableOf oneFace out.pages store out.outline tree
+    let tb := Pdf.tableOf geom oneFace out.pages store out.outline tree
     t s!"table {n}: nodup, covering [1, size)"
       (tb.ids.toList.Nodup && tb.ids.size + 1 == tb.size)
     let pdf := Pdf.write geom oneFace out.pages doc.info store out.outline (tree := tree)
@@ -3536,7 +3568,7 @@ def featurePlacingPages : Array Layout.PageOut :=
 closed, names one-to-one with rows), `features` on the shapes that decide
 each row — a soft-mask image says `smask`, a plain one does not, a copied
 page says `formXObject` and `copiedGraph`, a JPEG says `dct` — and, over
-every corpus fixture, the four unemitted features stay unreached while
+every corpus fixture, the four features no fixture emits stay unreached while
 the bookkeeping five — the structure tree among them — are always
 reached; and `objStmMulti` turns on with the second object stream, at the
 boundary exactly. -/
@@ -3612,7 +3644,7 @@ def featureCensusChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : 
       (planAt (full + 1)).chunks.length == 2)
   t "features: objstm-multi exactly when a second object stream opens"
     (!bare.contains .objStmMulti && !multiAt full && multiAt (full + 1))
-  -- The census over the corpus: the four unemitted features never, the
+  -- The census over the corpus: the four features no fixture emits never, the
   -- bookkeeping five always, and the census is in registry order.
   for n in goldenNames do
     let (doc, _) ← goldenDoc n
@@ -3759,14 +3791,16 @@ def artifactMarkChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet)
   let remap : Array Nat := #[0, 1]
   let imgMap : Array (Option Nat) := #[some 0, none]
   let tags := contentOpsTags
-  let ops (p : Layout.PageOut) := Pdf.contentOps geom remap (contentOpsWidths ()) imgMap tags p
+  let ops (p : Layout.PageOut) :=
+    Pdf.contentOps geom remap (contentOpsWidths ()) imgMap tags Pdf.figureNames p
   t "artifacts: the fill block, the rule block and each placeholder wrap as recorded; leaves under their types"
     (Pdf.render (ops contentOpsTextPage) == artifactTextExpected)
   t "artifacts: furniture lines are pagination groups inside the text object, a leafless line a bare one"
     (Pdf.render (ops artifactFurniturePage) == artifactFurnitureExpected)
   t "artifacts: the furniture page strips to its plain twin"
     (stripMarkLines artifactFurnitureExpected
-      == Pdf.render (Pdf.contentOpsPlain geom remap (contentOpsWidths ()) imgMap tags artifactFurniturePage))
+      == Pdf.render (Pdf.contentOpsPlain geom remap (contentOpsWidths ()) imgMap tags Pdf.figureNames
+        artifactFurniturePage))
   t "artifacts: picture paths are grouped per picture under the holder's type"
     (Pdf.render (ops contentOpsPathPage) == artifactPathExpected)
   t "artifacts: the marks of the text page are its two leaves, numbered in stream order"
@@ -3852,8 +3886,9 @@ def artifactMarkChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet)
       t s!"artifacts {n} p{i}: the runs under pagination wrappers are the furniture runs, no flow run"
         ((ops.toList.flatMap fun o => match o with
             | .text tops => paginationRuns tops
-            | .fill _ _ _ _ _ | .path _ _ _ | .image _ _ _ _ _ | .imageMissing _ _ _ _
-            | .marked _ _ => []) == furnitureRuns page)
+            | .fill _ _ _ _ _ | .paint _ _ _ _ | .group _ _ _ _ | .shade _ _ | .outline _ _ _
+            | .xobject _ _ _ _ | .image _ _ _ _ _ | .imageMissing _ _ _ _ | .marked _ _ => [])
+              == furnitureRuns page)
       t s!"artifacts {n} p{i}: every operation at the top of the stream is wrapped, or the text object with every operator wrapped"
         (ops.all Pdf.ContentOp.wrapped)
   t s!"artifacts: the corpus exercised the layer ({pages} pages, {wrappers} wrappers, \

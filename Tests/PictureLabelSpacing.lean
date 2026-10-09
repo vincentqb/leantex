@@ -28,18 +28,20 @@ def pathLabelWitness (fonts : Font.FontSet) (src : String) : Except String Witne
     throw s!"picture option was refused: {ds.map (·.message)}"
   let out := layoutOf fonts doc
   let some page := out.pages[0]? | throw "no shipped page"
-  let #[path] := page.paths | throw "expected one shipped path"
-  let (anchor, tangent) ← match path.path with
-    | .segs #[.line x y u v] => pure (((x + u) / 2, -(y + v) / 2), (u - x, y - v))
-    | .segs #[.cubic x y a b c d u v] =>
-      pure (((x + 3 * a + 3 * c + u) / 8, -(y + 3 * b + 3 * d + v) / 8),
-        (-x - a + c + u, y + b - d - v))
+  let #[(geom, _, stroke)] := pageDraws page | throw "expected one shipped path"
+  let (anchor, tangent) ← match geom with
+    | .path subs => match (subpathSegs subs).toList with
+      | [.line x y u v] => pure (((x + u) / 2, -(y + v) / 2), (u - x, y - v))
+      | [.cubic x y a b c d u v] =>
+        pure (((x + 3 * a + 3 * c + u) / 8, -(y + 3 * b + 3 * d + v) / 8),
+          (-x - a + c + u, y + b - d - v))
+      | _ => throw "expected one segment or rectangle"
     | .rect x y w h => pure ((x + w / 2, -(y + h / 2)), (w, h))
-    | .segs _ | .circle .. | .tri .. => throw "expected one segment or rectangle"
+    | .ellipse .. => throw "expected one segment or rectangle"
   let glyphs := shippedBodyGlyphs out
   let some glyph := glyphs[0]? | throw "no shipped label"
   return { ink := ← ShippedInk.targetInk fonts glyphs
-           anchor, tangent, width := (path.stroke.map (·.width)).getD 0
+           anchor, tangent, width := (stroke.map (·.width)).getD 0
            size := glyph.size, em := doc.page.fontSize
            ex := ((Layout.labelMetric (Layout.Geom.ofPage doc.page) fonts) #[.text "x"] 1000).ex
            text := String.ofList (glyphs.toList.map (·.scalar)) }

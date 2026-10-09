@@ -972,7 +972,11 @@ def artMoveOp (onlyContent : Bool) (dx dy : Dim.Sp) : Pdf.ContentOp → Pdf.Cont
   | .text ops => .text (artMoveTextList onlyContent dx dy #[] ops.toList)
   | .marked t body => .marked t (artMoveList onlyContent dx dy #[] body.toList)
   | o@(.fill _ _ _ _ _) => o
-  | o@(.path _ _ _) => o
+  | o@(.paint _ _ _ _) => o
+  | o@(.group _ _ _ _) => o
+  | o@(.shade _ _) => o
+  | o@(.outline _ _ _) => o
+  | o@(.xobject _ _ _ _) => o
   | o@(.image _ _ _ _ _) => o
   | o@(.imageMissing _ _ _ _) => o
 
@@ -1012,7 +1016,11 @@ def artRegidOp (gid : Nat) : Pdf.ContentOp → Pdf.ContentOp
   | .text ops => .text (artRegidTextList gid #[] ops.toList)
   | .marked t body => .marked t (artRegidList gid #[] body.toList)
   | o@(.fill _ _ _ _ _) => o
-  | o@(.path _ _ _) => o
+  | o@(.paint _ _ _ _) => o
+  | o@(.group _ _ _ _) => o
+  | o@(.shade _ _) => o
+  | o@(.outline _ _ _) => o
+  | o@(.xobject _ _ _ _) => o
   | o@(.image _ _ _ _ _) => o
   | o@(.imageMissing _ _ _ _) => o
 

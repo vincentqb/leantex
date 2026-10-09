@@ -499,6 +499,15 @@ def buildScratch (cache : FontEnv.Cache) (faces : Array FontDb.Face) (name body 
     IO.FS.writeFile file (body.replace "@FONTS@" fonts.toString)
     build cache faces file.toString
 
+/-- A placed picture of one filled rectangle at page coordinates, in points:
+the shape the off-medium judge counts mark by mark. -/
+def rectInk (x y w h : Int) : Layout.InkOut :=
+  { fig := { box := ((0, 0), (0, 0)), clipToBox := false, outlines := #[], symbols := #[],
+             rasters := #[], title := none, losses := #[],
+             nodes := #[.draw (.rect (Dim.pt x) (Dim.pt y) (Dim.pt w) (Dim.pt h))
+               (some (Gfx.solidFill Ir.Color.black)) none] }
+    place := { flipY := false, dx := 0, dy := 0 } }
+
 def selftest : IO UInt32 := tierSelftest "typeset" fun no => do
   let geom : Layout.Geom := { pageW := Dim.pt 600, pageH := Dim.pt 800, hmargin := Dim.pt 100 }
   let words (n : Nat) : Array Layout.Seg :=
@@ -545,8 +554,8 @@ def selftest : IO UInt32 := tierSelftest "typeset" fun no => do
     (!offMedium { geom with bleed := Dim.pt 30 } fs (stLine 100 100 #[stRun 520 "long"]))
   no "off-medium: below the page's bottom edge it is off it"
     (offMedium geom fs (stLine 100 805 #[stRun 50 "low"]))
-  no "off-medium: a path past the edge is counted"
-    (offMediumCount geom fs #[{ lines := #[], paths := #[{ path := .rect (Dim.pt 590) 0 (Dim.pt 20) (Dim.pt 5) }] }] == 1)
+  no "off-medium: a picture mark past the edge is counted"
+    (offMediumCount geom fs #[{ lines := #[], inks := #[rectInk 590 0 20 5] }] == 1)
   let fill (x w : Int) : Layout.Fill :=
     { x := Dim.pt x, y := 0, w := Dim.pt w, h := Dim.pt 10, color := Ir.Color.black }
   no "off-medium: a fill past the edge is counted, a page ground is not"
@@ -706,8 +715,7 @@ def selftest : IO UInt32 := tierSelftest "typeset" fun no => do
     #[{ stPage ((#[13, 1, 2, 3, 4, 5, 6].map fun pt => bare (overBy pt)) ++
           #[bare (stLine 100 805 #[stRun 50 "low"]), bare (stLine 300 805 #[stRun 50 "low"])])
         (origin 0) with
-        paths := #[{ path := .rect (Dim.pt 590) 0 (Dim.pt 20) (Dim.pt 5) },
-                   { path := .rect (Dim.pt 590) (Dim.pt 50) (Dim.pt 20) (Dim.pt 5) }]
+        inks := #[rectInk 590 0 20 5, rectInk 590 50 20 5]
         fills := #[fill 590 20, fill 595 20] }] ++
     -- four clubs
     (List.range 4).toArray.flatMap (fun i => pair (1 + i) #[lineOf 712] (b3.lines)) ++

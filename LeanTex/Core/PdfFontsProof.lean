@@ -92,7 +92,7 @@ public theorem writeChecked_fonts_embedded_exact (geom : Layout.Geom) (fs : Font
     (b : ByteArray)
     (h : writeChecked geom fs pages info {} outline streams tree ops programs = .ok b) :
     (census b).map (·.fontsEmbedded) = .ok true := by
-  obtain ⟨domain, hb⟩ := (writeChecked_exact geom fs pages info {} outline streams
+  obtain ⟨_, domain, hb⟩ := (writeChecked_exact geom fs pages info {} outline streams
     tree ops programs b).mp h
   rw [← hb]
   exact write_fonts_embedded_exact geom fs pages info outline streams tree ops programs domain

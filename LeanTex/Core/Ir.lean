@@ -3,6 +3,7 @@ module
 public import LeanTex.Core.Diag
 public import LeanTex.Core.Heading
 public import LeanTex.Core.Dim
+public import LeanTex.Core.Gfx
 public import LeanTex.Core.Decl
 public import LeanTex.Core.Image
 public import LeanTex.Core.Math
@@ -3702,7 +3703,7 @@ public inductive Shape where
 
 /-- Repaint a shape, keeping its geometry and text: how a picture dims
 under an overlay cover. -/
-public def Shape.recolor (f : Color → Color) : Shape → Shape
+@[expose] public def Shape.recolor (f : Color → Color) : Shape → Shape
   | .rect x y w h c => .rect x y w h (f c)
   | .label x y t c sc al => .label x y t (f c) sc al
   | .circle x y r st fl =>
@@ -3711,16 +3712,11 @@ public def Shape.recolor (f : Color → Color) : Shape → Shape
     .frame x y w h (st.map fun s => { s with color := f s.color }) (fl.map f)
   | .edge segs st tip => .edge segs { st with color := f st.color } tip
 
-/-- A box in picture coordinates: min corner, then max corner. -/
-public abbrev Box := (Sp × Sp) × (Sp × Sp)
+/-- A box in picture coordinates: min corner, then max corner — the one
+box type of the vector model (`Gfx.Box`), whose join, order and hull it
+reads. -/
+public abbrev Box := Gfx.Box
 
-/-- The join of two boxes: the smallest box holding both. -/
-public def Box.join (a b : Box) : Box :=
-  ((min a.1.1 b.1.1, min a.1.2 b.1.2), (max a.2.1 b.2.1, max a.2.2 b.2.2))
-
-/-- `a` is inside `b`, componentwise. -/
-@[expose] public def Box.le (a b : Box) : Prop :=
-  b.1.1 ≤ a.1.1 ∧ b.1.2 ≤ a.1.2 ∧ a.2.1 ≤ b.2.1 ∧ a.2.2 ≤ b.2.2
 
 /-- Translate a measured interval beside an anchor. A positive direction
 puts its lower edge one gap beyond the anchor; a negative direction puts
@@ -3825,7 +3821,7 @@ does not read a `Sp`-typed term — the same workaround the `Box` proofs
 below record. -/
 private theorem labelInkSpan_covers_anchor (x y : Sp) (align : LabelAlign) (w tall : Sp)
     (hw : 0 ≤ w) (ht : 0 ≤ tall) :
-    Box.le ((x, y), (x, y)) (labelInkSpan x y align w tall) := by
+    Gfx.Box.le ((x, y), (x, y)) (labelInkSpan x y align w tall) := by
   have half : ∀ a b : Int, 0 ≤ b → a - b / 2 ≤ a ∧ a ≤ a - b / 2 + b := by
     intro a b h; omega
   have full : ∀ a b : Int, 0 ≤ b → a - b ≤ a := by intro a b h; omega
@@ -3907,7 +3903,7 @@ font's. -/
 (`labelInkSpan_covers_anchor`): widening a label from its anchor to its
 glyphs can only grow a hull. -/
 public theorem labelGlyphBox_covers (x y : Sp) (align : LabelAlign) (m : LabelInk) :
-    Box.le ((x, y), (x, y)) (labelGlyphBox x y align m) := by
+    Gfx.Box.le ((x, y), (x, y)) (labelGlyphBox x y align m) := by
   have hx := labelInkSpan_covers_anchor x y align (max m.w 0) (max (m.height + m.depth) 0)
     (Int.le_max_right _ _) (Int.le_max_right _ _)
   have lo : ∀ a b : Int, min a b ≤ a := by intro a b; omega
@@ -3987,7 +3983,7 @@ reaches the IR (`Picture.phantomCtrl`), so not even a dominated box arrives —
 but that is a surface decision, and this is the fact that holds whatever the
 surface does. -/
 public theorem phantom_extent_between (x y : Sp) (align : LabelAlign) (m p : LabelInk) :
-    Box.le (labelInkBox x y align m) (labelInkBox x y align (m.join p)) ∧
+    Gfx.Box.le (labelInkBox x y align m) (labelInkBox x y align (m.join p)) ∧
       (p.w ≤ m.w → p.height ≤ m.height → p.depth ≤ m.depth →
         labelInkBox x y align (m.join p) = labelInkBox x y align m) := by
   refine ⟨?_, ?_⟩
@@ -4040,7 +4036,7 @@ public def Shape.box : Shape → Box
       | none => match segs[0]? with
         | some s => s.box
         | none => ((0, 0), (0, 0))
-    segs.foldl (fun acc s => Box.join acc s.box) base
+    segs.foldl (fun acc s => Gfx.Box.join acc s.box) base
 
 public structure Picture where
   shapes : Array Shape := #[]
@@ -4064,7 +4060,7 @@ public structure Picture where
   alt : Alt := .undeclared
   deriving Repr, BEq, Inhabited
 
-public def Picture.recolor (p : Picture) (f : Color → Color) : Picture :=
+@[expose] public def Picture.recolor (p : Picture) (f : Color → Color) : Picture :=
   { p with shapes := p.shapes.map (·.recolor f) }
 
 /-- The fill a shape paints at a point, when it holds the point: a filled
@@ -4141,28 +4137,9 @@ glyphs' own box on the baseline the band places (`labelGlyphBox`). -/
   | s@(.frame _ _ _ _ _ _) => s.box
   | s@(.edge _ _ _) => s.box
 
--- The Box and Place proofs state their arithmetic over bare `Int` binders
--- because `omega` does not see through the `Sp` abbreviation (the same
--- workaround `furnitureBand`'s proof records in Layout).
-
-public theorem Box.le_refl (a : Box) : Box.le a a := by
-  have h : ∀ x : Int, x ≤ x := fun _ => Int.le_refl _
-  exact ⟨h _, h _, h _, h _⟩
-
-public theorem Box.le_join_left (a b : Box) : Box.le a (Box.join a b) := by
-  have hmin : ∀ x y : Int, min x y ≤ x := by intro x y; omega
-  have hmax : ∀ x y : Int, x ≤ max x y := by intro x y; omega
-  exact ⟨hmin _ _, hmin _ _, hmax _ _, hmax _ _⟩
-
-public theorem Box.le_join_right (a b : Box) : Box.le b (Box.join a b) := by
-  have hmin : ∀ x y : Int, min x y ≤ y := by intro x y; omega
-  have hmax : ∀ x y : Int, y ≤ max x y := by intro x y; omega
-  exact ⟨hmin _ _, hmin _ _, hmax _ _, hmax _ _⟩
-
-public theorem Box.le_trans {a b c : Box} (h1 : Box.le a b) (h2 : Box.le b c) : Box.le a c := by
-  have h : ∀ x y z : Int, x ≤ y → y ≤ z → x ≤ z := fun _ _ _ => Int.le_trans
-  exact ⟨h _ _ _ h2.1 h1.1, h _ _ _ h2.2.1 h1.2.1,
-         h _ _ _ h1.2.2.1 h2.2.2.1, h _ _ _ h1.2.2.2 h2.2.2.2⟩
+-- The Place proofs state their arithmetic over bare `Int` binders because
+-- `omega` does not see through the `Sp` abbreviation (the same workaround
+-- `furnitureBand`'s proof records in Layout).
 
 /-- The half-extents a label of this width and height asks of the node it
 hangs on: how far its ink reaches either side of the anchor, read off
@@ -4183,7 +4160,7 @@ arithmetic is spelled over bare `Int` binders and applied, because `omega`
 does not read an `Sp`-typed goal — the workaround `labelInkSpan_covers_anchor`
 records, one lemma per anchor shape rather than one per anchor. -/
 private theorem labelHalfExtent_covers (align : LabelAlign) (x y w tall : Sp) :
-    Box.le (labelInkSpan x y align w tall)
+    Gfx.Box.le (labelInkSpan x y align w tall)
       (nodeExtentBox x y (labelHalfExtent align w tall).1
         (labelHalfExtent align w tall).2) := by
   have mid : ∀ v d : Int,
@@ -4206,7 +4183,7 @@ private theorem labelHalfExtent_covers (align : LabelAlign) (x y w tall : Sp) :
 /-- A wider extent covers more: what makes the declared minimum a floor
 rather than an alternative to the measurement. -/
 public theorem nodeExtentBox_monotone (x y a b a' b' : Sp) (ha : a ≤ a') (hb : b ≤ b') :
-    Box.le (nodeExtentBox x y a b) (nodeExtentBox x y a' b') := by
+    Gfx.Box.le (nodeExtentBox x y a b) (nodeExtentBox x y a' b') := by
   have step : ∀ v p q : Int, p ≤ q → v - q ≤ v - p ∧ v + p ≤ v + q := by
     intro v p q h; omega
   exact ⟨(step x a a' ha).1, (step y b b' hb).1, (step x a a' ha).2, (step y b b' hb).2⟩
@@ -4239,11 +4216,11 @@ a node declaring more than its text keeps what it declared, which is the pgf
 reading — extent = max(minimum, text extent), manual §"Shapes". -/
 public theorem nodeExtent_covers (m : LabelMetric) (content : Array Inline) (scale : Nat)
     (align : LabelAlign) (declA declB x y : Sp) :
-    Box.le (labelInkBox x y align (m content scale))
+    Gfx.Box.le (labelInkBox x y align (m content scale))
       (nodeExtentBox x y (nodeExtent m content scale align declA declB).1
         (nodeExtent m content scale align declA declB).2) := by
   have grow : ∀ p q : Int, p ≤ max q p := by intro p q; omega
-  exact Box.le_trans (labelHalfExtent_covers align x y _ _)
+  exact Gfx.Box.le_trans (labelHalfExtent_covers align x y _ _)
     (nodeExtentBox_monotone x y _ _ _ _ (grow _ declA) (grow _ declB))
 
 /-- **Growth moves the border, never the letters.** Enlarging what a node
@@ -4263,7 +4240,7 @@ so growing one moves the other. -/
 public theorem centre_independent_of_growth (m : LabelMetric) (content : Array Inline)
     (scale : Nat) (align : LabelAlign) (declA declB declA' declB' x y : Sp)
     (hA : declA ≤ declA') (hB : declB ≤ declB') :
-    Box.le (nodeExtentBox x y (nodeExtent m content scale align declA declB).1
+    Gfx.Box.le (nodeExtentBox x y (nodeExtent m content scale align declA declB).1
              (nodeExtent m content scale align declA declB).2)
         (nodeExtentBox x y (nodeExtent m content scale align declA' declB').1
           (nodeExtent m content scale align declA' declB').2) ∧
@@ -4302,29 +4279,11 @@ public theorem nodeExtent_separates (m : LabelMetric) (ca cb : Array Inline)
     intro p u q s b v a h1 h2 h3 h4; omega
   exact chain _ _ _ sep _ x _ ha hb hsep rfl
 
-/-- The hull fold over a list of boxes, `List` companion first as every
-walk here. Polymorphic in what it reads a box from, so one walk and one set
-of containment lemmas serve the declared hull, the measured hull, and a
-caller that already holds the boxes. -/
-private def boxFoldList {α : Type} (f : α → Box) (acc : Box) : List α → Box
-  | [] => acc
-  | s :: rest => boxFoldList f (Box.join acc (f s)) rest
-
-/-- The smallest box holding every box in an array. Empty is the empty box
-at the origin. -/
-public def Box.hull (bs : Array Box) : Box :=
-  match bs.toList with
-  | [] => ((0, 0), (0, 0))
-  | b :: rest => boxFoldList id b rest
-
-/-- The declared hull's fold. -/
-private def bboxList (acc : Box) : List Shape → Box := boxFoldList Shape.box acc
-
-/-- The hull of a per-shape box over a picture, read through `Box.hull` so
+/-- The hull of a per-shape box over a picture, read through `Gfx.Box.hull` so
 a caller that needs the boxes themselves — to compare them pairwise, say —
 computes them once and folds the same way. -/
 public def Picture.boxFold (p : Picture) (f : Shape → Box) : Box :=
-  Box.hull (p.shapes.map f)
+  Gfx.Box.hull (p.shapes.map f)
 
 /-- The picture's bounding box: the join of its shapes' declared boxes. -/
 public def Picture.bbox (p : Picture) : Box := p.boxFold Shape.box
@@ -4339,56 +4298,18 @@ ink boxes, so a node label's set text is inside it and not merely its
 anchor. This is the box a caller must reserve; `bbox` is what the IR knows
 with no face. -/
 public def Picture.inkBbox (p : Picture) (m : LabelMetric) : Box :=
-  Box.hull (p.inkBoxes m)
-
-private theorem boxFoldList_le {α : Type} (f : α → Box) (acc : Box) (xs : List α) :
-    Box.le acc (boxFoldList f acc xs) := by
-  induction xs generalizing acc with
-  | nil => exact Box.le_refl acc
-  | cons s rest ih =>
-    exact Box.le_trans (Box.le_join_left acc (f s)) (ih (Box.join acc (f s)))
-
-private theorem boxFoldList_mem {α : Type} (f : α → Box) (acc : Box) (xs : List α) (s : α)
-    (h : s ∈ xs) : Box.le (f s) (boxFoldList f acc xs) := by
-  induction xs generalizing acc with
-  | nil => cases h
-  | cons t rest ih =>
-    cases h with
-    | head =>
-      exact Box.le_trans (Box.le_join_right acc (f s)) (boxFoldList_le _ _ rest)
-    | tail _ hmem => exact ih (Box.join acc (f t)) hmem
-
-private theorem bboxList_le (acc : Box) (xs : List Shape) : Box.le acc (bboxList acc xs) :=
-  boxFoldList_le _ acc xs
-
-private theorem bboxList_mem (acc : Box) (xs : List Shape) (s : Shape) (h : s ∈ xs) :
-    Box.le s.box (bboxList acc xs) := boxFoldList_mem _ acc xs s h
-
-/-- **The hull covers what it folds**: every box of the array lies inside
-the hull. The registered `_covers` shape, and the one fact every hull below
-is an instance of. -/
-public theorem Box.hull_covers (bs : Array Box) (b : Box) (h : b ∈ bs) :
-    Box.le b (Box.hull bs) := by
-  have h' : b ∈ bs.toList := by simpa using h
-  unfold Box.hull
-  split
-  · next heq => rw [heq] at h'; cases h'
-  · next t rest heq =>
-    rw [heq] at h'
-    cases h' with
-    | head => exact boxFoldList_le _ _ rest
-    | tail _ hmem => exact boxFoldList_mem _ _ rest b hmem
+  Gfx.Box.hull (p.inkBoxes m)
 
 /-- The per-shape hull covers every shape's box. -/
 public theorem Picture.boxFold_covers (p : Picture) (f : Shape → Box) (s : Shape)
-    (h : s ∈ p.shapes) : Box.le (f s) (p.boxFold f) :=
-  Box.hull_covers _ (f s) (Array.mem_map_of_mem h)
+    (h : s ∈ p.shapes) : Gfx.Box.le (f s) (p.boxFold f) :=
+  Gfx.Box.hull_covers _ (f s) (Array.mem_map_of_mem h)
 
 /-- The picture stays in its declared box: the bounding box contains the
 declared box of every shape it emits (labels bound at their anchors, see
 `Shape.box`). -/
 public theorem Picture.box_in_bbox (p : Picture) (s : Shape) (h : s ∈ p.shapes) :
-    Box.le s.box p.bbox := p.boxFold_covers Shape.box s h
+    Gfx.Box.le s.box p.bbox := p.boxFold_covers Shape.box s h
 
 /-- **A picture's box contains its ink.** The invariant the engine lacked:
 `box_in_bbox` bounds every *shape*, and a label's shape is a point, so the
@@ -4403,15 +4324,15 @@ ink of every shape is inside the box computed with that face. Each
 artifact's version is this fact projected through the metric it can
 answer. -/
 public theorem Picture.inkBbox_covers (p : Picture) (m : LabelMetric) (s : Shape)
-    (h : s ∈ p.shapes) : Box.le (s.inkBox m) (p.inkBbox m) :=
-  Box.hull_covers _ (s.inkBox m) (Array.mem_map_of_mem h)
+    (h : s ∈ p.shapes) : Gfx.Box.le (s.inkBox m) (p.inkBbox m) :=
+  Gfx.Box.hull_covers _ (s.inkBox m) (Array.mem_map_of_mem h)
 
 /-- **The natural box**: what TikZ reserves when nothing is declared — every
 mark's ink (`inkBoxes`, so a label's letters and not its anchor) and every
 node's border (`borders`: the text extent plus `inner sep`, which pgf's
 bounding box includes even for a node no path draws). -/
 public def Picture.natural (p : Picture) (m : LabelMetric) : Box :=
-  Box.hull (p.inkBoxes m ++ p.borders)
+  Gfx.Box.hull (p.inkBoxes m ++ p.borders)
 
 /-- **The box a picture occupies**: the declared box when `\useasboundingbox`
 gave one, else the natural box. The one IR value both backends read — the
@@ -4445,6 +4366,19 @@ public theorem Picture.mapLabels_box_id (m : LabelMetric) (f : Array Inline → 
   simp only [Picture.box, Picture.natural, hboxes]
   rfl
 
+/-- **Repainting moves no box** (`_id`): every shape's ink box reads its
+geometry and its label's measurement, never its paint, so a picture dimmed
+under an overlay cover occupies the box it occupied lit. -/
+public theorem Picture.recolor_box_id (p : Picture) (f : Color → Color) (m : LabelMetric) :
+    (p.recolor f).box m = p.box m := by
+  have hs : ∀ s : Shape, (s.recolor f).inkBox m = s.inkBox m := by
+    intro s; cases s <;> rfl
+  have hb : (p.recolor f).inkBoxes m = p.inkBoxes m := by
+    simp only [Picture.inkBoxes, Picture.recolor, Array.map_map]
+    exact Array.map_congr_left fun s _ => hs s
+  simp only [Picture.box, Picture.natural, hb]
+  rfl
+
 /-- **Where a picture stands on its line**: how far above its box's bottom
 edge the declared baseline runs (pgf manual §12.2.1), held inside the box;
 with nothing declared, the bottom edge is on the line. The one value both
@@ -4475,25 +4409,25 @@ shape's ink and every node's border lies inside the box, whatever face
 resolves. `inkBbox_covers` is the ink half of the old box; the borders are
 what made TikZ's box one inner sep larger than the engine's. -/
 public theorem Picture.box_covers (p : Picture) (m : LabelMetric) (h : p.declared = none) :
-    (∀ s ∈ p.shapes, Box.le (s.inkBox m) (p.box m)) ∧
-      (∀ b ∈ p.borders, Box.le b (p.box m)) := by
+    (∀ s ∈ p.shapes, Gfx.Box.le (s.inkBox m) (p.box m)) ∧
+      (∀ b ∈ p.borders, Gfx.Box.le b (p.box m)) := by
   simp only [Picture.box, h, Option.getD_none, Picture.natural]
   refine ⟨fun s hs => ?_, fun b hb => ?_⟩
-  · exact Box.hull_covers _ _ (Array.mem_append_left _ (Array.mem_map_of_mem hs))
-  · exact Box.hull_covers _ _ (Array.mem_append_right _ hb)
+  · exact Gfx.Box.hull_covers _ _ (Array.mem_append_left _ (Array.mem_map_of_mem hs))
+  · exact Gfx.Box.hull_covers _ _ (Array.mem_append_right _ hb)
 
 /-- The measured box loses nothing the declared box held: a shape's own
 geometry is its ink box unchanged, and a label's anchor is inside the
 measured box its ink occupies, so widening to the ink can only grow the
 hull. Every containment `box_in_bbox` gave still holds of `inkBbox`. -/
-public theorem Shape.box_le_inkBox (m : LabelMetric) (s : Shape) : Box.le s.box (s.inkBox m) := by
+public theorem Shape.box_le_inkBox (m : LabelMetric) (s : Shape) : Gfx.Box.le s.box (s.inkBox m) := by
   cases s with
   | label x y content color scale align =>
     exact labelGlyphBox_covers x y align _
-  | rect _ _ _ _ _ => exact Box.le_refl _
-  | circle _ _ _ _ _ => exact Box.le_refl _
-  | frame _ _ _ _ _ _ => exact Box.le_refl _
-  | edge _ _ _ => exact Box.le_refl _
+  | rect _ _ _ _ _ => exact Gfx.Box.le_refl _
+  | circle _ _ _ _ _ => exact Gfx.Box.le_refl _
+  | frame _ _ _ _ _ _ => exact Gfx.Box.le_refl _
+  | edge _ _ _ => exact Gfx.Box.le_refl _
 
 /-- Where a picture lands on a page: the map from picture coordinates
 (y up) to layout coordinates (y down). The elaborator has already applied
@@ -4514,17 +4448,38 @@ public structure Place where
 @[expose] public def Place.toPage (t : Place) (u : Sp × Sp) : Sp × Sp :=
   (t.x0 + (u.1 - t.xmin), t.yTop + (t.ymax - u.2))
 
+/-- The placement as the vector model's integer isometry: a translation and
+the y reflection. -/
+@[expose] public def Place.toIso (t : Place) : Gfx.Iso :=
+  { flipY := true, dx := t.x0 - t.xmin, dy := t.yTop + t.ymax }
+
+/-- **Today's placement is an isometry** (`_exact`): `toPage` is
+`Place.toIso` applied, point for point — so the exact inverse and the
+containment below are the isometry's, and every mark the vector model
+places lands where `toPage` put it. -/
+public theorem Place.affine_exact (t : Place) (u : Sp × Sp) : t.toPage u = t.toIso.apply u := by
+  obtain ⟨ux, uy⟩ := u
+  have hx : ∀ a b c : Int, a + (c - b) = c + (a - b) := by intro a b c; omega
+  have hy : ∀ a b c : Int, a + (b - c) = a + b - c := by intro a b c; omega
+  simp only [toPage, toIso, Gfx.Iso.apply, ↓reduceIte]
+  exact Prod.ext (hx _ _ _) (hy _ _ _)
+
 public def Place.ofPage (t : Place) (q : Sp × Sp) : Sp × Sp :=
   (t.xmin + (q.1 - t.x0), t.ymax - (q.2 - t.yTop))
 
-/-- The placement transform loses nothing: every page point recovers its
-picture point exactly. -/
+/-- Reading a page point back is the isometry's inverse. -/
+public theorem Place.ofPage_iso_exact (t : Place) (q : Sp × Sp) : t.ofPage q = t.toIso.inv.apply q := by
+  obtain ⟨qx, qy⟩ := q
+  have hx : ∀ a b c : Int, a + (c - b) = c + -(b - a) := by intro a b c; omega
+  have hy : ∀ m yT q : Int, m - (q - yT) = yT + m - q := by intro m yT q; omega
+  simp only [ofPage, toIso, Gfx.Iso.inv, Gfx.Iso.apply, ↓reduceIte]
+  exact Prod.ext (hx _ _ _) (hy _ _ _)
+
+/-- The placement transform loses nothing (`_id`): every page point
+recovers its picture point exactly — the isometry's inverse undoing it
+(`affine_exact`, `ofPage_iso_exact`). -/
 public theorem Place.ofPage_toPage (t : Place) (u : Sp × Sp) : t.ofPage (t.toPage u) = u := by
-  obtain ⟨ux, uy⟩ := u
-  have hx : ∀ a b c : Int, b + (a + (c - b) - a) = c := by intro a b c; omega
-  have hy : ∀ m yT q : Int, m - (yT + (m - q) - yT) = q := by intro m yT q; omega
-  simp only [toPage, ofPage, Prod.mk.injEq]
-  exact ⟨hx _ _ _, hy _ _ _⟩
+  rw [affine_exact, ofPage_iso_exact, Gfx.Iso.inv_apply_id]
 
 public theorem Place.toPage_ofPage (t : Place) (q : Sp × Sp) : t.toPage (t.ofPage q) = q := by
   obtain ⟨qx, qy⟩ := q
@@ -4534,21 +4489,20 @@ public theorem Place.toPage_ofPage (t : Place) (q : Sp × Sp) : t.toPage (t.ofPa
   exact ⟨hx _ _ _, hy _ _ _⟩
 
 /-- The transform preserves containment: a picture point inside a declared
-box lands inside that box's transform — x keeps its order, y reverses, so
-the placed box's top-left corner is the declared box's `(xmin, ymax)`. With
-`box_in_bbox` this is why no shape escapes the placed picture. -/
+box lands inside that box's transform — x keeps its order, y reverses, as
+the isometry `affine_exact` names does, so the placed box's top-left corner
+is the declared box's `(xmin, ymax)`. With `box_in_bbox` this is why no
+shape escapes the placed picture. -/
 public theorem Place.toPage_box (t : Place) (b : Box) (u : Sp × Sp)
     (hx1 : b.1.1 ≤ u.1) (hx2 : u.1 ≤ b.2.1) (hy1 : b.1.2 ≤ u.2) (hy2 : u.2 ≤ b.2.2) :
     (t.toPage (b.1.1, b.2.2)).1 ≤ (t.toPage u).1
       ∧ (t.toPage u).1 ≤ (t.toPage (b.2.1, b.1.2)).1
       ∧ (t.toPage (b.1.1, b.2.2)).2 ≤ (t.toPage u).2
       ∧ (t.toPage u).2 ≤ (t.toPage (b.2.1, b.1.2)).2 := by
-  have hx : ∀ x0 m a b : Int, a ≤ b → x0 + (a - m) ≤ x0 + (b - m) := by
-    intro x0 m a b h; omega
-  have hy : ∀ yT m a b : Int, a ≤ b → yT + (m - b) ≤ yT + (m - a) := by
-    intro yT m a b h; omega
-  simp only [toPage]
-  exact ⟨hx _ _ _ _ hx1, hx _ _ _ _ hx2, hy _ _ _ _ hy2, hy _ _ _ _ hy1⟩
+  have hx : ∀ d a b : Int, a ≤ b → a + d ≤ b + d := by intro d a b h; omega
+  have hy : ∀ d a b : Int, a ≤ b → d - b ≤ d - a := by intro d a b h; omega
+  simp only [affine_exact, toIso, Gfx.Iso.apply, ↓reduceIte]
+  exact ⟨hx _ _ _ hx1, hx _ _ _ hx2, hy _ _ _ hy2, hy _ _ _ hy1⟩
 
 end Pic
 

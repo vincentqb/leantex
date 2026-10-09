@@ -99,8 +99,9 @@ def seedPaletteChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO U
               (pdfGround (.ofPage doc.page) groundColor out)
             t (name ++ s!" {ground} preserves decorative fill and essential stroke in PDF")
               (out.pages.any fun page =>
-                page.fills.any (·.color == seeds.accent) &&
-                  page.paths.any fun p => p.stroke.any (·.color == c.accentEdge))
+                (pageDraws page).any (fun (_, fl, _) => fl.any (fillColor? · == some seeds.accent)) &&
+                  (pageDraws page).any fun (_, _, st) =>
+                    st.any fun s => strokeColor? s == some c.accentEdge)
             let (head, nodes, _) := HtmlDoc.emitTree {} doc
             t (name ++ s!" {ground} paints the HTML diagram ground")
               (htmlGround groundColor head)

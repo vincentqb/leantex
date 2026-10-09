@@ -29,31 +29,43 @@ private def source (shrink : Bool) : String :=
 private def labels (out : Layout.Out) : Array Layout.LineOut :=
   out.pages.flatMap fun p => p.lines.filter fun l => names.contains (lineText l)
 
-private def fills (out : Layout.Out) : Array Layout.Fill := out.pages.flatMap (·.fills)
+/-- Every picture draw on the pages, in paint order, with its picture's
+leaf, in layout coordinates. -/
+private def draws (out : Layout.Out) :
+    Array (Option Nat × Gfx.Geom × Option Gfx.Fill × Option Gfx.Stroke) :=
+  out.pages.flatMap fun p => p.inks.flatMap fun k =>
+    (nodeDrawsList #[] k.fig.nodes.toList).map fun (g, fl, st) => (k.leaf, g.mapIso k.place, fl, st)
 
-private def paths (out : Layout.Out) : Array Layout.PathOut := out.pages.flatMap (·.paths)
+/-- A picture's rectangle fill: a filled rectangle with no stroke. -/
+private def plainFill : Option Nat × Gfx.Geom × Option Gfx.Fill × Option Gfx.Stroke → Bool
+  | (_, .rect .., some _, none) => true
+  | _ => false
 
-/-- Independent observations of a shipped path: constructor, dimensions,
+private def fills (out : Layout.Out) := (draws out).filter plainFill
+
+private def paths (out : Layout.Out) := (draws out).filter (!plainFill ·)
+
+/-- Independent observations of a shipped draw: constructor, dimensions,
 segment kinds and every endpoint/control point. Translation changes only y. -/
-private def coordinates : Layout.PagePath → Nat × Array Dim.Sp × Array (Dim.Sp × Dim.Sp)
-  | .circle x y r => (0, #[r], #[(x, y)])
+private def coordinates : Gfx.Geom → Nat × Array Dim.Sp × Array (Dim.Sp × Dim.Sp)
+  | .ellipse x y rx ry => (0, #[rx, ry], #[(x, y)])
   | .rect x y w h => (1, #[w, h], #[(x, y)])
-  | .segs ss => (2, ss.map (fun s => match s with | .line .. => 0 | .cubic .. => 1),
-      ss.flatMap fun s => match s with
+  | .path subs => (2, (subpathSegs subs).map (fun s => match s with | .line .. => 0 | .cubic .. => 1),
+      (subpathSegs subs).flatMap fun s => match s with
       | .line x y u v => #[(x, y), (u, v)]
       | .cubic x y a b c d u v => #[(x, y), (a, b), (c, d), (u, v)])
-  | .tri x y u v a b => (3, #[], #[(x, y), (u, v), (a, b)])
 
-private def pathShift (before after : Layout.PathOut) (dy : Dim.Sp) : Bool :=
-  let (bk, bd, bp) := coordinates before.path
-  let (ak, ad, ap) := coordinates after.path
+private def pathShift (before after : Option Nat × Gfx.Geom × Option Gfx.Fill × Option Gfx.Stroke)
+    (dy : Dim.Sp) : Bool :=
+  let (bk, bd, bp) := coordinates before.2.1
+  let (ak, ad, ap) := coordinates after.2.1
   bk == ak && bd == ad && bp.size == ap.size &&
     (bp.zip ap).all (fun ((x, y), (u, v)) => x == u && v == y + dy) &&
-    before.stroke == after.stroke && before.fill == after.fill && before.leaf == after.leaf
+    before.2.2.2 == after.2.2.2 && before.2.2.1 == after.2.2.1 && before.1 == after.1
 
-private def fillShift (before after : Layout.Fill) (dy : Dim.Sp) : Bool :=
-  before.x == after.x && before.w == after.w && before.h == after.h &&
-    before.color == after.color && after.y == before.y + dy
+private def fillShift (before after : Option Nat × Gfx.Geom × Option Gfx.Fill × Option Gfx.Stroke)
+    (dy : Dim.Sp) : Bool :=
+  pathShift before after dy
 
 private def close (a b : Dim.Sp) : Bool :=
   -- Each PDF coordinate is rounded to .001 pt. Comparing two box edges
@@ -78,9 +90,11 @@ def pictureShrinkChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : 
   let (doc, ds) := elabMeasured oneFace (PictureShrink.source true)
   let geom := Layout.Geom.ofPage doc.page
   let roomy := layoutOf oneFace doc geom
-  -- The full-height background encloses every picture mark, so its last
+  -- Each picture's full-height fill encloses its marks, so the last one's
   -- bottom is the page builder's final natural bottom.
-  let naturalBottom := (PictureShrink.fills roomy).foldl (fun y f => max y (f.y + f.h)) 0
+  let naturalBottom := (PictureShrink.fills roomy).foldl (fun y f => match f.2.1 with
+    | .rect _ fy _ fh => max y (fy + fh)
+    | _ => y) 0
   let tightGeom := { geom with pageH := naturalBottom + geom.vmargin - Dim.pt 6 }
   let tight := layoutOf oneFace doc tightGeom
   let before := PictureShrink.labels roomy
@@ -97,8 +111,8 @@ def pictureShrinkChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : 
     let dy := -Dim.pt (#[0, 2, 6][i]!)
     let a := before[i]!
     let b := after[i]!
-    let ps := (PictureShrink.paths roomy).filter (·.leaf == a.leaf)
-    let qs := (PictureShrink.paths tight).filter (·.leaf == b.leaf)
+    let ps := (PictureShrink.paths roomy).filter (·.1 == a.leaf)
+    let qs := (PictureShrink.paths tight).filter (·.1 == b.leaf)
     t s!"picture shrink: {name} label follows its own preceding glue"
       (a.x == b.x && b.y == a.y + dy && a.leaf == b.leaf)
     t s!"picture shrink: {name} fill follows its label"
@@ -106,12 +120,12 @@ def pictureShrinkChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : 
         (PictureShrink.fills tight)[i]! dy)
     t s!"picture shrink: {name} all path coordinates follow its label"
       (ps.size == 5 && qs.size == 5 &&
-        ps.any (fun p => match p.path with | .circle .. => true | _ => false) &&
-        ps.any (fun p => match p.path with
-          | .segs ss => ss.any (fun s => match s with | .cubic .. => true | _ => false)
+        ps.any (fun p => match p.2.1 with | .ellipse .. => true | _ => false) &&
+        ps.any (fun p => match p.2.1 with
+          | .path subs => (subpathSegs subs).any (fun s => match s with | .cubic .. => true | _ => false)
           | _ => false) &&
         (ps.zip qs).all fun (p, q) => PictureShrink.pathShift p q dy)
-    let rects := qs.filterMap fun p => match p.path with
+    let rects := qs.filterMap fun p => match p.2.1 with
       | .rect _ y _ h => some (y, h)
       | _ => none
     t s!"picture shrink: {name} glyph ink stays centered in its node"
@@ -138,15 +152,15 @@ def pictureShrinkChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : 
          | [ra], [rb] => PictureShrink.close ra.x rb.x &&
            PictureShrink.close (b.mediaH - rb.y) (a.mediaH - ra.y + dy)
          | _, _ => false)
-      -- PDF paints all rectangle fills first, then each picture's five
-      -- paths in source order. Every box edge is read from PDF operators.
-      let indices := #[i] ++ (Array.range 5).map (fun k => 3 + 5 * i + k)
+      -- PDF paints each picture's marks in source order, its rectangle
+      -- fill first. Every box edge is read from PDF operators.
+      let indices := (Array.range 6).map (fun k => 6 * i + k)
       t s!"picture shrink: PDF {name} fill and all paths follow its label"
         (indices.all fun k => match a.boxes[k]?, b.boxes[k]? with
           | some p, some q => PictureShrink.boxShift a.mediaH b.mediaH p q dy
           | _, _ => false)
       t s!"picture shrink: PDF {name} baseline keeps its offset inside the box"
-        (match runsA.toList, runsB.toList, a.boxes[3 + 5 * i]?, b.boxes[3 + 5 * i]? with
+        (match runsA.toList, runsB.toList, a.boxes[6 * i + 1]?, b.boxes[6 * i + 1]? with
          | [ra], [rb], some p, some q =>
            PictureShrink.close (ra.y - p.y0) (rb.y - q.y0) &&
              PictureShrink.close (p.y1 - ra.y) (q.y1 - rb.y)

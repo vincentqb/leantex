@@ -4452,10 +4452,12 @@ def pictureLayoutChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : 
     layoutOf oneFace { body := body } geom
   let out := run #[.picture pic]
   t "picture ships one page" (out.pages.size == 1)
-  t "picture rect ships as one fill of its own size and colour"
-    ((out.pages[0]?.bind fun p => p.fills[0]?.map fun f =>
-      p.fills.size == 1 && f.x == geom.hmargin && f.y == geom.vmargin &&
-      f.w == Dim.pt 20 && f.h == Dim.pt 10 && f.color == red).getD false)
+  t "picture rect ships as one fill mark of its own size and colour, and no page fill"
+    ((out.pages[0]?.map fun p => p.fills.isEmpty && match (pageDraws p).toList with
+      | [(.rect x y w h, some f, none)] =>
+        x == geom.hmargin && y == geom.vmargin && w == Dim.pt 20 && h == Dim.pt 10 &&
+          f == Gfx.solidFill red
+      | _ => false).getD false)
   t "picture label ships its glyphs centred on the anchor"
     ((out.pages[0]?.map fun p =>
       match (p.lines.filter (!·.furniture)).toList with
@@ -4469,26 +4471,26 @@ def pictureLayoutChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : 
   -- A fills-only picture is page content: the page ships.
   let bare := run #[.picture { shapes := #[.rect 0 0 (Dim.pt 5) (Dim.pt 5) red] }]
   t "a picture of fills alone still ships its page"
-    ((bare.pages[0]?.map fun p => p.fills.size == 1).getD false)
+    ((bare.pages[0]?.map fun p => (pageDraws p).size == 1).getD false)
   -- An outlined node ships as a page path through the same transform:
   -- the centre maps like any picture point, the paint rides unchanged.
   let circled : Ir.Pic.Picture := { shapes := #[
     .circle (Dim.pt 10) (Dim.pt 5) (Dim.pt 5) (some ({} : Ir.Pic.Stroke)) (some red)] }
   let outC := run #[.picture circled]
   t "an outlined circle ships as one page path with its paint"
-    ((outC.pages[0]?.bind fun p => p.paths[0]?.map fun pa =>
-      (match pa.path with
-       | .circle cx cy r =>
-         cx == geom.hmargin + Dim.pt 5 && cy == geom.vmargin + Dim.pt 5 && r == Dim.pt 5
+    ((outC.pages[0]?.bind fun p => (pageDraws p)[0]?.map fun (g, fl, st) =>
+      (match g with
+       | .ellipse cx cy rx ry =>
+         cx == geom.hmargin + Dim.pt 5 && cy == geom.vmargin + Dim.pt 5 && rx == Dim.pt 5 &&
+           ry == Dim.pt 5
        | .rect _ _ _ _ => false
-       | .segs _ => false
-       | .tri _ _ _ _ _ _ => false) &&
-      pa.stroke == some ({} : Ir.Pic.Stroke) && pa.fill == some red).getD false)
+       | .path _ => false) &&
+      st == some (Gfx.strokeOf {}) && fl == some (Gfx.solidFill red)).getD false)
   -- `{center}` centres the box, as it centres a paragraph's lines.
   let centered := run #[.center #[.picture pic]]
   t "a centred picture centres its box"
-    ((centered.pages[0]?.bind fun p => p.fills[0]?.map fun f =>
-      f.x == geom.hmargin + (geom.textWidth - Dim.pt 20) / 2).getD false)
+    ((centered.pages[0]?.bind fun p => (pageDraws p)[0]?.map fun (g, _, _) =>
+      (markExtent g).1 == geom.hmargin + (geom.textWidth - Dim.pt 20) / 2).getD false)
   -- The diagnostic half of the contract: a box the text area cannot hold.
   let wide := run #[.picture { shapes :=
     #[.rect 0 0 (geom.textWidth + Dim.pt 50) (Dim.pt 10) red] }]
@@ -4753,7 +4755,7 @@ def fillCentreChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO 
     let (d, _) := elabStr (doc (card ++ "\\usepackage{tikz}\\pagestyle{empty}" ++ pre) body)
     let g := Layout.Geom.ofPage d.page
     let p ← (layoutOf oneFace d).pages[0]?
-    let (top, h) ← p.paths.findSome? fun q => match q.path with
+    let (top, h) ← (pageDraws p).findSome? fun (g, _, _) => match g with
       | .rect _ y _ h => some (y, h)
       | _ => none
     let label ← p.lines.find? fun l => hasStr (lineText l) "Alpha"
@@ -5244,9 +5246,9 @@ def frameBodyChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO U
   let (pd, _) := elabStr picSrc
   let below : Option Dim.Sp := do
     let p ← (layoutOf oneFace pd).pages[0]?
-    let f ← p.fills.find? fun f => f.h < (Layout.Geom.ofPage pd.page).pageH
+    let (_, fy, _, fh) ← (pageDraws p)[0]?.map fun (g, _, _) => markExtent g
     let l ← p.lines.find? fun l => hasStr (lineText l) "Charlie."
-    pure (l.y - (f.y + f.h))
+    pure (l.y - (fy + fh))
   let c := censusOfSrc oneFace (art "Bravo.")
   let pitch : Option Dim.Sp := do
     let b ← lineYOf c 0 "Bravo."

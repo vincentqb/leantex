@@ -198,9 +198,9 @@ actual PDF paint list. Every rectangle covers the medium, no path paints,
 and no later non-text segment can obscure the text. The last rectangle
 wins; an unpainted PDF page uses white paper. This certifies the uniform
 substrate only, not absence of overlapping text or full WCAG conformance.
-PDF painting order is `fills`, `paths`, text, then inline graphics. -/
+PDF painting order is `fills`, picture ink, text, then inline graphics. -/
 public def uniformTextGround? (geom : Geom) (page : PageOut) : Option Color :=
-  if page.paths.any (fun path => path.fill.isSome || path.stroke.isSome) ||
+  if page.inks.any (fun ink => !ink.fig.marks.isEmpty) ||
       !(page.lines.all fun line => line.segs.all textOnly) ||
       !(page.fills.all fun fill =>
         fill.x ≤ -geom.bleed && fill.y ≤ -geom.bleed &&

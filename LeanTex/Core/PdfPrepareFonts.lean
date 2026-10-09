@@ -52,7 +52,7 @@ public theorem prepare_census_fonts_exact (geom : Layout.Geom) (fs : Font.FontSe
   generalize hk : keepOf (usedAll fs pages) = keep at hm href
   simp only [List.mem_append, List.mem_cons, List.not_mem_nil, or_false,
     Prod.mk.injEq] at hm
-  rcases hm with (((((hcat | hpages) | hfont) | hinfo) | hout) | hpage) | hstruct
+  rcases hm with (((((((hcat | hpages) | hfont) | hinfo) | hout) | hpage) | hstruct) | hres) | hfig
   · rw [hcat.2] at hf
     exact False.elim (catalog_not_font _ _ _ _ hf)
   · rw [hpages.2, kindOf_pages_exact _ (by simp [Obj.get?])] at hf
@@ -61,6 +61,8 @@ public theorem prepare_census_fonts_exact (geom : Layout.Geom) (fs : Font.FontSe
     apply fontObjects_rows_embedded_exact _ k _ _ _ es e hrow hf
     apply href
     simp only [List.mem_append, List.mem_cons, List.not_mem_nil, or_false]
+    apply Or.inl
+    apply Or.inl
     apply Or.inl
     apply Or.inl
     apply Or.inl
@@ -121,5 +123,17 @@ public theorem prepare_census_fonts_exact (geom : Layout.Geom) (fs : Font.FontSe
         cases se.alt <;> cases se.lang <;> cases se.actualText <;>
           simp only [Obj.get?, Array.find?_append, find_choice,
             Array.find?_empty] <;> simp
+  · rw [hres.2] at hf
+    apply False.elim
+    apply kindOf_no_subtype_not_font _ ?_ ?_ hf
+    · rw [(resourcesDict_untyped_exact _ _ _ _ _).1]
+      simp
+    · exact (resourcesDict_untyped_exact _ _ _ _ _).2
+  · obtain ⟨⟨r, j⟩, _, heq⟩ := List.mem_map.mp hfig
+    have hv := congrArg Prod.snd heq
+    dsimp only at hv
+    rw [← hv] at hf
+    have hu := figDictObj_untyped_exact (nameRes (figureTable geom pages) r)
+    exact False.elim (kindOf_no_subtype_not_font _ hu.1 hu.2 hf)
 
 end LeanTex.Core.Pdf

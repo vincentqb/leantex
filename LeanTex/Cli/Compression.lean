@@ -141,6 +141,19 @@ public def fontZdata (root : Option System.FilePath) (fontCount : Nat)
     (fontJobs fontCount keep programs) limit compute
   return storeFonts fontCount done
 
+/-- Each copied page's content the writer stores, deflated through the
+cache by store entry — `Image.Store.formZ`: a figure unchanged since the
+last build reads its stream back instead of compressing it, as a page and a
+font program do. -/
+public def formZdata (root : Option System.FilePath) (contents : Array (Option ByteArray))
+    (limit : Nat := 4)
+    (compute : ByteArray → IO ByteArray := fun b => pure (Flate.deflate b)) :
+    IO (Array (Option ByteArray)) := do
+  let jobs := contents.zipIdx.filterMap fun (c, k) => c.map ((k, ·))
+  let done ← mapCached root Prod.snd (fun job z => (job.1, z)) jobs limit compute
+  return done.foldl (fun out (k, z) => out.setIfInBounds k (some z))
+    (Array.replicate contents.size none)
+
 -- These are the partitions consumed by mapCached's cold/mixed branch.
 -- The captured key is also the path read and published by deflateAtPath.
 public theorem pageBatches_exact (root : Option System.FilePath) (pages : Array ByteArray)

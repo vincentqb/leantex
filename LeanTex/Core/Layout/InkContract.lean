@@ -343,7 +343,7 @@ public theorem emitPictureShape_lines (fs : FontSet) (imgs : Image.Store) (geom 
     (out : PictureEmission) (shape : Ir.Pic.Shape) (line : LineOut)
     (h : line ∈ out.lines) :
     line ∈ (emitPictureShape fs imgs geom xHeight leaf place out shape).lines := by
-  cases shape <;> simp only [emitPictureShape, Id.run, pure]
+  cases shape <;> simp only [emitPictureShape]
   all_goals first
     | exact h
     | (split <;> simp [h])
@@ -354,7 +354,7 @@ public theorem emitPictureShape_diags (fs : FontSet) (imgs : Image.Store) (geom 
     (out : PictureEmission) (shape : Ir.Pic.Shape) (d : Diag)
     (h : d ∈ out.diags) :
     d ∈ (emitPictureShape fs imgs geom xHeight leaf place out shape).diags := by
-  cases shape <;> simp only [emitPictureShape, Id.run, pure]
+  cases shape <;> simp only [emitPictureShape]
   all_goals first
     | exact h
     | exact Array.mem_append_left _ h
@@ -369,7 +369,7 @@ public theorem emitPictureShape_label_lines (fs : FontSet) (imgs : Image.Store) 
       (emitLabel fs imgs geom xHeight leaf place x y content color scale align).line?.toArray) :
     line ∈ (emitPictureShape fs imgs geom xHeight leaf place out
       (.label x y content color scale align)).lines := by
-  simp only [emitPictureShape, Id.run, pure]
+  simp only [emitPictureShape]
   cases he : (emitLabel fs imgs geom xHeight leaf place x y content color scale align).line?
   · simp [he] at h
   · simp [he] at h
@@ -532,5 +532,36 @@ public theorem label_alignment_covers_exact (x y : Sp) (align : Ir.Pic.LabelAlig
     intro top height above
     omega
   exact arith _ _ _
+
+private theorem mapIdx_keep {α : Type} (xs : Array α) (n : Nat) (f : α → α)
+    (hf : ∀ a, f a = a) : xs.mapIdx (fun i a => if i < n then a else f a) = xs := by
+  apply Array.ext
+  · simp
+  · intro i _ _
+    simp only [Array.getElem_mapIdx]
+    split <;> simp [hf]
+
+/-- **A title slot moves what it placed as one box** (`_exact`): every line,
+fill and picture ink placed since the slot opened moves by the one shift its
+lines take, and what stood before the slot stays. A slot that moved its
+lines and fills and left a picture's strokes in flow position once split
+the picture from its own labels. -/
+private theorem placeSlot_shift_exact (fs : FontSet) (b : Spacing.Page)
+    (save : ColSave × Nat × Nat × Nat) (spec : SlotSpec) :
+    ∃ dx dy : Sp,
+      (b.placeSlot fs save spec).cur.lines = b.cur.lines.mapIdx (fun i l =>
+        if i < save.2.1 then l else { l with x := l.x + dx, y := l.y + dy }) ∧
+      (b.placeSlot fs save spec).cur.fills = b.cur.fills.mapIdx (fun i f =>
+        if i < save.2.2.1 then f else { f with x := f.x + dx, y := f.y + dy }) ∧
+      (b.placeSlot fs save spec).cur.inks = b.cur.inks.mapIdx (fun i k =>
+        if i < save.2.2.2 then k else (k.shiftX dx).shiftY dy) := by
+  obtain ⟨col, l0, f0, k0⟩ := save
+  simp only [Spacing.Page.placeSlot]
+  split
+  · refine ⟨0, 0, ?_, ?_, ?_⟩
+    · exact (mapIdx_keep _ _ _ fun l => by simp).symm
+    · exact (mapIdx_keep _ _ _ fun f => by simp).symm
+    · exact (mapIdx_keep _ _ _ fun k => by simp [InkOut.shiftX, InkOut.shiftY]).symm
+  · exact ⟨_, _, rfl, rfl, rfl⟩
 
 end LeanTex.Core.Layout

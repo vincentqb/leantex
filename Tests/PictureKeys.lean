@@ -15,7 +15,7 @@ def picDoc (pre opts body : String) : String :=
 /-- The stroke widths the first page ships, in paint order. -/
 def shippedWidths (oneFace : Font.FontSet) (src : String) : Array Dim.Sp :=
   ((layoutOf oneFace (elabStr src).1).pages[0]?.map fun p =>
-    p.paths.filterMap fun q => q.stroke.map (·.width)).getD #[]
+    (pageDraws p).filterMap fun (_, _, st) => st.map (·.width)).getD #[]
 
 /-- Does the source name any picture loss? Over the structured diagnostic. -/
 def picLoss (src : String) : Bool :=
@@ -164,11 +164,9 @@ def pictureTextBoxChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) :
     let (doc, _) := elabMeasured oneFace src
     let page ← (layoutOf oneFace doc).pages[0]?
     let label ← page.lines.find? fun l => hasStr (lineText l) "Label"
-    let starts := page.paths.filterMap fun q => match q.path with
-      | .segs ss => ss[0]?.map fun s => match s with
-        | .line _ y1 _ _ => y1
-        | .cubic _ y1 _ _ _ _ _ _ => y1
-      | _ => none
+    let starts := (pageDraws page).filterMap fun (g, _, st) => match g, st with
+      | .path subs, some _ => subs[0]?.map (·.start.2)
+      | _, _ => none
     let north ← starts[0]?
     let south ← starts[1]?
     pure (label.y, north, south)
@@ -270,13 +268,11 @@ def pictureClosedPathChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet
     IO Unit := do
   let t := check ref
   let pageOf (src : String) : Option Layout.PageOut := (layoutOf oneFace (elabStr src).1).pages[0]?
-  let paths (src : String) : Array Layout.PathOut := ((pageOf src).map (·.paths)).getD #[]
+  let draws (src : String) := ((pageOf src).map pageDraws).getD #[]
   let rect := picDoc "" "" "\\draw[thick] (0,0) rectangle (2,1);"
   t "a drawn rectangle strokes the box its corners span, and names nothing"
-    ((match (paths rect).toList with
-      | [q] => match q.path, q.stroke with
-        | .rect _ _ w h, some st => w == Dim.mm 20 && h == Dim.mm 10 && st.width == Dim.pt 4 / 5
-        | _, _ => false
+    ((match (draws rect).toList with
+      | [(.rect _ _ w h, _, some st)] => w == Dim.mm 20 && h == Dim.mm 10 && st.width == Dim.pt 4 / 5
       | _ => false) && !picLoss rect)
   let (rd, _) := elabStr rect
   t "the SVG strokes the rectangle as one closed outline"
@@ -284,14 +280,14 @@ def pictureClosedPathChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet
       (rd.body.foldl (fun acc b => acc ++ attrValuesOf (fun _ => true) "height" (HtmlDoc.blockNode {} b)) #[]).contains
         (Dim.mm 10).toPtString)
   let tri := picDoc "" "" "\\draw (0,0) -- (2,0) -- (1,1) -- cycle;"
-  let triSegs : Array Ir.Pic.PathSeg := (paths tri).foldl (fun acc q => match q.path with
-    | .segs ss => acc ++ ss
-    | _ => acc) #[]
+  let triSegs : Array Ir.Pic.PathSeg := ((pageOf tri).map edgeSegs).getD #[]
   t "-- cycle closes the path back to its start, and names nothing"
     (closedChain triSegs && !picLoss tri)
   let geom := Layout.Geom.ofPage (elabStr tri).1.page
-  let moves := (paths tri).foldl (fun n q =>
-    n + ((Pdf.pathSegs geom q.path).filter fun op => op matches .moveTo ..).size) 0
+  let moves := ((pageOf tri).map fun p => p.inks.foldl (fun n k =>
+    n + ((Pdf.inkPaint geom Pdf.figureNames k).foldl (fun n op => match op with
+      | .paint _ (some _) _ segs => n + (segs.filter fun op => op matches .moveTo ..).size
+      | _ => n) 0)) 0).getD 0
   t "the PDF strokes the closed polygon as one subpath"
     (moves == 1)
 
@@ -370,7 +366,7 @@ def pictureNodeCentreChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet
   let pageOf (body : String) : Option Layout.PageOut :=
     (layoutOf oneFace (elabMeasured oneFace (picDoc "" "" body)).1).pages[0]?
   let frames (p : Layout.PageOut) : Array (Dim.Sp × Dim.Sp × Dim.Sp × Dim.Sp) :=
-    p.paths.filterMap fun q => match q.path with
+    (pageDraws p).filterMap fun (g, _, _) => match g with
       | .rect x y w h => some (x, y, w, h)
       | _ => none
   let mid (b : Dim.Sp × Dim.Sp × Dim.Sp × Dim.Sp) : Dim.Sp := b.2.1 + b.2.2.2 / 2
@@ -383,11 +379,13 @@ def pictureNodeCentreChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet
   t "two drawn nodes at one height stand their outlines on one centre line, whatever their letters"
     ((pair.map fun p => level (frames p)).getD false)
   t "the edge between them is level"
-    ((pair.map fun p => p.paths.any fun q => match q.path with
-      | .segs ss => !ss.isEmpty && ss.all fun s => match s with
-        | .line _ y1 _ y2 => y1 == y2
-        | .cubic .. => false
-      | _ => false).getD false)
+    ((pair.map fun p => (pageDraws p).any fun (g, _, st) => match g, st with
+      | .path subs, some _ =>
+        let ss := subpathSegs subs
+        !ss.isEmpty && ss.all fun s => match s with
+          | .line _ y1 _ y2 => y1 == y2
+          | .cubic .. => false
+      | _, _ => false).getD false)
   let chain := pageOf ("\\node[draw] (c) at (0,0) {A};\\node[draw, right=of c] (d) {g};\n" ++
     "\\node[draw, right=of d] (e) {A};")
   t "a right=of chain of drawn nodes keeps one centre line"
@@ -426,16 +424,18 @@ def pictureOuterSepChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) 
   let pageOf (body : String) : Option Layout.PageOut :=
     (layoutOf oneFace (elabMeasured oneFace (picDoc "" "" body)).1).pages[0]?
   let frames (p : Layout.PageOut) : Array (Dim.Sp × Dim.Sp × Dim.Sp × Dim.Sp) :=
-    p.paths.filterMap fun q => match q.path with
+    (pageDraws p).filterMap fun (g, _, _) => match g with
       | .rect x y w h => some (x, y, w, h)
       | _ => none
   let edgeXs (p : Layout.PageOut) : Option (Dim.Sp × Dim.Sp) :=
-    p.paths.findSome? fun q => match q.path with
-      | .segs ss => match ss[0]?, ss[ss.size - 1]? with
+    (pageDraws p).findSome? fun (g, _, st) => match g, st with
+      | .path subs, some _ =>
+        let ss := subpathSegs subs
+        match ss[0]?, ss[ss.size - 1]? with
         | some (Ir.Pic.PathSeg.line x1 _ _ _), some (Ir.Pic.PathSeg.line _ _ x2 _) =>
           some (min x1 x2, max x1 x2)
         | _, _ => none
-      | _ => none
+      | _, _ => none
   -- The gaps from the left outline's right side to the edge's start, and
   -- from the edge's end to the right outline's left side.
   let gaps (opts : String) : Option (Dim.Sp × Dim.Sp) := do

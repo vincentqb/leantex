@@ -80,6 +80,15 @@ public import LeanTex.Core.PdfObjectHeaderProof
 public import LeanTex.Core.PdfFontContract
 public import LeanTex.Core.PdfProducerProof
 public import LeanTex.Core.PdfFontsProof
+public import LeanTex.Core.Gfx
+public import LeanTex.Core.GfxAffine
+public import LeanTex.Core.GfxPicture
+public import LeanTex.Core.PdfOps
+public import LeanTex.Core.GfxPdf
+public import LeanTex.Core.GfxSvg
+public import LeanTex.Core.GfxContract
+public import LeanTex.Core.PdfFigures
+public import LeanTex.Core.PdfCopiedForm
 public import LeanTex.Cli.Args
 public import LeanTex.Cli.Render
 public import LeanTex.Cli.DriverDiag

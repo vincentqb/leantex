@@ -1,6 +1,7 @@
 module
 
 public import Tests.Backends
+public import Tests.GfxMatrix
 
 public section
 
@@ -57,12 +58,17 @@ def Role.name : Role → String
   | .parentTree => "parent tree"
   | .leaf => "stream"
 
-/-- The references a resources dictionary names, one level: its `/Font`
-and `/XObject` entries (each a direct dictionary or one hop). -/
+/-- The references a resources dictionary names, one level: the
+dictionary itself when it is shared (indirect, ISO 32000-2 §7.7.3.3), its
+`/Font` and `/XObject` entries, and the ExtGStates, patterns and shadings a
+figure names (each a direct dictionary or one hop). -/
 def resourceRefs (es : Array Entry) (res : Obj) : Array (Role × Nat) := Id.run do
+  let mut out : Array (Role × Nat) := match res with
+    | .ref n _ => #[(.leaf, n)]
+    | _ => #[]
   let res := PdfCensus.deref es res
-  let mut out : Array (Role × Nat) := #[]
-  for (key, role) in [("Font", Role.font), ("XObject", Role.xobject)] do
+  for (key, role) in [("Font", Role.font), ("XObject", Role.xobject), ("ExtGState", Role.leaf),
+      ("Pattern", Role.leaf), ("Shading", Role.leaf)] do
     match PdfCensus.deref es ((res.get? key).getD .null) with
     | .dict kvs =>
       for (_, v) in kvs do
@@ -316,9 +322,10 @@ def Matrix.profile (m : Matrix) (profile fixture : String) : Option Verdict :=
 flate stream inflated beside them, `pdfText`): the spelled oracle of the
 typed census. `copiedGraph` has no spelling of its own — its objects are
 another producer's — `objStmMulti` is a count of streams, not a spelling,
-and the four the writer never emits (`tabs`, `transparencyGroup`, `brotli`,
-`jpx`) have none yet; `emittedFeatures` covers what is listed here, and the
-parsed reading below the rest. -/
+a transparency group's spelling can stand inside a copied graph too, and
+the three the writer never emits (`tabs`, `brotli`, `jpx`) have none yet;
+`emittedFeatures` covers what is listed here, and the parsed reading below
+the rest. -/
 def featureSpellings : List (Pdf.Feature × String) := [
   (.xrefStream, "/Type /XRef"),
   (.objStm, "/Type /ObjStm"),
@@ -398,8 +405,12 @@ def featuresOfEntries (es : Array Entry) : List Pdf.Feature := Id.run do
     match PdfCensus.deref es ((o.get? "Annots").getD .null) with
     | .arr xs => xs.any fun a => uriAction (PdfCensus.deref es a)
     | _ => false
+  -- The pages' shared resources: what the writer's own figure forms name.
+  let pageRes : Option Obj := (es.find? fun e => PdfCensus.kindOf e.val == .page).bind
+    (·.val.get? "Resources")
   let copiedGraph : Bool := es.any fun e =>
-    PdfCensus.kindOf e.val == .form && objHasRef ((e.val.get? "Resources").getD .null)
+    PdfCensus.kindOf e.val == .form && e.val.get? "Resources" != pageRes &&
+      objHasRef ((e.val.get? "Resources").getD .null)
   -- A page's content, decoded, opens a marked sequence.
   let markedContent : Bool := es.any fun e =>
     PdfCensus.kindOf e.val == .page &&
@@ -411,6 +422,12 @@ def featuresOfEntries (es : Array Entry) : List Pdf.Feature := Id.run do
             | _ => false
           | none => false
         | _ => false)
+  -- The writer's own transparency groups: a form isolated by its group
+  -- (§11.6.6) that names the shared resources the pages name; a copied
+  -- page's graph is the source's, and stays under `copiedGraph`.
+  let transparencyGroup : Bool := es.any fun e =>
+    PdfCensus.kindOf e.val == .form && pageRes.isSome && e.val.get? "Resources" == pageRes &&
+      nameIs ((PdfCensus.deref es ((e.val.get? "Group").getD .null)).get? "S") "Transparency"
   let feats : List (Pdf.Feature × Bool) := [
     (.xrefStream, has .xref),
     (.objStm, has .objStm),
@@ -427,7 +444,8 @@ def featuresOfEntries (es : Array Entry) : List Pdf.Feature := Id.run do
     (.xmp, has .metadata),
     (.trimBox, anyVal fun o => (o.get? "TrimBox").isSome),
     (.markedContent, markedContent),
-    (.structTree, anyVal fun o => nameIs (o.get? "Type") "StructTreeRoot")]
+    (.structTree, anyVal fun o => nameIs (o.get? "Type") "StructTreeRoot"),
+    (.transparencyGroup, transparencyGroup)]
   return feats.filterMap fun (f, b) => if b then some f else none
 
 /-- The parsed reading of a file's bytes, as matrix row names. -/
@@ -576,6 +594,24 @@ def pdfConformanceChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet)
       gaps.isEmpty
   t s!"pdf features: the golden set reaches marked content, a soft mask, a copied graph, a DCT image, several object streams"
     (["marked-content", "smask", "copied-graph", "dct", "objstm-multi"].all reached.contains)
+  -- No corpus picture paints through a form yet, so the figure forms get a
+  -- page of their own: an alpha group's and a symbol's (the synthetic
+  -- matrix's figures). The census names the forms the file carries — a
+  -- census that read only copied pages' bases once left them unnamed —
+  -- and the typed census and the parsed bytes agree on every row.
+  let figInks : Array Layout.InkOut := #[4, 5].filterMap fun i =>
+    (Tests.GfxMatrix.cases[i]?).map fun c =>
+      { fig := c.2, place := { flipY := true, dx := Dim.pt 50, dy := Dim.pt 300 }, leaf := none }
+  let figPages : Array Layout.PageOut := #[{ inks := figInks }]
+  let figGeom : Layout.Geom := {}
+  let figTyped := (Pdf.features figGeom oneFace figPages).map Pdf.Feature.name
+  let figParsed := ((PdfRead.objects (Pdf.write figGeom oneFace figPages)).map fun es =>
+    (featuresOfEntries es.val).map Pdf.Feature.name).toOption.getD []
+  t s!"pdf features figures: the census names the figure forms: {figTyped}"
+    (figTyped.contains "form-xobject" && figTyped.contains "transparency-group" &&
+      !figTyped.contains "copied-graph")
+  t s!"pdf features figures: typed census {figTyped} = parsed bytes {figParsed}"
+    (figTyped.all figParsed.contains && figParsed.all figTyped.contains)
   -- The mutants, through the walk: one corpus document with images.
   let src ← IO.FS.readFile "testdata/corpus/images.tex"
   let (doc, _) ← elabFixture "images" src

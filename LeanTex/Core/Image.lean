@@ -2110,6 +2110,11 @@ public def sourceCandidates (src : String) : List String :=
 
 public structure Store where
   entries : Array Loaded := #[]
+  /-- Each entry's copied PDF page content deflated, when the driver
+  deflated it through its content-hash cache — the writer then only picks
+  the smaller spelling (`Pdf.copiedFormStream`), as it does for font
+  programs (`Font.FontSet.zdata`). -/
+  formZ : Array (Option ByteArray) := #[]
   deriving Inhabited
 
 @[expose] public def Store.findRequest? (s : Store) (req : Request) : Option Nat :=

@@ -403,7 +403,7 @@ def goldenNames : List String :=
    "bibliography", "resume-data",
    "icons",
    "diagram", "diagram-boundary", "diagram-overflow", "diagram-refused", "diagram-shapes",
-   "diagram-tikzset",
+   "diagram-tikzset", "diagram-strokes",
    "tables", "tables-ragged", "tables-deck", "subfigures", "float-center", "box-sides",
    "math-companion", "math-first", "math-text", "math-alpha", "math-cancel", "greek-literal", "abstract", "crossref", "eqnum", "footnotes",
    "redefine", "titlebars", "titleground", "daylight", "blocks", "poster", "poster-headline", "listings",
@@ -702,7 +702,8 @@ structure CensusPage where
   cut-mark facts read (marks inside the bleed strip, none in the gap,
   duplex-symmetric). -/
   fillRects : Array (Dim.Sp × Dim.Sp × Dim.Sp × Dim.Sp) := #[]
-  /-- Picture paths shipped on the page: node outlines and edges. -/
+  /-- Picture paths shipped on the page: every mark of every picture's ink
+  — a node outline, an edge, a tip, a rectangle fill — in paint order. -/
   paths : Nat
   /-- Every shipped path's stroke, in paint order: its colour and width.
   What a fact about an inherited picture-level key reads — a key set on
@@ -725,6 +726,11 @@ structure CensusPage where
   resolved centre is only visible on the page
   (`Picture.placeRel_exact`, `Picture.place_order_agree`). -/
   pathBoxes : Array (Dim.Sp × Dim.Sp × Dim.Sp × Dim.Sp) := #[]
+  /-- Every shipped path's subpaths in paint order, each its segment count,
+  with whether its stroke is dashed: what a fact about a joined chain reads
+  — one subpath of two segments joins at its corner, where two subpaths of
+  one segment each would cap it. A rectangle or an ellipse has none. -/
+  pathRuns : Array (Array Nat × Bool) := #[]
   /-- Image boxes shipped on the page: an embedded figure, or a boundary
   request's box (fulfilled or placeholder) — what the diagram-boundary
   row reads to pin that the request ships ink where the picture stood. -/
@@ -749,6 +755,86 @@ def coveredColorsOf (doc : Ir.Doc) : Array Ir.Color :=
   (doc.palette.entries.filterMap fun (_, c) =>
     let covered := cov.of c
     if covered == c then none else some covered).push cov.plain
+
+/-- A page's picture marks in layout coordinates, in paint order: each draw
+of each ink, its geometry carried by the ink's placement. A picture's marks
+stand in its own frame (`ctm` the identity), so the placement is the whole
+map. -/
+def pageInkMarks (p : Layout.PageOut) :
+    Array (Gfx.Geom × Option Gfx.Fill × Option Gfx.Stroke) :=
+  p.inks.flatMap fun k => k.fig.marks.filterMap fun mk => match mk with
+    | .paint _ g fl st _ _ => some (g.mapIso k.place, fl, st)
+    | .raster _ _ _ _ => none
+    | .shading _ _ _ => none
+
+mutual
+
+/-- A node's draws onto `acc`, at any depth, as the figure states them. -/
+def nodeDrawsOne (acc : Array (Gfx.Geom × Option Gfx.Fill × Option Gfx.Stroke)) :
+    Gfx.Node Empty → Array (Gfx.Geom × Option Gfx.Fill × Option Gfx.Stroke)
+  | .draw g fl st => acc.push (g, fl, st)
+  | .group _ _ _ kids => nodeDrawsList acc kids.toList
+  | .use _ _ | .stamp _ _ _ _ | .image _ _ | .label _ | .words _ => acc
+
+def nodeDrawsList (acc : Array (Gfx.Geom × Option Gfx.Fill × Option Gfx.Stroke)) :
+    List (Gfx.Node Empty) → Array (Gfx.Geom × Option Gfx.Fill × Option Gfx.Stroke)
+  | [] => acc
+  | n :: rest => nodeDrawsList (nodeDrawsOne acc n) rest
+
+end
+
+/-- A page's picture draws in layout coordinates, in paint order, each
+geometry as the figure states it (a circle a circle) carried by its ink's
+placement: what a test about a shipped shape reads. -/
+def pageDraws (p : Layout.PageOut) : Array (Gfx.Geom × Option Gfx.Fill × Option Gfx.Stroke) :=
+  p.inks.flatMap fun k =>
+    (nodeDrawsList #[] k.fig.nodes.toList).map fun (g, fl, st) => (g.mapIso k.place, fl, st)
+
+/-- A fill's colour, when it fills with one. -/
+def fillColor? (f : Gfx.Fill) : Option Ir.Color :=
+  match f.paint with
+  | .solid c => some c
+  | .gradient _ => none
+
+/-- A stroke's colour, when it strokes with one. -/
+def strokeColor? (s : Gfx.Stroke) : Option Ir.Color :=
+  match s.paint with
+  | .solid c => some c
+  | .gradient _ => none
+
+/-- A path's segments with their start points, in layout coordinates: the
+edge segments a stroked path draws. -/
+def subpathSegs (subs : Array Gfx.Subpath) : Array Ir.Pic.PathSeg :=
+  subs.flatMap fun sp => Id.run do
+    let mut out : Array Ir.Pic.PathSeg := #[]
+    let mut cur := sp.start
+    for sg in sp.segs do
+      match sg with
+      | .line q => out := out.push (.line cur.1 cur.2 q.1 q.2)
+      | .cubic c1 c2 q => out := out.push (.cubic cur.1 cur.2 c1.1 c1.2 c2.1 c2.2 q.1 q.2)
+      cur := sg.endPt
+    return out
+
+/-- The segments of a page's picture edges — its stroked paths — in paint
+order, in layout coordinates. -/
+def edgeSegs (p : Layout.PageOut) : Array Ir.Pic.PathSeg :=
+  (pageDraws p).foldl (fun acc (g, _, st) => match g, st with
+    | .path subs, some _ => acc ++ (subpathSegs subs)
+    | _, _ => acc) #[]
+
+/-- A placed mark's extent as the page census reads it: a rectangle's own
+box, a path's box over its endpoints (start and segment ends, not control
+points) — a circle's arcs end on its bounding square. -/
+def markExtent : Gfx.Geom → Dim.Sp × Dim.Sp × Dim.Sp × Dim.Sp
+  | .rect x y w h => (x, y, w, h)
+  | .ellipse cx cy rx ry => (cx - rx, cy - ry, 2 * rx, 2 * ry)
+  | .path subs =>
+    let pts := subs.flatMap fun sp => #[sp.start] ++ sp.segs.map Gfx.Seg.endPt
+    let xs := pts.map (·.1)
+    let ys := pts.map (·.2)
+    let x0 := xs.foldl min (xs[0]?.getD 0)
+    let y0 := ys.foldl min (ys[0]?.getD 0)
+    (x0, y0, xs.foldl max (xs[0]?.getD 0) - x0, ys.foldl max (ys[0]?.getD 0) - y0)
 
 def censusOf (coveredColors : Array Ir.Color) (out : Layout.Out) :
     Array CensusPage := Id.run do
@@ -815,46 +901,21 @@ def censusOf (coveredColors : Array Ir.Color) (out : Layout.Out) :
                           polys := polys
                           fills := p.fills.size
                           fillRects := p.fills.map fun f => (f.x, f.y, f.w, f.h)
-                          paths := p.paths.size
-                          pathStrokes := p.paths.filterMap fun q =>
-                            q.stroke.map fun s => (s.color, s.width)
-                          pathSpans := p.paths.map fun q =>
-                            match q.path with
-                            | .circle _ _ r => (2 * r, 2 * r)
-                            | .rect _ _ w h => (w, h)
-                            | .tri x1 y1 x2 y2 x3 y3 =>
-                              (max x1 (max x2 x3) - min x1 (min x2 x3),
-                               max y1 (max y2 y3) - min y1 (min y2 y3))
-                            | .segs segs =>
-                              let xs := segs.flatMap fun s => match s with
-                                | .line x1 _ x2 _ => #[x1, x2]
-                                | .cubic x1 _ _ _ _ _ x2 _ => #[x1, x2]
-                              let ys := segs.flatMap fun s => match s with
-                                | .line _ y1 _ y2 => #[y1, y2]
-                                | .cubic _ y1 _ _ _ _ _ y2 => #[y1, y2]
-                              (xs.foldl max (xs[0]?.getD 0) - xs.foldl min (xs[0]?.getD 0),
-                               ys.foldl max (ys[0]?.getD 0) - ys.foldl min (ys[0]?.getD 0))
-                          pathBoxes := p.paths.map fun q =>
-                            match q.path with
-                            | .circle x y r =>
-                              let r := max r (-r)
-                              (x - r, y - r, 2 * r, 2 * r)
-                            | .rect x y w h => (x, y, w, h)
-                            | .tri x1 y1 x2 y2 x3 y3 =>
-                              let lo := (min x1 (min x2 x3), min y1 (min y2 y3))
-                              (lo.1, lo.2, max x1 (max x2 x3) - lo.1,
-                                max y1 (max y2 y3) - lo.2)
-                            | .segs segs =>
-                              let xs := segs.flatMap fun s => match s with
-                                | .line x1 _ x2 _ => #[x1, x2]
-                                | .cubic x1 _ _ _ _ _ x2 _ => #[x1, x2]
-                              let ys := segs.flatMap fun s => match s with
-                                | .line _ y1 _ y2 => #[y1, y2]
-                                | .cubic _ y1 _ _ _ _ _ y2 => #[y1, y2]
-                              let x0 := xs.foldl min (xs[0]?.getD 0)
-                              let y0 := ys.foldl min (ys[0]?.getD 0)
-                              (x0, y0, xs.foldl max (xs[0]?.getD 0) - x0,
-                                ys.foldl max (ys[0]?.getD 0) - y0)
+                          paths := (pageInkMarks p).size
+                          pathStrokes := (pageInkMarks p).filterMap fun (_, _, st) =>
+                            st.bind fun s => match s.paint with
+                              | .solid c => some (c, s.width)
+                              | .gradient _ => none
+                          pathSpans := (pageInkMarks p).map fun (g, _, _) =>
+                            let (_, _, w, h) := markExtent g
+                            (w, h)
+                          pathBoxes := (pageInkMarks p).map fun (g, _, _) => markExtent g
+                          pathRuns := (pageInkMarks p).map fun (g, _, st) =>
+                            let dashed := (st.map fun s => !s.dash.isEmpty).getD false
+                            match g with
+                            | .path subs => (subs.map (·.segs.size), dashed)
+                            | .rect _ _ _ _ => (#[], dashed)
+                            | .ellipse _ _ _ _ => (#[], dashed)
                           images := images }
   return pages
 

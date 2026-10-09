@@ -144,7 +144,9 @@ def diagnosticLayoutOriginChecks (ref : IO.Ref (List String))
   let roomyGeom := Layout.Geom.ofPage picShrinkDoc.page
   let roomy := Layout.run roomyGeom fs none picShrinkDoc
   let bottom := roomy.pages.foldl (fun y p =>
-    p.fills.foldl (fun y f => max y (f.y + f.h)) y) 0
+    (pageDraws p).foldl (fun y (g, _, _) =>
+      let (_, gy, _, gh) := markExtent g
+      max y (gy + gh)) (p.fills.foldl (fun y f => max y (f.y + f.h)) y)) 0
   let tightGeom := { roomyGeom with pageH := bottom + roomyGeom.vmargin - Dim.pt 4 }
   let picShrinkOut := DiagnosticLayoutOrigins.run fs tightGeom picShrinkDoc picShrinkSites
   let picShrinkDiags := picShrinkOut.diags.filter (·.kind == .N0200)

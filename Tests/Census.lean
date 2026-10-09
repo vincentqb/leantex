@@ -930,8 +930,8 @@ def censusRows4 :
       hasStr (censusText c) "\uF062")]),
   ("diagram", fun geom c => [
     ("one page", c.size == 1),
-    ("the 4×4 grid ships its sixteen fills",
-      (c[0]?.map (·.fills == 16)).getD false),
+    ("the 4×4 grid ships its sixteen fills, as the picture's own marks",
+      (c[0]?.map fun p => p.paths == 16 && p.fills == 0).getD false),
     ("every diagonal label ships",
       ["aa", "bb", "cc", "dd"].all fun l => hasStr (censusText c) l),
     ("the labels step up the diagonal",
@@ -944,7 +944,8 @@ def censusRows4 :
         hasStr (censusText c) "After the diagram")]),
   ("diagram-overflow", fun _ c => [
     ("one page", c.size == 1),
-    ("the band ships as a fill", (c[0]?.map (·.fills == 1)).getD false),
+    ("the band ships as a fill, the picture's own mark",
+      (c[0]?.map fun p => p.paths == 1 && p.fills == 0).getD false),
     ("its label ships", hasStr (censusText c) "wide band")]),
   ("diagram-boundary", fun _ c => [
     ("one page", c.size == 1),
@@ -954,8 +955,8 @@ def censusRows4 :
       hasStr (censusText c) "routes to the" &&
         hasStr (censusText c) "Text follows the requested picture")]),
   ("diagram-refused", fun _ c => [    ("one page", c.size == 1),
-    ("the placeholder outline ships as four fills",
-      (c[0]?.map (·.fills == 4)).getD false),
+    ("the placeholder outline ships as four fills, the picture's own marks",
+      (c[0]?.map fun p => p.paths == 4 && p.fills == 0).getD false),
     ("the diagnostic code ships inside the box", hasStr (censusText c) "W0362"),
     ("the prose around the placeholder ships",
       hasStr (censusText c) "constructs outside the rendered subset" &&
@@ -1014,6 +1015,24 @@ def censusRows5 :
     ("the prose around the diagram ships",
       hasStr (censusText c) "Before the diagram" &&
         hasStr (censusText c) "After the diagram")]),
+  -- **A picture's strokes ship as the vector model states them, in both
+  -- artifacts.** The chain's continuing segments are one path, so its
+  -- corner joins; the zero line width is the hairline, never no line; the
+  -- dashed chain is one dashed path around its corner. The HTML face of the
+  -- same row is `gfxStrokeCensusChecks`, over the typed SVG tree.
+  ("diagram-strokes", fun _ c => [
+    ("one page", c.size == 1),
+    ("the three strokes ship as the picture's own marks, no page fill among them",
+      (c[0]?.map fun p => p.paths == 3 && p.fills == 0).getD false),
+    ("the chain ships as one path of two segments, joined at its corner",
+      ((c[0]?.bind (·.pathRuns[0]?)).map fun (runs, dashed) => runs == #[2] && !dashed).getD false),
+    ("the zero line width ships as the hairline, width zero",
+      ((c[0]?.bind (·.pathStrokes[1]?)).map fun (_, w) => w == 0).getD false),
+    ("the dashed chain ships as one dashed path of two segments",
+      ((c[0]?.bind (·.pathRuns[2]?)).map fun (runs, dashed) => runs == #[2] && dashed).getD false),
+    ("the prose around the strokes ships",
+      hasStr (censusText c) "Before the strokes" &&
+        hasStr (censusText c) "After the strokes")]),
   ("tables", fun geom c => [
     ("one page", c.size == 1),
     ("the header row ships", hasStr (censusText c) "Construct"

@@ -101,8 +101,11 @@ def runContrastContractChecks (ref : IO.Ref (List String)) : IO Unit := do
         | .run _ _ _ _ glyphs _ _ _ _ ground _ =>
           String.ofList (glyphs.toList.map (·.2.1)) == "Label" && ground.isNone
         | _ => false) &&
-      page.paths.any fun path =>
-        path.fill == some Ir.Color.black && path.leaf == line.leaf)
+      page.inks.any fun k => k.leaf == line.leaf &&
+        (nodeDrawsList #[] k.fig.nodes.toList).any fun (_, fl, _) => fl.any fun f =>
+          match f.paint with
+          | .solid c => c == Ir.Color.black
+          | .gradient _ => false)
   for (name, doc, out) in #[
       ("ordinary", ordinary, ordinaryOut), ("pending", pending, pendingOut),
       ("coloured pending", colored, coloredOut), ("picture", picture, pictureOut)] do

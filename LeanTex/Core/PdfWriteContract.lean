@@ -70,6 +70,7 @@ public inductive WriteError where
   | objectStreamSize (bytes : Nat)
   | xrefStreamSize (bytes : Nat)
   | objectSpelling (id : Nat)
+  | inkRaster (page : Nat)
   deriving BEq, Repr
 
 /-- Check source spellings first, then measure once. The body and xref
@@ -140,20 +141,32 @@ public def writeChecked (geom : Layout.Geom) (fs : Font.FontSet) (pages : Array 
     (streams : Array (ByteArray × Option ByteArray) := #[])
     (tree : Struct.Tree := ⟨#[]⟩) (ops : Array (Array ContentOp) := #[])
     (programs : Array (ByteArray × Bool) := #[]) : Except WriteError ByteArray :=
-  (prepare geom fs pages info imgs outline streams tree ops programs).checked
+  -- premise: ofPictureIn_imageFree_exact — the ink Layout places is a lowered
+  -- picture's, which paints no raster; the refusal guards every other caller.
+  match inkRasterPage? pages with
+  | some i => .error (.inkRaster i)
+  | none => (prepare geom fs pages info imgs outline streams tree ops programs).checked
 
-/-- Success checks the source domain and returns exactly the actual
-writer's bytes for every input and cache argument. It does not assume
-successful parsing, decompression, or font validity. -/
+/-- Success checks the source domain — no page's ink paints a raster the
+writer has no image table for, the storage bounds, the spellings — and
+returns exactly the actual writer's bytes for every input and cache
+argument. It does not assume successful parsing, decompression, or font
+validity. -/
 public theorem writeChecked_exact (geom : Layout.Geom) (fs : Font.FontSet)
     (pages : Array Layout.PageOut) (info : Ir.Meta) (imgs : Image.Store)
     (outline : Array Layout.OutlineEntry) (streams : Array (ByteArray × Option ByteArray))
     (tree : Struct.Tree) (ops : Array (Array ContentOp))
     (programs : Array (ByteArray × Bool)) (b : ByteArray) :
     writeChecked geom fs pages info imgs outline streams tree ops programs = .ok b ↔
+      inkRasterPage? pages = none ∧
       (prepare geom fs pages info imgs outline streams tree ops programs).WithinDomain ∧
       write geom fs pages info imgs outline streams tree ops programs = b := by
-  exact WritePlan.checked_exact _ b
+  unfold writeChecked
+  cases h : inkRasterPage? pages with
+  | some i => simp
+  | none =>
+    simpa [write] using
+      WritePlan.checked_exact (prepare geom fs pages info imgs outline streams tree ops programs) b
 
 /-- Every row of the actual xref payload fits the widths the plan
 declares, with no premise: the widths are read off these rows. -/

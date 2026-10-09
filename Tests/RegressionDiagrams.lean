@@ -17,8 +17,8 @@ private def routeNoteChecks (ref : IO.Ref (List String)) (a : Regression.Artifac
     | _ => ""
   let chars := fun n => String.ofList (MathMl.nodeChars #[] n).toList
   let lines := bodyLines a.out
-  let paths := a.out.pages.flatMap (·.paths)
-  let rects := paths.filterMap fun p => match p.path with
+  let paths := a.out.pages.flatMap pageDraws
+  let rects := paths.filterMap fun (g, _, _) => match g with
     | .rect x y w h => some (x, y, w, h)
     | _ => none
   let pictures := (elemNodesList (· == "svg") #[] a.body.toList).filter fun n =>
@@ -96,15 +96,22 @@ private def routeNoteChecks (ref : IO.Ref (List String)) (a : Regression.Artifac
           return (attr n "fill", (← pt? x), (← pt? y),
             (← pt? u), (← pt? v), (← pt? w), (← pt? z))
         | _ => none
-    let nativeShafts := paths.filterMap fun p => do
-      let stroke ← p.stroke
-      match p.path with
-      | .segs #[.line x y u v] => some (stroke.color.css, x, y, u, v)
+    let nativeShafts := paths.filterMap fun (g, _, st) => do
+      let stroke ← st
+      let color ← strokeColor? stroke
+      match g with
+      | .path subs => match (subpathSegs subs).toList with
+        | [.line x y u v] => some (color.css, x, y, u, v)
+        | _ => none
       | _ => none
-    let nativeHeads := paths.filterMap fun p => do
-      let color ← p.fill
-      match p.path with
-      | .tri x y u v w z => some (color.css, x, y, u, v, w, z)
+    let nativeHeads := paths.filterMap fun (g, fl, _) => do
+      let fill ← fl
+      let color ← match fill.paint with
+        | .solid c => some c
+        | .gradient _ => none
+      match g with
+      | .path #[{ start := (x, y), segs := #[.line (u, v), .line (w, z)], closed := true }] =>
+        some (color.css, x, y, u, v, w, z)
       | _ => none
     let aims := #[
       ("#ff0000", (1 : Int), (0 : Int)), ("#0000ff", 0, -1),

@@ -26,17 +26,19 @@ def picturePathSyntaxChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet
     "\n\\useasboundingbox (-4,-3) rectangle (7,5);\n\\end{tikzpicture}\n\\end{document}"
   let page (body : String) (opts : String := "") := layoutOf oneFace (elabStr (src body opts)).1
   let points (out : Layout.Out) : Array (Nat × Array Int) :=
-    out.pages.flatMap fun p => p.paths.filterMap fun q => match q.path with
-      | .segs ss => some (0, ss.flatMap fun seg => match seg with
+    out.pages.flatMap fun p => (pageDraws p).filterMap fun (g, _, st) => match g, st with
+      | .path subs, some _ => some (0, (subpathSegs subs).flatMap fun seg => match seg with
         | .line x y u v => #[x, y, u, v]
         | .cubic x y a b c d u v => #[x, y, a, b, c, d, u, v])
-      | .tri x y u v a b => some (1, #[x, y, u, v, a, b])
-      | .rect .. | .circle .. => none
+      | .path #[sp], none => some (1, #[sp.start.1, sp.start.2] ++
+          sp.segs.flatMap fun seg => #[seg.endPt.1, seg.endPt.2])
+      | _, _ => none
   let counts (out : Layout.Out) : Nat × Nat :=
-    out.pages.foldl (fun acc p => p.paths.foldl (fun (acc : Nat × Nat) q => match q.path with
-      | .segs ss => (acc.1 + ss.size, acc.2)
-      | .tri .. => (acc.1, acc.2 + 1)
-      | .rect .. | .circle .. => acc) acc) (0, 0)
+    out.pages.foldl (fun acc p => (pageDraws p).foldl (fun (acc : Nat × Nat) (g, _, st) =>
+      match g, st with
+      | .path subs, some _ => (acc.1 + (subpathSegs subs).size, acc.2)
+      | .path _, none => (acc.1, acc.2 + 1)
+      | _, _ => acc) acc) (0, 0)
   let close (a b : Array (Nat × Array Int)) : Bool :=
     a.size == b.size && (a.zip b).all fun ((ka, xs), (kb, ys)) =>
       ka == kb && xs.size == ys.size && (xs.zip ys).all fun (x, y) =>

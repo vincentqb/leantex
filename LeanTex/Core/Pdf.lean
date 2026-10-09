@@ -8,6 +8,7 @@ import LeanTex.Core.Html
 public import LeanTex.Core.Layout
 import LeanTex.Core.Loop
 public import LeanTex.Core.PdfContent
+public import LeanTex.Core.PdfFigures
 public import LeanTex.Core.PdfStruct
 public import LeanTex.Core.PdfXref
 
@@ -113,24 +114,6 @@ private def pdfName (s : String) : String := Id.run do
     else
       out := out ++ "#" ++ String.ofList [hexDigit (c.toNat / 16), hexDigit c.toNat]
   return if out == "" then "Embedded" else out
-
-/-- A rational `p / q` (`q > 0`) as a decimal, rounded once at the ninth
-digit: the precision a form's `/Matrix` needs — its scale entries are the
-reciprocal of a page box in points, and one rounding at 1e-9 lands the
-placed corner within a nanometre of `form_bbox_exact`'s rational. -/
-private def ratString (p q : Int) : String :=
-  let neg := p < 0
-  let v := (p.natAbs * 1000000000 + q.natAbs / 2) / max 1 q.natAbs
-  let ip := v / 1000000000
-  let fr := v % 1000000000
-  let sign := if neg && v != 0 then "-" else ""
-  if fr == 0 then
-    s!"{sign}{ip}"
-  else
-    let frs := toString fr
-    let frs := ("".pushn '0' (9 - frs.length)) ++ frs
-    let frs := (frs.dropEndWhile (· == '0')).toString
-    s!"{sign}{ip}.{frs}"
 
 /-- A PDF string object from a spelling that already carries its
 delimiters (`(text)` or `<hex>`) — what `pdfTextString` and `pdfString`
@@ -477,6 +460,197 @@ and the structure elements are built from. -/
 public def tagsOf (tree : Struct.Tree) : Array (Option String) :=
   leafTags (skeleton tree) tree.leaves.size
 
+/-- The resource names figure operators are first written with: every
+request named 0, then renamed onto the document's figure table
+(`figureTable`, `namedPageOps`) before anything is spelled. A figure's
+raster has no table: no page's ink paints one (`Gfx.ofPictureIn_imageFree_exact`),
+the checked writer refuses an ink that would (`inkRasterPage?`), and a
+vector image's rasters will ride with the image store. -/
+@[expose] public def figureNames : GfxPdf.Request → Nat := fun _ => 0
+
+/-- The first page whose ink would paint a raster: the writer names a
+figure's raster only from the image store, so an ink carrying one is
+refused, never written with a name no resource answers. -/
+public def inkRasterPage? (pages : Array PageOut) : Option Nat :=
+  pages.findIdx? fun p => p.inks.any fun k => !k.fig.imageFree
+
+/-- **The figure resources a document's pages name**: every ink's requests
+in page and paint order, interned by content (`collectList`) — the table
+`namedPageOps` names into and the writer spells one object per entry of. -/
+public def figureTable (geom : Geom) (pages : Array PageOut) : Array FigRes :=
+  pages.foldl (fun t p => p.inks.foldl
+    (fun t k => collectList t (inkPaint geom figureNames k).toList) t) #[]
+
+/-- Pages' operators with their figure resources named onto the document's
+table; unchanged when no figure names one. -/
+public def namedPageOps (geom : Geom) (pages : Array PageOut) (ops : Array (Array ContentOp)) :
+    Array (Array ContentOp) :=
+  let t := figureTable geom pages
+  if t.isEmpty then ops else ops.map (nameOps t)
+
+/-- Whether a table entry is spelled as a form XObject's stream; the others
+are dictionaries in the object stream. -/
+@[expose] public def FigRes.isForm : FigRes → Bool
+  | .form _ _ => true
+  | .extG _ _ => false
+  | .pattern _ => false
+  | .shading _ => false
+
+/-- An entry's place among the table's entries of its own spelling kind:
+its slot in the writer's dictionary or form block. -/
+public def figRank (t : Array FigRes) (k : Nat) : Nat :=
+  let form := (t[k]?.map FigRes.isForm).getD false
+  ((t.extract 0 k).filter fun r => r.isForm == form).size
+
+public def figDictCount (t : Array FigRes) : Nat := (t.filter fun r => !r.isForm).size
+
+public def figFormCount (t : Array FigRes) : Nat := (t.filter FigRes.isForm).size
+
+/-- A rational at the nine-decimal spelling as a number object the object
+stream accepts: an integer where it has no fraction. -/
+private def ratObj (p q : Int) : PdfRead.Obj :=
+  let s := ratString p q
+  if s.toList.contains '.' then .real s else .int (s.toInt?.getD 0)
+
+private def rgbObj (c : Ir.Color) : PdfRead.Obj :=
+  .arr #[ratObj c.r.toNat 255, ratObj c.g.toNat 255, ratObj c.b.toNat 255]
+
+/-- One exponential segment between two colours over [0, 1] (§7.10.3). -/
+private def interpObj (c0 c1 : Ir.Color) : PdfRead.Obj :=
+  .dict #[("FunctionType", .int 2), ("Domain", .arr #[.int 0, .int 1]), ("C0", rgbObj c0),
+    ("C1", rgbObj c1), ("N", .int 1)]
+
+/-- A stop list as a PDF function over [0, 1]: the first colour before the
+first stop and the last after the last, as SVG pads; one segment between
+consecutive distinct offsets, stitched (§7.10.4). -/
+public def stopsFunctionObj (stops : Array Gfx.Stop) : PdfRead.Obj :=
+  let black : Ir.Color := { r := 0, g := 0, b := 0 }
+  match stops.toList with
+  | [] => interpObj black black
+  | [s] => interpObj s.color s.color
+  | first :: _ =>
+    let last := stops.back?.getD first
+    let pts : List (Nat × Ir.Color) :=
+      (if first.offset.val > 0 then [(0, first.color)] else []) ++
+        stops.toList.map (fun s => (s.offset.val, s.color)) ++
+        (if last.offset.val < 65536 then [(65536, last.color)] else [])
+    let segs := (pts.zip (pts.drop 1)).filter fun (a, b) => a.1 < b.1
+    match segs with
+    | [] => interpObj first.color first.color
+    | [(a, b)] => interpObj a.2 b.2
+    | _ =>
+      .dict #[("FunctionType", .int 3), ("Domain", .arr #[.int 0, .int 1]),
+        ("Functions", .arr (segs.map fun (a, b) => interpObj a.2 b.2).toArray),
+        ("Bounds", .arr ((segs.drop 1).map fun (a, _) => ratObj a.1 65536).toArray),
+        ("Encode", .arr (segs.flatMap fun _ => [PdfRead.Obj.int 0, .int 1]).toArray)]
+
+/-- A gradient as a shading dictionary in its own frame (§8.7.4.5.3–4),
+padded at both ends as SVG pads. -/
+public def shadingObj : Gfx.Gradient → PdfRead.Obj
+  | .linear p0 p1 stops _ =>
+    .dict #[("ShadingType", .int 2), ("ColorSpace", .name "DeviceRGB"),
+      ("Coords", .arr #[ptObj p0.1, ptObj p0.2, ptObj p1.1, ptObj p1.2]),
+      ("Function", stopsFunctionObj stops), ("Extend", .arr #[.bool true, .bool true])]
+  | .radial c0 r0 c1 r1 stops _ =>
+    .dict #[("ShadingType", .int 3), ("ColorSpace", .name "DeviceRGB"),
+      ("Coords", .arr #[ptObj c0.1, ptObj c0.2, ptObj r0, ptObj c1.1, ptObj c1.2, ptObj r1]),
+      ("Function", stopsFunctionObj stops), ("Extend", .arr #[.bool true, .bool true])]
+
+/-- An exact matrix as a PDF array: the linear part as is, the translation
+in points. -/
+public def matrixObj (m : Gfx.Affine) : PdfRead.Obj :=
+  .arr #[ratObj m.a.num m.a.den, ratObj m.b.num m.b.den, ratObj m.c.num m.c.den,
+    ratObj m.d.num m.d.den, ratObj m.e.num ((m.e.den : Int) * spPerPt),
+    ratObj m.f.num ((m.f.den : Int) * spPerPt)]
+
+/-- A table entry spelled as a dictionary: the alphas an ExtGState sets,
+a shading pattern with its matrix, a shading. A form is a stream. -/
+public def figDictObj : FigRes → Option PdfRead.Obj
+  | .extG a b =>
+    some (.dict #[("Type", .name "ExtGState"), ("ca", ratObj a.val 1000), ("CA", ratObj b.val 1000)])
+  | .pattern g =>
+    some (.dict #[("Type", .name "Pattern"), ("PatternType", .int 2), ("Shading", shadingObj g),
+      ("Matrix", matrixObj g.xf)])
+  | .shading g => some (shadingObj g)
+  | .form _ _ => none
+
+/-- A form's bounding box in whole points outward, read in its own space:
+a symbol's or a group's the ink box of what its body paints — each mark's
+control hull through its frame, dilated by its stroke's reach — and a
+stamp's its outline's control hull dilated by the reach its key carries,
+since its instances stroke with their own state. The control hull bounds a
+path (`Gfx.cubicAt_between`), the reach a stroke's paint past it
+(`Gfx.Stroke.reach`, by the cap and join geometry it reads), and a box's
+image through a matrix its points' images (`Gfx.Affine.boxImage_covers`).
+A figure form holds no text yet: figure text owes its ink box here. -/
+public def formBBox (kind : FormKind) (body : Array ContentOp) : Int × Int × Int × Int :=
+  let rs : GfxPdf.RState :=
+    { place := { flipY := false, dx := 0, dy := 0 }, placed := false, ctm := Gfx.Affine.unit,
+      base := Gfx.Affine.unit, clips := #[], alphas := #[], ca := Gfx.Alpha.opaque,
+      cA := Gfx.Alpha.opaque, pen := GfxPdf.Pen.initial }
+  let marks := GfxPdf.readList rs #[] body.toList
+  let box := match kind with
+    | .stamp reach => (Gfx.hullOf (Gfx.Mark.geomBox Gfx.rasterUnit) marks).map (·.dilate reach)
+    | .symbol => Gfx.hullOf (Gfx.Mark.inkBox Gfx.rasterUnit) marks
+    | .group => Gfx.hullOf (Gfx.Mark.inkBox Gfx.rasterUnit) marks
+  let floorPt (x : Sp) : Int := if x ≥ 0 then x / spPerPt else -((-x + spPerPt - 1) / spPerPt)
+  match box with
+  | some ((x0, y0), (x1, y1)) => (floorPt x0, floorPt y0, -(floorPt (-x1)), -(floorPt (-y1)))
+  | none => (0, 0, 0, 0)
+
+/-- A group of named resources as a resources dictionary entry, absent
+when the group is empty. -/
+private def resourceGroup (key : String) (es : Array (String × PdfRead.Obj)) :
+    Array (String × PdfRead.Obj) :=
+  if es.isEmpty then #[] else #[(key, .dict es)]
+
+/-- The one resources dictionary every page and figure form names
+(ISO 32000-2 §7.8.3): the kept faces, then each group of named resources
+the document has — XObjects, ExtGStates, patterns, shadings. -/
+public def resourcesDict (fonts : PdfRead.Obj)
+    (xobjects extg patterns shadings : Array (String × PdfRead.Obj)) : PdfRead.Obj :=
+  .dict (#[("Font", fonts)] ++ resourceGroup "XObject" xobjects ++ resourceGroup "ExtGState" extg ++
+    resourceGroup "Pattern" patterns ++ resourceGroup "Shading" shadings)
+
+private theorem resourceGroup_find_none (key k : String) (es : Array (String × PdfRead.Obj))
+    (h : key ≠ k) : (resourceGroup key es).find? (·.1 == k) = none := by
+  unfold resourceGroup
+  split <;> simp [h]
+
+/-- The resources dictionary names no type and no subtype (`_exact`): no
+census counts it a font, an image or a form. -/
+public theorem resourcesDict_untyped_exact (fonts : PdfRead.Obj)
+    (xobjects extg patterns shadings : Array (String × PdfRead.Obj)) :
+    (resourcesDict fonts xobjects extg patterns shadings).get? "Type" = none ∧
+      (resourcesDict fonts xobjects extg patterns shadings).get? "Subtype" = none := by
+  simp [resourcesDict, PdfRead.Obj.get?, Array.find?_append,
+    resourceGroup_find_none _ _ _ (by decide : "XObject" ≠ "Type"),
+    resourceGroup_find_none _ _ _ (by decide : "ExtGState" ≠ "Type"),
+    resourceGroup_find_none _ _ _ (by decide : "Pattern" ≠ "Type"),
+    resourceGroup_find_none _ _ _ (by decide : "Shading" ≠ "Type"),
+    resourceGroup_find_none _ _ _ (by decide : "XObject" ≠ "Subtype"),
+    resourceGroup_find_none _ _ _ (by decide : "ExtGState" ≠ "Subtype"),
+    resourceGroup_find_none _ _ _ (by decide : "Pattern" ≠ "Subtype"),
+    resourceGroup_find_none _ _ _ (by decide : "Shading" ≠ "Subtype")]
+
+/-- A figure-resource dictionary names no subtype and is no font
+(`_exact`): an ExtGState, a pattern or a shading, or nothing. -/
+public theorem figDictObj_untyped_exact (r : FigRes) :
+    ((figDictObj r).getD .null).get? "Type" ≠ some (.name "Font") ∧
+      ((figDictObj r).getD .null).get? "Subtype" = none := by
+  cases r with
+  | extG a b => simp [figDictObj, PdfRead.Obj.get?]
+  | pattern g => simp [figDictObj, PdfRead.Obj.get?]
+  | shading g => cases g <;> simp [figDictObj, shadingObj, PdfRead.Obj.get?]
+  | form k b => simp [figDictObj, PdfRead.Obj.get?]
+
+/-- The resource prefix a table entry's name is spelled with. -/
+@[expose] public def FigRes.namePrefix : FigRes → String
+  | .extG _ _ => "GS"
+  | .pattern _ => "P"
+  | .shading _ => "Sh"
+  | .form _ _ => "Fm"
+
 /-- Each page's typed operators, resolved against the faces and images the
 document actually uses and the structure tree's leaf tags: what
 `pageStreams` renders, before spelling. `keep` is `keepFaces` over these
@@ -488,7 +662,7 @@ public def pageOps (geom : Geom) (fs : FontSet) (pages : Array PageOut)
   let imgMap := imgMapOf imgs (usedImagesOf imgs pages)
   let tags := tagsOf tree
   let wt := widthTable fs.fonts keep
-  pages.map (contentOps geom remap wt imgMap tags)
+  namedPageOps geom pages (pages.map (contentOps geom remap wt imgMap tags figureNames))
 
 /-- The per-page content streams `write` embeds, uncompressed: the same
 bytes `write` computes for itself, exposed so the driver can deflate them
@@ -562,10 +736,11 @@ file to under 2%. -/
 /-- How many objects the writer compresses for these counts: the catalog
 and page tree, three dictionaries per face, Info, the outline root and
 items, one dictionary per page, the structure root, parent tree and
-namespace, and one dictionary per structure element (`prepare`'s list,
-`prepare_compressed_ids_exact`). -/
-@[expose] public def compressedCount (nf np nOut nElems : Nat) : Nat :=
-  3 * nf + np + (if nOut == 0 then 0 else nOut + 1) + nElems + 6
+namespace, one dictionary per structure element, the shared resources
+dictionary, and one dictionary per figure resource that is no form
+(`prepare`'s list, `prepare_compressed_ids_exact`). -/
+@[expose] public def compressedCount (nf np nOut nElems nFigDict : Nat) : Nat :=
+  3 * nf + np + (if nOut == 0 then 0 else nOut + 1) + nElems + 7 + nFigDict
 
 /-- Every object id one file allocates, computed once from the counts that
 decide it, in id order: 1 the catalog, 2 the page tree, four ids per kept
@@ -609,6 +784,12 @@ public structure ObjTable where
   parentTree : Nat
   namespaceId : Nat
   structBase : Nat
+  /-- The one resources dictionary every page and every figure form names,
+  after the structure block; then the figure table's dictionaries, then its
+  forms (`figureTable`), one object each. -/
+  resId : Nat
+  nFigDict : Nat
+  nFigForm : Nat
   deriving Repr
 
 namespace ObjTable
@@ -622,6 +803,8 @@ public def pageId (t : ObjTable) (i : Nat) : Nat := t.pageBase + 2 * i
 public def contentId (t : ObjTable) (i : Nat) : Nat := t.pageBase + 2 * i + 1
 public def outlineItemId (t : ObjTable) (k : Nat) : Nat := t.infoId + 2 + k
 public def structElemId (t : ObjTable) (k : Nat) : Nat := t.structBase + k
+public def figDictId (t : ObjTable) (k : Nat) : Nat := t.resId + 1 + k
+public def figFormId (t : ObjTable) (k : Nat) : Nat := t.resId + 1 + t.nFigDict + k
 public def objStmId (t : ObjTable) (k : Nat) : Nat := t.objStmBase + k
 
 /-- Every allocated id, in emission order — each block spelled from its
@@ -638,6 +821,9 @@ public def ids (t : ObjTable) : Array Nat :=
       else #[t.outlineRootId] ++ (Array.range t.nOut).map t.outlineItemId)
   ++ #[t.structTreeRoot, t.parentTree, t.namespaceId]
   ++ (Array.range t.nElems).map t.structElemId
+  ++ #[t.resId]
+  ++ (Array.range t.nFigDict).map t.figDictId
+  ++ (Array.range t.nFigForm).map t.figFormId
   ++ (#[t.xmpId] ++ (Array.range t.nStm).map t.objStmId ++ #[t.xrefId])
 
 /-- The cross-reference row kind of an id, given its position in the
@@ -654,9 +840,10 @@ public def kindOf (t : ObjTable) (compressedIdx : Nat → Option Nat) (id : Nat)
 end ObjTable
 
 /-- The table for `keep` faces, the placed images `usedImgs` of `imgs`,
-`np` pages, `nOut` outline entries and `nElems` structure elements. -/
+`np` pages, `nOut` outline entries, `nElems` structure elements, and the
+figure table's `nFigDict` dictionaries and `nFigForm` forms. -/
 public def objTable (keep : Array Nat) (imgs : Image.Store) (usedImgs : Array Nat)
-    (np nOut nElems : Nat) : ObjTable :=
+    (np nOut nElems nFigDict nFigForm : Nat) : ObjTable :=
   let nf := keep.size
   let extras := usedImgs.map (imgExtraOf imgs)
   let spans := extras.map ImgExtra.span
@@ -664,8 +851,9 @@ public def objTable (keep : Array Nat) (imgs : Image.Store) (usedImgs : Array Na
   let pageBase := 3 + 5 * nf + spans.toList.sum
   let infoId := pageBase + 2 * np
   let structTreeRoot := if nOut == 0 then infoId + 1 else infoId + 2 + nOut
-  let xmpId := structTreeRoot + 3 + nElems
-  let nStm := objStmCount (compressedCount nf np nOut nElems)
+  let resId := structTreeRoot + 3 + nElems
+  let xmpId := resId + 1 + nFigDict + nFigForm
+  let nStm := objStmCount (compressedCount nf np nOut nElems nFigDict)
   { nf, ni := usedImgs.size, np, nOut, imgIds, imgSpans := spans
     smaskIds := (imgIds.zip extras).map fun (id, e) => match e with
       | .alpha => some (id + 1)
@@ -682,15 +870,17 @@ public def objTable (keep : Array Nat) (imgs : Image.Store) (usedImgs : Array Na
     pageBase, infoId, outlineRootId := infoId + 1, xmpId
     objStmBase := xmpId + 1, nStm, xrefId := xmpId + 1 + nStm, size := xmpId + 2 + nStm
     nElems, structTreeRoot, parentTree := structTreeRoot + 1, namespaceId := structTreeRoot + 2
-    structBase := structTreeRoot + 3 }
+    structBase := structTreeRoot + 3, resId, nFigDict, nFigForm }
 
 /-- The table `write` reads for these inputs: the faces it embeds
 (`keepFaces`), the images it places (`usedImagesOf`), the page and outline
-counts, and the structure tree's element count. -/
-public def tableOf (fs : FontSet) (pages : Array PageOut) (imgs : Image.Store)
+counts, the structure tree's element count, and the figure table's two
+spelling kinds (`figureTable`). -/
+public def tableOf (geom : Geom) (fs : FontSet) (pages : Array PageOut) (imgs : Image.Store)
     (outline : Array OutlineEntry) (tree : Struct.Tree := ⟨#[]⟩) : ObjTable :=
+  let figs := figureTable geom pages
   objTable (keepFaces fs pages) imgs (usedImagesOf imgs pages) pages.size outline.size
-    (skeleton tree).size
+    (skeleton tree).size (figDictCount figs) (figFormCount figs)
 
 /-- **`blockIds_exact`**: consecutive blocks laid out by `blockStarts` tile
 the range from `base` of the spans' total, exactly. -/
@@ -729,7 +919,8 @@ private theorem ObjTable.ids_exact (t : ObjTable) (spans : List Nat)
     (hroot : t.outlineRootId = t.infoId + 1)
     (hsr : t.structTreeRoot = if t.nOut == 0 then t.infoId + 1 else t.infoId + 2 + t.nOut)
     (hpt : t.parentTree = t.structTreeRoot + 1) (hns : t.namespaceId = t.structTreeRoot + 2)
-    (hsb : t.structBase = t.structTreeRoot + 3) (hxmp : t.xmpId = t.structBase + t.nElems)
+    (hsb : t.structBase = t.structTreeRoot + 3) (hres : t.resId = t.structBase + t.nElems)
+    (hxmp : t.xmpId = t.resId + 1 + t.nFigDict + t.nFigForm)
     (hstm : t.objStmBase = t.xmpId + 1) (hxref : t.xrefId = t.xmpId + 1 + t.nStm)
     (hsize : t.size = t.xmpId + 2 + t.nStm) :
     t.ids.toList = List.range' 1 (t.size - 1) := by
@@ -762,14 +953,22 @@ private theorem ObjTable.ids_exact (t : ObjTable) (spans : List Nat)
   have helems : List.map t.structElemId (List.range t.nElems)
       = List.range' t.structBase t.nElems := by
     rw [List.range'_eq_map_range]; rfl
+  have hres1 : [t.resId] = List.range' t.resId 1 := rfl
+  have hfd : List.map t.figDictId (List.range t.nFigDict)
+      = List.range' (t.resId + 1) t.nFigDict := by
+    rw [List.range'_eq_map_range]; rfl
+  have hff : List.map t.figFormId (List.range t.nFigForm)
+      = List.range' (t.resId + 1 + t.nFigDict) t.nFigForm := by
+    rw [List.range'_eq_map_range]; rfl
   simp only [ObjTable.ids, Array.toList_append, Array.toList_flatMap, Array.toList_map,
     Array.toList_range, Array.toList_zip, Array.toList_range', himg, hsp]
   rw [blockIds_exact, flatMap_range_exact 3 4 t.nf _ hfont,
-    flatMap_range_exact t.pageBase 2 t.np _ hpage, hfile, h12, hinfo1, htail, hstruct, helems]
+    flatMap_range_exact t.pageBase 2 t.np _ hpage, hfile, h12, hinfo1, htail, hstruct, helems,
+    hres1, hfd, hff]
   by_cases h0 : t.nOut = 0
   · simp only [h0, beq_self_eq_true, ite_true, Array.toList_empty, List.append_nil] at hsr ⊢
     simp (disch := omega) only [joinRanges]
-    rw [hsize, hxmp, hsb, hsr, hinfo, hpb]
+    rw [hsize, hxmp, hres, hsb, hsr, hinfo, hpb]
     congr 1
     omega
   · have hne : (t.nOut == 0) = false := by simpa using h0
@@ -780,7 +979,7 @@ private theorem ObjTable.ids_exact (t : ObjTable) (spans : List Nat)
       rw [hroot]; exact joinRanges _ 1 _ _ rfl
     rw [hout]
     simp (disch := omega) only [joinRanges]
-    rw [hsize, hxmp, hsb, hsr, hinfo, hpb]
+    rw [hsize, hxmp, hres, hsb, hsr, hinfo, hpb]
     congr 1
     omega
 
@@ -788,16 +987,16 @@ private theorem ObjTable.ids_exact (t : ObjTable) (spans : List Nat)
 project): the table's ids, block by block from its slot functions, are the
 range `[1, size)` — the allocation is a tiling. -/
 public theorem objTable_ids_exact (keep : Array Nat) (imgs : Image.Store) (usedImgs : Array Nat)
-    (np nOut nElems : Nat) :
-    (objTable keep imgs usedImgs np nOut nElems).ids.toList
-      = List.range' 1 ((objTable keep imgs usedImgs np nOut nElems).size - 1) :=
+    (np nOut nElems nFigDict nFigForm : Nat) :
+    (objTable keep imgs usedImgs np nOut nElems nFigDict nFigForm).ids.toList
+      = List.range' 1 ((objTable keep imgs usedImgs np nOut nElems nFigDict nFigForm).size - 1) :=
   ObjTable.ids_exact _ ((usedImgs.map (imgExtraOf imgs)).map ImgExtra.span).toList
-    (List.toList_toArray) rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl
+    (List.toList_toArray) rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl
 
 /-- **`objTable_inj`** (the `_inj` statement): no two slots of the table
 share an id — the allocation is injective. -/
 public theorem objTable_inj (keep : Array Nat) (imgs : Image.Store) (usedImgs : Array Nat)
-    (np nOut nElems : Nat) : (objTable keep imgs usedImgs np nOut nElems).ids.toList.Nodup := by
+    (np nOut nElems nFigDict nFigForm : Nat) : (objTable keep imgs usedImgs np nOut nElems nFigDict nFigForm).ids.toList.Nodup := by
   rw [objTable_ids_exact]
   exact List.nodup_range' 1
 
@@ -805,9 +1004,9 @@ public theorem objTable_inj (keep : Array Nat) (imgs : Image.Store) (usedImgs : 
 trailer's `/Size`, other than the free-list head 0, is allocated — no row
 of the cross-reference is left to a default. -/
 public theorem objTable_covers (keep : Array Nat) (imgs : Image.Store) (usedImgs : Array Nat)
-    (np nOut nElems : Nat) :
-    ∀ id, 1 ≤ id → id < (objTable keep imgs usedImgs np nOut nElems).size →
-      id ∈ (objTable keep imgs usedImgs np nOut nElems).ids := by
+    (np nOut nElems nFigDict nFigForm : Nat) :
+    ∀ id, 1 ≤ id → id < (objTable keep imgs usedImgs np nOut nElems nFigDict nFigForm).size →
+      id ∈ (objTable keep imgs usedImgs np nOut nElems nFigDict nFigForm).ids := by
   intro id h1 h2
   rw [Array.mem_def, objTable_ids_exact, List.mem_range'_1]
   omega
@@ -816,12 +1015,12 @@ public theorem objTable_covers (keep : Array Nat) (imgs : Image.Store) (usedImgs
 lies in `[1, size)` — the converse of `objTable_covers`, and what makes
 `kindOf` answer on every id `write` iterates. -/
 public theorem objTable_between (keep : Array Nat) (imgs : Image.Store) (usedImgs : Array Nat)
-    (np nOut nElems : Nat) :
-    ∀ id ∈ (objTable keep imgs usedImgs np nOut nElems).ids,
-      1 ≤ id ∧ id < (objTable keep imgs usedImgs np nOut nElems).size := by
+    (np nOut nElems nFigDict nFigForm : Nat) :
+    ∀ id ∈ (objTable keep imgs usedImgs np nOut nElems nFigDict nFigForm).ids,
+      1 ≤ id ∧ id < (objTable keep imgs usedImgs np nOut nElems nFigDict nFigForm).size := by
   intro id h
   rw [Array.mem_def, objTable_ids_exact, List.mem_range'_1] at h
-  have : 3 ≤ (objTable keep imgs usedImgs np nOut nElems).size := by
+  have : 3 ≤ (objTable keep imgs usedImgs np nOut nElems nFigDict nFigForm).size := by
     simp only [objTable]
     omega
   omega
@@ -829,11 +1028,11 @@ public theorem objTable_between (keep : Array Nat) (imgs : Image.Store) (usedImg
 /-- `kindOf` is defined on every id the table allocates: the `none` arm of
 the match in `write` is dead by this theorem, not by a default. -/
 public theorem objTable_kindOf_some (keep : Array Nat) (imgs : Image.Store) (usedImgs : Array Nat)
-    (np nOut nElems : Nat) (compressedIdx : Nat → Option Nat) :
-    ∀ id ∈ (objTable keep imgs usedImgs np nOut nElems).ids,
-      ((objTable keep imgs usedImgs np nOut nElems).kindOf compressedIdx id).isSome = true := by
+    (np nOut nElems nFigDict nFigForm : Nat) (compressedIdx : Nat → Option Nat) :
+    ∀ id ∈ (objTable keep imgs usedImgs np nOut nElems nFigDict nFigForm).ids,
+      ((objTable keep imgs usedImgs np nOut nElems nFigDict nFigForm).kindOf compressedIdx id).isSome = true := by
   intro id h
-  have hb := objTable_between keep imgs usedImgs np nOut nElems id h
+  have hb := objTable_between keep imgs usedImgs np nOut nElems nFigDict nFigForm id h
   unfold ObjTable.kindOf
   rw [ite_eq_right (by simp only [Bool.or_eq_true, beq_iff_eq, decide_eq_true_eq]; omega)]
   split
@@ -891,21 +1090,21 @@ public theorem xrefEntry_kind_exact (t : ObjTable)
 /-- The actual xref payload has exactly the number of rows declared by
 `/Size` and `/Index`, including row zero, at any row layout. -/
 public theorem xrefEntries_size_exact (keep : Array Nat) (imgs : Image.Store)
-    (usedImgs : Array Nat) (np nOut nElems : Nat)
+    (usedImgs : Array Nat) (np nOut nElems nFigDict nFigForm : Nat)
     (compressedIdx offset : Nat → Option Nat) (xrefOff : Nat) (w : Xref.Widths) :
-    let t := objTable keep imgs usedImgs np nOut nElems
+    let t := objTable keep imgs usedImgs np nOut nElems nFigDict nFigForm
     (xrefEntries t compressedIdx offset xrefOff).size = t.size ∧
       (Xref.encode w (xrefEntries t compressedIdx offset xrefOff)).size = w.row * t.size := by
   dsimp only
-  have ht := objTable_ids_exact keep imgs usedImgs np nOut nElems
+  have ht := objTable_ids_exact keep imgs usedImgs np nOut nElems nFigDict nFigForm
   have hn := congrArg List.length ht
   simp only [Array.length_toList, List.length_range'] at hn
-  have hpos : 0 < (objTable keep imgs usedImgs np nOut nElems).size := by
+  have hpos : 0 < (objTable keep imgs usedImgs np nOut nElems nFigDict nFigForm).size := by
     simp only [objTable]
     omega
-  have hsize : (xrefEntries (objTable keep imgs usedImgs np nOut nElems)
+  have hsize : (xrefEntries (objTable keep imgs usedImgs np nOut nElems nFigDict nFigForm)
       compressedIdx offset xrefOff).size =
-      (objTable keep imgs usedImgs np nOut nElems).size := by
+      (objTable keep imgs usedImgs np nOut nElems nFigDict nFigForm).size := by
     simp only [xrefEntries, Array.size_append, Array.size_map, Array.size_singleton, hn]
     omega
   exact ⟨hsize, by rw [Xref.encode_size_exact, hsize]⟩
@@ -914,16 +1113,16 @@ public theorem xrefEntries_size_exact (keep : Array Nat) (imgs : Image.Store)
 This derives from the actual allocation's tiling, without an ordering
 premise on the table. -/
 public theorem xrefEntries_index_exact (keep : Array Nat) (imgs : Image.Store)
-    (usedImgs : Array Nat) (np nOut nElems : Nat)
+    (usedImgs : Array Nat) (np nOut nElems nFigDict nFigForm : Nat)
     (compressedIdx offset : Nat → Option Nat) (xrefOff id : Nat)
-    (hid : id < (objTable keep imgs usedImgs np nOut nElems).size) :
-    let t := objTable keep imgs usedImgs np nOut nElems
+    (hid : id < (objTable keep imgs usedImgs np nOut nElems nFigDict nFigForm).size) :
+    let t := objTable keep imgs usedImgs np nOut nElems nFigDict nFigForm
     (xrefEntries t compressedIdx offset xrefOff)[id]? =
       some (if id = 0 then freeHead else xrefEntry t compressedIdx offset xrefOff id) := by
   dsimp only
-  have ht := objTable_ids_exact keep imgs usedImgs np nOut nElems
-  have hta : (objTable keep imgs usedImgs np nOut nElems).ids =
-      (List.range' 1 ((objTable keep imgs usedImgs np nOut nElems).size - 1)).toArray := by
+  have ht := objTable_ids_exact keep imgs usedImgs np nOut nElems nFigDict nFigForm
+  have hta : (objTable keep imgs usedImgs np nOut nElems nFigDict nFigForm).ids =
+      (List.range' 1 ((objTable keep imgs usedImgs np nOut nElems nFigDict nFigForm).size - 1)).toArray := by
     rw [← ht, Array.toArray_toList]
   cases id with
   | zero => simp [xrefEntries, Array.getElem?_append]
@@ -931,7 +1130,7 @@ public theorem xrefEntries_index_exact (keep : Array Nat) (imgs : Image.Store)
     simp only [xrefEntries, hta, Array.getElem?_append, Array.size_singleton,
       Nat.succ_lt_succ_iff, Nat.not_lt_zero, ↓reduceIte, Nat.add_one_sub_one,
       Array.getElem?_map, List.getElem?_toArray]
-    simp [show id < (objTable keep imgs usedImgs np nOut nElems).size - 1 by omega,
+    simp [show id < (objTable keep imgs usedImgs np nOut nElems nFigDict nFigForm).size - 1 by omega,
       Nat.add_comm]
 
 /-- No row of the writer's cross-reference has a third field above 255:
@@ -1040,26 +1239,29 @@ public theorem Feature.name_inj (a b : Feature) (h : a.name = b.name) : a = b :=
 public def Feature.ofName? (s : String) : Option Feature := Feature.all.find? (·.name == s)
 
 /-- Whether one run of `write` on these inputs reaches a feature: the
-table's slots say what was allocated (a soft mask, a copied graph, an
-outline, the colour and structure families); the kept faces say which CID
+table's slots say what was allocated (a soft mask, a form — a copied
+page's or a figure's — a copied graph, an outline, the colour and
+structure families); the kept faces say which CID
 subtype; each placed image its declared filter; the pages their link
 annotations and the outline its URI targets; the content operators whether
 a marked sequence opens; the table with the structure tree's elements,
-how many object streams it fills. The four the writer cannot emit yet
-(`tabs`, `transparencyGroup`, `brotli`, `jpx`) are `false` here and rows the
-matrix already carries, so the day one is emitted the census says so. -/
+how many object streams it fills; the figure table whether a transparency
+group's form ships. The three the writer cannot emit yet (`tabs`,
+`brotli`, `jpx`) are `false` here and rows the matrix already carries, so
+the day one is emitted the census says so. -/
 private def reaches (geom : Geom) (fs : FontSet) (pages : Array PageOut) (imgs : Image.Store)
     (outline : Array OutlineEntry) (tree : Struct.Tree) : Feature → Bool
   | .xrefStream => true
   | .objStm => true
-  | .objStmMulti => 1 < (tableOf fs pages imgs outline tree).nStm
+  | .objStmMulti => 1 < (tableOf geom fs pages imgs outline tree).nStm
   | .flatePredictor15 =>
     (placedImages imgs pages).any (fun i => i.form.isNone && i.filter == .flatePredictor)
-      || (tableOf fs pages imgs outline).smaskIds.any Option.isSome
+      || (tableOf geom fs pages imgs outline).smaskIds.any Option.isSome
   | .dct => (placedImages imgs pages).any (fun i => i.form.isNone && i.filter == .dct)
-  | .smask => (tableOf fs pages imgs outline).smaskIds.any Option.isSome
-  | .formXObject => (tableOf fs pages imgs outline).formBases.any Option.isSome
-  | .copiedGraph => (tableOf fs pages imgs outline).formSizes.any (· > 0)
+  | .smask => (tableOf geom fs pages imgs outline).smaskIds.any Option.isSome
+  | .formXObject => (tableOf geom fs pages imgs outline).formBases.any Option.isSome ||
+    0 < (tableOf geom fs pages imgs outline).nFigForm
+  | .copiedGraph => (tableOf geom fs pages imgs outline).formSizes.any (· > 0)
   | .cidFontType0 => (keepFaces fs pages).any fun k => (fs.get k).isCff
   | .cidFontType2 => (keepFaces fs pages).any fun k => !(fs.get k).isCff
   | .linkURI =>
@@ -1068,13 +1270,19 @@ private def reaches (geom : Geom) (fs : FontSet) (pages : Array PageOut) (imgs :
   | .outlines => outline.size > 0
   | .xmp => true
   | .trimBox => geom.bleed != 0
-  | .outputIntent => (tableOf fs pages imgs outline).outputIntent.isSome
-  | .iccBased => (tableOf fs pages imgs outline).icc.isSome
+  | .outputIntent => (tableOf geom fs pages imgs outline).outputIntent.isSome
+  | .iccBased => (tableOf geom fs pages imgs outline).icc.isSome
   | .tabs => false
   | .markedContent => (pageOps geom fs pages imgs).any fun ops => (lines ops).any Line.isOpen
   -- every PDF is tagged: the structure block is unconditional (pdf-tag-skeleton)
   | .structTree => true
-  | .transparencyGroup => false
+  | .transparencyGroup => (figureTable geom pages).any fun r => match r with
+    | .form .group _ => true
+    | .form .symbol _ => false
+    | .form (.stamp _) _ => false
+    | .extG _ _ => false
+    | .pattern _ => false
+    | .shading _ => false
   | .brotli => false
   | .jpx => false
 where
@@ -1107,11 +1315,25 @@ public theorem features_mem (geom : Geom) (fs : FontSet) (pages : Array PageOut)
 public theorem features_smask_iff (geom : Geom) (fs : FontSet) (pages : Array PageOut)
     (imgs : Image.Store) (outline : Array OutlineEntry) (tree : Struct.Tree) :
     .smask ∈ features geom fs pages imgs outline tree ↔
-      ∃ k, ∃ h : k < (tableOf fs pages imgs outline).smaskIds.size,
-        ((tableOf fs pages imgs outline).smaskIds[k]).isSome = true := by
+      ∃ k, ∃ h : k < (tableOf geom fs pages imgs outline).smaskIds.size,
+        ((tableOf geom fs pages imgs outline).smaskIds[k]).isSome = true := by
   unfold features
   rw [List.mem_toArray, List.mem_filter]
   simp only [Feature.all_complete, true_and, reaches, Array.any_eq_true]
+
+/-- **`features_formXObject_exact`**: the census says `formXObject`
+exactly when the table allocates a form — a copied page's base or a figure
+form's slot, the rows `write` spells as a `/Subtype /Form` stream. A figure
+that paints through a symbol, a stamp or a transparency group ships one,
+and the census names it. -/
+public theorem features_formXObject_exact (geom : Geom) (fs : FontSet) (pages : Array PageOut)
+    (imgs : Image.Store) (outline : Array OutlineEntry) (tree : Struct.Tree) :
+    .formXObject ∈ features geom fs pages imgs outline tree ↔
+      (tableOf geom fs pages imgs outline).formBases.any Option.isSome = true ∨
+        0 < (tableOf geom fs pages imgs outline).nFigForm := by
+  unfold features
+  rw [List.mem_toArray, List.mem_filter]
+  simp only [Feature.all_complete, true_and, reaches, Bool.or_eq_true, decide_eq_true_eq]
 
 /-- The native stream prefixes owned by the writer. -/
 public inductive StreamPrefix where
@@ -1119,6 +1341,9 @@ public inductive StreamPrefix where
   | openType
   | trueType (length : Nat)
   | metadata
+  /-- A figure form: its box in whole points, the shared resources it
+  names, and whether it is an isolated transparency group. -/
+  | figForm (x0 y0 x1 y1 : Int) (res : Nat) (group : Bool)
   deriving Repr
 
 public def StreamPrefix.text : StreamPrefix → String
@@ -1126,6 +1351,10 @@ public def StreamPrefix.text : StreamPrefix → String
   | .openType => "/Subtype /OpenType"
   | .trueType n => s!"/Length1 {n}"
   | .metadata => "/Type /Metadata /Subtype /XML"
+  | .figForm x0 y0 x1 y1 res group =>
+    "/Type /XObject" ++ " /Subtype /Form" ++ s!" /BBox [{x0} {y0} {x1} {y1}]" ++
+      s!" /Resources {res} {(0 : Nat)} R" ++
+      (if group then " /Group << /Type /Group" ++ " /S /Transparency" ++ " /I true >>" else "")
 
 public def StreamPrefix.fragment (p : StreamPrefix) (filtered : Bool) : String :=
   p.text ++ if filtered then " /Filter /FlateDecode" else ""
@@ -1463,10 +1692,10 @@ public theorem writerXrefWidths_second_exact (t : ObjTable) (locs : Array (Nat �
 is constructed from source counts; there is no numeric premise left.
 Decompression and the reader's row walk remain separate contracts. -/
 public theorem writerXref_fields_exact (keep : Array Nat) (imgs : Image.Store)
-    (usedImgs : Array Nat) (np nOut nElems : Nat) (head : ByteArray) (rows : Array Row)
-    (objects : List (Nat × PdfRead.Obj)) (id : Nat)
-    (hid : id < (objTable keep imgs usedImgs np nOut nElems).size) :
-    let t := objTable keep imgs usedImgs np nOut nElems
+    (usedImgs : Array Nat) (np nOut nElems nFigDict nFigForm : Nat) (head : ByteArray)
+    (rows : Array Row) (objects : List (Nat × PdfRead.Obj)) (id : Nat)
+    (hid : id < (objTable keep imgs usedImgs np nOut nElems nFigDict nFigForm).size) :
+    let t := objTable keep imgs usedImgs np nOut nElems nFigDict nFigForm
     let out := serialize head rows
     let es := writerXrefEntries t out.2 objects out.1.size
     let w := Xref.widthsOf es
@@ -1478,11 +1707,11 @@ public theorem writerXref_fields_exact (keep : Array Nat) (imgs : Image.Store)
       Binary.readNatBE w.first data (w.row * id + 1) = some e.fields.2.1 ∧
       Binary.readNatBE w.second data (w.row * id + 1 + w.first) = some e.fields.2.2 := by
   dsimp only
-  have hi := xrefEntries_index_exact keep imgs usedImgs np nOut nElems
-    (fun n => ((compressedIndex (objTable keep imgs usedImgs np nOut nElems).size objects)[n]?).join)
-    (fun n => ((indexObjects (objTable keep imgs usedImgs np nOut nElems).size
+  have hi := xrefEntries_index_exact keep imgs usedImgs np nOut nElems nFigDict nFigForm
+    (fun n => ((compressedIndex (objTable keep imgs usedImgs np nOut nElems nFigDict nFigForm).size objects)[n]?).join)
+    (fun n => ((indexObjects (objTable keep imgs usedImgs np nOut nElems nFigDict nFigForm).size
       (serialize head rows).2.toList)[n]?).join) (serialize head rows).1.size id hid
-  have he := writerXrefEntries_fits (objTable keep imgs usedImgs np nOut nElems)
+  have he := writerXrefEntries_fits (objTable keep imgs usedImgs np nOut nElems nFigDict nFigForm)
     (serialize head rows).2 objects (serialize head rows).1.size _ (Array.mem_of_getElem? hi)
   simpa only [writerXrefEntries, ByteArray.empty_append, ByteArray.append_empty,
     ByteArray.size_empty, Nat.zero_add] using
@@ -1658,6 +1887,46 @@ public def zRow (id : Nat) (dict : String) (data z : ByteArray) : Row :=
 public def flateRow (id : Nat) (dict : String) (data : ByteArray) : Row :=
   zRow id dict data (Flate.deflate data)
 
+/-- A figure form's stream prefix: its box, the shared resources, and
+whether it is an isolated transparency group (§11.6.6) — a group form is,
+a symbol's or a stamp's is not. -/
+public def formPrefix (b : Int × Int × Int × Int) (resId : Nat) (kind : FormKind) : StreamPrefix :=
+  .figForm b.1 b.2.1 b.2.2.1 b.2.2.2 resId (match kind with
+    | .group => true
+    | .symbol => false
+    | .stamp _ => false)
+
+/-- A figure form's row: its body's operators under `formPrefix`. An entry
+that is no form, which the writer's form block never holds, writes an
+empty content stream, so its slot is still an object. -/
+public def formRow (id resId : Nat) : FigRes → Row
+  | .form kind body =>
+    flateRow id (formPrefix (formBBox kind body) resId kind).text (render body).toUTF8
+  | .extG _ _ => flateRow id StreamPrefix.content.text ByteArray.empty
+  | .pattern _ => flateRow id StreamPrefix.content.text ByteArray.empty
+  | .shading _ => flateRow id StreamPrefix.content.text ByteArray.empty
+
+/-- A copied page's content as the writer stores it: deflated, with the
+filter declared, when that is smaller, else as the source page carried it
+(`copiedForm_inflate_id`). The deflate is the driver's when it took one
+through its content-hash cache (`Image.Store.formZ`), else computed here.
+The page's resources and the objects they reach keep the source's own
+filters. -/
+@[expose] public def copiedFormStream (content : ByteArray) (z? : Option ByteArray) :
+    ByteArray × Bool :=
+  let z := z?.getD (Flate.deflate content)
+  if z.size < content.size then (z, true) else (content, false)
+
+/-- The content of each copied page the pages place, by store entry: what
+the driver deflates through its content-hash cache (`Image.Store.formZ`). -/
+public def copiedFormContents (imgs : Image.Store) (pages : Array PageOut) :
+    Array (Option ByteArray) :=
+  let used := usedImagesOf imgs pages
+  (Array.range imgs.entries.size).map fun k =>
+    if used.contains k then
+      ((((imgs.get? k).bind (·.info)).bind (·.form)).map (·.val.content))
+    else none
+
 public theorem zRow_native_exact (id : Nat) (p : StreamPrefix) (data z : ByteArray) :
     (zRow id p.text data z).body.Native := by
   unfold zRow
@@ -1668,6 +1937,10 @@ public theorem zRow_native_exact (id : Nat) (p : StreamPrefix) (data z : ByteArr
 public theorem flateRow_native_exact (id : Nat) (p : StreamPrefix) (data : ByteArray) :
     (flateRow id p.text data).body.Native :=
   zRow_native_exact id p data _
+
+public theorem formRow_native_exact (id resId : Nat) (r : FigRes) :
+    (formRow id resId r).body.Native := by
+  cases r <;> exact flateRow_native_exact _ _ _
 
 /-- `n` consecutive slices of at most `objStmCapacity` items each, in
 order: the structural fold `objStmChunks` runs. -/
@@ -1925,7 +2198,6 @@ public def prepare (geom : Geom) (fs : FontSet) (pages : Array PageOut)
       let font := fs.get fk
       FontSubset.program font (used.map (·.1))
   let usedImgs := usedImagesOf imgs pages
-  let ni := usedImgs.size
   let imgMap := imgMapOf imgs usedImgs
   let nOut := outline.size
   -- The structure tree: the skeleton once, its leaf tags into every page's
@@ -1939,14 +2211,20 @@ public def prepare (geom : Geom) (fs : FontSet) (pages : Array PageOut)
   -- same walk — `streams` are their render), else built here.
   let ops := if ops.size == np then ops
     else let wt := widthTable fs.fonts keep
-      pages.map (contentOps geom remap wt imgMap tags)
+      namedPageOps geom pages (pages.map (contentOps geom remap wt imgMap tags figureNames))
   let marks := ops.map pageMarks
   let es := fill sk (leafPagesOf nLeaves marks)
   let parentTree := parentTreeOf marks (leafOwners sk nLeaves)
   -- Every object id, from the one table: `objTable_ids_exact` says its
   -- ids tile `[1, size)`, so the cross-reference can be built without a
   -- second pass and no row is left to a default.
-  let t := objTable keep imgs usedImgs np nOut es.size
+  -- The figure table the pages' operators name into (`namedPageOps`),
+  -- split by how each entry is spelled: dictionaries in the object stream,
+  -- forms as streams.
+  let figs := figureTable geom pages
+  let figDicts := figs.filter fun r => !r.isForm
+  let figForms := figs.filter FigRes.isForm
+  let t := objTable keep imgs usedImgs np nOut es.size (figDictCount figs) (figFormCount figs)
 
   -- compressed (non-stream) objects, as typed values: `Obj.render` is the
   -- only place their bytes are decided, so what the census reads back is
@@ -1992,6 +2270,23 @@ public def prepare (geom : Geom) (fs : FontSet) (pages : Array PageOut)
           ("Rect", .arr #[ptObj x0, ptObj y0, ptObj x1, ptObj y1]),
           ("Border", .arr #[.int 0, .int 0, .int 0]), ("F", .int 4),
           linkTarget url]))]
+  -- The one resources dictionary every page and figure form names: the
+  -- kept faces; the placed images and the figure table's forms; the
+  -- table's ExtGStates, patterns and shadings — each name its entry's place
+  -- in the table, each reference its slot in the table's block.
+  let figId (k : Nat) : Nat :=
+    if (figs[k]?.map FigRes.isForm).getD false then t.figFormId (figRank figs k)
+    else t.figDictId (figRank figs k)
+  let figEntries (pick : FigRes → Bool) : Array (String × PdfRead.Obj) :=
+    figs.zipIdx.filterMap fun (r, k) =>
+      if pick r then some (s!"{r.namePrefix}{k + 1}", PdfRead.Obj.ref (figId k) 0) else none
+  let imgEntries : Array (String × PdfRead.Obj) :=
+    t.imgIds.zipIdx.map fun (id, n) => (s!"Im{n + 1}", PdfRead.Obj.ref id 0)
+  let resources : PdfRead.Obj := resourcesDict fontResources
+    (imgEntries ++ figEntries FigRes.isForm) (figEntries fun r => r.namePrefix == "GS")
+    (figEntries fun r => r.namePrefix == "P") (figEntries fun r => r.namePrefix == "Sh")
+  let figDictObjs : List (Nat × PdfRead.Obj) := figDicts.toList.zipIdx.map fun (r, j) =>
+    (t.figDictId j, (figDictObj (nameRes figs r)).getD .null)
   let pageDict (i : Nat) : PdfRead.Obj :=
     -- With bleed the medium is larger than the finished page, and the
     -- boxes follow from the declared trim size and bleed (`pageBoxes`,
@@ -2011,15 +2306,12 @@ public def prepare (geom : Geom) (fs : FontSet) (pages : Array PageOut)
       else pageBoxes geom.pageW geom.pageH b
     let boxes : Array (String × PdfRead.Obj) := if b == 0 && !(0 < inset) then #[] else
       #[("TrimBox", trim.obj), ("BleedBox", bleedBox.obj), ("ArtBox", trim.obj)]
-    let xobj : Array (String × PdfRead.Obj) := if ni == 0 then #[] else
-      #[("XObject", .dict (t.imgIds.zipIdx.map fun (id, n) =>
-        (s!"Im{n + 1}", PdfRead.Obj.ref id 0)))]
     -- `/StructParents` (§14.7.5.4): the page's key in the parent tree,
     -- under which its marked-content identifiers map back to elements.
     let ann := annots i
     .dict (#[("Type", PdfRead.Obj.name "Page"), ("Parent", .ref 2 0), ("MediaBox", media.obj)]
       ++ boxes
-      ++ #[("Resources", .dict (#[("Font", fontResources)] ++ xobj))]
+      ++ #[("Resources", .ref t.resId 0)]
       ++ ann
       ++ #[("Contents", .ref (t.contentId i) 0), ("StructParents", .int i)])
   -- Metadata is a *text string* (§7.9.2.2): ASCII literal, or UTF-16BE
@@ -2112,7 +2404,8 @@ public def prepare (geom : Geom) (fs : FontSet) (pages : Array PageOut)
     ++ es.toList.zipIdx.map fun (e, i) => (t.structElemId i, structElemObj e)
   let compressed : List (Nat × PdfRead.Obj) :=
     [(1, catalog), (2, pagesObj)] ++ fontObjs ++ [(t.infoId, infoDict)] ++ outlineObjs ++
-    (List.range np).map (fun i => (t.pageId i, pageDict i)) ++ structObjs
+    (List.range np).map (fun i => (t.pageId i, pageDict i)) ++ structObjs ++
+    [(t.resId, resources)] ++ figDictObjs
 
   -- assemble the file: every object as a row first, then one `serialize`
   -- fold whose offsets are its own (`serialize_locs_covers`). Nothing
@@ -2162,8 +2455,10 @@ public def prepare (geom : Geom) (fs : FontSet) (pages : Array PageOut)
 {Sp.toPtString fv.x1} {Sp.toPtString fv.y1}]"
         let matrix := s!"[{ratString spPerPt bw} 0 0 {ratString spPerPt bh} \
 {ratString (-fv.x0) bw} {ratString (-fv.y0) bh}]"
+        let stored := copiedFormStream fv.content (imgs.formZ[k]?).join
+        let filter := if stored.2 then " /Filter /FlateDecode" else ""
         rows := rows.push ⟨imgId, .form s!"<< /Type /XObject /Subtype /Form \
-/BBox {bbox} /Matrix {matrix} /Resources " (renderChunks base fv.resources) fv.content⟩
+/BBox {bbox} /Matrix {matrix}{filter} /Resources " (renderChunks base fv.resources) stored.1⟩
         for (o, l) in fv.objects.zipIdx do
           rows := rows.push ⟨base + l, .copied (renderChunks base o.chunks) o.stream⟩
       | _, _ =>
@@ -2211,6 +2506,12 @@ public def prepare (geom : Geom) (fs : FontSet) (pages : Array PageOut)
 /Height {inf.pxH} /ColorSpace /DeviceGray /BitsPerComponent {bpc} /Filter /FlateDecode \
 /DecodeParms << /Predictor 15 /Colors 1 /BitsPerComponent {bpc} /Columns {inf.pxW} >>"
             rows := rows.push ⟨mid, .stream mdict plane⟩
+
+  -- Figure forms: one stream per form the table holds, its body renamed
+  -- onto the table, under the shared resources; a transparency group's
+  -- form isolated (§11.6.6).
+  for (r, j) in figForms.zipIdx do
+    rows := rows.push (formRow (t.figFormId j) t.resId (nameRes figs r))
 
   for k in [0:nf] do
     let font := fs.get keep[k]!
@@ -2313,18 +2614,22 @@ public theorem prepare_native_exact (geom : Geom) (fs : FontSet) (pages : Array 
   apply push
   · apply Loop.forIn_range_inv P
     · apply Loop.forIn_array_inv P
-      · apply Loop.forIn_range_inv P
-        · simp [P]
-        · intro i _ _ rows h
+      · apply Loop.forIn_array_inv P
+        · apply Loop.forIn_range_inv P
+          · simp [P]
+          · intro i _ _ rows h
+            dsimp only [Id.run, bind, pure]
+            apply push _ _ h
+            split
+            · exact zRow_native_exact _ .content _ _
+            · exact flateRow_native_exact _ .content _
+        · intro x _ rows h
           dsimp only [Id.run, bind, pure]
-          apply push _ _ h
-          split
-          · exact zRow_native_exact _ .content _ _
-          · exact flateRow_native_exact _ .content _
+          simpa only [Image.Store.get?, Array.getElem?_empty, Option.bind_none,
+            ForInStep.value] using h
       · intro x _ rows h
         dsimp only [Id.run, bind, pure]
-        simpa only [Image.Store.get?, Array.getElem?_empty, Option.bind_none,
-          ForInStep.value] using h
+        exact push _ _ h (formRow_native_exact _ _ _)
     · intro k _ _ rows h
       dsimp only [Id.run, bind, pure]
       apply push
@@ -2344,7 +2649,7 @@ public theorem prepare_table_exact (geom : Geom) (fs : FontSet) (pages : Array P
     (streams : Array (ByteArray × Option ByteArray)) (tree : Struct.Tree)
     (ops : Array (Array ContentOp)) (programs : Array (ByteArray × Bool)) :
     (prepare geom fs pages info imgs outline streams tree ops programs).table =
-      tableOf fs pages imgs outline tree := by
+      tableOf geom fs pages imgs outline tree := by
   unfold prepare tableOf
   simp only [Id.run, pure, bind, keepFaces, fill_size_exact]
 
@@ -2363,7 +2668,8 @@ public theorem prepare_compressed_ids_exact (geom : Geom) (fs : FontSet) (pages 
         (List.range t.nOut).map t.outlineItemId) ++
       (List.range t.np).map t.pageId ++
       [t.structTreeRoot, t.parentTree, t.namespaceId] ++
-      (List.range t.nElems).map t.structElemId := by
+      (List.range t.nElems).map t.structElemId ++
+      [t.resId] ++ (List.range t.nFigDict).map t.figDictId := by
   dsimp only
   simp only [prepare, Id.run, pure, bind, List.map_append, List.map_cons,
     List.map_nil, List.map_flatMap, FontObjects.rows, List.map_map, Function.comp_def,
@@ -2416,10 +2722,13 @@ private theorem zRow_id (n : Nat) (d : String) (data z : ByteArray) :
 private theorem flateRow_id (n : Nat) (d : String) (data : ByteArray) :
     (flateRow n d data).id = n := zRow_id ..
 
+private theorem formRow_id (n resId : Nat) (r : FigRes) : (formRow n resId r).id = n := by
+  cases r <;> exact flateRow_id ..
+
 private theorem image_slots (keep : Array Nat) (imgs : Image.Store) (used : Array Nat)
-    (np nOut nElems k id n : Nat) (hk : used[n]? = some k)
-    (hi : (objTable keep imgs used np nOut nElems).imgIds[n]? = some id) :
-    let t := objTable keep imgs used np nOut nElems
+    (np nOut nElems nFigDict nFigForm k id n : Nat) (hk : used[n]? = some k)
+    (hi : (objTable keep imgs used np nOut nElems nFigDict nFigForm).imgIds[n]? = some id) :
+    let t := objTable keep imgs used np nOut nElems nFigDict nFigForm
     t.formBases[n]?.join =
       (match imgExtraOf imgs k with | .form _ => some (id + 1) | _ => none) ∧
     t.smaskIds[n]?.join =
@@ -2468,9 +2777,10 @@ public theorem prepare_direct_ids_exact (geom : Layout.Geom) (fs : Font.FontSet)
     p.direct.toList.map Row.id =
       (List.range p.table.np).map p.table.contentId ++
       ((p.table.imgIds.zip p.table.imgSpans).toList.flatMap fun p => List.range' p.1 p.2) ++
+      (List.range p.table.nFigForm).map p.table.figFormId ++
       (List.range p.table.nf).flatMap (fun k => [ObjTable.toUniId k, p.table.fileId k]) ++
       [p.table.xmpId] := by
-  let t := tableOf fs pages imgs outline tree
+  let t := tableOf geom fs pages imgs outline tree
   dsimp only
   simp only [prepare, Id.run, bind, pure, fill_size_exact]
   simp only [Array.toList_push, List.map_append, List.map_cons, List.map_nil, flateRow_id]
@@ -2484,6 +2794,13 @@ public theorem prepare_direct_ids_exact (geom : Layout.Geom) (fs : Font.FontSet)
       List.nil_append]
     all_goals rfl
   rw [forIn_array_ids (ids := fun rs : Array Row => rs.toList.map Row.id)
+    (emits := fun x : FigRes × Nat => [t.figFormId x.2])]
+  case hf =>
+    rintro ⟨r, j⟩ _ rs
+    refine ⟨_, rfl, ?_⟩
+    simp only [Array.toList_push, List.map_append, List.map_cons, List.map_nil, formRow_id]
+    rfl
+  rw [forIn_array_ids (ids := fun rs : Array Row => rs.toList.map Row.id)
     (emits := fun x : (Nat × Nat) × Nat => List.range' x.1.2 (imgExtraOf imgs x.1.1).span)]
   case hf =>
     rintro ⟨⟨k, imgId⟩, n⟩ hm rs
@@ -2491,6 +2808,7 @@ public theorem prepare_direct_ids_exact (geom : Layout.Geom) (fs : Font.FontSet)
     obtain ⟨inf, hinf⟩ := Option.isSome_iff_exists.mp
       (usedImagesOf_loaded imgs pages k (Array.mem_of_getElem? hs.1))
     have slots := image_slots _ imgs _ pages.size outline.size (skeleton tree).size
+      (figDictCount (figureTable geom pages)) (figFormCount (figureTable geom pages))
       k imgId n hs.1 hs.2
     simp only [hinf]
     cases hf : inf.form with
@@ -2523,7 +2841,8 @@ public theorem prepare_direct_ids_exact (geom : Layout.Geom) (fs : Font.FontSet)
     simp only [Array.toList_push, List.map_append, List.map_cons, List.map_nil]
     split <;> simp only [zRow_id, flateRow_id] <;> rfl
   rw [image_transcript]
-  simp only [List.map_nil, List.nil_append, ← List.map_eq_flatMap]
+  simp only [List.map_nil, List.nil_append, ← List.map_eq_flatMap, Array.toList_zipIdx,
+    map_zipIdx_snd, Array.length_toList]
   rfl
 
 /-- The object-stream rows carry the table's stream ids, in order. -/
@@ -2544,6 +2863,7 @@ private theorem emission_covers (p : WritePlan)
     (hd : p.direct.toList.map Row.id =
       (List.range p.table.np).map p.table.contentId ++
       ((p.table.imgIds.zip p.table.imgSpans).toList.flatMap fun q => List.range' q.1 q.2) ++
+      (List.range p.table.nFigForm).map p.table.figFormId ++
       (List.range p.table.nf).flatMap (fun k => [ObjTable.toUniId k, p.table.fileId k]) ++
       [p.table.xmpId])
     (hc : p.compressed.map Prod.fst =
@@ -2554,7 +2874,8 @@ private theorem emission_covers (p : WritePlan)
         (List.range p.table.nOut).map p.table.outlineItemId) ++
       (List.range p.table.np).map p.table.pageId ++
       [p.table.structTreeRoot, p.table.parentTree, p.table.namespaceId] ++
-      (List.range p.table.nElems).map p.table.structElemId)
+      (List.range p.table.nElems).map p.table.structElemId ++
+      [p.table.resId] ++ (List.range p.table.nFigDict).map p.table.figDictId)
     (hs : p.chunks.length = p.table.nStm) :
     ∀ id ∈ p.table.ids, id = p.table.xrefId ∨
       id ∈ p.rows.toList.map Row.id ∨ id ∈ p.compressed.map Prod.fst := by
@@ -2581,9 +2902,10 @@ private theorem chunks_count_exact (p : WritePlan)
         (List.range p.table.nOut).map p.table.outlineItemId) ++
       (List.range p.table.np).map p.table.pageId ++
       [p.table.structTreeRoot, p.table.parentTree, p.table.namespaceId] ++
-      (List.range p.table.nElems).map p.table.structElemId)
-    (hstm : p.table.nStm =
-      objStmCount (compressedCount p.table.nf p.table.np p.table.nOut p.table.nElems)) :
+      (List.range p.table.nElems).map p.table.structElemId ++
+      [p.table.resId] ++ (List.range p.table.nFigDict).map p.table.figDictId)
+    (hstm : p.table.nStm = objStmCount
+      (compressedCount p.table.nf p.table.np p.table.nOut p.table.nElems p.table.nFigDict)) :
     p.chunks.length = p.table.nStm := by
   have hl := congrArg List.length hc
   rw [List.length_map] at hl
@@ -2696,8 +3018,8 @@ private theorem writerEntry_live (t : ObjTable) (locs : Array (Nat × Nat))
           simp [hcomp] at this
 
 private theorem plan_entries_contract (p : WritePlan)
-    (keep : Array Nat) (imgs : Image.Store) (used : Array Nat) (np no ne : Nat)
-    (ht : p.table = objTable keep imgs used np no ne)
+    (keep : Array Nat) (imgs : Image.Store) (used : Array Nat) (np no ne nd nfm : Nat)
+    (ht : p.table = objTable keep imgs used np no ne nd nfm)
     (hc : ∀ id ∈ p.table.ids, id = p.table.xrefId ∨
       id ∈ p.rows.toList.map Row.id ∨ id ∈ p.compressed.map Prod.fst) :
     p.entries.size = p.table.size ∧
@@ -2706,7 +3028,7 @@ private theorem plan_entries_contract (p : WritePlan)
       (p.entries[i]?.bind PdfRead.xrefEntryLocation).isSome = true := by
   have hs : p.entries.size = p.table.size := by
     simpa only [WritePlan.entries, writerXrefEntries, ht] using
-      (xrefEntries_size_exact keep imgs used np no ne
+      (xrefEntries_size_exact keep imgs used np no ne nd nfm
         (fun n => ((compressedIndex p.table.size p.compressed)[n]?).join)
         (fun n => ((indexObjects p.table.size p.serialized.2.toList)[n]?).join)
         p.serialized.1.size default).1
@@ -2717,7 +3039,7 @@ private theorem plan_entries_contract (p : WritePlan)
           (fun n => ((indexObjects p.table.size p.serialized.2.toList)[n]?).join)
           p.serialized.1.size i) := by
     simpa only [WritePlan.entries, writerXrefEntries, ht] using
-      xrefEntries_index_exact keep imgs used np no ne
+      xrefEntries_index_exact keep imgs used np no ne nd nfm
         (fun n => ((compressedIndex p.table.size p.compressed)[n]?).join)
         (fun n => ((indexObjects p.table.size p.serialized.2.toList)[n]?).join)
         p.serialized.1.size i (by simpa only [ht] using hib)
@@ -2735,7 +3057,7 @@ private theorem plan_entries_contract (p : WritePlan)
     apply writerEntry_live _ _ _ _ i hib
     have hm : i ∈ p.table.ids := by
       rw [ht]
-      exact objTable_covers keep imgs used np no ne i (by omega) (by simpa only [ht] using hib)
+      exact objTable_covers keep imgs used np no ne nd nfm i (by omega) (by simpa only [ht] using hib)
     rcases hc i hm with hx | hd | hcomp
     · exact Or.inl hx
     · right
@@ -2756,7 +3078,8 @@ public theorem prepare_entries_contract (geom : Geom) (fs : FontSet) (pages : Ar
     ∀ i, 0 < i → i < p.entries.size →
       (p.entries[i]?.bind PdfRead.xrefEntryLocation).isSome = true :=
   plan_entries_contract _ (keepFaces fs pages) imgs (usedImagesOf imgs pages)
-    pages.size outline.size (skeleton tree).size
+    pages.size outline.size (skeleton tree).size (figDictCount (figureTable geom pages))
+    (figFormCount (figureTable geom pages))
     (prepare_table_exact geom fs pages info imgs outline streams tree ops programs)
     (prepare_emission_covers geom fs pages info imgs outline streams tree ops programs)
 

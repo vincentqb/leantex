@@ -569,7 +569,8 @@ private def pdfFillsOne (out : Array (Ir.Color × Dim.Sp × Dim.Sp)) :
     Pdf.ContentOp → Array (Ir.Color × Dim.Sp × Dim.Sp)
   | .fill color _ _ w h => out.push (color, w, h)
   | .marked _ body => pdfFillsList out body.toList
-  | .path _ _ _ | .text _ | .image _ _ _ _ _ | .imageMissing _ _ _ _ => out
+  | .paint _ _ _ _ | .group _ _ _ _ | .shade _ _ | .outline _ _ _ | .xobject _ _ _ _ | .text _
+  | .image _ _ _ _ _ | .imageMissing _ _ _ _ => out
 private def pdfFillsList (out : Array (Ir.Color × Dim.Sp × Dim.Sp)) :
     List Pdf.ContentOp → Array (Ir.Color × Dim.Sp × Dim.Sp)
   | [] => out

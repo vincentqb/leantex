@@ -847,7 +847,8 @@ Names beyond the ones this agent shipped are the siblings' tiers, declared
 ahead of their arrival so their absence is visible. -/
 def declaredTiers : List String :=
   ["commonmark", "compat", "coverage", "diagaudit", "diagdebt", "external", "htmla11y",
-   "htmlreader", "mdtwin", "parity", "purity", "rhythm", "typeset"]
+   "htmlreader", "mdtwin", "parity", "pdf-native", "purity", "rhythm", "svg-native",
+   "tikz-native", "typeset"]
 
 /-- The declared tiers that have not landed yet: only these may be absent,
 and their absence reports `missing`, which the aggregate does not gate — so
@@ -859,7 +860,7 @@ both halves: landing a tier and removing its name here are one commit. That
 is what makes the permission narrow rather than a hole the size of
 `declaredTiers`. -/
 def pendingTiers : List String :=
-  []
+  ["pdf-native", "svg-native", "tikz-native"]
 
 /-- Build every tier producer and its test dependencies before fan-out.
 Interpreted tools otherwise read stale compiled modules. No tier spawns
