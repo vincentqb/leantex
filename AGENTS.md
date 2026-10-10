@@ -147,14 +147,17 @@ is skipped.
   `Ui.diag`; only `Render` formats them. Reports read porcelain JSON records,
   never human headers. `diagnosticOutputBypasses` and its mutation selftest
   enforce this CLI source convention, including early formatting and direct
-  printing of diagnostic fields. A phase's log prints each wording of a
-  warning once: `Ui.resolve` folds repeats (`Diag.foldRepeats`) — the census's
-  loss where a subject names one, the same words where none does — so a later
-  warning in the same words is a note, the loss's first record carries the
-  census's count, and porcelain keeps every record (`foldRepeats_sum_exact`,
-  `foldRepeats_census_exact`, `foldRepeats_visible_inj`). Errors print at every
-  site; acceptance and `--werror` count a folded repeat once, as they count a
-  census repeat.
+  printing of diagnostic fields. A phase's log folds repeated warnings:
+  `Ui.resolve` delivers a warning as a note when an earlier warning of its
+  loss — the census's where a subject names one, the same words where none
+  does — says the same words (`Diag.foldRepeats`), and that first warning
+  carries their count; a loss's notes count on its first record, its lines add
+  up to its records, and porcelain keeps every record (`foldRepeats_sum_exact`,
+  `foldRepeats_loss_sum_exact`, `foldRepeats_shown_exact`,
+  `foldRepeats_visible_inj`). An emitter that keys once per construct
+  (`warnOnce`, `sayOnce`) delivers its later sites as notes itself, whatever
+  their words. Errors print at every site; acceptance and `--werror` count a
+  folded repeat once, as they count a census repeat.
 
 - A run never carries a leading of its own: its line box leads at its
   paragraph's leading in its own size's proportion (`Ir.runLead`), as LaTeX

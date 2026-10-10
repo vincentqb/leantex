@@ -13,9 +13,9 @@ many sites printed once per site when its emitter named no subject: the
 census groups by subject, and the sink printed every record that was not a
 note. A listing option the engine does not honour was such a loss, one line
 per listing. The invariant is over what the driver's own sink writes: a
-phase's repeats of one loss print one line carrying the count, `-v` prints
-every site, porcelain keeps every site, and the counts add up to the
-records. Every word here is invented. -/
+phase's repeats of one loss in the same words print one line carrying their
+count, `-v` prints every site, porcelain keeps every site, and the counts add
+up to the records, a loss's to its own. Every word here is invented. -/
 
 namespace Tests.DiagFold
 
@@ -133,15 +133,17 @@ def foldChecks (ref : IO.Ref (List String)) : IO Unit := do
   let (err, _, _) ← sink plain #[] advised
   t "the same message with different advice keeps both lines"
     ((warningLines err "W0110").length == 2)
-  -- One loss in different words keeps each wording; a repeated wording folds.
+  -- One loss in different words keeps each wording, each with its own count.
   let boxes := #[Diag.of .W0110 "box keys zzalpha are not applied" (span 1) (subject := some "zzbox"),
     Diag.of .W0110 "box keys zzbeta are not applied" (span 2) (subject := some "zzbox"),
     Diag.of .W0110 "box keys zzbeta are not applied" (span 3) (subject := some "zzbox")]
   let (err, _, _) ← sink plain #[] boxes
-  t s!"a loss's wordings each keep a line, its repeat folds ({warningLines err "W0110"})"
+  let (_, porcelain, _) ← sink { plain with porcelain := true } #[] boxes
+  t s!"a loss's wordings each keep a line carrying their own count ({warningLines err "W0110"})"
     ((warningLines err "W0110").length == 2 &&
-      (warningLines err "W0110").any (fun l => hasStr l "deck.tex:1:1" && hasStr l "(3 sites)") &&
-      (warningLines err "W0110").any (hasStr · "deck.tex:2:1"))
+      (warningLines err "W0110").any (fun l => hasStr l "deck.tex:1:1" && !hasStr l "sites)") &&
+      (warningLines err "W0110").any (fun l => hasStr l "deck.tex:2:1" && hasStr l "(2 sites)") &&
+      (porcelainRows porcelain "W0110").map (·.1) == [1, 2, 0])
   -- A repeat at another output scope is another loss.
   let scopes := (same.map fun d => { d with output := some .pdf }).push
     (Diag.of .W0110 "the zzsink option is not honoured; ignored" (span 3) (output := some .html))
@@ -167,18 +169,21 @@ def foldChecks (ref : IO.Ref (List String)) : IO Unit := do
       (folded.zip log).all fun (f, d) => { f with sites := d.sites }.demote == d.demote)
   t "folding: the sites in are the sites out"
     ((folded.toList.map (·.sites)).sum == log.size)
-  t "folding moves no count the census wrote"
-    (((Diag.foldRepeats ds).zip ds).all fun (f, d) => d.subject.isNone || f.sites == d.sites)
-  -- A loss that opens on a note keeps its count there, and its warning shows.
+  t "a census loss's folded counts add up to the census's"
+    (ds.all fun d => d.subject.isNone ||
+      ((((Diag.foldRepeats ds).filter (Diag.sameLoss d)).map (·.sites)).toList.sum ==
+        (((Diag.tallySites ds).filter (Diag.sameLoss d)).map (·.sites)).toList.sum))
+  -- A loss that opens on a note keeps that record's count there, and its
+  -- warning shows with its own.
   let quiet := #[(Diag.of .W0110 "the zzquiet option is not honoured; ignored" (span 1)
       (subject := some "zzquiet")).demote,
     Diag.of .W0110 "the zzquiet option is not honoured; ignored" (span 2)
       (subject := some "zzquiet")]
   let (err, _, _) ← sink plain #[] quiet
   let (_, porcelain, _) ← sink { plain with porcelain := true } #[] quiet
-  t "a loss that opens on a note still shows its warning, the count on its first record"
+  t "a loss that opens on a note still shows its warning, the loss's sites all counted"
     ((warningLines err "W0110").length == 1 && (warningLines err "W0110").all (hasStr · "deck.tex:2:1") &&
-      (porcelainRows porcelain "W0110") == [(2, "note"), (0, "warning")])
+      (porcelainRows porcelain "W0110") == [(1, "note"), (1, "warning")])
 
 /-- The doors a diagnostic is made through, by their call heads, and whether
 each takes a subject: a door named before its receiver (`diag ctx .`,
@@ -214,8 +219,9 @@ a second door for a code whose witness was subjected, so its sites printed
 one line each. Read off a stripped source: a counted code applied at a door
 must name a subject within the call, by keyword or by position, or be in
 `subjectDebt`; a door that takes no subject carries no counted code outside
-the debt. A call's extent is its own line and the deeper-indented lines under
-it; a record literal's, its fields to the closing brace. -/
+the debt. The reading is syntactic: a call's extent is its own line and the
+deeper-indented lines under it, a record literal's its fields to the closing
+brace, and a subject is named when the call writes one other than `none`. -/
 def doorOffences (src : String) : Array String := Id.run do
   let lines := ((stripNonCode src).splitOn "\n").toArray
   let mut out : Array String := #[]

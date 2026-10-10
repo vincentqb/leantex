@@ -79,9 +79,9 @@ def Ui.diag (ui : Ui) (d : Diag) : IO Unit := do
 
 /-- Resolve and print one phase against the document's acceptance
 (`\allow` and `--best-effort`). Return its accounting without retaining
-already-emitted messages. A loss repeated in the phase prints once, its
-first warning carrying the count and every later site a note
-(`Diag.foldRepeats`); porcelain keeps every site. -/
+already-emitted messages. Each wording of a loss repeated in the phase prints
+once, its first warning carrying the wording's count and every later one a
+note (`Diag.foldRepeats`); porcelain keeps every site. -/
 def Ui.resolve (ui : Ui) (allowed : Array String) (allowAll : Bool)
     (ds : Array Diag) (outputs : Array Diag.Output := #[.pdf, .html]) : IO Resolution := do
   let r := Diag.resolveAll allowed allowAll (Diag.foldRepeats (Diag.forOutputs outputs ds))
