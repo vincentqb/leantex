@@ -1358,7 +1358,7 @@ def reports : List Report := [
     pins := []
     state := .owed "the beamer frame layout owner: a declared shrink set at the measure over its factor and scaled by it" ["frameShrinkChecks"] },
   { id := "R146", date := "2026-10-10"
-    what := "a slide frame's text area ends above the slide class's, about two and a half points under the moloch-style theme at ten points and by its footline's height where the footline is empty, and its lines stand a fraction of a point further apart, so a frame the slide class fits overruns here and one it sets a point overfull continues"
+    what := "a slide frame's text area ends above the slide class's: about two and a half points under the moloch-style theme at ten points, by a frame-number footline the default theme does not draw, and by several lines where the footline is empty or a running foot owns the foot, whose frames take the slides margins; and its lines stand a fraction of a point further apart; so a frame the slide class fits overruns here, and one it sets a point overfull continues"
     pins := []
     state := .owed "the beamer frame layout owner: the frame's text area and line pitch as the slide class measures them" ["frameTextAreaChecks"] }
 ]

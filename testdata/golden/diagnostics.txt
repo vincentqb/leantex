@@ -782,9 +782,9 @@
 ⚠ [W0399]
   frame 1: a \vfill before more of its list item, or inside \alt, spaces nothing on the web slide
   suggestion: end the item at the \vfill, or move it outside the \alt
-── W0400 (degraded) a frame a little taller than its page stands past its text area, in the gap above its footline
+── W0400 (degraded) a frame a little taller than its page stands past its text area, in the gap below it
 ⚠ [W0400]
-  frame 1 stands 2.237pt past its text area, in the gap above its footline
+  frame 1 stands 2.237pt past its text area, in the gap below it
   suggestion: shorten the frame, or declare `[allowframebreaks]` on it to accept a break
 ── W0419 (degraded) a picture the boundary did not draw is drawn in part by the rendered subset; what it leaves out is named in the line
 ⚠ [W0419] - \begin

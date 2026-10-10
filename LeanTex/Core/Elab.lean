@@ -11993,11 +11993,11 @@ private def closeFramePalette (ctx : Ctx) (pos : Pos) (blocks : Array Block)
     (title : Array Inline) (opts : FrameOpts) (inner : Array Block)
     (aliasScope : Bool) : EM (Array Block) := do
   recordFrameSource ctx pos blocks.size
-  -- A declared `[squeeze]` rides as its marker opening the body
-  -- (`Ir.squeezeRole`), the one reading both backends make.
-  let inner := if opts.squeeze then inner.insertIdx 0 (Block.role Ir.squeezeRole #[]) (Nat.zero_le _)
-    else inner
-  let blocks := blocks.push (flattenFrame title opts.standout opts.valign opts.breakable inner)
+  -- A declared `[squeeze]` rides as its marker opening the body of the frame
+  -- as it stands once flattened (`Ir.squeezeRole`), the one reading both
+  -- backends make.
+  let frame := flattenFrame title opts.standout opts.valign opts.breakable inner
+  let blocks := blocks.push (if opts.squeeze then frame.markFrame Ir.squeezeRole else frame)
   if !aliasScope then return blocks
   let colors := (← get).scope.palette
   let pal := BeamerColor.restoreAliases ctx.palette (colors.current.getD ctx.palette)

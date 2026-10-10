@@ -8148,24 +8148,30 @@ public def frameSqueeze (body : Array Block) : FrameSqueeze :=
   else if (frameMarks body).contains squeezeFitRole then .fitted
   else .none
 
+/-- Mark a frame with the frame mark `role` (`Block.isFrameMark`) opening its
+body; a frame already marked so keeps its one mark, and any other block is
+left as it is. -/
+-- conserves: none — a splice of one empty mark into a frame's body, not a
+-- walk of the tree: the output's text is the input's, a mark carrying none.
+public def Block.markFrame (role : String) (b : Block) : Block :=
+  match b with
+  | .frame title standout valign breakable fbody =>
+    if (frameMarks fbody).contains role then b
+    else .frame title standout valign breakable
+      (fbody.insertIdx 0 (Block.role role #[]) (Nat.zero_le _))
+  | .para _ | .section .. | .list .. | .center _ | .ragged .. | .spaced .. | .role ..
+  | .link .. | .quote _ | .abstract _ | .titled .. | .equation .. | .verbatim ..
+  | .algorithm .. | .columns _ | .onSteps .. | .altSteps .. | .note _ | .only ..
+  | .nav .. | .logo _ | .pagebreak | .framefoot _ | .setPalette _ | .setTokens _
+  | .rule .. | .picture _ | .table .. | .float .. | .bibliography .. => b
+
 /-- Mark the top-level frames at `indices` with the frame mark `role`
-(`Block.isFrameMark`), the overflow ladder's decision then read off the IR; a
-frame already marked so keeps its one mark. -/
+(`Block.markFrame`), the overflow ladder's decision then read off the IR. -/
 -- conserves: none — a splice of empty marks into frame bodies, not a walk of
 -- the tree: the output's text is the input's, a mark carrying none.
 public def markFrames (body : Array Block) (indices : Array Nat) (role : String) :
     Array Block :=
-  body.mapIdx fun i b => match b with
-    | .frame title standout valign breakable fbody =>
-      if indices.contains i && !(frameMarks fbody).contains role then
-        .frame title standout valign breakable
-          (fbody.insertIdx 0 (Block.role role #[]) (Nat.zero_le _))
-      else b
-    | .para _ | .section .. | .list .. | .center _ | .ragged .. | .spaced .. | .role ..
-    | .link .. | .quote _ | .abstract _ | .titled .. | .equation .. | .verbatim ..
-    | .algorithm .. | .columns _ | .onSteps .. | .altSteps .. | .note _ | .only ..
-    | .nav .. | .logo _ | .pagebreak | .framefoot _ | .setPalette _ | .setTokens _
-    | .rule .. | .picture _ | .table .. | .float .. | .bibliography .. => b
+  body.mapIdx fun i b => if indices.contains i then b.markFrame role else b
 
 /-- Marking no frame changes nothing (`_id`). -/
 public theorem markFrames_id (body : Array Block) (role : String) :
@@ -8174,8 +8180,7 @@ public theorem markFrames_id (body : Array Block) (role : String) :
   apply Array.ext
   · simp
   · intro i h1 h2
-    simp only [Array.getElem_mapIdx, Array.contains_empty, Bool.false_and]
-    split <;> simp_all
+    simp
 
 /-- Mark each top-level frame `i` of `marks` with its role (`markFrames`). -/
 public def markFramesAt (body : Array Block) (marks : Array (Nat × String)) : Array Block :=
@@ -8211,6 +8216,16 @@ public inductive FrameFit where
   | overfull (over : Sp)
   | continued (over : Sp)
   deriving Repr, DecidableEq, Inhabited
+
+/-- Whether the ladder moved a frame step: stood it overfull or continued it. -/
+@[expose] public def FrameFit.moved : FrameFit → Bool
+  | .overfull _ | .continued _ => true
+  | .natural | .shrunk => false
+
+/-- Whether the ladder continued a frame step on the next page. -/
+@[expose] public def FrameFit.continues : FrameFit → Bool
+  | .continued _ => true
+  | .natural | .shrunk | .overfull _ => false
 
 /-- **The overflow ladder's decision** (`Layout.runFitted` decides every
 overlay step of a frame by it, as beamer sets each step's page): from how

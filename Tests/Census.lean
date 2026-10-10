@@ -1540,7 +1540,7 @@ def censusChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet)
     let (doc, diags) ← goldenDoc n
     let geom := Layout.Geom.ofPage doc.page
     let fs ← fixtureFontSet oneFace mathSet shipped doc
-    let out := layoutOf fs doc geom (some pats)
+    let out := (fittedOf fs doc geom (some pats)).out
     let c := censusOf (coveredColorsOf doc) out
     if mdGoldenNames.contains n then seen := seen.push (n, doc, out, c, diags)
     inkMarkupChecks ref n c

@@ -2496,12 +2496,13 @@ private def lineageSkipDecls (doc : Doc) (depth : Nat) (squeezed : Bool := false
   let topsep := if squeezed then Ir.squeezedTopsep.width.resolve size 0 else t
   s!"--{Ir.trivlistSkipName}: {lineageLength doc topsep}; --floatsep: {float};"
 
-/-- Whether any of the document's frames sets its lists squeezed
-(`Ir.frameSqueeze`). -/
+/-- Whether any of the document's frames, at any depth, sets its lists
+squeezed (`Ir.frameSqueeze`). -/
 private def anySqueezed (doc : Doc) : Bool :=
-  doc.body.any fun b => match b with
-    | .frame _ _ _ _ fbody => Ir.frameSqueeze fbody != .none
-    | _ => false
+  Ir.foldBlocks (fun acc b => acc || match b with
+      | .frame _ _ _ _ fbody => Ir.frameSqueeze fbody != .none
+      | _ => false)
+    (fun acc _ => acc) false doc.body
 
 /-- In beamer's lineage, the top level's trivlist and float spaces on the
 root (`lineageSkipDecls`). A declared `\topsep` or `\floatsep` is stated

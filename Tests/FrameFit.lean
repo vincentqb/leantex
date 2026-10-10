@@ -36,24 +36,27 @@ private def ladderNamed (out : Layout.Out) (label : String) : Array Diag :=
 
 /-- **A frame a little taller than its page stands overfull on it; one that
 reaches past the gap above its footline continues, named with its whole
-overrun** (`Layout.runFitted`, `Ir.frameFit`): every overlay step of a frame
-not declared breakable is set once to measure how far past its text area
-its content reaches beyond what its glue shrinks, and decided by that
-overrun. Within the gap beamer's `\footheight` keeps above the footline
-(4 pt, beamerbaseframecomponents.sty:165-167) the step ships on its one
-page, its ink above the footline's, named once by W0400; past it, or where
-footnotes stand at the floor and the overhang would reach them, the step
-continues on the next page as before, named by W0384 with the whole
-overrun, which one more line grows by exactly one baselineskip. Over
-`Layout.Out` on an invented moloch deck (10 pt, the shipped Fira Sans for
-every face): twenty-one lines below a 2 pt skip overrun by about 1.6 pt
-here — a frame lualatex fits, its text area ending lower than this engine's
-(owed) — two overlay steps as tall, a step of an `\only` the same beside a
-step that reaches past the gap, and a picture below seventeen lines;
-twenty-five and twenty-six lines continue; twenty-one alone fit; a 2 pt
-overrun below a footnote continues. At `ee2dec5d` every one of these frames
-that ran past its page shipped a continuation page, and W0384 stated only
-the first line past the page. Invented words. -/
+overrun, each frame once** (`Layout.runFitted`, `Ir.frameFit`,
+`Layout.frameAccount`): every overlay step of a frame not declared
+breakable is set once to measure how far past its text area its content
+reaches beyond what its glue shrinks, and decided by that overrun. Within
+the gap beamer's `\footheight` keeps above the footline (4 pt,
+beamerbaseframecomponents.sty:165-167) the step ships on its one page, its
+ink above the footline's; past it, or where footnotes stand at the floor and
+the overhang would reach them, the step continues on the next page as
+before. Each frame is named once: by W0400 with its largest overhang, or by
+W0384 with the whole overrun a continuing step measured, which one more line
+grows by exactly one baselineskip, an overfull step beside it said in the
+same message. Over `Layout.Out` on an invented moloch deck (10 pt, the
+shipped Fira Sans for every face): twenty-one lines below a 2 pt skip
+overrun by about 1.6 pt here — a frame lualatex fits, its text area ending
+lower than this engine's (owed) — two overlay steps as tall, two steps a
+point apart, an alternation's short side beside a long side that reaches
+past the gap, and a picture below seventeen lines; twenty-five and
+twenty-six lines continue; twenty-one alone fit; a point's overrun below a
+footnote continues. At `ee2dec5d` every one of these frames that ran past
+its page shipped a continuation page, and W0384 stated only the first line
+past the page. Invented words. -/
 def overhangChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
   let some fira ← shippedFira | t "overhang: the shipped Fira Sans parses" false
@@ -64,7 +67,9 @@ def overhangChecks (ref : IO.Ref (List String)) : IO Unit := do
      ("t", "\\vspace*{5pt}\nKilo words.\\footnote{Lima words.}\n\n" ++ paras 19),
      ("t", "\\vspace*{14pt}\n" ++ paras 17 ++ "\n\n" ++ pic),
      ("t", "\\vspace*{2pt}\n" ++ paras 20 ++
-       "\n\n\\alt<2>{Kilo words.\n\nLima words.\n\nMike words.\n\nNovember words.}{Kilo words.}")])
+       "\n\n\\alt<2>{Kilo words.\n\nLima words.\n\nMike words.\n\nNovember words.}{Kilo words.}"),
+     ("t", "\\vspace*{1pt}\n" ++ paras 20 ++
+       "\n\n\\alt<2>{\\vspace*{2pt}Kilo words.}{Kilo words.}")])
   t "overhang: the deck elaborates clean" (ds.all (·.severity != .error))
   let f := fittedOf fira doc (Layout.Geom.ofPage doc.page)
   let out := f.out
@@ -107,12 +112,18 @@ def overhangChecks (ref : IO.Ref (List String)) : IO Unit := do
         l.y + (Layout.segsInk fira l.segs).2 < n.y - (Layout.segsInk fira n.segs).1)
   t "overhang: a picture a point past the text area stands on its frame's one page"
     (framePages out 6 == 1 && (ladderNamed out "7").map (·.code) == #["W0400"])
-  t "overhang: each overlay step is decided on its own, as beamer sets each step's page"
-    (framePages out 7 == 3 &&
-      (match decision f 7 1, decision f 7 2 with
-       | some (.overfull _), some (.continued _) => true
-       | _, _ => false) &&
-      ((ladderNamed out "8").map (·.code)).qsort (· < ·) == #["W0384", "W0400"])
+  t "overhang: each overlay step is decided on its own, the frame named once"
+    (framePages out 7 == 3 && match decision f 7 1, decision f 7 2 with
+      | some (.overfull v), some (.continued c) =>
+        (ladderNamed out "8").map (·.message) ==
+          #[(Layout.continuedDiag (some "8") none c (some v)).message]
+      | _, _ => false)
+  t "overhang: steps overfull by different amounts name their frame once, by the larger"
+    (framePages out 8 == 2 && match decision f 8 1, decision f 8 2 with
+      | some (.overfull a), some (.overfull b) =>
+        a < b && (ladderNamed out "9").map (·.message) ==
+          #[(Layout.overfullDiag (some "9") none b).message]
+      | _, _ => false)
   -- The overhang stays above the footline's ink: the last body line's
   -- deepest glyph against the frame number's tallest.
   let page := out.pages[0]?.getD {}
@@ -125,6 +136,66 @@ def overhangChecks (ref : IO.Ref (List String)) : IO Unit := do
      | _, _ => false)
   t "overhang: the shipped pages are the setting the ladder recorded"
     (out.pages.size == (Layout.run (Layout.Geom.ofPage doc.page) fira none f.setting).pages.size)
+
+/-- **A running foot owns the bottom margin, so a frame there continues
+rather than stand in it** (`Layout.Spacing.Page.clearance`): a deck whose
+`\runningfoot` owns the foot takes the slides margins, where nothing keeps a
+gap between the text area and the foot's ink, so a frame a few points past
+its text area continues on the next page, named by W0384, and on every page
+the body's ink stays above the running foot's. Over `Layout.Out` on an
+invented moloch deck with an invented running foot: eighteen lines below a
+6 pt skip. A ladder that gave the slides margins the gap stood this frame
+in it, its last line's descenders on the running foot's ascenders. Invented
+words. -/
+def runningFootChecks (ref : IO.Ref (List String)) : IO Unit := do
+  let t := check ref
+  let some fira ← shippedFira | t "running foot: the shipped Fira Sans parses" false
+  let (doc, ds) := elabStr (beamerDeck "\\usetheme{moloch}\n\\runningfoot{Hikl gypsy words}\n"
+    [("t", "\\vspace*{6pt}\n" ++ paras 17 ++ "\n\nKilo gypsy words jumping."),
+     ("t", paras 3)])
+  t "running foot: the deck elaborates clean" (ds.all (·.severity != .error))
+  let f := fittedOf fira doc (Layout.Geom.ofPage doc.page)
+  let out := f.out
+  t "running foot: a frame a few points past its text area continues"
+    (framePages out 0 == 2 && (ladderNamed out "1").map (·.code) == #["W0384"] &&
+      match decision f 0 1 with
+      | some (.continued o) => 0 < o && o ≤ Dim.pt 4
+      | _ => false)
+  t "running foot: the body's ink stays above the running foot's on every page"
+    (out.pages.all fun p =>
+      let foot := p.lines.filter (·.furniture)
+      let body := p.lines.filter fun l => !l.furniture && !l.note
+      foot.all fun r => body.all fun l =>
+        l.y + (Layout.segsInk fira l.segs).2 < r.y - (Layout.segsInk fira r.segs).1)
+
+/-- **A declared `[squeeze]` marks the frame as it stands once flattened**
+(`Elab.closeFramePalette`, `Ir.Block.markFrame`): a frame holding only
+`\titlepage` is flattened into the title page's own frame, and a squeeze
+declared on it marks that frame, so the title page sets as it sets
+undeclared — over `Layout.Out` the same lines at the same places, and over
+the typed HTML tree one slide stage per frame, none inside another. A mark
+set before the flatten kept the frame from flattening: the title page's
+stage stood inside the squeezed one, its matter moved down and right, and
+its page gained a footline number. Invented words. -/
+def titlePageSqueezeChecks (ref : IO.Ref (List String)) : IO Unit := do
+  let t := check ref
+  let some fira ← shippedFira | t "title page squeeze: the shipped Fira Sans parses" false
+  let deck (opt : String) : String :=
+    "\\documentclass[10pt]{beamer}\n\\title{Kilo invented title}\n\\author{Lima Author}\n" ++
+      "\\begin{document}\n\\begin{frame}" ++ opt ++ "\n\\titlepage\n\\end{frame}\n" ++
+      "\\begin{frame}{Bravo}\nLima words.\n\\end{frame}\n\\end{document}\n"
+  let (sq, sds) := elabStr (deck "[squeeze]")
+  let (plain, _) := elabStr (deck "")
+  t "title page squeeze: the deck elaborates clean, the option read"
+    (sds.all (·.severity != .error) && !sds.any fun d => d.code == "N0102")
+  let lines (doc : Ir.Doc) : Array (String × Dim.Sp × Dim.Sp) :=
+    ((fittedOf fira doc (Layout.Geom.ofPage doc.page)).out.pages.flatMap (·.lines)).map
+      fun l => (lineText l, l.x, l.y)
+  t "title page squeeze: the title page sets as it sets undeclared"
+    (lines sq == lines plain)
+  let stages (doc : Ir.Doc) : Nat := (slideStages (HtmlDoc.emitTree {} doc).2.1).size
+  t "title page squeeze: one slide stage per frame, none inside another"
+    (stages sq == 2 && stages plain == 2)
 
 /-- **A frame's declared `[squeeze]` sets its lists as beamer's squeeze sets
 them, and the web deck squeezes the lists of a frame the page could not set

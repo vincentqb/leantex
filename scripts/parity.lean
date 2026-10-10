@@ -102,7 +102,7 @@ def engineSide (oneFace mathSet : Font.FontSet) (shipped : Array FontDb.Face)
   let (doc, diags) ← elabFixture stem src
   let geom := Layout.Geom.ofPage doc.page
   let fs ← fixtureFontSet oneFace mathSet shipped doc
-  let out := layoutOf fs doc geom (some pats) {}
+  let out := (fittedOf fs doc geom (some pats) {}).out
   let pdf := driverPdf fs geom doc out {}
   return (diags ++ out.diags, readArtifact pdf)
 

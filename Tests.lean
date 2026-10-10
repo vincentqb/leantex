@@ -590,6 +590,8 @@ def layoutSuiteChecks (ref : IO.Ref (List String)) : IO Unit := do
   Tests.FrameFit.overhangChecks ref
   Tests.FrameFit.squeezeChecks ref
   Tests.FrameFit.breakableTitleChecks ref
+  Tests.FrameFit.runningFootChecks ref
+  Tests.FrameFit.titlePageSqueezeChecks ref
   Tests.FrameArea.floatLevelChecks ref
   topskipChecks ref oneFace
   labelBaselineChecks ref oneFace

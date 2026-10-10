@@ -8484,32 +8484,38 @@ private def frameWho (label : Option String) : String :=
   | none => "a frame"
 
 /-- W0384: the frame labelled `label`, declared at `span`, is `o` taller
-than its page and continues on the next page. -/
-public def continuedDiag (label : Option String) (span : Option Span) (o : Sp) : Diag :=
+than its page and continues on the next page; `also`, where another of its
+overlay steps stood `p` past its text area instead, the one account of the
+frame says so too. -/
+public def continuedDiag (label : Option String) (span : Option Span) (o : Sp)
+    (also : Option Sp := none) : Diag :=
   Diag.of .W0384
-    s!"{frameWho label} is {o.toPtString}pt taller than its page; it continues on the next page"
+    (s!"{frameWho label} is {o.toPtString}pt taller than its page; it continues on the next page" ++
+      match also with
+      | some p => s!", and on another overlay step stands {p.toPtString}pt past its text area, \
+in the gap below it"
+      | none => "")
     (span := span)
     (help := "shorten the frame, or declare `[allowframebreaks]` on it to accept the break")
     (subject := label)
 
-/-- W0400: the frame stands `o` past its text area, in the gap above its
-footline. -/
+/-- W0400: the frame stands `o` past its text area, in the gap below it. -/
 public def overfullDiag (label : Option String) (span : Option Span) (o : Sp) : Diag :=
   Diag.of .W0400
-    s!"{frameWho label} stands {o.toPtString}pt past its text area, in the gap above its \
-footline"
+    s!"{frameWho label} stands {o.toPtString}pt past its text area, in the gap below it"
     (span := span)
     (help := "shorten the frame, or declare `[allowframebreaks]` on it to accept a break")
     (subject := label)
 
-/-- The overflow ladder's account of a frame step (`Ir.frameFit`): W0400
-where it stood overfull, W0384 where it continued; nothing where it fit, its
-glue shrunk or not. -/
-public def fitDiag (fit : Ir.FrameFit) (label : Option String) (span : Option Span) :
-    Option Diag :=
+/-- The overflow ladder's account of a frame (`Ir.frameFit`): W0400 where it
+stood overfull, W0384 where it continued, with `also` an overfull step's
+overhang beside a continuing one; nothing where it fit, its glue shrunk or
+not. -/
+public def fitDiag (fit : Ir.FrameFit) (label : Option String) (span : Option Span)
+    (also : Option Sp := none) : Option Diag :=
   match fit with
   | .overfull o => some (overfullDiag label span o)
-  | .continued o => some (continuedDiag label span o)
+  | .continued o => some (continuedDiag label span o also)
   | .natural | .shrunk => none
 
 /-- **A frame the ladder moved is named, by what it did; one it left is
@@ -8517,8 +8523,8 @@ not** (`_accounts`): `fitDiag` names exactly the overfull and the continued
 decisions, each by its own code — the one spelling the builder's W0384
 (`warnSpill`) and the ladder's account (`runFitted`) share. -/
 public theorem frameFit_accounts (fit : Ir.FrameFit) (label : Option String)
-    (span : Option Span) :
-    (fitDiag fit label span).map (·.kind) =
+    (span : Option Span) (also : Option Sp) :
+    (fitDiag fit label span also).map (·.kind) =
       match fit with
       | .overfull _ => some .W0400
       | .continued _ => some .W0384
@@ -8890,15 +8896,16 @@ public theorem frameBar_exact (pad strut depth : Int) (h : depth ≤ pad) :
 
 /-- How far below its text area a frame's ink may reach before the
 footline's: the gap beamer's `\footheight` keeps above the footline
-(beamerbaseframecomponents.sty:167, `Ir.footline`'s `sep`), wherever a footline
-stands below the frame's text area or beamer's text area ends above the
-paper's edge; nothing on a page whose area is the paper, and nothing on a
-page whose footnotes stand at the floor, which the overhang would reach. -/
+(beamerbaseframecomponents.sty:167, `Ir.footline`'s `sep`) where the page is
+beamer's text area (`FrameArea.text`); nothing on the slides margins, whose
+bottom margin a running foot may own, nothing where the area is the paper,
+and nothing on a page whose footnotes stand at the floor, which the overhang
+would reach. -/
 private def Spacing.Page.clearance (b : B) : Sp :=
   if b.notesH > 0 || !b.pendingNotes.isEmpty then 0 else
   match b.frameArea with
-  | .text | .margins => b.footGap
-  | .paper => 0
+  | .text => b.footGap
+  | .margins | .paper => 0
 
 /-- Whether the open frame stands a line `beyond` past its text area, beyond
 its glue's shrink, overfull on its page: everywhere while the ladder
@@ -8942,6 +8949,8 @@ private def Spacing.Page.warnSpill (b : B) (over : Sp) : B :=
     | .spill, _ | _, none =>
       { b with diags := b.diags.push (continuedDiag b.curFrameLabel b.frameSource over)
                spillWarned := true }
+    -- premise: runFitted_accounts — a marked frame's spill is recorded, not
+    -- named here: the ladder names every frame whose step it recorded.
     | _, some o => { b with spilled := b.spilled.push o, spillWarned := true }
   | _, _ => b
 
@@ -22008,6 +22017,88 @@ public def fitAccount (first final : Out) : Array (FrameOrigin × Ir.FrameFit) :
   steps ++ (final.spilled.filter fun o => !final.overruns.any (·.1 == o)).map fun o =>
     (o, Ir.FrameFit.continued (measured o 0))
 
+/-- The overruns the continuing steps of frame `k` measured. -/
+private def continuedBy (steps : List (FrameOrigin × Ir.FrameFit)) (k : Nat) : List Sp :=
+  steps.filterMap fun p => match p.2 with
+    | .continued c => if p.1.source == k then some c else none
+    | .natural | .shrunk | .overfull _ => none
+
+/-- The overhangs the overfull steps of frame `k` stood. -/
+private def overfullBy (steps : List (FrameOrigin × Ir.FrameFit)) (k : Nat) : List Sp :=
+  steps.filterMap fun p => match p.2 with
+    | .overfull v => if p.1.source == k then some v else none
+    | .natural | .shrunk | .continued _ => none
+
+/-- Frame `k`'s one account from its steps: continued where any step
+continued, with the largest overrun, and the largest overhang of a step that
+stood overfull beside it; else overfull, with the largest overhang. -/
+private def frameEntry (steps : List (FrameOrigin × Ir.FrameFit)) (k : Nat) :
+    Option (Nat × Ir.FrameFit × Option Sp) :=
+  match (continuedBy steps k).max?, (overfullBy steps k).max? with
+  | some c, v => some (k, .continued c, v)
+  | none, some v => some (k, .overfull v, none)
+  | none, none => none
+
+/-- **One account per frame** (one accounting per site): each frame a step
+of `steps` moved, by its index in the PDF's view, named by what its overlay
+steps did (`frameEntry`). -/
+public def frameAccount (steps : List (FrameOrigin × Ir.FrameFit)) :
+    List (Nat × Ir.FrameFit × Option Sp) :=
+  (steps.map (·.1.source)).eraseDups.filterMap (frameEntry steps)
+
+private theorem frameEntry_moved (steps : List (FrameOrigin × Ir.FrameFit)) (k : Nat)
+    (e : Nat × Ir.FrameFit × Option Sp) (h : frameEntry steps k = some e) :
+    e.1 = k ∧ e.2.1.moved := by
+  unfold frameEntry at h
+  split at h <;> simp only [Option.some.injEq, reduceCtorEq] at h <;> subst h <;>
+    exact ⟨rfl, rfl⟩
+
+/-- Every account a frame takes is a move (`fitDiag` names it). -/
+public theorem frameAccount_moved (steps : List (FrameOrigin × Ir.FrameFit))
+    (e : Nat × Ir.FrameFit × Option Sp) (he : e ∈ frameAccount steps) : e.2.1.moved := by
+  obtain ⟨k, -, hk⟩ := List.mem_filterMap.mp he
+  exact (frameEntry_moved steps k e hk).2
+
+/-- **Every moved step's frame is named, and a continuing step's frame as
+continuing** (`_covers`): a step `steps` stood overfull or continued has its
+frame's one account in `frameAccount`, and where the step continued, the
+account says the frame continues. -/
+public theorem frameAccount_covers (steps : List (FrameOrigin × Ir.FrameFit))
+    (o : FrameOrigin) (fit : Ir.FrameFit) (hs : (o, fit) ∈ steps) (hm : fit.moved) :
+    ∃ e ∈ frameAccount steps, e.1 = o.source ∧ (fit.continues → e.2.1.continues) := by
+  have hk : o.source ∈ (steps.map (·.1.source)).eraseDups :=
+    List.mem_eraseDups.mpr (List.mem_map.mpr ⟨(o, fit), hs, rfl⟩)
+  have entry : ∀ e, frameEntry steps o.source = some e → e ∈ frameAccount steps :=
+    fun e h => List.mem_filterMap.mpr ⟨o.source, hk, h⟩
+  cases fit with
+  | natural => exact absurd hm (by simp [Ir.FrameFit.moved])
+  | shrunk => exact absurd hm (by simp [Ir.FrameFit.moved])
+  | continued c =>
+    have hc : c ∈ continuedBy steps o.source :=
+      List.mem_filterMap.mpr ⟨(o, .continued c), hs, by simp⟩
+    cases hmax : (continuedBy steps o.source).max? with
+    | none => exact absurd (List.max?_eq_none_iff.mp hmax ▸ hc) (by simp)
+    | some m =>
+      have he : frameEntry steps o.source =
+          some (o.source, .continued m, (overfullBy steps o.source).max?) := by
+        simp only [frameEntry, hmax]
+      exact ⟨_, entry _ he, rfl, fun _ => rfl⟩
+  | overfull v =>
+    have hv : v ∈ overfullBy steps o.source :=
+      List.mem_filterMap.mpr ⟨(o, .overfull v), hs, by simp⟩
+    cases hover : (overfullBy steps o.source).max? with
+    | none => exact absurd (List.max?_eq_none_iff.mp hover ▸ hv) (by simp)
+    | some w =>
+      cases hcont : (continuedBy steps o.source).max? with
+      | none =>
+        have he : frameEntry steps o.source = some (o.source, .overfull w, none) := by
+          simp only [frameEntry, hcont, hover]
+        exact ⟨_, entry _ he, rfl, fun h => absurd h (by simp [Ir.FrameFit.continues])⟩
+      | some c =>
+        have he : frameEntry steps o.source = some (o.source, .continued c, some w) := by
+          simp only [frameEntry, hcont, hover]
+        exact ⟨_, entry _ he, rfl, fun h => absurd h (by simp [Ir.FrameFit.continues])⟩
+
 /-- The overflow ladder's result (`runFitted`): the pages and their
 diagnostics, the IR document they are one setting of, each measured frame
 step's decision, and the frames, by their index in `doc.body`, whose lists
@@ -22028,9 +22119,10 @@ each step's page (`stepDecisions`): as declared where it did not reach past,
 its overrun fits the gap above its footline — beamer's one overfull page —
 and `continued` past that. Where no frame reached past what its glue
 shrinks, the first setting is the document's; otherwise the document is set
-again with its frame steps marked as decided (`fittedDoc`). The ladder names every step
-it moved, by what the page did (`fitAccount`, `fitDiag`): W0400 with its
-overhang, W0384 with the whole overrun it measured, each once. A web stage
+again with its frame steps marked as decided (`fittedDoc`). The ladder
+names every frame it moved once, by what the page did with its steps
+(`fitAccount`, `frameAccount`, `fitDiag`): W0384 with the whole overrun it
+measured where a step continued, else W0400 with its overhang. A web stage
 has no glue to shrink, so a frame the page could not set at its glue's
 natural size, where it holds a list, sets its lists squeezed there
 (`webSqueeze`, `Ir.squeezeFrames`): beamer's `\itemsep0pt\topsep0.5pt`, the
@@ -22045,11 +22137,9 @@ public def runFitted (geom : Geom) (fs : FontSet) (pats : Option Hyphen.Patterns
   let final := if first.overruns.isEmpty then first
     else run geom fs pats setting imgs frameSpans pictureSpans
   let labels := (pdfView doc).frameLabels
-  -- Steps the page set alike are named once: a diagnostic is a function of
-  -- the frame and what the page did with it.
-  let named := ((fitAccount first final).map fun (o, fit) => (o.source, fit)).toList.eraseDups
-  let account := named.toArray.filterMap fun (k, fit) =>
-    fitDiag fit (labels[k]?.getD none) ((frameSpans.find? (·.1 == k)).map (·.2))
+  let account := (frameAccount (fitAccount first final).toList).toArray.filterMap
+    fun (k, fit, also) =>
+      fitDiag fit (labels[k]?.getD none) ((frameSpans.find? (·.1 == k)).map (·.2)) also
   let webSqueeze := ((decisions.filterMap fun (o, fit) =>
     match fit with
     | .natural => none
@@ -22076,37 +22166,49 @@ public theorem runFitted_projects (geom : Geom) (fs : FontSet) (pats : Option Hy
   · exact ⟨rfl, _, rfl⟩
   · exact ⟨rfl, _, rfl⟩
 
-/-- **Every frame step the ladder moved is named** (`_accounts`): each step
-of `fitAccount` — every marked frame step the final setting stood overfull
-or continued — has its diagnostic (`fitDiag`) among the fitted output's. -/
+/-- **Every frame the ladder moved is named, once, by what it did**
+(`_accounts`): a step of `fitAccount` — a marked frame step the final
+setting stood overfull or continued — has its frame's one account
+(`frameAccount`) among the fitted output's diagnostics, W0384 where the step
+continued. -/
 public theorem runFitted_accounts (geom : Geom) (fs : FontSet) (pats : Option Hyphen.Patterns)
     (doc : Doc) (imgs : Image.Store) (frameSpans pictureSpans : Array (Nat × Span))
-    (o : FrameOrigin) (fit : Ir.FrameFit) (d : Diag)
+    (o : FrameOrigin) (fit : Ir.FrameFit)
     (hs : (o, fit) ∈ fitAccount
       (run geom fs pats
         { doc with body := Ir.markFrames doc.body (ladderFrames doc) Ir.fitMeasureRole }
         imgs frameSpans pictureSpans)
       (run geom fs pats (runFitted geom fs pats doc imgs frameSpans pictureSpans).setting
         imgs frameSpans pictureSpans))
-    (hd : fitDiag fit ((pdfView doc).frameLabels[o.source]?.getD none)
-      ((frameSpans.find? (·.1 == o.source)).map (·.2)) = some d) :
-    d ∈ (runFitted geom fs pats doc imgs frameSpans pictureSpans).out.diags := by
-  have named : ∀ final : Out,
-      (o, fit) ∈ fitAccount
-        (run geom fs pats
-          { doc with body := Ir.markFrames doc.body (ladderFrames doc) Ir.fitMeasureRole }
-          imgs frameSpans pictureSpans) final →
-      (o.source, fit) ∈ ((fitAccount
-        (run geom fs pats
-          { doc with body := Ir.markFrames doc.body (ladderFrames doc) Ir.fitMeasureRole }
-          imgs frameSpans pictureSpans) final).map fun (o, fit) =>
-            (o.source, fit)).toList.eraseDups :=
-    fun final h => List.mem_eraseDups.mpr (Array.mem_toList_iff.mpr
-      (Array.mem_map.mpr ⟨(o, fit), h, rfl⟩))
+    (hm : fit.moved) :
+    ∃ d ∈ (runFitted geom fs pats doc imgs frameSpans pictureSpans).out.diags,
+      d.subject = (pdfView doc).frameLabels[o.source]?.getD none ∧
+        (fit.continues → d.kind = .W0384) := by
+  have named : ∀ first final : Out, (o, fit) ∈ fitAccount first final →
+      ∃ d ∈ (frameAccount (fitAccount first final).toList).toArray.filterMap
+          (fun (e : Nat × Ir.FrameFit × Option Sp) =>
+            fitDiag e.2.1 ((pdfView doc).frameLabels[e.1]?.getD none)
+              ((frameSpans.find? (·.1 == e.1)).map (·.2)) e.2.2),
+        d.subject = (pdfView doc).frameLabels[o.source]?.getD none ∧
+          (fit.continues → d.kind = .W0384) := by
+    intro first final h
+    obtain ⟨e, he, hk, hc⟩ := frameAccount_covers _ o fit (Array.mem_toList_iff.mpr h) hm
+    have hmv := frameAccount_moved _ e he
+    obtain ⟨k, f, also⟩ := e
+    simp only at hk hc hmv
+    subst hk
+    cases f with
+    | natural => simp [Ir.FrameFit.moved] at hmv
+    | shrunk => simp [Ir.FrameFit.moved] at hmv
+    | overfull v =>
+      refine ⟨_, Array.mem_filterMap.mpr ⟨_, List.mem_toArray.mpr he, rfl⟩, rfl, fun h => ?_⟩
+      exact absurd (hc h) (by simp [Ir.FrameFit.continues])
+    | continued c =>
+      exact ⟨_, Array.mem_filterMap.mpr ⟨_, List.mem_toArray.mpr he, rfl⟩, rfl, fun _ => rfl⟩
   simp only [runFitted] at hs ⊢
   split at hs <;> simp only [*, ite_true, ite_false, Bool.false_eq_true] <;>
-    exact Array.mem_append.mpr (Or.inr (Array.mem_filterMap.mpr
-      ⟨(o.source, fit), List.mem_toArray.mpr (named _ hs), hd⟩))
+    · obtain ⟨d, hd, hsub, hk⟩ := named _ _ hs
+      exact ⟨d, Array.mem_append.mpr (Or.inr hd), hsub, hk⟩
 
 private theorem keepFor_plain_body (backend : String) (body : Array Block)
     (h : ∀ b ∈ body, ∃ xs, b = .para xs ∧ PlainInlines xs) :
