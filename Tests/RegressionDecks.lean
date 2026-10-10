@@ -250,14 +250,16 @@ private def deckListings (ref : IO.Ref (List String)) (a : Artifact) : IO Unit :
     check ref s!"{name}: {lang} exact HTML source, indentation and terminal comment"
       (code.map (nodeTextOne "") == #[String.intercalate "\n" source.toList] &&
         treeShownOccurs code comment == 1)
-    painted ref name a page comment { r := 0x3d, g := 0x7b, b := 0x7b }
+    -- The code roles from the deck's palette: comments its muted text,
+    -- literals its example colour, keywords a tone of its ink's hue.
+    painted ref name a page comment { r := 0x64, g := 0x72, b := 0x74 }
     check ref s!"{name}: {lang} native keyword and string ink"
-      (tokenPaint a page source[0]! "def" { r := 0, g := 0x80, b := 0 } &&
-        tokenPaint a page source[2]! "\"square\"" { r := 0xba, g := 0x21, b := 0x21 })
+      (tokenPaint a page source[0]! "def" { r := 0x34, g := 0x5d, b := 0x94 } &&
+        tokenPaint a page source[2]! "\"square\"" { r := 0, g := 0x80, b := 0x80 })
     check ref s!"{name}: {lang} HTML token colours"
-      (styled code.toList "def" "color: var(--codekeyword, #008000)" &&
-        styled code.toList "\"square\"" "color: var(--codestring, #ba2121)" &&
-        styled code.toList comment "color: var(--codecomment, #3d7b7b)")
+      (styled code.toList "def" "color: var(--codekeyword, #345d94)" &&
+        styled code.toList "\"square\"" "color: var(--example, #008080)" &&
+        styled code.toList comment "color: var(--muted, #647274)")
 
 end Tests.RegressionDecks
 

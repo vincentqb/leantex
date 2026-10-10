@@ -162,7 +162,8 @@ def listingProviderChecks (ref : IO.Ref (List String)) : IO Unit := do
     for (word, kind) in [("echo", LeanTex.Core.ListingHighlight.Kind.nameBuiltin),
         ("ready", ⟨"Literal.String.Double"⟩), ("$HOME", ⟨"Name.Variable"⟩),
         ("# terminal", ⟨"Comment.Single"⟩)] do
-      let ink := (Listing.ink doc.palette none kind (style := style)).getD Ir.Color.black
+      let own := Listing.ink doc.palette none kind (style := style)
+      let ink := own.getD Ir.Color.black
       t "listing provider: Layout.Out ships checked class ink"
         ((ShellHighlight.witnessPaint? source word glyphs).any fun colors =>
           !colors.isEmpty && colors.all (· == ink))
@@ -171,7 +172,8 @@ def listingProviderChecks (ref : IO.Ref (List String)) : IO Unit := do
       t "listing provider: typed HTML agrees with shipped glyph ink"
         ((ShellHighlight.witnessPaint? source word painted).any fun colors =>
           !colors.isEmpty && colors.all fun color =>
-            color.any fun css => hasStr css (HtmlDoc.cssColor ink))
+            if own.isNone then color.isNone
+            else color.any fun css => hasStr css (HtmlDoc.cssColor ink))
     let forged := answers.map fun a => { a with tokens := #[#[{ text := "changed" }]] }
     let stale := answers.map fun a => { a with request := { a.request with source := "stale" } }
     -- Exact source still belongs to the language that requested its classes.

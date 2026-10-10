@@ -289,7 +289,6 @@ public inductive DiagCode where
   | W0435
   | W0393
   | W0394 | E0395 | W0396
-  | W0397
   | W0398
   | W0399
   | E0606
@@ -499,7 +498,6 @@ private def DiagCode.spec : DiagCode → String × Loss × String
   | .W0394 => ("0394", .degraded, "picture label has glyphs without measured outline bounds")
   | .E0395 => ("0395", .dropped, "picture label produced no line")
   | .W0396 => ("0396", .degraded, "picture label extends beyond its reserved glyph box")
-  | .W0397 => ("0397", .degraded, "a listing token sets without the frame or background its highlighting style draws around it; its text and colour still set")
   | .W0398 => ("0398", .degraded, "booktabs loads after a face is declared; its rule paddings are measured in Latin Modern, not in that face")
   | .W0399 => ("0399", .degraded, "a fill the web slide cannot grow where it stands spaces nothing; the slide sets its frame as if it were absent")
   | .E0606 => ("0606", .dropped, "the HTML page has unresolved rendering resources; publication is refused")
@@ -629,7 +627,10 @@ public def DiagCode.retired : List (String × Option String) :=
    ("W0376", some "N0376"),
    -- The withdrawal note named no loss beside the subset's refusals; the
    -- picture's one line carries them now, a wider loss than the note's.
-   ("N0419", some "W0419")]
+   ("N0419", some "W0419"),
+   -- A listing token paints in its code role, a colour and weights, never
+   -- a style's frame or background: the loss this named cannot occur.
+   ("W0397", none)]
 
 /-- **A code renumbered for its class, whose successor names exactly its
 loss.** The old spelling keeps answering, as a retired one does, and here

@@ -129,6 +129,17 @@ Optional tools must be on the shell's `PATH`:
 | PDF images in HTML | Poppler's `pdftocairo` |
 | Syntax highlighting beyond Lean, Python, shell scripts and sessions, and plain text | Pygments (`python3 -m pip install Pygments`) |
 
+Highlighted code sets each token in one of six roles: the ink, keywords,
+names, literals, comments, and errors — what must not ship, such as a proof
+hole or an unimplemented branch. A palette names a role's colour directly
+(`\palette{ codeerror = #RRGGBB }`, and likewise `codeink`, `codekeyword`,
+`codename`, `codeliteral`, `codecomment`). Otherwise the role follows the
+palette: errors take `alert`, comments `muted`, literals `example` (or one
+more hue, set apart from the ink and the alert), and keywords and names a
+tone of the ink's own hue. Without a palette, code takes the colours of the
+minted style. minted's `formatcom` runs TeX on the highlighter's own macros
+and has an effect only under a TeX engine.
+
 For image support on macOS:
 
 ```sh

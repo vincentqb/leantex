@@ -157,7 +157,7 @@ open Tests (mintedSettingsChecks listingHighlightChecks listingPaletteContinuati
   tableContextChecks linkMacroLayoutChecks inputUseChecks mathAlphaEntryChecks mathAlphaRegionChecks
   mathDiagnosticOriginChecks mathDelimiterTriggerChecks mathDollarSurfaceChecks
   diagnosticProducerOriginChecks diagnosticAggregationOriginChecks diagnosticPipelineOriginChecks
-  listDeclarationChecks stringConditionalChecks)
+  listDeclarationChecks stringConditionalChecks codeRoleChecks)
 open TcolorboxChecks (tcolorboxChecks tcolorboxSourceChecks)
 open TcolorboxColors (tcolorboxColorChecks)
 open PictureBoundary (pictureBoundaryChecks pictureWrapperChecks pictureShipChecks)
@@ -982,7 +982,7 @@ def reports : List Report := [
   { id := "R110", date := "2026-10-08"
     what := "A proof hole in a highlighted listing shipped as a bold keyword instead of its highlighting style's error red, and every token type the style styles beyond a few coarse classes lost its colour and weight, in both artifacts"
     pins := [check% listingStyleTableChecks, check% shellReplyChecks,
-      thm% Listing.paint_declared_mem, thm% Listing.paint_style_exact,
+      thm% Listing.paint_declared_mem, thm% Listing.paint_role_exact,
       thm% Listing.token_inline_source_exact]
     accept := ["a presentation deck's proof-hole slide against its lualatex build, in PDF and HTML: the hole sets in the style's red at regular weight and no other page changes",
       "one hundred thirty-seven guard assertions fail with the fix reverted: the hole lexed as a keyword, weights composed as the resolved style rather than the lualatex chain, style colours beyond seven classes dropped, and the token-box diagnostic absent",
@@ -1332,7 +1332,15 @@ def reports : List Report := [
     pins := [check% Tests.FrameGeometry.alertChecks]
     accept := ["six assertions fail with the fix reverted onto the recorded commit: the moloch word's face on the page and its emphasis in the web deck, and in a deck naming no theme the word's face and colour on the page and its emphasis and colour in the web deck",
       "a presentation deck's alerted words set in the body's weight, coloured"]
-    state := .guarded "e841ab4a" .revert .author }
+    state := .guarded "e841ab4a" .revert .author },
+  { id := "R143", date := "2026-10-10"
+    what := "In highlighted listings a proof hole and a raised not-implemented error shipped in two colours, though a deck's theme gives both its one alert colour: every token type took its highlighting style's own colour and weight, no palette colour reached a listing, and the theme's redefinitions of the style's macros run only under a TeX engine"
+    pins := [check% codeRoleChecks, check% listingStyleTableChecks, check% shellReplyChecks,
+      thm% Listing.paint_role_exact, thm% Listing.paint_declared_mem,
+      thm% Listing.paint_derived_exact, thm% CodeColor.tone_meets]
+    accept := ["six artifact assertions fail on the tree before the fix, in PDF and HTML alike: in the default style the hole set in the style's error red and the raised error in its bold exception red, in the friendly style the raised error took the keywords' green, and under an invented palette both kept the style's colours",
+      "a presentation deck's hole and not-implemented slides, in PDF and HTML: both markers in the deck's alert, every other listing token in a colour its palette derives, and minted's formatcom one info line over its listings, where each listing had warned of an unknown option"]
+    state := .guarded "9ec36474" .before .author }
 ]
 
 /-- The reports guarded but never seen failing: a count that may fall and

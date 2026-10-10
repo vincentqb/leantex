@@ -9,6 +9,7 @@ public import LeanTex.Core.Image
 public import LeanTex.Core.Math
 public import LeanTex.Core.LocaleContract
 public import LeanTex.Core.ListingHighlight
+public import LeanTex.Core.CodeRole
 import LeanTex.Core.Loop
 import Init.Data.Nat.ToString
 public import Std.Data.HashMap
@@ -12088,23 +12089,6 @@ public def titledLook (pal : Palette) : TitledKind → TitledLook
       bar := bar }
 
 
-/-- The palette roles that declare a listing colour, each for one Pygments
-token type: the role reads as that type's colour declaration in the
-listing's style, inherited by every descendant that declares none of its
-own (`Listing.paint`). -/
-public def listingRoles : List (String × ListingHighlight.Kind) :=
-  [("codekeyword", .keyword), ("codestring", .string), ("codenumber", .number),
-   ("codecomment", .comment), ("codebuiltin", .nameBuiltin), ("codename", .nameFunction),
-   ("codeoperator", .operator)]
-
-/-- A listing colour a palette declares: the role, the token type whose
-colour it declares, and the colour. -/
-public structure ListingRole where
-  role : String
-  kind : ListingHighlight.Kind
-  color : Color
-  deriving Repr, BEq
-
 /-- The document's resolved design: every semantic role the backends read,
 with every default applied here and nowhere else — the type is the totality
 claim, so a consumer can never invent a per-site fallback for a missing
@@ -12131,11 +12115,6 @@ public structure Design where
   /-- Quieted secondary furniture — the chrome footer's small text draws in
   it; the body ink when undeclared. -/
   muted : Color
-  /-- The listing colours the palette declares (`code…` roles). Every other
-  token colour is the listing's style's, which the shared painter keeps
-  legible on the actual ground; declared ones pass through the ordinary
-  contrast judge. -/
-  listing : Array ListingRole
   /-- The frame-title bar, when the design has one. -/
   frametitle : Option ColorPair
   /-- The title's ink when no bar is declared, and the subtitle's ink on
@@ -12221,8 +12200,6 @@ the document's declarations. -/
     coveredFraction := pal.coveredFraction.getD coveredFractionDefault
     covered := pal.find? "covered"
     muted := muted
-    listing := (listingRoles.filterMap fun (role, kind) =>
-      (pal.find? role).map fun color => { role, kind, color }).toArray
     frametitle := frametitle
     frameTitleFg := frameTitleFg
     framesubtitle := (pal.find? "framesubtitlefg").getD
@@ -12415,7 +12392,7 @@ public def Design.consumedRoles : List String :=
    "separator"] ++                    -- the title-page rule (Elab.titleBlocks
                                       -- via the titlepage style; Layout .rule,
                                       -- HtmlDoc's <hr class="separator">)
-  listingRoles.map (·.1)              -- Listing.paintLine, both backends
+  ListingHighlight.Role.all.map (·.key) -- CodeColor.resolve, both backends
 
 
 /-- How covering paints: the colour of a covered run that had none of its

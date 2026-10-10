@@ -25,6 +25,7 @@ body impl \begin{minted}[style=friendly]{lean} def probe := 7 \end{minted}
 body refuse:W0110 \begin{minted}[fontsize=small]{text} Alpha Bravo \end{minted}
 body refuse:W0110 \begin{minted}[style=unknown-style]{python} print(1) \end{minted}
 body refuse:W0110 \setminted{unknownsetting=on}\begin{minted}{text} Alpha Bravo \end{minted}
+body refuse:N0102 \begin{minted}[formatcom=\itshape]{python} print(1) \end{minted}
 pre refuse:W0301 \usemintedstyle{tango}
 pre refuse:W0301 \newminted{python}{linenos}
 # \setminted binds global or exact-lexer defaults. Environment options win;
@@ -32,7 +33,9 @@ pre refuse:W0301 \newminted{python}{linenos}
 # Fontsize accepts named size commands (\small) and auto; bare names are
 # literal text in FancyVerb and are diagnosed with the corrected spelling.
 # tabsize uses positive stops through 100; breaklines wraps at whitespace.
-# The default and friendly styles paint the token types Pygments' own
-# tables give them. Other Pygments styles are diagnosed, and a natively
-# classified listing executes no external highlighter.
-# Arbitrary formatting macros and additional fvextra keys remain named W0110.
+# A token paints in its code role: a colour the palette names for the role
+# or derives for it, else the default or friendly style's colour for the
+# role, from Pygments' own tables. Other Pygments styles are diagnosed, and
+# a natively classified listing executes no external highlighter. formatcom
+# runs TeX on the Pygments formatter's macros, which no part of the engine
+# runs: it is noted once (N0102). Additional fvextra keys remain W0110.

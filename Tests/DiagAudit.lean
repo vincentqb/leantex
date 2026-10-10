@@ -151,9 +151,6 @@ def registry : List AuditRow :=
    ⟨.W0435, .native, .native, check% kernelQedHereChecks⟩,
    -- A refused external classification keeps the source and names its loss.
    ⟨.W0393, .keep, .degraded, check% listingProviderChecks⟩,
-   -- A token box (a frame or background) the typed inlines cannot carry
-   -- yet: drawing it in both artifacts retires the code.
-   ⟨.W0397, .native, .native, check% listingStyleTableChecks⟩,
    -- A face declared before booktabs loads: measuring that face's ex at
    -- the class size (the driver holds the font environment) retires it.
    ⟨.W0398, .native, .native, check% Tests.tableFaceOrderChecks⟩,

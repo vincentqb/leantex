@@ -224,13 +224,12 @@ def listingFriendlyChecks (ref : IO.Ref (List String)) : IO Unit := do
      Ir.ListingStyle.ofName? " friendly " == some .friendly &&
      (["", "Friendly", "friendly-extra", "unknown-style"] : List String).all
        fun name => (Ir.ListingStyle.ofName? name).isNone)
-  let friendly := Ir.listingRoles.map fun (_, kind) =>
-    (Listing.paint (Ir.Design.ofPalette {}) .friendly kind).map (·.color)
-  t "listing friendly: the role types resolve to the style's sourced colours"
-    (friendly == ([{ r := 0, g := 112, b := 32 }, { r := 64, g := 112, b := 160 },
-      { r := 64, g := 160, b := 112 }, { r := 96, g := 160, b := 176 },
-      { r := 0, g := 112, b := 32 }, { r := 6, g := 40, b := 126 },
-      { r := 102, g := 102, b := 102 }] : List Ir.Color).map some)
+  let friendly := ListingHighlight.Role.all.map fun r =>
+    ((CodeColor.resolve {} Ir.Color.white .friendly).get r).map (·.color)
+  t "listing friendly: an undeclared palette's roles take the style's sourced colours"
+    (friendly == [none, some { r := 0, g := 112, b := 32 }, some { r := 6, g := 40, b := 126 },
+      some { r := 64, g := 112, b := 160 }, some { r := 96, g := 160, b := 176 },
+      some { r := 255, g := 0, b := 0 }])
   let authored := ({} : Ir.Palette).declare "codekeyword" Ir.Color.black
   t "listing friendly: authored roles take precedence over style defaults"
     (Listing.ink authored none .keyword (style := .friendly) == some Ir.Color.black)
@@ -353,11 +352,12 @@ title/standout pair, and a removed ground must not retain that entry's colour. -
 def listingPaletteEpochChecks (ref : IO.Ref (List String))
     (fonts : Font.FontSet) : IO Unit := do
   let t := check ref
-  let light := ({} : Ir.Palette).declare "fg" Ir.Color.black
+  -- Inks with a hue of their own, so a keyword derives a tone of its own.
+  let light := ({} : Ir.Palette).declare "fg" (Ir.Color.ofHtml 0x1F 0x2B 0x4D)
     |>.declare "bg" Ir.Color.white
     |>.declare "standoutfg" Ir.Color.white |>.declare "standoutbg" Ir.Color.black
     |>.declare "titlepagefg" Ir.Color.white |>.declare "titlepagebg" Ir.Color.black
-  let dark := light.declare "fg" Ir.Color.white |>.declare "bg" Ir.Color.black
+  let dark := light.declare "fg" (Ir.Color.ofHtml 0xC8 0xD8 0xF8) |>.declare "bg" Ir.Color.black
   let removed := { light with
     entries := light.entries.filter fun (role, _) => role != "fg" && role != "bg" }
   for (frame, standout, valign) in
@@ -411,11 +411,12 @@ or spills. Removing `bg` ships no fill; declaring it again resumes painting. -/
 def listingPaletteContinuationChecks (ref : IO.Ref (List String))
     (fonts : Font.FontSet) : IO Unit := do
   let t := check ref
-  let light := ({} : Ir.Palette).declare "fg" Ir.Color.black
+  -- Inks with a hue of their own, so a keyword derives a tone of its own.
+  let light := ({} : Ir.Palette).declare "fg" (Ir.Color.ofHtml 0x1F 0x2B 0x4D)
     |>.declare "bg" Ir.Color.white
     |>.declare "standoutfg" Ir.Color.white |>.declare "standoutbg" Ir.Color.black
     |>.declare "titlepagefg" Ir.Color.white |>.declare "titlepagebg" Ir.Color.black
-  let dark := light.declare "fg" Ir.Color.white |>.declare "bg" Ir.Color.black
+  let dark := light.declare "fg" (Ir.Color.ofHtml 0xC8 0xD8 0xF8) |>.declare "bg" Ir.Color.black
   let removed := light.erase "bg"
   let code (source : String) : Ir.Block :=
     .verbatim none source
@@ -470,7 +471,8 @@ def listingPaletteContinuationChecks (ref : IO.Ref (List String))
     t s!"listing epoch {name}: nested palette reaches the next frame, notes do not"
       (pre.size == 2 && pre.all fun (_, attrs) =>
         attrs.any fun (key, value) =>
-          key == "style" && hasStr value "background: #000000; color: #ffffff")
+          key == "style" && hasStr value
+            s!"background: #000000; color: {HtmlDoc.cssColor (Ir.Design.ofPalette dark).fg}")
     let longCode := String.intercalate "\n" (List.replicate 48 "return value")
     for (epochName, epoch) in [("light", light), ("removed", removed)] do
       let spill := { doc with body := #[.frame #[] standout valign true
@@ -715,12 +717,12 @@ def listingHighlightChecks (ref : IO.Ref (List String)) : IO Unit := do
     let spans := ListingHighlight.coloredSpansList #[]
       (ListingHighlight.codeNodesList #[] html.toList).toList
     let glyphs := ListingHighlight.glyphColors (layoutOf fonts standout)
-    let keyword := (Listing.ink theme.palette (some ground) .keyword).getD Ir.Color.black
+    let literal := (Listing.ink theme.palette (some ground) .string).getD Ir.Color.black
     t s!"highlight standout: {theme.name} typed HTML projects the local ink"
       (spans.any fun (text, style) =>
-        text == "def" && hasStr style (HtmlDoc.cssColor keyword))
+        text.trimAscii.toString == "\"hello\"" && hasStr style (HtmlDoc.cssColor literal))
     t s!"highlight standout: {theme.name} PDF draws legible local ink"
-      (glyphs.any (fun (c, color) => c == 'd' && color == keyword) &&
+      (glyphs.any (fun (c, color) => c == 'h' && color == literal) &&
        glyphs.all (fun (_, color) => Contrast.contrastMilli color ground ≥ Contrast.aaText))
     let doc := { ListingHighlight.sourceDoc "python" "def value(): return \"x\""
       with palette := theme.palette }
@@ -742,11 +744,11 @@ def listingHighlightChecks (ref : IO.Ref (List String)) : IO Unit := do
     let (_, coveredHtml, _) := HtmlDoc.emitTree {} coveredDoc
     let coveredSpans := ListingHighlight.coloredSpansList #[]
       (ListingHighlight.codeNodesList #[] coveredHtml.toList).toList
-    let keyword := (Listing.ink coveredDoc.palette none .keyword).getD Ir.Color.black
-    let quiet := (Ir.Design.ofDoc coveredDoc).cover.of keyword
+    let literal := (Listing.ink coveredDoc.palette none .string).getD Ir.Color.black
+    let quiet := (Ir.Design.ofDoc coveredDoc).cover.of literal
     t s!"highlight overlay: {theme.name} typed HTML keeps literal per-token cover"
       (coveredSpans.any (fun (text, style) =>
-         text == "def" && style == s!"color: {HtmlDoc.cssColor quiet}") &&
+         text.trimAscii.toString == "\"x\"" && style == s!"color: {HtmlDoc.cssColor quiet}") &&
        coveredSpans.all (fun (_, style) => !hasStr style "var(--covered"))
   let badColor := "\\palette{codekeyword=#FFFFFF}"
   let (_, diagnostics) := elabStr (dvDoc badColor

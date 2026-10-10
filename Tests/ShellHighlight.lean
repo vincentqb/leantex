@@ -26,8 +26,8 @@ structure Probe where
 https://pubs.opengroup.org/onlinepubs/9799919799/utilities/V3_chap02.html
 and Bash 5.3 manual §3.1.2, §3.5.3–3.5.4, §3.6.6,
 https://www.gnu.org/software/bash/manual/bash.html.
-The simple colour pins read a family's ink, which every subtype inherits in
-the shipped styles. Variables must differ from literal strings without
+The simple colour pins read a type's ink, its role's. Variables are
+identifiers and set in the ink, apart from literal strings, without
 fixing a Pygments subtype's colour. Complex constructs owe conservation here. -/
 def shellProbes : Array Probe := #[
   -- EOF and LF must give comments the same class ink in both artifacts.
@@ -168,9 +168,12 @@ def shellReplyChecks (ref : IO.Ref (List String)) : IO Unit := do
       ("Token.keyword", "Text"), ("Token..Name", "Text"), ("Token.Name.", "Text"),
       ("", "Text")] do
     t s!"listing reply: a class name is its token type {name}" (project name == ⟨path⟩)
-  t "listing reply: a type paints through its own ancestors and nothing else"
-    (Listing.ink {} none ⟨"Name.Builtinish"⟩ == Listing.ink {} none ⟨"Name"⟩ &&
-      Listing.ink {} none ⟨"Name.Builtin.Pseudo"⟩ == Listing.ink {} none .nameBuiltin &&
+  t "listing reply: a type takes its role through its own ancestors and nothing else"
+    (let role (path : String) := (ListingHighlight.Kind.mk path).role
+     role "Name.Builtinish" == .name && role "Name" == .ink &&
+      role "Name.Builtin.Pseudo.Extra" == .ink && role "Names.Builtin" == .ink &&
+      role "Keywordish" == .ink && role "" == .ink &&
+      Listing.ink {} none ⟨"Name.Builtinish"⟩ == Listing.ink {} none .nameFunction &&
       (Listing.ink {} none ⟨"Names.Builtin"⟩).isNone &&
       (Listing.ink {} none ⟨"Keywordish"⟩).isNone && (Listing.ink {} none ⟨""⟩).isNone)
   let normalized := ListingReply.Request.ofSource " BaSh " "\r\n\n\techo λ\r\n  \r\n"
@@ -228,7 +231,7 @@ def shellReplyChecks (ref : IO.Ref (List String)) : IO Unit := do
       (as.all fun a => a.tokens.map LeanTex.Core.ListingHighlight.lineText == r.lines)
     t "listing reply: unknown token classes carry no paint"
       (as.all fun a => a.tokens.flatten.all fun token =>
-        (Listing.ink {} none token.kind).isNone && (Listing.box? .friendly token.kind).isNone)
+        (Listing.ink {} none token.kind).isNone && (Listing.ink {} none token.kind (style := .friendly)).isNone)
   -- The lexer boundary may be part of the final token or a separate token.
   -- Deliberately bypass normalization here to include authored trailing LFs.
   for source in ["", "\n", "\n\n", "\n\techo λ😀  ", "echo x\n\n", "# tail\t  "] do
@@ -409,28 +412,26 @@ def shellHighlightChecks (ref : IO.Ref (List String))
           let typed := ShellHighlight.witnessPaint? source needle html
           match paint with
           | .ink kind =>
-            let ink := (Listing.ink doc.palette none kind (style := style)).getD fg
+            let own := Listing.ink doc.palette none kind (style := style)
+            let ink := own.getD fg
             t s!"{label}/{needle}: Layout.Out ships its class ink"
               (laid.any fun colors => !colors.isEmpty && colors.all (· == ink))
-            -- Black may be the PDF graphics state's initial ink: an
-            -- unpainted plain run owes no redundant colour operator.
-            if kind != .text then
+            -- Black may be the PDF graphics state's initial ink: a run in
+            -- the listing's own ink owes no redundant colour operator.
+            if own.isSome then
               t s!"{label}/{needle}: emitted PDF contains its class paint"
                 (bytesContain pdf ink.pdfFill)
             t s!"{label}/{needle}: typed HTML ships its class ink"
               (typed.any fun colors => !colors.isEmpty && colors.all fun color =>
-                if kind == .text then color.isNone
+                if own.isNone then color.isNone
                 else color.any fun css => hasStr css (HtmlDoc.cssColor ink))
           | .variable =>
-            let ink := laid.bind (·[0]?)
-            t s!"{label}/{needle}: variables have ink distinct from literal strings"
-              (ink.any fun color => color != fg && color != literal &&
-                laid.any fun colors => colors.all (· == color))
-            t s!"{label}/{needle}: emitted PDF contains the variable paint"
-              (ink.any fun color => color != fg && bytesContain pdf color.pdfFill)
-            t s!"{label}/{needle}: typed HTML agrees with the variable glyph ink"
-              (ink.any fun color => color != fg && typed.any fun colors =>
-                !colors.isEmpty && colors.all fun css =>
-                  css.any fun value => hasStr value (HtmlDoc.cssColor color))
+            -- A variable is an identifier: it sets in the listing's ink,
+            -- apart from the literal it may stand in.
+            t s!"{label}/{needle}: variables set in the ink, apart from literal strings"
+              (fg != literal && laid.any fun colors =>
+                !colors.isEmpty && colors.all (· == fg))
+            t s!"{label}/{needle}: typed HTML sets the variable in the ink"
+              (typed.any fun colors => !colors.isEmpty && colors.all (·.isNone))
 
 end Tests
