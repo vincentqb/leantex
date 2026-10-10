@@ -560,7 +560,7 @@ def shQuote (text : String) : String :=
   "'" ++ text.replace "'" "'\\''" ++ "'"
 
 /-- A boundary renderer that names its version and draws by copying a
-committed PDF beside a log. Shell builtins and `/bin/cp` alone, so a PATH
+given PDF beside a log. Shell builtins and `/bin/cp` alone, so a PATH
 holding nothing else still runs it. -/
 def fakeRenderer (pdf : System.FilePath) : String :=
   "#!/bin/sh\n" ++

@@ -254,9 +254,6 @@
 ℹ [N0030]
   '&' in a .bib field sets as the character; LaTeX reads it as an alignment tab outside a table and stops there
   suggestion: write it '\&' if the .bib must also build with LaTeX
-── N0024 (info) a figure's web face is drawn by an external converter, because the engine does not draw one of its features
-ℹ [N0024]
-  figure 'figures/plot.pdf' is drawn on the web page by pdftocairo, because the engine does not draw its type1 font
 ── N0100 (info) LaTeX idiom translated to its native declaration
 ℹ [N0100] - \usepackage
   '\usepackage{geometry}' → \page{ margin = 1in }
