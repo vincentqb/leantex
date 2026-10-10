@@ -52,8 +52,11 @@ public structure ToolCall where
 
 /-- How a run ended, what it printed, and each declared output (`none`
 when it is not a regular file inside the run's scratch directory once its
-links are followed). `complete` is a run that exited within its budget with
-both streams read to their end. -/
+links are followed). `out` and `err` are the streams read as UTF-8, each
+maximal ill-formed subpart read as U+FFFD (`Utf8.decode`), with the scratch
+directory's random name spelled `<scratch>`, as it is in the reason of a run
+that never started, so a reply names nothing the run chose. `complete` is a
+run that exited within its budget with both streams read to their end. -/
 public structure Ended where
   ran : PicCache.Ran
   out : String
@@ -410,7 +413,8 @@ the first line of what the candidate that started printed. -/
     Prog PicCache.Tool :=
   (fun
     | none => .absent "no executable file by this name on PATH"
-    | some (_, e) => PicCache.probed e.ran ((e.out.splitOn "\n").headD "").trimAscii.toString)
+    | some (_, e) =>
+      PicCache.probed e.ran ((e.out.splitOn "\n").headD "").trimAscii.toString (PicCache.saidOf e.err))
   <$> probe tool (versionCall budgetMs)
 
 /-- The regular files among the candidates, in order, each with its stat. -/

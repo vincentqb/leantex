@@ -106,11 +106,15 @@ made, ends the process with a segmentation fault instead of raising.
 It is made under the process umask and then closed to 0700, and one another
 process wrote into or replaced before it closed is left for another name;
 `setAccessRights` follows a link, so under a root others may rename in (no
-sticky bit) a swap between the two steps changes the mode of another file. -/
+sticky bit) a swap between the two steps changes the mode of another file.
+It is made under the root's real path, so its name is the one a tool reads
+as its working directory, whatever links or trailing separators the
+variable spells. -/
 private def scratchDir : IO System.FilePath := do
-  let (root, chosen) ← scratchRoot
+  let (named, chosen) ← scratchRoot
+  let root := (← (IO.FS.realPath named).toBaseIO).toOption.getD named
   let unmade (why : String) : IO.Error := IO.userError
-    s!"no scratch directory can be made in the temporary directory '{root}' ({chosen}): {why}"
+    s!"no scratch directory can be made in the temporary directory '{named}' ({chosen}): {why}"
   for _ in [0:16] do
     let dir := root / ("leantex-" ++ hex (← IO.getRandomBytes 8))
     match ← (IO.FS.createDir dir).toBaseIO with
@@ -155,6 +159,11 @@ public def withScratch {α : Type} (f : System.FilePath → IO α) : IO α := do
   let dir ← scratchDir
   try f dir finally discard <| (removeScratch dir).toBaseIO
 
+/-- `text` with the scratch directory's names, as made and as resolved,
+spelled `<scratch>`. -/
+private def scrubbed (dir real : System.FilePath) (text : String) : String :=
+  (text.replace real.toString "<scratch>").replace dir.toString "<scratch>"
+
 private def runCall (call : ToolCall) : BaseIO Ended := do
   let unstarted (why : String) : Ended :=
     { ran := .unstarted why, out := "", err := "", complete := false,
@@ -167,7 +176,7 @@ private def runCall (call : ToolCall) : BaseIO Ended := do
     match ← (IO.FS.realPath dir).toBaseIO with
     | .error e =>
       discard <| (IO.FS.removeDir dir).toBaseIO
-      return unstarted (toString e)
+      return unstarted (scrubbed dir dir (toString e))
     | .ok real =>
       let attempt : IO Ended := do
         for (name, bytes) in call.inputs do
@@ -179,12 +188,13 @@ private def runCall (call : ToolCall) : BaseIO Ended := do
         let mut outputs := #[]
         for name in call.outputs do
           outputs := outputs.push (name, ← ownOutput dir real name)
-        return { ran := got.ran, out := got.out, err := got.err, complete := got.complete, outputs }
+        return { ran := got.ran, out := scrubbed dir real got.out, err := scrubbed dir real got.err,
+                 complete := got.complete, outputs }
       let result ← attempt.toBaseIO
       discard <| (removeScratch dir).toBaseIO
       match result with
       | .ok ended => return ended
-      | .error e => return unstarted (toString e)
+      | .error e => return unstarted (scrubbed dir real (toString e))
 
 /-- The host's answer to one question. -/
 public def answer : (q : Ask) → BaseIO (Reply q)

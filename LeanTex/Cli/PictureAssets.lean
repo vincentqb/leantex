@@ -6,6 +6,7 @@ import LeanTex.Cli.Host
 import LeanTex.Cli.RunBounded
 import LeanTex.Cli.ToolProbe
 import LeanTex.Core.Flate
+import LeanTex.Core.Utf8
 
 /-! Fulfil standalone picture requests with owned scratch and checked cache
 answers. Tools must finish their writers with the foreground invocation;
@@ -71,19 +72,14 @@ private def produce (tool wrapped : String) : IO ConvCache.Result := do
         else pure ByteArray.empty
       let logPath := work / "pic.log"
       let log ← if ← logPath.pathExists then
-          pure (PicCache.Log.says (logTail (← IO.FS.readFile logPath)))
+          pure (PicCache.Log.says ((logTail (Utf8.decode (← IO.FS.readBinFile logPath)).text).replace
+            work.toString "<scratch>"))
         else pure PicCache.Log.absent
-      -- An attempt that reached no verdict and left no log names its last
-      -- line of standard error too, a loader's or a wrapper's, with the
-      -- scratch directory's random name spelled out of it.
-      let said := ((((ended.err.splitOn "\n").map (·.trimAscii.toString)).filter (!·.isEmpty)).getLastD
-        "").replace work.toString "<scratch>"
-      let said := if said.length > 200 then (said.take 200).toString ++ "…" else said
-      let outcome := match PicCache.outcome ended.ran (!bytes.isEmpty) log, log with
-        | .inconclusive why, .absent => if said.isEmpty then .inconclusive why
-            else .inconclusive s!"{why}: {said}"
-        | o, _ => o
-      return { outcome, bytes }
+      -- An attempt that reached no verdict and left no log names the tool's
+      -- last words too (`PicCache.annotate`), the scratch directory's random
+      -- name spelled out of them.
+      let said := PicCache.saidOf (ended.err.replace work.toString "<scratch>")
+      return { outcome := PicCache.annotate (PicCache.outcome ended.ran (!bytes.isEmpty) log) log said, bytes }
   catch e => return { outcome := .inconclusive (toString e) }
 
 /-- Independent invocations never share scratch. Each captures its result

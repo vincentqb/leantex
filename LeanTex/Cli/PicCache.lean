@@ -59,6 +59,24 @@ public def outcome (ran : Ran) (drew : Bool) (log : Log) : Outcome :=
   | .overran s => .inconclusive (said s!"no result within {s} s; killed")
   | .unstarted e => .inconclusive (said e)
 
+/-- The longest line of a tool's own words a reason carries. -/
+public def saidLimit : Nat := 200
+
+/-- The last nonblank line of `err`, cut at `saidLimit` characters and
+marked: the tool's own words, for a reason that has no log to quote. -/
+public def saidOf (err : String) : String :=
+  let said := (((err.splitOn "\n").map (·.trimAscii.toString)).filter (!·.isEmpty)).getLastD ""
+  if said.length > saidLimit then (said.take saidLimit).toString ++ "…" else said
+
+/-- An attempt that reached no verdict and left no log names `said` too,
+the words its tool wrote last (a loader's, a wrapper's); every other
+outcome is the one `outcome` read, so the words never reach a recorded
+answer (`ConvCache.annotate_record_exact`). -/
+@[expose] public def annotate (o : Outcome) (log : Log) (said : String) : Outcome :=
+  match o, log with
+  | .inconclusive why, .absent => if said.isEmpty then o else .inconclusive s!"{why}: {said}"
+  | o, _ => o
+
 /-- What the cache keeps of an outcome: the tool's own refusal, and
 nothing else. A drawn picture is kept as its PDF, and an inconclusive
 attempt is kept not at all — so the next build retries it. -/
@@ -83,12 +101,15 @@ public inductive Tool where
 /-- One `--version` attempt read as the tool's identity: a clean exit that
 named something is the tool, and nothing else is. `firstLine` is the first
 line of what the probe wrote — trusted only on a clean exit, since a failed
-`exec` hands back a child's inherited buffer rather than silence. -/
-public def probed (ran : Ran) (firstLine : String) : Tool :=
+`exec` hands back a child's inherited buffer rather than silence; `said`,
+the tool's last words on standard error (`saidOf`), only explains a
+nonzero exit, a loader's line among them. -/
+public def probed (ran : Ran) (firstLine : String) (said : String := "") : Tool :=
   match ran with
   | .exited 0 =>
     if firstLine = "" then .absent "no version line" else .present firstLine
-  | .exited c => .absent s!"'--version' exited {c}"
+  | .exited c =>
+    .absent (if said.isEmpty then s!"'--version' exited {c}" else s!"'--version' exited {c}: {said}")
   | .overran s => .absent s!"no version within {s} s; killed"
   | .unstarted e => .absent e
 
@@ -98,8 +119,8 @@ the *refused* path: the probe read a nonzero exit as a version string, so a
 picture no tool had ever looked at was reported as one the tool drew
 nothing for — a dropped loss that fails the run, where the honest answer is
 the degraded one, a placeholder and a warning naming the missing tool. -/
-public theorem probed_present_exact (ran : Ran) (firstLine version : String) :
-    probed ran firstLine = .present version ↔
+public theorem probed_present_exact (ran : Ran) (firstLine version said : String) :
+    probed ran firstLine said = .present version ↔
       (ran = .exited 0 ∧ firstLine = version ∧ firstLine ≠ "") := by
   cases ran with
   | exited c =>
@@ -115,8 +136,9 @@ public theorem probed_present_exact (ran : Ran) (firstLine version : String) :
 /-- **A nonzero exit names no version.** The half of `probed_present_exact`
 the missing-tool machine lands on, spelled as the equation the driver's
 routing reads. -/
-public theorem probed_absent_exact (c : Nat) (hc : c ≠ 0) (firstLine : String) :
-    probed (.exited c) firstLine = .absent s!"'--version' exited {c}" := by
+public theorem probed_absent_exact (c : Nat) (hc : c ≠ 0) (firstLine said : String) :
+    probed (.exited c) firstLine said = .absent (if said.isEmpty then s!"'--version' exited {c}"
+      else s!"'--version' exited {c}: {said}") := by
   unfold probed
   cases c with
   | zero => exact absurd rfl hc

@@ -1,6 +1,7 @@
 module
 
 public import LeanTex.Cli.PicCache
+import LeanTex.Core.Utf8
 
 namespace LeanTex.Cli.RunBounded
 
@@ -15,6 +16,9 @@ structure Capture where
   text : String := ""
   complete : Bool := false
 
+/-- How a run ended and what it printed, each stream read as UTF-8 with
+each maximal ill-formed subpart read as U+FFFD (`Utf8.decode`): a tool's
+encoding is no fact about whether it finished. -/
 public structure Ended where
   ran : PicCache.Ran
   out : String
@@ -28,10 +32,7 @@ private def capture (h : IO.FS.Handle) (limit : Nat) : IO Capture := do
   -- one extra byte distinguishes EOF at the limit from truncated output.
   for _ in [:limit + 1] do
     let chunk ← h.read (min 65536 (limit + 1 - bytes.size)).toUSize
-    if chunk.isEmpty then
-      return match String.fromUTF8? bytes with
-        | some text => { text, complete := true }
-        | none => {}
+    if chunk.isEmpty then return { text := (LeanTex.Core.Utf8.decode bytes).text, complete := true }
     bytes := bytes ++ chunk
     if bytes.size > limit then break
   return {}

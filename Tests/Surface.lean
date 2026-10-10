@@ -8990,6 +8990,22 @@ def picCacheChecks (ref : IO.Ref (List String)) : IO Unit := do
     (PicCache.probed (.unstarted "no such file") "" == .absent "no such file")
   t "a probe that never came back is no tool"
     (PicCache.probed (.overran 5) "" == .absent "no version within 5 s; killed")
+  t "a nonzero exit names the tool's last words, and a clean one ignores them"
+    (PicCache.probed (.exited 127) banner "luatex: error while loading shared libraries" ==
+        .absent "'--version' exited 127: luatex: error while loading shared libraries" &&
+     PicCache.probed (.exited 0) banner "a warning" == .present banner)
+  t "the tool's words are its last nonblank line, cut and marked"
+    (PicCache.saidOf "first\n  last words  \n\n" == "last words" &&
+     PicCache.saidOf (String.ofList (List.replicate 300 'x')) ==
+       String.ofList (List.replicate PicCache.saidLimit 'x') ++ "…" &&
+     PicCache.saidOf "" == "")
+  t "only an inconclusive attempt that left no log takes the tool's words"
+    (PicCache.annotate (.inconclusive "exit code 127") .absent "loader words" ==
+        .inconclusive "exit code 127: loader words" &&
+     PicCache.annotate (.inconclusive "exit code 127") (.says "log") "loader words" ==
+        .inconclusive "exit code 127" &&
+     PicCache.annotate (.refused "no") .absent "words" == .refused "no" &&
+     PicCache.annotate (.inconclusive "x") .absent "" == .inconclusive "x")
   -- The two endings route to two different losses, both degraded: a
   -- placeholder ships and the run stands. A picture the tool ran on and
   -- refused keeps its own code and the tool's words.

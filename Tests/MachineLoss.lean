@@ -24,6 +24,15 @@ private def fakeRenderer (pdf : System.FilePath) : String :=
   "/bin/cp " ++ shQuote pdf.toString ++ " pic.pdf || exit 3\n" ++
   "printf '%s\\n' 'Output written on pic.pdf (1 page).' > pic.log\n"
 
+/-- The boundary renderer, its terminal output ending in bytes that are no
+UTF-8, as a TeX engine's line breaking can split a character. -/
+private def noisyRenderer (pdf : System.FilePath) : String :=
+  fakeRenderer pdf ++ "printf 'Transcript written on pic.log \\303\\n\\377'\n"
+
+/-- The boundary renderer, its log ending in a character a line break split. -/
+private def splitLogRenderer (pdf : System.FilePath) : String :=
+  fakeRenderer pdf ++ "printf 'Transcript of an invented run \\303\\n' >> pic.log\n"
+
 /-- A PDF-to-SVG converter that names its version and converts by copying
 one SVG to the output it is given (`-svg <input> <output>`). -/
 private def fakeConverter (svg : System.FilePath) : String :=
@@ -456,6 +465,60 @@ def machineLossChecks (ref : IO.Ref (List String))
     let picture ← rootless unseen renderer "rootless-picture" (dir / "rootless-picture" / "page.html")
     t s!"machine loss CLI no scratch root: a render that cannot start is accepted, never a crash (exit {picture.exitCode})"
       (picture.exitCode == 0 && (recordsOf picture).any fun j => event j == some "accepted")
+    -- A renderer whose terminal output is no UTF-8 still finished, and its
+    -- render is read as the plain renderer's is: drawn, then unconverted.
+    let noisy := dir / "noisy"
+    writeScript (noisy / "lualatex") (noisyRenderer (corpus / "figures" / "box.pdf"))
+    let spoke ← build boundary noisy "noisy" (dir / "noisy-out" / "page.html")
+    let codes := (recordsOf spoke).filterMap codeOf
+    t s!"machine loss CLI renderer writing no UTF-8: the render is drawn, not unfinished (exit {spoke.exitCode}, {codes})"
+      (spoke.exitCode == 0 && codes.contains "W0378" && !codes.contains "W0382")
+    let splitLog := dir / "split-log"
+    writeScript (splitLog / "lualatex") (splitLogRenderer (corpus / "figures" / "box.pdf"))
+    let logged ← build boundary splitLog "split-log" (dir / "split-log-out" / "page.html")
+    let loggedCodes := (recordsOf logged).filterMap codeOf
+    t s!"machine loss CLI renderer whose log is no UTF-8: the render is drawn, not unfinished (exit {logged.exitCode}, {loggedCodes})"
+      (logged.exitCode == 0 && loggedCodes.contains "W0378" && !loggedCodes.contains "W0382")
+    -- A temporary root spelled through a link and a trailing separator: the
+    -- renderer names its working directory by its real path, and that name
+    -- is still spelled out of its words.
+    let realRoot := dir / "real-root"
+    IO.FS.createDirAll realRoot
+    symlink realRoot (dir / "linked-root")
+    let pwdSays := dir / "pwd-says"
+    writeScript (pwdSays / "lualatex") ("#!/bin/sh\nif [ \"$1\" = --version ]; then printf '%s\\n' " ++
+      "'synthetic boundary renderer 1'; exit 0; fi\nprintf '%s\\n' \"$(pwd)/pic.tex: cannot start\" >&2\nexit 127\n")
+    let linked ← IO.Process.output {
+      cmd := binary.toString, cwd := some dir
+      args := #[boundary.toString, "-o", (dir / "linked-out" / "page.html").toString, "--porcelain"]
+      env := #[("PATH", some pwdSays.toString), ("XDG_CACHE_HOME", some (dir / "cache-linked").toString),
+        ("LEANTEX_FONT", some font.toString), ("TMPDIR", some ((dir / "linked-root").toString ++ "/"))] }
+    t s!"machine loss CLI linked temporary root: W0382 spells the scratch directory out of the renderer's words (exit {linked.exitCode})"
+      ((recordsOf linked).any fun j => codeOf j == some "W0382" &&
+        ((j.getObjValAs? String "help").toOption.any fun h =>
+          hasStr h "<scratch>/pic.tex: cannot start" && !hasStr h "leantex-"))
+    -- A refusal whose log names the scratch directory: the remembered words,
+    -- replayed on every later build, name no random directory.
+    let pwdLog := dir / "pwd-log"
+    writeScript (pwdLog / "lualatex") ("#!/bin/sh\nif [ \"$1\" = --version ]; then printf '%s\\n' " ++
+      "'synthetic boundary renderer 1'; exit 0; fi\nprintf '%s\\n' \"! Synthetic refusal at $(pwd)/pic.tex.\" > pic.log\nexit 1\n")
+    let refusedHere ← build boundary pwdLog "pwd-log" (dir / "pwd-log-out" / "page.html")
+    let replayedHere ← build boundary pwdLog "pwd-log" (dir / "pwd-log-again" / "page.html")
+    let helpOf (run : IO.Process.Output) : List String := (recordsOf run).filterMap fun j =>
+      if codeOf j == some "W0382" then (j.getObjValAs? String "help").toOption else none
+    t s!"machine loss CLI refusal naming its scratch directory: the remembered words name <scratch> (exit {refusedHere.exitCode})"
+      (match helpOf refusedHere with
+        | [h] => hasStr h "<scratch>/pic.tex" && !hasStr h "leantex-" && helpOf replayedHere == [h]
+        | _ => false)
+    -- A renderer a missing library stops before it can say who it is: W0379
+    -- says why in the loader's words.
+    let unversioned := dir / "unversioned"
+    writeScript (unversioned / "lualatex") ("#!/bin/sh\nprintf '%s\\n' 'luatex: error while loading " ++
+      "shared libraries: libsynthetic.so.0: cannot open shared object file' >&2\nexit 127\n")
+    let unloaded ← build boundary unversioned "unversioned" (dir / "unversioned-out" / "page.html")
+    t s!"machine loss CLI renderer a loader stops at its version: W0379 carries the loader's words (exit {unloaded.exitCode})"
+      (unloaded.exitCode == 0 && (recordsOf unloaded).any fun j => codeOf j == some "W0379" &&
+        ((j.getObjValAs? String "message").toOption.any (hasStr · "error while loading shared libraries")))
     -- A renderer whose version question never ends: the help says so, rather
     -- than only telling the user to install a tool that is there.
     let hanging := dir / "hanging"
