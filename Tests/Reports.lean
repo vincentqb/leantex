@@ -113,6 +113,7 @@ import Tests.ElabFrameSources
 import Tests.LayoutSources
 import Tests.LineRhythm
 import Tests.Privacy
+import Tests.DiagFold
 import scripts.LandCore
 
 /-!
@@ -1239,7 +1240,16 @@ def reports : List Report := [
       check% Tests.LineRhythm.centredRuntChecks]
     accept := ["a ten-point deck's closing prose slide beside the reference engine's page in both artifacts: ragged right, unhyphenated, at its leading",
       "the same slide's thirteen lines each ending at the reference engine's word, as its ragged right fills every line first"]
-    state := .guarded "2b555dcfbad3803d9ebbb3d54fdc8571b36e9ea7" .before .author }
+    state := .guarded "2b555dcfbad3803d9ebbb3d54fdc8571b36e9ea7" .before .author },
+  { id := "R133", date := "2026-10-10"
+    what := "A beamer deck's build printed one warning per listing for a listing option the engine does not honour, while other repeated losses printed once with a site count: the option's emitter named no subject, and a repeat in the same words with no subject printed at every site"
+    pins := [check% Tests.DiagFold.foldChecks, check% Tests.DiagFold.subjectDoorChecks,
+      thm% Diag.foldRepeats_sum_exact, thm% Diag.foldRepeats_census_exact,
+      thm% Diag.foldRepeats_shown_exact, thm% Diag.foldRepeats_visible_inj]
+    accept := ["twenty-one assertions fail with the fold's subjectless and wording arms and the listing and siunitx subjects reverted onto the recorded commit, the census-keyed fold standing: a listing option's one line and count at five listings, every listing arm's words keying its loss, a siunitx option's one line, a subjectless repeat's one line with its werror, acceptance and porcelain counts, a loss's second wording, which the census-keyed fold hid, a loss that opens on a note, whose warning it hid, and the door scan naming twelve subjectless emissions of a counted code",
+      "a presentation deck's build prints its listing option once with its site count and a repeated glyph fallback once, and its porcelain keeps every record, the sites summing to the records",
+      "an invented document whose thousands of paragraphs each hold symbols its face lacks prints one line per symbol, its fold's counts written in one pass"]
+    state := .guarded "e942f189" .revert .author }
 ]
 
 /-- The reports guarded but never seen failing: a count that may fall and
