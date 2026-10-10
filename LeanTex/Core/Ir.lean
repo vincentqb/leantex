@@ -12064,7 +12064,7 @@ public def Design.consumedRoles : List String :=
    "separator"] ++                    -- the title-page rule (Elab.titleBlocks
                                       -- via the titlepage style; Layout .rule,
                                       -- HtmlDoc's <hr class="separator">)
-  listingRoles.map (·.1)              -- Listing.tokenInline, both backends
+  listingRoles.map (·.1)              -- Listing.paintLine, both backends
 
 
 /-- How covering paints: the colour of a covered run that had none of its

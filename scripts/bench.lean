@@ -931,7 +931,7 @@ def growthBound (label : String) (small big : Nat) : IO Unit := do
   let ratio := (big * 10 + max small 1 / 2) / max small 1
   IO.println s!"{padRight s!"leantex  growth, {label}" 42} {padLeft s!"{ratio / 10}.{ratio % 10}" 6} ×  (bound 8.0)"
   if big > 8 * max small 1 then
-    die s!"{label}: the elaboration grew {ratio / 10}.{ratio % 10}× for 4× the input (bound 8)"
+    die s!"{label}: the phase grew {ratio / 10}.{ratio % 10}× for 4× the input (bound 8)"
 
 /-- A listing's lexing is linear in its length, in lines and within a line,
 and so is setting it. A lexer step that copied its token array on every

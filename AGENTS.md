@@ -370,7 +370,14 @@ is skipped.
   600 ms on a 30-page document — the hook rejects an append whose trailing
   text is a call ending in a bare variable, whatever the left side spells.
   Appending to a `mut` string or array in a loop is fine: unique ownership
-  appends in place (`Pdf.write` builds the whole file that way).
+  appends in place (`Pdf.write` builds the whole file that way). An array
+  stays unique only while nothing else still reads it: a record update
+  builds its fields in structure order, so `{ acc with notes := … acc.items.size …,
+  items := acc.items.push x }` pushes while the size is still to be read,
+  and copies the array at every push; bind what the update reads first
+  (`let at_ := acc.items.size`). A read that must see the array before a
+  call grows it travels as a field the call writes (`ItemsAcc.before`): the
+  compiler may sink a pure `let` past the call.
   Bit-level work in a hot loop is `UInt64`/`UInt32`, never `Nat`: a `Nat`
   shift (`<<<`) is an out-of-line bignum call with no small-number fast
   path (~80 ns; `+`, `*`, `>>>`, `&&&` are inline), and two of them per

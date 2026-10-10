@@ -4882,7 +4882,8 @@ private def itemsOfTok (pats : Option Hyphen.Patterns) (size xHeight : Sp)
       if acc.dropped.contains m then acc
       else { acc with dropped := acc.dropped.push m
                       origins := rememberGlyph acc.origins .E0405 m.1 m.2 source }) acc
-    { acc with notes := acc.notes.push (acc.items.size, num, body, bodyLeaf)
+    let at_ := acc.items.size
+    { acc with notes := acc.notes.push (at_, num, body, bodyLeaf)
                items := acc.items.push mk }
   | .formula display sty body attr =>
     -- The flatten pass pushes a formula token only when a math face with
