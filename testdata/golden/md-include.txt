@@ -1,0 +1,38 @@
+class article
+page 612x792 vmargin 72 hmargin 150
+font dir "fonts"
+font body "Source Serif Pro"
+font mono "Source Code Pro"
+para
+  text "Placeholder prose from example.org, standing before the included file."
+section* h1
+  text "Included placeholder notes"
+para
+  text "An "
+  styled emph
+    italicCorr maybe
+    text "invented"
+  italicCorr maybe
+  text " paragraph with "
+  styled bold
+    italicCorr maybe
+    text "bold words"
+  italicCorr maybe
+  text " and a "
+  link "https://example.org/notes"
+    text "link"
+  text "."
+list unordered
+  item
+    para
+      text "First included item"
+  item
+    para
+      text "Second included item"
+verbatim language python
+  "def placeholder(n):"
+  "    return n + 1"
+para
+  text "Placeholder prose standing after it."
+-- diagnostics
+note[N0100] 10:1 '\usepackage{markdown}' → nothing: native Markdown fragments are read at each '\markdownInput' command

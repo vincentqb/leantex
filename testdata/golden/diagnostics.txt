@@ -9,6 +9,10 @@
 ✖ [E0003]
   cannot publish output: HTML and Markdown both name 'out.html'
   suggestion: choose separate files with -o and \output{ md = ... }; use destinations without hard links
+── E0004 (dropped) an artifact could not be written to its destination
+✖ [E0004]
+  cannot write 'site/out.pdf': permission denied
+  suggestion: choose a destination this user can write with -o, or the markdown twin's with \output{ md = ... }
 ── E0101 (dropped) lone backslash at end of input
 ✖ [E0101]
   lone backslash at end of input
@@ -696,9 +700,9 @@
   suggestion: install the tool the reason names (poppler's pdftocairo, libxml2's xmllint, librsvg's rsvg-convert), rebuild if it was interrupted, or \allow{W0378} accepts the loss
 ── W0379 (degraded) no boundary tool available for a picture outside the rendered subset; a placeholder box marks the picture
 ⚠ [W0379]
-  no boundary tool is available for this picture outside the rendered subset
+  no boundary tool is available for this picture: lualatex's version was not read (no executable file by this name on PATH)
   replaced by: a placeholder box
-  suggestion: install lualatex, or \pictures{ tool = none } accepts the placeholder; a warm cache needs no tool
+  suggestion: install lualatex if it is missing, or \pictures{ tool = none } accepts the placeholder; a warm cache needs no tool
 ── W0380 (degraded) a \cref target of unknown kind; the plain number is set
 ⚠ [W0380] - \cref
   'stepped' names a bare counter step, not a heading, equation, or float; the plain number is set

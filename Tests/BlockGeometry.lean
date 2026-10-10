@@ -132,8 +132,6 @@ private def markY (page : Layout.PageOut) : Mark → Option Dim.Sp
   | .top c n => (boxOf page c n).map (·.y)
   | .bottom c n => (boxOf page c n).map fun f => f.y + f.h
 
-private def milliOf (d : Dim.Sp) : Int := (d * 1000 + 32768) / 65536
-
 /-- 0.02 pt: the reference's three-decimal big points, the TeX/big-point
 conversion and TeX's sp rounding together stay under 0.005 pt; the rest is
 margin for the font program's glyph bounds read by two decoders. -/
@@ -373,8 +371,8 @@ private def tcolorboxChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) 
   for (a, b, want) in tcolorboxMeasured do
     match line a, line b with
     | some la, some lb =>
-      check ref s!"tcolorbox geometry: '{a}' to '{b}' {want} (lualatex) got {milliOf (lb.y - la.y)}"
-        ((milliOf (lb.y - la.y) - want).natAbs ≤ tolerance.toNat)
+      check ref s!"tcolorbox geometry: '{a}' to '{b}' {want} (lualatex) got {spMilli (lb.y - la.y)}"
+        ((spMilli (lb.y - la.y) - want).natAbs ≤ tolerance.toNat)
     | _, _ => check ref s!"tcolorbox geometry: '{a}' and '{b}' ship" false
   let (doc, _) := Elab.run "tcolorbox-geometry.tex" tcolorboxSource
   let geom := Layout.Geom.ofPage doc.page
@@ -585,8 +583,8 @@ private def skipChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO 
   for (a, b, want) in skipMeasured do
     match out.pages[0]?.bind (fun p => (markY p a).bind fun ya => (markY p b).map (· - ya)) with
     | some d =>
-      check ref s!"block skips: distance {want} (lualatex) got {milliOf d}"
-        ((milliOf d - want).natAbs ≤ tolerance.toNat)
+      check ref s!"block skips: distance {want} (lualatex) got {spMilli d}"
+        ((spMilli d - want).natAbs ≤ tolerance.toNat)
     | none => check ref s!"block skips: marks for {want} ship" false
   let (doc, _) := Elab.run "block-skips.tex" skipSource
   let (head, body, _) := HtmlDoc.emitTree {} doc
@@ -712,8 +710,8 @@ def blockGeometryChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO
   for (page, a, b, want) in measured do
     match out.pages[page]?.bind (fun p => (markY p a).bind fun ya => (markY p b).map (· - ya)) with
     | some d =>
-      check ref s!"block geometry: page {page + 1} distance {want} (lualatex) got {milliOf d}"
-        ((milliOf d - want).natAbs ≤ tolerance.toNat)
+      check ref s!"block geometry: page {page + 1} distance {want} (lualatex) got {spMilli d}"
+        ((spMilli d - want).natAbs ≤ tolerance.toNat)
     | none => check ref s!"block geometry: page {page + 1} marks for {want} ship" false
   shapeChecks ref fonts out
   htmlChecks ref

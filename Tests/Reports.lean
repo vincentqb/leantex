@@ -55,6 +55,7 @@ import Tests.TcolorboxColors
 import Tests.BlockBar
 import Tests.BlockBody
 import Tests.BlockGeometry
+import Tests.BlockSkips
 import Tests.BlockFillConditionals
 import Tests.BlockRegionFit
 import Tests.BlockHeaderClearance
@@ -68,6 +69,8 @@ import Tests.ListingProvider
 import Tests.ListingStyleTable
 import Tests.PublicationPaths
 import Tests.MarkdownInput
+import Tests.MarkdownDoors
+import Tests.MarkdownTwin
 import Tests.InputUse
 import Tests.MathAlphaEntry
 import Tests.MathDiagnosticOrigins
@@ -1111,6 +1114,36 @@ def reports : List Report := [
       "in the web deck a figure inside a list item stands within three points of its reference typesetting, where it stood eight low"]
     state := .guarded "445f6518" .revert .author },
   { id := "R123", date := "2026-10-08"
+    what := "How the two surfaces, the include of markdown in tex and the backends fit had no stated agreement, and a document's markdown twin did not read back to it: paragraphs read back as lists and headings, code lost its text, listings broke their fences and lost their blank lines, list items lost their code blocks, adjacent lists merged, a link in code-set text lost its link, a pipe in a table cell's code split the cell, and a hard break in a heading split it from its text"
+    pins := [thm% Elab.elabBlocks_input_exact, thm% Elab.markdownInput_blocks_exact,
+      thm% Md.desugar_vocabulary_mem, thm% Md.desugar_blockStart_contract,
+      thm% MarkdownDoc.escapeLineStart_contract, thm% MarkdownDoc.rowLine_cells_exact,
+      thm% MarkdownDoc.headingText_contract, thm% MarkdownDoc.titleLine_contract,
+      check% Tests.MarkdownDoors.markdownDoorChecks,
+      check% Tests.MarkdownTwin.markdownTwinChecks,
+      .tier "mdtwin" "corpus.reread-clean", .tier "mdtwin" "cm.Lists.reread-exact"]
+    accept := ["the record's failing run is the twin's: on the base tree forty-three round-trip rows fail, the thirty-seven first recorded and six of the seven added in review, for a link in code-set text, a listing's blank lines and lists side by side in an item or closing one",
+      "the seventh added row, a code-set URL, holds a face the base twin kept and the first fix lost: it passes on the base tree and fails on that fix's tree, with four of the other six",
+      "the theorems pinned here did not exist on the base tree, where the agreement between the surfaces and what an include means was prose",
+      "the door checks are a measurement, not a guard seen failing: the elaborator they measure is the base tree's, unchanged here, and each fails on a planted divergent door; under one surface at a time, over a synthetic family reaching every markdown node to depth two and over every CommonMark example, the neutral host's whole document is the file alone under the host's surface, and a frame whose content is the include is the frame with the file's raws in its place, with the call written tight and on a line of its own",
+      "a host's redefinition of each ordinary vocabulary control reaches the included file as it reaches the same raws spliced at the call",
+      "two rows added in the third review round fail on the second round's twin: an item whose paragraph and nested list sit in a resolved step wrote a blank line between them, which a CommonMark reader reads as a loose list, and an item opening with a block that writes nothing wrote an empty item before its text",
+      "rows added in the fourth review round fail fourteen ways on the third round's twin: a table row split at a pipe in code, a destination or a formula, a cell's hard break ended its row, and a heading's or frame title's hard break split it from its text; the fifth round's rows fail eight ways on the fourth's: the metadata title and summary written raw, a bare link the driver's document carries in a source location written as a link, a heading's hash before trailing space read as its closing sequence, a titled block's spaced title not bold, and a footnote's hard break ending the footnote",
+      "the sixth round's rows fail three ways on the fifth's: a run's closing tab or hard break left inside its delimiters, and a reference list's markers written raw, so the driver's bibliography twin was no fixed point",
+      "the twin's table rows read under an external GFM table reader as GFM's row grammar reads them, on every corpus twin that writes one"]
+    state := .guarded "fa516a82" .before .author },
+  { id := "R124", date := "2026-10-09"
+    what := "An explicit vertical skip between beamer blocks was absorbed"
+    pins := [check% Tests.BlockSkips.blockSkipChecks]
+    accept := ["in the browser a skip was an empty box whose margin collapsed into the next element's in block flow and overrode the space the element above leaves below it, and was written in print points where every other gap is in the screen's unit: a big skip between two blocks stood 15.3 points apart against the page's 22, and on an invented probe matrix of paragraphs, blocks, lists, centred blocks, displays and listings a big skip moved what follows by 0.69 of itself after a paragraph, 0.44 after a block, 0.19 after a centred block and by less than nothing after a display",
+      "the skip is now a box of its own as tall as the skip in the screen unit, the element above owning its space below before it: every skip box of the probe matrix realizes the sum of the three addends in a browser, and two blocks across a big skip stand the page's 22 points",
+      "with a document paragraph skip, a skip opening a frame moved its first paragraph or list 16 points against the reference engine's 12, the frame's own negative paragraph skip lost; it now moves it 12",
+      "seventy-nine assertions fail on the tree before the fix and hold after; a presentation deck's PDF is byte-identical, its block gaps match the reference engine's within 0.002 points wherever both set the same content height, and its browser deck stands each skip whole at every skip site",
+      "the primitive vertical skip, its glue unbraced, was an unknown command whose value shipped as a line of text; it now moves what follows as the reference engine does, by 7 and by -3 points, and its infinite spelling stands where the fill command stands; seven assertions fail before and hold after",
+      "review of the fix: a skip inside a table cell, a bold run, a footnote or a frame or block title failed the build, an infinite stretch of another order or factor became the fill command, and in the browser a skip opening an untitled frame or a paused step, or opening an item, stood a paragraph skip deeper, a paragraph past a skip after a list or a theorem paid the sheet's peer gap where the page pays the paragraph skip, and a title bar's skips added a rule's default margins and the title's own; thirty-three assertions fail on the fix and hold now, every reviewed probe moves what follows by the skip in a browser within 0.01 points, and a title bar stands its own skip alone from the title in the browser",
+      "second review of the fix: in the browser the follower past a skip right after a heading, or opening a centred block, a flushleft or an item, paid the paragraph gap where its place pays nothing without the skip, six points too far, and moved what followed a negative skip down; a glue keyword run into its dimension shipped the skip's rubber as unnamed text; and a page shipping none of the engine's stylesheet lost every skip; twenty-nine assertions fail on the reviewed tree and hold now, and every reviewed heading and container probe moves what follows by the skip in a browser within 0.01 points"]
+    state := .guarded "7284e33a" .before .author },
+  { id := "R125", date := "2026-10-10"
     what := "Inter-line spacing came out wider than the reference engine's: a paragraph in a named size stood on the body's leading, the larger sizes and code listings at six fifths of their type, and a slide's lines and gaps on screen at the screen's prose rhythm instead of the page's"
     pins := [check% Tests.LineRhythm.stepLeadingChecks, check% Tests.LineRhythm.htmlStepChecks,
       check% Tests.LineRhythm.htmlGapChecks, check% Tests.LineRhythm.listingPitchChecks,
@@ -1134,7 +1167,7 @@ def reports : List Report := [
       "a venue style's own size ladder: each declared step's lines at the leading it declares, beside the reference engine's",
       "the same deck's slides with pauses measured in a browser: every paragraph gap the declared one through each step, as on the page"]
     state := .guarded "fa516a828a2a36549fc2a56f1e1cb4d138b3b934" .before .author },
-  { id := "R124", date := "2026-10-08"
+  { id := "R126", date := "2026-10-10"
     what := "A slide of running prose read worse than the reference engine's: justified and hyphenated where the slide class sets its text ragged right"
     pins := [check% Tests.LineRhythm.raggedFrameChecks,
       check% Tests.LineRhythm.centredRuntChecks]

@@ -284,8 +284,8 @@ public def engineClasses : List String :=
    "math", "math-display", "nopadl", "nopadr", "note", "picture", "progress",
    "reveal-scroll", "ruled", "section-page", "separator", "slide",
    "slide-foot", "slide-logo", "slide-track", "slides", "snap", "spaced",
-   "standout", "step", "table-float", "tcolorbox", "tcolorbox-body", "alt-pair", "alt-alike",
-   "frame-body-tail", "frame-flow-end"] ++
+   "standout", "step", "table-float", "tcolorbox", "tcolorbox-body", "vskip", "alt-pair",
+   "alt-alike", "frame-body-tail", "frame-flow-end"] ++
   Ir.sizeScale.map (fun p => "size-" ++ p.1) ++ Ir.sizeScale.map (fun p => "lead-" ++ p.1)
 
 private theorem engineClasses_no_u_prefix :
@@ -867,7 +867,10 @@ public def styleRules (doc : Doc) : String × Array Diag :=
   for (element, st) in doc.styles.entries do
     let some tag := sel element | continue
     -- The title heading takes what the page's title door reads, nothing more.
-    let st := if element == "titlepage" then Ir.titleHeadingStyle st else st
+    -- Its `after` is the whole title block's, a skip of its own after it
+    -- (`Elab`'s title blocks), never the heading's margin.
+    let st := if element == "titlepage" then { Ir.titleHeadingStyle st with after := none }
+      else st
     let decls :=
       (st.before.map fun g => s!"margin-top: {cssLength g.width};").toList ++
       (st.after.map fun g => s!"margin-bottom: {cssLength g.width};").toList ++
@@ -1101,10 +1104,68 @@ declares one (`--parskip`, written by `baseCss` through `parskipVar`),
 else the table's peer row — the value the PDF walk's `Rd.parskip` spends. -/
 private def peerGap : String := s!"var(--parskip, {quantaRem (gapK "peer")})"
 
-/-- A trivlist's boundary: its `\topsep` on top of the peer gap, through the
-token the PDF walk reads (`Ir.trivlistSkip`). -/
-private def trivlistGap : String :=
-  s!"calc(var(--{Ir.trivlistSkipName}, {quantaRem (gapK "trivlist" - gapK "peer")}) + {peerGap})"
+/-- A trivlist's own space, its `\topsep`, through the token the PDF walk
+reads (`Ir.trivlistSkip`). -/
+private def trivlistOwn : String :=
+  s!"var(--{Ir.trivlistSkipName}, {quantaRem (gapK "trivlist" - gapK "peer")})"
+
+/-- A trivlist's boundary: its `\topsep` on top of the peer gap. -/
+private def trivlistGap : String := s!"calc({trivlistOwn} + {peerGap})"
+
+/-- The class of a document skip's box (`skipNode`). -/
+public def skipClass : String := "vskip"
+
+/-- The skip box's class is the engine's own, so no authored role class
+can collide with it (`roleClass_engine_disjoint`). -/
+private theorem skipClass_engine : skipClass ∈ engineClasses := by decide
+
+/-- An overlay step's carrier whose first child is a document skip's box:
+it stands where the box would, so it owns the box's boundaries. -/
+public def skipCarrier : String := s!":is(.step, .step-set):has(> .{skipClass}:first-child)"
+
+/-- An element's space below it, as the boundaries it owns: `peer` before
+the follower the sheet assumes — a paragraph, whose peer gap the value folds
+in where the element's space and the paragraph's add — and `own` before a
+document skip's box, or a step carrier opening on one, the element's own
+space alone: TeX puts the skip on the list after the element's space, and
+the follower past the skip pays its own (`skipNode`). Where the element's
+`peer` folds in TeX's `\parskip` rather than the sheet's peer gap — a list's
+space, a display's — `after` is that term, which the paragraph past the box
+pays in its place. `sels` are the element's own selectors. -/
+private def ownsBelow (sels : List String) (peer own : String) (after : Option String := none) :
+    List GapRule :=
+  let follow (tail : String) := ", ".intercalate (sels.map (· ++ tail))
+  [.boundary (follow " + *") peer,
+   .boundary (follow s!" + :is(.{skipClass}, {skipCarrier})") own] ++
+  (after.map fun v =>
+    [.boundary (follow s!" + .{skipClass} + p" ++ ", " ++ follow s!" + .{skipClass} + .{skipClass} + p") v]).getD []
+
+/-- A document skip — `\vspace`, `\smallskip`, `\medskip`, `\bigskip`, an
+`Ir.Block.spaced` holding nothing — as a box of its own carrying the skip's
+natural width as `--skip`, in the screen unit every boundary rule is written
+in (`screenMilli` at the body size `size`; an `ex` part at half the size,
+the conventional x-height). The sheet makes a positive skip the box's height
+(`baseCss`) and a negative one its bottom margin (`gapResets`), so the skip
+adds to the boundary it stands at as TeX's glue adds on the vertical list
+(`Layout`'s `vspace` door), negative glue pulling the follower up. The box
+owns no other margin: the element above owns its space below it before the
+box (`ownsBelow`), the element below its space above, and the box is a flow
+root, so no margin collapses through it in block flow, as none collapses in
+a flex column. The extent rides on the box itself too — its height, or a
+negative skip's bottom margin — so a page that ships none of the engine's
+sheet (`css = none`, a framework's) still moves its follower by the skip,
+which is the document's declaration. Fil glue has no natural width and the
+box no height. A token-sourced skip defers to its property. -/
+private def skipNode (size : Int) (g : Ir.Sourced SymGlue) : Node :=
+  let v := g.value.width.resolve size (size / 2)
+  let rem := milliRem (screenMilli size v.natAbs)
+  let len := if v < 0 then s!"-{rem}" else rem
+  let len := match g.token with
+    | some n => s!"var(--{n}, {len})"
+    | none => len
+  let extent := if v < 0 then s!"margin-bottom: {len}" else s!"height: {len}"
+  let style := if v == 0 then #[] else #[("style", s!"--skip: {len}; {extent}")]
+  Html.elem "div" #[] (#[("class", skipClass)] ++ style)
 
 /-- The elements a list level spaces: every list a list block emits — a
 description's `<dl>` among them (latex.ltx `description` is a `\list`) —
@@ -1132,6 +1193,10 @@ element — `\@trivlist`'s `\topsep` over the surrounding `\parskip`, and
 `\parskip`, zero at its natural width (`Layout.Geom.texParskip`), not the
 engine's paragraph mark. -/
 private def listSpace (m : Nat) : String := s!"calc({milliRem m} + var(--parskip, 0rem))"
+
+/-- The `\parskip` term a list's space folds in (`listSpace`), alone: what
+the paragraph past a skip box after the list pays. -/
+private def texParskip : Option String := some "var(--parskip, 0rem)"
 
 /-- One list level's three spaces in screen milli-rem, `\topsep`,
 `\itemsep` and `\parsep` of `Ir.listSkips`, each through `screenMilli`. -/
@@ -1171,12 +1236,12 @@ private def listLevelRules (pre : String) (g : Nat × Nat × Nat) (opened : Nat)
     let last := s!":has(> :is({", ".intercalate listElems}){sel}:last-child)"
     .boundary s!"{pre}li{last} + {itemSubject}, {pre}dd{last} + dt" (listSpace m)
   [.parskip s!"{pre}{itemSubject}, {pre}blockquote > *, {pre}dl > *" (milliRem g.2.2),
-   .boundary (", ".intercalate (listElems.map fun e => s!"{pre}* + {e}")) (listSpace opened),
-   .boundary (", ".intercalate (listElems.map fun e => s!"{pre}{e} + *")) (listSpace opened),
-   .boundary s!"{pre}li + {itemSubject}, {pre}dd + dt" (listSpace g.2.1)] ++
+   .boundary (", ".intercalate (listElems.map fun e => s!"{pre}* + {e}")) (listSpace opened)] ++
+  ownsBelow (listElems.map (pre ++ ·)) (listSpace opened) (milliRem opened) texParskip ++
+  [.boundary s!"{pre}li + {itemSubject}, {pre}dd + dt" (listSpace g.2.1)] ++
   (if opened == g.1 then [] else
-    [.boundary s!"{pre}* + .{inPar}" (listSpace g.1),
-     .boundary s!"{pre}.{inPar} + *" (listSpace g.1)]) ++
+    .boundary s!"{pre}* + .{inPar}" (listSpace g.1) ::
+      ownsBelow [s!"{pre}.{inPar}"] (listSpace g.1) (milliRem g.1) texParskip) ++
   (if nested.1 ≤ g.2.1 then [] else [after "" nested.1]) ++
   (if nested.2 ≤ max g.2.1 nested.1 then [] else [after s!":not(.{inPar})" nested.2])
 
@@ -1226,17 +1291,24 @@ public def thmRules (l : Ir.ListLineage) (size : Int) : List GapRule :=
     match Ir.thmSkips l size 1 {} k false with
     | some sk =>
       let above := screenMilli size sk.above.width.sp
-      [.boundary s!"* + {c}" (if sk.parskipAbove then listSpace above else milliRem above),
-       .boundary s!"{c} + *" (listSpace (screenMilli size sk.below.width.sp))]
-    | none => [.boundary s!"* + {c}" trivlistGap, .boundary s!"{c} + *" trivlistGap]
+      let below := screenMilli size sk.below.width.sp
+      .boundary s!"* + {c}" (if sk.parskipAbove then listSpace above else milliRem above) ::
+        ownsBelow [c] (listSpace below) (milliRem below) texParskip
+    | none => .boundary s!"* + {c}" trivlistGap :: ownsBelow [c] trivlistGap trivlistOwn
 
 /-- The resets: every block element's own vertical margins, first; a slide's
 frame title sets flush in its header band, which owns the title's space. -/
 private def gapResets : List GapRule :=
-  [.reset "p, ul, ol, li, dl, dd, pre, blockquote" "0",
+  [.reset "p, ul, ol, li, dl, dd, pre, blockquote, hr" "0",
    .reset "h1, h2, h3, h4, h5, h6" s!"0 0 {quantaRem (gapK "peer")}",
+   -- A title over a title bar's skip has no band of its own below: the
+   -- bars' skips are the whole rhythm of their block (`Ir.titleBars`).
+   .reset s!"h1:not(.body-heading):has(+ .{skipClass} + hr.separator)" "0",
    .reset "section.slide > header h2" "0",
-   .reset "figure.float" "0 auto"]
+   .reset "figure.float" "0 auto",
+   -- A document skip's box: a negative skip is its bottom margin, nothing
+   -- else; its space above is the boundary's (`ownsBelow`).
+   .reset s!".{skipClass}" "0 0 min(0rem, var(--skip, 0rem))"]
 
 /-- The boundaries the list levels stand after: the peer elements', the
 reference list's entries — a peer gap apart, the paragraphs
@@ -1245,8 +1317,8 @@ private def gapBeforeLists : List GapRule :=
   (blockGapKinds.filter (·.2 != "heading")).map (fun (sel, _) =>
     .boundary s!"* + {sel}" peerGap) ++
   [.boundary ".bibliography > li + li" peerGap,
-   .boundary s!"* + .{roleClass Ir.trivlistRole}, * + blockquote" trivlistGap,
-   .boundary s!".{roleClass Ir.trivlistRole} + *, blockquote + *" trivlistGap]
+   .boundary s!"* + .{roleClass Ir.trivlistRole}, * + blockquote" trivlistGap] ++
+  ownsBelow [s!".{roleClass Ir.trivlistRole}", "blockquote"] trivlistGap trivlistOwn
 
 /-- The display's space, TeX's long `\abovedisplayskip` (`Ir.displaySkipsFor`)
 as the screen's multiple of its quantum (`screenMilli`) — the same multiple
@@ -1254,6 +1326,21 @@ at every standard body, since the size files scale the skip with the type
 (10, 11 and 12 pt over quanta of 6, 6.6 and 7.2 pt). -/
 private def displayGapRem : String :=
   milliRem (screenMilli Ir.baseFontSize (Ir.displaySkipDefault Ir.baseFontSize).width.sp)
+
+/-- The follower past a skip box — one, or two in a row — where the box
+stands after a heading or opens a container (not a frame, whose opening the
+frame's own rules pay, nor a step carrier, which stands where the box would):
+it pays what its place pays without the box, nothing — the heading's band
+below is the heading's own, the container's edge the container's — as the
+page's walk opens no gap there. It stands after every rule a follower could
+take its gap from, and before the heading's follower, last. -/
+private def skipFollowerRule : GapRule :=
+  let box := s!".{skipClass}"
+  let past (place : String) (edge : String) : List String :=
+    [s!"{place}{box}{edge} + *", s!"{place}{box}{edge} + {box} + *",
+     s!"{place}{skipCarrier}{edge} > {box}:first-child + *"]
+  .boundary (", ".intercalate (past ":is(h1, h2, h3, h4, h5, h6) + " "" ++
+    past ":not(section.slide, .step, .step-set) > " ":first-child")) "0"
 
 /-- The boundaries the list levels stand before: the headings', the float's
 and the display's pairs, the float's caption seam, and the heading's
@@ -1264,24 +1351,36 @@ section instead, its margin collapsing through the section's edge, which
 carries none — on the heading, where a consumer sheet styling its
 sections as bands keeps them flush. -/
 private def gapAfterLists : List GapRule :=
+  let float := s!"var(--floatsep, {quantaRem (gapK "float")})"
+  let display := s!"var(--{Ir.displaySkipBelow}, {displayGapRem})"
   (blockGapKinds.filter (·.2 == "heading")).map (fun (sel, kind) =>
     .boundary s!"* + {sel}" (quantaRem (gapK kind))) ++
   [.boundary s!"* + section[id] > h{Ir.headingRank 1}:first-child" (quantaRem (gapK "heading")),
-   .boundary "* + figure.float" s!"var(--floatsep, {quantaRem (gapK "float")})",
-   .boundary "figure.float + *" s!"var(--floatsep, {quantaRem (gapK "float")})",
-   .boundary "* + .display" s!"var(--{Ir.displaySkipAbove}, {displayGapRem})",
-   .boundary ".display + *" s!"var(--{Ir.displaySkipBelow}, {displayGapRem})",
-   -- The object under a caption above it: the skip facing it is the
-   -- caption's own `margin-bottom`, the float's one internal seam, so the
-   -- object's peer margin yields, as the page's float plan pays that skip
-   -- alone (`Ir.captionSides`).
+   .boundary "* + figure.float" float,
+   -- A title under a title bar stands on the bar's skip alone: the bars'
+   -- skips are the whole rhythm of their block (`Ir.titleBars`).
+   .boundary "hr.separator + .vskip + h1:not(.body-heading)" "0"] ++
+  ownsBelow ["figure.float"] float float ++
+  [.boundary "* + .display" s!"var(--{Ir.displaySkipAbove}, {displayGapRem})"] ++
+  ownsBelow [".display"] display display (some "0rem") ++
+  [ -- The object under a caption above it: the skip facing it is the
+    -- caption's own `margin-bottom`, the float's one internal seam, so the
+    -- object's peer margin yields, as the page's float plan pays that skip
+    -- alone (`Ir.captionSides`).
     .boundary "figure.float > figcaption:first-child + *" "0",
     -- The first body element owns the frame opening, including a filled
     -- block with no paragraph margin. A fil spacer cannot pay this fixed
     -- skip when the frame has no spare space. A list's own space above
     -- its first item rides on top (`frameOpeningCss`).
+    -- A skip opening an untitled frame stands under beamer's
+    -- `\vskip-\parskip\vbox{}` too: the box, or the carrier opening on
+    -- one, pays it, and the paragraph past it cancels it by its own.
+    .boundary (s!"section.slide > :is(.{skipClass}, {skipCarrier}):first-child, " ++
+      s!"section.slide > .fill:first-child + :is(.{skipClass}, {skipCarrier})")
+      "calc(0rem - var(--parskip, 0rem))",
     .boundary "section.slide > .frame-body-start"
       "calc(var(--frame-body-skip) + var(--frame-body-before, 0pt) + var(--frame-body-open, 0pt))",
+    skipFollowerRule,
     .boundary ":is(h1, h2, h3, h4, h5, h6) + *" "0"]
 
 /-- A skip register in force for the sheet (`Ir.skipAmount`, the site the
@@ -1320,13 +1419,15 @@ private def blockRules (size : Int) (tokens : Ir.Tokens) : List GapRule :=
   -- tcolorbox's `beforeafter skip balanced=0.5\baselineskip`: half a leading
   -- between the box and the line boxes beside it, `\parskip` taken in.
   let balanced := milliRem (screenMilli size (Ir.rhythmQuantum size))
-  [.boundary "* + section.block" (milliRem above),
-   .boundary "section.block + *" s!"calc({milliRem below} + {peerGap})",
-   .boundary "section.block + section.block" (milliRem (below + above)),
+  .boundary "* + section.block" (milliRem above) ::
+    ownsBelow ["section.block"] s!"calc({milliRem below} + {peerGap})" (milliRem below) ++
+  [.boundary "section.block + section.block" (milliRem (below + above)),
    .parskip "section.block > *" "0rem",
-   .boundary "* + section.tcolorbox" balanced,
-   .boundary "section.tcolorbox + *" balanced,
-   .parskip "section.tcolorbox > *" "0rem"]
+   .boundary "* + section.tcolorbox" balanced] ++
+  -- Below the box its own space is the balanced skip less the `\parskip`
+  -- the paragraph after it spends (`Layout`'s box closing).
+  ownsBelow ["section.tcolorbox"] balanced s!"calc({balanced} - {peerGap})" ++
+  [.parskip "section.tcolorbox > *" "0rem"]
 
 /-- The block-boundary sheet, the one emitter of every vertical margin a
 block element carries. The resets come first: the element's own margins
@@ -1643,13 +1744,17 @@ private def throughMembers (pairs : List (Nat × Nat)) (m : String) : List Strin
       carrierTop ++ ":has(> " ++
         String.join (List.replicate (j - 1) (carrierLastLink ++ " > ")) ++ x ++ ":last-child)"
     let upOk := !(x == "*" || (x.splitOn ":has(").length > 1)
+    -- a carrier opening on a skip's box already stands where the box would
+    -- and owns its boundary (`skipCarrier`): the box takes none of its own
+    let downOk := (y.splitOn ("." ++ skipClass)).length == 1
     let frameEnd := if upOk && pre.isEmpty && y == s!"*:not({carrierTop})" then
         [s!"section.slide:has({x}.frame-flow-end) > .frame-body-tail"]
       else []
     (pre ++ x ++ " + " ++ y) :: (frameEnd ++ pairs.filterMap fun (j, k) =>
-      if j == 0 then (if k == 0 then none else some (pre ++ x ++ " + " ++ down k))
+      if j == 0 then (if k == 0 || !downOk then none else some (pre ++ x ++ " + " ++ down k))
       else if !upOk then none
       else if k == 0 then some (pre ++ up j ++ " + " ++ y)
+      else if !downOk then none
       else some (pre ++ up j ++ " + " ++ down k))
 
 /-- A boundary read through the boundary shapes `pairs` (`throughMembers`):
@@ -1709,7 +1814,7 @@ private theorem thmRules_noReset (l : Ir.ListLineage) (size : Int) :
     (thmRules l size).all (fun r => !r.isReset) = true := by
   simp only [thmRules, List.all_flatMap, List.all_eq_true]
   intro k _
-  split <;> simp [GapRule.isReset]
+  split <;> simp [ownsBelow, GapRule.isReset, texParskip]
 
 /-- **Each boundary's gap is its emitter's, and it renders** (`_contract`),
 for every class's list lineage and body size: every rule of the one
@@ -1725,7 +1830,7 @@ public theorem blockGap_owner_contract (l : Ir.ListLineage) (size : Int) (tokens
   have hbefore : gapBeforeLists.all (fun r => !r.isReset) = true := by decide
   have hafter : gapAfterLists.all (fun r => !r.isReset) = true := by decide
   have hblock : (blockRules size tokens).all (fun r => !r.isReset) = true := by
-    simp [blockRules, GapRule.isReset]
+    simp [blockRules, ownsBelow, GapRule.isReset]
   have hall : (gapBeforeLists ++ blockRules size tokens ++ thmRules l size ++ listRules l size tokens ++
       gapAfterLists).all (fun r => !r.isReset) = true := by
     simp only [List.all_append, hbefore, hafter, hblock, thmRules_noReset,
@@ -5514,6 +5619,14 @@ public def baseCss (cfg : Config) (doc : Doc) (pairs : List (Nat × Nat) := []) 
   -- scope it stands flush left, as it always did.
   "table { margin-left: var(--ltx-box-left, 0); margin-right: var(--ltx-box-right, auto); }\n" ++
   ".fill { flex: 1 1 auto; }\n" ++
+  -- A document skip's box (`skipNode`): a positive skip is its height, in a
+  -- block formatting context, so no margin collapses through it, and a
+  -- flex item that never shrinks, as a margin never does. Opening a frame
+  -- it pays the frame's `\vskip-\parskip`, which the paragraph after it
+  -- cancels by its own.
+  s!".{skipClass} \{ display: flow-root; flex: none; height: max(0rem, var(--skip, 0rem));\n" ++
+    "  --frame-body-before: calc(0rem - var(--parskip, 0rem)); }\n" ++
+  s!"{skipCarrier} \{ --frame-body-before: calc(0rem - var(--parskip, 0rem)); }\n" ++
   -- General rows keep the prior flex behavior. An exact pair switches to a
   -- grid that reserves the right max-content column before the left wraps.
   ".entry, .entry-row { display: flex; flex-wrap: wrap; column-gap: 0.4rem;\n" ++
@@ -8084,11 +8197,14 @@ public def blockNode (cfg : Config) (b : Block) : Node :=
     -- element behind.
     Html.text ""
   | .spaced before body =>
-    -- A token-declared gap defers to its own custom property, so a reader
+    -- Standing on its own it is a document skip, a box of its own
+    -- (`skipNode`). Carrying a body it is that content's own space above:
+    -- a token-declared gap defers to its own custom property, so a reader
     -- overriding `--subtitlegap` moves this margin; a computed gap prints
     -- the length it was handed (`cssSourced`) — on the deck as its share of
     -- the stage (`deckSourced`), a print length on a stage that is the
     -- viewport.
+    if body.isEmpty then skipNode cfg.page.fontSize before else
     let style := s!"margin-top: {if cfg.deck then deckSourced cfg.page.height before
       else cssSourced before}"
     Html.elem "div" (blockNodesInto cfg.into #[] body.toList)

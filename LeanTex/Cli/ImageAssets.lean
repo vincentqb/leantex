@@ -5,6 +5,7 @@ public import LeanTex.Cli.PicCache
 import LeanTex.Core.PdfCensus
 import LeanTex.Cli.SvgPoster
 import LeanTex.Cli.ConvCache
+import LeanTex.Cli.Host
 import LeanTex.Cli.RunBounded
 
 /-! Vector image IO. Captured SVG bytes remain the browser source. Fresh
@@ -268,7 +269,7 @@ private def convertResult (op : Op) (bytes : ByteArray)
   let runTool := runner.getD RunBounded.output
   ConvCache.cachedResult bytes spec.recipe spec.tools eligible do
     let independent ← IO.mkRef true
-    let result ← try IO.FS.withTempDir fun dir => do
+    let result ← try Host.withScratch fun dir => do
         let attempt : ExceptT PicCache.Outcome IO ByteArray := do
           let input := dir / ("source." ++ spec.inputExt)
           let output := dir / ("face." ++ spec.outputExt)

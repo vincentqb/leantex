@@ -6,6 +6,45 @@ public section
 
 namespace Tests
 
+/-- **Every artifact reaches the directory its path names, and one that
+cannot be written is a named loss.** A PDF or markdown twin whose directory
+does not exist yet is written with its directory made, as the page always
+was, and a destination no one can write (its directory a regular file) is
+E0004 under its path, once, with the system's words: the run fails with no
+uncaught exception. Both ended in an uncaught exception. -/
+def publicationWriteChecks (ref : IO.Ref (List String)) : IO Unit := do
+  let binary ← IO.FS.realPath ".lake/build/bin/leantex"
+  let font ← IO.FS.realPath "testdata/corpus/fonts/OpenSans-Regular.ttf"
+  IO.FS.withTempDir fun dir => do
+    let source (output : String) :=
+      "\\documentclass{article}\n" ++ output ++ "\\begin{document}\nAn invented write probe.\n\\end{document}\n"
+    let run (output : String) (args : Array String) := do
+      IO.FS.writeFile (dir / "source.tex") (source output)
+      IO.Process.output {
+        cmd := binary.toString, cwd := some dir, args := #["source.tex"] ++ args,
+        env := #[("LEANTEX_FONT", some font.toString),
+          ("XDG_CACHE_HOME", some (dir / "cache").toString)] }
+    let pdf ← run "" #["-o", "fresh/deeper/out.pdf"]
+    check ref s!"publication writes: a PDF's missing directory is made ({pdf.exitCode}): {pdf.stderr}"
+      (pdf.exitCode == 0 && (← (dir / "fresh" / "deeper" / "out.pdf").pathExists))
+    let md ← run "\\output{ formats = md }\n" #["-o", "fresh-md/notes.md"]
+    check ref s!"publication writes: a markdown twin's missing directory is made ({md.exitCode}): {md.stderr}"
+      (md.exitCode == 0 && (← (dir / "fresh-md" / "notes.md").pathExists))
+    -- A directory standing where the PDF goes: the page and the twin are
+    -- written, and the PDF alone is the loss.
+    IO.FS.createDirAll (dir / "partial" / "source.pdf")
+    let some3 ← run "\\output{ formats = html, md, pdf }\n" #["-o", "partial/", "--porcelain"]
+    let lines := (some3.stdout.splitOn "\n").filter (hasStr · "\"E0004\"")
+    check ref s!"publication writes: one unwritable artifact is the one loss, and the others are written ({some3.exitCode}): {some3.stdout}"
+      (some3.exitCode != 0 && lines.length == 1 && lines.all (hasStr · "partial/source.pdf") &&
+        (← (dir / "partial" / "source.html").pathExists) && (← (dir / "partial" / "source.md").pathExists))
+    IO.FS.writeFile (dir / "blocker") "a regular file where a directory would go"
+    let blocked ← run "" #["-o", "blocker/out.pdf", "--porcelain"]
+    let said := blocked.stdout ++ blocked.stderr
+    check ref s!"publication writes: an unwritable destination is E0004 under its path, not an uncaught exception ({blocked.exitCode}): {said}"
+      (blocked.exitCode != 0 && hasStr said "E0004" && hasStr said "blocker/out.pdf" &&
+        !hasStr said "uncaught exception")
+
 /-- Different formats must reach independent files. The CLI must reject a
 collision before any write, including existing-file and directory aliases;
 accepting diagnostics cannot authorize overwriting a different artifact. -/

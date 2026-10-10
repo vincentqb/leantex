@@ -138,7 +138,7 @@ def htmlGapChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "a deck's em parskip reaches the stage"
     (hasStr deck "--parskip: 0.604rem;")
   t "a deck's bigskip stands its 12 pt share of the 96 mm stage"
-    (hasStr deck "margin-top: 4.409vh" && !hasStr deck "margin-top: 12pt")
+    (hasStr deck "--skip: 1.450rem; height: 1.450rem" && !hasStr deck "height: 12pt")
 
 /-- Invented prose, long enough to break across several lines of a frame. -/
 private def longPara : String :=

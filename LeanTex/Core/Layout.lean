@@ -10249,7 +10249,9 @@ public structure Spacing.Pending where
   /-- A frame's body just opened (`Op.bodyOpen`): beamer's `\vskip-\parskip`
   stands before its `\vbox{}`, which the first paragraph's own `\parskip`
   cancels (no peer gap is paid) and a block, spending none, still pays
-  (its `\medskipamount`). Cleared by the next line's gap. -/
+  (its `\medskipamount`). A skip before the first element leaves it
+  standing: the skip goes on the list after the `\vbox{}`, and the element's
+  `\parskip` still meets the frame's. Cleared by the next line's gap. -/
   private frameTop : Bool := false
   /-- `\vspace*`'s rule stands in the owed glue, before `owed[k]`
   (`Ir.pageAnchorRole`): the boundary ships around it
@@ -13033,7 +13035,10 @@ private def collectBlockList (r : Rd) (a : Acc)
     if statefulBlock blk then
       collectBlockList r (collectBlock r a blk indent) rest indent first prevRule
     else
-    let a := if first then a else a.wantGap
+    -- Until a frame's body sets its first line no peer gap is owed: the
+    -- frame's `\vskip-\parskip` stands for the first element's `\parskip`,
+    -- a skip before that element included (`Spacing.Pending.frameTop`).
+    let a := if first || a.frameTop then a else a.wantGap
     let a := if ruleBlock blk then { a with declaredSkip := false } else a
     let a := collectBlock r a blk indent
     let a := if prevRule then { a with declaredSkip := false } else a

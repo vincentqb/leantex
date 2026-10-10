@@ -76,15 +76,24 @@ private def scratchName (name : String) : Bool :=
   !name.isEmpty && !name.startsWith "/" &&
     (name.splitOn "/").all fun part => !part.isEmpty && part != "." && part != ".."
 
-/-- Where scratch directories are made: the first of TMPDIR, TMP, TEMP and
-TEMPDIR that is set, else /tmp, the order `IO.FS.createTempDir` reads them
-in, except that a variable set to nothing is passed over here where
-`createTempDir` takes it as the root and fails. -/
-private def scratchRoot : BaseIO System.FilePath := do
+/-- Where scratch directories are made, with what chose it: the first of
+TMPDIR, TMP, TEMP and TEMPDIR that is set, else /tmp, the order
+`IO.FS.createTempDir` reads them in, except that a variable set to nothing
+is passed over here where `createTempDir` takes it as the root and fails. -/
+private def scratchRoot : BaseIO (System.FilePath × String) := do
   for name in ["TMPDIR", "TMP", "TEMP", "TEMPDIR"] do
     if let some dir ← IO.getEnv name then
-      unless dir.isEmpty do return dir
-  return "/tmp"
+      unless dir.isEmpty do return (dir, name)
+  return ("/tmp", "the default")
+
+/-- An error's kind in words, without the path it carried. -/
+public def describe : IO.Error → String
+  | .noFileOrDirectory .. => "no such file or directory"
+  | .permissionDenied .. => "permission denied"
+  | .alreadyExists .. => "a file of that name is in the way"
+  | .inappropriateType .. => "a file is where a directory should be"
+  | .resourceExhausted .. => "the system ran out of a resource it needs, such as space"
+  | e => ((toString e).splitOn "\n").headD (toString e)
 
 private def hex (bytes : ByteArray) : String :=
   bytes.foldl (fun s b => s ++ (if b < 16 then "0" else "") ++ String.ofList (Nat.toDigits 16 b.toNat)) ""
@@ -99,7 +108,9 @@ process wrote into or replaced before it closed is left for another name;
 `setAccessRights` follows a link, so under a root others may rename in (no
 sticky bit) a swap between the two steps changes the mode of another file. -/
 private def scratchDir : IO System.FilePath := do
-  let root ← scratchRoot
+  let (root, chosen) ← scratchRoot
+  let unmade (why : String) : IO.Error := IO.userError
+    s!"no scratch directory can be made in the temporary directory '{root}' ({chosen}): {why}"
   for _ in [0:16] do
     let dir := root / ("leantex-" ++ hex (← IO.getRandomBytes 8))
     match ← (IO.FS.createDir dir).toBaseIO with
@@ -107,12 +118,12 @@ private def scratchDir : IO System.FilePath := do
       match ← (IO.setAccessRights dir { user := ⟨true, true, true⟩ }).toBaseIO with
       | .error e =>
         discard <| (IO.FS.removeDir dir).toBaseIO
-        throw e
+        throw (unmade (describe e))
       | .ok () =>
         if (← dir.symlinkMetadata).type == .dir && (← dir.readDir).isEmpty then return dir
     | .error (.alreadyExists ..) => continue
-    | .error e => throw e
-  throw (IO.userError s!"no fresh scratch directory could be made under {root}")
+    | .error e => throw (unmade (describe e))
+  throw (unmade "every fresh name was taken")
 
 /-- A declared output, when it is a regular file inside the scratch
 directory once the symbolic links present when the run ends are followed, so
@@ -135,6 +146,14 @@ file the tool left where the scratch directory stood is removed as itself. -/
 private def removeScratch (dir : System.FilePath) : IO Unit := do
   if (← dir.symlinkMetadata).type == .dir then IO.FS.removeDirAll dir
   else IO.FS.removeFile dir
+
+/-- `f` in a fresh scratch directory of its own, removed afterwards whatever
+`f` returns or raises: `IO.FS.withTempDir` without its crash under a
+temporary root in which no directory can be made, for the runs not yet
+asked through `answer` (the picture renderer and the converters). -/
+public def withScratch {α : Type} (f : System.FilePath → IO α) : IO α := do
+  let dir ← scratchDir
+  try f dir finally discard <| (removeScratch dir).toBaseIO
 
 private def runCall (call : ToolCall) : BaseIO Ended := do
   let unstarted (why : String) : Ended :=

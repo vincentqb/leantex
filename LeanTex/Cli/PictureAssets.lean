@@ -2,6 +2,7 @@ module
 
 public import LeanTex.Cli.ConvCache
 import LeanTex.Cli.FontDiscovery
+import LeanTex.Cli.Host
 import LeanTex.Cli.RunBounded
 import LeanTex.Cli.ToolProbe
 import LeanTex.Core.Flate
@@ -61,7 +62,7 @@ private def produce (tool wrapped : String) : IO ConvCache.Result := do
     let command ← if tool.contains '/' && (System.FilePath.mk tool).isRelative then
         pure ((← IO.currentDir) / tool).toString
       else pure tool
-    IO.FS.withTempDir fun work => do
+    Host.withScratch fun work => do
       IO.FS.writeFile (work / "pic.tex") wrapped
       let ended ← RunBounded.runBounded command
         #["-interaction=batchmode", "-halt-on-error", "pic.tex"] work 120000

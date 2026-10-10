@@ -1,0 +1,22 @@
+% Invented fixture: a markdown file included as a slide frame's body. The
+% file (md-include/slide.md, which is no fixture of its own) holds a list,
+% inline code and a quotation; each must reach the frame's page. Nothing
+% here derives from any private document.
+\documentclass{slides}
+
+\fonts{ dir = "fonts", body = "Source Serif Pro", mono = "Source Code Pro" }
+\usepackage{markdown}
+
+\title{Included Placeholder Deck}
+\author{Pat Placeholder}
+\date{}
+
+\begin{document}
+
+\maketitle
+
+\begin{frame}{Included placeholder frame}
+\markdownInput{md-include/slide.md}
+\end{frame}
+
+\end{document}

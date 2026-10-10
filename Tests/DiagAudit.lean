@@ -158,7 +158,10 @@ def registry : List AuditRow :=
    ⟨.W0396, .keep, .degraded, check% layoutInkChecks⟩,
    ⟨.E0606, .refusal, .fails, check% htmlContainedCliChecks⟩,
    ⟨.E0607, .refusal, .fails, check% pdfBoundsChecks⟩,
-   ⟨.E0003, .refusal, .fails, check% publicationPathChecks⟩]
+   ⟨.E0003, .refusal, .fails, check% publicationPathChecks⟩,
+   -- A destination that cannot be written: the artifact is not there, and
+   -- the system's words say why; the other artifacts are written.
+   ⟨.E0004, .keep, .fails, check% Tests.publicationWriteChecks⟩]
 
 /-- An engine source's tier item: `LeanTex/Core/Elab.lean` is `Core.Elab`,
 `Main.lean` is `Main`. -/

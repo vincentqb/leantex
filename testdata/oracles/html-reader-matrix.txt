@@ -2,13 +2,13 @@
 target: chromium
 tools: node v26.10.0  chromium 151.0.7922.34 (playwright 1.62.0)  firefox untested (browserType.launch: Failed to launch the browser process.)  xmllint: using libxml version 21504  Using libxml 21504, libxslt 10145 and libexslt 825  rsvg-convert version 2.63.2  pdftocairo version 26.09.0  pdftotext version 26.09.0
 date: 2026-10-10
-src-key: dbe78feddbafd212
-browser-face-src-key: 78e35ea1a85b3740
+src-key: a6915adef790f76a
+browser-face-src-key: 9d576030d12a74c1
 browser-face-key: 94c5f08ab85c7a80
 browser-face: diagram-boundary diagram-boundary/i0-ebb51696f3335a2ca0f2739c01b2fefce339661a01c1a7608b124f72b01022dc.svg ok:13063:328976cbf658118181147f45593c0ec33aa06f3e7e67863203ca47dabe30637f
 browser-face: figures figures/i0-e0f0aa06d41410cda8846c8a7a7a6495a190e8c095ad947e4a5107d4d1134af1.svg ok:12919:c76f219716524e5acf842093f32db92567ca2fa9e79b8383859edaf707f4a932
 browser-face: figures figures/i1-e0f0aa06d41410cda8846c8a7a7a6495a190e8c095ad947e4a5107d4d1134af1.svg ok:12919:c76f219716524e5acf842093f32db92567ca2fa9e79b8383859edaf707f4a932
-fixtures: 98 built
+fixtures: 100 built
 
 [feature]
 # feature         chromium      firefox
@@ -95,6 +95,8 @@ md-code           pass          untested      load,fonts,lang,landmarks,color-sc
 md-emphasis       pass          untested      load,fonts,lang,landmarks,color-scheme,reduced-motion,print,no-script
 md-headings       pass          untested      load,fonts,lang,landmarks,color-scheme,reduced-motion,print,no-script
 md-images         pass          untested      load,images,fonts,lang,landmarks,color-scheme,reduced-motion,print,no-script
+md-include        pass          untested      load,fonts,lang,landmarks,color-scheme,reduced-motion,print,no-script
+md-include-deck   pass          untested      load,fonts,lang,landmarks,snaps,color-scheme,reduced-motion,print,print-sheets,no-script,stage-fit,deck-links
 md-links          pass          untested      load,fonts,lang,landmarks,color-scheme,reduced-motion,print,no-script
 md-lists          pass          untested      load,fonts,lang,landmarks,color-scheme,reduced-motion,print,no-script
 md-quotes         pass          untested      load,fonts,lang,landmarks,color-scheme,reduced-motion,print,no-script

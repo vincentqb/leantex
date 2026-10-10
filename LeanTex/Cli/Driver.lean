@@ -8,9 +8,8 @@ import LeanTex.Core.Flate
 import LeanTex.Core.PdfCensus
 import LeanTex.Core.PdfContract
 import LeanTex.Core.Image
-import LeanTex.Core.Lex
 import LeanTex.Core.Parse
-import LeanTex.Core.MdDesugar
+import LeanTex.Core.Surface
 import LeanTex.Core.Ir
 import LeanTex.Core.Struct
 import LeanTex.Core.Theme
@@ -255,8 +254,8 @@ def resolvePictures (ui : Ui) (doc : Ir.Doc)
       -- render of this request serves, and where none exists W0379 names
       -- the loss it returns.
       let earlier ← match picDir with
-        | some dir => Boundary.coldPicture dir tool key (spanFor id)
-        | none => pure (.error (DriverDiag.boundaryToolUnavailable tool (spanFor id)))
+        | some dir => Boundary.coldPicture dir tool key (spanFor id) why
+        | none => pure (.error (DriverDiag.boundaryToolUnavailable tool (spanFor id) why))
       match earlier with
       | .ok bytes =>
         return {
@@ -553,22 +552,23 @@ def frontend (ui : Ui) (file : String) : IO (Option Front) := do
     ui.phase "utf8" "valid" (← since t)
     let input := String.fromUTF8! bytes
     let t ← IO.monoMsNow
-    -- Which reader a path's extension selects. The markdown reader hands
-    -- back the same surface AST the tex reader does — one elaborator, one
-    -- place where meaning lives — so everything past this point is blind
-    -- to which surface the document was written in.
-    let (raws, frontDiags) ← do
-      if file.endsWith ".md" then
-        let (raws, ds) := Md.read file input
-        ui.phase "md" s!"{raws.size} top-level nodes" (← since t)
-        pure (raws, ds)
-      else
-        let (toks, lexDiags) := Lex.lex file input
+    -- Which surface a path's extension selects, read through its one door.
+    -- The markdown door hands back the same surface AST the tex door does —
+    -- one elaborator, one place where meaning lives — so everything past
+    -- this point reads raws, never the surface that wrote them. The tex
+    -- door's two stages report apart (`Surface.read_tex_exact`).
+    let (raws, frontDiags) ← match Surface.ofPath file with
+      | .tex => do
+        let (toks, lexDiags) := Surface.texLex file input
         ui.phase "lex" s!"{toks.size} tokens" (← since t)
         let t ← IO.monoMsNow
-        let (raws, parseDiags) := Parse.parse file toks
+        let (raws, parseDiags) := Surface.texParse file toks
         ui.phase "parse" s!"{raws.size} top-level nodes" (← since t)
         pure (raws, lexDiags ++ parseDiags)
+      | .markdown => do
+        let (raws, ds) := Surface.read .markdown file input
+        ui.phase "md" s!"{raws.size} top-level nodes" (← since t)
+        pure (raws, ds)
     let t ← IO.monoMsNow
     let (executed, inputDiags, spliced) ← Input.expandInputs file raws
     let (raws, dataDiags) ← Input.resolveData file executed.raws
@@ -966,8 +966,14 @@ in the HTML" (← since t)
         ui.accepted resolved.accepted
         ui.summary file failures.size (← since t0)
         return exitFor 0 failures.size resolved.warnings ui.cfg.werror
-      let written ← publish outDir (htmlBuilt.map (htmlPath, ·))
+      let (written, unwritten) ← publish outDir (htmlBuilt.map (htmlPath, ·))
         (mdBuilt.map (mdPath, ·)) (pdfBuilt.map (pdfPath, ·))
+      unless unwritten.isEmpty do
+        for d in unwritten do
+          ui.diag d
+        ui.accepted resolved.accepted
+        ui.summary file unwritten.size (← since t0)
+        return exitFor unwritten.size 0 resolved.warnings ui.cfg.werror
       -- The hatch's other teeth: an `\allow` that never fired is stale
       -- acceptance and warns; what was accepted always prints.
       resolved := resolved.append (← ui.resolve doc.allow allowAll (outputs := outputs)

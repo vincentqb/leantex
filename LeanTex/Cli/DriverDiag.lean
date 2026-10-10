@@ -31,6 +31,13 @@ public theorem atImageRequest_located_exact (imageSpans : Array (String × Span)
 public def unreadableInput (file err : String) : Diag :=
   Diag.of .E0001 s!"cannot read '{file}': {err}"
 
+/-- E0004: an artifact the build made could not be written where it was
+asked for; `err` is the system's reason. The other artifacts are written. -/
+public def outputUnwritable (path err : String) : Diag :=
+  Diag.of .E0004 s!"cannot write '{path}': {err}"
+    (help := "choose a destination this user can write with -o, or the markdown twin's with \\output{ md = ... }")
+    (subject := some path)
+
 /-- E0003: distinct artifacts would overwrite the same file. -/
 public def outputPathsConflict (detail : String) : Diag :=
   Diag.of .E0003 s!"cannot publish output: {detail}"
@@ -157,12 +164,17 @@ OpenType MATH table"
 /-- W0379: a picture outside the rendered subset states a boundary request,
 and no tool on this machine can fulfil it — nothing pinned is runnable and
 the cache holds no earlier render. The placeholder box ships; one per
-picture, at its span, so the census gate can match each to its loss. -/
-public def boundaryToolUnavailable (tool : String) (span : Option Span := none) : Diag :=
+picture, at its span, so the census gate can match each to its loss. `why`
+is how the tool's version question ended, in the message as the reason the
+version was not read, so a tool that is installed but did not answer, or
+could not be asked, is not reported as missing. -/
+public def boundaryToolUnavailable (tool : String) (span : Option Span := none)
+    (why : String := "") : Diag :=
   Diag.of .W0379
-    "no boundary tool is available for this picture outside the rendered subset"
+    (if why.isEmpty then "no boundary tool is available for this picture outside the rendered subset"
+      else s!"no boundary tool is available for this picture: {tool}'s version was not read ({why})")
     span
-    (help := s!"install {tool}, or \\pictures\{ tool = none } accepts the \
+    (help := s!"install {tool} if it is missing, or \\pictures\{ tool = none } accepts the \
 placeholder; a warm cache needs no tool")
     (recovery := some (.replacedBy "a placeholder box"))
 

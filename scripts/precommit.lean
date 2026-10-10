@@ -551,11 +551,14 @@ def addedByFile (diff : String) : Array (String × Array String) := Id.run do
   return out
 
 /-- Modules that consume the IR and must never reach back into the surface:
-re-parsing is how md→PDF and tex→HTML would decay into N×M special cases. -/
+re-parsing is how md→PDF and tex→HTML would decay into N×M special cases.
+The markdown twin is a backend like the others: it writes markdown from the
+IR, and a twin that read the markdown surface back would give one file two
+meanings. -/
 def backendFiles : List String :=
   ["LeanTex/Core/Layout.lean", "LeanTex/Core/Pdf.lean", "LeanTex/Core/PdfContent.lean",
    "LeanTex/Core/PdfStruct.lean", "LeanTex/Core/Html.lean", "LeanTex/Core/HtmlDoc.lean",
-   "LeanTex/Core/MathMl.lean"]
+   "LeanTex/Core/MathMl.lean", "LeanTex/Core/MarkdownDoc.lean"]
 
 /-- `IO`, or a name that runs effects without it (`BaseIO`, `EIO`, and the
 escapes that run either from pure code), as a code token, using the same
@@ -565,7 +568,20 @@ stated limitations apply here too. -/
 def ioInCore (l : String) : Bool :=
   ["IO", "BaseIO", "EIO", "unsafeBaseIO", "unsafeIO", "unsafeEIO"].any (bannedWord · l)
 
-def surfaceMods : List String := ["Lex", "Parse", "Elab", "Compat"]
+/-- Both surfaces: tex's lexer, parser, elaborator and compatibility layer,
+and markdown's reader and desugaring (`Md` is the namespace both of its
+modules declare). -/
+def surfaceMods : List String :=
+  ["Lex", "Parse", "Elab", "Compat", "MdParse", "MdDesugar", "Md"]
+
+/-- The door that reads either surface (LeanTex/Core/Surface.lean), and the
+names it reads one by. Importing the door, opening it or calling one of
+these reads a surface; naming a document's surface — the type, which the IR
+may carry for a backend to read — reads the IR, so the module's other names
+are no reach. -/
+def doorModule : String := "LeanTex.Core.Surface"
+def doorReads : List String :=
+  ["Surface.read", "Surface.fragment", "Surface.texLex", "Surface.texParse"]
 
 /-- Composed like the banned keywords: the gate scans this file's own staged
 diff, and the pattern must not read as a violation where it is defined. -/
@@ -579,7 +595,20 @@ String and comment content aside. -/
 def demotedAssign (l : String) : Bool :=
   containsSub (stripLineComment (stripStrings l)) kwDemotedAssign
 
-def surfaceImports : List String := surfaceMods.map ("import LeanTex.Core." ++ ·)
+/-- The module an import line names, at whatever visibility it imports:
+`import M`, `public import M`, `import all M`, `public import all M`, and
+the `meta` forms. Comparing the whole line to `import M` let a backend's
+`public import` or `import all` of a surface module pass. `none` for a line
+that is no import. -/
+def importedModule (t : String) : Option String :=
+  let ws := ((t.splitOn " ").filter (!·.isEmpty)).dropWhile
+    (fun w => w == "public" || w == "private" || w == "meta")
+  match ws with
+  | "import" :: "all" :: m :: _ => some m
+  | "import" :: m :: _ => some m
+  | _ => none
+
+def surfaceModules : List String := surfaceMods.map ("LeanTex.Core." ++ ·)
 
 /-- A qualified use `Mod.…` with nothing word-like before the name: catches
 `Parse.scanOpt` and `LeanTex.Core.Parse.scanOpt`, not `myParse.foo`. -/
@@ -673,16 +702,38 @@ def: a comment line carrying `conserves: none` and the reason. -/
 def conservesNone (l : String) : Bool :=
   containsSub l "conserves: none"
 
+/-- `pat` spelled as a whole name: no identifier character before it and none
+after, so `Lex.lex` matches `LeanTex.Core.Lex.lex` but not `myLex.lex` or
+`Lex.lexWith`, and `Parse.inputEnv` does not match `Parse.inputEnvFile?`. -/
+def spellsName (line pat : String) : Bool :=
+  let parts := line.splitOn pat
+  (parts.zip parts.tail).any fun (before, after) =>
+    (match before.toList.getLast? with
+     | none => true
+     | some c => !isWordChar c)
+    && (match after.toList.head? with
+     | none => true
+     | some c => !isWordChar c)
+
+/-- The namespaces an `open` line opens, `in` aside. -/
+def openedNames (t : String) : List String :=
+  if t.startsWith "open " then
+    (((t.drop 5).toString.splitOn " ").filter (fun w => !w.isEmpty && w != "in"))
+  else []
+
 /-- A backend reaching into the surface: an import, an `open`, or a
-qualified use of a surface module, comments aside. An alias
-(`abbrev P := LeanTex.Core.Parse` elsewhere) would not be seen — the same
-line-scanner limitation as `ioInCore`, stated, not claimed away. -/
+qualified use of a surface module, or the door read by import, `open` or
+call, comments aside. An alias (`abbrev P := LeanTex.Core.Parse` elsewhere)
+would not be seen — the same line-scanner limitation as `ioInCore`, stated,
+not claimed away. -/
 def surfaceReach (l : String) : Bool :=
   let l := stripLineComment l
   let t := l.trimAscii.toString
-  surfaceImports.any (t == ·)
+  (importedModule t).any (fun m => surfaceModules.contains m || m == doorModule)
     || (t.startsWith "open " && surfaceMods.any (hasWord t ·))
+    || (openedNames t).any (fun n => n == "Surface" || n == "Core.Surface" || n == doorModule)
     || surfaceMods.any (usesQualified l ·)
+    || doorReads.any (spellsName l ·)
 
 /-- The modules that judge a PDF's bytes and must never see the writer:
 the census, and the conformance contract that reads it. -/
@@ -700,7 +751,7 @@ file. `PdfRead.` is a different module and does not match. -/
 def writerReach (l : String) : Bool :=
   let l := stripLineComment l
   let t := l.trimAscii.toString
-  t == "import LeanTex.Core.Pdf"
+  importedModule t == some "LeanTex.Core.Pdf"
     || (t.startsWith "open " && hasWord t "Pdf")
     || usesQualified l "Pdf"
 
@@ -712,6 +763,12 @@ non-HTML angle-bracket text that way. -/
 def tagStringEmit (l : String) : Bool :=
   ((stripLineComment l).splitOn "\"<\"").drop 1 |>.any fun rest =>
     rest.trimAscii.toString.startsWith patAppend
+
+/-- The backends `tagStringEmit` does not judge, each for its reason: the
+typed tree's own renderer (Html.lean), and the markdown twin, whose `<url>`
+is CommonMark's autolink (§6.4), markdown syntax and no HTML at all. The
+twin stays under the surface and dimension gates like every backend. -/
+def tagStringExempt : List String := ["LeanTex/Core/Html.lean", "LeanTex/Core/MarkdownDoc.lean"]
 
 /-- `pat` with no identifier character following — so `FontDiscovery.scan` does not
 match `FontDiscovery.scanRoots`. `hasWord` cannot carry a dotted name: the dot is
@@ -1296,7 +1353,7 @@ def gates : List Gate := [
   scale drifts from the type scale, invisibly.
   Fix: read a token/style/palette entry, or put the source in a `--`
   comment on the same line (the diff scanner cannot see the line above)." },
-  { applies := fun f => backendFiles.contains f && f != "LeanTex/Core/Html.lean"
+  { applies := fun f => backendFiles.contains f && !tagStringExempt.contains f
     flag := tagStringEmit
     what := fun f => s!"HTML built from tag strings, in {f}"
     help := "  HTML is a typed tree with a certified escaper; a concatenated tag skips
@@ -1396,6 +1453,96 @@ def scopedDefNames (lines : Array String) : Array String := Id.run do
       scopes := scopes.tail
     else if let some name := topLevelDefName line then
       out := out.push (qualify space name)
+  return out
+
+/-- Each line's code, with string literals and comments blanked: nested
+block comments and strings carry across lines, so a docstring or a message
+that names a call is a mention, not a use. A char literal holding a quote
+does not open a string. -/
+def codeOnly (lines : Array String) : Array String := Id.run do
+  let mut depth := 0
+  let mut inStr := false
+  let mut esc := false
+  let mut out := #[]
+  for line in lines do
+    let cs := line.toList.toArray
+    let mut code := ""
+    let mut i := 0
+    while i < cs.size do
+      let c := cs[i]?.getD ' '
+      let next := cs[i + 1]?.getD ' '
+      if depth > 0 then
+        if c == '/' && next == '-' then
+          depth := depth + 1
+          i := i + 2
+        else if c == '-' && next == '/' then
+          depth := depth - 1
+          i := i + 2
+        else i := i + 1
+      else if inStr then
+        if esc then esc := false
+        else if c == '\\' then esc := true
+        else if c == '"' then inStr := false
+        i := i + 1
+      else if c == '-' && next == '-' then break
+      else if c == '/' && next == '-' then
+        depth := 1
+        code := code.push ' '
+        i := i + 2
+      else if c == '"' then
+        inStr := true
+        code := code.push ' '
+        i := i + 1
+      else if c == '\'' && cs[i + 2]? == some '\'' then
+        code := code.push ' '
+        i := i + 3
+      else
+        code := code.push c
+        i := i + 1
+    out := out.push code
+  return out
+
+/-- The surface reads the CLI spells only through the one door per surface
+(`Surface.read`, `Surface.fragment`, LeanTex/Core/Surface.lean): the tex
+lexer and parser, the markdown reader and desugaring, and the include
+wrapper's name. A second spelling of a door is where the two surfaces'
+meanings would start to drift, file by file. -/
+def surfaceDoorCalls : List String :=
+  ["Lex.lex", "Parse.parse", "Md.read", "Md.desugar", "Parse.inputEnv"]
+
+/-- The core's own tex readers around the door, by file and the definition
+that holds the read. Each reads text the engine holds — a string a test
+elaborates, a style declaration's value, a setting's value, synthesized
+compatibility source, a picture's macro definition, a bibliography style's
+formula — and never a file. The list is closed: a new reader is named here,
+with its reason, or reads through `Surface.read`. -/
+def coreTexReaders : List (String × String) :=
+  [("LeanTex/Core/Elab.lean", "run"), ("LeanTex/Core/Elab.lean", "applyStyle"),
+   ("LeanTex/Core/Data.lean", "valParsed"), ("LeanTex/Core/Compat.lean", "synth"),
+   ("LeanTex/Core/Picture.lean", "readMacro"), ("LeanTex/Core/BibStyle.lean", "formulaOf")]
+
+/-- The tex door's own stages and the door: where the lexer and the parser
+are defined and composed. -/
+def texDoorFiles : List String :=
+  ["LeanTex/Core/Lex.lean", "LeanTex/Core/Parse.lean", "LeanTex/Core/Surface.lean"]
+
+/-- The rows of a source that reach a surface around its door, each with the
+call it spells, comments and strings aside (`codeOnly`). A CLI source spells
+no reader of a surface at all; a core source lexes and parses tex text only
+in a declared reader (`coreTexReaders`). -/
+def surfaceDoorBypasses (file : String) (lines : Array String) : Array (Nat × String) := Id.run do
+  let mut out := #[]
+  if file == "Main.lean" || file.startsWith "LeanTex/Cli/" then
+    for (code, row) in (codeOnly lines).zipIdx do
+      for call in surfaceDoorCalls do
+        if spellsName code call then out := out.push (row + 1, call)
+  else if file.startsWith "LeanTex/Core/" && !texDoorFiles.contains file then
+    let mut current := ""
+    for (code, row) in (codeOnly lines).zipIdx do
+      if let some name := topLevelDefName code then current := name
+      for call in ["Lex.lex", "Parse.parse"] do
+        if spellsName code call && !coreTexReaders.contains (file, current) then
+          out := out.push (row + 1, call)
   return out
 
 /-- CLI terminal output has a small, audited boundary. Document diagnostics
@@ -1695,6 +1842,8 @@ def selftest : IO UInt32 := do
 
   expect "writerReach" writerReach [
     ("import LeanTex.Core.Pdf", true),
+    ("public import LeanTex.Core.Pdf", true),
+    ("import all LeanTex.Core.Pdf", true),
     ("open LeanTex.Core.Pdf in", true),
     ("  let s := Pdf.write geom fs pages", true),
     ("  let s := LeanTex.Core.Pdf.keepFaces fs pages", true),
@@ -1973,10 +2122,52 @@ def selftest : IO UInt32 := do
     ("open Elab", true),
     ("  let opt := Parse.scanOpt args i", true),
     ("    LeanTex.Core.Compat.rewrite doc", true),
+    -- the import's visibility never hid the module: each form names it
+    ("public import LeanTex.Core.Parse", true),
+    ("import all LeanTex.Core.Elab", true),
+    ("public import all LeanTex.Core.Compat", true),
+    ("public meta import LeanTex.Core.Lex", true),
+    -- markdown is a surface too: its reader, its desugaring, their namespace
+    ("import LeanTex.Core.MdParse", true),
+    ("public import LeanTex.Core.MdDesugar", true),
+    ("open LeanTex.Core.Md", true),
+    ("  let (raws, ds) := Md.read file text", true),
+    ("  let (raws, ds) := LeanTex.Core.Md.desugar file text", true),
+    -- the door: imported, opened or called it reads a surface; the type a
+    -- document's surface is named by is the IR's to carry
+    ("import LeanTex.Core.Surface", true),
+    ("public import LeanTex.Core.Surface", true),
+    ("open LeanTex.Core.Surface in", true),
+    ("  let (raws, ds) := Surface.read .tex file text", true),
+    ("  let (raws, ds) := LeanTex.Core.Surface.fragment .markdown f t p", true),
+    ("  | Ir.Surface.markdown => doc.surface", false),
+    ("  let w := Ir.Surface.textBlock s", false),
+    ("open Ir.Surface in", false),
+    ("  let r := Surface.readers", false),
     ("import LeanTex.Core.Ir", false),
+    ("public import LeanTex.Core.Ir", false),
+    ("import LeanTex.Core.ParseCache", false),
     ("  -- a backend never calls Parse.scanOpt; the IR carries it", false),
     ("  let reparse := myParse.run s", false),
+    ("  let md := MarkdownDoc.emit doc", false),
     ("  openTag := elem tag attrs kids", false)]
+
+  -- The gates as the hook applies them, file and line together: the twin is
+  -- a backend under the surface gate, and its CommonMark autolink is not a
+  -- tag string, while the same spelling in the HTML backend still is one.
+  let gated (file line : String) : Bool := gates.any fun g => g.applies file && g.flag line
+  let autolink := "  | .link url _ => acc " ++ patAppend ++ " \"<\" " ++ patAppend ++
+    " url " ++ patAppend ++ " \">\""
+  for (file, line, want) in [
+      ("LeanTex/Core/MarkdownDoc.lean", "import LeanTex.Core.MdParse", true),
+      ("LeanTex/Core/MarkdownDoc.lean", "public import LeanTex.Core.Parse", true),
+      ("LeanTex/Core/MarkdownDoc.lean", "  let (raws, ds) := Md.read file text", true),
+      ("LeanTex/Core/HtmlDoc.lean", "  let (raws, ds) := Md.desugar file text", true),
+      ("LeanTex/Core/HtmlDoc.lean", autolink, true),
+      ("LeanTex/Core/MarkdownDoc.lean", autolink, false),
+      ("LeanTex/Core/MarkdownDoc.lean", "public import LeanTex.Core.Ir", false)] do
+    if gated file line != want then
+      fails.modify (s!"gates on {file} {if want then "missed" else "fired on"}: {line}" :: ·)
 
   expect "tagStringEmit" tagStringEmit [
     -- the renderer's own shape: outside Html.lean it must fire, spaced or not
@@ -2392,6 +2583,41 @@ those whose name says their text is compressed" :: ·)
   unless zPaths legacyNames == #["a.md", "caf\uFFFD.md", "caf\u00E9.md"] do
     fails.modify ("zPaths did not read a -z name list in each of its encodings" :: ·)
 
+  -- The door rule, broken once per call it names and held clear of what only
+  -- mentions one: a docstring, a block comment's continuation, a message, a
+  -- longer name, the door itself, and a file outside the CLI.
+  for (what, file, source, bad) in [
+      ("the markdown reader", "LeanTex/Cli/Input.lean",
+        ["  let (sub, ds) := Md.read path text"], true),
+      ("the markdown desugaring", "Main.lean", ["  let r := LeanTex.Core.Md.desugar f s"], true),
+      ("a hand-built include wrapper", "LeanTex/Cli/Input.lean",
+        ["  return (#[.env (Parse.inputEnv path) sub pos], ds)"], true),
+      ("the tex lexer", "LeanTex/Cli/Driver.lean", ["  let (toks, ds) := Lex.lex file input"], true),
+      ("the tex parser", "LeanTex/Cli/Driver.lean",
+        ["  let (raws, ds) := LeanTex.Core.Parse.parse file toks"], true),
+      ("a docstring", "LeanTex/Cli/Input.lean", ["/-- `Md.read` is the markdown door -/"], false),
+      ("a block comment", "LeanTex/Cli/Input.lean", ["/-- the door", "  Lex.lex then Parse.parse", "-/"],
+        false),
+      ("a message", "LeanTex/Cli/Input.lean", ["  let name := \"Md.read\""], false),
+      ("a longer name", "LeanTex/Cli/Input.lean", ["  if (Parse.inputEnvFile? n).isSome then x"], false),
+      ("the door", "LeanTex/Cli/Input.lean", ["  let (raws, ds) := Surface.read .tex file text"], false),
+      ("a declared core reader", "LeanTex/Core/Data.lean",
+        ["def valParsed (src text : String) : Array Raw × Array Diag :=",
+          "  let (toks, lexDiags) := Lex.lex src text"], false),
+      ("an undeclared core reader", "LeanTex/Core/Elab.lean",
+        ["private def reread (s : String) : Array Raw :=", "  (Parse.parse \"\" (Lex.lex \"\" s).1).1"],
+        true),
+      ("a declared name in another file", "LeanTex/Core/Ir.lean",
+        ["def valParsed (src text : String) : Array Raw :=", "  (Parse.parse src (Lex.lex src text).1).1"],
+        true),
+      ("the core reading a wrapper's name", "LeanTex/Core/Elab.lean",
+        ["private def other (s : String) := Parse.inputEnvFile? s"], false),
+      ("the door's own stage", "LeanTex/Core/Surface.lean",
+        ["@[expose] public def texLex (file text : String) := Lex.lex file text"], false)] do
+    let got := !(surfaceDoorBypasses file source.toArray).isEmpty
+    if got != bad then
+      fails.modify (s!"surfaceDoorBypasses {what}: got {got}, want {bad}" :: ·)
+
   let failed := (← fails.get).reverse
   if failed.isEmpty then
     IO.println "precommit selftest: all passed"
@@ -2704,6 +2930,13 @@ the privacy check is skipped."
       say s!"pre-commit: diagnostic output bypass in {f}:{row}: {why}.
   Keep document diagnostics as Diag values through Ui.diag; only Render formats them.
   Status/help and command output belong in the audited UI and command handlers."
+    for (row, call) in surfaceDoorBypasses f lines do
+      say s!"pre-commit: {f}:{row} reads a surface around its door ({call}).
+  Each surface has one door into the surface AST, Surface.read, and an
+  included file one wrapper, Surface.fragment (LeanTex/Core/Surface.lean);
+  a second spelling of either is where two readings of one file drift apart.
+  Fix: read through Surface.read or Surface.fragment — or, for tex text the
+  core itself holds, name the reader in coreTexReaders with its reason."
   let mut testDefs : List String := []
   let mut testText := ""
   for f in (#["Tests.lean"] : Array String) ++ (← System.FilePath.walkDir "Tests").filterMap

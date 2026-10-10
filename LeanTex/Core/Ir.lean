@@ -12309,6 +12309,17 @@ public theorem markInParagraph_text (inPar : Bool) (k : Nat) :
   · rfl
   · rfl
 
+/-- With no paragraph text flushed before it, the pushed block stands as it
+is. -/
+public theorem markInParagraph_false_id (k : Nat) (blocks : Array Block) :
+    markInParagraph false k blocks = blocks := by
+  unfold markInParagraph
+  split <;> simp_all
+
+/-- Flushing into nothing leaves no paragraph with text. -/
+public theorem flushedText_empty_exact (k : Nat) : flushedText k #[] = false := by
+  simp [flushedText]
+
 /-- A display's context is a name for its placement, never text: the
 display it wraps ships the census the wrapper does. -/
 private theorem displayCtxOf_text (acc : String) (b : Block) :

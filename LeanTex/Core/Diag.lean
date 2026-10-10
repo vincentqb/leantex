@@ -214,7 +214,7 @@ letter itself is derived from the declared `Loss` at the one construction
 site (`DiagCode.code`), and `DiagCode.code_letter` holds the two spellings
 equal. -/
 public inductive DiagCode where
-  | E0001 | E0002 | E0003
+  | E0001 | E0002 | E0003 | E0004
   | E0101 | E0102 | E0111 | E0112 | E0113
   | E0201 | E0202 | E0205
   | E0303 | E0304 | E0305 | E0306 | E0309 | E0310 | E0311 | E0312 | E0313
@@ -297,6 +297,7 @@ private def DiagCode.spec : DiagCode → String × Loss × String
   | .E0001 => ("0001", .dropped, "cannot read an input file")
   | .E0002 => ("0002", .dropped, "input is not valid UTF-8")
   | .E0003 => ("0003", .dropped, "output formats do not have independent destinations; publication is refused")
+  | .E0004 => ("0004", .dropped, "an artifact could not be written to its destination")
   | .E0101 => ("0101", .dropped, "lone backslash at end of input")
   | .E0102 => ("0102", .dropped, "unclosed verbatim environment")
   | .E0111 => ("0111", .dropped, "beamer template body carrying content dropped")

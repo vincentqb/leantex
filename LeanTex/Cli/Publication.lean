@@ -7,6 +7,7 @@ public import LeanTex.Cli.PicCache
 import LeanTex.Core.HtmlResource
 import LeanTex.Core.Image
 import LeanTex.Cli.DriverDiag
+import LeanTex.Cli.Host
 import LeanTex.Cli.ImageAssets
 
 /-! Capture the resources a checked HTML page owns and publish accepted artifacts.
@@ -239,23 +240,25 @@ public def prepareHtml (file : String) (cfg : HtmlDoc.Config) (doc : Ir.Doc) :
 
 /-- The only artifact write site, after acceptance. An HTML publication
 requires a checked tree and writes its own serialization, with no sidecars
-or rereads of resources captured before the gate. -/
+or rereads of resources captured before the gate. Each artifact's directory
+is made as it is written, and an artifact that cannot be written is E0004
+under its path, the others written: what was written, and the losses. -/
 public def publish (outDir : Option String) (html : Option (String × HtmlArtifact))
     (md : Option (String × String)) (pdf : Option (String × ByteArray)) :
-    IO (Array String) := do
+    IO (Array String × Array Diag) := do
   let mut written : Array String := #[]
+  let mut lost : Array Diag := #[]
   if let some o := outDir then
-    IO.FS.createDirAll o
-  if let some (path, page) := html then
-    IO.FS.createDirAll ((System.FilePath.mk path).parent.getD ".")
-    IO.FS.writeFile path page.render
-    written := written.push path
-  if let some (path, text) := md then
-    IO.FS.writeFile path text
-    written := written.push path
-  if let some (path, bytes) := pdf then
-    IO.FS.writeBinFile path bytes
-    written := written.push path
-  return written
+    discard <| (IO.FS.createDirAll o).toBaseIO
+  let artifacts := (html.map fun (path, page) => (path, page.render.toUTF8)).toArray ++
+    (md.map fun (path, text) => (path, text.toUTF8)).toArray ++ pdf.toArray
+  for (path, bytes) in artifacts do
+    let write : IO Unit := do
+      IO.FS.createDirAll ((System.FilePath.mk path).parent.getD ".")
+      IO.FS.writeBinFile path bytes
+    match ← write.toBaseIO with
+    | .ok () => written := written.push path
+    | .error e => lost := lost.push (DriverDiag.outputUnwritable path (Host.describe e))
+  return (written, lost)
 
 end LeanTex.Cli.Publication

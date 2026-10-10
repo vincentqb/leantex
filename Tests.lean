@@ -87,6 +87,7 @@ import Tests.BlockRegionFit
 import Tests.BlockHeaderClearance
 import Tests.BlockGeometry
 import Tests.FrameArea
+import Tests.BlockSkips
 import Tests.BlockFillConditionals
 import Tests.PaletteTextEpoch
 import Tests.MintedSettings
@@ -98,6 +99,8 @@ import Tests.Markdown
 import Tests.MarkdownHtml
 import Tests.MarkdownHeadings
 import Tests.MarkdownInput
+import Tests.MarkdownDoors
+import Tests.MarkdownTwin
 import Tests.InputUse
 import Tests.XparseProvide
 import Tests.XparseIgnoredOperands
@@ -272,6 +275,9 @@ def backendSuiteChecks (ref : IO.Ref (List String)) : IO Unit := do
   listingStyleTableChecks ref
   mdPreambleChecks ref
   markdownInputChecks ref
+  Tests.MarkdownDoors.markdownDoorChecks ref
+  Tests.MarkdownDoors.markdownDoorDriverChecks ref
+  Tests.MarkdownTwin.markdownTwinChecks ref
   inputUseChecks ref
   backendChecks ref
   pictureBoundaryChecks ref
@@ -300,6 +306,7 @@ def backendSuiteChecks (ref : IO.Ref (List String)) : IO Unit := do
   Tests.machineLossChecks ref
   htmlContainedCorpusChecks ref
   publicationPathChecks ref
+  Tests.publicationWriteChecks ref
   anchorCostChecks ref
   htmlTokenClosureChecks ref
   htmlSourcedGapChecks ref
@@ -358,6 +365,7 @@ def layoutSuiteChecks (ref : IO.Ref (List String)) : IO Unit := do
   Tests.BlockRegionFit.checks ref oneFace
   Tests.BlockHeaderClearance.checks ref oneFace
   Tests.BlockGeometry.blockGeometryChecks ref oneFace
+  Tests.BlockSkips.blockSkipChecks ref oneFace
   Tests.BlockFillConditionals.blockFillConditionalChecks ref oneFace
   Tests.PaletteTextEpoch.paletteTextEpochChecks ref oneFace
   Tests.ThemeCss.epochChecks ref oneFace

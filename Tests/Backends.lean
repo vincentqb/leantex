@@ -446,20 +446,6 @@ def flowShapeList (acc : Array String) : List Html.Node → Array String
 
 end
 
-/-- A selector's top-level comma-separated parts, a comma inside a
-parenthesized argument (`:is(h1, h2)`) kept in its part. -/
-private def selParts (sel : String) : List String := Id.run do
-  let mut parts : Array String := #[]
-  let mut cur := ""
-  let mut depth := 0
-  for c in sel.toList do
-    if c == '(' then depth := depth + 1
-    if c == ')' then depth := depth - 1
-    if c == ',' && depth == 0 then
-      parts := parts.push cur.trimAscii.toString
-      cur := ""
-    else cur := cur.push c
-  return (parts.push cur.trimAscii.toString).toList
 
 /-- The subject of one selector part: its rightmost compound, after the last
 top-level combinator, cut at its first pseudo-class, attribute or id —
@@ -528,7 +514,7 @@ def htmlRhythmChecks (ref : IO.Ref (List String)) : IO Unit := do
     ((plainPage.splitOn ":where(h1, h2, h3, h4, h5, h6) { margin: 0 0 0.725rem; }").length == 2 &&
      (plainPage.splitOn ":where(:is(h1, h2, h3, h4, h5, h6) + *) { margin-top: 0; }").length == 2)
   t "html block elements' own margins are the emitter's zero-specificity resets"
-    ((plainPage.splitOn ":where(p, ul, ol, li, dl, dd, pre, blockquote) { margin: 0; }").length == 2 &&
+    ((plainPage.splitOn ":where(p, ul, ol, li, dl, dd, pre, blockquote, hr) { margin: 0; }").length == 2 &&
      (plainPage.splitOn ":where(figure.float) { margin: 0 auto; }").length == 2 &&
      !hasStr plainPage "\nli { margin")
   t "html peer gap is the page's parskip over one screen quantum, top-owned"
@@ -548,7 +534,7 @@ def htmlRhythmChecks (ref : IO.Ref (List String)) : IO Unit := do
   -- carrying it.
   let subjects : List String := ([Ir.ListLineage.sizeFile, .beamer, .web].flatMap fun l =>
     (HtmlDoc.blockGapRules l Ir.baseFontSize {}).flatMap fun r => match r with
-    | .boundary sel _ => (selParts sel).filterMap fun part =>
+    | .boundary sel _ => (cssSelParts sel).filterMap fun part =>
         let s := selSubject part
         if s == "*" || s.isEmpty then none else some s
     | .reset _ _ => []
@@ -562,7 +548,7 @@ def htmlRhythmChecks (ref : IO.Ref (List String)) : IO Unit := do
     let (doc, _) ← goldenDoc n
     for (sel, decls) in artCssBlocks (HtmlDoc.baseCss {} doc) do
       if !sel.startsWith ":where(" && setsMargin decls &&
-          (selParts sel).any (fun part => subjects.any (compoundOverlaps (selSubject part))) then
+          (cssSelParts sel).any (fun part => subjects.any (compoundOverlaps (selSubject part))) then
         shadows := shadows.push s!"{n}: {sel}"
   t "html gap subjects are read off the emitter"
     (["p", "ul", "ol", "li", "h2", "figure.float", ".display", "blockquote"].all subjects.contains)
@@ -2953,6 +2939,9 @@ def pdfCensusTable :
   -- no link annotation: the image a link wraps ships without its link, the
   -- loss `silentLosses` records; this row follows the fix that closes it
   ("md-images", (1, 1, 4, 0, 1, 0, 0, none, ["DCTDecode", "FlateDecode"])),
+  -- the included markdown's link is the page's one annotation
+  ("md-include", (1, 1, 0, 0, 0, 1, 0, none, ["FlateDecode"])),
+  ("md-include-deck", (2, 1, 0, 0, 0, 0, 0, none, ["FlateDecode"])),
   ("md-links", (1, 1, 0, 0, 0, 4, 0, none, ["FlateDecode"])),
   ("md-lists", (1, 1, 0, 0, 0, 0, 0, none, ["FlateDecode"])),
   ("md-quotes", (1, 1, 0, 0, 0, 0, 0, none, ["FlateDecode"])),

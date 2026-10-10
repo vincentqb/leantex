@@ -4980,8 +4980,17 @@ private theorem condDocument_package_failed_exact (reader : InputReader Id)
       hc hp hd hflags hi hsettling hv hr) hdeferred]
   simp [packageFailed, packageLoaded, Nat.add_assoc, hdeferred]
 
+/-- A word that is a glue keyword run into its dimension, as TeX reads
+`plus2pt` (the keyword's optional spaces may be none): the dimension's
+spelling past the keyword, if the word is one. -/
+private def keyRun? (w key : String) : Option String :=
+  let rest := (w.drop key.length).toString
+  if w.startsWith key && rest.toList.head?.any (fun c => c.isDigit || c == '.' || c == ',' || c == '-' || c == '+')
+  then some rest else none
+
 /-- A TeX length in the native spelling: `0.75\beat` is `0.75 * beat`,
-`\relax` vanishes. Each control word goes through `ref`, told whether an
+`\relax` vanishes, a glue keyword run into its dimension is its own word
+(`keyRun?`). Each control word goes through `ref`, told whether an
 argument group follows it; `none` from `ref` makes the whole value
 unreadable. `\dimexpr … \relax` is its parenthesized expression. -/
 public def lengthSrcBy (ref : String → Bool → Option String) (raws : Array Raw) :
@@ -5025,8 +5034,13 @@ public def lengthSrcBy (ref : String → Bool → Option String) (raws : Array R
       s := s ++ pre ++ v
       prevNumber := false
     | .word w _ =>
+      let lead := if s.isEmpty || s.endsWith " " then "" else " "
+      let (w, num) := match keyRun? w "plus", keyRun? w "minus" with
+        | some rest, _ => (lead ++ "plus " ++ rest, rest)
+        | none, some rest => (lead ++ "minus " ++ rest, rest)
+        | none, none => (w, w)
       s := s ++ w
-      prevNumber := w.toList.all fun c => c.isDigit || c == '.'
+      prevNumber := num.toList.all fun c => c.isDigit || c == '.'
     | .space => s := s ++ " "
     | other => s := s ++ rawSrcOne other
   -- `\dimexpr` ends with its argument when no `\relax` closes it (e-TeX
@@ -5350,13 +5364,27 @@ private def dimenEnd (raws : Array Raw) (i : Nat) : Nat :=
   | _ => i
 
 /-- Past an optional glue keyword (`plus`, or its sanitised `\@plus`) and
-the dimension after it. -/
+the dimension after it — the keyword its own word, or run into the
+dimension (`keyRun?`). -/
 private def afterKey (raws : Array Raw) (k : Nat) (key : String) : Nat :=
   let j := skipSpaces raws k
   match raws[j]? with
   | some (.ctrl c _) => if c == "@" ++ key then dimenEnd raws (j + 1) else k
-  | some (.word w _) => if w == key then dimenEnd raws (j + 1) else k
+  | some (.word w _) =>
+    if w == key then dimenEnd raws (j + 1)
+    else match keyRun? w key with
+      | some rest =>
+        if rest.toList.any Char.isAlpha then j + 1
+        else
+          let u := skipSpaces raws (j + 1)
+          match raws[u]? with
+          | some (.ctrl _ _) => u + 1
+          | some (.word unit _) => if unit.toList.all Char.isAlpha then u + 1 else j + 1
+          | _ => j + 1
+      | none => k
   | _ => k
+
+
 
 /-- Where a glue value ends: a register it copies (`\itemsep \parsep`), or
 a dimension with its optional `plus` and `minus` parts. -/
@@ -6973,6 +7001,42 @@ and patterns stand in" pos
       return some (#[.ctrl vspaceAnchorMark pos] ++ (← synthAt native pos), k)
     became "\\vspace" native pos
     return some (← synthAt native pos, k)
+  | "vskip" =>
+    -- TeX's primitive reads its glue unbraced (TeXbook ch. 12) and puts it
+    -- on the vertical list where it stands, as `\vspace` does. The one
+    -- difference, `\vspace`'s closing `\vskip\z@skip`, lets an `\addvspace`
+    -- after it add where after `\vskip` it takes the larger; the skip adds
+    -- here after both. A glue the native reader reads, or `\vfill`'s own
+    -- spelling; a register or an expression stays the unknown command. In
+    -- a definition's body it means what its use makes it mean.
+    if (← get).inDef then return none
+    let v0 := skipSpaces raws start
+    let e := glueEnd raws v0
+    let src := lengthSrc (raws.extract v0 e)
+    let value? : Option String :=
+      if e ≤ v0 then none
+      else if (Decl.parseGlue src).isSome then some src
+      else match src.splitOn " plus " with
+        | [w, s] =>
+          match Decl.parseLength w, Decl.filFactor? s with
+          | some l, some ((m, sc), order) =>
+            -- `\vfill`'s own glue is the engine's one infinite stretch. A
+            -- stretch of another order or factor ranks against the page's
+            -- other infinite glues, which the engine does not tell apart:
+            -- it sets at its natural width, named.
+            if l == {} && order == 2 && m == (sc : Int) then some "fill"
+            else some (w.trimAscii.toString)
+          | _, _ => none
+        | _ => none
+    let some value := value? | return none
+    if value != "fill" && (Decl.parseGlue src).isNone then
+      sayOnce "ctrl:vskip:fil" .W0104
+        s!"'\\vskip {src}' has an infinite stretch of an order or factor other than \\vfill's; \
+fills here have one order, so the skip sets at its natural width" pos
+        (help := "write \\vfill for the page's leftover")
+    let native := s!"\\block[before = {value}]\{}"
+    became "\\vskip" native pos
+    return some (← synthAt native pos, e)
   | "newpage" | "clearpage" =>
     -- One page model: with no floats to flush, \clearpage and \newpage are
     -- the declared boundary \pagebreak names.

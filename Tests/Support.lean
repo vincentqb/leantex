@@ -204,14 +204,80 @@ def firstFormula (d : Ir.Doc) : Option Math.MList :=
     | .center bs => bs.findSome? blockFormula
     | b => blockFormula b
 
-/-- A *markdown* source through the one elaborator: the reader, the
-desugaring, then `Elab.runRaws` — the same path `leantex doc.md` takes. -/
+/-- A *markdown* source through the one elaborator: the markdown door
+(`Surface.read`), then `Elab.runRaws` — the same path `leantex doc.md`
+takes. -/
 def elabMd (s : String) : Ir.Doc × Array Diag :=
-  let (raws, ds) := Md.read "t.md" s
+  let (raws, ds) := Surface.read .markdown "t.md" s
   Elab.runRaws "t.md" raws ds
 
 /-- Diagnostics of a markdown source. -/
 def dvMd (s : String) : Array Diag := (elabMd s).2
+
+/-! ## The markdown doors
+
+Two ways a markdown file reaches the one elaborator: alone, as a document,
+and included in a tex host through `\markdownInput`. The door checks
+(`Tests/MarkdownDoors.lean`) and the CommonMark classifier
+(`scripts/commonmark.lean`) read these builders, one copy. -/
+
+/-- A reader that answers no request. -/
+def nullReader : Compat.InputReader Id := fun _ context => (none, context)
+
+/-- A markdown file as a document of its own: its door, then execution and
+elaboration as the driver runs a document. The null reader is exact here:
+a markdown file's raws lie in a vocabulary that holds no input or package
+request (`Md.desugar_vocabulary_mem`), so no request reaches a reader. -/
+def standaloneDoc (f t : String) : Ir.Doc × Array Diag :=
+  let (raws, ds) := Surface.read .markdown f t
+  Elab.runExecuted f (Elab.executeInputs nullReader f raws) ds
+
+/-- The included door's reader, pure: `\markdownInput{name}` is answered
+with the markdown door's fragment of the file `files` maps the name to,
+resumed in the requesting context as the driver resumes it; every other
+request is left unanswered. The fragment's own diagnostics accumulate in
+the state, where the driver's input log keeps them. -/
+def mdFileReader (files : List (String × String × String)) :
+    Compat.InputReader (StateM (Array Diag)) := fun request context => do
+  if request.command != "markdownInput" then return (none, context)
+  match files.find? (·.1 == request.name.trimAscii.toString) with
+  | none => return (none, context)
+  | some (_, path, text) =>
+    let (sub, ds) := Surface.fragment .markdown path text request.pos
+    modify (· ++ ds)
+    let (answer, context) := Elab.resumeInput nullReader context request.file sub
+    return (some answer, context)
+
+/-- A tex host through its door, executed with the included door's reader:
+the host's reading diagnostics, then the reader's, the driver's order. -/
+def includedDoc (hostFile host : String) (files : List (String × String × String)) :
+    Ir.Doc × Array Diag :=
+  let (raws, ds) := Surface.read .tex hostFile host
+  let (executed, readDs) := (Elab.executeInputs (mdFileReader files) hostFile raws).run #[]
+  Elab.runExecuted hostFile executed (ds ++ readDs)
+
+/-- A markdown file alone as a document named `docFile`: its door's
+fragment and nothing else — no preamble, no host, no reader. Named as a
+host, it is the file alone under that host's surface, the document the
+neutral host's is held to; named as the file itself, it is the markdown
+door's own document with its raws wrapped as the file they came from. -/
+def aloneDoc (docFile f t : String) : Ir.Doc × Array Diag :=
+  let (raws, ds) := Surface.fragment .markdown f t {}
+  Elab.runExecuted docFile (Elab.executeInputs nullReader docFile raws) ds
+
+/-- The neutral host: an article whose body is one `\markdownInput` and
+nothing else, so the include stands as the body's block sequence. -/
+def neutralHost (name : String) : String :=
+  "\\documentclass{article}\\usepackage{markdown}\\begin{document}\\markdownInput{" ++ name ++
+    "}\\end{document}"
+
+/-- The neutral host as a source is usually written: each command on a line
+of its own and a blank line either side of the include, so the include
+stands among the blank source the include theorems allow
+(`Elab.sourceBlank`). -/
+def spacedNeutralHost (name : String) : String :=
+  "\\documentclass{article}\n\\usepackage{markdown}\n\n\\begin{document}\n\n\\markdownInput{" ++
+    name ++ "}\n\n\\end{document}\n"
 
 mutual
 
@@ -342,7 +408,8 @@ def goldenNames : List String :=
    "math-companion", "math-first", "math-text", "math-alpha", "math-cancel", "greek-literal", "abstract", "crossref", "eqnum", "footnotes",
    "redefine", "titlebars", "titleground", "daylight", "blocks", "poster", "poster-headline", "listings",
    "algorithm", "lineno", "lineno-modulo",
-   "cond-newif", "cond-ifdefined", "cond-ifx", "cond-ifnum", "cond-loaded"] ++
+   "cond-newif", "cond-ifdefined", "cond-ifx", "cond-ifnum", "cond-loaded",
+   "md-include", "md-include-deck"] ++
   mdGoldenNames
 
 -- KP test helpers: word/glue/forced-break item builders and a brute-force
@@ -464,10 +531,9 @@ def checkXref (pdf : ByteArray) : Except String Nat := do
 filename establishes the input directory even when the source itself is
 held in memory, so synthetic probes and file fixtures use the same path. -/
 def elabInputSrc (file src : String) : IO (Ir.Doc × Array Diag) := do
-  let (tokens, lexDs) := Lex.lex file src
-  let (raws, parseDs) := Parse.parse file tokens
+  let (raws, readDs) := Surface.read .tex file src
   let (executed, inputDs, _) ← Input.expandInputs file raws
-  return Elab.runExecuted file executed (lexDs ++ parseDs ++ inputDs)
+  return Elab.runExecuted file executed (readDs ++ inputDs)
 
 /-- A `testdata/corpus/sty-parity` fixture run the way the driver runs it: the
 input execution (`Input.expandInputs`) first, so a local `.sty` beside the
@@ -486,24 +552,26 @@ def runStyParity (name : String) :
     Compat.styRead (srcF.getD path) sty pos ds
   return (doc, inputDs ++ ds, spliced)
 
-/-- A fixture elaborated the way the driver builds it: the `\data` effect
-fulfilled from the corpus directory before elaboration (the expansion
-needs the records where `\begin{foreach}` stands), then elaboration, then
-the `.bib` bibliography effect — the same fulfilments `Main` performs, so
-a data or bibliography fixture exercises the pipeline the documents run.
-Fixtures that request neither pass through untouched. -/
+/-- A fixture elaborated the way the driver builds it: its includes
+fulfilled from the corpus directory at their use (`Input.expandInputs`), the
+`\data` effect fulfilled before elaboration (the expansion needs the records
+where `\begin{foreach}` stands), then elaboration, then the `.bib`
+bibliography effect — the same fulfilments `Main` performs, so an include,
+data or bibliography fixture exercises the pipeline the documents run.
+Fixtures that request none pass through untouched. -/
 def elabFixture (n src : String) : IO (Ir.Doc × Array Diag) := do
   let file := s!"{n}.tex"
-  let (toks, lexDiags) := Lex.lex file src
-  let (raws, parseDiags) := Parse.parse file toks
+  let (raws, readDiags) := Surface.read .tex file src
+  let (executed, inputDiags, _) ← Input.expandInputs file raws (dir := "testdata/corpus")
   let mut dataSources : Array (String × String) := #[]
-  for (srcName, _) in Data.fileRefs raws do
+  for (srcName, _) in Data.fileRefs executed.raws do
     let name := Data.sourceName srcName
     let path := s!"testdata/corpus/{name}"
     if ← System.FilePath.pathExists path then
       dataSources := dataSources.push (srcName, ← IO.FS.readFile path)
-  let (raws, dataDiags) := Data.expandData file dataSources raws
-  let (doc, diags) := Elab.runRaws file raws (lexDiags ++ parseDiags ++ dataDiags)
+  let (raws, dataDiags) := Data.expandData file dataSources executed.raws
+  let (doc, diags) := Elab.runExecuted file (executed.withRaws raws)
+    (readDiags ++ inputDiags ++ dataDiags)
   let requested := Ir.bibRefs doc
   if requested.isEmpty then return (doc, diags)
   let mut sources : Array (String × String) := #[]
@@ -530,6 +598,24 @@ def goldenDoc (n : String) : IO (Ir.Doc × Array Diag) := do
     let (raws, ds) := Md.read file src
     return Elab.runRaws file raws ds
   else elabFixture n src
+
+/-- The corpus documents a markdown twin is measured over, each as the
+driver elaborates it, by path: every tex fixture with its includes, data
+and bibliography fulfilled (`elabFixture`), and every markdown fixture of
+the golden set through its door (`goldenDoc`). The twin tier and the reader
+hop read this one list. -/
+def corpusTwinDocs : IO (Array (String × Ir.Doc)) := do
+  let mut names : Array String := #[]
+  for f in ← System.FilePath.readDir "testdata/corpus" do
+    if f.fileName.endsWith ".tex" then names := names.push (f.fileName.dropEnd 4).toString
+  let mut out := #[]
+  for n in names.qsort (· < ·) do
+    let (d, _) ← elabFixture n (← IO.FS.readFile s!"testdata/corpus/{n}.tex")
+    out := out.push (s!"testdata/corpus/{n}.tex", d)
+  for n in mdGoldenNames do
+    let (d, _) ← goldenDoc n
+    out := out.push (s!"testdata/corpus/{n}.md", d)
+  return out
 
 def firstDiff (expected actual : String) : String := Id.run do
   let e := expected.splitOn "\n"
@@ -1701,6 +1787,34 @@ def cssRulesOf (css sel : String) : List String :=
 /-- The declarations of the first stylesheet rule whose selector is `sel`
 exactly: the text between its braces. -/
 def cssRuleOf (css sel : String) : Option String := (cssRulesOf css sel).head?
+
+/-- A length in sp as thousandths of a point, rounded to nearest: what the
+layout checks print and compare against a reference's three decimals. -/
+def spMilli (d : Dim.Sp) : Int := (d * 1000 + 32768) / 65536
+
+/-- A selector list's parts, split at its top-level commas (a comma inside
+`:is(…)` or `:has(…)` belongs to its part). -/
+def cssSelParts (sel : String) : List String := Id.run do
+  let mut parts : Array String := #[]
+  let mut cur := ""
+  let mut depth := 0
+  for c in sel.toList do
+    if c == '(' then depth := depth + 1
+    if c == ')' then depth := depth - 1
+    if c == ',' && depth == 0 then
+      parts := parts.push cur.trimAscii.toString
+      cur := ""
+    else cur := cur.push c
+  return (parts.push cur.trimAscii.toString).toList
+
+/-- A CSS length in `rem` as thousandths of a rem — the unit every boundary
+of the gap sheet is written in (`HtmlDoc.screenMilli`) — or nothing for any
+other spelling. -/
+def remMilliOf (value : String) : Option Int := do
+  let value := value.trimAscii.toString
+  guard (value.endsWith "rem")
+  let (m, sc) ← Decl.parseDecimal (value.dropEnd 3).toString
+  return m * 1000 / (sc : Int)
 
 /-- Read a CSS stage length and compare its share to the shipped PDF
 length. One printed milli-percent is the rounding bound, independently of
