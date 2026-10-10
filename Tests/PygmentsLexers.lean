@@ -114,6 +114,21 @@ def randomRe (depth : Nat) (seed : UInt64) : Console.Re × UInt64 :=
     (.alt a b, s)
   | 0, _ => (.empty, s)
 
+/-- The first occurrence of `w`'s first `k` scalars at or after `fromPos`:
+a backreference's search, scanned from every position. -/
+def findPrefix (s : Src) (fromPos : Nat) (w : Array Char) (k : Nat) : Option Nat := Id.run do
+  if k == 0 then return some fromPos
+  if k > w.size then return none
+  for j in [fromPos:s.size + 1 - min k (s.size + 1)] do
+    let mut hit := true
+    for h : t in [0:min k w.size] do
+      have : t < w.size := Nat.lt_of_lt_of_le h.upper (Nat.min_le_right _ _)
+      if j + t ≥ s.size || s.chars.getD (j + t) w[t] != w[t] then
+        hit := false
+        break
+    if hit then return some j
+  return none
+
 /-- The heredoc search the way the regex reads it: the delimiter's
 prefixes, longest first, each searched for from past its own length. -/
 def heredocByPrefixes (s : Src) (p : Nat) : Option Nat := Id.run do
@@ -127,7 +142,7 @@ def heredocByPrefixes (s : Src) (p : Nat) : Option Nat := Id.run do
   let word := s.chars.extract a (a + len)
   for i in [0:len] do
     let k := len - i
-    if let some q := s.find (a + k + 1) word k then return some (q + k)
+    if let some q := findPrefix s (a + k + 1) word k then return some (q + k)
   return none
 
 end PygmentsLexers

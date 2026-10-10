@@ -904,8 +904,11 @@ private def usesBlock (cx : UseCx) (acc : UseAcc) : Block → UseAcc
       | none => acc
     let ground := cx.ground.orElse fun _ => some (Design.ofPalette acc.pal).bg
     let codeCx := { cx.style spec.fontSize with ground }
-    (spec.tokenLines source).foldl (fun acc line =>
-      let brushes := Listing.brushes acc.pal ground covered spec.style #[line]
+    -- One brush per type for the whole listing, as both backends draw it;
+    -- the palette changes only at a `.setPalette`, never inside a listing.
+    let lines := spec.tokenLines source
+    let brushes := Listing.brushes acc.pal ground covered spec.style lines
+    lines.foldl (fun acc line =>
       usesInlines codeCx acc
         ((Listing.paintLine acc.pal ground covered spec.style brushes line).flatMap
           fun r => Listing.paintRun r #[.text r.text]).toList) acc

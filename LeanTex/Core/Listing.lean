@@ -166,9 +166,13 @@ public def brush (pal : Palette) (ground covered : Option Color) (style : Listin
       role := if covered.isSome then none else (paint (Design.ofPalette pal) style k).bind (·.role) }
   | none => { look, ink := covered, role := none }
 
-/-- Text that lays down no ink in `b`'s weights: white space, not underlined. -/
+/-- A scalar that lays down no ink: white space, the no-break space a
+listing's display spelling sets where its spaces must not break included. -/
+public def blank (c : Char) : Bool := c.isWhitespace || c == '\u00a0'
+
+/-- Text that lays down no ink in `b`'s weights: blank, not underlined. -/
 public def Brush.inkFree (b : Brush) (text : String) : Bool :=
-  !b.look.underline && text.all Char.isWhitespace
+  !b.look.underline && text.all blank
 
 /-- A token's text in its brush. Text that lays down no ink takes no
 colour: it paints nothing, and its colour would only cost the artifact a
@@ -265,13 +269,36 @@ private def Run.join? (r : Run) (b : Brush) (t : Token) : Option Run :=
   else if r.brush.ink.isNone && b.ink.isNone then some { r with tokens := r.tokens.push t }
   else none
 
+/-- `Run.join?`'s decision alone: the joined run's brush and inked flag.
+Deciding before the run is built leaves `r` unread when its tokens grow,
+so they grow in place; building the joined run beside the run that might
+not join copied its tokens at every join. -/
+private def Run.joins? (r : Run) (b : Brush) (t : Token) : Option (Brush × Bool) :=
+  if r.brush.weights ≠ b.weights then none
+  else if b.inkFree t.text then some (r.brush, r.inked)
+  else if !r.inked then some (b, true)
+  else if r.brush.ink.isNone && b.ink.isNone then some (r.brush, r.inked)
+  else none
+
+private theorem joins?_join? (r : Run) (b : Brush) (t : Token) :
+    (r.joins? b t).map (fun bi => ({ brush := bi.1, inked := bi.2, tokens := r.tokens.push t } : Run)) =
+      r.join? b t := by
+  unfold Run.joins? Run.join?
+  split
+  · rfl
+  · split
+    · rfl
+    · split
+      · rfl
+      · split <;> rfl
+
 private def runsGo (brushOf : Kind → Brush) : List Token → Option Run → Array Run → Array Run
   | [], none, acc => acc
   | [], some r, acc => acc.push r
   | t :: ts, none, acc => runsGo brushOf ts (some (Run.start (brushOf t.kind) t)) acc
   | t :: ts, some r, acc =>
-    match r.join? (brushOf t.kind) t with
-    | some r' => runsGo brushOf ts (some r') acc
+    match r.joins? (brushOf t.kind) t with
+    | some (brush, inked) => runsGo brushOf ts (some { brush, inked, tokens := r.tokens.push t }) acc
     | none => runsGo brushOf ts (some (Run.start (brushOf t.kind) t)) (acc.push r)
 
 /-- A listing line as runs of tokens that ship alike, painted from `table`. -/
@@ -279,11 +306,11 @@ public def paintLine (pal : Palette) (ground covered : Option Color) (style : Li
     (table : Array (Kind × Brush)) (line : Array Token) : Array Run :=
   runsGo (brushIn pal ground covered style table) line.toList none #[]
 
-/-- What one scalar shows: its weights, its ink — which white space that is
-not underlined does not show — and the scalar. -/
+/-- What one scalar shows: its weights, its ink — which a blank scalar that
+is not underlined does not show — and the scalar. -/
 public def seen (w : Bool × Bool × Bool) (ink : Option (Color × Option String)) (c : Char) :
     (Bool × Bool × Bool) × Option (Color × Option String) × Char :=
-  (w, if !w.2.2 && c.isWhitespace then none else ink, c)
+  (w, if !w.2.2 && blank c then none else ink, c)
 
 /-- What a token painted alone by `b` shows, scalar by scalar. -/
 public def tokenShows (b : Brush) (t : Token) :
@@ -294,19 +321,6 @@ public def tokenShows (b : Brush) (t : Token) :
 public def Run.shows (r : Run) :
     List ((Bool × Bool × Bool) × Option (Color × Option String) × Char) :=
   r.tokens.toList.flatMap fun t => t.text.toList.map (seen r.brush.weights r.ink)
-
-private theorem join?_tokens {r r' : Run} {b : Brush} {t : Token}
-    (h : r.join? b t = some r') : r'.tokens = r.tokens.push t := by
-  unfold Run.join? at h
-  split at h
-  · cases h
-  · split at h
-    · cases h; rfl
-    · split at h
-      · cases h; rfl
-      · split at h
-        · cases h; rfl
-        · cases h
 
 private theorem runsGo_tokens (B : Kind → Brush) (ts : List Token) :
     ∀ (cur : Option Run) (acc : Array Run),
@@ -323,9 +337,7 @@ private theorem runsGo_tokens (B : Kind → Brush) (ts : List Token) :
     | some r =>
       simp only [runsGo]
       split
-      · rename_i r' hj
-        rw [ih]
-        simp only [Option.map_some, Option.getD_some, join?_tokens hj]
+      · rw [ih]
         simp
       · rw [ih]
         simp [Run.start]
@@ -351,7 +363,7 @@ private theorem inkFree_seen {b : Brush} {t : Token} (h : b.inkFree t.text = tru
   simp only [Bool.and_eq_true, Bool.not_eq_true'] at h
   apply List.map_congr_left
   intro c hc
-  have hws : c.isWhitespace = true := by
+  have hws : blank c = true := by
     have := h.2
     rw [String.all_bool_eq] at this
     exact List.all_eq_true.mp this c hc
@@ -457,8 +469,10 @@ private theorem runsGo_good (B : Kind → Brush) (ts : List Token) :
     | some r =>
       simp only [runsGo]
       split
-      · rename_i r' hj
-        exact ih _ _ hacc fun r'' hr'' => by cases hr''; exact join_good B (hcur r rfl) hj
+      · rename_i brush inked hj
+        have hj' : r.join? (B t.kind) t = some { brush, inked, tokens := r.tokens.push t } := by
+          rw [← joins?_join?, hj]; rfl
+        exact ih _ _ hacc fun r'' hr'' => by cases hr''; exact join_good B (hcur r rfl) hj'
       · refine ih _ _ ?_ fun r'' hr'' => by cases hr''; exact start_good B t
         simp only [Array.toList_push, List.mem_append, List.mem_singleton]
         intro r'' hr''

@@ -31,9 +31,10 @@ on the same fixtures and requires identical artifacts and diagnostics.
 `--decode-only` measures the decode phase alone over invented 3 MiB
 documents: ASCII or accented words, LF or CR LF line ends.
 `--listings-only` measures a build of the invented highlight snippets as
-minted listings, one copy and eight, and holds a listing's elaboration
-linear in its length, in lines and, over invented adversarial listings, in
-the shapes that once made a lexer superlinear.
+minted listings, one copy and eight, and holds a listing's elaboration and
+layout linear in its length, in lines and, over invented adversarial
+listings, in the shapes that once made a lexer, painting or setting
+superlinear.
 The slide run also needs sha256sum, pdftocairo and xmllint.
 For before/after runs use this same driver, N, font/tool environment and an
 otherwise idle host; shared-host timings are provisional. Redirect stdout
@@ -268,7 +269,9 @@ repeats, a heredoc delimiter's every prefix, heredocs whose delimiters
 never recur, a state stack copied on every push, and every lookahead a
 Python rule reads past what it writes when nothing tabled it — blank lines
 before a docstring, a docstring that never closes, a format field's key,
-dotted name or width that never closes, and a named escape with no brace. -/
+dotted name or width that never closes, and a named escape with no brace —
+and long lines of alike tokens, spaces and tabs, which painting copied at
+every token and setting at every no-break space. -/
 def adversarialListings (len : Nat) : List (String × String × String) :=
   let rep (s : String) (k : Nat) : String := String.join (List.replicate k s)
   let lines (s : String) : String := rep (s ++ "\n") 8
@@ -285,7 +288,12 @@ def adversarialListings (len : Nat) : List (String × String × String) :=
    ("python", "format keys", lines (rep "s = '{a['\n" (len / 4))),
    ("python", "format names", lines ("s = '" ++ rep "{a[" (len / 6) ++ "]" ++ rep ".b" (len / 4) ++ "'")),
    ("python", "format widths", lines ("s = '" ++ rep "{a[" (len / 6) ++ "]:" ++ rep "0" (len / 2) ++ "'")),
-   ("python", "named escapes", lines ("s = '" ++ rep "\\N{" (len / 3)))]
+   ("python", "named escapes", lines ("s = '" ++ rep "\\N{" (len / 3))),
+   ("python", "long line", lines (rep "x " (len / 2))),
+   ("lean4", "long line", lines (rep "x " (len / 2))),
+   ("console", "long command", lines ("$ " ++ rep "x " (len / 2))),
+   ("text", "long line", lines (rep "x " (len / 2))),
+   ("text", "tabbed line", lines (rep "x\t" (len / 2)))]
 /-- A repeated image must not repeatedly encode the embedded font programs
 while checking HTML resource closure. Both sizes use the same captured assets. -/
 def benchImageDeck (n frames : Nat) : IO Unit := do

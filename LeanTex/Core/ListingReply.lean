@@ -136,14 +136,15 @@ private def splitTokens (tokens : Array Classified) : Array (Array Token) := Id.
     let parts := token.text.splitOn "\n"
     for (part, i) in parts.zipIdx do
       if i > 0 then lines := lines.push #[]
+      -- The line is modified where it stands: read out and set back, it was
+      -- shared at every write and copied at every token.
       if !part.isEmpty then
-        let last := lines.back!
-        let line := match last.back? with
+        lines := lines.modify (lines.size - 1) fun last =>
+          match last.back? with
           | some prev =>
             if prev.kind == kind then last.pop.push { prev with text := prev.text ++ part }
             else last.push { kind, text := part }
           | none => last.push { kind, text := part }
-        lines := lines.set! (lines.size - 1) line
   return lines
 
 /-- Offsets count Unicode characters, as Pygments does. Every token starts

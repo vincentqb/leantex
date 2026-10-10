@@ -2779,7 +2779,9 @@ private def WordAcc.glyph (fontIdx : Nat) (color : Ir.Color) (link : Option Stri
         (glyphOfSc smallcaps size (fs.get fb) c).map (fb, ·) with
     | some (fb, g) =>
       let st := st.flush fontIdx color link size leading decorations ground attr
-      let st := { st with sources := st.sources.push (sourceId, st.items.size),
+      -- The count is read before the update, which writes `items` first.
+      let n := st.items.size
+      let st := { st with sources := st.sources.push (sourceId, n),
                            items := st.items.push (.box g.2.2 fb color link #[g] size {leading}
                              decorations 0 ground owner) }
       if st.substs.any (fun e => e.1 == fontIdx && e.2.1 == c) then st
@@ -2944,8 +2946,11 @@ private def wordItems (pats : Option Hyphen.Patterns) (langKey : String)
           -- A kern: width but no glyph, and never a breakpoint, so `\,` cannot
           -- become a place to end a line.
           st := st.flush fontIdx color link size leading decorations ground attr
+          -- The count is read before the update, which writes `items` first:
+          -- read inside it, the items were copied at every space.
+          let n := st.items.size
           st := { st with
-            sources := st.sources.push (i, st.items.size)
+            sources := st.sources.push (i, n)
             items := st.items.push (.box (size * num / den) fontIdx color link #[] size {leading}
               decorations 0 ground (owners[i]?.getD attr)) }
           i := i + 1
@@ -2953,8 +2958,9 @@ private def wordItems (pats : Option Hyphen.Patterns) (langKey : String)
           if c == '\u00a0' then
             -- A no-break space is an interword space that is not glue.
             st := st.flush fontIdx color link size leading decorations ground attr
+            let n := st.items.size
             st := { st with
-              sources := st.sources.push (i, st.items.size)
+              sources := st.sources.push (i, n)
               items := st.items.push (.box (scaledAt size font font.spaceAdvance) fontIdx color link #[] size {leading}
                   decorations 0 ground (owners[i]?.getD attr)) }
             i := i + 1
@@ -13205,10 +13211,9 @@ private def collectVerbatim (r : Rd) (a : Acc) (covered : Option Ir.Color) (s : 
               for piece in run.tokens do
                 let (sourceColumn, text) := (pieces[k]?.map (·.2)).getD (0, piece.text)
                 k := k + 1
-                -- A line's site is a scalar that lays down ink: white space,
-                -- which the display spelling sets as no-break spaces where
-                -- it must not break, names no token a reader could find.
-                let source := if piece.text.all (fun c => c.isWhitespace || c == '\u00a0') then none
+                -- A line's site is a scalar that lays down ink: blank text
+                -- names no token a reader could find.
+                let source := if piece.text.all Listing.blank then none
                   else codeSource i sourceColumn text
                 body := body.push
                   (source.map (fun span => .located span #[.text piece.text]) |>.getD (.text piece.text))

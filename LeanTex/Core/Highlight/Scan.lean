@@ -22,11 +22,14 @@ A lexer is linear in its text by construction. A rule reads the scalars of
 the tokens it writes, a bounded window past them (a literal, a word of a
 list), and anything further only from a `Table`: a scan answered at every
 position in one pass from the end of the text, built the first time a rule
-asks it, read in constant time (`Memo.read_exact`, `Src.runs_exact`). So a
-step costs a constant beside what it writes; every step reads a scalar or
+asks it, read by one array access. A table answers exactly what its scan
+answers (`Memo.read_exact`, `Src.runs_exact`); its cost is the one pass. So
+a step costs a constant beside what it writes; every step reads a scalar or
 pops a state, and a push needs a read, so the drive takes at most two steps
 a scalar. Pygments' backtracking rereads the same text from every position
-a rule is tried at; a table is that rereading answered once.
+a rule is tried at; a table is that rereading answered once. The cost
+argument is the code's shape, not a theorem: `scripts/bench.lean
+--listings-only` is its evidence, over the shapes that once broke it.
 -/
 namespace LeanTex.Core.Highlight
 
@@ -226,21 +229,6 @@ public def lit (s : Src) (i : Nat) (w : Array Char) : Bool := Id.run do
   for h : k in [0:w.size] do
     if s.chars.getD (i + k) w[k] != w[k] then return false
   return true
-
-/-- The first occurrence of `w`'s first `k` scalars starting at or after
-`from`: a backreference's search. -/
-public def find (s : Src) (fromPos : Nat) (w : Array Char) (k : Nat) : Option Nat := Id.run do
-  if k == 0 then return some fromPos
-  if k > w.size then return none
-  for j in [fromPos:s.chars.size + 1 - min k (s.chars.size + 1)] do
-    let mut hit := true
-    for h : t in [0:min k w.size] do
-      have : t < w.size := Nat.lt_of_lt_of_le h.upper (Nat.min_le_right _ _)
-      if j + t ≥ s.chars.size || s.chars.getD (j + t) w[t] != w[t] then
-        hit := false
-        break
-    if hit then return some j
-  return none
 
 end Src
 
