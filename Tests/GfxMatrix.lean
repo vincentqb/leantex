@@ -110,8 +110,10 @@ def gfxMatrixChecks (ref : IO.Ref (List String)) : IO Unit := do
   let pdf0 := Pdf.render (pdfOps f0)
   t "gfx matrix: PDF states a stroke's cap, join, miter limit, dash and alphas"
     (["1 J ", "2 j ", "4 M ", "[2 1] 1 d ", "/GS1 gs "].all (hasStr pdf0 ·))
+  -- A dashed rectangle spells as the path its dashes run along, as PDF's
+  -- `re` traces it: an SVG `rect` starts and runs its dashes its own way.
   t "gfx matrix: SVG states what differs from its initial values, and not the miter limit 4"
-    ((attrs f0 "rect").any fun a => has a "stroke-linecap" "round" && has a "stroke-linejoin" "bevel" &&
+    ((attrs f0 "path").any fun a => has a "stroke-linecap" "round" && has a "stroke-linejoin" "bevel" &&
       has a "stroke-dasharray" "2 1" && has a "stroke-dashoffset" "1" &&
       has a "stroke-opacity" "0.5" && !(a.any (·.1 == "stroke-miterlimit")))
   let some (_, f1) := cases[1]? | t "gfx matrix: cases" false
@@ -121,7 +123,7 @@ def gfxMatrixChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "gfx matrix: and through gradient definitions in SVG"
     ((attrs f1 "linearGradient").any (has · "id" "f7~g0") &&
       (attrs f1 "radialGradient").any (has · "id" "f7~g1") &&
-      (attrs f1 "ellipse").any fun a => has a "fill" "url(#f7~g0)" && has a "stroke" "url(#f7~g1)")
+      (attrs f1 "path").any fun a => has a "fill" "url(#f7~g0)" && has a "stroke" "url(#f7~g1)")
   let some (_, f2) := cases[2]? | t "gfx matrix: cases" false
   t "gfx matrix: an even-odd fill is f* in PDF and fill-rule in SVG"
     ((Pdf.render (pdfOps f2)).endsWith "f* Q" && (attrs f2 "path").any (has · "fill-rule" "evenodd"))

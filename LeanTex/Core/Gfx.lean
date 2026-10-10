@@ -360,6 +360,9 @@ public structure Stroke where
   alpha : Alpha
   deriving Repr, BEq, Inhabited
 
+/-- Whether a stroke is dashed: a dash array to run along its path. -/
+@[expose] public def Stroke.dashed (s : Stroke) : Bool := !s.dash.isEmpty
+
 /-- A paint as seen from a frame that `m` maps into the one it was stated
 in: a gradient's own frame composed through `m`, a colour as it is. -/
 @[expose] public def Paint.under (m : Affine) : Paint → Paint
@@ -790,12 +793,29 @@ end Kit
 /-! ## Reading a figure: its marks -/
 
 /-- A geometry as both artifacts' readers meet it: an ellipse is the four
-arcs both formats paint (`Kit.ellipse`); a rectangle and a path are
-themselves. -/
+arcs both formats paint (`Kit.ellipse`); a rectangle that encloses area is
+itself, and one of zero or negative extent the path PDF's `re` traces
+(ISO 32000-2 §8.5.2.1), which PDF strokes and SVG draws no `rect` for; a
+path is itself. -/
 @[expose] public def Geom.normal : Geom → Geom
-  | .rect x y w h => .rect x y w h
+  | .rect x y w h => if 0 < w ∧ 0 < h then .rect x y w h else .path #[Kit.rectPath x y w h]
   | .ellipse cx cy rx ry => .path (Kit.ellipse cx cy rx ry)
   | .path subs => .path subs
+
+/-- A geometry as the path it traces from its start — a rectangle from its
+min corner counter-clockwise (`re`), an ellipse from angle 0 — what a dash
+pattern runs along, from where it starts. -/
+@[expose] public def Geom.traced : Geom → Geom
+  | .rect x y w h => .path #[Kit.rectPath x y w h]
+  | .ellipse cx cy rx ry => .path (Kit.ellipse cx cy rx ry)
+  | .path subs => .path subs
+
+/-- **The outline a draw paints**: under a dashed stroke, the path its
+dashes run along (`traced`), whose start and direction they show; else the
+outline of what it covers (`normal`), whose start no fill or solid stroke
+shows. -/
+@[expose] public def Geom.drawn (g : Geom) (dashed : Bool) : Geom :=
+  if dashed then g.traced else g.normal
 
 /-- A segment's points mapped. -/
 @[expose] public def Seg.map (f : Pt → Pt) : Seg → Seg
@@ -818,7 +838,8 @@ themselves. -/
 
 /-- One ink mark as a reader of either artifact meets it, in the figure's
 frame: the frame it paints in (`ctm`, child to figure), its geometry in that
-frame (`Geom.normal`), its paints — widths and dashes in that frame, every
+frame (`Geom.drawn`: the path a dash pattern runs along under a dashed
+stroke, else the outline of what it covers), its paints — widths and dashes in that frame, every
 gradient's own frame composed through to the figure's (`Paint.under`), the
 one frame a reader recovers it in from either artifact: PDF states a
 pattern's matrix against its stream's default space (ISO 32000-2 §8.7.2),
@@ -863,8 +884,8 @@ stays structural and a `use` left in it paints nothing. -/
 @[expose] public def Node.marksOne {L : Type} (outlines : Array (Array Subpath)) (cx : Ctx)
     (acc : Array Mark) : Node L → Array Mark
   | .draw g fl st =>
-    acc.push (.paint cx.ctm g.normal (fl.map (Fill.under cx.ctm)) (st.map (Stroke.under cx.ctm))
-      cx.clips cx.alphas)
+    acc.push (.paint cx.ctm (g.drawn (st.any Stroke.dashed)) (fl.map (Fill.under cx.ctm))
+      (st.map (Stroke.under cx.ctm)) cx.clips cx.alphas)
   | .group xf clips alpha kids => Node.marksList outlines (cx.enter xf clips alpha) acc kids.toList
   | .use _ _ => acc
   | .stamp o xf fl st =>

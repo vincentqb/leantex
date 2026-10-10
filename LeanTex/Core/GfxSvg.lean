@@ -11,8 +11,10 @@ Two layers. `tree` lowers a figure onto a typed SVG element tree — typed
 geometry and typed presentation attributes, each attribute present exactly
 where it differs from SVG's initial value — and `readMarks` reads that tree
 with SVG's own meaning (SVG 2 §13: fill initially black, stroke initially
-none, width 1, miter limit 4; a zero width paints nothing; a group's
-`opacity` composites it as one isolated group). `marks_projects` is the
+none, width 1, miter limit 4; a zero width paints nothing; a `rect` or
+`ellipse` of zero size draws nothing, and one under a dashed stroke runs
+from its own start; a group's `opacity` composites it as one isolated
+group). `marks_projects` is the
 statement that the reading is the figure's marks, before a byte is spelled.
 `spell` is the second layer: the total spelling of that tree into
 `Html.Node`, through the certified escaper, with presentation attributes
@@ -172,6 +174,18 @@ paint in the element's user space (`sPaint`). -/
   | c :: rest => #[.g none none (some { geom := fr.place c.geom, rule := c.rule })
       (nestClips fr kids rest)]
 
+/-- **A draw's geometry as the element SVG draws as the model does**: a
+rectangle or ellipse as its own element only where it encloses area and its
+stroke is solid — SVG draws no `rect` or `ellipse` of zero or negative size
+(SVG 2 §10.2, §10.4), and starts and runs its outline its own way, which a
+dash pattern shows — else as the path the model draws (`Geom.drawn`),
+placed point by point. -/
+@[expose] public def shapeOf (fr : SFrame) (g : Geom) (dashed : Bool) : Geom :=
+  match g with
+  | .rect _ _ w h => if 0 < w ∧ 0 < h ∧ dashed = false then fr.place g else fr.place (g.drawn dashed)
+  | .ellipse _ _ rx ry => if 0 < rx ∧ 0 < ry ∧ dashed = false then fr.place g else fr.place (g.drawn dashed)
+  | .path _ => fr.place g
+
 /-- Flip a raster's unit square, one frame unit on a side (`rasterUnit`):
 the model's (0,0) is its bottom-left, an SVG image's its top-left. -/
 @[expose] public def unitFlip : Affine := ⟨1, 0, 0, -1, 0, 65536⟩
@@ -183,7 +197,7 @@ mutual
 @[expose] public def treeOne {L : Type} (labelEl : SFrame → L → Html.Node)
     (outlines : Array (Array Subpath)) (rasters : Array RasterRef)
     (bodies : Array (Array El)) (fr : SFrame) (acc : Array El) : Node L → Array El
-  | .draw g fl st => acc.push (.shape (fr.place g) (attrsOf fr fl st))
+  | .draw g fl st => acc.push (.shape (shapeOf fr g (st.any Stroke.dashed)) (attrsOf fr fl st))
   | .group xf clips alpha kids =>
     let t := groupXf fr xf
     let fr' := fr.enter t
@@ -431,6 +445,20 @@ public def pathD (subs : Array Subpath) : String :=
     if sp.closed then acc ++ "Z " else acc) ""
   if raw.endsWith "Z " then (raw.dropEnd 1).toString else raw
 
+/-- A subpath whose every point is its start: a dot, where a stroke paints
+one. -/
+@[expose] public def pointlike (s : Subpath) : Bool := s.points.all (· == s.start)
+
+/-- A shape's geometry as spelled: under square caps a path's dots left out —
+SVG paints a square at one and PDF nothing (ISO 32000-2 §8.5.3.2: a
+degenerate subpath is painted only under round caps), and a dot encloses no
+area to fill. -/
+@[expose] public def spelledGeom (g : Geom) (square : Bool) : Geom :=
+  match g with
+  | .rect x y w h => .rect x y w h
+  | .ellipse cx cy rx ry => .ellipse cx cy rx ry
+  | .path subs => if square then .path (subs.filter fun s => !pointlike s) else .path subs
+
 /-- A geometry as an element: a rectangle, a circle or ellipse, a path. -/
 public def geomEl (g : Geom) (attrs : Array (String × String)) : Html.Node :=
   match g with
@@ -531,7 +559,7 @@ an outline go once into the definitions, under their ids. -/
 public def spellOne (sp : Spell) (acc : Array Html.Node) : El → Array Html.Node × Spell
   | .shape g a =>
     let (attrs, sp) := attrsSpell sp a
-    (acc.push (geomEl g attrs), sp)
+    (acc.push (geomEl (spelledGeom g (a.cap == some .square)) attrs), sp)
   | .g xf op clip kids =>
     let (inner, sp) := spellList sp #[] kids.toList
     let base : Array (String × String) :=
@@ -633,7 +661,7 @@ private theorem spellOne_plain (sp : Spell) :
   | acc, .shape g a, h => by
     simp only [El.plain, Bool.and_eq_true] at h
     have ha := attrsSpell_plain sp a h.1 h.2
-    refine ⟨geomEl g (attrsSpell sp a).1, ?_⟩
+    refine ⟨geomEl (spelledGeom g (a.cap == some .square)) (attrsSpell sp a).1, ?_⟩
     simp only [spellOne]
     rw [ha]
   | acc, .g xf op clip kids, h => by
@@ -751,7 +779,8 @@ private theorem spellOne_closed (q : Html.Node → Bool) (hq : PlainClosed q) (s
       ∃ node, spellOne sp acc e = (acc.push node, sp) ∧ q node = true
   | acc, .shape g a, h, _ => by
     simp only [El.plain, Bool.and_eq_true] at h
-    refine ⟨geomEl g (attrsSpell sp a).1, ?_, geomEl_closed q hq _ _⟩
+    refine ⟨geomEl (spelledGeom g (a.cap == some .square)) (attrsSpell sp a).1, ?_,
+      geomEl_closed q hq _ _⟩
     simp only [spellOne]
     rw [attrsSpell_plain sp a h.1 h.2]
   | acc, .g xf op clip kids, h, hr => by
@@ -899,6 +928,22 @@ ellipse is its four arcs. -/
 @[expose] public def SState.geom (ss : SState) (g : Geom) : Geom :=
   (if ss.placed then g.mapIso ss.place.inv else g).normal
 
+/-- **A shape element's geometry in the figure frame, as SVG draws it**
+(SVG 2 §10): a `rect` or `ellipse` of zero or negative size draws nothing;
+one under a dashed stroke is the path SVG traces for it in its own
+coordinates — a `rect` from its corner along x, an `ellipse` from angle 0
+toward y (`Geom.traced`) — carried back point by point; one under a solid
+stroke or none is the region it outlines, whose start and direction no
+reader sees; a path is itself, carried back. -/
+@[expose] public def SState.shapeGeom (ss : SState) (g : Geom) (dashed : Bool) : Option Geom :=
+  let back (g : Geom) : Geom := if ss.placed then g.mapIso ss.place.inv else g
+  match g with
+  | .rect _ _ w h =>
+    if 0 < w ∧ 0 < h then some (if dashed then back g.traced else (back g).normal) else none
+  | .ellipse _ _ rx ry =>
+    if 0 < rx ∧ 0 < ry then some (if dashed then back g.traced else (back g).normal) else none
+  | .path _ => some (back g)
+
 @[expose] public def SState.cm (ss : SState) : Option Affine → SState
   | none => ss
   | some m => { ss with placed := false, ctm := ss.userCtm.compose m }
@@ -922,7 +967,9 @@ mutual
 ink. -/
 @[expose] public def readOne (ss : SState) (acc : Array Mark) : El → Array Mark
   | .shape g a =>
-    acc.push (.paint ss.frameCtm (ss.geom g) (readFill ss a) (readStroke ss a) ss.clips ss.alphas)
+    match ss.shapeGeom g a.dash.isSome with
+    | some geom => acc.push (.paint ss.frameCtm geom (readFill ss a) (readStroke ss a) ss.clips ss.alphas)
+    | none => acc
   | .g xf op clip kids => readList (ss.enterG xf op clip) acc kids.toList
   | .use _ xf body => readList (ss.cm (some xf)) acc body.toList
   | .stamp _ xf subs a =>
@@ -963,6 +1010,98 @@ private theorem geom_agree (place : Iso) (fr : SFrame) (ss : SState) (hp : ss.pl
     simp [SState.geom, SFrame.place, hpl, hi]
   · simp only [hpl, ↓reduceIte] at hi
     simp [SState.geom, SFrame.place, hpl, hi, hp, Geom.mapIso_inv_id]
+
+private theorem normal_rect_pos {x y w h : Sp} (hp : 0 < w ∧ 0 < h) :
+    (Geom.rect x y w h).normal = .rect x y w h := by
+  simp only [Geom.normal]
+  split
+  · rfl
+  · next hn => exact absurd hp hn
+
+/-- The element a draw spells reads back, with SVG's meaning, as the outline
+the draw paints (`Geom.drawn`). -/
+private theorem shape_agree (place : Iso) (fr : SFrame) (ss : SState) (hp : ss.place = place)
+    (hi : fr.iso = if ss.placed then some place else none) (g : Geom) (d : Bool) :
+    ss.shapeGeom (shapeOf fr g d) d = some (g.drawn d) := by
+  have back : ∀ g : Geom, (if ss.placed then (fr.place g).mapIso ss.place.inv else fr.place g) = g := by
+    intro g
+    cases hpl : ss.placed
+    · simp only [hpl, Bool.false_eq_true, ↓reduceIte] at hi
+      simp [SFrame.place, hi]
+    · simp only [hpl, ↓reduceIte] at hi
+      simp [SFrame.place, hi, hp, Geom.mapIso_inv_id]
+  have placePath : ∀ subs, ∃ subs', fr.place (.path subs) = .path subs' := by
+    intro subs
+    cases h : fr.iso <;> simp [SFrame.place, h, Geom.mapIso]
+  have placeRect : ∀ x y w h, ∃ x' y', fr.place (.rect x y w h) = .rect x' y' w h := by
+    intro x y w h
+    cases hf : fr.iso <;> simp [SFrame.place, hf, Geom.mapIso, Iso.rect]
+  have placeEllipse : ∀ cx cy rx ry, ∃ cx' cy', fr.place (.ellipse cx cy rx ry) = .ellipse cx' cy' rx ry := by
+    intro cx cy rx ry
+    cases hf : fr.iso <;> simp [SFrame.place, hf, Geom.mapIso]
+  have hpath : ∀ subs, ss.shapeGeom (fr.place (.path subs)) d = some (.path subs) := by
+    intro subs
+    obtain ⟨subs', hs⟩ := placePath subs
+    have hb := back (.path subs)
+    rw [hs] at hb ⊢
+    simp only [SState.shapeGeom]
+    exact congrArg some hb
+  cases g with
+  | rect x y w h =>
+    simp only [shapeOf]
+    by_cases hc : 0 < w ∧ 0 < h ∧ d = false
+    · obtain ⟨hw, hh, hd⟩ := hc
+      subst hd
+      simp only [hw, hh, and_self, ↓reduceIte, Geom.drawn, Bool.false_eq_true]
+      obtain ⟨x', y', hr⟩ := placeRect x y w h
+      have hb := back (.rect x y w h)
+      rw [hr] at hb ⊢
+      simp only [SState.shapeGeom, hw, hh, and_self, ↓reduceIte, Bool.false_eq_true]
+      rw [hb, normal_rect_pos ⟨hw, hh⟩]
+    · simp only [hc, ↓reduceIte]
+      have hd : (Geom.rect x y w h).drawn d = .path #[Kit.rectPath x y w h] := by
+        cases d with
+        | true => rfl
+        | false =>
+          have hn : ¬(0 < w ∧ 0 < h) := fun hp => hc ⟨hp.1, hp.2, rfl⟩
+          simp only [Geom.drawn, Bool.false_eq_true, ↓reduceIte, Geom.normal]
+          split
+          · next hy => exact absurd hy hn
+          · rfl
+      rw [hd]
+      exact hpath _
+  | ellipse cx cy rx ry =>
+    simp only [shapeOf]
+    have hd : (Geom.ellipse cx cy rx ry).drawn d = .path (Kit.ellipse cx cy rx ry) := by
+      cases d <;> rfl
+    by_cases hc : 0 < rx ∧ 0 < ry ∧ d = false
+    · obtain ⟨hx, hy, hdf⟩ := hc
+      subst hdf
+      simp only [hx, hy, and_self, ↓reduceIte]
+      obtain ⟨cx', cy', he⟩ := placeEllipse cx cy rx ry
+      have hb := back (.ellipse cx cy rx ry)
+      rw [he] at hb ⊢
+      simp only [SState.shapeGeom, hx, hy, and_self, ↓reduceIte, Bool.false_eq_true]
+      rw [hb]
+      rfl
+    · simp only [hc, ↓reduceIte]
+      rw [hd]
+      exact hpath _
+  | path subs =>
+    simp only [shapeOf]
+    rw [show (Geom.path subs).drawn d = .path subs by cases d <;> rfl]
+    exact hpath subs
+
+/-- A draw's attributes state a dash exactly where its stroke has one. -/
+private theorem attrsOf_dashed (fr : SFrame) (fl : Option Fill) (st : Option Stroke) :
+    (attrsOf fr fl st).dash.isSome = st.any Stroke.dashed := by
+  cases st with
+  | none => rfl
+  | some s =>
+    simp only [attrsOf, Option.bind_some, Option.any_some, Stroke.dashed]
+    by_cases h : s.dash = #[]
+    · simp [h]
+    · simp [h]
 
 /-- A paint spelled in a user space reads back as the paint under the frame
 that user space's coordinates were lifted from. -/
@@ -1212,10 +1351,6 @@ public theorem treeList_acc {L : Type} (labelEl : SFrame → L → Html.Node)
 
 end
 
-private theorem agrees_plainGeom (place : Iso) (cx : Ctx) (fr : SFrame) (ss : SState)
-    (h : Agrees place cx fr ss) (g : Geom) : ss.geom (fr.place g) = g.normal :=
-  geom_agree place fr ss h.hplace h.hiso g
-
 mutual
 
 private theorem read_treeOne_free {L : Type} (labelEl : SFrame → L → Html.Node)
@@ -1227,7 +1362,7 @@ private theorem read_treeOne_free {L : Type} (labelEl : SFrame → L → Html.No
         Node.marksOne outlines cx acc n
   | .draw g fl st, cx, fr, ss, acc, _, h => by
     simp only [treeOne, Array.toList_push, List.nil_append, readList, readOne, Node.marksOne,
-      agrees_plainGeom place cx fr ss h g,
+      attrsOf_dashed, shape_agree place fr ss h.hplace h.hiso g,
       readFill_attrsOf ss fr cx.ctm (agrees_user place cx fr ss h),
       readStroke_attrsOf ss fr cx.ctm (agrees_user place cx fr ss h), h.hctm, h.hclips, h.halphas]
   | .group xf clips alpha kids, cx, fr, ss, acc, hu, h => by

@@ -617,8 +617,10 @@ A CMYK colour, painted or sampled, previews as pdftoppm shows it; a
 TrueType program with no cmap shows its glyphs by their 'post' names, as
 pdftoppm draws them; a glyph stroked through its frame strokes the width,
 dash and phase the state set in user space (`PdfGfx.strokeIn_between`),
-where it once stroked them 65,536 times as wide. Each case once imported
-with no loss named and drew otherwise. -/
+where it once stroked them 65,536 times as wide; an `re` of negative extent
+keeps the corner order PDF traces, where it was once read as the rectangle
+it covers and its dashes moved. Each case once imported with no loss named
+and drew otherwise. -/
 def pdfStateChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
   let maskGroup (box : String) (ink : String) :=
@@ -737,6 +739,14 @@ def pdfStateChecks (ref : IO.Ref (List String)) : IO Unit := do
   let unmapped := marksOf (ttPdf noCmap 4)
   t s!"state: a TrueType program with no cmap draws its glyphs by their 'post' names ({unmapped.size} of {mapped.size})"
     (mapped.size == 3 && unmapped == mapped)
+  -- An `re` of negative extent is the path PDF traces, from its corner
+  -- toward the negative extents: a dash pattern starts there.
+  let inverted := marksOf (statePdf "<< >>" "[4 2] 0 d 2 w 150 80 -100 -50 re S" #[])
+  t s!"state: an re of negative extent keeps the corner order PDF traces ({repr (inverted.map fun m => match m with
+      | .paint _ g _ _ _ _ => some g | _ => none)})"
+    (match inverted.toList with
+     | [.paint _ g _ _ _ _] => g == .path #[Gfx.Kit.rectPath (Dim.pt 150) (Dim.pt 80) (Dim.pt (-100)) (Dim.pt (-50))]
+     | _ => false)
   -- A stroked glyph's lengths stand in its frame; drawn through it, they
   -- are the user space's: 0.5 pt wide, dashed 2 on 1 from 0.25.
   let inUser (m : Gfx.Affine) (v : Dim.Sp) : Rat := (v : Rat) * m.a / 65536

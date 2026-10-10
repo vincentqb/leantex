@@ -1473,16 +1473,10 @@ private def withPaintClip (clip : Option (Affine × Clip)) (n : Node Run) : Node
   | some (rel, c) => clipIn rel c n
   | none => n
 
-/-- The current path's geometry, as the typed operators read it — one `re`
-of negative extent read as the rectangle it covers, whose interior is the
-same and whose spelling every reader takes (an SVG `rect` of negative size
-draws nothing). -/
-private def St.geom (st : St) : Geom :=
-  let g := GfxPdf.geomOf st.path.toList
-  match g with
-  | .rect x y w h =>
-    if w < 0 || h < 0 then .rect (min x (x + w)) (min y (y + h)) w.natAbs h.natAbs else g
-  | .ellipse _ _ _ _ | .path _ => g
+/-- The current path's geometry, as the typed operators read it: one `re`
+of any extent is the rectangle PDF traces, which a reader of either
+artifact draws as its path where it encloses no area (`Geom.normal`). -/
+private def St.geom (st : St) : Geom := GfxPdf.geomOf st.path.toList
 
 /-- A path painted (§8.5.3): filled by its rule, stroked with the state in
 force, each with its constant alpha; then the clip it was marked for. -/

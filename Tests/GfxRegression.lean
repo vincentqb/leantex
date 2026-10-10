@@ -131,7 +131,12 @@ every picture path (F1); an edge's continuing segments each opened with
 its own `M` in the SVG, so interior vertices drew caps where the PDF drew
 joins (F2); a zero line width painted nothing in the SVG where PDF and pgf
 draw the thinnest visible line (F3); SVG strokes left at SVG's miter limit
-of 4 where PDF and pgf mitre to 10 (F4). Invented pictures. -/
+of 4 where PDF and pgf mitre to 10 (F4). And three the readers' agreement
+was blind to while the SVG reader did not read SVG's own rules: a stroked
+rectangle of zero size spelled a `rect` SVG draws nothing for, a dashed
+rectangle or circle an element whose dashes start elsewhere and run the
+other way, and a square-capped dot a square the PDF does not paint.
+Invented pictures. -/
 def gfxDefectChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit := do
   let t := check ref
   let red : Ir.Color := { r := 255, g := 0, b := 0 }
@@ -207,6 +212,55 @@ def gfxDefectChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO U
   let strokes := stroked.filter fun (_, attrs) => attrs.any fun (k, v) => k == "stroke" && v != "none"
   t "F4: HTML TikZ strokes carry stroke-miterlimit 10"
     (strokes.size == 3 && strokes.all fun (_, attrs) => attr? attrs "stroke-miterlimit" == some "10")
+  -- A rectangle or circle that encloses no area, or that a dashed stroke
+  -- runs along, spells as the path the PDF strokes: SVG draws no `rect` or
+  -- `circle` of zero size, and starts and runs a dashed one its own way.
+  let shapes (doc : Ir.Doc) : Array (String × Array (String × String)) :=
+    (elemAttrsList (fun tag => tag == "path" || tag == "rect" || tag == "circle" || tag == "ellipse") #[]
+      (doc.body.toList.map (HtmlDoc.blockNode {}))).filter fun (_, attrs) =>
+        attrs.any fun (k, v) => k == "stroke" && v != "none"
+  let (docZ, _) := elabStr (picDoc "" "" "\\draw (0,0) rectangle (2,0);\n\\draw (3,0) rectangle (3,1);")
+  t s!"zero-size: a stroked rectangle of zero height or width spells the path the PDF strokes ({shapes docZ})"
+    ((shapes docZ).size == 2 && (shapes docZ).all fun (tag, attrs) =>
+      tag == "path" && ((attr? attrs "d").map fun d => (d.splitOn "L").length == 4).getD false)
+  let lsZ := streamLines oneFace docZ (layoutOf oneFace docZ)
+  t "zero-size: and the PDF strokes each as its `re`"
+    ((lsZ.filter fun l => l.endsWith " re S Q").size == 2)
+  let numbers (d : String) : Array Int := (d.splitOn " ").toArray.filterMap fun w =>
+    (w.replace "," "").toInt?.orElse fun _ =>
+      ((w.replace "," "").splitOn ".")[0]?.bind (·.toInt?)
+  let (docD, _) := elabStr (picDoc "" "" "\\draw[dashed] (0,0) rectangle (2,1);")
+  t s!"dashed: a dashed rectangle's dashes start where the PDF's do, at its min corner along x ({shapes docD})"
+    (match (shapes docD).toList with
+     | [("path", attrs)] =>
+       match (attr? attrs "d").map numbers with
+       | some ns =>
+         -- M x0 y0 L x1 y0: the bottom edge first (SVG's y grows down, so
+         -- the min corner's y is the largest of the four).
+         ns.size ≥ 8 && ns[1]? == ns[3]? && (ns[0]?.getD 0) < (ns[2]?.getD 0) &&
+           (ns[5]?.getD 0) < (ns[1]?.getD 0)
+       | none => false
+     | _ => false)
+  let (docC, _) := elabStr (picDoc "" "" "\\node[draw,dashed,circle,minimum size=1cm] at (0,0) {};")
+  t s!"dashed: a dashed circle runs counter-clockwise from angle 0, as the PDF's does ({shapes docC})"
+    (match (shapes docC).toList with
+     | [("path", attrs)] =>
+       match (attr? attrs "d").map numbers with
+       | some ns => ns.size ≥ 8 && (ns[7]?.getD 0) < (ns[1]?.getD 0)
+       | none => false
+     | _ => false)
+  -- A square-capped dot: PDF paints nothing (ISO 32000-2 §8.5.3.2), SVG a
+  -- square, so the spelling leaves the dot out of its path.
+  let dotted : Gfx.Figure Empty :=
+    { box := ((0, 0), (Dim.pt 10, Dim.pt 10)), clipToBox := false, outlines := #[], symbols := #[]
+      rasters := #[], title := none, losses := #[]
+      nodes := #[.draw (.path #[{ start := (Dim.pt 2, Dim.pt 2), segs := #[.line (Dim.pt 2, Dim.pt 2)], closed := false },
+          { start := (Dim.pt 4, Dim.pt 4), segs := #[.line (Dim.pt 8, Dim.pt 4)], closed := false }]) none
+        (some { paint := .solid red, width := Dim.pt 1, cap := .square, join := .miter, miterLimit := 10
+                dash := #[], phase := 0, alpha := Gfx.Alpha.opaque })] }
+  let dotSvg := GfxSvg.document (fun _ (e : Empty) => nomatch e) #[] dotted
+  t s!"dots: a square-capped dot is left out of the SVG path, which keeps the segment beside it"
+    (!hasStr dotSvg "M 2 8 L 2 8" && hasStr dotSvg "M 4 6 L 8 6")
   -- The standalone mode ships the inline SVG's box and marks as a file.
   match doc4.body.toList.filterMap (fun b => match b with | .picture p => some p | _ => none) with
   | [pic] =>

@@ -112,12 +112,19 @@ in where the coordinates were still carried by it. -/
   | none => fr
   | some m => { iso := none, stream := fr.stream.compose m }
 
-/-- A geometry's operators in the frame: normalized, and carried by the
-placement when it still applies. -/
-@[expose] public def Frame.geomOps (fr : Frame) (g : Geom) : List PathOp :=
+/-- A geometry's operators in the frame, carried by the placement when it
+still applies: a rectangle stays one `re` wherever the placement keeps its
+corner order — in a frame of its own, or translated — and a placement that
+flips carries the outline its stroke paints (`Geom.drawn`) point by point,
+so a dash pattern starts where the figure's does. -/
+@[expose] public def Frame.geomOps (fr : Frame) (g : Geom) (dashed : Bool) : List PathOp :=
   match fr.iso with
-  | some t => GfxPdf.geomOps (g.normal.mapIso t)
-  | none => GfxPdf.geomOps g.normal
+  | some t =>
+    if t.flipY then GfxPdf.geomOps ((g.drawn dashed).mapIso t)
+    else match g with
+      | .rect _ _ _ _ => GfxPdf.geomOps (g.mapIso t)
+      | .ellipse _ _ _ _ | .path _ => GfxPdf.geomOps (g.normal.mapIso t)
+  | none => GfxPdf.geomOps g
 
 /-- A paint as PDF paints it: a device colour, or a shading pattern whose
 matrix maps the gradient's frame to the stream's default space — the
@@ -205,7 +212,7 @@ instance's stroke, its unstated parameters the initial ones. -/
     (st : Option Stroke) : ContentOp :=
   .paint (fl.map (paintFill ix fr)) (st.map (paintStroke ix fr))
     (extOf ix ((fl.map (·.alpha)).getD Alpha.opaque) ((st.map (·.alpha)).getD Alpha.opaque))
-    (fr.geomOps g).toArray
+    (fr.geomOps g (st.any Stroke.dashed)).toArray
 
 /-- Whether a group changes nothing: identity frame, no clip, opaque. Its
 kids are written inline. -/
@@ -223,7 +230,7 @@ public instance (xf : Affine) (clips : Array Clip) (alpha : Alpha) :
 
 /-- A group's clips as clipping paths in its child frame. -/
 @[expose] public def clipOpsOf (fr : Frame) (clips : Array Clip) : Array (Array PathOp × Rule) :=
-  clips.map fun c => ((fr.geomOps c.geom).toArray, c.rule)
+  clips.map fun c => ((fr.geomOps c.geom false).toArray, c.rule)
 
 /-- A form's frame: its own coordinates, its default space — where a
 symbol's body stands. -/
@@ -341,9 +348,12 @@ undone while the coordinates are placed, else the `cm`s read. -/
 @[expose] public def RState.userCtm (rs : RState) : Affine :=
   if rs.placed then rs.place.inv.toAffine else rs.ctm
 
-/-- A path's geometry in the figure frame. -/
-@[expose] public def RState.geom (rs : RState) (segs : Array PathOp) : Geom :=
-  if rs.placed then (geomOf segs.toList).mapIso rs.place.inv else geomOf segs.toList
+/-- A path's geometry in the figure frame, as a stroke dashed or not paints
+it (`Geom.drawn`): read where it stands, then carried back from the
+placement — point by point, a rectangle that encloses area as one. -/
+@[expose] public def RState.geom (rs : RState) (segs : Array PathOp) (dashed : Bool) : Geom :=
+  let g := (geomOf segs.toList).drawn dashed
+  if rs.placed then g.mapIso rs.place.inv else g
 
 /-- The state after a `cm`, if one was read. -/
 @[expose] public def RState.cm (rs : RState) : Option Affine → RState
@@ -374,7 +384,7 @@ frame, the alphas its ExtGState sets. -/
     (clips : Array (Array PathOp × Rule)) : RState :=
   let rs1 := rs.cm m
   { rs1 with
-    clips := rs1.clips ++ clips.map fun c => (rs1.frameCtm, { geom := rs1.geom c.1, rule := c.2 })
+    clips := rs1.clips ++ clips.map fun c => (rs1.frameCtm, { geom := rs1.geom c.1 false, rule := c.2 })
     ca := (gs.map (·.fill)).getD rs1.ca
     cA := (gs.map (·.stroke)).getD rs1.cA }
 
@@ -409,7 +419,7 @@ where the instance sets it. -/
 /-- An outline painted with the state in force. -/
 @[expose] public def RState.outlineMark (rs : RState) (fl : Option Rule) (st : Bool)
     (segs : Array PathOp) : Mark :=
-  .paint rs.frameCtm (rs.geom segs)
+  .paint rs.frameCtm (rs.geom segs false)
     (fl.map fun r => { paint := rs.pen.fill, rule := r, alpha := rs.ca })
     (if st then
       some { paint := rs.pen.stroke, width := rs.pen.width, cap := rs.pen.cap, join := rs.pen.join
@@ -425,8 +435,8 @@ rectangle it fills; text, page images and placeholders are no figure ink;
 marked content reads through. -/
 @[expose] public def readOne (rs : RState) (acc : Array Mark) : ContentOp → Array Mark
   | .paint fl st gs segs =>
-    acc.push (.paint rs.frameCtm (rs.geom segs) (fl.map (readFill rs gs)) (st.map (readStroke rs gs))
-      rs.clips rs.alphas)
+    acc.push (.paint rs.frameCtm (rs.geom segs ((st.map (readStroke rs gs)).any Stroke.dashed))
+      (fl.map (readFill rs gs)) (st.map (readStroke rs gs)) rs.clips rs.alphas)
   | .group m gs clips body => readList (rs.enterGroup m gs clips) acc body.toList
   | .xobject m _ kind body =>
     match kind with
@@ -437,7 +447,7 @@ marked content reads through. -/
   | .shade _ g => acc.push (.shading (g.withXf rs.userCtm) rs.clips rs.alphas)
   | .outline fl st segs => acc.push (rs.outlineMark fl st segs)
   | .fill c x y w h =>
-    acc.push (.paint rs.frameCtm (rs.geom #[.rect x y w h])
+    acc.push (.paint rs.frameCtm (rs.geom #[.rect x y w h] false)
       (some { paint := .solid c, rule := .nonzero, alpha := rs.ca }) none rs.clips rs.alphas)
   | .text _ => acc
   | .image _ _ _ _ _ => acc
@@ -519,18 +529,132 @@ private theorem geomOf_path_id (subs : Array Subpath) :
 (`_id`): one `re` is its rectangle, moves and segments their subpaths. -/
 public theorem geomOf_geomOps_id (g : Geom) : geomOf (geomOps g.normal) = g.normal := by
   cases g with
-  | rect x y w h => rfl
+  | rect x y w h =>
+    simp only [Geom.normal]
+    split
+    · rfl
+    · exact geomOf_path_id _
   | ellipse cx cy rx ry => exact geomOf_path_id _
   | path subs => exact geomOf_path_id subs
 
-/-- The same through the placement: a placed normalized geometry reads back
-placed. -/
-private theorem geomOf_geomOps_mapIso_id (t : Iso) (g : Geom) :
-    geomOf (geomOps (g.normal.mapIso t)) = g.normal.mapIso t := by
+private theorem normal_rect_pos {x y w h : Sp} (hp : 0 < w ∧ 0 < h) :
+    (Geom.rect x y w h).normal = .rect x y w h := by
+  simp only [Geom.normal]
+  split
+  · rfl
+  · next hn => exact absurd hp hn
+
+private theorem normal_rect_neg {x y w h : Sp} (hp : ¬(0 < w ∧ 0 < h)) :
+    (Geom.rect x y w h).normal = .path #[Kit.rectPath x y w h] := by
+  simp only [Geom.normal]
+  split
+  · next hn => exact absurd hn hp
+  · rfl
+
+/-- A geometry's own operators read back to the outline a stroke paints. -/
+private theorem geomOf_geomOps_drawn (g : Geom) (d : Bool) :
+    (geomOf (geomOps g)).drawn d = g.drawn d := by
   cases g with
   | rect x y w h => rfl
-  | ellipse cx cy rx ry => exact geomOf_path_id _
-  | path subs => exact geomOf_path_id _
+  | ellipse cx cy rx ry =>
+    have : geomOf (geomOps (.ellipse cx cy rx ry)) = .path (Kit.ellipse cx cy rx ry) :=
+      geomOf_path_id _
+    rw [this]
+    cases d <;> rfl
+  | path subs => rw [geomOf_path_id]
+
+/-- The outline a stroke paints is its own outline. -/
+private theorem drawn_drawn (g : Geom) (d : Bool) : (g.drawn d).drawn d = g.drawn d := by
+  cases g with
+  | rect x y w h =>
+    cases d with
+    | true => rfl
+    | false =>
+      simp only [Geom.drawn, Bool.false_eq_true, ↓reduceIte]
+      by_cases hp : 0 < w ∧ 0 < h
+      · rw [normal_rect_pos hp, normal_rect_pos hp]
+      · rw [normal_rect_neg hp]; rfl
+  | ellipse cx cy rx ry => cases d <;> rfl
+  | path subs => cases d <;> rfl
+
+/-- A placement keeps the outline a stroke paints such: a rectangle that
+encloses area keeps its extents, a path stays a path. -/
+private theorem drawn_mapIso (t : Iso) (g : Geom) (d : Bool) :
+    ((g.drawn d).mapIso t).drawn d = (g.drawn d).mapIso t := by
+  cases g with
+  | rect x y w h =>
+    cases d with
+    | true => rfl
+    | false =>
+      simp only [Geom.drawn, Bool.false_eq_true, ↓reduceIte]
+      by_cases hp : 0 < w ∧ 0 < h
+      · rw [normal_rect_pos hp]
+        simp only [Geom.mapIso, Iso.rect]
+        exact normal_rect_pos hp
+      · rw [normal_rect_neg hp]; rfl
+  | ellipse cx cy rx ry => cases d <;> rfl
+  | path subs => cases d <;> rfl
+
+/-- A placed outline's operators read back placed. -/
+private theorem geomOf_drawn_mapIso (t : Iso) (g : Geom) (d : Bool) :
+    geomOf (geomOps ((g.drawn d).mapIso t)) = (g.drawn d).mapIso t := by
+  cases g with
+  | rect x y w h =>
+    cases d with
+    | true => exact geomOf_path_id _
+    | false =>
+      simp only [Geom.drawn, Bool.false_eq_true, ↓reduceIte]
+      by_cases hp : 0 < w ∧ 0 < h
+      · rw [normal_rect_pos hp]; rfl
+      · rw [normal_rect_neg hp]; exact geomOf_path_id _
+  | ellipse cx cy rx ry => cases d <;> exact geomOf_path_id _
+  | path subs => cases d <;> exact geomOf_path_id _
+
+/-- A path placed and drawn is the placed path, which the inverse placement
+carries back. -/
+private theorem drawn_mapIso_path (t : Iso) (subs : Array Subpath) (d : Bool) :
+    (((Geom.path subs).mapIso t).drawn d).mapIso t.inv = .path subs := by
+  have h : ((Geom.path subs).mapIso t).drawn d = (Geom.path subs).mapIso t := by
+    cases d <;> rfl
+  rw [h, Geom.mapIso_inv_id]
+
+/-- A rectangle's outline translated is the translated rectangle's. -/
+private theorem rectPath_translate (t : Iso) (ht : t.flipY = false) (x y w h : Sp) :
+    (Kit.rectPath x y w h).map t.apply = Kit.rectPath (x + t.dx) (y + t.dy) w h := by
+  obtain ⟨fl, dx, dy⟩ := t
+  simp only at ht
+  subst ht
+  simp only [Kit.rectPath, Subpath.map, Iso.apply, Bool.false_eq_true, ↓reduceIte,
+    List.map_toArray, List.map_cons, List.map_nil, Seg.map, Subpath.mk.injEq, true_and, and_true]
+  rw [Int.add_right_comm x w dx, Int.add_right_comm y h dy]
+
+/-- A translated rectangle's operators read back, carried back by the
+translation, as the outline its stroke paints. -/
+private theorem rect_translate_drawn (t : Iso) (ht : t.flipY = false) (x y w h : Sp) (d : Bool) :
+    ((geomOf (geomOps ((Geom.rect x y w h).mapIso t))).drawn d).mapIso t.inv =
+      (Geom.rect x y w h).drawn d := by
+  have hinv : t.inv.flipY = false := by simp [Iso.inv, ht]
+  have hback : (Kit.rectPath (x + t.dx) (y + t.dy) w h).map t.inv.apply = Kit.rectPath x y w h := by
+    rw [rectPath_translate t.inv hinv]
+    simp only [Iso.inv, ht, Bool.false_eq_true, ↓reduceIte]
+    rw [Int.add_neg_cancel_right, Int.add_neg_cancel_right]
+  have hr : (Geom.rect x y w h).mapIso t = .rect (x + t.dx) (y + t.dy) w h := by
+    simp [Geom.mapIso, Iso.rect, ht]
+  rw [hr]
+  have hg : geomOf (geomOps (.rect (x + t.dx) (y + t.dy) w h)) = .rect (x + t.dx) (y + t.dy) w h := rfl
+  rw [hg]
+  cases d with
+  | true =>
+    simp only [Geom.drawn, ↓reduceIte, Geom.traced, Geom.mapIso, List.map_toArray,
+      List.map_cons, List.map_nil, hback]
+  | false =>
+    simp only [Geom.drawn, Bool.false_eq_true, ↓reduceIte]
+    by_cases hp : 0 < w ∧ 0 < h
+    · rw [normal_rect_pos hp, normal_rect_pos hp]
+      have := Geom.mapIso_inv_id t (.rect x y w h)
+      rwa [hr] at this
+    · rw [normal_rect_neg hp, normal_rect_neg hp]
+      simp only [Geom.mapIso, List.map_toArray, List.map_cons, List.map_nil, hback]
 
 private theorem readList_append (rs : RState) (acc : Array Mark) (a b : List ContentOp) :
     readList rs acc (a ++ b) = readList rs (readList rs acc a) b := by
@@ -595,17 +719,33 @@ private structure Agrees (place : Iso) (cx : Ctx) (fr : Frame) (rs : RState) : P
   hpen : rs.pen = Pen.initial
 
 /-- Where the frames agree on placement, a geometry's operators read back to
-the geometry, normalized. -/
+the outline its stroke paints (`Geom.drawn`). -/
 private theorem geom_agree (place : Iso) (fr : Frame) (rs : RState) (hp : rs.place = place)
-    (hi : fr.iso = if rs.placed then some place else none) (g : Geom) :
-    rs.geom (fr.geomOps g).toArray = g.normal := by
+    (hi : fr.iso = if rs.placed then some place else none) (g : Geom) (d : Bool) :
+    rs.geom (fr.geomOps g d).toArray d = g.drawn d := by
   cases hpl : rs.placed
   · simp only [hpl, Bool.false_eq_true, ↓reduceIte] at hi
     simp only [RState.geom, hpl, Frame.geomOps, hi, Bool.false_eq_true, ↓reduceIte,
-      geomOf_geomOps_id]
+      geomOf_geomOps_drawn]
   · simp only [hpl, ↓reduceIte] at hi
-    simp only [RState.geom, hpl, Frame.geomOps, hi, ↓reduceIte, geomOf_geomOps_mapIso_id, hp,
-      Geom.mapIso_inv_id]
+    simp only [RState.geom, hpl, Frame.geomOps, hi, ↓reduceIte, hp]
+    by_cases hf : place.flipY
+    · simp only [hf, ↓reduceIte, geomOf_drawn_mapIso, drawn_mapIso, Geom.mapIso_inv_id]
+    · have hf' : place.flipY = false := by simpa using hf
+      simp only [hf', Bool.false_eq_true, ↓reduceIte]
+      cases g with
+      | rect x y w h => exact rect_translate_drawn place hf' x y w h d
+      | ellipse cx cy rx ry =>
+        have hn : geomOf (geomOps ((Geom.ellipse cx cy rx ry).normal.mapIso place)) =
+            (Geom.ellipse cx cy rx ry).normal.mapIso place := geomOf_path_id _
+        rw [hn, show (Geom.ellipse cx cy rx ry).normal = .path (Kit.ellipse cx cy rx ry) from rfl,
+          drawn_mapIso_path, show (Geom.ellipse cx cy rx ry).drawn d = .path (Kit.ellipse cx cy rx ry) by
+            cases d <;> rfl]
+      | path subs =>
+        have hn : geomOf (geomOps ((Geom.path subs).normal.mapIso place)) =
+            (Geom.path subs).normal.mapIso place := geomOf_path_id _
+        rw [hn, show (Geom.path subs).normal = .path subs from rfl, drawn_mapIso_path,
+          show (Geom.path subs).drawn d = .path subs by cases d <;> rfl]
 
 /-- A read `cm` composes onto the user space's frame. -/
 private theorem cm_some_frameCtm (rs : RState) (m : Affine) :
@@ -695,20 +835,26 @@ private theorem read_draw (ix : Request → Nat) (place : Iso) (cx : Ctx) (fr : 
     (h : Agrees place cx fr rs) (acc : Array Mark) (g : Geom) (fl : Option Fill)
     (st : Option Stroke) :
     readOne rs acc (drawOp ix fr g fl st) =
-      acc.push (.paint cx.ctm g.normal (fl.map (Fill.under cx.ctm)) (st.map (Stroke.under cx.ctm))
-        cx.clips cx.alphas) := by
-  simp only [drawOp, readOne, h.hctm, h.hclips, h.halphas, geom_agree place fr rs h.hplace h.hiso g]
-  congr 2
-  · cases fl with
-    | none => rfl
-    | some f =>
-      simp only [Option.map_some]
-      exact congrArg some (readFill_paintFill ix place cx fr rs h f _)
-  · cases st with
+      acc.push (.paint cx.ctm (g.drawn (st.any Stroke.dashed)) (fl.map (Fill.under cx.ctm))
+        (st.map (Stroke.under cx.ctm)) cx.clips cx.alphas) := by
+  have hst : Option.map (readStroke rs (extOf ix ((fl.map (·.alpha)).getD Alpha.opaque)
+      ((st.map (·.alpha)).getD Alpha.opaque)) ∘ paintStroke ix fr) st =
+      st.map (Stroke.under cx.ctm) := by
+    cases st with
     | none => rfl
     | some s =>
-      simp only [Option.map_some]
+      simp only [Option.map_some, Function.comp]
       exact congrArg some (readStroke_paintStroke ix place cx fr rs h s _)
+  have hd : (st.map (Stroke.under cx.ctm)).any Stroke.dashed = st.any Stroke.dashed := by
+    cases st <;> rfl
+  simp only [drawOp, readOne, Option.map_map, h.hctm, h.hclips, h.halphas]
+  rw [hst, hd, geom_agree place fr rs h.hplace h.hiso g]
+  congr 2
+  cases fl with
+  | none => rfl
+  | some f =>
+    simp only [Option.map_some]
+    exact congrArg some (readFill_paintFill ix place cx fr rs h f _)
 
 /-- A group's `cm`, written or not, enters the model's frame. -/
 private theorem cm_group_frameCtm (place : Iso) (cx : Ctx) (fr : Frame) (rs : RState)
@@ -759,14 +905,14 @@ private theorem clips_agree (place : Iso) (cx : Ctx) (fr : Frame) (rs : RState)
     (h : Agrees place cx fr rs) (xf : Affine) (m : Option Affine)
     (hm : (rs.cm m).frameCtm = cx.ctm.compose xf) (clips : Array Clip) :
     (clipOpsOf (fr.enter m) clips).map
-        (fun c => ((rs.cm m).frameCtm, ({ geom := (rs.cm m).geom c.1, rule := c.2 } : Clip))) =
+        (fun c => ((rs.cm m).frameCtm, ({ geom := (rs.cm m).geom c.1 false, rule := c.2 } : Clip))) =
       clips.map fun c => (cx.ctm.compose xf, { c with geom := c.geom.normal }) := by
   simp only [clipOpsOf, Array.map_map]
   apply Array.map_congr_left
   intro c _
   simp only [Function.comp, hm,
     geom_agree place (fr.enter m) (rs.cm m) (by rw [cm_place, h.hplace]) (cm_iso place fr rs h.hiso _)
-      c.geom]
+      c.geom false, Geom.drawn, Bool.false_eq_true, ↓reduceIte]
 
 /-- After an opaque group's `cm` — written or not, entering the model's
 frame — and its clips, the three sides agree. -/
@@ -875,10 +1021,10 @@ private theorem read_stamp_form (ix : Request → Nat) (place : Iso) (cx : Ctx) 
     exact cm_lift_frameCtm place cx fr rs h xf
   simp only [outlineBody, readList, readOne, RState.outlineMark]
   have hfe : (rs1.cm (some (fr.lift xf))).enterForm.frameCtm = cx.ctm.compose xf := hf
-  have hge : (rs1.cm (some (fr.lift xf))).enterForm.geom (geomOps (.path subs)).toArray =
+  have hge : (rs1.cm (some (fr.lift xf))).enterForm.geom (geomOps (.path subs)).toArray false =
       .path subs := by
     simp only [RState.geom, RState.enterForm, RState.cm, Bool.false_eq_true, ↓reduceIte,
-      geomOf_path_id]
+      geomOf_path_id, Geom.drawn, Geom.normal]
   have hce : (rs1.cm (some (fr.lift xf))).enterForm.clips = cx.clips := by
     rw [← h.hclips, ← hp1.2.1]; rfl
   have hae : (rs1.cm (some (fr.lift xf))).enterForm.alphas = cx.alphas := by
@@ -926,7 +1072,7 @@ private theorem read_stamp_inline (ix : Request → Nat) (place : Iso) (cx : Ctx
   simp only [clipOpsOf, Array.map_empty] at ha
   simp only [readOne, readList]
   rw [read_draw ix place _ _ _ ha]
-  simp [Ctx.enter, Geom.normal]
+  cases hd : st.any Stroke.dashed <;> simp [Ctx.enter, Geom.drawn, Geom.normal, Geom.traced]
 
 mutual
 
