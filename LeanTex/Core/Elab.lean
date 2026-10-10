@@ -579,6 +579,109 @@ public structure Counters where
   their counters in flow order. -/
   thm : ThmDecls := {}
 
+/-- A global assignment made inside a group: the one thing a group's end
+keeps (TeXbook ch. 24 — a `\global` value outlives every group it was made
+in). `\pagecolor` and `\nopagecolor` set the page ground globally, and a
+body `\palette` keeps its documented flow scope the same way: each logs the
+entry it left, and a group's end replays the entries logged since its start
+over the state it restores. -/
+public inductive GlobalWrite where
+  /-- A palette key set (`some`) or cleared (`none`), with its decorative
+  class; `native` when Beamer's role state follows the key, as a native
+  `\palette` entry's does (`BeamerColor.State.native`). -/
+  | entry (key : String) (value : Option Color) (decorative : Bool) (native : Bool)
+  /-- The cover fraction a body `\palette{ covered = ... }` set. -/
+  | covered (fraction : Option Nat)
+  deriving Repr, BEq, Inhabited
+
+/-- The declaration state TeX's save stack governs (TeXbook ch. 24): the local
+declarations a group's end puts back — the palette and Beamer colour state a
+`\color` or `\setbeamercolor` changes, the language a block `\selectlanguage`
+sets, the URL face `\urlstyle` names, the declarations met between blocks —
+and the log of global assignments, which outlive every group and are
+replayed at each group's end. One record, saved and restored at one point per
+group (`texGroup`), so a group's restore is one equation
+(`texGroup_scope_id`). -/
+public structure GroupScope where
+  /-- The palette in force in flow order and the named Beamer colours: the
+  last body declaration's state, read back at the top of every
+  `elabBlocks` iteration. `none` while the body declared nothing. The
+  document palette both backends read as epoch 0 stays the preamble+theme
+  state; the flow state rides the `.setPalette` blocks. -/
+  palette : BeamerColor.State := {}
+  /-- The language in force from a block-level switch (`\selectlanguage`),
+  `none` for the document's main language. Paragraphs formed under it
+  carry the attribute (`mkPara`). -/
+  lang : Option String := none
+  /-- The family a `\url`/`\nolinkurl` sets in, from url.sty's `\urlstyle`:
+  `tt`/`rm`/`sf` name the mono/roman/sans family, and `same` asks for the
+  running face, which is `none` — no family style at all, not a fourth
+  family. url.sty's own default is `tt`, so that is the initial value.
+  In the preamble it is the last defined value the preamble names, for
+  every declaration wherever the selector stands (`elabDoc` reads it before
+  the fold); in the body it applies to the URLs after it in its group. -/
+  urlFamily : Option Ir.Style := some .mono
+  /-- The declarations met between blocks in the enclosing scopes,
+  outermost first (`Ir.Decl`): every inline region built under them — a
+  paragraph, a table cell — is wrapped in them (`Ir.wrapDecls`), which is
+  how `\footnotesize` before a tabular reaches its cells
+  (`Ir.decl_between_blocks_covers`). The declaration arm pushes on entering
+  the rest of its scope and restores on leaving. -/
+  blockDecls : List Ir.Decl := []
+  /-- Every global assignment in flow order (`GlobalWrite`): the one field a
+  group's end keeps, replaying the entries logged since its start over the
+  local fields it puts back. -/
+  globals : Array GlobalWrite := #[]
+  deriving Inhabited
+
+/-- One global assignment replayed over a restored colour state, through the
+door the assignment used: the palette entry set or cleared, and Beamer's
+role state where a native entry moves it. `base` is the palette a `current`
+of `none` stands for. -/
+@[expose] public def GlobalWrite.replay (base : Palette) (s : BeamerColor.State) :
+    GlobalWrite → BeamerColor.State
+  | .entry key value decorative native =>
+    let pal := s.current.getD base
+    let s := { s with current := some (match value with
+      | some c => pal.declare key c decorative
+      | none => pal.erase key) }
+    match value, native with
+    | some c, true => s.native key c
+    | _, _ => s
+  | .covered fraction =>
+    { s with current := some { s.current.getD base with coveredFraction := fraction } }
+
+/-- Does a replayed entry move Beamer's role state, so the named colours
+resolve again over it? -/
+@[expose] public def GlobalWrite.movesRoles : GlobalWrite → Bool
+  | .entry _ _ _ native => native
+  | .covered _ => false
+
+/-- What a group's end leaves (TeXbook ch. 24): the local fields its start
+held, the global assignments logged since replayed over them in order — a
+named Beamer colour then resolves again against the replayed roles, as it
+does after a body `\palette` — and the log as the group closed it. -/
+@[expose] public def GroupScope.restore (base : Palette) (saved closed : GroupScope) :
+    GroupScope :=
+  let logged := closed.globals.extract saved.globals.size closed.globals.size
+  let s := logged.foldl (GlobalWrite.replay base) saved.palette
+  let s := if logged.any GlobalWrite.movesRoles && !s.elements.isEmpty then
+      let (s, pal, _) := s.resolve (s.current.getD base)
+      { s with current := some pal }
+    else s
+  { saved with palette := s, globals := closed.globals }
+
+/-- With no global assignment logged since its start, a group's end leaves
+exactly the scope its start held. -/
+public theorem GroupScope.restore_id (base : Palette) (saved closed : GroupScope)
+    (h : closed.globals = saved.globals) : saved.restore base closed = saved := by
+  unfold GroupScope.restore
+  rw [h]
+  have hnone : saved.globals.extract saved.globals.size saved.globals.size = #[] := by
+    simp only [Array.extract_eq_empty_iff]; omega
+  rw [hnone]
+  simp
+
 public structure ESt where
   diags : Array Diag := #[]
   /-- Warn-once keys already fired: a macro used forty times is one problem,
@@ -649,39 +752,12 @@ public structure ESt where
   load's marker (`@natbib`, which the compatibility pass replays at
   `\begin{document}`) says natbib is there. -/
   natbib : Option (Array String) := none
-  /-- The family a `\url`/`\nolinkurl` sets in, from url.sty's `\urlstyle`:
-  `tt`/`rm`/`sf` name the mono/roman/sans family, and `same` asks for the
-  running face, which is `none` — no family style at all, not a fourth
-  family. url.sty's own default is `tt`, so that is the initial value.
-  In the preamble it is the last defined value the preamble names, for
-  every declaration wherever the selector stands (`elabDoc` reads it before
-  the fold); in the body, flow scope, as `flowPalette` is: a selector
-  applies to the URLs after it. -/
-  urlFamily : Option Ir.Style := some .mono
-  /-- The palette in force in flow order — the last body `\palette` state,
-  written by the declaration arm and read back at the top of every
-  `elabBlocks` iteration, so a declaration inside a nested scope reaches
-  the content after that scope closes: flow scope, no brace revert (the
-  engine's `\centering` choice). `none` while the body declared nothing.
-  The document palette both backends read as epoch 0 stays the
-  preamble+theme state; the flow state rides the `.setPalette` blocks.
-  Named Beamer declarations share this record, outside the inline knot's
-  top-level fields, so later parents resolve against the next epoch. -/
-  flowPalette : BeamerColor.State := {}
-  /-- Body-declared tokens (`\setlength` mid-document), same door. -/
+  /-- The declaration state, restored at each group's end (`texGroup`). -/
+  scope : GroupScope := {}
+  /-- Body-declared tokens (`\setlength` mid-document): a group restores the
+  lengths it assigned through the keys the compatibility pass marks at its
+  close (`closeLengthScope`). -/
   flowTokens : Option Tokens := none
-  /-- The language in force from a block-level switch (`\selectlanguage`),
-  `none` for the document's main language — the same from-here-forward
-  flow state `inAppendix` uses. Paragraphs formed under it carry the
-  attribute (`mkPara`). -/
-  flowLang : Option String := none
-  /-- The declarations met between blocks in the enclosing scopes,
-  outermost first (`Ir.Decl`), threaded as the flow language is: every
-  inline region built under them — a paragraph, a table cell — is wrapped
-  in them (`Ir.wrapDecls`), which is how `\footnotesize` before a tabular
-  reaches its cells (`Ir.decl_between_blocks_covers`). The declaration
-  arm pushes on entering the rest of its scope and restores on leaving. -/
-  blockDecls : List Ir.Decl := []
   /-- Bumped by each body declaration: the cheap guard that lets the block
   loop skip re-reading the flow state per raw item. -/
   flowGen : Nat := 0
@@ -799,6 +875,69 @@ private def listingVal (v : String) : String :=
   else v
 
 public abbrev EM := StateM ESt
+
+/-- **A TeX group** (TeXbook ch. 24): whatever the group's body does, its
+end puts back the declaration state its start held, then replays the global
+assignments logged inside. When the palette in force at the end differs from
+the restored one, the restored palette rides one `.setPalette` placed after
+the group, so both backends read the epoch the state holds; `flowGen` moves
+so the block spine re-reads the state. `base` is the palette a `current` of
+`none` stands for. -/
+@[expose] public def texGroup (base : Palette) (act : EM α) : EM (α × Array Block) := fun st =>
+  let (a, done) := act st
+  let scope := st.scope.restore base done.scope
+  let restored := scope.palette.current.getD base
+  let epoch := if (done.scope.palette.current.getD base).sameAs restored then #[]
+    else #[Block.setPalette restored]
+  ((a, epoch), { done with scope := scope, flowGen := done.flowGen + 1 })
+
+/-- A group's end restores the state its start held with the global
+assignments logged inside replayed over it, whatever its body did. -/
+public theorem texGroup_scope_exact (base : Palette) (act : EM α) (st : ESt) :
+    ((texGroup base act).run st).2.scope = st.scope.restore base (act.run st).2.scope := rfl
+
+/-- **With no global assignment inside, a group's end is the identity on the
+declaration state**: the state after it equals the state before it. -/
+public theorem texGroup_scope_id (base : Palette) (act : EM α) (st : ESt)
+    (hglobal : (act.run st).2.scope.globals = st.scope.globals) :
+    ((texGroup base act).run st).2.scope = st.scope := by
+  rw [texGroup_scope_exact]
+  exact GroupScope.restore_id base st.scope _ hglobal
+
+/-- A group passes its global assignments on: the log after it is its body's. -/
+public theorem texGroup_globals_exact (base : Palette) (act : EM α) (st : ESt) :
+    ((texGroup base act).run st).2.scope.globals = (act.run st).2.scope.globals := rfl
+
+/-- The epoch a group's end places is exactly the restored palette, when the
+palette its body closed with resolves differently, and nothing otherwise. -/
+public theorem texGroup_epoch_exact (base : Palette) (act : EM α) (st : ESt) :
+    ((texGroup base act).run st).1.2 =
+      let restored := (st.scope.restore base (act.run st).2.scope).palette.current.getD base
+      if ((act.run st).2.scope.palette.current.getD base).sameAs restored then #[]
+      else #[Block.setPalette restored] := rfl
+
+/-- An inline group's end: the same restore, with no epoch — inline content
+writes no palette and no block can stand in it, so only the URL face can
+have moved. -/
+@[expose] public def inlineGroup (base : Palette) (act : EM α) : EM α := fun st =>
+  let (a, done) := act st
+  (a, { done with scope := st.scope.restore base done.scope })
+
+/-- An inline group's end restores the state its start held, as a block
+group's does. -/
+public theorem inlineGroup_scope_exact (base : Palette) (act : EM α) (st : ESt) :
+    ((inlineGroup base act).run st).2.scope = st.scope.restore base (act.run st).2.scope := rfl
+
+/-- An inline group around a value that touches no state is that value. -/
+public theorem inlineGroup_pure (base : Palette) (x : α) :
+    inlineGroup base (pure x : EM α) = pure x := by
+  funext st
+  show (x, { st with scope := st.scope.restore base st.scope }) = (x, st)
+  rw [GroupScope.restore_id base st.scope st.scope rfl]
+
+/-- Log a global assignment, for every enclosing group's end to replay. -/
+private def logGlobal (w : GlobalWrite) : EM Unit :=
+  modify fun st => { st with scope := { st.scope with globals := st.scope.globals.push w } }
 
 private def setFrameSourceBase (base : Option Nat) : EM Unit :=
   modify fun st => { st with spans := { st.spans with
@@ -1471,7 +1610,7 @@ the block-walk knot so the arm inside costs it one call. A switch back to
 the main language clears the attribute rather than tagging redundantly. -/
 private def flowLangUpdate (ctx : Ctx) (marker : String) (st : ESt) : ESt :=
   let tag := (marker.drop "@lang:".length).toString
-  { st with flowLang := if tag == ctx.locale.tag then none else some tag }
+  { st with scope := { st.scope with lang := if tag == ctx.locale.tag then none else some tag } }
 
 /-- A paragraph under the flow language carries the attribute
 (`langWrap_text`: the census is untouched). -/
@@ -4379,6 +4518,8 @@ This is the only elaboration door for model syntax; callers differ only in
 how an unresolved named expression is reported. -/
 private def readColor (ctx : Ctx) (pal : Palette) (model : Option String)
     (src : String) (pos : Pos) : EM ColorRead := do
+  if model.isNone && src == Compat.normalInkSource then
+    return .resolved (Ir.Design.ofPalette ctx.basePalette).fg none
   let label := match model with
     | some m => s!"{m.trimAscii.toString}({src.trimAscii.toString})"
     | none => src.trimAscii.toString
@@ -4634,6 +4775,7 @@ paragraph of its own, the rendered subset draws it")
 seal pictureOptEntries splitPictureAlt subsetPicture routePicture inlinePicture
 seal secFmtOfBody applySecFmt applyCounter counterCtrl counterArm runInHead
 seal theCounterLevel? sectionLevel
+seal inlineGroup
 
 mutual
 /-- A pure declaration chain: an inline that is nothing but nested style
@@ -4779,7 +4921,7 @@ private def elabUnknownArgs (ctx : Ctx) (raws : Array Raw) (j : Nat) (count : Na
       let acc := flushText acc (if count > 0 then " " else "")
       have hw : rawWeightList body.toList < sliceWeight raws j :=
         body_lt_slice hj (by simp only [rawWeight]; omega) (Nat.le_refl j)
-      let inner ← elabInlinesCore ctx body
+      let inner ← inlineGroup ctx.palette (elabInlinesCore ctx body)
       let j2 := skipSpaces raws (j + 1)
       have hj2ge := skipSpaces_ge raws (j + 1)
       have hadv : sliceWeight raws j2 < sliceWeight raws j :=
@@ -4853,7 +4995,7 @@ private def elabInlinesFrom (ctx : Ctx) (raws : Array Raw) (i : Nat)
       have hw : rawWeightList body.toList < sliceWeight raws i :=
         body_lt_slice' h (by rw [hr]; simp only [rawWeight]; omega)
       let acc := flushText acc sb
-      let inner ← elabInlinesCore ctx body
+      let inner ← inlineGroup ctx.palette (elabInlinesCore ctx body)
       elabInlinesFrom ctx raws (i + 1) (acc ++ inner) ""
     | .env name body pos =>
       have hw : rawWeightList body.toList < sliceWeight raws i :=
@@ -5366,8 +5508,8 @@ no extent is reserved for it" pos
         else if name == "urlstyle" then
           -- url.sty's face selector for `\url`/`\nolinkurl`: four values,
           -- `tt`/`rm`/`sf` naming a family and `same` the running face.
-          -- Flow scope, as `\centering` and `\palette` are: it applies to
-          -- the URLs after it, with no brace revert.
+          -- It applies to the URLs after it; a group's end puts the face
+          -- its start held back (`texGroup`, `inlineGroup`).
           let j := skipSpaces raws (i + 1)
           have hjge := skipSpaces_ge raws (i + 1)
           match hj : raws[j]? with
@@ -5375,7 +5517,7 @@ no extent is reserved for it" pos
             have hjlt := getElem?_lt hj
             let v := (Parse.rawSrc vRaw).trimAscii.toString
             match urlStyleFamily? v with
-            | some fam => modify fun st => { st with urlFamily := fam }
+            | some fam => modify fun st => { st with scope := { st.scope with urlFamily := fam } }
             | none =>
               warnOnce ctx ("ctrl:urlstyle:" ++ v) .W0104
                 s!"'\\urlstyle\{{v}}' names no URL face; skipped" pos
@@ -5405,7 +5547,7 @@ no extent is reserved for it" pos
           -- document had lost.
           let j := skipSpaces raws (i + 1)
           have hjge := skipSpaces_ge raws (i + 1)
-          let fam := (← get).urlFamily
+          let fam := (← get).scope.urlFamily
           match hj : raws[j]? with
           | some (.group urlRaw _) =>
             have hjlt := getElem?_lt hj
@@ -5578,9 +5720,14 @@ private def elabInlinesCtrl2 (ctx : Ctx) (raws : Array Raw) (i : Nat)
     -- With a group, that group is the argument: `\primary{Alex}` means
     -- colour Alex, which is what it looks like. Without one it is a
     -- declaration colouring the rest of the group, as `\bfseries` does.
+    -- `\color{c}` took its one argument already, so a group after it is
+    -- the declaration's content, not an argument.
     recordColorSpan ctx source c cssName.isSome pos
-    let j := skipSpaces raws (i + 1)
-    have hjge := skipSpaces_ge raws (i + 1)
+    let j := if inkMarker then raws.size else skipSpaces raws (i + 1)
+    have hjge : i + 1 ≤ j := by
+      by_cases hk : inkMarker
+      · simp only [j, hk, ↓reduceIte]; omega
+      · simp only [j, hk, Bool.false_eq_true, ↓reduceIte]; exact skipSpaces_ge raws (i + 1)
     match hj : raws[j]? with
     | some (.group body _) =>
       have hjlt := getElem?_lt hj
@@ -6015,6 +6162,7 @@ unseal refCtrlForm? refFormNeedsKind
 unseal secFmtOfBody applySecFmt applyCounter counterCtrl counterArm runInHead
 unseal pictureOptEntries splitPictureAlt subsetPicture routePicture inlinePicture
 unseal theCounterLevel? sectionLevel
+unseal inlineGroup
 
 /-- Input-side resolver misses for the ordinary recovery arm. This checks
 registries and declared context, never the result of elaborating the call.
@@ -6194,7 +6342,7 @@ private theorem elabUnknownArgs_last_group_exact (ctx : Ctx) (raws : Array Raw)
     (hend : raws.size ≤ j + 1) :
     elabUnknownArgs ctx raws j 0 acc sb spaceAfter =
       (do
-        let inner ← elabInlines ctx body
+        let inner ← inlineGroup ctx.palette (elabInlines ctx body)
         pure (flushText acc sb ++ inner, "", ⟨j + 1, by omega⟩, 1, false)) := by
   have hs : skipSpaces raws (j + 1) = j + 1 := by
     rw [skipSpaces]
@@ -6268,13 +6416,13 @@ private theorem elabUnknownCtrl_option_run_exact (file name w kept : String)
       pure (flushText acc sb ++ #[sourceInline {file} {col := 9} (.text kept)].map (mapSmartText none),
         "", ⟨5, by omega⟩, 1, false) := by
     rw [elabUnknownArgs_last_group_exact _ _ _ _ _ _ _ _ rfl (by simp [xs]),
-      elabInlines_word_exact file kept {col := 9} rfl]
+      elabInlines_word_exact file kept {col := 9} rfl, inlineGroup_pure]
     simp only [pure_bind]
   have ay : elabUnknownArgs {file} ys 1 0 acc sb false =
       pure (flushText acc sb ++ #[sourceInline {file} {col := 9} (.text kept)].map (mapSmartText none),
         "", ⟨2, by omega⟩, 1, false) := by
     rw [elabUnknownArgs_last_group_exact _ _ _ _ _ _ _ _ rfl (by simp [ys]),
-      elabInlines_word_exact file kept {col := 9} rfl]
+      elabInlines_word_exact file kept {col := 9} rfl, inlineGroup_pure]
     simp only [pure_bind]
   have ax0 : elabUnknownArgs {file} xs
       (skipSpaces xs (skipOptionRuns xs (skipStar xs (skipSpaces xs 1)) {}).1)
@@ -6717,7 +6865,17 @@ private def isDeclaration (ctx : Ctx) : Raw → Bool
   | .ctrl n _ =>
     n == "centering" || n.startsWith Compat.fontSizeMark || (Ir.raggedSideOf? n).isSome
       || (declStyles.lookup n).isSome || (ctx.palette.find? n).isSome
+      || n.startsWith "@ink:" || n.startsWith "@lang:"
   | _ => false
+
+/-- A palette name read with its argument colours the argument alone:
+`\accent{word}` is content, bare `\accent` a declaration. -/
+private def argFree (ctx : Ctx) (r : Raw) (rest : List Raw) : Bool :=
+  match r with
+  | .ctrl n _ =>
+    !((ctx.palette.find? n).isSome &&
+      (rest.dropWhile (· matches .space)).head? matches some (.group _ _))
+  | _ => true
 
 /-- A named font declaration or a palette name used without an argument.
 The paragraph and list-prefix readers share this lexical distinction:
@@ -6754,40 +6912,102 @@ private def isDeclBlock (ctx : Ctx) (n : String) (raws : Array Raw) (i : Nat)
   (cur.all isSpaceOrPar && n.startsWith Compat.fontSizeMark) ||
     (declBlockOf ctx n raws i cur).isSome
 
+/-- A font size read whole, needing no size around it: no `em` or `ex` part. -/
+private def absoluteSize : Dim.Affine Dim.Measure → Bool
+  | .lit g => g.width.em == 0 && g.width.ex == 0
+  | _ => false
+
+/-- The axis a style declaration sets, where a later one on the same axis
+replaces it: the size (named, or a `\fontsize` read whole), the family,
+the series, the upright/italic shape, small caps — a separate axis since
+LaTeX 2020, so `\scshape` keeps italic — and the language. `\em` turns the
+slant and `\normalfont` resets several axes, which `pushDecl` reads apart,
+and a `\fontsize` reading the size around it (`1.2em`) compounds, so none
+of the three has an axis. -/
+private def styleAxis : Ir.Style → Option Nat
+  | .size _ => some 0
+  | .fontSize size _ => if absoluteSize size then some 0 else none
+  | .mono | .sans | .roman | .family _ => some 1
+  | .bold | .medium | .series _ => some 2
+  | .italic | .upright => some 3
+  | .smallcaps => some 5
+  | .lang _ => some 4
+  | .emph | .normal => none
+
+/-- Does a declaration set the slant outright, whatever came before it, so
+no `\em` before it still turns? -/
+private def setsSlant : Ir.Decl → Bool
+  | .style .italic | .style .upright | .style .normal => true
+  | _ => false
+
+/-- The `\em` turn standing after the innermost declaration that sets the
+slant, taken out — two turns with nothing setting the slant between them
+cancel. The list is innermost first. -/
+private def dropEmTurn : List Ir.Decl → Option (List Ir.Decl)
+  | [] => none
+  | e :: rest =>
+    if e == .style .emph then some rest
+    else if setsSlant e then none
+    else (dropEmTurn rest).map (e :: ·)
+
+/-- Push a declaration onto a scope's list, dropping what it overrides: an
+earlier one on its axis, every `\em` turn before a declaration that sets the
+slant, everything but size and language before `\normalfont`, and the turn a
+second `\em` cancels. The inner one wins anyway, so what is dropped wrapped
+nothing, and the list keeps one declaration per axis, one `\normalfont`,
+one `\em` turn and one colour however many declarations a scope makes. -/
+private def pushDecl (decls : List Ir.Decl) (d : Ir.Decl) : List Ir.Decl :=
+  if d == .style .emph then
+    match dropEmTurn decls.reverse with
+    | some rest => rest.reverse
+    | none => decls ++ [d]
+  else
+  let replaced : Ir.Decl → Bool := match d with
+    | .style .normal => fun e => match e with
+      | .style t => t == .normal || t == .emph || (styleAxis t).any fun a => a != 0 && a != 4
+      | .color .. => false
+    | .style s => match styleAxis s with
+      | some a => fun e => match e with
+        | .style t => styleAxis t == some a || (a == 3 && t == .emph)
+        | .color .. => false
+      | none => fun _ => false
+    | .color .. => fun e => e matches .color ..
+  decls.filter (!replaced ·) ++ [d]
+
 /-- Enter the rest of a declaration's scope: the declaration joins the open
 ones innermost (unchanged for `\centering` and the ragged pair). Returns
 the list to restore on leaving. -/
 private def enterBlockDecl (ctx : Ctx) (n : String) (raws : Array Raw) (i : Nat)
     (cur : Array Raw) (pos : Pos) : EM (List Ir.Decl) := do
-  let saved := (← get).blockDecls
+  let saved := (← get).scope.blockDecls
   if n.startsWith Compat.fontSizeMark then
     if let some style ← readFontSizeStyle ctx n pos then
-      modify fun st => { st with blockDecls := saved ++ [.style style] }
+      modify fun st => { st with scope := { st.scope with blockDecls := pushDecl saved (.style style) } }
   else
     match declBlockOf ctx n raws i cur with
-    | some d => modify fun st => { st with blockDecls := saved ++ [d] }
+    | some d => modify fun st => { st with scope := { st.scope with blockDecls := pushDecl saved d } }
     | none => pure ()
   return saved
 
 /-- Leave the scope: restore what `enterBlockDecl` saved. -/
 private def leaveBlockDecl (saved : List Ir.Decl) : EM Unit :=
-  modify fun st => { st with blockDecls := saved }
+  modify fun st => { st with scope := { st.scope with blockDecls := saved } }
 
 /-- Elaborate under additional declarations, then restore the caller's
 declarations while retaining every other effect. `Ir.wrapDecls_text` is the
 IR conservation law; this operation supplies its scoped declaration input. -/
 public def withBlockDecls (decls : List Ir.Decl) (action : EM α) : EM α :=
   fun st =>
-    let (value, done) := action { st with blockDecls := st.blockDecls ++ decls }
-    (value, { done with blockDecls := st.blockDecls })
+    let (value, done) := action { st with scope := { st.scope with blockDecls := st.scope.blockDecls ++ decls } }
+    (value, { done with scope := { done.scope with blockDecls := st.scope.blockDecls } })
 
 /-- Declaration scope restores exactly that field for every elaboration
 action, including an action that changes declarations itself. Its result
 and all other state effects are preserved. -/
 public theorem withBlockDecls_exact (decls : List Ir.Decl) (action : EM α) (st : ESt) :
     withBlockDecls decls action st =
-      let (value, done) := action { st with blockDecls := st.blockDecls ++ decls }
-      (value, { done with blockDecls := st.blockDecls }) := by rfl
+      let (value, done) := action { st with scope := { st.scope with blockDecls := st.scope.blockDecls ++ decls } }
+      (value, { done with scope := { done.scope with blockDecls := st.scope.blockDecls } }) := by rfl
 
 /-- Nested declaration scopes compose in source order for every action;
 restoration cannot discard effects outside the declaration field. -/
@@ -6796,7 +7016,7 @@ public theorem withBlockDecls_compose_exact (outer inner : List Ir.Decl) (action
       withBlockDecls (outer ++ inner) action := by
   funext st
   simp only [withBlockDecls, List.append_assoc]
-  cases action { st with blockDecls := st.blockDecls ++ (outer ++ inner) }
+  cases action { st with scope := { st.scope with blockDecls := st.scope.blockDecls ++ (outer ++ inner) } }
   rfl
 
 /-- Declaration alignment is shared by paragraph and list scopes. -/
@@ -6816,7 +7036,7 @@ private def wrapDeclAlign (align : Option Ir.HAlign) (inner : Array Block) :
 /-- The declaration arm's whole effect but the recursion: the elaborated
 rest of the scope, centred or ragged as one block wrapper (an empty scope
 wraps nothing); a style or colour declaration already reached every
-region inside through `ctx.blockDecls`. -/
+region inside through `scope.blockDecls`. -/
 private def declScopeWrap (n : String) (inner : Array Block) : Array Block :=
   wrapDeclAlign (declAlignOf n) inner
 
@@ -6845,17 +7065,32 @@ private def listScopeCtrl (ctx : Ctx) (raws : Array Raw) (i : Nat)
   return (namedScopeDecl ctx name raws i).map fun d =>
     { scope with decls := scope.decls ++ [d] }
 
+/-- A `\color` in force from here: the palette carrying its ink, and the
+scope's colour declarations dropped, since one ink stands at a time and the
+last declared wins over a palette name declared before it. -/
+private def setInk (pal : Palette) (st : ESt) : ESt :=
+  { st with
+    scope := { st.scope with
+      palette := { st.scope.palette with current := some pal }
+      blockDecls := st.scope.blockDecls.filter (!· matches .color ..) }
+    flowGen := st.flowGen + 1 }
+
 /-- The block form's whole effect but the recursion: resolve the explicit
 ink source through the typed colour door, declare the flow ink, and bump the
 flow state. -/
 private def inkFlowDecl (ctx : Ctx) (marker : String) (pos : Pos) :
     EM (Option Ir.Palette) := do
   let source := (marker.drop "@ink:".length).toString
+  if source == Compat.normalInkSource then
+    -- `\normalcolor` between blocks: the opening ink back, declared or
+    -- defaulted as it opened.
+    let pal := ctx.palette.restore ctx.basePalette "fg"
+    modify (setInk pal)
+    return some pal
   match ← readColor ctx ctx.palette none source pos with
   | .resolved c _ =>
     let pal := ctx.palette.declare "fg" c
-    modify fun st => { st with flowPalette := { st.flowPalette with current := some pal }
-                               flowGen := st.flowGen + 1 }
+    modify (setInk pal)
     return some pal
   | .missing =>
     warnPaletteMiss ctx source pos
@@ -6867,17 +7102,30 @@ private def warnPageColorMiss (ctx : Ctx) (source : String) (pos : Pos) : EM Uni
     s!"'{source}' is not in the palette; the page ground is unchanged" pos
     (help := "declare the colour before using it as a page ground")
 
+/-- `\pagecolor` sets the page ground globally (xcolor manual §2.6.4: it
+holds for the current and all following pages, whatever group it stands
+in), so the entry is logged for every enclosing group's end to replay. -/
 private def pageGroundDecl (ctx : Ctx) (marker : String) (pos : Pos) :
     EM (Option Ir.Palette) := do
   let source := (marker.drop Compat.pageColorMarkPrefix.length).toString
   match ← readColor ctx ctx.palette none source pos with
-  | .resolved c _ => return some (ctx.palette.declare "bg" c)
+  | .resolved c _ =>
+    logGlobal (.entry "bg" (some c) false false)
+    return some (ctx.palette.declare "bg" c)
   | .missing =>
     warnPageColorMiss ctx source pos
     return none
   | .rejected => return none
 
-private def isParRaw : Raw → Bool
+/-- `\nopagecolor`: the opening ground back, every other role kept, as
+global as the `\pagecolor` it undoes. -/
+private def pageGroundReset (ctx : Ctx) : EM Ir.Palette := do
+  logGlobal (.entry "bg" (ctx.basePalette.find? "bg")
+    (ctx.basePalette.decorative.contains "bg") false)
+  return ctx.palette.restore ctx.basePalette "bg"
+
+/-- A paragraph end: a blank line, or `\par` spelled. -/
+public def isParRaw : Raw → Bool
   | .par _ => true
   | .ctrl "par" _ => true
   | _ => false
@@ -6958,8 +7206,13 @@ private theorem rawPars_decl {ctx : Ctx} {r : Raw}
     · rfl
   | _ => simp_all [isDeclaration]
 
+/-- A raw that makes the brace group it stands in a block scope: an
+alignment declaration, or a declaration only the block walk reads — a page
+ground (`\pagecolor`, `\nopagecolor`) or a Beamer colour. -/
 private def isCenteringRaw : Raw → Bool
   | .ctrl n _ => n == "centering" || (Ir.raggedSideOf? n).isSome
+      || n.startsWith Compat.pageColorMarkPrefix || n == Compat.pageColorResetMark
+      || n == BeamerColor.marker || n == BeamerColor.starMarker
   | _ => false
 
 /-- Is a group here an argument? It is when, looking back over spaces and
@@ -6975,6 +7228,17 @@ private def isArgument (cur : Array Raw) : Bool := Id.run do
     | some (.sym ']' _) => return true
     | _ => return false
   return false
+
+/-- The declarations a group split at a paragraph end re-applies to the parts
+after it: a declaration standing in it (`isDeclaration`, its argument
+aside), and `\urlstyle` with its face, whose group holds no paragraph end. -/
+private def carryDecl (ctx : Ctx) (r : Raw) (rest : List Raw) (decls : Array Raw) :
+    Array Raw :=
+  if isDeclaration ctx r && argFree ctx r rest then decls.push r
+  else match r, (rest.dropWhile (· matches .space)).head? with
+    | .ctrl "urlstyle" _, some (.group b gp) =>
+      if rawParsList b.toList == 0 then (decls.push r).push (.group b gp) else decls
+    | _, _ => decls
 
 /-- `\par` ends a paragraph wherever it stands, a scope group included:
 `{A \par B}` is `{A}\par{decls B}`, the declarations active at the break
@@ -6999,8 +7263,7 @@ private def splitAtParsGo (ctx : Ctx) (pos : Pos) :
           else out).push r)
         decls decls
     else
-      splitAtParsGo ctx pos rest out
-        (if isDeclaration ctx r then decls.push r else decls) (pre.push r)
+      splitAtParsGo ctx pos rest out (carryDecl ctx r rest decls) (pre.push r)
 
 private def splitAtPars (ctx : Ctx) (body : Array Raw) (pos : Pos) : Array Raw :=
   splitAtParsGo ctx pos body.toList #[] #[] #[]
@@ -7066,15 +7329,23 @@ private theorem splitAtParsGo_pars (ctx : Ctx) (pos : Pos) (l : List Raw)
       simp only [nestedParsList]
       omega
     · rename_i hpar
-      have hd' : rawParsList (if isDeclaration ctx r then decls.push r
-          else decls).toList = 0 := by
+      have hd' : rawParsList (carryDecl ctx r rest decls).toList = 0 := by
+        unfold carryDecl
         split
         · rename_i hdecl
-          rw [rawParsList_push, rawPars_decl (by simpa using hpar) hdecl]
+          rw [rawParsList_push,
+            rawPars_decl (by simpa using hpar) ((Bool.and_eq_true _ _).mp hdecl).1]
           omega
-        · exact hd
-      have h1 := ih out (if isDeclaration ctx r then decls.push r else decls)
-        (pre.push r) hd'
+        · split
+          · rename_i b gp _ _
+            split
+            · rename_i hb
+              rw [rawParsList_push, rawParsList_push]
+              simp only [rawPars, beq_iff_eq] at hb ⊢
+              simp [hb, hd]
+            · exact hd
+          · exact hd
+      have h1 := ih out (carryDecl ctx r rest decls) (pre.push r) hd'
       have h2 : rawParsList (pre.push r).toList
           = rawParsList pre.toList + rawPars r := rawParsList_push pre r
       have h3 := rawPars_split r
@@ -7255,7 +7526,7 @@ private def finishPara (inlines : Array Inline) : EM (Option Block) := do
   if inlines.isEmpty then return none
   -- The declarations in force where the paragraph ends set its step
   -- (`Ir.paraAt`): LaTeX reads `\baselineskip` at `\par`.
-  return some (paraUnder (← get).flowLang (Ir.paraAt (← get).blockDecls inlines))
+  return some (paraUnder (← get).scope.lang (Ir.paraAt (← get).scope.blockDecls inlines))
 
 private def mkPara (ctx : Ctx) (cur : Array Raw) : EM (Option Block) := do
   let mut cur := cur
@@ -7583,8 +7854,8 @@ private def parsePaletteOpts (ctx : Ctx) (src : String) (pos : Pos) :
 unresolved expressions only once declarations have settled. -/
 private def resolveBeamerColors (ctx : Ctx) (pal : Palette)
     (settle : Bool := false) : EM Palette := do
-  let (colors, pal, issues) := (← get).flowPalette.resolve pal
-  modify fun st => { st with flowPalette := colors }
+  let (colors, pal, issues) := (← get).scope.palette.resolve pal
+  modify fun st => { st with scope := { st.scope with palette := colors } }
   for (key, c, span) in colors.origins do
     recordColorDeclaration key c span
   if settle then
@@ -7598,8 +7869,8 @@ private def resolveBeamerColors (ctx : Ctx) (pal : Palette)
 private def applyBeamerColor (ctx : Ctx) (pal : Palette) (name : String)
     (star : Bool) (src : String) (pos : Pos) : EM Palette := do
   let name := name.trimAscii.toString
-  let (colors, unsupported) := (← get).flowPalette.declare name star src (ctx.sourceSpan pos)
-  modify fun st => { st with flowPalette := colors }
+  let (colors, unsupported) := (← get).scope.palette.declare name star src (ctx.sourceSpan pos)
+  modify fun st => { st with scope := { st.scope with palette := colors } }
   for key in unsupported do
     warnOnce ctx ("beamercolor:key:" ++ name ++ ":" ++ key) .W0104
       s!"'\\setbeamercolor' key '{key}' on '{name}' is unsupported; the key is dropped" pos
@@ -7625,7 +7896,7 @@ private def beamerColorArm (ctx : Ctx) (raws : Array Raw) (i : Nat)
   | some (.group elem _), some (.group body _) =>
     let pal ← applyBeamerColor ctx ctx.palette (rawSrc elem) star (rawSrc body) pos
     let pal ← resolveBeamerColors ctx pal true
-    modify fun st => { st with flowPalette := { st.flowPalette with current := some pal },
+    modify fun st => { st with scope := { st.scope with palette := { st.scope.palette with current := some pal } },
                                flowGen := st.flowGen + 1 }
     return ⟨(some pal, j2 + 1), by omega⟩
   | _, _ =>
@@ -7635,7 +7906,7 @@ private def beamerColorArm (ctx : Ctx) (raws : Array Raw) (i : Nat)
 /-- A named element can be a parent even when it has no paint site of its
 own. Refuse it only when no supported site resolves through it. -/
 private def finishBeamerColors (ctx : Ctx) : EM Unit := do
-  let colors := (← get).flowPalette
+  let colors := (← get).scope.palette
   for e in colors.elements do
     -- premise: beamerReachChecks — under both colour themes an element is
     -- named here exactly when declaring it leaves both artifacts unchanged:
@@ -7670,6 +7941,7 @@ private def applyPaletteEntry (ctx : Ctx) (pal : Palette) (key valueSrc entry : 
     | some n =>
       if 1 ≤ n && n ≤ 99 then
         pal := { pal with coveredFraction := some n }
+        logGlobal (.covered (some n))
         noteDeclared ctx "palette" "covered"
       else
         diag ctx .E0332 s!"covered fraction must be 1–99 percent, got '{valueSrc}'" pos
@@ -7682,7 +7954,10 @@ private def applyPaletteEntry (ctx : Ctx) (pal : Palette) (key valueSrc entry : 
       noteDeclared ctx "palette" key
       recordColorDeclaration key c (ctx.sourceSpan pos)
       unless aliasOnly do
-        modify fun st => { st with flowPalette := st.flowPalette.native key c }
+        modify fun st => { st with scope := { st.scope with palette := st.scope.palette.native key c } }
+        -- A body `\palette` keeps its flow scope past every group's end:
+        -- a global assignment (`GlobalWrite`).
+        logGlobal (.entry key (some c) decorative true)
       return pal.declare key c decorative
     match ← readColor ctx pal none valueSrc pos with
     | .resolved c _ => pal := ← put pal c
@@ -8948,7 +9223,7 @@ no-declaration path one Nat comparison. Named so the refresh provably
 leaves every measure component alone (`flowCtx_measure`). -/
 private def flowCtx (ctx : Ctx) (st : ESt) (gen : Nat) : Ctx :=
   if st.flowGen != gen then
-    { ctx with palette := st.flowPalette.current.getD ctx.palette
+    { ctx with palette := st.scope.palette.current.getD ctx.palette
                tokens := st.flowTokens.getD ctx.tokens }
   else ctx
 
@@ -9114,7 +9389,7 @@ private def tabularArm (ctx : Ctx) (n : String) (body : Array Raw)
     if h' : j < body.size then
       match body[j] with
       | .ctrl "\\" bpos =>
-        cells := cells.push (Ir.paraAt (← get).blockDecls (← elabInlines ctx (trimRawEdges cellRaws)))
+        cells := cells.push (Ir.paraAt (← get).scope.blockDecls (← elabInlines ctx (trimRawEdges cellRaws)))
         (spans, cells) := closeSpan spans cells rows.size spanHere
         spanHere := none
         cellRaws := #[]
@@ -9136,7 +9411,7 @@ private def tabularArm (ctx : Ctx) (n : String) (body : Array Raw)
             j := j'
         | _ => pure ()
       | .sym '&' _ =>
-        cells := cells.push (Ir.paraAt (← get).blockDecls (← elabInlines ctx (trimRawEdges cellRaws)))
+        cells := cells.push (Ir.paraAt (← get).scope.blockDecls (← elabInlines ctx (trimRawEdges cellRaws)))
         (spans, cells) := closeSpan spans cells rows.size spanHere
         spanHere := none
         cellRaws := #[]
@@ -9221,7 +9496,7 @@ private def tabularArm (ctx : Ctx) (n : String) (body : Array Raw)
         j := j + 1
     else break
   if cellRaws.any (!isSpaceOrPar ·) || !cells.isEmpty then
-    cells := cells.push (Ir.paraAt (← get).blockDecls (← elabInlines ctx (trimRawEdges cellRaws)))
+    cells := cells.push (Ir.paraAt (← get).scope.blockDecls (← elabInlines ctx (trimRawEdges cellRaws)))
     (spans, cells) := closeSpan spans cells rows.size spanHere
     rows := rows.push cells
   -- Rectangularity: every walk below trusts `cols.size`.
@@ -9283,7 +9558,7 @@ private def listingBlock (ctx : Ctx) (env s : String) (pos : Pos) : EM Block := 
   -- (`Ir.Surface.listing`): LaTeX's defaults on a tex document, and on a
   -- markdown one, which can declare none, its smaller wrapping code.
   let base := ctx.surface.listing
-  let inherited := (← get).blockDecls.foldl (fun size decl => match decl with
+  let inherited := (← get).scope.blockDecls.foldl (fun size decl => match decl with
     | .style s@(.size _) | .style s@(.fontSize _ _) => s
     | _ => size) base.fontSize
   let sourceStart := ("\\begin{" ++ env ++ "}").foldl
@@ -9502,7 +9777,7 @@ private def qedHereTag (ctx : Ctx) (p : Pos) : EM (Option (Array Inline)) := do
   if (← get).ctr.thm.proofs == 0 then return none
   let mark ← qedMark ctx p
   modify fun st => { st with ctr := { st.ctr with thm := { st.ctr.thm with qedPlaced := true } } }
-  return some (Ir.wrapDecls (← get).blockDecls mark)
+  return some (Ir.wrapDecls (← get).scope.blockDecls mark)
 
 /-- The heading numbers a counter numbered within heading level `within`
 was stepped under, the appendix mark included, as one key: the counter
@@ -9870,9 +10145,115 @@ private def pendingParaInput : List Raw → Bool
 termination_by raws => rawWeightList raws
 decreasing_by all_goals simp only [rawWeightList, rawWeight] <;> omega
 
-/-- Flush the open paragraph, if any, and settle owners that began inside
-it. A palette or other state-only block is not a paragraph: only this
-boundary advances a pending owner's start. -/
+/-- Does a control word standing at a paragraph's top level stay in force past
+the paragraph's end? A colour, a font, series, size or language declaration,
+a palette name read bare: a paragraph end closes no group (TeXbook ch. 24), so
+each holds for what follows in its group. `\ttfamily` keeps its inline
+reading, as between blocks (`declBlockOf`). -/
+private def carriesPar (ctx : Ctx) (n : String) : Bool :=
+  n != "ttfamily" &&
+    (n.startsWith "@ink:" || n.startsWith Compat.fontSizeMark || (declStyleOf n).isSome
+      || (ctx.palette.resolve n).isSome)
+
+/-- `readFontSizeStyle` without its diagnostics: the paragraph's own reading
+already named a size it could not read. -/
+private def fontSizeStyle? (ctx : Ctx) (name : String) : Option Style :=
+  let payload := (name.drop Compat.fontSizeMark.length).toString
+  match payload.splitOn Compat.fontSizeSep with
+  | [sizeSrc, leadingSrc] =>
+    match fontDim ctx sizeSrc, fontDim ctx leadingSrc with
+    | .ok size, .ok leading => some (.fontSize size leading)
+    | _, _ => none
+  | _ => none
+
+/-- One carried declaration, applied as its reading between blocks applies
+it: a colour as the next palette epoch over `pal`, the palette in force; a
+language switch as the flow's; a style, size or bare palette name as the
+scope's declaration. The paragraph's own reading named whatever does not
+read, so this one is silent. -/
+private def carryOne (ctx : Ctx) (pal : Palette) (cur : Array Raw) (i : Nat) (n : String)
+    (blocks : Array Block) : EM (Array Block × Palette) := do
+  if n.startsWith "@ink:" then
+    let source := (n.drop "@ink:".length).toString
+    let ink := if source == Compat.normalInkSource then
+        some (pal.restore ctx.basePalette "fg")
+      else match pal.resolveSource none source with
+        | .ok (some c) => some (pal.declare "fg" c)
+        | _ => none
+    match ink with
+    | some p =>
+      modify (setInk p)
+      return (blocks.push (.setPalette p), p)
+    | none => return (blocks, pal)
+  else if n.startsWith "@lang:" then
+    modify (flowLangUpdate ctx n)
+    return (blocks, pal)
+  else
+    let decl := if n.startsWith Compat.fontSizeMark then (fontSizeStyle? ctx n).map .style
+      else namedScopeDecl ctx n cur i
+    match decl with
+    | some d =>
+      modify fun st => { st with scope := { st.scope with
+        blockDecls := pushDecl st.scope.blockDecls d } }
+    | none => pure ()
+    return (blocks, pal)
+
+/-- Every declaration a paragraph's text made at its top level, carried in
+order past its end (`carriesPar`), with the palette they leave in force. -/
+private def carryDeclsGo (ctx : Ctx) (cur : Array Raw) (i : Nat) :
+    List Raw → Array Block × Palette → EM (Array Block × Palette)
+  | [], acc => pure acc
+  | .ctrl n _ :: rest, (blocks, pal) =>
+    if carriesPar ctx n then do
+      let acc ← carryOne ctx pal cur i n blocks
+      carryDeclsGo ctx cur (i + 1) rest acc
+    else carryDeclsGo ctx cur (i + 1) rest (blocks, pal)
+  | _ :: rest, acc => carryDeclsGo ctx cur (i + 1) rest acc
+
+private def carryDecls (ctx : Ctx) (cur : Array Raw) (blocks : Array Block) :
+    EM (Array Block × Palette) :=
+  carryDeclsGo ctx cur 0 cur.toList (blocks, ctx.palette)
+
+/-- A paragraph holding no carried declaration carries nothing. -/
+private def quietRaw (ctx : Ctx) : Raw → Bool
+  | .ctrl n _ => !carriesPar ctx n
+  | _ => true
+
+private theorem carryDeclsGo_quiet (ctx : Ctx) (cur : Array Raw) :
+    ∀ (i : Nat) (rs : List Raw) (blocks : Array Block) (pal : Palette),
+      rs.all (quietRaw ctx) = true → carryDeclsGo ctx cur i rs (blocks, pal) = pure (blocks, pal)
+  | _, [], _, _, _ => rfl
+  | i, r :: rest, blocks, pal, h => by
+    simp only [List.all_cons, Bool.and_eq_true] at h
+    cases r with
+    | ctrl n p =>
+      have hq : carriesPar ctx n = false := by simpa [quietRaw] using h.1
+      simp only [carryDeclsGo, hq, Bool.false_eq_true, ↓reduceIte]
+      exact carryDeclsGo_quiet ctx cur (i + 1) rest blocks pal h.2
+    | _ =>
+      simp only [carryDeclsGo]
+      exact carryDeclsGo_quiet ctx cur (i + 1) rest blocks pal h.2
+
+private theorem carryDecls_quiet (ctx : Ctx) (cur : Array Raw)
+    (h : cur.toList.all (quietRaw ctx) = true) :
+    carryDecls ctx cur = fun blocks => pure (blocks, ctx.palette) :=
+  funext fun blocks => carryDeclsGo_quiet ctx cur 0 cur.toList blocks ctx.palette h
+
+/-- A name the recovery arm reads as unknown is no declaration a paragraph
+carries. -/
+private theorem carriesPar_recovers (ctx : Ctx) (name : String)
+    (hn : recoversInlineName ctx name = true) : carriesPar ctx name = false := by
+  simp only [recoversInlineName, Bool.and_eq_true, Bool.not_eq_true',
+    Option.isNone_iff_eq_none] at hn
+  simp only [carriesPar, hn, Option.isSome_none, Bool.or_self, Bool.and_false]
+
+private theorem carryDecls_empty (ctx : Ctx) (blocks : Array Block) :
+    carryDecls ctx #[] blocks = pure (blocks, ctx.palette) := rfl
+
+/-- Flush the open paragraph, if any, carry the declarations its text made
+past its end (`carryDecls`), and settle owners that began inside it. A
+palette or other state-only block is not a paragraph: only this boundary
+advances a pending owner's start. -/
 private def flushPara (ctx : Ctx) (blocks : Array Block) (cur : Array Raw) :
     EM (MCtx ctx × Array Block) := do
   let paraCtx := { ctx with macroRoles := { ctx.macroRoles with
@@ -9881,9 +10262,10 @@ private def flushPara (ctx : Ctx) (blocks : Array Block) (cur : Array Raw) :
   let blocks := match p with
     | some p => blocks.push p
     | none => blocks
+  let (blocks, pal) ← carryDecls ctx cur blocks
   let roles := ctx.macroRoles.blocks.map fun run =>
     if run.pendingPara then { run with start := blocks.size, pendingPara := false } else run
-  return (⟨{ ctx with macroRoles := { ctx.macroRoles with blocks := roles } },
+  return (⟨{ ctx with palette := pal, macroRoles := { ctx.macroRoles with blocks := roles } },
     rfl, rfl, rfl, rfl⟩, blocks)
 
 /-- A declaration or open overlay consumes the rest of the same source
@@ -9996,15 +10378,16 @@ private def flowStyleArm (ctx : Ctx) (n : String) (raws : Array Raw)
       return (⟨ctx, rfl, rfl, rfl, rfl⟩, ⟨start, Nat.le_refl _⟩, blocks, gen)
   let ⟨(pal?, j), hj⟩ : { t : Option Palette × Nat // start ≤ t.2 } ←
     if n.startsWith "@ink:" then do
-      -- xcolor's `\color` colours the enclosing flow (manual §2.6.4).
+      -- xcolor's `\color` colours the rest of its group (manual §2.6.4).
       -- Its `fg` declaration reaches design resolution and contrast,
-      -- just as a native palette does; nested flow has no brace revert.
+      -- just as a native palette does; the group's end restores it
+      -- (`texGroup`).
       pure ⟨(← inkFlowDecl ctx n pos, start), Nat.le_refl _⟩
     else if n.startsWith Compat.pageColorMarkPrefix then do
       pure ⟨(← pageGroundDecl ctx n pos, start), Nat.le_refl _⟩
-    else if n == Compat.pageColorResetMark then
+    else if n == Compat.pageColorResetMark then do
       -- Restore only the opening ground, preserving every other role.
-      pure ⟨(some (ctx.palette.restore ctx.basePalette "bg"), start), Nat.le_refl _⟩
+      pure ⟨(some (← pageGroundReset ctx), start), Nat.le_refl _⟩
     else if n == BeamerColor.marker || n == BeamerColor.starMarker then
       beamerColorArm ctx raws start (n == BeamerColor.starMarker) pos
     else do
@@ -10040,7 +10423,7 @@ private def flowStyleArm (ctx : Ctx) (n : String) (raws : Array Raw)
   if n == "palette" || n.startsWith Compat.pageColorMarkPrefix ||
       n == Compat.pageColorResetMark then
     if let some pal := pal? then
-      modify fun st => { st with flowPalette := { st.flowPalette with current := some pal },
+      modify fun st => { st with scope := { st.scope with palette := { st.scope.palette with current := some pal } },
                                  flowGen := st.flowGen + 1 }
   let currentGen := (← get).flowGen
   let nextGen := if n == "palette" && pal?.isNone then gen else currentGen
@@ -10087,7 +10470,7 @@ private def carrierOpening (raws : Array Raw) (i : Nat) (blocks : Array Block)
     | [] | .par _ :: _ => false
     | _ :: _ => true
   let inPar := opensOnText && ranOn && Ir.flushedText (blocks.size - 1) blocks
-  (inPar, !inPar && blocks.back?.any Ir.Block.leavesEndPe && !parPrecedes raws i)
+  (inPar, !inPar && Ir.lastLeavesEndPe blocks && !parPrecedes raws i)
 
 /-- A braced overlay's carrier, its group `body` at `raws[jg]`, stood in its
 paragraph (`carrierOpening`) and before the break after the group. Outside
@@ -10131,7 +10514,7 @@ paragraph precedes it, the block before it leaves `\@endpe` set
 line's `\par` ends it (ltlists.dtx `\@doendpe`), and the display then opens
 a paragraph of its own, on the empty line TeX sets after a paragraph. -/
 private def endPeAt (raws : Array Raw) (i : Nat) (inPar : Bool) (flushed : Array Block) : Bool :=
-  !inPar && (flushed.back?.map Ir.Block.leavesEndPe).getD false && !parPrecedes raws i
+  !inPar && Ir.lastLeavesEndPe flushed && !parPrecedes raws i
 
 /-- A display formula met between words, outside the knot: the open
 paragraph flushed, the display's own arm, and where the display at `i`
@@ -10347,16 +10730,25 @@ private def thmOpen (ctx : Ctx) (n : String) (body : Array Raw) (pos : Pos) :
         | none => definedOr ctx "proofname" pos (pure #[.text ctx.locale.proof])
       pure (#[.styled .italic (name ++ addPunct name), .text labelSep], false, true, .proof)
   if italic then
-    modify fun s => { s with blockDecls := st.blockDecls ++ [.style .italic] }
+    modify fun s => { s with scope := { s.scope with blockDecls := st.scope.blockDecls ++ [.style .italic] } }
   -- A proof pushes its QED (amsthm.sty `\pushQED{\qed}`): a `\qedhere` in
   -- it may set the mark.
   if qed then
     modify fun s => { s with ctr := { s.ctr with thm := { s.ctr.thm with
       proofs := s.ctr.thm.proofs + 1, qedPlaced := false } } }
-  return ({ head := Ir.wrapDecls st.blockDecls head, space, qed,
+  return ({ head := Ir.wrapDecls st.scope.blockDecls head, space, qed,
             qedDef := if qed then bodyQedDef? body else none,
             outerPlaced := st.ctr.thm.qedPlaced, target := st.refTarget,
-            decls := st.blockDecls }, k)
+            decls := st.scope.blockDecls }, k)
+
+/-- Run `q` on at the end of the last paragraph standing before any trailing
+epoch (state, never content), or set it as a paragraph of its own. -/
+private def appendLastPara (inner : Array Block) (q : Array Inline) : Array Block :=
+  let tail := (inner.toList.reverse.takeWhile fun b => b matches .setPalette _ | .setTokens _).length
+  let k := inner.size - tail
+  match k, inner[k - 1]? with
+  | j + 1, some (.para c) => inner.set! j (.para (c ++ q))
+  | _, _ => inner.push (.para q)
 
 /-- Close a theorem-like scope: restore what `thmOpen` changed, open the
 first paragraph with the head — or stand it alone when the body opens with
@@ -10370,7 +10762,7 @@ name. A `\qedhere` moves the mark (amsthm.sty `\setQED@elt` empties the
 stack): its text-mode run gets the mark here, and the end sets none. -/
 private def thmClose (ctx : Ctx) (n : String) (o : ThmOpen) (inner : Array Block)
     (pos : Pos) : EM (Array Block) := do
-  modify fun st => { st with refTarget := o.target, blockDecls := o.decls }
+  modify fun st => { st with refTarget := o.target, scope := { st.scope with blockDecls := o.decls } }
   let inner : Array Block := match inner[0]? with
     | some (Block.para c) => inner.modify 0 fun _ => .para (o.head ++ c)
     | _ => #[Block.para o.head] ++ inner
@@ -10394,9 +10786,7 @@ private def thmClose (ctx : Ctx) (n : String) (o : ThmOpen) (inner : Array Block
       -- `\renewcommand{\qedsymbol}{}` is the manual's way to omit it.
       if placed || mark.isEmpty then pure inner else
       let q : Array Inline := #[.strut {}, .fill, .text "\u2003"] ++ shown
-      pure (match inner.back? with
-        | some (.para c) => inner.pop.push (.para (c ++ q))
-        | _ => inner.push (.para q))
+      pure (appendLastPara inner q)
     else pure inner
   return #[.role (Ir.thmSpaceRole o.space) #[.role n inner]]
 
@@ -11205,7 +11595,36 @@ private theorem linkedRowChoice_splice {raws : Array Raw} {i : Nat}
     rw [hr]
     simpa only [nestedPars, ← nestedParsList_eq] using hb.2
 
+/-- A group's blocks with the epoch its end places after them: the block
+spine's one call per group (`texGroup`). -/
+@[noinline] private def groupBlocks (base : Palette) (act : EM (Array Block)) :
+    EM (Array Block) := do
+  let (blocks, epoch) ← texGroup base act
+  return blocks ++ epoch
+
+/-- A group the open paragraph runs into: its text before the `{` was
+written outside the group, so the declarations it made stand again after
+the group's end puts the state back. -/
+@[noinline] private def restoringGroup (ctx : Ctx) (cur : Array Raw) (act : EM (Array Block)) :
+    EM (Array Block) := do
+  let blocks ← groupBlocks ctx.palette act
+  let pal := (← get).scope.palette.current.getD ctx.palette
+  return (← carryDeclsGo ctx cur 0 cur.toList (blocks, pal)).1
+
+/-- An environment is a group (ltmiscen.dtx: `\begin` opens one), save an
+`\input` file's wrapper, which names the file its raws came from and scopes
+nothing (`\input` opens no group). A list or quote opened inside an open
+paragraph (no blank line before it) rides in the in-paragraph role:
+`\@trivlist` finds horizontal mode there and adds no `\partopsep`. The
+marks read the environment's own blocks; the epoch stands after them. -/
+@[noinline] private def envGroup (n : String) (base : Palette) (inPar parEnd afterEnv : Bool)
+    (k : Nat) (act : EM (Array Block)) : EM (Array Block) := do
+  let (blocks, epoch) ←
+    if (Parse.inputEnvFile? n).isSome then (·, #[]) <$> act else texGroup base act
+  return Ir.markDisplay inPar parEnd afterEnv k (Ir.markInParagraph inPar k blocks) ++ epoch
+
 seal nativeLinkedRow linkedRowChoice noteLinkedRow
+seal texGroup groupBlocks restoringGroup envGroup
 
 /-- Does the control sequence `n`, met at `raws[i]` with the current paragraph
 accumulator `cur`, open a block rather than continue the paragraph? Lifted
@@ -11522,7 +11941,7 @@ Use the same colour parser and dependent Beamer resolver as declarations,
 retaining their source expressions for resolution after the group closes. -/
 private def openStandoutPalette (ctx : Ctx) (standout : Bool) (blocks : Array Block) :
     EM (MCtx ctx × Array Block × Bool) := do
-  let aliases := (← get).flowPalette.standoutAliases
+  let aliases := (← get).scope.palette.standoutAliases
   if !standout || aliases.isEmpty then
     return (⟨ctx, rfl, rfl, rfl, rfl⟩, blocks, false)
   let mut pal := ctx.palette
@@ -11531,7 +11950,7 @@ private def openStandoutPalette (ctx : Ctx) (standout : Bool) (blocks : Array Bl
     pal ← applyPaletteEntry origin pal alias.name alias.source alias.name
       alias.span.pos (aliasOnly := true)
     pal ← resolveBeamerColors origin pal
-  modify fun st => { st with flowPalette := { st.flowPalette with current := some pal },
+  modify fun st => { st with scope := { st.scope with palette := { st.scope.palette with current := some pal } },
                              flowGen := st.flowGen + 1 }
   return (⟨{ ctx with palette := pal }, rfl, rfl, rfl, rfl⟩, blocks.push (.setPalette pal), true)
 
@@ -11541,11 +11960,11 @@ private def closeFramePalette (ctx : Ctx) (pos : Pos) (blocks : Array Block)
   recordFrameSource ctx pos blocks.size
   let blocks := blocks.push (flattenFrame title opts.standout opts.valign opts.breakable inner)
   if !aliasScope then return blocks
-  let colors := (← get).flowPalette
+  let colors := (← get).scope.palette
   let pal := BeamerColor.restoreAliases ctx.palette (colors.current.getD ctx.palette)
     (colors.standoutAliases.map (·.name))
   let pal ← resolveBeamerColors ctx pal
-  modify fun st => { st with flowPalette := { st.flowPalette with current := some pal },
+  modify fun st => { st with scope := { st.scope with palette := { st.scope.palette with current := some pal } },
                              flowGen := st.flowGen + 1 }
   return blocks.push (.setPalette pal)
 
@@ -11910,7 +12329,8 @@ the column shares the leftover" cpos
       have hc1 : slicePars (cbody.extract m2 cbody.size) 0
           = nestedParsList (cbody.extract m2 cbody.size).toList :=
         slicePars_zero _
-      let cinner ← elabBlockScope ctx (cbody.extract m2 cbody.size)
+      -- A column is a group: beamer sets each in a minipage of its own.
+      let cinner ← groupBlocks ctx.palette (elabBlockScope ctx (cbody.extract m2 cbody.size))
       columnsGo ctx body (j + 1) (cols.push ({ width with pos := colPos }, cinner)) #[]
         blocks
         (by
@@ -12711,8 +13131,9 @@ decreasing_by all_goals blocks_dec
 paragraph end is spliced open first, so the `\par` inside it is the
 boundary it is everywhere else; a non-boundary raw joins the open
 paragraph; a boundary flushes it and dispatches. The flow state is re-read
-each step (`flowCtx`), so a body declaration reaches the content after the
-scope that made it. -/
+each step (`flowCtx`), so a declaration reaches the content after it to the
+end of its group, where `texGroup` puts the group's start back — and a
+global one past it. -/
 private def elabBlocksGo (ctx : Ctx) (raws : Array Raw) (i : Nat)
     (blocks : Array Block) (cur : Array Raw) (gen : Nat) :
     EM (Array Block) := do
@@ -12759,7 +13180,8 @@ private def elabBlocksGo (ctx : Ctx) (raws : Array Raw) (i : Nat)
         -- A restoring scope stays whole so its snapshot predates every
         -- assignment. Its opening text still joins the pending paragraph:
         -- only a boundary inside the body may flush that paragraph.
-        let inner ← splicedFrameScope (some blocks.size) (elabBlockScope ctx' body cur)
+        let inner ← restoringGroup ctx' cur
+          (splicedFrameScope (some blocks.size) (elabBlockScope ctx' body cur))
         elabBlocksGo ctx' raws (i + 1) (blocks ++ inner) #[] gen'
       else if (body.any isCenteringRaw || bodyIsBlock body) && !isArgument cur then
         -- A scope group carrying a `\centering` declaration, or holding
@@ -12770,7 +13192,8 @@ private def elabBlocksGo (ctx : Ctx) (raws : Array Raw) (i : Nat)
         -- group is the command's, as in the par splice above; its own
         -- block sequence, so the declaration stops at the closing brace.
         let (⟨ctx', hm⟩, blocks) ← flushPara ctx' blocks cur
-        let inner ← splicedFrameScope (some blocks.size) (elabBlockScope ctx' body)
+        let inner ← groupBlocks ctx'.palette
+          (splicedFrameScope (some blocks.size) (elabBlockScope ctx' body))
         elabBlocksGo ctx' raws (i + 1) (blocks ++ inner) #[] gen'
       else
         elabBlocksGo ctx' raws (i + 1) blocks (cur.push raws[i]) gen'
@@ -12834,12 +13257,9 @@ private def elabBlocksGo (ctx : Ctx) (raws : Array Raw) (i : Nat)
         let (⟨ctx', hm⟩, flushed) ← flushPara ctx' blocks cur
         let inPar := Ir.flushedText k flushed
         let afterEnv := endPeAt raws i inPar flushed
-        let blocks ← elabEnvArm ctx' n body epos flushed
-        -- A list or quote opened inside an open paragraph (no blank line
-        -- before it) rides in the in-paragraph role: `\@trivlist` finds
-        -- horizontal mode there and adds no `\partopsep`.
-        elabBlocksGo ctx' raws (i + 1) (Ir.markDisplay inPar (parFollows raws (i + 1)) afterEnv
-          flushed.size (Ir.markInParagraph inPar flushed.size blocks)) #[] gen'
+        let blocks ← envGroup n ctx'.palette inPar (parFollows raws (i + 1)) afterEnv
+          flushed.size (elabEnvArm ctx' n body epos flushed)
+        elabBlocksGo ctx' raws (i + 1) blocks #[] gen'
       else
         elabBlocksGo ctx' raws (i + 1) blocks (cur.push raws[i]) gen'
     | .ctrl n cpos =>
@@ -12852,10 +13272,10 @@ private def elabBlocksGo (ctx : Ctx) (raws : Array Raw) (i : Nat)
         let pal? ← if n.startsWith Compat.pageColorMarkPrefix then
             pageGroundDecl ctx' n cpos
           else
-            pure (some (ctx'.palette.restore ctx'.basePalette "bg"))
+            some <$> pageGroundReset ctx'
         match pal? with
         | some pal => modify fun st =>
-          { st with flowPalette := { st.flowPalette with current := some pal },
+          { st with scope := { st.scope with palette := { st.scope.palette with current := some pal } },
                     flowGen := st.flowGen + 1 }
         | none => pure ()
         let ⟨palCtx, hm⟩ : MCtx ctx' ←
@@ -13270,6 +13690,7 @@ unseal isColumnStray
 unseal parFollows parPrecedes endPeAt displayAtBlock
 unseal scanBracketArg
 unseal nativeLinkedRow linkedRowChoice noteLinkedRow
+unseal texGroup groupBlocks restoringGroup envGroup
 unseal enterAppendicesIf leaveAppendices wrapScopedEnv
 unseal thmOf? thmEnv thmOpen thmClose descItems coverItems ownBibList
 
@@ -13308,7 +13729,7 @@ private theorem elabInlines_recovered_head (ctx : Ctx) (name : String) (raws : A
 private theorem elabInlines_group (ctx : Ctx) (body : Array Raw) (p : Pos)
     (hm : ctx.macroRoles = ({file := ""} : Ctx).macroRoles) (hp : p.origins = []) :
     elabInlines ctx #[.group body p] = (do
-      let inner ← elabInlines ctx body
+      let inner ← inlineGroup ctx.palette (elabInlines ctx body)
       pure (if ctx.literalText then mergeText inner
         else (mergeText inner).map (mapSmartText ctx.literalWhen))) := by
   have he : ctx.macroRoles.enter = ctx.macroRoles := by rw [hm]; rfl
@@ -13351,11 +13772,11 @@ private theorem elabInlines_recovery_group (ctx : Ctx) (name : String)
   have ha : elabUnknownArgs ctx xs
       (skipSpaces xs (skipOptionRuns xs (skipStar xs (skipSpaces xs 1)) p).1)
       0 #[] "" false = (do
-        let inner ← elabInlines ctx body
+        let inner ← inlineGroup ctx.palette (elabInlines ctx body)
         pure (inner, "", ⟨2, by simp only [hs, hstar, ho]; omega⟩, 1, false)) := by
     have hi (j : Nat) (hj : j = 1) :
         elabUnknownArgs ctx xs j 0 #[] "" false = (do
-          let inner ← elabInlines ctx body
+          let inner ← inlineGroup ctx.palette (elabInlines ctx body)
           pure (inner, "", ⟨2, by omega⟩, 1, false)) := by
       subst j
       rw [elabUnknownArgs_last_group_exact _ _ _ _ _ _ _ _ rfl (by simp [xs])]
@@ -13406,7 +13827,8 @@ private theorem elabInlines_recovered_group (ctx : Ctx) (name w : String) (p gp 
           let inner ← elabInlines ctx #[.word w wp]
           pure (inner, "", ⟨2, by omega⟩, 1, false)) := by
       subst j
-      rw [elabUnknownArgs_last_group_exact _ _ _ _ _ _ _ _ rfl (by simp [xs])]
+      rw [elabUnknownArgs_last_group_exact _ _ _ _ _ _ _ _ rfl (by simp [xs]),
+        elabInlines_word ctx w wp hm hwp, inlineGroup_pure]
       simp [flushText]
     exact hi _ (by simp only [hs, hstar, ho])
   rw [elabUnknownCtrl]
@@ -13499,8 +13921,8 @@ private theorem mkPara_recovered_word (ctx : Ctx) (name w : String) (p gp wp : P
     mkPara ctx #[.ctrl name p, .group #[.word w wp] gp] = (do
       warnUnknownCmd ctx name false p
       noteSalvage (unknownCmdDiag name {}).1 name (rawSrc #[.group #[.word w wp] gp])
-      return some (paraUnder (← get).flowLang
-        (Ir.paraAt (← get).blockDecls #[sourceInline ctx wp (.text w)]))) := by
+      return some (paraUnder (← get).scope.lang
+        (Ir.paraAt (← get).scope.blockDecls #[sourceInline ctx wp (.text w)]))) := by
   rw [mkPara]
   simp only [ForIn.forIn]
   rw [Lean.Loop.forIn_eq_of_monadTail]
@@ -13532,7 +13954,7 @@ private theorem blockMacroStep_idle (ctx : Ctx) (st : ESt) (raws : Array Raw)
 private theorem flushPara_empty (ctx : Ctx) (blocks : Array Block)
     (hm : ctx.macroRoles = ({file := ""} : Ctx).macroRoles) :
     flushPara ctx blocks #[] = pure (⟨ctx, rfl, rfl, rfl, rfl⟩, blocks) := by
-  simp [flushPara, hm, MacroRoles.empty]
+  simp [flushPara, hm, MacroRoles.empty, carryDecls_empty]
   cases ctx
   cases hm
   rfl
@@ -13542,8 +13964,8 @@ private theorem flushPara_pending (ctx : Ctx) (blocks : Array Block) (cur : Arra
     (he : cur.isEmpty = false) :
     flushPara ctx blocks cur = (do
       let para ← mkPara ctx cur
-      pure (⟨ctx, rfl, rfl, rfl, rfl⟩,
-        match para with | some b => blocks.push b | none => blocks)) := by
+      let (bs, pal) ← carryDecls ctx cur (match para with | some b => blocks.push b | none => blocks)
+      pure (⟨{ ctx with palette := pal }, rfl, rfl, rfl, rfl⟩, bs)) := by
   cases ctx
   cases hm
   simp only [flushPara, he, Bool.false_eq_true, ↓reduceIte, Array.filter_empty,
@@ -13573,9 +13995,6 @@ private theorem blockMacroStep_done (ctx : Ctx) (st : ESt) (raws : Array Raw)
     simp only [bind_assoc, pure_bind]
     simp [hm, MacroRoles.empty, closeBlockFrameSources, commonOrigins,
       moveMacroRuns, closeMacroRuns]
-    cases ctx
-    cases hm
-    rfl
 
 private theorem elabBlocksGo_done (ctx : Ctx) (st : ESt) (raws : Array Raw) (i : Nat)
     (blocks : Array Block) (cur : Array Raw)
@@ -13601,7 +14020,7 @@ private theorem elabBlocksGo_done (ctx : Ctx) (st : ESt) (raws : Array Raw) (i :
     rfl
   · rw [flushPara_pending ctx blocks cur hm (Bool.eq_false_iff.mpr he)]
     simp only [bind_assoc, pure_bind]
-    simp only [flushPara_empty ctx _ hm, pure_bind]
+    simp only [flushPara_empty, hm, pure_bind]
 
 private theorem run_get (k : ESt → EM α) (st : ESt) :
     ((do let x ← get; k x) : EM α).run st = (k st).run st := by rfl
@@ -13652,7 +14071,7 @@ private theorem elabBlocksGo_plain_group (ctx : Ctx) (st : ESt)
   simp only [pure_bind]
   simp [hpar, hblock]
   rw [elabBlocksGo_done ctx st _ 1 blocks _ hm (by simp)]
-  rw [flushPara_pending ctx blocks _ hm rfl]
+  rw [flushPara_pending ctx blocks _ hm rfl, carryDecls_quiet ctx _ (by simp [quietRaw])]
   simp only [bind_assoc, pure_bind]
   rfl
 
@@ -13674,6 +14093,7 @@ private theorem elabBlocksGo_recovery (ctx : Ctx) (st : ESt) (name : String)
     elabBlocksGo_recovery_group ctx st name body p gp blocks hm hgp,
     elabBlocksGo_done ctx st _ 2 blocks _ hm (by simp),
     flushPara_pending ctx blocks _ hm rfl,
+    carryDecls_quiet ctx _ (by simp [quietRaw, carriesPar_recovers ctx name hn]),
     mkPara_recovery_group ctx name body p gp hm hp hgp hn]
   simp only [bind_assoc, pure_bind]
 
@@ -13864,13 +14284,14 @@ private theorem elabBlocksGo_recovered_word (ctx : Ctx) (st : ESt) (name w : Str
     ((do
       warnUnknownCmd ctx name false p
       noteSalvage (unknownCmdDiag name {}).1 name (rawSrc #[.group #[.word w wp] gp])
-      return blocks.push (paraUnder (← get).flowLang
-        (Ir.paraAt (← get).blockDecls #[sourceInline ctx wp (.text w)]))) :
+      return blocks.push (paraUnder (← get).scope.lang
+        (Ir.paraAt (← get).scope.blockDecls #[sourceInline ctx wp (.text w)]))) :
       EM (Array Block)).run st := by
   rw [elabBlocksGo_recovered_ctrl ctx st name w p gp wp blocks hm hp hb,
     elabBlocksGo_recovered_group ctx st name w p gp wp blocks hm hgp,
     elabBlocksGo_done ctx st _ 2 blocks _ hm (by simp),
     flushPara_pending ctx blocks _ hm rfl,
+    carryDecls_quiet ctx _ (by simp [quietRaw, carriesPar_recovers ctx name hn]),
     mkPara_recovered_word ctx name w p gp wp hm hp hwp hn hs he hl ht hr]
   simp only [bind_assoc, pure_bind]
 
@@ -16031,13 +16452,14 @@ the built-in's heading and margins stand{replaced}"
     let pal ← applyBeamerColor s.ctx s.palette name star src pos
     return { s with palette := pal, ctx := { s.ctx with palette := pal } }
   | .beamerSite chain channel key _ =>
-    modify fun st => { st with flowPalette := st.flowPalette.addSite chain channel key }
+    modify fun st => { st with scope := { st.scope with
+      palette := st.scope.palette.addSite chain channel key } }
     let pal ← resolveBeamerColors s.ctx s.palette
     return { s with palette := pal, ctx := { s.ctx with palette := pal } }
   | .standoutColor name source pos =>
-    modify fun st => { st with flowPalette := { st.flowPalette with
-      standoutAliases := st.flowPalette.standoutAliases ++
-        [⟨name.trimAscii.toString, source, s.ctx.sourceSpan pos⟩] } }
+    modify fun st => { st with scope := { st.scope with palette := { st.scope.palette with
+      standoutAliases := st.scope.palette.standoutAliases ++
+        [⟨name.trimAscii.toString, source, s.ctx.sourceSpan pos⟩] } } }
     return s
   | .palette opts body pos =>
     -- `\palette[decorative]{...}`: options read by the one door
@@ -16127,10 +16549,10 @@ the built-in's heading and margins stand{replaced}"
         let ds := Theme.apply th before
         -- The bundle's colour theme declares its own relationships under the
         -- document's (`BeamerColor.themeElement`).
-        modify fun st => { st with flowPalette := { st.flowPalette with theme := tname } }
+        modify fun st => { st with scope := { st.scope with palette := { st.scope.palette with theme := tname } } }
         for (key, c) in th.palette.entries do
           recordColorDeclaration key c (s.ctx.sourceSpan pos)
-          modify fun st => { st with flowPalette := st.flowPalette.native key c }
+          modify fun st => { st with scope := { st.scope with palette := st.scope.palette.native key c } }
         let pal ← resolveBeamerColors s.ctx ds.palette
         return { s with
           palette := pal
@@ -17275,8 +17697,8 @@ private def beginDoc (file : String) (raws : Array Raw) (picPre : String := "")
   let urlFamily0 : Option Ir.Style := decls.foldl (fun fam d =>
       match d with
       | .urlstyle (some v) _ => (urlStyleFamily? v).getD fam
-      | _ => fam) (← get).urlFamily
-  modify fun st => { st with urlFamily := urlFamily0 }
+      | _ => fam) (← get).scope.urlFamily
+  modify fun st => { st with scope := { st.scope with urlFamily := urlFamily0 } }
   let s ← decls.foldlM applyDecl
     { ctx := { file := file, listingReplies := listingReplies
                pic := { tool := picTool0, preamble := picPre, metric := picMetric
@@ -17312,10 +17734,23 @@ private def prepareStyledBody (file : String) (decls : Array PDecl)
   let palette := match s.pageGround with
     | some c => basePalette.declare "bg" c
     | none => basePalette
+  -- The ink a `\normalcolor` restores is the one in force when the body
+  -- opens (color.sty's `\default@color`): a preamble `\color`, which the
+  -- body's start replays, included.
+  let openingInk := decls.foldl (fun pal d => match d with
+    | .bodyStart m _ =>
+      if m.startsWith "@ink:" then
+        let source := (m.drop "@ink:".length).toString
+        if source == Compat.normalInkSource then pal.restore basePalette "fg"
+        else match pal.resolveSource none source with
+          | .ok (some c) => pal.declare "fg" c
+          | _ => pal
+      else pal
+    | _ => pal) basePalette
   let tokens := themedDs.tokens
   let styles := themedDs.styles
   let chrome := themedDs.chrome
-  ctx := { ctx with palette := palette, basePalette := basePalette, tokens := tokens, styles := styles
+  ctx := { ctx with palette := palette, basePalette := openingInk, tokens := tokens, styles := styles
                     locale := s.info.locale }
   let mut head := s.head
   let mut foot := s.foot
@@ -17486,7 +17921,7 @@ private def prepareStyledBody (file : String) (decls : Array PDecl)
     -- state exists only for the shadow judge below, which must see every
     -- role the document ever declares.
     let stBody ← get
-    let finalPalette := stBody.flowPalette.current.getD palette
+    let finalPalette := stBody.scope.palette.current.getD palette
     -- A definition that shadows a palette role replaces a value that adapts
     -- with one that cannot: the palette no longer reaches those words (a
     -- variant or a host page's override dies there), and the contrast judge —

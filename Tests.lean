@@ -93,6 +93,7 @@ import Tests.BlockTemplate
 import Tests.ElementBoundaries
 import Tests.BlockFillConditionals
 import Tests.PaletteTextEpoch
+import Tests.GroupScope
 import Tests.MintedSettings
 import Tests.ListingHighlight
 import Tests.ListingStyleTable
@@ -408,6 +409,7 @@ def layoutSuiteChecks (ref : IO.Ref (List String)) : IO Unit := do
   Tests.ElementBoundaries.elementBoundaryChecks ref oneFace
   Tests.BlockFillConditionals.blockFillConditionalChecks ref oneFace
   Tests.PaletteTextEpoch.paletteTextEpochChecks ref oneFace
+  Tests.GroupScope.groupScopeChecks ref oneFace
   Tests.ThemeCss.epochChecks ref oneFace
   stringConditionalChecks ref oneFace
   seedPaletteChecks ref oneFace

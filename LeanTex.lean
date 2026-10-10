@@ -51,6 +51,7 @@ public import LeanTex.Core.EncodingOption
 public import LeanTex.Core.EncodingData
 public import LeanTex.Core.Encoding
 public import LeanTex.Core.InputContract
+public import LeanTex.Core.GroupContract
 public import LeanTex.Core.Elab
 public import LeanTex.Core.ElabRegistryContract
 public import LeanTex.Core.TitleContract

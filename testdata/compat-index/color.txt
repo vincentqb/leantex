@@ -3,6 +3,7 @@
 pre impl \definecolor{c}{rgb}{1,0,0}
 body impl \textcolor{black}{x}
 body impl {\color{black} x}
+body impl {\color{black}\normalcolor x}
 body refuse:W0301 \colorbox{black}{x}
 body refuse:W0301 \fcolorbox{black}{white}{x}
 pre impl \pagecolor{black}

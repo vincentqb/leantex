@@ -35,7 +35,7 @@ role trivlist-env
     block before 3300/1000ex plus 900/1000ex minus 450/1000ex
     para
       color driftwood #786954
-        text " crew@example.org • example.org/harbour"
+        text "crew@example.org • example.org/harbour"
 section* 1
   text "Fixtures"
 role fixture

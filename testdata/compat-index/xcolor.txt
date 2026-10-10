@@ -6,6 +6,7 @@ pre impl \colorlet{d}{black}
 pre refuse:W0301 \providecolor{c}{HTML}{112233}
 body impl \textcolor{black}{x}
 body impl {\color{black} x}
+body impl {\color{black}\normalcolor x}
 body impl {\color{black!50!white} x}
 body refuse:W0301 \colorbox{black}{x}
 body refuse:W0301 \fcolorbox{black}{white}{x}

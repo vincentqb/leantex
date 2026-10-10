@@ -64,6 +64,10 @@ public structure Config where
   document's preamble+theme palette (`emitTree` seeds it); each
   `.setPalette` replaces it as the walk passes the block. -/
   pal : Ir.Palette := {}
+  /-- The document's own palette, epoch 0's: an epoch that comes back to it
+  (a group's end restoring the state before a `\color`) paints as epoch 0
+  does, in the stylesheet's ink. -/
+  docPal : Ir.Palette := {}
   /-- A listing's local frame colours. Its code panel states the same ground
   that PDF paints, so default syntax inks have one contrast contract on
   screen and paper, including standout and title-page frames. -/
@@ -7109,6 +7113,17 @@ public theorem Config.inFrame_membership_agree (cfg : Config) (frame : Block)
 private def joinStyles (a b : String) : String :=
   if a.isEmpty then b else if b.isEmpty then a else a ++ "; " ++ b
 
+/-- An epoch's accumulated declarations with each property's last value kept
+where it last stands: a later declaration of a property wins over an earlier
+one in the same attribute, so the compacted style paints the same and stays
+as long as the properties it sets, however many epochs the flow passed. -/
+private def compactStyle (style : String) : String :=
+  let decls := (style.splitOn ";").filterMap fun d =>
+    let d := d.trimAscii.toString
+    if d.isEmpty then none else some (((d.splitOn ":").headD "").trimAscii.toString, d)
+  let kept := decls.foldr (fun (k, d) acc => if acc.any (·.1 == k) then acc else (k, d) :: acc) []
+  String.intercalate "; " (kept.map (·.2))
+
 /-- A body palette epoch as semantic changes, before CSS serialization. `none`
 removes a property. -/
 public structure PaletteDiff where
@@ -7148,30 +7163,42 @@ public def Config.advancePalette (cfg : Config) (p : Ir.Palette) : Config :=
   let diff := epochPaletteDiff cfg.pal p
   let d := Design.ofPalette p
   let fg := (d.inkOn "fg" { fg := d.fg, bg := cfg.bodyGround.getD d.bg }).fg
+  let home := cfg.bodyGround.isNone && p.sameAs cfg.docPal
   { cfg with pal := p
              listingGround := cfg.bodyGround.or (p.find? "bg")
-             listingFg := some fg, bodyInk := none
-             epochStyle := joinStyles cfg.epochStyle diff.style
-             epochPaint := s!"color: {cssColor fg};" ++
+             listingFg := if home then none else some fg, bodyInk := none
+             epochStyle := compactStyle (joinStyles cfg.epochStyle diff.style)
+             epochPaint := if home then "" else s!"color: {cssColor fg};" ++
                surfaceInkDecls p (cfg.bodyGround.getD d.bg)
              epochGround := cfg.bodyGround.isNone && (cfg.epochGround || diff.groundChanged) }
 
 /-- Listings inherit the epoch's shared IR ink on the enclosing surface,
-including the default selected when a foreground declaration is erased. -/
+including the default selected when a foreground declaration is erased; an
+epoch back at the document's own palette, outside a painted body, inherits
+the stylesheet's as epoch 0 does. -/
 public theorem Config.advancePalette_ink_projects (cfg : Config) (p : Ir.Palette) :
     (cfg.advancePalette p).listingFg =
-      some ((Design.ofPalette p).inkOn "fg"
+      if cfg.bodyGround.isNone && p.sameAs cfg.docPal then none
+      else some ((Design.ofPalette p).inkOn "fg"
         { fg := (Design.ofPalette p).fg
           bg := cfg.bodyGround.getD (Design.ofPalette p).bg }).fg := by
   rfl
+
+/-- An epoch back at the document's own palette, outside a painted body,
+paints nothing of its own: its text takes the stylesheet's ink, as epoch 0's
+does, so a group's end that restores the palette restores the page. -/
+public theorem Config.advancePalette_home_exact (cfg : Config) (p : Ir.Palette)
+    (hhome : (cfg.bodyGround.isNone && p.sameAs cfg.docPal) = true) :
+    (cfg.advancePalette p).epochPaint = "" ∧ (cfg.advancePalette p).listingFg = none := by
+  simp only [Config.advancePalette, hhome, ↓reduceIte, and_self]
 
 /-- Token declarations have the same sibling flow as palette declarations;
 a table length among them is spelled as `tokenVars` spells it, against the
 document's basis (`Config.lengthBasis`, `lengthBasisOf`). -/
 private def Config.advanceTokens (cfg : Config) (tk : Ir.Tokens) : Config :=
   { cfg with tokens := tk
-             epochStyle := joinStyles cfg.epochStyle
-               (epochTokenStyle cfg.lengthBasis cfg.tokens tk) }
+             epochStyle := compactStyle (joinStyles cfg.epochStyle
+               (epochTokenStyle cfg.lengthBasis cfg.tokens tk)) }
 
 /-- The outgoing declarations of ordinary containers continue in source
 order. Columns, notes and navigation are independent content scopes, as
@@ -9490,6 +9517,7 @@ private def emitTreeCore (cfg : Config) (doc : Doc) (styles : String × Array Di
     | _ => ""
   let cfg := { cfg with styles := doc.styles
                         pal := doc.palette
+                        docPal := doc.palette
                         tokens := doc.tokens
                         deck := doc.docClass.record.model == .frame
                         chromeAllowed := doc.chromeAllowed

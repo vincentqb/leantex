@@ -6271,6 +6271,12 @@ private def modeledColorSource (model : Option String) (value : String) : String
 surface control-word character, so a document cannot forge the transition. -/
 public def pageColorResetMark : String := "@pagecolor-reset"
 
+/-- The ink source `\normalcolor` names: the colour in force when the body
+opened (color.sty keeps it as `\default@color`), which the elaborator reads
+from the document palette. A colour name holds no backslash, so no
+`\color{...}` spells it. -/
+public def normalInkSource : String := "\\normalcolor"
+
 /-- KOMA's `\\sectionlinesformat` is a hook for drawing after a heading. The one
 idiom worth reading is a rule in a colour, `\\textcolor{X}{\\leaders\\hrule …}`;
 any other non-empty body is a dropped loss and says so — an empty body asks
@@ -7245,6 +7251,8 @@ and patterns stand in" pos
     -- `\color[model]{spec}` colours to the end of the group (xcolor manual
     -- §2.6.4). The marker carries the source specification intact; the
     -- typed colour parser and resolver in the elaborator own conversion.
+    -- The command ends in `\ignorespaces` (color.sty `\@declaredcolor`),
+    -- so the space after its argument sets nothing.
     let (model, j) := takeOpt raws start
     let (args, k) := takeGroups raws j 1
     if args.isEmpty then return none
@@ -7253,7 +7261,7 @@ and patterns stand in" pos
     match model with
     | some m => became s!"\\color[{m}]\{{value}}" s!"the {source} ink declaration" pos
     | none => became s!"\\color\{{value}}" s!"\\{value}" pos
-    return some (#[.ctrl ("@ink:" ++ source) pos], k)
+    return some (#[.ctrl ("@ink:" ++ source) pos], skipSpaces raws k)
   | "vspace" =>
     -- The star is `\@vspacer`'s zero rule before the space: its mark goes
     -- first, so the space stays at a page's top (`vspaceAnchorMark`).
@@ -8919,6 +8927,11 @@ face serves every language, so the binding is dropped" pos
   | "nopagecolor" =>
     became "\\nopagecolor" "the document's default page ground" pos
     return some (#[.ctrl pageColorResetMark pos], start)
+  | "normalcolor" =>
+    -- color.sty's `\normalcolor`: the rest of the group takes the ink in
+    -- force at `\begin{document}`, wherever a `\color` changed it since.
+    became "\\normalcolor" "the document's normal ink, to the end of the group" pos
+    return some (#[.ctrl ("@ink:" ++ normalInkSource) pos], start)
   | "geometry" | "newgeometry" =>
     -- The command forms: the same keys the package options carry
     -- (geometry manual §5: `\newgeometry` is `\geometry` restricted to

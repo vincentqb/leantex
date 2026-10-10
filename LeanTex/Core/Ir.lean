@@ -1898,6 +1898,13 @@ public def Palette.restore (p opening : Palette) (key : String) : Palette :=
   | some c => p.declare key c (opening.decorative.contains key)
   | none => p.erase key
 
+/-- Two palettes that resolve every key alike, whatever order their entries
+were declared in: the same values, decorative keys, cover and realized inks. -/
+@[expose] public def Palette.sameAs (a b : Palette) : Bool :=
+  (a.entries ++ b.entries).all (fun (k, _) => a.find? k == b.find? k) &&
+    (a.decorative ++ b.decorative).all (fun k => a.decorative.contains k == b.decorative.contains k) &&
+    a.coveredFraction == b.coveredFraction && a.inks == b.inks
+
 /-- Erasing a key makes that key absent, not a guessed replacement colour. -/
 public theorem Palette.erase_exact (p : Palette) (key : String) :
     (p.erase key).find? key = none := by
@@ -6100,14 +6107,16 @@ public inductive Block where
   the frames from here on carry in the chrome footer's left slot, beside
   the frame number. Empty content clears it back to the chrome default. -/
   | framefoot (content : Array Inline)
-  /-- Body `\palette`: a stateful declaration in flow order, carrying the
+  /-- A palette epoch: a stateful declaration in flow order, carrying the
   full palette state in force from here on (preamble + theme + every body
   declaration up to and including this one — elaboration merges, backends
-  only replay). Flow scope, no brace revert: the engine's `\centering`
-  choice, and what `\logo`/`.framefoot` already do. Layout swaps the
-  accumulator's palette (and the default ink derived from it) at the
-  block; HTML opens an epoch container redefining the changed custom
-  properties. The node ships no ink of its own. -/
+  only replay). A body `\palette` or `\pagecolor` keeps it past the groups
+  it stands in, as a global assignment does; a group's end that restores a
+  local `\color` places one carrying the state it restores
+  (`Elab.texGroup`). Layout swaps the accumulator's palette (and the
+  default ink derived from it) at the block; HTML opens an epoch container
+  redefining the changed custom properties. The node ships no ink of its
+  own. -/
   | setPalette (pal : Palette)
   /-- Body `\tokens` (`\setlength` mid-document): the token state in force
   from here on, the same stateful door as `.setPalette`. -/
@@ -6276,14 +6285,36 @@ public def markInParagraph (inPar : Bool) (k : Nat) (blocks : Array Block) : Arr
   | false, _ => blocks
   | true, none => blocks
 
+/-- The last block at index `k` or above that ships content: an epoch
+(`.setPalette`, `.setTokens`) is state, so what stands before a block is
+read through the epochs a group's end or a paragraph's declarations leave
+behind it. -/
+public def lastContentFrom? (blocks : Array Block) (k : Nat) : Option Block :=
+  go blocks.size
+where
+  /-- Scan down from index `i - 1`, no lower than `k`. -/
+  go : Nat → Option Block
+    | 0 => none
+    | i + 1 =>
+      if i < k then none
+      else if blocks[i]?.any (· matches .setPalette _ | .setTokens _) then go i
+      else blocks[i]?
+
+/-- The last content block of the whole sequence. -/
+public def lastContent? (blocks : Array Block) : Option Block := lastContentFrom? blocks 0
+
 /-- Did flushing the open paragraph leave one with text — anything but
 label anchors, which ship no ink and keep TeX in vertical mode — as the
-last of `after`, past the `k` blocks that stood before? -/
+last content past the `k` blocks that stood before? -/
 public def flushedText (k : Nat) (after : Array Block) : Bool :=
-  k < after.size &&
-    match after.back? with
-    | some (.para content) => !content.all (· matches .label _)
-    | _ => false
+  match lastContentFrom? after k with
+  | some (.para content) => !content.all (· matches .label _)
+  | _ => false
+
+/-- Does the last content of `blocks` leave TeX in the state a list, quote or
+theorem ends in (`Block.leavesEndPe`)? -/
+public def lastLeavesEndPe (blocks : Array Block) : Bool :=
+  ((lastContent? blocks).map Block.leavesEndPe).getD false
 
 /-- A description item's first paragraph read at its label (`descLabelRole`,
 whose body closes with the `\labelsep` separator): the label and the text
@@ -12879,7 +12910,11 @@ public theorem markInParagraph_false_id (k : Nat) (blocks : Array Block) :
 
 /-- Flushing into nothing leaves no paragraph with text. -/
 public theorem flushedText_empty_exact (k : Nat) : flushedText k #[] = false := by
-  simp [flushedText]
+  simp [flushedText, lastContentFrom?, lastContentFrom?.go]
+
+/-- Nothing before leaves no list, quote or theorem behind. -/
+public theorem lastLeavesEndPe_empty_exact : lastLeavesEndPe #[] = false := by
+  simp [lastLeavesEndPe, lastContent?, lastContentFrom?, lastContentFrom?.go]
 
 /-- A display's context is a name for its placement, never text: the
 display it wraps ships the census the wrapper does. -/

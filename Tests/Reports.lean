@@ -66,6 +66,8 @@ import Tests.BlockRegionFit
 import Tests.BlockHeaderClearance
 import Tests.FrameArea
 import Tests.PaletteTextEpoch
+import Tests.GroupScope
+import LeanTex.Core.GroupContract
 import Tests.ThemePalette
 import Tests.ThemeCss
 import Tests.MintedSettings
@@ -1278,7 +1280,16 @@ def reports : List Report := [
       "eighteen more fail before the corrections for the fourth review: seven where a table cell's break set its lines flush left in a right or centred column, in a column as wide as the cell's words on one line, and eleven twin round trips, where a run ending on a break, alone or before text, in a list item or a quotation, wrote the break as a backslash outside the run, which a block's end reads as itself",
       "thirteen more fail before the corrections for the fifth review: six where a tex cell without a break was set as broken lines without its hyphenation, a word overfull or a pair wrapped, and seven where a tex run's closing break was written as `<br>` before a word, through an enclosing run or a wrapper, or in a heading or a cell, so its emphasis read back as asterisks; after them every corpus document and both presentation decks ship byte-identical PDF and HTML to the base's",
       "a long markdown report of several hundred disclosures and two presentation decks ship byte-identical PDF and HTML; the report's PDF build names no lost collapse while its HTML and markdown builds name every one, and its markdown twin is its own twin"]
-    state := .guarded "3d122253" .before .author }
+    state := .guarded "3d122253" .before .author },
+  { id := "R136", date := "2026-10-10"
+    what := "a colour declared inside an environment reached every page after it: a title page's own ink on its own ground stayed in force, so the body text after it shipped near the page's own colour in both artifacts and read as blank pages"
+    pins := [thm% Elab.texGroup_scope_id, thm% Elab.elabBlocks_env_scope_id,
+      thm% Elab.elabBlocks_group_scope_id, check% Tests.GroupScope.groupScopeChecks]
+    accept := ["a private document's own build: on the base tree most of its text could not be read against its ground in either artifact, its PDF pages showing only explicitly coloured runs; on the fixed tree every text node reads, and its pages show their headings, lists and paragraphs where the reference engine's do",
+      "the class the report belongs to, measured under lualatex on invented probes and held by the guards: a colour declared inside a brace group, a begingroup or bgroup pair, an environment, a frame or a list reached text after the group's end; a Beamer colour set inside a frame reached the next frame; a block-level language switch reached text after its environment; a colour or size declared in a paragraph's own text stopped at the paragraph's end where TeX keeps it to the group's end, past list items too; and the command that restores the document's normal colour was unknown",
+      "review of the fix: a colour declared in a paragraph moved the display or list after it, and a display after a list, quote or theorem that coloured its text, by two to twelve points; side-by-side boxes shared one colour state; the normal-colour command ignored a colour set in the preamble; a palette name carried past a paragraph outranked every later colour; a declaration that ended a paragraph dropped the colour carried out of it; a group's end dropped the Beamer colours a global palette entry derives; and an epoch-heavy document's HTML grew with the square of its groups; twenty-five assertions fail on the reviewed tree and hold now, and the space after a colour command no longer sets a second space",
+      "second review: small caps set after an italic dropped the slant, a URL face stopped at the first paragraph end inside its group, carried sizes and emphasis grew the HTML with the square of their paragraphs, text after a colouring group shipped a concrete ink where the page's own text reads the stylesheet's, a colour declared before a group that restores its lengths stopped at that group, a page colour inside braces or a begingroup pair never reached its page, and a group after a colour command took the colour alone; twenty-one assertions fail on the reviewed tree and hold now"]
+    state := .guarded "e5233428" .before .author }
 ]
 
 /-- The reports guarded but never seen failing: a count that may fall and

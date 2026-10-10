@@ -404,7 +404,8 @@ private theorem elabBlocksGo_input_at (ctx : Ctx) (st : ESt) (raws : Array Raw) 
     rw [hr] at heq
     cases heq
     simp [inputEnv_ne_linkedBoxRowMark, inputEnvFile?_inputEnv, hb, pictureInSentence_input,
-      flushPara_empty ctx _ hm, Ir.flushedText_empty_exact, Ir.markInParagraph_false_id, endPeAt]
+      flushPara_empty ctx _ hm, Ir.flushedText_empty_exact, Ir.lastLeavesEndPe_empty_exact,
+      Ir.markInParagraph_false_id, endPeAt, envGroup]
   · rename_i heq; rw [hr] at heq; cases heq
   · rename_i _ _ _ _ henv _
     exact absurd hr (henv _ _ _)
@@ -431,7 +432,7 @@ private theorem elabBlocksGo_end (ctx : Ctx) (st : ESt) (raws : Array Raw) (i : 
     split <;> exact hm
   rw [elabBlocksGo, run_get]
   simp only [show ¬ i < raws.size from Nat.not_lt.mpr hi, ↓reduceDIte]
-  simp [blockMacroStep, flowMCtx, hf, blockMacroKinds, hi, flushPara,
+  simp [blockMacroStep, flowMCtx, hf, blockMacroKinds, hi, flushPara, carryDecls_empty,
     closeBlockFrameSources, commonOrigins, moveMacroRuns, closeMacroRuns, MacroRoles.empty]
   rfl
 
