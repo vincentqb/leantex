@@ -127,6 +127,9 @@ body impl \begin{tikzpicture}\fill (0,0) circle (2pt);\end{tikzpicture}
 body impl \begin{tikzpicture}\filldraw[fill=yellow] (0,0) circle (1);\end{tikzpicture}
 body impl \begin{tikzpicture}\draw (0,0) ellipse (1 and 0.5);\end{tikzpicture}
 body impl \begin{tikzpicture}\draw (0,0) circle [radius=3mm];\end{tikzpicture}
+body impl \begin{tikzpicture}\shade[left color=red, right color=blue] (0,0) rectangle (1,1);\end{tikzpicture}
+body impl \begin{tikzpicture}\shadedraw[inner color=white, outer color=red] (0,0) circle (1);\end{tikzpicture}
+body impl \begin{tikzpicture}\clip (0,0) rectangle (1,1);\fill (0,0) circle (1);\end{tikzpicture}
 body impl \begin{tikzpicture}\pgfmathsetlengthmacro{\h}{0.5cm}\draw (0,0) -- (\h,\h);\end{tikzpicture}
 body impl \begin{tikzpicture}\draw ($(0,0)!.5!(2,0)$) -- ($2*(1,1)$);\end{tikzpicture}
 body impl \begin{tikzpicture}\draw[<->] (0,0) -- (1,0);\end{tikzpicture}

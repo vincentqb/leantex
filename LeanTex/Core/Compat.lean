@@ -2260,7 +2260,8 @@ equal to this list). The conditional pass puts no document macro of such a
 name into a picture: the walk names it where it stands. -/
 public def picWalkCtrls : List String :=
   ["fill", "node", "draw", "path", "foreach", "pgfmathsetmacro",
-   "pgfmathtruncatemacro", "pgfmathsetlengthmacro", "coordinate", "filldraw", "else", "fi"]
+   "pgfmathtruncatemacro", "pgfmathsetlengthmacro", "coordinate", "filldraw", "shade",
+   "shadedraw", "clip", "else", "fi"]
 
 /-- A package that is a theme of the document's class, not a picture's:
 beamer's theme family `beamer<slot>theme<name>` (`themeAsking`, read

@@ -1120,6 +1120,24 @@ def censusRows5 :
       (c[0]?.map fun p => (p.pathStrokes.filter (·.1 == { r := 255, g := 0, b := 0 })).size == 2).getD false),
     ("the prose around the square ships",
       hasStr (censusText c) "Before the square" && hasStr (censusText c) "After the square")]),
+  -- The long tail drawn by the engine: an axial and a ball shading and a
+  -- clipped disc; an ellipse and a diamond joined by a Stealth arrow, a node
+  -- with a label and a pin, a dashed frame fitted round two nodes, a brace.
+  -- Each mark one page path; the pin's edge in help lines; the fitted frame
+  -- dashed. The shadings' stops and the clip's group are
+  -- `tikzShapeChecks`', over the shipped figures.
+  ("diagram-longtail", fun _ c => [
+    ("one page", c.size == 1),
+    ("no boundary box stands where the pictures are",
+      (c[0]?.map (·.images == 0)).getD false),
+    ("every shading, fill, outline, arrow, edge, frame and brace ships as a page path",
+      (c[0]?.map fun p => p.paths == 11 && p.pathStrokes.size == 8).getD false),
+    ("the pin's edge ships in help lines, gray at 0.2 pt",
+      (c[0]?.map fun p => p.pathStrokes.any (· == ({ r := 128, g := 128, b := 128 }, Dim.pt 2 / 10))).getD false),
+    ("the fitted frame ships dashed",
+      (c[0]?.map fun p => p.pathRuns.any (·.2)).getD false),
+    ("every node's text, its label's and its pin's ships",
+      ["oval", "kite", "node", "top", "pin"].all fun l => hasStr (censusText c) l)]),
   ("diagram-strokes", fun _ c => [
     ("one page", c.size == 1),
     ("the three strokes ship as the picture's own marks, no page fill among them",

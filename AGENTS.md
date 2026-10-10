@@ -87,6 +87,12 @@ is skipped.
   placement as evidence (leantex centres measured target ink along the
   arrow's forward ray; cancel.sty places the value at the arrow tip).
   `--report` prints without gating, `--selftest` checks the parsers.
+- `scripts/tikz-diff.lean` when touching the picture reader (`Picture.lean`)
+  or the vector model's emission — every tikz-native probe drawn by leantex
+  and by LuaLaTeX in the faces the engine resolves, rasterized and read at
+  three levels (the ink's box, its pixels beyond a quarter of the gray
+  scale, the exact bytes); a report, never a gate, and `--selftest` holds
+  each level's blind spot against the level above.
 - `lake lint` checks every maintained Lean source, including unimported
   modules and executables, with strict elaboration and a compiled axiom
   audit. The build uses `-E hasSorry`; no source path exempts a proof.

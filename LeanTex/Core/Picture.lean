@@ -616,6 +616,12 @@ public inductive Stmt where
   /-- `\begin{scope}[opts] … \end{scope}` (TikZ manual §12.3.1): a group
   whose options transform its coordinates and set keys for its statements. -/
   | scope (opts : Array Tok) (body : List Stmt)
+  /-- `\shade[…] …;` and `\shadedraw[…] …;` — `\path[shade]` and
+  `\path[shade, draw]`: the path painted with a shading (pgf manual §15.7). -/
+  | shade (toks : Array Tok) (draw : Bool)
+  /-- `\clip[…] …;` — `\path[clip]`: what follows it in its scope paints
+  inside the path (pgf manual §15.9). -/
+  | clip (toks : Array Tok)
   deriving Repr, Inhabited
 
 /-- The `;`-terminated statement kinds the machine collects. -/
@@ -627,6 +633,9 @@ private inductive StKind where
   | bbox
   | coordinate
   | filldraw
+  | shade
+  | shadedraw
+  | clip
   deriving Repr, BEq, Inhabited
 
 private def StKind.name : StKind → String
@@ -637,6 +646,9 @@ private def StKind.name : StKind → String
   | .bbox => "useasboundingbox"
   | .coordinate => "coordinate"
   | .filldraw => "filldraw"
+  | .shade => "shade"
+  | .shadedraw => "shadedraw"
+  | .clip => "clip"
 
 /-- What the statement machine is in the middle of. -/
 private inductive Mode where
@@ -872,6 +884,9 @@ private def step (t : Tok) (st : PSt) : PSt :=
     | .ctrl "useasboundingbox" => { st with mode := .stmt .bbox #[] }
     | .ctrl "coordinate" => { st with mode := .stmt .coordinate #[] }
     | .ctrl "filldraw" => { st with mode := .stmt .filldraw #[] }
+    | .ctrl "shade" => { st with mode := .stmt .shade #[] }
+    | .ctrl "shadedraw" => { st with mode := .stmt .shadedraw #[] }
+    | .ctrl "clip" => { st with mode := .stmt .clip #[] }
     | .ctrl "textcolor" => { st with mode := .tcolor }
     | .ctrl "color" => { st with mode := .scolor }
     | .ctrl "scope env" => { st with mode := .scopeBody }
@@ -907,6 +922,9 @@ private def step (t : Tok) (st : PSt) : PSt :=
         | .bbox => st.finish (.bbox acc)
         | .coordinate => st.finish (.coordinate acc)
         | .filldraw => st.finish (.filldraw acc)
+        | .shade => st.finish (.shade acc false)
+        | .shadedraw => st.finish (.shade acc true)
+        | .clip => st.finish (.clip acc)
     | _ => { st with mode := .stmt kind (acc.push t) }
   | .sname setMode =>
     match t with
@@ -956,6 +974,12 @@ private def step (t : Tok) (st : PSt) : PSt :=
       { st with pending := st.pending.push (vars, list), mode := .stmt .coordinate #[] }
     | .ctrl "filldraw" =>
       { st with pending := st.pending.push (vars, list), mode := .stmt .filldraw #[] }
+    | .ctrl "shade" =>
+      { st with pending := st.pending.push (vars, list), mode := .stmt .shade #[] }
+    | .ctrl "shadedraw" =>
+      { st with pending := st.pending.push (vars, list), mode := .stmt .shadedraw #[] }
+    | .ctrl "clip" =>
+      { st with pending := st.pending.push (vars, list), mode := .stmt .clip #[] }
     | .ctrl name =>
       match condKindOf name with
       | some k =>
@@ -1509,7 +1533,8 @@ the shorthand itself. Anything else stays outside the subset and is named,
 which is what keeps a genuinely different tip kind a visible loss rather
 than a silent head of the wrong shape. -/
 private def drawsAsArrow (styles : List (String × Array Tok)) (n : String) : Bool :=
-  n == ">" || n == "<" || n == "latex" || n == "Latex" || (styles.lookup (tipKey n)).isSome
+  n == ">" || n == "<" || n == "latex" || n == "Latex" || n == "Stealth" ||
+    (styles.lookup (tipKey n)).isSome
 
 /-- Read a `\tikzset` key list: every definition entry this reader knows
 folds into the bundles, in source order so a later definition may name an
@@ -1994,12 +2019,61 @@ public theorem circleBorder_step (cx cy r qx qy : Int)
   rw [e1, e2]
   exact ⟨by omega, by omega, by omega, by omega, hsq⟩
 
+/-- Where the ray from an ellipse's centre toward `q` meets it (pgf's
+`\pgfpointborderellipse`, the `ellipse` shape's `\anchorborder`): the
+direction scaled by `a·b / √((dx·b)² + (dy·a)²)`; the centre toward itself. -/
+public def ellipseBorder (cx cy a b qx qy : Int) : Int × Int :=
+  let dx := qx - cx
+  let dy := qy - cy
+  let n := isqrt ((dx * b) * (dx * b) + (dy * a) * (dy * a))
+  if n == 0 then (cx, cy) else (cx + dx * a * b / n, cy + dy * a * b / n)
+
+/-- Where the ray from a diamond's centre toward `q` meets its border — the
+diamond of half diagonals `a` and `b`, `|x|/a + |y|/b = 1` (the `diamond`
+shape's `\anchorborder`, the intersection with the side the ray reaches);
+the centre toward itself. -/
+public def diamondBorder (cx cy a b qx qy : Int) : Int × Int :=
+  let dx := qx - cx
+  let dy := qy - cy
+  let n : Int := (dx.natAbs : Int) * b + (dy.natAbs : Int) * a
+  if n == 0 then (cx, cy) else (cx + dx * a * b / n, cy + dy * a * b / n)
+
+/-- **A diamond's border toward a point on its axis is its corner**
+(`_exact`): straight right of the centre, the ray meets the diamond at its
+east corner, one half diagonal out — the anchor `east` names. -/
+public theorem diamondBorder_axis_exact (cx cy a b d : Int) (hb : 0 < b) (hd : 0 < d) :
+    diamondBorder cx cy a b (cx + d) cy = (cx + a, cy) := by
+  have hx : cx + d - cx = d := by omega
+  have hy : cy - cy = 0 := by omega
+  have habs : ((d.natAbs : Nat) : Int) = d := Int.natAbs_of_nonneg (by omega)
+  have hne : d * b ≠ 0 := by
+    have := Int.mul_pos hd hb
+    omega
+  have hq : d * a * b / (d * b) = a := by
+    rw [Int.mul_comm d a, Int.mul_assoc]
+    exact Int.mul_ediv_cancel a hne
+  unfold diamondBorder
+  simp only [hx, hy, habs, Int.natAbs_zero, Int.natCast_zero, Int.zero_mul, Int.add_zero]
+  have hb0 : (d * b == 0) = false := by simpa using hne
+  simp only [hb0, Bool.false_eq_true, ↓reduceIte, hq, Int.zero_ediv, Int.add_zero]
+
 /-- `inner sep`'s default, in ten-thousandths of an em: pgf's `0.3333em`
 (TikZ manual §17.2.2, the `inner sep`/`inner xsep`/`inner ysep` keys). -/
 private def innerSepDefault : Int := 3333
 
 /-- One inner sep at this em. -/
 public def innerSep (em : Sp) : Sp := em * innerSepDefault / 10000
+
+/-- A node's shape: pgf's `rectangle` and `circle` (pgfmoduleshapes.code.tex)
+and the `shapes.geometric` library's `ellipse` and `diamond`, the diamond at
+its default aspect — what its border, its corner anchors and its drawn
+outline are. -/
+public inductive NodeShape where
+  | rectangle
+  | circle
+  | ellipse
+  | diamond
+  deriving Repr, BEq, DecidableEq, Inhabited
 
 /-- **A drawn node's outline is the shape pgf draws**, for a node that does
 not declare its whole extent (pgfmoduleshapes.code.tex, the `rectangle`
@@ -2011,27 +2085,35 @@ the larger minimum. The glyph box `lo`–`hi` is relative to the node's
 centre `sy`. Returns the outline's centre height and its width and height
 (a circle's are both its diameter), so a governing minimum is met to the
 sp. -/
-public def nodeOutline (circle : Bool) (minW minH sy textHalfW lo hi sepX sepY : Sp) :
+public def nodeOutline (shape : NodeShape) (minW minH sy textHalfW lo hi sepX sepY : Sp) :
     Sp × Sp × Sp :=
   let mid := sy + (lo + hi) / 2
   let tx := textHalfW + sepX
   let ty := (hi - lo) / 2 + sepY
-  if circle then
+  match shape with
+  | .rectangle => (mid, max minW (2 * tx), max minH (2 * ty))
+  | .circle =>
     let d := max (max minW minH) (2 * isqrt (tx * tx + ty * ty))
     (mid, d, d)
-  else (mid, max minW (2 * tx), max minH (2 * ty))
+  -- The ellipse's radii are its text box's half extents one inner sep out,
+  -- times pgf's 1.4142136 (pgflibraryshapes.geometric.code.tex, `\radius`).
+  | .ellipse =>
+    (mid, max minW (2 * (tx * 14142136 / 10000000)), max minH (2 * (ty * 14142136 / 10000000)))
+  -- The diamond at its default aspect reaches the sum of the half extents
+  -- on both axes (`\outernortheast`).
+  | .diamond => (mid, max minW (2 * (tx + ty)), max minH (2 * (tx + ty)))
 
 /-- **The outline covers the letters, one inner sep out** (`_covers`): the
 drawn rectangle is centred on the text box and at least the text box plus
 two inner seps on each axis — the room pgf gives a node's text, whatever
 minimum it declares — and a governing minimum is its size exactly. -/
 public theorem nodeOutline_covers (minW minH sy textHalfW lo hi sepX sepY : Int) :
-    (nodeOutline false minW minH sy textHalfW lo hi sepX sepY).1 = sy + (lo + hi) / 2 ∧
-      2 * (textHalfW + sepX) ≤ (nodeOutline false minW minH sy textHalfW lo hi sepX sepY).2.1 ∧
-      2 * ((hi - lo) / 2 + sepY) ≤ (nodeOutline false minW minH sy textHalfW lo hi sepX sepY).2.2 ∧
-      minW ≤ (nodeOutline false minW minH sy textHalfW lo hi sepX sepY).2.1 ∧
-      minH ≤ (nodeOutline false minW minH sy textHalfW lo hi sepX sepY).2.2 := by
-  simp only [nodeOutline, Bool.false_eq_true, ↓reduceIte, true_and]
+    (nodeOutline .rectangle minW minH sy textHalfW lo hi sepX sepY).1 = sy + (lo + hi) / 2 ∧
+      2 * (textHalfW + sepX) ≤ (nodeOutline .rectangle minW minH sy textHalfW lo hi sepX sepY).2.1 ∧
+      2 * ((hi - lo) / 2 + sepY) ≤ (nodeOutline .rectangle minW minH sy textHalfW lo hi sepX sepY).2.2 ∧
+      minW ≤ (nodeOutline .rectangle minW minH sy textHalfW lo hi sepX sepY).2.1 ∧
+      minH ≤ (nodeOutline .rectangle minW minH sy textHalfW lo hi sepX sepY).2.2 := by
+  simp only [nodeOutline, true_and]
   have step : ∀ mW mH t u : Int, 2 * t ≤ max mW (2 * t) ∧ 2 * u ≤ max mH (2 * u) ∧
       mW ≤ max mW (2 * t) ∧ mH ≤ max mH (2 * u) := by
     intros; omega
@@ -2055,12 +2137,12 @@ frame, the anchors on it and the edges from them therefore follow the node
 and never its glyphs. The defect centred each outline on its letters' box
 instead, so `g` stood 2 bp above `A` at one declared height and a
 `right=of` chain climbed by the difference at every step. -/
-public theorem nodeOutline_seat_exact (circle : Bool) (minW minH sy textHalfW ht dp sepX sepY : Int) :
-    (nodeOutline circle minW minH sy textHalfW (textSeat ht dp).2.1 (textSeat ht dp).2.2
+public theorem nodeOutline_seat_exact (shape : NodeShape) (minW minH sy textHalfW ht dp sepX sepY : Int) :
+    (nodeOutline shape minW minH sy textHalfW (textSeat ht dp).2.1 (textSeat ht dp).2.2
       sepX sepY).1 = sy := by
   have step : ∀ s h d : Int, s + ((-((h - d) / 2) - d) + (-((h - d) / 2) + h)) / 2 = s := by
     intro s h d; omega
-  cases circle <;> exact step sy ht dp
+  cases shape <;> exact step sy ht dp
 
 /-- **A node's border half-extent: its text, plus one inner sep, or the
 declared minimum where that is larger.** pgf manual §17.2.2 — a node's
@@ -2087,14 +2169,15 @@ public theorem borderHalf_between (decl ink sep : Sp) (hd : decl ≤ ink + sep)
     intro d i s h1 h2; omega
   exact step decl ink sep hd hs
 
-/-- A named node's anchoring geometry: centre and border half-extents (a
-circle's radius twice). What an edge's `(name)` endpoint resolves to. -/
+/-- A named node's anchoring geometry: centre, border half-extents (a
+circle's radius twice, an ellipse's radii, a diamond's half diagonals) and
+shape. What an edge's `(name)` endpoint resolves to. -/
 public structure NodeGeom where
   x : Sp
   y : Sp
   a : Sp := 0
   b : Sp := 0
-  circle : Bool := false
+  shape : NodeShape := .rectangle
   /-- Where this node's own text baseline stands, in the picture's
   coordinates: what the `base` family of anchors reads. Nodes centre their
   label, so the baseline sits below the centre by half the measured ink
@@ -2148,13 +2231,20 @@ corner is the radius times this on each axis. -/
 private def diag45 : Int := 707
 
 /-- The horizontal reach of a corner anchor: a rectangle's corner is its
-own border, a circle's the point on the circle at 45°. -/
+own border, a circle's and an ellipse's the point at 0.707107 of their radii
+(the shapes' `north east`), a diamond's the middle of its side (`.5\pgf@x`). -/
 public def NodeGeom.cornerA (g : NodeGeom) : Sp :=
-  if g.circle then g.a * diag45 / 1000 else g.a
+  match g.shape with
+  | .rectangle => g.a
+  | .circle | .ellipse => g.a * diag45 / 1000
+  | .diamond => g.a / 2
 
 /-- The vertical reach of a corner anchor. -/
 public def NodeGeom.cornerB (g : NodeGeom) : Sp :=
-  if g.circle then g.b * diag45 / 1000 else g.b
+  match g.shape with
+  | .rectangle => g.b
+  | .circle | .ellipse => g.b * diag45 / 1000
+  | .diamond => g.b / 2
 
 /-- The baseline the `base` family stands on, held inside the node's own
 extent. The clamp is inert wherever the extent covers the label's ink —
@@ -2186,13 +2276,13 @@ public def NodeGeom.anchorPoint (g : NodeGeom) : NodeAnchor → Sp × Sp
 own border: the pairing rather than four coordinates restated, so a sign
 error in the table is one failing conjunct. `offset_corners_exact` is the
 same shape one level up, over the relative-placement vocabulary. -/
-public theorem anchorPoint_corners_exact (g : NodeGeom) (h : g.circle = false) :
+public theorem anchorPoint_corners_exact (g : NodeGeom) (h : g.shape = .rectangle) :
     g.anchorPoint .northEast = ((g.anchorPoint .east).1, (g.anchorPoint .north).2) ∧
     g.anchorPoint .northWest = ((g.anchorPoint .west).1, (g.anchorPoint .north).2) ∧
     g.anchorPoint .southEast = ((g.anchorPoint .east).1, (g.anchorPoint .south).2) ∧
     g.anchorPoint .southWest = ((g.anchorPoint .west).1, (g.anchorPoint .south).2) := by
-  have ca : g.cornerA = g.a := by simp only [NodeGeom.cornerA, h]; rfl
-  have cb : g.cornerB = g.b := by simp only [NodeGeom.cornerB, h]; rfl
+  have ca : g.cornerA = g.a := by simp [NodeGeom.cornerA, h]
+  have cb : g.cornerB = g.b := by simp [NodeGeom.cornerB, h]
   simp only [NodeGeom.anchorPoint, ca, cb, and_self]
 
 /-- The two sides of an axis are opposite displacements of the centre: a
@@ -2242,16 +2332,22 @@ public theorem anchorPoint_between (g : NodeGeom) (ha : 0 ≤ g.a) (hb : 0 ≤ g
   have clamp : ∀ v d p : Int, 0 ≤ d →
       v - d ≤ max (v - d) (min (v + d) p) ∧ max (v - d) (min (v + d) p) ≤ v + d := by
     intro v d p h; omega
+  have hf : ∀ d : Int, 0 ≤ d → 0 ≤ d / 2 ∧ d / 2 ≤ d := by
+    intro d h; omega
   have hca : 0 ≤ g.cornerA ∧ g.cornerA ≤ g.a := by
-    simp only [NodeGeom.cornerA, diag45]
-    split
-    · exact dg g.a ha
-    · exact ⟨ha, Int.le_refl _⟩
+    unfold NodeGeom.cornerA diag45
+    cases g.shape with
+    | rectangle => exact ⟨ha, Int.le_refl _⟩
+    | circle => exact dg g.a ha
+    | ellipse => exact dg g.a ha
+    | diamond => exact hf g.a ha
   have hcb : 0 ≤ g.cornerB ∧ g.cornerB ≤ g.b := by
-    simp only [NodeGeom.cornerB, diag45]
-    split
-    · exact dg g.b hb
-    · exact ⟨hb, Int.le_refl _⟩
+    unfold NodeGeom.cornerB diag45
+    cases g.shape with
+    | rectangle => exact ⟨hb, Int.le_refl _⟩
+    | circle => exact dg g.b hb
+    | ellipse => exact dg g.b hb
+    | diamond => exact hf g.b hb
   have hbase : g.y - g.b ≤ g.baseY ∧ g.baseY ≤ g.y + g.b := by
     simp only [NodeGeom.baseY]; exact clamp g.y g.b g.base hb
   have cx := cn g.x g.a g.cornerA hca.1 hca.2
@@ -2277,6 +2373,16 @@ private def splitAnchor (s : String) : Option (String × String) :=
   match s.splitOn "." with
   | [nm, an] => if nm.isEmpty || an.isEmpty then none else some (nm, an)
   | _ => none
+
+/-- A node placed against another once that one stands: a `label=` or a
+`pin=` (TikZ manual §17.10) — the node it hangs on, its spec as written, and
+the distance a key set (`none`: the pin's 3 ex). -/
+public structure After where
+  main : NodeGeom
+  pin : Bool
+  spec : List Tok
+  dist : Option Sp
+  deriving Repr, Inhabited
 
 /-- Shapes and named losses, accumulated across the unrolled walk. A
 diagnostic dedupes on its message: one construct looped over forty times
@@ -2309,6 +2415,13 @@ public structure Ev where
   resolves; a count that stops falling is a cycle or a name no node
   carries, and the refusals the final run carries name it. -/
   deferred : Nat := 0
+  /-- The clip the statement just evaluated set (`\clip`, or a `clip` key):
+  the statement walk applies it to what follows in the scope
+  (`clipAfter`) and clears it. -/
+  clipGeom : Option Gfx.Geom := none
+  /-- The labels and pins the node just evaluated asked for, placed once it
+  stands (`drainAfter`). -/
+  after : Array After := #[]
 
 private def Ev.diag (ev : Ev) (d : PDiag) : Ev :=
   if ev.diags.any (·.2 == d.2) then ev else { ev with diags := ev.diags.push d }
@@ -3923,7 +4036,10 @@ private def readsPathOpt (styles : List (String × Array Tok)) (opt : Array Tok)
       | none => false
     | ts => ["draw", "dashed", "dotted", "densely dotted", "fill", "color",
         "auto", "swap", "'", "shorten<", "shorten>", "rounded corners", "sharp corners",
-        "opacity", "fill opacity", "draw opacity"].contains (keyPath ts) ||
+        "opacity", "fill opacity", "draw opacity", "shade", "shading", "shading angle",
+        "top color", "bottom color", "left color", "right color", "middle color",
+        "inner color", "outer color", "ball color", "decorate", "decoration"].contains
+        (keyPath ts) ||
         toKeyNames.contains (keyPath ts) || (readLineWidth ts).isSome
 
 /-- Is a `\fill`'s bracket a list of keys a path reads (`fill opacity=0.3`,
@@ -3946,7 +4062,8 @@ the loop names any switch in it that it cannot set (`readFont`). -/
 private def readsNodeOpt (opt : Array Tok) : Bool :=
   if (readPlace (0, 0) opt.toList).isSome then true
   else match opt.toList with
-  | ts => ["circle", "rectangle", "draw", "dashed", "dotted", "densely dotted",
+  | ts => ["circle", "rectangle", "ellipse", "diamond", "shape", "label", "pin",
+      "label distance", "pin distance", "fit", "draw", "dashed", "dotted", "densely dotted",
       "text", "fill", "minimum size", "minimum width", "minimum height",
       "inner sep", "inner xsep", "inner ysep", "outer sep", "outer xsep", "outer ysep",
       "node contents", "font", "text height", "text depth", "align", "anchor"].contains
@@ -4453,7 +4570,15 @@ private def evalNode (cx : Cx) (env : List (String × Val)) (toks : Array Tok)
   -- The node's outline, gathered from its options: shape kind (pgf's
   -- default node shape is a rectangle), whether it draws and/or fills,
   -- how it strokes, and the declared minimum extents.
-  let mut isCircle := false
+  let mut nodeShape : NodeShape := .rectangle
+  -- `label=` and `pin=` (TikZ manual §17.10): nodes placed against this one
+  -- once it stands (`drainAfter`), and the distances their keys set.
+  let mut extras : Array (Bool × List Tok) := #[]
+  let mut labelDist : Sp := 0
+  let mut pinDist : Option Sp := none
+  -- `fit=(a) (b) …` (tikzlibraryfit.code.tex): the node's text box covers
+  -- what the list names.
+  let mut fitTo : Option (List Tok) := none
   let mut draw : Option (Option Ir.Color) := none
   let mut fillCol : Option Ir.Color := none
   let mut dash : Ir.Pic.Dash := .solid
@@ -4525,8 +4650,29 @@ is outside the rendered picture subset; the lines stay centred")
       match evalColor cx env rest.toArray with
       | .ok c => color := c
       | .error e => ev := ev.diag (.E0333, s!"in '\\node', {e}; the colour is dropped")
-    | [.ident "circle"] => isCircle := true
-    | [.ident "rectangle"] => isCircle := false
+    | [.ident "circle"] => nodeShape := .circle
+    | [.ident "rectangle"] => nodeShape := .rectangle
+    | [.ident "ellipse"] => nodeShape := .ellipse
+    | [.ident "diamond"] => nodeShape := .diamond
+    | .ident "shape" :: .sym '=' :: rest =>
+      match keyName rest with
+      | some "circle" => nodeShape := .circle
+      | some "rectangle" => nodeShape := .rectangle
+      | some "ellipse" => nodeShape := .ellipse
+      | some "diamond" => nodeShape := .diamond
+      | _ => ev := ev.diag (.W0334, s!"node option {optName opt.toList} is outside the rendered \
+picture subset; the node is a rectangle")
+    | .ident "label" :: .sym '=' :: rest => extras := extras.push (false, rest)
+    | .ident "pin" :: .sym '=' :: rest => extras := extras.push (true, rest)
+    | .ident "label" :: .ident "distance" :: .sym '=' :: rest =>
+      match readDim rest with
+      | .ok d => labelDist := d
+      | .error e => ev := ev.diag (.W0334, s!"in 'label distance', {e}; the option is dropped")
+    | .ident "pin" :: .ident "distance" :: .sym '=' :: rest =>
+      match readDim rest with
+      | .ok d => pinDist := some d
+      | .error e => ev := ev.diag (.W0334, s!"in 'pin distance', {e}; the option is dropped")
+    | .ident "fit" :: .sym '=' :: rest => fitTo := some rest
     | [.ident "draw"] => draw := some none
     | [.ident "draw", .sym '=', .ident "none"] => draw := none
     | .ident "draw" :: .sym '=' :: rest =>
@@ -4628,6 +4774,34 @@ node is placed by its anchor alone")
       | none =>
         ev := ev.diag (.W0334, s!"node option {optName (o :: rest)} is outside the rendered \
 picture subset; the option is dropped")
+  -- The fit library's box (`\tikz@lib@fit`): the named nodes' west, east,
+  -- north and south anchors and the bare points, their hull the node's
+  -- text box, centred on its centre, the node anchored there.
+  let mut fitBox : Option (Sp × Sp × Sp × Sp) := none
+  if let some ft := fitTo then
+    let fts := (ft.filter (· != .space)).toArray
+    let mut pts : Array (Sp × Sp) := #[]
+    let mut j := 0
+    for _ in [0:fts.size + 1] do
+      if j ≥ fts.size then break
+      match readAnchor cx env ev fts j (0, 0) with
+      | .ok (a, next, _) =>
+        match a with
+        | .node g =>
+          for an in [NodeAnchor.west, .east, .north, .south] do pts := pts.push (g.anchorPoint an)
+        | .point x y => pts := pts.push (x, y)
+        j := next
+      | .error _ =>
+        ev := ev.diag (.E0333, "in 'fit', a node or point it names does not resolve; the node \
+fits the rest")
+        break
+    if let some p0 := pts[0]? then
+      let x0 := pts.foldl (fun m p => min m p.1) p0.1
+      let x1 := pts.foldl (fun m p => max m p.1) p0.1
+      let y0 := pts.foldl (fun m p => min m p.2) p0.2
+      let y1 := pts.foldl (fun m p => max m p.2) p0.2
+      fitBox := some ((x0 + x1) / 2, (y0 + y1) / 2, x1 - x0, y1 - y0)
+      anchorAt := none
   -- pgf places a node with no `at` at the path's current point, which at
   -- the start of a node statement is the origin; a relative placement
   -- (`right=of a`) puts it one `node distance` from the node it names.
@@ -4637,10 +4811,12 @@ picture subset; the option is dropped")
   -- carries — or a cycle — is refused, by that name.
   -- `at (…)`: a point, a node or its anchor, or a calc computation — read
   -- by the one reader every endpoint is.
-  let atAnchor : Option (Except PDiag Anchor) := pro.at?.map fun inner =>
-    match inner.toList with
-    | [.math false raw _] => calcAnchor cx env ev raw "'\\node'" "the node is not drawn"
-    | _ => anchorBody cx env ev inner "'\\node'" "the node is not drawn"
+  let atAnchor : Option (Except PDiag Anchor) := match fitBox with
+    | some (fx, fy, _, _) => some (.ok (.point fx fy))
+    | none => pro.at?.map fun inner =>
+      match inner.toList with
+      | [.math false raw _] => calcAnchor cx env ev raw "'\\node'" "the node is not drawn"
+      | _ => anchorBody cx env ev inner "'\\node'" "the node is not drawn"
   let unresolved : Bool :=
     (atAnchor matches some (.error _)) ||
     (atAnchor.isNone && (match place with
@@ -4678,7 +4854,10 @@ outside the rendered picture subset; the label is not drawn")
       | .label lx ly content _ sz al => some (Ir.Pic.labelInkBox lx ly al (cx.metric content sz))
       | .ink _ => none
     let ((bx0, by0), (bx1, by1)) := Gfx.Box.hull bands
-    (max (-bx0) bx1, max (-by0) by1)
+    -- A fitted node's text box is as wide as what it fits (`text width`).
+    match fitBox with
+    | some (_, _, fw, _) => (fw / 2, max (-by0) by1)
+    | none => (max (-bx0) bx1, max (-by0) by1)
   -- Each line's baseline and measurement. The label's *first* line is the
   -- node's baseline, as it is for any TeX box: what the `base` family of
   -- anchors reads.
@@ -4718,16 +4897,29 @@ outside the rendered picture subset; the label is not drawn")
     (min lo (b - m.boxDepth), max hi (b + m.boxHeight))) (baseOff, baseOff)
   let dimOf (ts : Option (List Tok)) : Option Sp :=
     ts.bind fun ts => (readNodeDim em ex ts).toOption
-  let declHt := dimOf textHt
-  let declDp := dimOf textDp
+  -- A fitted node's text box is as tall as what it fits, centred on it
+  -- (`text height` and `text depth` the fit library sets).
+  let declHt := match fitBox with
+    | some (_, _, _, fh) => some (fh / 2)
+    | none => dimOf textHt
+  let declDp := match fitBox with
+    | some (_, _, _, fh) => some (fh - fh / 2)
+    | none => dimOf textDp
   for (key, ts) in [("text height", textHt), ("text depth", textDp)] do
     if let some ts := ts then
       if let .error e := readNodeDim em ex ts then
         ev := ev.diag (.W0334, s!"in '{key}', {e}; the option is dropped")
   -- A node declaring both minimums (a circle, its size) keeps the declared
   -- outline and the anchors it always had; any other drawn one is outlined.
-  let declaredExtent : Bool := if isCircle then max minW minH > 0 else minW > 0 && minH > 0
-  let outlined : Bool := (draw.isSome || fillCol.isSome) && !declaredExtent
+  let declaredExtent : Bool := match nodeShape with
+    | .circle => max minW minH > 0
+    | .rectangle => minW > 0 && minH > 0
+    | .ellipse | .diamond => false
+  -- An ellipse or a diamond is its outline drawn or not: its anchors stand on
+  -- the shape's border, which `nodeOutline` computes from its text box.
+  let outlined : Bool :=
+    (draw.isSome || fillCol.isSome || nodeShape == .ellipse || nodeShape == .diamond) &&
+      !declaredExtent
   let (base, boxLo, boxHi, halfB) : Sp × Sp × Sp × Sp :=
     if declHt.isNone && declDp.isNone && !outlined then (baseOff, glyphs.1, glyphs.2, inkHalf.2)
     else
@@ -4739,7 +4931,7 @@ outside the rendered picture subset; the label is not drawn")
   -- node by `nodeOutline_seat_exact`), where the node has one.
   let outline? : Option (Sp × Sp) :=
     if outlined then
-      let (_, w, h) := nodeOutline isCircle (dimF minW) (dimF minH) 0 inkHalf.1 boxLo boxHi sepX sepY
+      let (_, w, h) := nodeOutline nodeShape (dimF minW) (dimF minH) 0 inkHalf.1 boxLo boxHi sepX sepY
       some (w, h)
     else none
   -- The placed node's own half-extents, its side of the border-to-border
@@ -4747,8 +4939,8 @@ outside the rendered picture subset; the label is not drawn")
   -- else the declared minimum, or the label's own reach where the text
   -- stands proud of it (`Ir.Pic.nodeExtent`, whose `nodeExtent_covers` is
   -- why a placement parts text and not centres).
-  let declA : Sp := if isCircle then dimF (max minW minH) / 2 else dimF minW / 2
-  let declB : Sp := if isCircle then dimF (max minW minH) / 2 else dimF minH / 2
+  let declA : Sp := if nodeShape == .circle then dimF (max minW minH) / 2 else dimF minW / 2
+  let declB : Sp := if nodeShape == .circle then dimF (max minW minH) / 2 else dimF minH / 2
   let ownA : Sp := match outline? with
     | some (w, _) => w / 2
     | none => borderHalf declA inkHalf.1 sepX
@@ -4771,7 +4963,7 @@ outside the rendered picture subset; the label is not drawn")
     else
       let ox := oxsep.getD (width / 2)
       let oy := oysep.getD (width / 2)
-      if isCircle then (max ox oy, max ox oy) else (ox, oy)
+      if nodeShape == .circle then (max ox oy, max ox oy) else (ox, oy)
   let anchA : Sp := ownA + outA
   let anchB : Sp := ownB + outB
   -- A placement anchor moves the centre so the named anchor stands on the
@@ -4779,7 +4971,7 @@ outside the rendered picture subset; the label is not drawn")
   -- read where it stands at the origin.
   let anchorShift : Sp × Sp := match anchorAt with
     | some (an, (dx, dy)) =>
-      let p := ({ x := 0, y := 0, a := anchA, b := anchB, circle := isCircle, base } :
+      let p := ({ x := 0, y := 0, a := anchA, b := anchB, shape := nodeShape, base } :
         NodeGeom).anchorPoint an
       (dx - p.1, dy - p.2)
     | none => (0, 0)
@@ -4799,7 +4991,7 @@ outside the rendered picture subset; the label is not drawn")
     let placement ← placement
     let plan : NodePlan :=
       { name := nodeName, placement
-        shape := { x := 0, y := 0, a := anchA, b := anchB, circle := isCircle, base } }
+        shape := { x := 0, y := 0, a := anchA, b := anchB, shape := nodeShape, base } }
     let (resolved, nodes) := plan.run ev.nodes
     match resolved with
     | .ok geom => return (geom, nodes)
@@ -4841,6 +5033,9 @@ this one against; the node is not drawn")
         -- A coordinate adds no box of its own (pgf's `coordinate` shape
         -- reaches no bounding box): it only names its point.
         ev := ev.place coordinate border nodes
+        for (pin, spec) in extras do
+          let x : After := { main := geom, pin, spec, dist := if pin then pinDist else some labelDist }
+          ev := { ev with after := ev.after.push x }
         -- The node's outline, before its label so the fill paints under
         -- the text. A declared extent is the declared minimum (pgf manual
         -- §"Shapes": extent = max(minimum, text extent + 2·inner sep) per
@@ -4855,18 +5050,27 @@ this one against; the node is not drawn")
             { color := c.getD cx.ink
               width := width
               dash := dash }
+          let paintOf (w h : Sp) : Ir.Pic.Shape := match nodeShape with
+            | .rectangle => .frame (sx - w / 2) (sy - h / 2) w h stroke fillCol
+            | .circle => .circle sx sy (w / 2) stroke fillCol
+            | .ellipse =>
+              .ink (.draw (.ellipse sx sy (w / 2) (h / 2)) (fillCol.map Ir.Pic.solidFill)
+                (stroke.map Ir.Pic.strokeOf))
+            | .diamond =>
+              -- The drawn diamond stands inside its anchors by 1.414213 outer
+              -- seps less one (the shape's `\backgroundpath`).
+              let dx := w / 2 + outA - outA * 1414213 / 1000000
+              let dy := h / 2 + outB - outB * 1414213 / 1000000
+              let sub : Gfx.Subpath :=
+                { start := (sx + dx, sy), closed := true
+                  segs := #[.line (sx, sy + dy), .line (sx - dx, sy), .line (sx, sy - dy)] }
+              .ink (.draw (.path #[sub]) (fillCol.map Ir.Pic.solidFill) (stroke.map Ir.Pic.strokeOf))
           match outline? with
-          | some (w, h) =>
-            let shape : Ir.Pic.Shape :=
-              if isCircle then .circle sx sy (w / 2) stroke fillCol
-              else .frame (sx - w / 2) (sy - h / 2) w h stroke fillCol
-            ev := { ev with shapes := ev.shapes.push shape }
+          | some (w, h) => ev := { ev with shapes := ev.shapes.push (paintOf w h) }
           | none =>
-            let shape : Ir.Pic.Shape :=
-              if isCircle then .circle sx sy (dimF (max minW minH) / 2) stroke fillCol
-              else .frame (sx - dimF minW / 2) (sy - dimF minH / 2) (dimF minW) (dimF minH)
-                stroke fillCol
-            ev := { ev with shapes := ev.shapes.push shape }
+            let (w, h) := if nodeShape == .circle then (dimF (max minW minH), dimF (max minW minH))
+              else (dimF minW, dimF minH)
+            ev := { ev with shapes := ev.shapes.push (paintOf w h) }
         match bodyOf with
         | .error d => return ev.diag d
         | .ok (lines, mdiags) =>
@@ -4909,8 +5113,11 @@ private def Anchor.toward (a : Anchor) (q : Sp × Sp) : Sp × Sp :=
   | .point x y => (x, y)
   | .node g =>
     if g.a ≤ 0 || g.b ≤ 0 then (g.x, g.y)
-    else if g.circle then circleBorder g.x g.y g.a q.1 q.2
-    else rectBorder g.x g.y g.a g.b q.1 q.2
+    else match g.shape with
+      | .rectangle => rectBorder g.x g.y g.a g.b q.1 q.2
+      | .circle => circleBorder g.x g.y g.a q.1 q.2
+      | .ellipse => ellipseBorder g.x g.y g.a g.b q.1 q.2
+      | .diamond => diamondBorder g.x g.y g.a g.b q.1 q.2
 
 /-- The `latex`/`->` arrow tip as a filled triangle, plus the point the
 stroked line shortens to. Extents are pgf's own declaration
@@ -5103,6 +5310,9 @@ private inductive PathMode where
   | path
   | fill
   | filldraw
+  | shade
+  | shadedraw
+  | clip
   deriving BEq
 
 /-- A length key's value as `\pgfmathsetlength` reads it: a length, `em`
@@ -5235,39 +5445,78 @@ the path is not drawn")
 /-- cos and sin of milli-degrees, in 2⁻³⁰ (`Gfx.Trig.cosSin`). -/
 private def cosSinMilli (m : Int) : Int × Int := Gfx.Trig.cosSin (m * Gfx.Trig.pi / 180000)
 
+/-- One arc piece carried onto the canvas from the current point: its
+segment, and its end as the next current point. -/
+private def arcStep (onCanvas : Sp × Sp → Sp × Sp) (acc : Array Ir.Pic.PathSeg × (Sp × Sp)) :
+    Gfx.Seg → Array Ir.Pic.PathSeg × (Sp × Sp)
+  | .line q =>
+    let q' := onCanvas q
+    (acc.1.push (.line acc.2.1 acc.2.2 q'.1 q'.2), q')
+  | .cubic c1 c2 q =>
+    let c1' := onCanvas c1
+    let c2' := onCanvas c2
+    let q' := onCanvas q
+    (acc.1.push (.cubic acc.2.1 acc.2.2 c1'.1 c1'.2 c2'.1 c2'.2 q'.1 q'.2), q')
+
+/-- The current point after a run of pieces is the canvas image of the last
+one's end, or the point it started from. -/
+private theorem arcStep_end (onCanvas : Sp × Sp → Sp × Sp) :
+    ∀ (segs : List Gfx.Seg) (acc : Array Ir.Pic.PathSeg × (Sp × Sp)),
+      (segs.foldl (arcStep onCanvas) acc).2 =
+        ((segs.getLast?.map fun sg => onCanvas sg.endPt).getD acc.2)
+  | [], _ => rfl
+  | [sg], acc => by cases sg <;> rfl
+  | sg :: sg2 :: rest, acc => by
+    rw [List.foldl_cons, arcStep_end onCanvas (sg2 :: rest)]
+    simp only [List.getLast?_cons_cons]
+    cases h : (sg2 :: rest).getLast? with
+    | none => simp at h
+    | some l => rfl
+
 /-- An arc's pieces on the canvas, from its start `p`: the ellipse arc of
 radii `rx`, `ry` from `s` to `e`, laid out in the picture's own frame
 (`Gfx.Kit.arcCubics`, which ends exactly on the declared end) and carried
 through the transformation's linear part, the start pinned to `p` — and the
 end, which is the next current point. -/
 private def arcPieces (cx : Cx) (p : Sp × Sp) (s e rx ry : Int) :
-    Array Ir.Pic.PathSeg × (Sp × Sp) := Id.run do
+    Array Ir.Pic.PathSeg × (Sp × Sp) :=
   let u := Gfx.Trig.unit
-  let (cs, ss) := cosSinMilli s
-  let (ce, se) := cosSinMilli e
-  let start : Sp × Sp := (rx * cs / u, ry * ss / u)
-  let last : Sp × Sp := (rx * ce / u, ry * se / u)
+  let start : Sp × Sp := (rx * (cosSinMilli s).1 / u, ry * (cosSinMilli s).2 / u)
+  let last : Sp × Sp := (rx * (cosSinMilli e).1 / u, ry * (cosSinMilli e).2 / u)
   let θ0 := s * Gfx.Trig.pi / 180000
   let Δ := (e - s) * Gfx.Trig.pi / 180000
   let pieces := Gfx.Kit.arcCubics 0 0 rx ry 0 θ0 Δ last
   let onCanvas (q : Sp × Sp) : Sp × Sp :=
     let d := cx.placeVec (q.1 - start.1) (q.2 - start.2)
     (p.1 + d.1, p.2 + d.2)
-  let mut out : Array Ir.Pic.PathSeg := #[]
-  let mut cur := p
-  for sg in pieces do
-    match sg with
-    | .line q =>
-      let q' := onCanvas q
-      out := out.push (.line cur.1 cur.2 q'.1 q'.2)
-      cur := q'
-    | .cubic c1 c2 q =>
-      let c1' := onCanvas c1
-      let c2' := onCanvas c2
-      let q' := onCanvas q
-      out := out.push (.cubic cur.1 cur.2 c1'.1 c1'.2 c2'.1 c2'.2 q'.1 q'.2)
-      cur := q'
-  return (out, cur)
+  pieces.foldl (arcStep onCanvas) (#[], p)
+
+/-- **An arc ends where its end angle stands** (`_exact`): the next current
+point — where the path goes on — is the canvas image of the ellipse's point
+at the end angle, measured from the point the arc started at, whatever the
+trigonometry rounded on the way (`Gfx.Kit.arcCubics_exact`). -/
+private theorem arc_end_exact (cx : Cx) (p : Sp × Sp) (s e rx ry : Int) :
+    (arcPieces cx p s e rx ry).2 =
+      let u := Gfx.Trig.unit
+      let d := cx.placeVec (rx * (cosSinMilli e).1 / u - rx * (cosSinMilli s).1 / u)
+        (ry * (cosSinMilli e).2 / u - ry * (cosSinMilli s).2 / u)
+      (p.1 + d.1, p.2 + d.2) := by
+  unfold arcPieces
+  rw [← Array.foldl_toList, arcStep_end]
+  have hl := Gfx.Kit.arcCubics_exact 0 0 rx ry 0 (s * Gfx.Trig.pi / 180000)
+    ((e - s) * Gfx.Trig.pi / 180000)
+    (rx * (cosSinMilli e).1 / Gfx.Trig.unit, ry * (cosSinMilli e).2 / Gfx.Trig.unit)
+  rw [← Array.getLast?_toList] at hl
+  cases hp : (Gfx.Kit.arcCubics 0 0 rx ry 0 (s * Gfx.Trig.pi / 180000)
+      ((e - s) * Gfx.Trig.pi / 180000)
+      (rx * (cosSinMilli e).1 / Gfx.Trig.unit, ry * (cosSinMilli e).2 / Gfx.Trig.unit)).toList.getLast? with
+  | none =>
+    rw [hp] at hl
+    simp at hl
+  | some sg =>
+    rw [hp] at hl
+    simp only [Option.map_some, Option.some.injEq] at hl
+    simp only [Option.map_some, Option.getD_some, hl]
 
 /-- An ellipse about a canvas centre under the transformation: an
 axis-aligned one keeps the model's own geometry, its radii scaled by the
@@ -5355,16 +5604,80 @@ subset; the path is not drawn")
 private def tipNode (st : Ir.Pic.Stroke) (t : Ir.Pic.Tip) : Gfx.Node Empty :=
   .draw (.path #[Ir.Pic.tipSubpath t]) (some (Ir.Pic.solidFill st.color)) none
 
+/-- The tip an end of a path draws: the subset's triangle (`tipAt`), or a
+mark of its own shape (arrows.meta's `Stealth`). -/
+private inductive TipInk where
+  | tri (t : Ir.Pic.Tip)
+  | node (n : Gfx.Node Empty)
+
+private def tipInkNode (st : Ir.Pic.Stroke) : TipInk → Gfx.Node Empty
+  | .tri t => tipNode st t
+  | .node n => n
+
 /-- An edge and its tips: the subset's edge shape where it has at most one
-tip (`Ir.Pic.Shape.edge`), else one group of the path and each tip. -/
+tip and that one the triangle (`Ir.Pic.Shape.edge`), else one group of the
+path and each tip. -/
 private def edgeWithTips (segs : Array Ir.Pic.PathSeg) (st : Ir.Pic.Stroke)
-    (tips : Array Ir.Pic.Tip) : Ir.Pic.Shape :=
+    (tips : Array TipInk) : Ir.Pic.Shape :=
   match tips.toList with
   | [] => .edge segs st none
-  | [t] => .edge segs st (some t)
+  | [.tri t] => .edge segs st (some t)
   | _ =>
     let path : Gfx.Node Empty := .draw (.path (Ir.Pic.edgeSubpaths segs)) none (some (Ir.Pic.strokeOf st))
-    .ink (.group Gfx.Affine.unit #[] Gfx.Alpha.opaque (#[path] ++ tips.map (tipNode st)))
+    .ink (.group Gfx.Affine.unit #[] Gfx.Alpha.opaque (#[path] ++ tips.map (tipInkNode st)))
+
+/-- Which tip a name draws: arrows.meta's `Stealth`, or the subset's
+triangle every other drawable name stands for (`drawsAsArrow`). -/
+private inductive TipKind where
+  | plain
+  | stealth
+  deriving BEq
+
+private def tipKindOf : Option String → TipKind
+  | some "Stealth" => .stealth
+  | _ => .plain
+
+/-- arrows.meta's `Stealth` at its defaults, arriving at `q` from `p`
+(pgflibraryarrows.meta.code.tex: `length = +3pt 4.5 .8`, `width' = +0pt
+.75`, `inset' = +0pt 0.325`, its line width the path's, capped at a quarter
+of the length less the inset). The dart's corners come from pgf's own miter
+arithmetic: the front corner `½·lw·√(1 + 4(L/W)²)` short of the tip end,
+the back corners' miters from the half angle between the dart's sides, the
+inset `½·lw·√(1 + 4(I/W)²)` deeper. It is filled and stroked at its line
+width with mitred joins, its tip end on `q`, and the path stops for it at
+the inset less a quarter line width (`\pgfarrowssetlineend`). -/
+private def stealthArrival (p q : Sp × Sp) (lw : Sp) (color : Ir.Color) :
+    Option (TipInk × Sp × Sp) :=
+  let dx := q.1 - p.1
+  let dy := q.2 - p.2
+  let n := isqrt (dx * dx + dy * dy)
+  if n == 0 then none else
+  let len : Int := Dim.pt 3 + lw * 45 / 10 -- length = +3pt 4.5 (pgflibraryarrows.meta.code.tex)
+  let wid : Int := len * 75 / 100
+  let ins : Int := len * 325 / 1000
+  let alw : Int := min lw ((len - ins) / 4)
+  if wid ≤ 0 then none else
+  let front := alw * isqrt (wid * wid + 4 * len * len) / (2 * wid)
+  let insetMiter := alw * isqrt (wid * wid + 4 * ins * ins) / (2 * wid)
+  let a1 := Gfx.Trig.atan2 len (wid / 2)
+  let a0 := Gfx.Trig.atan2 ins (wid / 2)
+  let half := (a1 - a0) / 2
+  let (ch, sh) := Gfx.Trig.cosSin half
+  let yc := if sh == 0 then alw / 2 else alw * ch / (2 * sh)
+  let (ca, sa) := Gfx.Trig.cosSin (a0 + half)
+  let u := Gfx.Trig.unit
+  let back := if ins == 0 then alw / 2 else sa * yc / u
+  let top := ca * yc / u
+  let hw := wid / 2 - top
+  -- The dart's frame: x along the arrival, its origin one length behind q.
+  let at_ (s t : Int) : Sp × Sp :=
+    (q.1 + ((s - len) * dx - t * dy) / n, q.2 + ((s - len) * dy + t * dx) / n)
+  let dart : Gfx.Subpath :=
+    { start := at_ (len - front) 0, closed := true
+      segs := #[.line (at_ back hw), .line (at_ (ins + insetMiter) 0), .line (at_ back (-hw))] }
+  let st : Gfx.Stroke := Ir.Pic.strokeOf { color, width := alw }
+  let stop := at_ (ins + insetMiter - alw / 4) 0
+  some (.node (.draw (.path #[dart]) (some (Ir.Pic.solidFill color)) (some st)), stop)
 
 mutual
 
@@ -5402,6 +5715,201 @@ the nonzero rule. -/
     let rectSubs := rects.map fun (x, y, w, h) => Gfx.Kit.rectPath x y w h
     let ellSubs := ellipses.flatMap fun (ex, ey, rx, ry) => Gfx.Kit.ellipse ex ey rx ry
     .path (Ir.Pic.edgeSubpaths segs ++ rectSubs ++ ellSubs ++ extra)
+
+/-- The three shadings TikZ declares (tikz.code.tex: `axis`, `radial`,
+`ball`). -/
+public inductive ShadeKind where
+  | axis
+  | radial
+  | ball
+  deriving Repr, BEq, DecidableEq, Inhabited
+
+/-- A path's shading as TikZ's options leave it (tikz.code.tex, the shading
+options): its kind, its angle in milli-degrees, and the colours each kind
+reads. -/
+public structure ShadeSpec where
+  kind : ShadeKind
+  angle : Int
+  top : Ir.Color
+  middle : Ir.Color
+  bottom : Ir.Color
+  inner : Ir.Color
+  outer : Ir.Color
+  ball : Ir.Color
+  deriving Repr, Inhabited
+
+/-- What TikZ sets before any key (the `\pgfutil@colorlet` lines after
+tikz.code.tex's declarations, xcolor's colours as TikZ copied them when it
+loaded): the axis shading gray over white with their mix between, the
+radial gray to white, the ball blue; the axis kind, no angle. -/
+public def ShadeSpec.initial : ShadeSpec :=
+  let base (n : String) : Ir.Color := ((default : Ir.Palette).resolve n).getD Ir.Color.black
+  { kind := .axis, angle := 0, top := base "gray"
+    middle := Ir.Color.mix (base "gray") 50 (base "white"), bottom := base "white"
+    inner := base "gray", outer := base "white", ball := base "blue" }
+
+/-- One shading colour key (tikz.code.tex): the colour it sets, the middle
+it mixes again from top and bottom, the kind and the angle it switches to —
+`left` and `right` are `top` and `bottom` a quarter turn round. `none` for a
+side no key names. -/
+public def ShadeSpec.setColor (s : ShadeSpec) (side : String) (c : Ir.Color) :
+    Option ShadeSpec :=
+  let mid (t b : Ir.Color) : Ir.Color := Ir.Color.mix t 50 b
+  match side with
+  | "top" => some { s with top := c, middle := mid c s.bottom, kind := .axis, angle := 0 }
+  | "bottom" => some { s with bottom := c, middle := mid s.top c, kind := .axis, angle := 0 }
+  | "left" => some { s with top := c, middle := mid c s.bottom, kind := .axis, angle := 90000 }
+  | "right" => some { s with bottom := c, middle := mid s.top c, kind := .axis, angle := 90000 }
+  | "middle" => some { s with middle := c, kind := .axis }
+  | "inner" => some { s with inner := c, kind := .radial }
+  | "outer" => some { s with outer := c, kind := .radial }
+  | "ball" => some { s with ball := c, kind := .ball }
+  | _ => none
+
+/-- A stop `num/den` of the way along a gradient's run, in the model's
+65536ths, rounded half up. -/
+@[expose] public def stopAt (num den : Nat) (c : Ir.Color) : Gfx.Stop :=
+  { offset := ⟨min 65536 ((num * 65536 + den / 2) / den), Nat.lt_succ_of_le (Nat.min_le_left _ _)⟩
+    color := c }
+
+/-- A shading's stops as tikz.code.tex declares them: the axis shading's
+`color(0bp)` to `color(100bp)` over its 100 bp, the radial's and the ball's
+over the 50 bp radius, the ball's colour mixed with white and black. -/
+@[expose] public def ShadeSpec.stops (s : ShadeSpec) : Array Gfx.Stop :=
+  match s.kind with
+  | .axis => #[stopAt 0 100 s.bottom, stopAt 25 100 s.bottom, stopAt 50 100 s.middle,
+      stopAt 75 100 s.top, stopAt 100 100 s.top]
+  | .radial => #[stopAt 0 50 s.inner, stopAt 25 50 s.outer, stopAt 50 50 s.outer]
+  | .ball => #[stopAt 0 50 (Ir.Color.mix s.ball 15 Ir.Color.white),
+      stopAt 9 50 (Ir.Color.mix s.ball 75 Ir.Color.white),
+      stopAt 18 50 (Ir.Color.mix s.ball 70 Ir.Color.black),
+      stopAt 25 50 (Ir.Color.mix s.ball 50 Ir.Color.black), stopAt 50 50 Ir.Color.black]
+
+/-- **A shading's stops are pgf's** (`_exact`): the axis shading's bottom
+colour up to a quarter of its run, its middle at the half, its top from
+three quarters; the radial's inner colour at the centre and its outer from
+half the radius out; the ball's five stops at 0, 9, 18, 25 and 50 of its
+50 bp — each offset the declared one to the nearest 65536th, each colour
+the declared one (tikz.code.tex, `\pgfdeclareverticalshading{axis}` and the
+two `\pgfdeclareradialshading`s). -/
+public theorem shade_stops_exact (s : ShadeSpec) :
+    s.stops.map (·.offset.val) = (match s.kind with
+      | .axis => #[0, 16384, 32768, 49152, 65536]
+      | .radial => #[0, 32768, 65536]
+      | .ball => #[0, 11796, 23593, 32768, 65536]) ∧
+    s.stops.map (·.color) = (match s.kind with
+      | .axis => #[s.bottom, s.bottom, s.middle, s.top, s.top]
+      | .radial => #[s.inner, s.outer, s.outer]
+      | .ball => #[Ir.Color.mix s.ball 15 Ir.Color.white, Ir.Color.mix s.ball 75 Ir.Color.white,
+          Ir.Color.mix s.ball 70 Ir.Color.black, Ir.Color.mix s.ball 50 Ir.Color.black,
+          Ir.Color.black]) := by
+  cases h : s.kind <;> simp [ShadeSpec.stops, stopAt, h] <;> decide
+
+/-- **Where a shading stands** (pgfcoreshade.code.tex, `\pgfshadepath`): the
+shading's own frame — its 100 bp square about its centre — scaled so that
+its middle 50 bp covers the path's box, `(w·|cos| + h·|sin|)/(|cos| + |sin|)`
+across and the roles swapped up, then turned by its angle and set on the
+box's centre. `none` for a box with no extent on an axis, which pgf leaves
+unshaded. -/
+private def shadeFrame (angle : Int) (box : Gfx.Box) : Option Gfx.Affine :=
+  let ((x0, y0), (x1, y1)) := box
+  if x1 ≤ x0 || y1 ≤ y0 then none else
+  let u : Rat := Gfx.Trig.unit
+  let (ci, si) := cosSinMilli angle
+  let c : Rat := ci / u
+  let s : Rat := si / u
+  let ac : Rat := if c < 0 then -c else c
+  let as : Rat := if s < 0 then -s else s
+  let w : Rat := x1 - x0
+  let h : Rat := y1 - y0
+  let half : Rat := Dim.pt 50 -- the shading's middle 50 bp (pgfcoreshade.code.tex)
+  let sx := (w * ac + h * as) / ((ac + as) * half)
+  let sy := (w * as + h * ac) / ((ac + as) * half)
+  some ⟨c * sx, s * sx, -s * sy, c * sy, ((x0 : Rat) + x1) / 2, ((y0 : Rat) + y1) / 2⟩
+
+/-- The fill a shading paints its path with (`\pgfshadepath`, then the
+declaration): the axis shading a linear gradient up its own 100 bp, the
+radial ones from their start circle — a point, the centre or the ball's
+highlight 10 bp up and to the left — to the 50 bp circle about the centre,
+in the frame `shadeFrame` fits to the path's box. A turned shading of a long
+box can reach past its own square, where pgf paints nothing and the model
+pads with the end colour. -/
+private def shadeFill (s : ShadeSpec) (box : Gfx.Box) : Option Gfx.Fill :=
+  (shadeFrame s.angle box).map fun xf =>
+    let r := Dim.pt 50 -- the shading's 100 bp square (pgfcoreshade.code.tex)
+    let g : Gfx.Gradient := match s.kind with
+      | .axis => .linear (0, -r) (0, r) s.stops xf
+      | .radial => .radial (0, 0) 0 (0, 0) r s.stops xf
+      | .ball => .radial (-(Dim.pt 10), Dim.pt 10) 0 (0, 0) r s.stops xf -- \pgfqpoint{-10bp}{10bp}
+    { paint := .gradient g, rule := .nonzero, alpha := Gfx.Alpha.opaque }
+
+/-- The brace decoration's keys (pgfmoduledecorations.code.tex and
+tikzlibrarydecorations.code.tex): its amplitude, 2.5 pt until set; the
+aspect its tip stands at, half way; `mirror` and `raise`. -/
+private structure BraceSpec where
+  amplitude : Sp := Dim.pt 25 / 10 -- \pgfdecorationsegmentamplitude2.5pt (pgfmoduledecorations.code.tex)
+  aspect : Int := 500
+  mirror : Bool := false
+  raise : Sp := 0
+
+/-- A `decoration=` value read as the brace: its name and its keys. -/
+private def readBrace (cx : Cx) (env : List (String × Val)) (rest : List Tok) :
+    Except String BraceSpec := do
+  let inner : List Tok := match rest with
+    | [.group g] => g.filter (· != .space)
+    | _ => rest
+  let mut b : BraceSpec := {}
+  let mut named := false
+  for e in splitTop inner.toArray ',' do
+    let key := keyPath e.toList
+    let value := (e.toList.dropWhile (· != .sym '=')).drop 1
+    if key == "brace" then named := true
+    else if key == "name" then
+      if keyName value == some "brace" then named := true
+      else throw s!"the decoration '{String.join (value.map tokText)}' is outside the rendered \
+picture subset"
+    else if key == "amplitude" then b := { b with amplitude := ← optLen cx env value }
+    else if key == "aspect" then b := { b with aspect := ← evalNum env value.toArray }
+    else if key == "mirror" then b := { b with mirror := value != [.ident "false"] }
+    else if key == "raise" then b := { b with raise := ← optLen cx env value }
+    else throw s!"the decoration key '{key}' is outside the rendered picture subset"
+  unless named do throw "a decoration other than the brace is outside the rendered picture subset"
+  return b
+
+/-- The brace along a straight side (pgflibrarydecorations.pathreplacing,
+`\pgfdeclaredecoration{brace}`): in the side's frame — x along it from its
+start, y to its left, raised and then mirrored as the keys ask — a curve up
+to half the amplitude, a line, the tip's two curves up to the amplitude at
+the aspect and down again, a line and the curve back to the side's end;
+each end's run the amplitude, or on a short side half its part. -/
+private def braceSegs (b : BraceSpec) (x0 y0 x1 y1 : Sp) : Array Ir.Pic.PathSeg :=
+  let dx := x1 - x0
+  let dy := y1 - y0
+  let d := isqrt (dx * dx + dy * dy)
+  if d == 0 then #[.line x0 y0 x1 y1] else
+  let a := b.amplitude
+  let sd := b.aspect * d / 1000
+  let yc := if 2 * a > sd then sd / 2 else a
+  let xc := if -2 * a < sd - d then (d - sd) / 2 else a
+  let at_ (s t : Int) : Sp × Sp :=
+    let t := t + b.raise
+    let t := if b.mirror then -t else t
+    (x0 + (s * dx - t * dy) / d, y0 + (s * dy + t * dx) / d)
+  let cub (p c1 c2 q : Sp × Sp) : Ir.Pic.PathSeg := .cubic p.1 p.2 c1.1 c1.2 c2.1 c2.2 q.1 q.2
+  let ln (p q : Sp × Sp) : Ir.Pic.PathSeg := .line p.1 p.2 q.1 q.2
+  let p0 := at_ 0 0
+  let p1 := at_ yc (a / 2)
+  let p2 := at_ (sd - yc) (a / 2)
+  let tipP := at_ sd a
+  let p3 := at_ (sd + xc) (a / 2)
+  let p4 := at_ (d - xc) (a / 2)
+  let p5 := at_ d 0
+  #[cub p0 (at_ (15 * yc / 100) (3 * a / 10)) (at_ (yc / 2) (a / 2)) p1,
+    ln p1 p2,
+    cub p2 (at_ (sd - yc / 2) (a / 2)) (at_ (sd - 15 * yc / 100) (7 * a / 10)) tipP,
+    cub tipP (at_ (sd + 15 * xc / 100) (7 * a / 10)) (at_ (sd + xc / 2) (a / 2)) p3,
+    ln p3 p4,
+    cub p4 (at_ (d - xc / 2) (a / 2)) (at_ (d - 15 * xc / 100) (3 * a / 10)) p5]
 
 /-- **A circle operation is the model's own circle about its point** (TikZ
 manual §14.6): `circle (r)` standing alone paints the ellipse of two equal
@@ -5632,11 +6140,26 @@ private def evalDraw (cx : Cx) (env : List (String × Val)) (toks : Array Tok)
   let mut endArrow := false
   -- `\path` paints nothing of itself; an `edge` operation or an explicit
   -- `draw` key is what makes it stroke (pgf's `every edge` carries `draw`).
-  let mut strokes := mode == .draw || mode == .filldraw
+  let mut strokes := mode == .draw || mode == .filldraw || mode == .shadedraw
   -- `\fill` and `\filldraw` fill, as does a `fill` key; `fill=<colour>`
   -- names the colour, else the path's own colour fills it.
   let mut fills := mode == .fill || mode == .filldraw
   let mut fillColor : Option Ir.Color := none
+  -- `\shade`, `\shadedraw` and every shading key paint the path with a
+  -- shading, pgf's defaults until a key sets one.
+  let mut shades := mode == .shade || mode == .shadedraw
+  let mut shading : ShadeSpec := ShadeSpec.initial
+  -- `\clip` and the `clip` key: what follows in the scope paints inside the
+  -- path (`clipAfter`).
+  let mut clips := mode == .clip
+  -- `decorate` with `decoration={brace, …}`: the path replaced by the brace
+  -- along it.
+  let mut decorate := false
+  let mut brace : Option BraceSpec := none
+  -- The tip names each end draws, and the one `>=` makes the shorthand's.
+  let mut startName : Option String := none
+  let mut endName : Option String := none
+  let mut shorthand : Option String := none
   -- `shorten <=`/`shorten >=` (pgf manual §16.3.1): the path stops short of
   -- its ends, and a tip stands where it stops.
   let mut shortenStart : Sp := 0
@@ -5684,6 +6207,8 @@ private def evalDraw (cx : Cx) (env : List (String × Val)) (toks : Array Tok)
       -- A later specification replaces an earlier one, end for end.
       startArrow := st.any (drawsAsArrow cx.styles)
       endArrow := en.any (drawsAsArrow cx.styles)
+      startName := st
+      endName := en
       for tip in [st, en] do
         if let some name := tip then
           unless drawsAsArrow cx.styles name do
@@ -5712,6 +6237,7 @@ picture subset; the edge is drawn without a head")
     | .sym '>' :: .sym '=' :: rest =>
       match tipName rest with
       | some tip =>
+        shorthand := some tip
         unless drawsAsArrow cx.styles tip do
           ev := ev.diag (.W0334, s!"arrow tip '{tip}' is outside the rendered \
 picture subset; the edge is drawn without a head")
@@ -5767,6 +6293,32 @@ picture subset; the option is dropped")
       match optAlpha env rest with
       | .ok a => strokeAlpha := a
       | .error e => ev := ev.diag (.E0333, s!"in 'draw opacity', {e}; it is ignored")
+    | [.ident "shade"] => shades := true
+    | [.ident "clip"] => clips := true
+    | [.ident "decorate"] => decorate := true
+    | .ident "decoration" :: .sym '=' :: rest =>
+      match readBrace cx env rest with
+      | .ok b => brace := some b
+      | .error e => ev := ev.diag (.W0334, s!"{e}; the path is drawn undecorated")
+    | .ident "shading" :: .sym '=' :: rest =>
+      match keyName rest with
+      | some "axis" => shading := { shading with kind := .axis }; shades := true
+      | some "radial" => shading := { shading with kind := .radial }; shades := true
+      | some "ball" => shading := { shading with kind := .ball }; shades := true
+      | _ => ev := ev.diag (.W0334, s!"the shading '{String.join (rest.map tokText)}' is \
+outside the rendered picture subset; the option is dropped")
+    | .ident "shading" :: .ident "angle" :: .sym '=' :: rest =>
+      match evalNum env rest.toArray with
+      | .ok m => shading := { shading with angle := m }; shades := true
+      | .error e => ev := ev.diag (.E0333, s!"in 'shading angle', {e}; it is ignored")
+    | .ident side :: .ident "color" :: .sym '=' :: rest =>
+      match evalColor cx env rest.toArray with
+      | .ok c =>
+        match shading.setColor side c with
+        | some s => shading := s; shades := true
+        | none => ev := ev.diag (.W0334, s!"draw option '{side} color' is outside the \
+rendered picture subset; the option is dropped")
+      | .error e => ev := ev.diag (.E0333, s!"in '{side} color', {e}; the colour is dropped")
     | [] => pure ()
     | o :: rest =>
       match toSpec.read env opt with
@@ -5954,9 +6506,19 @@ the rendered picture subset; the edge is not drawn")
     { color := color
       width := width
       dash := dash }
+  -- The tip each end draws: the name it wrote, the shorthand's own heads
+  -- the tip `>=` named.
+  let kindOf (n : Option String) : TipKind :=
+    if n == some ">" || n == some "<" then tipKindOf shorthand else tipKindOf n
+  let startKind := kindOf startName
+  let endKind := kindOf endName
+  let tipFor (kind : TipKind) (p q : Sp × Sp) : Option (TipInk × Sp × Sp) :=
+    match kind with
+    | .plain => (arrivalTip p q stroke.width).map fun (t, b) => (.tri t, b)
+    | .stealth => stealthArrival p q stroke.width stroke.color
   let mut segs : Array Ir.Pic.PathSeg := #[]
-  let mut tip : Option Ir.Pic.Tip := none
-  let mut startTip : Option Ir.Pic.Tip := none
+  let mut tip : Option TipInk := none
+  let mut startTip : Option TipInk := none
   let mut labels : Array Ir.Pic.Shape := #[]
   -- A rectangle's outline: a closed frame, which both backends stroke as
   -- one path with every corner joined.
@@ -6031,10 +6593,10 @@ the rendered picture subset; the edge is not drawn")
         -- A tip rides the arc's tangent at its end, as on a curve.
         if last && endArrow then
           if let some (.cubic _ _ _ _ c2x c2y ex ey) := pieces.back? then
-            tip := (tipAt ex ey (ex - c2x) (ey - c2y) stroke.width).map (·.1)
+            tip := (tipFor endKind (c2x, c2y) (ex, ey)).map (·.1)
         if k == 0 && startArrow then
           if let some (.cubic sx sy c1x c1y _ _ _ _) := pieces.toList.head? then
-            startTip := (tipAt sx sy (sx - c1x) (sy - c1y) stroke.width).map (·.1)
+            startTip := (tipFor startKind (c1x, c1y) (sx, sy)).map (·.1)
         if let some label := mid then
           labels := labels ++ label.place cx width fin (fin.1 - p.1, fin.2 - p.2)
       | .straight | .orthogonal _ =>
@@ -6056,10 +6618,10 @@ the rendered picture subset; the edge is not drawn")
         let p2 := if last && shortenEnd != 0 then towardBy p2 (corner.getD p1) shortenEnd else p2
         -- A tip at the start shortens the first side, pointing back at its
         -- anchor, as one at the end shortens the last.
-        let startHit : Option (Ir.Pic.Tip × Sp × Sp) :=
+        let startHit : Option (TipInk × Sp × Sp) :=
           if k == 0 && startArrow then
             let ahead := corner.getD p2
-            arrivalTip ahead p1 stroke.width
+            tipFor startKind ahead p1
           else none
         if let some (t, _, _) := startHit then startTip := some t
         let p1 := match startHit with
@@ -6070,7 +6632,7 @@ the rendered picture subset; the edge is not drawn")
           segs := segs.push (.line p1.1 p1.2 q.1 q.2)
         let departure := corner.getD p1
         if last && endArrow then
-          match arrivalTip departure p2 stroke.width with
+          match tipFor endKind departure p2 with
           | some (t, bx, byy) =>
             segs := segs.push (.line departure.1 departure.2 bx byy)
             tip := some t
@@ -6112,11 +6674,11 @@ the rendered picture subset; the edge is not drawn")
         if subStart.isNone || cur != some p1 then subStart := some (segs.size - 1, p1.1, p1.2)
         cur := some p2
         if k == 0 && startArrow then
-          startTip := (tipAt p1.1 p1.2 (p1.1 - c1.1) (p1.2 - c1.2) stroke.width).map (·.1)
+          startTip := (tipFor startKind c1 p1).map (·.1)
         if last && endArrow then
           -- the tip rides the arrival tangent; the curve keeps its
           -- endpoint and the filled tip covers its last reach
-          tip := (tipAt p2.1 p2.2 (p2.1 - c2.1) (p2.2 - c2.2) stroke.width).map (·.1)
+          tip := (tipFor endKind c2 p2).map (·.1)
         if let some label := mid then
           -- B(½) and its local tangent B′(½), with the common positive
           -- factor 3/4 omitted: the chord can point to a different side.
@@ -6130,27 +6692,44 @@ the rendered picture subset; the edge is not drawn")
   -- A `\path` whose operations never asked to draw paints nothing of its
   -- own; its in-path labels still stand, as pgf sets them. A chain of
   -- nothing but rectangles strokes no edge of its own.
-  let tips : Array Ir.Pic.Tip := startTip.toArray ++ tip.toArray
+  let tips : Array TipInk := startTip.toArray ++ tip.toArray
+  -- A decorated side is the brace along it (`braceSegs`): the one
+  -- decoration this subset draws, on the one path it reads, a straight side.
+  if decorate then
+    match brace, segs.toList, rects.isEmpty && ellipses.isEmpty && extraSubs.isEmpty with
+    | some b, [.line x0 y0 x1 y1], true => segs := braceSegs b x0 y0 x1 y1
+    | some _, _, _ => ev := ev.diag (.W0334, "a brace along anything but one straight side is \
+outside the rendered picture subset; the path is drawn undecorated")
+    | none, _, _ => ev := ev.diag (.W0334, "'decorate' without a decoration this subset draws \
+is outside the rendered picture subset; the path is drawn undecorated")
   if let some r := rounded then segs := roundJoints r segs
+  -- One geometry for a fill, a shading, a clip or an ellipse: every side,
+  -- rectangle and ellipse of the statement — a lone rectangle or ellipse as
+  -- its own geometry.
+  let geom := paintedGeom segs rects ellipses extraSubs
   let painted : Array Ir.Pic.Shape :=
-    if fills || !ellipses.isEmpty || !extraSubs.isEmpty then
-      -- One path for a fill or an ellipse: every side, rectangle and
-      -- ellipse of the statement, filled by the nonzero rule and stroked
-      -- once — a lone rectangle or ellipse as its own geometry.
-      let geom := paintedGeom segs rects ellipses extraSubs
+    if fills || shades || !ellipses.isEmpty || !extraSubs.isEmpty then
+      -- Filled by the nonzero rule, then shaded (tikz.code.tex paints the
+      -- fill, then the shading, then the stroke), then stroked once.
       let fill := if fills then some (Ir.Pic.solidFill (fillColor.getD color)) else none
+      let shade := if shades then geom.hull.bind (shadeFill shading) else none
       let st := if strokes then some (Ir.Pic.strokeOf stroke) else none
-      if fill.isNone && st.isNone then #[] else
-      let draw : Gfx.Node Empty := .draw geom fill st
-      if tips.isEmpty || !strokes then #[.ink draw]
-      else #[.ink (.group Gfx.Affine.unit #[] Gfx.Alpha.opaque (#[draw] ++ tips.map (tipNode stroke)))]
+      let draws : Array (Gfx.Node Empty) := match shade with
+        | some sh => (if fill.isSome then #[.draw geom fill none] else #[]).push (.draw geom (some sh) st)
+        | none => if fill.isNone && st.isNone then #[] else #[.draw geom fill st]
+      let marks := if tips.isEmpty || !strokes then draws else draws ++ tips.map (tipInkNode stroke)
+      match marks.toList with
+      | [] => #[]
+      | [d] => #[.ink d]
+      | _ => #[.ink (.group Gfx.Affine.unit #[] Gfx.Alpha.opaque marks)]
     else if strokes && !segs.isEmpty then frames.push (edgeWithTips segs stroke tips)
     else frames
   let painted := if fillAlpha == Gfx.Alpha.opaque && strokeAlpha == Gfx.Alpha.opaque then painted
     else painted.map fun sh => match sh with
       | .ink n => .ink (alphaOne fillAlpha strokeAlpha n)
       | .label .. => sh
-  return { ev with shapes := ev.shapes ++ painted ++ labels }
+  return { ev with shapes := ev.shapes ++ painted ++ labels
+                   clipGeom := if clips then some geom else ev.clipGeom }
 
 -- Trees (TikZ manual §21): `\node {root} child {node {a} child {…}} …;`.
 
@@ -6863,6 +7442,242 @@ private theorem scope_compose_exact (cx : Cx) (env : List (String × Val)) (opts
 private def condDrawnWords (holds : Bool) : String :=
   if holds then "the branch before '\\else' is drawn" else "only the '\\else' branch is drawn"
 
+/-- A shape's ink node, `none` for a label. -/
+private def inkOf : Ir.Pic.Shape → Option (Gfx.Node Empty)
+  | .ink n => some n
+  | .label .. => none
+
+private def isLabelShape : Ir.Pic.Shape → Bool
+  | .label .. => true
+  | .ink _ => false
+
+/-- TikZ's `auto` anchor (tikz.code.tex, `\tikz@auto@anchor` and its primed
+twin): from a unit direction `(ux, uy)` in thousandths, the anchor that
+puts a node on the left of it — on the right under `swap` — a component
+counting where it exceeds 0.05. What a diagram's arrow label and a node's
+`label=` read. -/
+private def labelAutoAnchor (ux uy : Int) (swap : Bool) : NodeAnchor :=
+  let px := ux > 50
+  let nx := ux < -50
+  let py := uy > 50
+  let ny := uy < -50
+  if !swap then
+    if px then (if py then .southEast else if ny then .southWest else .south)
+    else if nx then (if py then .northEast else if ny then .northWest else .north)
+    else (if uy > 0 then .east else .west)
+  else
+    if px then (if py then .northWest else if ny then .northEast else .north)
+    else if nx then (if py then .southWest else if ny then .southEast else .south)
+    else (if uy > 0 then .west else .east)
+
+/-- What a clip does to the statements after it in its scope (pgf manual
+§15.9; pgfcorepathusage.code.tex): their ink paints inside the clip path —
+one group of the model, clipped by it — and nothing after it reaches the
+picture's size, the clip path's own box standing for it. A node's letters
+are set as text, outside the model, so a label the clip would cut is named;
+one inside a rectangular clip is cut by nothing. -/
+private def clipAfter (cx : Cx) (before : Ev) (g : Gfx.Geom) (inner : Ev) : Ev :=
+  let inks := inner.shapes.filterMap inkOf
+  let labels := inner.shapes.filter isLabelShape
+  let group : Array Ir.Pic.Shape := if inks.isEmpty then #[] else
+    #[.ink (.group Gfx.Affine.unit #[{ geom := g, rule := .nonzero }] Gfx.Alpha.opaque inks)]
+  let inside (s : Ir.Pic.Shape) : Bool := match s, g with
+    | .label x y content _ scale align, .rect rx ry rw rh =>
+      let ((a, b), (c, d)) := Ir.Pic.labelGlyphBox x y align (cx.metric content scale)
+      rx ≤ a && ry ≤ b && c ≤ rx + rw && d ≤ ry + rh
+    | _, _ => false
+  let ev := { inner with shapes := before.shapes ++ group ++ labels
+                         borders := before.borders ++ g.hull.toArray }
+  if labels.all inside then ev
+  else ev.diag (.W0334, "a node after a '\\clip' is set whole; the clip reaches only the \
+picture's paths")
+
+/-- **A clip covers what follows it** (`_covers`): every shape before the
+clip ships as it was, every label after it ships, and every mark of ink
+after it ships inside the one group the clip path clips. -/
+private theorem clip_covers (cx : Cx) (before inner : Ev) (g : Gfx.Geom) :
+    (∀ s ∈ before.shapes, s ∈ (clipAfter cx before g inner).shapes) ∧
+    (∀ s ∈ inner.shapes, isLabelShape s → s ∈ (clipAfter cx before g inner).shapes) ∧
+    (∀ n, Ir.Pic.Shape.ink n ∈ inner.shapes →
+      Ir.Pic.Shape.ink (.group Gfx.Affine.unit #[{ geom := g, rule := .nonzero }]
+        Gfx.Alpha.opaque (inner.shapes.filterMap inkOf)) ∈ (clipAfter cx before g inner).shapes ∧
+      n ∈ inner.shapes.filterMap inkOf) := by
+  have hdiag : ∀ (e : Ev) (d : PDiag), (e.diag d).shapes = e.shapes := by
+    intro e d
+    unfold Ev.diag
+    split <;> rfl
+  have hshapes : (clipAfter cx before g inner).shapes =
+      before.shapes ++ (if (inner.shapes.filterMap inkOf).isEmpty then #[] else
+        #[.ink (.group Gfx.Affine.unit #[{ geom := g, rule := .nonzero }] Gfx.Alpha.opaque
+          (inner.shapes.filterMap inkOf))]) ++ inner.shapes.filter isLabelShape := by
+    unfold clipAfter
+    dsimp only
+    split
+    · rfl
+    · exact hdiag _ _
+  refine ⟨fun s hs => ?_, fun s hs hl => ?_, fun n hn => ?_⟩
+  · rw [hshapes]
+    exact Array.mem_append_left _ (Array.mem_append_left _ hs)
+  · rw [hshapes]
+    exact Array.mem_append_right _ (Array.mem_filter.mpr ⟨hs, hl⟩)
+  · have hmem : n ∈ inner.shapes.filterMap inkOf := Array.mem_filterMap.mpr ⟨_, hn, rfl⟩
+    refine ⟨?_, hmem⟩
+    rw [hshapes]
+    have hne : (inner.shapes.filterMap inkOf).isEmpty = false := by
+      cases h : (inner.shapes.filterMap inkOf).isEmpty with
+      | false => rfl
+      | true =>
+        rw [Array.isEmpty_iff] at h
+        rw [h] at hmem
+        simp at hmem
+    rw [hne]
+    exact Array.mem_append_left _ (Array.mem_append_right _ (by simp))
+
+mutual
+
+/-- Does a statement hold a clip that reaches past its own end — one inside
+a TeX group, a conditional's branch or a loop's body, none of which is a
+scope in pgf's sense (pgf manual §15.9: a clip lasts to the end of its
+scope, which only a `scope` and the picture make)? -/
+private def leaksOne : Stmt → Bool
+  | .grouped _ body => leaksList body
+  | .cond _ _ t e => leaksList t || leaksList e
+  | .foreach _ _ body => leaksList body
+  | .clip _ | .scope _ _ | .fill _ | .node _ | .draw _ | .path _ | .bbox _ | .set _ _ _
+  | .coordinate _ | .filldraw _ | .setColor _ | .setDecl _ | .shade _ _ => false
+
+private def leaksList : List Stmt → Bool
+  | [] => false
+  | s :: rest => (s matches .clip _) || leaksOne s || leaksList rest
+
+end
+
+/-- The angle of a named label position (tikz.code.tex,
+`tikz@label@angle@is@…`), in milli-degrees. -/
+private def labelAngleOf : String → Option Int
+  | "right" => some 0
+  | "above right" => some 45000
+  | "above" => some 90000
+  | "above left" => some 135000
+  | "left" => some 180000
+  | "below left" => some 225000
+  | "below" => some 270000
+  | "below right" => some 315000
+  | _ => none
+
+/-- A label's or a pin's spec as written (`[opts]angle:text`, TikZ manual
+§17.10.2): its own options, its angle in milli-degrees (`none` on the
+node's centre), and its text. A spec with no colon is its text at the
+default position, above. -/
+private def readExtra (env : List (String × Val)) (spec : List Tok) :
+    Except String (Array Tok × Option Int × List Tok) := do
+  let ts := match spec.filter (· != .space) with
+    | [.group g] => g
+    | _ => spec
+  let ts := ts.dropWhile (· == .space)
+  let (opts, rest) : List Tok × List Tok :=
+    if ts.head? == some (.sym '[') then
+      ((ts.drop 1).takeWhile (· != .sym ']'), ((ts.drop 1).dropWhile (· != .sym ']')).drop 1)
+    else ([], ts)
+  let (pos, text) : List Tok × List Tok :=
+    match rest.findIdx? (· == .sym ':') with
+    | some k => (rest.take k, rest.drop (k + 1))
+    | none => ([], rest)
+  let text := match text.filter (· != .space) with
+    | [.group g] => g
+    | _ => text
+  let angle : Option Int ← match keyName (pos.filter (· != .space)) with
+    | none => pure (some 90000)
+    | some "center" => pure none
+    | some n =>
+      match labelAngleOf n with
+      | some a => pure (some a)
+      | none => (evalNum env pos.toArray).map some
+  return (opts.toArray, angle, text)
+
+/-- The anchor TikZ gives a label on a node of no extent
+(`\tikz@compute@direction`): the side away from the angle, by its sector. -/
+private def sectorAnchor (m : Int) : NodeAnchor :=
+  let d := ((m / 1000) % 360 + 360) % 360
+  if d < 4 then .west else if d < 87 then .southWest else if d < 94 then .south
+  else if d < 177 then .southEast else if d < 184 then .east else if d < 267 then .northEast
+  else if d < 274 then .north else if d < 357 then .northWest else .west
+
+/-- An anchor's name as a node option spells it. -/
+private def anchorSpelling : NodeAnchor → List String
+  | .center => ["center"]
+  | .north => ["north"]
+  | .south => ["south"]
+  | .east => ["east"]
+  | .west => ["west"]
+  | .northEast => ["north", "east"]
+  | .northWest => ["north", "west"]
+  | .southEast => ["south", "east"]
+  | .southWest => ["south", "west"]
+  | .base => ["base"]
+  | .baseEast => ["base", "east"]
+  | .baseWest => ["base", "west"]
+
+/-- The labels and pins the node just placed asked for (TikZ manual §17.10;
+tikz.code.tex, `tikz@label@post`): each a node of its own, its `auto`
+anchor on the side away from its node, standing on that node's border
+point at its angle and `label distance` beyond it (0 pt, a pin's 3 ex) — or,
+on a node of no extent, beside its point by the angle's sector — with a
+pin's edge drawn from the node's border to the pin's in `help lines`. -/
+private def drainAfter (cx : Cx) (env : List (String × Val)) (ev : Ev) : Ev := Id.run do
+  let pend := ev.after
+  let mut ev := { ev with after := #[] }
+  let ex := (cx.metric #[.text "x"] 1000).ex
+  let at0 : Cx := { cx with xf := Gfx.Affine.unit, scale := 1000 }
+  for x in pend do
+    let what := if x.pin then "pin" else "label"
+    match readExtra env x.spec with
+    | .error e => ev := ev.diag (.E0333, s!"in a node's '{what}', {e}; it is not drawn")
+    | .ok (opts, angle, text) =>
+      let g := x.main
+      let dist : Sp := x.dist.getD (3 * ex)
+      let (pt, an) : (Sp × Sp) × NodeAnchor := match angle with
+        | none => ((g.x, g.y), .center)
+        | some m =>
+          let (c, s) := cosSinMilli m
+          let border := (Anchor.node g).toward (g.x + c / 1024, g.y + s / 1024)
+          let dx := border.1 - g.x
+          let dy := border.2 - g.y
+          let n := isqrt (dx * dx + dy * dy)
+          if n == 0 then
+            let u := Gfx.Trig.unit
+            ((g.x + dist * c / u, g.y + dist * s / u), sectorAnchor m)
+          else
+            ((border.1 + dist * dx / n, border.2 + dist * dy / n),
+             labelAutoAnchor (dy * 1000 / n) (-(dx * 1000 / n)) false)
+      let mut toks : Array Tok := #[.sym '[', .ident "anchor", .sym '=']
+      for w in anchorSpelling an do toks := toks.push (.ident w)
+      unless opts.isEmpty do
+        toks := toks.push (.sym ',')
+        for t in opts do toks := toks.push t
+      for t in [Tok.sym ']', .ident "at", .sym '(', .ctrl " extra x", .sym ',', .ctrl " extra y",
+          .sym ')', .group text] do
+        toks := toks.push t
+      let env' := (" extra x", Val.len pt.1) :: (" extra y", Val.len pt.2) :: env
+      let bordersBefore := ev.borders.size
+      ev := evalNode at0 env' toks ev
+      unless ev.after.isEmpty do
+        ev := { ev with after := #[] }.diag (.W0334, s!"a {what}'s own label or pin is outside \
+the rendered picture subset; it is dropped")
+      if x.pin then
+        if let some ((bx0, by0), (bx1, by1)) := ev.borders[bordersBefore]? then
+          let pg : NodeGeom :=
+            { x := (bx0 + bx1) / 2, y := (by0 + by1) / 2, a := (bx1 - bx0) / 2, b := (by1 - by0) / 2 }
+          let p1 := (Anchor.node g).toward (pg.x, pg.y)
+          let p2 := (Anchor.node pg).toward (g.x, g.y)
+          -- `every pin edge` is `help lines`: xcolor's gray at 0.2 pt.
+          let help : Ir.Pic.Stroke :=
+            { color := { r := 128, g := 128, b := 128 }
+              width := Dim.pt 2 / 10 -- help lines/.style={color=gray,line width=0.2pt} (tikz.code.tex)
+              dash := .solid }
+          ev := { ev with shapes := ev.shapes.push (.edge #[.line p1.1 p1.2 p2.1 p2.2] help none) }
+  return ev
+
 mutual
 
 /-- Evaluate statements in order, threading the macro environment: a
@@ -6880,7 +7695,15 @@ private def evalList (cx : Cx) : List Stmt → List (String × Val) → Ev →
   | .setDecl n :: rest, env, ev => evalList { cx with decls := cx.decls.push n } rest env ev
   | s :: rest, env, ev =>
     let (env2, ev2) := evalOne cx s env ev
-    evalList cx rest env2 ev2
+    let ev2 := if leaksOne s && !rest.isEmpty then
+        ev2.diag (.W0334, "a '\\clip' inside a group, a branch or a loop lasts to the end of \
+its scope in pgf; the statements after it are drawn unclipped")
+      else ev2
+    match ev2.clipGeom with
+    | some g =>
+      let (env3, inner) := evalList cx rest env2 { ev2 with clipGeom := none, shapes := #[] }
+      (env3, clipAfter cx ev2 g inner)
+    | none => evalList cx rest env2 ev2
   -- A group's declarations change the context its statements read, so the
   -- context is no fixed parameter and the measure is stated: a statement
   -- list or a statement by its size, a loop by its body's and then the
@@ -6906,9 +7729,12 @@ rendered picture subset; the keys are dropped")
     | .error d => (env, ev.diag d)
   | .node toks, env, ev =>
     match flattenTree toks with
-    | some (items, bad) => (env, evalTree cx env items bad ev)
-    | none => (env, evalNode cx env toks ev)
-  | .coordinate toks, env, ev => (env, evalNode cx env toks ev (coordinate := true))
+    | some (items, bad) => (env, drainAfter cx env (evalTree cx env items bad ev))
+    | none => (env, drainAfter cx env (evalNode cx env toks ev))
+  | .coordinate toks, env, ev => (env, drainAfter cx env (evalNode cx env toks ev (coordinate := true)))
+  | .shade toks draw, env, ev =>
+    (env, evalDraw cx env toks ev (mode := if draw then .shadedraw else .shade))
+  | .clip toks, env, ev => (env, evalDraw cx env toks ev (mode := .clip))
   | .draw toks, env, ev => (env, evalDraw cx env toks ev)
   | .path toks, env, ev => (env, evalDraw cx env toks ev (mode := .path))
   | .filldraw toks, env, ev => (env, evalDraw cx env toks ev (mode := .filldraw))
@@ -7144,7 +7970,8 @@ would need a picture language this walk does not have. Read off the one
 place the vocabulary lives (`step`), so the two cannot drift. -/
 public def walkCtrls : List String :=
   ["fill", "node", "draw", "path", "foreach", "pgfmathsetmacro",
-   "pgfmathtruncatemacro", "pgfmathsetlengthmacro", "coordinate", "filldraw", "else", "fi"]
+   "pgfmathtruncatemacro", "pgfmathsetlengthmacro", "coordinate", "filldraw", "shade",
+   "shadedraw", "clip", "else", "fi"]
 
 /-- Does this walk give the name a meaning of its own? -/
 private def walkOwns (n : String) : Bool := walkCtrls.contains n || (condKindOf n).isSome
@@ -8000,24 +8827,6 @@ private def cubicAtMilli (p0 c1 c2 p1 : Sp × Sp) (t : Int) : (Sp × Sp) × (Sp 
   ((pt p0.1 c1.1 c2.1 p1.1, pt p0.2 c1.2 c2.2 p1.2),
    (dv p0.1 c1.1 c2.1 p1.1, dv p0.2 c1.2 c2.2 p1.2))
 
-/-- tikz-cd's `auto` anchor for a label (tikz.code.tex, `\tikz@auto@anchor`
-and its primed twin): from the path's unit tangent `(ux, uy)` in thousandths,
-the anchor that puts the label on the left of the direction — on the right
-under `swap` — a component counting where it exceeds 0.05. -/
-private def autoAnchor (ux uy : Int) (swap : Bool) : NodeAnchor :=
-  let px := ux > 50
-  let nx := ux < -50
-  let py := uy > 50
-  let ny := uy < -50
-  if !swap then
-    if px then (if py then .southEast else if ny then .southWest else .south)
-    else if nx then (if py then .northEast else if ny then .northWest else .north)
-    else (if uy > 0 then .east else .west)
-  else
-    if px then (if py then .northWest else if ny then .northEast else .north)
-    else if nx then (if py then .southWest else if ny then .southEast else .south)
-    else (if uy > 0 then .west else .east)
-
 /-- The centre of a box of half-extents `(a, b)` whose `an` anchor stands on
 `p` (a rectangle's anchors). -/
 private def centreFor (p : Sp × Sp) (a b : Sp) : NodeAnchor → Sp × Sp
@@ -8258,7 +9067,7 @@ public def elabCd (pal : Ir.Palette) (raws : Array Parse.Raw)
         let ha := m.w / 2 + sep
         let hb := (m.boxHeight + m.boxDepth) / 2 + sep
         let an : NodeAnchor :=
-          if l.description || !draws then .center else autoAnchor ux uy (l.swap != swapAll)
+          if l.description || !draws then .center else labelAutoAnchor ux uy (l.swap != swapAll)
         let ctr := centreFor pos ha hb an
         let base := ctr.2 - (m.boxHeight - m.boxDepth) / 2
         if l.description then

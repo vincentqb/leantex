@@ -3253,10 +3253,10 @@ def elabDocChecks (ref : IO.Ref (List String)) : IO Unit := do
     ((elabStr ("\\begin{document}\\begin{tikzpicture}[lbl/.style={font=\\small, text=black}]\n" ++
       "\\node[lbl] at (0,0) {x};\\end{tikzpicture}\\end{document}")).2.isEmpty)
   t "elab picture style bundle names its outside options, not itself"
-    (((elabStr ("\\pictures{ tool = none }\\begin{document}\\begin{tikzpicture}[b/.style={ellipse}]\n" ++
+    (((elabStr ("\\pictures{ tool = none }\\begin{document}\\begin{tikzpicture}[b/.style={star}]\n" ++
       "\\node[b] at (0,0) {x};\\end{tikzpicture}\\end{document}")).2.map (·.message)).any
-      (fun m => hasStr m "'ellipse'") &&
-     !((elabStr ("\\pictures{ tool = none }\\begin{document}\\begin{tikzpicture}[b/.style={ellipse}]\n" ++
+      (fun m => hasStr m "'star'") &&
+     !((elabStr ("\\pictures{ tool = none }\\begin{document}\\begin{tikzpicture}[b/.style={star}]\n" ++
       "\\node[b] at (0,0) {x};\\end{tikzpicture}\\end{document}")).2.map (·.message)).any
       (fun m => hasStr m "'b'"))
   t "elab picture style bundle referencing an earlier bundle expands"
@@ -3325,10 +3325,10 @@ def elabDocChecks (ref : IO.Ref (List String)) : IO Unit := do
   -- diagnostic, never the bundle's — and a style of nothing but unknown
   -- keys cannot make the picture claim to be drawn silently.
   t "elab tikzset style names its outside keys by their own spelling"
-    (((elabStr ("\\pictures{ tool = none }\\tikzset{b/.style={ellipse}}\n" ++
+    (((elabStr ("\\pictures{ tool = none }\\tikzset{b/.style={star}}\n" ++
       "\\begin{document}\\begin{tikzpicture}\n" ++
       "\\node[b] at (0,0) {x};\\end{tikzpicture}\\end{document}")).2.map (·.message)).any
-      (fun m => hasStr m "'ellipse'"))
+      (fun m => hasStr m "'star'"))
   -- A `\tikzset` entry the native reader does not understand is named at
   -- the line that wrote it, and the tool the document configures does not
   -- change that: the engine drew this picture itself, so the entry is read
@@ -3407,12 +3407,12 @@ def elabDocChecks (ref : IO.Ref (List String)) : IO Unit := do
   -- of nothing but fills reads no keys at all — and it still draws, so the
   -- refusal path would not have named them either.
   t "elab inherited key no path or node read is named at the picture"
-    (warnCodes (dvDoc "\\tikzset{odd/.style={ellipse}}\n"
+    (warnCodes (dvDoc "\\tikzset{odd/.style={star}}\n"
       "\\begin{tikzpicture}[artifact, odd]\\fill (0,0) rectangle (1,1);\\end{tikzpicture}")
       == ["W0334"] &&
-     ((elabStr (dvDoc "\\tikzset{odd/.style={ellipse}}\n"
+     ((elabStr (dvDoc "\\tikzset{odd/.style={star}}\n"
       "\\begin{tikzpicture}[artifact, odd]\\fill (0,0) rectangle (1,1);\\end{tikzpicture}")).2.map
-      (·.message)).any (fun m => hasStr m "'ellipse'"))
+      (·.message)).any (fun m => hasStr m "'star'"))
   -- The hostile input at the picture level too: a self-referential style
   -- applied to the picture expands one level, keeps its own name as a
   -- literal key, and the node's option loop names it. Nothing is chased —
@@ -3966,8 +3966,8 @@ def pictureElabChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "an unknown macro is E0333"
     (errCodes (wrap "\\fill (\\nope,0) rectangle (1,1);") == ["E0333"])
   t "an unsupported node option loses only the option"
-    (warnCodes (wrap "\\node[ellipse] at (1,1) {x};") == ["W0334"] &&
-      (picOf (wrap "\\node[ellipse] at (1,1) {x};")).map (·.shapes.size) == some 1)
+    (warnCodes (wrap "\\node[star] at (1,1) {x};") == ["W0334"] &&
+      (picOf (wrap "\\node[star] at (1,1) {x};")).map (·.shapes.size) == some 1)
   -- Node outlines: circle/rectangle with draw/fill and a declared minimum
   -- (pgf manual §"Shapes": extent = max(minimum, text + 2·inner sep);
   -- the minimum is the whole answer when it dominates the body, the case
@@ -6406,13 +6406,13 @@ def boundaryChecks (ref : IO.Ref (List String)) : IO Unit := do
   -- the declared font roles travel — the math face through unicode-math.
   let reqOf (d : Ir.Doc) : String := ((Ir.pictureRefs d)[0]?.map (·.2)).getD ""
   let pal := "\\palette{ ember = #C0431F, quietbg = #F2EEE8 }\n"
-  -- The keys and the macro references ride on the `\shade`, the construct
+  -- The keys and the macro references ride on the `\pattern`, the construct
   -- still outside the subset: a `\node` with no `at` draws natively now
   -- (M8b slice 3), and its body's unreadable macro no longer costs the
   -- label either (`Picture.nodeLabel`), so a node always ships a shape and
   -- a fixture about the boundary request has to name something the engine
   -- cannot draw at all.
-  let picC := "\\begin{tikzpicture}\\shade[fill=ember!20, text=ember] (0,0) rectangle (1,1);" ++
+  let picC := "\\begin{tikzpicture}\\pattern[fill=ember!20, text=ember] (0,0) rectangle (1,1);" ++
     "\\end{tikzpicture}"
   let (cdoc, _) := elabStr (dvDoc pal picC)
   t "a palette role the picture mentions is declared in the standalone"
@@ -6428,7 +6428,7 @@ def boundaryChecks (ref : IO.Ref (List String)) : IO Unit := do
      (Ir.pictureRefs cdoc).map (·.1) == (Ir.pictureRefs cdoc'').map (·.1))
   -- Carried styles are executable request source too. Their dependencies
   -- must travel even when the picture body spells only a style name.
-  let styledPic := "\\begin{tikzpicture}\\shade[painted] (0,0) rectangle (1,1);" ++
+  let styledPic := "\\begin{tikzpicture}\\pattern[painted] (0,0) rectangle (1,1);" ++
     "\\end{tikzpicture}"
   let styledPreamble := "\\tikzset{painted/.style={fill=quietbg}}\n"
   let styledDoc := (elabStr (dvDoc (pal ++ styledPreamble) styledPic)).1
@@ -6464,7 +6464,7 @@ def boundaryChecks (ref : IO.Ref (List String)) : IO Unit := do
       pictureMacros := styleMacros.set! 2
         ("unused", "\\providecommand{\\unused}{}\\renewcommand{\\unused}{Elsewhere}") })
   let (ldoc, _) := elabStr (dvDoc (pal ++ "\\colorlet{ember2}{ember!50!black}\n")
-    ("\\begin{tikzpicture}\\shade[text=ember2] (0,0) rectangle (1,1);" ++
+    ("\\begin{tikzpicture}\\pattern[text=ember2] (0,0) rectangle (1,1);" ++
      "\\end{tikzpicture}"))
   t "a colorlet role rides with its resolved value"
     (match ldoc.palette.find? "ember2" with
@@ -6472,7 +6472,7 @@ def boundaryChecks (ref : IO.Ref (List String)) : IO Unit := do
          hasStr (reqOf ldoc) "\\definecolor{ember2}{RGB}{"
      | none => false)
   let (kdoc, _) := elabStr (dvDoc "\\palette{ ink = cmyk(0, 0.6, 0.4, 0.2), key = cmyk(0, 1, 1, 0) }\n"
-    ("\\begin{tikzpicture}\\shade[text=ink, fill=key] (0,0) rectangle (1,1);" ++
+    ("\\begin{tikzpicture}\\pattern[text=ink, fill=key] (0,0) rectangle (1,1);" ++
      "\\end{tikzpicture}"))
   t "a cmyk role rides in its declared model"
     ((kdoc.palette.find? "ink" |>.any (·.cmyk.isSome)) &&
@@ -6482,7 +6482,7 @@ def boundaryChecks (ref : IO.Ref (List String)) : IO Unit := do
   -- \alert's rewrite, and a formula in a node — red before this slice
   -- (undefined colour `alert`, Computer Modern letters), green after.
   let (tdoc, tds) := elabStr (dvDoc "\\theme{moloch}\n\\fonts{ math = \"Fira Math\" }\n"
-    ("\\begin{tikzpicture}\\shade[\\alert{x} $y$]" ++
+    ("\\begin{tikzpicture}\\pattern[\\alert{x} $y$]" ++
      " (0,0) rectangle (1,1);\\end{tikzpicture}"))
   t "a theme role reached through alert's rewrite is declared with the bundle's value"
     (hasStr (reqOf tdoc) "\\textcolor {alert}" &&
@@ -6514,11 +6514,11 @@ def boundaryChecks (ref : IO.Ref (List String)) : IO Unit := do
   let mac := "\\newcommand{\\tint}[2][]{\\textcolor{ember}{#2}}\n" ++
     "\\newcommand{\\badge}[2][]{\\tint{[#2]}}\n" ++
     "\\newcommand{\\elsewhere}{only ever in prose}\n"
-  let picM := "\\begin{tikzpicture}\\shade[\\badge{ok}] (0,0) rectangle (1,1);" ++
+  let picM := "\\begin{tikzpicture}\\pattern[\\badge{ok}] (0,0) rectangle (1,1);" ++
     "\\end{tikzpicture}"
   let (mdoc, mds) := elabStr (dvDoc (pal ++ mac) picM)
   let (expandedDoc, expandedDs) := elabStr (dvDoc pal
-    ("\\begin{tikzpicture}\\shade[\\textcolor{ember}{[ok]}]" ++
+    ("\\begin{tikzpicture}\\pattern[\\textcolor{ember}{[ok]}]" ++
      " (0,0) rectangle (1,1);\\end{tikzpicture}"))
   t "optional-default and transitive macro calls produce the literal boundary request"
     (!(reqOf expandedDoc).isEmpty &&
@@ -6563,10 +6563,10 @@ def boundaryChecks (ref : IO.Ref (List String)) : IO Unit := do
       ("explicit", "\\opt[e]{a}", "qea<b>"),
       ("empty", "\\opt[]{a}", "qa<b>")] do
     let (bound, boundDs) := elabStr (dvDoc family
-      ("\\begin{tikzpicture}\\shade[\\plain" ++ call ++ "\\raw{b}]" ++
+      ("\\begin{tikzpicture}\\pattern[\\plain" ++ call ++ "\\raw{b}]" ++
        " (0,0) rectangle (1,1);\\end{tikzpicture}"))
     let literal := (elabStr (dvDoc ""
-      ("\\begin{tikzpicture}\\shade[" ++ expanded ++
+      ("\\begin{tikzpicture}\\pattern[" ++ expanded ++
        "] (0,0) rectangle (1,1);\\end{tikzpicture}"))).1
     t s!"the definer family's {choice} optional argument produces the literal boundary request"
       (!(reqOf literal).isEmpty && Ir.pictureRefs bound == Ir.pictureRefs literal &&
@@ -6574,7 +6574,7 @@ def boundaryChecks (ref : IO.Ref (List String)) : IO Unit := do
   -- Both spellings declare the same macro. A remaining native call carries
   -- that declaration; a LaTeX call already expanded needs no declaration.
   -- Their standalone bytes need not agree to name the same drawing.
-  let picD := "\\begin{tikzpicture}\\shade[\\hue{x}] (0,0) rectangle (1,1);" ++
+  let picD := "\\begin{tikzpicture}\\pattern[\\hue{x}] (0,0) rectangle (1,1);" ++
     "\\end{tikzpicture}"
   let latexDef := "\\newcommand{\\hue}[1]{\\textbf{#1}}\n"
   let nativeDef := "\\define \\hue(a1: content) {\\textbf{#1}}\n"
@@ -6585,7 +6585,7 @@ def boundaryChecks (ref : IO.Ref (List String)) : IO Unit := do
     (let req := reqOf (elabStr (dvDoc nativeDef picD)).1
      hasStr req "\\providecommand{\\hue}{}" &&
      hasStr req "\\renewcommand{\\hue}[1]{\\textbf {#1}}" &&
-     hasStr req "\\shade [\\hue {x}]")
+     hasStr req "\\pattern [\\hue {x}]")
   t "a picture package's load rides too: no W0103 for it"
     (ds.all (·.code != "W0103"))
   -- Determinism by purity: two elaborations of one document state
@@ -6685,10 +6685,10 @@ def pictureDefnReachChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet)
   -- picture that reads them.
   let sets := "\\usetikzlibrary{arrows.meta}\n\\tikzset{plumearrow/.tip={Latex[round]}}\n\n"
   -- A picture the subset draws nothing of, so the boundary is its route.
-  -- `\shade` is the construct outside it: a `\path` of drawn segments is
+  -- `\pattern` is the construct outside it: a `\path` of drawn segments is
   -- native now (M8b slice 3), and a fixture that routes has to name
   -- something the engine genuinely cannot draw.
-  let outside := "\\begin{tikzpicture}\\shade (0,0) rectangle (1,1);\\end{tikzpicture}"
+  let outside := "\\begin{tikzpicture}\\pattern (0,0) rectangle (1,1);\\end{tikzpicture}"
   let (bodyDoc, bodyDs) := elabStr (dvDoc "" (sets ++ outside))
   let (preDoc, _) := elabStr (dvDoc sets outside)
   let reqOf (d : Ir.Doc) : String := ((Ir.pictureRefs d)[0]?.map (·.2)).getD ""
@@ -6720,7 +6720,7 @@ def pictureDefnReachChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet)
   -- into the picture's one line (`Boundary.fold`). The first pass routes it
   -- whole (`pictureRouteChecks`).
   let partly := "\\begin{tikzpicture}\\node at (0,0) {Alpha};" ++
-    "\\shade (0,0) rectangle (1,1);\\end{tikzpicture}"
+    "\\pattern (0,0) rectangle (1,1);\\end{tikzpicture}"
   let (partDoc, partDs) := elabStr (dvDoc "" partly)
   t "with no tool, a picture the subset draws partly is the subset's, its refusal named"
     (partDoc.pictureSrcs.isEmpty && partDs.any (·.code == "W0334") &&
@@ -8717,7 +8717,7 @@ def pictureKeyGateChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) :
   let native := "\\begin{tikzpicture}\n\\node[box] (a) at (0, 0) {A};\n" ++
     "\\node[box] (b) at (3, 0) {B};\n\\draw[->] (a) -- (b);\n\\end{tikzpicture}\n"
   -- A picture the subset draws nothing of, so it goes whole to the boundary.
-  let wholePic := "\\begin{tikzpicture}\n\\shade (0,0) rectangle (2,1);\n\\end{tikzpicture}\n"
+  let wholePic := "\\begin{tikzpicture}\n\\pattern (0,0) rectangle (2,1);\n\\end{tikzpicture}\n"
   let body := "A paragraph stands first.\n\n" ++ native ++ "\nText resumes after it.\n"
   let openSrc := dvDoc keys body
   let refusedSrc := dvDoc ("\\pictures{ tool = none }\n" ++ keys) body
@@ -8800,7 +8800,7 @@ def pictureGlobalKeyChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet)
     ((metaTip[0]?.map (·.paths == 4)).getD false)
   -- A tip kind this subset cannot draw stays a named loss: the head is
   -- missing, and a substitution would be a head of the wrong shape.
-  let otherTip := elabStr (box ++ "\\tikzset{-Stealth}\n" ++
+  let otherTip := elabStr (box ++ "\\tikzset{-Kite}\n" ++
     "\\begin{document}\n\\begin{tikzpicture}\n" ++ pair ++
     "\\draw (a) -- (b);\n\\end{tikzpicture}\n\\end{document}")
   t "a tip kind the subset cannot draw is still named as dropped"

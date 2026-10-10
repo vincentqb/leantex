@@ -61,8 +61,8 @@ accepts. Invented content. -/
 private def acceptedSource (fonts : System.FilePath) : String :=
   "\\documentclass{article}\n" ++
   "\\fonts{ dir = \"" ++ fonts.toString ++ "\", body = \"Source Serif Pro\" }\n" ++
-  "\\allow{E0382}\n\\begin{document}\nAn invented shading follows.\n\n" ++
-  "\\begin{tikzpicture}\n  \\shade (0,0) rectangle (2,1);\n\\end{tikzpicture}\n\\end{document}\n"
+  "\\allow{E0382}\n\\begin{document}\nAn invented pattern follows.\n\n" ++
+  "\\begin{tikzpicture}\n  \\pattern (0,0) rectangle (2,1);\n\\end{tikzpicture}\n\\end{document}\n"
 
 /-- An included SVG figure, by a generated file beside the document.
 Invented content. -/
@@ -244,7 +244,7 @@ def machineLossChecks (ref : IO.Ref (List String))
   let icon := svgDocument "<circle cx=\"10\" cy=\"10\" r=\"8\"/>"
   let (pageDoc, _) := elabStr (dvDoc ""
     ("\\includegraphics[alt={An invented square}]{figure.svg}\n\n" ++
-      "\\begin{tikzpicture}\n  \\shade (0,0) rectangle (2,1);\n\\end{tikzpicture}"))
+      "\\begin{tikzpicture}\n  \\pattern (0,0) rectangle (2,1);\n\\end{tikzpicture}"))
   let pageDoc := { pageDoc with info := { pageDoc.info with favicon := some "icon.svg" } }
   let pagePic := ((Ir.imageRequests pageDoc).find? (·.src.startsWith Ir.picSrcPrefix)).map (·.src)
   let cfg : HtmlDoc.Config := {

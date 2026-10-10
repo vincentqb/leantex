@@ -804,9 +804,9 @@ def pdfStateChecks (ref : IO.Ref (List String)) : IO Unit := do
 open Tests.PdfNative in
 /-- **PDF figures ship native web faces with no converter on the
 machine**: an invented cairo-made figure included by `\includegraphics`,
-and the corpus' boundary diagram whose lualatex answer is the committed
-reference PDF (a stand-in lualatex copies it in), build HTML with no
-converter on `PATH`. Neither W0605 nor W0378 fires, and the page embeds
+and the corpus' boundary diagram, a stand-in lualatex answering its
+picture with a committed boundary PDF (`lualatex-shade.pdf`), build HTML
+with no converter on `PATH`. Neither W0605 nor W0378 fires, and the page embeds
 exactly the engine's own drawing of each page (`PdfFaces.svgOf`) — before
 faces were drawn natively, the first shipped a placeholder (W0605) and the
 second had no face at all (W0378). An include's words ride beside its face

@@ -82,7 +82,7 @@ exit 19\n"
       "\\iffalse",
       "\\includegraphics[alt={Skipped}]{missing.png}",
       "\\begin{tikzpicture}",
-      "\\shade (0,0) rectangle (2,1);",
+      "\\pattern (0,0) rectangle (2,1);",
       "\\end{tikzpicture}",
       "\\fi",
       "\\input{chapters/images}",
@@ -94,7 +94,7 @@ exit 19\n"
       "\\includegraphics[alt={Invalid}]{invalid.png}",
       "\\includegraphics[alt={Profiled and oriented}]{metadata.jpg}",
       "\\begin{tikzpicture}",
-      "\\shade (0,0) rectangle (2,1);",
+      "\\pattern (0,0) rectangle (2,1);",
       "\\end{tikzpicture}", ""])
     let result ← IO.Process.output {
       cmd := binary.toString

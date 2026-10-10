@@ -1,0 +1,44 @@
+% Synthetic fixture: the long tail of a sketch's keys — an axial and a ball
+% shading, a clip trimming a disc to a frame, ellipse and diamond nodes, a
+% Stealth arrow between them, a label and a pin, a dashed frame fitted
+% round two nodes, and a brace. Invented content and design.
+\documentclass{article}
+
+\pictures{ tool = none }
+
+\fonts{ dir = "fonts", body = "Source Serif Pro" }
+
+\palette{
+  wash = #2A6F4E,
+}
+
+\title{Shades and Shapes}
+\author{Pat Placeholder}
+
+\begin{document}
+
+\maketitle
+
+\section{Paint}
+
+\begin{tikzpicture}
+  \shade[left color=wash, right color=white] (0,0) rectangle (3,1);
+  \shade[ball color=wash] (4.5,0.5) circle (0.5);
+  \begin{scope}
+    \clip (6,0) rectangle (7,1);
+    \fill[wash] (6,0) circle (1);
+  \end{scope}
+\end{tikzpicture}
+
+\section{Shapes}
+
+\begin{tikzpicture}
+  \node[ellipse, draw] (e) at (0,0) {oval};
+  \node[diamond, draw] (d) at (3,0) {kite};
+  \draw[-Stealth] (e) -- (d);
+  \node[draw, label=above:top, pin=below:pin] (n) at (6,0) {node};
+  \node[draw, dashed, fit=(e) (d)] {};
+  \draw[decorate, decoration={brace, amplitude=5pt}] (-1,1.2) -- (4,1.2);
+\end{tikzpicture}
+
+\end{document}

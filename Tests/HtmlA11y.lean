@@ -240,7 +240,7 @@ def htmlA11yChecks (ref : IO.Ref (List String)) : IO Unit := do
     t "html a11y: W0605's remedy clears it"
       (!fires (webOnly ++ "\\begin{ifbackend}{pdf}\n" ++ pdfInclude ++ "\n\\end{ifbackend}"))
     let pdoc := (elabStr (dvDoc "" ("\\begin{tikzpicture}\n" ++
-      "\\shade (0,0) rectangle (2,1);\n\\end{tikzpicture}"))).1
+      "\\pattern (0,0) rectangle (2,1);\n\\end{tikzpicture}"))).1
     match (Ir.imageRefs pdoc).find? (·.startsWith Ir.picSrcPrefix) with
     | none => t "html a11y: the boundary probe states a picture request" false
     | some src =>
@@ -256,7 +256,7 @@ def htmlA11yChecks (ref : IO.Ref (List String)) : IO Unit := do
   -- A refused picture's placeholder is never decorative: its name is the
   -- code that names the loss, the text the box itself shows.
   let refused := dvDoc "\\pictures{ tool = none }\n"
-    "\\begin{tikzpicture}\n\\shade (0,0) rectangle (2,1);\n\\end{tikzpicture}"
+    "\\begin{tikzpicture}\n\\pattern (0,0) rectangle (2,1);\n\\end{tikzpicture}"
   let (rdoc, rds) := elabStr refused
   let (_, rbody, _) := HtmlDoc.emitTree {} rdoc
   t "html a11y: the refused picture fires W0362" (rds.any (·.code == "W0362"))
@@ -266,7 +266,7 @@ def htmlA11yChecks (ref : IO.Ref (List String)) : IO Unit := do
   -- a tool that refused — ships its request key as the `src`, which draws
   -- nothing: never decorative, so it is named by what it is, in the page's
   -- language, and a caption the author wrote still wins.
-  let shaded := "\\begin{tikzpicture}\n\\shade (0,0) rectangle (2,1);\n\\end{tikzpicture}"
+  let shaded := "\\begin{tikzpicture}\n\\pattern (0,0) rectangle (2,1);\n\\end{tikzpicture}"
   let (tdoc, _) := elabStr (dvDoc "" shaded)
   let (_, tbody, _) := HtmlDoc.emitTree {} tdoc
   t s!"html a11y: a boundary picture with no face is named: {imgAlts tbody}"

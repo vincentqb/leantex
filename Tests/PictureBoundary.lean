@@ -116,7 +116,7 @@ def wrapperDeck : Ir.Doc :=
   let deck := "\\documentclass{beamer}\n\\usepackage{probestyle}\n" ++
     "\\usepackage{beamercolorthemeprobe}\n\\usepackage{pdfpc,pgfpages}\n" ++
     "\\begin{document}\n\\begin{frame}\n" ++
-    picture "\\shade[left color=probeTeal] (0,0) circle (0.2);" ++ "\n\\end{frame}\n\\end{document}"
+    picture "\\pattern[pattern color=probeTeal] (0,0) circle (0.2);" ++ "\n\\end{frame}\n\\end{document}"
   let (raws, _) := Compat.applyLocalSty (parseRaws "t" deck)
     #[("probestyle", parseRaws "probestyle.sty" sty)]
   (Elab.runRawsSpanned "t" raws).1
@@ -167,11 +167,11 @@ quotes: the tool's words, the machine's, or the declaration. -/
 private def shipPictures : List (String × String × String × String × Nat × String) :=
   let block (body : String) : String := "\\begin{tikzpicture}" ++ body ++ "\\end{tikzpicture}\n\n"
   let part := block ("\\node at (0,0) {Alpha};\\pgfmathsetmacro{\\even}{mod(1,2)==0}" ++
-    "\\shade (0,0) rectangle (1,1);")
-  let twice := block "\\node at (0,0) {Alpha};\\shade (0,0) rectangle (1,1);"
-  let none := block "\\shade (0,0) rectangle (1,1);"
+    "\\pattern (0,0) rectangle (1,1);")
+  let twice := block "\\node at (0,0) {Alpha};\\pattern (0,0) rectangle (1,1);"
+  let none := block "\\pattern (0,0) rectangle (1,1);"
   let inline := "\\begin{tabular}{ll} Alpha & \\tikz{\\fill (0,0) rectangle (0.2,0.2);" ++
-    "\\shade (0,0) rectangle (0.1,0.1);} \\\\ Beta & words \\end{tabular}\n\n"
+    "\\pattern (0,0) rectangle (0.1,0.1);} \\\\ Beta & words \\end{tabular}\n\n"
   [("refused", "drawn in part", "W0419", part, 1, "Undefined control sequence"),
    ("refused", "drawn by no one", "W0382", none, 1, "Undefined control sequence"),
    ("refused", "drawn in part, twice", "W0419", twice, 2, "Undefined control sequence"),
@@ -252,7 +252,7 @@ def pictureShipChecks (ref : IO.Ref (List String))
           t s!"{art}: the line carries every construct left out"
             (warnings.all fun j =>
               let msg := (j.getObjValAs? String "message").toOption.getD ""
-              hasStr msg "\\shade" && (copies > 1 || hasStr msg "'mod'"))
+              hasStr msg "\\pattern" && (copies > 1 || hasStr msg "'mod'"))
         if ext == "html" then
           let html ← if ← output.pathExists then IO.FS.readFile output else pure ""
           let tags := placeholderTags html

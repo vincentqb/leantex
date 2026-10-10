@@ -4657,6 +4657,20 @@ public theorem phantom_extent_between (x y : Sp) (align : LabelAlign) (m p : Lab
     unfold labelInkBox
     rw [ew, eh, ed]
 
+/-- The box a group that clips reaches: its clips' own geometry through its
+frame, since what it paints stands inside them — and pgf counts the clip
+path, not what follows it (pgfcorepathusage.code.tex: a clip ends
+`relevantforpicturesize`). `none` for any other node. -/
+@[expose] public def clipHull : Gfx.Node Empty → Option Box
+  | .group xf clips _ _ => Gfx.hullOf (fun (c : Gfx.Clip) => c.geom.hull.map (Gfx.Box.image xf)) clips
+  | .draw .. | .use .. | .stamp .. | .image .. | .label _ | .words _ => none
+
+/-- Repainting moves no clip: a group's frame and clips are what its box
+reads, and a repaint keeps both. -/
+public theorem clipHull_recolor_id (f : Color → Color) (n : Gfx.Node Empty) :
+    clipHull (Gfx.Node.recolorOne f id n) = clipHull n := by
+  cases n <;> rfl
+
 /-- The declared box of a shape, corners sorted. A label's box is its
 anchor point — its text extent is a font question layout answers, so
 `Shape.inkBox` is the measured form and this is what the IR knows on its
@@ -4666,7 +4680,8 @@ which is what the measured box exists to close. -/
 public def Shape.box : Shape → Box
   | .label x y _ _ _ _ => ((x, y), (x, y))
   | .ink n =>
-    (Gfx.hullOf (Gfx.Mark.geomBox Gfx.rasterUnit) (Gfx.Node.marksOne #[] Gfx.Ctx.root #[] n)).getD
+    ((clipHull n).orElse fun _ =>
+      Gfx.hullOf (Gfx.Mark.geomBox Gfx.rasterUnit) (Gfx.Node.marksOne #[] Gfx.Ctx.root #[] n)).getD
       ((0, 0), (0, 0))
 
 public structure Picture where
@@ -5029,7 +5044,8 @@ public theorem Picture.recolor_box_id (p : Picture) (f : Color → Color) (m : L
     intro s
     cases s with
     | label => rfl
-    | ink n => simp only [Shape.recolor, Shape.inkBox, Shape.box, Gfx.Node.recolor_geomBox_id]
+    | ink n => simp only [Shape.recolor, Shape.inkBox, Shape.box, Gfx.Node.recolor_geomBox_id,
+        clipHull_recolor_id]
   have hb : (p.recolor f).inkBoxes m = p.inkBoxes m := by
     simp only [Picture.inkBoxes, Picture.recolor, Array.map_map]
     exact Array.map_congr_left fun s _ => hs s

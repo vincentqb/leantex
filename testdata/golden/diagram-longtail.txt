@@ -1,0 +1,52 @@
+class article
+page 612x792 vmargin 72 hmargin 150
+font dir "fonts"
+font body "Source Serif Pro"
+palette wash #2A6F4E
+meta title "Shades and Shapes"
+meta author "Pat Placeholder"
+center
+  section* 0
+    text "Shades and Shapes"
+  para
+    text "Pat Placeholder"
+section 1 number "1"
+  text "Paint"
+picture 3 shapes
+  border 170.079 0 198.425 28.346
+  draw rect 0 0 85.039 28.346 fill linear(5 stops)
+  draw ellipse 127.559 14.173 14.173 14.173 fill radial(5 stops)
+  group clip 1
+    draw ellipse 170.079 0 28.346 28.346 fill #2A6F4E
+section 1 number "2"
+  text "Shapes"
+picture 12 shapes
+  border -4.714 -4.714 4.714 4.714
+  border 78.373 -6.666 91.705 6.666
+  border 166.746 -3.333 173.412 3.333
+  border 166.746 3.533 173.412 10.199
+  border 166.746 -10.199 173.412 -3.533
+  border -8.247 -10.199 95.238 10.199
+  draw ellipse 0 0 4.714 4.714 stroke #000000 0.4
+  label 0 0 #000000 1000
+    text "oval"
+  draw path (91.622,0)--(85.039,6.583)--(78.456,0)--(85.039,-6.583) z stroke #000000 0.4
+  label 85.039 0 #000000 1000
+    text "kite"
+  group
+    draw path (4.914,0)--(75.098,0) stroke #000000 0.4
+    draw path (77.604,0)--(74.019,1.351)--(75.198,0)--(74.019,-1.351) z fill #000000 stroke #000000 0.4
+  draw rect 166.746 -3.333 6.666 6.666 stroke #000000 0.4
+  label 170.079 0 #000000 1000
+    text "node"
+  label 170.079 6.866 #000000 1000
+    text "top"
+  label 170.079 -6.866 #000000 1000
+    text "pin"
+  group
+    draw path (170.079,-3.533)--(170.079,-3.533) stroke #808080 0.2
+  draw rect -8.247 -10.199 103.485 20.398 stroke #000000 0.4 dash 3,3
+  group
+    draw path (-28.346,34.016)~(-23.346,36.516)--(37.52,36.516)~(42.52,39.016)~(47.52,36.516)--(108.386,36.516)~(113.386,34.016) stroke #000000 0.4
+-- diagnostics
+note[N0376] 24:1 this picture ships no text alternative; assistive technology reads nothing in its place (WCAG 2.2 SC 1.1.1) | help: describe the picture — \begin{tikzpicture}[alt={...}] — mark it decorative with [artifact], or caption a figure around it; an empty alt= says nothing

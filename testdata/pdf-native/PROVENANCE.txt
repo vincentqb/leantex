@@ -14,9 +14,8 @@ cairo-chart.pdf
 
 lualatex-shade.pdf
   LuaHBTeX 1.24.0 (TeX Live 2026) on lualatex-shade.tex, beside it: the
-  standalone the engine wraps the boundary picture of
-  testdata/corpus/diagram-boundary.tex in, as the driver hands it to
-  lualatex. A pgf axial shading.
+  standalone the engine wraps a boundary picture in, as the driver hands
+  it to lualatex. A pgf axial shading.
 
 lualatex-text.pdf
   LuaHBTeX 1.24.0 (TeX Live 2026) on lualatex-text.tex, beside it, with the
