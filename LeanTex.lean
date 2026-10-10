@@ -104,6 +104,7 @@ public import LeanTex.Core.PdfContentLex
 public import LeanTex.Core.PdfContentLexProof
 public import LeanTex.Core.PdfFilters
 public import LeanTex.Core.PngEncode
+public import LeanTex.Core.PngEncodeProof
 public import LeanTex.Core.PdfFont
 public import LeanTex.Core.PdfGfx
 public import LeanTex.Core.FigureLoss

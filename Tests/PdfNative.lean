@@ -275,8 +275,10 @@ def pdfFixtureChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "fixture: an encrypted file is refused, not read as noise"
     ((lossesOf encryptedCanvasPdf).isOk == false)
 
-/-- **A PNG the engine writes reads back**: the probe sees its size, its
-colour type and its depth, and its CRC is PNG's. -/
+/-- **A PNG the engine writes reads back**, through the deflating encoder
+`PngEncode.probe_encode_exact` reaches only by its stream's size: the probe
+sees its size, its colour type and its depth; and the CRC, which the
+theorem does not read, is PNG's. -/
 def pngEncodeChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
   let h : PngEncode.Header := { width := 3, height := 2, bitDepth := 8, colorType := 6 }

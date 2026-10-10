@@ -37,9 +37,15 @@ public def be32 (n : Nat) : ByteArray :=
   ⟨#[UInt8.ofNat (n / 16777216 % 256), UInt8.ofNat (n / 65536 % 256), UInt8.ofNat (n / 256 % 256),
     UInt8.ofNat (n % 256)]⟩
 
+/-- The four bytes of a chunk type this module writes (ISO/IEC 15948 §5.4). -/
+public def tagIHDR : ByteArray := ⟨#[73, 72, 68, 82]⟩
+public def tagPLTE : ByteArray := ⟨#[80, 76, 84, 69]⟩
+public def tagIDAT : ByteArray := ⟨#[73, 68, 65, 84]⟩
+public def tagIEND : ByteArray := ⟨#[73, 69, 78, 68]⟩
+
 /-- One chunk: its length, type, data and the CRC over type and data. -/
-public def chunk (ty : String) (data : ByteArray) : ByteArray :=
-  let body := ty.toUTF8 ++ data
+public def chunk (ty : ByteArray) (data : ByteArray) : ByteArray :=
+  let body := ty ++ data
   be32 data.size ++ body ++ be32 (crc32 body).toNat
 
 /-- The PNG signature. -/
@@ -55,19 +61,29 @@ public structure Header where
   colorType : Nat
   deriving Repr, BEq, Inhabited
 
+/-- A header PNG's colour-type table gives an image with no palette
+(ISO/IEC 15948 §11.2.2, Table 11.1), its size in 32 bits: greyscale at 1,
+2, 4, 8 or 16 bits; truecolour, greyscale with alpha and truecolour with
+alpha at 8 or 16. -/
+@[expose] public def Header.Plain (h : Header) : Prop :=
+  0 < h.width ∧ h.width < 2 ^ 32 ∧ 0 < h.height ∧ h.height < 2 ^ 32 ∧
+    ((h.colorType = 0 ∧ h.bitDepth ∈ [1, 2, 4, 8, 16]) ∨
+      ((h.colorType = 2 ∨ h.colorType = 4 ∨ h.colorType = 6) ∧ h.bitDepth ∈ [8, 16]))
+
 /-- The `IHDR` chunk's data: no interlace, the one compression and filter
 method PNG defines. -/
 public def ihdr (h : Header) : ByteArray :=
   be32 h.width ++ be32 h.height ++ ⟨#[UInt8.ofNat h.bitDepth, UInt8.ofNat h.colorType, 0, 0, 0]⟩
 
 /-- **A PNG from a zlib stream of filtered rows**: the stream becomes the
-one `IDAT`, as it stands; `palette` is the `PLTE` an indexed image needs. -/
+one `IDAT`, as it stands; `palette` is the `PLTE` an indexed image needs.
+What the probe reads back from one is `probe_encode_exact`. -/
 public def encodeIdat (h : Header) (zlib : ByteArray) (palette : Option ByteArray := none) : ByteArray :=
-  signature ++ chunk "IHDR" (ihdr h) ++
+  signature ++ chunk tagIHDR (ihdr h) ++
     (match palette with
-     | some p => chunk "PLTE" p
+     | some p => chunk tagPLTE p
      | none => ByteArray.empty) ++
-    chunk "IDAT" zlib ++ chunk "IEND" ByteArray.empty
+    chunk tagIDAT zlib ++ chunk tagIEND ByteArray.empty
 
 /-- The samples per pixel of a colour type. -/
 public def channels : Nat → Nat
