@@ -14409,9 +14409,22 @@ private def blockShapeOf (ctx : Ctx) (src : String) (pos : Pos) : EM (Option Blo
                                      parskip := words.contains "parskip" } }
         else ok := false; bad s!"a 'title' that is not plain or flags among box, strut, parskip: {vt.quote}"
       | "untitled" =>
-        if vt == "box" then sh := { sh with untitled := true }
-        else if vt == "none" then sh := { sh with untitled := false }
-        else ok := false; bad s!"an 'untitled' that is neither box nor none: {vt.quote}"
+        if vt == "box" then sh := { sh with bare := none }
+        else if vt.startsWith "{" then
+          -- The arm the template's title test takes, its own skips.
+          let mut bare : BlockBare := {}
+          for sub in Decl.splitEntries (unbrace vt) do
+            match Decl.splitEntry sub with
+            | some (uk, uv) =>
+              match uk, skipsOf uv.trimAscii.toString with
+              | "before", some sk => bare := { bare with before := sk }
+              | "between", some sk => bare := { bare with between := sk }
+              | _, _ =>
+                ok := false
+                bad s!"an 'untitled' entry that is not before or between skips: {sub.quote}"
+            | none => ok := false; bad s!"an 'untitled' entry that is not key = value: {sub.quote}"
+          sh := { sh with bare := some bare }
+        else ok := false; bad s!"an 'untitled' that is neither box nor a group of skips: {vt.quote}"
       | "whole" =>
         if vt == "parskip" then sh := { sh with whole := some true }
         else if vt == "plain" then sh := { sh with whole := some false }
@@ -14565,6 +14578,11 @@ private def applyStyle (ctx : Ctx) (styles : Styles) (element src : String) (pos
         warnOnce ctx ("style:titlepage:" ++ key) .W0104
           s!"'{key}' has no meaning on the title page; the title is set without it" pos
           (help := "draw rules around the title with rule-above, rule-below or separator")
+      -- premise: blockStyleKeyChecks — no site reads these keys on a beamer block: both artifacts ship the same page with and without each
+      if Ir.blockStyleElements.contains element && !Ir.blockStyleKeys.contains key then
+        warnOnce ctx ("style:" ++ element ++ ":" ++ key) .W0104
+          s!"'{key}' has no meaning on a beamer block; the block is set without it" pos
+          (help := "a block reads its title's font and its template's shape")
       let asInline : EM (Option (Array Inline)) := inlineOf valueSrc
       let asLength : EM (Option SymGlue) := lengthOf key valueSrc
       -- Every colour-valued style key uses the same typed source resolver
@@ -14601,7 +14619,7 @@ private def applyStyle (ctx : Ctx) (styles : Styles) (element src : String) (pos
           diag ctx .E0323 s!"'body-size' in '\\style' expects a size name, got '{v}'" pos
             (help := "sizes: tiny, scriptsize, footnotesize, small, normalsize, large, Large")
       | "shape" =>
-        if !["block", "alertblock", "exampleblock"].contains element then
+        if !Ir.blockStyleElements.contains element then
           diag ctx .E0323 s!"'shape' in '\\style' belongs to a beamer block, not '{element}'" pos
             (help := "write \\style{block}{ shape = {...} }")
         else if let some sh ← blockShapeOf ctx valueSrc pos then

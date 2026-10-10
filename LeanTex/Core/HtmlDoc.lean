@@ -1445,18 +1445,29 @@ registers in force, and no `\parskip` inside the boxes
 (`\@arrayparboxrestore`). A block an overlay step wraps meets its
 neighbours through the step's carrier as every block does
 (`GapRule.throughCarriers`): the block owns its boundary inside the
-carrier, as it would with no carrier there. -/
-private def blockRules (size : Int) (tokens : Ir.Tokens) : List GapRule :=
+carrier, as it would with no carrier there. On a page with a block set in
+its kind's template (`shaped`), that block stands its template's skips as
+its own box's padding (`blockShapeCss`), so a boundary beside it pays only
+what the page's walk spends there beyond them: the follower's `\parskip`,
+or a default block's own space; and its body keeps the page's `\parskip`. -/
+private def blockRules (size : Int) (tokens : Ir.Tokens) (shaped : Bool) : List GapRule :=
   let above := blockAboveMilli size tokens
   let below := screenMilli size (skipSp size tokens "smallskipamount")
   -- tcolorbox's `beforeafter skip balanced=0.5\baselineskip`: half a leading
   -- between the box and the line boxes beside it, `\parskip` taken in.
   let balanced := milliRem (screenMilli size (Ir.rhythmQuantum size))
+  let shapedRules : List GapRule := if !shaped then [] else
+    .boundary "* + section.block-shaped" "0rem" ::
+      ownsBelow ["section.block-shaped"] s!"calc(0rem + {peerGap})" "0rem" ++
+    [.boundary "section.block + section.block-shaped" (milliRem below),
+     .boundary "section.block-shaped + section.block" (milliRem above),
+     .boundary "section.block-shaped + section.block-shaped" "0rem",
+     .parskip "section.block-shaped > *" "inherit"]
   .boundary "* + section.block" (milliRem above) ::
     ownsBelow ["section.block"] s!"calc({milliRem below} + {peerGap})" (milliRem below) ++
   [.boundary "section.block + section.block" (milliRem (below + above)),
-   .parskip "section.block > *" "0rem",
-   .boundary "* + section.tcolorbox" balanced] ++
+   .parskip "section.block > *" "0rem"] ++ shapedRules ++
+  [.boundary "* + section.tcolorbox" balanced] ++
   -- Below the box its own space is the balanced skip less the `\parskip`
   -- the paragraph after it spends (`Layout`'s box closing).
   ownsBelow ["section.tcolorbox"] balanced s!"calc({balanced} - {peerGap})" ++
@@ -1480,8 +1491,9 @@ heading, whose band below is the heading's own (the reset's
 consumer rule — a declared `\style` on the bare element or a reader
 stylesheet owning a container's spacing with `gap` — wins without a
 specificity fight, which is the HTML backend's override contract. -/
-public def blockGapRules (l : Ir.ListLineage) (size : Int) (tokens : Ir.Tokens) : List GapRule :=
-  gapResets ++ gapBeforeLists ++ blockRules size tokens ++ thmRules l size ++
+public def blockGapRules (l : Ir.ListLineage) (size : Int) (tokens : Ir.Tokens)
+    (shaped : Bool := false) : List GapRule :=
+  gapResets ++ gapBeforeLists ++ blockRules size tokens shaped ++ thmRules l size ++
     listRules l size tokens ++ gapAfterLists
 
 /-! ### Overlay carriers
@@ -1813,8 +1825,8 @@ public theorem GapRule.throughCarriers_isReset (pairs : List (Nat × Nat)) (r : 
 
 /-- The block-boundary sheet read through a tree's boundary shapes. -/
 public def blockGapCss (l : Ir.ListLineage) (size : Int) (tokens : Ir.Tokens)
-    (pairs : List (Nat × Nat) := []) : String :=
-  String.join ((blockGapRules l size tokens).map fun r => (r.throughCarriers pairs).render)
+    (pairs : List (Nat × Nat) := []) (shaped : Bool := false) : String :=
+  String.join ((blockGapRules l size tokens shaped).map fun r => (r.throughCarriers pairs).render)
 
 private theorem dropWhile_append_all {α : Type} (p : α → Bool) (xs ys : List α)
     (h : xs.all p = true) : (xs ++ ys).dropWhile p = ys.dropWhile p := by
@@ -1857,15 +1869,17 @@ needs before the emitted gap is the rendered one; the heading's follower
 rule stands last. That no base-sheet rule outside the emitter declares a
 margin on an element it spaces is the text's to show, and
 `htmlRhythmChecks` reads it off every golden page's sheet. -/
-public theorem blockGap_owner_contract (l : Ir.ListLineage) (size : Int) (tokens : Ir.Tokens) :
-    ((blockGapRules l size tokens).dropWhile GapRule.isReset).all (fun r => !r.isReset) = true ∧
-    (blockGapRules l size tokens).getLast? = some (.boundary ":is(h1, h2, h3, h4, h5, h6) + *" "0") := by
+public theorem blockGap_owner_contract (l : Ir.ListLineage) (size : Int) (tokens : Ir.Tokens)
+    (shaped : Bool) :
+    ((blockGapRules l size tokens shaped).dropWhile GapRule.isReset).all (fun r => !r.isReset) = true ∧
+    (blockGapRules l size tokens shaped).getLast? =
+      some (.boundary ":is(h1, h2, h3, h4, h5, h6) + *" "0") := by
   have hbefore : gapBeforeLists.all (fun r => !r.isReset) = true := by decide
   have hafter : gapAfterLists.all (fun r => !r.isReset) = true := by decide
-  have hblock : (blockRules size tokens).all (fun r => !r.isReset) = true := by
-    simp [blockRules, ownsBelow, GapRule.isReset]
-  have hall : (gapBeforeLists ++ blockRules size tokens ++ thmRules l size ++ listRules l size tokens ++
-      gapAfterLists).all (fun r => !r.isReset) = true := by
+  have hblock : (blockRules size tokens shaped).all (fun r => !r.isReset) = true := by
+    cases shaped <;> simp [blockRules, ownsBelow, GapRule.isReset]
+  have hall : (gapBeforeLists ++ blockRules size tokens shaped ++ thmRules l size ++
+      listRules l size tokens ++ gapAfterLists).all (fun r => !r.isReset) = true := by
     simp only [List.all_append, hbefore, hafter, hblock, thmRules_noReset,
       listRules_noReset, Bool.and_self]
   refine ⟨?_, ?_⟩
@@ -1881,12 +1895,12 @@ the sheet read through any boundary shapes still stands its resets first and
 alone and its heading's follower last, so every carrier variant ranks where
 its boundary ranks — each rides inside its boundary's own rule. -/
 public theorem blockGapThrough_owner_contract (l : Ir.ListLineage) (size : Int)
-    (tokens : Ir.Tokens) (d : List (Nat × Nat)) :
-    (((blockGapRules l size tokens).map (GapRule.throughCarriers d)).dropWhile
+    (tokens : Ir.Tokens) (d : List (Nat × Nat)) (shaped : Bool) :
+    (((blockGapRules l size tokens shaped).map (GapRule.throughCarriers d)).dropWhile
         GapRule.isReset).all (fun r => !r.isReset) = true ∧
-      ((blockGapRules l size tokens).map (GapRule.throughCarriers d)).getLast? =
+      ((blockGapRules l size tokens shaped).map (GapRule.throughCarriers d)).getLast? =
         some ((GapRule.boundary ":is(h1, h2, h3, h4, h5, h6) + *" "0").throughCarriers d) := by
-  have hc := blockGap_owner_contract l size tokens
+  have hc := blockGap_owner_contract l size tokens shaped
   have hp : (GapRule.isReset ∘ GapRule.throughCarriers d) = GapRule.isReset := by
     funext r
     exact GapRule.throughCarriers_isReset d r
@@ -2208,11 +2222,16 @@ public def titleSlotCss (doc : Doc) : String :=
   "section.slide.title-page > [class^=\"u-titlepage-slot-\"] p { margin: 0; } }\n"
 
 /-- A block template's length as the stylesheet writes it: its print part in
-the screen's unit, as the gap sheet writes one (`screenMilli`), its `em` and
-`ex` parts kept for the face to resolve. -/
-public def blockShapeLength (size : Int) (g : SymGlue) : String :=
+the page's own unit — on a deck's stage its share of the stage (`vh`, the
+unit the deck's type is set in, so the length keeps its proportion to the
+type at every viewport), elsewhere the screen's rem (`screenMilli`) — and its
+`em` and `ex` parts kept for the face to resolve. -/
+public def blockShapeLength (doc : Doc) (g : SymGlue) : String :=
   let l := g.width
-  let parts := (if l.sp != 0 then [milliRem (screenMilli size l.sp)] else []) ++
+  let sp : String := if doc.docClass.record.model == .frame then
+      s!"{decMilli (deckStageMilli l.sp doc.page.height)}vh"
+    else milliRem (screenMilli doc.page.fontSize l.sp)
+  let parts := (if l.sp != 0 then [sp] else []) ++
     (if l.em != 0 then [s!"{decMilli l.em}em"] else []) ++
     (if l.ex != 0 then [s!"{decMilli l.ex}ex"] else [])
   match parts with
@@ -2220,49 +2239,72 @@ public def blockShapeLength (size : Int) (g : SymGlue) : String :=
   | [one] => one
   | many => "calc(" ++ String.intercalate " + " many ++ ")"
 
-/-- **A block template's boxes and rules, as the stylesheet sets them**: the
-projection of each kind's `Ir.BlockShape`, the value the page's templated
-block arm reads. The title's box is the header, padded above by the
-`\parskip` its line spends and the box's own where its list opens on a colour
-change; the box holding title and body is the section. A rule beside a box is
-that box's `::before` (left) or `::after` (right), `width` wide, `sep` beside
-the box's edge, from the box's top below the line's `\parskip` to its bottom,
-in the palette entry it reads — `var(--name, colour)`, the spelling of
-`Ir.BlockEdge.ink`; a rule inside the line pads its box by `width + sep`. The
-lengths keep their font-relative units: neither box sets a size of its own,
-so an `em` is the body's, the font the template's rule is read in. A shaped
-block's body keeps the page's `\parskip`, which the colour boxes' reset
-takes from every block's children. -/
+/-- **A block template's boxes, rules and skips, as the stylesheet sets
+them**: the projection of each kind's `Ir.BlockShape`, the value the page's
+templated block arm reads. The section stands the template's skips as its
+padding — above the title in the arm the block takes
+(`Ir.BlockShape.skipsAbove`), and below the body — and the header the skips
+between title and body below it, so the boundaries around it pay only the
+follower's own gap (`blockRules`). The title's box is the header, padded
+above by the `\parskip` its line spends and the box's own where its list
+opens on a node; the box holding title and body is the section. A rule
+beside a box is that box's `::before` (left) or `::after` (right), `width`
+wide, `sep` beside the box's edge, from the box's top below the line's
+`\parskip` to its bottom above the skips below it, in the palette entry it
+reads — `var(--name, colour)`, the spelling of `Ir.BlockEdge.ink`; a rule
+inside the line pads its box by `width + sep`. Lengths keep their
+font-relative units: neither box sets a size of its own, so an `em` is the
+body's, the font the template's rule is read in. A shaped block's body keeps
+the page's `\parskip` (`blockRules`). -/
 public def blockShapeCss (doc : Doc) : String :=
   let shapes := [Ir.TitledKind.block, .alert, .example].filterMap fun k =>
     (Ir.blockShapeOf doc.styles k).map (k, ·)
   if shapes.isEmpty then "" else
-  let len := blockShapeLength doc.page.fontSize
+  let len := blockShapeLength doc
+  let skips (sk : Array Ir.BlockSkip) : String := len (Ir.blockSkipSum doc.tokens sk)
   let paint (e : Ir.BlockEdge) : String := match e.name with
     | some n => s!"var(--{n}, {cssColor e.color})"
     | none => cssColor e.color
-  let rule (pseudo : String) (sel : String) (e : Ir.BlockEdge) (pad : String) : String :=
+  let rule (pseudo : String) (sel : String) (e : Ir.BlockEdge) (pad top bottom : String) : String :=
     let place := if e.side == .left then "left" else "right"
-    s!"{sel}::{pseudo} \{ content: \"\"; position: absolute; top: {peerGap}; bottom: 0; \
+    s!"{sel}::{pseudo} \{ content: \"\"; position: absolute; top: {top}; bottom: {bottom}; \
 {place}: calc({pad} - {len e.sep} - {len e.width}); width: {len e.width}; background: {paint e}; }\n"
   let rules := shapes.map fun (k, sh) =>
     let sel := s!"section.block-shaped.block-{k.name}"
     let inner := if sh.title.parskip then peerGap else "0rem"
+    let before := skips sh.before
+    let after := skips sh.after
+    let between := skips sh.between
     let edges (span : Ir.BlockSpan) := sh.edges.filter (·.span == span)
-    let boxRules (span : Ir.BlockSpan) (box : String) : String :=
+    let boxRules (span : Ir.BlockSpan) (box : String) (top bottom : String) : String :=
       let es := edges span
       let padL := len (sh.inset span .left)
       let padR := len (sh.inset span .right)
-      let left := (es.find? (·.side == .left)).map fun e => rule "before" box e padL
-      let right := (es.find? (·.side == .right)).map fun e => rule "after" box e padR
+      let left := (es.find? (·.side == .left)).map fun e => rule "before" box e padL top bottom
+      let right := (es.find? (·.side == .right)).map fun e => rule "after" box e padR top bottom
       (if es.isEmpty then "" else
         s!"{box} \{ position: relative; padding-inline: {padL} {padR}; }\n") ++
       left.getD "" ++ right.getD ""
-    let titleRules := boxRules .title s!"{sel} > header"
-    let wholeRules := boxRules .whole sel
-    s!"{sel} > header \{ padding-top: calc({peerGap} + {inner}); }\n" ++ titleRules ++ wholeRules
-  let joined := String.join rules
-  ":where(section.block.block-shaped > *) { --parskip: inherit; }\n" ++ joined
+    let titleRules := boxRules .title s!"{sel} > header" peerGap between
+    let wholeRules := boxRules .whole sel s!"calc({before} + {peerGap})" after
+    -- The arm an untitled block takes where its template leaves the title
+    -- out: its own skips, and — the body opening the box around it — the
+    -- line's `\parskip` above that box and the box's own inside it.
+    let bare := match sh.bare with
+      | some b =>
+        let inside := if sh.whole.isSome then
+            s!" + {skips b.between}" ++ (if sh.whole == some true then s!" + {peerGap}" else "")
+          else ""
+        s!"{sel}:not(:has(> header)) \{ padding-top: calc({skips b.before} + {peerGap}{inside}); }\n" ++
+        (if (edges .whole).isEmpty then "" else
+          String.join ((edges .whole).toList.map fun e =>
+            let pseudo := if e.side == .left then "before" else "after"
+            s!"{sel}:not(:has(> header))::{pseudo} \{ top: calc({skips b.before} + {peerGap}); }\n"))
+      | none => ""
+    s!"{sel} \{ padding-top: {before}; padding-bottom: {after}; }\n" ++
+      s!"{sel} > header \{ padding-top: calc({peerGap} + {inner}); padding-bottom: {between}; }\n" ++
+      titleRules ++ wholeRules ++ bare
+  String.join rules
 
 /-- A tcolorbox length (`Ir.tcb…`, TeX millimetres) as CSS: its print
 length at the body size, as the print walk spends it — millimetres the
@@ -5851,7 +5893,8 @@ public def baseCss (cfg : Config) (doc : Doc) (pairs : List (Nat × Nat) := []) 
   "figure.float > figcaption:first-child { margin-top: 0;\n" ++
   "  padding-top: var(--ltx-capfar-top); padding-bottom: 0;\n" ++
   "  margin-bottom: var(--ltx-capsep-top); }\n" ++
-  blockGapCss doc.docClass.record.lists doc.page.fontSize doc.tokens pairs ++
+  blockGapCss doc.docClass.record.lists doc.page.fontSize doc.tokens pairs
+    (shaped := [Ir.TitledKind.block, .alert, .example].any fun k => (Ir.blockShapeOf doc.styles k).isSome) ++
   -- Slides: the class-split deck/handout rules, header type included
   -- (`slideCss`); the standout rule below holds on both media.
   slideCss doc ++
@@ -8277,7 +8320,7 @@ public def blockNode (cfg : Config) (b : Block) : Node :=
       -- The kind's own template (`Ir.BlockShape`): no colour box, the title
       -- in its font on the page's ground, the body's paragraphs keeping the
       -- page's skip; the boxes' rules are the stylesheet's (`blockShapeCss`).
-      let showTitle := !title.isEmpty || shape.untitled
+      let showTitle := shape.showsTitle (!title.isEmpty)
       let titleInk := (d.inkOn (kind.roleStem ++ "titlefg")
         { fg := titleLook.fg, bg := parent.bg }).fg
       let head : Array Html.Node :=

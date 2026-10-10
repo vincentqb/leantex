@@ -121,6 +121,17 @@ private def beamerFontElements : List (String × String × String) :=
    ("block title alerted", "alertblock", "font"),
    ("block title example", "exampleblock", "font")]
 
+/-- The block-title fonts a shipped theme declares, the fields a document's
+`\setbeamerfont` merges into: beamerfontthememoloch.sty's `\setbeamerfont{block
+title}{size=\normalsize, series=\bfseries}` and the same for `block title
+alerted`; `block title example` keeps beamerfontthemedefault.sty's parent
+alone. The engine's title default is this font, so a deck that declares none
+sets as before. -/
+private def themeBlockFont (theme element : String) : List (String × String) :=
+  if theme == "moloch" && (element == "block title" || element == "block title alerted") then
+    [("series", "\\bfseries"), ("size", "\\normalsize")]
+  else []
+
 /-- Beamer's font axes in selection order (`beamerbasefont.sty`,
 `\beamer@usebeamerfont`): each declaration replaces its named fields, and
 selection runs size, shape, series, family regardless of declaration order.
@@ -780,6 +791,9 @@ private structure St where
   /-- A `\usetheme` was seen: `\alert` then maps to the theme's alert colour
   rather than the unthemed bold stand-in. -/
   themed : Bool := false
+  /-- The shipped theme the deck names (`\usetheme`, its lineage's name):
+  what its own font declarations are read from (`themeBlockFont`). -/
+  beamerTheme : String := ""
   /-- The declared class produces a presentation. What a beamer *mode*
   specification is read against: `<presentation:0>` suppresses a frame only
   where the artifact is the presentation it addresses — beamer's article mode
@@ -6828,7 +6842,9 @@ private def flushBeamerBlocks : M (Array Raw) := do
                 colors := colors.push role
               | none => colors := colors.push "fg"
             let native := s!"\\style\{{styleEl}}\{ shape = {BlockTemplate.native r colors} }"
-            became s!"\\defbeamertemplate\{{beginEl}}" native pos
+            -- The pair as installed, however each half was: named,
+            -- defined or set.
+            became s!"{beginEl} / {endEl}" native pos
             out := out ++ wrap (← synthAt native pos)
             pure #[]
       | some _, none => pure #[s!"its '{endEl}' half, which the document never sets"]
@@ -7528,7 +7544,7 @@ is skipped" pos
     let (args, _) := takeGroups raws start 1
     let tname := (rawSrc (args.getD 0 #[])).trimAscii.toString
     if (Theme.find? tname).isSome then
-      write fun st => { st with themed := true }
+      write fun st => { st with themed := true, beamerTheme := tname }
     return none
   | "alert" =>
     let j := skipSpaces raws start
@@ -7586,8 +7602,8 @@ only preamble block templates are read" pos
     -- registers a template sets, so the allocation means nothing more.
     let j := skipSpaces raws start
     match raws[j]? with
-    | some (.ctrl _ _) =>
-      became "\\newbox" "a box register a block template reads" pos
+    | some (.ctrl r _) =>
+      discard s!"\\newbox\\{r}" "a box register's allocation sets nothing on the page" "newbox" pos
       return some (#[], j + 1)
     | _ => return none
   | "setbeamertemplate" =>
@@ -7615,8 +7631,12 @@ only preamble block templates are read" pos
           installBlockTemplate element body pos
           became s!"\\setbeamertemplate\{{element}}[{name}]" "a block template, read where the preamble ends" pos
         | none =>
-          -- The default inner theme's own option: the built-in pair stands.
-          write fun st => { st with beamerTemplates := st.beamerTemplates.filter (·.1 != element) }
+          -- The default inner theme's own option: the built-in pair stands,
+          -- installed afresh, so an earlier addition goes with the template
+          -- it modified.
+          write fun st => { st with
+            beamerTemplates := st.beamerTemplates.filter (·.1 != element)
+            beamerBlockBegin := if element == "block begin" then #[] else st.beamerBlockBegin }
           if name != "default" then
             sayOnce ("beamer:template:" ++ element ++ ":" ++ name) .W0110
               s!"'\\setbeamertemplate\{{element}}[{name}]' names a template the document never \
@@ -7790,7 +7810,8 @@ defines; those blocks keep beamer's default template" pos
     if h : args.size = 2 then
       let element := (rawSrc args[0]).trimAscii.toString
       let source := rawSrc args[1]
-      let stored := (← get).beamerFonts.toList.lookup element |>.getD []
+      let stored := (← get).beamerFonts.toList.lookup element |>.getD
+        (themeBlockFont (← get).beamerTheme element)
       let previous := if starred then [] else stored
       let fields := beamerFontUpdate previous source
       unless element == "normal text" do
@@ -7819,8 +7840,12 @@ has no styleable element for; skipped" pos
         for (key, value) in updates do
           if key == "parent" then
             sayOnce ("beamer:setbeamerfont:" ++ element ++ ":" ++ key) .W0104
-              s!"'\\setbeamerfont\{{element}}' inherits with '{key}'; the engine has \
-no font inheritance, so only declared commands are taken" pos
+              (if target.endsWith "block" then
+                s!"'\\setbeamerfont\{{element}}' names its parents with '{key}'; the \
+engine's alerted and example block titles inherit the plain block title's font, and nothing \
+else, so only declared commands are taken"
+              else s!"'\\setbeamerfont\{{element}}' inherits with '{key}'; the engine has \
+no font inheritance, so only declared commands are taken") pos
               (help := beamerNative.lookup "setbeamerfont")
           else if key == "size*" && (braceGroups value).size != 2 then
             sayOnce ("beamer:setbeamerfont:" ++ element ++ ":" ++ key) .W0104
@@ -7842,7 +7867,17 @@ its value is skipped" pos
             became s!"\\setbeamerfont\{{element}}" "local font fields" pos
             return some (#[], k)
           let cmds := beamerFontCommands fields
-          let native := s!"\\style\{{target}}\{ {styleKey} = \{{cmds}} }"
+          -- The theme's own alerted title font stands over the plain
+          -- title's (`Ir.blockTitleFont`'s parent chain): it is the alerted
+          -- kind's own once the plain title's font is declared at all.
+          let alerted := "block title alerted"
+          let seed := themeBlockFont (← get).beamerTheme alerted
+          let own := if target == "block" && !seed.isEmpty &&
+              ((← get).beamerFonts.toList.lookup alerted).isNone then
+            s!" \\style\{alertblock}\{ font = \{{beamerFontCommands seed}} }" else ""
+          unless own.isEmpty do
+            write fun st => { st with beamerFonts := st.beamerFonts.push (alerted, seed) }
+          let native := s!"\\style\{{target}}\{ {styleKey} = \{{cmds}} }" ++ own
           became s!"\\setbeamerfont\{{element}}" native pos
           return some (← synthAt native pos, k)
         else return some (#[], k)
@@ -7927,7 +7962,7 @@ its value is skipped" pos
     -- unknown name leaves the document unthemed (W0314 says so), and
     -- \alert keeps its unthemed bold stand-in.
     if (Theme.find? tname).isSome then
-      write fun st => { st with themed := true }
+      write fun st => { st with themed := true, beamerTheme := tname }
     let options ← if tname == "moloch" then molochOptions "\\usetheme" (opt.getD "") pos
       else pure #[]
     return some ((← synthAt native pos) ++ options, k)
@@ -8664,6 +8699,10 @@ private def rewriteCtrlNamed (name : String) (pos : Pos) (raws : Array Raw)
       else none
     if (name.endsWith "fontfamily" || name.endsWith "fontface") && declared.isNone then return none
     let start := if declared.isSome then skipSpaces raws start + 1 else start
+    let st0 ← get
+    let defined := match declared with
+      | some c => st0.bound.contains c || st0.fontFamilies.contains c
+      | none => false
     if let some c := declared then
       write fun st => { st with bound := if st.bound.contains c then st.bound else st.bound.push c }
     let (langOpt, j0) := if name == "babelfont" then takeOpt raws start else (none, start)
@@ -8672,6 +8711,24 @@ private def rewriteCtrlNamed (name : String) (pos : Pos) (raws : Array Raw)
     let (args, k) := takeGroups raws j 1
     -- fontspec takes its features before the name or after it.
     let (optAfter, k) := takeOpt raws k
+    -- The provide forms define the command only where it is undefined
+    -- (`\ProvideDocumentCommand`): a command already standing keeps the
+    -- family it selects.
+    if name.startsWith "provide" && defined then
+      let c := declared.getD ""
+      discard s!"\\{name}\\{c}" s!"'\\{c}' is already defined, and the provide form keeps it"
+        s!"{name}:{c}" pos
+      return some (#[], k)
+    -- A family declared in the body: the document's families are its
+    -- preamble's, so the declaration is skipped, named as the command the
+    -- author wrote, and the family's command selects nothing.
+    -- premise: bodyFamilyChecks — a body declaration declares no family in either artifact
+    if (← get).inDoc then
+      if let some c := declared then
+        sayOnce ("ctrl:" ++ name) .W0340
+          s!"'\\{name}' is a declaration; in the body it is ignored, and '\\{c}' selects no family" pos
+          (help := "declare it in the preamble, before '\\begin{document}'")
+        return some ((← synthAt s!"\\define \\{c}() " pos) ++ #[Raw.group #[] pos], k)
     let slot := match name, declared with
       | _, some c => "family." ++ c
       | "babelfont", _ => match rawSrc (slotArgs.getD 0 #[]) with

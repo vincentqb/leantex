@@ -228,11 +228,14 @@ public inductive Node where
 
 /-! ## The interpreter -/
 
-/-- What a group restores: the font element, the colour, `\hsize`. -/
+/-- What a group restores: the font element, the colour, `\hsize`, and the
+beamer colour element whose channels the colour names `fg` and `bg` stand
+for (`\usebeamercolor` sets both with `\colorlet`, beamerbasecolor.sty). -/
 private structure Scope where
   font : Option String := none
   paint : Option Paint := none
   hsize : Dimen := { line := 1000 }
+  channels : Option String := none
   deriving Inhabited
 
 /-- A list under construction: vertical or horizontal, its nodes, and the
@@ -672,6 +675,7 @@ private def run (toks : Array Tok) (titled : Bool) : St := Id.run do
         match readArg toks j with
         | some (arg, k) =>
           let el := (wordsOf arg).trimAscii.toString
+          s := { s with scope := { s.scope with channels := some el } }
           match ch with
           | some c =>
             if c == "fg" || c == "bg" then s := s.paint (.beamer el c)
@@ -686,7 +690,9 @@ private def run (toks : Array Tok) (titled : Bool) : St := Id.run do
           let name := (wordsOf arg).trimAscii.toString
           let p : Paint := if name.endsWith ".fg" then .beamer (name.dropEnd 3).toString "fg"
             else if name.endsWith ".bg" then .beamer (name.dropEnd 3).toString "bg"
-            else .named name
+            else match s.scope.channels, name with
+              | some el, "fg" | some el, "bg" => .beamer el name
+              | _, _ => .named name
           s := s.paint p
           i := k
         | _, _ => s := s.miss "\\color"; i := i + 1
@@ -821,7 +827,7 @@ title and body are set in, which the caller holds to the kind's own. -/
 public structure Read where
   before : Array Ir.BlockSkip := #[]
   title : Ir.BlockTitleBox := {}
-  untitled : Bool := true
+  bare : Option Ir.BlockBare := none
   between : Array Ir.BlockSkip := #[]
   after : Array Ir.BlockSkip := #[]
   whole : Option Bool := none
@@ -1027,7 +1033,8 @@ private def lowerArm (nodes : Array Node) : Except String Arm := Id.run do
 
 /-- **A block template pair, read**: both arms of the title test run and
 lowered, and held to one shape — the untitled arm differs from the titled
-one only in leaving the title out, or in keeping its box empty. -/
+one only in leaving the title out, with the skips of its own that arm stands
+(`Ir.BlockBare`), or in keeping its box empty. -/
 public def read (beginRaws endRaws : Array Raw) (defs : String → Option Macro := fun _ => none)
     (bound : Nat := 0) : Except (Array String) Read :=
   let opening := flatten beginRaws
@@ -1047,11 +1054,11 @@ public def read (beginRaws endRaws : Array Raw) (defs : String → Option Macro 
       let titleEdges := t.edges.filter (·.span == .title)
       let wholeEdges (a : Arm) := a.edges.filter (·.span == .whole)
       let untitledBox := u.title.isSome
-      if t.before != u.before then .error #["skips above the title the untitled arm sets otherwise"]
-      else if t.after != u.after then .error #["skips below the body the untitled arm sets otherwise"]
+      if t.after != u.after then .error #["skips below the body the untitled arm sets otherwise"]
       else if t.whole.isSome != u.whole.isSome || wholeEdges t != wholeEdges u then
         .error #["a box around the body the untitled arm sets otherwise"]
-      else if untitledBox && (u.title != t.title || u.edges != t.edges || u.between != t.between) then
+      else if untitledBox && (u.title != t.title || u.edges != t.edges || u.between != t.between ||
+          u.before != t.before) then
         .error #["an empty title box the untitled arm sets otherwise"]
       else if titleEdges.any (fun _ => !title.boxed) then
         .error #["a rule beside a title with no box of its own"]
@@ -1060,7 +1067,8 @@ public def read (beginRaws endRaws : Array Raw) (defs : String → Option Macro 
         if spansides.toList.eraseDups.length != spansides.size then
           .error #["two rules on one side of one box"]
         else .ok
-          { before := t.before, title := title, untitled := untitledBox
+          { before := t.before, title := title
+            bare := if untitledBox then none else some { before := u.before, between := u.between }
             between := t.between, after := t.after
             whole := if t.title.isSome && !untitledBox then u.whole else t.whole
             edges := t.edges, titleFont := t.titleFont, titlePaint := t.titlePaint
@@ -1120,7 +1128,13 @@ public def native (r : Read) (colors : Array String) : String :=
 sep = {lengthSrc e.sep}, hang = {e.hang}, color = {colors.getD i "fg"} }"
   let skips (key : String) (sk : Array Ir.BlockSkip) : String :=
     if sk.isEmpty then "" else s!", {key} = {skipsSrc sk}"
-  s!"\{ title = {title}, untitled = {if r.untitled then "box" else "none"}\
+  let untitled := match r.bare with
+    | none => "box"
+    | some b =>
+      let parts := (if b.before.isEmpty then [] else [s!"before = {skipsSrc b.before}"]) ++
+        (if b.between.isEmpty then [] else [s!"between = {skipsSrc b.between}"])
+      "{" ++ (if parts.isEmpty then "" else " " ++ String.intercalate ", " parts ++ " ") ++ "}"
+  s!"\{ title = {title}, untitled = {untitled}\
 {skips "before" r.before}{skips "between" r.between}{skips "after" r.after}{whole}\
 {String.join edges} }"
 
