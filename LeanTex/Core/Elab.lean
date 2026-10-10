@@ -9295,14 +9295,14 @@ private def listingBlock (ctx : Ctx) (env s : String) (pos : Pos) : EM Block := 
       let name := (v.drop 1).toString
       if Ir.sizeScale.any (·.1 == name) then some name else none
     else none
-  -- A key and value is one loss wherever a listing names it.
-  let unhonoured (key msg : String) (help : Option String) : EM Unit :=
-    warnOnce ctx ("lstopt:" ++ key) .W0110 msg pos (help := help)
+  -- Keyed by its words: two listings share a loss exactly when they print the same.
+  let unhonoured (msg : String) (help : Option String) : EM Unit :=
+    warnOnce ctx ("lstopt:" ++ msg) .W0110 msg pos (help := help)
   let langOf (raw : String) : EM (Option Ir.ListingLang) := do
     match Ir.listingLang? raw with
     | some l => pure (some l)
     | none =>
-      unhonoured ("language=" ++ raw.trimAscii.toString)
+      unhonoured
         s!"listing language '{raw.trimAscii.toString}' is not a plain name; the \
 listing carries no language"
         "spell it as letters, digits, +, #, - or . (python, c++, c#)"
@@ -9321,7 +9321,7 @@ listing carries no language"
       if v == "left" then numbers := true
       else if v == "none" then numbers := false
       else
-        unhonoured ("numbers=" ++ v) s!"'numbers={v}' asks for a numbering the engine \
+        unhonoured s!"'numbers={v}' asks for a numbering the engine \
 does not draw; lines keep no numbers" "numbers=left draws them"
     | some ("linenos", v) =>
       numbers := v.trimAscii.toString != "false"
@@ -9332,11 +9332,11 @@ does not draw; lines keep no numbers" "numbers=left draws them"
         match Ir.ListingStyle.ofName? v with
         | some selected => style := selected
         | none =>
-          unhonoured ("minted:style=" ++ v)
+          unhonoured
             s!"listing style '{v}' is not supported; the current style stands"
             "use style=default or style=friendly"
       else
-        unhonoured ("lstlisting:style=" ++ v)
+        unhonoured
           s!"listing named style '{v}' is not supported; the current style stands" none
     | some ("fontsize", v) =>
       let v := listingVal v
@@ -9344,7 +9344,7 @@ does not draw; lines keep no numbers" "numbers=left draws them"
       else if env == "minted" && (sizeName? v).isSome then
         fontSize := .size ((sizeName? v).getD "normalsize")
       else
-        unhonoured ("fontsize=" ++ v) s!"listing fontsize '{v}' is not a supported size command; \
+        unhonoured s!"listing fontsize '{v}' is not a supported size command; \
 the current size stands" "use a named size command such as fontsize=\\small, or fontsize=auto"
     | some ("tabsize", v) =>
       let v := listingVal v
@@ -9352,16 +9352,16 @@ the current size stands" "use a named size command such as fontsize=\\small, or 
       match v.toNat? with
       | some n =>
         if 0 < n && n ≤ 100 then tabSize := n
-        else unhonoured ("tabsize=" ++ v) s!"listing tabsize '{v}' is outside 1..100; \
+        else unhonoured s!"listing tabsize '{v}' is outside 1..100; \
 the current tab stops stand" none
       | none =>
-        unhonoured ("tabsize=" ++ v) s!"listing tabsize '{v}' is not an integer; \
+        unhonoured s!"listing tabsize '{v}' is not an integer; \
 the current tab stops stand" none
     | some ("breaklines", v) =>
       let v := listingVal v
       if v == "true" then breakLines := true
       else if v == "false" then breakLines := false
-      else unhonoured ("breaklines=" ++ v) s!"listing breaklines '{v}' is not true or false; \
+      else unhonoured s!"listing breaklines '{v}' is not true or false; \
 the current wrapping stands" none
     | some ("basicstyle", v) =>
       let v := listingVal v
@@ -9374,14 +9374,14 @@ the current wrapping stands" none
           let name := name.trimAscii.toString
           if name == "ttfamily" then size else .size name) inherited
       else
-        unhonoured "basicstyle" "listing basicstyle supports only \\ttfamily and named \
+        unhonoured "listing basicstyle supports only \\ttfamily and named \
 size commands; the current style stands" none
     | some (k, _) =>
-      unhonoured k s!"listing key '{k}' is not honoured; ignored" none
+      unhonoured s!"listing key '{k}' is not honoured; ignored" none
     | none =>
       if bare == "linenos" then numbers := true
       else if bare == "breaklines" then breakLines := true
-      else unhonoured bare s!"listing key '{bare}' is not honoured; ignored" none
+      else unhonoured s!"listing key '{bare}' is not honoured; ignored" none
   if env == "minted" then
     match Parse.mintedLangHead s afterOpt with
     | some (lang, _) => language ← langOf lang

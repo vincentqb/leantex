@@ -1288,8 +1288,10 @@ says content did not reach the page as declared, and a reader sizing that
 damage reads the site total off one line — which `Diag.tallySites` computes
 from `Diag.subject` and from nothing else. A censused code emitted with no
 subject is therefore outside the census: `Diag.tallySites_subjectless_id`
-says the tally returns it untouched, so it fires once per site, repeats its
-help at each, and bills every site to `--werror`.
+says the tally returns it untouched. The log a phase prints still folds its
+repeats in the same words (`Diag.foldRepeats`), but a site whose words differ
+— a measure, a name — prints its own line and its own help, and bills its own
+warning to `--werror`.
 
 A since-retired code is the witness that this needed stating. It named a
 fragment of an unknown command's `[...]` run at the same site where `W0301`

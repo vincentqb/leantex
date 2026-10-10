@@ -65,22 +65,49 @@ def foldChecks (ref : IO.Ref (List String)) : IO Unit := do
     (String.join (List.replicate 5 listing)))
   let w0110 := ds.filter (·.kind == .W0110)
   t s!"a listing key's five sites are five records ({w0110.size})" (w0110.size == 5)
-  t "a listing key's sites carry the key as their subject"
-    (w0110.all (·.subject == some "lstopt:zzfoldkey"))
+  t "a listing key's sites carry their words as their subject"
+    (w0110.all fun d => d.subject == some ("lstopt:" ++ d.message))
   t "the census counts a listing key's sites on its first record"
     ((w0110.map (·.sites)).toList == [5, 0, 0, 0, 0])
-  let (err, _, r) ← sink plain #[] ds
+  let (err, _, _) ← sink plain #[] ds
   t s!"a listing key repeated at five listings prints one warning ({(warningLines err "W0110").length})"
     ((warningLines err "W0110").length == 1 && (headLines err "W0110").length == 1)
   t "the line it prints carries the five sites"
     ((warningLines err "W0110").all (hasStr · "(5 sites)"))
-  t "the repeat sites are notes the completion line counts" (r.notes ≥ 4)
   let (verbose, _, _) ← sink { plain with verbosity := 1 } #[] ds
   t "-v prints every site, one warning and four notes"
     ((headLines verbose "W0110").length == 5 && (warningLines verbose "W0110").length == 1)
   let (_, porcelain, _) ← sink { plain with porcelain := true } #[] ds
   t "porcelain keeps every site, the first carrying the count"
     ((porcelainRows porcelain "W0110").map (·.1) == [5, 0, 0, 0, 0])
+  -- Each listing arm keys its loss by its words: two sites share a subject
+  -- exactly when they print the same.
+  let arms := ["zzfoldkey=on", "zzfoldkey", "numbers=zzbad", "fontsize=", "fontsize={}",
+    "tabsize=0", "tabsize=zz", "breaklines=zz", "basicstyle", "basicstyle=\\bfseries",
+    "language={zz zz}", "style=zzstyle"]
+  let armDoc := String.join ((arms ++ arms).map fun a =>
+    s!"\\begin\{lstlisting}[{a}]\nalpha\n\\end\{lstlisting}\n\n")
+  let armDs := (elabStr (dvDoc "\\usepackage{listings}" armDoc)).2.filter (·.kind == .W0110)
+  t s!"every listing arm names its loss ({armDs.size} records)"
+    (armDs.size == 2 * arms.length && armDs.all (·.subject.isSome))
+  t "a listing arm's subject and its words determine each other"
+    (armDs.all fun a => armDs.all fun b => (a.subject == b.subject) == (a.message == b.message))
+  let (err, _, _) ← sink plain #[] (elabStr (dvDoc "\\usepackage{listings}" armDoc)).2
+  -- `zzfoldkey=on` and a bare `zzfoldkey` print the same words.
+  t s!"each listing arm's words print once ({(warningLines err "W0110").length} lines)"
+    ((warningLines err "W0110").length == arms.length - 1 &&
+      (armDs.map (·.message)).toList.eraseDups.length == arms.length - 1 &&
+      ((warningLines err "W0110").filter (hasStr · "(4 sites)")).length == 1 &&
+      ((warningLines err "W0110").filter (hasStr · "(2 sites)")).length == arms.length - 2)
+  -- A siunitx command's option, at three sites.
+  let (_, siDs) := elabStr (dvDoc "\\usepackage{siunitx}"
+    "One \\num[zzopt=1]{1}, two \\num[zzopt=2]{2}, three \\num[zzopt=3]{3}.")
+  let siW := siDs.filter (·.kind == .W0110)
+  t s!"a siunitx command's options are one loss, keyed by the command ({siW.size})"
+    (siW.size == 3 && siW.all (·.subject == some "siopt:num"))
+  let (err, _, _) ← sink plain #[] siDs
+  t "a siunitx command's options print once, with their sites"
+    ((warningLines err "W0110").length == 1 && (warningLines err "W0110").all (hasStr · "(3 sites)"))
   -- The class, whatever the emitter: a warning repeated in the same words
   -- with no subject is one loss.
   let same := (List.range 4).toArray.map fun k =>
@@ -92,15 +119,29 @@ def foldChecks (ref : IO.Ref (List String)) : IO Unit := do
       ((warningLines err "W0110").filter (hasStr · "(4 sites)")).length == 1)
   t "the line shown is the first site"
     ((warningLines err "W0110").any fun l => hasStr l "deck.tex:3:1" && hasStr l "(4 sites)")
-  t "a repeat is one warning under --werror, as a census repeat is"
+  t "a repeat is one warning under --werror, as a census repeat is, and its sites are notes"
     (r.warnings == 2 && r.notes == 3)
   let (_, porcelain, _) ← sink { plain with porcelain := true } #[] (same.push other)
-  t "porcelain: the counts add up to the records"
-    (((porcelainRows porcelain "W0110").map (·.1)).sum == 5 &&
-      (porcelainRows porcelain "W0110").length == 5)
+  t "porcelain: the first site carries the count and the later ones none"
+    ((porcelainRows porcelain "W0110").map (·.1) == [4, 0, 0, 0, 1])
   t "porcelain: the later sites read note, the first warning"
     ((porcelainRows porcelain "W0110").map (·.2) ==
       ["warning", "note", "note", "note", "warning"])
+  -- What a record says beyond its message is its words too.
+  let advised := #[Diag.of .W0110 "zzsame words" (span 1) (help := some "zzone"),
+    Diag.of .W0110 "zzsame words" (span 2) (help := some "zztwo")]
+  let (err, _, _) ← sink plain #[] advised
+  t "the same message with different advice keeps both lines"
+    ((warningLines err "W0110").length == 2)
+  -- One loss in different words keeps each wording; a repeated wording folds.
+  let boxes := #[Diag.of .W0110 "box keys zzalpha are not applied" (span 1) (subject := some "zzbox"),
+    Diag.of .W0110 "box keys zzbeta are not applied" (span 2) (subject := some "zzbox"),
+    Diag.of .W0110 "box keys zzbeta are not applied" (span 3) (subject := some "zzbox")]
+  let (err, _, _) ← sink plain #[] boxes
+  t s!"a loss's wordings each keep a line, its repeat folds ({warningLines err "W0110"})"
+    ((warningLines err "W0110").length == 2 &&
+      (warningLines err "W0110").any (fun l => hasStr l "deck.tex:1:1" && hasStr l "(3 sites)") &&
+      (warningLines err "W0110").any (hasStr · "deck.tex:2:1"))
   -- A repeat at another output scope is another loss.
   let scopes := (same.map fun d => { d with output := some .pdf }).push
     (Diag.of .W0110 "the zzsink option is not honoured; ignored" (span 3) (output := some .html))
@@ -109,31 +150,62 @@ def foldChecks (ref : IO.Ref (List String)) : IO Unit := do
     ((warningLines err "W0110").length == 2)
   -- An error is never folded: each site fails the build and prints.
   let errs := (List.range 3).toArray.map fun k => Diag.of .E0304 "a zzmissing argument" (span k)
-  let (err, _, r) ← sink plain #[] errs
-  t "a repeated error prints at every site and counts every site"
-    ((headLines err "E0304").length == 3 && r.errors == 3)
+  let named := (List.range 3).toArray.map fun k =>
+    Diag.of .E0304 "a zzmissing argument" (span k) (subject := some "zzarg")
+  let (err, _, r) ← sink plain #[] (errs ++ named)
+  t "a repeated error prints at every site and counts every site, named or not"
+    ((headLines err "E0304").length == 6 && r.errors == 6)
   -- Acceptance reads the folded phase, as it reads a census repeat.
   let (err, _, r) ← sink plain #["W0110"] (same.push other)
   t "an accepted repeat prints nothing and is accepted once per loss"
     ((headLines err "W0110").isEmpty && r.accepted.size == 2 && r.warnings == 0)
   -- The law the theorems state, read off the folded records.
-  let folded := Diag.foldRepeats (same.push other ++ errs ++ ds)
+  let log := same.push other ++ errs ++ named ++ boxes ++ advised ++ ds
+  let folded := Diag.foldRepeats log
   t "folding keeps every record, in order, rewriting only counts and demotion"
-    (folded.size == (same.push other ++ errs ++ ds).size &&
-      (folded.zip (same.push other ++ errs ++ ds)).all fun (f, d) =>
-        { f with sites := d.sites }.demote == d.demote)
+    (folded.size == log.size &&
+      (folded.zip log).all fun (f, d) => { f with sites := d.sites }.demote == d.demote)
   t "folding: the sites in are the sites out"
-    ((folded.toList.map (·.sites)).sum == (same.push other ++ errs ++ ds).size)
+    ((folded.toList.map (·.sites)).sum == log.size)
   t "folding moves no count the census wrote"
     (((Diag.foldRepeats ds).zip ds).all fun (f, d) => d.subject.isNone || f.sites == d.sites)
+  -- A loss that opens on a note keeps its count there, and its warning shows.
+  let quiet := #[(Diag.of .W0110 "the zzquiet option is not honoured; ignored" (span 1)
+      (subject := some "zzquiet")).demote,
+    Diag.of .W0110 "the zzquiet option is not honoured; ignored" (span 2)
+      (subject := some "zzquiet")]
+  let (err, _, _) ← sink plain #[] quiet
+  let (_, porcelain, _) ← sink { plain with porcelain := true } #[] quiet
+  t "a loss that opens on a note still shows its warning, the count on its first record"
+    ((warningLines err "W0110").length == 1 && (warningLines err "W0110").all (hasStr · "deck.tex:2:1") &&
+      (porcelainRows porcelain "W0110") == [(2, "note"), (0, "warning")])
 
-/-- The doors a diagnostic is made through, as their call heads read in a
-stripped source, and whether each takes a subject: Elab's `diag` takes none. -/
-def subjectDoors : List (String × Bool) :=
-  [("diag ctx .", false), ("diagOf ctx .", true), ("say .", true), ("Diag.of .", true)]
+/-- The doors a diagnostic is made through, by their call heads, and whether
+each takes a subject: a door named before its receiver (`diag ctx .`,
+`diagOf s.ctx .`, `warn st .`), one applied to its code directly (`say .`,
+`Diag.of .`), and a record literal (`kind := .`). Elab's `diag` and Layout's
+`warn` take no subject. -/
+def receiverDoors : List (String × Bool) := [("diag", false), ("diagOf", true), ("warn", false)]
+
+def directDoors : List (String × Bool) := [("say", true), ("Diag.of", true)]
 
 /-- A line's indentation. -/
 def indentOf (l : String) : Nat := (l.toList.takeWhile (· == ' ')).length
+
+/-- A token with the brackets that open an argument or a literal dropped. -/
+def headTok (t : String) : String :=
+  String.ofList (t.toList.dropWhile fun c => c == '(' || c == '[' || c == '#' || c == '{')
+
+/-- The code a token applies (`.W0110`, `.W0110)`), if it applies one. -/
+def codeOfTok (t : String) : Option String :=
+  if t.startsWith "." then
+    let tok := String.ofList ((t.toList.drop 1).takeWhile Char.isAlphanum)
+    if isDiagCode tok then some tok else none
+  else none
+
+/-- Does a call's text name a subject: by keyword with a value, or by position? -/
+def namesSubject (call : String) : Bool :=
+  (hasStr call "subject :=" && !hasStr call "subject := none") || hasStr call "(some subject)"
 
 /-- **Every direct emission of a counted loss names it.** A degraded or
 pending code is counted by its subject, at every emission or as a debt row;
@@ -142,21 +214,40 @@ a second door for a code whose witness was subjected, so its sites printed
 one line each. Read off a stripped source: a counted code applied at a door
 must name a subject within the call, by keyword or by position, or be in
 `subjectDebt`; a door that takes no subject carries no counted code outside
-the debt. -/
+the debt. A call's extent is its own line and the deeper-indented lines under
+it; a record literal's, its fields to the closing brace. -/
 def doorOffences (src : String) : Array String := Id.run do
   let lines := ((stripNonCode src).splitOn "\n").toArray
   let mut out : Array String := #[]
   for h : i in [0:lines.size] do
     let line := lines[i]
-    for (head, takes) in subjectDoors do
-      for part in (line.splitOn head).drop 1 do
-        let tok := String.ofList (part.toList.takeWhile Char.isAlphanum)
-        let some code := DiagCode.ofString? tok | continue
-        unless code.censused && !subjectDebt.contains tok do continue
-        let rest := (lines.extract (i + 1) lines.size).toList.takeWhile fun l =>
-          !l.trimAscii.isEmpty && indentOf l > indentOf line
-        unless takes && hasStr (String.intercalate "\n" (part :: rest)) "subject" do
-          out := out.push tok
+    let toks := ((line.splitOn " ").filter (!·.isEmpty)).toArray.map headTok
+    for k in [0:toks.size] do
+      let t0 := toks[k]?.getD ""
+      let door : Option (String × Bool × Bool) :=
+        match receiverDoors.lookup t0 with
+        | some takes =>
+          if (toks[k + 1]?.getD ".").startsWith "." then none
+          else (toks[k + 2]?.bind codeOfTok).map (·, takes, false)
+        | none =>
+          match directDoors.lookup t0 with
+          | some takes => (toks[k + 1]?.bind codeOfTok).map (·, takes, false)
+          | none =>
+            if t0 == "kind" && toks[k + 1]? == some ":=" then
+              (toks[k + 2]?.bind codeOfTok).map (·, true, true)
+            else none
+      let some (tok, takes, literal) := door | continue
+      let some code := DiagCode.ofString? tok | continue
+      unless code.censused && !subjectDebt.contains tok do continue
+      let below := (lines.extract (i + 1) lines.size).toList
+      let rest := if literal then
+          if hasStr line "}" then [] else
+          let fields := below.takeWhile fun l => !l.trimAscii.isEmpty && indentOf l ≥ indentOf line
+          let n := (fields.findIdx (hasStr · "}")) + 1
+          fields.take n
+        else below.takeWhile fun l => !l.trimAscii.isEmpty && indentOf l > indentOf line
+      unless takes && namesSubject (String.intercalate "\n" (line :: rest)) do
+        out := out.push tok
   return out
 
 def subjectDoorChecks (ref : IO.Ref (List String)) : IO Unit := do
@@ -166,19 +257,29 @@ def subjectDoorChecks (ref : IO.Ref (List String)) : IO Unit := do
       offences := offences.push s!"{file} {tok}"
   check ref s!"every direct emission of a counted loss names its subject ({offences})"
     offences.isEmpty
-  -- The scan reads what it claims to.
+  -- The scan reads what it claims to, at each door it names.
   let hit (src : String) : Bool := !(doorOffences src).isEmpty
-  check ref "door scan: a subjectless door with a counted code is an offence"
-    (hit "  diag ctx .W0110 \"m\" (some pos)\n")
-  check ref "door scan: a door whose call names no subject is an offence"
-    (hit "  say .W0110 \"m\" pos\n    (help := \"h\")\n")
-  check ref "door scan: a door whose call names its subject on a later line is not"
-    (!hit "  say .W0110 \"m\" pos\n    (subject := some \"k\")\n")
-  check ref "door scan: a subject passed by position names it"
-    (!hit "  Diag.of .W0110 message span (some help) (some subject)\n")
-  check ref "door scan: a debt code is not an offence"
-    (!hit "  diag ctx .W0311 \"m\" (some pos)\n")
-  check ref "door scan: a code named in a string or a comment is not an emission"
+  let t := check ref
+  t "door scan: the subjectless door, under each receiver it is called with"
+    (hit "  diag ctx .W0110 \"m\" (some pos)\n" && hit "  diag s.ctx .W0110 \"m\" none\n" &&
+      hit "  (diag ctx' .W0110 \"m\" none)\n" && hit "  warn st .W0110 \"m\"\n")
+  t "door scan: a subject-taking door whose call names none"
+    (hit "  say .W0110 \"m\" pos\n    (help := \"h\")\n" &&
+      hit "  diagOf ctx .W0110 \"m\" (some pos)\n" &&
+      hit "  ds.push (Diag.of .W0110 \"m\" (span := sp))\n" &&
+      hit "  say .W0110 \"m\" pos (subject := none)\n")
+  t "door scan: a call naming its subject on a later line, by keyword or position"
+    (!hit "  say .W0110 \"m\" pos\n    (subject := some \"k\")\n" &&
+      !hit "  #[Diag.of .W0110 message span (some help) (some subject)]\n" &&
+      !hit "  diagOf s.ctx .W0110 \"m\" (some pos) (subject := key)\n")
+  t "door scan: a record literal names its subject among its fields, or is an offence"
+    (hit "  ds.push {\n    kind := .W0110\n    message := \"m\" }\n" &&
+      !hit "  ds.push {\n    kind := .W0110\n    message := \"m\"\n    subject := some k }\n" &&
+      hit "  ds.push {\n    kind := .W0110\n    message := \"m\" }\n  ds.push {\n    kind := .W0110\n    subject := some k }\n")
+  t "door scan: a debt code, an uncounted code and an accumulator are not offences"
+    (!hit "  diag ctx .W0311 \"m\" (some pos)\n" && !hit "  diag ctx .W0350 \"m\" (some pos)\n" &&
+      !hit "  st.diag .W0334 \"m\"\n")
+  t "door scan: a code named in a string or a comment is not an emission"
     (!hit "  -- diag ctx .W0110\n  let s := \"say .W0110\"\n")
 
 end Tests.DiagFold

@@ -62,8 +62,8 @@ public def human (color : Bool) (d : Diag) (showOutput : Bool := false) : String
   let trigger := match d.trigger with
     | some text => if text.isEmpty then "" else " - " ++ humanText "\\n" text
     | none => ""
-  -- A loss's first line carries its total; the sink folds its later sites
-  -- into notes (`Diag.foldRepeats`).
+  -- A loss's first line carries its total; `Ui.resolve` delivers its repeats
+  -- as notes (`Diag.foldRepeats`).
   let count := if d.sites ≤ 1 then "" else sgr color "1" s!" ({d.sites} sites)"
   let reason := if d.message.isEmpty then "" else
     "\n  " ++ humanText "\n  " (d.message.replace "\r\n" "\n")
@@ -151,9 +151,9 @@ private def recoveryJson : Diag.Recovery → String
 bands without a table and without trusting `severity`, which demotion
 rewrites; `subject` is the structured key a census groups by, so no
 consumer has to group by message text. `sites` is how many of the run's
-sites the line accounts for, absent when it is 1: the first line of a loss
-carries them all and each later one 0, so the lines' counts add up to the
-run's sites (`Diag.foldRepeats_sum_exact`). `offsets` lists every byte
+sites the line accounts for, absent when it is 1: a repeated wording's first
+line carries its repeats and each later one 0, so the lines' counts add up to
+the run's sites (`Diag.foldRepeats_sum_exact`). `offsets` lists every byte
 offset a diagnostic names, where its message shows only the first few. -/
 public def porcelainDiag (d : Diag) : String :=
   let base := [("event", jstr "diagnostic"), ("severity", jstr d.severity.label),
