@@ -2116,7 +2116,8 @@ changes the document — promote it to impl"
 
 /-- The package-claim index: every package in `Compat.nativePackages` ships
 `testdata/compat-index/<pkg>.txt`, its user-facing command surface as
-reviewable data — one line per command, `<place> <annotation> <call>`,
+reviewable data — a `# source:` header naming the manual sections the file
+covers, then one line per command, `<place> <annotation> <call>`,
 place `pre` | `body` | `frame` (a presentation frame body, with the package
 loaded in its preamble; a presentation class loads by `\documentclass`),
 annotation `impl` | `inert:<why>` | `refuse:<code>`. An `impl` call
@@ -2402,7 +2403,7 @@ def utf8FuzzChecks (ref : IO.Ref (List String)) : IO Unit := do
 
 /-- The IR-to-IR walks are exhaustive, and each arm below was a wildcard
 drop once: the fact checked is the behaviour the walk owes the constructor
-it used to drop silently (PLAN 2026-09-17, the obligation table). -/
+it used to drop silently (AGENTS.md § When you add). -/
 def walkChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
   -- A font template's hole may sit inside any body-carrying wrapper: a
@@ -8953,10 +8954,14 @@ def posterChromeCompatChecks (ref : IO.Ref (List String)) : IO Unit := do
     ((elabStr (pre "")).1.headline.isNone)
 
 
-/-- The boundary cache's decision, the driver's half stated as values
-(`LeanTex.Cli.PicCache`): one attempt per request and tool version,
-whichever way the tool answered. Before this block a *failing* render was
-the one verdict the cache did not keep, so every unrenderable picture paid
+/-- The boundary cache's policy stated as values (`LeanTex.Cli.PicCache`):
+one attempt per request and tool version, whichever way the tool answered.
+The driver's half is the attempt's outcome, the tool's identity and the
+version memo; the step table and what `remembers` keeps are the module's
+model of the record decision the driver makes through
+`ConvCache.Result.record?`, exercised here until U68 restates the policy
+over that decision and deletes the model. Before this block a *failing*
+render was the one verdict the cache did not keep, so every unrenderable picture paid
 a fresh tool process on every build — the drawn ones warmed, the refused
 ones never did, and a document with six of them stayed seconds slow
 forever. The three facts that close it: a held verdict is never re-run, a

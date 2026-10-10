@@ -7,21 +7,21 @@ after `lake build TestsModules` (the aggregate does that for you):
   lake env lean --run scripts/diagdebt.lean --selftest   the encoding
 
 `subjectDebt` in `Tests/Diag.lean` is the censused codes that emit with no
-subject and so sit outside `Diag.tallySites`'s census. AGENTS.md already
-says that list "may fall and never rise", so the ratchet here mechanises an
-existing rule. This tier imports the module and measures the *value* rather
-than counting lines of source: a count read off source text drifts from the
-value the suite checks the first time a row is reformatted, and nothing
-would see it.
+subject and so sit outside `Diag.tallySites`'s census. `subjectCensusChecks`
+already reads that list in both directions, falling and never rising, so the
+ratchet here mechanises an existing rule. This tier imports the module and
+measures the *value* rather than counting lines of source: a count read off
+source text drifts from the value the suite checks the first time a row is
+reformatted, and nothing would see it.
 
 `siteAccounting` is deliberately **not** ratcheted, and this is the
-correction the review found. Its rows are what AGENTS.md's obligation table
-*prescribes* adding — "fold the fragment into the first code's message, or
-land a `siteAccounting` row naming the file that owes the merge" — and PLAN
-names that row as the shape of a routed fix. A tier that fails when the
-list grows would turn a specialist's routed finding into a regression, and
-rows also appear when a new probe discovers a collision rather than when
-code creates one. So the count is a provenance line: data, never gated.
+correction the review found. Its rows are what AGENTS.md § When you add
+*prescribes* adding — one accounting, or a `siteAccounting` row naming the
+file that owes the merge — and that row is the shape of a routed fix. A
+tier that fails when the list grows would turn a specialist's routed
+finding into a regression, and rows also appear when a new probe discovers
+a collision rather than when code creates one. So the count is a provenance
+line: data, never gated.
 
 Encoded as headroom, so a shrinking debt reads as a rising number.
 
@@ -58,8 +58,8 @@ def selftest : IO UInt32 := tierSelftest "diagdebt" fun no => do
     (siteAccounting.all fun r => r.1 != r.2.1)
   no "encoding: a shorter debt list reads as a higher value"
     (debtCap - (1 : Int) > debtCap - (2 : Int))
-  -- The correction this tier carries: adding a siteAccounting row is what
-  -- AGENTS.md prescribes to route a fix, so the count is provenance. This
+  -- The correction this tier carries: adding a siteAccounting row is how a
+  -- fix is routed (AGENTS.md § When you add), so the count is provenance. This
   -- fails if anyone gives it an item.
   let (prov, rows) ← measureTier
   no s!"siteAccounting is not an item ({String.intercalate ", " (rows.map (·.item)).toList})"

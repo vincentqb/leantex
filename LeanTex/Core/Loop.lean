@@ -35,7 +35,7 @@ to be read by it.
   for a scan that can fail. An error propagates without a value; every
   successful exit, including `break`, preserves the invariant.
 
-The discipline this supports is recorded in AGENTS.md's obligation table:
+The discipline this supports is recorded in AGENTS.md § Lean rules:
 a loop owes the invariant its statement will be read through, named beside
 it. What the pair does *not* reach, so it is not mistaken for more than it
 is: a pure invariant cannot see how much of the input the loop has

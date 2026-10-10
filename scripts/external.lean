@@ -23,6 +23,10 @@ document is how far elaboration alone gets:
   1  no error, at least one unknown construct
   0  an error diagnostic
 
+The tier's premise, that a 0 is a refusal, is the report's to check wherever
+both readings exist: it held on 216 of 216 committed documents and missed on
+1 of 1,031 upstream, where a face refuses a TAB after elaboration.
+
 *A list* is `<set><TAB><path>` lines, each path relative to the list's own
 directory, `#` lines provenance. The committed corpus's list names only
 documents lualatex builds under `-halt-on-error`, so every item is in the

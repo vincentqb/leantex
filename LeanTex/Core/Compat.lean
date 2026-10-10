@@ -10100,8 +10100,8 @@ consumed with an empty replacement is paid for — the diagnostics grew or a
 state write happened — for *every* name, position, and state. Proved by
 unfolding the dispatcher's tail and the guard (`account`) alone; the arms
 (`rewriteCtrlAt` and everything under it) stay opaque, so no future arm
-can break the statement. `_accounts` is the registered shape (AGENTS.md,
-the suffix registry): an empty result is paid for by a diagnostic or a
+can break the statement. `_accounts` is the registered shape
+(THEOREMS.md § Naming): an empty result is paid for by a diagnostic or a
 write. -/
 private theorem rewriteCtrl_accounts (name : String) (pos : Pos) (raws : Array Raw)
     (start : Nat) (s s' : St) (k : Nat)

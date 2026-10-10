@@ -281,7 +281,7 @@ public def boundaryFailed (tool logTail src : String) (span : Option Span := non
 /-- **W0382, for an attempt that never finished.** The tool was asked and
 reached no answer — a budget kill, a spawn that raised, a nonzero exit that
 left no log (`PicCache.outcome`) — which is a fact about the machine, not
-the request: nothing is remembered (`PicCache.remembers_verdict_exact`), and
+the request: nothing is remembered (`ConvCache.inconclusive_retried_exact`), and
 nothing is withdrawn to the rendered subset's drawing
 (`Boundary.withdrawStep_unfinished_exact`), so the page carries the
 placeholder a failed render leaves, never a different drawing. `why` is how

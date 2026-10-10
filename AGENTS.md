@@ -1,603 +1,177 @@
 # AGENTS.md
 
-leantex: fast, certified, modern document engine in Lean 4 — one language,
-two surfaces (tex primary, markdown as sugar), two backends (PDF 2.0 and
-HTML). Keep README.md focused on end users; git history records completed
-work. Never record personal information (names, emails, and
-the text or topics of private documents) or local paths to private documents
-in this repo; refer to the private reference corpus abstractly.
-A local denylist, `info/private-terms` in the git common directory (never
-committed; format and readings in `scripts/Privacy.lean`), holds this: the
-hook checks what a commit adds (lines, paths, binaries), and `lake lint`, the
-landing's gate, the staged tree and, outside the hook, every commit not on
-`refs/remotes/origin/main` and its message (refused when that ref is
-missing). A finding names a location, never the term; with no list the check
-is skipped.
+leantex is a Lean 4 document engine: LaTeX and markdown (as sugar) in, one IR, PDF 2.0, HTML and a
+markdown twin out. `README.md` is for users, `THEOREMS.md` indexes what is proved, and
+`PRINCIPLES.md` decides what these leave open: read it before designing.
 
-## Setup
+## Privacy
 
-- Toolchain: elan-managed, pinned by `lean-toolchain` (track stable; v4.34.1 today).
-- This host's glibc is older than the toolchain's bundled clang needs, so
-  that clang cannot run.
-  Export before any `lake` command (verified working):
+- Nothing personal or private enters the repository or a commit message: no names, initials, emails,
+  career facts, a private document's text, topic, palette, font, spacing or path (`homePathHits`);
+  acceptance runs locally on the private corpus, named abstractly, never in CI (review).
+- The denylist, info/private-terms in git's common directory (format: `scripts/Privacy.lean`), is
+  never committed, printed or quoted; the gates read what a commit adds, the tree and each unpushed
+  commit with its message, naming a location, never the term (`privacyTree`, `privacyGateChecks`).
+- Fixtures, probes and tests are invented (placeholder names, example.org) and hermetic: a fixture
+  naming a font ships it with its licence in `testdata/corpus/fonts/` and declares
+  `\fonts{ dir = "fonts" }` (review), tests scan only there (`fontScanInTest`), and a hermetic run
+  empties font and TeX trees, HOME and PATH (unshare -Urm; owed (U34): `Tests/Registry.lean`).
 
-  ```bash
-  export LEAN_CC=/home/linuxbrew/.linuxbrew/bin/clang
-  export LIBRARY_PATH="$(lean --print-prefix)/lib:$(lean --print-prefix)/lib/lean"
-  ```
+## Build and verify
 
-- Interactive shell is fish: unmatched globs are hard errors; run bash-isms
-  via `bash -c '...'`.
+`lean-toolchain` is bumped only in its own commit (`scripts/precommit.lean`). This host's glibc is
+too old for the bundled clang: export these before lake, and run bash-isms via bash -c (fish).
 
-## Build / test
+```bash
+export LEAN_CC=/home/linuxbrew/.linuxbrew/bin/clang
+export LIBRARY_PATH="$(lean --print-prefix)/lib:$(lean --print-prefix)/lib/lean"
+```
 
-- `lake build` — proofs are checked here; a broken theorem is a broken build.
-- `lake test` — golden corpus + property tests. Run both before declaring done.
-- `git config core.hooksPath scripts/hooks` — one-time: installs the
-  pre-commit hook (build with warnings-as-failures + convention checks).
-  The harness is Lean throughout (`scripts/*.lean`, run via
-  `lake env lean --run`); the one exception is this hook, where git executes
-  a file, so `scripts/hooks/pre-commit` stays a few-line sh trampoline into
-  `scripts/precommit.lean`.
-- `lake exe Tests --update` — regenerate goldens after an intended IR change.
-- Deeper oracles, not in `lake test` (too slow / need TeX): run
-  `scripts/kp-fuzz.lean` when touching line breaking,
-  `scripts/hyphen-diff.lean` when touching hyphenation,
-  `scripts/compose-fuzz.lean` when touching the preamble apply sites in
-  Elab.lean (declaration commutation — T1's oracle until the theorem
-  closes),
-  `scripts/oklab-roundtrip.lean` when touching `Core/Oklab.lean`
-  (sRGB→Oklab→sRGB identity over all 2²⁴ inputs, ~30 min),
-  `scripts/img-fuzz.lean` when touching the image decode paths
-  (`Image.decode` totality — truncations, mutants, random blobs — plus the
-  pristine fixtures decoding to their known sizes), and
-  `scripts/fontcache-check.lean` when touching the font scan or its cache
-  (it replaces a font under the same name and checks the answer follows
-  the file), `scripts/texfonts-report.lean` when touching the TeX font
-  directories (`Cli/TexFontTrees.lean`: it lists every face the host's
-  kpsewhich font paths reach that the rule misses), and
-  `scripts/typeset.lean --report` (or `--lines <fixture>`,
-  `--pages <fixture>`) when touching line breaking, pagination, protrusion
-  or font fallback: the typeset tier's counts per `testdata/typeset` fixture
-  and the lines and page turns behind them (the tier itself gates in
-  `scoreboard --check`), and `scripts/highlight-diff.lean` when touching
-  the native lexers (`LeanTex/Core/Highlight/`) or their data — Pygments
-  against the mirrors, token for token, over the snippets, seeded fuzz and
-  local documents' listings; `--python` names an interpreter that imports
-  the release `PygmentsLexData.pygmentsVersion` records, and `--record`
-  regenerates the hermetic fixtures `lake test` holds them to. A mirror
-  answers what Pygments' backtracking answers without backtracking: a rule
-  reads past the scalars it writes only through a `Table`
-  (`Highlight/Scan.lean`), a scan answered at every position in one pass,
-  because each lookahead read directly once made a lexer quadratic or worse
-  in lines or a line's length; `scripts/bench.lean --listings-only` holds
-  every lexer linear over invented adversarial listings as well as in lines.
-- `scripts/html-oracle.lean` when touching what a deck stage holds (type,
-  leading, gaps, tables): its `stage-fit` row holds every frame the PDF
-  page holds to its stage at the deck's own aspect in Chromium, not a pixel
-  past its foot (one pixel is a scrollbar on a classic-scrollbar platform),
-  the premise — which frames continue on a further page (W0384) or declare
-  `[allowframebreaks]` — read off the PDF build and the source.
-- `scripts/cancel-diff.lean` when touching the cancellation geometry
-  (`Math.cancelGeom` and the marks it lays) — an external LuaLaTeX
-  (cancel.sty over FiraMath) vs leantex placement differential over an
-  invented matrix of widths/heights/styles/thickness/room/value cases,
-  needing TeX so never in `lake test`; it gates the reserved-room advance to
-  a cross-engine band and the value direction exactly, and prints the value
-  placement as evidence (leantex centres measured target ink along the
-  arrow's forward ray; cancel.sty places the value at the arrow tip).
-  `--report` prints without gating, `--selftest` checks the parsers.
-- `scripts/tikz-diff.lean` when touching the picture reader (`Picture.lean`)
-  or the vector model's emission — every tikz-native probe drawn by leantex
-  and by LuaLaTeX in the faces the engine resolves, rasterized and read at
-  three levels (the ink's box, its pixels beyond a quarter of the gray
-  scale, the exact bytes); a report, never a gate, and `--selftest` holds
-  each level's blind spot against the level above.
-- `lake lint` checks every maintained Lean source, including unimported
-  modules and executables, with strict elaboration and a compiled axiom
-  audit. The build uses `-E hasSorry`; no source path exempts a proof.
-- `lake env lean --run` interprets the `.olean` files as they stand and
-  rebuilds none of them, so build the libraries a script imports first
-  (`lake build scoreboard` for `scripts.Board`). A script library built
-  against an older `LeanTex` structure crashes the interpreter with a bare
-  segfault: `Ir.Pic.LabelInk` gaining fields took `scripts/html-oracle.lean`
-  down that way.
-- Performance claims come only from `scripts/bench.lean` (vs lualatex on the
-  corpus; `--doc-cost [--record]` for the invented reference documents and
-  the `testdata/perf` history, recorded only from commits `main` holds),
-  never from reasoning about the code. The bench is a report and never
-  gates a landing (its reference-list growth row fails its own run); of
-  document cost only the hermetic `doccost` tier (peak-memory growth,
-  artifact size) gates one.
+- A unit is done when `lake build`, `lake test` and `lake lint` pass (`scripts/lint.lean`); the hook
+  is `git config core.hooksPath scripts/hooks` (`scripts/precommit.lean`), `land check` runs the
+  landing gates (`scripts/land.lean`); one gate table is owed (U29): `scripts/Gates.lean`.
+- The harness is Lean throughout (`scripts/*.lean`, run by lake env lean --run, which rebuilds
+  nothing: build a script's imports first) but for the hook, a few-line sh trampoline into
+  `scripts/precommit.lean`. Lake runs the extra linters, missingDocs off by design
+  (`lakefile.toml`); the hook and land build --wfail (`defaultGates`); goldens move only with a
+  source, regenerated by lake exe Tests --update (`goldenSource`).
+- Run an area's oracle on touching it, evidence and not a gate (review):
+  - line breaking: `scripts/kp-fuzz.lean`; hyphenation: `scripts/hyphen-diff.lean`
+  - Elab's preamble apply sites: `scripts/compose-fuzz.lean`; Oklab: `scripts/oklab-roundtrip.lean`
+  - image decoding: `scripts/img-fuzz.lean`; font scan and cache: `scripts/fontcache-check.lean`
+  - cancellation: `scripts/cancel-diff.lean`; TeX font trees: `scripts/texfonts-report.lean`
+  - breaking, pagination, protrusion, fallback: `scripts/typeset.lean` --report or --lines
+  - lexers or their data, reading ahead only through a Table: `scripts/highlight-diff.lean`
+  - a deck stage's type, leading, gaps, tables: `scripts/html-oracle.lean`, stage-fit
+  - the picture reader or vector emission: `scripts/tikz-diff.lean`
+- Performance claims come only from `scripts/bench.lean`, run on touching a whole-document pass: a
+  report no landing gates on (`defaultGates`), its --doc-cost history taking only commits main holds
+  (`onMain`); document cost gates only as the hermetic doccost tier (`scripts/doccost.lean`), build
+  cost owed (U30): `scripts/buildcost.lean`.
 
-## Conventions
+## Layout and design
 
-- Before fixing an issue, write down the invariant whose absence allowed it —
-  as a theorem statement when it is one, as a test when it is not — then fix
-  to that invariant, not to the symptom. The test fails before and passes
-  after; if the lesson generalises, it becomes a rule here or a hook check.
+- `LeanTex/Core/` is pure, `LeanTex/Cli/` fulfilling its requests (`ioInCore`); new host access is a
+  World question for `Host.answer` alone, never copying an unported site (review); scratch is
+  Host.withScratch's (`tempRootOutsideHost`); world assumptions are hypotheses or premise rows
+  (`premiseChecks`).
+- Surfaces (Lex, Parse, Compat, MdParse, MdDesugar) feed Elab; backends read only its IR
+  (`surfaceReach`; owed (U27)), a judge only an artifact's bytes, never its writer (`writerReach`).
+- Plain import for implementation, public for interface types, import all only for a small proof or
+  contract companion (`buildGraphChecks`); in a large module types precede theorems (owed (U28)).
+- HTML is a typed tree with certified escapers (`tagStringEmit`, `escapeText_no_lt`; CSS owed (U62):
+  `cssString_no_lt`); no page runs script but the slides pager, a constant (`deck_script_constant`),
+  and the math boundary (`htmlContainedCorpusChecks`).
+- The artifact is a function of the document, the font environment and the output name: a flag says
+  where output lands, when, how the run reports, its exit and acceptance policy, or adds fonts
+  (`undeclaredConfigRead`), but for --math-boundary, a hypothesis of `artifact_flag_free`; removing
+  a CLI surface is a migration: run every out-of-repo build invoking the binary (review).
+- The kernel owns the page models (flow, frame, face): a class is a record over one
+  (`elabDocChecks`); one needing layout code is a new page model; a theme is only visual (review).
+- A claim about what a page shows comes from a rendered page or the shipped census, never an IR dump
+  or a golden (`irDumpUnmarked`, `censusChecks`).
+- A run leads at its paragraph's leading scaled to its size, never a leading of its own, and a size
+  span states no line height (`runLead_between`, `inlineRunChecks`).
 
-- A claim about what a page shows comes only from a rendered page or the
-  shipped-page census (`censusChecks` over `Layout.Out`, `Check.Shipped`),
-  never from an IR dump or golden — goldens witness elaboration, not the
-  artifact; six visual defects once passed a fully green suite this way. A
-  visual bug's regression test asserts over `Layout.Out` or the typed HTML
-  tree (or a raster), never over `Ir.dump`.
+## When you add
 
-- The obligation table: adding a kind of thing owes an invariant, decided
-  before the code. Enforcement is named in parentheses.
+- An Ir constructor: an arm in every walk and backend, no wildcard, its census fact once it ships
+  ink (`identityArm`, `wildcardThrough`, `censusChecks`).
+- An IR walk: a foldBlocks or mapInlines leaf, or its reason beside the def, and a census theorem or
+  conserves-none line (`walkEntry`); the fold reads every inline region a backend sets, a reference
+  list's included (`foldBlock_bibliography_exact`); a golden fixture or backend emission: a
+  censusTable row of what ships (`corpusCoverageChecks`; snapshots owed (U74): `Tests/Visual.lean`).
+- A PDF text-positioning emission: placed by the viewer's arithmetic (`artGlyphPlacementOffences`).
+- A typographic attachment: its anchors, direction and bounds named, its displacement derived from
+  them and the resolved font (`CancelAlignment.checks`).
+- A diagnostic code: one constructor with its loss, a firing witness, a voice-clean message and an
+  audit row (`DiagCode.all_complete`, `diagWitness`, `DiagAudit.registry`).
+- A diagnostic at a site another code names: one accounting, or a siteAccounting row naming the file
+  owing the merge (`siteAccountingChecks`); a censused code: a subject at every emission and door,
+  or a subjectDebt row only falling (`subjectCensusChecks`, `subjectDoorChecks`).
+- A gate naming, silencing or demoting a loss: the check falsifying its premise, beside it
+  (`premisePin`), and two builds differing by its condition (`pictureKeyGateChecks`).
+- A path where a machine fact (a tool absent, killed or unable to start, a check unfinished) stops a
+  conversion, a face or a check: a degraded artifact, never a refused one, its loss named once,
+  nothing cached, though a tool's refusal is cached and replayed as the same loss
+  (`machineLossChecks`, `boundaryUnfinishedChecks`, `inconclusive_retried_exact`).
+- A design constant: a token, or its source where it stands (`dimLiteral`); a token: one resolving
+  site, held over every bundle (`builtin_palettes_contract`); a colour role: a `Role.row` arm read
+  only through `Design.at` (`default_sites_contract`), the stylesheet its projection
+  (`role_css_projects`, `htmlRoleClosureChecks`); a code role through `CodeColor.resolve`.
+- A page-opening path: a declared vertical distribution and ground (`artStageGroundChecks`); a
+  furniture element: a declared alignment, never a hard-coded centre (review).
+- A PageOut field shipping ink: its place in `PageOut.blank`, every emptiness test's one reading,
+  and in finishPage's distribution gates if it moves with content (review; `gfxContentPageChecks`).
+- A document class: a record row with sourced defaults and implied assertions (`elabDocChecks`); an
+  assertion kind: its judge in Check.one, no wildcard, a test breaking it (review).
+- A native package: a compat-index file of its documented commands, probed (`compatIndexChecks`).
+- A length LaTeX fixes as a class or package loads: that dimen, in the preamble font at the class
+  size (`tableLengthChecks`); a fix to one term of a printed distance is judged by the whole against
+  a lualatex probe (`tableStrutChecks`); a control the engine only logs: its groups consumed and its
+  N0100 accounted, while an unknown command keeps its arguments (`logOnlyChecks`).
+- A declaration a group scopes: its state in Elab's GroupScope, restored at the group's end, or a
+  logged GlobalWrite where TeX assigns globally, never its own ESt field (`groupScopeChecks`).
+- A math or text symbol: a generated row (`mathSymChecks`, `textSymChecks`).
+- Each comparison level with a blind spot: the pair it cannot see, equal at it and unequal a level
+  up, and its ordering premise checked (`scripts/parity.lean`, `scripts/mdtwin.lean`).
+- A measurement a goal is judged by: a tier, whose contract `scripts/Board.lean` states.
+- An HTML emission assistive technology must name, reach or skip: its fact in the judge
+  (`htmlA11yChecks`); a box a stylesheet scrolls: its rule in `declaresScroll`, or the judge cannot
+  see it, and a print lift (`print_lifts_stage_bounds_covers`, `printLiftChecks`).
+- An HTML rule that only spaces or styles: a class on its element (`trivlistChecks`); a block margin
+  only in the gap rules (`htmlRhythmChecks`), which read through an element no flow block is, like
+  an overlay's carrier (`blockGapThrough_owner_contract`, `overlayGapChecks`).
+- A surface reader: a classifier it cannot certify (`scripts/commonmark.lean`), lowering into a
+  declared vocabulary (`desugar_vocabulary_mem`).
+- An HTML spelling markdown reads: lowered onto an existing md node, never a passthrough
+  (`htmlInlineAt_covers`), each attribute carried, honoured, routed or refused; it ships what its
+  markdown spelling ships (`htmlTwinChecks`) or means (`cellBreakChecks`, `disclosurePrintChecks`,
+  `pdfDestinationChecks`); text spelling it is escaped in the twin (`mdTwinBreakChecks`); a loss is
+  named once per artifact suffering it (`mdHtmlAccountsChecks`, `refusedDisclosureChecks`).
+- A markdown-twin emission: a reader arm reading it back or a named loss, and its tier item
+  (`scripts/mdtwin.lean`); a spelling no reader here reads owes that reader's grammar as a model and
+  a theorem against it (`rowLine_cells_exact`).
+- A refusal by name: no error, its code alone, the page without it, or for a use its braced
+  spelling's (`refusedEnvChecks`, `delimitedUseChecks`); an engine name for a raw: a character no
+  word holds (`reservedEnvNameChecks`).
+- A name read off a title or caption: one page's reading, never the census (`frameAnchorChecks`).
+- A script running git in repositories it makes: one guard per command (`hcall_writes_owned`).
+- A vendored corpus: its licence, provenance and checksums (`scripts/external.lean`).
+- A user-reported breakage: a Reports row whose guards resolve (`reportChecks`).
 
-  | when you add… | you owe… |
-  |---|---|
-  | an `Ir` constructor | an explicit arm in every IR-to-IR walk and both backends — no wildcard (compiler + hook) — and its census fact once it ships ink |
-  | a golden fixture | a `censusTable` row asserting its shipped pages (`lake test` coverage check) |
-  | a backend emission | the census assertion that it appeared (`censusTable`) |
-  | a PDF text-positioning emission (a `TJ` element, `Tm`, `Tz`, a `/W` width) | placement by the viewer's arithmetic over what the file states — the pen model reads the file's own spellings (`Sp.toPtMilli`, `pdfWidthμ`), never the writer's belief of where its pen stands (`place_between`) — and every corpus page held to its layout's glyph positions by the artifact tier (`artGlyphPlacementOffences`). The writer once believed its pen stood at the layout's x after each run while the viewer advanced by nominal widths: kerns never reached a page, and text after a font change overlapped the word before it |
-  | a diagnostic code | a `DiagCode` constructor with its declared `Loss` — severity and the code letter derive from the loss, one code one meaning (compiler + `lake test`; the hook rejects a severity written outside Diag.lean) — a firing witness in `diagWitness` whose rendered form lands in the diagnostics golden, and a message that passes the voice lint: self-contained (no repo file, no milestone), an action or no help, one convention (Tests.lean; the hook rejects repo-internal references in strings). Registering a new code is one constructor, one `spec` arm, and `count + 1` — nothing else: `all` is derived, and `all_complete`/`all_nodup` make a miscount a build failure in both directions. It also owes a decision: a `DiagAudit.registry` row (`Tests/DiagAudit.lean`) with its verdict, target rung and a pin that resolves, or the `diagaudit` tier falls |
-  | a design constant | a token, or the source written where it stands (hook, backend files) |
-  | a recursive IR walk | a `List` companion + accumulator (hook), and its census statement: a public Block/Inline walk ships a theorem named with a registered conservation suffix — `_text` (census equality, stated as a `Conserves` instance), `_covers`, `_id` — or the one-line refusal `-- conserves: none — <why>` beside the def (hook, whole tree) |
-  | a colour role the engine paints | one registry row (`Ir.Role.row`): its `\palette` key (the CSS property `--ltx-<key>`), need, the ground it stands on, a fallback per scheme, presence, where the document's contrast report reads its site (`Row.judged`: every page, the element it inks, or the runs coloured with it), the `\setbeamercolor` channels that write it — an arm per constructor, no default — and its stratum (`Role.fallback_depth_monotone`). It resolves only through `Ir.Design.at` (the PDF reads the print column through `Design.ofPalette`, of the *epoch* palette in force where a frame stands, `frametitle_agree`); a listing code role resolves at `CodeColor.resolve`, which reads the palette's roles through the same door. The stylesheet's colour properties are that resolved table — an inherited role declared as `var(--ltx-<parent>)` — so a rule reads the role's own property, never a hand chain (`HtmlDoc.role_css_projects`), and a page declares exactly the roles something on it reads (`HtmlDoc.pageRoleSet`; `htmlRoleClosureChecks`). Its pair enters `Ir.Design.sites` from the row (`sites_covers`) and the document's report where its row says (`Contrast.judged_covers`); the registry's own defaults meet their needs in every scheme (`default_sites_contract`), each bundle's in its contract (`ThemeContract`). A colour a document declares, or a listing style it declares states, ships exactly, in both artifacts, and a pair short of its need is reported once — the engine solves for legibility only where it derives the colour itself: an undeclared style's token colours, and a listing's plain text on a ground the listing declares (`Tests.DeclaredColors`). A token the engine reads keeps one resolving site and a per-bundle check |
-  | a page-opening path | a declared vertical distribution and ground, never a default (`Layout.VDist` is the vocabulary; the ground is the palette in force, read at `Ir.frameGroundOf`, which `artStageGroundChecks` holds both artifacts to; declare through them) |
-  | a kind of output a page holds (a `PageOut` field that ships ink) | its place in `PageOut.blank`, the one reading every test of whether a page holds anything goes through — the boundary, the float replay, the last page, the fresh-page test, the commit-or-break door — and, when it moves with the content, in `finishPage`'s distribution gates beside lines and inks; `openBody` alone reads title lines, since it asks whether a title's depth stands above the body. Review is the guard: `brk_ships_exact`, `closeLast_ships_exact` and `gfxContentPageChecks` pin today's fields only. Picture fills once moved from a page's fills into its placed inks while those tests still read lines and fills: a page holding only a picture was dropped, merged into the next frame, set over and left undistributed |
-  | a furniture element | a declared alignment, never a hard-coded `.center` (`align` on `ElementStyle` carries it) |
-  | an `AssertKind` | its judge in `Check.one` (exhaustive match) and a test that breaks it once |
-  | a cached external answer | the *failure* cached too, under the same content key, replayed as the identical diagnostic — and an attempt with no evidence the tool ran (kill, failed spawn, nonzero exit with no log) cached not at all (`Cli/PicCache.lean` holds the policy as values; `step_cold_exact`, `remembers_verdict_exact`, `unlogged_retried_exact`, `picCacheChecks`) |
-  | a path on which a fact about the machine — a tool absent, killed or unable to start, a check that did not finish — stops a conversion, a face or a check | a degraded artifact, never a refused one: the page ships a labelled placeholder or the rendered subset's drawing where the face is missing, and a page icon leaves the head, the loss is named once under its subject, the PDF is unchanged, and nothing is remembered (`machineLossChecks`). A tool that cannot start fails at exec (Lean's exit 255, a missing loader or interpreter among them), or, on glibc, exits 127 when the dynamic loader lacks a shared library or a shell wrapper lacks its command, and 126 when the file or the wrapper's command cannot be executed. A boundary render that did not finish — killed, a spawn that raised, or a nonzero exit with no log, a renderer that cannot start after naming its version among them — is such a path too: W0382 names it, nothing withdraws it to the rendered subset's drawing, and both artifacts ship its placeholder (`boundaryUnfinishedChecks`, `pictureShipChecks`). Four such paths once refused the HTML page while the PDF shipped |
-  | a document class | sourced defaults, and its contract as implied assertions |
-  | a `nativePackages` entry | `testdata/compat-index/<pkg>.txt` covering the package's *documented* command list — the manual section named in its header, one row per command, `impl` proved by no W0301/W0302 — nor W0012, under which a formula is its own source text and differs from the renamed call by spelling alone — and `refuse:<code>` by the code firing (`lake test` probes every row; the hook rejects an entry without its file) |
-  | a math symbol | a row `scripts/gen-mathsym-data.lean` derives from its declaring file (class) and unicode-math's table (scalar), not a hand row: a hand row of `MathParse.ctrlAtom` that shadows a generated one says the same or is a `handDivergences` entry; a declared command with no scalar of its own is a refused row naming the glyph it lacks; its glyph is in the shipped math face or a `firaGaps` entry, both ways; and its line in a parity fixture holds its scalar to lualatex's (`mathSymChecks`, parity `amssymb`/`mathsym`) |
-  | a text symbol or accent | a row `scripts/gen-textsym-data.lean` derives from tuenc.def (the TU encoding lualatex sets) and the kernel names latex.ltx defines as one, not a hand row: a hand table that answers a generated name first (`Elab.escapes`, `Bib.charCommands`, `Lex.textSymbols`, `Compat`'s literal rewrites) sets the same scalar, an accent composes by NFC to every tuenc.def composite, and a palette role no symbol spells (`textSymChecks`) |
-  | a gate on the declared setup (context, config, declarations, state) that names, silences, or demotes a loss | the check that falsifies its premise, named beside it: `-- premise: <pin> — <why>`, or the refusal `-- premise: none — <why>` (hook, whole tree; the pin must resolve to a theorem the build checks or a check block the suite runs). A premise about another subsystem is a claim, and prose rots — three defects shared that shape. The shape of such a check is two builds differing by the gate's own condition: a byte-identical artifact with different diagnostics means nothing else was handling the case, so the gate is a silencer (`pictureKeyGateChecks`) |
-  | a diagnostic emission at a site another code already names | one accounting, not two: fold the fragment into the first code's message, or land a `siteAccounting` row naming the file that owes the merge (`siteAccountingChecks`). A `degraded`/`pending` code is *censused* (`DiagCode.censused`) and the census runs on `subject` alone — `tallySites` returns a subjectless diagnostic untouched — so such a code carries a subject at every emission, or a frozen `subjectDebt` baseline row that may fall and never rise (`subjectCensusChecks` over each code's witness, `subjectDoorChecks` over the source's direct doors — `diag`, `diagOf`, `say`, `Diag.of`, `warn` and record literals: a listing option once emitted `W0110` with no subject while the code's witness carried one, and printed a line per listing). `W0301` counted its command while `W0341` printed once per site for a fragment of that same command, at the same span |
-  | a comparison level with a declared blind spot | the pair of inputs differing only in what it ignores, asserted equal under that level and unequal under the level above — for **every** level with a blind spot, not the newest one (`parity --selftest` holds `censusKey` blind and `orderKey` sighted, and `orderKey` blind and `lineKey` sighted; `mdtwin --selftest` holds `twin-stable` blind and `reread-exact` sighted on italic against emphasis). A "blind to" column nobody checks is prose: the reading-order level was believed to see line breaking until two pages with identical scalar sequences and different line partitions both passed it. Also owed: the level's *ordering premise* as a check, not a docstring — the line reading claimed first-paint order was reading order, which a float placed away from its source position falsifies. A record format owes the same of its empty value — round-trip every field empty, which is the arm a real fixture eventually takes and the one a hand-written example never does |
-  | a `forIn`/`Id.run` loop whose state an owed statement must cross | the invariant, written in the loop's own module (where the private state is nameable) and exported as the corollary the statement reads — never the loop restated as a fold. `LeanTex.Core.Loop` reads a loop that `break`s, which is exactly where the stdlib's `foldl` bridges stop, and `Ir.floorMask_id` is the worked example: three loops, no change to the walk. A pure invariant is blind to how much input the loop consumed, so a claim about the loop's *value* (a census, a round trip) owes the progress-indexed form or its own algebra instead — say which of the two the statement is (review) |
-  | a measurement a goal is judged by | a tier, not a number in a report: `testdata/scoreboard/<t>.tsv` (`<t>` matching `[a-z0-9-]+`, which the aggregate faults otherwise; `#` provenance lines, then `item<TAB>integer`, higher is better, sorted, unique) written only by `scripts/<t>.lean` in the three modes (regenerate / `--check` / `--selftest`), plus its name in `Scoreboard.declaredTiers`, whose absence is a **fault** unless the name is also on `pendingTiers` — and a pending name whose tier has both halves fails the selftest, so landing a tier and removing its name are one commit. The contract the aggregate reads is `--check`'s exit status alone: a porcelain line (`tierLine`) is optional and can never override a non-zero exit, and `# encoding:` is an optional ranking hint (absent: gated, unranked). An absent or empty baseline under `--check` is a fault; only regeneration starts from nothing — and the aggregate faults an empty or rowless baseline itself, whatever its producer exits. One ratchet for every tier (`Board.ratchet`, applied by the `tierMain` a producer is built on): a fall or an unretired vanish fails, and so does an **unrecorded rise** (`result=stale`) — record it by regenerating, in the commit that earned it, as `subjectDebt` and `siteAccounting` are read in both directions. Weakening is a request a human writes in the committed file and regeneration spends once: a fall needs `# lowered: <item> <old>→<new> — <why>` naming exactly the fall from the committed floor, and is written back as the record `# lowered (applied): …`, which authorises nothing again, so a second fall of one item needs a second request; a committed file still holding a request that names its committed floor is `stale`, and one holding a request that names any other floor is a fault (the message says: mark it `# lowered (applied):` if it records a fall already written, otherwise correct or delete it). A shrink-is-good metric is encoded as headroom (`cap - count`), never as the count, because a ratchet points one way for every tier; an item is retired only by a `# retired: <item> — <why>` line written beside its row, which regeneration applies by dropping the row (a measurement that still produces a retired item is malformed), and a whole tier only by a `# retired-tier: <why>` tombstone in its file. `scoreboard --check --base <rev>` is the gate the land tool runs, `<rev>` the main it lands onto: against the files committed at `<rev>`, read with replacement objects off, a fall or a vanish needs a line new since `<rev>` (a record spending a request `<rev>` holds is new), a baseline present at `<rev>` may not disappear, a base git cannot read is a fault, and every tier file in the tree — one new since `<rev>` included — must validate and is `stale` while it holds any request, so neither a hand-edited floor nor a deleted-and-regenerated baseline launders one; a pass prints each weakening and each new line it credited, control characters spelled out, which is where the human reads them. `--check` is hermetic — committed references and in-repo data only — and anything needing another engine, the network or the host's TeX tree is a report (`scoreboard --bench`), never a gate (`scoreboard --selftest` fans out to every tier's) |
-  | an HTML emission assistive technology must name or reach, or is told to skip — an `<svg>`, an `<img>`, a disclosure's `<summary>`, a box a stylesheet rule scrolls (`overflow: auto`), a box under `aria-hidden` | its fact in the judge `HtmlDoc.a11yFacts` — a scroll rule also enters `declaresScroll`, or the judge cannot see the box: a name (`carriesName`), a non-blank `alt` or a declared decorative role, a summary's shown text (`holdsTextOne`), `tabindex="0"` and — where the role takes one — a name, and no tab stop under `aria-hidden` (`tabbable`). A judge that skips what `aria-hidden` removes still counts the tab stops in it, or hiding a link scores as a fix: a linked logo shipped that way. `htmlA11yChecks` holds `svg`, `scroll`, `hidden-focus` and the summaries' names at zero on every shipped page; the `htmla11y` tier ratchets the rest, and axe over the rendered corpus is its report |
-  | a box a stylesheet rule bounds and scrolls on screen (a fixed height, `overflow: auto`) | its print lift: paper has no scroll, and a scroll container is monolithic there, so it clips what exceeds it — on paper the box grows or its lines wrap, and growing leaves no sheet blank (`print_lifts_stage_bounds_covers` for the deck's stages; the reader oracle's `print-spill` and `print-sheets` rows on the printed corpus). A frame of 30 items once printed 14, and the first lift printed three blank sheets |
-  | a surface reader (a second front end to the one elaborator) | its spec suite as a *classifier*: every case carries a committed verdict — `match`, `rejected`, `divergence` (with its reason in the script), or `owed` — and an unclassified deviation fails. **No bucket may be certified by the reader under test**: a strict refusal is a claim, and `rejected` needs corroboration from outside the reader — a raw-HTML refusal's text passes through the spec's own expected HTML verbatim, an indented-code or lazy refusal is on a reviewed list that fails in both directions (`testdata/commonmark/strict-reviewed.tsv`) — or the case is `owed` with the refusal named. A case whose run names a markdown route (or a `W0110`, an option the desugaring leaked) is never a `match`, however the trees compare; when the trees agree once exactly the named gaps are hidden, its note names the gap that blocks it — the verdict row an IR gap owes, never a false match — and a gap construct the expected page carries that the engine's page drops, where the element it sits on did ship, must be named by the run or every mode fails (`silentGaps`: a list before `* * *` once shipped no rule and raised nothing). A case waiting on a dialect decision the user owns carries that decision as its note and stays `owed`. Comparison is over trees, and every attribute is compared unless a declared row drops it beside what it hides; an attribute that decides whether content reaches a reader (`hidden`, `aria-hidden`, `role`, `lang`) is never a row, on a construct or on the chrome the comparison unwraps. `--selftest` breaks every normalization in both directions: it hides what it declares and not the difference beside it (the class normalization once hid three lost languages, and a six-attribute keep-list certified a page whose every paragraph was `hidden` as 323 matches). The reader desugars to the surface AST, and no reader text reaches a re-parse: where the elaborator reads a construct back from option text (a listing's language, an image's alternative), what crosses is an IR value (`Ir.ListingLang`) or a spelling the elaborator's own splitter is checked to read back exactly (`MdDesugar.altSource`), never the author's text — a `]` in an info string once ended the option head and leaked into the code. A construct the surface AST cannot express is *routed* by a keyed diagnostic whose loss class is decided by what reaches the page — `pending` only where nothing does — and a construct the AST *can* express is carried through its one existing resolving site, never routed (`scripts/commonmark.lean --check`, `testdata/commonmark/verdicts.tsv`, `testdata/scoreboard/commonmark.tsv`). The desugaring's image is a declared vocabulary (`Md.vocabulary`, `Md.desugar_vocabulary_mem`), extended in the commit that adds the construct: the vocabulary is what an including host can reach, so growing it is a decision the proof makes visible, never a side effect |
-  | an emission of the markdown twin (`MarkdownDoc`) | the reader arm that reads it back, or a named loss, and its `mdtwin` item: the round trip is measured, never assumed (`scripts/mdtwin.lean`, `testdata/scoreboard/mdtwin.tsv`, `Tests/MarkdownTwin.lean`). A spelling no reader in the tree reads — the pipe table — owes that reader's grammar as a stated model and a theorem against it (`MarkdownDoc.gfmRow`, `rowLine_cells_exact`), held to the external reader by `commonmark.lean --reader-hop`: a code span's `|` once split its cell with every check green, since nothing in the tree read a table. This rule's absence let a pipe table ship with no reader, and a twin whose paragraphs read back as lists and headings |
-  | an HTML spelling the markdown reader accepts | its lowering onto an md AST node that already exists, and so onto that node's one resolving site — a disjunct of `htmlInlineAt_covers` or a block event of the reader's — never a passthrough node in the md AST, the surface AST or the IR; a decision for every attribute it may carry: carried by an existing field, honoured exactly by what ships (a premise pin), routed by an existing route, or the element refused — never dropped; an `htmlTwinChecks` row whose HTML, shipped lines and diagnostics equal its markdown spelling's — or, where markdown has no spelling for it (a comment, an empty target, a break inside a heading or a table cell, a disclosure), rows holding each artifact to what it means: the page without it, a link reaching it (`pdfDestinationChecks`), two heading lines, a cell's lines each on its column's side in a column as wide as the widest (`cellBreakChecks`), the platform's element on the web and its body expanded on paper (`disclosurePrintChecks`); text spelling it written escaped by the markdown twin, whose reader reads the spelling too, and read back as text (`mdTwinBreakChecks`); a loss named for each artifact that suffers it, the twin included, and none for one that suffers none (`disclosurePrintChecks`: a disclosure, which no artifact loses, names nothing); and one accounting per construct (`mdHtmlAccountsChecks`, `refusedDisclosureChecks`). `<details open>` was refused while the closed spelling, which ships the same expanded page, was read: no row had decided the attribute's fate. Once `<br>` was read, the twin's unescaped text `<br>` read back as a break with nothing raised |
-  | a refusal of a construct by name (a definition, a redefinition, a use) | a check quantified over what it refuses, two builds apart: the refused spelling raises no error, is named by its code alone, and ships the page of the document without it — or, for a use, the page of its braced spelling — since a refusal that adds ink or fails the build is the loss it claims to avoid (`refusedEnvChecks` over `builtinEnvNames` × `splitShapes`, `delimitedUseChecks`). What the refused construct's parts owe is judged by its definer, never by the parse that read them (`Elab.settleSplits`) |
-  | a name the engine gives a raw that a document could also write — an environment wrapper, a definer body's half | a character no word token holds — a space, since a word is a run of characters neither special nor white space and a document's environment name is one word — never a prefix a word can spell: the `@` claim was false twice, and `\begin{@open:center}` failed a build as a half (`reservedEnvNameChecks` over `Parse.splitOpen`, `splitClose`, `inputEnv`) |
-  | a script that runs git in repositories it makes — a harness, a probe | one guard before every command: git names the command's repository from the command's own directory and environment, and the command runs only when that repository, and anything it creates, lies inside a fresh root the run made — a push naming by path a bare repository the run made; the run refuses to start when any repository encloses its root; every child runs under `GIT_ALLOW_PROTOCOL=file` (`hcall_writes_owned`; the `hookdir`, `incheckout`, `guard` and `nonet` scenarios). Scrubbing inherited variables is one layer, not the guard: without the scrub, a harness run under a hook's `GIT_DIR` pushed that repository's `main` to its origin and rewrote its config |
-  | a vendored third-party corpus | its licence verbatim beside it; a `PROVENANCE.txt` naming the upstream commit and what was taken, what was left and why — a user's own document is left, since fixtures here are invented; a `SHA256SUMS` over the upstream bytes that `sha256sum -c` checks from that directory; only documents the reference builds under `-halt-on-error`, so every one is in the denominator; and the reading that needs neither fonts nor TeX as a tier, its premise checked by the report wherever both readings exist (`testdata/external/flashtex`, `scripts/external.lean`: a 0 is a refusal, held on 216 of 216 and missed on 1 of 1,031 upstream, where a face refuses a TAB after elaboration). `testdata/commonmark` vendors a spec the same way |
-  | an HTML rule for an engine role that only spaces or styles, or a block margin | a class on the element it governs, never an element of its own (`withClass`) — a consumer stylesheet's combinators were written against the element tree, and one wrapper `div` took a site port's layout in every viewport; the environment and its declaration ship one tree (`trivlistChecks`). A vertical margin on a block element lives only in `blockGapRules`, all inside `:where()`, resets first (`blockGap_owner_contract`; `htmlRhythmChecks` fails any other rule that declares one) — an element rule at (0,0,1) once outranked every gap rule, and no paragraph gap rendered. An element a block must ship that is no block of the flow — an overlay's carrier, one per animated opacity, or a backend's transparent group — is read through by every boundary, down the chains of first and last children the emitted tree stands its boundaries between (`carrierPairs`, `GapRule.throughCarriers`, `blockGapThrough_owner_contract`), so the sheet grows with the tree's boundary shapes and never with how deep its carriers nest, and an alternation's end only where its groups end alike (`altEndsAlike`); a frame's blocks take the same gap with and without their overlays, and every step of its page stands every line where the flat frame does (`overlayGapChecks`, `carrierDisplayChecks`): the first block in each carrier once took no gap, and a declared `\parskip` vanished at every step |
-  | a setting a document declares — a length, a counter, a size, a key — or a default that stands in for one | LaTeX's behaviour, exactly, measured under lualatex on a synthetic probe, down to what LaTeX itself discards: that is discarded here too and said in a note, never honoured against LaTeX (a preamble `\itemsep` reaches no list, since the class's `\@listi` sets it again — `Compat.paramSites`' reset rows, `paramSiteChecks`). A departure only when it is *measurably better* on a named axis — contrast (a WCAG ratio), accessibility (an `a11yFacts` fact), rhythm (a baseline gap on `Layout.Out`), alignment (an offset in sp) — and *barely different* inside a bound declared beside the rule (an Oklab distance, a fraction of a point, a sub-pixel offset), a check holding both. A setting no engine site reads is named where it stands (W0104, keyed by the parameter), never translated onto a token nothing reads: every carried row sets exactly the page its native spelling sets, and a different page from the document without it |
-  | a declaration a document can make inside a group — a colour, a font, a language, a URL face, a Beamer colour | its state in `Elab.GroupScope`, which a group's end puts back (`texGroup` at brace groups, begingroup and bgroup pairs, environments and columns; `inlineGroup` at an inline brace group), or a logged `GlobalWrite` where TeX makes the assignment global (`\pagecolor`), or the native door's documented flow scope (`\palette`) — never an `ESt` field of its own the restore does not see. A paragraph end closes no group, so what a paragraph's text declares is carried past it (`carryDecls`), and a group split at a paragraph end re-applies its declarations to each part. A colour once rode the flow palette, a global door: a title page's `\color` reached every page after it and the body shipped in the page's own colour (`texGroup_scope_id`, `elabBlocks_env_scope_id`, `groupScopeChecks`). Still outside it: lengths (Compat's per-key restore, `closeLengthScope`), a body `\definecolor` (the native palette door, so global, where xcolor's is local), a URL face chosen inside a command's own argument, and an inline `\normalcolor`'s HTML paint (the IR's concrete normal ink, not the stylesheet's) |
-  | a breakage the user reports | a `Reports.reports` row (`Tests/Reports.lean`): its date, the report in abstract words — the construct, never the document — and pins to its guards that resolve or do not compile (`thm%`, `check%`, a tier item; an out-of-repo acceptance run in abstract words), closed only as `guarded`: the tree its guards failed on (the broken commit, or the fix reverted) and whose record says so, before the fix lands. A report with no guard yet is `owed` to a named owner under its guard's name, and the suite fails once that name lands until the row is promoted; the `unwitnessed` and `owed` counts are baselines held in both directions (`reportChecks`). A green check asserting the reported behaviour keeps the defect: two rows once pinned the user's false W0104 as expected |
+## Lean rules
 
-- TeX package/class warning and info controls are log-only compatibility rows: consume their exact groups in `Compat.meaningFree`, require N0100 accounting through a deferred-hook test, and never let those groups enter body recovery. Arbitrary unknown commands must still preserve their arguments.
+- Every theorem has a complete proof and no project axiom; nothing is unsafe, fuelled or declared
+  partial (`bannedWord`, `scripts/ProofAudit.lean`), though repeat loops compile to partial (owed
+  (U72)): the language is designed terminating. A guarantee in prose names its theorem; an unproved
+  claim is pending work, never an unfinished declaration (`scripts/cites.lean`).
+- A resisting proof, a declaration near its budget or a kernel check of seconds is a factorization
+  finding, never a raise, fuel or a sampled decide; a literal bound under the default holds its cost
+  (`heartbeatRaise`); a long list literal stands in parts (`censusPartRows`).
+- A walk threads an Array accumulator, never prepending to a recursive call's result
+  (`quadraticPrepend`); hot paths use Array and ByteArray, bit work UInt64, never Nat (review).
+- An index is proved or defaulted, never a new `]!` (`bangBaseline`); constructor fields carry no
+  defaults (`ctorDefault`); a comment says only a why the code cannot (review).
+- Elab's knots are at budget: a name a knot seals is unsealed after it (`sealMismatch`); arm logic
+  goes in outside helpers (`tikzArm`, `boxOptsArm`); knot functions gain no parameter or top-level
+  state, values in the raws, state in its own record (review; owed (U87): `Elab.classify_exact`).
+- A loop invariant lives in the loop's module or a proof module importing it all, exported as the
+  corollary a statement reads (`floorMask_id`, `LeanTex/Core/Loop.lean`).
+- A large value a check block's loop closes over is read at run time first (`pdfBoundsChecks`).
+- A generated module is only data, its contracts hand-owned (`LeanTex/Core/LocaleContract.lean`).
+- Omega reads Int binders, not Sp; a deep decide is decide +kernel, one over shipped constants in a
+  leaf module off Elab's import chain; a def theorems unfold projects a call's result, never
+  destructures it; a measure fact's value is a subtype pattern, never a let; a zero-argument def
+  runs at module start, so takes Unit; deletion and rebuild judge dead proof structure (review).
 
-- Document diagnostics reach the terminal as typed `Diag` records through
-  `Ui.diag`; only `Render` formats them. Reports read porcelain JSON records,
-  never human headers. `diagnosticOutputBypasses` and its mutation selftest
-  enforce this CLI source convention, including early formatting and direct
-  printing of diagnostic fields. A phase's log folds repeated warnings by
-  their wording, never by their census key: `Ui.resolve` delivers a warning
-  as a note when an earlier warning of its code and output scope says the
-  same words (`Diag.sameLine`, `Diag.foldRepeats`), whatever subject either
-  carries, and that first warning carries their count; a census loss's notes
-  count on the line its first record prints on, a line's count is what it
-  stands for, and porcelain keeps every record (`foldRepeats_sum_exact`,
-  `foldRepeats_line_exact`, `foldRepeats_shown_exact`,
-  `foldRepeats_visible_inj`). So a site's particulars — the page or frame it
-  stands on, how far it overruns, a renamed anchor, a count measured there, a
-  tool's reason — are the record's `detail`, printed beside the words and kept
-  out of them, or one loss prints a line per site; a value the author declared
-  may stand in the words, as the construct's own, and so does the file a
-  byte-level loss stands in, each file a loss of its own. A warning code whose
-  witness repeats its construct at another site — another line, column and
-  byte offset — prints no more warning lines written twice than once
-  (`repeatFoldChecks`); the codes whose witness cannot repeat — a record its
-  emitter builds alone, a preamble declaration, a loss judged once per
-  document, page, file or name — are a baseline read in both directions, each
-  row with its reason (`repeatFoldUnexercised`), and that each prints a line
-  per loss is pending work. A warning's witnessed words state no number
-  outside what they quote, save a reading's name, a scalar, a standard's
-  citation and a code (`dvLint`, `dvNumber?`): a row, an index or a count,
-  which no shifted copy varies, is detail too. A header names a construct
-  the author wrote — a control sequence, an environment opener, a math shift
-  — or nothing, never a word of text or a fragment of code (`Diag.Spelling`);
-  a loss about a place — an overfull line, a declared line that re-flowed, a
-  table wider than the measure, a page set short — names none
-  (`DiagCode.namesPlace`), and a loss of the PDF's page names that output, so
-  a build that ships no PDF prints none. An emitter that keys once per
-  construct (`warnOnce`, `sayOnce`) delivers its later sites as notes itself,
-  whatever their words. Errors print at every site; `--werror` counts a
-  folded line once; acceptance accepts every site of a code it names and
-  counts each loss once — one census key, or a subjectless repeat in the same
-  words (`Diag.acceptedLosses`).
+## Repository
 
-- A run never carries a leading of its own: its line box leads at its
-  paragraph's leading in its own size's proportion (`Ir.runLead`), as LaTeX
-  reads one `\baselineskip` per paragraph, at its `\par`, so a run smaller
-  than its paragraph stays inside the paragraph's strut (`runLead_between`);
-  on the HTML side a size span states no line height and inherits its
-  block's unitless one. Each run carrying its step's leading stood every
-  line holding a small run 0.35 pt low under a tight skip column
-  (`inlineRunChecks`). A run larger than its paragraph grows its box in the
-  same proportion, as CSS's unitless line height does, where TeX keeps the
-  `\baselineskip` until the ink collides: pending work.
-
-- A typographic attachment names its anchors, direction and the bounds it
-  reads: measured ink, advance or baseline-inclusive line box. Derive
-  displacement from those constraints and the resolved font, and reserve the resulting
-  reach. Nonpainting spacing contributes advance, not attachment ink.
-  Geometry tolerances come from the coordinate arithmetic;
-  perceptual tolerances need rendered evidence at a stated viewing size.
-  `inkRayOrigin_between` and `CancelAlignment.checks` pin the cancellation
-  example: matching tip height alone never guaranteed alignment with the
-  arrow's direction.
-
-- Theorems are stated on the IR first. A fact both artifacts must honour
-  (structure, numbering, census, palette, language, alternatives) is one
-  theorem over `Ir`/`Theme`/`Design`, and each backend's version is a
-  projection corollary over the one IR value both artifacts read —
-  `html_fonts_cover_pdf`, `backend_gaps_agree`, `footBand_projects` are the
-  shape. A backend theorem with no IR statement behind it either names a
-  fact genuinely of the artifact (placement, escaping, xref) or is
-  mis-layered — say which in its docstring.
-
-- A proof that resists is a factorization finding, not a tactic problem:
-  case analysis the statement never mentions, a private state the
-  statement cannot name, a heartbeat wall. Write it as the refactor it
-  needs — a field the statement can read, a state split, an equation
-  pack — and complete the proof against the resulting interface. Record
-  an unresolved claim as pending work, never as a proved theorem. Never work
-  around it with fuel, `decide` over samples, or a test in a theorem's
-  clothes.
-
-- The **kernel** owns the page models (flow / frame / face — three today,
-  `report`'s chapter-page a candidate fourth). A **document class** is a
-  named bundle *over* a page model: defaults, furniture semantics, implied
-  assertions, metadata contract. `resume`, `webpage`, `poster` are classes
-  in this sense — as `article`, `slides`, `card` already are. `\theme`
-  stays the *visual* layer only (palette, tokens, styles), orthogonal to
-  class, as LaTeX's packages are orthogonal to its classes. The guard is
-  the record shape (`Ir.ClassRecord`): a class is a *record*, not a module
-  with its own layout code — if a proposed class needs layout code rather
-  than values, assertions and furniture flags, it is asking for a new page
-  model and goes to the kernel discussion instead.
-
-- Theorem shape suffixes are a registry, not a habit: `_text` (census
-  equality; state it as a `Conserves` instance), `_covers`, `_id`, `_inj`,
-  `_rectangular`, `_exact`, `_monotone`, `_fixed_point`, `_contract`,
-  `_set_eq`, `_between` (a value inside two named bounds), `_mem` (the
-  result is drawn from the input set), `_accounts` (an empty result is
-  paid for by a diagnostic or a write — `rewriteCtrl_accounts` is the
-  shape), `_named` (every element of a census has a diagnostic whose
-  `subject` is its key — `pending_named` is the shape; the census is a
-  fold, the judge reads the same fold, and matching is the structured
-  `Diag.subject`, never the message text), `_projects` (a backend value
-  is the projection of one IR value — `footBand_projects` is the shape),
-  `_agree` (two projections of one IR value agree — `backend_gaps_agree`
-  is the shape), `_gated` (a mutating output implies a proven state — the
-  landing's merge and push are proposed only from a state whose every gate
-  observation was ok; a shape of its own because the antecedent is the
-  *action*, not the value, so no other suffix's reading applies), `_pinned`
-  (the landing's run invariant — the gated tip, the gate tree's read-back
-  and the landed `main` are one sha — holds initially and is preserved by
-  every transition: `init_pinned`, `step_pinned`, `trace_pinned`), `_owned`
-  (every write an action declares is one the state it was proposed from
-  owns — a shape of its own because the conclusion is about *where* an
-  output writes, not what it names: `step_writes_owned`,
-  `trace_writes_owned`), `_only` (every question a host program can ask,
-  whatever the replies before it, satisfies a predicate — `located_only`
-  is the shape; a shape of its own because it speaks of the program's
-  questions on every path, which is what lets it hold of every
-  interpreter through `Prog.runM_only_exact`, not of a value). A new
-  property instantiates a
-  suffix, or the review says why
-  it is a new shape; the first three are what the hook's walk gate looks
-  for. `_in_measure` is not a shape (`kern_measure_exact` once carried
-  it). A step lemma is named by its step and by the field or invariant of
-  the walk's state it speaks of (`pushRun_runs`, `moveTo_plainOps`): that
-  second part is never a registered suffix, a step lemma takes a suffix
-  only when it has that shape itself (`step_pinned`), and the statement
-  the step lemmas assemble carries the walk's shape (`mark_ink_exact`). A contract over shipped bundles quantifies over `Theme.builtin`,
-  never per bundle — adding a bundle is entering the contract.
-
-- A new collector over the IR is a `foldBlocks`/`foldInlines` leaf
-  function; a new leaf-rewrite is a `mapInlines`/`mapBlocks` function; a
-  hand-rolled mutual walk states its reason beside the def. Ten copies of
-  the two generic shapes accumulated before the walks were factored — two
-  of the three wildcards among them hid real gaps (a footnote's image
-  shipped a silent placeholder). The fold reads every inline region a
-  backend sets, and content the engine builds from authored text is
-  authored: a reference list's fields go through the inline elaborator, so
-  its entries are read (`foldBlock_bibliography_exact`). Skipped as
-  "formatted renderings", they hid a field's image, picture and footnote
-  from the requests and the endnotes: an empty box, and a page refused.
-
-- A generated module (`*Data.lean`) carries only data; contracts and
-  lookups over it live in a hand-owned module (`LocaleContract.lean` is
-  the shape). Code embedded in a generator's output drifts from the
-  checked-in file the first time one of the pair is edited alone, and no
-  check can see it: regeneration needs this host's TeX tree, so CI cannot.
-
-- Pure core: modules under `LeanTex/Core/` do no IO (the
-  pre-commit hook enforces the boundary). Files, fonts,
-  anything external surfaces as request values the CLI driver fulfills
-  (effects as data).
-- The driver's own host access is a vocabulary too: `World.Ask` names the
-  questions (an environment variable, the working directory, a stat, a
-  read, a listing, a bounded tool run, an atomic write, a directory tree),
-  a `World.Prog` over them is a value, `World.lean` does no IO (hook), and
-  `Host.answer` is the one interpreter — a `BaseIO` action, so every
-  `IO.Error` is reply data. New host access is a question added there, not
-  another `IO.FS`/`IO.Process` call site: a program's result is then the
-  replay of its trace (`Host.record_replay_exact`, which
-  `Host.recordIO_fst_exact` carries to the shipped `runIO`), a property of
-  every path through a program holds of every interpreter
-  (`Prog.runM_only_exact`), and a world assumption is a theorem's
-  hypothesis about replies, never an axiom. The call sites still outside
-  it — the driver, the conversion and picture caches, the image and font
-  readers, the TeX-roots lookup — are ports owed to the waves that follow,
-  not precedents.
-- The artifact is a function of the document and the font environment;
-  flags are not arguments to it. What to build is the document's to declare
-  (`\output`); a flag says where output lands (`-o`), when (`--watch`), how
-  the run reports (`-q`/`-v`, `--porcelain`, `--color`), the run's exit and
-  acceptance policy (`--werror`, `--best-effort`), or extends the font
-  environment (`--font-dir`). The statement is the theorem
-  `artifact_flag_free` (Args.lean); the hook rejects a `Config` read in
-  Main.lean whose field is not on the declared allowlist
-  (`driverConfigReads` in scripts/precommit.lean) — the token a new flag
-  would start from on its way toward a backend. `--math-boundary` is the
-  one recorded remainder, carried as a named hypothesis in the theorem
-  until `\output` grows its key.
-- Removing a CLI surface is a migration, not a deletion, and its callers are
-  not all in this repo: the site port's build script and every private
-  document's build recipe invoke the binary too. Grepping this tree returns
-  clean and proves nothing — `--emit` was deleted that way and broke the site
-  build on the next run. No hook can see those repos, so the check is manual
-  and belongs in the same commit: run every out-of-repo build that invokes
-  leantex before declaring the surface gone.
-- Backends consume the IR and nothing else. A backend never re-parses, and
-  never reaches back into the surface AST — that is how md→PDF and tex→HTML
-  stay free instead of becoming N×M special cases. The hook rejects a
-  surface reach-in — an import, `open`, or qualified use of
-  `Lex`/`Parse`/`Elab`/`Compat` — in a backend module.
-- HTML is built as a typed tree with a certified escaper, never by
-  concatenating tag strings. Any new node type goes through the escaper by
-  construction; if you find yourself writing `"<" ++ …`, stop.
-- A default LaTeX assigns as a `\dimen` when a class or package loads —
-  booktabs' `.65ex`, its `.08em` — is that dimen, and so is a table length
-  the preamble's `\setlength` declares (`Ir.PreambleFace.fixTableLengths`):
-  its em and ex are the preamble font's at the class's `\normalsize`
-  (`Ir.PreambleFace`, `Ir.optionNormalSize`: 10.95pt under `11pt`; measured
-  under lualatex), never the face or size where it is used. Read where it
-  was used, booktabs' seps stood 18% wide in a deck whose face has a tall
-  x-height (`tableLengthChecks`). Other preamble lengths still resolve where
-  they are read; fixing them the same way is pending work.
-- A distance LaTeX prints is a sum, and matching one of its terms is not
-  matching the distance: booktabs' seps made lualatex's took the printed rule
-  gaps further from lualatex's, because the rows beside the rules stood on
-  their glyphs where every array row stands on `\@arstrut`
-  (`tableStrutChecks`). Judge a term's fix by the printed distance, against
-  a synthetic lualatex probe whose `\showbox` lists every term.
-- A name read off a title or a caption — a slide's or a section's anchor
-  and accessible name, an image's alternative from its caption, the title
-  metadata — is one page's reading (`Ir.firstPageText`), never the census
-  (`plainText`), which carries both groups of every overlay alternation
-  because both ship: read as the census, `\textcolor<2>{c}{Word}` anchored
-  its frame `wordword` (`frameAnchorChecks`).
-- No backend emits script to compensate for a platform. Say what the page
-  means, declaratively, and let the platform — or the stylesheet framework a
-  document chooses — decide how widely it works. Where a declarative feature
-  is unevenly supported, the honest floor is the degraded state (a control
-  that is always visible, not one that is permanently hidden), and shipping a
-  shim instead buys a small effect at the cost of a permanent escaping
-  obligation and a rule that then holds only approximately. Two script paths
-  stand: `--math-boundary`, for genuinely computational behaviour a document
-  asks for by name, and the slides class's constant keyboard/uncover script —
-  permitted because it is a constant (no escaping obligation,
-  `deck_script_constant` pins the literal), gated on the class
-  (`deck_script_gated`), and the deck degrades to the pure-CSS pager when
-  scripting is off (`floor_covered_script_gated`). A third path needs the
-  same three properties or a design discussion.
-- Design tokens are the styling API for both backends: a new visual knob is a
-  token, not a hard-coded constant in a backend.
-- A listing token paints in its code role (`Kind.role`: ink, keyword, name,
-  literal, comment, error), and a role's colour resolves at one site,
-  `CodeColor.resolve`: the role's own palette key (`codekeyword`, …), else the
-  palette's roles by the rule stated there, else the minted style's colour for
-  the role. This is a decided exception to the obligation table's row for a
-  setting a document declares (LaTeX's behaviour, exactly): it departs from
-  lualatex's per-type colours on purpose — code coherent with its palette,
-  two markers of one role one colour, every colour the engine derives or
-  adapts legible on its ground — so a per-type
-  colour is never reintroduced to match lualatex, and minted's `formatcom`,
-  which runs TeX on the highlighter's own macros, stays a TeX-only hook
-  (N0102).
-- Hot paths use `Array`/`ByteArray`/packed `UInt32`; no `List`. A structural
-  walk over a `List` (the totality pattern below) accumulates into an
-  `Array` it threads through: building the result as `#[x] ++ walk rest`
-  copies the walk's result at every element and turns a 4 ms pass into
-  600 ms on a 30-page document — the hook rejects an append whose trailing
-  text is a call ending in a bare variable, whatever the left side spells.
-  Appending to a `mut` string or array in a loop is fine: unique ownership
-  appends in place (`Pdf.write` builds the whole file that way). An array
-  stays unique only while nothing else still reads it: a record update
-  builds its fields in structure order, so `{ acc with notes := … acc.items.size …,
-  items := acc.items.push x }` pushes while the size is still to be read,
-  and copies the array at every push; bind what the update reads first
-  (`let at_ := acc.items.size`). A read that must see the array before a
-  call grows it travels as a field the call writes (`ItemsAcc.before`): the
-  compiler may sink a pure `let` past the call.
-  Bit-level work in a hot loop is `UInt64`/`UInt32`, never `Nat`: a `Nat`
-  shift (`<<<`) is an out-of-line bignum call with no small-number fast
-  path (~80 ns; `+`, `*`, `>>>`, `&&&` are inline), and two of them per
-  byte were three quarters of the compressor. A `Nat` loop variable that
-  only indexes is fine.
-  `scripts/bench.lean` is the check; run it when touching any pass over the
-  whole document.
-- A kernel `decide` over shipped constants belongs in a leaf module, off
-  the import chain to Elab: the next structure its module declares waits
-  for the pending kernel check, so the check runs in series with every
-  module downstream. A zero-argument `def` is evaluated when its module
-  initializes, in every process; take `Unit` to defer the cost to first
-  use.
-- A closed term a loop's closure captures can be copied into the loop's
-  specialized body and rebuilt once per element: a 65,536-entry PDF plan
-  captured by one `find?` held `lake test` for 25 minutes instead of 3. A
-  large value in a check block depends on a runtime read (a ref, an
-  argument) before any closure captures it (`pdfBoundsChecks`).
-- A module's private part — private declarations, unexposed bodies,
-  proofs, comments — reaches another file's build only through
-  `import all`, or through a file outside the module system, which reads
-  every transitive import whole; a private edit rebuilds exactly those
-  readers. So a consumer reads public interfaces: a proof that must unfold
-  a body reads an `@[expose]`d definition or a public lemma beside it, and
-  `import all` is for small readers whose rebuild costs seconds, such as a
-  proof or contract companion beside what it reads. Private reads chain:
-  ContrastContract and ElabRegistryContract read Theme whole and, through
-  Theme's `import all Ir`, Ir's private part, which their kernel `decide`s
-  evaluate, so a 28-second contract rebuilds on every Ir edit — the
-  standing exception. Every library and test file is a `module` but the
-  declared shims (`buildGraphChecks` reads each header with Lake's own
-  reader and holds to declared lists the shims, each large file's private
-  reads, and each large file's private readers). One comment line
-  appended to Ir once rebuilt 184 modules in 6½ minutes, through Layout's
-  and HtmlDoc's `import all` and 172 test files outside the module
-  system. Order matters inside a large module too: a `structure`,
-  `inductive` or multi-definition `mutual` block is added synchronously
-  and waits for the elaboration and kernel check of every theorem before
-  it (Layout loses about 100 of its 136 seconds this way), and a kernel
-  check over a few seconds is a factorization finding —
-  `emitTree_resolve_agree` cost 73 s while `emitTree` destructured its
-  emitter's result, and a fraction of a second once it returned
-  projections. The kernel honours `maxHeartbeats`, so a bound beside such
-  a theorem holds its cost deterministically. A list literal's elaboration
-  cost grows faster than linearly in its elements: the census rows stand
-  in parts of at most `censusPartRows`.
-- The inline elaboration knot compiles at its heartbeat budget (more than
-  198k of 200k on 2026-09-27), and its cost grows with `ESt`'s top-level
-  fields: state the knot never reads goes in a record of its own
-  (`Counters` is the shape), never a new top-level field.
-- `Elab`'s block knot (the mutual block around `elabBlocksGo`) is at its
-  compiler budget. An arm's new logic goes in a helper outside it
-  (`tikzArm`, `boxOptsArm`), and no knot function gains a parameter: one
-  on `columnsGo` alone tipped the knot's compilation past the default
-  200000 heartbeats. A value an inner walk needs travels in the raws
-  (`Compat.columnsRowPos`) instead.
-- A cache over an external tool caches the tool's *whole* answer, not
-  only the answer that succeeded. A verdict remembered for the drawn case
-  and dropped for the refused one means the slow path is the one that
-  repeats: six unrenderable pictures cost six `lualatex` startups on every
-  build, forever (4,524 ms of a 4,754 ms run), while the renderable ones
-  warmed after the first. So the failure goes in the same slot under the
-  same content key, and the replay reports the identical diagnostic with
-  the tool's own words — a cached loss is still named, once, at full
-  strength. The line a cache must not cross: an attempt the tool never
-  finished is not a verdict. A budget kill, a spawn that raised, and a
-  nonzero exit that left no log are all facts about the machine, not the
-  request, and caching one would let a busy minute — or a missing
-  install — permanently condemn a picture that renders. An exit code alone
-  cannot make that call: a missing tool still reaches `exec` and comes
-  back as an exit code — 255 from Lean's spawn, whose forked child reports
-  the failed `exec` and exits — so the evidence is that the tool left a
-  log. The policy lives as
-  values in the driver (`Cli/PicCache.lean`) precisely so it is checkable
-  with no tool installed.
-- Theorems only where they pay (parser totality, elaboration termination and
-  determinism, line-break optimality, dimension arithmetic, PDF xref, UTF-8).
-  The language is designed terminating — a construct that breaks that property
-  needs a design discussion, not a fuel parameter. A guarantee stated in
-  prose names the theorem that holds it; a claim with no theorem is
-  described as pending work, without an unfinished Lean declaration. In a statement meant for
-  `omega`, spell binders and structure fields `Int`, not `Sp`: omega reads
-  the bare spelling only, and an `Sp`-typed hypothesis is silently invisible
-  to it. `omega` handles `Int.max`/`min` directly — no `Int.max_def` unfold,
-  no generalize-the-max; and a `decide` that needs `maxRecDepth` raised is
-  spelled `decide +kernel` instead. A case split whose branches read
-  identical may still be load-bearing for elaboration cost — judge dead
-  proof structure by deletion and rebuild, never by inspection.
-- Every maintained theorem has a complete proof. `lake build` uses
-  `-E hasSorry`; `lake lint` additionally checks compiled axiom closure and
-  fresh source elaboration, including anonymous and private proofs. Project
-  axioms and proof holes are rejected. External behavior is an explicit
-  premise about returned evidence, exercised by boundary tests; statements
-  range over the actual implementation, never a specification copy.
-- No default values on inductive constructor fields — patterns then
-  under-specify silently; the hook rejects them. Structure fields keep theirs.
-- Never add `partial` to reach a green build. Tree recursion over `Array`
-  fields works via mutual recursion through `List` (see `Compat.rewriteList`,
-  `Html.render`); a `map`/`flatMap` over children hides the call behind a
-  lambda the checker cannot see, and a list matched against a literal pattern
-  with a catch-all variable loses the tail — write the `List` companion
-  instead. Index loops bounded by `[0:xs.size + 1]` are total without it.
-  None remain: `takeArgs`, `elabInlines`, and `elabBlocks` all terminate by
-  proved lexicographic measures (`elaboration_total` in Elab.lean names the
-  fact; the pre-commit hook rejects any `partial` at all). The shape to
-  copy is the elabBlocks knot: explicit index recursion whose measure facts
-  stand as `have`s beside each call — and mind that the termination goals
-  zeta-expand plain `let`s while hypotheses keep the variable, so a value a
-  measure fact describes travels as a subtype pattern, never a bare `let`.
-- A claim is open until machine-checked. An executable oracle
-  (`scripts/kp-fuzz.lean`) is evidence, not a theorem — say which one you have.
-- Comments: nearly none. Names and tests carry the what; a comment only for a
-  why the code cannot say.
-- Linters: the core linters plus the `linter.extra` set run inside
-  `lake build` (enabled in `lakefile.toml`); a warning fails the pre-commit
-  hook, and `linter.missingDocs` stays off deliberately.
-- A test helper used by two check blocks moves to the shared section
-  (`Tests/Support.lean`) the moment the second caller appears. Fifteen
-  copies of one deck builder grew from parallel slices each lacking a
-  visible shared builder; the by-phase split fixed the ordering that caused
-  it, and this rule prevents regrowth.
-- In-repo tests and fixtures are synthetic, and synthetic means invented: no
-  text, topics, or distinctive design values (fonts, spacing constants,
-  palettes) copied from the private corpus. Placeholder names, `example.org`
-  contacts. The private corpus never enters this repo; acceptance runs
-  against it locally, never in CI.
-- Fixtures and tests never depend on what this host has installed. A fixture
-  that names a font ships it in `testdata/corpus/fonts/` (with its license) and
-  declares `\fonts{ dir = "fonts" }`; `Tests.lean` scans only that directory
-  (`FontDiscovery.scanRoots [testFonts]`), never `FontDiscovery.scan`. To prove a change
-  hermetic, build the corpus in a namespace with the font directories
-  emptied: `unshare -Urm`, `mount -t tmpfs none /usr/share/fonts` (and the
-  TeX Live tree), `HOME` and `PATH` pointed at empty directories.
-
-## Don't touch
-
-- `lean-toolchain` — bumps are deliberate, in their own commit.
-- `testdata/golden/**` — regenerate through the harness, never hand-edit.
-
-## Commits
-
-- Commit each verified unit (build + tests green); imperative subject line.
-- Never push without being asked.
-- Landing a branch onto `main` goes through `land` (`scripts/land.lean`) — never
-  a hand rebase or merge. It reads preconditions from
-  `git status --porcelain` and `git rev-parse` *through files*, makes a
-  detached gate tree at the branch tip it read and rebases *there* onto the
-  `main` it read, runs every gate in that tree, re-reads the branch and `main`
-  after them, fast-forwards `refs/heads/main` by name to the *sha the gates
-  ran on*, reads the new tip back, and writes one ledger row per fact. It never
-  writes the branch or its owner's worktree: every action declares what it
-  writes, and `step_writes_owned` holds the core to the run's own tree and
-  ledger, and `main` and the remote only to the gated tip on a proven run; a
-  verdict claiming a landing implies `main` was read back at that sha. Prose
-  reports of repository state obey the rule claims about a page obey: from the
-  artifact. The landing never resolves a conflict: a conflict outside the
-  union-merged files is a refusal with exit 2 that touches nothing of the
-  owner's, and the branch's owner rebases and resolves it in their own
-  worktree, then re-runs `land check`; the tool never guesses how to
-  reconcile conflicting implementations or specifications.
-  A branch landed onto a `main` that had moved keeps its original commits: the
-  ledger records the tip it read, and `land retire` reads that. A landed
-  branch is never continued: while `main` holds its landing, `land` refuses
-  it and sends the next unit to a new branch from `main` (`land new <name>`);
-  a landing `main` no longer holds — `main` put back before a push — counts
-  for nothing, and the branch lands again (`step_unheld_exact`,
-  `step_barred_exact`).
-- Never `git stash`: the stack is per-repository, not per-worktree, and agents
-  here work in parallel worktree checkouts — a `pop` can apply, and drop,
-  another worktree's entry. Set work aside with file copies instead (the file
-  moved away to prove a test fails before the fix, copied back after). One
-  four-minute test run was long enough for a second agent's stash to take
-  `stash@{0}`; the pop planted its 115-line `Compat.lean` rewrite in the first
-  agent's tree and removed it from the stack. Recovery worked only because the
-  stash commit outlives the stack entry in the shared object store:
-  `git stash store <sha>` puts it back, with the SHA the pop printed.
+- Write the invariant first: before code, what a new kind of thing owes; before a fix, the one whose
+  absence allowed it, a theorem or a test failing before and passing after; fix to it, not the
+  symptom; a lesson that generalises becomes a rule here or a hook check (review; `reportChecks` for
+  reports); a test helper two check blocks share lives in `Tests/Support.lean` (`scopedDefNames`).
+- Commit each verified unit with an imperative subject; never push unasked; land only through land,
+  which moves main to exactly the gated sha, the next unit starting with land new
+  (`step_writes_owned`, `trace_pinned`, `step_barred_exact`); report repository state from the
+  artifact; never git stash (one stack for all worktrees): set work aside as file copies (review).

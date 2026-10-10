@@ -2,7 +2,42 @@ module
 
 /-! Pure boundary outcomes and tool-version memo policy. `PictureAssets`
 captures process results; `ConvCache` stores complete drawings or refusals.
-Unfinished attempts are retried. -/
+Unfinished attempts are retried.
+
+A cache over an external tool caches the tool's whole answer, not only the
+answer that succeeded. A verdict remembered for the drawn case and dropped
+for the refused one makes the slow path the one that repeats: six
+unrenderable pictures once cost six `lualatex` startups on every build,
+4,524 ms of a 4,754 ms run, while the renderable ones warmed after the first.
+So a refusal goes in the same slot under the same content key, and the replay
+reports the identical diagnostic in the tool's own words: a cached loss is
+still named, once, at full strength.
+
+The line a cache must not cross: an attempt the tool never finished is not a
+verdict. A budget kill, a spawn that raised and a nonzero exit that left no
+log are facts about the machine, not the request, and caching one would let
+a busy minute or a missing install condemn a picture that renders. An exit
+code alone cannot make that call, since a missing tool still reaches `exec`
+and comes back as an exit code, 255 from Lean's spawn, whose forked child
+reports the failed `exec` and exits; the evidence is that the tool left a
+log.
+
+Where the driver decides: `outcome` reads one attempt as a verdict, and
+`ConvCache.Result.record?` decides what a slot keeps of it, the one record
+decision production calls (through `PictureAssets` and `ImageAssets`).
+`ConvCache.refusal_replays_exact`, `ConvCache.inconclusive_retried_exact` and
+`ConvCache.empty_retried_exact` state its cases, and
+`ConvCache.replay_record_exact` that a warm slot answers with the fresh
+attempt's outcome; that `record?` composed with `outcome` keeps exactly the
+tool's refusals and drawings is owed (U68): `record?_some_exact`. `step` and
+`remembers` below are a model of the policy that no production path calls,
+so the lemmas stated over them (`step_cold_exact`, `replay_says_exact`,
+`remembers_verdict_exact`, `overrun_retried_exact`, `unlogged_retried_exact`)
+hold of the model, not of the driver, until U68 restates the policy over
+`record?` and deletes them. The suite's `picCacheChecks` exercises both and
+holds the live half by values, needing no tool installed: the outcome
+classification, the tool's identity (`probed`) and the version memo
+(`versionStep`). -/
 
 namespace LeanTex.Cli.PicCache
 

@@ -135,7 +135,7 @@ private def ThmDecls.ams (d : ThmDecls) : Bool := d.style != .kernel
 
 /-- What the picture arm reads, as one field of `Ctx`: the block knot copies
 every `Ctx` field at each `{ ctx with … }`, and its compilation is at its
-budget (AGENTS.md), so the picture context travels as one value — the
+budget (AGENTS.md § Lean rules), so the picture context travels as one value — the
 `SpanRecords` shape. -/
 public structure PicCtx where
   /-- The boundary tool in force: the external TeX that draws pictures

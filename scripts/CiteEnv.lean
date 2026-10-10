@@ -55,17 +55,31 @@ public inductive Verdict where
   | phantom
   deriving BEq, Inhabited, FromJson, ToJson, Repr
 
+/-- A batch's work: the docstrings to collect, the queries to judge, and the
+queries whose resolved declarations are wanted by name, not only by verdict. -/
 public structure Request where
   modules : Array String
   paths : Array String
   collect : Bool := false
   queries : Array Query := #[]
+  named : Array Query := #[]
   deriving FromJson, ToJson
+
+/-- A declaration a named query resolves to, and whether it forms types: an
+inductive, structure or class, a constructor, or a definition whose result
+past every binder is a sort (a type alias, a predicate). A rule document's
+pin names the check that holds a rule, and a type is vocabulary, which holds
+nothing. -/
+public structure Resolved where
+  name : Name
+  typeFormer : Bool
+  deriving BEq, Inhabited, FromJson, ToJson
 
 public structure Response where
   modules : Array String
   sites : Array Site := #[]
   verdicts : Array Verdict := #[]
+  named : Array (Array Resolved) := #[]
   deriving FromJson, ToJson
 
 public def moduleFile (name : String) : String := name.replace "." "/" ++ ".lean"
@@ -147,20 +161,47 @@ def shortIndex (env : Environment) (modules : Array String) : IO NameIndex := do
       idx := indexName idx name aliasName
   return idx
 
-/-- Restoring the declaring module lets Lean resolve its private names itself.
+/-- The complete declarations a token names from a module and namespace.
+Restoring the declaring module lets Lean resolve its private names itself.
 A resolver answer with projection suffixes is not a declaration, and reserved
 names count only after the compiler has actually created their constants. -/
+def resolvedIn (env : Environment) (moduleName : String) (ns : Name)
+    (opens : List OpenDecl) (token : String) : List Name :=
+  ((ResolveName.resolveGlobalName (env.setMainModule (toModuleName moduleName)) {}
+    ns opens token.toName).filter fun (name, projections) =>
+      projections.isEmpty && (env.checked.get.find? name).isSome).map (·.1)
+
 def resolvesIn (env : Environment) (moduleName : String) (ns : Name)
     (opens : List OpenDecl) (token : String) : Bool :=
-  (ResolveName.resolveGlobalName (env.setMainModule (toModuleName moduleName)) {}
-    ns opens token.toName).any fun (name, projections) =>
-      projections.isEmpty && (env.checked.get.find? name).isSome
+  !(resolvedIn env moduleName ns opens token).isEmpty
+
+/-- The places a token's last component is declared: where the tree tier
+resolves it from. -/
+def origins (idx : NameIndex) (token : String) : Array (String × Name) :=
+  idx[(token.splitOn ".").getLast!]?.getD #[]
 
 def verdict (env : Environment) (idx : NameIndex) (q : Query) : Verdict :=
   if resolvesIn env q.moduleName q.ns [] q.token then .scope
-  else if (idx[(q.token.splitOn ".").getLast!]?.getD #[]).any fun (m, ns) =>
-      resolvesIn env m ns [] q.token then .tree
+  else if (origins idx q.token).any fun (m, ns) => resolvesIn env m ns [] q.token then .tree
   else .phantom
+
+/-- Every declaration a query's token names through either tier, each once:
+what `verdict` asks only the existence of. A pin that must name one
+declaration reads this, so two theorems sharing a short name are seen. -/
+def resolutions (env : Environment) (idx : NameIndex) (q : Query) : Array Name := Id.run do
+  let mut out : Array Name := #[]
+  for n in resolvedIn env q.moduleName q.ns [] q.token do
+    unless out.contains n do out := out.push n
+  for (m, ns) in origins idx q.token do
+    for n in resolvedIn env m ns [] q.token do
+      unless out.contains n do out := out.push n
+  return out
+
+def resolvedOf (env : Environment) (n : Name) : Resolved :=
+  { name := n, typeFormer := match env.checked.get.find? n with
+      | some (.ctorInfo _) => true
+      | some info => info.type.getForallBody.isSort
+      | none => false }
 
 /-- Each worker owns one imported environment. Its process exits before the next
 batch starts, releasing Lean's imported memory regions as well as the values. -/
@@ -171,6 +212,7 @@ public def run (request : Request) : IO Response := do
   let idx ← shortIndex env request.modules
   return {
     modules := request.modules, sites := docs
-    verdicts := request.queries.map (verdict env idx) }
+    verdicts := request.queries.map (verdict env idx)
+    named := request.named.map fun q => (resolutions env idx q).map (resolvedOf env) }
 
 end CiteEnv

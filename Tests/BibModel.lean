@@ -1653,7 +1653,10 @@ before the list and before the one after it, as LaTeX numbers a `.bbl`'s
 notes — at the page's foot and among the page's endnotes. The image and the
 picture once shipped an empty box and refused the page (E0606), and the
 note shipped the body's first note's number and no endnote: the walks that
-collect a document's requests and notes did not read a list's entries. -/
+collect a document's requests and notes did not read a list's entries,
+skipped as formatted renderings. Content the engine builds from authored
+text is authored: a list's fields go through the inline elaborator, so the
+fold reads its entries (`Ir.foldBlock_bibliography_exact`). -/
 def bibFieldContentChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit := do
   let t := check ref
   let fonts ← mathSetOf oneFace

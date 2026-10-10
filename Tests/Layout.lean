@@ -2106,8 +2106,9 @@ def spacingChecks (ref : IO.Ref (List String)) (geom : Layout.Geom)
      mixed[1]! - mixed[0]! != leading && mixed[2]! - mixed[1]! == leading)
   -- The heading rule is raised half the x-height of the heading's own
   -- face at the heading's size — never the body's — asserted over
-  -- `Layout.Out`, per AGENTS: a visual bug's regression never reads an IR
-  -- dump. The x-height is the measured ink 'x' (`Font.xHeightOptical`).
+  -- `Layout.Out`, since a visual bug's regression never reads an IR dump
+  -- (AGENTS.md § Layout and design). The x-height is the measured ink 'x'
+  -- (`Font.xHeightOptical`).
   let rdoc := (Elab.run "t" ("\\documentclass{article}\\palette{ ink = #112233 }" ++
     "\\style{section}{ rule = ink }\\begin{document}\\section{S}x\\end{document}")).1
   let ruleRaises := ((layoutOf oneFace rdoc geom).pages.flatMap (·.lines)).filterMap
@@ -4451,7 +4452,7 @@ def posterChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit
   -- no longer dump a paragraph's whole slack on its first line — the
   -- beamerposter defect where every paragraph's first line broke at
   -- roughly half the measure while the lines below filled it. Judged over
-  -- `Layout.Out` (the page-claim rule), never a raster or an IR dump.
+  -- `Layout.Out` (AGENTS.md § Layout and design), never a raster or an IR dump.
   let colPoster :=
     "\\documentclass[final]{beamer}\n" ++
     "\\usepackage[size=custom,width=100,height=80,scale=1.2]{beamerposter}\n" ++

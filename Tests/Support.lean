@@ -936,7 +936,7 @@ def runGoldens (update : Bool) (fail : String → IO Unit) : IO Unit := do
           fail s!"golden {n}: mismatch, {firstDiff g out} (if intended, run: lake exe Tests --update)"
 
 /-- The shipped-page census over `Layout.Out`: the observable facts a page
-claim may cite (AGENTS.md, the page-claim rule). Chars come from the set
+claim may cite (AGENTS.md § Layout and design). Chars come from the set
 glyph runs — gaps become single spaces and lines join with one space, so a
 phrase survives a line break but not a hyphenation. `covered` collects the
 runs painted in one of the document's own covered colours

@@ -777,11 +777,12 @@ def cssBlocksIn (css : String) : Array (List String × String × String) := Id.r
       cur := cur.push c
   return out
 
-/-- **A box the sheet scrolls on screen has its lift on paper** (AGENTS: a
-scroll box owes its print lift; deck-print routed the code block's): on
-every golden page's own sheet, each rule that holds on paper and declares
-an overflow `auto` or `scroll` has a rule at its selector inside
-`@media print` that sets that overflow `visible` — the deck's stage grows
+/-- **A box the sheet scrolls on screen has its lift on paper**
+(AGENTS.md § When you add: a scroll box owes its print lift; deck-print
+routed the code block's): on every golden page's own sheet, each rule that
+holds on paper and declares an overflow `auto` or `scroll` has a rule at its
+selector inside `@media print` that sets that overflow `visible` — the
+deck's stage grows
 (`HtmlDoc.print_lifts_stage_bounds_covers`), and a code block wraps its
 long line inside the box, since paper has no scroll and a scroll box clips
 there. It fails on `8d3df368`, whose print block left every `pre` at

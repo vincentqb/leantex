@@ -558,7 +558,7 @@ field to disagree with its class, so a new code inherits a correct recovery
 rather than choosing one. -/
 public def DiagCode.floor (c : DiagCode) : Floor := c.loss.floor
 
-/-- **Exactly the degraded codes owe ink.** The obligation table's rule — a
+/-- **Exactly the degraded codes owe ink.** The ink rule — a
 `degraded` loss ships the construct's text content — is not one reading of
 the registry among several: it is the whole of the ink obligation, for every
 registered code. A future loss class cannot inherit the obligation by

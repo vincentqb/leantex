@@ -1459,8 +1459,8 @@ mutual
 
 /-- Does this subtree ship an element the chain selects? The path threads
 down the walk, so each element is judged against its own ancestors. The
-tree is read for the carrier, never the printed page (AGENTS.md, the
-page-claim rule). -/
+tree is read for the carrier, never the printed page
+(AGENTS.md § Layout and design). -/
 def artChainInOne (chain : Array ArtStep) (path : Array ArtElem) : Html.Node → Bool
   | .text _ => false
   | .style _ => false

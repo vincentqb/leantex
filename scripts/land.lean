@@ -32,6 +32,15 @@ onto `main` as the run read it, seeded with a copy of a `.lake`, and removed
 when the run ends — never in the branch's worktree, whose owner may commit,
 switch or edit while the landing runs. The landing never writes the branch
 or its worktree: it reads them.
+
+The landing never resolves a conflict either. A conflict outside the
+union-merged files is a refusal with exit 2 that touches nothing of the
+owner's; the branch's owner rebases and resolves it in their own worktree,
+then reruns `land check`. The tool never guesses how to reconcile conflicting
+implementations or specifications. A branch landed onto a `main` that had
+moved keeps its original commits: the ledger records the tip it read, and
+`land retire` reads that. A prose report of repository state is read from
+the ledger and the refs, as a claim about a page is read from the page.
 -/
 import scripts.LandCore
 

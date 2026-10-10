@@ -201,7 +201,11 @@ private def runCall (call : ToolCall) : BaseIO Ended := do
       | .ok ended => return ended
       | .error e => return unstarted (scrubbed dir real (toString e))
 
-/-- The host's answer to one question. -/
+/-- The host's answer to one question, and the one place the driver's host
+access is answered: new access is a question added to `Ask`, never another
+`IO.FS` or `IO.Process` call site. The sites this does not answer yet — the
+driver, the conversion and picture caches, the image and font readers, the
+TeX-roots lookup — are ports owed, not precedents to copy. -/
 public def answer : (q : Ask) → BaseIO (Reply q)
   | .env name => IO.getEnv name
   | .cwd => caught do return (← IO.currentDir).toString

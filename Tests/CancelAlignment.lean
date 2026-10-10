@@ -704,7 +704,17 @@ end CancelAlignment
 
 open CancelAlignment in
 /-- Public suite entry point. Judged entirely on the shipped page and
-font outlines; no expected offset comes from `Math.cancelGeom`. -/
+font outlines; no expected offset comes from `Math.cancelGeom`.
+
+The rule it holds for every typographic attachment: name the anchors, the
+direction and the bounds read (measured ink, advance, or the
+baseline-inclusive line box), derive the displacement from them and the
+resolved font, and reserve the reach; nonpainting spacing contributes
+advance, never attachment ink. Geometry tolerances come from the coordinate
+arithmetic, perceptual ones from rendered evidence at a stated size.
+Matching the tip's height alone never guaranteed alignment with the arrow's
+direction, which is why these checks judge along the ray
+(`Math.inkRayOrigin_between`). -/
 def CancelAlignment.checks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit := do
   judgeChecks ref oneFace
   headWingChecks ref oneFace

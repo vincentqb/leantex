@@ -485,7 +485,9 @@ name first), a parenthesised append (`walk cfg (acc ++ node x) rest` extends
 an accumulator), an RHS with non-name structure (literals, brackets), a
 self-append (`s := s ++ one x`), and an RHS ending in a projection
 (`out.extract i out.size` splices, it does not walk a tail). Line-local: an
-application split across lines is not seen. -/
+application split across lines is not seen. The shape turned a 4 ms pass
+into 1157 ms three times in one day, and a 4 ms pass into 600 ms on a
+30-page document. -/
 def quadraticPrepend (l : String) : Bool :=
   match (l.splitOn patAppend).reverse with
   | rhs :: lhs :: _ =>
@@ -681,13 +683,13 @@ def wildcardNumeral (l : String) : Bool :=
 /-- The registered conservation-shape suffixes: a public IR-to-IR walk's
 census statement is the walk's name plus one of these — census equality
 (`dimBlocks_text`), leaf coverage (`keepFor_covers`), or conditional
-identity (`substPage_id`). AGENTS.md § Conventions carries the
-reviewer-facing suffix registry; this list is its mechanical half. -/
+identity (`substPage_id`). The reviewer-facing registry is
+THEOREMS.md § Naming; this list is its mechanical half. -/
 def conservesSuffixes : List String := ["_text", "_covers", "_id"]
 
 /-- A public IR-to-IR walk entry: a non-private `def`, signature on one
 line, taking and returning `Array Block` or `Array Inline` — the shape
-whose census fact the obligation table's walk row owes. Returns the def's
+whose census fact an IR walk owes (AGENTS.md § When you add). Returns the def's
 name. A signature split across lines is not seen — the same line-scanner
 limitation as `ioInCore`, stated, not claimed away. -/
 def walkEntry (l : String) : Option String := Id.run do
@@ -764,11 +766,11 @@ def writerReach (l : String) : Bool :=
     || (t.startsWith "open " && hasWord t "Pdf")
     || usesQualified l "Pdf"
 
-/-- HTML built by concatenating tag strings: the exact shape AGENTS.md bans
-(`"<" ++ …`) everywhere but the typed tree's own renderer (Html.lean, which
-the caller exempts by file). A multi-character tag literal (`"<div>" ++`)
-is a stated blind spot — Pdf.lean's CMap and XMP writers legitimately build
-non-HTML angle-bracket text that way. -/
+/-- HTML built by concatenating tag strings (`"<" ++ …`): the shape no backend
+writes (AGENTS.md § Layout and design), everywhere but the typed tree's own
+renderer (Html.lean, which the caller exempts by file). A multi-character tag
+literal (`"<div>" ++`) is a stated blind spot — Pdf.lean's CMap and XMP
+writers legitimately build non-HTML angle-bracket text that way. -/
 def tagStringEmit (l : String) : Bool :=
   ((stripLineComment l).splitOn "\"<\"").drop 1 |>.any fun rest =>
     rest.trimAscii.toString.startsWith patAppend
@@ -789,7 +791,7 @@ def hasCall (line pat : String) : Bool :=
     | c :: _ => !isWordChar c
 
 /-- A host font scan in a test: `FontDiscovery.scan` where only the shipped-corpus
-`FontDiscovery.scanRoots [testFonts]` is hermetic (AGENTS.md, Conventions). -/
+`FontDiscovery.scanRoots [testFonts]` is hermetic (AGENTS.md § Privacy). -/
 def fontScanInTest (l : String) : Bool :=
   hasCall (stripLineComment (stripStrings l)) "FontDiscovery.scan"
 
@@ -829,7 +831,8 @@ def irTierMark : String := "-- ir tier:"
 
 /-- An IR dump in a test without its stated tier. `Ir.dump` and its walk
 companions all match: each reads the IR, and a page claim judged there is
-the six-visual-defects shape (AGENTS.md, Conventions). -/
+the shape six visual defects once passed a fully green suite in: goldens
+witness elaboration, not the artifact (AGENTS.md § Layout and design). -/
 def irDumpUnmarked (l : String) : Bool :=
   containsSub (stripLineComment (stripStrings l)) "Ir.dump" && !containsSub l irTierMark
 
@@ -870,8 +873,9 @@ def wildcardThrough (l : String) : Bool :=
       isVarToken r && !answers.contains r
   | _ => false
 
-/-- `]!` sites in a file, strings and comments aside — the panic-on-miss
-index COMMON bans adding to reach green. -/
+/-- `]!` sites in a file, strings and comments aside: the panic-on-miss index.
+A miss aborts the whole run, and one font in a TeX tree once took a build
+down that way, so an index is proved in bounds or defaulted instead. -/
 def bangCount (ls : Array String) : Nat := Id.run do
   let mut n := 0
   for l in ls do
@@ -927,15 +931,254 @@ def milestoneTok (s : String) : Bool := Id.run do
       return true
   return false
 
-/-- A repo-internal reference inside a string literal: `PLAN.md`,
-`AGENTS.md`, a `LeanTex/` path, or a milestone token. A diagnostic must be
+/-- The documents a source may point into by section, `<doc> § <heading>`:
+a pointer is how a check's help defers to the rule instead of restating it,
+and it must name a heading the document has, or a renamed section leaves
+the help pointing nowhere. -/
+def sectionDocs : List String := ["AGENTS.md", "PRINCIPLES.md", "THEOREMS.md"]
+
+/-- A repo-internal reference inside a string literal: `PLAN.md`, a rule
+document (`AGENTS.md`, `PRINCIPLES.md`, `THEOREMS.md`), a `LeanTex/` path, or
+a milestone token. A diagnostic must be
 actionable by someone holding only their own document — `see PLAN.md`
 points at a file the user does not have (the diag-voice defect). Lines that
 are themselves comments stay legal: prose for developers may name the plan. -/
 def repoRefInString (l : String) : Bool :=
   let s := stringsOnly (stripLineComment l)
-  containsSub s "PLAN.md" || containsSub s "AGENTS.md" ||
+  containsSub s "PLAN.md" || sectionDocs.any (containsSub s ·) ||
     containsSub s "LeanTex/" || milestoneTok s
+
+/-- The caps of a prose rule document, which an agent session reads whole: its
+lines, a line's width in characters, and its bytes. The width keeps the line
+cap honest, since a table row is one line however long, and the bytes bound
+what a session reads. A rule earns its line by naming the check that holds
+it (`cites --check` resolves the names), and the history behind a rule lives
+in git and in that check's docstring: the incident log `AGENTS.md`
+replaced, 603 lines and 66,197 bytes, restated its checks in prose that
+drifted from them. -/
+structure DocCap where
+  doc : String
+  lines : Nat
+  width : Nat
+  bytes : Nat
+
+def ruleDocCaps : List DocCap := [
+  { doc := "AGENTS.md", lines := 180, width := 100, bytes := 14000 },
+  { doc := "PRINCIPLES.md", lines := 130, width := 100, bytes := 9000 }]
+
+/-- Does the line date a rule to an incident: an ISO date, or the retired
+plan file named as a word? A rule states what holds; the day it was learned
+belongs to the commit that learned it. -/
+def datedStory (l : String) : Bool := Id.run do
+  if hasWord l "PLAN" then return true
+  let cs := l.toList.toArray
+  let digit (k : Nat) : Bool := (cs[k]?.map Char.isDigit).getD false
+  for i in [0:cs.size] do
+    if digit i && digit (i + 1) && digit (i + 2) && digit (i + 3) && cs[i + 4]? == some '-'
+        && digit (i + 5) && digit (i + 6) && cs[i + 7]? == some '-'
+        && digit (i + 8) && digit (i + 9) then
+      return true
+  return false
+
+/-- Each cap of `caps` the document exceeds, said whole. A document with no
+row is uncapped. -/
+def capFaults (doc text : String) (caps : List DocCap := ruleDocCaps) : Array String := Id.run do
+  let some cap := caps.find? (·.doc == doc) | return #[]
+  let lines := text.splitOn "\n"
+  let lines := if text.endsWith "\n" then lines.dropLast else lines
+  let mut out := #[]
+  if lines.length > cap.lines then
+    out := out.push s!"{doc} is {lines.length} lines, over its cap of {cap.lines}"
+  for (l, i) in lines.zipIdx do
+    if l.length > cap.width then
+      out := out.push s!"{doc}:{i + 1} is {l.length} characters wide, over its cap of {cap.width}"
+  if text.utf8ByteSize > cap.bytes then
+    out := out.push s!"{doc} is {text.utf8ByteSize} bytes, over its cap of {cap.bytes}"
+  return out
+
+/-- The lines of a rule document `datedStory` reads as dated, numbered. -/
+def datedLines (text : String) : Array (Nat × String) :=
+  ((text.splitOn "\n").zipIdx.filter (datedStory ·.1)).toArray.map fun (l, i) =>
+    (i + 1, l.trimAscii.toString)
+
+/-- The section marker, composed so this file's own text never reads as a
+pointer: the scan below covers every tracked source, this one included. -/
+def sectionMark : String := " " ++ "§"
+
+/-- The `<doc> § <heading>` pointers a line makes, backticks aside. The
+heading runs to the first parenthesis, `,`, `;`, `:`, `"`, backslash or the
+close of a block comment, less a closing period; a marker with no heading
+after it on the line reads as an empty heading, which no document has. -/
+def sectionRefs (l : String) : Array (String × String) := Id.run do
+  let t := l.replace "`" ""
+  let mut out := #[]
+  for doc in sectionDocs do
+    for rest in (t.splitOn (doc ++ sectionMark)).drop 1 do
+      let rest := (rest.splitOn "-/").headD rest
+      let h := String.ofList ((rest.toList.drop 1).takeWhile fun c =>
+        c != '(' && c != ')' && c != ',' && c != ';' && c != ':' && c != '"' && c != '\\')
+      let h := h.trimAscii.toString
+      let h := if h.endsWith "." then (h.dropEnd 1).toString else h
+      out := out.push (doc, if rest.startsWith " " then h else "")
+  return out
+
+/-- The `## ` headings of a markdown document. -/
+def docHeadings (text : String) : List String :=
+  (text.splitOn "\n").filterMap fun l =>
+    if l.startsWith "## " then some (l.drop 3).toString.trimAscii.toString else none
+
+/-- Every section pointer in `files` naming no heading of its document,
+located. `heads` maps each document to its headings; a document absent from
+it has none. -/
+def danglingSectionRefs (heads : List (String × List String))
+    (files : Array (String × String)) : Array (String × Nat × String) := Id.run do
+  let mut out := #[]
+  for (f, text) in files do
+    for (l, i) in (text.splitOn "\n").zipIdx do
+      for (doc, h) in sectionRefs l do
+        unless (((heads.find? (·.1 == doc)).map (·.2)).getD []).contains h do
+          out := out.push (f, i + 1, doc ++ sectionMark ++ " " ++ h)
+  return out
+
+/-- A tracked source's text for the prose scans, read as bytes and decoded
+leniently: a probe may hold bytes that are not UTF-8 on purpose, and a strict
+read threw there and ended the whole gate, every check after it unread. -/
+def sourceText (path : System.FilePath) : IO String :=
+  return Privacy.textOfBytes (← IO.FS.readBinFile path)
+
+/-- The trampoline git executes, whose cheap greps decide whether this gate
+runs at all. -/
+def hookPath : String := "scripts/hooks/pre-commit"
+
+/-- The pattern the trampoline's first test matches the staged names with:
+the single-quoted argument of its `--name-only | grep -qE` line, or none
+when the hook has no such line. -/
+def hookNamePattern (hook : String) : Option String := do
+  let marker := "git diff --cached --name-only | grep -qE '"
+  let l ← (hook.splitOn "\n").find? (containsSub · marker)
+  let pat := ((((l.splitOn marker).drop 1).headD "").splitOn "'").headD ""
+  if pat.isEmpty then none else some pat
+
+/-- Does the matcher the trampoline runs, `grep -qE`, accept `name` as one
+staged path under `pat`? Asked of grep itself, so the answer is the hook's
+own and not a reading of its regex. -/
+def hookGreps (pat name : String) : IO Bool := do
+  let (code, _, _) ← runBytes "sh"
+    #["-c", "printf '%s\\n' \"$1\" | grep -qE \"$2\"", "sh", name, pat]
+  return code == 0
+
+/-- The rule documents a commit touching only that document would carry
+past this gate: the ones the trampoline's staged-name pattern does not
+match, all of them when it has no such pattern. Such a commit never reaches
+the shape and pointer checks, so a cap or a dated rule waits for landing,
+the one gate that still reads the tree. The trampoline's pattern once
+matched no rule document, so on a clone with no denylist a commit editing
+only one could skip these checks. -/
+def hookSkippedDocs (hook : String) : IO (List String) := do
+  let some pat := hookNamePattern hook | return sectionDocs
+  sectionDocs.filterM fun d => return !(← hookGreps pat d)
+
+/-- The prose of a Lean source, one entry per line: the text of its comments
+and docstrings, code and string literals left out. Block comments nest; a
+string honours its escapes and runs across lines, so a help text spanning
+several lines is code, not prose; a character literal (`'"'`) opens no
+string. -/
+def leanProse (text : String) : Array String := Id.run do
+  let cs := text.toList.toArray
+  let charAt (k : Nat) : Char := cs[k]?.getD ' '
+  let mut out : Array String := #[]
+  let mut cur := ""
+  let mut depth := 0
+  let mut lineComment := false
+  let mut inString := false
+  let mut skip := 0
+  for i in [0:cs.size] do
+    if skip > 0 then
+      skip := skip - 1
+      continue
+    let c := charAt i
+    if c == '\n' then
+      out := out.push cur
+      cur := ""
+      lineComment := false
+    else if lineComment then
+      cur := cur.push c
+    else if depth > 0 then
+      if c == '/' && charAt (i + 1) == '-' then
+        depth := depth + 1
+        skip := 1
+      else if c == '-' && charAt (i + 1) == '/' then
+        depth := depth - 1
+        skip := 1
+      else
+        cur := cur.push c
+    else if inString then
+      if c == '\\' && charAt (i + 1) != '\n' then skip := 1
+      else if c == '"' then inString := false
+    else if c == '"' then
+      inString := true
+    else if c == '\'' && charAt (i + 2) == '\'' then
+      skip := 2
+    else if c == '\'' && charAt (i + 1) == '\\' && charAt (i + 3) == '\'' then
+      skip := 3
+    else if c == '-' && charAt (i + 1) == '-' then
+      lineComment := true
+      skip := 1
+    else if c == '/' && charAt (i + 1) == '-' then
+      depth := 1
+      skip := if charAt (i + 2) == '-' || charAt (i + 2) == '!' then 2 else 1
+  out := out.push cur
+  return out
+
+/-- The prose of a markdown file, one entry per line: fenced code blanked. -/
+def mdProse (text : String) : Array String := Id.run do
+  let mut out : Array String := #[]
+  let mut fence := false
+  for l in text.splitOn "\n" do
+    if l.trimAscii.toString.startsWith "```" then
+      fence := !fence
+      out := out.push ""
+    else
+      out := out.push (if fence then "" else l)
+  return out
+
+/-- Text with its backticked spans removed: a span names a thing, and a file
+written `AGENTS.md` is the file, not a pointer into it. -/
+def unticked (l : String) : String :=
+  String.join (((l.splitOn "`").zipIdx.filter fun (_, i) => i % 2 == 0).map (·.1))
+
+/-- A loose pointer into a rule document: `AGENTS.md` or `PRINCIPLES.md`
+named in prose with no section after it, or the retired `obligation table`
+named. A rule's address is its section, which `danglingSectionRefs` holds to
+the document; a pointer by nickname or bare file name outlives the rule it
+named. -/
+def looseRuleRef (prose : String) : Bool :=
+  let t := unticked prose
+  containsSub t ("obligation" ++ " table") ||
+    ["AGENTS", "PRINCIPLES"].any fun doc =>
+      ((t.splitOn doc).drop 1).any fun rest => !rest.startsWith (".md" ++ sectionMark)
+
+/-- The roots of the vendored corpora: each directory holding a tracked
+`PROVENANCE.txt`, which a vendored corpus owes beside its licence. Their
+files are upstream bytes a checksum pins, so the prose checks pass them by:
+no edit could answer a fault there. -/
+def vendoredRoots (tracked : Array String) : Array String :=
+  tracked.filterMap fun p =>
+    if p.endsWith "/PROVENANCE.txt" then some (p.dropEnd "PROVENANCE.txt".length).toString
+    else none
+
+/-- Is the path inside a vendored corpus? -/
+def vendored (roots : Array String) (p : String) : Bool := roots.any (p.startsWith ·)
+
+/-- Every loose pointer in `files`, located: in the comments and docstrings
+of a Lean source, and in the unfenced text of a markdown file. -/
+def looseRuleRefs (files : Array (String × String)) : Array (String × Nat × String) := Id.run do
+  let mut out := #[]
+  for (f, text) in files do
+    let prose := if f.endsWith ".lean" then leanProse text else mdProse text
+    for (l, i) in prose.zipIdx do
+      if looseRuleRef l then out := out.push (f, i + 1, l.trimAscii.toString)
+  return out
 
 /-- The Config fields the driver may read: the command, the diagnostic
 channel, the where/when of a run, the run's acceptance policy, the font
@@ -1053,8 +1296,9 @@ def sealAllow : List String := ["noteDefs"]
 /-- The size-step formula re-spelled outside Ir (asked by q-layout, live
 once `Ir.scaleStep` landed): `sizeScale.lookup … getD` is `scaleStep`'s
 body, and nine copies of it once diverged on the default (`getD 700` vs
-`getD 1000` — both dead, still drift). A bare `match` on the lookup is not
-the shape: an unknown size name must stay an `Option`. -/
+`getD 1000` — both dead, still drift): markBox's default drifted to 700
+while every other site said 1000. A bare `match` on the lookup is not the
+shape: an unknown size name must stay an `Option`. -/
 def scaleStepRespell (l : String) : Bool :=
   let t := stripLineComment (stripStrings l)
   containsSub t "sizeScale.lookup" && containsSub t ".getD"
@@ -1168,7 +1412,19 @@ def computedDemote (l : String) : Bool :=
 conditional on the declared setup that either names a loss in its block or
 skips one named below it. A conditional whose block both reads the setup and
 emits is a `.gate`; one that returns without emitting while an emission
-follows is a `.silence`. -/
+follows is a `.silence`.
+
+The contract the gate holds: a gate on the declared setup (context,
+configuration, declarations, state) that names, silences or demotes a loss
+owes the check that falsifies its premise, named beside it — the marker
+`premiseMark` reads, or its reasoned refusal — and the pin resolves to a
+theorem the build checks or a check block the suite runs (`pinResolves`). A
+premise about another subsystem is a claim, and prose rots: three defects
+shared that shape, one of them a deck that lost every arrowhead with a green
+suite. The shape of such a check is two builds differing by the gate's own
+condition: a byte-identical artifact with different diagnostics means nothing
+else was handling the case, so the gate is a silencer
+(`pictureKeyGateChecks`). -/
 def premiseSite (lines : Array String) (i : Nat) : Option PremiseKind := Id.run do
   let l := lines[i]?.getD ""
   if computedDemote l then return some .demote
@@ -1282,62 +1538,61 @@ def gates : List Gate := [
     what := fun f => s!"a class judged by its name string (`docClass.name ==`) in {f}"
     help := "  The DocClass inductive exists so a class check is a match the compiler
   keeps exhaustive; comparing the name string re-creates the stringly
-  checks it replaced, invisible to the next constructor.
+  checks it replaced, invisible to the next constructor (PRINCIPLES.md § Typed boundaries).
   Fix: match on the constructor; a genuinely name-shaped need (a
   diagnostic quoting the class) reads .name without comparing it." },
   { applies := fun _ => true
     flag := bannedWord kwPartial
     what := fun f => s!"new '{kwPartial}' in staged changes to {f}"
-    help := s!"  The tree holds no '{kwPartial}': every recursion terminates by a
-  proved measure (elaboration_total names the elaborator's; AGENTS.md,
-  Conventions, holds the technique) — the allowance list emptied on
-  2026-09-19 and stays empty.
-  Fix: make the recursion structural (see AGENTS.md, Conventions)." },
+    help := s!"  No declaration in the tree is marked '{kwPartial}': every recursion the
+  source spells terminates by a proved measure, though do-notation repeat
+  loops still compile to a {kwPartial} combinator (AGENTS.md § Lean rules).
+  Fix: make the recursion structural, through a List companion or an index
+  measure whose facts stand beside each call." },
   { applies := fun _ => true
     flag := bannedWord kwSorry
     what := fun f => s!"'{kwSorry}' in staged changes to {f}"
-    help := "  Fix: finish the proof." },
+    help := "  Every theorem has a complete proof (AGENTS.md § Lean rules).
+  Fix: finish the proof." },
   { applies := fun _ => true
     flag := bannedWord kwUnsafe
     what := fun f => s!"'{kwUnsafe}' in staged changes to {f}"
-    help := s!"  Fix: stay in the safe fragment; {kwUnsafe} code voids the certification story." },
+    help := s!"  No code is {kwUnsafe}: it voids the certification story (AGENTS.md § Lean rules).
+  Fix: stay in the safe fragment." },
   { applies := fun _ => true
     flag := quadraticPrepend
     what := fun f => s!"'{patAppend} walk rest' (prepend to a recursive call's result) in {f}"
-    help := "  Prepending to a recursive call's result copies it at every element -- it
-  turned a 4 ms pass into 1157 ms, three times in one day (PLAN 2026-09-16).
+    help := "  Prepending to a recursive call's result copies it at every element
+  (AGENTS.md § Lean rules).
   Fix: thread an Array accumulator through the walk (see Compat.rewriteList);
   a one-off prepend outside a recursion can bind the call to a name first." },
   { applies := fun _ => true
     flag := ctorDefault
     what := fun f => s!"inductive constructor field with a default value, in {f}"
-    help := "  Defaults on constructor fields let patterns under-specify silently: `.run
-  a b c` once matched only the default, with the whole suite green (PLAN
-  2026-09-15).
+    help := "  Constructor fields carry no defaults: a pattern then under-specifies
+  silently (AGENTS.md § Lean rules).
   Fix: spell the field at every constructor site; defaults belong on structures." },
   { applies := fun f => f.endsWith ".lean" && f != "LeanTex/Core/Diag.lean"
     flag := demotedAssign
     what := fun f => s!"a demotion written outside Diag.lean, in {f}"
-    help := "  Severity and the code letter are projections of a Diag's stored kind
-  since the derivation landed — `severity :=` no longer compiles — and
-  `demoted` is the one policy bit left: a call site that writes it ships
-  a content loss as a note, which is how \"content silently gone\" once
-  shipped as a warning fourteen times (PLAN, the severity policy).
+    help := "  Severity and the code letter are projections of a Diag's stored kind, and
+  `demoted` is the one policy bit left: a call site that writes it ships a
+  content loss as a note (PRINCIPLES.md § One loss in one line).
   Fix: emit through Diag.of; demotion is `\\allow`'s decision alone
   (Diag.demote, in Diag.lean)." },
   { applies := fun f => f.startsWith "LeanTex/" || f == "Main.lean"
     flag := repoRefInString
     what := fun f => s!"a repo-internal reference in a string the user can see, in {f}"
     help := "  A diagnostic is read by someone holding only their own document: PLAN.md,
-  AGENTS.md, a LeanTex/ path, and milestone names (M6, M8) mean nothing
-  there — 'see PLAN.md' shipped in real output (the diag-voice defect).
+  AGENTS.md, a LeanTex/ path and milestone names (M6, M8) mean nothing there
+  (PRINCIPLES.md § One loss in one line).
   Fix: say what happens and what to write instead; the voice lint in
   Tests.lean judges the registered text." },
   { applies := fun f => f == "Main.lean" || f == "LeanTex/Cli/Driver.lean"
     flag := undeclaredConfigRead
     what := fun f => s!"a Config read in {f} not on the driver's declared list"
     help := "  The artifact is a function of the document and the font environment;
-  flags are not arguments to it (AGENTS.md, Conventions). A new Config
+  flags are not arguments to it (AGENTS.md § Layout and design). A new Config
   field the driver reads is one question away from shaping the artifact,
   so it lands on driverConfigReads (scripts/precommit.lean) only after
   that question is answered no — and a flag that does shape the artifact
@@ -1349,7 +1604,7 @@ def gates : List Gate := [
     what := fun f => s!"a temporary directory or file made outside Host in {f}"
     help := "  On Lean v4.34.1 the toolchain's temporary-directory and temporary-file
   calls end the process with a segmentation fault when the temporary root
-  is missing.
+  is missing, so the host's one interpreter makes them (AGENTS.md § Layout and design).
   Fix: make the directory with Host.withScratch, whose failure is an
   IO.Error naming the root." },
   { applies := fun f => f.startsWith "LeanTex/Core/" || f == "LeanTex/Cli/World.lean"
@@ -1358,36 +1613,34 @@ def gates : List Gate := [
     help := "  Modules under LeanTex/Core/ do no IO: files
   and fonts surface as request values the CLI driver fulfills. World.lean
   is the host's vocabulary, and a program over it is a value: Host.lean
-  alone answers its questions.
+  alone answers its questions (AGENTS.md § Layout and design).
   Fix: return a request value and fulfill it under LeanTex/Cli/, or ask
   World's question and answer it in Host.lean." },
   { applies := (·.startsWith "LeanTex/Core/")
     flag := identityArm
     what := fun f => s!"identity catch-all arm (`| x => x`) in {f}"
     help := "  A rewrite walk with a wildcard ships a new IR constructor through
-  untouched -- the shape of the covered-content defect (PLAN 2026-09-17).
+  untouched (AGENTS.md § When you add).
   Fix: spell every constructor; the compiler then makes the next
-  constructor a build error at every walk (AGENTS.md, obligation table)." },
+  constructor a build error at every walk." },
   { applies := (· == "LeanTex/Core/Ir.lean")
     flag := wildcardNumeral
     what := fun f => s!"wildcard arm answering a numeral (`| _ => 1`) in {f}"
     help := "  A measure walk with a numeric default silently miscounts a new IR
-  constructor -- a step inside a section title got no handout page this
-  way (PLAN 2026-09-17).
+  constructor (AGENTS.md § When you add).
   Fix: spell every constructor and say what each one measures." },
   { applies := (backendFiles.contains ·)
     flag := surfaceReach
     what := fun f => s!"a backend reaches into the surface, in {f}"
     help := "  Backends consume the IR and nothing else; a backend that re-parses is how
-  md→PDF and tex→HTML decay into N×M special cases (AGENTS.md, Conventions).
+  md→PDF and tex→HTML decay into N×M special cases (AGENTS.md § Layout and design).
   Fix: put what the backend needs on the IR." },
   { applies := (judgeFiles.contains ·)
     flag := writerReach
     what := fun f => s!"a judge of the PDF's bytes reaches into the writer, in {f}"
     help := "  PdfCensus judges what a PDF's bytes carry, through PdfRead alone, and
   PdfContract judges the census; a judge that can see Pdf.lean's spellings
-  reports the writer's intent, which is how an unembedded copied face once
-  passed fonts.all_embedded.
+  reports the writer's intent (AGENTS.md § Layout and design).
   Fix: read the fact off the parsed objects or the census; a spelling a
   judge needs is a fact of ISO 32000-2 or a profile, stated where it
   stands with its section." },
@@ -1395,7 +1648,7 @@ def gates : List Gate := [
     flag := dimLiteral
     what := fun f => s!"bare dimension literal in {f}"
     help := "  A design value in a backend is a token, or carries its source where it
-  stands (AGENTS.md, obligation table): a loose `pt 14` is how a heading
+  stands (AGENTS.md § When you add): a loose `pt 14` is how a heading
   scale drifts from the type scale, invisibly.
   Fix: read a token/style/palette entry, or put the source in a `--`
   comment on the same line (the diff scanner cannot see the line above)." },
@@ -1403,29 +1656,28 @@ def gates : List Gate := [
     flag := tagStringEmit
     what := fun f => s!"HTML built from tag strings, in {f}"
     help := "  HTML is a typed tree with a certified escaper; a concatenated tag skips
-  the escaper by construction (AGENTS.md, Conventions). Html.lean's own
+  the escaper by construction (AGENTS.md § Layout and design). Html.lean's own
   renderer is the one sanctioned site.
   Fix: build the node with the typed constructors; the renderer emits it." },
   { applies := fun f => f == "Tests.lean" || f.startsWith "Tests/"
     flag := fontScanInTest
     what := fun f => s!"FontDiscovery.scan in {f}"
     help := "  Tests scan only the shipped corpus fonts — FontDiscovery.scanRoots [testFonts]
-  (AGENTS.md, Conventions); a host scan makes the suite depend on what
+  (AGENTS.md § Privacy); a host scan makes the suite depend on what
   this machine has installed.
   Fix: ship the font in testdata/corpus/fonts/ and scan through testFonts." },
   { applies := fun f => f == "Tests.lean" || f.startsWith "Tests/"
     flag := irDumpUnmarked
     what := fun f => s!"Ir.dump in {f} without its stated tier"
-    help := s!"  A claim about what a page shows never comes from an IR dump — six visual
-  defects once passed a fully green suite that way (AGENTS.md, Conventions).
+    help := s!"  A claim about what a page shows never comes from an IR dump
+  (AGENTS.md § Layout and design).
   Fix: assert over Layout.Out or the typed HTML tree; an IR-tier fact that
   is not a page claim says so on the line: `{irTierMark} <why>`." },
   { applies := fun f => f.startsWith "LeanTex/" && f != "LeanTex/Core/Ir.lean"
     flag := scaleStepRespell
     what := fun f => s!"the size-step formula re-spelled (`sizeScale.lookup … getD`) in {f}"
     help := "  Ir.scaleStep is the one resolving site for a named step of the size
-  scale; the getD re-spelling is how markBox's default drifted to 700
-  while every other site said 1000.
+  scale (PRINCIPLES.md § One fact in one IR value).
   Fix: read Ir.scaleStep base name; a genuine Option need (an unknown
   name must stay none) matches on the lookup without getD, and a theorem
   naming a raw table value lives beside the table in Ir.lean." },
@@ -1433,9 +1685,8 @@ def gates : List Gate := [
       && f != "Tests/Support.lean"
     flag := splitOnIdiom
     what := fun f => s!"a local copy of Support's hasStr (a splitOn-count `let`) in {f}"
-    help := "  (hay.splitOn needle).length > 1 is Tests/Support.lean's hasStr; eight
-  copies of the idiom grew across the test tree before the shared helper
-  was reached for (AGENTS.md, Conventions: the second caller moves it).
+    help := "  (hay.splitOn needle).length > 1 is Tests/Support.lean's hasStr, and the
+  second caller of a test helper moves it there (AGENTS.md § Repository).
   Fix: use hasStr, or bind it over a fixed page: let has := hasStr page." },
   { applies := (· == "LeanTex/Cli/Input.lean")
     flag := undecodedRead
@@ -1443,7 +1694,7 @@ def gates : List Gate := [
     help := "  A file the document names becomes text through Encoding.readTex or
   Encoding.readMarkdown, which replace bytes that are not text and name
   where; IO.FS.readFile throws instead, and a Latin-1 .bib once ended the
-  run with an uncaught exception that way.
+  run with an uncaught exception that way (PRINCIPLES.md § Always ship).
   Fix: read the bytes with readSource and decode them through Encoding." },
   { applies := fun f => f.startsWith "Tests" && f.endsWith ".lean"
     flag := undecodedFixture
@@ -1452,7 +1703,7 @@ def gates : List Gate := [
   its bytes through the decoding door (a byte-order mark skipped, bytes
   that are not text replaced, lines ended at CR, a declared encoding
   honoured), where IO.FS.readFile hands a reader bytes the binary never
-  sees as they stand.
+  sees as they stand (PRINCIPLES.md § One mechanism per concept).
   Fix: read the file with fixtureText." },
   { applies := fun f => f.startsWith "scripts/" && f.endsWith ".lean"
     flag := frontEndRestated
@@ -1461,14 +1712,15 @@ def gates : List Gate := [
   door, Input.readDocument: the decoding door, the surface reader the
   extension selects, input execution and the declaration's settling. A copy
   of the steps reads a Latin-1, BOM or CR file differently from the binary,
-  and the tier then measures a page no build ships.
+  and the tier then measures a page no build ships
+  (PRINCIPLES.md § One mechanism per concept).
   Fix: read the bytes with Input.readSource and pass them to Input.readDocument." },
   { applies := fun f => f.startsWith "LeanTex/" && f.endsWith ".lean"
     flag := heartbeatRaise
     what := fun f => s!"a {kwMaxHeartbeats} raise in {f}"
     help := s!"  The tree holds zero heartbeat raises; a proof that needs one is telling
-  you the definition's shape is wrong (the MarkdownDoc emit_body_title_first
-  case), not that the budget is small.
+  you the definition's shape is wrong, not that the budget is small
+  (AGENTS.md § Lean rules).
   Fix: reshape the proof or the definition. Report any remaining blocker
   without claiming an unproved guarantee." }]
 
@@ -2297,6 +2549,111 @@ def selftest : IO UInt32 := do
   if homePathHits (grepRecords gr) != #[("notes.md", 3, dirHome ++ "dave")] then
     fails.modify ("homePathHits: wrong hit from a tree grep" :: ·)
 
+  -- The rule documents' shape: a cap on lines, on a line's width and on
+  -- bytes, each read once; a date or the plan file dates a rule, a version
+  -- or a span of numbers does not.
+  expect "datedStory" datedStory [
+    ("the allowance list emptied on 2026-09-19 and stays empty", true),
+    ("see PLAN for the history", true),
+    ("v4.34.1, 2^24 inputs, 30 min, U37", false),
+    ("a PLANE figure, a plan file", false)]
+  let cap : List DocCap := [{ doc := "D.md", lines := 3, width := 10, bytes := 40 }]
+  let capCases : List (String × Nat) := [
+    ("- a\n- b\n- c\n", 0), ("- a\n- b\n- c\n- d\n", 1),
+    ("- a rule too wide\n", 1), (String.join (List.replicate 3 "- abcdefgh\n") ++ "", 0),
+    ("- abcdefgh\n- abcdefgh\n- abcdefghi\n" ++ "", 1), ("x".pushn 'y' 50, 2)]
+  for (text, want) in capCases do
+    unless (capFaults "D.md" text cap).size == want do
+      fails.modify (s!"capFaults: {(capFaults "D.md" text cap).size} faults for {repr text}" :: ·)
+  unless (capFaults "Other.md" ("x".pushn 'y' 500) cap).isEmpty do
+    fails.modify ("capFaults: a document with no cap row was capped" :: ·)
+  unless datedLines "a\nemptied on 2026-09-19\nb\n" == #[(2, "emptied on 2026-09-19")] do
+    fails.modify (s!"datedLines: {datedLines "a\nemptied on 2026-09-19\nb\n"}" :: ·)
+  let vendoredTree := #["testdata/external/x/PROVENANCE.txt", "testdata/external/x/a/README.md",
+    "testdata/externalia.md", "README.md"]
+  unless vendoredRoots vendoredTree == #["testdata/external/x/"] &&
+      vendored (vendoredRoots vendoredTree) "testdata/external/x/a/README.md" &&
+      !vendored (vendoredRoots vendoredTree) "testdata/externalia.md" &&
+      !vendored (vendoredRoots vendoredTree) "README.md" do
+    fails.modify (s!"vendoredRoots: {vendoredRoots vendoredTree}" :: ·)
+  -- Section pointers, spelled through the marker so this file's own text is no
+  -- pointer: each ends at punctuation, and a marker split from its heading
+  -- across lines points nowhere.
+  let ag := "AGENTS.md" ++ sectionMark
+  let refCases : List (String × Array (String × String)) := [
+    (s!"  stands ({ag} When you add): a loose", #[("AGENTS.md", "When you add")]),
+    (s!"the registry (`{ag} Naming`) and {ag} Lean rules.",
+      #[("AGENTS.md", "Naming"), ("AGENTS.md", "Lean rules")]),
+    (s!"names follow {ag} Naming (`conservesSuffixes`)", #[("AGENTS.md", "Naming")]),
+    (s!"  ({ag} Principles, 14)", #[("AGENTS.md", "Principles")]),
+    (s!"(PRINCIPLES.md{sectionMark} Rules are checks)", #[("PRINCIPLES.md", "Rules are checks")]),
+    (s!"defers to {ag}", #[("AGENTS.md", "")]),
+    ("names AGENTS.md in prose and no section", #[])]
+  for (l, want) in refCases do
+    unless sectionRefs l == want do
+      fails.modify (s!"sectionRefs {l}: got {sectionRefs l}" :: ·)
+  let heads := [("AGENTS.md", docHeadings "# T\n\n## Lean rules\n\ntext\n## When you add\n")]
+  let srcs := #[("a.lean", s!"-- ({ag} Lean rules)\n-- ({ag} Conventions)\n"),
+    ("b.md", s!"see {ag} When you add.\n")]
+  unless danglingSectionRefs heads srcs == #[("a.lean", 2, ag ++ " Conventions")] do
+    fails.modify (s!"danglingSectionRefs: {danglingSectionRefs heads srcs}" :: ·)
+  unless sectionRefs s!"a docstring ending at {ag} Lean rules -/" == #[("AGENTS.md", "Lean rules")] do
+    fails.modify ("sectionRefs: a comment close read as part of the heading" :: ·)
+  -- Prose is what comments and docstrings say: code and strings are not, a
+  -- string runs across lines and through a line continuation, a character
+  -- literal opens none, and block comments nest.
+  let src := "def a := \"x -- y\" -- one\n/-- two\n  three -/\ndef b := '\"' -- four\n\
+    def c := \"five\\\n  six\" /- seven /- eight -/ nine -/\n"
+  unless leanProse src == #[" one", " two", "  three ", " four", "", " seven  eight  nine ", ""] do
+    fails.modify (s!"leanProse: {leanProse src}" :: ·)
+  -- A loose pointer: the file named in prose without a section, or the
+  -- retired table; a section pointer, a backticked file and a string pass.
+  expect "looseRuleRef" looseRuleRef [
+    ("(AGENTS.md, Conventions)", true),
+    ("per AGENTS: a visual bug", true),
+    ("the obligation table's walk row", true),
+    ("budget (AGENTS.md), so", true),
+    ("convention is AGENTS': the artifact", true),
+    ("see PRINCIPLES.md for the rule", true),
+    (s!"holds it ({ag} Lean rules)", false),
+    ("`AGENTS.md`'s length cap", false),
+    ("names THEOREMS.md and nothing else", false)]
+  let looseSrcs := #[
+    ("a.lean", s!"def x := \"AGENTS.md, a string\" -- see AGENTS.md\n/-- fine ({ag} Lean rules) -/\n"),
+    ("b.md", "see AGENTS.md\n```\nAGENTS.md, in a fence\n```\n")]
+  unless (looseRuleRefs looseSrcs).map (fun (f, n, _) => (f, n)) == #[("a.lean", 1), ("b.md", 1)] do
+    fails.modify (s!"looseRuleRefs: {looseRuleRefs looseSrcs}" :: ·)
+  -- The trampoline's pre-filter, asked of grep itself: the pattern as the
+  -- hook spells it reaches every rule document, and one that dropped a
+  -- document lets a commit of that document alone skip the gate.
+  let hookWith (alt : String) : String :=
+    "#!/bin/sh\n# comment\ngit diff --cached --name-only | grep -qE '\\.lean$|^PLAN\\.md$|^("
+      ++ alt ++ ")\\.md$' \\\n  || exit 0\n"
+  unless hookNamePattern (hookWith "AGENTS") == some "\\.lean$|^PLAN\\.md$|^(AGENTS)\\.md$" do
+    fails.modify (s!"hookNamePattern: {hookNamePattern (hookWith "AGENTS")}" :: ·)
+  unless hookNamePattern "#!/bin/sh\nexit 0\n" == none do
+    fails.modify ("hookNamePattern: a hook with no name test yielded a pattern" :: ·)
+  let wholeSkips ← hookSkippedDocs (hookWith "AGENTS|PRINCIPLES|THEOREMS")
+  unless wholeSkips.isEmpty do
+    fails.modify (s!"hookSkippedDocs: the whole alternative skipped {wholeSkips}" :: ·)
+  let partSkips ← hookSkippedDocs (hookWith "AGENTS|THEOREMS")
+  unless partSkips == ["PRINCIPLES.md"] do
+    fails.modify (s!"hookSkippedDocs: dropping PRINCIPLES skipped {partSkips}" :: ·)
+  unless (← hookSkippedDocs "#!/bin/sh\nexit 0\n") == sectionDocs do
+    fails.modify ("hookSkippedDocs: a hook with no name test skipped nothing" :: ·)
+  unless !(← hookGreps "^(AGENTS|THEOREMS)\\.md$" "docs/AGENTS.md") do
+    fails.modify ("hookGreps: an anchored pattern matched a nested path" :: ·)
+  -- The prose scans read a source whatever its bytes.
+  let latin1 ← IO.FS.withTempDir fun dir => do
+    let f := dir / "latin1.md"
+    IO.FS.writeBinFile f (ByteArray.mk #[0x41, 0xE9, 0x0A])
+    try
+      let t ← sourceText f
+      pure (some t)
+    catch _ => pure none
+  unless latin1.any (·.startsWith "A") do
+    fails.modify ("sourceText: a source holding bytes that are not UTF-8 was not read" :: ·)
+
   expect "bannedWord" (bannedWord kwPartial) [
     -- a declaration must still fire, wherever it stands on the line
     ("+" ++ kwPartial ++ " def foo : Nat := 0", true),
@@ -2593,6 +2950,7 @@ def selftest : IO UInt32 := do
     ("            (help := s!\"planned for {milestone}; see PLAN.md\" ++", true),
     ("  say .W0104 \"planned for M8\" pos", true),
     ("  let msg := \"stated in AGENTS.md\"", true),
+    ("  let msg := \"see THEOREMS.md for the proof\"", true),
     ("  fail s!\"see LeanTex/Core/Diag.lean\"", true),
     -- legal spellings: code tokens, comments, docstrings, honest text
     ("  -- planned for M8, tracked in PLAN.md", false),
@@ -2990,8 +3348,62 @@ def main (args : List String) : IO UInt32 := do
   Fix: rename one. A case-insensitive checkout keeps one of the two, and for
   a Lean module the compiled .olean names collide as well."
 
+  -- The rule documents' shape, and every pointer into a section of one, read
+  -- before the relevance gate so a commit touching only the documents is
+  -- judged as well. The pointers are read from every tracked source but the
+  -- vendored corpora's upstream bytes.
+  let mut heads : List (String × List String) := []
+  for doc in sectionDocs do
+    if ← System.FilePath.pathExists doc then
+      let text ← IO.FS.readFile doc
+      heads := (doc, docHeadings text) :: heads
+      for fault in capFaults doc text do
+        say s!"pre-commit: {fault}.
+  A rule document is read whole at the start of every session, so it states
+  rules and names their checks (PRINCIPLES.md § Rules are checks).
+  Fix: fold the rule into the check it names, its contract into that check's
+  docstring, or carry an over-wide line onto the next."
+      for (n, l) in datedLines text do
+        say s!"pre-commit: {doc}:{n} dates a rule:
+  {l}
+  A rule states what holds; the day it was learned belongs to the commit that
+  learned it (PRINCIPLES.md § Rules are checks).
+  Fix: cut the date or the story, and keep what the check needs in its docstring."
+  if ← System.FilePath.pathExists hookPath then
+    let skipped ← hookSkippedDocs (← IO.FS.readFile hookPath)
+    unless skipped.isEmpty do
+      say s!"pre-commit: {hookPath} lets a commit touching only {String.intercalate " or " skipped} skip this gate:
+  its staged-name pattern must match every rule document, or the caps, the
+  dated-rule check and the pointer checks above never read an edit to one
+  until landing (PRINCIPLES.md § Rules are checks).
+  Fix: add the document to the `^(AGENTS|PRINCIPLES|THEOREMS)\\.md$` alternative."
+  let trackedPaths := ((tracked.splitOn "\x00").filter (!·.isEmpty)).toArray
+  let roots := vendoredRoots trackedPaths
+  let mut sources : Array (String × String) := #[]
+  for p in trackedPaths do
+    if (p.endsWith ".lean" || p.endsWith ".md") && !vendored roots p &&
+        (← System.FilePath.pathExists p) then
+      sources := sources.push (p, ← sourceText p)
+  let dangling := danglingSectionRefs heads sources
+  if !dangling.isEmpty then
+    let hits := String.intercalate "\n" (dangling.toList.map fun (f, n, r) => s!"  {f}:{n}: {r}")
+    say s!"pre-commit: a section pointer names no heading of its document:
+{hits}
+  A help text or a docstring defers to a rule by pointing at its section; the
+  pointer names a `## ` heading exactly and ends at punctuation.
+  Fix: point at the heading as it reads now, or restore the section."
+  let loose := looseRuleRefs (sources.filter fun (f, _) => !sectionDocs.contains f)
+  if !loose.isEmpty then
+    let hits := String.intercalate "\n" (loose.toList.map fun (f, n, l) => s!"  {f}:{n}: {l}")
+    say s!"pre-commit: a comment points into a rule document by nickname or bare name:
+{hits}
+  A rule's address is its section, which the pointer check above holds to the
+  document; a nickname outlives the rule it named (PRINCIPLES.md § Rules are checks).
+  Fix: write `AGENTS.md{sectionMark} <heading>`, or the same into `PRINCIPLES.md`,
+  for the section the rule stands in now."
+
   -- A home directory names a person and a machine, and the tree may carry
-  -- neither (AGENTS.md, opening paragraph). The hook reads the lines this
+  -- neither (AGENTS.md § Privacy). The hook reads the lines this
   -- commit adds to every staged file, whatever its extension; CI and --tree
   -- read every tracked text file, so a path that arrived by a route with no
   -- hook — a machine without core.hooksPath — is still found.
@@ -3013,7 +3425,7 @@ def main (args : List String) : IO UInt32 := do
   Fix: refer to the private reference corpus abstractly, write a placeholder,
   or give the path relative to the repository."
 
-  -- Personal and private-document terms (AGENTS.md, opening paragraph), by
+  -- Personal and private-document terms (AGENTS.md § Privacy), by
   -- the denylist this clone keeps outside the tree: the hook reads every line,
   -- path and binary the commit adds, whatever its extension; --tree and
   -- --range read the whole staged tree and, outside the hook, every unpushed
@@ -3048,7 +3460,7 @@ the privacy check is skipped."
   -- commits around it, so this reads the index alone.
   if src == .index && staged.contains "lean-toolchain" && staged.any (· != "lean-toolchain") then
     say "pre-commit: lean-toolchain changed together with other files.
-  Toolchain bumps are deliberate and go in their own commit (AGENTS.md, Don't touch).
+  Toolchain bumps are deliberate and go in their own commit (AGENTS.md § Build and verify).
   Fix: git restore --staged lean-toolchain, commit the rest, then commit the bump alone."
 
   if staged.any (·.startsWith "testdata/golden/") then
@@ -3066,7 +3478,7 @@ the privacy check is skipped."
       | none => pure #[]
     if !staged.any goldenSource && !branchTouched.any goldenSource then
       say "pre-commit: testdata/golden/** changed without a .lean or testdata/corpus/*.tex or *.md change.
-  Goldens are regenerated through the harness, never hand-edited (AGENTS.md, Don't touch).
+  Goldens are regenerated through the harness, never hand-edited (AGENTS.md § Build and verify).
   Fix: revert the golden files, or regenerate with: lake exe Tests --update"
 
   let diff ← match sel with
@@ -3125,7 +3537,8 @@ the privacy check is skipped."
 {String.intercalate "\n" bad}
   Keys share one flat store per module; spell the namespace where the call is —
   a literal (\"ctrl:x\") or a concatenation opening with one ((\"env:\" ++ name)) —
-  so two constructs of one name cannot silence each other, and this check can see it."
+  so two constructs of one name cannot silence each other, and this check can see it
+  (PRINCIPLES.md § One loss in one line)."
 
   -- The claim and its evidence arrive together: a nativePackages entry
   -- without its testdata/compat-index file used to surface an hour later at
@@ -3139,10 +3552,11 @@ the privacy check is skipped."
         say s!"pre-commit: '{pkg}' is in nativePackages with no testdata/compat-index/{pkg}.txt.
   A nativePackages entry arrives with its index file: the package's
   documented command list, one row per command, the manual section named
-  in its header (AGENTS.md, obligation table); lake test probes every row.
+  in its header (compatIndexChecks in Tests/Surface.lean states the format);
+  lake test probes every row.
   Fix: write testdata/compat-index/{pkg}.txt before adding the entry."
 
-  -- The conservation gate — the obligation table's walk row, mechanical:
+  -- The conservation gate — the IR-walk row (AGENTS.md § When you add), mechanical:
   -- every public IR-to-IR walk in core (a def taking and returning
   -- Array Block / Array Inline) ships its census statement, named by a
   -- registered shape suffix (`_text` / `_covers` / `_id`, the Conserves
@@ -3179,8 +3593,8 @@ the privacy check is skipped."
       i ≥ d && conservesNone (lines[i - d]?.getD "")
     unless hasThm || escaped do
       say s!"pre-commit: the IR walk `{name}` ({f}:{i + 1}) has no conservation statement.
-  A public Block/Inline walk owes its census fact (AGENTS.md, obligation
-  table): a theorem named `{name}_text` (census equality — state it as a
+  A public Block/Inline walk owes its census fact (AGENTS.md § When you add;
+  THEOREMS.md § Naming): a theorem named `{name}_text` (census equality — state it as a
   `Conserves` instance), `{name}_covers`, or `{name}_id` — or, when the
   walk genuinely conserves nothing, the one-line refusal
   `-- conserves: none — <why>` beside the def."
@@ -3194,7 +3608,7 @@ the privacy check is skipped."
   -- a deck's arrowheads in silence), a recovery justified by what no other
   -- path could then do, and a demotion asking whether a name is a TeX
   -- internal when the fact it needs is whether the author wrote the file.
-  -- AGENTS.md already says a guarantee stated in prose is not a guarantee and
+  -- A guarantee stated in prose is not a guarantee (AGENTS.md § Lean rules), and
   -- cites.lean enforces it for theorem citations; this is the same rule where
   -- the claim is about a sibling subsystem rather than a proof.
   -- Whole tree, not the diff: a gate and its pin land in different hunks, and
@@ -3206,7 +3620,8 @@ the privacy check is skipped."
   for (f, lines) in premiseTexts do
     for (row, why) in diagnosticOutputBypasses f lines do
       say s!"pre-commit: diagnostic output bypass in {f}:{row}: {why}.
-  Keep document diagnostics as Diag values through Ui.diag; only Render formats them.
+  Keep document diagnostics as Diag values through Ui.diag; only Render formats them
+  (PRINCIPLES.md § One loss in one line).
   Status/help and command output belong in the audited UI and command handlers."
     for (row, call) in surfaceDoorBypasses f lines do
       say s!"pre-commit: {f}:{row} reads a surface around its door ({call}).
@@ -3237,15 +3652,14 @@ the privacy check is skipped."
         | none =>
           say s!"pre-commit: a premise marker with no reason, in {f}:{i + 1}:
   {l.trimAscii}
-  A marker names the check that fails when the premise breaks, and why:
-  `-- {premiseMark} <pin> — <why>`, or `-- {premiseMark} none — <why>` when
-  nothing falsifies it."
+  A premise marker names the check that falsifies it (AGENTS.md § When you add).
+  Fix: write `-- {premiseMark} <pin> — <why>`, or `-- {premiseMark} none — <why>`
+  when nothing falsifies it."
         | some (some pin, _) =>
           unless pinResolves treeText testText testDefs pin do
             say s!"pre-commit: the premise marker in {f}:{i + 1} names `{pin}`, which resolves to nothing.
-  A pin is a theorem the build checks, or a check block the suite runs — one
-  that fails when the premise breaks. A block the suite never calls pins
-  nothing.
+  A pin is a theorem the build checks or a check block the suite runs
+  (AGENTS.md § When you add).
   Fix: name the real check, or write `{premiseMark} none — <why>` and say what is missing."
         | some (none, _) => pure ()
   -- Each registry row is checked in both directions, so it cannot rot either
@@ -3256,15 +3670,15 @@ the privacy check is skipped."
     unless containsSub txt row.site do
       say s!"pre-commit: the premise row for {row.file} no longer matches its site:
   {row.site}
-  A premise row records a gate whose honesty rests on another subsystem. The
-  site moved or its condition changed, so the premise owes a fresh reading.
+  The site moved or its condition changed, so the premise owes a fresh reading
+  (AGENTS.md § When you add).
   Fix: update the row, or move the marker beside the site and delete the row."
     match row.pin with
     | some pin =>
       unless pinResolves treeText testText testDefs pin do
         say s!"pre-commit: the premise row for {row.file} ({row.site}) names `{pin}`, which resolves to nothing.
-  Fix: name the check that falsifies the premise, or record the row with no
-  pin and say what is missing."
+  A premise names the check that falsifies it (AGENTS.md § When you add).
+  Fix: name that check, or record the row with no pin and say what is missing."
     | none => pure ()
   for (f, lines) in premiseTexts do
     for i in [0:lines.size] do
@@ -3279,11 +3693,7 @@ the privacy check is skipped."
           say s!"pre-commit: a premise with no pin, in {f}:{i + 1} — it {kind.what}:
   {(lines[i]?.getD "").trimAscii}
   A gate that rests on a fact about another subsystem owes the check that
-  holds the fact; a premise recorded in prose alone rots silently — that is
-  how a deck lost every arrowhead with a green suite. The decisive shape is
-  two builds differing by the gate's own condition: if the artifact is
-  byte-identical and only the diagnostics move, nothing else was handling the
-  case (`pictureKeyGateChecks` is the worked example).
+  holds the fact (AGENTS.md § When you add; premiseSite states the shape).
   Fix: write `-- {premiseMark} <pin> — <why>` beside it, naming that check;
   `-- {premiseMark} none — <why>` records it as debt instead."
 
@@ -3299,9 +3709,9 @@ the privacy check is skipped."
       let side (what : String) (ns : List String) : String :=
         if ns.isEmpty then "" else s!"\n  {what}: {String.intercalate " " ns}"
       say s!"pre-commit: seal/unseal mismatch in {f}:{side "sealed but never unsealed" sealedOnly}{side "unsealed but never sealed" unsealedOnly}
-  Every name a knot seals is unsealed right after it (Elab.lean's pairs
-  are the shape); a deliberately module-final seal is allowlisted in
-  sealAllow (scripts/precommit.lean) with its reason where it stands."
+  Each name a knot seals is unsealed after it (AGENTS.md § Lean rules).
+  Fix: unseal it after the knot, as Elab.lean's pairs do; a deliberately
+  module-final seal goes on sealAllow (scripts/precommit.lean) with its reason."
 
   -- The state-door gate (the accounts slice), whole tree over Compat:
   -- every modify/set lives in a declared door, or the dispatcher's
@@ -3317,7 +3727,7 @@ the privacy check is skipped."
           say s!"pre-commit: bare state mutation outside a door, in `{cur}` ({f}:{i + 1}):
   {l.trimAscii}
   The dispatcher's silence guard reads diags.size and the writes counter
-  (rewriteCtrl_accounts), and a modify/set outside the declared doors
+  (rewriteCtrl_accounts, THEOREMS.md § Surfaces), and a modify/set outside the declared doors
   (compatStateDoors, scripts/precommit.lean) is invisible to both: the
   arm would look silent and draw a false W0387.
   Fix: mutate through `write` (it counts); diagnostics go through `say`."
@@ -3340,7 +3750,7 @@ the privacy check is skipped."
       -- A leaf projection is not a walk: a def handed to `foldInlines`/
       -- `foldBlocks`/`mapInline`/`mapBlock` reads one node while the shared
       -- fold recurses, so its catch-all is the fold's own totality, not a
-      -- hole (AGENTS: a new collector is a fold leaf). Every identifier
+      -- hole (AGENTS.md § When you add: an IR walk is a fold leaf). Every identifier
       -- following a fold call on its line is exempt.
       let folds := ["foldInlines", "foldBlocks", "mapInline", "mapBlock"]
       let leafNames : Array String := lines.foldl (fun acc l =>
@@ -3372,8 +3782,8 @@ the privacy check is skipped."
           say s!"pre-commit: wildcard arm in the IR walk `{cur}` ({f}:{i + 1}):
   {l.trimAscii}
   Spell every constructor, or the next Ir constructor silently falls
-  through (AGENTS.md, obligation table: an Ir constructor owes an explicit
-  arm in every walk); the allowlisted frozen sites live in precommit.lean."
+  through (AGENTS.md § When you add); the allowlisted frozen sites live in
+  precommit.lean."
 
   -- The role-read gate, whole tree over LeanTex/: a colour role is read
   -- through the registry and the one resolving region, never by its key
@@ -3401,13 +3811,13 @@ the privacy check is skipped."
     let base := ((bangBaseline.find? (·.1 == f)).map (·.2)).getD 0
     if n > base then
       say s!"pre-commit: new ]! index in {f}: {n} sites, baseline {base}.
-  ]! aborts the whole run on a miss — one font in a TeX Live tree once took
-  the run down with it.
+  An index is proved in bounds or defaulted, since a miss aborts the whole
+  run (AGENTS.md § Lean rules).
   Fix: use `for h :` bounds, getD, or a proof-carrying index; the per-file
   count may only fall (lower its bangBaseline row in scripts/precommit.lean
   when you remove sites)."
 
-  -- The Support rule, mechanical (AGENTS.md, Conventions: a test helper
+  -- The Support rule, mechanical (AGENTS.md § Repository: a test helper
   -- used by two check blocks moves to Tests/Support.lean the moment the
   -- second caller appears): a top-level def name spelled in two test
   -- files is that second caller arriving. Fifteen copies of one deck
@@ -3425,7 +3835,7 @@ the privacy check is skipped."
       if name == name2 && f < f2 then
         say s!"pre-commit: test helper `{name}` is defined in both {f} and {f2}.
   A helper used by two check blocks moves to Tests/Support.lean the moment
-  the second caller appears (AGENTS.md, Conventions).
+  the second caller appears (AGENTS.md § Repository).
   Fix: keep one `{name}` in Tests/Support.lean and delete the copies."
 
   -- The same rule one directory over: a tier producer's `--selftest` is its

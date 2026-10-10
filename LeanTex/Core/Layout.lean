@@ -1571,7 +1571,12 @@ public structure PageOut where
 A page that is not blank ships at a boundary and as the last page
 (`brk_ships_exact`, `closeLast_ships_exact`), and the next box stands below
 what it holds (`gfxContentPageChecks`): a picture that paints fills or
-strokes alone is content as a line is. -/
+strokes alone is content as a line is. Every test of whether a page holds
+anything reads this — the boundary, the float replay, the last page, the
+fresh-page test, the commit-or-break door — so a new kind of output a page
+holds takes its place here, and in `finishPage`'s distribution gates beside
+lines and inks when it moves with the content; `openBody` alone reads title
+lines, since it asks whether a title's depth stands above the body. -/
 @[expose] public def PageOut.blank (p : PageOut) : Bool :=
   p.lines.isEmpty && p.fills.isEmpty && p.inks.isEmpty
 

@@ -147,7 +147,8 @@ and whose record says so. What is not closed stays visible: `unwitnessed`
 (guards, but no failing run on record) and `owed` (no guard yet, the owner
 and the guard's name once it lands) are counts the suite holds in both
 directions, and an owed guard that lands fails the suite until its row is
-promoted.
+promoted. A green check asserting the reported behaviour keeps the defect:
+two rows once pinned a reported false W0104 as expected.
 -/
 
 open LeanTex.Core

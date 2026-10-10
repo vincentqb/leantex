@@ -623,15 +623,27 @@ def bulmaSheetChecks (ref : IO.Ref (List String)) : IO Unit := do
     (HtmlDoc.emitClosed cfg doc #[]).1.isOk
 
 /-- The shipped generated syntax must remain in the checked vocabulary.
-This is a syntax coverage guard; missing captures still owe publication checks. -/
+This is a syntax coverage guard; missing captures still owe publication checks.
+It is also the census of script: no corpus page, in any stylesheet mode,
+runs script but the slides class's constant pager, and every deck runs that
+one (a JSON-LD data block is data, not script). -/
 def htmlContainedCorpusChecks (ref : IO.Ref (List String)) : IO Unit := do
+  let mut decks := 0
   for name in goldenNames do
     let (doc, _) ← goldenDoc name
     for mode in [HtmlDoc.CssMode.own, .bulma, .none] do
       let (head, body, _) := HtmlDoc.emitTree { css := mode } doc
-      let refusals := (HtmlResource.requests head body).filterMap fun
+      let requests := HtmlResource.requests head body
+      let refusals := requests.filterMap fun
         | .refused why => some why
         | _ => none
       check ref s!"contained corpus syntax: {name} {repr mode}: {repr refusals}" refusals.isEmpty
+      let scripts := requests.filterMap fun
+        | .script js => some js
+        | _ => none
+      check ref s!"contained corpus script: {name} {repr mode} runs only the deck's constant pager"
+        (scripts == if doc.docClass == .slides then #[HtmlDoc.deckScript] else #[])
+    if doc.docClass == .slides then decks := decks + 1
+  check ref s!"contained corpus script: the corpus ships decks ({decks})" (0 < decks)
 
 end Tests

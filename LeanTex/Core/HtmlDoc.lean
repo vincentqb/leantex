@@ -855,7 +855,7 @@ mutual
 whole marker — or plain text. `none` is the inexpressible remainder, which
 the emitter must diagnose, never silently default (`styleRules`): the same
 declaration then reaches both backends or the difference has a name.
-Explicit arms (the obligation table; no wildcard in a backend's IR walk). -/
+Explicit arms: no wildcard in a backend's IR walk (AGENTS.md § When you add). -/
 private def markerCssOne (scale : List (String × Nat)) (decls : Array String) :
     Inline → Option MarkerCss
   | .text s => some { text := s, decls := decls }
@@ -7045,7 +7045,7 @@ table (`Ir.VAlign.shares` carries the sourcing) exactly as
 `Layout.VDist.of` projects it for the PDF page — a backend may not read
 another backend, so each projects the IR and `vdist_shares_agree` in
 Tests states the agreement. A page-opening path owes a declared
-distribution, never a default (the obligation table). -/
+distribution, never a default (AGENTS.md § When you add). -/
 @[expose] public def vdistShares (keys : Ir.FrameKeys) (v : Ir.VAlign) (breakable : Bool := false) :
     Nat × Nat :=
   Ir.VAlign.shares keys v breakable

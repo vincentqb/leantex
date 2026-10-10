@@ -126,8 +126,8 @@ spellings, where a signal is genuinely lost — is named by W0387 instead.
 A control that consumed its groups and said neither still fails, which is
 the loss this gate exists to catch.
 
-Both are recognised by `Diag.subject`, never by the text they render:
-AGENTS.md's `_named` rule is that matching is the structured subject, and
+Both are recognised by `Diag.subject`, never by the text they render: the
+`_named` shape (THEOREMS.md § Naming) matches on the structured subject, and
 message text is the golden's business. The two doors namespace their keys
 differently because they are different losses about the same control —
 `ctrl:nothing:<name>` for the translated silence, `ctrl:<name>` for the

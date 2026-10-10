@@ -42,6 +42,14 @@ with nothing written:
 
 The oracle is never "must match". Every fixture's number is what the engine
 reaches today; the ladder's whole claim is that it does not go down.
+
+Each comparison level owes the pair it is blind to, equal under it and
+unequal under the level above, and its ordering premise as a check, never a
+docstring: `--selftest` reads a page painted out of order, since the line
+reading once took first-paint order for reading order, which a float placed
+away from its source falsifies. The sidecar is a record format a tier reads,
+so it owes the round trip of its empty value that scripts/Board.lean's tier
+contract states, held in scripts/parity-regen.lean.
 -/
 import LeanTex.Cli.FontDiscovery
 import scripts.ParityCore
@@ -558,14 +566,16 @@ def selftest : IO UInt32 := do
   unless linesOf (page #[wide, line 100 "ab"]) == #["abz"] do
     bad := bad.push s!"a line is not read left to right: {repr (linesOf (page #[wide, line 100 "ab"]))}"
   -- Order is blind to the line partition; the line level is not. That is the
-  -- measured reason the level exists, so it is asserted here rather than told.
+  -- measured reason the level exists, so it is asserted here rather than told:
+  -- the reading-order level was once believed to see line breaking, until two
+  -- pages with one scalar sequence and different line partitions both passed.
   let split := page #[line 100 "ab", line 80 "cd"]
   let joined := page #[line 100 "abcd"]
   unless orderKey split == orderKey joined do bad := bad.push "orderKey is not blind to lines"
   unless lineKey split != lineKey joined do bad := bad.push "lineKey is blind to lines"
-  -- And the level below: census is blind to order, order is not. The pair
-  -- the obligation row owes for every comparison level with a declared
-  -- blind spot — one equal under the level, unequal under the one above it.
+  -- And the level below: census is blind to order, order is not. Every
+  -- comparison level with a declared blind spot owes such a pair, one equal
+  -- under the level and unequal under the one above (AGENTS.md § When you add).
   let ab := page #[line 100 "ab"]
   let ba := page #[line 100 "b", { line 100 "a" with x := Dim.pt 50 }]
   unless censusKey ab == censusKey ba do bad := bad.push "censusKey is not blind to order"

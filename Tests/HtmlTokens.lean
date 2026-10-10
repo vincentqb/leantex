@@ -19,8 +19,8 @@ defect is the *absence* of a reference, which only the emitted stylesheet
 can witness.
 
 So this is a check, not a theorem: the property is decidable by reading
-what the backend emitted, and AGENTS.md's rule is that an inspectable
-artifact fact wants a test rather than a proof.
+what the backend emitted, and an invariant no theorem states is written as a
+test (AGENTS.md § Repository).
 
 Two distinctions make the claim true rather than merely loud.
 

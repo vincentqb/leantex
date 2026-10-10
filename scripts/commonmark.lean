@@ -40,6 +40,25 @@ unclassified deviation fails. Four verdicts:
   number, a title, a language, a fourth-level heading) that the engine's
   page drops must be named by the run, or every mode fails (`silentGaps`).
 
+A case whose run names a markdown route (or a W0110, an option the
+desugaring leaked) is never a `match`, however the trees compare: when the
+trees agree once exactly the named gaps are hidden, its note names the gap
+that blocks it, the verdict row an IR gap owes. A gap construct dropped where
+the element it sits on did ship must be named, because a list before `* * *`
+once shipped no rule and raised nothing. A case waiting on a dialect decision
+the user owns carries that decision as its note and stays `owed`.
+
+The reader desugars to the surface AST, and no reader text reaches a
+re-parse: where the elaborator reads a construct back from option text (a
+listing's language, an image's alternative), what crosses is an IR value
+(`Ir.ListingLang`) or a spelling the elaborator's own splitter is checked to
+read back exactly (`Md.altSource`), never the author's text; a `]` in an info
+string once ended the option head and leaked into the code. A construct the
+surface AST cannot express is routed by a keyed diagnostic whose loss class
+is decided by what reaches the page (`pending` only where nothing does), and
+a construct the AST can express is carried through its one existing
+resolving site, never routed.
+
 The ratchet is the tier file `testdata/scoreboard/commonmark.tsv`, in the one
 scoreboard format and under the one ratchet every tier obeys
 (`Scoreboard.tierMain`, `Scoreboard.ratchet`): per spec section a

@@ -220,7 +220,24 @@ def selfTest : IO (List (String × Bool)) := do
 
 end Tests.BuildGraph
 
-/-- The build graph's private reads over the maintained tree. -/
+/-- The build graph's private reads over the maintained tree. A consumer
+reads public interfaces: a proof that must unfold a body reads an
+`@[expose]`d definition or a public lemma beside it, and `import all` is for
+small readers whose rebuild costs seconds, such as a proof or contract
+companion beside what it reads. Private reads chain: ContrastContract and
+ElabRegistryContract read Theme whole and, through Theme's `import all Ir`,
+Ir's private part, which their kernel `decide`s evaluate, so a 28-second
+contract rebuilds on every Ir edit, the standing exception. Every library and
+test file is a `module` but the declared shims; each header is read with
+Lake's own reader, and the shims, each large file's private reads and each
+large file's private readers are held to declared lists. One comment line
+appended to Ir once rebuilt 184 modules in six and a half minutes, through
+Layout's and HtmlDoc's `import all` and 172 test files outside the module
+system. Order inside a large module costs as much, and this check does not
+read it: a structure, an inductive or a mutual block is added
+synchronously, after the elaboration and kernel check of every theorem above
+it, so its types stand before its theorems; Layout once lost about 100 of
+its 136 seconds that way. -/
 def buildGraphChecks (ref : IO.Ref (List String)) : IO Unit := do
   for (name, ok) in ← Tests.BuildGraph.selfTest do
     check ref s!"build graph model: {name}" ok

@@ -296,7 +296,10 @@ row is spellings the vocabulary reads and the one they all lower to; in
 every context the row names, a spelling and its twin give byte-identical
 HTML, the same shipped lines (position, size and text) and the same
 diagnostics. Never the IR: a row holds the artifacts, where a reader meets
-the page. -/
+the page. Every attribute a spelling may carry is decided here, carried,
+honoured, routed or refused: `<details open>` was once refused while the
+closed spelling, which ships the same expanded page, was read, because no
+row had decided the attribute's fate. -/
 def htmlTwinChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
   let some fonts ← serifFacesSet
@@ -552,7 +555,8 @@ source's page — rendered, which tells a break from the text `<br>` — and
 is its own twin; and a tex document's breaks stay inside the constructs
 that held them while its text stays text. A table cell is held to GFM's
 spelling, every pipe escaped, and a break inside one reads back as the
-break it was. -/
+break it was. The text half is why: once the reader read `<br>`, the twin's
+unescaped text `<br>` read back as a break, with nothing raised. -/
 def mdTwinBreakChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
   for (ctx, src) in [("paragraph", "Alder<br>Birch\n"), ("heading", "# Alder<br>Birch\n"),

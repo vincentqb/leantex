@@ -49,7 +49,10 @@ leaves no room; and the page's vertical distribution moves it as it
 moves a rule of its size: a `[c]` frame's centring, fil glue and a flush
 bottom. Each held over `Layout.Out`,
 each failing while page shipment and placement read only a page's lines and
-fills. Invented pictures. -/
+fills. Picture fills once moved from a page's fills into its placed inks while
+those tests still read lines and fills: a page holding only a picture was
+dropped, merged into the next frame, set over and left undistributed.
+Invented pictures. -/
 def gfxContentPageChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit := do
   let t := check ref
   let draws (out : Layout.Out) (i : Nat) : Nat := ((out.pages[i]?.map pageDraws).map (·.size)).getD 0

@@ -5,10 +5,23 @@ and `scripts/<tier>.lean` — and the file is the whole claim: `#` lines for
 provenance (tool versions, the encoding; data, never gated), then
 `item<TAB>integer` rows, higher is better, sorted and unique.
 
+A measurement a goal is judged by is a tier, never a number in a report.
+`<tier>` matches `[a-z0-9-]+`, which the aggregate faults otherwise. Its
+producer runs in three modes (regenerate, `--check`, `--selftest`), and its
+name is in `declaredTiers`, whose absence is a fault unless the name is also
+on `pendingTiers`; a pending name whose tier has both halves fails the
+selftest, so landing a tier and removing its name are one commit. An absent
+or empty baseline under `--check` is a fault, and only regeneration starts
+from nothing; the aggregate faults an empty or rowless baseline itself,
+whatever its producer exits. `--check` is hermetic, reading committed
+references and in-repo data only: anything that needs another engine, the
+network or the host's TeX tree is a report (`scoreboard --bench`), never a
+gate, and `scoreboard --selftest` fans out to every tier's.
+
 The tier contract is the exit status of `--check`, and nothing else. That is
-what PLAN's spec defines, so it is the only thing every tier's writer was
-told about, and four writers built to it in parallel. Two things this
-library likes are therefore optional, never gating:
+the one thing every tier's writer was told about, and four writers built to
+it in parallel. Two things this library likes are therefore optional, never
+gating:
 
 * the porcelain line (`tierLine`) adds counts when a tier prints one, and
   can never turn a non-zero exit into a pass;
@@ -17,6 +30,12 @@ library likes are therefore optional, never gating:
 
 An item may hold spaces: a row is split on its tab, and no consumer splits
 an item on whitespace.
+
+A record format a tier reads beside its rows — a sidecar, a record its
+producer writes and reads back — owes the round trip of its empty value,
+every field empty: that is the arm a real fixture eventually takes and the
+one a hand-written example never does. The parity sidecar's is held in
+scripts/parity-regen.lean, the rhythm record's in scripts/rhythm.lean.
 
 The ratchet, stated once here so every tier obeys the same one:
 
@@ -51,8 +70,11 @@ from the file alone, which is what keeps every mode hermetic:
 * `# retired-tier: <why>` in place of every row retires a whole tier: the
   file stays as its tombstone and the producer is deleted.
 
-A committed file still carrying a request is `stale` under `--check`: it is
-not what a regeneration wrote. `scoreboard --check --base <rev>` holds the
+A committed file still carrying a request that names its committed floor is
+`stale` under `--check`: it is not what a regeneration wrote. One holding a
+request that names any other floor is a fault, and the message says to mark
+it applied if it records a fall already written, otherwise to correct or
+delete it. `scoreboard --check --base <rev>` holds the
 tree's files to the ones committed at `<rev>` (`judgeBase`), read with git's
 replacement objects off: a fall or a vanish there needs a line that is new
 since `<rev>` — a record spending a request `<rev>` holds is new, since the
@@ -60,7 +82,10 @@ spend is — which is what stops a hand-edited value, or a baseline deleted and
 regenerated from nothing, from laundering one. Every tier file in the tree,
 one new since `<rev>` included (`judgeNew`), must read as the format
 (`validate`), and one still carrying a request is `stale` there too, whatever
-its producer answers.
+its producer answers. A baseline present at `<rev>` may not disappear, and a
+base git cannot read is a fault. A pass prints each weakening and each new
+line it credited, control characters spelled out, which is where the human
+reads them.
 
 The encoding line is read by the queue, so a deficit is computed rather
 than declared: `# encoding: headroom cap=<n>` means the value is

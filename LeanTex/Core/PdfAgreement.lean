@@ -26,9 +26,9 @@ from the same set (`HtmlDoc.shipFaces`), with captured font programs
 embedded in the HTML font resources. Stated as the superset the HTML can
 honestly promise: it never sees layout's used-glyph data, so it declares
 every face of the set, and the embedded subset is covered a fortiori. The
-convention is AGENTS': the artifact is a function of the document and the
-font environment — a viewer without the document's faces installed must
-not read it in a stand-in. -/
+convention (AGENTS.md § Layout and design): the artifact is a function of the
+document and the font environment — a viewer without the document's faces
+installed must not read it in a stand-in. -/
 public theorem html_fonts_cover_pdf (fs : FontSet) (pages : Array PageOut)
     (h : 0 < fs.fonts.size) :
     ∀ k ∈ keepFaces fs pages, ∃ ff ∈ HtmlDoc.shipFaces fs, ff.index = k :=

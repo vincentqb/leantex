@@ -303,7 +303,9 @@ body face, so a deck set in a face with a tall x-height opened its rules
 sets 10.95pt; a preamble's `1ex` resolved in the table's own face and size;
 the deck's stage spelled `\tabcolsep` in paper points, under half its share
 of the PDF page; and an article's stylesheet spelled the rule gaps in points,
-a 10pt article's at 0.23 of its body text where the page sets 0.28. -/
+a 10pt article's at 0.23 of its body text where the page sets 0.28. Only
+table lengths are fixed this way: the preamble's other lengths still resolve
+where they are read, and fixing them alike is pending work. -/
 def tableLengthChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit := do
   let t := check ref
   for (kind, cls, lengths) in tableLengthsLualatex do

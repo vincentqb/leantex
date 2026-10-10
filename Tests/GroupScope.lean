@@ -323,7 +323,20 @@ private def colourOnly : List (String × String × String) :=
 /-- **A colour declared inside a group does not reach text after it**, in
 either artifact: every marker's glyph runs in `Layout.Out` and its leaf in
 the typed HTML tree carry the colour the lualatex measurement names, and a
-colour declaration moves no line. -/
+colour declaration moves no line. A declaration a document can make inside a
+group (a colour, a font, a language, a URL face, a Beamer colour) keeps its
+state in the scope record, in the global log where TeX makes the assignment
+global (`\pagecolor`), or in the flow scope its native door documents
+(`\palette`). A paragraph end closes no group, so what a
+paragraph's text declares is carried past it (`carryDecls`), and a group
+split at a paragraph end re-applies its declarations to each part. A colour
+once rode the flow palette, a global door: a title page's `\color` reached
+every page after it and the body shipped in the page's own colour. Still
+outside the scope record: lengths (Compat's per-key restore,
+`closeLengthScope`), a body `\definecolor` (the native palette door, so
+global, where xcolor's is local), a URL face chosen inside a command's own
+argument, and an inline `\normalcolor`'s HTML paint (the IR's concrete normal
+ink, not the stylesheet's). -/
 def groupScopeChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit := do
   let t := check ref
   for p in probes do

@@ -15,7 +15,13 @@ only invented outline titles and no external fonts or resources; the
 refusal the CLI reports as E0607 is the producer's own, on an invented
 face name. These executable witnesses supplement the universal field
 theorems; they are not proof premises. Parent registration calls this
-block. -/
+block.
+
+Its large value depends on a runtime read before any closure captures it:
+a closed term a loop's closure captures can be copied into the loop's
+specialized body and rebuilt once per element, and this block's
+65,536-entry plan, captured by one `find?` as a closed term, held
+`lake test` for 25 minutes instead of 3. -/
 def pdfBoundsChecks (failures : IO.Ref (List String)) : IO Unit := do
   let check (name : String) (ok : Bool) : IO Unit := do
     unless ok do failures.modify (name :: ·)

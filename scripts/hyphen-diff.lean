@@ -30,21 +30,28 @@ def showHyphens (pats : Hyphen.Patterns) (word : String) : String := Id.run do
     out := out.push c
   return out
 
-/-- Lowercase-alphabetic words of length ≥ 6 from the corpus and docs,
-sorted and deduplicated — the same list the shell pipeline built with
-tr/grep/sort -u. -/
+/-- A word list: one word per line, `#` lines and blank lines aside. -/
+def readWordList (path : System.FilePath) : IO (Array String) := do
+  let contents ← IO.FS.readFile path
+  return ((contents.splitOn "\n").filterMap fun line =>
+    let w := line.trimAscii.toString
+    if w.isEmpty || w.startsWith "#" then none else some w).toArray
+
+/-- The committed sample (`testdata/oracles/hyphen-words.txt`) and the
+lowercase-alphabetic words of length ≥ 6 in the corpus documents, sorted
+and deduplicated: data and fixtures, never a rules document, so editing
+one cannot shrink the sample. -/
 def defaultWords : IO (Array String) := do
   let mut text := ""
   for entry in (← System.FilePath.readDir "testdata/corpus").qsort (·.fileName < ·.fileName) do
     if entry.fileName.endsWith ".tex" then
       text := text ++ (← IO.FS.readFile entry.path) ++ "\n"
-  for doc in ["README.md", "AGENTS.md"] do
-    text := text ++ (← IO.FS.readFile doc) ++ "\n"
   let isLetter := fun (c : Char) => (c ≥ 'a' && c ≤ 'z') || (c ≥ 'A' && c ≤ 'Z')
   let tokens := (text.split (fun c => !isLetter c)).toList.map (·.toString)
   let keep := tokens.filter fun w =>
     w.length ≥ 6 && w.toList.all (fun c => c ≥ 'a' && c ≤ 'z')
-  let sorted := keep.toArray.qsort (· < ·)
+  let committed ← readWordList "testdata/oracles/hyphen-words.txt"
+  let sorted := (committed ++ keep.toArray).qsort (· < ·)
   let mut out : Array String := #[]
   for w in sorted do
     if out.back? != some w then
@@ -79,11 +86,7 @@ def main (args : List String) : IO UInt32 := do
     return (← die 2 "luatex not found")
 
   let words ← match args.head? with
-    | some path =>
-      let contents ← IO.FS.readFile path
-      pure (((contents.splitOn "\n").filterMap fun line =>
-        let w := line.trimAscii.toString
-        if w.isEmpty then none else some w).toArray)
+    | some path => readWordList path
     | none => defaultWords
   let total := words.size
 

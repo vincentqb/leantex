@@ -9339,7 +9339,7 @@ mutual
 /-- The walk of `fillTemplate`. Exhaustive over `Inline` by design: any
 body-carrying wrapper may hold the template's hole, and a leaf carries no
 body to fill. A new constructor must answer here or the build breaks —
-never add a wildcard arm (AGENTS.md, the obligation table). -/
+never add a wildcard arm (AGENTS.md § When you add). -/
 private def fillOne (content : Array Inline) : Inline → Inline
   | .styled st body =>
     .styled st (if body.isEmpty then content else (fillList content body.toList).toArray)
@@ -14504,11 +14504,11 @@ public structure Cover where
   plain : Color
   of : Color → Color
 
-/-- The one resolving site for covering (the palette-role obligation,
-AGENTS.md): the per-colour cover at the design's fraction toward its
-surface, and the plain cover for runs with no colour of their own — the
-declared `covered` colour when the document names one, the fraction of
-the body ink otherwise. Everything that covers — the layout dim walks,
+/-- The one resolving site for covering (the colour-role obligation,
+AGENTS.md § When you add): the per-colour cover at the design's fraction
+toward its surface, and the plain cover for runs with no colour of their
+own — the declared `covered` colour when the document names one, the
+fraction of the body ink otherwise. Everything that covers — the layout dim walks,
 the contrast contract — reads this and nothing else. -/
 public def Design.cover (d : Design) : Cover :=
   let of := Oklab.cover d.coveredFraction d.bg
@@ -15147,7 +15147,7 @@ public theorem footnoteWrap_text (num : Option Nat) :
 (`Inline.colored`, whose census is its body's) where the kind declares a
 colour, and the body unchanged where it does not, so it ships exactly the
 text census the body already had — the `Styles` walk's conservation fact
-(AGENTS.md, obligation table). -/
+(AGENTS.md § When you add). -/
 public theorem Styles_text (s : Styles) (kind : String) :
     Conserves plainText (s.linkInk kind) := by
   intro body
@@ -21492,8 +21492,8 @@ label commands"); here it resolves to the number the author captioned.
 The binding is the walk's context, so this is the open event and nothing
 else: `foldCtxBlock` owns the descent, and the arms below say only what
 each block does to the binding its content is read under. The explicit
-arms are the obligation table's, kept here because a new constructor must
-declare which binding it passes down. -/
+arms are an Ir constructor's obligation (AGENTS.md § When you add), kept here
+because a new constructor must declare which binding it passes down. -/
 public def floatLabelEnter (float : Option RefBinding) (out : Array (String × Option RefBinding))
     (b : Block) : Array (String × Option RefBinding) × Option RefBinding :=
   match b with

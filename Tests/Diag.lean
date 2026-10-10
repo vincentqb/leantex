@@ -733,7 +733,8 @@ a source path, or a milestone token (`M6`, `M8`). A diagnostic must be
 actionable by someone holding only their own document. -/
 def dvInternalRef (s : String) : Bool :=
   let has (pat : String) : Bool := (s.splitOn pat).length > 1
-  has "PLAN.md" || has "AGENTS.md" || has "LeanTex/" || has ".lean" ||
+  has "PLAN.md" || has "AGENTS.md" || has "PRINCIPLES.md" || has "THEOREMS.md" ||
+    has "LeanTex/" || has ".lean" ||
     (Id.run do
       let cs := s.toList.toArray
       for i in [0:cs.size] do
