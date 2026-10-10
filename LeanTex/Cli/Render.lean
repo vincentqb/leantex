@@ -14,9 +14,25 @@ private def severityColor : Severity → String
   | .warning => "1;33"
   | .note => "1;36"
 
+/-- The bidirectional formatting characters: the embeddings, overrides and
+isolates (U+202A–202E, U+2066–2069) and the implicit marks (U+061C, U+200E,
+U+200F), which reorder what a reader sees without being seen. -/
+private def bidiControl (c : Char) : Bool :=
+  let n := c.toNat
+  n == 0x061C || n == 0x200E || n == 0x200F || (0x202A ≤ n && n ≤ 0x202E) ||
+    (0x2066 ≤ n && n ≤ 0x2069)
+
+/-- `acc`, then `\u` and the four upper-case hexadecimal digits of `c`. -/
+private def pushEscape (acc : String) (c : Char) : String :=
+  let hex (d : Nat) : Char := Char.ofNat (if d < 10 then 48 + d else 55 + d)
+  let n := c.toNat
+  [hex (n / 4096 % 16), hex (n / 256 % 16), hex (n / 16 % 16), hex (n % 16)].foldl String.push
+    ((acc.push '\\').push 'u')
+
 /-- Keep a diagnostic's continuations attached to its header. A filename
 and trigger use literal newline escapes; other fields use indented continuations.
-Terminal controls are data, including an escape supplied by an external tool. -/
+Terminal controls are data, including an escape supplied by an external tool,
+and so are the bidirectional formatting characters. -/
 private def humanText (newline : String) (s : String) : String :=
   s.foldl (init := "") fun acc c =>
     match c with
@@ -29,6 +45,7 @@ private def humanText (newline : String) (s : String) : String :=
       if c.toNat < 0x20 || (0x7F ≤ c.toNat && c.toNat ≤ 0x9F) then
         let hex := String.ofList (Nat.toDigits 16 c.toNat)
         acc ++ "\\x" ++ (if hex.length < 2 then "0" else "") ++ hex
+      else if bidiControl c then pushEscape acc c
       else acc.push c
 
 /-- Severity icons share the completion line's visual vocabulary. Output
@@ -133,6 +150,7 @@ private def jsonEscape (s : String) : String :=
       if c.toNat < 0x20 || (0x7F ≤ c.toNat && c.toNat ≤ 0x9F) then
         let hex := "0123456789abcdef".toList
         acc ++ "\\u00" ++ String.ofList [hex[c.toNat >>> 4]!, hex[c.toNat &&& 0xF]!]
+      else if bidiControl c then pushEscape acc c
       else
         acc.push c
 

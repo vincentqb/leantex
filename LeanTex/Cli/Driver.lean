@@ -190,17 +190,31 @@ def since (t0 : Nat) : IO Nat := do
 
 /-- Where the markdown twin is written: `outPath`, unless the document
 declared its served name (`\output{ md = "llms.txt" }`) — the declared
-name replaces the stem-derived one in the same directory, so the HTML
-head's alternate link and the file on disk cannot drift apart. An explicit
-`-o twin.md` file still wins: the command line outranks the document. -/
+name, read lexically from the same directory (`PublicationPaths.placed`),
+replaces the stem-derived one, and the HTML head's alternate link names
+that file from the page (`twinHref`), so the two cannot drift apart. An
+explicit `-o twin.md` file still wins: the command line outranks the
+document. -/
 def mdOutPath (output : Option String) (outputIsDir : Bool) (source : String)
     (declared : Option String) : String :=
   let base := outPath output outputIsDir source .md
   match declared with
   | some name =>
     if (output.bind emitOfPath) == some Emit.md then base
-    else ((System.FilePath.mk base).parent.getD "." / name).toString
+    else PublicationPaths.placed ((System.FilePath.mk base).parent.getD ".").toString name
   | none => base
+
+/-- The markdown twin's link from the page, a function of the document
+alone, as every artifact is (`artifact_flag_free`): the declared name read
+from the page's directory, where `mdOutPath` places it
+(`PublicationPaths.nameHref`), or the derived file's own name. None for a
+declared name the page cannot link: an absolute one, or one with no final
+file name. A run that writes both artifacts names no markdown file with
+`-o`, so the declared name is where its twin lands. -/
+def twinHref (mdPath : String) (declared : Option String) : Option String :=
+  match declared with
+  | some name => PublicationPaths.nameHref name
+  | none => (System.FilePath.mk mdPath).fileName.bind PublicationPaths.nameHref
 
 
 /-- One fulfilled boundary picture. Both artifacts read these captured
@@ -825,8 +839,7 @@ in the HTML" (← since t)
           fonts := if shipFonts then some fs else none
           -- The markdown twin, when one is being written beside the page,
           -- is linked from the head as the alternate representation.
-          mdHref := if emit.contains .md then (System.FilePath.mk mdPath).fileName
-            else none
+          mdHref := if emit.contains .md then twinHref mdPath doc.output.md else none
           -- A picture's `viewBox` is the box the PDF reserves: the same
           -- label measurement layout places with, over the one face set.
           labelMetric := Layout.labelMetric (Layout.Geom.ofPage doc.page) fs

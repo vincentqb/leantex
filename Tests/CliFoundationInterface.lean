@@ -14,6 +14,8 @@ example : List String → Except String LeanTex.Cli.Config := LeanTex.Cli.parse
 example : System.FilePath → ByteArray → IO Unit := LeanTex.Cli.AtomicFile.write
 example : Array (String × String) → IO (Option String) :=
   LeanTex.Cli.PublicationPaths.conflict
+example : String → Option String := LeanTex.Cli.PublicationPaths.nameHref
+example : String → String → String := LeanTex.Cli.PublicationPaths.placed
 example : String := LeanTex.Cli.SvgPoster.stylesheet
 example : Bool → LeanTex.Core.Diag → Bool → String := @LeanTex.Cli.Render.human
 example : LeanTex.Core.Diag → String := LeanTex.Cli.Render.porcelainDiag

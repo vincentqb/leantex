@@ -1,6 +1,7 @@
 module
 
 public import Tests.Support
+import LeanTex.Cli.PublicationPaths
 
 public section
 
@@ -42,6 +43,53 @@ def publicationWriteChecks (ref : IO.Ref (List String)) : IO Unit := do
     check ref s!"publication writes: the failed run's summary names what it wrote ({summary})"
       (summary.length == 1 && summary.all fun l => hasStr l "\"output\":" &&
         hasStr l "partial/source.html" && hasStr l "partial/source.md" && !hasStr l "partial/source.pdf")
+    -- A declared name with a directory: the alternate link reads the twin
+    -- from the page's directory, where it is written.
+    let linked ← run "\\output{ formats = html, md, md = \"notes/the twin#1.md\" }\n" #["-o", "linked/"]
+    let pageFile := dir / "linked" / "source.html"
+    let page ← if ← pageFile.pathExists then IO.FS.readFile pageFile else pure ""
+    check ref s!"publication writes: the alternate link names the twin from the page's directory ({linked.exitCode}): {linked.stderr}"
+      (linked.exitCode == 0 && (← (dir / "linked" / "notes" / "the twin#1.md").pathExists) &&
+        hasStr page "type=\"text/markdown\" href=\"notes/the%20twin%231.md\"")
+    let href := LeanTex.Cli.PublicationPaths.nameHref
+    let placed := LeanTex.Cli.PublicationPaths.placed
+    check ref "publication writes: a twin's link reads its name lexically, encodes what a URL reads otherwise, and names no directory"
+      (href "./notes//a b#c?d%e:f\\g.md" == some "notes/a%20b%23c%3Fd%25e%3Af%5Cg.md" &&
+        href "../up/é (1).md" == some "../up/é%20(1).md" && href "link/../t2.md" == some "t2.md" &&
+        href "/rooted/x.md" == none && ["", ".", "..", "sub/", "x.md/", "a/..", "x/."].all (href · == none))
+    check ref "publication writes: a twin lands where its link points"
+      (placed "out" "link/../t2.md" == "out/t2.md" && placed "out" "../up.md" == "up.md" &&
+        placed "." "../x.md" == "../x.md" && placed "/w/out" "notes/x.md" == "/w/out/notes/x.md" &&
+        placed "out" "/abs/x.md" == "/abs/x.md" && placed "out" "sub/" == "out/sub/")
+    -- A twin declared by an absolute name is written there, and the page,
+    -- which has no address for it that -o would not change, links none.
+    let elsewhere := dir / "elsewhere" / "twin.md"
+    let rooted ← run s!"\\output\{ formats = html, md, md = \"{elsewhere}\" }\n" #["-o", "rooted/"]
+    let rootedPage := dir / "rooted" / "source.html"
+    let rootedText ← if ← rootedPage.pathExists then IO.FS.readFile rootedPage else pure ""
+    check ref s!"publication writes: a twin declared by an absolute name is written there and not linked ({rooted.exitCode}): {rooted.stderr}"
+      (rooted.exitCode == 0 && (← elsewhere.pathExists) && !rootedText.isEmpty &&
+        !hasStr rootedText "text/markdown")
+    -- A declared name that walks back through a link: the twin lands where
+    -- the link points, the page's own directory, not through the link.
+    IO.FS.createDirAll (dir / "real-target" / "inner")
+    IO.FS.createDirAll (dir / "through")
+    symlink (dir / "real-target" / "inner") (dir / "through" / "link")
+    let through ← run "\\output{ formats = html, md, md = \"link/../t2.md\" }\n" #["-o", "through/"]
+    let throughPage := dir / "through" / "source.html"
+    let throughText ← if ← throughPage.pathExists then IO.FS.readFile throughPage else pure ""
+    check ref s!"publication writes: a twin named back through a link lands where its link points ({through.exitCode}): {through.stderr}"
+      (through.exitCode == 0 && (← (dir / "through" / "t2.md").pathExists) &&
+        !(← (dir / "real-target" / "t2.md").pathExists) &&
+        hasStr throughText "type=\"text/markdown\" href=\"t2.md\"")
+    -- A declared name that names a directory: no twin can be written there,
+    -- and the page links none.
+    let named ← run "\\output{ formats = html, md, md = \"sub/\" }\n" #["-o", "dir-twin/", "--porcelain"]
+    let namedPage := dir / "dir-twin" / "source.html"
+    let namedText ← if ← namedPage.pathExists then IO.FS.readFile namedPage else pure ""
+    check ref s!"publication writes: a twin name that names a directory is E0004 and no link ({named.exitCode}): {named.stdout}"
+      (named.exitCode != 0 && hasStr named.stdout "\"E0004\"" && !namedText.isEmpty &&
+        !hasStr namedText "text/markdown")
     IO.FS.writeFile (dir / "blocker") "a regular file where a directory would go"
     let blocked ← run "" #["-o", "blocker/out.pdf", "--porcelain"]
     let said := blocked.stdout ++ blocked.stderr

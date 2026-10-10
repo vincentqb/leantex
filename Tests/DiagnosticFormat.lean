@@ -10,6 +10,13 @@ open LeanTex.Core LeanTex.Cli
 
 namespace Tests
 
+/-- The bidirectional formatting characters a terminal line must not carry
+raw. -/
+private def bidiControls : List Nat :=
+  [0x061C, 0x200E, 0x200F] ++ (List.range 5).map (· + 0x202A) ++ (List.range 4).map (· + 0x2066)
+
+private def bidi (c : Char) : Bool := bidiControls.contains c.toNat
+
 /-- A diagnostic's first line carries its effective severity,
 stable code and optional source position. Continuations belong to that one
 record, even when a tool or filename supplies terminal control characters.
@@ -70,7 +77,7 @@ def diagnosticFormatTextChecks (ref : IO.Ref (List String)) : IO Unit := do
     (Render.human false (Diag.of .E0001 controls) ==
       "✖ [E0001]\n  \\x00\\x07\\x08\\x7f\\x85\\x9b")
   let statusControls := String.ofList ((List.range 32 ++ (List.range 33).map (· + 127) ++
-    [0x2028, 0x2029]).map Char.ofNat)
+    [0x2028, 0x2029] ++ bidiControls).map Char.ofNat)
   for color in [false, true] do
     let unstyle := fun (s : String) =>
       ["\x1b[1;32m", "\x1b[1;31m", "\x1b[2m", "\x1b[0m"].foldl
@@ -89,13 +96,14 @@ def diagnosticFormatTextChecks (ref : IO.Ref (List String)) : IO Unit := do
     for (name, render, expected) in statuses do
       for (path, visible) in
           [("", ""), ("résumé [draft]\\part", "résumé [draft]\\part"),
-           ("\r\n\t\x1b[0m\x9b0m\u2028\u2029", "\\r\\n\\t\\x1b[0m\\x9b0m\\u2028\\u2029")] do
+           ("\r\n\t\x1b[0m\x9b0m\u2028\u2029", "\\r\\n\\t\\x1b[0m\\x9b0m\\u2028\\u2029"),
+           ("\u202Etxt.exe\u2066x\u2069\u200F", "\\u202Etxt.exe\\u2066x\\u2069\\u200F")] do
         let actual := render path
         t s!"diagnostic format: {name} preserves visible paths, color={color}"
           (unstyle actual == expected visible && actual.contains '\x1b' == color)
       t s!"diagnostic format: {name} is one safe physical line, color={color}"
         (!(unstyle (render statusControls)).toList.any fun c => c.toNat < 0x20 ||
-          (0x7F ≤ c.toNat && c.toNat ≤ 0x9F) || c == '\u2028' || c == '\u2029')
+          (0x7F ≤ c.toNat && c.toNat ≤ 0x9F) || c == '\u2028' || c == '\u2029' || bidi c)
   -- Strip only the SGR sequences the renderer emits, not arbitrary escapes
   -- in a diagnostic. The latter must have been spelled out as data.
   for sample in [d, multi, { d with sites := 3 }, accepted] do
@@ -185,7 +193,7 @@ def diagnosticRecordChecks (ref : IO.Ref (List String)) : IO Unit := do
   -- Round-trip every serialized text field empty, then with all terminal
   -- control bytes and both Unicode line separators, through a real JSON reader.
   let controls := String.ofList ((List.range 32 ++ (List.range 33).map (· + 127) ++
-    [0x2028, 0x2029]).map Char.ofNat)
+    [0x2028, 0x2029] ++ bidiControls).map Char.ofNat)
   for text in ["", "\"\\" ++ controls] do
     let sample := Diag.of .W0301 text
       (some ⟨text, { line := 0, col := 0 }⟩) (help := text) (subject := text)
@@ -203,7 +211,7 @@ def diagnosticRecordChecks (ref : IO.Ref (List String)) : IO Unit := do
     t "diagnostic record: JSON retains output scope" (output.toOption == some "pdf")
     t "diagnostic record: JSON is one safe physical line"
       (!encoded.toList.any fun c => c.toNat < 0x20 ||
-        (0x7F ≤ c.toNat && c.toNat ≤ 0x9F) || c == '\u2028' || c == '\u2029')
+        (0x7F ≤ c.toNat && c.toNat ≤ 0x9F) || c == '\u2028' || c == '\u2029' || bidi c)
   let pdf := { d with output := some .pdf }
   let html := { d with output := some .html }
   let common := { d with output := none }

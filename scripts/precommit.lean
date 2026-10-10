@@ -563,7 +563,7 @@ def backendFiles : List String :=
 /-- A temporary directory or file made outside Host, as a code token: on Lean
 v4.34.1 the toolchain's own temporary-directory and temporary-file calls end
 the process with a segmentation fault when the temporary root is missing,
-so the driver makes every scratch directory through `Host.withScratch`. The
+so the driver makes every scratch directory through Host. The
 shared string and line-comment boundary applies, with its stated limits. -/
 def tempRootOutsideHost (l : String) : Bool :=
   ["withTempDir", "createTempDir", "withTempFile", "createTempFile"].any (bannedWord · l)
@@ -2245,7 +2245,12 @@ def selftest : IO UInt32 := do
       ("LeanTex/Core/HtmlDoc.lean", "  let (raws, ds) := Md.desugar file text", true),
       ("LeanTex/Core/HtmlDoc.lean", autolink, true),
       ("LeanTex/Core/MarkdownDoc.lean", autolink, false),
-      ("LeanTex/Core/MarkdownDoc.lean", "public import LeanTex.Core.Ir", false)] do
+      ("LeanTex/Core/MarkdownDoc.lean", "public import LeanTex.Core.Ir", false),
+      ("LeanTex/Cli/PictureAssets.lean", "  let (h, path) ← IO.FS.createTempFile", true),
+      ("Main.lean", "  IO.FS.withTempFile fun h path => pure ()", true),
+      ("LeanTex/Cli/Host.lean", "  let dir ← IO.FS.createTempDir", false),
+      ("scripts/zz.lean", "  IO.FS.withTempDir fun dir => pure ()", false),
+      ("Tests/Zz.lean", "  IO.FS.withTempDir fun dir => pure ()", false)] do
     if gated file line != want then
       fails.modify (s!"gates on {file} {if want then "missed" else "fired on"}: {line}" :: ·)
 

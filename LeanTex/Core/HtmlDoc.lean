@@ -53,8 +53,9 @@ public structure Config where
   /-- The document's loaded images, from the driver: `<img>` carries the
   intrinsic pixel size so the page never reflows while loading. -/
   imgs : Image.Store := {}
-  /-- The markdown twin's name, from the driver when it writes one beside
-  the page: the head then links it as the alternate representation
+  /-- The markdown twin's address, from the driver when it writes one: a
+  relative URL from the page to the file, percent-encoded where a URL would
+  read it as something else. The head links it as the alternate representation
   (`rel=alternate`, HTML §4.6.6.1; `text/markdown`, RFC 7763) — the
   llms.txt convention's discoverable form. -/
   mdHref : Option String := none

@@ -164,14 +164,23 @@ def faultChecks (ref : IO.Ref (List String)) (dir : System.FilePath) : IO Unit :
   let spent := (← IO.monoMsNow) - start
   t s!"world/host: a run past its budget is killed and ends incomplete ({spent} ms)"
     (!hung.complete && hung.ran == .overran 0 && spent < 4000)
-  let copied ← Host.answer (.run { call "/bin/sh" #["-c", "cat in/data > out.txt; pwd"] 10000 with
-    inputs := #[("in/data", "payload".toUTF8)], outputs := #["out.txt", "never.txt"] })
-  let scratch := copied.out.trimAscii.toString
+  let noisyStart ← IO.monoMsNow
+  let noisy ← Host.answer (.run (call "/bin/sh" #["-c", "printf 'out\\376'; printf '\\377 tail' >&2; exit 3"] 10000))
+  let noisySpent := (← IO.monoMsNow) - noisyStart
+  t s!"world/host: a run whose streams are not UTF-8 ends as it exited, each stray byte read as U+FFFD ({noisySpent} ms)"
+    (noisy.complete && noisy.ran == .exited 3 && noisy.out == "out\uFFFD" && noisy.err == "\uFFFD tail" &&
+      noisySpent < 4000)
+  let copied ← Host.answer (.run { call "/bin/sh" #["-c", "cat in/data > out.txt; pwd > where.txt; pwd; pwd -L >&2"] 10000 with
+    inputs := #[("in/data", "payload".toUTF8)], outputs := #["out.txt", "never.txt", "where.txt"] })
+  let scratch := ((copied.outputs.find? (·.1 == "where.txt")).bind (·.2)).map (String.fromUTF8? · |>.getD "")
+    |>.getD "" |>.trimAscii |>.toString
   t "world/host: a run reads its inputs and returns its declared outputs"
     (copied.complete && copied.ran == .exited 0 &&
-      copied.outputs == #[("out.txt", some "payload".toUTF8), ("never.txt", none)])
+      (copied.outputs.extract 0 2) == #[("out.txt", some "payload".toUTF8), ("never.txt", none)])
   t "world/host: a run's scratch directory is removed after it"
     (!scratch.isEmpty && !(← System.FilePath.pathExists scratch))
+  t s!"world/host: a reply names the run's scratch directory as <scratch>, never its random name: {copied.out}{copied.err}"
+    (copied.out == "<scratch>\n" && copied.err == "<scratch>\n" && !hasStr (copied.out ++ copied.err) "leantex-")
   let escaped ← Host.answer (.run { call "/bin/sh" #["-c", "true"] 10000 with
     inputs := #[("../escaped", "x".toUTF8)] })
   t "world/host: a run never writes outside its scratch directory"
@@ -194,25 +203,40 @@ def faultChecks (ref : IO.Ref (List String)) (dir : System.FilePath) : IO Unit :
     return (outside, do
       return (← (outside / "outside-secret").pathExists) && (← (outside / "keep" / "file").pathExists))
   let (outside, untouched) ← outsideAt "outside"
+  -- A reply spells the scratch directory `<scratch>`, so each run below
+  -- names its real path in a file the test owns, outside it.
+  let whereWas (file : System.FilePath) : IO String := do
+    let path := ((← (IO.FS.readFile file).toBaseIO).toOption.getD "").trimAscii.toString
+    return if path.startsWith "/" then path else ""
+  let movedAt := dir / "moved.where"
   let moved ← Host.answer (.run { call "/bin/sh"
-      #["-c", "d=$PWD; mv \"$d\" \"$d.moved\" && ln -s \"$1\" \"$d\" && printf '%s' \"$d\"", "sh",
-        outside.toString] 10000 with
+      #["-c", "d=$PWD; printf '%s' \"$d\" > \"$2\"; mv \"$d\" \"$d.moved\" && ln -s \"$1\" \"$d\" && " ++
+        "printf '%s' \"$d\"", "sh", outside.toString, movedAt.toString] 10000 with
     outputs := #["outside-secret"] })
-  let movedScratch := moved.out.trimAscii.toString
+  let movedScratch ← whereWas movedAt
   t "world/host: a run that leaves a link where its scratch directory stood gets nothing outside back"
-    (moved.complete && moved.ran == .exited 0 && moved.outputs == #[("outside-secret", none)])
+    (moved.complete && moved.ran == .exited 0 && moved.outputs == #[("outside-secret", none)] &&
+      moved.out == "<scratch>")
   t "world/host: cleanup removes a link where the scratch directory stood, and nothing it names"
     (!movedScratch.isEmpty && (← untouched) && !(← System.FilePath.pathExists movedScratch))
   unless movedScratch.isEmpty do
     discard <| (IO.FS.removeDirAll (movedScratch ++ ".moved")).toBaseIO
   let (elsewhere, kept) ← outsideAt "elsewhere"
+  let awayAt := dir / "away.where"
   let linkedAway ← Host.answer (.run (call "/bin/sh"
     #["-c", "ln -s \"$1\" away && ln -s /nonexistent-leantex-target dangling && mkdir -p a/b && " ++
-      "ln -s \"$1\" a/b/away && printf '%s' \"$PWD\"", "sh", elsewhere.toString] 10000))
-  let awayScratch := linkedAway.out.trimAscii.toString
+      "ln -s \"$1\" a/b/away && printf '%s' \"$PWD\" > \"$2\"", "sh", elsewhere.toString,
+      awayAt.toString] 10000))
+  let awayScratch ← whereWas awayAt
   t "world/host: cleanup removes the links a run left, dangling or to a directory outside, and nothing they name"
     (linkedAway.complete && linkedAway.ran == .exited 0 && (← kept) && !awayScratch.isEmpty &&
       !(← System.FilePath.pathExists awayScratch))
+  let clashing ← Host.answer (.run { call "/bin/sh" #["-c", "true"] 10000 with
+    inputs := #[("a", "file".toUTF8), ("a/b", "under a file".toUTF8)] })
+  t s!"world/host: a run whose input cannot be written never starts, and its reason names no scratch directory ({repr clashing.ran})"
+    (match clashing.ran with
+      | .unstarted why => hasStr why "<scratch>" && !hasStr why "leantex-"
+      | _ => false)
   let target := (dir / "published").toString
   t "world/host: an atomic write is read back whole"
     (match ← Host.answer (.writeAtomic target "whole".toUTF8),
@@ -318,6 +342,13 @@ def pathChecks (ref : IO.Ref (List String)) (dir : System.FilePath) : IO Unit :=
   t s!"world/path: a version question that hangs is killed within its budget ({spent} ms)"
     ((match hung with | .absent _ => true | .present _ => false) && spent < 4000)
 
+/-- The budget of a child Lean interpreter that elaborates its driver
+before running it: two minutes, since a loaded machine takes far longer
+than an idle one to read the imports, and neither child check reads the
+outer time (the probe check times its probe inside the child, and the
+scratch check reads how the run ended). -/
+def childBudgetMs : Nat := 120000
+
 /-- The driver's own entry point, `ToolProbe.probeVersion` at its default
 budget, under a version question that never ends: a child whose PATH starts
 with a shim that sleeps. An unbounded probe holds the child past the
@@ -337,7 +368,7 @@ def probeChildChecks (ref : IO.Ref (List String)) (dir : System.FilePath) : IO U
     "    | .absent _ => if spent < 5000 then 0 else 2\n" ++
     "    | .present _ => 1\n"
   let path := s!"{dir / "hang"}:{(← IO.getEnv "PATH").getD ""}"
-  let result ← RunBounded.runBounded lean.toString #["--run", driver.toString] dir 20000 100
+  let result ← RunBounded.runBounded lean.toString #["--run", driver.toString] dir childBudgetMs 100
     (env := #[("PATH", some path), ("LEAN_PATH", some leanPath)])
   check ref s!"world/path: the driver's version probe ends a tool that hangs: {result.out}{result.err}"
     (result.complete && result.ran == .exited 0)
@@ -359,7 +390,7 @@ def scratchChildChecks (ref : IO.Ref (List String)) (dir : System.FilePath) : IO
     "  return match e.ran with\n" ++
     "    | .unstarted _ => 0\n" ++
     "    | _ => 1\n"
-  let result ← RunBounded.runBounded lean.toString #["--run", driver.toString] dir 20000 100
+  let result ← RunBounded.runBounded lean.toString #["--run", driver.toString] dir childBudgetMs 100
     (env := #[("TMPDIR", some (dir / "no-such-root").toString), ("LEAN_PATH", some leanPath)])
   check ref s!"world/host: a run under a missing temporary root never starts, and the host answers ({repr result.ran}): {result.out}{result.err}"
     (result.complete && result.ran == .exited 0)
