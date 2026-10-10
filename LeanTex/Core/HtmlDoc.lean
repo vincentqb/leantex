@@ -93,6 +93,23 @@ public structure Config where
   `emitTree`'s entry: what a table length a body `\tokens` declares is spelled
   against, as `tokenVars` spells the preamble's. -/
   lengthBasis : LengthBasis := .classSize Ir.baseFontSize
+  /-- How a narrowing table (`Ir.ColSpec.narrows`, a markdown table's) fits
+  the measure it stands in — the step it sets at and whether it still
+  overhangs at that step — read off that measure and its columns, pads,
+  rows and spans by the page's own decision (`Layout.tableFit`), which the
+  driver hands over with the document's faces: the HTML states the step as
+  the table's font size and centres an overhang across both margins on
+  paper (`bt-overhang`). The default fits every table as declared. -/
+  tableFit : Sp → Array Ir.ColSpec → Bool → Bool → Array (Array (Array Inline)) →
+    Array Ir.ColSpan → Option String × Bool := fun _ _ _ _ _ _ => (none, false)
+  /-- The document's list lineage (`Ir.ListLineage`), from the document at
+  `emitTree`'s entry: what a list or quotation level indents by
+  (`Config.deeper`). -/
+  lists : Ir.ListLineage := .sizeFile
+  /-- How many list and quotation levels stand around this content, and the
+  measure they take off its start and end (`Config.deeper`). -/
+  listDepth : Nat := 0
+  inset : Sp := 0
   /-- The resolved local measurement context. A box replaces the horizontal
   measures while retaining the page's text height; outside a box, `none`
   reads the document's text area. Providers share the native vocabulary. -/
@@ -163,11 +180,26 @@ public def Config.measureValues (cfg : Config) : MeasureValues :=
   cfg.measures.getD (MeasureValues.horizontal
     (cfg.page.width - 2 * cfg.page.hmargin) (cfg.page.height - 2 * cfg.page.vmargin))
 
+/-- One list or quotation level deeper: the level's `\leftmargin` (the
+class's, `Ir.leftMargin` at the next `\@listdepth`; the page's own 1.5 em
+where the lineage declares none, `Layout.listIndentFor`) off the measure's
+start, and for a quotation (`both`) off its end too — the measure the
+page's list and quote arms narrow theirs to, so a table's fit reads the
+measure its page decides against (`tableFit`). A declared
+`\leftmargin⟨n⟩` is not read here. -/
+public def Config.deeper (cfg : Config) (both : Bool) : Config :=
+  let lv := cfg.listDepth + 1
+  let lm := (Ir.leftMargin cfg.lists cfg.page.fontSize lv).getD (cfg.page.fontSize * 3 / 2)
+  { cfg with listDepth := lv, inset := cfg.inset + (if both then 2 * lm else lm) }
+
 /-- Enter a box with the same horizontal-measure convention as native
 paragraphs. Descendant widths resolve against it; siblings keep their own
-context because only the child's configuration changes. -/
+context because only the child's configuration changes. The box opens at
+list depth zero, its measure its own, as `minipage` resets `\@listdepth`
+(latex.ltx, `\@mplistdepth`). -/
 public def Config.atMeasure (cfg : Config) (width : Sp) : Config :=
-  { cfg with measures := some (MeasureValues.horizontal width cfg.measureValues.textHeight) }
+  { cfg with measures := some (MeasureValues.horizontal width cfg.measureValues.textHeight)
+             listDepth := 0, inset := 0 }
 
 @[expose] public def cssColor (c : Color) : String := c.css
 
@@ -277,7 +309,7 @@ public def engineClasses : List String :=
   ["abstract", "b", "i", "mono", "sc", "em", "sans", "normal", "rm", "md", "up",
    "section-number", "display", "equation", "eqnum",
    "band-left", "band-right", "booktabs", "bt-center", "bt-cmid", "bt-heavy-above", "bt-left",
-   "bt-light-above", "bt-nowrap", "bt-right", "cell-measure", "centered", "ragged", "ragged-right", "column", "columns", "content",
+   "bt-light-above", "bt-nowrap", "bt-overhang", "bt-right", "cell-measure", "centered", "ragged", "ragged-right", "column", "columns", "content",
    "deck-progress", "entry",
    "entry-pair", "entry-row", "entry-rows", "fill", "float", "frame-body-end",
    "frame-body-start", "group", "icon",
@@ -5299,6 +5331,15 @@ private def docHasListing (doc : Doc) : Bool :=
       | _ => false)
     (fun b _ => b) false doc.body
 
+/-- Whether the document carries a table whose columns narrow (a markdown
+table's, `Ir.ColSpec.narrows`): the gate on its print rule, so a document
+without one ships exactly the stylesheet it shipped before. -/
+private def docHasNarrowingTable (doc : Doc) : Bool :=
+  Ir.foldBlocks (fun b bl => b || match bl with
+      | .table cols .. => cols.any (·.narrows)
+      | _ => false)
+    (fun b _ => b) false doc.body
+
 /-- Whether the document carries a reference list: the gate on its rules,
 so a document without one ships exactly the stylesheet it shipped before. -/
 private def docHasBibliography (doc : Doc) : Bool :=
@@ -5554,6 +5595,13 @@ public def baseCss (cfg : Config) (doc : Doc) (pairs : List (Nat × Nat) := []) 
   -- A page set ragged or unhyphenated hyphenates nothing on its own
   -- (`autoHyphens`), as the page's breaker never pays a hyphen there.
   s!"p \{ hyphens: {if autoHyphens doc.page then "auto" else "manual"}; }\n" ++
+  -- A markdown document's inline code may end a line where it would
+  -- otherwise overflow it, as its page breaks code after url.sty's break
+  -- characters (`Layout.urlBreak`): a browser breaks only an identifier
+  -- wider than the line, at whatever character it must, rather than let it
+  -- push the page sideways. A tex document's `\texttt` keeps LaTeX's rule.
+  (if doc.surface == .markdown then
+    ":where(:not(pre) > code) { overflow-wrap: break-word; }\n" else "") ++
   -- A list's items, a description's text under its label and a
   -- quotation's two edges stand their level's `\leftmargin` in, as the
   -- page sets them (`listIndentCss`).
@@ -5786,6 +5834,15 @@ public def baseCss (cfg : Config) (doc : Doc) (pairs : List (Nat × Nat) := []) 
   -- overruns the measure: only such a line moves, and every character
   -- reaches the sheet.
   "  pre { overflow-x: visible; white-space: pre-wrap; overflow-wrap: anywhere; }\n" ++
+  -- A markdown table whose words alone pass the column at its smallest
+  -- step stands centred on it, overhanging both margins equally, as its
+  -- page sets it (`Layout.tableFit`): on paper both margins are room, and
+  -- the right one alone ran its last columns off the sheet. On screen it
+  -- keeps the column's start, where a narrow viewport can still scroll to
+  -- its end.
+  (if docHasNarrowingTable doc then
+    "  table.booktabs.bt-overhang { position: relative; left: 50%; transform: translateX(-50%); }\n"
+  else "") ++
   "}\n" ++
   "@media (prefers-reduced-motion: reduce) {\n" ++
   "  * { animation: none !important; transition: none !important; }\n" ++
@@ -6460,13 +6517,17 @@ left. -/
 `\cmidrule` spans its column, and `bt-nowrap` on a natural column's cell, so
 auto table layout cannot squeeze the column to min-content (the
 `:where(... td.bt-nowrap ...)` rule). `white-space` on the `<col>` itself would
-do nothing (CSS Tables §17.3), so the class lands on the cell. One `class`
+do nothing (CSS Tables §17.3), so the class lands on the cell. A narrowing
+column's cell (`Ir.ColSpec.narrows`, a markdown table's) carries none: the
+page fits its table as automatic table layout does (`Layout.fitColumns`),
+and the browser does the same once nothing forbids it. One `class`
 attribute carries them all. -/
 @[expose] public def cellClasses (cols : Array Ir.ColSpec) (cmids : Array (Nat × Nat))
     (spans : Array Ir.ColSpan) (i j : Nat) : List String :=
+  let spec := Ir.cellSpec cols spans i j
   cellSideClassOf cols spans i j ::
     ((if cmids.any (fun (a, b) => a ≤ j + 1 && j + 1 ≤ b) then ["bt-cmid"] else []) ++
-      (if (Ir.cellSpec cols spans i j).width matches .natural then ["bt-nowrap"] else []))
+      (if (spec.width matches .natural) && !spec.narrows then ["bt-nowrap"] else []))
 
 /-- The classes a block set wholly in the named step `n` carries: the step's
 size, and on a deck its leading over that size (`sizeRules`), as the page
@@ -6644,8 +6705,12 @@ private def tableNode (cfg : Config) (cols : Array Ir.ColSpec) (padL padR : Bool
       | .top | .mid | .bottom | .gap _ => out) (#[] : Array (Nat × Nat))
     Html.elem "tr" (tableRowCells cfg cols cmids spans headerRows i row)
       (if cls.isEmpty then #[] else #[("class", cls)])
+  -- A markdown table too wide for the text block sets at the page's step
+  -- and, still too wide at its floor, overhangs both margins on paper.
+  let (step, overhang) :=
+    cfg.tableFit (cfg.measureValues.lineWidth - cfg.inset) cols padL padR rows spans
   let cls := "booktabs" ++ (if padL then "" else " nopadl")
-    ++ (if padR then "" else " nopadr")
+    ++ (if padR then "" else " nopadr") ++ (if overhang then " bt-overhang" else "")
   let kids := Id.run do
     let mut kids := #[Html.elem "colgroup" colEls]
     if 0 < headerRows then
@@ -6653,9 +6718,15 @@ private def tableNode (cfg : Config) (cols : Array Ir.ColSpec) (padL padR : Bool
     if headerRows < rows.size then
       kids := kids.push (Html.elem "tbody" (rowEls.extract headerRows rowEls.size))
     return kids
-  let attrs := match target with
-    | some t => #[("class", cls), ("style", "width: " ++ t.css)]
-    | none => #[("class", cls)]
+  let decls : List String :=
+    (match target with
+      | some t => ["width: " ++ t.css]
+      | none => []) ++
+    (match step with
+      | some st => ((fontStyleDecls cfg.page.scale (.size st)).getD #[]).toList
+      | none => [])
+  let attrs := if decls.isEmpty then #[("class", cls)]
+    else #[("class", cls), ("style", " ".intercalate decls)]
   Html.elem "table" kids attrs
 
 /-- A use of a role in the artifact references the role, not only its frozen
@@ -8022,9 +8093,9 @@ public def blockNode (cfg : Config) (b : Block) : Node :=
     let desc := !ordered && !items.isEmpty && items.all fun it => match it[0]? with
       | some (Block.para c) => (Ir.descLabel? c).isSome
       | _ => false
-    if desc then Html.elem "dl" (descItemsInto cfg.into #[] items.toList) else
+    if desc then Html.elem "dl" (descItemsInto (cfg.deeper false).into #[] items.toList) else
     let tag := if ordered then "ol" else "ul"
-    Html.elem tag (listItemsInto cfg.into #[] items.toList)
+    Html.elem tag (listItemsInto (cfg.deeper false).into #[] items.toList)
   | .center body =>
     -- A display formula's block is the `.display` paragraph the base
     -- sheet's display rules address — the same shape the PDF walk reads
@@ -8079,7 +8150,7 @@ public def blockNode (cfg : Config) (b : Block) : Node :=
   -- A quotation is HTML's own construct: `<blockquote>` carries the
   -- set-off semantics that the PDF path expresses as margins.
   | .quote body =>
-    Html.elem "blockquote" (blockNodesInto cfg.into #[] body.toList)
+    Html.elem "blockquote" (blockNodesInto (cfg.deeper true).into #[] body.toList)
   -- beamer's titled block: a <section> with its header, through the typed
   -- tree and the escaper; the kind rides as a class so the stylesheet (a
   -- reader's own included) can address each. Its two colour boxes stand
@@ -8252,6 +8323,18 @@ public def blockNode (cfg : Config) (b : Block) : Node :=
         | _ => s!" line-height: {decMilli (printLeadingMilli cfg.page)};") ++
       s!" tab-size: {spec.tabSize};" ++
       (if spec.breakLines then " white-space: pre-wrap;" else "") ++
+      -- A wrapped line's continuation hangs `breakIndent` in, as listings
+      -- sets it on the page: CSS indents every line but the first after
+      -- each forced break (`hanging each-line`). It measures from the
+      -- block's edge, so an indented source line continues at the break
+      -- indent alone here, where the page adds the line's own indentation
+      -- (`breakautoindent`); a browser without the keywords sets the
+      -- continuation at the edge.
+      (match spec.breakIndent with
+        | some w =>
+          if spec.breakLines then s!" text-indent: {cssLength (.ofSp w)} hanging each-line;"
+          else ""
+        | none => "") ++
       (if paint.isEmpty then "" else " " ++ paint)
     let pre := Html.elem "pre" #[code]
       ((if spec.numbers then #[("class", "numbered")] else #[]) ++
@@ -9009,7 +9092,8 @@ private def emitTreeCore (cfg : Config) (doc : Doc) (styles : String × Array Di
                         deck := doc.docClass.record.model == .frame
                         chromeAllowed := doc.chromeAllowed
                         page := doc.page
-                        lengthBasis := lengthBasisOf doc }
+                        lengthBasis := lengthBasisOf doc
+                        lists := doc.docClass.record.lists }
   -- The chrome footer: every frame section closes with the section in
   -- force and its own frame number, in the muted key at the scale's small
   -- step — the same declarations the PDF path reads. A `\framefoot` note

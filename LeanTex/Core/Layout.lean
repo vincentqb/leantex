@@ -809,6 +809,42 @@ public def forcedCost : Int := -10000
 line at a hyphen, against the badness scale the breaker shares with TeX. -/
 public def hyphenPenalty : Int := 50
 
+/-- Where a run may end a line after a character it sets, unhyphenated,
+and at what penalty — TeX's rule for prose: after an explicit hyphen, at
+`hyphenPenalty`. -/
+public def proseBreak (c : Char) : Option Nat :=
+  if c == '-' then some hyphenPenalty.toNat else none
+
+/-- latex.ltx's `\binoppenalty` and `\relpenalty`, 700 and 500: what a break
+after a binary operator or a relation costs, and what url.sty prices its
+breaks at (`urlBreak`). -/
+public def binopPenalty : Nat := 700
+public def relPenalty : Nat := 500
+
+/-- url.sty's break table, the way `\path` sets text no hyphenation can
+break: after `. @ \ / ! _ | ; > ] ) , ? & ' + = #` (`\UrlBreaks`) at
+`\binoppenalty`, and after `:` (`\UrlBigBreaks`) at `\relpenalty` — 700
+and 500, latex.ltx's values — and after a hyphen, which the package's
+`hyphens` option adds to `\UrlBreaks` and every browser breaks after too
+(UAX #14's class BA): a long kebab-case flag or package name otherwise
+holds no break, and a justified paragraph around it none either. Never
+inside a run of letters or digits, and never drawing a hyphen. -/
+public def urlBreak (c : Char) : Option Nat :=
+  if ".@\\/!_|;>]),?&'+=#-".contains c then some binopPenalty
+  else if c == ':' then some relPenalty
+  else none
+
+/-- Where a browser breaks a table cell's code: after any hyphen that no
+hyphen follows — never before a hyphen (UAX #14, LB21) — so `-q` breaks
+after its hyphen, `--sort` and `a--b` after their second, `café-x` and
+`x-1` after theirs, as Chromium sets each in a cell at its min-content
+width; and after no other character an identifier holds. A cell is as
+wide as its widest unbreakable run, so its code needs no break the page
+could choose and the browser could not. -/
+public def cellCodeBreak (_prev : Option Char) (c : Char) (next : Option Char) : Option Nat :=
+  if c == '-' && next.any (· != '-') then some hyphenPenalty.toNat
+  else none
+
 public inductive Seg where
   /-- A glyph run. `width` is carried so link rectangles and alignment can be
   computed without re-measuring against the font. Each glyph carries its
@@ -1466,7 +1502,28 @@ public structure TextStyle where
   `Seg.run`, so the pair the contrast judge owes completeness over is
   declared, never recovered geometrically. -/
   ground : Option Ir.Color := none
+  /-- A typewriter run breaks as url.sty sets a path (`urlBreak`) rather
+  than as prose (`proseBreak`): a markdown document's paragraph code, which
+  no declaration can make breakable (`collectPara` sets it from its
+  `urlBreaks`, the surface's by default, `Spacing.Context.surface`; a table
+  cell's never). Read by `explicitBreak`. -/
+  urlBreaks : Bool := false
+  /-- A typewriter run in a narrowing table's cell (`Ir.ColSpec.narrows`)
+  breaks as a browser breaks a table cell's code (`cellCodeBreak`), so the
+  page and the HTML narrow the same column. Read by `explicitBreak`. -/
+  cellCode : Bool := false
   deriving Repr, BEq, Inhabited
+
+/-- Where a run of this style may end a line after a character, unhyphenated,
+from the character, the one before it and the one after it in its word: a
+typewriter run (slot 2) under `urlBreaks` where url.sty's `\path` breaks,
+one under `cellCode` where a browser breaks a cell's code, every other run
+after an explicit hyphen. -/
+private def TextStyle.explicitBreak (sty : TextStyle) :
+    Option Char → Char → Option Char → Option Nat :=
+  if sty.slot == 2 && sty.urlBreaks then fun _ c _ => urlBreak c
+  else if sty.slot == 2 && sty.cellCode then cellCodeBreak
+  else fun _ c _ => proseBreak c
 
 /-- Snapshot the command-entry properties ulem uses for a through-line. -/
 private def TextStyle.decorationSource (sty : TextStyle) : DecorationSource :=
@@ -2798,10 +2855,12 @@ private theorem wordItemChars_letters (xs : List Char)
     simp [wordItemChars, hc, hcs]
 
 /-- One word → items: boxes split by hyphenation points (flagged penalties
-carrying the hyphen glyph) and by explicit hyphens (unflagged, no glyph).
-A scalar the styled face lacks is set from the precomputed fallback face
-(`FontSet.fallback`) at the same size — its own one-glyph box, since a box
-carries one face — or dropped when no face covers it. `missing` and `substs`
+carrying the hyphen glyph) and after each character `explicitBreak` prices
+(unflagged, no glyph: `proseBreak`'s explicit hyphen, or `urlBreak`'s table
+in a run that breaks as url.sty sets a path). A scalar the styled face
+lacks is set from the precomputed fallback face (`FontSet.fallback`) at the
+same size — its own one-glyph box, since a box carries one face — or
+dropped when no face covers it. `missing` and `substs`
 carry `(styled font, scalar)` so the diagnostic can name the family.
 `smallcaps` routes every glyph lookup — styled face and fallback alike —
 through that face's own `smcp`+`c2sc` substitution (`glyphOfSc`); it is set
@@ -2814,6 +2873,7 @@ original box: expansion must round from that same origin. Hyphenation,
 fallback faces and fixed spaces still start fresh boxes. The final array maps
 source scalars to the items that carry them, for zero-ink destinations. -/
 private def wordItems (pats : Option Hyphen.Patterns) (langKey : String)
+    (explicitBreak : Option Char → Char → Option Char → Option Nat)
     (size : Sp) (leading : Option Sp) (fontIdx : Nat)
     (color : Ir.Color) (ground : Option Ir.Color) (link : Option String)
     (decorations : Decorations) (smallcaps : Bool) (attr : Attribution)
@@ -2871,12 +2931,13 @@ private def wordItems (pats : Option Hyphen.Patterns) (langKey : String)
                   decorations 0 ground (owners[i]?.getD attr)) }
             i := i + 1
           else
+            let brk := explicitBreak (if i == 0 then none else chars[i - 1]?) c chars[i + 1]?
             st := st.glyph fontIdx color link size leading decorations ground attr smallcaps fs font c i
               (owners[i]?.getD attr) (origins[i]?.getD none)
             i := i + 1
-            if c == '-' then
+            if let some cost := brk then
               st := st.flush fontIdx color link size leading decorations ground attr
-              st := { st with items := st.items.push (.pen 0 hyphenPenalty false fontIdx color #[]) }
+              st := { st with items := st.items.push (.pen 0 cost false fontIdx color #[]) }
     else
       break
   st := st.flush fontIdx color link size leading decorations ground attr
@@ -2891,14 +2952,15 @@ private def WordAcc.Prefix (chars : Array Char) (missing : Array (Nat × Char))
 source scalars, except the explicitly nonpainting fixed spaces. The cursor
 invariant proves that the actual loop consumed the entire input. -/
 private theorem wordItems_none_chars (langKey : String)
+    (explicitBreak : Option Char → Char → Option Char → Option Nat)
     (size : Sp) (leading : Option Sp) (fontIdx : Nat)
     (color : Ir.Color) (ground : Option Ir.Color) (link : Option String)
     (decorations : Decorations) (smallcaps : Bool) (attr : Attribution)
     (fs : FontSet) (font : Font) (chars : Array Char) (missing : Array (Nat × Char))
     (substs : Array (Nat × Char × Nat)) (cache : Std.HashMap String (Array Nat))
     (owners : Array Attribution) (origins : Array (Option Span)) (sites : GlyphOrigins) :
-    let out := wordItems none langKey size leading fontIdx color ground link decorations
-      smallcaps attr fs font chars missing substs cache owners origins sites
+    let out := wordItems none langKey explicitBreak size leading fontIdx color ground link
+      decorations smallcaps attr fs font chars missing substs cache owners origins sites
     out.2.1 = #[] → out.2.2.1 = #[] →
       missing = #[] ∧ substs = #[] ∧
         out.1.toList.flatMap Item.boxChars = chars.toList.flatMap wordItemChars := by
@@ -2966,8 +3028,10 @@ private theorem wordItems_none_chars (langKey : String)
               simpa [WordAcc.chars, Item.boxChars, wordItemChars, hl, hf, hnb] using
                 (WordAcc.flush_chars fontIdx color link size leading decorations ground attr st).trans hpchars
             · simp only [hnb]
-              by_cases hh : (chars[i] == '-') = true
-              · simp only [hh, ↓reduceIte]
+              cases hh : explicitBreak (if i == 0 then none else chars[i - 1]?) chars[i]
+                  chars[i + 1]? with
+              | some cost =>
+                simp only
                 refine ⟨⟨Nat.succ_le_of_lt hin, ?_⟩, Nat.lt_succ_self i⟩
                 intro hc
                 have hg := WordAcc.glyph_chars fontIdx color link size leading decorations ground attr
@@ -2981,7 +3045,8 @@ private theorem wordItems_none_chars (langKey : String)
                     (st.glyph fontIdx color link size leading decorations ground attr smallcaps fs font
                       chars[i] i (owners[i]?.getD attr) (origins[i]?.getD none))).trans
                     (hg.2.trans (congrArg (· ++ [chars[i]]) hpchars))
-              · simp only [hh]
+              | none =>
+                simp only
                 refine ⟨⟨Nat.succ_le_of_lt hin, ?_⟩, Nat.lt_succ_self i⟩
                 intro hc
                 have hg := WordAcc.glyph_chars fontIdx color link size leading decorations ground attr
@@ -4717,8 +4782,14 @@ private def itemsOfTok (pats : Option Hyphen.Patterns) (size xHeight : Sp)
       else (sty, chars)
     let (sz, leading) := sty.metrics size xHeight textW textH
     let decorations := sty.resolvedDecorations size xHeight textW textH fs
+    -- A typewriter run (slot 2, `applyStyle`'s `.mono`) is never
+    -- hyphenated: LaTeX's typewriter families set `\hyphenchar` to −1
+    -- (t1cmtt.fd; tulmtt.fd, Latin Modern Mono under fontspec), so a hyphen
+    -- never appears inside an identifier; where it may end a line instead
+    -- is its style's (`TextStyle.explicitBreak`).
+    let wordPats := if sty.slot == 2 then none else patsOf pats sty.lang
     let (ws, m, s, c', offsets, sources, sites) :=
-      wordItems (patsOf pats sty.lang) (sty.lang.getD "") sz leading idx sty.color
+      wordItems wordPats (sty.lang.getD "") sty.explicitBreak sz leading idx sty.color
         sty.ground sty.link decorations useGsub attr fs font chars
         acc.dropped acc.substs acc.cache owners origins acc.origins
     -- The space before the word pairs with its first glyph. Read first,
@@ -5005,11 +5076,13 @@ private def itemsOfInlines (pats : Option Hyphen.Patterns) (size xHeight : Sp)
 with \\allow{E0405}"))
   for (idx, c, fb) in acc.substs do
     let source := glyphOrigin acc.origins .W0009 idx c
+    -- One loss per face and scalar, counted at every site it recurs.
     diags := diags.push (Diag.of .W0009
       s!"'{(fs.get idx).family}' has no glyph for U+{hex c.toNat}"
       (span := source) (output := some .pdf)
       (trigger := (source.bind (·.pos.command)).getD (String.singleton c))
-      (recovery := some (.replacedBy s!"a glyph from '{(fs.get fb).family}'")))
+      (recovery := some (.replacedBy s!"a glyph from '{(fs.get fb).family}'"))
+      (subject := some s!"glyph:{(fs.get idx).family}:U+{hex c.toNat}"))
   for (idx, c, a, base) in acc.unstyled do
     let source := glyphOrigin acc.origins .W0016 idx c
     diags := diags.push (Diag.of .W0016
@@ -5287,9 +5360,9 @@ private theorem itemsOfTok_none_chars (size xHeight : Sp)
   all_goals first | contradiction | skip
   case word sty cs attr =>
     simp only [itemsOfTok, ht, Bool.false_and, Bool.false_eq_true, ↓reduceIte,
-      patsOf_off, ItemsAcc.Clean, ItemsAcc.chars, Tk.itemChars]
+      patsOf_off, ite_self, ItemsAcc.Clean, ItemsAcc.chars, Tk.itemChars]
     intro hc
-    have hw := wordItems_none_chars (sty.lang.getD "")
+    have hw := wordItems_none_chars (sty.lang.getD "") sty.explicitBreak
       (sty.metrics size xHeight textW textH).1
       (sty.metrics size xHeight textW textH).2
       (fs.lookup sty.slot sty.weight.css sty.italic) sty.color sty.ground sty.link
@@ -5874,6 +5947,17 @@ public def Measure.ex (m : Measure) (expand : Bool) : Sp :=
 
 public def overfullDemerits : Int := 100000000
 
+/-- What an overfull line costs: `overfullDemerits` for being overfull and
+as much again for every whole point it overhangs. An overhang priced in sp
+was cheaper than one line too loose to be feasible (TeX's inf_bad, the
+same 10⁸), so a paragraph with two long unbreakable runs packed the text
+between them onto one overfull line, past the paper, to save the loose
+one. Priced per point, a word packed onto an overfull line always costs
+more than the line it saves, and an overfull line ends at its first break
+past its unbreakable run, as TeX's final pass ends one (tex.web §854). -/
+public def overfullCost (overhang : Sp) : Int :=
+  overfullDemerits * (1 + overhang / Dim.pt 1) -- per point: TeX reports an overfull box in pt (tex.web §663)
+
 /-- Demerits of one candidate line. Under font expansion the badness
 denominators grow by the boxes' own flexibility (`Measure.ex`): the form
 of the cost is unchanged, expansion is only more room (Thành tb71 —
@@ -5893,7 +5977,7 @@ public def lineDemerits (items : Array Item) (m : Measure) (target : Sp) (j : Na
       if m.shrink + ex < -delta then -1  -- overfull marker
       else badness delta (m.shrink + ex)
   let base : Int :=
-    if b < 0 then overfullDemerits + (m.natural - target)
+    if b < 0 then overfullCost (m.natural - target)
     else (10 + b) ^ 2
   let penTerm : Int :=
     match items[j]? with
@@ -5950,6 +6034,11 @@ public structure KpSums where
   differencing, scaled once at the read so it cannot drift from
   `measure`'s own accumulation. -/
   b : Array Sp
+  /-- The stretch every line carries besides its own glue: TeX's
+  background (tex.web §827, `\leftskip` plus `\rightskip`), which prices a
+  line that holds no glue of its own — a single word — as finitely as any
+  other. Zero but in a narrowed table cell (`Spacing.Paragraph.background`). -/
+  bg : Sp := 0
 
 public def kpSums (items : Array Item) : KpSums := Id.run do
   let n := items.size
@@ -6063,7 +6152,8 @@ private def kpCandidate (items : Array Item) (sums : KpSums)
         let fin := if p != n && isFlagged items p && j == n - 1 then
           finalHyphenDemerits else 0
         let lone := if runt && j == n - 1 && oneWordLine items a j then runtDemerits else 0
-        let d := d0 + lineDemerits items m target j expand fil + dbl + fin + lone
+        let d := d0 + lineDemerits items { m with stretch := m.stretch + sums.bg } target j expand
+          fil + dbl + fin + lone
         let ties := if fil then some n else none
         let c := { c with here := kpChoose c.here (d, p) ties }
         if m.natural - (m.shrink + m.ex expand) > target + slack then
@@ -6817,10 +6907,12 @@ private theorem KpChain.spans {items : Array Item} {last : Nat} {breaks : List N
 prefix-sum line measures and an active list: a node whose line to the
 current position is already overfull beyond shrink can only get worse, so
 it is considered one last time and then deactivated (one node is always
-retained so a solution exists even for unbreakable content). -/
+retained so a solution exists even for unbreakable content). `bg` is the
+background stretch every line carries (`KpSums.bg`). -/
 public def kp (items : Array Item) (target : Sp) (protrude : Bool := false)
-    (expand : Bool := false) (fil : Bool := false) (runt : Bool := false) : Array Nat :=
-  let sums := kpSums items
+    (expand : Bool := false) (bg : Sp := 0) (fil : Bool := false) (runt : Bool := false) :
+    Array Nat :=
+  let sums := { kpSums items with bg := bg }
   let slack : Sp := if protrude then maxProtrudeRight items else 0
   let st := kpForward items sums target slack protrude expand fil runt items.size
   match (st.best.getD (items.size-1) none) with
@@ -6828,14 +6920,16 @@ public def kp (items : Array Item) (target : Sp) (protrude : Bool := false)
   | some _ => kpBack items.size st.best (items.size-1)
 
 /-- The actual breaker retains all box glyphs in source order. The domain
-allows arbitrary widths, costs and overflow; it excludes internal forced
-ends, whose independently authored segments need their own chain. -/
-private theorem kp_boxChars (items : Array Item) (target : Sp) (protrude expand fil : Bool) {runt : Bool}
+allows arbitrary widths, costs, overflow and background; it excludes
+internal forced ends, whose independently authored segments need their own
+chain. -/
+private theorem kp_boxChars (items : Array Item) (target : Sp) (protrude expand : Bool)
+    (bg : Sp) (fil : Bool) {runt : Bool}
     (hn : 0 < items.size) (hb : canBreakAt items (items.size-1) = true)
     (hf : ∀ k, k+1 < items.size → isForced items k = false) :
-    (breakSpans items (kp items target protrude expand fil runt).toList).1 =
+    (breakSpans items (kp items target protrude expand bg fil runt).toList).1 =
       items.toList.flatMap Item.boxChars := by
-  let sums := kpSums items
+  let sums := { kpSums items with bg := bg }
   let slack : Sp := if protrude then maxProtrudeRight items else 0
   let st := kpForward items sums target slack protrude expand fil runt items.size
   have ht := (kpForward_valid items sums target slack protrude expand fil (runt := runt) items.size
@@ -6882,20 +6976,22 @@ badness stays within `pretolerance` and nothing is overfull, and only a
 paragraph that fails gets the hyphenating pass. This is what keeps
 hyphens rare — a paragraph that sets cleanly without them never
 hyphenates, whatever small demerit gain a hyphen could buy. Explicit
-hyphens (unflagged pens) and forced breaks keep their pens. -/
+hyphens (unflagged pens) and forced breaks keep their pens. Both passes
+price every line with the background stretch `bg` (`KpSums.bg`). -/
 public def kpTwoPass (items : Array Item) (target : Sp) (protrude : Bool := false)
-    (expand : Bool := false) (fil : Bool := false) (runt : Bool := false) : Array Nat := Id.run do
+    (expand : Bool := false) (bg : Sp := 0) (fil : Bool := false) (runt : Bool := false) :
+    Array Nat := Id.run do
   let sealable : Item → Bool := fun it => match it with
     | .pen _ cost flagged _ _ _ => flagged && forcedCost < cost && cost < 10000
     | .box .. | .glue .. | .decoratedGlue .. | .img .. | .rule .. | .poly .. => false
-  if !items.any sealable then return kp items target protrude expand fil runt
+  if !items.any sealable then return kp items target protrude expand bg fil runt
   let plain := items.map fun it => match it with
     | .pen w cost flagged f c g =>
       if flagged && forcedCost < cost && cost < 10000 then .pen w 10000 flagged f c g
       else .pen w cost flagged f c g
     | .box .. | .glue .. | .decoratedGlue .. | .img .. | .rule .. | .poly .. => it
-  let breaks := kp plain target protrude expand fil runt
-  if breaks.isEmpty then return kp items target protrude expand fil runt
+  let breaks := kp plain target protrude expand bg fil runt
+  if breaks.isEmpty then return kp items target protrude expand bg fil runt
   let mut prev := plain.size
   for j in breaks do
     let a := lineStart plain (if prev == plain.size then 0 else prev + 1)
@@ -6904,11 +7000,11 @@ public def kpTwoPass (items : Array Item) (target : Sp) (protrude : Bool := fals
     let delta := target - m.natural
     let bad : Int :=
       if delta == 0 then 0
-      else if delta > 0 then (if m.fil || fil then 0 else badness delta (m.stretch + ex))
+      else if delta > 0 then (if m.fil || fil then 0 else badness delta (m.stretch + bg + ex))
       else if m.shrink + ex < -delta then (pretolerance : Int) + 1
       else badness delta (m.shrink + ex)
     if bad > (pretolerance : Int) then
-      return kp items target protrude expand fil runt
+      return kp items target protrude expand bg fil runt
     prev := j
   return breaks
 
@@ -9781,11 +9877,21 @@ private theorem finishPage_fill_centre_exact (b : B) (owed : Sp)
   simp_all [Array.getElem?_mapIdx, Option.map_map, Function.comp_def,
     Nat.not_lt.mpr hi]
 
+/-- The census key of an overfull line: the source position its first
+located item stands at, so each overfull line is its own loss — TeX logs
+every overfull box, and each wants its own fix — and only the same site
+set again (an overlay's repeated page) counts as a repeat. A line no
+source item reaches shares one key, the one `uniqueDiags` collapses into
+a count. -/
+def overfullSubject : Option Span → String
+  | some s => s!"overfull:{s.file}:{s.pos.line}:{s.pos.col}"
+  | none => "overfull:unlocated"
+
 private def Spacing.Page.warnOverfull (b : B) (source : Option Span) : B :=
   { b with
     diags := b.diags.push
       (Diag.of .W0005 "overfull line; no feasible break" (span := source)
-        (trigger := source.bind (·.pos.command))) }
+        (trigger := source.bind (·.pos.command)) (subject := some (overfullSubject source))) }
 
 /-- First located item of the line actually set, never a neighbouring line's
 site. Callers shift this map alongside inserted marks and hanging kerns. -/
@@ -9884,6 +9990,18 @@ public structure Spacing.Paragraph where
   `\strut` in each code line): its box is the strut's at least
   (`Spacing.Page.placeLine`'s `strut`). -/
   private strut : Option Sp := none
+  /-- The paragraph's forced line ends declare its lines (W0386 names one
+  that did not hold, `ParagraphBreaks.Splits`): a tex `\\` does. A
+  markdown hard break is HTML's `<br>`: it ends a line and declares nothing
+  about the line it ends, so a markdown paragraph records only its own end. -/
+  private declaresLines : Bool := true
+  /-- The stretch every line carries besides its own glue (`KpSums.bg`):
+  plain TeX's `\raggedright` `\rightskip 0pt plus 2em` in a narrowed table
+  cell (`Ir.ColSpec.narrows`), where a line may hold one word and no glue.
+  Priced so, a word stands alone on its line where the breaker once packed
+  the cell's words onto one overfull line across the next column. Zero
+  elsewhere. -/
+  private background : Sp := 0
 
 private abbrev ParaJob := Spacing.Paragraph
 
@@ -10152,6 +10270,11 @@ public structure Spacing.Context where
   cover here, as beamer's `\opaqueness` covers every colour a covered step
   uses. -/
   private covering : Option Ir.Cover := none
+  /-- The surface the document was written in (`Ir.Doc.surface`): a
+  markdown document's code breaks as url.sty sets a path
+  (`TextStyle.urlBreaks`), and a remedy the walk names is one that surface
+  can write. -/
+  private surface : Ir.Surface := .tex
 
 private abbrev Rd := Spacing.Context
 
@@ -10624,7 +10747,8 @@ private def collectPara (r : Rd) (a : Acc)
     (hangIndent : Sp := 0) (literalLines : Bool := false)
     (dispJob : Option DisplayJob := none) (paintPadding : Option Sp := none)
     (rowStrut : Option (Sp × Sp) := none) (strut : Option Sp := none)
-    (inserted : Bool := false) : Acc :=
+    (inserted : Bool := false) (background : Sp := 0)
+    (urlBreaks : Bool := r.surface == .markdown) : Acc :=
   let a := a.flushGap r
   let indent := indent + hangIndent
   -- The measure the paragraph sets against — and what a fraction-of-
@@ -10642,7 +10766,7 @@ private def collectPara (r : Rd) (a : Acc)
   -- on a dark standout background.
   let baseStyle := if baseStyle.color == Ir.Color.black then
       { baseStyle with color := a.fg } else baseStyle
-  let baseStyle := { baseStyle with ground := a.ground }
+  let baseStyle := { baseStyle with ground := a.ground, urlBreaks := urlBreaks }
   let (items, ds, cache, extras, rawNotes, wordOffsets, anchors, itemSources) :=
     itemsOfInlines r.pats size r.xHeight r.fs baseStyle inlines a.hyphCache
       (LeafCtr.of leaf span inlines) r.imgs measure r.geom.textHeight (noteOk := true)
@@ -10723,7 +10847,8 @@ private def collectPara (r : Rd) (a : Acc)
         if overfull then
           ds := ds.push (Diag.of .W0005 "overfull line; no feasible break"
             (span := lineSource nsources s brk)
-            (trigger := (lineSource nsources s brk).bind (·.pos.command)))
+            (trigger := (lineSource nsources s brk).bind (·.pos.command))
+            (subject := some (overfullSubject (lineSource nsources s brk))))
         let box := lineExtent r.fs r.geom.fontSize (scaleB bodyFont.ascent)
           (scaleB bodyFont.capHeight) (scaleB (-bodyFont.descent))
           r.geom.leading noteSize lsegs noteLead
@@ -10797,7 +10922,10 @@ private def collectPara (r : Rd) (a : Acc)
       leaf := leaf
       keepNext := keepNext
       display := dispJob
-      rowStrut := rowStrut }) }
+      rowStrut := rowStrut
+      background := background
+      -- premise: markdownWarningChecks — a markdown paragraph whose long line ends in a hard break sets the page its tex twin sets, breaking there and wrapping the line before it, and only the tex twin names W0386, as LaTeX names nothing
+      declaresLines := r.surface != .markdown }) }
 
 /-- The weight of a heading's declared rule: 0.06 em of the base — the
 0.6 pt the engine shipped at the 10 pt base where it was picked, now
@@ -11153,6 +11281,22 @@ states (`HtmlDoc.cellSideClassOf`). -/
 @[expose] public def cellParagraph (spec : Ir.ColSpec) : Bool × Bool × Bool :=
   (!spec.ragged, spec.ragged && spec.align == .right, spec.ragged && spec.align == .center)
 
+/-- How a natural cell sets when its narrowed column (`Ir.ColSpec.narrows`)
+cannot hold it on one line: a ragged paragraph on the cell's side, as a
+browser wraps a table cell, `(flushRight, center)` — hung from the right
+edge where the side is right, centred where it is centre. -/
+@[expose] public def narrowedCell (side : Ir.HAlign) : Bool × Bool :=
+  (side == .right, side == .center)
+
+/-- The stretch a narrowed cell's every line carries (`KpSums.bg`): plain
+TeX's `\raggedright`, `\rightskip 0pt plus 2em` (plain.tex; ragged2e's
+`\RaggedRightRightskip` is the same), at the cell's size. A ragged line's
+own stretch is its word spaces' (`raggedItems`), so a line holding one word,
+or one run of code, holds none: with this skip it is priced as finitely as
+any other, and the breaker sets a word per line rather than pack a narrow
+cell's words onto one overfull line across the next column. -/
+@[expose] public def narrowedSkip (size : Sp) : Sp := 2 * size
+
 /-- The strut every row of a table stands on: latex.ltx's `\@arstrutbox`,
 0.7 of the `\baselineskip` in force where the table opens above the
 baseline and the rest below it (`\strutbox`'s 0.3, so the two make the
@@ -11194,6 +11338,155 @@ never the table's own face or size. The stylesheet states the same default
     (name : String) : Sp :=
   declared.getD (face.resolve (Ir.tableLengthDefault name))
 
+/-- A cell's min-content width: the widest run of its items no break may
+split — boxes, images and rules summed between two legal breaks, interword
+glue or an unflagged penalty (an explicit hyphen, in code too, or a forced
+break). A hyphenation point reads as no break: a fitted cell sets ragged
+and unhyphenated. Nor does a break priced at `binopPenalty` or `relPenalty`,
+a formula's: a browser breaks no formula, and a cell's code breaks only at
+a space or a hyphen there and on the page, as a table cell sets it
+(`collectTable` sets cells without url.sty's breaks). -/
+private def itemsMinWidth (items : Array Item) : Sp := Id.run do
+  let mut widest : Sp := 0
+  let mut run : Sp := 0
+  for it in items do
+    match it with
+    | .box w .. => run := run + w
+    | .img _ w _ => run := run + w
+    | .rule w .. => run := run + w
+    | .glue _ | .decoratedGlue _ _ =>
+      widest := max widest run
+      run := 0
+    | .pen _ cost flagged _ _ _ =>
+      if !flagged && cost < 10000 && cost != (binopPenalty : Int) && cost != (relPenalty : Int) then
+        widest := max widest run
+        run := 0
+    | .poly .. => pure ()
+  return max widest run
+
+/-- One narrowed column: its widest unbreakable run `mn`, and its share of the
+room left over beyond every column's run, `k` of `d`, in proportion to how
+much wider its widest line `w` is than that run. -/
+public def fitWidth (mn w k d : Int) : Int :=
+  if d ≤ 0 then w else mn + (w - mn) * k / d
+
+/-- A narrowed column stands between its widest unbreakable run and its
+natural width whenever the room shared is no more than the room wanted. -/
+public theorem fitWidth_between (mn w k d : Int) (hmw : mn ≤ w) (hk : 0 ≤ k)
+    (hkd : k ≤ d) : mn ≤ fitWidth mn w k d ∧ fitWidth mn w k d ≤ w := by
+  unfold fitWidth
+  split
+  · exact ⟨hmw, Int.le_refl w⟩
+  · rename_i hd
+    have hd : 0 < d := by omega
+    have h0 : 0 ≤ (w - mn) * k / d := Int.ediv_nonneg (Int.mul_nonneg (by omega) hk) (by omega)
+    have h1 : (w - mn) * k / d ≤ w - mn := by
+      apply Int.ediv_le_of_le_mul hd
+      exact Int.mul_le_mul_of_nonneg_left hkd (by omega)
+    omega
+
+/-- **A markdown table is a web table** (`collectTable`): its narrowing
+columns (`Ir.ColSpec.narrows`) share a measure too narrow for them as a
+browser's automatic table layout shares it (HTML 4.01 §B.5.2, the
+autolayout algorithm). Every such column keeps at least its widest
+unbreakable run (`mins`), and what the measure leaves beyond them all is
+shared in proportion to how much wider each column's widest line is than
+its run (`fitWidth`). A table that fits keeps its natural widths; one whose
+runs alone pass the measure takes them, and passes it by the rest. Any
+other column keeps its width, out of the room. -/
+public def fitColumns (cols : Array Ir.ColSpec) (avail : Sp) (natural mins : Array Sp) :
+    Array Sp :=
+  let isNat (j : Nat) : Bool :=
+    (cols[j]?.map fun c => c.narrows && (c.width matches .natural)).getD false
+  let lo (j : Nat) (w : Sp) : Sp := min ((mins[j]?).getD w) w
+  let sums := natural.zipIdx.foldl (fun (fx, mx, mn) (w, j) =>
+    if isNat j then (fx, mx + w, mn + lo j w) else (fx + w, mx, mn)) ((0 : Sp), (0 : Sp), (0 : Sp))
+  let (fixed, maxSum, minSum) := sums
+  let room := avail - fixed
+  if maxSum ≤ room then natural
+  else natural.mapIdx fun j w =>
+    if !isNat j then w
+    else if room ≤ minSum then lo j w
+    else fitWidth (lo j w) w (room - minSum) (maxSum - minSum)
+
+/-- The sizes a markdown table steps down through when its words alone are
+wider than the text block, largest first: LaTeX's own steps below
+`\normalsize`, `\small` and `\footnotesize`, then the floor, `\scriptsize` —
+the size LaTeX sets a first-level script at, the smallest it sets a
+reading text by (size10.clo: 9, 8 and 7 pt at 10). An author's own remedy
+for a wide table is one of these declarations; a markdown source can
+write none. -/
+public def tableSteps : List String := ["small", "footnotesize", "scriptsize"]
+
+/-- The step a markdown table takes only when, at the floor, it is wider
+than the paper: LaTeX's `\tiny`, 5 pt at 10 — type hard to read beats
+columns the sheet never shows. -/
+public def tableLastStep : String := "tiny"
+
+/-- How a narrowing table (`Ir.ColSpec.narrows`) fits its text block: the
+size step it sets at (`none`: its body size) and how far its widest
+unbreakable runs, with the column gaps and outer pads, still pass the
+block at that size — zero once they fit. -/
+public structure TableFit where
+  step : Option String := none
+  overhang : Sp := 0
+  deriving Repr, BEq, Inhabited
+
+/-- What a table's narrowing columns need at a size: each column's widest
+unbreakable run (`itemsMinWidth`) over its cells but a span's, set as the
+table's measuring pass sets them — unhyphenated, as a narrowed cell sets —
+with the gaps and pads; any other column counts its widest cell. -/
+private def tableNeed (fs : FontSet) (geom : Geom) (xHeight : Sp) (imgs : Image.Store)
+    (cols : Array Ir.ColSpec) (padL padR : Bool) (rows : Array (Array (Array Ir.Inline)))
+    (spans : Array Ir.ColSpan) (colsep size : Sp) : Sp := Id.run do
+  let mut widths : Array Sp := cols.map fun _ => 0
+  let mut cache : Std.HashMap String (Array Nat) := {}
+  for (row, i) in rows.zipIdx do
+    for (cell, j) in row.zipIdx do
+      unless inSpan spans i j do
+        let (items, _, c, _) :=
+          itemsOfInlines none size xHeight fs { cellCode := true } cell cache (.fixed .unattributed)
+            imgs geom.textWidth geom.textHeight (ladder := geom.scale)
+        cache := c
+        let narrows := (cols[j]?.map (·.narrows)).getD false
+        let w := if narrows then itemsMinWidth items else itemsNaturalWidth items
+        widths := widths.modify j (max · w)
+  return widths.foldl (· + ·) 0 + tablePadding colsep cols.size padL padR
+
+/-- **The size a markdown table sets at**: its body size when its narrowing
+columns' widest runs fit the measure it stands in, `avail` (`tableNeed`),
+else the largest of `tableSteps` at which they do, else the floor with what
+still overhangs — or, when that overhang, centred, would pass the side
+margins and so the paper, the last step (`tableLastStep`). One decision,
+both artifacts: the page sets the table's
+cells at its step against its own measure and centres the overhang across
+both margins (`collectTable`), and the driver hands this same function to
+the HTML (`HtmlDoc.Config.tableFit`), which reads the same measure — the
+text block less the list and quotation levels around the table
+(`HtmlDoc.Config.deeper`) — states the step as the table's font size and
+centres the overhang on paper. A table with no narrowing column fits as
+declared. -/
+public def tableFit (geom : Geom) (fs : FontSet) (imgs : Image.Store) (colsep avail : Sp)
+    (cols : Array Ir.ColSpec) (padL padR : Bool) (rows : Array (Array (Array Ir.Inline)))
+    (spans : Array Ir.ColSpan) : TableFit := Id.run do
+  unless cols.any (·.narrows) do return {}
+  let xHeight := fs.body.xHeight * geom.fontSize / fs.body.unitsPerEm
+  let need (step : Option String) : Sp :=
+    tableNeed fs geom xHeight imgs cols padL padR rows spans colsep
+      (match step with
+        | some s => Ir.scaleStepIn geom.scale geom.fontSize s
+        | none => geom.fontSize)
+  if need none ≤ avail then return {}
+  for s in tableSteps do
+    if need (some s) ≤ avail then return { step := some s }
+  let floor := tableSteps.getLast?
+  -- What still overhangs at the floor stands in the margins while the table
+  -- is no wider than the paper (`collectTable` keeps it on); wider, the
+  -- last step is the one that keeps its columns on the sheet.
+  if need floor ≤ geom.pageW then return { step := floor, overhang := need floor - avail }
+  let last := some tableLastStep
+  return { step := last, overhang := max 0 (need last - avail) }
+
 /-- Lay out a `.table`: booktabs' formal table. Columns take their declared
 fraction of the measure (or their widest cell), separated by `2·tabcolsep`
 (classes.dtx) with the outer pads under `@{}`'s control; each row places
@@ -11209,54 +11502,91 @@ private def collectTable (r : Rd) (a0 : Acc)
   if cols.isEmpty then
     return a0
   let mut a := a0.flushGap r
-  let size := r.geom.fontSize
   let tok (name : String) : Sp :=
     tableLength ((a.tokens.find? name).map fun g => (r.resolve g).width) r.preamble name
   let colsep := tok "tabcolsep"
   let total := (a.measure.getD r.geom.textWidth) - indent
+  -- A markdown table whose words alone pass its measure sets a step
+  -- smaller (`tableFit`, the decision the HTML states too). Its cells take
+  -- no hyphen, on every pass: the decision measures them unhyphenated, and
+  -- a hyphenation point splits a word's box, its kerns with it.
+  let web := cols.any (·.narrows)
+  let cellPats := if web then none else r.pats
+  let fit := tableFit r.geom r.fs r.imgs colsep total cols padL padR rows spans
+  let size := match fit.step with
+    | some s => Ir.scaleStepIn r.geom.scale r.geom.fontSize s
+    | none => r.geom.fontSize
   -- Natural widths, measured per cell (needed for `l`/`c`/`r` column
   -- widths and for right-aligned placement). The measuring pass drops its
   -- diagnostics: the setting pass below emits them once.
   let mut nats : Array (Array Sp) := #[]
+  let mut mins : Array Sp := cols.map fun _ => 0
   let mut cache := a.hyphCache
-  for row in rows do
+  for (row, i) in rows.zipIdx do
     let mut rowNats : Array Sp := #[]
-    for cell in row do
+    for (cell, j) in row.zipIdx do
       -- a measuring pass: these items never ship, so they carry no attribution
       let (items, _, c, _) :=
-        itemsOfInlines r.pats size r.xHeight r.fs { color := a.fg, ground := a.ground } cell cache
+        itemsOfInlines cellPats size r.xHeight r.fs
+          { color := a.fg, ground := a.ground, cellCode := web } cell cache
           (.fixed .unattributed) r.imgs r.geom.textWidth r.geom.textHeight
           (ladder := r.geom.scale) (step := r.step)
       cache := c
       rowNats := rowNats.push (itemsNaturalWidth items)
+      unless inSpan spans i j do
+        mins := mins.modify j (max · (itemsMinWidth items))
     nats := nats.push rowNats
   a := { a with hyphCache := cache }
-  let widths := tableColWidths colsep total size cols nats spans padL padR
+  let natural := tableColWidths colsep total size cols nats spans padL padR
+  -- A markdown table is a web table: too wide for the measure, it narrows
+  -- its narrowing columns as a browser does (`fitColumns`), and the cells
+  -- of a narrowed column wrap below.
+  let widths := if web then
+      fitColumns cols (total - tablePadding colsep cols.size padL padR) natural mins
+    else natural
   let lead : Sp := if padL then colsep else 0
   let trail : Sp := if padR then colsep else 0
   let innerGaps : Sp := 2 * colsep * ((cols.size : Int) - 1)
   let tableW : Sp := lead + widths.foldl (· + ·) 0 + innerGaps + trail
-  -- A table wider than the measure stays its declared width and is named,
-  -- never squeezed to fit: `\tabcolsep` is a rigid kern (classes.dtx sets
-  -- it as a dimen, no rubber), so TeX itself sets the same source overfull
-  -- and says so: a table whose `p{}` widths and gaps sum past the measure
-  -- is overfull under lualatex too. Shrinking the gaps would fit a box TeX
-  -- does not fit and silently change every gap to hide an error in the
-  -- declared column widths; the honest fix is the author's, and the help
-  -- names it. (The KP breaker's own rule is the same: shrink is spent only
-  -- where the glue declared some.)
+  -- A tex table wider than the measure stays its declared width and is
+  -- named, never squeezed to fit: `\tabcolsep` is a rigid kern (classes.dtx
+  -- sets it as a dimen, no rubber), so TeX itself sets the same source
+  -- overfull and says so: a table whose `p{}` widths and gaps sum past the
+  -- measure is overfull under lualatex too. Shrinking the gaps would fit a
+  -- box TeX does not fit and silently change every gap to hide an error in
+  -- the declared column widths; the honest fix is the author's, and the
+  -- help names it. (The KP breaker's own rule is the same: shrink is spent
+  -- only where the glue declared some.) A markdown table declares no width:
+  -- its columns narrowed above, and its type stepped down (`tableFit`).
+  -- Named at its first located cell, with a remedy its source can write.
+  -- What a markdown table still overhangs stands centred on its measure,
+  -- moved along the line only as far as keeps it on the paper — a table in
+  -- a list item has its indent's room on the left and the margin alone on
+  -- the right — and it leaves the paper only when it is wider than it.
+  let offPaper := tableW > r.geom.pageW
   if tableW > total then
     a := { a with diags := a.diags.push (Diag.of .W0338
-      (s!"the table is {(tableW - total).toPtString}pt wider than the measure")
-      (help := "narrow the p{...} column widths, or widen the text block")) }
+      (if web && fit.overhang > 0 then
+          s!"the table's words alone are {(tableW - total).toPtString}pt wider than the \
+measure at its smallest size; it " ++
+            (if offPaper then "runs past the edges of the paper" else "overhangs the margins")
+        else s!"the table is {(tableW - total).toPtString}pt wider than the measure")
+      (span := rows.findSome? fun row => row.findSome? Ir.inlineSource)
+      (help := if web then
+          "shorten the longest word in each column, or split the table into narrower ones"
+        else "narrow the p{...} column widths, or widen the text block")) }
   let side : Ir.HAlign := if center then .center else if r.geom.flushRight then .right else .left
-  let x0 : Sp := indent + side.boxOffset (max 0 (total - tableW))
+  let x0 : Sp := if web && tableW > total then
+      if offPaper then (r.geom.pageW - tableW) / 2 - r.geom.hmargin
+      else max (-r.geom.hmargin)
+        (min (indent - (tableW - total) / 2) (r.geom.pageW - r.geom.hmargin - tableW))
+    else indent + side.boxOffset (max 0 (total - tableW))
   -- The scope's side places the table box and stops there: a cell sets by
   -- its own spec (`cellSide`), from none of the scope's side, justification
   -- or box centring — `\@arrayparboxrestore` (latex.ltx) zeroes `\leftskip`
   -- and `\rightskip` in every `p` cell, so a `\raggedright` around the
   -- table leaves a wrapped cell justified.
-  let rc := { r with centreBoxes := false
+  let rc := { r with centreBoxes := false, pats := cellPats
                      geom := { r.geom with flushRight := false, justify := true } }
   -- The left edge of column j's cell box.
   let colX (j : Nat) : Sp := Id.run do
@@ -11358,7 +11688,12 @@ private def collectTable (r : Rd) (a0 : Acc)
         pendBelow := none
       prev := 0
       let row := rows[i]
-      a := { a with ops := a.ops.push (.colOpen #[]) }
+      -- Every cell stands on the row's baseline by its first line, as an
+      -- `\halign` row stands its entries (a `p` entry is a `\vtop`, whose
+      -- reference point is its first baseline): a cell whose first line
+      -- is taller moves the row's baseline down for every cell, never its
+      -- own text alone.
+      a := { a with ops := a.ops.push (.colOpen (Array.replicate row.size .first)) }
       for j in [0:row.size] do
         -- a `\multicolumn` head sets across the columns it covers, gaps
         -- included, by its own spec: a `p{…}` one wraps at its own width
@@ -11385,20 +11720,35 @@ private def collectTable (r : Rd) (a0 : Acc)
           let (sub, leaf) := sub.leafRange (leafCount cell)
           let span := leafCount cell
           -- A wrapping cell is a paragraph its spec sets (`cellParagraph`);
-          -- a natural one is a single line its side places in the box.
+          -- a natural one is a single line its side places in the box. A
+          -- natural cell its narrowed column cannot hold on one line
+          -- (`Ir.ColSpec.narrows`, a markdown table's) wraps as a browser
+          -- wraps a table cell: ragged on its side and unhyphenated
+          -- (`narrowedCell`).
+          let nat := ((nats[i]?).bind (·[j]?)).getD 0
           let sub := if !(spec.width matches .natural) then
               let (justify, flushRight, center) := cellParagraph spec
               collectPara { rc with geom := { rc.geom with justify, flushRight } } sub cell x
-                center size (leaf := leaf) (span := span) (rowStrut := strut)
+                center size (baseStyle := { cellCode := web }) (leaf := leaf) (span := span)
+                (rowStrut := strut) (urlBreaks := false)
+            else if spec.narrows && nat > measureW then
+              let (flushRight, center) := narrowedCell (cellSide cols spans i j)
+              collectPara
+                { rc with pats := none, geom := { rc.geom with justify := false, flushRight } }
+                sub cell x center size (baseStyle := { cellCode := web }) (leaf := leaf)
+                (span := span) (rowStrut := strut) (background := narrowedSkip size)
+                (urlBreaks := false)
             else match cellSide cols spans i j with
             | .center =>
-              collectPara rc sub cell x true size (leaf := leaf) (span := span) (rowStrut := strut)
+              collectPara rc sub cell x true size (baseStyle := { cellCode := web }) (leaf := leaf)
+                (span := span) (rowStrut := strut) (urlBreaks := false)
             | .right =>
-              let nat := ((nats[i]?).bind (·[j]?)).getD 0
               collectPara rc sub cell (x + max 0 (wj - nat)) false size
-                (leaf := leaf) (span := span) (rowStrut := strut)
+                (baseStyle := { cellCode := web }) (leaf := leaf) (span := span) (rowStrut := strut)
+                (urlBreaks := false)
             | .left =>
-              collectPara rc sub cell x false size (leaf := leaf) (span := span) (rowStrut := strut)
+              collectPara rc sub cell x false size (baseStyle := { cellCode := web }) (leaf := leaf)
+                (span := span) (rowStrut := strut) (urlBreaks := false)
           a := { a with
             ops := a.ops ++ sub.ops
             hyphCache := sub.hyphCache
@@ -12456,6 +12806,87 @@ private def collectLogo (a : Acc) (content : Array Inline) : Acc :=
   let a := (a.leafRange (leafCount content)).1
   { a with ops := a.ops.push (.setLogo content) }
 
+/-- One display column of a listing line as the layout sets it: the
+character (`ListingSpec.layoutText`'s spelling, tab stops expanded), the
+token it came from, its authored source column, and whether the source is
+white space there — where a wrap may fall. -/
+private structure CodeUnit where
+  c : Char
+  token : Nat
+  sourceCol : Nat
+  space : Bool
+  deriving Inhabited
+
+/-- A source line as display units, each character spelled as `layoutText`
+spells the whole line, the column threaded through the tokens. -/
+private def codeUnits (spec : Ir.ListingSpec) (line : Array ListingHighlight.Token) :
+    Array CodeUnit := Id.run do
+  let mut out : Array CodeUnit := #[]
+  let mut col := 0
+  let mut src := 0
+  let mut k := 0
+  for token in line do
+    for c in token.text.toList do
+      let (kept, next) := spec.layoutText col (String.singleton c)
+      for d in kept.toList do
+        out := out.push { c := d, token := k, sourceCol := src, space := c == ' ' || c == '\t' }
+      col := next
+      src := src + 1
+    k := k + 1
+  return out
+
+/-- A character that continues an identifier, which listings never breaks
+inside: its letter and digit classes (`a`–`z`, `A`–`Z`, `@`, `$`, `_`,
+`0`–`9`), every non-ASCII scalar read as a letter. -/
+private def codeIdent (c : Char) : Bool :=
+  c.isAlphanum || c == '_' || c == '@' || c == '$' || c.toNat > 127
+
+/-- Where a source line wraps as listings wraps it (`breaklines`, under its
+default `breakatwhitespace=false`; a LuaLaTeX probe agrees): greedily, each
+segment the longest that fits — `first` wide for the line's first, `cont`
+for every continuation — ending before a space or between two output
+units, never inside an identifier, the spaces at a wrap dropped. A segment
+no legal break brings inside its width runs on to its first legal break, as
+TeX sets the overfull line. Each segment is its unit range; `widths` is
+each unit's advance. -/
+private def codeWraps (us : Array CodeUnit) (widths : Array Sp) (first cont : Sp) :
+    Array (Nat × Nat) := Id.run do
+  let n := us.size
+  let mut pre : Array Sp := #[0]
+  for w in widths do
+    pre := pre.push ((pre.back?.getD 0) + w)
+  let width (a b : Nat) : Sp := (pre[b]?.getD 0) - (pre[a]?.getD 0)
+  let legal (b : Nat) : Bool :=
+    match us[b - 1]?, us[b]? with
+    | some p, some q => !p.space && (q.space || !(codeIdent p.c && codeIdent q.c))
+    | _, _ => false
+  let mut out : Array (Nat × Nat) := #[]
+  let mut s := 0
+  for _ in [0:n + 1] do
+    if s ≥ n then break
+    let limit := if out.isEmpty then first else cont
+    if width s n ≤ limit then
+      out := out.push (s, n)
+      s := n
+    else
+      let mut cut : Option Nat := none
+      let mut over : Option Nat := none
+      for b in [s + 1:n] do
+        if width s b > limit && (cut.isSome || over.isSome) then break
+        if legal b then
+          if width s b ≤ limit then cut := some b else over := some b
+      match cut.orElse fun _ => over with
+      | some b =>
+        out := out.push (s, b)
+        let mut k := b
+        for _ in [b:n] do
+          if (us[k]?.map (·.space)).getD false then k := k + 1 else break
+        s := k
+      | none =>
+        out := out.push (s, n)
+        s := n
+  return out
+
 private def collectVerbatim (r : Rd) (a : Acc) (covered : Option Ir.Color) (s : String) (spec : Ir.ListingSpec) (indent : Sp) : Acc :=
   -- Code lines use the declared size through the ordinary style resolver.
   -- No hyphenation patterns: the engine must never invent a hyphen inside
@@ -12492,6 +12923,35 @@ private def collectVerbatim (r : Rd) (a : Acc) (covered : Option Ir.Color) (s : 
   -- later pair 0.25 pt, the gaps around the listing a bare `verbatim`'s.
   let sty := applyStyle r.geom.scale {} spec.fontSize
   let overlap := if sty.leading.isSome then 0 else spec.lineOverlap
+  -- A listing owns its line box, not the enclosing body's strut.
+  -- Resolve once against the body/local measure, then give collectPara
+  -- that size and an explicit skip: its ordinary mixed-size paragraph
+  -- strut would otherwise hold 8pt code on 12pt body baselines.
+  let avail := (a.measure.getD r.geom.textWidth) - indent
+  let (size, leading) := sty.metrics r.geom.fontSize r.xHeight avail r.geom.textHeight
+  let leading := leading.getD
+    (Ir.stepSkip (sty.stepLead r.geom.skips r.geom.fontSize) size r.geom.leading)
+  -- A listing that wraps as listings wraps (`breakIndent`) is broken here,
+  -- line by line, each continuation standing in its line's own indentation
+  -- and the break indent: every segment then fits, so the paragraph sets
+  -- the lines as declared and none re-flows. Advances are the mono slot's
+  -- at the listing's size, a missing glyph's its fallback face's.
+  let wrap := if spec.breakLines then spec.breakIndent else none
+  let mono := r.fs.get (r.fs.lookup 2 400 false)
+  let advance (c : Char) : Sp :=
+    match glyphOf size mono c with
+    | some g => g.2.2
+    | none =>
+      match (r.fs.fallbackFor c).bind fun fb => glyphOf size (r.fs.get fb) c with
+      | some g => g.2.2
+      | none => 0
+  let codeSource (i sourceColumn : Nat) (text : String) : Option Span :=
+    spec.source.map fun source =>
+      let line := source.pos.line + i - 1 +
+        (if s.startsWith "\n" || s.startsWith "\r\n" then 1 else 0)
+      let col := (if line == source.pos.line then source.pos.col else 1) + sourceColumn
+      { source with pos := { source.pos with
+          line := line, col := col, command := some text } }
   -- Declared line numbers are furniture beside each line — generated
   -- ink, like a list's markers: right-aligned digits in the mono face,
   -- held to their line by no-break spaces.
@@ -12505,42 +12965,73 @@ private def collectVerbatim (r : Rd) (a : Acc) (covered : Option Ir.Color) (s : 
         unless out.isEmpty do
           let taken := if i == 2 then 2 * overlap else overlap
           out := out.push (.linebreak { width := Dim.Length.ofSp (-taken) })
-        if spec.numbers then
-          let numStr := toString i
-          let pad := String.ofList (List.replicate (w - numStr.length) '\u00a0')
-          out := out.push (.text (pad ++ numStr ++ "\u00a0\u00a0"))
+        let numbered := if spec.numbers then
+            let numStr := toString i
+            String.ofList (List.replicate (w - numStr.length) '\u00a0') ++ numStr ++ "\u00a0\u00a0"
+          else ""
+        unless numbered.isEmpty do
+          out := out.push (.text numbered)
         if (ListingHighlight.lineText line).isEmpty then
           out := out.push (.text "\u00a0")
         else
-          let mut column := 0
-          -- Source columns count authored scalars. Display columns expand
-          -- tabs and exclude the generated line-number prefix.
-          let mut sourceColumn := 0
-          for token in line do
-            let (kept, nextColumn) := spec.layoutText column token.text
-            column := nextColumn
-            let inline := Listing.tokenInline a.pal a.ground covered
-              { token with text := kept } (style := spec.style)
-            let source := spec.source.map fun source =>
-              let line := source.pos.line + i - 1 +
-                (if s.startsWith "\n" || s.startsWith "\r\n" then 1 else 0)
-              let col := (if line == source.pos.line then source.pos.col else 1) + sourceColumn
-              { source with pos := { source.pos with
-                  line := line, col := col, command := some token.text } }
-            sourceColumn := sourceColumn + token.text.length
-            out := out.push (source.map (fun span => .located span #[inline]) |>.getD inline)
+          -- Each physical line the source line sets as: its token pieces
+          -- in display spelling, each with its authored source column and
+          -- the token's source text. Source columns count authored
+          -- scalars; display columns expand tabs and exclude the generated
+          -- line-number prefix.
+          let (physical, hang) : Array (Array (ListingHighlight.Token × Nat × String)) × Sp :=
+            match wrap with
+            | none => Id.run do
+              let mut column := 0
+              let mut sourceColumn := 0
+              let mut pieces := #[]
+              for token in line do
+                let (kept, nextColumn) := spec.layoutText column token.text
+                column := nextColumn
+                pieces := pieces.push ({ token with text := kept }, sourceColumn, token.text)
+                sourceColumn := sourceColumn + token.text.length
+              return (#[pieces], 0)
+            | some breakIndent => Id.run do
+              let us := codeUnits { spec with breakLines := false } line
+              let ws := us.map (advance ·.c)
+              let prefixW := (numbered.toList.map advance).sum
+              let lead := ((us.toList.takeWhile (·.space)).map (advance ·.c)).sum
+              let hang := prefixW + lead + breakIndent
+              let mut physical := #[]
+              for (a0, b0) in codeWraps us ws (avail - prefixW) (avail - hang) do
+                let mut pieces := #[]
+                let mut k := a0
+                for _ in [a0:b0] do
+                  if k ≥ b0 then break
+                  let some first := us[k]? | break
+                  let mut chars : Array Char := #[]
+                  for _ in [k:b0] do
+                    match us[k]? with
+                    | some u =>
+                      if k < b0 && u.token == first.token then
+                        chars := chars.push u.c
+                        k := k + 1
+                      else break
+                    | none => break
+                  let some token := line[first.token]? | break
+                  pieces := pieces.push
+                    ({ token with text := String.ofList chars.toList }, first.sourceCol, token.text)
+                physical := physical.push pieces
+              return (physical, hang)
+          let mut j := 0
+          for pieces in physical do
+            if j > 0 then
+              out := out.push (.linebreak {})
+              out := out.push (.hspace (.lit { width := .ofSp hang }) true)
+            j := j + 1
+            for (piece, sourceColumn, text) in pieces do
+              let inline := Listing.tokenInline a.pal a.ground covered piece (style := spec.style)
+              let source := codeSource i sourceColumn text
+              out := out.push (source.map (fun span => .located span #[inline]) |>.getD inline)
       pure #[.styled .mono out]
   let inner := match covered with
     | some c => #[.colored c none inner]
     | none => inner
-  -- A listing owns its line box, not the enclosing body's strut.
-  -- Resolve once against the body/local measure, then give collectPara
-  -- that size and an explicit skip: its ordinary mixed-size paragraph
-  -- strut would otherwise hold 8pt code on 12pt body baselines.
-  let (size, leading) := sty.metrics
-    r.geom.fontSize r.xHeight ((a.measure.getD r.geom.textWidth) - indent) r.geom.textHeight
-  let leading := leading.getD
-    (Ir.stepSkip (sty.stepLead r.geom.skips r.geom.fontSize) size r.geom.leading)
   -- the code is one leaf, its whole content; line numbers are generated
   let (a, leaf) := a.leafRange 1
   collectPara { r with pats := none, geom := { r.geom with justify := false } }
@@ -14580,25 +15071,43 @@ public def isEndFill (items : Array Item) (k : Nat) : Bool :=
 
 /-- Read the actual item boundaries and the actual breaking task's result
 once, at paragraph placement. No page text or displayed frame counter is
-used to infer the authored segmentation afterwards. -/
+used to infer the authored segmentation afterwards. A paragraph whose
+forced ends declare no lines (`declares` false, a markdown paragraph's)
+records its own end alone: it declared one line shape, the paragraph's. -/
 public def paragraphBreaksOf (site : Nat) (leaf : Option Nat) (frame : Option FrameOrigin)
-    (items : Array Item) (breaks : Array Nat) : ParagraphBreaks :=
+    (declares : Bool) (items : Array Item) (breaks : Array Nat) : ParagraphBreaks :=
+  let forced := (Array.range items.size).filter (isForced items)
   { site := site, leaf := leaf, frame := frame
-    forced := (Array.range items.size).filter (isForced items)
+    forced := if declares then forced else forced.extract (forced.size - 1) forced.size
     chosen := breaks
     endFills := breaks.filter (isEndFill items) }
 
 public theorem paragraphBreaksOf_forced_mem (site : Nat) (leaf : Option Nat)
     (frame : Option FrameOrigin) (items : Array Item) (breaks : Array Nat) (k : Nat) :
-    k ∈ (paragraphBreaksOf site leaf frame items breaks).forced ↔
+    k ∈ (paragraphBreaksOf site leaf frame true items breaks).forced ↔
       k < items.size ∧ isForced items k = true := by
-  simp only [paragraphBreaksOf, Array.mem_filter, Array.mem_range]
+  simp only [paragraphBreaksOf, ↓reduceIte, Array.mem_filter, Array.mem_range]
 
 public theorem paragraphBreaksOf_endFills_mem (site : Nat) (leaf : Option Nat)
-    (frame : Option FrameOrigin) (items : Array Item) (breaks : Array Nat) (k : Nat) :
-    k ∈ (paragraphBreaksOf site leaf frame items breaks).endFills ↔
+    (frame : Option FrameOrigin) (declares : Bool) (items : Array Item) (breaks : Array Nat)
+    (k : Nat) :
+    k ∈ (paragraphBreaksOf site leaf frame declares items breaks).endFills ↔
       k ∈ breaks ∧ isEndFill items k = true := by
   simp [paragraphBreaksOf]
+
+/-- A paragraph that declares no lines records no re-flow, whatever the
+breaker chose: the one end it records closes it, and only a declared end
+before the last can be split (`ParagraphBreaks.Splits`). -/
+public theorem paragraphBreaksOf_undeclared_exact (site : Nat) (leaf : Option Nat)
+    (frame : Option FrameOrigin) (items : Array Item) (breaks : Array Nat) :
+    (paragraphBreaksOf site leaf frame false items breaks).reflows = #[] := by
+  simp only [ParagraphBreaks.reflows, paragraphBreaksOf, Bool.false_eq_true, ↓reduceIte]
+  generalize (Array.range items.size).filter (isForced items) = forced
+  have hpop : (forced.extract (forced.size - 1) forced.size).pop = #[] := by
+    apply Array.eq_empty_of_size_eq_zero
+    simp only [Array.size_pop, Array.size_extract]
+    omega
+  simp [hpop]
 
 /-- W0386, the declared shape's account: the author ended a line where they
 meant it to end, the segment did not fit the measure, and the breaker found
@@ -14664,7 +15173,7 @@ private theorem warnReflow_accounts (b : B) (declared shipped : Nat) (reflowed :
   split <;> simp_all
 
 private def placePara (fs : FontSet) (b : B) (j : ParaJob) (breaks : Array Nat) : B :=
-  let p := paragraphBreaksOf b.paragraphBreaks.size j.leaf b.curFrameOrigin j.items breaks
+  let p := paragraphBreaksOf b.paragraphBreaks.size j.leaf b.curFrameOrigin j.declaresLines j.items breaks
   let start := ({ b with diags := b.diags ++ j.diags }).warnReflow
     p.forced.size breaks.size (!p.reflows.isEmpty)
   (breaks.foldl (placeParaLine fs j)
@@ -14817,14 +15326,15 @@ private theorem WordAcc.letters_prose (fontIdx : Nat) (color : Ir.Color) (link :
     exact WordAcc.glyph_prose _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ st hs
 
 private theorem wordItems_none_prose (langKey : String)
+    (explicitBreak : Option Char → Char → Option Char → Option Nat)
     (size : Sp) (leading : Option Sp) (fontIdx : Nat)
     (color : Ir.Color) (ground : Option Ir.Color) (link : Option String)
     (decorations : Decorations) (smallcaps : Bool) (attr : Attribution)
     (fs : FontSet) (font : Font) (chars : Array Char) (missing : Array (Nat × Char))
     (substs : Array (Nat × Char × Nat)) (cache : Std.HashMap String (Array Nat))
     (owners : Array Attribution) (origins : Array (Option Span)) (sites : GlyphOrigins) :
-    ItemsProse (wordItems none langKey size leading fontIdx color ground link decorations
-      smallcaps attr fs font chars missing substs cache owners origins sites).1 := by
+    ItemsProse (wordItems none langKey explicitBreak size leading fontIdx color ground link
+      decorations smallcaps attr fs font chars missing substs cache owners origins sites).1 := by
   unfold wordItems
   dsimp only
   apply Loop.bind_of_inv
@@ -14851,7 +15361,7 @@ private theorem wordItems_none_prose (langKey : String)
               split
               · exact (itemsProse_push _ _).mpr
                   ⟨WordAcc.flush_prose _ _ _ _ _ _ _ _ _ hg, by
-                    simp [Item.Prose, forcedCost, hyphenPenalty]⟩
+                    unfold Item.Prose; exact ⟨by unfold forcedCost; omega, rfl, rfl⟩⟩
               · exact hg
       · exact hs
   · intro st hs
@@ -14890,9 +15400,9 @@ private theorem itemsOfTok_none_prose (size xHeight : Sp)
   all_goals first | contradiction | skip
   case word sty cs attr =>
     simp only [itemsOfTok, ht, Bool.false_and, Bool.false_eq_true, ↓reduceIte,
-      patsOf_off]
+      patsOf_off, ite_self]
     exact (itemsProse_append _ _).mpr ⟨widenLast_prose _ _ hi,
-      wordItems_none_prose _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _⟩
+      wordItems_none_prose _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _⟩
   case space sty =>
     exact (itemsProse_push _ _).mpr ⟨hi, decoratedGlue_prose _ _ _ _ _⟩
 
@@ -15043,9 +15553,10 @@ private theorem raggedItems_paraItems (items : Array Item) :
     raggedItems (paraItems items) = paraItems (raggedItems items) := by
   simp [raggedItems, paraItems]
 
-private theorem kpTwoPass_unflagged (items : Array Item) (target : Sp) (protrude expand fil : Bool) {runt : Bool}
-    (hp : ∀ it ∈ items, it.UnflaggedEmpty) :
-    kpTwoPass items target protrude expand fil runt = kp items target protrude expand fil runt := by
+private theorem kpTwoPass_unflagged (items : Array Item) (target : Sp) (protrude expand : Bool)
+    (bg : Sp) (fil : Bool) {runt : Bool} (hp : ∀ it ∈ items, it.UnflaggedEmpty) :
+    kpTwoPass items target protrude expand bg fil runt =
+      kp items target protrude expand bg fil runt := by
   unfold kpTwoPass
   dsimp only
   split
@@ -15059,11 +15570,12 @@ private theorem kpTwoPass_unflagged (items : Array Item) (target : Sp) (protrude
     cases it <;> simp_all [Item.UnflaggedEmpty]
 
 private theorem kpTwoPass_paraItems_chars (items : Array Item) (target : Sp)
-    (protrude expand fil : Bool) {runt : Bool} (hp : ItemsProse items) :
-    (breakSpans (paraItems items) (kpTwoPass (paraItems items) target protrude expand fil runt).toList).1 =
+    (protrude expand : Bool) (bg : Sp) (fil : Bool) {runt : Bool} (hp : ItemsProse items) :
+    (breakSpans (paraItems items)
+        (kpTwoPass (paraItems items) target protrude expand bg fil runt).toList).1 =
       (paraItems items).toList.flatMap Item.boxChars := by
-  rw [kpTwoPass_unflagged _ _ _ _ _ (itemsProse_unflagged items hp)]
-  exact kp_boxChars _ _ _ _ _ (by simp [paraItems_size]) (paraItems_end items)
+  rw [kpTwoPass_unflagged _ _ _ _ _ _ (itemsProse_unflagged items hp)]
+  exact kp_boxChars _ _ _ _ _ _ (by simp [paraItems_size]) (paraItems_end items)
     (paraItems_noEarlierForced items hp)
 
 private theorem setLine_unflagged_chars (items : Array Item) (a j : Nat) (target : Sp)
@@ -15249,9 +15761,10 @@ private theorem KpChain.members_lt {items : Array Item} {last : Nat} {breaks : L
     · rcases List.mem_singleton.mp hk with rfl
       exact hj
 
-private theorem kp_members_lt (items : Array Item) (target : Sp) (protrude expand fil : Bool) {runt : Bool}
-    (hn : 0 < items.size) : ∀ k ∈ kp items target protrude expand fil runt, k < items.size := by
-  let sums := kpSums items
+private theorem kp_members_lt (items : Array Item) (target : Sp) (protrude expand : Bool)
+    (bg : Sp) (fil : Bool) {runt : Bool} (hn : 0 < items.size) :
+    ∀ k ∈ kp items target protrude expand bg fil runt, k < items.size := by
+  let sums := { kpSums items with bg := bg }
   let slack : Sp := if protrude then maxProtrudeRight items else 0
   let st := kpForward items sums target slack protrude expand fil runt items.size
   have ht := (kpForward_valid items sums target slack protrude expand fil (runt := runt) items.size
@@ -15385,15 +15898,16 @@ private theorem census_placePara_prose {n : Nat} (pick : Option Nat → Bool →
     (hj : j.SourceBound n) (hb : b.SourceBound n) (hh : Spacing.Paragraph.hangIndent j = 0)
     (hp : ItemsProse items) (he : Spacing.Paragraph.items j = paraItems items) :
     Spacing.Page.census pick (placePara fs b j
-      (kpTwoPass (Spacing.Paragraph.items j) (Spacing.Paragraph.target j) protrude expand fil runt)) =
+      (kpTwoPass (Spacing.Paragraph.items j) (Spacing.Paragraph.target j) protrude expand
+        (Spacing.Paragraph.background j) fil runt)) =
       Spacing.Page.census pick b ++ (if pick (Spacing.Paragraph.leaf j) (!(Spacing.Paragraph.inFloat j)) then
         (Spacing.Paragraph.items j).toList.flatMap Item.boxChars else []) := by
   rw [census_placePara pick fs b j _ hj hb hh]
-  · rw [he, kpTwoPass_paraItems_chars _ _ _ _ _ hp]
+  · rw [he, kpTwoPass_paraItems_chars _ _ _ _ _ _ hp]
   · rw [he]
     exact itemsProse_unflagged items hp
-  · rw [he, kpTwoPass_unflagged _ _ _ _ _ (itemsProse_unflagged items hp)]
-    exact kp_members_lt _ _ _ _ _ (by simp [paraItems_size])
+  · rw [he, kpTwoPass_unflagged _ _ _ _ _ _ (itemsProse_unflagged items hp)]
+    exact kp_members_lt _ _ _ _ _ _ (by simp [paraItems_size])
 
 
 /-- Content with no physical placeholder survives the physical pass whole:
@@ -18154,7 +18668,7 @@ private theorem placePara_breaks_exact (fs : FontSet) (b : B) (j : ParaJob)
     (breaks : Array Nat) :
     (placePara fs b j breaks).paragraphBreaks =
       b.paragraphBreaks.push
-        (paragraphBreaksOf b.paragraphBreaks.size j.leaf b.curFrameOrigin j.items breaks) :=
+        (paragraphBreaksOf b.paragraphBreaks.size j.leaf b.curFrameOrigin j.declaresLines j.items breaks) :=
   (reflowStep_paraLines ..).1
 
 private theorem reflowStep_warnReflow (b : B) (declared shipped : Nat) (split : Bool) :
@@ -18173,7 +18687,7 @@ private theorem warnReflow_diag (b : B) (declared shipped : Nat) :
 private theorem placePara_reflows (fs : FontSet) (b : B) (j : ParaJob)
     (breaks : Array Nat) (hb : b.ReflowsNamed) :
     (placePara fs b j breaks).ReflowsNamed := by
-  let p := paragraphBreaksOf b.paragraphBreaks.size j.leaf b.curFrameOrigin j.items breaks
+  let p := paragraphBreaksOf b.paragraphBreaks.size j.leaf b.curFrameOrigin j.declaresLines j.items breaks
   let start := ({ b with diags := b.diags ++ j.diags }).warnReflow
     p.forced.size breaks.size (!p.reflows.isEmpty)
   have appended : ReflowStep b { b with diags := b.diags ++ j.diags } :=
@@ -19346,7 +19860,8 @@ private theorem sourceBound_collectPara {n : Nat} (r : Rd) (a : Acc)
     (collectPara r a xs indent false r.geom.fontSize
       (leaf := leaf) (span := span)).SourceBound n := by
   have hn := itemsOfInlines_plainNotes r.pats r.geom.fontSize r.xHeight r.fs
-    ({ color := (a.flushGap r).fg, ground := (a.flushGap r).ground } : TextStyle)
+    ({ color := (a.flushGap r).fg, ground := (a.flushGap r).ground
+       urlBreaks := r.surface == .markdown } : TextStyle)
     xs (a.flushGap r).hyphCache (LeafCtr.of leaf span xs) r.imgs
     ((a.flushGap r).measure.getD r.geom.textWidth - (indent + 0))
     r.geom.textHeight true r.geom.scale r.step r.roleMetrics hp
@@ -19612,7 +20127,8 @@ private theorem collectPara_prose (r : Rd) (a : Acc)
       (GlyphClean (Spacing.Paragraph.diags j) →
         inkCensus ((Spacing.Paragraph.items j).toList.flatMap Item.boxChars) =
           inkCensus (Ir.plainText xs).toList) := by
-  let style : TextStyle := { color := (Spacing.Pending.fg (a.flushGap r)), ground := (Spacing.Pending.ground (a.flushGap r)) }
+  let style : TextStyle := { color := (Spacing.Pending.fg (a.flushGap r)), ground := (Spacing.Pending.ground (a.flushGap r))
+                             urlBreaks := Spacing.Context.surface r == .markdown }
   have hn := itemsOfInlines_plainNotes (Spacing.Context.pats r) (Spacing.Context.geom r).fontSize (Spacing.Context.xHeight r) (Spacing.Context.fs r)
     style xs (Spacing.Pending.hyphCache (a.flushGap r)) (LeafCtr.of leaf span xs) (Spacing.Context.imgs r)
     ((Spacing.Pending.measure (a.flushGap r)).getD (Spacing.Context.geom r).textWidth - (indent + 0))
@@ -19976,7 +20492,8 @@ private def withLayoutOps {α : Type} (geom : Geom) (fs : FontSet)
                    pictureSpans := pictureSpans
                    headline := doc.headline
                    footGap := footGap
-                   cover := some cover }
+                   cover := some cover
+                   surface := doc.surface }
   let acc0 : Acc := { pal := doc.palette
                       tokens := doc.tokens
                       frameCount := doc.frameCount
@@ -20023,7 +20540,7 @@ private def withLayoutOps {α : Type} (geom : Geom) (fs : FontSet)
     | .progress num den fg bg thick x w => .progress num den fg bg thick x w
     | .para j => .para j (Task.spawn fun _ =>
         kpTwoPass j.items j.target (j.protrude && j.justify && !j.center)
-          (j.expand && j.justify && !j.center) j.rightFil (j.center && j.rightFil))
+          (j.expand && j.justify && !j.center) j.background j.rightFil (j.center && j.rightFil))
     | .regionOpen target => .regionOpen target
     | .regionClose => .regionClose
     | .colOpen p => .colOpen p
@@ -20210,6 +20727,7 @@ private def StagedOp.Prose : StagedOp → Prop
     kpTwoPass (Spacing.Paragraph.items j) (Spacing.Paragraph.target j)
       (Spacing.Paragraph.protrude j && Spacing.Paragraph.justify j && !Spacing.Paragraph.center j)
       (Spacing.Paragraph.expand j && Spacing.Paragraph.justify j && !Spacing.Paragraph.center j)
+      (Spacing.Paragraph.background j)
       (Spacing.Paragraph.rightFil j)
       (Spacing.Paragraph.center j && Spacing.Paragraph.rightFil j)
   | StagedOp.skip _ | StagedOp.skipAlt .. | StagedOp.anchorRule _ | StagedOp.anchor _ => True
@@ -21625,7 +22143,7 @@ private theorem paragraph_fold (fs : FontSet) (j : ParaJob)
       exact ih _ (paragraph_step fs j a b prev brk first hj hn h ha hb) rfl hrest'
 
 private def paragraphStart (b : B) (j : ParaJob) (breaks : Array Nat) : B × Nat × Bool :=
-  let p := paragraphBreaksOf b.paragraphBreaks.size j.leaf b.curFrameOrigin j.items breaks
+  let p := paragraphBreaksOf b.paragraphBreaks.size j.leaf b.curFrameOrigin j.declaresLines j.items breaks
   let start := ({ b with diags := b.diags ++ j.diags }).warnReflow
     p.forced.size breaks.size (!p.reflows.isEmpty)
   ({ start with paragraphBreaks := b.paragraphBreaks.push p }, 0, true)

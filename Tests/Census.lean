@@ -85,6 +85,27 @@ def condBranchRow (kept hidden : List String) :
 def mdSizeOf (c : Array CensusPage) (needle : String) : Dim.Sp :=
   (lineSizeOf c 0 needle).getD 0
 
+/-- The pages' text read as prose, every run of spaces one space: a claim
+about a phrase then holds wherever the measure breaks its lines. -/
+def censusProse (c : Array CensusPage) : String :=
+  " ".intercalate (((censusText c).splitOn " ").filter (!·.isEmpty))
+
+/-- The pages' ink with every space dropped: a listing's line reads whole
+however it wraps. -/
+def censusInk (c : Array CensusPage) : String :=
+  String.ofList ((censusText c).toList.filter (· != ' '))
+
+/-- Three rules in line order bracket a table as booktabs sets one: a heavy
+rule above the header, a lighter one between it and the first row, and a
+rule as heavy as the first under the last row. -/
+def booktabsBrackets (c : Array CensusPage) (rules : List (Dim.Sp × Dim.Sp))
+    (header firstRow lastRow : String) : Bool :=
+  match rules, lineYOf c 0 header, lineYOf c 0 firstRow, lineYOf c 0 lastRow with
+  | [(top, heavy), (mid, light), (bottom, heavy')], some h, some f, some l =>
+    decide (light < heavy) && heavy == heavy' && decide (top < h) && decide (h < mid) &&
+      decide (mid < f) && decide (l < bottom)
+  | _, _, _, _ => false
+
 /-- The markdown fixtures' census rows: what the markdown reader's pages
 show, read off `Layout.Out` like every other row. Facts a later reader
 change keeps (the text of a pipe table's cells ships whether the table is
@@ -92,13 +113,16 @@ read as a table or as text) stand here; a loss the build names stays out of
 them, the golden and the diagnostic witnessing it instead. -/
 def censusMdRows :
     List (String × (Layout.Geom → Array CensusPage → List (String × Bool))) := [
-  ("md-code", fun _ c => [
+  ("md-code", fun geom c => [
     ("one page", c.size == 1),
     ("the code span ships inside its sentence",
       hasStr (censusText c) "Inline code such as count_birds(day) sits in a sentence"),
     ("a doubled-backtick span keeps the backtick it holds", hasStr (censusText c) "a`b"),
-    ("the fenced block ships its long line whole, comment included",
-      hasStr (censusText c) "entry.verified)#onelongline"),
+    ("the fenced block's long line wraps inside the measure, every character shipped, \
+its comment included",
+      hasStr (censusInk c) "andentry.verified)#onelongline" &&
+        ["returnsum(", "longline"].all fun n =>
+          (lineRightOf c 0 n).any fun r => decide (r ≤ geom.pageW - geom.hmargin)),
     ("a tilde fence keeps its indented line", hasStr (censusText c) "indentedlineinsidethefence"),
     ("prose resumes after the code", hasStr (censusText c) "A paragraph after the code.")]),
   ("md-emphasis", fun _ c => [
@@ -132,7 +156,7 @@ def censusMdRows :
       hasStr (censusText c) "• A list item with an image:")]),
   ("md-links", fun _ c => [
     ("one page", c.size == 1),
-    ("an inline link's text ships", hasStr (censusText c) "An inline link to the example site"),
+    ("an inline link's text ships", hasStr (censusProse c) "An inline link to the example site"),
     ("links inside emphasis and strong text ship",
       hasStr (censusText c) "see the index" && hasStr (censusText c) "strong text with a link"),
     ("link underlines ship as rules", (c[0]?.map fun p => decide (p.rules ≥ 1)).getD false)]),
@@ -172,6 +196,9 @@ def censusMdRows :
       hasStr (censusText c) "High water 06:10 (4.1 m), low water 12:25."),
     ("the option table's cells ship",
       ["--units", "metres or feet", "print the numbers and no words"].all (hasStr (censusText c) ·)),
+    ("the option table ships as a booktabs table, its delimiter row read and not set",
+      booktabsBrackets c ((pageRuleSegs c 0).toList.take 3) "Default" "the day to report"
+        "print the numbers and no words" && !hasStr (censusText c) "| |"),
     ("the task items' text ships", hasStr (censusText c) "read the log format")]),
   ("md-rules", fun _ c => [
     ("one page", c.size == 1),
@@ -183,7 +210,21 @@ def censusMdRows :
     ("every cell's text ships",
       ["Monday", "06:10", "12:25", "Wednesday", "13:50", "4.6"].all (hasStr (censusText c) ·)),
     ("an escaped pipe's row ships its meaning", hasStr (censusText c) "a literal pipe"),
-    ("prose after a table ships", hasStr (censusText c) "A paragraph after the table")])]
+    ("prose after a table ships", hasStr (censusText c) "A paragraph after the table"),
+    ("each pipe table ships as a booktabs table, its delimiter row read and not set",
+      (pageRuleSegs c 0).size == 6 && !hasStr (censusText c) "| |" &&
+        booktabsBrackets c ((pageRuleSegs c 0).toList.take 3) "High water" "Monday" "Wednesday" &&
+        booktabsBrackets c (((pageRuleSegs c 0).toList.drop 3).take 3) "Meaning" "a literal pipe"
+          "about"),
+    ("each column aligns as its delimiter row says: right columns end with their header, \
+the centred one centres on it, the left one starts with it",
+      lineXOf c 0 "Monday" == lineXOf c 0 "Day" &&
+      lineRightOf c 0 "06:10" == lineRightOf c 0 "High water" &&
+      lineRightOf c 0 "4.1" == lineRightOf c 0 "Range (m)" &&
+      (match lineXOf c 0 "12:25", lineRightOf c 0 "12:25", lineXOf c 0 "Low water",
+          lineRightOf c 0 "Low water" with
+        | some a, some b, some d, some e => a + b == d + e
+        | _, _, _, _ => false))])]
 
 /-- A loss a markdown golden ships with no diagnostic naming it: a construct
 markdown writes that the page sets as its own source text, or sets without
@@ -216,10 +257,6 @@ def pageLinkTargets (out : Layout.Out) : Array String :=
 
 /-- The silent losses the markdown goldens ship today. -/
 def silentLosses : List SilentLoss := [
-  { what := "a pipe table ships as one run-on paragraph, its delimiter row set as dashes"
-    owner := "the markdown reader reading GFM pipe tables as tables (markdownTableChecks)"
-    fixtures := ["md-readme", "md-table"]
-    shows := fun _ _ c _ => hasStr (censusText c) "| |" },
   { what := "a task list item ships its checkbox as bracket text"
     owner := "list items that carry a task state, set as a box in both artifacts"
     fixtures := ["md-readme"]

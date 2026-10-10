@@ -106,6 +106,20 @@ public def buildFontSet (doc : Ir.Doc) (scan : FaceScan)
   let spec := if spec.body.isNone && spec.sans.isNone then
       { spec with body := FontDb.defaultFamily faces }
     else spec
+  -- beamer sets a presentation in its sans family (see `resolveName`).
+  let slides := doc.docClass == Ir.DocClass.slides
+  let textFamily := if slides then spec.sans.orElse fun _ => spec.body
+    else spec.body.orElse fun _ => spec.sans
+  -- A markdown document cannot declare a typewriter face, so its undeclared
+  -- slot takes the default text family's designed companion wherever the
+  -- scan serves it whole and fixed-pitch (`FontDb.monoCompanion`, held to
+  -- the resolver call below by `monoCompanion_contract`). Anywhere else — a
+  -- tex document, or a scan without the companion — an undeclared slot
+  -- falls to the body family, the loss W0390 names.
+  -- premise: markdownMonoChecks — two builds of one markdown document, its companion in the scan and not, set code in different faces, and only the second names W0390
+  let spec := if doc.surface == .markdown && spec.mono.isNone then
+      { spec with mono := textFamily.bind (FontDb.monoCompanion faces ·) }
+    else spec
   let mut fonts : Array Font.Font := #[]
   let mut paths : Array String := #[]
   let mut index : Array ((Nat × Nat × Bool) × Nat) := #[]
@@ -129,7 +143,6 @@ public def buildFontSet (doc : Ir.Doc) (scan : FaceScan)
   -- text slot is the declared sans family, and its declared per-variant
   -- faces come with it. The engine's three slots carry no separate serif
   -- default for decks: \rmfamily follows the deck's face.
-  let slides := doc.docClass == Ir.DocClass.slides
   let resolveName (slot : Nat) : Option String :=
     match slot with
     -- A document that names a sans family and no body family reads its
@@ -138,8 +151,7 @@ public def buildFontSet (doc : Ir.Doc) (scan : FaceScan)
     -- regular — but as an accident of load order that no weight or
     -- variant could refine; naming it makes the sans's declared faces
     -- (an upright of another weight, a light one) reach the text.
-    | 0 => if slides then spec.sans.orElse fun _ => spec.body
-      else spec.body.orElse fun _ => spec.sans
+    | 0 => textFamily
     | 1 => spec.sans.orElse fun _ => spec.body
     | _ => spec.mono.orElse fun _ => spec.body
   -- A slot's declared faces live under its *effective* slot: the one its
@@ -156,8 +168,7 @@ public def buildFontSet (doc : Ir.Doc) (scan : FaceScan)
   -- for a weight nobody asked), plus every declared face's own key — a
   -- declaration is a request to load, as fontspec's is, so a declared
   -- Light ships in the HTML set even before a run selects it.
-  let standard : List (Nat × Bool) :=
-    [(400, false), (700, false), (400, true), (700, true)]
+  let standard : List (Nat × Bool) := FontDb.corners
   let extraKeysFor (slot : Nat) : List (Nat × Bool) :=
     ((Layout.docWeightKeys doc).toList.filterMap fun (s, w, i) =>
       if s == slot then some (w, i) else none) ++

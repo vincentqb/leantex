@@ -274,6 +274,46 @@ characters at 10 pt — the measure the band diagnostic exists to catch. A
 document that declares any `\page` geometry keeps every value it named. -/
 public def articleTextBlock : Sp := pt 312
 
+/-- The text block of a markdown page: 32 picas (384 pt). A markdown source
+declares no page, so this is the whole of its geometry, and it is set by
+characters per line, not inherited from the article's 26 picas — 61
+characters of the face a markdown page sets in. Through the copy-fitting
+fit the readable-band judge reads (W0201; memoir manual eqs. 2.1–2.2) it
+sets 75 characters of DejaVu Sans, the first family an undeclared document
+takes (`FontDb.defaultFamilies`), whose lowercase alphabet runs 146.5 pt at
+10 pt: the upper bound Bringhurst gives continuous text (Elements §2.1.2).
+In the narrowest family of that list, the Helvetica class (127.3 pt, TeX
+Gyre Heros), it sets 85, the low end of the 85–90 he allows discontinuous
+text — the code, lists and tables most markdown documents are made of — so
+every default family lands inside the band, 75 to 85. -/
+public def markdownTextBlock : Sp := pt 384
+
+/-- The surfaces a document or an included file can be written in: the tex
+reader's or the markdown reader's, each read through its one door
+(`Surface.read`). A markdown source can declare nothing — no page, no faces, no
+listing keys — so what its surface defaults is the whole of those settings
+for its documents: the text block (`textBlock`), how code sets
+(`Surface.listing`), and a typewriter face beside the default text face
+(the driver's `FontDb.monoCompanion`). One decision, the path's extension
+(`ofPath`), read by the driver to pick the reader and by the elaborator to
+record the surface in the document; a markdown fragment a tex document
+includes is set as that document's surface sets it — but for its tables,
+whose fit is the construct's own (`ColSpec.narrows`), not a default. -/
+public inductive Surface where
+  | tex
+  | markdown
+  deriving Repr, BEq, DecidableEq, Inhabited
+
+/-- The surface a path's extension selects for a document: `.md` reads as
+markdown, everything else as tex. -/
+public def Surface.ofPath (file : String) : Surface :=
+  if file.endsWith ".md" then .markdown else .tex
+
+/-- The text block an undeclared flow page takes on this surface. -/
+public def Surface.textBlock : Surface → Sp
+  | .tex => articleTextBlock
+  | .markdown => markdownTextBlock
+
 /-- The slides stage and its defaults, beamer's own where beamer names one:
 128×96 mm (the guide's "slides are by default only 128mm by 96mm large"),
 160×90 mm at `aspectratio=169`, side text margins of 1 cm ("the left and
@@ -5152,6 +5192,16 @@ public structure ColSpec where
   (latex.ltx) — and a declaration in the modifier sets those skips again
   inside the cell, so `>{\raggedright}p` sets ragged where `p` justifies. -/
   ragged : Bool := false
+  /-- A natural column that narrows as a web table's does: a markdown
+  table's (`Parse.markdownTableEnv`), whose source declares no width and
+  whose page cannot scroll. Too wide for its measure, its table shares the
+  measure as a browser's automatic table layout shares it
+  (`Layout.fitColumns`), each such column keeping its widest unbreakable
+  run, and a cell its column cannot hold on one line wraps ragged on its
+  side (`Layout.narrowedCell`); the HTML cell then wraps too, carrying no
+  `bt-nowrap` (`HtmlDoc.cellClasses`). A tex `l`, `c` or `r` column never
+  narrows: LaTeX sets its every cell on one line. -/
+  narrows : Bool := false
   deriving Repr, BEq, Inhabited
 
 /-- Relative table-track hints, in permille of the flexible target. Natural
@@ -5765,6 +5815,13 @@ public structure ListingSpec where
   their glyphs' boxes, as verbatim's are. A colour box around the code ends
   on the last line's box. -/
   lineStrut : Bool := false
+  /-- How a wrapping listing's continuation stands in past its own line's
+  indentation, when it wraps as listings.sty wraps (`breakindent`, with
+  `breakautoindent` on): the layout then breaks each source line itself, so
+  every declared line holds and none re-flows. `none` leaves a wrap to the
+  paragraph breaker, which names the re-flow (W0386) — minted's, whose
+  fvextra continuation carries a break symbol this engine does not draw. -/
+  breakIndent : Option Sp := none
   deriving Repr, BEq, Inhabited
 
 /-- fvextra's `backgroundcolorboxoverlap`, 0.25 pt (fvextra.sty,
@@ -5778,6 +5835,27 @@ first two lines twice as much, 8.966 bp — while the lines one wrapped
 source line breaks into keep the skip itself, and the gap after the
 listing is a bare `verbatim`'s. -/
 public def fvextraLineOverlap : Sp := Dim.pt 1 / 4
+
+/-- listings.sty's continuation indent: `breakindent` defaults to 20 pt
+(listings.dtx, `\lst@Key{breakindent}{20pt}`), and a LuaLaTeX probe sets a
+continuation 20 pt past its line's own indentation. -/
+public def listingBreakIndent : Sp := pt 20
+
+/-- What a listing sets with before its own keys: on a tex document LaTeX's
+defaults, the ambient size and no wrapping. A markdown document declares no
+listing keys, and its code takes `\footnotesize`, LaTeX's own step, at
+which the markdown page's measure holds 79 to 80 monospaced columns (the
+0.6 em advance of every default typewriter face, to within 0.003 em) — the
+80-column line most code is written to (PEP 8's limit is 79) — and wraps a
+longer line as listings does: paper has no scroll, so every character a
+wrap can reach does — a run with no break point at all runs on, as
+listings sets it. The HTML's
+`<pre>` keeps its padding inside the same measure, so a browser at 16 px
+holds about 72 of those columns and wraps the rest. -/
+public def Surface.listing : Surface → ListingSpec
+  | .tex => {}
+  | .markdown =>
+    { fontSize := .size "footnotesize", breakLines := true, breakIndent := some listingBreakIndent }
 
 /-- The declared language as the bare token, `none` when none is declared:
 the one IR fact both text projections below read. -/
@@ -8336,6 +8414,8 @@ message. -/
 
 public structure Doc where
   docClass : DocClass := .article
+  /-- The surface the document was written in (`Surface.ofPath`). -/
+  surface : Surface := .tex
   classOptions : String := ""
   page : PageSpec := {}
   fonts : FontSpec := {}
@@ -10757,13 +10837,15 @@ end
 /-- One column spec, for the dump: the align letter, then the declared
 width. `l:400/1000` is a left `p{.4\linewidth}`; a bare letter is a
 natural column; `~` after the letter marks a ragged one (`ColSpec.ragged`),
-`l~:400/1000` a `>{\raggedright}p{.4\linewidth}`. -/
+`l~:400/1000` a `>{\raggedright}p{.4\linewidth}`; `<` a narrowing one
+(`ColSpec.narrows`), a markdown table's `l<`. -/
 private def dumpColSpec (c : ColSpec) : String :=
   let al := match c.align with
     | .left => "l"
     | .center => "c"
     | .right => "r"
   let al := if c.ragged then al ++ "~" else al
+  let al := if c.narrows then al ++ "<" else al
   match c.width with
   | .natural => al
   | .sized e =>

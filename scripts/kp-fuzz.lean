@@ -1,7 +1,8 @@
 /-
 Randomized differential test: the pruned Knuth-Plass DP must return a break
 sequence whose demerits equal the brute-force minimum over all legal break
-sequences. Run with:
+sequences, with and without a background stretch every line carries
+(`KpSums.bg`, a narrowed table cell's ragged right skip). Run with:
 
   lake env lean --run scripts/kp-fuzz.lean [iterations]
 
@@ -67,7 +68,7 @@ private def randItems (g : Gen) : Array Item × Gen := Id.run do
   return (items, g)
 
 private def seqCost (items : Array Item) (target : Dim.Sp)
-    (protrude expand fil : Bool) (breaks : List Nat) (runt : Bool := false) :
+    (protrude expand fil : Bool) (breaks : List Nat) (runt : Bool := false) (bg : Dim.Sp := 0) :
     Option Int := Id.run do
   let mut prev : Nat := 0
   let mut first := true
@@ -86,7 +87,7 @@ private def seqCost (items : Array Item) (target : Dim.Sp)
       if isForced items k then
         return none
     let m := measure items a b protrude
-    total := total + lineDemerits items m target b expand fil
+    total := total + lineDemerits items { m with stretch := m.stretch + bg } target b expand fil
     if prevFlagged && isFlagged items b then
       total := total + doubleHyphenDemerits
     if prevFlagged && b == items.size - 1 then
@@ -105,7 +106,8 @@ sequences that reach it the one TeX's line breaker keeps — each break's
 predecessor the latest of equal demerits (tex.web §855), which is the
 sequence greatest when compared from its end. -/
 private def bruteBest (items : Array Item) (target : Dim.Sp)
-    (protrude expand fil : Bool) (runt : Bool := false) : Option (Int × List Nat) := Id.run do
+    (protrude expand fil : Bool) (runt : Bool := false) (bg : Dim.Sp := 0) :
+    Option (Int × List Nat) := Id.run do
   let n := items.size
   let legal := (List.range n).filter (canBreakAt items ·)
   let optional' := legal.filter (· != n - 1)
@@ -124,7 +126,7 @@ private def bruteBest (items : Array Item) (target : Dim.Sp)
       if mask / 2 ^ idx % 2 == 1 then
         chosen := chosen ++ [b]
     let seq := chosen ++ [n - 1]
-    if let some c := seqCost items target protrude expand fil seq runt then
+    if let some c := seqCost items target protrude expand fil seq runt bg then
       match best with
       | some (b0, s0) =>
         if c < b0 || (c == b0 && later seq s0) then best := some (c, seq)
@@ -162,24 +164,25 @@ def main (args : List String) : IO UInt32 := do
     -- LaTeX's `\raggedright` (TeX's own glue under a fil `\rightskip`), and
     -- a centred paragraph's fil with its lone last word priced: the same
     -- breaker must be optimal over every item shape — with the protrusion
-    -- boundary term and the expansion flexibility on and off, independently
-    -- — and under the fil, where demerits tie, keep TeX's own choice among
-    -- the ties.
+    -- boundary term, the expansion flexibility and the background stretch
+    -- on and off, independently — and under the fil, where demerits tie,
+    -- keep TeX's own choice among the ties.
     for (shape, fil, runt) in [(items, false, false), (raggedItems items, false, false),
         (items, true, false), (items, true, true)] do
       for (protrude, expand) in [(false, false), (true, false), (false, true), (true, true)] do
-        let kpBreaks := (kp shape target protrude expand fil runt).toList
-        let kpCost := seqCost shape target protrude expand fil kpBreaks runt
-        let brute := bruteBest shape target protrude expand fil runt
-        unless kpCost.isSome && kpCost == brute.map (·.1) do
-          failures := failures + 1
-          IO.eprintln s!"FAIL case {i} (protrude={protrude}, expand={expand}, fil={fil}, runt={runt}): \
-target={target} kp={kpCost} brute={brute.map (·.1)}"
-          IO.eprintln s!"  breaks={kpBreaks}"
-          IO.eprintln s!"  items={shape.size}"
-        if fil && kpCost == brute.map (·.1) && some kpBreaks != brute.map (·.2) then
-          failures := failures + 1
-          IO.eprintln s!"FAIL case {i} (protrude={protrude}, expand={expand}): \
+        for bg in [(0 : Dim.Sp), Dim.pt 2, Dim.pt 20] do
+          let kpBreaks := (kp shape target protrude expand bg fil runt).toList
+          let kpCost := seqCost shape target protrude expand fil kpBreaks runt bg
+          let brute := bruteBest shape target protrude expand fil runt bg
+          unless kpCost.isSome && kpCost == brute.map (·.1) do
+            failures := failures + 1
+            IO.eprintln s!"FAIL case {i} (protrude={protrude}, expand={expand}, fil={fil}, \
+runt={runt}, bg={bg}): target={target} kp={kpCost} brute={brute.map (·.1)}"
+            IO.eprintln s!"  breaks={kpBreaks}"
+            IO.eprintln s!"  items={shape.size}"
+          if fil && kpCost == brute.map (·.1) && some kpBreaks != brute.map (·.2) then
+            failures := failures + 1
+            IO.eprintln s!"FAIL case {i} (protrude={protrude}, expand={expand}, bg={bg}): \
 the fil tie keeps {kpBreaks}, TeX keeps {brute.map (·.2)}"
     unless measuresAgree items do
       failures := failures + 1

@@ -36,6 +36,12 @@ reaches the page, which is the registry's rule and not a habit:
   `md:link-title`, `md:image-title`, `md:code-info`, `md:image-alt`,
   `md:disclosure`. Shipping content cannot take an absent-content loss.
 
+A GFM table is expressible, and crosses as the booktabs `{tabular}` it
+means, every cell's content inside a group of its own (`tableRaws_contract`),
+where the `{tabular}` reader looks for no cell or row end. Its environment
+is the markdown table's own (`Parse.markdownTableEnv`): the one difference
+from a tex `{tabular}` is that its columns narrow as a web table's do.
+
 All six heading ranks cross the native heading bridge as fixed names and
 grouped inline raws. Their shared IR rank reaches both artifacts unchanged;
 a body h1 remains distinct from document-title furniture.
@@ -289,6 +295,156 @@ private def inlListRaws (file : String) (out : Array Raw) (ds : Array Diag) :
 
 end
 
+/-- A table column's spec letter: GFM's undeclared alignment is the left
+`l`, LaTeX's own default for a text column. -/
+public def TableAlign.specLetter : TableAlign → Char
+  | .none => 'l'
+  | .left => 'l'
+  | .right => 'r'
+  | .center => 'c'
+
+/-- The cells of a row after its first, each after the `&` that separates
+it from the one before, the accumulator threaded. A cell is one group: its
+content rides inside, where the `{tabular}` reading looks for no `&` and no
+`\\`, so a cell's own text cannot end a cell or a row. -/
+private def laterCellsRaws (file : String) (p : Pos) (out : Array Raw) (ds : Array Diag) :
+    List (Array Inl) → Array Raw × Array Diag
+  | [] => (out, ds)
+  | cell :: rest =>
+    let (rs, cds) := inlListRaws file #[] #[] cell.toList
+    laterCellsRaws file p ((out.push (.sym '&' p)).push (.group rs p)) (ds ++ cds) rest
+
+/-- A row's cells as groups, `&` between each two. -/
+private def rowCellsRaws (file : String) (p : Pos) : List (Array Inl) → Array Raw × Array Diag
+  | [] => (#[], #[])
+  | cell :: rest =>
+    let (rs, cds) := inlListRaws file #[] #[] cell.toList
+    laterCellsRaws file p #[.group rs p] cds rest
+
+/-- One row: its cells, closed by `\\`. -/
+private def rowRaws (file : String) (row : Array (Array Inl)) (p : Pos) :
+    Array Raw × Array Diag :=
+  let cells := rowCellsRaws file p row.toList
+  (cells.1.push (.ctrl "\\" p), cells.2)
+
+/-- The data rows, each after the one before, the accumulator threaded. -/
+private def rowsRaws (file : String) (p : Pos) (out : Array Raw) (ds : Array Diag) :
+    List (Array (Array Inl)) → Array Raw × Array Diag
+  | [] => (out, ds)
+  | row :: rest =>
+    let (rs, rds) := rowRaws file row p
+    rowsRaws file p (out ++ rs) (ds ++ rds) rest
+
+/-- A table as the booktabs `{tabular}` the surface AST already has, the
+one resolving site both artifacts read a table from: a column per
+alignment between `@{}` at either edge, so the rules span the columns' text
+and no outer pad, as booktabs' own examples set a formal table
+(`@{}llr@{}`, booktabs manual); the header between `\toprule` and
+`\midrule` — what makes it the head (`Ir.tableHeaderRows`) — the data rows,
+then `\bottomrule`. Three rules and no vertical one. The environment is the
+markdown table's own (`Parse.markdownTableEnv`), read as `{tabular}` is,
+its columns narrowing as a web table's do (`Ir.ColSpec.narrows`): a
+markdown table declares no widths, wherever it is read — alone, or
+included in a tex document. -/
+public def tableRaws (file : String) (aligns : Array TableAlign)
+    (header : Array (Array Inl)) (rows : Array (Array (Array Inl))) (p : Pos) :
+    Array Raw × Array Diag :=
+  let spec := String.ofList (aligns.toList.map TableAlign.specLetter)
+  let (hr, hds) := rowRaws file header p
+  let head : Array Raw := #[.group #[.sym '@' p, .group #[] p, .word spec p,
+    .sym '@' p, .group #[] p] p, .ctrl "toprule" p]
+  let (body, ds) := rowsRaws file p ((head ++ hr).push (.ctrl "midrule" p)) hds rows.toList
+  (#[.env Parse.markdownTableEnv (body.push (.ctrl "bottomrule" p)) p], ds)
+
+/-- What a markdown table may put at a `{tabular}` body's top level: a
+group — the column spec or one cell —, the `&` between two cells, the `\\`
+that ends a row, and booktabs' three rules. Never a word or a space: a
+cell's text read there would be the table's own structure. -/
+public def TableTop (p : Pos) (r : Raw) : Prop :=
+  (∃ g, r = .group g p) ∨ r = .sym '&' p ∨ r = .ctrl "\\" p
+    ∨ r = .ctrl "toprule" p ∨ r = .ctrl "midrule" p ∨ r = .ctrl "bottomrule" p
+
+private theorem tableTop_push (p : Pos) (xs : Array Raw) (r : Raw)
+    (h : ∀ x ∈ xs, TableTop p x) (hr : TableTop p r) : ∀ x ∈ xs.push r, TableTop p x := by
+  intro x hx
+  rcases Array.mem_push.mp hx with hx | rfl
+  · exact h x hx
+  · exact hr
+
+private theorem laterCellsRaws_tableTop (file : String) (p : Pos) (cells : List (Array Inl)) :
+    ∀ (out : Array Raw) (ds : Array Diag), (∀ x ∈ out, TableTop p x) →
+      ∀ x ∈ (laterCellsRaws file p out ds cells).1, TableTop p x := by
+  induction cells with
+  | nil => intro out ds h; exact h
+  | cons cell rest ih =>
+    intro out ds h
+    unfold laterCellsRaws
+    rcases inlListRaws file #[] #[] cell.toList with ⟨rs, cds⟩
+    exact ih _ _ (tableTop_push p _ _ (tableTop_push p _ _ h (Or.inr (Or.inl rfl)))
+      (Or.inl ⟨rs, rfl⟩))
+
+private theorem rowCellsRaws_tableTop (file : String) (p : Pos) (cells : List (Array Inl)) :
+    ∀ x ∈ (rowCellsRaws file p cells).1, TableTop p x := by
+  cases cells with
+  | nil => simp [rowCellsRaws]
+  | cons cell rest =>
+    unfold rowCellsRaws
+    exact laterCellsRaws_tableTop file p rest _ _ (by
+      intro x hx
+      simp at hx
+      exact hx ▸ Or.inl ⟨_, rfl⟩)
+
+private theorem rowRaws_tableTop (file : String) (row : Array (Array Inl)) (p : Pos) :
+    ∀ x ∈ (rowRaws file row p).1, TableTop p x :=
+  tableTop_push p _ _ (rowCellsRaws_tableTop file p row.toList) (Or.inr (Or.inr (Or.inl rfl)))
+
+private theorem rowsRaws_tableTop (file : String) (p : Pos) (rows : List (Array (Array Inl))) :
+    ∀ (out : Array Raw) (ds : Array Diag), (∀ x ∈ out, TableTop p x) →
+      ∀ x ∈ (rowsRaws file p out ds rows).1, TableTop p x := by
+  induction rows with
+  | nil => intro out ds h; exact h
+  | cons row rest ih =>
+    intro out ds h
+    unfold rowsRaws
+    have hr := rowRaws_tableTop file row p
+    rcases hrow : rowRaws file row p with ⟨rs, rds⟩
+    rw [hrow] at hr
+    refine ih _ _ ?_
+    intro x hx
+    rcases Array.mem_append.mp hx with hx | hx
+    · exact h x hx
+    · exact hr x hx
+
+/-- **The lowering's shape: a cell's text is inside its cell's group.** A
+markdown table lowers to one markdown `{tabular}` (`Parse.markdownTableEnv`)
+whose body holds, at its top level, nothing but groups — the column spec
+and one per cell —, the `&` and `\\` between them, and booktabs' rules;
+every word a cell holds sits inside that cell's group. What the shape buys
+rests on a premise of the elaborator's, not proved here: that the
+`{tabular}` reader splits a body into rows and cells only at its top level,
+never inside a group. The end-to-end check holds it — `markdownTableChecks`
+ships an `&` and a `\\` in a cell as that cell's text. -/
+public theorem tableRaws_contract (file : String) (aligns : Array TableAlign)
+    (header : Array (Array Inl)) (rows : Array (Array (Array Inl))) (p : Pos) :
+    ∃ body, (tableRaws file aligns header rows p).1 = #[.env Parse.markdownTableEnv body p] ∧
+      ∀ x ∈ body, TableTop p x := by
+  unfold tableRaws
+  have hh := rowRaws_tableTop file header p
+  rcases hhr : rowRaws file header p with ⟨hr, hds⟩
+  rw [hhr] at hh
+  dsimp only
+  refine ⟨_, rfl, ?_⟩
+  refine tableTop_push p _ _ ?_ (Or.inr (Or.inr (Or.inr (Or.inr (Or.inr rfl)))))
+  refine rowsRaws_tableTop file p _ _ _ ?_
+  refine tableTop_push p _ _ ?_ (Or.inr (Or.inr (Or.inr (Or.inr (Or.inl rfl)))))
+  intro x hx
+  rcases Array.mem_append.mp hx with hx | hx
+  · simp at hx
+    rcases hx with rfl | rfl
+    · exact Or.inl ⟨_, rfl⟩
+    · exact Or.inr (Or.inr (Or.inr (Or.inl rfl)))
+  · exact hh x hx
+
 mutual
 
 /-- One block as surface raws. -/
@@ -342,6 +498,7 @@ without a language" p
       ds.push (routeDegraded file "loose-list"
         "a loose list sets as a tight one: its items' paragraph spacing is not carried" p)
     (#[.env (if ordered then "enumerate" else "itemize") rs p], ds)
+  | .table aligns header rows p => tableRaws file aligns header rows p
 
 private def blkListRaws (file : String) (out : Array Raw) (ds : Array Diag) :
     List Blk → Array Raw × Array Diag

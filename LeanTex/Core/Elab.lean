@@ -269,6 +269,9 @@ public structure Ctx where
   tokens (`paperwidth`, `textwidth`, …) and a token-named column width
   resolve against. Set once, after the class defaults are applied. -/
   page : Ir.PageSpec := {}
+  /-- The surface the document was written in, set once with `page`: an
+  input wrapper changes `file`, never this. -/
+  surface : Ir.Surface := .tex
   /-- The engine's own length tokens, resolved from the final page: the
   body-side lookup `\setlength` expressions extend theirs with. -/
   engineTokens : Array (String × Dim.SymGlue) := #[]
@@ -6616,7 +6619,7 @@ private def bodyIsBlockOne : Raw → Bool
     if (Parse.inputEnvFile? n).isSome then bodyIsBlockList body.toList
     else
       blockEnvs.contains n || isMathEnv n || n == Tcolorbox.boxEnv
-        || n == "tabular" || n == "tabular*"
+        || n == "tabular" || n == "tabular*" || n == Parse.markdownTableEnv
         || n == "algorithm" || n == "algorithm*" || n == "algorithm2e"
         || n == "algorithmic"
         || reservedEnv.contains n || bodyIsBlockList body.toList
@@ -9073,7 +9076,11 @@ private def tabularArm (ctx : Ctx) (n : String) (body : Array Raw)
   match body[k]? with
   | some (.group spec _) =>
     let (cs, pl, pr, warns) := parseColSpec ctx spec flexTarget
-    cols := cs
+    -- A markdown table's natural columns narrow as a web table's do: its
+    -- source declares no width (`Ir.ColSpec.narrows`).
+    cols := if n == Parse.markdownTableEnv then
+        cs.map fun c => { c with narrows := c.width matches .natural }
+      else cs
     padL := pl
     padR := pr
     for (key, msg, help) in warns do
@@ -9260,14 +9267,19 @@ private def listingBlock (ctx : Ctx) (env s : String) (pos : Pos) : EM Block := 
   -- size. Bare `verbatim`, `minted`, and `lstlisting` all inherit it: LaTeX's
   -- `\verbatim@font` is `\normalfont\ttfamily`, which selects the mono family
   -- and changes no size, so verbatim sets at the ambient size — never a fixed
-  -- `footnotesize`. A package's own size option overrides it below.
+  -- `footnotesize`. A package's own size option overrides it below. What
+  -- a listing starts from before any of that is its surface's
+  -- (`Ir.Surface.listing`): LaTeX's defaults on a tex document, and on a
+  -- markdown one, which can declare none, its smaller wrapping code.
+  let base := ctx.surface.listing
   let inherited := (← get).blockDecls.foldl (fun size decl => match decl with
     | .style s@(.size _) | .style s@(.fontSize _ _) => s
-    | _ => size) (Ir.Style.size "normalsize")
+    | _ => size) base.fontSize
   let sourceStart := ("\\begin{" ++ env ++ "}").foldl
     (fun p c => p.next (c == '\n')) pos
   if env == "verbatim" then
-    return .verbatim none s { fontSize := inherited, source := some (ctx.sourceSpan sourceStart) }
+    return .verbatim none s
+      { base with fontSize := inherited, source := some (ctx.sourceSpan sourceStart) }
   let (opts, afterOpt) := (Parse.listingOptHead s).getD ("", 0)
   let mut content := s
   let mut caption : Option String := none
@@ -9276,8 +9288,8 @@ private def listingBlock (ctx : Ctx) (env s : String) (pos : Pos) : EM Block := 
   let mut language : Option Ir.ListingLang := none
   let mut style := Ir.ListingStyle.default
   let mut fontSize := inherited
-  let mut tabSize := 8
-  let mut breakLines := false
+  let mut tabSize := base.tabSize
+  let mut breakLines := base.breakLines
   let sizeName? (v : String) : Option String :=
     if v.startsWith "\\" then
       let name := (v.drop 1).toString
@@ -9386,6 +9398,10 @@ size commands; the current style stands" (some pos)
     breakLines := breakLines
     lineOverlap := if env == "minted" then Ir.fvextraLineOverlap else 0
     lineStrut := env == "minted" && breakLines
+    -- listings wraps with its own continuation indent; minted's fvextra
+    -- wrap keeps the surface's (none on a tex document).
+    -- premise: markdownCodeChecks — a breaklines lstlisting sets every line inside the measure, continuations 20 pt in, with no re-flow named, while minted's wrap keeps no break indent and so the paragraph breaker's W0386
+    breakIndent := if env == "lstlisting" then some Ir.listingBreakIndent else base.breakIndent
     source := some (ctx.sourceSpan contentPos) }
   let spec ← match caption with
     | some cap => do
@@ -10043,6 +10059,30 @@ private def carrierOpening (raws : Array Raw) (i : Nat) (blocks : Array Block)
   let inPar := opensOnText && ranOn && Ir.flushedText (blocks.size - 1) blocks
   (inPar, !inPar && blocks.back?.any Ir.Block.leavesEndPe)
 
+/-- A braced overlay's carrier, its group `body` at `raws[jg]`, stood in its
+paragraph (`carrierOpening`) and before the break after the group. Outside
+the block knot, whose compilation is at its budget. -/
+private def carrierInGroup (raws : Array Raw) (i jg : Nat) (blocks : Array Block)
+    (body : Array Raw) (inner : Array Block) : Array Block :=
+  let (inPar, endPe) := carrierOpening raws i blocks body
+  Ir.carrierDisplays inPar endPe (parFollows raws (jg + 1)) inner
+
+/-- An open overlay's carrier, the rest of the scope from `raws[jg]` on,
+stood in its paragraph: nothing follows it in the scope. -/
+private def carrierToEnd (raws : Array Raw) (i jg : Nat) (blocks : Array Block)
+    (inner : Array Block) : Array Block :=
+  let (inPar, endPe) := carrierOpening raws i blocks (raws.extract jg raws.size)
+  Ir.carrierDisplays inPar endPe false inner
+
+/-- An alternation's two groups, each stood in the paragraph the
+alternation opens in and before the break after its second group. -/
+private def altCarriers (raws : Array Raw) (i j3 : Nat) (blocks : Array Block)
+    (spec : Ir.OverlaySpec) (ga gb : Array Raw) (ia ib : Array Block) : Block :=
+  let after := parFollows raws (j3 + 1)
+  let (pa, ea) := carrierOpening raws i blocks ga
+  let (pb, eb) := carrierOpening raws i blocks gb
+  .alternate spec (Ir.carrierDisplays pa ea after ia) (Ir.carrierDisplays pb eb after ib)
+
 /-- `\pause`'s carrier, the rest of the scope from `raws[i]` on, revealed at
 step `n` and stood in its paragraph (`carrierOpening`): nothing follows it
 in the scope, so its last display keeps the break it found there. An empty
@@ -10072,7 +10112,7 @@ private def displayAtBlock (ctx : Ctx) (body : Array Raw) (pos : Pos) (blocks : 
 -- data to that process, never proof material, and unfolding it is what
 -- blows the elaboration budget. Sealed for the knot, unsealed right after.
 seal takeArgs mkPara finishPara flushPara stripMathMeta
-seal blockMacroStep pauseCarrier
+seal blockMacroStep pauseCarrier carrierInGroup carrierToEnd altCarriers
 seal closeBlockMacros blockControlContext
 seal splicedFrameScope setFrameSourceBase recordFrameSource keepFrameSourcePrefix
 seal declAlignOf
@@ -11829,7 +11869,7 @@ private def elabEnvArm (ctx : Ctx) (n : String) (scope : Array Raw)
     blocks ← displayMathArm ctx numbered body pos blocks
   else if let some (kind, numbered) := alignEnvs.lookup n then
     blocks ← alignEnvArm ctx n kind numbered body pos blocks
-  else if Compat.tableEnvs.contains n then
+  else if Compat.tableEnvs.contains n || n == Parse.markdownTableEnv then
     blocks ← tabularArm ctx n body pos blocks
   else if n == "thebibliography" then
     blocks := blocks ++ (← ownBibList ctx body)
@@ -12433,11 +12473,7 @@ private def elabCtrlArm (ctx : Ctx) (raws : Array Raw) (i : Nat)
               rfl, rfl, rfl, rfl⟩
           let ia ← elabBlockScope stepCtx ga
           let ib ← elabBlockScope ctx gb
-          let after := parFollows raws (j3 + 1)
-          let (pa, ea) := carrierOpening raws i blocks ga
-          let (pb, eb) := carrierOpening raws i blocks gb
-          blocks := blocks.push (.alternate spec (Ir.carrierDisplays pa ea after ia)
-            (Ir.carrierDisplays pb eb after ib))
+          blocks := blocks.push (altCarriers raws i j3 blocks spec ga gb ia ib)
           return (blocks, ⟨j3 + 1, by omega⟩)
         | none =>
           -- One reading at block level too: an unnumberable spec keeps the
@@ -12477,8 +12513,7 @@ when it is empty — '{}'")
             pure ⟨{ ctx with stepBase := max ctx.stepBase (spec.start - 1) },
               rfl, rfl, rfl, rfl⟩
           let inner ← elabBlockScope stepCtx gbody
-          let (inPar, endPe) := carrierOpening raws i blocks gbody
-          let inner := Ir.carrierDisplays inPar endPe (parFollows raws (jg + 1)) inner
+          let inner := carrierInGroup raws i jg blocks gbody inner
           unless inner.isEmpty do
             blocks := blocks.push (.onSteps spec inner)
           return (blocks, ⟨jg + 1, by omega⟩)
@@ -12508,8 +12543,7 @@ when it is empty — '{}'")
             pure ⟨{ ctx with stepBase := max ctx.stepBase (spec.start - 1) },
               rfl, rfl, rfl, rfl⟩
           let inner ← elabBlockScope stepCtx (raws.extract jg raws.size)
-          let (inPar, endPe) := carrierOpening raws i blocks (raws.extract jg raws.size)
-          let inner := Ir.carrierDisplays inPar endPe false inner
+          let inner := carrierToEnd raws i jg blocks inner
           unless inner.isEmpty do
             blocks := blocks.push (.onSteps spec inner)
           return (blocks, ⟨raws.size, by omega⟩)
@@ -12684,7 +12718,7 @@ private def elabBlocksGo (ctx : Ctx) (raws : Array Raw) (i : Nat)
         if (Parse.inputEnvFile? n).isSome then bodyIsBlock body
         else
           blockEnvs.contains n || isMathEnv n || n == Tcolorbox.boxEnv
-            || n == "tabular" || n == "tabular*"
+            || n == "tabular" || n == "tabular*" || n == Parse.markdownTableEnv
             || n == "algorithm" || n == "algorithm*" || n == "algorithm2e"
             || n == "algorithmic"
             || reservedEnv.contains n
@@ -13126,7 +13160,7 @@ public theorem elaboration_total (ctx : Ctx) (raws : Array Raw) (st : ESt) :
     ∃ r, (elabBlocks ctx raws).run st = r :=
   ⟨_, rfl⟩
 
-unseal blockMacroStep pauseCarrier
+unseal blockMacroStep pauseCarrier carrierInGroup carrierToEnd altCarriers
 unseal lengthScopeKeys? openLengthScope closeLengthScope openBlockScope closeBlockScope
 unseal closeBlockMacros blockControlContext
 unseal splicedFrameScope setFrameSourceBase recordFrameSource keepFrameSourcePrefix
@@ -17056,12 +17090,14 @@ private def prepareStyledBody (file : String) (decls : Array PDecl)
       diag ctx .W0356
         "class option 'draft' asks for a proofing mode the engine does not have; the document is rendered in full"
         none
+  let surface := Ir.Surface.ofPath file
   if record.model == .flow && !sawPage then
     -- An undeclared letter page takes Bringhurst's text block for a 10pt
     -- text face, 26 picas, not the word-processor inch: the default must
     -- satisfy the measure band the engine checks (W0201). A document that
-    -- declares any \page geometry keeps every value it named.
-    page := { page with hmargin := (page.width - Ir.articleTextBlock) / 2 }
+    -- declares any \page geometry keeps every value it named. A markdown
+    -- source can declare none, so its page is its surface's text block.
+    page := { page with hmargin := (page.width - surface.textBlock) / 2 }
   -- Furniture legality is the class record's, not the geometry's: a class
   -- that carries no running furniture drops the declaration and says so.
   if !record.runningFurniture && (head.isSome || foot.isSome) then
@@ -17086,7 +17122,7 @@ private def prepareStyledBody (file : String) (decls : Array PDecl)
                     frameAlign := classFrameAlign classOpts
                     face := record.model == .face
                     numberHeadings := record.numberHeadings, styles := styles
-                    page := page, tokens := tokens
+                    page := page, tokens := tokens, surface := surface
                     engineTokens := engineLengthTokensOfPage page }
   -- Numbering is a property of the finished document, not of any one
   -- elaboration site: `Ir.numberFloats` fills every captioned float's
@@ -17283,6 +17319,7 @@ private def prepareStyledBody (file : String) (decls : Array PDecl)
       author := fallback info.author st.author }
     let doc : Doc := {
       docClass := docClass
+      surface := surface
       classOptions := classOptions
       page := page
       fonts := fonts

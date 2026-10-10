@@ -37,18 +37,11 @@ to the elaborator. -/
 
 namespace LeanTex.Core
 
-/-- The surfaces a document or an included file can be written in. -/
-public inductive Surface where
-  | tex
-  | markdown
-  deriving Repr, BEq, DecidableEq
+/-! The surface is the IR's to name (`Ir.Surface`): the elaborator records
+it in the document and only the surface's own defaults read it there. This
+namespace is the door alone — what reads a surface's text. -/
 
 namespace Surface
-
-/-- The surface a path's extension selects for a document: `.md` reads as
-markdown, everything else as tex. -/
-public def ofPath (file : String) : Surface :=
-  if file.endsWith ".md" then .markdown else .tex
 
 /-- The tex door's first stage, the lexer, for a caller that reports each
 stage on its own (the driver's `-v` phases). -/
@@ -62,7 +55,7 @@ stage on its own (the driver's `-v` phases). -/
 The tex door is the lexer then the parser; the markdown door is the reader
 then the desugaring, which lowers into the AST without generating tex text
 (`Md.desugar`). -/
-@[expose] public def read : Surface → String → String → Array Parse.Raw × Array Diag
+@[expose] public def read : Ir.Surface → String → String → Array Parse.Raw × Array Diag
   | .tex, file, text =>
     let (toks, lexDs) := Lex.lex file text
     let (raws, parseDs) := Parse.parse file toks
@@ -78,9 +71,9 @@ public theorem read_tex_exact (file text : String) :
 
 /-- An included file through its surface's door, in the wrapper the
 elaborator knows a file by, standing at the including call's position. -/
-@[expose] public def fragment (s : Surface) (path text : String) (pos : Pos) :
+@[expose] public def fragment (s : Ir.Surface) (path text : String) (pos : Pos) :
     Array Parse.Raw × Array Diag :=
-  let (sub, ds) := s.read path text
+  let (sub, ds) := read s path text
   (#[.env (Parse.inputEnv path) sub pos], ds)
 
 end Surface

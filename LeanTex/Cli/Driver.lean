@@ -79,10 +79,11 @@ def Ui.diag (ui : Ui) (d : Diag) : IO Unit := do
 
 /-- Resolve and print one phase against the document's acceptance
 (`\allow` and `--best-effort`). Return its accounting without retaining
-already-emitted messages. -/
+already-emitted messages. A loss repeated in the phase shows once, its first
+site carrying the count and every later one a note (`Diag.foldRepeats`). -/
 def Ui.resolve (ui : Ui) (allowed : Array String) (allowAll : Bool)
     (ds : Array Diag) (outputs : Array Diag.Output := #[.pdf, .html]) : IO Resolution := do
-  let r := Diag.resolveAll allowed allowAll (Diag.forOutputs outputs ds)
+  let r := Diag.resolveAll allowed allowAll (Diag.foldRepeats (Diag.forOutputs outputs ds))
   for d in r.diags do
     ui.diag d
   return { r with diags := #[] }
@@ -555,9 +556,11 @@ def frontend (ui : Ui) (file : String) : IO (Option Front) := do
     -- Which surface a path's extension selects, read through its one door.
     -- The markdown door hands back the same surface AST the tex door does —
     -- one elaborator, one place where meaning lives — so everything past
-    -- this point reads raws, never the surface that wrote them. The tex
-    -- door's two stages report apart (`Surface.read_tex_exact`).
-    let (raws, frontDiags) ← match Surface.ofPath file with
+    -- this point reads raws, never the surface that wrote them; the
+    -- elaborator records the same decision in the document, where only the
+    -- surface's own defaults read it (`Ir.Surface.textBlock`, `Ir.Surface.listing`).
+    -- The tex door's two stages report apart (`Surface.read_tex_exact`).
+    let (raws, frontDiags) ← match Ir.Surface.ofPath file with
       | .tex => do
         let (toks, lexDiags) := Surface.texLex file input
         ui.phase "lex" s!"{toks.size} tokens" (← since t)
@@ -859,6 +862,13 @@ in the HTML" (← since t)
             Layout.mathEm (Layout.Geom.ofPage doc.page) fs ss st (some measures)
           mathTextEm := fun measures ss st =>
             Layout.mathTextEm (Layout.Geom.ofPage doc.page) fs ss st (some measures)
+          -- A markdown table's size and overhang: the page's own decision,
+          -- over the one face set.
+          tableFit := fun avail cols padL padR rows spans =>
+            let fit := Layout.tableFit (Layout.Geom.ofPage htmlDoc.page) fs imgs
+              (Layout.tableLength none htmlDoc.preambleFace "tabcolsep") avail cols padL padR rows
+              spans
+            (fit.step, fit.overhang > 0)
         }
         let (result, hdiags) ← prepareHtml file hcfg htmlDoc
         resolved := resolved.append (← ui.resolve doc.allow allowAll (outputs := outputs)

@@ -23,6 +23,10 @@ import Tests.ParagraphMathRhythm
 import Tests.BeamerProof
 import Tests.MarkdownHtml
 import Tests.MarkdownHeadings
+import Tests.MarkdownTables
+import Tests.MarkdownPage
+import Tests.MarkdownWarnings
+import Tests.MarkdownCode
 import Tests.Artifact
 import Tests.UnderlineSpacing
 import Tests.HtmlTokens
@@ -1165,6 +1169,47 @@ def reports : List Report := [
       "with the band split at the face's baseline restored and the guards kept, six assertions fail: the seat, a word of x-height letters on lualatex's baseline against a rule on the page and in the browser, and the declared bound for a word of capitals, one with an ascender and one of figures"]
     state := .guarded "269bd628" .revert .author },
   { id := "R128", date := "2026-10-10"
+    what := "A markdown pipe table shipped as one run-on paragraph, its delimiter row set as dashes"
+    pins := [check% Tests.MarkdownTables.markdownTableChecks,
+      thm% LeanTex.Core.Md.tableRaws_contract]
+    accept := ["twenty-two typed HTML and shipped layout assertions fail before the reader reads pipe tables",
+      "eight more fail where every table set at its natural width: a table too wide for its measure narrows its columns as a browser's automatic table layout does, each keeping its widest word, its cells wrapping ragged with every word on the page in both artifacts; a table whose words alone pass the measure keeps them whole; and every cell of a row stands on one baseline",
+      "the GFM specification's eight table examples are classified: seven match and one waits on the smart punctuation decision",
+      "a long markdown report's summary table sets inside the measure under booktabs' three rules in both artifacts, where it ran forty points past it",
+      "a table of prose descriptions keeps every word on the page in the PDF, on screen and in print, where its description column was cut at the page edge",
+      "fourteen more fail on the rebased branch with narrowed cells' ragged right skip, the step-down and the centred overhang reverted: one-word and code lines packed onto overfull lines over the next column, and a table whose words alone passed the measure kept its size and ran off the paper in both artifacts",
+      "one more fails with a tex ragged p column set unhyphenated, as a narrowed markdown cell sets: its words packed onto one line over the next column, where main's setting wraps them",
+      "a results table of single figures too wide for the measure sets a size step smaller, its figures whole and inside the measure, the HTML stating the same step; one too wide even at the smallest step stands centred across both margins, on paper while no wider than the measure and both margins, and is named, with a remedy markdown can write",
+      "on the branch before cells measured their code as they set it and the decision read the table's own measure, invented probes ran off the paper or out of their container: a table whose code holds hyphens kept its body size with its last column past the paper edge, a table in a quotation and one in a list item kept a size their measure could not hold, and a sixteen-column table of figures lost its edge columns; on this tree each fits its measure at the step both artifacts state, or stands centred on the paper at the last step"]
+    state := .guarded "08e2326b" .revert .author },
+  { id := "R129", date := "2026-10-10"
+    what := "A markdown document took the article's narrow measure, leaving two-inch margins on a letter page"
+    pins := [check% Tests.MarkdownPage.markdownPageChecks,
+      check% Tests.MarkdownCode.markdownCodeChecks]
+    accept := ["eight shipped layout and HTML measure assertions fail before markdown pages take their own text block",
+      "eight listing and shipped layout assertions fail before markdown code sets small and wraps as listings wraps",
+      "three more fail where inline code could not break: a justified markdown paragraph now breaks a long identifier after the url package's break characters, every line inside the measure and no word space three of its own wide, and the page's stylesheet lets a browser break one where it would overflow, while a tex document's typewriter run never breaks",
+      "every shipped text face sets the markdown measure between seventy and ninety characters with the readable band judge quiet",
+      "a long markdown report's side margins narrow from about two inches to about one and a half, and none of its code runs past its measure or off the page, where two hundred twenty-two lines ran off before",
+      "a wrapped code line continues twenty points in on screen as on paper",
+      "a justified paragraph holding a kebab-case flag longer than the measure breaks after the flag's hyphens, every line inside the measure, where on the branch before it the paragraph's rest ran past the paper on one overfull line"]
+    state := .guarded "fa516a82" .before .author },
+  { id := "R130", date := "2026-10-10"
+    what := "A markdown document with no preamble set its code in the proportional text face, hyphenated it, and printed every repeat of a loss as its own warning"
+    pins := [check% Tests.MarkdownWarnings.markdownWarningChecks,
+      check% Tests.MarkdownWarnings.markdownMonoChecks,
+      thm% Diag.foldRepeats_sum_exact,
+      thm% Diag.foldRepeats_error_exact,
+      thm% FontDb.monoCompanion_contract,
+      thm% Layout.paragraphBreaksOf_undeclared_exact]
+    accept := ["five assertions over the typewriter face, code line ends and the default log fail before markdown code takes its designed typewriter companion and repeated warnings fold",
+      "one more fails where a markdown hard break was read as a declared line shape: the page sets as its tex twin's and names no re-flow, as LaTeX names none",
+      "a long markdown report's two thousand four hundred sixty-six warning lines become four, each carrying its site count",
+      "with no DejaVu installed a markdown document's code sets in the URW typewriter face beside the URW sans, with no warning",
+      "a tex document that declares no typewriter face keeps the body family and the one warning that names it",
+      "two presentation decks render pixel-identical, their logs only folding a repeated glyph fallback"]
+    state := .guarded "fa516a82" .before .author },
+  { id := "R131", date := "2026-10-10"
     what := "Inter-line spacing came out wider than the reference engine's: a paragraph in a named size stood on the body's leading, the larger sizes and code listings at six fifths of their type, and a slide's lines and gaps on screen at the screen's prose rhythm instead of the page's"
     pins := [check% Tests.LineRhythm.stepLeadingChecks, check% Tests.LineRhythm.htmlStepChecks,
       check% Tests.LineRhythm.htmlGapChecks, check% Tests.LineRhythm.listingPitchChecks,
@@ -1188,7 +1233,7 @@ def reports : List Report := [
       "a venue style's own size ladder: each declared step's lines at the leading it declares, beside the reference engine's",
       "the same deck's slides with pauses measured in a browser: every paragraph gap the declared one through each step, as on the page"]
     state := .guarded "fa516a828a2a36549fc2a56f1e1cb4d138b3b934" .before .author },
-  { id := "R129", date := "2026-10-10"
+  { id := "R132", date := "2026-10-10"
     what := "A slide of running prose read worse than the reference engine's: justified and hyphenated where the slide class sets its text ragged right"
     pins := [check% Tests.LineRhythm.raggedFrameChecks,
       check% Tests.LineRhythm.centredRuntChecks]

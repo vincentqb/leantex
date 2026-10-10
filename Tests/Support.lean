@@ -328,14 +328,18 @@ def mdPresList (acc : Array Html.Node) : List Html.Node → Array Html.Node
 end
 
 /-- The attributes of an unconfigured fence's `<pre>`: the verbatim size,
-leading and tab settings, and a tab stop so a keyboard can reach and scroll it
-(`HtmlDoc.a11yFacts`). Named once, so a backend change fails the fence rows
-at this line rather than at four literals. The exact attribute check also
-rejects leaked language text or an attribute hiding the code. A bare fence
-sets at the ambient size — the document base, `1em` — as LaTeX's `verbatim`
-does (it selects the mono family and changes no size). -/
+leading, tab and wrapping settings, and a tab stop so a keyboard can reach
+and scroll it (`HtmlDoc.a11yFacts`). Named once, so a backend change fails
+the fence rows at this line rather than at four literals. The exact
+attribute check also rejects leaked language text or an attribute hiding
+the code. A markdown fence sets as its surface's code does
+(`Ir.Surface.listing`): at `\footnotesize`, `0.8em`, on that size's own
+leading (9.5 pt over 8, `Ir.stepSkip`), wrapping its long lines with their
+continuations hung 20 pt in. -/
 def mdCodeBlockPreAttrs : Array (String × String) :=
-  #[("style", "font-size: 1em; line-height: 1.2; tab-size: 8;"), ("tabindex", "0")]
+  #[("style", "font-size: 0.8em; line-height: 1.187; tab-size: 8; white-space: pre-wrap; \
+text-indent: 20pt hanging each-line;"),
+    ("tabindex", "0")]
 
 /-- The page's code blocks, in order, each as the one text its `<code>`
 holds — when the block is exactly a `<pre>` carrying `mdCodeBlockPreAttrs`
@@ -450,6 +454,15 @@ def leanChild (what : String) : IO (System.FilePath × String) := do
 /-- `text` quoted as one word for `/bin/sh`. -/
 def shQuote (text : String) : String :=
   "'" ++ text.replace "'" "'\\''" ++ "'"
+
+/-- One of the suite's shipped faces by file name, parsed; `none` when the
+file is missing or does not parse. -/
+def loadTestFont (file : String) : IO (Option Font.Font) := do
+  let p := testFonts ++ "/" ++ file
+  unless ← System.FilePath.pathExists p do return none
+  match Font.parse (← IO.FS.readBinFile p) with
+  | .ok f => return some f
+  | .error _ => return none
 
 /-- Does a produced file contain this ASCII run? PDF content streams are the
 only witness that a face or a size reached the output, and the file as a whole
@@ -1773,6 +1786,16 @@ def twoSlotOf (roman sans : Font.Font) : Font.FontSet := {
   fonts := #[roman, sans]
   index := ((List.range 3).flatMap fun slot =>
     let f := if slot == 1 then 1 else 0
+    [((slot, 400, false), f), ((slot, 700, false), f),
+     ((slot, 400, true), f), ((slot, 700, true), f)]).toArray
+}
+
+/-- Two faces: the text slots (0 and 1) one file and the typewriter slot
+(2) another, so code and prose are told apart by the face a run sets in. -/
+def monoSlotOf (text mono : Font.Font) : Font.FontSet := {
+  fonts := #[text, mono]
+  index := ((List.range 3).flatMap fun slot =>
+    let f := if slot == 2 then 1 else 0
     [((slot, 400, false), f), ((slot, 700, false), f),
      ((slot, 400, true), f), ((slot, 700, true), f)]).toArray
 }

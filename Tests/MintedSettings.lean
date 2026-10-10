@@ -206,11 +206,17 @@ def mintedSettingsChecks (ref : IO.Ref (List String)) : IO Unit := do
     "\\begin{lstlisting}[" ++ opts ++ "]\n" ++ simple ++ "\n\\end{lstlisting}\n"
   let lstDefaults := "\\lstset{basicstyle=\\ttfamily\\small,tabsize=3,breaklines=true}"
   -- Listings sets its lines at the size's own skip, minted at fvextra's
-  -- overlap under it, so the comparison is listing against listing.
+  -- overlap under it, so the comparison is listing against listing; and
+  -- listings wraps with its own 20 pt continuation indent, which minted's
+  -- wrap does not carry, so the global keys are held to the same keys
+  -- stated locally, and to minted's size, tab and wrap.
   t "listing defaults: basicstyle size/tab/wrap reach both artifacts"
     (same (dvDoc lstDefaults (lst ""))
         (dvDoc "" (lst "basicstyle=\\ttfamily\\small,tabsize=3,breaklines=true")) &&
-      hasSize (dvDoc lstDefaults (lst "")) 9 &&
+      MintedSettings.pageSettings (rendered (dvDoc lstDefaults (lst ""))) ==
+        MintedSettings.pageSettings (rendered globalDoc) &&
+      (MintedSettings.html (dvDoc lstDefaults (lst ""))).1.any
+        (MintedSettings.htmlSettings · "0.9" 3 true) &&
       !(warnCodes (dvDoc lstDefaults (lst ""))).contains "W0110")
   t "listing defaults: local keys override global keys"
     (same (dvDoc lstDefaults (lst "basicstyle=\\ttfamily\\large,tabsize=5,breaklines=false"))

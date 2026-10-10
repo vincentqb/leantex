@@ -1257,7 +1257,7 @@ two codes name one cause site and disagree about being counted. The code that
 put this list on both gates is retired: its loss is a clause of `W0301`'s own
 message now, so it no longer owes a row here. -/
 def subjectDebt : List String :=
-  ["W0003", "W0005", "W0006", "W0007", "W0009", "W0010", "W0011", "W0102",
+  ["W0003", "W0006", "W0007", "W0010", "W0011", "W0102",
    "W0310", "W0311", "W0312", "W0319", "W0320",
    "W0321", "W0325", "W0326", "W0327", "W0328", "W0330", "W0331", "W0332",
    "W0333", "W0335", "W0336", "W0338", "W0342", "W0352",

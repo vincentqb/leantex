@@ -11,8 +11,12 @@ The engine resolves three family slots — body, sans, mono. A slot the
 document declares no family for is filled by the body family
 (`resolveName` in the driver's assembly), so a `\texttt`, `\url` or
 verbatim run in a document with no `\fonts{ mono = ... }` sets in body
-prose. This module is the decision; the diagnostic is
-`DriverDiag.slotCollapsed` (W0390).
+prose. The one exception cannot reach this report: a markdown document,
+which can declare nothing, takes its text family's designed typewriter
+companion where the scan serves it at every corner in fixed pitch
+(`FontDb.monoCompanion_contract`), and a fixed-pitch slot is no loss — so
+every slot this module reports was served by the body family. This module
+is the decision; the diagnostic is `DriverDiag.slotCollapsed` (W0390).
 
 The decision reads the face, never the slot index. An index says which
 face; it does not say what that face is, and the two part company in a

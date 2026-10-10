@@ -1,12 +1,67 @@
 class article
-page 612x792 vmargin 72 hmargin 150
+page 612x792 vmargin 72 hmargin 114
 section* h1
   text "A Table of Tides"
-para
-  text "| Day | High water | Low water | Range (m) | |:———-|———–:|:———:|———-:| | Monday | 06:10 | 12:25 | 4.1 | | Tuesday | 06:52 | 13:07 | 4.4 | | Wednesday | 07:35 | 13:50 | 4.6 |"
+table @{}l<,r<,c<,r<@{}
+  rule 0 top
+  rule 1 mid
+  rule 4 bottom
+  row
+    cell
+      text "Day"
+    cell
+      text "High water"
+    cell
+      text "Low water"
+    cell
+      text "Range (m)"
+  row
+    cell
+      text "Monday"
+    cell
+      text "06:10"
+    cell
+      text "12:25"
+    cell
+      text "4.1"
+  row
+    cell
+      text "Tuesday"
+    cell
+      text "06:52"
+    cell
+      text "13:07"
+    cell
+      text "4.4"
+  row
+    cell
+      text "Wednesday"
+    cell
+      text "07:35"
+    cell
+      text "13:50"
+    cell
+      text "4.6"
 para
   text "A paragraph after the table, and a second table with an escaped pipe:"
-para
-  text "| Symbol | Meaning | |——–|—————-| | | | a literal pipe | | ~ | about |"
+table @{}l<,l<@{}
+  rule 0 top
+  rule 1 mid
+  rule 3 bottom
+  row
+    cell
+      text "Symbol"
+    cell
+      text "Meaning"
+  row
+    cell
+      text "|"
+    cell
+      text "a literal pipe"
+  row
+    cell
+      text "~"
+    cell
+      text "about"
 -- diagnostics
 (none)

@@ -457,10 +457,11 @@ public theorem leastBy_set_eq (lt : Face → Face → Bool)
           | inl h3 => exact absurd h3.symm (fun h => hab h.symm)
           | inr h3 => exact absurd h2 (hasym mb ma h3)
 
-/-- One designed body↔math pairing, sourced: the body family a document
-declares, its designed math companion, where the pairing is documented, and
-the companion's licence (checked at the source). The engine ships none of
-these faces — a row costs nothing until the host already has the face. -/
+/-- One designed pairing, sourced: a text family, its designed companion —
+a math face (`mathCompanions`) or a typewriter face (`monoCompanions`) —,
+where the pairing is documented, and the companion's licence (checked at
+the source). The engine ships none of these faces — a row costs nothing
+until the host already has the face. -/
 public structure Pairing where
   body : String
   companion : String
@@ -547,14 +548,18 @@ public def mathCompanions : Array Pairing := #[
   { body := "CMU Serif", companion := "Latin Modern Math"
     source := "gust.org.pl/projects/e-foundry/lm-math", license := "GUST Font License" }]
 
+/-- The row of a sourced pairing table that names `body`: the one lookup
+both companion tables share (`mathCompanions`, `monoCompanions`). -/
+public def companionRow (table : Array Pairing) (body : String) : Option Pairing :=
+  table.find? fun p => normEq body ((norm p.body).toList.toArray)
+
 /-- The designed math companion of `body` in the supplied metadata: the sourced table
 row naming the family, resolved against the scan as the least face (under
 the one documented order) whose family is the row's companion. `none` when
 no row names the family or no supplied face names the companion. This pure
 decision neither reads nor validates that face's MATH table. -/
 public def pickCompanion (faces : Array Face) (body : String) : Option (Pairing × Face) := do
-  let row ← mathCompanions.find? fun p =>
-    normEq body ((norm p.body).toList.toArray)
+  let row ← companionRow mathCompanions body
   let face ← leastBy faceLt (faces.filter fun f =>
     normEq f.family ((norm row.companion).toList.toArray))
   return (row, face)
@@ -574,7 +579,7 @@ public theorem pickCompanion_set_eq (a b : Array Face) (body : String)
     (htotal : ∀ f g, f ∈ a → g ∈ a → f = g ∨ faceLt f g ∨ faceLt g f) :
     pickCompanion a body = pickCompanion b body := by
   unfold pickCompanion
-  cases mathCompanions.find? fun p => normEq body ((norm p.body).toList.toArray) with
+  cases companionRow mathCompanions body with
   | none => rfl
   | some row =>
     have heq := leastBy_set_eq faceLt htrans hasym
@@ -643,5 +648,105 @@ public def defaultFamily (faces : Array Face) : Option String :=
     match faces.find? fun f => ((norm f.family).splitOn "sans").length > 1 with
     | some f => some f.family
     | none => faces[0]?.map (·.family)
+
+/-- The designed typewriter companions of the default text families, as
+data: one row per `defaultFamilies` entry whose own project or collection
+ships a monospaced family beside it, where that is documented, and the
+companion's licence. A default family with none is on `monoUnpaired`
+instead, so every default family is a decided row (`markdownMonoChecks`).
+The engine ships none of these faces — a row costs nothing until the host
+already has the face. Sources:
+- github.com/dejavu-fonts/dejavu-fonts (README, "Available fonts") — DejaVu
+  Sans and DejaVu Sans Mono, one family; the DejaVu fonts licence (Bitstream
+  Vera's, with public-domain changes).
+- github.com/liberationfonts/liberation-fonts (README) — Liberation Sans,
+  Serif and Mono, one collection, metric-compatible with Arial, Times New
+  Roman and Courier New; SIL OFL.
+- github.com/ArtifexSoftware/urw-base35-fonts — the PostScript base 35 set,
+  Nimbus Sans (Helvetica) and Nimbus Mono PS (Courier) among them; AGPL with
+  a font exception.
+- the PostScript core set (PostScript Language Reference, the standard 35)
+  and PSNFSS's standard sans and typewriter pairing (`helvet`, `courier`;
+  psnfss2e) — Helvetica with Courier, and Microsoft's core fonts for the web
+  the same way, Arial with Courier New (the correspondence the Liberation
+  collection documents); vendor licences. -/
+public def monoCompanions : Array Pairing := #[
+  { body := "DejaVu Sans", companion := "DejaVu Sans Mono"
+    source := "github.com/dejavu-fonts/dejavu-fonts", license := "DejaVu fonts licence" },
+  { body := "Helvetica", companion := "Courier"
+    source := "PostScript core set; psnfss2e", license := "vendor licence" },
+  { body := "Arial", companion := "Courier New"
+    source := "Microsoft core fonts for the web", license := "vendor licence" },
+  { body := "Liberation Sans", companion := "Liberation Mono"
+    source := "github.com/liberationfonts/liberation-fonts", license := "SIL Open Font License" },
+  { body := "Nimbus Sans", companion := "Nimbus Mono PS"
+    source := "github.com/ArtifexSoftware/urw-base35-fonts", license := "AGPL with font exception" }]
+
+/-- The default text families no project ships a designed typewriter face
+beside: their documents' undeclared slot keeps the text family, and W0390
+names it. -/
+public def monoUnpaired : List String := ["Helvetica Neue", "Inter"]
+
+/-- The four corners NFSS names for every family — regular, bold, italic,
+bold italic — at the weights the driver's assembly asks them at. -/
+public def corners : List (Nat × Bool) := [(400, false), (700, false), (400, true), (700, true)]
+
+/-- Does the assembly's own resolver (`resolveWeight`, with nothing
+declared) answer this corner of `family` with the family's own face,
+unsubstituted and fixed-pitch? -/
+public def cornerFixed (faces : Array Face) (family : String) (c : Nat × Bool) : Bool :=
+  match resolveWeight faces family none c.1 c.2 with
+  | some (f, none) => f.fixedPitch
+  | _ => false
+
+private theorem cornerFixed_fixedPitch (faces : Array Face) (family : String) (c : Nat × Bool)
+    (h : cornerFixed faces family c = true) :
+    ∃ f, resolveWeight faces family none c.1 c.2 = some (f, none) ∧ f.fixedPitch = true := by
+  unfold cornerFixed at h
+  split at h
+  · rename_i f heq
+    exact ⟨f, heq, h⟩
+  · exact absurd h Bool.false_ne_true
+
+/-- The typewriter family a markdown document's undeclared slot takes: its
+text family's designed companion (`monoCompanions`), when the scan serves
+the companion at every corner with its own fixed-pitch face (`cornerFixed`)
+— else none, and the slot falls to the text family as every undeclared
+slot does, the loss W0390 names. A markdown source cannot declare a face, so
+this is how its code reaches a typewriter face; a tex document declares its
+own. -/
+public def monoCompanion (faces : Array Face) (text : String) : Option String :=
+  (companionRow monoCompanions text).bind fun row =>
+    if corners.all (cornerFixed faces row.companion) then some row.companion else none
+
+/-- **The default sets no corner it cannot serve.** A family the default
+picks answers every corner, through the same resolver call the assembly
+makes, with its own face, unsubstituted and fixed-pitch: it can never turn
+an undeclared slot into a substitution warning (W0006) or a proportional
+face, and it is never a guess beyond the sourced rows. -/
+public theorem monoCompanion_contract (faces : Array Face) (text family : String)
+    (h : monoCompanion faces text = some family) :
+    ∀ c ∈ corners, ∃ f, resolveWeight faces family none c.1 c.2 = some (f, none) ∧
+      f.fixedPitch = true := by
+  unfold monoCompanion at h
+  rcases Option.bind_eq_some_iff.mp h with ⟨row, _, hrow⟩
+  split at hrow
+  · rename_i hall
+    cases hrow
+    intro c hc
+    exact cornerFixed_fixedPitch faces _ c (List.all_eq_true.mp hall c hc)
+  · cases hrow
+
+/-- The default is drawn from the sourced rows: a family it picks is the
+companion of the row naming the text family. -/
+public theorem monoCompanion_mem (faces : Array Face) (text family : String)
+    (h : monoCompanion faces text = some family) :
+    ∃ row, companionRow monoCompanions text = some row ∧ row.companion = family := by
+  unfold monoCompanion at h
+  rcases Option.bind_eq_some_iff.mp h with ⟨row, hr, hrow⟩
+  split at hrow
+  · cases hrow
+    exact ⟨row, hr, rfl⟩
+  · cases hrow
 
 end LeanTex.Core.FontDb

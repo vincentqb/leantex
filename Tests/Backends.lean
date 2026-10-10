@@ -2942,7 +2942,7 @@ def pdfCensusTable :
   -- the included markdown's link is the page's one annotation
   ("md-include", (1, 1, 0, 0, 0, 1, 0, none, ["FlateDecode"])),
   ("md-include-deck", (2, 1, 0, 0, 0, 0, 0, none, ["FlateDecode"])),
-  ("md-links", (1, 1, 0, 0, 0, 4, 0, none, ["FlateDecode"])),
+  ("md-links", (1, 1, 0, 0, 0, 6, 0, none, ["FlateDecode"])),
   ("md-lists", (1, 1, 0, 0, 0, 0, 0, none, ["FlateDecode"])),
   ("md-quotes", (1, 1, 0, 0, 0, 0, 0, none, ["FlateDecode"])),
   ("md-readme", (1, 1, 0, 0, 0, 1, 0, none, ["FlateDecode"])),
