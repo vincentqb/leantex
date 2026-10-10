@@ -1552,12 +1552,72 @@ private def renderPaints (mode : Nat) : Bool × Bool × Bool :=
   | 6 => (true, true, true)
   | _ => (false, false, true)
 
-/-- A stroke's width carried into a glyph frame: divided by the frame's
-scale where the frame is a similarity; `none` where it is not one. -/
-private def strokeIn (m : Affine) (w : Sp) : Option Sp :=
-  if m.a = m.d ∧ m.b = -m.c ∧ m.b = 0 ∧ m.a ≠ 0 then some (spOfRat ((w : Rat) / (if m.a < 0 then -m.a else m.a)))
-  else if m.a = -m.d ∧ m.b = m.c ∧ m.b = 0 ∧ m.a ≠ 0 then some (spOfRat ((w : Rat) / (if m.a < 0 then -m.a else m.a)))
+/-- The factor a frame scales every length by, where it is an axis-aligned
+similarity: no shear, no rotation, the two axes scaled alike up to a
+reflection. -/
+public def frameScale? (m : Affine) : Option Rat :=
+  if m.b = 0 ∧ m.c = 0 ∧ m.a ≠ 0 ∧ (m.d = m.a ∨ m.d = -m.a) then
+    some (if m.a < 0 then -m.a else m.a)
   else none
+
+/-- A user-space length carried into a glyph frame: its sp divided by the
+frame's scale (`frameScale?`), rounded once to the frame's sp; `none` where
+the frame scales no length alike in every direction. -/
+public def strokeIn (m : Affine) (w : Sp) : Option Sp :=
+  (frameScale? m).map fun s => spOfRat ((w : Rat) / 65536 / s)
+
+/-- `spOfRat` rounds to the nearest sp: within half of one. -/
+public theorem spOfRat_between (r : Rat) :
+    r * 65536 - 1 / 2 ≤ (spOfRat r : Rat) ∧ (spOfRat r : Rat) ≤ r * 65536 + 1 / 2 := by
+  unfold spOfRat
+  have floorLe (x : Rat) : ((x.floor : Int) : Rat) ≤ x := Rat.le_floor_iff.mp (Int.le_refl _)
+  have ltFloor (x : Rat) : x < ((x.floor + 1 : Int) : Rat) := Rat.floor_lt_iff.mp (Int.lt_succ _)
+  simp only
+  split
+  · next hv =>
+    have h1 := floorLe (-(r * 65536) + 1 / 2)
+    have h2 := ltFloor (-(r * 65536) + 1 / 2)
+    push_cast at h1 h2 ⊢
+    constructor <;> grind
+  · next hv =>
+    have h1 := floorLe (r * 65536 + 1 / 2)
+    have h2 := ltFloor (r * 65536 + 1 / 2)
+    push_cast at h1 h2 ⊢
+    constructor <;> grind
+
+/-- **A length carried into a glyph frame lands back on itself**
+(`_between`): where `strokeIn` answers, the frame scales lengths by a
+positive `s`, and the carried length drawn through the frame is the user
+space's within half of the frame's sp — one rounding, in the frame. A
+glyph stroked through its frame strokes the width, dash and phase the
+graphics state set. -/
+public theorem strokeIn_between (m : Affine) (w w' : Sp) (h : strokeIn m w = some w') :
+    ∃ s : Rat, 0 < s ∧ m.b = 0 ∧ m.c = 0 ∧ (m.a = s ∨ m.a = -s) ∧ (m.d = s ∨ m.d = -s) ∧
+      (w : Rat) - s / 2 ≤ (w' : Rat) * s ∧ (w' : Rat) * s ≤ (w : Rat) + s / 2 := by
+  unfold strokeIn frameScale? at h
+  split at h
+  · next hm =>
+    obtain ⟨hb, hc, ha, hd⟩ := hm
+    simp only [Option.map_some, Option.some.injEq] at h
+    subst h
+    refine ⟨if m.a < 0 then -m.a else m.a, ?_, hb, hc, ?_, ?_, ?_⟩
+    · split <;> grind
+    · split <;> grind
+    · split <;> grind
+    · have hs : (0 : Rat) < (if m.a < 0 then -m.a else m.a) := by split <;> grind
+      generalize (if m.a < 0 then -m.a else m.a) = s at hs ⊢
+      have hr := spOfRat_between ((w : Rat) / 65536 / s)
+      have e : (w : Rat) / 65536 / s * 65536 = (w : Rat) / s := by grind
+      rw [e] at hr
+      obtain ⟨lo, hi⟩ := hr
+      have hlo := Rat.mul_le_mul_of_nonneg_right lo (Rat.le_of_lt hs)
+      have hhi := Rat.mul_le_mul_of_nonneg_right hi (Rat.le_of_lt hs)
+      have e2 : ((w : Rat) / s - 1 / 2) * s = (w : Rat) - s / 2 := by grind
+      have e3 : ((w : Rat) / s + 1 / 2) * s = (w : Rat) + s / 2 := by grind
+      rw [e2] at hlo
+      rw [e3] at hhi
+      exact ⟨hlo, hhi⟩
+  · simp at h
 
 /-- The colour a stencil mask paints in (§8.9.6.2): the fill colour; a
 pattern is none, and `rasterOf` names the mask a loss. -/

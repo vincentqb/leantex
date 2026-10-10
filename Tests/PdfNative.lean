@@ -615,8 +615,10 @@ say is named: a tiling pattern that strokes a path or fills a glyph, a
 stencil mask painted with a pattern, a JPEG under a `Decode` that remaps it.
 A CMYK colour, painted or sampled, previews as pdftoppm shows it; a
 TrueType program with no cmap shows its glyphs by their 'post' names, as
-pdftoppm draws them. Each case once imported with no loss named and drew
-otherwise. -/
+pdftoppm draws them; a glyph stroked through its frame strokes the width,
+dash and phase the state set in user space (`PdfGfx.strokeIn_between`),
+where it once stroked them 65,536 times as wide. Each case once imported
+with no loss named and drew otherwise. -/
 def pdfStateChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
   let maskGroup (box : String) (ink : String) :=
@@ -735,6 +737,27 @@ def pdfStateChecks (ref : IO.Ref (List String)) : IO Unit := do
   let unmapped := marksOf (ttPdf noCmap 4)
   t s!"state: a TrueType program with no cmap draws its glyphs by their 'post' names ({unmapped.size} of {mapped.size})"
     (mapped.size == 3 && unmapped == mapped)
+  -- A stroked glyph's lengths stand in its frame; drawn through it, they
+  -- are the user space's: 0.5 pt wide, dashed 2 on 1 from 0.25.
+  let inUser (m : Gfx.Affine) (v : Dim.Sp) : Rat := (v : Rat) * m.a / 65536
+  let near (x y : Rat) : Bool := x - y ≤ mkRat 1 1000 && y - x ≤ mkRat 1 1000
+  for mode in [1, 2] do
+    let ttStroked := syntheticPdfBin #["<< /Type /Catalog /Pages 2 0 R >>".toUTF8,
+      "<< /Type /Pages /Kids [3 0 R] /Count 1 >>".toUTF8,
+      "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200 100] /Contents 4 0 R /Resources << /Font << /F1 5 0 R >> >> >>".toUTF8,
+      (streamObj s!"{mode} Tr 0.5 w [2 1] 0.25 d BT /F1 40 Tf 20 30 Td <242526> Tj ET").toUTF8,
+      "<< /Type /Font /Subtype /TrueType /BaseFont /Placeholder /FirstChar 36 /LastChar 38 /Widths [600 600 600] \
+        /FontDescriptor 6 0 R >>".toUTF8,
+      "<< /Type /FontDescriptor /FontName /Placeholder /Flags 32 /FontBBox [0 0 1000 1000] /ItalicAngle 0 \
+        /Ascent 900 /Descent -200 /CapHeight 700 /StemV 80 /FontFile2 7 0 R >>".toUTF8,
+      streamObjBin face s!"/Length1 {face.size} "]
+    let strokes := (marksOf ttStroked).filterMap fun m => match m with
+      | .paint ctm _ _ (some st) _ _ => some (inUser ctm st.width, st.dash.map (inUser ctm), inUser ctm st.phase)
+      | _ => none
+    t s!"state: a glyph stroked in mode {mode} strokes the width, dash and phase in force ({strokes})"
+      (strokes.size == 3 && strokes.all fun (w, d, p) =>
+        near w (mkRat 1 2) && d.size == 2 && (d[0]?.any (near · 2)) && (d[1]?.any (near · 1)) &&
+          near p (mkRat 1 4))
 
 open Tests.PdfNative in
 /-- **PDF figures ship native web faces with no converter on the

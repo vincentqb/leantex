@@ -448,19 +448,21 @@ def machineLossChecks (ref : IO.Ref (List String))
     t s!"machine loss CLI no scratch root: a render that cannot start is accepted, never a crash (exit {picture.exitCode})"
       (picture.exitCode == 0 && (recordsOf picture).any fun j => event j == some "accepted")
     -- A renderer whose terminal output is no UTF-8 still finished, and its
-    -- render is read as the plain renderer's is: drawn, then unconverted.
+    -- render is read as the plain renderer's is: drawn, its web face the
+    -- engine's own reading of it.
     let noisy := dir / "noisy"
     writeScript (noisy / "lualatex") (noisyRenderer (corpus / "figures" / "box.pdf"))
     let spoke ← build boundary noisy "noisy" (dir / "noisy-out" / "page.html")
     let codes := (recordsOf spoke).filterMap codeOf
     t s!"machine loss CLI renderer writing no UTF-8: the render is drawn, not unfinished (exit {spoke.exitCode}, {codes})"
-      (spoke.exitCode == 0 && codes.contains "W0378" && !codes.contains "W0382")
+      (spoke.exitCode == 0 && codes.contains "N0023" && !codes.contains "W0382" && !codes.contains "W0378")
     let splitLog := dir / "split-log"
     writeScript (splitLog / "lualatex") (splitLogRenderer (corpus / "figures" / "box.pdf"))
     let logged ← build boundary splitLog "split-log" (dir / "split-log-out" / "page.html")
     let loggedCodes := (recordsOf logged).filterMap codeOf
     t s!"machine loss CLI renderer whose log is no UTF-8: the render is drawn, not unfinished (exit {logged.exitCode}, {loggedCodes})"
-      (logged.exitCode == 0 && loggedCodes.contains "W0378" && !loggedCodes.contains "W0382")
+      (logged.exitCode == 0 && loggedCodes.contains "N0023" && !loggedCodes.contains "W0382" &&
+        !loggedCodes.contains "W0378")
     -- A temporary root spelled through a link and a trailing separator: the
     -- renderer names its working directory by its real path, and that name
     -- is still spelled out of its words.
