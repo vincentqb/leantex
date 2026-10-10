@@ -26,19 +26,21 @@ def picturePathSyntaxChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet
     "\n\\useasboundingbox (-4,-3) rectangle (7,5);\n\\end{tikzpicture}\n\\end{document}"
   let page (body : String) (opts : String := "") := layoutOf oneFace (elabStr (src body opts)).1
   let points (out : Layout.Out) : Array (Nat × Array Int) :=
-    out.pages.flatMap fun p => (pageDraws p).filterMap fun (g, _, st) => match g, st with
-      | .path subs, some _ => some (0, (subpathSegs subs).flatMap fun seg => match seg with
-        | .line x y u v => #[x, y, u, v]
-        | .cubic x y a b c d u v => #[x, y, a, b, c, d, u, v])
-      | .path #[sp], none => some (1, #[sp.start.1, sp.start.2] ++
+    out.pages.flatMap fun p => (pageDraws p).filterMap fun (g, fl, st) =>
+      match g, isTipDraw fl st with
+      | .path #[sp], true => some (1, #[sp.start.1, sp.start.2] ++
           sp.segs.flatMap fun seg => #[seg.endPt.1, seg.endPt.2])
+      | .path subs, false => if st.isNone then none else
+        some (0, (subpathSegs subs).flatMap fun seg => match seg with
+          | .line x y u v => #[x, y, u, v]
+          | .cubic x y a b c d u v => #[x, y, a, b, c, d, u, v])
       | _, _ => none
   let counts (out : Layout.Out) : Nat × Nat :=
-    out.pages.foldl (fun acc p => (pageDraws p).foldl (fun (acc : Nat × Nat) (g, _, st) =>
-      match g, st with
-      | .path subs, some _ => (acc.1 + (subpathSegs subs).size, acc.2)
-      | .path _, none => (acc.1, acc.2 + 1)
-      | _, _ => acc) acc) (0, 0)
+    out.pages.foldl (fun acc p => (pageDraws p).foldl (fun (acc : Nat × Nat) (g, fl, st) =>
+      match g, isTipDraw fl st, st with
+      | .path _, true, _ => (acc.1, acc.2 + 1)
+      | .path subs, false, some _ => (acc.1 + (subpathSegs subs).size, acc.2)
+      | _, _, _ => acc) acc) (0, 0)
   let close (a b : Array (Nat × Array Int)) : Bool :=
     a.size == b.size && (a.zip b).all fun ((ka, xs), (kb, ys)) =>
       ka == kb && xs.size == ys.size && (xs.zip ys).all fun (x, y) =>

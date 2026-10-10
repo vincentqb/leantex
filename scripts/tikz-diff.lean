@@ -135,9 +135,13 @@ def referenceDoc (kind : ProbeKind) (body : String) : String :=
   | .picture => pre ++ "\\begin{tikzpicture}\n" ++ body ++ "\n\\end{tikzpicture}\n\\end{document}\n"
   | .cd => pre ++ "$\\begin{tikzcd}" ++ body ++ "\\end{tikzcd}$\n\\end{document}\n"
 
-/-- The engine's document: the tier's own, with no page number to ink. -/
+/-- The engine's document: the tier's own, loading the libraries the
+reference loads — arrows.meta changes the head `->` draws in both — with no
+page number to ink. -/
 def nativeDoc (kind : ProbeKind) (body : String) : String :=
-  (probeDoc kind body).replace "\\begin{document}" "\\pagestyle{empty}\n\\begin{document}"
+  (probeDoc kind body).replace "\\begin{document}" ("\\usepackage{tikz}\n" ++
+    "\\usetikzlibrary{arrows.meta, shapes.geometric, fit, decorations.pathreplacing, calc}\n" ++
+    "\\pagestyle{empty}\n\\begin{document}")
 
 def run (cmd : String) (args : Array String) (cwd : System.FilePath) : IO Bool := do
   try

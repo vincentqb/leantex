@@ -4748,6 +4748,7 @@ private def subsetPicture (ctx : Ctx) (body : Array Raw) :
   Picture.elabPicture ctx.palette body (pictureMath ctx) ctx.pic.sets ctx.pic.metric
     ctx.pic.macros argStyles ctx.page.scale declStyles ctx.page.fontSize
     (locate := fun pos => some (ctx.sourceSpan pos))
+    (metaArrows := (ctx.pic.preamble.splitOn "arrows.meta").length > 1)
 
 /-- The size switch in force where a picture stands, by its ladder name,
 when it is not `normalsize` — the declaration scope a paragraph's text
@@ -6185,13 +6186,14 @@ a side channel, never slide content" pos
       (help := "it is a block-level command: use it between paragraphs, " ++
         "not inside inline content")
     elabInlinesFrom ctx raws (i + 1) acc sb
-  else if Compat.nativeSetCtrls.contains name ||
+  else if Compat.nativeReadCtrls.contains name ||
       (ctx.pic.tool.isSome && Compat.boundaryCtrls.contains name) then
     -- A tikz-family set line is not unknown wherever it stands. Its group
     -- addresses the picture machinery, never the sentence: kept as text it
     -- printed the definition's own source into the paragraph. The engine
-    -- reads `\tikzset` itself now (`Compat.nativeSetCtrls`), so that line
-    -- is consumed whichever renderer draws; the rest are the boundary's
+    -- reads `\tikzset` and `\usetikzlibrary` itself now
+    -- (`Compat.nativeReadCtrls`), so those lines are consumed whichever
+    -- renderer draws; the rest are the boundary's
     -- while it is open (`Compat.boundaryDecls` collected them — body-level
     -- lines included, `boundaryDecls_covers`), and a declared refusal
     -- (`tool = none`) makes those unknown again, arguments and all. What a
@@ -6322,7 +6324,7 @@ public def recoversInlineName (ctx : Ctx) (name : String) : Bool :=
   (reservedCtrl.lookup name).isNone &&
   !(declCtrl.contains name || runningCtrl.contains name) &&
   !(blockOnly.contains name) &&
-  !(Compat.nativeSetCtrls.contains name ||
+  !(Compat.nativeReadCtrls.contains name ||
     (ctx.pic.tool.isSome && Compat.boundaryCtrls.contains name)) &&
   !((unknownCmdDiag name {}).1 == .W0301 && Compat.packageFile ctx.file &&
     Compat.codeInternal name && !ctx.atUse)
@@ -17086,12 +17088,12 @@ a heading; its numbers stand alone" pos
     return { s with ctx := { s.ctx with cancel := (Math.CancelSpec.ofOptions opts).1 } }
   | .unknownCmd name unclosed pos =>
     -- A tikz-family set line is not unknown: the engine reads `\tikzset`
-    -- itself (`Compat.nativeSetCtrls`), and while the boundary is open the
-    -- rest ride into every wrapped standalone (`Compat.boundaryDecls`
-    -- collected them), where the real TikZ reads them. A declared refusal
-    -- (`tool = none`) makes only the ones the engine does not read unknown
-    -- again.
-    if Compat.nativeSetCtrls.contains name ||
+    -- and `\usetikzlibrary` itself (`Compat.nativeReadCtrls`), and while the
+    -- boundary is open the rest ride into every wrapped standalone
+    -- (`Compat.boundaryDecls` collected them), where the real TikZ reads
+    -- them. A declared refusal (`tool = none`) makes only the ones the
+    -- engine does not read unknown again.
+    if Compat.nativeReadCtrls.contains name ||
         (s.ctx.pic.tool.isSome && Compat.boundaryCtrls.contains name) then
       return s
     -- Unknown preamble commands are configuration, not content: their

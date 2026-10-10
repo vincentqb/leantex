@@ -1178,6 +1178,9 @@ public structure Cx where
   somewhere. Where a node with no `at` stands is its image of the origin. A
   named node's point is the canvas's and never moves. -/
   xf : Gfx.Affine := Gfx.Affine.unit
+  /-- Does the document load arrows.meta? Then `To`, and so the `->`
+  shorthand's heads, is its Computer Modern arrow (`tipKindOf`). -/
+  metaArrows : Bool := false
 
 /-- Picture milli-units to sp: one TikZ unit is 1 cm, times the declared
 scale. One multiplication, one rounding division. -/
@@ -1524,17 +1527,41 @@ private def arrowSpec (ts : List Tok) : Option (Option String × Option String) 
     | some a, some b => some (a, b)
     | _, _ => none
 
-/-- Does a name draw as this subset's arrow head? A tip the document
-declared with `/.tip`, or one of the built-in kinds the plain head has
-always stood in for: `latex` (pgf manual §16.3, the `arrows` library) and
-`Latex`, which is `arrows.meta`'s spelling of that same tip — one shape
-under two library names, so admitting it claims no new substitution. `>` is
-the shorthand itself. Anything else stays outside the subset and is named,
-which is what keeps a genuinely different tip kind a visible loss rather
-than a silent head of the wrong shape. -/
+/-- The tips the subset draws, each by its own declaration: pgf's `to`, what
+the `->` shorthand draws (pgfcorearrows.code.tex: `<-> /.tip = {To}`,
+`To /.tip = to`); arrows.meta's `Computer Modern Rightarrow`, what it draws
+where the document loads arrows.meta (`To /.tip = {Computer Modern
+Rightarrow}`); pgf's `latex` and `stealth`; and arrows.meta's `Latex` and
+`Stealth` at their defaults. -/
+private inductive TipKind where
+  | to
+  | cmRightarrow
+  | latex
+  | stealthOld
+  | latexMeta
+  | stealth
+  deriving BEq
+
+/-- The tip a name draws, `none` for a name no declaration here gives;
+`metaLib` says the document loads arrows.meta, which makes `To` — and so the
+shorthand's heads — the Computer Modern arrow. -/
+private def tipKindOf (metaLib : Bool) : String → Option TipKind
+  | ">" | "<" | "To" => some (if metaLib then .cmRightarrow else .to)
+  | "to" => some .to
+  | "Computer Modern Rightarrow" => some .cmRightarrow
+  | "latex" => some .latex
+  | "stealth" => some .stealthOld
+  | "Latex" => some .latexMeta
+  | "Stealth" => some .stealth
+  | _ => none
+
+/-- Does a name draw as one of this subset's arrow heads? A tip the document
+declared with `/.tip`, or one the subset draws by its own declaration
+(`tipKindOf`). Anything else stays outside the subset and is named, which
+is what keeps a tip kind it does not draw a visible loss rather than a
+silent head of the wrong shape. -/
 private def drawsAsArrow (styles : List (String × Array Tok)) (n : String) : Bool :=
-  n == ">" || n == "<" || n == "latex" || n == "Latex" || n == "Stealth" ||
-    (styles.lookup (tipKey n)).isSome
+  (tipKindOf false n).isSome || (styles.lookup (tipKey n)).isSome
 
 /-- Read a `\tikzset` key list: every definition entry this reader knows
 folds into the bundles, in source order so a later definition may name an
@@ -5119,39 +5146,148 @@ private def Anchor.toward (a : Anchor) (q : Sp × Sp) : Sp × Sp :=
       | .ellipse => ellipseBorder g.x g.y g.a g.b q.1 q.2
       | .diamond => diamondBorder g.x g.y g.a g.b q.1 q.2
 
-/-- The `latex`/`->` arrow tip as a filled triangle, plus the point the
-stroked line shortens to. Extents are pgf's own declaration
-(pgflibraryarrows, the `latex` tip): the unit is 0.28 pt + 0.3·line
-width, the apex 9 units ahead of the anchor with the back corners 3
-behind at ±3.75 — drawn tip 12 units long; the straight sides stand in
-for the declared curved outline, a stated approximation. -/
-private def tipAt (x y dx dy width : Sp) : Option (Ir.Pic.Tip × Sp × Sp) :=
+/-- The tip an end of a path draws, as marks of the vector model: a
+producer's own triangle (`Ir.Pic.Tip`), or the tip's own drawing. -/
+private inductive TipInk where
+  | tri (t : Ir.Pic.Tip)
+  | node (n : Gfx.Node Empty)
+
+/-- The tip of kind `k` whose tip end stands on `q`, arriving along `(dx,
+dy)`, for a path of width `lw` in `color`: its marks, and where the path
+stops for it — each tip's own frame (x along the arrival, its tip end on
+`q`) and its own declaration of what it draws and where its line ends.
+`none` for no direction. -/
+private def tipAlong (k : TipKind) (q : Sp × Sp) (dx dy lw : Sp) (color : Ir.Color) :
+    Option (TipInk × Sp × Sp) :=
   let n := isqrt (dx * dx + dy * dy)
-  if n == 0 then none
-  else
-    let unitA := Dim.pt 28 / 100 + width * 3 / 10
-    let len := 12 * unitA
-    let half := unitA * 15 / 4
-    let bx := x - len * dx / n
-    let byy := y - len * dy / n
-    let ox := (-dy) * half / n
-    let oy := dx * half / n
-    some ({ x1 := x, y1 := y
-            x2 := bx + ox, y2 := byy + oy
-            x3 := bx - ox, y3 := byy - oy }, bx, byy)
+  if n == 0 then none else
+  -- A point of the tip's frame whose tip end is `tipEnd` ahead of its origin.
+  let frame (tipEnd s t : Int) : Sp × Sp :=
+    (q.1 + ((s - tipEnd) * dx - t * dy) / n, q.2 + ((s - tipEnd) * dy + t * dx) / n)
+  -- The old arrows' unit (pgfcorearrows.code.tex: `0.28pt` and `.3\pgflinewidth`).
+  let a : Int := Dim.pt 28 / 100 + lw * 3 / 10 -- \pgfutil@tempdima=0.28pt (pgfcorearrows.code.tex)
+  let filled (sub : Gfx.Subpath) : Gfx.Node Empty :=
+    .draw (.path #[sub]) (some (Ir.Pic.solidFill color)) none
+  match k with
+  | .to =>
+    -- Stroked at 0.8 of the line width with round caps and joins; its tip
+    -- end 0.21 pt and 0.625 line widths ahead, its line end its origin.
+    let tipEnd : Int := Dim.pt 21 / 100 + lw * 625 / 1000 -- \pgfarrowsrightextend (pgfcorearrows.code.tex)
+    let f := frame tipEnd
+    let sub : Gfx.Subpath :=
+      { start := f (-3 * a) (4 * a), closed := false
+        segs := #[.cubic (f (-275 * a / 100) (25 * a / 10)) (f 0 (a / 4)) (f (75 * a / 100) 0),
+          .cubic (f 0 (-(a / 4))) (f (-275 * a / 100) (-(25 * a / 10))) (f (-3 * a) (-4 * a))] }
+    let st : Gfx.Stroke :=
+      { Ir.Pic.strokeOf { color, width := lw * 8 / 10 } with cap := .round, join := .round }
+    some (.node (.draw (.path #[sub]) none (some st)), f 0 0)
+  | .cmRightarrow =>
+    -- arrows.meta's `Computer Modern Rightarrow` (`length = +1.6pt 2.2`,
+    -- `width' = +0pt 2.096774`, round): stroked at the line width with round
+    -- caps and joins, the inner length and width a line width less; its tip
+    -- end half a line width ahead of its origin, its line end half one
+    -- behind.
+    let len : Int := Dim.pt 16 / 10 + lw * 22 / 10 -- length = +1.6pt 2.2 (pgflibraryarrows.meta.code.tex)
+    let wid : Int := len * 2096774 / 1000000
+    let ia := len - lw
+    let ib := wid - lw
+    let f := frame (lw / 2)
+    let sub : Gfx.Subpath :=
+      { start := f (-ia) (ib / 2), closed := false
+        segs := #[.cubic (f (-(81731 * ia / 100000)) (ib / 5)) (f (-(41019 * ia / 100000))
+            (5833333 * ib / 100000000)) (f 0 0),
+          .cubic (f (-(41019 * ia / 100000)) (-(5833333 * ib / 100000000)))
+            (f (-(81731 * ia / 100000)) (-(ib / 5))) (f (-ia) (-(ib / 2)))] }
+    let st : Gfx.Stroke :=
+      { Ir.Pic.strokeOf { color, width := lw } with cap := .round, join := .round }
+    some (.node (.draw (.path #[sub]) none (some st)), f (-(lw / 2)) 0)
+  | .latex =>
+    -- Filled, its sides curved: the apex 9 units ahead, the back 1 behind.
+    let f := frame (9 * a)
+    some (.node (filled
+      { start := f (9 * a) 0, closed := true
+        segs := #[.cubic (f (63333 * a / 10000) (a / 2)) (f (2 * a) (2 * a)) (f (-a) (375 * a / 100)),
+          .line (f (-a) (-(375 * a / 100))),
+          .cubic (f (2 * a) (-(2 * a))) (f (63333 * a / 10000) (-(a / 2))) (f (9 * a) 0)] }), f 0 0)
+  | .stealthOld =>
+    -- Filled: the apex 5 units ahead, the back corners 3 behind, the notch
+    -- at the origin.
+    let f := frame (5 * a)
+    some (.node (filled
+      { start := f (5 * a) 0, closed := true
+        segs := #[.line (f (-3 * a) (4 * a)), .line (f 0 0), .line (f (-3 * a) (-4 * a))] }), f 0 0)
+  | .latexMeta =>
+    -- arrows.meta's `Latex` (`length = +3pt 4.5 .8`, `width' = +0pt .75`):
+    -- the line width capped at a fifth of the length; the front miter
+    -- `lw·√(1 + 9(L/W)²)`, half of it and half the line width taken off the
+    -- length; the back corners' height half the width less the miter the
+    -- normalised `(0.3L, 0.2333333W)` gives. Filled and stroked, mitred, its
+    -- tip end half a line width short of the length, its line end its origin.
+    let len : Int := Dim.pt 3 + lw * 45 / 10 -- length = +3pt 4.5 (pgflibraryarrows.meta.code.tex)
+    let wid : Int := len * 75 / 100
+    let alw : Int := min lw (len / 5)
+    if wid ≤ 0 then none else
+    let front := alw * isqrt (wid * wid + 9 * len * len) / wid
+    let inner := len - front / 2 - alw / 2
+    let vx := 3 * len / 10
+    let vy := wid * 2333333 / 10000000
+    let vn := isqrt (vx * vx + vy * vy)
+    let hb := if vx == 0 then wid / 2 else wid / 2 - alw * (vy + vn) / (2 * vx)
+    let f := frame (len - alw / 2)
+    let sub : Gfx.Subpath :=
+      { start := f inner 0, closed := true
+        segs := #[.cubic (f (877192 * inner / 1000000) (77922 * hb / 1000000))
+            (f (337381 * inner / 1000000) (519480 * hb / 1000000)) (f 0 hb),
+          .line (f 0 (-hb)),
+          .cubic (f (337381 * inner / 1000000) (-(519480 * hb / 1000000)))
+            (f (877192 * inner / 1000000) (-(77922 * hb / 1000000))) (f inner 0)] }
+    some (.node (.draw (.path #[sub]) (some (Ir.Pic.solidFill color))
+      (some (Ir.Pic.strokeOf { color, width := alw }))), f 0 0)
+  | .stealth =>
+    -- arrows.meta's `Stealth` (`length = +3pt 4.5 .8`, `width' = +0pt .75`,
+    -- `inset' = +0pt 0.325`): the line width capped at a quarter of the
+    -- length less the inset; the front corner `½·lw·√(1 + 4(L/W)²)` short of
+    -- the tip end, the back corners' miters from the half angle between the
+    -- dart's sides, the inset `½·lw·√(1 + 4(I/W)²)` deeper. Filled and
+    -- stroked, mitred; the path stops at the inset less a quarter line width
+    -- (`\pgfarrowssetlineend`).
+    let len : Int := Dim.pt 3 + lw * 45 / 10 -- length = +3pt 4.5 (pgflibraryarrows.meta.code.tex)
+    let wid : Int := len * 75 / 100
+    let ins : Int := len * 325 / 1000
+    let alw : Int := min lw ((len - ins) / 4)
+    if wid ≤ 0 then none else
+    let front := alw * isqrt (wid * wid + 4 * len * len) / (2 * wid)
+    let insetMiter := alw * isqrt (wid * wid + 4 * ins * ins) / (2 * wid)
+    let a1 := Gfx.Trig.atan2 len (wid / 2)
+    let a0 := Gfx.Trig.atan2 ins (wid / 2)
+    let half := (a1 - a0) / 2
+    let (ch, sh) := Gfx.Trig.cosSin half
+    let yc := if sh == 0 then alw / 2 else alw * ch / (2 * sh)
+    let (ca, sa) := Gfx.Trig.cosSin (a0 + half)
+    let u := Gfx.Trig.unit
+    let back := if ins == 0 then alw / 2 else sa * yc / u
+    let hw := wid / 2 - ca * yc / u
+    let f := frame len
+    let dart : Gfx.Subpath :=
+      { start := f (len - front) 0, closed := true
+        segs := #[.line (f back hw), .line (f (ins + insetMiter) 0), .line (f back (-hw))] }
+    some (.node (.draw (.path #[dart]) (some (Ir.Pic.solidFill color))
+      (some (Ir.Pic.strokeOf { color, width := alw }))), f (ins + insetMiter - alw / 4) 0)
 
 /-- The tip a straight side draws where it arrives at `q`, coming from `p`:
 the one geometry both ends read, a start tip being the arrival at the start
 from the far end. -/
-private def arrivalTip (p q : Sp × Sp) (width : Sp) : Option (Ir.Pic.Tip × Sp × Sp) :=
-  tipAt q.1 q.2 (q.1 - p.1) (q.2 - p.2) width
+private def tipArrival (k : TipKind) (p q : Sp × Sp) (lw : Sp) (color : Ir.Color) :
+    Option (TipInk × Sp × Sp) :=
+  tipAlong k q (q.1 - p.1) (q.2 - p.2) lw color
 
 /-- **`<-` draws the tip `->` draws, at the other end.** The start tip of a
 side from `p` toward `q` is the arrival tip of the side reversed — the same
-point, direction and reach — because a start is read as an arrival from the
-far end (pgf manual §16.2: an arrow specification names its two ends). -/
-private theorem reversedTip_exact (p q : Sp × Sp) (w : Sp) :
-    arrivalTip q p w = tipAt p.1 p.2 (p.1 - q.1) (p.2 - q.2) w := rfl
+kind, point, direction and reach — because a start is read as an arrival
+from the far end (pgf manual §16.2: an arrow specification names its two
+ends). -/
+private theorem reversedTip_exact (k : TipKind) (p q : Sp × Sp) (w : Sp) (c : Ir.Color) :
+    tipArrival k q p w c = tipAlong k p (p.1 - q.1) (p.2 - q.2) w c := rfl
 
 /-- Where a segment leaving in direction `deg` (degrees) exits this
 anchor: the border along the declared tangent, for a node with extents. -/
@@ -5604,12 +5740,6 @@ subset; the path is not drawn")
 private def tipNode (st : Ir.Pic.Stroke) (t : Ir.Pic.Tip) : Gfx.Node Empty :=
   .draw (.path #[Ir.Pic.tipSubpath t]) (some (Ir.Pic.solidFill st.color)) none
 
-/-- The tip an end of a path draws: the subset's triangle (`tipAt`), or a
-mark of its own shape (arrows.meta's `Stealth`). -/
-private inductive TipInk where
-  | tri (t : Ir.Pic.Tip)
-  | node (n : Gfx.Node Empty)
-
 private def tipInkNode (st : Ir.Pic.Stroke) : TipInk → Gfx.Node Empty
   | .tri t => tipNode st t
   | .node n => n
@@ -5625,59 +5755,6 @@ private def edgeWithTips (segs : Array Ir.Pic.PathSeg) (st : Ir.Pic.Stroke)
   | _ =>
     let path : Gfx.Node Empty := .draw (.path (Ir.Pic.edgeSubpaths segs)) none (some (Ir.Pic.strokeOf st))
     .ink (.group Gfx.Affine.unit #[] Gfx.Alpha.opaque (#[path] ++ tips.map (tipInkNode st)))
-
-/-- Which tip a name draws: arrows.meta's `Stealth`, or the subset's
-triangle every other drawable name stands for (`drawsAsArrow`). -/
-private inductive TipKind where
-  | plain
-  | stealth
-  deriving BEq
-
-private def tipKindOf : Option String → TipKind
-  | some "Stealth" => .stealth
-  | _ => .plain
-
-/-- arrows.meta's `Stealth` at its defaults, arriving at `q` from `p`
-(pgflibraryarrows.meta.code.tex: `length = +3pt 4.5 .8`, `width' = +0pt
-.75`, `inset' = +0pt 0.325`, its line width the path's, capped at a quarter
-of the length less the inset). The dart's corners come from pgf's own miter
-arithmetic: the front corner `½·lw·√(1 + 4(L/W)²)` short of the tip end,
-the back corners' miters from the half angle between the dart's sides, the
-inset `½·lw·√(1 + 4(I/W)²)` deeper. It is filled and stroked at its line
-width with mitred joins, its tip end on `q`, and the path stops for it at
-the inset less a quarter line width (`\pgfarrowssetlineend`). -/
-private def stealthArrival (p q : Sp × Sp) (lw : Sp) (color : Ir.Color) :
-    Option (TipInk × Sp × Sp) :=
-  let dx := q.1 - p.1
-  let dy := q.2 - p.2
-  let n := isqrt (dx * dx + dy * dy)
-  if n == 0 then none else
-  let len : Int := Dim.pt 3 + lw * 45 / 10 -- length = +3pt 4.5 (pgflibraryarrows.meta.code.tex)
-  let wid : Int := len * 75 / 100
-  let ins : Int := len * 325 / 1000
-  let alw : Int := min lw ((len - ins) / 4)
-  if wid ≤ 0 then none else
-  let front := alw * isqrt (wid * wid + 4 * len * len) / (2 * wid)
-  let insetMiter := alw * isqrt (wid * wid + 4 * ins * ins) / (2 * wid)
-  let a1 := Gfx.Trig.atan2 len (wid / 2)
-  let a0 := Gfx.Trig.atan2 ins (wid / 2)
-  let half := (a1 - a0) / 2
-  let (ch, sh) := Gfx.Trig.cosSin half
-  let yc := if sh == 0 then alw / 2 else alw * ch / (2 * sh)
-  let (ca, sa) := Gfx.Trig.cosSin (a0 + half)
-  let u := Gfx.Trig.unit
-  let back := if ins == 0 then alw / 2 else sa * yc / u
-  let top := ca * yc / u
-  let hw := wid / 2 - top
-  -- The dart's frame: x along the arrival, its origin one length behind q.
-  let at_ (s t : Int) : Sp × Sp :=
-    (q.1 + ((s - len) * dx - t * dy) / n, q.2 + ((s - len) * dy + t * dx) / n)
-  let dart : Gfx.Subpath :=
-    { start := at_ (len - front) 0, closed := true
-      segs := #[.line (at_ back hw), .line (at_ (ins + insetMiter) 0), .line (at_ back (-hw))] }
-  let st : Gfx.Stroke := Ir.Pic.strokeOf { color, width := alw }
-  let stop := at_ (ins + insetMiter - alw / 4) 0
-  some (.node (.draw (.path #[dart]) (some (Ir.Pic.solidFill color)) (some st)), stop)
 
 mutual
 
@@ -6508,14 +6585,22 @@ the rendered picture subset; the edge is not drawn")
       dash := dash }
   -- The tip each end draws: the name it wrote, the shorthand's own heads
   -- the tip `>=` named.
+  -- A declared tip (`name/.tip = {…}`) draws what it is declared as, the
+  -- triangle-sided `latex` where that is no tip of these.
+  let kindOf1 := tipKindOf cx.metaArrows
+  let declared (n : String) : TipKind :=
+    ((cx.styles.lookup (tipKey n)).bind fun ts => (tipName ts.toList).bind kindOf1).getD .latex
+  let shorthandKind : TipKind := if cx.metaArrows then .cmRightarrow else .to
   let kindOf (n : Option String) : TipKind :=
-    if n == some ">" || n == some "<" then tipKindOf shorthand else tipKindOf n
+    match n with
+    | some ">" | some "<" =>
+      (shorthand.bind fun s => (kindOf1 s).orElse fun _ => some (declared s)).getD shorthandKind
+    | some s => (kindOf1 s).getD (declared s)
+    | none => shorthandKind
   let startKind := kindOf startName
   let endKind := kindOf endName
   let tipFor (kind : TipKind) (p q : Sp × Sp) : Option (TipInk × Sp × Sp) :=
-    match kind with
-    | .plain => (arrivalTip p q stroke.width).map fun (t, b) => (.tri t, b)
-    | .stealth => stealthArrival p q stroke.width stroke.color
+    tipArrival kind p q stroke.width stroke.color
   let mut segs : Array Ir.Pic.PathSeg := #[]
   let mut tip : Option TipInk := none
   let mut startTip : Option TipInk := none
@@ -8316,7 +8401,7 @@ public def elabPicture (pal : Ir.Palette) (raws : Array Parse.Raw)
     (argStyles : List (String × Ir.Style))
     (ladder : List (String × Nat))
     (declStyles : List (String × Ir.Style)) (bodySize : Sp)
-    (locate : Pos → Option Span := fun _ => none) :
+    (locate : Pos → Option Span := fun _ => none) (metaArrows : Bool := false) :
     Ir.Pic.Picture × Array PDiag := Id.run do
   let raw := ofRawsAt locate raws
   let toks := expandMacros (macroTable ladder declStyles macros raw) raw
@@ -8417,7 +8502,7 @@ public def elabPicture (pal : Ir.Palette) (raws : Array Parse.Raw)
     match styles.lookup n with
     | some bundle => (splitTop bundle ',').filter fun e => !e.isEmpty
     | none => #[]
-  let cx : Cx := { pal := pal, scale := scale
+  let cx : Cx := { pal := pal, scale := scale, metaArrows := metaArrows
                    styles := styles, transformShape := transformShape
                    global := documentOpts (sets.map ofSetting)
                    opts := inherited

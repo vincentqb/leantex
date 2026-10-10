@@ -223,9 +223,9 @@ def tikzPathChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Un
         (HtmlDoc.blockNode {} b)).size) 0 == 1)
   -- Tips at either end.
   let tipsOf (src : String) : Nat := (drawsOf oneFace src).foldl (fun n (g, fl, st) =>
-    match g, fl, st with
-    | .path _, some _, none => n + 1
-    | _, _, _ => n) 0
+    match g with
+    | .path _ => if isTipDraw fl st then n + 1 else n
+    | _ => n) 0
   let back := picDoc "" "\\draw[<-] (0,0) -- (2,0);"
   let fore := picDoc "" "\\draw[->] (2,0) -- (0,0);"
   t "tips: a start tip stands where the reversed path's end tip stands"

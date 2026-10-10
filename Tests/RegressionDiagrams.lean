@@ -89,11 +89,13 @@ private def routeNoteChecks (ref : IO.Ref (List String)) (a : Regression.Artifac
         | ["M", x, y, "L", u, v] =>
           return (attr n "stroke", (← pt? x), (← pt? y), (← pt? u), (← pt? v))
         | _ => none
+    -- A head is pgf's `to`: two curves from one wing through the apex to the
+    -- other, stroked with round caps — its apex, then its wings.
     let svgHeads := svgPaths.filterMap fun n => do
-      if attr n "fill" == "none" then none else
-        match (attr n "d").splitOn " " |>.filter (· != "") with
-        | ["M", x, y, "L", u, v, "L", w, z, "Z"] =>
-          return (attr n "fill", (← pt? x), (← pt? y),
+      if attr n "stroke-linecap" != "round" then none else
+        match ((attr n "d").replace "," " ").splitOn " " |>.filter (· != "") with
+        | ["M", u, v, "C", _, _, _, _, x, y, "C", _, _, _, _, w, z] =>
+          return (attr n "stroke", (← pt? x), (← pt? y),
             (← pt? u), (← pt? v), (← pt? w), (← pt? z))
         | _ => none
     let nativeShafts := paths.filterMap fun (g, _, st) => do
@@ -104,13 +106,11 @@ private def routeNoteChecks (ref : IO.Ref (List String)) (a : Regression.Artifac
         | [.line x y u v] => some (color.css, x, y, u, v)
         | _ => none
       | _ => none
-    let nativeHeads := paths.filterMap fun (g, fl, _) => do
-      let fill ← fl
-      let color ← match fill.paint with
-        | .solid c => some c
-        | .gradient _ => none
+    let nativeHeads := paths.filterMap fun (g, fl, st) => do
+      if !isTipDraw fl st then none else
+      let color ← strokeColor? (← st)
       match g with
-      | .path #[{ start := (x, y), segs := #[.line (u, v), .line (w, z)], closed := true }] =>
+      | .path #[{ start := (u, v), segs := #[.cubic _ _ (x, y), .cubic _ _ (w, z)], closed := false }] =>
         some (color.css, x, y, u, v, w, z)
       | _ => none
     let aims := #[
@@ -119,24 +119,27 @@ private def routeNoteChecks (ref : IO.Ref (List String)) (a : Regression.Artifac
     for (backend, shafts, heads, slack) in
         #[("native", nativeShafts, nativeHeads, (1 : Nat)),
           ("HTML", svgShafts, svgHeads, 132)] do
-      t s!"{backend} ships five shafts and five filled heads"
+      t s!"{backend} ships five shafts and five heads"
         (shafts.size == 5 && heads.size == 5)
       for (color, dx, dy) in aims do
-        let points := fun x y =>
-          (if dx == 0 then x == 0 else x * dx > 0) &&
-          (if dy == 0 then y == 0 else y * dy > 0)
+        -- Across the aim, a direction is level to within the spelling's
+        -- rounding: each SVG point rounds on its own.
+        let points := fun (x y : Int) =>
+          (if dx == 0 then x.natAbs ≤ slack else x * dx > 0) &&
+          (if dy == 0 then y.natAbs ≤ slack else y * dy > 0)
         let matching := heads.filter fun (c, x, y, u, v, w, z) =>
           c == color && points (2 * x - u - w) (2 * y - v - z)
         t s!"{backend} {color} arrow points ({dx},{dy})" (matching.size == 1)
         for (_, x, y, u, v, w, z) in matching do
-          -- Native coordinates round below one sp; SVG point spellings
-          -- round below 0.001pt each (66sp), including the head midpoint.
+          -- The shaft stops at the head's origin, inside the head: between
+          -- its wings and its apex. Native coordinates round below one sp;
+          -- SVG point spellings round below 0.001pt each (66sp).
           t s!"{backend} {color} head meets its shaft and has two wings"
             ((u - x) * (z - y) != (w - x) * (v - y) &&
               shafts.any fun (c, sx, sy, ex, ey) =>
                 c == color && points (ex - sx) (ey - sy) &&
-                (ex - (u + w) / 2).natAbs ≤ slack &&
-                (ey - (v + z) / 2).natAbs ≤ slack)
+                min x (min u w) ≤ ex + slack && ex ≤ max x (max u w) + slack &&
+                min y (min v z) ≤ ey + slack && ey ≤ max y (max v z) + slack)
 
   let reductions := lines.filter fun l => lineText l false == "𝑢+𝑥√𝑦0𝑔+𝑣"
   t "the complete reduction ships once" (reductions.size == 1)

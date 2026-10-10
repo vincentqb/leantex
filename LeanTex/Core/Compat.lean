@@ -2198,6 +2198,13 @@ subset draws nothing of is drawn there and needs the same definitions.
 A subset of `boundaryCtrls`. -/
 public def nativeSetCtrls : List String := ["tikzset"]
 
+/-- The picture-family lines the engine reads itself and so never names as
+unknown, whichever renderer draws: the set lines it reads (`nativeSetCtrls`)
+and `\usetikzlibrary`, whose libraries the picture reader implements or
+names where a picture uses them, and whose `arrows.meta` changes the head
+the `->` shorthand draws (`Picture.tipKindOf`). -/
+public def nativeReadCtrls : List String := nativeSetCtrls ++ ["usetikzlibrary"]
+
 /-- Picture packages, whose whole meaning is drawing: with the boundary
 open (the default), their loads belong to the boundary standalone's
 preamble (`boundaryDecls` carries each with its options) rather than being

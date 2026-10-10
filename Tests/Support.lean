@@ -1034,22 +1034,29 @@ def shapeFrame? : Ir.Pic.Shape →
   | .ink (.draw (.rect x y w h) fl st) => some (x, y, w, h, st, fl)
   | _ => none
 
+/-- Is a draw an arrow tip's mark rather than a path's own stroke? A tip is
+filled (`latex`, `stealth`, arrows.meta's `Latex` and `Stealth`) or
+stroked with round caps (`to`, the Computer Modern arrow), where the path a
+tip ends is pgf's butt-capped line. -/
+def isTipDraw (fl : Option Gfx.Fill) (st : Option Gfx.Stroke) : Bool :=
+  fl.isSome || (st.map (·.cap != .butt)).getD false
+
 /-- A shape's ink read back as an edge the subset draws: its segments, its
 stroke, and whether a tip ends it. -/
 def shapeEdge? : Ir.Pic.Shape → Option (Array Ir.Pic.PathSeg × Gfx.Stroke × Bool)
   | .ink (.group _ _ _ kids) =>
     match kids.toList with
     | [.draw (.path subs) none (some st)] => some (subpathSegs subs, st, false)
-    | [.draw (.path subs) none (some st), .draw _ (some _) none] =>
-      some (subpathSegs subs, st, true)
+    | [.draw (.path subs) none (some st), .draw _ fl tst] =>
+      if isTipDraw fl tst then some (subpathSegs subs, st, true) else none
     | _ => none
   | _ => none
 
 /-- The segments of a page's picture edges — its stroked paths — in paint
 order, in layout coordinates. -/
 def edgeSegs (p : Layout.PageOut) : Array Ir.Pic.PathSeg :=
-  (pageDraws p).foldl (fun acc (g, _, st) => match g, st with
-    | .path subs, some _ => acc ++ (subpathSegs subs)
+  (pageDraws p).foldl (fun acc (g, fl, st) => match g, st with
+    | .path subs, some _ => if isTipDraw fl st then acc else acc ++ (subpathSegs subs)
     | _, _ => acc) #[]
 
 /-- A placed mark's extent as the page census reads it: a rectangle's own

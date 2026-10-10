@@ -26,8 +26,8 @@ picture 7 shapes
   group
     draw path (198.425,0)~(212.598,14.173)~(226.772,0)--(226.772,-14.173) stroke #000000 0.4
   group
-    draw path (0,-28.346)--(78.239,-28.346) stroke #000000 0.4
-    draw path (83.039,-28.346)--(78.239,-26.846)--(78.239,-29.846) z fill #000000
+    draw path (0,-28.346)--(82.579,-28.346) stroke #000000 0.4
+    draw path (81.379,-26.746)~(82.879,-28.346)~(81.379,-29.946) stroke #000000 0.32 cap round join round
   draw rect 113.386 -42.52 56.693 28.346 fill #2A6F4E alpha 300
 -- diagnostics
 (none)

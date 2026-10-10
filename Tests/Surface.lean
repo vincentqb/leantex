@@ -6612,15 +6612,20 @@ def boundaryChecks (ref : IO.Ref (List String)) : IO Unit := do
      native.body.any fun b => match b with | .picture _ => true | _ => false)
   -- The declared refusal: the constructs stay refused where they stand,
   -- the placeholder is W0362's, and no W0379 — the declaration accepted
-  -- it. The set lines and the picture package's load are then unknown
-  -- and unsupported again, named.
+  -- it. The picture package's load and a set line only the boundary reads
+  -- are then unknown and unsupported again, named; a library load is the
+  -- engine's own line, which no refusal makes unknown.
   let refuse := "\\pictures{ tool = none }\n"
-  let (closedDoc, closedDs) := elabStr (dvDoc (refuse ++ sets) pic)
+  let boundaryOnly := "\\pgfplotsset{compat=1.18}\n"
+  let (closedDoc, closedDs) := elabStr (dvDoc (refuse ++ sets ++ boundaryOnly) pic)
   t "tool = none refuses: W0334 stays, no request, no W0379"
     (closedDs.any (·.code == "W0334") && closedDs.all (·.code != "W0379") &&
      closedDoc.pictureSrcs.isEmpty && closedDoc.pictureTool.isNone)
-  t "tool = none makes the set lines and the picture load named losses again"
-    (closedDs.any (·.code == "W0301") && closedDs.any (·.code == "W0103"))
+  t "tool = none makes the boundary's set lines and the picture load named losses again"
+    (closedDs.any (fun d => d.code == "W0301" && hasStr d.message "pgfplotsset") &&
+     closedDs.any (·.code == "W0103"))
+  t "tool = none leaves a library load the engine's own"
+    (closedDs.all fun d => !(d.code == "W0301" && hasStr d.message "usetikzlibrary"))
   -- An unpinned tool is refused: the driver executes the named binary, so
   -- the value is drawn from the engine's own list, never the document's.
   -- The misread pin does not close the door: E0321 names the value, and
@@ -6709,10 +6714,14 @@ def pictureDefnReachChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet)
     (!hasStr shipped "plumearrow" && !hasStr shipped "arrows.meta" &&
      !hasStr shipped "Latex")
   -- The declared refusal is still the acceptance: with no boundary, a set
-  -- line is an unknown command again, arguments and all.
-  let (_, refusedDs) := elabStr (dvDoc "\\pictures{ tool = none }\n" (sets ++ outside))
-  t "tool = none makes a body-level set line an unknown command again"
-    (refusedDs.any (·.code == "W0301"))
+  -- line only the boundary reads is an unknown command again, arguments
+  -- and all; the library load and the `\tikzset` are the engine's own.
+  let (_, refusedDs) := elabStr (dvDoc "\\pictures{ tool = none }\n"
+    (sets ++ "\\pgfplotsset{compat=1.18}\n" ++ outside))
+  t "tool = none makes a body-level boundary set line an unknown command again"
+    (refusedDs.any fun d => d.code == "W0301" && hasStr d.message "pgfplotsset")
+  t "tool = none keeps a body-level library load the engine's own"
+    (refusedDs.all fun d => !(d.code == "W0301" && hasStr d.message "usetikzlibrary"))
   -- A picture the subset draws partly, with no tool to draw it — this face
   -- fulfils nothing, as a machine with no tool and a cold cache does not:
   -- its request is withdrawn and the subset's drawing is what ships, the
