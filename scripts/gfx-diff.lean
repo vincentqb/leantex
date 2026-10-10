@@ -353,7 +353,7 @@ names. -/
 def documentPdf (fs : Font.FontSet) (fig : Figure Empty) : ByteArray :=
   let ((x0, y0), (x1, y1)) := fig.box
   let geom : Layout.Geom := { pageW := x1 - x0, pageH := y1 - y0 }
-  let ink : Layout.InkOut := { fig, place := { flipY := true, dx := -x0, dy := y1 }, leaf := none }
+  let ink : Layout.InkOut := { fig := fig.lift, place := { flipY := true, dx := -x0, dy := y1 }, leaf := none }
   match Pdf.writeChecked geom fs #[{ inks := #[ink] }] with
   | .ok b => b
   | .error _ => ByteArray.empty

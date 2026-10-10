@@ -1237,14 +1237,17 @@ public def Geom.ofPage (spec : Ir.PageSpec) (base : Geom := {}) : Geom :=
     skips := spec.skipScale
     raggedFil := spec.raggedFil }
 
-/-- A picture's ink on the page: its figure with the labels taken out —
-they are the page's lines (`emitLabel`) — the isometry placing picture
-coordinates (y up) in layout coordinates (y down), and the picture leaf it
-paints (`LineOut.leaf`'s contract, on ink), so the PDF writer groups it
-under its figure. One per picture, its marks in source order, a rectangle
-fill among them where the source put it. -/
+/-- A picture's ink on the page: its figure, each label the key of the page
+line that sets it (`Gfx.ofPictureKeyed`: the picture and the label's shape,
+the origin `emitLabel`'s line is stamped with) — so the PDF writer sets each
+label's line inside the picture's sequence, where its node stands among the
+ink — the isometry placing picture coordinates (y up) in layout coordinates
+(y down), and the picture leaf it paints (`LineOut.leaf`'s contract, on
+ink), so the PDF writer groups it under its figure. One per picture, its
+marks in source order, a rectangle fill among them where the source put
+it. -/
 public structure InkOut where
-  fig : Gfx.Figure Empty
+  fig : Gfx.Figure (Nat × Nat)
   place : Gfx.Iso
   leaf : Option Nat := none
   deriving Repr, Inhabited
@@ -16954,15 +16957,17 @@ public def emitPictureShape (fs : FontSet) (imgs : Image.Store) (geom : Geom)
         out.lines.push line
     { out with lines := lines, diags := out.diags ++ label.diags }
 
-/-- **A picture's ink is its lowered figure** (`Gfx.ofPicture`) with the
-labels taken out, placed by the picture's isometry (`Ir.Pic.Place.toIso`)
-and stamped with its leaf: one ink, its marks in source order, a rectangle
-fill among them where the source put it. `none` when the picture is labels
+/-- **A picture's ink is its lowered figure** (`Gfx.ofPicture`), each label
+keyed by the line that sets it (`Gfx.ofPictureKeyed`, the picture's
+`origin` and the label's shape), placed by the picture's isometry
+(`Ir.Pic.Place.toIso`) and stamped with its leaf: one ink, its marks in
+source order, a rectangle fill among them where the source put it, its
+labels where they stand among the marks. `none` when the picture is labels
 only. `box` is the box placement already measured. -/
 public def pictureInk (box : Gfx.Box) (pic : Ir.Pic.Picture) (place : Ir.Pic.Place)
-    (leaf : Option Nat) : Option InkOut :=
-  let fig := (Gfx.ofPictureIn box pic).dropLabels
-  if fig.nodes.isEmpty then none else some { fig := fig, place := place.toIso, leaf := leaf }
+    (leaf : Option Nat) (origin : Nat) : Option InkOut :=
+  if pic.shapes.all (· matches .label ..) then none
+  else some { fig := Gfx.ofPictureKeyed origin box pic, place := place.toIso, leaf := leaf }
 
 /-- The actual picture emitter in source-shape order. Its fold state keeps
 label lines and their diagnostic account together. -/
@@ -17047,11 +17052,17 @@ private def placePicture (fs : FontSet) (imgs : Image.Store) (b0 : B)
   -- affine map the invertibility and containment theorems range over.
   let place : Ir.Pic.Place := { x0 := x, yTop := yTop, xmin := px0, ymax := py1 }
   let emitted := emitPicture fs imgs b.geom b.xHeight leaf place pic (some origin)
-  let ink := pictureInk box pic place leaf
+  let ink := pictureInk box pic place leaf origin
+  -- The anchors pending above the picture — the labels of a display it
+  -- stands for — land on its first line, where a link to them lands; a
+  -- picture with no line leaves them to the next.
+  let labelLines := emitted.lines.modify 0 fun l => { l with anchors := b.pendingAnchors ++ l.anchors }
+  let pending := if emitted.lines.isEmpty then b.pendingAnchors else #[]
   b := ({ b with pageStretch := stretch
-                 diags := b.diags ++ emitted.diags }.pushSibling
+                 diags := b.diags ++ emitted.diags
+                 pendingAnchors := pending }.pushSibling
     (inks := ink.toArray)
-    (shrink := some above) (fils := some fils)).pushLabels emitted.lines above fils
+    (shrink := some above) (fils := some fils)).pushLabels labelLines above fils
   b := { b with
     openRegions := b.openRegions.map fun s => { s with begun := true }
     pageShrink := above

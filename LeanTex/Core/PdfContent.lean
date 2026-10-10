@@ -682,12 +682,85 @@ edge (the bleed), y up from its bottom. -/
 @[expose] public def pageIso (geom : Geom) : Gfx.Iso :=
   { flipY := true, dx := geom.bleed, dy := geom.bleed + geom.pageH }
 
+/-! ### A picture's labels inside its picture's sequence -/
+
+/-- A page line's picture label key, when the page may set it inside its
+picture: the picture and shape the label was laid for
+(`LabelAudit.Stamp.origin`). A furniture line stays in the text object,
+where the furniture census counts it (`furniture_covers`). -/
+public def _root_.LeanTex.Core.Layout.LineOut.labelKey? (l : LineOut) : Option (Nat × Nat) :=
+  if l.furniture then none else l.pictureLabel.map (·.origin)
+
+/-- The label keys a page's inks set among their ink, in paint order: each
+ink's top-level labels, in node order. -/
+public def inkLabelKeys (inks : Array InkOut) : List (Nat × Nat) :=
+  inks.toList.flatMap fun k => k.fig.nodes.toList.flatMap fun n => n.label?.toList
+
+/-- **Whether a page sets its pictures' labels inside their pictures**:
+every ink's labels stand at its top level, no ink reuses a symbol, and no
+key is set twice — so each label line paints exactly once, where its node
+stands among its picture's ink (`paintRuns_text`). A page that fails any of
+the three keeps every line in its text object, as before labels moved. -/
+public def routesLabels (inks : Array InkOut) : Bool :=
+  inks.all (fun k => k.fig.labelsTop && k.fig.symbols.isEmpty) && decide (inkLabelKeys inks).Nodup
+
+/-- Whether a page line paints inside its picture's sequence. -/
+public def heldBy (route : Bool) (keys : List (Nat × Nat)) (l : LineOut) : Bool :=
+  route && match l.labelKey? with
+    | some k => keys.contains k
+    | none => false
+
+/-- A segment with its glyphs taken out: a run advances as it did and paints
+nothing; every other segment stands. -/
+public def _root_.LeanTex.Core.Layout.Seg.withoutGlyphs : Seg → Seg
+  | .run idx color link w _ size m decs raise ground attr =>
+    .run idx color link w #[] size m decs raise ground attr
+  | .gap w word => .gap w word
+  | .decoratedGap w word decs => .decoratedGap w word decs
+  | .decoration kind w t raise color => .decoration kind w t raise color
+  | .rule w t raise color => .rule w t raise color
+  | .image store w h => .image store w h
+  | .poly pts color => .poly pts color
+
+/-- A line with its glyphs taken out: what the text object walks for a label
+line its picture sets — its rules, images and polygons where they stood. -/
+public def _root_.LeanTex.Core.Layout.LineOut.withoutGlyphs (l : LineOut) : LineOut :=
+  { l with segs := l.segs.map Layout.Seg.withoutGlyphs }
+
+/-- The lines the text object walks: every page line, a held one without
+its glyphs. -/
+public def bodyLines (page : PageOut) : Array LineOut :=
+  let held := heldBy (routesLabels page.inks) (inkLabelKeys page.inks)
+  page.lines.map fun l => if held l then l.withoutGlyphs else l
+
+/-- The text a label key's held lines set, walked as the page walks a line
+from a fresh state — a text object of its own inside its own saved state
+(`GfxPdf.textGroup`), so it reads no font, colour or pen the page's text set
+— or nothing where no held line carries the key. -/
+public def labelText (geom : Geom) (remap : Array Nat) (widths : Array (Array Int))
+    (imgMap : Array (Option Nat)) (tags : Array (Option String)) (held : List LineOut)
+    (k : Nat × Nat) : Option (Array TextOp) :=
+  match held.filter (·.labelKey? == some k) with
+  | [] => none
+  | ls => some (ls.foldl (stepLinePlain geom remap imgMap tags) { widths }).ops
+
+/-- The label setter of a page: the text of each key its held lines carry,
+or nothing on a page that routes none. -/
+public def pageLabels (geom : Geom) (remap : Array Nat) (widths : Array (Array Int))
+    (imgMap : Array (Option Nat)) (tags : Array (Option String)) (page : PageOut) :
+    (Nat × Nat) → Option (Array TextOp) :=
+  let keys := inkLabelKeys page.inks
+  let route := routesLabels page.inks
+  if route then labelText geom remap widths imgMap tags (page.lines.toList.filter (heldBy route keys))
+  else fun _ => none
+
 /-- A picture's ink as operators: its figure under layout's placement
-composed into the page's PDF space (`GfxPdf.emit`). A picture's figure has
-no labels — they are the page's lines. -/
-@[expose] public def inkPaint (geom : Geom) (ix : GfxPdf.Request → Nat) (k : InkOut) :
-    Array ContentOp :=
-  GfxPdf.emit ix (fun _ e => nomatch e) ((pageIso geom).compose k.place) k.fig
+composed into the page's PDF space (`GfxPdf.emit`), each label set where its
+node stands as the text `tx` gives its key (`GfxPdf.textGroup`), or nothing. -/
+@[expose] public def inkPaint (geom : Geom) (ix : GfxPdf.Request → Nat)
+    (tx : (Nat × Nat) → Option (Array TextOp)) (k : InkOut) : Array ContentOp :=
+  GfxPdf.emit ix (fun _ key => (tx key).toArray.map GfxPdf.textGroup)
+    ((pageIso geom).compose k.place) k.fig
 
 /-- A single operation under an artifact wrapper. -/
 private def artifact (kind : Option ArtifactKind) (o : ContentOp) : ContentOp :=
@@ -736,22 +809,24 @@ leaf are one picture's and sit under one sequence (the layout pushes a
 picture's one ink with its leaf, `placePicture`). An ink that paints nothing
 opens nothing. Structural on the list; the open group travels as state so
 the walk needs no lookahead. -/
-private def inkGroupsList (geom : Geom) (ix : GfxPdf.Request → Nat) (tags : Array (Option String))
+private def inkGroupsList (geom : Geom) (ix : GfxPdf.Request → Nat)
+    (tx : (Nat × Nat) → Option (Array TextOp)) (tags : Array (Option String))
     (out : Array ContentOp) (cur : Option (Option Nat × Array ContentOp)) :
     List InkOut → Array ContentOp
   | [] => flushGroup tags out cur
   | k :: rest =>
-    let ops := inkPaint geom ix k
-    if ops.isEmpty then inkGroupsList geom ix tags out cur rest
+    let ops := inkPaint geom ix tx k
+    if ops.isEmpty then inkGroupsList geom ix tx tags out cur rest
     else match cur with
       | some (lf, acc) =>
-        if lf == k.leaf then inkGroupsList geom ix tags out (some (lf, acc ++ ops)) rest
-        else inkGroupsList geom ix tags (flushGroup tags out cur) (some (k.leaf, ops)) rest
-      | none => inkGroupsList geom ix tags out (some (k.leaf, ops)) rest
+        if lf == k.leaf then inkGroupsList geom ix tx tags out (some (lf, acc ++ ops)) rest
+        else inkGroupsList geom ix tx tags (flushGroup tags out cur) (some (k.leaf, ops)) rest
+      | none => inkGroupsList geom ix tx tags out (some (k.leaf, ops)) rest
 
-private def inkGroups (geom : Geom) (ix : GfxPdf.Request → Nat) (tags : Array (Option String))
+private def inkGroups (geom : Geom) (ix : GfxPdf.Request → Nat)
+    (tx : (Nat × Nat) → Option (Array TextOp)) (tags : Array (Option String))
     (inks : Array InkOut) : Array ContentOp :=
-  inkGroupsList geom ix tags #[] none inks.toList
+  inkGroupsList geom ix tx tags #[] none inks.toList
 
 mutual
 
@@ -821,21 +896,22 @@ public def numberMarks (ops : Array ContentOp) : Array ContentOp :=
 /-- One page's operations: fills first, in order (the page background,
 then any bars), as one artifact of no stated type — the layout ships
 backgrounds, bars and cut marks in one array; then picture paths, one
-sequence per picture under its figure's type; then the text object, each
-line under its origin's wrapper; then the images the text walk gathered,
-each under its line's origin, a placeholder a layout artifact; then the
-rules it gathered, as one layout artifact. Identifiers in stream order
-over the middle — paths, text, images; the two artifact blocks hold fills
-only and carry none, and a rule-heavy page would pay their rebuild for
-nothing. Every painting operator sits under exactly one wrapper
-(`mcids_partition_covers`). -/
+sequence per picture under its figure's type, each label of the picture set
+inside it where its node stands among the ink (`pageLabels`); then the text
+object, each other line under its origin's wrapper; then the images the
+text walk gathered, each under its line's origin, a placeholder a layout
+artifact; then the rules it gathered, as one layout artifact. Identifiers
+in stream order over the middle — paths, text, images; the two artifact
+blocks hold fills only and carry none, and a rule-heavy page would pay
+their rebuild for nothing. Every painting operator sits under exactly one
+wrapper (`mcids_partition_covers`). -/
 public def contentOps (geom : Geom) (remap : Array Nat) (widths : Array (Array Int))
     (imgMap : Array (Option Nat)) (tags : Array (Option String)) (ix : GfxPdf.Request → Nat)
     (page : PageOut) : Array ContentOp :=
   let fills := page.fills.map fun f =>
     ContentOp.fill f.color (geom.bleed + f.x) (geom.bleed + geom.pageH - f.y - f.h) f.w f.h
-  let paths := inkGroups geom ix tags page.inks
-  let st := page.lines.foldl (stepLine geom remap imgMap tags) { widths }
+  let paths := inkGroups geom ix (pageLabels geom remap widths imgMap tags page) tags page.inks
+  let st := (bodyLines page).foldl (stepLine geom remap imgMap tags) { widths }
   let images := st.images.map imageOp
   let rules := st.rules.map fun (c, x, y, w, h) => ContentOp.fill c x y w h
   let middle := numberMarks ((paths.push (.text st.ops)) ++ images)
@@ -849,8 +925,8 @@ public def contentOpsPlain (geom : Geom) (remap : Array Nat) (widths : Array (Ar
     (page : PageOut) : Array ContentOp :=
   let fills := page.fills.map fun f =>
     ContentOp.fill f.color (geom.bleed + f.x) (geom.bleed + geom.pageH - f.y - f.h) f.w f.h
-  let paths := page.inks.flatMap (inkPaint geom ix)
-  let st := page.lines.foldl (stepLinePlain geom remap imgMap tags) { widths }
+  let paths := page.inks.flatMap (inkPaint geom ix (pageLabels geom remap widths imgMap tags page))
+  let st := (bodyLines page).foldl (stepLinePlain geom remap imgMap tags) { widths }
   let images := st.images.map imageOpPlain
   let rules := st.rules.map fun (c, x, y, w, h) => ContentOp.fill c x y w h
   let body := (fills ++ paths).push (.text st.ops)
@@ -1212,12 +1288,14 @@ private theorem figureOnly_of_mem (body : Array ContentOp) (h : ∀ o ∈ body, 
 
 mutual
 
-private theorem emitOne_figureOnly (ix : GfxPdf.Request → Nat)
+private theorem emitOne_figureOnly {L : Type} (ix : GfxPdf.Request → Nat)
+    (labelOps : GfxPdf.Frame → L → Array ContentOp)
+    (hl : ∀ fr l, ∀ o ∈ labelOps fr l, o.figureOnly = true)
     (outlines : Array (Array Gfx.Subpath)) (bodyOps : Array (Array ContentOp))
     (hb : ∀ b ∈ bodyOps, ∀ o ∈ b, o.figureOnly = true) :
-    ∀ (n : Gfx.Node Empty) (fr : GfxPdf.Frame) (acc : Array ContentOp),
+    ∀ (n : Gfx.Node L) (fr : GfxPdf.Frame) (acc : Array ContentOp),
       (∀ o ∈ acc, o.figureOnly = true) →
-      ∀ o ∈ GfxPdf.emitOne ix (fun _ e => nomatch e) outlines bodyOps fr acc n,
+      ∀ o ∈ GfxPdf.emitOne ix labelOps outlines bodyOps fr acc n,
         o.figureOnly = true
   | .draw g fl st, fr, acc, ha => by
     intro o ho
@@ -1229,19 +1307,19 @@ private theorem emitOne_figureOnly (ix : GfxPdf.Request → Nat)
     intro o ho
     simp only [GfxPdf.emitOne] at ho
     split at ho
-    · exact emitList_figureOnly ix outlines bodyOps hb kids.toList fr acc ha o ho
+    · exact emitList_figureOnly ix labelOps hl outlines bodyOps hb kids.toList fr acc ha o ho
     · split at ho
       · simp only [Array.mem_push] at ho
         rcases ho with ho | rfl
         · exact ha o ho
-        · exact figureOnly_of_mem _ (emitList_figureOnly ix outlines bodyOps hb kids.toList _ #[]
-            (by simp))
+        · exact figureOnly_of_mem _ (emitList_figureOnly ix labelOps hl outlines bodyOps hb
+            kids.toList _ #[] (by simp))
       · simp only [Array.mem_push] at ho
         rcases ho with ho | rfl
         · exact ha o ho
         · simp only [ContentOp.figureOnly, ContentOp.figureOnlyList, Bool.and_true]
-          exact figureOnly_of_mem _ (emitList_figureOnly ix outlines bodyOps hb kids.toList _ #[]
-            (by simp))
+          exact figureOnly_of_mem _ (emitList_figureOnly ix labelOps hl outlines bodyOps hb
+            kids.toList _ #[] (by simp))
   | .use k xf, fr, acc, ha => by
     intro o ho
     simp only [GfxPdf.emitOne] at ho
@@ -1270,38 +1348,134 @@ private theorem emitOne_figureOnly (ix : GfxPdf.Request → Nat)
     rcases ho with ho | rfl
     · exact ha o ho
     · rfl
-  | .label l, _, _, _ => nomatch l
+  | .label l, fr, acc, ha => by
+    intro o ho
+    simp only [GfxPdf.emitOne, Array.mem_append] at ho
+    rcases ho with ho | ho
+    · exact ha o ho
+    · exact hl fr l o ho
   | .words _, fr, acc, ha => by
     intro o ho
     simp only [GfxPdf.emitOne] at ho
     exact ha o ho
 
-private theorem emitList_figureOnly (ix : GfxPdf.Request → Nat)
+private theorem emitList_figureOnly {L : Type} (ix : GfxPdf.Request → Nat)
+    (labelOps : GfxPdf.Frame → L → Array ContentOp)
+    (hl : ∀ fr l, ∀ o ∈ labelOps fr l, o.figureOnly = true)
     (outlines : Array (Array Gfx.Subpath)) (bodyOps : Array (Array ContentOp))
     (hb : ∀ b ∈ bodyOps, ∀ o ∈ b, o.figureOnly = true) :
-    ∀ (xs : List (Gfx.Node Empty)) (fr : GfxPdf.Frame) (acc : Array ContentOp),
+    ∀ (xs : List (Gfx.Node L)) (fr : GfxPdf.Frame) (acc : Array ContentOp),
       (∀ o ∈ acc, o.figureOnly = true) →
-      ∀ o ∈ GfxPdf.emitList ix (fun _ e => nomatch e) outlines bodyOps fr acc xs,
+      ∀ o ∈ GfxPdf.emitList ix labelOps outlines bodyOps fr acc xs,
         o.figureOnly = true
   | [], _, acc, ha => ha
   | n :: rest, fr, acc, ha => by
     simp only [GfxPdf.emitList]
-    exact emitList_figureOnly ix outlines bodyOps hb rest fr _
-      (emitOne_figureOnly ix outlines bodyOps hb n fr acc ha)
+    exact emitList_figureOnly ix labelOps hl outlines bodyOps hb rest fr _
+      (emitOne_figureOnly ix labelOps hl outlines bodyOps hb n fr acc ha)
 
 end
 
-/-- **A picture's ink is figure operators only**: no glyph run, no
-marked-content sequence, under whatever placement and resource naming. -/
-private theorem inkPaint_figureOnly (geom : Geom) (ix : GfxPdf.Request → Nat) (k : InkOut) :
-    ∀ o ∈ inkPaint geom ix k, o.figureOnly = true := by
-  unfold inkPaint GfxPdf.emit
-  refine emitList_figureOnly ix _ _ ?_ _ _ #[] (by simp)
+/-- A figure's operators under a label setter that adds only figure
+operators are figure operators only: no glyph run, no marked-content
+sequence. -/
+private theorem emit_figureOnly {L : Type} (ix : GfxPdf.Request → Nat)
+    (labelOps : GfxPdf.Frame → L → Array ContentOp)
+    (hl : ∀ fr l, ∀ o ∈ labelOps fr l, o.figureOnly = true) (place : Gfx.Iso) (fig : Gfx.Figure L) :
+    ∀ o ∈ GfxPdf.emit ix labelOps place fig, o.figureOnly = true := by
+  unfold GfxPdf.emit
+  refine emitList_figureOnly ix labelOps hl _ _ ?_ _ _ #[] (by simp)
   intro b hb o ho
   unfold GfxPdf.bodyOpsOf at hb
   simp only [Array.mem_map] at hb
   obtain ⟨body, _, rfl⟩ := hb
-  exact emitList_figureOnly ix _ #[] (by simp) _ _ #[] (by simp) o ho
+  exact emitList_figureOnly ix labelOps hl _ #[] (by simp) _ _ #[] (by simp) o ho
+
+mutual
+
+/-- A label-free node writes what it writes whatever sets the labels. -/
+private theorem emitOne_labelOps_irrel {L : Type} (ix : GfxPdf.Request → Nat)
+    (lo₁ lo₂ : GfxPdf.Frame → L → Array ContentOp) (outlines : Array (Array Gfx.Subpath))
+    (bodyOps : Array (Array ContentOp)) :
+    ∀ (n : Gfx.Node L) (fr : GfxPdf.Frame) (acc : Array ContentOp), n.labelFree = true →
+      GfxPdf.emitOne ix lo₁ outlines bodyOps fr acc n =
+        GfxPdf.emitOne ix lo₂ outlines bodyOps fr acc n
+  | .draw .., _, _, _ => rfl
+  | .group xf clips alpha kids, fr, acc, hf => by
+    simp only [Gfx.Node.labelFree] at hf
+    have ih := fun fr' acc' =>
+      emitList_labelOps_irrel ix lo₁ lo₂ outlines bodyOps kids.toList fr' acc' hf
+    simp only [GfxPdf.emitOne, ih]
+  | .use .., _, _, _ => rfl
+  | .stamp .., _, _, _ => rfl
+  | .image .., _, _, _ => rfl
+  | .label _, _, _, hf => by simp [Gfx.Node.labelFree] at hf
+  | .words _, _, _, _ => rfl
+
+private theorem emitList_labelOps_irrel {L : Type} (ix : GfxPdf.Request → Nat)
+    (lo₁ lo₂ : GfxPdf.Frame → L → Array ContentOp) (outlines : Array (Array Gfx.Subpath))
+    (bodyOps : Array (Array ContentOp)) :
+    ∀ (xs : List (Gfx.Node L)) (fr : GfxPdf.Frame) (acc : Array ContentOp),
+      Gfx.Node.labelFreeList xs = true →
+      GfxPdf.emitList ix lo₁ outlines bodyOps fr acc xs =
+        GfxPdf.emitList ix lo₂ outlines bodyOps fr acc xs
+  | [], _, _, _ => rfl
+  | n :: rest, fr, acc, hf => by
+    simp only [Gfx.Node.labelFreeList, Bool.and_eq_true] at hf
+    simp only [GfxPdf.emitList]
+    rw [emitOne_labelOps_irrel ix lo₁ lo₂ outlines bodyOps n fr acc hf.1]
+    exact emitList_labelOps_irrel ix lo₁ lo₂ outlines bodyOps rest fr _ hf.2
+
+end
+
+/-- What a picture's ink may hold: figure operators, and its labels' text
+groups, whose text carries no marked-content sequence of its own. -/
+private def PicOp (o : ContentOp) : Prop :=
+  o.figureOnly = true ∨ ∃ t, o = GfxPdf.textGroup t ∧ inkText t = t
+
+/-- The two kinds of label setter a page's ink is painted with: none (a
+page that routes no label), or text groups of plain text over a figure
+whose labels stand at its top level and that reuses no symbol. -/
+private def InkSetter (tx : (Nat × Nat) → Option (Array TextOp)) (k : InkOut) : Prop :=
+  (∀ key, tx key = none) ∨
+    ((k.fig.labelsTop = true ∧ k.fig.symbols = #[]) ∧ ∀ key t, tx key = some t → inkText t = t)
+
+private theorem inkPaint_picOps (geom : Geom) (ix : GfxPdf.Request → Nat)
+    (tx : (Nat × Nat) → Option (Array TextOp)) (k : InkOut) (h : InkSetter tx k) :
+    ∀ o ∈ inkPaint geom ix tx k, PicOp o := by
+  rcases h with hnone | ⟨⟨htop, hsym⟩, ht⟩
+  · have hlo : (fun (_ : GfxPdf.Frame) (key : Nat × Nat) => (tx key).toArray.map GfxPdf.textGroup)
+        = fun _ _ => #[] := by
+      funext _ key
+      simp [hnone key]
+    intro o ho
+    unfold inkPaint at ho
+    rw [hlo] at ho
+    exact Or.inl (emit_figureOnly ix (fun _ _ => #[]) (by simp) _ k.fig o ho)
+  · intro o ho
+    unfold inkPaint GfxPdf.emit at ho
+    rw [GfxPdf.emitList_flatMap] at ho
+    have hb : GfxPdf.bodyOpsOf ix (fun _ key => (tx key).toArray.map GfxPdf.textGroup) k.fig = #[] := by
+      simp [GfxPdf.bodyOpsOf, Gfx.Figure.bodies, hsym]
+    rw [hb] at ho
+    simp only [List.mem_toArray, List.mem_flatMap, Array.mem_toList_iff] at ho
+    obtain ⟨n, hn, ho⟩ := ho
+    have hnt : n.topOk = true := by
+      simp only [Gfx.Figure.labelsTop, Bool.and_eq_true, Array.all_eq_true'] at htop
+      exact htop.1 n hn
+    by_cases hlab : ∃ l, n = .label l
+    · obtain ⟨key, rfl⟩ := hlab
+      simp only [GfxPdf.emitOne, Array.empty_append] at ho
+      cases htx : tx key with
+      | none => simp [htx] at ho
+      | some t =>
+        simp only [htx, Option.toArray_some, List.map_toArray, List.map_cons, List.map_nil,
+          List.mem_toArray, List.mem_cons, List.not_mem_nil, or_false] at ho
+        exact Or.inr ⟨t, ho, ht key t htx⟩
+    · have hf := Gfx.Node.labelFree_of_topOk n hnt fun l he => hlab ⟨l, he⟩
+      rw [emitOne_labelOps_irrel ix _ (fun _ _ => #[]) _ _ n _ #[] hf] at ho
+      exact Or.inl (emitOne_figureOnly ix (fun _ _ => #[]) (by simp) _ #[] (by simp) n _ #[]
+        (by simp) o ho)
 
 mutual
 
@@ -1509,32 +1683,21 @@ private theorem imageOp_runs (i : ImgOut) : (imageOp i).runs = [] := by
   unfold imageOp
   split <;> simp [artifact, ContentOp.runs, ContentOp.runsList]
 
-private theorem flushGroup_runs (tags : Array (Option String)) (out : Array ContentOp)
-    (cur : Option (Option Nat × Array ContentOp)) (hc : ∀ g ∈ cur, ∀ o ∈ g.2, o.runs = [])
-    (ho : ∀ o ∈ out, o.runs = []) : ∀ o ∈ flushGroup tags out cur, o.runs = [] := by
-  intro o h
-  cases cur with
-  | none => exact ho o h
-  | some g =>
-    simp only [flushGroup, Array.mem_push] at h
-    rcases h with h | rfl
-    · exact ho o h
-    · simp only [ContentOp.runs, ContentOp.runsList_eq]
-      exact List.flatMap_eq_nil_iff.mpr fun o' h' => hc g rfl o' (Array.mem_def.mpr h')
-
-/-- Every operator of the ink groups is one marked sequence of figure
-operators. -/
+/-- Every operator of the ink groups is one marked sequence of a picture's
+ink: figure operators and its labels' text groups. -/
 private theorem inkGroupsList_shape (geom : Geom) (ix : GfxPdf.Request → Nat)
-    (tags : Array (Option String)) (inks : List InkOut) (out : Array ContentOp)
+    (tx : (Nat × Nat) → Option (Array TextOp))
+    (tags : Array (Option String)) (inks : List InkOut) (hk : ∀ k ∈ inks, InkSetter tx k)
+    (out : Array ContentOp)
     (cur : Option (Option Nat × Array ContentOp))
-    (hc : ∀ g ∈ cur, ∀ o ∈ g.2, o.figureOnly = true)
-    (ho : ∀ o ∈ out, ∃ t body, o = .marked t body ∧ ∀ b ∈ body, b.figureOnly = true) :
-    ∀ o ∈ inkGroupsList geom ix tags out cur inks,
-      ∃ t body, o = .marked t body ∧ ∀ b ∈ body, b.figureOnly = true := by
+    (hc : ∀ g ∈ cur, ∀ o ∈ g.2, PicOp o)
+    (ho : ∀ o ∈ out, ∃ t body, o = .marked t body ∧ ∀ b ∈ body, PicOp b) :
+    ∀ o ∈ inkGroupsList geom ix tx tags out cur inks,
+      ∃ t body, o = .marked t body ∧ ∀ b ∈ body, PicOp b := by
   have hflush : ∀ (out : Array ContentOp) (cur : Option (Option Nat × Array ContentOp)),
-      (∀ g ∈ cur, ∀ o ∈ g.2, o.figureOnly = true) →
-      (∀ o ∈ out, ∃ t body, o = .marked t body ∧ ∀ b ∈ body, b.figureOnly = true) →
-      ∀ o ∈ flushGroup tags out cur, ∃ t body, o = .marked t body ∧ ∀ b ∈ body, b.figureOnly = true := by
+      (∀ g ∈ cur, ∀ o ∈ g.2, PicOp o) →
+      (∀ o ∈ out, ∃ t body, o = .marked t body ∧ ∀ b ∈ body, PicOp b) →
+      ∀ o ∈ flushGroup tags out cur, ∃ t body, o = .marked t body ∧ ∀ b ∈ body, PicOp b := by
     intro out cur hc ho o h
     cases cur with
     | none => exact ho o h
@@ -1546,50 +1709,43 @@ private theorem inkGroupsList_shape (geom : Geom) (ix : GfxPdf.Request → Nat)
   induction inks generalizing out cur with
   | nil => exact hflush out cur hc ho
   | cons k rest ih =>
+    have hrest : ∀ k' ∈ rest, InkSetter tx k' := fun k' h => hk k' (List.mem_cons_of_mem _ h)
     simp only [inkGroupsList]
-    have hk := inkPaint_figureOnly geom ix k
+    have hkk := inkPaint_picOps geom ix tx k (hk k (List.mem_cons_self ..))
     split
-    · exact ih out cur hc ho
+    · exact ih hrest out cur hc ho
     · split
       · rename_i lf acc
         split
-        · apply ih
+        · apply ih hrest
           · intro g hg o h
             simp only [Option.mem_def, Option.some.injEq] at hg
             subst hg
             simp only [Array.mem_append] at h
             rcases h with h | h
             · exact hc _ rfl o h
-            · exact hk o h
+            · exact hkk o h
           · exact ho
-        · apply ih
+        · apply ih hrest
           · intro g hg o h
             simp only [Option.mem_def, Option.some.injEq] at hg
             subst hg
-            exact hk o h
+            exact hkk o h
           · exact hflush out _ hc ho
-      · apply ih
+      · apply ih hrest
         · intro g hg o h
           simp only [Option.mem_def, Option.some.injEq] at hg
           subst hg
-          exact hk o h
+          exact hkk o h
         · exact ho
 
 private theorem inkGroups_shape (geom : Geom) (ix : GfxPdf.Request → Nat)
-    (tags : Array (Option String)) (inks : Array InkOut) :
-    ∀ o ∈ inkGroups geom ix tags inks,
-      ∃ t body, o = .marked t body ∧ ∀ b ∈ body, b.figureOnly = true :=
-  inkGroupsList_shape geom ix tags inks.toList #[] none (by simp) (by simp)
-
-/-- A picture's ink paints no glyph run, however grouped. -/
-private theorem inkGroups_runs (geom : Geom) (ix : GfxPdf.Request → Nat)
-    (tags : Array (Option String)) (inks : Array InkOut) :
-    (inkGroups geom ix tags inks).toList.flatMap ContentOp.runs = [] := by
-  apply List.flatMap_eq_nil_iff.mpr
-  intro o h
-  obtain ⟨t, body, rfl, hb⟩ := inkGroups_shape geom ix tags inks o (Array.mem_def.mpr h)
-  simp only [ContentOp.runs]
-  exact figureOnlyList_runs _ (figureOnly_of_mem body hb)
+    (tx : (Nat × Nat) → Option (Array TextOp)) (tags : Array (Option String))
+    (inks : Array InkOut) (hk : ∀ k ∈ inks, InkSetter tx k) :
+    ∀ o ∈ inkGroups geom ix tx tags inks,
+      ∃ t body, o = .marked t body ∧ ∀ b ∈ body, PicOp b :=
+  inkGroupsList_shape geom ix tx tags inks.toList (fun k h => hk k (Array.mem_toList_iff.mp h))
+    #[] none (by simp) (by simp)
 
 private theorem artifact_runs (k : Option ArtifactKind) (o : ContentOp) :
     (artifact k o).runs = o.runs := by
@@ -1678,27 +1834,6 @@ private theorem numberMarks_runs_list (ops : Array ContentOp) :
 public theorem numberMarks_runs (ops : Array ContentOp) : runsOf (numberMarks ops) = runsOf ops :=
   numberMarks_runs_list ops
 
-/-- **The PDF paints every glyph run the page shipped, in order.** The glyph
-census of the typed content stream is the page's run census: no run
-dropped, none invented, none reordered — the `_text` fact for the
-PageOut → ContentOp projection (not a `Conserves` instance: the walk
-changes type, as `structTree_text` does). -/
-public theorem contentOps_text (geom : Geom) (remap : Array Nat) (widths : Array (Array Int))
-    (imgMap : Array (Option Nat)) (tags : Array (Option String)) (ix : GfxPdf.Request → Nat)
-    (page : PageOut) :
-    runsOf (contentOps geom remap widths imgMap tags ix page) = pageRuns page := by
-  unfold contentOps
-  unfold runsOf pageRuns
-  simp only [Array.toList_append, List.flatMap_append, artifactBlock_runs, numberMarks_runs_list]
-  simp only [Array.toList_push, List.flatMap_append, List.flatMap_cons,
-    List.flatMap_nil, Array.toList_map, List.flatMap_map, imageOp_runs,
-    flatMap_nil_fun, inkGroups_runs]
-  simp only [ContentOp.runs, polyOp, flatMap_nil_fun, List.append_nil, List.nil_append]
-  have hr := foldl_lines_runs geom remap imgMap tags page.lines.toList { widths }
-  have hi := foldl_lines_items geom remap imgMap tags page.lines.toList { widths } rfl
-  rw [Array.foldl_toList] at hr hi
-  simp only [TextSt.runs, hi] at hr
-  simpa using hr
 private theorem hexDigit_inj : ∀ a, a < 16 → ∀ b, b < 16 → hexDigit a = hexDigit b → a = b := by
   decide
 
@@ -2390,42 +2525,454 @@ private theorem figureOnlyList_ink : ∀ (l : List ContentOp), ContentOp.figureO
 
 end
 
-private theorem inkPaint_ink (geom : Geom) (ix : GfxPdf.Request → Nat) (k : InkOut) :
-    ContentOp.inkList (inkPaint geom ix k).toList = (inkPaint geom ix k).toList :=
-  figureOnlyList_ink _ (figureOnly_of_mem _ (inkPaint_figureOnly geom ix k))
+private theorem inkList_self (l : List ContentOp) (h : ∀ o ∈ l, o.ink = [o]) :
+    ContentOp.inkList l = l := by
+  induction l with
+  | nil => rfl
+  | cons o rest ih =>
+    simp only [ContentOp.inkList, h o (List.mem_cons_self ..),
+      ih fun o' h' => h o' (List.mem_cons_of_mem _ h'), List.singleton_append]
+
+/-- A picture's ink is its own ink: no marked sequence under a figure
+operator, none in a label's text. -/
+private theorem picOp_ink (o : ContentOp) (h : PicOp o) : o.ink = [o] := by
+  rcases h with h | ⟨t, rfl, ht⟩
+  · exact figureOnly_ink o h
+  · simp only [GfxPdf.textGroup, ContentOp.ink, ContentOp.inkList, List.append_nil]
+    simp [inkText] at ht
+    simp [inkText, ht]
+
+private theorem inkPaint_ink (geom : Geom) (ix : GfxPdf.Request → Nat)
+    (tx : (Nat × Nat) → Option (Array TextOp)) (k : InkOut) (h : InkSetter tx k) :
+    ContentOp.inkList (inkPaint geom ix tx k).toList = (inkPaint geom ix tx k).toList :=
+  inkList_self _ fun o ho => picOp_ink o (inkPaint_picOps geom ix tx k h o (Array.mem_toList_iff.mp ho))
 
 /-- Grouping a page's ink per picture moves no mark: the ink under the
 groups is the inks' operators, in order. -/
 private theorem inkGroupsList_ink (geom : Geom) (ix : GfxPdf.Request → Nat)
-    (tags : Array (Option String)) (inks : List InkOut)
+    (tx : (Nat × Nat) → Option (Array TextOp))
+    (tags : Array (Option String)) (inks : List InkOut) (hk : ∀ k ∈ inks, InkSetter tx k)
     (out : Array ContentOp) (cur : Option (Option Nat × Array ContentOp)) :
-    ContentOp.inkList (inkGroupsList geom ix tags out cur inks).toList
+    ContentOp.inkList (inkGroupsList geom ix tx tags out cur inks).toList
       = ContentOp.inkList out.toList ++ (groupInk cur)
-        ++ inks.flatMap (fun k => (inkPaint geom ix k).toList) := by
+        ++ inks.flatMap (fun k => (inkPaint geom ix tx k).toList) := by
   induction inks generalizing out cur with
   | nil => simp [inkGroupsList, flushGroup_ink]
   | cons k rest ih =>
+    have hrest : ∀ k' ∈ rest, InkSetter tx k' := fun k' h => hk k' (List.mem_cons_of_mem _ h)
+    have hkk := inkPaint_ink geom ix tx k (hk k (List.mem_cons_self ..))
     simp only [inkGroupsList]
     split
     · next he =>
-      rw [ih]
+      rw [ih hrest]
       simp [Array.isEmpty_iff.mp he]
     · split
       · split
-        · rw [ih]
-          simp [groupInk, ContentOp.inkList_append, inkPaint_ink, List.append_assoc]
-        · rw [ih, flushGroup_ink]
-          simp [groupInk, inkPaint_ink, List.append_assoc]
-      · rw [ih]
-        simp [groupInk, inkPaint_ink, List.append_assoc]
+        · rw [ih hrest]
+          simp [groupInk, ContentOp.inkList_append, hkk, List.append_assoc]
+        · rw [ih hrest, flushGroup_ink]
+          simp [groupInk, hkk, List.append_assoc]
+      · rw [ih hrest]
+        simp [groupInk, hkk, List.append_assoc]
 
 private theorem inkGroups_ink (geom : Geom) (ix : GfxPdf.Request → Nat)
-    (tags : Array (Option String)) (inks : Array InkOut) :
-    ContentOp.inkList (inkGroups geom ix tags inks).toList
-      = inks.toList.flatMap (fun k => (inkPaint geom ix k).toList) := by
+    (tx : (Nat × Nat) → Option (Array TextOp))
+    (tags : Array (Option String)) (inks : Array InkOut) (hk : ∀ k ∈ inks, InkSetter tx k) :
+    ContentOp.inkList (inkGroups geom ix tx tags inks).toList
+      = inks.toList.flatMap (fun k => (inkPaint geom ix tx k).toList) := by
   unfold inkGroups
-  rw [inkGroupsList_ink]
+  rw [inkGroupsList_ink geom ix tx tags inks.toList (fun k h => hk k (Array.mem_toList_iff.mp h))]
   simp [groupInk, ContentOp.inkList]
+
+/-! ### The glyph census, in paint order -/
+
+mutual
+
+private theorem TextOp.ink_runs : ∀ o : TextOp, TextOp.runsList o.ink = o.runs
+  | .scale _ => rfl
+  | .move _ _ => rfl
+  | .font _ _ => rfl
+  | .color _ => rfl
+  | .show _ => by simp [TextOp.ink, TextOp.runsList, TextOp.runs]
+  | .marked _ body => by
+    simp only [TextOp.ink, TextOp.runs]
+    exact TextOp.inkList_runs body.toList
+
+private theorem TextOp.inkList_runs : ∀ l : List TextOp,
+    TextOp.runsList (TextOp.inkList l) = TextOp.runsList l
+  | [] => rfl
+  | o :: rest => by
+    simp only [TextOp.inkList, TextOp.runsList]
+    rw [TextOp.runsList_eq, List.flatMap_append, ← TextOp.runsList_eq, ← TextOp.runsList_eq,
+      TextOp.ink_runs o, TextOp.inkList_runs rest]
+
+end
+
+mutual
+
+private theorem ContentOp.ink_runs : ∀ o : ContentOp, ContentOp.runsList o.ink = o.runs
+  | .fill .. => rfl
+  | .paint .. => rfl
+  | .shade .. => rfl
+  | .outline .. => rfl
+  | .xobject .. => by simp [ContentOp.ink, ContentOp.runsList]
+  | .group m gs clips body => by
+    simp only [ContentOp.ink, ContentOp.runsList, ContentOp.runs,
+      List.append_nil]
+    exact ContentOp.inkList_runs body.toList
+  | .text ops => by
+    simp only [ContentOp.ink, ContentOp.runsList, ContentOp.runs, List.append_nil, inkText]
+    rw [← TextOp.runsList_eq, ← TextOp.runsList_eq, TextOp.inkList_runs]
+  | .image .. => rfl
+  | .imageMissing .. => rfl
+  | .marked _ body => by
+    simp only [ContentOp.ink, ContentOp.runs]
+    exact ContentOp.inkList_runs body.toList
+
+private theorem ContentOp.inkList_runs : ∀ l : List ContentOp,
+    ContentOp.runsList (ContentOp.inkList l) = ContentOp.runsList l
+  | [] => rfl
+  | o :: rest => by
+    simp only [ContentOp.inkList, ContentOp.runsList]
+    rw [ContentOp.runsList_eq, List.flatMap_append, ← ContentOp.runsList_eq,
+      ← ContentOp.runsList_eq, ContentOp.ink_runs o, ContentOp.inkList_runs rest]
+
+end
+
+/-- Unwrapping ships every run: the wrappers carry none of their own. -/
+private theorem runsOf_inkOps (ops : Array ContentOp) : runsOf (inkOps ops) = runsOf ops := by
+  unfold runsOf inkOps
+  rw [← ContentOp.runsList_eq, ← ContentOp.runsList_eq, List.toList_toArray,
+    ContentOp.inkList_runs]
+
+/-- A page line's glyph runs, segment by segment. -/
+public def _root_.LeanTex.Core.Layout.LineOut.glyphRuns (l : LineOut) : List (Array Nat) :=
+  l.segs.toList.flatMap segRuns
+
+/-- **A page's glyph runs in the order its content stream paints them**:
+each picture's labels where its picture paints them, in ink order and node
+order — the lines each key's labels sit on — then every other line, in
+order. On a page that routes no label, the page's runs (`pageRuns`). -/
+public def paintRuns (page : PageOut) : List (Array Nat) :=
+  let keys := inkLabelKeys page.inks
+  let route := routesLabels page.inks
+  let held := page.lines.toList.filter (heldBy route keys)
+  (if route then keys.flatMap fun k => (held.filter (·.labelKey? == some k)).flatMap Layout.LineOut.glyphRuns
+   else []) ++
+    (page.lines.toList.filter fun l => !heldBy route keys l).flatMap Layout.LineOut.glyphRuns
+
+/-- A page's lines in the order its content stream paints their glyphs:
+each picture's label lines where its picture paints them, then every other
+line. The order a reader of the file's glyphs meets the layout's in. -/
+public def paintLines (page : PageOut) : List LineOut :=
+  let keys := inkLabelKeys page.inks
+  let route := routesLabels page.inks
+  let held := page.lines.toList.filter (heldBy route keys)
+  (if route then keys.flatMap fun k => held.filter (·.labelKey? == some k) else []) ++
+    page.lines.toList.filter fun l => !heldBy route keys l
+
+/-- The paint-order census is the paint-order lines' runs. -/
+public theorem paintRuns_lines_exact (page : PageOut) :
+    paintRuns page = (paintLines page).flatMap Layout.LineOut.glyphRuns := by
+  simp only [paintRuns, paintLines]
+  by_cases h : routesLabels page.inks = true <;>
+    simp [h, List.flatMap_append, List.flatMap_assoc]
+
+private theorem withoutGlyphs_runs (l : LineOut) : l.withoutGlyphs.glyphRuns = [] := by
+  simp only [Layout.LineOut.glyphRuns, LineOut.withoutGlyphs, Array.toList_map, List.flatMap_map]
+  apply List.flatMap_eq_nil_iff.mpr
+  intro s _
+  cases s <;> simp [Layout.Seg.withoutGlyphs, segRuns]
+
+private theorem flatMap_ite_filter {α β : Type} (p : α → Bool) (f : α → List β) (l : List α) :
+    l.flatMap (fun a => if p a then [] else f a) = (l.filter fun a => !p a).flatMap f := by
+  induction l with
+  | nil => rfl
+  | cons a rest ih =>
+    by_cases h : p a
+    · rw [List.flatMap_cons, List.filter_cons]
+      simp [h, ih]
+    · rw [List.flatMap_cons, List.filter_cons]
+      simp [h, ih]
+
+/-- The text object's runs: the lines it walks, a held line glyphless. -/
+private theorem bodyLines_runs (page : PageOut) :
+    (bodyLines page).toList.flatMap Layout.LineOut.glyphRuns =
+      (page.lines.toList.filter fun l =>
+        !heldBy (routesLabels page.inks) (inkLabelKeys page.inks) l).flatMap Layout.LineOut.glyphRuns := by
+  unfold bodyLines
+  simp only [Array.toList_map, List.flatMap_map]
+  have := flatMap_ite_filter (heldBy (routesLabels page.inks) (inkLabelKeys page.inks))
+    Layout.LineOut.glyphRuns page.lines.toList
+  rw [← this]
+  apply Gfx.flatMap_congr_mem
+  intro l _
+  split
+  · exact withoutGlyphs_runs l
+  · rfl
+
+private theorem stepLinePlain_runs (geom : Geom) (remap : Array Nat) (imgMap : Array (Option Nat))
+    (tags : Array (Option String)) (st : TextSt) (l : LineOut) (h : st.items = #[]) :
+    (stepLinePlain geom remap imgMap tags st l).runs = st.runs ++ l.glyphRuns ∧
+      (stepLinePlain geom remap imgMap tags st l).items = #[] := by
+  have hs := lineSt_runs geom remap imgMap (Origin.of tags l) st l
+  have hi := lineSt_items geom remap imgMap (Origin.of tags l) st l
+  simp only [TextSt.runs, h, hi, Array.toList_empty, List.flatMap_nil, List.append_nil,
+    List.nil_append] at hs
+  refine ⟨?_, hi⟩
+  simp only [stepLinePlain, TextSt.runs, hi, h, Array.toList_append, List.flatMap_append, hs,
+    Array.toList_empty, List.flatMap_nil, List.append_nil, Layout.LineOut.glyphRuns]
+
+private theorem foldl_stepLinePlain_runs (geom : Geom) (remap : Array Nat)
+    (imgMap : Array (Option Nat)) (tags : Array (Option String)) (ls : List LineOut)
+    (st : TextSt) (h : st.items = #[]) :
+    (ls.foldl (stepLinePlain geom remap imgMap tags) st).runs = st.runs ++ ls.flatMap Layout.LineOut.glyphRuns ∧
+      (ls.foldl (stepLinePlain geom remap imgMap tags) st).items = #[] := by
+  induction ls generalizing st with
+  | nil => simp [h]
+  | cons l rest ih =>
+    obtain ⟨hr, hi⟩ := stepLinePlain_runs geom remap imgMap tags st l h
+    obtain ⟨hr', hi'⟩ := ih _ hi
+    refine ⟨?_, hi'⟩
+    simp [hr', hr, List.append_assoc]
+
+/-- A label key's text paints the runs of the lines it was set from. -/
+private theorem labelText_runs (geom : Geom) (remap : Array Nat) (widths : Array (Array Int))
+    (imgMap : Array (Option Nat)) (tags : Array (Option String)) (held : List LineOut)
+    (k : Nat × Nat) :
+    (labelText geom remap widths imgMap tags held k).toList.flatMap
+        (fun t => TextOp.runsList t.toList) =
+      (held.filter (·.labelKey? == some k)).flatMap Layout.LineOut.glyphRuns := by
+  unfold labelText
+  generalize held.filter (·.labelKey? == some k) = ls
+  cases ls with
+  | nil => rfl
+  | cons l rest =>
+    obtain ⟨hr, hi⟩ := foldl_stepLinePlain_runs geom remap imgMap tags (l :: rest) { widths } rfl
+    simp only [TextSt.runs, hi, Array.toList_empty, List.flatMap_nil, List.append_nil,
+      List.nil_append] at hr
+    simp only [Option.toList_some, List.flatMap_cons, List.flatMap_nil, List.append_nil,
+      TextOp.runsList_eq]
+    exact hr
+
+/-- A label key's text is plain: no marked sequence inside it. -/
+private theorem labelText_plain (geom : Geom) (remap : Array Nat) (widths : Array (Array Int))
+    (imgMap : Array (Option Nat)) (tags : Array (Option String)) (held : List LineOut)
+    (k : Nat × Nat) (t : Array TextOp) (h : labelText geom remap widths imgMap tags held k = some t) :
+    inkText t = t := by
+  unfold labelText at h
+  generalize held.filter (·.labelKey? == some k) = ls at h
+  cases ls with
+  | nil => cases h
+  | cons l rest =>
+    cases h
+    exact foldl_stepLinePlain_plainOps geom remap imgMap tags (l :: rest) { widths } rfl
+
+/-- A page's label setter is one its ink may be painted with. -/
+private theorem pageLabels_setter (geom : Geom) (remap : Array Nat) (widths : Array (Array Int))
+    (imgMap : Array (Option Nat)) (tags : Array (Option String)) (page : PageOut) :
+    ∀ k ∈ page.inks, InkSetter (pageLabels geom remap widths imgMap tags page) k := by
+  intro k hk
+  unfold pageLabels
+  by_cases hr : routesLabels page.inks = true
+  · right
+    simp only [hr, ↓reduceIte]
+    have hall := hr
+    simp only [routesLabels, Bool.and_eq_true, Array.all_eq_true', decide_eq_true_eq] at hall
+    have hk' := hall.1 k hk
+    simp only [Array.isEmpty_iff] at hk'
+    exact ⟨hk', fun key t ht => labelText_plain _ _ _ _ _ _ key t ht⟩
+  · left
+    intro key
+    simp [hr]
+
+/-- The runs a picture's ink paints: none under no label setter. -/
+private theorem inkPaint_runs_none (geom : Geom) (ix : GfxPdf.Request → Nat)
+    (tx : (Nat × Nat) → Option (Array TextOp)) (k : InkOut) (h : ∀ key, tx key = none) :
+    ContentOp.runsList (inkPaint geom ix tx k).toList = [] := by
+  rw [ContentOp.runsList_eq]
+  apply List.flatMap_eq_nil_iff.mpr
+  intro o ho
+  rcases inkPaint_picOps geom ix tx k (Or.inl h) o (Array.mem_toList_iff.mp ho) with hf | ⟨t, rfl, _⟩
+  · exact figureOnly_runs o hf
+  · exfalso
+    have hlo : (fun (_ : GfxPdf.Frame) (key : Nat × Nat) => (tx key).toArray.map GfxPdf.textGroup)
+        = fun _ _ => #[] := by
+      funext _ key
+      simp [h key]
+    unfold inkPaint at ho
+    rw [hlo] at ho
+    have := emit_figureOnly ix (fun _ _ => #[]) (by simp) _ k.fig _ (Array.mem_toList_iff.mp ho)
+    simp [GfxPdf.textGroup, ContentOp.figureOnly, ContentOp.figureOnlyList] at this
+
+/-- **A picture's ink paints its labels' runs, in node order**, where its
+labels stand at its top level and it reuses no symbol. -/
+private theorem inkPaint_runs_top (geom : Geom) (ix : GfxPdf.Request → Nat)
+    (tx : (Nat × Nat) → Option (Array TextOp)) (k : InkOut)
+    (htop : k.fig.labelsTop = true) (hsym : k.fig.symbols = #[]) :
+    ContentOp.runsList (inkPaint geom ix tx k).toList =
+      (k.fig.nodes.toList.flatMap fun n => n.label?.toList).flatMap
+        fun key => (tx key).toList.flatMap fun t => TextOp.runsList t.toList := by
+  unfold inkPaint GfxPdf.emit
+  rw [GfxPdf.emitList_flatMap]
+  have hb : GfxPdf.bodyOpsOf ix (fun _ key => (tx key).toArray.map GfxPdf.textGroup) k.fig = #[] := by
+    simp [GfxPdf.bodyOpsOf, Gfx.Figure.bodies, hsym]
+  rw [hb, ContentOp.runsList_eq, List.toList_toArray, List.flatMap_assoc, List.flatMap_assoc]
+  apply Gfx.flatMap_congr_mem
+  intro n hn
+  have hnt : n.topOk = true := by
+    simp only [Gfx.Figure.labelsTop, Bool.and_eq_true, Array.all_eq_true'] at htop
+    exact htop.1 n (Array.mem_toList_iff.mp hn)
+  by_cases hlab : ∃ l, n = .label l
+  · obtain ⟨key, rfl⟩ := hlab
+    cases htx : tx key with
+    | none => simp [GfxPdf.emitOne, htx, Gfx.Node.label?]
+    | some t =>
+      simp [GfxPdf.emitOne, htx, Gfx.Node.label?, GfxPdf.textGroup, ContentOp.runs,
+        ContentOp.runsList, TextOp.runsList_eq]
+  · have hf := Gfx.Node.labelFree_of_topOk n hnt fun l he => hlab ⟨l, he⟩
+    have hl : n.label? = none := by
+      cases n with
+      | label l => exact absurd rfl fun h => hlab ⟨l, h⟩
+      | draw | group | use | stamp | image | words => rfl
+    rw [hl, emitOne_labelOps_irrel ix _ (fun _ _ => #[]) _ _ n _ #[] hf]
+    simp only [Option.toList_none, List.flatMap_nil]
+    apply List.flatMap_eq_nil_iff.mpr
+    intro o ho
+    exact figureOnly_runs o (emitOne_figureOnly ix (fun _ _ => #[]) (by simp) _ #[] (by simp) n _ #[]
+      (by simp) o (Array.mem_toList_iff.mp ho))
+
+/-- **The PDF paints every glyph run the page shipped, in paint order.** The
+glyph census of the typed content stream is the page's runs in the order
+its stream paints them (`paintRuns`): each picture's labels inside its
+picture, every other line in the text object — no run dropped, none
+invented, none moved but a label into its picture (`paintRuns_text`) — the
+`_text` fact for the PageOut → ContentOp projection (not a `Conserves`
+instance: the walk changes type, as `structTree_text` does). -/
+public theorem contentOps_text (geom : Geom) (remap : Array Nat) (widths : Array (Array Int))
+    (imgMap : Array (Option Nat)) (tags : Array (Option String)) (ix : GfxPdf.Request → Nat)
+    (page : PageOut) :
+    runsOf (contentOps geom remap widths imgMap tags ix page) = paintRuns page := by
+  have hset := pageLabels_setter geom remap widths imgMap tags page
+  have hpaths : (inkGroups geom ix (pageLabels geom remap widths imgMap tags page) tags
+      page.inks).toList.flatMap ContentOp.runs =
+        (if routesLabels page.inks then (inkLabelKeys page.inks).flatMap fun k =>
+          ((page.lines.toList.filter (heldBy (routesLabels page.inks) (inkLabelKeys page.inks))).filter
+            (·.labelKey? == some k)).flatMap Layout.LineOut.glyphRuns
+         else []) := by
+    have h1 := runsOf_inkOps (inkGroups geom ix (pageLabels geom remap widths imgMap tags page) tags
+      page.inks)
+    unfold runsOf inkOps at h1
+    rw [List.toList_toArray] at h1
+    rw [← h1, inkGroups_ink geom ix _ tags page.inks hset, List.flatMap_assoc]
+    by_cases hr : routesLabels page.inks = true
+    · have hall := hr
+      simp only [routesLabels, Bool.and_eq_true, Array.all_eq_true', decide_eq_true_eq] at hall
+      simp only [hr, ↓reduceIte]
+      unfold inkLabelKeys
+      rw [List.flatMap_assoc]
+      apply Gfx.flatMap_congr_mem
+      intro k hk
+      have hk' := hall.1 k (Array.mem_toList_iff.mp hk)
+      simp only [Array.isEmpty_iff] at hk'
+      rw [← ContentOp.runsList_eq, inkPaint_runs_top geom ix _ k hk'.1 hk'.2]
+      apply Gfx.flatMap_congr_mem
+      intro key _
+      unfold pageLabels
+      simp only [hr, ↓reduceIte]
+      exact labelText_runs geom remap widths imgMap tags _ key
+    · simp only [hr, Bool.false_eq_true, ↓reduceIte]
+      apply List.flatMap_eq_nil_iff.mpr
+      intro k _
+      rw [← ContentOp.runsList_eq]
+      apply inkPaint_runs_none
+      intro key
+      unfold pageLabels
+      simp [hr]
+  unfold contentOps
+  unfold runsOf
+  simp only [Array.toList_append, List.flatMap_append, artifactBlock_runs, numberMarks_runs_list]
+  simp only [Array.toList_push, List.flatMap_append, List.flatMap_cons,
+    List.flatMap_nil, Array.toList_map, List.flatMap_map, imageOp_runs,
+    flatMap_nil_fun]
+  simp only [ContentOp.runs, polyOp, flatMap_nil_fun, List.append_nil, List.nil_append]
+  rw [hpaths]
+  have hr := foldl_lines_runs geom remap imgMap tags (bodyLines page).toList { widths }
+  have hi := foldl_lines_items geom remap imgMap tags (bodyLines page).toList { widths } rfl
+  rw [Array.foldl_toList] at hr hi
+  simp only [TextSt.runs, hi, Array.toList_empty, List.flatMap_nil, List.append_nil,
+    List.nil_append] at hr
+  have hr' : ((bodyLines page).foldl (stepLine geom remap imgMap tags) { widths }).ops.toList.flatMap
+      TextOp.runs = (bodyLines page).toList.flatMap Layout.LineOut.glyphRuns := hr
+  rw [hr', bodyLines_runs page]
+  rfl
+
+private theorem flatMap_filter_key_perm {α κ : Type} [BEq κ] [LawfulBEq κ] (g : α → Option κ) :
+    ∀ (K : List κ) (L : List α), K.Nodup → (∀ x ∈ L, ∃ k ∈ K, g x = some k) →
+      (K.flatMap fun k => L.filter fun x => g x == some k).Perm L := by
+  intro K
+  induction K with
+  | nil =>
+    intro L _ hL
+    have : L = [] := List.eq_nil_iff_forall_not_mem.mpr fun x hx => by
+      obtain ⟨k, hk, _⟩ := hL x hx
+      simp at hk
+    subst this
+    exact List.Perm.refl _
+  | cons k rest ih =>
+    intro L hn hL
+    rw [List.nodup_cons] at hn
+    let L₂ := L.filter fun x => !(g x == some k)
+    have hrest : (rest.flatMap fun k' => L.filter fun x => g x == some k') =
+        rest.flatMap fun k' => L₂.filter fun x => g x == some k' := by
+      apply Gfx.flatMap_congr_mem
+      intro k' hk'
+      simp only [L₂, List.filter_filter]
+      apply List.filter_congr
+      intro x _
+      by_cases hx : g x = some k'
+      · have hne : k' ≠ k := fun he => hn.1 (he ▸ hk')
+        simp [hx, hne]
+      · simp [hx]
+    have hL₂ : ∀ x ∈ L₂, ∃ k' ∈ rest, g x = some k' := by
+      intro x hx
+      simp only [L₂, List.mem_filter, Bool.not_eq_true', beq_eq_false_iff_ne, ne_eq] at hx
+      obtain ⟨k', hk', hg⟩ := hL x hx.1
+      rcases List.mem_cons.mp hk' with rfl | hk''
+      · exact absurd hg hx.2
+      · exact ⟨k', hk'', hg⟩
+    rw [List.flatMap_cons, hrest]
+    exact ((ih L₂ hn.2 hL₂).append_left _).trans (List.filter_append_perm _ L)
+
+/-- **Moving a label into its picture moves no run** (`_text`, the census
+as a multiset): a page's runs in paint order (`paintRuns`) are its runs in
+line order (`pageRuns`), each as often — every held line's runs paint
+exactly once, at the one key no other ink sets (`routesLabels`). -/
+public theorem paintRuns_text (page : PageOut) : (paintRuns page).Perm (pageRuns page) := by
+  unfold paintRuns pageRuns
+  by_cases hr : routesLabels page.inks = true
+  · simp only [hr, ↓reduceIte]
+    have hall := hr
+    simp only [routesLabels, Bool.and_eq_true, Array.all_eq_true', decide_eq_true_eq] at hall
+    let held := page.lines.toList.filter (heldBy true (inkLabelKeys page.inks))
+    have hkeys : ∀ x ∈ held, ∃ k ∈ inkLabelKeys page.inks, x.labelKey? = some k := by
+      intro x hx
+      simp only [held, List.mem_filter, heldBy, Bool.true_and] at hx
+      cases hk : x.labelKey? with
+      | none => simp [hk] at hx
+      | some k =>
+        simp only [hk] at hx
+        exact ⟨k, List.contains_iff_mem.mp hx.2, rfl⟩
+    have hp := flatMap_filter_key_perm LineOut.labelKey? (inkLabelKeys page.inks) held hall.2 hkeys
+    rw [← List.flatMap_assoc]
+    have hsplit := List.filter_append_perm (heldBy true (inkLabelKeys page.inks)) page.lines.toList
+    refine ((hp.flatMap_right Layout.LineOut.glyphRuns).append_right _).trans ?_
+    rw [← List.flatMap_append]
+    exact hsplit.flatMap_right _
+  · simp only [hr, Bool.false_eq_true, ↓reduceIte, heldBy, Bool.false_and, Bool.not_false,
+      List.nil_append]
+    rw [List.filter_eq_self.mpr (fun _ _ => rfl)]
+    exact List.Perm.of_eq rfl
 
 mutual
 
@@ -2520,22 +3067,24 @@ public theorem mark_ink_exact (geom : Geom) (remap : Array Nat) (widths : Array 
     (page : PageOut) :
     inkOps (contentOps geom remap widths imgMap tags ix page)
       = contentOpsPlain geom remap widths imgMap tags ix page := by
+  have hset := pageLabels_setter geom remap widths imgMap tags page
   unfold contentOps contentOpsPlain
   simp only [inkOps, Array.toList_append, ContentOp.inkList_append, numberMarks_ink_list]
-  have hp := foldl_stepLine_plain geom remap imgMap tags page.lines.toList { widths }
+  have hp := foldl_stepLine_plain geom remap imgMap tags (bodyLines page).toList { widths }
   rw [Array.foldl_toList, Array.foldl_toList] at hp
-  have hpo := foldl_stepLinePlain_plainOps geom remap imgMap tags page.lines.toList { widths } rfl
+  have hpo := foldl_stepLinePlain_plainOps geom remap imgMap tags (bodyLines page).toList
+    { widths } rfl
   rw [Array.foldl_toList] at hpo
-  have hops : inkText (page.lines.foldl (stepLine geom remap imgMap tags) { widths }).ops
-      = (page.lines.foldl (stepLinePlain geom remap imgMap tags) { widths }).ops := by
+  have hops : inkText ((bodyLines page).foldl (stepLine geom remap imgMap tags) { widths }).ops
+      = ((bodyLines page).foldl (stepLinePlain geom remap imgMap tags) { widths }).ops := by
     rw [← hpo]; exact congrArg TextSt.ops hp
   have himg := congrArg TextSt.images hp
   have hrul := congrArg TextSt.rules hp
   have hpol := congrArg TextSt.polys hp
   simp only [TextSt.plain] at himg hrul hpol
   simp only [Array.toList_push, ContentOp.inkList_append,
-    artifactBlock_ink, inkGroups_ink, Array.toList_map, Array.toList_append,
-    ContentOp.inkList, ContentOp.ink, hops, himg, hrul, hpol, List.append_nil]
+    artifactBlock_ink, inkGroups_ink geom ix _ tags page.inks hset, Array.toList_map,
+    Array.toList_append, ContentOp.inkList, ContentOp.ink, hops, himg, hrul, hpol, List.append_nil]
   rw [inkList_map _ (fun f => ContentOp.fill f.color (geom.bleed + f.x)
       (geom.bleed + geom.pageH - f.y - f.h) f.w f.h) _ (fun f => by simp [ContentOp.ink]),
     inkList_map _ imageOpPlain _ imageOp_ink,
@@ -2685,10 +3234,12 @@ public theorem wrapped_covers (geom : Geom) (remap : Array Nat) (widths : Array 
     intro o ho
     simp only [Array.mem_toList_iff, Array.mem_append, Array.mem_push, Array.mem_map] at ho
     rcases ho with (hp | rfl) | ⟨i, _, rfl⟩
-    · obtain ⟨t, body, rfl, _⟩ := inkGroups_shape geom ix tags page.inks o hp
+    · obtain ⟨t, body, rfl, _⟩ := inkGroups_shape geom ix _ tags page.inks
+        (pageLabels_setter geom remap widths imgMap tags page) o hp
       rfl
     · simp only [ContentOp.wrapped, Array.all_eq_true_iff_forall_mem]
-      have := foldl_lines_marked geom remap imgMap tags page.lines.toList { widths } (by simp)
+      have := foldl_lines_marked geom remap imgMap tags (bodyLines page).toList { widths }
+        (by simp)
       rw [Array.foldl_toList] at this
       exact this
     · exact imageOp_wrapped i
@@ -3047,9 +3598,9 @@ public theorem mcids_partition_covers (geom : Geom) (remap : Array Nat) (widths 
       obtain ⟨f, _, rfl⟩ := ho
       exact Or.inl ⟨_, _, _, _, _, rfl⟩)
   have hC := fillBlock_contentOpens (some .layout)
-    (((page.lines.foldl (stepLine geom remap imgMap tags) { widths }).rules.map
+    ((((bodyLines page).foldl (stepLine geom remap imgMap tags) { widths }).rules.map
       fun (c, x, y, w, h) => ContentOp.fill c x y w h) ++
-      (page.lines.foldl (stepLine geom remap imgMap tags) { widths }).polys.map polyOp)
+      ((bodyLines page).foldl (stepLine geom remap imgMap tags) { widths }).polys.map polyOp)
     (fun o ho => by
       simp only [Array.mem_append, Array.mem_map] at ho
       rcases ho with ⟨t, _, rfl⟩ | ⟨p, _, rfl⟩

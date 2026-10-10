@@ -2,6 +2,7 @@ module
 
 public import LeanTex.Core.Ir
 public import LeanTex.Core.GfxAffine
+public import LeanTex.Core.GfxSteps
 
 /-!
 # A TikZ picture as a figure
@@ -309,5 +310,236 @@ public theorem ofPicture_recolor_exact (m : Ir.Pic.LabelMetric) (pic : Ir.Pic.Pi
   apply List.map_congr_left
   intro s _
   exact ofShape_recolor f s
+
+/-- A label-free figure as one of any label type. -/
+@[expose] public def Figure.lift {L : Type} (fig : Figure Empty) : Figure L :=
+  { box := fig.box, clipToBox := fig.clipToBox, nodes := fig.nodes.map Node.lift
+    outlines := fig.outlines, symbols := fig.symbols.map (·.map Node.lift)
+    rasters := fig.rasters, title := fig.title, losses := fig.losses }
+
+/-! ## A picture as the page's ink, its labels in their places -/
+
+/-- **A picture as the page's ink**: the lowered picture (`ofPictureIn`),
+each label the key the page finds its line by — the picture `id` and the
+label's shape index, the origin layout stamps the line with
+(`Layout.LabelAudit.Stamp.origin`) — so the PDF sets a label's line where
+its node stands among the ink (`Pdf.contentOps`). -/
+@[expose] public def ofPictureKeyed (id : Nat) (box : Box) (pic : Ir.Pic.Picture) :
+    Figure (Nat × Nat) :=
+  { box := box, clipToBox := false
+    nodes := (ofPictureIn box pic).nodes.mapIdx fun i n => n.mapLabelsOne fun _ => (id, i)
+    outlines := #[], symbols := #[], rasters := #[], title := none, losses := #[] }
+
+mutual
+
+private theorem lift_labelFree {L : Type} : ∀ n : Node Empty, (Node.lift n : Node L).labelFree = true
+  | .draw .. => rfl
+  | .group _ _ _ kids => by
+    simp only [Node.lift, Node.labelFree, Node.liftList_map, Array.toList_append, List.nil_append]
+    exact liftList_labelFree kids.toList
+  | .use .. => rfl
+  | .stamp .. => rfl
+  | .image .. => rfl
+  | .label l => nomatch l
+  | .words _ => rfl
+
+private theorem liftList_labelFree {L : Type} :
+    ∀ xs : List (Node Empty), Node.labelFreeList (xs.map (Node.lift (L := L))) = true
+  | [] => rfl
+  | n :: rest => by
+    simp only [List.map_cons, Node.labelFreeList, lift_labelFree n, liftList_labelFree rest,
+      Bool.and_self]
+
+end
+
+mutual
+
+private theorem mapLabels_labelFree {L L' : Type} (f : L → L') :
+    ∀ n : Node L, (n.mapLabelsOne f).labelFree = n.labelFree
+  | .draw .. => rfl
+  | .group _ _ _ kids => by
+    simp only [Node.mapLabelsOne, Node.labelFree, Node.mapLabelsList_map, Array.toList_append,
+      List.nil_append]
+    exact mapLabelsList_labelFree f kids.toList
+  | .use .. => rfl
+  | .stamp .. => rfl
+  | .image .. => rfl
+  | .label _ => rfl
+  | .words _ => rfl
+
+private theorem mapLabelsList_labelFree {L L' : Type} (f : L → L') :
+    ∀ xs : List (Node L),
+      Node.labelFreeList (xs.map (Node.mapLabelsOne f)) = Node.labelFreeList xs
+  | [] => rfl
+  | n :: rest => by
+    simp only [List.map_cons, Node.labelFreeList, mapLabels_labelFree f n,
+      mapLabelsList_labelFree f rest]
+
+end
+
+private theorem mapLabels_topOk {L L' : Type} (f : L → L') (n : Node L) :
+    (n.mapLabelsOne f).topOk = n.topOk := by
+  cases n with
+  | group _ _ _ kids =>
+    simp only [Node.mapLabelsOne, Node.topOk, Node.mapLabelsList_map, Array.toList_append,
+      List.nil_append]
+    exact mapLabelsList_labelFree f kids.toList
+  | draw | use | stamp | image | label | words => rfl
+
+private theorem ofShape_topOk (s : Ir.Pic.Shape) : (ofShape s).topOk = true := by
+  cases s with
+  | label => rfl
+  | ink n =>
+    cases n with
+    | group _ _ _ kids =>
+      simp only [ofShape, Node.lift, Node.topOk, Node.liftList_map, Array.toList_append,
+        List.nil_append]
+      exact liftList_labelFree kids.toList
+    | label l => exact nomatch l
+    | draw | use | stamp | image | words => rfl
+
+/-- **A lowered picture's labels stand at its top level** (`_exact`): each
+shape is one node, a label or ink holding none. -/
+public theorem ofPictureIn_labelsTop_exact (box : Box) (pic : Ir.Pic.Picture) :
+    (ofPictureIn box pic).labelsTop = true := by
+  have hn : (ofPictureIn box pic).nodes.all Node.topOk = true := by
+    rw [Array.all_eq_true]
+    intro i hi
+    simp only [ofPictureIn, Array.getElem_map]
+    exact ofShape_topOk _
+  simp only [Figure.labelsTop, hn, Bool.true_and]
+  simp [ofPictureIn]
+
+/-- **A picture's labels stand at its top level** (`_exact`): every node of
+the page's ink is a label or ink holding none, and it has no symbols — so
+each label line sets in the ink's own frame, between the ink written before
+it and after it. -/
+public theorem ofPictureKeyed_labelsTop_exact (id : Nat) (box : Box) (pic : Ir.Pic.Picture) :
+    (ofPictureKeyed id box pic).labelsTop = true := by
+  have hn : (ofPictureKeyed id box pic).nodes.all Node.topOk = true := by
+    rw [Array.all_eq_true]
+    intro i hi
+    simp only [ofPictureKeyed, Array.getElem_mapIdx, mapLabels_topOk]
+    simp only [ofPictureIn, Array.getElem_map]
+    exact ofShape_topOk _
+  simp only [Figure.labelsTop, hn, Bool.true_and]
+  simp [ofPictureKeyed]
+
+mutual
+
+private theorem mapLabels_imageFree {L L' : Type} (f : L → L') :
+    ∀ n : Node L, (n.mapLabelsOne f).imageFree = n.imageFree
+  | .draw .. => rfl
+  | .group _ _ _ kids => by
+    simp only [Node.mapLabelsOne, Node.imageFree, Node.mapLabelsList_map, Array.toList_append,
+      List.nil_append]
+    exact mapLabelsList_imageFree f kids.toList
+  | .use .. => rfl
+  | .stamp .. => rfl
+  | .image .. => rfl
+  | .label _ => rfl
+  | .words _ => rfl
+
+private theorem mapLabelsList_imageFree {L L' : Type} (f : L → L') :
+    ∀ xs : List (Node L),
+      Node.imageFreeList (xs.map (Node.mapLabelsOne f)) = Node.imageFreeList xs
+  | [] => rfl
+  | n :: rest => by
+    simp only [List.map_cons, Node.imageFreeList, mapLabels_imageFree f n,
+      mapLabelsList_imageFree f rest]
+
+end
+
+private theorem imageFreeList_mapIdx {L L' : Type} (f : Nat → L → L') :
+    ∀ xs : List (Node L),
+      Node.imageFreeList (xs.mapIdx fun i n => n.mapLabelsOne (f i)) = Node.imageFreeList xs := by
+  intro xs
+  induction xs generalizing f with
+  | nil => rfl
+  | cons n rest ih =>
+    rw [List.mapIdx_cons]
+    simp only [Node.imageFreeList, mapLabels_imageFree]
+    rw [ih (fun i => f (i + 1))]
+
+/-- **The page's ink paints no raster** (`_exact`) where the picture's
+shapes hold none: its nodes are the lowered picture's, relabelled — so the
+PDF writer, which names a raster only from the image store, is asked for
+none (`Pdf.inkRasterPage?`). -/
+public theorem ofPictureKeyed_imageFree_exact (id : Nat) (box : Box) (pic : Ir.Pic.Picture)
+    (h : ∀ s ∈ pic.shapes, shapeImageFree s = true) :
+    (ofPictureKeyed id box pic).imageFree = true := by
+  have h' := imageFreeList_map pic.shapes.toList fun s hs => h s (Array.mem_toList_iff.mp hs)
+  simp only [Figure.imageFree, ofPictureKeyed, Array.toList_mapIdx, ofPictureIn, Array.toList_map]
+  rw [imageFreeList_mapIdx (fun i (_ : LabelSpec) => (id, i)), h']
+  simp
+
+private theorem marks_mapIdx {L L' : Type} (outlines : Array (Array Subpath)) (cx : Ctx)
+    (f : Nat → L → L') :
+    ∀ (xs : List (Node L)) (acc : Array Mark),
+      Node.marksList outlines cx acc
+          (Node.expandList (#[] : Array (Array (Node L'))) 0 #[]
+            (xs.mapIdx fun i n => n.mapLabelsOne (f i))).toList =
+        Node.marksList outlines cx acc
+          (Node.expandList (#[] : Array (Array (Node L))) 0 #[] xs).toList := by
+  intro xs
+  induction xs generalizing f with
+  | nil => intro acc; rfl
+  | cons n rest ih =>
+    intro acc
+    rw [List.mapIdx_cons]
+    simp only [Node.expandList]
+    rw [Node.expandList_acc, Node.expandList_acc (#[] : Array (Array (Node L))),
+      Array.toList_append, Array.toList_append, Node.marksList_append, Node.marksList_append,
+      Node.expandOne_mapLabels, Array.toList_map, Node.marksList_mapLabels,
+      ih (fun i => f (i + 1))]
+
+/-- **Keying a picture's labels moves no mark** (`_exact`): the page's ink
+paints exactly what the lowered picture paints. -/
+public theorem ofPictureKeyed_marks_exact (id : Nat) (box : Box) (pic : Ir.Pic.Picture) :
+    (ofPictureKeyed id box pic).marks = (ofPictureIn box pic).marks := by
+  have hb : (ofPictureKeyed id box pic).bodies = #[] := by simp [ofPictureKeyed, Figure.bodies]
+  have hb' : (ofPictureIn box pic).bodies = #[] := by simp [ofPictureIn, Figure.bodies]
+  unfold Figure.marks Figure.expanded
+  rw [hb, hb']
+  simp only [Array.size_empty]
+  have hn : (ofPictureKeyed id box pic).nodes.toList =
+      (ofPictureIn box pic).nodes.toList.mapIdx fun i n => n.mapLabelsOne fun _ => (id, i) := by
+    simp [ofPictureKeyed]
+  rw [hn]
+  exact marks_mapIdx #[] Ctx.root (fun i (_ : LabelSpec) => (id, i)) _ #[]
+
+private theorem flatMap_mapIdx {α β γ : Type} (g : Nat → α → β) (h₁ : β → List γ)
+    (h₂ : α → List γ) (h : ∀ i a, h₁ (g i a) = h₂ a) :
+    ∀ xs : List α, (xs.mapIdx g).flatMap h₁ = xs.flatMap h₂ := by
+  intro xs
+  induction xs generalizing g with
+  | nil => rfl
+  | cons a rest ih =>
+    rw [List.mapIdx_cons, List.flatMap_cons, List.flatMap_cons, h 0 a,
+      ih (fun i => g (i + 1)) (fun i a => h (i + 1) a)]
+
+/-- **The page's ink paints what the picture paints, each label where its
+node stands** (`_exact`): the keyed figure's steps are the lowered
+picture's, each label read as its key — the marks unmoved, every label in
+its place among them. What lets the PDF's label order be the HTML's
+(`picture_labelOrder_agree`). -/
+public theorem ofPictureKeyed_steps_exact (id : Nat) (box : Box) (pic : Ir.Pic.Picture) :
+    (ofPictureKeyed id box pic).steps.map (Step.mapLabel fun _ => ()) =
+      (ofPictureIn box pic).steps.map (Step.mapLabel fun _ => ()) := by
+  rw [Figure.steps_eq, Figure.steps_eq]
+  apply Array.toList_inj.mp
+  simp only [Array.toList_map, List.map_flatMap]
+  have hn : (ofPictureKeyed id box pic).nodes.toList =
+      (ofPictureIn box pic).nodes.toList.mapIdx fun i n => n.mapLabelsOne fun _ => (id, i) := by
+    simp [ofPictureKeyed]
+  rw [hn]
+  apply flatMap_mapIdx
+  intro i n
+  rw [Figure.nodeSteps_mapLabels_exact (fun _ => (id, i)) (ofPictureIn box pic)
+    (ofPictureKeyed id box pic) rfl rfl rfl n]
+  simp only [Array.toList_map, List.map_map]
+  apply List.map_congr_left
+  intro s _
+  cases s <;> rfl
 
 end LeanTex.Core.Gfx

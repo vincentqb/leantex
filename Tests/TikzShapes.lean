@@ -9,18 +9,18 @@ open LeanTex.Core LeanTex.Cli Tests.TikzCoverage
 mutual
 
 /-- Every clipping group's clips in a figure's nodes, outermost first. -/
-def nodeClipsOne (acc : Array (Array Gfx.Clip)) : Gfx.Node Empty → Array (Array Gfx.Clip)
+def nodeClipsOne {L : Type} (acc : Array (Array Gfx.Clip)) : Gfx.Node L → Array (Array Gfx.Clip)
   | .group _ cs _ kids => nodeClipsList (if cs.isEmpty then acc else acc.push cs) kids.toList
   | .draw .. | .use .. | .stamp .. | .image .. | .label _ | .words _ => acc
 
-def nodeClipsList (acc : Array (Array Gfx.Clip)) : List (Gfx.Node Empty) → Array (Array Gfx.Clip)
+def nodeClipsList {L : Type} (acc : Array (Array Gfx.Clip)) : List (Gfx.Node L) → Array (Array Gfx.Clip)
   | [] => acc
   | n :: rest => nodeClipsList (nodeClipsOne acc n) rest
 
 end
 
 /-- The figures a page of pictures ships, each in its own frame. -/
-def figsOf (oneFace : Font.FontSet) (src : String) : Array (Gfx.Figure Empty) :=
+def figsOf (oneFace : Font.FontSet) (src : String) : Array (Gfx.Figure (Nat × Nat)) :=
   (layoutOf oneFace (elabStr src).1).pages.flatMap fun p => p.inks.map (·.fig)
 
 /-- A figure's draws in the figure's own frame: geometry and paint read in
@@ -111,6 +111,45 @@ def tikzShapeChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO U
   let leak := picDoc "" "{\\clip (0,0) rectangle (1,1);}\\fill (0,0) circle (1);"
   t "clip: one inside a group, which pgf carries past it, is named"
     ((lossesOf leak).any fun d => d.code == "W0334" && hasStr d.message "clip")
+  -- The web page paints the same, read over the typed HTML tree: each
+  -- shading a gradient element carrying pgf's stops, which the shape it
+  -- fills names; each clip a `clipPath` the clipped group names. The
+  -- emissions this subset first makes reachable from a picture.
+  let htmlOf (src : String) : Array Html.Node := (HtmlDoc.emitTree {} (elabStr src).1).2.1
+  let tagged (tag : String) (body : Array Html.Node) : Array Html.Node :=
+    elemNodesList (· == tag) #[] body.toList
+  let attrOf (n : Html.Node) (key : String) : Option String := match n with
+    | .elem _ attrs _ => HtmlDoc.attrOf? attrs key
+    | _ => none
+  let refsTo (body : Array Html.Node) (key id : String) : Bool :=
+    (elemNodesList (fun _ => true) #[] body.toList).any fun n =>
+      attrOf n key == some s!"url(#{id})"
+  for (what, src, tag, stops) in [
+      ("an axial shading", axial, "linearGradient", 5),
+      ("a radial shading", radial, "radialGradient", 3),
+      ("a ball shading", ball, "radialGradient", 5)] do
+    let body := htmlOf src
+    match (tagged tag body).toList with
+    | [g] =>
+      let id := (attrOf g "id").getD ""
+      t s!"html: {what} is one {tag} with pgf's {stops} stops, in the user space it paints"
+        ((tagged "stop" #[g]).size == stops && attrOf g "gradientUnits" == some "userSpaceOnUse" &&
+          (attrOf g "gradientTransform").isSome)
+      t s!"html: the shape {what} fills names its gradient"
+        (!id.isEmpty && refsTo body "fill" id)
+    | _ => t s!"html: {what} ships one {tag}" false
+  let clipBody := htmlOf clipped
+  match (tagged "clipPath" clipBody).toList with
+  | [c] =>
+    let id := (attrOf c "id").getD ""
+    t "html: a clip is one clipPath, in the user space of what it clips, holding the rectangle"
+      (attrOf c "clipPathUnits" == some "userSpaceOnUse" && (tagged "rect" #[c]).size == 1)
+    t "html: the group the clip clips names it, and holds the clipped circle"
+      (!id.isEmpty && (tagged "g" clipBody).any fun g =>
+        attrOf g "clip-path" == some s!"url(#{id})" &&
+          ((tagged "circle" #[g]).size + (tagged "ellipse" #[g]).size +
+            (tagged "path" #[g]).size) == 1)
+  | _ => t "html: a clip ships one clipPath" false
   -- Node shapes, against the rectangle about the same letters: an ellipse's
   -- radii are its half extents times 1.4142136, a diamond's half diagonals
   -- their sum, less 0.414213 outer seps.
@@ -223,3 +262,24 @@ def tikzShapeChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO U
        | [.cubic _ y0 _ _ _ _ _ _, _, .cubic _ _ _ _ _ _ _ ty, _, _, _] => decide (ty > y0)
        | _ => false
      | _ => false)
+  -- The ground a label stands on: a translucent fill is no opaque ground —
+  -- it is composited over what it covers at its alpha, as both artifacts
+  -- paint it — and an opaque one is its own colour. The invariant whose
+  -- absence took a `fill opacity` fill's colour as the label's ground.
+  let blue : Ir.Color := { r := 0, g := 0, b := 255 }
+  let wash : Ir.Pic.Shape := .ink (.draw (.rect 0 0 100 100)
+    (some { paint := .solid blue, rule := .nonzero, alpha := ⟨200, by decide⟩ }) none)
+  let solid : Ir.Pic.Shape := .ink (.draw (.rect 0 0 100 100) (some (Ir.Pic.solidFill blue)) none)
+  t "ground: a translucent fill blends over the picture's ground"
+    (Ir.Pic.fillUnder (some Ir.Color.white) #[wash] 50 50 == some { r := 204, g := 204, b := 255 })
+  t "ground: an opaque fill is its own colour, over a translucent one too"
+    (Ir.Pic.fillUnder (some Ir.Color.white) #[solid] 50 50 == some blue &&
+      Ir.Pic.fillUnder (some Ir.Color.white) #[wash, solid] 50 50 == some blue)
+  t "ground: a fill that misses the anchor leaves the picture's ground"
+    (Ir.Pic.fillUnder (some Ir.Color.white) #[wash] 500 50 == some Ir.Color.white)
+  t "ground: a translucent fill over a ground the walk cannot name names none"
+    (Ir.Pic.fillUnder none #[wash] 50 50 == none)
+  let faded : Ir.Pic.Shape := .ink (.group Gfx.Affine.unit #[] ⟨500, by decide⟩
+    #[.draw (.rect 0 0 100 100) (some (Ir.Pic.solidFill blue)) none])
+  t "ground: a group faded to half its kids paints them half over the ground"
+    (Ir.Pic.fillUnder (some Ir.Color.white) #[faded] 50 50 == some { r := 128, g := 128, b := 255 })

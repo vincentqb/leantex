@@ -49,6 +49,16 @@ def tikzTipChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Uni
     t "to: the shaft stops at the head's origin, its tip end short of the end"
       (near x1 (ends - tipEnd))
   | _ => t "to: the shorthand ships a shaft and a stroked head" false
+  -- `<-` is `->` on the side run the other way (`reversedTip_exact`, here
+  -- through the whole statement reader): the same head at the same point,
+  -- the shaft between the same two points, run backwards.
+  for (tipSpec, fwdSpec) in [("<-", "->"), ("latex-", "-latex"), ("stealth-", "-stealth")] do
+    match arrowParts oneFace (picDoc "" s!"\\draw[{tipSpec}] (0,0) -- (1,0.5);"),
+        arrowParts oneFace (picDoc "" s!"\\draw[{fwdSpec}] (1,0.5) -- (0,0);") with
+    | some ((a0, b0, a1, b1), h, f, s), some ((c0, d0, c1, d1), h', f', s') =>
+      t s!"reversed tip: '{tipSpec}' draws the head '{fwdSpec}' draws on the side run backwards"
+        (h == h' && f == f' && s == s' && a0 == c1 && b0 == d1 && a1 == c0 && b1 == d0)
+    | _, _ => t s!"reversed tip: '{tipSpec}' and '{fwdSpec}' each ship a shaft and a head" false
   -- With arrows.meta loaded, the shorthand is its Computer Modern arrow.
   let metaDoc := picDoc "" ("\\draw[->] " ++ line) "\\usepackage{tikz}\n\\usetikzlibrary{arrows.meta}\n"
   t "Computer Modern Rightarrow: arrows.meta names no unknown command and no loss"
@@ -63,6 +73,19 @@ def tikzTipChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Uni
        | some (.cubic _ _ (ax, _)) => near ax (ends - lw / 2) && near x1 (ends - lw)
        | _ => false)
   | _ => t "Computer Modern Rightarrow: the shorthand ships a shaft and a stroked head" false
+  -- tikz-cd loads arrows.meta itself (tikzlibrarycd.code.tex), so a document
+  -- that loads the package, or its library, draws every `->` as one that
+  -- names arrows.meta does.
+  let metaArrow := arrowParts oneFace metaDoc
+  for (how, pre) in [("the tikz-cd package", "\\usepackage{tikz-cd}\n"),
+      ("the package with options", "\\usepackage[all]{tikz-cd}\n"),
+      ("the cd library", "\\usepackage{tikz}\n\\usetikzlibrary{positioning, cd}\n")] do
+    t s!"Computer Modern Rightarrow: {how} draws the shorthand as arrows.meta does"
+      (metaArrow.isSome && arrowParts oneFace (picDoc "" ("\\draw[->] " ++ line) pre) == metaArrow)
+  t "to: a library that loads no arrows.meta keeps pgf's own head"
+    (arrowParts oneFace (picDoc "" ("\\draw[->] " ++ line) "\\usepackage{tikz}\n\\usetikzlibrary{calc}\n")
+      == arrowParts oneFace (picDoc "" ("\\draw[->] " ++ line)) &&
+      arrowParts oneFace (picDoc "" ("\\draw[->] " ++ line)) != metaArrow)
   -- `latex`: filled, curved sides, its apex on the end.
   match arrowParts oneFace (picDoc "" ("\\draw[-latex] " ++ line)) with
   | some ((x0, _, x1, _), .path #[sub], some _, none) =>

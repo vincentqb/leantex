@@ -185,7 +185,8 @@ def scanFaces (ui : Ui) (file : String) (spec : Ir.FontSpec)
   let faces ← FontDiscovery.scanRoots
     (docDirs ++ (← FontDiscovery.systemRoots (ui.cfg.fontDirs.toList ++ (← texFontDirs))))
   if announce then ui.phase "fontdb" s!"{faces.size} faces" ((← IO.monoMsNow) - t)
-  return { faces := faces, docDirs := docDirs, dirs := spec.dirs, diags := dirDiags }
+  return { faces := faces, docDirs := docDirs, dirs := spec.dirs, diags := dirDiags
+           privateDirs := ui.cfg.fontDirs.toList ++ (← FontDiscovery.envDirs) }
 
 def since (t0 : Nat) : IO Nat := do
   return (← IO.monoMsNow) - t0

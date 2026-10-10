@@ -4743,12 +4743,12 @@ private def pictureMath (ctx : Ctx) (d : Bool) (raws : Array Parse.Raw) :
       #[(.W0012, s!"math with {what} is not rendered yet; the \
 formula {floorWording (Parse.rawSrc raws)}")])
 
-private def subsetPicture (ctx : Ctx) (body : Array Raw) :
+private def subsetPicture (ctx : Ctx) (body : Array Raw) (size : Option String) :
     Ir.Pic.Picture × Array Picture.PDiag :=
   Picture.elabPicture ctx.palette body (pictureMath ctx) ctx.pic.sets ctx.pic.metric
     ctx.pic.macros argStyles ctx.page.scale declStyles ctx.page.fontSize
     (locate := fun pos => some (ctx.sourceSpan pos))
-    (metaArrows := (ctx.pic.preamble.splitOn "arrows.meta").length > 1)
+    (metaArrows := Picture.metaArrowsOf ctx.pic.preamble) (outerDecls := size.toArray)
 
 /-- The size switch in force where a picture stands, by its ladder name,
 when it is not `normalsize` — the declaration scope a paragraph's text
@@ -4812,7 +4812,7 @@ private def inlinePicture (ctx : Ctx) (body : Array Raw) (pos : Pos) :
   -- boundary's image there or names that it is not drawn, and a withdrawn
   -- request takes the second door.
   if ctx.pic.tool.isSome && !body.isEmpty && !ctx.pic.withdrawn.contains id then
-    let (pic, _) := subsetPicture ctx body
+    let (pic, _) := subsetPicture ctx body (← pictureSizeInForce)
     return some (← routePicture ctx body { pic with alt := alt } pos false)
   warnOnce ctx ("picture:inline:" ++ id) .W0334
     "a picture inside a line of text is not drawn: the rendered subset sets a \
@@ -4846,7 +4846,7 @@ private def tikzcdNative (ctx : Ctx) (body : Array Raw) (pos : Pos) :
   let id := Ir.picHash src.source
   let ground := (ctx.palette.find? "bg").getD Ir.Color.white
   let (pic, pdiags) := Picture.Cd.elabCd ctx.palette b (pictureMath ctx) ctx.pic.metric
-    ctx.page.fontSize ground
+    ctx.page.fontSize ground ((src.size.bind fun n => ctx.page.scale.lookup n).getD 1000)
   -- The document's `\tikzcdset` lines set keys this reader does not read:
   -- the diagram is the boundary's, which reads them, or is drawn here with
   -- them named.
@@ -9957,18 +9957,26 @@ private def stepEquation : EM String := do
   modify fun st => { st with ctr := { st.ctr with eqNum := v, eqSnap := snap } }
   return withinNumber st.ctr st.ctr.eqWithin v
 
+/-- A display's label anchors where a drawing stands for its formula: the
+paragraph of anchors alone, which ships no ink and opens no gap in either
+backend (`collectParaBlock`, `paragraphNode`) — the anchors a formula's
+paragraph carries before its formula. -/
+private def labelAnchors (keys : Array String) : Array Block :=
+  if keys.isEmpty then #[] else #[.para (keys.map Ir.Inline.label)]
+
 /-- A display-math environment, outside the knot to keep the pack small. -/
 private def displayMathArm (ctx : Ctx) (numbered : Bool) (body : Array Raw) (pos : Pos)
     (blocks : Array Block) : EM (Array Block) := do
   let mut blocks := blocks
   let (body, qedAt) := dropQedHere body
   let (cleaned, keys, nonum, tag) ← stripMathMeta ctx body
-  -- An unnumbered display the diagram reader draws ships its drawing.
+  -- An unnumbered display the diagram reader draws ships its drawing, its
+  -- labels' anchors beside it as the formula's stand in its paragraph.
   if qedAt.isNone && tag.isNone && (!numbered || nonum) then
     if let some pic ← tikzcdNative ctx cleaned pos then
       for key in keys do
         recordLabel ctx key (← get).refTarget pos
-      return blocks.push (.center #[.picture pic])
+      return (blocks ++ labelAnchors keys).push (.center #[.picture pic])
   let inl ← match ← tikzcdDisplay ctx cleaned pos with
     | some pic => pure pic
     | none => elabMathInline ctx true cleaned pos
@@ -10028,7 +10036,7 @@ private def alignEnvArm (ctx : Ctx) (n : String) (kind : Math.GridKind)
   -- unnumbered alignment's lone diagram takes the picture's door.
   if !numbered && tag.isNone then
     if let some native ← tikzcdNative ctx cleaned pos then
-      return blocks.push (.center #[.picture native])
+      return (blocks ++ labelAnchors keys).push (.center #[.picture native])
   let pic ← if numbered || tag.isSome then pure none else tikzcdDisplay ctx cleaned pos
   let inl ← match pic with
     | some pic => pure pic
@@ -10079,7 +10087,7 @@ private def tikzArm (ctx : Ctx) (body : Array Raw) (pos : Pos)
     (blocks : Array Block) : EM (Array Block) := do
   let mut blocks := blocks
   let (alt, body) := splitPictureAlt body pos
-  let (pic, pdiags) := subsetPicture ctx body
+  let (pic, pdiags) := subsetPicture ctx body (← pictureSizeInForce)
   let pic := { pic with alt := alt }
   -- **The boundary draws what the subset would draw with a loss.** A
   -- picture the subset draws whole stays native: the engine owns that ink.

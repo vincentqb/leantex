@@ -540,6 +540,7 @@ def layoutSuiteChecks (ref : IO.Ref (List String)) : IO Unit := do
   agreeChecks ref oneFace pats
   artifactMarkChecks ref oneFace pats
   gfxDefectChecks ref oneFace
+  gfxLabelOrderChecks ref oneFace
   gfxContentPageChecks ref oneFace
   pdfFigureWriterChecks ref oneFace
   gfxInkRasterChecks ref oneFace

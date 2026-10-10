@@ -285,7 +285,7 @@ def pictureClosedPathChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet
     (closedChain triSegs && !picLoss tri)
   let geom := Layout.Geom.ofPage (elabStr tri).1.page
   let moves := ((pageOf tri).map fun p => p.inks.foldl (fun n k =>
-    n + ((Pdf.inkPaint geom Pdf.figureNames k).foldl (fun n op => match op with
+    n + ((Pdf.inkPaint geom Pdf.figureNames (fun _ => none) k).foldl (fun n op => match op with
       | .paint _ (some _) _ segs => n + (segs.filter fun op => op matches .moveTo ..).size
       | _ => n) 0)) 0).getD 0
   t "the PDF strokes the closed polygon as one subpath"

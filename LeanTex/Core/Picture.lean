@@ -1187,6 +1187,16 @@ scale. One multiplication, one rounding division. -/
 public def Cx.toSp (cx : Cx) (m : Int) : Sp :=
   m * cx.scale * Dim.mm 10 / 1000000
 
+/-- The size the declarations in force set a node's text at, per mille of
+the body, under the node's own factor: the innermost size step of the
+document's ladder among them — one written in the picture (`Stmt.setDecl`)
+or around it (`elabPicture`'s `outerDecls`) — as a node, on a path or on
+its own, sets in the font current where it stands. -/
+public def Cx.declScale (cx : Cx) (factor : Nat) : Nat :=
+  let declSize : Option Nat :=
+    cx.decls.foldl (fun z n => (cx.ladder.lookup n).orElse fun _ => z) none
+  (declSize.map fun k => k * factor / 1000).getD factor
+
 /-- A rational to the nearest `Sp`, half up. -/
 private def roundRat (q : Rat) : Sp := (q + 1 / 2).floor
 
@@ -1554,6 +1564,36 @@ private def tipKindOf (metaLib : Bool) : String → Option TipKind
   | "Latex" => some .latexMeta
   | "Stealth" => some .stealth
   | _ => none
+
+/-- The names a group of a preamble line lists: the text between the first
+`{` and the next `}`, split at commas, each trimmed. -/
+private def groupNames (line : String) : List String :=
+  match line.splitOn "{" with
+  | _ :: rest :: _ =>
+    ((rest.splitOn "}").headD "").splitOn "," |>.map (·.trimAscii.toString) |>.filter (!·.isEmpty)
+  | _ => []
+
+/-- The TikZ libraries a picture preamble loads (`Compat.boundaryScan`'s
+lines): every `\usetikzlibrary` line's names, and `cd` for a load of the
+tikz-cd package, whose file runs `\usetikzlibrary{cd}` (tikz-cd.sty). -/
+public def preambleLibraries (pre : String) : List String :=
+  (pre.splitOn "\n").flatMap fun line =>
+    let line := line.trimAscii.toString
+    if line.startsWith "\\usetikzlibrary" then groupNames line
+    else if line.startsWith "\\usepackage" || line.startsWith "\\RequirePackage" then
+      let pkgLine := match line.splitOn "]" with
+        | [one] => one
+        | _ :: rest => "]".intercalate rest
+        | [] => line
+      if (groupNames pkgLine).contains "tikz-cd" then ["cd"] else []
+    else []
+
+/-- **Does the preamble make `->` arrows.meta's Computer Modern arrow?**
+arrows.meta itself, or the cd library, which loads it
+(tikzlibrarycd.code.tex: `\usetikzlibrary{matrix,quotes,arrows.meta}`), so a
+document that loads tikz-cd draws every picture's `->` with that head. -/
+public def metaArrowsOf (pre : String) : Bool :=
+  (preambleLibraries pre).any fun l => l == "arrows.meta" || l == "cd"
 
 /-- Does a name draw as one of this subset's arrow heads? A tip the document
 declared with `/.tip`, or one the subset draws by its own declaration
@@ -4586,13 +4626,12 @@ private def evalNode (cx : Cx) (env : List (String × Val)) (toks : Array Tok)
   -- §25.4); `font=` then sets its size relative to that.
   let factor : Nat := if cx.transformShape && cx.scale > 0 then cx.scale.toNat else 1000
   -- The declarations in force where the node stands (`Stmt.setDecl`): a
-  -- size step of the document's ladder, or a font declaration.
-  let declSize : Option Nat := cx.decls.foldl (fun z n => (cx.ladder.lookup n).orElse fun _ => z) none
-  -- A size switch is a size step, every other declaration a style: what a
+  -- size step of the document's ladder, or a font declaration. A size
+  -- switch is a size step, every other declaration a style: what a
   -- `font=` value's switches mean (`readFont`).
   let baseStyles : Array Ir.Style := cx.decls.filterMap fun n =>
     if (cx.ladder.lookup n).isSome then none else cx.declStyles.lookup n
-  let mut scale : Nat := (declSize.map fun k => k * factor / 1000).getD factor
+  let mut scale : Nat := cx.declScale factor
   let mut ev := ev
   -- The node's outline, gathered from its options: shape kind (pgf's
   -- default node shape is a rectangle), whether it draws and/or fills,
@@ -5281,13 +5320,52 @@ private def tipArrival (k : TipKind) (p q : Sp × Sp) (lw : Sp) (color : Ir.Colo
     Option (TipInk × Sp × Sp) :=
   tipAlong k q (q.1 - p.1) (q.2 - p.2) lw color
 
-/-- **`<-` draws the tip `->` draws, at the other end.** The start tip of a
-side from `p` toward `q` is the arrival tip of the side reversed — the same
-kind, point, direction and reach — because a start is read as an arrival
-from the far end (pgf manual §16.2: an arrow specification names its two
-ends). -/
+/-- A segment run the other way: the same points, its ends swapped. -/
+private def segReverse : Ir.Pic.PathSeg → Ir.Pic.PathSeg
+  | .line x1 y1 x2 y2 => .line x2 y2 x1 y1
+  | .cubic x1 y1 c1x c1y c2x c2y x2 y2 => .cubic x2 y2 c2x c2y c1x c1y x1 y1
+
+/-- **One side of a path between its two ends**, as `evalDraw` draws every
+straight or elbowed side: the start's tip when `startT` names one — the
+arrival at `p1` from the elbow or the far end — the shaft stopping where
+that tip's line end stands, through the elbow when there is one, to the end,
+stopping where the end's tip (`endT`) puts its line end. The segments, the
+start's and the end's tip ink, and where the shaft starts. -/
+private def sideShaft (startT endT : Option TipKind) (corner : Option (Sp × Sp))
+    (p1 p2 : Sp × Sp) (lw : Sp) (color : Ir.Color) :
+    Array Ir.Pic.PathSeg × Option TipInk × Option TipInk × (Sp × Sp) :=
+  let startHit := startT.bind fun k => tipArrival k (corner.getD p2) p1 lw color
+  let q1 : Sp × Sp := match startHit with
+    | some (_, bx, byy) => (bx, byy)
+    | none => p1
+  let departure := corner.getD q1
+  let elbow : Array Ir.Pic.PathSeg := match corner with
+    | some q => #[.line q1.1 q1.2 q.1 q.2]
+    | none => #[]
+  let endHit := endT.bind fun k => tipArrival k departure p2 lw color
+  let q2 : Sp × Sp := match endHit with
+    | some (_, bx, byy) => (bx, byy)
+    | none => p2
+  (elbow.push (.line departure.1 departure.2 q2.1 q2.2), startHit.map (·.1), endHit.map (·.1), q1)
+
+/-- **`<-` draws what `->` draws on the side run the other way** (`_exact`):
+the side from `p` to `q` with a tip at its start is the side from `q` to `p`
+with that tip at its end — the same head, standing at `p` and pointing at
+it, and the same shaft between the same two points, run backwards — because
+pgf reads an arrow specification's start as an arrival from the far end
+(pgf manual §16.2: a specification names its two ends). Stated over the
+side step `evalDraw` draws every straight side with. -/
 private theorem reversedTip_exact (k : TipKind) (p q : Sp × Sp) (w : Sp) (c : Ir.Color) :
-    tipArrival k q p w c = tipAlong k p (p.1 - q.1) (p.2 - q.2) w c := rfl
+    (sideShaft (some k) none none p q w c).1 =
+        (sideShaft none (some k) none q p w c).1.map segReverse ∧
+      (sideShaft (some k) none none p q w c).2.1 = (sideShaft none (some k) none q p w c).2.2.1 ∧
+      (sideShaft (some k) none none p q w c).2.2.1 = (sideShaft none (some k) none q p w c).2.1 := by
+  simp only [sideShaft, Option.bind_some, Option.bind_none, Option.getD_none, Option.map_none]
+  cases tipArrival k q p w c with
+  | none => simp [segReverse]
+  | some hit =>
+    obtain ⟨t, bx, byy⟩ := hit
+    simp [segReverse]
 
 /-- Where a segment leaving in direction `deg` (degrees) exits this
 anchor: the border along the declared tangent, for a node with extents. -/
@@ -5862,26 +5940,6 @@ over the 50 bp radius, the ball's colour mixed with white and black. -/
       stopAt 18 50 (Ir.Color.mix s.ball 70 Ir.Color.black),
       stopAt 25 50 (Ir.Color.mix s.ball 50 Ir.Color.black), stopAt 50 50 Ir.Color.black]
 
-/-- **A shading's stops are pgf's** (`_exact`): the axis shading's bottom
-colour up to a quarter of its run, its middle at the half, its top from
-three quarters; the radial's inner colour at the centre and its outer from
-half the radius out; the ball's five stops at 0, 9, 18, 25 and 50 of its
-50 bp — each offset the declared one to the nearest 65536th, each colour
-the declared one (tikz.code.tex, `\pgfdeclareverticalshading{axis}` and the
-two `\pgfdeclareradialshading`s). -/
-public theorem shade_stops_exact (s : ShadeSpec) :
-    s.stops.map (·.offset.val) = (match s.kind with
-      | .axis => #[0, 16384, 32768, 49152, 65536]
-      | .radial => #[0, 32768, 65536]
-      | .ball => #[0, 11796, 23593, 32768, 65536]) ∧
-    s.stops.map (·.color) = (match s.kind with
-      | .axis => #[s.bottom, s.bottom, s.middle, s.top, s.top]
-      | .radial => #[s.inner, s.outer, s.outer]
-      | .ball => #[Ir.Color.mix s.ball 15 Ir.Color.white, Ir.Color.mix s.ball 75 Ir.Color.white,
-          Ir.Color.mix s.ball 70 Ir.Color.black, Ir.Color.mix s.ball 50 Ir.Color.black,
-          Ir.Color.black]) := by
-  cases h : s.kind <;> simp [ShadeSpec.stops, stopAt, h] <;> decide
-
 /-- **Where a shading stands** (pgfcoreshade.code.tex, `\pgfshadepath`): the
 shading's own frame — its 100 bp square about its centre — scaled so that
 its middle 50 bp covers the path's box, `(w·|cos| + h·|sin|)/(|cos| + |sin|)`
@@ -6086,7 +6144,7 @@ private def readEdgeLabel (cx : Cx) (env : List (String × Val))
       ev := ev.diag (.W0334, "an 'every node' key on an edge label is outside \
 the rendered picture subset; the keys are dropped")
     let mut mcolor := cx.ink
-    let mut mscale : Nat := factor
+    let mut mscale : Nat := cx.declScale factor
     let mut mstyles : Array Ir.Style := #[]
     -- `none` is "this label declared no placement": it then takes the
     -- side `auto` computes from the path's direction, or the path's
@@ -6702,28 +6760,16 @@ the rendered picture subset; the edge is not drawn")
           else p1
         let p2 := if last && shortenEnd != 0 then towardBy p2 (corner.getD p1) shortenEnd else p2
         -- A tip at the start shortens the first side, pointing back at its
-        -- anchor, as one at the end shortens the last.
-        let startHit : Option (TipInk × Sp × Sp) :=
-          if k == 0 && startArrow then
-            let ahead := corner.getD p2
-            tipFor startKind ahead p1
-          else none
-        if let some (t, _, _) := startHit then startTip := some t
-        let p1 := match startHit with
-          | some (_, bx, byy) => (bx, byy)
-          | none => p1
+        -- anchor, as one at the end shortens the last (`sideShaft`).
+        let (side, sTip, eTip, p1) :=
+          sideShaft (if k == 0 && startArrow then some startKind else none)
+            (if last && endArrow then some endKind else none) corner p1 p2 stroke.width
+            stroke.color
+        if let some t := sTip then startTip := some t
+        if let some t := eTip then tip := some t
         let first := segs.size
-        if let some q := corner then
-          segs := segs.push (.line p1.1 p1.2 q.1 q.2)
+        segs := segs ++ side
         let departure := corner.getD p1
-        if last && endArrow then
-          match tipFor endKind departure p2 with
-          | some (t, bx, byy) =>
-            segs := segs.push (.line departure.1 departure.2 bx byy)
-            tip := some t
-          | none => segs := segs.push (.line departure.1 departure.2 p2.1 p2.2)
-        else
-          segs := segs.push (.line departure.1 departure.2 p2.1 p2.2)
         -- A side that does not start where the last ended opens a subpath,
         -- as pgf moves to a node's border toward the next point.
         if subStart.isNone || cur != some p1 then subStart := some (first, p1.1, p1.2)
@@ -8391,7 +8437,10 @@ step. `bodySize` is likewise required: label leading and relative lengths
 must read the same document size as their artifact measurement. `locate`
 places a position of the picture's own body where the elaborator reads it
 (`Tok.math`'s site); a setting carries its own file (`ofSetting`), and a
-macro's definition text none (`readMacro`). -/
+macro's definition text none (`readMacro`). `outerDecls` are the font
+declarations in force where the picture stands — the size switch around
+it, `{\large …}` — which every node's text sets in, as a node sets in the
+font current at its statement. -/
 public def elabPicture (pal : Ir.Palette) (raws : Array Parse.Raw)
     (math : Bool → Array Parse.Raw → Ir.Inline × Array PDiag :=
       fun d rs => (.math d (Parse.rawSrc rs), #[]))
@@ -8401,7 +8450,8 @@ public def elabPicture (pal : Ir.Palette) (raws : Array Parse.Raw)
     (argStyles : List (String × Ir.Style))
     (ladder : List (String × Nat))
     (declStyles : List (String × Ir.Style)) (bodySize : Sp)
-    (locate : Pos → Option Span := fun _ => none) (metaArrows : Bool := false) :
+    (locate : Pos → Option Span := fun _ => none) (metaArrows : Bool := false)
+    (outerDecls : Array String := #[]) :
     Ir.Pic.Picture × Array PDiag := Id.run do
   let raw := ofRawsAt locate raws
   let toks := expandMacros (macroTable ladder declStyles macros raw) raw
@@ -8516,6 +8566,7 @@ public def elabPicture (pal : Ir.Palette) (raws : Array Parse.Raw)
                    declStyles := declStyles
                    metric := metric
                    bodySize := bodySize
+                   decls := outerDecls
                    ink := ink0.getD Ir.Color.black
                    -- A declaration the parse skipped is gone before
                    -- evaluation begins, so a name that then resolves to
@@ -8869,14 +8920,15 @@ public theorem arrow_border_exact (x y a up down qx qy : Int) (ha : 0 < a) (hu :
     let b := if qy > y then up else down
     ((cellBorder x y a up down qx qy).1 = x - a ∨ (cellBorder x y a up down qx qy).1 = x + a ∨
       (cellBorder x y a up down qx qy).2 = y - b ∨ (cellBorder x y a up down qx qy).2 = y + b ∨
-      (qx = x ∧ qy = y)) := by
+      (qx = x ∧ qy = y)) ∧
+    x - a ≤ (cellBorder x y a up down qx qy).1 ∧ (cellBorder x y a up down qx qy).1 ≤ x + a ∧
+    y - b ≤ (cellBorder x y a up down qx qy).2 ∧ (cellBorder x y a up down qx qy).2 ≤ y + b := by
   intro b
   have hb : 0 < b := by
     show 0 < (if qy > y then up else down)
     split <;> assumption
-  have := (rectBorder_exact x y a b qx qy ha hb).1
   simp only [cellBorder]
-  exact this
+  exact rectBorder_exact x y a b qx qy ha hb
 
 /-- The tip tikz-cd draws (`cm to`: arrows.meta's Computer Modern
 Rightarrow at `length=+0pt 6.2`, its width 2.096774 of its length, round
@@ -8938,6 +8990,23 @@ that this reader does not. -/
 private def outside (what : String) : PDiag :=
   (.W0334, s!"{what} is outside the rendered diagram subset; it is dropped")
 
+/-- A cell's node options, when the cell opens with them — `|[…]|`, the
+library's spelling of options for the cell's node (tikzlibrarycd.code.tex,
+`|[...]|`) — and the cell's content after them. -/
+private def cellOptions (raws : Array Parse.Raw) : Option (Array Parse.Raw × Array Parse.Raw) :=
+  let i := skipSp raws 0
+  match raws[i]? with
+  | some (.word "|" _) =>
+    (readBracket raws (skipSp raws (i + 1))).bind fun (inner, next) =>
+      match raws[next]? with
+      | some (.word w p) =>
+        if w == "|" then some (inner, raws.extract (next + 1) raws.size)
+        else if w.startsWith "|" then
+          some (inner, #[Parse.Raw.word (w.drop 1).toString p] ++ raws.extract (next + 1) raws.size)
+        else none
+      | _ => none
+  | _ => none
+
 /-- A separation value: a name the library declares, or a length. -/
 private def sepValue (names : List (String × Int)) (em ex : Sp) (toks : List Tok) :
     Except String Sp :=
@@ -8955,14 +9024,17 @@ style at the middle of the path, placed `auto` by its tangent. What the
 reader does not draw is named, and the caller routes the diagram whole. -/
 public def elabCd (pal : Ir.Palette) (raws : Array Parse.Raw)
     (math : Bool → Array Parse.Raw → Ir.Inline × Array PDiag)
-    (metric : Ir.Pic.LabelMetric) (bodySize : Sp) (ground : Ir.Color) :
+    (metric : Ir.Pic.LabelMetric) (bodySize : Sp) (ground : Ir.Color) (size : Nat := 1000) :
     Ir.Pic.Picture × Array PDiag := Id.run do
   let mut diags : Array PDiag := #[]
   let note (d : PDiag) (ds : Array PDiag) : Array PDiag :=
     if ds.any (·.2 == d.2) then ds else ds.push d
   let cx : Cx := { pal := pal, math := math, metric := metric, bodySize := bodySize }
-  let probe := metric #[.text "x"] 1000
-  let em : Sp := bodySize
+  -- The size in force (`size`, per mille of the body): the cells' math, the
+  -- labels' script style and every em and ex of the separations read it, as
+  -- the diagram's matrix sets in the font current where it stands.
+  let probe := metric #[.text "x"] size
+  let em : Sp := bodySize * (size : Int) / 1000
   let ex : Sp := probe.ex
   -- The diagram's own options.
   let mut i := skipSp raws 0
@@ -8993,12 +9065,18 @@ public def elabCd (pal : Ir.Palette) (raws : Array Parse.Raw)
     let mut row : Array (Option (Ir.Inline × Ir.Pic.LabelInk)) := #[]
     for h2 : c in [0:grid[r].size] do
       let (content, arrows) := splitCell grid[r][c]
+      -- A cell's own node options (`|[…]|`, tikz-cd §3) are named, never
+      -- set as the cell's mathematics.
+      let mut content := content
+      if let some (opts, rest) := cellOptions content then
+        diags := note (outside s!"the cell options '|[{Parse.rawSrc opts}]|'") diags
+        content := rest
       for a in arrows do arrowsAt := arrowsAt.push (r, c, a)
       if content.isEmpty then row := row.push none
       else
         let (inl, ds) := math false content
         diags := ds.foldl (fun acc d => note d acc) diags
-        row := row.push (some (inl, metric #[inl] 1000))
+        row := row.push (some (inl, metric #[inl] size))
     cells := cells.push row
   let width := (cells[0]?.map (·.size)).getD 0
   let xsep : Sp := ex
@@ -9037,7 +9115,7 @@ public def elabCd (pal : Ir.Palette) (raws : Array Parse.Raw)
       if let some (some (inl, m)) := cells[r]?.bind (·[c]?) then
         let cx0 := xs.getD c 0
         let base := ys.getD r 0 - axisOf m
-        shapes := shapes.push (labelAt (cx0 - m.w / 2) base #[inl] cx.ink 1000 m)
+        shapes := shapes.push (labelAt (cx0 - m.w / 2) base #[inl] cx.ink size m)
         borders := borders.push ((cx0 - halfOf m, base - m.boxDepth - ysep),
           (cx0 + halfOf m, base + m.boxHeight + ysep))
   -- The arrows, after the matrix, as the library draws them.
@@ -9144,7 +9222,7 @@ public def elabCd (pal : Ir.Palette) (raws : Array Parse.Raw)
           | .error _ => diags := note (outside s!"label option {optName e.toList}") diags
         let script : Nat := if probe.script > 0 then probe.script else 700
         -- A phantom's label sets in the cell's own style, centred.
-        let scale : Nat := if draws then script else 1000
+        let scale : Nat := if draws then script * size / 1000 else size
         let (inl, ds) := math false l.content
         diags := ds.foldl (fun acc d => note d acc) diags
         let m := metric #[inl] scale

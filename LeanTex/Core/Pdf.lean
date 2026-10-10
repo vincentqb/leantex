@@ -463,7 +463,7 @@ public def tagsOf (tree : Struct.Tree) : Array (Option String) :=
 /-- The resource names figure operators are first written with: every
 request named 0, then renamed onto the document's figure table
 (`figureTable`, `namedPageOps`) before anything is spelled. A figure's
-raster has no table: no page's ink paints one (`Gfx.ofPictureIn_imageFree_exact`),
+raster has no table: no page's ink paints one (`Gfx.ofPictureKeyed_imageFree_exact`),
 the checked writer refuses an ink that would (`inkRasterPage?`), and a
 vector image's rasters will ride with the image store. -/
 @[expose] public def figureNames : GfxPdf.Request → Nat := fun _ => 0
@@ -476,10 +476,11 @@ public def inkRasterPage? (pages : Array PageOut) : Option Nat :=
 
 /-- **The figure resources a document's pages name**: every ink's requests
 in page and paint order, interned by content (`collectList`) — the table
-`namedPageOps` names into and the writer spells one object per entry of. -/
+`namedPageOps` names into and the writer spells one object per entry of. A
+label's text group requests none, so the ink is read without its labels. -/
 public def figureTable (geom : Geom) (pages : Array PageOut) : Array FigRes :=
   pages.foldl (fun t p => p.inks.foldl
-    (fun t k => collectList t (inkPaint geom figureNames k).toList) t) #[]
+    (fun t k => collectList t (inkPaint geom figureNames (fun _ => none) k).toList) t) #[]
 
 /-- Pages' operators with their figure resources named onto the document's
 table; unchanged when no figure names one. -/

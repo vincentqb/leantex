@@ -141,7 +141,7 @@ public def writeChecked (geom : Layout.Geom) (fs : Font.FontSet) (pages : Array 
     (streams : Array (ByteArray × Option ByteArray) := #[])
     (tree : Struct.Tree := ⟨#[]⟩) (ops : Array (Array ContentOp) := #[])
     (programs : Array (ByteArray × Bool) := #[]) : Except WriteError ByteArray :=
-  -- premise: ofPictureIn_imageFree_exact — a lowered picture paints a raster
+  -- premise: ofPictureKeyed_imageFree_exact — a lowered picture paints a raster
   -- only where a shape's own ink holds one, which no evaluator door builds;
   -- the refusal guards that case and every other caller.
   match inkRasterPage? pages with

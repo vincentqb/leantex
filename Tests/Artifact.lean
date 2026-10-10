@@ -362,7 +362,9 @@ private def artIntAfter (stack : Array CTok) (key : String) : Option Int := do
 
 /-- The state the evaluation threads: the marked-content stack, the pen,
 the face and size in force, the horizontal scale in per mille, the open
-path's box, and the transformation the last `cm` set (for `Do`). -/
+path's box, the transformation the last `cm` set (for `Do`), and the text
+state each `q` saved for its `Q` to restore (§8.4.2: the text state is
+graphics state). -/
 private structure ArtSt where
   runs : Array ArtRun := #[]
   boxes : Array ArtBox := #[]
@@ -376,6 +378,7 @@ private structure ArtSt where
   face : String := ""
   path : Option (Dim.Sp × Dim.Sp × Dim.Sp × Dim.Sp) := none
   cm : Option (Dim.Sp × Dim.Sp × Dim.Sp × Dim.Sp) := none
+  saved : Array (Dim.Sp × Int × Option ArtFont × String) := #[]
 
 private def artExtend (p : Option (Dim.Sp × Dim.Sp × Dim.Sp × Dim.Sp))
     (x y : Dim.Sp) : Option (Dim.Sp × Dim.Sp × Dim.Sp × Dim.Sp) :=
@@ -493,8 +496,13 @@ def evalContent (fonts : Std.HashMap String ArtFont) (toks : Array CTok) :
             boxes := s.boxes.push { marks := s.marks, kind := "image"
                                     x0 := min e (e + a), y0 := min f (f + d)
                                     x1 := max e (e + a), y1 := max f (f + d) } }
-      else if o == "q" || o == "Q" then
-        s := { s with cm := none }
+      else if o == "q" then
+        s := { s with cm := none, saved := s.saved.push (s.size, s.th, s.font, s.face) }
+      else if o == "Q" then
+        match s.saved.back? with
+        | some (size, th, font, face) =>
+          s := { s with cm := none, size, th, font, face, saved := s.saved.pop }
+        | none => s := { s with cm := none }
       else if o == "BMC" || o == "BDC" then
         let tag := (s.stack.findSome? ctName?).getD ""
         let m : ArtMark := if tag == "Artifact" then .artifact (artNameAfter s.stack "Type")
@@ -1002,12 +1010,13 @@ def artAccounted (diags : Array Diag) : Bool :=
   diags.any fun d => artOverflowCodes.contains d.code
 
 /-- Where the layout put each glyph of a page, in PDF user space and in
-stream order: the line's x, the segments before it, and the glyph's laid
-advance from its run's start under the line's expansion, by the rule
-`Layout.setLine` scales a run by (`w + w·f/1000`). -/
+stream order — the lines as the stream paints them (`Pdf.paintLines`: a
+picture's labels inside its picture): the line's x, the segments before it,
+and the glyph's laid advance from its run's start under the line's
+expansion, by the rule `Layout.setLine` scales a run by (`w + w·f/1000`). -/
 def artLaidGlyphs (geom : Layout.Geom) (p : Layout.PageOut) : Array Dim.Sp := Id.run do
   let mut out : Array Dim.Sp := #[]
-  for l in p.lines do
+  for l in Pdf.paintLines p do
     let mut x := geom.bleed + l.x
     for s in l.segs do
       match s with

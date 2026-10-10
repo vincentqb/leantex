@@ -26,6 +26,17 @@ def strokedPaths (doc : Ir.Doc) : Array (Array (String × String)) :=
 def attr? (attrs : Array (String × String)) (key : String) : Option String :=
   (attrs.find? (·.1 == key)).map (·.2)
 
+/-- A step read back from an artifact, as ink or a label. -/
+def stepKind {α : Type} : Gfx.Step α → String
+  | .mark _ => "ink"
+  | .label _ => "label"
+
+/-- Whether the first list is the second with some elements left out. -/
+def subseq : List String → List String → Bool
+  | [], _ => true
+  | _ :: _, [] => false
+  | a :: as, b :: bs => if a == b then subseq as bs else subseq (a :: as) bs
+
 end Tests.GfxRegression
 
 open Tests.GfxRegression in
@@ -309,6 +320,7 @@ shipped pipeline. -/
 def gfxAgreementChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet)
     (arts : Array GoldenArt) : IO Unit := do
   let mut placed := 0
+  let mut labelled := 0
   for art in arts do
     let metric := Layout.labelMetric art.geom oneFace art.store
     let pics := Ir.foldBlocks (fun (acc : Array Ir.Pic.Picture) b => match b with
@@ -319,8 +331,32 @@ def gfxAgreementChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet)
       let ms := GfxSvg.readMarks (HtmlDoc.pictureIso box) (HtmlDoc.pictureTree pic box metric {})
       if ms.isEmpty then none else some ms
     let pdf := art.out.pages.flatMap fun p => p.inks.map fun k =>
-      GfxPdf.readMarks ((Pdf.pageIso art.geom).compose k.place) (Pdf.inkPaint art.geom Pdf.figureNames k)
+      GfxPdf.readMarks ((Pdf.pageIso art.geom).compose k.place)
+        (Pdf.inkPaint art.geom Pdf.figureNames (fun _ => none) k)
     placed := placed + pdf.size
+    -- The order the labels paint in among the ink, read off the pages'
+    -- own streams: every picture sequence the PDF paints interleaves its
+    -- labels with its ink as one of the document's pictures' SVG does.
+    let svgSteps := pics.map fun pic =>
+      let box := pic.box metric
+      (GfxSvg.readSteps (HtmlDoc.pictureIso box) (HtmlDoc.pictureTree pic box metric {})).map
+        Tests.GfxRegression.stepKind
+    let tree := Struct.ofDoc (Layout.pdfView art.doc)
+    -- An image's sequence (a raster under its Figure) reads as no step.
+    let pdfSteps := ((Pdf.pageOps art.geom oneFace art.out.pages art.store tree).flatMap fun ops =>
+      ops.filterMap fun o => match o with
+        | .marked (.content "Figure" _ _) body =>
+          some ((GfxPdf.readSteps { flipY := true, dx := 0, dy := 0 } body).map
+            Tests.GfxRegression.stepKind)
+        | _ => none).filter (!·.isEmpty)
+    -- A label the page set no line for (math with no math face in the
+    -- suite's one face) paints nothing in the PDF: the sequence is the
+    -- SVG's with such labels left out, never reordered.
+    check ref s!"gfx agreement {art.name}: every picture sequence sets its labels among its ink as its SVG does"
+      (pdfSteps.all fun s => svgSteps.any fun v =>
+        Tests.GfxRegression.subseq s.toList v.toList &&
+          s.filter (· == "ink") == v.filter (· == "ink"))
+    labelled := labelled + (pdfSteps.filter fun s => s.contains "label" && svgSteps.contains s).size
     let strokes := pics.flatMap fun pic =>
       (elemAttrsList (fun tag => tag == "path" || tag == "rect" || tag == "circle" || tag == "ellipse")
         #[] (HtmlDoc.pictureKids pic (pic.box metric) metric {}).toList).filter fun (_, attrs) =>
@@ -332,3 +368,60 @@ def gfxAgreementChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet)
     check ref s!"gfx agreement {art.name}: every picture with ink is placed"
       (svg.all fun m => pdf.contains m)
   check ref s!"gfx agreement: the corpus placed picture ink ({placed} inks)" (placed > 0)
+  check ref s!"gfx agreement: the corpus sets labels among picture ink as its SVG does ({labelled})"
+    (labelled > 0)
+
+open Tests.GfxRegression in
+/-- **A picture's labels paint in the order its statements wrote them, in
+the PDF as in the HTML.** The invariant whose absence painted every picture
+label after all of its picture's ink in the PDF — the page's one text object
+followed the pictures — while the HTML painted them in source order: a fill
+written after a node covered its label in the SVG and in pgf's own drawing,
+and not in the PDF. Asserted over the artifacts a reader meets: the page's
+typed stream read back operator by operator (`GfxPdf.readSteps`) and as the
+spelled lines, and the typed SVG tree (`GfxSvg.readSteps`). Invented
+picture. -/
+def gfxLabelOrderChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit := do
+  let t := check ref
+  let red : Ir.Color := { r := 255, g := 0, b := 0 }
+  let (doc, _) := elabStr (picDoc "" ""
+    "\\node at (0,0) {Under};\n\\fill[red] (-0.6,-0.2) rectangle (0.6,0.2);\n\\node at (0,1) {Over};")
+  let out := layoutOf oneFace doc
+  let tree := Struct.ofDoc (Layout.pdfView doc)
+  let geom := Layout.Geom.ofPage doc.page
+  let ops := ((Pdf.pageOps geom oneFace out.pages {} tree)[0]?).getD #[]
+  let figures := ops.filterMap fun o => match o with
+    | .marked (.content "Figure" _ _) body => some body
+    | _ => none
+  t "label order: the PDF sets the picture's labels in its Figure sequence, on either side of the fill as written"
+    (match figures.toList with
+     | [body] => (GfxPdf.readSteps { flipY := true, dx := 0, dy := 0 } body).map stepKind ==
+         #["label", "ink", "label"]
+     | _ => false)
+  -- The page's stream as spelled: inside the one Figure sequence, a saved
+  -- state around a text object, the red fill, another; the page's own text
+  -- object holds neither label.
+  let ls := streamLines oneFace doc out
+  let fig := ls.findIdx? (fun l => l.startsWith "/Figure << /MCID")
+  let fillAt := ls.findIdx? (fun l => hasStr l (red.pdfFill ++ " ") && l.endsWith " re f Q")
+  let bts := (ls.zipIdx.filter (·.1 == "BT")).map (·.2)
+  t "label order: the spelled stream paints the first label, the fill, then the second, in one sequence"
+    (match fig, fillAt, bts.toList with
+     | some f, some r, b1 :: b2 :: _ =>
+       f < b1 && b1 < r && r < b2 && ls[b1 - 1]? == some "q" && ls[b2 - 1]? == some "q" &&
+         ((ls.extract (f + 1) b2).all fun l => l != "EMC")
+     | _, _, _ => false)
+  t "label order: the stream's glyph census is the page's, in paint order, every run once"
+    (match out.pages[0]? with
+     | some p => Pdf.runsOf ops == Pdf.paintRuns p &&
+         (Pdf.paintRuns p).length == (Pdf.pageRuns p).length &&
+         ((Pdf.paintLines p).filterMap (·.pictureLabel.map (·.key))).take 2 == ["Under", "Over"]
+     | none => false)
+  -- The HTML: the picture's typed SVG tree, read back element by element.
+  match doc.body.toList.filterMap (fun b => match b with | .picture p => some p | _ => none) with
+  | [pic] =>
+    let box := HtmlDoc.pictureBoxOf {} pic
+    let els := HtmlDoc.pictureTree pic box
+    t "label order: the SVG paints the same order"
+      ((GfxSvg.readSteps (HtmlDoc.pictureIso box) els).map stepKind == #["label", "ink", "label"])
+  | _ => t "label order: the document holds one picture" false

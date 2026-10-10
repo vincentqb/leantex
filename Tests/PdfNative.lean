@@ -278,7 +278,7 @@ def pdfReadbackChecks (ref : IO.Ref (List String)) (fs : Font.FontSet) : IO Unit
     unless fig.imageFree do continue
     let ((x0, y0), (x1, y1)) := fig.box
     let geom : Layout.Geom := { pageW := x1 - x0, pageH := y1 - y0 }
-    let ink : Layout.InkOut := { fig, place := (Pdf.pageIso geom).inv, leaf := none }
+    let ink : Layout.InkOut := { fig := fig.lift, place := (Pdf.pageIso geom).inv, leaf := none }
     match Pdf.writeChecked geom fs #[{ inks := #[ink] }] with
     | .error _ => t s!"readback: {name} writes" false
     | .ok pdf =>

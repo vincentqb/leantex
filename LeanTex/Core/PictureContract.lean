@@ -229,3 +229,41 @@ public theorem runExecuted_pictureKeys_named (file : String) (executed : Compat.
     hdrew h
 
 end LeanTex.Core.Elab
+
+/-! ## Facts over shipped constants
+
+Kernel decisions over constants the boundary and the shadings ship, kept in
+this leaf module off the import chain to the elaborator. -/
+
+namespace LeanTex.Core.Ir
+
+/-- A ten-point document's standalone opens as it always did. -/
+public theorem standaloneHead_ten_exact :
+    standaloneHead (Dim.pt 10) = "\\documentclass{standalone}\n\\usepackage{tikz}\n" := by
+  decide
+
+end LeanTex.Core.Ir
+
+namespace LeanTex.Core.Picture
+
+/-- **A shading's stops are pgf's** (`_exact`): the axis shading's bottom
+colour up to a quarter of its run, its middle at the half, its top from
+three quarters; the radial's inner colour at the centre and its outer from
+half the radius out; the ball's five stops at 0, 9, 18, 25 and 50 of its
+50 bp — each offset the declared one to the nearest 65536th, each colour
+the declared one (tikz.code.tex, `\pgfdeclareverticalshading{axis}` and the
+two `\pgfdeclareradialshading`s). -/
+public theorem shade_stops_exact (s : ShadeSpec) :
+    s.stops.map (·.offset.val) = (match s.kind with
+      | .axis => #[0, 16384, 32768, 49152, 65536]
+      | .radial => #[0, 32768, 65536]
+      | .ball => #[0, 11796, 23593, 32768, 65536]) ∧
+    s.stops.map (·.color) = (match s.kind with
+      | .axis => #[s.bottom, s.bottom, s.middle, s.top, s.top]
+      | .radial => #[s.inner, s.outer, s.outer]
+      | .ball => #[Ir.Color.mix s.ball 15 Ir.Color.white, Ir.Color.mix s.ball 75 Ir.Color.white,
+          Ir.Color.mix s.ball 70 Ir.Color.black, Ir.Color.mix s.ball 50 Ir.Color.black,
+          Ir.Color.black]) := by
+  cases h : s.kind <;> simp [ShadeSpec.stops, stopAt, h] <;> decide
+
+end LeanTex.Core.Picture

@@ -45,8 +45,11 @@ example (left right : Array Nat)
 example (geom : Layout.Geom) (remap : Array Nat) (widths : Array (Array Int))
     (images : Array (Option Nat)) (tags : Array (Option String))
     (ix : GfxPdf.Request → Nat) (page : Layout.PageOut) :
-    Pdf.runsOf (Pdf.contentOps geom remap widths images tags ix page) = Pdf.pageRuns page :=
+    Pdf.runsOf (Pdf.contentOps geom remap widths images tags ix page) = Pdf.paintRuns page :=
   Pdf.contentOps_text geom remap widths images tags ix page
+
+example (page : Layout.PageOut) : (Pdf.paintRuns page).Perm (Pdf.pageRuns page) :=
+  Pdf.paintRuns_text page
 
 example (geom : Layout.Geom) (remap : Array Nat) (widths : Array (Array Int))
     (images : Array (Option Nat)) (tags : Array (Option String))

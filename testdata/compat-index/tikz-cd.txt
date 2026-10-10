@@ -27,6 +27,13 @@ body impl \[\begin{tikzcd} A \arrow{r}{f} & B \end{tikzcd}\]
 body impl \[\begin{tikzcd} A \arrow{r}[swap]{f} & B \end{tikzcd}\]
 body impl \[\begin{tikzcd} A \arrow{r} & B \end{tikzcd}\]
 body impl \[\begin{tikzcd} A \rar & B \end{tikzcd}\]
+body impl \[\begin{tikzcd} A & B \lar \end{tikzcd}\]
+body impl \[\begin{tikzcd} A \dar \\ B \end{tikzcd}\]
+body impl \[\begin{tikzcd} A \\ B \uar \end{tikzcd}\]
+body impl \[\begin{tikzcd} A \drar & \\ & B \end{tikzcd}\]
+body impl \[\begin{tikzcd} & A \dlar \\ B & \end{tikzcd}\]
+body impl \[\begin{tikzcd} & B \\ A \urar & \end{tikzcd}\]
+body impl \[\begin{tikzcd} B & \\ & A \ular \end{tikzcd}\]
 body impl \[\begin{tikzcd}[row sep=large] A \arrow[d] \\ B \end{tikzcd}\]
 body impl \[\begin{tikzcd}[column sep=small] A \arrow[r] & B \end{tikzcd}\]
 body impl \[\begin{tikzcd}[sep=huge] A \arrow[r] & B \end{tikzcd}\]
@@ -46,12 +53,19 @@ body refuse:W0334 \[\begin{tikzcd} A \arrow[r, maps to] & B \end{tikzcd}\]
 body refuse:W0334 \[\begin{tikzcd} A \arrow[r, Rightarrow] & B \end{tikzcd}\]
 body refuse:W0334 \[\begin{tikzcd} A \arrow[r, equal] & B \end{tikzcd}\]
 body refuse:W0334 \[\begin{tikzcd} A \arrow[r, shift left] & B \end{tikzcd}\]
+body refuse:W0334 \[\begin{tikzcd} A \arrow[r, shift right] & B \end{tikzcd}\]
+body refuse:W0334 \[\begin{tikzcd} A \arrow[to=Z] & |[alias=Z]| B \end{tikzcd}\]
+body refuse:W0334 \[\begin{tikzcd} A \arrow[r, from=Z] & |[alias=Z]| B \end{tikzcd}\]
+body refuse:W0334 \[\begin{tikzcd} |[red]| A \arrow[r] & B \end{tikzcd}\]
+body refuse:W0334 \tikzcdset{arrow style=tikz}\[\begin{tikzcd} A \arrow[r] & B \end{tikzcd}\]
 body refuse:W0334 \[\begin{tikzcd} A \arrow[r, crossing over] & B \end{tikzcd}\]
 body refuse:W0334 \[\begin{tikzcd}[cramped] A \arrow[r] & B \end{tikzcd}\]
 body refuse:W0334 \[\begin{tikzcd} A \arrow[r, squiggly] & B \end{tikzcd}\]
 body refuse:W0334 \[\begin{tikzcd} A \arrow[r, "f" marking] & B \end{tikzcd}\]
 pre impl \tikzcdset{arrow style=tikz}
-# \tikzcdset lines are the boundary's: a diagram in a document that sets
-# them is drawn there, and natively with the settings named where no tool
-# draws it. The row above is impl for the command; the probe has no
-# diagram for the setting to reach.
+# \tikzcdset lines are the boundary's: the command is read and carried to
+# the boundary's standalone (the pre row), and a diagram in a document that
+# sets them is drawn there, or natively with the settings named where no
+# tool draws it (the body row with its diagram, a refusal). A cell's own
+# |[...]| options and the to= and from= targets they name are refusals the
+# same way: named, never set as the cell's mathematics.

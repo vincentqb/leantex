@@ -283,7 +283,7 @@ def gfxInkRasterChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : I
   let some (_, raster) := cases[7]? | t "ink rasters: cases" false
   let some (_, plain) := cases[0]? | t "ink rasters: cases" false
   let page (fig : Gfx.Figure Empty) : Layout.PageOut :=
-    { inks := #[{ fig := fig, place := { flipY := true, dx := 0, dy := Dim.pt 100 } }] }
+    { inks := #[{ fig := fig.lift, place := { flipY := true, dx := 0, dy := Dim.pt 100 } }] }
   t "ink rasters: an ink that paints a raster is refused"
     (match Pdf.writeChecked {} oneFace #[page plain, page raster] with
      | .error (.inkRaster 1) => true

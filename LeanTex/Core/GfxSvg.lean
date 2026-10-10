@@ -2,6 +2,7 @@ module
 
 public import LeanTex.Core.Gfx
 public import LeanTex.Core.GfxAffine
+public import LeanTex.Core.GfxSteps
 public import LeanTex.Core.Html
 
 /-!
@@ -1792,5 +1793,146 @@ public theorem marks_projects {L : Type} (labelEl : SFrame → L → Html.Node)
   unfold readMarks tree Figure.marks Figure.expanded
   exact read_treeList labelEl rasters fig place fig.nodes.toList Ctx.root _ (SState.root place) #[]
     (agrees_root place)
+
+/-! ## Labels among the ink -/
+
+/-- One top-level element's steps: label content is that label; any other
+element the marks it paints, read with SVG's meaning at the root. -/
+@[expose] public def readStep (place : Iso) : El → Array (Step Html.Node)
+  | .raw n => #[.label n]
+  | e@(.shape ..) | e@(.g ..) | e@(.use ..) | e@(.stamp ..) | e@(.image ..) =>
+    (readOne (SState.root place) #[] e).map .mark
+
+/-- **What a typed SVG tree paints, its labels among its ink**, read with
+SVG's meaning: each top-level element's steps, in document order. -/
+@[expose] public def readSteps (place : Iso) (els : Array El) : Array (Step Html.Node) :=
+  els.foldl (fun acc e => acc ++ readStep place e) #[]
+
+private theorem readSteps_eq (place : Iso) (els : Array El) :
+    readSteps place els = (els.toList.flatMap fun e => (readStep place e).toList).toArray := by
+  unfold readSteps
+  rw [← Array.foldl_toList]
+  suffices h : ∀ (xs : List El) (acc : Array (Step Html.Node)),
+      xs.foldl (fun acc e => acc ++ readStep place e) acc =
+        acc ++ (xs.flatMap fun e => (readStep place e).toList).toArray by
+    simpa using h els.toList #[]
+  intro xs
+  induction xs with
+  | nil => intro acc; simp
+  | cons e rest ih =>
+    intro acc
+    simp only [List.foldl_cons, List.flatMap_cons, ih, Array.append_assoc]
+    congr 1
+    apply Array.toList_inj.mp
+    simp
+
+mutual
+
+private theorem readOne_acc (ss : SState) (acc : Array Mark) :
+    ∀ e : El, readOne ss acc e = acc ++ readOne ss #[] e
+  | .shape g a => by
+    simp only [readOne]
+    split <;> simp
+  | .g xf op clip kids => by
+    simp only [readOne]
+    exact readList_acc _ acc kids.toList
+  | .use k xf body => by
+    simp only [readOne]
+    exact readList_acc _ acc body.toList
+  | .stamp o xf subs a => by simp [readOne]
+  | .image k m ref => by simp [readOne]
+  | .raw n => by simp [readOne]
+
+private theorem readList_acc (ss : SState) (acc : Array Mark) :
+    ∀ l : List El, readList ss acc l = acc ++ readList ss #[] l
+  | [] => by simp [readList]
+  | e :: rest => by
+    simp only [readList]
+    rw [readList_acc ss _ rest, readList_acc ss (readOne ss #[] e) rest, readOne_acc ss acc e,
+      Array.append_assoc]
+
+end
+
+private theorem readList_flatMap (ss : SState) (l : List El) :
+    readList ss #[] l = (l.flatMap fun e => (readOne ss #[] e).toList).toArray := by
+  induction l with
+  | nil => simp [readList]
+  | cons e rest ih =>
+    simp only [readList, List.flatMap_cons]
+    rw [readList_acc, ih]
+    apply Array.toList_inj.mp
+    simp
+
+private theorem treeList_flatMap {L : Type} (labelEl : SFrame → L → Html.Node)
+    (outlines : Array (Array Subpath)) (rasters : Array RasterRef) (bodies : Array (Array El))
+    (fr : SFrame) (xs : List (Node L)) :
+    treeList labelEl outlines rasters bodies fr #[] xs =
+      (xs.flatMap fun n => (treeOne labelEl outlines rasters bodies fr #[] n).toList).toArray := by
+  induction xs with
+  | nil => simp [treeList]
+  | cons n rest ih =>
+    simp only [treeList, List.flatMap_cons]
+    rw [treeList_acc, ih]
+    apply Array.toList_inj.mp
+    simp
+
+/-- A label-free node writes no label content at the top of what it writes. -/
+private theorem treeOne_noRaw {L : Type} (labelEl : SFrame → L → Html.Node)
+    (outlines : Array (Array Subpath)) (rasters : Array RasterRef) (bodies : Array (Array El))
+    (fr : SFrame) (n : Node L) (hf : n.labelFree = true) :
+    ∀ e ∈ treeOne labelEl outlines rasters bodies fr #[] n, ∀ m, e ≠ .raw m := by
+  intro e he m hm
+  subst hm
+  cases n with
+  | label l => simp [Node.labelFree] at hf
+  | use k xf =>
+    simp only [treeOne] at he
+    split at he <;> simp at he
+  | draw | group | stamp | image | words => simp [treeOne] at he
+
+/-- **What the SVG says, its labels among its ink, is what the figure
+paints** (`_projects`): for a figure whose labels stand at its top level,
+the typed tree `tree` builds — each label the content its setter gives it —
+read with SVG's meaning, element by element, is the figure's steps: its
+marks as `marks_projects` reads them, each label where its node stands. -/
+public theorem steps_projects {L : Type} (labelEl : SFrame → L → Html.Node)
+    (rasters : Array RasterRef) (place : Iso) (fig : Figure L) (h : fig.labelsTop = true) :
+    readSteps place (tree labelEl rasters place fig) =
+      fig.steps.map (Step.mapLabel (labelEl { iso := some place })) := by
+  have htop : ∀ n ∈ fig.nodes.toList, n.topOk = true := by
+    intro n hn
+    simp only [Figure.labelsTop, Bool.and_eq_true, Array.all_eq_true'] at h
+    exact h.1 n (Array.mem_toList_iff.mp hn)
+  rw [readSteps_eq, Figure.steps_eq]
+  unfold tree
+  rw [treeList_flatMap]
+  apply Array.toList_inj.mp
+  simp only [Array.toList_map, List.map_flatMap, List.flatMap_assoc]
+  apply Gfx.flatMap_congr_mem
+  intro n hn
+  by_cases hlab : ∃ l, n = .label l
+  · obtain ⟨l, rfl⟩ := hlab
+    simp [treeOne, Figure.nodeSteps, readStep, Step.mapLabel]
+  · have hn' : ∀ l, n ≠ .label l := fun l he => hlab ⟨l, he⟩
+    have hf := Node.labelFree_of_topOk n (htop n hn) hn'
+    have hr := read_treeOne labelEl rasters fig place n Ctx.root
+      { iso := some place } (SState.root place) #[] (agrees_root place)
+    rw [readList_flatMap] at hr
+    have hs : fig.nodeSteps n = (Node.marksList fig.outlines Ctx.root #[]
+        (Node.expandOne fig.bodies fig.bodies.size #[] n).toList).map .mark := by
+      cases n with
+      | label l => exact absurd rfl (hn' l)
+      | draw | group | use | stamp | image | words => rfl
+    rw [hs, ← hr]
+    simp only [Array.toList_map, List.map_flatMap, List.map_map]
+    apply Gfx.flatMap_congr_mem
+    intro e he
+    have hraw := treeOne_noRaw labelEl fig.outlines rasters
+      (bodyEls labelEl rasters fig) { iso := some place } n hf e
+      (Array.mem_toList_iff.mp he)
+    cases e with
+    | raw m => exact absurd rfl (hraw m)
+    | shape | g | use | stamp | image =>
+      simp [readStep, Function.comp_def, Step.mapLabel]
 
 end LeanTex.Core.GfxSvg

@@ -601,7 +601,7 @@ def pdfConformanceChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet)
   -- and the typed census and the parsed bytes agree on every row.
   let figInks : Array Layout.InkOut := #[4, 5].filterMap fun i =>
     (Tests.GfxMatrix.cases[i]?).map fun c =>
-      { fig := c.2, place := { flipY := true, dx := Dim.pt 50, dy := Dim.pt 300 }, leaf := none }
+      { fig := c.2.lift, place := { flipY := true, dx := Dim.pt 50, dy := Dim.pt 300 }, leaf := none }
   let figPages : Array Layout.PageOut := #[{ inks := figInks }]
   let figGeom : Layout.Geom := {}
   let figTyped := (Pdf.features figGeom oneFace figPages).map Pdf.Feature.name

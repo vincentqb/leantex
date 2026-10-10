@@ -2,6 +2,7 @@ module
 
 public import LeanTex.Core.Gfx
 public import LeanTex.Core.GfxAffine
+public import LeanTex.Core.GfxSteps
 public import LeanTex.Core.PdfOps
 
 /-!
@@ -1256,5 +1257,286 @@ public theorem marks_projects {L : Type} (ix : Request → Nat)
   unfold readMarks emit Figure.marks Figure.expanded
   exact read_emitList ix labelOps hl fig place fig.nodes.toList Ctx.root _ (RState.root place) #[]
     (agrees_root place)
+
+/-! ## Labels among the ink -/
+
+/-- A label's text as the operators a figure sets it with: a text object in
+a saved graphics state of its own, so its font, colour and text state end
+with it (ISO 32000-2 §8.4.2, §9.3.1: text state is graphics state). -/
+@[expose] public def textGroup (t : Array TextOp) : ContentOp := .group none none #[] #[.text t]
+
+/-- The text a label's operators set, when an operator is one: a saved state
+around one text object and nothing else. -/
+@[expose] public def textGroup? : ContentOp → Option (Array TextOp)
+  | .group m gs clips body =>
+    match body.toList with
+    | [.text t] => if m.isNone && gs.isNone && clips.isEmpty then some t else none
+    | _ => none
+  | .fill .. | .paint .. | .text _ | .image .. | .imageMissing .. | .marked .. | .shade ..
+  | .outline .. | .xobject .. => none
+
+/-- Whether an operator is a text object. -/
+@[expose] public def isTextOp : ContentOp → Bool
+  | .text _ => true
+  | .fill .. | .paint .. | .group .. | .image .. | .imageMissing .. | .marked .. | .shade ..
+  | .outline .. | .xobject .. => false
+
+/-- One top-level operator's steps: a label's text group is that label; any
+other operator the marks it paints, read with PDF's meaning at the page. -/
+@[expose] public def readStep (place : Iso) (o : ContentOp) : Array (Step (Array TextOp)) :=
+  match textGroup? o with
+  | some t => #[.label t]
+  | none => (readOne (RState.root place) #[] o).map .mark
+
+/-- **What a figure's operators paint, its labels among its ink**, read
+with PDF's meaning: each top-level operator's steps, in stream order. -/
+@[expose] public def readSteps (place : Iso) (ops : Array ContentOp) :
+    Array (Step (Array TextOp)) :=
+  ops.foldl (fun acc o => acc ++ readStep place o) #[]
+
+private theorem readSteps_eq (place : Iso) (ops : Array ContentOp) :
+    readSteps place ops = (ops.toList.flatMap fun o => (readStep place o).toList).toArray := by
+  unfold readSteps
+  rw [← Array.foldl_toList]
+  suffices h : ∀ (xs : List ContentOp) (acc : Array (Step (Array TextOp))),
+      xs.foldl (fun acc o => acc ++ readStep place o) acc =
+        acc ++ (xs.flatMap fun o => (readStep place o).toList).toArray by
+    simpa using h ops.toList #[]
+  intro xs
+  induction xs with
+  | nil => intro acc; simp
+  | cons o rest ih =>
+    intro acc
+    simp only [List.foldl_cons, List.flatMap_cons, ih, Array.append_assoc]
+    congr 1
+    apply Array.toList_inj.mp
+    simp
+
+mutual
+
+private theorem readOne_acc (rs : RState) (acc : Array Mark) :
+    ∀ o : ContentOp, readOne rs acc o = acc ++ readOne rs #[] o
+  | .paint fl st gs segs => by simp [readOne]
+  | .group m gs clips body => by
+    simp only [readOne]
+    exact readList_acc _ acc body.toList
+  | .xobject m res kind body => by
+    cases kind with
+    | symbol => simp only [readOne]; exact readList_acc _ acc body.toList
+    | group => simp only [readOne]; exact readList_acc _ acc body.toList
+    | stamp fp sp gs => simp only [readOne]; exact readList_acc _ acc body.toList
+    | raster k => simp [readOne]
+  | .shade res g => by simp [readOne]
+  | .outline fl st segs => by simp [readOne]
+  | .fill c x y w h => by simp [readOne]
+  | .text _ => by simp [readOne]
+  | .image .. => by simp [readOne]
+  | .imageMissing .. => by simp [readOne]
+  | .marked _ body => by
+    simp only [readOne]
+    exact readList_acc rs acc body.toList
+
+private theorem readList_acc (rs : RState) (acc : Array Mark) :
+    ∀ l : List ContentOp, readList rs acc l = acc ++ readList rs #[] l
+  | [] => by simp [readList]
+  | o :: rest => by
+    simp only [readList]
+    rw [readList_acc rs _ rest, readList_acc rs (readOne rs #[] o) rest, readOne_acc rs acc o,
+      Array.append_assoc]
+
+end
+
+/-- The marks a list of operators reads to, operator by operator. -/
+private theorem readList_flatMap (rs : RState) (l : List ContentOp) :
+    readList rs #[] l = (l.flatMap fun o => (readOne rs #[] o).toList).toArray := by
+  induction l with
+  | nil => simp [readList]
+  | cons o rest ih =>
+    simp only [readList, List.flatMap_cons]
+    rw [readList_acc, ih]
+    apply Array.toList_inj.mp
+    simp
+
+public theorem emitList_flatMap {L : Type} (ix : Request → Nat)
+    (labelOps : Frame → L → Array ContentOp) (outlines : Array (Array Subpath))
+    (bodyOps : Array (Array ContentOp)) (fr : Frame) (xs : List (Node L)) :
+    emitList ix labelOps outlines bodyOps fr #[] xs =
+      (xs.flatMap fun n => (emitOne ix labelOps outlines bodyOps fr #[] n).toList).toArray := by
+  induction xs with
+  | nil => simp [emitList]
+  | cons n rest ih =>
+    simp only [emitList, List.flatMap_cons]
+    rw [emitList_acc, ih]
+    apply Array.toList_inj.mp
+    simp
+
+private theorem textGroup?_of_body (m : Option Affine) (gs : Option ExtG)
+    (clips : Array (Array PathOp × Rule)) (body : Array ContentOp)
+    (h : ∀ o ∈ body, isTextOp o = false) : textGroup? (.group m gs clips body) = none := by
+  simp only [textGroup?]
+  cases hb : body.toList with
+  | nil => rfl
+  | cons o rest =>
+    cases rest with
+    | cons _ _ => cases o <;> rfl
+    | nil =>
+      cases o with
+      | text t =>
+        have hm : ContentOp.text t ∈ body := by
+          rw [← Array.mem_toList_iff, hb]
+          simp
+        have := h _ hm
+        simp [isTextOp] at this
+      | fill | paint | group | image | imageMissing | marked | shade | outline | xobject => rfl
+
+/-- What a label-free node writes: no text object and no label's text group,
+at the top of what it writes. -/
+private def InkOps (ops : Array ContentOp) : Prop :=
+  ∀ o ∈ ops, isTextOp o = false ∧ textGroup? o = none
+
+mutual
+
+private theorem emitOne_inkOps {L : Type} (ix : Request → Nat)
+    (labelOps : Frame → L → Array ContentOp) (outlines : Array (Array Subpath))
+    (bodyOps : Array (Array ContentOp)) :
+    ∀ (n : Node L) (fr : Frame), n.labelFree = true →
+      InkOps (emitOne ix labelOps outlines bodyOps fr #[] n)
+  | .draw g fl st, fr, _ => by
+    intro o ho
+    simp only [emitOne, Array.push_empty, Array.mem_singleton] at ho
+    subst ho
+    exact ⟨rfl, rfl⟩
+  | .group xf clips alpha kids, fr, hf => by
+    simp only [Node.labelFree] at hf
+    simp only [emitOne]
+    split
+    · exact emitList_inkOps ix labelOps outlines bodyOps kids.toList fr hf
+    · split
+      · intro o ho
+        simp only [Array.push_empty, Array.mem_singleton] at ho
+        subst ho
+        refine ⟨rfl, textGroup?_of_body _ _ _ _ fun b hb => ?_⟩
+        exact (emitList_inkOps ix labelOps outlines bodyOps kids.toList _ hf b hb).1
+      · intro o ho
+        simp only [Array.push_empty, Array.mem_singleton] at ho
+        subst ho
+        exact ⟨rfl, rfl⟩
+  | .use k xf, fr, _ => by
+    intro o ho
+    simp only [emitOne] at ho
+    split at ho
+    · simp only [Array.push_empty, Array.mem_singleton] at ho
+      subst ho
+      exact ⟨rfl, rfl⟩
+    · simp at ho
+  | .stamp o' xf fl st, fr, _ => by
+    intro o ho
+    simp only [emitOne] at ho
+    split at ho
+    · simp only [Array.push_empty, Array.mem_singleton] at ho
+      subst ho
+      exact ⟨rfl, rfl⟩
+    · simp only [Array.push_empty, Array.mem_singleton] at ho
+      subst ho
+      exact ⟨rfl, rfl⟩
+  | .image k xf, fr, _ => by
+    intro o ho
+    simp only [emitOne, Array.push_empty, Array.mem_singleton] at ho
+    subst ho
+    exact ⟨rfl, rfl⟩
+  | .label l, _, hf => by simp [Node.labelFree] at hf
+  | .words _, fr, _ => by
+    intro o ho
+    simp [emitOne] at ho
+
+private theorem emitList_inkOps {L : Type} (ix : Request → Nat)
+    (labelOps : Frame → L → Array ContentOp) (outlines : Array (Array Subpath))
+    (bodyOps : Array (Array ContentOp)) :
+    ∀ (xs : List (Node L)) (fr : Frame), Node.labelFreeList xs = true →
+      InkOps (emitList ix labelOps outlines bodyOps fr #[] xs)
+  | [], _, _ => by intro o ho; simp [emitList] at ho
+  | n :: rest, fr, hf => by
+    simp only [Node.labelFreeList, Bool.and_eq_true] at hf
+    simp only [emitList]
+    rw [emitList_acc]
+    intro o ho
+    simp only [Array.mem_append] at ho
+    rcases ho with ho | ho
+    · exact emitOne_inkOps ix labelOps outlines bodyOps n fr hf.1 o ho
+    · exact emitList_inkOps ix labelOps outlines bodyOps rest fr hf.2 o ho
+
+end
+
+/-- A label-free node's operators, read operator by operator at the page,
+are its marks. -/
+private theorem readSteps_ink {L : Type} (ix : Request → Nat)
+    (labelOps : Frame → L → Array ContentOp)
+    (hl : ∀ fr l rs acc, readList rs acc (labelOps fr l).toList = acc)
+    (fig : Figure L) (place : Iso) (n : Node L) (hf : n.labelFree = true) :
+    ((emitOne ix labelOps fig.outlines (bodyOpsOf ix labelOps fig)
+        { iso := some place, stream := Affine.unit } #[] n).toList.flatMap
+          fun o => (readStep place o).toList) =
+      (Node.marksList fig.outlines Ctx.root #[]
+        (Node.expandOne fig.bodies fig.bodies.size #[] n).toList).toList.map .mark := by
+  have hi := emitOne_inkOps ix labelOps fig.outlines (bodyOpsOf ix labelOps fig) n
+    { iso := some place, stream := Affine.unit } hf
+  have hr := read_emitOne ix labelOps hl fig place n Ctx.root
+    { iso := some place, stream := Affine.unit } (RState.root place) #[] (agrees_root place)
+  rw [← hr, readList_flatMap]
+  simp only [List.map_flatMap]
+  apply flatMap_congr_mem
+  intro o ho
+  have ho' := (hi o (Array.mem_toList_iff.mp ho)).2
+  simp [readStep, ho']
+
+private theorem marks_labelsBy {L α : Type} (f : L → Array α) (ms : List Mark) :
+    (ms.map Step.mark).flatMap (fun s => (Step.labelsBy f s).toList) = ms.map Step.mark := by
+  induction ms with
+  | nil => rfl
+  | cons m rest ih =>
+    rw [List.map_cons, List.flatMap_cons, ih]
+    rfl
+
+/-- **What the PDF says, its labels among its ink, is what the figure
+paints** (`_projects`): for a figure whose labels stand at its top level,
+the operators `emit` writes — each label set as its text group, or as
+nothing where it has no text — read with PDF's meaning, operator by
+operator, are the figure's steps: its marks as `marks_projects` reads them,
+each label where its node stands. -/
+public theorem steps_projects {L : Type} (ix : Request → Nat) (tx : L → Option (Array TextOp))
+    (place : Iso) (fig : Figure L) (h : fig.labelsTop = true) :
+    readSteps place (emit ix (fun _ l => (tx l).toArray.map textGroup) place fig) =
+      fig.steps.flatMap (Step.labelsBy fun l => (tx l).toArray) := by
+  have hl : ∀ (fr : Frame) (l : L) (rs : RState) (acc : Array Mark),
+      readList rs acc ((tx l).toArray.map textGroup).toList = acc := by
+    intro fr l rs acc
+    cases tx l with
+    | none => simp [readList]
+    | some t => simp [readList, readOne, textGroup]
+  have htop : ∀ n ∈ fig.nodes.toList, n.topOk = true := by
+    intro n hn
+    simp only [Figure.labelsTop, Bool.and_eq_true, Array.all_eq_true'] at h
+    exact h.1 n (Array.mem_toList_iff.mp hn)
+  rw [readSteps_eq, Figure.steps_eq]
+  unfold emit
+  rw [emitList_flatMap]
+  apply Array.toList_inj.mp
+  simp only [Array.toList_flatMap, List.flatMap_assoc]
+  apply flatMap_congr_mem
+  intro n hn
+  by_cases hlab : ∃ l, n = .label l
+  · obtain ⟨l, rfl⟩ := hlab
+    cases htx : tx l with
+    | none => simp [emitOne, htx, Figure.nodeSteps, Step.labelsBy]
+    | some t =>
+      simp [emitOne, htx, Figure.nodeSteps, Step.labelsBy, readStep, textGroup, textGroup?]
+  · have hn' : ∀ l, n ≠ .label l := fun l he => hlab ⟨l, he⟩
+    rw [readSteps_ink ix _ hl fig place n (Node.labelFree_of_topOk n (htop n hn) hn')]
+    have hs : fig.nodeSteps n = (Node.marksList fig.outlines Ctx.root #[]
+        (Node.expandOne fig.bodies fig.bodies.size #[] n).toList).map .mark := by
+      cases n with
+      | label l => exact absurd rfl (hn' l)
+      | draw | group | use | stamp | image | words => rfl
+    rw [hs, Array.toList_map, marks_labelsBy]
 
 end LeanTex.Core.GfxPdf

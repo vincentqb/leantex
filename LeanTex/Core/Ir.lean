@@ -4722,44 +4722,69 @@ public def geomFillAt (x y : Sp) (c : Color) : Gfx.Geom → Option Color
     else none
   | .path _ => none
 
+/-- A paint over the ground it covers, at the paint's alpha: per sRGB
+channel, `a`‰ of the paint and the rest of the ground, rounded — source-over
+with a constant alpha, as both artifacts composite a fill (ISO 32000-2
+§11.3.3; Compositing and Blending 1 §5.1), in the sRGB the contrast
+contracts read. An opaque paint is its own colour whatever it covers; a
+translucent one over a ground the walk cannot name names none. -/
+public def _root_.LeanTex.Core.Ir.Color.over (c : Color) (a : Gfx.Alpha) :
+    Option Color → Option Color
+  | some u =>
+    if a = Gfx.Alpha.opaque then some c else
+    let ch (x y : UInt8) : UInt8 :=
+      UInt8.ofNat ((x.toNat * a.val + y.toNat * (1000 - a.val) + 500) / 1000)
+    some { r := ch c.r u.r, g := ch c.g u.g, b := ch c.b u.b }
+  | none => if a = Gfx.Alpha.opaque then some c else none
+
 mutual
 
--- conserves: none — a reading: the fill a node paints at one point.
-/-- The solid fill one node paints at a point, the last of a plain group's
-kids that paints it winning, as the painter's algorithm has it. A group that
-moves, clips or fades its kids is not read: the ground under a label there
-is not one colour the walk can name. -/
-public def inkFillAt (x y : Sp) : Gfx.Node Empty → Option Color
-  | .draw g (some { paint := .solid c, .. }) _ => geomFillAt x y c g
-  | .draw _ _ _ => none
+-- conserves: none — a reading: the ground a node leaves at one point.
+/-- The ground one node leaves at a point over the ground `under` it paints
+on: a solid fill holding the point composites over it at its alpha
+(`Color.over`); a plain group's kids in order, as the painter's algorithm
+has it; a group that fades its kids, their ground faded over `under` at the
+group's alpha — exact under normal blending, an isolated group's coverage
+being its kids'. A group that moves or clips its kids is not read: whether
+its ink covers the point is not a question this walk answers, so the ground
+it stands on stands. -/
+public def inkGroundAt (x y : Sp) (under : Option Color) : Gfx.Node Empty → Option Color
+  | .draw g (some { paint := .solid c, alpha, .. }) _ =>
+    match geomFillAt x y c g with
+    | some c => c.over alpha under
+    | none => under
+  | .draw _ _ _ => under
   | .group xf clips alpha kids =>
-    if xf == Gfx.Affine.unit && clips.isEmpty && alpha == Gfx.Alpha.opaque then
-      inkFillAtList x y none kids.toList
-    else none
-  | .use _ _ => none
-  | .stamp _ _ _ _ => none
-  | .image _ _ => none
+    if xf == Gfx.Affine.unit && clips.isEmpty then
+      let inner := inkGroundAtList x y under kids.toList
+      if alpha == Gfx.Alpha.opaque || inner == under then inner
+      else inner.bind fun k => k.over alpha under
+    else under
+  | .use _ _ => under
+  | .stamp _ _ _ _ => under
+  | .image _ _ => under
   | .label l => nomatch l
-  | .words _ => none
+  | .words _ => under
 
-public def inkFillAtList (x y : Sp) (acc : Option Color) : List (Gfx.Node Empty) → Option Color
-  | [] => acc
-  | n :: rest => inkFillAtList x y ((inkFillAt x y n).or acc) rest
+public def inkGroundAtList (x y : Sp) (under : Option Color) :
+    List (Gfx.Node Empty) → Option Color
+  | [] => under
+  | n :: rest => inkGroundAtList x y (inkGroundAt x y under n) rest
 
 end
 
-/-- The fill a shape paints at a point, when it holds the point: a filled
-rectangle, a filled circle's disc, a filled frame's box. -/
-public def Shape.fillAt (x y : Sp) : Shape → Option Color
-  | .label _ _ _ _ _ _ => none
-  | .ink n => inkFillAt x y n
+/-- The ground a shape leaves at a point over `under`: a label's glyphs are
+no one's ground. -/
+public def Shape.groundAt (x y : Sp) (under : Option Color) : Shape → Option Color
+  | .label _ _ _ _ _ _ => under
+  | .ink n => inkGroundAt x y under n
 
-/-- The ground a label's ink stands on: the fill of the last shape drawn
-before it that paints its anchor — a node's own fill sits under its
-label — and `none` where the label stands on whatever the picture stands
-on. -/
-public def fillUnder (drawn : Array Shape) (x y : Sp) : Option Color :=
-  drawn.foldl (fun g s => (s.fillAt x y).or g) none
+/-- The ground a label's ink stands on: `base`, the ground the picture
+stands on, with every shape drawn before the label composited over it where
+it paints the label's anchor (`inkGroundAt`) — a node's own fill sits under
+its label, a translucent one blended over what it covers. -/
+public def fillUnder (base : Option Color) (drawn : Array Shape) (x y : Sp) : Option Color :=
+  drawn.foldl (fun g s => s.groundAt x y g) base
 
 /-- The inline content each label sets, for the font-scalar walk: every
 glyph — text or math — a picture can ask a face for is here. -/
@@ -15105,7 +15130,7 @@ private def recolorRolesShapes (recolor : RoleRecolor) (pal : Palette) (ground :
   | s :: rest =>
     let s' := match s with
       | .label x y content c sc al =>
-        let g := (Pic.fillUnder drawn x y).or ground
+        let g := Pic.fillUnder ground drawn x y
         .label x y (recolorRolesInlines recolor pal g #[] content.toList) (recolor pal g none c)
           sc al
       | .ink n => .ink n
@@ -16714,11 +16739,6 @@ on the document's own ladder. Any other body size is the switch's to set
   else if body == Dim.pt 12 then "\\documentclass[12pt]{standalone}\n\\usepackage{tikz}\n"
   else "\\documentclass{standalone}\n\\usepackage{tikz}\n"
 
-/-- A ten-point document's standalone opens as it always did. -/
-public theorem standaloneHead_ten_exact :
-    standaloneHead (Dim.pt 10) = "\\documentclass{standalone}\n\\usepackage{tikz}\n" := by
-  decide
-
 /-- The size switch a request's standalone sets before its picture: the
 size in force by its ladder name, on a body size the class's own ladder
 holds (`standaloneHead`); on any other body size, the size the engine's
@@ -16968,18 +16988,21 @@ public theorem macroDecls_mem (macros : Array (String × String)) (body : String
 
 /-- **The boundary request projects the document's design.** Every
 request `pictureRefs` states is one picture body of `pictureSrcs`
-wrapped with the document's preamble, its declared font roles
-(`fontLines doc.fonts`), the palette roles the request mentions
-(`paletteDecls doc.palette`) and the macro definitions its preamble and
-body reach (`macroDecls doc.pictureMacros`) — the same `fonts` and `palette`
-both backends read through `Design.ofDoc`. No backend theorem stands behind
-this one: the PDF embeds the tool's drawing and the HTML embeds a
+wrapped with the document's preamble, the font roles it is set in
+(`fontLines faces`: the document's declared roles, or the faces the engine
+resolved for them, which the driver hands — `Cli.FontAssembly.boundaryFonts`),
+the palette roles the request mentions (`paletteDecls doc.palette`) and the
+macro definitions its preamble and body reach (`macroDecls
+doc.pictureMacros`) — the same `palette` both backends read through
+`Design.ofDoc`, and the faces the page sets in. No backend theorem stands
+behind this one: the PDF embeds the tool's drawing and the HTML embeds a
 rasterization of the same drawing — one fulfilment, two projections. -/
-public theorem pictureRefs_design_projects (doc : Doc) (id w : String)
-    (h : (id, w) ∈ pictureRefs doc) :
+public theorem pictureRefs_design_projects (doc : Doc) (faces : FontSpec)
+    (id w : String)
+    (h : (id, w) ∈ pictureRefs doc faces) :
     ∃ src, (id, src) ∈ doc.pictureSrcs ∧
       w = wrapStandalone (standaloneHead doc.page.fontSize) doc.picturePreamble
-        (fontLines doc.fonts)
+        (fontLines faces)
         (paletteDecls doc.palette
           (macroDeclLines (macroDecls doc.pictureMacros (doc.picturePreamble ++ src.body)) ++
             (doc.picturePreamble ++ src.body)))

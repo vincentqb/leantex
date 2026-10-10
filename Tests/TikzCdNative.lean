@@ -95,3 +95,46 @@ def tikzcdNativeChecks (ref : IO.Ref (List String)) (mathSet : Font.FontSet) : I
   t "diagram natively: with the boundary closed it draws here and names the key"
     ((Ir.pictureRefs closed).isEmpty && closedDs.any (fun d => d.code == "W0334" && hasStr d.message "hook") &&
       hasStr (censusText (page closed)) "Alpha")
+  -- A cell's own node options are named, never set as its mathematics.
+  let (opted, optDs) := firstPass (dvDoc ("\\pictures{ tool = none }\n" ++ pre)
+    "\\[\\begin{tikzcd} |[red]| \\mathrm{Alpha} \\arrow[r] & \\mathrm{Beta} \\end{tikzcd}\\]")
+  t "diagram natively: a cell's |[...]| options are named, never set as its mathematics"
+    (optDs.any (fun d => d.code == "W0334" && hasStr d.message "cell options") &&
+      hasStr (censusText (page opted)) "Alpha" && !hasStr (censusText (page opted)) "red")
+  -- A label in a display the reader draws keeps its anchor, as a formula's
+  -- does: the reference lands on the web page and on the PDF's page. The
+  -- invariant whose absence shipped the drawing without its labels'
+  -- anchors, so every link to them pointed nowhere.
+  let labelled := "\\documentclass{article}\n\\usepackage{amsmath}\n\\usepackage{hyperref}\n" ++
+    pre ++ "\\begin{document}\n\\section{One}\nSee \\ref{cd} and \\ref{al}.\n" ++
+    "\\[\\begin{tikzcd} \\mathrm{Alpha} \\arrow[r] & \\mathrm{Beta} \\end{tikzcd}\\label{cd}\\]\n" ++
+    "Then\n\\begin{align*}\\begin{tikzcd} \\mathrm{Gamma} \\arrow[r] & \\mathrm{Delta} " ++
+    "\\end{tikzcd}\\label{al}\\end{align*}\nAfter.\n\\end{document}"
+  let (ldoc, _) := firstPass labelled
+  let (_, lbody, hds) := HtmlDoc.emitTree {} ldoc
+  let ids := lbody.flatMap (attrValuesOf (fun _ => true) "id")
+  t "diagram natively: a label in its display keeps its anchor on the web page"
+    ((Ir.pictureRefs ldoc).isEmpty && ids.contains "cd" && ids.contains "al" &&
+      hds.all (·.code != "W0326") && hasStr (censusText (page ldoc)) "Delta")
+  let lpages := (layoutOf mathSet ldoc).pages
+  t "diagram natively: and on the PDF's page, where its link lands"
+    ((Layout.destination? lpages "cd").isSome && (Layout.destination? lpages "al").isSome)
+  -- A drawing sets in the size in force where it stands, as a diagram's
+  -- cells and a picture's nodes set in the font current at their statement
+  -- — the size the boundary's request carries too (`pictureSizeInForce`).
+  -- The invariant whose absence drew a diagram under `\large` at the body
+  -- size natively and at the large size at the boundary.
+  let widthOf (src : String) (word : String) : Option Dim.Sp :=
+    let c := page (firstPass src).1
+    (c[0]?.bind fun p => p.lines.find? (·.text.trimAscii.toString == word)).map (·.width)
+  let one := "\\[\\begin{tikzcd} \\mathrm{Alpha} \\arrow[r] & \\mathrm{Beta} \\end{tikzcd}\\]"
+  let node := "\\begin{tikzpicture}\\node {Alpha};\\draw (0,0) -- node {Beta} (2,0);\\end{tikzpicture}"
+  for (what, body) in [("a diagram's cells", one), ("a picture's node", node),
+      ("a picture's edge label", node)] do
+    let word := if what == "a picture's edge label" then "Beta" else "Alpha"
+    match widthOf (dvDoc pre body) word, widthOf (dvDoc pre ("{\\large " ++ body ++ "\n}")) word,
+        widthOf (dvDoc pre ("{\\small " ++ body ++ "\n}")) word with
+    | some w, some wl, some ws =>
+      t s!"drawing size: {what} set larger under \\large and smaller under \\small"
+        (w * 11 < wl * 10 && ws < w)
+    | _, _, _ => t s!"drawing size: {what} ships under each size" false

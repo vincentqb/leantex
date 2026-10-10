@@ -24,8 +24,9 @@ default sans, its formulas in that face's math companion — sent its
 diagrams to a tool that set them in other faces, as Type 1 programs a
 vector import cannot read. The request now carries, for a role the document
 left undeclared, the face the engine resolved (`boundaryFonts`); a declared
-role stands as written, and a face the document ships in its own directory
-travels nowhere, since the tool cannot see it. The fixture beside it is the
+role stands as written, and a face the document ships in its own directory,
+or one found only where the engine alone was told to look, travels nowhere,
+since the tool cannot see it. The fixture beside it is the
 request for an invented diagram under the faces a host resolves for such a
 deck, and the PDF lualatex made of it: the check holds the request to the
 committed source, so a wrapper change fails here until the PDF is
@@ -61,6 +62,16 @@ def boundaryFaceChecks (ref : IO.Ref (List String)) : IO Unit := do
     let kept := boundaryFonts doc.fonts fs shipped
     t "boundary faces: a face the document ships in its own directory travels nowhere"
       (kept.body.isNone && kept.math.isNone)
+    -- A root only the engine was told about (`--font-dir`,
+    -- `LEANTEX_FONT_PATH`) is no root the tool searches: a family found
+    -- there alone would name a face lualatex cannot find, failing a picture
+    -- its Computer Modern default draws.
+    let engineOnly := boundaryFonts doc.fonts fs { scan with privateDirs := [testFonts] }
+    t "boundary faces: a face only the engine was told where to find travels nowhere"
+      (engineOnly.body.isNone && engineOnly.math.isNone)
+    let elsewhere := boundaryFonts doc.fonts fs { scan with privateDirs := ["/nonexistent/fonts"] }
+    t "boundary faces: an engine-only root elsewhere keeps the shared faces travelling"
+      (elsewhere.body == spec.body && elsewhere.math == spec.math)
     let declared := firstPass (dvDoc "\\usepackage{tikz-cd}\n\\fonts{ math = \"Latin Modern Math\" }\n"
       ("\\[" ++ cdLossy ++ "\\]"))
     t "boundary faces: a declared role stands as written"

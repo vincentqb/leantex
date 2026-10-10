@@ -34,6 +34,12 @@ public def searchDirs : List String :=
    "/System/Library/Fonts", "/System/Library/Fonts/Supplemental", "/Library/Fonts",
    "/opt/homebrew/share/fonts"]
 
+/-- The roots `LEANTEX_FONT_PATH` names: the engine's alone, which no other
+program's font search reads. -/
+public def envDirs : IO (List String) := do
+  let env := (← IO.getEnv "LEANTEX_FONT_PATH").getD ""
+  return (env.splitOn ":").filter (!·.isEmpty)
+
 /-- Where else to look, from `LEANTEX_FONT_PATH` and `$HOME`. A TeX Live tree is
 not always at `/usr/share`, and a user's own fonts are never there: without this
 a document naming a font it demonstrably has gets told the font does not exist. -/
@@ -42,9 +48,7 @@ public def extraDirs : IO (List String) := do
   let userDirs :=
     if home.isEmpty then []
     else [home ++ "/.fonts", home ++ "/.local/share/fonts", home ++ "/Library/Fonts"]
-  let env := (← IO.getEnv "LEANTEX_FONT_PATH").getD ""
-  let fromEnv := (env.splitOn ":").filter (!·.isEmpty)
-  return userDirs ++ fromEnv
+  return userDirs ++ (← envDirs)
 
 /-- Read selected sfnt tables at their declared offsets, padding gaps with
 zeros. `none` means no candidate image could be read, not that a font was

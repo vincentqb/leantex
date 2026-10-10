@@ -84,7 +84,7 @@ def pdfFigureWriterChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) 
   let t := check ref
   let figs := #[1, 4, 5].filterMap fun i => (cases[i]?).map (·.2)
   let inks : Array Layout.InkOut := figs.map fun f =>
-    { fig := f, place := { flipY := true, dx := Dim.pt 50, dy := Dim.pt 300 }, leaf := none }
+    { fig := f.lift, place := { flipY := true, dx := Dim.pt 50, dy := Dim.pt 300 }, leaf := none }
   let pages : Array Layout.PageOut := #[{ inks := inks }]
   let geom : Layout.Geom := {}
   let pdf := Pdf.write geom oneFace pages

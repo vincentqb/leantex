@@ -92,6 +92,7 @@ public import LeanTex.Core.PdfProducerProof
 public import LeanTex.Core.PdfFontsProof
 public import LeanTex.Core.Gfx
 public import LeanTex.Core.GfxAffine
+public import LeanTex.Core.GfxSteps
 public import LeanTex.Core.GfxPicture
 public import LeanTex.Core.PdfOps
 public import LeanTex.Core.GfxPdf

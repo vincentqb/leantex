@@ -48,8 +48,11 @@
 # fact about TeX's own state or its control-sequence table, so it ships
 # the branch that draws with the assumption named,
 # part V shape borders (\pgfpointshapeborder), pgflibraryarrows (the latex
-# tip). tikzpicture renders its subset natively; a picture with a
-# construct outside it routes whole to the graphics boundary (§53's
+# and stealth tips), arrows.meta's Latex and Stealth, §17.10 label= and pin=,
+# tikzlibraryfit's fit=, pgflibraryshapes.geometric's diamond, and
+# pgflibrarydecorations.pathreplacing's brace. tikzpicture renders its
+# subset natively; a picture with a construct outside it routes whole to
+# the graphics boundary (§53's
 # externalization, open by default): real TeX draws it, back as an opaque
 # measured vector box (N0023 says so) — so those rows are impl here, and
 # the set lines belong to the boundary's standalone, consumed silently.
@@ -140,6 +143,14 @@ body impl \begin{tikzpicture}\draw[rounded corners] (0,0) rectangle (2,1);\draw[
 body impl \begin{tikzpicture}\draw (0,0) arc (0:90:1);\draw (2,0) arc[start angle=0, end angle=180, radius=5mm];\end{tikzpicture}
 body impl \begin{tikzpicture}\draw[->, shorten >=2pt, shorten <=1pt] (0,0) -- (1,0);\end{tikzpicture}
 body impl \begin{tikzpicture}\begin{scope}[shift={(1,0)}, rotate=30, scale=2]\draw (0,0) -- (1,0);\end{scope}\end{tikzpicture}
+body impl \begin{tikzpicture}\node[draw, label=above:{x}] (u) at (0,0) {z};\end{tikzpicture}
+body impl \begin{tikzpicture}\node[draw, pin=right:{y}] (u) at (0,0) {z};\end{tikzpicture}
+body impl \begin{tikzpicture}\node (u) at (0,0) {x};\node (v) at (1,1) {y};\node[draw, fit=(u) (v)] {};\end{tikzpicture}
+body impl \begin{tikzpicture}\draw[decorate, decoration={brace, amplitude=4pt}] (0,0) -- (2,0);\end{tikzpicture}
+body impl \begin{tikzpicture}\node[diamond, draw] at (0,0) {x};\end{tikzpicture}
+body impl \begin{tikzpicture}\draw[-stealth] (0,0) -- (1,0);\end{tikzpicture}
+body impl \begin{tikzpicture}\draw[-Stealth] (0,0) -- (1,0);\end{tikzpicture}
+body impl \begin{tikzpicture}\draw[-Latex] (0,0) -- (1,0);\end{tikzpicture}
 body impl \begin{tikzpicture}\begin{scope}[xshift=1cm, yshift=2mm, xscale=2, yscale=0.5, red, thick]\draw (0,0) -- (1,0);\end{scope}\end{tikzpicture}
 body impl \begin{tikzpicture}\draw[opacity=0.5] (0,0) -- (1,0);\fill[fill opacity=0.3] (0,0) rectangle (1,1);\draw[draw opacity=0.2] (0,0) circle (1);\end{tikzpicture}
 body impl \tikz{\fill (0,0) rectangle (1,1);}

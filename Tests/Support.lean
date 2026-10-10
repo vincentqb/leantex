@@ -975,14 +975,14 @@ def pageInkMarks (p : Layout.PageOut) :
 mutual
 
 /-- A node's draws onto `acc`, at any depth, as the figure states them. -/
-def nodeDrawsOne (acc : Array (Gfx.Geom × Option Gfx.Fill × Option Gfx.Stroke)) :
-    Gfx.Node Empty → Array (Gfx.Geom × Option Gfx.Fill × Option Gfx.Stroke)
+def nodeDrawsOne {L : Type} (acc : Array (Gfx.Geom × Option Gfx.Fill × Option Gfx.Stroke)) :
+    Gfx.Node L → Array (Gfx.Geom × Option Gfx.Fill × Option Gfx.Stroke)
   | .draw g fl st => acc.push (g, fl, st)
   | .group _ _ _ kids => nodeDrawsList acc kids.toList
   | .use _ _ | .stamp _ _ _ _ | .image _ _ | .label _ | .words _ => acc
 
-def nodeDrawsList (acc : Array (Gfx.Geom × Option Gfx.Fill × Option Gfx.Stroke)) :
-    List (Gfx.Node Empty) → Array (Gfx.Geom × Option Gfx.Fill × Option Gfx.Stroke)
+def nodeDrawsList {L : Type} (acc : Array (Gfx.Geom × Option Gfx.Fill × Option Gfx.Stroke)) :
+    List (Gfx.Node L) → Array (Gfx.Geom × Option Gfx.Fill × Option Gfx.Stroke)
   | [] => acc
   | n :: rest => nodeDrawsList (nodeDrawsOne acc n) rest
 

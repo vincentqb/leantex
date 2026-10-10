@@ -1418,4 +1418,101 @@ with a positive entry, the box's corners ordered. -/
     Node.wfList fig.outlines.size fig.rasters.size fig.symbols.size fig.nodes.toList &&
     (fig.symbols.zipIdx.all fun (s, j) => Node.wfList fig.outlines.size fig.rasters.size j s.toList)
 
+/-! ## Labels among the ink -/
+
+mutual
+
+-- conserves: none — a predicate.
+/-- Whether a tree holds no label at any depth. -/
+@[expose] public def Node.labelFree {L : Type} : Node L → Bool
+  | .draw _ _ _ => true
+  | .group _ _ _ kids => Node.labelFreeList kids.toList
+  | .use _ _ => true
+  | .stamp _ _ _ _ => true
+  | .image _ _ => true
+  | .label _ => false
+  | .words _ => true
+
+@[expose] public def Node.labelFreeList {L : Type} : List (Node L) → Bool
+  | [] => true
+  | n :: rest => Node.labelFree n && Node.labelFreeList rest
+
+end
+
+mutual
+
+-- conserves: none — a relabelling: every mark and every label's place
+-- stays (`Figure.nodeSteps_mapLabels_exact`).
+/-- A node with each label read through `f`, at every depth; its ink stays. -/
+@[expose] public def Node.mapLabelsOne {L L' : Type} (f : L → L') : Node L → Node L'
+  | .draw g fl st => .draw g fl st
+  | .group xf clips alpha kids => .group xf clips alpha (Node.mapLabelsList f #[] kids.toList)
+  | .use k xf => .use k xf
+  | .stamp o xf fl st => .stamp o xf fl st
+  | .image k xf => .image k xf
+  | .label l => .label (f l)
+  | .words s => .words s
+
+@[expose] public def Node.mapLabelsList {L L' : Type} (f : L → L') (acc : Array (Node L')) :
+    List (Node L) → Array (Node L')
+  | [] => acc
+  | n :: rest => Node.mapLabelsList f (acc.push (Node.mapLabelsOne f n)) rest
+
+end
+
+/-- A node a figure's top level may hold where its labels stand there: a
+label, or ink holding none. -/
+@[expose] public def Node.topOk {L : Type} : Node L → Bool
+  | .label _ => true
+  | .draw _ _ _ => true
+  | .group _ _ _ kids => Node.labelFreeList kids.toList
+  | .use _ _ => true
+  | .stamp _ _ _ _ => true
+  | .image _ _ => true
+  | .words _ => true
+
+/-- **A figure whose labels stand at its top level**: every node a label or
+ink holding none, every symbol label-free — so each label paints in the
+figure's own frame, where the placement still carries coordinates, between
+the ink written before it and the ink written after. A picture's figure is
+one (`ofPictureKeyed_labelsTop_exact`). -/
+@[expose] public def Figure.labelsTop {L : Type} (fig : Figure L) : Bool :=
+  fig.nodes.all Node.topOk && fig.symbols.all fun s => s.all Node.labelFree
+
+/-- One step of what a figure paints, in painter's order: an ink mark, or a
+label the engine sets. -/
+public inductive Step (L : Type) where
+  | mark (m : Mark)
+  | label (l : L)
+  deriving Repr, BEq, Inhabited
+
+/-- A step with its label read through `f`. -/
+@[expose] public def Step.mapLabel {L L' : Type} (f : L → L') : Step L → Step L'
+  | .mark m => .mark m
+  | .label l => .label (f l)
+
+/-- A step with its label replaced by what `f` sets for it — none, one or
+several labels of another type; a mark stays. -/
+@[expose] public def Step.labelsBy {L α : Type} (f : L → Array α) : Step L → Array (Step α)
+  | .mark m => #[.mark m]
+  | .label l => (f l).map .label
+
+/-- One top-level node's steps: a label is itself; any other node the marks
+it paints, its uses expanded, read as `Figure.marks` reads them. -/
+@[expose] public def Figure.nodeSteps {L : Type} (fig : Figure L) (n : Node L) : Array (Step L) :=
+  match n with
+  | .label l => #[.label l]
+  | .draw .. | .group .. | .use .. | .stamp .. | .image .. | .words _ =>
+    (Node.marksList fig.outlines Ctx.root #[]
+      (Node.expandOne fig.bodies fig.bodies.size #[] n).toList).map .mark
+
+/-- **What a figure paints, its labels among its ink**, in painter's order:
+each top-level node's steps. For a figure whose labels stand at its top
+level, the sequence both artifacts' readers reproduce
+(`GfxPdf.steps_projects`, `GfxSvg.steps_projects`) — so a label paints over
+the ink written before it and under the ink written after, in both
+(`labelOrder_agree`). -/
+@[expose] public def Figure.steps {L : Type} (fig : Figure L) : Array (Step L) :=
+  fig.nodes.foldl (fun acc n => acc ++ fig.nodeSteps n) #[]
+
 end LeanTex.Core.Gfx

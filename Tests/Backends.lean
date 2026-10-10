@@ -3198,7 +3198,7 @@ def contentOpsTextPage : Layout.PageOut := {
              { x := Dim.pt 5, y := Dim.pt 5, w := Dim.pt 50, h := Dim.pt 10, color := contentOpsCyan }] }
 
 /-- A synthetic figure of plain draws, its frame y up. -/
-def contentOpsFigure (nodes : Array (Gfx.Node Empty)) : Gfx.Figure Empty :=
+def contentOpsFigure {L : Type} (nodes : Array (Gfx.Node L)) : Gfx.Figure L :=
   { box := ((0, 0), (0, 0)), clipToBox := false, nodes := nodes, outlines := #[], symbols := #[]
     rasters := #[], title := none, losses := #[] }
 
@@ -3330,7 +3330,8 @@ def contentOpsChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "content ops: the glyph census is the page's runs"
     (Pdf.runsOf (Pdf.contentOps geom remap (contentOpsWidths ()) imgMap tags Pdf.figureNames
         contentOpsTextPage)
-      == Pdf.pageRuns contentOpsTextPage)
+      == Pdf.paintRuns contentOpsTextPage &&
+      Pdf.paintRuns contentOpsTextPage == Pdf.pageRuns contentOpsTextPage)
   -- Two spellings that coincide: the honest bound on injectivity.
   t "content ops: a fill and a fill-only rectangle path spell the same"
     (Pdf.render #[.fill contentOpsRed 1 2 3 4]

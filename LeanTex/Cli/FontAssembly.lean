@@ -36,6 +36,9 @@ public structure FaceScan where
   docDirs : List String
   dirs : Array String
   diags : Array Diag
+  /-- The roots the engine alone was told about — `--font-dir` and
+  `LEANTEX_FONT_PATH` — which no other program's font search reads. -/
+  privateDirs : List String := []
 
 /-- Which assembly a font set is: the one the document settles on, or the
 provisional one a picture's labels are measured against before the body has
@@ -297,15 +300,22 @@ for a document naming none, a deck's sans) and the math face the companion
 rule chose (`FontEnv.resolveMath`). Without them lualatex sets a picture's
 text and formulas in its Computer Modern defaults — another face than the
 page's, and Type 1 programs a vector import cannot read. Only a family the
-scan found outside the document's own directories travels: the tool
-resolves a family by name from its own search path, and cannot see a
-directory the document ships. -/
+scan found in a root the tool searches too travels — the system's and TeX's
+font directories, never the document's own nor one only the engine was told
+about (`FaceScan.privateDirs`): the tool resolves a family by name from its
+own search path, and a family it cannot find fails the picture that a
+Computer Modern default would have drawn. -/
+-- premise: boundaryFaceChecks — a family found only in the document's
+-- directories or in an engine-only root stays home, one found in a shared
+-- root travels; that luaotfload's search reads the shared roots and no
+-- other is the tool's, witnessed by the fixture lualatex made.
 public def boundaryFonts (spec : Ir.FontSpec) (fs : Font.FontSet) (scan : FaceScan) :
     Ir.FontSpec :=
-  let inDocDir (path : String) : Bool :=
-    scan.docDirs.any fun d => path.startsWith (d ++ "/") || path == d
+  let under (dirs : List String) (path : String) : Bool :=
+    dirs.any fun d => path.startsWith (d ++ "/") || path == d
   let travels (fam : String) : Bool :=
-    scan.faces.any fun f => f.family == fam && !inDocDir f.path
+    scan.faces.any fun f =>
+      f.family == fam && !under scan.docDirs f.path && !under scan.privateDirs f.path
   let text := (fs.index.find? (·.1 == (0, 400, false))).bind fun (_, i) => fs.fonts[i]?
   let math := fs.math.bind (fs.fonts[·]?)
   { spec with
