@@ -2682,17 +2682,23 @@ public structure Imported where
   page : Nat
   deriving Inhabited
 
+/-- **A content stream read as a figure** where `cx` places it: every
+token read from PDF's initial state (`runToks`), the figure in `cx`'s box,
+clipped to it, its losses named — a page's reading over its resources
+(`importPage`), and what the read-back statement (`readback_id`) reads. -/
+public def readStream (cx : Ctx) (content : ByteArray) : Figure Run :=
+  let toks := PdfContentLex.scan content
+  let e : Entered cx.doc := { list := [], nodup := List.nodup_nil, listed := fun _ h => by cases h }
+  let st := runToks cx e toks 0 (St.initial (GState.initial Affine.unit) Store.empty)
+  let s := st.store
+  { box := cx.box, clipToBox := true, nodes := st.finish, outlines := s.outlines, symbols := s.symbols
+    rasters := s.rasters, title := none, losses := s.losses }
+
 /-- A page's content read in its default space as a figure in `box`,
 clipped to it, its losses named. -/
 private def figureOf (doc : Doc) (page : PdfRead.Page) (box : Box) (content : ByteArray) : Figure Run :=
   let res := ((page.resources.map fun r => (doc.deref r).toOption.getD .null)).getD (.dict #[])
-  let cx : Ctx := { doc, res, base := Affine.unit, off := offGroups doc, box }
-  let toks := PdfContentLex.scan content
-  let e : Entered doc := { list := [], nodup := List.nodup_nil, listed := fun _ h => by cases h }
-  let st := runToks cx e toks 0 (St.initial (GState.initial Affine.unit) Store.empty)
-  let s := st.store
-  { box, clipToBox := true, nodes := st.finish, outlines := s.outlines, symbols := s.symbols
-    rasters := s.rasters, title := none, losses := s.losses }
+  readStream { doc, res, base := Affine.unit, off := offGroups doc, box } content
 
 /-- **A PDF page as a figure** (ISO 32000-2 §8, §9): its box — the page's
 (`Doc.pageBox`), as the PDF backend places it (`PdfRead.readForm`) —
@@ -2744,7 +2750,7 @@ public theorem import_box_exact (b : ByteArray) (sel : PdfRead.PageSelection) (i
             | ok c =>
               simp only [hc, Except.ok.injEq] at h
               subst h
-              exact ⟨d, n, p, rfl, hp, by simp [figureOf, hb]⟩
+              exact ⟨d, n, p, rfl, hp, by simp [figureOf, readStream, hb]⟩
 
 /-- **A PDF figure's two faces stand in one box** (`_agree`): the box the
 PDF backend places the page's form in (`PdfRead.readForm`) and the box the

@@ -109,6 +109,7 @@ public import LeanTex.Core.PngEncode
 public import LeanTex.Core.PngEncodeProof
 public import LeanTex.Core.PdfFont
 public import LeanTex.Core.PdfGfx
+public import LeanTex.Core.PdfGfxReadback
 public import LeanTex.Core.FigureLoss
 public import LeanTex.Core.FigureFace
 public import LeanTex.Cli.Args

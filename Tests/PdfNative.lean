@@ -257,7 +257,8 @@ the synthetic matrix that paints no raster, written as a one-page document
 by `Pdf.writeChecked` under the identity placement and imported, paints the
 figure's marks on the grid the writer spells them to (`pdfGrid`) — its
 operators, its resources and its forms read with PDF's meaning on the
-other side. -/
+other side. The cases `PdfGfx.readback_id` covers are named, and each is
+held to the theorem's statement executed. -/
 def pdfReadbackChecks (ref : IO.Ref (List String)) (fs : Font.FontSet) : IO Unit := do
   let t := check ref
   let green : Ir.Color := { r := 0, g := 160, b := 0 }
@@ -287,6 +288,22 @@ def pdfReadbackChecks (ref : IO.Ref (List String)) (fs : Font.FontSet) : IO Unit
         t s!"readback: {name} reads back with nothing lost" imp.figure.losses.isEmpty
         t s!"readback: {name} paints the figure's marks, on the writer's grid"
           (imp.figure.marks == fig.marks.map pdfGrid)
+  -- `PdfGfx.readback_id`'s reach over the matrix: the cases whose nodes it
+  -- covers and whose operators stand on the print grid, each held to the
+  -- statement executed, the stream read with no resources at all.
+  let emitted (fig : Gfx.Figure Empty) := GfxPdf.emit names PdfGfx.noLabels PdfGfx.isoId fig
+  let covered := all.filter fun (_, fig) =>
+    PdfGfx.nodesPlain fig.nodes.toList && (PdfGfx.opsBack (emitted fig).toList).toArray == emitted fig
+  t s!"readback: the theorem covers the matrix's plain cases ({covered.map (·.1)})"
+    (covered.map (·.1) == #["an even-odd path", "a turned group clipped twice", "ink-free words"])
+  let bare : PdfGfx.Ctx :=
+    { doc := { bytes := .empty, locs := {}, memo := {}, memo_ok := fun _ _ h => by simp at h, root := 0
+               trailer := .null }
+      res := .dict #[], base := Gfx.Affine.unit, off := #[], box := ((0, 0), (0, 0)) }
+  for (name, fig) in covered do
+    let imp := PdfGfx.readStream bare (Pdf.render (emitted fig)).toUTF8
+    t s!"readback: {name} reads back as the theorem states"
+      (imp.losses.isEmpty && imp.marks.map PdfGfx.markScreen == fig.marks.map PdfGfx.markScreen)
 
 open Tests.PdfNative in
 /-- **The committed fixtures draw with nothing lost**: cairo's chart
