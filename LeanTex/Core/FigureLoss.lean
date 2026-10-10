@@ -10,10 +10,10 @@ An importer answers exact only when every construct it met has the model's
 meaning; anything else is a keyed `Gfx.Loss`. This module is how a loss is
 named: its feature key, the subject a diagnostic carries it under —
 `figure:<kind>:<feature>`, the kind the importer's (`svg`, `pdf`) — and the
-diagnostics a PDF figure's web face owes it: W0608 where the engine's
-drawing ships without the feature, N0024 where the external converter drew
-the figure because of it. One subject per feature, so the census counts
-the feature, and the message names the figure.
+diagnostics a drawn figure owes it: W0609 where the engine's drawing ships
+without the feature, N0024 where the external converter drew the figure
+because of it. One subject per feature, so the census counts the feature,
+and the message names the figure.
 -/
 
 namespace LeanTex.Core.FigureLoss
@@ -46,12 +46,17 @@ open LeanTex.Core LeanTex.Core.Gfx
   | .font k => s!"{k} font"
   | .budget w => s!"{w} beyond the reader's budget"
 
-/-- **W0608**: a PDF figure's web face is the engine's drawing without the
-feature — no converter drew the figure whole. -/
-@[expose] public def pdfLostDiag (src : String) (l : Gfx.Loss) : Diag :=
-  Diag.of .W0608
-    s!"figure '{src}' is drawn on the web page without its {words l}, which the engine does not draw"
-    (help := some "install poppler's pdftocairo to draw the figure whole, or accept the loss with \\allow{W0608}")
+/-- **W0609**: a PDF figure's web face is the engine's drawing without the
+feature — no converter drew the figure whole; where one was asked and gave
+no face the page can carry, its own words say why. -/
+@[expose] public def pdfLostDiag (src : String) (failure : Option String) (l : Gfx.Loss) : Diag :=
+  Diag.of .W0609
+    (s!"figure '{src}' is drawn on the web page without its {words l}, which the engine does not draw" ++
+      (match failure with
+       | some why => s!" ({why})"
+       | none => ""))
+    (help := some "install poppler's pdftocairo to draw the figure whole, or accept the engine's \
+      drawing with \\allow{W0609}")
     (subject := some (subject "pdf" l)) (output := some .html)
 
 /-- **N0024**: a PDF figure's web face is the external converter's drawing,
@@ -68,11 +73,12 @@ because the engine does not draw the feature. -/
 /-- **Every loss of a PDF figure is named** (`_named`): each loss of the
 census has a diagnostic whose subject is its key — the one the census is
 counted by — whichever route drew the web face. -/
-public theorem pdfDiags_named (src : String) (converted : Bool) (losses : Array Gfx.Loss) (l : Gfx.Loss)
-    (h : l ∈ losses) :
-    ∃ d ∈ diags (if converted then pdfConvertedDiag src else pdfLostDiag src) losses,
+public theorem pdfDiags_named (src : String) (failure : Option String) (converted : Bool)
+    (losses : Array Gfx.Loss) (l : Gfx.Loss) (h : l ∈ losses) :
+    ∃ d ∈ diags (if converted then pdfConvertedDiag src else pdfLostDiag src failure) losses,
       d.subject = some (subject "pdf" l) := by
-  refine ⟨(if converted then pdfConvertedDiag src else pdfLostDiag src) l, Array.mem_map_of_mem h, ?_⟩
+  refine ⟨(if converted then pdfConvertedDiag src else pdfLostDiag src failure) l,
+    Array.mem_map_of_mem h, ?_⟩
   cases converted <;> simp [pdfLostDiag, pdfConvertedDiag, Diag.of_subject]
 
 end LeanTex.Core.FigureLoss

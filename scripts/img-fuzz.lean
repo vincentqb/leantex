@@ -16,7 +16,7 @@ refusal that names its format (never a lie). Every truncation length of
 the shipped fixtures and the synthetics, single-byte mutants at seeded
 random offsets, and random blobs go through `Image.probe` and
 `Image.plan`. The PDF figure importer (`PdfGfx.importPage`) is fuzzed the
-same way, in five classes of 10 000 inputs each, every import inside a
+same way, in six classes of 10 000 inputs each, every import inside a
 wall-time budget (`pdfFigureFuzz`). This is an executable oracle, not a
 theorem: it witnesses totality on millions of bytes of input, it does not
 prove it.
@@ -228,7 +228,7 @@ def timedImport (tally : IO.Ref Tally) (budget : Nat) (what : String) (b : ByteA
 
 def pdfFigureFuzz : IO Unit := do
   let names := #["cairo-chart.pdf", "leantex-strokes.pdf", "lualatex-shade.pdf", "lualatex-text.pdf",
-    "matplotlib-dialect.pdf"]
+    "matplotlib-dialect.pdf", "print-dialect.pdf"]
   let mut fixtures : Array ByteArray := #[]
   let mut slowest := 0
   for n in names do
@@ -312,6 +312,51 @@ def pdfFigureFuzz : IO Unit := do
       | 1 => prog.set! i (UInt8.ofNat v)
       | _ => ⟨(Array.range (i % 4096)).map fun j => UInt8.ofNat ((j * 2654435761 + v) % 256)⟩
     timedImport tally budget "a broken font program" (fontPdf font key bytes dict)
+  -- 6. Image dictionaries: every sample depth, colour space and decoding
+  -- the importer's tables read (grey, RGB, CMYK, indexed over each base, a
+  -- stencil, a colour-key or a soft mask beside), at random sizes, over
+  -- data short, exact or long, and a random Decode array.
+  let spaces : Array String := #["/DeviceGray", "/DeviceRGB", "/DeviceCMYK",
+    "[/Indexed /DeviceRGB 3 <ff000000ff000000ffffffff>]", "[/Indexed /DeviceCMYK 1 <00ff0000ff000000>]",
+    "[/Indexed /DeviceGray 255 <" ++ String.join ((List.range 256).map fun i =>
+      let h := "0123456789abcdef".toList
+      String.ofList [h[i / 16]!, h[i % 16]!]) ++ ">]", "/Pattern", "/Lab"]
+  for _ in [0:10000] do
+    let (w, s1) := rand s 40
+    let (h, s2) := rand s1 40
+    let (bi, s3) := rand s2 7
+    let (si, s4) := rand s3 spaces.size
+    let (extra, s5) := rand s4 5
+    let (len, s6) := rand s5 6000
+    let (dk, s7) := rand s6 4
+    s := s7
+    let bpc := #[1, 2, 4, 8, 16, 3, 0][bi]!
+    let decode := match dk with
+      | 0 => ""
+      | 1 => "/Decode [1 0 1 0 1 0 1 0] "
+      | 2 => "/Decode [0 255] "
+      | _ => "/Decode [0.25 0.75 -1 2 0 1 1 0] "
+    let more := match extra with
+      | 0 => "/ImageMask true "
+      | 1 => "/SMask 9 0 R "
+      | 2 => "/Mask [0 128 10 20 0 255 0 9] "
+      | 3 => "/Interpolate true "
+      | _ => ""
+    let data : ByteArray := ⟨(Array.range len).map fun j => UInt8.ofNat ((j * 2654435761 + w * 31 + h) % 256)⟩
+    let dict := s!"/Type /XObject /Subtype /Image /Width {w} /Height {h} /ColorSpace {spaces[si]!} \
+/BitsPerComponent {bpc} {decode}{more}"
+    let pdf := fuzzPdfBin #[
+      "<< /Type /Catalog /Pages 2 0 R >>".toUTF8, "<< /Type /Pages /Kids [3 0 R] /Count 1 >>".toUTF8,
+      "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 100 50] /Contents 4 0 R \
+/Resources << /XObject << /I1 5 0 R >> /Pattern << /P1 6 0 R >> >> >>".toUTF8,
+      fuzzStreamBin "0.2 0.4 0.6 rg q 40 0 0 30 10 10 cm /I1 Do Q /Pattern cs /P1 scn q 20 0 0 20 60 10 cm /I1 Do Q".toUTF8,
+      fuzzStreamBin data dict,
+      fuzzStreamBin "1 0 0 rg 0 0 5 5 re f".toUTF8
+        "/PatternType 1 /PaintType 1 /TilingType 1 /BBox [0 0 10 10] /XStep 10 /YStep 10 /Resources << >> ",
+      "<< >>".toUTF8, "<< >>".toUTF8,
+      fuzzStreamBin ⟨(Array.range (w * h)).map fun j => UInt8.ofNat (j * 7 % 256)⟩
+        s!"/Type /XObject /Subtype /Image /Width {w} /Height {h} /ColorSpace /DeviceGray /BitsPerComponent 8 "]
+    timedImport tally budget "an image dictionary" pdf
   let t ← tally.get
   IO.println s!"img-fuzz: the PDF figure importer read {t.runs} inputs ({t.drawn} drawn, the rest \
 refused), the slowest in {t.worst} ms, under {budget} ms"

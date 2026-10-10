@@ -219,15 +219,17 @@ Each SVG's verdict is `svgVerdict`'s: only the boundary's refusal refuses the
 page, and a check that never finished omits the resource (`omitFaces`).
 No URL is fetched and no output directory exists at this point. -/
 public def prepareHtml (file : String) (cfg : HtmlDoc.Config) (doc : Ir.Doc)
-    (native : Array ByteArray := #[]) :
+    (checked : Array ByteArray := #[]) :
     IO (Except String HtmlArtifact × Array Diag) := do
   let cfg ← match ← captureHtmlResources file cfg doc with
     | .ok cfg => pure cfg
     | .error why => return (.error why, #[])
   -- premise: nativeFaceClosedChecks — a face the engine drew itself
   -- (`PdfFaces.svgOf`) names only its own fragments and `data:` rasters, so
-  -- the converter's validation has nothing to attest and is not asked.
-  let mut svgChecked : Array ByteArray := native
+  -- the converter's validation has nothing to attest, and a converted face
+  -- the face decision kept passed this very check there (`PdfFaces.answerOf`):
+  -- neither is asked again.
+  let mut svgChecked : Array ByteArray := checked
   let mut omitted : Array (ByteArray × String) := #[]
   for resource in HtmlDoc.resources cfg do
     if resource.media == .svg && !svgChecked.contains resource.bytes &&

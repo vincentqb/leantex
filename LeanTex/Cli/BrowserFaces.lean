@@ -120,10 +120,12 @@ private def primarySource? (en : Image.Loaded) : Option ByteArray :=
 private inductive Prepared where
   | keep (entry : Image.Loaded)
   | converted (entry : Image.Loaded) (plan : Plan) (bytes : Except String ByteArray)
-      (diags : Array Diag) (native : Bool) (route : Option Boundary.Route)
+      (diags : Array Diag) (checked : Bool) (route : Option Boundary.Route)
 
 /-- A selected PDF page's face is native first (`PdfFaces.face`): the
-converter runs only for a page whose import names a loss. -/
+converter runs only for a page whose import names a loss, and its face
+serves only where the page's own check keeps it. Either face stretches onto
+the box the include gives it, as the PDF form does. -/
 private def preparePrimary (en : Image.Loaded) : IO Prepared := do
   let p := plan en
   let some conversion := p.conversion? | return .keep en
@@ -133,7 +135,8 @@ private def preparePrimary (en : Image.Loaded) : IO Prepared := do
     return .converted en p (.error "the SVG source has no captured bytes") #[] false none
   | .pdfPage page, some pdf =>
     let f ← PdfFaces.face (HtmlDoc.resolvedSrc en) pdf page (ImageAssets.pdfSvg pdf page)
-    return .converted en p f.bytes f.diags f.native (some f.route)
+      ImageAssets.validateSvgResult (stretch := true) (cache := ← PdfFaces.cacheDir) (checkRefused := false)
+    return .converted en p f.bytes f.diags f.checked (some f.route)
   | .pdfPage _, none =>
     return .converted en p (.error "the PDF source has no captured bytes") #[] false none
 
@@ -142,32 +145,33 @@ private def Prepared.companion? : Prepared → Option ByteArray
   | _ => none
 
 /-- What one face's preparation leaves: the entry, the diagnostics its
-route owes, and the bytes of a face the engine drew itself. -/
+route owes, and the bytes of a face publication need not check again
+(`PdfFaces.Face.checked`). -/
 public structure Finished where
   entry : Image.Loaded
   diags : Array Diag
-  native : Option ByteArray
+  checked : Option ByteArray
   route : Option Boundary.Route
 
 private def Prepared.finish (prepared : Prepared) : IO Finished := do
   match prepared with
-  | .keep en => return { entry := en, diags := #[], native := none, route := none }
-  | .converted en p bytes diags native route =>
+  | .keep en => return { entry := en, diags := #[], checked := none, route := none }
+  | .converted en p bytes diags checked route =>
     let companionOk ← match prepared.companion? with
       | some svg => Except.isOk <$> ImageAssets.validateSvg svg
       | none => pure false
     let entry := apply en p { bytes, companionOk }
-    let nativeFace := if native then (match bytes with
+    let checkedFace := if checked then (match bytes with
       | .ok b => some b
       | .error _ => none) else none
-    return { entry, diags, native := nativeFace, route }
+    return { entry, diags, checked := checkedFace, route }
 
 public def prepare (en : Image.Loaded) : IO Image.Loaded := do
   return (← (← preparePrimary en).finish).entry
 
 /-- Prepare browser faces with at most `max 1 limit` concurrent requests,
 returning them in source order, with the diagnostics each route owes and
-the faces the engine drew itself. All primaries finish before companions:
+the faces publication need not check again. All primaries finish before companions:
 distinct PDF sources can share a companion's validation cache slot.
 Both phases use the same content keys as the conversion cache's source
 prefix and the ordered, exclusive partition checked by `Batch.plan_exact`,
@@ -178,7 +182,7 @@ public def prepareAllFaces (entries : Array Image.Loaded) (limit : Nat := 4) :
   let prepared ← mapBySource limit primarySource? preparePrimary entries
   let done ← mapBySource limit Prepared.companion? Prepared.finish prepared
   return (done.map (·.entry), done.flatMap (fun f => f.diags.map (f.entry.src, ·)),
-    done.filterMap (·.native), done.foldl (fun t f => (f.route.map t.add).getD t) {})
+    done.filterMap (·.checked), done.foldl (fun t f => (f.route.map t.add).getD t) {})
 
 /-- `prepareAllFaces`' entries alone. -/
 public def prepareAll (entries : Array Image.Loaded) (limit : Nat := 4) :

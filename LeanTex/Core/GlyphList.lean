@@ -132,6 +132,10 @@ public def cffSids : Thunk (Std.HashMap String Nat) := Thunk.mk fun _ =>
 /-- A glyph name's CFF standard string identifier, if it has one. -/
 public def cffSid? (name : String) : Option Nat := cffSids.get.get? name
 
+/-- The standard Macintosh glyph name a TrueType 'post' table gives index
+`i` (0 to 257). -/
+public def macGlyphName (i : Nat) : Option String := GlyphListData.macGlyphNames[i]?
+
 /-- A CFF standard string by its identifier. -/
 public def cffString? (sid : Nat) : Option String := GlyphListData.cffStandardStrings[sid]?
 

@@ -388,7 +388,7 @@ its label when nothing did — while the PDF draws a placeholder box. That the
 marked page closes is evidence, not a theorem: `machineLossChecks` closes it
 over the fixture's IR and through the built binary. -/
 public def markFaceless (s : Image.Store) : Image.Store :=
-  { entries := s.entries.map markOne }
+  { s with entries := s.entries.map markOne }
 
 /-- **Every boundary picture has a face or a reason** (`_covers`). -/
 public theorem markFaceless_covers (s : Image.Store) :
@@ -455,7 +455,7 @@ accounting. A file the tools read and refused keeps the refusal: only the
 requests whose plan a fact about the machine stopped are marked (`stopped`,
 the driver's record). -/
 public def markUnplanned (stopped : Array Image.Request) (s : Image.Store) : Image.Store :=
-  { entries := s.entries.map (markStopped stopped) }
+  { s with entries := s.entries.map (markStopped stopped) }
 
 /-- **Every stopped include has a reason** (`_covers`). -/
 public theorem markUnplanned_covers (stopped : Array Image.Request) (s : Image.Store) :
@@ -573,6 +573,14 @@ public theorem route_lossy_exact (ls : Array Gfx.Loss) (t : ToolState) (decl : R
     route (.lossy ls) t decl = .tool ∨ route (.lossy ls) t decl = .nativeWithLoss := by
   unfold route
   cases decl <;> cases t <;> simp
+
+/-- **The converter's drawing serves only where it drew** (`_exact`): a lossy
+import takes the converter's face only from a converter the document did
+not refuse and that drew one. -/
+public theorem route_tool_exact (ls : Array Gfx.Loss) (t : ToolState) (decl : Refusal)
+    (h : route (.lossy ls) t decl = .tool) : t = .drew ∧ decl = .none := by
+  unfold route at h
+  cases decl <;> cases t <;> simp_all
 
 /-- **A lossless import never asks the converter** (`_exact`), whatever the
 document declares. -/

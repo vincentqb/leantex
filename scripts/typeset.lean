@@ -39,7 +39,7 @@ row.
 
   overfull       body lines past the text area beyond their protrusion
   overflow-pt    the largest such overflow, in whole points
-  off-medium     lines, paths and fills with ink off the page and its bleed
+  off-medium     lines, picture marks and fills with ink off the page and its bleed
   club           a paragraph's first line alone at the foot of a page
   widow          a paragraph's last line alone at the head of a page
   page-hyphen    a page turn inside a hyphenated word
@@ -710,7 +710,7 @@ def selftest : IO UInt32 := tierSelftest "typeset" fun no => do
     (List.range n).toArray.map fun (i : Nat) => top + 12 * (i : Int)
   let pages : Array Layout.PageOut :=
     -- seven lines past the text area by 13, 1 … 6 pt; two lines below the
-    -- page, two paths and two fills past its edge
+    -- page, two picture marks and two fills past its edge
     #[{ stPage ((#[13, 1, 2, 3, 4, 5, 6].map fun pt => bare (overBy pt)) ++
           #[bare (stLine 100 805 #[stRun 50 "low"]), bare (stLine 300 805 #[stRun 50 "low"])])
         (origin 0) with

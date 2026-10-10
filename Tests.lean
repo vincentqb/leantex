@@ -352,6 +352,7 @@ def backendSuiteChecks (ref : IO.Ref (List String)) : IO Unit := do
   glyphListChecks ref
   pdfFontChecks ref
   pdfInterpreterChecks ref
+  pdfStateChecks ref
   figureRouteChecks ref
   nativeFaceClosedChecks ref
   pdfFixtureChecks ref

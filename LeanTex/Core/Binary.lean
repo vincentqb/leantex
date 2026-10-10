@@ -230,6 +230,55 @@ public theorem Reads.array (read : Reader α) (encode : α → ByteArray) (value
   simp only [Reader.array, hsize, ↓reduceIte]
   simpa using Reads.arrayLoop read encode values.toList #[] (by simpa using h) pre post
 
+/-- `count` records read one after another onto `acc`, each as wide as it
+says — `array`'s reading where the records' widths differ. -/
+public def Reader.many (read : Reader α) : Nat → Array α → Reader (Array α)
+  | 0, acc => pure acc
+  | count + 1, acc => do
+      let value ← read
+      Reader.many read count (acc.push value)
+
+/-- **Records of any width read back** (`Reader.many` over `array`). -/
+public theorem Reads.many (read : Reader α) (encode : α → ByteArray)
+    (values : List α) (acc : Array α) (h : ∀ v ∈ values, Reads read v (encode v)) :
+    Reads (Reader.many read values.length acc) (acc ++ values.toArray)
+      (Binary.array encode values.toArray) := by
+  induction values generalizing acc with
+  | nil => simpa [Reader.many] using Reads.pure acc
+  | cons value values ih =>
+      rw [array_cons]
+      have heq : acc ++ (value :: values).toArray = acc.push value ++ values.toArray := by
+        apply Array.ext'
+        simp
+      rw [heq]
+      exact Reads.bind read (fun v => Reader.many read values.length (acc.push v))
+          value (acc.push value ++ values.toArray) (encode value)
+          (Binary.array encode values.toArray)
+          (h value (by simp)) (ih _ (fun v hv => h v (by simp [hv])))
+
+/-- A string as a record: its UTF-8 bytes behind their count. -/
+@[expose] public def str (s : String) : ByteArray := natBE 4 s.toUTF8.size ++ s.toUTF8
+
+/-- A string record read back. -/
+public def Reader.str : Reader String := do
+  let n ← Reader.nat 4
+  let b ← Reader.bytes n
+  Reader.lift (String.fromUTF8? b)
+
+/-- A string's UTF-8 bytes decode as the string. -/
+public theorem fromUTF8?_toUTF8 (s : String) : String.fromUTF8? s.toUTF8 = some s := by
+  have h : s.toByteArray.IsValidUTF8 := s.isValidUTF8
+  simp only [String.toUTF8_eq_toByteArray, String.fromUTF8?, h, ↓reduceDIte, String.fromUTF8]
+
+/-- **A string record reads back** for a string under 4 GiB. -/
+public theorem Reads.str (s : String) (h : s.toUTF8.size < 256 ^ 4) :
+    Reads Reader.str s (str s) := by
+  have hb := Reads.bind (Reader.bytes s.toUTF8.size) (fun b => Reader.lift (String.fromUTF8? b))
+    s.toUTF8 s s.toUTF8 .empty (Reads.bytes s.toUTF8) (Reads.lift _ s (fromUTF8?_toUTF8 s))
+  rw [ByteArray.append_empty] at hb
+  exact Reads.bind (Reader.nat 4) _ s.toUTF8.size s (natBE 4 s.toUTF8.size) s.toUTF8
+    (Reads.nat 4 _ h) hb
+
 /-- Reject trailing bytes after the record parser succeeds. -/
 public def Reader.run (read : Reader α) (bytes : ByteArray) : Option α := do
   let (value, pos) ← read bytes 0

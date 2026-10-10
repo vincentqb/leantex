@@ -1,0 +1,54 @@
+%PDF-1.7
+1 0 obj
+<< /Type /Catalog /Pages 2 0 R >>
+endobj
+2 0 obj
+<< /Type /Pages /Kids [3 0 R] /Count 1 >>
+endobj
+3 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200 120] /Contents 4 0 R /Resources << /XObject << /I1 5 0 R /I2 6 0 R >> /Shading << /S0 7 0 R >> >> >>
+endobj
+4 0 obj
+<< /Length 291 >>
+stream
+0 0 0 0 k 0 0 200 120 re f
+0 0 0 1 k 10 70 40 40 re f
+1 0 0 0 k 60 70 40 40 re f
+0 1 0 0 k 110 70 40 40 re f
+0 0 1 0 k 160 70 30 40 re f
+0.2 0.6 0 0.1 K 3 w 10 60 m 190 60 l S
+q 10 10 180 40 re W n q 180 0 0 40 10 10 cm /S0 sh Q Q
+q 30 0 0 30 20 15 cm /I1 Do Q
+q 30 0 0 30 150 15 cm /I2 Do Q
+endstream
+endobj
+5 0 obj
+<< /Length 129 /Type /XObject /Subtype /Image /Width 4 /Height 4 /ColorSpace /DeviceCMYK /BitsPerComponent 8 /Filter /ASCIIHexDecode >>
+stream
+00ff0000ff00002a00ff0000ff00002aff00002a00ff0000ff00002a00ff000000ff0000ff00002a00ff0000ff00002aff00002a00ff0000ff00002a00ff0000>
+endstream
+endobj
+6 0 obj
+<< /Length 9 /Type /XObject /Subtype /Image /Width 2 /Height 2 /ColorSpace [/Indexed /DeviceCMYK 2 <000000ff 00ffff00 ff000000>] /BitsPerComponent 8 /Filter /ASCIIHexDecode >>
+stream
+00010201>
+endstream
+endobj
+7 0 obj
+<< /ShadingType 2 /ColorSpace /DeviceCMYK /Coords [0 0 1 0] /Function << /FunctionType 2 /Domain [0 1] /C0 [0 0.8 0 0] /C1 [1 0.8 0 0] /N 1 >> /Extend [true true] >>
+endobj
+xref
+0 8
+0000000000 65535 f 
+0000000009 00000 n 
+0000000058 00000 n 
+0000000115 00000 n 
+0000000279 00000 n 
+0000000621 00000 n 
+0000000919 00000 n 
+0000001137 00000 n 
+trailer
+<< /Size 8 /Root 1 0 R >>
+startxref
+1318
+%%EOF

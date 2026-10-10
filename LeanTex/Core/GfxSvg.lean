@@ -821,20 +821,24 @@ top-left corner at the origin, y down. -/
 /-- **A figure as a standalone SVG document's root**: spelled children in
 the SVG namespace, the viewBox the figure's box in points from its
 top-left corner, the size the same in `pt`, overflow hidden exactly when
-the figure clips to its box. -/
-public def documentRoot (box : Box) (clipToBox : Bool) (kids : Array Html.Node) : Html.Node :=
+the figure clips to its box; a figure that `stretch`es fills whatever box
+it is shown in, as the PDF form an include scales does, instead of SVG's
+default fit inside it. -/
+public def documentRoot (box : Box) (clipToBox : Bool) (kids : Array Html.Node)
+    (stretch : Bool := false) : Html.Node :=
   let w := (box.2.1 - box.1.1).toPtString
   let h := (box.2.2 - box.1.2).toPtString
-  Html.elem "svg" kids #[("xmlns", "http://www.w3.org/2000/svg"), ("viewBox", s!"0 0 {w} {h}"),
+  Html.elem "svg" kids (#[("xmlns", "http://www.w3.org/2000/svg"), ("viewBox", s!"0 0 {w} {h}"),
     ("width", s!"{w}pt"), ("height", s!"{h}pt"),
-    ("overflow", if clipToBox then "hidden" else "visible")]
+    ("overflow", if clipToBox then "hidden" else "visible")] ++
+    (if stretch then #[("preserveAspectRatio", "none")] else #[]))
 
 /-- A figure as a standalone SVG file: the XML declaration and its root. -/
 public def document {L : Type} (labelEl : SFrame → L → Html.Node) (rasters : Array RasterRef)
-    (fig : Figure L) : String :=
+    (fig : Figure L) (stretch : Bool := false) : String :=
   "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n" ++
     Html.render (documentRoot fig.box fig.clipToBox
-      (spell 0 (tree labelEl rasters (documentIso fig.box) fig))) 0
+      (spell 0 (tree labelEl rasters (documentIso fig.box) fig)) stretch) 0
 
 /-! ## Reading back -/
 

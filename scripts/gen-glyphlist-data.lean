@@ -22,7 +22,9 @@ What the module receives:
   MacRomanEncoding and the CFF Expert encoding, as pdf.js spells them
   (encodings.js), whose StandardEncoding must equal 8a.enc's;
 - `cffStandardStrings`: the CFF standard strings by string identifier,
-  0 to 390 (cff_parser.js).
+  0 to 390 (cff_parser.js);
+- `macGlyphNames`: the 258 standard Macintosh glyph names, by the index a
+  TrueType 'post' table gives them (fonts_utils.js).
 
 Every source is checked against testdata/vendor/glyphlist/SHA256SUMS
 before it is read.
@@ -191,6 +193,10 @@ def main : IO Unit := do
   let expert ← jsStrings "encodings.js" "ExpertEncoding" encJs
   let stdJs ← jsStrings "encodings.js" "StandardEncoding" encJs
   let cffStrings ← jsStrings "cff_parser.js" "CFFStandardStrings" cffJs
+  let macGlyphs ← jsStrings "fonts_utils.js" "MacStandardGlyphOrdering"
+    (← IO.FS.readFile (dir / "fonts_utils.js"))
+  unless macGlyphs.size == 258 && macGlyphs[0]? == some ".notdef" && macGlyphs[3]? == some "space" do
+    die s!"fonts_utils.js: {macGlyphs.size} Macintosh glyph names, expected 258 from .notdef"
   for (n, xs) in [("WinAnsiEncoding", winNames), ("MacRomanEncoding", macNames),
       ("ExpertEncoding", expert), ("StandardEncoding", stdJs)] do
     unless xs.size == 256 do die s!"encodings.js: {n} has {xs.size} names, expected 256"
@@ -209,7 +215,8 @@ def main : IO Unit := do
     "Windows code page 1252 and Mac OS Roman (Python's cp1252 and mac_roman",
     "codecs), with the PDF's readings of the two applied as the generator's",
     "header says, and pdf.js's encoding names and CFF standard strings",
-    "(encodings.js, cff_parser.js). This module carries only data: `GlyphList`",
+    "(encodings.js, cff_parser.js), and its standard Macintosh glyph names",
+    "(fonts_utils.js). This module carries only data: `GlyphList`",
     "reads it, and its contracts are checked by the suite.",
     "-/",
     "",
@@ -246,8 +253,12 @@ def main : IO Unit := do
     "public def cffStandardStrings : Array String :=",
     "  " ++ stringArray cffStrings,
     "",
+    "/-- The standard Macintosh glyph names by their 'post' table index, 0 to 257. -/",
+    "public def macGlyphNames : Array String :=",
+    "  " ++ stringArray macGlyphs,
+    "",
     "end LeanTex.Core.GlyphListData",
     ""]
   IO.FS.writeFile output text
   IO.println s!"wrote {output}: {agl.size} glyph names, three encodings, their names, \
-{cffStrings.size} CFF standard strings"
+{cffStrings.size} CFF standard strings, {macGlyphs.size} Macintosh glyph names"

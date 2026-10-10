@@ -944,31 +944,6 @@ private def Reader.deref (r : Reader) (o : Obj) : Except String Obj := do
   | .ref n _ => return (← r.get n).1
   | _ => return o
 
-/-- Resolve an array before selecting its ordered stream references.
-For a single stream retain the original reference, not its dictionary. -/
-private def Reader.contentParts (r : Reader) (contents : Obj) : Except String (Array Obj) := do
-  match ← r.deref contents with
-  | .arr xs => return xs
-  | _ => return #[contents]
-
-/-- Artifact-specific: every resolved array is preserved exactly,
-including order, multiplicity and the empty value, whichever storage
-form supplied it. The premise is the reader's actual dereference. -/
-private theorem Reader.contentParts_array_exact (r : Reader) (contents : Obj) (xs : Array Obj)
-    (h : r.deref contents = .ok (.arr xs)) :
-    r.contentParts contents = .ok xs := by
-  simp only [Reader.contentParts, h]
-  rfl
-
-/-- Artifact-specific: resolving a single stream's dictionary does not
-replace the reference from which the caller reads its stream bytes. -/
-private theorem Reader.contentParts_stream_exact (r : Reader) (num gen : Nat)
-    (es : Array (String × Obj)) (raw : ByteArray)
-    (h : r.get num = .ok (.dict es, some raw)) :
-    r.contentParts (.ref num gen) = .ok #[.ref num gen] := by
-  simp only [Reader.contentParts, Reader.deref, h]
-  rfl
-
 -- ## One read of a file: object streams decoded once
 
 /-- An object stream's decoded data, header pairs and `/First`, as
@@ -1706,6 +1681,32 @@ private def readPage (b : ByteArray) (page : PageSelection) :
 public def Doc.page (d : Doc) (page : PageSelection) : Except String (Nat × Page) :=
   selectPage d d.root page
 
+/-- A page's `Contents` as its ordered stream references (§7.7.3.3): an
+array resolved, a single stream kept as the reference it is, not its
+dictionary. -/
+public def Doc.contentParts (r : Doc) (contents : Obj) : Except String (Array Obj) := do
+  match ← r.deref contents with
+  | .arr xs => return xs
+  | _ => return #[contents]
+
+/-- Artifact-specific: every resolved array is preserved exactly,
+including order, multiplicity and the empty value, whichever storage form
+supplied it. The premise is the reader's actual dereference. -/
+public theorem Doc.contentParts_array_exact (r : Doc) (contents : Obj) (xs : Array Obj)
+    (h : r.deref contents = .ok (.arr xs)) :
+    r.contentParts contents = .ok xs := by
+  simp only [Doc.contentParts, h]
+  rfl
+
+/-- Artifact-specific: resolving a single stream's dictionary does not
+replace the reference from which the caller reads its stream bytes. -/
+public theorem Doc.contentParts_stream_exact (r : Doc) (num gen : Nat)
+    (es : Array (String × Obj)) (raw : ByteArray)
+    (h : r.get num = .ok (.dict es, some raw)) :
+    r.contentParts (.ref num gen) = .ok #[.ref num gen] := by
+  simp only [Doc.contentParts, Doc.deref, h]
+  rfl
+
 /-- A page's content streams decoded and joined by line feeds (§7.8.2: the
 division between streams falls only between operators). -/
 public def Doc.content (r : Doc) (page : Page) : Except String ByteArray := do
@@ -1713,9 +1714,7 @@ public def Doc.content (r : Doc) (page : Page) : Except String ByteArray := do
   match page.node.get? "Contents" with
   | none => pure ()
   | some contents =>
-    let parts ← match ← r.deref contents with
-      | .arr xs => pure xs
-      | _ => pure #[contents]
+    let parts ← r.contentParts contents
     for part in parts do
       let num ← match part with
         | .ref n _ => pure n

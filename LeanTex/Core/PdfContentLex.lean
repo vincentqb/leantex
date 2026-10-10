@@ -202,42 +202,55 @@ public def Tok.renderInto (acc : ByteArray) : Tok → ByteArray
     (head ++ "ID ".toUTF8 ++ data).push 10 ++ "EI".toUTF8
 
 /-- Tokens spelled one after another, a line feed after each: what `scan`
-reads back (`scan_render_exact`). -/
+reads back, for operands and operators, whole (`scan_render_exact`). An
+inline image's data is found again by its stated length or the `EI` that
+ends it, which the theorem does not cover: the suite's lexer cases hold
+it (`pdfContentLexChecks`). -/
 public def render (toks : Array Tok) : ByteArray :=
   toks.foldl (fun acc t => (t.renderInto acc).push 10) ByteArray.empty
 
 /-! ## Reading operands -/
 
-/-- A number operand as an exact rational: an integer, or a real's decimal
-spelling read exactly (§7.3.3: an optional sign, digits, at most one
-point). `none` for anything else. -/
-public def numRat? (o : Obj) : Option Rat :=
+/-- A number operand's parts (§7.3.3): its sign, its digits as one
+natural `n`, and the power of ten `scale` they are over — an integer's
+scale is 1, and a real's spelling is read exactly (an optional sign,
+digits, at most one point). `none` for anything else. -/
+public def numParts? (o : Obj) : Option (Bool × Nat × Nat) :=
   match o with
-  | .int n => some n
+  | .int n => some (decide (n < 0), n.natAbs, 1)
   | .real raw => Id.run do
     let s := raw.toList
     let (neg, s) := match s with
       | '-' :: rest => (true, rest)
       | '+' :: rest => (false, rest)
       | _ => (false, s)
-    let mut ip : Nat := 0
-    let mut fr : Nat := 0
+    let mut n : Nat := 0
     let mut scale : Nat := 1
     let mut seenDot := false
     let mut seen := false
     for c in s do
       if c.isDigit then
         seen := true
-        if seenDot then
-          fr := fr * 10 + (c.toNat - 48)
-          scale := scale * 10
-        else ip := ip * 10 + (c.toNat - 48)
+        n := n * 10 + (c.toNat - 48)
+        if seenDot then scale := scale * 10
       else if c == '.' && !seenDot then seenDot := true
       else return none
     if !seen then return none
-    let v : Rat := (ip : Rat) + mkRat fr scale
-    return some (if neg then -v else v)
+    return some (neg, n, scale)
   | _ => none
+
+/-- A number operand as an exact rational (`numParts?`). -/
+public def numRat? (o : Obj) : Option Rat :=
+  (numParts? o).map fun (neg, n, scale) =>
+    let v : Rat := mkRat n scale
+    if neg then -v else v
+
+/-- `numRat?` is its parts' rational. -/
+public theorem numRat?_parts (o : Obj) : numRat? o = (numParts? o).map fun (neg, n, scale) =>
+    let v : Rat := mkRat n scale
+    if neg then -v else v := by
+  unfold numRat?
+  rfl
 
 /-- A string operand's bytes, its escapes resolved (§7.3.4): a literal's
 backslash sequences — `\n \r \t \b \f \( \) \\`, up to three octal digits,

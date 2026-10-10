@@ -2,12 +2,12 @@
 target: chromium
 tools: node v26.10.0  chromium 151.0.7922.34 (playwright 1.62.0)  firefox untested (browserType.launch: Failed to launch the browser process.)  xmllint: using libxml version 21504  Using libxml 21504, libxslt 10145 and libexslt 825  rsvg-convert version 2.63.2  pdftocairo version 26.09.0  pdftotext version 26.09.0
 date: 2026-10-10
-src-key: 2fa930974f32508d
-browser-face-src-key: 9ed85bbb09b495c6
-browser-face-key: 94c5f08ab85c7a80
-browser-face: diagram-boundary diagram-boundary/i0-ebb51696f3335a2ca0f2739c01b2fefce339661a01c1a7608b124f72b01022dc.svg ok:13063:328976cbf658118181147f45593c0ec33aa06f3e7e67863203ca47dabe30637f
-browser-face: figures figures/i0-e0f0aa06d41410cda8846c8a7a7a6495a190e8c095ad947e4a5107d4d1134af1.svg ok:12919:c76f219716524e5acf842093f32db92567ca2fa9e79b8383859edaf707f4a932
-browser-face: figures figures/i1-e0f0aa06d41410cda8846c8a7a7a6495a190e8c095ad947e4a5107d4d1134af1.svg ok:12919:c76f219716524e5acf842093f32db92567ca2fa9e79b8383859edaf707f4a932
+src-key: 0fa968aa645fd651
+browser-face-src-key: 49e47f170bfe82e4
+browser-face-key: d9702d98f2a585fe
+browser-face: diagram-boundary diagram-boundary/i0-249712644942f6539c1996773ace62926cd3156eaefec34acd4772d192e1d9a1.svg ok:1456:6f73c6e15aa34a10126ee55979b535d3ad8737a5632c1ec78a67c5484fc44925
+browser-face: figures figures/i0-145721e6db6af3f37ca705139a3da319b045f092c8d27cd7d4625f2c8b2b48a5.svg ok:9883:72ae369b264b0157ad4515f219a76237b5d47577799b84a92910b91b3d7fd439
+browser-face: figures figures/i1-145721e6db6af3f37ca705139a3da319b045f092c8d27cd7d4625f2c8b2b48a5.svg ok:9883:72ae369b264b0157ad4515f219a76237b5d47577799b84a92910b91b3d7fd439
 fixtures: 101 built
 
 [feature]

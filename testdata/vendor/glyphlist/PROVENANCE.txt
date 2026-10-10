@@ -19,15 +19,17 @@ cp1252.py, mac_roman.py
   generator reads only their decoding tables.
   Licence: Python Software Foundation License (LICENSE-PYTHON.txt, Python's own LICENSE.txt).
 
-cff_parser.js, encodings.js
+cff_parser.js, encodings.js, fonts_utils.js
   pdf.js (https://github.com/mozilla/pdf.js) at commit
-  519c1ba8ea02023e005dfc68c9442db1fed3fc01: src/core/cff_parser.js and
-  src/core/encodings.js. Taken whole; the generator reads only the CFF
-  standard strings (Adobe Technical Note #5176, Appendix A) from the first,
-  and the glyph names of WinAnsiEncoding, MacRomanEncoding,
-  StandardEncoding and the CFF Expert encoding (ISO 32000-2 Annex D; Technical
-  Note #5176, Appendix C) from the second. Its StandardEncoding is checked
-  against 8a.enc at generation.
+  519c1ba8ea02023e005dfc68c9442db1fed3fc01: src/core/cff_parser.js,
+  src/core/encodings.js and src/core/fonts_utils.js. Taken whole; the
+  generator reads only the CFF standard strings (Adobe Technical Note #5176,
+  Appendix A) from the first; the glyph names of WinAnsiEncoding,
+  MacRomanEncoding, StandardEncoding and the CFF Expert encoding (ISO 32000-2
+  Annex D; Technical Note #5176, Appendix C) from the second, whose
+  StandardEncoding is checked against 8a.enc at generation; and the 258
+  standard Macintosh glyph names a TrueType 'post' table indexes (Apple's
+  TrueType Reference Manual, the 'post' table) from the third.
   Licence: Apache License 2.0 (LICENSE-PDFJS.txt, pdf.js's own LICENSE).
 
 Left out: the AGL for New Fonts (aglfn.txt) and the ITC Zapf Dingbats list

@@ -9,7 +9,8 @@ The pdf-native tier: how far the engine draws a PDF figure itself.
 Each item is a committed, invented PDF in testdata/pdf-native, made by a
 tool the reader meets in practice — cairo through rsvg-convert, lualatex in
 the repository's shipped faces, the engine's own writer — or written here by
-hand in matplotlib's dialect (`matplotlibDialect`): PROVENANCE.txt names how
+hand in matplotlib's dialect (`matplotlibDialect`) or a print workflow's, in
+CMYK (`printDialect`): PROVENANCE.txt names how
 each was made, SHA256SUMS pins the bytes. Its value is what the importer
 (`PdfGfx.importPage`) makes of page 1:
 
@@ -34,7 +35,7 @@ def dir : String := "testdata/pdf-native"
 /-- The tier's items: the committed fixtures, in a fixed order. -/
 def fixtures : Array String :=
   #["cairo-chart.pdf", "leantex-strokes.pdf", "lualatex-shade.pdf", "lualatex-text.pdf",
-    "matplotlib-dialect.pdf"]
+    "matplotlib-dialect.pdf", "print-dialect.pdf"]
 
 /-- One PDF's value: the importer's verdict on page 1. -/
 def value (pdf : ByteArray) : Int :=
@@ -100,6 +101,34 @@ q 16 0 0 16 160 96 cm /I1 Do Q\n\
     "/Type /XObject /Subtype /Image /Width 4 /Height 4 /ColorSpace /DeviceGray /BitsPerComponent 8 \
 /Filter /ASCIIHexDecode "]
 
+/-- **The hand-written print-dialect fixture**: what a print workflow's
+figures spell, invented content — device CMYK fills and strokes by `k` and
+`K`, a CMYK image, an indexed image over a CMYK base, and an axial shading
+in CMYK whose one ink changes. -/
+def printDialect : ByteArray := pdfOf #[
+  "<< /Type /Catalog /Pages 2 0 R >>",
+  "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+  "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200 120] /Contents 4 0 R /Resources \
+<< /XObject << /I1 5 0 R /I2 6 0 R >> /Shading << /S0 7 0 R >> >> >>",
+  stream "0 0 0 0 k 0 0 200 120 re f\n\
+0 0 0 1 k 10 70 40 40 re f\n\
+1 0 0 0 k 60 70 40 40 re f\n\
+0 1 0 0 k 110 70 40 40 re f\n\
+0 0 1 0 k 160 70 30 40 re f\n\
+0.2 0.6 0 0.1 K 3 w 10 60 m 190 60 l S\n\
+q 10 10 180 40 re W n q 180 0 0 40 10 10 cm /S0 sh Q Q\n\
+q 30 0 0 30 20 15 cm /I1 Do Q\n\
+q 30 0 0 30 150 15 cm /I2 Do Q",
+  stream (String.join ((List.range 16).map fun i =>
+      if (i + i / 4) % 2 == 0 then "00ff0000" else "ff00002a") ++ ">")
+    "/Type /XObject /Subtype /Image /Width 4 /Height 4 /ColorSpace /DeviceCMYK /BitsPerComponent 8 \
+/Filter /ASCIIHexDecode ",
+  stream "00010201>"
+    "/Type /XObject /Subtype /Image /Width 2 /Height 2 /ColorSpace [/Indexed /DeviceCMYK 2 \
+<000000ff 00ffff00 ff000000>] /BitsPerComponent 8 /Filter /ASCIIHexDecode ",
+  "<< /ShadingType 2 /ColorSpace /DeviceCMYK /Coords [0 0 1 0] \
+/Function << /FunctionType 2 /Domain [0 1] /C0 [0 0.8 0 0] /C1 [1 0.8 0 0] /N 1 >> /Extend [true true] >>"]
+
 /-- The fixture's pins: `SHA256SUMS`, each line `<hash>  <file>`. -/
 def pinFaults : IO (Array String) := do
   let sums := dir ++ "/SHA256SUMS"
@@ -130,7 +159,8 @@ def measureTier : IO (Array String × Array Row) := do
     rows := rows.push { item := f, value := v }
   return (#[
     "# corpus: testdata/pdf-native, invented figures made by cairo (rsvg-convert), lualatex in the \
-shipped faces, the engine's writer, and by hand in matplotlib's dialect (PROVENANCE.txt, SHA256SUMS)",
+shipped faces, the engine's writer, and by hand in matplotlib's and a print workflow's dialects \
+(PROVENANCE.txt, SHA256SUMS)",
     "# value: PdfGfx.importPage on page 1 — 2 drawn with nothing lost, 1 drawn with its losses \
 named, 0 refused; the structural half (equality with the other importer's reading) is pending",
     s!"# counts: {counts[2]!} at 2, {counts[1]!} at 1, {counts[0]!} at 0"], rows)
@@ -139,6 +169,9 @@ def selftest : IO UInt32 := tierSelftest "pdf-native" fun expect => do
   let committed ← IO.FS.readBinFile (dir ++ "/matplotlib-dialect.pdf")
   expect "the hand-written fixture is the file this script writes (--fixtures)"
     (committed == matplotlibDialect)
+  let printed ← IO.FS.readBinFile (dir ++ "/print-dialect.pdf")
+  expect "the hand-written print fixture is the file this script writes (--fixtures)"
+    (printed == printDialect)
   expect "every fixture is pinned" (← pinFaults).isEmpty
   expect "a figure drawn with nothing lost is 2" (value matplotlibDialect == 2)
   let type1 := pdfOf #[
@@ -156,6 +189,7 @@ def main (args : List String) : IO UInt32 := do
   match args with
   | ["--fixtures"] =>
     IO.FS.writeBinFile (PdfNative.dir ++ "/matplotlib-dialect.pdf") PdfNative.matplotlibDialect
-    IO.println s!"wrote {PdfNative.dir}/matplotlib-dialect.pdf"
+    IO.FS.writeBinFile (PdfNative.dir ++ "/print-dialect.pdf") PdfNative.printDialect
+    IO.println s!"wrote {PdfNative.dir}/matplotlib-dialect.pdf and print-dialect.pdf"
     return 0
   | _ => tierMain "pdf-native" .raw PdfNative.measureTier PdfNative.selftest args

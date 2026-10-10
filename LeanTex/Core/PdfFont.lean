@@ -336,6 +336,41 @@ private def programOf (d : Doc) (desc : Option Obj) : Program × Option Gfx.Loss
       | some _ => (.missing, some (.font "type1"), none)
       | none => (.missing, some (.font "nonembedded"), none)
 
+/-- **A TrueType program's glyphs by name** (the 'post' table, Apple's
+TrueType Reference Manual): format 1.0 names the first 258 glyphs in the
+standard Macintosh order; format 2.0 gives each glyph an index into that
+order, or past it into the table's own Pascal strings; each name to the
+first glyph it names. Format 3.0 names none. -/
+public def postGlyphs (b : ByteArray) : Std.HashMap String Nat := Id.run do
+  let some t := Ink.findTable b "post" | return {}
+  if !(Ink.fits b t) || t.length < 32 then return {}
+  let version := Ink.u32 b t.offset
+  let mut m : Std.HashMap String Nat := {}
+  if version == 0x00010000 then
+    for i in [0:258] do
+      if let some n := GlyphList.macGlyphName i then
+        if !m.contains n then m := m.insert n i
+    return m
+  if version != 0x00020000 || t.length < 34 then return m
+  let numGlyphs := Ink.u16 b (t.offset + 32)
+  let indices := t.offset + 34
+  let tableEnd := t.offset + t.length
+  if indices + 2 * numGlyphs > tableEnd then return m
+  let mut names : Array String := #[]
+  let mut p := indices + 2 * numGlyphs
+  for _ in [0:t.length] do
+    if p ≥ tableEnd then break
+    let len := Ink.u8 b p
+    if p + 1 + len > tableEnd then break
+    names := names.push (String.ofList ((b.extract (p + 1) (p + 1 + len)).toList.map Char.ofUInt8))
+    p := p + 1 + len
+  for g in [0:numGlyphs] do
+    let i := Ink.u16 b (indices + 2 * g)
+    let n := if i < 258 then GlyphList.macGlyphName i else names[i - 258]?
+    if let some n := n then
+      if !n.isEmpty && !m.contains n then m := m.insert n g
+  return m
+
 /-- A simple font's widths by code (§9.6.2.1): `Widths` from `FirstChar`,
 `MissingWidth` elsewhere. -/
 private def simpleWidths (d : Doc) (font : Obj) (desc : Option Obj) : Array Rat :=
@@ -368,10 +403,11 @@ and text. A code's glyph name is its `Differences` entry, else its
 encoding stands (§9.6.5.1), and a font with no program StandardEncoding
 unless it is symbolic. A TrueType program's glyph is found through the
 name's scalar in its Unicode cmap, or by code in its symbolic or Macintosh
-one (§9.6.5.4); a CFF program's through the name's string identifier in
-its charset, or its own encoding by code; a Type 3 font's procedure by the
-name. The text is `ToUnicode`'s, else the name's through the glyph list,
-else the base encoding's. -/
+one (§9.6.5.4), else by the name in its 'post' table (`postGlyphs`), else
+it is glyph 0, as a viewer draws an unmapped code; a CFF program's through
+the name's string identifier in its charset, or its own encoding by code; a
+Type 3 font's procedure by the name. The text is `ToUnicode`'s, else the
+name's through the glyph list, else the base encoding's. -/
 public def loadSimple (d : Doc) (font : Obj) : Loaded := Id.run do
   let subtype := match (d.field font "Subtype").toOption.getD none with
     | some (.name n) => n
@@ -433,6 +469,13 @@ public def loadSimple (d : Doc) (font : Obj) : Loaded := Id.run do
     let symRows := cmapSub b 3 0
     let macRows := cmapSub b 1 0
     let look (m : Option Cmap) (c : Nat) : Option Nat := m.bind (·.glyph? c)
+    let post := postGlyphs b
+    -- A code no cmap maps is found by its glyph name in the program's 'post'
+    -- table — the name its Differences or base encoding gives it, else
+    -- WinAnsiEncoding's, a TrueType font's default — and else is glyph 0,
+    -- as a viewer draws it: the program's `.notdef`.
+    let postName (c : Nat) : Option String :=
+      (explicit c).orElse fun _ => some (GlyphList.Base.winAnsi.name c)
     let glyphs := (Array.range 256).map fun c =>
       let byUnicode := (scalarOf c).bind fun ch => look uniRows ch.toNat
       let bySymbol := (look symRows (0xF000 + c)).orElse fun _ => look symRows c
@@ -440,7 +483,8 @@ public def loadSimple (d : Doc) (font : Obj) : Loaded := Id.run do
       let g := if isSym || (uniRows.isNone && symRows.isSome) then
           bySymbol.orElse fun _ => byMac.orElse fun _ => byUnicode
         else byUnicode.orElse fun _ => bySymbol.orElse fun _ => byMac
-      g.map GlyphRef.gid
+      let g := g.orElse fun _ => (postName c).bind fun n => if n.isEmpty then none else post.get? n
+      some (GlyphRef.gid (g.getD 0))
     return { program, codes := .simple glyphs widths ((Array.range 256).map (textOf named)), losses := loss.toArray }
   | .ink src _, none =>
     let glyph (c : Nat) : Option Nat :=

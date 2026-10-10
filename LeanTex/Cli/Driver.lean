@@ -449,14 +449,14 @@ its SMIL stays intact in an image context, while print and reduced motion
 select the static poster. An absent or unusable companion leaves the PDF
 poster as the browser face. No generated script or inline XML is needed. -/
 def imageBrowserFaces (imgs : Image.Store) : IO Image.Store := do
-  return { entries := ← BrowserFaces.prepareAll imgs.entries }
+  return { imgs with entries := ← BrowserFaces.prepareAll imgs.entries }
 
 /-- `imageBrowserFaces`, with the diagnostics each face's route owes and the
 faces the engine drew itself (`PdfFaces.face`). -/
 def imageBrowserFacesNative (imgs : Image.Store) :
     IO (Image.Store × Array (String × Diag) × Array ByteArray × PdfFaces.Tally) := do
   let (entries, diags, natives, tally) ← BrowserFaces.prepareAllFaces imgs.entries
-  return ({ entries }, diags, natives, tally)
+  return ({ imgs with entries }, diags, natives, tally)
 
 def countErrors (diags : Array Diag) : Nat :=
   diags.foldl (fun n d => if d.severity == .error then n + 1 else n) 0
@@ -464,33 +464,53 @@ def countErrors (diags : Array Diag) : Nat :=
 /-- Boundary pictures' browser faces, native first (`PdfFaces.face`): a
 picture whose import names no loss is drawn by the engine with no converter
 run; one whose import names a loss goes to the converter — its PDF converted
-to SVG and checked as publication checks it (`Boundary.htmlFace`) — and
-where the converter does not draw it the engine's lossy drawing ships with
-each loss named. A picture nothing drew retains the existing named fallback
+to SVG and checked as publication checks it (`ImageAssets.validateSvgResult`)
+— and where the converter gives no face the check keeps, the engine's lossy
+drawing ships with each loss named. A picture nothing drew retains the existing named fallback
 — W0378 at the picture's span, and the rendered subset's drawing where it
-draws the picture in part; no output path is consulted. Also returns the
-faces the engine drew itself, and how each face was decided. -/
+draws the picture in part; no output path is consulted. A picture the
+subset draws in part (`fallbacks`) whose only drawing the engine has lacks
+a font's text takes that path too: the subset sets the text in the
+document's faces, which the boundary's answer would otherwise ship without.
+Also returns the faces publication need not check again, and how each face
+was decided. -/
 def picsToSvgNative (pics : Array PicResult) (imgs : Image.Store)
-    (imageSpans : Array (String × Span) := #[]) :
+    (imageSpans : Array (String × Span) := #[]) (fallbacks : Array String := #[]) :
     IO (Image.Store × Array Diag × Array String × Array ByteArray × PdfFaces.Tally) := do
   let mut entries := imgs.entries
   let mut diags : Array Diag := #[]
   let mut unconverted : Array String := #[]
   let mut natives : Array ByteArray := #[]
   let mut tally : PdfFaces.Tally := {}
-  for r in pics do
-    let f ← PdfFaces.face r.src r.bytes .first (Boundary.htmlFace r.bytes)
+  let cache ← PdfFaces.cacheDir
+  -- Pictures are read four at a time, never two of one content at once,
+  -- so the cache slot a picture writes is the one picture's.
+  let faces ← Batch.map 4 (fun (r : PicResult) => Flate.contentKey r.bytes) (fun r =>
+    PdfFaces.face r.src r.bytes .first (ImageAssets.picFace r.bytes) ImageAssets.validateSvgResult
+      (cache := cache)) pics
+  for (r, f) in pics.zip faces do
+    -- premise: nativeFigureBuildChecks — a textless answer for a picture the subset draws in
+    -- part ships the subset's drawing under W0378, and one the subset cannot draw keeps the
+    -- engine's drawing with its W0609
+    let textless := f.route == .nativeWithLoss &&
+      f.diags.any (fun d => d.subject.any (·.startsWith "figure:pdf:font:")) &&
+      fallbacks.any (fun id => Ir.picSrcPrefix ++ id == r.src)
+    if textless then
+      diags := diags.push (DriverDiag.atImageRequest imageSpans r.src (DriverDiag.boundarySvgMissing r.src
+        "its text is in a font the engine does not draw, and no converter drew it"))
+      unconverted := unconverted.push r.src
+      continue
     tally := tally.add f.route
     diags := diags ++ f.diags.map (DriverDiag.atImageRequest imageSpans r.src)
     match f.bytes with
     | .ok bytes =>
       entries := entries.map fun en =>
         if en.src == r.src then { en with webSvg := some bytes } else en
-      if f.native then natives := natives.push bytes
+      if f.checked then natives := natives.push bytes
     | .error why =>
       diags := diags.push (DriverDiag.atImageRequest imageSpans r.src (DriverDiag.boundarySvgMissing r.src why))
       unconverted := unconverted.push r.src
-  return (Boundary.markFaceless { entries }, diags, unconverted, natives, tally)
+  return (Boundary.markFaceless { imgs with entries }, diags, unconverted, natives, tally)
 
 /-- `picsToSvgNative`'s store, diagnostics and unconverted pictures. -/
 def picsToSvg (pics : Array PicResult) (imgs : Image.Store)
@@ -867,7 +887,8 @@ def build (ui : Ui) (file : String) : IO UInt32 := do
         -- elaborated again for the page with it withdrawn, and the PDF
         -- keeps the boundary's drawing.
         let tf ← IO.monoMsNow
-        let (imgs, svgDiags, unconverted, picNatives, picTally) ← picsToSvgNative pics imgs reqSpans.images
+        let (imgs, svgDiags, unconverted, picNatives, picTally) ←
+          picsToSvgNative pics imgs reqSpans.images reqSpans.fallbacks
         let (imgs, faceDiags, faceNatives, faceTally) ← imageBrowserFacesNative imgs
         let tally := picTally.merge faceTally
         if tally.native + tally.lossy + tally.tool + tally.refused > 0 then

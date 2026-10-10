@@ -121,7 +121,9 @@ array, a dictionary. -/
   | .op n => n.toList.head? == some 'R'
   | .val _ | .inline _ _ => false
 
-/-- A token the writer spells. -/
+/-- A token the writer spells, so that the round trip holds of it: an
+operand, an operator. An inline image is not one — where its data ends is
+found by its length or its `EI`, outside this theorem. -/
 @[expose] public def TokSpelled : Tok → Prop
   | .val o => ValSpelled o
   | .op n => OpSpelled n

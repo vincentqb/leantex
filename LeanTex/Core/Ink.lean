@@ -1287,9 +1287,10 @@ public theorem Src.cidCff_agree (s : Src) (cid g : Nat) (h : s.cidGlyph cid = so
   | «opaque» => simp [Src.cidGlyph] at h
 
 /-- **A bare CFF and the OpenType font it came from are one reading**
-(`_agree`): a PDF's `FontFile3` holding an OpenType font's `CFF ` table
-reads as the font set reads that font, so a glyph a figure carries draws
-exactly as the document's own face draws it. -/
+(`_agree`): the source a PDF's `FontFile3` builds from an OpenType font's
+`CFF ` table, read bare, is the source the font set builds from the font
+itself — one reader over the same bytes, so a glyph is decoded the same
+way whichever of the two programs carries it. -/
 public theorem Src.bareCff_agree (b t : ByteArray) (n : Nat) (h : cffTable b = some t) :
     Src.make b true n = Src.ofCff t := by
   simp [Src.make, h]

@@ -33,5 +33,10 @@ matplotlib-dialect.pdf
   --fixtures writes it from `PdfNative.matplotlibDialect`, and the tier's
   selftest holds the committed bytes to it.
 
+print-dialect.pdf
+  Written by hand in a print workflow's CMYK dialect: scripts/pdf-native.lean
+  --fixtures writes it from `PdfNative.printDialect`, and the tier's
+  selftest holds the committed bytes to it.
+
 SHA256SUMS pins every PDF above; sha256sum -c SHA256SUMS checks them from
 this directory.

@@ -1,6 +1,10 @@
-import Tests.Support
-import Tests.GfxMatrix
-import Lean.Data.Json
+module
+
+public import Tests.Support
+public import Tests.GfxMatrix
+public import Lean.Data.Json
+
+public section
 
 open LeanTex.Core LeanTex.Cli
 
@@ -110,23 +114,27 @@ open Tests.PdfNative in
 /-- **A PDF figure's web face is native first** (`Boundary.route`, whose
 premise this is): an exact import ships the engine's drawing and never asks
 the converter; one that names a loss ships the converter's drawing with
-each loss noted (N0024) when the converter draws, and the engine's lossy
-drawing with each loss named (W0608) when it does not; a page the importer
-cannot read takes the converter's answer, or none. The premise is two
-builds apart: with the converter and without it, a lossless figure's face
-is the same bytes and no converter ran, and a lossy one names the same
-subjects. -/
+each loss noted (N0024) when the converter draws a face the page's check
+keeps, and the engine's lossy drawing with each loss named (W0609) when it
+does not — no converter, a failed one, or a face the check refuses or does
+not finish, whose words the line carries; a page the importer cannot read
+takes the converter's answer, a refused face kept for publication to
+refuse, or none. The premise is two builds apart: with the converter and
+without it, a lossless figure's face is the same bytes and no converter
+ran, and a lossy one names the same subjects. A face stretches onto the box
+it is shown in exactly where the PDF face does. -/
 def figureRouteChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
+  let keeps : ByteArray → IO PicCache.Outcome := fun _ => pure .drawn
   for (name, pdf, lossless) in [("cairo-chart.pdf", ← fixture "cairo-chart.pdf", true),
       ("lualatex-text.pdf", ← fixture "lualatex-text.pdf", true), ("lossy.pdf", type1FigurePdf, false)] do
     let runs ← IO.mkRef 0
-    let present ← PdfFaces.face name pdf .first do
+    let present ← PdfFaces.face name pdf .first (do
       runs.modify (· + 1)
-      return .ok (svgDocument "<path d=\"M0 0L20 20\"/>")
-    let absent ← PdfFaces.face name pdf .first do
+      return .ok (svgDocument "<path d=\"M0 0L20 20\"/>")) keeps
+    let absent ← PdfFaces.face name pdf .first (do
       runs.modify (· + 1)
-      return .error "the converter is missing"
+      return .error "the converter is missing") keeps
     let bytesOf (f : PdfFaces.Face) : Option ByteArray := f.bytes.toOption
     let subjects (f : PdfFaces.Face) : Array (Option String) := f.diags.map (·.subject)
     if lossless then
@@ -138,34 +146,48 @@ def figureRouteChecks (ref : IO.Ref (List String)) : IO Unit := do
         (!(subjects present).isEmpty && subjects present == subjects absent &&
           present.route == .tool && absent.route == .nativeWithLoss)
   let asked ← IO.mkRef 0
+  let converted := svgDocument "<path d=\"M0 0L20 20\"/>"
   let drawing : IO (Except String ByteArray) := do
     asked.modify (· + 1)
-    return .ok (svgDocument "<path d=\"M0 0L20 20\"/>")
+    return .ok converted
   let failing : IO (Except String ByteArray) := do
     asked.modify (· + 1)
     return .error "the converter is missing"
   let chart ← fixture "cairo-chart.pdf"
-  let f ← PdfFaces.face "chart.pdf" chart .first failing
+  let f ← PdfFaces.face "chart.pdf" chart .first failing keeps
   t "face route: an exact import is native, the converter never asked"
     (f.route == .native && f.native && f.bytes.isOk && f.diags.isEmpty && (← asked.get) == 0)
-  let f ← PdfFaces.face "lossy.pdf" type1FigurePdf .first drawing
+  let f ← PdfFaces.face "lossy.pdf" type1FigurePdf .first drawing keeps
   t "face route: a lossy import goes to the converter, each loss noted"
     (f.route == .tool && !f.native && (← asked.get) == 1 &&
       f.diags.size == 1 && f.diags.all (·.kind == .N0024) &&
       f.diags.all (·.subject == some "figure:pdf:font:type1"))
-  let f ← PdfFaces.face "lossy.pdf" type1FigurePdf .first failing
+  let f ← PdfFaces.face "lossy.pdf" type1FigurePdf .first failing keeps
   t "face route: a lossy import the converter does not draw ships its lossy drawing, the loss named"
     (f.route == .nativeWithLoss && f.native && f.bytes.isOk &&
-      f.diags.size == 1 && f.diags.all (·.kind == .W0608))
-  let f ← PdfFaces.face "lossy.pdf" type1FigurePdf .first drawing .declared
+      f.diags.size == 1 && f.diags.all (·.kind == .W0609))
+  -- The converter drew, and the page's own check refused its face, or
+  -- could not finish checking it: the page carries the engine's drawing,
+  -- never a face it would refuse or omit.
+  for (said, check) in [("refuses", (fun _ => pure (.refused "an external reference") :
+      ByteArray → IO PicCache.Outcome)), ("does not finish", fun _ => pure (.inconclusive "the check was killed"))] do
+    let f ← PdfFaces.face "lossy.pdf" type1FigurePdf .first drawing check
+    t s!"face route: a lossy import whose converted face the check {said} ships its lossy drawing, in the check's words"
+      (f.route == .nativeWithLoss && f.native && f.bytes.isOk && f.bytes.toOption != some converted &&
+        f.diags.size == 1 && f.diags.all fun d => d.kind == .W0609 &&
+          ((d.message.splitOn "external reference").length > 1 || (d.message.splitOn "killed").length > 1))
+  let f ← PdfFaces.face "lossy.pdf" type1FigurePdf .first drawing keeps .declared
   t "face route: a document that refuses the converter keeps the lossy drawing, never asking it"
-    (f.route == .nativeWithLoss && f.native && (← asked.get) == 2)
-  let f ← PdfFaces.face "locked.pdf" encryptedCanvasPdf .first failing
+    (f.route == .nativeWithLoss && f.native && (← asked.get) == 4)
+  let f ← PdfFaces.face "locked.pdf" encryptedCanvasPdf .first failing keeps
   t "face route: a page the importer refuses and nothing draws has no face"
     (f.route == .refused && f.bytes.isOk == false)
-  let f ← PdfFaces.face "locked.pdf" encryptedCanvasPdf .first drawing
+  let f ← PdfFaces.face "locked.pdf" encryptedCanvasPdf .first drawing keeps
   t "face route: a page the importer refuses takes the converter's drawing"
     (f.route == .tool && f.bytes.isOk)
+  let f ← PdfFaces.face "locked.pdf" encryptedCanvasPdf .first drawing fun _ => pure (.refused "x")
+  t "face route: a page the importer refuses keeps a refused face for publication to refuse"
+    (f.route == .refused && f.bytes.toOption == some converted)
   t "face route: the route is the boundary's one decision"
     (Boundary.route .exact .notAsked .none == .native &&
       Boundary.route (.lossy #[.font "type1"]) .drew .none == .tool &&
@@ -173,8 +195,20 @@ def figureRouteChecks (ref : IO.Ref (List String)) : IO Unit := do
       Boundary.route (.refused "x") (.failed "x") .none == .refused)
   let losses := (lossesOf type1FigurePdf).toOption.getD #[]
   t "face route: every loss is named once, under its feature"
-    (losses.size == 1 && (FigureLoss.diags (FigureLoss.pdfLostDiag "x.pdf") losses).all
+    (losses.size == 1 && (FigureLoss.diags (FigureLoss.pdfLostDiag "x.pdf" none) losses).all
       (·.subject == some "figure:pdf:font:type1"))
+  -- The stretch rule: a sequence's poster page differs in shape from its
+  -- first frame, whose canvas the PDF form stretches it onto.
+  let root (f : PdfFaces.Face) : String := match f.bytes.toOption.bind (String.fromUTF8? ·) with
+    | some svg => ((svg.splitOn "<svg").getD 1 "").takeWhile (· != '>') |>.toString
+    | none => ""
+  let poster ← PdfFaces.face "sequence.pdf" svgCanvasPdf .last failing keeps (stretch := true)
+  let plain ← PdfFaces.face "sequence.pdf" svgCanvasPdf .last failing keeps
+  t s!"face route: a stretched face fills its box as the PDF form does ({root poster})"
+    (poster.native && ((root poster).splitOn "preserveAspectRatio=\"none\"").length == 2 &&
+      ((root poster).splitOn "viewBox=\"0 0 60 120\"").length == 2)
+  t s!"face route: an unstretched face keeps SVG's fit ({root plain})"
+    (plain.native && ((root plain).splitOn "preserveAspectRatio").length == 1)
 
 open Tests.PdfNative in
 /-- **A native face is closed by construction**, what lets publication take
@@ -519,9 +553,173 @@ def pdfInterpreterChecks (ref : IO.Ref (List String)) : IO Unit := do
   let inkAndBlack := shading (shaded "/DeviceCMYK" (seg "[1 0 0 0]" "[0 0 0 1]") "[0 1]") "/S0 sh"
   t "interpreter: a CMYK colour whose black and inks both change is named, still drawn"
     (lossesOf inkAndBlack == .ok #[.resource "shading-function-approximated"])
-  let oneBlack := shading (shaded "/DeviceCMYK" (seg "[1 0 0 0.5]" "[0 1 0 0.5]") "[0 1]") "/S0 sh"
-  t "interpreter: a CMYK colour under one black is drawn exactly"
-    (lossesOf oneBlack == .ok #[])
+  let twoInks := shading (shaded "/DeviceCMYK" (seg "[1 0 0 0.5]" "[0 1 0 0.5]") "[0 1]") "/S0 sh"
+  t "interpreter: a CMYK colour whose two inks change together is named, still drawn"
+    (lossesOf twoInks == .ok #[.resource "shading-function-approximated"])
+  let oneInk := shading (shaded "/DeviceCMYK" (seg "[1 0 0 0.5]" "[0 0 0 0.5]") "[0 1]") "/S0 sh"
+  t "interpreter: a CMYK colour with one changing ink is drawn exactly"
+    (lossesOf oneInk == .ok #[])
+
+namespace Tests.PdfNative
+
+/-- A one-page figure of `ink` under `res`, its further objects from 5. -/
+def statePdf (res ink : String) (more : Array String) : ByteArray := syntheticPdf (#[
+  "<< /Type /Catalog /Pages 2 0 R >>", "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+  s!"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200 100] /Contents 4 0 R /Resources {res} >>",
+  streamObj ink] ++ more)
+
+/-- The clip geometries a mark is painted under. -/
+def clipGeoms : Gfx.Mark → Array Gfx.Geom
+  | .paint _ _ _ _ clips _ => clips.map (·.2.geom)
+  | .raster _ _ clips _ => clips.map (·.2.geom)
+  | .shading _ clips _ => clips.map (·.2.geom)
+
+/-- A figure's marks, none where the import refuses. -/
+def marksOf (pdf : ByteArray) : Array Gfx.Mark :=
+  ((PdfGfx.importPage pdf).toOption.map (·.figure.marks)).getD #[]
+
+/-- A raster's pixels as 8-bit RGB, where its PNG holds them so: rows
+behind filter byte 0, as `PngEncode.encode` writes them. -/
+def rgbPixels (r : Gfx.Raster) : Option (Array (UInt8 × UInt8 × UInt8)) := do
+  let plan ← (Image.decode r.bytes).toOption
+  let rows ← (Flate.inflate plan.data (r.pxW * r.pxH * 4 + r.pxH)).toOption
+  let stride := r.pxW * 3 + 1
+  return (Array.range (r.pxW * r.pxH)).map fun i =>
+    let pos := (i / r.pxW) * stride + 1 + (i % r.pxW) * 3
+    (rows[pos]?.getD 0, rows[pos + 1]?.getD 0, rows[pos + 2]?.getD 0)
+
+end Tests.PdfNative
+
+open Tests.PdfNative in
+/-- **What the graphics state carries reaches the marks it paints**: a
+constant soft mask's box clips what is painted under it, and nothing after
+`/SMask /None` or under a second mask, which replaces it (§11.6.5.2); a Type
+3 glyph's procedure paints with the alphas and line width in force
+(§9.6.4); a shading's `BBox` clips it (§8.7.4.5.1). What the model cannot
+say is named: a tiling pattern that strokes a path or fills a glyph, a
+stencil mask painted with a pattern, a JPEG under a `Decode` that remaps it.
+A CMYK colour, painted or sampled, previews as pdftoppm shows it; a
+TrueType program with no cmap shows its glyphs by their 'post' names, as
+pdftoppm draws them. Each case once imported with no loss named and drew
+otherwise. -/
+def pdfStateChecks (ref : IO.Ref (List String)) : IO Unit := do
+  let t := check ref
+  let maskGroup (box : String) (ink : String) :=
+    streamObj ink s!"/Type /XObject /Subtype /Form /BBox {box} /Group << /S /Transparency /CS /DeviceGray >> "
+  let mask (n : Nat) := s!"<< /Type /ExtGState /SMask << /Type /Mask /S /Luminosity /G {n} 0 R >> >>"
+  let box (x y w h : Int) : Gfx.Geom := .rect (Dim.pt x) (Dim.pt y) (Dim.pt w) (Dim.pt h)
+  let reset := marksOf (statePdf "<< /ExtGState << /M 5 0 R /N 6 0 R >> >>"
+    "1 0 0 rg /M gs 0 0 50 50 re f /N gs 0 0 1 rg 100 20 80 60 re f"
+    #[mask 7, "<< /Type /ExtGState /SMask /None >>", maskGroup "[0 0 50 50]" "0.5 g 0 0 50 50 re f"])
+  t s!"state: a soft mask clips what it masks, and nothing after /SMask /None ({repr (reset.map clipGeoms)})"
+    (reset.map clipGeoms == #[#[box 0 0 50 50], #[]])
+  let replace := marksOf (statePdf "<< /ExtGState << /M 5 0 R /M2 6 0 R >> >>"
+    "1 0 0 rg /M gs 0 0 50 50 re f /M2 gs 0 0 1 rg 100 20 80 60 re f"
+    #[mask 7, mask 8, maskGroup "[0 0 50 50]" "0.5 g 0 0 50 50 re f",
+      maskGroup "[100 20 180 80]" "0.5 g 100 20 80 60 re f"])
+  t s!"state: a second soft mask replaces the first ({repr (replace.map clipGeoms)})"
+    (replace.map clipGeoms == #[#[box 0 0 50 50], #[box 100 20 80 60]])
+  let restored := marksOf (statePdf "<< /ExtGState << /M 5 0 R /N 6 0 R >> >>"
+    "/M gs q /N gs 0 0 10 10 re f Q 0 0 10 10 re f"
+    #[mask 7, "<< /Type /ExtGState /SMask /None >>", maskGroup "[0 0 50 50]" "0.5 g 0 0 50 50 re f"])
+  t s!"state: Q restores the soft mask a q saved ({repr (restored.map clipGeoms)})"
+    (restored.map clipGeoms == #[#[], #[box 0 0 50 50]])
+  let type3 (ink proc : String) := statePdf "<< /Font << /F1 5 0 R >> /ExtGState << /A 7 0 R >> >>" ink
+    #["<< /Type /Font /Subtype /Type3 /FontBBox [0 0 1000 1000] /FontMatrix [0.001 0 0 0.001 0 0] \
+        /CharProcs << /a 6 0 R >> /Encoding << /Type /Encoding /Differences [97 /a] >> \
+        /FirstChar 97 /LastChar 97 /Widths [1000] >>",
+      streamObj proc, "<< /Type /ExtGState /ca 0.3 /CA 0.3 >>"]
+  let fillAlphas (ms : Array Gfx.Mark) : Array Nat := ms.filterMap fun m => match m with
+    | .paint _ _ (some f) _ _ _ => some f.alpha.val
+    | _ => none
+  let glyphAlpha := marksOf (type3 "0 0 1 rg /A gs BT /F1 60 Tf 20 20 Td (a) Tj ET"
+    "1000 0 d0 0 0 400 1000 re f 600 0 400 1000 re f")
+  t s!"state: a Type 3 glyph paints under the alpha in force ({fillAlphas glyphAlpha})"
+    (fillAlphas glyphAlpha == #[300, 300])
+  let glyphWidth := marksOf (type3 "7 w BT /F1 60 Tf 20 20 Td (a) Tj ET" "1000 0 d0 0 0 m 1000 1000 l S")
+  let widths := glyphWidth.filterMap fun m => match m with
+    | .paint _ _ _ (some st) _ _ => some st.width
+    | _ => none
+  t s!"state: a Type 3 glyph strokes with the line width in force ({widths})" (widths == #[Dim.pt 7])
+  let tile := streamObj "1 0 0 rg 0 0 5 5 re f"
+    "/PatternType 1 /PaintType 1 /TilingType 1 /BBox [0 0 10 10] /XStep 10 /YStep 10 /Resources << >> "
+  t "state: a tiling pattern that strokes is named"
+    (lossesOf (statePdf "<< /Pattern << /P1 5 0 R >> >>" "/Pattern CS /P1 SCN 8 w 20 50 m 180 50 l S" #[tile])
+      == .ok #[.resource "tiling-paint"])
+  t "state: a tiling pattern that fills a glyph is named"
+    (lossesOf (statePdf "<< /Pattern << /P1 5 0 R >> /Font << /F1 6 0 R >> >>"
+      "/Pattern cs /P1 scn BT /F1 80 Tf 20 10 Td (a) Tj ET"
+      #[tile, "<< /Type /Font /Subtype /Type3 /FontBBox [0 0 1000 1000] /FontMatrix [0.001 0 0 0.001 0 0] \
+          /CharProcs << /a 7 0 R >> /Encoding << /Type /Encoding /Differences [97 /a] >> \
+          /FirstChar 97 /LastChar 97 /Widths [1000] >>",
+        streamObj "1000 0 0 0 1000 1000 d1 0 0 1000 1000 re f"]) == .ok #[.resource "tiling-paint"])
+  let stencil := syntheticPdfBin #["<< /Type /Catalog /Pages 2 0 R >>".toUTF8,
+    "<< /Type /Pages /Kids [3 0 R] /Count 1 >>".toUTF8,
+    "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200 100] /Contents 4 0 R \
+      /Resources << /Pattern << /P1 5 0 R >> /XObject << /I1 6 0 R >> >> >>".toUTF8,
+    (streamObj "/Pattern cs /P1 scn q 80 0 0 80 60 10 cm /I1 Do Q").toUTF8, tile.toUTF8,
+    streamObjBin ⟨Array.replicate 8 0xF0⟩ "/Type /XObject /Subtype /Image /Width 8 /Height 8 /ImageMask true /BitsPerComponent 1 "]
+  t "state: a stencil mask painted with a pattern is named" (lossesOf stencil == .ok #[.resource "stencil-pattern"])
+  let bboxed := marksOf (statePdf "<< /Shading << /S0 5 0 R >> >>" "/S0 sh"
+    #["<< /ShadingType 2 /ColorSpace /DeviceRGB /Coords [0 0 200 0] /BBox [50 25 150 75] \
+        /Function << /FunctionType 2 /Domain [0 1] /C0 [1 0 0] /C1 [0 0 1] /N 1 >> /Extend [true true] >>"])
+  t s!"state: a shading's BBox clips it ({repr (bboxed.map clipGeoms)})"
+    (bboxed.map clipGeoms == #[#[box 50 25 100 50]])
+  let jpeg ← IO.FS.readBinFile "testdata/corpus/rects.jpg"
+  let jpegPdf (decode : String) := syntheticPdfBin #["<< /Type /Catalog /Pages 2 0 R >>".toUTF8,
+    "<< /Type /Pages /Kids [3 0 R] /Count 1 >>".toUTF8,
+    "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200 100] /Contents 4 0 R /Resources << /XObject << /I1 5 0 R >> >> >>".toUTF8,
+    (streamObj "q 64 0 0 40 10 10 cm /I1 Do Q").toUTF8,
+    streamObjBin jpeg s!"/Type /XObject /Subtype /Image /Width 64 /Height 40 /ColorSpace /DeviceRGB \
+      /BitsPerComponent 8 /Filter /DCTDecode {decode}"]
+  t "state: a JPEG passes through whole" (match PdfGfx.importPage (jpegPdf "") with
+    | .ok imp => imp.figure.losses.isEmpty && imp.figure.rasters.map (·.bytes) == #[jpeg]
+    | .error _ => false)
+  t "state: a JPEG under a Decode that remaps it is named"
+    (lossesOf (jpegPdf "/Decode [1 0 1 0 1 0]") == .ok #[.resource "dct-decode"])
+  let cmykFills := (marksOf (statePdf "<< >>" "0 0 0 1 k 0 0 50 50 re f 1 0 0 0 k 50 0 50 50 re f 0.5 0 0 0.5 k 100 0 50 50 re f" #[])).filterMap
+    fun m => match m with
+      | .paint _ _ (some { paint := .solid c, .. }) _ _ _ => some (c.r, c.g, c.b)
+      | _ => none
+  -- pdftoppm shows the third (73, 118, 141): its green is 118.5 exactly
+  -- here, which its decimal constants put a hair under the half.
+  t s!"state: CMYK fills preview as pdftoppm shows them ({cmykFills})"
+    (cmykFills == #[(35, 31, 32), (0, 173, 239), (73, 119, 141)])
+  let cmykImage := syntheticPdfBin #["<< /Type /Catalog /Pages 2 0 R >>".toUTF8,
+    "<< /Type /Pages /Kids [3 0 R] /Count 1 >>".toUTF8,
+    "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200 100] /Contents 4 0 R /Resources << /XObject << /I1 5 0 R >> >> >>".toUTF8,
+    (streamObj "q 20 0 0 10 10 10 cm /I1 Do Q").toUTF8,
+    streamObjBin ⟨#[0, 0, 0, 255, 255, 0, 0, 0]⟩
+      "/Type /XObject /Subtype /Image /Width 2 /Height 1 /ColorSpace /DeviceCMYK /BitsPerComponent 8 "]
+  let samples := ((PdfGfx.importPage cmykImage).toOption.bind fun imp => imp.figure.rasters[0]?.bind rgbPixels).getD #[]
+  t s!"state: CMYK samples preview as CMYK fills do ({samples})" (samples == #[(35, 31, 32), (0, 173, 239)])
+  let grid : List Nat := [0, 51, 128, 200, 255]
+  t "state: a sample's CMYK preview is the exact one, at every grid point of the cube"
+    (grid.all fun c => grid.all fun m => grid.all fun y => grid.all fun k =>
+      PdfGfx.cmykRgb8 c.toUInt8 m.toUInt8 y.toUInt8 k.toUInt8 ==
+        PdfGfx.cmykRgb (mkRat c 255) (mkRat m 255) (mkRat y 255) (mkRat k 255))
+  -- The test face, and the same program with its cmap's tag renamed, so the
+  -- program holds no cmap at all.
+  let face ← IO.FS.readBinFile (testFonts ++ "/OpenSans-Regular.ttf")
+  let noCmap := Id.run do
+    let mut b := face
+    for k in [0:Ink.u16 face 4] do
+      let entry := 12 + 16 * k
+      if face.extract entry (entry + 4) == "cmap".toUTF8 then b := b.set! entry 0x78
+    return b
+  let ttPdf (prog : ByteArray) (flags : Nat) := syntheticPdfBin #["<< /Type /Catalog /Pages 2 0 R >>".toUTF8,
+    "<< /Type /Pages /Kids [3 0 R] /Count 1 >>".toUTF8,
+    "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200 100] /Contents 4 0 R /Resources << /Font << /F1 5 0 R >> >> >>".toUTF8,
+    (streamObj "BT /F1 40 Tf 20 30 Td <242526> Tj ET").toUTF8,
+    "<< /Type /Font /Subtype /TrueType /BaseFont /Placeholder /FirstChar 36 /LastChar 38 /Widths [600 600 600] \
+      /FontDescriptor 6 0 R >>".toUTF8,
+    s!"<< /Type /FontDescriptor /FontName /Placeholder /Flags {flags} /FontBBox [0 0 1000 1000] /ItalicAngle 0 \
+      /Ascent 900 /Descent -200 /CapHeight 700 /StemV 80 /FontFile2 7 0 R >>".toUTF8,
+    streamObjBin prog s!"/Length1 {prog.size} "]
+  let mapped := marksOf (ttPdf face 32)
+  let unmapped := marksOf (ttPdf noCmap 4)
+  t s!"state: a TrueType program with no cmap draws its glyphs by their 'post' names ({unmapped.size} of {mapped.size})"
+    (mapped.size == 3 && unmapped == mapped)
 
 open Tests.PdfNative in
 /-- **PDF figures ship native web faces with no converter on the
@@ -539,8 +737,8 @@ def nativeFigureBuildChecks (ref : IO.Ref (List String)) : IO Unit := do
   let corpus ← IO.FS.realPath "testdata/corpus/diagram-boundary.tex"
   let chart ← fixture "cairo-chart.pdf"
   let shade ← fixture "lualatex-shade.pdf"
-  let faceOf (pdf : ByteArray) : Option String :=
-    (PdfGfx.importPage pdf).toOption.map fun imp => HtmlResource.base64 (PdfFaces.svgOf imp.figure)
+  let faceOf (pdf : ByteArray) (stretch : Bool) : Option String :=
+    (PdfGfx.importPage pdf).toOption.map fun imp => HtmlResource.base64 (PdfFaces.svgOf imp.figure stretch)
   IO.FS.withTempDir fun dir => do
     let tools := dir / "bin"
     IO.FS.createDirAll tools
@@ -557,23 +755,43 @@ exec /bin/cp \"$LEANTEX_NATIVE_PDF\" pic.pdf\n"
     IO.FS.writeFile (dir / "figure.tex") (String.intercalate "\n" [
       "\\documentclass{article}", "\\begin{document}",
       "\\includegraphics[alt={An invented chart}]{chart.pdf}", "\\end{document}", ""])
-    let build (src out : System.FilePath) : IO (UInt32 × Array Lean.Json × String) := do
+    IO.FS.writeBinFile (dir / "type1.pdf") type1FigurePdf
+    let build (src out : System.FilePath) (answer : String := "shade.pdf") :
+        IO (UInt32 × Array Lean.Json × String) := do
       let r ← IO.Process.output {
         cmd := binary.toString
         args := #[src.toString, "-o", out.toString, "--porcelain"]
         env := #[("PATH", some tools.toString), ("LEANTEX_FONT", some font.toString),
-          ("LEANTEX_NATIVE_PDF", some (dir / "shade.pdf").toString),
-          ("XDG_CACHE_HOME", some (dir / "cache").toString)] }
+          ("LEANTEX_NATIVE_PDF", some (dir / answer).toString),
+          ("XDG_CACHE_HOME", some (dir / ("cache-" ++ answer)).toString)] }
       let records := ((r.stdout.splitOn "\n").filterMap fun line => (Lean.Json.parse line).toOption).toArray
       let html ← if ← out.pathExists then IO.FS.readFile out else pure ""
       return (r.exitCode, records, html)
     let named (records : Array Lean.Json) (code : String) : Bool :=
       records.any fun record => record.getObjValAs? String "code" == .ok code
-    for (name, src, out, pdf) in [("the cairo figure", dir / "figure.tex", dir / "figure.html", chart),
-        ("the boundary diagram", (corpus : System.FilePath), dir / "diagram.html", shade)] do
+    -- An include's face stretches as its PDF form does; a boundary
+    -- picture's keeps SVG's fit, as its converted face did.
+    for (name, src, out, pdf, stretch) in [("the cairo figure", dir / "figure.tex", dir / "figure.html", chart, true),
+        ("the boundary diagram", (corpus : System.FilePath), dir / "diagram.html", shade, false)] do
       let (code, records, html) ← build src out
       t s!"native faces: {name} builds HTML with no converter on PATH" (code == 0)
-      t s!"native faces: {name} names no missing face (W0605, W0378) and no loss (W0608)"
-        (!named records "W0605" && !named records "W0378" && !named records "W0608")
+      t s!"native faces: {name} names no missing face (W0605, W0378) and no loss (W0609)"
+        (!named records "W0605" && !named records "W0378" && !named records "W0609")
       t s!"native faces: {name}'s page embeds the engine's own drawing, byte for byte"
-        ((faceOf pdf).any fun face => (html.splitOn face).length ≥ 2)
+        ((faceOf pdf stretch).any fun face => (html.splitOn face).length ≥ 2)
+    -- A boundary answer whose text is in a font the engine does not draw,
+    -- with no converter: a picture the rendered subset draws in part takes
+    -- the subset's drawing, its text in the document's faces (W0378 names
+    -- the face); one it draws nothing of keeps the engine's drawing, its
+    -- loss named (W0609). The first once shipped the drawing without text.
+    IO.FS.writeFile (dir / "partial.tex") (String.intercalate "\n" [
+      "\\documentclass{article}", "\\begin{document}", "An invented picture follows.", "",
+      "\\begin{tikzpicture}", "  \\draw[rounded corners] (0,0) rectangle (3,1);",
+      "  \\node at (1.5,0.5) {Mark};", "\\end{tikzpicture}", "", "\\end{document}", ""])
+    let (code, records, html) ← build (dir / "partial.tex") (dir / "partial.html") "type1.pdf"
+    t s!"native faces: a textless answer for a picture the subset draws in part is the subset's (exit {code})"
+      (code == 0 && named records "W0378" && !named records "W0609" && (html.splitOn "<svg").length ≥ 2 &&
+        (html.splitOn "Mark").length ≥ 2)
+    let (code, records, _) ← build corpus (dir / "diagram-type1.html") "type1.pdf"
+    t s!"native faces: a textless answer for a picture the subset cannot draw is the engine's, its loss named (exit {code})"
+      (code == 0 && named records "W0609" && !named records "W0378")

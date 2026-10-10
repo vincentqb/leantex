@@ -296,8 +296,12 @@ def machineLossChecks (ref : IO.Ref (List String))
     let svgInclude := dir / "include.tex"
     IO.FS.writeFile svgInclude (includeSource (corpus / "fonts"))
     IO.FS.writeBinFile (dir / "face.svg") face
+    -- The renderer's answer is one the engine's importer refuses (an
+    -- encrypted file), so its web face is the converter's or none: what a
+    -- machine without the converter, or without the face check, loses.
+    IO.FS.writeBinFile (dir / "refused.pdf") encryptedCanvasPdf
     for d in [renderer, converter] do
-      IO.FS.writeFile (d / "lualatex") (fakeRenderer (corpus / "figures" / "box.pdf"))
+      IO.FS.writeFile (d / "lualatex") (fakeRenderer (dir / "refused.pdf"))
       IO.setAccessRights (d / "lualatex") { user := ⟨true, true, true⟩ }
     IO.FS.writeFile (converter / "pdftocairo") (fakeConverter (dir / "face.svg"))
     IO.setAccessRights (converter / "pdftocairo") { user := ⟨true, true, true⟩ }

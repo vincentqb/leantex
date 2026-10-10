@@ -39,6 +39,10 @@ superlinear.
 page (`\includegraphics[page=k]`), and reports the warm images phase — the
 page read into its form — per page, its median over N runs, page 1 and the
 slowest page named; the file is the caller's and stays outside the tree.
+`--faces-only <file.pdf>...` builds the HTML of a document including each
+figure, cold over an empty private cache and warm over the one it left, and
+reports the html phase (and the faces phase within it, where the compiler
+names one) and the whole build, cold and warm, the median of N pairs.
 The slide run also needs sha256sum, pdftocairo and xmllint.
 For before/after runs use this same driver, N, font/tool environment and an
 otherwise idle host; shared-host timings are provisional. Redirect stdout
@@ -1085,6 +1089,49 @@ def benchPdfPages (n : Nat) (pdf : System.FilePath) : IO Unit := do
     IO.println s!"{padRight s!"leantex  slowest page, {slowest.1} of {pages}" 42} {padLeft (toString slowest.2) 6} ms (median of {n})"
     IO.println s!"leantex  pages under 150 ms: {(times.filter (·.2 < 150)).size} of {pages}"
 
+/-- **A PDF figure's web face, cold and warm**: an HTML build of a document
+including each figure, the first over an empty private cache and the second
+over the one it left, the median of `n` pairs — the html phase, where the
+figure's web face is decided (and, where the compiler reports it, the faces
+phase within it) and the whole build. A compiler without a faces phase — one
+that converts every figure — is measured by the rest, so this driver compares
+it with one that draws them. -/
+def benchFaces (n : Nat) (pdfs : List String) : IO Unit := do
+  let binary ← IO.FS.realPath (← compiler)
+  let fonts ← IO.FS.realPath "testdata/corpus/fonts"
+  IO.FS.withTempDir fun dir => do
+    for pdf in pdfs do
+      let source ← IO.FS.realPath pdf
+      let name := (System.FilePath.mk pdf).fileName.getD pdf
+      let doc := dir / "figure.tex"
+      IO.FS.writeFile doc ("\\documentclass{article}\n\\fonts{ dir = \"" ++ fonts.toString ++
+        "\", body = \"Open Sans\" }\n\\begin{document}\n\\includegraphics[width=8cm,alt={An invented figure}]{" ++
+        source.toString ++ "}\n\\end{document}\n")
+      let mut rows : Array (String × Array Nat × Array Nat) := #[]
+      let mut htmlCold : Array Nat := #[]
+      let mut htmlWarm : Array Nat := #[]
+      let mut facesCold : Array Nat := #[]
+      let mut facesWarm : Array Nat := #[]
+      let mut buildCold : Array Nat := #[]
+      let mut buildWarm : Array Nat := #[]
+      for i in [0:n] do
+        let cache := dir / s!"cache-{name}-{i}"
+        let first ← sample binary doc (dir / "figure.html") cache true
+        let second ← sample binary doc (dir / "figure.html") cache true
+        let some h1 := first.phase? "html" | die s!"{name}: no html phase"
+        let some h2 := second.phase? "html" | die s!"{name}: no html phase"
+        htmlCold := htmlCold.push h1.ms
+        htmlWarm := htmlWarm.push h2.ms
+        if let some f := first.phase? "faces" then facesCold := facesCold.push f.ms
+        if let some f := second.phase? "faces" then facesWarm := facesWarm.push f.ms
+        buildCold := buildCold.push first.compilerMs
+        buildWarm := buildWarm.push second.compilerMs
+      rows := rows ++ #[("html", htmlCold, htmlWarm), ("build", buildCold, buildWarm)] ++
+        (if facesCold.isEmpty then #[] else #[("faces", facesCold, facesWarm)])
+      for (what, c, w) in rows do
+        IO.println s!"{padRight s!"leantex  {name} {what}, cold" 42} {padLeft (toString (median c)) 6} ms (median of {n})"
+        IO.println s!"{padRight s!"leantex  {name} {what}, warm" 42} {padLeft (toString (median w)) 6} ms (median of {n})"
+
 def main (args : List String) : IO UInt32 := do
   if args.head? == some "--doc-cost" then return ← docCost args.tail
   if args == ["--slides-selftest"] then
@@ -1109,6 +1156,9 @@ def main (args : List String) : IO UInt32 := do
     return 0
   if let ["--pdf-pages-only", file] := args then
     benchPdfPages n file
+    return 0
+  if let "--faces-only" :: files := args then
+    benchFaces n files
     return 0
   if args == ["--boundary-only"] then
     unless ← hasCmd "lualatex" do die "picture benchmark needs lualatex"
