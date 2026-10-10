@@ -79,8 +79,9 @@ def Ui.diag (ui : Ui) (d : Diag) : IO Unit := do
 
 /-- Resolve and print one phase against the document's acceptance
 (`\allow` and `--best-effort`). Return its accounting without retaining
-already-emitted messages. A loss repeated in the phase shows once, its first
-site carrying the count and every later one a note (`Diag.foldRepeats`). -/
+already-emitted messages. A loss repeated in the phase prints once, its
+first warning carrying the count and every later site a note
+(`Diag.foldRepeats`); porcelain keeps every site. -/
 def Ui.resolve (ui : Ui) (allowed : Array String) (allowAll : Bool)
     (ds : Array Diag) (outputs : Array Diag.Output := #[.pdf, .html]) : IO Resolution := do
   let r := Diag.resolveAll allowed allowAll (Diag.foldRepeats (Diag.forOutputs outputs ds))
@@ -941,9 +942,8 @@ in the HTML" (← since t)
       resolved := resolved.append (← ui.resolve doc.allow allowAll (outputs := outputs)
         ((Diag.unfired doc.allow resolved.fired).map DriverDiag.allowUnfired))
       ui.accepted resolved.accepted
-      let notes := (Diag.forOutputs outputs diags).foldl
-        (fun n d => if d.severity == .note then n + 1 else n) 0
-      ui.done file (String.intercalate ", " written.toList) out.pages.size (← since t0) notes
+      ui.done file (String.intercalate ", " written.toList) out.pages.size (← since t0)
+        resolved.notes
       -- `--werror`: the outputs above were written — the flag turns the
       -- exit code, never the rendering — and the verdict line says why the
       -- build failed anyway.

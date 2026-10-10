@@ -12,10 +12,15 @@ example : DiagCode → String := DiagCode.meaning
 example : Array Diag → Array Diag := Diag.tallySites
 example (ds : Array Diag) : (Diag.tallySites ds).size = ds.size :=
   Diag.tallySites_length ds
+example : Array Diag → Array Diag := Diag.foldRepeats
+example (ds : Array Diag) : ((Diag.foldRepeats ds).toList.map (·.sites)).sum = ds.size :=
+  Diag.foldRepeats_sum_exact ds
 
 example : True := by
   fail_if_success have := DiagCode.spec
   fail_if_success have := DiagCode.ctorCeiling
   fail_if_success have := Diag.carrier
+  fail_if_success have := Diag.repeatCarrier
+  fail_if_success have := Diag.foldOne
   fail_if_success have := Resolution.record
   trivial

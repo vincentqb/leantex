@@ -68,7 +68,12 @@ public def Severity.label : Severity → String
 public def Severity.letter : Severity → Char
   | .error => 'E'
   | .warning => 'W'
-  | .note => 'N' 
+  | .note => 'N'
+
+/-- The severity the default log prints and `--werror` counts as a warning. -/
+public def Severity.isWarning : Severity → Bool
+  | .warning => true
+  | .error | .note => false
 
 /-- What a reader of the shipped output loses at the site that emits a
 diagnostic. Severity is a function of one question — can the reader recover
@@ -645,8 +650,10 @@ loss is named" is a lookup, never a search of the message text
 (`Ir.Diag.mentions`, the resolution gate `pending_named`). `sites` is how
 many times this loss occurs in the document: a once-per-document warning
 carries the total so the default log states it, and each further site rides
-beside it as a note. One writer, `tallySites`, and its default is the
-honest one for a diagnostic nothing else counted. -/
+beside it as a note. Two writers: `tallySites`, the census, over a producer's
+log, and `foldRepeats`, the log a phase prints, which reads the census's
+groups wherever a subject names one; the default is the honest one for a
+diagnostic nothing else counted. -/
 public structure Diag where
   kind : DiagCode
   message : String
@@ -893,7 +900,7 @@ therefore has to carry the total, or a reader sizing the damage from it
 undercounts — ten lines standing for fifty losses is how a document full of
 silent drops reads as nearly clean.
 
-This is the one writer of `sites`: the first diagnostic of each loss carries
+This is the census's writer of `sites`: the first diagnostic of each loss carries
 the number of diagnostics sharing its code, subject and output, every later one
 carries 0, and a diagnostic with no subject is its own one site — so the
 counts on a log add up to its length (`tallySites_sum_exact`). Stamping the
@@ -1136,66 +1143,357 @@ public theorem Diag.tallySites_subjectless_id (ds : Array Diag) (i : Nat) (h : i
   rw [Diag.count_mapIdx_eq_one (Diag.carrier ds.toList) i i hl
     fun j hj => Diag.carrier_eq_iff_self ds.toList i j hl hj (by simpa using hn)]
 
-/-- **One warning, one line on the default log.** The tally, with every
-later site of a warning — a record `tallySites` leaves with no sites,
-because an earlier diagnostic of the same code, subject and output carries
-the count — delivered as a note, listed under `-v`. What `Elab`'s
-`warnOnce` does for the elaborator's keyed warnings, as the one
-presentation for every producer: the markdown reader's routes and the
-layout's glyph substitutions alike. An error is never folded: a build
-fails at each of its sites, and the summary counts every one. Folding
-changes what a later warning site is delivered as and nothing else:
-nothing is added, removed, reordered or reworded, the sites are the
-tally's (`foldRepeats_sum_exact`), a diagnostic with no subject — its own
-one site — keeps its severity, and the warning count the summary prints
-is a count of losses, each carrying its sites. The demotion bit is written
-here beside `Diag.accept`, the other policy door. -/
-public def Diag.foldRepeats (ds : Array Diag) : Array Diag :=
-  (Diag.tallySites ds).map fun d =>
-    if d.sites == 0 && d.severity == .warning then d.demote else d
+/-- **Two records repeat one loss on the log.** With a subject, the census's
+identity (`sameLoss`). With none, a warning code repeated in the same words at
+the same output scope: the words are all such a record names, so a second line
+tells a reader nothing the first did not, except where it stands. The code
+decides whether a record is a warning, never its demotion, so neither a fold
+nor an acceptance moves a record between groups. -/
+public def Diag.sameRepeat (a b : Diag) : Bool :=
+  (decide (a.kind = b.kind) && decide (a.output = b.output)) &&
+    decide (a.subject = b.subject) &&
+    (a.subject.isSome || (decide (a.message = b.message) && a.kind.loss.severity.isWarning))
 
-/-- A first site, a subjectless one and every error is the tally's record
-unchanged; a later warning site is the tally's record demoted. -/
-public theorem Diag.foldRepeats_exact (ds : Array Diag) (i : Nat)
-    (h : i < (Diag.tallySites ds).size) :
-    (Diag.foldRepeats ds)[i]? = some (if ((Diag.tallySites ds)[i]).sites == 0 &&
-        ((Diag.tallySites ds)[i]).severity == .warning
-      then ((Diag.tallySites ds)[i]).demote else (Diag.tallySites ds)[i]) := by
+public theorem Diag.sameRepeat_iff (a b : Diag) :
+    Diag.sameRepeat a b = true ↔
+      (a.kind = b.kind ∧ a.output = b.output) ∧ a.subject = b.subject ∧
+        (a.subject.isSome = true ∨ (a.message = b.message ∧ a.kind.loss.severity.isWarning = true)) := by
+  simp [Diag.sameRepeat, and_assoc]
+
+/-- With a subject, the log's group is the census's. -/
+public theorem Diag.sameRepeat_subject_exact (a b : Diag) (h : a.subject.isSome = true) :
+    Diag.sameRepeat a b = Diag.sameLoss a b := by
+  apply Bool.eq_iff_iff.mpr
+  rw [Diag.sameRepeat_iff, Diag.sameLoss_iff]
+  exact ⟨fun ⟨hk, hs, _⟩ => ⟨hk, hs, h⟩, fun ⟨hk, hs, _⟩ => ⟨hk, hs, Or.inl h⟩⟩
+
+private theorem Diag.sameRepeat_symm {a b : Diag} (h : Diag.sameRepeat a b = true) :
+    Diag.sameRepeat b a = true := by
+  obtain ⟨⟨hk, ho⟩, hs, hr⟩ := (Diag.sameRepeat_iff a b).mp h
+  refine (Diag.sameRepeat_iff b a).mpr ⟨⟨hk.symm, ho.symm⟩, hs.symm, ?_⟩
+  rcases hr with hr | ⟨hm, hw⟩
+  · exact Or.inl (by rw [← hs]; exact hr)
+  · exact Or.inr ⟨hm.symm, by rw [← hk]; exact hw⟩
+
+private theorem Diag.sameRepeat_trans {a b c : Diag} (h₁ : Diag.sameRepeat a b = true)
+    (h₂ : Diag.sameRepeat b c = true) : Diag.sameRepeat a c = true := by
+  obtain ⟨⟨hk, ho⟩, hs, hr⟩ := (Diag.sameRepeat_iff a b).mp h₁
+  obtain ⟨⟨hk', ho'⟩, hs', hr'⟩ := (Diag.sameRepeat_iff b c).mp h₂
+  refine (Diag.sameRepeat_iff a c).mpr ⟨⟨hk.trans hk', ho.trans ho'⟩, hs.trans hs', ?_⟩
+  rcases hr with hr | ⟨hm, hw⟩
+  · exact Or.inl hr
+  · rcases hr' with hr' | ⟨hm', _⟩
+    · exact Or.inl (by rw [hs]; exact hr')
+    · exact Or.inr ⟨hm.trans hm', hw⟩
+
+private theorem Diag.sameRepeat_self {a b : Diag} (h : Diag.sameRepeat a b = true) :
+    Diag.sameRepeat a a = true := by
+  obtain ⟨_, _, hr⟩ := (Diag.sameRepeat_iff a b).mp h
+  refine (Diag.sameRepeat_iff a a).mpr ⟨⟨rfl, rfl⟩, rfl, ?_⟩
+  rcases hr with hr | ⟨_, hw⟩
+  · exact Or.inl hr
+  · exact Or.inr ⟨rfl, hw⟩
+
+private theorem Diag.sameRepeat_congr {a b : Diag} (h : Diag.sameRepeat a b = true) :
+    Diag.sameRepeat a = Diag.sameRepeat b := by
+  funext c
+  apply Bool.eq_iff_iff.mpr
+  exact ⟨fun hac => Diag.sameRepeat_trans (Diag.sameRepeat_symm h) hac,
+    fun hbc => Diag.sameRepeat_trans h hbc⟩
+
+private theorem Diag.sameRepeat_of_warning {d : Diag} (h : d.severity.isWarning = true) :
+    Diag.sameRepeat d d = true := by
+  have hw : d.kind.loss.severity.isWarning = true := by
+    cases hd : d.demoted <;> simp_all [Diag.severity, Severity.isWarning]
+  exact (Diag.sameRepeat_iff d d).mpr ⟨⟨rfl, rfl⟩, rfl, Or.inr ⟨rfl, hw⟩⟩
+
+/-- The index a group's line stands at: its first warning, or its first
+record when none of it is a warning. -/
+private def Diag.repeatHead (l : List Diag) (p : Diag → Bool) : Nat :=
+  if l.findIdx (fun e => p e && e.severity.isWarning) < l.length then
+    l.findIdx (fun e => p e && e.severity.isWarning)
+  else l.findIdx p
+
+private theorem Diag.repeatHead_mem (l : List Diag) (p : Diag → Bool) (i : Nat)
+    (hi : i < l.length) (hp : p l[i] = true) :
+    ∃ e, l[Diag.repeatHead l p]? = some e ∧ p e = true := by
+  unfold Diag.repeatHead
+  split
+  · rename_i hw
+    have hg := List.findIdx_getElem (w := hw)
+    simp only [Bool.and_eq_true] at hg
+    exact ⟨_, List.getElem?_eq_getElem hw, hg.1⟩
+  · have hlt : l.findIdx p < l.length :=
+      List.findIdx_lt_length_of_exists ⟨l[i], List.getElem_mem hi, hp⟩
+    exact ⟨_, List.getElem?_eq_getElem hlt, List.findIdx_getElem (w := hlt)⟩
+
+/-- The index whose line carries a record's count on the log: its group's
+head, or its own index when it repeats nothing. -/
+private def Diag.repeatCarrier (l : List Diag) (i : Nat) (d : Diag) : Nat :=
+  if Diag.sameRepeat d d then Diag.repeatHead l (Diag.sameRepeat d) else i
+
+private theorem Diag.repeatCarrier_lt (l : List Diag) (i : Nat) (h : i < l.length) :
+    Diag.repeatCarrier l i l[i] < l.length := by
+  unfold Diag.repeatCarrier
+  split
+  · rename_i hs
+    obtain ⟨e, he, _⟩ := Diag.repeatHead_mem l (Diag.sameRepeat l[i]) i h hs
+    exact (List.getElem?_eq_some_iff.mp he).1
+  · exact h
+
+private theorem Diag.repeatCarrier_mem (l : List Diag) (i : Nat) (h : i < l.length)
+    (hk : Diag.sameRepeat l[i] l[i] = true) :
+    ∃ e, l[Diag.repeatCarrier l i l[i]]? = some e ∧ Diag.sameRepeat l[i] e = true := by
+  unfold Diag.repeatCarrier
+  simp only [hk, ite_true]
+  exact Diag.repeatHead_mem l (Diag.sameRepeat l[i]) i h hk
+
+private theorem Diag.repeatCarrier_congr (l : List Diag) (i j : Nat) (hi : i < l.length)
+    (hj : j < l.length) (h : Diag.sameRepeat l[i] l[j] = true) :
+    Diag.repeatCarrier l i l[i] = Diag.repeatCarrier l j l[j] := by
+  unfold Diag.repeatCarrier
+  simp only [Diag.sameRepeat_self h, Diag.sameRepeat_self (Diag.sameRepeat_symm h), ite_true]
+  rw [Diag.sameRepeat_congr h]
+
+private theorem Diag.repeatCarrier_alone (l : List Diag) (i : Nat) (h : i < l.length)
+    (hk : Diag.sameRepeat l[i] l[i] = false) : Diag.repeatCarrier l i l[i] = i := by
+  simp [Diag.repeatCarrier, hk]
+
+/-- A record a carrier points at is its own carrier. -/
+private theorem Diag.repeatCarrier_target (l : List Diag) (k j : Nat) (hk : k < l.length)
+    (hj : j < l.length) (h : Diag.repeatCarrier l k l[k] = j) :
+    Diag.repeatCarrier l j l[j] = j := by
+  cases hkk : Diag.sameRepeat l[k] l[k]
+  · rw [Diag.repeatCarrier_alone l k hk hkk] at h
+    subst h
+    exact Diag.repeatCarrier_alone l k hk hkk
+  · obtain ⟨e, he, hs⟩ := Diag.repeatCarrier_mem l k hk hkk
+    rw [h] at he
+    obtain ⟨_, hje⟩ := List.getElem?_eq_some_iff.mp he
+    rw [← hje] at hs
+    rw [← Diag.repeatCarrier_congr l k j hk hj hs, h]
+
+private theorem Diag.repeatCarrier_eq_iff (l : List Diag) (c j : Nat) (hc : c < l.length)
+    (hj : j < l.length) (hcc : Diag.repeatCarrier l c l[c] = c)
+    (hkc : Diag.sameRepeat l[c] l[c] = true) :
+    Diag.repeatCarrier l j l[j] = c ↔ Diag.sameRepeat l[c] l[j] = true := by
+  constructor
+  · intro hjc
+    cases hkj : Diag.sameRepeat l[j] l[j]
+    · rw [Diag.repeatCarrier_alone l j hj hkj] at hjc
+      subst hjc
+      rw [hkc] at hkj
+      exact absurd hkj (by simp)
+    · obtain ⟨e, he, hs⟩ := Diag.repeatCarrier_mem l j hj hkj
+      rw [hjc] at he
+      obtain ⟨_, hce⟩ := List.getElem?_eq_some_iff.mp he
+      rw [← hce] at hs
+      exact Diag.sameRepeat_symm hs
+  · intro hs
+    rw [← Diag.repeatCarrier_congr l c j hc hj hs, hcc]
+
+private theorem Diag.repeatCount_later (l : List Diag) (j : Nat) (hj : j < l.length)
+    (hne : Diag.repeatCarrier l j l[j] ≠ j) :
+    (l.mapIdx (Diag.repeatCarrier l)).count j = 0 := by
+  have := Diag.count_mapIdx_eq_countP (l := l) (Diag.repeatCarrier l) (fun _ => false) j
+    fun k hk => by
+      simp only [Bool.false_eq_true, iff_false]
+      exact fun h => hne (Diag.repeatCarrier_target l k j hk hj h)
+  simpa using this
+
+/-- A warning's group shows its first warning, which carries the group's
+size. -/
+private theorem Diag.repeatCarrier_shown (l : List Diag) (j : Nat) (hj : j < l.length)
+    (hw : l[j].severity.isWarning = true) :
+    ∃ c, ∃ hc : c < l.length, c ≤ j ∧ Diag.sameRepeat l[j] l[c] = true ∧
+      l[c].severity.isWarning = true ∧
+      (l.mapIdx (Diag.repeatCarrier l)).count c = l.countP (Diag.sameRepeat l[j]) := by
+  have hkj : Diag.sameRepeat l[j] l[j] = true := Diag.sameRepeat_of_warning hw
+  have hq : (Diag.sameRepeat l[j] l[j] && l[j].severity.isWarning) = true := by
+    simp only [hkj, hw, Bool.and_self]
+  have hlt : l.findIdx (fun e => Diag.sameRepeat l[j] e && e.severity.isWarning) < l.length :=
+    List.findIdx_lt_length_of_exists ⟨_, List.getElem_mem hj, hq⟩
+  have hhead : Diag.repeatCarrier l j l[j] =
+      l.findIdx (fun e => Diag.sameRepeat l[j] e && e.severity.isWarning) := by
+    unfold Diag.repeatCarrier Diag.repeatHead
+    simp only [hkj, hlt, ite_true]
+  have hg := List.findIdx_getElem (w := hlt)
+  simp only [Bool.and_eq_true] at hg
+  have hle := Diag.findIdx_le_of_true
+    (p := fun e => Diag.sameRepeat l[j] e && e.severity.isWarning) hj hq
+  generalize l.findIdx (fun e => Diag.sameRepeat l[j] e && e.severity.isWarning) = c
+    at hlt hhead hg hle
+  obtain ⟨hgs, hgw⟩ := hg
+  have hcc : Diag.repeatCarrier l c l[c] = c := Diag.repeatCarrier_target l j c hj hlt hhead
+  have hkc : Diag.sameRepeat l[c] l[c] = true :=
+    Diag.sameRepeat_self (Diag.sameRepeat_symm hgs)
+  have hcount := Diag.count_mapIdx_eq_countP (Diag.repeatCarrier l) (Diag.sameRepeat l[c]) c
+    fun k hk => Diag.repeatCarrier_eq_iff l c k hlt hk hcc hkc
+  rw [← Diag.sameRepeat_congr hgs] at hcount
+  exact ⟨c, hlt, hle, hgs, hgw, hcount⟩
+
+/-- One record as the log delivers it: its count, and a warning that counts
+nothing delivered as a note. -/
+private def Diag.foldOne (n : Nat) (d : Diag) : Diag :=
+  if n == 0 && d.severity.isWarning then { d with sites := n }.demote
+  else { d with sites := n }
+
+private theorem Diag.foldOne_sites (n : Nat) (d : Diag) : (Diag.foldOne n d).sites = n := by
+  unfold Diag.foldOne; split <;> rfl
+
+private theorem Diag.foldOne_severity (n : Nat) (d : Diag) :
+    (Diag.foldOne n d).severity =
+      if n == 0 && d.severity.isWarning then .note else d.severity := by
+  unfold Diag.foldOne
+  split <;> rfl
+
+private theorem Diag.foldOne_shown (n : Nat) (d : Diag)
+    (h : (Diag.foldOne n d).severity.isWarning = true) :
+    n ≠ 0 ∧ d.severity.isWarning = true := by
+  rw [Diag.foldOne_severity] at h
+  cases hb : (n == 0 && d.severity.isWarning)
+  · simp only [hb, Bool.false_eq_true, ite_false] at h
+    refine ⟨fun hn => ?_, h⟩
+    simp [hn, h] at hb
+  · simp only [hb, ite_true] at h
+    exact absurd h (by simp [Severity.isWarning])
+
+/-- **One loss, one line.** A loss repeated across a phase's log shows once:
+its group's first warning carries the group's count, and every later warning
+of the group is delivered as a note, listed under `-v`. A group is a loss the
+census names by its subject, or a warning repeated in the same words with no
+subject (`sameRepeat`), so a subjectless emitter's repeats fold exactly as
+`warnOnce`'s do. Folding changes how often a loss is printed and nothing it
+says: nothing is added, removed, reordered or reworded
+(`foldRepeats_record_exact`), the counts add up to the records
+(`foldRepeats_sum_exact`), an error and a note keep their severity
+(`foldRepeats_kept_exact`, `foldRepeats_error_exact`), and every warning's
+group still shows one warning carrying its count (`foldRepeats_carrier_exact`,
+`foldRepeats_visible_inj`).
+The demotion is written here beside `Diag.accept`, the other policy door. -/
+public def Diag.foldRepeats (ds : Array Diag) : Array Diag :=
+  let carriers := ds.toList.mapIdx (Diag.repeatCarrier ds.toList)
+  ds.mapIdx fun i d => Diag.foldOne (carriers.count i) d
+
+private theorem Diag.foldRepeats_getElem? (ds : Array Diag) (i : Nat) (h : i < ds.size) :
+    (Diag.foldRepeats ds)[i]? =
+      some (Diag.foldOne ((ds.toList.mapIdx (Diag.repeatCarrier ds.toList)).count i) ds[i]) := by
   simp [Diag.foldRepeats, h]
 
-/-- **An error stays an error.** Whatever its site count, a tallied error
-is delivered at error severity, so the summary's error count and the exit
-status read every failing site. -/
-public theorem Diag.foldRepeats_error_exact (ds : Array Diag) (i : Nat)
-    (h : i < (Diag.tallySites ds).size)
-    (he : ((Diag.tallySites ds)[i]).severity = .error) :
-    ((Diag.foldRepeats ds)[i]?).map (·.severity) = some .error := by
-  have hw : (Severity.error == Severity.warning) = false := rfl
-  simp [Diag.foldRepeats, h, he, hw]
+public theorem Diag.foldRepeats_size_exact (ds : Array Diag) :
+    (Diag.foldRepeats ds).size = ds.size :=
+  Array.size_mapIdx
 
-/-- **Folding keeps the census.** The sites of a folded log still add up to
-its length: demotion rewrites what a line says it is, never how much it
-counts. -/
+/-- Folding rewrites a record's count and its demotion, and nothing else. -/
+public theorem Diag.foldRepeats_record_exact (ds : Array Diag) (i : Nat) (h : i < ds.size) :
+    ((Diag.foldRepeats ds)[i]?).map
+      (fun d => { d with sites := ds[i].sites, demoted := ds[i].demoted }) = some ds[i] := by
+  rw [Diag.foldRepeats_getElem? ds i h]
+  simp only [Option.map_some, Option.some.injEq]
+  unfold Diag.foldOne
+  split <;> rfl
+
+/-- **The sites in are the sites out.** Summing the folded log's counts gives
+the number of records it was given, whatever the phase. -/
 public theorem Diag.foldRepeats_sum_exact (ds : Array Diag) :
     ((Diag.foldRepeats ds).toList.map (·.sites)).sum = ds.size := by
-  have hsites : (Diag.foldRepeats ds).toList.map (·.sites) =
-      (Diag.tallySites ds).toList.map (·.sites) := by
-    simp only [Diag.foldRepeats, Array.toList_map, List.map_map]
-    congr 1
-    funext d
-    simp only [Function.comp_apply]
-    split <;> rfl
-  rw [hsites, Diag.tallySites_sum_exact]
+  have hmap : (Diag.foldRepeats ds).toList.map (·.sites) =
+      (List.range ds.size).map ((ds.toList.mapIdx (Diag.repeatCarrier ds.toList)).count ·) := by
+    apply List.ext_getElem
+    · simp [Diag.foldRepeats]
+    · intro n _ _
+      simp [Diag.foldRepeats, Diag.foldOne_sites]
+  rw [hmap, Diag.sum_count_range]
+  have hall : ∀ o ∈ ds.toList.mapIdx (Diag.repeatCarrier ds.toList), o < ds.size := by
+    intro o ho
+    obtain ⟨j, hj, rfl⟩ := List.mem_mapIdx.mp ho
+    have := Diag.repeatCarrier_lt ds.toList j hj
+    rwa [Array.length_toList] at this
+  rw [List.filter_eq_self.mpr (by simpa using hall)]
+  simp
+
+/-- An error stays an error and a note a note: only a warning is folded. -/
+public theorem Diag.foldRepeats_kept_exact (ds : Array Diag) (i : Nat) (h : i < ds.size)
+    (hw : ds[i].severity.isWarning = false) :
+    ((Diag.foldRepeats ds)[i]?).map (·.severity) = some ds[i].severity := by
+  rw [Diag.foldRepeats_getElem? ds i h]
+  simp [Diag.foldOne_severity, hw]
+
+/-- **An error stays an error.** A build fails at each of its sites, and the
+summary counts every one. -/
+public theorem Diag.foldRepeats_error_exact (ds : Array Diag) (i : Nat) (h : i < ds.size)
+    (he : ds[i].severity = .error) :
+    ((Diag.foldRepeats ds)[i]?).map (·.severity) = some .error := by
+  rw [Diag.foldRepeats_kept_exact ds i h (by rw [he]; rfl), he]
+
+/-- **Every warning is shown, once, with its count.** A warning's group keeps
+a warning at or before it, the group's first, and that line carries the
+number of records in the group. -/
+public theorem Diag.foldRepeats_carrier_exact (ds : Array Diag) (j : Nat) (hj : j < ds.size)
+    (hw : ds[j].severity.isWarning = true) :
+    ∃ i, ∃ hi : i < ds.size, i ≤ j ∧ Diag.sameRepeat ds[j] ds[i] = true ∧
+      ((Diag.foldRepeats ds)[i]?).map (fun d => (d.severity.isWarning, d.sites)) =
+        some (true, (ds.filter (Diag.sameRepeat ds[j])).size) := by
+  have hjl : j < ds.toList.length := by simpa using hj
+  obtain ⟨c, hc, hle, hs, hcw, hcount⟩ :=
+    Diag.repeatCarrier_shown ds.toList j hjl (by simpa using hw)
+  have hkj : Diag.sameRepeat ds.toList[j] ds.toList[j] = true :=
+    Diag.sameRepeat_of_warning (by simpa using hw)
+  have hpos : ds.toList.countP (Diag.sameRepeat ds.toList[j]) ≠ 0 := by
+    rw [List.countP_eq_length_filter]
+    intro h0
+    have := List.eq_nil_of_length_eq_zero h0
+    rw [List.filter_eq_nil_iff] at this
+    exact this _ (List.getElem_mem hjl) hkj
+  have hcs : c < ds.size := by simpa using hc
+  refine ⟨c, hcs, hle, by simpa using hs, ?_⟩
+  rw [Diag.foldRepeats_getElem? ds c hcs]
+  simp only [Option.map_some, Option.some.injEq, Prod.mk.injEq]
+  have hsize : (ds.filter (Diag.sameRepeat ds[j])).size =
+      ds.toList.countP (Diag.sameRepeat ds.toList[j]) := by
+    rw [List.countP_eq_length_filter, ← Array.length_toList, Array.toList_filter]
+    simp
+  have hcount' : (ds.toList.mapIdx (Diag.repeatCarrier ds.toList)).count c =
+      ds.toList.countP (Diag.sameRepeat ds.toList[j]) := hcount
+  refine ⟨?_, by rw [Diag.foldOne_sites, hcount', hsize]⟩
+  rw [Diag.foldOne_severity, hcount']
+  have hn : (ds.toList.countP (Diag.sameRepeat ds.toList[j]) == 0) = false := by
+    simpa using hpos
+  simp only [hn, Bool.false_and, Bool.false_eq_true, ite_false]
+  simpa using hcw
+
+/-- **A group shows at most one warning.** Two records of one group both
+delivered as warnings are the same record. -/
+public theorem Diag.foldRepeats_visible_inj (ds : Array Diag) (i j : Nat) (hi : i < ds.size)
+    (hj : j < ds.size)
+    (hvi : ((Diag.foldRepeats ds)[i]?).map (·.severity.isWarning) = some true)
+    (hvj : ((Diag.foldRepeats ds)[j]?).map (·.severity.isWarning) = some true)
+    (h : Diag.sameRepeat ds[i] ds[j] = true) : i = j := by
+  rw [Diag.foldRepeats_getElem? ds i hi] at hvi
+  rw [Diag.foldRepeats_getElem? ds j hj] at hvj
+  simp only [Option.map_some, Option.some.injEq] at hvi hvj
+  have hil : i < ds.toList.length := by simpa using hi
+  have hjl : j < ds.toList.length := by simpa using hj
+  have hci : Diag.repeatCarrier ds.toList i ds.toList[i] = i := Classical.byContradiction
+    fun hne => (Diag.foldOne_shown _ _ hvi).1 (by simpa using Diag.repeatCount_later ds.toList i hil hne)
+  have hcj : Diag.repeatCarrier ds.toList j ds.toList[j] = j := Classical.byContradiction
+    fun hne => (Diag.foldOne_shown _ _ hvj).1 (by simpa using Diag.repeatCount_later ds.toList j hjl hne)
+  have := Diag.repeatCarrier_congr ds.toList i j hil hjl (by simpa using h)
+  rw [hci, hcj] at this
+  exact this
 
 /-- Diagnostics resolved against the document's acceptance, with the counts
 of every resolved phase. Counts follow acceptance, so an accepted loss is
-neither an error nor a warning. -/
+neither an error nor a warning. `notes` counts the lines only `-v` prints
+that no acceptance demoted: a note as emitted, and a repeat site the fold
+delivered as one. -/
 public structure Resolution where
   diags : Array Diag := #[]
   fired : Array String := #[]
   accepted : Array String := #[]
   errors : Nat := 0
   warnings : Nat := 0
+  notes : Nat := 0
   deriving Repr, BEq
 
 /-- Phase accounting keeps the rendered records, acceptance and exit counts
@@ -1206,7 +1504,8 @@ public def Resolution.append (a b : Resolution) : Resolution :=
     fired := a.fired ++ b.fired
     accepted := a.accepted ++ b.accepted
     errors := a.errors + b.errors
-    warnings := a.warnings + b.warnings }
+    warnings := a.warnings + b.warnings
+    notes := a.notes + b.notes }
 
 @[simp] theorem Resolution.empty_append_id (r : Resolution) :
     ({} : Resolution).append r = r := by
@@ -1228,7 +1527,8 @@ private def Resolution.record (r : Resolution) (d : Diag) (accepted : Bool) : Re
     fired := r.fired.push d.code
     accepted := if accepted then r.accepted.push d.code else r.accepted
     errors := r.errors + (if d.severity == .error then 1 else 0)
-    warnings := r.warnings + (if d.severity == .warning then 1 else 0) }
+    warnings := r.warnings + (if d.severity == .warning then 1 else 0)
+    notes := r.notes + (if d.severity == .note && !accepted then 1 else 0) }
 
 private theorem Resolution.record_append (a b : Resolution) (d : Diag) (accepted : Bool) :
     (a.append b).record d accepted = a.append (b.record d accepted) := by
@@ -1251,8 +1551,8 @@ private theorem Diag.resolveAll_fold (allowed : Array String) (allowAll : Bool)
   simp [resolveAll]
 
 /-- Resolving consecutive phases equals resolving their combined stream.
-The record equality covers diagnostic order, fired and accepted codes, and
-both exit counts under the same acceptance policy. -/
+The record equality covers diagnostic order, fired and accepted codes, both
+exit counts and the notes under the same acceptance policy. -/
 public theorem Diag.resolveAll_append_exact (allowed : Array String) (allowAll : Bool)
     (xs ys : Array Diag) :
     Diag.resolveAll allowed allowAll (xs ++ ys) =

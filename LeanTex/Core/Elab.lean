@@ -9295,13 +9295,17 @@ private def listingBlock (ctx : Ctx) (env s : String) (pos : Pos) : EM Block := 
       let name := (v.drop 1).toString
       if Ir.sizeScale.any (·.1 == name) then some name else none
     else none
+  -- A key and value is one loss wherever a listing names it.
+  let unhonoured (key msg : String) (help : Option String) : EM Unit :=
+    warnOnce ctx ("lstopt:" ++ key) .W0110 msg pos (help := help)
   let langOf (raw : String) : EM (Option Ir.ListingLang) := do
     match Ir.listingLang? raw with
     | some l => pure (some l)
     | none =>
-      diag ctx .W0110 s!"listing language '{raw.trimAscii.toString}' is not a plain name; the \
-listing carries no language" (some pos)
-        (help := "spell it as letters, digits, +, #, - or . (python, c++, c#)")
+      unhonoured ("language=" ++ raw.trimAscii.toString)
+        s!"listing language '{raw.trimAscii.toString}' is not a plain name; the \
+listing carries no language"
+        "spell it as letters, digits, +, #, - or . (python, c++, c#)"
       pure none
   for entry in Decl.splitEntries opts do
     let bare := entry.trimAscii.toString
@@ -9317,9 +9321,8 @@ listing carries no language" (some pos)
       if v == "left" then numbers := true
       else if v == "none" then numbers := false
       else
-        diag ctx .W0110 s!"'numbers={v}' asks for a numbering the engine \
-does not draw; lines keep no numbers" (some pos)
-          (help := "numbers=left draws them")
+        unhonoured ("numbers=" ++ v) s!"'numbers={v}' asks for a numbering the engine \
+does not draw; lines keep no numbers" "numbers=left draws them"
     | some ("linenos", v) =>
       numbers := v.trimAscii.toString != "false"
     | some ("language", v) => language ← langOf (listingVal v)
@@ -9329,37 +9332,37 @@ does not draw; lines keep no numbers" (some pos)
         match Ir.ListingStyle.ofName? v with
         | some selected => style := selected
         | none =>
-          diag ctx .W0110 s!"listing style '{v}' is not supported; the current style stands"
-            (some pos) (help := "use style=default or style=friendly")
+          unhonoured ("minted:style=" ++ v)
+            s!"listing style '{v}' is not supported; the current style stands"
+            "use style=default or style=friendly"
       else
-        diag ctx .W0110 s!"listing named style '{v}' is not supported; the current style stands"
-          (some pos)
+        unhonoured ("lstlisting:style=" ++ v)
+          s!"listing named style '{v}' is not supported; the current style stands" none
     | some ("fontsize", v) =>
       let v := listingVal v
       if env == "minted" && v == "auto" then fontSize := inherited
       else if env == "minted" && (sizeName? v).isSome then
         fontSize := .size ((sizeName? v).getD "normalsize")
       else
-        diag ctx .W0110 s!"listing fontsize '{v}' is not a supported size command; \
-the current size stands" (some pos)
-          (help := "use a named size command such as fontsize=\\small, or fontsize=auto")
+        unhonoured ("fontsize=" ++ v) s!"listing fontsize '{v}' is not a supported size command; \
+the current size stands" "use a named size command such as fontsize=\\small, or fontsize=auto"
     | some ("tabsize", v) =>
       let v := listingVal v
       -- FancyVerb's upper bound (fancyvrb.sty, the FV/tabsize key).
       match v.toNat? with
       | some n =>
         if 0 < n && n ≤ 100 then tabSize := n
-        else diag ctx .W0110 s!"listing tabsize '{v}' is outside 1..100; \
-the current tab stops stand" (some pos)
+        else unhonoured ("tabsize=" ++ v) s!"listing tabsize '{v}' is outside 1..100; \
+the current tab stops stand" none
       | none =>
-        diag ctx .W0110 s!"listing tabsize '{v}' is not an integer; \
-the current tab stops stand" (some pos)
+        unhonoured ("tabsize=" ++ v) s!"listing tabsize '{v}' is not an integer; \
+the current tab stops stand" none
     | some ("breaklines", v) =>
       let v := listingVal v
       if v == "true" then breakLines := true
       else if v == "false" then breakLines := false
-      else diag ctx .W0110 s!"listing breaklines '{v}' is not true or false; \
-the current wrapping stands" (some pos)
+      else unhonoured ("breaklines=" ++ v) s!"listing breaklines '{v}' is not true or false; \
+the current wrapping stands" none
     | some ("basicstyle", v) =>
       let v := listingVal v
       let names := v.splitOn "\\"
@@ -9371,14 +9374,14 @@ the current wrapping stands" (some pos)
           let name := name.trimAscii.toString
           if name == "ttfamily" then size else .size name) inherited
       else
-        diag ctx .W0110 "listing basicstyle supports only \\ttfamily and named \
-size commands; the current style stands" (some pos)
+        unhonoured "basicstyle" "listing basicstyle supports only \\ttfamily and named \
+size commands; the current style stands" none
     | some (k, _) =>
-      diag ctx .W0110 s!"listing key '{k}' is not honoured; ignored" (some pos)
+      unhonoured k s!"listing key '{k}' is not honoured; ignored" none
     | none =>
       if bare == "linenos" then numbers := true
       else if bare == "breaklines" then breakLines := true
-      else diag ctx .W0110 s!"listing key '{bare}' is not honoured; ignored" (some pos)
+      else unhonoured bare s!"listing key '{bare}' is not honoured; ignored" none
   if env == "minted" then
     match Parse.mintedLangHead s afterOpt with
     | some (lang, _) => language ← langOf lang
