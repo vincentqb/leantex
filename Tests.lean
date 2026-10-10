@@ -231,6 +231,7 @@ import Tests.TikzCd
 import Tests.TikzCoverage
 import Tests.BoundaryFaces
 import Tests.TikzLongTail
+import Tests.TikzCdNative
 import Tests.PictureLabelSpacing
 import Tests.PictureHtmlBaseline
 import Tests.PictureMathLabels
@@ -623,6 +624,7 @@ def layoutSuiteChecks (ref : IO.Ref (List String)) : IO Unit := do
   tikzPathChecks ref oneFace
   Tests.boundaryFaceChecks ref
   tikzLongTailChecks ref oneFace
+  tikzcdNativeChecks ref (← mathSetOf oneFace)
   tikzInlineChecks ref oneFace
   pictureEveryLevelChecks ref oneFace
   pictureStyleHandlerChecks ref oneFace

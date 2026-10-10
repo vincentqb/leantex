@@ -56,7 +56,7 @@ public def nativePackages : List String :=
    "libertine", "carlito", "xspace", "float", "biblatex", "appendix",
    "cleveref", "listings", "minted", "siunitx",
    "algorithm2e", "algorithmicx", "algpseudocode", "algorithm", "lineno", "environ", "amsthm",
-   "cancel", "animate", "markdown", "ulem"]
+   "cancel", "animate", "markdown", "ulem", "tikz-cd"]
 
 /-- Beamer's colour elements, each mapped onto the engine's palette roles:
 the role its `fg=` declares and the role its `bg=` declares. An empty role
@@ -2205,15 +2205,17 @@ W0103's named loss — the real TeX at the edge is what reads them. A closed
 list, extended when a document brings the next one; a package with body
 commands outside pictures does not belong here. -/
 public def boundaryPkgs : List String :=
-  ["genealogytree", "pgfplots", "circuitikz", "tikz-cd"]
+  ["genealogytree", "pgfplots", "circuitikz"]
 
 /-- The native packages whose loads ride to the boundary standalone too: the
 engine sets their mathematics itself, but a picture's labels and a
 diagram's cells are TeX's to set at the boundary, and amsmath's
 `\underset`, `\text` and `\substack`, or amssymb's `\mathbb`, are
 undefined in a standalone that never loaded them — the picture would fail
-for want of a package its document did load. -/
-public def boundaryMathPkgs : List String := ["amsmath", "amssymb", "amsfonts"]
+for want of a package its document did load. tikz-cd is the same case: the
+engine draws a diagram itself where its reader can, and the diagrams it
+routes are the library's to draw. -/
+public def boundaryMathPkgs : List String := ["amsmath", "amssymb", "amsfonts", "tikz-cd"]
 
 /-- The document refused the boundary: a `\pictures` block declaring
 `tool = none`. Read over the unrewritten preamble exactly as

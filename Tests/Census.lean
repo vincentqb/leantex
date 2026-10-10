@@ -1095,6 +1095,31 @@ def censusRows5 :
         p.pathStrokes.any (·.2 == Ir.Pic.thinWidth)).getD false),
     ("the labels ship, the turned one beside its path",
       hasStr (censusText c) "box" && hasStr (censusText c) "turned")]),
+  -- A commutative square and triangle drawn by the engine: seven arrows,
+  -- each a shaft and a tip, and the description label's ground behind it;
+  -- cells and labels as mathematics, the labels a script size below the
+  -- cells, the coloured diagonal in its colour. Placement against the
+  -- cells' measured letters is `tikzcdNativeChecks`', which elaborates as
+  -- the driver does.
+  ("diagram-cd", fun _ c => [
+    ("one page", c.size == 1),
+    ("no boundary box stands where the diagrams are",
+      (c[0]?.map (·.images == 0)).getD false),
+    ("every arrow's shaft and tip ships as a page path, and the description's ground",
+      (c[0]?.map fun p => p.paths == 15 && p.pathStrokes.size == 14).getD false),
+    ("every cell and label ships as mathematics",
+      ["𝑃", "𝑄", "𝑅", "𝑆", "𝑢", "𝑣", "𝑤", "𝑥", "𝐾", "𝐿", "𝑀", "𝑚"].all
+        fun l => hasStr (censusText c) l),
+    ("a label is set a script size below its cells",
+      (((lineSizeOf c 0 "𝑢").bind fun a => (lineSizeOf c 0 "𝑃").map fun b =>
+        decide (a < b)).getD false)),
+    ("a row stands below the row before it",
+      (((lineYOf c 0 "𝑃").bind fun yp => (lineYOf c 0 "𝑅").map fun yr =>
+        decide (yp < yr)).getD false)),
+    ("the coloured diagonal strokes its shaft and tip in its colour",
+      (c[0]?.map fun p => (p.pathStrokes.filter (·.1 == { r := 255, g := 0, b := 0 })).size == 2).getD false),
+    ("the prose around the square ships",
+      hasStr (censusText c) "Before the square" && hasStr (censusText c) "After the square")]),
   ("diagram-strokes", fun _ c => [
     ("one page", c.size == 1),
     ("the three strokes ship as the picture's own marks, no page fill among them",

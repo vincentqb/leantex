@@ -40,7 +40,7 @@ def boundaryFaceChecks (ref : IO.Ref (List String)) : IO Unit := do
   let faces ← FontDiscovery.scanRootsIn none [testFonts]
   let scan : FaceScan := { faces, docDirs := [], dirs := #[], diags := #[] }
   let cache ← FontEnv.Cache.mk'
-  let doc := firstPass (dvDoc "\\usepackage{tikz-cd}\n" ("\\[" ++ cdDiagram ++ "\\]"))
+  let doc := firstPass (dvDoc "\\usepackage{tikz-cd}\n" ("\\[" ++ cdLossy ++ "\\]"))
   let reqOf (d : Ir.Doc) (spec : Ir.FontSpec) : String :=
     (((Ir.pictureRefs d spec)[0]?).map (·.2)).getD ""
   match ← buildFontSet doc scan cache (.provisional true) with
@@ -62,7 +62,7 @@ def boundaryFaceChecks (ref : IO.Ref (List String)) : IO Unit := do
     t "boundary faces: a face the document ships in its own directory travels nowhere"
       (kept.body.isNone && kept.math.isNone)
     let declared := firstPass (dvDoc "\\usepackage{tikz-cd}\n\\fonts{ math = \"Latin Modern Math\" }\n"
-      ("\\[" ++ cdDiagram ++ "\\]"))
+      ("\\[" ++ cdLossy ++ "\\]"))
     t "boundary faces: a declared role stands as written"
       ((boundaryFonts declared.fonts fs scan).math == some "Latin Modern Math")
   -- The committed fixture: the request under a host's resolved faces, and

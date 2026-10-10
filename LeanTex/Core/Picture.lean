@@ -7661,4 +7661,615 @@ public def placeholder (code : String) : Ir.Pic.Picture :=
       .rect (side - th) 0 th side grey,
       .label (side / 2) (side / 2) #[.text code] grey 1000 .center] }
 
+
+/-! ## Commutative diagrams: tikz-cd's matrix of math cells and the arrows between them
+
+The library (tikzlibrarycd.code.tex) is a TikZ matrix of math nodes in the
+`asymmetrical rectangle` shape — a rectangle whose `center` stands at the
+math axis above its text's baseline, so a row's cells align on their axes
+and a horizontal arrow runs at axis height — with every `\arrow` saved and
+drawn after the matrix as a `\path … to …` between two cells' borders. This
+section reads that grammar and lays it out as pgf's matrix does: each
+column as wide as its widest cell either side of the cell origins, each row
+as tall as its tallest, the separations between their boxes. -/
+
+namespace Cd
+
+/-- tikz-cd's row and column separations by name, in milli-em
+(tikzlibrarycd.code.tex, `row sep/<name>/.initial` and `column sep/…`). -/
+public def rowSepEm : List (String × Int) :=
+  [("huge", 3600), ("large", 2700), ("normal", 1800), ("scriptsize", 1350), ("small", 900),
+   ("tiny", 450)]
+
+public def colSepEm : List (String × Int) :=
+  [("huge", 4800), ("large", 3600), ("normal", 2400), ("scriptsize", 1800), ("small", 1200),
+   ("tiny", 600)]
+
+/-- One arrow label as written: its math, and the keys around it (`swap`,
+`description`, a colour). -/
+structure Label where
+  content : Array Parse.Raw
+  swap : Bool := false
+  description : Bool := false
+  keys : Array (Array Tok) := #[]
+  deriving Inhabited
+
+/-- One arrow as its cell wrote it: the target's offset in rows and columns,
+its keys, and its labels. -/
+structure Arrow where
+  dr : Int := 0
+  dc : Int := 0
+  keys : Array (Array Tok) := #[]
+  labels : Array Label := #[]
+  deriving Inhabited
+
+/-- Raws with their spaces dropped at both ends. -/
+private def trimRaws (rs : Array Parse.Raw) : Array Parse.Raw :=
+  let a := rs.toList.dropWhile (· matches .space)
+  (a.reverse.dropWhile (· matches .space)).reverse.toArray
+
+/-- Split raws at their top-level commas: a comma inside a word ends one
+entry and starts the next, a group stays whole. -/
+private def splitEntries (raws : Array Parse.Raw) : Array (Array Parse.Raw) := Id.run do
+  let mut out : Array (Array Parse.Raw) := #[]
+  let mut cur : Array Parse.Raw := #[]
+  for r in raws do
+    match r with
+    | .word s p =>
+      let mut first := true
+      for piece in s.splitOn "," do
+        unless first do
+          out := out.push (trimRaws cur)
+          cur := #[]
+        first := false
+        unless piece.isEmpty do cur := cur.push (.word piece p)
+    | r => cur := cur.push r
+  out := out.push (trimRaws cur)
+  return out.filter (!·.isEmpty)
+
+/-- The raws of a `[…]` bracket opening at `i`, and the index past its `]`. -/
+private def readBracket (raws : Array Parse.Raw) (i : Nat) : Option (Array Parse.Raw × Nat) := Id.run do
+  unless raws[i]? matches some (.sym '[' _) do return none
+  let mut depth : Nat := 0
+  let mut inner : Array Parse.Raw := #[]
+  for k in [i + 1:raws.size] do
+    match raws[k]? with
+    | some (.sym '[' p) =>
+      depth := depth + 1
+      inner := inner.push (.sym '[' p)
+    | some (.sym ']' p) =>
+      if depth == 0 then return some (inner, k + 1)
+      depth := depth - 1
+      inner := inner.push (.sym ']' p)
+    | some r => inner := inner.push r
+    | none => pure ()
+  return none
+
+/-- Skip spaces from `i`. -/
+private def skipSp (raws : Array Parse.Raw) (i : Nat) : Nat := Id.run do
+  let mut j := i
+  for _ in [i:raws.size] do
+    if raws[j]? matches some .space then j := j + 1 else break
+  return j
+
+/-- A run of direction letters (`r`, `dr`, `uul`) as rows and columns. -/
+private def dirOf (s : String) : Option (Int × Int) :=
+  if s.isEmpty then none else
+  s.toList.foldl (fun acc c => acc.bind fun (r, k) => match c with
+    | 'r' => some (r, k + 1)
+    | 'l' => some (r, k - 1)
+    | 'd' => some (r + 1, k)
+    | 'u' => some (r - 1, k)
+    | _ => none) (some (0, 0))
+
+/-- Option keys from raws, as the picture walk's token entries. -/
+private def keyEntries (raws : Array Parse.Raw) : Array (Array Tok) :=
+  (splitTop ((ofRaws raws).filter (· != .space)) ',').filter (!·.isEmpty)
+
+/-- A quoted label (the `quotes` library's `"text"'` and `"text" keys`):
+the raws between the quotes, then what follows them. `none` where the entry
+opens with no quote. -/
+private def quotedLabel (entry : Array Parse.Raw) : Option Label := Id.run do
+  match (entry[0]? : Option Parse.Raw) with
+  | some (.word s p) =>
+    unless s.startsWith "\"" do return none
+    let body := (s.drop 1).toString
+    -- The closing quote in the opening word itself: `"f"` or `"f"'`.
+    match body.splitOn "\"" with
+    | inner :: rest@(_ :: _) =>
+      let after := "\"".intercalate rest
+      return some (labelTail #[.word inner p] after (entry.extract 1 entry.size) p)
+    | _ =>
+      let mut content : Array Parse.Raw := if body.isEmpty then #[] else #[.word body p]
+      for k in [1:entry.size] do
+        match entry[k]? with
+        | some (.word w q) =>
+          match w.splitOn "\"" with
+          | before :: rest@(_ :: _) =>
+            unless before.isEmpty do content := content.push (.word before q)
+            return some (labelTail content ("\"".intercalate rest) (entry.extract (k + 1) entry.size) q)
+          | _ => content := content.push (.word w q)
+        | some r => content := content.push r
+        | none => pure ()
+      return some { content }
+  | _ => return none
+where
+  /-- What follows the closing quote: `'` swaps, a group or words are keys. -/
+  labelTail (content : Array Parse.Raw) (after : String) (rest : Array Parse.Raw) (p : Pos) : Label := Id.run do
+    let mut l : Label := { content }
+    let mut tail := after
+    if tail.startsWith "'" then
+      l := { l with swap := true }
+      tail := (tail.drop 1).toString
+    let mut raws : Array Parse.Raw := if tail.isEmpty then #[] else #[.word tail p]
+    for r in rest do
+      match r with
+      | .group g _ => raws := raws ++ g
+      | r => raws := raws.push r
+    for e in keyEntries raws do
+      match keyPath e.toList with
+      | "description" => l := { l with description := true }
+      | "swap" | "'" => l := { l with swap := !l.swap }
+      | _ => l := { l with keys := l.keys.push e }
+    return l
+
+/-- One option entry of an arrow: a quoted label, a direction, or a key. -/
+private def arrowEntry (a : Arrow) (entry : Array Parse.Raw) : Arrow :=
+  match quotedLabel entry with
+  | some l => { a with labels := a.labels.push l }
+  | none =>
+    let es := keyEntries entry
+    match es.toList with
+    | [e] =>
+      match (keyName e.toList).bind dirOf with
+      | some (r, k) => { a with dr := a.dr + r, dc := a.dc + k }
+      | none => { a with keys := a.keys.push e }
+    | _ => { a with keys := a.keys ++ es }
+
+/-- A cell's raws read as its content and the arrows it starts: `\arrow`,
+`\ar` and the direction shortcuts (`\rar`, `\drar`, …), each with its
+bracket of keys in the new syntax, and in the old one a direction group
+then any number of labels, each with an optional bracket (the library's
+`\tikzcd@ar@old` and `\tikzcd@ar@getlabel`). -/
+private def splitCell (raws : Array Parse.Raw) : Array Parse.Raw × Array Arrow := Id.run do
+  let shortcuts : List (String × String) :=
+    [("rar", "r"), ("lar", "l"), ("dar", "d"), ("uar", "u"), ("drar", "dr"), ("dlar", "dl"),
+     ("urar", "ur"), ("ular", "ul")]
+  let mut content : Array Parse.Raw := #[]
+  let mut arrows : Array Arrow := #[]
+  let mut i := 0
+  for _ in [0:raws.size + 1] do
+    match (raws[i]? : Option Parse.Raw) with
+    | none => break
+    | some (.ctrl n p) =>
+      let short := List.lookup n shortcuts
+      if n == "arrow" || n == "ar" || short.isSome then
+        let mut a : Arrow := {}
+        if let some d := short then
+          if let some (r, k) := dirOf d then a := { a with dr := r, dc := k }
+        let mut j := skipSp raws (i + 1)
+        if let some (inner, next) := readBracket raws j then
+          for e in splitEntries inner do a := arrowEntry a e
+          j := skipSp raws next
+        -- The old syntax: a direction group, then labels.
+        if short.isNone then
+          if let some (.group g _) := raws[j]? then
+            if let some (r, k) := dirOf (Parse.rawSrc g).trimAscii.toString then
+              a := { a with dr := a.dr + r, dc := a.dc + k }
+            j := skipSp raws (j + 1)
+            for _ in [0:raws.size] do
+              let (lkeys, k) := match readBracket raws j with
+                | some (inner, next) => (keyEntries inner, skipSp raws next)
+                | none => (#[], j)
+              match raws[k]? with
+              | some (.group lbl _) =>
+                let mut l : Label := { content := lbl }
+                for e in lkeys do
+                  match keyPath e.toList with
+                  | "description" => l := { l with description := true }
+                  | "swap" | "'" => l := { l with swap := !l.swap }
+                  | _ => l := { l with keys := l.keys.push e }
+                a := { a with labels := a.labels.push l }
+                j := skipSp raws (k + 1)
+              | _ => break
+        arrows := arrows.push a
+        i := j
+      else
+        content := content.push (.ctrl n p)
+        i := i + 1
+    | some r =>
+      content := content.push r
+      i := i + 1
+  return (trimRaws content, arrows)
+
+/-- The rows of a diagram body and their cells: rows end at `\\`, cells at
+`&`, or at `\&` under `ampersand replacement`. A trailing empty row is no
+row. -/
+private def splitRows (raws : Array Parse.Raw) (amp : Bool) : Array (Array (Array Parse.Raw)) := Id.run do
+  let mut rows : Array (Array (Array Parse.Raw)) := #[]
+  let mut row : Array (Array Parse.Raw) := #[]
+  let mut cell : Array Parse.Raw := #[]
+  for r in raws do
+    let ends := match r with
+      | .sym '&' _ => !amp
+      | .ctrl "&" _ => amp
+      | _ => false
+    if r matches .ctrl "\\" _ then
+      rows := rows.push (row.push cell)
+      row := #[]
+      cell := #[]
+    else if ends then
+      row := row.push cell
+      cell := #[]
+    else cell := cell.push r
+  let last := row.push cell
+  unless last.all (fun c => (trimRaws c).isEmpty) do rows := rows.push last
+  return rows
+
+/-- Every row as wide as the widest, short rows padded with empty cells: the
+grid a matrix lays out. -/
+public def padRows (rows : Array (Array (Array Parse.Raw))) : Array (Array (Array Parse.Raw)) :=
+  let width := rows.foldl (fun w r => max w r.size) 0
+  rows.map fun r => r ++ Array.replicate (width - r.size) #[]
+
+/-- **A diagram's cells are a rectangle.** Every row of the grid the layout
+reads has as many cells as the widest row the source wrote, so a column's
+width and a row's height are each read over one complete set of cells. -/
+public theorem cells_rectangular (rows : Array (Array (Array Parse.Raw))) :
+    ∀ r ∈ padRows rows, r.size = rows.foldl (fun w r => max w r.size) 0 := by
+  intro r hr
+  simp only [padRows, Array.mem_map] at hr
+  obtain ⟨r0, hr0, rfl⟩ := hr
+  have hle : r0.size ≤ rows.foldl (fun w r => max w r.size) 0 := by
+    have key : ∀ (l : List (Array (Array Parse.Raw))) (w : Nat),
+        (∀ x ∈ l, x.size ≤ l.foldl (fun w r => max w r.size) w) ∧
+        w ≤ l.foldl (fun w r => max w r.size) w := by
+      intro l
+      induction l with
+      | nil => intro w; simp
+      | cons x xs ih =>
+        intro w
+        have h := ih (max w x.size)
+        refine ⟨fun y hy => ?_, Nat.le_trans (Nat.le_max_left _ _) h.2⟩
+        simp only [List.mem_cons] at hy
+        rcases hy with rfl | hy
+        · exact Nat.le_trans (Nat.le_max_right _ _) h.2
+        · exact h.1 y hy
+    rw [← Array.foldl_toList]
+    exact (key rows.toList 0).1 r0 (Array.mem_toList_iff.mpr hr0)
+  simp only [Array.size_append, Array.size_replicate]
+  omega
+
+/-- Where a cell's border meets the ray from its centre toward `q`: the
+`asymmetrical rectangle`'s `\anchorborder` — the rectangle's border, its
+half-height above the centre toward a point above it and below toward a
+point below, the centre standing at the math axis. -/
+public def cellBorder (x y a up down qx qy : Int) : Int × Int :=
+  rectBorder x y a (if qy > y then up else down) qx qy
+
+/-- **An arrow ends on its cell's border** (`_exact`): toward any point
+other than the centre, the end has the dominant coordinate exactly on one
+of the cell's sides — the left or right one, or the top toward a point above
+the axis, the bottom toward one below — and stays within the cell's extent
+on the other, so an arrow neither stops short of a cell nor enters it. -/
+public theorem arrow_border_exact (x y a up down qx qy : Int) (ha : 0 < a) (hu : 0 < up)
+    (hd : 0 < down) :
+    let b := if qy > y then up else down
+    ((cellBorder x y a up down qx qy).1 = x - a ∨ (cellBorder x y a up down qx qy).1 = x + a ∨
+      (cellBorder x y a up down qx qy).2 = y - b ∨ (cellBorder x y a up down qx qy).2 = y + b ∨
+      (qx = x ∧ qy = y)) := by
+  intro b
+  have hb : 0 < b := by
+    show 0 < (if qy > y then up else down)
+    split <;> assumption
+  have := (rectBorder_exact x y a b qx qy ha hb).1
+  simp only [cellBorder]
+  exact this
+
+/-- The tip tikz-cd draws (`cm to`: arrows.meta's Computer Modern
+Rightarrow at `length=+0pt 6.2`, its width 2.096774 of its length, round
+caps and joins, stroked at the arrow's width): its path in the frame of the
+arrow's end, `d` the unit direction in thousandths, ending at the path's
+end point. -/
+private def cmTo (end_ : Sp × Sp) (dx dy : Int) (lw : Sp) : Gfx.Subpath :=
+  let a := 52 * lw / 10
+  let b := 12 * lw
+  -- The tip's origin stands half a line width behind the end (its tip end).
+  let ox := end_.1 - dx * lw / 2000
+  let oy := end_.2 - dy * lw / 2000
+  let at_ (u v : Int) : Sp × Sp := (ox + (dx * u - dy * v) / 1000, oy + (dy * u + dx * v) / 1000)
+  { start := at_ (-a) (b / 2)
+    segs := #[.cubic (at_ (-a * 81731 / 100000) (b * 2 / 10)) (at_ (-a * 41019 / 100000)
+        (b * 5833333 / 100000000)) (at_ 0 0),
+      .cubic (at_ (-a * 41019 / 100000) (-b * 5833333 / 100000000))
+        (at_ (-a * 81731 / 100000) (-b * 2 / 10)) (at_ (-a) (-b / 2))]
+    closed := false }
+
+/-- A unit direction in thousandths from a vector, `(1000, 0)` for none. -/
+private def unitOf (dx dy : Int) : Int × Int :=
+  let n := isqrt (dx * dx + dy * dy)
+  if n == 0 then (1000, 0) else (dx * 1000 / n, dy * 1000 / n)
+
+/-- The cubic at `t` (thousandths), and its tangent there. -/
+private def cubicAtMilli (p0 c1 c2 p1 : Sp × Sp) (t : Int) : (Sp × Sp) × (Sp × Sp) :=
+  let s := 1000 - t
+  let pt (a b c d : Int) : Int :=
+    (a * s * s * s + 3 * b * s * s * t + 3 * c * s * t * t + d * t * t * t) / 1000000000
+  let dv (a b c d : Int) : Int :=
+    (3 * (b - a) * s * s + 6 * (c - b) * s * t + 3 * (d - c) * t * t) / 1000000
+  ((pt p0.1 c1.1 c2.1 p1.1, pt p0.2 c1.2 c2.2 p1.2),
+   (dv p0.1 c1.1 c2.1 p1.1, dv p0.2 c1.2 c2.2 p1.2))
+
+/-- tikz-cd's `auto` anchor for a label (tikz.code.tex, `\tikz@auto@anchor`
+and its primed twin): from the path's unit tangent `(ux, uy)` in thousandths,
+the anchor that puts the label on the left of the direction — on the right
+under `swap` — a component counting where it exceeds 0.05. -/
+private def autoAnchor (ux uy : Int) (swap : Bool) : NodeAnchor :=
+  let px := ux > 50
+  let nx := ux < -50
+  let py := uy > 50
+  let ny := uy < -50
+  if !swap then
+    if px then (if py then .southEast else if ny then .southWest else .south)
+    else if nx then (if py then .northEast else if ny then .northWest else .north)
+    else (if uy > 0 then .east else .west)
+  else
+    if px then (if py then .northWest else if ny then .northEast else .north)
+    else if nx then (if py then .southWest else if ny then .southEast else .south)
+    else (if uy > 0 then .west else .east)
+
+/-- The centre of a box of half-extents `(a, b)` whose `an` anchor stands on
+`p` (a rectangle's anchors). -/
+private def centreFor (p : Sp × Sp) (a b : Sp) : NodeAnchor → Sp × Sp
+  | .center | .base | .baseEast | .baseWest => p
+  | .north => (p.1, p.2 - b)
+  | .south => (p.1, p.2 + b)
+  | .east => (p.1 - a, p.2)
+  | .west => (p.1 + a, p.2)
+  | .northEast => (p.1 - a, p.2 - b)
+  | .northWest => (p.1 + a, p.2 - b)
+  | .southEast => (p.1 - a, p.2 + b)
+  | .southWest => (p.1 + a, p.2 + b)
+
+/-- A label shape whose text baseline stands at `b` and whose left edge at
+`x0`: the band arithmetic `Ir.Pic.labelBaseline` reads, solved for the
+anchor. -/
+private def labelAt (x0 b : Sp) (content : Array Ir.Inline) (color : Ir.Color) (scale : Nat)
+    (m : Ir.Pic.LabelInk) : Ir.Pic.Shape :=
+  let tall := m.height + m.depth
+  .label x0 (b + m.height - tall + tall / 2) content color scale .west
+
+/-- What a diagram's statement of itself costs: an option the library reads
+that this reader does not. -/
+private def outside (what : String) : PDiag :=
+  (.W0334, s!"{what} is outside the rendered diagram subset; it is dropped")
+
+/-- A separation value: a name the library declares, or a length. -/
+private def sepValue (names : List (String × Int)) (em ex : Sp) (toks : List Tok) :
+    Except String Sp :=
+  match (keyName toks).bind (fun n => List.lookup n names) with
+  | some m => .ok (m * em / 1000)
+  | none => readNodeDim em ex toks
+
+/-- **A diagram, natively** (tikzlibrarycd.code.tex): the matrix of math
+cells laid out as pgf's matrix lays one out — the `asymmetrical rectangle`
+cells aligned on their centres, which stand at the math axis, columns and
+rows separated between their widest and tallest cells by `column sep` and
+`row sep` — and every arrow a path from its cell's border to its target's,
+at the math face's rule thickness, ending in `cm to`, its labels in script
+style at the middle of the path, placed `auto` by its tangent. What the
+reader does not draw is named, and the caller routes the diagram whole. -/
+public def elabCd (pal : Ir.Palette) (raws : Array Parse.Raw)
+    (math : Bool → Array Parse.Raw → Ir.Inline × Array PDiag)
+    (metric : Ir.Pic.LabelMetric) (bodySize : Sp) (ground : Ir.Color) :
+    Ir.Pic.Picture × Array PDiag := Id.run do
+  let mut diags : Array PDiag := #[]
+  let note (d : PDiag) (ds : Array PDiag) : Array PDiag :=
+    if ds.any (·.2 == d.2) then ds else ds.push d
+  let cx : Cx := { pal := pal, math := math, metric := metric, bodySize := bodySize }
+  let probe := metric #[.text "x"] 1000
+  let em : Sp := bodySize
+  let ex : Sp := probe.ex
+  -- The diagram's own options.
+  let mut i := skipSp raws 0
+  let mut amp := false
+  let mut rowSep : Sp := 1800 * em / 1000
+  let mut colSep : Sp := 2400 * em / 1000
+  if let some (inner, next) := readBracket raws i then
+    i := next
+    for e in keyEntries inner do
+      let key := keyPath e.toList
+      let value := (e.toList.dropWhile (· != .sym '=')).drop 1
+      if key == "ampersand replacement" then amp := true
+      else if key == "row sep" || key == "column sep" || key == "sep" then
+        match (if key == "column sep" then sepValue colSepEm em ex value
+               else sepValue rowSepEm em ex value),
+              sepValue colSepEm em ex value with
+        | .ok r, .ok c =>
+          if key != "column sep" then rowSep := r
+          if key != "row sep" then colSep := c
+        | .error err, _ | _, .error err =>
+          diags := note (.E0333, s!"in the diagram's '{key}', {err}; it is ignored") diags
+      else diags := note (outside s!"diagram option {optName e.toList}") diags
+  let grid := padRows (splitRows (raws.extract i raws.size) amp)
+  -- Each cell: its content, arrows, and measured box.
+  let mut cells : Array (Array (Option (Ir.Inline × Ir.Pic.LabelInk))) := #[]
+  let mut arrowsAt : Array (Nat × Nat × Arrow) := #[]
+  for h : r in [0:grid.size] do
+    let mut row : Array (Option (Ir.Inline × Ir.Pic.LabelInk)) := #[]
+    for h2 : c in [0:grid[r].size] do
+      let (content, arrows) := splitCell grid[r][c]
+      for a in arrows do arrowsAt := arrowsAt.push (r, c, a)
+      if content.isEmpty then row := row.push none
+      else
+        let (inl, ds) := math false content
+        diags := ds.foldl (fun acc d => note d acc) diags
+        row := row.push (some (inl, metric #[inl] 1000))
+    cells := cells.push row
+  let width := (cells[0]?.map (·.size)).getD 0
+  let xsep : Sp := ex
+  let ysep : Sp := 85 * ex / 100
+  let axisOf (m : Ir.Pic.LabelInk) : Sp := m.axis
+  -- Per column, the widest cell either side of the origin; per row, the
+  -- tallest above and below it.
+  let halfOf (m : Ir.Pic.LabelInk) : Sp := m.w / 2 + xsep
+  let upOf (m : Ir.Pic.LabelInk) : Sp := m.boxHeight + ysep - axisOf m
+  let downOf (m : Ir.Pic.LabelInk) : Sp := m.boxDepth + ysep + axisOf m
+  let colHalf : Array Sp := (Array.range width).map fun c =>
+    cells.foldl (fun w row => match row[c]? with
+      | some (some (_, m)) => max w (halfOf m)
+      | _ => w) 0
+  let rowUp : Array Sp := cells.map fun row => row.foldl (fun w cell => match cell with
+      | some (_, m) => max w (upOf m)
+      | none => w) 0
+  let rowDown : Array Sp := cells.map fun row => row.foldl (fun w cell => match cell with
+      | some (_, m) => max w (downOf m)
+      | none => w) 0
+  let mut xs : Array Sp := #[]
+  let mut x : Sp := 0
+  for c in [0:width] do
+    if c > 0 then x := x + colHalf.getD (c - 1) 0 + colSep + colHalf.getD c 0
+    xs := xs.push x
+  let mut ys : Array Sp := #[]
+  let mut y : Sp := 0
+  for r in [0:cells.size] do
+    if r > 0 then y := y - rowDown.getD (r - 1) 0 - rowSep - rowUp.getD r 0
+    ys := ys.push y
+  -- The cells.
+  let mut shapes : Array Ir.Pic.Shape := #[]
+  let mut borders : Array Ir.Pic.Box := #[]
+  for r in [0:cells.size] do
+    for c in [0:width] do
+      if let some (some (inl, m)) := cells[r]?.bind (·[c]?) then
+        let cx0 := xs.getD c 0
+        let base := ys.getD r 0 - axisOf m
+        shapes := shapes.push (labelAt (cx0 - m.w / 2) base #[inl] cx.ink 1000 m)
+        borders := borders.push ((cx0 - halfOf m, base - m.boxDepth - ysep),
+          (cx0 + halfOf m, base + m.boxHeight + ysep))
+  -- The arrows, after the matrix, as the library draws them.
+  let geomOf (r c : Nat) : Option (Sp × Sp × Sp × Sp × Sp) :=
+    match cells[r]?.bind (·[c]?) with
+    | some (some (_, m)) => some (xs.getD c 0, ys.getD r 0, halfOf m, upOf m, downOf m)
+    | _ => none
+  for (r, c, a) in arrowsAt do
+    let tr : Int := r + a.dr
+    let tc : Int := c + a.dc
+    let target := if tr < 0 || tc < 0 then none else geomOf tr.toNat tc.toNat
+    match geomOf r c, target with
+    | some (sx, sy, sa, su, sd), some (tx, ty, ta, tu, td) =>
+      let mut color := cx.ink
+      let mut lw : Sp := if probe.rule > 0 then probe.rule else Ir.Pic.thinWidth
+      let mut dash : Array Sp := #[]
+      let mut spec : ToSpec := {}
+      let mut draws := true
+      let mut swapAll := false
+      let mut startAt : Option NodeAnchor := none
+      let mut endAt : Option NodeAnchor := none
+      for e in a.keys do
+        let key := keyPath e.toList
+        let value := (e.toList.dropWhile (· != .sym '=')).drop 1
+        match spec.read [] e with
+        | some (.ok s) => spec := s
+        | some (.error err) => diags := note (.E0333, s!"in an arrow's '{key}', {err}") diags
+        | none =>
+        if key == "dashed" then dash := #[7 * lw, 4 * lw]
+        else if key == "swap" || key == "'" then swapAll := !swapAll
+        else if key == "phantom" then draws := false
+        else if key == "start anchor" || key == "end anchor" then
+          match nameOfToks value >>= nodeAnchorOf with
+          | some an => if key == "start anchor" then startAt := some an else endAt := some an
+          | none => diags := note (outside s!"arrow option {optName e.toList}") diags
+        else if let some (.ok w) := readLineWidth e.toList then lw := w
+        else
+          match evalColor cx [] e with
+          | .ok col => color := col
+          | .error _ => diags := note (outside s!"arrow option {optName e.toList}") diags
+      -- The ends: an anchor where one is declared, else the border toward
+      -- the other end (along the bend's own angle where the arrow bends).
+      let anchorOf (x y a up down : Sp) : NodeAnchor → Sp × Sp
+        | .center => (x, y)
+        | .north => (x, y + up)
+        | .south => (x, y - down)
+        | .east => (x + a, y)
+        | .west => (x - a, y)
+        | .northEast => (x + a, y + up)
+        | .northWest => (x - a, y + up)
+        | .southEast => (x + a, y - down)
+        | .southWest => (x - a, y - down)
+        | .base | .baseEast | .baseWest => (x, y)
+      let toward (x y a up down : Sp) (q : Sp × Sp) : Sp × Sp :=
+        cellBorder x y a up down q.1 q.2
+      let (p1, p2) :=
+        if spec.curved then
+          (match startAt with
+            | some an => anchorOf sx sy sa su sd an
+            | none => toward sx sy sa su sd (turnAbout (sx, sy) (tx, ty) spec.outA),
+           match endAt with
+            | some an => anchorOf tx ty ta tu td an
+            | none => toward tx ty ta tu td (turnAbout (tx, ty) (sx, sy) (180 + spec.inA)))
+        else
+          (match startAt with
+            | some an => anchorOf sx sy sa su sd an
+            | none => toward sx sy sa su sd (tx, ty),
+           match endAt with
+            | some an => anchorOf tx ty ta tu td an
+            | none => toward tx ty ta tu td (sx, sy))
+      let (c1, c2) : (Sp × Sp) × (Sp × Sp) :=
+        if spec.curved then
+          let vx := p2.1 - p1.1
+          let vy := p2.2 - p1.2
+          (turnedControl p1.1 p1.2 vx vy spec.outA spec.outL,
+           turnedControl p2.1 p2.2 vx vy spec.inA spec.inL)
+        else (p1, p2)
+      -- The tip's direction is the arrival tangent; the shaft stops one line
+      -- width short, where the tip's line end stands.
+      let (dx, dy) := if spec.curved then unitOf (p2.1 - c2.1) (p2.2 - c2.2)
+        else unitOf (p2.1 - p1.1) (p2.2 - p1.2)
+      let shaftEnd : Sp × Sp := (p2.1 - dx * lw / 1000, p2.2 - dy * lw / 1000)
+      let stroke : Gfx.Stroke :=
+        { Ir.Pic.strokeOf { color, width := lw } with dash, cap := .butt }
+      if draws then
+        let shaft : Gfx.Subpath :=
+          if spec.curved then
+            { start := p1, segs := #[.cubic c1 c2 shaftEnd], closed := false }
+          else { start := p1, segs := #[.line shaftEnd], closed := false }
+        let tipStroke : Gfx.Stroke := { stroke with dash := #[], cap := .round, join := .round }
+        shapes := shapes.push (.ink (.group Gfx.Affine.unit #[] Gfx.Alpha.opaque
+          #[.draw (.path #[shaft]) none (some stroke),
+            .draw (.path #[cmTo p2 dx dy lw]) none (some tipStroke)]))
+      -- Labels: at the path's middle, `auto` by its tangent there.
+      for l in a.labels do
+        let (pos, tan) :=
+          if spec.curved then cubicAtMilli p1 c1 c2 p2 500
+          else (((p1.1 + p2.1) / 2, (p1.2 + p2.2) / 2), (p2.1 - p1.1, p2.2 - p1.2))
+        let (ux, uy) := unitOf tan.1 tan.2
+        let mut lcolor := color
+        for e in l.keys do
+          match evalColor cx [] e with
+          | .ok col => lcolor := col
+          | .error _ => diags := note (outside s!"label option {optName e.toList}") diags
+        let script : Nat := if probe.script > 0 then probe.script else 700
+        -- A phantom's label sets in the cell's own style, centred.
+        let scale : Nat := if draws then script else 1000
+        let (inl, ds) := math false l.content
+        diags := ds.foldl (fun acc d => note d acc) diags
+        let m := metric #[inl] scale
+        let sep := ex / 2
+        let ha := m.w / 2 + sep
+        let hb := (m.boxHeight + m.boxDepth) / 2 + sep
+        let an : NodeAnchor :=
+          if l.description || !draws then .center else autoAnchor ux uy (l.swap != swapAll)
+        let ctr := centreFor pos ha hb an
+        let base := ctr.2 - (m.boxHeight - m.boxDepth) / 2
+        if l.description then
+          shapes := shapes.push (.rect (ctr.1 - ha) (ctr.2 - hb) (2 * ha) (2 * hb) ground)
+        shapes := shapes.push (labelAt (ctr.1 - m.w / 2) base #[inl] lcolor scale m)
+        borders := borders.push ((ctr.1 - ha, ctr.2 - hb), (ctr.1 + ha, ctr.2 + hb))
+    | _, _ =>
+      diags := note (.E0333, s!"an arrow from row {r + 1}, column {c + 1} reaches no cell; \
+it is not drawn") diags
+  return ({ shapes, borders }, diags)
+
+end Cd
+
 end LeanTex.Core.Picture

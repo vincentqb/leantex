@@ -4734,17 +4734,18 @@ located at its opener, as `sourceInline` locates a paragraph's, so the notes
 the formula census raises after elaboration name the label; one a document
 style sets is located in the file that wrote the style
 (`Picture.ofSetting`). -/
+private def pictureMath (ctx : Ctx) (d : Bool) (raws : Array Parse.Raw) :
+    Ir.Inline × Array Picture.PDiag :=
+  let expanded := expandMathList ctx.user ctx.limit #[] raws.toList
+  match MathParse.parseMath d expanded (mathEnv ctx) with
+  | .ok (l, _) => (.formula d (Parse.rawSrc raws) l, #[])
+  | .error what => (.math d (Parse.rawSrc raws),
+      #[(.W0012, s!"math with {what} is not rendered yet; the \
+formula {floorWording (Parse.rawSrc raws)}")])
+
 private def subsetPicture (ctx : Ctx) (body : Array Raw) :
     Ir.Pic.Picture × Array Picture.PDiag :=
-  let mathOf (d : Bool) (raws : Array Parse.Raw) :
-      Ir.Inline × Array Picture.PDiag :=
-    let expanded := expandMathList ctx.user ctx.limit #[] raws.toList
-    match MathParse.parseMath d expanded (mathEnv ctx) with
-    | .ok (l, _) => (.formula d (Parse.rawSrc raws) l, #[])
-    | .error what => (.math d (Parse.rawSrc raws),
-        #[(.W0012, s!"math with {what} is not rendered yet; the \
-formula {floorWording (Parse.rawSrc raws)}")])
-  Picture.elabPicture ctx.palette body mathOf ctx.pic.sets ctx.pic.metric
+  Picture.elabPicture ctx.palette body (pictureMath ctx) ctx.pic.sets ctx.pic.metric
     ctx.pic.macros argStyles ctx.page.scale declStyles ctx.page.fontSize
     (locate := fun pos => some (ctx.sourceSpan pos))
 
@@ -4827,6 +4828,45 @@ private def soleTikzcd (body : Array Raw) : Option (Array Raw × Pos) :=
   match (body.filter fun r => !(r matches .space)).toList with
   | [.env "tikzcd" b p] => some (b, p)
   | _ => none
+
+/-- **A commutative diagram the engine draws whole is its own picture.** The
+diagram reader (`Picture.Cd.elabCd`) lays the cells out and draws the
+arrows; where it names no loss, the display ships its drawing and asks the
+boundary for nothing. Where it names one and the boundary is open, the
+boundary draws the diagram (`tikzcdDisplay`) and this drawing is the
+fallback a withdrawal returns to; where the boundary is closed or the
+request withdrawn, this drawing ships with its losses named — never the
+formula's text where the reader drew something. -/
+private def tikzcdNative (ctx : Ctx) (body : Array Raw) (pos : Pos) :
+    EM (Option Ir.Pic.Picture) := do
+  let some (b, _) := soleTikzcd body | return none
+  let src : Ir.PicSrc :=
+    { kind := .cd, body := Parse.rawSrc b, size := ← pictureSizeInForce }
+  let id := Ir.picHash src.source
+  let ground := (ctx.palette.find? "bg").getD Ir.Color.white
+  let (pic, pdiags) := Picture.Cd.elabCd ctx.palette b (pictureMath ctx) ctx.pic.metric
+    ctx.page.fontSize ground
+  -- The document's `\tikzcdset` lines set keys this reader does not read:
+  -- the diagram is the boundary's, which reads them, or is drawn here with
+  -- them named.
+  let pdiags := if (ctx.pic.preamble.splitOn "\\tikzcdset").length > 1 then
+      pdiags.push (.W0334, "the document's '\\tikzcdset' settings are outside the native \
+diagram reader; the diagram is drawn without them")
+    else pdiags
+  if pic.shapes.isEmpty then return none
+  -- premise: tikzcdNativeChecks — a diagram the reader draws with a named
+  -- loss goes to the open boundary whole, and draws here, named, where it
+  -- is closed or the request was withdrawn.
+  if Picture.namesLoss pdiags && ctx.pic.tool.isSome && !ctx.pic.withdrawn.contains id then
+    return none
+  for (code, msg) in pdiags do
+    let help : Option String := match code with
+      | .W0334 => some "write it with arrows, labels and keys the diagram reader draws, \
+or let a boundary tool draw it"
+      | _ => none
+    warnOnce ctx ("picture:" ++ msg) code msg pos (help := help)
+  recordNativePictureSpan ctx pos
+  return some pic
 
 /-- **A commutative diagram standing alone in a display is a picture.**
 `\[\begin{tikzcd}…\end{tikzcd}\]` is TikZ ink set as display mathematics,
@@ -9921,6 +9961,12 @@ private def displayMathArm (ctx : Ctx) (numbered : Bool) (body : Array Raw) (pos
   let mut blocks := blocks
   let (body, qedAt) := dropQedHere body
   let (cleaned, keys, nonum, tag) ← stripMathMeta ctx body
+  -- An unnumbered display the diagram reader draws ships its drawing.
+  if qedAt.isNone && tag.isNone && (!numbered || nonum) then
+    if let some pic ← tikzcdNative ctx cleaned pos then
+      for key in keys do
+        recordLabel ctx key (← get).refTarget pos
+      return blocks.push (.center #[.picture pic])
   let inl ← match ← tikzcdDisplay ctx cleaned pos with
     | some pic => pure pic
     | none => elabMathInline ctx true cleaned pos
@@ -9978,6 +10024,9 @@ private def alignEnvArm (ctx : Ctx) (n : String) (kind : Math.GridKind)
     recordLabel ctx key none pos
   -- A numbered row owes its number (W0015, `elabMathEnv`'s), so only an
   -- unnumbered alignment's lone diagram takes the picture's door.
+  if !numbered && tag.isNone then
+    if let some native ← tikzcdNative ctx cleaned pos then
+      return blocks.push (.center #[.picture native])
   let pic ← if numbered || tag.isSome then pure none else tikzcdDisplay ctx cleaned pos
   let inl ← match pic with
     | some pic => pure pic

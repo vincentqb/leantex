@@ -1,0 +1,57 @@
+# source: tikz-cd's manual (tikz-cd-doc, v1.0): §1 getting started (the
+# tikzcd environment as a matrix of math cells, & and \\, \arrow and its
+# alias \ar with a direction of r, l, u and d letters, the quotes label
+# syntax with ' for swap, and the alternative syntax \arrow{direction}{label}
+# with its optional label bracket), §2 controlling the appearance (row sep,
+# column sep and sep by name — tiny, small, scriptsize, normal, large, huge —
+# or by length; ampersand replacement; the arrow style keys rightarrow and
+# the rest; dashed; colours; description labels; \tikzcdset), §3 advanced
+# usage (bend left and bend right, start anchor and end anchor, shift left
+# and shift right, crossing over, phantom, marking, to= and from=, cell
+# options |[...]|). A diagram standing alone in a display is drawn by the
+# engine's diagram reader where it reads every key (tikzlibrarycd.code.tex's
+# matrix and arrow semantics); a key it does not read routes the diagram
+# whole to the graphics boundary (N0023), and where no tool draws it — these
+# probes fulfil nothing — the request is withdrawn and the reader's drawing
+# ships with the key named, so those rows are refusals.
+body impl \[\begin{tikzcd} A \arrow[r] & B \end{tikzcd}\]
+body impl \[\begin{tikzcd} A \ar[r] & B \end{tikzcd}\]
+body impl \[\begin{tikzcd} A \arrow[r, "f"] & B \end{tikzcd}\]
+body impl \[\begin{tikzcd} A \arrow[r, "f"'] & B \end{tikzcd}\]
+body impl \[\begin{tikzcd} A \arrow[r, "f" description] & B \end{tikzcd}\]
+body impl \[\begin{tikzcd} A \arrow[d] \\ B \end{tikzcd}\]
+body impl \[\begin{tikzcd} A \arrow[dr] & \\ & B \end{tikzcd}\]
+body impl \[\begin{tikzcd} A & B \arrow[l] \end{tikzcd}\]
+body impl \[\begin{tikzcd} A \\ B \arrow[u] \end{tikzcd}\]
+body impl \[\begin{tikzcd} A \arrow{r}{f} & B \end{tikzcd}\]
+body impl \[\begin{tikzcd} A \arrow{r}[swap]{f} & B \end{tikzcd}\]
+body impl \[\begin{tikzcd} A \arrow{r} & B \end{tikzcd}\]
+body impl \[\begin{tikzcd} A \rar & B \end{tikzcd}\]
+body impl \[\begin{tikzcd}[row sep=large] A \arrow[d] \\ B \end{tikzcd}\]
+body impl \[\begin{tikzcd}[column sep=small] A \arrow[r] & B \end{tikzcd}\]
+body impl \[\begin{tikzcd}[sep=huge] A \arrow[r] & B \end{tikzcd}\]
+body impl \[\begin{tikzcd}[column sep=2em] A \arrow[r] & B \end{tikzcd}\]
+body impl \[\begin{tikzcd}[ampersand replacement=\&] A \arrow[r] \& B \end{tikzcd}\]
+body impl \[\begin{tikzcd} A \arrow[r, red] & B \end{tikzcd}\]
+body impl \[\begin{tikzcd} A \arrow[r, dashed] & B \end{tikzcd}\]
+body impl \[\begin{tikzcd} A \arrow[r, bend left] & B \end{tikzcd}\]
+body impl \[\begin{tikzcd} A \arrow[r, bend right=40] & B \end{tikzcd}\]
+body impl \[\begin{tikzcd} A \arrow[r, start anchor=north east, end anchor=north west] & B \end{tikzcd}\]
+body impl \[\begin{tikzcd} A \arrow[r, phantom, "\cong"] & B \end{tikzcd}\]
+body impl \begin{equation*}\begin{tikzcd} A \arrow[r] & B \end{tikzcd}\end{equation*}
+body impl \begin{align*}\begin{tikzcd} A \arrow[r] & B \end{tikzcd}\end{align*}
+body refuse:W0334 \[\begin{tikzcd} A \arrow[r, hook] & B \end{tikzcd}\]
+body refuse:W0334 \[\begin{tikzcd} A \arrow[r, two heads] & B \end{tikzcd}\]
+body refuse:W0334 \[\begin{tikzcd} A \arrow[r, maps to] & B \end{tikzcd}\]
+body refuse:W0334 \[\begin{tikzcd} A \arrow[r, Rightarrow] & B \end{tikzcd}\]
+body refuse:W0334 \[\begin{tikzcd} A \arrow[r, equal] & B \end{tikzcd}\]
+body refuse:W0334 \[\begin{tikzcd} A \arrow[r, shift left] & B \end{tikzcd}\]
+body refuse:W0334 \[\begin{tikzcd} A \arrow[r, crossing over] & B \end{tikzcd}\]
+body refuse:W0334 \[\begin{tikzcd}[cramped] A \arrow[r] & B \end{tikzcd}\]
+body refuse:W0334 \[\begin{tikzcd} A \arrow[r, squiggly] & B \end{tikzcd}\]
+body refuse:W0334 \[\begin{tikzcd} A \arrow[r, "f" marking] & B \end{tikzcd}\]
+pre impl \tikzcdset{arrow style=tikz}
+# \tikzcdset lines are the boundary's: a diagram in a document that sets
+# them is drawn there, and natively with the settings named where no tool
+# draws it. The row above is impl for the command; the probe has no
+# diagram for the setting to reach.

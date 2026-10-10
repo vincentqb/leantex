@@ -14,10 +14,24 @@ def cdDiagram : String :=
 
 /-- The three displays a diagram stands alone in: `\[…\]`, `equation*`, and an
 unnumbered alignment — every one the reference talks wrote one in. -/
-def cdDisplays : List (String × String) :=
-  [("a bracket display", "\\[" ++ cdDiagram ++ "\\]"),
-   ("equation*", "\\begin{equation*}" ++ cdDiagram ++ "\\end{equation*}"),
-   ("align*", "\\begin{align*}" ++ cdDiagram ++ "\\end{align*}")]
+def cdDisplaysOf (d : String) : List (String × String) :=
+  [("a bracket display", "\\[" ++ d ++ "\\]"),
+   ("equation*", "\\begin{equation*}" ++ d ++ "\\end{equation*}"),
+   ("align*", "\\begin{align*}" ++ d ++ "\\end{align*}")]
+
+def cdDisplays : List (String × String) := cdDisplaysOf cdDiagram
+
+/-- The same diagram with an arrow key the native reader does not draw (a
+hooked tail): the one the boundary still draws. -/
+def cdLossy : String :=
+  "\\begin{tikzcd} \\mathrm{Alpha} \\arrow[r, \"f\", hook] & \\mathrm{Beta} \\arrow{d}{g} " ++
+    "\\\\ & \\mathrm{Gamma} \\end{tikzcd}"
+
+/-- The diagram with upright cells and labels, whose text a page census
+reads back as written. -/
+def cdUpright : String :=
+  "\\begin{tikzcd} \\mathrm{Alpha} \\arrow[r, \"\\mathrm{f}\"] & \\mathrm{Beta} " ++
+    "\\arrow{d}{\\mathrm{g}} \\\\ & \\mathrm{Gamma} \\end{tikzcd}"
 
 /-- **A commutative diagram standing alone in a display ships a picture.**
 The invariant whose absence set every diagram of the reference talks as
@@ -49,7 +63,7 @@ def tikzcdRouteChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO
       n + (displays.foldl (fun acc e =>
         acc ++ (attrValuesOf (· == "img") "src" e).filter (·.startsWith Ir.picSrcPrefix))
         #[]).size) 0
-  for (form, body) in cdDisplays do
+  for (form, body) in cdDisplaysOf cdLossy do
     let (doc, ds, rs) := firstPass (dvDoc pre body)
     let refs := Ir.pictureRefs doc
     t s!"a lone diagram in {form} states one diagram request"
@@ -73,16 +87,17 @@ def tikzcdRouteChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO
        !hasStr (censusText page) "arrow")
     t s!"the HTML display holds the request's image: {form}"
       (displayImgs doc == 1)
-  -- Every other door keeps the floor and names it, never a placeholder.
-  let bracket := "\\[" ++ cdDiagram ++ "\\]"
+  -- Every other door draws the diagram natively and names what it could
+  -- not draw: never a placeholder, never the formula's text.
+  let bracket := "\\[" ++ cdLossy ++ "\\]"
   let (closed, closedDs) := elabStr (dvDoc ("\\pictures{ tool = none }\n" ++ pre) bracket)
-  t "with the boundary refused, the diagram keeps its text floor, named"
-    (closed.pictureSrcs.isEmpty && closedDs.any (·.code == "W0012") &&
-     hasStr (censusText (shipped closed)) "Alpha" &&
+  t "with the boundary refused, the diagram draws natively, its loss named"
+    (closed.pictureSrcs.isEmpty && closedDs.any (·.code == "W0334") &&
+     closedDs.all (·.code != "W0012") && hasStr (censusText (shipped closed)) "Alpha" &&
      ((shipped closed)[0]?.map (·.images == 0)) == some true)
   let (withdrawn, withdrawnDs) := elabStr (dvDoc pre bracket)
-  t "a diagram no tool drew is withdrawn to the same floor, named"
-    (withdrawn.pictureSrcs.isEmpty && withdrawnDs.any (·.code == "W0012") &&
+  t "a diagram no tool drew is withdrawn to the same native drawing, named"
+    (withdrawn.pictureSrcs.isEmpty && withdrawnDs.any (·.code == "W0334") &&
      hasStr (censusText (shipped withdrawn)) "Alpha")
   let (mixed, mixedDs, _) := firstPass (dvDoc pre ("\\[ x + " ++ cdDiagram ++ "\\]"))
   t "a diagram beside other mathematics stays the formula's floor, named"
@@ -113,35 +128,35 @@ def boundaryFidelityChecks (ref : IO.Ref (List String)) : IO Unit := do
   let pre := "\\usepackage{amsmath}\n\\usepackage{tikz-cd}\n"
   let display (body : String) : String := "\\[" ++ body ++ "\\]"
   -- The class takes the document's body size; ten points opens as it did.
-  let ten := reqOf (dvDoc pre (display cdDiagram))
+  let ten := reqOf (dvDoc pre (display cdLossy))
   let eleven := reqOf ("\\documentclass[11pt]{article}\n" ++ pre ++
-    "\\begin{document}\n" ++ display cdDiagram ++ "\n\\end{document}")
+    "\\begin{document}\n" ++ display cdLossy ++ "\n\\end{document}")
   t "a ten-point document's standalone opens as it always did"
     (hasStr ten "\\documentclass{standalone}\n\\usepackage{tikz}\n")
   t "an eleven-point document's standalone takes its body size"
     (hasStr eleven "\\documentclass[11pt]{standalone}")
   -- The size in force where the diagram stands is the standalone's.
-  let largeSrc := dvDoc pre ("{\\large\n" ++ display cdDiagram ++ "\n}")
+  let largeSrc := dvDoc pre ("{\\large\n" ++ display cdLossy ++ "\n}")
   let large := reqOf largeSrc
   t "a diagram under a size switch is drawn at that size"
     (hasStr large "\\begin{document}\n\\large\n\\begin{tikzcd}")
   t "one diagram at two sizes is two requests"
     (((firstPass largeSrc).1.pictureSrcs.map (·.1)) !=
-      ((firstPass (dvDoc pre (display cdDiagram))).1.pictureSrcs.map (·.1)))
+      ((firstPass (dvDoc pre (display cdLossy))).1.pictureSrcs.map (·.1)))
   t "a body size the class holds no option for is set by its own switch"
     (Ir.pictureSwitch { fontSize := Dim.pt 9 } none ==
       some s!"\\fontsize\{{(Dim.pt 9).toPtString}pt}\{{(Ir.leadingFor (Dim.pt 9)).toPtString}pt}\\selectfont")
   -- The document's own operators and lengths ride to the standalone.
   let ops := reqOf (dvDoc (pre ++ "\\DeclareMathOperator{\\gradient}{grad}\n" ++
       "\\newlength{\\thumbside}\\setlength{\\thumbside}{.5in}\n")
-    (display "\\begin{tikzcd} A \\arrow[r, \"\\gradient\"] & \\parbox{\\thumbside}{B} \\end{tikzcd}"))
+    (display "\\begin{tikzcd} A \\arrow[r, \"\\gradient\", hook] & \\parbox{\\thumbside}{B} \\end{tikzcd}"))
   t "an operator the document declared is the standalone's"
     (hasStr ops "\\renewcommand{\\gradient}{\\operatorname{grad}}")
   t "a length the document declared and set is the standalone's, guarded"
     (hasStr ops "\\ifdefined\\thumbside\\else\\newlength{\\thumbside}\\fi\\setlength{\\thumbside}{.5in}")
   -- beamer's alert is a slides document's, and its colour rides with it.
   let alerted := reqOf ("\\documentclass{beamer}\n" ++ pre ++ "\\begin{document}\n\\begin{frame}\n" ++
-    display "\\begin{tikzcd} A \\arrow[r] & \\alert{B} \\end{tikzcd}" ++ "\n\\end{frame}\n\\end{document}")
+    display "\\begin{tikzcd} A \\arrow[r, hook] & \\alert{B} \\end{tikzcd}" ++ "\n\\end{frame}\n\\end{document}")
   t "a slides document's diagram that alerts carries the alert and its colour"
     (hasStr alerted "\\RenewDocumentCommand{\\alert}{d<>m}" && hasStr alerted "\\definecolor{alert}")
   t "an article's standalone carries no alert of beamer's"

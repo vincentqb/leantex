@@ -12533,8 +12533,17 @@ public def measureLabelLine (fs : FontSet) (size width ex : Sp) (segs : Array Se
     Ir.Pic.LabelInk :=
   let band := labelVExtent fs size segs
   let ink := labelGlyphExtent fs size segs
+  -- The math face at the size a label's formula sets at (`MathEnv.forRun`'s
+  -- base: the body's x-height matched).
+  let (axis, rule, script) : Sp × Sp × Nat := match fs.mathFont? with
+    | some (_, f, c) =>
+      let base : Int := (Math.mathSize size.toNat fs.body.xHeightOptical fs.body.unitsPerEm
+        f.xHeightOptical f.unitsPerEm : Nat)
+      (c.axisHeight * base / (f.unitsPerEm : Int),
+       c.fractionRuleThickness * base / (f.unitsPerEm : Int), c.scales.script * 10)
+    | none => (0, 0, 0)
   { w := width, height := band.1, depth := band.2
-    boxHeight := ink.1, boxDepth := ink.2, ex := ex }
+    boxHeight := ink.1, boxDepth := ink.2, ex := ex, axis, rule, script }
 
 /-- The label metric carries the measured bounds without rounding or a
 font-metric substitution. This is the backend projection of the two

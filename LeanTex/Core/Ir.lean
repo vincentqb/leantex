@@ -4418,6 +4418,15 @@ public structure LabelInk where
   /-- The face's x-height at the label's size: what `ex` means in a node's
   options, as TeX reads it (fontdimen 5). -/
   ex : Sp := 0
+  /-- The math face's axis height and fraction rule thickness at the label's
+  size (MATH table, `AxisHeight`, `FractionRuleThickness`), and its script
+  scale in thousandths (`ScriptPercentScaleDown`): what a diagram centres
+  its cells on, strokes its arrows at and sets its labels at, as tikz-cd
+  reads the font's axis height, its rule thickness and script style. Zero
+  where no math face is resolved. -/
+  axis : Sp := 0
+  rule : Sp := 0
+  script : Nat := 0
   deriving Repr, BEq, Inhabited
 
 /-- What a label's content sets to at a per-mille size: the measurement

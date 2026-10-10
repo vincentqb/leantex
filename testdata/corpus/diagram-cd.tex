@@ -1,0 +1,40 @@
+% Synthetic fixture: a commutative square and a triangle in tikz-cd's own
+% syntax, drawn by the engine itself — both arrow spellings, a label on
+% each side of its arrow, a description label, a bent arrow, a coloured
+% diagonal, and a column separation by name. Invented content and design.
+\documentclass{article}
+
+\pictures{ tool = none }
+
+\fonts{ dir = "fonts", body = "Source Serif Pro", math = "Fira Math" }
+
+\usepackage{tikz-cd}
+
+\title{Squares and Triangles}
+\author{Pat Placeholder}
+
+\begin{document}
+
+\maketitle
+
+\section{A square}
+
+Before the square.
+\[
+\begin{tikzcd}[column sep=large]
+  P \arrow[r, "u"] \arrow[d, "v"'] & Q \arrow{d}{w} \\
+  R \arrow[r, "x" description] & S
+\end{tikzcd}
+\]
+After the square.
+
+\section{A triangle}
+
+\[
+\begin{tikzcd}
+  K \arrow[r, bend left, "m"] \arrow[dr, red] & L \arrow[d] \\
+  & M
+\end{tikzcd}
+\]
+
+\end{document}
