@@ -68,7 +68,7 @@ example : FontAssembly.FaceScan := { faces := #[], docDirs := [], dirs := #[], d
 example : FontAssembly.Purpose := .settled
 example : FontAssembly.Purpose := .provisional true
 example : Ir.Doc → FontAssembly.FaceScan → FontEnv.Cache → FontAssembly.Purpose →
-    IO (Except Diag (Font.FontSet × Ir.Doc × Array Diag × String)) :=
+    IO (Except Diag (Font.FontSet × Ir.Doc × Array Diag × Array String)) :=
   FontAssembly.buildFontSet
 
 -- The browser oracle reads the same plan and preservation contracts as the driver.

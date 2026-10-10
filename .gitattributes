@@ -2,3 +2,4 @@ testdata/golden/diagnostics.txt merge=union
 testdata/parity/*.ref.pdf binary
 testdata/parity/*.tex -text
 testdata/probes/u96/* -text
+testdata/perf/*.tsv merge=union

@@ -11,7 +11,7 @@ The scoreboard: one line per goal, and a queue computed from the deficits.
                             since <rev>, and a file still holding a request is
                             stale
   scoreboard --queue        ranked deficits across every tier
-  scoreboard --bench        the speed report, never gated
+  scoreboard --bench        the speed and document-cost reports, never gated
   scoreboard --selftest     the format, the ratchet, and the malformations
   scoreboard --key <dir>    the HTML freshness key of a corpus directory (its
                             `.tex` fixtures and a `fonts/` of shipped faces) —
@@ -488,15 +488,51 @@ not a tier name ([a-z0-9-]+), which --check faults"
 
 -- ## The speed report
 
-/-- Delegate sampling and reporting to the benchmark driver.
-This runs another engine and is not a hermetic gate. -/
+/-- The modules a source imports: its `import` lines, whatever modifiers
+precede the keyword, before its first line of code. -/
+def headerImports (text : String) : Array String := Id.run do
+  let mut out : Array String := #[]
+  let mut depth := 0
+  for line in text.splitOn "\n" do
+    let t := ((line.splitOn " --").headD "").trimAscii.toString
+    if depth > 0 || t.startsWith "/-" then
+      depth := depth + ((t.splitOn "/-").length - 1) - ((t.splitOn "-/").length - 1)
+      continue
+    if t.isEmpty || t.startsWith "--" || t == "module" then continue
+    let words := (t.splitOn " ").filter (!·.isEmpty)
+    unless words.contains "import" do break
+    if let some m := words.getLast? then out := out.push m
+  return out
+
+/-- What a run has after `lake build` (`defaultTargets`): the toolchain's
+modules, and the `LeanTex` library, which is all the `leantex` executable's
+root imports. -/
+def defaultBuilt (m : String) : Bool :=
+  ["Init", "Std", "Lean", "Lake", "LeanTex"].any fun r => m == r || m.startsWith (r ++ ".")
+
+/-- Delegate sampling and reporting to the benchmark driver: the comparison
+with lualatex, then what the invented reference documents cost
+(`--doc-cost`). Both time this host, so neither is a hermetic gate. The driver
+runs after `lake build`, as its header says, which this does first: `lake env
+lean --run` builds nothing, so it would time whatever the last build left, and
+a module the build does not make fails the run (`headerImports`). -/
 def benchReport : IO UInt32 := do
-  IO.println "scoreboard: bench is a report, never a gate (it runs lualatex)."
-  let out ← IO.Process.output
-    { cmd := "lake", args := #["env", "lean", "--run", "scripts/bench.lean"] }
-  IO.print out.stdout
-  if out.exitCode != 0 then IO.eprint out.stderr
-  return out.exitCode
+  IO.println "scoreboard: bench is a report, never a gate (it runs lualatex and times this host)."
+  let built ← IO.Process.output { cmd := "lake", args := #["build"] }
+  if built.exitCode != 0 then
+    IO.eprint built.stdout
+    IO.eprint built.stderr
+    IO.eprintln "scoreboard: lake build failed, so the bench has nothing to time"
+    return 1
+  let mut code : UInt32 := 0
+  for mode in [#[], #["--doc-cost"]] do
+    let out ← IO.Process.output
+      { cmd := "lake", args := #["env", "lean", "--run", "scripts/bench.lean"] ++ mode }
+    IO.print out.stdout
+    if out.exitCode != 0 then
+      IO.eprint out.stderr
+      code := out.exitCode
+  return code
 
 -- ## Selftest
 
@@ -1417,6 +1453,22 @@ faults" false
   no "listing: an entry that does not read fails the whole listing"
     ((readListing s!"100644 blob\ttestdata/scoreboard/compat.tsv{nul}").isNone &&
       (readListing s!"testdata/scoreboard/compat.tsv{nul}").isNone)
+
+  -- The bench runs after `lake build`, as its header says and `--bench` does,
+  -- so it imports nothing else: a script module there failed every mode of it.
+  no "bench: lake build's default targets are not the library and executable the bench's \
+imports are judged against"
+    (((← readFileOr "lakefile.toml").splitOn "\n").contains
+      "defaultTargets = [\"LeanTex\", \"leantex\"]")
+  let benchImports := headerImports (← readFileOr "scripts/bench.lean")
+  let unbuilt := benchImports.filter (!defaultBuilt ·)
+  no s!"bench: scripts/bench.lean imports {unbuilt}, which lake build does not build, so after \
+the build its header asks for it fails, or runs a stale module"
+    (!benchImports.isEmpty && unbuilt.isEmpty)
+  no "bench: the import reader and its judge"
+    (headerImports "/- a\n-/\nimport A\npublic import B.C -- why\n\ndef x := 1\nimport D\n" ==
+        #["A", "B.C"] && !defaultBuilt "scripts.DocBench" && defaultBuilt "LeanTex.Core.Image" &&
+      !defaultBuilt "LeanTexExtra" && defaultBuilt "Lean.Data.Json")
 
   let failed := (← fails.get).reverse
   if !failed.isEmpty then

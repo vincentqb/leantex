@@ -355,11 +355,11 @@ def registry : List Premise := [
     tools := ["lean", "lake"]
     unchecked := some "They build and run every check in the tree, so none stands outside them." },
   { name := "userland", residue := .dev "POSIX utilities", reach := .dev
-    statement := "The POSIX utilities the suite and the scripts call behave as POSIX specifies, so a synthetic tool the suite writes from them, such as cache-identity-tool or the PATH fixtures' tool, answers as its script says."
+    statement := "The POSIX utilities the suite and the scripts call behave as POSIX specifies, and shasum hashes as sha256sum does where it is the checksum tool a platform ships, so a synthetic tool the suite writes from them, such as cache-identity-tool or the PATH fixtures' tool, answers as its script says, and a history row names the executable it measured."
     sites := [("Tests/PictureAssets.lean", "pictureAssetToolBody"), ("scripts/runboundprobe.lean", "main"),
       ("Tests/World.lean", "pathChecks")]
     tools := ["sh", "cat", "cmp", "sleep", "mkdir", "chmod", "ln", "base64", "ps", "kill", "date",
-      "timeout", "rm", "mktemp", "mkfifo", "sha256sum", "cp", "unzip", "cache-identity-tool",
+      "timeout", "rm", "mktemp", "mkfifo", "sha256sum", "shasum", "cp", "unzip", "cache-identity-tool",
       "renderer-format", "tool"]
     checks := [check% listingProviderChecks, check% Tests.pictureAssetsChecks, check% Tests.World.checks] },
   { name := "absent-tool", residue := .dev "an absent executable", reach := .dev

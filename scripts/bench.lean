@@ -34,6 +34,17 @@ The slide run also needs sha256sum, pdftocairo and xmllint.
 For before/after runs use this same driver, N, font/tool environment and an
 otherwise idle host; shared-host timings are provisional. Redirect stdout
 to retain every sample, phase median and input/binary fingerprint.
+`--doc-cost` reports what the invented reference documents of
+`scripts/DocBench.lean` cost in sealed builds — cold and warm milliseconds,
+edit-to-artifact latency under `--watch`, peak resident set size, bytes,
+user-space instructions where `perf` runs, growth from `n` to `4n` — and the
+peak of every corpus fixture (N defaults to 3 there), each against the last
+run on this host class in `testdata/perf/documents.tsv`, the instructions held
+to ±3% of it. It is `scripts/doccost.lean --bench`, whose script modules
+`lake build` does not build, so it builds them, and the engine unless
+`LEANTEX_BENCH_BINARY` names one, before it runs. `--doc-cost --record`
+appends the run there, from a clean checkout of a commit main holds;
+`--history <path>` compares with and records into a scratch history instead.
 -/
 
 def compiler : IO String := do
@@ -42,6 +53,19 @@ def compiler : IO String := do
 def die (msg : String) : IO α := do
   IO.eprintln msg
   IO.Process.exit 1
+
+/-- `--doc-cost`: `scripts/doccost.lean --bench` with the remaining arguments,
+after building what it imports and the engine it measures, since
+`lake env lean --run` interprets whatever the last build left. -/
+def docCost (rest : List String) : IO UInt32 := do
+  let engine := if (← IO.getEnv "LEANTEX_BENCH_BINARY").isSome then #[] else #["leantex"]
+  let targets := engine ++ #["scripts.doccost"]
+  let built ← (← IO.Process.spawn { cmd := "lake", args := #["build", "-q"] ++ targets }).wait
+  if built != 0 then die s!"lake build {String.intercalate " " targets.toList} failed"
+  let report ← IO.Process.spawn
+    { cmd := "lake", args := #["env", "lean", "--run", "scripts/doccost.lean", "--bench"] ++
+        rest.toArray }
+  report.wait
 
 def runMs (cmd : String) (args : Array String) : IO Nat := do
   let t0 ← IO.monoMsNow
@@ -797,6 +821,7 @@ def run (n : Nat) (compressed : Bool := false) : IO Unit := do
 end Slides
 
 def main (args : List String) : IO UInt32 := do
+  if args.head? == some "--doc-cost" then return ← docCost args.tail
   if args == ["--slides-selftest"] then
     Slides.selftest
     return 0

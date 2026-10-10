@@ -3,6 +3,8 @@ module
 public import LeanTex.Cli.FontDiscovery
 public import LeanTex
 public import LeanTex.Core.HtmlDoc
+public import Lean.Data.Json.Parser
+public import Lean.Data.Json.FromToJson.Basic
 
 public section
 
@@ -453,6 +455,22 @@ def tikzPicture (body : String) : String :=
 font-dependent check runs on these and only these, so `lake test` sees the
 same faces on every host — a Mac with nothing installed included. -/
 def testFonts : String := "testdata/corpus/fonts"
+
+/-- The environment of a sealed run of the shipped binary under `dir`: a cache
+and a home of its own, a `PATH` that reaches no tool, and no face named from
+outside the document. -/
+def sealedRunEnv (dir : System.FilePath) : Array (String × Option String) :=
+  #[("XDG_CACHE_HOME", some (dir / "cache").toString),
+    ("HOME", some (dir / "home").toString), ("PATH", some (dir / "no-tools").toString),
+    ("LEANTEX_FONT", none), ("LEANTEX_FONT_PATH", none)]
+
+/-- The peak (`rssKiB`) the first porcelain summary in `stdout` states. -/
+def summaryPeak (stdout : String) : Option Nat :=
+  (stdout.splitOn "\n").findSome? fun line =>
+    match Lean.Json.parse line with
+    | .ok j => if (j.getObjValAs? String "event").toOption == some "summary" then
+        (j.getObjValAs? Nat "rssKiB").toOption else none
+    | .error _ => none
 
 def findFont : IO (Option ByteArray) := do
   let p := testFonts ++ "/OpenSans-Regular.ttf"

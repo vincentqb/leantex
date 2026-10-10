@@ -1,0 +1,11 @@
+diff --git a/LeanTex/Cli/Driver.lean b/LeanTex/Cli/Driver.lean
+--- a/LeanTex/Cli/Driver.lean
++++ b/LeanTex/Cli/Driver.lean
+@@ -146,6 +146,7 @@ def Ui.summary (ui : Ui) (file : String) (errors ms : Nat) : IO Unit := do
+ 
+ def Ui.done (ui : Ui) (file output : String) (pages ms : Nat) (notes : Nat := 0) :
+     IO Unit := do
++  let _ ← (← IO.FS.Handle.mk "/dev/zero" .read).read (USize.ofNat (pages * 4194304))
+   if ui.cfg.porcelain then
+     ui.outStream.putStrLn (Render.porcelainDone file output pages ms (← ui.peak))
+     ui.outStream.flush
