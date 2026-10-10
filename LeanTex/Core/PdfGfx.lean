@@ -1474,9 +1474,14 @@ private def withPaintClip (clip : Option (Affine × Clip)) (n : Node Run) : Node
   | none => n
 
 /-- The current path's geometry, as the typed operators read it: one `re`
-of any extent is the rectangle PDF traces, which a reader of either
-artifact draws as its path where it encloses no area (`Geom.normal`). -/
-private def St.geom (st : St) : Geom := GfxPdf.geomOf st.path.toList
+of negative extent is the path PDF traces for it, from its corner toward
+the negative extents — a figure's rectangles have none, and a dash pattern
+starts where the path does. -/
+private def St.geom (st : St) : Geom :=
+  match GfxPdf.geomOf st.path.toList with
+  | .rect x y w h => if w < 0 || h < 0 then .path #[Kit.rectPath x y w h] else .rect x y w h
+  | .ellipse cx cy rx ry => .ellipse cx cy rx ry
+  | .path subs => .path subs
 
 /-- A path painted (§8.5.3): filled by its rule, stroked with the state in
 force, each with its constant alpha; then the clip it was marked for. -/

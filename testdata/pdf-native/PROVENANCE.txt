@@ -24,6 +24,13 @@ lualatex-text.pdf
     lualatex -interaction=batchmode -halt-on-error lualatex-text.tex
   CID-keyed CFF text and math.
 
+lualatex-strokedtext.pdf
+  LuaHBTeX 1.24.0 (TeX Live 2026) on lualatex-strokedtext.tex, beside it,
+  with the shipped Fira Sans copied into ./fonts:
+    lualatex -interaction=batchmode -halt-on-error lualatex-strokedtext.tex
+  CID-keyed CFF text painted with a stroke: fontspec's FakeBold (text
+  rendering mode 2) and a word in outline mode (1) set by a PDF literal.
+
 leantex-strokes.pdf
   The engine's own writer: leantex testdata/corpus/diagram-strokes.tex,
   on the branch that added this file. OpenType CFF text and TikZ ink.
@@ -37,6 +44,16 @@ print-dialect.pdf
   Written by hand in a print workflow's CMYK dialect: scripts/pdf-native.lean
   --fixtures writes it from `PdfNative.printDialect`, and the tier's
   selftest holds the committed bytes to it.
+
+geometry-dialect.pdf
+  Written by hand over PDF's own geometry rules: scripts/pdf-native.lean
+  --fixtures writes it from `PdfNative.geometryDialect`, and the tier's
+  selftest holds the committed bytes to it.
+
+text-dialect.pdf
+  Written by hand over the text state's positioning, in a Type 3 font:
+  scripts/pdf-native.lean --fixtures writes it from `PdfNative.textDialect`,
+  and the tier's selftest holds the committed bytes to it.
 
 SHA256SUMS pins every PDF above; sha256sum -c SHA256SUMS checks them from
 this directory.

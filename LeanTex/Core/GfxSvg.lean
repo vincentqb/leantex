@@ -168,10 +168,19 @@ paint in the element's user space (`sPaint`). -/
   | none => fr
   | some _ => { iso := none }
 
+/-- A clip's geometry as its element: a rectangle of zero or negative size
+as the path it outlines (`Geom.normal`) — SVG clips to no such `rect`,
+where PDF clips to the region the path encloses — and any other as it
+stands. -/
+@[expose] public def clipGeom : Geom → Geom
+  | .rect x y w h => (Geom.rect x y w h).normal
+  | .ellipse cx cy rx ry => .ellipse cx cy rx ry
+  | .path subs => .path subs
+
 /-- A group's clips, each one `g` around the kids, in the group's frame. -/
 @[expose] public def nestClips (fr : SFrame) (kids : Array El) : List Clip → Array El
   | [] => kids
-  | c :: rest => #[.g none none (some { geom := fr.place c.geom, rule := c.rule })
+  | c :: rest => #[.g none none (some { geom := fr.place (clipGeom c.geom), rule := c.rule })
       (nestClips fr kids rest)]
 
 /-- **A draw's geometry as the element SVG draws as the model does**: a
@@ -472,7 +481,9 @@ public def geomEl (g : Geom) (attrs : Array (String × String)) : Html.Node :=
     else
       Html.elem "ellipse" #[] (#[("cx", cx.toPtString), ("cy", cy.toPtString),
         ("rx", rx.toPtString), ("ry", ry.toPtString)] ++ attrs)
-  | .path subs => Html.elem "path" #[] (#[("d", pathD subs)] ++ attrs)
+  -- An empty path spells no `d`: an empty value is a bare attribute, which
+  -- no XML reader of a standalone SVG accepts.
+  | .path subs => Html.elem "path" #[] ((if subs.isEmpty then #[] else #[("d", pathD subs)]) ++ attrs)
 
 /-- An alpha as an opacity, to three decimals. -/
 @[expose] public def alphaSpell (a : Alpha) : String := ratString a.val 1000
@@ -590,7 +601,8 @@ public def spellOne (sp : Spell) (acc : Array Html.Node) : El → Array Html.Nod
     let id := svgId sp.ord .outline o
     let sp := if sp.outlines.contains o then sp else
       { sp with outlines := sp.outlines.push o
-                defs := sp.defs.push (Html.elem "path" #[] #[("id", id), ("d", pathD subs)]) }
+                defs := sp.defs.push (Html.elem "path" #[] (#[("id", id)] ++
+                  if subs.isEmpty then #[] else #[("d", pathD subs)])) }
     let (attrs, sp) := attrsSpell sp a
     (acc.push (Html.elem "use" #[] (#[("href", s!"#{id}"), transformAttr xf] ++ attrs)), sp)
   | .image _ m ref =>
@@ -1018,6 +1030,30 @@ private theorem normal_rect_pos {x y w h : Sp} (hp : 0 < w ∧ 0 < h) :
   · rfl
   · next hn => exact absurd hp hn
 
+private theorem normal_rect_neg {x y w h : Sp} (hp : ¬(0 < w ∧ 0 < h)) :
+    (Geom.rect x y w h).normal = .path #[Kit.rectPath x y w h] := by
+  simp only [Geom.normal]
+  split
+  · next hn => exact absurd hn hp
+  · rfl
+
+/-- A normal geometry is its own normal form. -/
+private theorem normal_normal (g : Geom) : g.normal.normal = g.normal := by
+  cases g with
+  | rect x y w h =>
+    by_cases hp : 0 < w ∧ 0 < h
+    · rw [normal_rect_pos hp, normal_rect_pos hp]
+    · rw [normal_rect_neg hp]; rfl
+  | ellipse cx cy rx ry => rfl
+  | path subs => rfl
+
+/-- A clip's element outlines what the clip covers. -/
+private theorem clipGeom_normal (g : Geom) : (clipGeom g).normal = g.normal := by
+  cases g with
+  | rect x y w h => exact normal_normal (.rect x y w h)
+  | ellipse cx cy rx ry => rfl
+  | path subs => rfl
+
 /-- The element a draw spells reads back, with SVG's meaning, as the outline
 the draw paints (`Geom.drawn`). -/
 private theorem shape_agree (place : Iso) (fr : SFrame) (ss : SState) (hp : ss.place = place)
@@ -1247,9 +1283,9 @@ private theorem read_nestClips (place : Iso) (fr : SFrame) (inner : Array El) (a
   | c :: rest, ss, hp, hi => by
     simp only [nestClips, List.toList_toArray, readList, readOne, SState.enterG, SState.cm]
     rw [read_nestClips place fr inner acc rest
-      { ss with clips := ss.clips.push (ss.frameCtm, { geom := ss.geom (fr.place c.geom), rule := c.rule }) }
+      { ss with clips := ss.clips.push (ss.frameCtm, { geom := ss.geom (fr.place (clipGeom c.geom)), rule := c.rule }) }
       hp hi]
-    simp only [geom_agree place fr ss hp hi c.geom, List.map_cons]
+    simp only [geom_agree place fr ss hp hi (clipGeom c.geom), clipGeom_normal, List.map_cons]
     congr 2
     simp [SState.frameCtm]
 

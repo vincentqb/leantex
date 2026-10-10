@@ -234,7 +234,8 @@ bare attribute is not — and no script, style or foreign object appears. -/
 def nativeFaceClosedChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
   for name in ["cairo-chart.pdf", "lualatex-text.pdf", "lualatex-shade.pdf",
-      "matplotlib-dialect.pdf", "leantex-strokes.pdf"] do
+      "matplotlib-dialect.pdf", "leantex-strokes.pdf", "geometry-dialect.pdf", "text-dialect.pdf",
+      "lualatex-strokedtext.pdf"] do
     match PdfGfx.importPage (← fixture name) with
     | .error e => t s!"native face: {name} imports ({e})" false
     | .ok imp =>
@@ -291,14 +292,17 @@ open Tests.PdfNative in
 /-- **The committed fixtures draw with nothing lost**: cairo's chart
 (TrueType text, an opacity soft mask, gradients, a transparency group),
 lualatex's pictures in the shipped faces (CID-keyed CFF text, a pgf axial
-shading), the engine's own writer (OpenType CFF text) and the
-matplotlib-dialect file (Type 3 glyphs, marker forms, an alpha state, a
-clip, a soft-masked image) — each glyph a stamp of its outline and its
-recovered text the figure's words. -/
+shading, text stroked by FakeBold and in outline mode), the engine's own
+writer (OpenType CFF text), the matplotlib-dialect file (Type 3 glyphs,
+marker forms, an alpha state, a clip, a soft-masked image) and the
+geometry and text dialects (degenerate shapes under each cap, inline
+images, the text state's positioning) — each glyph a stamp of its outline
+and its recovered text the figure's words. -/
 def pdfFixtureChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
   for (name, words) in [("cairo-chart.pdf", "invented chart"), ("lualatex-text.pdf", "Alpha node"),
-      ("lualatex-shade.pdf", ""), ("leantex-strokes.pdf", ""), ("matplotlib-dialect.pdf", "ab")] do
+      ("lualatex-shade.pdf", ""), ("leantex-strokes.pdf", ""), ("matplotlib-dialect.pdf", "ab"),
+      ("geometry-dialect.pdf", ""), ("text-dialect.pdf", "abba"), ("lualatex-strokedtext.pdf", "fake bold")] do
     match PdfGfx.importPage (← fixture name) with
     | .error e => t s!"fixture: {name} imports ({e})" false
     | .ok imp =>
@@ -312,6 +316,17 @@ def pdfFixtureChecks (ref : IO.Ref (List String)) : IO Unit := do
     t "fixture: lualatex's glyphs are stamps of their outlines"
       (!imp.figure.outlines.isEmpty && imp.figure.outlines.all (!·.isEmpty))
   | .error _ => t "fixture: lualatex-text imports" false
+  match PdfGfx.importPage (← fixture "geometry-dialect.pdf") with
+  | .ok imp =>
+    -- SVG draws, and clips to, no rect of zero or negative size, and
+    -- paints a square where a square cap meets a dot PDF leaves unpainted.
+    let rects := (attrsAll (faceTree imp.figure)).filter fun (tag, k, v) =>
+      tag == "rect" && (k == "width" || k == "height") && (v == "0" || v.startsWith "-")
+    t s!"fixture: the geometry dialect's face spells no rect SVG draws nothing for ({rects})" rects.isEmpty
+    let svg := (String.fromUTF8? (PdfFaces.svgOf imp.figure)).getD ""
+    t "fixture: the geometry dialect's square-capped dot is left out, its round one kept"
+      (!hasStr svg "M 140 100 L 140 100" && hasStr svg "M 160 100 Z")
+  | .error _ => t "fixture: geometry-dialect imports" false
   match PdfGfx.importPage (← fixture "matplotlib-dialect.pdf") with
   | .ok imp =>
     t "fixture: the marker form paints as one symbol, used at every placement"

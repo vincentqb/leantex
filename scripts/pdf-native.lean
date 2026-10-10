@@ -9,8 +9,9 @@ The pdf-native tier: how far the engine draws a PDF figure itself.
 Each item is a committed, invented PDF in testdata/pdf-native, made by a
 tool the reader meets in practice — cairo through rsvg-convert, lualatex in
 the repository's shipped faces, the engine's own writer — or written here by
-hand in matplotlib's dialect (`matplotlibDialect`) or a print workflow's, in
-CMYK (`printDialect`): PROVENANCE.txt names how
+hand in matplotlib's dialect (`matplotlibDialect`), a print workflow's, in
+CMYK (`printDialect`), or to exercise PDF's own geometry rules
+(`geometryDialect`) and text state (`textDialect`): PROVENANCE.txt names how
 each was made, SHA256SUMS pins the bytes. Its value is what the importer
 (`PdfGfx.importPage`) makes of page 1:
 
@@ -34,8 +35,9 @@ def dir : String := "testdata/pdf-native"
 
 /-- The tier's items: the committed fixtures, in a fixed order. -/
 def fixtures : Array String :=
-  #["cairo-chart.pdf", "leantex-strokes.pdf", "lualatex-shade.pdf", "lualatex-text.pdf",
-    "matplotlib-dialect.pdf", "print-dialect.pdf"]
+  #["cairo-chart.pdf", "geometry-dialect.pdf", "leantex-strokes.pdf", "lualatex-shade.pdf",
+    "lualatex-strokedtext.pdf", "lualatex-text.pdf", "matplotlib-dialect.pdf", "print-dialect.pdf",
+    "text-dialect.pdf"]
 
 /-- One PDF's value: the importer's verdict on page 1. -/
 def value (pdf : ByteArray) : Int :=
@@ -129,6 +131,54 @@ q 30 0 0 30 150 15 cm /I2 Do Q",
   "<< /ShadingType 2 /ColorSpace /DeviceCMYK /Coords [0 0 1 0] \
 /Function << /FunctionType 2 /Domain [0 1] /C0 [0 0.8 0 0] /C1 [1 0.8 0 0] /N 1 >> /Extend [true true] >>"]
 
+/-- **The hand-written geometry fixture**: the shapes whose drawing turns on
+PDF's own rules (ISO 32000-2 §8.5.3), invented — stroked rectangles of zero
+height and zero width, a dashed rectangle of negative extent (its dashes
+start at its corner and run toward the negative extents), a dashed curve,
+degenerate subpaths under each line cap (a square cap paints nothing, a
+round one a dot), a clip by an `re` of negative extent, and inline images
+in ASCIIHex, RGB and grey. -/
+def geometryDialect : ByteArray := pdfOf #[
+  "<< /Type /Catalog /Pages 2 0 R >>",
+  "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+  "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200 120] /Contents 4 0 R >>",
+  stream "1 g 0 0 200 120 re f\n\
+0 0 0 RG 1.5 w 10 105 60 0 re S\n\
+10 20 0 70 re S\n\
+[6 3] 0 d 0.8 0.1 0.1 RG 1 w 190 110 -60 -40 re S\n\
+[4 2] 1 d 0.1 0.5 0.1 RG 2 w 30 40 m 30 60 50 80 70 80 c 90 80 110 60 110 40 c S\n\
+[] 0 d 0 0 0.8 RG 6 w 2 J 140 20 m 140 20 l S\n\
+1 J 160 20 m h S\n\
+0 J 180 20 m 180 20 l S\n\
+q 120 35 -30 -20 re W n 0.9 0.6 0.1 rg 80 5 50 40 re f Q\n\
+q 20 0 0 20 140 40 cm BI /W 2 /H 2 /CS /RGB /BPC 8 /F /AHx ID ff000000ff000000ffffff00> EI Q\n\
+q 20 0 0 20 165 40 cm BI /W 2 /H 1 /CS /G /BPC 8 /F /AHx ID 20e0> EI Q"]
+
+/-- **The hand-written text fixture**: the text state's positioning, over a
+Type 3 font whose glyphs are filled `d1` procedures, invented — leading and
+`T*`, character and word spacing, horizontal scaling, rise, the two quote
+operators, a `TJ` adjustment, and a rotated text matrix — with a ToUnicode
+CMap, so its words are the figure's. -/
+def textDialect : ByteArray := pdfOf #[
+  "<< /Type /Catalog /Pages 2 0 R >>",
+  "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+  "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200 120] /Contents 4 0 R /Resources \
+<< /Font << /F1 5 0 R >> >> >>",
+  stream "1 g 0 0 200 120 re f 0 g\n\
+BT /F1 12 Tf 14 TL 10 100 Td (ab ab) Tj T* 2 Tc (ab ab) Tj T* 0 Tc 6 Tw (ab ab) Tj\n\
+T* 0 Tw 150 Tz (ab ab) Tj T* 100 Tz (a) Tj 4 Ts (b) Tj 0 Ts (a) Tj\n\
+(ab) ' 1 3 (ab ab) \" [(a) -600 (b) 300 (a)] TJ ET\n\
+BT 0.6 0.8 -0.8 0.6 150 20 Tm /F1 14 Tf (abba) Tj ET",
+  "<< /Type /Font /Subtype /Type3 /FontBBox [0 0 600 700] /FontMatrix [0.001 0 0 0.001 0 0] \
+/CharProcs << /a 6 0 R /b 7 0 R /space 8 0 R >> /Encoding << /Type /Encoding /Differences [32 /space 97 /a /b] >> \
+/FirstChar 32 /LastChar 98 /Widths [250 " ++ String.join (List.replicate 64 "0 ") ++ "600 600] /ToUnicode 9 0 R >>",
+  stream "600 0 0 0 600 700 d1 100 0 m 500 0 l 300 700 l h f",
+  stream "600 0 0 0 600 700 d1 100 0 m 500 0 l 500 700 l 100 700 l h f",
+  stream "250 0 d0",
+  stream "/CIDInit /ProcSet findresource begin 12 dict begin begincmap \
+/CMapName /Placeholder-UCS def 1 begincodespacerange <00> <ff> endcodespacerange \
+2 beginbfchar <20> <0020> <61> <0061> endbfchar 1 beginbfrange <62> <62> <0062> endbfrange endcmap end end"]
+
 /-- The fixture's pins: `SHA256SUMS`, each line `<hash>  <file>`. -/
 def pinFaults : IO (Array String) := do
   let sums := dir ++ "/SHA256SUMS"
@@ -159,8 +209,8 @@ def measureTier : IO (Array String × Array Row) := do
     rows := rows.push { item := f, value := v }
   return (#[
     "# corpus: testdata/pdf-native, invented figures made by cairo (rsvg-convert), lualatex in the \
-shipped faces, the engine's writer, and by hand in matplotlib's and a print workflow's dialects \
-(PROVENANCE.txt, SHA256SUMS)",
+shipped faces, the engine's writer, and by hand in matplotlib's and a print workflow's dialects and \
+over PDF's geometry rules and text state (PROVENANCE.txt, SHA256SUMS)",
     "# value: PdfGfx.importPage on page 1 — 2 drawn with nothing lost, 1 drawn with its losses \
 named, 0 refused; the structural half (equality with the other importer's reading) is pending",
     s!"# counts: {counts[2]!} at 2, {counts[1]!} at 1, {counts[0]!} at 0"], rows)
@@ -172,6 +222,12 @@ def selftest : IO UInt32 := tierSelftest "pdf-native" fun expect => do
   let printed ← IO.FS.readBinFile (dir ++ "/print-dialect.pdf")
   expect "the hand-written print fixture is the file this script writes (--fixtures)"
     (printed == printDialect)
+  let shaped ← IO.FS.readBinFile (dir ++ "/geometry-dialect.pdf")
+  expect "the hand-written geometry fixture is the file this script writes (--fixtures)"
+    (shaped == geometryDialect)
+  let texted ← IO.FS.readBinFile (dir ++ "/text-dialect.pdf")
+  expect "the hand-written text fixture is the file this script writes (--fixtures)"
+    (texted == textDialect)
   expect "every fixture is pinned" (← pinFaults).isEmpty
   expect "a figure drawn with nothing lost is 2" (value matplotlibDialect == 2)
   let type1 := pdfOf #[
@@ -190,6 +246,9 @@ def main (args : List String) : IO UInt32 := do
   | ["--fixtures"] =>
     IO.FS.writeBinFile (PdfNative.dir ++ "/matplotlib-dialect.pdf") PdfNative.matplotlibDialect
     IO.FS.writeBinFile (PdfNative.dir ++ "/print-dialect.pdf") PdfNative.printDialect
-    IO.println s!"wrote {PdfNative.dir}/matplotlib-dialect.pdf and print-dialect.pdf"
+    IO.FS.writeBinFile (PdfNative.dir ++ "/geometry-dialect.pdf") PdfNative.geometryDialect
+    IO.FS.writeBinFile (PdfNative.dir ++ "/text-dialect.pdf") PdfNative.textDialect
+    IO.println s!"wrote {PdfNative.dir}/matplotlib-dialect.pdf, print-dialect.pdf, geometry-dialect.pdf \
+and text-dialect.pdf"
     return 0
   | _ => tierMain "pdf-native" .raw PdfNative.measureTier PdfNative.selftest args

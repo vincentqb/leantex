@@ -8,7 +8,8 @@ repository root:
 The never-worse report for the PDF figure importer. Each figure is a
 committed pdf-native fixture (testdata/pdf-native, invented, made by the
 tool the importer meets — lualatex, cairo, the engine's writer — or by
-hand in matplotlib's dialect or a print workflow's CMYK one). Its reference is Poppler's raster of the
+hand in matplotlib's dialect, a print workflow's CMYK one, or over PDF's
+own geometry rules and text state). Its reference is Poppler's raster of the
 page (`pdftoppm` at `rasterDpi`). Its two web faces are the engine's own
 drawing (`PdfFaces.svgOf` of `PdfGfx.importPage`) and the converter's
 (`pdftocairo -svg`), each a standalone SVG Chromium screenshots at the
@@ -54,8 +55,9 @@ def dir : String := "testdata/pdf-native"
 
 /-- The fixtures the report reads, in a fixed order. -/
 def fixtures : Array String :=
-  #["cairo-chart.pdf", "leantex-strokes.pdf", "lualatex-shade.pdf", "lualatex-text.pdf",
-    "matplotlib-dialect.pdf", "print-dialect.pdf"]
+  #["cairo-chart.pdf", "geometry-dialect.pdf", "leantex-strokes.pdf", "lualatex-shade.pdf",
+    "lualatex-strokedtext.pdf", "lualatex-text.pdf", "matplotlib-dialect.pdf", "print-dialect.pdf",
+    "text-dialect.pdf"]
 
 def tool (cmd : String) (args : Array String) : IO IO.Process.Output := do
   match ← runTool cmd args with
