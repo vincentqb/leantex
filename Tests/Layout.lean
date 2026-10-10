@@ -1984,10 +1984,16 @@ def displayTexChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO 
   -- list end sets none, though the list leaves owed glue exactly as the
   -- `\vspace` above does. The pair isolates the fact — equal owed, one
   -- empty line (`bs`) apart — and is where the owed-glue reading was blind.
-  let listend := linesOf "\\begin{itemize}\\item A\\end{itemize}\n\n\\[ x = 1 \\]\nBravo."
+  -- A blank line between ends `\@endpe` (its `\par`, ltlists.dtx
+  -- `\@doendpe`): the display opens a paragraph of its own and TeX sets the
+  -- empty line, as lualatex does after a list and a blank line.
+  let listend := linesOf "\\begin{itemize}\\item A\\end{itemize}\n\\[ x = 1 \\]\nBravo."
+  let listpar := linesOf "\\begin{itemize}\\item A\\end{itemize}\n\n\\[ x = 1 \\]\nBravo."
   let vsp2 := linesOf "Alpha words.\n\n\\vspace{10pt}\n\\[ x = 1 \\]\nBravo words."
-  t "a display after a list end sets no empty line, one amsmath sets after an equal vspace"
+  t "a display right after a list end sets no empty line, one amsmath sets after an equal vspace"
     (listend.size == 3 && vsp2.size == 3 && step vsp2 0 == step listend 0 + bs)
+  t "a display after a list end and a blank line sets the empty line"
+    (listpar.size == 3 && step listpar 0 == step listend 0 + bs)
   -- A control between the text and the display opens the display's
   -- paragraph whether or not a blank line follows it: the empty line is the
   -- vertical-mode fact, not a literal blank line in the source.

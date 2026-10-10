@@ -10534,6 +10534,27 @@ its quantized `\topsep`, until its HTML half moves with it. -/
 private def Spacing.Pending.listSpace (a : Acc) (g : Glue) : Acc :=
   { a.addvspace g with declaredSkip := true, trivOwed := true }
 
+/-- A list's opening space: the trivlist's `\addvspace` (`listSpace`),
+except under beamer, whose `itemize`, `enumerate` and `description` set their
+body colour (`\usebeamercolor[fg]`) before `\list` opens. The colour stack's
+push then stands last on the vertical list, `\lastskip` reads zero there,
+and `\addvspace` adds the `\topsep` to the space above instead of taking the
+larger (`listOpen_beamer_adds_exact`). Measured under lualatex, a beamer list
+stands its `\topsep` further below a block, a list, a centred block or a
+display than a paragraph there stands; the list's closing space is the
+trivlist's under both, beamer's colour popped before it. -/
+private def Spacing.Pending.listOpen (a : Acc) (r : Rd) (g : Glue) : Acc :=
+  match r.lists with
+  | .beamer => { a.vskip g with trivOwed := true }
+  | .sizeFile | .web => a.listSpace g
+
+/-- **A beamer list's `\topsep` adds to the glue owed above it** (`_exact`):
+whatever stands owed, the list's opening appends its space, as TeX's
+`\vskip` does after the colour's whatsit. -/
+private theorem listOpen_beamer_adds_exact (a : Acc) (r : Rd) (g : Glue)
+    (h : r.lists = .beamer) : (a.listOpen r g).owed = a.owed.push g := by
+  simp [Spacing.Pending.listOpen, Spacing.Pending.vskip, h]
+
 /-- **An explicit `\vspace` is never absorbed by an element's space**
 (`_exact`): after a `\vspace`, each element door — `\addvspace`, a
 trivlist's `\topsep`, a list's — appends its glue, so the document's skip
@@ -13132,6 +13153,31 @@ private def collectVerbatim (r : Rd) (a : Acc) (covered : Option Ir.Color) (s : 
     (leaf := leaf) (span := 1) (literalLines := true)
     (strut := if spec.lineStrut then some leading else none)
 
+/-- A listing with the space its environment sets around it
+(`Ir.ListingFrame`): a trivlist's `\topsep` at its depth, as a `center`'s,
+or fancyvrb's `\list` one level down, its `\topsep` by `\addvspace` on both sides under TeX's
+`\parskip`, as a list's — the web's lineage, which has no list levels,
+spacing that as its trivlists. -/
+private def collectListing (r : Rd) (a : Acc) (covered : Option Ir.Color) (s : String)
+    (spec : Ir.ListingSpec) (indent : Sp) : Acc :=
+  let trivlist (a : Acc) : Glue := r.resolve (Ir.trivlistSkipFor r.lists a.tokens r.geom.fontSize
+    (a.itemDepth + a.enumDepth + a.quoteDepth))
+  match spec.frame with
+  | .none => collectVerbatim r a covered s spec indent
+  | .trivlist =>
+    let g := trivlist a
+    (collectVerbatim r (a.trivSpace g) covered s spec indent).trivSpace g
+  | .list =>
+    let lv := a.itemDepth + a.enumDepth + a.quoteDepth + 1
+    match Ir.listSkips r.lists r.geom.fontSize lv with
+    | some sk =>
+      let g := (r.resolve sk.topsep).add (r.resolve (Ir.partopsepFor r.lists r.geom.fontSize lv a.tokens))
+      let top := if a.afterHeading then a.flushGap r else (a.listSpace g).flushGap r
+      (collectVerbatim r top covered s spec indent).listSpace g
+    | none =>
+      let g := trivlist a
+      (collectVerbatim r (a.trivSpace g) covered s spec indent).trivSpace g
+
 private def collectAlgorithm (r : Rd) (a : Acc) (numbered semis : Bool) (lines : Array Ir.AlgLine) (indent : Sp) : Acc :=
   -- Pseudocode: each line one display-type paragraph at the body size —
   -- never hyphenated (the engine must not invent a hyphen inside an
@@ -13998,7 +14044,7 @@ private def collectBlock (r : Rd) (a : Acc)
     -- after the heading stands (`Spacing.Pending.afterHeading`).
     let a := match st.before, top with
       | some g, _ => a.addvspace (r.resolve g)
-      | none, some t => if a.afterHeading then a.flushGap r else (a.listSpace t).flushGap r
+      | none, some t => if a.afterHeading then a.flushGap r else (a.listOpen r t).flushGap r
       | none, none => a
     -- The level's `\leftmargin` (`Spacing.Context.leftMargin`), unless the list's style
     -- declares its own indent.
@@ -14284,7 +14330,7 @@ private def collectBlock (r : Rd) (a : Acc)
     -- something, so adjacent breaks never make a blank page.
     a.pageBreak
   | .logo content => collectLogo a content
-  | .verbatim covered s spec => collectVerbatim r a covered s spec indent
+  | .verbatim covered s spec => collectListing r a covered s spec indent
   | .algorithm numbered semis lines => collectAlgorithm r a numbered semis lines indent
   | .framefoot content => collectFramefoot a content
   | .setPalette p =>

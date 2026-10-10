@@ -5775,6 +5775,24 @@ public def ListingStyle.ofName? (name : String) : Option ListingStyle :=
   let name := name.trimAscii.toString
   ListingStyle.all.find? (·.name == name)
 
+/-- How a listing's environment spaces it from its neighbours, as its
+package sets it: `{verbatim}` is a trivlist (latex.ltx `\@verbatim`), its
+`\topsep` the trivlist's at its depth (`trivlistSkipFor`); `{minted}`'s code
+is fancyvrb's `\list` with no items one level down
+(fancyvrb.sty `\FV@List`: `\FV@ListVSpace` and `\@endparenv` spend its
+`\@topsepadd`), its level's `\topsep` taking the larger of its
+neighbour's. Measured under lualatex: 8 and 3 pt from a paragraph in a
+beamer frame at 10 pt. `{lstlisting}`'s `\medskipamount` above and below
+(listings.sty's `aboveskip` and `belowskip`, 6 pt there) is not yet a
+frame. `none` spaces it as a paragraph — a markdown document's code
+(`Surface.markdown`), which no package sets. Both backends read it: the PDF
+walk's space around the code and the HTML sheet's rules on its element. -/
+public inductive ListingFrame where
+  | none
+  | trivlist
+  | list
+  deriving Repr, BEq, DecidableEq, Inhabited
+
 /-- What a code listing declares beside its content — the delta between
 `{verbatim}` and listings' `{lstlisting}` / minted's `{minted}` (listings
 manual: the `caption` key, lstmisc's `numbers` key; minted's `linenos`).
@@ -5833,6 +5851,8 @@ public structure ListingSpec where
   paragraph breaker, which names the re-flow (W0386) — minted's, whose
   fvextra continuation carries a break symbol this engine does not draw. -/
   breakIndent : Option Sp := none
+  /-- How the environment spaces the code from its neighbours. -/
+  frame : ListingFrame := .none
   deriving Repr, BEq, Inhabited
 
 /-- fvextra's `backgroundcolorboxoverlap`, 0.25 pt (fvextra.sty,
@@ -6198,8 +6218,9 @@ overlay's carrier or a backend's group, which the page ends where its last
 block ends. -/
 public def Block.leavesEndPe : Block → Bool
   | .list .. | .quote _ => true
+  | .verbatim _ _ spec => spec.frame == .trivlist || spec.frame == .list
   | .role n body =>
-    (thmSpaceOf? n).isSome ||
+    (thmSpaceOf? n).isSome || n == trivlistRole ||
       (n == inParagraphRole && match body with
         | #[.list ..] | #[.quote _] => true
         | #[.role m _] => (thmSpaceOf? m).isSome

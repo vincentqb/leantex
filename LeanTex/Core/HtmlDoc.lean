@@ -319,8 +319,8 @@ public def engineClasses : List String :=
    "math", "math-display", "nopadl", "nopadr", "note", "picture", "progress",
    "reveal-scroll", "ruled", "section-page", "separator", "slide",
    "slide-foot", "slide-logo", "slide-track", "slides", "snap", "spaced",
-   "standout", "step", "table-float", "tcolorbox", "tcolorbox-body", "vskip", "alt-pair",
-   "alt-alike", "frame-body-tail", "frame-flow-end"] ++
+   "standout", "step", "table-float", "tcolorbox", "tcolorbox-body", "verbatim-list", "vskip",
+   "alt-pair", "alt-alike", "frame-body-tail", "frame-flow-end"] ++
   Ir.sizeScale.map (fun p => "size-" ++ p.1) ++ Ir.sizeScale.map (fun p => "lead-" ++ p.1)
 
 private theorem engineClasses_no_u_prefix :
@@ -1148,6 +1148,10 @@ private def trivlistOwn : String :=
 /-- A trivlist's boundary: its `\topsep` on top of the peer gap. -/
 private def trivlistGap : String := s!"calc({trivlistOwn} + {peerGap})"
 
+/-- The class of fancyvrb's `\list` around a listing's code
+(`Ir.ListingFrame.list`): the list levels space it (`listElems`). -/
+public def verbatimListClass : String := "verbatim-list"
+
 /-- The class of a document skip's box (`skipNode`). -/
 public def skipClass : String := "vskip"
 
@@ -1205,12 +1209,14 @@ private def skipNode (size : Int) (g : Ir.Sourced SymGlue) : Node :=
 
 /-- The elements a list level spaces: every list a list block emits — a
 description's `<dl>` among them (latex.ltx `description` is a `\list`) —
-and every quotation (classes.dtx: `quote` is a `\list`), and not the
+and every quotation (classes.dtx: `quote` is a `\list`) and fancyvrb's code
+(`verbatimListClass`, a `\list` with no items), and not the
 reference list, whose entries the PDF walk sets a peer gap apart
 (`Layout.collectBibliography`), nor an algorithm's line lists, whose lines
 stand a leading apart. -/
 private def listElems : List String :=
-  ["ul:not(.bibliography)", "ol:not(.algorithm):not(.algorithm *)", "blockquote", "dl"]
+  ["ul:not(.bibliography)", "ol:not(.algorithm):not(.algorithm *)", "blockquote", "dl",
+   "." ++ verbatimListClass]
 
 /-- A list block's item, and not a reference-list entry, an algorithm's
 line or an endnote. -/
@@ -8625,13 +8631,19 @@ public def blockNode (cfg : Config) (b : Block) : Node :=
        -- so it is a tab stop: a keyboard reaches what a long line spills
        -- (WCAG 2.2 SC 2.1.1). Its role takes no name, so it carries none.
        #[("tabindex", "0")])
-    match spec.caption with
-    | some (n, cap) =>
-      Html.elem "figure"
-        #[Html.elem "figcaption" (inlines cfg (Ir.listingCaption cfg.locale n cap)),
-          pre]
-        #[("class", "listing")]
-    | none => pre
+    let node := match spec.caption with
+      | some (n, cap) =>
+        Html.elem "figure"
+          #[Html.elem "figcaption" (inlines cfg (Ir.listingCaption cfg.locale n cap)),
+            pre]
+          #[("class", "listing")]
+      | none => pre
+    -- The environment's space (`Ir.ListingFrame`), a class on the element
+    -- it governs: a trivlist's, or a list level's.
+    match spec.frame with
+    | .trivlist => withClass (roleClass Ir.trivlistRole) node
+    | .list => withClass verbatimListClass node
+    | .none => node
   | .algorithm numbered semis lines =>
     -- Pseudocode as nested ordered lists: one <ol> per block, depth from
     -- nesting, line numbers by a CSS counter when declared (declarative,

@@ -404,7 +404,7 @@ private theorem elabBlocksGo_input_at (ctx : Ctx) (st : ESt) (raws : Array Raw) 
     rw [hr] at heq
     cases heq
     simp [inputEnv_ne_linkedBoxRowMark, inputEnvFile?_inputEnv, hb, pictureInSentence_input,
-      flushPara_empty ctx _ hm, Ir.flushedText_empty_exact, Ir.markInParagraph_false_id]
+      flushPara_empty ctx _ hm, Ir.flushedText_empty_exact, Ir.markInParagraph_false_id, endPeAt]
   · rename_i heq; rw [hr] at heq; cases heq
   · rename_i _ _ _ _ henv _
     exact absurd hr (henv _ _ _)

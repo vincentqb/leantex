@@ -620,9 +620,11 @@ def htmlListGapChecks (ref : IO.Ref (List String)) : IO Unit := do
   let space (m : String) := s!"calc({m}rem + var(--parskip, 0rem))"
   let art := page "{article}"
   -- The emitter's selector lists, spelled here once: a list level's
-  -- elements, each level reached through an item ancestor per enclosing
-  -- list (`<li>` or a description's `<dd>`).
-  let elems := ["ul:not(.bibliography)", "ol:not(.algorithm):not(.algorithm *)", "blockquote", "dl"]
+  -- elements — fancyvrb's listing among them, a `\list` with no items —
+  -- each level reached through an item ancestor per enclosing list (`<li>`
+  -- or a description's `<dd>`).
+  let elems := ["ul:not(.bibliography)", "ol:not(.algorithm):not(.algorithm *)", "blockquote", "dl",
+    ".verbatim-list"]
   let lv (n : Nat) : String := String.join (List.replicate n ":is(li, dd, blockquote) ")
   let above (n : Nat) := ", ".intercalate (elems.map fun e => s!"{lv n}* + {e}")
   let below (n : Nat) := ", ".intercalate (elems.map fun e => s!"{lv n}{e} + *")

@@ -9287,7 +9287,9 @@ private def listingBlock (ctx : Ctx) (env s : String) (pos : Pos) : EM Block := 
     (fun p c => p.next (c == '\n')) pos
   if env == "verbatim" then
     return .verbatim none s
-      { base with fontSize := inherited, source := some (ctx.sourceSpan sourceStart) }
+      { base with
+        fontSize := inherited, source := some (ctx.sourceSpan sourceStart)
+        frame := if ctx.surface == .tex then .trivlist else .none }
   let (opts, afterOpt) := (Parse.listingOptHead s).getD ("", 0)
   let mut content := s
   let mut caption : Option String := none
@@ -9413,6 +9415,7 @@ size commands; the current style stands" none
     -- wrap keeps the surface's (none on a tex document).
     -- premise: markdownCodeChecks — a breaklines lstlisting sets every line inside the measure, continuations 20 pt in, with no re-flow named, while minted's wrap keeps no break indent and so the paragraph breaker's W0386
     breakIndent := if env == "lstlisting" then some Ir.listingBreakIndent else base.breakIndent
+    frame := if ctx.surface == .tex && env == "minted" then .list else .none
     source := some (ctx.sourceSpan contentPos) }
   let spec ← match caption with
     | some cap => do
@@ -10105,18 +10108,38 @@ private def pauseCarrier (raws : Array Raw) (i : Nat) (blocks : Array Block) (n 
   let (inPar, endPe) := carrierOpening raws i blocks (raws.extract (i + 1) raws.size)
   blocks.push (.step n none (Ir.carrierDisplays inPar endPe false inner))
 
+/-- Does a blank line stand just before position `i`, past the spaces? -/
+private def parPrecedes (raws : Array Raw) (i : Nat) : Bool := Id.run do
+  let mut j := i
+  for _ in [0:i] do
+    j := j - 1
+    match raws[j]? with
+    | some .space => pure ()
+    | some (.par _) => return true
+    | _ => return false
+  return false
+
+/-- Does an environment's `\@endpe` reach a display at position `i`, so that
+TeX sets no empty line before it (`Ir.DisplayCtx.afterEnv`): no text of the
+paragraph precedes it, the block before it leaves `\@endpe` set
+(`Ir.Block.leavesEndPe`), and no blank line stands between — the blank
+line's `\par` ends it (ltlists.dtx `\@doendpe`), and the display then opens
+a paragraph of its own, on the empty line TeX sets after a paragraph. -/
+private def endPeAt (raws : Array Raw) (i : Nat) (inPar : Bool) (flushed : Array Block) : Bool :=
+  !inPar && (flushed.back?.map Ir.Block.leavesEndPe).getD false && !parPrecedes raws i
+
 /-- A display formula met between words, outside the knot: the open
-paragraph flushed, the display's own arm, and where the display stands in
-its paragraph (`Ir.markDisplay`) — text before it, and whether a paragraph
-break follows (`after`). -/
+paragraph flushed, the display's own arm, and where the display at `i`
+stands in its paragraph (`Ir.markDisplay`) — text before it, whether a
+paragraph break follows, and an environment end's `\@endpe` (`endPeAt`). -/
 private def displayAtBlock (ctx : Ctx) (body : Array Raw) (pos : Pos) (blocks : Array Block)
-    (cur : Array Raw) (after : Bool) : EM (MCtx ctx × Array Block) := do
+    (cur : Array Raw) (raws : Array Raw) (i : Nat) : EM (MCtx ctx × Array Block) := do
   let k := blocks.size
   let (next, flushed) ← flushPara ctx blocks cur
   let out ← displayMathArm next.val false body pos flushed
   let inPar := Ir.flushedText k flushed
-  let afterEnv := !inPar && (flushed.back?.map Ir.Block.leavesEndPe).getD false
-  return (next, Ir.markDisplay inPar after afterEnv flushed.size out)
+  return (next, Ir.markDisplay inPar (parFollows raws (i + 1)) (endPeAt raws i inPar flushed)
+    flushed.size out)
 
 -- The well-founded translation whnf-reduces through the knot's body when
 -- it assembles the fixpoint and its equations; everything the arms call is
@@ -10490,7 +10513,7 @@ seal declCtrl runningCtrl titleCtrls overlayCtrls blockEnvs reservedEnv
 seal displayMathEnvs alignEnvs isMathEnv sectionLevel specWord?
 seal lookupUser lookupUserEnv isArgument isCenteringRaw isParRaw splitAtPars sizeParScope
 seal isColumnStray
-seal parFollows displayAtBlock
+seal parFollows parPrecedes endPeAt displayAtBlock
 
 -- ===== Pseudocode environments: algorithm2e and algorithmicx ============
 --
@@ -12741,7 +12764,7 @@ private def elabBlocksGo (ctx : Ctx) (raws : Array Raw) (i : Nat)
         -- environment's one arm: unnumbered, a label binding to the flow's
         -- last number, and a `\tag` standing in the number's place.
         let (⟨ctx', hm⟩, blocks) ←
-          displayAtBlock ctx' body mpos blocks cur (parFollows raws (i + 1))
+          displayAtBlock ctx' body mpos blocks cur raws i
         elabBlocksGo ctx' raws (i + 1) blocks #[] gen'
       else
         elabBlocksGo ctx' raws (i + 1) blocks (cur.push raws[i]) gen'
@@ -12783,7 +12806,7 @@ private def elabBlocksGo (ctx : Ctx) (raws : Array Raw) (i : Nat)
         let k := blocks.size
         let (⟨ctx', hm⟩, flushed) ← flushPara ctx' blocks cur
         let inPar := Ir.flushedText k flushed
-        let afterEnv := !inPar && (flushed.back?.map Ir.Block.leavesEndPe).getD false
+        let afterEnv := endPeAt raws i inPar flushed
         let blocks ← elabEnvArm ctx' n body epos flushed
         -- A list or quote opened inside an open paragraph (no blank line
         -- before it) rides in the in-paragraph role: `\@trivlist` finds
@@ -13217,7 +13240,7 @@ unseal declCtrl runningCtrl titleCtrls overlayCtrls blockEnvs reservedEnv
 unseal displayMathEnvs alignEnvs isMathEnv sectionLevel specWord? blockHeading?
 unseal lookupUser lookupUserEnv isArgument isCenteringRaw isParRaw splitAtPars sizeParScope
 unseal isColumnStray
-unseal parFollows displayAtBlock
+unseal parFollows parPrecedes endPeAt displayAtBlock
 unseal scanBracketArg
 unseal nativeLinkedRow linkedRowChoice noteLinkedRow
 unseal enterAppendicesIf leaveAppendices wrapScopedEnv
