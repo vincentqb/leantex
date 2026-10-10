@@ -38,7 +38,7 @@ frame
     text "A default bundle"
   para
     text "The page is warm paper and the ink warm near-black. An "
-    styled bold
+    color alert #0B66C2
       text "azure emphasis"
     text " and a "
     color example #0F7A52
@@ -51,4 +51,4 @@ frame standout
 note[N0100] 4:1 '\documentclass{beamer}' → \documentclass[aspectratio=169]{slides}
 note[N0100] 4:1 '\RequirePackage{amsmath}' → nothing: the engine does this itself
 note[N0100] 4:1 '\usepackage{amsthm}' → \theoremstyle{plain}
-note[N0100] 22:6 '\alert' → {\bfseries ...}
+note[N0100] 22:6 '\alert' → \textcolor{alert}{...}

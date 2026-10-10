@@ -77,11 +77,11 @@ def pictureBoundaryChecks (ref : IO.Ref (List String)) : IO Unit := do
   let styledReq := requestText styledDoc
   t "the fulfilment input keeps the skip and bridges alert with a declared color"
     ((Ir.pictureRefs styledDoc).size == 1 && hasStr styledReq "\\smallskip" &&
-      hasStr styledReq "\\textcolor {alert}" && hasStr styledReq "\\bfseries" &&
+      hasStr styledReq "\\textcolor {alert}" && !hasStr styledReq "\\bfseries" &&
       hasStr styledReq "\\definecolor{alert}" && hasStr styledReq "\\color {blue}" &&
       !hasStr styledReq "\\block" && !hasStr styledReq "\\@ink:")
   for (theme, label, explicit) in [
-      ("\\theme{moloch}", "\\alert{Bright}", "\\textcolor{alert}{\\bfseries Bright}"),
+      ("\\theme{moloch}", "\\alert{Bright}", "\\textcolor{alert}{Bright}"),
       ("", "\\alert{Bright}", "{\\bfseries Bright}"),
       ("", "\\textcolor{blue}{Bright}", "\\textcolor{blue}{Bright}")] do
     let native (text : String) := firstPass (dvDoc theme

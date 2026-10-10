@@ -794,6 +794,10 @@ private structure St where
   /-- The shipped theme the deck names (`\usetheme`, its lineage's name):
   what its own font declarations are read from (`themeBlockFont`). -/
   beamerTheme : String := ""
+  /-- A theme was named, in any spelling, known or not: the slides class's
+  default bundle then steps aside (`Elab`'s `sawTheme`), and with it the
+  alert colour it would install. -/
+  themeNamed : Bool := false
   /-- The declared class produces a presentation. What a beamer *mode*
   specification is read against: `<presentation:0>` suppresses a frame only
   where the artifact is the presentation it addresses — beamer's article mode
@@ -2115,16 +2119,23 @@ private def OverlayPrefix.append (out : OverlayPrefix) (rs : Array Raw) : Overla
 private instance : HAppend OverlayPrefix (Array Raw) OverlayPrefix := ⟨OverlayPrefix.append⟩
 
 /-- The alert style around a body, one spelling for both `\alert` forms:
-themed, the theme's alert colour AND bold — colour alone would be the only
-signal distinguishing the run, which WCAG 2.2 SC 1.4.1 forbids (metropolis
-itself colours only; the divergence is deliberate); unthemed there is no
-alert colour and bold stands in. The bold is a declaration, as beamer's
-`alerted text` font is: `\textbf` would also set a text command's italic
-corrections at the run's edges, which beamer's `\alert` does not. -/
+themed (`alertThemed`), the alert colour alone — beamer's `\alert` selects
+the `alerted text` colour and its font (beamerbaselocalstructure.sty:85),
+which beamer's default font theme leaves empty
+(beamerfontthemedefault.sty:15) and moloch never sets (measured under
+lualatex: an alerted word sets in the body's face and weight). A decision
+over the engine's earlier bold, which kept colour from being the run's only
+visual signal (WCAG 2.2 SC 1.4.1): the slide class's look was asked for. A
+beamer theme gives the word weight through its `alerted text` font, which the
+engine does not read (`\setbeamerfont` names it unsupported). Unthemed there
+is no alert colour, and bold stands in so the run still differs from its
+neighbours — a departure where a deck names beamer's bare default, whose
+colour theme sets the word red: the bare deck installs no palette. The bold is a declaration, as a theme's
+`alerted text` font would be: `\textbf` would also set a text command's
+italic corrections at the run's edges, which beamer's `\alert` does not. -/
 public def alertStyled (themed : Bool) (body : Array Raw) (pos : Pos) : Array Raw :=
   if themed then
-    #[.ctrl "textcolor" pos, .group #[.word "alert" pos] pos,
-      .group (#[.ctrl "bfseries" pos] ++ body) pos]
+    #[.ctrl "textcolor" pos, .group #[.word "alert" pos] pos, .group body pos]
   else #[.group (#[.ctrl "bfseries" pos] ++ body) pos]
 
 /-- An unforgeable command name: a control word cannot contain a space.
@@ -6779,17 +6790,24 @@ private def crefRangeArm (name : String) (pos : Pos) (raws : Array Raw)
       .ctrl "labelcref" pos, .group args[1] pos], k)
   else return none
 
+/-- Whether `\alert` takes the alert colour: a shipped theme stands, or a
+deck names none, so its class installs the default bundle and the bundle's
+alert colour with it (`Elab`'s slides default). -/
+private def alertThemed : M Bool := do
+  let st ← get
+  return st.themed || (st.deck && !st.themeNamed)
+
 /-- `\alert{body}` without an overlay spec: `alertStyled` around the body —
-themed, `\textcolor{alert}` around bold; unthemed, bold. With no body group
-the command stays `\textbf`, which names the missing argument. -/
+themed, `\textcolor{alert}`; unthemed, bold. With no body group the command
+stays `\textbf`, which names the missing argument. -/
 private def alertPlain (pos : Pos) (raws : Array Raw) (start : Nat) :
     M (Option (Array Raw × Nat)) := do
-  let themed := (← get).themed
+  let themed ← alertThemed
   let (args, k) := takeGroups raws start 1
   match args[0]? with
   | some body =>
     became "\\alert"
-      (if themed then "\\textcolor{alert}{\\bfseries ...}" else "{\\bfseries ...}") pos
+      (if themed then "\\textcolor{alert}{...}" else "{\\bfseries ...}") pos
     return some (alertStyled themed body pos, k)
   | none =>
     if themed then
@@ -7624,6 +7642,7 @@ is skipped" pos
     -- bundle declared an alert role no use could reach.
     let (args, _) := takeGroups raws start 1
     let tname := (rawSrc (args.getD 0 #[])).trimAscii.toString
+    write fun st => { st with themeNamed := true }
     if (Theme.find? tname).isSome then
       write fun st => { st with themed := true, beamerTheme := tname }
     return none
@@ -7635,7 +7654,7 @@ is skipped" pos
       became s!"\\alert{w}" "a conditional alert style" pos
       -- Leave the original body for rewriteRaw: it is not expanded into
       -- two alternative groups and no nested compatibility work is skipped.
-      return some (#[.ctrl (alertMark (← get).themed) pos, spec], j + 1)
+      return some (#[.ctrl (alertMark (← alertThemed)) pos, spec], j + 1)
     | _ => alertPlain pos raws start
   | "fonts" =>
     -- A native family declaration takes the next family slot, as the
@@ -8056,6 +8075,7 @@ its value is skipped" pos
     -- Only a theme the engine ships turns the themed mappings on: an
     -- unknown name leaves the document unthemed (W0314 says so), and
     -- \alert keeps its unthemed bold stand-in.
+    write fun st => { st with themeNamed := true }
     if (Theme.find? tname).isSome then
       write fun st => { st with themed := true, beamerTheme := tname }
     let options ← if tname == "moloch" then molochOptions "\\usetheme" (opt.getD "") pos
@@ -8541,6 +8561,7 @@ rendered subset is drawn whole at the boundary" pos
       let nm := themeAlias nm
       let native := s!"\\theme\{{nm}}"
       became s!"\\{name}\{{p}}" native pos
+      write fun st => { st with themeNamed := true }
       if (Theme.find? nm).isSome then
         write fun st => { st with themed := true }
       out := out ++ (← synthAt native pos)

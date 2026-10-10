@@ -448,7 +448,12 @@ def diagWitness (one mapped withMath : Font.FontSet)
   -- closes the page mid-frame and the account fires once, naming the frame.
   | .W0384 => dvL one (dvDeck "\\theme{moloch}\n"
       ("\\begin{frame}{Too tall}\n" ++
+       String.join (List.replicate 30 "one line\n\n") ++ "\\end{frame}\n" ++
+       "\\begin{frame}[standout]\n" ++
        String.join (List.replicate 30 "one line\n\n") ++ "\\end{frame}"))
+  -- A fill before more of its list item: the web slide cannot grow it.
+  | .W0399 => dvH (dvDeck ""
+      "\\begin{frame}\n\\begin{itemize}\n\\item Kilo\n\\vfill\nLima\n\\end{itemize}\n\\end{frame}")
   -- A font change inside a math word: the word survives in one face.
   | .W0385 => dvE "$\\text{\\textbf{bold} word}$"
   -- A construct outside the modeled subset whose one content operand stands

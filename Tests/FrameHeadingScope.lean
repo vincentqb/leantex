@@ -77,7 +77,7 @@ private def bodyShape : Html.Node → Array (String × String)
 
 private def expectedShape (valign : Ir.VAlign) (levels : Array Ir.HeadingLevel) :
     Array (String × String) :=
-  let (above, below) := Ir.VAlign.shares valign
+  let (above, below) := Ir.VAlign.shares .moloch valign
   let spacer (n : Nat) := if n == 0 then #[] else #[("fill", s!"flex-grow: {n}")]
   let leading := spacer above
   let trailing := spacer below

@@ -51,6 +51,9 @@ sizes it), `standoutfg`/`bg` invert a `[standout]` frame, and `muted`
 quiets secondary furniture — the chrome footer draws in it. -/
 public structure Theme extends Decls where
   name : String
+  /-- The frame-alignment keys the bundle's inner theme sets: beamer's own
+  unless the lineage redefines them, as moloch's `[c]` does. -/
+  frameKeys : Ir.FrameKeys := .beamer
 
 /-- `{\large\bfseries}` (`{\Large\bfseries}` for `large := "Large"`) as the
 elaborator reads a `\style` font value: nested wrappers with an empty body
@@ -136,6 +139,7 @@ public def moloch : Theme :=
       -- (Contrast.builtin_designs_covered is the kernel check).
       coveredFraction := some 31 }
     tokens := lineageTokens
+    frameKeys := .moloch
     styles := { entries := #[
       ("frametitle", boldFont "large"),
       ("sectionpage", boldFont "Large"),

@@ -91,6 +91,7 @@ import Tests.FrameArea
 import Tests.BlockSkips
 import Tests.BlockTemplate
 import Tests.ElementBoundaries
+import Tests.FrameGeometry
 import Tests.BlockFillConditionals
 import Tests.PaletteTextEpoch
 import Tests.GroupScope
@@ -571,6 +572,17 @@ def layoutSuiteChecks (ref : IO.Ref (List String)) : IO Unit := do
   Tests.FrameArea.footWeightChecks ref
   Tests.FrameArea.trivlistOpeningChecks ref
   Tests.FrameArea.standoutAlignNoteChecks ref
+  Tests.FrameGeometry.titleInsetChecks ref
+  Tests.FrameGeometry.standoutNumberChecks ref
+  Tests.FrameGeometry.sectionMeasureChecks ref
+  Tests.FrameGeometry.titleOpeningChecks ref
+  Tests.FrameGeometry.centreSplitChecks ref
+  Tests.FrameGeometry.vfillChecks ref
+  Tests.FrameGeometry.nestedFillChecks ref
+  Tests.FrameGeometry.fillCarrierChecks ref
+  Tests.FrameGeometry.fillCensusChecks ref
+  Tests.FrameGeometry.articleFillChecks ref
+  Tests.FrameGeometry.alertChecks ref
   Tests.FrameArea.floatLevelChecks ref
   topskipChecks ref oneFace
   labelBaselineChecks ref oneFace

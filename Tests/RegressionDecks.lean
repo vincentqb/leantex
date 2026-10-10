@@ -93,12 +93,11 @@ private def title (ref : IO.Ref (List String)) (name : String) (a : Artifact)
 
 private def workshop (ref : IO.Ref (List String)) (a : Artifact) : IO Unit := do
   let name := "decks/workshop"
-  stages ref name a #[none, none, some 1, none, some 2, some 2, some 3, some 4]
-    #["titlepage", "section-0", "1", "section-1", "2.1", "2.2", "3", "4"]
-    #[("choose-the-pieces", "1"), ("arrange-then-attach", "2"),
-      ("pause-and-compare", "3"), ("pack-the-pieces", "4")]
-    #[("Mosaic workshop", "1 / 4"), ("Mosaic workshop", "2 / 4"),
-      ("Mosaic workshop", "2 / 4"), ("Workshop reminder", ""), ("", "4 / 4")]
+  stages ref name a #[none, none, some 1, none, some 2, some 2, none, some 3]
+    #["titlepage", "section-0", "1", "section-1", "2.1", "2.2", "standout", "3"]
+    #[("choose-the-pieces", "1"), ("arrange-then-attach", "2"), ("pack-the-pieces", "3")]
+    #[("Mosaic workshop", "1 / 3"), ("Mosaic workshop", "2 / 3"),
+      ("Mosaic workshop", "2 / 3"), ("Workshop reminder", ""), ("", "3 / 3")]
   title ref name a "Paper Mosaic Workshop" "Workshop Facilitators"
   check ref s!"{name}: section inputs ship their pages"
     (textAt a 1 == #["Plan the pattern"] && textAt a 3 == #["Build the pattern"] &&

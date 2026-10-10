@@ -996,8 +996,8 @@ def numberingChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO U
     ("\\maketitle\n\\section{S}\n\\begin{frame}{One}\na\n\\end{frame}\n" ++
      "\\begin{frame}[standout]\nQ\n\\end{frame}"))
   t "numbering deck source clean" ds.isEmpty
-  t "the numbering skips the title but counts standout frames"
-    (doc.frameCount == 2 && doc.frameNumbers.toList.filterMap id == [1, 2])
+  t "the numbering skips the title and the standout frame"
+    (doc.frameCount == 1 && doc.frameNumbers.toList.filterMap id == [1])
   let geom := Layout.Geom.ofPage doc.page
   let out := layoutOf oneFace doc geom
   t "numbering deck four pages" (out.pages.size == 4)
@@ -1005,7 +1005,7 @@ def numberingChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO U
     (out.pages.map (·.foot.isSome) == #[false, false, true, false])
   t "the content frame is frame 1, not 2"
     ((out.pages[2]?.bind (·.foot)).map (fun f => Ir.plainText (Ir.bandInlines f)) == some "S1")
-  t "the progress bar shows 0 of 2 before any content frame"
+  t "the progress bar shows 0 of 1 before any content frame"
     (match out.pages[1]? with
      | some p => (p.fills.any fun f => f.color == ({ r := 0xCB, g := 0xC0, b := 0xB6 } : Ir.Color)) &&
          !(p.fills.any fun f => f.color == ({ r := 0xA5, g := 0x5A, b := 0x13 } : Ir.Color))
@@ -1028,8 +1028,8 @@ def numberingChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO U
      "\\begin{frame}{B}\nc\n\\end{frame}\n" ++
      "\\begin{frame}[standout]\nQ\n\\end{frame}"))
   t "two-sequences deck source clean" dDs.isEmpty
-  t "two content frames and the standout count 1, 2 and 3"
-    (dDoc.frameCount == 3 && dDoc.frameNumbers.toList.filterMap id == [1, 2, 3])
+  t "two content frames count 1 and 2, the standout none"
+    (dDoc.frameCount == 2 && dDoc.frameNumbers.toList.filterMap id == [1, 2])
   let dOut := layoutOf oneFace dDoc
   t "two-sequences deck six pages" (dOut.pages.size == 6)
   t "a stepped frame's pages share one footer"
@@ -2022,20 +2022,21 @@ def contrastChecks (ref : IO.Ref (List String)) : IO Unit := do
     (let badEntries := (Theme.moloch.palette.entries.filter (·.1 != "alert")).push
         ("alert", ({ r := 0xEB, g := 0x81, b := 0x1B } : Ir.Color))
      !Contrast.paletteContract { entries := badEntries })
-  -- Themed \alert is colour AND bold: colour alone would be the run's only
-  -- signal (WCAG 2.2 SC 1.4.1); unthemed it stays the bold stand-in.
+  -- Themed \alert is the alert colour alone, as beamer's `alerted text`
+  -- sets no font of its own (`Compat.alertStyled`); unthemed it stays the
+  -- bold stand-in.
   let themedAlert := elabStr ("\\documentclass{beamer}\\usetheme{moloch}" ++
     "\\begin{document}\\begin{frame}\\alert{hot}\\end{frame}\\end{document}")
-  t "themed alert is colour and bold" (themedAlert.1.body.any fun b =>
+  t "themed alert is the colour alone" (themedAlert.1.body.any fun b =>
     match b with
     | .frame _ _ _ _ body => body.any fun blk =>
       match blk with
       | .para content => content.any fun x =>
         match x with
-        | .colored _ (some "alert") inner => inner.any fun y =>
+        | .colored _ (some "alert") inner => inner.all fun y =>
           match y with
-          | .styled .bold _ => true
-          | _ => false
+          | .styled .bold _ => false
+          | _ => true
         | _ => false
       | _ => false
     | _ => false)
@@ -2158,11 +2159,24 @@ def themeChecks (ref : IO.Ref (List String)) : IO Unit := do
           | _ => false
         | _ => false
      | _ => false)
-  t "unthemed alert stays bold"
+  -- A deck naming no theme takes its class's default bundle, and with it
+  -- the bundle's alert colour; a deck naming bareness (`\theme{default}`)
+  -- has none, and its alert is held only to stand apart: beamer's default
+  -- colour theme sets it red, which the bare deck does not install.
+  t "a deck naming no theme takes its default bundle's alert colour"
     (match (elabStr (deck169 "" "\\begin{frame}{T}\n\\alert{hot}\n\\end{frame}")).1.body with
      | #[.frame _ _ _ _ body] => body.any fun b => match b with
         | .para xs => xs.any fun x => match x with
-          | .styled .bold _ => true
+          | .colored c (some "alert") _ => some c == Theme.daylight.palette.find? "alert"
+          | _ => false
+        | _ => false
+     | _ => false)
+  t "unthemed alert stands apart from its neighbours"
+    (match (elabStr (deck169 "\\theme{default}"
+        "\\begin{frame}{T}\n\\alert{hot}\n\\end{frame}")).1.body with
+     | #[.frame _ _ _ _ body] => body.any fun b => match b with
+        | .para xs => xs.any fun x => match x with
+          | .styled .bold _ | .colored .. => true
           | _ => false
         | _ => false
      | _ => false)
@@ -2745,6 +2759,7 @@ def deckStepChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Un
     (fun (_, attrs) => attrs.contains ("data-snap", "")) |>.size
   let count (s : String) : Nat := (html.splitOn s).length - 1
   let slideSections := count "<section class=\"slide\""
+    + count "<section class=\"slide titlebar\""
     + count "<section class=\"slide standout\""
     + count "<section class=\"slide title-page\""
   let frames := doc.body.foldl (fun n b => match b with

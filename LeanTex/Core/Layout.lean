@@ -534,22 +534,27 @@ public theorem slides_lines_survive_bands (a d f : Sp)
   exact key a d f g.headBand g.footBand g.pageH hh hf hH.1 hH.2 hhb hfb
 
 /-- How a page distributes its leftover vertical space: declared shares of
-the stretch above and below the content, the ratio form of beamer's
-`\vfil`-glue model. Centring is 1:1, top-flush is 0:1 (all leftover
-below), bottom-flush 1:0, and the moloch title page 3618:2000 — the
-frame's own centring unit on each side composed with the template's
-`0pt plus 1.618fil` and `\vfil` above against its `plus 1fil` below
-(`Ir.golden_composes_center`; beamerinnerthememoloch.dtx, the "golden
-ratio spacing" of its `title page` template). -/
+the stretch above and below the content, in thousandths of one fil unit —
+the ratio form of beamer's `\vfil`-glue model — and whether that glue is of
+a body `\vfill`'s order (`joins`), so a `\vfill` on the page shares the
+leftover with it rather than taking it all. Centring is 1000:1000, top-flush
+0:1000 (all leftover below), bottom-flush 1000:0, and the moloch title page
+3618:2000 — the frame's own centring unit on each side composed with the
+template's `0pt plus 1.618fil` and `\vfil` above against its `plus 1fil`
+below (`Ir.golden_composes_center`; beamerinnerthememoloch.dtx, the "golden
+ratio spacing" of its `title page` template). None of the four joins: a page
+the builder opens keeps its leftover below an order the body's `\vfill`
+outranks, and a frame's own glue is `VDist.of`'s. -/
 public structure VDist where
   above : Nat
   below : Nat
+  joins : Bool
   deriving Repr, BEq, Inhabited
 
-public def VDist.top : VDist := ⟨0, 1⟩
-public def VDist.center : VDist := ⟨1, 1⟩
-public def VDist.bottom : VDist := ⟨1, 0⟩
-public def VDist.golden : VDist := ⟨3618, 2000⟩
+public def VDist.top : VDist := ⟨0, 1000, false⟩
+public def VDist.center : VDist := ⟨1000, 1000, false⟩
+public def VDist.bottom : VDist := ⟨1000, 0, false⟩
+public def VDist.golden : VDist := ⟨3618, 2000, false⟩
 
 /-- The shift of a line with `k` of its page's `n` fil units above it:
 TeX's first-order infinite glue, as a share of the page's leftover.
@@ -615,7 +620,19 @@ public theorem VDist.center_is_halving (l : Sp) :
   unfold aboveShare filShare center
   split
   · rfl
-  · simp
+  · have h1 : ((1000 : Nat) : Int) = 1000 := rfl
+    have h2 : ((1000 + 1000 : Nat) : Int) = 2000 := rfl
+    have hn : (1000 + 1000 : Nat) = 0 ↔ False := by decide
+    have key : ∀ x : Int, x * 1000 / 2000 = x / 2 := by intro x; omega
+    simp only [hn, ite_false, h1, h2]
+    exact key l
+
+/-- One fil unit of two is the centred share: the page builder's split of a
+leftover between two fills of one order is its centring's. -/
+public theorem filShare_half_exact (l : Sp) : filShare l 1 2 = VDist.center.aboveShare l := by
+  rw [VDist.center_is_halving]
+  unfold filShare
+  split <;> simp
 
 /-- "All leftover below" is the old top-flush behaviour: the article page
 and every other undeclared page keep their lines exactly where they were. -/
@@ -631,8 +648,8 @@ differ by the single scaled point the halving assigns below. The source is
 moloch's `[c]` key — `\beamer@frametopskip` and `\beamer@framebottomskip`
 both `0pt plus 1fil` (beamerinnerthememoloch.sty:455-456), measured under
 lualatex as a split of exactly one half; plain beamer's own key is
-`1fill` against `1.5fill` (beamerbaseframe.sty:257-258), a ratio the
-vocabulary can declare but no shipped bundle does. The content's top is the
+`1fill` against `1.5fill` (beamerbaseframe.sty:257-258), every other
+bundle's (`Ir.FrameKeys.beamer`). The content's top is the
 title box's bottom (`Spacing.Page.openBody`), as the fil above stands there in beamer,
 and its bottom is `Spacing.Page.contentEnd` — the last box with its depth and the
 closing space the box keeps — so the two shares are the content's gaps. -/
@@ -645,17 +662,44 @@ public theorem VDist.center_split_exact (l : Int) (h : 0 ≤ l) :
     split at hs <;> omega
   exact key l _ h (VDist.center_is_halving l)
 
-/-- The distribution a frame's declaration names: a projection of the one
-IR table (`Ir.VAlign.shares`), so the PDF page cannot drift from the HTML
-deck's spacers. `golden` is the title page's composed 3618:2000. -/
-@[expose] public def VDist.of (v : Ir.VAlign) : VDist :=
-  ⟨v.shares.1, v.shares.2⟩
+/-- The distribution a frame's declaration names under the deck's keys: a
+projection of the one IR table (`Ir.frameGlue`), so the PDF page cannot
+drift from the HTML deck's spacers. `golden` is the title page's composed
+3618:2000. -/
+@[expose] public def VDist.of (keys : Ir.FrameKeys) (v : Ir.VAlign) (breakable : Bool := false) :
+    VDist :=
+  let g := Ir.frameGlue keys breakable v
+  ⟨g.above, g.below, g.joins⟩
 
 /-- The standalone `golden` is the table's own: the literal and the
 projection are one value, so a change to the sourced ratio cannot leave a
 second copy behind (the shape `VDist.golden` was, and which let the two
 drift). -/
-public theorem VDist.golden_projects : VDist.golden = VDist.of .golden := by rfl
+public theorem VDist.golden_projects (keys : Ir.FrameKeys) :
+    VDist.golden = VDist.of keys .golden := by
+  cases keys <;> rfl
+
+/-- moloch's `[c]` is the builder's centring: the same value, so the
+centred-page statements below read a moloch frame's page as written. -/
+public theorem VDist.center_projects : VDist.center = VDist.of .moloch .center := by rfl
+
+/-- The fil units the leftover is shared in, above a line and on the whole
+page (`filShare`'s `k` of `n`), from the `\vfill` units on the page: one unit
+each, TeX's split between fills of one order and stretch, where the page's
+own glue yields to them; where it joins (`VDist.joins`), each `\vfill` is
+the thousand thousandths of its `0pt plus 1fill` beside the page's own
+shares, the share above standing above every line and the share below
+below them all. -/
+@[expose] public def VDist.filAbove (d : VDist) (k : Nat) : Nat :=
+  if d.joins then d.above + Ir.fillUnit * k else k
+
+@[expose] public def VDist.filTotal (d : VDist) (n : Nat) : Nat :=
+  if d.joins then d.above + Ir.fillUnit * n + d.below else n
+
+/-- Where the page's glue yields, its units are the `\vfill`s alone. -/
+public theorem VDist.filUnits_id (d : VDist) (h : d.joins = false) (k n : Nat) :
+    d.filAbove k = k ∧ d.filTotal n = n := by
+  simp [VDist.filAbove, VDist.filTotal, h]
 
 /-- **The ground a frame declares for its own page.** Only the title page
 has one — `.golden` is the distribution `\maketitle` alone declares — and it
@@ -1300,6 +1344,10 @@ travel with that decision through placement. -/
 public structure FrameOpening where
   origin : Option FrameOrigin
   number : Option Nat
+  /-- The frame's label (`Ir.Doc.frameLabels`): what a diagnostic about the
+  frame names it by, its number or, unnumbered, its standout or title-page
+  ordinal. -/
+  label : Option String := none
   chrome : Ir.Chrome
   note : Option (Array Ir.Inline)
   sectionTitle : Array Ir.Inline
@@ -1434,6 +1482,11 @@ public structure PageOut where
   /-- Source frame and overlay owning this physical page. Continuation
   pages retain the identity of the step that spilled. -/
   frameOrigin : Option FrameOrigin := none
+  /-- The fill glue the page's close shared its leftover among
+  (`Spacing.Page.finishPage`): one unit per run of fill glue between two
+  boxes, so two `\vfill`s with no box between them are one unit here where
+  TeX, and the fill census's page reading (`Ir.frameFills`), count two. -/
+  fils : Nat := 0
   /-- The bottom edge of this page's page-top chrome bar (`.titleBar`),
   when one painted: the extent the furniture pass lays the headline
   band's corner logos into. -/
@@ -7987,6 +8040,8 @@ public structure Spacing.Page where
   /-- The displayed counter of the frame opened by `.frameOpen`.
   Furniture changes never assign this counter. -/
   private curFrame : Option Nat := none
+  /-- The label of the frame opened by `.frameOpen` (`FrameOpening.label`). -/
+  private curFrameLabel : Option String := none
   /-- The source frame and overlay opened by `.frameOpen`. -/
   private curFrameOrigin : Option FrameOrigin := none
   /-- The footline band's box — its glyphs' height above and depth below
@@ -8410,8 +8465,11 @@ private def Spacing.Page.finishPage (b : B) (owed : Sp := 0) (flush : Bool := fa
   -- The leftover between the content's bottom and the bottom margin. Fil
   -- glue owns it when any stands on the page: each line moves by its
   -- share (`filShare`) — the \vspace{\fill} sandwich centres, a leading
-  -- \vfill bottom-flushes, exactly TeX's infinite-glue model. A trailing
-  -- pending fil (a \vfill nothing follows) joins the denominator. With no
+  -- \vfill bottom-flushes where the page's own glue yields, exactly TeX's
+  -- infinite-glue model. A trailing
+  -- pending fil (a \vfill nothing follows) joins the denominator, and so
+  -- does a frame's own glue of the fills' order (`VDist.filAbove`,
+  -- `VDist.filTotal`): beamer's keys share with a `\vfill`. With no
   -- fil, the page's declared ratio (`VDist`) splits it as before. Only
   -- what follows the `.pin` mark moves. Lines, fills and inks read
   -- their own glue shares, so a bar and its title stay attached.
@@ -8435,8 +8493,9 @@ private def Spacing.Page.finishPage (b : B) (owed : Sp := 0) (flush : Bool := fa
   let (lines, delta) := if pageFils > 0 then
       (lines.mapIdx fun i l =>
         if i < b.pinnedLines then l
-        else { l with y := l.y + filShare leftover (b.filsAbove.getD i 0) pageFils },
-       filShare leftover (b.filsAbove.back?.getD 0) pageFils)
+        else { l with y := l.y + filShare leftover (b.vdist.filAbove (b.filsAbove.getD i 0))
+                                   (b.vdist.filTotal pageFils) },
+       filShare leftover (b.vdist.filAbove (b.filsAbove.back?.getD 0)) (b.vdist.filTotal pageFils))
     else if flush && !(b.needed > 0) && 0 < b.pageStretch && 0 < lo
         && (lines.size > b.pinnedLines || inks.size > b.pinnedInks) then
       (lines.mapIdx fun i l =>
@@ -8449,7 +8508,7 @@ private def Spacing.Page.finishPage (b : B) (owed : Sp := 0) (flush : Bool := fa
         lines.mapIdx fun i l => if i < b.pinnedLines then l else { l with y := l.y + d },
        d)
   let riderShift (stretch : Sp) (fils : Nat) : Sp :=
-    if pageFils > 0 then filShare leftover fils pageFils
+    if pageFils > 0 then filShare leftover (b.vdist.filAbove fils) (b.vdist.filTotal pageFils)
     else if flush && !(b.needed > 0) && 0 < b.pageStretch && 0 < lo
         && (lines.size > b.pinnedLines || inks.size > b.pinnedInks) then stretch * lo / b.pageStretch
     else delta
@@ -8489,7 +8548,7 @@ private def Spacing.Page.finishPage (b : B) (owed : Sp := 0) (flush : Bool := fa
                                    frameArea := b.frameArea,
                                    footLook := b.curFootLook,
                                    frame := b.curFrame, frameOrigin := b.curFrameOrigin,
-                                   band := b.curBand },
+                                   fils := pageFils, band := b.curBand },
            cur := {}, curBand := none, pageState := b.pageState.ship,
            shrinkAbove := #[], fillShrinkAbove := #[], inkShrinkAbove := #[],
            fillStretchAbove := #[], inkStretchAbove := #[],
@@ -8726,15 +8785,15 @@ frame, and outside any frame (an article's page close is flow), silent. -/
 private def Spacing.Page.warnSpill (b : B) (over : Sp) : B :=
   match b.frameBreak, b.spillWarned with
   | some false, false =>
-    let who := match b.curFrame with
-      | some n => s!"frame {n}"
+    let who := match b.curFrameLabel with
+      | some l => s!"frame {l}"
       | none => "a frame"
     { b with diags := b.diags.push (Diag.of .W0384
         (s!"{who} is {over.toPtString}pt taller than its page; " ++
           "it continues on the next page")
         (span := b.frameSource)
         (help := "shorten the frame, or declare `[allowframebreaks]` on it to accept the break")
-        (subject := b.curFrame.map toString))
+        (subject := b.curFrameLabel))
              spillWarned := true }
   | _, _ => b
 
@@ -9308,13 +9367,13 @@ have nonnegative depth.
 This covers the additive placement and distribution steps, not a frame that
 retries on another page, shrinks glue, or overrides the first baseline. -/
 public theorem frame_opening_paint_covers (header origin pd bs h size leftover : Int)
-    (valign : VAlign) (hheader : header ≤ origin) (hpd : 0 ≤ pd) :
+    (keys : Ir.FrameKeys) (valign : VAlign) (hheader : header ≤ origin) (hpd : 0 ≤ pd) :
     header + frameBodySkip true valign size ≤
       origin + frameBodySkip true valign size + texBoxTop bs pd h +
-        (VDist.of valign).aboveShare leftover := by
+        (VDist.of keys valign).aboveShare leftover := by
   have hbox := (texBoxTop_between bs pd h).1
-  have hshare : (0 : Int) ≤ (VDist.of valign).aboveShare leftover :=
-    (VDist.split_exact (VDist.of valign) leftover).1
+  have hshare : (0 : Int) ≤ (VDist.of keys valign).aboveShare leftover :=
+    (VDist.split_exact (VDist.of keys valign) leftover).1
   omega
 
 /-- The furniture-symmetry argument, applied to bars: the realized gap
@@ -9397,10 +9456,10 @@ ascent reached into the bar. An untitled frame on a footline page opens the
 same way on an empty page, at the top of beamer's text area (moloch's
 headline is empty, so `\headheight` is zero): its `\vbox{}` is the paper's
 top edge, or the bottom of a band already painted there. -/
-private def Spacing.Page.openBody (b : B) (fs : FontSet) (g : Glue) : B :=
+private def Spacing.Page.openBody (b : B) (fs : FontSet) (g : Glue) (box : Option Sp) : B :=
   let barBottom := (b.cur.fills.back?.map fun f => f.y + f.h).getD 0
   let opened := { b with y := if b.cur.lines.isEmpty then barBottom
-                             else max (b.y + b.prevDepth) barBottom
+                             else max (b.y + box.getD b.prevDepth) barBottom
                          prevDepth := 0
                          prevBelow := b.strutBelow fs
                          prevBand := .text
@@ -9421,8 +9480,8 @@ private def Spacing.Page.openBody (b : B) (fs : FontSet) (g : Glue) : B :=
 the first page, including its fixed opening skip and header census.
 The spill's cleared pending glue cannot change that reference. -/
 private theorem Spacing.Page.openBody_resume_agree (b : B) (fs : FontSet) (g : Glue)
-    (c : Spacing.Chrome) (hc : b.chrome = some c) (owed : Sp) (flush : Bool) :
-    let opened := b.openBody fs g
+    (box : Option Sp) (c : Spacing.Chrome) (hc : b.chrome = some c) (owed : Sp) (flush : Bool) :
+    let opened := b.openBody fs g box
     let resumed := (opened.finishPage owed flush).reopenChrome
     resumed.y = opened.y + opened.skip.width ∧
     resumed.prevDepth = opened.prevDepth ∧
@@ -9897,7 +9956,8 @@ that ships it. The engine counts each fil as one unit of TeX's infinite
 stretch, which is TeX's split exactly where the fills are of one order and
 one stretch — `\vspace*{\fill}` above and below, the card's idiom. On a page
 whose two fil units stand one above every line past the pin and one below
-them, with no shrink given and no note block, page close moves every such
+them, whose own glue yields to them (`VDist.joins`: a page the builder opens,
+a moloch `[c]` frame), with no shrink given and no note block, page close moves every such
 line by the one share `filShare l 1 2` of the leftover `l` between the
 complete content end (`regionContentEnd`: the ordinary box and any painted
 surface below it) and the floor, and the share left below differs from it by
@@ -9905,7 +9965,7 @@ at most the scaled point the halving assigns below. `VDist.center_split_exact`
 is the arithmetic; on a TeX page the box it is measured on is
 `placeLine_boxDepth_exact`'s at the bottom and `Spacing.Page.firstRise`'s at the top. -/
 private theorem finishPage_fill_centre_exact (b : B) (owed : Sp)
-    (hsh : b.needed ≤ 0 ∨ b.pageShrink ≤ 0)
+    (hsh : b.needed ≤ 0 ∨ b.pageShrink ≤ 0) (hj : b.vdist.joins = false)
     (h2 : b.pageFils + (if b.skip.fil then 1 else 0) = 2)
     (h1 : ∀ i, b.pinnedLines ≤ i → b.filsAbove.getD i 0 = 1)
     (hpn : b.pendingNotes.isEmpty = true) (hc : b.pinnedLines < b.cur.lines.size)
@@ -9928,12 +9988,12 @@ private theorem finishPage_fill_centre_exact (b : B) (owed : Sp)
         regionContentEnd (b.contentEnd owed) (b.surfaceEnd b.cur.lines b.cur.fills b.cur.inks)) 1 2
       ≤ filShare (noteFloor b.bottom b.noteGap b.notesH b.noteHang -
         regionContentEnd (b.contentEnd owed) (b.surfaceEnd b.cur.lines b.cur.fills b.cur.inks)) 1 2 + 1 := by
-  refine ⟨fun i hi => ?_, VDist.center_split_exact _ hl⟩
+  refine ⟨fun i hi => ?_, by rw [filShare_half_exact]; exact VDist.center_split_exact _ hl⟩
   have hcond : (decide (b.needed > 0) && decide (b.pageShrink > 0)) = false := by
     rcases hsh with h | h <;> simp [Int.not_lt.mpr h]
   unfold Spacing.Page.finishPage Spacing.Page.noteLines
-  simp only [hcond, hpn, h2, Bool.false_eq_true, ite_false, ite_true,
-    Array.append_empty, Array.back?_push, Option.bind_some]
+  simp only [hcond, hpn, h2, hj, VDist.filAbove, VDist.filTotal, Bool.false_eq_true, ite_false,
+    ite_true, Array.append_empty, Array.back?_push, Option.bind_some]
   simp_all [Array.getElem?_mapIdx, Option.map_map, Function.comp_def,
     Nat.not_lt.mpr hi]
 
@@ -10170,8 +10230,11 @@ private inductive Op where
   chose (`Spacing.Page.dispShort`). -/
   | skipAlt (long short : Glue)
   /-- A titled frame's content opens here (`Spacing.Page.openBody`): below the title
-  box, on a baseline, with the frame's own top skip pending. -/
-  | bodyOpen (g : Glue)
+  box, on a baseline, with the frame's own top skip pending. `box` is where
+  a title template's box ends below its last baseline, where the template
+  fixes it (`Ir.defaultFrameTitleBelow`); without one the title line's own
+  depth stands. -/
+  | bodyOpen (g : Glue) (box : Option Sp)
   | para (job : ParaJob)
   /-- The placed extent of a block link or painted surface. -/
   | regionOpen (kind : RegionKind)
@@ -10307,6 +10370,15 @@ public structure Spacing.Context where
   private inFrame : Bool := false
   /-- Where the class's list spacing comes from (`Ir.listSkips`). -/
   private lists : Ir.ListLineage := .sizeFile
+  /-- The deck's frame-alignment keys (`Ir.Doc.frameKeys`): the glue a
+  frame's declared alignment spends (`VDist.of`). -/
+  private frameKeys : Ir.FrameKeys := .beamer
+  /-- Every frame's label at its body index (`Ir.Doc.frameLabels`). -/
+  private frameLabels : Array (Option String) := #[]
+  /-- The walk is inside a box (`Ir.Block.listScope`), where TeX sets
+  content at its natural height, so a fill there stretches nothing the
+  page's leftover reaches (`Ir.frameFillsOne` stops at the same boxes). -/
+  private boxed : Bool := false
   /-- The list or quote being collected opened inside an open paragraph
   (`Ir.inParagraphRole`): its `\topsep` takes no `\partopsep`. Read by the
   environment's own arm and cleared for what it contains. -/
@@ -10403,6 +10475,8 @@ public structure Spacing.Pending where
   frame. Threaded by `run`'s driver off the one numbering — nothing in the
   walk counts. -/
   private frameNum : Option Nat := none
+  /-- The frame's label, from `Ir.Doc.frameLabels` by the same driver. -/
+  private frameLabel : Option String := none
   /-- Source frame and overlay from the top-level driver. -/
   private frameOrigin : Option FrameOrigin := none
   /-- Source declaration, before an overlay makes several collected frames. -/
@@ -10854,7 +10928,7 @@ palette, section and counter changes cannot rewrite this opening. -/
 private def Spacing.Pending.frameOpening (a : Acc) (standout : Bool)
     (area : FrameArea := .margins) :
     FrameOpening :=
-  { origin := a.frameOrigin, number := a.frameNum
+  { origin := a.frameOrigin, number := a.frameNum, label := a.frameLabel
     chrome := { footerLeft := a.chromeL, footerRight := a.chromeR,
                 standoutNote := a.standoutNote }
     note := a.frameFoot, sectionTitle := a.curSection, count := a.frameCount
@@ -12794,8 +12868,8 @@ private def openFrameBody (r : Rd) (a : Acc) (hasTitle : Bool) (valign : VAlign)
   let g : Glue := { width := frameBodySkip hasTitle valign r.geom.fontSize }
   match area with
   | .margins => a
-  | .text => { a with ops := a.ops.push (.bodyOpen g), wantDefault := false, frameTop := true }
-  | .paper => { a with ops := (a.ops.push (.bodyOpen g)).push .noInterline, wantDefault := false,
+  | .text => { a with ops := a.ops.push (.bodyOpen g none), wantDefault := false, frameTop := true }
+  | .paper => { a with ops := (a.ops.push (.bodyOpen g none)).push .noInterline, wantDefault := false,
                        frameTop := true }
 
 private def collectSection (r : Rd) (a : Acc) (level : Ir.HeadingLevel) (num : Option String) (title : Array Inline) (indent : Sp) : Acc :=
@@ -12830,16 +12904,15 @@ private def collectSection (r : Rd) (a : Acc) (level : Ir.HeadingLevel) (num : O
     -- stand, its content box opening flush at the paper's top.
     let area : FrameArea := if a.footAllowed then .paper else .margins
     let opening := { a.frameOpening false area with
-      origin := none, number := none, allowed := false }
+      origin := none, number := none, label := none, allowed := false }
     let a := { a with ops := (a.ops.push .frameClose).push (.frameOpen false none opening) }
     -- One page of the deck like any frame, on the palette's own ground.
     let ground := Ir.frameGroundOf a.pal false .center
     let a := { a with ops := a.ops.push (.pageStyle ground VDist.center) }
     let a := openFrameBody r a false .center area
     -- The centred measure the title and the bar share: moloch's own
-    -- 0.7875 of the line width (beamerinnerthememoloch.dtx, section page
-    -- progressbar template: \begin{minipage}{0.7875\linewidth}).
-    let mp : Sp := r.geom.textWidth * 7875 / 10000
+    -- 0.7875 of the line width (`Ir.sectionPageMeasure`).
+    let mp : Sp := Ir.sectionPageMeasure r.geom.textWidth
     let indent : Sp := (r.geom.textWidth - mp) / 2
     let st := r.style "sectionpage"
     let saved := (a.fg, a.ground)
@@ -13688,6 +13761,19 @@ private def collectHeadlineBand (r : Rd) (a : Acc) : Acc :=
     { a with ops := a.ops.push .pin, wantDefault := true }
   | none => a
 
+/-- A frame title's lines, on the measure its box gives them: with an
+inset, the paper's width less the inset on either side, the first line
+starting the inset from the paper's left edge (an indent before the text
+margin); without one, the text block's. -/
+private def frameTitleLine (r : Rd) (a : Acc) (inset : Option Sp)
+    (set : Acc → Sp → Acc) : Acc :=
+  match inset with
+  | none => set a 0
+  | some i =>
+    let saved := a.measure
+    let a := set { a with measure := some (r.geom.pageW - i - r.geom.hmargin) } (i - r.geom.hmargin)
+    { a with measure := saved }
+
 /-- A frame's title line. Themed (the palette declares `frametitlebg`) it is
 a colour bar across the whole page with its text in `frametitlefg` on it;
 undeclared it is the section-size bold line. The bar's box: a bundle that
@@ -13708,12 +13794,18 @@ private def collectFrameTitle (r : Rd) (a : Acc) (title : Array Inline)
     let titleSize := match st.font with
       | some tpl => Ir.templateSize r.geom.fontSize tpl
       | none => sectionSize r.geom 1
-    let a := match st.font with
+    -- moloch's bar is the paper's width with the title inset from either
+    -- edge (`Ir.frameTitleInset`); a bar without its token keeps the text
+    -- margin.
+    let inset := if (a.tokens.find? "frametitlepadding").isSome then
+        some (Ir.frameTitleInset titleSize) else none
+    let a := frameTitleLine r a inset fun a indent =>
+      match st.font with
       | some tpl =>
-        collectDisplay r a (Ir.fillTemplate tpl title) 0 false r.geom.fontSize
+        collectDisplay r a (Ir.fillTemplate tpl title) indent false r.geom.fontSize
           (leaf := titleLeaf) (span := titleSpan)
       | none =>
-        collectDisplay r a title 0 false titleSize
+        collectDisplay r a title indent false titleSize
           (baseStyle := { weight := .b }) (leaf := titleLeaf) (span := titleSpan)
           (inserted := true)
     let (pad, strut) := match a.tokens.find? "frametitlepadding" with
@@ -13729,7 +13821,7 @@ private def collectFrameTitle (r : Rd) (a : Acc) (title : Array Inline)
   | none =>
     let savedFg := a.fg
     let a := { a with fg := (Ir.Design.ofPalette a.pal).frameTitleFg }
-    let a := collectDisplay r a title 0 false (sectionSize r.geom 1)
+    let a := collectDisplay r a title 0 false (Ir.scaleStep r.geom.fontSize Ir.plainFrameTitleStep)
       (baseStyle := { weight := .b }) (leaf := titleLeaf) (span := titleSpan)
       (inserted := true)
     { a with wantDefault := true, fg := savedFg }
@@ -13845,6 +13937,16 @@ private theorem frameReader_foot_agree (r : Rd) (a : Acc) (standout : Bool) (are
           ((a.selectedFoot standout).map (bandBox r.fs r.imgs r.geom r.xHeight 1))) := by
   unfold frameReader
   split <;> rfl
+
+/-- The reader inside `blk`: boxed where the block is a box
+(`Ir.Block.listScope`, the one classification the web deck and the fill
+census read too), so a fill inside it stretches nothing the page's leftover
+reaches. The arms of the blocks the classification can name a box read it;
+every other arm keeps its reader. -/
+private def Spacing.Context.within (r : Rd) (blk : Block) : Rd :=
+  match blk.listScope r.lists r.styles with
+  | .box => { r with boxed := true }
+  | .onList | .aside => r
 
 mutual
 
@@ -14235,8 +14337,8 @@ private def collectBlock (r : Rd) (a : Acc)
         else (r.resolve sk.topsep).add (r.resolve (Ir.partopsepFor r.lists r.geom.fontSize lv a.tokens))
       let top := if a.afterHeading then a.flushGap r else (a.listSpace g).flushGap r
       let sub := { top with measure := narrow, quoteDepth := a.quoteDepth + 1 }
-      let ri := { r with inPar := false,
-                         geom := { r.geom with parskip := sk.parsep, texParskip := sk.parsep } }
+      let ri := { (r.within blk) with
+        inPar := false, geom := { r.geom with parskip := sk.parsep, texParskip := sk.parsep } }
       let sub := collectBlocks ri sub body (indent + lm)
       { sub.listSpace g with measure := saved, quoteDepth := a.quoteDepth }
     | none =>
@@ -14261,7 +14363,7 @@ private def collectBlock (r : Rd) (a : Acc)
                   ground := if done.paletteEpoch == a.paletteEpoch then a.ground
                     else a.bodyGround.or (done.pal.find? "bg") }
     -- `\@arrayparboxrestore`, as both boxes' bodies run: no `\parskip`.
-    let rb := { r with geom := { r.geom with parskip := {}, texParskip := {} } }
+    let rb := { (r.within blk) with geom := { r.geom with parskip := {}, texParskip := {} } }
     if kind == .box then
       let (opened, bodyIndent) := collectBoxOpen r a title indent (look.bg.map r.shown)
       let inner := { opened with
@@ -14334,7 +14436,7 @@ private def collectBlock (r : Rd) (a : Acc)
     let lm := r.leftMargin (a.itemDepth + a.enumDepth + a.quoteDepth + 1) a.tokens
     let sub := { a with
       measure := some ((a.measure.getD r.geom.textWidth) - lm), quoteDepth := a.quoteDepth + 1 }
-    let sub := collectBlocks { r with geom := { r.geom with fontSize := small } }
+    let sub := collectBlocks { (r.within blk) with geom := { r.geom with fontSize := small } }
       sub body (indent + lm)
     { sub with measure := saved, quoteDepth := a.quoteDepth }
   | .columns cols =>
@@ -14361,7 +14463,8 @@ private def collectBlock (r : Rd) (a : Acc)
     -- The box's own content starts from no side: `\@parboxrestore`
     -- (latex.ltx) zeroes `\leftskip` and `\rightskip` inside every
     -- minipage and `\parbox`.
-    let inner := { r with centreBoxes := false, geom := { r.geom with flushRight := false } }
+    let inner := { (r.within blk) with
+      centreBoxes := false, geom := { r.geom with flushRight := false } }
     let a := collectColumns inner a cols.toList (indent + off) shareW gutter total
     { a with ops := a.ops.push .colClose }
   | .bibliography _ _ items => collectBibliography r a items indent
@@ -14377,8 +14480,11 @@ private def collectBlock (r : Rd) (a : Acc)
     -- `before` — and stands in place of the peer default as those do, so
     -- one rhythm spelled upstream and at the use site ships the same
     -- positions.
-    let a := if body.isEmpty then a.vspace (r.resolve before.value)
-      else { a.vskip (r.resolve before.value) with declaredSkip := false }
+    -- Inside a box a fill sets at its natural width (`Rd.boxed`).
+    let g := r.resolve before.value
+    let g := if r.boxed then { g with fil := false } else g
+    let a := if body.isEmpty then a.vspace g
+      else { a.vskip g with declaredSkip := false }
     collectBlocks r a body indent
   | .onSteps spec body =>
     -- Grouping: the dimming was painted into the content's colours before
@@ -14465,7 +14571,7 @@ private def collectBlock (r : Rd) (a : Acc)
     -- The float's caption and body are box content, not galley lines: the
     -- sub-walk runs under a marked reader so no line of them is counted
     -- by the line-number census (`Spacing.Context.inFloat`).
-    let rf := { r with inFloat := true }
+    let rf := { (r.within blk) with inFloat := true }
     -- The text-side gaps stand first and last; in beamer's lineage they are
     -- the trivlist's, the paragraph gap on top (`Ir.floatSpaceFor`).
     let plan := floatPlan capAbove (!caption.isEmpty) floatSep capSep farSep
@@ -14504,7 +14610,8 @@ private def collectBlock (r : Rd) (a : Acc)
       -- frame's ground (`Ir.frameGroundOf`).
       let so := (Ir.Design.ofPalette a.pal).standout
       let ground := Ir.frameGroundOf a.pal true valign
-      let a := { a with ops := a.ops.push (.pageStyle ground (VDist.of valign)) }
+      let dist := VDist.of (Ir.frameKeysOf r.frameKeys true) valign breakable
+      let a := { a with ops := a.ops.push (.pageStyle ground dist) }
       -- No title box stands on a standout page: its content box opens at
       -- the text area's top, as an untitled frame's does.
       let a := openFrameBody r a false valign area
@@ -14522,7 +14629,8 @@ private def collectBlock (r : Rd) (a : Acc)
     -- after it, and a page never stands on the document's ground where
     -- its epoch declared its own. `none` is the undeclared page.
     let pageGround := Ir.frameGroundOf a.pal false valign
-    let a := { a with ops := a.ops.push (.pageStyle pageGround (VDist.of valign)) }
+    let dist := VDist.of (Ir.frameKeysOf r.frameKeys false) valign breakable
+    let a := { a with ops := a.ops.push (.pageStyle pageGround dist) }
     let a := match titleInk a.pal valign with
       | some ink => { a with fg := ink, ground := pageGround }
       | none => a
@@ -14542,7 +14650,13 @@ private def collectBlock (r : Rd) (a : Acc)
         openFrameBody r a false valign area
       else
       let g : Glue := { width := frameBodySkip true valign r.geom.fontSize }
-      { a with ops := (a.ops.push .pin).push (.bodyOpen g), wantDefault := false,
+      -- A title with no bar stands in beamer's default frametitle box, which
+      -- ends `1ex` above its strut's depth (`Ir.defaultFrameTitleBelow`).
+      let box := if (Ir.Design.ofPalette a.pal).frametitle.isSome then none
+        else
+          let size := Ir.scaleStep r.geom.fontSize Ir.plainFrameTitleStep
+          some (Ir.defaultFrameTitleBelow size r.geom.leading (r.xHeight * size / r.geom.fontSize))
+      { a with ops := (a.ops.push .pin).push (.bodyOpen g box), wantDefault := false,
                frameTop := true }
     -- A golden frame is the title page (only \maketitle declares golden),
     -- and everything on it is display furniture: titles never hyphenate
@@ -16317,7 +16431,7 @@ public theorem substPage_leaves_frame_slot (n total k tot : Nat) (s : Ir.ChromeS
 private inductive StagedOp where
   | skip (g : Glue)
   | skipAlt (long short : Glue)
-  | bodyOpen (g : Glue)
+  | bodyOpen (g : Glue) (box : Option Sp)
   | brk
   | pageOpening (opening : Ir.PageOpening)
   | pageStyle (bg : Option Ir.Color) (vdist : VDist)
@@ -16376,7 +16490,7 @@ public def pictureLabelRequests (origin : Nat) (pic : Ir.Pic.Picture) :
 private def stagedLabelRequests (ops : Array StagedOp) : Array LabelAudit.Request :=
   ops.flatMap fun op => match op with
     | .picture _ pic _ origin => pictureLabelRequests origin pic
-    | .skip _ | .skipAlt _ _ | .bodyOpen _ | .brk | .pageOpening _
+    | .skip _ | .skipAlt _ _ | .bodyOpen _ _ | .brk | .pageOpening _
       | .pageStyle _ _ | .pageGround _ | .titleBar _ _ _ | .frameOpen _ _ _
       | .frameClose | .boxAnchor _ _ _ | .hrule _ _ | .tableRule _ _ _ _
       | .pin | .progress _ _ _ _ _ _ _ | .para _ _ | .regionOpen _
@@ -16859,7 +16973,7 @@ private def stepStaged (fs : FontSet) (imgs : Image.Store) (st : StepSt)
     let g := if b.dispShort then short else long
     unless b.fresh && !(b.skip.fil || g.fil) do
       b := { b with skip := b.skip.add g }
-  | .bodyOpen g => b := b.openBody fs g
+  | .bodyOpen g box => b := b.openBody fs g box
   | .anchor sl => b := { b with pendingAnchors := b.pendingAnchors.push sl }
   | .brk =>
     -- A boundary closes a page only when the page holds something: two
@@ -16878,13 +16992,14 @@ private def stepStaged (fs : FontSet) (imgs : Image.Store) (st : StepSt)
                     freshStart := false }
   | .frameOpen br source opening =>
     b := { b with frameBreak := some br, frameSource := source, spillWarned := false,
-                  curFrame := opening.number, curFrameOrigin := opening.origin
+                  curFrame := opening.number, curFrameLabel := opening.label
+                  curFrameOrigin := opening.origin
                   curFoot := opening.footer, curFootLook := some opening.look
                   footBox := opening.footer.map
                     (bandBox fs imgs b.geom b.xHeight (b.pages.size + 1))
                   frameArea := opening.area }
   | .frameClose =>
-    b := { b with curFrame := none, curFrameOrigin := none,
+    b := { b with curFrame := none, curFrameLabel := none, curFrameOrigin := none,
                   curFoot := none, footBox := none, curFootLook := none,
                   frameArea := .margins }
   | .pageOpening opening => b := { b with pageState := b.pageState.applyOpening opening }
@@ -20118,7 +20233,8 @@ private def collectDocBlock (rd : Rd) (doc : Doc) (cover : Ir.Cover)
   match blk with
   | .frame title standout valign breakable body =>
     let num := nums[i]?.getD none
-    acc := { acc with frameNum := num, frameOrigin := some ⟨i, 1⟩,
+    acc := { acc with frameNum := num, frameLabel := rd.frameLabels[i]?.getD none,
+                      frameOrigin := some ⟨i, 1⟩,
                       framesDone := num.getD acc.framesDone
                       frameSource := (frameSpans.find? (·.1 == i)).map (·.2) }
     let steps := Ir.frameSteps blk
@@ -20870,6 +20986,8 @@ private def withLayoutOps {α : Type} (geom : Geom) (fs : FontSet)
                    locale := doc.info.locale
                    slides := doc.docClass.record.model == .frame
                    lists := doc.docClass.record.lists
+                   frameKeys := doc.frameKeys
+                   frameLabels := doc.frameLabels
                    imgs := imgs
                    pictureSpans := pictureSpans
                    headline := doc.headline
@@ -20907,7 +21025,7 @@ private def withLayoutOps {α : Type} (geom : Geom) (fs : FontSet)
     match op with
     | .skip g => .skip g
     | .skipAlt l sh => .skipAlt l sh
-    | .bodyOpen g => .bodyOpen g
+    | .bodyOpen g box => .bodyOpen g box
     | .brk => .brk
     | .pageOpening opening => .pageOpening opening
     | .pageStyle bg c => .pageStyle bg c
@@ -23070,8 +23188,9 @@ public def paragraphSafeDecision (fs : FontSet) (b : Page) (j : Paragraph)
     (paragraphStart (boundaryStart b gs) j breaks)
   let last := boundaryEnd fs b j breaks gs
   letI : Decidable (last.vdist = .top) :=
-    decidable_of_iff (last.vdist.above = 0 ∧ last.vdist.below = 1) (by
-      rcases last.vdist with ⟨above, below⟩
+    decidable_of_iff (last.vdist.above = 0 ∧ last.vdist.below = 1000 ∧
+        last.vdist.joins = false) (by
+      rcases last.vdist with ⟨above, below, joins⟩
       simp [VDist.top])
   change Decidable (_ ∧ _ ∧ _ ∧ _ ∧ _ ∧ NaturalClose last)
   unfold NaturalClose

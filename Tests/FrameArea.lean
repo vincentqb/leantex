@@ -8,12 +8,6 @@ open LeanTex.Core
 
 namespace Tests.FrameArea
 
-/-- A CSS length in `em` as thousandths of the em, where the value is one. -/
-private def emMilli (v : String) : Option Int := do
-  guard (v.endsWith "em")
-  let (m, sc) ← Decl.parseDecimal (v.dropEnd 2).toString
-  return m * 1000 / (sc : Int)
-
 /-- The invented moloch deck the checks lay out, the one source each value
 below was first measured on under lualatex (beamer 10 pt, 4:3, the shipped
 Fira Sans for every face): a standout frame, a standout frame whose note the
@@ -258,7 +252,7 @@ def openingChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "frame opening html: the first line's strut is the page's baselineskip at an em of the line"
     (strut.size == 1 && strut.all fun (sel, d) =>
       hasStr sel "li:first-child" &&
-      ((cssDeclOf d "height").bind emMilli).any (· * size / 1000 == lead))
+      ((cssDeclOf d "height").bind cssEmMilli).any (· * size / 1000 == lead))
   -- The content ends where its last line's glyphs end: every frame's last
   -- element is marked, and its last line trims to its baseline.
   let (_, body, _) := HtmlDoc.emitTree {} doc
@@ -539,7 +533,7 @@ def htmlChecks (ref : IO.Ref (List String)) : IO Unit := do
     ((cssBlocksFor css "section.section-page::after").any fun d =>
       ((cssDeclOf d "height").bind fun h =>
         if hasStr h "em - var(--progressheight" then
-          emMilli (((h.drop 5).takeWhile (· != ' ')).toString) else none).any fun m =>
+          cssEmMilli (((h.drop 5).takeWhile (· != ' ')).toString) else none).any fun m =>
         size * m / 1000 - 4 ≤ pdfStrut && pdfStrut ≤ size * m / 1000)
   let feet := elemAttrsList (· == "footer") #[] body.toList
   t "frame area html: a restored scriptsize note sizes its footline's box"

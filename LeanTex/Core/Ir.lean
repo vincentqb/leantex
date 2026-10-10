@@ -1765,6 +1765,32 @@ not at the body's. A bundle declaring the token gets moloch's box; a bar
 declared with no token keeps the engine's generic half-body pad. -/
 public def frameTitlePadding : SymGlue := { width := { em := 7 * leadingMilli / 10 } }
 
+/-- moloch's frame-title side margins (beamerouterthememoloch.sty:134-135,
+`\moloch@frametitle@margin@left` and `@right`): 0.85 of `\ht\strutbox` in
+the frametitle font, the title's inset from the paper's left edge and its
+measure's from the right, the bar's colour box being as wide as the paper
+— measured under lualatex as 8.30 bp at `\large` and 10.67 bp at `\Large`
+in a 10pt deck. Both backends read it: the page's title line and the web
+deck's title padding. -/
+public def frameTitleInset (titleSize : Sp) : Sp := frameTitleStrut titleSize * 85 / 100
+
+/-- The step a frame title with no bar sets at: `Large`, the step beamer's
+default font theme gives frame titles (beamerfontthemedefault.sty:73,
+`\setbeamerfont{frametitle}{parent=structure,size=\Large}`). Both backends
+read it: the page's bar-less title and the box it stands in, the web deck's
+title box. -/
+public def plainFrameTitleStep : String := "Large"
+
+/-- Where beamer's default frametitle box ends below the title's last
+baseline (beamerouterthemedefault.sty:169-180): the title line closes on a
+`\strut`, three tenths of its `\baselineskip` deep, and the box closes
+`\vskip-1ex` after it, in the title's font — a title with no bar of its
+own stands in this box, whose bottom the body's opening skip follows.
+`ex` is the title font's x-height at the title's size. Both backends read
+it: the page's body opening and the web deck's title bottom. -/
+public def defaultFrameTitleBelow (titleSize : Sp) (leading : Nat) (ex : Sp) : Sp :=
+  leadingFor titleSize leading * 3 / 10 - ex
+
 
 /-- The skip outside a title bar — above the top one, below the bottom
 one: one rhythm quantum. -/
@@ -3915,40 +3941,116 @@ lists are one vertical list, so the units add (`golden_composes_center`).
 -/
 @[expose] public def titlePageTemplateGlue : Nat × Nat := (2618, 1000)
 
-/-- A frame's own distribution composed with a template's glue, both
-first-order fil in one vertical list: the units add, at the template's
-thousandths. What a page-opening path's declared distribution is — a
-template's ratio is never the page's on its own. -/
+/-- A frame's own distribution composed with a template's glue, both in
+thousandths of one fil unit in one vertical list: the units add. What a
+page-opening path's declared distribution is — a template's ratio is never
+the page's on its own. -/
 @[expose] public def composeGlue (frame template : Nat × Nat) : Nat × Nat :=
-  (frame.1 * 1000 + template.1, frame.2 * 1000 + template.2)
+  (frame.1 + template.1, frame.2 + template.2)
+
+/-- Whose frame-alignment keys a deck's frames read: the glue
+`\beamer@frametopskip` and `\beamer@framebottomskip` hold for each of
+`[t]`, `[c]` and `[b]`. A bundle's value (`Theme.frameKeys`), never a
+document's: beamer documents reach the keys only through a theme. -/
+public inductive FrameKeys where
+  /-- beamer's own (beamerbaseframe.sty:256-272): `[c]` sets `0pt plus
+  1fill` above the body against `0pt plus 1.5fill` below it, `[t]` `.2cm
+  plus .5\paperheight` above — finite, so it takes no share of a leftover
+  infinite glue stretches into — against `0pt plus 1fill` below, `[b]`
+  `0pt plus 1fill` above and nothing below: all of `\vfill`'s order. -/
+  | beamer
+  /-- moloch's inner theme redefines `[c]` alone (beamerinnerthememoloch.sty:
+  454-460): `0pt plus 1fil` on either side, an order below `\vfill`'s;
+  `[t]` and `[b]` stay beamer's. -/
+  | moloch
+  deriving Repr, BEq, DecidableEq, Inhabited
+
+/-- A frame's own leftover-space glue above and below its body, in
+thousandths of `\vfill`'s stretch (`0pt plus 1fill`, ltspace.dtx), and
+whether it is of `\vfill`'s order. TeX stretches only the highest order of
+infinity present (TeXbook ch. 12, "glue set"), so glue that `joins` shares
+the leftover with a body's `\vfill` in proportion to the stretch each
+states, and glue that does not yields all of it to any `\vfill`. -/
+public structure FrameGlue where
+  above : Nat
+  below : Nat
+  joins : Bool
+  deriving Repr, BEq, DecidableEq, Inhabited
+
+/-- The measure a moloch section page centres its title and progress bar
+in: `0.7875\linewidth` (beamerinnerthememoloch.sty:345, the `progressbar`
+section page's minipage), the line width being the frame's text width.
+Both backends read it: the page's title measure and bar, the web deck's
+section-page title and bar. -/
+public def sectionPageMeasure (textWidth : Sp) : Sp := textWidth * 7875 / 10000
+
+/-- `\vfill`'s stretch, `0pt plus 1fill`, in the thousandths `FrameGlue`
+states a frame's own glue in: one fill's weight beside a frame's shares. -/
+@[expose] public def fillUnit : Nat := 1000
+
+/-- The glue a declared alignment sets under a deck's keys (`FrameKeys`):
+top-flush 0:1000 and bottom-flush 1000:0, of `\vfill`'s order under every
+keys; centring beamer's 1000:1500 of that order, or moloch's 1000:1000 an
+order below; and the title page's 3618:2000 — moloch's centring composed
+with its title-page template (`composeGlue`, `golden_composes_center`), of
+the template's fil order. The one table both artifacts must honour:
+`Layout.VDist.of` projects it onto the PDF page, `HtmlDoc.vdistShares` onto
+the deck's flex spacers, and `vdist_shares_agree` in Tests states the
+agreement. -/
+@[expose] public def VAlign.glue (keys : FrameKeys) : VAlign → FrameGlue
+  | .top => ⟨0, fillUnit, true⟩
+  | .center => match keys with
+    | .beamer => ⟨fillUnit, fillUnit * 3 / 2, true⟩
+    | .moloch => ⟨fillUnit, fillUnit, false⟩
+  | .bottom => ⟨fillUnit, 0, true⟩
+  | .golden =>
+    let g := composeGlue (fillUnit, fillUnit) titlePageTemplateGlue
+    ⟨g.1, g.2, false⟩
+
+/-- A breakable `[c]` frame's glue: beamer's autobreak skips,
+`0pt plus .4\paperheight` above against `0pt plus .6\paperheight` below
+(beamerbaseframe.sty:259-260, which `\beamer@frametopskipautobreak` and
+`@framebottomskipautobreak` hold for a frame declaring `allowframebreaks`,
+beamerbaseframe.sty:145-146), the same under moloch's keys
+(beamerinnerthememoloch.sty:457-458): finite, so the leftover splits two to
+three without a fill and any `\vfill` takes all of it. `[t]` and `[b]` keep
+their own glue, their autobreak skips being the same. -/
+@[expose] public def autobreakCentre : FrameGlue := ⟨fillUnit, fillUnit * 3 / 2, false⟩
+
+/-- The glue a frame spends: its alignment's under the keys it reads, a
+breakable centred frame's beamer's autobreak skips (`autobreakCentre`). -/
+@[expose] public def frameGlue (keys : FrameKeys) (breakable : Bool) (v : VAlign) : FrameGlue :=
+  if breakable && (v matches .center) then autobreakCentre else v.glue keys
+
+/-- The keys a frame reads: the deck's, except a standout frame's, which is
+moloch's `standout` key and sets moloch's own `[c]`
+(beamerinnerthememoloch.sty:465) under whatever keys the deck's theme sets. -/
+@[expose] public def frameKeysOf (keys : FrameKeys) (standout : Bool) : FrameKeys :=
+  if standout then .moloch else keys
 
 /-- The shares of a page's leftover vertical space above and below its
-content, per declared alignment: the ratio form of beamer's `\vfil`-glue
-model — top-flush 0:1 (all leftover below), centring 1:1 (beamer user
-guide §8.1: `c` is the default), bottom-flush 1:0, and the title page's
-3618:2000 — beamer's centring composed with moloch's title-page glue
-(`composeGlue`, `golden_composes_center`). The one table both artifacts
-must honour: `Layout.VDist.of` projects it onto the PDF page,
-`HtmlDoc.vdistShares` onto the deck's flex spacers, and
-`vdist_shares_agree` in Tests states the agreement. -/
-@[expose] public def VAlign.shares : VAlign → Nat × Nat
-  | .top => (0, 1)
-  | .center => (1, 1)
-  | .bottom => (1, 0)
-  | .golden => composeGlue (1, 1) titlePageTemplateGlue
+content, per declared alignment under a deck's keys: the ratio form of
+`VAlign.glue`. -/
+@[expose] public def VAlign.shares (keys : FrameKeys) (v : VAlign) (breakable : Bool := false) :
+    Nat × Nat :=
+  ((frameGlue keys breakable v).above, (frameGlue keys breakable v).below)
 
-/-- The title page's split is the enclosing frame's own centring composed
-with the template's glue, never the template's numbers alone: a frame
-contributes one fil unit on each side (`.center`) and moloch's template
-1.618 + 1 above against 1 below, so the page distributes 3618:2000 —
-above share 3618/5618. The decomposition is what makes the constant
-sourced rather than fitted: both halves are independently sourced (the
-frame's centring to beamer's user guide §8.1, the template's glue to
-beamerinnerthememoloch.dtx), and reading the template alone is the defect
-this states away — it put 2618/3618 of the leftover above and set the
-title matter a visible band too low. -/
-public theorem golden_composes_center :
-    VAlign.golden.shares = composeGlue VAlign.center.shares titlePageTemplateGlue := by
+/-- The title page's split is moloch's centring composed with the template's
+glue, never the template's numbers alone: the frame contributes one fil unit
+on each side and moloch's template 1.618 + 1 above against 1 below, so the
+page distributes 3618:2000 — above share 3618/5618 — whatever keys the deck's
+frames read, as the engine sets moloch's `title page` template for every
+deck. beamer's default template is another — a `[c]` frame whose template
+opens and closes on `\vfill`s — which the engine does not set: a deck on
+beamer's own theme takes moloch's title page. The decomposition is what makes the
+constant sourced rather than fitted: both halves are independently sourced
+(the frame's centring to beamerinnerthememoloch.sty:454-460, the template's
+glue to beamerinnerthememoloch.dtx), and reading the template alone is the
+defect this states away — it put 2618/3618 of the leftover above and set
+the title matter a visible band too low. -/
+public theorem golden_composes_center (keys : FrameKeys) :
+    VAlign.golden.shares keys =
+      composeGlue (VAlign.center.shares .moloch) titlePageTemplateGlue := by
   rfl
 
 namespace Pic
@@ -6432,14 +6534,17 @@ public def carrierDisplays (inPar endPe parEnd : Bool) (blocks : Array Block) :
     Array Block :=
   carrierCloseDisplay parEnd (carrierOpenDisplay inPar endPe blocks)
 
-/-- The frames the deck numbers: every `.frame` except a golden title page.
-The title is front matter; a standout is content whose footer is hidden,
-so it advances the same counter as any other content frame. Footer
-visibility is selected separately by `Chrome.frameFootBand`. The k-th
-countable frame in document order bears number k — the fold below —
-and a non-countable frame bears none. -/
+/-- The frames the deck numbers: every `.frame` except a golden title page
+and a standout frame. The title is front matter; a standout frame is
+moloch's `standout`, whose key sets `noframenumbering` unless the theme's
+`standout numbering` option asks otherwise (beamerinnerthememoloch.sty:
+462-467): it neither bears a number nor advances the counter, so the frame
+after it, the footline's total and the section pages' progress bar read
+the frames lualatex counts. Footer visibility is selected separately by
+`Chrome.frameFootBand`. The k-th countable frame in document order bears
+number k — the fold below — and a non-countable frame bears none. -/
 public def Block.countable : Block → Bool
-  | .frame _ _ valign _ _ => !(valign matches .golden)
+  | .frame _ standout valign _ _ => !standout && !(valign matches .golden)
   | _ => false
 
 /-- Count of `true` in a mask: the numbering's denominator. -/
@@ -7954,6 +8059,164 @@ one lookup both backends make; `none` is the default inner theme's pair. -/
 public def blockShapeOf (styles : Styles) (kind : TitledKind) : Option BlockShape :=
   kind.styleElement.bind fun el => (styles.find? el).bind (·.shape)
 
+/-- Where a block's own blocks stand against the vertical list the block
+stands on: the one classification the page's reader, the web deck and the
+fill census read (`Layout`'s and `HtmlDoc`'s block walks, `frameFillsOne`).
+TeX sets a list's items, a trivlist (`center`, the flush environments), an
+overlay's steps and every transparent group on the list they stand on, so a
+`\vfill` among them shares the page's leftover (`onList`). A box sets its
+content at its natural height, where a fill stretches nothing outside it
+(`box`): a beamer block and every `\beamercolorbox` (an `\hbox` around a
+`\vbox`, beamerbasecolor.sty:149-182), a column (`minipage`), and in
+beamer's lineage a quotation and an abstract, whose `quote begin`,
+`quotation begin` and `abstract begin` templates open that colour box
+(beamerinnerthemedefault.sty:324-325, 342-343, 351-352), where article sets
+them as a quotation list on the page's own list. A float is a box in article
+(`\@xfloat`'s `\vbox`, latex.ltx) and beamer's `{figure}`/`{table}` a
+`{center}` on the frame's list (beamerbaselocalstructure.sty:550-560). A
+beamer block standing in its kind's declared template (`blockShapeOf`) sets
+no colour box, so its body stands on the list too. A speaker note is no
+page content (`aside`). -/
+public inductive ListScope where
+  | onList
+  | box
+  | aside
+  deriving Repr, BEq, DecidableEq, Inhabited
+
+/-- A block's `ListScope` under a class's list lineage and the document's
+declared styles. -/
+@[expose] public def Block.listScope (l : ListLineage) (styles : Styles) : Block → ListScope
+  | .quote _ | .abstract _ => if l == .beamer then .box else .onList
+  | .float .. => if l == .beamer then .onList else .box
+  | .titled kind .. => if (blockShapeOf styles kind).isSome then .onList else .box
+  | .columns _ => .box
+  | .note _ => .aside
+  | .para _ | .section .. | .list .. | .center _ | .ragged .. | .spaced .. | .role ..
+  | .link .. | .equation .. | .verbatim .. | .algorithm .. | .onSteps .. | .altSteps ..
+  | .only .. | .nav .. | .logo _ | .pagebreak | .frame .. | .framefoot _ | .setPalette _
+  | .setTokens _ | .rule .. | .picture _ | .table .. | .bibliography .. => .onList
+
+/-- A list whose every item runs in by its label: a description list, the
+reading both backends set it by (`descLabel?`) — HTML's `<dl>`, whose `<dd>`
+holds the item's text and blocks. -/
+public def listIsDesc (ordered : Bool) (items : Array (Array Block)) : Bool :=
+  !ordered && !items.isEmpty && items.all fun it => match it[0]? with
+    | some (Block.para c) => (descLabel? c).isSome
+    | _ => false
+
+mutual
+
+/-- The fills a list item ends on: the run of `\vfill`s after its last other
+block, read through an overlay step or a backend's share the item ends on
+(`\item<2->`, `\pause`), which put nothing on the list of their own. The
+web deck's item grows by these (`HtmlDoc.fillCarrier`), its space falling at
+the item's end, which is where they stand. `n` is the run so far. -/
+-- conserves: none — the length of one leaf run at a list's end, not a census of the tree
+public def trailingFillsOne (n : Nat) : Block → Nat
+  | .spaced g body => if g.value.fil && body.isEmpty then n + 1 else 0
+  | .onSteps _ body => trailingFillsList 0 body.toList
+  | .only _ body => trailingFillsList 0 body.toList
+  | .para _ | .section .. | .list .. | .center _ | .ragged .. | .role .. | .link ..
+  | .quote _ | .abstract _ | .titled .. | .equation .. | .verbatim .. | .algorithm ..
+  | .columns _ | .altSteps .. | .note _ | .nav .. | .logo _ | .pagebreak | .frame ..
+  | .framefoot _ | .setPalette _ | .setTokens _ | .rule .. | .picture _ | .table ..
+  | .float .. | .bibliography .. => 0
+
+public def trailingFillsList (n : Nat) : List Block → Nat
+  | [] => n
+  | b :: rest => trailingFillsList (trailingFillsOne n b) rest
+
+end
+
+/-- The fills a list item ends on (`trailingFillsOne`). -/
+public def itemTrailingFills (item : Array Block) : Nat := trailingFillsList 0 item.toList
+
+/-- Which reading of a frame a fill census takes. `page k` is the page the
+frame sets at step `k`, an alternation's group the step shows; `every` is
+every step's at once, both groups of an alternation; `deck` the web deck's
+one stage, which grows a fill where its chain of containers can carry the
+growth: not inside an alternation, whose groups change from step to step
+while the stage's flex column does not, and inside a non-description list
+item only among the fills the item ends on, as an item is no flex column
+(its marker is a list item's). -/
+public inductive FillView where
+  | page (step : Nat)
+  | every
+  | deck
+  deriving Repr, BEq, Inhabited
+
+mutual
+
+/-- The `\vfill`s on a frame's own vertical list under one reading
+(`FillView`): every fill block, and the fill a `\block[before = fill]{…}`
+opens its content with, standing among the frame's blocks or inside a block
+whose blocks stand on the same list (`Block.listScope`), and never inside a
+box or an aside. A hand-rolled walk, not a `foldBlocks` leaf, because it
+stops at the boxes. The page reading is the count the page close shares a
+frame's leftover among (`Layout.PageOut.fils`), and the deck reading the
+web stage's (`HtmlDoc.deckSpacerShares`, `HtmlDoc.fillCarrier`). -/
+-- conserves: none — a count of one leaf kind on the frame's list, not a census of the tree
+public def frameFillsOne (l : ListLineage) (styles : Styles) (v : FillView) (acc : Nat) :
+    Block → Nat
+  | .spaced g inner => frameFillsList l styles v (if g.value.fil then acc + 1 else acc) inner.toList
+  | .list ordered items =>
+    match v with
+    | .deck =>
+      if listIsDesc ordered items then frameFillsItems l styles v acc items.toList
+      else items.foldl (fun n item => n + itemTrailingFills item) acc
+    | .page _ | .every => frameFillsItems l styles v acc items.toList
+  | .center body => frameFillsList l styles v acc body.toList
+  | .ragged _ body => frameFillsList l styles v acc body.toList
+  | .role _ body => frameFillsList l styles v acc body.toList
+  | .link _ body => frameFillsList l styles v acc body.toList
+  | .onSteps _ body => frameFillsList l styles v acc body.toList
+  | .altSteps spec first other =>
+    match v with
+    | .page k =>
+      if spec.showsFirst k then frameFillsList l styles v acc first.toList
+      else frameFillsList l styles v acc other.toList
+    | .every => frameFillsList l styles v (frameFillsList l styles v acc first.toList) other.toList
+    | .deck => acc
+  | .only _ body => frameFillsList l styles v acc body.toList
+  | .nav spec body => if spec.pin.isSome then acc else frameFillsList l styles v acc body.toList
+  | .quote body =>
+    if (Block.quote body).listScope l styles == .onList then frameFillsList l styles v acc body.toList
+    else acc
+  | .abstract body =>
+    if (Block.abstract body).listScope l styles == .onList then
+      frameFillsList l styles v acc body.toList
+    else acc
+  | .float kind num capAbove body caption =>
+    if (Block.float kind num capAbove body caption).listScope l styles == .onList then
+      frameFillsList l styles v acc body.toList
+    else acc
+  | .titled kind title body =>
+    if (Block.titled kind title body).listScope l styles == .onList then
+      frameFillsList l styles v acc body.toList
+    else acc
+  | .para _ | .section .. | .equation .. | .verbatim .. | .algorithm .. | .columns _
+  | .note _ | .logo _ | .pagebreak | .frame .. | .framefoot _ | .setPalette _ | .setTokens _
+  | .rule .. | .picture _ | .table .. | .bibliography .. =>
+    acc
+
+public def frameFillsList (l : ListLineage) (styles : Styles) (v : FillView) (acc : Nat) :
+    List Block → Nat
+  | [] => acc
+  | b :: rest => frameFillsList l styles v (frameFillsOne l styles v acc b) rest
+
+public def frameFillsItems (l : ListLineage) (styles : Styles) (v : FillView) (acc : Nat) :
+    List (Array Block) → Nat
+  | [] => acc
+  | item :: rest => frameFillsItems l styles v (frameFillsList l styles v acc item.toList) rest
+
+end
+
+/-- The `\vfill`s on a frame body's own vertical list under one reading
+(`frameFillsOne`). -/
+public def frameFills (l : ListLineage) (styles : Styles) (v : FillView) (body : Array Block) :
+    Nat :=
+  frameFillsList l styles v 0 body.toList
+
 /-- beamer's four font axes, in the order `\beamer@usebeamerfont` selects
 them (beamerbasefont.sty): size, shape, series, family. -/
 public inductive FontAxis where
@@ -8970,6 +9233,9 @@ public structure Doc where
   the band holds, so mixing the frame sequence with the physical one there
   is said, not silent (`footerSequenceDiags`). -/
   chromeDeclared : Bool := false
+  /-- The frame-alignment keys the deck's theme sets (`Theme.frameKeys`):
+  the glue each of `[t]`, `[c]` and `[b]` spends around a frame's body. -/
+  frameKeys : FrameKeys := .beamer
   styles : Styles := {}
   info : Meta := {}
   output : OutputSpec := {}
@@ -9066,6 +9332,35 @@ public def Doc.frameCountAt (doc : Doc) (i : Nat) : Nat :=
 /-- The numbering's denominator where the document starts. -/
 public def Doc.frameCount (doc : Doc) : Nat :=
   doc.frameCountAt 0
+
+/-- The name each frame is known by, at its body index: its number (in an
+appendix, `appendix-n`), an unnumbered standout frame `standout`,
+`standout-2`, …, a title page `titlepage`, `titlepage-2`, …; `none` at every
+other block. The web deck's stage names and a frame diagnostic's subject
+read this one array. -/
+public def Doc.frameLabels (doc : Doc) : Array (Option String) := Id.run do
+  let nums := doc.frameNumbers
+  let mut standouts := 0
+  let mut titlePages := 0
+  let mut out : Array (Option String) := #[]
+  for h : i in [0:doc.body.size] do
+    match doc.body[i] with
+    | .frame _ standout _ _ _ =>
+      match nums[i]?.getD none with
+      | some n =>
+        out := out.push (some (if doc.frameRestart.any (· ≤ i) then s!"appendix-{n}"
+          else toString n))
+      | none =>
+        if standout then
+          out := out.push (some (if standouts == 0 then "standout"
+            else s!"standout-{standouts + 1}"))
+          standouts := standouts + 1
+        else
+          out := out.push (some (if titlePages == 0 then "titlepage"
+            else s!"titlepage-{titlePages + 1}"))
+          titlePages := titlePages + 1
+    | _ => out := out.push none
+  return out
 
 /-- The document's preamble font: its class's (`PreambleFace.ofClass`) at
 its class size. The one resolving site both backends read a table's

@@ -88,6 +88,15 @@ public structure Config where
   of the IR's frame-area decision (`Ir.frameInTextArea`), under which every
   frame but the title page opens its body as beamer's `\vbox{}`. -/
   chromeAllowed : Bool := false
+  /-- The deck's frame-alignment keys (`Ir.Doc.frameKeys`): the glue a
+  frame's spacers grow by (`vdistShares`). -/
+  frameKeys : Ir.FrameKeys := .beamer
+  /-- A fill here grows nothing on the deck's stage: inside a box or an aside
+(`Ir.Block.listScope`, where a fill stretches nothing the stage
+distributes), an alternation's group, or a list item, which carries the
+fills it ends on itself (`fillCarrier`) — the fill census's deck reading
+skips the same places (`Ir.FillView.deck`). -/
+  fillsInert : Bool := false
   /-- The frame's numbered extent, used to project union selectors into
   finite HTML attribute tokens. It is read from the IR, never the surface. -/
   overlaySteps : Nat := 1
@@ -304,8 +313,8 @@ public def engineClasses : List String :=
    "math", "math-display", "nopadl", "nopadr", "note", "picture", "progress",
    "reveal-scroll", "ruled", "section-page", "separator", "slide",
    "slide-foot", "slide-logo", "slide-track", "slides", "snap", "spaced",
-   "standout", "step", "table-float", "tcolorbox", "tcolorbox-body", "verbatim-list", "vskip",
-   "alt-pair", "alt-alike", "frame-body-tail", "frame-flow-end"] ++
+   "standout", "step", "table-float", "tcolorbox", "tcolorbox-body", "titlebar", "verbatim-list", "vskip",
+   "alt-pair", "alt-alike", "frame-body-tail", "frame-flow-end", "fill-before"] ++
   Ir.sizeScale.map (fun p => "size-" ++ p.1) ++ Ir.sizeScale.map (fun p => "lead-" ++ p.1)
 
 private theorem engineClasses_no_u_prefix :
@@ -1207,8 +1216,11 @@ a flex column. The extent rides on the box itself too — its height, or a
 negative skip's bottom margin — so a page that ships none of the engine's
 sheet (`css = none`, a framework's) still moves its follower by the skip,
 which is the document's declaration. Fil glue has no natural width and the
-box no height. A token-sourced skip defers to its property. -/
-private def skipNode (size : Int) (g : Ir.Sourced SymGlue) : Node :=
+box no height; on a deck's stage it grows by `grow`, `\vfill`'s weight beside
+the frame's own glue (`deckSpacerShares`), so the stage's flex column shares
+the leftover between them as the page's close does. A token-sourced skip
+defers to its property. -/
+private def skipNode (size : Int) (g : Ir.Sourced SymGlue) (grow : Option Nat := none) : Node :=
   let v := g.value.width.resolve size (size / 2)
   let rem := milliRem (screenMilli size v.natAbs)
   let len := if v < 0 then s!"-{rem}" else rem
@@ -1216,7 +1228,9 @@ private def skipNode (size : Int) (g : Ir.Sourced SymGlue) : Node :=
     | some n => s!"var(--{n}, {len})"
     | none => len
   let extent := if v < 0 then s!"margin-bottom: {len}" else s!"height: {len}"
-  let style := if v == 0 then #[] else #[("style", s!"--skip: {len}; {extent}")]
+  let decls := (if v == 0 then [] else [s!"--skip: {len}", extent]) ++
+    (grow.map fun n => [s!"flex-grow: {n}"]).getD []
+  let style := if decls.isEmpty then #[] else #[("style", "; ".intercalate decls)]
   Html.elem "div" #[] (#[("class", skipClass)] ++ style)
 
 /-- The elements a list level spaces: every list a list block emits — a
@@ -1433,7 +1447,8 @@ private def gapAfterLists : List GapRule :=
       s!"section.slide > .fill:first-child + :is(.{skipClass}, {skipCarrier})")
       "calc(0rem - var(--parskip, 0rem))",
     .boundary "section.slide > .frame-body-start"
-      "calc(var(--frame-body-skip) + var(--frame-body-before, 0pt) + var(--frame-body-open, 0pt))"]
+      ("calc(var(--frame-body-skip) + var(--frame-title-below, 0pt) + " ++
+        "var(--frame-body-before, 0pt) + var(--frame-body-open, 0pt))")]
 
 /-- The heading's follower, the sheet's last rule: its band below is the
 heading's own. -/
@@ -2541,6 +2556,8 @@ properties rather than resolved literals, deliberately: a reader's
 stylesheet can override a token, which is the HTML backend's contract. -/
 public def themeCss (doc : Doc) : String :=
   let d := Design.ofDoc doc
+  let sectionMeasure :=
+    s!"min({stageVh doc.page (Ir.sectionPageMeasure (doc.page.width - 2 * doc.page.hmargin))}, 100%)"
   -- A removed epoch token must reach the shared undeclared default, never
   -- the opening document's colour. CSS tokens retain first priority.
   let defaults := Design.ofPalette {}
@@ -2594,8 +2611,13 @@ public def themeCss (doc : Doc) : String :=
       s!"  font-size: {frameTitleStep doc}em;\n" ++
       (if doc.chromeAllowed then s!"  margin: 0 calc(-1 * {safeareaVar}) 0;\n"
        else s!"  margin: calc(-1 * {safeareaVar}) calc(-1 * {safeareaVar}) 0;\n") ++
-      (if doc.chromeAllowed && (doc.tokens.find? "frametitlepadding").isSome then
-        s!"  padding: 0 {safeareaVar}; line-height: {decMilli (Ir.leadingFor 1000)}; } }\n" ++
+      (if (doc.tokens.find? "frametitlepadding").isSome then
+        -- moloch's bar is the paper's width, its title inset from either
+        -- edge by 0.85 of the title's strut (`Ir.frameTitleInset`, an em of
+        -- the title's size here, where the bar sets at the title's step),
+        -- wherever the chrome stands, as the page sets it.
+        s!"  padding: 0 {decMilli (Ir.frameTitleInset 1000)}em; line-height: \
+{decMilli (Ir.leadingFor 1000)}; } }\n" ++
         frameTitleStrutCss
        else s!"  padding: var(--frametitlepadding, {quantaRem 1}) {safeareaVar}; } }\n")
      else "") else
@@ -2607,6 +2629,19 @@ public def themeCss (doc : Doc) : String :=
     (if doc.chromeAllowed then
       "@media screen, print { section.slide:not(.title-page) > header {\n" ++
       s!"  padding-top: {stageVh doc.page doc.page.vmargin}; } }\n"
+     else "") ++
+    -- The title stands in beamer's default frametitle box, which ends 1ex
+    -- above its strut's depth (`Ir.defaultFrameTitleBelow`), wherever the
+    -- chrome stands, as the page sets it: the title's line trims to its
+    -- baseline and the body's opening takes the rest, in the title's own em
+    -- and ex at its step over the body (`Ir.plainFrameTitleStep`). A frame
+    -- whose palette epoch declares a bar (`.titlebar`) stands no such box.
+    (if doc.docClass.record.model == .frame then
+      "section.slide:not(.title-page):not(.titlebar) > header h2 \
+{ text-box: trim-end text alphabetic; }\n" ++
+      s!"section.slide:not(.title-page):not(.titlebar):has(> header) \{ --frame-title-below: \
+calc({stepFactor Ir.plainFrameTitleStep} * \
+({decMilli (Ir.defaultFrameTitleBelow 1000 doc.page.leading 0)}em - 1ex)); }\n"
      else "")) ++
   -- The headline band: the poster page's <header> around the title matter
   -- and the two corner-logo slots. Colours are the same frametitle tokens
@@ -2674,15 +2709,18 @@ public def themeCss (doc : Doc) : String :=
   (if doc.docClass.record.model == .frame then
     s!"section.section-page \{ text-align: center; padding: {quantaRem 3} 0;\n" ++
     "  break-inside: avoid; }\n" ++
+    -- The title and the bar share moloch's centred measure, the PDF's own
+    -- (`Ir.sectionPageMeasure`), as the stage's share the deck's type is
+    -- stated in, never past the stage's own width.
     "section.section-page h2 { display: inline-block; text-align: left;\n" ++
-    "  min-width: 60%; margin: 0; color: var(--sectiontitlefg, var(--fg)); }\n" ++
+    s!"  width: {sectionMeasure}; margin: 0; color: var(--sectiontitlefg, var(--fg)); }\n" ++
     -- The height reads the same token the PDF path reads
     -- (`progressheight`), with the same fallback — moloch's own 1pt
     -- (beamerouterthememoloch.dtx) — one resolving site per backend, one
     -- declared value.
     ".progress { background: var(--sectionprogressbg, var(--progressbg, var(--bg)));\n" ++
     "  height: var(--progressheight, 1pt);\n" ++
-    s!"  width: 60%; margin: {quantaRem 1} auto 0; }\n" ++
+    s!"  width: {sectionMeasure}; margin: {quantaRem 1} auto 0; }\n" ++
     ".progress > div { background: var(--sectionprogressfg, var(--progressfg)); height: 100%; }\n" ++
     -- moloch's section page closes on the subsection title's strut below
     -- its bar, a subsection in force or not, and centres that whole box as
@@ -4265,19 +4303,26 @@ private def printSheetGround : DeckRule :=
 
 /-- How far ahead of the declared vertical distribution a frame's end
 spacer claims the leftover (`printFrameEnd`): a hundredfold over the
-largest pair of fill shares any alignment declares
-(`printEndGrow_outranks_contract`), so the spacer takes its whole safe area
-before a fill grows, to within one part in a hundred of the leftover. -/
-public def printEndGrow : Nat := 1000000
+largest pair of shares any alignment declares together with a hundred of a
+body's fills (`printEndGrow_outranks_contract`), so the spacer takes its
+whole safe area before a fill grows, to within one part in a hundred of the
+leftover. -/
+public def printEndGrow : Nat := 100000000
 
-/-- The end spacer outranks every declared distribution a hundredfold:
-the golden title page's 3618 + 2000 is the largest, and a new alignment
-with larger shares fails here instead of moving a printed frame's
-content. `_contract`'s grade: one bound, every alignment. -/
+/-- The end spacer outranks every declared distribution a hundredfold, a
+hundred fills beside it: the golden title page's 3618 + 2000 is the largest
+pair, and a new alignment with larger shares fails here instead of moving a
+printed frame's content. `_contract`'s grade: one bound, every alignment. -/
 public theorem printEndGrow_outranks_contract :
-    ∀ v : Ir.VAlign, 100 * (v.shares.1 + v.shares.2) ≤ printEndGrow := by
-  intro v
-  cases v <;> decide
+    ∀ (keys : Ir.FrameKeys) (v : Ir.VAlign) (breakable : Bool) (fills : Nat), fills ≤ 100 →
+      100 * ((v.shares keys breakable).1 + (v.shares keys breakable).2 + Ir.fillUnit * fills) ≤
+        printEndGrow := by
+  intro keys v breakable fills h
+  have hf : Ir.fillUnit * fills ≤ 100000 := by simp only [Ir.fillUnit]; omega
+  have hs : (v.shares keys breakable).1 + (v.shares keys breakable).2 ≤ 5618 := by
+    cases keys <;> cases v <;> cases breakable <;> decide
+  simp only [printEndGrow]
+  omega
 
 /-- A frame's bottom safe area on paper is room its content may take
 before the frame continues, not a box that continues by itself. Padding
@@ -4299,6 +4344,14 @@ private def printFrameEnd : List DeckRule :=
       decls := [("content", "\"\""), ("flex", s!"{printEndGrow} 0 0"),
         ("max-height", safeareaVar)]
       part := .print } ]
+
+/-- The fill a `\block[before = fill]{…}` opens its content with, on a deck's
+stage: the box's `::before`, a flex item of the box's own column
+(`fillCarrier`) growing by one fill's weight, `\vfill`'s, ahead of the
+content — the space above the content, where the page sets the fill, with no
+element of its own. -/
+private def fillBeforeCss : String :=
+  s!"section.slide .spaced.fill-before::before \{ content: \"\"; flex-grow: {Ir.fillUnit}; }\n"
 
 /-- beamer's text area on the stage, wherever the chrome may stand
 (`Ir.frameInTextArea`; the title page keeps the safe area, as the PDF keeps
@@ -5250,8 +5303,9 @@ uncover rules read (`stepSnappedRule`). At startup it marks
 (`stepFloorCovered`): without the script that covered state is never
 declared. Every snap carries its canonical `data-slide-label`: the shared
 frame number, with a dotted suffix on every reveal of a stepped frame;
-`titlepage` and `section-k` for front matter; an `appendix-` prefix after a
-frame-number restart. Bare frame numbers still reach the first reveal,
+`titlepage` and `section-k` for front matter and `standout` for a standout
+frame, which bears no number (`Ir.Block.countable`); an `appendix-` prefix
+after a frame-number restart. Bare frame numbers still reach the first reveal,
 and authored title-slug links still resolve. Keyboard
 moves push history, native scrolling replaces the current fragment, and
 hash navigation restores the snap without adding history. -/
@@ -6013,7 +6067,7 @@ public def baseCss (cfg : Config) (doc : Doc) (pairs : List (Nat × Nat) := []) 
   s!"  font-size: {scaleSize standoutStep "em"}; font-weight: 600;\n" ++
   "  display: flex; flex-direction: column; justify-content: center; }\n" ++
   deckAreaCss doc ++
-  (if doc.docClass == .slides then frameOpeningCss doc else "") ++
+  (if doc.docClass == .slides then frameOpeningCss doc ++ fillBeforeCss else "") ++
   -- A deck's steps set their own leading, as the page sets each named
   -- size's `\baselineskip` (`Ir.stepSkip`); a reading page keeps the
   -- screen's one line height, inherited.
@@ -6092,7 +6146,19 @@ table (`Ir.VAlign.shares` carries the sourcing) exactly as
 another backend, so each projects the IR and `vdist_shares_agree` in
 Tests states the agreement. A page-opening path owes a declared
 distribution, never a default (the obligation table). -/
-@[expose] public def vdistShares : Ir.VAlign → Nat × Nat := Ir.VAlign.shares
+@[expose] public def vdistShares (keys : Ir.FrameKeys) (v : Ir.VAlign) (breakable : Bool := false) :
+    Nat × Nat :=
+  Ir.VAlign.shares keys v breakable
+
+/-- The grows a frame's two spacers take: its declared shares, unless its
+glue yields to a `\vfill` its body holds (`Ir.FrameGlue.joins`), when they
+take none — TeX stretches only the highest order present, and the PDF's page
+close gives such a page's leftover to its fills alone
+(`Layout.VDist.filAbove`). -/
+@[expose] public def deckSpacerShares (keys : Ir.FrameKeys) (breakable : Bool) (valign : Ir.VAlign)
+    (fills : Nat) : Nat × Nat :=
+  if (Ir.frameGlue keys breakable valign).joins || fills == 0 then vdistShares keys valign breakable
+  else (0, 0)
 
 /-- The overlay attributes a step's wrapper carries: its range as data, and
 the `--step` index the uncover reads. -/
@@ -7290,6 +7356,31 @@ public def withClass (c : String) : Node → Node
   | .style css => .style css
   | .script attrs code => .script attrs code
 
+/-- The node with more declarations in its `style`, appended to an element's
+own or added as it. -/
+public def withStyle (decls : String) : Node → Node
+  | .elem t attrs kids =>
+    if attrs.any (·.1 == "style") then
+      .elem t (attrs.map fun kv => if kv.1 == "style" then (kv.1, kv.2 ++ "; " ++ decls) else kv) kids
+    else .elem t (attrs.push ("style", decls)) kids
+  | .text s => .text s
+  | .style css => .style css
+  | .script attrs code => .script attrs code
+
+/-- A container holding `n` of its frame's fills on a deck's stage
+(`Ir.FillView.deck`), outside a box: it grows by their weight, a flex column
+of its own so the fills inside it take what it grows by — how the stage's
+column shares the leftover with a fill an overlay step, a trivlist, a list,
+a group or a link holds, as the page's close shares it. A list item stays a
+list item (`item`), whose marker no flex column keeps: it grows by the fills
+it ends on (`Ir.itemTrailingFills`), their space falling at its end, which is
+where they stand; a fill before more of the item grows nothing, and the deck
+names it (W0399). -/
+public def fillCarrier (cfg : Config) (n : Nat) (node : Node) (item : Bool := false) : Node :=
+  if !cfg.deck || cfg.fillsInert || n == 0 then node
+  else if item then withStyle s!"flex-grow: {Ir.fillUnit * n}" node
+  else withStyle s!"flex-grow: {Ir.fillUnit * n}; display: flex; flex-direction: column" node
+
 /-- A generated inline leading margin becomes the authored addend of the
 frame boundary. Keeping an inline `margin-top` would override the shared
 gap rule instead of adding to it. Other declarations remain on their box. -/
@@ -8421,6 +8512,9 @@ private def paragraphNode (cfg : Config) (content : Array Inline) : Node :=
 mutual
 
 public def blockNode (cfg : Config) (b : Block) : Node :=
+  let cfg := match b.listScope cfg.lists cfg.styles with
+    | .onList => cfg
+    | .box | .aside => { cfg with fillsInert := true }
   match b with
   | .para content => paragraphNode cfg content
   | .section level _ num title =>
@@ -8447,12 +8541,13 @@ public def blockNode (cfg : Config) (b : Block) : Node :=
   | .list ordered items =>
     -- A description list (every item run in by its label) is HTML's own
     -- `<dl>`; the label reading is the page's (`Ir.descLabel?`).
-    let desc := !ordered && !items.isEmpty && items.all fun it => match it[0]? with
-      | some (Block.para c) => (Ir.descLabel? c).isSome
-      | _ => false
-    if desc then Html.elem "dl" (descItemsInto (cfg.deeper false).into #[] items.toList) else
+    let desc := Ir.listIsDesc ordered items
+    let n := Ir.frameFillsOne cfg.lists cfg.styles .deck 0 b
+    if desc then
+      fillCarrier cfg n (Html.elem "dl" (descItemsInto (cfg.deeper false).into #[] items.toList))
+    else
     let tag := if ordered then "ol" else "ul"
-    Html.elem tag (listItemsInto (cfg.deeper false).into #[] items.toList)
+    fillCarrier cfg n (Html.elem tag (listItemsInto (cfg.deeper false).into #[] items.toList))
   | .center body =>
     -- A display formula's block is the `.display` paragraph the base
     -- sheet's display rules address — the same shape the PDF walk reads
@@ -8463,15 +8558,16 @@ public def blockNode (cfg : Config) (b : Block) : Node :=
     match Ir.displayContent? body with
     | some content => Html.elem "p" (inlines cfg content) #[("class", "display")]
     | none =>
-      Html.elem "div" (blockNodesInto cfg.into #[] body.toList) #[("class", "centered")]
+      fillCarrier cfg (Ir.frameFills cfg.lists cfg.styles .deck body)
+        (Html.elem "div" (blockNodesInto cfg.into #[] body.toList) #[("class", "centered")])
   -- The declared side as a class, resolved through the IR's own reader
   -- (`Ir.FlushSide.align`) so the stylesheet's `text-align` and the page's
   -- line origin cannot name different edges (`ragged_sides_agree`). Flush
   -- left is HTML text's resting state and the class still re-declares it,
   -- so the setting survives a centred ancestor (text-align inherits).
   | .ragged flush body =>
-    Html.elem "div" (blockNodesInto cfg.into #[] body.toList)
-      #[("class", raggedClass flush)]
+    fillCarrier cfg (Ir.frameFills cfg.lists cfg.styles .deck body)
+      (Html.elem "div" (blockNodesInto cfg.into #[] body.toList) #[("class", raggedClass flush)])
   -- The block half of the class hook: the authored name as a class on a
   -- generic flow container, through the typed tree and the escaper. The
   -- trivlist and in-paragraph roles only space, so each is a class on the
@@ -8496,18 +8592,23 @@ public def blockNode (cfg : Config) (b : Block) : Node :=
     -- the page's element tree is the display's own.
     | false, [k] =>
       if (Ir.DisplayCtx.ofRole? n).isSome then k
-      else Html.elem "div" kids #[("class", roleClass n)]
-    | _, _ => Html.elem "div" kids #[("class", roleClass n)]
+      else fillCarrier cfg (Ir.frameFills cfg.lists cfg.styles .deck body)
+        (Html.elem "div" kids #[("class", roleClass n)])
+    | _, _ =>
+      fillCarrier cfg (Ir.frameFills cfg.lists cfg.styles .deck body)
+        (Html.elem "div" kids #[("class", roleClass n)])
   -- HTML anchors have a transparent content model, so one anchor may own
   -- arbitrary flow children; elaboration rejects every anchor-bearing
   -- descendant before this node is built.
   | .link target body =>
-    Html.elem "a" (blockNodesInto cfg.into #[] body.toList)
-      #[("href", target), ("style", "display: block")]
+    fillCarrier cfg (Ir.frameFills cfg.lists cfg.styles .deck body)
+      (Html.elem "a" (blockNodesInto cfg.into #[] body.toList)
+        #[("href", target), ("style", "display: block")])
   -- A quotation is HTML's own construct: `<blockquote>` carries the
   -- set-off semantics that the PDF path expresses as margins.
   | .quote body =>
-    Html.elem "blockquote" (blockNodesInto (cfg.deeper true).into #[] body.toList)
+    fillCarrier cfg (Ir.frameFillsOne cfg.lists cfg.styles .deck 0 b)
+      (Html.elem "blockquote" (blockNodesInto (cfg.deeper true).into #[] body.toList))
   -- beamer's titled block: a <section> with its header, through the typed
   -- tree and the escaper; the kind rides as a class so the stylesheet (a
   -- reader's own included) can address each. Its two colour boxes stand
@@ -8574,8 +8675,10 @@ public def blockNode (cfg : Config) (b : Block) : Node :=
       let ink := (d.inkOn role { fg := look.fg.getD inherited.2, bg := parent.bg }).fg
       let shapedCfg := { cfg.into with
         listingFg := some ink, bodyInk := some (role, look.fg.getD inherited.2) }
-      Html.elem "section" (head ++ blockNodesInto shapedCfg #[] body.toList)
-        #[("class", s!"block block-{kind.name} block-shaped"), ("style", s!"color: {cssColor ink};")]
+      fillCarrier cfg (Ir.frameFillsOne cfg.lists cfg.styles .deck 0 b)
+        (Html.elem "section" (head ++ blockNodesInto shapedCfg #[] body.toList)
+          #[("class", s!"block block-{kind.name} block-shaped"),
+            ("style", s!"color: {cssColor ink};")])
     | none =>
     -- A painted region owns a box, distinct from its independently painted
     -- title. Unfilled bodies keep their original child structure.
@@ -8606,10 +8709,11 @@ public def blockNode (cfg : Config) (b : Block) : Node :=
     -- the class centres it (article.cls §abstract). The body's size is the
     -- one the PDF sets (`Ir.abstractBodySize`), on the region, where the
     -- rem-sized heading does not inherit it.
-    Html.elem "section"
-      (#[Html.elem "h2" #[Html.text cfg.locale.abstract] #[("style", "text-align: center")]] ++
-        blockNodesInto cfg.into #[] body.toList)
-      #[("class", abstractClass cfg.styles)]
+    fillCarrier cfg (Ir.frameFillsOne cfg.lists cfg.styles .deck 0 b)
+      (Html.elem "section"
+        (#[Html.elem "h2" #[Html.text cfg.locale.abstract] #[("style", "text-align: center")]] ++
+          blockNodesInto cfg.into #[] body.toList)
+        #[("class", abstractClass cfg.styles)])
   | .columns cols =>
     -- Side-by-side columns as a grid: the declared fractions become
     -- percentage tracks, so the HTML column really is as wide as the PDF's.
@@ -8628,7 +8732,8 @@ public def blockNode (cfg : Config) (b : Block) : Node :=
     -- The block form of the inline step arm: visible — the handout floor —
     -- with its `--step` index for the class-gated uncover, range as data,
     -- and the declared end on its own nested carrier.
-    overlayNode "div" cfg.overlaySteps spec (blockNodesInto cfg.into #[] body.toList)
+    fillCarrier cfg (Ir.frameFills cfg.lists cfg.styles .deck body)
+      (overlayNode "div" cfg.overlaySteps spec (blockNodesInto cfg.into #[] body.toList))
   | .altSteps spec firstPage otherPage =>
     -- The block form of the inline alternation arm. The groups need one
     -- carrier each so a selector can reach each range (`alt_backend_agree`);
@@ -8636,8 +8741,10 @@ public def blockNode (cfg : Config) (b : Block) : Node :=
     -- node, and the container carries no range, no side and no rule — only
     -- whether its groups end alike, which the gap sheet reads its end
     -- through (`altEndsAlike`).
-    let first := blockNodesInto cfg.into #[] firstPage.toList
-    let other := blockNodesInto cfg.into #[] otherPage.toList
+    -- A group's fills grow nothing (`Ir.FillView.deck`): the stage's flex
+    -- column is one for every step, and the groups change from step to step.
+    let first := blockNodesInto { cfg.into with fillsInert := true } #[] firstPage.toList
+    let other := blockNodesInto { cfg.into with fillsInert := true } #[] otherPage.toList
     Html.elem "div" (overlayAlternatives "div" cfg.overlaySteps spec first other)
       #[("class", if altEndsAlike first other then "alt-pair alt-alike" else "alt-pair")]
   | .note body =>
@@ -8657,11 +8764,19 @@ public def blockNode (cfg : Config) (b : Block) : Node :=
     -- the length it was handed (`cssSourced`) — on the deck as its share of
     -- the stage (`deckSourced`), a print length on a stage that is the
     -- viewport.
-    if body.isEmpty then skipNode cfg.page.fontSize before else
+    let grows := cfg.deck && !cfg.fillsInert && before.value.fil
+    if body.isEmpty then
+      skipNode cfg.page.fontSize before (if grows then some Ir.fillUnit else none)
+    else
     let style := s!"margin-top: {if cfg.deck then deckSourced cfg.page.height before
       else cssSourced before}"
-    Html.elem "div" (blockNodesInto cfg.into #[] body.toList)
-      #[("class", "spaced"), ("style", style)]
+    -- Fill glue above content (`\block[before = fill]{…}`) on a deck's
+    -- stage: the box is a flex column of its own (`fillCarrier`) whose
+    -- `::before` takes the fill's weight above the content
+    -- (`fillBeforeCss`).
+    fillCarrier cfg (Ir.frameFillsOne cfg.lists cfg.styles .deck 0 b)
+      (Html.elem "div" (blockNodesInto cfg.into #[] body.toList)
+        #[("class", if grows then "spaced fill-before" else "spaced"), ("style", style)])
   | .verbatim covered s spec =>
     -- `<pre>` preserves the raw lines; the escaper makes the content inert.
     -- The covered shade never reaches HTML (dimming is the PDF handout's;
@@ -8765,7 +8880,7 @@ public def blockNode (cfg : Config) (b : Block) : Node :=
       | none => cssColor color
     Html.elem "hr" #[] #[("class", "separator"),
       ("style", s!"border: none; height: {cssSourced thickness}; background: {c}")]
-  | .frame title standout valign _ body =>
+  | .frame title standout valign breakable body =>
     -- One slide of the deck: a linear readable section in every class. On
     -- the paged deck (`cfg.deck`) the slide is a flex column the height of
     -- the viewport, and its declared vertical distribution is realized as
@@ -8777,9 +8892,12 @@ public def blockNode (cfg : Config) (b : Block) : Node :=
     let header := if title.isEmpty then #[]
       else #[Html.elem "header" #[withLead cfg title (Html.elem "h2" (inlines cfg title))
         (inserted := true)]]
-    let cls := if standout then "slide standout"
-      else if valign matches .golden then "slide title-page" else "slide"
     let design := Ir.Design.ofPalette cfg.pal
+    -- A frame whose palette epoch declares a bar says so, as the page reads
+    -- the bar off the epoch in force (`Layout.collectFrameTitle`).
+    let cls := if standout then "slide standout"
+      else if valign matches .golden then "slide title-page"
+      else if design.frametitle.isSome && !title.isEmpty then "slide titlebar" else "slide"
     let listingFg := if standout then some design.standout.fg
       else if valign matches .golden then design.titlepage.map (·.fg) else none
     let bodyCfg := { cfg.into with
@@ -8797,7 +8915,9 @@ public def blockNode (cfg : Config) (b : Block) : Node :=
         #[("style", s!"--frame-body-skip: {length}")]
       else #[]
     let kids := if cfg.deck then
-        let (above, below) := vdistShares valign
+        let (above, below) :=
+          deckSpacerShares (Ir.frameKeysOf cfg.frameKeys standout) breakable valign
+            (Ir.frameFills cfg.lists cfg.styles .deck body)
         let spacer (n : Nat) (cls : String) : Array Html.Node :=
           if n == 0 then #[] else
             #[Html.elem "div" #[] #[("class", cls), ("style", s!"flex-grow: {n}")]]
@@ -8821,8 +8941,9 @@ public def blockNode (cfg : Config) (b : Block) : Node :=
     -- `emit` already kept this node for HTML (`Ir.keepFor "html"`): by here
     -- it is a transparent group. The target set rides as data, so a reader
     -- of the page can see the provenance of single-surface content.
-    Html.elem "div" (blockNodesInto cfg.into #[] body.toList)
-      #[("data-backend", String.intercalate "," targets.toList)]
+    fillCarrier cfg (Ir.frameFills cfg.lists cfg.styles .deck body)
+      (Html.elem "div" (blockNodesInto cfg.into #[] body.toList)
+        #[("data-backend", String.intercalate "," targets.toList)])
   | .nav spec body =>
     -- The navigation landmark (ARIA's `navigation` role comes with the
     -- element itself). A declared label names the instance (`aria-label`;
@@ -8848,7 +8969,8 @@ public def blockNode (cfg : Config) (b : Block) : Node :=
         (if pin.reveal then #[("class", "reveal-scroll")] else #[]).push
           ("style", style)
       | none => #[]
-    Html.elem "nav" (blockNodesInto cfg.into #[] body.toList) (labelAttrs ++ pinAttrs)
+    fillCarrier cfg (Ir.frameFillsOne cfg.lists cfg.styles .deck 0 b)
+      (Html.elem "nav" (blockNodesInto cfg.into #[] body.toList) (labelAttrs ++ pinAttrs))
   | .logo _ =>
     -- A state change, not content: the deck's top-level walk reads it
     -- (`attachLogo` ships the state as frame furniture), `blockNodesInto`
@@ -8871,8 +8993,9 @@ public def blockNode (cfg : Config) (b : Block) : Node :=
     let kids := blockNodesInto cfg.into #[] body.toList
     let kindCls := floatKindClass kind
     let cls := if kind == .figure then "float" else "float " ++ kindCls
-    Html.elem "figure" (if capAbove then capNode ++ kids else kids ++ capNode)
-      #[("class", cls)]
+    fillCarrier cfg (Ir.frameFillsOne cfg.lists cfg.styles .deck 0 b)
+      (Html.elem "figure" (if capAbove then capNode ++ kids else kids ++ capNode)
+        #[("class", cls)])
   -- The reference list: one item per resolved entry, carrying the anchor
   -- its citations link to. The key is author text from the `.bib` and
   -- enters the id through the typed tree, so it passes the attribute
@@ -8931,7 +9054,10 @@ private def columnNodesInto (cfg : Config) (total share : Sp) (acc : Array Node)
 private def listItemsInto (cfg : Config) (acc : Array Node) : List (Array Block) → Array Node
   | [] => acc
   | item :: rest =>
-    listItemsInto (cfg.afterBlocks item) (acc.push (listItem cfg "li" item.toList)) rest
+    listItemsInto (cfg.afterBlocks item)
+      (acc.push (fillCarrier cfg (Ir.itemTrailingFills item)
+        (listItem { cfg with fillsInert := true } "li" item.toList) (item := true)))
+      rest
 
 /-- A description list's items as HTML's own description list: each label a
 `<dt>` (the inlines the page runs in, `Ir.descLabel?`), the text after it
@@ -8945,10 +9071,14 @@ private def descItemsInto (cfg : Config) (acc : Array Node) : List (Array Block)
       else blockNodesInto cfg.into #[paragraphNode cfg.into after] bs
     descItemsInto (cfg.afterBlocks bs.toArray)
       ((acc.push (cfg.applyEpoch (Html.elem "dt" (inlines cfg label)))).push
-        (cfg.applyEpoch (Html.elem "dd" body))) rest
+        (cfg.applyEpoch (fillCarrier cfg
+          (Ir.frameFillsList cfg.lists cfg.styles .deck 0 bs) (Html.elem "dd" body)))) rest
   | item :: rest =>
     descItemsInto (cfg.afterBlocks item)
-      ((acc.push (Html.elem "dt" #[])).push (listItem cfg "dd" item.toList)) rest
+      ((acc.push (Html.elem "dt" #[])).push
+        (fillCarrier cfg (Ir.frameFills cfg.lists cfg.styles .deck item)
+          (listItem cfg "dd" item.toList)))
+      rest
 
 -- A one-paragraph item owns its paint on li/dd. Eliding its p must not
 -- elide the epoch with it, or add a wrapper that changes list rhythm.
@@ -9522,6 +9652,7 @@ private def emitTreeCore (cfg : Config) (doc : Doc) (styles : String × Array Di
                         tokens := doc.tokens
                         deck := doc.docClass.record.model == .frame
                         chromeAllowed := doc.chromeAllowed
+                        frameKeys := doc.frameKeys
                         page := doc.page
                         lengthBasis := lengthBasisOf doc
                         lists := doc.docClass.record.lists }
@@ -9544,7 +9675,7 @@ private def emitTreeCore (cfg : Config) (doc : Doc) (styles : String × Array Di
       let nums := doc.frameNumbers
       let mut total := doc.frameCount
       let mut done := 0
-      let mut titlePages := 0
+      let labels := doc.frameLabels
       let mut sectionPages := 0
       let mut curSection : Array Inline := #[]
       let mut frameFoot : Option (Array Inline) := none
@@ -9590,17 +9721,23 @@ private def emitTreeCore (cfg : Config) (doc : Doc) (styles : String × Array Di
 omitted from HTML"
               (help := some "the deck has no physical pages; \\framenumber \
 via \\chrome is the sequence both backends share"))
-        | .frame title standout _ _ _ =>
+        | .frame title standout _ _ fbody =>
           let frameCfg := cfg.inFrame b
           let num := nums[i]?.getD none
           let numberAttrs := num.toArray.map fun n => ("data-frame-number", toString n)
-          let label := match num with
-            | some n =>
-              if doc.frameRestart.any (· ≤ i) then s!"appendix-{n}" else toString n
-            | none =>
-              if titlePages == 0 then "titlepage" else s!"titlepage-{titlePages + 1}"
-          if num.isNone then titlePages := titlePages + 1
+          let label := (labels[i]?.getD none).getD "slide"
           done := num.getD done
+          -- A fill the stage cannot grow where it stands (`Ir.FillView.deck`)
+          -- spaces nothing here while the page shares its frame's leftover
+          -- with it: named, once per frame.
+          let lists := doc.docClass.record.lists
+          if Ir.frameFills lists doc.styles .deck fbody <
+              Ir.frameFills lists doc.styles .every fbody then
+            walkDiags := walkDiags.push (Diag.of .W0399
+              s!"frame {label}: a \\vfill before more of its list item, or inside \\alt, \
+spaces nothing on the web slide"
+              (help := some "end the item at the \\vfill, or move it outside the \\alt")
+              (subject := some label))
           -- One `section` per frame: the deck's steps reveal *in place*
           -- under the class-gated uncover rules (`deckStepCss`), so the
           -- HTML section count is the source frame count (`frames_sections`
@@ -10147,15 +10284,16 @@ public theorem picture_svg_named_contract (cfg : Config) (pic : Ir.Pic.Picture) 
     (blockNode cfg (.picture pic)).tag? = some "svg" ∧
       (pic.alternative ≠ .decorative → carriesName (blockNode cfg (.picture pic)) = true) := by
   rcases h : pictureBoxOf cfg pic with ⟨⟨x0, y0⟩, ⟨x1, y1⟩⟩
-  refine ⟨by simp [blockNode, pictureSvg, h, Html.elem, Node.tag?], fun hd => ?_⟩
+  refine ⟨by simp [blockNode, Ir.Block.listScope, pictureSvg, h, Html.elem, Node.tag?],
+    fun hd => ?_⟩
   cases ha : pic.alternative with
   | decorative => exact absurd ha hd
   | described t =>
-    simp [blockNode, pictureSvg, h, Html.elem, carriesName, pictureRole, pictureAltAttrs, ha,
-      firstNonBlank_contract _ _ (figureWord_contract cfg.locale)]
+    simp [blockNode, Ir.Block.listScope, pictureSvg, h, Html.elem, carriesName, pictureRole,
+      pictureAltAttrs, ha, firstNonBlank_contract _ _ (figureWord_contract cfg.locale)]
   | undeclared =>
-    simp [blockNode, pictureSvg, h, Html.elem, carriesName, pictureRole, pictureAltAttrs, ha,
-      figureWord_contract]
+    simp [blockNode, Ir.Block.listScope, pictureSvg, h, Html.elem, carriesName, pictureRole,
+      pictureAltAttrs, ha, figureWord_contract]
 
 /-- **Every deck stage the backend emits is reachable** (`_contract`): on
 the paged deck the frame arm's `section` — a scroll container by
@@ -10167,7 +10305,7 @@ public theorem frame_stage_reachable_contract (cfg : Config) (hd : cfg.deck = tr
     (title : Array Inline) (standout : Bool) (valign : VAlign) (br : Bool)
     (body : Array Block) :
     scrollReachable (blockNode cfg (.frame title standout valign br body)) = true := by
-  simp [blockNode, Config.inFrame, hd, Html.elem, scrollReachable, carriesName, attrOf?, stageAttrs,
-    frameName_contract]
+  simp [blockNode, Ir.Block.listScope, Config.inFrame, hd, Html.elem, scrollReachable,
+    carriesName, attrOf?, stageAttrs, frameName_contract]
 
 end LeanTex.Core.HtmlDoc

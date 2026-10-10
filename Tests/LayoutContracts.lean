@@ -150,10 +150,10 @@ def counterexamples (fs : FontSet) : Array (String × Bool) := Id.run do
       noDroppedGlyph spills && frameSteps spilling == 1 &&
       (spills.pages.filter (·.frame == some 1)).size > frameSteps spilling &&
       spills.diags.any (·.kind == .W0384)),
-    ("a numbered standout intentionally selects no chrome footer",
+    ("a standout frame bears no number and selects no chrome footer",
       standoutDoc.chrome.hasFooter && standoutDoc.foot.isNone &&
       noDroppedGlyph standout && standout.pages.size == 1 &&
-      standout.pages.all (fun p => p.frame == some 1 && p.foot.isNone)),
+      standout.pages.all (fun p => p.frame == none && p.foot.isNone)),
     ("restarted frame numbers do not identify distinct source frames",
       noDroppedGlyph restart && restart.pages.size == 2 &&
       restart.pages.all (·.frame == some 1)),
@@ -303,9 +303,9 @@ def footerChecks (fs : FontSet) : Array (String × Bool) :=
       noDroppedGlyph noted && noted.pages.size == 1 && selectedFooters geom fs notedDoc noted &&
       pdfFoots noted == #[("Note", "1")] && htmlFooters notedDoc == #[("Note", "1")] &&
       noted.pages.all (fun p => furnitureHas p "Note" && furnitureHas p "1")),
-    ("plain standout keeps its frame number and ships no footer ink",
+    ("plain standout bears no frame number and ships no footer ink",
       noDroppedGlyph plain && plain.pages.size == 1 && selectedFooters geom fs plainDoc plain &&
-      plain.pages.all (fun p => p.frame == some 1 && p.foot.isNone &&
+      plain.pages.all (fun p => p.frame == none && p.foot.isNone &&
         !furnitureHas p "1") &&
       (pdfFoots plain).isEmpty && (htmlFooters plainDoc).isEmpty),
     ("restored standout footer ships only the authored note in both artifacts",

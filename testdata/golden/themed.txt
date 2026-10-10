@@ -57,8 +57,7 @@ frame
     item
       para
         color alert #C2185B
-          styled bold
-            text "An overridden accent"
+          text "An overridden accent"
         text " and "
         color #8F999B
           text "a mixed colour"
@@ -72,8 +71,7 @@ frame
     para
       text "An "
       color alert #C2185B
-        styled bold
-          text "alert beat"
+        text "alert beat"
       text " and a "
       color example #008080
         text "teal example beat"
@@ -144,6 +142,6 @@ note[N0100] 8:1 '\documentclass{beamer}' → \documentclass[aspectratio=169]{sli
 note[N0100] 8:1 '\RequirePackage{amsmath}' → nothing: the engine does this itself
 note[N0100] 8:1 '\usepackage{amsthm}' → \theoremstyle{plain}
 note[N0100] 10:1 '\usetheme' → \theme{moloch}
-note[N0100] 36:11 '\alert' → \textcolor{alert}{\bfseries ...}
-note[N0100] 43:6 '\alert' → \textcolor{alert}{\bfseries ...}
+note[N0100] 36:11 '\alert' → \textcolor{alert}{...}
+note[N0100] 43:6 '\alert' → \textcolor{alert}{...}
 warning[W0315] 36:44 text coloured 'fg!50!bg' (#8F999B) reads at 2.79:1 on the page (#FAFAFA), below the 4.50:1 WCAG 2.2 asks of text (SC 1.4.3) | help: 'fg!68!bg' (#687578) meets it, ΔEOK 0.122 from the declared colour, past the 0.080 a repair may move it: write that weight, or keep it low: \palette[decorative]{ <name> = #8F999B }

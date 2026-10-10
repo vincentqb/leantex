@@ -1,5 +1,6 @@
 import Tests.Diag
 import Tests.Markdown
+import Tests.FrameGeometry
 import Tests.Layout
 import Tests.Themes
 import Tests.FontMath
@@ -155,6 +156,10 @@ def registry : List AuditRow :=
    -- A face declared before booktabs loads: measuring that face's ex at
    -- the class size (the driver holds the font environment) retires it.
    ⟨.W0398, .native, .native, check% Tests.tableFaceOrderChecks⟩,
+   -- A fill the web slide cannot grow where it stands: a slide that grows a
+   -- fill before more of its item, and one in an alternation's shown side,
+   -- retires the code.
+   ⟨.W0399, .native, .native, check% Tests.FrameGeometry.fillCarrierChecks⟩,
    -- Unknown outline data, an absent result and a reservation mismatch
    -- are separate losses. The check mutates each guard's own input and
    -- holds the actual emitted diagnostics to the label and full source.

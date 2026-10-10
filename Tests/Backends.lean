@@ -1033,12 +1033,34 @@ theorem heading_renderings_agree (level : Ir.HeadingLevel) :
   simp [MarkdownDoc.headingMarker]
 
 /-- The two backends declare one vertical-distribution table: each is a
-projection of `Ir.VAlign.shares`, so the agreement is `rfl` at every
-alignment — the previous form was a runtime pin over the four constants
-in `deckStructureChecks`, a decide-over-constants wearing a test. -/
-theorem vdist_shares_agree (v : Ir.VAlign) :
-    HtmlDoc.vdistShares v =
-      ((Layout.VDist.of v).above, (Layout.VDist.of v).below) := rfl
+projection of `Ir.frameGlue`, so the agreement is `rfl` at every
+alignment under either keys, breakable or not — the previous form was a runtime pin over the
+four constants in `deckStructureChecks`, a decide-over-constants wearing a
+test. -/
+theorem vdist_shares_agree (keys : Ir.FrameKeys) (v : Ir.VAlign) (breakable : Bool) :
+    HtmlDoc.vdistShares keys v breakable =
+      ((Layout.VDist.of keys v breakable).above, (Layout.VDist.of keys v breakable).below) := rfl
+
+/-- The two backends share a frame's leftover with its fills by one rule: a
+line with `k` of the frame's `n` fills above it stands the same fraction of
+the leftover down on the page (`Layout.VDist.filAbove` of `filTotal`) and on
+the web stage, whose spacers (`HtmlDoc.deckSpacerShares`) stand beside fills
+growing by `Ir.fillUnit` each. Cross-multiplied, because the page counts a
+fill as one unit where the frame's glue yields to it and the stage in
+thousandths. -/
+theorem fill_shares_agree (keys : Ir.FrameKeys) (v : Ir.VAlign) (breakable : Bool)
+    (n k : Nat) (hn : 0 < n) :
+    (Layout.VDist.of keys v breakable).filAbove k *
+        ((HtmlDoc.deckSpacerShares keys breakable v n).1 + Ir.fillUnit * n +
+          (HtmlDoc.deckSpacerShares keys breakable v n).2) =
+      ((HtmlDoc.deckSpacerShares keys breakable v n).1 + Ir.fillUnit * k) *
+        (Layout.VDist.of keys v breakable).filTotal n := by
+  have hn' : (n == 0) = false := by simpa using Nat.pos_iff_ne_zero.mp hn
+  simp only [Layout.VDist.of, Layout.VDist.filAbove, Layout.VDist.filTotal,
+    HtmlDoc.deckSpacerShares, HtmlDoc.vdistShares, Ir.VAlign.shares, hn', Bool.or_false]
+  by_cases hj : (Ir.frameGlue keys breakable v).joins = true
+  · simp [hj]
+  · simp [hj, Nat.mul_comm, Nat.mul_left_comm]
 
 /-- The two backends read one frame-area decision: the web deck opens an
 untitled or standout frame's body at the stage's top exactly where the PDF
@@ -1370,8 +1392,8 @@ def deckCssChecks (ref : IO.Ref (List String)) : IO Unit := do
       (attrs.find? (·.1 == "data-frame-number")).map fun (_, n) => (tag, n)
   t "numbered-link fixture elaborates clean" linksDs.isEmpty
   t "numbered links use the shared frame sequence once per stage, skipping unnumbered pages"
-    (numbered == #[("div", "1"), ("section", "2"), ("section", "3")] &&
-      linksDoc.frameNumbers.toList.filterMap id == [1, 2, 3])
+    (numbered == #[("div", "1"), ("section", "2")] &&
+      linksDoc.frameNumbers.toList.filterMap id == [1, 2])
   t "the deck pages horizontally by scroll snap on the root, no scrollbar stealing width"
     (has deckPage "html { scroll-snap-type: x mandatory; overflow-y: clip; }" &&
      has deckPage "[data-snap] { scroll-snap-align: start; scroll-snap-stop: always; }")
@@ -1406,7 +1428,7 @@ def deckCssChecks (ref : IO.Ref (List String)) : IO Unit := do
      has (printOf deckPage) ("html { background: var(--bg, var(--surface)); " ++
        "print-color-adjust: exact; }") &&
      has (printOf deckPage) "section.slide { padding-bottom: 0; }" &&
-     has (printOf deckPage) ("section.slide::after { content: \"\"; flex: 1000000 0 0; " ++
+     has (printOf deckPage) ("section.slide::after { content: \"\"; flex: 100000000 0 0; " ++
        "max-height: var(--safearea, 6vmin); }") &&
      !has (printOf deckPage) "break-inside" &&
      has (stageOf deckPage) "section.slide, section.section-page { width: 100vw;" &&
@@ -1628,11 +1650,12 @@ def deckStructureChecks (ref : IO.Ref (List String)) : IO Unit := do
   let count (s : String) : Nat := (html.splitOn s).length - 1
   t "declared distributions land as their ratios"
     -- golden above the title matter, its below share beneath; [t] one
-    -- spacer below, [b] one above, the default centring one each side.
+    -- spacer below, [b] one above, beamer's own centring a fill above
+    -- against a fill and a half below (`Ir.VAlign.glue`).
     -- The golden pair is the composed share (`Ir.golden_composes_center`):
     -- the frame's own centring unit on each side plus the template's glue.
     (count "flex-grow: 3618" == 1 && count "flex-grow: 2000" == 1 &&
-     count "flex-grow: 1\"" == 4)
+     count "flex-grow: 1000\"" == 3 && count "flex-grow: 1500\"" == 1)
   t "frame ids are unique, a repeated identical title numbers quietly"
     (count "id=\"alpha\"" == 1 && count "id=\"alpha-2\"" == 1 &&
      count "id=\"beta\"" == 1 && !eds.any (·.code == "W0327"))

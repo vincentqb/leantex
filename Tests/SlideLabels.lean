@@ -68,7 +68,7 @@ private def verify (ref : IO.Ref (List String)) (fonts : Font.FontSet)
       expected.pageMarkers.toList.zipIdx.all fun (marker, i) => pageOccurs census i marker == 1)
   t "layout suppresses numeric furniture on title, divider and standout pages"
     (out.pages.map (·.foot.isSome) == expected.pageFooters.map (·.isSome))
-  t "layout footer slots count logical frames including standouts"
+  t "layout footer slots count logical frames, a standout bearing none"
     (pdfFoots out == expected.pageFooters.filterMap id)
   t "layout paints the declared footer text once on each page"
     (expected.pageFooters.toList.zipIdx.all fun (footer, i) =>
@@ -77,7 +77,7 @@ private def verify (ref : IO.Ref (List String)) (fonts : Font.FontSet)
       | some (left, right) =>
         (left.isEmpty || pageOccurs census i left == 1) &&
         (right.isEmpty || pageOccurs census i right == 1))
-  t "typed HTML footers count the same frames without displaying standout numbers"
+  t "typed HTML footers count the same frames"
     (slideFootsList #[] html.toList == expected.htmlFooters)
 
 private def fractionTheme : String :=
@@ -93,14 +93,14 @@ private def mixedChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO
      "\\begin{frame}{Repeat}StepAlpha\n\n\\pause\nStepBeta\n\n\\pause\nStepGamma\\end{frame}\n" ++
      "\\begin{frame}FinalBody\\end{frame}"))) {
     snaps := #[("slide", "titlepage"), ("", "section-0"), ("repeat", "1"),
-      ("aside", "2"), ("", "section-1"), ("repeat-2-1", "3.1"),
-      ("repeat-2-2", "3.2"), ("repeat-2-3", "3.3"), ("slide-2", "4")]
+      ("aside", "standout"), ("", "section-1"), ("repeat-2-1", "2.1"),
+      ("repeat-2-2", "2.2"), ("repeat-2-3", "2.3"), ("slide-2", "3")]
     pageMarkers := #["TitleProbe", "RepeatSection", "FirstBody", "StandoutBody",
       "RepeatSection", "StepAlpha", "StepAlpha", "StepAlpha", "FinalBody"]
-    pageFooters := #[none, none, some ("", "1 / 4"), none, none,
-      some ("", "3 / 4"), some ("", "3 / 4"), some ("", "3 / 4"), some ("", "4 / 4")]
-    htmlFooters := #[("", "1 / 4"), ("", "3 / 4"), ("", "4 / 4")]
-    tracks := #[("repeat-2", "3.1")]
+    pageFooters := #[none, none, some ("", "1 / 3"), none, none,
+      some ("", "2 / 3"), some ("", "2 / 3"), some ("", "2 / 3"), some ("", "3 / 3")]
+    htmlFooters := #[("", "1 / 3"), ("", "2 / 3"), ("", "3 / 3")]
+    tracks := #[("repeat-2", "2.1")]
   }
 
 private def numericAliasChecks (ref : IO.Ref (List String))
@@ -113,11 +113,11 @@ private def numericAliasChecks (ref : IO.Ref (List String))
      "\\begin{frame}[standout]{1.2}DottedBody\\end{frame}\n" ++
      "\\begin{frame}{1}OneBody\\end{frame}\n" ++
      "\\begin{frame}{2}RepeatDigitBody\\end{frame}"))) {
-    snaps := #[("2-1", "1.1"), ("2-2", "1.2"), ("1-2", "2"), ("1", "3"), ("2-3", "4")]
+    snaps := #[("2-1", "1.1"), ("2-2", "1.2"), ("1-2", "standout"), ("1", "2"), ("2-3", "3")]
     pageMarkers := #["DigitAlpha", "DigitAlpha", "DottedBody", "OneBody", "RepeatDigitBody"]
-    pageFooters := #[some ("", "1 / 4"), some ("", "1 / 4"), none,
-      some ("", "3 / 4"), some ("", "4 / 4")]
-    htmlFooters := #[("", "1 / 4"), ("", "3 / 4"), ("", "4 / 4")]
+    pageFooters := #[some ("", "1 / 3"), some ("", "1 / 3"), none,
+      some ("", "2 / 3"), some ("", "3 / 3")]
+    htmlFooters := #[("", "1 / 3"), ("", "2 / 3"), ("", "3 / 3")]
     tracks := #[("2", "1.1")]
     shadowedFragments := #["1", "2"]
   }
@@ -135,24 +135,24 @@ private def appendixChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) :
     "RepeatSection", "AppendixAlpha", "AppendixAlpha", "AppendixAside", "AppendixLast"]
   verify ref fonts "explicit appendix reset" (elabStr (deck169
     (fractionTheme ++ "\\usepackage{appendixnumberbeamer}") body)) {
-    snaps := #[("", "section-0"), ("main", "1"), ("aside", "2"), ("end", "3"),
+    snaps := #[("", "section-0"), ("main", "1"), ("aside", "standout"), ("end", "2"),
       ("", "section-1"), ("main-2-1", "appendix-1.1"), ("main-2-2", "appendix-1.2"),
-      ("aside-2", "appendix-2"), ("end-2", "appendix-3")]
+      ("aside-2", "standout-2"), ("end-2", "appendix-2")]
     pageMarkers
-    pageFooters := #[none, some ("", "1 / 3"), none, some ("", "3 / 3"), none,
-      some ("", "1 / 3"), some ("", "1 / 3"), none, some ("", "3 / 3")]
-    htmlFooters := #[("", "1 / 3"), ("", "3 / 3"), ("", "1 / 3"), ("", "3 / 3")]
+    pageFooters := #[none, some ("", "1 / 2"), none, some ("", "2 / 2"), none,
+      some ("", "1 / 2"), some ("", "1 / 2"), none, some ("", "2 / 2")]
+    htmlFooters := #[("", "1 / 2"), ("", "2 / 2"), ("", "1 / 2"), ("", "2 / 2")]
     tracks := #[("main-2", "appendix-1.1")]
   }
   verify ref fonts "appendix without a reset" (elabStr (deck169 fractionTheme body)) {
-    snaps := #[("", "section-0"), ("main", "1"), ("aside", "2"), ("end", "3"),
-      ("", "section-1"), ("main-2-1", "4.1"), ("main-2-2", "4.2"),
-      ("aside-2", "5"), ("end-2", "6")]
+    snaps := #[("", "section-0"), ("main", "1"), ("aside", "standout"), ("end", "2"),
+      ("", "section-1"), ("main-2-1", "3.1"), ("main-2-2", "3.2"),
+      ("aside-2", "standout-2"), ("end-2", "4")]
     pageMarkers
-    pageFooters := #[none, some ("", "1 / 6"), none, some ("", "3 / 6"), none,
-      some ("", "4 / 6"), some ("", "4 / 6"), none, some ("", "6 / 6")]
-    htmlFooters := #[("", "1 / 6"), ("", "3 / 6"), ("", "4 / 6"), ("", "6 / 6")]
-    tracks := #[("main-2", "4.1")]
+    pageFooters := #[none, some ("", "1 / 4"), none, some ("", "2 / 4"), none,
+      some ("", "3 / 4"), some ("", "3 / 4"), none, some ("", "4 / 4")]
+    htmlFooters := #[("", "1 / 4"), ("", "2 / 4"), ("", "3 / 4"), ("", "4 / 4")]
+    tracks := #[("main-2", "3.1")]
   }
 
 private def standoutNoteChecks (ref : IO.Ref (List String))
@@ -169,19 +169,19 @@ private def standoutNoteChecks (ref : IO.Ref (List String))
     let note := if restored then some ("StandoutNote", "") else none
     let htmlNote := if restored then #[("StandoutNote", "")] else #[]
     verify ref fonts ("standout note " ++ toString restored) input {
-      snaps := #[("before", "1"), ("focus-1", "2.1"), ("focus-2", "2.2"),
-        ("after", "3"), ("empty", "4"), ("last", "5")]
+      snaps := #[("before", "1"), ("focus-1", "standout.1"), ("focus-2", "standout.2"),
+        ("after", "2"), ("empty", "standout-2"), ("last", "3")]
       pageMarkers := #["BeforeBody", "FocusAlpha", "FocusAlpha", "AfterBody", "EmptyBody", "LastBody"]
-      pageFooters := #[some ("", "1 / 5"), note, note, some ("NormalNote", "3 / 5"),
-        none, some ("", "5 / 5")]
-      htmlFooters := #[("", "1 / 5")] ++ htmlNote ++ #[("NormalNote", "3 / 5"), ("", "5 / 5")]
-      tracks := #[("focus", "2.1")]
+      pageFooters := #[some ("", "1 / 3"), note, note, some ("NormalNote", "2 / 3"),
+        none, some ("", "3 / 3")]
+      htmlFooters := #[("", "1 / 3")] ++ htmlNote ++ #[("NormalNote", "2 / 3"), ("", "3 / 3")]
+      tracks := #[("focus", "standout.1")]
     }
     let census := censusOf (coveredColorsOf input.1) (layoutOf fonts input.1)
     let compact (s : String) := String.ofList (s.toList.filter (!·.isWhitespace))
     let focusText := "FocusAlphaFocusBeta" ++ if restored then "StandoutNote" else ""
     check ref ("slide labels / standout note " ++ toString restored ++
-        " / shipped standout ink contains the explicit note only, never its counted number")
+        " / shipped standout ink contains the explicit note only, never a number")
       ([1, 2].all (fun i => (census[i]?.map (compact ∘ CensusPage.text)) == some focusText) &&
         (census[4]?.map (compact ∘ CensusPage.text)) == some "EmptyBody")
 
@@ -211,7 +211,8 @@ private def sectionChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : 
      "\\palette{progressfg=#123456}\n\\section{RepeatSection}\n" ++
      "\\begin{frame}[standout]{Aside}AsideBody\\end{frame}\n" ++
      "\\section{RepeatSection}\n\\begin{frame}{Two}SecondBody\\end{frame}"))) {
-    snaps := #[("one", "1"), ("", "section-0"), ("aside", "2"), ("", "section-1"), ("two", "3")]
+    snaps := #[("one", "1"), ("", "section-0"), ("aside", "standout"), ("", "section-1"),
+      ("two", "2")]
     pageMarkers := #["UnmarkedSection", "FirstBody", "RepeatSection", "AsideBody",
       "RepeatSection", "SecondBody"]
     pageFooters := #[none, none, none, none, none, none]
@@ -236,10 +237,10 @@ private def repeatedTitleChecks (ref : IO.Ref (List String))
   verify ref fonts "repeated source-elaborated title pages"
     (doc, titleDs ++ firstDs ++ asideDs ++ lastDs) {
     snaps := #[("slide", "titlepage"), ("repeat", "1"), ("slide-2", "titlepage-2"),
-      ("aside", "2"), ("slide-3", "titlepage-3"), ("repeat-2", "3")]
+      ("aside", "standout"), ("slide-3", "titlepage-3"), ("repeat-2", "2")]
     pageMarkers := #["TitleEcho", "FirstBody", "TitleEcho", "AsideBody", "TitleEcho", "LastBody"]
-    pageFooters := #[none, some ("", "1 / 3"), none, none, none, some ("", "3 / 3")]
-    htmlFooters := #[("", "1 / 3"), ("", "3 / 3")]
+    pageFooters := #[none, some ("", "1 / 2"), none, none, none, some ("", "2 / 2")]
+    htmlFooters := #[("", "1 / 2"), ("", "2 / 2")]
   }
 
 private def collisionChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit := do
@@ -264,12 +265,12 @@ private def collisionChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) 
      "\\appendix\n\\begin{frame}{Extra}ExtraBody\\end{frame}\n" ++
      "\\begin{frame}[standout]{Aside}ExtraAside\\end{frame}"))) {
     snaps := #[("appendix-1", "1.1"), ("appendix-2", "1.2"), ("extra", "appendix-1"),
-      ("aside", "appendix-2")]
+      ("aside", "standout")]
     pageMarkers := #["MainAlpha", "MainAlpha", "ExtraBody", "ExtraAside"]
-    pageFooters := #[some ("", "1 / 1"), some ("", "1 / 1"), some ("", "1 / 2"), none]
-    htmlFooters := #[("", "1 / 1"), ("", "1 / 2")]
+    pageFooters := #[some ("", "1 / 1"), some ("", "1 / 1"), some ("", "1 / 1"), none]
+    htmlFooters := #[("", "1 / 1"), ("", "1 / 1")]
     tracks := #[("appendix", "1.1")]
-    shadowedFragments := #["appendix-1", "appendix-2"]
+    shadowedFragments := #["appendix-1"]
   }
   verify ref fonts "a frame's own numeric alias is not a collision" (elabStr (deck169
     fractionTheme "\\begin{frame}{1}OwnBody\\end{frame}")) {
@@ -289,7 +290,7 @@ private def collisionChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) 
 
 private def linkChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := fun claim => check ref ("slide labels / canonical links / " ++ claim)
-  let targets := #["1", "1.1", "1.2", "2", "titlepage", "section-0", "section-1",
+  let targets := #["1", "1.1", "1.2", "standout", "titlepage", "section-0", "section-1",
     "appendix-1", "appendix-1.1", "appendix-1.2", "appendix-2", "intro", "intro-1", "aside"]
   let links := String.join (targets.toList.map fun target => "\\href{#" ++ target ++ "}{Go} ")
   let source (extra : String) := deck169

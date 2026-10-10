@@ -725,6 +725,9 @@
 ⚠ [W0384]
   frame 1 is 3.437pt taller than its page; it continues on the next page
   suggestion: shorten the frame, or declare `[allowframebreaks]` on it to accept the break
+⚠ [W0384]
+  frame standout is 13.714pt taller than its page; it continues on the next page
+  suggestion: shorten the frame, or declare `[allowframebreaks]` on it to accept the break
 ── W0385 (degraded) a colour or font change inside math is not carried; its content sets in the surrounding style
 ⚠ [W0385] - $
   '\textbf' inside math sets in the surrounding style
@@ -771,6 +774,10 @@
 ⚠ [W0398] - \usepackage
   '\usepackage{booktabs}' follows the main face's declaration; its rule paddings are measured in Latin Modern
   suggestion: load booktabs before '\setmainfont', where LaTeX measures them in Latin Modern too
+── W0399 (degraded) a fill the web slide cannot grow where it stands spaces nothing; the slide sets its frame as if it were absent
+⚠ [W0399]
+  frame 1: a \vfill before more of its list item, or inside \alt, spaces nothing on the web slide
+  suggestion: end the item at the \vfill, or move it outside the \alt
 ── W0419 (degraded) a picture the boundary did not draw is drawn in part by the rendered subset; what it leaves out is named in the line
 ⚠ [W0419] - \begin
   the rendered subset draws this picture in part: '\shade' is outside the rendered picture subset; not drawn

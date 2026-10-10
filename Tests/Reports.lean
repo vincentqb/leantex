@@ -65,6 +65,7 @@ import Tests.BlockFillConditionals
 import Tests.BlockRegionFit
 import Tests.BlockHeaderClearance
 import Tests.FrameArea
+import Tests.FrameGeometry
 import Tests.PaletteTextEpoch
 import Tests.GroupScope
 import LeanTex.Core.GroupContract
@@ -1289,7 +1290,49 @@ def reports : List Report := [
       "the class the report belongs to, measured under lualatex on invented probes and held by the guards: a colour declared inside a brace group, a begingroup or bgroup pair, an environment, a frame or a list reached text after the group's end; a Beamer colour set inside a frame reached the next frame; a block-level language switch reached text after its environment; a colour or size declared in a paragraph's own text stopped at the paragraph's end where TeX keeps it to the group's end, past list items too; and the command that restores the document's normal colour was unknown",
       "review of the fix: a colour declared in a paragraph moved the display or list after it, and a display after a list, quote or theorem that coloured its text, by two to twelve points; side-by-side boxes shared one colour state; the normal-colour command ignored a colour set in the preamble; a palette name carried past a paragraph outranked every later colour; a declaration that ended a paragraph dropped the colour carried out of it; a group's end dropped the Beamer colours a global palette entry derives; and an epoch-heavy document's HTML grew with the square of its groups; twenty-five assertions fail on the reviewed tree and hold now, and the space after a colour command no longer sets a second space",
       "second review: small caps set after an italic dropped the slant, a URL face stopped at the first paragraph end inside its group, carried sizes and emphasis grew the HTML with the square of their paragraphs, text after a colouring group shipped a concrete ink where the page's own text reads the stylesheet's, a colour declared before a group that restores its lengths stopped at that group, a page colour inside braces or a begingroup pair never reached its page, and a group after a colour command took the colour alone; twenty-one assertions fail on the reviewed tree and hold now"]
-    state := .guarded "e5233428" .before .author }
+    state := .guarded "e5233428" .before .author },
+  { id := "R137", date := "2026-10-10"
+    what := "A frame title on a moloch-style deck started at the text margin, where the slide class insets it from the paper's edge by its title bar's own margin"
+    pins := [check% Tests.FrameGeometry.titleInsetChecks]
+    accept := ["six assertions fail with the fix reverted onto the recorded commit: both title steps' start on the page, against the reference typesetting, and in the web deck's bar",
+      "a presentation deck's frame titles start within half a point of their reference typesetting on the page and in the web deck, where they stood eighteen points right"]
+    state := .guarded "e841ab4a" .revert .author },
+  { id := "R138", date := "2026-10-10"
+    what := "A section page's progress bar on a moloch-style deck stood shorter than the slide class draws it, a standout frame taking a number and advancing the count the bar and the footlines read, and the web deck set the section page's title and bar in a narrower measure than the page"
+    pins := [check% Tests.FrameGeometry.standoutNumberChecks,
+      check% Tests.FrameGeometry.sectionMeasureChecks, check% slideLabelChecks]
+    accept := ["forty-five assertions fail with the fix reverted onto the recorded commit: the footline numbers on the page and in the web deck, the section page's bar on both, the web section page's measure, and forty of the web deck's frame labels, which named a standout frame by a number",
+      "a presentation deck's section-page progress bars and footline numbers match their reference typesetting on every page, where the bars stood a tenth short and every number after its first standout frame ran one ahead; its web section pages' titles and bars stand where the page sets them, where they stood twenty points right",
+      "the section pages' vertical place is R120's guard (Tests.FrameArea.checks)"]
+    state := .guarded "e841ab4a" .revert .author },
+  { id := "R139", date := "2026-10-10"
+    what := "Under the default theme a titled frame's first line stood several points further below its title than the slide class sets it, and the web deck kept no title box"
+    pins := [check% Tests.FrameGeometry.titleOpeningChecks,
+      .tier "rhythm" "slides-default/frametitle-body.near",
+      .tier "rhythm" "slides-default/frametitle-block.near"]
+    accept := ["two assertions fail with the fix reverted onto the recorded commit: the first line's place below the title on the page, and the web deck's title box",
+      "the rhythm tier's default-theme frame-title rows stand within three points of their reference, where they stood six and a half points deep"]
+    state := .guarded "e841ab4a" .revert .author },
+  { id := "R140", date := "2026-10-10"
+    what := "A centred frame split its leftover space evenly whatever its theme, where the slide class sets the body two fifths of the way down and only a moloch-style theme centres it"
+    pins := [check% Tests.FrameGeometry.centreSplitChecks, check% vdistChecks,
+      thm% vdist_shares_agree]
+    accept := ["five assertions fail with the fix reverted onto the recorded commit: beamer's split on the page and in the web deck, the web deck's moloch shares in the frame glue's units, a standout frame's even spacers under beamer's keys, and the page's centred share two fifths of the way down",
+      "an untitled centred frame under either keys stands its lines within a tenth of a point of their reference typesetting on the page"]
+    state := .guarded "e841ab4a" .revert .author },
+  { id := "R141", date := "2026-10-10"
+    what := "A vertical fill in a frame took all of the frame's leftover space on the page, where the slide class shares it with the frame's own fill glue of its order and sets a fill inside a box at its natural height, a breakable centred frame split its leftover as an unbreakable one does, and the web deck rendered nothing for a fill"
+    pins := [check% Tests.FrameGeometry.vfillChecks, check% Tests.FrameGeometry.nestedFillChecks,
+      check% Tests.FrameGeometry.fillCarrierChecks, check% Tests.FrameGeometry.fillCensusChecks]
+    accept := ["seventy-six assertions fail with the fix reverted onto the recorded commit: the lines around a fill on the page and the web deck's spacers and carriers under either keys, at the frame's top level, after an overlay pause, between list items and descriptions, in a group, a figure, a table, a link, a backend's share, an alternation and a block's declared template, in a block and a column, and in a breakable frame, a breakable centred frame's own split, the fills the page closes on in a block and a column, and the web build naming the fills it cannot grow",
+      "a top, centred and bottom frame holding a fill stand their lines within a tenth of a point of their reference typesetting on the page, under either keys"]
+    state := .guarded "e841ab4a" .revert .author },
+  { id := "R142", date := "2026-10-10"
+    what := "An alerted word set bold where the slide class sets it in the body's face in its theme's alert colour, and in a deck naming no theme it took no colour at all"
+    pins := [check% Tests.FrameGeometry.alertChecks]
+    accept := ["six assertions fail with the fix reverted onto the recorded commit: the moloch word's face on the page and its emphasis in the web deck, and in a deck naming no theme the word's face and colour on the page and its emphasis and colour in the web deck",
+      "a presentation deck's alerted words set in the body's weight, coloured"]
+    state := .guarded "e841ab4a" .revert .author }
 ]
 
 /-- The reports guarded but never seen failing: a count that may fall and

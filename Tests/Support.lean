@@ -1922,6 +1922,25 @@ def shippedFiraFont : IO (Option Font.Font) := do
 lualatex's baselines and their tolerances. -/
 def ptMilli (milli : Int) : Dim.Sp := Dim.pt 1 * milli / 1000
 
+/-- An invented 10 pt beamer deck under `theme`, each frame naming its options
+and holding its body: the spelling the frame checks measure lualatex on. -/
+def beamerDeck (theme : String) (frames : List (String × String)) : String :=
+  s!"\\documentclass[10pt]\{beamer}\n{theme}\\begin\{document}\n" ++
+  String.join (frames.map fun (opt, body) =>
+    s!"\\begin\{frame}[{opt}]\n{body}\n\\end\{frame}\n") ++
+  "\\end{document}\n"
+
+/-- The baseline of the first body line holding `word` on page `page`. -/
+def bodyLineY (out : Layout.Out) (page : Nat) (word : String) : Option Dim.Sp :=
+  (out.pages[page]?.bind fun p => p.lines.find? fun l =>
+    !l.furniture && hasStr (lineText l) word).map (·.y)
+
+/-- A CSS length in `em` as thousandths of the em. -/
+def cssEmMilli (v : String) : Option Int := do
+  guard (v.endsWith "em")
+  let (m, sc) ← Decl.parseDecimal (v.dropEnd 2).toString
+  return m * 1000 / (sc : Int)
+
 /-- Two lengths within `slack` of each other. -/
 def withinSp (slack a b : Dim.Sp) : Bool := a - b ≤ slack && b - a ≤ slack
 
@@ -2042,6 +2061,25 @@ def elemNodesList (want : String → Bool) (acc : Array Html.Node) :
   | k :: rest => elemNodesList want (elemNodesOne want acc k) rest
 
 end
+
+/-- The slide stages of an emitted body, in document order. -/
+def slideStages (body : Array Html.Node) : Array Html.Node :=
+  (elemNodesList (· == "section") #[] body.toList).filter fun n => match n with
+    | .elem _ attrs _ => ((HtmlDoc.attrOf? attrs "class").getD "").splitOn " " |>.contains "slide"
+    | .text _ | .style _ | .script .. => false
+
+/-- The `flex-grow` a stage's direct children declare, in document order: the
+frame's spacers, a fill's box, a container holding fills. -/
+def stageGrows (stage : Html.Node) : Array String :=
+  match stage with
+  | .elem _ _ kids => kids.filterMap fun node => match node with
+    | .elem _ attrs _ =>
+      ((HtmlDoc.attrOf? attrs "style").getD "").splitOn ";" |>.findSome? fun d =>
+        match d.splitOn ":" with
+        | [k, v] => if k.trimAscii.toString == "flex-grow" then some v.trimAscii.toString else none
+        | _ => none
+    | .text _ | .style _ | .script .. => none
+  | .text _ | .style _ | .script .. => #[]
 
 /-- Attribute guards are a projection of the same element census. -/
 def elemAttrsList (want : String → Bool) (acc : Array (String × Array (String × String)))

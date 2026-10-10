@@ -4543,15 +4543,16 @@ private def modifierInlines (ctx : Ctx) (name : String) (style : Style)
     (edges : Bool × Bool) (inner : Array Inline) (pos : Pos) : EM (Array Inline) := do
   if name == Compat.alertMark false then return #[.styled .bold inner]
   if name != Compat.alertMark true then return Ir.fontCmdInlines style edges inner
-  let bold := #[Inline.styled .bold inner]
+  -- Themed, the alert colour alone (`Compat.alertStyled`); with no colour
+  -- to read, bold stands in as unthemed.
   match ← readColor ctx ctx.palette none "alert" pos with
   | .resolved c cssName =>
     recordColorSpan ctx "alert" c cssName.isSome pos
-    return #[.colored c cssName bold]
+    return #[.colored c cssName inner]
   | .missing =>
     warnPaletteMiss ctx "alert" pos
-    return bold
-  | .rejected => return bold
+    return #[.styled .bold inner]
+  | .rejected => return #[.styled .bold inner]
 
 /-- The one W0105 for an overlay specification the step model cannot
 number, outside the knot: one spelling for its three doors. -/
@@ -15739,6 +15740,8 @@ public structure PreState where
   /-- The document wrote `\theme{...}` — any spelling, known or not: the
   author's choice stands and the class default steps aside. -/
   sawTheme : Bool := false
+  /-- The frame-alignment keys the installed theme sets (`Theme.frameKeys`). -/
+  frameKeys : Ir.FrameKeys := .beamer
 
 /-- An optional `[...]` run at `j`: its contents and the index past it —
 `closeBracketFrom` doing the collection the preamble scanners below used
@@ -16560,6 +16563,7 @@ the built-in's heading and margins stand{replaced}"
           tokens := ds.tokens
           styles := ds.styles
           chrome := ds.chrome
+          frameKeys := th.frameKeys
           ctx := { s.ctx with palette := pal, tokens := ds.tokens } }
       | none =>
         diag s.ctx .W0319 s!"unknown theme '{tname}'; the document is unthemed"
@@ -18059,6 +18063,7 @@ private def prepareStyledBody (file : String) (decls : Array PDecl)
       footFrom := footFrom
       chrome := chrome
       chromeDeclared := chromeDeclared
+      frameKeys := if defaultBundle then Theme.daylight.frameKeys else s.frameKeys
       styles := styles
       info := info
       output := output

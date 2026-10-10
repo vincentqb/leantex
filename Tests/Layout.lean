@@ -2624,13 +2624,14 @@ def vdistChecks (ref : IO.Ref (List String)) (geom : Layout.Geom)
   let yB := firstY "\\begin{frame}[b]\nhello\n\\end{frame}"
   t "a frame centres by default, [t] sits above it" (yT < yC)
   t "[b] sits below the centre" (yC < yB)
-  -- 1:1 is the halving and 1:0 the whole leftover: centre is halfway
-  -- between top and bottom, up to the division's rounding — the top a
-  -- `[t]` frame's line would stand at without beamer's `.2cm` top skip
+  -- beamer's own centring is a fill above against a fill and a half below
+  -- (`Ir.VAlign.glue`), bottom-flush the whole leftover above: centre is
+  -- two fifths of the way from the top to the bottom — the top a `[t]`
+  -- frame's line would stand at without beamer's `.2cm` top skip
   -- (`Ir.frameBodySkip`), the one fixed space the distribution never
   -- spends.
-  t "centre is halfway between [t] less its top skip and [b]"
-    (yB - yC == yC - (yT - Dim.mm 2) || yB - yC == yC - (yT - Dim.mm 2) + 1)
+  t "centre is two fifths of the way between [t] less its top skip and [b]"
+    (yC - (yT - Dim.mm 2) == (yB - (yT - Dim.mm 2)) * 1000 / 2500)
   -- Ratio 0:1 is top-flush in beamer's text area: an untitled `[t]`
   -- frame's content box opens at the paper's top, `.2cm` down
   -- (beamerbaseframe.sty:263), and its first line stands one
@@ -2747,7 +2748,7 @@ def vdistChecks (ref : IO.Ref (List String)) (geom : Layout.Geom)
     return (first.y, last.y - first.y)
   match titleBlock "", titleBlock "\\\\ Beta\\\\ Gamma\\\\ Delta" with
   | some (y1, span1), some (y2, span2) =>
-    let (above, below) := Ir.VAlign.golden.shares
+    let (above, below) := Ir.VAlign.golden.shares .moloch
     -- Taller block, smaller leftover, so the block's top rises by the
     -- above share of the growth.
     let predicted := y1 - (span2 - span1) * above / (above + below)
