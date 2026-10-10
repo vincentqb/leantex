@@ -572,13 +572,14 @@ def frontend (ui : Ui) (file : String) : IO (Option Front) := do
                 ledger := src.ledger
                 cache := cache, scan := scan, provisional := provisional }
 
-/-- The reporting scope is the output plan's projection. Markdown has no
-backend-specific diagnostic scope; common source diagnostics still apply. -/
+/-- The reporting scope is the output plan's projection: each artifact the
+run writes, the markdown twin included, so a loss scoped to an artifact is
+named exactly when that artifact is written. -/
 def diagnosticOutputs (emit : Array Emit) : Array Diag.Output :=
-  emit.filterMap fun e => match e with
-    | .pdf => some .pdf
-    | .html => some .html
-    | .md => none
+  emit.map fun e => match e with
+    | .pdf => .pdf
+    | .html => .html
+    | .md => .md
 
 /-- **Is the document elaboration returned already the fixed point?** It
 was elaborated against `front.provisional`; font assembly settled on `fs`

@@ -943,6 +943,7 @@ private def warnOnceKey (key : String) : Option Diag.Output → String
   | none => key
   | some .pdf => key ++ "\npdf"
   | some .html => key ++ "\nhtml"
+  | some .md => key ++ "\nmd"
 
 /-- Record one loss site. Repetition changes presentation, never accounting. -/
 public def warnOnceState (ctx : Ctx) (key : String) (code : DiagCode) (msg : String)

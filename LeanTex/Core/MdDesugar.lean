@@ -34,7 +34,10 @@ reaches the page, which is the registry's rule and not a habit:
 * `W0392` (`degraded`, floor `content`) for a construct that ships,
   diminished: `md:list-start`, `md:loose-list`,
   `md:link-title`, `md:image-title`, `md:code-info`, `md:image-alt`,
-  `md:disclosure`. Shipping content cannot take an absent-content loss.
+  `md:disclosure`, which is named once for each artifact that loses the
+  collapse: the HTML page and the markdown twin, which can each spell one,
+  and not the PDF, where paper has no collapse to lose and every word
+  ships. Shipping content cannot take an absent-content loss.
 
 A GFM table is expressible, and crosses as the booktabs `{tabular}` it
 means, every cell's content inside a group of its own (`tableRaws_contract`),
@@ -77,8 +80,9 @@ private def route (file : String) (subject : String) (what : String) (pos : Pos)
 `degraded`, floor `content`, which is what the census must see for a link
 that sets without its title or a disclosure whose body stays expanded. -/
 private def routeDegraded (file : String) (subject : String) (what : String) (pos : Pos)
-    (help : Option String := none) : Diag :=
+    (help : Option String := none) (output : Option Diag.Output := none) : Diag :=
   Diag.of .W0392 what (some ⟨file, pos⟩) help (subject := some ("md:" ++ subject))
+    (output := output)
 
 /-- The value the elaborator reads back from one `\includegraphics` option
 source: `Decl.splitEntries`, then `Decl.splitEntry`, then the one layer of
@@ -486,8 +490,11 @@ without a language" p
   | .disclosure summary body p =>
     let (ss, sds) := inlListRaws file #[] #[] summary.toList
     let (rs, ds) := blkListRaws file #[] #[] body.toList
-    (disclosureRaws ss rs p, (sds ++ ds).push (routeDegraded file "disclosure"
-      "a disclosure sets its summary and body expanded: collapse behaviour is not carried" p))
+    let lost (o : Diag.Output) : Diag := routeDegraded file "disclosure"
+      "a disclosure sets its summary and body expanded: collapse behaviour is not carried" p
+      (output := some o)
+    -- premise: disclosurePrintChecks — its shipped-line rows set the disclosure as its bold-summary twin, every word in order, so the PDF loses nothing; its artifact rows find no collapse in the HTML page or the markdown twin, and its forOutputs rows name the loss for exactly those two, alone and through a tex host
+    (disclosureRaws ss rs p, ((sds ++ ds).push (lost .html)).push (lost .md))
   | .list ordered start tight items p =>
     let (rs, ds) := itemsRaws file #[] #[] items.toList p
     let ds := if ordered && start != 1 then

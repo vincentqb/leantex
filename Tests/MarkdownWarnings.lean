@@ -120,12 +120,17 @@ def markdownWarningChecks (ref : IO.Ref (List String)) : IO Unit := do
   let three := "<details>\n<summary>Ash</summary>\nBirch\n</details>\n\n\
 <details>\n<summary>Cedar</summary>\nDogwood\n</details>\n\n\
 <details>\n<summary>Elm</summary>\nFir\n</details>\n"
+  -- Each artifact that loses the collapse is told once, its warning
+  -- carrying the three sites; the PDF loses nothing and is told nothing.
+  for (o, n) in [(Diag.Output.html, 3), (.md, 3), (.pdf, 0)] do
+    let folded := Diag.foldRepeats (Diag.forOutputs #[o] (dvMd three))
+    let routes := folded.filter (·.subject == some "md:disclosure")
+    t s!"a loss repeated three times shows the {o.label} build one warning carrying \
+three sites ({routes.size})"
+      (routes.size == n && (routes.filter (·.severity == .warning)).size == min n 1
+        && routes.toList.map (·.sites) == (if n == 0 then [] else [3, 0, 0])
+        && (routes.filter (·.severity == .note)).size == n - min n 1)
   let folded := Diag.foldRepeats (dvMd three)
-  let routes := folded.filter (·.subject == some "md:disclosure")
-  t s!"a loss repeated three times shows one warning carrying three sites ({routes.size})"
-    (routes.size == 3 && (routes.filter (·.severity == .warning)).size == 1
-      && routes.toList.map (·.sites) == [3, 0, 0]
-      && (routes.filter (·.severity == .note)).size == 2)
   t "folding keeps every site in the census"
     ((folded.toList.map (·.sites)).sum == (dvMd three).size)
   -- An error is never folded: each refused site fails the build.

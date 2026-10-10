@@ -158,7 +158,7 @@
 ── E0390 (dropped) a markdown construct this dialect refuses by design; its content is dropped
 ✖ [E0390]
   raw HTML in markdown is refused: document content can never become markup here
-  suggestion: quote the text as a code span with `...`, or delete the tag
+  suggestion: write it in markdown (**bold**, *emphasis*, [text](url), ![alt](src)), quote it as a code span with `...`, or delete the tags
 ── E0395 (dropped) picture label produced no line
 ✖ [E0395]
   picture label produced no line

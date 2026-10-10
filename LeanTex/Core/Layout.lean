@@ -11023,6 +11023,33 @@ private def itemsNaturalWidth (items : Array Item) : Sp :=
     | .rule bw .. => w + bw
     | .poly .. => w) 0
 
+/-- Does a forced break stand among the items before their last — a `\\`,
+or a markdown `<br>`? Then a natural cell is lines, not one line. The last
+item is the forced break every paragraph's items end on (`itemsOfInlines`),
+which splits no line. -/
+private def itemsBreak (items : Array Item) : Bool :=
+  items.pop.any fun it => match it with
+    | .pen _ cost .. => cost ≤ forcedCost
+    | _ => false
+
+/-- A natural cell's width as lines: each run between two forced breaks at
+its natural width, the widest of them — a cell's max-content width, as a
+browser measures one (CSS Sizing 3, §5.1). Without a forced break it is
+`itemsNaturalWidth`. -/
+private def itemsLinesWidth (items : Array Item) : Sp := Id.run do
+  let mut widest : Sp := 0
+  let mut run : Sp := 0
+  for it in items do
+    match it with
+    | .box bw .. | .img _ bw _ | .rule bw .. => run := run + bw
+    | .glue g | .decoratedGlue g _ => run := run + g.width
+    | .pen _ cost .. =>
+      if cost ≤ forcedCost then
+        widest := max widest run
+        run := 0
+    | .poly .. => pure ()
+  return max widest run
+
 /-- The one door the document title renders through, centred or not: a
 declared `titlepage` font template wraps it — the same template the HTML
 backend applies to its <h1>, so the two surfaces cannot diverge — and
@@ -11427,7 +11454,7 @@ private def tableNeed (fs : FontSet) (geom : Geom) (xHeight : Sp) (imgs : Image.
             imgs geom.textWidth geom.textHeight (ladder := geom.scale)
         cache := c
         let narrows := (cols[j]?.map (·.narrows)).getD false
-        let w := if narrows then itemsMinWidth items else itemsNaturalWidth items
+        let w := if narrows then itemsMinWidth items else itemsLinesWidth items
         widths := widths.modify j (max · w)
   return widths.foldl (· + ·) 0 + tablePadding colsep cols.size padL padR
 
@@ -11498,10 +11525,12 @@ private def collectTable (r : Rd) (a0 : Acc)
   -- widths and for right-aligned placement). The measuring pass drops its
   -- diagnostics: the setting pass below emits them once.
   let mut nats : Array (Array Sp) := #[]
+  let mut breaks : Array (Array Bool) := #[]
   let mut mins : Array Sp := cols.map fun _ => 0
   let mut cache := a.hyphCache
   for (row, i) in rows.zipIdx do
     let mut rowNats : Array Sp := #[]
+    let mut rowBreaks : Array Bool := #[]
     for (cell, j) in row.zipIdx do
       -- a measuring pass: these items never ship, so they carry no attribution
       let (items, _, c, _) :=
@@ -11510,10 +11539,12 @@ private def collectTable (r : Rd) (a0 : Acc)
           (.fixed .unattributed) r.imgs r.geom.textWidth r.geom.textHeight
           (ladder := r.geom.scale) (step := r.step)
       cache := c
-      rowNats := rowNats.push (itemsNaturalWidth items)
+      rowNats := rowNats.push (itemsLinesWidth items)
+      rowBreaks := rowBreaks.push (itemsBreak items)
       unless inSpan spans i j do
         mins := mins.modify j (max · (itemsMinWidth items))
     nats := nats.push rowNats
+    breaks := breaks.push rowBreaks
   a := { a with hyphCache := cache }
   let natural := tableColWidths colsep total size cols nats spans padL padR
   -- A markdown table is a web table: too wide for the measure, it narrows
@@ -11702,8 +11733,11 @@ measure at its smallest size; it " ++
           -- natural cell its narrowed column cannot hold on one line
           -- (`Ir.ColSpec.narrows`, a markdown table's) wraps as a browser
           -- wraps a table cell: ragged on its side and unhyphenated
-          -- (`narrowedCell`).
+          -- (`narrowedCell`). One holding a forced break is its lines,
+          -- each on the column's side, the column as wide as the widest
+          -- (`itemsLinesWidth`), as a browser sets a cell's `<br>`.
           let nat := ((nats[i]?).bind (·[j]?)).getD 0
+          let broken := ((breaks[i]?).bind (·[j]?)).getD false
           let sub := if !(spec.width matches .natural) then
               let (justify, flushRight, center) := cellParagraph spec
               collectPara { rc with geom := { rc.geom with justify, flushRight } } sub cell x
@@ -11716,6 +11750,11 @@ measure at its smallest size; it " ++
                 sub cell x center size (baseStyle := { cellCode := web }) (leaf := leaf)
                 (span := span) (rowStrut := strut) (background := narrowedSkip size)
                 (urlBreaks := false)
+            else if broken then
+              let (flushRight, center) := narrowedCell (cellSide cols spans i j)
+              collectPara { rc with geom := { rc.geom with justify := false, flushRight } }
+                sub cell x center size (baseStyle := { cellCode := web }) (leaf := leaf)
+                (span := span) (rowStrut := strut) (urlBreaks := false)
             else match cellSide cols spans i j with
             | .center =>
               collectPara rc sub cell x true size (baseStyle := { cellCode := web }) (leaf := leaf)

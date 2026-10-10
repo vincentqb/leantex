@@ -1868,6 +1868,40 @@ def selftest : IO UInt32 := do
     (ex disclosureMd "<p><strong>Amber</strong></p><p>Cedar</p>")
   unless expandedCase.verdict == .owed && expandedCase.note == "blocked-by:md:disclosure" do
     bad := bad.push "typed HTML: agreeing expanded trees hid the disclosure's declared loss"
+  -- The HTML vocabulary, judged as a spec case is: a carried spelling
+  -- matches its page with nothing refused; one carrying an attribute the
+  -- vocabulary does not read is refused, and the spec's own passthrough
+  -- corroborates the refusal; an open disclosure is owed under its route;
+  -- a refused disclosure is rejected and names no disclosure route. Every
+  -- attribute that decides whether content reaches a reader refuses both
+  -- spellings it could ride.
+  let brCase := classify #[] (ex "Alder<br>Birch\n" "<p>Alder<br>Birch</p>\n")
+  unless brCase.verdict == .match_ && brCase.refusals.isEmpty do
+    bad := bad.push "vocabulary: a carried <br> did not match its page"
+  let corroboratedRefusal (j : Judged) : Bool :=
+    j.verdict == .rejected && !j.refusals.isEmpty && j.refusals.all (·.2)
+  unless corroboratedRefusal (classify #[]
+      (ex "Alder<br class=\"k\">Birch\n" "<p>Alder<br class=\"k\">Birch</p>\n")) do
+    bad := bad.push "vocabulary: a <br> with an attribute was not a corroborated refusal"
+  let openMd (attrs : String) : String :=
+    s!"<details open{attrs}>\n<summary>Amber</summary>\n\nCedar\n\n</details>\n"
+  let openHtml (attrs : String) : String :=
+    s!"<details open{attrs}>\n<summary>Amber</summary>\n<p>Cedar</p>\n</details>\n"
+  let openCase := classify #[] (ex (openMd "") (openHtml ""))
+  unless openCase.verdict == .owed && openCase.refusals.isEmpty
+      && openCase.routes.contains "md:disclosure" do
+    bad := bad.push "vocabulary: an open disclosure was not owed under its route"
+  let refusedDisclosure := classify #[]
+    (ex "<details>\nCedar\n</details>\n" "<details>\nCedar\n</details>\n")
+  unless corroboratedRefusal refusedDisclosure
+      && !refusedDisclosure.routes.contains "md:disclosure" do
+    bad := bad.push "vocabulary: a refused disclosure was not rejected, or named its route"
+  for a in readerAttrs do
+    unless corroboratedRefusal (classify #[]
+        (ex s!"Alder<br {a}>Birch\n" s!"<p>Alder<br {a}>Birch</p>\n")) do
+      bad := bad.push s!"vocabulary: <br {a}> was not a corroborated refusal"
+    unless corroboratedRefusal (classify #[] (ex (openMd s!" {a}") (openHtml s!" {a}"))) do
+      bad := bad.push s!"vocabulary: <details open {a}> was not a corroborated refusal"
   -- The reviewed list: a malformed row is refused rather than skipped.
   match parseReviewed "7\tmd:indented-code\tthe item's content is indented code\n" with
   | .ok rs => unless rs == #[(7, "md:indented-code")] do bad := bad.push "reviewed: row misread"
@@ -2222,6 +2256,10 @@ def scalingShapes : List (String × (Nat → String)) :=
    ("unclosed <!X", repeatTo "a <!A "),
    ("unclosed <![CDATA[", repeatTo "a <![CDATA["),
    ("unclosed autolinks", repeatTo "<a"),
+   ("bare breaks", repeatTo "a<br>"),
+   ("refused phrasing tags", repeatTo "<b>a</b> "),
+   ("unclosed break tags", repeatTo "<br "),
+   ("open disclosures", repeatTo "<details open>\n<summary>a</summary>\n\nb\n\n</details>\n"),
    -- block phase
    ("nested block quotes", nestTo "> " "a" ""),
    ("deeply nested lists", deepListTo),
