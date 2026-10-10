@@ -558,9 +558,9 @@ def frontend (ui : Ui) (file : String) : IO (Option Front) := do
     -- one elaborator, one place where meaning lives — so everything past
     -- this point reads raws, never the surface that wrote them; the
     -- elaborator records the same decision in the document, where only the
-    -- surface's own defaults read it (`Surface.textBlock`, `Surface.listing`).
+    -- surface's own defaults read it (`Ir.Surface.textBlock`, `Ir.Surface.listing`).
     -- The tex door's two stages report apart (`Surface.read_tex_exact`).
-    let (raws, frontDiags) ← match Surface.ofPath file with
+    let (raws, frontDiags) ← match Ir.Surface.ofPath file with
       | .tex => do
         let (toks, lexDiags) := Surface.texLex file input
         ui.phase "lex" s!"{toks.size} tokens" (← since t)

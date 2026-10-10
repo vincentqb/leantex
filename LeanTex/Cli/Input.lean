@@ -68,7 +68,7 @@ precedes the surface's extension policy: LaTeX's file-name sanitizer removes
 paired quotes and trims both ends when the name contains a dot, only the
 start otherwise (expl3-code.tex; quotedInputFilenameChecks). -/
 private def readFragment (dir : System.FilePath) (file name : String) (pos : Pos)
-    (prefer : String → String) (command : String) (surface : Surface) :
+    (prefer : String → String) (command : String) (surface : Ir.Surface) :
     IO (Array Parse.Raw × Array Diag) := do
   -- Do not turn an unmatched quote into an accepted, unquoted filename.
   let name := if name.toList.count '"' % 2 == 0 then
@@ -85,7 +85,7 @@ private def readFragment (dir : System.FilePath) (file name : String) (pos : Pos
     | .ok bytes =>
       if let some err := Utf8.validate bytes then
         return (#[], #[err.toDiag path.toString])
-      return surface.fragment path.toString (String.fromUTF8! bytes) pos
+      return Surface.fragment surface path.toString (String.fromUTF8! bytes) pos
   else
     -- The span names `file`, the file the `\input` sits in — the reader
     -- goes to that line to fix it, and a directory has no line 5.

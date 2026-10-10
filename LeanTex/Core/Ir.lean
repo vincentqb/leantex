@@ -266,8 +266,9 @@ text — the code, lists and tables most markdown documents are made of — so
 every default family lands inside the band, 75 to 85. -/
 public def markdownTextBlock : Sp := pt 384
 
-/-- The surface a document is written in: the tex reader's or the markdown
-reader's. A markdown source can declare nothing — no page, no faces, no
+/-- The surfaces a document or an included file can be written in: the tex
+reader's or the markdown reader's, each read through its one door
+(`Surface.read`). A markdown source can declare nothing — no page, no faces, no
 listing keys — so what its surface defaults is the whole of those settings
 for its documents: the text block (`textBlock`), how code sets
 (`Surface.listing`), and a typewriter face beside the default text face
@@ -281,7 +282,8 @@ public inductive Surface where
   | markdown
   deriving Repr, BEq, DecidableEq, Inhabited
 
-/-- The surface a source path selects: `.md` is markdown. -/
+/-- The surface a path's extension selects for a document: `.md` reads as
+markdown, everything else as tex. -/
 public def Surface.ofPath (file : String) : Surface :=
   if file.endsWith ".md" then .markdown else .tex
 

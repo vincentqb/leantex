@@ -18,7 +18,9 @@ Its ordinary controls are ordinary: a host redefinition reaches included
 markdown as it reaches the same call written in the host. Its bridged
 names hold a space, so no source can spell, forge or redefine them
 (`vocabulary_contract`). Its environments are names the elaborator gives a
-meaning of its own.
+meaning of its own; one of them, the markdown table's (`Parse.markdownTableEnv`),
+holds a space as the bridged names do, so a table included from markdown
+keeps its own fit whatever the host declares.
 
 A new desugaring arm that emits outside the vocabulary breaks the proof
 below; the commit that adds the construct extends the vocabulary, and
@@ -40,11 +42,12 @@ public structure Vocab where
 
 /-- The vocabulary markdown lowers into. -/
 @[expose] public def vocabulary : Vocab where
-  ctrls := ["emph", "textbf", "texttt", "href", "includegraphics", "item", "hypertarget", "\\"]
+  ctrls := ["emph", "textbf", "texttt", "href", "includegraphics", "item", "hypertarget", "\\",
+    "toprule", "midrule", "bottomrule"]
   bridged := [Ir.HeadingLevel.title, .h1, .h2, .h3, .h4, .h5, .h6].map Parse.headingControl
-  envs := ["quote", "itemize", "enumerate"]
+  envs := ["quote", "itemize", "enumerate", Parse.markdownTableEnv]
   verbs := ["verbatim", "lstlisting"]
-  syms := ['[', ']']
+  syms := ['[', ']', '&', '@']
 
 mutual
 
@@ -219,6 +222,85 @@ private theorem inlListRaws_adm (file : String) : (l : List Inl) → (out : Arra
 
 end
 
+private theorem sym_mem (c : Char) (p : Pos) (h : c ∈ vocabulary.syms) :
+    vocabulary.admits (.sym c p) = true := by
+  simp only [Vocab.admits]
+  exact List.contains_iff_mem.mpr h
+
+private theorem laterCellsRaws_adm (file : String) (p : Pos) : (cells : List (Array Inl)) →
+    (out : Array Raw) → (ds : Array Diag) → Adm out → Adm (laterCellsRaws file p out ds cells).1
+  | [], _, _, h => by simpa [laterCellsRaws] using h
+  | cell :: rest, out, ds, h => by
+    have hc := inlListRaws_adm file cell.toList #[] #[] adm_empty
+    unfold laterCellsRaws
+    rcases hr : inlListRaws file #[] #[] cell.toList with ⟨rs, cds⟩
+    rw [hr] at hc
+    exact laterCellsRaws_adm file p rest _ _
+      (adm_push (adm_push h (sym_mem '&' p (by simp [vocabulary]))) (adm_group rs p hc))
+
+private theorem rowCellsRaws_adm (file : String) (p : Pos) :
+    (cells : List (Array Inl)) → Adm (rowCellsRaws file p cells).1
+  | [] => by simpa [rowCellsRaws] using adm_empty
+  | cell :: rest => by
+    have hc := inlListRaws_adm file cell.toList #[] #[] adm_empty
+    unfold rowCellsRaws
+    exact laterCellsRaws_adm file p rest _ _ (adm_lit (by
+      intro r hr'
+      simp only [List.mem_cons, List.not_mem_nil, or_false] at hr'
+      subst hr'
+      exact adm_group _ p hc))
+
+private theorem rowRaws_adm (file : String) (row : Array (Array Inl)) (p : Pos) :
+    Adm (rowRaws file row p).1 := by
+  unfold rowRaws
+  exact adm_push (rowCellsRaws_adm file p row.toList) (ctrl_mem _ _ (by simp [vocabulary]))
+
+private theorem rowsRaws_adm (file : String) (p : Pos) : (rows : List (Array (Array Inl))) →
+    (out : Array Raw) → (ds : Array Diag) → Adm out → Adm (rowsRaws file p out ds rows).1
+  | [], _, _, h => by simpa [rowsRaws] using h
+  | row :: rest, out, ds, h => by
+    have hr := rowRaws_adm file row p
+    unfold rowsRaws
+    rcases hrow : rowRaws file row p with ⟨rs, rds⟩
+    rw [hrow] at hr
+    exact rowsRaws_adm file p rest _ _ (adm_append h hr)
+
+private theorem tableRaws_adm (file : String) (aligns : Array TableAlign)
+    (header : Array (Array Inl)) (rows : Array (Array (Array Inl))) (p : Pos) :
+    Adm (tableRaws file aligns header rows p).1 := by
+  have hh := rowRaws_adm file header p
+  unfold tableRaws
+  rcases hhr : rowRaws file header p with ⟨hr, hds⟩
+  rw [hhr] at hh
+  simp only at hh
+  dsimp only
+  have hhead : Adm (#[.group #[.sym '@' p, .group #[] p,
+      .word (String.ofList (aligns.toList.map TableAlign.specLetter)) p, .sym '@' p, .group #[] p] p,
+      .ctrl "toprule" p] : Array Raw) := adm_lit (by
+    intro r hr'
+    simp only [List.mem_cons, List.not_mem_nil, or_false] at hr'
+    rcases hr' with rfl | rfl
+    · exact adm_group _ _ (adm_lit (by
+        intro x hx
+        simp only [List.mem_cons, List.not_mem_nil, or_false] at hx
+        rcases hx with rfl | rfl | rfl | rfl | rfl
+        · exact sym_mem _ _ (by simp [vocabulary])
+        · exact adm_group _ _ adm_empty
+        · rfl
+        · exact sym_mem _ _ (by simp [vocabulary])
+        · exact adm_group _ _ adm_empty))
+    · exact ctrl_mem _ _ (by simp [vocabulary]))
+  have hbody := rowsRaws_adm file p rows.toList _ hds
+    (adm_push (adm_append hhead hh) (ctrl_mem "midrule" p (by simp [vocabulary])))
+  have hfull := adm_push hbody (ctrl_mem "bottomrule" p (by simp [vocabulary]))
+  exact adm_lit (by
+    intro r hr'
+    simp only [List.mem_cons, List.not_mem_nil, or_false] at hr'
+    subst hr'
+    simp only [Vocab.admits, Bool.and_eq_true]
+    exact ⟨by simp [vocabulary],
+      admitsList_of_adm _ fun x hx => hfull x (Array.mem_toList_iff.mp hx)⟩)
+
 mutual
 
 private theorem blkRaws_adm (file : String) : (b : Blk) → Adm (blkRaws file b).1
@@ -276,6 +358,9 @@ private theorem blkRaws_adm (file : String) : (b : Blk) → Adm (blkRaws file b)
       simp only [Vocab.admits, Bool.and_eq_true]
       exact ⟨by cases ordered <;> simp [vocabulary],
         admitsList_of_adm _ fun r hr => h r (Array.mem_toList_iff.mp hr)⟩)
+  | .table aligns header rows p => by
+    simp only [blkRaws]
+    exact tableRaws_adm file aligns header rows p
 
 private theorem blkListRaws_adm (file : String) : (l : List Blk) → (out : Array Raw) →
     (ds : Array Diag) → Adm out → Adm (blkListRaws file out ds l).1
@@ -366,6 +451,11 @@ private theorem blkRaws_starts (file : String) (b : Blk) : Starts (blkRaws file 
   | list ordered start tight items p =>
     simp only [blkRaws]
     exact starts_single (env_start _ _ _ (by cases ordered <;> simp [vocabulary]))
+  | table aligns header rows p =>
+    simp only [blkRaws]
+    obtain ⟨body, hbody, _⟩ := tableRaws_contract file aligns header rows p
+    rw [hbody]
+    exact starts_single (env_start _ _ _ (by simp [vocabulary]))
 
 private theorem blkListRaws_starts (file : String) : (l : List Blk) → (out : Array Raw) →
     (ds : Array Diag) → Starts out → Starts (blkListRaws file out ds l).1
@@ -395,11 +485,12 @@ public theorem vocabulary_contract :
   refine ⟨?_, ?_, ?_⟩
   · intro n hn
     simp only [vocabulary, List.mem_cons, List.not_mem_nil, or_false] at hn
-    rcases hn with rfl | rfl | rfl <;>
-      simp [Parse.inputEnvFile?, Parse.scopeEnv, Parse.splitOpen?, Parse.splitClose?]
+    rcases hn with rfl | rfl | rfl | rfl <;>
+      simp [Parse.inputEnvFile?, Parse.scopeEnv, Parse.splitOpen?, Parse.splitClose?,
+        Parse.markdownTableEnv]
   · intro n hn
     simp only [vocabulary, List.mem_cons, List.not_mem_nil, or_false] at hn
-    rcases hn with rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl <;> simp
+    rcases hn with rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl <;> simp
   · intro n hn
     obtain ⟨level, _, rfl⟩ := List.mem_map.mp hn
     cases level <;> simp [Parse.headingControl, Parse.headingControl?]
