@@ -1048,11 +1048,33 @@ beamerbaselocalstructure.sty:207, 270, 311). A name no document command can
 spell (it carries a space). -/
 public def squeezeRole : String := "frame squeeze"
 
-/-- The same spacing set by the overflow ladder (`frameFitOf`) on a frame
-the page fitted only past its glue's natural size, for the web deck alone:
-a web stage has no glue to shrink, and beamer's squeezed list spacing is the
-floor its list glue shrinks to (`Layout.squeezedFrames`). -/
+/-- The same spacing set by the overflow ladder (`frameFit`) on a frame the
+page could not set at its glue's natural size, for the web deck alone: a web
+stage has no glue to shrink, and beamer's squeezed list spacing is the floor
+its list glue shrinks to (`Layout.runFitted`). -/
 public def squeezeFitRole : String := "frame squeeze fit"
+
+/-- What every name the overflow ladder marks a frame with starts with
+(`fitMarkRole`). -/
+public def fitMarkPrefix : String := "frame fit "
+
+/-- The overflow ladder's first setting marks every frame not declared
+breakable this way (`Layout.runFitted`): the page stands it overfull
+whatever its overrun, to measure how far past its text area it reaches. -/
+public def fitMeasureRole : String := fitMarkPrefix ++ "measure"
+
+/-- The overflow ladder's decision that a frame's overlay step `step` stands
+overfull within the gap above its footline (`frameFit`, `Layout.runFitted`):
+the page sets it there rather than continue it. -/
+public def fitOverhangRole (step : Nat) : String := fitMarkPrefix ++ s!"overhang {step}"
+
+/-- The overflow ladder's decision that a frame's overlay step `step`
+continues on the next page (`frameFit`, `Layout.runFitted`): the page
+continues it, and the ladder names it with the overrun it measured. -/
+public def fitContinuesRole (step : Nat) : String := fitMarkPrefix ++ s!"continues {step}"
+
+/-- Whether a role is one of the overflow ladder's marks. -/
+@[expose] public def fitMarkRole (n : String) : Bool := n.startsWith fitMarkPrefix
 
 /-- A declaration at a page boundary, independent of the page's ground and
 vertical distribution. `empty` suppresses running furniture on one shipped
@@ -1119,7 +1141,7 @@ public theorem titlepage_empty_exact (s : PageState) :
 content: HTML, markdown and the structure tree read them as nothing. -/
 @[expose] public def pageMarkerRole (n : String) : Bool :=
   n == pageAnchorRole || n == noInterlineRole || n == primitiveSkipRole ||
-    (pageOpeningOfRole? n).isSome || n == squeezeRole || n == squeezeFitRole
+    (pageOpeningOfRole? n).isSome || n == squeezeRole || n == squeezeFitRole || fitMarkRole n
 
 /-- Every declared opening is a page-model mark, with no continuous-medium
 content of its own. HTML projects this fact instead of interpreting a
@@ -8106,33 +8128,71 @@ public inductive FrameSqueeze where
   | fitted
   deriving Repr, BEq, DecidableEq, Inhabited
 
-/-- A frame body's squeeze and the body without its marker: the one reading
-both backends make (`Layout`'s frame arm, `HtmlDoc`'s). -/
-public def frameSqueeze (body : Array Block) : FrameSqueeze × Array Block :=
-  match (body[0]? : Option Block) with
-  | some (.role n inner) =>
-    if inner.isEmpty && n == squeezeRole then (.declared, body.extract 1 body.size)
-    else if inner.isEmpty && n == squeezeFitRole then (.fitted, body.extract 1 body.size)
-    else (.none, body)
-  | _ => (.none, body)
+/-- Whether a block is one of a frame's marks: an empty engine role the
+overflow ladder or a declared `[squeeze]` opens the frame's body with. -/
+@[expose] public def Block.isFrameMark : Block → Bool
+  | .role n inner => inner.isEmpty &&
+      (n == squeezeRole || n == squeezeFitRole || fitMarkRole n)
+  | _ => false
 
-/-- Mark the top-level frames at `indices` for the overflow ladder's squeeze
-(`squeezeFitRole`), the decision both backends then read off the IR; a frame
-its author squeezed keeps its own marker. -/
+/-- The marks a frame's body opens with (`Block.isFrameMark`), in order. -/
+public def frameMarks (body : Array Block) : List String :=
+  (body.toList.takeWhile Block.isFrameMark).filterMap fun b => match b with
+    | .role n _ => some n
+    | _ => none
+
+/-- A frame body's squeeze: the one reading both backends make (`Layout`'s
+frame arm, `HtmlDoc`'s). -/
+public def frameSqueeze (body : Array Block) : FrameSqueeze :=
+  if (frameMarks body).contains squeezeRole then .declared
+  else if (frameMarks body).contains squeezeFitRole then .fitted
+  else .none
+
+/-- Mark the top-level frames at `indices` with the frame mark `role`
+(`Block.isFrameMark`), the overflow ladder's decision then read off the IR; a
+frame already marked so keeps its one mark. -/
 -- conserves: none — a splice of empty marks into frame bodies, not a walk of
 -- the tree: the output's text is the input's, a mark carrying none.
-public def squeezeFrames (body : Array Block) (indices : Array Nat) : Array Block :=
+public def markFrames (body : Array Block) (indices : Array Nat) (role : String) :
+    Array Block :=
   body.mapIdx fun i b => match b with
     | .frame title standout valign breakable fbody =>
-      if indices.contains i && (frameSqueeze fbody).1 == .none then
+      if indices.contains i && !(frameMarks fbody).contains role then
         .frame title standout valign breakable
-          (fbody.insertIdx 0 (Block.role squeezeFitRole #[]) (Nat.zero_le _))
+          (fbody.insertIdx 0 (Block.role role #[]) (Nat.zero_le _))
       else b
     | .para _ | .section .. | .list .. | .center _ | .ragged .. | .spaced .. | .role ..
     | .link .. | .quote _ | .abstract _ | .titled .. | .equation .. | .verbatim ..
     | .algorithm .. | .columns _ | .onSteps .. | .altSteps .. | .note _ | .only ..
     | .nav .. | .logo _ | .pagebreak | .framefoot _ | .setPalette _ | .setTokens _
     | .rule .. | .picture _ | .table .. | .float .. | .bibliography .. => b
+
+/-- Marking no frame changes nothing (`_id`). -/
+public theorem markFrames_id (body : Array Block) (role : String) :
+    markFrames body #[] role = body := by
+  unfold markFrames
+  apply Array.ext
+  · simp
+  · intro i h1 h2
+    simp only [Array.getElem_mapIdx, Array.contains_empty, Bool.false_and]
+    split <;> simp_all
+
+/-- Mark each top-level frame `i` of `marks` with its role (`markFrames`). -/
+public def markFramesAt (body : Array Block) (marks : Array (Nat × String)) : Array Block :=
+  marks.foldl (fun body (i, role) => markFrames body #[i] role) body
+
+/-- Marking nothing changes nothing (`_id`). -/
+public theorem markFramesAt_id (body : Array Block) : markFramesAt body #[] = body := by
+  simp [markFramesAt]
+
+/-- The web deck's squeeze of the frames the page could not set at their glue's
+natural size (`squeezeFitRole`, `Layout.runFitted`), which `HtmlDoc` reads. -/
+public def squeezeFrames (body : Array Block) (indices : Array Nat) : Array Block :=
+  markFrames body indices squeezeFitRole
+
+/-- Squeezing no frame changes nothing (`_id`). -/
+public theorem squeezeFrames_id (body : Array Block) : squeezeFrames body #[] = body :=
+  markFrames_id body squeezeFitRole
 
 /-- How a frame not declared breakable stands on its page, the overflow
 ladder at least cost (beamer user guide §8.1: a frame's text that does not
@@ -8143,45 +8203,51 @@ shrinks, as TeX's does (and the web deck, which has no glue to shrink,
 squeezes its lists, the floor its list glue shrinks to: `squeezeFitRole`);
 `overfull o` where it still stands `o` past its text area within the gap
 above its footline, and the page sets it there as beamer does; `continued o`
-where it reaches past that gap and continues on the next page. -/
+where it reaches `o` past its text area, past that gap, and continues on the
+next page. -/
 public inductive FrameFit where
   | natural
   | shrunk
   | overfull (over : Sp)
   | continued (over : Sp)
-  deriving Repr, BEq, Inhabited
+  deriving Repr, DecidableEq, Inhabited
 
-/-- **The overflow ladder's decision**, from how far a frame's content stands
-past its text area at its glue's natural size (`natural`, at most zero where
-it fits), how far that glue shrinks (`shrink`), and the gap below the text
-area its ink may take before the footline's (`clearance`): the page's own
-(`Layout`'s `fitCommit` reads the same three, line by line). -/
-public def frameFitOf (natural shrink clearance : Sp) : FrameFit :=
-  if natural ≤ 0 then .natural
-  else if natural ≤ shrink then .shrunk
-  else if natural - shrink ≤ clearance then .overfull (natural - shrink)
-  else .continued (natural - shrink)
+/-- **The overflow ladder's decision** (`Layout.runFitted` decides every
+overlay step of a frame by it, as beamer sets each step's page): from how
+far the step's content stood past its text area at its glue's natural size
+(`needed`, at most zero where it fit as declared), how far past it reached
+beyond what its glue shrinks (`beyond`), and the gap below its text area its
+ink may take before the footline's (`clearance`, none where footnotes stand
+at the floor). -/
+public def frameFit (needed beyond clearance : Sp) : FrameFit :=
+  if 0 < beyond then
+    if beyond ≤ clearance then .overfull beyond else .continued beyond
+  else if 0 < needed then .shrunk
+  else .natural
 
-/-- A frame that fits ships as its declaration sets it (`_id`): no shrink,
-no overhang, no continuation. -/
-public theorem frameFitOf_natural_id (natural shrink clearance : Sp) (h : natural ≤ 0) :
-    frameFitOf natural shrink clearance = .natural := by
-  simp [frameFitOf, h]
+/-- A frame that fits is set as it was declared (`_id`): no shrink, no
+overhang, no continuation. -/
+public theorem frameFit_id (needed beyond clearance : Sp) (h : needed ≤ 0)
+    (hb : beyond ≤ 0) : frameFit needed beyond clearance = .natural := by
+  have h1 : ¬ (0 : Int) < beyond := Int.not_lt.mpr hb
+  have h2 : ¬ (0 : Int) < needed := Int.not_lt.mpr h
+  simp [frameFit, h1, h2]
 
-/-- An overfull frame's overhang is positive and within its clearance
-(`_between`): the page never sets ink past the footline's gap. -/
-public theorem frameFitOf_overfull_between (natural shrink clearance o : Int)
-    (h : frameFitOf natural shrink clearance = .overfull o) : 0 < o ∧ o ≤ clearance := by
-  unfold frameFitOf at h
-  by_cases h0 : natural ≤ 0
-  · simp [h0] at h
-  · by_cases h1 : natural ≤ shrink
+/-- An overfull step's overhang is positive and within its clearance
+(`_between`): the ladder stands a frame's step overfull only where its whole
+overrun fits the gap above its footline. -/
+public theorem frameFit_between (needed beyond clearance o : Int)
+    (h : frameFit needed beyond clearance = .overfull o) : 0 < o ∧ o ≤ clearance := by
+  unfold frameFit at h
+  by_cases h0 : 0 < beyond
+  · by_cases h1 : beyond ≤ clearance
+    · simp only [h0, h1, ite_true, FrameFit.overfull.injEq] at h
+      subst h
+      exact ⟨h0, h1⟩
     · simp [h0, h1] at h
-    · by_cases h2 : natural - shrink ≤ clearance
-      · simp only [h0, h1, h2, ite_false, ite_true, FrameFit.overfull.injEq] at h
-        subst h
-        omega
-      · simp [h0, h1, h2] at h
+  · by_cases h2 : 0 < needed
+    · simp [h0, h2] at h
+    · simp [h0, h2] at h
 
 /-- Where a block's own blocks stand against the vertical list the block
 stands on: the one classification the page's reader, the web deck and the

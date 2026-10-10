@@ -1,6 +1,7 @@
 import Tests.Diag
 import Tests.Markdown
 import Tests.FrameGeometry
+import Tests.FrameFit
 import Tests.Layout
 import Tests.Themes
 import Tests.FontMath
@@ -158,6 +159,15 @@ def registry : List AuditRow :=
    -- fill before more of its item, and one in an alternation's shown side,
    -- retires the code.
    ⟨.W0399, .native, .native, check% Tests.FrameGeometry.fillCarrierChecks⟩,
+   -- A frame step a point or two past its text area stands overfull in the
+   -- gap above its footline, as beamer's one page sets it: the right loss
+   -- as it stands. Its text area matching beamer's narrows which frames
+   -- reach the gap, and the code stays.
+   ⟨.W0400, .keep, .degraded, check% Tests.FrameFit.overhangChecks⟩,
+   -- A frame step past that gap continues on the next page where beamer
+   -- sets it overfull on its one page, clipped: a decided divergence, named
+   -- with the whole overrun.
+   ⟨.W0384, .divergence, .degraded, check% Tests.FrameFit.overhangChecks⟩,
    -- Unknown outline data, an absent result and a reservation mismatch
    -- are separate losses. The check mutates each guard's own input and
    -- holds the actual emitted diagnostics to the label and full source.

@@ -564,7 +564,8 @@ def engineOut (cache : IO.Ref (Array (String × Font.Font))) (faces : Array Font
   let bibDiags := bibDiags ++ ledger.notes
   let fs ← Hermetic.fontSetFor cache oneFace faces fontsDir doc
   let (store, imgDiags, _) ← Hermetic.storeFor rhythmDir doc
-  let out := Layout.run (Layout.Geom.ofPage doc.page) fs (Hyphen.forTag doc.info.locale.tag) doc store
+  let out := (Layout.runFitted (Layout.Geom.ofPage doc.page) fs (Hyphen.forTag doc.info.locale.tag)
+    doc store).out
   let diags := elabDiags ++ bibDiags ++ imgDiags ++ out.diags
   return (out, diags, (Diag.resolveAll doc.allow false diags).errors)
 

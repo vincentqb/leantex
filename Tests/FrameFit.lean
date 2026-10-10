@@ -18,56 +18,101 @@ private def items (n : Nat) : String :=
     "\n".intercalate ((List.range n).map fun i => s!"\\item Kilo {i + 1} words.") ++
     "\n\\end{itemize}"
 
-/-- The physical pages the `k`-th frame ships, frames counted in order. -/
-private def framePages (out : Layout.Out) (k : Nat) : Nat :=
-  let sources := (out.pages.filterMap (·.frameOrigin.map (·.source))).toList.eraseDups
-  match sources[k]? with
-  | some source => (out.pages.filter fun p => p.frameOrigin.any (·.source == source)).size
-  | none => 0
+/-- The physical pages the frame at body index `source` ships. -/
+private def framePages (out : Layout.Out) (source : Nat) : Nat :=
+  (out.pages.filter fun p => p.frameOrigin.any (·.source == source)).size
 
 /-- The baselines of a page's body lines, in order. -/
 private def bodyBaselines (out : Layout.Out) (page : Nat) : Array Dim.Sp :=
   (((out.pages[page]?.map (·.lines)).getD #[]).filter (!·.furniture)).map (·.y)
 
-/-- **A frame a little taller than its page stands overfull on it, as
-beamer's does; only one taller than the gap above its footline continues**
-(`Layout.Spacing.Page.fitCommit`, `Ir.frameFitOf`): a frame not declared
-breakable whose content, its glue shrunk as far as it shrinks, stands past
-its text area within that gap (beamer's `\footheight` keeps 4 pt above the
-footline, beamerbaseframecomponents.sty:167) ships one page per overlay step
-with its last line's ink above the footline's, and one past it continues on
-the next page; each is named once by W0384, keyed by the frame. lualatex
-sets every one of these frames on its one page, the text "extends
-unpleasantly over the bottom" (beamer user guide §8.1). Over `Layout.Out`
-on an invented moloch deck (10 pt, the shipped Fira Sans for every face):
-twenty-one lines below a 2 pt rule-free skip overrun by about 1.6 pt, two
-of them on two overlay steps the same, twenty-five lines by about 48 pt,
-and twenty-one alone fit. At `ee2dec5d` the first frame shipped a second
-page holding its last line. Invented words. -/
+/-- The ladder's decision for the frame at body index `source`, step `step`. -/
+private def decision (f : Layout.Fitted) (source step : Nat) : Option Ir.FrameFit :=
+  (f.decisions.find? (·.1 == ⟨source, step⟩)).map (·.2)
+
+/-- The overflow ladder's diagnostics naming frame `label`. -/
+private def ladderNamed (out : Layout.Out) (label : String) : Array Diag :=
+  out.diags.filter fun d => (d.code == "W0384" || d.code == "W0400") && d.subject == some label
+
+/-- **A frame a little taller than its page stands overfull on it; one that
+reaches past the gap above its footline continues, named with its whole
+overrun** (`Layout.runFitted`, `Ir.frameFit`): every overlay step of a frame
+not declared breakable is set once to measure how far past its text area
+its content reaches beyond what its glue shrinks, and decided by that
+overrun. Within the gap beamer's `\footheight` keeps above the footline
+(4 pt, beamerbaseframecomponents.sty:165-167) the step ships on its one
+page, its ink above the footline's, named once by W0400; past it, or where
+footnotes stand at the floor and the overhang would reach them, the step
+continues on the next page as before, named by W0384 with the whole
+overrun, which one more line grows by exactly one baselineskip. Over
+`Layout.Out` on an invented moloch deck (10 pt, the shipped Fira Sans for
+every face): twenty-one lines below a 2 pt skip overrun by about 1.6 pt
+here — a frame lualatex fits, its text area ending lower than this engine's
+(owed) — two overlay steps as tall, a step of an `\only` the same beside a
+step that reaches past the gap, and a picture below seventeen lines;
+twenty-five and twenty-six lines continue; twenty-one alone fit; a 2 pt
+overrun below a footnote continues. At `ee2dec5d` every one of these frames
+that ran past its page shipped a continuation page, and W0384 stated only
+the first line past the page. Invented words. -/
 def overhangChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
   let some fira ← shippedFira | t "overhang: the shipped Fira Sans parses" false
+  let pic := "\\begin{tikzpicture}\\draw (0,0) rectangle (2,1.2);\\end{tikzpicture}"
   let (doc, ds) := elabStr (beamerDeck "\\usetheme{moloch}\n"
-    [("t", "\\vspace*{2pt}\n" ++ paras 21), ("t", paras 25), ("t", paras 21),
-     ("t", "\\vspace*{2pt}\n" ++ paras 20 ++ "\n\n\\pause\nKilo words.")])
+    [("t", "\\vspace*{2pt}\n" ++ paras 21), ("t", paras 25), ("t", paras 26), ("t", paras 21),
+     ("t", "\\vspace*{2pt}\n" ++ paras 20 ++ "\n\n\\pause\nKilo words."),
+     ("t", "\\vspace*{5pt}\nKilo words.\\footnote{Lima words.}\n\n" ++ paras 19),
+     ("t", "\\vspace*{14pt}\n" ++ paras 17 ++ "\n\n" ++ pic),
+     ("t", "\\vspace*{2pt}\n" ++ paras 20 ++
+       "\n\n\\alt<2>{Kilo words.\n\nLima words.\n\nMike words.\n\nNovember words.}{Kilo words.}")])
   t "overhang: the deck elaborates clean" (ds.all (·.severity != .error))
-  let out := layoutOf fira doc (Layout.Geom.ofPage doc.page)
-  let w0384 := out.diags.filter (·.code == "W0384")
-  t "overhang: a frame 1.6 pt taller than its page ships one page"
-    (framePages out 0 == 1)
-  t "overhang: an overlay frame within the gap ships one page per step"
-    (framePages out 3 == 2)
-  t "overhang: a frame 48 pt taller continues on a second page" (framePages out 1 == 2)
+  let f := fittedOf fira doc (Layout.Geom.ofPage doc.page)
+  let out := f.out
+  let gap := Dim.pt 4
+  t "overhang: a frame 1.6 pt past its text area ships one page, overfull within the gap"
+    (framePages out 0 == 1 && match decision f 0 1 with
+      | some (.overfull o) => 0 < o && o ≤ gap
+      | _ => false)
+  t "overhang: the overfull frame is named once, by W0400"
+    ((ladderNamed out "1").map (·.code) == #["W0400"])
+  t "overhang: a frame far past its page continues, named once by W0384 with its overrun"
+    (framePages out 1 == 2 && match decision f 1 1 with
+      | some (.continued o) =>
+        (ladderNamed out "2").map (·.message) == #[(Layout.continuedDiag (some "2") none o).message]
+      | _ => false)
+  -- The whole overrun, not the first line past the page: one more line
+  -- grows it by one baselineskip, the pitch of the fitting frame's lines.
+  let pitch := match (out.pages.findIdx? fun p => p.frameOrigin.any (·.source == 3)) with
+    | some i => let ys := bodyBaselines out i; (ys[1]?.getD 0) - (ys[0]?.getD 0)
+    | none => 0
+  t "overhang: W0384 states the whole overrun: one more line adds one baselineskip"
+    (0 < pitch && match decision f 1 1, decision f 2 1 with
+      | some (.continued a), some (.continued b) => withinSp (ptMilli 100) (b - a) pitch
+      | _, _ => false)
   t "overhang: a frame that fits ships one page, unnamed"
-    (framePages out 2 == 1 && !w0384.any (·.subject == some "3"))
-  t "overhang: an overhanging frame is named once, its steps' one loss, by the gap"
-    ((w0384.filter (·.subject == some "1")).size == 1 &&
-      (w0384.filter (·.subject == some "4")).size == 1 &&
-      w0384.all fun d => !(d.subject == some "1" || d.subject == some "4") ||
-        hasStr d.message "gap above its footline")
-  t "overhang: the continuing frame is named once, by its continuation"
-    ((w0384.filter (·.subject == some "2")).size == 1 &&
-      w0384.all fun d => d.subject != some "2" || hasStr d.message "continues on the next page")
+    (framePages out 3 == 1 && (ladderNamed out "4").isEmpty && decision f 3 1 == none)
+  t "overhang: an overlay frame within the gap ships one page per step, named once"
+    (framePages out 4 == 2 && (ladderNamed out "5").map (·.code) == #["W0400"])
+  t "overhang: a frame a point past its page below a footnote continues rather than reach it"
+    (framePages out 5 == 2 && (ladderNamed out "6").map (·.code) == #["W0384"] &&
+      match decision f 5 1 with
+      | some (.continued o) => 0 < o && o ≤ gap
+      | _ => false)
+  -- On every page of that frame the body's ink stays above the notes'.
+  t "overhang: the body's ink never reaches the footnotes"
+    (out.pages.all fun p => !p.frameOrigin.any (·.source == 5) ||
+      let notes := p.lines.filter (·.note)
+      let body := p.lines.filter fun l => !l.note && !l.furniture
+      notes.all fun n => body.all fun l =>
+        l.y + (Layout.segsInk fira l.segs).2 < n.y - (Layout.segsInk fira n.segs).1)
+  t "overhang: a picture a point past the text area stands on its frame's one page"
+    (framePages out 6 == 1 && (ladderNamed out "7").map (·.code) == #["W0400"])
+  t "overhang: each overlay step is decided on its own, as beamer sets each step's page"
+    (framePages out 7 == 3 &&
+      (match decision f 7 1, decision f 7 2 with
+       | some (.overfull _), some (.continued _) => true
+       | _, _ => false) &&
+      ((ladderNamed out "8").map (·.code)).qsort (· < ·) == #["W0384", "W0400"])
   -- The overhang stays above the footline's ink: the last body line's
   -- deepest glyph against the frame number's tallest.
   let page := out.pages[0]?.getD {}
@@ -78,20 +123,24 @@ def overhangChecks (ref : IO.Ref (List String)) : IO Unit := do
      | some l, some f =>
        l.y + (Layout.segsInk fira l.segs).2 < f.y - (Layout.segsInk fira f.segs).1
      | _, _ => false)
+  t "overhang: the shipped pages are the setting the ladder recorded"
+    (out.pages.size == (Layout.run (Layout.Geom.ofPage doc.page) fira none f.setting).pages.size)
 
 /-- **A frame's declared `[squeeze]` sets its lists as beamer's squeeze sets
-them, and the web deck squeezes the lists of a frame the page fitted only by
-shrinking its glue** (`Ir.frameSqueeze`, `Layout.squeezedFrames`): beamer's
-`\beamer@cramped` sets `\itemsep0pt` in every list the frame opens
-(beamerbaseframesize.sty:21-22), so nineteen invented items stand one
-baselineskip apart, lualatex's 11.955 bp, held to a tenth of a point; a web
-stage has no glue to shrink, so a frame the page fitted only past its glue's
-natural size — nineteen items on a page their itemsep shrinks to fit,
-lualatex's 13.317 bp apart, which the page keeps — sets its lists squeezed
-on the web, the floor that glue shrinks to, and a frame of paragraphs with
-no list is left alone. Over `Layout.Out` and the typed HTML tree. At
-`ee2dec5d` `[squeeze]` was named and ignored, and the web stage of the
-nineteen-item frame scrolled two items out of view. Invented words. -/
+them, and the web deck squeezes the lists of a frame the page could not set
+at its glue's natural size** (`Ir.frameSqueeze`, `Layout.runFitted`):
+beamer's `\beamer@cramped` sets `\itemsep0pt\topsep0.5pt` in every list the
+frame opens (beamerbaseframesize.sty:21-22), so nineteen invented items
+stand one baselineskip apart, lualatex's 11.955 bp, held to a tenth of a
+point; a web stage has no glue to shrink, so a frame the page fitted only
+by shrinking its glue — nineteen items on a page their itemsep shrinks to
+fit, lualatex's 13.317 bp apart, which the page keeps — sets its lists
+squeezed on the web, the floor that glue shrinks to, and a frame of
+paragraphs with no list is left alone. Over `Layout.Out` and the typed HTML
+tree: the squeezed stages' class, and the sheet's rules setting their items
+with no gap and a trivlist inside an item at its half point. At `ee2dec5d`
+`[squeeze]` was named and ignored, and the web stage of the nineteen-item
+frame scrolled two items out of view. Invented words. -/
 def squeezeChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
   let some fira ← shippedFira | t "squeeze: the shipped Fira Sans parses" false
@@ -99,7 +148,8 @@ def squeezeChecks (ref : IO.Ref (List String)) : IO Unit := do
     [("t,squeeze", items 19), ("t", items 19), ("t", "\\vspace*{2pt}\n" ++ paras 21)])
   t "squeeze: the deck elaborates clean, the option read"
     (ds.all (·.severity != .error) && !ds.any fun d => d.code == "N0102" && hasStr d.message "squeeze")
-  let out := layoutOf fira doc (Layout.Geom.ofPage doc.page)
+  let f := fittedOf fira doc (Layout.Geom.ofPage doc.page)
+  let out := f.out
   let gaps (page : Nat) : Array Dim.Sp :=
     let ys := bodyBaselines out page
     (ys.zip (ys.extract 1 ys.size)).map fun (a, b) => b - a
@@ -108,10 +158,9 @@ def squeezeChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "squeeze: the page keeps an unsqueezed frame's shrunk itemsep, as lualatex's"
     ((gaps 1).size == 18 &&
       withinSp (ptMilli 100) ((gaps 1).foldl (· + ·) 0 / 18) (ptMilli 13317))
-  let squeezed := Layout.squeezedFrames doc out
   t "squeeze: the web squeezes the frame the page shrank, and no other"
-    (squeezed == #[1])
-  let web := { doc with body := Ir.squeezeFrames doc.body squeezed }
+    (f.webSqueeze == #[1])
+  let web := { doc with body := Ir.squeezeFrames doc.body f.webSqueeze }
   let (head, body, _) := HtmlDoc.emitTree {} web
   let classes := (slideStages body).map fun n => match n with
     | .elem _ attrs _ => (HtmlDoc.attrOf? attrs "class").getD ""
@@ -119,17 +168,29 @@ def squeezeChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "squeeze: the declared and the shrunk frame's stages carry the squeeze class"
     (classes.map (hasStr · "squeeze") == #[true, true, false])
   let css := treeCssList "" head.toList
-  t "squeeze: the sheet sets a squeezed frame's items with no itemsep"
-    (hasStr css "section.slide.squeeze li")
+  let rules := (css.splitOn "}").filterMap fun chunk => match chunk.splitOn "{" with
+    | [sel, decls] => some (sel, decls)
+    | _ => none
+  t "squeeze: the sheet sets a squeezed frame's items with no gap between them"
+    (rules.any fun (sel, decls) =>
+      hasStr sel "section.slide.squeeze li + li" && hasStr decls "margin-top: calc(0.000rem")
+  t "squeeze: a trivlist in a squeezed frame's item takes the squeeze's half point"
+    ((cssRulesOf css
+      "section.slide.squeeze li, section.slide.squeeze dd, section.slide.squeeze blockquote").any
+      (hasStr · s!"--{Ir.trivlistSkipName}:"))
 
-/-- **A breakable frame keeps a block's title with its body**
-(`Layout.Spacing.Page.keepHeading`): beamer's block is one box, so in a frame
-declared `[allowframebreaks]` it never leaves its title alone at a page's
-foot; nineteen invented paragraphs before a two-paragraph block put the
-title on the page's last line, and the title opens the continuation with
-its body, as lualatex sets the block whole there. Over `Layout.Out`. At
-`ee2dec5d` the title stood alone at the first page's foot. Invented
-words. -/
+/-- **A breakable frame keeps a block's title with its body, and flow keeps
+LaTeX's own break** (`Layout.Spacing.Page.keepHeading`): beamer's block is
+one box, so in a frame declared `[allowframebreaks]` it never leaves its
+title alone at a page's foot; nineteen invented paragraphs before a
+two-paragraph block put the title on the page's last line, and the title
+opens the continuation with its body, as lualatex sets the block whole
+there. In an article, beamerarticle's block opens with its title in bold and
+no `\nobreak`, so its body may break after its first line, as lualatex's
+may: a sweep of invented paragraphs before a block of two lines finds the
+title and the first line on one page and the second on the next. Over
+`Layout.Out`. At `ee2dec5d` the breakable frame's title stood alone at the
+first page's foot. Invented words. -/
 def breakableTitleChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
   let some fira ← shippedFira | t "breakable title: the shipped Fira Sans parses" false
@@ -137,13 +198,26 @@ def breakableTitleChecks (ref : IO.Ref (List String)) : IO Unit := do
     [("t,allowframebreaks", paras 19 ++
       "\n\n\\begin{block}{Alpha}\nLima words.\n\nMike words.\n\\end{block}")])
   t "breakable title: the deck elaborates clean" (ds.all (·.severity != .error))
-  let out := layoutOf fira doc (Layout.Geom.ofPage doc.page)
-  let pageOf (word : String) : Option Nat :=
+  let out := (fittedOf fira doc (Layout.Geom.ofPage doc.page)).out
+  let pageOf (out : Layout.Out) (word : String) : Option Nat :=
     out.pages.findIdx? fun p => p.lines.any fun l => hasStr (lineText l) word
   t "breakable title: the block's title stands on its body's page"
-    (match pageOf "Alpha", pageOf "Lima" with
+    (match pageOf out "Alpha", pageOf out "Lima" with
      | some a, some l => a == l
      | _, _ => false)
   t "breakable title: the frame continues" (out.pages.size == 2)
+  let article (n : Nat) : String :=
+    "\\documentclass{article}\n\\usepackage{beamerarticle}\n\\begin{document}\n" ++
+      "\n\n".intercalate ((List.range n).map fun i =>
+        s!"Kilo {i + 1} words in an invented paragraph long enough to fill a line of the " ++
+          "article's measure, more or less.") ++
+      "\n\n\\begin{block}{Alpha}\nLima words.\\\\\nMike words.\n\\end{block}\n\\end{document}\n"
+  let splits := (List.range 30).filter fun k =>
+    let out := (fittedOf fira (elabStr (article (30 + k))).1).out
+    match pageOf out "Alpha", pageOf out "Lima", pageOf out "Mike" with
+    | some a, some l, some m => a == l && m == l + 1
+    | _, _, _ => false
+  t "breakable title: in flow a block's body breaks after its first line, as LaTeX's may"
+    (!splits.isEmpty)
 
 end Tests.FrameFit

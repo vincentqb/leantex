@@ -764,13 +764,15 @@ def build (ui : Ui) (file : String) : IO UInt32 := do
         | none => s!"no patterns for '{doc.info.locale.tag}'") (← since t)
       let t ← IO.monoMsNow
       let geom := Layout.Geom.ofPage doc.page
-      let out := Layout.run geom fs pats doc imgs
+      -- The pages as the overflow ladder sets them (`Layout.runFitted`); the
+      -- frames it found the page could not set at their glue's natural size,
+      -- whose lists the web deck, which has no glue to shrink, squeezes
+      -- (`Ir.squeezeFrames`).
+      let fitted := Layout.runFitted geom fs pats doc imgs
         (frameSpans := Layout.frameSpansForPdf doc reqSpans.frames)
         (pictureSpans := Layout.pictureSpansForPdf doc reqSpans.images)
-      -- The frames the page fitted only past their glue's natural size: the
-      -- web deck, which has no glue to shrink, squeezes their lists
-      -- (`Layout.squeezedFrames`, read off the IR as `Ir.squeezeFrames`).
-      let squeezed := Layout.squeezedFrames doc out
+      let out := fitted.out
+      let squeezed := fitted.webSqueeze
       let layoutDiags := out.diags.map sourceDiag
       resolved := resolved.append (← ui.resolve doc.allow allowAll (outputs := outputs) layoutDiags)
       ui.phase "layout" s!"{out.pages.size} pages" (← since t)

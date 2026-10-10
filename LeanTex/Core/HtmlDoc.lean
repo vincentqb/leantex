@@ -2483,13 +2483,25 @@ lineage (`Ir.trivlistSkipFor`, `Ir.floatSpaceFor`), in the page's unit:
 gap on top, a figure being the `{center}` it opens — a declared
 `\floatsep` alone. Declared where its `--topsep` is, so each level's float
 reads its own level's space. -/
-private def lineageSkipDecls (doc : Doc) (depth : Nat) : String :=
+private def lineageSkipDecls (doc : Doc) (depth : Nat) (squeezed : Bool := false) : String :=
   let size := doc.page.fontSize
   let t := (Ir.trivlistSkipFor .beamer doc.tokens size depth).width.resolve size 0
   let float := match Ir.floatSpaceFor .beamer doc.tokens size depth with
-    | (_, true) => s!"calc(var(--{Ir.trivlistSkipName}) + var(--parskip, 0rem))"
+    | (_, true) => if squeezed then s!"calc({lineageLength doc t} + var(--parskip, 0rem))"
+      else s!"calc(var(--{Ir.trivlistSkipName}) + var(--parskip, 0rem))"
     | (g, false) => lineageLength doc (g.width.resolve size 0)
-  s!"--{Ir.trivlistSkipName}: {lineageLength doc t}; --floatsep: {float};"
+  -- A squeezed frame's trivlist inside a list item takes the `\topsep0.5pt`
+  -- beamer's squeeze leaves in force (`Ir.squeezedTopsep`), as the page's
+  -- does; its floats keep their own space, as the page's do.
+  let topsep := if squeezed then Ir.squeezedTopsep.width.resolve size 0 else t
+  s!"--{Ir.trivlistSkipName}: {lineageLength doc topsep}; --floatsep: {float};"
+
+/-- Whether any of the document's frames sets its lists squeezed
+(`Ir.frameSqueeze`). -/
+private def anySqueezed (doc : Doc) : Bool :=
+  doc.body.any fun b => match b with
+    | .frame _ _ _ _ fbody => Ir.frameSqueeze fbody != .none
+    | _ => false
 
 /-- In beamer's lineage, the top level's trivlist and float spaces on the
 root (`lineageSkipDecls`). A declared `\topsep` or `\floatsep` is stated
@@ -2509,8 +2521,13 @@ private def lineageLevelRules (doc : Doc) : String :=
   | .beamer =>
     let within := ["li", "dd", "blockquote"]
     let deep := within.flatMap fun o => within.map (o ++ " " ++ ·)
+    let sq (sels : List String) := sels.map ("section.slide.squeeze " ++ ·)
     s!"{", ".intercalate within} \{ {lineageSkipDecls doc 1} }\n" ++
-    s!"{", ".intercalate deep} \{ {lineageSkipDecls doc 2} }\n"
+    s!"{", ".intercalate deep} \{ {lineageSkipDecls doc 2} }\n" ++
+    (if anySqueezed doc then
+      s!"{", ".intercalate (sq within)} \{ {lineageSkipDecls doc 1 true} }\n" ++
+      s!"{", ".intercalate (sq deep)} \{ {lineageSkipDecls doc 2 true} }\n"
+    else "")
   | .sizeFile | .web => ""
 
 /-- The footline band's box as the stage lengths `footlineCss` reads: its
@@ -6091,9 +6108,7 @@ public def baseCss (cfg : Config) (doc : Doc) (pairs : List (Nat × Nat) := []) 
   "  margin-bottom: var(--ltx-capsep-top); }\n" ++
   blockGapCss doc.docClass.record.lists doc.page.fontSize doc.tokens pairs
     (shaped := [Ir.TitledKind.block, .alert, .example].any fun k => (Ir.blockShapeOf doc.styles k).isSome)
-    (squeezed := doc.body.any fun b => match b with
-      | .frame _ _ _ _ fbody => (Ir.frameSqueeze fbody).1 != .none
-      | _ => false) ++
+    (squeezed := anySqueezed doc) ++
   -- Slides: the class-split deck/handout rules, header type included
   -- (`slideCss`); the standout rule below holds on both media.
   slideCss doc ++
@@ -8944,7 +8959,7 @@ public def blockNode (cfg : Config) (b : Block) : Node :=
     -- beamer's squeezed list spacing, declared or set by the overflow
     -- ladder (`Ir.frameSqueeze`), read by the sheet's squeezed list rules
     -- (`squeezeListRules`).
-    let cls := if (Ir.frameSqueeze body).1 != .none then cls ++ " squeeze" else cls
+    let cls := if Ir.frameSqueeze body != .none then cls ++ " squeeze" else cls
     let listingFg := if standout then some design.standout.fg
       else if valign matches .golden then design.titlepage.map (·.fg) else none
     let bodyCfg := { cfg.into with

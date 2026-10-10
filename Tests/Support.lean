@@ -1512,6 +1512,18 @@ def layoutOf (fonts : Font.FontSet) (doc : Ir.Doc)
   let out := Layout.run geom fonts pats doc imgs
   { out with diags := alphaDiags ++ out.diags }
 
+/-- A document set as the driver sets the pages it ships, through the
+overflow ladder (`Layout.runFitted`), its math alphabet scopes resolved first
+as `layoutOf` resolves them. -/
+def fittedOf (fonts : Font.FontSet) (doc : Ir.Doc)
+    (geom : Layout.Geom := Layout.Geom.ofPage doc.page)
+    (pats : Option Hyphen.Patterns := none)
+    (imgs : Image.Store := {}) : Layout.Fitted :=
+  let family := fonts.math.bind (fonts.fonts[·]?) |>.map (·.family) |>.getD "math face"
+  let (doc, alphaDiags) := Ir.resolveMathAlphas fonts.mathAlphabets family doc
+  let f := Layout.runFitted geom fonts pats doc imgs
+  { f with out := { f.out with diags := alphaDiags ++ f.out.diags } }
+
 /-- The font set a golden fixture lays out under in the suite: `oneFace`,
 plus the math face a build would resolve — `mathSet` (the shipped Fira
 Math) when the fixture declares a math face, else `FontDiscovery.pickMathFace`
@@ -1963,6 +1975,12 @@ resolution as every test artifact. -/
 def dvL (fonts : Font.FontSet) (src : String) : Array Diag :=
   let (doc, ds) := elabStr src
   ds ++ (layoutOf fonts doc).diags
+
+/-- Diagnostics after layout through the overflow ladder (`fittedOf`), as
+the driver reports them. -/
+def dvF (fonts : Font.FontSet) (src : String) : Array Diag :=
+  let (doc, ds) := elabStr src
+  ds ++ (fittedOf fonts doc).out.diags
 
 /-- Diagnostics after the HTML backend. -/
 def dvH (src : String) : Array Diag :=

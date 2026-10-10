@@ -66,6 +66,7 @@ import Tests.BlockRegionFit
 import Tests.BlockHeaderClearance
 import Tests.FrameArea
 import Tests.FrameGeometry
+import Tests.FrameFit
 import Tests.PaletteTextEpoch
 import Tests.GroupScope
 import LeanTex.Core.GroupContract
@@ -1341,7 +1342,24 @@ def reports : List Report := [
       thm% CodeColor.tone_meets]
     accept := ["thirteen assertions fail on the tree before the fix: ten artifact ones, in PDF and HTML alike — in the default style the hole set in the style's error red and the raised error in its bold exception red, in the friendly style the raised error took the keywords' green, and under an invented palette, its error colour named by role or derived, both kept the style's colours — and the formatcom line, the two builds a declared style changes no page of, and that style's naming",
       "a presentation deck's hole and not-implemented slides, in PDF and HTML: both markers in the deck's alert, every other listing token in a colour its palette derives, minted's formatcom one info line over its listings where each listing had warned of an unknown option, and its declared style, which now colours no token there, named once"]
-    state := .guarded "9ec36474" .before .author }
+    state := .guarded "9ec36474" .before .author },
+  { id := "R144", date := "2026-10-10"
+    what := "A frame not declared breakable that ran a point or two past its page shipped a continuation page holding its last line, where the slide class sets it overfull on its one page; a declared squeeze was named and ignored, the web deck scrolled a frame the page fitted by shrinking its lists' glue, and a breakable frame left a block's title alone at a page's foot"
+    pins := [check% Tests.FrameFit.overhangChecks, check% Tests.FrameFit.squeezeChecks,
+      check% Tests.FrameFit.breakableTitleChecks, thm% Ir.frameFit_between,
+      thm% Ir.frameFit_id, thm% Layout.frameFit_accounts, thm% Layout.runFitted_accounts,
+      thm% Layout.runFitted_projects]
+    accept := ["nine assertions fail with the fix reverted onto the recorded commit: a frame 1.6 pt too tall and an overlay frame as tall shipping a page per step and named by the gap, the declared squeeze read and its items one baselineskip apart, the web deck squeezing the frame the page shrank with its stage's class and rule, and the breakable frame's block title on its body's page",
+      "two presentation decks ship as many pages as their reference typesetting, unchanged by the ladder"]
+    state := .guarded "438dedf3" .revert .author },
+  { id := "R145", date := "2026-10-10"
+    what := "a frame declared to shrink is set as one not declared so, where the slide class sets it again at a wider measure and scales it down to fit its page"
+    pins := []
+    state := .owed "the beamer frame layout owner: a declared shrink set at the measure over its factor and scaled by it" ["frameShrinkChecks"] },
+  { id := "R146", date := "2026-10-10"
+    what := "a slide frame's text area ends above the slide class's, about two and a half points under the moloch-style theme at ten points and by its footline's height where the footline is empty, and its lines stand a fraction of a point further apart, so a frame the slide class fits overruns here and one it sets a point overfull continues"
+    pins := []
+    state := .owed "the beamer frame layout owner: the frame's text area and line pitch as the slide class measures them" ["frameTextAreaChecks"] }
 ]
 
 /-- The reports guarded but never seen failing: a count that may fall and
@@ -1349,7 +1367,7 @@ never rise, and falls only when this line does. -/
 def unwitnessedBaseline : Nat := 10
 
 /-- The reports not closed, the same way. -/
-def owedBaseline : Nat := 2
+def owedBaseline : Nat := 4
 
 def Report.unwitnessed (r : Report) : Bool := r.state matches .unwitnessed
 

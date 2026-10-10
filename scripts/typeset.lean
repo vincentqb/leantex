@@ -207,7 +207,7 @@ and judges both a PDF and an HTML page"
     let alts := PlanLoss.pictureAlts doc spans.images store
     let imgDiags := imgDiags ++ ledger ++ alts
     let geom := Layout.Geom.ofPage doc.page
-    let out := Layout.run geom fs (Hyphen.forTag doc.info.locale.tag) doc store
+    let out := (Layout.runFitted geom fs (Hyphen.forTag doc.info.locale.tag) doc store).out
     let css : HtmlDoc.CssMode := match cssFor doc.output.css with
       | .own => .own
       | .bulma => .bulma

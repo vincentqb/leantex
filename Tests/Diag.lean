@@ -499,13 +499,19 @@ def diagWitness (one mapped withMath : Font.FontSet)
         "a \\multicolumn{2}{c}{x} & y & z \\\\\n\\end{tabular}"))
   | .W0338 => dvL one (dvDoc "" ("\\begin{tabular}{p{0.8\\linewidth}p{0.8\\linewidth}}\n" ++
       "a & b \\\\\n\\end{tabular}"))
-  -- A frame taller than its page with no [allowframebreaks]: the layout
-  -- closes the page mid-frame and the account fires once, naming the frame.
-  | .W0384 => dvL one (dvDeck "\\theme{moloch}\n"
+  -- A frame taller than its page with no [allowframebreaks], past the gap
+  -- above its footline: the page continues it and the ladder names it once,
+  -- with its whole overrun.
+  | .W0384 => dvF one (dvDeck "\\theme{moloch}\n"
       ("\\begin{frame}{Too tall}\n" ++
        String.join (List.replicate 30 "one line\n\n") ++ "\\end{frame}\n" ++
        "\\begin{frame}[standout]\n" ++
        String.join (List.replicate 30 "one line\n\n") ++ "\\end{frame}"))
+  -- A frame a point or two past its text area: the page stands it there, in
+  -- the gap above its footline, and the ladder names it once.
+  | .W0400 => dvF one (dvDeck "\\theme{moloch}\n"
+      ("\\begin{frame}{Nearly fits}\n\\vspace*{12pt}\n" ++
+       String.join (List.replicate 16 "one line\n\n") ++ "\\end{frame}"))
   -- A fill before more of its list item: the web slide cannot grow it.
   | .W0399 => dvH (dvDeck ""
       "\\begin{frame}\n\\begin{itemize}\n\\item Kilo\n\\vfill\nLima\n\\end{itemize}\n\\end{frame}")
