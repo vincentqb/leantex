@@ -560,6 +560,14 @@ def backendFiles : List String :=
    "LeanTex/Core/PdfStruct.lean", "LeanTex/Core/Html.lean", "LeanTex/Core/HtmlDoc.lean",
    "LeanTex/Core/MathMl.lean", "LeanTex/Core/MarkdownDoc.lean"]
 
+/-- A temporary directory or file made outside Host, as a code token: on Lean
+v4.34.1 the toolchain's own temporary-directory and temporary-file calls end
+the process with a segmentation fault when the temporary root is missing,
+so the driver makes every scratch directory through `Host.withScratch`. The
+shared string and line-comment boundary applies, with its stated limits. -/
+def tempRootOutsideHost (l : String) : Bool :=
+  ["withTempDir", "createTempDir", "withTempFile", "createTempFile"].any (bannedWord · l)
+
 /-- `IO`, or a name that runs effects without it (`BaseIO`, `EIO`, and the
 escapes that run either from pure code), as a code token, using the same
 string and line-comment boundary as the banned-keyword gate. A block
@@ -1306,6 +1314,14 @@ def gates : List Gate := [
   breaks the theorem artifact_flag_free instead of growing the list.
   Fix: make it a document declaration (\\output) rather than a flag; a
   flag about where/when/how-loudly goes on the list, deliberately." },
+  { applies := fun f => (f.startsWith "LeanTex/" || f == "Main.lean") && f != "LeanTex/Cli/Host.lean"
+    flag := tempRootOutsideHost
+    what := fun f => s!"a temporary directory or file made outside Host in {f}"
+    help := "  On Lean v4.34.1 the toolchain's temporary-directory and temporary-file
+  calls end the process with a segmentation fault when the temporary root
+  is missing.
+  Fix: make the directory with Host.withScratch, whose failure is an
+  IO.Error naming the root." },
   { applies := fun f => f.startsWith "LeanTex/Core/" || f == "LeanTex/Cli/World.lean"
     flag := ioInCore
     what := fun f => s!"IO in {f}"
@@ -2095,8 +2111,17 @@ def selftest : IO UInt32 := do
     ("+  | x => { s with field := v }", false),
     ("+  | .text s => s", false)]
 
-  -- `addedByFile` hands these two checks their lines with the `+` already
+  -- `addedByFile` hands these checks their lines with the `+` already
   -- stripped, unlike the whole-diff checks above.
+  expect "tempRootOutsideHost" tempRootOutsideHost [
+    ("    let result ← try IO.FS.withTempDir fun dir => do", true),
+    ("  let dir ← IO.FS.createTempDir", true),
+    ("  let (h, path) ← IO.FS.createTempFile", true),
+    ("  IO.FS.withTempFile fun h path => do", true),
+    ("    Host.withScratch fun work => do", false),
+    ("  -- IO.FS.withTempDir crashes here", false),
+    ("  let note := \"withTempDir\"", false)]
+
   expect "ioInCore" ioInCore [
     ("def scan (roots : List String) : IO (Array Face) := do", true),
     ("    let bytes ← IO.FS.readBinFile path", true),

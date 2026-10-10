@@ -82,13 +82,18 @@ public def human (color : Bool) (d : Diag) (showOutput : Bool := false) : String
     | none => ""
   head ++ scope ++ location ++ trigger ++ count ++ reason ++ recovery ++ suggestion
 
-public def humanSummary (color : Bool) (file : String) (errors : Nat) (ms : Nat) : String :=
+/-- A run's verdict line. `written` names the artifacts a failed run still
+wrote, so a reader can tell them from stale ones. -/
+public def humanSummary (color : Bool) (file : String) (errors : Nat) (ms : Nat)
+    (written : Array String := #[]) : String :=
   let file := humanText "\\n" file
   if errors == 0 then
     s!"{sgr color "1;32" "✔"} {file} ({ms} ms)"
   else
     let noun := if errors == 1 then "error" else "errors"
-    s!"{sgr color "1;31" "✖"} {file} — {errors} {noun} ({ms} ms)"
+    let wrote := if written.isEmpty then "" else
+      s!"; wrote {humanText "\\n" (", ".intercalate written.toList)}"
+    s!"{sgr color "1;31" "✖"} {file} — {errors} {noun}{wrote} ({ms} ms)"
 
 public def humanDone (color : Bool) (file output : String) (pages ms : Nat) (notes : Nat := 0) :
     String :=
@@ -174,14 +179,22 @@ public def porcelainDiag (d : Diag) : String :=
     | none => all
   obj all
 
+/-- A `-v` phase line. `detail` can carry a tool's own words (a version
+line, a renderer's last line of standard error), so its control characters
+are spelled out as a diagnostic's are. -/
+public def humanPhase (name detail : String) (ms : Nat) : String :=
+  s!"{humanText "\\n" name}: {humanText "\\n" detail} ({ms} ms)"
+
 public def porcelainPhase (name detail : String) (ms : Nat) : String :=
   obj [("event", jstr "phase"), ("name", jstr name), ("detail", jstr detail),
     ("ms", toString ms)]
 
-public def porcelainSummary (file : String) (ok : Bool) (errors ms : Nat) : String :=
-  obj [("event", jstr "summary"), ("file", jstr file),
-    ("ok", if ok then "true" else "false"), ("errors", toString errors),
-    ("ms", toString ms)]
+public def porcelainSummary (file : String) (ok : Bool) (errors ms : Nat)
+    (written : Array String := #[]) : String :=
+  obj ([("event", jstr "summary"), ("file", jstr file),
+    ("ok", if ok then "true" else "false")] ++
+    (if written.isEmpty then [] else [("output", jstr (", ".intercalate written.toList))]) ++
+    [("errors", toString errors), ("ms", toString ms)])
 
 public def porcelainDone (file output : String) (pages ms : Nat) : String :=
   obj [("event", jstr "summary"), ("file", jstr file), ("ok", "true"),

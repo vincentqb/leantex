@@ -113,13 +113,14 @@ def Ui.phase (ui : Ui) (name detail : String) (ms : Nat) : IO Unit := do
     if ui.cfg.porcelain then
       ui.outStream.putStrLn (Render.porcelainPhase name detail ms)
     else
-      ui.errStream.putStrLn s!"{name}: {detail} ({ms} ms)"
+      ui.errStream.putStrLn (Render.humanPhase name detail ms)
 
-def Ui.summary (ui : Ui) (file : String) (errors ms : Nat) : IO Unit := do
+def Ui.summary (ui : Ui) (file : String) (errors ms : Nat) (written : Array String := #[]) :
+    IO Unit := do
   if ui.cfg.porcelain then
-    ui.outStream.putStrLn (Render.porcelainSummary file (errors == 0) errors ms)
+    ui.outStream.putStrLn (Render.porcelainSummary file (errors == 0) errors ms written)
   else if !ui.cfg.quiet then
-    ui.errStream.putStrLn (Render.humanSummary ui.color file errors ms)
+    ui.errStream.putStrLn (Render.humanSummary ui.color file errors ms written)
 
 def Ui.done (ui : Ui) (file output : String) (pages ms : Nat) (notes : Nat := 0) :
     IO Unit := do
@@ -988,7 +989,7 @@ in the HTML" (← since t)
         for d in unwritten do
           ui.diag d
         ui.accepted resolved.accepted
-        ui.summary file unwritten.size (← since t0)
+        ui.summary file unwritten.size (← since t0) written
         return exitFor unwritten.size 0 resolved.warnings ui.cfg.werror
       -- The hatch's other teeth: an `\allow` that never fired is stale
       -- acceptance and warns; what was accepted always prints.

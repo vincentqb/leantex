@@ -73,7 +73,17 @@ private def produce (tool wrapped : String) : IO ConvCache.Result := do
       let log ← if ← logPath.pathExists then
           pure (PicCache.Log.says (logTail (← IO.FS.readFile logPath)))
         else pure PicCache.Log.absent
-      return { outcome := PicCache.outcome ended.ran (!bytes.isEmpty) log, bytes }
+      -- An attempt that reached no verdict and left no log names its last
+      -- line of standard error too, a loader's or a wrapper's, with the
+      -- scratch directory's random name spelled out of it.
+      let said := ((((ended.err.splitOn "\n").map (·.trimAscii.toString)).filter (!·.isEmpty)).getLastD
+        "").replace work.toString "<scratch>"
+      let said := if said.length > 200 then (said.take 200).toString ++ "…" else said
+      let outcome := match PicCache.outcome ended.ran (!bytes.isEmpty) log, log with
+        | .inconclusive why, .absent => if said.isEmpty then .inconclusive why
+            else .inconclusive s!"{why}: {said}"
+        | o, _ => o
+      return { outcome, bytes }
   catch e => return { outcome := .inconclusive (toString e) }
 
 /-- Independent invocations never share scratch. Each captures its result

@@ -464,6 +464,28 @@ def machineLossChecks (ref : IO.Ref (List String))
     t s!"machine loss CLI killed version question: W0379 names how the question ended (exit {slow.exitCode})"
       (slow.exitCode == 0 && (recordsOf slow).any fun j => codeOf j == some "W0379" &&
         ((j.getObjValAs? String "message").toOption.any (hasStr · "version was not read (no version within")))
+    -- A renderer that names its version and then cannot start the render (a
+    -- shared library gone since): it leaves no log, so the attempt is no
+    -- verdict, and W0382 says what stopped it in the loader's words.
+    let unloadable := dir / "unloadable"
+    writeScript (unloadable / "lualatex") ("#!/bin/sh\nif [ \"$1\" = --version ]; then printf '%s\\n' 'synthetic boundary renderer 1'; exit 0; fi\n" ++
+      "printf 'luatex: error while loading shared libraries: libsynthetic.so.0: cannot open shared object file\\033]0;zz\\007\\n' >&2\nexit 127\n")
+    let stopped ← build boundary unloadable "unloadable" (dir / "unloadable-out" / "page.html")
+    t s!"machine loss CLI unloadable renderer: W0382 carries the loader's words (exit {stopped.exitCode})"
+      ((recordsOf stopped).any fun j => codeOf j == some "W0382" &&
+        ((j.getObjValAs? String "help").toOption.any (hasStr · "error while loading shared libraries")))
+    -- The same words on a human -v run, where a phase line repeats them: no
+    -- control character the renderer wrote reaches the terminal raw.
+    let human ← IO.Process.output {
+      cmd := binary.toString, cwd := some dir
+      args := #[boundary.toString, "-o", (dir / "unloadable-human" / "page.html").toString, "-v"]
+      env := #[("PATH", some unloadable.toString),
+        ("XDG_CACHE_HOME", some (dir / "cache-unloadable-human").toString),
+        ("LEANTEX_FONT", some font.toString)] }
+    let raw := human.stderr.toList.filter fun c =>
+      (c.toNat < 0x20 && c != '\n') || (0x7F ≤ c.toNat && c.toNat ≤ 0x9F)
+    t s!"machine loss CLI unloadable renderer: a human -v run prints no raw control character ({raw.length})"
+      (hasStr human.stderr "error while loading shared libraries" && raw.isEmpty)
   legacySlotChecks ref
 
 end Tests

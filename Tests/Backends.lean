@@ -2001,6 +2001,15 @@ def renderChecks (ref : IO.Ref (List String)) : IO Unit := do
     "\"help\":\"fix it\"}")
   t "porcelain summary" (Render.porcelainSummary "a.tex" false 2 17 ==
     "{\"event\":\"summary\",\"file\":\"a.tex\",\"ok\":false,\"errors\":2,\"ms\":17}")
+  t "porcelain summary of a failed run that wrote some artifacts names them"
+    (Render.porcelainSummary "a.tex" false 1 17 #["a.html", "a.md"] ==
+      "{\"event\":\"summary\",\"file\":\"a.tex\",\"ok\":false,\"output\":\"a.html, a.md\",\"errors\":1,\"ms\":17}")
+  t "human summary of a failed run that wrote some artifacts names them"
+    (Render.humanSummary false "a.tex" 1 17 #["a.html"] == "✖ a.tex — 1 error; wrote a.html (17 ms)")
+  t "human summary spells out a control character in a written path"
+    (Render.humanSummary false "a.tex" 1 17 #["a\nb.html"] == "✖ a.tex — 1 error; wrote a\\nb.html (17 ms)")
+  t "human phase line spells out a tool's control characters"
+    (Render.humanPhase "boundary" "x\u001b]0;t\u0007y" 3 == "boundary: x\\x1b]0;t\\x07y (3 ms)")
 
   -- render: human, no color
   t "human diag plain" (Render.human false d ==
