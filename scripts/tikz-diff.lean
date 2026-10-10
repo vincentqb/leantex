@@ -121,18 +121,19 @@ def pixelDiff (a b : Gray) : Nat := Id.run do
 def exactSame (a b : Gray) : Bool := a.w == b.w && a.h == b.h && a.px == b.px
 
 /-- The reference document: the probe in the standalone class, with the
-libraries its keys belong to, the palette entry the probes name, beamer's
-`\alert` (its default alerted text is red; the standalone is no beamer, so
-the name is undefined there, and the probe that groups statements under it
-would stop the run), and the faces the engine resolves for a document that
-declares none — set as the boundary sets them (`boundaryFonts`), so a
-label's letters are the same letters in both drawings. -/
+libraries its keys belong to, the palette entry the probes name, `\alert`
+as the engine reads it in the probe's unthemed document — bold, no colour
+(`Compat.alertStyled`); the standalone has no `\alert`, and beamer's red
+would hold the drawing against another colour — and the faces the engine
+resolves for a document that declares none — set as the boundary sets them
+(`boundaryFonts`), so a label's letters are the same letters in both
+drawings. -/
 def referenceDoc (kind : ProbeKind) (body : String) : String :=
   let pre := "\\documentclass[border=0pt]{standalone}\n\\usepackage{tikz}\n" ++
     "\\usetikzlibrary{arrows.meta, shapes.geometric, fit, decorations.pathreplacing, calc}\n" ++
     "\\usepackage{tikz-cd}\n\\usepackage{fontspec}\n\\setmainfont{DejaVu Sans}\n" ++
     "\\usepackage{unicode-math}\n\\setmathfont{TeX Gyre DejaVu Math}\n" ++
-    "\\definecolor{grid}{HTML}{2A6F4E}\n\\providecommand{\\alert}[1]{{\\color{red}#1}}\n" ++
+    "\\definecolor{grid}{HTML}{2A6F4E}\n\\providecommand{\\alert}[1]{{\\bfseries #1}}\n" ++
     "\\begin{document}\n"
   match kind with
   | .picture => pre ++ "\\begin{tikzpicture}\n" ++ body ++ "\n\\end{tikzpicture}\n\\end{document}\n"
