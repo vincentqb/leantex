@@ -13205,9 +13205,10 @@ private def collectVerbatim (r : Rd) (a : Acc) (covered : Option Ir.Color) (s : 
               for piece in run.tokens do
                 let (sourceColumn, text) := (pieces[k]?.map (·.2)).getD (0, piece.text)
                 k := k + 1
-                -- A line's site is a scalar that lays down ink: white space
-                -- names no token a reader could find.
-                let source := if piece.text.all Char.isWhitespace then none
+                -- A line's site is a scalar that lays down ink: white space,
+                -- which the display spelling sets as no-break spaces where
+                -- it must not break, names no token a reader could find.
+                let source := if piece.text.all (fun c => c.isWhitespace || c == '\u00a0') then none
                   else codeSource i sourceColumn text
                 body := body.push
                   (source.map (fun span => .located span #[.text piece.text]) |>.getD (.text piece.text))
