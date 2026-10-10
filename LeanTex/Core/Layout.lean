@@ -9938,11 +9938,15 @@ and TeX's interline rule places the box from its height, or past any
 `\baselineskip` when `more` stands in the box after the paragraph. Its lines
 stand `leading` apart by TeX's rule, the `\baselineskip` of the font the box
 sets them in, and the band after the box is spaced from its depth by TeX's
-rule too. -/
+rule too. A paragraph of the block's own list, no box's (`boxed` false: a
+template's title set without a box), stands its first line by that rule
+too, from the line above, at the `\baselineskip` TeX reads where the
+paragraph ends: its font's. -/
 public structure TexBox where
   inset : Sp
   more : Bool
   leading : Sp
+  boxed : Bool := true
   deriving Repr, Inhabited, DecidableEq
 
 /-- One paragraph, measured and ready to break: everything `kp` and line
@@ -13242,18 +13246,14 @@ the block walk resolves it (`Spacing.Context.xHeight`). -/
 public def titledPaddingOf (fs : FontSet) (geom : Geom) : Sp :=
   titledPadding geom.fontSize (fs.body.xHeight * geom.fontSize / fs.body.unitsPerEm)
 
-/-- A block title's `\baselineskip` under its font template — what its box's
-lines stand apart by and its `\strut` reads: where the template sets a named
-size (`Ir.templateStep`), the `\baselineskip` that size sets
-(`Ir.sizeFileLeading`), or on a size ladder of the document's own that size's
-leading; with no size, the page's own. The template's size wrapper sets the
+/-- A block title's `\baselineskip` under its font template
+(`Ir.blockTitleLeading`), resolved in the body's font: what its box's lines
+stand apart by and its `\strut` reads. The template's size wrapper sets the
 title's runs at that size itself. -/
 private def titleLeading (r : Rd) (font : Option (Array Inline)) : Sp :=
-  match font.bind Ir.templateStep with
-  | some s =>
-    if r.geom.scale == Ir.sizeScale then Ir.sizeFileLeading r.geom.fontSize r.geom.leading s
-    else Ir.leadingFor (Ir.scaleStepIn r.geom.scale r.geom.fontSize s) r.geom.leading
-  | none => Ir.leadingFor r.geom.fontSize r.geom.leading
+  (Ir.blockTitleLeading r.geom.scale r.geom.fontSize r.geom.leading
+    (MeasureValues.horizontal r.geom.textWidth r.geom.textHeight) font).resolve
+    r.geom.fontSize r.xHeight
 
 /-- A titled block's title colour box (beamerinnerthemedefault.sty, `block
 begin`), read at the block's epoch: a painted title is a colour box around
@@ -13356,9 +13356,12 @@ cancels it), its first line stands where TeX's interline rule puts its box
 (`TexBox`) and its lines its font's `\baselineskip` apart, `\strut` at its
 ends reading that `\baselineskip` when the template struts it, in the kind's
 title font (`Ir.blockTitleFont`) and ink on the page's ground — with the
-rules beside its own box around it. An empty title is the struts' line, or
-an empty line where nothing struts it, whose box then holds no paragraph and
-spends no `\parskip`. Then the arm's skips between, and the body's opening:
+rules beside its own box around it; a title with no box is a paragraph of
+the block's own list, its first line too where TeX's interline rule puts it
+under its font's `\baselineskip`. An empty title is the struts' line, or an
+empty line where nothing struts it, whose box then holds no paragraph and
+spends no `\parskip` — with no box, no line at all. Then the arm's skips
+between, and the body's opening:
 an untitled body opening the box around it stands those skips inside that
 box. A rule stands `sep` beside its box and `width` wide; one inside the
 line moves its box in by both. Returns the opened state, the body's indent
@@ -13374,12 +13377,15 @@ private def collectShapedOpen (r : Rd) (a : Acc) (kind : TitledKind) (shape : Ir
   let titleR := len (shape.inset .title .right)
   let titled := !title.isEmpty
   let showTitle := shape.showsTitle titled
+  -- An empty title with no box of its own sets a paragraph only where
+  -- struts stand in it.
+  let setsTitle := showTitle && (titled || shape.title.boxed || shape.title.strut)
   let font := Ir.blockTitleFont r.styles kind
   let titleLeading := titleLeading r font
   -- An empty title starts a paragraph in its box only where a strut does.
   let titleInset := if shape.title.parskip && (titled || shape.title.strut) then parskip else 0
   let between := r.resolve (Ir.blockSkipSum a.tokens (shape.skipsBetween titled))
-  let wholeInset := if showTitle then titleInset
+  let wholeInset := if setsTitle then titleInset
     else between.width + (if shape.whole == some true then parskip else 0)
   -- The boxes' edges, from the page's left: the whole box's, then the
   -- title box's inside it.
@@ -13399,7 +13405,7 @@ private def collectShapedOpen (r : Rd) (a : Acc) (kind : TitledKind) (shape : Ir
   let above := r.resolve (Ir.blockSkipSum a.tokens (shape.skipsAbove titled))
   let a := { a.vskip above with wantDefault := !a.frameTop }
   let a := if shape.whole.isSome then opens (a.flushGap r) .whole wx0 wx1 wholeInset else a
-  let a := if !showTitle then a else
+  let a := if !setsTitle then a else
     let look := Ir.titledLook a.pal kind
     let d := Ir.Design.ofPalette a.pal
     let titleInk := (d.inkOn (kind.roleStem ++ "titlefg")
@@ -13417,7 +13423,7 @@ private def collectShapedOpen (r : Rd) (a : Acc) (kind : TitledKind) (shape : Ir
       if shape.title.boxed then some { inset := titleInset, more := false, leading := titleLeading }
       else if shape.whole.isSome then
         some { inset := titleInset, more := true, leading := titleLeading }
-      else none
+      else some { inset := 0, more := false, leading := titleLeading, boxed := false }
     let strut := if shape.title.strut then some titleLeading else none
     let a := collectDisplay r a shown (ti - r.geom.hmargin) false r.geom.fontSize
       (baseStyle := { weight := .b }) (leaf := leaf) (span := leafCount title)
@@ -13428,13 +13434,13 @@ private def collectShapedOpen (r : Rd) (a : Acc) (kind : TitledKind) (shape : Ir
   -- holding the box spent the page's `\parskip` where the box opened, and
   -- the body's first paragraph stands below the arm's skips and the box's
   -- own `\parskip` inside it.
-  let a := if shape.whole.isSome && !showTitle then
+  let a := if shape.whole.isSome && !setsTitle then
       -- The box holds more than the body's first paragraph unless the
       -- body is that one paragraph.
       let more := !(body.size == 1 && body[0]? matches some (Ir.Block.para _))
       { a with boxOpener := some { inset := wholeInset, more := more
                                    leading := Ir.leadingFor r.geom.fontSize r.geom.leading } }
-    else if !showTitle then a.vskip between
+    else if !setsTitle then a.vskip between
     else (a.vskip between).wantGap
   (a, wx0 - r.geom.hmargin, wx1 - r.geom.hmargin)
 
@@ -15294,10 +15300,11 @@ private def placeParaLine (fs : FontSet) (j : ParaJob)
   let ns := if j.notes.isEmpty then #[] else
     (j.notes.filter fun n => (st.2.2 || st.2.1 < n.1) && n.1 < brk).map (·.2)
   -- A TeX box's later lines stand its own `\baselineskip` apart, by TeX's
-  -- interline rule from the line above.
+  -- interline rule from the line above, and so does a boxless paragraph's
+  -- first.
   let firstBaseline := match j.texBox with
     | some tb =>
-      if st.2.2 then some (texBoxBaseline fs b0 j tb g.1 (brk + 1 == j.items.size))
+      if st.2.2 && tb.boxed then some (texBoxBaseline fs b0 j tb g.1 (brk + 1 == j.items.size))
       else some (texBaselineGap tb.leading b0.boxDepth (lineStrutInk j.strut (segsInk fs g.1)).1)
     | none => if st.2.2 then j.firstBaseline else none
   let b1 := b1.openDisplayAt j st.2.2 g.2.1 g.1

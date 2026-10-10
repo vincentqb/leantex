@@ -7856,7 +7856,8 @@ public def blockStyleElements : List String := ["block", "alertblock", "exampleb
 
 /-- The `\style` keys a beamer block reads: its title's `font`
 (`blockTitleFont`) and its template (`blockShapeOf`); every other key is
-named where it is declared (W0104) rather than dropped in silence. -/
+named where it is declared (W0104) rather than dropped in silence, and kept
+out of the block's style, so nothing reads it. -/
 public def blockStyleKeys : List String := ["font", "shape"]
 
 /-- Elements a document may style. Section levels are `section`, `subsection`,
@@ -8477,11 +8478,6 @@ public def templateSize (base : Sp) (tpl : Array Inline) : Sp :=
   if let some (Inline.styled (Style.size s) _) := (tpl[0]? : Option Inline)
   then scaleStep base s else base
 
-/-- The named size a font template sets its content at, `templateSize`'s
-wrapper: `none` where it sets none. -/
-public def templateStep (tpl : Array Inline) : Option String :=
-  if let some (Inline.styled (Style.size s) _) := (tpl[0]? : Option Inline) then some s else none
-
 /-- The `\baselineskip` each named size sets under a class option, in
 milli-points, as its size file's `\@setfontsize` gives it: size10.clo:48-86
 (`\large` is `\@setfontsize\large\@xiipt{14}`), size11.clo and size12.clo
@@ -8526,6 +8522,24 @@ public def sizeFileLeading (body : Sp) (leading : Nat) (name : String) : Sp :=
     | some milli => Dim.pt 1 * (milli : Int) / 1000 * (leading : Int) / 1000
     | none => leadingFor (scaleStep body name) leading
   | none => leadingFor (scaleStep body name) leading
+
+/-- **A block title's `\baselineskip`**, which its box's lines stand apart by
+and its `\strut` reads (.7 of it above the baseline, .3 below), from the size
+its font template sets outermost: a `\fontsize`'s own leading (`size*` in
+`\setbeamerfont`), stretched by the page's `\linespread` as `\selectfont`
+stretches `\f@baselineskip`; a named size's, the size file's
+(`sizeFileLeading`) or, on a size ladder of the document's own, the engine's
+leading of that size; with no size, the page's. A length, its font-relative
+parts kept, so each backend resolves them in the font it sets: the one value
+the PDF's title box and the stylesheet's empty title box read. -/
+public def blockTitleLeading (scale : List (String × Nat)) (body : Sp) (leading : Nat)
+    (env : MeasureValues) (font : Option (Array Inline)) : Length :=
+  match (font.bind (·[0]?) : Option Inline) with
+  | some (.styled (.size s) _) =>
+    .ofSp (if scale == sizeScale then sizeFileLeading body leading s
+      else leadingFor (scaleStepIn scale body s) leading)
+  | some (.styled (.fontSize _ lead) _) => (lead.eval env.find).width.scale leading 1000
+  | _ => .ofSp (leadingFor body leading)
 
 /-- The token resolves to the strut it is defined as: at the slides
 class's `\large` title step, `frametitlepadding` and `frameTitleStrut`

@@ -44,6 +44,16 @@ title box sets the box, a line of its struts or of nothing, and every rule
 beside it once (`boxed`); a title's `\strut` and its lines read its own
 font's `\baselineskip` (`sized`); and beamer's default blocks place a sized
 title by the page's interline rule (`plainsized`).
+
+A second review's probes hold the rest: an empty title box under a declared
+size, strutted and not, in both artifacts (`emptybox`); a title with no box of
+its own, a paragraph of the block's list, empty the struts' line or no line at
+all (`plainempty`); a title font declared
+with `size*` standing its own `\baselineskip`, templated and in the default
+blocks (`starsized`, `plainstar`); `\usebeamercolor` binding only the channels
+its element sets (`chain`); a title font declared before the theme, and one
+declared with the star (`parentChecks`); and a block's unread style keys kept
+out of both artifacts, each the one refusal at its site.
 -/
 
 /-- A rule beside the title's box, hanging `.6em` into the margin, `.3em`
@@ -489,6 +499,300 @@ def channelsSource : String :=
   "\\end{frame}\n" ++
   "\\end{document}\n"
 
+/-- The title's box kept empty under declared title sizes: strutted at
+`\large`, two rules inside the line beside it; the alerted kind unstrutted,
+so its empty box holds no paragraph; the example strutted at `\small`. -/
+def emptyBoxSource : String :=
+  "\\documentclass[10pt,aspectratio=169]{beamer}\n" ++
+  "\\usetheme{moloch}\n" ++
+  "\\definecolor{probeInk}{HTML}{1F2A44}\n" ++
+  "\\definecolor{probeEdge}{HTML}{2E8B57}\n" ++
+  "\\definecolor{probeEdgeTwo}{HTML}{8B2E57}\n" ++
+  "\\setbeamercolor{normal text}{fg=probeInk,bg=white}\n" ++
+  "\\setbeamercolor{probe edge}{bg=probeEdge}\n" ++
+  "\\setbeamerfont{block title}{size=\\large}\n" ++
+  "\\setbeamerfont{block title example}{size=\\small}\n" ++
+  "\\setlength{\\parskip}{2pt}\n" ++
+  "\\makeatletter\n" ++
+  "\\newbox\\probe@box\n" ++
+  "\\setbeamertemplate{block begin}{%\n" ++
+  "  \\par\\vspace{4pt}%\n" ++
+  "  \\setbox\\probe@box\\vbox{\\hsize\\linewidth\\advance\\hsize by -6pt\n" ++
+  "    \\usebeamerfont*{block title}\\usebeamercolor[fg]{block title}%\n" ++
+  "    \\strut\\insertblocktitle\\strut\\par}%\n" ++
+  "  \\noindent{\\color{probeEdgeTwo}\\vrule width 1.5pt height \\ht\\probe@box depth \\dp\\probe@box}%\n" ++
+  "  \\hskip 1.5pt\\copy\\probe@box\\hskip 1pt{\\usebeamercolor[bg]{probe edge}%\n" ++
+  "    \\vrule width 2pt height \\ht\\probe@box depth \\dp\\probe@box}%\n" ++
+  "  \\par\\nobreak\\vskip 3pt\n" ++
+  "  \\usebeamerfont{block body}\\usebeamercolor[fg]{block body}}\n" ++
+  "\\setbeamertemplate{block end}{\\par\\vskip 5pt}\n" ++
+  "\\setbeamertemplate{block alerted begin}{%\n" ++
+  "  \\par\\vspace{4pt}%\n" ++
+  "  \\setbox\\probe@box\\vbox{\\hsize\\linewidth\\advance\\hsize by -3pt\n" ++
+  "    \\usebeamerfont*{block title alerted}\\usebeamercolor[fg]{block title alerted}%\n" ++
+  "    \\insertblocktitle\\par}%\n" ++
+  "  \\noindent\\copy\\probe@box\\hskip 1pt{\\usebeamercolor[bg]{probe edge}%\n" ++
+  "    \\vrule width 2pt height \\ht\\probe@box depth \\dp\\probe@box}%\n" ++
+  "  \\par\\nobreak\\vskip 3pt\n" ++
+  "  \\usebeamerfont{block body alerted}\\usebeamercolor[fg]{block body alerted}}\n" ++
+  "\\setbeamertemplate{block alerted end}{\\par\\vskip 5pt}\n" ++
+  "\\setbeamertemplate{block example begin}{%\n" ++
+  "  \\par\\vspace{4pt}%\n" ++
+  "  \\setbox\\probe@box\\vbox{\\hsize\\linewidth\\advance\\hsize by -3pt\n" ++
+  "    \\usebeamerfont*{block title example}\\usebeamercolor[fg]{block title example}%\n" ++
+  "    \\strut\\insertblocktitle\\strut\\par}%\n" ++
+  "  \\noindent\\copy\\probe@box\\hskip 1pt{\\usebeamercolor[bg]{probe edge}%\n" ++
+  "    \\vrule width 2pt height \\ht\\probe@box depth \\dp\\probe@box}%\n" ++
+  "  \\par\\nobreak\\vskip 3pt\n" ++
+  "  \\usebeamerfont{block body example}\\usebeamercolor[fg]{block body example}}\n" ++
+  "\\setbeamertemplate{block example end}{\\par\\vskip 5pt}\n" ++
+  "\\makeatother\n" ++
+  "\\begin{document}\n" ++
+  "\\begin{frame}[t]{Empty large}\n" ++
+  "Lead paragraph above.\n" ++
+  "\\begin{block}{Gamma title words}\n" ++
+  "Body words here.\n" ++
+  "\\end{block}\n" ++
+  "\\begin{block}{}\n" ++
+  "Untitled boxed words.\n" ++
+  "\\end{block}\n" ++
+  "Trailing paragraph below.\n" ++
+  "\\end{frame}\n" ++
+  "\\begin{frame}[t]{Empty bare}\n" ++
+  "Lead paragraph above.\n" ++
+  "\\begin{alertblock}{Delta title words}\n" ++
+  "Third body words.\n" ++
+  "\\end{alertblock}\n" ++
+  "\\begin{alertblock}{}\n" ++
+  "Untitled bare words.\n" ++
+  "\\end{alertblock}\n" ++
+  "Trailing paragraph below.\n" ++
+  "\\end{frame}\n" ++
+  "\\begin{frame}[t]{Empty small}\n" ++
+  "Lead paragraph above.\n" ++
+  "\\begin{exampleblock}{Epsilon title words}\n" ++
+  "Fifth body words.\n" ++
+  "\\end{exampleblock}\n" ++
+  "\\begin{exampleblock}{}\n" ++
+  "Untitled small words.\n" ++
+  "\\end{exampleblock}\n" ++
+  "Trailing paragraph below.\n" ++
+  "\\end{frame}\n" ++
+  "\\end{document}\n"
+
+/-- Rules painted through two `\usebeamercolor`s, the later element setting
+only the other channel: `\color{bg}` after a foreground-only element,
+`\color{fg}` after a background-only one, and `\usebeamercolor[bg]` of the
+foreground-only one; then a frame that gives it a background. -/
+def chainSource : String :=
+  "\\documentclass[10pt,aspectratio=169]{beamer}\n" ++
+  "\\usetheme{moloch}\n" ++
+  "\\definecolor{probeInk}{HTML}{1F2A44}\n" ++
+  "\\definecolor{probeEdge}{HTML}{2E8B57}\n" ++
+  "\\definecolor{probeEdgeTwo}{HTML}{8B2E57}\n" ++
+  "\\definecolor{probeRed}{HTML}{B22222}\n" ++
+  "\\definecolor{probeBlue}{HTML}{1E40AF}\n" ++
+  "\\setbeamercolor{normal text}{fg=probeInk,bg=white}\n" ++
+  "\\setbeamercolor{probe edge}{fg=probeEdgeTwo,bg=probeEdge}\n" ++
+  "\\setbeamercolor{probe fgonly}{fg=probeRed}\n" ++
+  "\\setbeamercolor{probe bgonly}{bg=probeBlue}\n" ++
+  "\\makeatletter\n" ++
+  "\\newbox\\probe@box\n" ++
+  "\\setbeamertemplate{block begin}{%\n" ++
+  "  \\par\\vskip\\medskipamount\n" ++
+  "  \\ifx\\insertblocktitle\\@empty\\else\n" ++
+  "    \\setbox\\probe@box\\vbox{\\hsize\\linewidth\n" ++
+  "      \\usebeamerfont*{block title}\\usebeamercolor[fg]{block title}%\n" ++
+  "      \\strut\\insertblocktitle\\strut\\par}%\n" ++
+  "    \\noindent\\llap{{\\usebeamercolor{probe edge}\\usebeamercolor{probe fgonly}\\color{bg}%\n" ++
+  "        \\vrule width 1.2pt height \\ht\\probe@box depth \\dp\\probe@box}\\hskip 2pt}%\n" ++
+  "    \\box\\probe@box\\par\\nobreak\n" ++
+  "  \\fi\n" ++
+  "  \\usebeamerfont{block body}\\usebeamercolor[fg]{block body}}\n" ++
+  "\\setbeamertemplate{block end}{\\par\\vskip\\smallskipamount}\n" ++
+  "\\setbeamertemplate{block alerted begin}{%\n" ++
+  "  \\par\\vskip\\medskipamount\n" ++
+  "  \\ifx\\insertblocktitle\\@empty\\else\n" ++
+  "    \\setbox\\probe@box\\vbox{\\hsize\\linewidth\n" ++
+  "      \\usebeamerfont*{block title alerted}\\usebeamercolor[fg]{block title alerted}%\n" ++
+  "      \\strut\\insertblocktitle\\strut\\par}%\n" ++
+  "    \\noindent\\llap{{\\usebeamercolor{probe edge}\\usebeamercolor{probe bgonly}\\color{fg}%\n" ++
+  "        \\vrule width 1.4pt height \\ht\\probe@box depth \\dp\\probe@box}\\hskip 2pt}%\n" ++
+  "    \\box\\probe@box\\par\\nobreak\n" ++
+  "  \\fi\n" ++
+  "  \\usebeamerfont{block body alerted}\\usebeamercolor[fg]{block body alerted}}\n" ++
+  "\\setbeamertemplate{block alerted end}{\\par\\vskip\\smallskipamount}\n" ++
+  "\\setbeamertemplate{block example begin}{%\n" ++
+  "  \\par\\vskip\\medskipamount\n" ++
+  "  \\ifx\\insertblocktitle\\@empty\\else\n" ++
+  "    \\setbox\\probe@box\\vbox{\\hsize\\linewidth\n" ++
+  "      \\usebeamerfont*{block title example}\\usebeamercolor[fg]{block title example}%\n" ++
+  "      \\strut\\insertblocktitle\\strut\\par}%\n" ++
+  "    \\noindent\\llap{{\\usebeamercolor{probe edge}\\usebeamercolor[bg]{probe fgonly}%\n" ++
+  "        \\vrule width 1.6pt height \\ht\\probe@box depth \\dp\\probe@box}\\hskip 2pt}%\n" ++
+  "    \\box\\probe@box\\par\\nobreak\n" ++
+  "  \\fi\n" ++
+  "  \\usebeamerfont{block body example}\\usebeamercolor[fg]{block body example}}\n" ++
+  "\\setbeamertemplate{block example end}{\\par\\vskip\\smallskipamount}\n" ++
+  "\\makeatother\n" ++
+  "\\begin{document}\n" ++
+  "\\begin{frame}[t]{Chain}\n" ++
+  "Lead paragraph above.\n" ++
+  "\\begin{block}{Alpha title words}\n" ++
+  "Body words here.\n" ++
+  "\\end{block}\n" ++
+  "\\begin{alertblock}{Beta title words}\n" ++
+  "Third body words.\n" ++
+  "\\end{alertblock}\n" ++
+  "\\begin{exampleblock}{Gamma title words}\n" ++
+  "Fourth body words.\n" ++
+  "\\end{exampleblock}\n" ++
+  "\\end{frame}\n" ++
+  "\\begin{frame}[t]{Chain set}\n" ++
+  "\\setbeamercolor{probe fgonly}{bg=probeBlue}\n" ++
+  "Lead paragraph above.\n" ++
+  "\\begin{block}{Delta title words}\n" ++
+  "Fifth body words.\n" ++
+  "\\end{block}\n" ++
+  "\\begin{exampleblock}{Epsilon title words}\n" ++
+  "Sixth body words.\n" ++
+  "\\end{exampleblock}\n" ++
+  "\\end{frame}\n" ++
+  "\\end{document}\n"
+
+/-- Title fonts declared with `size*`, each its own `\baselineskip`: the
+alerted title 13 pt on 17, the example 9 pt on 15; one-line and two-line
+titles. -/
+def starSizedSource : String :=
+  "\\documentclass[10pt,aspectratio=169]{beamer}\n" ++
+  "\\usetheme{moloch}\n" ++
+  "\\definecolor{probeInk}{HTML}{1F2A44}\n" ++
+  "\\definecolor{probeEdge}{HTML}{2E8B57}\n" ++
+  "\\setbeamercolor{normal text}{fg=probeInk,bg=white}\n" ++
+  "\\setbeamercolor{probe edge}{bg=probeEdge}\n" ++
+  "\\setbeamerfont{block title alerted}{size*={13}{17}}\n" ++
+  "\\setbeamerfont{block title example}{size*={9}{15}}\n" ++
+  "\\makeatletter\n" ++
+  "\\newbox\\probe@box\n" ++
+  "\\newcommand{\\probe@open}[1]{%\n" ++
+  "  \\par\\vskip\\medskipamount\n" ++
+  "  \\ifx\\insertblocktitle\\@empty\\else\n" ++
+  "    \\setbox\\probe@box\\vbox{\\hsize\\linewidth\n" ++
+  "      \\usebeamerfont*{block title#1}\\usebeamercolor[fg]{block title#1}%\n" ++
+  "      \\strut\\insertblocktitle\\strut\\par}%\n" ++
+  "    \\noindent\\llap{{\\usebeamercolor[bg]{probe edge}%\n" ++
+  "        \\vrule width 1.2pt height \\ht\\probe@box depth \\dp\\probe@box}\\hskip 2pt}%\n" ++
+  "    \\box\\probe@box\\par\\nobreak\n" ++
+  "  \\fi\n" ++
+  "  \\usebeamerfont{block body#1}\\usebeamercolor[fg]{block body#1}}\n" ++
+  "\\newcommand{\\probe@close}{\\par\\vskip\\smallskipamount}\n" ++
+  "\\defbeamertemplate*{block begin}{probe}{\\probe@open{}}\n" ++
+  "\\defbeamertemplate*{block end}{probe}{\\probe@close}\n" ++
+  "\\defbeamertemplate*{block alerted begin}{probe}{\\probe@open{ alerted}}\n" ++
+  "\\defbeamertemplate*{block alerted end}{probe}{\\probe@close}\n" ++
+  "\\defbeamertemplate*{block example begin}{probe}{\\probe@open{ example}}\n" ++
+  "\\defbeamertemplate*{block example end}{probe}{\\probe@close}\n" ++
+  "\\makeatother\n" ++
+  "\\begin{document}\n" ++
+  "\\begin{frame}[t]{Star sized}\n" ++
+  "Lead paragraph above.\n" ++
+  "\\begin{block}{Alpha title words}\n" ++
+  "Body words here.\n" ++
+  "\\end{block}\n" ++
+  "\\begin{alertblock}{Beta title words}\n" ++
+  "Third body words.\n" ++
+  "\\end{alertblock}\n" ++
+  "\\begin{exampleblock}{Gamma title words}\n" ++
+  "Fourth body words.\n" ++
+  "\\end{exampleblock}\n" ++
+  "Trailing paragraph below.\n" ++
+  "\\end{frame}\n" ++
+  "\\begin{frame}[t]{Star sized wrap}\n" ++
+  "Lead paragraph above.\n" ++
+  "\\begin{alertblock}{First title line\\\\Second title line}\n" ++
+  "Fifth body words.\n" ++
+  "\\end{alertblock}\n" ++
+  "\\begin{exampleblock}{Third title line\\\\Fourth title line}\n" ++
+  "Sixth body words.\n" ++
+  "\\end{exampleblock}\n" ++
+  "Trailing paragraph below.\n" ++
+  "\\end{frame}\n" ++
+  "\\end{document}\n"
+
+/-- beamer's default blocks under a `size*` title font, 13 pt on 17. -/
+def plainStarSource : String :=
+  "\\documentclass[10pt,aspectratio=169]{beamer}\n" ++
+  "\\usetheme{moloch}\n" ++
+  "\\definecolor{probeInk}{HTML}{1F2A44}\n" ++
+  "\\setbeamercolor{normal text}{fg=probeInk,bg=white}\n" ++
+  "\\setbeamerfont{block title}{size*={13}{17}}\n" ++
+  "\\begin{document}\n" ++
+  "\\begin{frame}[t]{Plain star}\n" ++
+  "Lead paragraph above.\n" ++
+  "\\begin{block}{Alpha heading words}\n" ++
+  "Body words here.\n" ++
+  "\\end{block}\n" ++
+  "\\begin{exampleblock}{Gamma heading words}\n" ++
+  "Fourth body words.\n" ++
+  "\\end{exampleblock}\n" ++
+  "Trailing paragraph below.\n" ++
+  "\\end{frame}\n" ++
+  "\\begin{frame}[t]{Plain star wrap}\n" ++
+  "Lead paragraph above.\n" ++
+  "\\begin{block}{First heading line\\\\Second heading line}\n" ++
+  "Fifth body words.\n" ++
+  "\\end{block}\n" ++
+  "Trailing paragraph below.\n" ++
+  "\\end{frame}\n" ++
+  "\\end{document}\n"
+
+/-- Titles set without a box of their own, each in a group so the body keeps
+its own font: unstrutted, so an untitled block sets no title paragraph at
+all; strutted at `\large`, so an untitled one sets the struts' line. -/
+def plainEmptySource : String :=
+  "\\documentclass[10pt,aspectratio=169]{beamer}\n" ++
+  "\\usetheme{moloch}\n" ++
+  "\\definecolor{probeInk}{HTML}{1F2A44}\n" ++
+  "\\setbeamercolor{normal text}{fg=probeInk,bg=white}\n" ++
+  "\\setbeamerfont{block title alerted}{size=\\large}\n" ++
+  "\\setlength{\\parskip}{2pt}\n" ++
+  "\\setbeamertemplate{block begin}{%\n" ++
+  "  \\par\\vskip 4pt\n" ++
+  "  {\\usebeamerfont*{block title}\\usebeamercolor[fg]{block title}%\n" ++
+  "    \\insertblocktitle\\par}%\n" ++
+  "  \\vskip 3pt\n" ++
+  "  \\usebeamerfont{block body}\\usebeamercolor[fg]{block body}}\n" ++
+  "\\setbeamertemplate{block end}{\\par\\vskip 5pt}\n" ++
+  "\\setbeamertemplate{block alerted begin}{%\n" ++
+  "  \\par\\vskip 4pt\n" ++
+  "  {\\usebeamerfont*{block title alerted}\\usebeamercolor[fg]{block title alerted}%\n" ++
+  "    \\strut\\insertblocktitle\\strut\\par}%\n" ++
+  "  \\vskip 3pt\n" ++
+  "  \\usebeamerfont{block body alerted}\\usebeamercolor[fg]{block body alerted}}\n" ++
+  "\\setbeamertemplate{block alerted end}{\\par\\vskip 5pt}\n" ++
+  "\\begin{document}\n" ++
+  "\\begin{frame}[t]{Plain empty}\n" ++
+  "Lead paragraph above.\n" ++
+  "\\begin{block}{Gamma title words}\n" ++
+  "Body words here.\n" ++
+  "\\end{block}\n" ++
+  "\\begin{block}{}\n" ++
+  "Untitled plain words.\n" ++
+  "\\end{block}\n" ++
+  "Trailing paragraph below.\n" ++
+  "\\end{frame}\n" ++
+  "\\begin{frame}[t]{Plain strut}\n" ++
+  "Lead paragraph above.\n" ++
+  "\\begin{alertblock}{Delta title words}\n" ++
+  "Third body words.\n" ++
+  "\\end{alertblock}\n" ++
+  "\\begin{alertblock}{}\n" ++
+  "Untitled strut words.\n" ++
+  "\\end{alertblock}\n" ++
+  "Trailing paragraph below.\n" ++
+  "\\end{frame}\n" ++
+  "\\end{document}\n"
+
 private def edgeColor : Ir.Color := { r := 0x2E, g := 0x8B, b := 0x57 }
 
 private def edgeTwoColor : Ir.Color := { r := 0x8B, g := 0x2E, b := 0x57 }
@@ -642,7 +946,80 @@ private def measured : Array (String × Nat × Mark × Mark × Int) := #[
   ("plainsized", 1, .base "Lead paragraph above.", .base "First heading line", 18520),
   ("plainsized", 1, .base "First heading line", .base "Second heading line", 14000),
   ("plainsized", 1, .base "Second heading line", .base "Fifth body words.", 14545),
-  ("plainsized", 1, .base "Fifth body words.", .base "Trailing paragraph below.", 15000)]
+  ("plainsized", 1, .base "Fifth body words.", .base "Trailing paragraph below.", 15000),
+  -- An empty title box under a declared size: the struts' line at its own
+  -- font's `\baselineskip` and the box's `\parskip`, the rules as tall; an
+  -- unstrutted box holds no paragraph and draws no rule.
+  ("emptybox", 0, .base "Lead paragraph above.", .base "Gamma title words", 21202),
+  ("emptybox", 0, .top edgeTwoColor 0, .base "Gamma title words", 11800),
+  ("emptybox", 0, .top edgeTwoColor 0, .bottom edgeTwoColor 0, 16000),
+  ("emptybox", 0, .top edgeColor 0, .bottom edgeColor 0, 16000),
+  ("emptybox", 0, .base "Gamma title words", .base "Body words here.", 17000),
+  ("emptybox", 0, .base "Body words here.", .base "Untitled boxed words.", 43202),
+  ("emptybox", 0, .top edgeTwoColor 1, .base "Untitled boxed words.", 28800),
+  ("emptybox", 0, .top edgeTwoColor 1, .bottom edgeTwoColor 1, 16000),
+  ("emptybox", 0, .top edgeColor 1, .bottom edgeColor 1, 16000),
+  ("emptybox", 0, .base "Untitled boxed words.", .base "Trailing paragraph below.", 19000),
+  ("emptybox", 1, .base "Lead paragraph above.", .base "Delta title words", 18000),
+  ("emptybox", 1, .top edgeColor 0, .base "Delta title words", 9598),
+  ("emptybox", 1, .top edgeColor 0, .bottom edgeColor 0, 9695),
+  ("emptybox", 1, .base "Delta title words", .base "Third body words.", 17000),
+  ("emptybox", 1, .base "Third body words.", .base "Untitled bare words.", 40000),
+  ("emptybox", 1, .base "Untitled bare words.", .base "Trailing paragraph below.", 19000),
+  ("emptybox", 2, .base "Lead paragraph above.", .base "Epsilon title words", 19102),
+  ("emptybox", 2, .top edgeColor 0, .base "Epsilon title words", 9700),
+  ("emptybox", 2, .top edgeColor 0, .bottom edgeColor 0, 13000),
+  ("emptybox", 2, .base "Epsilon title words", .base "Fifth body words.", 17000),
+  ("emptybox", 2, .base "Fifth body words.", .base "Untitled small words.", 41102),
+  ("emptybox", 2, .top edgeColor 1, .base "Untitled small words.", 26700),
+  ("emptybox", 2, .top edgeColor 1, .bottom edgeColor 1, 13000),
+  ("emptybox", 2, .base "Untitled small words.", .base "Trailing paragraph below.", 19000),
+  -- `size*` titles stand their declared `\baselineskip`: the strut, the
+  -- lines of a two-line title, and the depth what follows is spaced from.
+  ("starsized", 0, .base "Lead paragraph above.", .base "Alpha title words", 18000),
+  ("starsized", 0, .top edgeColor 0, .base "Alpha title words", 8400),
+  ("starsized", 0, .top edgeColor 0, .bottom edgeColor 0, 12000),
+  ("starsized", 0, .base "Alpha title words", .base "Body words here.", 12000),
+  ("starsized", 0, .base "Body words here.", .base "Beta title words", 24302),
+  ("starsized", 0, .top edgeColor 1, .base "Beta title words", 11900),
+  ("starsized", 0, .top edgeColor 1, .bottom edgeColor 1, 17000),
+  ("starsized", 0, .base "Beta title words", .base "Third body words.", 13698),
+  ("starsized", 0, .base "Third body words.", .base "Gamma title words", 22902),
+  ("starsized", 0, .top edgeColor 2, .base "Gamma title words", 10500),
+  ("starsized", 0, .top edgeColor 2, .bottom edgeColor 2, 15000),
+  ("starsized", 0, .base "Gamma title words", .base "Fourth body words.", 13098),
+  ("starsized", 0, .base "Fourth body words.", .base "Trailing paragraph below.", 15000),
+  ("starsized", 1, .base "Lead paragraph above.", .base "First title line", 21302),
+  ("starsized", 1, .top edgeColor 0, .base "First title line", 11900),
+  ("starsized", 1, .top edgeColor 0, .bottom edgeColor 0, 34000),
+  ("starsized", 1, .base "First title line", .base "Second title line", 17000),
+  ("starsized", 1, .base "Second title line", .base "Fifth body words.", 13751),
+  ("starsized", 1, .base "Fifth body words.", .base "Third title line", 22902),
+  ("starsized", 1, .top edgeColor 1, .base "Third title line", 10500),
+  ("starsized", 1, .top edgeColor 1, .bottom edgeColor 1, 30000),
+  ("starsized", 1, .base "Third title line", .base "Fourth title line", 15000),
+  ("starsized", 1, .base "Fourth title line", .base "Sixth body words.", 13098),
+  ("starsized", 1, .base "Sixth body words.", .base "Trailing paragraph below.", 15000),
+  -- A title with no box is a paragraph of the block's list, placed by the
+  -- interline rule under its font's `\baselineskip`; empty and unstrutted
+  -- it is no paragraph at all.
+  ("plainempty", 0, .base "Lead paragraph above.", .base "Gamma title words", 18000),
+  ("plainempty", 0, .base "Gamma title words", .base "Body words here.", 17000),
+  ("plainempty", 0, .base "Body words here.", .base "Untitled plain words.", 26000),
+  ("plainempty", 0, .base "Untitled plain words.", .base "Trailing paragraph below.", 19000),
+  ("plainempty", 1, .base "Lead paragraph above.", .base "Delta title words", 20000),
+  ("plainempty", 1, .base "Delta title words", .base "Third body words.", 17000),
+  ("plainempty", 1, .base "Third body words.", .base "Untitled strut words.", 42000),
+  ("plainempty", 1, .base "Untitled strut words.", .base "Trailing paragraph below.", 19000),
+  ("plainstar", 0, .base "Lead paragraph above.", .base "Alpha heading words", 19279),
+  ("plainstar", 0, .base "Alpha heading words", .base "Body words here.", 14785),
+  ("plainstar", 0, .base "Body words here.", .base "Gamma heading words", 22279),
+  ("plainstar", 0, .base "Gamma heading words", .base "Fourth body words.", 14785),
+  ("plainstar", 0, .base "Fourth body words.", .base "Trailing paragraph below.", 15000),
+  ("plainstar", 1, .base "Lead paragraph above.", .base "First heading line", 19279),
+  ("plainstar", 1, .base "First heading line", .base "Second heading line", 17000),
+  ("plainstar", 1, .base "Second heading line", .base "Fifth body words.", 14785),
+  ("plainstar", 1, .base "Fifth body words.", .base "Trailing paragraph below.", 15000)]
 
 /-- lualatex's horizontal distances, the same way. -/
 private def measuredX : Array (String × Nat × Mark × Mark × Int) := #[
@@ -697,7 +1074,9 @@ private def tolerance : Int := 2
 
 private def sources : List (String × String) :=
   [("hanging", hanging), ("whole", whole), ("inside", inside), ("armed", armedSource),
-   ("boxed", boxedSource), ("sized", sizedSource), ("plainsized", plainSizedSource)]
+   ("boxed", boxedSource), ("sized", sizedSource), ("plainsized", plainSizedSource),
+   ("emptybox", emptyBoxSource), ("starsized", starSizedSource), ("plainstar", plainStarSource),
+   ("plainempty", plainEmptySource)]
 
 private def layout (fonts : Font.FontSet) (name src : String) : Layout.Geom × Layout.Out × Array Diag :=
   let (doc, diags) := Elab.run s!"block-template-{name}.tex" src
@@ -731,6 +1110,10 @@ private def pageChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO 
       | "boxed" => #[4, 1]
       | "sized" => #[3, 2]
       | "plainsized" => #[0, 0]
+      | "emptybox" => #[4, 1, 2]
+      | "starsized" => #[3, 2]
+      | "plainstar" => #[0, 0]
+      | "plainempty" => #[0, 0]
       | _ => #[1, 1]
     check ref s!"block template {name}: one rule per box that has one ({rules})" (rules == want)
     check ref s!"block template {name}: no colour box is painted"
@@ -928,6 +1311,27 @@ private def channelChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : 
     check ref s!"block template channels page {page}: the rule paints the element's background"
       (rules.size == 1 && rules.all (·.color == c))
 
+/-- **`\usebeamercolor` binds a channel only where its element sets one**
+(beamerbasecolor.sty: `fg` and `bg` become the element's where it has them
+and keep the colour in force otherwise): `\color{bg}` after an element with
+no background paints the earlier element's background, `\color{fg}` after
+one with no foreground the earlier one's foreground, and
+`\usebeamercolor[bg]` of an element with no background keeps the earlier
+one's — lualatex paints the three rules green, rose and green — in each
+frame's epoch, so a frame that gives the foreground-only element a
+background paints its rules blue. The earlier element is read, so nothing
+calls its colours unused. -/
+private def chainChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit := do
+  let (_, out, diags) := layout fonts "chain" chainSource
+  check ref "block template chain: the probe reads without loss"
+    ((diags ++ out.diags).all (·.severity == .note))
+  let blue : Ir.Color := { r := 0x1E, g := 0x40, b := 0xAF }
+  for (page, want) in [(0, #[edgeColor, edgeTwoColor, edgeColor]), (1, #[blue, blue])] do
+    let rules := ((((out.pages[page]?.map (·.fills)).getD #[]).filter fun f => f.w < Dim.pt 2).qsort
+      (·.y < ·.y)).map (·.color)
+    check ref s!"block template chain page {page}: each rule paints the channel its chain binds"
+      (rules == want)
+
 /-- A page's ink, as a comparison reads it: every line's place and letters,
 every fill's rectangle and colour. -/
 private def pageInk (out : Layout.Out) : Array String :=
@@ -935,32 +1339,58 @@ private def pageInk (out : Layout.Out) : Array String :=
     (p.lines.map fun l => s!"line {l.x} {l.y} {lineText l false}") ++
       p.fills.map fun f => s!"fill {f.x} {f.y} {f.w} {f.h} {f.color.r} {f.color.g} {f.color.b}"
 
+/-- Every `\style` key no beamer block reads, with a value its own element
+would take. -/
+private def blockUnreadEntries : List (String × String) :=
+  [("before", "30pt"), ("after", "30pt"), ("rule", "blue"), ("rule-position", "baseline"),
+   ("rule-thickness", "2pt"), ("marker", "{x}"), ("indent", "2em"), ("gap", "4pt"),
+   ("align", "center"), ("separator", "blue"), ("rule-above", "1pt"), ("rule-above-skip", "2pt"),
+   ("rule-above-gap", "3pt"), ("rule-below", "1pt"), ("rule-below-gap", "2pt"),
+   ("rule-below-skip", "3pt"), ("author-font", "{\\itshape}"), ("author-strut", "4pt"),
+   ("body-size", "small"), ("hover", "red"), ("focus", "blue"), ("motion", "150ms"),
+   ("color", "red")]
+
+/-- An article with no palette, so its stylesheet carries a dark scheme. -/
+private def paletteFree : String :=
+  "\\documentclass{article}\n\\begin{document}\nPlain words here.\n\\end{document}\n"
+
 /-- The style keys a beamer block reads are its title's `font` and its
-template's `shape`; every other key it is given is named once (W0104) where
-it is declared, and both artifacts ship exactly what they ship without it,
-for each of the three kinds, templated or in beamer's default blocks. -/
+template's `shape`. Every other key `\style` knows is named once (W0104)
+where it is declared and kept out of the document's styles, so both
+artifacts ship exactly what they ship without it: on the three kinds,
+templated or in beamer's default blocks, and on a page with no palette,
+whose stylesheet keeps the dark scheme a stored colour once took away. A
+key `\style` does not know, or one another element owns, is its own one
+refusal and nothing more. -/
 private def blockStyleKeyChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit := do
-  let unread := ["before", "after", "color", "rule", "align", "indent"]
-  for (probe, src) in [("hanging", hanging), ("plainsized", plainSizedSource)] do
+  let spec := String.intercalate ", " (blockUnreadEntries.map fun (k, v) => s!"{k} = {v}")
+  for (probe, src) in [("hanging", hanging), ("plainsized", plainSizedSource),
+      ("palettefree", paletteFree)] do
     for el in Ir.blockStyleElements do
-      let line := s!"\\style\{{el}}\{ before = 30pt, after = 30pt, color = red, rule = blue, \
-align = center, indent = 2em }\n"
+      let line := s!"\\style\{{el}}\{ {spec} }\n"
       let styled := src.replace "\\begin{document}" (line ++ "\\begin{document}")
       check ref s!"block style {probe} {el}: the styled probe differs from the probe" (styled != src)
       let (_, outA, diagsA) := layout fonts probe src
       let (_, outB, diagsB) := layout fonts probe styled
-      for key in unread do
+      for (key, _) in blockUnreadEntries do
         check ref s!"block style {probe} {el}: '{key}' is named once"
           ((diagsB.filter fun d => d.code == "W0104" &&
             d.subject == some s!"style:{el}:{key}").size == 1)
       check ref s!"block style {probe} {el}: nothing else is raised"
-        ((diagsB.filter (·.severity != .note)).size == unread.length &&
+        ((diagsB.filter (·.severity != .note)).size == blockUnreadEntries.length &&
           (diagsA.filter (·.severity != .note)).isEmpty)
       check ref s!"block style {probe} {el}: the page ships as without the keys"
         (pageInk outA == pageInk outB)
       let html (s : String) : String := (HtmlDoc.emit {} (Elab.run s!"block-style-{probe}.tex" s).1).1
       check ref s!"block style {probe} {el}: the HTML ships as without the keys"
         (html src == html styled)
+  for (el, entry, code) in [("alertblock", "foo = 1", "E0322"),
+      ("block", "slot = { set = title, anchor = west, at = west }", "E0323")] do
+    let src := paletteFree.replace "\\begin{document}" s!"\\style\{{el}}\{ {entry} }\n\\begin\{document}"
+    let (_, diags) := Elab.run "block-style-owned.tex" src
+    let raised := diags.filter (·.severity != .note)
+    check ref s!"block style {el}: '{entry}' is its one refusal, {code} ({raised.map (·.code)})"
+      (raised.size == 1 && raised.all (·.code == code))
 
 /-- The HTML stands a template's skips where the page does (`blockShapeCss`,
 `blockRules`): the section's padding above the title in the arm the block
@@ -996,6 +1426,51 @@ private def htmlSkipChecks (ref : IO.Ref (List String)) : IO Unit := do
   check ref "block skips HTML: a bigger skip above the title is a bigger padding"
     ((cssRuleOf sheet2 "section.block-shaped.block-block").any fun r =>
       hasStr r s!"padding-top: {len 12};")
+
+/-- **The HTML sets an empty title box as TeX does** (`blockShapeCss`): the
+box a template keeps for an untitled block stands its title font's strut
+tall where the template struts it — lualatex's two empty boxes are the 2pt
+`\parskip` inside them on a `\large` and a `\small` strut, 14 and 11 pt, on
+the deck's stage — beside its rules; where it does not, the box holds no
+paragraph, so it has no height and no rule beside it, and its line is one
+line of the page. The empty header carries none of it inline: the stylesheet
+owns each kind's box. A title with no box of its own spends its line's
+`\parskip` once, and empty is its struts' line or no line at all. -/
+private def emptyBoxHtmlChecks (ref : IO.Ref (List String)) : IO Unit := do
+  let (doc, _) := Elab.run "block-template-emptybox.tex" emptyBoxSource
+  let (head, body, _) := HtmlDoc.emitTree {} doc
+  let sheet := treeCssList "" (head.toList ++ body.toList)
+  for (kind, strut) in [("block", Dim.pt 14), ("example", Dim.pt 11)] do
+    let box := (cssRuleOf sheet s!"section.block-shaped.block-{kind} > header:empty").getD ""
+    check ref s!"empty title box HTML {kind}: the box is its title font's strut tall ({box})"
+      (hasStr box "box-sizing: content-box;" && cssStageLength box "min-height" strut doc.page.height)
+  let bare := (cssRuleOf sheet "section.block-shaped.block-alert > header:empty").getD ""
+  check ref s!"empty title box HTML alert: an unstrutted box holds no paragraph ({bare})"
+    (hasStr bare "box-sizing: content-box;" && hasStr bare "min-height: 1lh;" &&
+      hasStr bare "padding-top: var(--parskip, 0.725rem);")
+  let rule := (cssRuleOf sheet "section.block-shaped.block-alert > header:empty::after").getD ""
+  check ref s!"empty title box HTML alert: a box of no height has no rule beside it ({rule})"
+    (hasStr rule "content: none;")
+  let empties := (shapedSections body).flatMap fun kids => kids.filterMap fun k => match k with
+    | .elem "header" attrs #[] => some attrs
+    | _ => none
+  check ref s!"empty title box HTML: every kind's empty box is the stylesheet's ({empties.size})"
+    (empties.size == 3 && empties.all fun attrs => !attrs.any (·.1 == "style"))
+  -- A title with no box of its own spends its line's `\parskip` alone; empty,
+  -- it is the struts' line, or no line at all.
+  let (plain, _) := Elab.run "block-template-plainempty.tex" plainEmptySource
+  let (phead, pbody, _) := HtmlDoc.emitTree {} plain
+  let psheet := treeCssList "" (phead.toList ++ pbody.toList)
+  let titled := (cssRuleOf psheet "section.block-shaped.block-block > header").getD ""
+  check ref s!"unboxed title HTML: the title spends its line's paragraph skip once ({titled})"
+    (hasStr titled "padding-top: calc(var(--parskip, 0.725rem) + 0rem);")
+  let none := (cssRuleOf psheet "section.block-shaped.block-block > header:empty").getD ""
+  check ref s!"unboxed title HTML: an empty unstrutted title is no line ({none})"
+    (hasStr none "min-height: 0rem;" && hasStr none "padding-top: 0rem;")
+  let struts := (cssRuleOf psheet "section.block-shaped.block-alert > header:empty").getD ""
+  check ref s!"unboxed title HTML: an empty strutted title is its struts' line ({struts})"
+    (cssStageLength struts "min-height" (Dim.pt 14) plain.page.height &&
+      hasStr struts "padding-top: var(--parskip, 0.725rem);")
 
 /-- A shipped line's runs as the faces and sizes they set in. -/
 private def lineFaces (fs : Font.FontSet) (l : Layout.LineOut) : Array (String × Dim.Sp) :=
@@ -1037,7 +1512,26 @@ private def parentChecks (ref : IO.Ref (List String)) : IO Unit := do
      ("size", head ++ "\\setbeamerfont{block title}{size=\\large}\n" ++ blocks,
       [("Alpha title words", "OpenSans-Bold", Dim.pt 12),
        ("Beta title words", "OpenSans-Bold", Dim.pt 10),
-       ("Gamma title words", "OpenSans-Bold", Dim.pt 12)])]
+       ("Gamma title words", "OpenSans-Bold", Dim.pt 12)]),
+     -- Declared before the theme: loading moloch's font theme merges its own
+     -- size and series over the plain and alerted titles' fields, keeping
+     -- the declared family; the example title, which moloch leaves alone,
+     -- keeps its declared size.
+     ("pretheme", "\\documentclass[10pt,aspectratio=169]{beamer}\n\\usepackage{fontspec}\n" ++
+        "\\setsansfont{Open Sans}\n\\newfontfamily\\probeserif{Source Serif Pro}\n" ++
+        "\\setbeamerfont{block title}{size=\\large,family=\\probeserif}\n" ++
+        "\\setbeamerfont{block title alerted}{size=\\small}\n" ++
+        "\\setbeamerfont{block title example}{size=\\Large}\n\\usetheme{moloch}\n" ++ blocks,
+      [("Alpha title words", "SourceSerifPro-Bold", Dim.pt 10),
+       ("Beta title words", "SourceSerifPro-Bold", Dim.pt 10),
+       ("Gamma title words", "SourceSerifPro-Bold", Dim.pt 144 / 10)]),
+     -- The starred form clears the plain title's fields, moloch's series
+     -- with them: the plain title and the example under it set in the
+     -- regular weight, the alerted one in its own bold.
+     ("starred", head ++ "\\setbeamerfont*{block title}{size=\\small}\n" ++ blocks,
+      [("Alpha title words", "OpenSans-Regular", Dim.pt 9),
+       ("Beta title words", "OpenSans-Bold", Dim.pt 10),
+       ("Gamma title words", "OpenSans-Regular", Dim.pt 9)])]
   for (name, src, want) in probes do
     let (doc, _) := Elab.run s!"block-title-{name}.tex" src
     let some (fs, doc) ← assemble doc | check ref s!"block title {name}: the fixture fonts assemble" false
@@ -1048,6 +1542,10 @@ private def parentChecks (ref : IO.Ref (List String)) : IO Unit := do
         (lineText l false).startsWith (letters title)).map (lineFaces fs)).getD #[]
       check ref s!"block title {name}: '{title}' sets in {face} at {milliOf size} ({faces})"
         (!faces.isEmpty && faces.all (· == (face, size)))
+  let (_, diags) := Elab.run "block-title-starred.tex"
+    (head ++ "\\setbeamerfont*{block title}{size=\\small}\n" ++ blocks)
+  check ref "block title starred: the note names the declaration with its star"
+    (diags.any fun d => d.code == "N0100" && hasStr d.message "'\\setbeamerfont*{block title}'")
 
 /-- fontspec's provide forms define the command only where it is undefined
 (`\ProvideDocumentCommand`): a family command already declared keeps its
@@ -1109,7 +1607,8 @@ private def defaultOptionChecks (ref : IO.Ref (List String)) (fonts : Font.FontS
 
 /-- A family declared in the body is skipped as the declaration it is, named
 by the command the author wrote, and its command selects no family in
-either artifact. -/
+either artifact: the IR declares none, the HTML selects none, and the PDF
+sets the words in the page's own face. -/
 private def bodyFamilyChecks (ref : IO.Ref (List String)) : IO Unit := do
   let src := "\\documentclass[10pt,aspectratio=169]{beamer}\n\\usepackage{fontspec}\n" ++
     "\\begin{document}\n\\begin{frame}[t]{Body}\n\\newfontfamily\\probeA{Source Serif Pro}\n" ++
@@ -1122,6 +1621,14 @@ private def bodyFamilyChecks (ref : IO.Ref (List String)) : IO Unit := do
   check ref "body family: no family is declared" doc.fonts.families.isEmpty
   check ref "body family: the HTML selects no undeclared family"
     (!hasStr (HtmlDoc.emit {} doc).1 s!"var(--font-{Ir.familySlotBase})")
+  let some (fs, doc) ← assemble doc | check ref "body family: the fixture fonts assemble" false
+  let out := Layout.run (Layout.Geom.ofPage doc.page) fs none doc
+  let page : Layout.PageOut := out.pages[0]?.getD {}
+  let faces := match page.lines.find? fun l => hasStr (lineText l false) "Serif" with
+    | some line => lineFaces fs line
+    | none => #[]
+  check ref s!"body family: the PDF sets the words in the page's own face ({faces})"
+    (!faces.isEmpty && faces.all fun (face, _) => !face.startsWith "SourceSerifPro")
 
 def checks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit := do
   pageChecks ref fonts
@@ -1138,5 +1645,7 @@ def checks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit := do
   dumpChecks ref
   defaultOptionChecks ref fonts
   bodyFamilyChecks ref
+  chainChecks ref fonts
+  emptyBoxHtmlChecks ref
 
 end Tests.BlockTemplate

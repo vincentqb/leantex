@@ -1415,6 +1415,25 @@ private def beamerFontCommands (fields : List (String × String)) : String :=
     | some (_, value) => value
     | none => "")
 
+/-- A theme's own block title fields over those declared before it loads: its
+font theme's unstarred `\setbeamerfont` replaces the fields it names and
+keeps the rest (beamerfontthememoloch.sty). -/
+private def themeOver (stored seed : List (String × String)) : List (String × String) :=
+  seed.foldl (fun fields (key, value) =>
+    (key, value) :: fields.filter (fun e => beamerFontAxis e.1 != beamerFontAxis key)) stored
+
+/-- The fields the plain block title is set in: its own, the regular series
+where they name none. The engine's built-in title weight is the theme's bold
+series, which a starred declaration or an emptied field clears; with no
+series of its own the title keeps normal text's, as `\usebeamerfont*`
+leaves it. -/
+private def blockTitleFields (element : String) (fields : List (String × String)) :
+    List (String × String) :=
+  if element == "block title" &&
+      !fields.any (fun e => e.1 == "series" && !e.2.trimAscii.isEmpty) then
+    ("series", "\\mdseries") :: fields.filter (·.1 != "series")
+  else fields
+
 /-- The title-template reader carries measured size and leading separately.
 The other axes use the same selection order as native element styles. -/
 private def beamerTemplateFont (element : String) (fields : List (String × String)) :
@@ -6822,10 +6841,15 @@ private def flushBeamerBlocks : M (Array Raw) := do
         match BlockTemplate.read bb eb defs (st.serial + 1) with
         | .error us => pure us
         | .ok r =>
-          let titleOk := r.titleFont == some titleEl &&
-            r.titlePaint == some (.beamer titleEl "fg")
+          -- The kind's own element binds the foreground last: beamer's title
+          -- and body elements set one through their parents.
+          let inks (p : Option BlockTemplate.Paint) (el : String) : Bool :=
+            match p with
+            | some (.beamer (latest :: _) "fg") => latest == el
+            | _ => false
+          let titleOk := r.titleFont == some titleEl && inks r.titlePaint titleEl
           let bodyOk := (r.bodyFont.isNone || r.bodyFont == some bodyEl) &&
-            (r.bodyPaint.isNone || r.bodyPaint == some (.beamer bodyEl "fg"))
+            (r.bodyPaint.isNone || inks r.bodyPaint bodyEl)
           if !titleOk then pure #[s!"a title set in another font or colour than '{titleEl}'"]
           else if !bodyOk then pure #[s!"a body set in another font or colour than '{bodyEl}'"]
           else
@@ -6833,8 +6857,10 @@ private def flushBeamerBlocks : M (Array Raw) := do
             for (edge, i) in r.edges.zipIdx do
               let role := kind.roleStem ++ "edge" ++ (if i == 0 then "" else toString (i + 1))
               match edge.paint with
-              | some (.beamer el ch) =>
-                out := out ++ wrap #[.ctrl BeamerColor.siteMarker pos, .group (← synth el) pos,
+              | some (.beamer chain ch) =>
+                -- One group per element the channel is bound through.
+                let elements ← chain.toArray.mapM fun el => do return Raw.group (← synth el) pos
+                out := out ++ wrap #[.ctrl BeamerColor.siteMarker pos, .group elements pos,
                   .group (← synth ch) pos, .group (← synth role) pos]
                 colors := colors.push role
               | some (.named n) =>
@@ -7863,10 +7889,11 @@ its value is skipped" pos
         if starred || updates.any (fun e => beamerFontKeys.contains (beamerFontAxis e.1)) then
           -- premise: beamerTemplateChecks — a preamble group's font fields
           -- are usable inside it, but no native style escapes its scope.
+          let written := s!"\\setbeamerfont{if starred then "*" else ""}\{{element}}"
           if !(← get).inDoc && ((← get).inGroup || !(← get).beamerScopes.isEmpty) then
-            became s!"\\setbeamerfont\{{element}}" "local font fields" pos
+            became written "local font fields" pos
             return some (#[], k)
-          let cmds := beamerFontCommands fields
+          let cmds := beamerFontCommands (blockTitleFields element fields)
           -- The theme's own alerted title font stands over the plain
           -- title's (`Ir.blockTitleFont`'s parent chain): it is the alerted
           -- kind's own once the plain title's font is declared at all.
@@ -7878,7 +7905,7 @@ its value is skipped" pos
           unless own.isEmpty do
             write fun st => { st with beamerFonts := st.beamerFonts.push (alerted, seed) }
           let native := s!"\\style\{{target}}\{ {styleKey} = \{{cmds}} }" ++ own
-          became s!"\\setbeamerfont\{{element}}" native pos
+          became written native pos
           return some (← synthAt native pos, k)
         else return some (#[], k)
     else return none
@@ -7956,7 +7983,20 @@ its value is skipped" pos
     let (args, k) := takeGroups raws j 1
     let tname := (rawSrc (args.getD 0 #[])).trimAscii.toString
     let tname := themeAlias tname
-    let native := s!"\\theme\{{tname}}"
+    -- Loading the theme runs its font theme's unstarred `\setbeamerfont`s,
+    -- which merge over the block title fields declared before it: a size
+    -- declared first gives way to the theme's, a family stands.
+    let mut reseated : Array String := #[]
+    for (element, target, styleKey) in beamerFontElements do
+      let seed := themeBlockFont tname element
+      let some stored := (← get).beamerFonts.toList.lookup element | continue
+      if seed.isEmpty then continue
+      let fields := themeOver stored seed
+      write fun st => { st with
+        beamerFonts := (st.beamerFonts.filter (·.1 != element)).push (element, fields) }
+      reseated := reseated.push
+        s!"\\style\{{target}}\{ {styleKey} = \{{beamerFontCommands (blockTitleFields element fields)}} }"
+    let native := String.intercalate " " (s!"\\theme\{{tname}}" :: reseated.toList)
     became "\\usetheme" native pos
     -- Only a theme the engine ships turns the themed mappings on: an
     -- unknown name leaves the document unthemed (W0314 says so), and

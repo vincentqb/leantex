@@ -199,10 +199,12 @@ public def Dimen.neg (a : Dimen) : Dimen :=
 public def Dimen.length? (d : Dimen) : Option Length :=
   if d.line == 0 && d.ext.isEmpty then some d.len else none
 
-/-- What a colour command selects: a beamer colour element's channel
-(`\usebeamercolor[fg]{block title}`), or a colour by name (`\color{name}`). -/
+/-- What a colour command selects: a channel as the beamer colour elements in
+force bind it, the latest first — `\usebeamercolor[fg]{block title}`, or
+`\color{bg}` after `\usebeamercolor`s, read the channel of the latest element
+that sets it (beamerbasecolor.sty) — or a colour by name (`\color{name}`). -/
 public inductive Paint where
-  | beamer (element : String) (channel : String)
+  | beamer (chain : List String) (channel : String)
   | named (name : String)
   deriving Repr, BEq, Inhabited
 
@@ -229,13 +231,15 @@ public inductive Node where
 /-! ## The interpreter -/
 
 /-- What a group restores: the font element, the colour, `\hsize`, and the
-beamer colour element whose channels the colour names `fg` and `bg` stand
-for (`\usebeamercolor` sets both with `\colorlet`, beamerbasecolor.sty). -/
+beamer colour elements in force, the latest first, through which the colour
+names `fg` and `bg` read their channels: `\usebeamercolor` rebinds with
+`\colorlet` each channel its element sets and keeps the other
+(beamerbasecolor.sty). -/
 private structure Scope where
   font : Option String := none
   paint : Option Paint := none
   hsize : Dimen := { line := 1000 }
-  channels : Option String := none
+  channels : List String := []
   deriving Inhabited
 
 /-- A list under construction: vertical or horizontal, its nodes, and the
@@ -670,15 +674,24 @@ private def run (toks : Array Tok) (titled : Bool) : St := Id.run do
         | none => s := s.miss "\\usebeamerfont"; i := i + 1
       | "usebeamercolor" =>
         let j := skipSp toks (i + 1)
-        let j := if toks[j]? == some (.word "*") then j + 1 else j
+        let starred := toks[j]? == some (.word "*")
+        let j := if starred then j + 1 else j
         let (ch, j) := readOpt toks j
         match readArg toks j with
         | some (arg, k) =>
           let el := (wordsOf arg).trimAscii.toString
-          s := { s with scope := { s.scope with channels := some el } }
+          let bind (s : St) (el : String) : St × List String :=
+            let chain := el :: s.scope.channels.filter (· != el)
+            ({ s with scope := { s.scope with channels := chain } }, chain)
+          -- The starred form first uses normal text's foreground.
+          if starred then
+            let (s', chain) := bind s "normal text"
+            s := s'.paint (.beamer chain "fg")
+          let (s', chain) := bind s el
+          s := s'
           match ch with
           | some c =>
-            if c == "fg" || c == "bg" then s := s.paint (.beamer el c)
+            if c == "fg" || c == "bg" then s := s.paint (.beamer chain c)
             else s := s.miss s!"\\usebeamercolor[{c}]"
           | none => pure ()
           i := k
@@ -688,11 +701,11 @@ private def run (toks : Array Tok) (titled : Bool) : St := Id.run do
         match model, readArg toks j with
         | none, some (arg, k) =>
           let name := (wordsOf arg).trimAscii.toString
-          let p : Paint := if name.endsWith ".fg" then .beamer (name.dropEnd 3).toString "fg"
-            else if name.endsWith ".bg" then .beamer (name.dropEnd 3).toString "bg"
-            else match s.scope.channels, name with
-              | some el, "fg" | some el, "bg" => .beamer el name
-              | _, _ => .named name
+          let p : Paint := if name.endsWith ".fg" then .beamer [(name.dropEnd 3).toString] "fg"
+            else if name.endsWith ".bg" then .beamer [(name.dropEnd 3).toString] "bg"
+            else if (name == "fg" || name == "bg") && !s.scope.channels.isEmpty then
+              .beamer s.scope.channels name
+            else .named name
           s := s.paint p
           i := k
         | _, _ => s := s.miss "\\color"; i := i + 1

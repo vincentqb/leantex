@@ -2252,16 +2252,22 @@ beside a box is that box's `::before` (left) or `::after` (right), `width`
 wide, `sep` beside the box's edge, from the box's top below the line's
 `\parskip` to its bottom above the skips below it, in the palette entry it
 reads — `var(--name, colour)`, the spelling of `Ir.BlockEdge.ink`; a rule
-inside the line pads its box by `width + sep`. Lengths keep their
-font-relative units: neither box sets a size of its own, so an `em` is the
-body's, the font the template's rule is read in. A shaped block's body keeps
-the page's `\parskip` (`blockRules`). -/
+inside the line pads its box by `width + sep`. A title's box kept empty is
+its struts' line, the title font's `\baselineskip` tall
+(`Ir.blockTitleLeading`, what the PDF's strut reads), or unstrutted a box of
+no height beside no rule, its line one line of the page; a title with no box
+spends its line's `\parskip` once, and empty without struts sets nothing.
+Lengths keep their font-relative units: neither box sets a size of its own,
+so an `em` is the body's, the font the template's rule is read in. A shaped
+block's body keeps the page's `\parskip` (`blockRules`). -/
 public def blockShapeCss (doc : Doc) : String :=
   let shapes := [Ir.TitledKind.block, .alert, .example].filterMap fun k =>
     (Ir.blockShapeOf doc.styles k).map (k, ·)
   if shapes.isEmpty then "" else
   let len := blockShapeLength doc
   let skips (sk : Array Ir.BlockSkip) : String := len (Ir.blockSkipSum doc.tokens sk)
+  let measures := Dim.MeasureValues.horizontal (doc.page.width - 2 * doc.page.hmargin)
+    (doc.page.height - 2 * doc.page.vmargin)
   let paint (e : Ir.BlockEdge) : String := match e.name with
     | some n => s!"var(--{n}, {cssColor e.color})"
     | none => cssColor e.color
@@ -2271,7 +2277,9 @@ public def blockShapeCss (doc : Doc) : String :=
 {place}: calc({pad} - {len e.sep} - {len e.width}); width: {len e.width}; background: {paint e}; }\n"
   let rules := shapes.map fun (k, sh) =>
     let sel := s!"section.block-shaped.block-{k.name}"
-    let inner := if sh.title.parskip then peerGap else "0rem"
+    -- The `\parskip` a title spends inside the box it opens; a title with
+    -- no box in the block's list spends only its line's.
+    let inner := if sh.title.parskip && (sh.title.boxed || sh.whole.isSome) then peerGap else "0rem"
     let before := skips sh.before
     let after := skips sh.after
     let between := skips sh.between
@@ -2300,7 +2308,22 @@ public def blockShapeCss (doc : Doc) : String :=
           String.join ((edges .whole).toList.map fun e =>
             let pseudo := if e.side == .left then "before" else "after"
             s!"{sel}:not(:has(> header))::{pseudo} \{ top: calc({skips b.before} + {peerGap}); }\n"))
-      | none => ""
+      | none =>
+        -- The title's box kept empty: its struts' line, the title font's
+        -- `\baselineskip` tall (`Ir.blockTitleLeading`, the PDF's strut), or
+        -- unstrutted no paragraph — a box of no height beside no rule, its
+        -- line one line of the page; with no box, no line at all.
+        let hd := s!"{sel} > header:empty"
+        let leading := Ir.blockTitleLeading doc.page.scale doc.page.fontSize doc.page.leading
+          measures (Ir.blockTitleFont doc.styles k)
+        let strut := len { width := leading }
+        let (height, top) :=
+          if sh.title.strut then
+            (strut, if sh.title.boxed then s!"calc({peerGap} + {inner})" else peerGap)
+          else if sh.title.boxed then ("1lh", peerGap) else ("0rem", "0rem")
+        s!"{hd} \{ box-sizing: content-box; min-height: {height}; padding-top: {top}; }\n" ++
+          (if sh.title.strut || (edges .title).isEmpty then "" else
+            s!"{hd}::before \{ content: none; }\n{hd}::after \{ content: none; }\n")
     s!"{sel} \{ padding-top: {before}; padding-bottom: {after}; }\n" ++
       s!"{sel} > header \{ padding-top: calc({peerGap} + {inner}); padding-bottom: {between}; }\n" ++
       titleRules ++ wholeRules ++ bare
@@ -8323,9 +8346,11 @@ public def blockNode (cfg : Config) (b : Block) : Node :=
       let showTitle := shape.showsTitle (!title.isEmpty)
       let titleInk := (d.inkOn (kind.roleStem ++ "titlefg")
         { fg := titleLook.fg, bg := parent.bg }).fg
+      -- An empty title box is the stylesheet's, as tall as the template
+      -- sets it (`blockShapeCss`).
       let head : Array Html.Node :=
         if !showTitle then #[]
-        else if title.isEmpty then #[Html.elem "header" #[] #[("style", "min-height: 1lh;")]]
+        else if title.isEmpty then #[Html.elem "header" #[] #[]]
         else #[Html.elem "header" (inlines cfg shown)
           #[("style", s!"color: {cssColor titleInk};" ++ surfaceInkDecls cfg.pal parent.bg)]]
       let ink := (d.inkOn role { fg := look.fg.getD inherited.2, bg := parent.bg }).fg

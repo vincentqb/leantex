@@ -14578,11 +14578,16 @@ private def applyStyle (ctx : Ctx) (styles : Styles) (element src : String) (pos
         warnOnce ctx ("style:titlepage:" ++ key) .W0104
           s!"'{key}' has no meaning on the title page; the title is set without it" pos
           (help := "draw rules around the title with rule-above, rule-below or separator")
-      -- premise: blockStyleKeyChecks — no site reads these keys on a beamer block: both artifacts ship the same page with and without each
-      if Ir.blockStyleElements.contains element && !Ir.blockStyleKeys.contains key then
+      -- A key no beamer block reads is named and not stored, so no site can
+      -- read it; a key `\style` does not know, or one the title page owns,
+      -- is refused by its own arm below, the one accounting at its site.
+      -- premise: blockStyleKeyChecks — both artifacts ship the same page with and without each such key, a page with no palette included
+      if Ir.blockStyleElements.contains element && styleKeys.contains key &&
+          !Ir.blockStyleKeys.contains key && key != "slot" then
         warnOnce ctx ("style:" ++ element ++ ":" ++ key) .W0104
           s!"'{key}' has no meaning on a beamer block; the block is set without it" pos
           (help := "a block reads its title's font and its template's shape")
+        continue
       let asInline : EM (Option (Array Inline)) := inlineOf valueSrc
       let asLength : EM (Option SymGlue) := lengthOf key valueSrc
       -- Every colour-valued style key uses the same typed source resolver
@@ -15139,9 +15144,10 @@ public inductive PDecl where
   | beamerColor (name : String) (star : Bool) (source : String) (pos : Pos)
   | standoutColor (name source : String) (pos : Pos)
   /-- A block template's paint site (`BeamerColor.siteMarker`): the beamer
-  element and channel a template rule reads, and the palette entry it
-  paints, resolved with every named colour from here on. -/
-  | beamerSite (element channel key : String) (pos : Pos)
+  elements a template rule's channel is bound through, the latest first, the
+  channel, and the palette entry it paints, resolved with every named colour
+  from here on. -/
+  | beamerSite (chain : List String) (channel key : String) (pos : Pos)
   /-- A preamble page-ground selection, resolved where it stands. `none`
   is `\nopagecolor`; a concrete source is `\pagecolor`. -/
   | pageGround (source : Option String) (pos : Pos)
@@ -15412,10 +15418,14 @@ public def scanDecls (file : String) (pre : Array Raw) : Array PDecl := Id.run d
           let j2 := skipSpaces preamble (j + 1)
           let j3 := skipSpaces preamble (j2 + 1)
           match preamble[j]?, preamble[j2]?, preamble[j3]? with
-          | some (.group elem _), some (.group ch _), some (.group key _) =>
+          | some (.group elems _), some (.group ch _), some (.group key _) =>
             i := j3 + 1
-            out := out.push (.beamerSite (rawSrc elem).trimAscii.toString
-              (rawSrc ch).trimAscii.toString (rawSrc key).trimAscii.toString pos)
+            -- One group per element of the chain, the latest first.
+            let chain := elems.toList.filterMap fun r => match r with
+              | .group el _ => some (rawSrc el).trimAscii.toString
+              | _ => none
+            out := out.push (.beamerSite chain (rawSrc ch).trimAscii.toString
+              (rawSrc key).trimAscii.toString pos)
           | _, _, _ => out := out.push (.unknownCmd "usebeamercolor" none pos)
         else if name == BeamerColor.marker || name == BeamerColor.starMarker ||
             name == BeamerColor.standoutMarker then
@@ -15941,8 +15951,8 @@ the built-in's heading and margins stand{replaced}"
   | .beamerColor name star src pos =>
     let pal ← applyBeamerColor s.ctx s.palette name star src pos
     return { s with palette := pal, ctx := { s.ctx with palette := pal } }
-  | .beamerSite element channel key _ =>
-    modify fun st => { st with flowPalette := st.flowPalette.addSite element channel key }
+  | .beamerSite chain channel key _ =>
+    modify fun st => { st with flowPalette := st.flowPalette.addSite chain channel key }
     let pal ← resolveBeamerColors s.ctx s.palette
     return { s with palette := pal, ctx := { s.ctx with palette := pal } }
   | .standoutColor name source pos =>

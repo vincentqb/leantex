@@ -157,15 +157,16 @@ public structure State where
   stand under the document's. -/
   theme : String := ""
   /-- Paint sites a block template reads beside the native ones (`roles`'
-  shape): the element a rule's `\usebeamercolor[fg]` or `[bg]` names, and
-  the palette entry its channel paints. -/
-  sites : List (String × String × String) := []
+  shape): the elements a rule's colour reads its channel through — each
+  `\usebeamercolor` in force there, the latest first — and the palette entry
+  that channel paints. -/
+  sites : List (List String × String × String) := []
   deriving Inhabited
 
-/-- Register a template's paint site: the element's channel paints `key`.
-A site already registered for the key is replaced. -/
-public def State.addSite (s : State) (element channel key : String) : State :=
-  let site := if channel == "fg" then (element, key, "") else (element, "", key)
+/-- Register a template's paint site: the channel the chain of elements binds
+paints `key`. A site already registered for the key is replaced. -/
+public def State.addSite (s : State) (chain : List String) (channel key : String) : State :=
+  let site := if channel == "fg" then (chain, key, "") else (chain, "", key)
   { s with sites := s.sites.filter (fun (_, f, b) => f != key && b != key) ++ [site] }
 
 private def unbrace (s : String) : String :=
@@ -384,7 +385,7 @@ public def State.resolve (s : State) (pal : Palette) : State × Palette × List 
   let mut s := { s with origins := #[] }
   let mut out := base
   let mut issues := []
-  let allNames := (roles.map (·.1)) ++ (s.sites.map (·.1)) ++ ["structure", "titlelike"] ++
+  let allNames := (roles.map (·.1)) ++ (s.sites.flatMap (·.1)) ++ ["structure", "titlelike"] ++
     s.elements.flatMap (fun e => e.parents.getD [] ++ e.uses)
   let es := allNames.foldl (fun es name =>
     if es.any (·.name == name) then es
@@ -409,17 +410,25 @@ public def State.resolve (s : State) (pal : Palette) : State × Palette × List 
     if i < s.elements.length then i + 1 else 0
   let ordered := roles.mergeSort fun a b => rank a.1 ≤ rank b.1
   let normalBg := (Design.ofPalette context).bg
-  -- A template's site always paints: a channel the element leaves unset
-  -- is the colour in force there, normal text's (beamerbasecolor.sty's
-  -- `\usebeamercolor` falls back to the current `fg`/`bg`).
-  for (name, fgKey, bgKey) in s.sites do
-    let r := read s.theme context [] es name
-    let (names, _) := reach s.theme context es name { fg := !fgKey.isEmpty, bg := !bgKey.isEmpty }
-    s := { s with reached := s.reached ++ names }
-    issues := issues ++ r.issues
-    for (key, value, fallback) in [(fgKey, r.fg, normalFg), (bgKey, r.bg, normalBg)] do
-      unless key.isEmpty do
-        out := out.declare key ((value.bind (·.color)).getD fallback)
+  -- A template's site always paints, as beamerbasecolor.sty's
+  -- `\usebeamercolor` binds `fg` and `bg`: each element binds the channels
+  -- it sets and keeps the one in force where it sets none, so a channel is
+  -- the latest element's that sets it, every later element read on the way,
+  -- and else the colour in force there, normal text's.
+  for (chain, fgKey, bgKey) in s.sites do
+    let mut fg : Option Color := none
+    let mut bg : Option Color := none
+    for name in chain do
+      if (fgKey.isEmpty || fg.isSome) && (bgKey.isEmpty || bg.isSome) then break
+      let r := read s.theme context [] es name
+      let (names, _) := reach s.theme context es name
+        { fg := !fgKey.isEmpty && fg.isNone, bg := !bgKey.isEmpty && bg.isNone }
+      s := { s with reached := s.reached ++ names }
+      issues := issues ++ r.issues
+      if fg.isNone then fg := r.fg.bind (·.color)
+      if bg.isNone then bg := r.bg.bind (·.color)
+    unless fgKey.isEmpty do out := out.declare fgKey (fg.getD normalFg)
+    unless bgKey.isEmpty do out := out.declare bgKey (bg.getD normalBg)
   for (name, fgKey, bgKey) in ordered do
     let r := read s.theme context [] es name
     let (names, said) := reach s.theme context es name { fg := !fgKey.isEmpty, bg := !bgKey.isEmpty }
