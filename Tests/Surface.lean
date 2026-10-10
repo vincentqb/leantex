@@ -6775,11 +6775,11 @@ def pictureRouteChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) :
     (ds.filter fun d => d.code == "W0334" || d.code == "E0333").map
       fun d => (d.code, d.subject, d.message)
   let probes : List (String × String) :=
-    [("rounded corners", "\\draw[rounded corners] (0,0) rectangle (3,1);"),
+    [("a doubled line", "\\draw[double] (0,0) rectangle (3,1);"),
      ("a grid beside a frame", "\\draw[help lines] (0,0) grid (4,3);" ++
        "\\draw[thick] (0,0) rectangle (4,3);"),
-     ("scoped transforms", "\\draw (0,0) rectangle (1,1);\\begin{scope}[xshift=2cm]" ++
-       "\\draw[red] (0,0) rectangle (1,1);\\end{scope}")]
+     ("a doubled line in a scope", "\\draw (0,0) rectangle (1,1);\\begin{scope}[xshift=2cm]" ++
+       "\\draw[double] (0,0) rectangle (1,1);\\end{scope}")]
   for (name, body) in probes do
     let (doc, ds, rs) := firstPass (pic "" body)
     t s!"a picture the subset draws with a loss routes whole: {name}"
@@ -6827,7 +6827,7 @@ def pictureRouteChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) :
          hasStr (l.help.getD "") "tool = none")
   -- The page, both ways, off one first pass: the boundary's answer in the
   -- store ships as its box, and the withdrawn picture as the subset's ink.
-  let rounded := pic "" "\\draw[rounded corners] (0,0) rectangle (3,1);"
+  let rounded := pic "" "\\draw[double] (0,0) rectangle (3,1);"
   let (doc, _, _) := firstPass rounded
   let src := ((Ir.imageRefs doc).find? (·.startsWith Ir.picSrcPrefix)).getD ""
   let store : Image.Store :=
@@ -6845,7 +6845,7 @@ def pictureRouteChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) :
   -- boundary picture is.
   let (named, _, _) := firstPass (pic ""
     ("\\node at (0,0) {Alpha};\\node at (2,0) {Beta};" ++
-      "\\draw[rounded corners] (0,0) rectangle (3,1);"))
+      "\\draw[double] (0,0) rectangle (3,1);"))
   let altOf (d : Ir.Doc) : Array String := d.body.filterMap fun b => match b with
     | .para #[.image s _ alt] => if s.startsWith Ir.picSrcPrefix then some alt.text else none
     | _ => none

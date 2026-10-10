@@ -516,7 +516,7 @@ itself one round before. Asserted over the HTML tree of the document the
 driver emits for that face. Invented content. -/
 def pictureHtmlFaceChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
-  let src := dvDoc "" ("\\begin{tikzpicture}\\draw[rounded corners] (0,0) rectangle (3,1);\n" ++
+  let src := dvDoc "" ("\\begin{tikzpicture}\\draw (0,0) parabola (3,1);\n" ++
     "\\node at (1.5,0.5) {Mark};\\end{tikzpicture}")
   let (toks, lds) := Lex.lex "t" src
   let (raws, pds) := Parse.parse "t" toks

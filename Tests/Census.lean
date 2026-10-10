@@ -1082,6 +1082,19 @@ def censusRows5 :
     ("the picture's font= sets its tree's labels below the body size",
       (((lineSizeOf c 0 "sum").bind fun a => (lineSizeOf c 0 "mid").map fun b =>
         decide (a < b)).getD false))]),
+  -- Path keys and scopes: the rounded box, the turned polyline, the arc
+  -- continued by its line, the stopped arrow and its tip, the faded fill.
+  ("diagram-scope", fun _ c => [
+    ("one page", c.size == 1),
+    ("no boundary box stands where the picture is",
+      (c[0]?.map (·.images == 0)).getD false),
+    ("every path, tip and fill ships as a page path",
+      (c[0]?.map (·.paths == 6)).getD false),
+    ("the scope's colour and width stroke its path, and end with it",
+      (c[0]?.map fun p => p.pathStrokes.any (· == ({ r := 42, g := 111, b := 78 }, Ir.Pic.thickWidth)) &&
+        p.pathStrokes.any (·.2 == Ir.Pic.thinWidth)).getD false),
+    ("the labels ship, the turned one beside its path",
+      hasStr (censusText c) "box" && hasStr (censusText c) "turned")]),
   ("diagram-strokes", fun _ c => [
     ("one page", c.size == 1),
     ("the three strokes ship as the picture's own marks, no page fill among them",

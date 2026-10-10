@@ -885,7 +885,7 @@ exec /bin/cp \"$LEANTEX_NATIVE_PDF\" pic.pdf\n"
     -- loss named (W0609). The first once shipped the drawing without text.
     IO.FS.writeFile (dir / "partial.tex") (String.intercalate "\n" [
       "\\documentclass{article}", "\\begin{document}", "An invented picture follows.", "",
-      "\\begin{tikzpicture}", "  \\draw[rounded corners] (0,0) rectangle (3,1);",
+      "\\begin{tikzpicture}", "  \\draw (0,0) rectangle (3,1);", "  \\pattern (0,0) rectangle (1,1);",
       "  \\node at (1.5,0.5) {Mark};", "\\end{tikzpicture}", "", "\\end{document}", ""])
     let (code, records, html) ← build (dir / "partial.tex") (dir / "partial.html") "type1.pdf"
     t s!"native faces: a textless answer for a picture the subset draws in part is the subset's (exit {code})"

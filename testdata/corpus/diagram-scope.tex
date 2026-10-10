@@ -1,0 +1,39 @@
+% Synthetic fixture: the path keys and scopes a sketch reaches for — a
+% rounded box, a scope shifted, scaled and turned in the order its keys are
+% written, a scope's colour and width ending with it, an arc continued by
+% a line, an arrow stopped short of its target, and a fill at a third of
+% its alpha. Invented content and design.
+\documentclass{article}
+
+\pictures{ tool = none }
+
+\fonts{ dir = "fonts", body = "Source Serif Pro" }
+
+\palette{
+  wash = #2A6F4E,
+}
+
+\title{Scopes and Corners}
+\author{Pat Placeholder}
+
+\begin{document}
+
+\maketitle
+
+\section{Moved and turned}
+
+\begin{tikzpicture}
+  \draw[rounded corners=3pt] (0,0) rectangle (3,1.5);
+  \node at (1.5,0.75) {box};
+  \begin{scope}[shift={(4,0)}, rotate=30, wash, thick]
+    \draw (0,0) -- (1,0) -- (1,1);
+    \node[above] at (1,1) {turned};
+  \end{scope}
+  \begin{scope}[xshift=7cm, scale=0.5]
+    \draw (0,0) arc (180:0:1) -- (2,-1);
+  \end{scope}
+  \draw[->, shorten >=2pt] (0,-1) -- (3,-1);
+  \fill[fill opacity=0.3, wash] (4,-1.5) rectangle (6,-0.5);
+\end{tikzpicture}
+
+\end{document}

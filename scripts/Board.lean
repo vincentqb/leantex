@@ -860,7 +860,7 @@ both halves: landing a tier and removing its name here are one commit. That
 is what makes the permission narrow rather than a hole the size of
 `declaredTiers`. -/
 def pendingTiers : List String :=
-  ["svg-native", "tikz-native"]
+  ["svg-native"]
 
 /-- Build every tier producer and its test dependencies before fan-out.
 Interpreted tools otherwise read stale compiled modules. A producer that

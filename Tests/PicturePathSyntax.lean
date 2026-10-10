@@ -205,7 +205,7 @@ def picturePathSyntaxChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet
       ("\\draw (n.mystery) -- (e);", "W0334", "mystery"),
       ("\\draw (\\missing) -- (e);", "E0333", "missing"),
       ("\\draw (0,0) -- (1/0,2);", "E0333", "zero"),
-      ("\\draw (n) arc (e);", "W0334", "arc"),
+      ("\\draw (n) arc (e);", "E0333", "arc"),
       ("\\draw ($(n)!0.5!90:(e)$) -- (s);", "W0334", "calc"),
       ("\\draw ($(n)!(w)!(e)$) -- (s);", "W0334", "calc"),
       ("\\draw ($(n)+(0,1)*2$) -- (s);", "W0334", "calc"),

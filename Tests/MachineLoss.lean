@@ -73,12 +73,12 @@ private def includeSource (fonts : System.FilePath) : String :=
   "\\includegraphics[width=20pt,alt={An invented square}]{square.svg}\n\\end{document}\n"
 
 /-- A picture the rendered subset draws in part — its frame and its label —
-that its rounded corners send to the boundary. Invented content. -/
+that a pattern fill sends to the boundary. Invented content. -/
 private def fallbackSource (fonts : System.FilePath) : String :=
   "\\documentclass{article}\n" ++
   "\\fonts{ dir = \"" ++ fonts.toString ++ "\", body = \"Source Serif Pro\" }\n" ++
   "\\begin{document}\nAn invented picture follows.\n\n" ++
-  "\\begin{tikzpicture}\n  \\draw[rounded corners] (0,0) rectangle (3,1);\n" ++
+  "\\begin{tikzpicture}\n  \\draw (0,0) rectangle (3,1);\n  \\pattern (0,0) rectangle (1,1);\n" ++
   "  \\node at (1.5,0.5) {Mark};\n\\end{tikzpicture}\n\nText follows the picture.\n" ++
   "\\end{document}\n"
 
