@@ -3815,7 +3815,7 @@ private def gridAssemble (e : MathEnv) (size raise : Sp) (kind : Math.GridKind)
     for k in [0:row.size] do
       colW := colW.set! k (max colW[k]! (mathItemsWidth row[k]!))
   let cols : List (Sp × Sp) := (List.range n).map fun k =>
-    (colW[k]!, muAt size (kind.gapAfter k n : Int))
+    (colW[k]!, muAt size (kind.gapAfter k n : Int) + kind.pairSep k n)
   let total := Math.colOffset cols n
   -- The grid's baseline distance is the text leading, one source
   -- (`leadingFor`): a maths grid is lines of maths, and its rhythm is the
@@ -3829,19 +3829,19 @@ private def gridAssemble (e : MathEnv) (size raise : Sp) (kind : Math.GridKind)
   -- `1.5\ex@`, and rows `6\ex@` apart (`GridKind.small`).
   let gridSkip := match kind with
     | .small => size * 15 / 100
-    | .array _ _ | .align | .gather => size / 10
+    | .array _ _ | .align | .aligned | .gather => size / 10
   -- LaTeX's `\jot` (latex.ltx: 3pt), the extra opening between display
   -- alignment rows, size-relative — 3 pt at the 10 pt base. An `array` is
   -- inline math's grid and takes none, as LaTeX's array does not.
   let jot := match kind with
     | .array _ _ | .small => 0
-    | .align | .gather => size * 3 / 10
+    | .align | .aligned | .gather => size * 3 / 10
   -- An array's rows stand `\arraystretch` baselines apart: the stretch
   -- scales the strut every row carries (latex.ltx, `\@arstrutbox`).
   let pitch := match kind with
     | .array _ s => bl * (s : Int) / 1000
     | .small => size * 6 / 10
-    | .align | .gather => bl
+    | .align | .aligned | .gather => bl
   let rowExtents := cells.map fun row =>
     row.foldl (fun (t, b) cell =>
       let (ct, cb) := mathItemsExtent e.fs cell
@@ -3876,7 +3876,7 @@ private def gridAssemble (e : MathEnv) (size raise : Sp) (kind : Math.GridKind)
   | .small =>
     let thin := mathKern e size (muAt size 3)
     return (#[thin] ++ items).push thin
-  | .array _ _ | .align | .gather => return items
+  | .array _ _ | .align | .aligned | .gather => return items
 
 /-- Assemble a laid fraction (TeXbook Appendix G rule 15 over the MATH
 constants): numerator shifted up, denominator shifted down, and plain TeX's
@@ -4387,7 +4387,7 @@ private def layMathNucleus (e : MathEnv) (st : Math.MathStyle) (raise : Sp)
     let cellSt : Math.MathStyle := match kind with
       | .array _ _ => if st.rank > 2 then .text st.cramped else st
       | .small => .script false
-      | .align | .gather => .display false
+      | .align | .aligned | .gather => .display false
     let (cells, missing) := layGridRows e cellSt (#[], acc.2) rows
     (acc.1 ++ gridAssemble e (e.sizeAt st) raise kind cells, missing)
   | .cancel mark spec value body =>

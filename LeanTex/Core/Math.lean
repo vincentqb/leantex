@@ -1021,6 +1021,9 @@ space each side (amsmath.sty, `smallmatrix`; `\ex@` is 1 pt at the 10 pt
 base, amsgen.sty's `\compute@ex@`). -/
 public inductive GridKind where
   | align
+  /-- amsmath's inner alignments, `aligned` and `split`: `align`'s pairs,
+  `\minalignsep` apart (`GridKind.pairSep`). -/
+  | aligned
   | gather
   | array (cols : Array ColAlign) (stretch : Nat)
   | small
@@ -1029,7 +1032,7 @@ public inductive GridKind where
 /-- The alignment of column `k` under a grid kind. An `array` column past
 its spec centres — the spec mismatch was already diagnosed at elaboration. -/
 public def GridKind.colAlign : GridKind → Nat → ColAlign
-  | .align, k => if k % 2 == 0 then .right else .left
+  | .align, k | .aligned, k => if k % 2 == 0 then .right else .left
   | .gather, _ => .center
   | .array cols _, k => cols.getD k .center
   | .small, _ => .center
@@ -1044,9 +1047,23 @@ base is 18 mu (article.cls). `small` pays `\thickspace` before every
 column but the first, amsmath's `.2777em`: 5 mu. -/
 public def GridKind.gapAfter : GridKind → Nat → Nat → Nat
   | .align, k, n => if k + 1 == n then 0 else if k % 2 == 0 then 0 else 36
+  | .aligned, _, _ => 0
   | .gather, _, _ => 0
   | .array _ _, k, n => if k + 1 == n then 0 else 18
   | .small, k, n => if k + 1 == n then 0 else 5
+
+/-- amsmath's `\minalignsep` (amsmath.sty: `\minalignsep=10pt`): the space
+`aligned` and `split` stand between column pairs, `\start@aligned` setting
+`\alignsep@\minalignsep` as the `\tabskip` after each pair — a length,
+not a mu value. Measured under lualatex: two pairs of an `aligned` stand
+their pairs 10 pt apart. -/
+public def minAlignSep : Int := 10 * 65536
+
+/-- The gap after column `k` of `n` that is a length rather than mu
+(`gapAfter`): `aligned`'s `\minalignsep` after each pair but the last. -/
+public def GridKind.pairSep : GridKind → Nat → Nat → Int
+  | .aligned, k, n => if k + 1 == n || k % 2 == 0 then 0 else minAlignSep
+  | .align, _, _ | .gather, _, _ | .array _ _, _, _ | .small, _, _ => 0
 
 /-- Where column `k` starts, given each column's width and the gap that
 follows it: the sum of everything before it. One definition placed cells

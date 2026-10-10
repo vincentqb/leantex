@@ -214,6 +214,9 @@ public structure Marks where
   metric : MathStyle → CancelSpec → MList → MList → Option CancelMetric :=
     fun _ _ _ _ => none
   style : MathStyle := .text false
+  /-- `\minalignsep` in thousandths of the body's em (`Math.minAlignSep`),
+  the space between an `aligned`'s column pairs: 1000 at the 10 pt base. -/
+  alignSep : Nat := 1000
   /-- Font MATH percentages; the unmeasured default is plain TeX's 7/5 pt
   script sizes at its 10 pt base. -/
   scales : ScriptScales := { script := 70, scriptscript := 50 }
@@ -534,7 +537,7 @@ public def nucNode (mk : Marks) (disp : Bool) (cls : MathClass) : MNucleus → H
     let st := match kind with
       | .array _ _ => if mk.style.rank == 3 then .text mk.style.cramped else mk.style
       | .small => .script false
-      | .align | .gather => .display false
+      | .align | .aligned | .gather => .display false
     -- `smallmatrix` sets its cells in script style, a thin space each side:
     -- 3 mu of the text size, in the script size's em at a 70% script scale.
     let attrs := relativeStyle mk st
@@ -576,6 +579,15 @@ def rowNodes (mk : Marks) (disp : Bool) (kind : GridKind) (k : Nat)
           "text-align: right; text-align: -webkit-right; padding-right: 0")]
       | .align, .left => #[("style", "text-align: left; padding-left: 0")]
       | .align, .center => #[]
+      -- `aligned`'s pairs stand `\minalignsep` apart, half on each side of
+      -- the pair boundary; its outer edges keep the default.
+      | .aligned, .right =>
+        #[("style", "text-align: right; text-align: -webkit-right; padding-right: 0" ++
+          (if k == 0 then "" else s!"; padding-left: {milliEm (mk.alignSep / 2)}"))]
+      | .aligned, .left =>
+        #[("style", "text-align: left; padding-left: 0" ++
+          (if rest matches .nil then "" else s!"; padding-right: {milliEm (mk.alignSep / 2)}"))]
+      | .aligned, .center => #[]
       | .gather, .center => #[]
       | .gather, .left => #[("style", "text-align: left")]
       | .gather, .right =>

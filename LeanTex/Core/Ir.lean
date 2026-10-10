@@ -11129,6 +11129,7 @@ private def dumpMathNucleus (acc : String) (n : Math.MNucleus) : String :=
   | .grid kind rows =>
     let tag := match kind with
       | .align => "align"
+      | .aligned => "aligned"
       | .gather => "gather"
       | .array cols s =>
         "array:" ++ String.join (cols.toList.map fun a => match a with

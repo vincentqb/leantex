@@ -349,8 +349,8 @@ public def gridEnvs : List (String × GridKind × Option Char × Option Char) :=
    ("vmatrix", matrix, some '|', some '|'),
    ("Vmatrix", matrix, some '\u2016', some '\u2016'),
    ("cases", .array #[.left, .left] 1200, some '{', none),
-   ("aligned", .align, none, none), ("gathered", .gather, none, none),
-   ("split", .align, none, none), ("substack", .array #[.center] 1000, none, none),
+   ("aligned", .aligned, none, none), ("gathered", .gather, none, none),
+   ("split", .aligned, none, none), ("substack", .array #[.center] 1000, none, none),
    ("smallmatrix", .small, none, none)]
 
 /-- amsmath's sized delimiters (amsmath.sty: `\big` is `\bBigg@\@ne`, `\Big`
@@ -1082,7 +1082,7 @@ private def closeCell (kind : GridKind) (cells : Array MList)
     (overNum : Option (Array MItem)) (acc : Array MItem) : Array MList :=
   let body := closeLevel overNum acc
   let body := match kind with
-    | .align =>
+    | .align | .aligned =>
       if cells.size % 2 == 1 then .cons emptyOrd body else body
     | _ => body
   cells.push body

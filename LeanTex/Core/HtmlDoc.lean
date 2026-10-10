@@ -212,6 +212,7 @@ the marks with — when the page ships its faces; TeX's own stand-ins
 (`MathMl.Marks`' defaults) where it does not. -/
 public def mathMarks (cfg : Config) : MathMl.Marks :=
   let marks : MathMl.Marks := {
+    alignSep := (Math.minAlignSep * 1000 / max 1 cfg.page.fontSize).toNat
     metric := cfg.cancelMetric cfg.measureValues cfg.mathStyles
     em := cfg.mathEm cfg.measureValues cfg.mathStyles
     textEm := cfg.mathTextEm cfg.measureValues cfg.mathStyles }

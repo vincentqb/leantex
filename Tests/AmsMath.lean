@@ -12,7 +12,7 @@ def gridProbeBody (kind : Math.GridKind) : String :=
   let oneCol := match kind with
     | .gather => true
     | .array cols _ => cols.size == 1
-    | .align | .small => false
+    | .align | .aligned | .small => false
   if oneCol then "a \\\\ c" else "a & b \\\\ c & d"
 
 def gridProbeCall (env : String) (kind : Math.GridKind) : String :=
@@ -35,6 +35,13 @@ sets in its own grid. -/
 def resmall : Math.MList → Math.MList
   | .cons (.atom c (.grid (.array _ _) rows) sup sub lim) .nil =>
     .cons (.atom c (.grid .small rows) sup sub lim) .nil
+  | l => l
+
+/-- The formula with its alignment set as `aligned`'s: the display
+alignment's column model, its pairs `\minalignsep` apart. -/
+def realigned : Math.MList → Math.MList
+  | .cons (.atom c (.grid .align rows) sup sub lim) .nil =>
+    .cons (.atom c (.grid .aligned rows) sup sub lim) .nil
   | l => l
 
 /-- amsmath's grid environments are the grids their definitions build
@@ -63,9 +70,9 @@ def amsGridChecks (ref : IO.Ref (List String)) (fs : Font.FontSet) : IO Unit := 
     -- `\env@cases` also sets `\def\arraystretch{1.2}`
     ("cases", s!"$\\left\\\{\\begin\{array}\{ll}{cells}\\end\{array}\\right.$",
       restretch 1200),
-    ("aligned", s!"\\begin\{align*}{cells}\\end\{align*}", restretch 1000),
+    ("aligned", s!"\\begin\{align*}{cells}\\end\{align*}", realigned),
     ("gathered", "\\begin{gather*}a \\\\ c\\end{gather*}", restretch 1000),
-    ("split", s!"\\begin\{align*}{cells}\\end\{align*}", restretch 1000),
+    ("split", s!"\\begin\{align*}{cells}\\end\{align*}", realigned),
     ("substack", "$\\begin{array}{c}a \\\\ c\\end{array}$", restretch 1000),
     -- `smallmatrix` is its own grid: the matrix's cells, set as it sets them
     ("smallmatrix", s!"${arr}$", resmall)]
@@ -92,6 +99,26 @@ def amsGridChecks (ref : IO.Ref (List String)) (fs : Font.FontSet) : IO Unit := 
       (!·.isWhitespace))
     t s!"amsmath grid {env}: the HTML carries its cells between its delimiters \
 (got '{text}')" (text == expected)
+  -- `aligned` stands its column pairs `\minalignsep` apart (amsmath.sty
+  -- `\start@aligned`: `\alignsep@\minalignsep`, 10 pt), lualatex 9.96 bp
+  -- between the first pair's end and the second's start: on the page, the
+  -- second pair's cell opens 10 pt past the first pair's last glyph; in the
+  -- browser the pair boundary's two cells carry half of it each, in the
+  -- body's em.
+  let pairDoc := dvDoc "" "\\[ \\begin{aligned} a &= b & c &= d \\end{aligned} \\]"
+  let runsOf (src : String) : Array (String × Dim.Sp × Dim.Sp) :=
+    (bodyLines (layoutOf fs (elabStr src).1)).flatMap fun l =>
+      (lineRuns l).map fun (_, text, x, w) => (text, x, w)
+  let letter (c : Char) : String := String.singleton (mathLetter c)
+  match (runsOf pairDoc).find? (·.1 == letter 'b'), (runsOf pairDoc).find? (·.1 == letter 'c') with
+  | some (_, xb, wb), some (_, xc, _) =>
+    t s!"amsmath aligned: its column pairs stand \\minalignsep apart, got {spMilli (xc - (xb + wb))}"
+      (xc - (xb + wb) == Math.minAlignSep)
+  | _, _ => t "amsmath aligned: the two-pair probe ships its cells" false
+  let pairHtml := (HtmlDoc.emit {} (elabStr pairDoc).1).1
+  t "amsmath aligned: the browser's pair boundary carries the separation, half a side"
+    (hasStr pairHtml "padding-left: 0; padding-right: 0.500em" &&
+      hasStr pairHtml "padding-right: 0; padding-left: 0.500em")
   -- An alignment sets its cells in display style wherever it stands
   -- (amsmath.sty, `\start@aligned` and `gathered`: `$\m@th\displaystyle{##}$`),
   -- so a fraction in an inline `aligned` sets its numerator at the formula's
