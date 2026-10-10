@@ -8197,7 +8197,7 @@ private def Spacing.Page.finishPage (b : B) (owed : Sp := 0) (flush : Bool := fa
         else { l with y := l.y + filShare leftover (b.filsAbove.getD i 0) pageFils },
        filShare leftover (b.filsAbove.back?.getD 0) pageFils)
     else if flush && !(b.needed > 0) && 0 < b.pageStretch && 0 < lo
-        && lines.size > b.pinnedLines then
+        && (lines.size > b.pinnedLines || inks.size > b.pinnedInks) then
       (lines.mapIdx fun i l =>
         if i < b.pinnedLines then l
         else { l with y := l.y + b.stretchAbove.getD i 0 * lo / b.pageStretch },
@@ -8210,7 +8210,7 @@ private def Spacing.Page.finishPage (b : B) (owed : Sp := 0) (flush : Bool := fa
   let riderShift (stretch : Sp) (fils : Nat) : Sp :=
     if pageFils > 0 then filShare leftover fils pageFils
     else if flush && !(b.needed > 0) && 0 < b.pageStretch && 0 < lo
-        && lines.size > b.pinnedLines then stretch * lo / b.pageStretch
+        && (lines.size > b.pinnedLines || inks.size > b.pinnedInks) then stretch * lo / b.pageStretch
     else delta
   let bodyFills := fills.mapIdx fun i f =>
     if i < b.pinnedFills then f
@@ -9218,7 +9218,7 @@ private def Spacing.Page.fitCommit (b : B) (mk : Sp → LineOut) (firstY stepY r
       (b.commit (mk y) depth below rl true (min overflow above)).attachNotes notes
     else
       let b := b.spillPage (overflow - above)
-      if b.cur.lines.isEmpty then
+      if b.cur.blank then
         ((b.commit (mk (firstY b + b.surfaceTop)) depth below rl false 0).attachNotes
           notes).warnNoteOverrun (firstY b + b.surfaceTop) (inkBelow + b.surfaceBottom)
       else
@@ -15520,12 +15520,14 @@ private def placePicture (fs : FontSet) (imgs : Image.Store) (b0 : B)
     overflow := y + h - bottom
     above := b.pageShrink + b.skip.shrink
     stretch := b.pageStretch + b.skip.stretch
-    if overflow ≤ above ∨ b.noBreak then
+    -- A page with nothing on it yet takes the picture: a break would ship
+    -- an empty page and gain the picture nothing.
+    if overflow ≤ above ∨ b.noBreak ∨ b.cur.blank then
       yTop := y
       overflow := min overflow above
     else
       b := b.spillPage (overflow - above)
-      yTop := (if !b.cur.lines.isEmpty then b.y + b.prevDepth + inkClearance else firstTop b)
+      yTop := (if !b.cur.blank then b.y + b.prevDepth + inkClearance else firstTop b)
         + b.surfaceTop
       fils := b.pageFils
       overflow := 0
@@ -16080,11 +16082,16 @@ private theorem emptyBreak_pageState (fs : FontSet) (imgs : Image.Store)
 
 /-- **A boundary ships the page it closes whenever that page is not blank**
 (`_exact`): a line, a fill or a placed picture's ink makes it one shipped
-page, so a picture alone is never dropped nor merged into what follows. -/
+page, and that page carries every ink the page being built held, so a
+picture alone is never dropped nor merged into what follows. -/
 private theorem brk_ships_exact (fs : FontSet) (imgs : Image.Store)
     (st : StepSt) (hb : st.b.cur.blank = false) :
-    (stepStaged fs imgs st .brk).b.pages.size = st.b.pages.size + 1 := by
-  simp [stepStaged, hb, Spacing.Page.finishPage]
+    (stepStaged fs imgs st .brk).b.pages.size = st.b.pages.size + 1 ∧
+      ((stepStaged fs imgs st .brk).b.pages.back?.map (·.inks.size)) = some st.b.cur.inks.size := by
+  constructor
+  · simp [stepStaged, hb, Spacing.Page.finishPage]
+  · simp [stepStaged, hb, Spacing.Page.finishPage]
+    split <;> simp
 
 /-- Place a float group whole: a float is unbreakable, as LaTeX's floats
 are (a float body is a `\vbox` — placed on one page or deferred, never
@@ -16346,7 +16353,7 @@ private theorem placePicture_noBreak (fs : FontSet) (imgs : Image.Store)
   simp only [placePicture, Id.run, Id, pure]
   repeat' split
   all_goals first
-    | (exfalso; exact ‹¬(_ ∨ _ = true)› (Or.inr h))
+    | (exfalso; exact ‹¬(_ ∨ _ = true ∨ _)› (Or.inr (Or.inl h)))
     | (constructor <;> simp [h]
        done)
 
@@ -21238,11 +21245,15 @@ private theorem close_natural (b : B)
     hv, VDist.aboveShare, VDist.top, filShare, Spacing.Page.noteLines, hp]
 
 /-- **The last page ships whenever it is not blank** (`_exact`), the door
-`ship` closes through (`program_ship`): a document ending on a picture alone
-ends on that picture's page. -/
+`ship` closes through (`program_ship`), with every ink the page held: a
+document ending on a picture alone ends on that picture's page. -/
 private theorem closeLast_ships_exact (b : B) (hb : b.cur.blank = false) :
-    (closeLast b).pages.size = b.pages.size + 1 := by
-  simp [closeLast, hb, Spacing.Page.finishPage]
+    (closeLast b).pages.size = b.pages.size + 1 ∧
+      ((closeLast b).pages.back?.map (·.inks.size)) = some b.cur.inks.size := by
+  constructor
+  · simp [closeLast, hb, Spacing.Page.finishPage]
+  · simp [closeLast, hb, Spacing.Page.finishPage]
+    split <;> simp
 
 end LeanTex.Core.Layout.Spacing
 

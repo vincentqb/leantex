@@ -33,9 +33,11 @@ open Tests.GfxRegression in
 but a picture made of fills, or of strokes, ships alone at a page break, at a
 frame boundary and as the document's last page, and a float that does not fit
 after it opens a page of its own; what follows the picture on its page — a
-paragraph, a second picture — stands below it; and the page's vertical
-distribution moves it, a `[c]` frame's centring and fil glue alike. Each
-held over `Layout.Out`,
+paragraph, a second picture — stands below it, or on the next page when it
+leaves no room; a picture taller than its page stands on it rather than
+after an empty one; and the page's vertical distribution moves it as it
+moves a rule of its size: a `[c]` frame's centring, fil glue and a flush
+bottom. Each held over `Layout.Out`,
 each failing while page shipment and placement read only a page's lines and
 fills. Invented pictures. -/
 def gfxContentPageChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit := do
@@ -80,23 +82,45 @@ def gfxContentPageChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) :
     (match bottomOf twice 0, tops[1]? with
      | some bottom, some top => twice.pages.size == 1 && bottom ≤ top
      | _, _ => false)
-  let topOf (out : Layout.Out) (page : Nat) : Option Dim.Sp := do
-    let (g, _, _) ← (pageDraws (← out.pages[page]?))[0]?
-    return (markExtent g).2.1
-  let frameSrc (opt : String) : String :=
-    "\\documentclass{beamer}\\pictures{ tool = none }\\begin{document}\n\\begin{frame}" ++ opt ++
-      "\n" ++ pic "\\fill[red] (0,0) rectangle (3,2);" ++ "\n\\end{frame}\n\\end{document}"
-  let pageH (src : String) : Dim.Sp := (Layout.Geom.ofPage (elabStr src).1.page).pageH
   let lay (src : String) : Layout.Out := layoutOf oneFace (elabStr src).1
-  t "a frame holding only a picture centres it, as it centres a line"
-    (match topOf (lay (frameSrc "")) 0, topOf (lay (frameSrc "[t]")) 0 with
-     | some c, some top => pageH (frameSrc "") / 8 < c - top
-     | _, _ => false)
-  let filled := article ("\\vspace*{\\fill}\n" ++ pic fills ++ "\n\\vspace*{\\fill}")
-  t "fil glue around a picture alone on its page moves it, as it moves a line"
-    (match topOf (lay filled) 0, topOf (lay (article (pic fills))) 0 with
-     | some f, some b => pageH filled / 8 < f - b
-     | _, _ => false)
+  let picTops (out : Layout.Out) (page : Nat) : Array Dim.Sp :=
+    ((out.pages[page]?.map pageDraws).getD #[]).map fun (g, _, _) => (markExtent g).2.1
+  let ruleTops (out : Layout.Out) (page : Nat) : Array Dim.Sp :=
+    ((out.pages[page]?.map fun p => p.lines.filter (!·.furniture)).getD #[]).map fun l =>
+      l.y - (Layout.segsInk oneFace l.segs).1
+  -- pgf's centimetre (28.45274pt) and TeX's (7227/254pt) differ by under
+  -- 2 ppm: under 64sp across a page.
+  let near (a b : Array Dim.Sp) : Bool :=
+    a.size == b.size && (a.zip b).all fun (x, y) => (x - y).natAbs ≤ 64
+  let rule := "\\noindent\\rule{3cm}{2cm}"
+  let box := pic "\\fill[red] (0,0) rectangle (3,2);"
+  let frameSrc (opt body : String) : String :=
+    "\\documentclass{beamer}\\pictures{ tool = none }\\begin{document}\n\\begin{frame}" ++ opt ++
+      "\n" ++ body ++ "\n\\end{frame}\n\\end{document}"
+  let centred := lay (frameSrc "" box)
+  t "a frame holding only a picture centres it where it centres a rule of its size"
+    (near (picTops centred 0) (ruleTops (lay (frameSrc "" rule)) 0) &&
+      picTops centred 0 != picTops (lay (frameSrc "[t]" box)) 0)
+  let sandwich (body : String) : String := article ("\\vspace*{\\fill}\n" ++ body ++ "\n\\vspace*{\\fill}")
+  t "fil glue around a picture alone on its page moves it as it moves a rule of its size"
+    (near (picTops (lay (sandwich ("\\noindent" ++ box))) 0) (ruleTops (lay (sandwich rule)) 0))
+  let flush (body : String) : String :=
+    "\\documentclass{article}\\pictures{ tool = none }\\page{ bottom = flush }\\begin{document}\n" ++
+      "\n\n\\vspace{0pt plus 80pt}\n".intercalate [body, body, body] ++ "\n\\end{document}"
+  t "a flush bottom sets a page of pictures as it sets a page of rules of their size"
+    (near (picTops (lay (flush ("\\noindent" ++ pic "\\fill[red] (0,0) rectangle (3,8);"))) 0)
+      (ruleTops (lay (flush "\\noindent\\rule{3cm}{8cm}")) 0))
+  let towering := pic "\\fill[red] (0,0) rectangle (3,9);"
+  let tower := lay (frameSrc "[t]" towering)
+  let towerText := lay (frameSrc "[t]" (towering ++ "\n\nText after the picture."))
+  t "a picture taller than its frame's text area stands on its page, not after an empty one"
+    (tower.pages.size == 1 && draws tower 0 == 1 && draws towerText 0 == 1)
+  let crowded := lay (article (pic "\\fill[red] (0,0) rectangle (3,22.6);" ++
+    "\n\nA paragraph after a picture that leaves it no room on the page."))
+  t "a paragraph a picture leaves no room for opens the next page"
+    (crowded.pages.size == 2 && draws crowded 0 == 1 &&
+      ((crowded.pages[0]?.map fun p => (p.lines.filter (!·.furniture)).isEmpty).getD false) &&
+      ((crowded.pages[1]?.map fun p => !(p.lines.filter (!·.furniture)).isEmpty).getD false))
   let tall := layoutOf oneFace (elabStr (article (pic "\\fill[red] (0,0) rectangle (3,14);" ++
     "\n\n\\begin{figure}[h]\n" ++ pic "\\fill[blue] (0,0) rectangle (3,9);" ++
     "\n\\caption{An invented figure.}\n\\end{figure}"))).1
