@@ -1127,6 +1127,7 @@ def reports : List Report := [
       "a host's redefinition of each ordinary vocabulary control reaches the included file as it reaches the same raws spliced at the call",
       "two rows added in the third review round fail on the second round's twin: an item whose paragraph and nested list sit in a resolved step wrote a blank line between them, which a CommonMark reader reads as a loose list, and an item opening with a block that writes nothing wrote an empty item before its text",
       "rows added in the fourth review round fail fourteen ways on the third round's twin: a table row split at a pipe in code, a destination or a formula, a cell's hard break ended its row, and a heading's or frame title's hard break split it from its text; the fifth round's rows fail eight ways on the fourth's: the metadata title and summary written raw, a bare link the driver's document carries in a source location written as a link, a heading's hash before trailing space read as its closing sequence, a titled block's spaced title not bold, and a footnote's hard break ending the footnote",
+      "the sixth round's rows fail three ways on the fifth's: a run's closing tab or hard break left inside its delimiters, and a reference list's markers written raw, so the driver's bibliography twin was no fixed point",
       "the twin's table rows read under an external GFM table reader as GFM's row grammar reads them, on every corpus twin that writes one"]
     state := .guarded "fa516a82" .before .author }
 ]
