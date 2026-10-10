@@ -43,10 +43,14 @@ public import LeanTex.Core.Struct
 public import LeanTex.Core.Data
 public import LeanTex.Core.ListMark
 public import LeanTex.Core.Theme
+public import LeanTex.Core.ThemeContract
+public import LeanTex.Core.DesignRoleContract
+public import LeanTex.Core.BeamerColorContract
 public import LeanTex.Core.Oklab
 public import LeanTex.Core.Contrast
 public import LeanTex.Core.ContrastContract
 public import LeanTex.Core.SeedPalette
+public import LeanTex.Core.CodeExport
 public import LeanTex.Core.Locale
 public import LeanTex.Core.LocaleData
 public import LeanTex.Core.LocaleContract

@@ -26,7 +26,7 @@ example : Theme.Theme → Theme.Decls → Array (String × String) := Theme.repl
 
 example : BeamerColor.State → String → Bool → String → Span →
     BeamerColor.State × List String := BeamerColor.State.declare
-example : BeamerColor.State → String → Color → BeamerColor.State :=
+example : BeamerColor.State → Role → Color → BeamerColor.State :=
   BeamerColor.State.native
 example : BeamerColor.State → Palette →
     BeamerColor.State × Palette × List BeamerColor.Issue :=

@@ -109,7 +109,7 @@ def largeReaders : List (String × List String) :=
    ("LeanTex.Core.Ir", ["LeanTex.Core.BibContract", "LeanTex.Core.ColorContract",
      "LeanTex.Core.ContrastContract", "LeanTex.Core.ControlContract",
      "LeanTex.Core.ElabRegistryContract", "LeanTex.Core.Pending", "LeanTex.Core.PictureCensus",
-     "LeanTex.Core.Theme"]),
+     "LeanTex.Core.Theme", "LeanTex.Core.ThemeContract"]),
    ("LeanTex.Core.Layout", ["LeanTex.Core.Layout.FramePartition",
      "LeanTex.Core.Layout.InkContract", "LeanTex.Core.Layout.InkOutput",
      "LeanTex.Core.Layout.MathRhythm", "LeanTex.Core.Layout.SpacingContract"]),

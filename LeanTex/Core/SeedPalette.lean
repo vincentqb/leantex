@@ -68,24 +68,26 @@ public def washRatio : Nat := 1150
 edges must work on the panel as well as on the page (WCAG 2.2, 1.4.3/1.4.11).
 The exact accent seed is decorative; AccentEdge carries essential information.
 Decorative fills carry no text or essential information of their own. -/
-@[expose] public def requirements : List (Role × Role × Nat) :=
-  [(.ink, .paper, Contrast.aaText),
-   (.ink, .surface, Contrast.aaText),
-   (.muted, .paper, Contrast.aaText),
-   (.muted, .surface, Contrast.aaText),
-   (.mutedOnDark, .ink, Contrast.aaText),
-   (.accentText, .paper, Contrast.aaText),
-   (.accentText, .surface, Contrast.aaText),
-   (.accentOnDark, .ink, Contrast.aaText),
-   (.diagramMuted, .paper, Contrast.aaNonText),
-   (.diagramMuted, .surface, Contrast.aaNonText),
-   (.accentEdge, .paper, Contrast.aaNonText),
-   (.accentEdge, .surface, Contrast.aaNonText),
-   (.accentEdge, .accentSoft, Contrast.aaNonText)]
+@[expose] public def requirements : List (Role × Role × Need) :=
+  [(.ink, .paper, .text),
+   (.ink, .surface, .text),
+   (.muted, .paper, .text),
+   (.muted, .surface, .text),
+   (.mutedOnDark, .ink, .text),
+   (.accentText, .paper, .text),
+   (.accentText, .surface, .text),
+   (.accentOnDark, .ink, .text),
+   (.diagramMuted, .paper, .nonText),
+   (.diagramMuted, .surface, .nonText),
+   (.accentEdge, .paper, .nonText),
+   (.accentEdge, .surface, .nonText),
+   (.accentEdge, .accentSoft, .nonText)]
 
+/-- Each requirement as the pair it judges, at the ratio its need owes — the
+needs and ratios a design's sites are judged by (`Ir.Site`). -/
 public def pairs (s : Seeds) (c : Colors) : List (Color × Color × Nat) :=
-  requirements.map fun (foreground, ground, req) =>
-    (foreground.color s c, ground.color s c, req)
+  requirements.map fun (foreground, ground, need) =>
+    (foreground.color s c, ground.color s c, Contrast.required need)
 
 public def contract (s : Seeds) (c : Colors) : Bool :=
   (pairs s c).all fun (ink, ground, req) =>
@@ -114,9 +116,10 @@ public theorem generated_contract {s : Seeds} (p : Generated s)
 /-- A named requirement is checked against the generated RGB values, the
 same values exported for both backends. -/
 public theorem generated_role_contract {s : Seeds} (p : Generated s)
-    {foreground ground : Role} {req : Nat} (h : (foreground, ground, req) ∈ requirements) :
-    req ≤ Contrast.contrastMilli (foreground.color s p.colors) (ground.color s p.colors) :=
-  generated_contract p (List.mem_map.mpr ⟨(foreground, ground, req), h, rfl⟩)
+    {foreground ground : Role} {need : Need} (h : (foreground, ground, need) ∈ requirements) :
+    Contrast.required need ≤
+      Contrast.contrastMilli (foreground.color s p.colors) (ground.color s p.colors) :=
+  generated_contract p (List.mem_map.mpr ⟨(foreground, ground, need), h, rfl⟩)
 
 /-- Select from the seed-to-ground Oklab segment, at the existing cover
 API's percentage resolution. Search from the ground: the quietest passing
@@ -192,7 +195,7 @@ than a second native-key mapping in the authoring layer. -/
 
 private theorem beamer_requirement_mem {element : String} {foreground ground : Role}
     (h : (element, foreground, ground) ∈ beamerBlocks) :
-    (foreground, ground, Contrast.aaText) ∈ requirements := by
+    (foreground, ground, Need.text) ∈ requirements := by
   simp only [beamerBlocks, List.mem_cons, List.mem_nil_iff, or_false, Prod.mk.injEq] at h
   rcases h with ⟨_, rfl, rfl⟩ | ⟨_, rfl, rfl⟩ | ⟨_, rfl, rfl⟩ |
     ⟨_, rfl, rfl⟩ | ⟨_, rfl, rfl⟩ | ⟨_, rfl, rfl⟩ <;> simp [requirements]

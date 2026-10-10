@@ -99,7 +99,8 @@ public theorem completePrepared_reports_contract (file : String) (p : Prepared)
       (Array.mem_append.mpr (Or.inl
         (Array.mem_append.mpr (Or.inl
           (Array.mem_append.mpr (Or.inl
-            (Array.mem_append.mpr (Or.inl h)))))))))))
+            (Array.mem_append.mpr (Or.inl
+              (Array.mem_append.mpr (Or.inl h)))))))))))))
 
 /-- The production preamble and body interpreter reach the same diagnostic
 completion for every picture-withdrawal environment. -/

@@ -140,8 +140,8 @@ def beamerColorsChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO 
   t "beamer colors: consumed named parents need no loss warning"
     (!colorLoss inheritedDs "probe base" && !colorLoss inheritedDs "parent")
   t "beamer colors: inherited colors reach a header CSS use"
-    ((treeCssOne "" inheritedHtml).contains "var(--frametitlefg" &&
-      (treeCssOne "" inheritedHtml).contains "--frametitlefg: #173b58")
+    ((treeCssOne "" inheritedHtml).contains "var(--ltx-frametitlefg" &&
+      (treeCssOne "" inheritedHtml).contains "--ltx-frametitlefg: #173b58")
   let (late, _, _) := build (parent ++
     "\\setbeamercolor{probe base}{fg=ProbeOther}")
   t "beamer colors: a later parent declaration changes later paint"
@@ -209,8 +209,8 @@ def beamerColorsChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO 
     let hex := Ir.Color.hexByte expected.r ++ Ir.Color.hexByte expected.g ++
       Ir.Color.hexByte expected.b
     t s!"beamer colors: {name} reaches the HTML header color use"
-      ((treeCssOne "" html).contains ("--frametitlefg: #" ++ hex.toLower) &&
-        (treeCssOne "" html).contains "var(--frametitlefg")
+      ((treeCssOne "" html).contains ("--ltx-frametitlefg: #" ++ hex.toLower) &&
+        (treeCssOne "" html).contains "var(--ltx-frametitlefg")
     t s!"beamer colors: {name} preserves the independent background without loss"
       (out.pages.any (fun p => p.fills.any (·.color == paper)) &&
         !colorLoss ds "cannot be resolved" && !colorLoss ds "unused")
@@ -252,7 +252,7 @@ def beamerColorsChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO 
       | _, _, _ => false)
   t "beamer colors: typed HTML carries the subtitle color use"
     ((elemStylesOne #[] subHtml).any fun (text, style) =>
-      text == "Subheading" && style.contains "var(--framesubtitlefg")
+      text == "Subheading" && style.contains "var(--ltx-framesubtitlefg")
   t "beamer colors: supported subtitle foreground has no loss"
     (!colorLoss subDs "framesubtitle")
   let sectionColors := "\\setbeamercolor{section title}{fg=ProbeOther}" ++
@@ -265,8 +265,8 @@ def beamerColorsChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO 
     (sec.pages.any fun p => p.lines.any (fun l => lineText l == "Middle") &&
       p.fills.any (·.color == third) && p.fills.any (·.color == paper))
   t "beamer colors: typed HTML reads section-specific roles"
-    ((treeCssOne "" secHtml).contains "var(--sectiontitlefg" &&
-      (treeCssOne "" secHtml).contains "var(--sectionprogressfg")
+    ((treeCssOne "" secHtml).contains "var(--ltx-sectiontitlefg" &&
+      (treeCssOne "" secHtml).contains "var(--ltx-sectionprogressfg")
   t "beamer colors: supported section roles have no loss"
     (!colorLoss secDs "section title" && !colorLoss secDs "section page")
   let (foot, footHtml, footDs) := build
@@ -275,7 +275,7 @@ def beamerColorsChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO 
     (foot.pages.any fun p => p.fills.any fun f =>
       f.color == paper && f.y > (Layout.Geom.ofPage (elabStr (colorDeck "" frame)).1.page).pageH / 2)
   t "beamer colors: typed HTML reads the footer background"
-    ((treeCssOne "" footHtml).contains "background: var(--footlinebg")
+    ((treeCssOne "" footHtml).contains "background: var(--ltx-footlinebg")
   t "beamer colors: supported footer background has no loss"
     (!colorLoss footDs "footline")
   let (unsupported, _, unsupportedDs) := build (sectionColors ++
@@ -333,8 +333,8 @@ def beamerColorsChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO 
       | .rule _ _ _ c => c == other
       | _ => false)
   t "beamer colors: title separator has the matching HTML color and no loss"
-    ((treeCssOne "" separatorHtml).contains "--separator: #582347" &&
+    ((treeCssOne "" separatorHtml).contains "--ltx-separator: #582347" &&
       !colorLoss separatorDs "title separator")
   for theme in Theme.builtin do
     t s!"beamer colors: {theme.name} satisfies the extended design contrast contract"
-      (Contrast.designContract (Ir.Design.ofPalette theme.palette))
+      (Contrast.paletteContract theme.palette)

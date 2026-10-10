@@ -25,8 +25,8 @@ def seedPaletteChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO U
           | [name, found] =>
             if name.trimAscii.toString == key then some found.trimAscii.toString else value
           | _ => value) none
-    property ":root" "--bg" == some color.css &&
-      property "body" "background" == some "var(--bg)"
+    property ":root" (HtmlDoc.roleVar .page) == some color.css &&
+      property "body" "background" == some (HtmlDoc.roleRef .page)
   let inks : List Ir.Color :=
     [{ r := 25, g := 42, b := 61 }, { r := 43, g := 31, b := 53 },
      { r := 32, g := 49, b := 39 }]
@@ -82,7 +82,7 @@ def seedPaletteChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO U
             t (name ++ s!" {ground}/{role} paints typed HTML")
               ((elemStylesList #[] nodes.toList).any fun (text, style) =>
                 text == "Witness" &&
-                  style == s!"color: var(--{role}, {color.css})")
+                  style == s!"color: var({(Ir.ColorRef.color role).property}, {color.css})")
           for (ground, groundColor) in [
               ("samplePaper", seeds.paper), ("sampleSurface", c.surface),
               ("sampleAccentSoft", c.accentSoft)] do

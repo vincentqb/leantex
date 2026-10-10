@@ -333,7 +333,7 @@ def deckListingChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO
   let art := (HtmlDoc.emit {} (elabStr (dvDoc "" body)).1).1
   t "a reading page keeps its code box"
     ((lastDeclared art "pre" "padding").any (· != "0") &&
-      lastDeclared art "pre" "background" == some "var(--tint)")
+      lastDeclared art "pre" "background" == some (HtmlDoc.roleRef .codeSurface))
 
 /-- The distinct baselines a source's body lines stand on, in page order, and
 the distances between them: a table's row pitch, one per row, whatever the

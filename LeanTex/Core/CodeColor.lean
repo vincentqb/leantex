@@ -8,8 +8,9 @@ import LeanTex.Core.Oklab
 
 /-!
 The colour each code role paints in (`ListingHighlight.Role`), resolved at
-one site, `resolve`, for both backends. A role's own palette key
-(`Role.key`) is the document's colour for it. Otherwise the role takes its
+one site, `resolve`, for both backends. A role's own palette key (its
+registry row, `Ir.Role.ofCode`) is the document's colour for it. Otherwise the
+role takes its
 colour from the palette's roles by one rule, so every palette has code
 colours of its own:
 
@@ -29,8 +30,8 @@ colours of its own:
 A derived hue ships as a tone (`tone`): its hue at `codeChroma`, never
 louder than the alert, and the lightness nearest the ground that clears
 `codeTone` there — Material 3's tonal rule (a key colour fixes hue and
-chroma, the ground chooses the tone), the rule `Contrast.realize` follows
-too. A role the palette gives the rule nothing to read for takes the
+chroma, the ground chooses the tone), the rule `Contrast.realizeNearest`
+follows too. A role the palette gives the rule nothing to read for takes the
 listing style's colour for the type a reader knows the role by
 (`roleStyleKind`).
 -/
@@ -43,27 +44,31 @@ public def table : ListingStyle → Table
   | .default => defaultTable
   | .friendly => friendlyTable
 
-/-- A token colour and where it comes from: `role` names the palette key it
+/-- A token colour and where it comes from: `role` names the registry role it
 ships under (the HTML custom property a host page may override, and the
 contrast judge's key), `declared` whether the document declared the colour
 — under a code role's own key, or as the palette role the rule reads —
-rather than the rule deriving it or the style choosing it. -/
+rather than the rule deriving it or the style choosing it, and `styled`
+whether the listing's highlighting style states it. A declared or a styled
+colour ships as stated; only what the rule derives is the engine's to fit
+to its ground. -/
 public structure Paint where
   color : Color
-  role : Option String
+  role : Option Ir.Role
   declared : Bool
+  styled : Bool := false
   deriving Repr, BEq
 
 /-- The palette keys that once coloured one token type each, and the role
 that type paints in now. They colour no listing: a role is named by its own
-key (`Role.key`), one naming scheme. -/
-public def retiredKeys : List (String × Role) :=
+key (`Ir.codeKey`, the registry's), one naming scheme. -/
+public def retiredKeys : List (String × ListingHighlight.Role) :=
   [("codestring", .literal), ("codenumber", .literal), ("codebuiltin", .name),
    ("codeoperator", .ink)]
 
 /-- The type a style's colour for a role is read from: the one a reader
 knows the role by. The ink has none: it sets in the listing's own colour. -/
-public def roleStyleKind : Role → Option Kind
+public def roleStyleKind : ListingHighlight.Role → Option Kind
   | .ink => none
   | .keyword => some .keyword
   | .name => some .nameFunction
@@ -72,7 +77,7 @@ public def roleStyleKind : Role → Option Kind
   | .error => some .genericError
 
 /-- The style's colour for a role. -/
-public def styleColor (style : ListingStyle) (r : Role) : Option Color :=
+public def styleColor (style : ListingStyle) (r : ListingHighlight.Role) : Option Color :=
   (roleStyleKind r).bind fun k => ((table style).resolvedOf k).color.map (·.1)
 
 /-- One just-noticeable difference (`Oklab.okJnd`): a colour nearer the
@@ -176,7 +181,7 @@ private def hueTone (ground : Color) (v : Int × Int) : Option Color :=
 /-- What the rule reads a role's colour from the palette as. -/
 public inductive Derived where
   /-- A palette role the rule reads. -/
-  | role (key : String)
+  | role (r : Ir.Role)
   /-- A colour the rule derives from the palette's roles. -/
   | color (c : Color)
   /-- The listing's own text colour: no colour of the role's own. -/
@@ -195,11 +200,11 @@ private structure Reads where
   muted : Option Color
 
 private def reads (pal : Palette) : Reads :=
-  let fg := pal.find? "fg"
-  let alert := (pal.find? "alert").filter fun a => some a != fg
+  let fg := Design.declared? pal .ink
+  let alert := (Design.declared? pal .alert).filter fun a => some a != fg
   { fg, alert
-    ex := (pal.find? "example").filter fun e => some e != fg && some e != alert
-    muted := (pal.find? "muted").filter fun m => some m != alert }
+    ex := (Design.declared? pal .example).filter fun e => some e != fg && some e != alert
+    muted := (Design.declared? pal .muted).filter fun m => some m != alert }
 
 /-- The hues the code already sets in: the ink's where it shows one, and
 the alert's. -/
@@ -208,7 +213,7 @@ private def Reads.hues (p : Reads) : List (Int × Int) :=
 
 /-- Whether the rule leaves role `r` open: the palette gives it nothing to
 read, whatever the ground. Only then does a listing style colour it. -/
-public def opens (pal : Palette) (r : Role) : Bool :=
+public def opens (pal : Palette) (r : ListingHighlight.Role) : Bool :=
   let p := reads pal
   match r with
   | .ink => false
@@ -233,7 +238,7 @@ private def Reads.chroma (p : Reads) : Int :=
 /-- The literal role, and the hue it sets in where it has one. -/
 private def literalOf (p : Reads) (ground : Color) : Derived × Option (Int × Int) :=
   match p.ex with
-  | some e => (.role "example", hue? e)
+  | some e => (.role .example, hue? e)
   | none =>
     match openHue p.hues with
     | some u => ((hueTone ground (scaled p.chroma u)).elim .ink .color, some u)
@@ -253,14 +258,14 @@ private def familyOf (p : Reads) (ground : Color) (literal : Option (Int × Int)
 
 private def commentOf (p : Reads) (page : Color) : Derived :=
   match p.muted, p.fg with
-  | some m, some f => if m == f then .color (f.mix 70 page) else .role "muted"
-  | some _, none => .role "muted"
+  | some m, some f => if m == f then .color (f.mix 70 page) else .role .muted
+  | some _, none => .role .muted
   | none, some f => .color (f.mix 70 page)
   | none, none => .none
 
 private def errorOf (p : Reads) : Derived :=
   match p.alert with
-  | some _ => .role "alert"
+  | some _ => .role .alert
   | none => .none
 
 private theorem familyOf_none {p : Reads} {ground : Color} {l : Option (Int × Int)}
@@ -314,7 +319,7 @@ public def derive (pal : Palette) (page ground : Color) : RoleTable Derived :=
 /-- **The rule leaves a role to the style only where it `opens`**: on every
 ground, a role the palette gives the rule something to read for derives a
 colour, or the ink. -/
-public theorem derive_none_opens (pal : Palette) (page ground : Color) (r : Role)
+public theorem derive_none_opens (pal : Palette) (page ground : Color) (r : ListingHighlight.Role)
     (h : (derive pal page ground).get r = .none) : opens pal r = true := by
   cases r <;> simp only [derive, RoleTable.get] at h
   · simp at h
@@ -338,29 +343,30 @@ public def resolve (pal : Palette) (ground : Color) (style : ListingStyle) :
   let page := (Design.ofPalette pal).bg
   let derived := derive pal page ground
   RoleTable.ofFn fun r =>
-    match pal.find? r.key with
-    | some c => some { color := c, role := some r.key, declared := true }
+    match Design.declared? pal (Ir.Role.ofCode r) with
+    | some c => some { color := c, role := some (Ir.Role.ofCode r), declared := true }
     | none =>
       match derived.get r with
-      | .role key => (pal.find? key).map fun c =>
+      | .role key => (Design.declared? pal key).map fun c =>
           if ground == page then { color := c, role := some key, declared := true }
-          else { color := c, role := some r.key, declared := false }
-      | .color c => some { color := c, role := some r.key, declared := false }
+          else { color := c, role := some (Ir.Role.ofCode r), declared := false }
+      | .color c => some { color := c, role := some (Ir.Role.ofCode r), declared := false }
       | .ink => none
       | .none => (styleColor style r).map fun c =>
-          { color := c, role := some r.key, declared := false }
+          { color := c, role := some (Ir.Role.ofCode r), declared := false, styled := true }
 
 /-- **A colour shipped as declared is one the palette declares, under the
 key it ships under**: a code role's own, or the palette role the rule
 reads. -/
 public theorem resolve_declared_mem (pal : Palette) (ground : Color) (style : ListingStyle)
-    (r : Role) (p : Paint) (h : (resolve pal ground style).get r = some p)
-    (hd : p.declared = true) : ∃ key, p.role = some key ∧ pal.find? key = some p.color := by
+    (r : ListingHighlight.Role) (p : Paint) (h : (resolve pal ground style).get r = some p)
+    (hd : p.declared = true) :
+    ∃ key, p.role = some key ∧ Design.declared? pal key = some p.color := by
   rw [resolve, RoleTable.get_ofFn] at h
   split at h
   · rename_i c hc
     cases h
-    exact ⟨r.key, rfl, hc⟩
+    exact ⟨_, rfl, hc⟩
   · split at h
     · rename_i key _
       simp only [Option.map_eq_some_iff] at h
@@ -378,8 +384,8 @@ public theorem resolve_declared_mem (pal : Palette) (ground : Color) (style : Li
 derives, adapts or takes from the style is the code role's, never a
 palette role's. -/
 public theorem resolve_derived_exact (pal : Palette) (ground : Color) (style : ListingStyle)
-    (r : Role) (p : Paint) (h : (resolve pal ground style).get r = some p)
-    (hd : p.declared = false) : p.role = some r.key := by
+    (r : ListingHighlight.Role) (p : Paint) (h : (resolve pal ground style).get r = some p)
+    (hd : p.declared = false) : p.role = some (Ir.Role.ofCode r) := by
   rw [resolve, RoleTable.get_ofFn] at h
   split at h
   · cases h; simp at hd
@@ -399,14 +405,14 @@ public theorem resolve_derived_exact (pal : Palette) (ground : Color) (style : L
 no key of the role's own, a type the style colours the role by, and
 nothing for the rule to read. A style no role reads changes no page the
 palette sets. -/
-public def styleReads (pal : Palette) (r : Role) : Bool :=
-  (pal.find? r.key).isNone && (roleStyleKind r).isSome && opens pal r
+public def styleReads (pal : Palette) (r : ListingHighlight.Role) : Bool :=
+  (Design.declared? pal (Ir.Role.ofCode r)).isNone && (roleStyleKind r).isSome && opens pal r
 
 /-- **A role no style reads resolves alike under every style**, on every
 ground: the style decides a colour only where `styleReads` says it does,
 so the inert-style diagnostic judges exactly what both artifacts ship. -/
 public theorem resolve_style_exact (pal : Palette) (ground : Color) (style style' : ListingStyle)
-    (r : Role) (h : styleReads pal r = false) :
+    (r : ListingHighlight.Role) (h : styleReads pal r = false) :
     (resolve pal ground style).get r = (resolve pal ground style').get r := by
   simp only [resolve, RoleTable.get_ofFn]
   split

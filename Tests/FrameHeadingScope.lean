@@ -26,9 +26,9 @@ def doc (progress footer : Bool) (valign : Ir.VAlign)
     (levels : Array Ir.HeadingLevel := #[1, 2, 3]) : Ir.Doc :=
   let base := (elabStr (deck169 "\\theme{moloch}" "")).1
   let palette := if progress then base.palette else
-    (["progressfg", "progressbg", "sectionprogressfg", "sectionprogressbg"].foldl
-      Ir.Palette.erase base.palette)
-  let palette := palette.declare "bg" { r := 237, g := 246, b := 249 }
+    ([Ir.Role.progressFill, .progressTrack, .sectionProgressFill, .sectionProgressTrack].foldl
+      (fun p r => p.erase (.role r)) base.palette)
+  let palette := palette.declare (.role .page) { r := 237, g := 246, b := 249 }
   let prologue := if footer then #[Ir.Block.framefoot #[.text "Frame footer"]] else #[]
   let body := #[Ir.Block.para #[.text "Before"]] ++
     levels.map (fun level => .section level true none #[.text s!"Heading {level}"]) ++
@@ -143,7 +143,7 @@ def frameHeadingScopeChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) 
     -- here would visibly replace it even if its text happened to fit.
     let base := FrameHeadingScope.doc progress false .golden #[1]
     let ground : Ir.Color := { r := 231, g := 242, b := 222 }
-    let doc := { base with palette := base.palette.declare "titlepagebg" ground }
+    let doc := { base with palette := base.palette.declare (.role .titlePageGround) ground }
     let out := layoutOf fonts doc
     let (_, html, _) := HtmlDoc.emitTree {} doc
     let stages := FrameHeadingScope.frameNodesList #[] html.toList

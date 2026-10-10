@@ -1,6 +1,8 @@
 module
 
-public import LeanTex.Core.Ir
+public import LeanTex.Core.Color
+public import LeanTex.Core.Dim
+public import LeanTex.Core.DesignRole
 import LeanTex.Core.Oklab
 
 /-!
@@ -62,6 +64,21 @@ public def aaText : Nat := 4500
 public def aaLargeText : Nat := 3000
 /-- SC 1.4.11 (AA), non-text UI information: 3:1. -/
 public def aaNonText : Nat := 3000
+
+/-- The ratio a role's need owes, in `contrastMilli`'s units: text 4.5:1
+and large-scale text 3:1 (SC 1.4.3), non-text information and a state
+change 3:1 (SC 1.4.11); a ground or decoration owes nothing. -/
+@[expose] public def required : Ir.Need → Nat
+  | .text => aaText
+  | .largeText => aaLargeText
+  | .nonText => aaNonText
+  | .state => aaNonText
+  | .decorative => 0
+
+/-- Every need's ratio is at most the text one: a pair that clears 4.5:1
+clears whatever its need asks. -/
+public theorem required_le_aaText (n : Ir.Need) : required n ≤ aaText := by
+  cases n <;> decide
 
 /-- A pair that clears the normal-text requirement also clears the
 large-scale text requirement. Consumers need this ordering, not the

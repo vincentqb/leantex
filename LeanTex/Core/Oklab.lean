@@ -1,6 +1,6 @@
 module
 
-public import LeanTex.Core.Ir
+public import LeanTex.Core.Color
 
 /-!
 Oklab as pure integer arithmetic over the engine's 8-bit `Color`, for one
@@ -203,6 +203,22 @@ private def nearestChannel (v : Int) : UInt8 :=
 /-- Round-to-nearest floor division (`d` positive, even). -/
 private def rdiv (t d : Int) : Int := (2 * t + d).fdiv (2 * d)
 
+/-- Oklab (at the 10²⁰ `labMix` scale) to linear-light sRGB at 10⁻⁷ (10⁷ is
+full intensity): the inverse M2 and inverse LMS matrices (Ottosson) and the
+cube undoing `icbrt`, each stage rounding to nearest, before any channel is
+clamped — what `toColor` inverts the transfer function of and
+`inGamutOfLab` reads. -/
+private def linearOf (lab : Lab) : Int × Int × Int :=
+  let lp := rdiv (10000000000 * lab.L + 3963377774 * lab.a + 2158037573 * lab.b) (10 ^ 24)
+  let mp := rdiv (10000000000 * lab.L - 1055613458 * lab.a - 638541728 * lab.b) (10 ^ 24)
+  let sp := rdiv (10000000000 * lab.L - 894841775 * lab.a - 12914855480 * lab.b) (10 ^ 24)
+  let l := lp ^ 3
+  let m := mp ^ 3
+  let s := sp ^ 3
+  (rdiv (40767416621 * l - 33077115913 * m + 2309699292 * s) (10 ^ 21),
+   rdiv (-12684380046 * l + 26097574011 * m - 3413193965 * s) (10 ^ 21),
+   rdiv (-41960863 * l - 7034186147 * m + 17076147010 * s) (10 ^ 21))
+
 /-- Oklab (at the 10²⁰ `labMix` scale) back to sRGB: the inverse M2 and
 inverse LMS matrices (Ottosson), the cube undoing `icbrt`, and
 `nearestChannel` undoing the transfer function. Each stage rounds to
@@ -220,22 +236,25 @@ oracle — and `toColorOfLab`, the scale wrapper every caller holding a
 `labOf`-scale value goes through; a new caller uses one of the two, never
 a bare `toColor`. -/
 private def toColor (lab : Lab) : Color :=
-  let lp := rdiv (10000000000 * lab.L + 3963377774 * lab.a + 2158037573 * lab.b) (10 ^ 24)
-  let mp := rdiv (10000000000 * lab.L - 1055613458 * lab.a - 638541728 * lab.b) (10 ^ 24)
-  let sp := rdiv (10000000000 * lab.L - 894841775 * lab.a - 12914855480 * lab.b) (10 ^ 24)
-  let l := lp ^ 3
-  let m := mp ^ 3
-  let s := sp ^ 3
-  { r := nearestChannel (rdiv (40767416621 * l - 33077115913 * m + 2309699292 * s) (10 ^ 21))
-    g := nearestChannel (rdiv (-12684380046 * l + 26097574011 * m - 3413193965 * s) (10 ^ 21))
-    b := nearestChannel (rdiv (-41960863 * l - 7034186147 * m + 17076147010 * s) (10 ^ 21)) }
+  let (r, g, b) := linearOf lab
+  { r := nearestChannel r, g := nearestChannel g, b := nearestChannel b }
 
 /-- `toColor` for a value at `labOf`'s own 10¹⁸ scale: the ×100 scale
 conversion spelled once (F8's wrapper), so a caller holding forward-space
-coordinates — the lightness search in `Contrast.realize` — cannot be
+coordinates — the lightness search in `Contrast.realizeNearest` — cannot be
 silently wrong by 100×. -/
 public def toColorOfLab (lab : Lab) : Color :=
   toColor { L := 100 * lab.L, a := 100 * lab.a, b := 100 * lab.b }
+
+/-- Whether a value at `labOf`'s 10¹⁸ scale is an sRGB colour: every
+linear channel inside [0, 1] before `toColor` clamps it, to within 5·10⁻⁶,
+under the pipeline's own rounding and a fifth of one 8-bit step. CSS Color
+4's gamut mapping reads it (§13.2: chroma reduced at constant lightness and
+hue until it holds). -/
+public def inGamutOfLab (lab : Lab) : Bool :=
+  let (r, g, b) := linearOf { L := 100 * lab.L, a := 100 * lab.a, b := 100 * lab.b }
+  let ok (v : Int) : Bool := decide (-50 ≤ v) && decide (v ≤ 10000050)
+  ok r && ok g && ok b
 
 /-- The cover of a colour: `f`% of its own Oklab value over the surface —
 Material's 38% disabled-state opacity translated to compositing over an
@@ -354,17 +373,3 @@ public theorem toward_surface_light (f : Nat) (hf : f ≤ 100) (c s : Lab) (h : 
   omega
 
 end LeanTex.Core.Oklab
-
-namespace LeanTex.Core.Ir
-
-/-- The one resolving site for covering (the palette-role obligation,
-AGENTS.md): the per-colour cover at the design's fraction toward its
-surface, and the plain cover for runs with no colour of their own — the
-declared `covered` colour when the document names one, the fraction of
-the body ink otherwise. Everything that covers — the layout dim walks,
-the contrast contract — reads this and nothing else. -/
-public def Design.cover (d : Design) : Cover :=
-  let of := Oklab.cover d.coveredFraction d.bg
-  { plain := d.covered.getD (of d.fg), of := of }
-
-end LeanTex.Core.Ir

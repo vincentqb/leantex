@@ -232,9 +232,6 @@
 ── N0021 (info) header and footer gaps differ as declared; equal gaps are the default
 ℹ [N0021]
   header and footer gaps differ by 10pt as declared; equal gaps are the default
-── N0022 (info) a palette role, or a mix of two named colours, is realized on one ground to meet its contrast requirement (WCAG 2.2)
-ℹ [N0022] - \alert
-  'alert' is realized lighter (#EE7C38) on the frame-title bar (#23373B) to meet 4.50:1
 ── N0023 (info) a picture is drawn by an external tool at the boundary; the engine measures its box, and its text is not in the document's census
 ℹ [N0023] - \begin
   this picture is drawn by lualatex at the boundary; its text is not in the document's census
@@ -456,10 +453,9 @@
 ⚠ [W0314] - \begin
   column width 'banana' is not a fraction of the text width; the column shares the leftover
   suggestion: write a factor like {0.5\textwidth}
-── W0315 (degraded) low-contrast colour pairing (WCAG 2.2)
+── W0315 (standard) low-contrast colour pairing (WCAG 2.2)
 ⚠ [W0315] - \textcolor
   text coloured 'yellow!50' (#FFFF80) reads at 1.01:1 on the page (#FAFAF9), below the 4.50:1 WCAG 2.2 asks of text (SC 1.4.3)
-  suggestion: no weight of this mix meets its ground: name it in \palette{ <name> = #FFFF80 } to have it met on its ground, or declare that entry under \palette[decorative] to keep it low
 ── W0316 (config) unknown option in \palette; block skipped
 ⚠ [W0316] - \palette
   unknown option in '\palette': "dark"; block skipped

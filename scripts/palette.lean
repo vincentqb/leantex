@@ -1,6 +1,7 @@
 module
 
 public meta import LeanTex.Core.SeedPalette
+public meta import LeanTex.Core.CodeExport
 public meta import Lean.Data.Json
 
 open LeanTex.Core
@@ -28,13 +29,20 @@ private meta def rgb (value : String) : Option Ir.Color := do
 Use `Prefix --seeds colors.json` to read exactly `ink`, `paper` and `accent`
 string fields instead of the three RGB arguments.
 Add `--beamer-blocks` before the prefix for filled block bindings; load
-the export after the Beamer theme's initialization.
+the export after the Beamer theme's initialization. Add `--pygments STYLE`
+for a listing's code colours as the engine derives them from a palette whose
+text, page and alert are the ink, paper and accent (`CodeExport`), with
+STYLE's colours where that palette leaves a role open: the colours and a
+`\<Prefix>Pygments` command to name in minted's `formatcom`.
 Only declarations go to stdout, so the caller can save or compare them.
 The script never rewrites a document or changes its permissions. -/
 public meta def main (args : List String) : IO UInt32 := do
   let (blocks, args) := match args with
     | "--beamer-blocks" :: rest => (true, rest)
     | rest => (false, rest)
+  let (pygments, args) := match args with
+    | "--pygments" :: style :: rest => (some style, rest)
+    | rest => (none, rest)
   let args ← match args with
     | [stem, "--seeds", path] =>
       try
@@ -48,7 +56,8 @@ public meta def main (args : List String) : IO UInt32 := do
         return 2
     | _ => pure args
   let [stem, ink, paper, accent] := args
-    | IO.eprintln "usage: palette.lean [--beamer-blocks] Prefix (INK PAPER ACCENT | --seeds colors.json)"
+    | IO.eprintln ("usage: palette.lean [--beamer-blocks] [--pygments STYLE] Prefix " ++
+        "(INK PAPER ACCENT | --seeds colors.json)")
       return 2
   if stem.isEmpty || !(stem.toList.all fun c => c.isAlpha && c.toNat < 128) then
     IO.eprintln "palette prefix must contain ASCII letters only"
@@ -60,6 +69,15 @@ public meta def main (args : List String) : IO UInt32 := do
   let some palette := SeedPalette.generate seeds
     | IO.eprintln "could not derive every role; use contrasting ink and paper with a distinct accent"
       return 1
-  IO.print (if blocks then SeedPalette.beamerDeclarations stem seeds palette
-    else SeedPalette.declarations stem seeds palette)
+  let code ← match pygments with
+    | none => pure ""
+    | some name =>
+      let some style := Ir.ListingStyle.ofName? name
+        | IO.eprintln s!"unknown highlighting style '{name}'; use default or friendly"
+          return 2
+      let pal : Ir.Palette := ({} : Ir.Palette).declare (.role .ink) ink
+        |>.declare (.role .page) paper |>.declare (.role .alert) accent
+      pure (CodeExport.texDeclarations stem pal style)
+  IO.print ((if blocks then SeedPalette.beamerDeclarations stem seeds palette
+    else SeedPalette.declarations stem seeds palette) ++ code)
   return 0

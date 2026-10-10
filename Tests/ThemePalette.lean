@@ -14,12 +14,12 @@ private def check (ref : IO.Ref (List String)) (name : String) (ok : Bool) : IO 
 example {s : SeedPalette.Seeds} (p : SeedPalette.Generated s) :
     Contrast.aaText ≤ Contrast.contrastMilli p.colors.muted p.colors.surface :=
   SeedPalette.generated_role_contract p (foreground := .muted) (ground := .surface)
-    (by simp [SeedPalette.requirements])
+    (need := .text) (by simp [SeedPalette.requirements])
 
 example {s : SeedPalette.Seeds} (p : SeedPalette.Generated s) :
     Contrast.aaText ≤ Contrast.contrastMilli p.colors.muted s.paper :=
   SeedPalette.generated_role_contract p (foreground := .muted) (ground := .paper)
-    (by simp [SeedPalette.requirements])
+    (need := .text) (by simp [SeedPalette.requirements])
 
 example {s : SeedPalette.Seeds} (p : SeedPalette.Generated s) :
     Contrast.aaText ≤ Contrast.contrastMilli p.colors.accentText p.colors.surface :=
@@ -29,7 +29,7 @@ example {s : SeedPalette.Seeds} (p : SeedPalette.Generated s) :
 example {s : SeedPalette.Seeds} (p : SeedPalette.Generated s) :
     Contrast.aaNonText ≤ Contrast.contrastMilli p.colors.accentEdge p.colors.accentSoft :=
   SeedPalette.generated_role_contract p (foreground := .accentEdge) (ground := .accentSoft)
-    (by simp [SeedPalette.requirements])
+    (need := .nonText) (by simp [SeedPalette.requirements])
 
 example {s : SeedPalette.Seeds} (p : SeedPalette.Generated s) :
     SeedPalette.Role.accent.color s p.colors = s.accent :=

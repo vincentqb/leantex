@@ -261,7 +261,6 @@ public inductive DiagCode where
   | W0373
   | W0374
   | N0376
-  | N0022
   | W0377
   | N0023
   | N0025
@@ -408,7 +407,7 @@ private def DiagCode.spec : DiagCode → String × Loss × String
   | .E0336 => ("0336", .dropped, "{...} groups went with an unknown wrapper")
   | .E0340 => ("0340", .dropped, "unknown icon name; nothing is rendered")
   | .W0314 => ("0314", .degraded, "column width is not a fraction of the text width")
-  | .W0315 => ("0315", .degraded, "low-contrast colour pairing (WCAG 2.2)")
+  | .W0315 => ("0315", .standard, "low-contrast colour pairing (WCAG 2.2)")
   | .W0316 => ("0316", .config, "unknown option in \\palette; block skipped")
   | .W0317 => ("0317", .config, "a card carries no running head or foot; declaration dropped")
   | .W0318 => ("0318", .config, "\\chrome outside the slides class; ignored")
@@ -471,7 +470,6 @@ private def DiagCode.spec : DiagCode → String × Loss × String
   | .W0373 => ("0373", .degraded, "\\thanks is kept inline in the title block")
   | .W0374 => ("0374", .degraded, "a footnote on a card face is kept inline; a face has no note apparatus")
   | .N0376 => ("0376", .info, "an image ships no text alternative (WCAG 2.2)")
-  | .N0022 => ("0022", .info, "a palette role, or a mix of two named colours, is realized on one ground to meet its contrast requirement (WCAG 2.2)")
   | .W0377 => ("0377", .degraded, "a link carries no text to name its purpose (WCAG 2.2)")
   | .N0023 => ("0023", .info, "a picture is drawn by an external tool at the boundary; the engine measures its box, and its text is not in the document's census")
   | .N0025 => ("0025", .info, "an inputenc declaration names an encoding other than UTF-8; each file it governs is listed with how it reads")

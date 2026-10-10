@@ -31,12 +31,12 @@ example : BEq Bib.NameFormat := inferInstance
 example : Inhabited Bib.NameFormat := inferInstance
 example : Repr Bib.Resolved := inferInstance
 
-example (ink : Option (Ir.Color × Option String)) : Bib.CitePunct :=
+example (ink : Option (Ir.Color × Option Ir.ColorRef)) : Bib.CitePunct :=
   { numbers := true, «open» := "[", close := "]", sep := ",",
     aysep := ",", yysep := ",", notesep := ", ", sort := true,
     compress := true, biblatex := false, ink }
 
-example (p : Bib.CitePunct) : Bool × String × Option (Ir.Color × Option String) :=
+example (p : Bib.CitePunct) : Bool × String × Option (Ir.Color × Option Ir.ColorRef) :=
   (p.numbers, p.notesep, p.ink)
 
 example : String → Bool := Bib.CitePunct.reads

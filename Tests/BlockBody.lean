@@ -130,8 +130,8 @@ private def htmlWitnessChecks (ref : IO.Ref (List String)) : IO Unit := do
 
 private def probe (kind : Ir.TitledKind) (title : Array Ir.Inline) : Ir.Doc :=
   { palette := { entries := #[
-      ("fg", Ir.Color.black), ("bg", Ir.Color.white),
-      (kind.name ++ "bodyfg", ink), (kind.name ++ "bodybg", ground)] }
+      (.role .ink, Ir.Color.black), (.role .page, Ir.Color.white),
+      (.role (Ir.Role.bodyInk kind), ink), (.role (Ir.Role.bodyGround kind), ground)] }
     body := #[.titled kind title #[.para #[.text "BODY"]]] }
 
 private def layout (fonts : Font.FontSet) (doc : Ir.Doc) : Layout.Out :=
@@ -194,11 +194,11 @@ private def regionChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : I
   let pale : Ir.Color := { r := 221, g := 238, b := 255 }
   let dark : Ir.Color := { r := 34, g := 51, b := 68 }
   let pal : Ir.Palette := { entries := #[
-    ("fg", Ir.Color.black), ("bg", Ir.Color.white), ("blockbodyfg", blue)] }
+    (.role .ink, Ir.Color.black), (.role .page, Ir.Color.white), (.role .blockBodyInk, blue)] }
   let epoch : Ir.Doc := { palette := pal, body := #[.titled .block #[] #[
     .para #[.text "BEFORE"],
     .setPalette { pal with entries := pal.entries.map fun (key, c) =>
-      (key, if key == "fg" then brown else c) },
+      (key, if key == .role .ink then brown else c) },
     .para #[.text "AFTER", .math false "x"], .verbatim none "CODE" {}]] }
   let leaves := html epoch
   for (text, tag) in #[("AFTER", "p"), ("x", "p"), ("CODE", "pre")] do
@@ -211,8 +211,9 @@ private def regionChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : I
         | _ => false)
   let nested : Ir.Doc := {
     palette := { entries := #[
-      ("fg", Ir.Color.black), ("bg", Ir.Color.white),
-      ("blockbodybg", pale), ("examplebodybg", dark), ("examplebodyfg", Ir.Color.white)] }
+      (.role .ink, Ir.Color.black), (.role .page, Ir.Color.white),
+      (.role .blockBodyGround, pale), (.role .exampleBodyGround, dark),
+      (.role .exampleBodyInk, Ir.Color.white)] }
     body := #[.titled .block #[] #[.titled .example #[] #[.para #[.text "NESTED"]]]] }
   -- beamer's colour boxes are `\textwidth` wide at every depth, so a nested
   -- box shares its parent's reach; the parent keeps the child's space above
@@ -229,7 +230,7 @@ private def regionChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : I
       leaf.nestedPaint pale.css dark.css Ir.Color.white.css)
   let empty : Ir.Doc := {
     palette := { entries := #[
-      ("fg", Ir.Color.black), ("bg", Ir.Color.white), ("blockbodybg", dark)] }
+      (.role .ink, Ir.Color.black), (.role .page, Ir.Color.white), (.role .blockBodyGround, dark)] }
     body := #[.para #[.text "BEFORE"], .titled .block #[] #[], .para #[.text "AFTER"]] }
   check ref "block body empty: PDF nonzero band between paragraphs"
     ((layout fonts empty).pages.any fun page => page.fills.any fun fill =>
@@ -244,7 +245,7 @@ private def regionChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : I
       width := Dim.pt 200, height := Dim.pt 100, hmargin := Dim.pt 10
       vmargin := Dim.pt 1, fontSize := Dim.pt 10 }
     palette := { entries := #[
-      ("fg", Ir.Color.black), ("bg", Ir.Color.white), ("blockbodybg", pale)] }
+      (.role .ink, Ir.Color.black), (.role .page, Ir.Color.white), (.role .blockBodyGround, pale)] }
     body := #[.titled .block #[] ((List.range 24).map fun i =>
       Ir.Block.para #[.text s!"LINE{i}"]).toArray] }
   let out := layout fonts spill

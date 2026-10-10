@@ -43,7 +43,7 @@ public structure CitePunct where
   colour (`Ir.Styles.linkInk`), hyperref's `citecolor` under `colorlinks`.
   Only the mark: the brackets and separators around it keep the running
   colour, as `\Hy@colorlink` leaves them. -/
-  ink : Option (Ir.Color × Option String) := none
+  ink : Option (Ir.Color × Option Ir.ColorRef) := none
   deriving Repr, BEq, Inhabited
 
 /-- natbib's `\bibstyle@plainnat` row, which `abbrvnat` and `unsrtnat`

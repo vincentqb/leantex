@@ -355,10 +355,10 @@ def abstractChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "the abstract heading derives the styled section's font, centred"
     ((Ir.abstractHeadingStyle sDoc.styles).font ==
       ((sDoc.styles.find? "section").bind (·.font)) &&
-     (Ir.abstractHeadingStyle sDoc.styles).align == some "center")
+     (Ir.abstractHeadingStyle sDoc.styles).align == some .center)
   t "an explicit style abstract key wins over the derivation"
     ((Ir.abstractHeadingStyle (sDoc.styles.declare "abstract"
-        { align := some "left" })).align == some "left")
+        { align := some .left })).align == some .left)
   -- The venue's \renewenvironment{abstract}: refused (W0303, the
   -- protection code for a built-in environment), its declarative
   -- appearance read — \large\bf and \centerline land as the heading's
@@ -374,7 +374,7 @@ def abstractChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "the refused redefinition's large bold centreline lands on the heading"
     ((Ir.abstractHeadingStyle vDoc.styles).font ==
       some #[.styled (.size "large") #[.styled .bold #[]]] &&
-     (Ir.abstractHeadingStyle vDoc.styles).align == some "center")
+     (Ir.abstractHeadingStyle vDoc.styles).align == some .center)
 
 /-- Heading numbers: article numbers unstarred levels 1–3 in flow order
 (classes.dtx §Sectioning), `\appendix` letters from A and restarts the
@@ -1470,7 +1470,7 @@ def compatChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "compat color is the declaration form"
     ((elabStr ("\\documentclass{article}\\palette{m = #666666}\\begin{document}" ++
       "a {\\color{m}b} c\\end{document}")).1.body ==
-      #[.para #[.text "a ", .colored { r := 0x66, g := 0x66, b := 0x66 } (some "m") #[.text "b"], .text " c"]])
+      #[.para #[.text "a ", .colored { r := 0x66, g := 0x66, b := 0x66 } (some (.color "m")) #[.text "b"], .text " c"]])
   -- `\color`'s argument is a palette *expression*: the `!`-mix grammar lives
   -- once, in `Palette.resolve`, and the bare-name arm routes through it.
   -- Before, `\color{m!50!black}` minted '\m!50!black' as a control word and
@@ -1720,7 +1720,7 @@ def compatChecks (ref : IO.Ref (List String)) : IO Unit := do
     "\\makeatletter\\renewcommand\\sectionlinesformat[4]{#3#4 \\textcolor{ink}{\\leaders\\hrule\\hfill}}\\makeatother" ++
     "\\thispagestyle{empty}\\ihead{L}"))
   t "compat koma section font" ((koma.1.styles.find? "section").bind (·.font) ==
-    some #[.styled (.size "large") #[.styled .sans #[.colored { r := 0x11, g := 0x22, b := 0x33 } (some "ink") #[]]]])
+    some #[.styled (.size "large") #[.styled .sans #[.colored { r := 0x11, g := 0x22, b := 0x33 } (some (.color "ink")) #[]]]])
   -- KOMA's disposition element is every sectioning level's font at once
   -- (KOMA-Script manual ch. 4): one declaration fans out to the heading
   -- elements the engine draws; a later per-level \setkomafont wins per
@@ -1737,7 +1737,7 @@ def compatChecks (ref : IO.Ref (List String)) : IO Unit := do
       dispo.2.all (·.code != "W0111"))
   t "compat koma section spacing"
     (((koma.1.styles.find? "section").bind (·.before)).map (·.width) == some { sp := Dim.pt 6 })
-  t "compat koma section rule" (((koma.1.styles.find? "section").bind (·.rule)).map (·.2) == some (some "ink"))
+  t "compat koma section rule" (((koma.1.styles.find? "section").bind (·.rule)).map (·.2) == some (some (.color "ink")))
   -- The TeX rule's own geometry rides along: `\hrule` has zero depth, so
   -- the reading is a baseline rule, and its `height` is the thickness —
   -- TeX's 0.4 pt default when none is written (TeXbook p. 221). A height
@@ -5796,8 +5796,8 @@ def titleSlotShipChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) :
   t "typed HTML keeps the two boxes and every independently styled part"
     (["u-titlepage-slot-0-part-0", "u-titlepage-slot-0-part-1",
       "u-titlepage-slot-1-part-0", "u-titlepage-slot-1-part-1"].all (hasStr htmlF) &&
-     hasStr htmlF "class=\"ragged\"" && hasStr htmlF "var(--probeGold" &&
-     hasStr htmlF "var(--probeSnow" &&
+     hasStr htmlF "class=\"ragged\"" && hasStr htmlF "var(--ltx-c-probeGold" &&
+     hasStr htmlF "var(--ltx-c-probeSnow" &&
      (elemStylesList #[] bodyF.toList).any fun (text, style) =>
        text == "Probe Heading" &&
        cssStageLength style "font-size" (Dim.pt 20) docF.page.height &&
@@ -5823,11 +5823,12 @@ def titleSlotShipChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) :
   t "a datum beside literal text is one named loss with its subject"
     ((dsM.filter (·.code == "W0363")).size == 1 &&
      dsM.any fun d => d.code == "W0363" && d.subject == key "author")
-  -- **A slot ink the title page's ground fails is realized lighter, and
-  -- both artifacts ship the realized value** — N0022's claim, read off
-  -- each artifact: the PDF run's colour and the ground painted under it
-  -- off `Layout.Out`, the HTML token the title slide resolves the run's
-  -- `var(--role)` through off the stylesheet the typed tree ships.
+  -- **A slot ink ships as declared on the title page's ground, judged at
+  -- the stage's size** — read off each artifact: the PDF run's colour and
+  -- the ground painted under it off `Layout.Out`, the HTML token the title
+  -- slide resolves the run's `var(--role)` through off the stylesheet the
+  -- typed tree ships. The rust falls short of a document's 4.5:1 on the
+  -- night ground and clears the 3:1 a deck's stage-size text asks.
   let night : Ir.Color := { r := 0x20, g := 0x28, b := 0x33 }
   let rust : Ir.Color := { r := 0xC8, g := 0x68, b := 0x3A }
   let preR := "\\definecolor{probeNight}{HTML}{202833}\\definecolor{probeRust}{HTML}{C8683A}" ++
@@ -5845,20 +5846,19 @@ def titleSlotShipChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) :
         | .run _ c .. => some c
         | _ => none
   let ground : Option Ir.Color := (outR.pages[0]?.bind (·.fills[0]?)).map (·.color)
-  t "the probe's author ink fails its ground as declared, and the loss is noted"
-    (Contrast.contrastMilli rust night < Contrast.aaText && dsR.any (·.code == "N0022"))
-  t "the PDF ships the realized author ink, legible on the ground painted under it"
+  t "the probe's author ink passes its ground at the stage's size, and nothing is noted"
+    (Contrast.contrastMilli rust night < Contrast.aaText &&
+      Contrast.aaLargeText ≤ Contrast.contrastMilli rust night &&
+      dsR.all fun d => d.code != "W0315" && d.code != "W0345")
+  t "the PDF ships the declared author ink on the ground painted under it"
     (match authorInk, ground with
-     | some c, some g => g == night && c != rust && Contrast.contrastMilli c g ≥ Contrast.aaText
+     | some c, some g => g == night && c == rust
      | _, _ => false)
   let (headR, bodyR, _) := HtmlDoc.emitTree {} docR
   let cssR := treeCssList (treeCssList "" headR.toList) bodyR.toList
-  t "the HTML title slide resolves the author's token to the ink the PDF ships"
-    ((titleSlideStylesList false #[] bodyR.toList).any (hasStr · "var(--probeRust") &&
-     (match authorInk with
-      | some c => (cssRulesOf cssR "section.slide.title-page").any
-          (hasStr · s!"--probeRust: {HtmlDoc.cssColor c};")
-      | none => false))
+  t "the HTML title slide resolves the author's token, never re-pointed on the slide"
+    ((titleSlideStylesList false #[] bodyR.toList).any (hasStr · "var(--ltx-c-probeRust") &&
+     !(cssRulesOf cssR "section.slide.title-page").any (hasStr · "--ltx-c-probeRust:"))
   -- **Each slot's stylesheet rule pins it where TikZ does**, read off the
   -- stylesheet the typed tree ships for the five-slot fixture. Known
   -- answers spelled from its declarations: `at` names the page point (a
@@ -6037,11 +6037,11 @@ def titleTemplateOptionalChecks (ref : IO.Ref (List String)) (oneFace : Font.Fon
          (lineSizeOf cN 0 "A. Example").any fun size =>
            (lineSizeOf cN 0 "Example Lab").any (· < size))
       t "the institute inherits page ink while the author's accent stays scoped in HTML"
-        (hasStr cssN "color: var(--titlepagefg" &&
+        (hasStr cssN "color: var(--ltx-titlepagefg" &&
          (elemStylesList #[] bodyN.toList).all (fun (text, style) =>
            !hasStr text "Example Lab" || !hasStr style "color:") &&
          (elemStylesList #[] bodyN.toList).any (fun (text, style) =>
-           text == "A. Example" && hasStr style "var(--probeAccent"))
+           text == "A. Example" && hasStr style "var(--ltx-c-probeAccent"))
     unless subtitle.isEmpty do
       let (_, _, outZ, _, _) := shipPre (populated.replace "\\vskip3pt" "\\vskip0pt")
       let cZ := censusOf (coveredColorsOf doc) outZ
@@ -6123,7 +6123,7 @@ def titleTemplateColorChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSe
         (pageOccurs c 0 "Colour Sample" == 1 && pageOccurs c 0 "Institute Sample" == 1 &&
          (lineYOf c 0 "Colour Sample").any (· > doc.page.height * 3 / 4) &&
          (elemStylesList #[] body.toList).any (fun (text, style) =>
-           text == "Institute Sample" && hasStr style "var(--probeAccent") &&
+           text == "Institute Sample" && hasStr style "var(--ltx-c-probeAccent") &&
          (cssRuleOf (treeCssList (treeCssList "" head.toList) body.toList)
            "section.slide.title-page > .u-titlepage-slot-1").any
            (hasStr · "translate(-0%, -100%)"))
@@ -7406,12 +7406,11 @@ def svgTextRuns (body : Array Html.Node) : Array (String × Array (String × Str
 /-- **One expression on one ground ships one ink, in a paragraph or a
 drawing** — review INK-2's finding: a re-weighted mix, and a realized
 role, shipped their repaired ink in text runs and their declared one in
-picture labels on the same page. Read off `Layout.Out` (the label lines a
-picture sets) and off the typed HTML tree (the label's SVG runs against
-the paragraph's spans): each expression's label run carries its text
-run's ink, in both artifacts; a label standing on a node's own fill is
-judged by that fill, so the page's ink does not follow it there.
-Invented content. -/
+picture labels on the same page. Every colour now ships as declared, so
+each expression's label run carries its text run's ink, the declared one,
+in both artifacts. Read off `Layout.Out` (the label lines a picture sets)
+and off the typed HTML tree (the label's SVG runs against the paragraph's
+spans). Invented content. -/
 def oneInkChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit := do
   let t := check ref
   let src := "\\documentclass{article}\\palette{ fg = #23373B, bg = #FAFAFA, soft = #888888 }" ++
@@ -7436,14 +7435,14 @@ def oneInkChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit
   let softDeclared : Ir.Color := { r := 0x88, g := 0x88, b := 0x88 }
   match pdfInk "Mixtext", pdfInk "Mixlabel" with
   | some text, some label =>
-    t "the mix's text run is re-weighted" (text != mixDeclared)
+    t "the mix's text run ships xcolor's value" (text == mixDeclared)
     t "the mix's picture label ships its text run's ink in the PDF" (label == text)
   | _, _ => failures ref "one ink: no mixed text run or label in the PDF"
   match pdfInk "Softtext", pdfInk "Softlabel", pdfInk "Filllabel" with
   | some text, some label, some filled =>
-    t "the role's text run is realized" (text != softDeclared)
+    t "the role's text run ships its declared value" (text == softDeclared)
     t "the role's picture label ships its text run's ink in the PDF" (label == text)
-    t "a label on a node's fill is not given the page's ink" (filled == softDeclared)
+    t "a label on a node's fill ships the declared ink" (filled == softDeclared)
   | _, _, _ => failures ref "one ink: no soft text run or label in the PDF"
   let (_, body, _) := HtmlDoc.emitTree {} doc
   let spans := elemStylesList #[] body.toList
@@ -7459,15 +7458,8 @@ def oneInkChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit
     t "the HTML paragraph and the HTML label carry the role's one ink"
       (spanHas "Softtext" (HtmlDoc.cssColor soft) && runHas "Softlabel" (HtmlDoc.cssColor soft))
   | _, _ => failures ref "one ink: no text runs to compare the HTML against"
-  -- Parked, routed to the SVG label emitter (`HtmlDoc.labelNodesOne`): a
-  -- role-named label on a node's fill paints `var(--role, declared)`, and
-  -- the page's realized `--role` wins there, while the PDF paints the
-  -- declared ink the fill's ground keeps. The node ground owes a scope, or
-  -- the label the IR's literal. A row failing in both directions: the fix
-  -- fails it until the row goes.
-  let filledLabelParked := true
-  t "parked: an HTML label on a node's fill still reads the page's role ink"
-    (runHas "Filllabel" "var(--soft" == filledLabelParked)
+  t "an HTML label on a node's fill carries the declared ink the PDF paints"
+    (runHas "Filllabel" (HtmlDoc.cssColor softDeclared))
 
 /-- **A node's text is inline content, so its styles reach both artifacts.**
 The defect: `\textbf{…}` in a node body set in the regular weight where
@@ -7666,7 +7658,7 @@ def pictureNodeStyleChecks (ref : IO.Ref (List String)) : IO Unit := do
       s == "Middle" && attrIn env "class" == some "sc")
   t "the SVG paints a coloured node's word in its palette role"
     ((svgRuns (node "\\textcolor{rose}{Middle}")).any fun (s, env) =>
-      s == "Middle" && env.any fun (k, v) => k == "style" && hasStr v "var(--rose")
+      s == "Middle" && env.any fun (k, v) => k == "style" && hasStr v "var(--ltx-c-rose")
   t "the SVG keeps a bold word's neighbours regular (guard)"
     ((svgRuns (node "Left \\textbf{Middle} Right")).all fun (s, env) =>
       svgBold env == (s == "Middle"))

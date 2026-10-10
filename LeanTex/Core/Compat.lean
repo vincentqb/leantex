@@ -86,7 +86,7 @@ ink. `background canvas` has a ground and no ink: beamer's default canvas
 template reads only its `bg`, painting it as a full-page rule
 (beamerouterthemedefault.sty, `\defbeamertemplate*{background canvas}`), so
 it is the page's `bg`, and in the body the ground of the frames after it. -/
-private def beamerColorRoles : List (String × String × String) :=
+private def beamerColorRoles : List (String × Option Ir.Role × Option Ir.Role) :=
   BeamerColor.roles
 
 /-- Beamer's font elements, mapped onto the engine's styleable element and
@@ -7016,15 +7016,21 @@ private def alertThemed : M Bool := do
   let st ← get
   return st.themed || (st.deck && !st.themeNamed)
 
-/-- `\alert{body}` without an overlay spec: `alertStyled` around the body —
-themed, `\textcolor{alert}`; unthemed, bold. With no body group the command
-stays `\textbf`, which names the missing argument. -/
-private def alertPlain (pos : Pos) (raws : Array Raw) (start : Nat) :
+/-- `\alert{body}` without an overlay spec. In text, themed, the alert style
+the elaborator gives the body (`alertMark`): beamer's `alerted text`, the
+alert role, whatever a colour named `alert` holds, the colour alone; in a
+picture, whose standalone TeX reads it too, `alertStyled` —
+`\textcolor{alert}`; unthemed, bold. With no body group the command stays
+`\textbf`, which names the missing argument. -/
+private def alertPlain (pos : Pos) (raws : Array Raw) (start : Nat) (picture : Bool := false) :
     M (Option (Array Raw × Nat)) := do
   let themed ← alertThemed
   let (args, k) := takeGroups raws start 1
   match args[0]? with
   | some body =>
+    if themed && !picture then
+      became "\\alert" "the alert colour" pos
+      return some (#[.ctrl (alertMark true) pos, .group body pos], k)
     became "\\alert"
       (if themed then "\\textcolor{alert}{...}" else "{\\bfseries ...}") pos
     return some (alertStyled themed body pos, k)
@@ -9253,8 +9259,9 @@ face serves every language, so the binding is dropped" pos
       let src := if (rawSrc args[1]).trimAscii.toString == "." then "#000000"
         else rawSrc args[1]
       let native := s!"\\palette\{ {rawSrc args[0]} = {src} }"
+      let carried := s!"\\palette\{ {rawSrc args[0]} = {Decl.xcolorDefinitionPrefix}{src} }"
       became "\\colorlet" native pos
-      return some (← synthAt native pos, k)
+      return some (← synthAt carried pos, k)
     else return none
   | "pagecolor" =>
     let (model, j) := takeOpt raws start
@@ -11005,7 +11012,7 @@ private def rewriteList (inBody : Bool) (raws : Array Raw) (out : Array Raw) :
     let rewritten : Option (Array Raw × Nat) ← if inPicture then do
         if overlayName name == "alert" &&
             (raws[skipSpaces raws (i + 1)]?.bind overlayWord?).isNone then
-          pure ((← alertPlain pos raws (i + 1)).map fun (repl, j) =>
+          pure ((← alertPlain pos raws (i + 1) (picture := true)).map fun (repl, j) =>
             (repl, j - (i + 1)))
         else pure none
       else rewriteCtrl (overlayName name) pos raws (i + 1)
@@ -12935,7 +12942,7 @@ file declares is the file's and a role it leaves alone keeps the bundle's.
 Neither extreme is right on its own. Reading only the bundle would drop the
 author's deliberate edit to a theme sitting in their own directory. Reading
 only the file would trade a complete, contrast-proved design
-(`Contrast.builtin_designs_legible` ranges over `Theme.builtin` and over
+(`Contrast.builtin_palettes_contract` ranges over `Theme.builtin` and over
 nothing a `.sty` can add) for the fragments of it this engine can absorb —
 and since dropping the native `\\theme` also drops `sawTheme`, a deck would
 then fall to the *default* bundle plus fragments, which is further from the

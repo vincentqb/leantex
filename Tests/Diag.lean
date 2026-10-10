@@ -321,10 +321,6 @@ def diagWitness (one mapped withMath : Font.FontSet)
     let ds := (Elab.runRaws "t" raws).2
     spliced.map fun (s, src, p) => Compat.styRead (src.getD "t") s p ds
   | .N0021 => dvL one (dvDoc "\\page{ headsep = 20pt, footskip = 30pt }\n" "x")
-  -- An accent the moloch frame-title bar fails by a move inside the ink
-  -- bound: the pair realizes there (lighter, same hue), the note says so.
-  | .N0022 => dvE (dvDeck "\\theme{moloch}\\palette{ alert = #D8691F }\n"
-      "\\begin{frame}{An \\alert{urgent} word}\nx\n\\end{frame}")
   | .W0368 => dvE (dvDoc "\\usepackage[klingon]{babel}\n" "x") ++
       dvE (dvDoc "\\pdfmeta{ language = \"xx\" }\n" "x")
   | .W0369 => dvE (dvDoc "\\babelfont[french]{rm}{Demo Serif}\n" "x")
@@ -408,9 +404,8 @@ def diagWitness (one mapped withMath : Font.FontSet)
   | .W0312 => dvE "\\title[never closes\n\\begin{document}\nx\n\\end{document}"
   | .W0314 => dvE (dvDeck "" ("\\begin{frame}{T}\\begin{columns}\n" ++
       "\\begin{column}{banana}\nx\n\\end{column}\n\\end{columns}\\end{frame}"))
-  -- An anonymous colour is not a role, so it never realizes: the pairing
-  -- warning is its own, in the author's spelling (a role-named failing pair
-  -- realizes and is N0022). Yellow over white meets no ratio at any mix.
+  -- A colour ships as declared and its pairing is reported in the author's
+  -- spelling. Yellow over white meets no ratio at any mix.
   | .W0315 => dvE (dvDoc "" "\\textcolor{yellow!50}{faint}")
   | .W0316 => dvE (dvDoc "\\palette[dark]{ a = #101010 }\n" "x")
   | .W0317 => dvE ("\\documentclass{card}\n\\runninghead{name}\n" ++
@@ -571,9 +566,8 @@ def diagWitness (one mapped withMath : Font.FontSet)
   | .W0343 =>
     dvE (dvDoc "\\page{ margin = 20pt }\n\\page{ margin = 30pt }\n" "x") ++
     dvE (dvDoc "\\runningfoot{one}\n\\runningfoot{two}\n" "x")
-  -- The text pairs (frame title, standout) now realize (N0022 carries
-  -- them); the covering judge has no lightness to choose — a cover is a
-  -- relation between two states — so it keeps W0345.
+  -- A cover is a relation between two states, judged on the page where
+  -- overlays ship.
   | .W0345 =>
     dvE (dvDeck "\\palette{ covered = #000000 }\n"
       "\\begin{frame}{T}\n\\uncover<2>{x}\n\\end{frame}")
@@ -844,9 +838,9 @@ construct is reported at the picture's position, where W0362 already names the p
 placeholder; name the constructs in W0362, or report each at its own span")]
 
 /-- Independent facts at one source site, witnessed below by varying the
-translation and the colour realization separately. These are not merge debt. -/
+translation and the colour's contrast separately. These are not merge debt. -/
 def independentSiteFacts : List (String × String) :=
-  [("N0022", "N0100"), ("N0100", "W0387")]
+  [("N0100", "W0315"), ("N0100", "W0387")]
 
 def sitePairClassified (pair : String × String) : Bool :=
   independentSiteFacts.contains pair ||
@@ -870,14 +864,14 @@ what the rewrite produced.
 Merge debt is registered in `siteAccounting` with the file that owes the
 change, read in both directions so a closed row cannot linger. Independent
 facts have a separate registry and executed controls: translating a colour
-declaration and realizing its contrast can both describe the same use.
+declaration and reporting its contrast can both describe the same use.
 Sharing a severity never exempts a pair from classification. -/
 def siteAccountingChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
   let mut seen : List (String × String) := []
   let mut sources : Array (String × Array Diag) := #[]
   let mut independentWitnesses : Array (String × String) := #[]
-  for (color, repaired) in [("888888", true), ("222222", false)] do
+  for (color, fails) in [("888888", true), ("222222", false)] do
     let pre := "\\palette{washed=#" ++ color ++ ",bg=#FFFFFF,fg=#222222}\n"
     let (translated, ds) := elabStr (dvDoc pre "{\\color{washed}Probe text.}")
     let (native, ns) := elabStr (dvDoc pre "\\textcolor{washed}{Probe text.}")
@@ -885,9 +879,10 @@ def siteAccountingChecks (ref : IO.Ref (List String)) : IO Unit := do
         [("translated", ds, "\\color", 2, true),
          ("native", ns, "\\textcolor", 1, false)] do
       let caseLabel := s!"independent site facts {color}/{label}: "
-      t (caseLabel ++ "no diagnostic loss") (notes.all (·.severity == .note))
-      for (kind, wanted) in [(DiagCode.N0100, translation), (.N0022, repaired)] do
-        let found := notes.filter (·.kind == kind)
+      t (caseLabel ++ "no loss but the colour's own contrast")
+        (notes.all fun d => d.severity == .note || d.kind == .W0315)
+      for (kind, wanted) in [(DiagCode.N0100, translation), (.W0315, fails)] do
+        let found := notes.filter fun d => d.kind == kind && !d.demoted
         t (caseLabel ++ kind.code ++ " occurs exactly when its condition holds")
           (found.size == if wanted then 1 else 0)
         t (caseLabel ++ kind.code ++ " retains its complete authored site")
@@ -901,10 +896,10 @@ def siteAccountingChecks (ref : IO.Ref (List String)) : IO Unit := do
       (Html.document "en" th tb == Html.document "en" nh nb)
     t s!"independent site facts {color}: native spelling has no collision"
       (siteCollisions ns == #[])
-    if repaired then
+    if fails then
       independentWitnesses := siteCollisions ds
-      t "independent site facts: translation and realization share their owning use"
-        (independentWitnesses == #[("N0022", "N0100")])
+      t "independent site facts: translation and the contrast report share their owning use"
+        (independentWitnesses == #[("N0100", "W0315")])
     else
       t "independent site facts: translation alone has no collision" (siteCollisions ds == #[])
   -- A retired listing key spelled as xcolor declares it: the translation

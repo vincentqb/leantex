@@ -297,10 +297,34 @@ private def parseModeledColor (model value : String) : Except ColorSpecError Col
     | _ => malformedColor model "expected four components"
   | _ => .error (.unsupported model)
 
+/-- A no-model source: native `#RGB`/`#RRGGBB`, the modelled `MODEL(...)`
+carrier, or a named xcolor expression. -/
+private def parsePlainColor (value : String) : Except ColorSpecError ColorSpec :=
+  if value.startsWith "#" then
+    let hex := (value.drop 1).toString
+    match hex.toList with
+    | [r, g, b] =>
+      match [r, g, b].mapM hexDigit? with
+      | some [rv, gv, bv] =>
+        .ok (.html (UInt8.ofNat (rv * 17)) (UInt8.ofNat (gv * 17))
+          (UInt8.ofNat (bv * 17)))
+      | _ => .error (.malformed "HTML" "expected three or six hexadecimal digits")
+    | _ =>
+      match htmlBytes hex with
+      | .ok (r, g, b) => .ok (.html r g b)
+      | .error e => .error e
+  else
+    match wrappedColor value with
+    | some (m, v) => parseModeledColor m v
+    | none => .ok (.named value)
+
 /-- Parse one colour source. An explicit model follows xcolor's
 case-sensitive model grammar. With no model, native `#RGB`/`#RRGGBB` and the
 modelled `MODEL(...)` carrier are read; every other value remains a named
-xcolor expression for `Palette.resolveSpec` to resolve. -/
+xcolor expression for `Palette.resolveSpec` to resolve. A value carrying
+`xcolorDefinitionPrefix` passed through xcolor's definition storage: a
+modelled value normalizes as xcolor stores it, any other value (`\colorlet`'s
+expression) reads as itself. -/
 public def parseColorSpec (model : Option String) (raw : String) :
     Except ColorSpecError ColorSpec :=
   let value := raw.trimAscii.toString
@@ -308,27 +332,11 @@ public def parseColorSpec (model : Option String) (raw : String) :
   | some model => parseModeledColor model.trimAscii.toString value
   | none =>
     if value.startsWith xcolorDefinitionPrefix then
-      let source := (value.drop xcolorDefinitionPrefix.length).toString
+      let source := (value.drop xcolorDefinitionPrefix.length).toString.trimAscii.toString
       match wrappedColor source with
       | some (m, v) => (parseModeledColor m v).map ColorSpec.xcolorDefined
-      | none => .error (.malformed "xcolor definition" "expected MODEL(components)")
-    else if value.startsWith "#" then
-      let hex := (value.drop 1).toString
-      match hex.toList with
-      | [r, g, b] =>
-        match [r, g, b].mapM hexDigit? with
-        | some [rv, gv, bv] =>
-          .ok (.html (UInt8.ofNat (rv * 17)) (UInt8.ofNat (gv * 17))
-            (UInt8.ofNat (bv * 17)))
-        | _ => .error (.malformed "HTML" "expected three or six hexadecimal digits")
-      | _ =>
-        match htmlBytes hex with
-        | .ok (r, g, b) => .ok (.html r g b)
-        | .error e => .error e
-    else
-      match wrappedColor value with
-      | some (m, v) => parseModeledColor m v
-      | none => .ok (.named value)
+      | none => parsePlainColor source
+    else parsePlainColor value
 
 /-- sp per unit, expressed as a fraction so conversions stay exact. -/
 private def unitScaleBase : String → Option (Int × Nat)

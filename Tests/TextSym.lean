@@ -67,7 +67,7 @@ def textSymChecks (ref : IO.Ref (List String)) : IO Unit := do
   -- inline dispatch reads the symbol tables before the palette.
   t "no shipped palette role is spelled by a text symbol"
     (Theme.builtin.all fun th => th.palette.entries.toList.all fun e =>
-      (Elab.escapeOf e.1).isNone)
+      (Elab.escapeOf e.1.key).isNone)
   t "a document palette role a text symbol spells is refused by name"
     ((elabStr ("\\documentclass{article}\n\\palette{ dag = #112233 }\n" ++
       "\\begin{document}\nx\n\\end{document}")).2.map (·.code) == #["E0303"])

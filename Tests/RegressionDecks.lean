@@ -84,11 +84,11 @@ private def title (ref : IO.Ref (List String)) (name : String) (a : Artifact)
     (ts.size == 1 && #[heading, byline, "Paper Lab"].all
       (fun s => treeShownOccurs ts s == 1))
   check ref s!"{name}: HTML title accent"
-    (styled ts.toList byline "color: var(--deckGold, #f4ce84)" &&
-      styled ts.toList "Paper Lab" "color: var(--deckGold, #f4ce84)")
+    (styled ts.toList byline "color: var(--ltx-c-deckGold, #f4ce84)" &&
+      styled ts.toList "Paper Lab" "color: var(--ltx-c-deckGold, #f4ce84)")
   let css := treeCssList "" a.head.toList
   check ref s!"{name}: HTML custom title palette"
-    (#["--titlepagebg: #243347", "--titlepagefg: #fafcff", "--deckGold: #f4ce84"].all
+    (#["--ltx-titlepagebg: #243347", "--ltx-titlepagefg: #fafcff", "--ltx-c-deckGold: #f4ce84"].all
       (hasStr css))
 
 private def workshop (ref : IO.Ref (List String)) (a : Artifact) : IO Unit := do
@@ -124,7 +124,7 @@ private def workshop (ref : IO.Ref (List String)) (a : Artifact) : IO Unit := do
       slideFootsList #[] standout.toList == #[("Workshop reminder", "")])
   let css := treeCssList "" a.head.toList
   check ref s!"{name}: HTML standout palette"
-    (hasStr css "--standoutbg: #243347" && hasStr css "--standoutfg: #fafcff")
+    (hasStr css "--ltx-standoutbg: #243347" && hasStr css "--ltx-standoutfg: #fafcff")
   check ref s!"{name}: numbered closing frame"
     (textAt a 7 == #["Pack the pieces", "Save the unused shapes for another pattern."])
   check ref s!"{name}: HTML opening and closing text"
@@ -183,11 +183,11 @@ private def overlays (ref : IO.Ref (List String)) (a : Artifact) : IO Unit := do
       deckAttr n "data-steps" == some "2 3" && deckAttr n "data-step" == some "2" &&
       deckAttr n "data-step-last" == some "3" && (deckAttr n "hidden").isNone))
   check ref s!"{name}: HTML cover colours"
-    (styled corner.toList "Corner marker" "color: var(--deckBlue, #1c5070)" &&
-      styled centre.toList "Centre marker" "color: var(--deckRust, #7a321d)")
+    (styled corner.toList "Corner marker" "color: var(--ltx-c-deckBlue, #1c5070)" &&
+      styled centre.toList "Centre marker" "color: var(--ltx-c-deckRust, #7a321d)")
   let css := treeCssList "" a.head.toList
   check ref s!"{name}: HTML cover palette and fraction"
-    (hasStr css "--deckBlue: #1c5070" && hasStr css "--deckRust: #7a321d" &&
+    (hasStr css "--ltx-c-deckBlue: #1c5070" && hasStr css "--ltx-c-deckRust: #7a321d" &&
       (cssRuleOf css
         "html[data-deck-script] [data-snapped=\"2\"] .step-set:not([data-steps~=\"2\"])").any
         (hasStr · "opacity: 22%"))
@@ -257,9 +257,9 @@ private def deckListings (ref : IO.Ref (List String)) (a : Artifact) : IO Unit :
       (tokenPaint a page source[0]! "def" { r := 0x34, g := 0x5d, b := 0x94 } &&
         tokenPaint a page source[2]! "\"square\"" { r := 0, g := 0x80, b := 0x80 })
     check ref s!"{name}: {lang} HTML token colours"
-      (styled code.toList "def" "color: var(--codekeyword, #345d94)" &&
-        styled code.toList "\"square\"" "color: var(--example, #008080)" &&
-        styled code.toList comment "color: var(--muted, #647274)")
+      (styled code.toList "def" "color: #345d94" &&
+        styled code.toList "\"square\"" "color: var(--ltx-example, #008080)" &&
+        styled code.toList comment "color: var(--ltx-muted, #647274)")
 
 end Tests.RegressionDecks
 

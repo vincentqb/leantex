@@ -568,7 +568,8 @@ def alertChecks (ref : IO.Ref (List String)) : IO Unit := do
       hasStr (nodeTextOne "" n) "lima"
     let coloured := (elemNodesList (fun _ => true) #[] body.toList).any fun n => match n with
       | .elem _ attrs _ => nodeTextOne "" n == "lima" &&
-          hasStr ((HtmlDoc.attrOf? attrs "style").getD "") "var(--alert"
+          hasStr ((HtmlDoc.attrOf? attrs "style").getD "")
+            ("var(" ++ (Ir.ColorRef.role .alert).property)
       | .text _ | .style _ | .script .. => false
     if bare then
       t s!"alert {name}: the alerted word stands apart from its neighbours on the page"

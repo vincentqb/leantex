@@ -44,7 +44,6 @@ example : True := by
   fail_if_success have := Contrast.UseAcc
   fail_if_success have := Contrast.Judged
   fail_if_success have := Contrast.effectivePairJudged
-  fail_if_success have := Contrast.realizePlan
   fail_if_success have := Contrast.textOnly
   fail_if_success have := Check.worstOvershoot
   fail_if_success have := Check.failure

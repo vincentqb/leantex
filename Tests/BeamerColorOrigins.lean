@@ -8,15 +8,17 @@ open LeanTex.Core
 
 namespace Tests
 
-/-- Delayed frame-title repair names the channel that supplied the winning
-Beamer alias. The synthetic included source runs through preparation, body
-elaboration, contrast realization, trigger attribution, and site accounting.
-The pre-judge palette checks distinguish source ownership from paint order. -/
+/-- A delayed frame-title contrast report names the channel that supplied
+the winning Beamer alias. The synthetic included source runs through
+preparation, body elaboration, the contrast report, trigger attribution,
+and site accounting. The pre-judge palette checks distinguish source
+ownership from paint order. The soft ink fails even the large-scale ratio a
+deck's stage-size title asks, so the bar's pair is reported. -/
 def beamerColorOriginsChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
   let root := "beamer-origins.tex"
   let child := "colors.sty"
-  let soft : Ir.Color := { r := 0x88, g := 0x88, b := 0x88 }
+  let soft : Ir.Color := { r := 0xAA, g := 0xAA, b := 0xAA }
   let white : Ir.Color := { r := 255, g := 255, b := 255 }
   let black : Ir.Color := { r := 0, g := 0, b := 0 }
   let parse (file text : String) := (Parse.parse file (Lex.lex file text).1).1
@@ -26,7 +28,7 @@ def beamerColorOriginsChecks (ref : IO.Ref (List String)) : IO Unit := do
   let exercise (name source : String) (expected : Ir.Color)
       (origin : Option (Nat × String)) : IO Unit := do
     let raws := parse root
-        "\\documentclass{beamer}\n\\definecolor{SoftInk}{HTML}{888888}\n" ++
+        "\\documentclass{beamer}\n\\definecolor{SoftInk}{HTML}{AAAAAA}\n" ++
       #[Parse.Raw.env (Parse.inputEnv child) (parse child source) {}] ++
       parse root
         "\\begin{document}\n\\begin{frame}{Heading}Body\\end{frame}\n\\end{document}"
@@ -34,8 +36,8 @@ def beamerColorOriginsChecks (ref : IO.Ref (List String)) : IO Unit := do
     let (plan, initial) := Elab.preparedBody root prepared
     let ((doc, table, report), state) := (Elab.runDocBody plan).run initial
     let (_, ds, _) := Elab.completePrepared root prepared #[] doc table report state
-    let repairs := ds.filter fun d =>
-      d.kind == .N0022 && d.subject.any (·.startsWith "frametitlefg:")
+    let reports := ds.filter fun d =>
+      d.kind == .W0345 && d.subject.any (·.startsWith "frametitlefg:")
     t s!"beamer origins: {name}: winning foreground"
       ((doc.palette.find? "frametitlefg").any (· == expected))
     t s!"beamer origins: {name}: winning background"
@@ -44,17 +46,17 @@ def beamerColorOriginsChecks (ref : IO.Ref (List String)) : IO Unit := do
       (!(ds.any fun d => d.severity == .error))
     match origin with
     | none =>
-      t s!"beamer origins: {name}: overwritten low contrast raises no repair"
-        (repairs.isEmpty && !(ds.any (·.kind == .W0345)))
+      t s!"beamer origins: {name}: overwritten low contrast raises no report"
+        (reports.isEmpty && !(ds.any (·.kind == .W0345)))
     | some (line, trigger) =>
-      t s!"beamer origins: {name}: exactly one repair for the declared pair"
-        (repairs.size == 1 && repairs.all fun d =>
+      t s!"beamer origins: {name}: exactly one report for the declared pair"
+        (reports.size == 1 && reports.all fun d =>
           d.subject == some (Ir.inkKey "frametitlefg" soft white))
-      let observed := String.intercalate ", " (repairs.toList.map fun d =>
+      let observed := String.intercalate ", " (reports.toList.map fun d =>
         let location := d.span.map (fun s => s!"{s.file}:{s.pos.line}:{s.pos.col}")
         s!"{location.getD "<no span>"} {d.trigger.getD "<no trigger>"}")
       t s!"beamer origins: {name}: owner {child}:{line}:1 {trigger}; observed {observed}"
-        (repairs.size == 1 && repairs.all fun d =>
+        (reports.size == 1 && reports.all fun d =>
           d.span.any (fun s =>
             s.file == child && s.pos.line == line && s.pos.col == 1) &&
           d.trigger == some trigger)
@@ -96,7 +98,7 @@ def beamerColorOriginsChecks (ref : IO.Ref (List String)) : IO Unit := do
     soft (some (2, "\\setbeamercolor"))
   exercise "a native winner retains its palette source"
     ("\\setbeamercolor{frametitle}{fg=black,bg=white}\n" ++
-      "\\palette{frametitlefg=#888888,frametitlebg=#FFFFFF}")
+      "\\palette{frametitlefg=#AAAAAA,frametitlebg=#FFFFFF}")
     soft (some (2, "\\palette"))
   exercise "a use expression owns its explicit channel"
     ("\\setbeamercolor{probe source}{fg=SoftInk,bg=white}\n" ++
@@ -114,8 +116,8 @@ def beamerColorOriginsChecks (ref : IO.Ref (List String)) : IO Unit := do
         k == key && span.file == child && span.pos.line == line)
   t "beamer origins: explicit channels retain their own sites"
     (owns resolved "frametitlefg" 1 && owns resolved "frametitlebg" 1)
-  let (native, _, _) := (resolved.native "frametitlefg" black).resolve
-    (painted.declare "frametitlefg" black)
+  let (native, _, _) := (resolved.native .frameTitleInk black).resolve
+    (painted.declareKey "frametitlefg" black)
   t "beamer origins: native overwrite clears only its Beamer channel source"
     (!(native.origins.any (·.1 == "frametitlefg")) && owns native "frametitlebg" 1)
   let (defaults, defaultPalette, _) := (resolved.declare

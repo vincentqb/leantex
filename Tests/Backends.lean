@@ -182,7 +182,7 @@ def classHookChecks (ref : IO.Ref (List String)) : IO Unit := do
         | _ => false
     | _ => false
   t "a palette role and an authored role share a page, each addressable"
-    (hasSpan ("style", "color: var(--accent, #205e3b)") bothTree &&
+    (hasSpan ("style", "color: var(--ltx-accent, #205e3b)") bothTree &&
      hasSpan ("class", "u-entry") bothTree)
   -- The block half: a command whose expansion is block content keeps its
   -- name on a flow container.
@@ -217,15 +217,15 @@ def styleChecks (ref : IO.Ref (List String)) : IO Unit := do
   let secStyle := styled.1.styles.find? "section"
   t "style section font is a template with a hole"
     ((secStyle.bind (·.font)) == some #[.styled (.size "large") #[.styled .sans
-      #[.colored { r := 0x11, g := 0x22, b := 0x33 } (some "ink") #[]]]])
+      #[.colored { r := 0x11, g := 0x22, b := 0x33 } (some (.color "ink")) #[]]]])
   t "style section spacing reads tokens"
     ((secStyle.bind (·.before)).map (·.width) == some { sp := Dim.pt 6 } &&
      (secStyle.bind (·.after)).map (·.width) == some { sp := Dim.pt 3 })
   t "style section rule names the palette entry"
-    ((secStyle.bind (·.rule)).map (·.2) == some (some "ink"))
+    ((secStyle.bind (·.rule)).map (·.2) == some (some (.color "ink")))
   let listStyle := styled.1.styles.find? "itemize"
   t "style itemize marker is content"
-    ((listStyle.bind (·.marker)) == some #[.colored { r := 0x11, g := 0x22, b := 0x33 } (some "ink") #[.text "•"]])
+    ((listStyle.bind (·.marker)) == some #[.colored { r := 0x11, g := 0x22, b := 0x33 } (some (.color "ink")) #[.text "•"]])
   -- A declared marker either reaches HTML as declared or the substitution
   -- is named (W0331): a glyph in a colour and a size is expressible in
   -- a ::marker rule (CSS Pseudo-Elements 4 §4.1), arbitrary inline content
@@ -233,10 +233,10 @@ def styleChecks (ref : IO.Ref (List String)) : IO Unit := do
   -- exactly the declared characters.
   let markInk : Ir.Color := { r := 0x20, g := 0x5E, b := 0x3B }
   t "markerCss? expresses colour and size around text"
-    (HtmlDoc.markerCss? #[.colored markInk (some "markerink")
+    (HtmlDoc.markerCss? #[.colored markInk (some (.color "markerink"))
         #[.styled (.size "small") #[.text "•"]]] ==
       some { text := "•"
-             decls := #["color: var(--markerink, #205e3b);", "font-size: 0.9em;"] })
+             decls := #["color: var(--ltx-c-markerink, #205e3b);", "font-size: 0.9em;"] })
   t "markerCss? expresses bold plain text"
     (HtmlDoc.markerCss? #[.styled .bold #[.text "»"]] ==
       some { text := "»", decls := #["font-weight: 600;"] })
@@ -254,7 +254,7 @@ def styleChecks (ref : IO.Ref (List String)) : IO Unit := do
     HtmlDoc.emit {} (markerDoc "\\textcolor{markerink}{\\small\\textbullet}")
   t "html styled marker reaches ::marker with its colour and size"
     ((styledMarkerPage.splitOn
-      "{ content: \"•  \"; color: var(--markerink, #205e3b); font-size: 0.9em; }").length == 2)
+      "{ content: \"•  \"; color: var(--ltx-c-markerink, #205e3b); font-size: 0.9em; }").length == 2)
   t "html styled marker is clean" (styledMarkerDs.all (·.code != "W0331"))
   let (nestedMarkerPage, nestedMarkerDs) :=
     HtmlDoc.emit {} (markerDoc "\\textbf{\\textit{»}}")
@@ -595,7 +595,7 @@ def htmlRhythmChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "html themed fixture elaborates clean"
     (themedDs.all fun d => d.severity == .note)
   t "html progress height reads the token the PDF reads"
-    ((themedPage.splitOn (".progress { background: var(--sectionprogressbg, var(--progressbg, var(--bg)));\n" ++
+    ((themedPage.splitOn (".progress { background: var(--ltx-sectionprogressbg);\n" ++
       "  height: var(--progressheight, 1pt);")).length == 2)
   t "html themed sheet has one gap owner per boundary"
     ((themedPage.splitOn "margin-bottom").length == 2)
@@ -1277,14 +1277,14 @@ def interactionChecks (ref : IO.Ref (List String)) : IO Unit := do
     "\\begin{document}\\begin{nav}\\href{#one-head}{One}\\end{nav}" ++
     "\\section*{One Head}x\\end{document}")
   t "interaction keys parse" (ds.isEmpty &&
-    ((doc.styles.find? "nav").bind (·.hover)).map (·.2) == some (some "ink") &&
+    ((doc.styles.find? "nav").bind (·.hover)).map (·.2) == some (some (.color "ink")) &&
     ((doc.styles.find? "nav").bind (·.motion)) == some 150)
   -- css = none ships only the declared rules, so the guard must ride with
   -- the declaration: both halves are checked on the emitted page.
   let (page, pds) := HtmlDoc.emit { css := .none } doc
   t "declared hover and focus land on the nav's links" (pds.isEmpty &&
-    has page "nav a:hover { color: var(--ink, #1d4ed8); }" &&
-    has page "nav a:focus-visible { outline-color: var(--ink, #1d4ed8); }")
+    has page "nav a:hover { color: var(--ltx-c-ink, #1d4ed8); }" &&
+    has page "nav a:focus-visible { outline-color: var(--ltx-c-ink, #1d4ed8); }")
   t "a declared motion ships with its guard even without the base sheet"
     (has page "nav a { transition: color 150ms, outline-color 150ms; }" &&
      has page ("@media (prefers-reduced-motion: reduce) " ++
@@ -1407,7 +1407,7 @@ def deckCssChecks (ref : IO.Ref (List String)) : IO Unit := do
      has deckPage "@media (prefers-reduced-motion: reduce) {" &&
      has deckPage "html { scroll-behavior: auto; }")
   t "the deck slide fills the viewport as an opaque column on the declared ground"
-    (has deckPage ("background: var(--bg, var(--surface)); color: var(--fg, var(--ink)); " ++
+    (has deckPage ("background: var(--ltx-bg); color: var(--ltx-fg); " ++
       "display: flex; flex-direction: column;"))
   -- Print pages the stages: the stage, its type and its furniture hold on
   -- both media (the `@media screen, print` block), the sheet is the PDF's
@@ -1425,7 +1425,7 @@ def deckCssChecks (ref : IO.Ref (List String)) : IO Unit := do
      has (printOf deckPage) ("section.slide, section.section-page { break-after: page; " ++
        "break-before: page; height: auto; min-height: 100dvh; overflow-y: visible; " ++
        "box-decoration-break: clone; print-color-adjust: exact; }") &&
-     has (printOf deckPage) ("html { background: var(--bg, var(--surface)); " ++
+     has (printOf deckPage) ("html { background: var(--ltx-bg); " ++
        "print-color-adjust: exact; }") &&
      has (printOf deckPage) "section.slide { padding-bottom: 0; }" &&
      has (printOf deckPage) ("section.slide::after { content: \"\"; flex: 100000000 0 0; " ++
@@ -1689,7 +1689,7 @@ def deckProgressChecks (ref : IO.Ref (List String)) : IO Unit := do
      has html "animation-timeline: scroll(root x)")
   t "the hairline reads the tokens the PDF's bar reads"
     (has html (".deck-progress { position: fixed; top: 0; left: 0; width: 100%;\n" ++
-      "  height: var(--progressheight, 1pt); background: var(--progressfg);"))
+      "  height: var(--progressheight, 1pt); background: var(--ltx-progressfg);"))
   t "the hairline does not print: paper has no scroll, and no blank last sheet"
     (has html "@media print { .deck-progress { display: none; } }")
   let (bareDoc, _) := elabStr (deck169 "\\theme{default}"
@@ -2116,7 +2116,7 @@ def linkHtmlChecks (ref : IO.Ref (List String)) : IO Unit := do
     ((page.splitOn "<h2><span class=\"section-number\">1</span>\u2003Head</h2>").length == 2)
   t "html bold becomes strong" ((page.splitOn "<strong>bold</strong>").length == 2)
   t "html colour references the token"
-    ((page.splitOn "var(--primary, #7c3aed)").length == 2)
+    ((page.splitOn "var(--ltx-c-primary, #7c3aed)").length == 2)
   t "html link has href"
     ((page.splitOn
       "<a href=\"https://example.org\" style=\"color: inherit\">link</a>").length == 2)

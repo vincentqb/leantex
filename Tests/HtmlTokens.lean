@@ -90,16 +90,41 @@ the name it was resolved from, paired at the token lookup
 and the rule. -/
 def htmlUnreadTokenOffences : List (String × String) := []
 
-/-- A design token the engine emits is a token some rule reads. -/
+/-- The `--ltx-*` colour properties a page reads with no fallback: each
+`var(--ltx-<name>)` it spells, a rule's read or an alias's target. -/
+def ltxBareReads (html : String) : List String :=
+  ((html.splitOn "var(--ltx-").drop 1).filterMap fun piece =>
+    let cs := piece.toList
+    let name := cs.takeWhile fun c => c.isAlphanum || c == '-' || c == '_'
+    if (cs.drop name.length).head? == some ')' then some (String.ofList name) else none
+
+/-- The colour properties a page reads with no fallback and never declares:
+each would leave its rule invalid at computed-value time, the property
+falling back to its initial value or the inherited one. -/
+def ltxDanglingReads (html : String) : List String :=
+  (ltxBareReads html).eraseDups.filter fun n => !hasStr html s!"--ltx-{n}:"
+
+/-- A design token the engine emits is a token some rule reads, and a
+colour property a page reads without a fallback is one the page declares:
+the role table is closed under the rules' reads and its own aliases
+(`HtmlDoc.cssRoles_closed`), here on every shipped page. -/
 def htmlTokenClosureChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
   for (n, _) in htmlUnreadTokenOffences do
     t s!"unread token row {n}: names an engine token"
       (engineTokenNames.contains n)
+  t "property closure: the judge names a bare read the page never declares"
+    (ltxDanglingReads "a { color: var(--ltx-zz) }" == ["zz"] &&
+      ltxDanglingReads "a { color: var(--ltx-zz, #000) }" == [] &&
+      ltxDanglingReads ":root { --ltx-zz: #000; } a { color: var(--ltx-zz) }" == [] &&
+      ltxDanglingReads ":root { --ltx-zz: var(--ltx-yy); }" == ["yy"])
   let mut pages : List String := []
   for n in goldenNames do
     let (doc, _) ← goldenDoc n
-    pages := (HtmlDoc.emit {} doc).1 :: pages
+    let html := (HtmlDoc.emit {} doc).1
+    t s!"property closure {n}: every colour property read without a fallback is declared"
+      (ltxDanglingReads html).isEmpty
+    pages := html :: pages
   for tok in engineTokenNames do
     let declared := pages.any fun h => declaresToken h tok
     let read := pages.any fun h => readsToken h tok
@@ -109,6 +134,42 @@ now reads it; delete its row" (declared && !read)
     else
       t s!"token closure {tok}: declared as a custom property by some fixture, \
 so some rule must reference it" (!declared || read)
+
+/-- The role properties a page declares (`--ltx-<role>: …`), by property. -/
+def roleDeclsIn (html : String) : List String :=
+  (((html.splitOn "--ltx-").drop 1).filterMap fun piece =>
+    let name := String.ofList (piece.toList.takeWhile fun c => c.isAlphanum || c == '-' || c == '_')
+    let rest := (piece.toList.drop name.length).dropWhile (· == ' ')
+    if rest.head? == some ':' then some ("--ltx-" ++ name) else none).filter
+      fun n => (HtmlDoc.roleOfVar? n).isSome
+
+/-- The role properties a page reads (`var(--ltx-<role>`), with or without
+a fallback. -/
+def roleReadsIn (html : String) : List String :=
+  (HtmlDoc.varReads html).toList.filter fun n => (HtmlDoc.roleOfVar? n).isSome
+
+/-- **A page declares exactly the colour roles it reads**: every role
+property a rule, an element's paint or an alias reads — fallback or none —
+is declared, and every role property it declares something reads
+(`HtmlDoc.pageRoleSet`), on every shipped page. A planted pair holds the
+judge to both directions. -/
+def htmlRoleClosureChecks (ref : IO.Ref (List String)) : IO Unit := do
+  let t := check ref
+  let judge (html : String) : List String × List String :=
+    let decls := roleDeclsIn html
+    let reads := roleReadsIn html
+    ((reads.filter (!decls.contains ·)).eraseDups, (decls.filter (!reads.contains ·)).eraseDups)
+  t "role closure: the judge names an undeclared read and an unread declaration"
+    (judge ":root { --ltx-bg: #fff; } a { color: var(--ltx-fg, #000) }" ==
+      (["--ltx-fg"], ["--ltx-bg"]) &&
+     judge ":root { --ltx-bg: #fff; --ltx-fg: var(--ltx-bg); } a { color: var(--ltx-fg) }" ==
+      ([], []))
+  for n in goldenNames do
+    let (doc, _) ← goldenDoc n
+    let html := (HtmlDoc.emit {} doc).1
+    let (undeclared, unread) := judge html
+    t s!"role closure {n}: every role read is declared ({undeclared})" undeclared.isEmpty
+    t s!"role closure {n}: every declared role is read ({unread})" unread.isEmpty
 
 /-- The title page's own gaps, measured on one synthetic document rather
 than as a union over the corpus: every part a lineage bundle's inter-part

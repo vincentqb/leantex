@@ -73,11 +73,14 @@ public structure Config where
   screen and paper, including standout and title-page frames. -/
   listingGround : Option Ir.Color := none
   listingFg : Option Ir.Color := none
+  /-- The roles the page's stylesheet declares (`pageRoles`): what a body
+  epoch re-declares when its palette moves one of their defaults. -/
+  cssRoles : List Ir.Role := []
   /-- A painted body keeps its ground across palette declarations. Its
-  inherited ink retains the declared role so nested surfaces can select
-  that role's recorded realization on their own ground. -/
+  inherited ink retains the declared role, the name a nested run's colour
+  property reads. -/
   bodyGround : Option Ir.Color := none
-  bodyInk : Option (String × Ir.Color) := none
+  bodyInk : Option (Ir.ColorRef × Ir.Color) := none
   /-- The token state in force, same door (`.setTokens`). -/
   tokens : Ir.Tokens := {}
   /-- Whether the emitted page is the paged deck (the slides class's frame
@@ -644,9 +647,9 @@ private def fontStyleDecls (scale : List (String × Nat)) (st : Style)
   -- nothing rather than inexpressible
   | .lang _ => some #[]
 
-private def markerColorDecl (c : Ir.Color) (name : Option String) : String :=
+private def markerColorDecl (c : Ir.Color) (name : Option Ir.ColorRef) : String :=
   match name with
-  | some n => s!"color: var(--{n}, {cssColor c});"
+  | some n => s!"color: var({n.property}, {cssColor c});"
   | none => s!"color: {cssColor c};"
 
 mutual
@@ -930,7 +933,7 @@ public def styleRules (doc : Doc) : String × Array Diag :=
       (st.indent.map fun g => s!"padding-left: {cssLength g.width};").toList ++
       (st.rule.map fun (c, n) =>
         let color := match n with
-          | some name => s!"var(--{name}, {cssColor c})"
+          | some name => s!"var({name.property}, {cssColor c})"
           | none => cssColor c
         -- The flex items align by baseline; the rule element then lifts
         -- itself half its own ex — the heading's x-height, since it
@@ -960,8 +963,8 @@ an overlay step does not"))
     -- and a declared motion goes through `motionCss` — the guarded form is
     -- the only form the emitter has.
     let iSel := s!"{tag} a"
-    let tokenColor (c : Ir.Color) (n : Option String) : String := match n with
-      | some name => s!"var(--{name}, {cssColor c})"
+    let tokenColor (c : Ir.Color) (n : Option Ir.ColorRef) : String := match n with
+      | some name => s!"var({name.property}, {cssColor c})"
       | none => cssColor c
     let interDecls :=
       (st.hover.map fun (c, n) =>
@@ -2177,40 +2180,6 @@ bundles' standout template): what the standout rule sets the frame at and
 its footline undoes. -/
 private def standoutStep : String := "Large"
 
-/-- The grounds the stylesheet paints under content, each with the selector
-of the element it paints: the frame-title bar, the standout inversion, the
-title page, and each titled kind's bar — the grounds the realization walk
-judges a run on (`Ir.recolorRolesBlock`), read off the one resolved
-`Design`. -/
-private def inkScopes (d : Design) : List (String × Ir.Color) :=
-  (d.frametitle.map fun p => ("section.slide > header", p.bg)).toList ++
-    (d.footline.bar.map fun bg => ("footer.slide-foot", bg)).toList ++
-    [("section.slide.standout", d.standout.bg)] ++
-    (d.titlepage.map fun p => ("section.slide.title-page", p.bg)).toList ++
-    (([(Ir.TitledKind.block, d.blockTitle), (.alert, d.alertTitle),
-        (.example, d.exampleTitle)] : List (Ir.TitledKind × Ir.TitledLook)).filterMap
-      fun (k, look) => look.bar.map fun bar => (s!"section.block-{k.name} > header", bar)) ++
-    (d.blockTitle.bar.map fun bar => ("section.tcolorbox > header", bar)).toList
-
-/-- One recorded ink as the scoped custom property that re-points its role's
-token on its ground: a run's `var(--role)` there resolves to the ink the PDF
-paints the same run in. -/
-public def inkDecl (e : Ir.GroundInk) : String := s!"--{e.role}: {cssColor e.ink};"
-
-/-- The declarations one ground's scope carries: every ink the design
-records on that ground. -/
-public def inkDecls (d : Design) (g : Ir.Color) : List String :=
-  (d.inks.toList.filter (·.ground == g)).map inkDecl
-
-/-- A local surface resets outer realizations before applying its own.
-An ink corrected on a dark panel must not leak into a nested light panel. -/
-private def surfaceInkDecls (pal : Ir.Palette) (g : Ir.Color) : String :=
-  let d := Design.ofPalette pal
-  let roles := d.inks.foldl (fun xs e =>
-    if xs.contains e.role then xs else xs.push e.role) (#[] : Array String)
-  String.join (roles.toList.filterMap fun role => (pal.find? role).map fun c =>
-    s!"--{role}: {cssColor (d.inkOn role { fg := c, bg := g }).fg};")
-
 /-- The tallest type a footline band's slots set, per mille of the band's
 own step (`Ir.footline.step`): a named size inside a slot is the body's step,
 as the page sets it (`Layout.setBandSlot`), so the band's box is as tall as
@@ -2227,20 +2196,19 @@ private def footCapDecl (scale : List (String × Nat)) (band : Array Ir.BandSlot
 
 /-- The HTML body consumes the same resolved paint as the PDF body. -/
 @[expose] public def titledBodyPaint (pal : Ir.Palette) (kind : Ir.TitledKind)
-    (parent : Ir.ColorPair) (parentRole : String) : Ir.ColorPair :=
-  (Ir.Design.ofPalette pal).titledBodyPaint kind parent parentRole
+    (parent : Ir.ColorPair) : Ir.ColorPair :=
+  (Ir.Design.ofPalette pal).titledBodyPaint kind parent
 
 public theorem titledBodyPaint_projects (pal : Ir.Palette) (kind : Ir.TitledKind)
-    (parent : Ir.ColorPair) (parentRole : String) :
-    titledBodyPaint pal kind parent parentRole =
-      (Ir.Design.ofPalette pal).titledBodyPaint kind parent parentRole := by rfl
+    (parent : Ir.ColorPair) :
+    titledBodyPaint pal kind parent = (Ir.Design.ofPalette pal).titledBodyPaint kind parent := by
+  rfl
 
 /-- Both body painters project one IR design value, including independent
-channel inheritance and any recorded correction on the local surface. -/
+channel inheritance. -/
 public theorem titledBodyPaint_agree (pal : Ir.Palette) (kind : Ir.TitledKind)
-    (parent : Ir.ColorPair) (parentRole : String) :
-    titledBodyPaint pal kind parent parentRole =
-      Layout.titledBodyPaint pal kind parent parentRole := by rfl
+    (parent : Ir.ColorPair) :
+    titledBodyPaint pal kind parent = Layout.titledBodyPaint pal kind parent := by rfl
 
 /-- HTML retains the shared inset's font-relative unit. At the same body
 font size, its length is exactly the PDF inset, independent of leading. -/
@@ -2260,43 +2228,6 @@ public def titledBoxPaint : String :=
 public def titledBodyBoxPaint : String :=
   s!"padding: 0 {cssLength titledPadding} {cssLength titledPadding}; " ++
     s!"margin-inline: -{cssLength titledPadding};"
-
-/-- **The HTML declares every recorded ink on the ground it was realized
-for.** For every scope the stylesheet paints on an ink's ground, the
-scope's declarations carry that ink — the HTML half of
-`realized_agree`. -/
-public theorem inkDecls_projects (d : Design) (e : Ir.GroundInk) (he : e ∈ d.inks)
-    (g : Ir.Color) (hg : (e.ground == g) = true) :
-    s!"--{e.role}: {cssColor e.ink};" ∈ inkDecls d g := by
-  simp only [inkDecls, List.mem_map, List.mem_filter, Array.mem_toList_iff]
-  exact ⟨e, ⟨he, hg⟩, rfl⟩
-
-/-- The scoped token rules: per ground the stylesheet paints, the inks
-recorded there. A design whose pairs all pass records none and emits
-nothing. -/
-public def inkScopeCss (d : Design) : String :=
-  String.join ((inkScopes d).filterMap fun (sel, g) =>
-    let decls := inkDecls d g
-    if decls.isEmpty then none
-    else some (sel ++ " {\n" ++ String.join (decls.map fun x => s!"  {x}\n") ++ "}\n"))
-
-/-- **One realized ink per role and ground, in both artifacts.** Every ink
-the realized document's design records — a role, the colour it was
-declared as, the ground it realized on — is the ink the PDF's run rewrite
-gives a run of that role and colour on that ground, and the ink every
-scope the stylesheet paints on that ground declares: two projections of
-one IR value (`Ir.Design.inks`), in the shape of `backend_gaps_agree`.
-The HTML used to realize the bar and standout tokens a second time, over a
-palette entry already realized for the page, and shipped a third value
-neither the PDF nor the N0022 note named. -/
-public theorem realized_agree (doc : Doc) (site : Contrast.ColorSite) (h0 : doc.palette.inks = #[])
-    (e : Ir.GroundInk) (he : e ∈ (Design.ofDoc (Contrast.realizeDoc doc site).1).inks)
-    (g : Ir.Color) (hg : (e.ground == g) = true) :
-    Contrast.realizeRecolor doc site doc.palette (some e.ground) (some e.role) e.declared =
-        e.ink ∧
-      s!"--{e.role}: {cssColor e.ink};" ∈
-        inkDecls (Design.ofDoc (Contrast.realizeDoc doc site).1) g :=
-  ⟨Contrast.realized_projects doc site h0 e he, inkDecls_projects _ e he g hg⟩
 
 /-- **The title page's slots, pinned**: the stylesheet projection of the IR
 value `Layout.B.placeSlot` places by (`Ir.TitleSlot.place`). Each slot's box
@@ -2380,7 +2311,7 @@ opens on a node; the box holding title and body is the section. A rule
 beside a box is that box's `::before` (left) or `::after` (right), `width`
 wide, `sep` beside the box's edge, from the box's top below the line's
 `\parskip` to its bottom above the skips below it, in the palette entry it
-reads — `var(--name, colour)`, the spelling of `Ir.BlockEdge.ink`; a rule
+reads — `var(<its property>, colour)`, the spelling of `Ir.BlockEdge.ink`; a rule
 inside the line pads its box by `width + sep`. A title's box kept empty is
 its struts' line, the title font's `\baselineskip` tall
 (`Ir.blockTitleLeading`, what the PDF's strut reads), or unstrutted a box of
@@ -2398,7 +2329,7 @@ public def blockShapeCss (doc : Doc) : String :=
   let measures := Dim.MeasureValues.horizontal (doc.page.width - 2 * doc.page.hmargin)
     (doc.page.height - 2 * doc.page.vmargin)
   let paint (e : Ir.BlockEdge) : String := match e.name with
-    | some n => s!"var(--{n}, {cssColor e.color})"
+    | some n => s!"var({n.property}, {cssColor e.color})"
     | none => cssColor e.color
   let rule (pseudo : String) (sel : String) (e : Ir.BlockEdge) (pad top bottom : String) : String :=
     let place := if e.side == .left then "left" else "right"
@@ -2463,6 +2394,300 @@ length at the body size, as the print walk spends it — millimetres the
 screen keeps in proportion to the type, through the stylesheet's own
 print-to-screen projection (`screenMilli`). -/
 private def tcbLength (v : Int) : String := milliRem (screenMilli Ir.baseFontSize v)
+
+/-! ### Colour roles as custom properties
+
+Every colour the stylesheet paints is a registry role's custom property,
+`--ltx-<css>` (`Ir.CssName.ident`), and every rule reads it plainly,
+`var(--ltx-<role>)`. The values come from one table, `Ir.Design.cssDecl`: a
+declared role its colour, an inherited role an alias of the role its default
+reads (`var(--ltx-<parent>)`), a scheme's own constant otherwise — so the
+fallback chains are the registry's rows, projected, never re-spelled here,
+and a reader stylesheet that overrides a parent's property moves every role
+inheriting from it. The table declares exactly the roles the emitted rules
+read and the roles their aliases name (`cssRoles`). -/
+
+/-- A role's custom property: `--ltx-<css>`. -/
+@[expose] public def roleVar (r : Ir.Role) : String := "--" ++ (Ir.CssName.role r).ident
+
+/-- A rule's read of a role's colour: `var(--ltx-<css>)`. -/
+@[expose] public def roleRef (r : Ir.Role) : String := "var(" ++ roleVar r ++ ")"
+
+/-- A read of a role that may resolve to nothing, with the value CSS gives an
+invalid read — `transparent` for a background. -/
+private def roleRefOr (r : Ir.Role) (fallback : String) : String :=
+  "var(" ++ roleVar r ++ ", " ++ fallback ++ ")"
+
+/-- One declaration's CSS value: a colour, or the alias of its parent. -/
+@[expose] public def cssDeclValue : Ir.CssDecl → String
+  | .value c => cssColor c
+  | .alias r => roleRef r
+
+/-- Every custom property a CSS text reads, `var(--<name>` with or without a
+fallback, in the order it reads them: one pass over the text. -/
+public def varReads (css : String) : Array String := Id.run do
+  let mut out : Array String := #[]
+  for piece in (css.splitOn "var(").drop 1 do
+    let t := piece.toList.dropWhile (· == ' ')
+    if t.take 2 == ['-', '-'] then
+      out := out.push (String.ofList (t.takeWhile fun c => c.isAlphanum || c == '-' || c == '_'))
+  return out
+
+/-- Every role by its custom property. -/
+private def roleVars : Std.HashMap String Ir.Role :=
+  Ir.Role.all.foldl (fun m r => m.insert (roleVar r) r) {}
+
+/-- The role a custom property is the property of, `--ltx-<css>`. -/
+public def roleOfVar? (name : String) : Option Ir.Role := roleVars[name]?
+
+/-- The roles a stylesheet's rules read: each role whose `var(--ltx-<css>`
+reference it spells, with or without a fallback, in registry order. -/
+public def rolesRead (css : String) : List Ir.Role :=
+  let reads := (varReads css).toList.filterMap roleOfVar?
+  Ir.Role.all.filter reads.contains
+
+/-- The roles a table must declare for a set of reads, in registry order:
+the reads and every role their aliases reach in a scheme the page ships
+(`Ir.Design.reach`), so no alias it declares dangles
+(`cssRoles_closed`). -/
+@[expose] public def cssRoles (pal : Ir.Palette) (schemes : List Ir.Scheme)
+    (seed : List Ir.Role) : List Ir.Role :=
+  Ir.Role.all.filter fun r => seed.any fun q => (Ir.Design.reach pal schemes q).contains r
+
+/-- **The page's roles are closed under their aliases**: an alias a declared
+role carries in a scheme the page ships names a declared role. -/
+public theorem cssRoles_closed (pal : Ir.Palette) (schemes : List Ir.Scheme)
+    (seed : List Ir.Role) (s : Ir.Scheme) (hs : s ∈ schemes) :
+    ∀ r ∈ cssRoles pal schemes seed, ∀ p,
+      Ir.Design.cssDecl pal s r = some (.alias p) → p ∈ cssRoles pal schemes seed := by
+  intro r hr p hp
+  simp only [cssRoles, List.mem_filter, List.any_eq_true, List.contains_iff_mem] at hr ⊢
+  obtain ⟨_, q, hq, hrq⟩ := hr
+  exact ⟨List.contains_iff_mem.mp (Ir.Role.all_complete p),
+    q, hq, Ir.Design.reach_covers pal schemes q r p s hs hrq hp⟩
+
+/-- **The table a page's stylesheet declares, aliases chased, is the
+resolver** (`_projects`): for every scheme the page ships and every role it
+declares, chasing the declarations it emits — a declared role's value
+(`paletteVars`), an undeclared one's default or alias (`roleDefaultVars`,
+each the `Ir.Design.cssDecl` it prints through `cssDeclValue`) — reads
+exactly `Ir.Design.at`: the HTML's colours are a projection of the one
+resolver, chains included. -/
+public theorem role_css_projects (pal : Ir.Palette) (schemes : List Ir.Scheme)
+    (seed : List Ir.Role) (s : Ir.Scheme) (hs : s ∈ schemes) (r : Ir.Role)
+    (hr : r ∈ cssRoles pal schemes seed) :
+    Ir.Design.chase (Ir.Design.restrict (Ir.Design.cssDecl pal s) (cssRoles pal schemes seed)) r =
+      Ir.Design.at pal s r := by
+  rw [Ir.Design.chase_restrict_exact _ _ (cssRoles_closed pal schemes seed s hs) r hr]
+  exact Ir.Design.cssDecl_chase_exact pal s r
+
+/-- **The declarations a page's stylesheet carries for its roles, in one
+scheme**: each role of the set the palette leaves undeclared, as its
+default — an alias or the scheme's constant. A declared role is declared
+by the document's own block (`paletteVars`), after every scheme's. -/
+public def roleDefaultVars (pal : Ir.Palette) (s : Ir.Scheme) (roles : List Ir.Role) :
+    List String :=
+  roles.filterMap fun r =>
+    if (Ir.Design.declared? pal r).isSome then none
+    else (Ir.Design.cssDecl pal s r).map fun d => s!"    {roleVar r}: {cssDeclValue d};"
+
+/-- The roles whose default the dark scheme declares differently from the
+light one: what the dark block re-declares. -/
+private def darkDefaultVars (pal : Ir.Palette) (roles : List Ir.Role) : List String :=
+  roles.filterMap fun r =>
+    if (Ir.Design.declared? pal r).isSome then none
+    else
+      let dk := Ir.Design.cssDecl pal .dark r
+      if dk == Ir.Design.cssDecl pal .light r then none
+      else dk.map fun d => s!"    {roleVar r}: {cssDeclValue d};"
+
+/-! #### The page's roles
+
+The page declares a role's property exactly when something on the page reads
+it: a rule of its stylesheet, an element's own paint, a reader alias, or the
+alias another declared role carries — in the document's palette or any
+epoch's, in each scheme the page ships (`pageRoleSet`). A role nothing gives a
+value in any of those has no declaration, so a read of it takes its fallback
+(`resolveRoleVars`), and an epoch's re-declaration of a role nothing reads is
+dropped (`keepRoleStyle`). -/
+
+/-- A style attribute's references: what its ordinary declarations read,
+and each custom property it declares with what that declaration reads. -/
+private def styleRefs (style : String) : Array String × Array (String × Array String) :=
+  (style.splitOn ";").foldl (fun (acc : Array String × Array (String × Array String)) piece =>
+    let t := piece.trimAscii.toString
+    if t.startsWith "--" then
+      match t.splitOn ":" with
+      | name :: rest => (acc.1, acc.2.push (name.trimAscii.toString, varReads (":".intercalate rest)))
+      | [] => acc
+    else ((varReads t).foldl Array.push acc.1, acc.2)) (#[], #[])
+
+mutual
+
+/-- The custom properties an emitted tree reads, and the declarations its
+style attributes carry with what each reads. -/
+private def nodeRefsOne (acc : Array String × Array (String × Array String)) :
+    Node → Array String × Array (String × Array String)
+  | .elem _ attrs kids =>
+    let acc := match attrs.find? (·.1 == "style") with
+      | some (_, st) =>
+        let (r, e) := styleRefs st
+        (r.foldl Array.push acc.1, e.foldl Array.push acc.2)
+      | none => acc
+    nodeRefsList acc kids.toList
+  | .style css => ((varReads css).foldl Array.push acc.1, acc.2)
+  | .text _ | .script _ _ => acc
+
+private def nodeRefsList (acc : Array String × Array (String × Array String)) :
+    List Node → Array String × Array (String × Array String)
+  | [] => acc
+  | n :: ns => nodeRefsList (nodeRefsOne acc n) ns
+
+end
+
+/-- Every palette a page's body declares, the document's first, in order. -/
+private def pagePalettes (doc : Doc) : List Ir.Palette :=
+  doc.palette :: (Ir.foldBlocks (fun (acc : Array Ir.Palette) b => match b with
+    | .setPalette p => acc.push p
+    | _ => acc) (fun acc _ => acc) #[] doc.body).toList
+
+/-- Whether some palette gives a role a value in some shipped scheme: the
+document declares it, or a scheme's default stands for it. -/
+private def roleDeclarable (pals : List Ir.Palette) (schemes : List Ir.Scheme) (r : Ir.Role) :
+    Bool :=
+  pals.any fun p => (Ir.Design.declared? p r).isSome ||
+    schemes.any fun s => (Ir.Design.cssDecl p s r).isSome
+
+/-- **The roles a page declares**: the closure of what it reads (`roots`)
+under the aliases a declared role carries — the registry's in every palette
+and scheme (`Ir.Design.cssDecl`), and the ones the page's own declarations
+state (`edges`) — less the roles no palette gives a value. -/
+public def pageRoleSet (pals : List Ir.Palette) (schemes : List Ir.Scheme)
+    (roots : List Ir.Role) (edges : Array (Ir.Role × List Ir.Role)) : List Ir.Role := Id.run do
+  let rows : List (Ir.Role × Ir.Role) := pals.flatMap fun p => schemes.flatMap fun s =>
+    Ir.Role.all.filterMap fun r => match Ir.Design.cssDecl p s r with
+      | some (.alias q) => some (r, q)
+      | _ => none
+  let mut set := roots
+  for _ in [0:Ir.Role.all.length + 1] do
+    let viaRows := (rows.filter fun (src, _) => set.contains src).map (·.2)
+    let viaEdges := (edges.filter fun (src, _) => set.contains src).toList.flatMap (·.2)
+    let next := Ir.Role.all.filter fun r => set.contains r || viaRows.contains r || viaEdges.contains r
+    if next.length == set.length then break
+    set := next
+  return Ir.Role.all.filter fun r => set.contains r && roleDeclarable pals schemes r
+
+/-- A CSS text with every read of a role outside `keep` replaced by its
+fallback (`initial` where it has none): a property the page never declares
+reads as its fallback anyway, and stating that keeps every read pointed at a
+declaration. A text that reads no such role is returned as it stands; else
+one pass per read it holds. -/
+public def resolveRoleVars (keep : Ir.Role → Bool) (s : String) : String := Id.run do
+  let stray := (varReads s).any fun n => (roleOfVar? n).any (!keep ·)
+  if !stray then return s
+  let opener := "var(--ltx-".toList.toArray
+  let mut text := s
+  for _ in [0:(varReads s).size] do
+    let cs := text.toList.toArray
+    let opensAt (i : Nat) : Bool := Id.run do
+      for k in [0:opener.size] do
+        if cs[i + k]? != opener[k]? then return false
+      return true
+    let mut out := ""
+    let mut i := 0
+    let mut changed := false
+    for _ in [0:cs.size] do
+      if i ≥ cs.size then break
+      if cs[i]? == some 'v' && opensAt i then
+        let nameStart := i + 4
+        let mut j := nameStart
+        for _ in [nameStart:cs.size] do
+          match cs[j]? with
+          | some c => if c.isAlphanum || c == '-' || c == '_' then j := j + 1 else break
+          | none => break
+        let name := String.ofList (cs.extract nameStart j).toList
+        let mut depth := 1
+        let mut k := j
+        let mut comma : Option Nat := none
+        for _ in [j:cs.size] do
+          match cs[k]? with
+          | some '(' => depth := depth + 1
+          | some ')' =>
+            depth := depth - 1
+            if depth == 0 then break
+          | some ',' => if depth == 1 && comma.isNone then comma := some k
+          | _ => pure ()
+          k := k + 1
+        let whole := String.ofList (cs.extract i (k + 1)).toList
+        match roleOfVar? name with
+        | some r =>
+          if keep r then out := out ++ whole
+          else
+            changed := true
+            out := out ++ match comma with
+              | some c0 => (String.ofList (cs.extract (c0 + 1) k).toList).trimAscii.toString
+              | none => "initial"
+        | none => out := out ++ whole
+        i := k + 1
+      else
+        out := out.push (cs[i]?.getD ' ')
+        i := i + 1
+    text := out
+    if !changed then break
+  return text
+
+/-- A style attribute with its declarations of roles outside `keep` dropped
+and its reads of them resolved (`resolveRoleVars`). -/
+private def keepRoleStyle (keep : Ir.Role → Bool) (style : String) : String :=
+  if (style.splitOn "--ltx-").length ≤ 1 then style else
+  let pieces := (style.splitOn ";").filter fun piece =>
+    let t := piece.trimAscii.toString
+    match (t.splitOn ":").head? with
+    | some name => match roleOfVar? name.trimAscii.toString with
+      | some r => !t.startsWith "--" || keep r
+      | none => true
+    | none => true
+  resolveRoleVars keep (";".intercalate pieces)
+
+mutual
+
+/-- An emitted tree with every style attribute kept to the page's roles. -/
+private def keepRolesOne (keep : Ir.Role → Bool) : Node → Node
+  | .elem tag attrs kids =>
+    .elem tag (attrs.map fun (k, v) => if k == "style" then (k, keepRoleStyle keep v) else (k, v))
+      (keepRolesList keep #[] kids.toList)
+  | .style css => .style (resolveRoleVars keep css)
+  | n@(.text _) => n
+  | n@(.script _ _) => n
+
+private def keepRolesList (keep : Ir.Role → Bool) (acc : Array Node) : List Node → Array Node
+  | [] => acc
+  | n :: ns => keepRolesList keep (acc.push (keepRolesOne keep n)) ns
+
+end
+
+/-- The reader names a stylesheet once read the engine's colours under,
+kept one release as aliases of the roles that now carry them, and each
+author colour's own name: a host stylesheet that reads `var(--bg)` or
+`var(--primary)` keeps working while it moves to `--ltx-*`. An author
+colour keeps its own name where the two meet (`\definecolor{bg}`), as it
+read before the roles moved. Read-only: an override goes to the `--ltx-*`
+property a rule reads. -/
+private def readerAliases (pal : Ir.Palette) (roles : List Ir.Role) (taken : List String := []) :
+    List String :=
+  let roleNames : List (String × Ir.Role) :=
+    [("fg", .ink), ("bg", .page), ("muted", .muted), ("ink", .ink), ("surface", .page),
+     ("accent", .focus), ("tint", .codeSurface), ("rule", .rule)]
+  let authored (n : String) := pal.colors.any (·.1 == n)
+  -- An author colour's own name stands only where the engine's stylesheet
+  -- does not read that property itself (`--topsep`, `--measure`): there
+  -- the alias would replace the engine's length with a colour.
+  let free (n : String) := !taken.contains ("--" ++ n) && !n.startsWith "ltx-"
+  (roleNames.filter fun (n, r) => roles.contains r && !authored n && free n).map
+      (fun (n, r) => s!"    --{n}: {roleRef r};") ++
+    (pal.colors.toList.filter fun (n, _) =>
+        !n.isEmpty && free n && n.all fun c => c.isAlphanum || c == '-' || c == '_').map
+      fun (n, _) => s!"    --{n}: var({(Ir.ColorRef.color n).property});"
 
 /-- A stage length in the deck's unit, its share of the stage's height
 (`deckStageMilli`), as type and the frame opening are stated. -/
@@ -2581,7 +2806,7 @@ private def footlineCss (page : PageSpec) : String :=
   "section.slide > footer.slide-foot { position: relative; order: 1;\n" ++
   s!"  margin: 0 calc(-1 * {safeareaVar}); line-height: 0;\n" ++
   "  font-weight: var(--ltx-body-weight, normal);\n" ++
-  "  color: var(--muted); background: var(--footlinebg, transparent); }\n" ++
+  s!"  color: {roleRef .footInk}; background: {roleRefOr .footBand "transparent"}; }\n" ++
   s!"section.slide.standout > footer.slide-foot \{ font-size: calc({step}em / \
 {stepFactor standoutStep}); }\n" ++
   "footer.slide-foot::before { content: \"\"; display: inline-block;\n" ++
@@ -2610,11 +2835,13 @@ public def themeCss (doc : Doc) : String :=
   let d := Design.ofDoc doc
   let sectionMeasure :=
     s!"min({stageVh doc.page (Ir.sectionPageMeasure (doc.page.width - 2 * doc.page.hmargin))}, 100%)"
-  -- A removed epoch token must reach the shared undeclared default, never
-  -- the opening document's colour. CSS tokens retain first priority.
-  let defaults := Design.ofPalette {}
-  (if d.bgDeclared then "body { background: var(--bg); }\n" else "") ++
-  (if d.fgDeclared then "body { color: var(--fg); }\n" else "") ++
+  -- A palette anywhere in the document that declares a role: the opening
+  -- one or an epoch's.
+  let declares (r : Ir.Role) : Bool :=
+    (Ir.Design.declared? doc.palette r).isSome ||
+      Ir.foldBlocks (fun a b => a || match b with
+        | .setPalette p => (Ir.Design.declared? p r).isSome
+        | _ => false) (fun a _ => a) false doc.body
   -- Paint is carried by each block's palette epoch. A document-level
   -- condition would miss body declarations that add or remove a bar.
   "section.block > header { font-weight: bold; }\n" ++
@@ -2636,8 +2863,8 @@ public def themeCss (doc : Doc) : String :=
   s!"section.tcolorbox > .tcolorbox-body:first-child \{ padding-top: {tcbLength (Ir.tcbRule + Ir.tcbBoxsep + Ir.tcbTop)}; }\n" ++
   s!"{blockAt "first-child"} \{ --frame-body-before: calc({milliFactor (blockAboveMilli doc.page.fontSize doc.tokens)}rem - var(--parskip, 0rem)); }\n" ++
   (if d.frametitle.isSome then
-    "section.slide > header { background: var(--frametitlebg);\n" ++
-    "  color: var(--frametitlefg, var(--bg, #fff));\n" ++
+    s!"section.slide > header \{ background: {roleRef .frameTitleBar};\n" ++
+    s!"  color: {roleRef .frameTitleInk};\n" ++
     -- The bar sets at the title's own step, so `frametitlepadding` — an em
     -- of the title size, `\ht\strutbox` measured after
     -- `\usebeamerfont{frametitle}` — resolves here against the size it is
@@ -2673,7 +2900,10 @@ public def themeCss (doc : Doc) : String :=
         frameTitleStrutCss
        else s!"  padding: var(--frametitlepadding, {quantaRem 1}) {safeareaVar}; } }\n")
      else "") else
-    "section.slide > header { color: var(--frametitlefg, var(--fg)); }\n" ++
+    -- Undeclared, an unbarred title takes the ink of what it stands in, as
+    -- every heading does, so the rule stands only where a palette names one.
+    (if declares .frameTitleInk then
+      s!"section.slide > header \{ color: {roleRef .frameTitleInk}; }\n" else "") ++
     "section.slide > header h2 { color: inherit; }\n" ++
     -- With no bar the title is the first line of the page, where the PDF
     -- sets it (`Layout.collectFrameTitle`): the slides' top margin
@@ -2709,10 +2939,7 @@ calc({stepFactor Ir.plainFrameTitleStep} * \
   -- matter from the logo beside it.
   (match doc.headline with
    | some _ =>
-     let side : Ir.HAlign := match (doc.styles.find? "titlepage").bind (·.align) with
-       | some "left" => .left
-       | some "right" => .right
-       | _ => .center
+     let side : Ir.HAlign := ((doc.styles.find? "titlepage").bind (·.align)).getD .center
      let pad := s!"gap: {quantaRem 2}; padding: {quantaRem 2} {quantaRem 3}; }\n"
      (if side == .center then
        "body > header.headline { display: grid; grid-template-columns: 1fr auto 1fr;\n" ++
@@ -2728,9 +2955,9 @@ calc({stepFactor Ir.plainFrameTitleStep} * \
      "body > header.headline h1 { margin: 0; }
 " ++
      (if d.frametitle.isSome then
-       "body > header.headline { background: var(--frametitlebg);
+       s!"body > header.headline \{ background: {roleRef .frameTitleBar};
 " ++
-       "  color: var(--frametitlefg, var(--bg, #fff)); }
+       s!"  color: {roleRef .frameTitleInk}; }
 " ++
        "body > header.headline h1 { color: inherit; }
 "
@@ -2740,22 +2967,15 @@ calc({stepFactor Ir.plainFrameTitleStep} * \
   -- bar's rule is: a design that declares none emits no rule, so a page the
   -- PDF leaves on the document's ground is not painted here either. The
   -- role is the one the PDF path reads (`Layout.titleGround`, through
-  -- `Ir.Design.ofPalette`); the reference resolves against the `:root`
-  -- declaration `paletteVars` writes for it.
+  -- `Ir.Design.ofPalette`); the reference resolves against the role table.
   (match d.titlepage with
    | some _ =>
-     "section.slide.title-page { background: var(--titlepagebg);\n" ++
-     s!"  color: var(--titlepagefg, var(--bg, {cssColor defaults.bg})); }\n" ++
+     s!"section.slide.title-page \{ background: {roleRef .titlePageGround};\n" ++
+     s!"  color: {roleRef .titlePageInk}; }\n" ++
      "section.slide.title-page h1 { color: inherit; }\n"
    | none => "") ++
   titleSlotCss doc ++
   blockShapeCss doc ++
-  -- A role names a hue; the contract chooses its lightness on each ground
-  -- (`Contrast.realizeDoc`, the one solver site): where a run realized on
-  -- a ground the stylesheet paints, the scope carries the ink the palette
-  -- records there, so a run's var(--role) resolves to the value the PDF
-  -- paints it in rather than the page's.
-  inkScopeCss d ++
   -- Rules are available to later palette epochs too; the section node
   -- itself is gated on that epoch's resolved section-progress pair.
   (if doc.docClass.record.model == .frame then
@@ -2765,15 +2985,15 @@ calc({stepFactor Ir.plainFrameTitleStep} * \
     -- (`Ir.sectionPageMeasure`), as the stage's share the deck's type is
     -- stated in, never past the stage's own width.
     "section.section-page h2 { display: inline-block; text-align: left;\n" ++
-    s!"  width: {sectionMeasure}; margin: 0; color: var(--sectiontitlefg, var(--fg)); }\n" ++
+    s!"  width: {sectionMeasure}; margin: 0; color: {roleRef .sectionTitleInk}; }\n" ++
     -- The height reads the same token the PDF path reads
     -- (`progressheight`), with the same fallback — moloch's own 1pt
     -- (beamerouterthememoloch.dtx) — one resolving site per backend, one
     -- declared value.
-    ".progress { background: var(--sectionprogressbg, var(--progressbg, var(--bg)));\n" ++
+    s!".progress \{ background: {roleRef .sectionProgressTrack};\n" ++
     "  height: var(--progressheight, 1pt);\n" ++
     s!"  width: {sectionMeasure}; margin: {quantaRem 1} auto 0; }\n" ++
-    ".progress > div { background: var(--sectionprogressfg, var(--progressfg)); height: 100%; }\n" ++
+    s!".progress > div \{ background: {roleRefOr .sectionProgressFill "transparent"}; height: 100%; }\n" ++
     -- moloch's section page closes on the subsection title's strut below
     -- its bar, a subsection in force or not, and centres that whole box as
     -- the PDF does (`Layout.collectSection`): the one value, at the body's
@@ -2795,7 +3015,7 @@ height: calc({decMilli (Ir.sectionPageStrut 1000 doc.page.leading)}em - var(--pr
     (if doc.docClass == .slides && d.progress.isSome then
       "@media screen { @supports (animation-timeline: scroll()) {\n" ++
       ".deck-progress { position: fixed; top: 0; left: 0; width: 100%;\n" ++
-      "  height: var(--progressheight, 1pt); background: var(--progressfg);\n" ++
+      s!"  height: var(--progressheight, 1pt); background: {roleRef .progressFill};\n" ++
       "  transform-origin: 0 50%;\n" ++
       "  animation: ltx-deck-progress linear both;\n" ++
       "  animation-timeline: scroll(root x); }\n" ++
@@ -2825,11 +3045,11 @@ to { transform: scaleX(1) } }\n" ++
 {milliFactor (k * 1000 / max step 1)}em; }\n")) else "")
 
 /-- One palette entry as the CSS custom-property declaration `:root`
-carries: the definition site a role use's `var(--name, …)` reference
-resolves against. This is where a role's palette-dependence lives in the
+carries — a role's `--ltx-<css>`, an author colour's `--ltx-c-<escape>`: the
+definition site a use's `var(--ltx-…, …)` reference resolves against. This is where a role's palette-dependence lives in the
 artifact, so `role_use_is_palette_dependent` is stated over it. -/
-private def paletteVar (n : String) (c : Ir.Color) : String :=
-  "    --" ++ n ++ ": " ++ cssColor c ++ ";"
+private def paletteVar (n : Ir.ColorRef) (c : Ir.Color) : String :=
+  "    " ++ n.property ++ ": " ++ cssColor c ++ ";"
 
 /-- Every palette entry's declaration line, in declaration order. -/
 public def paletteVars (p : Ir.Palette) : List String :=
@@ -2885,14 +3105,14 @@ public theorem cssColor_inj (a b : Ir.Color) (h : cssColor a = cssColor b) :
 /-- The good theorem, the contrapositive of "frozen at authoring time": for
 a role `r` and palettes that differ at `r`, the emitted `:root` custom
 property declarations differ — so a use of `r` renders in the palette's
-colour for `r`, because its span references `var(--r, …)`
+colour for `r`, because its span references `var(--ltx-…, …)`
 (`role_use_names_its_token`) and that reference resolves against exactly
 this block. A hardcoded `\textcolor{#808080}` cannot satisfy this: it
 emits no variable reference and no palette can reach it. Stated over
 `paletteVars ∘ Palette.declare` — the palette-to-artifact dependence lives
 here, not in the whole `emit` string, whose `intercalate` structure would
 only obscure the same fact. -/
-public theorem role_use_is_palette_dependent (p : Ir.Palette) (r : String)
+public theorem role_use_is_palette_dependent (p : Ir.Palette) (r : Ir.ColorRef)
     (c₁ c₂ : Ir.Color) (hne : (c₁.r, c₁.g, c₁.b) ≠ (c₂.r, c₂.g, c₂.b)) :
     paletteVars (p.declare r c₁) ≠ paletteVars (p.declare r c₂) := by
   simp only [paletteVars, Ir.Palette.declare, Array.toList_push, List.map_append,
@@ -3374,8 +3594,13 @@ both backends and a reader's stylesheet can override them. With a resolved
 `FontSet` the slot stacks name only the synthetic families (plus the honest
 generic), exactly the faces the sibling directory ships; without one they
 name the declared families against the platform, today's degraded state. -/
-private def tokenVars (cfg : Config) (doc : Doc) : String :=
-  let palette := paletteVars doc.palette
+private def tokenVars (cfg : Config) (doc : Doc) (roles : List Ir.Role)
+    (taken : List String := []) : String :=
+  let aliases := readerAliases doc.palette roles taken
+  -- A declared role the page reads nothing of has no declaration either.
+  let palette := (doc.palette.entries.toList.filterMap fun (n, c) => match n with
+      | .role r => if roles.contains r then some (paletteVar n c) else none
+      | .color _ => some (paletteVar n c)) ++ aliases
   -- beamer's lineage states its trivlist and float spaces in the page's
   -- unit (`lineageSkipVars`).
   let stated (n : String) : Bool :=
@@ -3761,12 +3986,12 @@ a frame's ground is data both backends read, never a stylesheet constant:
 painting `--surface` whatever the document declared shipped a dark
 declared ground as light ink on a light stage, and a theme's dark ink on
 the dark scheme's surface. -/
-public def stageGround : String := "var(--bg, var(--surface))"
+public def stageGround : String := roleRef .page
 
 /-- The stage's ink, paired with `stageGround`: `color` is computed where it
 is declared, so a body epoch's `--fg` redefined on the stage reaches its text
 only through a declaration on the stage itself. -/
-public def stageInk : String := "var(--fg, var(--ink))"
+public def stageInk : String := roleRef .ink
 
 /-- Every frame fills the viewport as one opaque column of the row:
 `100vw` wide (exactly the scrollport — the root clips y, so no scrollbar
@@ -5618,7 +5843,7 @@ private def slideCss (doc : Doc) : String :=
   -- The handout card, today's rendering, byte for byte: the only-media
   -- form for every non-deck class, the print twin for the deck.
   let handout :=
-    s!"section.slide \{ border: {slideBorderPx}px solid var(--rule); border-radius: {slideRadiusPx}px;\n" ++
+    s!"section.slide \{ border: {slideBorderPx}px solid {roleRef .rule}; border-radius: {slideRadiusPx}px;\n" ++
     s!"  padding: {slidePadV} {slidePadH}; margin: 0; break-inside: avoid; }\n" ++
     s!"* + section.slide \{ margin-top: {slidePadV}; }\n"
   -- The slide header's shared type rule, inside this split so the deck's
@@ -5716,8 +5941,8 @@ public def imageSeeThrough (en : Image.Loaded) : Bool :=
     | some p => p.alpha != .opaque || Image.isSvg (resolvedSrc en) || en.webSvg.isSome
     | none => false
 
-/-- Whether the page ships the dark colour scheme. Only the engine's own
-token set has a proven dark variant (`Contrast.dark_contract`). A colour
+/-- Whether the page ships the dark colour scheme. Only the registry's own
+defaults have a proven dark column (`Contrast.default_sites_contract`). A colour
 the document chose — a palette entry, its own or a bundle's, an epoch's
 palette, a coloured run anywhere the document sets one (`Ir.foldDoc`: the
 body, the furniture, a style's templates), a rule or a picture, whose marks
@@ -5825,73 +6050,17 @@ public def figureWordsRule : String :=
   s!".{figureWordsClass} \{ position: absolute; width: 1px; height: 1px; overflow: hidden; \
 clip-path: inset(50%); white-space: nowrap; }\n"
 
-/-- The base stylesheet. Small on purpose: a generated document should not
-ship a framework to use four of its rules. Dark mode is a variant of the same
-token set, not an inversion hack. The typography with an authority behind it
-is derived above (`Ir.sizeScale` for the headings and standout,
-`Ir.leadingMilli` and `bodyLeadingMilli` for the leadings); the remaining
-paddings, margins, radii and breakpoints are this stylesheet's own screen
-furniture — stated as the engine's choices, no external authority names
-them, and each is overridable by a reader stylesheet, which is the HTML
-backend's contract. -/
-public def baseCss (cfg : Config) (doc : Doc) (pairs : List (Nat × Nat) := []) : String :=
-  -- The two token sets are `Contrast.light`/`Contrast.dark`, not literals
-  -- here: every pairing they create is proved legible over there
-  -- (`light_contract`, `dark_contract`), and a value only a backend knows
-  -- would be a value no theorem covers.
-  let lt := Contrast.light
-  let dk := Contrast.dark
-  let defaults := Design.ofPalette {}
-  let parskip := parskipVar doc.page
-  let dual := dualScheme cfg.imgs doc
+/-- The base stylesheet's rules, after its custom properties: what
+`pageRoles` reads the page's roles off. -/
+public def baseRules (doc : Doc) (pairs : List (Nat × Nat) := []) (figureWords : Bool := false) :
+    String :=
   let tl := tableLengthFallback doc
-  ":root {\n" ++
-  (if dual then "    color-scheme: light dark;\n" else "    color-scheme: light;\n") ++
-  s!"    --measure: {measureEm doc.page};\n" ++
-  parskip ++
-  lineageSkipVars doc ++
-  s!"    --ink: {cssColor lt.ink};\n" ++
-  s!"    --surface: {cssColor lt.surface};\n" ++
-  s!"    --muted: {cssColor lt.muted};\n" ++
-  s!"    --accent: {cssColor lt.accent};\n" ++
-  s!"    --tint: {cssColor lt.tint};\n" ++
-  s!"    --rule: {cssColor lt.rule};\n" ++
-  "    --font-body: Georgia, \"Times New Roman\", serif;\n" ++
-  "    --font-sans: system-ui, -apple-system, \"Segoe UI\", sans-serif;\n" ++
-  "    --font-mono: ui-monospace, SFMono-Regular, Menlo, monospace;\n" ++
-  "}\n" ++
-  (if !dual then "" else
-  "@media (prefers-color-scheme: dark) {\n" ++
-  "  :root {\n" ++
-  s!"    --ink: {cssColor dk.ink};\n" ++
-  s!"    --surface: {cssColor dk.surface};\n" ++
-  s!"    --muted: {cssColor dk.muted};\n" ++
-  -- The light accent read at 2.64:1 on the dark surface -- under the 3:1
-  -- a focus indicator needs (WCAG 2.2 SC 1.4.11) -- so dark carries its
-  -- own accent; inverting ink and surface never fixed a hue chosen
-  -- against a light page.
-  s!"    --accent: {cssColor dk.accent};\n" ++
-  s!"    --tint: {cssColor dk.tint};\n" ++
-  s!"    --rule: {cssColor dk.rule};\n" ++
-  "  }\n" ++
-  "}\n") ++
-  -- The document's own declarations, after the dark variant: a declared
-  -- token or font is the document's value in every scheme the page
-  -- ships. A page with a declared colour ships one scheme (`dualScheme`),
-  -- so the dark variant never stands a declared colour on a ground no
-  -- judge read it on; a media query adds no specificity, so at the shared
-  -- :root specificity source order is the whole cascade here — the same
-  -- equal-specificity, order-decides contract the declared stylesheet
-  -- link relies on below.
-  (let tv := tokenVars cfg doc
-   if tv.isEmpty then "" else ":root {\n" ++ tv ++ "\n}\n") ++
-  lineageLevelRules doc ++
   "*, *::before, *::after { box-sizing: border-box; }\n" ++
   "body {\n" ++
   "  margin: 0;\n" ++
   s!"  padding: {quantaRem 3} 1.25rem {quantaRem 6};\n" ++
-  "  background: var(--surface);\n" ++
-  "  color: var(--ink);\n" ++
+  s!"  background: {roleRef .page};\n" ++
+  s!"  color: {roleRef .ink};\n" ++
   "  font-family: var(--font-body);\n" ++
   -- 1rem: the reader's own declared size, the browser-consensus default.
   -- It also makes the screen rhythm rational — the unit is exactly
@@ -5945,8 +6114,8 @@ public def baseCss (cfg : Config) (doc : Doc) (pairs : List (Nat × Nat) := []) 
   -- quotation's two edges stand their level's `\leftmargin` in, as the
   -- page sets them (`listIndentCss`).
   listIndentCss doc.docClass.record.lists ++
-  (if cfg.imgs.entries.any (!·.webWords.isEmpty) then figureWordsRule else "") ++
-  "li::marker { color: var(--muted); }\n" ++
+  (if figureWords then figureWordsRule else "") ++
+  s!"li::marker \{ color: {roleRef .marker}; }\n" ++
   -- The class-default list marking, per nesting level, matching the PDF
   -- backend (classes.dtx: bullet, bold en-dash, centered asterisk, centered
   -- dot; arabic., (alph), roman., Alph.). Descendant selectors count depth
@@ -5976,12 +6145,12 @@ public def baseCss (cfg : Config) (doc : Doc) (pairs : List (Nat × Nat) := []) 
   "    text-decoration-thickness: from-font; text-underline-position: from-font; }\n" ++
   s!"s \{ text-decoration-line: line-through; text-decoration-thickness: {lineThroughThicknessCss};\n" ++
   "    text-decoration-skip-ink: none; }\n" ++
-  "a:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }\n" ++
+  s!"a:focus-visible \{ outline: 2px solid {roleRef .focus}; outline-offset: 2px; }\n" ++
   "code, pre { font-family: var(--font-mono); font-size: 0.925em; }\n" ++
   "pre > code { font-size: inherit; }\n" ++
   -- Flexbox 1 §4.5 gives scroll containers no automatic minimum size.
   -- Keep code at its content height; a crowded stage owns vertical scrolling.
-  s!"pre \{ background: var(--tint); padding: {quantaRem 1} 1rem; overflow-x: auto;\n" ++
+  s!"pre \{ background: {roleRef .codeSurface}; padding: {quantaRem 1} 1rem; overflow-x: auto;\n" ++
   "      border-radius: 4px; flex-shrink: 0; }\n" ++
   -- A captioned listing wears the figure-caption shape, caption above
   -- (listings' captionpos default); declared line numbers are a CSS
@@ -5994,7 +6163,7 @@ public def baseCss (cfg : Config) (doc : Doc) (pairs : List (Nat × Nat) := []) 
     "pre.numbered { counter-reset: listing-line; }\n" ++
     "pre.numbered .line::before { counter-increment: listing-line;\n" ++
     "  content: counter(listing-line); display: inline-block; width: 2.25em;\n" ++
-    "  padding-right: 1em; text-align: right; color: var(--muted);\n" ++
+    s!"  padding-right: 1em; text-align: right; color: {roleRef .marker};\n" ++
     "  user-select: none; }\n"
    else "") ++
   (if docHasBibliography doc then bibCss doc else "") ++
@@ -6111,7 +6280,7 @@ public def baseCss (cfg : Config) (doc : Doc) (pairs : List (Nat × Nat) := []) 
   -- `Layout.collectAlgorithm`): algorithm2e's own inset, so a number
   -- stands in the algorithm's box and never in the page margin
   "ol.algorithm.numbered li::before { content: counter(algline);\n" ++
-  "  color: var(--muted); font-size: 0.8em; width: 1.5em;\n" ++
+  s!"  color: {roleRef .marker}; font-size: 0.8em; width: 1.5em;\n" ++
   "  position: absolute; left: 0; text-align: right; }\n" ++
   "figure.float > table { margin-left: auto; margin-right: auto; }\n" ++
   "figure.float > img { display: block; margin: 0 auto; }\n" ++
@@ -6139,8 +6308,8 @@ public def baseCss (cfg : Config) (doc : Doc) (pairs : List (Nat × Nat) := []) 
   -- whole frame's, as moloch's `\usebeamerfont{standout}` is: lists and
   -- centred blocks set at it too. The footline keeps its own step and
   -- weight (`footlineCss`).
-  s!"section.slide.standout \{ background: var(--standoutbg, var(--fg, {cssColor defaults.standout.bg}));\n" ++
-  s!"  color: var(--standoutfg, var(--bg, {cssColor defaults.standout.fg})); text-align: center;\n" ++
+  s!"section.slide.standout \{ background: {roleRef .standoutGround};\n" ++
+  s!"  color: {roleRef .standoutInk}; text-align: center;\n" ++
   s!"  font-size: {scaleSize standoutStep "em"}; font-weight: 600;\n" ++
   "  display: flex; flex-direction: column; justify-content: center; }\n" ++
   deckAreaCss doc ++
@@ -6169,7 +6338,11 @@ public def baseCss (cfg : Config) (doc : Doc) (pairs : List (Nat × Nat) := []) 
   ".equation { display: flex; align-items: center; }\n" ++
   ".equation > .math { flex: 1 1 auto; text-align: center; }\n" ++
   "@media print {\n" ++
-  "  body { background: #fff; color: #000; padding: 0; }\n" ++
+  -- The sheet's paper and ink are the print column's, LaTeX's white paper
+  -- and black ink, on the page's own box; every other role keeps its light
+  -- value on paper.
+  s!"  body \{ background: {cssColor ((Ir.Design.at {} .print .page).getD Ir.Color.white)}; \
+color: {cssColor ((Ir.Design.at {} .print .ink).getD Ir.Color.black)}; padding: 0; }\n" ++
   -- Paper has no scroll, and a scroll box is monolithic there, so it
   -- clips what runs past it: on paper a code block wraps a line wider than
   -- itself inside the box instead. A departure from LaTeX's verbatim, which
@@ -6192,6 +6365,68 @@ public def baseCss (cfg : Config) (doc : Doc) (pairs : List (Nat × Nat) := []) 
   "@media (max-width: 30rem) {\n" ++
   "  .entry-pair { grid-template-columns: minmax(0, 1fr); }\n" ++
   "}"
+
+/-- The roles the reader aliases read (`readerAliases`): roots of every page's
+set, so a host stylesheet's `var(--bg)` resolves. -/
+public def readerRoles : List Ir.Role := [.page, .ink, .muted, .focus, .codeSurface, .rule]
+
+/-- **The roles a page's own stylesheet declares**: every role its rules read
+(`rolesRead` over `baseRules` and `themeCss`), the roles the reader aliases
+name, and the roles their aliases name in turn, in each scheme the page
+ships (`cssRoles`). -/
+public def pageRoles (cfg : Config) (doc : Doc) : List Ir.Role :=
+  let schemes : List Ir.Scheme := if dualScheme cfg.imgs doc then [.light, .dark] else [.light]
+  cssRoles doc.palette schemes
+    (rolesRead (baseRules doc ++ themeCss doc) ++ readerRoles)
+
+
+/-- The base stylesheet. Small on purpose: a generated document should not
+ship a framework to use four of its rules. Dark mode is a variant of the same
+token set, not an inversion hack. The typography with an authority behind it
+is derived above (`Ir.sizeScale` for the headings and standout,
+`Ir.leadingMilli` and `bodyLeadingMilli` for the leadings); the remaining
+paddings, margins, radii and breakpoints are this stylesheet's own screen
+furniture — stated as the engine's choices, no external authority names
+them, and each is overridable by a reader stylesheet, which is the HTML
+backend's contract. -/
+public def baseCss (cfg : Config) (doc : Doc) (pairs : List (Nat × Nat) := [])
+    (roles : Option (List Ir.Role) := none) (taken : List String := []) : String :=
+  let parskip := parskipVar doc.page
+  let dual := dualScheme cfg.imgs doc
+  let roles := roles.getD (pageRoles cfg doc)
+  -- The roles' defaults come from the registry's light and dark columns
+  -- (`Ir.Role.row`), and paper and ink on the print sheet from its print
+  -- column, not literals here: every site they create is proved legible
+  -- in every scheme (`Contrast.default_sites_contract`), and a value only
+  -- a backend knew would be a value no theorem covers.
+  ":root {\n" ++
+  (if dual then "    color-scheme: light dark;\n" else "    color-scheme: light;\n") ++
+  s!"    --measure: {measureEm doc.page};\n" ++
+  parskip ++
+  lineageSkipVars doc ++
+  String.join ((roleDefaultVars doc.palette .light roles).map (· ++ "\n")) ++
+  "    --font-body: Georgia, \"Times New Roman\", serif;\n" ++
+  "    --font-sans: system-ui, -apple-system, \"Segoe UI\", sans-serif;\n" ++
+  "    --font-mono: ui-monospace, SFMono-Regular, Menlo, monospace;\n" ++
+  "}\n" ++
+  (if !dual then "" else
+  "@media (prefers-color-scheme: dark) {\n" ++
+  "  :root {\n" ++
+  String.join ((darkDefaultVars doc.palette roles).map (· ++ "\n")) ++
+  "  }\n" ++
+  "}\n") ++
+  -- The document's own declarations, after the dark variant: a declared
+  -- colour, token or font is the document's value in every scheme the page
+  -- ships. A page with a declared colour ships one scheme (`dualScheme`),
+  -- so the dark variant never stands a declared colour on a ground no
+  -- judge read it on; a media query adds no specificity, so at the shared
+  -- :root specificity source order is the whole cascade here — the same
+  -- equal-specificity, order-decides contract the declared stylesheet
+  -- link relies on below.
+  (let tv := tokenVars cfg doc roles taken
+   if tv.isEmpty then "" else ":root {\n" ++ tv ++ "\n}\n") ++
+  lineageLevelRules doc ++
+  baseRules doc pairs (cfg.imgs.entries.any (!·.webWords.isEmpty))
 
 private def styleClass : Style → String
   | .bold => "b"
@@ -6723,7 +6958,7 @@ private def inlineNodeInto (cfg : Config) (acc : Array Node) (x : Inline) : Arra
     -- fallback, so the token really is the styling API: a host page can
     -- restyle the document by redefining --primary.
     let value := match name with
-      | some n => s!"color: var(--{n}, {cssColor c})"
+      | some n => s!"color: var({n.property}, {cssColor c})"
       | none => s!"color: {cssColor c}"
     acc.push (Html.elem "span" (inlineNodesInto cfg #[] body.toList) #[("style", value)])
   | .located _ body => inlineNodesInto cfg acc body.toList
@@ -7103,10 +7338,10 @@ the contrapositive of "frozen at authoring time"; a colour that arrived
 with no palette name (`name = none`) has no variable to follow and really
 is frozen. -/
 private theorem role_use_names_its_token (cfg : Config) (acc : Array Node)
-    (c : Ir.Color) (n : String) (body : Array Inline) :
+    (c : Ir.Color) (n : Ir.ColorRef) (body : Array Inline) :
     inlineNodeInto cfg acc (.colored c (some n) body) =
       acc.push (Html.elem "span" (inlineNodesInto cfg #[] body.toList)
-        #[("style", s!"color: var(--{n}, {cssColor c})")]) := by
+        #[("style", s!"color: var({n.property}, {cssColor c})")]) := by
   simp [inlineNodeInto]
 
 /-- The class hook's emission half: an authored role (not an internal
@@ -7153,7 +7388,7 @@ private theorem linkLeafAfford_projects (cfg : Config) (acc : Array Node)
              acc.push (Html.elem "span"
                #[Html.elem "u" (inlineNodesInto cfg #[] [x])]
                #[("style", match n with
-                  | some nm => s!"color: var(--{nm}, {cssColor c})"
+                  | some nm => s!"color: var({nm.property}, {cssColor c})"
                   | none => s!"color: {cssColor c}")])
          | none => acc.push (Html.elem "u" (inlineNodesInto cfg #[] [x]))) := by
   rw [Ir.Styles.linkLeafAfford_afford s kind x h]
@@ -7273,27 +7508,58 @@ private def compactStyle (style : String) : String :=
 /-- A body palette epoch as semantic changes, before CSS serialization. `none`
 removes a property. -/
 public structure PaletteDiff where
-  entries : Array (String × Option Ir.Color)
+  entries : Array (Ir.ColorRef × Option Ir.Color)
+  /-- The page's roles the epoch re-declares by default: a role it leaves
+  undeclared whose default changed, or whose alias names a role the epoch
+  re-declares — a custom property's `var()` resolves where it is declared,
+  so an inherited role is re-stated wherever its parent moves. -/
+  defaults : Array (Ir.Role × Option Ir.CssDecl) := #[]
 
 /-- Whether this epoch changes the page ground. -/
 public def PaletteDiff.groundChanged (diff : PaletteDiff) : Bool :=
-  diff.entries.any (·.1 == "bg")
+  diff.entries.any (·.1 == .role .page)
 
-/-- Serialize the semantic palette changes as custom-property declarations. -/
+/-- Serialize the semantic palette changes as custom-property declarations:
+the declared entries, a removed role standing for its default instead. -/
 public def PaletteDiff.style (diff : PaletteDiff) : String :=
-  String.intercalate "; " (diff.entries.toList.map fun
-    | (n, some c) => s!"--{n}: {cssColor c}"
-    | (n, none) => s!"--{n}: initial")
+  let restated := diff.defaults.map (·.1)
+  String.intercalate "; " ((diff.entries.toList.filterMap fun
+    | (n, some c) => some s!"{n.property}: {cssColor c}"
+    | (.role r, none) => if restated.contains r then none else some s!"{roleVar r}: initial"
+    | (n, none) => some s!"{n.property}: initial") ++
+    diff.defaults.toList.map fun
+      | (r, some d) => s!"{roleVar r}: {cssDeclValue d}"
+      | (r, none) => s!"{roleVar r}: initial")
 
 /-- The custom-property redefinitions a body `\palette` makes, against the
-palette in force before it. Equality is explicitly over the HTML projection:
-a PDF device rider can change without selecting a different screen value. -/
-public def epochPaletteDiff (before after : Ir.Palette) : PaletteDiff :=
+palette in force before it, over the page's roles (`pageRoles`). Equality is
+explicitly over the HTML projection: a PDF device rider can change without
+selecting a different screen value. -/
+public def epochPaletteDiff (roles : List Ir.Role) (before after : Ir.Palette) : PaletteDiff :=
   let changed := (after.entries.filter fun (n, c) =>
-    (before.find? n).map cssColor != some (cssColor c)).map fun (n, c) => (n, some c)
+    (before.lookup n).map cssColor != some (cssColor c)).map fun (n, c) => (n, some c)
   let removed := (before.entries.filter fun (n, _) =>
-    (after.find? n).isNone).map fun (n, _) => (n, none)
-  { entries := changed ++ removed }
+    (after.lookup n).isNone).map fun (n, _) => (n, none)
+  let entries := changed ++ removed
+  let screen (d : Option Ir.CssDecl) : Option String := d.map cssDeclValue
+  let undeclared := roles.filter fun r => (Ir.Design.declared? after r).isNone
+  let moved := entries.toList.filterMap fun
+    | (.role r, _) => some r
+    | (.color _, _) => none
+  let base := undeclared.filter fun r =>
+    screen (Ir.Design.cssDecl after .light r) != screen (Ir.Design.cssDecl before .light r)
+  let restated := Id.run do
+    let mut set := base
+    for _ in [0:Ir.Role.all.foldl (fun m r => max m r.depth) 0 + 1] do
+      let named := undeclared.filter fun r =>
+        !set.contains r && match Ir.Design.cssDecl after .light r with
+          | some (.alias p) => set.contains p || moved.contains p
+          | _ => false
+      set := set ++ named
+    return set
+  { entries
+    defaults := ((undeclared.filter restated.contains).map fun r =>
+      (r, Ir.Design.cssDecl after .light r)).toArray }
 
 /-- The redefinitions a body `\tokens` makes, same diff. -/
 public def epochTokenStyle (basis : LengthBasis) (before after : Ir.Tokens) : String :=
@@ -7306,16 +7572,14 @@ the page ground follows the new palette. Flow needs concrete ink because
 a custom property does not recompute an ancestor's inherited CSS color;
 a deck stage instead reads the tokens through its own paint rules. -/
 public def Config.advancePalette (cfg : Config) (p : Ir.Palette) : Config :=
-  let diff := epochPaletteDiff cfg.pal p
-  let d := Design.ofPalette p
-  let fg := (d.inkOn "fg" { fg := d.fg, bg := cfg.bodyGround.getD d.bg }).fg
+  let diff := epochPaletteDiff cfg.cssRoles cfg.pal p
+  let fg := (Design.ofPalette p).fg
   let home := cfg.bodyGround.isNone && p.sameAs cfg.docPal
   { cfg with pal := p
-             listingGround := cfg.bodyGround.or (p.find? "bg")
+             listingGround := cfg.bodyGround.or (Ir.Design.declared? p .page)
              listingFg := if home then none else some fg, bodyInk := none
              epochStyle := compactStyle (joinStyles cfg.epochStyle diff.style)
-             epochPaint := if home then "" else s!"color: {cssColor fg};" ++
-               surfaceInkDecls p (cfg.bodyGround.getD d.bg)
+             epochPaint := if home then "" else s!"color: {cssColor fg};"
              epochGround := cfg.bodyGround.isNone && (cfg.epochGround || diff.groundChanged) }
 
 /-- Listings inherit the epoch's shared IR ink on the enclosing surface,
@@ -7325,9 +7589,7 @@ the stylesheet's as epoch 0 does. -/
 public theorem Config.advancePalette_ink_projects (cfg : Config) (p : Ir.Palette) :
     (cfg.advancePalette p).listingFg =
       if cfg.bodyGround.isNone && p.sameAs cfg.docPal then none
-      else some ((Design.ofPalette p).inkOn "fg"
-        { fg := (Design.ofPalette p).fg
-          bg := cfg.bodyGround.getD (Design.ofPalette p).bg }).fg := by
+      else some (Design.ofPalette p).fg := by
   rfl
 
 /-- An epoch back at the document's own palette, outside a painted body,
@@ -8016,7 +8278,7 @@ public def labelNodesOne (f : LabelFace) (acc : Array Node) (x : Inline)
       (mathCfg.map fun cfg => { cfg with mathStyles := cfg.mathStyles.push st })
   | .colored c name body =>
     let paint := match name with
-      | some n => ("style", s!"{if native then "color" else "fill"}: var(--{n}, {cssColor c})")
+      | some n => ("style", s!"{if native then "color" else "fill"}: var({n.property}, {cssColor c})")
       | none => if native then ("style", s!"color: {cssColor c}") else ("fill", cssColor c)
     acc.push (Html.elem (if native then "mrow" else "tspan")
       (labelNodesList f #[] body.toList mathCfg) #[paint])
@@ -8706,8 +8968,13 @@ public def blockNode (cfg : Config) (b : Block) : Node :=
           #[("class", "section-number")], Html.text "\u2003"] ++ kids
       | none => kids
     let attrs := if st.rule.isSome then #[("class", "ruled")] else #[]
-    let attrs := if cfg.deck && level == 1 then
-      attrs.push ("style", "color: var(--sectiontitlefg, var(--fg))") else attrs
+    -- A deck's section heading outside a frame takes the section title's
+    -- ink where the palette declares it or the ink it follows, and the
+    -- body's otherwise: on paper the print sheet's ink, as the PDF sets it.
+    let attrs := if cfg.deck && level == 1 &&
+        ((Ir.Design.declared? cfg.pal .sectionTitleInk).isSome ||
+          (Ir.Design.declared? cfg.pal .ink).isSome) then
+      attrs.push ("style", s!"color: {roleRef .sectionTitleInk}") else attrs
     let node := withLead cfg title (Html.elem tag kids attrs)
     if level == .h1 then withClass "body-heading" node else node
   | .list ordered items =>
@@ -8796,18 +9063,14 @@ public def blockNode (cfg : Config) (b : Block) : Node :=
   | .titled kind title body =>
     let d := Design.ofPalette cfg.pal
     let look := d.titledBody kind
-    let inherited := cfg.bodyInk.getD ("fg", cfg.listingFg.getD d.fg)
+    let inherited := cfg.bodyInk.getD (.role .ink, cfg.listingFg.getD d.fg)
     let parent : Ir.ColorPair :=
       { fg := inherited.2, bg := cfg.listingGround.getD d.bg }
-    let paint := titledBodyPaint cfg.pal kind parent inherited.1
-    let role := if look.fg.isSome then kind.roleStem ++ "bodyfg" else inherited.1
+    let paint := titledBodyPaint cfg.pal kind parent
+    let role := if look.fg.isSome then .role (Ir.Role.bodyInk kind) else inherited.1
     let titleLook := Ir.titledLook cfg.pal kind
-    let titleGround := titleLook.bar.getD parent.bg
-    let titleInk := (d.inkOn (kind.roleStem ++ "titlefg")
-      { fg := titleLook.fg, bg := titleGround }).fg
     let barStyle := (titleLook.bar.map fun c => s!"background: {cssColor c}; {titledBoxPaint}").getD ""
-    let titleStyle := s!"color: {cssColor titleInk};" ++ surfaceInkDecls cfg.pal titleGround ++
-      barStyle
+    let titleStyle := s!"color: {cssColor titleLook.fg};" ++ barStyle
     -- The kind's title font (`\setbeamerfont{block title}`), the page's.
     let shown := match Ir.blockTitleFont cfg.styles kind with
       | some tpl => Ir.fillTemplate tpl title
@@ -8821,7 +9084,7 @@ public def blockNode (cfg : Config) (b : Block) : Node :=
       bodyGround := look.bg.or cfg.bodyGround
       bodyInk := some (role, (look.resolve parent).fg) }
     let kids := blockNodesInto bodyCfg #[] body.toList
-    let bodyStyle := s!"color: {cssColor paint.fg};" ++ surfaceInkDecls cfg.pal paint.bg
+    let bodyStyle := s!"color: {cssColor paint.fg};"
     if kind == .box then
       -- tcolorbox's box: its title and upper part are its own segments, each
       -- padded by the stylesheet (`themeCss`) and painted from the plain
@@ -8829,8 +9092,7 @@ public def blockNode (cfg : Config) (b : Block) : Node :=
       let barStyle := (titleLook.bar.map fun c => s!"background: {cssColor c};").getD ""
       let head : Array Html.Node := if title.isEmpty then #[] else
         #[Html.elem "header" (inlines cfg title)
-          #[("style", s!"color: {cssColor titleInk};" ++ surfaceInkDecls cfg.pal titleGround ++
-            barStyle)]]
+          #[("style", s!"color: {cssColor titleLook.fg};" ++ barStyle)]]
       let bodyPaint := (look.bg.map fun bg => s!"background: {cssColor bg};").getD ""
       Html.elem "section" (head.push (Html.elem "div" kids
           #[("class", "tcolorbox-body"), ("style", bodyStyle ++ bodyPaint)]))
@@ -8842,16 +9104,15 @@ public def blockNode (cfg : Config) (b : Block) : Node :=
       -- in its font on the page's ground, the body's paragraphs keeping the
       -- page's skip; the boxes' rules are the stylesheet's (`blockShapeCss`).
       let showTitle := shape.showsTitle (!title.isEmpty)
-      let titleInk := (d.inkOn (kind.roleStem ++ "titlefg")
-        { fg := titleLook.fg, bg := parent.bg }).fg
+      let titleInk := titleLook.fg
       -- An empty title box is the stylesheet's, as tall as the template
       -- sets it (`blockShapeCss`).
       let head : Array Html.Node :=
         if !showTitle then #[]
         else if title.isEmpty then #[Html.elem "header" #[] #[]]
         else #[Html.elem "header" (inlines cfg shown)
-          #[("style", s!"color: {cssColor titleInk};" ++ surfaceInkDecls cfg.pal parent.bg)]]
-      let ink := (d.inkOn role { fg := look.fg.getD inherited.2, bg := parent.bg }).fg
+          #[("style", s!"color: {cssColor titleInk};")]]
+      let ink := look.fg.getD inherited.2
       let shapedCfg := { cfg.into with
         listingFg := some ink, bodyInk := some (role, look.fg.getD inherited.2) }
       fillCarrier cfg (Ir.frameFillsOne cfg.lists cfg.styles .deck 0 b)
@@ -8970,7 +9231,9 @@ public def blockNode (cfg : Config) (b : Block) : Node :=
     -- IR projection the markdown fence reads too (`listing_language_agree`);
     -- the attribute value goes through the escaper as every attribute does.
     let lines := spec.tokenLines s
-    let brushes := Listing.brushes cfg.pal cfg.listingGround covered spec.style lines
+    -- minted's `bgcolor` is the ground the listing's own tokens stand on.
+    let ground := (spec.ground.map (·.1)).or cfg.listingGround
+    let brushes := Listing.brushes cfg.pal ground covered spec.style lines
     let codeAttrs : Array (String × String) := match spec.htmlClass with
       | some c => #[("class", c)]
       | none => #[]
@@ -8979,19 +9242,24 @@ public def blockNode (cfg : Config) (b : Block) : Node :=
       for i in [:lines.size] do
         if i > 0 then kids := kids.push (Html.text "\n")
         let line := inlines cfg
-          ((Listing.paintLine cfg.pal cfg.listingGround covered spec.style brushes lines[i]!).flatMap
-            fun r => Listing.paintRun r #[.text r.text])
+          ((Listing.paintLine cfg.pal ground covered spec.style brushes
+            lines[i]!).flatMap fun r => Listing.paintRun r #[.text r.text])
         kids := if spec.numbers then
           kids.push (Html.elem "span" line #[("class", "line")])
           else kids ++ line
       return kids
     let code := Html.elem "code" codeKids codeAttrs
     let design := Ir.Design.ofPalette cfg.pal
-    let paint := if spec.highlight.isEmpty then
-        (covered.map fun c => s!"color: {cssColor c};").getD ""
-      else
-        s!"background: {cssColor (cfg.listingGround.getD design.bg)}; " ++
+    let paint := match spec.ground with
+      | some (g, ref) =>
+        s!"background: {(ref.map fun n => s!"var({n.property}, {cssColor g})").getD (cssColor g)}; " ++
         s!"color: {cssColor (covered.getD (cfg.listingFg.getD design.fg))};"
+      | none =>
+        if spec.highlight.isEmpty then
+          (covered.map fun c => s!"color: {cssColor c};").getD ""
+        else
+          s!"background: {cssColor (cfg.listingGround.getD design.bg)}; " ++
+          s!"color: {cssColor (covered.getD (cfg.listingFg.getD design.fg))};"
     let style := String.intercalate " "
       (((fontStyleDecls cfg.page.scale spec.fontSize (fontLengthCss cfg)).getD #[]).toList) ++
       (match spec.fontSize with
@@ -9055,7 +9323,7 @@ public def blockNode (cfg : Config) (b : Block) : Node :=
     -- can override either. The thickness deferred to nothing until the IR
     -- carried its token name beside the resolved length.
     let c := match name with
-      | some n => s!"var(--{n}, {cssColor color})"
+      | some n => s!"var({n.property}, {cssColor color})"
       | none => cssColor color
     Html.elem "hr" #[] #[("class", "separator"),
       ("style", s!"border: none; height: {cssSourced thickness}; background: {c}")]
@@ -9643,9 +9911,9 @@ private def attachLogo (cfg : Config) (node : Node)
     match node with
     | .elem tag attrs kids =>
       let justify := match Ir.logoAlign cfg.styles with
-        | "left" => "flex-start"
-        | "center" => "center"
-        | _ => "flex-end"
+        | .left => "flex-start"
+        | .center => "center"
+        | .right => "flex-end"
       Node.elem tag attrs (kids.push (logoBox "slide-logo"
         (some s!"justify-content: {justify}")
         (inlines cfg (logoDecoration content)) (inlines cfg content)))
@@ -9814,8 +10082,14 @@ private def emitTreeCore (cfg : Config) (doc : Doc) (styles : String × Array Di
   | .bulma =>
     -- Bind our tokens onto Bulma's own custom properties so a host page's
     -- theme and ours agree instead of fighting.
-    head := head.push (Node.style (faceRules ++ ":root {\n" ++ tokenVars cfg doc ++ "\n" ++
-      "    --bulma-primary: var(--primary, var(--accent, #1d4ed8));\n" ++
+    -- Bulma's primary is a host's or the document's own `--primary` (the
+    -- reader alias of an author colour `primary`), else the focus role: an
+    -- override of either reaches it.
+    let primary := "var(--primary, " ++ roleRef .focus ++ ")"
+    let focusDecl := String.join ((roleDefaultVars doc.palette .light [.focus]).map (· ++ "\n"))
+    head := head.push (Node.style (faceRules ++ ":root {\n" ++ tokenVars cfg doc [.focus] ++ "\n" ++
+      focusDecl ++
+      s!"    --bulma-primary: {primary};\n" ++
       "    --bulma-body-family: var(--font-body, inherit);\n" ++
       "}\n" ++ styled))
   | .none => unless styled.isEmpty do head := head.push (Node.style styled)
@@ -9830,7 +10104,12 @@ private def emitTreeCore (cfg : Config) (doc : Doc) (styles : String × Array Di
   let bodyClass := match cfg.css with
     | .bulma => "content"
     | _ => ""
+  -- Every role is the walk's to re-declare where an epoch moves it; the page
+  -- then keeps the roles something on it reads (`pageRoleSet`).
   let cfg := { cfg with styles := doc.styles
+                        cssRoles := match cfg.css with
+                          | .own => Ir.Role.all
+                          | _ => []
                         pal := doc.palette
                         docPal := doc.palette
                         tokens := doc.tokens
@@ -9987,8 +10266,7 @@ first; retitle one frame, or link to '#{id}'"))
                   #[("class", "slide-foot size-" ++ Ir.footline.step),
                     ("style", String.intercalate " "
                       (paint ++ footCapDecl doc.page.scale band ++
-                        footBoxDecls doc.page (cfg.footBox (num.getD 0) band) ++
-                        (look.bar.map fun ground => inkDecls design ground).getD []))]))
+                        footBoxDecls doc.page (cfg.footBox (num.getD 0) band)))]))
               | _, other => other
             else node
           -- The frame's logo: the state in force at this position, from
@@ -10175,10 +10453,25 @@ one in the article class"
       (imageAttrsList (some "data-image-index") #[] body.toList) do
     if let some en := cfg.imgs.get? k then
       diags := diags.push (undecodableDiag (resolvedSrc en) en.webError (some k))
+  let mut shipped := body
   if cssCfg.css == .own then
-    head := head.modify styleAt fun _ => Node.style (faceRules ++
-      baseCss cssCfg doc (carrierPairs body) ++ "\n" ++ themeCss doc ++ styled)
-  return (head, body, diags)
+    let pairs := carrierPairs body
+    let theme := themeCss doc
+    let rules := baseRules doc pairs (cssCfg.imgs.entries.any (!·.webWords.isEmpty)) ++ "\n" ++
+      theme ++ styled
+    let (bodyReads, bodyDecls) := nodeRefsList (#[], #[]) body.toList
+    let sheetReads := varReads rules
+    let roots := (sheetReads ++ bodyReads).toList.filterMap roleOfVar? ++ readerRoles
+    let edges := bodyDecls.filterMap fun (name, reads) =>
+      (roleOfVar? name).map (·, reads.toList.filterMap roleOfVar?)
+    let schemes : List Ir.Scheme :=
+      if dualScheme cssCfg.imgs doc then [.light, .dark] else [.light]
+    let roles := pageRoleSet (pagePalettes doc) schemes roots edges
+    shipped := keepRolesList roles.contains #[] body.toList
+    head := head.modify styleAt fun _ => Node.style (faceRules ++ resolveRoleVars roles.contains
+      (baseCss cssCfg doc pairs (roles := some roles) (taken := sheetReads.toList) ++
+        "\n" ++ theme ++ styled))
+  return (head, shipped, diags)
 
 /-- Normalize the shared IR at the public entry, before any backend walk. -/
 public def emitTree (cfg : Config) (doc : Doc) :
@@ -10402,60 +10695,31 @@ was emitted for. -/
 public def a11yFacts (own deck : Bool) (body : Array Node) : A11yFacts :=
   a11yList own deck false false {} body.toList
 
-/-- The four pairings one variant of the stylesheet creates, as data: body
-text on the page, marker text on the page, code text on its tint, the focus
-indicator on the page — each with the ratio it owes (SC 1.4.3, SC 1.4.11).
-`Contrast.ThemeColors.contractHolds` is exactly their conjunction
-(`themePairs_contract`), so a count over this list judges what that
-contract judges. -/
-public def themePairs (t : Contrast.ThemeColors) : List (String × Ir.Color × Ir.Color × Nat) :=
-  [("text", t.ink, t.surface, Contrast.aaText), ("muted", t.muted, t.surface, Contrast.aaText),
-   ("code", t.ink, t.tint, Contrast.aaText), ("accent", t.accent, t.surface, Contrast.aaNonText)]
-
-public theorem themePairs_contract (t : Contrast.ThemeColors) :
-    t.contractHolds =
-      (themePairs t).all fun p => decide (Contrast.contrastMilli p.2.1 p.2.2.1 ≥ p.2.2.2) := by
-  simp [Contrast.ThemeColors.contractHolds, themePairs, Bool.and_assoc]
-
-/-- The colours a page's own stylesheet paints in one colour scheme, read
-as the cascade resolves them. A palette entry named after a token (`ink`,
-`muted`, …) is emitted after both scheme blocks at the same `:root`
-specificity (`tokenVars`), so it holds in both schemes; an undeclared
-token keeps the scheme's own. The text is the design's declared ink when it
-declares one (`themeCss`: `body { color: var(--fg) }`), and the ground
-under it is the declared page (`body { background: var(--bg) }`), both read
-off `Design.ofDoc`, their one resolving site. The paged deck's stage paints
-the same declared page (`deckStageRule` reads `stageGround`, the declared
-`bg` before the scheme's surface), so every class judges one pair: until it
-did, the stage painted `var(--surface)` whatever the document declared, and
-a theme's declared ink stood on the dark scheme's surface. Under `bulma` or
-`none` the engine ships no colour of its own and claims nothing;
-`schemeFailures` counts none. -/
-public def schemeColors (doc : Doc) (base : Contrast.ThemeColors) : Contrast.ThemeColors :=
-  let tok (n : String) (d : Ir.Color) : Ir.Color := (doc.palette.find? n).getD d
-  let d := Design.ofDoc doc
-  let surface := tok "surface" base.surface
-  let text := if d.fgDeclared then d.fg else tok "ink" base.ink
-  let page := if d.bgDeclared then d.bg else surface
-  { ink := text
-    surface := page
-    muted := tok "muted" base.muted
-    accent := tok "accent" base.accent
-    tint := tok "tint" base.tint
-    rule := tok "rule" base.rule }
+/-- The pairings a page's own stylesheet creates for its text in one scheme,
+read off the role table it declares (`Ir.Design.cssDecl_chase_exact`): body
+text on the page, marker text on the page, code text on its surface, the
+focus indicator on the page — each with the ratio it owes (SC 1.4.3, SC
+1.4.11). A declared role holds in every scheme the page ships; an undeclared
+one takes the scheme's own column. -/
+public def themePairs (pal : Ir.Palette) (s : Ir.Scheme) : List (String × Ir.Color × Ir.Color × Nat) :=
+  let look (r : Ir.Role) := (Ir.Design.at pal s r).getD Ir.Color.black
+  [("text", look .ink, look .page, Contrast.aaText),
+   ("muted", look .marker, look .page, Contrast.aaText),
+   ("code", look .codeInk, look .codeSurface, Contrast.aaText),
+   ("accent", look .focus, look .page, Contrast.aaNonText)]
 
 /-- The pairings a page fails, in each colour scheme it ships: `themePairs`
-over `schemeColors` in light, and in dark where the page ships the dark
-variant (`dualScheme`, over the page's own loaded images) — a single-scheme
-page shows its light colours to a dark-mode reader, one judgement, never
-counted twice. A page under a stylesheet the engine does not own fails
-none, because the engine paints none of them. -/
+in light, and in dark where the page ships the dark variant (`dualScheme`,
+over the page's own loaded images) — a single-scheme page shows its light
+colours to a dark-mode reader, one judgement, never counted twice. A page
+under a stylesheet the engine does not own fails none, because the engine
+paints none of them. -/
 public def schemeFailures (own : Bool) (imgs : Image.Store) (doc : Doc) : List (String × String) :=
   if !own then [] else
-    ([("light", Contrast.light)] ++
-        (if dualScheme imgs doc then [("dark", Contrast.dark)] else [])).flatMap
-      fun (scheme, base) =>
-      ((themePairs (schemeColors doc base)).filter fun p =>
+    (([("light", Ir.Scheme.light)] : List (String × Ir.Scheme)) ++
+        (if dualScheme imgs doc then [("dark", Ir.Scheme.dark)] else [])).flatMap
+      fun (scheme, s) =>
+      ((themePairs doc.palette s).filter fun p =>
           Contrast.contrastMilli p.2.1 p.2.2.1 < p.2.2.2).map fun p => (scheme, p.1)
 
 /-- **Every picture the backend emits is named or hidden** (`_contract`):

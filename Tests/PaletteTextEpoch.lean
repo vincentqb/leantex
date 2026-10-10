@@ -111,7 +111,7 @@ private def containerEpochChecks (ref : IO.Ref (List String))
         (ink.size == 1 && ink.all fun leaf =>
           leaf.color == some brown.css && leaf.ownerColor == some brown.css)
   let base := document true
-  let changed := base.palette.declare "fg" brown
+  let changed := base.palette.declare (.role .ink) brown
   let wrappers : List (String × (Array Ir.Block → Ir.Block)) :=
     [("center", .center), ("ragged", .ragged .left), ("quote", .quote),
      ("abstract", .abstract), ("role", .role "container"),

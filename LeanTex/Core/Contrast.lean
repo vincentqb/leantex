@@ -66,59 +66,13 @@ public def ratioString (milli : Nat) : String :=
   let frac := (milli % 1000) / 10
   s!"{milli / 1000}.{if frac < 10 then "0" else ""}{frac}:1"
 
-/-- The colour pairings one variant of the engine's own stylesheet creates:
-text inks over the two backgrounds it paints, and the focus indicator. A
-new token that gets paired with another belongs here, so the contract below
-covers it. -/
-public structure ThemeColors where
-  ink : Color
-  surface : Color
-  muted : Color
-  accent : Color
-  tint : Color
-  rule : Color
-  deriving Repr, BEq
+/-! ## The nearest legible colour: a role names a hue, a ground its lightness
 
-/-- Every pairing this variant's stylesheet creates clears the threshold for
-its role: body and marker text on the page (SC 1.4.3, 4.5:1), code text on
-its tint (SC 1.4.3), and the focus indicator on the page (SC 1.4.11, 3:1).
-`rule` is pure decoration — a hairline under a heading conveys nothing the
-heading does not — and pure decoration is exempt by both criteria. -/
-@[expose] public def ThemeColors.contractHolds (t : ThemeColors) : Bool :=
-  contrastMilli t.ink t.surface ≥ aaText
-    && contrastMilli t.muted t.surface ≥ aaText
-    && contrastMilli t.ink t.tint ≥ aaText
-    && contrastMilli t.accent t.surface ≥ aaNonText
-
-/-- The light token set `HtmlDoc.baseCss` ships. -/
-public def light : ThemeColors := {
-  ink := { r := 0x18, g := 0x18, b := 0x1B }
-  surface := { r := 0xFA, g := 0xFA, b := 0xF9 }
-  muted := { r := 0x71, g := 0x71, b := 0x7A }
-  accent := { r := 0x1D, g := 0x4E, b := 0xD8 }
-  tint := { r := 0xF4, g := 0xF4, b := 0xF5 }
-  rule := { r := 0xE4, g := 0xE4, b := 0xE7 }
-}
-
-/-- The dark token set behind `prefers-color-scheme: dark`. Not an inversion
-of `light`: the accent is the same hue two tints lighter, because the light
-accent reads at 2.64:1 on this surface — under the 3:1 the focus indicator
-needs (SC 1.4.11) — and inverting ink/surface does nothing for a colour that
-was chosen against a light page. -/
-public def dark : ThemeColors := {
-  ink := { r := 0xFA, g := 0xFA, b := 0xF9 }
-  surface := { r := 0x18, g := 0x18, b := 0x1B }
-  muted := { r := 0xA1, g := 0xA1, b := 0xAA }
-  accent := { r := 0x60, g := 0xA5, b := 0xFA }
-  tint := { r := 0x27, g := 0x27, b := 0x2A }
-  rule := { r := 0x3F, g := 0x3F, b := 0x46 }
-}
-
-/-! ## Realization: a role names a hue; the contract chooses its lightness
-
-A palette role declares a hue and chroma; on each ground it ships on, the
-engine realizes the lightness that meets the pair's requirement. Sources,
-and the rule taken from each:
+A colour a document states ships as stated: the judge below reports a
+pairing that falls short of its ground and never repaints it. What the
+engine derives itself — a palette generated from seeds (`SeedPalette`) —
+takes the tone that meets its ground, by the search here. Sources, and the
+rule taken from each:
 
 * https://m3.material.io/styles/color/system/how-the-system-works —
   Material 3 tonal palettes: a key color fixes hue and chroma, and each
@@ -137,16 +91,12 @@ and the rule taken from each:
   WCAG relative-luminance ratio — monotone in lightness moving away from
   the ground, which is what the binary search below rides.
 
-The solver searches the Oklab lightness axis at the declared `(a, b)`
-(hue and chroma held fixed, exactly Material's tonal walk), taking the
-nearest passing lightness to the declared one; when no lightness at that
-chroma reaches the ratio (a saturated hue against a mid ground), chroma
-reduces stepwise toward the neutral axis before giving up. `none` means
-the declared colour stands and the pairing warning fires as before —
-realization is never silent and never approximate: every returned colour
-re-judges against the requirement and lies within the ink bound of the
-declared one by construction (`realize_between`, below), and a pair that
-already passes is returned unchanged (`realize_id_of_passing`). -/
+The solver searches the Oklab lightness axis at the colour's `(a, b)` (hue
+and chroma held fixed, exactly Material's tonal walk), taking the nearest
+passing lightness; when no lightness at that chroma reaches the ratio (a
+saturated hue against a mid ground), chroma reduces stepwise toward the
+neutral axis before giving up. Every returned colour re-judges against the
+requirement (`realizeNearest_meets`). -/
 
 /-- The candidate at lightness `L` (the `labOf` 10¹⁸ scale) with chroma
 scaled to `f`% of the declared: hue held, tone the variable. -/
@@ -187,70 +137,11 @@ private def realizeAt (req : Nat) (ground : Color) (lab : Oklab.Lab)
     | none, some d => some (realizeCand lab f d)
     | none, none => none
 
-/-! ## The bound on a repair: barely different, measurably better
-
-A repair ships a colour the author did not write — a role's lightness
-realized on a ground (`realize`), a mix's weight moved (`remix`) — so it
-departs from what LaTeX ships, xcolor's value of the declaration. A
-departure stands only when it is measurably better, which the guard on
-every return makes true (the pair then meets its WCAG 2.2 requirement),
-and barely different: within `inkBoundSq` of the declared colour, in
-ΔEOK. Sources, and the rule taken from each:
-
-* https://www.w3.org/TR/css-color-4/ §20.3 "ΔEOK" — the colour difference
-  "is simply the Euclidean distance in Oklab color space".
-* https://www.w3.org/TR/css-color-4/ §14.2.1 "Binary Search Gamut Mapping
-  with Local MINDE" — "For the OkLCh color space, one JND is an OkLCh
-  difference of 0.02", with ΔEOK the metric.
-
-Beyond the bound the declared colour ships as xcolor computes it, and the
-pairing warning fires, naming the repair a document can write itself. -/
-
-/-- ΔEOK², squared so the bound compares with no root: the Euclidean
-distance between two colours' `labOf` coordinates, at its 10¹⁸ scale
-(10³⁶ per unit²). -/
-public def deltaEOkSq (c c' : Color) : Nat :=
-  let p := Oklab.labOf c
-  let q := Oklab.labOf c'
-  ((p.L - q.L) * (p.L - q.L) + (p.a - q.a) * (p.a - q.a) +
-    (p.b - q.b) * (p.b - q.b)).toNat
-
-public theorem deltaEOkSq_self (c : Color) : deltaEOkSq c c = 0 := by
-  simp [deltaEOkSq]
-
-/-- One just-noticeable difference at `labOf`'s scale (`Oklab.okJnd`). -/
-public def okJnd : Nat := Oklab.okJnd
-
-/-- How far a repair may move a declared colour, in JNDs: four, ΔEOK 0.08 —
-a difference a reader sees only beside the original, with the colour still
-the one its name says. A declared reading of "barely different", not a
-measurement: a smaller count repairs less and warns more. -/
-public def inkBoundJnds : Nat := 4
-
-/-- The bound on `deltaEOkSq`'s scale. -/
-public def inkBoundSq : Nat := (inkBoundJnds * okJnd) * (inkBoundJnds * okJnd)
-
-/-- The bound in thousandths of ΔEOK, for messages. -/
-public def inkBoundMilli : Nat := inkBoundJnds * okJnd / 10 ^ 15
-
-/-- A repair stays within the bound of the colour it repairs. -/
-public def withinInkBound (declared shipped : Color) : Bool :=
-  decide (deltaEOkSq declared shipped ≤ inkBoundSq)
-
-/-- ΔEOK in thousandths, truncated: what a message prints. -/
-public def deltaEOkMilli (c c' : Color) : Nat := Nat.sqrt (deltaEOkSq c c') / 10 ^ 15
-
-/-- `0.078` from 78: thousandths spelled for a message. -/
-public def milliString (m : Nat) : String :=
-  let f := toString (m % 1000)
-  s!"{m / 1000}.{"".pushn '0' (3 - f.length)}{f}"
-
-/-- The nearest legible colour on a ground, however far it lies: the
-colour itself when the pair already meets `req` (milli-ratio,
-`contrastMilli`'s scale); otherwise the nearest lightness at the declared
-hue and chroma that does, reducing chroma toward the neutral axis when the
-full-chroma axis never reaches it; `none` when nothing does. The solver
-`realize` bounds, and what a warning past the bound offers the author. -/
+/-- The nearest legible colour on a ground: the colour itself when the
+pair already meets `req` (milli-ratio, `contrastMilli`'s scale); otherwise
+the nearest lightness at its hue and chroma that does, reducing chroma
+toward the neutral axis when the full-chroma axis never reaches it; `none`
+when nothing does. What the generator realizes a derived role with. -/
 public def realizeNearest (req : Nat) (ground c : Color) : Option Color :=
   if req ≤ contrastMilli c ground then some c
   -- A colour carrying a print model is declared in DeviceCMYK: realizing
@@ -262,18 +153,9 @@ public def realizeNearest (req : Nat) (ground c : Color) : Option Color :=
         realizeAt req ground (Oklab.labOf c) f).bind fun cand =>
       if req ≤ contrastMilli cand ground then some cand else none
 
-/-- Realize a colour on a ground: unchanged when the pair already meets
-`req`; otherwise the nearest legible colour (`realizeNearest`) when it lies
-within the ink bound of the declared one; `none` otherwise — the declared
-colour then stands and the pairing diagnostic fires as before. -/
-public def realize (req : Nat) (ground c : Color) : Option Color :=
-  if req ≤ contrastMilli c ground then some c
-  else (realizeNearest req ground c).bind fun cand =>
-    if withinInkBound c cand then some cand else none
-
-/-- The unbounded solver's answer meets the requirement: every return is
-guarded by the judged quantity itself, so no monotonicity or search
-argument is load-bearing. -/
+/-- The solver's answer meets the requirement: every return is guarded by
+the judged quantity itself, so no monotonicity or search argument is
+load-bearing. -/
 public theorem realizeNearest_meets {req : Nat} {ground c c' : Color}
     (h : realizeNearest req ground c = some c') : req ≤ contrastMilli c' ground := by
   unfold realizeNearest at h
@@ -292,209 +174,10 @@ public theorem realizeNearest_meets {req : Nat} {ground c c' : Color}
         next hp => cases h; exact hp
         next => cases h
 
-/-- **A realized colour is measurably better and barely different** — the
-rule every departure from LaTeX answers to, as the two bounds the shipped
-colour sits between: it meets the pair's requirement, and it lies within
-the ink bound of the colour the document declared. -/
-public theorem realize_between {req : Nat} {ground c c' : Color}
-    (h : realize req ground c = some c') :
-    req ≤ contrastMilli c' ground ∧ deltaEOkSq c c' ≤ inkBoundSq := by
-  unfold realize at h
-  split at h
-  next hp => cases h; exact ⟨hp, by simp [deltaEOkSq_self]⟩
-  next =>
-    match hb : realizeNearest req ground c with
-    | none => rw [hb] at h; cases h
-    | some cand =>
-      rw [hb, Option.bind_some] at h
-      split at h
-      next hw =>
-        cases h
-        exact ⟨realizeNearest_meets hb, by simpa [withinInkBound] using hw⟩
-      next => cases h
-
-/-- The realized colour passes the pair's requirement whenever the solver
-returns one — the postcondition by construction. -/
-public theorem realize_meets_contract {req : Nat} {ground c c' : Color}
-    (h : realize req ground c = some c') : req ≤ contrastMilli c' ground :=
-  (realize_between h).1
-
-/-- A pair that already passes is unchanged: realization is the identity
-on every legible pairing, so a passing document's artifact cannot move. -/
-public theorem realize_id_of_passing {req : Nat} {ground c : Color}
-    (h : req ≤ contrastMilli c ground) : realize req ground c = some c := by
-  simp [realize, h]
-
-/-- The weight nearest `pct` that `pass` accepts, searched outward from it
-over 0..100, the heavier side first at each distance. -/
-private def nearestWeight (pass : Nat → Bool) (pct : Nat) : Option Nat :=
-  (List.range 101).findSome? fun d =>
-    if pct + d ≤ 100 && pass (pct + d) then some (pct + d)
-    else if d ≤ pct && pct - d ≤ 100 && pass (pct - d) then some (pct - d)
-    else none
-
-private theorem nearestWeight_mem {pass : Nat → Bool} {pct q : Nat}
-    (h : nearestWeight pass pct = some q) : q ≤ 100 ∧ pass q = true := by
-  unfold nearestWeight at h
-  obtain ⟨d, _, hd⟩ := List.exists_of_findSome?_eq_some h
-  split at hd
-  · rename_i hup
-    simp only [Bool.and_eq_true, decide_eq_true_eq] at hup
-    simp only [Option.some.injEq] at hd
-    exact hd ▸ hup
-  · split at hd
-    · rename_i _ hdn
-      simp only [Bool.and_eq_true, decide_eq_true_eq] at hdn
-      simp only [Option.some.injEq] at hd
-      exact hd ▸ ⟨hdn.1.2, hdn.2⟩
-    · exact absurd hd (by simp)
-
-/-- The weight nearest the declared one whose mix meets `req` on `ground`,
-however far it moves the colour: what the warning offers the author when a
-repair would pass the bound. -/
-public def remixNearest (req : Nat) (ground a b : Color) (pct : Nat) : Option (Nat × Color) :=
-  if a.cmyk.isSome then none
-  else (nearestWeight (fun q => decide (req ≤ contrastMilli (a.mix q b) ground)) pct).map
-    fun q => (q, a.mix q b)
-
-/-- Re-weight a two-colour mix to meet `req` on `ground`: the weight nearest
-the declared one whose mix passes and stays within the bound of xcolor's
-value of the declared mix, searched outward from it. A mix states a
-relation between two colours the author named (`a!P!b`: P% of `a` over
-`b`), so its repair keeps both colours and moves only the weight; `none`
-when no weight within the bound reaches the ratio — the mix then keeps its
-warning — and for a mix in the print model, whose declared components the
-press reads, as `realize` refuses a print colour. -/
-public def remix (req : Nat) (ground a b : Color) (pct : Nat) : Option (Nat × Color) :=
-  if a.cmyk.isSome then none
-  else (nearestWeight (fun q => decide (req ≤ contrastMilli (a.mix q b) ground) &&
-      withinInkBound (a.mix pct b) (a.mix q b)) pct).map fun q => (q, a.mix q b)
-
-private theorem remix_parts {req pct q : Nat} {ground a b c : Color}
-    (h : remix req ground a b pct = some (q, c)) :
-    q ≤ 100 ∧ c = a.mix q b ∧ req ≤ contrastMilli c ground ∧
-      deltaEOkSq (a.mix pct b) c ≤ inkBoundSq := by
-  unfold remix at h
-  split at h
-  · exact absurd h (by simp)
-  · obtain ⟨q', hq', he⟩ := Option.map_eq_some_iff.mp h
-    simp only [Prod.mk.injEq] at he
-    obtain ⟨rfl, rfl⟩ := he
-    have ⟨h100, hp⟩ := nearestWeight_mem hq'
-    simp only [withinInkBound, Bool.and_eq_true, decide_eq_true_eq] at hp
-    exact ⟨h100, rfl, hp.1, hp.2⟩
-
-/-- **A re-weighted mix is a mix of the author's two colours, and it
-passes.** The weight is a percentage and the colour is exactly the mix of
-the declared operands at that weight — drawn from the segment between the
-two named colours, never a colour of the engine's own — and the pair it
-makes meets the requirement, by construction: every return is guarded by
-the judged quantity. -/
-public theorem remix_mem {req pct q : Nat} {ground a b c : Color}
-    (h : remix req ground a b pct = some (q, c)) :
-    q ≤ 100 ∧ c = a.mix q b ∧ req ≤ contrastMilli c ground :=
-  let p := remix_parts h
-  ⟨p.1, p.2.1, p.2.2.1⟩
-
-/-- **A repaired mix is measurably better and barely different** — the
-rule every departure from LaTeX answers to, as the two bounds the shipped
-mix sits between: it meets the requirement on its ground, and it lies
-within the ink bound of xcolor's value of the mix the author wrote. -/
-public theorem remix_between {req pct q : Nat} {ground a b c : Color}
-    (h : remix req ground a b pct = some (q, c)) :
-    req ≤ contrastMilli c ground ∧ deltaEOkSq (a.mix pct b) c ≤ inkBoundSq :=
-  let p := remix_parts h
-  ⟨p.2.2.1, p.2.2.2⟩
-
 -- The document-level check: the pairings a document's own colours create.
 
 private def hexOf (c : Color) : String :=
   s!"#{Color.hexByte c.r}{Color.hexByte c.g}{Color.hexByte c.b}"
-
-/-- The help a failing role pair carries: past the ink bound, the colour
-that would meet the requirement and how far from the declared one it lies;
-where nothing meets it, the decorative spelling alone. -/
-private def lowHelp (key : String) (req : Nat) (ground c : Color) : String :=
-  let keep := "\\palette[decorative]{ " ++ s!"{key} = {hexOf c} " ++ "}"
-  match realizeNearest req ground c with
-  | some c' =>
-    s!"{hexOf c'} meets it, ΔEOK {milliString (deltaEOkMilli c c')} away, past the " ++
-      s!"{milliString inkBoundMilli} a repair may move a colour: declare it, or {keep} " ++
-      "to keep it low"
-  | none => "deliberate low contrast is declared, not defaulted: " ++ keep
-
-/-- One palette-entry realization: applied to the palette equal to `pal`
-wherever it stands (the document's or a `.setPalette`'s), so every reader
-of the key — both backends through `Design.ofDoc`, the layout's per-epoch
-reads — resolves the realized value. -/
-private structure PalWrite where
-  pal : Palette
-  key : String
-  /-- The ground of the pair this write solved. A write can propagate to a
-  different palette snapshot only when this is that snapshot's page. -/
-  ground : Color
-  value : Color
-  deriving Repr, BEq
-
-/-- One run-level realization: a role-named colour on the ground the judge
-read it against, and the value that ships there. -/
-private structure RunWrite where
-  role : String
-  declared : Color
-  ground : Color
-  value : Color
-  deriving Repr, BEq
-
-/-- A role used under a palette on a ground that is not its page, whose
-pairing realized there: where the realized palette records the ink
-(`Judged.repal`), so the HTML can declare what the PDF's runs ship. -/
-private structure InkSite where
-  pal : Palette
-  role : String
-  declared : Color
-  ground : Color
-  deriving BEq
-
-/-- One mix re-weighting: an anonymous colour on the ground the judge read
-it against, and the re-weighted mix that ships there (`remix`). -/
-private structure MixWrite where
-  declared : Color
-  ground : Color
-  value : Color
-  deriving Repr, BEq
-
-/-- What one judge produces: its diagnostics — an N0022 note where a
-failing pair realized, the pairing warning where none could — and the
-realization plan `realizeDoc` applies. -/
-private structure Judged where
-  diags : Array Diag := #[]
-  palWrites : Array PalWrite := #[]
-  runWrites : Array RunWrite := #[]
-  inkSites : Array InkSite := #[]
-  mixWrites : Array MixWrite := #[]
-
-/-- The N0022 note: the role kept its hue and chroma; the engine chose its
-lightness on this ground (`realize`, whose sources the docstring above
-names). -/
-private def realizedNote (role : String) (ground : Color)
-    (groundName : Option String) (c c' : Color) (req : Nat)
-    (span : Option Span) : Diag :=
-  let dir := if luminance c' ≥ luminance c then "lighter" else "darker"
-  Diag.of .N0022
-    (s!"'{role}' is realized {dir} ({hexOf c'}) on {groundName.getD "the page"} " ++
-      s!"({hexOf ground}) to meet {ratioString req}")
-    (span := span)
-    (subject := some (inkKey role c ground))
-
-/-- The N0022 note for a re-weighted mix: the author's expression, and the
-same expression at the weight that meets the ground (`remix`). -/
-private def remixedNote (expr : String) (ground : Color) (groundName : Option String)
-    (c c' : Color) (q req : Nat) (span : Option Span) : Diag :=
-  Diag.of .N0022
-    (s!"'{expr}' is realized as '{mixReweighed expr q}' ({hexOf c'}) on " ++
-      s!"{groundName.getD "the page"} ({hexOf ground}) to meet {ratioString req}")
-    (span := span)
-    (subject := some (inkKey expr c ground))
 
 /-- One coloured text occurrence: the name it was used under when it had
 one, the colour, whether it stood as large-scale text (≥ 18pt, or bold
@@ -503,7 +186,7 @@ base size) — and the epoch it stood in: the effective page under it and
 whether it was decorative-exempt there. A pairing is judged against the
 palette in force where it is used, never the document's final one. -/
 private structure Use where
-  name : Option String
+  name : Option ColorRef
   color : Color
   large : Bool
   /-- The effective page under this use: the local ground where one stands
@@ -517,8 +200,8 @@ private structure Use where
   /-- Exempt where it stood: `covered`, a name the epoch's decorative set
   carries, or an anonymous value a decorative entry names. -/
   exempt : Bool
-  /-- The palette in force at the use: what a realization of this pairing
-  is keyed by, and where a matching entry is rewritten. -/
+  /-- The palette in force at the use: what its decorative exemption and its
+  authored site are read under. -/
   pal : Palette
   /-- The coloured run the use stands in (one per `.colored` inline and per
   furniture use): what a pairing's site count counts. -/
@@ -526,10 +209,10 @@ private structure Use where
   deriving BEq
 
 /-- The walk's fold state: the palette in force (epoch), the uses with
-their epochs resolved, and the design sites the per-epoch resolved-pair
-judge needs — which epochs shipped a titled frame, a standout frame, or
-pending overlay content. Palettes dedup on push: a document has few
-epochs, and each is judged once. -/
+their epochs resolved, and the design sites the per-epoch site judge needs
+— which epochs shipped a titled frame, a standout frame, or pending overlay
+content. Palettes dedup on push: a document has few epochs, and each is
+judged once. -/
 private structure UseAcc where
   pal : Palette
   uses : Array Use := #[]
@@ -544,7 +227,7 @@ private structure UseAcc where
   blockPals : Array (TitledKind × Palette) := #[]
   standoutPals : Array Palette := #[]
   /-- Epochs that shipped a title page with a declared ground of its own:
-  the pair `titlePageStep` judges, against the palette in force there. -/
+  the site the judge reads there, against the palette in force. -/
   titlePagePals : Array Palette := #[]
   pendingPals : Array Palette := #[]
   /-- The coloured runs met so far: the next run's site number. -/
@@ -553,26 +236,10 @@ private structure UseAcc where
 private def pushUnique [BEq α] (xs : Array α) (p : α) : Array α :=
   if xs.contains p then xs else xs.push p
 
-/-- The effective page of a palette: its `bg`, else the shipped light
-surface (the same rule `effectivePair` applies to epoch 0). -/
+/-- The effective page of a palette: its `bg`, else the screen's own light
+page (the same rule `effectivePair` applies to epoch 0). -/
 private def surfaceOf (pal : Palette) : Color :=
-  (pal.find? "bg").getD light.surface
-
-/-- The ground a titled block's title stands on: the kind's bar where the
-palette declares one, the epoch's own page where it does not. One resolving
-site, read by the per-use walk, the resolved-pair judge, and the judged-pair
-census alike — `titled_ground_agree` holds them to it.
-
-The undeclared page resolves through `surfaceOf`, not `Color.white`, because
-that is what the artifacts ship: `Layout` carries an unbarred title run's
-ground as `none` — paper it paints no fill for — and under a `none` ground
-the PDF leaves white paper while HTML's body takes `--surface`
-(`light.surface`, `HtmlDoc.baseCss`). `light.surface` is the darker of the
-two, so a pair that passes here passes on the white page too; grounding on
-white instead judged the lighter one and passed titles the HTML page fails —
-#757575 reads 4.61:1 on white and 4.41:1 on the surface it ships on. -/
-private def titledGround (pal : Palette) (kind : TitledKind) : Color :=
-  (titledLook pal kind).bar.getD (surfaceOf pal)
+  (Design.at pal .light .page).getD Color.white
 
 /-- The text-size context of the walk below. `size` follows the layout
 semantics: a size declaration sets a factor over the document base (`base`
@@ -583,7 +250,7 @@ private structure UseCx where
   slides : Bool := false
   chromeFoot : Bool := false
   bold : Bool := false
-  cur : Option (Option String × Color × Nat) := none
+  cur : Option (Option ColorRef × Color × Nat) := none
   /-- The local ground under this content, when it is not the page: the
   frame-title bar, the standout inversion. A pairing is judged against
   the surface it actually sits on — the same colour can pass on the page
@@ -600,11 +267,11 @@ private structure UseCx where
   inkEpoch : Option Nat := none
   /-- Frame default for a nested surface; the frame's own default pair is
   already judged by its design-site contract. -/
-  inheritedInk : Option (String × Color) := none
+  inheritedInk : Option (ColorRef × Color) := none
 
 private def UseCx.atEpoch (cx : UseCx) (pal : Palette) (epoch : Nat) : UseCx :=
   let cx := if cx.inkEpoch.any (· != epoch) then
-    { cx with cur := some (some "fg", (Design.ofPalette pal).fg,
+    { cx with cur := some (some (.role .ink), (Design.ofPalette pal).fg,
         (cx.cur.map (·.2.2)).getD 0), inkEpoch := some epoch }
     else cx
   -- premise: listingPaletteAuditChecks — a body declaration replaces the
@@ -613,8 +280,13 @@ private def UseCx.atEpoch (cx : UseCx) (pal : Palette) (epoch : Nat) : UseCx :=
     { cx with ground := none, groundName := none, groundEpoch := none, inheritedInk := none }
   else cx
 
+/-- Whether a use stands as large-scale text at the size its medium shows it.
+A deck's stage is shown at the size of the screen it is projected on — a
+4:3 stage 96 mm tall on a 1080-pixel display sets its 11pt body near 33pt,
+past WCAG 2.2's 18pt large-scale threshold — so every slide text is
+large-scale; elsewhere the glossary sizes at the document's own base. -/
 private def UseCx.large (cx : UseCx) : Bool :=
-  largeText cx.size cx.bold
+  cx.slides || largeText cx.size cx.bold
 
 private def UseCx.style (cx : UseCx) : Style → UseCx
   | .bold => { cx with bold := true }
@@ -637,11 +309,11 @@ private def UseCx.style (cx : UseCx) : Style → UseCx
     | .error _ => { cx with size := 0 }
   | _ => cx
 
-private def UseAcc.use (acc : UseAcc) (cx : UseCx) (nm : Option String)
+private def UseAcc.use (acc : UseAcc) (cx : UseCx) (nm : Option ColorRef)
     (c : Color) : UseAcc :=
   let exempt := match nm with
-    | some n => n == "covered" || acc.pal.decorative.contains n
-    | none => acc.pal.decorative.any (fun n => acc.pal.find? n == some c)
+    | some n => n == .role .covered || acc.pal.decorative.contains n
+    | none => acc.pal.decorative.any (fun n => acc.pal.lookup n == some c)
   let u : Use := { name := nm
                    color := c
                    large := cx.large
@@ -764,8 +436,8 @@ private def usesBlock (cx : UseCx) (acc : UseAcc) : Block → UseAcc
   | .section level _ _ title =>
     let hc := { headingCx cx.base level with cur := cx.cur }
     let (hc, acc) := if cx.slides && level == 1 then
-      match acc.pal.find? "sectiontitlefg" with
-      | some c => ({ hc with cur := some (some "sectiontitlefg", c, acc.runs) },
+      match Design.declared? acc.pal .sectionTitleInk with
+      | some c => ({ hc with cur := some (some (.role .sectionTitleInk), c, acc.runs) },
           { acc with runs := acc.runs + 1 })
       | none => (hc, acc)
       else (hc, acc)
@@ -781,16 +453,16 @@ private def usesBlock (cx : UseCx) (acc : UseAcc) : Block → UseAcc
     let look := titledLook acc.pal kind
     let titleCx := { cx with
       bold := true
-      cur := some (some (kind.roleStem ++ "titlefg"), look.fg, acc.runs)
+      cur := some (some (.role (Role.titleInk kind)), look.fg, acc.runs)
       ground := look.bar.or cx.ground
       groundName := (look.bar.map (fun _ => "the block-title bar")).or cx.groundName }
     let d := Design.ofPalette acc.pal
     let bodyLook := d.titledBody kind
-    let defaultInk := cx.inheritedInk.getD ("fg", d.fg)
+    let defaultInk := cx.inheritedInk.getD (.role .ink, d.fg)
     let inherited := cx.cur.getD (some defaultInk.1, defaultInk.2, acc.runs + 1)
     let parent : ColorPair := { fg := inherited.2.1, bg := cx.ground.getD (surfaceOf acc.pal) }
     let bodyCx := { cx with
-      cur := some (if bodyLook.fg.isSome then some (kind.roleStem ++ "bodyfg") else inherited.1,
+      cur := some (if bodyLook.fg.isSome then some (.role (Role.bodyInk kind)) else inherited.1,
         (bodyLook.resolve parent).fg, acc.runs + 1)
       inkEpoch := some acc.epochs.size
       ground := bodyLook.bg.or cx.ground
@@ -816,8 +488,8 @@ private def usesBlock (cx : UseCx) (acc : UseAcc) : Block → UseAcc
     -- frame is a design site of its epoch: the resolved-pair judge tests
     -- the frame-title bar and the standout inversion against the palette
     -- in force here, not the document's final one.
-    let acc := if title.isEmpty then acc else
-      { acc with titledPals := pushUnique acc.titledPals acc.pal }
+    let acc := if title.isEmpty || (Design.declared? acc.pal .frameTitleBar).isNone then acc
+      else { acc with titledPals := pushUnique acc.titledPals acc.pal }
     let acc := if cx.chromeFoot && !standout && !(valign matches .golden) then
       { acc with footPals := pushUnique acc.footPals acc.pal }
       else acc
@@ -831,13 +503,13 @@ private def usesBlock (cx : UseCx) (acc : UseAcc) : Block → UseAcc
     let titleCx := cx.style (.size "large")
     let titleCx := { titleCx with
       bold := true
-      ground := acc.pal.find? "frametitlebg"
-      groundName := (acc.pal.find? "frametitlebg").map
+      ground := Design.declared? acc.pal .frameTitleBar
+      groundName := (Design.declared? acc.pal .frameTitleBar).map
         (fun _ => "the frame-title bar") }
-    -- A foreground-only title has no bar for `frameTitleStep` to judge.
+    -- A foreground-only title has no bar for the site judge to read.
     let (titleCx, acc) := if titleCx.ground.isNone then
-      match acc.pal.find? "frametitlefg" with
-      | some c => ({ titleCx with cur := some (some "frametitlefg", c, acc.runs) },
+      match Design.declared? acc.pal .frameTitleInk with
+      | some c => ({ titleCx with cur := some (some (.role .frameTitleInk), c, acc.runs) },
           { acc with runs := acc.runs + 1 })
       | none => (titleCx, acc)
       else (titleCx, acc)
@@ -846,17 +518,17 @@ private def usesBlock (cx : UseCx) (acc : UseAcc) : Block → UseAcc
     let d := Design.ofPalette acc.pal
     let bodyCx := if standout then
         { cx with ground := some d.standout.bg
-                  inheritedInk := some ("standoutfg", d.standout.fg)
+                  inheritedInk := some (.role .standoutInk, d.standout.fg)
                   groundName := some "the standout frame"
                   groundEpoch := some acc.epochs.size }
       -- And a title page with a declared ground sits on that: the ground
-      -- `Layout.titleGround` paints and the realization walk rewrites on
-      -- (`Ir.titleGroundOf`, the one reading), so every use on the page is
-      -- judged against the surface it really stands on.
+      -- `Layout.titleGround` paints (`Ir.titleGroundOf`, the one reading),
+      -- so every use on the page is judged against the surface it really
+      -- stands on.
       else match titleGroundOf acc.pal valign with
         | some ground =>
           { cx with ground := some ground, groundName := some "the title page"
-                    inheritedInk := some ("titlepagefg", (d.titlepage.map (·.fg)).getD d.fg)
+                    inheritedInk := some (.role .titlePageInk, (d.titlepage.map (·.fg)).getD d.fg)
                     groundEpoch := some acc.epochs.size }
         | none => cx
     usesBlocks bodyCx (usesInlines titleCx acc title.toList) body.toList
@@ -901,16 +573,18 @@ private def usesBlock (cx : UseCx) (acc : UseAcc) : Block → UseAcc
     let acc := match spec.caption with
       | some (_, cap) => usesInlines cx acc cap.toList
       | none => acc
-    let ground := cx.ground.orElse fun _ => some (Design.ofPalette acc.pal).bg
-    let codeCx := { cx.style spec.fontSize with ground }
+    let ground := (spec.ground.map (·.1)).orElse fun _ =>
+      cx.ground.orElse fun _ => some (Design.ofPalette acc.pal).bg
+    let codeCx := { cx.style spec.fontSize with
+      ground, groundName := (spec.ground.map fun _ => "the listing's ground").or cx.groundName }
     -- One brush per type for the whole listing, as both backends draw it;
     -- the palette changes only at a `.setPalette`, never inside a listing.
     let lines := spec.tokenLines source
     let brushes := Listing.brushes acc.pal ground covered spec.style lines
     lines.foldl (fun acc line =>
       usesInlines codeCx acc
-        ((Listing.paintLine acc.pal ground covered spec.style brushes line).flatMap
-          fun r => Listing.paintRun r #[.text r.text]).toList) acc
+        ((Listing.paintLine acc.pal ground covered spec.style brushes
+          line).flatMap fun r => Listing.paintRun r #[.text r.text]).toList) acc
   | .note _ | .rule _ _ _ | .logo _ | .picture _
   | .pagebreak => acc
 
@@ -926,6 +600,11 @@ private def usesColumns (cx : UseCx) (acc : UseAcc) :
 
 end
 
+/-- Whether the document is shown as a deck's stage: the frame page model,
+whose text the judge reads at the size its screen shows it (`UseCx.large`,
+`Need.atStage`). -/
+public def stageOf (doc : Doc) : Bool := doc.docClass.record.model == .frame
+
 /-- The body walk: every coloured use with the epoch it stood in, the
 epoch boundaries, and the design sites each epoch ships, read off
 `doc.body` once. One site, so the judge and the judged-pair census read
@@ -936,7 +615,7 @@ private def docWalk (doc : Doc) : UseAcc :=
     | _ => false
   let cx : UseCx :=
     { base := doc.page.fontSize, size := doc.page.fontSize
-      slides := doc.docClass.record.model == .frame
+      slides := stageOf doc
       chromeFoot := doc.docClass.record.chrome && doc.foot.isNone &&
         (doc.chrome.hasFooter || hasFrameFoot) }
   usesBlocks cx { pal := doc.palette } doc.body.toList
@@ -946,11 +625,11 @@ heads and feet and the chrome footer. The chrome footer reads its frame's
 epoch and band ground; running heads and feet are document state and read
 epoch 0. One site, read by the per-use judge and by the judged-pair census. -/
 private def docUses (doc : Doc) (walk : UseAcc) : UseAcc := Id.run do
-  let base : UseCx := { base := doc.page.fontSize, size := doc.page.fontSize }
+  let base : UseCx := { base := doc.page.fontSize, size := doc.page.fontSize, slides := stageOf doc }
   let mut acc := { walk with pal := doc.palette }
   for pal in walk.footPals do
     let look := (Design.ofPalette pal).footline
-    let key := if (pal.find? "muted").isSome then "muted" else "fg"
+    let key : ColorRef := if (Design.declared? pal .muted).isSome then .role .muted else .role .ink
     let cx := { base with
       size := Ir.scaleStep doc.page.fontSize Ir.footline.step
       ground := look.bar, groundName := look.bar.map (fun _ => "the footline") }
@@ -970,252 +649,133 @@ the declared page when there is one, the shipped light surface otherwise
 shipped surface is the marginally darker of the two, so passing here passes
 on the PDF's white page too). -/
 public def effectivePair (doc : Doc) : ColorPair :=
-  let d := Design.ofDoc doc
-  { fg := d.fg, bg := if d.bgDeclared then d.bg else light.surface }
+  { fg := (Design.ofDoc doc).fg, bg := (Design.at doc.palette .light .page).getD Color.white }
 
-/-- The effective ink judged against the effective page, first and
-unconditionally — the straight-line half of `docDiags`, so
-`defaulted_ink_cannot_escape` can range over every document. A declared
-pair realizes first (N0022) and keeps W0315's spelling where realization
-cannot reach, with the decorative escape before either; a defaulted ink on
-a declared page is its own code (W0330), because its remedy is different:
-declare the ink, not the intent. -/
-private def effectivePairJudged (doc : Doc)
-    (site : ColorSite := fun _ _ _ => none) : Judged :=
-  if doc.palette.decorative.contains "fg" then {}
-  else
-    let p := effectivePair doc
-    let milli := contrastMilli p.fg p.bg
-    if milli < aaText then
-      if (Design.ofDoc doc).fgDeclared then
-        -- A declared ink is a role: realize its lightness on its page
-        -- (hue and chroma kept) before warning; only an unreachable pair
-        -- keeps W0315, so poor contrast is never silent and never stands
-        -- where the engine can meet the contract.
-        match realize aaText p.bg p.fg with
-        | some c' =>
-          { diags := #[realizedNote "fg" p.bg none p.fg c' aaText
-              ((site doc.palette (some "fg") p.fg).map (·.2))]
-            palWrites := #[{ pal := doc.palette, key := "fg", ground := p.bg, value := c' }] }
-        | none =>
-          { diags := #[Diag.of .W0315
-              (s!"text coloured 'fg' ({hexOf p.fg}) reads at {ratioString milli} " ++
-                s!"on the page ({hexOf p.bg}), below the {ratioString aaText} " ++
-                "WCAG 2.2 asks of text (SC 1.4.3)")
-              (span := (site doc.palette (some "fg") p.fg).map (·.2))
-              (help := some (lowHelp "fg" aaText p.bg p.fg))
-              (subject := some (inkKey "fg" p.fg p.bg))] }
-      else
-        -- A defaulted ink was never declared: there is no hue to keep, so
-        -- nothing realizes — the remedy is the declaration (W0330 stands).
-        { diags := #[Diag.of .W0330
-            (s!"declared page {hexOf p.bg} keeps the defaulted {hexOf p.fg} ink: " ++
-              s!"{ratioString milli}, below the " ++
-              s!"{ratioString aaText} WCAG 2.2 asks of text (SC 1.4.3)")
-            (span := (site doc.palette (some "bg") p.bg).map (·.2))
-            (help := some ("a declared surface chooses its ink: declare " ++
-              "\\palette{ fg = ... }" ++ " beside bg"))] }
-    else {}
+/-- A design site as the document judge reads it: the print site
+(`Design.site?`) at its medium's need (`Need.atStage`), with an undeclared
+page read as the shipped light surface (`surfaceOf`). That is what the
+artifacts ship under a `none` ground — the PDF leaves white paper, HTML's
+body takes the page role's light default (`HtmlDoc.baseCss`) — and the
+surface is the darker of the two, so a pair that passes here passes on the
+white page too. Grounding on white judged the lighter one and passed titles
+the HTML page fails: #757575 reads 4.61:1 on white and 4.41:1 on the
+surface it ships on. -/
+public def judgedSite? (stage : Bool) (pal : Palette) (r : Role) : Option Site :=
+  (Design.site? pal .print r).map fun st =>
+    let st := { st with need := st.need.atStage stage }
+    if st.on == .page then { st with ground := surfaceOf pal } else st
 
-/-- Each body epoch's effective pair, judged as epoch 0's is
-(`effectivePairDiags`): a `\palette` mid-document that leaves its ink
-illegible on its page is the same defect wherever it is declared, and it
-is judged against the state in force from that point — never the
-document's final state. A pair already judged is silent.
+/-- What WCAG 2.2 asks of a need, as a message spells it. -/
+private def needClause : Need → String
+  | .text => "text (SC 1.4.3)"
+  | .largeText => "large-scale text (SC 1.4.3)"
+  | .nonText => "non-text information (SC 1.4.11)"
+  | .state => "a state change (SC 1.4.11)"
+  | .decorative => "nothing"
 
-The loop is a fold over a named step, so the plan it builds is a statement's
-to read: `epochStep_no_pal_writes` is where "a passing pair is never
-rewritten" is held, one epoch at a time. -/
-private def epochStep (site : ColorSite) (s : Judged × Array ColorPair) (pal : Palette) :
-    Judged × Array ColorPair :=
-  if pal.decorative.contains "fg" then s
-  else
-    let j := s.1
-    let p : ColorPair := { fg := (pal.find? "fg").getD Color.black, bg := surfaceOf pal }
-    -- The palette write lands per epoch even when the pair's diagnostic is
-    -- already reported: two epochs declaring the same failing pair are two
-    -- palettes to rewrite, one message to read.
-    let dup := s.2.contains p
-    let done := s.2.push p
-    let milli := contrastMilli p.fg p.bg
-    if milli < aaText then
-      if (pal.find? "fg").isSome then
-        match realize aaText p.bg p.fg with
-        | some c' =>
-          let pw : PalWrite := { pal := pal, key := "fg", ground := p.bg, value := c' }
-          let j := { j with palWrites := j.palWrites.push pw }
-          (if dup then j else
-            { j with diags := j.diags.push (realizedNote "fg" p.bg none p.fg c' aaText
-              ((site pal (some "fg") p.fg).map (·.2))) },
-           done)
-        | none =>
-          (if dup then j else
-            { j with diags := j.diags.push (Diag.of .W0315
-              (s!"text coloured 'fg' ({hexOf p.fg}) reads at {ratioString milli} " ++
-                s!"on the page ({hexOf p.bg}), below the {ratioString aaText} " ++
-                "WCAG 2.2 asks of text (SC 1.4.3)")
-              (span := (site pal (some "fg") p.fg).map (·.2))
-              (help := some (lowHelp "fg" aaText p.bg p.fg))
-              (subject := some (inkKey "fg" p.fg p.bg))) },
-           done)
-      else
-        (if dup then j else
-          { j with diags := j.diags.push (Diag.of .W0330
-            (s!"declared page {hexOf p.bg} keeps the defaulted {hexOf p.fg} ink: " ++
-              s!"{ratioString milli}, below the " ++
-              s!"{ratioString aaText} WCAG 2.2 asks of text (SC 1.4.3)")
-            (span := (site pal (some "bg") p.bg).map (·.2))
-            (help := some ("a declared surface chooses its ink: declare " ++
-              "\\palette{ fg = ... }" ++ " beside bg"))) },
-         done)
-    else (j, done)
-
-private def epochPairJudged (site : ColorSite) (doc : Doc) (epochs : Array Palette) : Judged :=
-  (epochs.foldl (epochStep site)
-    ({}, #[{ fg := (Design.ofDoc doc).fg, bg := (effectivePair doc).bg }])).1
-
-/-- The resolved design's own pairs, judged for the document that ships
-them — the pairs `Design.ofDoc` creates out of declared and defaulted keys
-together, which the per-use walk in `docDiags` cannot see because no body
-text is coloured with them: the frame-title bar (its template sets
-`\large\bfseries` — 12pt bold, under WCAG 2.2's large-scale sizes, so SC
-1.4.3's 4.5:1), the standout frame (`\Large\bfseries`, 14.4pt bold, WCAG
-large-scale, so 3:1), and the covering (SC 1.4.11's 3:1 between an active
-and an inactive state, and quieter-than-active — `coveredContract`'s own
-two bounds, judged from `Design.cover`, the one resolving site). Each is
-judged only when the element ships, and against the palette in force
-where it ships — the walk records which epochs carry a titled frame, a
-standout frame, or pending overlay content, so a body `\palette` before a
-frame is judged for that frame and a declaration after it is not. The
-shipped bundles are proved (`builtin_designs_legible`,
-`builtin_designs_covered`), so only a document's own override can fire
-this; a failing pair realizes before it warns, and the decorative escape is the same one the per-use walk honours, on
-the pair's ink key.
-
-Each family is a fold over a named step, and the plan is assembled from the
-three that write — so "a passing pair is never rewritten" is one lemma per
-step (`blockTitleStep_no_pal_writes` and its siblings), and the cover
-judge's write-freedom is structural rather than asserted: a covering is the
-author's declaration to quiet, so `pendingCoverDiags` returns messages and
-has no plan to add to. -/
-private def blockTitleStep (site : ColorSite) (s : Judged) (kp : TitledKind × Palette) : Judged :=
-  -- The block title sets bold at the body size — under WCAG 2.2's
-  -- large-scale sizes, so SC 1.4.3's 4.5:1 — on the bar when the
-  -- palette declares one, on the page otherwise (`titledGround`, the one
-  -- resolving site). A failing pair realizes before it warns.
-  let kind := kp.1
-  let pal := kp.2
-  let look := titledLook pal kind
-  let ground := titledGround pal kind
-  let milli := contrastMilli look.fg ground
-  if milli < aaText && !pal.decorative.contains s!"{kind.roleStem}titlefg" then
-    match realize aaText ground look.fg with
-    | some c' =>
-      { s with
-        diags := s.diags.push (realizedNote s!"{kind.roleStem}titlefg" ground
-          (look.bar.map fun _ => "the block-title bar") look.fg c' aaText
-          ((site pal (some s!"{kind.roleStem}titlefg") look.fg).map (·.2)))
-        palWrites := s.palWrites.push
-          { pal := pal, key := s!"{kind.roleStem}titlefg", ground := ground, value := c' } }
+/-- What a failing site says, on one line. W0345 for a themed element's
+pair (its row's `noun`), W0315 for the page's text, or W0330 when that ink
+was never declared: the remedy is then the declaration, which its help
+names. The colours ship as stated — the judge reports and never repaints. -/
+private def siteVerdict (site : ColorSite) (r : Role) (pal : Palette) (st : Site) : Diag :=
+  let key := (ColorRef.role r).key
+  let req := required st.need
+  let milli := contrastMilli st.ink st.ground
+  let clause := needClause st.need
+  let span := (site pal (some key) st.ink).map (·.2)
+  if r.row.noun.isNone && (Design.declared? pal r).isNone then
+    let onKey := (ColorRef.role st.on).key
+    Diag.of .W0330
+      (s!"declared page {hexOf st.ground} keeps the defaulted {hexOf st.ink} ink: " ++
+        s!"{ratioString milli}, below the {ratioString req} WCAG 2.2 asks of " ++ clause)
+      (span := (site pal (some onKey) st.ground).map (·.2))
+      (help := some ("a declared surface chooses its ink: declare " ++
+        "\\palette{ " ++ key ++ " = ... }" ++ " beside " ++ onKey))
+  else match r.row.noun with
+    | some noun =>
+      Diag.of .W0345
+        (s!"{noun} pairs {hexOf st.ink} on {hexOf st.ground} at " ++
+          s!"{ratioString milli}, below the {ratioString req} WCAG 2.2 asks of " ++ clause)
+        (span := span) (subject := some (inkKey key st.ink st.ground))
     | none =>
-      { s with diags := s.diags.push (Diag.of .W0345
-        (s!"the {kind.name} block title pairs {hexOf look.fg} on " ++
-          s!"{hexOf ground} at {ratioString milli}, below the " ++
-          s!"{ratioString aaText} WCAG 2.2 asks of text (SC 1.4.3)")
-        (span := (site pal (some s!"{kind.roleStem}titlefg") look.fg).map (·.2))
-        (help := some (lowHelp s!"{kind.roleStem}titlefg" aaText ground look.fg))) }
-  else s
+      Diag.of .W0315
+        (s!"text coloured '{key}' ({hexOf st.ink}) reads at {ratioString milli} " ++
+          s!"on the page ({hexOf st.ground}), below the {ratioString req} " ++
+          "WCAG 2.2 asks of " ++ clause)
+        (span := span) (subject := some (inkKey key st.ink st.ground))
 
-private def frameTitleStep (site : ColorSite) (doc : Doc) (s : Judged) (pal : Palette) : Judged :=
-  match (Design.ofDoc { doc with palette := pal }).frametitle with
-  | none => s
-  | some p =>
-    let milli := contrastMilli p.fg p.bg
-    if milli < aaText && !pal.decorative.contains "frametitlefg" then
-      match realize aaText p.bg p.fg with
-      | some c' =>
-        { s with
-          diags := s.diags.push (realizedNote "frametitlefg" p.bg
-            (some "the frame-title bar") p.fg c' aaText
-            ((site pal (some "frametitlefg") p.fg).map (·.2)))
-          palWrites := s.palWrites.push
-            { pal := pal, key := "frametitlefg", ground := p.bg, value := c' } }
-      | none =>
-        { s with diags := s.diags.push (Diag.of .W0345
-          (s!"the frame-title bar pairs {hexOf p.fg} on {hexOf p.bg} at " ++
-            s!"{ratioString milli}, below the {ratioString aaText} " ++
-            "WCAG 2.2 asks of text (SC 1.4.3)")
-          (span := (site pal (some "frametitlefg") p.fg).map (·.2))
-          (help := some (lowHelp "frametitlefg" aaText p.bg p.fg))) }
-    else s
+/-- **The one site judge.** A shipped design site, judged under the palette
+in force where it ships: a site that does not ship there, is declared
+decorative, meets its need, or was reported by an earlier epoch says
+nothing (`judgeSite_id`); a failing one says its verdict once. -/
+private def judgeSite (site : ColorSite) (stage : Bool) (s : Array Diag × Array Site) :
+    Role × Palette → Array Diag × Array Site
+  | (r, pal) =>
+    match judgedSite? stage pal r with
+    | some st =>
+      if pal.decorative.contains (.role r) || st.passes || s.2.contains st then s
+      else (s.1.push (siteVerdict site r pal st), s.2.push st)
+    | none => s
 
-private def standoutStep (site : ColorSite) (doc : Doc) (s : Judged) (pal : Palette) : Judged :=
-  let d := Design.ofDoc { doc with palette := pal }
-  let milli := contrastMilli d.standout.fg d.standout.bg
-  if milli < aaLargeText && !pal.decorative.contains "standoutfg" then
-    match realize aaLargeText d.standout.bg d.standout.fg with
-    | some c' =>
-      { s with
-        diags := s.diags.push (realizedNote "standoutfg" d.standout.bg
-          (some "the standout frame") d.standout.fg c' aaLargeText
-          ((site pal (some "standoutfg") d.standout.fg).map (·.2)))
-        palWrites := s.palWrites.push
-          { pal := pal, key := "standoutfg", ground := d.standout.bg, value := c' } }
-    | none =>
-      { s with diags := s.diags.push (Diag.of .W0345
-        (s!"the standout frame pairs {hexOf d.standout.fg} on " ++
-          s!"{hexOf d.standout.bg} at {ratioString milli}, below the " ++
-          s!"{ratioString aaLargeText} WCAG 2.2 asks of large-scale text (SC 1.4.3)")
-        (span := (site pal (some "standoutfg") d.standout.fg).map (·.2))
-        (help := some (lowHelp "standoutfg" aaLargeText d.standout.bg d.standout.fg))) }
-  else s
+/-- A family of sites, judged in order. -/
+private def judgeSites (site : ColorSite) (stage : Bool) (xs : Array (Role × Palette)) :
+    Array Diag :=
+  (xs.foldl (judgeSite site stage) (#[], #[])).1
 
-/-- The title page's own pair, per epoch that ships one. Judged at the body
-threshold (`aaText`, 4.5:1) rather than the standout frame's large-text one:
-the matter on a title page is mixed — the title sets large, but the author
-line, the institute and the date set at or below the body size — so the
-stricter bound is the one the page actually needs.
+/-- The sites one shipped event stands for: every registry site of the
+palette in force (`Design.sites`, in print), whose row the report reads at
+that event (`Row.judged`), in registry order. -/
+public def eventSites (ev : Judged) (pal : Palette) : Array (Role × Palette) :=
+  ((Design.sites pal .print).filter (·.role.row.judged == ev)).toArray.map (·.role, pal)
 
-The ground is the author's declaration and nothing else
-(`Ir.Design.titleGround_exact`), so a failure here is a failure of the pair
-the document wrote, never of a ground the engine chose. The realization door
-is the ink's, as everywhere: the declared ground stands and the ink moves to
-meet it, or `decorative` says the low contrast was meant. -/
-private def titlePageStep (site : ColorSite) (doc : Doc) (s : Judged) (pal : Palette) : Judged :=
-  let d := Design.ofDoc { doc with palette := pal }
-  match d.titlepage with
-  | none => s
-  | some p =>
-    let milli := contrastMilli p.fg p.bg
-    if milli < aaText && !pal.decorative.contains "titlepagefg" then
-      match realize aaText p.bg p.fg with
-      | some c' =>
-        { s with
-          diags := s.diags.push (realizedNote "titlepagefg" p.bg
-            (some "the title page") p.fg c' aaText
-            ((site pal (some "titlepagefg") p.fg).map (·.2)))
-          palWrites := s.palWrites.push
-            { pal := pal, key := "titlepagefg", ground := p.bg, value := c' } }
-      | none =>
-        { s with diags := s.diags.push (Diag.of .W0345
-          (s!"the title page pairs {hexOf p.fg} on {hexOf p.bg} at " ++
-            s!"{ratioString milli}, below the {ratioString aaText} " ++
-            "WCAG 2.2 asks of text (SC 1.4.3)")
-          (span := (site pal (some "titlepagefg") p.fg).map (·.2))
-          (help := some (lowHelp "titlepagefg" aaText p.bg p.fg))) }
-    else s
+/-- The page in every epoch, the document's palette first: the page's text
+is judged whether or not the document spelled it — a document that declares
+a dark page and leaves the ink defaulted ships black on dark, and the
+contract judges what ships. -/
+private def pageEvents (doc : Doc) (walk : UseAcc) : Array (Judged × Palette) :=
+  (#[doc.palette] ++ walk.epochs).map (.page, ·)
+
+/-- The themed elements, per epoch that ships one, which the per-use walk
+cannot see because no body text is coloured with them: each titled block's
+title (bold at the body size, under WCAG 2.2's large-scale sizes, so 4.5:1),
+each frame title on its bar (`\large\bfseries` is 12pt bold, so 4.5:1), each
+standout frame (`\Large\bfseries`, 14.4pt bold, large-scale, so 3:1) and each
+declared title page (mixed matter, so the body threshold). -/
+private def elementEvents (walk : UseAcc) : Array (Judged × Palette) :=
+  walk.blockPals.map (fun (k, pal) => (.element (Element.ofTitled k), pal)) ++
+    walk.titledPals.map (.element .frameTitle, ·) ++
+    walk.standoutPals.map (.element .standout, ·) ++
+    walk.titlePagePals.map (.element .titlePage, ·)
+
+private def pageSites (doc : Doc) (walk : UseAcc) : Array (Role × Palette) :=
+  (pageEvents doc walk).flatMap fun (ev, pal) => eventSites ev pal
+
+private def elementSites (walk : UseAcc) : Array (Role × Palette) :=
+  (elementEvents walk).flatMap fun (ev, pal) => eventSites ev pal
+
+/-- What a document ships that its report reads sites at, in judging order:
+the page in every epoch, then each themed element in the epoch it ships
+in, each with the palette in force there. -/
+public def shippedEvents (doc : Doc) : Array (Judged × Palette) :=
+  let walk := docWalk doc
+  let elements := elementEvents walk
+  pageEvents doc walk ++ elements
+
+/-- The design sites a document ships, in judging order, each with the
+palette in force where it ships: every event's sites (`eventSites`). -/
+public def shippedSites (doc : Doc) : Array (Role × Palette) :=
+  (shippedEvents doc).flatMap fun (ev, pal) => eventSites ev pal
 
 /-- The covering judged, per epoch that ships pending content: SC 1.4.11's
 3:1 between an active and an inactive state, and quieter-than-active —
-`coveredContract`'s own two bounds, read from `Design.cover`. Messages
-only: the cover fraction is the author's declaration, so the remedy is
-theirs to choose (lower it, or name a quieter colour), and no realization
-can make a deliberately dim state legible without undoing the intent. -/
+`coveredContract`'s own two bounds, read from `Design.cover`: the cover
+fraction is the author's declaration, so the remedy is theirs to choose
+(lower it, or name a quieter colour). -/
 private def pendingCoverDiags (site : ColorSite) (doc : Doc) (pending : Array Palette) :
     Array Diag := Id.run do
   let mut out : Array Diag := #[]
   for pal in pending do
-    if pal.decorative.contains "covered" then continue
+    if pal.decorative.contains (.role .covered) then continue
     let d := Design.ofDoc { doc with palette := pal }
     let cov := d.cover
     let coverHelp := some ("a cover is a declaration too: lower " ++
@@ -1246,21 +806,10 @@ private def pendingCoverDiags (site : ColorSite) (doc : Doc) (pending : Array Pa
     -- fg cover just judged).
     if d.covered.isSome then
       out := out ++ judge "covered" d.fg cov.plain
-    for role in ["alert", "example"] do
-      if let some c := pal.find? role then
+    for (role, r) in [("alert", Role.alert), ("example", Role.example)] do
+      if let some c := Design.declared? pal r then
         out := out ++ judge role c (cov.of c)
   return out
-
-private def resolvedPairJudged (site : ColorSite) (doc : Doc)
-    (titled standout titlePage pending : Array Palette)
-    (blocks : Array (TitledKind × Palette)) : Judged :=
-  let jB := blocks.foldl (blockTitleStep site) {}
-  let jT := titled.foldl (frameTitleStep site doc) {}
-  let jS := standout.foldl (standoutStep site doc) {}
-  let jP := titlePage.foldl (titlePageStep site doc) {}
-  let coverDiags := pendingCoverDiags site doc pending
-  { diags := jB.diags ++ jT.diags ++ jS.diags ++ jP.diags ++ coverDiags
-    palWrites := jB.palWrites ++ jT.palWrites ++ jS.palWrites ++ jP.palWrites }
 
 /-- One pairing: an ink and the ground it stood on. -/
 private structure PairKey where
@@ -1279,7 +828,7 @@ membership question by key. Judging by scanning what came before instead
 cost two full passes over the uses per use: 3,200 coloured runs put ~200 ms
 of quadratic scanning into a 307 ms build (PLAN 2026-09-23). -/
 private structure UseKey where
-  name : Option String
+  name : Option ColorRef
   pair : PairKey
   deriving BEq
 
@@ -1303,10 +852,8 @@ the warning names that spelling, so poor contrast is a choice a document
 states, never a silent default.
 
 The loop is a fold over `useStep`, whose state carries the dedup: the keys
-already reported, the palette entries already written per key, and the
-solver's answers. That the dedup cannot rewrite a *passing* pair is
-`useStep_no_writes`, one use at a time — the dedup is where such a write
-would arise, since it is the only state between a pair and its plan. -/
+already reported, and the run each pairing last spoke for. A colour ships as
+stated whatever its verdict, so the fold's only output is what it says. -/
 private def allLargeOf (uses : Array Use) : Std.HashMap UseKey Bool :=
   -- Whether a pairing stood as large-scale text *everywhere* it was used:
   -- one keyed fold over the uses, so the answer is the whole document's and
@@ -1314,38 +861,25 @@ private def allLargeOf (uses : Array Use) : Std.HashMap UseKey Bool :=
   uses.foldl (fun m v => m.insert v.key (v.large && (m[v.key]?).getD true)) {}
 
 private structure UseJudgeState where
-  j : Judged := {}
-  /-- The pairings already reported: the effective pair seeds it, since
-  `effectivePairJudged` (and `epochPairJudged`) already spoke for it and a
-  body use of the same pairing must not report it twice. -/
+  diags : Array Diag := #[]
+  /-- The pairings already reported: the effective pair seeds it, since the
+  site judge already spoke for it and a body use of the same pairing must
+  not report it twice. -/
   done : Std.HashSet UseKey
-  /-- The palette entries already written, per key. Within one key the only
-  dimension left is the epoch's palette — a palette and a role fix the
-  colour, the ground and so the realized value — and a document has few
-  epochs, so this stays the dedup `j.palWrites.contains` was, without the
-  scan over every write made so far. -/
-  palSeen : Std.HashMap UseKey (Array Palette) := {}
-  /-- `realize` is a pure search over the requirement, the ground and the
-  colour, so a pairing that repeats is solved once: one pale role through a
-  long document paid the Oklab lightness walk per *use* before this,
-  1,101 ms of judging for 3,000 uses of one failing role. -/
-  solved : Std.HashMap PairKey (Option Color) := {}
   /-- The coloured run each pairing warning last spoke for: a later run of
   the same pairing adds a note, a later use in the same run adds nothing. -/
   sites : Std.HashMap UseKey Nat := {}
-  /-- `remix`'s answer per anonymous pairing, solved once like `solved`. -/
-  remixed : Std.HashMap PairKey (Option (Nat × Color)) := {}
 
-/-- A pairing warning at one coloured run: the warning, with its help and
-the pairing's first span, at the first run; a note at each later run, under
-one subject, so the tally puts the run count on the line that shows. -/
+/-- A pairing warning at one coloured run: the warning, with the pairing's
+first span, at the first run; a note at each later run, under one subject,
+so the tally puts the run count on the one line that shows. -/
 private def UseJudgeState.pairing (s : UseJudgeState) (dup : Bool) (key : UseKey)
-    (run : Nat) (subject message help : String) (span : Option Span) : UseJudgeState :=
+    (run : Nat) (subject message : String) (span : Option Span) : UseJudgeState :=
   if dup && s.sites[key]? == some run then s
   else
-    let d := if dup then (Diag.of .W0315 message span (subject := some subject)).demote
-      else Diag.of .W0315 message span (some help) (some subject)
-    { s with j := { s.j with diags := s.j.diags.push d }, sites := s.sites.insert key run }
+    let d := Diag.of .W0315 message span (subject := some subject)
+    { s with diags := s.diags.push (if dup then d.demote else d)
+             sites := s.sites.insert key run }
 
 private def useStep (site : ColorSite) (large : Std.HashMap UseKey Bool)
     (s : UseJudgeState) (u : Use) : UseJudgeState :=
@@ -1360,239 +894,46 @@ private def useStep (site : ColorSite) (large : Std.HashMap UseKey Bool)
     let allLarge := (large[key]?).getD true
     let threshold := if allLarge then aaLargeText else aaText
     let assessment := assessPair threshold u.color u.surface
-    let milli := assessment.ratio
-    if !assessment.passes then
-      -- A role-named use realizes: the hue is the declaration's, the
-      -- lightness the ground's choice — normalised at the text threshold
-      -- (4.5:1 covers the large-scale 3:1, and one value per (role,
-      -- ground) pair is what both backends can agree on). A colour with
-      -- no role name was written inline by the author and is never
-      -- re-realized — only warned, as before.
-      match u.name with
-      | some role =>
-        let cand := match s.solved[key.pair]? with
-          | some c => c
-          | none => realize aaText u.surface u.color
-        let solved := s.solved.insert key.pair cand
-        match cand with
-        | some c' =>
-          -- The palette follows the value: when the epoch's palette
-          -- carries this role at this colour, the realization is recorded
-          -- where the palette stands — its entry on its own page, its
-          -- ground inks elsewhere — so furniture, custom properties and
-          -- scoped tokens read the value the runs ship. Per epoch, even
-          -- when the note is already reported.
-          let written := (s.palSeen[key]?).getD #[]
-          let fresh := u.pal.find? role == some u.color && !written.contains u.pal
-          let palSeen := if fresh then s.palSeen.insert key (written.push u.pal)
-            else s.palSeen
-          let pw : PalWrite :=
-            { pal := u.pal, key := role, ground := u.surface, value := c' }
-          let inkSite : InkSite :=
-            { pal := u.pal, role := role, declared := u.color, ground := u.surface }
-          let jw : Judged := if !fresh then s.j
-            else if u.surface == surfaceOf u.pal then
-              { s.j with palWrites := s.j.palWrites.push pw }
-            else { s.j with inkSites := s.j.inkSites.push inkSite }
-          let rw : RunWrite :=
-            { role := role, declared := u.color, ground := u.surface, value := c' }
-          let jr : Judged := if dup then jw else
-            { jw with
-              runWrites := jw.runWrites.push rw
-              diags := jw.diags.push
-                (realizedNote role u.surface u.groundName u.color c' aaText
-                  ((site u.pal u.name u.color).map (·.2))) }
-          { s with j := jr, done := done, palSeen := palSeen, solved := solved }
-        | none =>
-          let s := s.pairing dup key u.site (inkKey role u.color u.surface)
-            (s!"text coloured '{role}' ({hexOf u.color}) reads at {ratioString milli} " ++
-              s!"on {u.groundName.getD "the page"} ({hexOf u.surface}), " ++
-              s!"below the {ratioString threshold} " ++
-              s!"WCAG 2.2 asks of {if allLarge then "large-scale text" else "text"} (SC 1.4.3)")
-            (if dup then "" else lowHelp role aaText u.surface u.color)
-            ((site u.pal u.name u.color).map (·.2))
-          { s with done := done, solved := solved }
-      | none =>
-        -- A colour with no role was written as a value or an expression;
-        -- the name it reports is the author's own spelling where the
-        -- elaboration recorded one, never one the engine invents. A mix of
-        -- two named colours is re-weighted to meet its ground (`remix`):
-        -- the author's relation kept, only the weight moved.
-        let origin := site u.pal none u.color
-        let mix := origin.bind fun (e, _) => (u.pal.mixParts e).map fun parts => (e, parts)
-        let cand := match s.remixed[key.pair]? with
-          | some r => r
-          | none => mix.bind fun (_, (a, pct, b)) => remix aaText u.surface a b pct
-        let s := { s with remixed := s.remixed.insert key.pair cand }
-        match mix, cand with
-        | some (e, _), some (q, c') =>
-          let mw : MixWrite := { declared := u.color, ground := u.surface, value := c' }
-          let j := if dup then s.j else
-            { s.j with
-              mixWrites := s.j.mixWrites.push mw
-              diags := s.j.diags.push
-                (remixedNote e u.surface u.groundName u.color c' q aaText
-                  (origin.map (·.2))) }
-          { s with j := j, done := done }
-        | _, _ =>
-          let label := match origin with
-            | some (e, _) => s!"'{e}' ({hexOf u.color})"
-            | none => hexOf u.color
-          -- The help is the first run's alone (`pairing`): past the bound,
-          -- the repair a document can write itself.
-          let help := if dup then "" else
-            match mix.bind fun (e, (a, pct, b)) =>
-                (remixNearest aaText u.surface a b pct).map fun (q, c) => (e, a.mix pct b, q, c) with
-            | some (e, declared, q, c) =>
-              s!"'{mixReweighed e q}' ({hexOf c}) meets it, ΔEOK " ++
-                s!"{milliString (deltaEOkMilli declared c)} from the declared colour, past " ++
-                s!"the {milliString inkBoundMilli} a repair may move it: write that weight, " ++
-                "or keep it low: \\palette[decorative]{ <name> = " ++ s!"{hexOf u.color} " ++ "}"
-            | none =>
-              s!"{if mix.isSome then "no weight of this mix meets its ground"
-                 else "a colour with no role is not realized"}: " ++
-                "name it in \\palette{ <name> = " ++
-                s!"{hexOf u.color} " ++ "} to have it met on its ground, or declare that " ++
-                "entry under \\palette[decorative] to keep it low"
-          let s := s.pairing dup key u.site
-            (inkKey ((origin.map (·.1)).getD (hexOf u.color)) u.color u.surface)
-            (s!"text coloured {label} reads at {ratioString milli} " ++
-              s!"on {u.groundName.getD "the page"} ({hexOf u.surface}), " ++
-              s!"below the {ratioString threshold} " ++
-              s!"WCAG 2.2 asks of {if allLarge then "large-scale text" else "text"} (SC 1.4.3)")
-            help (origin.map (·.2))
-          { s with done := done }
-    else { s with done := done }
+    if assessment.passes then { s with done := done }
+    else
+      -- The name a pairing reports is its role's or the author's own
+      -- spelling where the elaboration recorded one, never one the engine
+      -- invents; an anonymous value reports its hex.
+      let origin := site u.pal (u.name.map (·.key)) u.color
+      let spelled : Option String := match u.name with
+        | some role => some role.key
+        | none => origin.map Prod.fst
+      let label := match spelled with
+        | some e => s!"'{e}' ({hexOf u.color})"
+        | none => hexOf u.color
+      let s := s.pairing dup key u.site
+        (inkKey (spelled.getD (hexOf u.color)) u.color u.surface)
+        (s!"text coloured {label} reads at {ratioString assessment.ratio} " ++
+          s!"on {u.groundName.getD "the page"} ({hexOf u.surface}), " ++
+          s!"below the {ratioString threshold} " ++
+          s!"WCAG 2.2 asks of {if allLarge then "large-scale text" else "text"} (SC 1.4.3)")
+        (origin.map (·.2))
+      { s with done := done }
 
-private def declaredUseJudged (site : ColorSite) (doc : Doc) (walk : UseAcc) : Judged :=
+private def declaredUseJudged (site : ColorSite) (doc : Doc) (walk : UseAcc) : Array Diag :=
   let d := Design.ofDoc doc
   let uses := (docUses doc walk).uses
   (uses.foldl (useStep site (allLargeOf uses))
     { done := ({} : Std.HashSet UseKey).insert
-        { name := some "fg",
-          pair := { color := d.fg, ground := (effectivePair doc).bg } } }).j
+        { name := some (.role .ink),
+          pair := { color := d.fg, ground := (effectivePair doc).bg } } }).diags
 
-/-- The whole document-level contrast contract, one walk: the uses with
-their epochs, the design sites per epoch, and the epoch boundaries are
-read off `doc.body` once; then each half judges against the palette in
-force where the pairing ships — realizing a failing role pair (N0022 +
-the plan) before it warns, warning as before where realization cannot
-reach or the colour has no role. -/
-private def realizePlan (doc : Doc) (site : ColorSite := fun _ _ _ => none) : Judged :=
+/-- **The document-level contrast report**, one walk: the uses with their
+epochs, the design sites per epoch, and the epoch boundaries are read off
+`doc.body` once; then each half judges against the palette in force where
+the pairing ships, at the size its medium shows it. Every colour ships as
+the document states it: this is a report, and the document is not an input
+it returns. `site` names each pairing's authored expression and span. -/
+public def docDiags (doc : Doc) (site : ColorSite := fun _ _ _ => none) : Array Diag :=
   let walk := docWalk doc
-  let jE := effectivePairJudged doc site
-  let jP := epochPairJudged site doc walk.epochs
-  let jU := declaredUseJudged site doc walk
-  let jR := resolvedPairJudged site doc walk.titledPals walk.standoutPals
-    walk.titlePagePals walk.pendingPals walk.blockPals
-  { diags := jE.diags ++ jP.diags ++ jU.diags ++ jR.diags
-    palWrites := jE.palWrites ++ jP.palWrites ++ jU.palWrites ++ jR.palWrites
-    runWrites := jU.runWrites
-    inkSites := jU.inkSites
-    mixWrites := jU.mixWrites }
-
-/-- The document-level contrast diagnostics: `realizePlan`'s message half. -/
-public def docDiags (doc : Doc) : Array Diag := (realizePlan doc).diags
-
-/-- The plan's ink for one role-named pairing: the value its (role,
-declared colour, ground) realized to, when it failed and the solver met
-it. The one lookup both the run rewrite and the realized palettes'
-recorded inks read. -/
-private def Judged.inkOf (j : Judged) (role : String) (declared ground : Color) :
-    Option Color :=
-  (j.runWrites.find? fun w =>
-    w.role == role && w.declared == declared && w.ground == ground).map (·.value)
-
-/-- A palette write is keyed by the semantic pair it solved, not by every
-unrelated entry in the palette snapshot. Two epochs carrying the same role
-value on the same page ground therefore receive the same realization; an
-epoch that changes either remains independent. -/
-private def PalWrite.matches (w : PalWrite) (p : Palette) : Bool :=
-  w.pal == p ||
-    ((w.pal.find? w.key).isSome &&
-      w.ground == surfaceOf w.pal &&
-      w.pal.find? w.key == p.find? w.key &&
-      w.ground == surfaceOf p &&
-      w.pal.decorative.contains w.key == p.decorative.contains w.key)
-
-/-- A palette as the realized document carries it: each failing entry of
-its own realized, and the inks of the roles judged under it on other
-grounds recorded (`Palette.inks`). -/
-private def Judged.repal (j : Judged) (p : Palette) : Palette :=
-  let q := j.palWrites.foldl (fun q w => if w.matches p then q.declare w.key w.value else q) p
-  { q with inks := j.inkSites.filterMap fun s =>
-      if s.pal == p then (j.inkOf s.role s.declared s.ground).map fun v =>
-        { role := s.role, declared := s.declared, ground := s.ground, ink := v }
-      else none }
-
-/-- The plan's re-weighted mix for an anonymous colour on one ground. -/
-private def Judged.mixOf (j : Judged) (declared ground : Color) : Option Color :=
-  (j.mixWrites.find? fun w => w.declared == declared && w.ground == ground).map (·.value)
-
-/-- The run rewrite: a run ships the plan's ink for its pairing on the
-ground it stands on (`none` reads the palette's own page) — a role's
-realization, or an anonymous mix's re-weighting — and keeps its declared
-colour where the pairing passed. -/
-private def Judged.recolor (j : Judged) : RoleRecolor := fun pal ground nm c =>
-  match nm with
-  | some role => (j.inkOf role c (ground.getD (surfaceOf pal))).getD c
-  | none => (j.mixOf c (ground.getD (surfaceOf pal))).getD c
-
-/-- The run rewrite `realizeDoc` applies, as a value a statement can name. -/
-public def realizeRecolor (doc : Doc) (site : ColorSite := fun _ _ _ => none) : RoleRecolor :=
-  (realizePlan doc site).recolor
-
-/-- The realization pass: judge every (role, ground) pair the document
-ships, realize the failing role pairs (`realize` — hue and chroma kept,
-lightness chosen per ground), and rewrite the document so both backends
-read the realized values — palette entries where the pair is the palette's
-own (the frame-title bar, a titled bar, the standout inversion, `fg` and
-the content colours on their page), role-named runs where a use sits on a
-local ground. A document whose pairs all pass is returned untouched —
-`realizeDoc_id`, stated over this function and proved through each judge's
-own plan, not inferred from the single-pair `realize_id_of_passing` — so a
-legible document's artifact cannot move. Diagnostics are the judges' own:
-N0022 where a pair realized, the pairing warnings where none could. -/
-public def realizeDoc (doc : Doc) (site : ColorSite := fun _ _ _ => none) : Doc × Array Diag :=
-  let j := realizePlan doc site
-  if j.palWrites.isEmpty && j.runWrites.isEmpty && j.inkSites.isEmpty &&
-      j.mixWrites.isEmpty then (doc, j.diags)
-  else
-    ({ doc with
-        palette := j.repal doc.palette
-        head := doc.head.map fun xs =>
-          recolorRolesInlines j.recolor doc.palette none #[] xs.toList
-        foot := doc.foot.map fun xs =>
-          recolorRolesInlines j.recolor doc.palette none #[] xs.toList
-        body := recolorRoles j.repal j.recolor doc.palette doc.body },
-      j.diags)
-
-/-- **The ink a run ships is the ink its palette records.** Every ink a
-realized palette records for a role — the colour it was declared as, the
-ground it stood on — is the ink the run rewrite gives a run of that role
-and colour on that ground: the record and the rewrite read the plan's one
-lookup (`Judged.inkOf`), so what the HTML declares from the record and what
-the PDF paints from the rewritten run are one value. A document as
-elaborated records no inks; realization is what writes them. -/
-public theorem realized_projects (doc : Doc) (site : ColorSite) (h0 : doc.palette.inks = #[])
-    (e : GroundInk) (he : e ∈ (realizeDoc doc site).1.palette.inks) :
-    realizeRecolor doc site doc.palette (some e.ground) (some e.role) e.declared = e.ink := by
-  have hpal : (realizeDoc doc site).1.palette = doc.palette ∨
-      (realizeDoc doc site).1.palette = (realizePlan doc site).repal doc.palette := by
-    dsimp only [realizeDoc]
-    split
-    · exact .inl rfl
-    · exact .inr rfl
-  rcases hpal with hp | hp
-  · rw [hp, h0] at he
-    exact absurd he (by simp)
-  · rw [hp] at he
-    simp only [Judged.repal, Array.mem_filterMap] at he
-    obtain ⟨s, _, hs⟩ := he
-    split at hs
-    · obtain ⟨v, hv, rfl⟩ := Option.map_eq_some_iff.mp hs
-      simp [realizeRecolor, Judged.recolor, hv]
-    · exact absurd hs (by simp)
+  let stage := stageOf doc
+  judgeSites site stage (pageSites doc walk) ++ declaredUseJudged site doc walk ++
+    judgeSites site stage (elementSites walk) ++ pendingCoverDiags site doc walk.pendingPals
 
 /-- The judged pair is the shipped pair: what `effectivePairDiags` judges is
 the resolved design's own ink — the field `Layout.run` colours every
@@ -1604,14 +945,18 @@ cannot escape the contract by never being spelled. -/
 public theorem judged_pair_is_shipped (doc : Doc) :
     (effectivePair doc).fg = (Design.ofDoc doc).fg ∧
     ((Design.ofDoc doc).bgDeclared = true →
-      (effectivePair doc).bg = (Design.ofDoc doc).bg) :=
-  ⟨rfl, fun h => by simp [effectivePair, h]⟩
+      (effectivePair doc).bg = (Design.ofDoc doc).bg) := by
+  refine ⟨rfl, fun h => ?_⟩
+  have hdec : (Design.ofDoc doc).bgDeclared = (Design.declared? doc.palette .page).isSome := rfl
+  obtain ⟨c, hc⟩ := Option.isSome_iff_exists.mp (hdec ▸ h)
+  have hbg : (Design.ofDoc doc).bg = (Design.at doc.palette .print .page).getD Color.white := rfl
+  simp only [effectivePair, hbg, Design.at_declared doc.palette .light .page c hc,
+    Design.at_declared doc.palette .print .page c hc]
 
-/-- The resolved-pair judge grounds a titled title where the per-use walk
-records it: both resolve `(titledLook pal kind).bar` — the ground `Layout`
-carries on the title run, `none` where no bar is declared — through
-`surfaceOf`, the engine's one reading of an unpainted page. Two projections
-of one palette, so the pair the judge weighs is the pair the reader sees.
+/-- The site judge grounds a titled title where the per-use walk records it:
+both read the kind's bar where the palette declares one, and `surfaceOf`,
+the engine's one reading of an unpainted page, where it does not — so the
+pair the judge weighs is the pair the reader sees.
 
 Stated because the two drifted: the judge read an unbarred title's page as
 `Color.white` while the walk read it as `surfaceOf` (`#FAFAF9`, the surface
@@ -1619,85 +964,161 @@ Stated because the two drifted: the judge read an unbarred title's page as
 ground — so a title between the two ratios was judged passing and shipped
 failing, with no test, theorem or diagnostic to say so. -/
 private theorem titled_ground_agree (acc : UseAcc) (cx : UseCx) (kind : TitledKind)
-    (nm : Option String) (c : Color) :
+    (nm : Option ColorRef) (c : Color) (stage : Bool) (st : Site)
+    (h : judgedSite? stage acc.pal (Role.titleInk kind) = some st) :
     ((acc.use { cx with ground := (titledLook acc.pal kind).bar } nm c).uses.back?).map
-        Use.surface = some (titledGround acc.pal kind) := by
-  simp [UseAcc.use, titledGround]
+        Use.surface = some st.ground := by
+  have hg : (Role.titleInk kind).row.ground = some (Role.titleBar kind) := by cases kind <;> rfl
+  have hn : (Role.titleInk kind).row.need.paired = true := by cases kind <;> rfl
+  have hp : (Role.titleInk kind).row.presence = .always := by cases kind <;> rfl
+  have hb : (Role.titleBar kind == Role.page) = false := by cases kind <;> rfl
+  simp only [judgedSite?, Design.site?, hg, hn, hp, Presence.holds, Bool.and_self, ite_true,
+    Option.bind_some, Option.map_map] at h
+  obtain ⟨ink, -, rfl⟩ := Option.map_eq_some_iff.mp h
+  simp only [UseAcc.use, titledLook, Array.back?_push, Option.map_some, Function.comp]
+  cases Design.at acc.pal .print (Role.titleBar kind) <;> simp [hb]
+
+/-- The judged page under a palette is its declared page, else the shipped
+light surface — the ground the effective pair reads. -/
+private theorem effectivePair_bg (doc : Doc) : (effectivePair doc).bg = surfaceOf doc.palette :=
+  rfl
+
+/-- The page's text, as the site judge reads it: the effective pair, at
+its medium's need. -/
+private theorem judgedSite_ink (stage : Bool) (doc : Doc) :
+    judgedSite? stage doc.palette .ink =
+      some { role := .ink, ink := (effectivePair doc).fg, on := .page
+             ground := (effectivePair doc).bg, need := Need.text.atStage stage } := by
+  have hink : Design.at doc.palette .print .ink = some (effectivePair doc).fg := by
+    have hfg : (effectivePair doc).fg = (Design.at doc.palette .print .ink).getD Color.black := rfl
+    obtain ⟨c', hc'⟩ := Option.isSome_iff_exists.mp (Design.at_ink_isSome doc.palette .print)
+    rw [hfg, hc']
+    rfl
+  obtain ⟨c, hc⟩ := Option.isSome_iff_exists.mp (Design.at_page_isSome doc.palette .print)
+  simp [judgedSite?, Design.site?, Role.row, Row.keyed, Need.paired, Presence.holds, hink, hc,
+    effectivePair_bg]
+
+/-- A site is its role's. -/
+private theorem site?_role {pal : Palette} {s : Scheme} {r : Role} {st : Site}
+    (h : Design.site? pal s r = some st) : st.role = r := by
+  simp only [Design.site?, Option.bind_eq_some_iff] at h
+  obtain ⟨g, _, h⟩ := h
+  split at h
+  · obtain ⟨ink, _, hst⟩ := Option.map_eq_some_iff.mp h
+    split at hst <;> (subst hst; rfl)
+  · cases h
+
+private theorem filter_filterMap_role (f : Role → Option Site)
+    (hf : ∀ r st, f r = some st → st.role = r) (q : Role → Bool) :
+    ∀ l : List Role, (l.filterMap f).filter (fun st => q st.role) = (l.filter q).filterMap f
+  | [] => rfl
+  | r :: rs => by
+    have ih := filter_filterMap_role f hf q rs
+    cases h : f r with
+    | none => by_cases hq : q r = true <;> simp [h, hq, ih]
+    | some st =>
+      have hr := hf r st h
+      subst hr
+      by_cases hq : q st.role = true <;> simp [h, hq, ih]
+
+/-- The page's sites in an epoch: the ink's, alone. -/
+private theorem eventSites_page (pal : Palette) :
+    eventSites .page pal = ((Design.site? pal .print .ink).toList.map (·.role, pal)).toArray := by
+  have h := filter_filterMap_role (Design.site? pal .print) (fun _ _ h => site?_role h)
+    (fun r => r.row.judged == .page) Role.all
+  simp only [eventSites, Design.sites]
+  rw [h, Role.judged_page]
+  simp only [List.filterMap_cons, List.filterMap_nil]
+  cases Design.site? pal .print .ink <;> simp
+
+/-- A fold's invariant, as an induction the judge's lemmas below
+instantiate: a property held by the seed and by every step over the list's
+own elements is held by the result. -/
+private theorem foldlList_invariant {α β : Type} (P : β → Prop) (f : β → α → β) :
+    ∀ (xs : List α) (init : β), P init →
+      (∀ b a, a ∈ xs → P b → P (f b a)) → P (xs.foldl f init)
+  | [], _, hi, _ => hi
+  | a :: as, init, hi, hs =>
+    foldlList_invariant P f as (f init a) (hs init a (List.mem_cons_self ..) hi)
+      (fun b x hx hb => hs b x (List.mem_cons_of_mem a hx) hb)
+
+/-- A step never retracts a message. -/
+private theorem judgeSite_diags_mono (site : ColorSite) (stage : Bool)
+    (s : Array Diag × Array Site) (x : Role × Palette) :
+    s.1.size ≤ (judgeSite site stage s x).1.size := by
+  obtain ⟨r, pal⟩ := x
+  simp only [judgeSite]
+  split
+  · split
+    · exact Nat.le_refl _
+    · simp
+  · exact Nat.le_refl _
 
 /-- The load-bearing form of F3, over every document: when the effective
-pair fails the AA text threshold and the ink is not declared decorative,
-`docDiags` reports — declared ink or defaulted, because
-`effectivePairDiags` judges the pair before the declared-use walk runs.
-The missing special case is now an impossibility, not a covered branch. -/
+pair fails the ratio its medium asks of text and the ink is not declared
+decorative, `docDiags` reports — declared ink or defaulted, because the
+page's text is the first site the judge reads, before the declared-use walk
+runs. The missing special case is an impossibility, not a covered branch. -/
 public theorem defaulted_ink_cannot_escape (doc : Doc)
-    (hdec : doc.palette.decorative.contains "fg" = false)
-    (hfail : contrastMilli (effectivePair doc).fg (effectivePair doc).bg < aaText) :
+    (hdec : doc.palette.decorative.contains (.role .ink) = false)
+    (hfail : contrastMilli (effectivePair doc).fg (effectivePair doc).bg <
+      required (Need.text.atStage (stageOf doc))) :
     0 < (docDiags doc).size := by
-  have h1 : 0 < (effectivePairJudged doc).diags.size := by
-    unfold effectivePairJudged
-    rw [hdec]
-    simp only [Bool.false_eq_true, ite_false, hfail, ite_true]
-    split
-    · split <;> simp
-    · simp
-  simp only [docDiags, realizePlan, Array.size_append]
+  have hp : ({ role := .ink, ink := (effectivePair doc).fg, on := .page
+               ground := (effectivePair doc).bg, need := Need.text.atStage (stageOf doc) } :
+      Site).passes = false := by
+    simp [Site.passes, Nat.not_le.mpr hfail]
+  have hdec' : ColorRef.role Role.ink ∉ doc.palette.decorative := by simpa using hdec
+  have h1 : 0 < (judgeSite (fun _ _ _ => none) (stageOf doc) (#[], #[])
+      (Role.ink, doc.palette)).1.size := by
+    simp [judgeSite, judgedSite_ink (stageOf doc) doc, hdec', hp]
+  obtain ⟨st0, h0⟩ : ∃ st0, Design.site? doc.palette .print .ink = some st0 := by
+    have := judgedSite_ink (stageOf doc) doc
+    simp only [judgedSite?, Option.map_eq_some_iff] at this
+    obtain ⟨st0, h0, _⟩ := this
+    exact ⟨st0, h0⟩
+  have hr : st0.role = .ink := site?_role h0
+  have he : (eventSites .page doc.palette).toList = [(Role.ink, doc.palette)] := by
+    rw [eventSites_page, h0]
+    simp [hr]
+  have hps : ∃ rest, (pageSites doc (docWalk doc)).toList = (Role.ink, doc.palette) :: rest := by
+    refine ⟨((docWalk doc).epochs.toList.map (Judged.page, ·)).flatMap
+      (fun p => (eventSites p.1 p.2).toList), ?_⟩
+    simp only [pageSites, pageEvents, Array.toList_flatMap, Array.toList_map, Array.toList_append,
+      List.map_append, List.flatMap_append]
+    simp only [List.map_cons, List.map_nil, List.flatMap_cons, List.flatMap_nil, List.append_nil, he,
+      List.cons_append, List.nil_append]
+  have hE : 0 < (judgeSites (fun _ _ _ => none) (stageOf doc) (pageSites doc (docWalk doc))).size := by
+    obtain ⟨rest, hrest⟩ := hps
+    unfold judgeSites
+    rw [← Array.foldl_toList, hrest, List.foldl_cons]
+    exact foldlList_invariant (fun b => 0 < b.1.size) _ _ _ h1
+      fun b x _ hb => Nat.lt_of_lt_of_le hb (judgeSite_diags_mono _ _ b x)
+  simp only [docDiags, Array.size_append]
   omega
 
 -- The built-in theme bundles, held to the same contract.
 
-/-- Every pairing a resolved design ships is legible: body ink on the page
-(SC 1.4.3, 4.5:1); `muted` — the chrome footer's small text — on the page,
-under WCAG's large-scale sizes, so 4.5:1 as well (total: undeclared it is
-the body ink, so the clause collapses into the first); the frame-title bar
-pair when the design has one — `\large\bfseries` is 12pt bold, under WCAG's
-large-scale sizes, so 4.5:1; and the standout pair — `\Large\bfseries`,
-14.4pt bold, large-scale, so 3:1 — which resolution makes total, so a
-defaulted inversion is checked, never assumed. The progress bar and
-separator are not checked: supplementary position indicators the section
-title already carries, outside SC 1.4.11's "required to understand the
-content"; nor is a block template's rule (`Ir.BlockEdge.ink`), a mark beside
-a title whose own text names the block; `covered` is exempt as inactive — a declared design decision,
-pinned by this judge's own skip rather than by a theorem, and
-`coveredContract` below holds it to visibly-covered. -/
-public def designContract (d : Design) : Bool :=
-  contrastMilli d.fg d.bg ≥ aaText
-    && contrastMilli d.muted d.bg ≥ aaText
-    && (match d.frametitle with
-        | some p => contrastMilli p.fg p.bg ≥ aaText
-        | none => contrastMilli d.frameTitleFg d.bg ≥ aaText)
-    && contrastMilli d.framesubtitle ((d.frametitle.map (·.bg)).getD d.bg) ≥ aaText
-    && contrastMilli d.sectionTitle d.bg ≥ aaText
-    && contrastMilli d.footline.fg (d.footline.bar.getD d.bg) ≥ aaText
-    -- The titled block's pairs, total as the standout's: the title sets
-    -- bold at the body size (under WCAG's large-scale sizes, so 4.5:1)
-    -- on the bar when the design has one, on the page otherwise.
-    && contrastMilli d.blockTitle.fg (d.blockTitle.bar.getD d.bg) ≥ aaText
-    && contrastMilli d.alertTitle.fg (d.alertTitle.bar.getD d.bg) ≥ aaText
-    && contrastMilli d.exampleTitle.fg (d.exampleTitle.bar.getD d.bg) ≥ aaText
-    && ([TitledKind.block, .alert, .example].all fun kind =>
-      let pair := d.titledBodyPaint kind { fg := d.fg, bg := d.bg } "fg"
-      contrastMilli pair.fg pair.bg ≥ aaText)
-    && contrastMilli d.standout.fg d.standout.bg ≥ aaLargeText
-
-/-- A palette's whole contract: `alert` and `example` colour body text on
-`bg` (4.5:1, SC 1.4.3) — content colours the design record does not carry —
-and every semantic pairing (`muted` included) is the resolved design's,
-judged with its defaults applied rather than passed vacuously when a key is
-absent. -/
+/-- **A palette's whole contract**: every pair its design ships in print
+(`Design.sites`, generated from the registry's rows) meets its need, every
+default applied rather than passed vacuously when a key is absent — body,
+muted and marker text and the content colours on the page, the frame-title
+bar and its subtitle, the section title, the footline, each titled block's
+title and body, the standout inversion (large-scale text, 3:1) and a
+declared title page. The progress bar and the separator are decorative:
+supplementary position indicators the section title already carries,
+outside SC 1.4.11's "required to understand the content", and so is a
+block template's rule (`Ir.BlockEdge.ink`), a mark beside a title whose
+own text names the block; `covered` is a state, held to visibly-covered
+by `coveredContract` below. -/
 public def paletteContract (pal : Palette) : Bool :=
-  let bg := (pal.find? "bg").getD Color.white
-  let text (k : String) : Bool :=
-    match pal.find? k with
-    | some c => contrastMilli c bg ≥ aaText
-    | none => true
-  text "alert" && text "example"
-    && designContract (Design.ofDoc { palette := pal })
+  (Design.sites pal .print).all Site.passes
 
 /-- Every listing ink of every shipped style is text-AA on every listing
 ground of a bundle: the page, its standout inversion, and its title page
-when declared. On its page a palette role ships as the bundle declares it,
-which the bundle's own contract holds to AA; on every other ground the
-shared painter adapts it, as it does a style's colour. -/
+when declared. A colour the bundle declares ships as declared, which this
+holds to AA on every such ground; every other colour the shared painter
+adapts there. -/
 public def listingContract (pal : Palette) : Bool :=
   let d := Design.ofPalette pal
   ListingStyle.all.all fun style =>
@@ -1730,8 +1151,8 @@ public def coveredContract (pal : Palette) : Bool :=
     contrastMilli (cov.of c) d.bg < contrastMilli c d.bg
       && contrastMilli c (cov.of c) ≥ aaNonText
   visiblyCovered d.fg
-    && (match pal.find? "alert" with | some c => visiblyCovered c | none => true)
-    && (match pal.find? "example" with | some c => visiblyCovered c | none => true)
+    && (match Design.declared? pal .alert with | some c => visiblyCovered c | none => true)
+    && (match Design.declared? pal .example with | some c => visiblyCovered c | none => true)
     && contrastMilli cov.plain d.bg < contrastMilli d.fg d.bg
     && contrastMilli d.fg cov.plain ≥ aaNonText
 
@@ -1748,270 +1169,61 @@ public def coverMonotone (pal : Palette) : Bool :=
   let quieter (c : Color) : Bool :=
     contrastMilli (cov.of (cov.of c)) d.bg < contrastMilli (cov.of c) d.bg
   quieter d.fg
-    && (match pal.find? "alert" with | some c => quieter c | none => true)
-    && (match pal.find? "example" with | some c => quieter c | none => true)
+    && (match Design.declared? pal .alert with | some c => quieter c | none => true)
+    && (match Design.declared? pal .example with | some c => quieter c | none => true)
 
-/-- The (ink, ground) pairs the document-level contrast judge enumerates,
-as data: the effective pair, each body epoch's effective pair, every
-coloured use on the surface it stood on (the running head and foot and
-the chrome footer's muted key included, exactly as `docDiags`' walk reads
-them), and the resolved design-site pairs per epoch that ships one — the
-frame-title bar, the standout inversion, the titled blocks.
-This is a domain of the document realization plan, not a census of placed
-glyphs or of emitted diagnostics. Overlay dimming computes additional
-colours, picture labels have their own paint, and exempt uses need not emit
-a diagnostic. `contrastContractChecks` pins actual placed counterexamples
-to the former claim that this domain contains every shipped pair.
+/-- The coloured uses the walk met, each as the pair it stood in: its colour
+on the ground it stood on, the running head and foot and the chrome footer
+included (`docUses`). -/
+public def usePairs (doc : Doc) : Array (Color × Color) :=
+  (docUses doc (docWalk doc)).uses.map fun u => (u.color, u.surface)
 
-One family per operand, each the same array the matching judge iterates
-(`docWalk`, `docUses`, the one resolving sites) — declarative rather than
-accumulated so a statement can read a family's membership off it, which is
-what `realizeDoc_id` needs to carry a passing pair into each judge. -/
+/-- The (ink, ground) pairs the document-level contrast judge enumerates, as
+data: every design site the document ships (`shippedSites`, as the judge
+reads it) and every coloured use (`usePairs`). This is the domain of the
+document's contrast report, not a census of placed glyphs or of emitted
+diagnostics. Overlay dimming computes additional colours, picture labels
+have their own paint, and exempt uses need not emit a diagnostic.
+`contrastContractChecks` pins actual placed counterexamples to the former
+claim that this domain contains every shipped pair. -/
 public def judgedPairs (doc : Doc) : Array (Color × Color) :=
-  let walk := docWalk doc
-  let d0 := Design.ofDoc doc
-  let bg0 := (effectivePair doc).bg
-  #[((effectivePair doc).fg, bg0), (d0.fg, bg0), (d0.muted, bg0)]
-    ++ (walk.epochs.map fun pal => ((pal.find? "fg").getD Color.black, surfaceOf pal))
-    ++ ((docUses doc walk).uses.map fun u => (u.color, u.surface))
-    ++ (walk.blockPals.map fun kp => ((titledLook kp.2 kp.1).fg, titledGround kp.2 kp.1))
-    ++ (walk.titledPals.filterMap fun pal =>
-        (Design.ofDoc { doc with palette := pal }).frametitle.map fun p => (p.fg, p.bg))
-    ++ (walk.standoutPals.map fun pal =>
-        ((Design.ofDoc { doc with palette := pal }).standout.fg,
-         (Design.ofDoc { doc with palette := pal }).standout.bg))
-    ++ (walk.titlePagePals.filterMap fun pal =>
-        (Design.ofDoc { doc with palette := pal }).titlepage.map fun p => (p.fg, p.bg))
+  let uses := usePairs doc
+  (shippedSites doc).filterMap (fun x =>
+      (judgedSite? (stageOf doc) x.2 x.1).map fun st => (st.ink, st.ground))
+    ++ uses
 
-/-- A fold's invariant, as an induction the judges' no-write lemmas below
-instantiate: a property held by the seed and by every step over the list's
-own elements is held by the result. -/
-private theorem foldlList_invariant {α β : Type} (P : β → Prop) (f : β → α → β) :
-    ∀ (xs : List α) (init : β), P init →
-      (∀ b a, a ∈ xs → P b → P (f b a)) → P (xs.foldl f init)
-  | [], _, hi, _ => hi
-  | a :: as, init, hi, hs =>
-    foldlList_invariant P f as (f init a) (hs init a (List.mem_cons_self ..) hi)
-      (fun b x hx hb => hs b x (List.mem_cons_of_mem a hx) hb)
+/-- **The judged pairs cover the registry's sites where they ship**
+(`_covers`): for every event the document ships — the page in each epoch,
+each themed element in the epoch it ships in — every site the registry
+generates for the palette in force there (`Design.sites`) whose row the
+report reads at that event (`Row.judged`) is a judged pair, at its medium's
+need, and so is every coloured use the walk met. A role added to the
+registry enters the report the way its row says, with no list here to
+extend; `Design.sites_covers` says which roles have a site. -/
+public theorem judged_covers (doc : Doc) :
+    (∀ ev ∈ shippedEvents doc, ∀ st ∈ Design.sites ev.2 .print, st.role.row.judged = ev.1 →
+      ∀ st', judgedSite? (stageOf doc) ev.2 st.role = some st' →
+        (st'.ink, st'.ground) ∈ judgedPairs doc) ∧
+    ∀ p ∈ usePairs doc, p ∈ judgedPairs doc := by
+  refine ⟨fun ev hev st hst hj st' h' => ?_, fun p hp => Array.mem_append_right _ hp⟩
+  have hsite : (st.role, ev.2) ∈ shippedSites doc := by
+    unfold shippedSites
+    refine Array.mem_flatMap.mpr ⟨ev, hev, ?_⟩
+    obtain ⟨e, pal⟩ := ev
+    simp only [eventSites, Array.mem_map, List.mem_toArray, List.mem_filter, beq_iff_eq]
+    exact ⟨st, ⟨hst, by simpa using hj⟩, rfl⟩
+  exact Array.mem_append_left _ (Array.mem_filterMap.mpr ⟨_, hsite, by rw [h']; rfl⟩)
 
-private theorem epochStep_no_pal_writes (site : ColorSite)
-    (s : Judged × Array ColorPair) (pal : Palette)
-    (hpass : aaText ≤ contrastMilli ((pal.find? "fg").getD Color.black) (surfaceOf pal))
-    (h : s.1.palWrites = #[]) : (epochStep site s pal).1.palWrites = #[] := by
-  unfold epochStep
-  split
-  · exact h
-  · simpa [Nat.not_lt.mpr hpass] using h
-
-private theorem epochPairJudged_no_pal_writes (site : ColorSite) (doc : Doc) (epochs : Array Palette)
-    (h : ∀ pal ∈ epochs,
-      aaText ≤ contrastMilli ((pal.find? "fg").getD Color.black) (surfaceOf pal)) :
-    (epochPairJudged site doc epochs).palWrites = #[] := by
-  unfold epochPairJudged
-  rw [← Array.foldl_toList]
-  exact foldlList_invariant (fun s => s.1.palWrites = #[]) (epochStep site) epochs.toList
-    ({}, #[{ fg := (Design.ofDoc doc).fg, bg := (effectivePair doc).bg }]) rfl
-    fun s pal hmem hs =>
-      epochStep_no_pal_writes site s pal (h pal (Array.mem_toList_iff.mp hmem)) hs
-
-private theorem effectivePairJudged_no_pal_writes (site : ColorSite) (doc : Doc)
-    (hpass : aaText ≤ contrastMilli (effectivePair doc).fg (effectivePair doc).bg) :
-    (effectivePairJudged doc site).palWrites = #[] := by
-  unfold effectivePairJudged
-  split
-  · rfl
-  · simp [Nat.not_lt.mpr hpass]
-
-private theorem blockTitleStep_no_pal_writes (site : ColorSite)
-    (s : Judged) (kp : TitledKind × Palette)
-    (hpass : aaText ≤ contrastMilli (titledLook kp.2 kp.1).fg (titledGround kp.2 kp.1))
-    (h : s.palWrites = #[]) : (blockTitleStep site s kp).palWrites = #[] := by
-  simpa [blockTitleStep, Nat.not_lt.mpr hpass] using h
-
-private theorem frameTitleStep_no_pal_writes (site : ColorSite)
-    (doc : Doc) (s : Judged) (pal : Palette)
-    (hpass : ∀ p : ColorPair, (Design.ofDoc { doc with palette := pal }).frametitle = some p →
-      aaText ≤ contrastMilli p.fg p.bg)
-    (h : s.palWrites = #[]) : (frameTitleStep site doc s pal).palWrites = #[] := by
-  unfold frameTitleStep
-  split
-  · exact h
-  · next p hp => simpa [Nat.not_lt.mpr (hpass p hp)] using h
-
-private theorem standoutStep_no_pal_writes (site : ColorSite)
-    (doc : Doc) (s : Judged) (pal : Palette)
-    (hpass : aaLargeText ≤ contrastMilli
-      (Design.ofDoc { doc with palette := pal }).standout.fg
-      (Design.ofDoc { doc with palette := pal }).standout.bg)
-    (h : s.palWrites = #[]) : (standoutStep site doc s pal).palWrites = #[] := by
-  simpa [standoutStep, Nat.not_lt.mpr hpass] using h
-
-private theorem titlePageStep_no_pal_writes (site : ColorSite)
-    (doc : Doc) (s : Judged) (pal : Palette)
-    (hpass : ∀ p : ColorPair,
-      (Design.ofDoc { doc with palette := pal }).titlepage = some p →
-      aaText ≤ contrastMilli p.fg p.bg)
-    (h : s.palWrites = #[]) : (titlePageStep site doc s pal).palWrites = #[] := by
-  unfold titlePageStep
-  rcases htp : (Design.ofDoc { doc with palette := pal }).titlepage with _ | p
-  · simpa [htp] using h
-  · simpa [htp, Nat.not_lt.mpr (hpass p htp)] using h
-
-private theorem resolvedPairJudged_no_pal_writes (site : ColorSite) (doc : Doc)
-    (titled standout titlePage pending : Array Palette)
-    (blocks : Array (TitledKind × Palette))
-    (hb : ∀ kp ∈ blocks,
-      aaText ≤ contrastMilli (titledLook kp.2 kp.1).fg (titledGround kp.2 kp.1))
-    (ht : ∀ pal ∈ titled, ∀ p : ColorPair,
-      (Design.ofDoc { doc with palette := pal }).frametitle = some p →
-      aaText ≤ contrastMilli p.fg p.bg)
-    (hs : ∀ pal ∈ standout, aaLargeText ≤ contrastMilli
-      (Design.ofDoc { doc with palette := pal }).standout.fg
-      (Design.ofDoc { doc with palette := pal }).standout.bg)
-    (hp : ∀ pal ∈ titlePage, ∀ p : ColorPair,
-      (Design.ofDoc { doc with palette := pal }).titlepage = some p →
-      aaText ≤ contrastMilli p.fg p.bg) :
-    (resolvedPairJudged site doc titled standout titlePage pending blocks).palWrites = #[] := by
-  have eB : (blocks.foldl (blockTitleStep site) {}).palWrites = #[] := by
-    rw [← Array.foldl_toList]
-    exact foldlList_invariant (fun j => j.palWrites = #[]) (blockTitleStep site) blocks.toList
-      {} rfl fun j kp hmem hj =>
-        blockTitleStep_no_pal_writes site j kp (hb kp (Array.mem_toList_iff.mp hmem)) hj
-  have eT : (titled.foldl (frameTitleStep site doc) {}).palWrites = #[] := by
-    rw [← Array.foldl_toList]
-    exact foldlList_invariant (fun j => j.palWrites = #[]) (frameTitleStep site doc) titled.toList
-      {} rfl fun j pal hmem hj =>
-        frameTitleStep_no_pal_writes site doc j pal (ht pal (Array.mem_toList_iff.mp hmem)) hj
-  have eS : (standout.foldl (standoutStep site doc) {}).palWrites = #[] := by
-    rw [← Array.foldl_toList]
-    exact foldlList_invariant (fun j => j.palWrites = #[]) (standoutStep site doc) standout.toList
-      {} rfl fun j pal hmem hj =>
-        standoutStep_no_pal_writes site doc j pal (hs pal (Array.mem_toList_iff.mp hmem)) hj
-  have eP : (titlePage.foldl (titlePageStep site doc) {}).palWrites = #[] := by
-    rw [← Array.foldl_toList]
-    exact foldlList_invariant (fun j => j.palWrites = #[]) (titlePageStep site doc) titlePage.toList
-      {} rfl fun j pal hmem hj =>
-        titlePageStep_no_pal_writes site doc j pal (hp pal (Array.mem_toList_iff.mp hmem)) hj
-  simp [resolvedPairJudged, eB, eT, eS, eP]
-
-private theorem useStep_no_writes (site : ColorSite) (large : Std.HashMap UseKey Bool)
-    (s : UseJudgeState) (u : Use)
-    (hpass : aaText ≤ contrastMilli u.color u.surface)
-    (h : s.j.palWrites = #[] ∧ s.j.runWrites = #[] ∧ s.j.inkSites = #[] ∧
-      s.j.mixWrites = #[]) :
-    (useStep site large s u).j.palWrites = #[] ∧ (useStep site large s u).j.runWrites = #[] ∧
-      (useStep site large s u).j.inkSites = #[] ∧ (useStep site large s u).j.mixWrites = #[] := by
-  have hthr : ¬ (contrastMilli u.color u.surface <
-      (if (large[u.key]?).getD true then aaLargeText else aaText)) := by
-    refine Nat.not_lt.mpr ?_
-    split
-    · exact Nat.le_trans aaLargeText_le_aaText hpass
-    · exact hpass
-  unfold useStep
-  split
-  · exact h
-  · have hpass := (assessPair_contract
-      (if (large[u.key]?).getD true then aaLargeText else aaText)
-      u.color u.surface).2.mpr (Nat.not_lt.mp hthr)
-    simpa only [hpass, Bool.not_true, Bool.false_eq_true, ↓reduceIte] using h
-
-private theorem declaredUseJudged_no_writes (site : ColorSite) (doc : Doc) (walk : UseAcc)
-    (h : ∀ u ∈ (docUses doc walk).uses, aaText ≤ contrastMilli u.color u.surface) :
-    (declaredUseJudged site doc walk).palWrites = #[] ∧
-      (declaredUseJudged site doc walk).runWrites = #[] ∧
-      (declaredUseJudged site doc walk).inkSites = #[] ∧
-      (declaredUseJudged site doc walk).mixWrites = #[] := by
-  simpa [declaredUseJudged] using
-    foldlList_invariant
-      (fun s => s.j.palWrites = #[] ∧ s.j.runWrites = #[] ∧ s.j.inkSites = #[] ∧
-        s.j.mixWrites = #[])
-      (useStep site (allLargeOf (docUses doc walk).uses)) (docUses doc walk).uses.toList
-      { done := ({} : Std.HashSet UseKey).insert
-          { name := some "fg",
-            pair := { color := (Design.ofDoc doc).fg, ground := (effectivePair doc).bg } } }
-      ⟨rfl, rfl, rfl, rfl⟩
-      fun s u hmem hs =>
-        useStep_no_writes site _ s u (h u (Array.mem_toList_iff.mp hmem)) hs
-
-/-- A legible document's artifact cannot move: when every pair the judge
-enumerates (`judgedPairs` — the effective pair, each epoch's, every
-coloured use on the ground it stood on, and each design site that ships)
-already meets the text threshold, `realizeDoc` returns the document
-itself, not a copy.
-
-`realize_id_of_passing` is the single-pair fact; this is the document-level
-one, and the two are not the same claim — a plan that emitted a write for a
-*passing* pair would shift a legible document's colours while every
-single-pair statement stayed true. The proof is one no-write lemma per
-judge, each a fold invariant over that judge's own step, so the dedup state
-the plan is built through (`useStep`'s `done`/`palSeen`/`solved`) cannot
-manufacture a write the pair did not ask for. The large-scale pairs are
-covered by the text threshold, which is the stricter of the two. -/
-public theorem realizeDoc_id (doc : Doc) (site : ColorSite)
-    (h : ∀ p ∈ judgedPairs doc, aaText ≤ contrastMilli p.1 p.2) :
-    (realizeDoc doc site).1 = doc := by
-  have hE : aaText ≤ contrastMilli (effectivePair doc).fg (effectivePair doc).bg := by
-    refine h ((effectivePair doc).fg, (effectivePair doc).bg) ?_
-    simp only [judgedPairs]
-    exact Array.mem_append_left _ (Array.mem_append_left _ (Array.mem_append_left _
-      (Array.mem_append_left _ (Array.mem_append_left _
-        (Array.mem_append_left _ (by simp))))))
-  have hP : ∀ pal ∈ (docWalk doc).epochs,
-      aaText ≤ contrastMilli ((pal.find? "fg").getD Color.black) (surfaceOf pal) := by
-    intro pal hp
-    refine h ((pal.find? "fg").getD Color.black, surfaceOf pal) ?_
-    simp only [judgedPairs]
-    exact Array.mem_append_left _ (Array.mem_append_left _ (Array.mem_append_left _
-      (Array.mem_append_left _ (Array.mem_append_left _
-        (Array.mem_append_right _ (Array.mem_map.mpr ⟨pal, hp, rfl⟩))))))
-  have hU : ∀ u ∈ (docUses doc (docWalk doc)).uses,
-      aaText ≤ contrastMilli u.color u.surface := by
-    intro u hu
-    refine h (u.color, u.surface) ?_
-    simp only [judgedPairs]
-    exact Array.mem_append_left _ (Array.mem_append_left _ (Array.mem_append_left _
-      (Array.mem_append_left _ (Array.mem_append_right _ (Array.mem_map.mpr ⟨u, hu, rfl⟩)))))
-  have hB : ∀ kp ∈ (docWalk doc).blockPals,
-      aaText ≤ contrastMilli (titledLook kp.2 kp.1).fg (titledGround kp.2 kp.1) := by
-    intro kp hkp
-    refine h ((titledLook kp.2 kp.1).fg, titledGround kp.2 kp.1) ?_
-    simp only [judgedPairs]
-    exact Array.mem_append_left _ (Array.mem_append_left _ (Array.mem_append_left _
-      (Array.mem_append_right _ (Array.mem_map.mpr ⟨kp, hkp, rfl⟩))))
-  have hT : ∀ pal ∈ (docWalk doc).titledPals, ∀ p : ColorPair,
-      (Design.ofDoc { doc with palette := pal }).frametitle = some p →
-      aaText ≤ contrastMilli p.fg p.bg := by
-    intro pal hpal p hp
-    refine h (p.fg, p.bg) ?_
-    simp only [judgedPairs]
-    exact Array.mem_append_left _ (Array.mem_append_left _ (Array.mem_append_right _
-      (Array.mem_filterMap.mpr ⟨pal, hpal, by rw [hp]; rfl⟩)))
-  have hS : ∀ pal ∈ (docWalk doc).standoutPals, aaLargeText ≤ contrastMilli
-      (Design.ofDoc { doc with palette := pal }).standout.fg
-      (Design.ofDoc { doc with palette := pal }).standout.bg := by
-    intro pal hpal
-    refine Nat.le_trans aaLargeText_le_aaText
-      (h ((Design.ofDoc { doc with palette := pal }).standout.fg,
-          (Design.ofDoc { doc with palette := pal }).standout.bg) ?_)
-    simp only [judgedPairs]
-    exact Array.mem_append_left _ (Array.mem_append_right _
-      (Array.mem_map.mpr ⟨pal, hpal, rfl⟩))
-  have hTP : ∀ pal ∈ (docWalk doc).titlePagePals, ∀ p : ColorPair,
-      (Design.ofDoc { doc with palette := pal }).titlepage = some p →
-      aaText ≤ contrastMilli p.fg p.bg := by
-    intro pal hpal p hp
-    refine h (p.fg, p.bg) ?_
-    simp only [judgedPairs]
-    exact Array.mem_append_right _
-      (Array.mem_filterMap.mpr ⟨pal, hpal, by rw [hp]; rfl⟩)
-  have hu := declaredUseJudged_no_writes site doc (docWalk doc) hU
-  simp [realizeDoc, realizePlan,
-    effectivePairJudged_no_pal_writes site doc hE,
-    epochPairJudged_no_pal_writes site doc (docWalk doc).epochs hP,
-    resolvedPairJudged_no_pal_writes site doc (docWalk doc).titledPals
-      (docWalk doc).standoutPals (docWalk doc).titlePagePals (docWalk doc).pendingPals
-      (docWalk doc).blockPals hB hT hS hTP,
-    hu.1, hu.2.1, hu.2.2.1, hu.2.2.2]
+/-- **A passing site is the identity** (`_id`): a site that does not ship,
+is declared decorative, or meets its need leaves the judging state exactly
+as it was — no message and no dedup entry — so the report cannot name a
+pair that meets what its medium asks. -/
+private theorem judgeSite_id (site : ColorSite) (stage : Bool) (s : Array Diag × Array Site)
+    (r : Role) (pal : Palette) (h : ∀ st, judgedSite? stage pal r = some st → st.passes = true) :
+    judgeSite site stage s (r, pal) = s := by
+  cases hst : judgedSite? stage pal r with
+  | none => simp [judgeSite, hst]
+  | some st => simp [judgeSite, hst, h st hst]
 
 /-- Every nonempty glyph run returned by the actual layout entry has an
 arithmetic assessment with its recorded paint and address. The only

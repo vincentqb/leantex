@@ -13,6 +13,7 @@ and the second is the one a lualatex build's minted runs.
 For each shipped style (`Ir.ListingStyle`):
 - the data module receives the style's `styles` table, every non-empty
   declaration verbatim, in token order: what `PygmentsStyle` resolves;
+  and `STANDARD_TYPES`, each type's name in the formatter's macros;
 - the oracle receives Pygments' own answers for every standard token type
   (`pygments.token.STANDARD_TYPES`): `style_for_token`, and what the LaTeX
   formatter minted runs ships for one token of the type, read off its
@@ -101,6 +102,7 @@ def minted(formatter, ttype):
             look['box'] = f'fill:{fill.group(1)}'
     return look
 
+standard = [[str(ttype), STANDARD_TYPES[ttype]] for ttype in sorted(STANDARD_TYPES, key=tuple)]
 answers = []
 for name in sys.argv[1:]:
     style = get_style_by_name(name)
@@ -124,7 +126,7 @@ for name in sys.argv[1:]:
                      'border': hexcolor(resolved['border']),
                      'minted': minted(formatter, ttype)})
     answers.append({'name': name, 'declarations': declarations, 'rows': rows})
-json.dump({'version': pygments.__version__, 'styles': answers}, sys.stdout)
+json.dump({'version': pygments.__version__, 'standard': standard, 'styles': answers}, sys.stdout)
 "#
 
 def strLit (s : String) : String :=
@@ -187,6 +189,18 @@ public def {name}Style : List (String × String) :=\n  [" ++
         ← field tex "chain", ← field tex "color", ← field tex "bold", ← field tex "italic",
         ← field tex "underline", ← field tex "box"]
       table := table ++ "\t".intercalate cells.toList ++ "\n"
+  let some standard := (json.getObjVal? "standard").toOption.bind (·.getArr?.toOption)
+    | die "the Pygments answer has no standard types"
+  let mut names : Array String := #[]
+  for row in standard do
+    let some pair := row.getArr?.toOption | die "a malformed standard type"
+    let (.str ttype, .str short) := (pair.getD 0 .null, pair.getD 1 .null)
+      | die "a malformed standard type"
+    names := names.push s!"({strLit ttype}, {strLit short})"
+  data := data ++ "\n/-- `pygments.token.STANDARD_TYPES`: (token type, the name the LaTeX formatter\n\
+spells its `\\PYG@tok@…` macro with), in token order. -/\n\
+public def standardTypes : List (String × String) :=\n  [" ++
+    ",\n   ".intercalate names.toList ++ "]\n"
   data := data ++ "\nend LeanTex.Core.PygmentsStyleData\n"
   IO.FS.writeFile "LeanTex/Core/PygmentsStyleData.lean" data
   IO.FS.writeFile "testdata/oracles/pygments-styles.tsv" table

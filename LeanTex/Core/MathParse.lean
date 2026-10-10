@@ -259,7 +259,7 @@ property's name), and the cancel package's options and `\CancelColor`. The
 defaults resolve nothing and load no option, which is how a formula parses
 where no document stands behind it. -/
 public structure Env where
-  ink : String → Option (Ir.Color × Bool) := fun _ => none
+  ink : String → Option (Ir.Color × Option Ir.ColorRef) := fun _ => none
   cancel : CancelSpec := {}
   /-- The expression `\CancelColor` names when the palette cannot resolve
   it: a formula that draws a mark names it (W0304), the marks set in the
@@ -842,7 +842,7 @@ private inductive Dest where
   /-- `\textcolor`'s content: it closes into `{\color{c} …}`, the braced
   Ord atom whose list opens with the colour switch (xcolor's
   `\textcolor` is `{\color{c}#2}`). -/
-  | inked (color : Ir.Color) (name : Option String)
+  | inked (color : Ir.Color) (name : Option Ir.ColorRef)
   /-- `\cancelto`'s first argument, the value: it becomes the request for
   the second. -/
   | cancelValue (spec : CancelSpec)
@@ -1427,8 +1427,8 @@ private def parseToks (toks : Array MTok) (top : Option GridKind) (display : Boo
         let (name, j) ← skipNamedArg toks (i + 1) n
         match env.ink name with
         | some (c, entry) =>
-          notes := notes.push (.inkUsed name c entry)
-          pending := .inked c (if entry then some name else none) :: pending
+          notes := notes.push (.inkUsed name c entry.isSome)
+          pending := .inked c entry :: pending
         | none => notes := notes.push (.inkMissed name)
         i := j
       else if n == "color" then
@@ -1451,8 +1451,8 @@ private def parseToks (toks : Array MTok) (top : Option GridKind) (display : Boo
           let (name, j) ← skipNamedArg toks (i + 1) n
           match env.ink name with
           | some (c, entry) =>
-            notes := notes.push (.inkUsed name c entry)
-            acc := acc.push (.ink c (if entry then some name else none))
+            notes := notes.push (.inkUsed name c entry.isSome)
+            acc := acc.push (.ink c entry)
           | none => notes := notes.push (.inkMissed name)
           i := j
       else if n == "cancelto" then

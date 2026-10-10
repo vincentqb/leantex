@@ -83,6 +83,9 @@ import Tests.ListDeclarations
 import Tests.Tcolorbox
 import Tests.TcolorboxColors
 import Tests.BlockBar
+import Tests.ReadableBar
+import Tests.ColorNames
+import Tests.DeclaredColors
 import Tests.BlockBody
 import Tests.BlockRegionFit
 import Tests.BlockHeaderClearance
@@ -255,7 +258,7 @@ import Tests.Privacy
 open LeanTex.Core LeanTex.Core.Utf8 LeanTex.Cli
 open Tests (mintedSettingsChecks listingHighlightChecks pygmentsLexerChecks pygmentsLinearChecks
   svgAssetChecks svgToolChecks
-  shellReplyChecks shellHighlightChecks listingProviderChecks listingStyleTableChecks codeRoleChecks
+  shellReplyChecks shellHighlightChecks listingProviderChecks listingStyleTableChecks codeRoleChecks codeExportChecks
   publicationPathChecks
   htmlContainedChecks htmlContainedPublicationChecks htmlContainedSvgColorChecks
   htmlContainedCliChecks htmlContainedCorpusChecks
@@ -323,6 +326,7 @@ def backendSuiteChecks (ref : IO.Ref (List String)) : IO Unit := do
   listingProviderChecks ref
   listingStyleTableChecks ref
   codeRoleChecks ref
+  codeExportChecks ref
   mdPreambleChecks ref
   markdownInputChecks ref
   Tests.MarkdownDoors.markdownDoorChecks ref
@@ -376,6 +380,7 @@ def backendSuiteChecks (ref : IO.Ref (List String)) : IO Unit := do
   Tests.publicationWriteChecks ref
   anchorCostChecks ref
   htmlTokenClosureChecks ref
+  htmlRoleClosureChecks ref
   htmlSourcedGapChecks ref
   htmlA11yChecks ref
   htmlMathChecks ref
@@ -429,6 +434,10 @@ def layoutSuiteChecks (ref : IO.Ref (List String)) : IO Unit := do
   tcolorboxSourceChecks ref oneFace
   tcolorboxColorChecks ref oneFace
   blockBarChecks ref oneFace
+  Tests.ReadableBar.checks ref oneFace
+  Tests.ColorNames.checks ref oneFace
+  Tests.ColorNames.unreadKeyChecks ref
+  Tests.DeclaredColors.checks ref oneFace
   Tests.BlockBody.checks ref oneFace
   Tests.BlockRegionFit.checks ref oneFace
   Tests.BlockHeaderClearance.checks ref oneFace
@@ -533,8 +542,6 @@ def layoutSuiteChecks (ref : IO.Ref (List String)) : IO Unit := do
   posterChecks ref oneFace
   censusChecks ref oneFace pats
   titledGroundChecks ref oneFace
-  realizedAgreeChecks ref oneFace
-  inkBoundChecks ref oneFace
   oneInkChecks ref oneFace
   scopeChecks ref oneFace
   bandChecks ref oneFace
@@ -695,6 +702,7 @@ def layoutSuiteChecks (ref : IO.Ref (List String)) : IO Unit := do
   themeReconcileChecks ref oneFace
   chromeDeclChecks ref
   layerDiagChecks ref
+  styleMergeChecks ref
   footerBandChecks ref oneFace
   chromeFooterChecks ref oneFace
   numberingChecks ref oneFace
@@ -871,8 +879,7 @@ def themeSuiteChecks (ref : IO.Ref (List String)) : IO Unit := do
   roleChecks ref
   titleGroundChecks ref
   roleInvocationChecks ref
-  realizedChecks ref
-  realizeDocIdChecks ref
+  docReportChecks ref
   roleShadowChecks ref
   geminiChecks ref
 

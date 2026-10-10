@@ -2,8 +2,8 @@
 Round-trip oracle for the integer Oklab pipeline, cached. The walk itself
 lives in scripts/oklab-walk.lean (spawned from here) and costs ~30
 minutes; a pass is cached against the content of the claim's inputs: the
-source of `Core/Oklab.lean`, of `Core/Ir.lean` (where `Color` and the
-`BEq` the check uses live — Ir's own imports never reach `cover`), and
+source of `Core/Oklab.lean`, of `Core/Color.lean` (where `Color` and the
+`BEq` the check uses live), of `Core/Ir.lean` (the walk's other reads), and
 `lean-toolchain` (the compiler realizing the arithmetic). Content, never
 mtime or git state: a dirty edit must miss. The cache lives under
 `.lake/` (generated state, ignored); its absence is a miss, never an
@@ -15,7 +15,8 @@ miss checks. Run it when touching `Core/Oklab.lean`:
 
 /-- The files whose content the cached verdict is a claim about. -/
 def cacheDeps : List System.FilePath :=
-  ["LeanTex/Core/Oklab.lean", "LeanTex/Core/Ir.lean", "lean-toolchain"]
+  ["LeanTex/Core/Oklab.lean", "LeanTex/Core/Color.lean", "LeanTex/Core/Ir.lean",
+   "lean-toolchain"]
 
 def cachePath : System.FilePath := ".lake/oklab-roundtrip.cache"
 

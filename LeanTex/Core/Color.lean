@@ -39,6 +39,15 @@ and the CMYK arithmetic rider. -/
 public instance : BEq Color where
   beq a b := a.r == b.r && a.g == b.g && a.b == b.b && a.cmyk == b.cmyk
 
+/-- The equality boundary is explicit: device-operator provenance cannot
+silently enter a screen or contrast comparison. -/
+public theorem Color.beq_screen_exact (a b : Color) :
+    (a == b) = (a.r == b.r && a.g == b.g && a.b == b.b && a.cmyk == b.cmyk) := by rfl
+
+@[expose] public def Color.black : Color := { r := 0, g := 0, b := 0 }
+
+@[expose] public def Color.white : Color := { r := 255, g := 255, b := 255 }
+
 /-- One byte as two hex digits; `upper` picks the alphabet's case. The dump
 printers and diagnostics quote colours uppercase; CSS serializes lowercase
 (`Color.css`). One printer for every reader, so a byte cannot render two

@@ -1180,7 +1180,7 @@ private def projectionChecks (ref : IO.Ref (List String)) : IO Unit := do
           (if e.span == .title then " > header" else "")
         let pseudo := if e.side == .left then "::before" else "::after"
         let paint := match e.name with
-          | some n => s!"var(--{n}, {HtmlDoc.cssColor e.color})"
+          | some n => s!"var({n.property}, {HtmlDoc.cssColor e.color})"
           | none => HtmlDoc.cssColor e.color
         check ref s!"block template {name} {kind.name}: the stylesheet draws the page's rule"
           ((cssRuleOf css (box ++ pseudo)).any fun r =>
@@ -1223,7 +1223,7 @@ private def readingChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : 
         whole := some true
         edges := #[{ span := .whole, side := .right, width := { width := { em := 250 } }
                      sep := { width := .ofSp (Dim.pt 3) }, hang := false
-                     color := { r := 0x12, g := 0x34, b := 0x56 }, name := some "accent" }] })]
+                     color := { r := 0x12, g := 0x34, b := 0x56 }, name := some (.role .focus) }] })]
   for (src, want) in reads do
     let doc := (Elab.run "block-shape.tex"
       ("\\documentclass{slides}\n\\palette{ accent = #123456 }\n\\style{block}{ shape = " ++ src ++

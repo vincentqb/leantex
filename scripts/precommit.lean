@@ -18,6 +18,7 @@ working tree; CI checks the committed tree.
 
 import scripts.Gate
 import scripts.Privacy
+import LeanTex.Core.DesignRole
 
 open Privacy (addedLines addedRuns splitFirst)
 
@@ -1772,6 +1773,58 @@ def selfFramed (lines : Array String) : Array String := Id.run do
       out := out.push n
   return out
 
+/-- The registry's `\palette` keys, read off the rows: the strings a role is
+declared by, which no reader outside the resolver spells. -/
+def roleKeyNames : List String := LeanTex.Core.Ir.Role.all.filterMap (·.row.key)
+
+/-- A colour role read by its key string — through a palette door, or a
+colour expression a reader resolves (`readColor … "alert"`, which reads an
+author colour of that name first) — through the palette's role view
+(`Palette.declaredRoles`), or through the palette's raw lookup of a role
+(`Palette.lookup (.role r)`, a declaration read past the resolver's door
+`Design.declared?`): the reads the registry (DesignRole.lean) and Ir.lean's
+resolving region own. A beamer element's channel names (`fg`, `bg` of
+`\setbeamercolor`) are option keys, not reads. The view's name is its own,
+so a field of another record named `roles` is no read of it. Strings stay
+in, since the literal is the offence; comments go. -/
+def roleReadLine (l : String) : Bool :=
+  let t := stripLineComment l
+  (roleKeyNames.any fun k =>
+    ["find? ", "declareKey ", "ofKey ", "ofKey? ", "contains "].any (fun door =>
+      containsSub t (door ++ "\"" ++ k ++ "\"")) ||
+    (containsSub t "readColor " && containsSub t ("\"" ++ k ++ "\""))) ||
+  (["lookup (.role ", "lookup (ColorRef.role ", "lookup (Ir.ColorRef.role "].any
+    (containsSub t ·)) ||
+  ((t.splitOn ".declaredRoles").drop 1).any fun rest =>
+    rest.isEmpty || !(rest.front.isAlphanum || rest.front == '_')
+
+/-- The role reads one file makes outside the places that own them: every
+line of the registry is exempt, and in Ir.lean the lines between
+`section DesignResolve` and `end DesignResolve`. -/
+def roleReads (f : String) (lines : Array String) : Array (Nat × String) := Id.run do
+  if f == "LeanTex/Core/DesignRole.lean" then return #[]
+  let mut inRegion := false
+  let mut out := #[]
+  for i in [0:lines.size] do
+    let l := lines[i]!
+    let t := l.trimAscii.toString
+    if f == "LeanTex/Core/Ir.lean" && t == "section DesignResolve" then inRegion := true
+    else if f == "LeanTex/Core/Ir.lean" && t == "end DesignResolve" then inRegion := false
+    else if !inRegion && roleReadLine l then out := out.push (i, l)
+  return out
+
+/-- A catch-all arm in the registry's `Role.row`: a role added without its
+row would take some other row's data in silence. -/
+def roleRowWildcards (lines : Array String) : Array Nat := Id.run do
+  let mut inRow := false
+  let mut out := #[]
+  for i in [0:lines.size] do
+    let l := lines[i]!
+    if let some n := topLevelDefName l then inRow := n == "Role.row"
+    if inRow && (stripLineComment l).trimAscii.toString.startsWith "| _ " then
+      out := out.push i
+  return out
+
 /-- Every case a gate predicate must catch and every legal spelling it must
 pass, run by `lean --run scripts/precommit.lean --selftest` from `lake test`.
 Positive cases are the shapes whose escape prompted a gate change; negative
@@ -1790,6 +1843,40 @@ def selftest : IO UInt32 := do
     ("testdata/corpus/tables.tex", true),
     ("testdata/golden/md-table.txt", false),
     ("testdata/typeset/md-report.md", false)]
+
+  expect "roleReadLine" roleReadLine [
+    ("  let g := pal.find? \"bg\"", true),
+    ("  let r := p.declaredRoles.find? (·.1 == .page)", true),
+    ("  if pal.decorative.contains \"fg\" then", true),
+    ("  let p := pal.declareKey \"frametitlebg\" c", true),
+    ("  match ← readColor ctx ctx.palette none \"alert\" pos with", true),
+    ("  match ctx.palette.lookup (.role .alert) with", true),
+    ("  (ctx.basePalette.lookup (ColorRef.role .page))", true),
+    ("  let c := (nm.bind ctx.palette.lookup).getD c", false),
+    ("  if (key == \"fg\" && fg.isNone) || (key == \"bg\" && bg.isNone) then", false),
+    ("  let g := Design.declared? pal .page", false),
+    ("  for (name, fg, bg) in BeamerColor.roles do", false),
+    ("    { acc with roles := acc.roles.push role }", false),
+    ("  let t := doc.styles.find? \"titlepage\"", false),
+    ("  let m := s!\"text coloured 'fg' reads low\"", false),
+    ("  -- pal.find? \"bg\" in a comment", false)]
+  if (roleReads "LeanTex/Core/Layout.lean" #["  let r := a.pal.declaredRoles"]).isEmpty then
+    fails.modify ("roleReads missed a planted role view read in Layout.lean" :: ·)
+  if (roleReads "LeanTex/Core/Layout.lean" #["  let g := a.pal.lookup (.role .page)"]).isEmpty then
+    fails.modify ("roleReads missed a planted raw role lookup in Layout.lean" :: ·)
+  if !(roleReads "LeanTex/Core/Ir.lean"
+      #["section DesignResolve", "  p.declaredRoles.size", "end DesignResolve"]).isEmpty then
+    fails.modify ("roleReads fired inside the resolving region" :: ·)
+  if (roleReads "LeanTex/Core/Ir.lean"
+      #["section DesignResolve", "end DesignResolve", "  p.declaredRoles.size"]).isEmpty then
+    fails.modify ("roleReads missed a read after the resolving region" :: ·)
+  if !(roleReads "LeanTex/Core/DesignRole.lean" #["  pal.find? \"bg\""]).isEmpty then
+    fails.modify ("roleReads fired in the registry" :: ·)
+  if (roleRowWildcards #["@[expose] public def Role.row : Role → Row", "  | .page => x",
+      "  | _ => y"]).isEmpty then
+    fails.modify ("roleRowWildcards missed a catch-all in Role.row" :: ·)
+  if !(roleRowWildcards #["public def Role.depth : Role → Nat", "  | _ => 0"]).isEmpty then
+    fails.modify ("roleRowWildcards fired outside Role.row" :: ·)
 
   expect "computedDemote" computedDemote [
     -- the proxy defect's spelling: a demotion decided by a predicate over
@@ -3216,6 +3303,24 @@ the privacy check is skipped."
   Spell every constructor, or the next Ir constructor silently falls
   through (AGENTS.md, obligation table: an Ir constructor owes an explicit
   arm in every walk); the allowlisted frozen sites live in precommit.lean."
+
+  -- The role-read gate, whole tree over LeanTex/: a colour role is read
+  -- through the registry and the one resolving region, never by its key
+  -- string or the palette's role view elsewhere; and the registry's row
+  -- table names every role (no catch-all).
+  for (f, lines) in coreTexts do
+    for (i, l) in roleReads f lines do
+      say s!"pre-commit: a colour role read outside its resolver ({f}:{i + 1}):
+  {l.trimAscii}
+  A role resolves at one site (`Design.at`, Ir.lean's `section DesignResolve`)
+  from one registry (DesignRole.lean); a key string read elsewhere is a
+  second default chain, and an author colour of that name would satisfy it.
+  Fix: read `Design.at pal s r`, `Design.declared? pal r` or a `Design` field."
+    if f == "LeanTex/Core/DesignRole.lean" then
+      for i in roleRowWildcards lines do
+        say s!"pre-commit: a catch-all arm in `Role.row` ({f}:{i + 1}).
+  Every role owes its own row; a wildcard gives a new role another's data.
+  Fix: write the role's row."
 
   -- The ]! ratchet (handed by impl-shapes), whole tree: per-file counts
   -- against the frozen baseline — a commit may lower a count, never raise

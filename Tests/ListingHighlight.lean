@@ -230,7 +230,7 @@ def listingFriendlyChecks (ref : IO.Ref (List String)) : IO Unit := do
     (friendly == [none, some { r := 0, g := 112, b := 32 }, some { r := 6, g := 40, b := 126 },
       some { r := 64, g := 112, b := 160 }, some { r := 96, g := 160, b := 176 },
       some { r := 255, g := 0, b := 0 }])
-  let authored := ({} : Ir.Palette).declare "codekeyword" Ir.Color.black
+  let authored := ({} : Ir.Palette).declare (.role .codeKeyword) Ir.Color.black
   t "listing friendly: authored roles take precedence over style defaults"
     (Listing.ink authored none .keyword (style := .friendly) == some Ir.Color.black)
   for theme in Theme.builtin do
@@ -353,13 +353,13 @@ def listingPaletteEpochChecks (ref : IO.Ref (List String))
     (fonts : Font.FontSet) : IO Unit := do
   let t := check ref
   -- Inks with a hue of their own, so a keyword derives a tone of its own.
-  let light := ({} : Ir.Palette).declare "fg" (Ir.Color.ofHtml 0x1F 0x2B 0x4D)
-    |>.declare "bg" Ir.Color.white
-    |>.declare "standoutfg" Ir.Color.white |>.declare "standoutbg" Ir.Color.black
-    |>.declare "titlepagefg" Ir.Color.white |>.declare "titlepagebg" Ir.Color.black
-  let dark := light.declare "fg" (Ir.Color.ofHtml 0xC8 0xD8 0xF8) |>.declare "bg" Ir.Color.black
+  let light := ({} : Ir.Palette).declare (.role .ink) (Ir.Color.ofHtml 0x1F 0x2B 0x4D)
+    |>.declare (.role .page) Ir.Color.white
+    |>.declare (.role .standoutInk) Ir.Color.white |>.declare (.role .standoutGround) Ir.Color.black
+    |>.declare (.role .titlePageInk) Ir.Color.white |>.declare (.role .titlePageGround) Ir.Color.black
+  let dark := light.declare (.role .ink) (Ir.Color.ofHtml 0xC8 0xD8 0xF8) |>.declare (.role .page) Ir.Color.black
   let removed := { light with
-    entries := light.entries.filter fun (role, _) => role != "fg" && role != "bg" }
+    entries := light.entries.filter fun (role, _) => role != .role .ink && role != .role .page }
   for (frame, standout, valign) in
       [("normal", false, Ir.VAlign.center), ("title", false, .golden),
        ("standout", true, .center)] do
@@ -412,12 +412,12 @@ def listingPaletteContinuationChecks (ref : IO.Ref (List String))
     (fonts : Font.FontSet) : IO Unit := do
   let t := check ref
   -- Inks with a hue of their own, so a keyword derives a tone of its own.
-  let light := ({} : Ir.Palette).declare "fg" (Ir.Color.ofHtml 0x1F 0x2B 0x4D)
-    |>.declare "bg" Ir.Color.white
-    |>.declare "standoutfg" Ir.Color.white |>.declare "standoutbg" Ir.Color.black
-    |>.declare "titlepagefg" Ir.Color.white |>.declare "titlepagebg" Ir.Color.black
-  let dark := light.declare "fg" (Ir.Color.ofHtml 0xC8 0xD8 0xF8) |>.declare "bg" Ir.Color.black
-  let removed := light.erase "bg"
+  let light := ({} : Ir.Palette).declare (.role .ink) (Ir.Color.ofHtml 0x1F 0x2B 0x4D)
+    |>.declare (.role .page) Ir.Color.white
+    |>.declare (.role .standoutInk) Ir.Color.white |>.declare (.role .standoutGround) Ir.Color.black
+    |>.declare (.role .titlePageInk) Ir.Color.white |>.declare (.role .titlePageGround) Ir.Color.black
+  let dark := light.declare (.role .ink) (Ir.Color.ofHtml 0xC8 0xD8 0xF8) |>.declare (.role .page) Ir.Color.black
+  let removed := light.erase (.role .page)
   let code (source : String) : Ir.Block :=
     .verbatim none source
       { highlight := ListingHighlight.tokenize .python (Ir.verbatimLines source) }
@@ -488,29 +488,30 @@ def listingPaletteContinuationChecks (ref : IO.Ref (List String))
         (Layout.pageGroundsDeclared geom fonts none spill == ground.isSome)
 
 /-- The contrast judge must leave a styled frame's entry ground at a body
-palette declaration, even an identical one, and retain the authored role's
-bounded repair/refusal policy on the new ground. -/
+palette declaration, even an identical one, and report the authored role's
+pairing on the new ground. The grey fails even the large-scale ratio a
+deck's stage-size text asks, so the pairing is reported. -/
 def listingPaletteAuditChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
-  let gray : Ir.Color := { r := 136, g := 136, b := 136 }
-  let light := ({} : Ir.Palette).declare "fg" Ir.Color.black
-    |>.declare "bg" Ir.Color.white |>.declare "codekeyword" gray
-    |>.declare "standoutfg" Ir.Color.white |>.declare "standoutbg" Ir.Color.black
-    |>.declare "titlepagefg" Ir.Color.white |>.declare "titlepagebg" Ir.Color.black
+  let gray : Ir.Color := { r := 0xAA, g := 0xAA, b := 0xAA }
+  let light := ({} : Ir.Palette).declare (.role .ink) Ir.Color.black
+    |>.declare (.role .page) Ir.Color.white |>.declare (.role .codeKeyword) gray
+    |>.declare (.role .standoutInk) Ir.Color.white |>.declare (.role .standoutGround) Ir.Color.black
+    |>.declare (.role .titlePageInk) Ir.Color.white |>.declare (.role .titlePageGround) Ir.Color.black
   for (name, standout, valign) in
       [("title", false, Ir.VAlign.golden), ("standout", true, .center)] do
     let entry := ListingHighlight.epochDoc light none standout valign
     t s!"listing audit {name}: unchanged entry is judged on its own ground"
       ((Contrast.judgedPairs entry).contains (gray, Ir.Color.black) &&
        (Contrast.docDiags entry).all fun d => !hasStr d.message "'codekeyword'")
-    for (epochName, epoch) in [("repeated", light), ("removed", light.erase "bg")] do
+    for (epochName, epoch) in [("repeated", light), ("removed", light.erase (.role .page))] do
       let doc := ListingHighlight.epochDoc light (some epoch) standout valign
       let pairs := (Contrast.judgedPairs doc).filter (·.1 == gray)
       t s!"listing audit {name}/{epochName}: declaration replaces the entry ground"
         (!pairs.isEmpty && pairs.all (·.2 == Ir.Color.white))
       t s!"listing audit {name}/{epochName}: real audit names the current page"
         ((Contrast.docDiags doc).any fun d =>
-          d.code == "N0022" && hasStr d.message "'codekeyword'" &&
+          d.code == "W0315" && hasStr d.message "'codekeyword'" &&
           hasStr d.message "the page (#FFFFFF)")
     let source := "return value"
     let large := { entry with body := #[.frame #[] standout valign false
@@ -519,9 +520,10 @@ def listingPaletteAuditChecks (ref : IO.Ref (List String)) : IO Unit := do
           highlight := ListingHighlight.tokenize .python (Ir.verbatimLines source) }]] }
     t s!"listing audit {name}: epoch reset preserves listing size and authored ink priority"
       ((Contrast.judgedPairs large).contains (gray, Ir.Color.white) &&
-       (Contrast.docDiags large).all fun d => !hasStr d.message "'codekeyword'")
+       (Contrast.docDiags large).any fun d =>
+         hasStr d.message "'codekeyword'" && hasStr d.message "large-scale text")
     let refused := ListingHighlight.epochDoc light
-      (some (light.declare "codekeyword" Ir.Color.white)) standout valign
+      (some (light.declare (.role .codeKeyword) Ir.Color.white)) standout valign
     t s!"listing audit {name}: an unrepairable authored role still warns"
       ((Contrast.docDiags refused).any fun d =>
         d.code == "W0315" && hasStr d.message "'codekeyword'" &&
@@ -538,33 +540,29 @@ standoutfg=#FFFFFF,standoutbg=#000000}"
     (pre.size == 2 && pre.all fun (_, attrs) =>
       attrs.any fun (key, value) =>
         key == "style" && hasStr value "background: #000000; color: #ffffff")
-  let (repaired, ds) := elabStr (dvDeck preamble
-    ("\\begin{frame}[standout]\\palette{bg=#FFFFFF,codekeyword=#888888}" ++
+  let (declared, ds) := elabStr (dvDeck preamble
+    ("\\begin{frame}[standout]\\palette{bg=#FFFFFF,codekeyword=#AAAAAA}" ++
       code ++ "\\end{frame}"))
-  let (_, html, _) := HtmlDoc.emitTree {} repaired
+  let (_, html, _) := HtmlDoc.emitTree {} declared
   let codes := ListingHighlight.codeNodesList #[] html.toList
-  let some ink := Contrast.realize Contrast.aaText Ir.Color.white gray |
-    failures ref "listing audit: gray-on-white bounded repair fixture no longer repairs"
-  t "listing audit source: the actual audit reports the bounded role repair"
-    (ds.any fun d => d.code == "N0022" && hasStr d.message "'codekeyword'" &&
+  t "listing audit source: the actual audit reports the role's pairing on the page"
+    (ds.any fun d => d.code == "W0315" && hasStr d.message "'codekeyword'" &&
       hasStr d.message "the page (#FFFFFF)")
-  t "listing audit source: typed HTML ships the repair on the declared page"
-    (Contrast.withinInkBound gray ink &&
-     Contrast.contrastMilli ink Ir.Color.white ≥ Contrast.aaText &&
-     (elemAttrsList (· == "pre") #[] html.toList).any (fun (_, attrs) =>
+  t "listing audit source: typed HTML ships the declared ink on the declared page"
+    ((elemAttrsList (· == "pre") #[] html.toList).any (fun (_, attrs) =>
        attrs.any fun (key, value) => key == "style" && hasStr value "background: #ffffff") &&
      (ListingHighlight.coloredSpansList #[] codes.toList).any fun (text, style) =>
-       text == "return" && hasStr style (HtmlDoc.cssColor ink))
+       text == "return" && hasStr style (HtmlDoc.cssColor gray))
 
-/-- A role repair must reach the run that the audit judged. Every declaration
-ends the frame-entry ground, even an identical or nested one; notes do not.
-The witnesses read shipped glyphs, PDF paint and the typed HTML spans. -/
+/-- The pair the audit reports is the pair the run ships: the declared ink, on
+the ground the audit judged. Every declaration ends the frame-entry ground,
+even an identical or nested one; notes do not. The witnesses read shipped
+glyphs, PDF paint and the typed HTML spans. The grey fails even the
+large-scale ratio a deck's stage-size text asks. -/
 def listingRoleEpochChecks (ref : IO.Ref (List String))
     (fonts : Font.FontSet) : IO Unit := do
   let t := check ref
-  let gray : Ir.Color := { r := 136, g := 136, b := 136 }
-  let some repaired := Contrast.realize Contrast.aaText Ir.Color.white gray |
-    failures ref "role epoch: gray-on-white bounded repair fixture no longer repairs"
+  let gray : Ir.Color := { r := 0xAA, g := 0xAA, b := 0xAA }
   let shipped (name : String) (doc : Ir.Doc) (inks grounds : Array Ir.Color) : IO Unit := do
     let out := layoutOf fonts doc
     let glyphs := (ListingHighlight.glyphColors out).filter fun (c, _) =>
@@ -587,29 +585,26 @@ def listingRoleEpochChecks (ref : IO.Ref (List String))
     t s!"role epoch {name}: typed HTML carries the audited ink"
       (spans.size == inks.size && (spans.zip inks).all fun ((_, style), ink) =>
         hasStr style (HtmlDoc.cssColor ink))
-  let preamble := "\\theme{default}\\palette{fg=#000000,bg=#FFFFFF,accent=#888888,\
+  let preamble := "\\theme{default}\\palette{fg=#000000,bg=#FFFFFF,accent=#AAAAAA,\
 standoutfg=#FFFFFF,standoutbg=#000000}"
-  for (name, source, ink, code) in
-      [("source", "\\textcolor{accent}{sample}", repaired, "N0022"),
-       ("large source", "\\Huge\\textcolor{accent}{sample}", Ir.Color.ofHtml 136 136 136, ""),
-       ("literal source", "\\textcolor{#888888}{sample}", Ir.Color.ofHtml 136 136 136, "W0315"),
-       ("unrepairable source", "\\textcolor{#FFFFFF}{sample}",
-         Ir.Color.ofHtml 255 255 255, "W0315")] do
+  for (name, source, ink) in
+      [("source", "\\textcolor{accent}{sample}", Ir.Color.ofHtml 0xAA 0xAA 0xAA),
+       ("literal source", "\\textcolor{#AAAAAA}{sample}", Ir.Color.ofHtml 0xAA 0xAA 0xAA),
+       ("white source", "\\textcolor{#FFFFFF}{sample}", Ir.Color.ofHtml 255 255 255)] do
     let (doc, ds) := elabStr (dvDeck preamble
       ("\\begin{frame}[standout]\\palette{bg=#FFFFFF}" ++ source ++ "\\end{frame}"))
-    t s!"role epoch {name}: actual audit keeps its repair or refusal policy"
+    t s!"role epoch {name}: actual audit reports the pairing on the declared page"
       (ds.all (·.severity != .error) &&
-       if code.isEmpty then ds.all (fun d => !hasStr d.message "'accent'")
-       else ds.any fun d =>
-         d.code == code && hasStr d.message "the page (#FFFFFF)" &&
-         (code != "N0022" || (hasStr d.message "'accent'" && hasStr d.message "#767676")))
+       ds.any fun d =>
+         d.code == "W0315" && hasStr d.message "the page (#FFFFFF)" &&
+         (name != "source" || hasStr d.message "'accent'"))
     shipped name doc #[ink] #[Ir.Color.white]
-  let light := ({} : Ir.Palette).declare "fg" Ir.Color.black
-    |>.declare "bg" Ir.Color.white |>.declare "accent" gray
-    |>.declare "standoutfg" Ir.Color.white |>.declare "standoutbg" Ir.Color.black
-    |>.declare "titlepagefg" Ir.Color.white |>.declare "titlepagebg" Ir.Color.black
-  let changed := light.declare "alert" Ir.Color.black
-  let sample : Ir.Block := .para #[.colored gray (some "accent") #[.text "sample"]]
+  let light := ({} : Ir.Palette).declare (.role .ink) Ir.Color.black
+    |>.declare (.role .page) Ir.Color.white |>.declare (.color "accent") gray
+    |>.declare (.role .standoutInk) Ir.Color.white |>.declare (.role .standoutGround) Ir.Color.black
+    |>.declare (.role .titlePageInk) Ir.Color.white |>.declare (.role .titlePageGround) Ir.Color.black
+  let changed := light.declare (.role .alert) Ir.Color.black
+  let sample : Ir.Block := .para #[.colored gray (some (.color "accent")) #[.text "sample"]]
   let base := { (elabStr (dvDeck "\\theme{default}" "")).1 with palette := light }
   for (frameName, standout, valign) in
       [("title", false, Ir.VAlign.golden), ("standout", true, .center)] do
@@ -625,23 +620,23 @@ standoutfg=#FFFFFF,standoutbg=#000000}"
            (.frac 500, #[sample])], sample], 3, true),
          ("nested notes", #[.center #[.setPalette light, .note #[.setPalette changed]],
            sample], 1, true)] do
-      let raw := { base with body := #[.frame #[] standout valign false body] }
-      let (doc, ds) := Contrast.realizeDoc raw
+      let doc := { base with body := #[.frame #[] standout valign false body] }
+      let ds := Contrast.docDiags doc
       let name := s!"{frameName}/{name}"
       t s!"role epoch {name}: actual audit names the declared page only after a boundary"
         (if resets then ds.any (fun d =>
-          d.code == "N0022" && hasStr d.message "'accent'" &&
-          hasStr d.message "the page (#FFFFFF)" && hasStr d.message "#767676")
+          d.code == "W0315" && hasStr d.message "'accent'" &&
+          hasStr d.message "the page (#FFFFFF)")
          else ds.all (fun d => !hasStr d.message "'accent'"))
-      shipped name doc (List.replicate count (if resets then repaired else gray)).toArray
+      shipped name doc (List.replicate count gray).toArray
         #[if resets then Ir.Color.white else Ir.Color.black]
-    let raw := { base with body := #[
+    let doc := { base with body := #[
       .frame #[] standout valign false #[sample],
       .frame #[] false .center false #[sample]] }
-    let (doc, ds) := Contrast.realizeDoc raw
-    t s!"role epoch {frameName}/exit: later page repair does not change the entry run"
-      (ds.any fun d => d.code == "N0022" && hasStr d.message "'accent'")
-    shipped s!"{frameName}/exit" doc #[gray, repaired] #[Ir.Color.black, Ir.Color.white]
+    let ds := Contrast.docDiags doc
+    t s!"role epoch {frameName}/exit: the later page's pairing is reported, the entry run kept"
+      (ds.any fun d => d.code == "W0315" && hasStr d.message "'accent'")
+    shipped s!"{frameName}/exit" doc #[gray, gray] #[Ir.Color.black, Ir.Color.white]
 
 /-- Artifact regression: the old pipeline preserves code but ships no syntax
 colour in either artifact. These checks must fail on that implementation. -/
@@ -740,7 +735,7 @@ def listingHighlightChecks (ref : IO.Ref (List String)) : IO Unit := do
          c == c' && quiet == (Ir.Design.ofDoc doc).cover.of ink)
     let coveredDoc := { doc with
       body := coveredBody
-      palette := doc.palette.declare "covered" Ir.Color.black }
+      palette := doc.palette.declare (.role .covered) Ir.Color.black }
     let (_, coveredHtml, _) := HtmlDoc.emitTree {} coveredDoc
     let coveredSpans := ListingHighlight.coloredSpansList #[]
       (ListingHighlight.codeNodesList #[] coveredHtml.toList).toList

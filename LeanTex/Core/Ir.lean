@@ -9,7 +9,9 @@ public import LeanTex.Core.Image
 public import LeanTex.Core.Math
 public import LeanTex.Core.LocaleContract
 public import LeanTex.Core.ListingHighlight
-public import LeanTex.Core.CodeRole
+public import LeanTex.Core.DesignRole
+public import LeanTex.Core.ContrastRatio
+public import LeanTex.Core.Oklab
 import LeanTex.Core.Loop
 import Init.Data.Nat.ToString
 public import Std.Data.HashMap
@@ -414,11 +416,6 @@ pasted on a board. A document's own `\assert{ text.xheight >= ... }`
 takes control. -/
 public def posterXHeightFloor : Sp := Dim.mm100 350
 
-/-- The equality boundary is explicit: device-operator provenance cannot
-silently enter a screen or contrast comparison. -/
-public theorem Color.beq_screen_exact (a b : Color) :
-    (a == b) = (a.r == b.r && a.g == b.g && a.b == b.b && a.cmyk == b.cmyk) := by rfl
-
 /-- Equality for a lookup that selects source-bearing data. Screen equality
 is intentionally weaker; any selection that can carry a PDF rider uses this
 relation instead. -/
@@ -429,8 +426,6 @@ public def Color.sameSource (a b : Color) : Bool :=
 public theorem Color.sameSource_pdfModel_exact (a b : Color) :
     a.sameSource b = true → (a.pdfModel == b.pdfModel) = true := by
   simp [Color.sameSource]
-
-@[expose] public def Color.black : Color := { r := 0, g := 0, b := 0 }
 
 /-- xcolor's screen projection of one CMYK channel: `1 - min(1, c+k)`,
 then the package's TeX-scaled conversion to an HTML byte. -/
@@ -720,7 +715,7 @@ public def Tokens.declare (t : Tokens) (key : String) (g : SymGlue) : Tokens :=
 the one read back, and a redeclaration collapses — declaring a key twice is
 declaring the later value once. Public: `Theme`'s install fold runs the
 same store step, so its lemmas consume these rather than re-proving them. -/
-public theorem declare_find_eq {α : Type} (xs : Array (String × α)) (k : String) (v : α) :
+public theorem declare_find_eq {κ α : Type} [BEq κ] [LawfulBEq κ] (xs : Array (κ × α)) (k : κ) (v : α) :
     ((xs.filter (·.1 != k)).push (k, v)).find? (·.1 == k) = some (k, v) := by
   have hnone : (xs.filter (·.1 != k)).find? (·.1 == k) = none := by
     rw [Array.find?_eq_none]
@@ -730,19 +725,19 @@ public theorem declare_find_eq {α : Type} (xs : Array (String × α)) (k : Stri
   rw [Array.find?_push, hnone]
   simp
 
-private theorem declare_collapse {α : Type} (xs : Array (String × α)) (k : String) (v : α) :
+private theorem declare_collapse {κ α : Type} [BEq κ] [LawfulBEq κ] (xs : Array (κ × α)) (k : κ) (v : α) :
     ((xs.filter (·.1 != k)).push (k, v)).filter (·.1 != k) = xs.filter (·.1 != k) := by
   rw [Array.filter_push]
   simp
 
 /-- The locality half over the same store: a declaration changes exactly
 the key it names — every other key reads back as before. -/
-public theorem declare_keeps {α : Type} (xs : Array (String × α)) (k k' : String) (v : α)
+public theorem declare_keeps {κ α : Type} [BEq κ] [LawfulBEq κ] (xs : Array (κ × α)) (k k' : κ) (v : α)
     (h : k' ≠ k) :
     ((xs.filter (·.1 != k)).push (k, v)).find? (·.1 == k') = xs.find? (·.1 == k') := by
   rw [Array.find?_push, Array.find?_filter]
-  have hpred : (fun a : String × α => decide ((a.fst != k) = true ∧ (a.fst == k') = true))
-      = (fun a : String × α => a.fst == k') := by
+  have hpred : (fun a : κ × α => decide ((a.fst != k) = true ∧ (a.fst == k') = true))
+      = (fun a : κ × α => a.fst == k') := by
     funext x
     by_cases hx : (x.1 == k') = true
     · have hxe : x.1 = k' := by simpa using hx
@@ -1895,26 +1890,18 @@ public theorem rhythm_table_exact (size : Sp) :
       headingBeforeDefault, trivlistSkipDefault, Dim.Length.ofSp,
       List.lookup] <;> omega
 
-/-- A role realized on a ground other than its palette's page: the role, the
-colour it was declared as there, the ground, and the ink the contrast
-contract chose (`Contrast.realizeDoc`). -/
-public structure GroundInk where
-  role : String
-  declared : Color
-  ground : Color
-  ink : Color
-  deriving Repr, BEq, Inhabited
-
-/-- The key a role's realization on one ground is named by — the role, the
-colour it was declared as, the ground — as the `subject` of its N0022 note,
-so "every realization is reported" is a lookup. -/
+/-- The key a pairing is reported under — the name it was used under, the
+colour, the ground — as the `subject` of its contrast warning, so one
+pairing used at many runs is one loss with a count. -/
 public def inkKey (role : String) (declared ground : Color) : String :=
   let hex (c : Color) := s!"#{Color.hexByte c.r}{Color.hexByte c.g}{Color.hexByte c.b}"
   s!"{role}:{hex declared}@{hex ground}"
 
-/-- Named colours declared by `\palette`. -/
+/-- The colours a document and its bundles declare, in declaration order:
+author colours (`\definecolor`, `\colorlet`, a `\palette` key no role owns)
+and roles, one kind each (`ColorRef`), so no author name ever binds a role. -/
 public structure Palette where
-  entries : Array (String × Color) := #[]
+  entries : Array (ColorRef × Color) := #[]
   /-- `covered = <n>%`: the fraction of each covered run's own ink over
   the surface — beamer's `\setbeamercovered{transparent=<n>}`, and the
   per-bundle knob the covered contract ranges over. `none` takes
@@ -1923,69 +1910,97 @@ public structure Palette where
   /-- Entries declared under `\palette[decorative]{...}`: deliberately
   low-contrast — a watermark, a dimmed aside — and exempt from the pairing
   diagnostic, the way WCAG 2.2 SC 1.4.3 exempts pure decoration. -/
-  decorative : Array String := #[]
-  /-- The realized inks of the roles used under this palette on grounds
-  that are not its page, written by the realization pass and read by
-  both backends through `Design.inks`. Empty until realization. -/
-  inks : Array GroundInk := #[]
+  decorative : Array ColorRef := #[]
   deriving Repr, BEq, Inhabited
 
+/-- The colour a palette declares under one name, of either kind. -/
+public def Palette.lookup (p : Palette) (ref : ColorRef) : Option Color :=
+  (p.entries.find? (·.1 == ref)).map (·.2)
+
+/-- The author colours, in declaration order. -/
+public def Palette.colors (p : Palette) : Array (String × Color) :=
+  p.entries.filterMap fun
+    | (.color n, c) => some (n, c)
+    | (.role _, _) => none
+
+section DesignResolve
+
+/-! The one door a name in a colour expression goes through, beside the
+resolver below: an author colour of that name, else the role its key names. -/
+
+/-- What a name in a colour expression reads: an author colour of that
+name, else the declared role whose key it is — `\definecolor` wins over a
+role exactly as it wins over xcolor's base names. -/
+public def Palette.refOf? (p : Palette) (name : String) : Option ColorRef :=
+  if (p.lookup (.color name)).isSome then some (.color name)
+  else (Role.ofKey? name).bind fun r =>
+    if (p.lookup (.role r)).isSome then some (.role r) else none
+
+/-- A name in a colour expression: an author colour, else a role. -/
 public def Palette.find? (p : Palette) (name : String) : Option Color :=
-  (p.entries.find? (·.1 == name)).map (·.2)
+  (p.lookup (.color name)).or ((Role.ofKey? name).bind fun r => p.lookup (.role r))
+
+end DesignResolve
 
 /-- Replace-on-redeclare: a later declaration overrides, keeping one entry
 per name. The one install mechanism — a document's `\palette` and a theme's
 bundle go through the same door. -/
-@[expose] public def Palette.declare (p : Palette) (key : String) (c : Color)
+@[expose] public def Palette.declare (p : Palette) (ref : ColorRef) (c : Color)
     (decorative : Bool := false) : Palette :=
   { p with
-    entries := (p.entries.filter (·.1 != key)).push (key, c)
+    entries := (p.entries.filter (·.1 != ref)).push (ref, c)
     decorative := if decorative then
-        if p.decorative.contains key then p.decorative
-        else p.decorative.push key
-      else p.decorative.filter (· != key) }
+        if p.decorative.contains ref then p.decorative
+        else p.decorative.push ref
+      else p.decorative.filter (· != ref) }
 
-/-- Remove one palette key while leaving every unrelated declaration in its
+/-- The `\palette{<key> = …}` door: a role's key declares the role, any
+other key an author colour. -/
+public def Palette.declareKey (p : Palette) (key : String) (c : Color)
+    (decorative : Bool := false) : Palette :=
+  p.declare (ColorRef.ofKey key) c decorative
+
+/-- Remove one name while leaving every unrelated declaration in its
 current epoch. Used by a page-ground reset when the opening document palette
 had no explicit ground. -/
-public def Palette.erase (p : Palette) (key : String) : Palette :=
-  { p with entries := p.entries.filter (·.1 != key)
-           decorative := p.decorative.filter (· != key) }
+public def Palette.erase (p : Palette) (ref : ColorRef) : Palette :=
+  { p with entries := p.entries.filter (·.1 != ref)
+           decorative := p.decorative.filter (· != ref) }
 
-/-- Restore one key from an opening palette: its original value and
+/-- Restore one name from an opening palette: its original value and
 classification when present, absence when the opening palette inherited the
 class default. -/
-public def Palette.restore (p opening : Palette) (key : String) : Palette :=
-  match opening.find? key with
-  | some c => p.declare key c (opening.decorative.contains key)
-  | none => p.erase key
+public def Palette.restore (p opening : Palette) (ref : ColorRef) : Palette :=
+  match opening.lookup ref with
+  | some c => p.declare ref c (opening.decorative.contains ref)
+  | none => p.erase ref
 
-/-- Two palettes that resolve every key alike, whatever order their entries
-were declared in: the same values, decorative keys, cover and realized inks. -/
+/-- Two palettes that resolve every name alike, whatever order their entries
+were declared in: the same values, decorative names and cover. -/
 @[expose] public def Palette.sameAs (a b : Palette) : Bool :=
-  (a.entries ++ b.entries).all (fun (k, _) => a.find? k == b.find? k) &&
+  (a.entries ++ b.entries).all (fun (k, _) => a.lookup k == b.lookup k) &&
     (a.decorative ++ b.decorative).all (fun k => a.decorative.contains k == b.decorative.contains k) &&
-    a.coveredFraction == b.coveredFraction && a.inks == b.inks
+    a.coveredFraction == b.coveredFraction
 
-/-- Erasing a key makes that key absent, not a guessed replacement colour. -/
-public theorem Palette.erase_exact (p : Palette) (key : String) :
-    (p.erase key).find? key = none := by
-  simp only [Palette.erase, Palette.find?]
-  have hnone : (p.entries.filter (·.1 != key)).find? (·.1 == key) = none := by
+/-- Erasing a name makes it absent, not a guessed replacement colour. -/
+public theorem Palette.erase_exact (p : Palette) (ref : ColorRef) :
+    (p.erase ref).lookup ref = none := by
+  simp only [Palette.erase, Palette.lookup]
+  have hnone : (p.entries.filter (·.1 != ref)).find? (·.1 == ref) = none := by
     rw [Array.find?_eq_none]
     intro x hx
     have hne := (Array.mem_filter.mp hx).2
     simpa using hne
   simp [hnone]
 
-/-- Erasing one key preserves every other palette lookup. -/
-public theorem Palette.erase_keeps_others (p : Palette) (key other : String)
-    (h : other ≠ key) : (p.erase key).find? other = p.find? other := by
-  unfold Palette.erase Palette.find?
+/-- Erasing one name preserves every other lookup. -/
+public theorem Palette.erase_keeps_others (p : Palette) (ref other : ColorRef)
+    (h : other ≠ ref) : (p.erase ref).lookup other = p.lookup other := by
+  unfold Palette.erase Palette.lookup
   rw [Array.find?_filter]
   have hpred :
-      (fun a : String × Color => decide ((a.fst != key) = true ∧ (a.fst == other) = true))
-        = (fun a : String × Color => a.fst == other) := by
+      (fun a : ColorRef × Color => decide ((a.fst != ref) = true ∧ (a.fst == other) = true))
+        = (fun a : ColorRef × Color => a.fst == other) := by
     funext x
     by_cases hx : (x.1 == other) = true
     · have hxe : x.1 = other := by simpa using hx
@@ -1995,103 +2010,106 @@ public theorem Palette.erase_keeps_others (p : Palette) (key other : String)
 
 /-- A reset reads exactly as the opening palette read, whether that means a
 concrete document colour or the class's undeclared default. -/
-public theorem Palette.restore_exact (p opening : Palette) (key : String) :
-    (p.restore opening key).find? key = opening.find? key := by
-  cases h : opening.find? key with
-  | none => simpa [Palette.restore, h] using Palette.erase_exact p key
+public theorem Palette.restore_exact (p opening : Palette) (ref : ColorRef) :
+    (p.restore opening ref).lookup ref = opening.lookup ref := by
+  cases h : opening.lookup ref with
+  | none => simpa [Palette.restore, h] using Palette.erase_exact p ref
   | some c =>
     simp only [Palette.restore, h]
-    unfold Palette.declare Palette.find?
+    unfold Palette.declare Palette.lookup
     rw [declare_find_eq]
     rfl
 
 /-- Keyed last-wins for colours (T2), the same statement `\tokens` carries:
 the declared colour is the one resolved. -/
-public theorem Palette.declare_last_wins (p : Palette) (k : String) (c : Color) :
-    (p.declare k c).find? k = some c := by
-  unfold declare find?
+public theorem Palette.declare_last_wins (p : Palette) (ref : ColorRef) (c : Color) :
+    (p.declare ref c).lookup ref = some c := by
+  unfold declare lookup
   rw [declare_find_eq]
   rfl
 
 /-- Declaring a colour resolves to that colour for either decorative flag. -/
-public theorem Palette.declare_find_exact (p : Palette) (key : String)
+public theorem Palette.declare_find_exact (p : Palette) (ref : ColorRef)
     (color : Color) (decorative : Bool) :
-    (p.declare key color decorative).find? key = some color := by
-  unfold Palette.declare Palette.find?
+    (p.declare ref color decorative).lookup ref = some color := by
+  unfold Palette.declare Palette.lookup
   rw [declare_find_eq]
   rfl
 
 /-- Redeclaring a colour overwrites without residue (T2) — the door theme
 bundles and documents share, so "override the theme's entry" is exact, not
 approximate. -/
-public theorem Palette.declare_overwrite (p : Palette) (k : String) (c c' : Color) :
-    (p.declare k c).declare k c' = p.declare k c' := by
+public theorem Palette.declare_overwrite (p : Palette) (ref : ColorRef) (c c' : Color) :
+    (p.declare ref c).declare ref c' = p.declare ref c' := by
   unfold declare
   rw [declare_collapse]
   simp
 
 /-- An override changes exactly what it names, the locality half: every
-other key resolves as it did before, whether or not the declaration is
+other name resolves as it did before, whether or not the declaration is
 decorative. With `declare_last_wins` above this is the whole per-key
 layering contract — every layer (engine default, theme bundle, document
 declaration; values, not expressions, per the `Theme` docstring and PLAN
 2026-09-17) installs through this one door, and the statement's absence is
 what let a document's `\muted` erase a theme role silently. -/
-public theorem Palette.declare_keeps_others (p : Palette) (k k' : String) (c : Color) (d : Bool)
-    (h : k' ≠ k) : (p.declare k c d).find? k' = p.find? k' := by
-  unfold declare find?
+public theorem Palette.declare_keeps_others (p : Palette) (ref other : ColorRef) (c : Color)
+    (d : Bool) (h : other ≠ ref) : (p.declare ref c d).lookup other = p.lookup other := by
+  unfold declare lookup
   rw [declare_keeps _ _ _ _ h]
 
-/-- Restoring a page-ground key preserves every unrelated body declaration,
-whether the opening palette supplies that key or leaves it absent. -/
-public theorem Palette.restore_keeps_others (p opening : Palette) (key other : String)
-    (h : other ≠ key) : (p.restore opening key).find? other = p.find? other := by
+/-- Restoring a page-ground name preserves every unrelated body declaration,
+whether the opening palette supplies that name or leaves it absent. -/
+public theorem Palette.restore_keeps_others (p opening : Palette) (ref other : ColorRef)
+    (h : other ≠ ref) : (p.restore opening ref).lookup other = p.lookup other := by
   unfold Palette.restore
-  cases opening.find? key with
-  | none => exact p.erase_keeps_others key other h
-  | some c => exact p.declare_keeps_others key other c _ h
+  cases opening.lookup ref with
+  | none => exact p.erase_keeps_others ref other h
+  | some c => exact p.declare_keeps_others ref other c _ h
 
-/-- Restoring one key never changes the palette's cover fraction. -/
-public theorem Palette.restore_keeps_covered (p opening : Palette) (key : String) :
-    (p.restore opening key).coveredFraction = p.coveredFraction := by
+/-- Restoring one name never changes the palette's cover fraction. -/
+public theorem Palette.restore_keeps_covered (p opening : Palette) (ref : ColorRef) :
+    (p.restore opening ref).coveredFraction = p.coveredFraction := by
   unfold Palette.restore
-  cases opening.find? key <;> rfl
+  cases opening.lookup ref <;> rfl
 
-/-- The restored key carries the opening declaration's decorative
+/-- The restored name carries the opening declaration's decorative
 classification when it exists, and no stale exemption when it does not. -/
-public theorem Palette.restore_decorative_exact (p opening : Palette) (key : String) :
-    (p.restore opening key).decorative.contains key =
-      ((opening.find? key).isSome && opening.decorative.contains key) := by
-  cases h : opening.find? key with
+public theorem Palette.restore_decorative_exact (p opening : Palette) (ref : ColorRef) :
+    (p.restore opening ref).decorative.contains ref =
+      ((opening.lookup ref).isSome && opening.decorative.contains ref) := by
+  cases h : opening.lookup ref with
   | none => simp [Palette.restore, h, Palette.erase]
   | some c =>
-    by_cases hd : key ∈ opening.decorative
-    · by_cases hp : key ∈ p.decorative <;>
+    by_cases hd : ref ∈ opening.decorative
+    · by_cases hp : ref ∈ p.decorative <;>
         simp [Palette.restore, h, Palette.declare, hd, hp]
     · simp [Palette.restore, h, Palette.declare, hd]
 
 /-- A colour override never touches the covered fraction. -/
-public theorem Palette.declare_keeps_covered (p : Palette) (k : String) (c : Color) (d : Bool) :
-    (p.declare k c d).coveredFraction = p.coveredFraction := by rfl
+public theorem Palette.declare_keeps_covered (p : Palette) (ref : ColorRef) (c : Color)
+    (d : Bool) : (p.declare ref c d).coveredFraction = p.coveredFraction := by rfl
 
 /-- The decorative exemption rides with the declaration: a plain
-redeclaration removes its key from the exempt set, so re-declaring a
+redeclaration removes its name from the exempt set, so re-declaring a
 colour without the opt-out restores the contrast check. The exemption is
 WCAG 2.2 SC 1.4.3's decoration exemption, and it excuses the declared
-value — a property of one declaration, never of the key forever: before
+value — a property of one declaration, never of the name forever: before
 this statement a stale exemption outlived the value it excused, and a
 redeclared colour shipped illegible in silence. -/
-public theorem declare_decorative_rides (p : Palette) (k : String) (c : Color) :
-    (p.declare k c false).decorative.contains k = false := by
+public theorem declare_decorative_rides (p : Palette) (ref : ColorRef) (c : Color) :
+    (p.declare ref c false).decorative.contains ref = false := by
   simp [Palette.declare]
 
-/-- The other direction: declaring decorative exempts the key. -/
-public theorem declare_decorative_names (p : Palette) (k : String) (c : Color) :
-    (p.declare k c true).decorative.contains k = true := by
+/-- The other direction: declaring decorative exempts the name. -/
+public theorem declare_decorative_names (p : Palette) (ref : ColorRef) (c : Color) :
+    (p.declare ref c true).decorative.contains ref = true := by
   simp only [Palette.declare, ite_true]
-  by_cases h : k ∈ p.decorative <;> simp [h]
+  by_cases h : ref ∈ p.decorative <;> simp [h]
 
-@[expose] public def Color.white : Color := { r := 255, g := 255, b := 255 }
+/-- An expression name reads its author colour before any role. -/
+public theorem Palette.find?_color_first (p : Palette) (n : String) (c : Color)
+    (h : p.lookup (.color n) = some c) : p.find? n = some c := by
+  simp [Palette.find?, h]
 
 /-- `pct`% of `x` over the rest of `y`, rounded half up — the one mixing
 step, in whichever unit the model's components come in. -/
@@ -2159,6 +2177,15 @@ private theorem Color.mix_cmyk_exact (a b : Color) (pct : Nat) (q : Nat × Nat �
       mixStep q.2.2.1 b.toCmyk.2.2.1 pct, mixStep q.2.2.2 b.toCmyk.2.2.2 pct) := by
   simp [Color.mix, h, Color.mixCmyk, Color.ofCmyk]
 
+/-- The blanks a palette expression's parts are trimmed of. -/
+public def asciiBlank (c : Char) : Bool := c == ' ' || c == '\t' || c == '\n' || c == '\r'
+
+/-- A colour name an expression reads as itself: no `!` mix operator and no
+blank at either end. -/
+public def plainName (n : String) : Bool :=
+  !n.toList.contains '!' && (n.toList.head?.all fun c => !asciiBlank c) &&
+    (n.toList.getLast?.all fun c => !asciiBlank c)
+
 /-- The `!`-separated parts of a palette expression, each trimmed of ASCII
 whitespace: structural recursion the kernel evaluates, so a contract over
 `Palette.resolve` can close by `decide` — `String.splitOn`'s well-founded
@@ -2172,8 +2199,7 @@ private def bangParts (cur : List Char) : List Char → List String
 where
   /-- `cur` holds the segment reversed; trim both ends of the restored order. -/
   trimmed (cur : List Char) : String :=
-    let ws (c : Char) : Bool := c == ' ' || c == '\t' || c == '\n' || c == '\r'
-    String.ofList (((cur.dropWhile ws).reverse).dropWhile ws)
+    String.ofList (((cur.dropWhile asciiBlank).reverse).dropWhile asciiBlank)
 
 /-- xcolor's base colours, "always available" once the package loads
 (xcolor manual §4.1, Table 1) — and the engine accepts xcolor natively,
@@ -2218,7 +2244,7 @@ wherever it resolves: `find?` is the single reader of the entries, and
 every atom here goes through it first. Before that rule, a palette naming
 an entry `black` painted the declared colour where `find?` resolved and
 pure black where a mix or `\textcolor` did
-(`role_resolves_at_one_site` is the contract). -/
+(`Theme.resolve_find_exact` is the contract). -/
 public def Palette.resolve (p : Palette) (expr : String) : Option Color :=
   let rec go (c : Color) : List String → Option Color
     | [] => some c
@@ -3750,7 +3776,7 @@ public inductive Inline where
   | styled (style : Style) (body : Array Inline)
   /-- `name` is the palette entry this came from, when it had one, so the
   HTML backend can emit `var(--name)` and let a host page override it. -/
-  | colored (color : Color) (name : Option String) (body : Array Inline)
+  | colored (color : Color) (name : Option ColorRef) (body : Array Inline)
   /-- Diagnostic provenance only. Every semantic reading traverses `body`
   unchanged; the span neither styles content nor adds a semantic leaf.
   Source-free compilation removes this wrapper with `eraseLocations`. -/
@@ -5207,7 +5233,7 @@ public inductive HAlign where
   | left
   | center
   | right
-  deriving Repr, BEq, Inhabited
+  deriving Repr, BEq, DecidableEq, Inhabited
 
 /-- The side as the `text-align` keyword the scope rules print. -/
 @[expose] public def HAlign.align : HAlign → String
@@ -5896,14 +5922,6 @@ public def AlgKind.name : AlgKind → String
   | .closer o => s!"close {o.name}"
   | .ret => "return"
 
-/-- The muted role's one resolving chain (`Design.ofDoc` reads the same
-chain): the palette's `muted`, else its `fg`, else black — quieted
-secondary ink. Spelled once so a walk reading the epoch palette in force
-(algorithm comments, line numbers) resolves exactly as the document
-design does. -/
-public def mutedOf (pal : Palette) : Color :=
-  (pal.find? "muted").getD ((pal.find? "fg").getD Color.black)
-
 /-- One algorithm line as display inlines — the one site both backends
 read, so the page and the HTML list item spell a line identically
 (`algorithm_lines_agree` is the statement). Keywords set bold
@@ -5950,7 +5968,7 @@ public def AlgLine.rendered (w : AlgWords) (semis : Bool) (muted : Color)
   if let some c := l.comment then
     unless out.isEmpty do
       out := out.push (.text " ")
-    out := out.push (.colored muted (some "muted")
+    out := out.push (.colored muted (some (.role .muted))
       (#[Inline.text "/* "] ++ c ++ #[Inline.text " */"]))
   return out
 
@@ -6034,37 +6052,6 @@ public structure BibItem where
   shorthand among them (`\hss` before each). Both backends read it. -/
   labelFlush : Bool := false
   deriving Repr, BEq, Inhabited
-
-/-- The titled block's kind, closed: beamer's three block environments
-(`{block}`, `{alertblock}`, `{exampleblock}` — beamer user guide §12.3,
-"Highlighting"), and tcolorbox's box, which its lowering sets through the
-same surface (`Tcolorbox.lower`). The kind selects the role pair the title
-resolves through (`titledLook`, the box the plain block's: `roleStem`)
-and the box the block stands in: beamer's two colour boxes for the three,
-tcolorbox's frame for the box — a poster and a deck set the same node at
-different base sizes. -/
-public inductive TitledKind where
-  | block
-  | alert
-  | example
-  | box
-  deriving Repr, BEq, DecidableEq, Inhabited
-
-/-- The kind's one spelling: the HTML class suffix, one naming site for both
-backends and the dump. -/
-public def TitledKind.name : TitledKind → String
-  | .block => "block"
-  | .alert => "alert"
-  | .example => "example"
-  | .box => "box"
-
-/-- The role-key stem the kind's colours resolve through (`alerttitlefg`):
-tcolorbox's box takes the plain block's roles, where its lowering declares
-its colours. -/
-public def TitledKind.roleStem : TitledKind → String
-  | .block | .box => "block"
-  | .alert => "alert"
-  | .example => "example"
 
 /-- The token grammar a listing's declared language must fit before either
 text artifact may carry it: an ASCII lowercase letter, then lowercase
@@ -6179,6 +6166,10 @@ public structure ListingSpec where
   language : Option ListingLang := none
   /-- Both backends pass this value to the one shared token painter. -/
   style : ListingStyle := .default
+  /-- minted's `bgcolor`: the listing's own ground, fvextra's colour box
+  behind every source line across the line width (`\FV@BGColor@List`), with
+  the name it was spelled by when it names one. -/
+  ground : Option (Color × Option ColorRef) := none
   /-- One segment array per normalized source line. Empty means plain text.
   `tokenLines` validates the text before either backend consumes this cache. -/
   highlight : Array (Array ListingHighlight.Token) := #[]
@@ -6462,7 +6453,7 @@ public inductive Block where
   so the token's name travels with it — the colour's name always did,
   which is why `separator` was readable from a stylesheet and
   `separatorheight` was not. -/
-  | rule (color : Color) (name : Option String) (thickness : Sourced SymGlue)
+  | rule (color : Color) (name : Option ColorRef) (thickness : Sourced SymGlue)
   /-- An elaborated `tikzpicture` subset: concrete shapes in picture
   coordinates, everything evaluated at elaboration (loops unrolled,
   expressions reduced, colours resolved, `scale=` applied). Layout places
@@ -8111,7 +8102,7 @@ public structure BlockEdge where
   sep : SymGlue
   hang : Bool
   color : Color
-  name : Option String := none
+  name : Option ColorRef := none
   deriving Repr, BEq, Inhabited
 
 /-- **The one reading of a template rule's colour**, against the palette in
@@ -8119,7 +8110,7 @@ force where the block stands: the entry the rule names, else the colour it was
 declared with. The page reads it so, and the stylesheet writes the same lookup
 as `var(--name, colour)`. -/
 public def BlockEdge.ink (e : BlockEdge) (pal : Palette) : Color :=
-  (e.name.bind pal.find?).getD e.color
+  (e.name.bind pal.lookup).getD e.color
 
 /-- The title as a block template sets it. `boxed`: in a box of its own,
 `\hsize` wide, which TeX places in its list by the interline rule from the
@@ -8197,7 +8188,7 @@ public structure ElementStyle where
   before : Option SymGlue := none
   after : Option SymGlue := none
   /-- A rule filling the rest of the heading's line, in this palette colour. -/
-  rule : Option (Color × Option String) := none
+  rule : Option (Color × Option ColorRef) := none
   /-- Where `rule` stands against the baseline; undeclared, `xHeight`. -/
   rulePosition : Option RulePosition := none
   /-- `rule`'s thickness; undeclared, the engine's em-relative weight
@@ -8208,14 +8199,14 @@ public structure ElementStyle where
   indent : Option SymGlue := none
   /-- Space between list items. -/
   gap : Option SymGlue := none
-  /-- Horizontal alignment of the element's lines: `left`, `center`, or
-  `right`. The title page reads it (moloch sets its title matter ragged
-  left; undeclared, a title page centres). -/
-  align : Option String := none
+  /-- Horizontal alignment of the element's lines. The title page reads it
+  (moloch sets its title matter ragged left; undeclared, a title page
+  centres). -/
+  align : Option HAlign := none
   /-- A full-measure rule after the element's leading part, in this palette
   colour: the moloch title separator between the title block and the
   author block. -/
-  separator : Option (Color × Option String) := none
+  separator : Option (Color × Option ColorRef) := none
   /-- A full-measure rule above the element, this thick, in the ink colour:
   the NeurIPS-lineage top title bar (`\@toptitlebar`, `\hrule height 4\p@`
   above `\@title`). Read at the title block (`titleBars`); the venue
@@ -8257,14 +8248,14 @@ public structure ElementStyle where
   in milliseconds, of the transition between those states, and its CSS
   always ships inside its own `prefers-reduced-motion` guard
   (`HtmlDoc.motionCss`, WCAG 2.2 SC 2.3.3). -/
-  hover : Option (Color × Option String) := none
-  focus : Option (Color × Option String) := none
+  hover : Option (Color × Option ColorRef) := none
+  focus : Option (Color × Option ColorRef) := none
   motion : Option Nat := none
   /-- The ink a link kind's text is set in (`link`, `url`, `cite`), where the
   document declares one: hyperref's `linkcolor`, `urlcolor` and `citecolor`
   under `colorlinks`. Read at the one site each kind's link is built
   (`linkInk`); undeclared, a link keeps the running colour. -/
-  color : Option (Color × Option String) := none
+  color : Option (Color × Option ColorRef) := none
   /-- The title page's declared slots (`TitleSlot`), read by the title page
   only: a title page that declares any sets exactly its slots, each where
   it is pinned. Empty is the built-in title page. -/
@@ -8887,7 +8878,7 @@ public def abstractHeadingStyle (styles : Styles) : ElementStyle :=
   let own := (styles.find? "abstract").getD {}
   { own with
     font := own.font <|> sec.font
-    align := own.align <|> some "center" }
+    align := own.align <|> some .center }
 
 /-- With no explicit `\style{abstract}`, the abstract heading's font equals
 the section heading's, and it centres — by construction of the derivation,
@@ -8897,7 +8888,7 @@ public theorem abstract_heading_follows_section (styles : Styles)
     (h : styles.find? "abstract" = none) :
     (abstractHeadingStyle styles).font =
       ((styles.find? "section").getD {}).font ∧
-    (abstractHeadingStyle styles).align = some "center" := by
+    (abstractHeadingStyle styles).align = some .center := by
   simp [abstractHeadingStyle, h]
 
 /-- The abstract body's size step: the one resolving site both backends
@@ -10459,13 +10450,13 @@ end
 
 mutual
 
-private theorem list_mapInk (f : Ir.Color → Option String → Ir.Color) :
+private theorem list_mapInk (f : Ir.Color → Option ColorRef → Ir.Color) :
     ∀ (body : Math.MList) (acc : String), list acc (Math.MList.mapInk f body) = list acc body
   | .nil, _ => rfl
   | .cons x rest, acc => by
     simp only [Math.MList.mapInk, list, item_mapInk f x, list_mapInk f rest]
 
-private theorem item_mapInk (f : Ir.Color → Option String → Ir.Color) :
+private theorem item_mapInk (f : Ir.Color → Option ColorRef → Ir.Color) :
     ∀ (x : Math.MItem), item (Math.MItem.mapInk f x) = item x
   | .space _ => rfl
   | .ink _ _ => rfl
@@ -10473,7 +10464,7 @@ private theorem item_mapInk (f : Ir.Color → Option String → Ir.Color) :
     simp only [Math.MItem.mapInk, item, nucleus_mapInk f n, list_mapInk f sup,
       list_mapInk f sub]
 
-private theorem nucleus_mapInk (f : Ir.Color → Option String → Ir.Color) :
+private theorem nucleus_mapInk (f : Ir.Color → Option ColorRef → Ir.Color) :
     ∀ (n : Math.MNucleus), nucleus (Math.MNucleus.mapInk f n) = nucleus n
   | .sym _ => rfl
   | .styled _ _ => rfl
@@ -10496,7 +10487,7 @@ private theorem nucleus_mapInk (f : Ir.Color → Option String → Ir.Color) :
   | .cancel _ _ value body => by
     simp only [Math.MNucleus.mapInk, nucleus, list_mapInk f value, list_mapInk f body]
 
-private theorem row_mapInk (f : Ir.Color → Option String → Ir.Color) :
+private theorem row_mapInk (f : Ir.Color → Option ColorRef → Ir.Color) :
     ∀ (r : Math.MRow) (acc : String), row acc (Math.MRow.mapInk f r) = row acc r
   | .nil, _ => rfl
   | .cons c rest, acc => by
@@ -10504,7 +10495,7 @@ private theorem row_mapInk (f : Ir.Color → Option String → Ir.Color) :
     rw [row_mapInk f rest]
     cases rest <;> rfl
 
-private theorem rows_mapInk (f : Ir.Color → Option String → Ir.Color) :
+private theorem rows_mapInk (f : Ir.Color → Option ColorRef → Ir.Color) :
     ∀ (rs : Math.MRows) (acc : String), rows acc (Math.MRows.mapInk f rs) = rows acc rs
   | .nil, _ => rfl
   | .cons r rest, acc => by
@@ -10539,7 +10530,7 @@ public theorem formulaFloor_content_covers (body : Math.MList) :
 
 /-- Recolouring preserves the complete structural reading, including the
 operators and grouping that the scalar census does not count. -/
-public theorem formulaFloor_ink_id (f : Color → Option String → Color) (body : Math.MList) :
+public theorem formulaFloor_ink_id (f : Color → Option ColorRef → Color) (body : Math.MList) :
     formulaFloor (Math.MList.mapInk f body) = formulaFloor body :=
   FormulaText.list_mapInk f body ""
 
@@ -11973,7 +11964,7 @@ private def dumpMathItem (acc : String) (x : Math.MItem) : String :=
     dumpMathSub (dumpMathSup (dumpMathNucleus acc nuc) sup) sub
   | .space mu => acc ++ s!"mu:{mu}"
   | .ink c n => acc ++ s!"ink:#{Color.hexByte c.r}{Color.hexByte c.g}{Color.hexByte c.b}"
-      ++ (match n with | some n => s!"({n})" | none => "")
+      ++ (match n with | some n => s!"({n.key})" | none => "")
 
 private def dumpMathNucleus (acc : String) (n : Math.MNucleus) : String :=
   match n with
@@ -12101,7 +12092,7 @@ private def dumpInline (ind : String) (x : Inline) : String :=
   | .styled st body => s!"{ind}styled {st.label}\n" ++ dumpInlines (ind ++ "  ") body
   | .colored c name body =>
     let tag := match name with
-      | some n => s!"{n} #{Color.hexByte c.r}{Color.hexByte c.g}{Color.hexByte c.b}"
+      | some n => s!"{n.key} #{Color.hexByte c.r}{Color.hexByte c.g}{Color.hexByte c.b}"
       | none => s!"#{Color.hexByte c.r}{Color.hexByte c.g}{Color.hexByte c.b}"
     s!"{ind}color {tag}\n" ++ dumpInlines (ind ++ "  ") body
   | .located _ body => dumpInlines ind body
@@ -12327,6 +12318,10 @@ private def dumpBlock (ind : String) (b : Block) : String :=
       | none => "") ++
     (match spec.langToken with
       | some l => s!" language {l}"
+      | none => "") ++
+    (match spec.ground with
+      | some (c, ref) => " ground " ++ ((ref.map (·.key ++ " ")).getD "") ++
+          s!"#{Color.hexByte c.r}{Color.hexByte c.g}{Color.hexByte c.b}"
       | none => "") ++ "\n" ++
     (match spec.caption with
       | some (_, cap) => s!"{ind}  caption\n" ++ dumpInlines (ind ++ "    ") cap
@@ -12356,7 +12351,7 @@ private def dumpBlock (ind : String) (b : Block) : String :=
   | .setPalette pal =>
     s!"{ind}setPalette\n" ++
     String.join (pal.entries.toList.map fun (n, c) =>
-      s!"{ind}  {n} = #{Color.hexByte c.r}{Color.hexByte c.g}{Color.hexByte c.b}\n")
+      s!"{ind}  {n.key} = #{Color.hexByte c.r}{Color.hexByte c.g}{Color.hexByte c.b}\n")
   | .setTokens tk =>
     s!"{ind}setTokens\n" ++
     String.join (tk.entries.toList.map fun (n, g) =>
@@ -12364,7 +12359,7 @@ private def dumpBlock (ind : String) (b : Block) : String :=
   | .pagebreak => s!"{ind}pagebreak\n"
   | .rule color name thickness =>
     let nm := match name with
-      | some n => s!" {n}"
+      | some n => s!" {n.key}"
       | none => s!" #{Color.hexByte color.r}{Color.hexByte color.g}{Color.hexByte color.b}"
     s!"{ind}rule{nm} {dumpSourcedGlue thickness}\n"
   | .picture pic =>
@@ -12435,6 +12430,188 @@ Material's disabled-state opacity (m2.material.io/design/interaction/
 states.html#disabled: content at 38% opacity), an *opacity*, so it applies
 per colour; compositing over an opaque page is mixing toward it. -/
 public def coveredFractionDefault : Nat := 38
+
+section DesignResolve
+
+/-! ## Resolution
+
+Every role a backend paints resolves here: the palette's own declaration,
+else the role's default in the scheme, read off its row (`Role.row`). A
+default reads only shallower roles (`Role.fallback_depth_monotone`), so the
+recursion is on the role's stratum. -/
+
+/-- The colour the palette declares for a role, if any. -/
+public def Design.declared? (pal : Palette) (r : Role) : Option Color :=
+  pal.lookup (.role r)
+
+/-- One default, read through `look` for the roles it names in the scheme
+asked for, and through `printLook` for a role it reads as printed
+(`inPrint`). A bar's ink is the first candidate that meets the role's need
+on the bar (WCAG 2.2's ratio, `Contrast.required`), else the first
+candidate — the choice the engine shipped before it judged. -/
+@[expose] public def Design.fallbackWith (need : Need) (look printLook : Role → Option Color) :
+    Fallback → Option Color
+  | .first rs => rs.findSome? look
+  | .readable bar cands unbarred =>
+    match look bar with
+    | some g =>
+      let vals := cands.filterMap look
+      (vals.find? fun c => decide (Contrast.required need ≤ Contrast.contrastMilli c g)).or
+        vals.head?
+    | none => unbarred.findSome? look
+  | .inPrint r => printLook r
+  | .const c => some c
+  | .absent => none
+  | .code => none
+
+/-- The resolver at a stratum: a role of depth `d` resolves at `d`, reading
+the roles its default names at `d - 1`, in its own scheme or, for a role
+read as printed, in print. Structural on the stratum, so the kernel can
+evaluate it. -/
+@[expose] public def Design.atDepth (pal : Palette) : Nat → Scheme → Role → Option Color
+  | 0, s, r => (Design.declared? pal r).or
+      (Design.fallbackWith r.row.need (fun _ => none) (fun _ => none) (r.row.fallback s))
+  | n + 1, s, r => (Design.declared? pal r).or
+      (Design.fallbackWith r.row.need (Design.atDepth pal n s) (Design.atDepth pal n .print)
+        (r.row.fallback s))
+
+/-- **The one resolving site.** A role's colour in a scheme: the palette's
+declaration, else its row's default there. `none` is a role nothing paints
+(an undeclared bar, an undeclared content colour). -/
+@[expose] public def Design.at (pal : Palette) (s : Scheme) (r : Role) : Option Color :=
+  Design.atDepth pal r.depth s r
+
+private theorem filterMap_ext_mem {α β : Type} (f g : α → Option β) :
+    ∀ (l : List α), (∀ a ∈ l, f a = g a) → l.filterMap f = l.filterMap g
+  | [], _ => rfl
+  | a :: rest, h => by
+    simp only [List.filterMap_cons]
+    rw [h a (List.mem_cons_self ..),
+      filterMap_ext_mem f g rest (fun a' ha' => h a' (List.mem_cons_of_mem _ ha'))]
+
+private theorem findSome?_ext_mem {α β : Type} (f g : α → Option β) :
+    ∀ (l : List α), (∀ a ∈ l, f a = g a) → l.findSome? f = l.findSome? g
+  | [], _ => rfl
+  | a :: rest, h => by
+    simp only [List.findSome?_cons]
+    rw [h a (List.mem_cons_self ..),
+      findSome?_ext_mem f g rest (fun a' ha' => h a' (List.mem_cons_of_mem _ ha'))]
+
+private theorem Design.fallbackWith_congr (need : Need) (f g f' g' : Role → Option Color)
+    (fb : Fallback) (h : ∀ r ∈ fb.refs, f r = g r) (h' : ∀ r ∈ fb.refs, f' r = g' r) :
+    Design.fallbackWith need f f' fb = Design.fallbackWith need g g' fb := by
+  cases fb with
+  | first rs => exact findSome?_ext_mem f g rs h
+  | readable bar cands unbarred =>
+    simp only [Design.fallbackWith]
+    have hb : f bar = g bar := h bar (by simp [Fallback.refs])
+    have hc := filterMap_ext_mem f g cands fun r hr => h r (by simp [Fallback.refs, hr])
+    have hu := findSome?_ext_mem f g unbarred fun r hr => h r (by simp [Fallback.refs, hr])
+    rw [hb, hc, hu]
+  | inPrint r => exact h' r (by simp [Fallback.refs])
+  | const c => rfl
+  | absent => rfl
+  | code => rfl
+
+private theorem Role.refs_shallower (r : Role) (s : Scheme) :
+    ∀ r' ∈ (r.row.fallback s).refs, r'.depth < r.depth := by
+  have h := List.all_eq_true.mp Role.fallback_depth_monotone r
+    (List.contains_iff_mem.mp (Role.all_complete r))
+  have hs := List.all_eq_true.mp h s (by cases s <;> simp [Scheme.all])
+  intro r' hr'
+  exact of_decide_eq_true (List.all_eq_true.mp hs r' hr')
+
+private theorem Design.atDepth_stable (pal : Palette) :
+    ∀ (n : Nat) (s : Scheme) (r : Role), r.depth ≤ n →
+      Design.atDepth pal n s r = Design.at pal s r := by
+  intro n
+  induction n using Nat.strongRecOn with
+  | ind n ih =>
+    intro s r hr
+    have refs := Role.refs_shallower r s
+    have rhs : Design.at pal s r = (Design.declared? pal r).or
+        (Design.fallbackWith r.row.need (Design.at pal s) (Design.at pal .print)
+          (r.row.fallback s)) := by
+      show Design.atDepth pal r.depth s r = _
+      cases hd : r.depth with
+      | zero =>
+        simp only [Design.atDepth]
+        congr 1
+        apply Design.fallbackWith_congr
+        · intro r' hr'
+          have := refs r' hr'
+          omega
+        · intro r' hr'
+          have := refs r' hr'
+          omega
+      | succ d =>
+        simp only [Design.atDepth]
+        congr 1
+        apply Design.fallbackWith_congr
+        · intro r' hr'
+          have := refs r' hr'
+          exact ih d (by omega) s r' (by omega)
+        · intro r' hr'
+          have := refs r' hr'
+          exact ih d (by omega) .print r' (by omega)
+    rw [rhs]
+    cases n with
+    | zero =>
+      simp only [Design.atDepth]
+      congr 1
+      apply Design.fallbackWith_congr
+      · intro r' hr'
+        have := refs r' hr'
+        omega
+      · intro r' hr'
+        have := refs r' hr'
+        omega
+    | succ m =>
+      simp only [Design.atDepth]
+      congr 1
+      apply Design.fallbackWith_congr
+      · intro r' hr'
+        have := refs r' hr'
+        exact ih m (by omega) s r' (by omega)
+      · intro r' hr'
+        have := refs r' hr'
+        exact ih m (by omega) .print r' (by omega)
+
+/-- **A role is its declaration, else its default over resolved roles**: the
+resolver's equation, the one place a default chain is read. -/
+public theorem Design.resolve_unfold_exact (pal : Palette) (s : Scheme) (r : Role) :
+    Design.at pal s r = (Design.declared? pal r).or
+      (Design.fallbackWith r.row.need (Design.at pal s) (Design.at pal .print)
+        (r.row.fallback s)) := by
+  have refs := Role.refs_shallower r s
+  show Design.atDepth pal r.depth s r = _
+  cases hd : r.depth with
+  | zero =>
+    simp only [Design.atDepth]
+    congr 1
+    apply Design.fallbackWith_congr
+    · intro r' hr'
+      have := refs r' hr'
+      omega
+    · intro r' hr'
+      have := refs r' hr'
+      omega
+  | succ d =>
+    simp only [Design.atDepth]
+    congr 1
+    apply Design.fallbackWith_congr
+    · intro r' hr'
+      have := refs r' hr'
+      exact Design.atDepth_stable pal d s r' (by omega)
+    · intro r' hr'
+      have := refs r' hr'
+      exact Design.atDepth_stable pal d .print r' (by omega)
+
+/-- The declared roles, in declaration order. -/
+public def Palette.declaredRoles (p : Palette) : Array (Role × Color) :=
+  p.entries.filterMap fun
+    | (.role r, c) => some (r, c)
+    | (.color _, _) => none
 
 /-- One foreground/background pairing a themed element ships. -/
 public structure ColorPair where
@@ -12510,11 +12687,12 @@ public def blockBodyRaise : Length := { ex := 250 }
 empty. Themes such as Moloch declare their fills and inheritance through
 the palette bindings; no title or accent role implies a body fill. -/
 @[expose] public def titledBodyLook (pal : Palette) (kind : TitledKind) : SurfaceLook :=
-  { fg := pal.find? (kind.roleStem ++ "bodyfg"), bg := pal.find? (kind.roleStem ++ "bodybg") }
+  { fg := Design.declared? pal (Role.bodyInk kind)
+    bg := Design.declared? pal (Role.bodyGround kind) }
 
 public theorem titledBodyLook_exact (pal : Palette) (kind : TitledKind) :
-    (titledBodyLook pal kind).fg = pal.find? (kind.roleStem ++ "bodyfg") ∧
-    (titledBodyLook pal kind).bg = pal.find? (kind.roleStem ++ "bodybg") := by
+    (titledBodyLook pal kind).fg = Design.declared? pal (Role.bodyInk kind) ∧
+    (titledBodyLook pal kind).bg = Design.declared? pal (Role.bodyGround kind) := by
   exact ⟨rfl, rfl⟩
 
 /-- A titled block's resolved look: the title's ink, and the bar behind it
@@ -12525,34 +12703,15 @@ public structure TitledLook where
   bar : Option Color
   deriving Repr, BEq
 
-/-- The one resolving site for the titled block's roles, per kind —
-beamer's own parent chain (beamercolorthemedefault.sty: `block title` on
-structure, `block title alerted` on `alerted text`, `block title example`
-on `example text`), read onto the engine's keys: a bare title takes the
-kind's content colour (`alert`, `example`; the ink for `block`), and a
-declared `<kind>titlebg` turns the title into a colour bar whose default
-ink is the page colour, as the frame-title bar's is. Layout reads it with
-the palette in force at the block; `Design.ofDoc` reads it for the
-contrast contract. -/
-public def titledLook (pal : Palette) : TitledKind → TitledLook
-  | .block | .box =>
-    let bar := pal.find? "blocktitlebg"
-    { fg := (pal.find? "blocktitlefg").getD
-        (if bar.isSome then (pal.find? "bg").getD Color.white
-         else (pal.find? "fg").getD Color.black)
-      bar := bar }
-  | .alert =>
-    let bar := pal.find? "alerttitlebg"
-    { fg := (pal.find? "alerttitlefg").getD
-        (if bar.isSome then (pal.find? "bg").getD Color.white
-         else (pal.find? "alert").getD ((pal.find? "fg").getD Color.black))
-      bar := bar }
-  | .example =>
-    let bar := pal.find? "exampletitlebg"
-    { fg := (pal.find? "exampletitlefg").getD
-        (if bar.isSome then (pal.find? "bg").getD Color.white
-         else (pal.find? "example").getD ((pal.find? "fg").getD Color.black))
-      bar := bar }
+/-- The titled block's title look, per kind, in print: beamer's own parent
+chain (beamercolorthemedefault.sty: `block title` on structure, `block title
+alerted` on `alerted text`, `block title example` on `example text`) as the
+registry's rows say — a bare title takes the kind's content colour, and a
+declared `<kind>titlebg` turns the title into a bar whose ink is the first
+of the page and the ink that is legible on it. -/
+@[expose] public def titledLook (pal : Palette) (kind : TitledKind) : TitledLook :=
+  { fg := (Design.at pal .print (Role.titleInk kind)).getD Color.black
+    bar := Design.at pal .print (Role.titleBar kind) }
 
 
 /-- The document's resolved design: every semantic role the backends read,
@@ -12624,75 +12783,519 @@ public structure Design where
   both shipped bundles and consumed by no backend yet — the role check in
   `Tests.lean` names it until the title-page rule lands. -/
   separator : Color
-  /-- Every role's realized ink on a ground that is not the page (the
-  frame-title bar, a titled bar, the standout inversion, the title page):
-  one value per role, declaration and ground, which the PDF's runs ship and
-  the HTML's scoped tokens declare (`HtmlDoc.realized_agree`). -/
-  inks : Array GroundInk
   /-- Thickness of the progress bar, resolved at layout like any token. -/
   progressheight : SymGlue
   styles : Styles
   deriving Repr, BEq
 
-/-- **The one resolving site for every palette role.** Each default the
-backends used to apply at their own use sites (`find?` + `getD`, each with
-its own chain) is applied here, once — and the argument is a palette rather
-than a document precisely because two consumers read two different
-palettes: `Design.ofDoc` reads the document's, and the layout reads the
+/-- **The design record in one scheme**, every colour field a projection of
+`Design.at`, the one resolving site, so no field restates a default chain.
+The argument is a palette rather than a document because two consumers read
+two palettes: `Design.ofDoc` reads the document's, and the layout reads the
 *epoch* palette in force where a frame stands, so a `\setPalette` mid-deck
-retitles the frames after it. That difference is the design; the defaults
-chain behind it is not, and it was written out a second time in
-`Layout.collectFrameTitle` until this function existed
-(`frametitle_agree`).
-
-The two fields a palette cannot answer — the progress bar's thickness and
-the style table — take their undeclared values here, and `ofDoc` overlays
-the document's declarations. -/
-@[expose] public def Design.ofPalette (pal : Palette) : Design :=
-  let fg := (pal.find? "fg").getD Color.black
-  let bg := (pal.find? "bg").getD Color.white
-  let frameTitleFg := (pal.find? "frametitlefg").getD fg
-  let frametitle := (pal.find? "frametitlebg").map fun barBg =>
-    { fg := (pal.find? "frametitlefg").getD bg, bg := barBg : ColorPair }
-  let muted := (pal.find? "muted").getD fg
-  let footBg := pal.find? "footlinebg"
-  let footKey := if (pal.find? "muted").isSome then "muted" else "fg"
-  let footInk := footBg.bind fun ground =>
-    pal.inks.find? fun e => e.role == footKey && e.declared == muted && e.ground == ground
+retitles the frames after it (`frametitle_agree`). The two fields a palette
+cannot answer — the progress bar's thickness and the style table — take
+their undeclared values here, and `ofDoc` overlays the document's
+declarations. -/
+@[expose] public def Design.resolve (pal : Palette) (s : Scheme) : Design :=
+  let res := Design.at pal s
+  let fg := (res .ink).getD Color.black
+  let bg := (res .page).getD Color.white
+  let muted := (res .muted).getD fg
+  let footBg := res .footBand
+  let titled (k : TitledKind) : TitledLook :=
+    { fg := (res (Role.titleInk k)).getD fg, bar := res (Role.titleBar k) }
   { fg := fg
     bg := bg
-    fgDeclared := (pal.find? "fg").isSome
-    bgDeclared := (pal.find? "bg").isSome
+    fgDeclared := (Design.declared? pal .ink).isSome
+    bgDeclared := (Design.declared? pal .page).isSome
     coveredFraction := pal.coveredFraction.getD coveredFractionDefault
-    covered := pal.find? "covered"
+    covered := res .covered
     muted := muted
-    frametitle := frametitle
-    frameTitleFg := frameTitleFg
-    framesubtitle := (pal.find? "framesubtitlefg").getD
-      ((frametitle.map (·.fg)).getD frameTitleFg)
-    sectionTitle := (pal.find? "sectiontitlefg").getD fg
-    footline := { fg := (footInk.map (·.ink)).getD muted, bar := footBg }
-    blockTitle := titledLook pal .block
-    alertTitle := titledLook pal .alert
-    exampleTitle := titledLook pal .example
+    frametitle := (res .frameTitleBar).map fun barBg =>
+      { fg := (res .frameTitleInk).getD bg, bg := barBg : ColorPair }
+    frameTitleFg := (res .frameTitleInk).getD fg
+    framesubtitle := (res .frameSubtitleInk).getD fg
+    sectionTitle := (res .sectionTitleInk).getD fg
+    footline := { fg := (res .footInk).getD muted, bar := footBg }
+    blockTitle := titled .block
+    alertTitle := titled .alert
+    exampleTitle := titled .example
     blockBody := titledBodyLook pal .block
     alertBody := titledBodyLook pal .alert
     exampleBody := titledBodyLook pal .example
-    progress := (pal.find? "progressfg").map fun barFg =>
-      { fg := barFg
-        bg := (pal.find? "progressbg").getD bg }
-    sectionProgress := ((pal.find? "sectionprogressfg").or (pal.find? "progressfg")).map fun barFg =>
-      { fg := barFg
-        bg := ((pal.find? "sectionprogressbg").or (pal.find? "progressbg")).getD bg }
-    standout := { fg := (pal.find? "standoutfg").getD bg
-                  bg := (pal.find? "standoutbg").getD fg }
-    titlepage := (pal.find? "titlepagebg").map fun ground =>
-      { fg := (pal.find? "titlepagefg").getD bg
-        bg := ground }
-    separator := (pal.find? "separator").getD fg
-    inks := pal.inks
+    progress := (res .progressFill).map fun f => { fg := f, bg := (res .progressTrack).getD bg }
+    sectionProgress := (res .sectionProgressFill).map fun f =>
+      { fg := f, bg := (res .sectionProgressTrack).getD bg }
+    standout := { fg := (res .standoutInk).getD bg, bg := (res .standoutGround).getD fg }
+    titlepage := (res .titlePageGround).map fun ground =>
+      { fg := (res .titlePageInk).getD bg, bg := ground }
+    separator := (res .separator).getD fg
     progressheight := { width := Dim.Length.ofSp (Dim.pt 1) }
     styles := {} }
+
+/-- The print design, which the PDF paints and the contrast judge reads. -/
+@[expose] public def Design.ofPalette (pal : Palette) : Design := Design.resolve pal .print
+
+/-- **An author colour never repaints a role.** Declaring a colour under any
+name — `\definecolor{bg}`, the minted manual's own idiom included — leaves
+the resolved design exactly as it was, in every scheme: names are scoped by
+kind (`ColorRef`), and the resolver reads only roles. Before the split the
+same declaration bound the page role and painted the whole page. -/
+public theorem Palette.defineColor_design_id (pal : Palette) (n : String) (c : Color)
+    (d : Bool) (s : Scheme) :
+    Design.resolve (pal.declare (.color n) c d) s = Design.resolve pal s := by
+  have hd : ∀ r, Design.declared? (pal.declare (.color n) c d) r = Design.declared? pal r :=
+    fun r => Palette.declare_keeps_others pal (.color n) (.role r) c d (by simp)
+  have hdepth : ∀ m, Design.atDepth (pal.declare (.color n) c d) m = Design.atDepth pal m := by
+    intro m
+    induction m with
+    | zero => funext s r; simp only [Design.atDepth, hd]
+    | succ m ih => funext s r; simp only [Design.atDepth, hd, ih]
+  have hat : Design.at (pal.declare (.color n) c d) s = Design.at pal s := by
+    funext r
+    simp only [Design.at, hdepth]
+  simp only [Design.resolve, titledBodyLook, hat, hd]
+  rfl
+
+/-- A declaration is what a role resolves to, in every scheme. -/
+public theorem Design.at_declared (pal : Palette) (s : Scheme) (r : Role) (c : Color)
+    (h : Design.declared? pal r = some c) : Design.at pal s r = some c := by
+  rw [Design.resolve_unfold_exact, h]
+  rfl
+
+/-- The page's text always resolves: its declaration, else the scheme's own
+ink. -/
+public theorem Design.at_ink_isSome (pal : Palette) (s : Scheme) :
+    (Design.at pal s .ink).isSome = true := by
+  rw [Design.resolve_unfold_exact]
+  cases Design.declared? pal .ink <;> cases s <;> rfl
+
+/-- The page always resolves: its declaration, else the scheme's own page. -/
+public theorem Design.at_page_isSome (pal : Palette) (s : Scheme) :
+    (Design.at pal s .page).isSome = true := by
+  rw [Design.resolve_unfold_exact]
+  cases Design.declared? pal .page <;> cases s <;> rfl
+
+/-- One pair a design ships: a role's ink on the ground it stands on — `on`
+is the role that ground is, the role's own where it resolves and the page
+where it does not — and what the ink owes there. -/
+public structure Site where
+  role : Role
+  ink : Color
+  on : Role
+  ground : Color
+  need : Need
+  deriving Repr, BEq
+
+/-- A site's pair meets its need (WCAG 2.2's ratio, `Contrast.required`). -/
+@[expose] public def Site.passes (st : Site) : Bool :=
+  decide (Contrast.required st.need ≤ Contrast.contrastMilli st.ink st.ground)
+
+/-- The site one role ships in a scheme, when it ships one: its row pairs it
+with a ground, its presence holds, and its ink resolves. -/
+@[expose] public def Design.site? (pal : Palette) (s : Scheme) (r : Role) : Option Site :=
+  r.row.ground.bind fun g =>
+    if r.row.need.paired && r.row.presence.holds (Design.at pal s) then
+      (Design.at pal s r).map fun ink =>
+        match Design.at pal s g with
+        | some c => { role := r, ink, on := g, ground := c, need := r.row.need }
+        | none =>
+          { role := r, ink, on := .page, ground := (Design.at pal s .page).getD Color.white,
+            need := r.row.need }
+    else none
+
+/-- **Every pair a design ships**, generated from the registry's rows: the
+site of each role present, in registry order. The bundle contracts, the
+document judge and the listing contract read this one list. -/
+@[expose] public def Design.sites (pal : Palette) (s : Scheme) : List Site :=
+  Role.all.filterMap (Design.site? pal s)
+
+/-- **The sites cover the registry** (`_covers`): a role whose row pairs it
+with a ground, whose presence holds and whose ink resolves has its site in
+the list, carrying that ink — so no pair a design creates can be missing
+from the contracts that read the list. -/
+public theorem Design.sites_covers (pal : Palette) (s : Scheme) (r g : Role) (c : Color)
+    (hg : r.row.ground = some g) (hn : r.row.need.paired = true)
+    (hp : r.row.presence.holds (Design.at pal s) = true) (hc : Design.at pal s r = some c) :
+    ∃ st ∈ Design.sites pal s, st.role = r ∧ st.ink = c := by
+  have hmem : r ∈ Role.all := List.contains_iff_mem.mp (Role.all_complete r)
+  cases hgr : Design.at pal s g with
+  | some b =>
+    exact ⟨{ role := r, ink := c, on := g, ground := b, need := r.row.need },
+      List.mem_filterMap.mpr ⟨r, hmem, by simp [Design.site?, hg, hn, hp, hc, hgr]⟩, rfl, rfl⟩
+  | none =>
+    exact ⟨{ role := r, ink := c, on := .page
+             ground := (Design.at pal s .page).getD Color.white, need := r.row.need },
+      List.mem_filterMap.mpr ⟨r, hmem, by simp [Design.site?, hg, hn, hp, hc, hgr]⟩, rfl, rfl⟩
+
+/-- The grounds body content flows on in a design — the page, the standout
+inversion, a declared title page, a block body: each region a site stands
+on, once. -/
+@[expose] public def Design.regionGrounds (pal : Palette) (s : Scheme) : List Color :=
+  (((Design.sites pal s).filter (·.on.row.region)).map (·.ground)).eraseDups
+
+
+/-! ## The stylesheet's projection
+
+What a role's CSS custom property declares in a scheme: the colour a
+document declared for it, else the role its default resolved through — a
+one-level alias, as the W3C Design Tokens format spells a reference — or a
+scheme's own constant. Chasing the aliases through the table reads back the
+resolver's value for every role (`Design.cssDecl_chase_exact`), so a
+stylesheet that declares this table and reads `var(--ltx-<role>)` paints
+what `Design.at` resolves, and a reader's override of a parent cascades to
+the roles that inherit from it. -/
+
+/-- One role property's declaration: a colour, or the role it aliases. -/
+public inductive CssDecl where
+  | value (c : Color)
+  | alias (r : Role)
+  deriving Repr, BEq, Inhabited
+
+/-- A declaration read through `look` for the role an alias names. -/
+@[expose] public def CssDecl.resolve (look : Role → Option Color) : CssDecl → Option Color
+  | .value c => some c
+  | .alias r => look r
+
+/-- The alias a default resolves through, read through `look` and
+`printLook` as `Design.fallbackWith` reads them: the first role of a
+`first` list that resolves; for a bar's ink the first candidate legible on
+the bar, else the first that resolves, and the `unbarred` list off a bar; a
+role read as printed as its alias where the palette declares it (a
+declaration ships in every scheme), else as its printed value; a scheme
+constant as its value; nothing for an absent or style default. -/
+@[expose] public def Design.fallbackDecl (need : Need) (pal : Palette)
+    (look printLook : Role → Option Color) : Fallback → Option CssDecl
+  | .first rs => (rs.find? fun r => (look r).isSome).map .alias
+  | .readable bar cands unbarred =>
+    match look bar with
+    | some g =>
+      let live := cands.filter fun r => (look r).isSome
+      ((live.find? fun r => (look r).any fun c =>
+          decide (Contrast.required need ≤ Contrast.contrastMilli c g)).or live.head?).map .alias
+    | none => (unbarred.find? fun r => (look r).isSome).map .alias
+  | .inPrint r =>
+    match Design.declared? pal r with
+    | some _ => some (.alias r)
+    | none => (printLook r).map .value
+  | .const c => some (.value c)
+  | .absent => none
+  | .code => none
+
+/-- **The declaration a role's property carries in a scheme**: its declared
+colour, else its row's default as an alias or a constant; `none` for a role
+nothing paints there. -/
+@[expose] public def Design.cssDecl (pal : Palette) (s : Scheme) (r : Role) : Option CssDecl :=
+  match Design.declared? pal r with
+  | some c => some (.value c)
+  | none => Design.fallbackDecl r.row.need pal (Design.at pal s) (Design.at pal .print)
+      (r.row.fallback s)
+
+/-- Chasing a table of declarations at a stratum: a value is itself, an
+alias the chase of its target one stratum down. Structural on the stratum,
+as `Design.atDepth` is. -/
+@[expose] public def Design.chaseAt (t : Role → Option CssDecl) : Nat → Role → Option Color
+  | 0, r => (t r).bind fun
+    | .value c => some c
+    | .alias _ => none
+  | n + 1, r => (t r).bind fun
+    | .value c => some c
+    | .alias r' => Design.chaseAt t n r'
+
+/-- A table chased from a role's own stratum. -/
+@[expose] public def Design.chase (t : Role → Option CssDecl) (r : Role) : Option Color :=
+  Design.chaseAt t r.depth r
+
+private theorem find?_isSome_bind {α β : Type} (f : α → Option β) :
+    ∀ (l : List α), ((l.find? fun a => (f a).isSome).bind f) = l.findSome? f
+  | [] => rfl
+  | a :: rest => by
+    simp only [List.find?_cons, List.findSome?_cons]
+    cases hf : f a with
+    | none => simpa [hf] using find?_isSome_bind f rest
+    | some b => simp [hf]
+
+private theorem live_find? (look : Role → Option Color) (Q : Color → Bool) :
+    ∀ (l : List Role),
+      (((l.filter fun r => (look r).isSome).find? fun r => (look r).any Q).bind look) =
+        (l.filterMap look).find? Q
+  | [] => rfl
+  | a :: rest => by
+    cases ha : look a with
+    | none => simpa [List.filter_cons, List.filterMap_cons, ha] using live_find? look Q rest
+    | some c =>
+      by_cases hq : Q c = true
+      · simp [ha, hq]
+      · simpa [List.filter_cons, List.filterMap_cons, ha, hq] using live_find? look Q rest
+
+private theorem live_head? (look : Role → Option Color) :
+    ∀ (l : List Role),
+      ((l.filter fun r => (look r).isSome).head?.bind look) = (l.filterMap look).head?
+  | [] => rfl
+  | a :: rest => by
+    cases ha : look a with
+    | none => simpa [List.filter_cons, List.filterMap_cons, ha] using live_head? look rest
+    | some c => simp [ha]
+
+private theorem or_bind_of_live {α β : Type} (f : α → Option β) (a b : Option α)
+    (h : ∀ x, a = some x → (f x).isSome) : (a.or b).bind f = (a.bind f).or (b.bind f) := by
+  cases a with
+  | none => rfl
+  | some x =>
+    obtain ⟨y, hy⟩ := Option.isSome_iff_exists.mp (h x rfl)
+    simp [hy]
+
+private theorem Design.fallbackDecl_resolve (need : Need) (pal : Palette)
+    (look printLook : Role → Option Color)
+    (hdecl : ∀ r c, Design.declared? pal r = some c → look r = some c ∧ printLook r = some c)
+    (fb : Fallback) :
+    (Design.fallbackDecl need pal look printLook fb).bind (CssDecl.resolve look) =
+      Design.fallbackWith need look printLook fb := by
+  cases fb with
+  | first rs =>
+    simp only [Design.fallbackDecl, Design.fallbackWith, Option.bind_map]
+    exact find?_isSome_bind look rs
+  | readable bar cands unbarred =>
+    simp only [Design.fallbackDecl, Design.fallbackWith]
+    cases hb : look bar with
+    | none =>
+      simp only [Option.bind_map]
+      exact find?_isSome_bind look unbarred
+    | some g =>
+      simp only [Option.bind_map]
+      have hlive : ∀ x, ((cands.filter fun r => (look r).isSome).find? fun r =>
+          (look r).any fun c => decide (Contrast.required need ≤ Contrast.contrastMilli c g)) =
+            some x → (look x).isSome := by
+        intro x hx
+        exact (List.mem_filter.mp (List.mem_of_find?_eq_some hx)).2
+      have hfun : (CssDecl.resolve look ∘ CssDecl.alias) = look := by funext r; rfl
+      rw [hfun, or_bind_of_live look _ _ hlive, live_find?, live_head?]
+  | inPrint r =>
+    cases hd : Design.declared? pal r with
+    | some c =>
+      obtain ⟨h1, h2⟩ := hdecl r c hd
+      simp [Design.fallbackDecl, Design.fallbackWith, hd, CssDecl.resolve, h1, h2]
+    | none =>
+      simp only [Design.fallbackDecl, Design.fallbackWith, hd]
+      cases printLook r <;> rfl
+  | const c => rfl
+  | absent => rfl
+  | code => rfl
+
+private theorem Design.fallbackDecl_alias_mem (need : Need) (pal : Palette)
+    (look printLook : Role → Option Color) (fb : Fallback) (r : Role)
+    (h : Design.fallbackDecl need pal look printLook fb = some (.alias r)) :
+    r ∈ fb.refs := by
+  cases fb with
+  | first rs =>
+    simp only [Design.fallbackDecl, Option.map_eq_some_iff, CssDecl.alias.injEq] at h
+    obtain ⟨r', hr', rfl⟩ := h
+    exact List.mem_of_find?_eq_some hr'
+  | readable bar cands unbarred =>
+    simp only [Design.fallbackDecl] at h
+    cases hb : look bar with
+    | none =>
+      simp only [hb, Option.map_eq_some_iff, CssDecl.alias.injEq] at h
+      obtain ⟨r', hr', rfl⟩ := h
+      simp [Fallback.refs, List.mem_of_find?_eq_some hr']
+    | some g =>
+      simp only [hb, Option.map_eq_some_iff, CssDecl.alias.injEq] at h
+      obtain ⟨r', hr', rfl⟩ := h
+      have hmem : r' ∈ cands.filter fun r => (look r).isSome := by
+        cases hf : (cands.filter fun r => (look r).isSome).find? fun r =>
+            (look r).any fun c => decide (Contrast.required need ≤ Contrast.contrastMilli c g) with
+        | some x =>
+          rw [hf] at hr'
+          cases hr'
+          exact List.mem_of_find?_eq_some hf
+        | none =>
+          rw [hf] at hr'
+          exact List.mem_of_mem_head? hr'
+      simp [Fallback.refs, (List.mem_filter.mp hmem).1]
+  | inPrint r' =>
+    simp only [Design.fallbackDecl] at h
+    cases hd : Design.declared? pal r' with
+    | some c =>
+      rw [hd] at h
+      cases h
+      simp [Fallback.refs]
+    | none =>
+      rw [hd] at h
+      cases hp : printLook r' with
+      | none => rw [hp] at h; cases h
+      | some c => rw [hp] at h; cases h
+  | const c => simp [Design.fallbackDecl] at h
+  | absent => simp [Design.fallbackDecl] at h
+  | code => simp [Design.fallbackDecl] at h
+
+private theorem bind_congr_some {α β : Type} (o : Option α) (f g : α → Option β)
+    (h : ∀ x, o = some x → f x = g x) : o.bind f = o.bind g := by
+  cases o with
+  | none => rfl
+  | some x => exact h x rfl
+
+/-- An alias in the table names a shallower role: the measure the chase
+recurses on. -/
+public theorem Design.cssDecl_alias_shallower (pal : Palette) (s : Scheme) (r r' : Role)
+    (h : Design.cssDecl pal s r = some (.alias r')) : r'.depth < r.depth := by
+  unfold Design.cssDecl at h
+  cases hd : Design.declared? pal r with
+  | some c => simp [hd] at h
+  | none =>
+    rw [hd] at h
+    exact Role.refs_shallower r s r' (Design.fallbackDecl_alias_mem _ _ _ _ _ r' h)
+
+/-- One step of the table reads the resolver's value. -/
+public theorem Design.cssDecl_resolve (pal : Palette) (s : Scheme) (r : Role) :
+    (Design.cssDecl pal s r).bind (CssDecl.resolve (Design.at pal s)) = Design.at pal s r := by
+  rw [Design.resolve_unfold_exact]
+  unfold Design.cssDecl
+  cases hd : Design.declared? pal r with
+  | some c => rfl
+  | none =>
+    simpa using Design.fallbackDecl_resolve r.row.need pal (Design.at pal s) (Design.at pal .print)
+      (fun r c h => ⟨Design.at_declared pal s r c h, Design.at_declared pal .print r c h⟩)
+      (r.row.fallback s)
+
+private theorem Design.chaseAt_stable (pal : Palette) (s : Scheme) :
+    ∀ (n : Nat) (r : Role), r.depth ≤ n →
+      Design.chaseAt (Design.cssDecl pal s) n r = Design.at pal s r := by
+  intro n
+  induction n with
+  | zero =>
+    intro r hr
+    rw [← Design.cssDecl_resolve pal s r]
+    simp only [Design.chaseAt]
+    apply bind_congr_some
+    intro x hx
+    cases x with
+    | value c => rfl
+    | alias r' =>
+      have := Design.cssDecl_alias_shallower pal s r r' hx
+      omega
+  | succ n ih =>
+    intro r hr
+    rw [← Design.cssDecl_resolve pal s r]
+    simp only [Design.chaseAt]
+    apply bind_congr_some
+    intro x hx
+    cases x with
+    | value c => rfl
+    | alias r' =>
+      have := Design.cssDecl_alias_shallower pal s r r' hx
+      exact ih r' (by omega)
+
+/-- **The stylesheet's table, aliases chased, is the resolver** (`_exact`):
+for every palette, scheme and role, chasing `Design.cssDecl` from the role
+reads exactly `Design.at`. -/
+public theorem Design.cssDecl_chase_exact (pal : Palette) (s : Scheme) (r : Role) :
+    Design.chase (Design.cssDecl pal s) r = Design.at pal s r :=
+  Design.chaseAt_stable pal s r.depth r (Nat.le_refl _)
+
+/-- The role a role's property aliases in a scheme, if it aliases one. -/
+@[expose] public def Design.aliasOf (pal : Palette) (s : Scheme) (r : Role) : Option Role :=
+  match Design.cssDecl pal s r with
+  | some (.alias p) => some p
+  | _ => none
+
+/-- The roles a role's aliases reach in some scheme of a list, itself
+included: structural on the stratum, which every alias descends. -/
+@[expose] public def Design.reachAt (pal : Palette) (schemes : List Scheme) :
+    Nat → Role → List Role
+  | 0, r => [r]
+  | n + 1, r => r :: (schemes.filterMap (Design.aliasOf pal · r)).flatMap (Design.reachAt pal schemes n)
+
+/-- The roles a role's aliases reach, from its own stratum. -/
+@[expose] public def Design.reach (pal : Palette) (schemes : List Scheme) (r : Role) : List Role :=
+  Design.reachAt pal schemes r.depth r
+
+private theorem Design.aliasOf_shallower (pal : Palette) (s : Scheme) (r p : Role)
+    (h : Design.aliasOf pal s r = some p) : p.depth < r.depth := by
+  unfold Design.aliasOf at h
+  split at h
+  · rename_i hd
+    cases h
+    exact Design.cssDecl_alias_shallower pal s r _ hd
+  · cases h
+
+private theorem Design.self_mem_reachAt (pal : Palette) (schemes : List Scheme) (n : Nat)
+    (r : Role) : r ∈ Design.reachAt pal schemes n r := by
+  cases n <;> simp [Design.reachAt]
+
+private theorem Design.reachAt_closed (pal : Palette) (schemes : List Scheme) :
+    ∀ (n : Nat) (q r p : Role) (s : Scheme), q.depth ≤ n → s ∈ schemes →
+      r ∈ Design.reachAt pal schemes n q → Design.aliasOf pal s r = some p →
+        p ∈ Design.reachAt pal schemes n q := by
+  intro n
+  induction n with
+  | zero =>
+    intro q r p s hq _ hr hp
+    simp only [Design.reachAt, List.mem_singleton] at hr
+    subst hr
+    have := Design.aliasOf_shallower pal s r p hp
+    omega
+  | succ n ih =>
+    intro q r p s hq hs hr hp
+    simp only [Design.reachAt, List.mem_cons, List.mem_flatMap, List.mem_filterMap] at hr ⊢
+    rcases hr with rfl | ⟨q', ⟨s', hs', hq'⟩, hr'⟩
+    · right
+      exact ⟨p, ⟨s, hs, hp⟩, Design.self_mem_reachAt pal schemes n p⟩
+    · right
+      refine ⟨q', ⟨s', hs', hq'⟩, ?_⟩
+      have hd := Design.aliasOf_shallower pal s' q q' hq'
+      exact ih q' r p s (by omega) hs hr' hp
+
+/-- **What a role reaches is closed under its aliases** (`_covers`): an alias
+any reached role declares in a listed scheme names a reached role, so a
+table declaring the reach of its reads leaves no alias dangling. -/
+public theorem Design.reach_covers (pal : Palette) (schemes : List Scheme) (q r p : Role)
+    (s : Scheme) (hs : s ∈ schemes) (hr : r ∈ Design.reach pal schemes q)
+    (hp : Design.cssDecl pal s r = some (.alias p)) : p ∈ Design.reach pal schemes q :=
+  Design.reachAt_closed pal schemes q.depth q r p s (Nat.le_refl _) hs hr
+    (by simp [Design.aliasOf, hp])
+
+/-- A table restricted to a set of roles. -/
+@[expose] public def Design.restrict (t : Role → Option CssDecl) (roles : List Role) (r : Role) :
+    Option CssDecl :=
+  if roles.contains r then t r else none
+
+private theorem Design.chaseAt_restrict (t : Role → Option CssDecl) (roles : List Role)
+    (hclosed : ∀ r ∈ roles, ∀ p, t r = some (.alias p) → p ∈ roles) :
+    ∀ (n : Nat) (r : Role), r ∈ roles →
+      Design.chaseAt (Design.restrict t roles) n r = Design.chaseAt t n r := by
+  intro n
+  induction n with
+  | zero =>
+    intro r hr
+    simp [Design.chaseAt, Design.restrict, hr]
+  | succ n ih =>
+    intro r hr
+    have hc : roles.contains r = true := List.contains_iff_mem.mpr hr
+    simp only [Design.chaseAt, Design.restrict, hc, ite_true]
+    apply bind_congr_some
+    intro x hx
+    cases x with
+    | value c => rfl
+    | alias p => exact ih p (hclosed r hr p hx)
+
+/-- **A table restricted to an alias-closed set chases as the whole table**
+on the set: declaring only the roles a stylesheet reads, and what their
+aliases name, loses no value. -/
+public theorem Design.chase_restrict_exact (t : Role → Option CssDecl) (roles : List Role)
+    (hclosed : ∀ r ∈ roles, ∀ p, t r = some (.alias p) → p ∈ roles) (r : Role)
+    (hr : r ∈ roles) : Design.chase (Design.restrict t roles) r = Design.chase t r :=
+  Design.chaseAt_restrict t roles hclosed r.depth r hr
+
+/-- The muted role's one resolving chain (`Design.ofDoc` reads the same
+chain): the palette's `muted`, else its `fg`, else black — quieted
+secondary ink. Spelled once so a walk reading the epoch palette in force
+(algorithm comments, line numbers) resolves exactly as the document
+design does. -/
+public def mutedOf (pal : Palette) : Color :=
+  (Design.at pal .print .muted).getD Color.black
+
+end DesignResolve
 
 /-- The body's declaration projected from the resolved design. -/
 @[expose] public def Design.titledBody (d : Design) : TitledKind → SurfaceLook
@@ -12704,38 +13307,23 @@ public theorem Design.titledBody_projects (pal : Palette) (kind : TitledKind) :
     (Design.ofPalette pal).titledBody kind = titledBodyLook pal kind := by
   cases kind <;> rfl
 
-/-- Read a recorded contrast realization on this surface. Source colours
-stay exact unless the contrast judge recorded a bounded correction for
-this role, declaration and ground. -/
-@[expose] public def Design.inkOn (d : Design) (role : String) (pair : ColorPair) : ColorPair :=
-  { pair with fg := ((d.inks.find? fun e =>
-      e.role == role && e.declared == pair.fg && e.ground == pair.bg).map (·.ink)).getD pair.fg }
-
-/-- The body inherits its enclosing ink's role as well as its declaration,
-so a nested background-only body reads the correction for its own ground. -/
+/-- A titled body's paint: its declared channels over the enclosing pair,
+the one value both backends' body painters read. -/
 @[expose] public def Design.titledBodyPaint (d : Design) (kind : TitledKind)
-    (parent : ColorPair) (parentRole : String) : ColorPair :=
-  let look := d.titledBody kind
-  d.inkOn (if look.fg.isSome then kind.roleStem ++ "bodyfg" else parentRole) (look.resolve parent)
+    (parent : ColorPair) : ColorPair :=
+  (d.titledBody kind).resolve parent
 
-/-- Ground selection and ink realization share one resolved body value;
-realization can change its ink only, never introduce a new ground. -/
+/-- The body keeps its own declared ground, else the enclosing one. -/
 public theorem Design.titledBodyPaint_contract (d : Design) (kind : TitledKind)
-    (parent : ColorPair) (parentRole : String) :
-    (d.titledBodyPaint kind parent parentRole).bg = (d.titledBody kind).bg.getD parent.bg := by
+    (parent : ColorPair) :
+    (d.titledBodyPaint kind parent).bg = (d.titledBody kind).bg.getD parent.bg := by
   rfl
-
-public theorem Design.titledBodyPaint_declared_exact (d : Design) (kind : TitledKind)
-    (parent : ColorPair) (parentRole : String) (h : d.inks = #[]) :
-    d.titledBodyPaint kind parent parentRole = (d.titledBody kind).resolve parent := by
-  simp [Design.titledBodyPaint, Design.inkOn, h]
 
 /-- The ground a frame's body stands on when the frame declares one of its
 own: a title page's (`titlepagebg`, through `Design.ofPalette`), `none` for
 a frame on the page's own ground. The one reading the page painter
-(`Layout.titleGround`), the contrast judge and the role-realization walk
-(`recolorRolesBlock`) make, so a pair realized on the title page is
-rewritten on the title page and painted there. -/
+(`Layout.titleGround`) and the contrast judge make, so a pair judged on the
+title page is the pair painted there. -/
 @[expose] public def titleGroundOf (pal : Palette) (valign : VAlign) : Option Color :=
   if valign matches .golden then (Design.ofPalette pal).titlepage.map (·.bg) else none
 
@@ -12754,14 +13342,14 @@ node (`HtmlDoc.stageGround`); `artStageGroundChecks` holds the two
 artifacts to it. -/
 public def frameGroundOf (pal : Palette) (standout : Bool) (valign : VAlign) : Option Color :=
   if standout then some (Design.ofPalette pal).standout.bg
-  else (titleGroundOf pal valign).orElse fun _ => pal.find? "bg"
+  else (titleGroundOf pal valign).orElse fun _ => Design.declared? pal .page
 
 /-- **A plain frame stands on the declared `bg` in force, and on nothing
 else**: a ground nobody declared is never invented, and an epoch's own
 ground is never replaced by the document's — the half of a per-slide
 background the page painter owed before it read the palette in force. -/
 public theorem frameGround_exact (pal : Palette) (valign : VAlign) (h : ¬ valign = .golden) :
-    frameGroundOf pal false valign = pal.find? "bg" := by
+    frameGroundOf pal false valign = Design.declared? pal .page := by
   cases valign <;> simp_all [frameGroundOf, titleGroundOf]
 
 /-- The document's resolved design: `ofPalette` over its palette, with the
@@ -12820,46 +13408,23 @@ verdict about the author's pair — the defect it forbids is a ground derived
 from `fg` or from the standout keys, which would report a failure the
 document never wrote. -/
 public theorem Design.titleGround_exact (pal : Palette) :
-    (Design.ofPalette pal).titlepage.map (·.bg) = pal.find? "titlepagebg" := by
-  unfold Design.ofPalette
-  cases pal.find? "titlepagebg" <;> rfl
+    (Design.ofPalette pal).titlepage.map (·.bg) = Design.declared? pal .titlePageGround := by
+  have h : Design.at pal .print .titlePageGround = Design.declared? pal .titlePageGround := by
+    rw [Design.resolve_unfold_exact]
+    cases Design.declared? pal .titlePageGround <;> rfl
+  unfold Design.ofPalette Design.resolve
+  simp only [h]
+  cases Design.declared? pal .titlePageGround <;> rfl
 
 /-- Per-element style, total: the empty style is the default, applied here
 rather than at each consumer. -/
 public def Design.style (d : Design) (element : String) : ElementStyle :=
   (d.styles.find? element).getD {}
 
-/-- The palette keys whose resolved `Design` field a backend consumes today,
-each named with its consumers; `Tests.lean` checks every role a built-in
-bundle declares appears here or is a content colour, so a decorative key no
-code reads is a named warning, never silence. -/
+/-- The palette keys the registry resolves: every key a document or bundle
+declares is a role some backend reads (`Role.row`), or an author colour. -/
 public def Design.consumedRoles : List String :=
-  ["fg", "bg",                        -- Layout.run / B.docBg, the frame and section-
-                                      -- page arms (frameGroundOf), HtmlDoc.themeCss
-                                      -- and the deck stage (stageGround)
-   "covered",                         -- Layout.run's overlay dimming
-   "muted",                           -- Layout.run's chrome footer, HtmlDoc.themeCss
-   "frametitlefg", "frametitlebg",    -- Layout.collectBlock, HtmlDoc.themeCss
-   "framesubtitlefg",                 -- Elab.frameRestGo's coloured title line
-   "sectiontitlefg",                  -- Layout.collectSection, HtmlDoc.themeCss
-   "footlinebg",                      -- Layout.B.finishPage, HtmlDoc.themeCss
-   "blocktitlefg", "blocktitlebg",    -- Layout.collectBlock titled arm,
-   "alerttitlefg", "alerttitlebg",    --   HtmlDoc.themeCss (titledLook is
-   "exampletitlefg", "exampletitlebg",--   the one resolving site)
-   "blockbodyfg", "blockbodybg",      -- Layout and HtmlDoc titled bodies;
-   "alertbodyfg", "alertbodybg",      --   Contrast judges their local surface
-   "examplebodyfg", "examplebodybg",  --   through titledBodyLook
-   "progressfg", "progressbg",        -- Layout.collectBlock, HtmlDoc.themeCss
-   "sectionprogressfg", "sectionprogressbg", -- the section-page progress variant
-   "standoutfg", "standoutbg",        -- Layout.collectBlock frame arm
-   "titlepagefg", "titlepagebg",      -- Layout.titleGround / collectBlock frame
-                                      -- arm, HtmlDoc.themeCss, Contrast's
-                                      -- titlePageStep
-   "separator"] ++                    -- the title-page rule (Elab.titleBlocks
-                                      -- via the titlepage style; Layout .rule,
-                                      -- HtmlDoc's <hr class="separator">)
-  ListingHighlight.Role.all.map (·.key) -- CodeColor.resolve, both backends
-
+  Role.all.filterMap (·.row.key)
 
 /-- How covering paints: the colour of a covered run that had none of its
 own, and the per-colour cover of an explicitly coloured one — the same
@@ -12868,6 +13433,16 @@ ink, quieter, never a repaint to one constant. Built once per document by
 public structure Cover where
   plain : Color
   of : Color → Color
+
+/-- The one resolving site for covering (the palette-role obligation,
+AGENTS.md): the per-colour cover at the design's fraction toward its
+surface, and the plain cover for runs with no colour of their own — the
+declared `covered` colour when the document names one, the fraction of
+the body ink otherwise. Everything that covers — the layout dim walks,
+the contrast contract — reads this and nothing else. -/
+public def Design.cover (d : Design) : Cover :=
+  let of := Oklab.cover d.coveredFraction d.bg
+  { plain := d.covered.getD (of d.fg), of := of }
 
 -- Overlay walks. Structural recursion through `List`, as the printers above.
 
@@ -13624,7 +14199,7 @@ the next placed line pays, no content. -/
 private def gapBlock (g : Dim.SymGlue) : Block := .spaced (Sourced.bare g) #[]
 
 /-- A declared bar with the skips beside it; no declared weight, no ink. -/
-private def barSide (ink : Color × Option String)
+private def barSide (ink : Color × Option ColorRef)
     (before after : Dim.SymGlue) : Option Dim.SymGlue → Array Block
   | some w => #[gapBlock before, .rule ink.1 ink.2 (Sourced.bare w), gapBlock after]
   | none => #[]
@@ -13635,7 +14210,7 @@ wrapped, so the centred walk still meets it — and the furniture below.
 The gaps beside each bar are the engine's rhythm (`titleBarGap` to the
 type, `titleBarSkip` outside) where the document declares none: the
 venue contributes the bars' weights, the engine where they sit. -/
-private def titleStep (st : ElementStyle) (ink : Color × Option String)
+private def titleStep (st : ElementStyle) (ink : Color × Option ColorRef)
     (out : Array Block) (starred : Bool) (num : Option String)
     (title : Array Inline) : Array Block :=
   let above := barSide ink (st.ruleAboveSkip.getD titleBarSkip)
@@ -13658,7 +14233,7 @@ wrappers, so the centred walk still meets the heading itself; a gap is
 emitted only beside its own bar, and a trailing skip with nothing after it
 is no ink. The bars are decorative ink in the ink colour: `titleBars_text`
 is the census statement that styling changes no content. -/
-public def titleBarsList (st : ElementStyle) (ink : Color × Option String)
+public def titleBarsList (st : ElementStyle) (ink : Color × Option ColorRef)
     (out : Array Block) (done : Bool) : List Block → Array Block
   | [] => out
   | b :: rest =>
@@ -13667,7 +14242,7 @@ public def titleBarsList (st : ElementStyle) (ink : Color × Option String)
       titleBarsList st ink (titleStep st ink out starred num title) true rest
     | b, _ => titleBarsList st ink (out.push b) done rest
 
-public def titleBars (st : ElementStyle) (ink : Color × Option String)
+public def titleBars (st : ElementStyle) (ink : Color × Option ColorRef)
     (blocks : Array Block) : Array Block :=
   if st.ruleAbove.isNone && st.ruleBelow.isNone then blocks
   else titleBarsList st ink #[] false blocks.toList
@@ -13778,7 +14353,7 @@ public theorem markDisplay_text (inPar parEnd afterEnv : Bool) (k : Nat) :
   · rfl
 
 private theorem blocksText_append_barSide (out : Array Block)
-    (ink : Color × Option String) (before after : Dim.SymGlue)
+    (ink : Color × Option ColorRef) (before after : Dim.SymGlue)
     (w : Option Dim.SymGlue) :
     blocksText (out ++ barSide ink before after w) = blocksText out := by
   cases w <;>
@@ -13786,7 +14361,7 @@ private theorem blocksText_append_barSide (out : Array Block)
       blockTextOne]
 
 private theorem blocksText_titleStep (st : ElementStyle)
-    (ink : Color × Option String) (out : Array Block) (starred : Bool)
+    (ink : Color × Option ColorRef) (out : Array Block) (starred : Bool)
     (num : Option String) (title : Array Inline) :
     blocksText (titleStep st ink out starred num title) =
       blocksText out ++ plainText title := by
@@ -13794,7 +14369,7 @@ private theorem blocksText_titleStep (st : ElementStyle)
   rw [blocksText_append_barSide, blocksText_push, blocksText_append_barSide]
   simp [blockTextOne]
 
-private theorem titleBarsList_text (st : ElementStyle) (ink : Color × Option String)
+private theorem titleBarsList_text (st : ElementStyle) (ink : Color × Option ColorRef)
     (out : Array Block) (done : Bool) (l : List Block) :
     blocksText (titleBarsList st ink out done l) =
       blockTextList (blocksText out) l := by
@@ -13806,7 +14381,7 @@ private theorem titleBarsList_text (st : ElementStyle) (ink : Color × Option St
 title block's plain-text census under the styled built-in equals the
 unstyled built-in's — the conservation the user reads as "the venue's
 furniture added nothing and lost nothing". -/
-public theorem titleBars_text (st : ElementStyle) (ink : Color × Option String) :
+public theorem titleBars_text (st : ElementStyle) (ink : Color × Option ColorRef) :
     Conserves blocksText (titleBars st ink) := by
   intro xs
   unfold titleBars
@@ -14928,567 +15503,12 @@ public theorem numberFloats_text : Conserves blocksText numberFloats := fun xs =
   simp [blocksText, numberFloats, numberFloatList_text {} #[] xs.toList "",
     blockTextList]
 
--- The role-realization walk: recolour role-named runs per ground, rewrite
--- palettes where they stand. Structural recursion through `List`, as the
--- walks above; the palette in force threads through the walk (flow scope:
--- a `.setPalette` inside a body reaches what follows it, exactly as the
--- contrast judge and the layout read it).
-
-/-- The per-run recolour a realization pass applies: the palette in force,
-the local ground when one stands (`none` reads the palette's own page),
-the run's role name when it has one, and the declared colour; the result
-is what ships. `Contrast.realizeDoc` instantiates it with the realization
-plan's lookups; the walk decides only *where* each ground stands — the
-same places the contrast judge reads (the frame-title bar, a titled
-block's bar, the standout inversion, else the page), so a pair the judge
-realized is rewritten exactly where it was judged. -/
-public abbrev RoleRecolor := Palette → Option Color → Option String → Color → Color
-
-/-- A declaration ends a frame's local ground even when its palette equals
-the preceding one. The epoch also prevents frame exit from restoring a
-ground whose declaration has been superseded inside the body. -/
-private structure RoleRecolorState where
-  pal : Palette
-  ground : Option Color := none
-  epoch : Nat := 0
-
-mutual
-
-public def recolorRolesInlines (recolor : RoleRecolor) (pal : Palette)
-    (ground : Option Color) (out : Array Inline) : List Inline → Array Inline
-  | [] => out
-  | x :: rest =>
-    recolorRolesInlines recolor pal ground
-      (out.push (recolorRolesInline recolor pal ground x)) rest
-
-private def recolorRolesInline (recolor : RoleRecolor) (pal : Palette)
-    (ground : Option Color) : Inline → Inline
-  | .colored c nm body =>
-    .colored (recolor pal ground nm c) nm
-      (recolorRolesInlines recolor pal ground #[] body.toList)
-  | .styled st body => .styled st (recolorRolesInlines recolor pal ground #[] body.toList)
-  | .located n body => .located n (recolorRolesInlines recolor pal ground #[] body.toList)
-  | .role n body => .role n (recolorRolesInlines recolor pal ground #[] body.toList)
-  | .link u body => .link u (recolorRolesInlines recolor pal ground #[] body.toList)
-  | .decorated kind body => .decorated kind (recolorRolesInlines recolor pal ground #[] body.toList)
-  | .onSteps spec body => .onSteps spec (recolorRolesInlines recolor pal ground #[] body.toList)
-  | .altSteps spec firstPage otherPage =>
-    .altSteps spec (recolorRolesInlines recolor pal ground #[] firstPage.toList)
-      (recolorRolesInlines recolor pal ground #[] otherPage.toList)
-  | .footnote n body => .footnote n (recolorRolesInlines recolor pal ground #[] body.toList)
-  -- A formula's colours are realized as a run's are, on the same ground.
-  | .formula d src body => .formula d src (body.mapInk fun c nm => recolor pal ground nm c)
-  | .text s => .text s
-  | .math d src => .math d src
-  | .image src size alt => .image src size alt
-  | .icon s l => .icon s l
-  | .label k => .label k
-  | .ref k p t tg => .ref k p t tg
-  | .cite t keys => .cite t keys
-  | .fill => .fill
-  | .hspace g keep => .hspace g keep
-  | .rule w h r => .rule w h r
-  | .strut h => .strut h
-  | .italicCorr m => .italicCorr m
-  | .pageNumber => .pageNumber
-  | .pageCount => .pageCount
-  | .linebreak e => .linebreak e
-
-
-end
-
-mutual
-
-private def recolorRolesList (repal : Palette → Palette) (recolor : RoleRecolor)
-    (cx : RoleRecolorState) (out : Array Block) :
-    List Block → Array Block × RoleRecolorState
-  | [] => (out, cx)
-  | b :: rest =>
-    let r := recolorRolesBlock repal recolor cx b
-    recolorRolesList repal recolor r.2 (out.push r.1) rest
-
-private def recolorRolesBlock (repal : Palette → Palette) (recolor : RoleRecolor)
-    (cx : RoleRecolorState) : Block → Block × RoleRecolorState
-  | .para content =>
-    (.para (recolorRolesInlines recolor cx.pal cx.ground #[] content.toList), cx)
-  | .equation num content =>
-    (.equation (recolorRolesInlines recolor cx.pal cx.ground #[] num.toList)
-      (recolorRolesInlines recolor cx.pal cx.ground #[] content.toList), cx)
-  -- A heading's title is judged on the page wherever it stands (the
-  -- judge's headingCx carries no local ground); the walk mirrors it.
-  | .section l st num title =>
-    (.section l st num (recolorRolesInlines recolor cx.pal none #[] title.toList), cx)
-  | .list o items =>
-    let r := recolorRolesItems repal recolor cx #[] items.toList
-    (.list o r.1, r.2)
-  | .center body =>
-    let r := recolorRolesList repal recolor cx #[] body.toList
-    (.center r.1, r.2)
-  | .ragged s body =>
-    let r := recolorRolesList repal recolor cx #[] body.toList
-    (.ragged s r.1, r.2)
-  | .quote body =>
-    let r := recolorRolesList repal recolor cx #[] body.toList
-    (.quote r.1, r.2)
-  | .abstract body =>
-    let r := recolorRolesList repal recolor cx #[] body.toList
-    (.abstract r.1, r.2)
-  -- The title sits on the bar when the palette in force declares one, on
-  -- the page otherwise (`titledLook`, the one resolving site — the same
-  -- ground the judge reads); the body keeps the enclosing ground.
-  | .titled kind title body =>
-    let r := recolorRolesList repal recolor cx #[] body.toList
-    (.titled kind
-      (recolorRolesInlines recolor cx.pal (titledLook cx.pal kind).bar #[] title.toList)
-      r.1, r.2)
-  | .role n body =>
-    let r := recolorRolesList repal recolor cx #[] body.toList
-    (.role n r.1, r.2)
-  | .link target body =>
-    let r := recolorRolesList repal recolor cx #[] body.toList
-    (.link target r.1, r.2)
-  | .spaced g body =>
-    let r := recolorRolesList repal recolor cx #[] body.toList
-    (.spaced g r.1, r.2)
-  | .columns cols =>
-    let r := recolorRolesColumns repal recolor cx #[] cols.toList
-    (.columns r.1, r.2)
-  | .onSteps spec body =>
-    let r := recolorRolesList repal recolor cx #[] body.toList
-    (.onSteps spec r.1, r.2)
-  | .altSteps spec firstPage otherPage =>
-    let ra := recolorRolesList repal recolor cx #[] firstPage.toList
-    let ro := recolorRolesList repal recolor ra.2 #[] otherPage.toList
-    (.altSteps spec ra.1 ro.1, ro.2)
-  | .only targets body =>
-    let r := recolorRolesList repal recolor cx #[] body.toList
-    (.only targets r.1, r.2)
-  | .nav spec body =>
-    let r := recolorRolesList repal recolor cx #[] body.toList
-    (.nav spec r.1, r.2)
-  -- The title sits on the frame-title bar when the palette in force
-  -- declares one; a standout frame's body sits on the inversion, and a
-  -- title page with a declared ground on that ground (`titleGroundOf`) —
-  -- the grounds the judge reads, at the palette in force at the frame.
-  | .frame title standout valign br body =>
-    let bodyGround := if standout then
-        some ((cx.pal.find? "standoutbg").getD ((cx.pal.find? "fg").getD Color.black))
-      else (titleGroundOf cx.pal valign).or cx.ground
-    let r := recolorRolesList repal recolor { cx with ground := bodyGround } #[] body.toList
-    (.frame (recolorRolesInlines recolor cx.pal (cx.pal.find? "frametitlebg") #[] title.toList)
-      standout valign br r.1,
-      { r.2 with ground := if r.2.epoch == cx.epoch then cx.ground else none })
-  | .framefoot content =>
-    (.framefoot (recolorRolesInlines recolor cx.pal (Design.ofPalette cx.pal).footline.bar
-      #[] content.toList), cx)
-  -- The epoch boundary: the palette is rewritten where it stands, and the
-  -- walk's context switches to the declared (pre-rewrite) state, the one
-  -- the judge keyed its plan by.
-  | .setPalette p =>
-    (.setPalette (repal p), { pal := p, ground := none, epoch := cx.epoch + 1 })
-  | .setTokens tk => (.setTokens tk, cx)
-  | .pagebreak => (.pagebreak, cx)
-  -- A note is a side channel, verbatim carries no role-named runs, a logo
-  -- is furniture, a rule is decorative ink: the judge reads none of them,
-  -- so the walk leaves each whole.
-  | .note body => (.note body, cx)
-  | .verbatim c s sp => (.verbatim c s sp, cx)
-  -- Lines are judged where they stand (`Contrast.usesBlock` descends into
-  -- content and comment), so the realizer rewrites exactly there.
-  | .algorithm n sm lines =>
-    (.algorithm n sm (recolorRolesAlgLines recolor cx.pal cx.ground #[] lines.toList), cx)
-  | .logo content => (.logo content, cx)
-  | .rule c nm th => (.rule c nm th, cx)
-  -- A label is a run like any other: it ships the plan's ink for its
-  -- pairing on the ground under it — a node's fill, else the ground the
-  -- picture stands on — so one expression on one ground is one ink,
-  -- whether it is set in a paragraph or in a drawing.
-  | .picture p =>
-    (.picture { p with shapes := recolorRolesShapes recolor cx.pal cx.ground #[] p.shapes.toList },
-      cx)
-  | .table cols pl pr rows rules spans =>
-    (.table cols pl pr (recolorRolesTableRows recolor cx.pal cx.ground #[] rows.toList) rules spans, cx)
-  | .float fk num ca body caption =>
-    let r := recolorRolesList repal recolor cx #[] body.toList
-    (.float fk num ca r.1
-      (recolorRolesInlines recolor cx.pal cx.ground #[] caption.toList), r.2)
-  | .bibliography src style items =>
-    (.bibliography src style
-      (recolorRolesBibItems recolor cx.pal cx.ground #[] items.toList), cx)
-
-private def recolorRolesItems (repal : Palette → Palette) (recolor : RoleRecolor)
-    (cx : RoleRecolorState) (out : Array (Array Block)) :
-    List (Array Block) → Array (Array Block) × RoleRecolorState
-  | [] => (out, cx)
-  | item :: rest =>
-    let r := recolorRolesList repal recolor cx #[] item.toList
-    recolorRolesItems repal recolor r.2 (out.push r.1) rest
-
-private def recolorRolesColumns (repal : Palette → Palette) (recolor : RoleRecolor)
-    (cx : RoleRecolorState) (out : Array (BoxWidth × Array Block)) :
-    List (BoxWidth × Array Block) → Array (BoxWidth × Array Block) × RoleRecolorState
-  | [] => (out, cx)
-  | (w, body) :: rest =>
-    let r := recolorRolesList repal recolor cx #[] body.toList
-    recolorRolesColumns repal recolor r.2 (out.push (w, r.1)) rest
-
-private def recolorRolesTableRows (recolor : RoleRecolor) (pal : Palette)
-    (ground : Option Color) (out : Array (Array (Array Inline))) :
-    List (Array (Array Inline)) → Array (Array (Array Inline))
-  | [] => out
-  | row :: rest =>
-    recolorRolesTableRows recolor pal ground
-      (out.push (recolorRolesTableCells recolor pal ground #[] row.toList)) rest
-
-private def recolorRolesTableCells (recolor : RoleRecolor) (pal : Palette)
-    (ground : Option Color) (out : Array (Array Inline)) :
-    List (Array Inline) → Array (Array Inline)
-  | [] => out
-  | cell :: rest =>
-    recolorRolesTableCells recolor pal ground
-      (out.push (recolorRolesInlines recolor pal ground #[] cell.toList)) rest
-
-private def recolorRolesBibItems (recolor : RoleRecolor) (pal : Palette)
-    (ground : Option Color) (out : Array BibItem) :
-    List BibItem → Array BibItem
-  | [] => out
-  | item :: rest =>
-    recolorRolesBibItems recolor pal ground
-      (out.push { item with
-        content := recolorRolesInlines recolor pal ground #[] item.content.toList }) rest
-
-private def recolorRolesAlgLines (recolor : RoleRecolor) (pal : Palette)
-    (ground : Option Color) (out : Array AlgLine) : List AlgLine → Array AlgLine
-  | [] => out
-  | l :: rest =>
-    recolorRolesAlgLines recolor pal ground (out.push
-      { depth := l.depth
-        kind := l.kind
-        content := recolorRolesInlines recolor pal ground #[] l.content.toList
-        comment := match l.comment with
-          | some c => some (recolorRolesInlines recolor pal ground #[] c.toList)
-          | none => Option.none }) rest
-
-/-- A picture's shapes in drawing order, each label recoloured on the ground
-under its anchor (`Pic.fillUnder` over the shapes drawn before it); every
-other shape keeps its paint. -/
-private def recolorRolesShapes (recolor : RoleRecolor) (pal : Palette) (ground : Option Color)
-    (drawn : Array Pic.Shape) : List Pic.Shape → Array Pic.Shape
-  | [] => drawn
-  | s :: rest =>
-    let s' := match s with
-      | .label x y content c sc al =>
-        let g := Pic.fillUnder ground drawn x y
-        .label x y (recolorRolesInlines recolor pal g #[] content.toList) (recolor pal g none c)
-          sc al
-      | .ink n => .ink n
-    recolorRolesShapes recolor pal ground (drawn.push s') rest
-
-
-end
-
-/-- The realization entry: the whole body walked once, page ground, the
-document's own palette the opening epoch. -/
-public def recolorRoles (repal : Palette → Palette) (recolor : RoleRecolor)
-    (pal : Palette) (xs : Array Block) : Array Block :=
-  (recolorRolesList repal recolor { pal } #[] xs.toList).1
-
 private theorem blockTextBibItems_chain (l1 l2 : List BibItem) (acc : String) :
     blockTextBibItems acc (l1 ++ l2)
       = blockTextBibItems (blockTextBibItems acc l1) l2 := by
   induction l1 generalizing acc with
   | nil => simp [blockTextBibItems]
   | cons item rest ih => simp [blockTextBibItems, ih]
-
-mutual
-
-private theorem recolorRolesInlines_text (recolor : RoleRecolor) (pal : Palette)
-    (ground : Option Color) (xs : List Inline) (out : Array Inline) :
-    plainTextList (recolorRolesInlines recolor pal ground out xs).toList
-      = plainTextList out.toList ++ plainTextList xs := by
-  match xs with
-  | [] => simp [recolorRolesInlines, plainTextList]
-  | x :: rest =>
-    rw [recolorRolesInlines, recolorRolesInlines_text recolor pal ground rest]
-    simp [plainTextList, plainTextList_append,
-      recolorRolesInline_text recolor pal ground x, String.append_assoc]
-
-private theorem recolorRolesInline_text (recolor : RoleRecolor) (pal : Palette)
-    (ground : Option Color) (x : Inline) :
-    plainTextOne (recolorRolesInline recolor pal ground x) = plainTextOne x := by
-  match x with
-  | .colored c nm body =>
-    rw [recolorRolesInline]
-    simp [plainTextOne, recolorRolesInlines_text recolor pal ground body.toList #[],
-      plainTextList]
-  | .styled st body =>
-    rw [recolorRolesInline]
-    simp [plainTextOne, recolorRolesInlines_text recolor pal ground body.toList #[],
-      plainTextList]
-  | .located n body =>
-    rw [recolorRolesInline]
-    simp [plainTextOne, recolorRolesInlines_text recolor pal ground body.toList #[],
-      plainTextList]
-  | .role n body =>
-    rw [recolorRolesInline]
-    simp [plainTextOne, recolorRolesInlines_text recolor pal ground body.toList #[],
-      plainTextList]
-  | .link u body =>
-    rw [recolorRolesInline]
-    simp [plainTextOne, recolorRolesInlines_text recolor pal ground body.toList #[],
-      plainTextList]
-  | .decorated kind body =>
-    rw [recolorRolesInline]
-    simp [plainTextOne, recolorRolesInlines_text recolor pal ground body.toList #[],
-      plainTextList]
-  | .onSteps spec body =>
-    rw [recolorRolesInline]
-    simp [plainTextOne, recolorRolesInlines_text recolor pal ground body.toList #[],
-      plainTextList]
-  | .altSteps spec firstPage otherPage =>
-    rw [recolorRolesInline]
-    simp [plainTextOne, recolorRolesInlines_text recolor pal ground firstPage.toList #[],
-      recolorRolesInlines_text recolor pal ground otherPage.toList #[], plainTextList]
-  | .footnote n body =>
-    rw [recolorRolesInline]
-    simp [plainTextOne, recolorRolesInlines_text recolor pal ground body.toList #[],
-      plainTextList]
-  | .formula d src body =>
-    rw [recolorRolesInline]
-    simp [plainTextOne, formulaFloor_ink_id]
-  | .text _ | .math _ _ | .image _ _ _ | .icon _ _ | .label _
-  | .ref _ _ _ _ | .cite _ _ | .fill | .hspace _ _ | .rule _ _ _ | .strut _ | .italicCorr _ | .pageNumber | .pageCount
-  | .linebreak _ => rfl
-
-end
-
-private theorem recolorRolesTableCells_text (recolor : RoleRecolor) (pal : Palette)
-    (ground : Option Color) (cells : List (Array Inline))
-    (out : Array (Array Inline)) (acc : String) :
-    blockTextTableCells acc (recolorRolesTableCells recolor pal ground out cells).toList
-      = blockTextTableCells (blockTextTableCells acc out.toList) cells := by
-  match cells with
-  | [] => simp [recolorRolesTableCells, blockTextTableCells]
-  | cell :: rest =>
-    rw [recolorRolesTableCells, recolorRolesTableCells_text recolor pal ground rest]
-    simp [blockTextTableCells, blockTextTableCells_chain, plainText,
-      recolorRolesInlines_text recolor pal ground cell.toList #[], plainTextList]
-
-private theorem recolorRolesTableRows_text (recolor : RoleRecolor) (pal : Palette)
-    (ground : Option Color) (rows : List (Array (Array Inline)))
-    (out : Array (Array (Array Inline))) (acc : String) :
-    blockTextTableRows acc (recolorRolesTableRows recolor pal ground out rows).toList
-      = blockTextTableRows (blockTextTableRows acc out.toList) rows := by
-  match rows with
-  | [] => simp [recolorRolesTableRows, blockTextTableRows]
-  | row :: rest =>
-    rw [recolorRolesTableRows, recolorRolesTableRows_text recolor pal ground rest]
-    simp [blockTextTableRows, blockTextTableRows_chain,
-      recolorRolesTableCells_text recolor pal ground row.toList #[], blockTextTableCells]
-
-private theorem recolorRolesBibItems_text (recolor : RoleRecolor) (pal : Palette)
-    (ground : Option Color) (items : List BibItem)
-    (out : Array BibItem) (acc : String) :
-    blockTextBibItems acc (recolorRolesBibItems recolor pal ground out items).toList
-      = blockTextBibItems (blockTextBibItems acc out.toList) items := by
-  match items with
-  | [] => simp [recolorRolesBibItems, blockTextBibItems]
-  | item :: rest =>
-    rw [recolorRolesBibItems, recolorRolesBibItems_text recolor pal ground rest]
-    simp [blockTextBibItems, blockTextBibItems_chain, plainText,
-      recolorRolesInlines_text recolor pal ground item.content.toList #[], plainTextList]
-
-private theorem recolorRolesAlgLines_text (recolor : RoleRecolor) (pal : Palette)
-    (ground : Option Color) (ls : List AlgLine) (out : Array AlgLine)
-    (acc : String) :
-    algLineText acc (recolorRolesAlgLines recolor pal ground out ls).toList
-      = algLineText (algLineText acc out.toList) ls := by
-  match ls with
-  | [] => simp [recolorRolesAlgLines, algLineText]
-  | l :: rest =>
-    rw [recolorRolesAlgLines, recolorRolesAlgLines_text recolor pal ground rest]
-    rw [Array.toList_push, algLineText_chain]
-    cases hc : l.comment with
-    | none =>
-      simp [algLineText, hc, plainText, plainTextList,
-        recolorRolesInlines_text recolor pal ground l.content.toList #[]]
-    | some c =>
-      simp [algLineText, hc, plainText, plainTextList,
-        recolorRolesInlines_text recolor pal ground l.content.toList #[],
-        recolorRolesInlines_text recolor pal ground c.toList #[]]
-
-mutual
-
-private theorem recolorRolesList_text (repal : Palette → Palette) (recolor : RoleRecolor)
-    (cx : RoleRecolorState) (xs : List Block)
-    (out : Array Block) (acc : String) :
-    blockTextList acc (recolorRolesList repal recolor cx out xs).1.toList
-      = blockTextList (blockTextList acc out.toList) xs := by
-  match xs with
-  | [] => simp [recolorRolesList, blockTextList]
-  | b :: rest =>
-    rw [recolorRolesList,
-      recolorRolesList_text repal recolor
-        (recolorRolesBlock repal recolor cx b).2 rest]
-    simp [blockTextList, blockTextList_chain,
-      recolorRolesBlock_text repal recolor cx b]
-
-private theorem recolorRolesBlock_text (repal : Palette → Palette) (recolor : RoleRecolor)
-    (cx : RoleRecolorState) (b : Block) (acc : String) :
-    blockTextOne acc (recolorRolesBlock repal recolor cx b).1
-      = blockTextOne acc b := by
-  match b with
-  | .para content =>
-    rw [recolorRolesBlock]
-    simp [blockTextOne, plainText,
-      recolorRolesInlines_text recolor cx.pal cx.ground content.toList #[], plainTextList]
-  | .equation num content =>
-    rw [recolorRolesBlock]
-    simp [blockTextOne, plainText,
-      recolorRolesInlines_text recolor cx.pal cx.ground content.toList #[],
-      recolorRolesInlines_text recolor cx.pal cx.ground num.toList #[], plainTextList]
-  | .section l st num title =>
-    rw [recolorRolesBlock]
-    simp [blockTextOne, plainText,
-      recolorRolesInlines_text recolor cx.pal none title.toList #[], plainTextList]
-  | .list o items =>
-    rw [recolorRolesBlock]
-    simp [blockTextOne,
-      recolorRolesItems_text repal recolor cx items.toList #[] acc,
-      blockTextItems]
-  | .center body =>
-    rw [recolorRolesBlock]
-    simp [blockTextOne,
-      recolorRolesList_text repal recolor cx body.toList #[] acc, blockTextList]
-  | .ragged _ body =>
-    rw [recolorRolesBlock]
-    simp [blockTextOne,
-      recolorRolesList_text repal recolor cx body.toList #[] acc, blockTextList]
-  | .quote body =>
-    rw [recolorRolesBlock]
-    simp [blockTextOne,
-      recolorRolesList_text repal recolor cx body.toList #[] acc, blockTextList]
-  | .abstract body =>
-    rw [recolorRolesBlock]
-    simp [blockTextOne,
-      recolorRolesList_text repal recolor cx body.toList #[] acc, blockTextList]
-  | .titled kind title body =>
-    rw [recolorRolesBlock]
-    simp [blockTextOne, plainText,
-      recolorRolesInlines_text recolor cx.pal (titledLook cx.pal kind).bar title.toList #[],
-      plainTextList,
-      recolorRolesList_text repal recolor cx body.toList #[] _, blockTextList]
-  | .role n body =>
-    rw [recolorRolesBlock]
-    simp [blockTextOne,
-      recolorRolesList_text repal recolor cx body.toList #[] acc, blockTextList]
-  | .link target body =>
-    rw [recolorRolesBlock]
-    simp [blockTextOne,
-      recolorRolesList_text repal recolor cx body.toList #[] acc, blockTextList]
-  | .spaced g body =>
-    rw [recolorRolesBlock]
-    simp [blockTextOne,
-      recolorRolesList_text repal recolor cx body.toList #[] acc, blockTextList]
-  | .columns cols =>
-    rw [recolorRolesBlock]
-    simp [blockTextOne,
-      recolorRolesColumns_text repal recolor cx cols.toList #[] acc,
-      blockTextColumns]
-  | .onSteps spec body =>
-    rw [recolorRolesBlock]
-    simp [blockTextOne,
-      recolorRolesList_text repal recolor cx body.toList #[] acc, blockTextList]
-  | .altSteps spec firstPage otherPage =>
-    rw [recolorRolesBlock]
-    simp [blockTextOne, recolorRolesList_text, blockTextList]
-  | .only targets body =>
-    rw [recolorRolesBlock]
-    simp [blockTextOne,
-      recolorRolesList_text repal recolor cx body.toList #[] acc, blockTextList]
-  | .nav spec body =>
-    rw [recolorRolesBlock]
-    simp [blockTextOne,
-      recolorRolesList_text repal recolor cx body.toList #[] acc, blockTextList]
-  | .frame title standout valign _ body =>
-    rw [recolorRolesBlock]
-    simp [blockTextOne, plainText,
-      recolorRolesInlines_text recolor cx.pal (cx.pal.find? "frametitlebg") title.toList #[],
-      plainTextList,
-      recolorRolesList_text repal recolor
-        { cx with ground :=
-            if standout then
-              some ((cx.pal.find? "standoutbg").getD ((cx.pal.find? "fg").getD Color.black))
-            else (titleGroundOf cx.pal valign).or cx.ground } body.toList #[] _,
-      blockTextList]
-  | .framefoot content =>
-    rw [recolorRolesBlock]
-    simp [blockTextOne, plainText,
-      recolorRolesInlines_text recolor cx.pal (Design.ofPalette cx.pal).footline.bar
-        content.toList #[], plainTextList]
-  | .setPalette _ | .setTokens _ | .pagebreak | .note _ | .verbatim _ _ _
-  | .logo _ | .rule _ _ _ | .picture _ => rfl
-  | .algorithm n sm lines =>
-    rw [recolorRolesBlock]
-    show algLineText acc
-      (recolorRolesAlgLines recolor cx.pal cx.ground #[] lines.toList).toList = _
-    rw [recolorRolesAlgLines_text recolor cx.pal cx.ground lines.toList #[] acc]
-    rfl
-  | .table cols pl pr rows rules spans =>
-    rw [recolorRolesBlock]
-    simp [blockTextOne,
-      recolorRolesTableRows_text recolor cx.pal cx.ground rows.toList #[] acc,
-      blockTextTableRows]
-  | .float fk num ca body caption =>
-    rw [recolorRolesBlock]
-    simp [blockTextOne, plainText,
-      recolorRolesInlines_text recolor cx.pal cx.ground caption.toList #[], plainTextList,
-      recolorRolesList_text repal recolor cx body.toList #[] _, blockTextList]
-  | .bibliography src style items =>
-    rw [recolorRolesBlock]
-    simp [blockTextOne,
-      recolorRolesBibItems_text recolor cx.pal cx.ground items.toList #[] acc,
-      blockTextBibItems]
-
-private theorem recolorRolesItems_text (repal : Palette → Palette) (recolor : RoleRecolor)
-    (cx : RoleRecolorState) (items : List (Array Block))
-    (out : Array (Array Block)) (acc : String) :
-    blockTextItems acc (recolorRolesItems repal recolor cx out items).1.toList
-      = blockTextItems (blockTextItems acc out.toList) items := by
-  match items with
-  | [] => simp [recolorRolesItems, blockTextItems]
-  | item :: rest =>
-    rw [recolorRolesItems,
-      recolorRolesItems_text repal recolor
-        (recolorRolesList repal recolor cx #[] item.toList).2 rest]
-    simp [blockTextItems, blockTextItems_chain,
-      recolorRolesList_text repal recolor cx item.toList #[], blockTextList]
-
-private theorem recolorRolesColumns_text (repal : Palette → Palette) (recolor : RoleRecolor)
-    (cx : RoleRecolorState)
-    (cols : List (BoxWidth × Array Block))
-    (out : Array (BoxWidth × Array Block)) (acc : String) :
-    blockTextColumns acc (recolorRolesColumns repal recolor cx out cols).1.toList
-      = blockTextColumns (blockTextColumns acc out.toList) cols := by
-  match cols with
-  | [] => simp [recolorRolesColumns, blockTextColumns]
-  | (w, body) :: rest =>
-    rw [recolorRolesColumns,
-      recolorRolesColumns_text repal recolor
-        (recolorRolesList repal recolor cx #[] body.toList).2 rest]
-    simp [blockTextColumns, blockTextColumns_chain,
-      recolorRolesList_text repal recolor cx body.toList #[], blockTextList]
-
-end
-
-/-- Realization recolours, it never rewrites content: the text census is
-fixed through the whole walk, whatever the plan's recolour and palette
-rewrite do — a realized document says exactly what the declared one
-said. -/
-public theorem recolorRoles_text (repal : Palette → Palette) (recolor : RoleRecolor)
-    (pal : Palette) : Conserves blocksText (recolorRoles repal recolor pal) := fun xs => by
-  simp [blocksText, recolorRoles,
-    recolorRolesList_text repal recolor { pal } xs.toList #[] "", blockTextList]
 
 -- Backend conditionals: `keepFor` is one backend's view of the document,
 -- and `keepFor_covers` is what stops a conditional from becoming a silent
@@ -16837,9 +16857,7 @@ public def slideShims (doc : Doc) (roots : String) : String :=
     named.contains n && (doc.palette.find? n).isNone).foldl (fun s c => s ++ colorDeclLine c) ""
 
 /-- The request one picture body states, formed from the finished
-document: the driver calls `pictureRefs` after contrast realization, so a
-role the realizer moved is moved in the picture too — the picture's
-`alert` is the page's `alert`. The carried preamble and the body are both
+document, so the picture's `alert` is the page's `alert`. The carried preamble and the body are both
 dependency roots: a TikZ style can name a macro or colour that the body
 never spells. The colour scan also reads every reachable macro definition,
 so the same closure that makes a macro travel makes its colours travel. -/
@@ -17158,8 +17176,8 @@ beamerouterthemedefault.sty, the `sidebar right` template's
 `\llap{\insertlogo\hskip0.1cm}` at the sidebar's bottom). Vertical
 placement is not a knob: the logo rides the furniture band at the page
 bottom, as the foot does. -/
-public def logoAlign (styles : Styles) : String :=
-  ((styles.find? "logo").bind (·.align)).getD "right"
+public def logoAlign (styles : Styles) : HAlign :=
+  ((styles.find? "logo").bind (·.align)).getD .right
 
 /-- Every image source the logo state ships — the preamble `\logo` and each
 body declaration's content. A logo is decorative furniture by role
@@ -19237,7 +19255,7 @@ set in its place, and a later `\normalsize` inside resets because it
 stands innermost and sizes are absolute (`Layout.applyStyle`). -/
 public inductive Decl where
   | style (s : Style)
-  | color (c : Color) (name : Option String)
+  | color (c : Color) (name : Option ColorRef)
   deriving Repr, BEq
 
 /-- One declaration around a region: exactly the node its grouped
@@ -20504,7 +20522,7 @@ public def dump (doc : Doc) (diags : Array Diag) : String :=
       fontLine s!"{slotName}.{variant}" (some f))
   let paletteLines := String.join (doc.palette.entries.toList.map fun (n, c) =>
     let mark := if doc.palette.decorative.contains n then " decorative" else ""
-    s!"palette {n} #{Color.hexByte c.r}{Color.hexByte c.g}{Color.hexByte c.b}{mark}\n") ++
+    s!"palette {n.key} #{Color.hexByte c.r}{Color.hexByte c.g}{Color.hexByte c.b}{mark}\n") ++
     (match doc.palette.coveredFraction with
      | some f => s!"palette covered {f}%\n"
      | none => "")

@@ -2688,7 +2688,7 @@ private inductive SalMode where
   /-- `\textcolor`'s first group: the palette role. -/
   | colorRole
   /-- `\textcolor`'s second group, to set in the role it named. -/
-  | colorBody (c : Ir.Color) (role : Option String)
+  | colorBody (c : Ir.Color) (role : Option Ir.ColorRef)
   /-- A text command's argument (`\textbf{...}`, read from `Cx.argStyles`):
   the next group, or the one word standing there, sets in the style the
   command names — what the same command does in a paragraph. -/
@@ -2978,8 +2978,8 @@ private def salOne (cx : Cx) (env : List (String × Val)) (t : Tok) (s : Sal) : 
     | .group g =>
       match evalColor cx env g.toArray with
       | .ok c =>
-        let role : Option String := match g.filter (· != .space) with
-          | [.ident w] => if cx.pal.entries.any (·.1 == w) then some w else none
+        let role : Option Ir.ColorRef := match g.filter (· != .space) with
+          | [.ident w] => cx.pal.refOf? w
           | _ => none
         { s with mode := .colorBody c role }
       | .error e => { (s.refuse s!"the colour ({e})") with mode := .text }
@@ -3162,7 +3162,7 @@ private theorem plainText_from (P : Char → Prop) (xs : Array Ir.Inline) :
   plainText_from P xs
 
 @[simp] private theorem textFrom_colored (P : Char → Prop) (c : Ir.Color)
-    (role : Option String) (xs : Array Ir.Inline) :
+    (role : Option Ir.ColorRef) (xs : Array Ir.Inline) :
     textFrom P (Ir.plainTextOne (.colored c role xs)) ↔ inlinesFrom P xs :=
   plainText_from P xs
 

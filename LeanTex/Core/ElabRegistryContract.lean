@@ -86,6 +86,6 @@ really reaches the palette arm is the paired executable check in
 Tests.lean (`roleInvocationChecks`), an oracle, not a theorem. -/
 public theorem every_role_is_invocable :
     (Theme.builtin.all fun t => t.palette.entries.toList.all fun e =>
-      e.1.toList.all Lex.nameChar && !builtinNames.contains e.1) = true := by decide
+      e.1.key.toList.all Lex.nameChar && !builtinNames.contains e.1.key) = true := by decide
 
 end LeanTex.Core.Elab

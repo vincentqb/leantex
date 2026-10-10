@@ -44,7 +44,7 @@ def elabTitleBoundaryChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t (name : String) (ok : Bool) := unless ok do ref.modify (name :: ·)
   let style (out : Ir.Doc × Array Diag) : Option Ir.ElementStyle :=
     out.1.styles.find? "titlepage"
-  let align (out : Ir.Doc × Array Diag) : Option String :=
+  let align (out : Ir.Doc × Array Diag) : Option Ir.HAlign :=
     (style out).bind (·.align)
   let refusalSites (out : Ir.Doc × Array Diag) :
       Array (Option Span × Option String × Option String × Option String) :=
@@ -57,7 +57,7 @@ def elabTitleBoundaryChecks (ref : IO.Ref (List String)) : IO Unit := do
   let beamer ← pure (Elab.run "probe.tex" (conditional "inserttitle"))
   let internal ← pure (Elab.run "probe.tex" (conditional "@title"))
   t "title alias boundary: a conditional reads the actual source spelling"
-    (align beamer == some "left" && align internal == some "right")
+    (align beamer == some .left && align internal == some .right)
   let template (name : String) :=
     "\\documentclass{article}\n\\title{Title}\\author{Author}\\date{Date}\n" ++
       "\\renewcommand{\\maketitle}{\\centering\\bfseries\\large\\hrule\\@title\\" ++
@@ -107,7 +107,7 @@ def elabUnknownDispatchChecks (ref : IO.Ref (List String)) : IO Unit := do
   let contexts : Array (String × Elab.Ctx) :=
     #[("argument", {ctx with args := #[("zzz", some #[.text "bound"])]}),
       ("definition", {ctx with user := #[cmd], limit := 1}),
-      ("palette", {ctx with palette := {entries := #[("zzz", {r := 0, g := 0, b := 0})]}})]
+      ("palette", {ctx with palette := {entries := #[(.color "zzz", {r := 0, g := 0, b := 0})]}})]
   for (label, context) in contexts do
     t s!"unknown dispatch: a {label} binding is outside the recovery domain"
       (!Elab.recoversInlineName context "zzz")

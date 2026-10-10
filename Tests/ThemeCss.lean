@@ -34,6 +34,34 @@ private def colorValue (vars : Ir.Palette) (value : String) : Option Ir.Color :=
         (({} : Ir.Palette).resolveSource none key).toOption.join
       else none
 
+/-- One pass of custom-property declarations over a scope's variables, in
+order: a later declaration of a name replaces an earlier one, `initial`
+removes it. -/
+private def variablesPass (inherited : Ir.Palette) (style : String) : Ir.Palette :=
+  (style.splitOn ";").foldl (fun vars decl =>
+    match decl.splitOn ":" with
+    | [key, value] =>
+      let key := key.trimAscii.toString
+      let value := value.trimAscii.toString
+      if !key.startsWith "--" then vars else
+        let name := (key.drop 2).toString
+        if value == "initial" then
+          { vars with entries := vars.entries.filter (·.1.key != name) }
+        else match colorValue vars value with
+          | some color => vars.declareKey name color
+          | none => vars
+    | _ => vars) inherited
+
+/-- A scope's custom properties as the cascade computes them: an alias may
+name a property declared after it in the scope, so the passes repeat until
+every alias the registry's strata allow has resolved. -/
+private def variables (inherited : Ir.Palette) (style : String) : Ir.Palette :=
+  (List.range 4).foldl (fun vars _ => variablesPass vars style) inherited
+
+/-- The page's own `:root` properties, light scheme: the top-level rules. -/
+private def rootVars (css : String) : Ir.Palette :=
+  variables {} (String.intercalate ";" (cssRulesOf css ":root"))
+
 private def ruleColor (css selector key : String) (vars : Ir.Palette) :
     Option Ir.Color :=
   (property (String.intercalate ";" (cssRulesOf css selector)) key).bind
@@ -66,33 +94,33 @@ public def checks (ref : IO.Ref (List String)) : IO Unit := do
       colorValue empty "var(--missing, #ffffff)" == some Ir.Color.white)
   let sparse := [
     ("bare", empty),
-    ("ink-only", empty.declare "fg" dark),
-    ("ground-only", empty.declare "bg" pale),
-    ("pair", (empty.declare "fg" dark).declare "bg" pale)]
+    ("ink-only", empty.declareKey "fg" dark),
+    ("ground-only", empty.declareKey "bg" pale),
+    ("pair", (empty.declareKey "fg" dark).declareKey "bg" pale)]
   let palettes := sparse ++ Theme.builtin.map fun theme => (theme.name, theme.palette)
   for (name, pal) in palettes do
     let doc := probe pal
     let css := sheet {} doc
-    let d := Ir.Design.ofPalette pal
-    for (key, expected) in [("background", d.standout.bg), ("color", d.standout.fg)] do
-      t s!"theme CSS/{name}: standout {key} projects Design"
-        (ruleColor css "section.slide.standout" key pal == some expected)
+    let light (r : Ir.Role) := Ir.Design.at pal .light r
+    for (key, role) in [("background", Ir.Role.standoutGround), ("color", .standoutInk)] do
+      t s!"theme CSS/{name}: standout {key} projects the resolver"
+        (ruleColor css "section.slide.standout" key (rootVars css) == light role)
     -- Add only the activating ground: the absent ink must inherit by the
-    -- same inversion the shared design declares.
-    let pal := (pal.declare "frametitlebg" dark).declare "titlepagebg" dark
+    -- same rule the shared design declares.
+    let pal := (pal.declareKey "frametitlebg" dark).declareKey "titlepagebg" dark
     let css := sheet {} (probe pal)
-    let d := Ir.Design.ofPalette pal
-    t s!"theme CSS/{name}: title page ink projects Design"
-      (ruleColor css "section.slide.title-page" "color" pal == d.titlepage.map (·.fg))
-    t s!"theme CSS/{name}: title bar ink projects Design"
-      (ruleColor css "section.slide > header" "color" pal == d.frametitle.map (·.fg))
-    t s!"theme CSS/{name}: palette tokens override fallback ink"
+    let light (r : Ir.Role) := Ir.Design.at pal .light r
+    t s!"theme CSS/{name}: title page ink projects the resolver"
+      (ruleColor css "section.slide.title-page" "color" (rootVars css) == light .titlePageInk)
+    t s!"theme CSS/{name}: title bar ink projects the resolver"
+      (ruleColor css "section.slide > header" "color" (rootVars css) == light .frameTitleInk)
+    t s!"theme CSS/{name}: a reader's property overrides the fallback ink"
       (ruleColor css "section.slide.standout" "color"
-        (pal.declare "standoutfg" pale) == some pale)
-    t s!"theme CSS/{name}: palette tokens override fallback ground"
+        ((rootVars css).declareKey "ltx-standoutfg" pale) == some pale)
+    t s!"theme CSS/{name}: a reader's property overrides the fallback ground"
       (ruleColor css "section.slide.standout" "background"
-        (pal.declare "standoutbg" dark) == some dark)
-  let opening := empty.declare "bg" pale
+        ((rootVars css).declareKey "ltx-standoutbg" dark) == some dark)
+  let opening := empty.declareKey "bg" pale
   let reset : Ir.Doc := { palette := opening, body := #[
     .setPalette empty, .para #[.text "RESET"]] }
   for mode in [HtmlDoc.CssMode.own, .none, .bulma] do
@@ -100,11 +128,13 @@ public def checks (ref : IO.Ref (List String)) : IO Unit := do
     let styles := elemStylesList #[] body.toList
     let paints := styles.filterMap fun (_, style) =>
       (property style "background").map fun bg => (style, bg)
+    let lightPage := Ir.Design.at empty .light .page
     t "theme CSS: removing a flow ground reaches a painted sibling"
       (!paints.isEmpty && paints.all fun (style, _) =>
-        property style "--bg" == some "initial")
-    let vars := if mode == .own then empty.declare "surface" Contrast.light.surface else empty
-    let expected := if mode == .own then some Contrast.light.surface else none
+        property style (HtmlDoc.roleVar .page) ==
+          some (if mode == .own then (lightPage.map HtmlDoc.cssColor).getD "" else "initial"))
+    let vars := variables {} (String.intercalate ";" (paints.toList.map (·.1)))
+    let expected := if mode == .own then lightPage else none
     t "theme CSS: removed ground has only the declared native surface"
       (paints.all fun (_, bg) => colorValue vars bg == expected)
   let doc := probe empty
@@ -117,8 +147,13 @@ public def checks (ref : IO.Ref (List String)) : IO Unit := do
   t "theme CSS: the author's rule remains last"
     (treeCssList "" head.toList |>.endsWith author)
   let bulma := sheet { css := .bulma } (probe empty)
+  -- Bulma's primary reads a host's `--primary` first, as it did before the
+  -- registry, then the focus role's own property, so a host's override of
+  -- either reaches it; the property is the registry's.
   t "theme CSS: Bulma's default accent is the native contrast palette"
-    (ruleColor bulma ":root" "--bulma-primary" empty == some Contrast.light.accent)
+    (property (String.intercalate ";" (cssRulesOf bulma ":root")) "--bulma-primary" ==
+        some "var(--primary, var(--ltx-accent))" &&
+      ruleColor bulma ":root" "--ltx-accent" empty == Ir.Design.at empty .light .focus)
 
 /-- A palette declared inside a structural scope still belongs to the frame
 it precedes. These authored scopes take different generic emitter paths;
@@ -172,21 +207,6 @@ public def epochSources : List (String × String) :=
             frame ++ "\\end{document}\n"
           (name, source)
   direct ++ wrappedEpochSources
-
-private def variables (inherited : Ir.Palette) (style : String) : Ir.Palette :=
-  (style.splitOn ";").foldl (fun vars decl =>
-    match decl.splitOn ":" with
-    | [key, value] =>
-      let key := key.trimAscii.toString
-      let value := value.trimAscii.toString
-      if !key.startsWith "--" then vars else
-        let name := (key.drop 2).toString
-        if value == "initial" then
-          { vars with entries := vars.entries.filter (·.1 != name) }
-        else match colorValue vars value with
-          | some color => vars.declare name color
-          | none => vars
-    | _ => vars) inherited
 
 private structure StagePaint where
   before : Bool

@@ -731,7 +731,7 @@ the title page is untouched. The HTML side reads the same role through
 `paletteVars`; `artGroundParityChecks` holds the two artifacts to it. -/
 public theorem titleGround_projects (pal : Ir.Palette) (valign : Ir.VAlign) :
     titleGround pal valign =
-      if valign matches .golden then pal.find? "titlepagebg" else none := by
+      if valign matches .golden then Ir.Design.declared? pal .titlePageGround else none := by
   unfold titleGround Ir.titleGroundOf
   cases valign <;> simp [Ir.Design.titleGround_exact]
 
@@ -10754,7 +10754,7 @@ public structure Spacing.Pending where
   /-- The enclosing painted body survives a palette declaration. Its ink
   keeps the source declaration separately from any ground-specific correction. -/
   private bodyGround : Option Ir.Color := none
-  private bodyInk : Option (String × Ir.Color) := none
+  private bodyInk : Option (Ir.ColorRef × Ir.Color) := none
   /-- The number of the frame being collected, from `Ir.frameNumbers`:
   `some k` for the k-th countable frame, `none` for a title
   frame. Threaded by `run`'s driver off the one numbering — nothing in the
@@ -11178,7 +11178,7 @@ private def Spacing.Context.style (r : Rd) (element : String) : Ir.ElementStyle 
 `Design.ofDoc`'s own rule, applied here per epoch so the ink always follows
 the palette in force. -/
 private def fgOf (pal : Ir.Palette) : Ir.Color :=
-  (pal.find? "fg").getD Ir.Color.black
+  (Ir.Design.at pal .print .ink).getD Ir.Color.black
 
 /-- `.setPalette` on the accumulator: the palette, default ink, and
 surface change together. The page ground rides as a state op so placement
@@ -11186,8 +11186,8 @@ can apply the epoch to the current and following pages; no content op or gap
 is introduced. -/
 private def Spacing.Pending.setPalette (a : Acc) (p : Ir.Palette) : Acc :=
   { a with pal := p, paletteEpoch := a.paletteEpoch + 1
-           fg := fgOf p, bodyInk := none, ground := a.bodyGround.or (p.find? "bg")
-           ops := a.ops.push (.pageGround (p.find? "bg")) }
+           fg := fgOf p, bodyInk := none, ground := a.bodyGround.or (Ir.Design.declared? p .page)
+           ops := a.ops.push (.pageGround (Ir.Design.declared? p .page)) }
 
 /-- `.setTokens`, same door. -/
 private def Spacing.Pending.setTokens (a : Acc) (tk : Ir.Tokens) : Acc :=
@@ -11198,7 +11198,7 @@ glue, or diagnostic. This is the confinement core: earlier placed material
 is untouched while the current page's eventual shipout reads the last ground
 state. -/
 private theorem Spacing.Pending.setPalette_emits_no_content (a : Acc) (p : Ir.Palette) :
-    (a.setPalette p).ops = a.ops.push (.pageGround (p.find? "bg")) ∧
+    (a.setPalette p).ops = a.ops.push (.pageGround (Ir.Design.declared? p .page)) ∧
       (a.setPalette p).owed = a.owed ∧
       (a.setPalette p).wantDefault = a.wantDefault ∧
       (a.setPalette p).diags = a.diags :=
@@ -13295,7 +13295,7 @@ private def collectSection (r : Rd) (a : Acc) (level : Ir.HeadingLevel) (num : O
   -- The rule's weight is the declared thickness, else the engine's
   -- em-relative default; its position is the declared one, else the
   -- x-height raise — both facts travel to the line as one record.
-  let rule : Option HeadingRule := st.rule.map fun (rc : Ir.Color × Option String) =>
+  let rule : Option HeadingRule := st.rule.map fun (rc : Ir.Color × Option Ir.ColorRef) =>
     { thickness := (st.ruleThickness.map fun g => (r.resolve g).width).getD
         (headingRuleWeight r.geom.fontSize)
       position := st.rulePosition.getD .xHeight
@@ -13465,6 +13465,7 @@ private def codeWraps (us : Array CodeUnit) (widths : Array Sp) (first cont : Sp
   return out
 
 private def collectVerbatim (r : Rd) (a : Acc) (covered : Option Ir.Color) (s : String) (spec : Ir.ListingSpec) (indent : Sp) : Acc :=
+  let a0 := a
   -- Code lines use the declared size through the ordinary style resolver.
   -- No hyphenation patterns: the engine must never invent a hyphen inside
   -- an identifier. A pending overlay's shade rides in `covered`: code
@@ -13498,6 +13499,9 @@ private def collectVerbatim (r : Rd) (a : Acc) (covered : Option Ir.Color) (s : 
   -- first source line takes it twice: measured under lualatex, an fvextra
   -- listing's first two lines stand 0.5 pt under the step's skip and every
   -- later pair 0.25 pt, the gaps around the listing a bare `verbatim`'s.
+  -- minted's `bgcolor` is the code's own ground: fvextra's colour box
+  -- behind each line, across the line width, the lines' struts deep.
+  let ground := (spec.ground.map (·.1)).or a.ground
   let sty := applyStyle r.geom.scale {} spec.fontSize
   let overlap := if sty.leading.isSome then 0 else spec.lineOverlap
   -- A listing owns its line box, not the enclosing body's strut.
@@ -13534,7 +13538,7 @@ private def collectVerbatim (r : Rd) (a : Acc) (covered : Option Ir.Color) (s : 
   -- held to their line by no-break spaces.
   let inner : Array Ir.Inline := Id.run do
       let lines := spec.tokenLines s
-      let brushes := Listing.brushes a.pal a.ground covered spec.style lines
+      let brushes := Listing.brushes a.pal ground covered spec.style lines
       let w := (toString lines.size).length
       let mut out : Array Ir.Inline := #[]
       let mut i := 0
@@ -13603,7 +13607,8 @@ private def collectVerbatim (r : Rd) (a : Acc) (covered : Option Ir.Color) (s : 
               out := out.push (.hspace (.lit { width := .ofSp hang }) true)
             j := j + 1
             let mut k := 0
-            for run in Listing.paintLine a.pal a.ground covered spec.style brushes (pieces.map (·.1)) do
+            for run in Listing.paintLine a.pal ground covered spec.style brushes
+                (pieces.map (·.1)) do
               let mut body : Array Ir.Inline := #[]
               for piece in run.tokens do
                 let (sourceColumn, text) := (pieces[k]?.map (·.2)).getD (0, piece.text)
@@ -13622,11 +13627,19 @@ private def collectVerbatim (r : Rd) (a : Acc) (covered : Option Ir.Color) (s : 
     | none => inner
   -- the code is one leaf, its whole content; line numbers are generated
   let (a, leaf) := a.leafRange 1
-  collectPara { r with pats := none, geom := { r.geom with justify := false } }
+  let a := match spec.ground with
+    | some (g, _) =>
+      { a.pushOp (.regionOpen (.surface (r.shown g) 0 (r.geom.hmargin + indent) avail false))
+        with ground := some g }
+    | none => a
+  let done := collectPara { r with pats := none, geom := { r.geom with justify := false } }
     a inner indent false size
     (baseStyle := { leading := some (.lit { width := .ofSp leading }) })
     (leaf := leaf) (span := 1) (literalLines := true)
     (strut := if spec.lineStrut then some leading else none)
+  match spec.ground with
+  | some _ => { done.pushOp .regionClose with ground := a0.ground }
+  | none => done
 
 /-- A listing with the space its environment sets around it, where the class
 spaces that frame as TeX does (`Ir.ListingFrame.onPage`): a trivlist's
@@ -13717,7 +13730,7 @@ private def collectAlgorithm (r : Rd) (a : Acc) (numbered semis : Bool) (lines :
       comment := l.comment.map fun c => if leafCount c == 0 then c else markContent c }
     let content := Ir.AlgLine.rendered words semis muted l
     let marker : Option (Array Ir.Inline) := if numbered then
-        some #[Ir.Inline.colored muted (some "muted") #[.text s!"{i}"]]
+        some #[Ir.Inline.colored muted (some (.role .muted)) #[.text s!"{i}"]]
       else none
     -- the line's leaves: its content's, then its comment's (`Struct.algRaw`)
     let span := leafCount l.content + leafCount (l.comment.getD #[])
@@ -13743,13 +13756,13 @@ private def collectRuleBlock (r : Rd) (a : Acc) (color : Ir.Color) (thickness : 
 
 /-- PDF body paint is a projection of the shared design at the block's epoch. -/
 @[expose] public def titledBodyPaint (pal : Ir.Palette) (kind : Ir.TitledKind)
-    (parent : Ir.ColorPair) (parentRole : String) : Ir.ColorPair :=
-  (Ir.Design.ofPalette pal).titledBodyPaint kind parent parentRole
+    (parent : Ir.ColorPair) : Ir.ColorPair :=
+  (Ir.Design.ofPalette pal).titledBodyPaint kind parent
 
 public theorem titledBodyPaint_projects (pal : Ir.Palette) (kind : Ir.TitledKind)
-    (parent : Ir.ColorPair) (parentRole : String) :
-    titledBodyPaint pal kind parent parentRole =
-      (Ir.Design.ofPalette pal).titledBodyPaint kind parent parentRole := by rfl
+    (parent : Ir.ColorPair) :
+    titledBodyPaint pal kind parent = (Ir.Design.ofPalette pal).titledBodyPaint kind parent := by
+  rfl
 
 /-- Resolve the shared block inset in the body's measured font units. -/
 @[expose] public def titledPadding (fontSize xHeight : Sp) : Sp :=
@@ -13791,13 +13804,10 @@ private def collectTitledTitle (r : Rd) (a : Acc) (kind : TitledKind)
       (.boxAnchor (.tex (2 * pad)) 0 true)).pushOp .regionClose
   | bar, false =>
     let saved := (a.fg, a.ground)
-    let d := Ir.Design.ofPalette a.pal
-    let titleInk := (d.inkOn (kind.roleStem ++ "titlefg")
-      { fg := look.fg, bg := bar.getD (a.ground.getD d.bg) }).fg
     let a := match bar with
       | some c => a.pushOp (.regionOpen (.surface (r.shown c) pad x w false))
       | none => a
-    let a := { a with fg := r.shown titleInk, ground := bar.orElse fun _ => a.ground }
+    let a := { a with fg := r.shown look.fg, ground := bar.orElse fun _ => a.ground }
     let (a, leaf) := a.leafRange (leafCount title)
     let font := Ir.blockTitleFont r.styles kind
     let shown := match font with
@@ -13848,16 +13858,13 @@ private def collectBoxOpen (r : Rd) (a : Acc) (title : Array Inline) (indent : S
   let a := if title.isEmpty then
       bodyOpen a (.balanced s) 0 (Ir.tcbRule + Ir.tcbBoxsep + Ir.tcbTop)
     else
-      let d := Ir.Design.ofPalette a.pal
-      let titleInk := (d.inkOn (TitledKind.box.roleStem ++ "titlefg")
-        { fg := look.fg, bg := look.bar.getD (a.ground.getD d.bg) }).fg
       let a := match look.bar with
         | some c => a.pushOp (.regionOpen (.surface (r.shown c) (Ir.tcbBoxsep + Ir.tcbRule) x w true))
         | none => a
       let a := ((a.pushOp (.boxAnchor (.balanced s) 0 look.bar.isSome)).pushOp .noInterline).vskip
         { width := Ir.tcbRule + Ir.tcbBoxsep }
       let saved := (a.fg, a.ground)
-      let a := { a with fg := r.shown titleInk, ground := look.bar.orElse fun _ => a.ground
+      let a := { a with fg := r.shown look.fg, ground := look.bar.orElse fun _ => a.ground
                         measure := some (measure - Ir.tcbInset) }
       let (a, leaf) := a.leafRange (leafCount title)
       let a := collectDisplay r a title (indent + Ir.tcbInset) false r.geom.fontSize
@@ -13931,9 +13938,7 @@ private def collectShapedOpen (r : Rd) (a : Acc) (kind : TitledKind) (shape : Ir
   let a := if shape.whole.isSome then opens (a.flushGap r) .whole wx0 wx1 wholeInset else a
   let a := if !setsTitle then a else
     let look := Ir.titledLook a.pal kind
-    let d := Ir.Design.ofPalette a.pal
-    let titleInk := (d.inkOn (kind.roleStem ++ "titlefg")
-      { fg := look.fg, bg := a.ground.getD d.bg }).fg
+    let titleInk := look.fg
     let saved := a.fg
     let a := if shape.title.boxed then opens (a.flushGap r) .title tx0 tx1 titleInset else a
     let (ti, tm) := if shape.title.boxed then (tx0, tx1) else (wx0, wx1)
@@ -14002,8 +14007,8 @@ page's setting, as the style names the heading. -/
 private def collectAbstractHead (r : Rd) (a : Acc) (indent : Sp) : Acc :=
   let small := Ir.scaleStep r.geom.fontSize "small"
   let hst := Ir.abstractHeadingStyle r.styles
-  let hcenter := hst.align != some "left" && hst.align != some "right"
-  let rh := if hst.align == some "right"
+  let hcenter := hst.align != some .left && hst.align != some .right
+  let rh := if hst.align == some .right
     then { r with geom := { r.geom with flushRight := true } } else r
   let a := match hst.font with
     | some tpl =>
@@ -14053,21 +14058,19 @@ distribution moves the body below it, never the band. -/
 private def collectHeadlineBand (r : Rd) (a : Acc) : Acc :=
   match r.headline with
   | some hl =>
-    let bar := a.pal.find? "frametitlebg"
+    let band := (Ir.Design.ofPalette a.pal).frametitle
+    let bar := band.map (·.bg)
     let saved := (a.fg, a.ground)
-    let a := match bar with
-      | some barBg =>
-        { a with fg := (a.pal.find? "frametitlefg").getD
-                   ((a.pal.find? "bg").getD Ir.Color.white)
-                 ground := some barBg }
+    let a := match band with
+      | some pair => { a with fg := pair.fg, ground := some pair.bg }
       | none => a
     let tps := r.style "titlepage"
     -- Three-way, as the declaration's own vocabulary is: `left`, `right`,
     -- or centred where nothing is declared. Read two-way, a declared
     -- `right` fell into the centred arm and the page silently centred
     -- while the HTML backend passed `right` through to CSS.
-    let center := tps.align != some "left" && tps.align != some "right"
-    let rt := if tps.align == some "right"
+    let center := tps.align != some .left && tps.align != some .right
+    let rt := if tps.align == some .right
       then { r with geom := { r.geom with flushRight := true } } else r
     let a := match tps.font with
       | some tpl =>
@@ -14690,16 +14693,16 @@ private def collectBlock (r : Rd) (a : Acc)
   | .titled kind title body =>
     let d := Ir.Design.ofPalette a.pal
     let look := d.titledBody kind
-    let inherited := a.bodyInk.getD ("fg", a.fg)
+    let inherited := a.bodyInk.getD (.role .ink, a.fg)
     let parent : Ir.ColorPair := { fg := inherited.2, bg := a.ground.getD d.bg }
-    let paint := titledBodyPaint a.pal kind parent inherited.1
-    let role := if look.fg.isSome then kind.roleStem ++ "bodyfg" else inherited.1
+    let paint := titledBodyPaint a.pal kind parent
+    let role := if look.fg.isSome then .role (Ir.Role.bodyInk kind) else inherited.1
     let restore (done : Acc) : Acc :=
       { done with measure := a.measure, bodyGround := a.bodyGround
                   bodyInk := if done.paletteEpoch == a.paletteEpoch then a.bodyInk else none
                   fg := if done.paletteEpoch == a.paletteEpoch then a.fg else fgOf done.pal
                   ground := if done.paletteEpoch == a.paletteEpoch then a.ground
-                    else a.bodyGround.or (done.pal.find? "bg") }
+                    else a.bodyGround.or (Ir.Design.declared? done.pal .page) }
     -- `\@arrayparboxrestore`, as both boxes' bodies run: no `\parskip`.
     let rb := { (r.within blk) with geom := { r.geom with parskip := {}, texParskip := {} } }
     if kind == .box then
@@ -14716,7 +14719,7 @@ private def collectBlock (r : Rd) (a : Acc)
       -- The kind's own template: no colour box, so the body keeps the
       -- page's `\parskip` and its ink stands on the page's ground.
       let (opened, bodyIndent, bodyMeasure) := collectShapedOpen r a kind shape title body indent
-      let ink := (d.inkOn role { fg := look.fg.getD inherited.2, bg := a.ground.getD d.bg }).fg
+      let ink := look.fg.getD inherited.2
       let inner := { opened with
         fg := r.shown ink, measure := some bodyMeasure
         bodyInk := some (role, look.fg.getD inherited.2) }
@@ -14973,7 +14976,7 @@ private def collectBlock (r : Rd) (a : Acc)
       -- Restore by recomputing from the palette in force: a `.setPalette`
       -- inside the frame must reach what follows it (flow scope), so a
       -- saved copy would restore a stale epoch's ink.
-      let a := { a with fg := fgOf a.pal, ground := a.pal.find? "bg" }
+      let a := { a with fg := fgOf a.pal, ground := Ir.Design.declared? a.pal .page }
       a.pageBreak.pushOp .frameClose
     else
     -- The frame's own ground (`Ir.frameGroundOf`): the title page's
@@ -15025,7 +15028,7 @@ private def collectBlock (r : Rd) (a : Acc)
     -- standout arm does: a `.setPalette` inside the frame must reach what
     -- follows it, so a saved copy would restore a stale epoch's ink.
     let a := if pageGround.isSome then
-        { a with fg := fgOf a.pal, ground := a.pal.find? "bg" }
+        { a with fg := fgOf a.pal, ground := Ir.Design.declared? a.pal .page }
       else a
     a.pageBreak.pushOp .frameClose
 
@@ -20146,7 +20149,7 @@ public def runPost (sh : Shipped) : Out := Id.run do
   -- Running content is laid out per page once the count is known, into the
   -- margin, so it never disturbs the body it annotates.
   let total := pages.size
-  let furnGround := doc.palette.find? "bg"
+  let furnGround := Ir.Design.declared? doc.palette .page
   -- Margin line numbers (`\page{ linenumbers = on }`): furniture in the
   -- muted role at the footnotesize step, laid here where the head and
   -- foot are — engine-placed margin ink, never body flow. The column
@@ -20234,9 +20237,9 @@ public def runPost (sh : Shipped) : Out := Id.run do
     | some brk =>
       let (segs, w, _) := setLine items (lineStart items 0) brk geom.textWidth false
       let x := match Ir.logoAlign doc.styles with
-        | "left" => geom.hmargin
-        | "center" => (geom.pageW - w) / 2
-        | _ => geom.pageW - geom.hmargin - w
+        | .left => geom.hmargin
+        | .center => (geom.pageW - w) / 2
+        | .right => geom.pageW - geom.hmargin - w
       (some { x := x
               y := geom.pageH - geom.vmargin
               size := geom.fontSize, segs := segs, setWidth := w }, ds, c)
@@ -21424,7 +21427,7 @@ private def withLayoutOps {α : Type} (geom : Geom) (fs : FontSet)
                       standoutNote := doc.chrome.standoutNote
                       footAllowed := footAllowed
                       fg := design.fg
-                      ground := doc.palette.find? "bg" }
+                      ground := Ir.Design.declared? doc.palette .page }
   -- One handout page per overlay step, driven here at the top level: a
   -- multi-step frame collects once per step with pending content dimmed
   -- (`Ir.dimBlocks`), under ONE frame number — the furniture belongs to the
@@ -22784,7 +22787,7 @@ fills). -/
 private theorem runCore_bg
     (geom : Geom) (fs : FontSet) (pats : Option Hyphen.Patterns)
     (doc : Ir.Doc) (imgs : Image.Store)
-    (hbg : (doc.palette.find? "bg").isSome = true)
+    (hbg : (Ir.Design.declared? doc.palette .page).isSome = true)
     (hepoch : pageGroundsDeclaredCore geom fs pats doc imgs = true) :
     ∀ p ∈ (runCore geom fs pats doc imgs).pages,
       ∃ f ∈ p.fills.toList,
@@ -22829,7 +22832,7 @@ private theorem runCore_bg
     (bgStep_placeFrom _ _ _ _ _ (Array.all_eq_true'.mp hepoch) (by simp))) ?_ rfl q hq)
     ?_ ?_ ?_
   all_goals first
-    | (simp [Ir.Design.ofDoc, Ir.Design.ofPalette, pdfView, hbg]
+    | (simp [Ir.Design.ofDoc, Ir.Design.ofPalette, Ir.Design.resolve, pdfView, hbg]
        done)
     | (try dsimp only
        repeat' split
@@ -22845,7 +22848,7 @@ fourth and only appends (`addMarks_mem`), so the fill rides through. -/
 public theorem page_background_survives
     (geom : Geom) (fs : FontSet) (pats : Option Hyphen.Patterns)
     (doc : Ir.Doc) (imgs : Image.Store)
-    (hbg : (doc.palette.find? "bg").isSome = true)
+    (hbg : (Ir.Design.declared? doc.palette .page).isSome = true)
     (hepoch : pageGroundsDeclared geom fs pats doc imgs = true) :
     ∀ p ∈ (run geom fs pats doc imgs).pages,
       ∃ f ∈ p.fills.toList,

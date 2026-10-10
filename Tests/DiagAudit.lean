@@ -118,8 +118,8 @@ def registry : List AuditRow :=
   [⟨.W0201, .keep, .native, check% measureChecks⟩,
    ⟨.W0202, .keep, .native, check% rhythmChecks⟩,
    ⟨.N0376, .keep, .native, check% a11yChecks⟩,
-   -- The covered arm warns about the engine's own default cover: realize
-   -- it per role at its one resolving site instead, as N0022 does.
+   -- The covered arm warns about the engine's own default cover: derive
+   -- the cover per role at its one resolving site instead.
    ⟨.W0345, .native, .native, check% contrastChecks⟩,
    -- A fallback face substitutes where lualatex substitutes silently.
    ⟨.W0009, .keep, .degraded, check% fallbackChecks⟩,

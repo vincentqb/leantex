@@ -58,17 +58,6 @@ def cellsOf (style : Ir.ListingStyle) (type chain : String) : Array String :=
     hexCell r.bgcolor, hexCell r.border, chain, (l.color.map (texRgb ·.1)).getD "-",
     bit l.bold, bit l.italic, bit l.underline, boxCell l.box]
 
-/-- `ink` is `seed` where `seed` is legible on `ground`, and otherwise the
-least whole-percent xcolor mix of `seed` toward a pole that is: the bounded
-adjustment, read off the result rather than restating its search. -/
-def leastLegible (ground seed ink : Ir.Color) : Bool :=
-  let ok (c : Ir.Color) := Contrast.contrastMilli c ground ≥ Contrast.aaText
-  if ok seed then ink == seed
-  else ok ink && [Ir.Color.black, Ir.Color.white].any fun pole =>
-    match (List.range 100).find? (fun i => seed.mix (100 - (i + 1)) pole == ink) with
-    | some i => (List.range i).all fun j => !ok (seed.mix (100 - (j + 1)) pole)
-    | none => false
-
 /-- What a weight is in the four-face set: regular 0, bold 1, italic 2,
 bold italic 3 (`serifFacesSet`). -/
 def faceOf (bold italic : Bool) : Nat := (if bold then 1 else 0) + (if italic then 2 else 0)
@@ -179,11 +168,8 @@ def listingStyleTableChecks (ref : IO.Ref (List String)) : IO Unit := do
       (chain == "-" || (chain.splitOn "+").length == (Kind.ofPygments type).chain.length)
     for ground in [Ir.Color.white, Ir.Color.black] do
       let k := Kind.ofPygments type
-      t s!"code roles: {style.name} {type} ships its role's style colour, or the least legible mix of it, on {ground.css}"
-        (match CodeColor.styleColor style k.role, Listing.ink {} (some ground) k (style := style) with
-          | some seed, some ink => leastLegible ground seed ink
-          | none, none => true
-          | _, _ => false)
+      t s!"code roles: {style.name} {type} ships its role's style colour as the style states it, on {ground.css}"
+        (Listing.ink {} (some ground) k (style := style) == CodeColor.styleColor style k.role)
   let some fonts ← serifFacesSet | failures ref "pygments styles: the serif faces load"
   let kinds := types.map Kind.ofPygments
   for style in Ir.ListingStyle.all do
@@ -211,10 +197,8 @@ def listingStyleTableChecks (ref : IO.Ref (List String)) : IO Unit := do
         (inks.all (· == inks[0]?.getD none))
   -- The report: a Lean proof hole under minted's styles.
   let friendlyRed := Listing.ink {} none .genericError (style := .friendly)
-  t "pygments styles: friendly's Generic.Error red is legible and barely different from #FF0000"
-    (friendlyRed.any fun c => c != Ir.Color.ofHtml 255 0 0 &&
-      Contrast.contrastMilli c Ir.Color.white ≥ Contrast.aaText &&
-      Contrast.withinInkBound (Ir.Color.ofHtml 255 0 0) c)
+  t "pygments styles: friendly's Generic.Error ships its own #FF0000"
+    (friendlyRed == some (Ir.Color.ofHtml 255 0 0))
   t "pygments styles: default's Generic.Error ships its own #E40000"
     (Listing.ink {} none .genericError (style := .default) == some (Ir.Color.ofHtml 228 0 0))
   for style in Ir.ListingStyle.all do
@@ -294,47 +278,47 @@ def codeRoleChecks (ref : IO.Ref (List String)) : IO Unit := do
   let exampleInk := Ir.Color.ofHtml 0x1A 0x6A 0x3A
   let own := Ir.Color.ofHtml 0x70 0x20 0x90
   let pal (entries : List (String × Ir.Color)) : Ir.Palette :=
-    entries.foldl (fun p (k, c) => p.declare k c) {}
+    entries.foldl (fun p (k, c) => p.declareKey k c) {}
   let invented := pal [("fg", ink), ("bg", white), ("alert", alert), ("muted", muted),
     ("example", exampleInk)]
   let roles (p : Ir.Palette) := CodeColor.resolve p white .default
-  let declared (key : String) (c : Ir.Color) : Option CodeColor.Paint :=
+  let declared (key : Ir.Role) (c : Ir.Color) : Option CodeColor.Paint :=
     some { color := c, role := some key, declared := true }
   let r := roles invented
   t "code roles: on its page, a role the document names no colour for ships the palette role it reads"
-    (r.get .error == declared "alert" alert && r.get .comment == declared "muted" muted &&
-      r.get .literal == declared "example" exampleInk && r.get .ink == none)
+    (r.get .error == declared .alert alert && r.get .comment == declared .muted muted &&
+      r.get .literal == declared .example exampleInk && r.get .ink == none)
   let dark := CodeColor.resolve invented Ir.Color.black .default
   t "code roles: on another ground, the palette role is the code role's own colour to adapt"
-    (dark.get .error == some { color := alert, role := some "codeerror", declared := false } &&
-      dark.get .literal == some { color := exampleInk, role := some "codeliteral", declared := false })
+    (dark.get .error == some { color := alert, role := some .codeError, declared := false } &&
+      dark.get .literal == some { color := exampleInk, role := some .codeLiteral, declared := false })
   t "code roles: keywords and names share a tone of the ink's hue, derived and legible"
     (match r.get .keyword, r.get .name with
       | some k, some n =>
-        k.color == n.color && !k.declared && k.role == some "codekeyword" &&
-          n.role == some "codename" && hueCosMilli k.color ink ≥ 990 &&
+        k.color == n.color && !k.declared && k.role == some .codeKeyword &&
+          n.role == some .codeName && hueCosMilli k.color ink ≥ 990 &&
           Contrast.contrastMilli k.color white ≥ CodeColor.codeTone
       | _, _ => false)
   t "code roles: a role's own key wins over the palette role it reads, as declared"
-    ((roles (invented.declare "codeerror" own)).get .error ==
-      some { color := own, role := some "codeerror", declared := true })
+    ((roles (invented.declare (.role .codeError) own)).get .error ==
+      some { color := own, role := some .codeError, declared := true })
   t "code roles: an ink with no hue of its own sets keywords and names in the ink"
-    (let r := roles (invented.declare "fg" (Ir.Color.ofHtml 0x22 0x22 0x22))
+    (let r := roles (invented.declare (.role .ink) (Ir.Color.ofHtml 0x22 0x22 0x22))
      r.get .keyword == none && r.get .name == none)
   let teal := Ir.Color.ofHtml 0x1A 0x50 0x70
   t "code roles: a literal hue within 60° of the ink's leaves keywords in the ink"
-    (let r := roles (invented.declare "example" teal |>.declare "fg" (Ir.Color.ofHtml 0x1C 0x3A 0x4A))
+    (let r := roles (invented.declare (.role .example) teal |>.declare (.role .ink) (Ir.Color.ofHtml 0x1C 0x3A 0x4A))
      hueCosMilli teal (Ir.Color.ofHtml 0x1C 0x3A 0x4A) ≥ 500 && r.get .keyword == none)
   t "code roles: a muted step that is the ink itself quiets comments to the ink 70:30 into the page"
-    ((roles (invented.declare "muted" ink)).get .comment ==
-      some { color := ink.mix 70 white, role := some "codecomment", declared := false })
+    ((roles (invented.declare (.role .muted) ink)).get .comment ==
+      some { color := ink.mix 70 white, role := some .codeComment, declared := false })
   let literalOf (p : Ir.Palette) := ((roles p).get .literal).map (·.color)
   t "code roles: an example that is the ink derives one more hue, far from the ink's and the alert's"
-    (match literalOf (invented.declare "example" ink) with
+    (match literalOf (invented.declare (.role .example) ink) with
       | some c => hueCosMilli c ink ≤ 50 && hueCosMilli c alert ≤ 50 &&
           Contrast.contrastMilli c white ≥ CodeColor.codeTone &&
-          (roles (invented.declare "example" ink)).get .literal ==
-            some { color := c, role := some "codeliteral", declared := false }
+          (roles (invented.declare (.role .example) ink)).get .literal ==
+            some { color := c, role := some .codeLiteral, declared := false }
       | none => false)
   t "code roles: with the alert the only hue, the literal stands opposite it"
     (match literalOf (pal [("fg", Ir.Color.ofHtml 0x22 0x22 0x22), ("bg", white), ("alert", alert)]) with
@@ -342,7 +326,7 @@ def codeRoleChecks (ref : IO.Ref (List String)) : IO Unit := do
       | none => false)
   let quiet := Ir.Color.ofHtml 0x90 0x60 0x60
   t "code roles: no derived hue is louder than the alert"
-    (match (roles (invented.declare "alert" quiet)).get .keyword with
+    (match (roles (invented.declare (.role .alert) quiet)).get .keyword with
       | some k => chromaOf k.color ≤ chromaOf quiet + chromaOf quiet / 10
       | none => false)
   t "code roles: a palette that declares none of the roles the rule reads takes the style's"
@@ -355,8 +339,8 @@ def codeRoleChecks (ref : IO.Ref (List String)) : IO Unit := do
       t s!"code roles: {theme.name} on {ground.css}: a declared colour is the palette's, any other ships legible"
         (ListingHighlight.Role.all.all fun role => match r.get role with
           | some p => if p.declared then
-              ground == d.bg && p.role.any fun key => theme.palette.find? key == some p.color
-            else p.role == some role.key &&
+              ground == d.bg && p.role.any fun key => Ir.Design.declared? theme.palette key == some p.color
+            else p.role == some (Ir.Role.ofCode role) &&
               Contrast.contrastMilli (Listing.defaultInk ground p.color) ground ≥ Contrast.aaText
           | none => true)
   let palette := "\\palette{fg=#202440,bg=#FFFFFF,alert=#B01030,muted=#5A6068,example=#1A6A3A}"
@@ -425,10 +409,10 @@ def codeRoleChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "code roles: an alert that is the ink leaves the error role to the style"
     ((roles twin).get .error ==
       (CodeColor.styleColor .default .error).map fun c =>
-        { color := c, role := some "codeerror", declared := false })
+        { color := c, role := some .codeError, declared := false, styled := true })
   t "code roles: a muted step that is the alert quiets comments to the ink 70:30 into the page"
-    ((roles (invented.declare "muted" alert)).get .comment ==
-      some { color := ink.mix 70 white, role := some "codecomment", declared := false })
+    ((roles (invented.declare (.role .muted) alert)).get .comment ==
+      some { color := ink.mix 70 white, role := some .codeComment, declared := false })
   -- A key that once coloured one token type colours no listing now: named
   -- once where the palette declares it, its name still a colour, and a
   -- listing holding a token of each key's type ships as the document
@@ -438,15 +422,15 @@ def codeRoleChecks (ref : IO.Ref (List String)) : IO Unit := do
       "\\begin{minted}{python}\nprint(\"s\", 1 + len(x))\n\\end{minted}")).1
   let plainTyped := shipped (typed "")
   for r in [ListingHighlight.Role.literal, .name, .ink] do
-    t s!"code roles: {r.key} repaints the listing holding each retired key's type"
-      (shipped (typed s!"\\palette\{ {r.key} = #AA0000 }") != plainTyped)
+    t s!"code roles: {Ir.codeKey r} repaints the listing holding each retired key's type"
+      (shipped (typed s!"\\palette\{ {Ir.codeKey r} = #AA0000 }") != plainTyped)
   for (key, r) in CodeColor.retiredKeys do
     for spelling in [s!"\\palette\{ {key} = #AA0000 }", s!"\\definecolor\{{key}}\{HTML}\{AA0000}",
         s!"\\colorlet\{{key}}\{black}"] do
       let (_, ds) := markerDoc (palette ++ spelling)
       let named := ds.filter fun d => d.code == "W0387" && d.subject == some s!"listingkey:{key}"
-      t s!"code roles: {spelling} is named once where it stands, pointing to {r.key}"
-        (named.size == 1 && named.all fun d => hasStr (d.help.getD "") r.key)
+      t s!"code roles: {spelling} is named once where it stands, pointing to {Ir.codeKey r}"
+        (named.size == 1 && named.all fun d => hasStr (d.help.getD "") (Ir.codeKey r))
       t s!"code roles: {spelling} leaves the listing holding its type as the document without it"
         (shipped (typed spelling) == plainTyped)
   let (_, early) := elabStr (dvDoc "\\usepackage{minted}"
@@ -455,6 +439,38 @@ def codeRoleChecks (ref : IO.Ref (List String)) : IO Unit := do
     (early.any fun d => d.code == "W0387" && !d.demoted && d.help.isSome)
   t "code roles: no shipped bundle declares a retired key"
     (Theme.builtin.all fun th => th.palette.entries.all fun (k, _) =>
-      (CodeColor.retiredKeys.lookup k).isNone)
+      (CodeColor.retiredKeys.lookup k.key).isNone)
+
+/-- The TeX export of a palette's code colours: one redefinition per standard
+token type, every setting stated, each role's colour the one the engine
+paints on the page (`CodeExport.pageBrushes`), the alert the palette's own. -/
+def codeExportChecks (ref : IO.Ref (List String)) : IO Unit := do
+  let t := check ref
+  let ink := Ir.Color.ofHtml 0x20 0x24 0x40
+  let alert := Ir.Color.ofHtml 0xB0 0x10 0x30
+  let pal : Ir.Palette := ({} : Ir.Palette).declare (.role .ink) ink
+    |>.declare (.role .page) Ir.Color.white |>.declare (.role .alert) alert
+  for style in Ir.ListingStyle.all do
+    let tex := CodeExport.texDeclarations "Probe" pal style
+    let named := (PygmentsStyle.standardTypes.filter (!·.2.isEmpty)).length
+    t s!"code export {style.name}: one macro per standard type"
+      ((tex.splitOn "\\@namedef{PYG@tok@").length == named + 1)
+    t s!"code export {style.name}: every macro states every setting"
+      (((tex.splitOn "\\@namedef{PYG@tok@").drop 1).all fun m =>
+        ["\\PYG@bf=", "\\PYG@it=", "\\PYG@ul=\\relax", "\\PYG@bc=\\relax", "\\PYG@tc"].all
+          (hasStr m ·))
+    let brushes := CodeExport.pageBrushes pal style
+    for r in ListingHighlight.Role.all do
+      match (brushes.get r).ink with
+      | some c =>
+        t s!"code export {style.name}: the {repr r} role's colour is the one the page ships"
+          (hasStr tex s!"\\definecolor\{{CodeExport.colorName "Probe" r}}\{HTML}\{{Ir.Color.hexByte c.r}{Ir.Color.hexByte c.g}{Ir.Color.hexByte c.b}}")
+      | none =>
+        t s!"code export {style.name}: the {repr r} role defines no colour of its own"
+          (!hasStr tex s!"\\definecolor\{{CodeExport.colorName "Probe" r}}")
+    t s!"code export {style.name}: the error role is the palette's alert, exactly"
+      ((brushes.get .error).ink == some alert)
+    t s!"code export {style.name}: an ink type sets in the listing's own colour"
+      (hasStr tex "\\@namedef{PYG@tok@n}{\\let\\PYG@bf=\\relax\\let\\PYG@it=\\relax\\let\\PYG@ul=\\relax\\let\\PYG@bc=\\relax\\let\\PYG@tc=\\relax}")
 
 end Tests

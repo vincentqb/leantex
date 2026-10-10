@@ -310,21 +310,25 @@ public theorem run_recovery_named (file input : String) (item : Ir.Recovered)
     (run file input).2.any (·.subject == some item.subject) = true :=
   runRaws_recovery_named file _ _ _ item h
 
-/-- The final document judges can realize colours but conserve the body's
-text census. This is the document returned by the production completion. -/
+/-- **The final judges report; none rewrites** (`_exact`): the document the
+production completion returns is the document elaborated, every colour as
+the document stated it. The contrast report (`Contrast.docDiags`) names a
+pairing short of its medium's ratio and leaves the pair alone. -/
+public theorem completePrepared_doc_exact (file : String) (p : Prepared)
+    (earlier : Array Diag) (doc : Ir.Doc) (table : Ir.RefTable)
+    (report : PictureReportContext) (st : ESt) :
+    (completePrepared file p earlier doc table report st).1 = doc := by
+  unfold completePrepared
+  rfl
+
+/-- The final document judges conserve the body's text census: the
+document returned by the production completion is the one elaborated. -/
 public theorem completePrepared_body_text (file : String) (p : Prepared)
     (earlier : Array Diag) (doc : Ir.Doc) (table : Ir.RefTable)
     (report : PictureReportContext) (st : ESt) :
     Ir.blocksText (completePrepared file p earlier doc table report st).1.body =
       Ir.blocksText doc.body := by
-  change Ir.blocksText (Contrast.realizeDoc doc
-    (fun pal name c => colorSiteOf st.spans.colors name c
-      (declarations := st.spans.colorDeclarations) (palette := some pal))).1.body = _
-  unfold Contrast.realizeDoc
-  dsimp only
-  split
-  · rfl
-  · exact Ir.recolorRoles_text _ _ _ doc.body
+  rw [completePrepared_doc_exact]
 
 /-- The input condition is checked on the context and body produced by
 the real declaration/class preparation, for each withdrawal environment.

@@ -989,8 +989,8 @@ def colorModelChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO 
         (pageOut.pages[0]?).any fun p => p.fills.any fun f => samePreview want f.color)
     t s!"xcolor {model}: typed HTML paints the same page-colour preview"
       ((elemStylesList #[] pageBody.toList).any fun (shown, style) =>
-        hasStr shown "Model Ground" && hasStr style ("--bg: " ++ HtmlDoc.cssColor want) &&
-          hasStr style "background: var(--bg")
+        hasStr shown "Model Ground" && hasStr style ("--ltx-bg: " ++ HtmlDoc.cssColor want) &&
+          hasStr style "background: var(--ltx-bg")
   let boundaryPdf (pre body : String) : ByteArray :=
     let (d, _) := elabStr (article pre body)
     let geom := Layout.Geom.ofPage d.page
@@ -1037,14 +1037,13 @@ def colorModelChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO 
   let contrastEpoch := contrastDoc.body.foldl (fun p b => match b with
     | .setPalette q => some q
     | _ => p) none
-  let realizedMuted := contrastDoc.palette.find? "muted"
-  t "a role realized in one epoch also reaches an equal role-ground pair at the root"
-    (contrastDs.any (·.code == "N0022") && realizedMuted.isSome &&
-      contrastEpoch.bind (·.find? "muted") == realizedMuted &&
-      realizedMuted.any fun c =>
-        Contrast.aaText ≤ Contrast.contrastMilli c Contrast.light.surface)
-  t "the accessibility colour judge reads the realized root pair"
-    ((HtmlDoc.schemeFailures true {} contrastDoc).isEmpty)
+  let declaredMuted := contrastDoc.palette.find? "muted"
+  t "a role failing in one epoch is reported, both palettes keeping its declared value"
+    (contrastDs.any (·.code == "W0315") &&
+      declaredMuted == some { r := 0x73, g := 0x73, b := 0x80 } &&
+      contrastEpoch.bind (·.find? "muted") == declaredMuted)
+  t "the accessibility colour judge reads the declared root pair"
+    (!(HtmlDoc.schemeFailures true {} contrastDoc).isEmpty)
   let malformed : List (String × String × String) :=
     [("short HTML", "\\textcolor[HTML]{369}{Kept Ink}", "E0321"),
      ("bad HTML digit", "\\textcolor[HTML]{GG6699}{Kept Ink}", "E0321"),
@@ -1091,16 +1090,22 @@ def colorModelChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO 
     (forwardDoc.palette.find? "bg" == none && forwardDs.any (·.code == "W0304"))
   let base : Ir.Color := { r := 0xF7, g := 0xF7, b := 0xF7 }
   let painted : Ir.Color := { r := 0x11, g := 0x22, b := 0x33 }
-  let groundDiff := HtmlDoc.epochPaletteDiff ({} : Ir.Palette)
-    (({} : Ir.Palette).declare "bg" painted)
+  let groundDiff := HtmlDoc.epochPaletteDiff [.page, .progressTrack, .paper, .standoutInk]
+    ({} : Ir.Palette) (({} : Ir.Palette).declare (.role .page) painted)
   t "HTML palette epochs carry the ground change before CSS serialization"
-    (groundDiff.groundChanged && groundDiff.entries.any (·.1 == "bg") &&
-      hasStr groundDiff.style "--bg: #112233")
-  let projectionDiff := HtmlDoc.epochPaletteDiff
-    (({} : Ir.Palette).declare "bg" rgbHalf)
-    (({} : Ir.Palette).declare "bg" grayHalf)
+    (groundDiff.groundChanged && groundDiff.entries.any (·.1 == .role .page) &&
+      hasStr groundDiff.style s!"{HtmlDoc.roleVar .page}: #112233")
+  -- A custom property's `var()` resolves where it is declared, so a role
+  -- inheriting the ground, and one inheriting that, re-states in the epoch.
+  t "HTML palette epochs re-state the roles inheriting the changed ground"
+    (hasStr groundDiff.style s!"{HtmlDoc.roleVar .progressTrack}: var({HtmlDoc.roleVar .page})" &&
+      hasStr groundDiff.style s!"{HtmlDoc.roleVar .paper}: var({HtmlDoc.roleVar .page})" &&
+      hasStr groundDiff.style s!"{HtmlDoc.roleVar .standoutInk}: var({HtmlDoc.roleVar .paper})")
+  let projectionDiff := HtmlDoc.epochPaletteDiff [.page]
+    (({} : Ir.Palette).declare (.role .page) rgbHalf)
+    (({} : Ir.Palette).declare (.role .page) grayHalf)
   t "HTML palette diffs compare the screen projection, not PDF provenance"
-    (projectionDiff.entries.isEmpty)
+    (projectionDiff.entries.isEmpty && projectionDiff.defaults.isEmpty)
   let accent : Ir.Color := { r := 0xAA, g := 0xBB, b := 0xCC }
   let later : Ir.Color := { r := 0x22, g := 0x33, b := 0x44 }
   let resetSrc := article
@@ -1129,10 +1134,10 @@ def colorModelChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO 
     | _ => css) ""
   let resetStyles := elemStylesList #[] resetBody.toList
   t "the typed HTML root paints the preamble ground and the reset epoch restores it"
-    (hasStr resetRootCss "--bg: #112233" &&
+    (hasStr resetRootCss "--ltx-bg: #112233" &&
       resetStyles.any (fun (text, style) => hasStr text "Reset page" &&
-        !hasStr text "Painted page" && hasStr style "--bg: #f7f7f7" &&
-        hasStr style "background: var(--bg"))
+        !hasStr text "Painted page" && hasStr style "--ltx-bg: #f7f7f7" &&
+        hasStr style "background: var(--ltx-bg"))
   let (clearDoc, clearDs) := elabStr (article ""
     "\\pagecolor[HTML]{112233}Painted clear page.\\pagebreak\\nopagecolor Default clear page.")
   let clearGeom := Layout.Geom.ofPage clearDoc.page
@@ -1143,10 +1148,11 @@ def colorModelChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO 
     (clearDs.all (fun d => d.severity != .error && d.code != "W0301") &&
       (clearOut.pages[0]?).any (fun p => p.fills.any (·.color == painted)) &&
       (clearOut.pages[1]?).any (·.fills.isEmpty))
-  t "typed HTML clears an epoch property when the document ground was undeclared"
+  t "typed HTML restores the registry ground in an epoch when the document ground was undeclared"
     (clearStyles.any fun (text, style) => hasStr text "Default clear page" &&
-      !hasStr text "Painted clear page" && hasStr style "--bg: initial" &&
-      hasStr style "background: var(--bg")
+      !hasStr text "Painted clear page" &&
+      hasStr style ("--ltx-bg: " ++ HtmlDoc.cssColor (screenColor .light .page)) &&
+      hasStr style "background: var(--ltx-bg")
   let (samePageDoc, samePageDs) := elabStr (article ""
     "\\pagecolor[HTML]{112233}Earlier text. \\nopagecolor same paragraph.\\pagebreak Later text.")
   let samePageOut := layoutOf oneFace samePageDoc (Layout.Geom.ofPage samePageDoc.page)
@@ -2708,8 +2714,8 @@ def vdistChecks (ref : IO.Ref (List String)) (geom : Layout.Geom)
        -- The separator stands inside its declared-gap wrapper
        -- (`separatorgap` above it, the rule convention's gap).
        inner.size ≥ 2 && inner.any (fun b => match b with
-         | .rule _ (some "sep") _ => true
-         | .spaced _ #[.rule _ (some "sep") _] => true
+         | .rule _ (some (.color "sep")) _ => true
+         | .spaced _ #[.rule _ (some (.color "sep")) _] => true
          | _ => false) && !inner.any (fun b => match b with
          | .center _ => true
          | _ => false)
@@ -3243,7 +3249,7 @@ After text keeps it: flow scope, no brace revert.")
     | .style css => s ++ css
     | _ => s) ""
   t "the html :root carries the epoch-0 palette value"
-    (hasStr headCss "--accent: #1155cc" && !hasStr headCss "--accent: #cc1100")
+    (hasStr headCss "--ltx-accent: #1155cc" && !hasStr headCss "--ltx-accent: #cc1100")
   let styleAttrs (nodes : Array Html.Node) : Array (String × String) :=
     -- (own text, style attribute) of each top-level element, in order
     nodes.filterMap fun n => match n with
@@ -3256,10 +3262,10 @@ After text keeps it: flow scope, no brace revert.")
   let entries := styleAttrs tops
   t "the html sibling before the declaration carries no epoch redefinition"
     ((entries.find? fun (txt, _) => hasStr txt "Early ink").map
-      (fun (_, st) => !hasStr st "--accent") == some true)
+      (fun (_, st) => !hasStr st "--ltx-accent") == some true)
   t "the html sibling after the declaration redefines the property on itself"
     ((entries.find? fun (txt, _) => hasStr txt "Late ink").map
-      (fun (_, st) => hasStr st "--accent: #cc1100") == some true)
+      (fun (_, st) => hasStr st "--ltx-accent: #cc1100") == some true)
   -- Nested declarations keep the same flow scope in both backends.
   -- Later siblings carry the resulting epoch on their own element;
   -- propagating it requires no wrapper around preceding content.
@@ -3271,13 +3277,13 @@ After text keeps it: flow scope, no brace revert.")
   let els5 := elemStylesList #[] body5.toList
   t "a nested epoch redefines the property on its later siblings"
     (els5.any fun (txt, st) => hasStr txt "Second inside" &&
-      !hasStr txt "First inside" && hasStr st "--accent: #cc1100")
+      !hasStr txt "First inside" && hasStr st "--ltx-accent: #cc1100")
   t "a nested epoch never reaches the content before it"
     (els5.all fun (txt, st) => !(hasStr txt "First inside" &&
-      !hasStr txt "Second inside" && hasStr st "--accent"))
+      !hasStr txt "Second inside" && hasStr st "--ltx-accent"))
   t "a nested epoch reaches the enclosing element's later siblings in html"
     (els5.any fun (txt, st) => hasStr txt "Outside after" &&
-      !hasStr txt "First inside" && hasStr st "--accent: #cc1100")
+      !hasStr txt "First inside" && hasStr st "--ltx-accent: #cc1100")
   t "a nested epoch reaches the same later text in pdf"
     (colorOf (runsOf nestedSrc) "Outside after" == some post)
   -- The deck walk threads the same epoch: a declaration between frames
@@ -3289,10 +3295,10 @@ After text keeps it: flow scope, no brace revert.")
   let elsd := elemStylesList #[] bodyd.toList
   t "a deck epoch redefines the property on the frames after it"
     (elsd.any fun (txt, st) => hasStr txt "two" && !hasStr txt "one" &&
-      hasStr st "--accent: #cc1100")
+      hasStr st "--ltx-accent: #cc1100")
   t "a deck epoch never reaches the frames before it"
     (elsd.all fun (txt, st) => !(hasStr txt "one" && !hasStr txt "two" &&
-      hasStr st "--accent"))
+      hasStr st "--ltx-accent"))
   -- The confinement oracle — `setting_confined_to_suffix`'s executable
   -- form, over `Layout.run`'s shipped pages: the page closed before the
   -- declaration is identical with and without it. The theorem itself is
@@ -3320,8 +3326,8 @@ After text keeps it: flow scope, no brace revert.")
   -- A use whose epoch declares a dark page is judged on that page.
   let dsDark := codesOf (doc
     "\\palette{ bg = #202020, dim = #787878 }\n\n\\textcolor{dim}{dim words} here.")
-  t "a use inside a dark-page epoch is judged on that page, and realizes there"
-    (dsDark.any fun d => d.code == "N0022" && hasStr d.message "#202020")
+  t "a use inside a dark-page epoch is judged on that page, and warns there"
+    (dsDark.any fun d => d.code == "W0315" && hasStr d.message "#202020")
   -- A body epoch that declares a page and leaves the ink defaulted is the
   -- W0330 defect wherever it is declared.
   t "a body epoch's defaulted ink on its declared page is W0330"
@@ -3333,7 +3339,7 @@ After text keeps it: flow scope, no brace revert.")
 \\textcolor{q}{quiet before} stays exempt.\n\n\\palette{ q = #888888 }\n\n\
 \\textcolor{q}{loud after} is judged.\n\\end{document}")
   t "a plain body redeclaration removes the decorative exemption from here on"
-    (dsRedecl.any fun d => d.code == "N0022" && hasStr d.message "'q'")
+    (dsRedecl.any fun d => d.code == "W0315" && hasStr d.message "'q'")
   -- The resolved-design judge (W0345) is per epoch: a bad frame-title
   -- pair declared before a frame is judged for it; declared after the
   -- last frame, it styles nothing and stays silent.
@@ -3341,17 +3347,17 @@ After text keeps it: flow scope, no brace revert.")
     "\\documentclass{slides}\\theme{moloch}\\begin{document}\n\
 \\begin{frame}{A}\none\n\\end{frame}\n\n" ++ mid ++
     "\\begin{frame}{B}\ntwo\n\\end{frame}\n\n" ++ tail ++ "\\end{document}"
-  t "a bad frame-title pair declared before a frame is judged for it, and realizes"
-    ((codesOf (deckDoc "\\palette{ frametitlebg = #555555, frametitlefg = #BBBBBB }\n\n"
+  t "a bad frame-title pair declared before a frame is judged for it"
+    ((codesOf (deckDoc "\\palette{ frametitlebg = #555555, frametitlefg = #888888 }\n\n"
       "")).any
-      fun d => d.code == "N0022" && hasStr d.message "'frametitlefg'")
+      fun d => d.code == "W0345" && hasStr d.message "the frame-title bar")
   t "a bad frame-title pair declared after the last frame styles nothing"
-    ((codesOf (deckDoc "" "\\palette{ frametitlebg = #555555, frametitlefg = #BBBBBB }\n\n")).all
-      fun d => d.code != "W0345" && d.code != "N0022")
+    ((codesOf (deckDoc "" "\\palette{ frametitlebg = #555555, frametitlefg = #888888 }\n\n")).all
+      fun d => d.code != "W0345")
   -- Per (fg, bg) pair, not per token: moloch's darkened alert passes on
   -- the light page and fails on the dark frame-title bar — the same
-  -- colour, two grounds, judged where each sits. Its nearest legible ink
-  -- there lies past the ink bound (ΔEOK 0.155), so it warns where it sits.
+  -- colour, two grounds, judged where each sits, and it warns where it
+  -- sits.
   let deckAlert (title body : String) : String :=
     "\\documentclass{slides}\\theme{moloch}\\begin{document}\n\
 \\begin{frame}{" ++ title ++ "}\n" ++ body ++ "\n\\end{frame}\n\\end{document}"
@@ -3360,7 +3366,7 @@ After text keeps it: flow scope, no brace revert.")
       fun d => d.code == "W0315" && hasStr d.message "the frame-title bar")
   t "the same accent in the body is judged on the page, and passes there"
     ((codesOf (deckAlert "A title" "an \\alert{urgent} word")).all
-      fun d => d.code != "W0315" && d.code != "N0022")
+      fun d => d.code != "W0315")
   t "an accent inside a standout frame is judged on the inversion, and warns there"
     ((codesOf ("\\documentclass{slides}\\theme{moloch}\\begin{document}\n\
 \\begin{frame}[standout]\nan \\alert{urgent} word\n\\end{frame}\n\\end{document}")).any
@@ -4172,13 +4178,13 @@ def cardChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet)
   -- Contrast is the colour slice's contract, reused rather than restated:
   -- the pairing warning and its declared-intent silence reach a card
   -- through the same docDiags walk as every other class.
-  t "an illegible card pairing realizes through the colour contract (N0022)"
-    ((noteCodes (card "" "\\textcolor{washed}{faint}"
-      "\\palette{ washed = #888888 }\n")).contains "N0022")
+  t "an illegible card pairing warns through the colour contract"
+    ((warnCodes (card "" "\\textcolor{washed}{faint}"
+      "\\palette{ washed = #888888 }\n")).contains "W0315")
   t "declared decorative intent silences it on a card too"
     (let src := card "" "\\textcolor{washed}{faint}"
       "\\palette[decorative]{ washed = #DDDDDD }\n"
-     !(warnCodes src).contains "W0315" && !(noteCodes src).contains "N0022")
+     !(warnCodes src).contains "W0315")
 
 /-- Printer's cut marks, wired: the `\page` keys parse into the spec, the
 declared faces ship exactly the eight derived fills, off means none, and

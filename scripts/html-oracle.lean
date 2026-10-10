@@ -1166,8 +1166,9 @@ so the matrix would describe pages nothing ties to this tree; nothing written")
       probe := { probe with unavailable := probe.unavailable.push ("firefox", "not attempted") }
     | some (m, _) =>
       IO.FS.writeFile (work / "probe.cjs") probeJs
-      let tokens := s!"{HtmlDoc.cssColor Contrast.light.ink} {HtmlDoc.cssColor Contrast.light.surface} " ++
-        s!"{HtmlDoc.cssColor Contrast.dark.ink} {HtmlDoc.cssColor Contrast.dark.surface}"
+      let col (s : Ir.Scheme) (r : Ir.Role) : String :=
+        HtmlDoc.cssColor ((Ir.Design.at ({} : Ir.Palette) s r).getD Ir.Color.black)
+      let tokens := s!"{col .light .ink} {col .light .page} {col .dark .ink} {col .dark .page}"
       let out ← IO.Process.output
         { cmd := "node"
           args := #[(work / "probe.cjs").toString, (work / "corpus").toString] ++ fixtures

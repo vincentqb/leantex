@@ -1,5 +1,7 @@
 import Tests.DiagAudit
 import Tests.BuildGraph
+import Tests.DeclaredColors
+import LeanTex.Core.ControlContract
 import Tests.Surface
 import Tests.Regress
 import Tests.Census
@@ -485,7 +487,7 @@ def reports : List Report := [
   { id := "R56", date := "2026-09-30"
     what := "a contrast repair was reported after a frame palette declaration while both artifacts still painted the original role ink against the new ground"
     pins := [check% listingRoleEpochChecks, check% listingHighlightChecks,
-      thm% Ir.recolorRoles_text]
+      thm% Elab.completePrepared_doc_exact]
     accept := ["invented title and standout frames paint the audited role ink after direct and nested palette declarations"]
     state := .guarded "09e4aa72" .before .author },
   { id := "R57", date := "2026-09-30"
@@ -1360,7 +1362,15 @@ def reports : List Report := [
   { id := "R146", date := "2026-10-10"
     what := "a slide frame's text area ends above the slide class's: about two and a half points under the moloch-style theme at ten points, by a frame-number footline the default theme does not draw, and by several lines where the footline is empty or a running foot owns the foot, whose frames take the slides margins; and its lines stand a fraction of a point further apart; so a frame the slide class fits overruns here, and one it sets a point overfull continues"
     pins := []
-    state := .owed "the beamer frame layout owner: the frame's text area and line pitch as the slide class measures them" ["frameTextAreaChecks"] }
+    state := .owed "the beamer frame layout owner: the frame's text area and line pitch as the slide class measures them" ["frameTextAreaChecks"] },
+  { id := "R147", date := "2026-10-10"
+    what := "declared colours shipped repainted toward a contrast target, a role's ink on the page and on a frame-title bar, a mix of two named colours and a highlighting style's token colours among them, and a deck's stage-size text was held to the small-text ratio, so a three-colour palette's accent was reported as illegible on the page it was designed for"
+    pins := [check% Tests.DeclaredColors.checks, check% listingRoleEpochChecks,
+      thm% Elab.completePrepared_doc_exact, thm% Listing.paint_declared_mem,
+      thm% Contrast.defaulted_ink_cannot_escape]
+    accept := ["ten of the seventeen guard assertions fail on the tree before the fix: the role's warning named a repair, the pair on the frame-title bar was not reported once naming the bar, the mix and the style's token colours shipped repainted in both artifacts and were noted as realized rather than reported, and a document's page text at 3.95:1 drew no warning",
+      "a presentation deck's declared three-colour palette ships its exact values in both artifacts, as its lualatex build does, its accent passing at the stage's size and its highlighting style's comment colour reported once"]
+    state := .guarded "6bc5f128" .before .author }
 ]
 
 /-- The reports guarded but never seen failing: a count that may fall and

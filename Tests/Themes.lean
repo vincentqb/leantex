@@ -480,7 +480,7 @@ def alertOverlayChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : I
   -- through the same channel it reads covering by, given the palette's
   -- alert colour instead of the cover colours.
   let (tDoc, _) := elabStr (themedDeck "One \\alert<2>{apple} here.")
-  let alertInk := ((tDoc.palette.entries.find? (·.1 == "alert")).map (·.2))
+  let alertInk := ((tDoc.palette.entries.find? (·.1 == (.role .alert))).map (·.2))
   let tc := censusOf ((alertInk.map (#[·])).getD #[]) (layoutOf oneFace tDoc)
   let tCov := censusOf (coveredColorsOf tDoc) (layoutOf oneFace tDoc)
   t "the theme declares an alert colour for the census to read" alertInk.isSome
@@ -500,9 +500,9 @@ def alertOverlayChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : I
   t "html shows the plain body off the step and hides the styled one"
     (hasStr html "<span class=\"alt alt-pending\" data-step=\"2\" data-step-last=\"2\">quince</span>" &&
       hasStr html ("<span class=\"alt alt-crisp\" data-step=\"2\" data-step-last=\"2\" " ++
-        "hidden=\"hidden\"><span style=\"color: var(--alert, "))
+        "hidden=\"hidden\"><span style=\"color: var(--ltx-alert, "))
   t "html names the alert colour once, on the styled alternative alone"
-    ((html.splitOn "color: var(--alert, ").length == 2)
+    ((html.splitOn "color: var(--ltx-alert, ").length == 2)
   t "html wraps the alert in no step: an alternation is never covered"
     (!hasStr html "class=\"step\"")
   -- The step-by-step agreement on this fixture: the rules select the group
@@ -780,7 +780,7 @@ def chromeDeclChecks (ref : IO.Ref (List String)) : IO Unit := do
   -- bundle contract the theorems hold.
   let weaker : Ir.Palette := { entries :=
     Theme.moloch.palette.entries.map fun (k, c) =>
-      if k == "muted" then (k, { r := 121, g := 133, b := 135 }) else (k, c) }
+      if k == (.role .muted : Ir.ColorRef) then (k, { r := 121, g := 133, b := 135 }) else (k, c) }
   t "the palette contract rejects a muted one step weaker"
     (!Contrast.paletteContract weaker)
 
@@ -824,6 +824,36 @@ def layerDiagChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "an untouched element style beside a replaced one stays silent"
     (((ds "\\style{section}{ before = 3pt }\\theme{moloch}").filter
       (·.code == "W0348")).isEmpty)
+
+/-- A bundle's element style is installed whole: every field rides the
+install (`Theme.styleMerge`, built positionally), so a theme that styles a
+link kind's ink keeps it through `\theme`, and a document that already
+declares the same style is not told it was replaced (W0348). The merge once
+named every field but `color`, which erased a declared link ink and made
+the replacement comparison see a change no install made. -/
+def styleMergeChecks (ref : IO.Ref (List String)) : IO Unit := do
+  let t := check ref
+  let ink : Ir.Color := { r := 0x12, g := 0x34, b := 0x56 }
+  let linked : Ir.ElementStyle := { color := some (ink, none) }
+  let probe : Theme.Theme := { name := "probe", styles := { entries := #[("link", linked)] } }
+  t "a bundle's link colour survives the install"
+    (((Theme.apply probe {}).styles.find? "link").bind (·.color) == some (ink, none))
+  t "every style field survives a merge onto an empty entry"
+    (Theme.styleMerge linked {} == linked)
+  let declared : Theme.Decls := { styles := ({} : Ir.Styles).declare "link" linked }
+  t "an install the document already agrees with replaces nothing"
+    (Theme.replaces probe declared).isEmpty
+  t "an install that changes the link colour is a replacement"
+    (Theme.replaces probe
+      { styles := ({} : Ir.Styles).declare "link" { color := some (Ir.Color.black, none) } }
+      == #[("style", "link")])
+  let exemptPalette := ({} : Ir.Palette).declareKey "alert" ink (decorative := true)
+  let exempt : Theme.Theme := { name := "exempt", palette := exemptPalette }
+  let doc : Theme.Decls := { palette := ({} : Ir.Palette).declareKey "alert" Ir.Color.black }
+  t "a class default does not re-exempt a key the document redeclared"
+    (!(Theme.applyUnder exempt doc).palette.decorative.contains (.role .alert))
+  t "a class default keeps its exemption on a key the document left alone"
+    ((Theme.applyUnder exempt {}).palette.decorative.contains (.role .alert))
 
 /-- The footer band is reserved, never overlaid: `Geom.bodyBottom` is the one
 place a footer's band comes out of the page, placement reads the bottom only
@@ -950,7 +980,7 @@ def chromeFooterChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : I
   t "html footer styling comes from the tokens"
     ((html.splitOn "section.slide > footer.slide-foot { position: relative;").length == 2 &&
      (((html.splitOn "footer.slide-foot {")[1]?.getD "").splitOn
-       "var(--muted)").length == 2)
+       "var(--ltx-foot-ink)").length == 2)
   let (rHtml, _) := HtmlDoc.emit {} rDoc
   t "html drops the chrome footer under runningfoot too"
     ((rHtml.splitOn "slide-foot").length == 1)
@@ -1252,10 +1282,14 @@ def themeFurnitureChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) :
      | _, _ => false)
   let (html, _) := HtmlDoc.emit {} doc
   t "html body takes bg and fg"
-    ((html.splitOn "body { background: var(--bg); }").length == 2 &&
-     (html.splitOn "body { color: var(--fg); }").length == 2)
+    (match Ir.Design.declared? doc.palette .page, Ir.Design.declared? doc.palette .ink with
+     | some bg, some fg =>
+       hasStr html s!"--ltx-bg: {HtmlDoc.cssColor bg};" &&
+         hasStr html s!"--ltx-fg: {HtmlDoc.cssColor fg};" &&
+         hasStr html "  background: var(--ltx-bg);\n" && hasStr html "  color: var(--ltx-fg);\n"
+     | _, _ => false)
   t "html frame header is a bar"
-    ((html.splitOn "section.slide > header { background: var(--frametitlebg);").length == 2)
+    ((html.splitOn "section.slide > header { background: var(--ltx-frametitlebg);").length == 2)
   t "html section page carries its position"
     ((html.splitOn "class=\"section-page\"").length == 2 &&
      (html.splitOn "width: 50%").length == 2)
@@ -1515,7 +1549,7 @@ def paletteChecks (ref : IO.Ref (List String)) : IO Unit := do
     match b with
     | .para content => content.any fun x =>
       match x with
-      | .colored c name body => c.r == 0x7C && name == some "primary" && body.size == 1
+      | .colored c name body => c.r == 0x7C && name == some (.color "primary") && body.size == 1
       | _ => false
     | _ => false)
   t "palette unknown name warns and keeps the content"
@@ -1531,11 +1565,11 @@ def paletteChecks (ref : IO.Ref (List String)) : IO Unit := do
       "\\begin{document}" ++ body ++ "\\end{document}")).1
   t "palette name takes its group as an argument"
     ((palSrc "\\mut{in} out").body == #[.para #[
-      .colored { r := 0x66, g := 0x66, b := 0x66 } (some "mut") #[.text "in"],
+      .colored { r := 0x66, g := 0x66, b := 0x66 } (some (.color "mut")) #[.text "in"],
       .text " out"]])
   t "palette name with no group runs to the end of the group"
     ((palSrc "{\\mut in} out").body == #[.para #[
-      .colored { r := 0x66, g := 0x66, b := 0x66 } (some "mut") #[.text "in"],
+      .colored { r := 0x66, g := 0x66, b := 0x66 } (some (.color "mut")) #[.text "in"],
       .text " out"]])
   t "palette covered fraction declares" (
     (elabStr ("\\documentclass{article}\\palette{covered = 21\\%}" ++
@@ -1575,20 +1609,20 @@ def contrastChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "contrast black on white is 21:1"
     (Contrast.contrastMilli .black .white == 21000)
   t "contrast of a colour with itself is 1:1"
-    (Contrast.contrastMilli Contrast.light.accent Contrast.light.accent == 1000)
+    (Contrast.contrastMilli (screenColor .light .focus) (screenColor .light .focus) == 1000)
   t "contrast does not care which side is the text"
-    (Contrast.contrastMilli Contrast.light.muted Contrast.light.surface ==
-     Contrast.contrastMilli Contrast.light.surface Contrast.light.muted)
+    (Contrast.contrastMilli (screenColor .light .muted) (screenColor .light .page) ==
+     Contrast.contrastMilli (screenColor .light .page) (screenColor .light .muted))
   t "ratio string" (Contrast.ratioString 4627 == "4.62:1" &&
     Contrast.ratioString 21000 == "21.00:1" && Contrast.ratioString 1005 == "1.00:1")
-  -- The contract check fires on a deliberately illegible bundle: the dark
-  -- set with the light accent is the exact defect dark_contract guards
-  -- against (2.64:1 focus ring, under SC 1.4.11's 3:1).
-  t "contract rejects the illegible bundle"
-    (!({ Contrast.dark with accent := Contrast.light.accent } :
-      Contrast.ThemeColors).contractHolds)
-  t "illegible bundle names its ratio" (Contrast.ratioString
-    (Contrast.contrastMilli Contrast.light.accent Contrast.dark.surface) == "2.64:1")
+  -- The dark column re-accents: the light focus ring on the dark page is
+  -- the defect `default_sites_contract` guards against (2.64:1, under
+  -- SC 1.4.11's 3:1).
+  t "the light focus ring fails the dark page"
+    (Contrast.contrastMilli (screenColor .light .focus) (screenColor .dark .page) <
+      Contrast.aaNonText)
+  t "illegible focus ring names its ratio" (Contrast.ratioString
+    (Contrast.contrastMilli (screenColor .light .focus) (screenColor .dark .page)) == "2.64:1")
 
   -- The covered contract fires on the finding it encodes: moloch at
   -- Material's 38% leaves alert (2.89:1) and example (2.75:1) under the
@@ -1624,9 +1658,9 @@ def contrastChecks (ref : IO.Ref (List String)) : IO Unit := do
   let darkBlock := ((page.splitOn "prefers-color-scheme: dark")[1]?.getD "").splitOn "}"
     |>.headD ""
   t "dark block re-accents"
-    ((darkBlock.splitOn s!"--accent: {HtmlDoc.cssColor Contrast.dark.accent}").length == 2)
-  t "light accent comes from the proven constant"
-    ((page.splitOn s!"--accent: {HtmlDoc.cssColor Contrast.light.accent}").length == 2)
+    ((darkBlock.splitOn s!"{HtmlDoc.roleVar .focus}: {HtmlDoc.cssColor (screenColor .dark .focus)}").length == 2)
+  t "light accent comes from the registry's light column"
+    ((page.splitOn s!"{HtmlDoc.roleVar .focus}: {HtmlDoc.cssColor (screenColor .light .focus)}").length == 2)
   -- A page that declares a colour ships one scheme (`HtmlDoc.dualScheme`):
   -- only the engine's own token set has a proven dark variant, and the
   -- dark block once stood a declared ink equal to the light default on
@@ -1641,9 +1675,9 @@ def contrastChecks (ref : IO.Ref (List String)) : IO Unit := do
     | _ => acc
   let deckCss := headCss deckHead
   let themeMuted := match Theme.moloch.palette.find? "muted" with
-    | some c => s!"--muted: {HtmlDoc.cssColor c};"
+    | some c => s!"{HtmlDoc.roleVar .muted}: {HtmlDoc.cssColor c};"
     | none => "no muted key"
-  let darkMuted := s!"--muted: {HtmlDoc.cssColor Contrast.dark.muted};"
+  let darkMuted := s!"{HtmlDoc.roleVar .muted}: {HtmlDoc.cssColor (screenColor .dark .muted)};"
   t "a themed deck declares its muted once and ships no dark variant"
     ((deckCss.splitOn themeMuted).length == 2 && (deckCss.splitOn darkMuted).length == 1 &&
      hasStr deckCss "color-scheme: light;" && !hasStr deckCss "prefers-color-scheme: dark")
@@ -1714,24 +1748,23 @@ def contrastChecks (ref : IO.Ref (List String)) : IO Unit := do
   -- fg is judged against a declared bg directly.
   let pale := "\\documentclass{article}\\palette{ washed = #DDDDDD }" ++
     "\\begin{document}\\textcolor{washed}{faint}\\end{document}"
-  -- #888888 on the shipped surface reaches 4.5:1 at #737373, ΔEOK 0.071:
-  -- inside the ink bound, so it realizes. #DDDDDD needs a move past it.
+  -- A failing role ships as declared and is reported, never repainted.
   let quiet := "\\documentclass{article}\\palette{ washed = #888888 }" ++
     "\\begin{document}\\textcolor{washed}{faint}\\end{document}"
-  t "a failing role pairing inside the bound realizes, the note naming role and requirement"
-    ((elabStr quiet).2.any fun d => d.code == "N0022" &&
+  t "a failing role pairing warns once, naming role and requirement"
+    ((elabStr quiet).2.any fun d => d.code == "W0315" && d.severity == .warning &&
       (d.message.splitOn "'washed'").length == 2 &&
       (d.message.splitOn "4.50:1").length == 2)
-  t "a pale role past the bound warns, its help naming the nearest legible colour"
-    (((elabStr pale).2.any fun d => d.code == "W0315" &&
-      d.subject.any (·.startsWith "washed:") &&
-      d.help.any fun h => hasStr h "#737373" && hasStr h "past the 0.080") &&
-     (elabStr pale).2.all (·.code != "N0022"))
+  t "a failing role ships its declared value"
+    ((elabStr quiet).1.palette.find? "washed" == some { r := 0x88, g := 0x88, b := 0x88 })
+  t "a pale role warns on one line, naming no repair"
+    ((elabStr pale).2.any fun d => d.code == "W0315" &&
+      d.subject.any (·.startsWith "washed:") && d.help.isNone)
   t "declared intent silences the pairing judge whole"
     (let src := "\\documentclass{article}" ++
       "\\palette[decorative]{ washed = #DDDDDD }" ++
       "\\begin{document}\\textcolor{washed}{faint}\\end{document}"
-     !(warnCodes src).contains "W0315" && !(noteCodes src).contains "N0022")
+     !(warnCodes src).contains "W0315")
   -- The decorative exemption is a property of the declaration, not of the
   -- key: a plain redeclaration replaces the excused value, so it restores
   -- the contrast check; only redeclaring with the opt-out keeps it.
@@ -1746,33 +1779,30 @@ def contrastChecks (ref : IO.Ref (List String)) : IO Unit := do
       "\\palette[decorative]{ washed = #DDDDDD }" ++
       "\\begin{document}\\textcolor{washed}{faint}\\end{document}")).contains "W0315")
   -- An anonymous use (a mixed colour) has no name, so the decorative
-  -- escape matches it by value — and the help names no key the author did
-  -- not write: it states the two steps, with the name left to the author.
-  -- Yellow over white is a mix no weight can carry, so it keeps its warning.
+  -- escape matches it by value, and its warning names the expression the
+  -- author wrote and no key the author did not.
   let anon := "\\documentclass{article}\\begin{document}\\textcolor{yellow!50}{quiet}" ++
     "\\end{document}"
   let anonDiag := ((elabStr anon).2.filter (·.code == "W0315"))[0]?
   t "an unreachable mix warns, naming the expression the author wrote"
     (anonDiag.any fun d => d.subject.any (·.startsWith "yellow!50:"))
-  t "the anonymous help invents no role name"
-    (anonDiag.any fun d => d.help.any fun h => hasStr h "<name>" && !hasStr h "quiet")
-  -- A mix of two named colours that fails its ground is re-weighted inside
-  -- the ink bound: the note is the mix's own, under the author's
-  -- expression (fg!60!bg reaches its nearest legible weight at ΔEOK 0.054).
+  t "the anonymous warning invents no role name and names no repair"
+    (anonDiag.any fun d => d.help.isNone && !hasStr d.message "quiet")
+  -- A mix of two named colours that fails its ground ships xcolor's value
+  -- and is reported under the author's expression.
   let reMix := elabStr ("\\documentclass{article}\\palette{ fg = #23373B, bg = #FAFAFA }" ++
     "\\begin{document}\\textcolor{fg!60!bg}{quiet}\\end{document}")
-  t "a failing mix of two named colours is re-weighted, not warned"
-    (reMix.2.all (·.code != "W0315") &&
-      reMix.2.any fun d => d.code == "N0022" && d.subject.any (·.startsWith "fg!60!bg:"))
-  let mixed := ((({ entries := #[("fg", { r := 0x23, g := 0x37, b := 0x3B }),
-      ("bg", { r := 0xFA, g := 0xFA, b := 0xFA })] } : Ir.Palette).resolve "fg!50!bg").getD
+  t "a failing mix of two named colours warns under its expression"
+    (reMix.2.any fun d => d.code == "W0315" && d.subject.any (·.startsWith "fg!60!bg:"))
+  let mixed := ((({ entries := #[((.role .ink), { r := 0x23, g := 0x37, b := 0x3B }),
+      ((.role .page), { r := 0xFA, g := 0xFA, b := 0xFA })] } : Ir.Palette).resolve "fg!50!bg").getD
     Ir.Color.black)
   t "a decorative entry at the mix's value keeps it low: no re-weighting, no warning"
     (let src := "\\documentclass{article}\\palette{ fg = #23373B, bg = #FAFAFA }" ++
       "\\palette[decorative]{ dim = #" ++ Ir.Color.hexByte mixed.r ++
       Ir.Color.hexByte mixed.g ++ Ir.Color.hexByte mixed.b ++ " }" ++
       "\\begin{document}\\textcolor{fg!50!bg}{quiet}\\end{document}"
-     !(warnCodes src).contains "W0315" && !(noteCodes src).contains "N0022")
+     !(warnCodes src).contains "W0315")
   t "covered is exempt by role"
     (!(warnCodes ("\\documentclass{article}\\palette{ covered = #DDDDDD }" ++
       "\\begin{document}\\textcolor{covered}{later}\\end{document}")).contains "W0315")
@@ -1782,14 +1812,14 @@ def contrastChecks (ref : IO.Ref (List String)) : IO Unit := do
   -- element ships. p5's archetype: moloch + a near-white frametitlebg
   -- shipped frame titles at 1.07:1 with zero diagnostics.
   let titled := "\\begin{frame}{T}x\\end{frame}"
-  t "an overridden frame-title pair inside the bound realizes, the note naming the requirement"
-    ((elabStr (dvDeck "\\theme{moloch}\\palette{ frametitlebg = #555555, frametitlefg = #BBBBBB }"
-      titled)).2.any
-      fun d => d.code == "N0022" && (d.message.splitOn "'frametitlefg'").length == 2 &&
-        (d.message.splitOn "4.50:1").length == 2)
-  t "an overridden frame-title pair past the bound warns, naming the bound"
-    ((elabStr (dvDeck "\\theme{moloch}\\palette{ frametitlebg = #F2F2F0 }" titled)).2.any
-      fun d => d.code == "W0345" && d.help.any (hasStr · "past the 0.080"))
+  -- A deck's title stands at stage size, so it asks large-scale text's 3:1:
+  -- #BBBBBB on #555555 reads 3.88:1.
+  t "an overridden frame-title pair is judged at the stage's size"
+    (!(warnCodes (dvDeck "\\theme{moloch}\\palette{ frametitlebg = #555555, frametitlefg = #BBBBBB }"
+      titled)).contains "W0345")
+  t "an overridden frame-title pair below 3:1 warns once, on one line"
+    (((elabStr (dvDeck "\\theme{moloch}\\palette{ frametitlebg = #F2F2F0 }" titled)).2.filter
+      fun d => d.code == "W0345" && d.help.isNone && hasStr d.message "3.00:1").size == 1)
   t "the untouched bundle's frame-title pair is silent"
     (!(warnCodes (dvDeck "\\theme{moloch}" titled)).contains "W0345")
   t "an illegible frame-title pair without a titled frame is silent"
@@ -1798,10 +1828,10 @@ def contrastChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "declared decorative intent silences the frame-title pair"
     (!(warnCodes (dvDeck ("\\theme{moloch}\\palette{ frametitlebg = #F2F2F0 }" ++
       "\\palette[decorative]{ frametitlefg = #FAFAF9 }") titled)).contains "W0345")
-  t "an overridden standout pair realizes at the large-scale threshold"
+  t "an overridden standout pair warns at the large-scale threshold"
     ((elabStr (dvDeck "\\palette{ standoutfg = #A0A0A0, standoutbg = #FAFAFA }"
       "\\begin{frame}[standout]S\\end{frame}")).2.any
-      fun d => d.code == "N0022" && (d.message.splitOn "'standoutfg'").length == 2 &&
+      fun d => d.code == "W0345" && hasStr d.message "the standout frame" &&
         (d.message.splitOn "3.00:1").length == 2)
   t "an illegible standout pair without a standout frame is silent"
     (!(warnCodes (dvDeck "\\palette{ standoutfg = #DDDDDD, standoutbg = #FAFAFA }"
@@ -1820,18 +1850,18 @@ def contrastChecks (ref : IO.Ref (List String)) : IO Unit := do
   -- body text it warns, as Huge (24.9pt) large-scale text it passes.
   let grey (body : String) := "\\documentclass{article}" ++
     "\\palette{ grey = #767676 }\\begin{document}" ++ body ++ "\\end{document}"
-  t "borderline grey realizes as body text"
-    ((noteCodes (grey "\\textcolor{grey}{x}")).contains "N0022")
+  t "borderline grey warns as body text"
+    ((warnCodes (grey "\\textcolor{grey}{x}")).contains "W0315")
   t "borderline grey passes as large-scale text"
     (!(warnCodes (grey "{\\Huge \\textcolor{grey}{x}}")).contains "W0315")
-  for (name, decl, realized) in [
+  for (name, decl, fails) in [
       ("absolute large", "\\fontsize{20pt}{24pt}\\selectfont", false),
       ("absolute small after Huge", "\\Huge\\fontsize{8pt}{10pt}\\selectfont", true),
       ("absolute large after small", "\\small\\fontsize{20pt}{24pt}\\selectfont", false),
       ("unresolved size after Huge", "\\Huge\\fontsize{1ex}{10pt}\\selectfont", true)] do
     t s!"contrast font size: {name}"
-      ((noteCodes (grey ("{" ++ decl ++ "\\textcolor{grey}{x}}"))).contains "N0022" ==
-        realized)
+      ((warnCodes (grey ("{" ++ decl ++ "\\textcolor{grey}{x}}"))).contains "W0315" ==
+        fails)
   -- The judge reads the layout's own scale (contrast_judges_what_layout_sets):
   -- at a 9 pt base a section sets at 12.96 pt — not WCAG large-scale — while
   -- the old absolute 14 pt bold was, so the judge passed text the page fails.
@@ -1842,15 +1872,14 @@ def contrastChecks (ref : IO.Ref (List String)) : IO Unit := do
     "\\page{ fontsize = " ++ size ++ " }\\palette{ grey = #767676 }" ++
     "\\begin{document}\\section{\\textcolor{grey}{Head}}x\\end{document}"
   t "a 9pt-base section title is judged at the size the layout sets"
-    ((noteCodes (sizedSection "9pt")).contains "N0022")
+    ((warnCodes (sizedSection "9pt")).contains "W0315")
   t "a 10pt-base section title stays large-scale, judge and page agreeing"
-    (!(warnCodes (sizedSection "10pt")).contains "W0315" &&
-     !(noteCodes (sizedSection "10pt")).contains "N0022")
-  t "a declared fg is judged against the declared bg, and realizes there"
+    (!(warnCodes (sizedSection "10pt")).contains "W0315")
+  t "a declared fg is judged against the declared bg"
     ((elabStr ("\\documentclass{article}" ++
       "\\palette{ fg = #808080, bg = #F0F0F0 }" ++
       "\\begin{document}x\\end{document}")).2.any fun d =>
-        d.code == "N0022" && (d.message.splitOn "'fg'").length == 2 &&
+        d.code == "W0315" && (d.message.splitOn "'fg'").length == 2 &&
           (d.message.splitOn "#F0F0F0").length == 2)
   -- The effective pair (F3): the contract judges the pair the page ships,
   -- not only the pair the document spelled. A declared dark page with the
@@ -1876,7 +1905,7 @@ def contrastChecks (ref : IO.Ref (List String)) : IO Unit := do
     ((((elabStr ("\\documentclass{article}" ++
       "\\palette{ fg = #808080, bg = #F0F0F0 }" ++
       "\\begin{document}\\textcolor{fg}{x}\\end{document}")).2.filter
-        fun d => d.code == "N0022" || d.code == "W0315" || d.code == "W0330").size) == 1)
+        fun d => (d.code == "W0315" || d.code == "W0330") && d.severity == .warning).size) == 1)
   t "the built-in themes raise no pairing warning"
     (!(warnCodes ("\\documentclass{slides}\\theme{moloch}\\begin{document}" ++
       "\\begin{frame}x\\end{frame}\\end{document}")).contains "W0315")
@@ -1938,29 +1967,28 @@ def contrastChecks (ref : IO.Ref (List String)) : IO Unit := do
     (((elabStr ("\\documentclass{article}" ++
       "\\palette{ alpha = #888888, beta = #888888 }\\begin{document}" ++
       "\\textcolor{alpha}{a} \\textcolor{beta}{b} \\textcolor{alpha}{c}" ++
-      "\\end{document}")).2.filter (·.code == "N0022")).size == 2)
+      "\\end{document}")).2.filter fun d =>
+        d.code == "W0315" && d.severity == .warning).size == 2)
   t "one role on two grounds is two pairings"
     (((elabStr ("\\documentclass{article}" ++
       "\\palette{ fg = #303030, bg = #FFFFFF, mid = #818181 }\\begin{document}" ++
       "\\textcolor{mid}{a}\n\n\\palette{ bg = #222222 }\n\n\\textcolor{mid}{b}" ++
       "\\end{document}")).2.filter fun d =>
-        d.code == "N0022" && (d.message.splitOn "'mid'").length == 2).size == 2)
-  -- The palette write is per epoch even when the note is already said: two
-  -- epochs declaring one failing role are two palettes to rewrite and one
-  -- message to read. Within a pairing key the only dimension left is the
-  -- epoch's palette, which is what the write's dedup is keyed on.
+        d.code == "W0315" && d.severity == .warning &&
+          (d.message.splitOn "'mid'").length == 2).size == 2)
+  -- Two epochs declaring one failing role are one message to read, and
+  -- both palettes keep the declared value.
   let twoEpochs := elabStr ("\\documentclass{article}" ++
     "\\palette{ washed = #888888 }\\begin{document}\\textcolor{washed}{a}" ++
     "\n\n\\palette{ washed = #888888 }\n\n\\textcolor{washed}{b}\\end{document}")
   let declared : Ir.Color := { r := 0x88, g := 0x88, b := 0x88 }
-  t "two epochs declaring one failing role read one note"
-    ((twoEpochs.2.filter fun d =>
-      d.code == "N0022" || d.code == "W0315").size == 1)
-  t "and both epochs' palettes are realized"
-    (twoEpochs.1.palette.find? "washed" != some declared &&
+  t "two epochs declaring one failing role read one warning"
+    ((twoEpochs.2.filter fun d => d.code == "W0315" && d.severity == .warning).size == 1)
+  t "and both epochs' palettes keep the declared value"
+    (twoEpochs.1.palette.find? "washed" == some declared &&
      (twoEpochs.1.body.filterMap fun b => match b with
        | .setPalette p => p.find? "washed"
-       | _ => none) == #[(twoEpochs.1.palette.find? "washed").getD declared])
+       | _ => none) == #[declared])
   -- The judge must be linear in the coloured runs. The shape that made the
   -- quadratic version cost seconds is one pairing used everywhere at a
   -- large size: the dedup answers at once, but the large-scale question was
@@ -1970,10 +1998,10 @@ def contrastChecks (ref : IO.Ref (List String)) : IO Unit := do
   -- as IR, so the clock sees the judge and not the parser.
   let dk : Ir.Color := { r := 0x10, g := 0x10, b := 0x10 }
   let manyUses : Ir.Doc :=
-    { palette := { entries := #[("dk", dk)] }
+    { palette := { entries := #[((.color "dk"), dk)] }
       body := (List.range 20000).toArray.map fun i =>
         Ir.Block.para #[.styled (.size "Huge")
-          #[.colored dk (some "dk") #[.text s!"w{i}"]]] }
+          #[.colored dk (some (.color "dk")) #[.text s!"w{i}"]]] }
   let t0 ← IO.monoMsNow
   let judged := Contrast.docDiags manyUses
   -- Consumed before the clock is read again: a pure `let` floats to its
@@ -1983,26 +2011,26 @@ def contrastChecks (ref : IO.Ref (List String)) : IO Unit := do
   let judgeMs := (← IO.monoMsNow) - t0
   t s!"the contrast judge is linear in the coloured runs ({judgeMs} ms for 20000)"
     (judgeMs < 1500)
-  -- A failing pairing is solved once, not once per use: the lightness search
-  -- is a pure function of the requirement, the ground and the colour, so the
-  -- note one use earns is the note three thousand earn — and the search is
-  -- paid once. Measured in the judge: 3,000 uses of one failing role cost
-  -- 1,101 ms solved per use.
+  -- A failing pairing is reported once, not once per use: the warning one
+  -- use earns is the warning three thousand earn.
   let washedNotes (uses : Nat) : Array String :=
     ((elabStr ("\\documentclass{article}\\palette{ washed = #888888 }" ++
       "\\begin{document}" ++
       String.join ((List.range uses).map fun i =>
         "\\textcolor{washed}{w" ++ toString i ++ "} ") ++
-      "\\end{document}")).2.filter (·.code == "N0022")).map (·.message)
-  t "a repeated failing pairing is solved once, to the same value"
+      "\\end{document}")).2.filter fun d =>
+        d.code == "W0315" && d.severity == .warning).map (·.message)
+  t "a repeated failing pairing is reported once, in the same words"
     ((washedNotes 4).size == 1 && washedNotes 4 == washedNotes 1)
   let manyPale : Ir.Doc :=
-    { palette := { entries := #[("washed", declared)] }
+    { palette := { entries := #[((.color "washed"), declared)] }
       body := (List.range 3000).toArray.map fun i =>
-        Ir.Block.para #[.colored declared (some "washed") #[.text s!"w{i}"]] }
+        Ir.Block.para #[.colored declared (some (.color "washed")) #[.text s!"w{i}"]] }
   let t1 ← IO.monoMsNow
   let paleJudged := Contrast.docDiags manyPale
-  t "3,000 uses of one failing pairing read one note" (paleJudged.size == 1)
+  t "3,000 uses of one failing pairing read one warning carrying their count"
+    ((paleJudged.filter (·.severity == .warning)).size == 1 &&
+      (Diag.tallySites paleJudged).any fun d => d.severity == .warning && d.sites == 3000)
   let paleMs := (← IO.monoMsNow) - t1
   t s!"a failing pairing is solved once, not per use ({paleMs} ms for 3000)"
     (paleMs < 400)
@@ -2019,8 +2047,8 @@ def contrastChecks (ref : IO.Ref (List String)) : IO Unit := do
   -- The check fires on the illegible bundle it exists for: moloch's own
   -- alert (#EB811B, 2.61:1 as body text) fails the contract.
   t "the contract rejects moloch's original alert"
-    (let badEntries := (Theme.moloch.palette.entries.filter (·.1 != "alert")).push
-        ("alert", ({ r := 0xEB, g := 0x81, b := 0x1B } : Ir.Color))
+    (let badEntries := (Theme.moloch.palette.entries.filter (·.1 != (.role .alert))).push
+        ((.role .alert), ({ r := 0xEB, g := 0x81, b := 0x1B } : Ir.Color))
      !Contrast.paletteContract { entries := badEntries })
   -- Themed \alert is the alert colour alone, as beamer's `alerted text`
   -- sets no font of its own (`Compat.alertStyled`); unthemed it stays the
@@ -2033,7 +2061,7 @@ def contrastChecks (ref : IO.Ref (List String)) : IO Unit := do
       match blk with
       | .para content => content.any fun x =>
         match x with
-        | .colored _ (some "alert") inner => inner.all fun y =>
+        | .colored _ (some (.role .alert)) inner => inner.all fun y =>
           match y with
           | .styled .bold _ => false
           | _ => true
@@ -2043,7 +2071,7 @@ def contrastChecks (ref : IO.Ref (List String)) : IO Unit := do
 
 def mixChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
-  let pal : Ir.Palette := { entries := #[("base", { r := 0x40, g := 0x00, b := 0x80 })] }
+  let pal : Ir.Palette := { entries := #[((.color "base"), { r := 0x40, g := 0x00, b := 0x80 })] }
   t "mix toward white" (pal.resolve "base!50" == some { r := 0xA0, g := 0x80, b := 0xC0 })
   t "mix with black" (pal.resolve "base!50!black" == some { r := 0x20, g := 0x00, b := 0x40 })
   t "mix chain folds left" (pal.resolve "base!50!black!30" ==
@@ -2064,14 +2092,14 @@ def mixChecks (ref : IO.Ref (List String)) : IO Unit := do
        some (({ r := 0, g := 128, b := 128 } : Ir.Color).mix 50
          { r := 0, g := 0, b := 255 }))
   t "a declared entry wins over a base name"
-    (({ entries := #[("gray", { r := 1, g := 2, b := 3 })] } : Ir.Palette).resolve "gray"
+    (({ entries := #[((.color "gray"), { r := 1, g := 2, b := 3 })] } : Ir.Palette).resolve "gray"
       == some { r := 1, g := 2, b := 3 })
   -- One resolving site: a declared entry wins over resolve's own black and
   -- white atoms, so a mix, \textcolor, and the role invocation cannot
   -- disagree about what a name means. Before the rule, a palette naming an
   -- entry 'black' painted the declared colour where find? resolved and
   -- pure black where resolve did — PDF ink and the HTML variable diverged.
-  let shadow : Ir.Palette := { entries := #[("black", { r := 0x33, g := 0x33, b := 0x33 })] }
+  let shadow : Ir.Palette := { entries := #[((.color "black"), { r := 0x33, g := 0x33, b := 0x33 })] }
   t "a declared black wins over the built-in atom"
     (shadow.resolve "black" == shadow.find? "black")
   t "undeclared black and white stay available"
@@ -2105,7 +2133,7 @@ def mixChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "tokens redeclare overrides"
     ((oDoc.tokens.find? "s").map (·.width) == some (Dim.Length.ofSp (Dim.pt 8)))
   t "palette redeclare keeps one entry"
-    ((oDoc.palette.entries.filter (·.1 == "a")).size == 1)
+    ((oDoc.palette.entries.filter (·.1 == (.color "a"))).size == 1)
 
 /-- `\theme` and the built-in bundles: a theme is data applied through the
 same declarations a document writes, and everything after the site
@@ -2155,7 +2183,7 @@ def themeChecks (ref : IO.Ref (List String)) : IO Unit := do
     (match aDoc.body with
      | #[.frame _ _ _ _ body] => body.any fun b => match b with
         | .para xs => xs.any fun x => match x with
-          | .colored c (some "alert") _ => c == { r := 0xA5, g := 0x5A, b := 0x13 }
+          | .colored c (some (.role .alert)) _ => c == { r := 0xA5, g := 0x5A, b := 0x13 }
           | _ => false
         | _ => false
      | _ => false)
@@ -2167,7 +2195,7 @@ def themeChecks (ref : IO.Ref (List String)) : IO Unit := do
     (match (elabStr (deck169 "" "\\begin{frame}{T}\n\\alert{hot}\n\\end{frame}")).1.body with
      | #[.frame _ _ _ _ body] => body.any fun b => match b with
         | .para xs => xs.any fun x => match x with
-          | .colored c (some "alert") _ => some c == Theme.daylight.palette.find? "alert"
+          | .colored c (some (.role .alert)) _ => some c == Theme.daylight.palette.lookup (.role .alert)
           | _ => false
         | _ => false
      | _ => false)
@@ -2271,34 +2299,27 @@ def titleGroundChecks (ref : IO.Ref (List String)) : IO Unit := do
   -- document's, so the pair stays absent and nothing is painted.
   t "a title-page ink with no ground declares no ground"
     ((designOf "\\palette{ titlepagefg = #F4F6F8 }").titlepage.isNone)
-  -- The judge, on the author's own pair. The ground stands and the ink
-  -- moves: a title page whose ink falls just short realizes it lighter
-  -- (ΔEOK 0.040, inside the ink bound), naming the body requirement
-  -- (4.5:1) because a title page carries body-size matter; a dark-on-dark
-  -- ink the bound cannot reach keeps its declared value and warns.
-  let dim := "\\palette{ titlepagebg = #101822, titlepagefg = #747474 }"
-  t "an illegible title-page pair realizes its ink at the body threshold"
+  -- The judge, on the author's own pair, at the stage's size: a title page
+  -- ink that falls short of large-scale text's 3:1 keeps its declared value
+  -- and warns once, naming the declared ground.
+  let dim := "\\palette{ titlepagebg = #101822, titlepagefg = #3A4048 }"
+  t "an illegible title-page pair warns at the stage's threshold"
     ((elabStr (deckOf dim "\\maketitle")).2.any fun d =>
-      d.code == "N0022" && (d.message.splitOn "'titlepagefg'").length == 2 &&
-        (d.message.splitOn "4.50:1").length == 2 &&
-        (d.message.splitOn "the title page").length == 2)
-  t "the realized note names the declared ground, not an invented one"
+      d.code == "W0345" && (d.message.splitOn "3.00:1").length == 2 &&
+        (d.message.splitOn "the title page").length == 2 && d.help.isNone)
+  t "the warning names the declared ground, not an invented one"
     ((elabStr (deckOf dim "\\maketitle")).2.any fun d =>
-      d.code == "N0022" && (d.message.splitOn "#101822").length == 2)
-  t "a title-page ink past the bound keeps its declared value and warns"
-    ((elabStr (deckOf "\\palette{ titlepagebg = #101822, titlepagefg = #2A3038 }"
-      "\\maketitle")).2.any fun d =>
-        d.code == "W0345" && hasStr d.message "#2A3038" && d.help.any (hasStr · "past the 0.080"))
+      d.code == "W0345" && (d.message.splitOn "#101822").length == 2)
+  t "a title-page ink keeps its declared value"
+    ((designOf dim).titlepage.any (·.fg == { r := 0x3A, g := 0x40, b := 0x48 }))
   -- Only where the page ships: a deck with no \maketitle has no title page,
   -- so an illegible pair is a declaration nothing stands on.
   t "an illegible title-page pair without a title page is silent"
-    (!(warnCodes (deckOf dim "\\begin{frame}{T}x\\end{frame}")).contains "W0345" &&
-     (elabStr (deckOf dim "\\begin{frame}{T}x\\end{frame}")).2.all
-       fun d => d.code != "N0022")
+    (!(warnCodes (deckOf dim "\\begin{frame}{T}x\\end{frame}")).contains "W0345")
   -- Deliberate low contrast is declared, not defaulted.
   t "declared decorative intent silences the title-page pair"
-    ((elabStr (deckOf (dim ++ "\\palette[decorative]{ titlepagefg = #2A3038 }")
-      "\\maketitle")).2.all fun d => d.code != "W0345" && d.code != "N0022")
+    ((elabStr (deckOf (dim ++ "\\palette[decorative]{ titlepagefg = #3A4048 }")
+      "\\maketitle")).2.all fun d => d.code != "W0345")
   -- An undeclared title page is judged on the page it really stands on, so
   -- it must stay silent under a bundle whose own pairs pass.
   t "an undeclared title page adds no pair to judge"
@@ -2325,7 +2346,8 @@ def roleChecks (ref : IO.Ref (List String)) : IO Unit := do
   let contentColours := ["alert", "example"]
   let pendingConsumer : List (String × String) := []
   for th in Theme.builtin do
-    for (role, _) in th.palette.entries do
+    for (named, _) in th.palette.entries do
+      let role := named.key
       if contentColours.contains role || Ir.Design.consumedRoles.contains role then
         pure ()
       else match pendingConsumer.lookup role with
@@ -2337,221 +2359,6 @@ def roleChecks (ref : IO.Ref (List String)) : IO Unit := do
   check ref "pending roles are really unread"
     (pendingConsumer.all fun (r, _) => !Ir.Design.consumedRoles.contains r)
 
-/-- The realization rule's executable census — the cross-ground half of
-`Contrast.realized_builtin_contract`, whose kernel check covers the pairs
-a bundle's design creates itself: for every shipped bundle, each content
-colour that fails the frame-title bar or the standout inversion either
-realizes there inside the ink bound or is a row of `beyondBound`, the
-bundle pairs whose nearest legible ink lies past it — a registry that
-fails in both directions, so a bundle change that brings a pair inside
-the bound, or pushes one out, is a decision someone writes down (the
-lightness search is not the identity there, and the kernel does not
-evaluate it cheaply, so this half is an oracle). And the backend
-agreement, `features_agree` shape: the run the PDF path ships and the
-scoped custom property the HTML path declares both carry the one
-solver's answer. -/
-def realizedChecks (ref : IO.Ref (List String)) : IO Unit := do
-  let t := check ref
-  -- Each needs a move past four JNDs (ΔEOK 0.13–0.44) to meet 4.5:1, so a
-  -- document that sets the role on that ground keeps the declared ink and
-  -- warns. Whether a bundle should ship another ink there is the user's.
-  let beyondBound : List (String × String × String) :=
-    [("moloch", "alert", "the frame-title bar"), ("moloch", "example", "the frame-title bar"),
-     ("moloch", "alert", "the standout frame"), ("moloch", "example", "the standout frame"),
-     ("plain", "alert", "the standout frame"), ("plain", "example", "the standout frame"),
-     ("daylight", "alert", "the standout frame"), ("daylight", "example", "the standout frame"),
-     ("gemini", "alert", "the frame-title bar"), ("gemini", "example", "the frame-title bar")]
-  let mut seen : List (String × String × String) := []
-  for th in Theme.builtin do
-    let d := Ir.Design.ofDoc { palette := th.palette }
-    let grounds := (match d.frametitle with
-      | some p => [("the frame-title bar", p.bg)]
-      | none => []) ++ [("the standout frame", d.standout.bg)]
-    for (gname, ground) in grounds do
-      for role in ["alert", "example"] do
-        if let some c := th.palette.find? role then
-          if Contrast.contrastMilli c ground < Contrast.aaText then
-            let row := (th.name, role, gname)
-            match Contrast.realize Contrast.aaText ground c with
-            | some c' =>
-              t s!"'{role}' of '{th.name}' realizes on {gname}, inside the bound"
-                (Contrast.aaText ≤ Contrast.contrastMilli c' ground &&
-                  Contrast.deltaEOkSq c c' ≤ Contrast.inkBoundSq && !beyondBound.contains row)
-            | none =>
-              seen := row :: seen
-              t s!"'{role}' of '{th.name}' on {gname} is past the bound, and registered"
-                (beyondBound.contains row)
-  t "every registered bundle pair past the bound is one the census meets"
-    (beyondBound.all seen.contains)
-  -- One solver, two backends: an accent inside a moloch frame title, one
-  -- the bar fails by a move inside the bound (ΔEOK 0.061).
-  let deck := "\\documentclass{slides}\\theme{moloch}\\palette{ alert = #D8691F }" ++
-    "\\begin{document}\\begin{frame}{An \\alert{urgent} word}x\\end{frame}\\end{document}"
-  let (doc, ds) := elabStr deck
-  let bar := (Theme.moloch.palette.find? "frametitlebg").getD Ir.Color.black
-  let alert : Ir.Color := { r := 0xD8, g := 0x69, b := 0x1F }
-  match Contrast.realize Contrast.aaText bar alert with
-  | some c' =>
-    t "the realized run ships the solver's value (the PDF half)"
-      (doc.body.any fun b => match b with
-        | .frame title _ _ _ _ => title.any fun x => match x with
-          | .colored cRun (some "alert") _ => cRun == c'
-          | _ => false
-        | _ => false)
-    t "the realized note names the ground"
-      (ds.any fun d => d.code == "N0022" && hasStr d.message "the frame-title bar")
-    t "the scoped custom property ships the solver's value (the HTML half)"
-      (hasStr (HtmlDoc.themeCss doc)
-        ("section.slide > header {\n  --alert: " ++ HtmlDoc.cssColor c' ++ ";"))
-  | none => failures ref "moloch alert does not realize on its bar"
-  -- The shipped census: the realized deck carries no failing role pair —
-  -- every pairing warning either realized away or never fired.
-  t "the realized deck ships no failing role pair"
-    (ds.all fun d => d.code != "W0315" && d.code != "W0345")
-
-/-- **One realized ink per role and ground, in both artifacts** — N0022's
-claim, read off each artifact for a role declared so it fails on the page
-and on three local grounds (the frame-title bar, a block-title bar, the
-standout inversion): the PDF run's ink and the ground under it off
-`Layout.Out`, the HTML token each scope re-points off the stylesheet the
-typed tree ships, the note off its structured subject. A failing page pair
-rewrites the palette entry, which is what hid the second solver pass the
-HTML once ran over it on the bar: this fixture is the one the pair needs
-to come apart, where a passing page pair makes the two passes coincide. -/
-def realizedAgreeChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) :
-    IO Unit := do
-  let t := check ref
-  let src := "\\documentclass{slides}\\theme{moloch}" ++
-    "\\palette{ alert = #D8691F, frametitlebg = #202633, frametitlefg = #FFFFFF, " ++
-    "blocktitlebg = #2B2F36, blocktitlefg = #FFFFFF }\\begin{document}" ++
-    "\\begin{frame}{\\textcolor{alert}{Barred Heading}}\\textcolor{alert}{Paged words.}" ++
-    "\\begin{block}{\\textcolor{alert}{Block Heading}}Plain body.\\end{block}\\end{frame}" ++
-    "\\begin{frame}[standout]\\textcolor{alert}{Inverted words.}\\end{frame}\\end{document}"
-  let (doc, ds) := elabStr src
-  let out := layoutOf oneFace doc
-  let runOf (needle : String) : Option (Ir.Color × Option Ir.Color) :=
-    out.pages.findSome? fun p => (p.lines.find? fun l => hasStr (lineText l) needle).bind fun l =>
-      l.segs.findSome? fun s => match s with
-        | .run _ c _ _ _ _ _ _ _ g _ => some (c, g)
-        | _ => none
-  let (head, body, _) := HtmlDoc.emitTree {} doc
-  let css := treeCssList (treeCssList "" head.toList) body.toList
-  let declared : Ir.Color := { r := 0xD8, g := 0x69, b := 0x1F }
-  let hexOf (c : Ir.Color) : String :=
-    s!"#{Ir.Color.hexByte c.r}{Ir.Color.hexByte c.g}{Ir.Color.hexByte c.b}"
-  let design := Ir.Design.ofDoc doc
-  let noted (key : String) (ink : Ir.Color) : Bool :=
-    ds.any fun d => d.code == "N0022" && d.subject == some key && hasStr d.message (hexOf ink)
-  for (needle, sel) in [("Barred", "section.slide > header"),
-      ("Block Heading", "section.block-block > header"),
-      ("Inverted", "section.slide.standout")] do
-    match runOf needle with
-    | some (ink, some ground) =>
-      t s!"the PDF ships a legible realized alert on {sel}'s ground"
-        (ink != declared && Contrast.aaText ≤ Contrast.contrastMilli ink ground)
-      t s!"the HTML scope {sel} declares the ink the PDF paints"
-        ((cssRulesOf css sel).any (hasStr · s!"--alert: {HtmlDoc.cssColor ink};"))
-      t s!"the design records the ink the PDF paints on {sel}'s ground"
-        (design.inks.any fun e => e.role == "alert" && e.declared == declared &&
-          e.ground == ground && e.ink == ink)
-      t s!"the N0022 note for {sel}'s ground names the ink both artifacts ship"
-        (noted (Ir.inkKey "alert" declared ground) ink)
-    | _ => failures ref s!"no alert run on a painted ground under {sel} in the PDF"
-  let page := (doc.palette.find? "bg").getD Ir.Color.white
-  -- The ground itself is one value: the paged stage paints the declared
-  -- page the PDF paints and the judge reads, not the engine's own surface.
-  t "the paged stage paints the declared page the realization was judged on"
-    ((cssRulesOf css "section.slide, section.section-page").any
-        (hasStr · "background: var(--bg, var(--surface))") &&
-      (cssRulesOf css ":root").any (hasStr · s!"--bg: {HtmlDoc.cssColor page};"))
-  match runOf "Paged" with
-  | some (ink, _) =>
-    t "the page's realized alert is the palette entry the HTML root declares"
-      (ink != declared && doc.palette.find? "alert" == some ink &&
-        (cssRulesOf css ":root").any (hasStr · s!"--alert: {HtmlDoc.cssColor ink};"))
-    t "the N0022 note for the page names the ink both artifacts ship"
-      (noted (Ir.inkKey "alert" declared page) ink)
-  | none => failures ref "no alert run on the page in the PDF"
-  -- Both directions of the census: every recorded ink is named by a note,
-  -- and every note names a realization some artifact ships.
-  let shipped := design.inks.map (fun e => Ir.inkKey e.role e.declared e.ground)
-    |>.push (Ir.inkKey "alert" declared page)
-  t "every realization the design records is named by an N0022 note"
-    (shipped.all fun k => ds.any fun d => d.code == "N0022" && d.subject == some k)
-  t "every N0022 note names a realization the artifacts ship"
-    (ds.all fun d => d.code != "N0022" || d.subject.any shipped.contains)
-
-/-- **A repair is barely different, and past the bound the declared colour
-ships** — the ink bound read off both artifacts (review INK-1: a pale mix
-shipped at near full strength, ΔEOK 0.263 from the declared colour, with no
-warning). A mix whose nearest legible weight lies inside the bound ships
-re-weighted in the PDF run and the HTML span alike, within the bound of
-xcolor's value, and notes it; a mix whose nearest legible weight lies past
-it ships xcolor's value in both, and warns under its own key, naming the
-weight a document can write. -/
-def inkBoundChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit := do
-  let t := check ref
-  let fg : Ir.Color := { r := 0x23, g := 0x37, b := 0x3B }
-  let bg : Ir.Color := { r := 0xFA, g := 0xFA, b := 0xFA }
-  let shipOf (w : Nat) : Ir.Doc × Array Diag × Option Ir.Color × Array (String × String) :=
-    let (doc, ds) := elabStr ("\\documentclass{article}\\palette{ fg = #23373B, bg = #FAFAFA }" ++
-      "\\begin{document}\\textcolor{fg!" ++ toString w ++ "!bg}{Mixed words here.}" ++
-      "\\end{document}")
-    let ink := (layoutOf oneFace doc).pages.findSome? fun p =>
-      (p.lines.find? fun l => hasStr (lineText l) "Mixed").bind fun l =>
-        l.segs.findSome? fun s => match s with
-          | .run _ c .. => some c
-          | _ => none
-    let (_, body, _) := HtmlDoc.emitTree {} doc
-    (doc, ds, ink, elemStylesList #[] body.toList)
-  let htmlShips (styles : Array (String × String)) (c : Ir.Color) : Bool :=
-    styles.any fun (txt, st) => hasStr txt "Mixed" && st == s!"color: {HtmlDoc.cssColor c}"
-  -- Inside the bound: ΔEOK 0.054 to the nearest legible weight.
-  let near := fg.mix 60 bg
-  let (_, nDs, nInk, nStyles) := shipOf 60
-  match nInk with
-  | some ink =>
-    t "a mix inside the bound ships re-weighted, legible on its page"
-      (ink != near && Contrast.aaText ≤ Contrast.contrastMilli ink bg &&
-        ((List.range 101).any fun q => 60 < q && fg.mix q bg == ink))
-    t "the re-weighted mix lies within the ink bound of xcolor's value"
-      (Contrast.deltaEOkSq near ink ≤ Contrast.inkBoundSq)
-    t "the HTML run carries the re-weighted ink the PDF paints" (htmlShips nStyles ink)
-    t "the re-weighting is noted under the mix's key, and nothing warns"
-      (nDs.any (fun d => d.code == "N0022" && d.subject.any (·.startsWith "fg!60!bg:")) &&
-        nDs.all (·.code != "W0315"))
-  | none => failures ref "no mixed run in the PDF (inside the bound)"
-  -- Past the bound: the nearest legible weight, 68, is ΔEOK 0.122 away.
-  let far := fg.mix 50 bg
-  let (_, fDs, fInk, fStyles) := shipOf 50
-  t "a mix past the bound ships xcolor's value in the PDF" (fInk == some far)
-  t "a mix past the bound ships xcolor's value in the HTML" (htmlShips fStyles far)
-  t "a mix past the bound is never noted as realized"
-    (fDs.all fun d => !(d.code == "N0022" && d.subject.any (·.startsWith "fg!50!bg:")))
-  t "a mix past the bound warns under its key, naming the weight to write"
-    (fDs.any fun d => d.code == "W0315" && d.subject.any (·.startsWith "fg!50!bg:") &&
-      d.help.any (hasStr · "'fg!68!bg'"))
-  -- beamer's `transparent` covering is the key's default opaqueness, 15%,
-  -- set as xcolor's mixin of the ink over the page (beamerbaseoverlay.sty):
-  -- the covered run ships within the bound of that colour, where the
-  -- bundle's own 31% lay ΔEOK 0.114 from it.
-  let (covDoc, covDs) := elabStr ("\\documentclass{beamer}\n\\usetheme{moloch}\n" ++
-    "\\setbeamercovered{transparent}\n\\begin{document}\n\\begin{frame}\n" ++
-    "Shown \\uncover<2>{Pending}\n\\end{frame}\n\\end{document}")
-  let covInk := (layoutOf oneFace covDoc).pages[0]?.bind fun p =>
-    p.lines.findSome? fun l => l.segs.findSome? fun s => match s with
-      | .run _ c _ _ glyphs .. =>
-        if hasStr (String.ofList (glyphs.toList.map (·.2.1))) "Pending" then some c else none
-      | _ => none
-  let covD := Ir.Design.ofDoc covDoc
-  t "a transparent covering is beamer's fifteen per cent, and nothing warns"
-    (covDoc.palette.coveredFraction == some 15 && covDs.all (·.severity == .note))
-  match covInk with
-  | some ink =>
-    t "the covered run ships within the ink bound of beamer's covered colour"
-      (Contrast.deltaEOkSq (covD.fg.mix 15 covD.bg) ink ≤ Contrast.inkBoundSq)
-  | none => failures ref "no covered run on the step's first page"
-
 /-- The executable half of `every_role_is_invocable` (Elab.lean): resolution
 order lives in `elabInlines`, whose sanctioned recursion no theorem can
 range over, so the fact that every shipped bundle's role really reaches the
@@ -2562,21 +2369,19 @@ naming the key. -/
 def roleInvocationChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
   for th in Theme.builtin do
-    for (key, c) in th.palette.entries do
-      let (doc, ds) := elabStr ("\\documentclass{article}\\theme{" ++ th.name ++
+    for (named, c) in th.palette.entries do
+      let key := named.key
+      let (doc, _) := elabStr ("\\documentclass{article}\\theme{" ++ th.name ++
         s!"}\\begin\{document}\\{key}\{x}\\end\{document}")
       -- `\alert` is a compat idiom (colour and bold, W3C SC 1.4.1): the
-      -- role must reach the words, whatever wrapper the idiom adds. A
-      -- structural role invoked as body text (bg, standoutfg) fails the
-      -- page pairing and realizes: the run then carries the realized
-      -- value, and the note names the key — invocability is the name
-      -- reaching the palette arm either way.
+      -- role must reach the words, whatever wrapper the idiom adds, in its
+      -- declared colour — a structural role invoked as body text (bg,
+      -- standoutfg) may fail the page pairing, and is reported, never
+      -- repainted.
       t s!"role '{key}' of '{th.name}' is invocable"
         (match doc.body with
          | #[.para #[.colored c' (some n) inner]] =>
-           n == key && Ir.plainText inner == "x" &&
-             (c' == c || ds.any fun d => d.code == "N0022" &&
-               (d.message.splitOn s!"'{key}'").length == 2)
+           n.key == key && Ir.plainText inner == "x" && c' == c
          | _ => false)
   -- The two halves of palette-dependence meet on the real page: the use
   -- references the token (role_use_names_its_token) and :root declares it
@@ -2586,9 +2391,9 @@ def roleInvocationChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "role page source clean" qDs.isEmpty
   let qPage := (HtmlDoc.emit {} qDoc).1
   t "a role use references its token on the page"
-    ((qPage.splitOn "color: var(--quiet, #123456)").length == 2)
+    ((qPage.splitOn "color: var(--ltx-c-quiet, #123456)").length == 2)
   t "the page declares the token the use references"
-    ((qPage.splitOn "--quiet: #123456;").length == 2)
+    ((qPage.splitOn "--ltx-c-quiet: #123456;").length == 2)
 
 /-- W0342: a definition that shadows a palette role is named, with the cost
 in the reason — the palette (a variant, a host page's override) and the
@@ -3315,14 +3120,14 @@ def titledGroundChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) :
     IO Unit := do
   let t := check ref
   let grey : Ir.Color := { r := 0x75, g := 0x75, b := 0x75 }
-  let surface := Contrast.light.surface
+  let surface := screenColor .light .page
   -- The discriminator: this colour passes on white and fails on the
   -- surface the page ships, so the two groundings cannot both be right.
   t "the probe colour passes on white"
     (Contrast.aaText ≤ Contrast.contrastMilli grey Ir.Color.white)
   t "the probe colour fails on the shipped surface"
     (Contrast.contrastMilli grey surface < Contrast.aaText)
-  let pal := ({} : Ir.Palette).declare "blocktitlefg" grey
+  let pal := ({} : Ir.Palette).declareKey "blocktitlefg" grey
   let doc : Ir.Doc :=
     { palette := pal
       body := #[.titled .block #[.text "Title"] #[.para #[.text "body text"]]] }
@@ -3342,17 +3147,10 @@ def titledGroundChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) :
   let ds := Contrast.docDiags doc
   t "the judge speaks for the shipped titled pair" (!ds.isEmpty)
   t "the judge names the ground the page ships"
-    (ds.any fun d => (d.code == "N0022" || d.code == "W0345") &&
-      hasStr d.message "#FAFAF9")
-  -- And the value it writes clears the requirement on that same ground.
-  let realized := (Contrast.realizeDoc doc).1
-  t "the realized title clears the requirement on the shipped ground"
-    (match realized.palette.find? "blocktitlefg" with
-     | some c => Contrast.aaText ≤ Contrast.contrastMilli c surface
-     | none => false)
+    (ds.any fun d => d.code == "W0345" && hasStr d.message "#FAFAF9")
   -- A declared bar is still the ground: the fix resolves the undeclared
   -- page, it does not override a bar.
-  let barPal := (pal.declare "blocktitlebg" { r := 0xEE, g := 0xEE, b := 0xEE })
+  let barPal := (pal.declareKey "blocktitlebg" { r := 0xEE, g := 0xEE, b := 0xEE })
   let barDoc := { doc with palette := barPal }
   let barOut := layoutOf oneFace barDoc
   t "a declared bar is the title's ground"
@@ -3365,65 +3163,58 @@ def titledGroundChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) :
   t "the judge grounds the barred title on the bar"
     ((Contrast.docDiags barDoc).all fun d => !hasStr d.message "#FAFAF9")
   -- A declared page is the ground where one is declared, white nowhere.
-  let pagePal := (pal.declare "bg" { r := 0xFF, g := 0xFF, b := 0xFF })
+  let pagePal := (pal.declareKey "bg" { r := 0xFF, g := 0xFF, b := 0xFF })
   t "a declared white page is judged as declared"
     ((Contrast.docDiags { doc with palette := pagePal }).isEmpty)
 
 
-/-- A legible document is returned untouched, and a failing one is not: the
-executable half of `realizeDoc_id`, over a document that exercises every
-family the plan is built from — the effective pair, a mid-document epoch,
-role-named and anonymous uses, a titled block, a frame title, a standout
-frame, pending overlay content, and page furniture. A write emitted for a
-*passing* pair fails the first row here (the returned document differs from
-the one handed in) while every single-pair statement stays true, which is
-the gap this pins: `realize_id_of_passing` speaks for one pair, not for the
-plan the dedup assembles. The second row keeps it honest — the same
-machinery does move a document whose pair fails, so the first row is not
-passing for want of a mechanism. Own function: `main`'s elaboration
-budget. -/
-def realizeDocIdChecks (ref : IO.Ref (List String)) : IO Unit := do
+/-- A legible document draws no contrast report, and a failing one does:
+over a document that exercises every family the report reads — the
+effective pair, a mid-document epoch, role-named and anonymous uses, a
+titled block, a frame title, a standout frame, pending overlay content, and
+page furniture. The document is never an input the report returns: what
+ships is what was declared (`Elab.completePrepared_doc_exact`). Own
+function: `main`'s elaboration budget. -/
+def docReportChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
   let ink : Ir.Color := { r := 0x11, g := 0x11, b := 0x11 }
   let bar : Ir.Color := { r := 0x20, g := 0x30, b := 0x40 }
   let onBar : Ir.Color := { r := 0xF8, g := 0xF8, b := 0xF8 }
   let legible : Ir.Palette :=
-    ((((((({} : Ir.Palette).declare "fg" ink).declare "bg" Ir.Color.white).declare
-      "quiet" { r := 0x44, g := 0x44, b := 0x44 }).declare
-      "frametitlebg" bar).declare "frametitlefg" onBar).declare
-      "blocktitlefg" ink).declare "muted" { r := 0x40, g := 0x40, b := 0x40 }
+    ((((((({} : Ir.Palette).declareKey "fg" ink).declareKey "bg" Ir.Color.white).declareKey
+      "quiet" { r := 0x44, g := 0x44, b := 0x44 }).declareKey
+      "frametitlebg" bar).declareKey "frametitlefg" onBar).declareKey
+      "blocktitlefg" ink).declareKey "muted" { r := 0x40, g := 0x40, b := 0x40 }
   let epoch : Ir.Palette :=
-    ((({} : Ir.Palette).declare "fg" ink).declare "bg" Ir.Color.white).declare
+    ((({} : Ir.Palette).declareKey "fg" ink).declareKey "bg" Ir.Color.white).declareKey
       "quiet" { r := 0x44, g := 0x44, b := 0x44 }
   let body : Array Ir.Block :=
-    #[.para #[.colored { r := 0x44, g := 0x44, b := 0x44 } (some "quiet") #[.text "role ink"]],
+    #[.para #[.colored { r := 0x44, g := 0x44, b := 0x44 } (some (.color "quiet")) #[.text "role ink"]],
       .para #[.colored ink none #[.text "anonymous ink"]],
       .titled .block #[.text "Panel"] #[.para #[.text "panel body"]],
       .frame #[.text "Frame title"] false .center false #[.para #[.text "frame body"]],
       .frame #[.text "Standout"] true .center false #[.para #[.text "standout body"]],
       .para #[.step 2 none #[.text "pending"]],
       .setPalette epoch,
-      .para #[.colored ink (some "fg") #[.text "after the epoch"]]]
+      .para #[.colored ink (some (.role .ink)) #[.text "after the epoch"]]]
   let doc : Ir.Doc :=
     { palette := legible, body := body
       head := some #[.text "running head"], foot := some #[.text "running foot"] }
-  let (out, ds) := Contrast.realizeDoc doc
-  t "a legible document is returned untouched" (out == doc)
+  let ds := Contrast.docDiags doc
   t "a legible document's every judged pair passes"
     ((Contrast.judgedPairs doc).all fun p =>
       Contrast.aaText ≤ Contrast.contrastMilli p.1 p.2)
-  t "a legible document draws no realization note and no pairing warning"
-    (ds.all fun d => d.code != "N0022" && d.code != "W0315" && d.code != "W0345")
-  -- The same machinery moves a document that fails: one quiet role, judged
-  -- on the page it sits on, realizes inside the ink bound and the returned
-  -- document differs.
+  t "a legible document draws no pairing warning"
+    (ds.all fun d => d.code != "W0315" && d.code != "W0345")
+  -- The same judge speaks for a document that fails: one quiet role, judged
+  -- on the page it sits on.
   let pale : Ir.Color := { r := 0x88, g := 0x88, b := 0x88 }
   let failing := { doc with
-    palette := legible.declare "quiet" pale
-    body := #[.para #[.colored pale (some "quiet") #[.text "pale role ink"]]] }
-  let (fOut, fDs) := Contrast.realizeDoc failing
+    palette := legible.declareKey "quiet" pale
+    body := #[.para #[.colored pale (some (.color "quiet")) #[.text "pale role ink"]]] }
+  let fDs := Contrast.docDiags failing
   t "a failing pair is judged, not passed over"
     (!(Contrast.judgedPairs failing).all fun p =>
       Contrast.aaText ≤ Contrast.contrastMilli p.1 p.2)
-  t "a failing document does move" (!(fOut == failing))
-  t "a failing document says so" (fDs.any fun d => d.code == "N0022" || d.code == "W0315")
+  t "a failing document says so, once"
+    ((fDs.filter fun d => d.code == "W0315" && d.severity == .warning).size == 1)

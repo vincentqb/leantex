@@ -130,15 +130,21 @@ def a11ySelftest : IO UInt32 := tierSelftest "htmla11y" fun no => do
   let plain := (elabStr (dvDoc "" "x")).1
   no s!"contrast: an undeclared page passes both schemes: {HtmlDoc.schemeFailures true {} plain}"
     (HtmlDoc.schemeFailures true {} plain).isEmpty
-  let inked := (elabStr (dvDoc "\\palette{ ink = #18181B }\n" "x")).1
+  let inked := (elabStr (dvDoc "\\palette{ fg = #18181B }\n" "x")).1
   no s!"contrast: a declared ink keeps its one scheme and passes it: {HtmlDoc.schemeFailures true {} inked}"
     (!HtmlDoc.dualScheme {} inked && (HtmlDoc.schemeFailures true {} inked).isEmpty)
-  let pale := (elabStr (dvDoc "\\palette{ ink = #D4D4D8 }\n" "x")).1
+  let pale := (elabStr (dvDoc "\\palette{ fg = #D4D4D8 }\n" "x")).1
   no s!"contrast: a declared ink that fails its ground fails once: {HtmlDoc.schemeFailures true {} pale}"
     ((HtmlDoc.schemeFailures true {} pale).contains ("light", "text") &&
      !(HtmlDoc.schemeFailures true {} pale).any (·.1 == "dark"))
   no "contrast: a stylesheet the engine does not own claims nothing"
     (HtmlDoc.schemeFailures false {} pale).isEmpty
+  -- A key no role carries declares an author colour, which paints nothing
+  -- until a document names it.
+  let named := (elabStr (dvDoc "\\palette{ ink = #D4D4D8 }\n" "x")).1
+  no s!"contrast: a palette key no role carries fails nothing: \
+{HtmlDoc.schemeFailures true {} named}"
+    (HtmlDoc.schemeFailures true {} named).isEmpty
   let deck := (elabStr (dvDeck "" "\\begin{frame}{T}\nx\n\\end{frame}")).1
   -- The deck's stage paints the bundle's declared page, as the PDF does, so
   -- its declared ink reads on it, in the one scheme the page ships.

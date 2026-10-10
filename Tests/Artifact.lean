@@ -1346,6 +1346,9 @@ the role is what a document declares and the engine registers, while the
 element is the emitter's choice and is resolved below. -/
 def artBandRole : String := "frametitlebg"
 
+/-- The custom property the HTML backend declares the band role under. -/
+def artBandProp : String := (Ir.CssName.role .frameTitleBar).ident
+
 /-- Does this declaration list paint a background from this role's property?
 The property is read as a declaration — `background` or `background-color`
 before the colon — so a `var()` reference in a border or a shadow does not
@@ -1367,7 +1370,7 @@ def artPaintsFrom (role : String) (decls : String) : Bool :=
           prop.trimAscii.toString == "background-color") &&
         (hasStr value s!"var(--{role})" || hasStr value s!"var(--{role},")
 
-def artPaintsBand (decls : String) : Bool := artPaintsFrom artBandRole decls
+def artPaintsBand (decls : String) : Bool := artPaintsFrom artBandProp decls
 
 /-- An element as the tree carries it: its tag and its classes. -/
 abbrev ArtElem := String × Array String
@@ -1504,7 +1507,7 @@ def artGroundSelectors (role : String) (css : String) : Array String :=
 
 /-- The selectors under which a stylesheet paints the band. -/
 def artBandSelectors (css : String) : Array String :=
-  artGroundSelectors artBandRole css
+  artGroundSelectors artBandProp css
 
 /-- Every way a document's two artifacts disagree about its furniture band,
 each named with the end that lost it: the three links of the chain and
@@ -1521,14 +1524,14 @@ def artBandOffences (painted declared : Bool) (css : String)
   let sels := artBandSelectors css
   if painted && !declared then
     out := out.push s!"a page paints a top-edge furniture band while the design \
-declares no band pair: --{artBandRole} is unset"
+declares no band pair: --{artBandProp} is unset"
   if !sels.isEmpty && !declared then
-    out := out.push s!"the stylesheet paints from --{artBandRole} with no band \
+    out := out.push s!"the stylesheet paints from --{artBandProp} with no band \
 pair declared: {sels.toList}"
   if declared then
     if sels.isEmpty then
       out := out.push s!"the design declares a band pair and no rule paints a \
-background from --{artBandRole}"
+background from --{artBandProp}"
     else
       let readable := sels.filter fun s => !(artSelChains s).isEmpty
       if readable.isEmpty then
@@ -1570,7 +1573,7 @@ def artBandMutants : List (String × Bool × Bool × String × Array Html.Node �
     #[Html.elem "section" #[kid] #[("class", "slide")]]
   let live := slide header
   let bandRule (sel : String) : String :=
-    sel ++ " { background: var(--frametitlebg);\n  color: var(--frametitlefg, var(--bg, #fff)); }\n"
+    sel ++ " { background: var(--ltx-frametitlebg);\n  color: var(--ltx-frametitlefg); }\n"
   [ ("the shape the backend writes", true, true, bandRule "section.slide > header", live, false),
     ("the poster's own carrier instead", true, true,
       bandRule "body > header.headline",
@@ -1578,7 +1581,7 @@ def artBandMutants : List (String × Bool × Bool × String × Array Html.Node �
     ("the bar declared only inside an at-rule", true, true,
       "@media screen {\n" ++ bandRule "section.slide > header" ++ "}\n", live, false),
     ("the reference carrying a fallback", true, true,
-      "section.slide > header { background: var(--frametitlebg, #333); }\n", live, false),
+      "section.slide > header { background: var(--ltx-frametitlebg, #333); }\n", live, false),
     ("the element and its rule renamed together", true, true,
       bandRule "section.slide > div.band-top",
       slide (Html.elem "div" #[] #[("class", "band-top")]), false),
@@ -1591,9 +1594,9 @@ def artBandMutants : List (String × Bool × Bool × String × Array Html.Node �
     ("the element lifted out of the slide", true, true,
       bandRule "section.slide > header", #[header], true),
     ("the property misspelled", true, true,
-      "section.slide > header { background: var(--frametitlebackground); }\n", live, true),
+      "section.slide > header { background: var(--ltx-frametitlebackground); }\n", live, true),
     ("the reference off the ground and onto a border", true, true,
-      "section.slide > header { border-color: var(--frametitlebg); }\n", live, true),
+      "section.slide > header { border-color: var(--ltx-frametitlebg); }\n", live, true),
     ("a rule painting a band the design never declared", false, false,
       bandRule "section.slide > header", live, true),
     ("bytes painting a band the design never declared", true, false, "", live, true),
@@ -1662,6 +1665,9 @@ band's claim is: the role is the document's declaration, the element is the
 emitter's choice. -/
 def artGroundRole : String := "titlepagebg"
 
+/-- The custom property the HTML backend declares the title-page ground under. -/
+def artGroundProp : String := (Ir.CssName.role .titlePageGround).ident
+
 /-- Every way a document's two artifacts disagree about a title page's own
 declared ground — the same three links as the band, over the other ground
 the engine paints. Pure in its four arguments, so the mutants below exercise
@@ -1674,12 +1680,12 @@ page carrying its own ground from a page carrying the document's. -/
 def artGroundOffences (painted declared : Bool) (css : String)
     (body : Array Html.Node) : Array String := Id.run do
   let mut out : Array String := #[]
-  let sels := artGroundSelectors artGroundRole css
+  let sels := artGroundSelectors artGroundProp css
   if painted && !declared then
     out := out.push s!"a page paints a full-page ground while the design \
-declares no title-page pair: --{artGroundRole} is unset"
+declares no title-page pair: --{artGroundProp} is unset"
   if !sels.isEmpty && !declared then
-    out := out.push s!"the stylesheet paints from --{artGroundRole} with no \
+    out := out.push s!"the stylesheet paints from --{artGroundProp} with no \
 title-page pair declared: {sels.toList}"
   if declared then
     unless painted do
@@ -1687,7 +1693,7 @@ title-page pair declared: {sels.toList}"
 ships a full-page fill in it"
     if sels.isEmpty then
       out := out.push s!"the design declares a title-page pair and no rule \
-paints a background from --{artGroundRole}"
+paints a background from --{artGroundProp}"
     else
       let readable := sels.filter fun s => !(artSelChains s).isEmpty
       if readable.isEmpty then
@@ -1710,13 +1716,13 @@ def artGroundMutants :
     #[Html.elem "section" #[title] #[("class", cls)]]
   let live := page "slide title-page"
   let groundRule (sel : String) : String :=
-    sel ++ " { background: var(--titlepagebg);\n  color: var(--titlepagefg, var(--bg, #fafaf9)); }\n"
+    sel ++ " { background: var(--ltx-titlepagebg);\n  color: var(--ltx-titlepagefg); }\n"
   [ ("the shape the backend writes", true, true,
       groundRule "section.slide.title-page", live, false),
     ("the ground declared only inside an at-rule", true, true,
       "@media screen {\n" ++ groundRule "section.slide.title-page" ++ "}\n", live, false),
     ("the reference carrying a fallback", true, true,
-      "section.slide.title-page { background: var(--titlepagebg, #101822); }\n",
+      "section.slide.title-page { background: var(--ltx-titlepagebg, #101822); }\n",
       live, false),
     ("the element and its rule renamed together", true, true,
       groundRule "section.slide.title-ground",
@@ -1730,10 +1736,10 @@ def artGroundMutants :
     ("the PDF page never painted it", false, true,
       groundRule "section.slide.title-page", live, true),
     ("the property misspelled", true, true,
-      "section.slide.title-page { background: var(--titlepageground); }\n",
+      "section.slide.title-page { background: var(--ltx-titlepageground); }\n",
       live, true),
     ("the reference off the ground and onto a border", true, true,
-      "section.slide.title-page { border-color: var(--titlepagebg); }\n",
+      "section.slide.title-page { border-color: var(--ltx-titlepagebg); }\n",
       live, true),
     ("a rule painting a ground the design never declared", false, false,
       groundRule "section.slide.title-page", live, true),
@@ -1797,7 +1803,7 @@ def artGroundParityChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet)
     let css := artTreeCssList (artTreeCssList "" head.toList) body.toList
     if painted then paintedSeen := paintedSeen + 1
     if declared then declaredSeen := declaredSeen + 1
-    if declared && !(artGroundSelectors artGroundRole css).isEmpty then
+    if declared && !(artGroundSelectors artGroundProp css).isEmpty then
       carriedSeen := carriedSeen + 1
     t s!"ground parity {n}: {(artGroundOffences painted declared css body).toList}"
       (artGroundOffences painted declared css body).isEmpty
@@ -1833,7 +1839,7 @@ def artGroundParityChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet)
       hasStr d.message "readable full-page ground stays")
   t s!"a readable full-page fill survives title-layout fallback in both artifacts: \
 {mixedOffences.toList}"
-    (mixedPainted && hasStr mixedCss "--titlepagebg: #202833;" && mixedOffences.isEmpty)
+    (mixedPainted && hasStr mixedCss "--ltx-titlepagebg: #202833;" && mixedOffences.isEmpty)
 
 /-! ## A frame's own ground: the palette in force, and both artifacts paint it
 
@@ -1851,7 +1857,7 @@ surface. -/
 /-- The property a frame's plain ground is declared under: the palette's
 `bg`, which `:root` carries for the document and a body epoch redefines on
 the node it stands on (`HtmlDoc.withEpoch`). -/
-def artStageRole : String := "bg"
+def artStageRole : String := (Ir.CssName.role .page).ident
 
 /-- The last value a declaration list gives one custom property. -/
 def artVarIn (decls : String) (name : String) : Option String :=
@@ -1860,11 +1866,12 @@ def artVarIn (decls : String) (name : String) : Option String :=
     | [k, v] => if k.trimAscii.toString == s!"--{name}" then some v.trimAscii.toString else none
     | _ => none).getLast?
 
-/-- The last value the stylesheet's `:root` blocks give one custom property:
-the document's own declaration, which the backend writes after the
-colour-scheme defaults. -/
+/-- The last value the stylesheet's top-level `:root` blocks give one custom
+property — the light screen's: the document's own declaration, which the
+backend writes after the colour-scheme defaults. A block inside `@media`
+restates the dark scheme's or the print sheet's value. -/
 def artRootVar (css : String) (name : String) : Option String :=
-  ((artCssBlocks css).filterMap fun (sel, decls) =>
+  ((artTopCssBlocks css).filterMap fun (sel, decls) =>
     if sel == ":root" then artVarIn decls name else none).back?
 
 mutual
@@ -1952,13 +1959,13 @@ def artStageGroundOffences (expected : Array (Option Ir.Color)) (css : String)
       out := out.push s!"no rule paints the plain stage from --{artStageRole}"
     unless blocks.any fun (_, d) => (d.splitOn ";").any fun x =>
         match x.splitOn ":" with
-        | [p, v] => p.trimAscii.toString == "color" && hasStr v "var(--fg"
+        | [p, v] => p.trimAscii.toString == "color" && hasStr v "var(--ltx-fg"
         | _ => false do
-      out := out.push "no rule inks the plain stage from --fg"
+      out := out.push "no rule inks the plain stage from --ltx-fg"
   let root := artRootVar css artStageRole
   for i in [0:min stages.size expected.size] do
     let got := stages[i]!.orElse fun _ => root
-    let want := expected[i]!.map HtmlDoc.cssColor
+    let want := (expected[i]!.orElse fun _ => Ir.Design.at {} .light .page).map HtmlDoc.cssColor
     if got != want then
       out := out.push s!"plain frame {i + 1}: the stage resolves --{artStageRole} to \
 {got}, the palette in force declares {want}"
@@ -1993,18 +2000,18 @@ def artStageMutants : List (String × String × Array Html.Node × Bool) :=
   let stage (style : String) : Html.Node :=
     Html.elem "section" #[] (#[("class", "slide")] ++
       (if style.isEmpty then #[] else #[("style", style)]))
-  let root := ":root {\n    --bg: #fdfcf9;\n}\n"
+  let root := ":root {\n    --ltx-bg: #fdfcf9;\n}\n"
   let rule (bg : String) : String :=
     s!"@media screen \{\nsection.slide, section.section-page \{ background: {bg}; \
-color: var(--fg, var(--ink)); }\n}\n"
-  let live := #[Html.elem "main" #[stage "", stage "--bg: #14213d"]]
-  [ ("the shape the backend writes", root ++ rule "var(--bg, var(--surface))", live, false),
+color: var(--ltx-fg); }\n}\n"
+  let live := #[Html.elem "main" #[stage "", stage "--ltx-bg: #14213d"]]
+  [ ("the shape the backend writes", root ++ rule "var(--ltx-bg)", live, false),
     ("the rule gone", root, live, true),
-    ("the stage painting the stylesheet's surface", root ++ rule "var(--surface)", live, true),
-    ("the epoch's redefinition dropped", root ++ rule "var(--bg, var(--surface))",
+    ("the stage painting the code surface", root ++ rule "var(--ltx-code-surface)", live, true),
+    ("the epoch's redefinition dropped", root ++ rule "var(--ltx-bg)",
       #[Html.elem "main" #[stage "", stage ""]], true),
     ("the ink rule gone", root ++
-      "section.slide { background: var(--bg, var(--surface)); }\n", live, true)]
+      "section.slide { background: var(--ltx-bg); }\n", live, true)]
 
 /-- Every page of a frame that does not stand on the frame's declared
 ground: the PDF half of the stage-ground claim, read off `Layout.Out` — the

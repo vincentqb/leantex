@@ -42,10 +42,10 @@ example : List String := MathSymData.refused
 example (acc : Array Char) : MList.scalarsList acc .nil = acc := by
   simp only [MList.scalarsList]
 
-example (f : Ir.Color → Option String → Ir.Color) :
+example (f : Ir.Color → Option Ir.ColorRef → Ir.Color) :
     MList.mapInk f .nil = .nil := rfl
 
-example (f : Ir.Color → Option String → Ir.Color) (body : MList) (acc : Array Char) :
+example (f : Ir.Color → Option Ir.ColorRef → Ir.Color) (body : MList) (acc : Array Char) :
     (MList.mapInk f body).scalarsList acc = body.scalarsList acc :=
   MList.mapInk_scalars f body acc
 

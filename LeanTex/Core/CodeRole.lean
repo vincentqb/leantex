@@ -30,9 +30,6 @@ public def Role.word : Role → String
   | .comment => "comment"
   | .error => "error"
 
-/-- The palette key a document declares the role's colour under. -/
-public def Role.key (r : Role) : String := "code" ++ r.word
-
 /-- A top-level type's own role, and its descendants'. A bare `Name` is an
 identifier, which sets in the ink; the names below it name what a
 definition, an import or the language introduces. -/

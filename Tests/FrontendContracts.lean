@@ -29,7 +29,7 @@ def frontendTitleContextChecks (ref : IO.Ref (List String)) : IO Unit := do
       t s!"title context: {aliasName} preserves the merged style"
         (left.1.styles.find? "titlepage" == right.1.styles.find? "titlepage")
       t s!"title context: {aliasName} preserves explicit document precedence"
-        (((left.1.styles.find? "titlepage").bind (·.align)) == some "right")
+        (((left.1.styles.find? "titlepage").bind (·.align)) == some .right)
   -- Reading a refused body is a once-only preamble operation, including a
   -- body that declares no supported styling. Keeping that payload in the
   -- body interpreter would leave its spelling observable after its reader.

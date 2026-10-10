@@ -662,12 +662,25 @@ private def stepWrapChecks (ref : IO.Ref (List String)) : IO Unit := do
       hasStr l ":is(.step, .step-set):has(> section.block:first-child)" &&
         hasStr l "--frame-body-before:" && !hasStr l "margin-top")
 
+/-- ΔEOK², squared so a bound compares with no root: the Euclidean distance
+between two colours' `Oklab.labOf` coordinates, at its 10¹⁸ scale. -/
+private def deltaEOkSq (c c' : Ir.Color) : Nat :=
+  let p := Oklab.labOf c
+  let q := Oklab.labOf c'
+  ((p.L - q.L) * (p.L - q.L) + (p.a - q.a) * (p.a - q.a) + (p.b - q.b) * (p.b - q.b)).toNat
+
+/-- Four just-noticeable differences, ΔEOK 0.08 (one JND is 0.02, CSS Color 4
+§14.2.1), on `deltaEOkSq`'s scale: how far the engine's cover, a mix in
+Oklab, may stand from xcolor's mix in sRGB. -/
+private def coverBoundSq : Nat := (8 * 10 ^ 16) * (8 * 10 ^ 16)
+
 /-- beamer's transparent covering mixes every colour a covered step uses
 with the page (`\opaqueness`, beamerbaseoverlay.sty), a block's colour
 boxes and heading ink included: on the step that does not show it, a block
 after `\pause` ships its bars and heading at their cover, the cover the
-engine gives every covered colour (`Ir.Design.cover`), within the ink bound
-of xcolor's mix; on the step that shows it, its own colours. -/
+engine gives every covered colour (`Ir.Design.cover`), within four
+just-noticeable differences of xcolor's mix; on the step that shows it, its
+own colours. -/
 private def coveredChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit := do
   let src := "\\documentclass{beamer}\n\\setbeamercovered{transparent}\n" ++
     "\\definecolor{probeInk}{HTML}{1F2A44}\n\\definecolor{probeSurface}{HTML}{E8EEF6}\n" ++
@@ -696,9 +709,9 @@ private def coveredChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : 
     ((paint 0)[2]? == some (cover.of ink) && (paint 0)[3]? == some (cover.of surface))
   check ref "block covering: a covered block's heading ink ships at its cover"
     (headingInk 0 == some (cover.of Ir.Color.white))
-  check ref "block covering: the covered boxes lie within the ink bound of xcolor's mix"
-    (Contrast.deltaEOkSq (ink.mix 15 page) (cover.of ink) ≤ Contrast.inkBoundSq &&
-      Contrast.deltaEOkSq (surface.mix 15 page) (cover.of surface) ≤ Contrast.inkBoundSq)
+  check ref "block covering: the covered boxes lie within four just-noticeable differences of xcolor's mix"
+    (deltaEOkSq (ink.mix 15 page) (cover.of ink) ≤ coverBoundSq &&
+      deltaEOkSq (surface.mix 15 page) (cover.of surface) ≤ coverBoundSq)
   check ref "block covering: the step that shows the block ships its own colours"
     (paint 1 == #[ink, surface, ink, surface] && headingInk 1 == some Ir.Color.white)
 

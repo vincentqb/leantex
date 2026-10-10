@@ -107,10 +107,9 @@ public def moloch : Theme :=
   let bg := Color.black.mix 2 Color.white                     -- black!2
   -- moloch's own alert is #EB811B, which reads at 2.61:1 on this page —
   -- under the 4.5:1 WCAG 2.2 SC 1.4.3 asks of text. This value is the
-  -- same hue at a lightness that clears it: an instance of the
-  -- realization rule (a role names a hue; the contract chooses its
-  -- lightness on each ground — Contrast.realize), and
-  -- Contrast.realized_builtin_contract holds it, with every shipped
+  -- same hue at a lightness that clears it (a role names a hue; its
+  -- ground chooses the lightness — Contrast.realizeNearest), and
+  -- Contrast.builtin_palettes_contract holds it, with every shipped
   -- pair, to the ratio by kernel check.
   let alert : Color := { r := 0xA5, g := 0x5A, b := 0x13 }
   let progressfg := alert
@@ -118,17 +117,18 @@ public def moloch : Theme :=
   { name := "moloch"
     palette := {
       entries := #[
-        ("fg", fg), ("bg", bg), ("alert", alert), ("example", { r := 0x00, g := 0x80, b := 0x80 }),
+        (.role .ink, fg), (.role .page, bg), (.role .alert, alert),
+        (.role .example, { r := 0x00, g := 0x80, b := 0x80 }),
         -- The muted step: the theme's own ink mixed 70:30 into its page, the
         -- strongest quieting that still clears the 4.5:1 WCAG 2.2 SC 1.4.3
         -- asks of the small footer text (4.79:1 here;
         -- Contrast.builtin_palettes_contract is the kernel check, and
         -- 60:40 already fails at 3.65:1).
-        ("muted", fg.mix 70 bg),                              -- fg!70!bg
-        ("frametitlefg", bg), ("frametitlebg", fg),
-        ("progressfg", progressfg), ("progressbg", progressbg),
-        ("separator", progressfg),
-        ("standoutfg", bg), ("standoutbg", fg)]
+        (.role .muted, fg.mix 70 bg),                              -- fg!70!bg
+        (.role .frameTitleInk, bg), (.role .frameTitleBar, fg),
+        (.role .progressFill, progressfg), (.role .progressTrack, progressbg),
+        (.role .separator, progressfg),
+        (.role .standoutInk, bg), (.role .standoutGround, fg)]
       -- Covered overlay content keeps each colour at 31% of itself over
       -- the page, mixed in Oklab (Core/Oklab.lean). Material's
       -- disabled-state opacity is 38% (m2.material.io/design/interaction/
@@ -148,8 +148,8 @@ public def moloch : Theme :=
       -- and draws a separator rule between the title block and the author
       -- block, in the palette's separator colour (resolved here, exactly
       -- what `separator = separator` resolved to at install time).
-      ("titlepage", { align := some "left"
-                      separator := some (progressfg, some "separator") })] }
+      ("titlepage", { align := some .left
+                      separator := some (progressfg, some (.role .separator)) })] }
     chrome := builtinChrome }
 
 /-- A quieter default: near-black ink on white, one restrained accent, no
@@ -161,14 +161,14 @@ public def plain : Theme :=
   { name := "plain"
     palette := {
       entries := #[
-        ("fg", fg), ("bg", bg), ("alert", { r := 0xB3, g := 0x26, b := 0x1E }),
-        ("example", { r := 0x20, g := 0x5E, b := 0x3B }),
+        (.role .ink, fg), (.role .page, bg), (.role .alert, { r := 0xB3, g := 0x26, b := 0x1E }),
+        (.role .example, { r := 0x20, g := 0x5E, b := 0x3B }),
         -- Same muted rule as moloch: ink 70:30 into the page (6.36:1 here).
-        ("muted", fg.mix 70 bg),                              -- fg!70!bg
-        ("progressfg", fg.mix 60 .white),                     -- fg!60
-        ("progressbg", fg.mix 15 .white),                     -- fg!15
-        ("separator", fg.mix 40 .white),                      -- fg!40
-        ("standoutfg", bg), ("standoutbg", fg)]
+        (.role .muted, fg.mix 70 bg),                              -- fg!70!bg
+        (.role .progressFill, fg.mix 60 .white),                     -- fg!60
+        (.role .progressTrack, fg.mix 15 .white),                     -- fg!15
+        (.role .separator, fg.mix 40 .white),                      -- fg!40
+        (.role .standoutInk, bg), (.role .standoutGround, fg)]
       -- Covered keeps each colour at 38% of itself over the page — the
       -- Material disabled-state opacity, per colour in Oklab; this
       -- bundle's roles all clear the 3:1 state change at 38%
@@ -198,13 +198,13 @@ public def daylight : Theme :=
   { name := "daylight"
     palette := {
       entries := #[
-        ("fg", fg), ("bg", bg), ("alert", accent),
-        ("example", { r := 0x0F, g := 0x7A, b := 0x52 }),   -- GOV.UK success
-        ("muted", fg.mix 70 bg),                            -- fg!70!bg, 5.55:1
-        ("progressfg", accent),
-        ("progressbg", accent.mix 20 bg),                   -- accent!20!bg
-        ("separator", accent),
-        ("standoutfg", bg), ("standoutbg", accent)]
+        (.role .ink, fg), (.role .page, bg), (.role .alert, accent),
+        (.role .example, { r := 0x0F, g := 0x7A, b := 0x52 }),   -- GOV.UK success
+        (.role .muted, fg.mix 70 bg),                            -- fg!70!bg, 5.55:1
+        (.role .progressFill, accent),
+        (.role .progressTrack, accent.mix 20 bg),                   -- accent!20!bg
+        (.role .separator, accent),
+        (.role .standoutInk, bg), (.role .standoutGround, accent)]
       coveredFraction := some 38 }
     -- The lineage's rhythm, not this bundle's own knob: the shared table
     -- makes the docstring's claim true in code.
@@ -215,8 +215,8 @@ public def daylight : Theme :=
       ("frametitle", boldFont "large"),
       ("sectionpage", boldFont "Large"),
       ("standout", boldFont "Large"),
-      ("titlepage", { align := some "left"
-                      separator := some (accent, some "separator") })] }
+      ("titlepage", { align := some .left
+                      separator := some (accent, some (.role .separator)) })] }
     chrome := builtinChrome }
 
 /-- The Gemini poster lineage as a token bundle: a blue headline band with
@@ -237,24 +237,24 @@ public def gemini : Theme :=
   { name := "gemini"
     palette := {
       entries := #[
-        ("fg", fg), ("bg", bg),
+        (.role .ink, fg), (.role .page, bg),
         -- The lineage leaves alerted/example text to beamer's defaults
         -- (beamercolorthemedefault.sty: `alerted text` fg=red, `example
         -- text` fg=green!50!black). red reads 4.00:1 on this page, under
         -- the 4.5:1 WCAG 2.2 SC 1.4.3 asks of text; this is the same hue
-        -- at the lightness the realization rule chooses on this ground
-        -- (Contrast.realize; 4.53:1), moloch's alert precedent.
-        ("alert", { r := 0xEE, g := 0x00, b := 0x00 }),
-        ("example", { r := 0x00, g := 0x80, b := 0x00 }),      -- green!50!black
+        -- at the nearest lightness that clears it on this ground
+        -- (Contrast.realizeNearest; 4.53:1), moloch's alert precedent.
+        (.role .alert, { r := 0xEE, g := 0x00, b := 0x00 }),
+        (.role .example, { r := 0x00, g := 0x80, b := 0x00 }),      -- green!50!black
         -- The same 70:30 ink-into-page muted rule the other bundles use
         -- (8.45:1 here); gemini declares no muted step of its own.
-        ("muted", fg.mix 70 bg),                               -- fg!70!bg
-        ("frametitlefg", lightgray), ("frametitlebg", blue),   -- headline fg/bg
-        ("blocktitlefg", blue),                                -- block title fg=blue (bg=white: the page, no bar)
-        ("alerttitlefg", lightgray), ("alerttitlebg", blue),   -- block alerted title
-        ("exampletitlefg", blue), ("exampletitlebg", lightgray), -- block example title
-        ("standoutfg", bg), ("standoutbg", fg),                -- palette tertiary bg=black,fg=white
-        ("separator", darkblue)]                               -- headline rule bg=darkblue
+        (.role .muted, fg.mix 70 bg),                               -- fg!70!bg
+        (.role .frameTitleInk, lightgray), (.role .frameTitleBar, blue),   -- headline fg/bg
+        (.role .blockTitleInk, blue),                                -- block title fg=blue (bg=white: the page, no bar)
+        (.role .alertTitleInk, lightgray), (.role .alertTitleBar, blue),   -- block alerted title
+        (.role .exampleTitleInk, blue), (.role .exampleTitleBar, lightgray), -- block example title
+        (.role .standoutInk, bg), (.role .standoutGround, fg),                -- palette tertiary bg=black,fg=white
+        (.role .separator, darkblue)]                               -- headline rule bg=darkblue
       -- Covered overlay content keeps each colour at 30% of itself over
       -- the page, mixed in Oklab. At Material's 38% disabled-state
       -- default this bundle's alert and example read at 2.70:1 and
@@ -269,8 +269,8 @@ public def gemini : Theme :=
       -- keep title centered") — declared here, the alignment token the
       -- band reads, never a hard-coded centring. The separator is the
       -- lineage's headline rule, in its own colour.
-      ("titlepage", { align := some "center"
-                      separator := some (darkblue, some "separator") })] } }
+      ("titlepage", { align := some .center
+                      separator := some (darkblue, some (.role .separator)) })] } }
 
 public def builtin : List Theme := [moloch, plain, daylight, gemini]
 
@@ -286,18 +286,6 @@ public theorem footline_left_contract : ∀ th ∈ builtin, th.chrome.footerLeft
   simp only [builtin, List.mem_cons, List.not_mem_nil, or_false] at h
   rcases h with rfl | rfl | rfl | rfl <;> rfl
 
-/-- A role resolves at one site: `Palette.find?` is the single reader of
-the entries, and `Palette.resolve` — the evaluator `\textcolor` and every
-declaration value go through — agrees with it on every entry name of every
-shipped bundle. `black` and `white` are `resolve`'s only own atoms and they
-yield to a declared entry of the same name, so the two spellings of a role
-use cannot diverge; a bundle declaring an entry named `black` would fail
-this contract's proof only if the yield rule broke. Adding a bundle is
-entering the contract. -/
-public theorem role_resolves_at_one_site :
-    (builtin.all fun t => t.palette.entries.toList.all fun e =>
-      t.palette.resolve e.1 == t.palette.find? e.1) = true := by decide
-
 public def find? (name : String) : Option Theme :=
   builtin.find? (·.name == name)
 
@@ -306,36 +294,27 @@ public def names : List String := builtin.map (·.name)
 /-- Key-wise onto the element's existing entry: the theme's key wins where
 both declare it (the positional last-writer rule every palette entry
 follows), and the document's survives where the theme is silent — over
-every `Option` field of `ElementStyle`, the same merge a later `\style`
-block performs against the running entry. -/
+every field of `ElementStyle`, the same merge a later `\style` block
+performs against the running entry. Built positionally, so a field added
+to the record is a compile error here rather than a silently dropped key:
+the structure-instance spelling this replaces omitted `color` and erased a
+link colour at every install. -/
 public def styleMerge (top base : ElementStyle) : ElementStyle :=
-  { font := top.font <|> base.font
-    before := top.before <|> base.before
-    after := top.after <|> base.after
-    rule := top.rule <|> base.rule
-    rulePosition := top.rulePosition <|> base.rulePosition
-    ruleThickness := top.ruleThickness <|> base.ruleThickness
-    marker := top.marker <|> base.marker
-    indent := top.indent <|> base.indent
-    gap := top.gap <|> base.gap
-    align := top.align <|> base.align
-    separator := top.separator <|> base.separator
-    ruleAbove := top.ruleAbove <|> base.ruleAbove
-    ruleAboveSkip := top.ruleAboveSkip <|> base.ruleAboveSkip
-    ruleAboveGap := top.ruleAboveGap <|> base.ruleAboveGap
-    ruleBelow := top.ruleBelow <|> base.ruleBelow
-    ruleBelowGap := top.ruleBelowGap <|> base.ruleBelowGap
-    ruleBelowSkip := top.ruleBelowSkip <|> base.ruleBelowSkip
-    authorFont := top.authorFont <|> base.authorFont
-    authorStrut := top.authorStrut <|> base.authorStrut
-    bodySize := top.bodySize <|> base.bodySize
-    hover := top.hover <|> base.hover
-    focus := top.focus <|> base.focus
-    motion := top.motion <|> base.motion
-    slots := if top.slots.isEmpty then base.slots else top.slots
-    shape := top.shape <|> base.shape }
+  ElementStyle.mk (top.font <|> base.font) (top.before <|> base.before)
+    (top.after <|> base.after) (top.rule <|> base.rule)
+    (top.rulePosition <|> base.rulePosition) (top.ruleThickness <|> base.ruleThickness)
+    (top.marker <|> base.marker) (top.indent <|> base.indent) (top.gap <|> base.gap)
+    (top.align <|> base.align) (top.separator <|> base.separator)
+    (top.ruleAbove <|> base.ruleAbove) (top.ruleAboveSkip <|> base.ruleAboveSkip)
+    (top.ruleAboveGap <|> base.ruleAboveGap) (top.ruleBelow <|> base.ruleBelow)
+    (top.ruleBelowGap <|> base.ruleBelowGap) (top.ruleBelowSkip <|> base.ruleBelowSkip)
+    (top.authorFont <|> base.authorFont) (top.authorStrut <|> base.authorStrut)
+    (top.bodySize <|> base.bodySize) (top.hover <|> base.hover) (top.focus <|> base.focus)
+    (top.motion <|> base.motion) (top.color <|> base.color)
+    (if top.slots.isEmpty then base.slots else top.slots)
+    (top.shape <|> base.shape)
 
-private def installPalette (p : Palette) : List (String × Color) → Palette
+private def installPalette (p : Palette) : List (ColorRef × Color) → Palette
   | [] => p
   | (k, c) :: es => installPalette (p.declare k c) es
 
@@ -391,26 +370,10 @@ public def applyUnder (th : Theme) (s : Decls) : Decls :=
       let pal := installPalette th.palette s.palette.entries.toList
       { pal with
         coveredFraction := s.palette.coveredFraction <|> th.palette.coveredFraction
-        decorative := s.palette.decorative ++ th.palette.decorative }
+        decorative := s.palette.decorative ++ pal.decorative }
     tokens := installTokens th.tokens s.tokens.entries.toList
     styles := installStyles th.styles s.styles.entries.toList
     chrome := chromeApply s.chrome th.chrome }
-
-/-- Arch-design I2, the engine half, discharged from the staging queue:
-what `\theme` installs is what the bundle declares — the install function
-is `apply`, the very function the elaborator calls at the `\theme` site
-(its arm threads `Theme.apply th before` and nothing else into the state),
-so a bundle's title-page alignment and separator survive the install onto
-an undeclared document. The literal through-`Elab.run` reading stays with
-the executable oracles: Elab's WF recursion is kernel-irreducible (the
-2026-09-19 probe — `decide +kernel` stalls at the `Decidable` instance
-even with every function total), and this statement over the install
-function is the same fact one definitional step earlier. -/
-public theorem titlepage_align_declared_engine :
-    (builtin.all fun t =>
-      match (apply t {}).styles.find? "titlepage" with
-      | some st => st.align.isSome && st.separator.isSome
-      | none => true) = true := by decide
 
 /-- Every `(declaration, key)` the bundle installs — `("palette", "alert")`,
 `("chrome", "footer.left")` — whatever stood there before: the keys whose
@@ -418,7 +381,7 @@ standing value is the theme's after `apply`. -/
 public def declares (th : Theme) : Array (String × String) := Id.run do
   let mut out : Array (String × String) := #[]
   for (k, _) in th.palette.entries do
-    out := out.push ("palette", k)
+    out := out.push ("palette", k.key)
   if th.palette.coveredFraction.isSome then
     out := out.push ("palette", "covered")
   for (k, _) in th.tokens.entries do
@@ -441,9 +404,9 @@ chrome. -/
 public def replaces (th : Theme) (s : Decls) : Array (String × String) := Id.run do
   let mut out : Array (String × String) := #[]
   for (k, c) in th.palette.entries do
-    if let some c0 := s.palette.find? k then
+    if let some c0 := s.palette.lookup k then
       if c0 != c then
-        out := out.push ("palette", k)
+        out := out.push ("palette", k.key)
   if let some n := th.palette.coveredFraction then
     if let some m := s.palette.coveredFraction then
       if n != m then
@@ -465,19 +428,6 @@ public def replaces (th : Theme) (s : Decls) : Array (String × String) := Id.ru
       if d0 != d then
         out := out.push ("chrome", "footer.right")
   return out
-
-/-- The class layer under the theme layer: a class fixes the page model
-and its implied contract, and a theme may override neither. The type
-carries most of it — `Ir.DocClass.record` reads the class alone, and
-`apply`'s whole domain and codomain is `Decls`, which has no class, page,
-or assertion field, so applying any theme leaves the class's page model
-and assertions unchanged by construction. The checkable residue is this
-contract: every key a shipped bundle installs lives on one of the four
-visual surfaces. Quantified over `builtin` — adding a bundle is entering
-the contract. -/
-public theorem theme_layer_contract :
-    (builtin.all fun t => (declares t).toList.all fun e =>
-      ["palette", "tokens", "style", "chrome"].contains e.1) = true := by decide
 
 /-! ## The layering contract over the install
 
@@ -504,12 +454,6 @@ public def nodupKeys {α : Type} : List (String × α) → Bool
   | [] => true
   | e :: es => !(es.any (·.1 == e.1)) && nodupKeys es
 
-/-- Entering the contract: every shipped bundle declares each style element
-once, so `apply_fixed_point` covers it. Quantified over `builtin` — adding
-a bundle re-runs this check. -/
-public theorem builtin_styles_nodup :
-    (builtin.all fun th => nodupKeys th.styles.entries.toList) = true := by decide
-
 private theorem orElse_absorb {α : Type} (a b : Option α) :
     (a <|> (a <|> b)) = (a <|> b) := by
   cases a <;> rfl
@@ -527,13 +471,13 @@ private theorem styleMerge_absorb (a b : ElementStyle) :
 push the entry. `Palette.declare`, `Tokens.declare`, and `Styles.declare`
 all reduce to iterating this step, so the fold lemmas below serve all
 three surfaces. -/
-private def installEntries {α : Type} (xs : Array (String × α)) :
-    List (String × α) → Array (String × α)
+private def installEntries {κ α : Type} [BEq κ] [LawfulBEq κ] (xs : Array (κ × α)) :
+    List (κ × α) → Array (κ × α)
   | [] => xs
   | (k, v) :: es => installEntries ((xs.filter (·.1 != k)).push (k, v)) es
 
-private theorem installEntries_keeps {α : Type} (es : List (String × α))
-    (xs : Array (String × α)) (k : String) (h : ∀ e ∈ es, e.1 ≠ k) :
+private theorem installEntries_keeps {κ α : Type} [BEq κ] [LawfulBEq κ] (es : List (κ × α))
+    (xs : Array (κ × α)) (k : κ) (h : ∀ e ∈ es, e.1 ≠ k) :
     (installEntries xs es).find? (·.1 == k) = xs.find? (·.1 == k) := by
   induction es generalizing xs with
   | nil => rfl
@@ -544,8 +488,8 @@ private theorem installEntries_keeps {α : Type} (es : List (String × α))
     rw [ih _ (fun e' he' => h e' (List.mem_cons_of_mem _ he')),
       declare_keeps _ _ _ _ (fun hh => hk hh.symm)]
 
-private theorem installEntries_residue {α : Type} (es : List (String × α))
-    (xs : Array (String × α)) :
+private theorem installEntries_residue {κ α : Type} [BEq κ] [LawfulBEq κ] (es : List (κ × α))
+    (xs : Array (κ × α)) :
     installEntries xs es =
       xs.filter (fun x => !(es.any (fun e => x.1 == e.1))) ++ installEntries #[] es := by
   induction es generalizing xs with
@@ -557,32 +501,32 @@ private theorem installEntries_residue {α : Type} (es : List (String × α))
     obtain ⟨k, v⟩ := e
     simp only [installEntries]
     rw [ih ((xs.filter (·.1 != k)).push (k, v)),
-      ih (((#[] : Array (String × α)).filter (·.1 != k)).push (k, v))]
+      ih (((#[] : Array (κ × α)).filter (·.1 != k)).push (k, v))]
     rw [Array.filter_push, Array.filter_push, Array.filter_filter]
-    have hpred : (fun x : String × α => (!(es.any fun e => x.1 == e.1)) && (x.1 != k))
-        = (fun x : String × α => !(((k, v) :: es).any fun e => x.1 == e.1)) := by
+    have hpred : (fun x : κ × α => (!(es.any fun e => x.1 == e.1)) && (x.1 != k))
+        = (fun x : κ × α => !(((k, v) :: es).any fun e => x.1 == e.1)) := by
       funext x
       simp only [List.any_cons, Bool.not_or]
       rw [Bool.and_comm]
       rfl
     rw [hpred]
-    have hempty : ((#[] : Array (String × α)).filter (·.1 != k)) = #[] := rfl
+    have hempty : ((#[] : Array (κ × α)).filter (·.1 != k)) = #[] := rfl
     rw [hempty]
-    cases _hP : (!(es.any fun e => ((k, v) : String × α).1 == e.1)) with
+    cases _hP : (!(es.any fun e => ((k, v) : κ × α).1 == e.1)) with
     | false =>
       simp only [Bool.false_eq_true, ite_false]
       rw [show (Array.filter (fun x => !es.any fun e => x.fst == e.fst)
-        (#[] : Array (String × α))) = #[] from rfl]
+        (#[] : Array (κ × α))) = #[] from rfl]
       simp
     | true =>
       simp only [ite_true]
       rw [show (Array.filter (fun x => !es.any fun e => x.fst == e.fst)
-        (#[] : Array (String × α))) = #[] from rfl]
+        (#[] : Array (κ × α))) = #[] from rfl]
       rw [Array.push_eq_append, Array.push_eq_append]
       simp
 
-private theorem installEntries_mem {α : Type} (es : List (String × α))
-    (xs : Array (String × α)) (x : String × α) (hx : x ∈ installEntries xs es) :
+private theorem installEntries_mem {κ α : Type} [BEq κ] [LawfulBEq κ] (es : List (κ × α))
+    (xs : Array (κ × α)) (x : κ × α) (hx : x ∈ installEntries xs es) :
     x ∈ xs ∨ (es.any (fun e => x.1 == e.1)) = true := by
   induction es generalizing xs with
   | nil => exact .inl hx
@@ -597,10 +541,10 @@ private theorem installEntries_mem {α : Type} (es : List (String × α))
     · right
       simp [List.any_cons, hany]
 
-private theorem installEntries_idem {α : Type} (es : List (String × α))
-    (xs : Array (String × α)) :
+private theorem installEntries_idem {κ α : Type} [BEq κ] [LawfulBEq κ] (es : List (κ × α))
+    (xs : Array (κ × α)) :
     installEntries (installEntries xs es) es = installEntries xs es := by
-  have hself : ((installEntries (#[] : Array (String × α)) es).filter
+  have hself : ((installEntries (#[] : Array (κ × α)) es).filter
       (fun x => !(es.any (fun e => x.1 == e.1)))) = #[] := by
     rw [Array.filter_eq_empty_iff]
     intro x hx
@@ -609,21 +553,21 @@ private theorem installEntries_idem {α : Type} (es : List (String × α))
     · simp [hany]
   rw [installEntries_residue es (installEntries xs es), installEntries_residue es xs]
   rw [Array.filter_append (by simp), Array.filter_filter]
-  have hidem : (fun x : String × α => (!(es.any fun e => x.1 == e.1)) &&
-      !(es.any fun e => x.1 == e.1)) = (fun x : String × α => !(es.any fun e => x.1 == e.1)) := by
+  have hidem : (fun x : κ × α => (!(es.any fun e => x.1 == e.1)) &&
+      !(es.any fun e => x.1 == e.1)) = (fun x : κ × α => !(es.any fun e => x.1 == e.1)) := by
     funext x
     exact Bool.and_self _
   rw [hidem, hself]
   simp
 
-private theorem find?_none_keys {α : Type} (xs : Array (String × α)) (k : String)
+private theorem find?_none_keys {κ α : Type} [BEq κ] [LawfulBEq κ] (xs : Array (κ × α)) (k : κ)
     (h : xs.find? (·.1 == k) = none) : ∀ e ∈ xs.toList, e.1 ≠ k := by
   intro e he hk
   rw [Array.find?_eq_none] at h
   have := h e (by simpa using he)
   simp [hk] at this
 
-private theorem installPalette_entries (p : Palette) (es : List (String × Color)) :
+private theorem installPalette_entries (p : Palette) (es : List (ColorRef × Color)) :
     (installPalette p es).entries = installEntries p.entries es := by
   induction es generalizing p with
   | nil => rfl
@@ -633,7 +577,7 @@ private theorem installPalette_entries (p : Palette) (es : List (String × Color
     rw [ih]
     rfl
 
-private theorem installPalette_covered (p : Palette) (es : List (String × Color)) :
+private theorem installPalette_covered (p : Palette) (es : List (ColorRef × Color)) :
     (installPalette p es).coveredFraction = p.coveredFraction := by
   induction es generalizing p with
   | nil => rfl
@@ -643,7 +587,7 @@ private theorem installPalette_covered (p : Palette) (es : List (String × Color
     rw [ih]
     rfl
 
-private theorem installPalette_decorative (p : Palette) (es : List (String × Color)) :
+private theorem installPalette_decorative (p : Palette) (es : List (ColorRef × Color)) :
     (installPalette p es).decorative =
       p.decorative.filter (fun x => !(es.any (fun e => x == e.1))) := by
   induction es generalizing p with
@@ -768,8 +712,8 @@ private theorem tokens_ext {a b : Tokens} (h : a.entries = b.entries) : a = b :=
   simpa using h
 
 private theorem palette_ext {a b : Palette} (he : a.entries = b.entries)
-    (hc : a.coveredFraction = b.coveredFraction) (hd : a.decorative = b.decorative)
-    (hi : a.inks = b.inks) : a = b := by
+    (hc : a.coveredFraction = b.coveredFraction) (hd : a.decorative = b.decorative) :
+    a = b := by
   cases a
   cases b
   simp_all
@@ -815,11 +759,6 @@ private theorem paletteApply_decorative (bp : Palette) : ∀ q : Palette,
   show (installPalette q bp.entries.toList).decorative = _
   exact installPalette_decorative ..
 
-private theorem installPalette_inks : ∀ (p : Palette) (es : List (String × Color)),
-    (installPalette p es).inks = p.inks
-  | _, [] => rfl
-  | p, (k, c) :: es => installPalette_inks (p.declare k c) es
-
 private theorem paletteApply_idem (bp p : Palette) :
     paletteApply bp (paletteApply bp p) = paletteApply bp p := by
   apply palette_ext
@@ -832,22 +771,83 @@ private theorem paletteApply_idem (bp p : Palette) :
     congr 1
     funext x
     exact Bool.and_self _
-  · simp only [paletteApply, installPalette_inks]
 
 private theorem chromeApply_idem (bc c : Chrome) :
     chromeApply bc (chromeApply bc c) = chromeApply bc c := by
   simp only [chromeApply]
   rw [orElse_absorb, orElse_absorb, orElse_absorb]
 
+private theorem bangParts_plain (cur : List Char) (l : List Char) (h : '!' ∉ l) :
+    bangParts cur l = [bangParts.trimmed (l.reverse ++ cur)] := by
+  induction l generalizing cur with
+  | nil => simp [bangParts]
+  | cons c rest ih =>
+    have hc : c ≠ '!' := fun e => h (e ▸ List.mem_cons_self ..)
+    have hr : '!' ∉ rest := fun m => h (List.mem_cons_of_mem _ m)
+    simp only [bangParts, beq_iff_eq, hc, ite_false, ih (c :: cur) hr, List.reverse_cons,
+      List.append_assoc, List.cons_append, List.nil_append]
+
+private theorem dropWhile_head_keep (p : Char → Bool) (l : List Char)
+    (h : l.head?.all (fun c => !p c) = true) : l.dropWhile p = l := by
+  cases l with
+  | nil => rfl
+  | cons c rest =>
+    simp only [List.head?_cons, Option.all_some, Bool.not_eq_true'] at h
+    simp [h]
+
+/-- **A plain name resolves to its entry.** `Palette.resolve` — the
+evaluator `\textcolor` and every declaration value go through — reads a
+name with no `!` and no blank at either end as exactly what `find?` reads:
+the two spellings of one colour use cannot diverge, for any palette. The
+side condition is what `resolve` itself splits and trims on. -/
+public theorem resolve_find_exact (pal : Palette) (n : String) (c : Color)
+    (hn : plainName n = true) (h : pal.find? n = some c) : pal.resolve n = some c := by
+  simp only [plainName, Bool.and_eq_true, Bool.not_eq_true', List.contains_eq_mem,
+    decide_eq_false_iff_not] at hn
+  obtain ⟨⟨hb, hhead⟩, hlast⟩ := hn
+  have hparts : bangParts [] n.toList = [n] := by
+    rw [bangParts_plain [] n.toList hb, List.append_nil]
+    simp only [bangParts.trimmed]
+    have h1 : n.toList.reverse.dropWhile asciiBlank = n.toList.reverse := by
+      apply dropWhile_head_keep
+      rw [List.head?_reverse]
+      exact hlast
+    rw [h1, List.reverse_reverse, dropWhile_head_keep _ _ hhead, String.ofList_toList]
+  unfold Palette.resolve
+  rw [hparts]
+  simp [Palette.atom, h, Palette.resolve.go]
+
+/-- **A class default never re-exempts a redeclared key.** The exemption a
+class-default bundle installs under the document survives exactly for the
+keys the document did not declare: a document that redeclares a theme's
+decorative entry is judged on its own declaration, as `Palette.declare`
+judges every redeclaration. -/
+public theorem applyUnder_decorative_exact (th : Theme) (s : Decls) (k : ColorRef) :
+    k ∈ (applyUnder th s).palette.decorative ↔
+      (k ∈ s.palette.decorative ∨ (k ∈ th.palette.decorative ∧ s.palette.lookup k = none)) := by
+  show k ∈ s.palette.decorative ++ (installPalette th.palette s.palette.entries.toList).decorative
+    ↔ _
+  rw [Array.mem_append, installPalette_decorative, Array.mem_filter]
+  have hnone : (!(s.palette.entries.toList.any fun e => k == e.1)) = true ↔
+      s.palette.lookup k = none := by
+    simp only [Palette.lookup, Option.map_eq_none_iff, Array.find?_eq_none, Bool.not_eq_true',
+      List.any_eq_false, Array.mem_toList_iff, beq_iff_eq]
+    constructor
+    · intro hall x hx hxk
+      exact hall x hx (by simpa using hxk.symm)
+    · intro hall x hx hkx
+      exact hall x hx (by simpa using hkx.symm)
+  rw [hnone]
+
 /-- T2, the palette half, in `Palette.declare_keeps_others`'s terms: a
 bundle changes only the keys it declares — a key the theme does not name
 resolves after `\theme` exactly as before it. -/
-public theorem apply_palette_keeps_others (th : Theme) (s : Decls) (k : String)
-    (h : th.palette.find? k = none) :
-    (apply th s).palette.find? k = s.palette.find? k := by
+public theorem apply_palette_keeps_others (th : Theme) (s : Decls) (k : ColorRef)
+    (h : th.palette.lookup k = none) :
+    (apply th s).palette.lookup k = s.palette.lookup k := by
   have hall : ∀ e ∈ th.palette.entries.toList, e.1 ≠ k := by
     apply find?_none_keys
-    simp only [Palette.find?, Option.map_eq_none_iff] at h
+    simp only [Palette.lookup, Option.map_eq_none_iff] at h
     exact h
   show ((installPalette s.palette th.palette.entries.toList).entries.find?
       (·.1 == k)).map (·.2) = _
@@ -867,12 +867,12 @@ public theorem apply_keeps_covered (th : Theme) (s : Decls)
 /-- The decorative exemption is per key and rides with declarations
 (`declare_decorative_rides`); a bundle that does not declare a key never
 touches its exemption. -/
-public theorem apply_palette_keeps_decorative (th : Theme) (s : Decls) (k : String)
-    (h : th.palette.find? k = none) :
+public theorem apply_palette_keeps_decorative (th : Theme) (s : Decls) (k : ColorRef)
+    (h : th.palette.lookup k = none) :
     (k ∈ (apply th s).palette.decorative) ↔ k ∈ s.palette.decorative := by
   have hall : ∀ e ∈ th.palette.entries.toList, e.1 ≠ k := by
     apply find?_none_keys
-    simp only [Palette.find?, Option.map_eq_none_iff] at h
+    simp only [Palette.lookup, Option.map_eq_none_iff] at h
     exact h
   show k ∈ (installPalette s.palette th.palette.entries.toList).decorative ↔ _
   rw [installPalette_decorative]

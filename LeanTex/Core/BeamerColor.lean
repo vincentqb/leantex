@@ -15,28 +15,21 @@ public def standoutMarker : String := " beamer standout color"
 rule): its element, channel and the palette entry it paints. -/
 public def siteMarker : String := " beamer color site"
 
-/-- Beamer's named elements with genuine native paint sites. In particular,
+/-- The role an element's channel writes: the registry row that binds it
+(`Row.beamer`). -/
+public def channelRole (name : String) (ch : Channel) : Option Role :=
+  Role.all.find? fun r => r.row.beamer.contains (name, ch)
+
+/-- Beamer's named elements with genuine native paint sites, and the roles
+their two channels write, read off the registry's rows in registry order
+(elements that share a role keep beamer's relative order: the frame title
+before the headline, the footline before the page number). In particular,
 the head/foot progress placement is absent: a section rule is not that site.
 Sources: beamercolorthemedefault.sty and beamercolorthememoloch.sty. -/
-public def roles : List (String × String × String) :=
-  [("normal text", "fg", "bg"), ("background canvas", "", "bg"),
-   ("frametitle", "frametitlefg", "frametitlebg"),
-   ("headline", "frametitlefg", "frametitlebg"),
-   ("framesubtitle", "framesubtitlefg", ""),
-   ("section title", "sectiontitlefg", ""),
-   ("block title", "blocktitlefg", "blocktitlebg"),
-   ("block title alerted", "alerttitlefg", "alerttitlebg"),
-   ("block title example", "exampletitlefg", "exampletitlebg"),
-   ("block body", "blockbodyfg", "blockbodybg"),
-   ("block body alerted", "alertbodyfg", "alertbodybg"),
-   ("block body example", "examplebodyfg", "examplebodybg"),
-   ("alerted text", "alert", ""), ("example text", "example", ""),
-   ("standout", "standoutfg", "standoutbg"),
-   ("progress bar", "progressfg", "progressbg"),
-   ("progress bar in section page", "sectionprogressfg", "sectionprogressbg"),
-   ("title separator", "separator", ""),
-   ("footline", "muted", "footlinebg"),
-   ("page number in head/foot", "muted", "")]
+public def roles : List (String × Option Role × Option Role) :=
+  let names := Role.all.flatMap fun r => r.row.beamer.map (·.1)
+  (names.foldl (fun acc n => if acc.contains n then acc else acc ++ [n]) []).map fun n =>
+    (n, channelRole n .fg, channelRole n .bg)
 
 /-- beamer's default colour theme's relationships among the modelled
 elements (beamercolorthemedefault.sty): relationships, not copied colours.
@@ -117,27 +110,29 @@ public structure StandoutAlias where
   source : String
   span : Span
 
-/-- End the alias scope without discarding unrelated flow declarations. -/
+/-- End the alias scope without discarding unrelated flow declarations.
+An alias is an xcolor name (`\colorlet`), so it restores as one. -/
 public def restoreAliases (opening : Palette) (current : Palette)
     (names : List String) : Palette :=
-  names.foldl (fun pal name => pal.restore opening name) current
+  names.foldl (fun pal name => pal.restore opening (.color name)) current
 
 /-- Every scoped name regains its opening value, including absence; every
 other name keeps the closing epoch's value. This is independent of colours,
 declaration order, duplicate aliases and intervening flow declarations. -/
 public theorem restoreAliases_contract (opening current : Palette)
-    (names : List String) (key : String) :
-    (restoreAliases opening current names).find? key =
-      if key ∈ names then opening.find? key else current.find? key := by
+    (names : List String) (key : ColorRef) :
+    (restoreAliases opening current names).lookup key =
+      if key ∈ names.map ColorRef.color then opening.lookup key
+      else current.lookup key := by
   induction names generalizing current with
   | nil => rfl
   | cons name names ih =>
     simp only [restoreAliases, List.foldl_cons] at *
     rw [ih]
-    by_cases hm : key ∈ names
+    by_cases hm : key ∈ names.map ColorRef.color
     · simp [hm]
-    · by_cases he : key = name
-      · subst name
+    · by_cases he : key = .color name
+      · subst he
         simp [hm, Palette.restore_exact]
       · simp [hm, he, Palette.restore_keeps_others _ _ _ _ he]
 
@@ -148,7 +143,7 @@ public structure State where
   current : Option Palette := none
   elements : List Element := []
   opening : Palette := {}
-  painted : Array String := #[]
+  painted : Array Role := #[]
   reached : List String := []
   /-- Winning authored channels, rebuilt by `resolve` in native role order. -/
   origins : Array (String × Color × Span) := #[]
@@ -211,14 +206,14 @@ public def State.declare (s : State) (name : String) (star : Bool) (src : String
 
 /-- A native role declared later wins too. Fixed colours retain their native
 model, including CMYK; the compatibility resolver never converts them. -/
-public def State.native (s : State) (key : String) (color : Color) : State := Id.run do
+public def State.native (s : State) (key : Role) (color : Color) : State := Id.run do
   if s.elements.isEmpty then return s
-  let mut s := { s with opening := s.opening.declare key color }
+  let mut s := { s with opening := s.opening.declare (.role key) color }
   for (name, fg, bg) in roles do
-    if key == fg || key == bg then
+    if fg == some key || bg == some key then
       let e := (s.elements.find? (·.name == name)).getD
         { name := name, declared := false }
-      let e := if key == fg then { e with fg := some (.native color) }
+      let e := if fg == some key then { e with fg := some (.native color) }
         else { e with bg := some (.native color) }
       s := { s with elements := s.elements.filter (·.name != name) ++ [e] }
   return s
@@ -247,10 +242,10 @@ private theorem Reading.over_projects (a b : Reading) :
 private def own (pal : Palette) (name : String) : Reading :=
   match roles.lookup name with
   | some (fg, bg) =>
-    { fg := (pal.find? fg).map (fun c => ⟨some c, none⟩),
-      bg := (pal.find? bg).map (fun c => ⟨some c, none⟩) }
+    { fg := (fg.bind (Design.declared? pal)).map (fun c => ⟨some c, none⟩),
+      bg := (bg.bind (Design.declared? pal)).map (fun c => ⟨some c, none⟩) }
   | none => if name == "structure" then
-      { fg := (pal.find? "fg").map (fun c => ⟨some c, none⟩) } else {}
+      { fg := (Design.declared? pal .ink).map (fun c => ⟨some c, none⟩) } else {}
 
 /-- An element as it stands over its colour theme's declaration
 (`themeElement`): the document's keys, then the theme's where the document
@@ -291,8 +286,8 @@ private def read (theme : String) (pal : Palette) (path : List (String × Option
     for used in e.uses do
       let u := read theme aliases ((name, e.sites.lookup "use") :: path) rest used
       let current := Design.ofPalette aliases
-      aliases := aliases.declare (used ++ ".fg") ((u.fg.bind (·.color)).getD current.fg)
-      aliases := aliases.declare (used ++ ".bg") ((u.bg.bind (·.color)).getD current.bg)
+      aliases := aliases.declare (.color (used ++ ".fg")) ((u.fg.bind (·.color)).getD current.fg)
+      aliases := aliases.declare (.color (used ++ ".bg")) ((u.bg.bind (·.color)).getD current.bg)
       r := { r with issues := r.issues ++ u.issues }
     for parent in e.parents.getD (if e.reset then [] else defaultParents name) do
       r := r.over (read theme aliases ((name, e.sites.lookup "parent") :: path) rest parent)
@@ -381,7 +376,7 @@ Later explicit aliases of one native site win. `use` makes temporary xcolor
 aliases available to expressions, but contributes no inherited channel.
 Missing parents contribute nothing, as in Beamer. -/
 public def State.resolve (s : State) (pal : Palette) : State × Palette × List Issue := Id.run do
-  let base := s.painted.foldl (fun p key => p.restore s.opening key) pal
+  let base := s.painted.foldl (fun p key => p.restore s.opening (.role key)) pal
   let mut s := { s with origins := #[] }
   let mut out := base
   let mut issues := []
@@ -393,18 +388,18 @@ public def State.resolve (s : State) (pal : Palette) : State × Palette × List 
   -- Frame furniture starts from normal text. Resolve that context before
   -- the sites, even when normal text was declared after a child.
   let normal := read s.theme base [] es "normal text"
-  let context := [("fg", normal.fg), ("bg", normal.bg)].foldl (fun p (key, value) =>
+  let context := [(Role.ink, normal.fg), (Role.page, normal.bg)].foldl (fun p (key, value) =>
     match value.map (·.color) with
     | none => p
-    | some none => p.erase key
-    | some (some c) => p.declare key c) base
+    | some none => p.erase (.role key)
+    | some (some c) => p.declare (.role key) c) base
   let normalFg := (Design.ofPalette context).fg
   let context := startColors.foldl
     (fun p name =>
       let r := read s.theme p [] es name
       let d := Design.ofPalette p
-      (p.declare (name ++ ".fg") ((r.fg.bind (·.color)).getD d.fg)).declare (name ++ ".bg")
-        ((r.bg.bind (·.color)).getD d.bg)) context
+      (p.declare (.color (name ++ ".fg")) ((r.fg.bind (·.color)).getD d.fg)).declare
+        (.color (name ++ ".bg")) ((r.bg.bind (·.color)).getD d.bg)) context
   let rank (name : String) : Nat :=
     let i := s.elements.findIdx (·.name == name)
     if i < s.elements.length then i + 1 else 0
@@ -427,11 +422,11 @@ public def State.resolve (s : State) (pal : Palette) : State × Palette × List 
       issues := issues ++ r.issues
       if fg.isNone then fg := r.fg.bind (·.color)
       if bg.isNone then bg := r.bg.bind (·.color)
-    unless fgKey.isEmpty do out := out.declare fgKey (fg.getD normalFg)
-    unless bgKey.isEmpty do out := out.declare bgKey (bg.getD normalBg)
+    unless fgKey.isEmpty do out := out.declare (ColorRef.ofKey fgKey) (fg.getD normalFg)
+    unless bgKey.isEmpty do out := out.declare (ColorRef.ofKey bgKey) (bg.getD normalBg)
   for (name, fgKey, bgKey) in ordered do
     let r := read s.theme context [] es name
-    let (names, said) := reach s.theme context es name { fg := !fgKey.isEmpty, bg := !bgKey.isEmpty }
+    let (names, said) := reach s.theme context es name { fg := fgKey.isSome, bg := bgKey.isSome }
     let names := startColors.foldl (fun acc start => acc ++ (reach s.theme context es start
       { fg := said.contains (start ++ ".fg"), bg := said.contains (start ++ ".bg") }).1) names
     s := { s with reached := s.reached ++ names }
@@ -439,22 +434,23 @@ public def State.resolve (s : State) (pal : Palette) : State × Palette × List 
     -- parent its element overrides on every channel leaves it as it was.
     if names.any fun n => es.any fun e => e.name == n && e.declared then
       issues := issues ++ r.issues
-      for (key, value) in [(fgKey, r.fg), (bgKey, r.bg)] do
-        unless key.isEmpty do
+      for (role, value) in [(fgKey, r.fg), (bgKey, r.bg)] do
+        if let some key := role then
           let origin := value.bind (·.origin)
           let value := value.bind (·.color)
           -- An empty Beamer heading inherits normal text. Erasing its
           -- native key would instead choose the title bar's inverse ink.
-          let value := if key == "frametitlefg" then value.or (some normalFg) else value
+          let value := if key == .frameTitleInk then value.or (some normalFg) else value
           unless s.painted.contains key do
-            s := { s with opening := s.opening.restore base key,
+            s := { s with opening := s.opening.restore base (.role key),
                           painted := s.painted.push key }
-          s := { s with origins := s.origins.filter (·.1 != key) }
+          let name := (ColorRef.role key).key
+          s := { s with origins := s.origins.filter (·.1 != name) }
           if let (some c, some span) := (value, origin) then
-            s := { s with origins := s.origins.push (key, c, span) }
+            s := { s with origins := s.origins.push (name, c, span) }
           out := match value with
-            | some c => out.declare key c
-            | none => out.erase key
+            | some c => out.declare (.role key) c
+            | none => out.erase (.role key)
   return (s, out, issues)
 
 end LeanTex.Core.BeamerColor

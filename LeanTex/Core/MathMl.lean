@@ -258,8 +258,8 @@ def fracNode (mk : Marks) (disp : Bool) (spec : FracSpec)
 property with the literal as its fallback when the colour came from a
 named entry — the text runs' emission, so a host page restyles a formula's
 colours as it restyles its text's. -/
-def inkCss (c : Ir.Color) : Option String → String
-  | some n => s!"var(--{n}, {c.css})"
+def inkCss (c : Ir.Color) : Option Ir.ColorRef → String
+  | some n => s!"var({n.property}, {c.css})"
   | none => c.css
 
 /-- A colour switch's reach: the colour every element after the switch in

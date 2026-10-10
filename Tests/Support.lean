@@ -2175,6 +2175,11 @@ def treeCssOne (acc : String) : Html.Node → String
 
 end
 
+/-- A registry role's colour where nothing declares it, in one scheme: the
+screen stylesheet's own value (`Ir.Role.row`'s columns). -/
+def screenColor (s : Ir.Scheme) (r : Ir.Role) : Ir.Color :=
+  (Ir.Design.at {} s r).getD Ir.Color.black
+
 /-- The declarations of every stylesheet rule whose selector is `sel`
 exactly, in order: the texts between their braces. -/
 def cssRulesOf (css sel : String) : List String :=
@@ -2215,6 +2220,35 @@ def remMilliOf (value : String) : Option Int := do
   guard (value.endsWith "rem")
   let (m, sc) ← Decl.parseDecimal (value.dropEnd 3).toString
   return m * 1000 / (sc : Int)
+
+/-- The custom properties a stylesheet's top-level `:root` rules declare —
+the light screen's table, since a rule nested in an `@media` block is not
+top-level — newest first, so `List.lookup` reads the declaration the
+cascade keeps. -/
+def screenRootVars (css : String) : List (String × String) :=
+  (cssRulesOf css ":root").foldl (fun vars block =>
+    (block.splitOn ";").foldl (fun vars decl =>
+      match decl.splitOn ":" with
+      | [k, v] =>
+        let k := k.trimAscii.toString
+        if k.startsWith "--" then (k, v.trimAscii.toString) :: vars else vars
+      | _ => vars) vars) []
+
+/-- A CSS value with its `var()` references chased through a property
+table, eight references deep: `var(--x)` reads the table's `--x`, and
+`var(--x, fb)` reads `fb` where the table has no `--x`. `none` where a
+reference dangles. -/
+def chaseCssValue (vars : List (String × String)) (value : String) : Option String :=
+  (List.range 8).foldl (fun acc _ => acc.bind fun v =>
+    if v.startsWith "var(" && v.endsWith ")" then
+      match ((v.drop 4).dropEnd 1).toString.splitOn "," with
+      | [] => none
+      | key :: rest =>
+        match vars.lookup key.trimAscii.toString with
+        | some w => some w
+        | none =>
+          if rest.isEmpty then none else some (String.intercalate "," rest).trimAscii.toString
+    else some v) (some value)
 
 /-- Read a CSS stage length and compare its share to the shipped PDF
 length. One printed milli-percent is the rounding bound, independently of
@@ -2325,9 +2359,10 @@ text paired with its declarations. Brace-depth scanned rather than split on
 `}`, so a nested at-rule's inner blocks come out under their own selectors
 (the backend writes the paged deck's bar inside `@media screen`) and the
 at-rule's prelude never reads as one. Total by construction: the loop is
-bounded by the length and every step advances the position. -/
-def artCssBlocks (css : String) : Array (String × String) := Id.run do
-  let mut out : Array (String × String) := #[]
+bounded by the length and every step advances the position. Each block
+carries the number of at-rules it nests in. -/
+def artCssRules (css : String) : Array (Nat × String × String) := Id.run do
+  let mut out : Array (Nat × String × String) := #[]
   let mut sels : Array String := #[]
   let mut cur := ""
   for c in css.toList do
@@ -2337,12 +2372,20 @@ def artCssBlocks (css : String) : Array (String × String) := Id.run do
     else if c == '}' then
       let decls := cur.trimAscii.toString
       if decls.contains ':' then
-        out := out.push ((sels.back?.getD "").trimAscii.toString, decls)
+        out := out.push (sels.size - 1, (sels.back?.getD "").trimAscii.toString, decls)
       sels := sels.pop
       cur := ""
     else
       cur := cur.push c
   return out
+
+/-- Every innermost declaration block, as its selector and declarations. -/
+def artCssBlocks (css : String) : Array (String × String) := (artCssRules css).map (·.2)
+
+/-- The blocks outside every at-rule: the light screen's rules, where an
+`@media` block restates the dark scheme's or the print sheet's values. -/
+def artTopCssBlocks (css : String) : Array (String × String) :=
+  (artCssRules css).filterMap fun (d, b) => if d == 0 then some b else none
 
 /-- The declarations of every innermost block a stylesheet carries for the
 selector `sel` exactly, nested at-rule blocks included (`artCssBlocks`). -/

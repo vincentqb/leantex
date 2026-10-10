@@ -67,7 +67,7 @@ def checks (ref : IO.Ref (List String)) : IO Unit := do
        labelText ls == Picture.LabelGenerated.nodeFloor.text && !ds.isEmpty)
   let styledCx : Picture.Cx :=
     { cx with
-      pal := ({} : Ir.Palette).declare "accent" Ir.Color.black
+      pal := ({} : Ir.Palette).declare (.color "accent") Ir.Color.black
       argStyles := [("textbf", .bold), ("emph", .emph)] }
   let nested := Picture.nodeLabel styledCx [("value", .str "bound")]
     [.ctrl "textbf", .group [.ident "outer", .space, .ctrl "textcolor",
@@ -175,7 +175,7 @@ def provenanceRenderChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) :
   let measuredCx : Picture.Cx := {
     cx with
     metric
-    pal := ({} : Ir.Palette).declare "accent" Ir.Color.black
+    pal := ({} : Ir.Palette).declare (.color "accent") Ir.Color.black
     argStyles := [("textbf", .bold), ("emph", .emph)]
     math := fun display _ =>
       (.styled .italic #[.text (if display then "[DISPLAY]" else "[math]")], #[]) }

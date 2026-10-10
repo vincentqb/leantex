@@ -22,12 +22,12 @@ example {ε α : Type} (P : α → Prop) (e : ε) :
 example : Repr Note := inferInstance
 example : BEq Note := inferInstance
 
-example (resolve : String → Option (Ir.Color × Bool)) (cancel : CancelSpec)
+example (resolve : String → Option (Ir.Color × Option Ir.ColorRef)) (cancel : CancelSpec)
     (missed : Option String) : Env :=
   { ink := resolve, cancel := cancel, cancelMiss := missed }
 
 example (env : Env) :
-    (String → Option (Ir.Color × Bool)) × CancelSpec × Option String :=
+    (String → Option (Ir.Color × Option Ir.ColorRef)) × CancelSpec × Option String :=
   (env.ink, env.cancel, env.cancelMiss)
 
 example (note : Note) : String :=

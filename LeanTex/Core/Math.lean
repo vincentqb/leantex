@@ -1,6 +1,7 @@
 module
 
 public import LeanTex.Core.Color
+public import LeanTex.Core.DesignRole
 
 namespace LeanTex.Core.Math
 
@@ -1296,7 +1297,7 @@ public structure CancelSpec where
   thick : Bool := false
   room : Bool := false
   size : CancelSize := .step
-  color : Option (Ir.Color × Option String) := none
+  color : Option (Ir.Color × Option Ir.ColorRef) := none
   deriving Repr, BEq, Inhabited
 
 /-- cancel.sty's options, read as its `\ProcessOptions` reads them: in the
@@ -2047,7 +2048,7 @@ public inductive MItem where
   text path reads, `name` its palette entry when it was one. It is TeX's
   colour whatsit — no atom, no class — so it never changes the space the
   table puts between its neighbours. -/
-  | ink (color : Ir.Color) (name : Option String)
+  | ink (color : Ir.Color) (name : Option Ir.ColorRef)
   deriving Repr, BEq
 
 public inductive MList where
@@ -2377,8 +2378,8 @@ theorem MathAlphabet.remapList_classes_id (a : MathAlphabet) :
   | .cons (.ink _ _) rest => by
     simp only [remapList, remapItem, MList.classes, remapList_classes_id a rest]
 
-private def usedInk (ink : Option (Ir.Color × Option String))
-    (acc : Array (Ir.Color × Option String)) : Array (Ir.Color × Option String) :=
+private def usedInk (ink : Option (Ir.Color × Option Ir.ColorRef))
+    (acc : Array (Ir.Color × Option Ir.ColorRef)) : Array (Ir.Color × Option Ir.ColorRef) :=
   match ink with
   | some p => acc.push p
   | none => acc
@@ -2388,23 +2389,23 @@ mutual
 /-- Colours used by math atoms and generated marks, with their palette
 names. A switch changes the inherited ink but is not itself a use.
 Sublists, scripts and grid cells keep their enclosing ink on return. -/
-public def MList.inks (ink : Option (Ir.Color × Option String))
-    (acc : Array (Ir.Color × Option String)) :
-    MList → Array (Ir.Color × Option String)
+public def MList.inks (ink : Option (Ir.Color × Option Ir.ColorRef))
+    (acc : Array (Ir.Color × Option Ir.ColorRef)) :
+    MList → Array (Ir.Color × Option Ir.ColorRef)
   | .nil => acc
   | .cons (.ink c n) rest => MList.inks (some (c, n)) acc rest
   | .cons x rest => MList.inks ink (MItem.inks ink acc x) rest
 
-def MItem.inks (ink : Option (Ir.Color × Option String))
-    (acc : Array (Ir.Color × Option String)) :
-    MItem → Array (Ir.Color × Option String)
+def MItem.inks (ink : Option (Ir.Color × Option Ir.ColorRef))
+    (acc : Array (Ir.Color × Option Ir.ColorRef)) :
+    MItem → Array (Ir.Color × Option Ir.ColorRef)
   | .atom _ nuc sup sub _ =>
     MList.inks ink (MList.inks ink (MNucleus.inks ink acc nuc) sup) sub
   | .space _ | .ink _ _ => acc
 
-def MNucleus.inks (ink : Option (Ir.Color × Option String))
-    (acc : Array (Ir.Color × Option String)) :
-    MNucleus → Array (Ir.Color × Option String)
+def MNucleus.inks (ink : Option (Ir.Color × Option Ir.ColorRef))
+    (acc : Array (Ir.Color × Option Ir.ColorRef)) :
+    MNucleus → Array (Ir.Color × Option Ir.ColorRef)
   | .sym c => if c.isWhitespace then acc else usedInk ink acc
   | .styled _ c => if c.isWhitespace then acc else usedInk ink acc
   | .word s => if s.toList.any (!·.isWhitespace) then usedInk ink acc else acc
@@ -2424,15 +2425,15 @@ def MNucleus.inks (ink : Option (Ir.Color × Option String))
     let markInk := spec.color <|> ink
     MList.inks markInk (MList.inks ink (usedInk markInk acc) body) value
 
-def MRow.inks (ink : Option (Ir.Color × Option String))
-    (acc : Array (Ir.Color × Option String)) :
-    MRow → Array (Ir.Color × Option String)
+def MRow.inks (ink : Option (Ir.Color × Option Ir.ColorRef))
+    (acc : Array (Ir.Color × Option Ir.ColorRef)) :
+    MRow → Array (Ir.Color × Option Ir.ColorRef)
   | .nil => acc
   | .cons c rest => MRow.inks ink (MList.inks ink acc c) rest
 
-def MRows.inks (ink : Option (Ir.Color × Option String))
-    (acc : Array (Ir.Color × Option String)) :
-    MRows → Array (Ir.Color × Option String)
+def MRows.inks (ink : Option (Ir.Color × Option Ir.ColorRef))
+    (acc : Array (Ir.Color × Option Ir.ColorRef)) :
+    MRows → Array (Ir.Color × Option Ir.ColorRef)
   | .nil => acc
   | .cons r rest => MRows.inks ink (MRow.inks ink acc r) rest
 
@@ -2441,20 +2442,18 @@ end
 mutual
 
 /-- Every colour of a math list replaced through `f`, with its palette
-name — the formula's share of contrast realization, the map
-`Ir.recolorRoles` applies to a text run's colour. Nothing else moves
-(`mapInk_scalars`). -/
-@[expose] public def MList.mapInk (f : Ir.Color → Option String → Ir.Color) : MList → MList
+name. Nothing else moves (`mapInk_scalars`). -/
+@[expose] public def MList.mapInk (f : Ir.Color → Option Ir.ColorRef → Ir.Color) : MList → MList
   | .nil => .nil
   | .cons x rest => .cons (MItem.mapInk f x) (MList.mapInk f rest)
 
-@[expose] public def MItem.mapInk (f : Ir.Color → Option String → Ir.Color) : MItem → MItem
+@[expose] public def MItem.mapInk (f : Ir.Color → Option Ir.ColorRef → Ir.Color) : MItem → MItem
   | .atom cls nuc sup sub lim =>
     .atom cls (MNucleus.mapInk f nuc) (MList.mapInk f sup) (MList.mapInk f sub) lim
   | .space mu => .space mu
   | .ink c n => .ink (f c n) n
 
-@[expose] public def MNucleus.mapInk (f : Ir.Color → Option String → Ir.Color) : MNucleus → MNucleus
+@[expose] public def MNucleus.mapInk (f : Ir.Color → Option Ir.ColorRef → Ir.Color) : MNucleus → MNucleus
   | .sym c => .sym c
   | .styled sty c => .styled sty c
   | .word s => .word s
@@ -2470,11 +2469,11 @@ name — the formula's share of contrast realization, the map
     .cancel mark { spec with color := spec.color.map fun (c, n) => (f c n, n) }
       (MList.mapInk f value) (MList.mapInk f body)
 
-@[expose] public def MRow.mapInk (f : Ir.Color → Option String → Ir.Color) : MRow → MRow
+@[expose] public def MRow.mapInk (f : Ir.Color → Option Ir.ColorRef → Ir.Color) : MRow → MRow
   | .nil => .nil
   | .cons c rest => .cons (MList.mapInk f c) (MRow.mapInk f rest)
 
-@[expose] public def MRows.mapInk (f : Ir.Color → Option String → Ir.Color) : MRows → MRows
+@[expose] public def MRows.mapInk (f : Ir.Color → Option Ir.ColorRef → Ir.Color) : MRows → MRows
   | .nil => .nil
   | .cons r rest => .cons (MRow.mapInk f r) (MRows.mapInk f rest)
 
@@ -2485,14 +2484,14 @@ mutual
 /-- Recolouring preserves the formula's glyph census. Preservation of the
 full structural plaintext reading is proved separately by
 `Ir.formulaFloor_ink_id`; it does not follow from scalar equality alone. -/
-public theorem MList.mapInk_scalars (f : Ir.Color → Option String → Ir.Color) :
+public theorem MList.mapInk_scalars (f : Ir.Color → Option Ir.ColorRef → Ir.Color) :
     ∀ (l : MList) (acc : Array Char), (MList.mapInk f l).scalarsList acc = l.scalarsList acc
   | .nil, _ => rfl
   | .cons x rest, acc => by
     simp only [MList.mapInk, MList.scalarsList, MItem.mapInk_scalars f x,
       MList.mapInk_scalars f rest]
 
-theorem MItem.mapInk_scalars (f : Ir.Color → Option String → Ir.Color) :
+theorem MItem.mapInk_scalars (f : Ir.Color → Option Ir.ColorRef → Ir.Color) :
     ∀ (x : MItem) (acc : Array Char), (MItem.mapInk f x).scalars acc = x.scalars acc
   | .atom _ nuc sup sub _, acc => by
     simp only [MItem.mapInk, MItem.scalars, MNucleus.mapInk_scalars f nuc,
@@ -2500,7 +2499,7 @@ theorem MItem.mapInk_scalars (f : Ir.Color → Option String → Ir.Color) :
   | .space _, _ => rfl
   | .ink _ _, _ => rfl
 
-theorem MNucleus.mapInk_scalars (f : Ir.Color → Option String → Ir.Color) :
+theorem MNucleus.mapInk_scalars (f : Ir.Color → Option Ir.ColorRef → Ir.Color) :
     ∀ (n : MNucleus) (acc : Array Char), (MNucleus.mapInk f n).scalars acc = n.scalars acc
   | .sym _, _ => rfl
   | .styled _ _, _ => rfl
@@ -2526,14 +2525,14 @@ theorem MNucleus.mapInk_scalars (f : Ir.Color → Option String → Ir.Color) :
     simp only [MNucleus.mapInk, MNucleus.scalars, MList.mapInk_scalars f body,
       MList.mapInk_scalars f value]
 
-theorem MRow.mapInk_scalars (f : Ir.Color → Option String → Ir.Color) :
+theorem MRow.mapInk_scalars (f : Ir.Color → Option Ir.ColorRef → Ir.Color) :
     ∀ (r : MRow) (acc : Array Char), (MRow.mapInk f r).scalarsRow acc = r.scalarsRow acc
   | .nil, _ => rfl
   | .cons c rest, acc => by
     simp only [MRow.mapInk, MRow.scalarsRow, MList.mapInk_scalars f c,
       MRow.mapInk_scalars f rest]
 
-theorem MRows.mapInk_scalars (f : Ir.Color → Option String → Ir.Color) :
+theorem MRows.mapInk_scalars (f : Ir.Color → Option Ir.ColorRef → Ir.Color) :
     ∀ (rs : MRows) (acc : Array Char), (MRows.mapInk f rs).scalarsRows acc = rs.scalarsRows acc
   | .nil, _ => rfl
   | .cons r rest, acc => by

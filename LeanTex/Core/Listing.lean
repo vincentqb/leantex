@@ -9,9 +9,10 @@ import LeanTex.Core.Oklab
 Shared listing paint, downstream of the IR and upstream of both backends.
 Classification is already in `ListingSpec`; this module never lexes source.
 A token paints in its code role (`Kind.role`): the role's weights, and the
-colour `CodeColor.resolve` gives the role on the listing's ground. Colours
-the document declares follow the document contrast realizer; every other
-colour adapts to the actual ground.
+colour `CodeColor.resolve` gives the role on the listing's ground. A colour
+the document declares or the listing's style states ships as stated, the
+contrast report naming a pairing that falls short (`Contrast.docDiags`);
+every colour the rule derives adapts to the actual ground.
 -/
 namespace LeanTex.Core.Listing
 
@@ -33,13 +34,14 @@ public theorem paint_role_exact (pal : Palette) (ground : Color) (style : Listin
 the key it ships under. -/
 public theorem paint_declared_mem (pal : Palette) (ground : Color) (style : ListingStyle)
     (k : Kind) (p : CodeColor.Paint) (h : paint pal ground style k = some p)
-    (hd : p.declared = true) : ∃ key, p.role = some key ∧ pal.find? key = some p.color :=
+    (hd : p.declared = true) :
+    ∃ key, p.role = some key ∧ Design.declared? pal key = some p.color :=
   resolve_declared_mem pal ground style k.role p h hd
 
 /-- **Every other colour a token ships is under its role's own key.** -/
 public theorem paint_derived_exact (pal : Palette) (ground : Color) (style : ListingStyle)
     (k : Kind) (p : CodeColor.Paint) (h : paint pal ground style k = some p)
-    (hd : p.declared = false) : p.role = some k.role.key :=
+    (hd : p.declared = false) : p.role = some (Ir.Role.ofCode k.role) :=
   resolve_derived_exact pal ground style k.role p h hd
 
 /-- Style colours keep their value when it is legible. On other grounds,
@@ -56,21 +58,18 @@ public def defaultInk (ground seed : Color) : Color := Id.run do
     if Contrast.contrastMilli c ground ≥ Contrast.aaText then return c
   return pole
 
-/-- A paint's colour on the actual ground. A recorded realization on a local
-ground takes precedence over the palette's page colour. Other colours are
-adapted here once, identically for PDF, screen and print. -/
-private def shipped (d : Design) (bg : Color) (p : CodeColor.Paint) : Color :=
-  if p.declared then
-    ((d.inks.find? fun e =>
-      some e.role == p.role && e.declared == p.color && e.ground == bg).map (·.ink)).getD p.color
-  else defaultInk bg p.color
+/-- A paint's colour on the actual ground: a colour the document or the
+listing's style states as stated, the contrast report naming a pairing that
+falls short; a colour the rule derives fitted here once, identically for
+PDF, screen and print. -/
+private def shipped (bg : Color) (p : CodeColor.Paint) : Color :=
+  if p.declared || p.styled then p.color else defaultInk bg p.color
 
 /-- One type's colour on the actual ground. -/
 public def ink (pal : Palette) (ground : Option Color) (kind : Kind)
     (style : ListingStyle := .default) : Option Color :=
-  let d := Design.ofPalette pal
-  let bg := ground.getD d.bg
-  (paint pal bg style kind).map (shipped d bg)
+  let bg := ground.getD (Design.ofPalette pal).bg
+  (paint pal bg style kind).map (shipped bg)
 
 /-- A role's weights around a token's text, nested as `\PYG@do` nests
 them: underline outside italic outside bold. Text and source punctuation
@@ -93,20 +92,20 @@ colour during flattening. -/
 public structure Brush where
   look : Look
   ink : Option Color
-  role : Option String
+  role : Option ColorRef
   deriving Repr, BEq
 
 /-- A role's brush, from its resolved paint. -/
 private def roleBrush (d : Design) (bg : Color) (covered : Option Color)
-    (r : Role) (p : Option CodeColor.Paint) : Brush :=
+    (r : ListingHighlight.Role) (p : Option CodeColor.Paint) : Brush :=
   let look : Look := { bold := r.weights.1, italic := r.weights.2 }
   match p with
   | some p =>
-    let c := shipped d bg p
+    let c := shipped bg p
     let c := if covered.isSome then ({ d with bg := bg }).cover.of c else c
     -- Like `Ir.dimInline`, covered ink is literal: a CSS role would replace
     -- the per-token mixture with the one declared `covered` colour.
-    { look, ink := some c, role := if covered.isSome then none else p.role }
+    { look, ink := some c, role := if covered.isSome then none else p.role.map .role }
   | none => { look, ink := covered, role := none }
 
 /-- Every role's brush on one ground, each resolved once. -/
@@ -178,7 +177,7 @@ public def Brush.weights (b : Brush) : Bool × Bool × Bool :=
   (b.look.bold, b.look.italic, b.look.underline)
 
 /-- The ink `b` ships `text` in: none for text that lays down none. -/
-public def Brush.shipsInk (b : Brush) (text : String) : Option (Color × Option String) :=
+public def Brush.shipsInk (b : Brush) (text : String) : Option (Color × Option ColorRef) :=
   if b.inkFree text then none else b.ink.map (·, b.role)
 
 /-- The brush a type has in `table`, or its own where the table has none. -/
@@ -215,7 +214,7 @@ public structure Run where
   tokens : Array Token
 
 /-- The ink a run ships its text in. -/
-public def Run.ink (r : Run) : Option (Color × Option String) :=
+public def Run.ink (r : Run) : Option (Color × Option ColorRef) :=
   if r.inked then r.brush.ink.map (·, r.brush.role) else none
 
 public def Run.text (r : Run) : String := lineText r.tokens
@@ -272,18 +271,18 @@ public def paintLine (pal : Palette) (ground covered : Option Color) (style : Li
 
 /-- What one scalar shows: its weights, its ink — which a blank scalar that
 is not underlined does not show — and the scalar. -/
-public def seen (w : Bool × Bool × Bool) (ink : Option (Color × Option String)) (c : Char) :
-    (Bool × Bool × Bool) × Option (Color × Option String) × Char :=
+public def seen (w : Bool × Bool × Bool) (ink : Option (Color × Option ColorRef)) (c : Char) :
+    (Bool × Bool × Bool) × Option (Color × Option ColorRef) × Char :=
   (w, if !w.2.2 && blank c then none else ink, c)
 
 /-- What a token painted alone by `b` shows, scalar by scalar. -/
 public def tokenShows (b : Brush) (t : Token) :
-    List ((Bool × Bool × Bool) × Option (Color × Option String) × Char) :=
+    List ((Bool × Bool × Bool) × Option (Color × Option ColorRef) × Char) :=
   t.text.toList.map (seen b.weights (b.shipsInk t.text))
 
 /-- What a run shows, scalar by scalar. -/
 public def Run.shows (r : Run) :
-    List ((Bool × Bool × Bool) × Option (Color × Option String) × Char) :=
+    List ((Bool × Bool × Bool) × Option (Color × Option ColorRef) × Char) :=
   r.tokens.toList.flatMap fun t => t.text.toList.map (seen r.brush.weights r.ink)
 
 private theorem runsGo_tokens (B : Kind → Brush) (ts : List Token) :
@@ -321,7 +320,7 @@ private def Run.Good (B : Kind → Brush) (r : Run) : Prop :=
 
 private theorem inkFree_seen {b : Brush} {t : Token} (h : b.inkFree t.text = true)
     (w : Bool × Bool × Bool) (hw : w.2.2 = b.look.underline)
-    (x y : Option (Color × Option String)) :
+    (x y : Option (Color × Option ColorRef)) :
     t.text.toList.map (seen w x) = t.text.toList.map (seen w y) := by
   unfold Brush.inkFree at h
   simp only [Bool.and_eq_true, Bool.not_eq_true'] at h
@@ -481,16 +480,17 @@ public theorem paintRun_text (r : Run) : Conserves plainText (paintRun r) := fun
   simp only [paintRun]
   split <;> split <;> split <;> split <;> simp [plainText, plainTextOne, plainTextList]
 
-/-- Every colour a listing ships on a ground is held to text AA there, even
-where the surrounding frame uses the lower large-text threshold: every
-role's, as it ships. -/
+/-- Every colour a listing ships on a ground and the palette does not declare
+is text AA there, even where the surrounding frame uses the lower large-text
+threshold: every role's, as it ships — what the rule fits, and what the
+listing's style states. A declared colour is its palette's contract's, and
+the contrast report's to name. -/
 public def contract (pal : Palette) (ground : Option Color) (style : ListingStyle := .default) :
     Bool :=
-  let d := Design.ofPalette pal
-  let bg := ground.getD d.bg
+  let bg := ground.getD (Design.ofPalette pal).bg
   let paints := resolve pal bg style
-  Role.all.all fun r => match paints.get r with
-    | some p => decide (Contrast.aaText ≤ Contrast.contrastMilli (shipped d bg p) bg)
+  ListingHighlight.Role.all.all fun r => match paints.get r with
+    | some p => p.declared || decide (Contrast.aaText ≤ Contrast.contrastMilli (shipped bg p) bg)
     | none => true
 
 end LeanTex.Core.Listing

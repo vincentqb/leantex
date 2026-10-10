@@ -83,4 +83,4 @@ role entry
         text "BA, Medieval History"
       text ", Example University"
 -- diagnostics
-(none)
+warning[W0387] 23:1 '\palette' entry 'ink' declares a colour nothing in the document names; the page's text colour is the 'fg' key | help: declare \palette{ fg = ... } for the page's text, or name 'ink' where it is used
