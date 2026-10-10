@@ -1267,8 +1267,9 @@ def reports : List Report := [
       "one hundred fifty-nine guard assertions fail on the branch's tree before the fourth review with the whole fix reverted",
       "fourteen fail on the rebased tree with the corrections for the third review reverted: three refused summaries whose tag spans lines, each refused a second time at its disclosure; a break in a heading or a table cell read back as a space, in six twin round trips and three heading twins; an empty target or its id dropped from the twin, its link left without a page anchor, twice, and a tex label written as no target; and a note inside code-set text copied into the code, its mark lost",
       "eighteen more fail before the corrections for the fourth review: seven where a table cell's break set its lines flush left in a right or centred column, in a column as wide as the cell's words on one line, and eleven twin round trips, where a run ending on a break, alone or before text, in a list item or a quotation, wrote the break as a backslash outside the run, which a block's end reads as itself",
+      "thirteen more fail before the corrections for the fifth review: six where a tex cell without a break was set as broken lines without its hyphenation, a word overfull or a pair wrapped, and seven where a tex run's closing break was written as `<br>` before a word, through an enclosing run or a wrapper, or in a heading or a cell, so its emphasis read back as asterisks; after them every corpus document and both presentation decks ship byte-identical PDF and HTML to the base's",
       "a long markdown report of several hundred disclosures and two presentation decks ship byte-identical PDF and HTML; the report's PDF build names no lost collapse while its HTML and markdown builds name every one, and its markdown twin is its own twin"]
-    state := .guarded "b041da49" .before .author }
+    state := .guarded "3d122253" .before .author }
 ]
 
 /-- The reports guarded but never seen failing: a count that may fall and

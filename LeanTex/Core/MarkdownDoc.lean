@@ -545,29 +545,58 @@ private def trailWhite (afterBreak : Bool) : List Char → List Char × List Cha
 
 /-- Does what follows a run let its closing delimiter close after a `<br>`:
 nothing, white space or ASCII punctuation (§6.2: a delimiter run after
-punctuation is right-flanking only when one of these follows)? Anything
+punctuation is right-flanking only when one of these follows)? `after`
+answers for the end of the list — what its enclosing content writes next,
+`true` only where a block, a heading's line, a cell or a link's text ends,
+since an enclosing run's closer joins this one's delimiter run and a
+wrapper with no delimiter is followed by its own next inline. Anything
 else answers no, which keeps the break outside the run. -/
-private def closesAfterTag : List Inline → Bool
-  | [] => true
+private def closesAfterTag (after : Bool) : List Inline → Bool
+  | [] => after
   | .text s :: _ => match s.toList with
     | c :: _ => mdWhite c || (c.toNat < 128 && !c.isAlphanum && c.toNat > 32)
     | [] => false
   | .linebreak _ :: _ => true
   -- an italic correction writes nothing; a target and a link open with `<`
   -- or `[`
-  | .italicCorr _ :: rest => closesAfterTag rest
+  | .italicCorr _ :: rest => closesAfterTag after rest
   | .label _ :: _ | .link .. :: _ => true
   | _ => false
 
 /-- A run's closing hard breaks, kept inside its delimiters as `<br>` where
-the delimiter still closes after one (`closesAfterTag`): outside them, a
-break the block ends on is a backslash CommonMark reads as itself (§6.7),
-and a break inside the run moved out of it. `none` when the run's closing
-white space is not breaks alone. -/
-private def closingBreaks (trail : String) (rest : List Inline) : Option String :=
-  if !trail.isEmpty && (trail.replace "\\\n" "").isEmpty && closesAfterTag rest then
+the delimiter still closes after one (`closes`, from `closesAfterTag`):
+outside them, a break the block ends on is a backslash CommonMark reads as
+itself (§6.7), and a break inside the run moved out of it. `none` when the
+run's closing white space is not breaks alone. -/
+private def closingBreaks (trail : String) (closes : Bool) : Option String :=
+  if !trail.isEmpty && (trail.replace "\\\n" "").isEmpty && closes then
     some (trail.replace "\\\n" "<br>")
   else none
+
+/-- A heading's or a cell's run text split before the `<br>`s it ends on,
+each one the twin wrote: after an odd run of backslashes a `<br>` is text,
+its `<` escaped. -/
+private def trailingTags (s : String) : String × String := Id.run do
+  let mut core := s
+  let mut tags := ""
+  for _ in [0:s.length + 1] do
+    unless core.endsWith "<br>" do break
+    let before := (core.dropEnd 4).toString
+    unless (before.toList.reverse.takeWhile (· == '\\')).length % 2 == 0 do break
+    core := before
+    tags := "<br>" ++ tags
+  return (core, tags)
+
+/-- A heading's or a cell's run text split after the `<br>`s it opens with;
+at the start of the text a `<` is always the twin's own. -/
+private def leadingTags (s : String) : String × String := Id.run do
+  let mut core := s
+  let mut tags := ""
+  for _ in [0:s.length + 1] do
+    unless core.startsWith "<br>" do break
+    core := (core.drop 4).toString
+    tags := tags ++ "<br>"
+  return (tags, core)
 
 /-- A run's text split at its own leading and trailing white space: a
 delimiter beside white space neither opens nor closes (§6.2), so the white
@@ -628,7 +657,7 @@ mutual
 italic, and code have markdown spellings; colour, small caps, and underline
 have none and render as their text. The accumulator threads through the
 sibling walk, as everywhere (`#[x] ++ rest` copies). -/
-private def inlineInto (site : Site) (acc : String) : Inline → String
+private def inlineInto (site : Site) (acc : String) (after : Bool := true) : Inline → String
   | .text s =>
     let escaped := escapeText (site != .cell) s
     acc ++ escaped
@@ -662,29 +691,29 @@ private def inlineInto (site : Site) (acc : String) : Inline → String
     -- a code span's content is not unescaped: its text, as it is
     | .mono => monoInto acc #[] body.toList
     | _ =>
-      let inner := inlinesInto site "" none body.toList
+      let inner := inlinesInto site "" none after body.toList
       match styleMark st with
       | some m =>
         let (lead, core, trail) := spaceSplit inner
         if core.isEmpty then acc ++ lead ++ trail else acc ++ lead ++ m ++ core ++ m ++ trail
       | none => acc ++ inner
-  | .colored _ _ body => inlinesInto site acc none body.toList
-  | .located _ body => inlinesInto site acc none body.toList
+  | .colored _ _ body => inlinesInto site acc none after body.toList
+  | .located _ body => inlinesInto site acc none after body.toList
   -- the role's class is a web styling hook; prose keeps the words
-  | .role _ body => inlinesInto site acc none body.toList
+  | .role _ body => inlinesInto site acc none after body.toList
   | .link url body =>
     -- A link whose text is its plain destination is an autolink
     -- (`bareLink`); anything else writes its text and a destination that
     -- reads back exactly.
     if bareLink url body && autolinkable url then acc ++ "<" ++ url ++ ">"
     else
-      let inner := inlinesInto site "" none body.toList
+      let inner := inlinesInto site "" none true body.toList
       let dest := linkDest url
       acc ++ "[" ++ inner ++ "](" ++ dest ++ ")"
-  | .decorated _ body => inlinesInto site acc none body.toList
-  | .onSteps _ body => inlinesInto site acc none body.toList
+  | .decorated _ body => inlinesInto site acc none after body.toList
+  | .onSteps _ body => inlinesInto site acc none after body.toList
   | .altSteps _ active otherwise =>
-    inlinesInto site (inlinesInto site acc none active.toList) none otherwise.toList
+    inlinesInto site (inlinesInto site acc none false active.toList) none after otherwise.toList
   -- `\hfill` separates a label from what it pushes to the far margin; text
   -- has no margin, so the separation renders as a spaced em dash. The space
   -- the author typed before it folds in rather than doubling.
@@ -728,28 +757,44 @@ that follows a run of its own delimiter reopens it: the closing delimiter
 written last comes off, and this run's opening one is not written. `prev`
 is the delimiter the text written so far ends on, if it ends on a closing
 one; a run's own spaces stand outside its delimiters (`spaceSplit`). -/
-private def inlinesInto (site : Site) (acc : String) (prev : Option String := none) :
-    List Inline → String
+private def inlinesInto (site : Site) (acc : String) (prev : Option String := none)
+    (after : Bool := true) : List Inline → String
   | [] => acc
   | .styled st body :: rest =>
     match styleMark st with
     | some m =>
-      let (lead, core, trail) := spaceSplit (inlinesInto site "" none body.toList)
-      let (core, trail) := match closingBreaks trail rest with
-        | some brs => (core ++ brs, "")
-        | none => (core, trail)
+      let closes := closesAfterTag after rest
+      let (lead, core, trail) := spaceSplit (inlinesInto site "" none closes body.toList)
+      -- A paragraph's run keeps its closing breaks inside as `<br>` where
+      -- its closer still closes after one; a heading's or a cell's writes
+      -- its breaks as `<br>` already, and moves them out where it cannot,
+      -- as it moves an opening one before the opener, which no `<br>` may
+      -- stand after.
+      let (lead, core, trail) := if site == .flow then
+          match closingBreaks trail closes with
+          | some brs => (lead, core ++ brs, "")
+          | none => (lead, core, trail)
+        else
+          let (opening, core) := leadingTags core
+          let (core, closing) := if closes then (core, "") else trailingTags core
+          (lead ++ opening, core, closing ++ trail)
       let ends := if trail.isEmpty then some m else none
       if core.isEmpty then
-        inlinesInto site (acc ++ lead ++ trail) (if (lead ++ trail).isEmpty then prev else none) rest
+        inlinesInto site (acc ++ lead ++ trail) (if (lead ++ trail).isEmpty then prev else none)
+          after rest
       else if prev == some m then
-        inlinesInto site ((acc.dropEnd m.length).toString ++ lead ++ core ++ m ++ trail) ends rest
-      else inlinesInto site (acc ++ lead ++ m ++ core ++ m ++ trail) ends rest
-    | none => inlinesInto site (inlineInto site acc (.styled st body)) none rest
+        inlinesInto site ((acc.dropEnd m.length).toString ++ lead ++ core ++ m ++ trail) ends
+          after rest
+      else inlinesInto site (acc ++ lead ++ m ++ core ++ m ++ trail) ends after rest
+    | none =>
+      inlinesInto site (inlineInto site acc (closesAfterTag after rest) (.styled st body)) none
+        after rest
   | x :: rest =>
     -- an inline that writes nothing (an italic correction) leaves the run
     -- it follows open to the next
-    let next := inlineInto site acc x
-    inlinesInto site next (if next.utf8ByteSize == acc.utf8ByteSize then prev else none) rest
+    let next := inlineInto site acc (closesAfterTag after rest) x
+    inlinesInto site next (if next.utf8ByteSize == acc.utf8ByteSize then prev else none) after
+      rest
 
 end
 
@@ -763,7 +808,7 @@ private def closeHash (s : String) : String :=
 /-- The markdown spelling of inline content in a paragraph's flow, its
 trailing `#` escaped (`closeHash`). -/
 public def inlineText (xs : Array Inline) : String :=
-  closeHash (inlinesInto .flow "" none xs.toList)
+  closeHash (inlinesInto .flow "" none true xs.toList)
 
 /-- Line endings as spaces: what stands on one line. A line ending a code
 span holds reads as a space (§6.1), and one in a formula's source is TeX's
@@ -775,12 +820,12 @@ private def oneLine (s : String) : String :=
 placement theorems below quote it — the emitted title line is `# ` followed
 by exactly this. -/
 public def headingText (xs : Array Inline) : String :=
-  closeHash (oneLine (inlinesInto .line "" none xs.toList))
+  closeHash (oneLine (inlinesInto .line "" none true xs.toList))
 
 /-- A pipe table cell's text as the cell reads: one line, its pipes bare —
 the row escapes them (`rowLine`). -/
 public def cellText (xs : Array Inline) : String :=
-  oneLine (inlinesInto .cell "" none xs.toList)
+  oneLine (inlinesInto .cell "" none true xs.toList)
 
 private theorem oneLine_mem (s : String) : ∀ x ∈ (oneLine s).toList, x ≠ '\n' ∧ x ≠ '\r' := by
   intro x hx

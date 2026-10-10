@@ -384,6 +384,25 @@ def cellBreakChecks (ref : IO.Ref (List String)) : IO Unit := do
         ((spanOf broken w).isSome && spanOf broken w == spanOf rows w)
     t s!"a {side} cell's page keeps its break inside the cell"
       (hasStr (HtmlDoc.emit {} (elabMd broken).1).1 "Fir<br>Gorse bush</td>")
+  -- A tex natural cell holds no break and sets as it always has: on one
+  -- line, from the very items its column was measured from, the
+  -- document's hyphenation in force; a braced `\\` is a break, and its
+  -- lines stand on the column's side.
+  let pats := Hyphen.english.get
+  for spec in ["l", "c", "r"] do
+    for words in ["anything", "article artifact", "a hyphenation candidate"] do
+      let src := s!"\\begin\{tabular}\{{spec}}{words}\\end\{tabular}\n"
+      let out := layoutOf fonts (elabStr (dvDoc "" src)).1 (pats := some pats)
+      let lines := (bodyLines out).filter fun l => !(lineText l).trimAscii.isEmpty
+      t s!"a tex {spec} cell without a break sets on one line, never overfull ({words})"
+        ((lines.toList.map lineText).any (hasStr · words) && lines.size == 1 &&
+          !(out.diags.any (·.code == "W0005")))
+  let braced := "\\begin{tabular}{r}Elm\\\\{Fir\\\\Gorse bush}\\end{tabular}\n"
+  let out := layoutOf fonts (elabStr (dvDoc "" braced)).1 (pats := some pats)
+  let rights := ["Elm", "Fir", "Gorse bush"].map fun w =>
+    ((bodyLines out).find? fun l => hasStr (lineText l) w).bind inkSpanOf |>.map (·.2)
+  t s!"a tex r cell's braced break sets its lines flush right ({repr rights})"
+    (rights.all (·.isSome) && (rights.eraseDups.length == 1))
   let wide := "| Alder | Elm |\n| --- | --- |\n| Cedar<br>Dove | Fir |\n"
   let wideRows := "| Alder | Elm |\n| --- | --- |\n| Cedar | Fir |\n| Dove |  |\n"
   for w in ["Elm", "Fir"] do
@@ -553,6 +572,20 @@ def mdTwinBreakChecks (ref : IO.Ref (List String)) : IO Unit := do
     t s!"a tex break between {a} and {b} stays inside its construct" (hasStr html s!"{a}<br>{b}")
   for shown in ["Iris&lt;br&gt;Juniper", "Kelp&lt;br&gt;Larch", "Moss&amp;lt;Nettle"] do
     t s!"a tex document's text reads back as text: {shown}" (hasStr html shown)
+  -- A run's closing break in a tex document's twin: kept inside the run
+  -- as `<br>` only where its closer still closes after one — never before
+  -- a word, through an enclosing run or a wrapper with no delimiter — so
+  -- the emphasis reads back, in a paragraph, a heading and a cell alike.
+  for src in ["\\emph{\\textbf{Alder\\\\}}Birch", "\\textcolor{red}{\\emph{Alder\\\\}}Birch",
+      "\\underline{\\emph{Alder\\\\}}Birch", "\\textsc{\\emph{Alder\\\\}}Birch",
+      "\\section{\\emph{Alder\\\\}Birch}", "\\section{Birch\\emph{\\\\Alder}}",
+      "\\begin{tabular}{l}{\\emph{Alder\\\\}}Birch\\end{tabular}"] do
+    let twin := MarkdownDoc.emit (elabStr (src ++ "\n")).1
+    let (back, backDs) := elabMd twin
+    let page := docHtmlOf back
+    t s!"a tex run's closing break keeps its emphasis in the twin ({src}: {repr twin})"
+      (backDs.isEmpty && MarkdownDoc.emit back == twin && hasStr page "Alder" &&
+        (hasStr page "<em>" || hasStr page "<strong>") && !hasStr page "*")
   -- A footnote inside code-set text keeps its mark there and its note once,
   -- after the document, never copied into the code.
   let noted := MarkdownDoc.emit (elabStr "\\texttt{alpha\\footnote{Gamma note.}beta}\n").1

@@ -11045,10 +11045,12 @@ private def itemsNaturalWidth (items : Array Item) : Sp :=
     | .rule bw .. => w + bw
     | .poly .. => w) 0
 
-/-- Does a forced break stand among the items — a `\\`, or a markdown
-`<br>`? Then a natural cell is lines, not one line. -/
+/-- Does a forced break stand among the items before their last — a `\\`,
+or a markdown `<br>`? Then a natural cell is lines, not one line. The last
+item is the forced break every paragraph's items end on (`itemsOfInlines`),
+which splits no line. -/
 private def itemsBreak (items : Array Item) : Bool :=
-  items.any fun it => match it with
+  items.pop.any fun it => match it with
     | .pen _ cost .. => cost ≤ forcedCost
     | _ => false
 
@@ -11772,8 +11774,7 @@ measure at its smallest size; it " ++
                 (urlBreaks := false)
             else if broken then
               let (flushRight, center) := narrowedCell (cellSide cols spans i j)
-              collectPara
-                { rc with pats := none, geom := { rc.geom with justify := false, flushRight } }
+              collectPara { rc with geom := { rc.geom with justify := false, flushRight } }
                 sub cell x center size (baseStyle := { cellCode := web }) (leaf := leaf)
                 (span := span) (rowStrut := strut) (urlBreaks := false)
             else match cellSide cols spans i j with
