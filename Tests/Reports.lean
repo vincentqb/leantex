@@ -1344,14 +1344,15 @@ def reports : List Report := [
       "a presentation deck's hole and not-implemented slides, in PDF and HTML: both markers in the deck's alert, every other listing token in a colour its palette derives, minted's formatcom one info line over its listings where each listing had warned of an unknown option, and its declared style, which now colours no token there, named once"]
     state := .guarded "9ec36474" .before .author },
   { id := "R144", date := "2026-10-10"
-    what := "A frame not declared breakable that ran a point or two past its page shipped a continuation page holding its last line, where the slide class sets it overfull on its one page; a declared squeeze was named and ignored, the web deck scrolled a frame the page fitted by shrinking its lists' glue, and a breakable frame left a block's title alone at a page's foot"
+    what := "A frame not declared breakable that ran a point or two past its page shipped a continuation page holding its last line, where the slide class sets it on its one page, and its loss stated only the first line past the page; a declared squeeze was named and ignored, the web deck scrolled a frame the page fitted by shrinking its lists' glue, and a breakable frame left a block's title alone at a page's foot"
     pins := [check% Tests.FrameFit.overhangChecks, check% Tests.FrameFit.squeezeChecks,
       check% Tests.FrameFit.breakableTitleChecks, thm% Ir.frameFit_between,
       thm% Ir.frameFit_id, thm% Layout.frameFit_accounts, thm% Layout.runFitted_accounts,
       thm% Layout.runFitted_projects]
-    accept := ["nine assertions fail with the fix reverted onto the recorded commit: a frame 1.6 pt too tall and an overlay frame as tall shipping a page per step and named by the gap, the declared squeeze read and its items one baselineskip apart, the web deck squeezing the frame the page shrank with its stage's class and rule, and the breakable frame's block title on its body's page",
-      "two presentation decks ship as many pages as their reference typesetting, unchanged by the ladder"]
-    state := .guarded "438dedf3" .revert .author },
+    accept := ["twenty assertions fail with the engine reverted onto the recorded commit: a frame, two overlay steps, a picture and an alternation's shown side a point or two past their text area each shipping a page per step and named by W0400; a far frame's loss stating its whole overrun, one baselineskip more for one more line; a frame a point past its page below a footnote continuing; the declared squeeze read, its items a baselineskip apart; the web deck squeezing the frame the page shrank, with its stage's class, item gap and trivlist rule; the breakable frame's block title on its body's page; and W0400's witness and both codes' golden blocks",
+      "the in-repo corpus builds to the same PDF and HTML bytes, its one frame past its page now stating its whole overrun, and a private reference deck builds to the same bytes in both artifacts",
+      "on invented probes the overrun a continuing frame's loss states is the slide class's own overfull report, apart from the text area's distance from the slide class's (R146)"]
+    state := .guarded "426db813" .revert .author },
   { id := "R145", date := "2026-10-10"
     what := "a frame declared to shrink is set as one not declared so, where the slide class sets it again at a wider measure and scales it down to fit its page"
     pins := []
