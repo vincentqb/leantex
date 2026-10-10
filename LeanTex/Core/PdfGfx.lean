@@ -7,6 +7,7 @@ public import LeanTex.Core.PdfFont
 public import LeanTex.Core.PdfOps
 public import Std.Data.HashMap
 import LeanTex.Core.GfxAffine
+import LeanTex.Core.PdfGfx.Fn
 import LeanTex.Core.GfxPdf
 import LeanTex.Core.PdfFilters
 import LeanTex.Core.PngEncode
@@ -440,153 +441,57 @@ private def fnNums (doc : Doc) (dict : Obj) (k : String) : Array Rat :=
   | some (.arr xs) => xs.filterMap fun x => (doc.deref x).toOption.bind ratOf
   | _ => #[]
 
-/-- A sampled function's layout (§7.10.2): its sample count, bits per
-sample, outputs, encode pair, and each output's decode pair. -/
-private structure Sampled where
-  size : Nat
-  bps : Nat
-  nout : Nat
-  e0 : Rat
-  e1 : Rat
-  decode : Array Rat
-
-/-- A Type 0 function's layout, one input: the defaults its dictionary
-leaves out filled as §7.10.2 says (`Encode` [0, Size − 1], `Decode` its
-`Range`). -/
-private def sampledOf (doc : Doc) (dict : Obj) : Sampled :=
-  let size := ((fnNums doc dict "Size")[0]?.getD 2).floor.toNat
-  let bps := (((dict.get? "BitsPerSample").bind Obj.int?).getD 8).toNat
-  let range := fnNums doc dict "Range"
-  let enc := fnNums doc dict "Encode"
-  let dec := fnNums doc dict "Decode"
-  { size, bps, nout := max 1 (range.size / 2), e0 := enc[0]?.getD 0, e1 := enc[1]?.getD ((size : Rat) - 1)
-    decode := if dec.size == range.size && !dec.isEmpty then dec else range }
-
-/-- A Type 2 or Type 0 function at `t` (§7.10.2–3): an exponential's curve
-— exactly where its exponent is a whole number up to 16, linearly
-otherwise, which `fnStops` names; a sampled function at 8 or 16 bits,
-linearly between the two samples around `t`, as its default order says. -/
-private def evalSimple (doc : Doc) (dict : Obj) (data : Option ByteArray) (t : Rat) : Option (Array Rat) := do
-  let ty := ((dict.get? "FunctionType").bind Obj.int?).getD (-1)
-  let dom := fnNums doc dict "Domain"
-  let t0 := dom[0]?.getD 0
-  let t1 := dom[1]?.getD 1
-  let t := max t0 (min t1 t)
-  if ty == 2 then
-    let c0 := let c := fnNums doc dict "C0"; if c.isEmpty then #[0] else c
-    let c1 := let c := fnNums doc dict "C1"; if c.isEmpty then #[1] else c
-    let n := ((dict.get? "N").bind ratOf).getD 1
-    let tn : Rat := if n.den == 1 && 0 ≤ n && n ≤ 16 then t ^ n.num.toNat else t
-    return (c0.zip c1).map fun (a, b) => a + tn * (b - a)
-  else if ty == 0 then
-    let raw ← data
-    let sm := sampledOf doc dict
-    guard ((sm.bps == 8 || sm.bps == 16) && sm.size ≥ 1)
-    let e := if t1 == t0 then sm.e0 else sm.e0 + (t - t0) * (sm.e1 - sm.e0) / (t1 - t0)
-    let e := max 0 (min ((sm.size : Rat) - 1) e)
-    let i0 := e.floor.toNat
-    let i1 := min (sm.size - 1) (i0 + 1)
-    let frac := e - (i0 : Rat)
-    let maxV : Nat := 2 ^ sm.bps - 1
-    let sample (i j : Nat) : Rat :=
-      let k := i * sm.nout + j
-      let v := if sm.bps == 8 then (raw[k]?.getD 0).toNat
-        else (raw[2 * k]?.getD 0).toNat * 256 + (raw[2 * k + 1]?.getD 0).toNat
-      let x : Rat := mkRat v maxV
-      let d0 := sm.decode[2 * j]?.getD 0
-      let d1 := sm.decode[2 * j + 1]?.getD 1
-      d0 + x * (d1 - d0)
-    return (Array.range sm.nout).map fun j => sample i0 j + frac * (sample i1 j - sample i0 j)
-  else none
-
-/-- A Type 3 stitching's subfunction for `t` (§7.10.4): its index, its
-domain, and `t` carried into it by its encoding. `left` takes, at a bound,
-the subfunction that ends there rather than the one that starts there. -/
-private def stitchAt (doc : Doc) (dict : Obj) (nfns : Nat) (t : Rat) (left : Bool) :
-    Nat × Rat × Rat × Rat :=
-  let dom := fnNums doc dict "Domain"
-  let t0 := dom[0]?.getD 0
-  let t1 := dom[1]?.getD 1
-  let t := max t0 (min t1 t)
-  let bounds := fnNums doc dict "Bounds"
-  let enc := fnNums doc dict "Encode"
-  let below := (bounds.toList.filter fun b => if left then b < t else b ≤ t).length
-  let k := min below (nfns - 1)
-  let lo := if k == 0 then t0 else bounds[k - 1]?.getD t0
-  let hi := if k ≥ bounds.size then t1 else bounds[k]?.getD t1
-  let e0 := enc[2 * k]?.getD 0
-  let e1 := enc[2 * k + 1]?.getD 1
-  (k, lo, hi, if hi == lo then e0 else e0 + (t - lo) * (e1 - e0) / (hi - lo))
-
-/-- The subfunctions of a stitching function, as written. -/
+/-- The functions a stitching joins, as written. -/
 private def stitchFns (doc : Doc) (dict : Obj) : Array Obj :=
   match (dict.get? "Functions").bind fun x => (doc.deref x).toOption with
   | some (.arr xs) => xs
   | _ => #[]
 
-/-- **A function of one input at `t`** (§7.10): Type 2 and Type 0, and a
-Type 3 stitching of them — its bounds choosing the subfunction, `left`
-choosing at a bound the one that ends there, its encoding mapping `t` into
-it. A stitching nested in a stitching, and a Type 4 calculator, read as
-nothing: the shading is named as a loss. -/
-private def evalFn (doc : Doc) (f : Obj) (t : Rat) (left : Bool := false) : Option (Array Rat) := do
+/-- A function object read as a piece (§7.10): an exponential or a sampled
+function, the defaults its dictionary leaves out filled as §7.10.2–3 say;
+anything else — a calculator, a stitching inside a stitching — read as
+nothing. -/
+private def readPiece (doc : Doc) (f : Obj) : Piece :=
   let (dict, data) := fnDict doc f
   let ty := ((dict.get? "FunctionType").bind Obj.int?).getD (-1)
-  if ty == 3 then
-    let fns := stitchFns doc dict
-    guard (fns.size > 0)
-    let (k, _, _, u) := stitchAt doc dict fns.size t left
-    let (sd, sdata) := fnDict doc (fns[k]?.getD .null)
-    guard (((sd.get? "FunctionType").bind Obj.int?) != some 3)
-    evalSimple doc sd sdata u
-  else evalSimple doc dict data t
+  let dom := fnNums doc dict "Domain"
+  let d0 := dom[0]?.getD 0
+  let d1 := dom[1]?.getD 1
+  if ty == 2 then
+    let c0 := let c := fnNums doc dict "C0"; if c.isEmpty then #[0] else c
+    let c1 := let c := fnNums doc dict "C1"; if c.isEmpty then #[1] else c
+    .expo { d0, d1, c0, c1, n := ((dict.get? "N").bind ratOf).getD 1 }
+  else if ty == 0 then
+    let size := ((fnNums doc dict "Size")[0]?.getD 2).floor.toNat
+    let range := fnNums doc dict "Range"
+    let enc := fnNums doc dict "Encode"
+    let dec := fnNums doc dict "Decode"
+    .sampled { d0, d1, size, bps := (((dict.get? "BitsPerSample").bind Obj.int?).getD 8).toNat,
+               nout := max 1 (range.size / 2), e0 := enc[0]?.getD 0, e1 := enc[1]?.getD ((size : Rat) - 1),
+               decode := if dec.size == range.size && !dec.isEmpty then dec else range, raw := data }
+  else .unread
 
-/-- **Where a function's stops stand over `[t0, t1]`**, and whether linear
-interpolation between them is the function itself (§7.10): an exponential
-of exponent 1 between its ends; a sampled function at every sample; a
-stitching at its bounds and at each subfunction's own points carried back
-through its encoding. An exponential of another exponent is read at 17
-points, which is not itself: the caller names the approximation. -/
-private def fnStops (doc : Doc) (f : Obj) (t0 t1 : Rat) : Array Rat × Bool :=
-  let simple (dict : Obj) (s0 s1 : Rat) : Array Rat × Bool :=
-    let ty := ((dict.get? "FunctionType").bind Obj.int?).getD (-1)
-    if ty == 2 then
-      if (((dict.get? "N").bind ratOf).getD 1) == 1 then (#[s0, s1], true)
-      else ((Array.range 17).map fun (k : Nat) => s0 + (s1 - s0) * mkRat k 16, false)
-    else if ty == 0 then
-      let sm := sampledOf doc dict
-      let dom := fnNums doc dict "Domain"
-      let d0 := dom[0]?.getD 0
-      let d1 := dom[1]?.getD 1
-      let pts := if sm.e1 == sm.e0 || sm.size > 4096 then #[] else
-        (Array.range sm.size).map fun (i : Nat) => d0 + ((i : Rat) - sm.e0) * (d1 - d0) / (sm.e1 - sm.e0)
-      (#[s0] ++ pts.filter (fun x => s0 < x && x < s1) ++ #[s1],
-        (sm.bps == 8 || sm.bps == 16) && sm.size ≤ 4096 && sm.e1 != sm.e0)
-    else (#[s0, s1], false)
+/-- **A function object read** (§7.10): a stitching of the pieces it joins
+(Type 3), or a piece. -/
+private def readFn (doc : Doc) (f : Obj) : Fn :=
   let (dict, _) := fnDict doc f
   if ((dict.get? "FunctionType").bind Obj.int?) == some 3 then
-    let fns := stitchFns doc dict
-    let bounds := fnNums doc dict "Bounds"
-    let enc := fnNums doc dict "Encode"
-    let inner := (Array.range fns.size).foldl (fun (acc : Array Rat × Bool) (k : Nat) =>
-      let lo := if k == 0 then t0 else bounds[k - 1]?.getD t0
-      let hi := if k ≥ bounds.size then t1 else bounds[k]?.getD t1
-      let e0 := enc[2 * k]?.getD 0
-      let e1 := enc[2 * k + 1]?.getD 1
-      let (sd, _) := fnDict doc (fns[k]?.getD .null)
-      let nested := ((sd.get? "FunctionType").bind Obj.int?) == some 3
-      let (pts, exact) := simple sd (min e0 e1) (max e0 e1)
-      let back := if e1 == e0 then #[] else pts.map fun u => lo + (u - e0) * (hi - lo) / (e1 - e0)
-      (acc.1 ++ back.filter (fun x => t0 < x && x < t1), acc.2 && exact && !nested)) (#[], true)
-    let pts := (#[t0] ++ bounds.filter (fun b => t0 < b && b < t1) ++ inner.1 ++ #[t1]).qsort (· < ·)
-    (pts.foldl (fun acc x => if acc.back? == some x then acc else acc.push x) #[], inner.2 && fns.size > 0)
-  else simple dict t0 t1
+    let dom := fnNums doc dict "Domain"
+    .stitch { d0 := dom[0]?.getD 0, d1 := dom[1]?.getD 1, bounds := fnNums doc dict "Bounds",
+              enc := fnNums doc dict "Encode", subs := (stitchFns doc dict).map (readPiece doc) }
+  else .piece (readPiece doc f)
 
-/-- **A shading's stops** (§8.7.4.5.3): the function read at each point
-`fnStops` gives — at a bound of a stitching, both the subfunction that ends
-there and the one that starts there, one stop where they agree and two at
-one offset where the colour jumps — each colour in the shading's space.
-The second component is whether the stops are the function itself. -/
+/-- **A shading's stops** (§8.7.4.5.3): its function read at each point
+its stops give (`Fn.stops`) — at a stop after the first, both the value
+the function approaches from below and the one it takes there, one stop
+where they agree and two at one offset where the colour jumps — each colour
+in the shading's space. The second component is whether the gradient is
+the shading: the function's stops are exact (`stitch_exact` for an
+exponential and a stitching of them; pending work for a sampled
+function), every component at every stop is inside [0, 1], so the colour
+space clips none of the line between them, and a CMYK colour converts to a
+line between stops — its black the same at every stop, or its other three
+components. -/
 private def shadingStops (cx : Ctx) (sh : Obj) (sp : Space) : Option (Array Stop × Bool) := do
   let fnObj ← sh.get? "Function"
   let dom : Array Rat := match (sh.get? "Domain").bind fun x => (cx.doc.deref x).toOption with
@@ -594,30 +499,32 @@ private def shadingStops (cx : Ctx) (sh : Obj) (sp : Space) : Option (Array Stop
     | _ => #[0, 1]
   let t0 := dom[0]?.getD 0
   let t1 := dom[1]?.getD 1
-  let fns : Array Obj := match (cx.doc.deref fnObj).toOption with
+  let fns : Array Fn := (match (cx.doc.deref fnObj).toOption with
     | some (.arr xs) => xs
-    | _ => #[fnObj]
-  let read := fns.map fun f => fnStops cx.doc f t0 t1
+    | _ => #[fnObj]).map (readFn cx.doc)
+  let read := fns.map fun f => f.stops t0 t1
   let pts := ((read.foldl (fun acc r => acc ++ r.1) #[]).qsort (· < ·)).foldl
     (fun acc x => if acc.back? == some x then acc else acc.push x) #[]
-  let exact := read.all (·.2)
-  let colorAt (t : Rat) (left : Bool) : Option Ir.Color := do
-    let comps ← if fns.size == 1 then evalFn cx.doc (fns[0]?.getD .null) t left
-      else fns.mapM fun f => (evalFn cx.doc f t left).map fun v => v[0]?.getD 0
-    return deviceColorRat sp comps
+  let compsAt (t : Rat) (left : Bool) : Option (Array Rat) :=
+    if fns.size == 1 then (fns[0]?.getD (Fn.piece .unread)).eval t left
+    else fns.mapM fun f => (f.eval t left).map fun v => v[0]?.getD 0
   let offsetOf (t : Rat) : Fin 65537 :=
     let s := if t1 == t0 then 0 else (t - t0) / (t1 - t0)
     let v := (unit01 s * 65536 + (1 : Rat) / 2).floor.toNat
     ⟨min v 65536, by omega⟩
   let mut out : Array Stop := #[]
+  let mut seen : Array (Array Rat) := #[]
   for h : i in [0:pts.size] do
     let t := pts[i]
-    let c ← colorAt t false
-    if i > 0 && i + 1 < pts.size then
-      let before ← colorAt t true
-      if before != c then out := out.push { offset := offsetOf t, color := before }
-    out := out.push { offset := offsetOf t, color := c }
-  return (out, exact)
+    let c ← compsAt t false
+    if i > 0 then
+      let before ← compsAt t true
+      seen := seen.push before
+      if deviceColorRat sp before != deviceColorRat sp c then
+        out := out.push { offset := offsetOf t, color := deviceColorRat sp before }
+    seen := seen.push c
+    out := out.push { offset := offsetOf t, color := deviceColorRat sp c }
+  return (out, read.all (·.2) && linearIn sp seen)
 where
   deviceColorRat (sp : Space) (comps : Array Rat) : Ir.Color :=
     let v (i : Nat) : Rat := unit01 (comps[i]?.getD 0)
@@ -628,6 +535,14 @@ where
       { r := byteOf ((1 - v 0) * (1 - v 3)), g := byteOf ((1 - v 1) * (1 - v 3))
         b := byteOf ((1 - v 2) * (1 - v 3)) }
     | _ => { r := 128, g := 128, b := 128 }
+  linearIn (sp : Space) (cs : Array (Array Rat)) : Bool :=
+    cs.all (fun v => v.all fun x => 0 ≤ x && x ≤ 1) &&
+      match sp with
+      | .cmyk =>
+        let k := cs.map (·[3]?.getD 0)
+        let cmy := cs.map (·.extract 0 3)
+        k.all (· == k[0]?.getD 0) || cmy.all (· == cmy[0]?.getD #[])
+      | _ => true
 
 /-- A shading read as a gradient in its own space: whether it extends past
 its start and its end, and the loss key of what the gradient only

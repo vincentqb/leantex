@@ -405,10 +405,15 @@ open Tests.PdfNative in
 /-- **The interpreter keeps PDF's meaning where it is subtle**: optional
 content under each visibility policy and through a single group reference
 (§8.11.2.2); a Type 3 glyph that sets no colour of its own painting in the
-colour of the text that shows it, by `d1` and by `d0` (§9.6.4); and the
-shadings the gradient model only approaches named, not drawn as if exact —
-an exponential function of another exponent, a radial shading whose start
-circle leaves its end circle, a shading pattern that stops short. -/
+colour of the text that shows it, by `d1` and by `d0` (§9.6.4); a function
+held to part of its shading's domain, a stitching held to part of it, and a
+domain ending where the colour jumps, drawn with a stop where the line
+bends (§7.10); and the shadings the gradient model only approaches named,
+not drawn as if exact — an exponential function of another exponent, a
+stitching whose bounds are out of order, a colour that leaves its space
+between stops, a CMYK colour whose black and inks both change, a radial
+shading whose start circle leaves its end circle, a shading pattern that
+stops short. -/
 def pdfInterpreterChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
   let ocDoc (props : String) : ByteArray := syntheticPdf #[
@@ -466,6 +471,57 @@ def pdfInterpreterChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "interpreter: a shading pattern that stops short is named"
     (lossesOf (shading (axial "1" "[false false]") "/Pattern cs /P0 scn 0 0 100 50 re f") ==
       .ok #[.resource "shading-unextended"])
+  let faceStops (pdf : ByteArray) : Array (String × String) := match PdfGfx.importPage pdf with
+    | .ok imp => (elemAttrsList (· == "stop") #[] (faceTree imp.figure).toList).map fun (_, attrs) =>
+        (((attrs.find? (·.1 == "offset")).map (·.2)).getD "",
+          ((attrs.find? (·.1 == "stop-color")).map (·.2)).getD "")
+    | .error _ => #[]
+  let shaded (space fnDict shDom : String) :=
+    s!"<< /ShadingType 2 /ColorSpace {space} /Coords [0 0 100 0] /Domain {shDom} /Function {fnDict} \
+      /Extend [true true] >>"
+  let seg (c0 c1 : String) (dom : String := "[0 1]") :=
+    s!"<< /FunctionType 2 /Domain {dom} /C0 {c0} /C1 {c1} /N 1 >>"
+  let stitching (dom bounds enc : String) (fns : List String) :=
+    s!"<< /FunctionType 3 /Domain {dom} /Bounds {bounds} /Encode {enc} /Functions [{" ".intercalate fns}] >>"
+  let narrow := shading (shaded "/DeviceRGB" (seg "[1 0 0]" "[0 0 1]" "[0 0.5]") "[0 1]") "/S0 sh"
+  let st := faceStops narrow
+  t s!"interpreter: a function held to part of its shading's domain stops where it is held ({st})"
+    (lossesOf narrow == .ok #[] && st.map (·.1) == #["0", "0.5", "1"] && st[1]?.map (·.2) == st[2]?.map (·.2))
+  let late := shading (shaded "/DeviceRGB" (stitching "[0.25 1]" "[0.5]" "[0 1 0 1]"
+    [seg "[1 0 0]" "[0 1 0]", seg "[0 1 0]" "[0 0 1]"]) "[0 1]") "/S0 sh"
+  let st := faceStops late
+  t s!"interpreter: a stitching held to part of its shading's domain stops where it is held ({st})"
+    (lossesOf late == .ok #[] && st.map (·.1) == #["0", "0.25", "0.5", "1"] &&
+      st[0]?.map (·.2) == st[1]?.map (·.2))
+  let jump := shading (shaded "/DeviceRGB" (stitching "[0 1]" "[0.5]" "[0 1 0 1]"
+    [seg "[1 0 0]" "[0 1 0]", seg "[0 0 1]" "[0 0 1]"]) "[0 0.5]") "/S0 sh"
+  let st := faceStops jump
+  t s!"interpreter: a shading whose domain ends where its colour jumps ends on both colours ({st})"
+    (lossesOf jump == .ok #[] && st.map (·.1) == #["0", "1", "1"] && st[1]?.map (·.2) != st[2]?.map (·.2))
+  let early := shading (shaded "/DeviceRGB" (stitching "[0 0.75]" "[0.75]" "[0 1 0 1]"
+    [seg "[1 0 0]" "[0 1 0]", seg "[0 0 1]" "[0 0 1]"]) "[0 1]") "/S0 sh"
+  let st := faceStops early
+  t s!"interpreter: a stitching that ends before its shading holds its last colour past its end ({st})"
+    (lossesOf early == .ok #[] && st.map (·.1) == #["0", "0.75", "0.75", "1"] &&
+      st[2]?.map (·.2) == st[3]?.map (·.2) && st[1]?.map (·.2) != st[2]?.map (·.2))
+  let held := shading (shaded "/DeviceRGB" (stitching "[0.25 1]" "[0.25]" "[0 1 0 1]"
+    [seg "[0 1 0]" "[0 1 0]", seg "[1 0 0]" "[0 0 1]"]) "[0 1]") "/S0 sh"
+  let st := faceStops held
+  t s!"interpreter: a stitching held at its start holds the colour it starts with ({st})"
+    (lossesOf held == .ok #[] && st.map (·.1) == #["0", "0.25", "1"] && st[0]?.map (·.2) == st[1]?.map (·.2))
+  let unordered := shading (shaded "/DeviceRGB" (stitching "[0 1]" "[0.7 0.3]" "[0 1 0 1 0 1]"
+    [seg "[1 0 0]" "[0 1 0]", seg "[0 1 0]" "[0 0 1]", seg "[0 0 1]" "[1 0 0]"]) "[0 1]") "/S0 sh"
+  t "interpreter: a stitching whose bounds are out of order is named, still drawn"
+    (lossesOf unordered == .ok #[.resource "shading-function-approximated"])
+  let leaves := shading (shaded "/DeviceRGB" (seg "[-1 0 0]" "[2 0 0]") "[0 1]") "/S0 sh"
+  t "interpreter: a colour that leaves its space between stops is named, still drawn"
+    (lossesOf leaves == .ok #[.resource "shading-function-approximated"])
+  let inkAndBlack := shading (shaded "/DeviceCMYK" (seg "[1 0 0 0]" "[0 0 0 1]") "[0 1]") "/S0 sh"
+  t "interpreter: a CMYK colour whose black and inks both change is named, still drawn"
+    (lossesOf inkAndBlack == .ok #[.resource "shading-function-approximated"])
+  let oneBlack := shading (shaded "/DeviceCMYK" (seg "[1 0 0 0.5]" "[0 1 0 0.5]") "[0 1]") "/S0 sh"
+  t "interpreter: a CMYK colour under one black is drawn exactly"
+    (lossesOf oneBlack == .ok #[])
 
 open Tests.PdfNative in
 /-- **PDF figures ship native web faces with no converter on the
