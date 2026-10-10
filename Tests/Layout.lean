@@ -2604,14 +2604,19 @@ def vdistChecks (ref : IO.Ref (List String)) (geom : Layout.Geom)
   t "a frame centres by default, [t] sits above it" (yT < yC)
   t "[b] sits below the centre" (yC < yB)
   -- 1:1 is the halving and 1:0 the whole leftover: centre is halfway
-  -- between top and bottom, up to the division's rounding.
-  t "centre is halfway between [t] and [b]"
-    (yB - yC == yC - yT || yB - yC == yC - yT + 1)
-  -- Ratio 0:1 reproduces the undistributed placement exactly
-  -- (VDist.top_is_flush at page level): a [t] frame's first line sits
-  -- where an article's does.
-  t "[t] is the old top-flush placement"
-    (yT == firstY "hello")
+  -- between top and bottom, up to the division's rounding — the top a
+  -- `[t]` frame's line would stand at without beamer's `.2cm` top skip
+  -- (`Ir.frameBodySkip`), the one fixed space the distribution never
+  -- spends.
+  t "centre is halfway between [t] less its top skip and [b]"
+    (yB - yC == yC - (yT - Dim.mm 2) || yB - yC == yC - (yT - Dim.mm 2) + 1)
+  -- Ratio 0:1 is top-flush in beamer's text area: an untitled `[t]`
+  -- frame's content box opens at the paper's top, `.2cm` down
+  -- (beamerbaseframe.sty:263), and its first line stands one
+  -- `\baselineskip` below that `\vbox{}` — never at the slides margin an
+  -- article's first line stands below.
+  t "[t] opens beamer's top skip and one baselineskip below the paper's top"
+    (yT == Dim.mm 2 + Ir.leadingFor geom.fontSize geom.leading && yT < firstY "hello")
   -- Two paragraphs in a frame stay two through frame elaboration and the
   -- distribution: the frame's text baselines are the article's peer pair
   -- (`spacingChecks`), whether or not a comment line precedes the blank
@@ -2635,9 +2640,10 @@ def vdistChecks (ref : IO.Ref (List String)) (geom : Layout.Geom)
   t "[b] parses to bottom"
     ((elabStr (deck169Body "\\begin{frame}[b]\nx\n\\end{frame}")).1.body ==
       #[.frame #[] false .bottom false #[.para #[.text "x"]]])
-  t "[t,standout] keeps both"
+  -- moloch's `standout` key sets `c` after any alignment before it.
+  t "[t,standout] is a standout frame, centred as moloch's key centres it"
     ((elabStr (deck169Body "\\begin{frame}[t,standout]\nx\n\\end{frame}")).1.body ==
-      #[.frame #[] true .top false #[.para #[.text "x"]]])
+      #[.frame #[] true .center false #[.para #[.text "x"]]])
   -- A titled frame's title is page-top chrome: distributing the body must
   -- not move the title line, and the title bar keeps its height.
   let titled (opt : String) : String :=
@@ -4782,8 +4788,9 @@ at `f16b1321` by −2.4 and +1.8 (the last line's metric descent read as its
 depth, and a declared `\topskip` unread). A centred frame is the same box
 in beamer — lualatex lifts a frame whose last line has descenders by half
 their depth (1.00 bp for "ppp" against "ooo", beamer 11pt, moloch) — and
-the engine's frame does not yet: that row is owed, and fails in both
-directions. Invented words. -/
+the engine's untitled frame does too, its box opening at the paper's top;
+the titled frame's row is owed, and fails in both directions. Invented
+words. -/
 def faceCentreChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit := do
   let t := check ref
   let face (size w1 w2 : String) : String :=
@@ -4816,21 +4823,30 @@ def faceCentreChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO 
       (within (skew (src "") i) (Dim.pt 10))
     t s!"face {i + 1}: a declared \\topskip stands above the fill whole"
       (within (skew (src "\\setlength{\\topskip}{14pt}") i) (Dim.pt 14))
-  let deck (last : String) : String :=
-    "\\documentclass{beamer}\\usetheme{moloch}\\begin{document}\\begin{frame}[c]\n" ++
-      "Alpha words here.\n\n" ++ last ++ "\n\\end{frame}\\end{document}"
+  let deck (head last : String) : String :=
+    "\\documentclass{beamer}\\usetheme{moloch}\\begin{document}\\begin{frame}[c]" ++ head ++
+      "\nAlpha words here.\n\n" ++ last ++ "\n\\end{frame}\\end{document}"
   let lastDepth (s : String) : Option (Dim.Sp × Dim.Sp) := do
     let p ← (layoutOf oneFace (elabStr s).1).pages[0]?
     let l ← p.lines.find? fun l => hasStr (lineText l) "Bravo"
     pure (l.y, (Layout.segsInk oneFace l.segs).2)
-  match lastDepth (deck "Bravo words ooo"), lastDepth (deck "Bravo words ppp") with
+  -- An untitled frame's content opens at the paper's top, with no title box
+  -- above it, so its box ends where TeX's does, on the glyphs (`B.contentEnd`):
+  -- the `ppp` frame lifts by half their depth, to the halving's sp.
+  match lastDepth (deck "" "Bravo words ooo"), lastDepth (deck "" "Bravo words ppp") with
+  | some (yo, dO), some (yp, dp) =>
+    t "an untitled centred frame lifts by half its last line's glyph depth, as lualatex does"
+      (dO < dp && (yo - yp) - (dp - dO) / 2 ≤ 1 && (dp - dO) / 2 - (yo - yp) ≤ 1)
+  | _, _ => t "the frame depth fixtures lay out" false
+  match lastDepth (deck "{Kilo}" "Bravo words ooo"), lastDepth (deck "{Kilo}" "Bravo words ppp") with
   | some (yo, dO), some (yp, dp) =>
     -- Owed, both ways: beamer lifts the `ppp` frame by half the glyphs'
-    -- depth; the engine's frame keeps the face's descent (`B.contentEnd`)
-    -- until its window moves with it. Fixing one without the other fails here.
-    t "owed: a centred frame still ends on its last line's face descent"
+    -- depth; the engine's titled frame keeps the face's descent
+    -- (`B.contentEnd`) until its window — the title box, sized by the size
+    -- ladder — moves with it. Fixing one without the other fails here.
+    t "owed: a titled centred frame still ends on its last line's face descent"
       (dO < dp && yo == yp)
-  | _, _ => t "the frame depth fixtures lay out" false
+  | _, _ => t "the titled frame depth fixtures lay out" false
 
 /-- **Under `\flushbottom` a page the builder broke stands its last baseline
 on the text area's floor** (`B.finishPage`'s `flush`, `B.flushes`). TeX's
@@ -5315,11 +5331,7 @@ size-ladder difference and its last line's depth, inside 1.5 bp. At
 up, and the `[c]` line 7.311 bp high. Invented words. -/
 def footlineChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
-  let some fira ← (do
-      match Font.parse (← IO.FS.readBinFile (testFonts ++ "/FiraSans-Regular.otf")) with
-      | .ok f => pure (some (oneFaceOf f))
-      | .error _ => pure none : IO (Option Font.FontSet))
-    | t "footline: the shipped Fira Sans parses" false
+  let some fira ← shippedFira | t "footline: the shipped Fira Sans parses" false
   let tol : Dim.Sp := Dim.pt 3 / 2
   let near (a b slack : Dim.Sp) : Bool := a - b ≤ slack && b - a ≤ slack
   let bp (milli : Int) : Dim.Sp := Dim.pt 1 * milli / 1000
@@ -5929,15 +5941,19 @@ def footnoteLayoutChecks (ref : IO.Ref (List String))
       sweepOk := false
   t "footnote: mark and note share one page at every fill depth" sweepOk
   -- The frame foot: the same flush lands a deck's note at the bottom of
-  -- its frame's page while the centred body stays above it.
+  -- its frame's page while the centred body stays above it. beamer sets a
+  -- frame's notes at the foot of its `\vbox to\textheight`, so the floor
+  -- they stand on is the frame's text area's (`Layout.frameFloor`), not
+  -- the slides margin's.
   let dsrc := deck169Frame "Frame words\\footnote{a frame-foot note} here."
   let (ddoc, _) := elabStr dsrc
   let dgeom := Layout.Geom.ofPage ddoc.page
   let dout := layoutOf oneFace ddoc
   t "footnote: a frame's note lands at the frame foot"
-    (!(notesOf dout).isEmpty &&
-      (notesOf dout).all fun n => n.y ≤ dgeom.bodyBottom &&
-        (flowOf dout).all fun b => b.y < n.y)
+    (!(notesOf dout).isEmpty && dout.pages.all fun p =>
+      p.lines.all fun n => !n.note ||
+        (n.y ≤ Layout.frameFloor dgeom.pageH Ir.footline.sep p.footBox &&
+          dgeom.bodyBottom < n.y && (flowOf dout).all fun b => b.y < n.y))
   -- W0372: a note taller than the text block overruns, named; an
   -- ordinary note stays silent.
   let (bigDoc, _) := elabStr (dvDoc

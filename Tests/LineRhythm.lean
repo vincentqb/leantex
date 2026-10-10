@@ -284,9 +284,16 @@ def displayStepChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO
   t "a Huge document title's lines stand in the step's proportion"
     (banded (art ("\\title{\\Huge " ++ longTitle ++ "}\n\\author{Kilo Lima}\n\\date{}\n")
       "\\maketitle"))
-  t "a small frame title's lines stand in the step's proportion"
-    (banded (deck "" ("\\begin{frame}{\\small " ++ longTitle ++ " " ++ longTitle ++ "}\n" ++
-      "Body words.\n\\end{frame}")))
+  -- beamer inserts a frame's title in a group: a smaller size inside it
+  -- ends before the template's `\par`, whose skip leads the lines
+  let titlePitches (pre : String) : Array Sp :=
+    (sizedPitches (deck "" ("\\begin{frame}{" ++ pre ++ longTitle ++ " " ++ longTitle ++ "}\n" ++
+      "Body words.\n\\end{frame}"))).map (·.2)
+  t "a small frame title's lines lead at the frame title's own skip"
+    (match (titlePitches "")[0]? with
+     | some p => ["\\small ", "\\tiny "].all fun pre =>
+         !(titlePitches pre).isEmpty && (titlePitches pre).all (· == p)
+     | none => false)
   t "a frame title under no size command keeps the six-fifths rule"
     (banded (deck "" ("\\begin{frame}{" ++ longTitle ++ "}\nBody words.\n\\end{frame}")))
   t "a deck title page's LARGE title lines stand in the step's proportion"
@@ -884,16 +891,18 @@ the page leads a display's lines at the step's `\baselineskip` on the base
 the step scales: the title's element carries `lead-<step>` and stands no
 line of its own, and the step's span inside it, at the step's size, takes
 the leading over that size — the page's own pitch over its own type, to the
-milli, for a step below the title's size and one above it. Before, the
-element took the leading over its own size and the span inherited that
-factor, so a step above the title's size stood every line that step's
-factor too loose: 37.3 bp per line for a `\Large` frame title the page sets
-at 25.9. -/
+milli. Before, the element took the leading over its own size and the span
+inherited that factor, so a step above the title's size stood every line
+that step's factor too loose: 37.3 bp per line for a `\Large` frame title
+the page sets at 25.9. A step below the body's own ends inside the group
+beamer inserts a frame's title in, and the title keeps its own leading in
+both artifacts (`Ir.insertedStep?`): a `\tiny` title led at 8.64 bp where
+lualatex leads it at the title's 17.94. -/
 def headingLeadChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit := do
   let t := check ref
-  for step in ["small", "Large"] do
+  for step in ["Large", "LARGE"] do
     let deckDoc := (elabStr ("\\documentclass[10pt]{beamer}\n\\begin{document}\n" ++
-      "\\begin{frame}{\\" ++ step ++ " " ++ longTitle ++ " " ++ longTitle ++ "}\n" ++
+      "\\begin{frame}{\\" ++ step ++ " " ++ longTitle ++ "}\n" ++
       "Body words.\n\\end{frame}\n\\end{document}")).1
     let (head, nodes, _) := HtmlDoc.emitTree {} deckDoc
     let tree := CTree.of nodes
@@ -910,7 +919,8 @@ def headingLeadChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO
         | some j => if heads.contains j then return true else at? := (tree.el j).parent
       return false
     let spans := (List.range tree.els.size).filter fun i => has i ("size-" ++ step) && inHead i
-    let page := (sizedPitches (layoutOf oneFace deckDoc)).map fun (sz, p) => p * 1000 / sz
+    let page := ((sizedPitches (layoutOf oneFace deckDoc)).filter (0 < ·.2)).map
+      fun (sz, p) => p * 1000 / sz
     t s!"a {step} frame title's element carries the step's leading and stands no line"
       (heads.length == 1 &&
         heads.all fun i => cascadeInherited tree rules "line-height" i == some "0")
@@ -919,12 +929,26 @@ def headingLeadChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO
         match (cascadeInherited tree rules "line-height" i).bind milliOf with
         | some v => page.all fun q => (v - q).natAbs ≤ 1
         | none => false)
-  let plain := (elabStr ("\\documentclass[10pt]{beamer}\n\\begin{document}\n" ++
-    "\\begin{frame}{" ++ longTitle ++ "}\nBody words.\n\\end{frame}\n\\end{document}")).1
-  let (_, plainNodes, _) := HtmlDoc.emitTree {} plain
-  t "a frame title under no size command keeps the heading's leading"
-    ((elemNodesList (· == "h2") #[] plainNodes.toList).size == 1 &&
-      Ir.sizeScale.all fun (n, _) => (withClassIn plainNodes ("lead-" ++ n)).isEmpty)
+  -- a smaller step inside a frame's title ends before the template's
+  -- `\par`, so the title keeps the heading's own line height, as the page
+  -- keeps the title's skip (`displayStepChecks`)
+  let titleDoc (pre : String) : Ir.Doc :=
+    (elabStr ("\\documentclass[10pt]{beamer}\n\\begin{document}\n" ++
+      "\\begin{frame}{" ++ pre ++ longTitle ++ "}\nBody words.\n\\end{frame}\n" ++
+      "\\end{document}")).1
+  let titleLead (pre : String) : Option String :=
+    let (head, nodes, _) := HtmlDoc.emitTree {} (titleDoc pre)
+    let tree := CTree.of nodes
+    let rules := cssRules (treeCssList "" head.toList)
+    ((List.range tree.els.size).find? fun i => (tree.el i).tag == "h2").bind
+      (cascadeInherited tree rules "line-height" ·)
+  for pre in ["", "\\small ", "\\tiny "] do
+    let (_, nodes, _) := HtmlDoc.emitTree {} (titleDoc pre)
+    t s!"a frame title under {if pre.isEmpty then "no size command" else pre.trimAscii.toString} \
+keeps the heading's own leading"
+      ((elemNodesList (· == "h2") #[] nodes.toList).size == 1 &&
+        Ir.sizeScale.all (fun (n, _) => (withClassIn nodes ("lead-" ++ n)).isEmpty) &&
+        (titleLead pre).isSome && titleLead pre == titleLead "")
 
 /-- The flow blocks of each frame a deck's tree ships, seeing through overlay
 carriers and skipping the frame's furniture, each block's tag, its text and
@@ -1004,8 +1028,8 @@ block of the frame takes the same `margin-top` in the cascade — the
 declared `\parskip` between paragraphs, a list's and a quotation's space,
 the display's skip — and every step of the page stands every line where the
 flat frame does: a display opening a carrier keeps the `\@endpe` the
-quotation before it left (`Ir.openAfterEnv`), and a covered display stays a
-display (`Ir.displayParts` reads through the cover's colour). A carrier is an element of its own (one element animates
+quotation before it left (`Ir.carrierDisplays`), and a covered display stays
+a display (`Ir.displayParts` reads through the cover's colour). A carrier is an element of its own (one element animates
 one opacity), so the sheet's sibling boundaries read through it
 (`HtmlDoc.GapRule.throughCarriers`, `HtmlDoc.blockGapThrough_owner_contract`);
 before, the first block in each carrier took no margin and the declared gap
@@ -1050,11 +1074,13 @@ def overlayGapChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO 
     (!flatPages.isEmpty && ovPages.size == 3 * flatPages.size &&
       (List.range ovPages.size).all fun i => ovPages[i]? == flatPages[i % flatPages.size]?)
   -- an alternation: the page at each step is the flat frame of the group
-  -- it shows, and the screen with no snap shows the first; where the groups
-  -- end apart the block after them reads neither, where alike either
-  for (alike, label) in [(false, "a paragraph and a list"), (true, "two lists")] do
-    let groups := if alike then (gapList "Kilo", gapList "Lima")
-      else ("Kilo words in a paragraph.", gapList "Lima")
+  -- it shows, and the screen with no snap shows the first, whichever kind
+  -- of block each group ends on; the block after a pair ending apart reads
+  -- the group shown there, never the hidden one
+  for (groups, alike, label) in [
+      (("Kilo words in a paragraph.", gapList "Lima"), false, "a paragraph shown first and a list"),
+      ((gapList "Kilo", "Lima words in a paragraph."), false, "a list shown first and a paragraph"),
+      ((gapList "Kilo", gapList "Lima"), true, "two lists")] do
     let around (mid : String) : String :=
       "Alder words open the frame.\n\n" ++ mid ++ "\n\nLarch words end the frame."
     let altDoc := (elabStr (gapDeck (around ("\\alt<2>{" ++ groups.2 ++ "}{" ++
@@ -1115,10 +1141,13 @@ private def carrierDisplayCases : List (String × String × String) :=
 /-- **A carrier stands its displays in their paragraph**
 (`Ir.carrierDisplays`): a display opening or closing a `\pause` or an
 `\uncover` stands, at every step of the page and on the screen, where it
-stands with no overlay there, as lualatex stands it — inside the paragraph
-its text runs on in, right after the environment end that left `\@endpe`,
-before the break that does or does not follow. Elaborated alone, the
-carrier's body saw neither side: a display after a list opened a new
+stands with no overlay there — inside the paragraph its text runs on in,
+right after the environment end that left `\@endpe`, before the break that
+does or does not follow — as lualatex stands it, save one departure: where
+an `\uncover` group closes on a display before a paragraph break, beamer's
+carrier leaves an empty line after the display (about 13.5 bp), which the
+page does not set, as an overlay is no line of the page. Elaborated alone,
+the carrier's body saw neither side: a display after a list opened a new
 paragraph about 13 pt lower, one in a running paragraph about 8 pt, and
 every covered step set the display as a centred paragraph, the cover's
 colour hiding its shape (`Ir.displayParts`). -/

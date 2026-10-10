@@ -845,6 +845,8 @@ in the HTML" (← since t)
           -- A picture's `viewBox` is the box the PDF reserves: the same
           -- label measurement layout places with, over the one face set.
           labelMetric := Layout.labelMetric (Layout.Geom.ofPage doc.page) fs
+          -- The footline's box is the page's band box, over the same faces.
+          footBox := fun n band => some (Layout.footBandBox (Layout.Geom.ofPage doc.page) fs imgs n band)
           cancelMetric := fun measures ss st spec body value =>
             Layout.cancelMetric (Layout.Geom.ofPage doc.page) fs ss st spec body value (some measures)
           mathEm := fun measures ss st =>

@@ -1159,6 +1159,79 @@ public theorem listSkips_web_exact (size : Sp) (level : Nat) :
     listSkips .web size level = none := by
   simp only [listSkips]
 
+/-- The class options a display's size file is read from, each with the
+`\normalsize` its file sets (`\@xipt` is 10.95 pt, `\@xivpt` 14.4 pt,
+`\@xviipt` 17.28 pt, `\@xxpt` 20.74 pt: ltplain's values). -/
+private def displayOptions : List (Nat × Sp) :=
+  [(8, Dim.pt 8), (9, Dim.pt 9), (10, Dim.pt 10), (11, Dim.pt 1095 / 100), (12, Dim.pt 12),
+   (14, Dim.pt 144 / 10), (17, Dim.pt 1728 / 100), (20, Dim.pt 2074 / 100)]
+
+/-- The top-level `\topsep` the size file of each beamer class option
+leaves in force as it loads, running its `\@listi`: size8.clo and
+size9.clo:145 `6pt plus 2pt minus 3pt` (extsizes' files, which beamer.cls
+loads for `8pt` and `9pt`), size10.clo:218 `8pt plus 2pt minus 4pt`,
+size11.clo:218 `9pt plus 3pt minus 5pt`, size12.clo:218 `10pt plus 4pt minus
+6pt`, size14.clo:145 `12pt plus 5pt minus 7pt`, size17.clo:145 `14pt plus 6pt
+minus 8pt`, size20.clo:145 `16pt plus 7pt minus 9pt`. -/
+private def beamerTopsepTable : List (Nat × SymGlue) :=
+  [(8, ptsGlue 600 200 300), (9, ptsGlue 600 200 300), (10, ptsGlue 800 200 400),
+   (11, ptsGlue 900 300 500), (12, ptsGlue 1000 400 600), (14, ptsGlue 1200 500 700),
+   (17, ptsGlue 1400 600 800), (20, ptsGlue 1600 700 900)]
+
+/-- The class option a beamer body declares: the option whose point size,
+or the `\normalsize` its file sets (10.95, 14.4, 17.28 and 20.74 pt), is the
+body; otherwise beamer's documented default, `11pt` — a poster's body is
+beamerposter's scaled type over beamer's own size file, whose skips the
+package leaves in force. -/
+private def beamerOptionOf (size : Sp) : Nat :=
+  ((displayOptions.find? fun o => Dim.pt o.1 == size || o.2 == size).map (·.1)).getD 11
+
+/-- **The one resolving site for a trivlist's space in a lineage**, at the
+list depth it stands in. In beamer's lineage, outside a list, the document's
+token where declared, else LaTeX's own top-level `\topsep` — the size file's
+of the class option (`beamerTopsepTable`), since beamer's `\@listi`
+(beamerbaselocalstructure.sty:151-154) runs only inside a list — measured
+under lualatex as `8pt plus 2pt minus 4pt` above and below a `{center}` in
+a 10pt frame; inside a list at depth `n`, the `\topsep` beamer's
+`\@list⟨n⟩` sets there (`listSkips`: 3 pt, then 2 pt), which no preamble
+declaration survives. Elsewhere the rhythm's quantum (`trivlistSkip`). A
+frame distributes its content instead of setting it on the text grid the
+quantum keeps, so a deck spends LaTeX's value. Both backends read it: the
+PDF walk around a trivlist and the web deck's `--topsep`. -/
+public def trivlistSkipFor (l : ListLineage) (tokens : Tokens) (size : Sp) (depth : Nat) :
+    SymGlue :=
+  match l with
+  | .beamer =>
+    let top := (beamerTopsepTable.lookup (beamerOptionOf size)).getD (trivlistSkipDefault size)
+    if depth == 0 then (tokens.find? trivlistSkipName).getD top
+    else ((listSkips .beamer size depth).map (·.topsep)).getD top
+  | .sizeFile | .web => trivlistSkip tokens size
+
+/-- Outside beamer's lineage the trivlist's space is the one every class
+reads (`trivlistSkip`), at every depth. -/
+public theorem trivlistSkipFor_trivlistSkip_exact (l : ListLineage) (tokens : Tokens)
+    (size : Sp) (depth : Nat) (h : l ≠ .beamer) :
+    trivlistSkipFor l tokens size depth = trivlistSkip tokens size := by
+  cases l <;> simp_all [trivlistSkipFor]
+
+/-- **The one resolving site for a float's space against the text**, at
+the list depth it stands in, with whether the paragraph gap stands on top
+of it: a declared `\floatsep` (`\tokens{ floatsep = ... }`) alone where the
+document sets one; in beamer's lineage, where a figure or a table is the
+`{center}` its environment opens (beamerbaselocalstructure.sty:550-559,
+`\par\nobreak\begin{center}`), the trivlist's space there
+(`trivlistSkipFor`) with the paragraph gap on top of it, as a trivlist
+spends it — measured under lualatex, a frame's `\parskip` moves the text
+after a figure by itself; elsewhere the rhythm's float unit
+(`floatSepDefault`). Both backends read it: the PDF float plan's text-side
+gaps and the web deck's `--floatsep`. -/
+public def floatSpaceFor (l : ListLineage) (tokens : Tokens) (size : Sp) (depth : Nat) :
+    SymGlue × Bool :=
+  match tokens.find? "floatsep", l with
+  | some g, _ => (g, false)
+  | none, .beamer => (trivlistSkipFor l tokens size depth, true)
+  | none, .sizeFile | none, .web => (floatSepDefault size, false)
+
 /-- The class's `\partopsep`, the value in force where no list level sets
 its own: size10.clo:215 `2pt plus 1pt minus 1pt`, size11.clo:215
 `3pt plus 1pt minus 1pt`, size12.clo:215 `3pt plus 2pt minus 2pt`, scaled
@@ -1211,13 +1284,6 @@ private def displaySkipsTable : Nat → DisplaySkips
   | 14 => ⟨ptsGlue 1400 300 700, ptsGlue 1400 300 700, ptsGlue 0 400 0, ptsGlue 700 400 300⟩
   | 17 => ⟨ptsGlue 1500 400 800, ptsGlue 1500 400 800, ptsGlue 0 400 0, ptsGlue 800 400 300⟩
   | _ => ⟨ptsGlue 1700 500 800, ptsGlue 1700 500 800, ptsGlue 0 500 0, ptsGlue 1000 500 400⟩
-
-/-- The class options a display's size file is read from, each with the
-`\normalsize` its file sets (`\@xipt` is 10.95 pt, `\@xivpt` 14.4 pt,
-`\@xviipt` 17.28 pt, `\@xxpt` 20.74 pt: ltplain's values). -/
-private def displayOptions : List (Nat × Sp) :=
-  [(8, Dim.pt 8), (9, Dim.pt 9), (10, Dim.pt 10), (11, Dim.pt 1095 / 100), (12, Dim.pt 12),
-   (14, Dim.pt 144 / 10), (17, Dim.pt 1728 / 100), (20, Dim.pt 2074 / 100)]
 
 /-- The `\normalsize` a class option's size file sets, for a body declared
 at that option's point size: `11pt` sets 10.95 pt (size11.clo's `\@xipt`),
@@ -3031,6 +3097,34 @@ flow step on a deck set its title 20% large, enough to re-flow a title
 line whose breaks the author declared. -/
 @[expose] public def titleSize (base : Sp) (slides : Bool) : Sp :=
   scaleStep base (if slides then "Large" else "LARGE")
+
+/-- The reach below its bar's top of moloch's section-page template's last
+line, the subsection title's strut (`\strut` before
+`\ifx\insertsubsectionhead\@empty`, beamerinnerthememoloch.dtx): its baseline
+one `\baselineskip` of the subsection title's `\large` under the bar's top,
+its depth three tenths of that below — where the content box beamer centres
+ends. The one value both backends read: the PDF's skip after the bar
+(`Layout.collectSection`) and the web section page's closing box, at the
+body's em (`HtmlDoc.themeCss`, `sectionPageStrut_between`). -/
+public def sectionPageStrut (size : Int) (factor : Nat := 1000) : Int :=
+  leadingFor (scaleStep size "large") factor * 13 / 10
+
+/-- **The web's em of the section-page strut is the page's, at every body**
+(`_between`): at the engine's leading the strut the PDF sets at a body of
+`size` stands within four sp under that body's share of the strut at the
+milli-em the web emits (`sectionPageStrut 1000`, an em of the section
+page's body) — the floors of the three steps, no more. -/
+public theorem sectionPageStrut_between (size : Int) :
+    size * sectionPageStrut 1000 / 1000 - 4 ≤ sectionPageStrut size ∧
+      sectionPageStrut size ≤ size * sectionPageStrut 1000 / 1000 := by
+  have hL : ((sizeScale.lookup "large").getD 1000 : Int) = 1200 := by decide
+  -- Spelled `Int`, not `Sp`, so `omega` reads the unfolded steps.
+  have hs : ∀ x : Int, sectionPageStrut x = x * 1200 / 1000 * 1200 / 1000 * 1000 / 1000 * 13 / 10 := by
+    intro x
+    simp only [sectionPageStrut, leadingFor, scaleStep, leadingMilli, hL]
+    rfl
+  rw [hs, hs]
+  omega
 
 /-- Adjacent steps of the scale, in order: what the scale theorems below
 quantify over. -/
@@ -6169,8 +6263,11 @@ paragraph the text before it left open (`inPar`), or right after an
 environment end that left `\@endpe` (`endPe`, `Block.leavesEndPe`) — and
 the last, a display closing the carrier with no break inside it, the break
 that does or does not follow the carrier (`parEnd`). lualatex sets a display
-across `\pause` and `\uncover` exactly where it sets it with neither. Every
-other block stands as it is. -/
+opening or closing a `\pause` or an `\uncover` where it sets it with neither,
+save one departure: where an `\uncover` group closes on a display before a
+paragraph break, beamer's carrier leaves an empty line after the display,
+which the page does not set — an overlay is no line of the page. Every other
+block stands as it is. -/
 public def carrierDisplays (inPar endPe parEnd : Bool) (blocks : Array Block) :
     Array Block :=
   carrierCloseDisplay parEnd (carrierOpenDisplay inPar endPe blocks)
@@ -7017,6 +7114,20 @@ the document's (`\captionsetup{position=…}`, keyed `""`), else `auto`. -/
 public def captionPosOf (decl : Array (String × CaptionPos)) (kind : FloatKind) : CaptionPos :=
   (((decl.find? (·.1 == kind.captionScope)) <|> (decl.find? (·.1 == ""))).map (·.2)).getD .auto
 
+/-- The position a float kind's captions are placed for in a class's
+lineage, where the document declares none: beamer's own `\caption`
+(`\beamer@makecaption`, beamerbaselocalstructure.sty:589-601) spends
+`\abovecaptionskip` above the caption and `\belowcaptionskip` below it
+whichever side of its object it stands, the kernel's `bottom` order;
+elsewhere the caption package's `auto` (`captionPosOf`). Both backends
+read it. -/
+public def captionPosFor (l : ListLineage) (decl : Array (String × CaptionPos))
+    (kind : FloatKind) : CaptionPos :=
+  match (decl.find? (·.1 == kind.captionScope)) <|> (decl.find? (·.1 == "")), l with
+  | some (_, p), _ => p
+  | none, .beamer => .bottom
+  | none, .sizeFile | none, .web => .auto
+
 /-- LaTeX's two caption skips (article.cls §\@makecaption, which sets
 `\abovecaptionskip` above a caption and `\belowcaptionskip` below it):
 `above` is the engine's `captionsep`, its default the rhythm quantum
@@ -7044,6 +7155,16 @@ public def CaptionSkip.default (s : CaptionSkip) (size : Sp) : SymGlue :=
   match s with
   | .above => captionSepDefault size
   | .below => {}
+
+/-- A skip's value where the document declares none, in a class's lineage:
+beamer sets `\abovecaptionskip` and `\belowcaptionskip` to 7 pt
+(beamerbaselocalstructure.sty:563-568) and spends one above a caption and
+the other below it in every figure and table (`\beamer@makecaption`);
+elsewhere `default`. -/
+public def CaptionSkip.defaultFor (l : ListLineage) (s : CaptionSkip) (size : Sp) : SymGlue :=
+  match l with
+  | .beamer => { width := { sp := Dim.pt 7 } }
+  | .sizeFile | .web => s.default size
 
 /-- **A caption's two skips, by the side it stands on and the side it is
 placed for**: the skip between the caption and its object, then the one on
@@ -8362,6 +8483,23 @@ its class size. The one resolving site both backends read a table's
 undeclared lengths from (`Layout.tableLength`, `HtmlDoc.tableLengthFallback`). -/
 public def Doc.preambleFace (doc : Doc) : PreambleFace :=
   PreambleFace.ofClass doc.docClass.record doc.page.fontSize
+
+/-- Where a deck's chrome may stand: a class whose record draws it, with no
+`\runningfoot` owning the foot. The one condition both backends read for
+beamer's frame furniture and text area — the PDF's footer and floor
+(`Layout.FrameArea`), the HTML deck's footer and stage. -/
+public def Doc.chromeAllowed (doc : Doc) : Bool :=
+  doc.docClass.record.chrome && doc.foot.isNone
+
+/-- Whether a frame stands its body in beamer's text area — the paper's top
+edge (moloch's headline is empty) to `\footheight` above its bottom edge:
+wherever the chrome may stand (`Doc.chromeAllowed`), every frame but the
+title page, whose template places its own furniture. The one decision both
+backends read: the PDF's floor and opening (`Layout.frameAreaFor`), the web
+deck's stage and opening (`HtmlDoc.frameOpensBody`); `frame_area_agree`
+states the agreement. -/
+public def frameInTextArea (chromeAllowed : Bool) (valign : VAlign) : Bool :=
+  chromeAllowed && !(valign matches .golden)
 
 /-- appendixnumberbeamer's numbering, exactly: split at the restart, the
 main part numbers `1, …, M` and the appendix `1, …, A`, each gapless — T3
@@ -17532,6 +17670,17 @@ with a small run inside it) or no size scope wraps it. The one resolving
 site: the page sets the paragraph's strut at this step, the HTML gives the
 paragraph element the step's class (`liftParaStep`). -/
 public def paraStep? (xs : Array Inline) : Option String := paraStepIn xs.toList
+
+/-- **The size step text a template inserts leads at**: the template sets
+the text in a group, so a size command inside it ends before the
+template's `\par` and the lines keep the template's own `\baselineskip` —
+lualatex leads a `\small` or a `\tiny` frame title at the frame title's
+skip (beamer's `\insertframetitle`). A step at or above the body's own, on
+the ladder `scale`, still leads its lines (`paraStep?`): TeX stands lines of
+type taller than the template's skip clear of each other by `\lineskip`,
+and the step's leading stands them clear too. -/
+public def insertedStep? (scale : List (String × Nat)) (xs : Array Inline) : Option String :=
+  (paraStep? xs).filter fun n => 1000 ≤ ((scale.find? (·.1 == n)).map (·.2)).getD 1000
 
 mutual
 

@@ -86,6 +86,7 @@ import Tests.BlockBody
 import Tests.BlockRegionFit
 import Tests.BlockHeaderClearance
 import Tests.BlockGeometry
+import Tests.FrameArea
 import Tests.BlockFillConditionals
 import Tests.PaletteTextEpoch
 import Tests.MintedSettings
@@ -499,6 +500,16 @@ def layoutSuiteChecks (ref : IO.Ref (List String)) : IO Unit := do
   frameBodyChecks ref oneFace
   frameContentEndChecks ref oneFace
   footlineChecks ref
+  Tests.FrameArea.checks ref
+  Tests.FrameArea.htmlChecks ref
+  Tests.FrameArea.footBoxChecks ref
+  Tests.FrameArea.frameNoteChecks ref
+  Tests.FrameArea.classAlignChecks ref
+  Tests.FrameArea.openingChecks ref
+  Tests.FrameArea.footWeightChecks ref
+  Tests.FrameArea.trivlistOpeningChecks ref
+  Tests.FrameArea.standoutAlignNoteChecks ref
+  Tests.FrameArea.floatLevelChecks ref
   topskipChecks ref oneFace
   labelBaselineChecks ref oneFace
   boundaryFitChecks ref oneFace

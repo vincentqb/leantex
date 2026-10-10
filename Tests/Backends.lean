@@ -1052,6 +1052,14 @@ theorem vdist_shares_agree (v : Ir.VAlign) :
     HtmlDoc.vdistShares v =
       ((Layout.VDist.of v).above, (Layout.VDist.of v).below) := rfl
 
+/-- The two backends read one frame-area decision: the web deck opens an
+untitled or standout frame's body at the stage's top exactly where the PDF
+stands that frame in beamer's text area — both projections of
+`Ir.frameInTextArea`, at every alignment and either chrome. -/
+theorem frame_area_agree (chrome : Bool) (v : Ir.VAlign) :
+    HtmlDoc.frameOpensBody chrome false v = (Layout.frameAreaFor chrome v == .text) := by
+  rw [HtmlDoc.frameOpensBody_projects, Layout.frameAreaFor_projects]
+
 /-- `{ifbackend}`: content addressed to a subset of the backends. One IR,
 elaborated once; each backend keeps or drops through `Ir.keepFor` at its own
 entry. The diagnostics, the `orphanFree` correspondence (the hypothesis of
@@ -1423,7 +1431,8 @@ def deckCssChecks (ref : IO.Ref (List String)) : IO Unit := do
   -- the theme's, judged in deckProgressChecks).
   t "a stepless deck ships no feature gate: the scroll is the motion"
     (!has deckPage "@supports (animation-timeline: view())" &&
-     !has deckPage "@supports not" && !has deckPage "position: sticky" &&
+     !has deckPage "@supports not" &&
+     !has deckPage ".slide-track > section.slide { position: sticky" &&
      !has deckPage "ltx-push" && !has deckPage "ltx-uncover" &&
      !has deckPage "class=\"slide-track\"" && !has deckPage "class=\"snap\"" &&
      (elemAttrsList (· == "section") #[] deckBody.toList).any fun (_, attrs) =>
@@ -2189,7 +2198,7 @@ def fontShipChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "font ship: an undeclared class takes the slot's kind"
     ((html.splitOn "--font-mono: \"ltx-mono\", \"ltx-body\", \"ltx-sans\", monospace;").length == 2)
   t "font ship: the body weight is the resolved face's, and nothing is faked"
-    ((html.splitOn "body { font-weight: 400; font-synthesis: small-caps; }").length == 2)
+    ((html.splitOn "body { font-weight: 400; --ltx-body-weight: 400; font-synthesis: small-caps; }").length == 2)
   -- A face only per-glyph fallback reaches ships under its own family and
   -- every slot stack appends it, so the browser's per-character walk can
   -- reach it — the CSS spelling of `FontSet.fallback`.

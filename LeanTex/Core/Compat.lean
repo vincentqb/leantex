@@ -5223,6 +5223,12 @@ moves a line" (tokens := false)
     if !st.inDef && !preamble && !st.inList && reachesLists st n then
       named "opens the lists after it, whose level macro leaves it be; a list here opens \
 with the space its level sets in the preamble, and only the trivlists after it read it"
+    -- A preamble `\topsep` stands until a list runs its `\@list⟨n⟩`, which
+    -- sets the length again: only a trivlist outside every list reads it.
+    else if !st.inDef && preamble && n == Ir.trivlistSkipName then
+      became what s!"\\tokens\{ {t} = {src} }, which a trivlist outside a list reads; \
+every list sets '\\topsep' again from its class's parameters" pos
+      synthAt s!"\\tokens\{ {t} = {src} }" pos
     else emit s!"\\tokens\{ {t} = {src} }"
   | _, true => emit own
   | .listIndent level, false =>
@@ -8526,13 +8532,6 @@ arithmetic truncates toward zero as TeX's '\\divide' does" pos
           (help := "divide outside '\\dimexpr': '(\\a - \\b) / 2' truncates as TeX does")
         return some (#[], k)
       match paramName args[0] with
-      | some "belowcaptionskip" =>
-        -- The caption's text side: in this engine that is the float
-        -- separation (`floatsep`), not a caption property; the LaTeX
-        -- default here is 0pt for the same reason.
-        say .N0102 "'\\belowcaptionskip' is not a knob here: the caption's \
-text side is the float separation ('\\tokens{ floatsep = ... }')" pos
-        return some (#[], k)
       | some n =>
         let target := (rawSrc args[0]).trimAscii.toString
         return some (← assignLength n args[1] s!"\\setlength\{{target}}" pos, k)

@@ -58,6 +58,7 @@ import Tests.BlockGeometry
 import Tests.BlockFillConditionals
 import Tests.BlockRegionFit
 import Tests.BlockHeaderClearance
+import Tests.FrameArea
 import Tests.PaletteTextEpoch
 import Tests.ThemePalette
 import Tests.ThemeCss
@@ -1075,6 +1076,41 @@ def reports : List Report := [
       "review of the second fix: the inheriting theme's model claimed a block option it does not load, so a fill declared on a text role no longer painted the alerted and example bars; a declared structure colour that reached no paint went unnamed while the shipped pages stayed byte-identical; and a guard testing for the theme's own setter read it as undefined; nine assertions fail on the second fix, and a premise check two builds apart now holds every modelled colour element, under both colour themes, to being named unused exactly when the shipped pages do not change"]
     state := .guarded "fa516a828a2a36549fc2a56f1e1cb4d138b3b934" .before .author },
   { id := "R120", date := "2026-10-08"
+    what := "Slide content was not centred in the slide's text area as the slide class centres it: standout frames, untitled frames and section pages stood against the slides margins on the page and inside a safe area in the web deck, a restored standout note pushed its frame down, a standout frame naming an alignment took it, and once centred dropped that alignment unnamed, the class options' top alignment was dropped, and the web deck centred a frame on its screen line boxes rather than its glyphs"
+    pins := [check% Tests.FrameArea.checks, check% Tests.FrameArea.htmlChecks,
+      check% Tests.FrameArea.classAlignChecks, check% Tests.FrameArea.openingChecks,
+      check% Tests.FrameArea.standoutAlignNoteChecks,
+      check% vdistChecks, check% faceCentreChecks, thm% Layout.frameFloor_exact,
+      thm% frame_area_agree, thm% Ir.sectionPageStrut_between]
+    accept := ["one assertion fails with the third review's note reverted onto the recorded commit: an alignment named with standout, before or after it, raises no note; five failed with the second review's fixes reverted onto 5a7802b8 — a standout frame naming an alignment, on the page and in the elaborated frame, the class options' top alignment twice, and the web deck's last-line trim — and the earlier guards with theirs reverted onto dbaea645",
+      "a presentation deck's quote frame stands its first line within a tenth of a point of its reference typesetting on the page, and its section pages within a quarter",
+      "a section page that follows a templated title page opens where every other section page does",
+      "a title with no bar opens in the web deck where its page sets it, within a tenth of a point",
+      "the web deck's standout frames in a presentation deck stand their first lines within a point and a fifth of their reference typesetting, where they stood up to five points high"]
+    state := .guarded "39d2c95c" .revert .author },
+  { id := "R121", date := "2026-10-08"
+    what := "Slide footers in the web deck did not set at the footline's own size, weight and place: a standout frame's restored note took the frame's enlarged type, every footline stood a safe area above the slide's edge, a light body's footline set in the family's regular face, and a frame whose content overran it pushed its footline off the slide"
+    pins := [check% Tests.FrameArea.htmlChecks, check% Tests.FrameArea.footBoxChecks,
+      check% Tests.FrameArea.footWeightChecks, .tier "htmlreader" "feature.chromium.pass"]
+    accept := ["two assertions fail with the second review's fixes reverted onto the recorded commit: the footline's weight under a light body, read by a cascade over the shipped stylesheet, and its place on an overrun stage; the earlier eight footline assertions failed with their fixes reverted onto dbaea645",
+      "a presentation deck's web footline notes and frame numbers stand within three hundredths of a point of its reference typesetting's, its quote frame's note at the footline's own size and colour",
+      "every web footline's text in both presentation decks sets in the body's light face, as the page and the reference typesetting do, its formulas in the math face",
+      "an overrunning frame's web footline stays on the slide's edge, within a hundredth of a point of its reference",
+      "both presentation decks print each frame on sheets that hold its content, never a footline alone"]
+    state := .guarded "5a7802b8" .revert .author },
+  { id := "R122", date := "2026-10-08"
+    what := "The space between a slide's title bar and its first line differed from the slide class's: the web deck padded the bar below its line box, untitled frames paid a paragraph gap at their top, a first line larger than the body stood too close to the opening, a first line in the web deck stood on its screen line box, an opening list lost its top separation there, an opening image stood flush on the opening on the page, a frame opening on a center, a flush environment or a figure spent the rhythm's quantum or a float's gap on the page and nothing in the web deck, a trivlist inside a list spent the top level's topsep, a figure inside a list item read the top level's float space in the web deck, and a figure's caption the rhythm's quantum where beamer spends 7pt"
+    pins := [check% Tests.FrameArea.htmlChecks, check% Tests.FrameArea.checks,
+      check% Tests.FrameArea.openingChecks, check% Tests.FrameArea.trivlistOpeningChecks,
+      check% Tests.FrameArea.floatLevelChecks, check% vdistChecks]
+    accept := ["four assertions fail with the fifth review's fixes reverted onto the recorded commit: a figure in a list item reading its own level's float space in the web deck, a declared topsep reaching the deck as the stage's share with its note, each level's spaces on selectors the cascade reads, and beamer's caption order; seven failed with the fourth review's fixes reverted onto f516d0dc — a center inside a list item on the page, a captioned figure's skips on the page, the class option's size file's topsep, and in the web deck the description's strut, the root's and each list level's topsep as the stage's share and the caption skips; seven failed with the third review's fixes reverted onto 39d2c95c — the frame's trivlist space, a trivlist's and a figure's opening on the page and their space between paragraphs, their opening space and first-line strut in the web deck, and the deck's declared spaces — three with the second review's reverted onto 5a7802b8 — the web deck's first-line strut and opening list space, and the page's opening image — and the bar's strut box, every frame's body opening and a bar-less title's top margin with theirs reverted onto dbaea645",
+      "a presentation deck's web title bars match its shipped pages' height, and on the page a short frame's first line stands within a fifth of a point of its reference typesetting",
+      "an untitled frame's opening paragraph and opening list stand their first lines within a tenth of a point of their reference typesetting on the page and in the web deck, and an opening image within a sixth on the page",
+      "an untitled frame opening on a center, a flushleft, a flushright, a figure, a centred image or a description stands its first line or image within a tenth of a point of its reference typesetting on the page, and a top-aligned one its lines within a tenth in the web deck too, its images a point high there",
+      "on the page a center inside a first-level list item and the lines after it stand within a quarter of a point of their reference typesetting, a captioned figure's next line within an eighth of its distance from the caption, and a 9pt deck's center within a third",
+      "in the web deck a figure inside a list item stands within three points of its reference typesetting, where it stood eight low"]
+    state := .guarded "445f6518" .revert .author },
+  { id := "R123", date := "2026-10-08"
     what := "Inter-line spacing came out wider than the reference engine's: a paragraph in a named size stood on the body's leading, the larger sizes and code listings at six fifths of their type, and a slide's lines and gaps on screen at the screen's prose rhythm instead of the page's"
     pins := [check% Tests.LineRhythm.stepLeadingChecks, check% Tests.LineRhythm.htmlStepChecks,
       check% Tests.LineRhythm.htmlGapChecks, check% Tests.LineRhythm.listingPitchChecks,
@@ -1094,11 +1130,11 @@ def reports : List Report := [
       Pin.tier "rhythm" "slides-steps/step-small.within"]
     accept := ["a ten-point deck rebuilt in both artifacts beside the reference engine's: body, small-size and code lines at its line pitch",
       "the same deck's slides measured in a browser: line pitch and paragraph gaps at the page's on the stage, and a code slide that fits its page fits its stage",
-      "a heading, a document title and a frame title set in a named size, wrapped across lines: their lines in the size's own proportion to their type, none solid",
+      "a heading, a document title and a frame title set in a named size, wrapped across lines: their lines in the size's own proportion to their type, none solid; a frame title set in a smaller size keeps the title's own leading, as the reference engine's group around the inserted title does",
       "a venue style's own size ladder: each declared step's lines at the leading it declares, beside the reference engine's",
       "the same deck's slides with pauses measured in a browser: every paragraph gap the declared one through each step, as on the page"]
     state := .guarded "fa516a828a2a36549fc2a56f1e1cb4d138b3b934" .before .author },
-  { id := "R121", date := "2026-10-08"
+  { id := "R124", date := "2026-10-08"
     what := "A slide of running prose read worse than the reference engine's: justified and hyphenated where the slide class sets its text ragged right"
     pins := [check% Tests.LineRhythm.raggedFrameChecks,
       check% Tests.LineRhythm.centredRuntChecks]
