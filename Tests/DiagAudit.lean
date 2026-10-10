@@ -175,7 +175,7 @@ def moduleItem (path : String) : String :=
 
 /-- The registries: each names the blocks it pins by writing them, so a
 mention there is never the suite running one. -/
-def registryFiles : List String := ["Tests/DiagAudit.lean", "Tests/Reports.lean"]
+def registryFiles : List String := ["Tests/DiagAudit.lean", "Tests/Reports.lean", "Tests/Premises.lean"]
 
 /-- The suite's own code, which a check pin must be run from: the driver and
 every suite module but the registries, which name each pinned block once by

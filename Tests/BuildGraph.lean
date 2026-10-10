@@ -65,13 +65,14 @@ def privateReads (graph : Std.HashMap String Header) (h : Header) : Array String
 
 /-- The files outside the module system, each small and imported by no
 module: the suite's root, which gathers every check; `Tests.DiagAudit`,
-which defines the `thm%`/`check%` pin syntax, and `Tests.Reports`, which
-uses it; `Tests.PdfReadRepresentability`, whose proofs decide over the
-UTF-8 bytes of string literals, a body core does not expose to modules; and
-`Tests.SvgBrowser`, outside the suite, which reads the scoreboard library. -/
+which defines the `thm%`/`check%` pin syntax, and `Tests.Reports` and
+`Tests.Premises`, which use it; `Tests.PdfReadRepresentability`, whose
+proofs decide over the UTF-8 bytes of string literals, a body core does not
+expose to modules; and `Tests.SvgBrowser`, outside the suite, which reads
+the scoreboard library. -/
 def legacyFiles : List String :=
-  ["Tests", "Tests.DiagAudit", "Tests.PdfReadRepresentability", "Tests.Reports",
-   "Tests.SvgBrowser"]
+  ["Tests", "Tests.DiagAudit", "Tests.PdfReadRepresentability", "Tests.Premises",
+   "Tests.Reports", "Tests.SvgBrowser"]
 
 /-- A file at least this long takes tens of seconds to elaborate (Layout,
 about 21,000 lines: 130 s; Picture, about 6,000: 27 s), so what its build
