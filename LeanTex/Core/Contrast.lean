@@ -218,9 +218,8 @@ public def deltaEOkSq (c c' : Color) : Nat :=
 public theorem deltaEOkSq_self (c : Color) : deltaEOkSq c c = 0 := by
   simp [deltaEOkSq]
 
-/-- One just-noticeable difference at `labOf`'s scale: ΔEOK 0.02 (CSS
-Color 4 §14.2.1). -/
-public def okJnd : Nat := 2 * 10 ^ 16
+/-- One just-noticeable difference at `labOf`'s scale (`Oklab.okJnd`). -/
+public def okJnd : Nat := Oklab.okJnd
 
 /-- How far a repair may move a declared colour, in JNDs: four, ΔEOK 0.08 —
 a difference a reader sees only beside the original, with the colour still
@@ -1696,9 +1695,9 @@ public def paletteContract (pal : Palette) : Bool :=
 
 /-- Every listing ink of every shipped style is text-AA on every listing
 ground of a bundle: the page, its standout inversion, and its title page
-when declared. The shared painter adapts style colours on that ground;
-declared colours are judged by `usesBlock`, through the usual bounded
-realization policy. -/
+when declared. On its page a palette role ships as the bundle declares it,
+which the bundle's own contract holds to AA; on every other ground the
+shared painter adapts it, as it does a style's colour. -/
 public def listingContract (pal : Palette) : Bool :=
   let d := Design.ofPalette pal
   ListingStyle.all.all fun style =>

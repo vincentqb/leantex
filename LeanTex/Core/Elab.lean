@@ -9593,6 +9593,7 @@ private def listingBlock (ctx : Ctx) (env s : String) (pos : Pos) : EM Block := 
   let mut numbers := false
   let mut language : Option Ir.ListingLang := none
   let mut style := Ir.ListingStyle.default
+  let mut styleDeclared := false
   let mut fontSize := inherited
   let mut tabSize := base.tabSize
   let mut breakLines := base.breakLines
@@ -9617,13 +9618,12 @@ listing carries no language"
     let bare := entry.trimAscii.toString
     if bare.isEmpty then
       continue
-    -- `formatcom` whatever its value spells, an empty one included.
-    if (Decl.splitEntry entry).map (·.1) == some "formatcom" || bare == "formatcom" ||
-        bare.startsWith "formatcom=" then
+    -- minted's `formatcom` whatever its value spells, an empty one included.
+    if env == "minted" && ((Decl.splitEntry entry).map (·.1) == some "formatcom" ||
+        bare == "formatcom" || bare.startsWith "formatcom=") then
       warnOnce ctx "lstopt:formatcom" .N0102
         "minted's formatcom runs TeX on the Pygments formatter's macros, which only a TeX \
-engine runs; this listing and every later one it reaches paint their tokens by their \
-code roles" pos
+engine runs; the listing's tokens paint by their code roles" pos
         (help := "set a role's colour in the palette by its name: codeink, codekeyword, \
 codename, codeliteral, codecomment or codeerror")
       continue
@@ -9646,7 +9646,9 @@ does not draw; lines keep no numbers" "numbers=left draws them"
       let v := listingVal v
       if env == "minted" then
         match Ir.ListingStyle.ofName? v with
-        | some selected => style := selected
+        | some selected =>
+          style := selected
+          styleDeclared := true
         | none =>
           unhonoured
             s!"listing style '{v}' is not supported; the current style stands"
@@ -9747,6 +9749,14 @@ size commands; the current style stands" none
     | some language => ListingHighlight.tokenize language (Ir.verbatimLines content)
     | none => (spec.langToken.bind fun language =>
         ListingReply.lookup ctx.listingReplies language content).getD #[]
+  -- premise: codeRoleChecks — two builds that differ only by the declared style ship byte-identical pages under a palette that gives every code role its colour, and different pages under one that leaves a role to the style
+  if styleDeclared then
+    let pal := (← get).scope.palette.current.getD ctx.palette
+    if !(ListingHighlight.Role.all.any (CodeColor.styleReads pal)) then
+      warnOnce ctx ("lstopt:style:" ++ style.name) .W0387
+        s!"minted's style '{style.name}' was read and had no effect: the palette names \
+or derives a colour for every code role" pos
+        (help := "\\allow{W0387} accepts the skip")
   return .verbatim none content { spec with highlight }
 
 /-- `(t)`: amsmath's `\tagform@` (`\maketag@@@{(\ignorespaces#1\unskip…)}`)

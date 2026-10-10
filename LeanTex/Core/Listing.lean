@@ -121,6 +121,13 @@ public def brush (pal : Palette) (ground covered : Option Color) (style : Listin
     (k : Kind) : Brush :=
   (roleBrushes pal ground covered style).get k.role
 
+/-- **Two types of one role ship one brush**, the value both backends paint
+from (`brushes`, `paintLine`): one set of weights, one ink, one key. -/
+public theorem brush_role_exact (pal : Palette) (ground covered : Option Color)
+    (style : ListingStyle) (k k' : Kind) (h : k.role = k'.role) :
+    brush pal ground covered style k = brush pal ground covered style k' := by
+  simp only [brush, h]
+
 /-- A scalar that lays down no ink: white space, the no-break space a
 listing's display spelling sets where its spaces must not break included. -/
 public def blank (c : Char) : Bool := c.isWhitespace || c == '\u00a0'
@@ -474,17 +481,16 @@ public theorem paintRun_text (r : Run) : Conserves plainText (paintRun r) := fun
   simp only [paintRun]
   split <;> split <;> split <;> split <;> simp [plainText, plainTextOne, plainTextList]
 
-/-- Every colour a listing derives or takes from its style is held to text
-AA on its ground, even where the surrounding frame uses the lower
-large-text threshold. A colour the document declares is the document's:
-the contrast report judges it, through the bounded realization policy. -/
+/-- Every colour a listing ships on a ground is held to text AA there, even
+where the surrounding frame uses the lower large-text threshold: every
+role's, as it ships. -/
 public def contract (pal : Palette) (ground : Option Color) (style : ListingStyle := .default) :
     Bool :=
   let d := Design.ofPalette pal
   let bg := ground.getD d.bg
   let paints := resolve pal bg style
   Role.all.all fun r => match paints.get r with
-    | some p => p.declared || decide (Contrast.aaText ≤ Contrast.contrastMilli (shipped d bg p) bg)
+    | some p => decide (Contrast.aaText ≤ Contrast.contrastMilli (shipped d bg p) bg)
     | none => true
 
 end LeanTex.Core.Listing

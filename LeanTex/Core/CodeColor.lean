@@ -13,10 +13,10 @@ one site, `resolve`, for both backends. A role's own palette key
 colour from the palette's roles by one rule, so every palette has code
 colours of its own:
 
-* the error role is the palette's `alert`;
-* the comment role is the palette's `muted`, where it is not the ink
-  itself; else the ink mixed 70:30 into the page, the muted step every
-  shipped bundle declares;
+* the error role is the palette's `alert`, where it is not the ink;
+* the comment role is the palette's `muted`, where it is neither the ink
+  nor the alert; else the ink mixed 70:30 into the page, the muted step
+  every shipped bundle declares;
 * the literal role is the palette's `example`, where it is neither the ink
   nor the alert; else one more hue, the middle of the widest arc of the hue
   circle the ink's and the alert's hues leave open — the hue farthest from
@@ -68,15 +68,14 @@ public def roleStyleKind : Role → Option Kind
 public def styleColor (style : ListingStyle) (r : Role) : Option Color :=
   (roleStyleKind r).bind fun k => ((table style).resolvedOf k).color.map (·.1)
 
-/-- One just-noticeable difference, ΔEOK 0.02 (CSS Color 4 §14.2.1: "one
-JND is an OkLCh difference of 0.02"), at `Oklab.labOf`'s 10¹⁸ scale. A
-colour nearer the neutral axis than one JND shows no hue. -/
-public def jnd : Int := 2 * 10 ^ 16
+/-- One just-noticeable difference (`Oklab.okJnd`): a colour nearer the
+neutral axis than one JND shows no hue. -/
+private def jnd : Int := Oklab.okJnd
 
 /-- A derived hue's chroma: five JNDs off the neutral axis. A declared
 reading of "plainly a hue beside the ink and the comment's grey, and
 quieter than an accent", not a measurement. -/
-public def codeChroma : Int := 5 * jnd
+public def codeChroma : Int := 5 * Oklab.okJnd
 
 /-- The contrast a derived hue's tone clears on its ground, in
 `contrastMilli`'s thousandths: Material 3's accent tone, 40, on its
@@ -129,10 +128,10 @@ private def bisect (pass : Int → Bool) : Nat → Int → Int → Int
     else if pass mid then bisect pass n f mid else bisect pass n mid p
 
 /-- The lightness nearest `from_` at which `pass` holds, on either side, to
-2⁻²⁰ of the axis: a thousandth of an 8-bit channel step. -/
+2⁻¹⁴ of the axis: a sixtieth of an 8-bit channel step. -/
 private def nearestPass (pass : Int → Bool) (from_ : Int) : Option Int :=
-  let down := if pass 0 then some (bisect pass 20 from_ 0) else none
-  let up := if pass (10 ^ 18) then some (bisect pass 20 from_ (10 ^ 18)) else none
+  let down := if pass 0 then some (bisect pass 14 from_ 0) else none
+  let up := if pass (10 ^ 18) then some (bisect pass 14 from_ (10 ^ 18)) else none
   match down, up with
   | some d, some u => some (if from_ - d ≤ u - from_ then d else u)
   | some d, none => some d
@@ -179,41 +178,146 @@ public inductive Derived where
   | none
   deriving Repr, BEq
 
-/-- The rule, on the ground a listing stands on: every role derived at
-once, each shared value computed once. -/
-public def derive (pal : Palette) (ground : Color) : RoleTable Derived :=
+/-- The palette roles the rule reads, each passed over where it is another
+role's colour already: an alert that is the ink, an example that is the
+ink or the alert, a muted step that is the alert. -/
+private structure Reads where
+  fg : Option Color
+  alert : Option Color
+  ex : Option Color
+  muted : Option Color
+
+private def reads (pal : Palette) : Reads :=
   let fg := pal.find? "fg"
-  let alert := pal.find? "alert"
-  let bg := (Design.ofPalette pal).bg
-  let chroma := match alert.bind hue? with
-    | some u => min codeChroma (norm u)
-    | none => codeChroma
-  let inkHue := if jnd ≤ chroma then fg.bind hue? else none
-  let hues := inkHue.toList ++ (alert.bind hue?).toList
-  let ex := (pal.find? "example").filter fun e => some e != fg && some e != alert
-  let literal : Derived × Option (Int × Int) := match ex with
-    | some e => (.role "example", hue? e)
-    | none =>
-      match (if jnd ≤ chroma then openHue hues else none).bind fun u =>
-          (hueTone ground (scaled chroma u)).map (·, u) with
-      | some (c, u) => (.color c, some u)
-      | none => (.none, none)
-  let family : Derived := match fg with
-    | none => .none
-    | some _ =>
-      match (inkHue.filter fun u => literal.2.all (clear u)).bind
-          (fun u => hueTone ground (scaled chroma u)) with
-      | some c => .color c
-      | none => .ink
-  let comment : Derived := match pal.find? "muted", fg with
-    | some m, some f => if m == f then .color (f.mix 70 bg) else .role "muted"
-    | some _, none => .role "muted"
-    | none, some f => .color (f.mix 70 bg)
-    | none, none => .none
-  { ink := .ink, keyword := family, name := family, literal := literal.1, comment
-    error := match alert with
-      | some _ => .role "alert"
-      | none => .none }
+  let alert := (pal.find? "alert").filter fun a => some a != fg
+  { fg, alert
+    ex := (pal.find? "example").filter fun e => some e != fg && some e != alert
+    muted := (pal.find? "muted").filter fun m => some m != alert }
+
+/-- The hues the code already sets in: the ink's where it shows one, and
+the alert's. -/
+private def Reads.hues (p : Reads) : List (Int × Int) :=
+  (p.fg.bind hue?).toList ++ (p.alert.bind hue?).toList
+
+/-- Whether the rule leaves role `r` open: the palette gives it nothing to
+read, whatever the ground. Only then does a listing style colour it. -/
+public def opens (pal : Palette) (r : Role) : Bool :=
+  let p := reads pal
+  match r with
+  | .ink => false
+  | .keyword | .name => p.fg.isNone
+  | .literal => p.ex.isNone && p.hues.isEmpty
+  | .comment => p.muted.isNone && p.fg.isNone
+  | .error => p.alert.isNone
+
+private theorem openHue_some (u : Int × Int) (us : List (Int × Int)) :
+    (openHue (u :: us)).isSome := by
+  cases us with
+  | nil => rfl
+  | cons w ws => simp only [openHue]; split <;> rfl
+
+/-- A derived hue's chroma under the palette: `codeChroma`, never louder
+than the alert. -/
+private def Reads.chroma (p : Reads) : Int :=
+  match p.alert.bind hue? with
+  | some u => min codeChroma (norm u)
+  | none => codeChroma
+
+/-- The literal role, and the hue it sets in where it has one. -/
+private def literalOf (p : Reads) (ground : Color) : Derived × Option (Int × Int) :=
+  match p.ex with
+  | some e => (.role "example", hue? e)
+  | none =>
+    match openHue p.hues with
+    | some u => ((hueTone ground (scaled p.chroma u)).elim .ink .color, some u)
+    | none => (.none, none)
+
+/-- Keywords and names: a tone of the ink's own hue where it stands clear
+of both the literal's hue and the alert's, else the ink. -/
+private def familyOf (p : Reads) (ground : Color) (literal : Option (Int × Int)) : Derived :=
+  match p.fg with
+  | none => .none
+  | some _ =>
+    match ((p.fg.bind hue?).filter fun u => literal.all (clear u) &&
+          (p.alert.bind hue?).all (clear u)).bind
+        (fun u => hueTone ground (scaled p.chroma u)) with
+    | some c => .color c
+    | none => .ink
+
+private def commentOf (p : Reads) (page : Color) : Derived :=
+  match p.muted, p.fg with
+  | some m, some f => if m == f then .color (f.mix 70 page) else .role "muted"
+  | some _, none => .role "muted"
+  | none, some f => .color (f.mix 70 page)
+  | none, none => .none
+
+private def errorOf (p : Reads) : Derived :=
+  match p.alert with
+  | some _ => .role "alert"
+  | none => .none
+
+private theorem familyOf_none {p : Reads} {ground : Color} {l : Option (Int × Int)}
+    (h : familyOf p ground l = .none) : p.fg = none := by
+  unfold familyOf at h
+  split at h
+  · assumption
+  · split at h <;> simp at h
+
+private theorem literalOf_none {p : Reads} {ground : Color}
+    (h : (literalOf p ground).1 = .none) : p.ex = none ∧ p.hues = [] := by
+  unfold literalOf at h
+  split at h
+  · simp at h
+  · rename_i he
+    refine ⟨he, ?_⟩
+    cases hh : p.hues with
+    | nil => rfl
+    | cons u us =>
+      have hs := openHue_some u us
+      rw [hh] at h
+      split at h
+      · rename_i v _
+        cases hc : hueTone ground (scaled p.chroma v) <;> simp [hc] at h
+      · rename_i hn; rw [hn] at hs; simp at hs
+
+private theorem commentOf_none {p : Reads} {page : Color}
+    (h : commentOf p page = .none) : p.muted = none ∧ p.fg = none := by
+  unfold commentOf at h
+  split at h
+  · split at h <;> simp at h
+  · simp at h
+  · simp at h
+  · rename_i hm hf; exact ⟨hm, hf⟩
+
+private theorem errorOf_none {p : Reads} (h : errorOf p = .none) : p.alert = none := by
+  unfold errorOf at h
+  split at h
+  · simp at h
+  · assumption
+
+/-- The rule, for a palette whose page is `page`, on the ground a listing
+stands on: every role derived at once, each shared value computed once. -/
+public def derive (pal : Palette) (page ground : Color) : RoleTable Derived :=
+  let p := reads pal
+  let literal := literalOf p ground
+  let family := familyOf p ground literal.2
+  { ink := .ink, keyword := family, name := family, literal := literal.1
+    comment := commentOf p page, error := errorOf p }
+
+/-- **The rule leaves a role to the style only where it `opens`**: on every
+ground, a role the palette gives the rule something to read for derives a
+colour, or the ink. -/
+public theorem derive_none_opens (pal : Palette) (page ground : Color) (r : Role)
+    (h : (derive pal page ground).get r = .none) : opens pal r = true := by
+  cases r <;> simp only [derive, RoleTable.get] at h
+  · simp at h
+  · simp [opens, familyOf_none h]
+  · simp [opens, familyOf_none h]
+  · obtain ⟨he, hh⟩ := literalOf_none h
+    simp [opens, he, hh]
+  · obtain ⟨hm, hf⟩ := commentOf_none h
+    simp [opens, hm, hf]
+  · simp [opens, errorOf_none h]
 
 /-- **The one resolving site for the code roles.** A role's own key first,
 shipped as the document declared it; then the rule (`derive`); then the
@@ -224,8 +328,8 @@ chose, under its key, judged by the contrast report as its prose uses are
 own key, as a colour the document did not choose there. -/
 public def resolve (pal : Palette) (ground : Color) (style : ListingStyle) :
     RoleTable (Option Paint) :=
-  let derived := derive pal ground
   let page := (Design.ofPalette pal).bg
+  let derived := derive pal page ground
   RoleTable.ofFn fun r =>
     match pal.find? r.key with
     | some c => some { color := c, role := some r.key, declared := true }
@@ -283,5 +387,32 @@ public theorem resolve_derived_exact (pal : Palette) (ground : Color) (style : L
     · simp only [Option.map_eq_some_iff] at h
       obtain ⟨_, _, rfl⟩ := h
       rfl
+
+/-- Whether the listing style gives role `r` its colour under the palette:
+no key of the role's own, a type the style colours the role by, and
+nothing for the rule to read. A style no role reads changes no page the
+palette sets. -/
+public def styleReads (pal : Palette) (r : Role) : Bool :=
+  (pal.find? r.key).isNone && (roleStyleKind r).isSome && opens pal r
+
+/-- **A role no style reads resolves alike under every style**, on every
+ground: the style decides a colour only where `styleReads` says it does,
+so the inert-style diagnostic judges exactly what both artifacts ship. -/
+public theorem resolve_style_exact (pal : Palette) (ground : Color) (style style' : ListingStyle)
+    (r : Role) (h : styleReads pal r = false) :
+    (resolve pal ground style).get r = (resolve pal ground style').get r := by
+  simp only [resolve, RoleTable.get_ofFn]
+  split
+  · rfl
+  · rename_i hk
+    split
+    · rfl
+    · rfl
+    · rfl
+    · rename_i hd
+      have ho := derive_none_opens pal _ ground r hd
+      cases hr : roleStyleKind r with
+      | none => simp [styleColor, hr]
+      | some _ => simp [styleReads, hk, hr, ho] at h
 
 end LeanTex.Core.CodeColor

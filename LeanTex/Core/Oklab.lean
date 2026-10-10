@@ -259,6 +259,10 @@ theorems below never need — scaling of the square by `f²` is scaling of
 chroma by `f`. -/
 public def chromaSq (l : Lab) : Int := l.a * l.a + l.b * l.b
 
+/-- One just-noticeable difference at `labOf`'s scale: ΔEOK 0.02 (CSS
+Color 4 §14.2.1, "one JND is an OkLCh difference of 0.02"). -/
+public def okJnd : Nat := 2 * 10 ^ 16
+
 /-- An exact grey has no chroma: both `(a, b)` coordinates are exactly 0.
 Equal channels read one table entry, the normalised M1 rows (each exactly
 10¹⁰) make l = m = s, and the normalised a/b rows of M2 (each exactly 0)

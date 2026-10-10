@@ -89,7 +89,7 @@ public structure RoleTable (α : Type) where
   comment : α
   error : α
 
-public def RoleTable.get {α : Type} (t : RoleTable α) : Role → α
+@[expose] public def RoleTable.get {α : Type} (t : RoleTable α) : Role → α
   | .ink => t.ink
   | .keyword => t.keyword
   | .name => t.name

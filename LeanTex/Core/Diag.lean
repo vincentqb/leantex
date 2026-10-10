@@ -628,8 +628,8 @@ public def DiagCode.retired : List (String × Option String) :=
    -- The withdrawal note named no loss beside the subset's refusals; the
    -- picture's one line carries them now, a wider loss than the note's.
    ("N0419", some "W0419"),
-   -- A listing token paints in its code role, a colour and weights, never
-   -- a style's frame or background: the loss this named cannot occur.
+   -- Retired by decision: a listing token paints in its code role, a
+   -- colour and weights, never a style's frame or background.
    ("W0397", none)]
 
 /-- **A code renumbered for its class, whose successor names exactly its

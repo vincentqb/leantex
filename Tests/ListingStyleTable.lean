@@ -395,5 +395,39 @@ def codeRoleChecks (ref : IO.Ref (List String)) : IO Unit := do
     ((ds.filter fun d => d.code == "N0102" && !d.demoted).size == 1 &&
       (ds.filter fun d => d.code == "N0102").size == 2 &&
       ds.all fun d => d.code != "W0110")
+  let (_, lstDs) := elabStr (dvDoc "\\usepackage{listings}"
+    "\\begin{lstlisting}[formatcom=\\itshape]\nx\n\\end{lstlisting}")
+  t "code roles: formatcom is minted's: a listings key of that name stays unknown"
+    (lstDs.any (·.code == "W0110") && lstDs.all (·.code != "N0102"))
+  -- The style is read only for a role the palette leaves open: two builds
+  -- differing only by the declared style ship one page exactly when the
+  -- palette answers every role, and the style is then named as inert.
+  let shipped (doc : Ir.Doc) := (glyphPaint (layoutOf fonts doc), htmlLines doc)
+  let open_ := "\\palette{fg=#202440,bg=#FFFFFF,muted=#5A6068,example=#1A6A3A}"
+  for (label, decl, answered) in [("an invented palette", palette, true),
+      ("a palette with no alert", open_, false)] do
+    let (friendlyDoc, friendlyDs) := markerDoc (decl ++ "\\setminted{style=friendly}")
+    let (defaultDoc, defaultDs) := markerDoc (decl ++ "\\setminted{style=default}")
+    let inert := fun (ds : Array Diag) (name : String) =>
+      ds.filter fun d => d.code == "W0387" && d.subject == some s!"lstopt:style:{name}"
+    t s!"code roles, {label}: the declared style changes the page exactly when a role is left to it"
+      ((shipped friendlyDoc == shipped defaultDoc) == answered)
+    t s!"code roles, {label}: the style is named as inert exactly when it changes no page"
+      ((inert friendlyDs "friendly").size == (if answered then 2 else 0) &&
+        (inert defaultDs "default").size == (if answered then 2 else 0) &&
+        (inert friendlyDs "friendly").all fun d => d.severity == .warning || d.demoted)
+  let redInk := Ir.Color.ofHtml 0x4A 0x14 0x18
+  t "code roles: an ink whose hue is the alert's own family leaves keywords in the ink"
+    (let r := roles (pal [("fg", redInk), ("bg", white), ("alert", Ir.Color.ofHtml 0xC0 0x10 0x1A)])
+     hueCosMilli redInk (Ir.Color.ofHtml 0xC0 0x10 0x1A) ≥ 500 && r.get .keyword == none &&
+       r.get .name == none)
+  let twin := pal [("fg", ink), ("bg", white), ("alert", ink), ("muted", muted)]
+  t "code roles: an alert that is the ink leaves the error role to the style"
+    ((roles twin).get .error ==
+      (CodeColor.styleColor .default .error).map fun c =>
+        { color := c, role := some "codeerror", declared := false })
+  t "code roles: a muted step that is the alert quiets comments to the ink 70:30 into the page"
+    ((roles (invented.declare "muted" alert)).get .comment ==
+      some { color := ink.mix 70 white, role := some "codecomment", declared := false })
 
 end Tests

@@ -133,12 +133,18 @@ Highlighted code sets each token in one of six roles: the ink, keywords,
 names, literals, comments, and errors — what must not ship, such as a proof
 hole or an unimplemented branch. A palette names a role's colour directly
 (`\palette{ codeerror = #RRGGBB }`, and likewise `codeink`, `codekeyword`,
-`codename`, `codeliteral`, `codecomment`). Otherwise the role follows the
-palette: errors take `alert`, comments `muted`, literals `example` (or one
-more hue, set apart from the ink and the alert), and keywords and names a
-tone of the ink's own hue. Without a palette, code takes the colours of the
-minted style. minted's `formatcom` runs TeX on the highlighter's own macros
-and has an effect only under a TeX engine.
+`codename`, `codeliteral`, `codecomment`); the per-type keys `codestring`,
+`codenumber`, `codebuiltin` and `codeoperator` are no longer read. Otherwise
+the role follows the palette: errors take `alert`, comments `muted`,
+literals `example` (or one more hue, set apart from the ink and the alert),
+and keywords and names a tone of the ink's own hue, or the ink itself where
+it has no hue of its own, keywords then set apart by weight alone. A role
+the palette leaves open takes the minted style's colour for that role.
+Every colour the engine derives or adapts stays legible on the ground the
+listing stands on; a colour the document declares ships as declared, and
+the contrast report names it if it reads too faintly. minted's
+`formatcom` runs TeX on the highlighter's own macros and has an effect only
+under a TeX engine.
 
 For image support on macOS:
 

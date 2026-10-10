@@ -980,10 +980,9 @@ def reports : List Report := [
       "unsupported callback content remains diagnosed"]
     state := .guarded "45c57eb94d1db0b99054f0f50932e6d9cfde6fef" .before .author },
   { id := "R110", date := "2026-10-08"
-    what := "A proof hole in a highlighted listing shipped as a bold keyword instead of its highlighting style's error red, and every token type the style styles beyond a few coarse classes lost its colour and weight, in both artifacts"
+    what := "A proof hole in a highlighted listing shipped as a bold keyword instead of its highlighting style's error red, and every token type the style styles beyond a few coarse classes lost its colour and weight, in both artifacts; decided since: a token paints in its code role, so the types of one role share its colour and weights, a hole is the error role's, and the token-box diagnostic is retired"
     pins := [check% listingStyleTableChecks, check% shellReplyChecks,
-      thm% Listing.paint_declared_mem, thm% Listing.paint_role_exact,
-      thm% Listing.token_inline_source_exact]
+      thm% Listing.paint_declared_mem, thm% Listing.token_inline_source_exact]
     accept := ["a presentation deck's proof-hole slide against its lualatex build, in PDF and HTML: the hole sets in the style's red at regular weight and no other page changes",
       "one hundred thirty-seven guard assertions fail with the fix reverted: the hole lexed as a keyword, weights composed as the resolved style rather than the lualatex chain, style colours beyond seven classes dropped, and the token-box diagnostic absent",
       "eight assertions fail with the hole lexing alone reverted: the hole as a bold keyword in both styles and both artifacts",
@@ -1336,10 +1335,12 @@ def reports : List Report := [
   { id := "R143", date := "2026-10-10"
     what := "In highlighted listings a proof hole and a raised not-implemented error shipped in two colours, though a deck's theme gives both its one alert colour: every token type took its highlighting style's own colour and weight, no palette colour reached a listing, and the theme's redefinitions of the style's macros run only under a TeX engine"
     pins := [check% codeRoleChecks, check% listingStyleTableChecks, check% shellReplyChecks,
-      thm% Listing.paint_role_exact, thm% Listing.paint_declared_mem,
-      thm% Listing.paint_derived_exact, thm% CodeColor.tone_meets]
-    accept := ["six artifact assertions fail on the tree before the fix, in PDF and HTML alike: in the default style the hole set in the style's error red and the raised error in its bold exception red, in the friendly style the raised error took the keywords' green, and under an invented palette both kept the style's colours",
-      "a presentation deck's hole and not-implemented slides, in PDF and HTML: both markers in the deck's alert, every other listing token in a colour its palette derives, and minted's formatcom one info line over its listings, where each listing had warned of an unknown option"]
+      thm% Listing.brush_role_exact, thm% Listing.paint_role_exact,
+      thm% Listing.paint_declared_mem, thm% Listing.paint_derived_exact,
+      thm% CodeColor.resolve_style_exact, thm% CodeColor.derive_none_opens,
+      thm% CodeColor.tone_meets]
+    accept := ["thirteen assertions fail on the tree before the fix: ten artifact ones, in PDF and HTML alike — in the default style the hole set in the style's error red and the raised error in its bold exception red, in the friendly style the raised error took the keywords' green, and under an invented palette, its error colour named by role or derived, both kept the style's colours — and the formatcom line, the two builds a declared style changes no page of, and that style's naming",
+      "a presentation deck's hole and not-implemented slides, in PDF and HTML: both markers in the deck's alert, every other listing token in a colour its palette derives, minted's formatcom one info line over its listings where each listing had warned of an unknown option, and its declared style, which now colours no token there, named once"]
     state := .guarded "9ec36474" .before .author }
 ]
 

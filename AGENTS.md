@@ -372,11 +372,14 @@ is skipped.
   literal, comment, error), and a role's colour resolves at one site,
   `CodeColor.resolve`: the role's own palette key (`codekeyword`, …), else the
   palette's roles by the rule stated there, else the minted style's colour for
-  the role. This departs from lualatex's per-type colours on purpose — code
-  coherent with its palette, two markers of one role one colour, legible on
-  every ground — so a per-type colour is never reintroduced to match lualatex,
-  and minted's `formatcom`, which runs TeX on the highlighter's own macros,
-  stays a TeX-only hook (N0102).
+  the role. This is a decided exception to the obligation table's row for a
+  setting a document declares (LaTeX's behaviour, exactly): it departs from
+  lualatex's per-type colours on purpose — code coherent with its palette,
+  two markers of one role one colour, every colour the engine derives or
+  adapts legible on its ground — so a per-type
+  colour is never reintroduced to match lualatex, and minted's `formatcom`,
+  which runs TeX on the highlighter's own macros, stays a TeX-only hook
+  (N0102).
 - Hot paths use `Array`/`ByteArray`/packed `UInt32`; no `List`. A structural
   walk over a `List` (the totality pattern below) accumulates into an
   `Array` it threads through: building the result as `#[x] ++ walk rest`
