@@ -369,9 +369,10 @@ def twinDriverChecks (ref : IO.Ref (List String)) : IO Unit := do
     (hasStr (MarkdownDoc.emit (driverDoc "\\href{http://example.org/x}{http://example.org/x}"))
       "<http://example.org/x>")
 
-/-- Spellings the second review found: a heading's `#` before trailing
-space, a titled block's title with spaces at either end, and a footnote
-whose text holds a hard break before a line that would open a block. -/
+/-- Edge spellings: a heading's `#` before trailing space, a titled block's
+title with spaces at either end, a footnote whose text holds a hard break
+before a line that would open a block, a run ending in a tab or a hard
+break, and a reference list's markers. -/
 def twinEdgeChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
   let (tw, back, _) := roundTrip { body := #[.section 1 true none #[.text "Issue # "]] }
@@ -392,6 +393,31 @@ def twinEdgeChecks (ref : IO.Ref (List String)) : IO Unit := do
   let tw := MarkdownDoc.emit doc
   t s!"twin: a footnote's lines stay its own ({repr tw})"
     (hasStr tw "[^1]: Note\\\n    \\# not a heading")
+  -- A run's delimiters stand clear of any white space and of a hard break
+  -- at its end: beside them they neither open nor close (CommonMark 6.2).
+  let (tw, back, _) := roundTrip { body := #[.para #[.styled .bold #[.text "Alder\t"],
+    .text "Birch"]] }
+  t s!"twin: a run's closing tab stands outside it ({repr tw})"
+    (hasStr tw "**Alder**\tBirch" && back.body.any fun b => match b with
+      | .para xs => xs.any fun x => match x with
+        | .styled .bold ys => Ir.plainText ys == "Alder"
+        | _ => false
+      | _ => false)
+  let (tw, back, _) := roundTrip { body := #[.para #[.styled .bold #[.text "Cedar",
+    .linebreak default], .text "Dogwood"]] }
+  t s!"twin: a run's closing hard break stands outside it ({repr tw})"
+    (hasStr tw "**Cedar**\\\nDogwood" && back.body.any fun b => match b with
+      | .para xs => xs.any fun x => match x with
+        | .styled .bold ys => Ir.plainText ys == "Cedar"
+        | _ => false
+      | _ => false)
+  -- A reference list's markers are text, so its twin is a fixed point: the
+  -- bibliography fixture, its `.bib` resolved as the driver resolves it.
+  let (d, _) ← elabFixture "bibliography" (← IO.FS.readFile "testdata/corpus/bibliography.tex")
+  let tw := MarkdownDoc.emit d
+  let (back, _) := elabMd tw
+  t s!"twin: a reference list's markers read back as written ({repr tw})"
+    (hasStr tw "\n\\[1\\] " && MarkdownDoc.emit back == tw)
 
 def markdownTwinChecks (ref : IO.Ref (List String)) : IO Unit := do
   twinInlineChecks ref

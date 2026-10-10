@@ -510,15 +510,42 @@ private def linkDest (url : String) : String :=
     "<" ++ esc (fun c => c == '<' || c == '>' || c == '\\') ++ ">"
   else esc (fun c => c == '(' || c == ')' || c == '\\')
 
-/-- A run's text split at its own leading and trailing spaces: a delimiter
-beside a space neither opens nor closes (§6.2), so the spaces stand outside
-the delimiters. -/
+/-- White space beside which a delimiter neither opens nor closes, as the
+markdown door reads it: a space, a tab, a line ending or a form feed.
+CommonMark's own (§2.1) adds the Unicode `Zs` class, which the door's
+dialect does not, so the twin follows the door: a run beside a no-break
+space is read alike by the two only once the dialect decides. -/
+private def mdWhite (c : Char) : Bool :=
+  c == ' ' || c == '\t' || c == '\n' || c == '\r' || c == '\x0C'
+
+/-- A run's opening white space, and the rest: CommonMark's white space,
+and a hard break's backslash before its line ending. -/
+private def leadWhite : List Char → List Char × List Char
+  | [] => ([], [])
+  | c :: rest =>
+    if mdWhite c || (c == '\\' && rest.head? == some '\n') then
+      let r := leadWhite rest
+      (c :: r.1, r.2)
+    else ([], c :: rest)
+
+/-- A reversed run's closing white space, and the rest: CommonMark's white
+space, and a hard break's backslash, met after its line ending. -/
+private def trailWhite (afterBreak : Bool) : List Char → List Char × List Char
+  | [] => ([], [])
+  | c :: rest =>
+    if mdWhite c || (afterBreak && c == '\\') then
+      let r := trailWhite (c == '\n') rest
+      (c :: r.1, r.2)
+    else ([], c :: rest)
+
+/-- A run's text split at its own leading and trailing white space: a
+delimiter beside white space neither opens nor closes (§6.2), so the white
+space stands outside the delimiters — a hard break at either end with it,
+since its backslash would otherwise escape the delimiter beside it. -/
 private def spaceSplit (s : String) : String × String × String :=
-  let cs := s.toList
-  let lead := cs.takeWhile (· == ' ')
-  let rest := cs.drop lead.length
-  let trail := rest.reverse.takeWhile (· == ' ')
-  (String.ofList lead, String.ofList (rest.take (rest.length - trail.length)), String.ofList trail)
+  let (lead, rest) := leadWhite s.toList
+  let (trail, core) := trailWhite false rest.reverse
+  (String.ofList lead, String.ofList core.reverse, String.ofList trail.reverse)
 
 /-- Code-set content onto `acc`: one code span for each run between links,
 and each link a link whose text is a code span. A code span holds no link —
@@ -792,8 +819,8 @@ private theorem escapeLineStart_mem (s : String) (x : Char)
         · exact Or.inr rfl
         · exact Or.inl (hsub x hx)
 
-/-- **The llms.txt head lines are lines**: whatever the metadata title and
-summary hold, line endings included, each is written on one line. -/
+/-- **The llms.txt title is a line**: whatever the metadata title holds,
+line endings included, it is written on one line. -/
 public theorem titleLine_contract (t : String) :
     ∀ x ∈ (titleLine t).toList, x ≠ '\n' ∧ x ≠ '\r' := by
   intro x hx
@@ -802,7 +829,8 @@ public theorem titleLine_contract (t : String) :
   · decide
   · decide
 
-/-- The summary line is a line, as the title line is. -/
+/-- **The llms.txt summary is a line**, whatever it holds, as the title
+is. -/
 public theorem summaryLine_contract (s : String) :
     ∀ x ∈ (summaryLine s).toList, x ≠ '\n' ∧ x ≠ '\r' := by
   intro x hx
@@ -849,7 +877,7 @@ private def bibItemsText (ind : String) (items : Array Ir.BibItem) : String := I
   let mut out := ""
   for item in items do
     let mark := match item.marker with
-      | some m => s!"[{m}] "
+      | some m => escapeText true s!"[{m}]" ++ " "
       | none => ""
     out := out ++ paraText ind ind (mark ++ inlineText item.content) ++ "\n\n"
   return out
@@ -1279,8 +1307,8 @@ title suppressed (the body carries its own level-0 heading), the summary
 was emitted *above* the body — `> summary` before `# title`. The invariant
 is positional, not source-conditional: the summary stands immediately after
 the title line, wherever that line comes from. Stated over `emit`, the
-function the driver runs; the newline-free hypotheses name the shape a
-metadata string must have to be a *line* at all. -/
+function the driver runs, for any metadata: each head line is written as
+text on one line (`titleLine_contract`, `summaryLine_contract`). -/
 
 private theorem append_nil (a : String) : ∃ r, a = a ++ r :=
   ⟨"", by simp⟩
