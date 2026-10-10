@@ -4980,8 +4980,17 @@ private theorem condDocument_package_failed_exact (reader : InputReader Id)
       hc hp hd hflags hi hsettling hv hr) hdeferred]
   simp [packageFailed, packageLoaded, Nat.add_assoc, hdeferred]
 
+/-- A word that is a glue keyword run into its dimension, as TeX reads
+`plus2pt` (the keyword's optional spaces may be none): the dimension's
+spelling past the keyword, if the word is one. -/
+private def keyRun? (w key : String) : Option String :=
+  let rest := (w.drop key.length).toString
+  if w.startsWith key && rest.toList.head?.any (fun c => c.isDigit || c == '.' || c == ',' || c == '-' || c == '+')
+  then some rest else none
+
 /-- A TeX length in the native spelling: `0.75\beat` is `0.75 * beat`,
-`\relax` vanishes. Each control word goes through `ref`, told whether an
+`\relax` vanishes, a glue keyword run into its dimension is its own word
+(`keyRun?`). Each control word goes through `ref`, told whether an
 argument group follows it; `none` from `ref` makes the whole value
 unreadable. `\dimexpr … \relax` is its parenthesized expression. -/
 public def lengthSrcBy (ref : String → Bool → Option String) (raws : Array Raw) :
@@ -5025,8 +5034,13 @@ public def lengthSrcBy (ref : String → Bool → Option String) (raws : Array R
       s := s ++ pre ++ v
       prevNumber := false
     | .word w _ =>
+      let lead := if s.isEmpty || s.endsWith " " then "" else " "
+      let (w, num) := match keyRun? w "plus", keyRun? w "minus" with
+        | some rest, _ => (lead ++ "plus " ++ rest, rest)
+        | none, some rest => (lead ++ "minus " ++ rest, rest)
+        | none, none => (w, w)
       s := s ++ w
-      prevNumber := w.toList.all fun c => c.isDigit || c == '.'
+      prevNumber := num.toList.all fun c => c.isDigit || c == '.'
     | .space => s := s ++ " "
     | other => s := s ++ rawSrcOne other
   -- `\dimexpr` ends with its argument when no `\relax` closes it (e-TeX
@@ -5350,13 +5364,27 @@ private def dimenEnd (raws : Array Raw) (i : Nat) : Nat :=
   | _ => i
 
 /-- Past an optional glue keyword (`plus`, or its sanitised `\@plus`) and
-the dimension after it. -/
+the dimension after it — the keyword its own word, or run into the
+dimension (`keyRun?`). -/
 private def afterKey (raws : Array Raw) (k : Nat) (key : String) : Nat :=
   let j := skipSpaces raws k
   match raws[j]? with
   | some (.ctrl c _) => if c == "@" ++ key then dimenEnd raws (j + 1) else k
-  | some (.word w _) => if w == key then dimenEnd raws (j + 1) else k
+  | some (.word w _) =>
+    if w == key then dimenEnd raws (j + 1)
+    else match keyRun? w key with
+      | some rest =>
+        if rest.toList.any Char.isAlpha then j + 1
+        else
+          let u := skipSpaces raws (j + 1)
+          match raws[u]? with
+          | some (.ctrl _ _) => u + 1
+          | some (.word unit _) => if unit.toList.all Char.isAlpha then u + 1 else j + 1
+          | _ => j + 1
+      | none => k
   | _ => k
+
+
 
 /-- Where a glue value ends: a register it copies (`\itemsep \parsep`), or
 a dimension with its optional `plus` and `minus` parts. -/

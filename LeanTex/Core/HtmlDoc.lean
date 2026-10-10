@@ -1136,7 +1136,8 @@ private def ownsBelow (sels : List String) (peer own : String) (after : Option S
   let follow (tail : String) := ", ".intercalate (sels.map (· ++ tail))
   [.boundary (follow " + *") peer,
    .boundary (follow s!" + :is(.{skipClass}, {skipCarrier})") own] ++
-  (after.map fun v => [.boundary (follow s!" + .{skipClass} + p") v]).getD []
+  (after.map fun v =>
+    [.boundary (follow s!" + .{skipClass} + p" ++ ", " ++ follow s!" + .{skipClass} + .{skipClass} + p") v]).getD []
 
 /-- A document skip — `\vspace`, `\smallskip`, `\medskip`, `\bigskip`, an
 `Ir.Block.spaced` holding nothing — as a box of its own carrying the skip's
@@ -1149,8 +1150,11 @@ adds to the boundary it stands at as TeX's glue adds on the vertical list
 owns no other margin: the element above owns its space below it before the
 box (`ownsBelow`), the element below its space above, and the box is a flow
 root, so no margin collapses through it in block flow, as none collapses in
-a flex column. Fil glue has no natural width and the box no height. A
-token-sourced skip defers to its property. -/
+a flex column. The extent rides on the box itself too — its height, or a
+negative skip's bottom margin — so a page that ships none of the engine's
+sheet (`css = none`, a framework's) still moves its follower by the skip,
+which is the document's declaration. Fil glue has no natural width and the
+box no height. A token-sourced skip defers to its property. -/
 private def skipNode (size : Int) (g : Ir.Sourced SymGlue) : Node :=
   let v := g.value.width.resolve size (size / 2)
   let rem := milliRem (screenMilli size v.natAbs)
@@ -1158,7 +1162,8 @@ private def skipNode (size : Int) (g : Ir.Sourced SymGlue) : Node :=
   let len := match g.token with
     | some n => s!"var(--{n}, {len})"
     | none => len
-  let style := if v == 0 then #[] else #[("style", s!"--skip: {len}")]
+  let extent := if v < 0 then s!"margin-bottom: {len}" else s!"height: {len}"
+  let style := if v == 0 then #[] else #[("style", s!"--skip: {len}; {extent}")]
   Html.elem "div" #[] (#[("class", skipClass)] ++ style)
 
 /-- The elements a list level spaces: every list a list block emits — a
@@ -1321,6 +1326,21 @@ at every standard body, since the size files scale the skip with the type
 private def displayGapRem : String :=
   milliRem (screenMilli Ir.baseFontSize (Ir.displaySkipDefault Ir.baseFontSize).width.sp)
 
+/-- The follower past a skip box — one, or two in a row — where the box
+stands after a heading or opens a container (not a frame, whose opening the
+frame's own rules pay, nor a step carrier, which stands where the box would):
+it pays what its place pays without the box, nothing — the heading's band
+below is the heading's own, the container's edge the container's — as the
+page's walk opens no gap there. It stands after every rule a follower could
+take its gap from, and before the heading's follower, last. -/
+private def skipFollowerRule : GapRule :=
+  let box := s!".{skipClass}"
+  let past (place : String) (edge : String) : List String :=
+    [s!"{place}{box}{edge} + *", s!"{place}{box}{edge} + {box} + *",
+     s!"{place}{skipCarrier}{edge} > {box}:first-child + *"]
+  .boundary (", ".intercalate (past ":is(h1, h2, h3, h4, h5, h6) + " "" ++
+    past ":not(section.slide, .step, .step-set) > " ":first-child")) "0"
+
 /-- The boundaries the list levels stand before: the headings', the float's
 and the display's pairs, the float's caption seam, and the heading's
 follower, last. A level-1
@@ -1338,10 +1358,7 @@ private def gapAfterLists : List GapRule :=
    .boundary "* + figure.float" float,
    -- A title under a title bar stands on the bar's skip alone: the bars'
    -- skips are the whole rhythm of their block (`Ir.titleBars`).
-   .boundary "hr.separator + .vskip + h1:not(.body-heading)" "0",
-   -- A skip opening an item stands under the item's own gap, which the
-   -- item already paid: the paragraph past it pays none again.
-   .boundary s!":is(li, dd) > .{skipClass}:first-child + p" "0"] ++
+   .boundary "hr.separator + .vskip + h1:not(.body-heading)" "0"] ++
   ownsBelow ["figure.float"] float float ++
   [.boundary "* + .display" s!"var(--{Ir.displaySkipAbove}, {displayGapRem})"] ++
   ownsBelow [".display"] display display (some "0rem") ++
@@ -1362,6 +1379,7 @@ private def gapAfterLists : List GapRule :=
       "calc(0rem - var(--parskip, 0rem))",
     .boundary "section.slide > .frame-body-start"
       "calc(var(--frame-body-skip) + var(--frame-body-before, 0pt) + var(--frame-body-open, 0pt))",
+    skipFollowerRule,
     .boundary ":is(h1, h2, h3, h4, h5, h6) + *" "0"]
 
 /-- A skip register in force for the sheet (`Ir.skipAmount`, the site the

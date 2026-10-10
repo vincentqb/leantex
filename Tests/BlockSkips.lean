@@ -224,17 +224,22 @@ private def pdfChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO U
         ((spMilli (t - b) - want).natAbs ≤ tolerance.toNat)
     | _, _ => check ref s!"block skips: the '{skip}' blocks ship their boxes" false
 
-/-- TeX's primitive `\vskip` reads its glue unbraced. lualatex moves what
-follows it exactly as `\vspace` moves it — 7 pt between paragraphs and
-mid-paragraph alike, since a vertical command ends the paragraph, and -3 pt
-for a negative skip — and `\vskip 0pt plus 1fill` is `\vfill`. One
+/-- TeX's primitive `\vskip` reads its glue unbraced, its keywords run into
+their dimensions or not (`plus2pt`). lualatex moves what follows it by its
+glue — 7 pt between paragraphs, and mid-paragraph too, where the vertical
+command ends the paragraph (a `\vspace` there is a `\vadjust` and keeps it),
+-3 pt for a negative skip, and `3pt plus2pt` or `3pt minus1pt` by 3 pt — and
+`\vskip 0pt plus 1fill` is `\vfill`, spelled `\vskip0pt plus1fill` too. One
 difference stays owed: an `\addvspace` after `\vskip` takes the larger, so
 lualatex moves a centred block after `\vskip 12pt` by 4 pt (its `\topsep`
 is 8 pt) where the engine adds the skip whole. -/
 private def vskipChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit := do
   let para := above "paragraph"
   let cases := [("between paragraphs", "\n\n\\vskip 7pt\n\n", 7),
-    ("mid-paragraph", "\n\\vskip 7pt\n", 7), ("negative", "\n\n\\vskip -3pt\n\n", -3)]
+    ("mid-paragraph", "\n\\vskip 7pt\n", 7), ("negative", "\n\n\\vskip -3pt\n\n", -3),
+    ("with a run-in stretch", "\n\n\\vskip 3pt plus2pt\n\n", 3),
+    ("with a run-in shrink", "\n\n\\vskip 3pt minus1pt\n\n", 3),
+    ("with both run in", "\n\n\\vskip3pt plus2pt minus1pt\n\n", 3)]
   for (name, skip, pts) in cases do
     let src := document "" [frame (para ++ "\n\n" ++ below "paragraph"),
       frame (para ++ skip ++ below "paragraph")]
@@ -247,29 +252,46 @@ private def vskipChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO
     | _, _ => check ref s!"block skips: the \\vskip {name} probe ships its marks" false
     check ref s!"block skips: \\vskip {name} is a skip, never text"
       (diags.all (·.code != "W0301") &&
-        pages.all fun p => p.lines.all fun l => !hasStr (lineText l) "pt")
+        pages.all fun p => p.lines.all fun l =>
+          !hasStr (lineText l) "pt" && !hasStr (lineText l) "plus" && !hasStr (lineText l) "minus")
   let fillOf (skip : String) : Option Dim.Sp :=
     let (doc, _) := Elab.run "block-skips-fill.tex"
       (document "" [frame (para ++ "\n\n" ++ skip ++ "\n\n" ++ below "paragraph")])
     ((Layout.run (Layout.Geom.ofPage doc.page) fonts none doc).pages[0]?).bind (lineY · "omega")
   check ref "block skips: \\vskip 0pt plus 1fill stands where \\vfill stands"
     ((fillOf "\\vskip 0pt plus 1fill").isSome && fillOf "\\vskip 0pt plus 1fill" == fillOf "\\vfill")
+  check ref "block skips: \\vskip0pt plus1fill stands where \\vfill stands"
+    ((fillOf "\\vskip0pt plus1fill").isSome && fillOf "\\vskip0pt plus1fill" == fillOf "\\vfill")
   let centred := document "" [frame (para ++ "\n\n" ++ below "centred"),
     frame (para ++ "\n\n\\vskip 12pt\n\n" ++ below "centred")]
   let (pages, _) := pagesOf fonts centred
   check ref "owed: \\vskip before a centred block adds 12 pt where TeX takes the larger, 4 pt"
     (((pages[0]?.bind span).bind fun d0 => (pages[1]?.bind span).map (· - d0)) == some (Dim.pt 12))
 
+/-- A declaration's value in an inline style. -/
+private def styleDecl (style name : String) : Option String :=
+  (style.splitOn ";").findSome? fun decl => do
+    let [n, value] := decl.splitOn ":" | none
+    if n.trimAscii.toString == name then some value.trimAscii.toString else none
+
 /-- A skip box's natural width in milli-rem, read off its style: the
 `--skip` the sheet turns into its height or, negative, its bottom margin;
 nothing declared is zero. -/
 private def boxMilli (style : String) : Option Int :=
-  let decl := (style.splitOn ";").findSome? fun decl => do
-    let [name, value] := decl.splitOn ":" | none
-    if name.trimAscii.toString == "--skip" then some value else none
-  match decl with
+  match styleDecl style "--skip" with
   | some value => remMilliOf value
   | none => if style.trimAscii.isEmpty then some 0 else none
+
+/-- The box's extent where no sheet reaches it: a positive skip's height, a
+negative one's bottom margin, the same length as its `--skip`, and no other
+margin. -/
+private def boxExtentInline (style : String) : Bool :=
+  match styleDecl style "--skip" with
+  | none => style.trimAscii.isEmpty
+  | some len =>
+    if len.startsWith "-" then
+      styleDecl style "margin-bottom" == some len && (styleDecl style "height").isNone
+    else styleDecl style "height" == some len && !hasStr style "margin"
 
 private def hasClassTok (attrs : Array (String × String)) (c : String) : Bool :=
   ((HtmlDoc.attrOf? attrs "class").getD "").splitOn " " |>.contains c
@@ -293,8 +315,20 @@ private def htmlChecks (ref : IO.Ref (List String)) : IO Unit := do
     let style := (HtmlDoc.attrOf? attrs "style").getD ""
     let want : Int := if v < 0 then -(HtmlDoc.screenMilli size (-v) : Int)
       else (HtmlDoc.screenMilli size v : Int)
-    check ref s!"block skips HTML: a {spMilli v} thousandths skip is a box of {want} milli-rem, not a margin ('{style}')"
-      (boxMilli style == some want && !hasStr style "margin")
+    check ref s!"block skips HTML: a {spMilli v} thousandths skip is a box of {want} milli-rem, its extent on the box ('{style}')"
+      (boxMilli style == some want && boxExtentInline style && !hasStr style "margin-top")
+  -- A page that ships none of the engine's sheet still moves the follower
+  -- by the skip: the box carries its extent itself, as it does with the sheet.
+  for (cfg, mode) in [(({ css := .none } : HtmlDoc.Config), "css = none"), ({ css := .bulma }, "bulma")] do
+    let (_, bare, _) := HtmlDoc.emitTree cfg doc
+    let styles := (elemNodesList (· == "div") #[] bare.toList).filterMap fun
+      | .elem _ attrs _ =>
+        if hasClassTok attrs "vskip" then some ((HtmlDoc.attrOf? attrs "style").getD "") else none
+      | _ => none
+    check ref s!"block skips HTML ({mode}): every skip box carries its extent inline"
+      (styles == boxes.map (fun attrs => (HtmlDoc.attrOf? attrs "style").getD "") &&
+        styles.all boxExtentInline && styles.any (hasStr · "height: ") &&
+        styles.any (hasStr · "margin-bottom: -"))
   -- The frame-top box takes the frame's opening and pays beamer's
   -- `\vskip-\parskip`, which the paragraph after it cancels by its own.
   check ref "block skips HTML: a skip opening a frame owns its opening"
@@ -411,8 +445,21 @@ private def sheetChecks (ref : IO.Ref (List String)) : IO Unit := do
         !hasStr v "var(--parskip")
     check ref s!"block skips HTML ({lname}): the paragraph past a skip after a list pays TeX's \\parskip"
       (has fun sel v => hasStr sel "ul:not(.bibliography) + .vskip + p" && v == "var(--parskip, 0rem)")
-    check ref s!"block skips HTML ({lname}): the paragraph past a skip opening an item pays no gap again"
-      (has fun sel v => sel == ":is(li, dd) > .vskip:first-child + p" && v == "0")
+    -- The follower past a skip box after a heading, or opening a container
+    -- other than a frame or a step carrier, pays what its place pays
+    -- without the box — nothing — in the second-last rule, after every rule
+    -- a follower takes its gap from: the rules stand at zero specificity,
+    -- so the later one wins.
+    let follower := (rules.reverse[1]?).bind fun
+      | .boundary sel v => if v == "0" then some (cssSelParts sel) else none
+      | _ => none
+    let carrier := HtmlDoc.skipCarrier
+    for (place, edge) in [(":is(h1, h2, h3, h4, h5, h6) + ", ""),
+        (":not(section.slide, .step, .step-set) > ", ":first-child")] do
+      for want in [s!"{place}.vskip{edge} + *", s!"{place}.vskip{edge} + .vskip + *",
+          s!"{place}{carrier}{edge} > .vskip:first-child + *"] do
+        check ref s!"block skips HTML ({lname}): the follower past '{want}' pays nothing, second-last"
+          ((follower.map (·.contains want)).getD false)
     check ref s!"block skips HTML ({lname}): a title under a title bar stands on the bar's skip alone"
       (has fun sel v => sel == "hr.separator + .vskip + h1:not(.body-heading)" && v == "0")
     check ref s!"block skips HTML ({lname}): a title over a title bar's skip has no band below"
@@ -421,8 +468,11 @@ private def sheetChecks (ref : IO.Ref (List String)) : IO Unit := do
         | _ => false)
     check ref s!"block skips HTML ({lname}): a rule's <hr> carries no margin"
       (rules.any fun
-        | .reset sel m => hasStr sel "hr" && m == "0"
+        | .reset sel m => (cssSelParts sel).contains "hr" && m == "0"
         | _ => false)
+    check ref s!"block skips HTML ({lname}): the paragraph past two skips after a list pays TeX's \\parskip"
+      (has fun sel v => (cssSelParts sel).contains "ul:not(.bibliography) + .vskip + .vskip + p" &&
+        v == "var(--parskip, 0rem)")
 
 def blockSkipChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit := do
   pdfChecks ref fonts
