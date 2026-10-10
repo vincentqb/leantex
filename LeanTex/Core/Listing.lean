@@ -44,11 +44,11 @@ public theorem paint_derived_exact (pal : Palette) (ground : Color) (style : Lis
     (hd : p.declared = false) : p.role = some (Ir.Role.ofCode k.role) :=
   resolve_derived_exact pal ground style k.role p h hd
 
-/-- Style colours keep their value when it is legible. On other grounds,
-choose the first whole-percent sRGB tint/shade that clears WCAG AA: the
-least change on that path, never applied to a colour the document declared.
-The endpoints and percentage scale are xcolor's `Color.mix`, not new
-palette constants. -/
+/-- A colour the rule derives keeps its value where it is legible. On
+another ground, the first whole-percent sRGB tint or shade that clears WCAG
+AA: the least change on that path, never applied to a colour the document
+declares or the listing's style states. The endpoints and percentage scale
+are xcolor's `Color.mix`, not new palette constants. -/
 public def defaultInk (ground seed : Color) : Color := Id.run do
   if Contrast.contrastMilli seed ground ≥ Contrast.aaText then return seed
   let pole := if Contrast.contrastMilli Color.black ground >

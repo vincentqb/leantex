@@ -132,6 +132,14 @@ For a saved palette, replace the three RGB arguments with `--seeds colors.json`,
 where the JSON object has exactly `ink`, `paper` and `accent` hex strings.
 Regenerate the TeX export after changing the seeds.
 
+Add `--pygments friendly` (or `default`) to export the code colours the engine
+derives for a palette whose text, page and alert are the ink, paper and accent:
+one colour per code role and a `\SlidePygments` command (named by the prefix)
+redefining the highlighter's token macros, with the style's colours only where
+the palette leaves a role open. Load it after `minted` and apply it with
+`\setminted{formatcom=\SlidePygments}`, so a lualatex build sets the colours
+leantex sets; leantex reads the palette itself and runs no `formatcom`.
+
 ## Images and code
 
 PNG, JPEG and PDF images embed directly in PDF output. SVG conversion runs
