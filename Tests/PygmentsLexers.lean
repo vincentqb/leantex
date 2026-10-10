@@ -1,6 +1,14 @@
-import Tests.Support
-import LeanTex.Core.Highlight
-import Lean.Data.Json
+module
+
+public import Tests.Support
+public import LeanTex.Core.Highlight
+import LeanTex.Core.Highlight.Bash
+public import LeanTex.Core.Highlight.Console
+import LeanTex.Core.PygmentsLexData
+import LeanTex.Core.ListingReply
+public import Lean.Data.Json
+
+public section
 
 open LeanTex.Core LeanTex.Core.Highlight
 open Lean (Json)

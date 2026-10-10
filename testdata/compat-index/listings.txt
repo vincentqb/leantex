@@ -2,8 +2,9 @@
 # (rTypesettingListings: the lstlisting environment, \lstset, \lstinline,
 # \lstinputlisting, \lstnewenvironment) with §Line numbers (uLineNumbers)
 # for the numbers key and the caption/label keys judged per environment.
-# The environment is lexically blind (code is never tokenized); its keys
-# are honoured or named W0110 at the one validation site. \lstinputlisting
+# The environment's body is captured raw, and its language (its own or
+# the last \lstset's) classifies the code as a minted listing's does; its
+# keys are honoured or named W0110 at the one validation site. \lstinputlisting
 # reads a file — a driver request later — and \lstinline's free-form
 # delimiter has no lexer door; both refuse by name.
 pre inert:binds \lstset{language=Python}

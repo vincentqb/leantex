@@ -32,8 +32,8 @@ on the same fixtures and requires identical artifacts and diagnostics.
 documents: ASCII or accented words, LF or CR LF line ends.
 `--listings-only` measures a build of the invented highlight snippets as
 minted listings, one copy and eight, and holds a listing's elaboration
-linear in its length, in lines and, over invented adversarial lines, in a
-line's length.
+linear in its length, in lines and, over invented adversarial listings, in
+the shapes that once made a lexer superlinear.
 The slide run also needs sha256sum, pdftocairo and xmllint.
 For before/after runs use this same driver, N, font/tool environment and an
 otherwise idle host; shared-host timings are provisional. Redirect stdout
@@ -256,16 +256,30 @@ def listingElabMs (n lines : Nat) : IO Nat := do
     body := body ++ "\n"
   elabMs n s!"one {lines}-line listing" "python" body
 
-/-- Invented lines that once cost each native lexer more than linear time
-in their length `len`: the session prompt pattern's nested repeats, a
-heredoc delimiter's every prefix, and a state stack copied on every push. -/
-def adversarialLines (len : Nat) : List (String × String × String) :=
+/-- Invented listings, of size proportional to `len`, that once cost a
+native lexer more than linear time: the session prompt pattern's nested
+repeats, a heredoc delimiter's every prefix, heredocs whose delimiters
+never recur, a state stack copied on every push, and every lookahead a
+Python rule reads past what it writes when nothing tabled it — blank lines
+before a docstring, a docstring that never closes, a format field's key,
+dotted name or width that never closes, and a named escape with no brace. -/
+def adversarialListings (len : Nat) : List (String × String × String) :=
   let rep (s : String) (k : Nat) : String := String.join (List.replicate k s)
-  [("console", "prompt", rep "a" (len / 2) ++ rep "@a" (len / 4) ++ "\n" ++
-      "$ fetch\n[" ++ rep "{\"k\":[0],\"v\":\"x\"}," (len / 20) ++ "]\n" ++ rep "a" len),
-   ("bash", "heredoc", "cat <<" ++ rep "a" (len / 2) ++ "\n" ++ rep (rep "a" (len / 4) ++ "b\n") 2),
-   ("lean4", "nesting", rep "/-" (len / 2) ++ rep "-/" (len / 2)),
-   ("python", "brackets", "x = " ++ rep "(" (len / 2) ++ rep ")" (len / 2))]
+  let lines (s : String) : String := rep (s ++ "\n") 8
+  [("console", "prompt", lines (rep "a" (len / 2) ++ rep "@a" (len / 4) ++ "\n" ++
+      "$ fetch\n[" ++ rep "{\"k\":[0],\"v\":\"x\"}," (len / 20) ++ "]\n" ++ rep "a" len)),
+   ("bash", "heredoc", lines ("cat <<" ++ rep "a" (len / 2) ++ "\n" ++
+      rep (rep "a" (len / 4) ++ "b\n") 2)),
+   ("bash", "heredocs", String.join ((List.range (2 * len)).map fun i =>
+      "cat <<q" ++ toString i ++ "z\n")),
+   ("lean4", "nesting", lines (rep "/-" (len / 2) ++ rep "-/" (len / 2))),
+   ("python", "brackets", lines ("x = " ++ rep "(" (len / 2) ++ rep ")" (len / 2))),
+   ("python", "blank lines", lines (rep "   \n" (len / 2) ++ "x = 1")),
+   ("python", "open docstring", rep " \n" len ++ "\"\"\"" ++ rep "x\n" len),
+   ("python", "format keys", lines (rep "s = '{a['\n" (len / 4))),
+   ("python", "format names", lines ("s = '" ++ rep "{a[" (len / 6) ++ "]" ++ rep ".b" (len / 4) ++ "'")),
+   ("python", "format widths", lines ("s = '" ++ rep "{a[" (len / 6) ++ "]:" ++ rep "0" (len / 2) ++ "'")),
+   ("python", "named escapes", lines ("s = '" ++ rep "\\N{" (len / 3)))]
 /-- A repeated image must not repeatedly encode the embedded font programs
 while checking HTML resource closure. Both sizes use the same captured assets. -/
 def benchImageDeck (n frames : Nat) : IO Unit := do
@@ -908,17 +922,16 @@ def growthBound (label : String) (small big : Nat) : IO Unit := do
 /-- A listing's lexing is linear in its length, in lines and within a line.
 A lexer step that copied its token array on every token once made it
 quadratic in the lines; backtracking over the session prompt pattern made
-it cubic in a line's length, a heredoc's delimiter search quadratic, and a
-state stack copied on every push quadratic in the nesting. -/
+it cubic in a line's length, a heredoc's delimiter search quadratic, a
+state stack copied on every push quadratic in the nesting, and a Python
+rule's lookahead past the scalars it writes quadratic in the lines or a
+line's length. -/
 def listingGrowth (n : Nat) : IO Unit := do
   growthBound "8000 / 2000 lines" (← listingElabMs n 2000) (← listingElabMs n 8000)
-  let lines (len : Nat) : List (String × String × String) :=
-    (adversarialLines len).map fun (lang, what, line) =>
-      (lang, what, String.join (List.replicate 8 (line ++ "\n")))
-  for ((lang, what, small), (_, _, big)) in (lines 2000).zip (lines 8000) do
+  for ((lang, what, small), (_, _, big)) in (adversarialListings 2000).zip (adversarialListings 8000) do
     growthBound s!"{lang} {what}, 8000 / 2000"
-      (← elabMs n s!"{lang} {what}, 2000 scalars" lang small)
-      (← elabMs n s!"{lang} {what}, 8000 scalars" lang big)
+      (← elabMs n s!"{lang} {what}, 2000 scale" lang small)
+      (← elabMs n s!"{lang} {what}, 8000 scale" lang big)
 
 def main (args : List String) : IO UInt32 := do
   if args.head? == some "--doc-cost" then return ← docCost args.tail

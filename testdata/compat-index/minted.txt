@@ -1,10 +1,12 @@
 # source: minted manual (v3.7), Commands and environments: the minted
 # environment with its mandatory {language} argument and linenos option;
 # \mint, \mintinline, \inputminted; \setminted and \usemintedstyle
-# configuration. Environment capture preserves source literally; Lean and
-# Python are classified natively after capture. Other lexer names preserve
-# plain source. \inputminted reads a file — a driver request later; the
-# short forms and external Pygments machinery refuse by name.
+# configuration. Environment capture preserves source literally. Lean 4,
+# Python, Bash, shell sessions and plain text are classified after capture
+# by mirrors of Pygments' own lexers; another lexer name asks the installed
+# Pygments and ships plain source where none answers. \inputminted reads a
+# file — a driver request later; the short forms and external Pygments
+# machinery refuse by name.
 body impl \begin{minted}{python} print(1) \end{minted}
 body impl \begin{minted}[linenos]{python} print(1) \end{minted}
 body impl \begin{minted}{C++} int x; \end{minted}
@@ -30,6 +32,7 @@ pre refuse:W0301 \newminted{python}{linenos}
 # Fontsize accepts named size commands (\small) and auto; bare names are
 # literal text in FancyVerb and are diagnosed with the corrected spelling.
 # tabsize uses positive stops through 100; breaklines wraps at whitespace.
-# The default and friendly styles use native lexical classes. Other
-# Pygments styles are diagnosed; no external highlighter is executed.
+# The default and friendly styles paint the token types Pygments' own
+# tables give them. Other Pygments styles are diagnosed, and a natively
+# classified listing executes no external highlighter.
 # Arbitrary formatting macros and additional fvextra keys remain named W0110.

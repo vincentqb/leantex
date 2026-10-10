@@ -34,6 +34,15 @@ private def sets : Thunk Sets := Thunk.mk fun _ =>
 
 private abbrev M := Machine St
 
+/-- The text, and the one table a rule reads past the scalars it writes:
+the end of a run of `\w` and `'`, which `[~?][a-z][\w']*:` reads before it
+knows whether its colon follows. -/
+private structure Ix where
+  s : Src
+  label : Table Nat
+
+private def Ix.of (s : Src) : Ix := { s, label := s.runs fun c => wordChar c || c == '\'' }
+
 /-- A name segment, by the Lean 4 lexer's name pattern. -/
 private def segmentEnd (s : Src) (i : Nat) : Option Nat :=
   if s.sat i leanNameStart then some (s.run (i + 1) leanNameRest) else none
@@ -57,7 +66,8 @@ private def exponentEnd (s : Src) (f : Nat) : Nat :=
     let q := if s.is (f + 1) '+' || s.is (f + 1) '-' then f + 2 else f + 1
     if s.sat q asciiDigit then s.run q asciiDigit else f
 
-private def expression (s : Src) (m : M) : Option M := Id.run do
+private def expression (ix : Ix) (m : M) : Option M := Id.run do
+  let s := ix.s
   let p := m.pos
   let t := sets.get
   if s.space p then return some (m.tok p (s.run p spaceChar) Ty.whitespace)
@@ -90,12 +100,13 @@ private def expression (s : Src) (m : M) : Option M := Id.run do
     return some (m.tok p d Ty.numberInteger)
   if s.is p '"' then return some ((m.tok p (p + 1) Ty.stringDouble).push .string)
   if (s.is p '~' || s.is p '?') && s.sat (p + 1) (fun c => 'a' ≤ c && c ≤ 'z') then
-    let e := s.run (p + 2) (fun c => wordChar c || c == '\'')
+    let e := ix.label.read (p + 2)
     if s.is e ':' then return some (m.tok p (e + 1) Ty.nameVariable)
   if p < s.size then return some (m.tok p (p + 1) Ty.nameBuiltinPseudo)
   return none
 
-private def root (s : Src) (m : M) : Option M := Id.run do
+private def root (ix : Ix) (m : M) : Option M := Id.run do
+  let s := ix.s
   let p := m.pos
   let t := sets.get
   if s.boundary p then
@@ -105,11 +116,11 @@ private def root (s : Src) (m : M) : Option M := Id.run do
       return some (m.tok p e Ty.keyword)
   if s.is p '@' && s.is (p + 1) '[' then
     return some ((m.tok p (p + 2) Ty.keywordDeclaration).push .attr)
-  return expression s m
+  return expression ix m
 
-private def attr (s : Src) (m : M) : Option M :=
-  if s.is m.pos ']' then some ((m.tok m.pos (m.pos + 1) Ty.keywordDeclaration).pop)
-  else expression s m
+private def attr (ix : Ix) (m : M) : Option M :=
+  if ix.s.is m.pos ']' then some ((m.tok m.pos (m.pos + 1) Ty.keywordDeclaration).pop)
+  else expression ix m
 
 private def notSlashDash (c : Char) : Bool := c != '/' && c != '-'
 
@@ -138,18 +149,20 @@ private def string (s : Src) (m : M) : Option M :=
   else if s.is p '"' then some ((m.tok p (p + 1) Ty.stringDouble).pop)
   else none
 
-private def step (s : Src) (m : M) : M :=
+private def step (ix : Ix) (m : M) : M :=
   let next := match m.top? with
-    | some .root | none => root s m
-    | some .attr => attr s m
-    | some .comment => comment s m
-    | some .docstring => docstring s m
-    | some .string => string s m
+    | some .root | none => root ix m
+    | some .attr => attr ix m
+    | some .comment => comment ix.s m
+    | some .docstring => docstring ix.s m
+    | some .string => string ix.s m
   match next with
   | some m' => m'
-  | none => m.fallback s .root
+  | none => m.fallback ix.s .root
 
 /-- The raw token stream Pygments' `Lean4Lexer` writes. -/
-public def lex (s : Src) : Array Raw := drive .root step s
+public def lex (s : Src) : Array Raw :=
+  let ix := Ix.of s
+  drive .root (fun _ m => step ix m) s
 
 end LeanTex.Core.Highlight.Lean4

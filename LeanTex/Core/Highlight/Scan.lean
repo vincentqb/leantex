@@ -17,6 +17,16 @@ Unicode answers of the Python the data was generated under, written into
 `PygmentsLexData` with the rest of the lexers' data. A `words` list matches its longest listed
 word that the suffix admits, which the generator checks against Pygments'
 own compiled pattern before writing the list.
+
+A lexer is linear in its text by construction. A rule reads the scalars of
+the tokens it writes, a bounded window past them (a literal, a word of a
+list), and anything further only from a `Table`: a scan answered at every
+position in one pass from the end of the text, built the first time a rule
+asks it, read in constant time (`Memo.read_exact`, `Src.runs_exact`). So a
+step costs a constant beside what it writes; every step reads a scalar or
+pops a state, and a push needs a read, so the drive takes at most two steps
+a scalar. Pygments' backtracking rereads the same text from every position
+a rule is tried at; a table is that rereading answered once.
 -/
 namespace LeanTex.Core.Highlight
 
@@ -197,12 +207,9 @@ public def boundary (s : Src) (i : Nat) : Bool :=
 @[inline] public def lineStart (s : Src) (i : Nat) : Bool := i == 0 || s.is (i - 1) '\n'
 
 /-- The end of the longest run of scalars from `i` satisfying `p`. -/
-public def run (s : Src) (i : Nat) (p : Char → Bool) : Nat := Id.run do
-  let mut stop := i
-  for h : j in [i:s.chars.size] do
-    if !p s.chars[j] then break
-    stop := j + 1
-  return stop
+public def run (s : Src) (i : Nat) (p : Char → Bool) : Nat :=
+  if h : i < s.chars.size then (if p s.chars[i] then s.run (i + 1) p else i) else i
+termination_by s.chars.size - i
 
 /-- The end of the longest run of scalars in `[i, lim)` satisfying `p`. -/
 public def runTo (s : Src) (i lim : Nat) (p : Char → Bool) : Nat := Id.run do
@@ -234,6 +241,168 @@ public def find (s : Src) (fromPos : Nat) (w : Array Char) (k : Nat) : Option Na
         break
     if hit then return some j
   return none
+
+end Src
+
+/-- What a scan does at a position: stop with its answer, or go on from a
+later one. -/
+public inductive Step (α : Type) where
+  | stop (a : α)
+  | next (j : Nat)
+
+namespace Step
+
+variable {α : Type}
+
+/-- The answer a scan from `i` reaches in a text of `n` scalars: its moves
+followed to a stop. A move that is not forward, or that leaves the text,
+stops with `dflt`. -/
+public def follow (f : Nat → Step α) (dflt : α) (n i : Nat) : α :=
+  match f i with
+  | .stop a => a
+  | .next j => if _h : i < j ∧ j ≤ n then follow f dflt n j else dflt
+termination_by n + 1 - i
+
+private theorem follow_eq (f : Nat → Step α) (dflt : α) (n i : Nat) :
+    follow f dflt n i = match f i with
+      | .stop a => a
+      | .next j => if i < j ∧ j ≤ n then follow f dflt n j else dflt := by
+  rw [follow]
+  cases f i with
+  | stop a => rfl
+  | next j => by_cases h : i < j ∧ j ≤ n <;> simp [h]
+
+/-- The answer at `k`, the answers past it read from `t`. -/
+@[inline] private def answer (f : Nat → Step α) (dflt : α) (n : Nat) (t : Array α) (k : Nat) : α :=
+  match f k with
+  | .stop a => a
+  | .next j => if k < j ∧ j ≤ n then t.getD j dflt else dflt
+
+/-- Positions `k - 1` down to `0` answered, each from the answers past it. -/
+private def fill (f : Nat → Step α) (dflt : α) (n : Nat) : Nat → Array α → Array α
+  | 0, t => t
+  | k + 1, t => fill f dflt n k (t.set! k (answer f dflt n t k))
+
+private theorem fill_follow (f : Nat → Step α) (dflt : α) (n : Nat) :
+    ∀ k (t : Array α), k ≤ n + 1 → t.size = n + 1 →
+      (∀ i, k ≤ i → i ≤ n → t.getD i dflt = follow f dflt n i) →
+      ∀ i, i ≤ n → (fill f dflt n k t).getD i dflt = follow f dflt n i := by
+  intro k
+  induction k with
+  | zero => intro t _ _ h i hi; exact h i (Nat.zero_le _) hi
+  | succ k ih =>
+    intro t hk hsize h i hi
+    simp only [fill]
+    apply ih
+    · omega
+    · simp [hsize]
+    · intro i' hki' hi'
+      have hk' : k < t.size := by omega
+      by_cases hik : i' = k
+      · subst hik
+        simp only [Array.set!, Array.getD_eq_getD_getElem?,
+          Array.getElem?_setIfInBounds_self_of_lt hk', Option.getD_some]
+        rw [follow_eq]
+        unfold answer
+        cases f i' with
+        | stop a => rfl
+        | next j =>
+          by_cases hj : i' < j ∧ j ≤ n
+          · simp only [hj, and_self, ite_true]
+            exact h j (by omega) hj.2
+          · simp [hj]
+      · simp only [Array.set!, Array.getD_eq_getD_getElem?]
+        rw [Array.getElem?_setIfInBounds_ne (Ne.symm hik), ← Array.getD_eq_getD_getElem?]
+        exact h i' (by omega) hi'
+    · exact hi
+
+end Step
+
+/-- A scan answered at every position of a text of `n` scalars at once:
+the answers filled from the end, each in constant time from the answers
+past it. -/
+public structure Memo (α : Type) where
+  step : Nat → Step α
+  dflt : α
+  n : Nat
+  answers : Array α
+
+namespace Memo
+
+variable {α : Type}
+
+public def of (f : Nat → Step α) (dflt : α) (n : Nat) : Memo α :=
+  ⟨f, dflt, n, Step.fill f dflt n (n + 1) (Array.replicate (n + 1) dflt)⟩
+
+/-- The scan's answer from `i`: the table's within the text; past it, one
+move decides. -/
+@[inline] public def read (m : Memo α) (i : Nat) : α :=
+  if i ≤ m.n then m.answers.getD i m.dflt
+  else match m.step i with
+    | .stop a => a
+    | .next _ => m.dflt
+
+/-- A table answers what its scan answers, at every position. -/
+public theorem read_exact (f : Nat → Step α) (dflt : α) (n i : Nat) :
+    (Memo.of f dflt n).read i = Step.follow f dflt n i := by
+  unfold read of
+  simp only
+  split
+  · exact Step.fill_follow f dflt n (n + 1) _ (Nat.le_refl _) (by simp)
+      (fun _ _ _ => by omega) i (by assumption)
+  · rw [Step.follow_eq]
+    cases f i with
+    | stop a => rfl
+    | next j => simp; omega
+
+end Memo
+
+/-- A scan's table, built the first time a rule asks it anything. -/
+public structure Table (α : Type) where
+  memo : Thunk (Memo α)
+
+namespace Table
+
+variable {α : Type}
+
+public def of (f : Nat → Step α) (dflt : α) (n : Nat) : Table α :=
+  ⟨Thunk.mk fun _ => Memo.of f dflt n⟩
+
+@[inline] public def read (t : Table α) (i : Nat) : α := t.memo.get.read i
+
+public theorem read_exact (f : Nat → Step α) (dflt : α) (n i : Nat) :
+    (Table.of f dflt n).read i = Step.follow f dflt n i :=
+  Memo.read_exact f dflt n i
+
+end Table
+
+namespace Src
+
+/-- `run`'s move: on through a scalar of the class, else stop. -/
+@[inline] public def runStep (s : Src) (p : Char → Bool) (i : Nat) : Step Nat :=
+  if s.sat i p then .next (i + 1) else .stop i
+
+private theorem runStep_follow (s : Src) (p : Char → Bool) (d : Nat) :
+    ∀ i, Step.follow (s.runStep p) d s.size i = s.run i p := by
+  intro i
+  induction i using Src.run.induct s p with
+  | case1 i h hp ih =>
+    rw [Step.follow_eq, run]
+    have : i < i + 1 ∧ i + 1 ≤ s.chars.size := ⟨Nat.lt_succ_self _, h⟩
+    simp only [runStep, sat, h, dite_true, hp, ite_true, size, this, and_self]
+    exact ih
+  | case2 i h hp =>
+    rw [Step.follow_eq, run]
+    simp [runStep, sat, h, hp]
+  | case3 i h =>
+    rw [Step.follow_eq, run]
+    simp [runStep, sat, h]
+
+/-- Every position's run of `p`: what `run` answers, in constant time. -/
+public def runs (s : Src) (p : Char → Bool) : Table Nat := Table.of (s.runStep p) 0 s.size
+
+public theorem runs_exact (s : Src) (p : Char → Bool) (i : Nat) : (s.runs p).read i = s.run i p := by
+  rw [runs, Table.read_exact, runStep_follow]
 
 end Src
 

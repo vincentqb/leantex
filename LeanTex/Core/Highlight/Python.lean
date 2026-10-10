@@ -66,6 +66,62 @@ private def sets : Thunk Sets := Thunk.mk fun _ =>
 
 private abbrev M := Machine St
 
+/-- `{word[…]` field's tail past its first name, `(\.\w+|\[[^\]]+\])*`: on
+through a dotted name or a bracketed key, else stop. -/
+private def groupStep (s : Src) (word close : Table Nat) (j : Nat) : Step Nat :=
+  if s.is j '.' && s.word (j + 1) then .next (word.read (j + 1))
+  else if s.is j '[' && s.sat (j + 1) (· != ']') then
+    let c := close.read (j + 1)
+    if s.is c ']' then .next (c + 1) else .stop j
+  else .stop j
+
+/-- `(?:\s|\\\s)*`: on through a space or an escaped one, else stop. -/
+private def blanksStep (s : Src) (j : Nat) : Step Nat :=
+  if s.space j then .next (j + 1)
+  else if s.is j '\\' && s.space (j + 1) then .next (j + 2)
+  else .stop j
+
+/-- The first `quote` tripled at or after a position. -/
+private def tripleStep (s : Src) (quote : Char) (j : Nat) : Step (Option Nat) :=
+  if s.lit j #[quote, quote, quote] then .stop (some j)
+  else if j < s.size then .next (j + 1) else .stop none
+
+private def flag (c : Char) : Bool := "-#0 +".contains c
+
+private def asciiDigit (c : Char) : Bool := c.isDigit
+
+/-- The text, and the tables its rules read past the scalars they write. -/
+private structure Ix where
+  s : Src
+  space : Table Nat
+  tab : Table Nat
+  blanks : Table Nat
+  word : Table Nat
+  digit : Table Nat
+  asciiDigits : Table Nat
+  flags : Table Nat
+  softRest : Table Nat
+  braceLine : Table Nat
+  groups : Table Nat
+  tdq : Table (Option Nat)
+  tsq : Table (Option Nat)
+
+private def Ix.of (s : Src) : Ix :=
+  let word := s.runs wordChar
+  let close := s.runs (· != ']')
+  { s, word
+    space := s.runs spaceChar
+    tab := s.runs fun c => c == ' ' || c == '\t'
+    blanks := Table.of (blanksStep s) 0 s.size
+    digit := s.runs digitChar
+    asciiDigits := s.runs asciiDigit
+    flags := s.runs flag
+    softRest := s.runs fun c => c != '\n' && c != '_'
+    braceLine := s.runs fun c => c != '}' && c != '\n'
+    groups := Table.of (groupStep s word close) 0 s.size
+    tdq := Table.of (tripleStep s '"') none s.size
+    tsq := Table.of (tripleStep s '\'') none s.size }
+
 /-- A name, by the Python lexer's name pattern. -/
 private def nameEnd (s : Src) (i : Nat) : Option Nat :=
   if s.sat i pyNameStart then some (s.run (i + 1) pyNameRest) else none
@@ -192,49 +248,40 @@ private def expr (s : Src) (m : M) : Option M := Id.run do
   if let some e := nameEnd s p then return some (m.tok p e Ty.name)
   return none
 
-/-- `^(\s*)([rRuUbB]{,2})("""(?:.|\n)*?""")` and its `'''` twin: the
+/-- `^(\s*)([rRuUbB]{,2})("""[\s\S]*?""")` and its `'''` twin: the
 whitespace's end, the prefix's end and the docstring's end. -/
-private def docstring (s : Src) (p : Nat) (quote : Char) : Option (Nat × Nat × Nat) := Id.run do
-  let w := s.run p spaceChar
+private def docstring (ix : Ix) (p : Nat) (quote : Char) : Option (Nat × Nat × Nat) := Id.run do
+  let s := ix.s
+  let w := ix.space.read p
   let affix (c : Char) := "rRuUbB".contains c
   let a := if s.sat w affix then (if s.sat (w + 1) affix then w + 2 else w + 1) else w
-  let three := #[quote, quote, quote]
-  if !s.lit a three then return none
-  match s.find (a + 3) three 3 with
+  if !s.lit a #[quote, quote, quote] then return none
+  match (if quote == '"' then ix.tdq else ix.tsq).read (a + 3) with
   | some q => return some (w, a, q + 3)
   | none => return none
 
-/-- `(?:\s|\\\s)+`'s end. -/
-private def blanksEnd (s : Src) (i : Nat) : Nat := Id.run do
-  let mut j := i
-  for _ in [0:s.size + 1] do
-    if s.space j then j := j + 1
-    else if s.is j '\\' && s.space (j + 1) then j := j + 2
-    else break
-  return j
-
-private def tab (c : Char) : Bool := c == ' ' || c == '\t'
-
 /-- `soft-keywords`: indentation, then `match` or `case` that the rest of
 the line does not reveal as a name. -/
-private def softKeyword (s : Src) (p : Nat) : Option (Nat × Nat) := Id.run do
+private def softKeyword (ix : Ix) (p : Nat) : Option (Nat × Nat) := Id.run do
+  let s := ix.s
   if !s.lineStart p then return none
-  let w := s.run p tab
+  let w := ix.tab.read p
   let e := if s.lit w #['m', 'a', 't', 'c', 'h'] then w + 5
     else if s.lit w #['c', 'a', 's', 'e'] then w + 4 else w
   if e == w || !s.boundary e then return none
-  let q := s.run e tab
+  let q := ix.tab.read e
   if s.sat q (fun c => ":,;=^&|@~)]}".contains c) then return none
   if (sets.get.softStops.longest s q s.boundary).isSome then return none
   return some (w, e)
 
-private def root (s : Src) (m : M) : Option M := Id.run do
+private def root (ix : Ix) (m : M) : Option M := Id.run do
+  let s := ix.s
   let p := m.pos
   let t := sets.get
   if s.is p '\n' then return some (m.tok p (p + 1) Ty.whitespace)
   if s.lineStart p then
     for quote in ['"', '\''] do
-      if let some (w, a, e) := docstring s p quote then
+      if let some (w, a, e) := docstring ix p quote then
         return some (((m.tok p w Ty.whitespace).tok w a Ty.stringAffix).tok a e Ty.stringDoc)
   if p == 0 && s.is 0 '#' && s.is 1 '!' && s.sat 2 (· != '\n') then
     return some (m.tok p (s.run 2 (· != '\n')) Ty.commentHashbang)
@@ -244,22 +291,22 @@ private def root (s : Src) (m : M) : Option M := Id.run do
   if let some e := t.keywords.longest s p s.boundary then return some (m.tok p e Ty.keyword)
   if let some e := t.constants.longest s p s.boundary then
     return some (m.tok p e Ty.keywordConstant)
-  if let some (w, e) := softKeyword s p then
+  if let some (w, e) := softKeyword ix p then
     return some (((m.tok p w Ty.text).tok w e Ty.keyword).push .softInner)
   let opener (word : Array Char) (kind : String) (st : St) : Option M :=
     if s.lit p word then
       let e := p + word.size
-      let w := blanksEnd s e
+      let w := ix.blanks.read e
       if w > e then some (((m.tok p e kind).tok e w Ty.whitespace).push st) else none
     else none
   let fromWord := #['f', 'r', 'o', 'm']
   let importWord := #['i', 'm', 'p', 'o', 'r', 't']
   let lazy (word : Array Char) (st : St) : Option M := Id.run do
     if !(s.lineStart p && s.lit p #['l', 'a', 'z', 'y']) then return none
-    let w := blanksEnd s (p + 4)
+    let w := ix.blanks.read (p + 4)
     if w == p + 4 || !s.lit w word then return none
     let e := w + word.size
-    let w2 := blanksEnd s e
+    let w2 := ix.blanks.read e
     if w2 == e then return none
     return some (((((m.tok p (p + 4) Ty.keywordNamespace).tok (p + 4) w Ty.whitespace).tok w e
       Ty.keywordNamespace).tok e w2 Ty.whitespace).push st)
@@ -271,13 +318,15 @@ private def root (s : Src) (m : M) : Option M := Id.run do
 
 /-- `(=\s*)?(\![sraf])?` from `p`, before the `}` or `:` that closes a
 replacement field. -/
-private def fieldTailEnd (s : Src) (p : Nat) : Nat :=
-  let a := if s.is p '=' then s.run (p + 1) spaceChar else p
+private def fieldTailEnd (ix : Ix) (p : Nat) : Nat :=
+  let s := ix.s
+  let a := if s.is p '=' then ix.space.read (p + 1) else p
   if s.is a '!' && s.sat (a + 1) (fun c => "sraf".contains c) then a + 2 else a
 
-private def fexpr (s : Src) (m : M) : Option M :=
+private def fexpr (ix : Ix) (m : M) : Option M :=
+  let s := ix.s
   let p := m.pos
-  let a := fieldTailEnd s p
+  let a := fieldTailEnd ix p
   if s.sat p (fun c => "{([".contains c) then some ((m.tok p (p + 1) Ty.punctuation).push .fexprInner)
   else if s.is a '}' then some ((m.tok p (a + 1) Ty.stringInterpol).pop)
   else if s.is a ':' then some ((m.tok p (a + 1) Ty.stringInterpol).pop)
@@ -293,11 +342,12 @@ private def fexprInner (s : Src) (m : M) : Option M :=
 
 /-- `(\s+)([^\n_]*)(_\b)`, the middle group lexed by `inner` as a text of
 its own, or `default('#pop')`. -/
-private def softInner (inner : Src → Array Raw) (s : Src) (m : M) : Option M := Id.run do
+private def softInner (inner : Src → Array Raw) (ix : Ix) (m : M) : Option M := Id.run do
+  let s := ix.s
   let p := m.pos
-  let w := s.run p spaceChar
+  let w := ix.space.read p
   if w > p then
-    let g := s.run w (fun c => c != '\n' && c != '_')
+    let g := ix.softRest.read w
     if s.is g '_' && s.boundary (g + 1) then
       let m := m.tok p w Ty.whitespace
       let shifted := (inner ⟨s.chars.extract w g⟩).map fun r =>
@@ -317,23 +367,25 @@ private def funcname (s : Src) (m : M) : Option M :=
 private def classname (s : Src) (m : M) : Option M :=
   (nameEnd s m.pos).map fun e => (m.tok m.pos e Ty.nameClass).pop
 
-private def imports (s : Src) (m : M) : Option M := Id.run do
+private def imports (ix : Ix) (m : M) : Option M := Id.run do
+  let s := ix.s
   let p := m.pos
-  let w := s.run p spaceChar
+  let w := ix.space.read p
   if w > p && s.lit w #['a', 's'] then
-    let w2 := s.run (w + 2) spaceChar
+    let w2 := ix.space.read (w + 2)
     if w2 > w + 2 then
       return some (((m.tok p w Ty.whitespace).tok w (w + 2) Ty.keyword).tok (w + 2) w2 Ty.whitespace)
   if s.is p '.' then return some (m.tok p (p + 1) Ty.nameNamespace)
   if let some e := nameEnd s p then return some (m.tok p e Ty.nameNamespace)
   if s.is w ',' then
-    let w2 := s.run (w + 1) spaceChar
+    let w2 := ix.space.read (w + 1)
     return some (((m.tok p w Ty.whitespace).tok w (w + 1) Ty.operator).tok (w + 1) w2 Ty.whitespace)
   return some m.pop
 
-private def fromimport (s : Src) (m : M) : Option M := Id.run do
+private def fromimport (ix : Ix) (m : M) : Option M := Id.run do
+  let s := ix.s
   let p := m.pos
-  let w := s.run p spaceChar
+  let w := ix.space.read p
   if w > p && s.lit w #['i', 'm', 'p', 'o', 'r', 't'] && s.boundary (w + 6) then
     return some (((m.tok p w Ty.whitespace).tok w (w + 6) Ty.keywordNamespace).pop)
   if s.is p '.' then return some (m.tok p (p + 1) Ty.nameNamespace)
@@ -348,10 +400,11 @@ private def hex (s : Src) (i n : Nat) : Bool := Id.run do
   return true
 
 /-- `stringescape`'s pattern: `\N{…}`, `\uXXXX`, `\UXXXXXXXX`. -/
-private def unicodeEscape (s : Src) (p : Nat) : Option Nat := Id.run do
+private def unicodeEscape (ix : Ix) (p : Nat) : Option Nat := Id.run do
+  let s := ix.s
   if !s.is p '\\' then return none
   if s.is (p + 1) 'N' && s.is (p + 2) '{' then
-    let close := s.run (p + 3) (fun c => c != '}' && c != '\n')
+    let close := ix.braceLine.read (p + 3)
     if s.is close '}' then return some (close + 1)
   if s.is (p + 1) 'u' && hex s (p + 2) 4 then return some (p + 6)
   if s.is (p + 1) 'U' && hex s (p + 2) 8 then return some (p + 10)
@@ -371,18 +424,18 @@ private def bytesEscape (s : Src) (p : Nat) : Option Nat :=
 /-- `%(\(\w+\))?[-#0 +]*([0-9]+|[*])?(\.([0-9]+|[*]))?[hlL]?[E-GXc-giorsaux%]`.
 Every part's scalars stay out of the parts after it, so only the greedy
 reading can end on a conversion. -/
-private def percentEnd (s : Src) (p : Nat) : Option Nat := Id.run do
+private def percentEnd (ix : Ix) (p : Nat) : Option Nat := Id.run do
+  let s := ix.s
   if !s.is p '%' then return none
   let mut a := p + 1
   if s.is a '(' then
-    let b := s.run (a + 1) wordChar
+    let b := ix.word.read (a + 1)
     if b > a + 1 && s.is b ')' then a := b + 1
-  a := s.run a (fun c => "-#0 +".contains c)
-  let asciiDigit (c : Char) := c.isDigit
-  if s.sat a asciiDigit then a := s.run a asciiDigit
+  a := ix.flags.read a
+  if s.sat a asciiDigit then a := ix.asciiDigits.read a
   else if s.is a '*' then a := a + 1
   if s.is a '.' then
-    if s.sat (a + 1) asciiDigit then a := s.run (a + 1) asciiDigit
+    if s.sat (a + 1) asciiDigit then a := ix.asciiDigits.read (a + 1)
     else if s.is (a + 1) '*' then a := a + 2
   if s.sat a (fun c => "hlL".contains c) then a := a + 1
   if s.sat a (fun c => "EFGXcdefgiorsaux%".contains c) then return some (a + 1)
@@ -391,31 +444,26 @@ private def percentEnd (s : Src) (p : Nat) : Option Nat := Id.run do
 /-- A format spec after its fill and alignment:
 `[-+ ]?#?0?(\d+)?,?(\.\d+)?[E-GXb-gnosx%]?`, greedy, since no part's
 scalars include the `}` that must follow. -/
-private def specRestEnd (s : Src) (b : Nat) : Nat := Id.run do
+private def specRestEnd (ix : Ix) (b : Nat) : Nat := Id.run do
+  let s := ix.s
   let mut a := b
   if s.sat a (fun c => "-+ ".contains c) then a := a + 1
   if s.is a '#' then a := a + 1
   if s.is a '0' then a := a + 1
-  a := s.run a digitChar
+  a := ix.digit.read a
   if s.is a ',' then a := a + 1
-  if s.is a '.' && s.digit (a + 1) then a := s.run (a + 1) digitChar
+  if s.is a '.' && s.digit (a + 1) then a := ix.digit.read (a + 1)
   if s.sat a (fun c => "EFGXbcdefgnosx%".contains c) then a := a + 1
   return a
 
 /-- `\{((\w+)((\.\w+)|(\[[^\]]+\]))*)?(\![sra])?(\:(.?[<>=\^])?…)?\}`. The
 field and conversion read greedily; the spec's fill and alignment are tried
 in the pattern's order, two scalars, the alignment alone, then neither. -/
-private def braceEnd (s : Src) (p : Nat) : Option Nat := Id.run do
+private def braceEnd (ix : Ix) (p : Nat) : Option Nat := Id.run do
+  let s := ix.s
   if !s.is p '{' then return none
   let mut a := p + 1
-  if s.word a then
-    a := s.run a wordChar
-    for _ in [0:s.size + 1] do
-      if s.is a '.' && s.word (a + 1) then a := s.run (a + 1) wordChar
-      else if s.is a '[' && s.sat (a + 1) (· != ']') then
-        let close := s.run (a + 1) (· != ']')
-        if s.is close ']' then a := close + 1 else break
-      else break
+  if s.word a then a := ix.groups.read (ix.word.read a)
   if s.is a '!' && s.sat (a + 1) (fun c => "sra".contains c) then a := a + 2
   if s.is a ':' then
     let align (c : Char) := "<>=^".contains c
@@ -423,19 +471,20 @@ private def braceEnd (s : Src) (p : Nat) : Option Nat := Id.run do
       (if s.sat (a + 1) (· != '\n') && s.sat (a + 2) align then [a + 3] else []) ++
       (if s.sat (a + 1) align then [a + 2] else []) ++ [a + 1]
     for b in fills do
-      let e := specRestEnd s b
+      let e := specRestEnd ix b
       if s.is e '}' then return some (e + 1)
   if s.is a '}' then return some (a + 1)
   return none
 
-private def strState (esc : Esc) (q : Quote) (s : Src) (m : M) : Option M := Id.run do
+private def strState (esc : Esc) (q : Quote) (ix : Ix) (m : M) : Option M := Id.run do
+  let s := ix.s
   let p := m.pos
   let ty := q.ty
   if esc == .rf || esc == .f then
     if s.is p '{' && s.is (p + 1) '{' then return some (m.tok p (p + 2) Ty.stringEscape)
     if s.is p '}' && s.is (p + 1) '}' then return some (m.tok p (p + 2) Ty.stringEscape)
   if esc == .f || esc == .s then
-    if let some e := unicodeEscape s p then return some (m.tok p e Ty.stringEscape)
+    if let some e := unicodeEscape ix p then return some (m.tok p e Ty.stringEscape)
   if esc == .f || esc == .s || esc == .b then
     if let some e := bytesEscape s p then return some (m.tok p e Ty.stringEscape)
   match q with
@@ -453,8 +502,8 @@ private def strState (esc : Esc) (q : Quote) (s : Src) (m : M) : Option M := Id.
     let plain (c : Char) := !"\\'\"{}\n".contains c
     if s.sat p plain then return some (m.tok p (s.run p plain) ty)
   else
-    if let some e := percentEnd s p then return some (m.tok p e Ty.stringInterpol)
-    if let some e := braceEnd s p then return some (m.tok p e Ty.stringInterpol)
+    if let some e := percentEnd ix p then return some (m.tok p e Ty.stringInterpol)
+    if let some e := braceEnd ix p then return some (m.tok p e Ty.stringInterpol)
     let plain (c : Char) := !"\\'\"%{\n".contains c
     if s.sat p plain then return some (m.tok p (s.run p plain) ty)
   if s.sat p (fun c => "'\"\\".contains c) then return some (m.tok p (p + 1) ty)
@@ -464,23 +513,28 @@ private def strState (esc : Esc) (q : Quote) (s : Src) (m : M) : Option M := Id.
   if (q == .tdq || q == .tsq) && s.is p '\n' then return some (m.tok p (p + 1) ty)
   return none
 
-private def step (inner : Src → Array Raw) (s : Src) (m : M) : M :=
+private def step (inner : Src → Array Raw) (ix : Ix) (m : M) : M :=
   let next := match m.top? with
-    | some .root | none => root s m
-    | some .fexpr => fexpr s m
-    | some .fexprInner => fexprInner s m
-    | some .softInner => softInner inner s m
-    | some .funcname => funcname s m
-    | some .classname => classname s m
-    | some .imports => imports s m
-    | some .fromimport => fromimport s m
-    | some (.str esc q) => strState esc q s m
+    | some .root | none => root ix m
+    | some .fexpr => fexpr ix m
+    | some .fexprInner => fexprInner ix.s m
+    | some .softInner => softInner inner ix m
+    | some .funcname => funcname ix.s m
+    | some .classname => classname ix.s m
+    | some .imports => imports ix m
+    | some .fromimport => fromimport ix m
+    | some (.str esc q) => strState esc q ix m
   match next with
   | some m' => m'
-  | none => m.fallback s .root
+  | none => m.fallback ix.s .root
+
+/-- One text lexed from the root, its tables its own. -/
+private def lexWith (inner : Src → Array Raw) (s : Src) : Array Raw :=
+  let ix := Ix.of s
+  drive .root (fun _ m => step inner ix m) s
 
 /-- The raw token stream Pygments' `PythonLexer` writes. -/
 public def lex (s : Src) : Array Raw :=
-  drive .root (step (drive .root (step fun _ => #[]))) s
+  lexWith (lexWith fun _ => #[]) s
 
 end LeanTex.Core.Highlight.Python

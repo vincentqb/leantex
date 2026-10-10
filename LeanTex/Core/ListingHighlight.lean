@@ -83,7 +83,7 @@ private theorem lineText_push (acc : Array Token) (t : Token) :
     lineText (acc.push t) = lineText acc ++ t.text := by
   simp [lineText]
 
-private theorem runsGo_text (kinds : Array String) (cs : List Char) :
+private theorem runsGo_lineText (kinds : Array String) (cs : List Char) :
     ∀ (i : Nat) (kind cur : String) (acc : Array Token),
       lineText (runsGo kinds i cs kind cur acc) = lineText acc ++ cur ++ String.ofList cs := by
   induction cs with
@@ -106,9 +106,9 @@ private theorem runsGo_text (kinds : Array String) (cs : List Char) :
 private def runs (kinds : Array String) (base : Nat) (line : String) : Array Token :=
   runsGo kinds base line.toList "" "" #[]
 
-private theorem runs_text (kinds : Array String) (base : Nat) (line : String) :
+private theorem runs_lineText (kinds : Array String) (base : Nat) (line : String) :
     lineText (runs kinds base line) = line := by
-  rw [runs, runsGo_text]
+  rw [runs, runsGo_lineText]
   simp [lineText]
 
 /-- Where each line starts in the lexed text, a newline after each. -/
@@ -136,6 +136,6 @@ public theorem tokenize_source_exact (lang : Language) (lines : Array String) :
   apply Array.ext
   · simp [tokenize]
   · intro i _ _
-    simp [tokenize, runs_text]
+    simp [tokenize, runs_lineText]
 
 end LeanTex.Core.ListingHighlight
