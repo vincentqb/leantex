@@ -278,6 +278,7 @@ def backendSuiteChecks (ref : IO.Ref (List String)) : IO Unit := do
   mdHtmlAccountsChecks ref
   htmlTwinChecks ref
   refusedDisclosureChecks ref
+  cellBreakChecks ref
   mdRawHtmlHelpChecks ref
   mdTwinBreakChecks ref
   breakRunAgreeChecks ref

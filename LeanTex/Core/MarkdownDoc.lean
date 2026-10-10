@@ -42,8 +42,9 @@ and the direct check, `scripts/commonmark.lean --reader-hop`, which reads
 every corpus document's twin and every accepted CommonMark example's twin
 with an external CommonMark reader and with the door, at the classifier's
 comparison, and every twin's pipe tables with an external GFM table reader
-against the rows `gfmRow` reads. It needs the tool, so it is a report and
-never a gate. -/
+against the rows `gfmRow` reads. No spec example holds the two raw HTML
+spellings the twin writes, `<br>` and an empty `<a name>`: the reader hop
+alone reads them. It needs the tool, so it is a report and never a gate. -/
 
 namespace LeanTex.Core.MarkdownDoc
 
@@ -148,8 +149,11 @@ Leading indentation (up to an indented code block, §4.4), a block quote's
 thematic break (§4.1), a setext underline (§4.3), a fence of three
 tildes, or of three backticks whose info string holds none (§4.5), an
 ordered marker (§5.2). An HTML block (§4.6)
-is not modelled: the twin escapes every `<` its text holds, and the one it
-writes bare opens an autolink, which is no tag. -/
+is not modelled: the twin escapes every `<` its text holds, and the ones it
+writes bare open an autolink, which is no tag, a `<br>`, which only a
+heading, a cell or a run's close holds, so no line begins with it, and an
+empty target `<a name="…"></a>`, whose open tag is followed by its close and
+so opens no block of the seventh condition, the one an `a` tag could. -/
 @[expose] public def opensBlockChars : List Char → Bool
   | [] => false
   | c :: rest =>
@@ -539,6 +543,32 @@ private def trailWhite (afterBreak : Bool) : List Char → List Char × List Cha
       (c :: r.1, r.2)
     else ([], c :: rest)
 
+/-- Does what follows a run let its closing delimiter close after a `<br>`:
+nothing, white space or ASCII punctuation (§6.2: a delimiter run after
+punctuation is right-flanking only when one of these follows)? Anything
+else answers no, which keeps the break outside the run. -/
+private def closesAfterTag : List Inline → Bool
+  | [] => true
+  | .text s :: _ => match s.toList with
+    | c :: _ => mdWhite c || (c.toNat < 128 && !c.isAlphanum && c.toNat > 32)
+    | [] => false
+  | .linebreak _ :: _ => true
+  -- an italic correction writes nothing; a target and a link open with `<`
+  -- or `[`
+  | .italicCorr _ :: rest => closesAfterTag rest
+  | .label _ :: _ | .link .. :: _ => true
+  | _ => false
+
+/-- A run's closing hard breaks, kept inside its delimiters as `<br>` where
+the delimiter still closes after one (`closesAfterTag`): outside them, a
+break the block ends on is a backslash CommonMark reads as itself (§6.7),
+and a break inside the run moved out of it. `none` when the run's closing
+white space is not breaks alone. -/
+private def closingBreaks (trail : String) (rest : List Inline) : Option String :=
+  if !trail.isEmpty && (trail.replace "\\\n" "").isEmpty && closesAfterTag rest then
+    some (trail.replace "\\\n" "<br>")
+  else none
+
 /-- A run's text split at its own leading and trailing white space: a
 delimiter beside white space neither opens nor closes (§6.2), so the white
 space stands outside the delimiters — a hard break at either end with it,
@@ -705,6 +735,9 @@ private def inlinesInto (site : Site) (acc : String) (prev : Option String := no
     match styleMark st with
     | some m =>
       let (lead, core, trail) := spaceSplit (inlinesInto site "" none body.toList)
+      let (core, trail) := match closingBreaks trail rest with
+        | some brs => (core ++ brs, "")
+        | none => (core, trail)
       let ends := if trail.isEmpty then some m else none
       if core.isEmpty then
         inlinesInto site (acc ++ lead ++ trail) (if (lead ++ trail).isEmpty then prev else none) rest
@@ -713,8 +746,8 @@ private def inlinesInto (site : Site) (acc : String) (prev : Option String := no
       else inlinesInto site (acc ++ lead ++ m ++ core ++ m ++ trail) ends rest
     | none => inlinesInto site (inlineInto site acc (.styled st body)) none rest
   | x :: rest =>
-    -- an inline that writes nothing (an italic correction, a label) leaves
-    -- the run it follows open to the next
+    -- an inline that writes nothing (an italic correction) leaves the run
+    -- it follows open to the next
     let next := inlineInto site acc x
     inlinesInto site next (if next.utf8ByteSize == acc.utf8ByteSize then prev else none) rest
 

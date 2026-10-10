@@ -341,6 +341,56 @@ def htmlTwinChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "a <br> inside a heading sets two heading lines"
     (mdBodyTextOf fonts "# Alder<br>Birch\n" == #["Alder", "Birch"] && hd.isEmpty)
 
+/-- Where a shipped line's text stands on the page: the left edge of its
+first glyph run and the right edge of its last, its segments walked as the
+page paints them. -/
+def inkSpanOf (l : Layout.LineOut) : Option (Dim.Sp × Dim.Sp) := Id.run do
+  let mut px := l.x
+  let mut first : Option Dim.Sp := none
+  let mut last : Option Dim.Sp := none
+  for seg in l.segs do
+    match seg with
+    | .run _ _ _ w .. =>
+      if first.isNone then first := some px
+      px := px + w
+      last := some px
+    | .gap w _ | .decoratedGap w _ _ | .rule w .. | .decoration _ w .. | .image _ w _ =>
+      px := px + w
+    | .poly .. => pure ()
+  return match first, last with
+    | some a, some b => some (a, b)
+    | _, _ => none
+
+/-- **A break inside a table cell sets as its lines would as rows.** A
+`<br>` in a cell is a line of its own, on the page as in a browser: each
+line stands on its column's side — left, right or centred, as the delimiter
+row says — and the column is as wide as its widest line, never as the
+cell's words on one line. Held on the shipped lines, against the same words
+spelled as rows, for each side; the page's cell keeps its break. -/
+def cellBreakChecks (ref : IO.Ref (List String)) : IO Unit := do
+  let t := check ref
+  let some fonts ← serifFacesSet
+    | t "the cell break faces load" false
+      return
+  let spanOf (src word : String) : Option (Dim.Sp × Dim.Sp) :=
+    ((bodyLines (layoutOf fonts (elabMd src).1)).find? (fun l => hasStr (lineText l) word)).bind
+      inkSpanOf
+  for (side, delim) in [("left", "---"), ("right", "---:"), ("centred", ":---:")] do
+    let broken := s!"| Alder | Elm |\n| --- | {delim} |\n| Cedar | Fir<br>Gorse bush |\n"
+    let rows := s!"| Alder | Elm |\n| --- | {delim} |\n| Cedar | Fir |\n|  | Gorse bush |\n"
+    for w in ["Elm", "Fir", "Gorse bush"] do
+      t s!"a {side} cell's broken lines stand where its lines as rows stand ({w}: \
+{repr (spanOf broken w)}, as rows {repr (spanOf rows w)})"
+        ((spanOf broken w).isSome && spanOf broken w == spanOf rows w)
+    t s!"a {side} cell's page keeps its break inside the cell"
+      (hasStr (HtmlDoc.emit {} (elabMd broken).1).1 "Fir<br>Gorse bush</td>")
+  let wide := "| Alder | Elm |\n| --- | --- |\n| Cedar<br>Dove | Fir |\n"
+  let wideRows := "| Alder | Elm |\n| --- | --- |\n| Cedar | Fir |\n| Dove |  |\n"
+  for w in ["Elm", "Fir"] do
+    t s!"a column holding a broken cell is as wide as its widest line ({w}: \
+{repr (spanOf wide w)}, as rows {repr (spanOf wideRows w)})"
+      ((spanOf wide w).isSome && spanOf wide w == spanOf wideRows w)
+
 /-- Does each word stand in `hay` exactly once, in this order? -/
 def mdOnceInOrder (hay : String) (ws : List String) : Bool :=
   let at_ (w : String) : Nat := ((hay.splitOn w).headD "").length
@@ -474,6 +524,11 @@ def mdTwinBreakChecks (ref : IO.Ref (List String)) : IO Unit := do
       ("a heading's text", "# Alder \\<br> Birch\n"),
       ("a comment as text", "Keep \\<!-- Cedar --> in view.\n"),
       ("a target as text", "Mark \\<a name=\"willow\">\\</a> here.\n"),
+      ("a run ending on a break", "*Alder<br>*\n"), ("a strong run ending on two breaks", "**Alder<br><br>**\n"),
+      ("a run ending on a break, then text", "**Alder<br>** Birch\n"),
+      ("a run ending on a break after text", "Birch **Alder<br>**\n"),
+      ("a list item's run ending on a break", "- **Alder<br>**\n"),
+      ("a quotation's run ending on a break", "> *Alder<br>*\n"),
       ("a table cell's break", "| Alder | Elm |\n| --- | --- |\n| Birch<br>Cedar | Fir |\n"),
       ("a heading's break", "## Gorse<br>Holly\n"),
       ("a target and its link", "<a name=\"willow\"></a>Mark here, and [back](#willow).\n"),

@@ -528,7 +528,7 @@ private def isBr (t : HtmlTag) : Bool := t.name == "br" && t.attrs.isEmpty
 a scan that resumes at a reading's stop always advances. Each scanner's
 bound is an invariant of its own loop (`Loop.forIn_range_inv`). -/
 
-theorem litAtList_reach {cs : Array Char} :
+theorem litAtList_between {cs : Array Char} :
     ∀ {i : Nat} {l : List Char}, litAtList cs i l = true → i ≤ cs.size →
       i + l.length ≤ cs.size
   | _, [], _, hi => by simpa using hi
@@ -539,7 +539,7 @@ theorem litAtList_reach {cs : Array Char} :
       cases hget : cs[i]? with
       | none => simp [hget] at hc
       | some d => exact (Array.getElem?_eq_some_iff.mp hget).1
-    have := litAtList_reach hr (by omega)
+    have := litAtList_between hr (by omega)
     simp only [List.length_cons]
     omega
 
@@ -568,7 +568,7 @@ theorem findLit_between {cs : Array Char} {i e : Nat} {lit : String}
         refine ⟨hst.1, fun r' hr' => ?_⟩
         simp only [Id.run_pure, ForInStep.value, Option.some.injEq] at hr'
         subst hr'
-        have := litAtList_reach hl (by omega)
+        have := litAtList_between hl (by omega)
         rw [String.length_toList] at this
         exact ⟨by omega, this⟩
       · exact ⟨(by omega : i ≤ st.2 + 1), fun r hr => by simp [ForInStep.value] at hr⟩
@@ -1320,7 +1320,7 @@ private def openTagInline (file : String) (cs : Array Char) (p : Pos) (t : HtmlT
       | none => refused
 
 /-- The three things an open tag can become, and where its reading stops. -/
-private theorem openTagInline_cases {file : String} {cs : Array Char} {p : Pos} {t : HtmlTag}
+private theorem openTagInline_exact {file : String} {cs : Array Char} {p : Pos} {t : HtmlTag}
     {next : Nat} {tok : Option ITok} {d : Option Diag}
     (h : openTagInline file cs p t = (next, tok, d)) :
     (next = t.stop ∧ tok = some (.hard p) ∧ d = none) ∨
@@ -1411,7 +1411,7 @@ theorem htmlInlineAt_accounts {file : String} {cs : Array Char} {i next : Nat} {
     | some t =>
       have htb := tagAt_between ht
       simp only [ht, Option.map_some, Prod.mk.injEq, Option.some.injEq] at h
-      rcases openTagInline_cases h.1 with ⟨rfl, rfl, rfl⟩ | ⟨key, he, rfl, rfl⟩ | ⟨rfl, rfl, rfl⟩
+      rcases openTagInline_exact h.1 with ⟨rfl, rfl, rfl⟩ | ⟨key, he, rfl, rfl⟩ | ⟨rfl, rfl, rfl⟩
       · exact ⟨htb.1, htb.2, Or.inl ⟨rfl, rfl⟩⟩
       · have heb := endTagAt_between he
         exact ⟨by omega, heb.2, Or.inl ⟨rfl, rfl⟩⟩
@@ -1435,7 +1435,7 @@ theorem htmlInlineAt_covers {file : String} {cs : Array Char} {i next : Nat} {p 
     | none => simp [ht] at h
     | some t =>
       simp only [ht, Option.map_some, Prod.mk.injEq, Option.some.injEq] at h
-      rcases openTagInline_cases h.1 with ⟨_, h2, _⟩ | ⟨key, _, h2, _⟩ | ⟨_, h2, _⟩
+      rcases openTagInline_exact h.1 with ⟨_, h2, _⟩ | ⟨key, _, h2, _⟩ | ⟨_, h2, _⟩
       · exact Or.inl (Option.some.inj h2)
       · exact Or.inr ⟨key, Option.some.inj h2⟩
       · simp at h2
