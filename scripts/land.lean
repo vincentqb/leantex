@@ -97,12 +97,48 @@ structure Ran where
   code : Nat
   out : String
   err : String
+  /-- The standard output's bytes, as the run directory holds them. -/
+  bytes : ByteArray := .empty
+  /-- Whether those bytes were UTF-8, so `out` is them unchanged;
+  `outputText` spelled them otherwise. -/
+  exact : Bool := true
+
+/-- Bytes spelled one-to-one as text: each well-formed UTF-8 sequence as its
+character with every backslash doubled, and each byte no sequence claims as
+`\xHH`. Two byte strings spell alike exactly when they are alike. -/
+def spelledText (bs : ByteArray) : String := Id.run do
+  let hex (n : Nat) : Char := if n < 10 then Char.ofNat (48 + n) else Char.ofNat (55 + n)
+  let mut out := ""
+  let mut i := 0
+  for _ in [0:bs.size] do
+    if i ≥ bs.size then break
+    match bs.utf8DecodeChar? i with
+    | some c =>
+      out := if c == '\\' then out ++ "\\\\" else out.push c
+      i := i + c.utf8Size
+    | none =>
+      let b := (bs[i]?.getD 0).toNat
+      out := ((out ++ "\\x").push (hex (b / 16))).push (hex (b % 16))
+      i := i + 1
+  return out
+
+/-- A command's output as the core reads it: UTF-8 as itself, and output that
+is not — a patch holding a fixture in an 8-bit encoding, which the net
+comparison lists whole — as `spelledText` spells it. Where two outputs are
+compared and either was not UTF-8, both are read through `spelledText`, so
+they compare alike exactly when their bytes do. -/
+def outputText (bs : ByteArray) : String :=
+  match String.fromUTF8? bs with
+  | some s => s
+  | none => spelledText bs
 
 /-- Run a command; write its two streams to separate files inside the run
 directory, read them back, and return what the files said. The read-back is
 the contract: the core is fed bytes that survived a round trip through the
-filesystem. Children get a null standard input and `GIT_TERMINAL_PROMPT=0`,
-so a command that would ask a human instead fails. -/
+filesystem, as `outputText` spells them. Both streams are read as bytes, by
+tasks of their own so neither pipe can fill and stall the other. Children
+get a null standard input and `GIT_TERMINAL_PROMPT=0`, so a command that
+would ask a human instead fails. -/
 def sh (e : Env) (ctr : IO.Ref Nat) (step cmd : String) (args : Array String)
     (cwd : Option String := none) : IO Ran := do
   let n ← ctr.modifyGet (fun k => (k, k + 1))
@@ -116,21 +152,27 @@ def sh (e : Env) (ctr : IO.Ref Nat) (step cmd : String) (args : Array String)
   -- path held (the text is not a sha, so `isSha` rejects it), but the cause
   -- is removed rather than relied upon.
   (← IO.getStdout).flush
-  let r ← try
-      IO.Process.output
+  let r : UInt32 × ByteArray × ByteArray ← try
+      let child ← IO.Process.spawn
         { cmd, args, cwd := cwd.map System.FilePath.mk, env := e.childEnv,
-          stdin := .null }
+          stdin := .null, stdout := .piped, stderr := .piped }
+      let o ← IO.asTask child.stdout.readBinToEnd Task.Priority.dedicated
+      let x ← IO.asTask child.stderr.readBinToEnd Task.Priority.dedicated
+      let o ← IO.ofExcept o.get
+      let x ← IO.ofExcept x.get
+      pure (← child.wait, o, x)
     catch ex =>
-      pure { exitCode := 127, stdout := "", stderr := s!"spawn failed: {ex}" }
-  IO.FS.writeFile outPath r.stdout
-  IO.FS.writeFile errPath r.stderr
-  let out ← IO.FS.readFile outPath
-  let err ← IO.FS.readFile errPath
+      pure (127, ByteArray.empty, s!"spawn failed: {ex}".toUTF8)
+  IO.FS.writeBinFile outPath r.2.1
+  IO.FS.writeBinFile errPath r.2.2
+  let outBytes ← IO.FS.readBinFile outPath
+  let out := outputText outBytes
+  let err := outputText (← IO.FS.readBinFile errPath)
   let h ← IO.FS.Handle.mk s!"{e.runDir}/{step}.log" .append
   h.putStr s!"$ ({cwd.getD "."}) {cmd} {String.intercalate " " args.toList}\n"
-  h.putStr s!"exit={r.exitCode}\n--- stdout\n{out}--- stderr\n{err}\n"
+  h.putStr s!"exit={r.1}\n--- stdout\n{out}--- stderr\n{err}\n"
   h.flush
-  return { code := r.exitCode.toNat, out, err }
+  return { code := r.1.toNat, out, err, bytes := outBytes, exact := outBytes.validateUTF8 }
 
 def git (e : Env) (ctr : IO.Ref Nat) (step : String) (args : Array String)
     (cwd : Option String := none) : IO Ran :=
@@ -749,11 +791,15 @@ def landLoop (e : Env) (ctr : IO.Ref Nat) (treeLive : IO.Ref Bool) (name : Strin
           if rb.code != 0 || ra.code != 0 then
             pure (.garbled "git diff-tree for the net comparison")
           else
-            let drift := netDrift (netOf rb.out) (netOf ra.out)
+            -- Where either listing is not UTF-8, both are read through one
+            -- one-to-one spelling, so the comparison is over their bytes.
+            let (before, after) := if rb.exact && ra.exact then (rb.out, ra.out)
+              else (spelledText rb.bytes, spelledText ra.bytes)
+            let drift := netDrift (netOf before) (netOf after)
             say "net" (if drift.isEmpty then "ok" else "fail")
-              ([("fork", fork), ("base", newBase), ("files", toString (netOf rb.out).size)]
+              ([("fork", fork), ("base", newBase), ("files", toString (netOf before).size)]
                 ++ (if drift.isEmpty then [] else [("drift", String.intercalate "," drift.toList)]))
-            pure (.netDiffs rb.out ra.out)
+            pure (.netDiffs before after)
       | .makeTree tip => do
         treeLive.set true
         let seed ← makeTree e ctr wt tip
@@ -1473,6 +1519,18 @@ def netCases : List (String × String × String × Array String) :=
 
 def selftest : IO UInt32 := do
   let mut bad := 0
+  -- A command's output reads one-to-one: UTF-8 as itself, a Latin-1 byte by
+  -- its value, a backslash doubled only where it must be told from one.
+  let latin : ByteArray := ⟨#[0x43, 0x61, 0x66, 0xE9]⟩
+  let spelled : ByteArray := "Caf\\xE9".toUTF8
+  for (why, ok) in [("UTF-8 output reads as itself", outputText "Café \\x".toUTF8 == "Café \\x"),
+      ("a byte UTF-8 does not claim is spelled by its value", outputText latin == "Caf\\xE9"),
+      ("a backslash in a spelled output is doubled", spelledText spelled == "Caf\\\\xE9"),
+      ("a byte and the text of its spelling spell apart", spelledText latin != spelledText spelled)] do
+    if ok then say "selftest" "ok" [("case", why)]
+    else
+      bad := bad + 1
+      say "selftest" "fail" [("case", why)]
   for c in cases do
     match caseFault c with
     | some why =>
@@ -2040,6 +2098,23 @@ def scenarioLands (self root : String) : IO Outcome := do
              && says out "step=gate-tree result=ok" && says out "step=tree-remove result=ok"
              && wts.size == 2
          , detail := s!"exit={code} gated={tip} main-after={after} worktrees={wts.size}" }
+
+/-- A branch whose change holds a file that is not UTF-8 — a fixture in an
+8-bit encoding — lands: git lists its patch with the file's own bytes, which
+a reader insisting on UTF-8 could not read, so the net comparison once
+failed every such landing as garbled. -/
+def scenarioLatin1 (self root : String) : IO Outcome := do
+  let s ← mkScratch s!"{root}/latin1" "latin1"
+  IO.FS.writeBinFile s!"{s.wt}/latin1.tex" ("Caf".toUTF8 ++ ⟨#[0xE9, 0x0A]⟩)
+  hgitOk #["add", "latin1.tex"] s.wt
+  hgitOk #["commit", "-qm", "Add a Latin-1 file"] s.wt
+  let tip ← revOf s.repo "refs/heads/agent/latin1"
+  let (code, out) ← landIn self s.repo #["latin1"] "t=true"
+  let after ← revOf s.repo "refs/heads/main"
+  return { label := "a branch holding a file that is not UTF-8 lands, its bytes compared exactly"
+         , ok := code == 0 && after == tip && says out "step=net result=ok"
+             && says out "result=landed"
+         , detail := s!"exit={code} tip={tip} main-after={after}" }
 
 /-- A branch that already contains `main` carries its reviewed merge result,
 including a side commit deliberately reconciled without its old content.
@@ -2725,7 +2800,8 @@ def scratchSelftest : IO UInt32 := do
   let starting : List (String × (String → String → IO Outcome)) :=
     [("hookdir", scenarioHookGitDir), ("incheckout", scenarioRootInCheckout)]
   let scenarios : List (String × (String → String → IO Outcome)) :=
-    [ ("lands", scenarioLands), ("moves", scenarioBranchMoves), ("leaves", scenarioMainLeaves)
+    [ ("lands", scenarioLands), ("latin1", scenarioLatin1), ("moves", scenarioBranchMoves)
+    , ("leaves", scenarioMainLeaves)
     , ("merge-kept", fun self root => scenarioMergedTip self root false)
     , ("merge-reconciled", fun self root => scenarioMergedTip self root true)
     , ("conflict", scenarioConflict), ("optin", scenarioNoOptIn), ("reserved", scenarioReserved)

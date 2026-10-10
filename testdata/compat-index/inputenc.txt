@@ -1,3 +1,5 @@
 # source: inputenc manual §4 — the encoding is an option; \inputencoding is the
-# one user command.
-body refuse:W0301 \inputencoding{utf8}
+# one user command. A file reads in one encoding throughout: a switch to the
+# encoding in force changes nothing, and any other is named.
+body impl \inputencoding{utf8}
+body refuse:W0104 \inputencoding{latin1}

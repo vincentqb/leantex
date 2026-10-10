@@ -54,6 +54,7 @@ import Tests.CacheIO
 import Tests.PictureAssets
 import Tests.ToolMemo
 import Tests.World
+import Tests.TexFontTrees
 import Tests.Surface
 import Tests.ElabContracts
 import Tests.FrontendContracts
@@ -98,6 +99,10 @@ import Tests.PublicationPaths
 import Tests.Markdown
 import Tests.MarkdownHtml
 import Tests.MarkdownHeadings
+import Tests.MarkdownTables
+import Tests.MarkdownPage
+import Tests.MarkdownWarnings
+import Tests.MarkdownCode
 import Tests.MarkdownInput
 import Tests.MarkdownDoors
 import Tests.MarkdownTwin
@@ -144,6 +149,7 @@ import Tests.DiagnosticListingOrigins
 import Tests.DiagnosticProducerOrigins
 import Tests.SourceAnnotations
 import Tests.InputOrigins
+import Tests.InputDecoding
 import Tests.ImageOrigins
 import Tests.Themes
 import Tests.SeedPalette
@@ -195,6 +201,7 @@ import Tests.LinkMacroLayout
 import Tests.PackageCode
 import Tests.PackageImports
 import Tests.ParagraphMathRhythm
+import Tests.LineRhythm
 import Tests.BeamerProof
 import Tests.DiagAudit
 import Tests.MathSym
@@ -222,6 +229,7 @@ import Tests.BigDelim
 import Tests.Regress
 import Tests.RegressionCorpus
 import Tests.Reports
+import Tests.Premises
 import Tests.Natbib
 import Tests.LinkColor
 import Tests.Privacy
@@ -244,7 +252,7 @@ open Tests (mintedSettingsChecks listingHighlightChecks svgAssetChecks svgToolCh
   listDeclarationChecks stringConditionalChecks)
 open TcolorboxChecks (tcolorboxChecks tcolorboxSourceChecks)
 open TcolorboxColors (tcolorboxColorChecks)
-open PictureBoundary (pictureBoundaryChecks)
+open PictureBoundary (pictureBoundaryChecks pictureWrapperChecks pictureShipChecks)
 open Tests (fontDefaultsChecks fontDefaultsOverrideChecks blockBarChecks batchChecks)
 
 /-- The backend blocks, dispatched together so each stays a leaf the
@@ -255,6 +263,8 @@ def backendSuiteChecks (ref : IO.Ref (List String)) : IO Unit := do
   styleChecks ref
   htmlLayoutChecks ref
   htmlRhythmChecks ref
+  Tests.LineRhythm.htmlStepChecks ref
+  Tests.LineRhythm.htmlGapChecks ref
   htmlListGapChecks ref
   htmlSectionGapChecks ref
   printLiftChecks ref
@@ -267,6 +277,11 @@ def backendSuiteChecks (ref : IO.Ref (List String)) : IO Unit := do
   markdownChecks ref
   markdownHtmlChecks ref
   markdownHeadingChecks ref
+  Tests.MarkdownTables.markdownTableChecks ref
+  Tests.MarkdownPage.markdownPageChecks ref
+  Tests.MarkdownWarnings.markdownWarningChecks ref
+  Tests.MarkdownWarnings.markdownMonoChecks ref
+  Tests.MarkdownCode.markdownCodeChecks ref
   algorithmBackendChecks ref
   listingLanguageChecks ref
   mintedSettingsChecks ref
@@ -282,6 +297,7 @@ def backendSuiteChecks (ref : IO.Ref (List String)) : IO Unit := do
   inputUseChecks ref
   backendChecks ref
   pictureBoundaryChecks ref
+  pictureWrapperChecks ref
   fontDefaultsChecks ref
   fontDefaultsOverrideChecks ref
   landmarkChecks ref
@@ -423,6 +439,19 @@ def layoutSuiteChecks (ref : IO.Ref (List String)) : IO Unit := do
   inkGeometryChecks ref
   spacingChecks ref geom oneFace font
   paragraphMathRhythmChecks ref
+  Tests.LineRhythm.stepLeadingChecks ref oneFace
+  Tests.LineRhythm.raggedFrameChecks ref oneFace
+  Tests.LineRhythm.listingPitchChecks ref oneFace
+  Tests.LineRhythm.displayStepChecks ref oneFace
+  Tests.LineRhythm.deckListingChecks ref oneFace
+  Tests.LineRhythm.cellStepChecks ref oneFace
+  Tests.LineRhythm.paraEndChecks ref oneFace
+  Tests.LineRhythm.venueLadderChecks ref oneFace
+  Tests.LineRhythm.inlineRunChecks ref oneFace
+  Tests.LineRhythm.overlayGapChecks ref oneFace
+  Tests.LineRhythm.carrierDisplayChecks ref oneFace
+  Tests.LineRhythm.headingLeadChecks ref oneFace
+  Tests.LineRhythm.centredRuntChecks ref oneFace
   displayTexChecks ref oneFace
   titleBarChecks ref geom oneFace font
   slideChecks ref oneFace
@@ -684,6 +713,14 @@ def layoutSuiteChecks (ref : IO.Ref (List String)) : IO Unit := do
   fontSizeAffineChecks ref oneFace
   linkColorChecks ref oneFace
 
+/-- The world premises' blocks, dispatched together so `main`'s spent
+elaboration budget stays flat: the runtime's process boundary, the
+toolchain's spawners, and the registry held to the source. -/
+def worldPremiseChecks (ref : IO.Ref (List String)) : IO Unit := do
+  Tests.processRuntimeChecks ref
+  toolchainSpawnChecks ref
+  premiseChecks ref
+
 /-- The surface-and-math suite: the dispatcher for the compat, class,
 bibliography, and math elaboration blocks, so an added block lands here and
 `main`'s spent elaboration budget stays flat — the regrowth the two suite
@@ -734,6 +771,7 @@ def surfaceSuiteChecks (ref : IO.Ref (List String)) : IO Unit := do
   Tests.toolMemoChecks ref
   Tests.World.checks ref
   toolProbeChecks ref
+  Tests.texFontTreeChecks ref
   posterChromeCompatChecks ref
   keyedLookupChecks ref
   compatAccountingChecks ref
@@ -782,6 +820,7 @@ def main (args : List String) : IO UInt32 := do
   let ref ← IO.mkRef ([] : List String)
 
   utf8Checks ref
+  inputDecodingChecks ref
   argsChecks ref
   renderChecks ref
   diagnosticFormatChecks ref
@@ -794,6 +833,7 @@ def main (args : List String) : IO UInt32 := do
   diagnosticProducerOriginChecks ref
   diagnosticAggregationOriginChecks ref
   diagnosticPipelineOriginChecks ref
+  pictureShipChecks ref
   sourceAnnotationChecks ref
   buildGraphChecks ref
   inputOriginsChecks ref
@@ -836,6 +876,7 @@ def main (args : List String) : IO UInt32 := do
   siteAccountingChecks ref
   diagAuditChecks ref
   reportChecks ref
+  worldPremiseChecks ref
   optionRunAccountingChecks ref
   visibleRunAccountingChecks ref
   monoSlotChecks ref

@@ -560,6 +560,14 @@ def backendFiles : List String :=
    "LeanTex/Core/PdfStruct.lean", "LeanTex/Core/Html.lean", "LeanTex/Core/HtmlDoc.lean",
    "LeanTex/Core/MathMl.lean", "LeanTex/Core/MarkdownDoc.lean"]
 
+/-- A temporary directory or file made outside Host, as a code token: on Lean
+v4.34.1 the toolchain's own temporary-directory and temporary-file calls end
+the process with a segmentation fault when the temporary root is missing,
+so the driver makes every scratch directory through `Host.withScratch`. The
+shared string and line-comment boundary applies, with its stated limits. -/
+def tempRootOutsideHost (l : String) : Bool :=
+  ["withTempDir", "createTempDir", "withTempFile", "createTempFile"].any (bannedWord · l)
+
 /-- `IO`, or a name that runs effects without it (`BaseIO`, `EIO`, and the
 escapes that run either from pure code), as a code token, using the same
 string and line-comment boundary as the banned-keyword gate. A block
@@ -784,6 +792,36 @@ def hasCall (line pat : String) : Bool :=
 def fontScanInTest (l : String) : Bool :=
   hasCall (stripLineComment (stripStrings l)) "FontDiscovery.scan"
 
+/-- A document's file read as text past the decoding door: `IO.FS.readFile`
+in the input module throws on a byte that is not UTF-8, where
+`Encoding.readTex` and `Encoding.readMarkdown` replace it and name where. -/
+def undecodedRead (l : String) : Bool :=
+  hasCall (stripLineComment (stripStrings l)) "IO.FS.readFile"
+
+/-- A file's text read past the decoding door and handed straight to a
+reader — a surface's door, the lexer, an elaboration — on the same line:
+the suite's and the harnesses' reading of a fixture is the driver's only
+through `fixtureText` or the front door. Line-local, as `frontEndRestated`
+is. -/
+def undecodedFixture (l : String) : Bool :=
+  let code := stripLineComment (stripStrings l)
+  hasCall code "IO.FS.readFile" &&
+    ["Lex.lex", "Md.read", "Surface.read", "Elab.run", "Elab.runRaws", "elabFixture",
+      "elabInputSrc"].any (hasCall code ·)
+
+/-- A harness restating the driver's front end: input execution or data
+resolution called on raws a script lexed itself, or a file's text read past
+the decoding door and handed to a reader on the same line. A script that
+reads a document as the driver reads it takes `Input.readDocument`, whose
+decoding door, surface reader and declaration settling a copy of the steps
+skips. Line-local: a read bound on one line and lexed on the next is not
+seen. -/
+def frontEndRestated (l : String) : Bool :=
+  let code := stripLineComment (stripStrings l)
+  hasCall code "Input.expandInputs" || hasCall code "Input.resolveData" ||
+    hasCall code "Elab.executeInputs" || undecodedFixture l
+
+
 /-- The marker stating why an `Ir.dump` read in a test is not a page claim;
 its presence on the line is the escape the gate honours. -/
 def irTierMark : String := "-- ir tier:"
@@ -854,8 +892,7 @@ def bangBaseline : List (String × Nat) := [
   ("LeanTex/Core/Layout.lean", 41),
   ("LeanTex/Core/Lex.lean", 2),
   ("LeanTex/Core/MathParse.lean", 1),
-  ("LeanTex/Core/Pdf.lean", 8),
-  ("LeanTex/Core/Utf8.lean", 4)]
+  ("LeanTex/Core/Pdf.lean", 8)]
 
 /-- The line's string-literal contents, concatenated — `stripStrings`'
 complement, with its stated line-scanner limitations. What the engine says
@@ -1306,6 +1343,14 @@ def gates : List Gate := [
   breaks the theorem artifact_flag_free instead of growing the list.
   Fix: make it a document declaration (\\output) rather than a flag; a
   flag about where/when/how-loudly goes on the list, deliberately." },
+  { applies := fun f => (f.startsWith "LeanTex/" || f == "Main.lean") && f != "LeanTex/Cli/Host.lean"
+    flag := tempRootOutsideHost
+    what := fun f => s!"a temporary directory or file made outside Host in {f}"
+    help := "  On Lean v4.34.1 the toolchain's temporary-directory and temporary-file
+  calls end the process with a segmentation fault when the temporary root
+  is missing.
+  Fix: make the directory with Host.withScratch, whose failure is an
+  IO.Error naming the root." },
   { applies := fun f => f.startsWith "LeanTex/Core/" || f == "LeanTex/Cli/World.lean"
     flag := ioInCore
     what := fun f => s!"IO in {f}"
@@ -1391,6 +1436,32 @@ def gates : List Gate := [
   copies of the idiom grew across the test tree before the shared helper
   was reached for (AGENTS.md, Conventions: the second caller moves it).
   Fix: use hasStr, or bind it over a fixed page: let has := hasStr page." },
+  { applies := (· == "LeanTex/Cli/Input.lean")
+    flag := undecodedRead
+    what := fun f => s!"a document file read as text past the decoding door, in {f}"
+    help := "  A file the document names becomes text through Encoding.readTex or
+  Encoding.readMarkdown, which replace bytes that are not text and name
+  where; IO.FS.readFile throws instead, and a Latin-1 .bib once ended the
+  run with an uncaught exception that way.
+  Fix: read the bytes with readSource and decode them through Encoding." },
+  { applies := fun f => f.startsWith "Tests" && f.endsWith ".lean"
+    flag := undecodedFixture
+    what := fun f => s!"a fixture's text read past the decoding door, in {f}"
+    help := "  The suite reads a fixture as the driver reads it: fixtureText decodes
+  its bytes through the decoding door (a byte-order mark skipped, bytes
+  that are not text replaced, lines ended at CR, a declared encoding
+  honoured), where IO.FS.readFile hands a reader bytes the binary never
+  sees as they stand.
+  Fix: read the file with fixtureText." },
+  { applies := fun f => f.startsWith "scripts/" && f.endsWith ".lean"
+    flag := frontEndRestated
+    what := fun f => s!"a document's front end restated in {f}"
+    help := "  A harness that reads a document as the driver reads it takes the front
+  door, Input.readDocument: the decoding door, the surface reader the
+  extension selects, input execution and the declaration's settling. A copy
+  of the steps reads a Latin-1, BOM or CR file differently from the binary,
+  and the tier then measures a page no build ships.
+  Fix: read the bytes with Input.readSource and pass them to Input.readDocument." },
   { applies := fun f => f.startsWith "LeanTex/" && f.endsWith ".lean"
     flag := heartbeatRaise
     what := fun f => s!"a {kwMaxHeartbeats} raise in {f}"
@@ -2095,8 +2166,17 @@ def selftest : IO UInt32 := do
     ("+  | x => { s with field := v }", false),
     ("+  | .text s => s", false)]
 
-  -- `addedByFile` hands these two checks their lines with the `+` already
+  -- `addedByFile` hands these checks their lines with the `+` already
   -- stripped, unlike the whole-diff checks above.
+  expect "tempRootOutsideHost" tempRootOutsideHost [
+    ("    let result ← try IO.FS.withTempDir fun dir => do", true),
+    ("  let dir ← IO.FS.createTempDir", true),
+    ("  let (h, path) ← IO.FS.createTempFile", true),
+    ("  IO.FS.withTempFile fun h path => do", true),
+    ("    Host.withScratch fun work => do", false),
+    ("  -- IO.FS.withTempDir crashes here", false),
+    ("  let note := \"withTempDir\"", false)]
+
   expect "ioInCore" ioInCore [
     ("def scan (roots : List String) : IO (Array Face) := do", true),
     ("    let bytes ← IO.FS.readBinFile path", true),
@@ -2189,6 +2269,39 @@ def selftest : IO UInt32 := do
     ("  let shipped ← FontDiscovery.scanRoots [testFonts]", false),
     ("  -- FontDiscovery.scan here would break hermeticity", false),
     ("  t \"a message naming FontDiscovery.scan stays data\" true", false)]
+
+  expect "undecodedRead" undecodedRead [
+    -- the reads the door replaced: both must fire
+    ("      sources := sources.push (src, ← IO.FS.readFile path)", true),
+    ("          let text ← IO.FS.readFile path", true),
+    -- the door, a comment, and a string naming the call
+    ("    match ← readSource path.toString with", false),
+    ("  -- IO.FS.readFile would throw on Latin-1 bytes", false),
+    ("  t \"a message naming IO.FS.readFile stays data\" true", false)]
+
+  expect "undecodedFixture" undecodedFixture [
+    ("    let (d, _) ← elabFixture n (← IO.FS.readFile s!\"testdata/corpus/{n}.tex\")", true),
+    ("  let (raws, _) := Surface.read .tex file (← IO.FS.readFile path)", true),
+    ("  let (doc, _) ← elabInputSrc path (← IO.FS.readFile path)", true),
+    ("  let (doc, ds) := Elab.runRaws file raws (← IO.FS.readFile path).length", true),
+    ("    let (d, _) ← elabFixture n (← fixtureText path)", false),
+    ("  let pins ← IO.FS.readFile path", false),
+    ("  -- elabFixture n (← IO.FS.readFile path) reads past the door", false)]
+
+  expect "frontEndRestated" frontEndRestated [
+    -- the restated steps, as the harnesses once spelled them: both must fire
+    ("  let (executed, inputDiags, _) ← Input.expandInputs file raws", true),
+    ("  let (executed, ds, _) ← LeanTex.Cli.Input.expandInputs file raws", true),
+    ("  let (raws, dataDiags) ← Input.resolveData file executed.raws", true),
+    ("  let (executed, log) ← (Elab.executeInputs (readAt dir file 8) file raws).run {}", true),
+    ("  let (doc, _) := Elab.run file (← IO.FS.readFile file)", true),
+    ("    let (raws, ds) := Md.read file (← IO.FS.readFile path)", true),
+    ("  let (doc, ds) ← elabFixture stem (← IO.FS.readFile path)", true),
+    ("  let (doc, ds) := Elab.runExecuted file src.executed src.diags", false),
+    -- the door, a comment, and a string naming the steps
+    ("  let src ← Input.readDocument file bytes", false),
+    ("  -- Input.expandInputs runs inside the front door", false),
+    ("  t \"a message naming Input.expandInputs stays data\" true", false)]
 
   expect "irDumpUnmarked" irDumpUnmarked [
     -- dump and its walk companions, unmarked: all must fire
@@ -2725,12 +2838,11 @@ def main (args : List String) : IO UInt32 := do
   -- read every tracked text file, so a path that arrived by a route with no
   -- hook — a machine without core.hooksPath — is still found.
   let homeLines ← if src == .index then pure (addedLines fullDiff) else do
-    let r ← IO.Process.output
-      { cmd := "git", args := #["grep", "-I", "-n", "-z", "-E", "/(home|Users)/"] }
-    if r.exitCode == 0 then pure (grepRecords r.stdout)
-    else if r.exitCode == 1 then pure #[]
+    let (code, out, err) ← runBytes "git" #["grep", "-I", "-n", "-z", "-E", "/(home|Users)/"]
+    if code == 0 then pure (grepRecords (Privacy.textOfBytes out))
+    else if code == 1 then pure #[]
     else
-      IO.eprintln s!"pre-commit: git grep failed:\n{r.stderr}"
+      IO.eprintln s!"pre-commit: git grep failed:\n{Privacy.textOfBytes err}"
       IO.Process.exit 1
   let homeHits := homePathHits homeLines
   if !homeHits.isEmpty then

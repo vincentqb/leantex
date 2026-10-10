@@ -1225,9 +1225,12 @@ def compatChecks (ref : IO.Ref (List String)) : IO Unit := do
   -- `\par` ends a paragraph inside a scope group, with the group's
   -- declarations carried into what follows; a command's argument group is
   -- not a scope and is left to the command.
+  -- A size group ending its paragraph inside it stays the block scope it is
+  -- (its size in force at the paragraph's end), the trailing space the
+  -- paragraph end removes.
   t "par in a scope group ends the paragraph"
     ((elabStr "{\\Huge a \\par} b").1.body ==
-      #[.para #[.styled (.size "Huge") #[.text "a "]], .para #[.text "b"]])
+      #[.para #[.styled (.size "Huge") #[.text "a"]], .para #[.text "b"]])
   t "par in a scope group carries the declarations"
     ((elabStr "{\\bfseries a \\par b}").1.body ==
       #[.para #[.styled .bold #[.text "a "]], .para #[.styled .bold #[.text "b"]]])
@@ -2316,12 +2319,13 @@ def dimChecks (ref : IO.Ref (List String)) : IO Unit := do
   if let some msg := failed then failures ref msg
   t "dim round-trip error reaches the print rounding bound" (worst > 20)
 
-/-- Differential fuzz of the UTF-8 validator against the core decoder
+/-- Differential fuzz of the UTF-8 decoder against the core validator
 (generator: xorshift64*, 400 byte strings — half raw random bytes of length
-0–15, half a valid encoded string with one byte overwritten): `validate`
-must accept exactly what `String.fromUTF8?` decodes. The fixed vectors in
-`main` pin the error kinds and offsets; this pins the accept/reject boundary
-where no fixed vector was written. -/
+0–15, half a valid encoded string with one byte overwritten): `decode`
+replaces nothing exactly where `String.fromUTF8?` decodes, reads valid
+bytes as that string, and names each replacement at a byte of the input,
+in ascending order. The fixed vectors in `utf8Checks` pin the subparts;
+this pins the accept/reject boundary where no fixed vector was written. -/
 def utf8FuzzChecks (ref : IO.Ref (List String)) : IO Unit := do
   let samples : Array String :=
     #["hello", "naïve", "αβγδε", "🎉🌍", "a\nb\nc", "τεχ — done", "𝔸𝔹ℂ"]
@@ -2341,14 +2345,18 @@ def utf8FuzzChecks (ref : IO.Ref (List String)) : IO Unit := do
     else
       let (which, s') := rand s samples.size
       s := s'
-      v := samples[which]!.toUTF8
+      v := (samples[which]?.getD "").toUTF8
       let (at_, s') := rand s v.size
       s := s'
       let (b, s'') := rand s' 256
       s := s''
       v := v.set! at_ (UInt8.ofNat b)
-    unless (validate v == none) == (String.fromUTF8? v).isSome do
-      failed := some s!"utf8 fuzz case {i}: validate and core decoder disagree on {v.toList}"
+    let d := Utf8.decode v
+    let ascending := (d.bad.toList.zip (d.bad.toList.drop 1)).all fun (a, b) => a < b
+    unless d.bad.isEmpty == (String.fromUTF8? v).isSome &&
+        ((String.fromUTF8? v).all (· == d.text)) && ascending &&
+        d.bad.all (· < v.size) do
+      failed := some s!"utf8 fuzz case {i}: decode and core decoder disagree on {v.toList}"
   if let some msg := failed then failures ref msg
 
 /-- The IR-to-IR walks are exhaustive, and each arm below was a wildcard
@@ -2565,35 +2573,49 @@ def scannerChecks (ref : IO.Ref (List String)) : IO Unit := do
   optArgChecks ref
   envBoundaryChecks ref
 
+/-- The decoder against the substitution the Unicode Standard recommends
+for ill-formed UTF-8 (§3.9, "U+FFFD Substitution of Maximal Subparts",
+Table 3-8) and the WHATWG decoder performs: one U+FFFD per maximal subpart,
+each at its first byte's offset, and the text around it read as written. -/
 def utf8Checks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
-  -- utf8: valid inputs
-  t "utf8 empty" (validate (bytes []) == none)
-  t "utf8 ascii" (validate "hello, world".toUTF8 == none)
-  t "utf8 multibyte" (validate "naïve — αβγ — 🎉".toUTF8 == none)
-
-  -- utf8: each error class, with offset
-  t "utf8 bare continuation" (errKindAt (bytes [0x68, 0x80]) == some (1, .invalidStart 0x80))
-  t "utf8 overlong 2-byte" (errKindAt (bytes [0xC0, 0x80]) == some (0, .overlong))
-  t "utf8 overlong 3-byte" (errKindAt (bytes [0xE0, 0x9F, 0x80]) == some (0, .overlong))
-  t "utf8 overlong 4-byte" (errKindAt (bytes [0xF0, 0x8F, 0x80, 0x80]) == some (0, .overlong))
-  t "utf8 surrogate" (errKindAt (bytes [0xED, 0xA0, 0x80]) == some (0, .surrogate))
-  t "utf8 out of range" (errKindAt (bytes [0xF4, 0x90, 0x80, 0x80]) == some (0, .outOfRange))
-  t "utf8 truncated" (errKindAt (bytes [0x61, 0xC3]) == some (1, .truncated))
-  t "utf8 bad continuation" (errKindAt (bytes [0xC3, 0x28]) == some (0, .invalidContinuation 0x28))
-
-  -- utf8: error position tracks lines and columns
-  let afterNewlines := bytes ("ab\ncd\n".toUTF8.toList ++ [0xFF])
-  t "utf8 position" ((validate afterNewlines).map (fun e => (e.pos.line, e.pos.col)) == some (3, 1))
-
-  -- utf8: agreement with core decoder on every vector above
+  let fffd (n : Nat) : String := String.ofList (List.replicate n '\uFFFD')
+  -- valid inputs read unchanged
+  for v in ["", "hello, world", "naïve — αβγ — 🎉"] do
+    t s!"utf8 valid reads unchanged ({v})" (Utf8.decode v.toUTF8 == ⟨v, #[]⟩)
+  -- each error class: the maximal subparts and their offsets
+  for (name, v, text, bad) in ([
+      ("bare continuation", [0x68, 0x80], "h" ++ fffd 1, #[1]),
+      ("overlong 2-byte", [0xC0, 0x80], fffd 2, #[0, 1]),
+      ("overlong 3-byte", [0xE0, 0x9F, 0x80], fffd 3, #[0, 1, 2]),
+      ("overlong 4-byte", [0xF0, 0x8F, 0x80, 0x80], fffd 4, #[0, 1, 2, 3]),
+      ("surrogate", [0xED, 0xA0, 0x80], fffd 3, #[0, 1, 2]),
+      ("out of range", [0xF4, 0x90, 0x80, 0x80], fffd 4, #[0, 1, 2, 3]),
+      ("truncated at end", [0x61, 0xC3], "a" ++ fffd 1, #[1]),
+      ("bad continuation", [0xC3, 0x28], fffd 1 ++ "(", #[0]),
+      ("truncated 3-byte", [0xE2, 0x82, 0x41], fffd 1 ++ "A", #[0]),
+      ("truncated 4-byte", [0xF0, 0x9F, 0x98], fffd 1, #[0]),
+      ("Table 3-8", [0x61, 0xF1, 0x80, 0x80, 0xE1, 0x80, 0xC2, 0x62, 0x80, 0x63, 0x80, 0xBF, 0x64],
+        "a" ++ fffd 3 ++ "b" ++ fffd 1 ++ "c" ++ fffd 2 ++ "d", #[1, 4, 6, 8, 10, 11])] :
+        List (String × List UInt8 × String × Array Nat)) do
+    t s!"utf8 {name}" (Utf8.decode (bytes v) == ⟨text, bad⟩)
+  -- byte-order marks: skipped, every one, and counted in the offsets
+  t "utf8 mark skipped" (Utf8.read (bytes [0xEF, 0xBB, 0xBF, 0x41]) == ⟨"A", #[]⟩)
+  t "utf8 doubled mark skipped"
+    (Utf8.read (bytes [0xEF, 0xBB, 0xBF, 0xEF, 0xBB, 0xBF, 0x41]) == ⟨"A", #[]⟩)
+  t "utf8 offsets count the mark"
+    (Utf8.read (bytes [0xEF, 0xBB, 0xBF, 0x41, 0xFF]) == ⟨"A" ++ fffd 1, #[4]⟩)
+  t "utf8 a mark's prefix is not a mark"
+    (Utf8.read (bytes [0xEF, 0xBB, 0x41]) == ⟨fffd 1 ++ "A", #[0]⟩)
+  t "utf8 a mark mid-text is text" (Utf8.read ("A\uFEFFB".toUTF8) == ⟨"A\uFEFFB", #[]⟩)
+  -- agreement with the core decoder on every vector above
   for (name, v) in [
       ("empty", bytes []), ("ascii", "hello".toUTF8), ("multi", "🎉é".toUTF8),
       ("cont", bytes [0x80]), ("overlong", bytes [0xC0, 0x80]),
       ("surrogate", bytes [0xED, 0xA0, 0x80]),
       ("range", bytes [0xF4, 0x90, 0x80, 0x80]), ("trunc", bytes [0xC3])] do
     t s!"utf8 agrees with core ({name})"
-      ((validate v == none) == (String.fromUTF8? v).isSome)
+      ((Utf8.decode v).bad.isEmpty == (String.fromUTF8? v).isSome)
   utf8FuzzChecks ref
 
 def argsChecks (ref : IO.Ref (List String)) : IO Unit := do
@@ -5785,7 +5807,7 @@ def titleSlotShipChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) :
   -- 100/100 …), `anchor` the box point (the translate), each shift em of
   -- the body. And the title's text edge — the shift plus the inner sep —
   -- agrees with the edge the PDF page sets it at.
-  let tgDoc := (← elabFixture "titleground" (← IO.FS.readFile "testdata/corpus/titleground.tex")).1
+  let tgDoc := (← elabFixture "titleground" (← fixtureText "testdata/corpus/titleground.tex")).1
   let (tgHead, tgBody, _) := HtmlDoc.emitTree {} tgDoc
   let tgCss := treeCssList (treeCssList "" tgHead.toList) tgBody.toList
   let em := tgDoc.page.fontSize
@@ -6409,8 +6431,8 @@ def boundaryChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "the declared math face rides through unicode-math"
     (hasStr (reqOf tdoc) "\\usepackage{unicode-math}" &&
      hasStr (reqOf tdoc) "\\setmathfont{Fira Math}")
-  t "a boundary picture with a formula stays one request with no E0382 of its own"
-    ((Ir.pictureRefs tdoc).size == 1 && tds.all (·.code != "E0382"))
+  t "a boundary picture with a formula stays one request with no W0382 of its own"
+    ((Ir.pictureRefs tdoc).size == 1 && tds.all (·.code != "W0382"))
   let (fdoc, _) := elabStr (dvDoc
     "\\fonts{ body = \"Source Serif Pro\", sans = \"Open Sans\", mono = \"Source Code Pro\" }\n"
     picC)
@@ -6634,8 +6656,9 @@ def pictureDefnReachChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet)
   -- A picture the subset draws partly, with no tool to draw it — this face
   -- fulfils nothing, as a machine with no tool and a cold cache does not:
   -- its request is withdrawn and the subset's drawing is what ships, the
-  -- refusal named beside it. The first pass routes it whole
-  -- (`pictureRouteChecks`).
+  -- refusal named beside it under the picture, where the driver folds it
+  -- into the picture's one line (`Boundary.fold`). The first pass routes it
+  -- whole (`pictureRouteChecks`).
   let partly := "\\begin{tikzpicture}\\node at (0,0) {Alpha};" ++
     "\\shade (0,0) rectangle (1,1);\\end{tikzpicture}"
   let (partDoc, partDs) := elabStr (dvDoc "" partly)
@@ -6646,18 +6669,16 @@ def pictureDefnReachChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet)
     (hasStr (shippedText partDoc) "Alpha")
   t "a picture the subset draws nothing of still routes to the boundary"
     ((Ir.pictureRefs bodyDoc).size == 1 && bodyDoc.pictureSrcs.size == 1)
-  -- A boundary failure is a dropped loss, not a degraded one: `degraded`
-  -- promises the reader sees "something stands here", and an empty
-  -- unlabelled box is the one thing that does not. A picture the engine drew
-  -- part of never meets it — its request is withdrawn and that drawing ships
-  -- (N0419) — so the failure is left for a picture the engine drew nothing
-  -- of, where there is nothing to fall back to, and the run fails rather
-  -- than shipping a page that reads as intentional.
+  -- A boundary failure ships its placeholder: the box marks the picture's
+  -- place, as an image that did not load marks its own, and the loss is
+  -- named once. A picture the engine drew part of never meets it — its
+  -- request is withdrawn and that drawing ships (W0419) — so the failure is
+  -- left for a picture the engine drew nothing of.
   let failed := DriverDiag.boundaryFailed "lualatex"
-    "! Package pgf Error: Unknown arrow tip kind 'plumearrow'."
-  t "a boundary failure is an error the document must declare to accept"
-    (failed.code == "E0382" && failed.severity == .error &&
-     DiagCode.E0382.loss == .dropped)
+    "! Package pgf Error: Unknown arrow tip kind 'plumearrow'." (Ir.picSrcPrefix ++ "aa")
+  t "a boundary failure is a degraded loss: the document ships its placeholder"
+    (failed.code == "W0382" && failed.severity == .warning &&
+     DiagCode.W0382.loss == .degraded && DiagCode.W0382.floor.inks)
   t "the failure carries the tool's own last words"
     (hasStr (failed.help.getD "") "Unknown arrow tip kind")
   -- The converter gap keeps W0378, and keeps it a warning: the PDF is
@@ -6674,10 +6695,11 @@ grid, one shape of five transformed ones). A picture the rendered subset
 draws with a named loss states one request on the first pass, as one it
 draws nothing of always did, so the page is TikZ's wherever a tool draws
 it; one it draws whole stays native; and a request no tool drew is
-withdrawn (`Cli.Boundary.withdraw`), the subset's drawing shipping with its
-refusals named exactly as the refused door names them. The page claims read
-`Layout.Out`: a drawn request ships one image box and none of the subset's
-ink, a withdrawn one the subset's ink and no box. -/
+withdrawn (`Cli.Boundary.withdraw`), the subset's drawing shipping with the
+refusals the refused door names, which the driver folds into the picture's
+one line (`Cli.Boundary.fold`). The page claims read `Layout.Out`: a drawn
+request ships one image box and none of the subset's ink, a withdrawn one
+the subset's ink and no box. -/
 def pictureRouteChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) :
     IO Unit := do
   let t := check ref
@@ -6707,10 +6729,42 @@ def pictureRouteChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) :
       (rs.fallbacks == (Ir.pictureRefs doc).map (·.1))
     let (closed, closedDs) := elabStr (pic "\\pictures{ tool = none }\n" body)
     let (drawn, drawnDs) := elabStr (pic "" body)
-    t s!"withdrawn, it is the refused door's drawing and diagnostics: {name}"
+    let id := (doc.pictureSrcs[0]?.map (·.1)).getD ""
+    let src := Ir.picSrcPrefix ++ id
+    let refusals (ds : Array Diag) : Array (String × String) :=
+      (pictureDiags ds).map fun (c, _, m) => (c, m)
+    t s!"withdrawn, it is the refused door's drawing and refusals: {name}"
       (!(native closed).isEmpty && native drawn == native closed &&
-       !(pictureDiags closedDs).isEmpty && pictureDiags drawnDs == pictureDiags closedDs &&
+       !(refusals closedDs).isEmpty && refusals drawnDs == refusals closedDs &&
        drawn.pictureSrcs.isEmpty)
+    t s!"withdrawn, each refusal is keyed under the picture: {name}"
+      (!id.isEmpty && (drawnDs.filter fun d => d.code == "W0334" || d.code == "E0333").all
+        (Boundary.fragmentOf id))
+    -- The driver's reading of that second pass: one line for the picture,
+    -- each refusal a clause of it, and none left beside it.
+    let folded := Boundary.fold #[] false "lualatex"
+      { ids := #[id], said := #[(id, none)] } drawnDs
+    let lines := folded.filter (·.code == "W0419")
+    t s!"withdrawn, the driver names the picture once: {name}"
+      ((pictureDiags folded).isEmpty && lines.size == 1 && lines.all fun l =>
+        l.severity == .warning && l.subject == some src &&
+        (refusals closedDs).all fun (_, m) => hasStr l.message m)
+    -- Declined, the same picture is the subset's by the document's own
+    -- word: its refusals keyed under it, recorded for the fold, and named in
+    -- the one line the withdrawn picture's names them in.
+    let (_, _, closedRs) := firstPass (pic "\\pictures{ tool = none }\n" body)
+    t s!"declined, the picture is recorded for the fold: {name}"
+      (closedRs.declined == #[id] && closedRs.fallbacks.isEmpty &&
+       (closedDs.filter fun d => d.code == "W0334" || d.code == "E0333").all
+         (Boundary.fragmentOf id))
+    let declinedFold := Boundary.foldLines #[] false
+      (Boundary.linesOf "lualatex" {} closedRs.declined) closedDs
+    let declinedLines := declinedFold.filter (·.code == "W0419")
+    t s!"declined, the driver names the picture in the withdrawn picture's one line: {name}"
+      ((pictureDiags declinedFold).isEmpty && declinedLines.size == 1 &&
+       declinedLines.map (·.message) == lines.map (·.message) &&
+       declinedLines.all fun l => l.subject == some src && l.severity == .warning &&
+         hasStr (l.help.getD "") "tool = none")
   -- The page, both ways, off one first pass: the boundary's answer in the
   -- store ships as its box, and the withdrawn picture as the subset's ink.
   let rounded := pic "" "\\draw[rounded corners] (0,0) rectangle (3,1);"
@@ -6751,22 +6805,70 @@ def pictureRouteChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) :
      Picture.namesLoss #[(.W0012, "x")] && !Picture.namesLoss #[(.N0114, "x")] &&
      !Picture.namesLoss #[])
   -- The withdrawal decision: a refused request the subset can stand in for
-  -- is withdrawn with one note at its span, in the tool's words where it
-  -- ran; any other refusal stands.
-  let span : Span := ⟨"t", { line := 3, col := 1 }⟩
+  -- is withdrawn, with why it came back undrawn; any other refusal stands.
   let (a, b) := (Ir.picSrcPrefix ++ "aa", Ir.picSrcPrefix ++ "bb")
   let cold := DriverDiag.boundaryToolUnavailable "lualatex"
-  let w := Boundary.withdraw "lualatex" #["aa"]
-    #[(a, .answered cold none), (b, .answered cold none)] #[(a, span)]
+  let w := Boundary.withdraw #["aa"] #[(a, .answered cold none), (b, .answered cold none)]
   t "a refusal of a picture the subset draws in part withdraws its request"
-    (w.ids == #["aa"] && w.standing.map (·.1) == #[b] &&
-     (w.notes.map fun d => (d.code, d.subject, d.span)) == #[("N0419", some a, some span)])
-  let failed := DriverDiag.boundaryFailed "lualatex" "! Package pgf Error: an invented failure."
-  let w2 := Boundary.withdraw "lualatex" #["aa"]
-    #[(a, .answered failed (some "! Package pgf Error: an invented failure."))] #[]
-  t "a tool that ran and drew nothing is quoted in the withdrawal's note"
-    (w2.standing.isEmpty && w2.notes.all fun d =>
-      d.code == "N0419" && hasStr (d.help.getD "") "an invented failure")
+    (w.ids == #["aa"] && w.standing.map (·.1) == #[b] && w.said == #[("aa", none)])
+  let failed := DriverDiag.boundaryFailed "lualatex" "! Package pgf Error: an invented failure." a
+  let w2 := Boundary.withdraw #["aa"]
+    #[(a, .answered failed (some "! Package pgf Error: an invented failure."))]
+  -- The second pass's refusals, keyed under the picture, fold into one line
+  -- per place the picture stands, where that place's first refusal stood;
+  -- a repeat site keeps its line, demoted as the elaborator made it, and a
+  -- note and another picture's loss pass through as they were.
+  let here : Span := ⟨"t", { line := 3, col := 1 }⟩
+  let again : Span := ⟨"t", { line := 9, col := 1 }⟩
+  let frag (m : String) (code : DiagCode) : Diag :=
+    Diag.of code m (some here) (help := some "the rendered subset is \\fill...rectangle")
+      (subject := some (Ir.picFragmentKey "aa" m))
+  let shade := frag "'\\shade' is outside the rendered picture subset; not drawn" .W0334
+  let unread := frag "in '\\pgfmathsetmacro' of '\\x', unknown function or name 'mod'" .E0333
+  let repeated (d : Diag) : Diag := Diag.demote { d with span := some again, help := none }
+  let before := Diag.of .W0301 "unknown command '\\zzbefore'" (subject := some "ctrl:zzbefore")
+  let note := frag "a decision" .N0114
+  let elsewhere := Diag.of .W0334 "'\\shade' is outside the rendered picture subset; not drawn"
+    (subject := some (Ir.picFragmentKey "bb" "x"))
+  let folded := Boundary.fold #[] false "lualatex" w2
+    #[before, shade, note, unread, repeated shade, repeated unread, elsewhere]
+  t "a withdrawn picture's refusals fold into one line at each place it stands"
+    (w2.standing.isEmpty &&
+     folded.map (·.code) == #["W0301", "W0419", "N0114", "W0419", "W0334"] &&
+     folded[0]? == some before && folded[2]? == some note && folded[4]? == some elsewhere)
+  t "the first line names every refusal and quotes the tool, the repeat site's is demoted"
+    ((folded[1]?.any fun d => d.subject == some a && d.severity == .warning &&
+      d.span == some here && hasStr d.message "'\\shade'" && hasStr d.message "'mod'" &&
+      hasStr (d.help.getD "") "an invented failure") &&
+     (folded[3]?.any fun d => d.subject == some a && d.severity == .note &&
+      d.span == some again && hasStr d.message "'mod'"))
+  -- A refusal the document accepts stays the elaborator's, so its `\allow`
+  -- entry fires and accepts it as written.
+  let accepted := Boundary.fold #["W0334"] false "lualatex" w2 #[shade, unread]
+  t "an accepted refusal is not folded, and the line names only the rest"
+    (accepted.map (·.code) == #["W0334", "W0419"] &&
+     (accepted[1]?.any fun d => hasStr d.message "'mod'" && !hasStr d.message "'\\shade'"))
+  -- Where the document accepts every refusal at a place, no line is built
+  -- there, so the first of them still says why the boundary drew nothing.
+  let everyOne := Boundary.fold #[] true "lualatex" w2 #[shade, unread]
+  let bothNamed := Boundary.fold #["W0334", "E0333"] false "lualatex" w2 #[shade, unread]
+  t "with every refusal accepted, nothing is folded, and the first quotes the tool"
+    (everyOne.map (fun d => (d.code, d.message)) == #[shade, unread].map (fun d => (d.code, d.message)) &&
+     (everyOne[0]?.any fun d => hasStr (d.help.getD "") "an invented failure") &&
+     everyOne[1]? == some unread && bothNamed == everyOne)
+  t "with no tool, the line says what would draw it whole"
+    ((Boundary.fold #[] false "lualatex" w #[shade]).any fun d =>
+      d.code == "W0419" && hasStr (d.help.getD "") "install lualatex")
+  -- A picture in a line of text, which the subset never draws, keeps the
+  -- line that says so, and takes why the boundary drew nothing as its help.
+  let inline := Diag.of .W0334 "a picture inside a line of text is not drawn"
+    (help := some "a boundary tool (lualatex) draws it in its line")
+    (subject := some (Ir.picInlineKey "aa"))
+  t "a withdrawn picture in a line keeps its line, with the tool's words"
+    (match (Boundary.fold #[] false "lualatex" w2 #[inline]).toList with
+     | [d] => d.code == "W0334" && d.message == inline.message &&
+         hasStr (d.help.getD "") "an invented failure"
+     | _ => false)
 
 /-- **An inline picture never prints its own source.** `\tikz` in either of
 its forms (pgfmanual §12.2.2) — a braced command list, or one command up to
@@ -8811,16 +8913,16 @@ def picCacheChecks (ref : IO.Ref (List String)) : IO Unit := do
   -- The replay is the fresh diagnostic, not a degraded stand-in: same
   -- code, same message, same help carrying the tool's own last words.
   let says := "! Package pgf Error: No shape named `x' is known."
-  let fresh := DriverDiag.boundaryFailed "lualatex" says
+  let fresh := DriverDiag.boundaryFailed "lualatex" says (Ir.picSrcPrefix ++ "aa")
   let replayed := match PicCache.step false (some says) with
-    | .replay s => some (DriverDiag.boundaryFailed "lualatex" s)
+    | .replay s => some (DriverDiag.boundaryFailed "lualatex" s (Ir.picSrcPrefix ++ "aa"))
     | _ => none
   t "a replayed refusal is the fresh diagnostic, word for word"
     (replayed.map (·.code) == some fresh.code &&
      replayed.map (·.message) == some fresh.message &&
      replayed.bind (·.help) == fresh.help)
   t "the replayed help still carries the tool's own words"
-    (fresh.code == "E0382" && (fresh.help.any fun h => hasStr h says))
+    (fresh.code == "W0382" && (fresh.help.any fun h => hasStr h says))
   -- What the tool answered, read off the process ending and what it left
   -- behind. An exit the tool chose *and left a log for* is a verdict;
   -- nothing else is.
@@ -8888,16 +8990,16 @@ def picCacheChecks (ref : IO.Ref (List String)) : IO Unit := do
     (PicCache.probed (.unstarted "no such file") "" == .absent "no such file")
   t "a probe that never came back is no tool"
     (PicCache.probed (.overran 5) "" == .absent "no version within 5 s; killed")
-  -- The two endings route to two different losses, and the absent one is
-  -- the degraded one: a placeholder ships and the run stands. A picture the
-  -- tool ran on and refused keeps the dropped loss, undiminished.
+  -- The two endings route to two different losses, both degraded: a
+  -- placeholder ships and the run stands. A picture the tool ran on and
+  -- refused keeps its own code and the tool's words.
   let unavailable := DriverDiag.boundaryToolUnavailable "lualatex"
   t "a tool that is not there is a degraded loss, not a dropped one"
     (unavailable.code == "W0379" && DiagCode.W0379.loss == .degraded &&
      unavailable.severity == .warning)
-  t "a picture the tool refused is still a dropped loss"
-    ((DriverDiag.boundaryFailed "lualatex" says).code == "E0382" &&
-     DiagCode.E0382.loss == .dropped && unavailable.code != "E0382")
+  t "a picture the tool refused ships its placeholder under a code of its own"
+    ((DriverDiag.boundaryFailed "lualatex" says (Ir.picSrcPrefix ++ "aa")).code == "W0382" &&
+     DiagCode.W0382.loss == .degraded && unavailable.code != "W0382")
   -- The version memo: asked once per tool binary, not once per build. The
   -- version string is still the slot's key
   -- (`PicCache.versionStep_remembered_exact`), and a witness that moved

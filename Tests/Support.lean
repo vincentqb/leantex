@@ -174,9 +174,6 @@ def rand (s : UInt64) (bound : Nat) : Nat × UInt64 :=
   let (s', v) := nextRand s
   ((v % UInt64.ofNat bound).toNat, s')
 
-def errKindAt (bs : ByteArray) : Option (Nat × ErrKind) :=
-  (validate bs).map fun e => (e.offset, e.kind)
-
 def toks (s : String) : List Lex.Tok :=
   ((Lex.lex "t" s).1.map (·.tok)).toList
 
@@ -328,14 +325,18 @@ def mdPresList (acc : Array Html.Node) : List Html.Node → Array Html.Node
 end
 
 /-- The attributes of an unconfigured fence's `<pre>`: the verbatim size,
-leading and tab settings, and a tab stop so a keyboard can reach and scroll it
-(`HtmlDoc.a11yFacts`). Named once, so a backend change fails the fence rows
-at this line rather than at four literals. The exact attribute check also
-rejects leaked language text or an attribute hiding the code. A bare fence
-sets at the ambient size — the document base, `1em` — as LaTeX's `verbatim`
-does (it selects the mono family and changes no size). -/
+leading, tab and wrapping settings, and a tab stop so a keyboard can reach
+and scroll it (`HtmlDoc.a11yFacts`). Named once, so a backend change fails
+the fence rows at this line rather than at four literals. The exact
+attribute check also rejects leaked language text or an attribute hiding
+the code. A markdown fence sets as its surface's code does
+(`Ir.Surface.listing`): at `\footnotesize`, `0.8em`, on that size's own
+leading (9.5 pt over 8, `Ir.stepSkip`), wrapping its long lines with their
+continuations hung 20 pt in. -/
 def mdCodeBlockPreAttrs : Array (String × String) :=
-  #[("style", "font-size: 1em; line-height: 1.2; tab-size: 8;"), ("tabindex", "0")]
+  #[("style", "font-size: 0.8em; line-height: 1.187; tab-size: 8; white-space: pre-wrap; \
+text-indent: 20pt hanging each-line;"),
+    ("tabindex", "0")]
 
 /-- The page's code blocks, in order, each as the one text its `<code>`
 holds — when the block is exactly a `<pre>` carrying `mdCodeBlockPreAttrs`
@@ -451,6 +452,15 @@ def leanChild (what : String) : IO (System.FilePath × String) := do
 def shQuote (text : String) : String :=
   "'" ++ text.replace "'" "'\\''" ++ "'"
 
+/-- One of the suite's shipped faces by file name, parsed; `none` when the
+file is missing or does not parse. -/
+def loadTestFont (file : String) : IO (Option Font.Font) := do
+  let p := testFonts ++ "/" ++ file
+  unless ← System.FilePath.pathExists p do return none
+  match Font.parse (← IO.FS.readBinFile p) with
+  | .ok f => return some f
+  | .error _ => return none
+
 /-- Does a produced file contain this ASCII run? PDF content streams are the
 only witness that a face or a size reached the output, and the file as a whole
 is not valid UTF-8, so the search is over bytes. -/
@@ -527,6 +537,16 @@ def checkXref (pdf : ByteArray) : Except String Nat := do
         throw s!"object {e.num}: {err}"
   return verified
 
+/-- A fixture file's text as the driver's decoding door reads it: a
+byte-order mark skipped, a byte that is not text replaced, a line ended at
+CR as at LF, and a tex file's own preamble declaration of its encoding
+honoured. A fixture the suite reads past the door would read differently
+from the binary the moment it carried any of them. -/
+def fixtureText (path : String) : IO String := do
+  let bytes ← IO.FS.readBinFile path
+  return if path.endsWith ".md" then (Encoding.readMarkdown path bytes).text
+    else (Encoding.readDocument path bytes).1.text
+
 /-- A source whose file includes are fulfilled before elaboration. The
 filename establishes the input directory even when the source itself is
 held in memory, so synthetic probes and file fixtures use the same path. -/
@@ -544,7 +564,7 @@ the `\input`-parity cases and the theme-loading family. -/
 def runStyParity (name : String) :
     IO (Ir.Doc × Array Diag × Array (String × Option String × Pos)) := do
   let path := s!"testdata/corpus/sty-parity/{name}.tex"
-  let src ← IO.FS.readFile path
+  let src ← fixtureText path
   let (raws, _) := Parse.parse path (Lex.lex path src).1
   let (executed, inputDs, spliced) ← Input.expandInputs path raws
   let (doc, ds) := Elab.runExecuted path executed
@@ -568,7 +588,7 @@ def elabFixture (n src : String) : IO (Ir.Doc × Array Diag) := do
     let name := Data.sourceName srcName
     let path := s!"testdata/corpus/{name}"
     if ← System.FilePath.pathExists path then
-      dataSources := dataSources.push (srcName, ← IO.FS.readFile path)
+      dataSources := dataSources.push (srcName, ← fixtureText path)
   let (raws, dataDiags) := Data.expandData file dataSources executed.raws
   let (doc, diags) := Elab.runExecuted file (executed.withRaws raws)
     (readDiags ++ inputDiags ++ dataDiags)
@@ -579,7 +599,7 @@ def elabFixture (n src : String) : IO (Ir.Doc × Array Diag) := do
     let name := Bib.sourceName srcName
     let path := s!"testdata/corpus/{name}"
     if ← System.FilePath.pathExists path then
-      sources := sources.push (srcName, ← IO.FS.readFile path)
+      sources := sources.push (srcName, ← fixtureText path)
   let (doc, bibDiags) := Bib.apply sources doc
   return (doc, diags ++ bibDiags)
 
@@ -592,7 +612,7 @@ def goldenFile (n : String) : String :=
 markdown reader for a markdown fixture, which requests no data and no
 bibliography; `elabFixture`'s fulfilments for a `.tex` one. -/
 def goldenDoc (n : String) : IO (Ir.Doc × Array Diag) := do
-  let src ← IO.FS.readFile (goldenFile n)
+  let src ← fixtureText (goldenFile n)
   if mdGoldenNames.contains n then
     let file := s!"{n}.md"
     let (raws, ds) := Md.read file src
@@ -610,7 +630,7 @@ def corpusTwinDocs : IO (Array (String × Ir.Doc)) := do
     if f.fileName.endsWith ".tex" then names := names.push (f.fileName.dropEnd 4).toString
   let mut out := #[]
   for n in names.qsort (· < ·) do
-    let (d, _) ← elabFixture n (← IO.FS.readFile s!"testdata/corpus/{n}.tex")
+    let (d, _) ← elabFixture n (← fixtureText s!"testdata/corpus/{n}.tex")
     out := out.push (s!"testdata/corpus/{n}.tex", d)
   for n in mdGoldenNames do
     let (d, _) ← goldenDoc n
@@ -920,6 +940,23 @@ def censusOf (coveredColors : Array Ir.Color) (out : Layout.Out) :
   return pages
 
 def hasStr (hay needle : String) : Bool := (hay.splitOn needle).length > 1
+
+/-- The opening tags of a page's failed-face placeholders: the spans that
+carry `data-image-src`. -/
+def placeholderTags (html : String) : List String :=
+  ((html.splitOn "<span ").drop 1).filterMap fun rest =>
+    let tag := (rest.splitOn ">").headD ""
+    if hasStr tag "data-image-src=" then some tag else none
+
+/-- An attribute's value in one opening tag, as the serializer writes it. -/
+def attrIn (tag name : String) : Option String :=
+  match (" " ++ tag).splitOn (" " ++ name ++ "=\"") with
+  | _ :: rest :: _ => some ((rest.splitOn "\"").headD "")
+  | _ => none
+
+/-- Does an opening tag carry a non-empty accessible name? -/
+def labelled (tag : String) : Bool :=
+  (attrIn tag "aria-label").any (!·.isEmpty)
 
 /-- Does a compat-index row's call load the row's own package? Then the
 scaffold does not load it a second time: a duplicate load puts the call's
@@ -1435,6 +1472,12 @@ flag this filters out. -/
 def bodyLines (out : Layout.Out) : Array Layout.LineOut :=
   out.pages.flatMap (·.lines.filter (!·.furniture))
 
+/-- The distances between consecutive body baselines, in page order: the
+line pitches a page shipped. -/
+def baselinePitches (out : Layout.Out) : Array Dim.Sp :=
+  let lines := bodyLines out
+  (lines.zip (lines.extract 1 lines.size)).map fun (a, b) => b.y - a.y
+
 /-- Face indices and character scalars of shipped body glyphs, in paint order. -/
 def bodyGlyphs (out : Layout.Out) : Array (Nat × Char) :=
   (bodyLines out).flatMap fun line => line.segs.flatMap fun seg => match seg with
@@ -1642,6 +1685,15 @@ def metricDoc (body : String) : String :=
 def metricOut (oneFace : Font.FontSet) (body : String) : Layout.Out :=
   layoutOf oneFace (elabStr (metricDoc body)).1
 
+/-- Every scalar a laid-out document inks, and its layout diagnostics. -/
+def inkedScalars (fs : Font.FontSet) (src : String) : Array Char × Array Diag :=
+  let out := layoutOf fs (elabStr src).1
+  let ink := out.pages.flatMap fun p => p.lines.flatMap fun l => l.segs.flatMap fun s =>
+    match s with
+    | .run _ _ _ _ glyphs _ _ _ _ _ _ => glyphs.map (·.2.1)
+    | _ => #[]
+  (ink, out.diags)
+
 /-- The glyphs a source's body lines ship, in page order — the instrument for
 a claim about what a page shows, read off `Layout.Out` rather than an IR
 dump. `geom` defaults to the document's own page; pass one to judge a source
@@ -1811,6 +1863,16 @@ def twoSlotOf (roman sans : Font.Font) : Font.FontSet := {
   fonts := #[roman, sans]
   index := ((List.range 3).flatMap fun slot =>
     let f := if slot == 1 then 1 else 0
+    [((slot, 400, false), f), ((slot, 700, false), f),
+     ((slot, 400, true), f), ((slot, 700, true), f)]).toArray
+}
+
+/-- Two faces: the text slots (0 and 1) one file and the typewriter slot
+(2) another, so code and prose are told apart by the face a run sets in. -/
+def monoSlotOf (text mono : Font.Font) : Font.FontSet := {
+  fonts := #[text, mono]
+  index := ((List.range 3).flatMap fun slot =>
+    let f := if slot == 2 then 1 else 0
     [((slot, 400, false), f), ((slot, 700, false), f),
      ((slot, 400, true), f), ((slot, 700, true), f)]).toArray
 }
@@ -2080,3 +2142,36 @@ def bibEntryLines (lines : Array Layout.LineOut) : Array (Array Layout.LineOut) 
       cur := #[]
     cur := cur.push l
   return if cur.isEmpty then out else out.push cur
+
+namespace Tests.World
+
+open LeanTex.Cli.World
+
+/-- A world read off a trace, `dflt` answering every question the trace
+does not hold. -/
+def traceWorld (tr : List Fact) (dflt : (q : Ask) → Reply q) : (q : Ask) → Reply q :=
+  fun q => match tr.find? (·.1 == q) with
+    | some ⟨q', r⟩ => if h : q' = q then h ▸ r else dflt q
+    | none => dflt q
+
+def quiet : (q : Ask) → Reply q
+  | .env _ => none
+  | .cwd => .error .absent
+  | .stat _ => .error .absent
+  | .readFile _ => .error .absent
+  | .listDir _ => .error .absent
+  | .run _ => { ran := .unstarted "unasked", out := "", err := "", complete := false, outputs := #[] }
+  | .writeAtomic .. => .error .absent
+  | .createDirAll _ => .error .absent
+
+/-- The host with PATH and the working directory replaced: every other
+question is the machine's. -/
+def hybrid (path : Option String) (cwd : Except Failure String) : (q : Ask) → BaseIO (Reply q)
+  | .env "PATH" => pure path
+  | .cwd => pure cwd
+  | q => Host.answer q
+
+def under {α : Type} (path : String) (cwd : Except Failure String) (p : Prog α) : BaseIO α :=
+  p.runM (hybrid (some path) cwd)
+
+end Tests.World

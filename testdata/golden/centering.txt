@@ -1,5 +1,5 @@
 class slides
-page 362.835x272.126 vmargin 26.4 hmargin 28.346 fontsize 11 parskip 0
+page 362.835x272.126 vmargin 26.4 hmargin 28.346 fontsize 11 parskip 0 justify off
 palette fg #292524
 palette bg #FDFCF9
 palette alert #0B66C2

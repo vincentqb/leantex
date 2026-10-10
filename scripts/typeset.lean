@@ -124,14 +124,6 @@ def fixtureFiles : IO (Array String) := do
 def stem (file : String) : String :=
   ((System.FilePath.mk file).fileStem).getD file
 
-/-- The surface reader a path's extension selects, as the driver selects it. -/
-def readSurface (file src : String) : Array Parse.Raw × Array Diag :=
-  if file.endsWith ".md" then Md.read file src
-  else
-    let (toks, lexDiags) := Lex.lex file src
-    let (raws, parseDiags) := Parse.parse file toks
-    (raws, lexDiags ++ parseDiags)
-
 /-- What a document needs that only a tool supplies, in words: a listing in a
 language no built-in highlighter reads, a picture outside the rendered subset. -/
 def toolNeeds (doc : Ir.Doc) : Array String :=
@@ -162,12 +154,15 @@ def assertFailures (geom : Layout.Geom) (fs : Font.FontSet) (doc : Ir.Doc) (out 
 artifacts, with no tool and no host scan. -/
 def build (cache : FontEnv.Cache) (faces : Array FontDb.Face) (file : String) :
     IO (Except String Built) := do
-  let src ← IO.FS.readFile file
-  let (raws, front) := readSurface file src
-  let (executed, inputDiags, spliced) ← Input.expandInputs file raws
-  let (raws, dataDiags) ← Input.resolveData file executed.raws
-  let earlier := front ++ inputDiags ++ dataDiags
-  let prepared := Elab.prepareExecuted file (executed.withRaws raws)
+  -- The front door, as the driver reads a document: the decoding door, the
+  -- surface the extension selects, input execution, the declaration settled.
+  let bytes ← match ← Input.readSource file with
+    | .ok bytes => pure bytes
+    | .error d => return .error s!"{file}: {d.message}"
+  let src ← Input.readDocument file bytes
+  let earlier := src.diags
+  let spliced := src.spliced
+  let prepared := Elab.prepareExecuted file src.executed
   let scanOf (d : Ir.Doc) : FontAssembly.FaceScan :=
     { faces, docDirs := [fontsDir.toString], dirs := d.fonts.dirs, diags := #[] }
   let pre := Elab.preambleDoc file prepared
@@ -182,9 +177,9 @@ def build (cache : FontEnv.Cache) (faces : Array FontDb.Face) (file : String) :
       IO (Ir.Doc × Array Diag × Elab.ReqSpans) := do
     let (doc, ds, spans) := Elab.runPrepared file prepared earlier metric
     let ds := ds ++ spliced.map fun (sty, s, pos) => Compat.styRead (s.getD file) sty pos ds
-    let (doc, bibDiags) ← Input.resolveBibliography file doc spans.bib
-    return (doc, ds ++ bibDiags ++ Ir.refDiags spans.labels (Elab.ReqSpans.spanOf spans.refs) doc,
-      spans)
+    let (doc, bibDiags, ledger) ← Input.resolveBibliography file doc spans.bib src.ledger
+    return (doc, ds ++ bibDiags ++ ledger.notes ++
+      Ir.refDiags spans.labels (Elab.ReqSpans.spanOf spans.refs) doc, spans)
   let (doc, elabDiags, spans) ← elaborate (provisional.getD fun _ _ => {})
   let needs := toolNeeds doc
   unless needs.isEmpty do
@@ -673,6 +668,8 @@ def selftest : IO UInt32 := tierSelftest "typeset" fun no => do
     (edgeSteps geom roles #[stPage #[lineOf 100, hung, unhung]] == 1)
   no "edge-step: where the page does not protrude there is no step"
     (edgeSteps { geom with protrude := false } roles #[stPage #[lineOf 100, hung, unhung]] == 0)
+  no "edge-step: a page set ragged keeps its exact margin, and no line steps"
+    (edgeSteps { geom with justify := false } roles #[stPage #[lineOf 100, hung, unhung]] == 0)
   no "edge-step: a centred paragraph has no one edge"
     (edgeSteps geom roles #[stPage #[lineOf 100, stLine 140 112 (words 3), unhung]] == 0)
   -- font-dupe: one program shipped twice.

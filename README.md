@@ -42,14 +42,37 @@ document-local `.sty` files. It does not execute arbitrary installed TeX package
 or Lua code; unsupported constructs produce diagnostics. A TeX installation
 is not required for native rendering.
 
-Markdown supports headings, emphasis, links, images, lists, quotes and fenced
-code. Include a Markdown fragment in TeX with:
+Markdown supports headings, emphasis, links, images, lists, quotes, fenced
+code and GitHub-style pipe tables, which set as booktabs tables. A table too
+wide for the text block narrows its columns and wraps its cells to fit, as
+a browser sets it; one whose words alone are too wide sets smaller, down to
+`\scriptsize` (`\tiny` only to stay on the paper), centred across both
+margins if it still overhangs. A Markdown document sets on a wider text
+block than an article, with its code in the text face's matching monospaced
+face: code blocks at `\footnotesize`, two sizes below the text, with long
+lines wrapped to stay on the page, and inline code free to break after
+punctuation such as `_`, `.`, `/` or `-` where a line needs it. A Markdown
+fragment included in TeX keeps its tables' fit and takes its page, code and
+line breaks from the TeX document around it. Include one with:
 
 ```tex
 \usepackage{markdown}
 % Inside the document:
 \markdownInput{notes.md}
 ```
+
+Source files are read as UTF-8 unless a byte-order mark says UTF-16, and a
+line ends at LF, CR LF or a CR alone. A TeX document that declares
+`\usepackage[latin1]{inputenc}` (or `latin9`, `cp1252`, `ansinew`,
+`applemac`) has every file it reads read in that encoding, byte for byte as
+pdfLaTeX reads it, unless a file is evidently UTF-8: valid UTF-8, or more
+UTF-8 sequences than stray bytes. `applemac` follows Apple's current Mac OS
+Roman table, so 0xDB is the euro sign where pdfLaTeX still prints ¤, and a
+few symbols read as Apple has them where pdfLaTeX prints a near neighbour.
+`\inputencoding` does not switch encodings partway through a file; it is
+named where it stands. Bytes that are not text, U+0000 among them, become
+U+FFFD, and one warning per file lists their offsets. The document still
+builds, as long as one of its fonts has a glyph for U+FFFD.
 
 See the [example documents](testdata/corpus) and
 [package compatibility index](testdata/compat-index) for supported syntax.
@@ -59,6 +82,12 @@ See the [example documents](testdata/corpus) and
 Use installed `.ttf` or `.otf` fonts through `\setmainfont{Family Name}` or
 `\fonts{body="Family Name"}`. List available families with `leantex fonts`;
 add search directories with `--font-dir` or `LEANTEX_FONT_PATH`.
+The fonts of the TeX distribution whose `lualatex` (else `luatex`, else `tex`)
+comes first on `PATH` are found without running TeX: the `fonts/opentype` and
+`fonts/truetype` directories of `~/texmf` (and macOS's `~/Library/texmf`), of
+the site's `texmf-local` (or a package's `/usr/local/share/texmf`), and of the
+distribution's trees in TeX Live's own layout (`texmf-dist`) and in the
+Debian, Fedora, Arch, Homebrew, MacPorts, FreeBSD and Nix packages' layouts.
 To bundle fonts with a document, use `\fonts{dir="fonts",body="Family Name"}`.
 macOS `.ttc` collections are not supported.
 

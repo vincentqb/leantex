@@ -370,8 +370,8 @@ private def htmlChecks (ref : IO.Ref (List String)) : IO Unit := do
   let valueOf (p : String → Bool) : Option Int := rules.findSome? fun
     | .boundary sel v => if p sel then remMilliOf v else none
     | _ => none
-  let below := valueOf fun s => s.startsWith ":is(section.block" && s.endsWith s!"+ :is(.vskip, {HtmlDoc.skipCarrier})"
-  let aboveNext := valueOf fun s => s.startsWith "* + :is(section.block"
+  let below := valueOf fun s => s.startsWith "section.block" && s.endsWith s!"+ :is(.vskip, {HtmlDoc.skipCarrier})"
+  let aboveNext := valueOf fun s => s == "* + section.block"
   let skip := (boxes[2]?.bind fun attrs => boxMilli ((HtmlDoc.attrOf? attrs "style").getD ""))
   match below, aboveNext, skip with
   | some b, some a, some s =>

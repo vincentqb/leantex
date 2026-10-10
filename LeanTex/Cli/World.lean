@@ -89,6 +89,11 @@ read refuses anything but a regular file. -/
   | .run _ => true
   | _ => false
 
+/-- The tool a run question asks the host to start. -/
+@[expose] public def Ask.runTool? : Ask → Option String
+  | .run call => some call.tool
+  | _ => none
+
 /-- One answered question. -/
 public abbrev Fact := (q : Ask) × Reply q
 
@@ -360,6 +365,12 @@ exit 255 with exactly this line on standard error. -/
 @[expose] public def execFailed (exe : String) (e : Ended) : Bool :=
   e.ran == .exited 255 && e.err == "could not execute external process '" ++ exe ++ "'\n"
 
+/-- The run of candidate `c`: what `call` builds for it, with `c` as the
+tool whatever `call` set there, so a probe starts a candidate of the name it
+was asked for and nothing else (`probe_runs_mem`). -/
+@[expose] public def runAt (call : String → ToolCall) (c : String) : ToolCall :=
+  { call c with tool := c }
+
 /-- Run each regular candidate in order until one starts, as execvp does:
 a candidate the OS refuses to execute comes back with the exec-failure
 signature, and the next is tried. -/
@@ -368,14 +379,15 @@ signature, and the next is tried. -/
   | [] => .pure none
   | c :: cs => .ask (.stat c) fun st =>
     if isFile st then
-      .ask (.run (call c)) fun e => if execFailed c e then probeGo call cs else .pure (some (c, e))
+      .ask (.run (runAt call c)) fun e =>
+        if execFailed c e then probeGo call cs else .pure (some (c, e))
     else probeGo call cs
 
 /-- The bare name, run as it is: with PATH unset, the C library's default
 search path decides. -/
 @[expose] public def bare (tool : String) (call : String → ToolCall) :
     Prog (Option (String × Ended)) :=
-  .ask (.run (call tool)) fun e => .pure (if execFailed tool e then none else some (tool, e))
+  .ask (.run (runAt call tool)) fun e => .pure (if execFailed tool e then none else some (tool, e))
 
 /-- execvp's rule over `located`'s lookup: each regular candidate in order,
 passing over one the OS refuses (`probeGo_exact`), or the bare name when
@@ -537,22 +549,22 @@ public theorem probeGo_exact (call : String → ToolCall) (w : (q : Ask) → Rep
     (cs : List String) (c : String) (e : Ended) :
     (probeGo call cs).run w = some (c, e) ↔
       ∃ pre post, cs = pre ++ c :: post ∧ isFile (w (.stat c)) = true ∧
-        e = w (.run (call c)) ∧ execFailed c e = false ∧
-        ∀ d ∈ pre, isFile (w (.stat d)) = false ∨ execFailed d (w (.run (call d))) = true := by
+        e = w (.run (runAt call c)) ∧ execFailed c e = false ∧
+        ∀ d ∈ pre, isFile (w (.stat d)) = false ∨ execFailed d (w (.run (runAt call d))) = true := by
   induction cs with
   | nil => simp [probeGo, Prog.run]
   | cons d ds ih =>
     change Prog.run w (if isFile (w (.stat d)) then
-        .ask (.run (call d)) fun e =>
+        .ask (.run (runAt call d)) fun e =>
           if execFailed d e then probeGo call ds else .pure (some (d, e))
       else probeGo call ds) = some (c, e) ↔ _
     constructor
     · intro hrun
       by_cases hf : isFile (w (.stat d)) = true
       · simp only [hf, ite_true] at hrun
-        change Prog.run w (if execFailed d (w (.run (call d))) then probeGo call ds
-          else .pure (some (d, w (.run (call d))))) = some (c, e) at hrun
-        by_cases hx : execFailed d (w (.run (call d))) = true
+        change Prog.run w (if execFailed d (w (.run (runAt call d))) then probeGo call ds
+          else .pure (some (d, w (.run (runAt call d))))) = some (c, e) at hrun
+        by_cases hx : execFailed d (w (.run (runAt call d))) = true
         · simp only [hx, ite_true] at hrun
           obtain ⟨pre, post, hds, hc, he, hne, hpre⟩ := ih.mp hrun
           refine ⟨d :: pre, post, by simp [hds], hc, he, hne, ?_⟩
@@ -589,8 +601,8 @@ public theorem probeGo_exact (call : String → ToolCall) (w : (q : Ask) → Rep
           exact hrest
         · by_cases hf : isFile (w (.stat d)) = true
           · simp only [hf, ite_true]
-            change Prog.run w (if execFailed d (w (.run (call d))) then probeGo call ds
-              else .pure (some (d, w (.run (call d))))) = some (c, e)
+            change Prog.run w (if execFailed d (w (.run (runAt call d))) then probeGo call ds
+              else .pure (some (d, w (.run (runAt call d))))) = some (c, e)
             simp only [hx, ite_true]
             exact hrest
           · simp only [hf, Bool.false_eq_true, ite_false]
@@ -620,7 +632,7 @@ default search path decides, as it decides for every spawn by name. -/
 public theorem probe_unset_exact (tool : String) (call : String → ToolCall)
     (w : (q : Ask) → Reply q) (hs : tool.contains '/' = false) (hp : w (.env "PATH") = none) :
     (probe tool call).run w =
-      if execFailed tool (w (.run (call tool))) then none else some (tool, w (.run (call tool))) := by
+      if execFailed tool (w (.run (runAt call tool))) then none else some (tool, w (.run (runAt call tool))) := by
   unfold probe lookup
   simp only [hs, Bool.false_eq_true, ite_false]
   change Prog.run w (match w (.env "PATH") with
@@ -646,6 +658,76 @@ public theorem probe_located_mem (tool : String) (call : String → ToolCall)
     have hk : s.kind = .file := by simpa [isFile, hw] using hc
     rw [located_exact, found, hcs]
     exact List.mem_filterMap.mpr ⟨c, by simp, by simp [regular, hw, hk]⟩
+
+/-- **The probe over a candidate list starts only its candidates**: every
+run question it asks, whatever the replies, names one of them as the tool. -/
+public theorem probeGo_runs_mem (call : String → ToolCall) (w : (q : Ask) → Reply q)
+    (cs : List String) : ∀ q ∈ (probeGo call cs).asks w, ∀ t, q.runTool? = some t → t ∈ cs := by
+  induction cs with
+  | nil => simp [probeGo, Prog.asks]
+  | cons c cs ih =>
+    intro q hq t ht
+    change q ∈ Ask.stat c :: Prog.asks w (if isFile (w (.stat c)) then
+        .ask (.run (runAt call c)) fun e =>
+          if execFailed c e then probeGo call cs else .pure (some (c, e))
+      else probeGo call cs) at hq
+    rcases List.mem_cons.mp hq with rfl | hq
+    · simp [Ask.runTool?] at ht
+    · by_cases hf : isFile (w (.stat c)) = true
+      · simp only [hf, ite_true] at hq
+        change q ∈ Ask.run (runAt call c) :: Prog.asks w (if execFailed c (w (.run (runAt call c)))
+          then probeGo call cs else .pure (some (c, w (.run (runAt call c))))) at hq
+        rcases List.mem_cons.mp hq with rfl | hq
+        · have htc : t = c := by simpa [Ask.runTool?, runAt] using ht.symm
+          exact htc ▸ List.mem_cons_self
+        · by_cases hx : execFailed c (w (.run (runAt call c))) = true
+          · simp only [hx, ite_true] at hq
+            exact List.mem_cons_of_mem _ (ih q hq t ht)
+          · simp [hx, Prog.asks] at hq
+      · simp only [hf, Bool.false_eq_true, ite_false] at hq
+        exact List.mem_cons_of_mem _ (ih q hq t ht)
+
+/-- **A probe starts the name it was asked for or one of that name's
+candidates**: every run question `probe tool call` asks, whatever the
+replies, names `tool` itself or a path `candidates` reads off PATH, so the
+tool a host program runs through `probe` is the name its call site spells,
+whatever the call builder sets. -/
+public theorem probe_runs_mem (tool : String) (call : String → ToolCall)
+    (w : (q : Ask) → Reply q) :
+    ∀ q ∈ (probe tool call).asks w, ∀ t, q.runTool? = some t →
+      t = tool ∨ t ∈ candidates tool (w (.env "PATH")) (w .cwd) := by
+  intro q hq t ht
+  unfold probe lookup at hq
+  by_cases hs : tool.contains '/' = true
+  · simp only [hs, ite_true] at hq
+    change q ∈ Ask.cwd :: Prog.asks w (probeGo call (candidates tool none (w .cwd))) at hq
+    rcases List.mem_cons.mp hq with rfl | hq
+    · simp [Ask.runTool?] at ht
+    · right
+      rw [candidates_slash_exact tool (w (.env "PATH")) none (w .cwd) hs]
+      exact probeGo_runs_mem call w _ q hq t ht
+  · simp only [hs, Bool.false_eq_true, ite_false] at hq
+    change q ∈ Ask.env "PATH" :: Prog.asks w (match w (.env "PATH") with
+      | none => bare tool call
+      | some p => .ask .cwd fun cwd => probeGo call (candidates tool (some p) cwd)) at hq
+    rcases List.mem_cons.mp hq with rfl | hq
+    · simp [Ask.runTool?] at ht
+    · cases hp : w (.env "PATH") with
+      | none =>
+        rw [hp] at hq
+        change q ∈ Ask.run (runAt call tool) :: Prog.asks w (.pure (if execFailed tool
+          (w (.run (runAt call tool))) then none else some (tool, w (.run (runAt call tool))))) at hq
+        rcases List.mem_cons.mp hq with rfl | hq
+        · left
+          simpa [Ask.runTool?, runAt] using ht.symm
+        · simp [Prog.asks] at hq
+      | some p =>
+        rw [hp] at hq
+        change q ∈ Ask.cwd :: Prog.asks w (probeGo call (candidates tool (some p) (w .cwd))) at hq
+        rcases List.mem_cons.mp hq with rfl | hq
+        · simp [Ask.runTool?] at ht
+        · right
+          exact probeGo_runs_mem call w _ q hq t ht
 
 /-- A question a lookup may ask: PATH, the working directory, or a stat. -/
 @[expose] public def Lookup : Ask → Prop

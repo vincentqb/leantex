@@ -235,7 +235,8 @@ private def tokenClearanceChecks (ref : IO.Ref (List String)) (fonts : Font.Font
       check ref (name ++ ": sourced fallback composes with the fixed opening")
         (stages.size == 1 && stages.all
           (htmlOpeningClearance css · (doc.page.fontSize / 4 + Dim.mm 2)
-            doc.page.height s!"var(--clearancegap, {length})"))
+            doc.page.height
+            s!"var(--clearancegap, {HtmlDoc.deckLengthCss doc.page.height gap.width})"))
       if scope == "epoch" then
         check ref (name ++ ": epoch declaration remains a length on the opening box")
           ((elemNodesList (fun _ => true) #[] nodes.toList).any fun node =>
@@ -271,6 +272,9 @@ def checks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit := do
       let out := layoutOf fonts doc
       let (head, nodes, htmlDiags) := HtmlDoc.emitTree { fonts := some fonts } doc
       let skip := doc.page.fontSize / 4 + if alignment == "t" then Dim.mm 2 else 0
+      -- An authored opening is a print length on the stage: its share of it.
+      let before := if before == "7pt" then
+        HtmlDoc.deckLengthCss doc.page.height (Dim.Length.ofSp (Dim.pt 7)) else before
       let pages := out.pages.filter (·.band.isSome)
       let stages := (elemNodesList (· == "section") #[] nodes.toList).filter
         (hasClass · "slide")

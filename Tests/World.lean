@@ -12,23 +12,6 @@ open LeanTex.Cli.World
 
 namespace Tests.World
 
-/-- A world read off a trace, `dflt` answering every question the trace
-does not hold. -/
-def traceWorld (tr : List Fact) (dflt : (q : Ask) → Reply q) : (q : Ask) → Reply q :=
-  fun q => match tr.find? (·.1 == q) with
-    | some ⟨q', r⟩ => if h : q' = q then h ▸ r else dflt q
-    | none => dflt q
-
-def quiet : (q : Ask) → Reply q
-  | .env _ => none
-  | .cwd => .error .absent
-  | .stat _ => .error .absent
-  | .readFile _ => .error .absent
-  | .listDir _ => .error .absent
-  | .run _ => { ran := .unstarted "unasked", out := "", err := "", complete := false, outputs := #[] }
-  | .writeAtomic .. => .error .absent
-  | .createDirAll _ => .error .absent
-
 def loud : (q : Ask) → Reply q
   | .env _ => some "loud"
   | .cwd => .ok "/loud"
@@ -53,16 +36,6 @@ def sizes (dir : String) : Prog String := do
         | .error _ => seen := seen.push s!"{name}=?"
     let unset ← ask (.env "LEANTEX_WORLD_CHECK_UNSET")
     return s!"{String.intercalate "," seen.toList};{unset.isSome}"
-
-/-- The host with PATH and the working directory replaced: every other
-question is the machine's. -/
-def hybrid (path : Option String) (cwd : Except Failure String) : (q : Ask) → BaseIO (Reply q)
-  | .env "PATH" => pure path
-  | .cwd => pure cwd
-  | q => Host.answer q
-
-def under {α : Type} (path : String) (cwd : Except Failure String) (p : Prog α) : BaseIO α :=
-  p.runM (hybrid (some path) cwd)
 
 /-- One spelling per directory entry: `.` components and repeated
 separators name the same place. -/

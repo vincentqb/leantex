@@ -133,8 +133,18 @@ public structure PageSpec where
   `baseFontSize`. -/
   fontSize : Sp := baseFontSize
   /-- Line spacing as a factor over the default 1.2, in thousandths, so
-  `\linespread{1.15}` has a home. -/
+  `\linespread{1.15}` has a home: what every line's leading reads. A
+  `\page` declaration composes it from `spread` and `bodySkip`, as LaTeX's
+  `\selectfont` stretches the `\baselineskip` a size command sets. -/
   leading : Nat := 1000
+  /-- `\linespread` (`\page{ leading = … }`), in thousandths: the stretch
+  over whatever `\baselineskip` the body's size sets. -/
+  spread : Nat := 1000
+  /-- The body's `\baselineskip` as a class's `\normalsize` declares it
+  (`\page{ baselineskip = … }`): `leading` is then its share of the 6⁄5
+  rule at the body size, times `spread`, resolved at the body size the
+  declaration ends on. `none` keeps the 6⁄5 rule. -/
+  bodySkip : Option Sp := none
   /-- The gap between peer paragraphs, with its rubber; `none` is the
   engine's default. LaTeX classes declare `0pt`, `\parskip` and the parskip
   package their own. -/
@@ -164,6 +174,12 @@ public structure PageSpec where
   redefinitions were read out (per-mille of the body, `setStep`'s door;
   `PageSpec.scale` resolves). `none` is the engine's `sizeScale`. -/
   sizes : Option (List (String × Nat)) := none
+  /-- The document's skip column: each named size's `\baselineskip`, per
+  mille of the body size, where the document declares one — its class's
+  `\normalsize` (`\page{ baselineskip = … }`), a venue's refused size
+  command's `\@setfontsize` third argument (`setSkip`'s door).
+  `PageSpec.skipScale` resolves; `none` is size10.clo's (`sizeSkipScale`). -/
+  skips : Option (List (String × Nat)) := none
   /-- Whether paragraphs may hyphenate; `none` takes the class default —
   on for `article` and `slides`, off for `card`, where a two-line name
   broken with a hyphen is never what anyone means. -/
@@ -174,6 +190,12 @@ public structure PageSpec where
   the stretch justification needs, and forcing it gives the breaker only
   overfull answers. -/
   justify : Option Bool := none
+  /-- Whether the ragged setting `justify` turns off is LaTeX's
+  `\raggedright` (`\@flushglue`, `\rightskip 0pt plus 1fil`): lines fill
+  first, unhyphenated, as TeX breaks them when no line can be loose. On for
+  a frame — beamer.cls declares `\raggedright` among its defaults — and off
+  for the engine's own ragged page (`card`), which balances its lines. -/
+  raggedFil : Bool := false
   /-- Whether boundary glyphs protrude into the margin so the optical edge
   is straight — microtype's character protrusion (Thành, "Margin kerning
   and font expansion with pdfTeX", TUGboat 22(3); microtype manual §2),
@@ -252,6 +274,46 @@ word-processor inch this replaces gave a 468 pt line, roughly a hundred
 characters at 10 pt — the measure the band diagnostic exists to catch. A
 document that declares any `\page` geometry keeps every value it named. -/
 public def articleTextBlock : Sp := pt 312
+
+/-- The text block of a markdown page: 32 picas (384 pt). A markdown source
+declares no page, so this is the whole of its geometry, and it is set by
+characters per line, not inherited from the article's 26 picas — 61
+characters of the face a markdown page sets in. Through the copy-fitting
+fit the readable-band judge reads (W0201; memoir manual eqs. 2.1–2.2) it
+sets 75 characters of DejaVu Sans, the first family an undeclared document
+takes (`FontDb.defaultFamilies`), whose lowercase alphabet runs 146.5 pt at
+10 pt: the upper bound Bringhurst gives continuous text (Elements §2.1.2).
+In the narrowest family of that list, the Helvetica class (127.3 pt, TeX
+Gyre Heros), it sets 85, the low end of the 85–90 he allows discontinuous
+text — the code, lists and tables most markdown documents are made of — so
+every default family lands inside the band, 75 to 85. -/
+public def markdownTextBlock : Sp := pt 384
+
+/-- The surfaces a document or an included file can be written in: the tex
+reader's or the markdown reader's, each read through its one door
+(`Surface.read`). A markdown source can declare nothing — no page, no faces, no
+listing keys — so what its surface defaults is the whole of those settings
+for its documents: the text block (`textBlock`), how code sets
+(`Surface.listing`), and a typewriter face beside the default text face
+(the driver's `FontDb.monoCompanion`). One decision, the path's extension
+(`ofPath`), read by the driver to pick the reader and by the elaborator to
+record the surface in the document; a markdown fragment a tex document
+includes is set as that document's surface sets it — but for its tables,
+whose fit is the construct's own (`ColSpec.narrows`), not a default. -/
+public inductive Surface where
+  | tex
+  | markdown
+  deriving Repr, BEq, DecidableEq, Inhabited
+
+/-- The surface a path's extension selects for a document: `.md` reads as
+markdown, everything else as tex. -/
+public def Surface.ofPath (file : String) : Surface :=
+  if file.endsWith ".md" then .markdown else .tex
+
+/-- The text block an undeclared flow page takes on this surface. -/
+public def Surface.textBlock : Surface → Sp
+  | .tex => articleTextBlock
+  | .markdown => markdownTextBlock
 
 /-- The slides stage and its defaults, beamer's own where beamer names one:
 128×96 mm (the guide's "slides are by default only 128mm by 96mm large"),
@@ -2830,6 +2892,241 @@ itself: the identity factor, `normalsize`'s. -/
 @[expose] public def scaleStep (base : Sp) (name : String) : Sp :=
   base * ((sizeScale.lookup name).getD 1000) / 1000
 
+/-- Each named step's `\baselineskip`, per mille of the body size: the
+second argument of size10.clo's `\@setfontsize` rows (`\tiny` 5/6 pt,
+`\scriptsize` 7/8, `\footnotesize` 8/9.5, `\small` 9/11, `\normalsize`
+10/12, `\large` 12/14, `\Large` 14.4/18, `\LARGE` 17.28/22, `\huge`
+20.74/25, `\Huge` 24.88/30), each measured under lualatex as the line pitch
+of a paragraph set wholly in the step. A size command sets both lengths,
+so the leading belongs to the step, not to a ratio of its type: the 6⁄5
+rule (`leadingFor`) sets a `\footnotesize` line 0.1 pt loose and a
+`\LARGE` one 1.3 pt tight. The ladder is size10.clo's at every body
+(`sizeScale`), and so is this column. -/
+@[expose] public def sizeSkipScale : List (String × Nat) :=
+  [("tiny", 600), ("scriptsize", 800), ("footnotesize", 950), ("small", 1100),
+   ("normalsize", 1200), ("large", 1400), ("Large", 1800), ("LARGE", 2200),
+   ("huge", 2500), ("Huge", 3000)]
+
+/-- The `\normalsize` row of a skip column: the body's own `\baselineskip`,
+per mille of the body size — the row every step's leading is read against
+(`stepLead`). size10.clo's 1200 off the column, and never below one. -/
+@[expose] public def skipBody (skips : List (String × Nat)) : Nat :=
+  max 1 ((skips.lookup "normalsize").getD 1200)
+
+/-- **A named step's leading at a base**: the base's leading (`leadingFor`,
+before `\linespread`) in the proportion the skip column in force gives the
+step's row to its `\normalsize` row (`skipBody`) — the `\baselineskip` a
+size command sets with its size, against the body's own. Under size10.clo's
+column (`sizeSkipScale`) at the body that is the file's own length
+(`\footnotesize` 9.5 pt at 10 pt). Under a document's column — a class's
+`\normalsize` (`\page{ baselineskip = … }`) or a venue's `\@setfontsize`
+rows — the page's factor carries the body's declared skip, so a step the
+document declares stands at its declared skip and every other step at
+size10.clo's own length (`stepLead_ratio_between`). On a display base — a
+heading's or a title's size, which the step scales — the leading scales
+with the type it leads. `none` off the column. -/
+@[expose] public def stepLead (skips : List (String × Nat)) (step : String) (base : Sp) :
+    Option Sp :=
+  (skips.lookup step).map fun (l : Nat) => leadingFor base * (l : Int) / (skipBody skips : Int)
+
+/-- **The baseline distance a run sets at** — the one resolving site the
+page's line boxes and the deck's line heights read: the leading of the
+named step it was set under (`stepLead`), any other size the 6⁄5 rule of
+its own size (`leadingFor`), both under the page's factor, which LaTeX's
+`\selectfont` applies (`\linespread`) to whatever `\baselineskip` the size
+command left. -/
+@[expose] public def stepSkip (lead : Option Sp) (size : Sp) (factor : Nat := 1000) : Sp :=
+  match lead with
+  | some l => l * factor / 1000
+  | none => leadingFor size factor
+
+/-- A run under no size command sets at the 6⁄5 rule of its own size. -/
+@[simp] public theorem stepSkip_none_exact (size : Sp) (factor : Nat) :
+    stepSkip none size factor = leadingFor size factor := rfl
+
+/-- **The leading a run's line box takes**: its paragraph's leading — the
+step the paragraph is set at (`lead`, `stepLead` at its base) over its
+nominal size — in the run's proportion to that size; under no step, the
+6⁄5 rule of the run's own size, which is the same proportion. LaTeX reads
+`\baselineskip` once, at `\par`, and a run adds only its ink, so a run never
+carries a leading of its own: a `{\small …}` run inside a body paragraph
+leads in the body's proportion to its smaller type, and its box stays inside
+the paragraph's strut whatever skip column the page reads
+(`runLead_between`). A unitless CSS line height is the same rule — the one
+an inline element inherits from the block it stands in, so the HTML's runs
+read this proportion too. A run larger than its paragraph grows its box in
+the same proportion, as CSS's does, where TeX keeps the `\baselineskip`
+until the ink collides: pending work. -/
+@[expose] public def runLead (lead : Option Sp) (nominal size : Sp) (factor : Nat := 1000) :
+    Sp :=
+  match lead with
+  | some l => l * size / max nominal 1 * factor / 1000
+  | none => leadingFor size factor
+
+/-- A run at its paragraph's own size leads at the paragraph's leading,
+exactly (`_exact`). -/
+public theorem runLead_exact (lead : Option Int) (nominal : Int) (h : 0 < nominal)
+    (factor : Nat) : runLead lead nominal nominal factor = stepSkip lead nominal factor := by
+  cases lead with
+  | none => rfl
+  | some l =>
+    have hm : max nominal 1 = nominal := by omega
+    simp only [runLead, stepSkip, hm]
+    rw [Int.mul_ediv_cancel _ (by omega)]
+
+/-- A larger run never leads less than a smaller one (`_monotone`), under any
+step's leading the paragraph carries. -/
+public theorem runLead_monotone (lead : Option Int) (nominal : Int) (factor : Nat) (a b : Int)
+    (hl : ∀ l, lead = some l → 0 ≤ l) (hab : a ≤ b) :
+    runLead lead nominal a factor ≤ runLead lead nominal b factor := by
+  have hf : (0 : Int) ≤ (factor : Int) := Int.natCast_nonneg _
+  cases lead with
+  | none =>
+    simp only [runLead, leadingFor]
+    apply Int.ediv_le_ediv (by decide)
+    apply Int.mul_le_mul_of_nonneg_right _ hf
+    apply Int.ediv_le_ediv (by decide)
+    exact Int.mul_le_mul_of_nonneg_right hab (by decide)
+  | some l =>
+    have h0 := hl l rfl
+    simp only [runLead]
+    apply Int.ediv_le_ediv (by decide)
+    apply Int.mul_le_mul_of_nonneg_right _ hf
+    apply Int.ediv_le_ediv (by omega)
+    exact Int.mul_le_mul_of_nonneg_left hab h0
+
+/-- **A run no larger than its paragraph leads within its paragraph's
+leading** (`_between`): between nothing and the leading the paragraph's own
+lines stand at (`stepSkip`), so a smaller run's box never reaches past the
+paragraph's strut by a leading of its own, under any step, column or factor. -/
+public theorem runLead_between (lead : Option Int) (nominal : Int) (factor : Nat) (s : Int)
+    (hn : 0 < nominal) (hl : ∀ l, lead = some l → 0 ≤ l) (hs : 0 ≤ s) (hsn : s ≤ nominal) :
+    0 ≤ runLead lead nominal s factor ∧
+      runLead lead nominal s factor ≤ stepSkip lead nominal factor := by
+  have h0 : runLead lead nominal 0 factor = 0 := by
+    cases lead <;> simp [runLead, leadingFor]
+  refine ⟨?_, ?_⟩
+  · rw [← h0]
+    exact runLead_monotone lead nominal factor 0 s hl hs
+  · rw [← runLead_exact lead nominal hn factor]
+    exact runLead_monotone lead nominal factor s nominal hl hsn
+
+/-- The size file's two columns — each row's size (`sizeScale`) and its
+leading (`sizeSkipScale`) — name the same steps in the same order: a step
+with a size has a leading and none is invented. -/
+public theorem sizeSkipScale_names_exact :
+    sizeSkipScale.map (·.1) = sizeScale.map (·.1) := by decide
+
+/-- Every step's leading lies between 8⁄7 of its size (`\scriptsize`'s,
+the tightest the size file sets) and 9⁄7 (`\LARGE`'s 22/17.28 is the
+loosest): no step sets its lines closer than the type and none drifts
+from the size file's proportions. -/
+public theorem sizeSkipScale_between :
+    ∀ p ∈ sizeScale, ∀ q ∈ sizeSkipScale, p.1 = q.1 →
+      8 * p.2 ≤ 7 * q.2 ∧ 7 * q.2 ≤ 9 * p.2 := by decide
+
+/-- **A step leads in its column's proportion to the body**, over every skip
+column the page reads (`PageSpec.skipScale`: size10.clo's, a class's, a
+venue's): the step's leading times the column's `\normalsize` row is the
+base's leading times the step's row, to the floor of one division — so a
+step stands to the body as its declared `\baselineskip` stands to the
+body's, whichever column declared them, and the page's factor scales both
+alike. -/
+public theorem stepLead_ratio_between (skips : List (String × Nat)) (step : String)
+    (base : Sp) (k : Nat) (hk : skips.lookup step = some k) :
+    ∃ l, stepLead skips step base = some l ∧
+      l * (skipBody skips : Int) ≤ leadingFor base * (k : Int) ∧
+      leadingFor base * (k : Int) < (l + 1) * (skipBody skips : Int) := by
+  have hn : (0 : Int) < (skipBody skips : Int) := by
+    have : 1 ≤ skipBody skips := Nat.le_max_left _ _
+    omega
+  refine ⟨leadingFor base * (k : Int) / (skipBody skips : Int), ?_, ?_, ?_⟩
+  · simp [stepLead, hk]
+  · exact Int.ediv_mul_le _ (Int.ne_of_gt hn)
+  · exact Int.lt_ediv_add_one_mul_self _ hn
+
+/-- **A step's lines clear their type on every base**: under size10.clo's
+columns, whatever base a named step scales — the body, a heading's size, a
+title's — its leading (`stepLead`) stands above the type it leads
+(`scaleStep`), and by no more than the size file's loosest proportion, 9⁄7,
+to the rounding of the integer divisions. The floor of a hundred sp is
+what strictness costs under that rounding. -/
+public theorem stepLead_between (base : Int) (hb : 100 ≤ base) :
+    ∀ p ∈ sizeScale, ∃ l, stepLead sizeSkipScale p.1 base = some l ∧
+      scaleStep base p.1 < l ∧ 7 * l ≤ 9 * scaleStep base p.1 + 9 := by
+  intro p hp
+  simp only [sizeScale, List.mem_cons, List.not_mem_nil, or_false] at hp
+  rcases hp with h|h|h|h|h|h|h|h|h|h <;> subst h <;>
+    simp only [stepLead, scaleStep, skipBody, sizeSkipScale, sizeScale, List.lookup,
+      leadingFor, leadingMilli] <;> simp <;>
+    first
+    | (show base * 500 / 1000 < base * 1200 / 1000 * 600 / 1200 ∧
+        7 * (base * 1200 / 1000 * 600 / 1200) ≤ 9 * (base * 500 / 1000) + 9; omega)
+    | (show base * 700 / 1000 < base * 1200 / 1000 * 800 / 1200 ∧
+        7 * (base * 1200 / 1000 * 800 / 1200) ≤ 9 * (base * 700 / 1000) + 9; omega)
+    | (show base * 800 / 1000 < base * 1200 / 1000 * 950 / 1200 ∧
+        7 * (base * 1200 / 1000 * 950 / 1200) ≤ 9 * (base * 800 / 1000) + 9; omega)
+    | (show base * 900 / 1000 < base * 1200 / 1000 * 1100 / 1200 ∧
+        7 * (base * 1200 / 1000 * 1100 / 1200) ≤ 9 * (base * 900 / 1000) + 9; omega)
+    | (show base < base * 1200 / 1000 ∧ 7 * (base * 1200 / 1000) ≤ 9 * base + 9; omega)
+    | (show base * 1200 / 1000 < base * 1200 / 1000 * 1400 / 1200 ∧
+        7 * (base * 1200 / 1000 * 1400 / 1200) ≤ 9 * (base * 1200 / 1000) + 9; omega)
+    | (show base * 1440 / 1000 < base * 1200 / 1000 * 1800 / 1200 ∧
+        7 * (base * 1200 / 1000 * 1800 / 1200) ≤ 9 * (base * 1440 / 1000) + 9; omega)
+    | (show base * 1728 / 1000 < base * 1200 / 1000 * 2200 / 1200 ∧
+        7 * (base * 1200 / 1000 * 2200 / 1200) ≤ 9 * (base * 1728 / 1000) + 9; omega)
+    | (show base * 2074 / 1000 < base * 1200 / 1000 * 2500 / 1200 ∧
+        7 * (base * 1200 / 1000 * 2500 / 1200) ≤ 9 * (base * 2074 / 1000) + 9; omega)
+    | (show base * 2488 / 1000 < base * 1200 / 1000 * 3000 / 1200 ∧
+        7 * (base * 1200 / 1000 * 3000 / 1200) ≤ 9 * (base * 2488 / 1000) + 9; omega)
+
+/-- At the body's own step any column is the 6⁄5 rule exactly: a paragraph
+that names `\normalsize` sets where an undeclared one does, whatever skip
+its `\normalsize` row declares — the page's factor already carries it. -/
+public theorem stepSkip_normalsize_exact (skips : List (String × Nat)) (n : Nat)
+    (hn : skips.lookup "normalsize" = some n) (hpos : 1 ≤ n) (body : Sp) (factor : Nat) :
+    stepSkip (stepLead skips "normalsize" body) body factor = leadingFor body factor := by
+  have hb : skipBody skips = n := by
+    simp only [skipBody, hn, Option.getD_some]
+    omega
+  have hn0 : (n : Int) ≠ 0 := by omega
+  have hl : stepLead skips "normalsize" body = some (leadingFor body) := by
+    simp only [stepLead, hn, hb, Option.map]
+    rw [Int.mul_ediv_cancel _ hn0]
+  rw [hl]
+  simp only [stepSkip, leadingFor, leadingMilli]
+  have h1000 : (body * ((1200 : Nat) : Int) / 1000 * ((1000 : Nat) : Int) / 1000 : Int) =
+      body * ((1200 : Nat) : Int) / 1000 :=
+    Int.mul_ediv_cancel _ (by decide)
+  rw [h1000]
+
+/-- A skip column with one row replaced: the door the document's own skips
+— a class's `\normalsize`, a venue's `\@setfontsize` rows — come in through.
+A name off the column leaves it as it was. -/
+public def setSkip (skips : List (String × Nat)) (name : String) (row : Nat) :
+    List (String × Nat) :=
+  skips.map fun p => if p.1 == name then (p.1, row) else p
+
+/-- A declared length's row in a skip column: its share of the body size, per
+mille, rounded — the arithmetic the size ladder's own door reads a declared
+size through. The length comes a thousandfold (`milli` sp: `Dim.pt` of a
+milli-point argument, or a length times 1000), so a `\@setfontsize` argument
+in hundredths of a point loses nothing before the one division. -/
+public def skipRowOf (milli body : Sp) : Nat :=
+  ((milli + body / 2) / max body 1).toNat
+
+/-- **A declared skip reads back as itself** (`_between`): the row a declared
+`\baselineskip` lands as, applied to the body it was read against, stands
+within half a per-mille share of the body of the length declared — the
+column holds what the document wrote, to its rounding. -/
+public theorem skipRowOf_between (milli body : Int) (hs : 0 ≤ milli) (hb : 0 < body) :
+    (skipRowOf milli body : Int) * body ≤ milli + body / 2 ∧
+      milli + body / 2 < ((skipRowOf milli body : Int) + 1) * body := by
+  have hm : max body 1 = body := by omega
+  have hq : 0 ≤ (milli + body / 2) / body := Int.ediv_nonneg (by omega) (by omega)
+  simp only [skipRowOf, hm, Int.toNat_of_nonneg hq]
+  exact ⟨Int.ediv_mul_le _ (Int.ne_of_gt hb), Int.lt_ediv_add_one_mul_self _ hb⟩
+
 /-- The size a document title sets at when no `titlepage` font template
 declares one: the one resolving site, so the two backends read one
 function rather than each naming a step. A flow page takes `LARGE`
@@ -2987,6 +3284,12 @@ of a named size step reads the ladder from here (or the `Geom` copy of
 it), never `sizeScale` directly, now that a document may own the ladder. -/
 public def PageSpec.scale (p : PageSpec) : List (String × Nat) :=
   p.sizes.getD sizeScale
+
+/-- The skip column in force for a document: its own, or size10.clo's. The
+one resolving site every step's leading reads (`stepLead`), so the page's
+line boxes and the deck's line heights cannot read two columns. -/
+public def PageSpec.skipScale (p : PageSpec) : List (String × Nat) :=
+  p.skips.getD sizeSkipScale
 
 /-- `scaleStep` over a document's ladder: the same integer arithmetic, the
 scale a parameter. A name off the ladder is the base itself. -/
@@ -3848,13 +4151,11 @@ baseline is `−(ht − dp)/2` of the *measured* box, so depth enters with
 slope ½ and a word with a descender floats up: 1.155 pt between `candle`
 and `misty` in Latin Modern at 10 pt (pgf manual §17.5.1 calls it
 "wobbles" and offers `anchor=mid` against it). Here `height` and `depth`
-are the face's declared cap height and descent at the run's size, never the
+split the face's declared cap-to-descent band at the run's size, never the
 glyphs present (`Layout.label_centre_glyph_free`), so the same arithmetic
-is content-blind and the wobble is zero. The reference that remains is a
-declared choice, not an accident: the band is cap-to-descent rather than
-cap-to-baseline, which seats every label `depth/2` above where trimming to
-the alphabetic baseline would (css-inline-3 §6's `text-box-trim`);
-`labelBaseline_between` is where that offset is quantified. -/
+is content-blind and the wobble is zero; the split puts the band's middle
+half an x-height above the baseline, so a centred label hangs from `mid`,
+the manual's own anchor, and `labelBaseline_between` quantifies the seat. -/
 public def labelBaseline (y : Sp) (align : LabelAlign) (m : LabelInk) : Sp :=
   (labelInkBox 0 y align m).2.2 - m.height
 
@@ -3939,11 +4240,12 @@ box's odd unit is assigned by (1 sp = 1/65536 pt). No glyph term appears, so
 this is the *whole* vertical story for a centred label: one number per
 (face, size).
 
-Read the other way it is the cost of the cap-to-descent band: against a
-band trimmed to the alphabetic baseline the label sits `depth/2` higher —
-1.67 pt at 10 pt in Source Serif Pro, 1.46 in Open Sans, 1.32 in Fira Sans.
-Uniform, therefore not a wobble; a reference choice, and the one deliberate
-difference from css-inline-3 §6's `text-box-edge: cap alphabetic`. -/
+With the band split at its x-height midpoint (`Layout.labelVStep`) that is
+half the face's x-height below the anchor: the seat pgf's `mid` anchor gives
+every node, and TeX's own for a box of x-height letters. Split at the face's
+baseline instead, the band seated a word of capitals half the face's
+descent above where lualatex sets it — 1.67 pt at 10 pt in Source Serif
+Pro, 1.46 in Open Sans, 1.32 in Fira Sans. -/
 public theorem labelBaseline_between (y : Sp) (m : LabelInk)
     (h : 0 ≤ m.height + m.depth) :
     y + (m.depth - m.height) / 2 ≤ labelBaseline y .center m ∧
@@ -4844,6 +5146,16 @@ public structure ColSpec where
   (latex.ltx) — and a declaration in the modifier sets those skips again
   inside the cell, so `>{\raggedright}p` sets ragged where `p` justifies. -/
   ragged : Bool := false
+  /-- A natural column that narrows as a web table's does: a markdown
+  table's (`Parse.markdownTableEnv`), whose source declares no width and
+  whose page cannot scroll. Too wide for its measure, its table shares the
+  measure as a browser's automatic table layout shares it
+  (`Layout.fitColumns`), each such column keeping its widest unbreakable
+  run, and a cell its column cannot hold on one line wraps ragged on its
+  side (`Layout.narrowedCell`); the HTML cell then wraps too, carrying no
+  `bt-nowrap` (`HtmlDoc.cellClasses`). A tex `l`, `c` or `r` column never
+  narrows: LaTeX sets its every cell on one line. -/
+  narrows : Bool := false
   deriving Repr, BEq, Inhabited
 
 /-- Relative table-track hints, in permille of the flexible target. Natural
@@ -5446,6 +5758,10 @@ public structure ListingSpec where
   tabSize : Nat := 8
   /-- FancyVerb/listings default: source lines do not wrap. -/
   breakLines : Bool := false
+  /-- What the listing's package takes off the space after each source
+  line: fvextra's `fvextraLineOverlap` for a minted listing, zero for a
+  bare `verbatim` and for listings' own. -/
+  lineOverlap : Sp := 0
   /-- Every code line carries a `\strut`, so its box is that strut's at
   least, whatever its glyphs: minted's lines under `breaklines`, which
   fvextra sets each as `\parbox[t]{…}{\noindent\strut … \strut}`
@@ -5453,7 +5769,47 @@ public structure ListingSpec where
   their glyphs' boxes, as verbatim's are. A colour box around the code ends
   on the last line's box. -/
   lineStrut : Bool := false
+  /-- How a wrapping listing's continuation stands in past its own line's
+  indentation, when it wraps as listings.sty wraps (`breakindent`, with
+  `breakautoindent` on): the layout then breaks each source line itself, so
+  every declared line holds and none re-flows. `none` leaves a wrap to the
+  paragraph breaker, which names the re-flow (W0386) — minted's, whose
+  fvextra continuation carries a break symbol this engine does not draw. -/
+  breakIndent : Option Sp := none
   deriving Repr, BEq, Inhabited
+
+/-- fvextra's `backgroundcolorboxoverlap`, 0.25 pt (fvextra.sty,
+`\fvset{backgroundcolorboxoverlap=0.25pt}`): the `\vspace{-0.25pt}` its
+`\FV@bgcoloroverlap` sets after every source line it processes, a
+background colour declared or not. minted 3 sets its code through
+fvextra, so a minted listing's source lines stand this much under their
+size's `\baselineskip` — measured under lualatex at 9.215 bp for
+`\footnotesize`'s 9.5 pt, where a bare `verbatim` stands 9.464, and its
+first two lines twice as much, 8.966 bp — while the lines one wrapped
+source line breaks into keep the skip itself, and the gap after the
+listing is a bare `verbatim`'s. -/
+public def fvextraLineOverlap : Sp := Dim.pt 1 / 4
+
+/-- listings.sty's continuation indent: `breakindent` defaults to 20 pt
+(listings.dtx, `\lst@Key{breakindent}{20pt}`), and a LuaLaTeX probe sets a
+continuation 20 pt past its line's own indentation. -/
+public def listingBreakIndent : Sp := pt 20
+
+/-- What a listing sets with before its own keys: on a tex document LaTeX's
+defaults, the ambient size and no wrapping. A markdown document declares no
+listing keys, and its code takes `\footnotesize`, LaTeX's own step, at
+which the markdown page's measure holds 79 to 80 monospaced columns (the
+0.6 em advance of every default typewriter face, to within 0.003 em) — the
+80-column line most code is written to (PEP 8's limit is 79) — and wraps a
+longer line as listings does: paper has no scroll, so every character a
+wrap can reach does — a run with no break point at all runs on, as
+listings sets it. The HTML's
+`<pre>` keeps its padding inside the same measure, so a browser at 16 px
+holds about 72 of those columns and wraps the rest. -/
+public def Surface.listing : Surface → ListingSpec
+  | .tex => {}
+  | .markdown =>
+    { fontSize := .size "footnotesize", breakLines := true, breakIndent := some listingBreakIndent }
 
 /-- The declared language as the bare token, `none` when none is declared:
 the one IR fact both text projections below read. -/
@@ -5730,14 +6086,17 @@ public def Block.alternate (spec : OverlaySpec) (active otherwise : Array Block)
 /-- Classify a display region without treating source annotations as
 content. `none` means another semantic inline was present; `some seen`
 records whether a formula was found among labels and empty annotations.
-Only diagnostic wrappers are traversed: a style or link still changes the
-semantic shape, so the general all-descendants fold is not this reader. -/
+Only diagnostic wrappers and colours are traversed: a colour is ink, not
+shape — a step's cover paints a covered display through one
+(`dimBlocks`), and covering reflows nothing — while a style or link still
+changes the semantic shape, so the general all-descendants fold is not
+this reader. -/
 -- conserves: none — a classifier; emits no document text.
 public def displayParts : List Inline → Bool → Option Bool
   | [], seen => some seen
   | .formula true _ _ :: rest, _ | .math true _ :: rest, _ => displayParts rest true
   | .label _ :: rest, seen => displayParts rest seen
-  | .located _ body :: rest, seen =>
+  | .located _ body :: rest, seen | .colored _ _ body :: rest, seen =>
     (displayParts body.toList seen).bind (displayParts rest)
   | _ :: _, _ => none
 termination_by xs _ => sizeOf xs
@@ -5769,13 +6128,17 @@ public def Block.partopsepEnv : Block → Bool
   | .role n _ => n == thmSpaceRole .kernel
   | _ => false
 
+mutual
+
 /-- A block whose end leaves TeX's `\@endpe` set (ltlists.dtx `\endtrivlist`,
 `\@doendpe`): a list, a quote, or any theorem-like trivlist. When a display
 opens a paragraph right after one — in vertical mode, possibly across a
 `\vspace` or a blank line but no intervening paragraph of text — the opening
 `\everypar` takes the indent box back, so TeX sets no empty line. One level
 of the in-paragraph wrapper (`inParagraphRole`) is seen through, as that is
-how a list opened mid-paragraph stands in the block stream. -/
+how a list opened mid-paragraph stands in the block stream; so is an
+overlay's carrier or a backend's group, which the page ends where its last
+block ends. -/
 public def Block.leavesEndPe : Block → Bool
   | .list .. | .quote _ => true
   | .role n body =>
@@ -5784,7 +6147,16 @@ public def Block.leavesEndPe : Block → Bool
         | #[.list ..] | #[.quote _] => true
         | #[.role m _] => (thmSpaceOf? m).isSome
         | _ => false)
+  | .onSteps _ body | .only _ body => leavesEndPeLast body.toList
   | _ => false
+
+/-- Whether the last of a carrier's blocks leaves `\@endpe` set. -/
+public def leavesEndPeLast : List Block → Bool
+  | [] => false
+  | [b] => b.leavesEndPe
+  | _ :: b :: rest => leavesEndPeLast (b :: rest)
+
+end
 
 /-- A list or a quote marked as opened inside a paragraph
 (`inParagraphRole`). Anything else stands as it is. -/
@@ -5884,6 +6256,52 @@ public def markDisplay (inPar parEnd afterEnv : Bool) (k : Nat) (blocks : Array 
     let c := { c with inPar, parEnd, afterEnv }
     blocks.pop.push (if c == {} then d else .role c.role #[d])
   | _, _ => blocks
+
+/-- A display in context `c`, wrapped in the role that names it — unwrapped
+in the default context, as `markDisplay` leaves it. -/
+public def withDisplayCtx (c : DisplayCtx) (d : Block) : Block :=
+  if c == {} then d else .role c.role #[d]
+
+/-- The opening half of `carrierDisplays`: a first block that is a display
+opening in vertical mode takes the state the carrier opened in. -/
+private def carrierOpenDisplay (inPar endPe : Bool) (blocks : Array Block) : Array Block :=
+  match blocks.toList with
+  | b :: rest =>
+    let (c, d) := displayCtxOf b
+    if d.isDisplay && !c.inPar && !c.afterEnv then
+      (withDisplayCtx { c with inPar := inPar, afterEnv := !inPar && endPe } d :: rest).toArray
+    else blocks
+  | [] => blocks
+
+/-- The closing half of `carrierDisplays`: a last block that is a display
+with no break after it inside the carrier takes the break after the
+carrier. -/
+private def carrierCloseDisplay (parEnd : Bool) (blocks : Array Block) : Array Block :=
+  match blocks.back? with
+  | some b =>
+    let (c, d) := displayCtxOf b
+    if d.isDisplay && !c.parEnd then
+      blocks.pop.push (withDisplayCtx { c with parEnd := parEnd } d)
+    else blocks
+  | none => blocks
+
+/-- **A carrier stands in its paragraph as its blocks would with no carrier
+there**: elaborated alone, an overlay's body sees neither the paragraph it
+opened in nor the break after it, so its first display would open a scope
+and its last end one. The first block, a display opening the carrier in
+vertical mode, takes the state the carrier opened in — inside the
+paragraph the text before it left open (`inPar`), or right after an
+environment end that left `\@endpe` (`endPe`, `Block.leavesEndPe`) — and
+the last, a display closing the carrier with no break inside it, the break
+that does or does not follow the carrier (`parEnd`). lualatex sets a display
+opening or closing a `\pause` or an `\uncover` where it sets it with neither,
+save one departure: where an `\uncover` group closes on a display before a
+paragraph break, beamer's carrier leaves an empty line after the display,
+which the page does not set — an overlay is no line of the page. Every other
+block stands as it is. -/
+public def carrierDisplays (inPar endPe parEnd : Bool) (blocks : Array Block) :
+    Array Block :=
+  carrierCloseDisplay parEnd (carrierOpenDisplay inPar endPe blocks)
 
 /-- The frames the deck numbers: every `.frame` except a golden title page.
 The title is front matter; a standout is content whose footer is hidden,
@@ -7950,6 +8368,8 @@ message. -/
 
 public structure Doc where
   docClass : DocClass := .article
+  /-- The surface the document was written in (`Surface.ofPath`). -/
+  surface : Surface := .tex
   classOptions : String := ""
   page : PageSpec := {}
   fonts : FontSpec := {}
@@ -10371,13 +10791,15 @@ end
 /-- One column spec, for the dump: the align letter, then the declared
 width. `l:400/1000` is a left `p{.4\linewidth}`; a bare letter is a
 natural column; `~` after the letter marks a ragged one (`ColSpec.ragged`),
-`l~:400/1000` a `>{\raggedright}p{.4\linewidth}`. -/
+`l~:400/1000` a `>{\raggedright}p{.4\linewidth}`; `<` a narrowing one
+(`ColSpec.narrows`), a markdown table's `l<`. -/
 private def dumpColSpec (c : ColSpec) : String :=
   let al := match c.align with
     | .left => "l"
     | .center => "c"
     | .right => "r"
   let al := if c.ragged then al ++ "~" else al
+  let al := if c.narrows then al ++ "<" else al
   match c.width with
   | .natural => al
   | .sized e =>
@@ -11943,6 +12365,47 @@ private theorem displayCtxOf_text (acc : String) (b : Block) :
     · next hd => simp [blockTextOne, hd, blockTextList]
     · rfl
   · rfl
+
+/-- Placing a display in a context moves its placement, never its text. -/
+private theorem withDisplayCtx_text (acc : String) (c : DisplayCtx) (d : Block) :
+    blockTextOne acc (withDisplayCtx c d) = blockTextOne acc d := by
+  unfold withDisplayCtx
+  split
+  · rfl
+  · simp [blockTextOne, blockTextList]
+
+private theorem carrierOpenDisplay_text (inPar endPe : Bool) :
+    Conserves blocksText (carrierOpenDisplay inPar endPe) := fun xs => by
+  unfold carrierOpenDisplay
+  split
+  · next b rest h =>
+    dsimp only
+    split
+    · have hb := displayCtxOf_text "" b
+      simp only [blocksText, h, blockTextList] at hb ⊢
+      rw [withDisplayCtx_text, hb]
+    · rfl
+  · rfl
+
+private theorem carrierCloseDisplay_text (parEnd : Bool) :
+    Conserves blocksText (carrierCloseDisplay parEnd) := fun xs => by
+  unfold carrierCloseDisplay
+  split
+  · next b hb =>
+    obtain ⟨ys, rfl⟩ := Array.back?_eq_some_iff.1 hb
+    dsimp only
+    split
+    · rw [Array.pop_push, blocksText_push, blocksText_push, withDisplayCtx_text,
+        displayCtxOf_text]
+    · rfl
+  · rfl
+
+/-- Standing a carrier's displays in its paragraph moves their placement,
+never their text. -/
+public theorem carrierDisplays_text (inPar endPe parEnd : Bool) :
+    Conserves blocksText (carrierDisplays inPar endPe parEnd) := fun xs => by
+  unfold carrierDisplays
+  rw [carrierCloseDisplay_text, carrierOpenDisplay_text]
 
 /-- Marking a display keeps the sequence's census: whatever context it
 records, the block pushed is the display itself or that display in a role. -/
@@ -14686,6 +15149,18 @@ source is this prefix plus the request's content hash. The driver fulfils
 it from the boundary cache instead of the filesystem. -/
 public def picSrcPrefix : String := "leantex-pic:"
 
+/-- The key a refusal the rendered subset names for a withdrawn picture is
+named under (`Elab.tikzArm` spells it at the call): the picture's id, then
+the refusal's own words, so the driver reads which picture a refusal
+belongs to off the structured subject (`Cli.Boundary.fragmentOf`), never
+off its message. -/
+public def picFragmentKey (id msg : String) : String := "picture:" ++ id ++ ":" ++ msg
+
+/-- The key a picture in a line of text is named under where it is not
+drawn (`Elab.inlinePicture` spells it at the call): the rendered subset
+sets a picture only as a block. -/
+public def picInlineKey (id : String) : String := "picture:inline:" ++ id
+
 /-- FNV-1a, two seeds, 32 hex digits. Over a picture body it is the
 picture's identity (`pictureSrcs`, the image source); over the wrapped
 request it is the boundary cache key — a content hash, so an unchanged
@@ -15205,7 +15680,7 @@ public def altDiags (doc : Doc) (spanOf : String → Option Span := fun _ => non
 
 /-- The judge's boundary-picture face, read by the driver after fulfilment:
 `shipped` says whether the picture's drawn box embeds — a picture the tool
-failed on ships a placeholder box, not an image, and E0382 has named that
+failed on ships a placeholder box, not an image, and W0382 has named that
 loss, so naming it here too would name one loss twice. -/
 public def picAltDiags (doc : Doc) (spanOf : String → Option Span)
     (shipped : String → Bool) : Array Diag :=
@@ -17210,6 +17685,360 @@ public theorem wrapDecls_text (ds : List Decl) : Conserves plainText (wrapDecls 
 
 mutual
 
+/-- The named size a paragraph is set in, read down the chain of single
+wrappers around its whole content (`.styled`, `.colored`, `.located`): the
+outermost size scope wins, the one a paragraph built by `paraAt` stands
+under where it ends; an explicit `\fontsize` or `\normalfont` ends the
+reading, the run's own leading or the body's then governing. A hand-rolled
+walk, not `foldInlines`: it descends only the chain of single wrappers and
+stops at the first size scope. -/
+-- conserves: none — a classifier over the wrapper chain; emits no document text.
+public def paraStepIn (xs : List Inline) : Option String :=
+  match xs with
+  | [x] => paraStepOne x
+  | [] => none
+  | _ :: _ :: _ => none
+
+-- conserves: none — the one-node face of paraStepIn's classifier.
+public def paraStepOne (x : Inline) : Option String :=
+  match x with
+  | .styled (.size n) _ => some n
+  | .styled (.fontSize _ _) _ | .styled .normal _ => none
+  | .styled .bold body | .styled .italic body | .styled .mono body
+  | .styled .smallcaps body | .styled .emph body | .styled .sans body
+  | .styled .roman body | .styled .medium body | .styled (.series _) body
+  | .styled .upright body | .styled (.lang _) body => paraStepIn body.toList
+  | .colored _ _ body => paraStepIn body.toList
+  | .located _ body => paraStepIn body.toList
+  | .text _ | .math _ _ | .formula _ _ _ | .role _ _ | .link _ _ | .label _
+  | .ref _ _ _ _ | .decorated _ _ | .fill | .hspace _ _ | .rule _ _ _ | .pageNumber
+  | .pageCount | .linebreak _ | .strut _ | .italicCorr _ | .onSteps _ _
+  | .altSteps _ _ _ | .image _ _ _ | .icon _ _ | .cite _ _ | .footnote _ _ => none
+
+end
+
+/-- **The size step a paragraph is set at**: the named size of the outermost
+scope wrapping its whole content — for a paragraph `paraAt` built, the size
+declaration in force where it ends (`paraStep_paraAt_exact`): `{\small …\par}`
+or a `\small` declaration standing over it sets the step, while
+`{\small …}\par`, whose group closed before the paragraph ended, stands under
+the body's own `\normalsize`, as LaTeX reads `\baselineskip` at `\par`.
+`none` when some content stands outside every size scope (a body paragraph
+with a small run inside it) or no size scope wraps it. The one resolving
+site: the page sets the paragraph's strut at this step, the HTML gives the
+paragraph element the step's class (`liftParaStep`). -/
+public def paraStep? (xs : Array Inline) : Option String := paraStepIn xs.toList
+
+/-- **The size step text a template inserts leads at**: the template sets
+the text in a group, so a size command inside it ends before the
+template's `\par` and the lines keep the template's own `\baselineskip` —
+lualatex leads a `\small` or a `\tiny` frame title at the frame title's
+skip (beamer's `\insertframetitle`). A step at or above the body's own, on
+the ladder `scale`, still leads its lines (`paraStep?`): TeX stands lines of
+type taller than the template's skip clear of each other by `\lineskip`,
+and the step's leading stands them clear too. -/
+public def insertedStep? (scale : List (String × Nat)) (xs : Array Inline) : Option String :=
+  (paraStep? xs).filter fun n => 1000 ≤ ((scale.find? (·.1 == n)).map (·.2)).getD 1000
+
+mutual
+
+/-- The wrapper chain with the size scope `paraStepIn` reads removed — the
+step stands on the paragraph element itself, so the scope left inside would
+scale the type twice — and every other wrapper, an inner size scope among
+them, kept. A hand-rolled walk, not `mapInlines`: it rewrites only the
+chain of single wrappers down to that scope. -/
+public def liftParaStepIn (xs : List Inline) : Array Inline :=
+  match xs with
+  | [x] => liftParaStepOne x
+  | [] => #[]
+  | y :: z :: rest => (y :: z :: rest).toArray
+
+/-- The one-node face of `liftParaStepIn`. -/
+public def liftParaStepOne (x : Inline) : Array Inline :=
+  match x with
+  | .styled (.size _) body => body
+  | .styled (.fontSize s l) body => #[.styled (.fontSize s l) body]
+  | .styled .normal body => #[.styled .normal body]
+  | .styled .bold body => #[.styled .bold (liftParaStepIn body.toList)]
+  | .styled .italic body => #[.styled .italic (liftParaStepIn body.toList)]
+  | .styled .mono body => #[.styled .mono (liftParaStepIn body.toList)]
+  | .styled .smallcaps body => #[.styled .smallcaps (liftParaStepIn body.toList)]
+  | .styled .emph body => #[.styled .emph (liftParaStepIn body.toList)]
+  | .styled .sans body => #[.styled .sans (liftParaStepIn body.toList)]
+  | .styled .roman body => #[.styled .roman (liftParaStepIn body.toList)]
+  | .styled .medium body => #[.styled .medium (liftParaStepIn body.toList)]
+  | .styled (.series w) body => #[.styled (.series w) (liftParaStepIn body.toList)]
+  | .styled .upright body => #[.styled .upright (liftParaStepIn body.toList)]
+  | .styled (.lang tag) body => #[.styled (.lang tag) (liftParaStepIn body.toList)]
+  | .colored c n body => #[.colored c n (liftParaStepIn body.toList)]
+  | .located span body => #[.located span (liftParaStepIn body.toList)]
+  | .text s => #[.text s]
+  | .math d src => #[.math d src]
+  | .formula d src body => #[.formula d src body]
+  | .role n body => #[.role n body]
+  | .link url body => #[.link url body]
+  | .label k => #[.label k]
+  | .ref k f t g => #[.ref k f t g]
+  | .decorated k body => #[.decorated k body]
+  | .fill => #[.fill]
+  | .hspace g k => #[.hspace g k]
+  | .rule w h r => #[.rule w h r]
+  | .pageNumber => #[.pageNumber]
+  | .pageCount => #[.pageCount]
+  | .linebreak g => #[.linebreak g]
+  | .strut h => #[.strut h]
+  | .italicCorr m => #[.italicCorr m]
+  | .onSteps spec body => #[.onSteps spec body]
+  | .altSteps spec a b => #[.altSteps spec a b]
+  | .image src size alt => #[.image src size alt]
+  | .icon c label => #[.icon c label]
+  | .cite f keys => #[.cite f keys]
+  | .footnote n body => #[.footnote n body]
+
+end
+
+/-- A paragraph's content with its step lifted (`paraStep?`) to the element
+that carries it. -/
+public def liftParaStep (xs : Array Inline) : Array Inline := liftParaStepIn xs.toList
+
+mutual
+
+private theorem liftParaStepIn_text (xs : List Inline) :
+    plainText (liftParaStepIn xs) = plainTextList xs := by
+  match xs with
+  | [x] =>
+    rw [liftParaStepIn, liftParaStepOne_text]
+    simp [plainTextList]
+  | [] => rw [liftParaStepIn]; rfl
+  | y :: z :: rest => rw [liftParaStepIn]; simp [plainText]
+
+private theorem liftParaStepOne_text (x : Inline) :
+    plainText (liftParaStepOne x) = plainTextOne x := by
+  match x with
+  | .styled (.size _) body =>
+    rw [liftParaStepOne]
+    simp [plainText, plainTextOne]
+  | .styled (.fontSize _ _) body | .styled .normal body =>
+    rw [liftParaStepOne]; simp [plainText, plainTextList]
+  | .styled (.bold) body | .styled (.italic) body | .styled (.mono) body
+  | .styled (.smallcaps) body | .styled (.emph) body | .styled (.sans) body
+  | .styled (.roman) body | .styled (.medium) body | .styled (.series _) body
+  | .styled (.upright) body | .styled (.lang _) body
+  | .colored _ _ body | .located _ body =>
+    have ih := liftParaStepIn_text body.toList
+    simp only [liftParaStepOne, plainText, plainTextList, plainTextOne] at ih ⊢
+    simp [ih]
+  | .text _ | .math _ _ | .formula _ _ _ | .role _ _ | .link _ _ | .label _
+  | .ref _ _ _ _ | .decorated _ _ | .fill | .hspace _ _ | .rule _ _ _ | .pageNumber
+  | .pageCount | .linebreak _ | .strut _ | .italicCorr _ | .onSteps _ _
+  | .altSteps _ _ _ | .image _ _ _ | .icon _ _ | .cite _ _ | .footnote _ _ =>
+    rw [liftParaStepOne]; simp [plainText, plainTextList]
+
+end
+
+/-- Lifting the step moves markup, never content: the paragraph ships the
+census it had. -/
+public theorem liftParaStep_text : Conserves plainText liftParaStep := fun xs => by
+  show plainText (liftParaStepIn xs.toList) = plainText xs
+  rw [liftParaStepIn_text]
+  rfl
+
+/-- Whether a declaration sets the size its runs take: a named step, an
+explicit `\fontsize`, or `\normalfont`, which resets the whole style here
+(`Layout`'s `applyStyle`). -/
+public def Decl.setsSize : Decl → Bool
+  | .style (.size _) | .style (.fontSize _ _) | .style .normal => true
+  | .style .bold | .style .italic | .style .mono | .style .smallcaps | .style .emph
+  | .style .sans | .style .roman | .style .medium | .style (.series _) | .style .upright
+  | .style (.lang _) | .color _ _ => false
+
+/-- Whether a font-size length reads the size in force (`em`, `ex`): a
+`\fontsize` spelled so scales the size declared before it. -/
+public def affineFontRelative {α : Type} : Dim.Affine α → Bool
+  | .lit g => g.width.em != 0 || g.width.ex != 0
+  | .ref _ => false
+  | .scale _ _ e => affineFontRelative e
+  | .add a b | .sub a b => affineFontRelative a || affineFontRelative b
+
+/-- Whether a declaration sets its runs' size whatever size stood before it:
+a named step and `\normalfont`, which are absolute here, and a `\fontsize`
+in absolute lengths. An `em` or `ex` `\fontsize` scales the size before it. -/
+public def Decl.shadowsSize : Decl → Bool
+  | .style (.size _) | .style .normal => true
+  | .style (.fontSize s l) => !affineFontRelative s && !affineFontRelative l
+  | .style .bold | .style .italic | .style .mono | .style .smallcaps | .style .emph
+  | .style .sans | .style .roman | .style .medium | .style (.series _) | .style .upright
+  | .style (.lang _) | .color _ _ => false
+
+/-- Whether a declaration does nothing but set the size: a named step or a
+`\fontsize` — what a later absolute size leaves without effect. -/
+public def Decl.onlySize : Decl → Bool
+  | .style (.size _) | .style (.fontSize _ _) => true
+  | .style .normal | .style .bold | .style .italic | .style .mono | .style .smallcaps
+  | .style .emph | .style .sans | .style .roman | .style .medium | .style (.series _)
+  | .style .upright | .style (.lang _) | .color _ _ => false
+
+/-- The step a size declaration leaves in force: its named size, or `none`
+under an explicit `\fontsize` or a `\normalfont`, where the run's own
+leading or the body's governs. Off a size declaration, nothing. -/
+public def Decl.sizeStep? : Decl → Option (Option String)
+  | .style (.size n) => some (some n)
+  | .style (.fontSize _ _) | .style .normal => some none
+  | .style .bold | .style .italic | .style .mono | .style .smallcaps | .style .emph
+  | .style .sans | .style .roman | .style .medium | .style (.series _) | .style .upright
+  | .style (.lang _) | .color _ _ => none
+
+/-- The named step a list of declarations gives the paragraph they stand
+over: the first size declaration's (`Decl.sizeStep?`), `none` under none. -/
+public def declStep (ds : List Decl) : Option String :=
+  (ds.filterMap Decl.sizeStep?).head?.join
+
+/-- The declarations in force where a paragraph ends, every size declaration
+a later absolute one leaves without effect dropped (`Decl.shadowsSize`):
+only the last absolute size sets the paragraph's type and leading, and a
+scope kept for a shadowed one would nest an em-relative size on the screen.
+An `em` `\fontsize` keeps the size it scales. -/
+public def dropShadowedSizes : List Decl → List Decl
+  | [] => []
+  | d :: rest =>
+    if d.onlySize && rest.any Decl.shadowsSize then dropShadowedSizes rest
+    else d :: dropShadowedSizes rest
+
+/-- **A paragraph as it ends**: its content wrapped in the declarations in
+force where it ends (`wrapDecls`), each shadowed size dropped
+(`dropShadowedSizes`), and — where no size declaration stands in force there
+but the content opens on a size scope that closed before the paragraph did
+(`{\small A}\par`) — the body's own `\normalsize` around it. LaTeX reads a
+paragraph's `\baselineskip` at its `\par`, so the step its lines lead at
+(`paraStep?`) is the declarations' (`paraStep_paraAt_exact`), never a size
+group's that closed inside it; the inner group still sets its runs' type. -/
+@[expose] public def paraAt (ds : List Decl) (xs : Array Inline) : Array Inline :=
+  let ds := dropShadowedSizes ds
+  let inner := wrapDecls ds xs
+  if !(ds.any Decl.setsSize) && (paraStep? inner).isSome then
+    #[.styled (.size "normalsize") inner]
+  else inner
+
+/-- Building a paragraph as it ends moves markup, never content. -/
+public theorem paraAt_text (ds : List Decl) : Conserves plainText (paraAt ds) := fun xs => by
+  unfold paraAt
+  dsimp only
+  split
+  · simp only [plainText, plainTextList, plainTextOne]
+    simpa [plainText] using wrapDecls_text (dropShadowedSizes ds) xs
+  · exact wrapDecls_text _ xs
+
+private theorem Decl.setsSize_iff (d : Decl) : d.setsSize = (d.sizeStep?).isSome := by
+  rcases d with ⟨s⟩ | ⟨c, n⟩
+  · cases s <;> rfl
+  · rfl
+
+private theorem Decl.shadowsSize_sets (d : Decl) (h : d.shadowsSize = true) :
+    d.setsSize = true := by
+  rcases d with ⟨s⟩ | ⟨c, n⟩
+  · cases s <;> simp_all [Decl.shadowsSize, Decl.setsSize]
+  · simp [Decl.shadowsSize] at h
+
+private theorem paraStep_wrap_free (d : Decl) (h : d.setsSize = false) (xs : Array Inline) :
+    paraStep? (d.wrap xs) = paraStep? xs := by
+  rcases d with ⟨s⟩ | ⟨c, n⟩
+  · cases s <;> simp_all [Decl.setsSize, Decl.wrap, paraStep?, paraStepIn, paraStepOne]
+  · simp [Decl.wrap, paraStep?, paraStepIn, paraStepOne]
+
+private theorem paraStep_wrap_size (d : Decl) (h : d.setsSize = true) (xs : Array Inline) :
+    paraStep? (d.wrap xs) = (d.sizeStep?).join := by
+  rcases d with ⟨s⟩ | ⟨c, n⟩
+  · cases s <;> simp_all [Decl.setsSize, Decl.wrap, Decl.sizeStep?, paraStep?, paraStepIn,
+      paraStepOne]
+  · simp [Decl.setsSize] at h
+
+private theorem dropShadowed_any (ds : List Decl) :
+    (dropShadowedSizes ds).any Decl.setsSize = ds.any Decl.setsSize := by
+  induction ds with
+  | nil => rfl
+  | cons d rest ih =>
+    simp only [dropShadowedSizes]
+    split
+    · rename_i h
+      simp only [Bool.and_eq_true] at h
+      obtain ⟨x, hx, hs⟩ := List.any_eq_true.mp h.2
+      have hr : rest.any Decl.setsSize = true :=
+        List.any_eq_true.mpr ⟨x, hx, Decl.shadowsSize_sets x hs⟩
+      simp [ih, hr]
+    · simp [ih]
+
+private theorem paraStep_wrapDecls (ds : List Decl) (xs : Array Inline) :
+    paraStep? (wrapDecls ds xs) =
+      if ds.any Decl.setsSize then declStep ds else paraStep? xs := by
+  induction ds with
+  | nil => rfl
+  | cons d rest ih =>
+    simp only [wrapDecls]
+    cases hs : d.setsSize with
+    | true =>
+      rw [paraStep_wrap_size d hs]
+      cases hz : d.sizeStep? with
+      | none =>
+        have := Decl.setsSize_iff d
+        simp [hs, hz] at this
+      | some v => simp [declStep, hz, hs]
+    | false =>
+      have hz : d.sizeStep? = none := by
+        have := Decl.setsSize_iff d
+        rw [hs] at this
+        cases h : d.sizeStep? with
+        | none => rfl
+        | some _ => simp [h] at this
+      rw [paraStep_wrap_free d hs, ih]
+      simp [hs, declStep, hz]
+
+/-- **A paragraph leads at the step its declarations give it** (`_exact`):
+the size step a paragraph built by `paraAt` sets its lines at (`paraStep?`)
+is the one the declarations standing over its end give it (`declStep` of
+the kept ones), whatever size scopes inside it closed before — the body's
+own when none stands there. `{\small A\par}` leads at `\small`'s skip;
+`{\small A}\par` at the body's, as LaTeX's `\par` reads `\baselineskip`.
+The kept declarations hold one size save behind an `em` `\fontsize` and
+after a `\normalfont`, where the first, the one this reads, is the size the
+later one scales or follows. -/
+public theorem paraStep_paraAt_exact (ds : List Decl) (xs : Array Inline) :
+    (paraStep? (paraAt ds xs)).filter (· != "normalsize") =
+      (declStep (dropShadowedSizes ds)).filter (· != "normalsize") := by
+  unfold paraAt
+  dsimp only
+  split
+  · rename_i h
+    simp only [Bool.and_eq_true, Bool.not_eq_true'] at h
+    have hnil : (dropShadowedSizes ds).filterMap Decl.sizeStep? = [] := by
+      apply List.filterMap_eq_nil_iff.mpr
+      intro x hx
+      have hn := List.any_eq_false.mp h.1 x hx
+      have := Decl.setsSize_iff x
+      cases hz : x.sizeStep? with
+      | none => rfl
+      | some _ => simp [hz] at this; simp [this] at hn
+    simp [paraStep?, paraStepIn, paraStepOne, declStep, hnil]
+  · rename_i h
+    rw [paraStep_wrapDecls]
+    split
+    · rfl
+    · rename_i hany
+      have hnil : (dropShadowedSizes ds).filterMap Decl.sizeStep? = [] := by
+        apply List.filterMap_eq_nil_iff.mpr
+        intro x hx
+        have hn := List.any_eq_false.mp (by simpa using hany) x hx
+        have := Decl.setsSize_iff x
+        cases hz : x.sizeStep? with
+        | none => rfl
+        | some _ => simp [hz] at this; simp [this] at hn
+      have hnone : paraStep? xs = none := by
+        rw [paraStep_wrapDecls] at h
+        simp only [hany, Bool.false_eq_true, ite_false] at h
+        simpa [hany] using h
+      simp [hnone, declStep, hnil]
+
+mutual
+
 -- conserves: none — a census, not a rewrite: it reads the tree and returns
 -- the text standing under a style the predicate accepts.
 /-- The text of inline content that stands under some `.styled st` with
@@ -17688,7 +18517,7 @@ private theorem resolveRefInlines_agree (loc : Locale) (table : RefTable) (xs : 
 What the engine could not resolve and a backend would otherwise ship
 unnamed: a `\ref` no label numbers, a `\cite` no bibliography answered, an
 image no file or tool produced. Each resolver names what it leaves — W0349,
-W0351, W0601/W0602/E0382/W0379 — and `pending_named` (Pending.lean) holds
+W0351, W0601/W0602/W0382/W0379 — and `pending_named` (Pending.lean) holds
 the census to those diagnostics, so "a warning per misunderstood thing" is
 a theorem over the pipeline's pure tail, not a convention each resolver
 keeps by hand. The silent `\cite` with no bibliography was that convention
@@ -18019,6 +18848,10 @@ public def dump (doc : Doc) (diags : Array Diag) : String :=
     (match doc.page.sizes with
       | some sc => String.join ((sc.filter fun p =>
           sizeScale.lookup p.1 != some p.2).map fun p => s!" size {p.1} {p.2}")
+      | none => "") ++
+    (match doc.page.skips with
+      | some sk => String.join ((sk.filter fun p =>
+          sizeSkipScale.lookup p.1 != some p.2).map fun p => s!" skip {p.1} {p.2}")
       | none => "") ++
     (match doc.page.parskip with
       | some g => s!" parskip {dumpGlue g}"

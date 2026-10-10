@@ -55,15 +55,6 @@ def symbolRows (text : String) : Array (String × String) := Id.run do
     | _ => pure ()
   return out
 
-/-- Every scalar a laid-out document inks, and its layout diagnostics. -/
-def inkedScalars (fs : Font.FontSet) (src : String) : Array Char × Array Diag :=
-  let out := layoutOf fs (elabStr src).1
-  let ink := out.pages.flatMap fun p => p.lines.flatMap fun l => l.segs.flatMap fun s =>
-    match s with
-    | .run _ _ _ _ glyphs _ _ _ _ _ _ => glyphs.map (·.2.1)
-    | _ => #[]
-  (ink, out.diags)
-
 mutual
 
 /-- The MathML leaves of an emitted tree, in document order: each `mo`,

@@ -2019,9 +2019,9 @@ def spacingChecks (ref : IO.Ref (List String)) (geom : Layout.Geom)
   let body := geom.fontSize
   let leading := Ir.leadingFor body geom.leading
   let scaled (sz : Dim.Sp) (units : Int) : Dim.Sp := units * sz / font.unitsPerEm
-  let leadedAt (sz : Dim.Sp) : Dim.Sp × Dim.Sp :=
+  let leadedAt (sz : Dim.Sp) (step : Option String := none) : Dim.Sp × Dim.Sp :=
     Layout.leadedBox (scaled sz font.ascent) (scaled sz (-font.descent))
-      (Ir.leadingFor sz geom.leading)
+      (Ir.stepSkip (step.bind (Ir.stepLead Ir.sizeSkipScale · body)) sz geom.leading)
   -- Interline is the metric rule (CSS 2.1 §10.8.1): the previous line's
   -- leaded below plus this line's leaded above — for uniform text exactly
   -- one leading, and after a Huge line the Huge box's own below, never a
@@ -2048,9 +2048,11 @@ def spacingChecks (ref : IO.Ref (List String)) (geom : Layout.Geom)
   let huge := ysOf geom "{\\Huge Title \\par}\n\nbody"
   let hugeSize := body * 2488 / 1000
   t "a Huge title ends one paragraph, not two lines" (huge.size == 2)
+  -- A Huge line's own box is leaded at `\Huge`'s `\baselineskip`, 30 pt.
   t "the line after a Huge title is spaced by the metric rule"
     (huge.size == 2 && huge[1]! - huge[0]! ==
-      (leadedAt hugeSize).2 + (leadedAt body).1 + (geom.parskip.resolve body 0).width)
+      (leadedAt hugeSize (some "Huge")).2 + (leadedAt body).1 +
+        (geom.parskip.resolve body 0).width)
   t "the line after a Huge title is not a Huge leading away"
     (huge.size == 2 && huge[1]! - huge[0]! < Ir.leadingFor hugeSize geom.leading)
   -- TeX's page builder: `\topskip` (the body size) above the first line,
@@ -3997,8 +3999,18 @@ def cardChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet)
     let out := layoutOf oneFace doc
     out.diags.any (·.code == "W0005")
   t "ragged card prose breaks without overfull lines" (!judgeOverfull "")
-  t "the same prose justified at card width cannot break"
-    (judgeOverfull "\\page{ justify = on }\n")
+  -- Justified at card width the prose has no good break: TeX sets such
+  -- lines underfull, its word spaces stretched far past their own width,
+  -- never one line overfull past the measure to spare a loose one.
+  let widestGap (pre : String) : Dim.Sp :=
+    (bodyLines (layoutOf oneFace (elabStr (card "" prose pre)).1)).foldl (fun m l =>
+      l.segs.foldl (fun m s => match s with
+        | .gap w _ => max m w
+        | _ => m) m) 0
+  t s!"the same prose justified at card width sets loose lines, never overfull ones \
+({widestGap "\\page{ justify = on }\n"} against {widestGap ""} ragged)"
+    (!judgeOverfull "\\page{ justify = on }\n"
+      && widestGap "\\page{ justify = on }\n" > 2 * widestGap "")
   t "article leaves hyphenation to the class default"
     ((elabStr "x").1.page.hyphenate == none)
   t "hyphenate is a page key any class may declare"
@@ -4929,9 +4941,21 @@ def vspaceStarChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO 
     t s!"\\vspace* keeps its space at a page's top, below a {ts}pt \\topskip"
       ((at? (src s!"\\setlength\{\\topskip}\{{ts}pt}" "\\vspace*{20pt}\nAlpha words") 0 "Alpha").map
         (·.1 == Dim.pt (ts + 20) + lead) |>.getD false)
+  -- A `\Huge` group closed before its paragraph ends leaves the body's
+  -- leading in force at `\par` (`Ir.paraAt`), and its 17.9 pt line is taller
+  -- than that leading: `\lineskip` below the kept space, as for a tall rule.
   t "a first line taller than the leading takes \\lineskip below the kept space"
     ((at? (src "" "\\vspace*{20pt}\n{\\Huge Alpha words}") 0 "Alpha").map
       (fun (y, h, _) => y == Dim.pt 30 + h + Layout.inkClearance) |>.getD false)
+  t "a rule taller than the leading takes \\lineskip below the kept space"
+    ((at? (src "" "\\vspace*{20pt}\n\\rule{1pt}{24pt} Alpha words") 0 "Alpha").map
+      (fun (y, h, _) => y == Dim.pt 30 + h + Layout.inkClearance) |>.getD false)
+  -- With `\Huge` in force at `\par` the line leads at `\Huge`'s own 30 pt,
+  -- clear of its 17.9 pt line: lualatex and the engine both stand it 30 pt
+  -- below the kept space.
+  t "a Huge first line stands Huge's leading below the kept space"
+    ((at? (src "" "\\vspace*{20pt}\n{\\Huge Alpha words\\par}") 0 "Alpha").map
+      (fun (y, _, _) => y == Dim.pt 60) |>.getD false)
   -- After `\newpage` the depth `\@vspacer` saves is the last line's.
   let p2 (pre : String) := src "" ("Alpha words\n\\newpage\n" ++ pre ++ "\\vspace*{20pt}\nBravo words")
   t "after \\newpage the line takes \\baselineskip less the last line's depth"
@@ -5536,7 +5560,7 @@ def labelBaselineChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : 
         l.y == geom.vmargin
           + (hull.2.2 - Ir.Pic.labelBaseline (Dim.pt 5) .center inkS)).getD false)
   -- The same fact at the measurement, where the reason is visible: the band
-  -- is the face's declared cap height and descent, so it cannot vary with
+  -- is the face's declared capitals-to-descent box, so it cannot vary with
   -- the text, while the set width must and does.
   let inkV := m #[.text "candle"] 1000
   let inkI := m #[.text "misty"] 1000
@@ -5547,16 +5571,72 @@ def labelBaselineChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : 
   t "so does the baseline the placement reads"
     (Ir.Pic.labelBaseline (Dim.pt 20) .center inkV
       == Ir.Pic.labelBaseline (Dim.pt 20) .center inkI)
-  -- The seat that remains, as the number it is: a centred label stands
-  -- (depth − height)/2 from its anchor, which is depth/2 above where a band
-  -- trimmed to the alphabetic baseline would put it (css-inline-3 §6).
-  -- Uniform, therefore not a wobble — a declared reference.
+  -- The seat, as the number it is: the band is the face's capitals-to-
+  -- descent box split at its x-height midpoint, so a centred label hangs
+  -- from pgf's `mid` anchor and stands half the face's x-height below its
+  -- anchor. Uniform, therefore not a wobble.
   let seat := Ir.Pic.labelBaseline (Dim.pt 20) .center inkV - Dim.pt 20
-  t "the seat is (depth − height)/2, to within one scaled point"
-    ((inkV.depth - inkV.height) / 2 <= seat
-      && seat <= (inkV.depth - inkV.height) / 2 + 1)
-  t "and it sits depth/2 above a cap-to-baseline band"
-    (seat > -inkV.height / 2 && seat - (-inkV.height / 2) == inkV.depth / 2)
+  let font := oneFace.body
+  let units (u : Int) : Int := u * geom.fontSize / (font.unitsPerEm : Int)
+  t "the band is the face's capitals-to-descent box, as a border measures it"
+    (let span := units (font.capHeight - font.descent)
+     span - 1 <= inkV.height + inkV.depth && inkV.height + inkV.depth <= span + 1)
+  let xh := units (font.xHeightOptical : Int)
+  t "the seat is half the face's measured x-height below the anchor, to within two scaled points"
+    (-xh / 2 - 2 <= seat && seat <= -xh / 2 + 2)
+  -- **Read off the artifact, against a rule drawn at the anchor.** A label
+  -- of x-height letters beside a thin rule centred on the same height: on
+  -- the page and in the SVG its baseline stands half the x-height below the
+  -- rule's middle — where TeX's node centring sets a box of x-height letters
+  -- (pgfmoduleshapes.code.tex, `center` at `.5\ht − .5\dp`), and where pgf's
+  -- `mid` anchor stands for every word. The band once split at the face's
+  -- baseline and set every label half the face's descent higher there.
+  let xInk := m #[.text "xz"] 1000
+  let rule : Ir.Color := { r := 200, g := 40, b := 40 }
+  let ruled : Ir.Pic.Picture := { shapes := #[
+    .rect 0 (Dim.pt 5 - Dim.pt 1 / 10) (Dim.pt 4) (Dim.pt 1 / 5) rule,
+    .label (Dim.pt 20) (Dim.pt 5) #[.text "xz"] Ir.Color.black 1000 .center] }
+  t "x-height letters measure the face's x-height box: its ex, no depth"
+    (xInk.boxDepth == 0 && xInk.boxHeight - 1 <= xInk.ex && xInk.ex <= xInk.boxHeight + 1)
+  t "on the page, x-height letters stand half an ex below the rule at their anchor"
+    (match (run #[.picture ruled]).pages[0]? with
+     | some pg =>
+       match (pageDraws pg)[0]?, (pg.lines.filter (!·.furniture))[0]? with
+       | some (g, _, _), some l =>
+         let (_, fy, _, fh) := markExtent g
+         let below := l.y - (fy + fh / 2)
+         xh / 2 - 2 <= below && below <= xh / 2 + 2
+       | _, _ => false
+     | none => false)
+  let milli (s : Option String) : Option Int := s.bind fun v =>
+    (Decl.parseDecimal v).map fun (mant, scale) => mant * 1000 / scale
+  let ruledSvg := HtmlDoc.pictureSvg { labelMetric := m } ruled
+  t "html: and in the SVG, against the same rule"
+    (match (elemAttrsOne (· == "rect") #[] ruledSvg)[0]?,
+        (elemAttrsOne (· == "text") #[] ruledSvg)[0]? with
+     | some (_, ra), some (_, ta) =>
+       match milli (HtmlDoc.attrOf? ra "y"), milli (HtmlDoc.attrOf? ra "height"),
+           milli (HtmlDoc.attrOf? ta "y") with
+       | some ry, some rh, some ty =>
+         let below := ty - (ry + rh / 2)
+         let want := Dim.Sp.toPtMilli (xh / 2)
+         want - 2 <= below && below <= want + 2
+       | _, _, _ => false
+     | _, _ => false)
+  -- **The declared bound on the departure from TeX.** Any other word
+  -- departs from TeX's seat by TeX's own wobble: half the gap between its
+  -- box's height less depth and the face's x-height, so never more than half
+  -- the face's ascender over its x-height or half its descender, whichever is
+  -- larger. Held word by word over the box each label measures.
+  let reach (c : Char) : Option (Int × Int) := (font.gid c).bind font.yExtent
+  let bound : Int := match reach 'l', reach 'p' with
+    | some (_, asc), some (desc, _) => max (units asc - xh) (units (-desc)) / 2 + 2
+    | _, _ => 0
+  for w in ["xz", "HIE", "Hg", "gap", "query", "label", "Fly", "42"] do
+    let ink := m #[.text w] 1000
+    let tex := -((ink.boxHeight - ink.boxDepth) / 2)
+    t s!"the seat departs from TeX's by no more than the declared bound: {w}"
+      (bound > 2 && ((Ir.Pic.labelBaseline 0 .center ink) - tex).natAbs <= bound.toNat)
   -- Constraint two: a hand-written correction must not break. A phantom
   -- whose metrics the label already declares changes no component.
   let dominated : Ir.Pic.LabelInk :=
@@ -5590,7 +5670,7 @@ def labelBaselineChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : 
     (match capTop with
      | some (hi, _) => hi <= font.ascent
      | none => false)
-  t "while the descent band does cover the descenders"
+  t "while the face's declared descent covers its descenders"
     (match (do
       let g ← font.gid 'y'
       let (lo, _) ← font.yExtent g

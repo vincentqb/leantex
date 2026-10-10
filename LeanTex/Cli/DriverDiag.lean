@@ -181,65 +181,74 @@ public def boundaryToolUnavailable (tool : String) (span : Option Span := none)
 placeholder; a warm cache needs no tool")
     (recovery := some (.replacedBy "a placeholder box"))
 
-/-- **E0382: a boundary render that failed is a dropped loss, not a
-degraded one** — where nothing else can stand in its place. `degraded` is
-declared as *the reader sees "something stands here"* — a substituted face,
-source text, a box carrying its code — and that is the one thing a failed
-boundary picture does not do: the box it leaves is empty and unlabelled, so
-the page reads as intentional while a whole diagram is gone. A picture the
-rendered subset draws in part never reaches this code on an answer: its
-request is withdrawn and the subset's drawing ships (N0419,
-`Boundary.withdraw`). So E0382 is left for a picture the engine drew nothing
-of, where there is nothing to fall back to and nothing honest to put in the
-box that the engine did not invent, and for an attempt that never finished
-(`boundaryUnfinished`). So the loss is loud where it can be loud without
-inventing ink — the run fails, and no artifact is written, which is the
-engine's standing contract for a dropped loss. `\allow{E0382}` is the
-declared door for a document that accepts the empty box. `logTail` is the
-tool's own last words, and `span` is where the picture stands. -/
-public def boundaryFailed (tool : String) (logTail : String) (span : Option Span := none) : Diag :=
-  Diag.of .E0382
-    s!"'{tool}' drew nothing for this picture; the page would carry an empty box"
+/-- **W0382: a boundary render that failed ships its placeholder.** A
+picture the rendered subset draws nothing of has nothing to fall back to,
+so its place on the page is the placeholder box an image that did not load
+leaves — the box marks it, the loss is named here once, under the picture's
+source, and the run goes on to write both artifacts, the HTML page holding
+the labelled placeholder `Boundary.markFaceless` gives a picture with no
+face. A picture the subset draws in part never reaches this code on an
+answer: its request is withdrawn and the subset's
+drawing ships, named by W0419 (`Boundary.withdraw`). `logTail` is the tool's
+own last words, `span` where the picture stands and `src` its image source.
+The code once failed the run as a dropped loss, so one picture the tool
+could not draw cost the whole document. -/
+public def boundaryFailed (tool logTail src : String) (span : Option Span := none) : Diag :=
+  Diag.of .W0382
+    s!"'{tool}' drew nothing for this picture; a placeholder box marks its place"
     span
     (help := if logTail.isEmpty then
-        s!"{tool}'s log says nothing usable; \\allow\{E0382} accepts the empty box"
+        s!"{tool}'s log says nothing usable; \\allow\{W0382} accepts the placeholder"
       else s!"{tool} says: {logTail}")
+    (subject := some src)
+    (recovery := some (.replacedBy "a placeholder box"))
 
-/-- **E0382, for an attempt that never finished.** The tool was asked and
+/-- **W0382, for an attempt that never finished.** The tool was asked and
 reached no answer — a budget kill, a spawn that raised, a nonzero exit that
 left no log (`PicCache.outcome`) — which is a fact about the machine, not
 the request: nothing is remembered (`PicCache.remembers_verdict_exact`), and
 nothing is withdrawn to the rendered subset's drawing
-(`Boundary.withdrawStep_unfinished_exact`), so the artifact never changes on
-it. The run fails as a failed render does, and says so in the machine's
-terms: `why` is how the attempt ended, and a rebuild asks again. -/
-public def boundaryUnfinished (tool why : String) (span : Option Span := none) : Diag :=
-  Diag.of .E0382
-    s!"'{tool}' did not finish this picture; the page would carry an empty box"
+(`Boundary.withdrawStep_unfinished_exact`), so the page carries the
+placeholder a failed render leaves, never a different drawing. `why` is how
+the attempt ended, and a rebuild asks again. -/
+public def boundaryUnfinished (tool why src : String) (span : Option Span := none) : Diag :=
+  Diag.of .W0382
+    s!"'{tool}' did not finish this picture; a placeholder box marks its place"
     span
     (help := s!"{why}; nothing is remembered, so a rebuild asks {tool} again; \
-\\allow\{E0382} accepts the empty box")
-
-/-- N0419: a boundary request no tool drew, for a picture the rendered
-subset draws in part. The request is withdrawn and the subset's drawing
-ships, its refusals named beside it exactly as `\pictures{ tool = none }`
-names them — so this is a note, not a loss: the losses are those refusals.
-`said` is the tool's own last words where it ran and drew nothing, and
-absent where no tool ran at all. -/
-public def boundaryWithdrawn (tool : String) (said : Option String) (src : String)
-    (span : Option Span := none) : Diag :=
-  let direct := "\\pictures{ tool = none } draws every picture this way, asking no tool"
-  Diag.of .N0419
-    ((match said with
-      | some _ => s!"'{tool}' drew nothing for this picture"
-      | none => "no boundary tool drew this picture") ++
-      ", so the rendered subset draws it; what the subset leaves out is named beside it")
-    span
-    (help := some (match said with
-      | some w => (if w.isEmpty then s!"{tool}'s log says nothing usable" else s!"{tool} says: {w}") ++
-          "; " ++ direct
-      | none => s!"install {tool} to draw it whole, and a warm cache needs no tool; " ++ direct))
+\\allow\{W0382} accepts the placeholder")
     (subject := some src)
+    (recovery := some (.replacedBy "a placeholder box"))
+
+/-- The help of a withdrawn picture's one line (W0419, which
+`Boundary.fold` states with every construct the rendered subset leaves
+out): why the boundary drew nothing, in the tool's own last words where it
+ran (`said`), or that no tool was there to ask. -/
+public def withdrawnHelp (tool : String) (said : Option String) : String :=
+  let direct := "\\pictures{ tool = none } draws every picture this way, asking no tool"
+  match said with
+  | some w =>
+    if w.isEmpty then s!"{tool} drew nothing and its log says nothing usable; " ++ direct
+    else s!"{tool} drew nothing and says: {w} — fix what {tool} reports, or " ++ direct
+  | none => s!"install {tool} to draw it whole, and a warm cache needs no tool; " ++ direct
+
+/-- The help of the line that names a withdrawn picture standing in a line
+of text, which the rendered subset never draws: why the boundary drew
+nothing there, and where the subset would draw it. -/
+public def withdrawnInlineHelp (tool : String) (said : Option String) : String :=
+  let block := "standing in a paragraph of its own, the rendered subset draws it"
+  match said with
+  | some w =>
+    if w.isEmpty then s!"{tool} drew nothing and its log says nothing usable; " ++ block
+    else s!"{tool} drew nothing and says: {w} — " ++ block
+  | none => s!"install {tool} to draw it in its line, and a warm cache needs no tool; " ++ block
+
+/-- The help of a declined picture's one line (W0419, `Boundary.foldLines`):
+the document's `\pictures{ tool = none }` keeps every picture to the
+rendered subset, and without it a boundary tool would draw this one whole. -/
+public def declinedHelp : String :=
+  "\\pictures{ tool = none } keeps every picture to the rendered subset; without it, \
+lualatex draws this one whole"
 
 /-- W0378: a boundary picture has no checked SVG face for the HTML artifact
 — its PDF→SVG conversion failed, or the check its SVG must pass did not

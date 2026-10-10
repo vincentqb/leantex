@@ -10,6 +10,7 @@ import Tests.PublicationPaths
 import Tests.HtmlContained
 import Tests.TableSide
 import Tests.PdfBounds
+import Tests.InputDecoding
 import scripts.Rung
 
 /-!
@@ -133,9 +134,12 @@ def registry : List AuditRow :=
    -- picture's constructs beside its placeholder: the siteAccounting rows.
    ⟨.N0100, .merge, .rewritten, check% siteAccountingChecks⟩,
    ⟨.W0362, .merge, .native, check% siteAccountingChecks⟩,
-   -- A boundary refusal the rendered subset stands in for: the note names
-   -- the withdrawal, and the subset's own codes carry the losses.
-   ⟨.N0419, .keep, .degraded, check% pictureRouteChecks⟩,
+   -- A boundary refusal the rendered subset stands in for: one line names
+   -- the picture, every construct the subset leaves out a clause of it.
+   ⟨.W0419, .keep, .degraded, check% pictureRouteChecks⟩,
+   -- A boundary picture no tool drew and the subset draws nothing of: the
+   -- placeholder ships and the line names it, in the tool's words.
+   ⟨.W0382, .keep, .degraded, check% pictureDefnReachChecks⟩,
    -- A line the author ended that the measure split; the paragraph's own
    -- last line is prose and sets as many lines as it needs, unnamed.
    ⟨.W0386, .keep, .degraded, check% titleBreakChecks⟩,
@@ -161,7 +165,18 @@ def registry : List AuditRow :=
    ⟨.E0003, .refusal, .fails, check% publicationPathChecks⟩,
    -- A destination that cannot be written: the artifact is not there, and
    -- the system's words say why; the other artifacts are written.
-   ⟨.E0004, .keep, .fails, check% Tests.publicationWriteChecks⟩]
+   ⟨.E0004, .keep, .fails, check% Tests.publicationWriteChecks⟩,
+   -- Bytes that are not text ship as U+FFFD, listed once per file. A file
+   -- under an inputenc encoding the engine carries a table for reads in it
+   -- byte by byte, as pdfLaTeX reads it, unless its bytes say UTF-8: a
+   -- valid UTF-8 file, or one whose well-formed sequences outnumber its
+   -- stray bytes, where pdfLaTeX garbles every accent and the strays are a
+   -- guess (W0004). latin1's 0x80-0x9F read as Windows-1252, where
+   -- pdfLaTeX refuses them; lualatex reads no declaration at all. The
+   -- declaration's one note says how each file read.
+   ⟨.W0002, .keep, .degraded, check% inputDecodingChecks⟩,
+   ⟨.W0004, .keep, .degraded, check% inputDecodingChecks⟩,
+   ⟨.N0025, .divergence, .native, check% inputDecodingChecks⟩]
 
 /-- An engine source's tier item: `LeanTex/Core/Elab.lean` is `Core.Elab`,
 `Main.lean` is `Main`. -/
@@ -172,7 +187,7 @@ def moduleItem (path : String) : String :=
 
 /-- The registries: each names the blocks it pins by writing them, so a
 mention there is never the suite running one. -/
-def registryFiles : List String := ["Tests/DiagAudit.lean", "Tests/Reports.lean"]
+def registryFiles : List String := ["Tests/DiagAudit.lean", "Tests/Reports.lean", "Tests/Premises.lean"]
 
 /-- The suite's own code, which a check pin must be run from: the driver and
 every suite module but the registries, which name each pinned block once by

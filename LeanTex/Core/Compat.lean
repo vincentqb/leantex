@@ -11,6 +11,7 @@ import LeanTex.Core.TitleTemplate
 import LeanTex.Core.BibStyle
 public import LeanTex.Core.Tcolorbox
 import LeanTex.Core.LoopProgress
+import LeanTex.Core.EncodingOption
 
 namespace LeanTex.Core.Compat
 
@@ -785,6 +786,9 @@ private structure St where
   delimiters through. A `\selectlanguage` outside the body leaves it:
   `\begin{document}` selects the main language again. -/
   mainLang : String := "en"
+  /-- The option the first `inputenc` load names, the encoding every file
+  reads in: what an `\inputencoding` names again, or switches from. -/
+  inputenc : Option String := none
   /-- Inside the document environment: where a preamble declaration —
   `\usepackage` first among them — is a placement defect (W0340), never
   a support question (W0103). -/
@@ -1062,6 +1066,12 @@ dispatcher's silence guard reads. Every `modify`/`set` in this file outside
 cannot mutate state invisibly to the guard. -/
 private def write (f : St → St) : M Unit :=
   modify fun st => { f st with writes := st.writes + 1 }
+
+/-- The first `inputenc` load's option is the encoding in force; a later
+load's options are not applied. -/
+private def recordInputenc (options : String) : M Unit := do
+  if (← get).inputenc.isNone then
+    write fun st => { st with inputenc := some ((Encoding.lastOption? options).getD "utf8") }
 
 private theorem write_eq (f : St → St) :
     write f = fun st => ((), { f st with writes := st.writes + 1 }) := by rfl
@@ -2170,6 +2180,32 @@ public def picWalkCtrls : List String :=
   ["fill", "node", "draw", "path", "foreach", "pgfmathsetmacro",
    "pgfmathtruncatemacro", "else", "fi"]
 
+/-- A package that is a theme of the document's class, not a picture's:
+beamer's theme family `beamer<slot>theme<name>` (`themeAsking`, read
+backwards by `themeSlotOfPackage?`; beamer user guide §15). A theme
+presupposes the class — its first lines call `\useinnertheme` and its
+siblings, which only beamer defines — and a boundary standalone is never
+that class, so such a load can only fail there. What a picture reads of a
+theme — its colours, its fonts, its TikZ libraries and styles, its macros —
+reaches the standalone through its own carriers instead. -/
+public def themePackage (p : String) : Bool := (themeSlotOfPackage? p).isSome
+
+/-- A package of the presentation class's own family, which presupposes the
+class: a theme (`themePackage`); one of beamer's own modules or an add-on
+named for it (`beamerbaseoverlay`, `appendixnumberbeamer`, `beamerposter`),
+each of which patches beamer's internals or calls its commands; or pdfpc's,
+whose hyperxmp needs the hyperref beamer loads first. A boundary standalone
+is neither beamer nor carries its hyperref, so such a load can only fail
+there, and the picture with it. `beamerarticle` is the beamer package made
+to load in another class (beamer user guide §21.2), so it is not one. -/
+public def classPackage (p : String) : Bool :=
+  themePackage p || ((p.splitOn "beamer").length > 1 && p != "beamerarticle") || p == "pdfpc"
+
+/-- The package loads a boundary standalone carries: every one the engine
+does not set itself, except one of the class's own family (`classPackage`). -/
+public def boundaryRides (p : String) : Bool :=
+  !p.isEmpty && !nativePackages.contains p && !classPackage p
+
 /-- What one tree walk collects for the renderers of a document's
 pictures: `pre` is the boundary standalone's preamble, as written; `sets`
 is the same collection read natively — one entry per `nativeSetCtrls`
@@ -2207,7 +2243,7 @@ private def boundaryLevel (file : String) (raws : Array Raw) (out : BoundaryScan
       let (opt, j) := takeOpt raws (i + 1)
       let (args, k) := takeGroups raws j 1
       let pkgs := ((rawSrc (args.getD 0 #[])).splitOn ",").map (·.trimAscii.toString)
-        |>.filter (fun p => !p.isEmpty && !nativePackages.contains p)
+        |>.filter boundaryRides
       let out :=
         if pkgs.isEmpty then out
         else
@@ -2258,7 +2294,8 @@ public def boundaryScan (file : String) (raws : Array Raw) : BoundaryScan :=
 the *unrewritten* tree — the compat rewrite drops package loads, so
 collection precedes it. Every non-native `\usepackage` rides with its
 options (pgfplots, genealogytree, circuitikz — whatever the pictures
-need), and each closed-list set line is reconstructed as written.
+need) but one of the class's own family (`boundaryRides`), and each
+closed-list set line is reconstructed as written.
 
 **Wherever they stand.** A set line is a definition the pictures read, and
 where the author wrote it says nothing about which pictures need it: a
@@ -7804,6 +7841,24 @@ dims (dim-not-hide), it is never hidden" pos
         (help := "\\palette{ covered = <n>% } sets the covered fraction; 'transparent' \
 and 'transparent=<n>' are understood")
       return some (#[], k)
+  | "inputencoding" =>
+    -- inputenc's one user command switches the encoding the rest of the
+    -- input is read in (inputenc manual §4). A file reads in one encoding
+    -- here, so a switch to the encoding in force changes nothing, any other
+    -- is named, and the argument is configuration, never ink.
+    let (args, k) := takeGroups raws start 1
+    let arg := (rawSrc (args.getD 0 #[])).trimAscii.toString
+    if Encoding.sameEncoding arg ((← get).inputenc.getD "utf8") then
+      -- premise: inputDecodingChecks — a switch to the encoding in force
+      -- ships the page of the document without it.
+      discard s!"\\inputencoding\{{arg}}" "the file already reads in that encoding"
+        ("inputencoding:" ++ arg) pos
+    else
+      sayOnce ("inputencoding:" ++ arg) .W0104
+        s!"'\\inputencoding\{{arg}}' is not applied: each file reads in one encoding throughout"
+        pos (help := s!"save the file in one encoding, UTF-8 best, and delete \
+'\\inputencoding\{{arg}}'")
+    return some (#[], k)
   | "KOMAoptions" =>
     -- KOMA's runtime option setter (KOMA-Script manual, \KOMAoptions;
     -- switches take true/on/yes and false/off/no). headsepline and
@@ -8123,7 +8178,12 @@ no package options are supported by the strict native Markdown dialect" pos
 its rule paddings are measured in Latin Modern" pos
       (help := some s!"load booktabs before '{cmd}', where LaTeX measures them in Latin Modern too")
       (subject := some "package:booktabs")
+  else if p == "inputenc" && Encoding.declaresNonUtf8 (opt.getD "") then
+    -- premise: inputDecodingChecks — the driver's one note (N0025) at this
+    -- span names what the declaration did to each file it governed.
+    recordInputenc (opt.getD "")
   else if nativePackages.contains p then
+    if p == "inputenc" then recordInputenc (opt.getD "")
     discard s!"\\{name}\{{p}}" "the engine does this itself" s!"{name}:{p}" pos
   else if boundaryPkgs.contains p && (← get).boundaryOpen then
     -- A picture package's load is the boundary's: `boundaryDecls`
@@ -8758,9 +8818,12 @@ skipped, and the length keeps its value" pos
     -- body opens with `\@setfontsize\normalsize<size><leading>` (fntguide
     -- §"\@setfontsize"; size10.clo is where `\@xpt`/`\@xipt` get their
     -- values) declares the document's body size and leading. Both are the
-    -- page's to carry: the leading lands as the factor over the engine's
-    -- 6/5 base (`Ir.leadingMilli`), so a spliced .sty's 10/10.95 sets
-    -- baselines at 10.95pt and the rhythm unit follows. The body's
+    -- page's to carry: the leading lands as the body's `\baselineskip`
+    -- (`\page{ baselineskip = … }`), the factor over the engine's 6/5 base
+    -- (`Ir.leadingMilli`) and the skip column's `\normalsize` row, so a
+    -- spliced .sty's 10/10.95 sets baselines at 10.95pt, the rhythm unit
+    -- follows, and a step the .sty never declares keeps size10.clo's own
+    -- skip (`Ir.stepLead`). The body's
     -- trailing display-skip internals are TeX the engine does not run;
     -- the translation note names what was taken. The display skips it
     -- assigns are the document's (`\begin{document}` runs `\normalsize`),
@@ -8774,10 +8837,9 @@ skipped, and the length keeps its value" pos
           if h : fsArgs.size ≥ 3 then
             if let (some sz, some ld) := (ptMacroArg fsArgs[1], ptMacroArg fsArgs[2]) then
               if sz > 0 && ld > 0 then
-                let factor := (ld * 1000000 + sz * 600) / (sz * 1200)
                 let skips ← sizeSkips sbody afterFs pos
                 let native := s!"\\page\{ fontsize = {milliStr sz}pt, \
-leading = {milliStr factor} }" ++
+baselineskip = {milliStr ld}pt }" ++
                   (if skips.isEmpty then "" else s!"\\tokens\{ {String.intercalate ", " skips.toList} }")
                 write fun st => { st with listiKept := !resetsListi sbody }
                 became "\\renewcommand{\\normalsize}" native pos
@@ -11658,7 +11720,7 @@ the input path and read it): the file splices into the preamble as an
 it would get written in the document — honoured through an existing arm,
 or named where it stands with the `.sty`'s own positions (the input
 wrapper carries the file name). Reading the file is the driver's effect
-(`Main.expandLocalSty`); the splice and the option machinery are here,
+(the input requests `Cli.Input` answers); the splice and the option machinery are here,
 pure. Where the file does not exist, the CTAN dispatch (W0103) applies
 unchanged. -/
 

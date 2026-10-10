@@ -250,7 +250,7 @@ def planRaws (host src : String) : Array Raw :=
 them. -/
 def fixturePlanRaws (n : String) : IO (Array Raw) := do
   let file := s!"{n}.tex"
-  let (raws, _) := Surface.read .tex file (← IO.FS.readFile s!"testdata/corpus/{n}.tex")
+  let (raws, _) := Surface.read .tex file (← fixtureText s!"testdata/corpus/{n}.tex")
   let (executed, _, _) ← Input.expandInputs file raws (dir := "testdata/corpus")
   return (Elab.preparedBody file (Elab.prepareExecuted file executed)).1.raws
 

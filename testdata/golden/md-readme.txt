@@ -1,5 +1,5 @@
 class article
-page 612x792 vmargin 72 hmargin 150
+page 612x792 vmargin 72 hmargin 114
 section* h1
   text "tidegauge"
 para
@@ -43,23 +43,47 @@ list ordered
         text "High water 06:10 (4.1 m), low water 12:25."
 section* 1
   text "Options"
-para
-  text "| Option | Default | Meaning | |————–|———|——————————–| | "
-  styled mono
-    italicCorr maybe
-    text "--day"
-  italicCorr maybe
-  text " | today | the day to report | | "
-  styled mono
-    italicCorr maybe
-    text "--units"
-  italicCorr maybe
-  text " | metres | metres or feet | | "
-  styled mono
-    italicCorr maybe
-    text "--quiet"
-  italicCorr maybe
-  text " | off | print the numbers and no words |"
+table @{}l<,l<,l<@{}
+  rule 0 top
+  rule 1 mid
+  rule 4 bottom
+  row
+    cell
+      text "Option"
+    cell
+      text "Default"
+    cell
+      text "Meaning"
+  row
+    cell
+      styled mono
+        italicCorr maybe
+        text "--day"
+      italicCorr maybe
+    cell
+      text "today"
+    cell
+      text "the day to report"
+  row
+    cell
+      styled mono
+        italicCorr maybe
+        text "--units"
+      italicCorr maybe
+    cell
+      text "metres"
+    cell
+      text "metres or feet"
+  row
+    cell
+      styled mono
+        italicCorr maybe
+        text "--quiet"
+      italicCorr maybe
+    cell
+      text "off"
+    cell
+      text "print the numbers and no words"
 section* 1
   text "Progress"
 list unordered

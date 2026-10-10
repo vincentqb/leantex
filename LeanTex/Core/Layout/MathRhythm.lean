@@ -92,7 +92,7 @@ public theorem inlineMath_extent_fixed_point
   dsimp only at hfit ⊢
   rw [hl, ht]
   simp only [htext, Bool.or_true, ite_true, Array.foldl_push, extra,
-    lineBoxStep] at hfit ⊢
+    lineBoxStep, Ir.runLead] at hfit ⊢
   rcases hfit with ⟨ha, hb, htop, hbottom⟩
   apply merge_absorbed
   · exact Int.max_le.mpr ⟨ha, htop⟩

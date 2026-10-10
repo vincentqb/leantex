@@ -12,9 +12,10 @@ elaborator then reads. This module is only the reader — source text to an
 md AST carrying `.md` spans, so every diagnostic downstream names the
 markdown line the reader saw.
 
-Dialect: CommonMark-shaped but strict. Three constructs are refused by
-design rather than silently diverging, each an `E0390` carrying the class
-as its subject:
+Dialect: CommonMark-shaped but strict, with GitHub Flavored Markdown's
+table extension, which the surface AST expresses as a booktabs table. Three
+constructs are refused by design rather than silently diverging, each an
+`E0390` carrying the class as its subject:
 
 * `raw-html` — raw HTML passthrough. What keeps the injection-safety
   argument short is that document content can never become markup; a
@@ -58,7 +59,18 @@ public inductive Inl where
 
 public instance : Inhabited Inl := ⟨.soft {}⟩
 
-/-- A block node. A list holds one `Array Blk` per item. -/
+/-- A table column's alignment as its GFM delimiter cell spells it: `---`
+declares none, `:--` left, `--:` right, `:-:` centre. -/
+public inductive TableAlign where
+  | none
+  | left
+  | right
+  | center
+  deriving Repr, BEq, Inhabited
+
+/-- A block node. A list holds one `Array Blk` per item. A table holds one
+alignment per column, the header's cells, and its data rows, each exactly
+one cell per column. -/
 public inductive Blk where
   | para (body : Array Inl) (pos : Pos)
   | heading (level : Ir.HeadingLevel) (body : Array Inl) (pos : Pos)
@@ -68,6 +80,8 @@ public inductive Blk where
   | disclosure (summary : Array Inl) (body : Array Blk) (pos : Pos)
   | list (ordered : Bool) (start : Nat) (tight : Bool) (items : Array (Array Blk))
       (pos : Pos)
+  | table (aligns : Array TableAlign) (header : Array (Array Inl))
+      (rows : Array (Array (Array Inl))) (pos : Pos)
   deriving Repr, BEq
 
 public instance : Inhabited Blk := ⟨.rule {}⟩
@@ -1369,6 +1383,124 @@ private def summaryAt (cs : Array Char) (i : Nat) (p : Pos) : Option (Array Inl)
 end LeanTex.Core.Md
 
 
+namespace LeanTex.Core.Md
+
+open LeanTex.Core
+
+/-! ## Tables
+
+GitHub Flavored Markdown's table, the one GFM leaf block the surface AST
+already expresses: it desugars to a booktabs `{tabular}`. The extension's
+rules (GFM 0.29, "Tables (extension)"), each a scanner here:
+
+* the delimiter row is cells of hyphens, each with an optional colon either
+  side, with pipes between them and optionally around them; the colons give
+  the column's alignment;
+* a row splits on every pipe a backslash does not escape, *before* any
+  inline is read, so `\|` is a pipe even inside a code span, and each cell
+  is trimmed;
+* the header is the last line of the paragraph the delimiter row stands
+  under and carries exactly as many cells; lines before it stay a paragraph;
+* a data row's missing cells are empty and its excess cells are dropped;
+* the table ends at a blank line, with its container, or where another block
+  starts. -/
+
+/-- The table extension's space: a space, a tab, a vertical tab or a form
+feed. -/
+def isTableSpace (c : Char) : Bool :=
+  c == ' ' || c == '\t' || c == '\x0b' || c == '\x0c'
+
+/-- The index past a run of table spaces at `i`. -/
+def tableSpaceEnd (cs : Array Char) (i : Nat) : Nat := Id.run do
+  let mut k := i
+  for _ in [0:cs.size + 1] do
+    if (cs[k]?).any isTableSpace then k := k + 1 else break
+  return k
+
+/-- A delimiter row at `i`: each column's alignment, or `none` when the
+line is not one. -/
+def tableDelimAt (cs : Array Char) (i : Nat) : Option (Array TableAlign) := Id.run do
+  let mut k := if cs[i]? == some '|' then i + 1 else i
+  let mut aligns : Array TableAlign := #[]
+  for _ in [0:cs.size + 1] do
+    k := tableSpaceEnd cs k
+    let left := cs[k]? == some ':'
+    if left then k := k + 1
+    let dashes := k
+    for _ in [0:cs.size + 1] do
+      if cs[k]? == some '-' then k := k + 1 else break
+    if k == dashes then return none
+    let right := cs[k]? == some ':'
+    if right then k := k + 1
+    k := tableSpaceEnd cs k
+    aligns := aligns.push
+      (if left && right then .center else if left then .left else if right then .right
+       else .none)
+    match cs[k]? with
+    | none => return some aligns
+    | some '|' =>
+      k := k + 1
+      if tableSpaceEnd cs k ≥ cs.size then return some aligns
+    | some _ => return none
+  return none
+
+/-- One cell of a row, `[start, stop)` of the line: trimmed, with each
+`\|` read as the pipe it escapes, every kept character carrying its `.md`
+position so a diagnostic inside the cell names its column. -/
+def tableCell (c : Chars) (start stop : Nat) : Chars := Id.run do
+  let blank (ch : Char) : Bool := isMdSpace ch || ch == '\x0b'
+  let mut a := start
+  let mut b := stop
+  for _ in [start:stop] do
+    if a < b && (c.at? a).any blank then a := a + 1 else break
+  for _ in [start:stop] do
+    if a < b && (c.at? (b - 1)).any blank then b := b - 1 else break
+  let mut cs : Array Char := #[]
+  let mut ps : Array Pos := #[]
+  for k in [a:b] do
+    unless c.at? k == some '\\' && c.at? (k + 1) == some '|' && k + 1 < b do
+      cs := cs.push ((c.at? k).getD ' ')
+      ps := ps.push (c.posAt k)
+  return ⟨cs, ps⟩
+
+/-- A row's cells, split on every pipe a backslash does not escape, with an
+optional pipe at either end. Empty when the line holds no cell — a lone
+`|` — which ends a table rather than continuing it. -/
+def tableCells (c : Chars) : Array Chars := Id.run do
+  let mut k := if c.at? 0 == some '|' then tableSpaceEnd c.cs 1 else 0
+  let mut cells : Array Chars := #[]
+  for _ in [0:c.size + 1] do
+    let start := k
+    for _ in [0:c.size + 1] do
+      match c.at? k with
+      | none => break
+      | some '|' => break
+      | some '\\' => k := k + (if (c.at? (k + 1)).any isMdPunct then 2 else 1)
+      | some _ => k := k + 1
+    let piped := c.at? k == some '|'
+    if k == start && !piped then break
+    cells := cells.push (tableCell c start (min k c.size))
+    if piped then k := tableSpaceEnd c.cs (k + 1) else break
+  return cells
+
+/-- A row's cells as inline content, exactly `n` of them: a missing cell is
+empty and an excess one is dropped, as the extension reads a data row. -/
+def tableRow (file : String) (n : Nat) (cells : Array Chars) :
+    Array (Array Inl) × Array Diag := Id.run do
+  let mut row : Array (Array Inl) := #[]
+  let mut diags : Array Diag := #[]
+  for k in [0:n] do
+    match cells[k]? with
+    | some c =>
+      let (inl, ds) := inlines file c
+      row := row.push inl
+      diags := diags ++ ds
+    | none => row := row.push #[]
+  return (row, diags)
+
+end LeanTex.Core.Md
+
+
 
 namespace LeanTex.Core.Md
 
@@ -1448,6 +1580,9 @@ private inductive Leaf where
   line inside a `<table>` was refused a second time as indented code. -/
   | html (e : HtmlEnd)
   | comment (pos : Pos)
+  /-- An open table: its rows so far, each already read into its cells. -/
+  | table (aligns : Array TableAlign) (header : Array (Array Inl))
+      (rows : Array (Array (Array Inl))) (pos : Pos)
   deriving Inhabited
 
 private def Leaf.isPara : Leaf → Bool
@@ -1502,6 +1637,9 @@ public def blocks (file : String) (input : String) : Array Blk × Array Diag := 
   let mut leaf : Leaf := .none
   let mut diags : Array Diag := #[]
   let mut sawBlank := false
+  -- The first line of the paragraph whose header a delimiter row failed to
+  -- match: GFM tries a paragraph once.
+  let mut tableVisited : Option Pos := none
   for li in [0:lines.size] do
     let some ln := lines[li]? | continue
     let cs := ln.cs
@@ -1605,13 +1743,15 @@ public def blocks (file : String) (input : String) : Array Blk × Array Diag := 
         continue
     | _ => pure ()
     let blank := isBlankFrom cs i
-    -- Closing the open paragraph, wherever a branch below needs it done.
+    -- Closing the open paragraph or table, wherever a branch below needs it
+    -- done: every site that ends a paragraph ends a table the same way.
     let closePara : Leaf → Array Blk → Pos → Array Blk × Array Diag :=
       fun l a fallback =>
         match l with
         | .para pls =>
           let (inl, ds) := inlines file (charsOf pls)
           (a.push (.para inl ((pls[0]?.map (·.2)).getD fallback)), ds)
+        | .table aligns header rows p => (a.push (.table aligns header rows p), #[])
         | _ => (a, #[])
     -- An unmatched container under an open paragraph is a lazy continuation
     -- when the line starts no block. A line indented four columns or more
@@ -1763,6 +1903,36 @@ public def blocks (file : String) (input : String) : Array Blk × Array Diag := 
       continue
     -- The leaf.
     let (j, ind) := indentAt cs i col
+    -- An open table takes the line as its next row unless the line starts
+    -- another block; then the table ends and the line reads as usual. A
+    -- blank line, a container's end, a quote and a list item closed it above.
+    if let .table aligns header rows tpos := leaf then
+      let startsBlock := ind ≥ 4 || (atxAt cs j).isSome || thematicAt cs j
+        || (fenceAt cs j).isSome || (htmlBlockKind cs j).isSome
+      let cells := if startsBlock then #[]
+        else tableCells (charsOfOne (sliceStr cs j cs.size) { line := ln.no, col := j + 1 })
+      if cells.isEmpty then
+        acc := acc.push (.table aligns header rows tpos)
+        leaf := .none
+      else
+        let (row, ds) := tableRow file aligns.size cells
+        diags := diags ++ ds
+        leaf := .table aligns header (rows.push row) tpos
+        sawBlank := false
+        continue
+    -- A delimiter row under a paragraph whose last line carries as many
+    -- cells opens a table, that line its header. A paragraph whose header
+    -- once failed to match stays a paragraph (`tableVisited`).
+    let tableStart : Option (Array (String × Pos) × Pos × Array Chars × Array TableAlign) :=
+      match leaf with
+      | .para pls =>
+        if ind ≥ 4 || tableVisited == (pls[0]?.map (·.2)) then Option.none
+        else match tableDelimAt cs j, pls.back? with
+          | some aligns, some (hs, hp) =>
+            let cells := tableCells (charsOfOne hs hp)
+            if cells.size == aligns.size then some (pls.pop, hp, cells, aligns) else Option.none
+          | _, _ => Option.none
+      | _ => Option.none
     -- An HTML block, by condition: one that may not interrupt a paragraph
     -- (condition 7) is paragraph text under an open one.
     let htmlStart : Option HtmlEnd :=
@@ -1865,10 +2035,20 @@ public def blocks (file : String) (input : String) : Array Blk × Array Diag := 
       else
         diags := diags.push (refuse file .rawHtml p)
         leaf := if htmlEndsIn cs j e then .none else .html e
+    else if let some (before, hp, cells, aligns) := tableStart then
+      let (a, ds) := closePara (if before.isEmpty then .none else .para before) acc lpos
+      let (header, ds2) := tableRow file aligns.size cells
+      acc := a
+      diags := diags ++ ds ++ ds2
+      leaf := .table aligns header #[] hp
     else
       let text := sliceStr cs j cs.size
       match leaf with
-      | .para pls => leaf := .para (pls.push (text, { line := ln.no, col := j + 1 }))
+      | .para pls =>
+        -- A delimiter row that opened no table is text, and its paragraph
+        -- can no longer become one.
+        if ind < 4 && (tableDelimAt cs j).isSome then tableVisited := pls[0]?.map (·.2)
+        leaf := .para (pls.push (text, { line := ln.no, col := j + 1 }))
       | _ => leaf := .para #[(text, { line := ln.no, col := j + 1 })]
     sawBlank := false
   -- End of input: the leaf, then every frame.
@@ -1879,6 +2059,7 @@ public def blocks (file : String) (input : String) : Array Blk × Array Diag := 
     diags := diags ++ ds
   | .fenced _ _ finfo fpos _ flines =>
     acc := acc.push (.code finfo (flines.foldl (fun s l => s ++ l ++ "\n") "") fpos)
+  | .table aligns header rows p => acc := acc.push (.table aligns header rows p)
   | .html _ => pure ()
   | .comment _ => pure ()
   | .none => pure ()

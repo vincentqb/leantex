@@ -85,6 +85,9 @@ private def charAtom (c : Char) : Option (MathClass × Char) :=
   | '→' => some (.rel, '→')
   | '∈' => some (.rel, '∈')
   | '∞' => some (.ord, '∞')
+  -- The replacement for bytes that were not text: an ordinary atom, so the
+  -- repair stays at the byte and the formula around it still sets.
+  | '\uFFFD' => some (.ord, '\uFFFD')
   | _ =>
     if c.isDigit then some (.ord, c)
     else if c.isAlpha && c.toNat < 128 then some (.ord, italicVar c)

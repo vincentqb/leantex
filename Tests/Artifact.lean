@@ -923,9 +923,7 @@ def artKnownOffences : List (String × ArtProp × String) := [
   ("diagram-overflow", .pageBox, "a picture wider than the page paints its fill past the \
 page edge; W0335 names it, and a picture should fit the medium or be clipped to it"),
   ("footer-collide", .pageBox, "a footline token with no legal break paints past the page \
-edge; W0388 names it, and a footline should break or shrink what it cannot fit"),
-  ("md-code", .pageBox, "a fenced code line with no break opportunity paints past the page \
-edge; W0005 names it, and a listing should wrap what the measure cannot hold")]
+edge; W0388 names it, and a footline should break or shrink what it cannot fit")]
 
 
 /-! ## The mutants: each claim broken once, on real bytes

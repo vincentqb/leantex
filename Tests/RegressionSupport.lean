@@ -50,7 +50,7 @@ private def htmlConfig (fonts : Font.FontSet) (geom : Layout.Geom) : HtmlDoc.Con
 both backends using the driver's font callbacks. Fonts are bundled, so the
 test cannot silently substitute a host-dependent or unmeasured layout. -/
 def compile (fonts : Font.FontSet) (path : String) : IO Artifact := do
-  let (tokens, lexDs) := Lex.lex path (← IO.FS.readFile path)
+  let (tokens, lexDs) := Lex.lex path (← fixtureText path)
   let (raws, parseDs) := Parse.parse path tokens
   let (executed, inputDs, _) ← LeanTex.Cli.Input.expandInputs path raws
   let earlier := lexDs ++ parseDs ++ inputDs

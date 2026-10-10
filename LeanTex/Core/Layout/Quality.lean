@@ -368,10 +368,13 @@ paragraph set flush left — every line after the first on one measure edge
 `x + hang` — a line on that edge that opens on a glyph and hangs it by
 other than the protrusion table grants (`protrusionLR`), the step a reader
 sees between a hung and an unhung quote. Counted only where the page
-protrudes; a paragraph of one line has no edge to step from. -/
+protrudes, which is on the lines it justifies: a page set ragged — a slide,
+under beamer's `\raggedright` — keeps every line's exact margin, as the
+layout sets a line ending in fil (`Layout.lineSetting`), so no line of it
+hangs and none steps; a paragraph of one line has no edge to step from. -/
 public def edgeStepLines (geom : Geom) (roles : Array LeafRole) (pages : Array PageOut) :
     Array LineOut :=
-  if !geom.protrude then #[] else
+  if !(geom.protrude && geom.justify) then #[] else
   (paragraphLines roles pages).foldl (fun acc (_, ls) =>
     match ls[1]? with
     | none => acc

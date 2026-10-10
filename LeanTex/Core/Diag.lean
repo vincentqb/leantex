@@ -214,7 +214,7 @@ letter itself is derived from the declared `Loss` at the one construction
 site (`DiagCode.code`), and `DiagCode.code_letter` holds the two spellings
 equal. -/
 public inductive DiagCode where
-  | E0001 | E0002 | E0003 | E0004
+  | E0001 | W0002 | E0003 | E0004 | W0004
   | E0101 | E0102 | E0111 | E0112 | E0113
   | E0201 | E0202 | E0205
   | E0303 | E0304 | E0305 | E0306 | E0309 | E0310 | E0311 | E0312 | E0313
@@ -258,9 +258,10 @@ public inductive DiagCode where
   | N0022
   | W0377
   | N0023
+  | N0025
   | W0378
   | W0379
-  | E0382
+  | W0382
   | W0380
   | W0381
   | W0383
@@ -278,7 +279,7 @@ public inductive DiagCode where
   | W0391
   | E0390
   | W0392
-  | N0419
+  | W0419
   | W0435
   | W0393
   | W0394 | E0395 | W0396
@@ -295,7 +296,8 @@ the compiler holds every projection exhaustive. The class letter is not
 written here: `DiagCode.code` derives it from the loss. -/
 private def DiagCode.spec : DiagCode → String × Loss × String
   | .E0001 => ("0001", .dropped, "cannot read an input file")
-  | .E0002 => ("0002", .dropped, "input is not valid UTF-8")
+  | .W0002 => ("0002", .degraded, "bytes that are not text in the file's encoding, U+0000 among them, are replaced by U+FFFD")
+  | .W0004 => ("0004", .degraded, "bytes a UTF-8 file holds that UTF-8 cannot read are read in the encoding its document declares, a guess the warning names")
   | .E0003 => ("0003", .dropped, "output formats do not have independent destinations; publication is refused")
   | .E0004 => ("0004", .dropped, "an artifact could not be written to its destination")
   | .E0101 => ("0101", .dropped, "lone backslash at end of input")
@@ -451,9 +453,10 @@ private def DiagCode.spec : DiagCode → String × Loss × String
   | .N0022 => ("0022", .info, "a palette role, or a mix of two named colours, is realized on one ground to meet its contrast requirement (WCAG 2.2)")
   | .W0377 => ("0377", .degraded, "a link carries no text to name its purpose (WCAG 2.2)")
   | .N0023 => ("0023", .info, "a picture is drawn by an external tool at the boundary; the engine measures its box, and its text is not in the document's census")
+  | .N0025 => ("0025", .info, "an inputenc declaration names an encoding other than UTF-8; each file it governs is listed with how it reads")
   | .W0378 => ("0378", .degraded, "a boundary picture has no checked browser face; the web page shows the rendered subset's drawing of it, or its text alternative")
   | .W0379 => ("0379", .degraded, "no boundary tool available for a picture outside the rendered subset; a placeholder box marks the picture")
-  | .E0382 => ("0382", .dropped, "the boundary tool ran and drew nothing for a picture; the page would carry an empty box")
+  | .W0382 => ("0382", .degraded, "the boundary tool ran and drew nothing for a picture, or did not finish it; a placeholder box marks its place")
   | .W0380 => ("0380", .degraded, "a \\cref target of unknown kind; the plain number is set")
   | .W0381 => ("0381", .degraded, "a unit outside the siunitx table; set as its ASCII spelling")
   | .W0383 => ("0383", .pending, "algorithm construct outside the modeled subset; kept as a plain line")
@@ -471,7 +474,7 @@ private def DiagCode.spec : DiagCode → String × Loss × String
   | .W0391 => ("0391", .config, "an unknown LaTeX internal ('@' in its name) in package code is skipped with its [...] and {...} arguments instead of setting them as text")
   | .E0390 => ("0390", .dropped, "a markdown construct this dialect refuses by design; its content is dropped")
   | .W0392 => ("0392", .degraded, "a markdown construct sets with part of its declaration dropped; its content still sets")
-  | .N0419 => ("0419", .info, "a boundary picture no tool drew is drawn by the rendered subset instead; what the subset leaves out is named beside it")
+  | .W0419 => ("0419", .degraded, "a picture the boundary did not draw is drawn in part by the rendered subset; what it leaves out is named in the line")
   | .W0435 => ("0435", .degraded, "a \\qedhere whose QED this engine cannot set where amsthm sets it; the QED stands on a line of its own after the display")
   | .W0393 => ("0393", .degraded, "the installed syntax highlighter cannot classify a listing; its source is set as plain text")
   | .W0394 => ("0394", .degraded, "picture label has glyphs without measured outline bounds")
@@ -574,9 +577,8 @@ went from 1 to 0 on such a document). The note says which code names the
 loss now, and the document widens its acceptance only by writing that code
 itself if acceptance is needed. `none` means the loss cannot occur any more —
 the engine's rule changed — so there is nothing to accept and nothing to fail
-over. A pure
-renumbering, whose successor names exactly the retired loss, would accept
-its successor; no row is one, so the table does not carry that case.
+over. A pure renumbering, whose successor names exactly the retired loss,
+accepts its successor: that is `DiagCode.renumbered`'s, not this table's.
 
 A row leaves this list only when a document naming the old code is
 implausible, which is a judgement about the world and not about this tree, so
@@ -592,7 +594,26 @@ public def DiagCode.retired : List (String × Option String) :=
    -- occur.
    ("W0344", none),
    -- A missing alternative is authoring advice; no acceptance is needed.
-   ("W0376", some "N0376")]
+   ("W0376", some "N0376"),
+   -- The withdrawal note named no loss beside the subset's refusals; the
+   -- picture's one line carries them now, a wider loss than the note's.
+   ("N0419", some "W0419")]
+
+/-- **A code renumbered for its class, whose successor names exactly its
+loss.** The old spelling keeps answering, as a retired one does, and here
+it also accepts the successor: the document accepted that loss, the loss is
+the same, and only what the page carries for it moved — so `\allow` of the
+old spelling accepting nothing would turn an accepted loss back into a
+warning that `--werror` fails on. Disjoint from `retired`, and the successor
+is a live code (both checked where the retired table is). -/
+public def DiagCode.renumbered : List (String × String) :=
+  [-- A picture the boundary tool drew nothing of, or did not finish: the
+   -- run failed with no artifact; it ships its placeholder now, the same
+   -- two events named under the same number.
+   ("E0382", "W0382"),
+   -- Bytes that are not UTF-8: the run refused the file; each sequence ships
+   -- as U+FFFD now, and the warning that lists them names the same bytes.
+   ("E0002", "W0002")]
 
 /-- An artifact whose diagnostics apply only when that output is requested. -/
 public inductive Diag.Output where
@@ -656,6 +677,10 @@ public structure Diag where
   recovery : Option Diag.Recovery := none
   /-- `none` applies to every output; a scoped loss applies only to that artifact. -/
   output : Option Diag.Output := none
+  /-- Every byte offset in the span's file the diagnostic names, where it
+  names more places than its message lists: the porcelain record carries
+  them all for a tool, the message the first few for a reader. -/
+  offsets : Array Nat := #[]
   deriving Repr, BEq
 
 /-- **Is this code's loss part of the site census?** A `degraded` or
@@ -1110,6 +1135,57 @@ public theorem Diag.tallySites_subjectless_id (ds : Array Diag) (i : Nat) (h : i
   have hl : i < ds.toList.length := by simpa using h
   rw [Diag.count_mapIdx_eq_one (Diag.carrier ds.toList) i i hl
     fun j hj => Diag.carrier_eq_iff_self ds.toList i j hl hj (by simpa using hn)]
+
+/-- **One warning, one line on the default log.** The tally, with every
+later site of a warning — a record `tallySites` leaves with no sites,
+because an earlier diagnostic of the same code, subject and output carries
+the count — delivered as a note, listed under `-v`. What `Elab`'s
+`warnOnce` does for the elaborator's keyed warnings, as the one
+presentation for every producer: the markdown reader's routes and the
+layout's glyph substitutions alike. An error is never folded: a build
+fails at each of its sites, and the summary counts every one. Folding
+changes what a later warning site is delivered as and nothing else:
+nothing is added, removed, reordered or reworded, the sites are the
+tally's (`foldRepeats_sum_exact`), a diagnostic with no subject — its own
+one site — keeps its severity, and the warning count the summary prints
+is a count of losses, each carrying its sites. The demotion bit is written
+here beside `Diag.accept`, the other policy door. -/
+public def Diag.foldRepeats (ds : Array Diag) : Array Diag :=
+  (Diag.tallySites ds).map fun d =>
+    if d.sites == 0 && d.severity == .warning then d.demote else d
+
+/-- A first site, a subjectless one and every error is the tally's record
+unchanged; a later warning site is the tally's record demoted. -/
+public theorem Diag.foldRepeats_exact (ds : Array Diag) (i : Nat)
+    (h : i < (Diag.tallySites ds).size) :
+    (Diag.foldRepeats ds)[i]? = some (if ((Diag.tallySites ds)[i]).sites == 0 &&
+        ((Diag.tallySites ds)[i]).severity == .warning
+      then ((Diag.tallySites ds)[i]).demote else (Diag.tallySites ds)[i]) := by
+  simp [Diag.foldRepeats, h]
+
+/-- **An error stays an error.** Whatever its site count, a tallied error
+is delivered at error severity, so the summary's error count and the exit
+status read every failing site. -/
+public theorem Diag.foldRepeats_error_exact (ds : Array Diag) (i : Nat)
+    (h : i < (Diag.tallySites ds).size)
+    (he : ((Diag.tallySites ds)[i]).severity = .error) :
+    ((Diag.foldRepeats ds)[i]?).map (·.severity) = some .error := by
+  have hw : (Severity.error == Severity.warning) = false := rfl
+  simp [Diag.foldRepeats, h, he, hw]
+
+/-- **Folding keeps the census.** The sites of a folded log still add up to
+its length: demotion rewrites what a line says it is, never how much it
+counts. -/
+public theorem Diag.foldRepeats_sum_exact (ds : Array Diag) :
+    ((Diag.foldRepeats ds).toList.map (·.sites)).sum = ds.size := by
+  have hsites : (Diag.foldRepeats ds).toList.map (·.sites) =
+      (Diag.tallySites ds).toList.map (·.sites) := by
+    simp only [Diag.foldRepeats, Array.toList_map, List.map_map]
+    congr 1
+    funext d
+    simp only [Function.comp_apply]
+    split <;> rfl
+  rw [hsites, Diag.tallySites_sum_exact]
 
 /-- Diagnostics resolved against the document's acceptance, with the counts
 of every resolved phase. Counts follow acceptance, so an accepted loss is

@@ -471,37 +471,37 @@ def pictureOuterSepChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) 
 The cached-answer rule, carried through the withdrawal: a budget kill, a
 spawn that raised and a nonzero exit that left no log are facts about the
 machine (`PicCache.outcome`), so the request is neither remembered nor
-withdrawn to the rendered subset's drawing. It stands as E0382, an error,
-and the run fails as loudly as a failed render does. Only an answer
-withdraws: no tool at all (W0379), or the tool's own no. The defect
-withdrew every refusal alike, so a tool that crashed shipped the subset's
-drawing with exit 0, its cause a note printed only under `-v`. The driver's
-own chain, run as values: the outcome an ending reads as, the ending the
-withdrawal reads, and what stands. Invented content. -/
+withdrawn to the rendered subset's drawing. It stands as W0382 under the
+picture's source, and the page carries the placeholder a failed render
+leaves, never a different drawing. Only an answer withdraws: no tool at all
+(W0379), or the tool's own no. The defect withdrew every refusal alike, so a
+tool that crashed shipped the subset's drawing, its cause a note printed
+only under `-v`. The driver's own chain, run as values: the outcome an
+ending reads as, the ending the withdrawal reads, and what stands. Invented
+content. -/
 def boundaryUnfinishedChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
   let id := Ir.picHash "\\draw[rounded corners] (0,0) rectangle (1,1);"
   let src := Ir.picSrcPrefix ++ id
   let run (o : PicCache.Outcome) : Boundary.Withdrawal :=
-    Boundary.withdraw "lualatex" #[id]
-      ((Boundary.undrawnOf "lualatex" o none).toArray.map (src, ·)) #[]
-  let loud (w : Boundary.Withdrawal) : Bool :=
-    w.ids.isEmpty && w.notes.isEmpty && w.standing.size == 1 &&
-      w.standing.all fun (s, d) => s == src && d.code == "E0382" && d.severity == .error
+    Boundary.withdraw #[id] ((Boundary.undrawnOf "lualatex" o none src).toArray.map (src, ·))
+  let stands (w : Boundary.Withdrawal) : Bool :=
+    w.ids.isEmpty && w.said.isEmpty && w.standing.size == 1 &&
+      w.standing.all fun (s, d) => s == src && d.code == "W0382" && d.subject == some src
   let endings : List (String × PicCache.Ran × PicCache.Log) :=
     [("exits 3 and leaves no log", .exited 3, .absent),
      ("overruns its budget", .overran 120, .says "! Emergency stop."),
      ("never starts", .unstarted "no such file", .absent)]
   for (what, ran, log) in endings do
-    t s!"a tool that {what} withdraws nothing: the picture's E0382 stands"
-      (loud (run (PicCache.outcome ran false log)))
+    t s!"a tool that {what} withdraws nothing: the picture's W0382 stands"
+      (stands (run (PicCache.outcome ran false log)))
   let answered := run (PicCache.outcome (.exited 1) false (.says "! Package pgf Error: invented."))
   t "the tool's own refusal withdraws a picture the subset draws in part"
     (answered.ids == #[id] && answered.standing.isEmpty &&
-      answered.notes.all (·.code == "N0419") && answered.notes.size == 1)
+      answered.said == #[(id, some "! Package pgf Error: invented.")])
   let cold := DriverDiag.boundaryToolUnavailable "lualatex"
   t "no tool at all withdraws it too"
-    ((Boundary.withdraw "lualatex" #[id] #[(src, .answered cold none)] #[]).ids == #[id])
+    ((Boundary.withdraw #[id] #[(src, .answered cold none)]).ids == #[id])
 
 
 /-- **The HTML face shows a drawing wherever the engine has one.** A picture
@@ -547,8 +547,10 @@ TeX sets `\tikz` as a box of its line, bottom on the baseline (pgfmanual
 §12.2.1), in a table cell, in a group's text and in a command's expansion
 alike. The boundary's image is such a box, so where the boundary is open a
 picture in a line ships as the image the boundary draws there, and the
-sentence around it stays one line; where the boundary is closed, or the
-request was withdrawn, the picture is named and not drawn. A command whose
+sentence around it stays one line, and a refused request keeps the
+placeholder that marks the place, since the subset, which sets pictures only
+as blocks, cannot stand in for it there; where the boundary is closed, or
+the picture's request was withdrawn, the picture is named and not drawn. A command whose
 body is a picture, expanded as a block, breaks its sentence as a picture
 written there does, and is named the same way. The defect drew nothing in a
 cell or a group, under W0307's false "not implemented", and split a sentence
@@ -579,8 +581,8 @@ def pictureInlineLineChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet
   t "a picture in a group's text stands in its sentence's line, and no W0307"
     ((Ir.pictureRefs gd).size == 1 && noW0307 gds &&
       gc.any fun p => p.lines.any fun l => hasStr l.text "Gamma" && hasStr l.text "delta")
-  -- Where the boundary is closed, or the request was withdrawn, the picture
-  -- is named where it stands and not drawn.
+  -- Where the boundary is closed, or the picture's request was withdrawn,
+  -- the picture is named where it stands and not drawn.
   let named (ds : Array Diag) : Bool :=
     ds.any fun d => d.code == "W0334" &&
       (d.subject.map (·.startsWith "picture:inline:")).getD false
@@ -588,9 +590,22 @@ def pictureInlineLineChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet
   let (xd, xds) := elabStr closed
   t "with the boundary closed, a picture in a cell is named and not drawn"
     (named xds && noW0307 xds && (Ir.pictureRefs xd).isEmpty && (cellImages xd).size == 0)
-  let (_, wds) := elabStr cell
-  t "a withdrawn request in a cell takes the same door"
-    (named wds && noW0307 wds)
+  -- A request in a line is never the subset's to stand in for, which sets
+  -- a picture only as a block: refused, it keeps the image whose
+  -- placeholder marks the place. Withdrawn all the same — with a block's
+  -- request of the same picture — it takes the closed door.
+  let (wd, wds) := elabStr cell
+  t "a request in a cell is never withdrawn on its own: its image keeps the place"
+    ((firstPass cell).2.2.fallbacks.isEmpty && (cellImages wd).size == 1 && !named wds &&
+      noW0307 wds)
+  let twin := (cd.pictureSrcs[0]?.map (·.1)).getD ""
+  let (toks, lds) := Lex.lex "t" cell
+  let (raws, pds) := Parse.parse "t" toks
+  let (twd, tds, _) := Elab.runPrepared "t" (Elab.prepare "t" raws) (lds ++ pds) (fun _ _ => {})
+    #[twin]
+  t "a withdrawn picture in a cell is named and not drawn, under the key the driver reads"
+    (!twin.isEmpty && named tds && noW0307 tds && (cellImages twd).size == 0 &&
+      tds.any fun d => d.code == "W0334" && Boundary.inlineOf twin d)
   -- A command whose body is a picture, expanded as a block in a sentence.
   let cmd := dvDoc "\\newcommand{\\dotmark}{\\tikz\\fill (0,0) rectangle (0.15,0.15);}\n"
     "Gamma \\dotmark{} delta."

@@ -1453,9 +1453,10 @@ def deckCssChecks (ref : IO.Ref (List String)) : IO Unit := do
          !["height", "max-height", "block-size", "max-block-size", "flex-basis"].contains
            ((d.splitOn ":").headD "").trimAscii.toString)
   -- 11pt over the 90mm stage (Ir.slidesFontSize / Ir.slidesStage169.2),
-  -- truncated to the printed milli: deck_type_is_stage_ratio's bounds.
+  -- truncated to the printed milli: deck_type_is_stage_ratio's bounds;
+  -- its lines at the page's leading (`Ir.stepSkip`), not the screen's.
   t "deck type is the PDF's stage ratio, in vh"
-    (has deckPage "font-size: 4.311vh; }" &&
+    (has deckPage "font-size: 4.311vh; line-height: 1.200; }" &&
      has deckPage "h1 { font-size: 1.728em; }" &&
      has deckPage "section.slide > header h2 { font-size: 1.440em; }")
   let (tokDoc, _) := elabStr (deck169 "\\tokens{ safearea = 20pt }"
@@ -1518,7 +1519,8 @@ def deckCssChecks (ref : IO.Ref (List String)) : IO Unit := do
   -- duplicates nothing on its way through the gate grouping. Each rule
   -- renders on one line, so the parse is line-local: the body between a
   -- line's last `{` and first `}`.
-  let rules := HtmlDoc.deckRules "4.311vh" "453.543pt 255.118pt" 38 3
+  let rules := HtmlDoc.deckRules { body := "4.311vh", root := "3.568vh", leading := "1.200" }
+    "453.543pt 255.118pt" 38 3
   let typed := rules.flatMap fun r => r.decls.map fun d => d.1 ++ ": " ++ d.2
   let emitted := ((HtmlDoc.emitDeckRules rules).splitOn "\n").flatMap fun l =>
     if (l.splitOn "{").length ≥ 2 && (l.splitOn "}").length ≥ 2 then
@@ -1990,19 +1992,28 @@ meaning, and no constructor outlives its last emission site. -/
 def renderChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
   -- render: porcelain is stable, escaped JSONL
-  let d : Diag := Diag.of .E0002 "bad \"quote\"\nline"
+  let d : Diag := Diag.of .E0001 "bad \"quote\"\nline"
     (some ⟨"a.tex", { line := 3, col := 7 }⟩)
     (help := "fix it")
   t "porcelain diag" (Render.porcelainDiag d ==
-    "{\"event\":\"diagnostic\",\"severity\":\"error\",\"code\":\"E0002\",\"loss\":\"dropped\"," ++
+    "{\"event\":\"diagnostic\",\"severity\":\"error\",\"code\":\"E0001\",\"loss\":\"dropped\"," ++
     "\"message\":\"bad \\\"quote\\\"\\nline\",\"file\":\"a.tex\",\"line\":3,\"col\":7," ++
     "\"help\":\"fix it\"}")
   t "porcelain summary" (Render.porcelainSummary "a.tex" false 2 17 ==
     "{\"event\":\"summary\",\"file\":\"a.tex\",\"ok\":false,\"errors\":2,\"ms\":17}")
+  t "porcelain summary of a failed run that wrote some artifacts names them"
+    (Render.porcelainSummary "a.tex" false 1 17 #["a.html", "a.md"] ==
+      "{\"event\":\"summary\",\"file\":\"a.tex\",\"ok\":false,\"output\":\"a.html, a.md\",\"errors\":1,\"ms\":17}")
+  t "human summary of a failed run that wrote some artifacts names them"
+    (Render.humanSummary false "a.tex" 1 17 #["a.html"] == "✖ a.tex — 1 error; wrote a.html (17 ms)")
+  t "human summary spells out a control character in a written path"
+    (Render.humanSummary false "a.tex" 1 17 #["a\nb.html"] == "✖ a.tex — 1 error; wrote a\\nb.html (17 ms)")
+  t "human phase line spells out a tool's control characters"
+    (Render.humanPhase "boundary" "x\u001b]0;t\u0007y" 3 == "boundary: x\\x1b]0;t\\x07y (3 ms)")
 
   -- render: human, no color
   t "human diag plain" (Render.human false d ==
-    "✖ [E0002] - a.tex:3:7\n  bad \"quote\"\n  line\n  suggestion: fix it")
+    "✖ [E0001] - a.tex:3:7\n  bad \"quote\"\n  line\n  suggestion: fix it")
 
 def linkHtmlChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
@@ -2941,7 +2952,7 @@ def pdfCensusTable :
   -- the included markdown's link is the page's one annotation
   ("md-include", (1, 1, 0, 0, 0, 1, 0, none, ["FlateDecode"])),
   ("md-include-deck", (2, 1, 0, 0, 0, 0, 0, none, ["FlateDecode"])),
-  ("md-links", (1, 1, 0, 0, 0, 4, 0, none, ["FlateDecode"])),
+  ("md-links", (1, 1, 0, 0, 0, 6, 0, none, ["FlateDecode"])),
   ("md-lists", (1, 1, 0, 0, 0, 0, 0, none, ["FlateDecode"])),
   ("md-quotes", (1, 1, 0, 0, 0, 0, 0, none, ["FlateDecode"])),
   ("md-readme", (1, 1, 0, 0, 0, 1, 0, none, ["FlateDecode"])),

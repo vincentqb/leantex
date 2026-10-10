@@ -13,7 +13,7 @@ namespace LeanTex.Core.CompatContract
 
 /-- Candidate coverage for an actual callback argument, including loads
 introduced by expansion. The request has one executed operand slice: its
-filename, options and the call the driver's `expandLocalSty` scans are
+filename, options and the call the driver's input reader answers are
 projections of that slice. No equality to an unexpanded source census is
 assumed.
 
@@ -653,20 +653,22 @@ public theorem runDocBody_input_exact (plan : DocBodyPlan) (f : String) (body pr
   rw [elabBlocks_input_exact plan.ctx f body pre post pos st h hpre hpost]
   rfl
 
-/-- Markdown's vocabulary against the elaborator's reserved names: its
-environments are the elaborator's own (a document cannot redefine them),
-and none of its controls is a length-restore marker. -/
+/-- Markdown's vocabulary against the elaborator's reserved names: each of
+its environments is the elaborator's own or holds a space no source spells
+(a document can redefine none of them), and none of its controls is a
+length-restore marker. -/
 public theorem markdownVocabulary_contract :
-    (∀ n ∈ Md.vocabulary.envs, n ∈ builtinEnvNames) ∧
+    (∀ n ∈ Md.vocabulary.envs, n ∈ builtinEnvNames ∨ ' ' ∈ n.toList) ∧
     (∀ n ∈ Md.vocabulary.ctrls ++ Md.vocabulary.bridged, Compat.lengthRestoreKeys? n = none) := by
   refine ⟨?_, ?_⟩
   · intro n hn
     simp only [Md.vocabulary, List.mem_cons, List.not_mem_nil, or_false] at hn
-    rcases hn with rfl | rfl | rfl <;> simp [builtinEnvNames, blockEnvs]
+    rcases hn with rfl | rfl | rfl | rfl <;>
+      simp [builtinEnvNames, blockEnvs, Parse.markdownTableEnv]
   · intro n hn
     rcases List.mem_append.mp hn with hn | hn
     · simp only [Md.vocabulary, List.mem_cons, List.not_mem_nil, or_false] at hn
-      rcases hn with rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl <;>
+      rcases hn with rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl <;>
         simp [Compat.lengthRestoreKeys?]
     · obtain ⟨level, _, rfl⟩ := List.mem_map.mp hn
       cases level <;> simp [Parse.headingControl, Compat.lengthRestoreKeys?]
@@ -689,7 +691,8 @@ private theorem bodyIsBlockOne_of_blockStart (r : Raw) (h : Md.BlockStart r) :
   · simp only [Md.vocabulary, List.mem_cons, List.not_mem_nil, or_false] at he
     rcases he with rfl | rfl <;> simp [bodyIsBlockOne]
   · simp only [Md.vocabulary, List.mem_cons, List.not_mem_nil, or_false] at hn
-    rcases hn with rfl | rfl | rfl <;> simp [bodyIsBlockOne, Parse.inputEnvFile?, blockEnvs]
+    rcases hn with rfl | rfl | rfl | rfl <;>
+      simp [bodyIsBlockOne, Parse.inputEnvFile?, blockEnvs, Parse.markdownTableEnv]
 
 private theorem bodyIsBlock_of_blockStart (body : Array Raw) (h : ∃ r ∈ body, Md.BlockStart r) :
     bodyIsBlock body = true := by

@@ -38,6 +38,10 @@ def publicationWriteChecks (ref : IO.Ref (List String)) : IO Unit := do
     check ref s!"publication writes: one unwritable artifact is the one loss, and the others are written ({some3.exitCode}): {some3.stdout}"
       (some3.exitCode != 0 && lines.length == 1 && lines.all (hasStr · "partial/source.pdf") &&
         (← (dir / "partial" / "source.html").pathExists) && (← (dir / "partial" / "source.md").pathExists))
+    let summary := (some3.stdout.splitOn "\n").filter (hasStr · "\"event\":\"summary\"")
+    check ref s!"publication writes: the failed run's summary names what it wrote ({summary})"
+      (summary.length == 1 && summary.all fun l => hasStr l "\"output\":" &&
+        hasStr l "partial/source.html" && hasStr l "partial/source.md" && !hasStr l "partial/source.pdf")
     IO.FS.writeFile (dir / "blocker") "a regular file where a directory would go"
     let blocked ← run "" #["-o", "blocker/out.pdf", "--porcelain"]
     let said := blocked.stdout ++ blocked.stderr

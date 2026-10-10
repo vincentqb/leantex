@@ -144,8 +144,9 @@ public structure PicCtx where
   /-- The boundary requests fulfilment withdrew: pictures the rendered
   subset draws in part whose request no tool drew (`Cli.Boundary.withdraw`).
   Each is drawn natively on the elaboration the driver runs with them, its
-  refusals named as a refused door names them. Empty on the first pass,
-  which states every request from the document alone. -/
+  refusals the ones a refused door names, keyed under the picture so the
+  driver folds them into its one line (`Cli.Boundary.fold`). Empty on the
+  first pass, which states every request from the document alone. -/
   withdrawn : Array String := #[]
   /-- The preamble declarations a boundary standalone needs beyond the
   document's design — non-native package loads and the tikz-family set
@@ -268,6 +269,9 @@ public structure Ctx where
   tokens (`paperwidth`, `textwidth`, …) and a token-named column width
   resolve against. Set once, after the class defaults are applied. -/
   page : Ir.PageSpec := {}
+  /-- The surface the document was written in, set once with `page`: an
+  input wrapper changes `file`, never this. -/
+  surface : Ir.Surface := .tex
   /-- The engine's own length tokens, resolved from the final page: the
   body-side lookup `\setlength` expressions extend theirs with. -/
   engineTokens : Array (String × Dim.SymGlue) := #[]
@@ -456,6 +460,9 @@ public structure SpanRecords where
   /-- The boundary pictures the rendered subset draws in part, by picture
   id: the requests the driver may withdraw (`ReqSpans.fallbacks`). -/
   fallbacks : Array String := #[]
+  /-- The pictures the rendered subset draws in part under the document's
+  `\pictures{ tool = none }`, by picture id (`ReqSpans.declined`). -/
+  declined : Array String := #[]
   /-- Top-level frame openings, maintained with the block accumulator. -/
   frames : FrameSources := {}
   /-- The actual log at the last content-recovery emission. Its persistent
@@ -1103,7 +1110,7 @@ public def runningCtrl : List String := ["runninghead", "runningfoot"]
 
 private def pageKeys : List String :=
   ["size", "width", "height", "margin", "vmargin", "hmargin",
-   "textwidth", "textheight", "leading", "parskip",
+   "textwidth", "textheight", "leading", "baselineskip", "parskip",
    "measure", "fontsize", "bleed", "hyphenate", "justify", "protrusion",
    "expansion", "numbers", "marks", "mark-gap", "mark-thickness", "linenumbers", "modulo",
    "furnituregap", "headsep", "footskip", "rule", "trim", "bottom"]
@@ -4013,6 +4020,12 @@ a bracket run they meant as content. -/
 private def optionRunAdvice (optionRun : Bool) : String :=
   if optionRun then "; content, not options? start the '[' on the next line" else ""
 
+/-- ragged2e's alignment declarations (ragged2e manual §2): the package is
+not read, so a region's justification or raggedness it declares stays the
+page's own. -/
+private def raggedTwoE : List String :=
+  ["justifying", "RaggedRight", "RaggedLeft", "Centering"]
+
 /-- The help an unknown command's warning points at: the generic
 declaration route, except where the engine knows what the construct is
 usually for and can name the native key instead — `\AddToHook`'s shipout
@@ -4024,6 +4037,9 @@ private def unknownCmdHelp (name : String) (optionRun : Bool) : String :=
     if name == "AddToHook" || name == "AddToHookNext" then
       "a hook body cannot be interpreted; \\page{ marks = cut } declares \
 printer's cut marks, derived from the trim and bleed"
+    else if raggedTwoE.contains name then
+      "the text keeps its page's own setting; \\page{ justify = on } or \
+\\page{ justify = off } sets the whole document's"
     else "\\define \\name(...) {body} declares it"
   s!"{route}{optionRunAdvice optionRun}"
 
@@ -4558,11 +4574,14 @@ formula {floorWording (Parse.rawSrc raws)}")])
 
 /-- One picture sent to the boundary: its request stated once, a picture
 the subset draws in part recorded as a fallback the driver may withdraw
-(`ReqSpans.fallbacks`), its span, the N0023 note, and the image that stands
-where the picture does — named by the words its own labels set
-(`Ir.Pic.Picture.said`), as the subset's drawing would have been named. -/
-private def routePicture (ctx : Ctx) (body : Array Raw) (pic : Ir.Pic.Picture) (pos : Pos) :
-    EM Ir.Inline := do
+(`ReqSpans.fallbacks`) where it stands as a block (`block`) — the subset
+never sets one in a line, so there a refused request keeps its placeholder,
+which marks the place, rather than an empty line — its span, the N0023
+note, and the image that stands where the picture does — named by the words
+its own labels set (`Ir.Pic.Picture.said`), as the subset's drawing would
+have been named. -/
+private def routePicture (ctx : Ctx) (body : Array Raw) (pic : Ir.Pic.Picture) (pos : Pos)
+    (block : Bool) : EM Ir.Inline := do
   let src := Parse.rawSrc body
   let id := Ir.picHash src
   let tool := ctx.pic.tool.getD "lualatex"
@@ -4570,7 +4589,7 @@ private def routePicture (ctx : Ctx) (body : Array Raw) (pic : Ir.Pic.Picture) (
   modify fun st =>
     let st := if st.pictures.any (fun p => p.1 == id) then st
       else { st with pictures := st.pictures.push (id, src) }
-    if pic.shapes.isEmpty || st.spans.fallbacks.contains id then st
+    if !block || pic.shapes.isEmpty || st.spans.fallbacks.contains id then st
     else { st with spans := { st.spans with fallbacks := st.spans.fallbacks.push id } }
   recordImageSpan ctx img pos
   warnOnce ctx ("picture:boundary:" ++ id) .N0023
@@ -4598,7 +4617,7 @@ private def inlinePicture (ctx : Ctx) (body : Array Raw) (pos : Pos) :
   -- request takes the second door.
   if ctx.pic.tool.isSome && !body.isEmpty && !ctx.pic.withdrawn.contains id then
     let (pic, _) := subsetPicture ctx body
-    return some (← routePicture ctx body { pic with alt := alt } pos)
+    return some (← routePicture ctx body { pic with alt := alt } pos false)
   warnOnce ctx ("picture:inline:" ++ id) .W0334
     "a picture inside a line of text is not drawn: the rendered subset sets a \
 picture only as a block" pos
@@ -6476,7 +6495,11 @@ option's US (3.5 × 2 in) or Japanese (91 × 55 mm) card trade size, else
 the class record's `trimDefault`, with `safeMargin` on both margins, and
 sets display-text policy: no hyphenation, and — below the 40-character
 working minimum for justified text (Bringhurst, Elements 2.1.2) — ragged.
-A frame fills beamer's stage (`slidesStageOf`) with the slides margins.
+A frame fills beamer's stage (`slidesStageOf`) with the slides margins,
+its text ragged right as beamer.cls declares among its defaults
+(`\raggedright`, measured under lualatex: no frame line is stretched to
+the measure, each takes every word that fits, and no hyphen pays against
+`\raggedright`'s infinite stretch).
 Flow reads the `*paper`/`paper=` options against `pageSizes` and
 `landscape` swaps the axes — the reading the geometry package documents
 for exactly these options (geometry manual §5.2). A document that declared
@@ -6508,6 +6531,11 @@ private def classPageDefaults (record : Ir.ClassRecord) (opts : List String)
       page := { page with hmargin := Ir.slidesHMargin }
     if page.vmargin == dflt.vmargin then
       page := { page with vmargin := Ir.slidesVMargin }
+    -- beamer.cls sets `\raggedright` among its defaults, for every frame:
+    -- LaTeX's own, whose lines fill first (`raggedFil`).
+    if page.justify.isNone then
+      page := { page with justify := some false }
+    page := { page with raggedFil := true }
   else if record.model == .face then
     if page.width == dflt.width && page.height == dflt.height then
       let named :=
@@ -6591,7 +6619,7 @@ private def bodyIsBlockOne : Raw → Bool
     if (Parse.inputEnvFile? n).isSome then bodyIsBlockList body.toList
     else
       blockEnvs.contains n || isMathEnv n || n == Tcolorbox.boxEnv
-        || n == "tabular" || n == "tabular*"
+        || n == "tabular" || n == "tabular*" || n == Parse.markdownTableEnv
         || n == "algorithm" || n == "algorithm*" || n == "algorithm2e"
         || n == "algorithmic"
         || reservedEnv.contains n || bodyIsBlockList body.toList
@@ -6971,6 +6999,21 @@ private def splitAtParsGo (ctx : Ctx) (pos : Pos) :
 private def splitAtPars (ctx : Ctx) (body : Array Raw) (pos : Pos) : Array Raw :=
   splitAtParsGo ctx pos body.toList #[] #[] #[]
 
+/-- A scope group whose paragraph ends inside it, under the size declaration
+it opens with (`{\small A\\B\par}`): LaTeX's `\par` there reads that size's
+`\baselineskip`, so the group is the block scope it is — its declaration
+standing over the paragraph (`Ir.paraAt`) — never spliced open at the
+paragraph end (`splitAtPars`), which would close the size before the `\par`
+and lead the paragraph at the body's skip. Only a group that ends at its
+paragraph end: text after the brace then joins no paragraph inside it. -/
+private def sizeParScope (body : Array Raw) : Bool :=
+  let ws := body.toList.filter fun r => !(r matches .space)
+  match ws.head?, ws.getLast? with
+  | some (.ctrl n _), some last =>
+    ((declStyleOf n) matches some (.size _) || n.startsWith Compat.fontSizeMark) &&
+      isParRaw last
+  | _, _ => false
+
 private theorem nestedParsList_push (a : Array Raw) (r : Raw) :
     nestedParsList (a.push r).toList = nestedParsList a.toList + nestedPars r := by
   simp [Array.toList_push, nestedParsList_append, nestedParsList]
@@ -7204,7 +7247,9 @@ private def finishPara (inlines : Array Inline) : EM (Option Block) := do
   -- says; kept, it is an empty line in the PDF and an empty row in HTML.
   let inlines := (trimParaList false #[] inlines.toList).1
   if inlines.isEmpty then return none
-  return some (paraUnder (← get).flowLang (Ir.wrapDecls (← get).blockDecls inlines))
+  -- The declarations in force where the paragraph ends set its step
+  -- (`Ir.paraAt`): LaTeX reads `\baselineskip` at `\par`.
+  return some (paraUnder (← get).flowLang (Ir.paraAt (← get).blockDecls inlines))
 
 private def mkPara (ctx : Ctx) (cur : Array Raw) : EM (Option Block) := do
   let mut cur := cur
@@ -9031,7 +9076,11 @@ private def tabularArm (ctx : Ctx) (n : String) (body : Array Raw)
   match body[k]? with
   | some (.group spec _) =>
     let (cs, pl, pr, warns) := parseColSpec ctx spec flexTarget
-    cols := cs
+    -- A markdown table's natural columns narrow as a web table's do: its
+    -- source declares no width (`Ir.ColSpec.narrows`).
+    cols := if n == Parse.markdownTableEnv then
+        cs.map fun c => { c with narrows := c.width matches .natural }
+      else cs
     padL := pl
     padR := pr
     for (key, msg, help) in warns do
@@ -9054,7 +9103,7 @@ private def tabularArm (ctx : Ctx) (n : String) (body : Array Raw)
     if h' : j < body.size then
       match body[j] with
       | .ctrl "\\" bpos =>
-        cells := cells.push (Ir.wrapDecls (← get).blockDecls (← elabInlines ctx (trimRawEdges cellRaws)))
+        cells := cells.push (Ir.paraAt (← get).blockDecls (← elabInlines ctx (trimRawEdges cellRaws)))
         (spans, cells) := closeSpan spans cells rows.size spanHere
         spanHere := none
         cellRaws := #[]
@@ -9076,7 +9125,7 @@ private def tabularArm (ctx : Ctx) (n : String) (body : Array Raw)
             j := j'
         | _ => pure ()
       | .sym '&' _ =>
-        cells := cells.push (Ir.wrapDecls (← get).blockDecls (← elabInlines ctx (trimRawEdges cellRaws)))
+        cells := cells.push (Ir.paraAt (← get).blockDecls (← elabInlines ctx (trimRawEdges cellRaws)))
         (spans, cells) := closeSpan spans cells rows.size spanHere
         spanHere := none
         cellRaws := #[]
@@ -9161,7 +9210,7 @@ private def tabularArm (ctx : Ctx) (n : String) (body : Array Raw)
         j := j + 1
     else break
   if cellRaws.any (!isSpaceOrPar ·) || !cells.isEmpty then
-    cells := cells.push (Ir.wrapDecls (← get).blockDecls (← elabInlines ctx (trimRawEdges cellRaws)))
+    cells := cells.push (Ir.paraAt (← get).blockDecls (← elabInlines ctx (trimRawEdges cellRaws)))
     (spans, cells) := closeSpan spans cells rows.size spanHere
     rows := rows.push cells
   -- Rectangularity: every walk below trusts `cols.size`.
@@ -9218,14 +9267,19 @@ private def listingBlock (ctx : Ctx) (env s : String) (pos : Pos) : EM Block := 
   -- size. Bare `verbatim`, `minted`, and `lstlisting` all inherit it: LaTeX's
   -- `\verbatim@font` is `\normalfont\ttfamily`, which selects the mono family
   -- and changes no size, so verbatim sets at the ambient size — never a fixed
-  -- `footnotesize`. A package's own size option overrides it below.
+  -- `footnotesize`. A package's own size option overrides it below. What
+  -- a listing starts from before any of that is its surface's
+  -- (`Ir.Surface.listing`): LaTeX's defaults on a tex document, and on a
+  -- markdown one, which can declare none, its smaller wrapping code.
+  let base := ctx.surface.listing
   let inherited := (← get).blockDecls.foldl (fun size decl => match decl with
     | .style s@(.size _) | .style s@(.fontSize _ _) => s
-    | _ => size) (Ir.Style.size "normalsize")
+    | _ => size) base.fontSize
   let sourceStart := ("\\begin{" ++ env ++ "}").foldl
     (fun p c => p.next (c == '\n')) pos
   if env == "verbatim" then
-    return .verbatim none s { fontSize := inherited, source := some (ctx.sourceSpan sourceStart) }
+    return .verbatim none s
+      { base with fontSize := inherited, source := some (ctx.sourceSpan sourceStart) }
   let (opts, afterOpt) := (Parse.listingOptHead s).getD ("", 0)
   let mut content := s
   let mut caption : Option String := none
@@ -9234,8 +9288,8 @@ private def listingBlock (ctx : Ctx) (env s : String) (pos : Pos) : EM Block := 
   let mut language : Option Ir.ListingLang := none
   let mut style := Ir.ListingStyle.default
   let mut fontSize := inherited
-  let mut tabSize := 8
-  let mut breakLines := false
+  let mut tabSize := base.tabSize
+  let mut breakLines := base.breakLines
   let sizeName? (v : String) : Option String :=
     if v.startsWith "\\" then
       let name := (v.drop 1).toString
@@ -9342,7 +9396,12 @@ size commands; the current style stands" (some pos)
     fontSize := fontSize
     tabSize := tabSize
     breakLines := breakLines
+    lineOverlap := if env == "minted" then Ir.fvextraLineOverlap else 0
     lineStrut := env == "minted" && breakLines
+    -- listings wraps with its own continuation indent; minted's fvextra
+    -- wrap keeps the surface's (none on a tex document).
+    -- premise: markdownCodeChecks — a breaklines lstlisting sets every line inside the measure, continuations 20 pt in, with no re-flow named, while minted's wrap keeps no break indent and so the paragraph breaker's W0386
+    breakIndent := if env == "lstlisting" then some Ir.listingBreakIndent else base.breakIndent
     source := some (ctx.sourceSpan contentPos) }
   let spec ← match caption with
     | some cap => do
@@ -9576,27 +9635,36 @@ private def tikzArm (ctx : Ctx) (body : Array Raw) (pos : Pos)
   -- as the request's fallback, not thrown away: when fulfilment draws
   -- nothing — no tool on this machine and a cold cache, or a tool that
   -- failed — the driver withdraws the request and elaborates again with its
-  -- id in `picWithdrawn` (`Cli.Boundary.withdraw`, N0419), and the drawing
-  -- ships with its refusals named exactly as `\pictures{ tool = none }`
-  -- names them. So a boundary failure never costs a page the subset could
-  -- draw in part — the trade that once made native-first the rule.
+  -- id in `picWithdrawn` (`Cli.Boundary.withdraw`), and the drawing ships
+  -- with the refusals `\pictures{ tool = none }` names folded into its one
+  -- line (`Cli.Boundary.fold`, W0419). So a boundary failure never costs a page
+  -- the subset could draw in part — the trade that once made native-first
+  -- the rule — nor the document.
   -- The tool is the build environment's, exactly as fonts are: the request
   -- rides the IR — content hash of the wrapped standalone source — and the
   -- driver fulfils it, cached by content, so a warm cache needs no TeX
   -- installed and a machine with none gets the driver's W0379 with the
   -- placeholder where the subset drew nothing. `\pictures{ tool = none }`
-  -- is the declared refusal that keeps the subset's named diagnostics
-  -- instead. The trust label: the engine claims placement and measurement
-  -- of the returned box, never its contents.
+  -- is the declared refusal: the subset draws every picture, one it draws
+  -- in part shipping with its refusals folded into one line as a withdrawn
+  -- picture's are. The trust label: the engine claims placement and
+  -- measurement of the returned box, never its contents.
   let src := Parse.rawSrc body
   let id := Ir.picHash src
   -- premise: pictureRouteChecks — a routed picture's losses are never dropped
   -- in silence: a drawn request ships the boundary's box, and a withdrawn one
-  -- the refused door's drawing with the refused door's diagnostics.
+  -- the refused door's drawing with the refused door's refusals in its line.
   if ctx.pic.tool.isSome && !body.isEmpty &&
       (pic.shapes.isEmpty ||
         (Picture.namesLoss pdiags && !ctx.pic.withdrawn.contains id)) then
-    return blocks.push (.para #[← routePicture ctx body pic pos])
+    return blocks.push (.para #[← routePicture ctx body pic pos true])
+  -- A picture the subset draws in part under `\pictures{ tool = none }` is
+  -- the subset's as a withdrawn one is: its refusals keyed under it, and its
+  -- id recorded for the driver's fold (`ReqSpans.declined`).
+  let declined := ctx.pic.tool.isNone && !pic.shapes.isEmpty && Picture.namesLoss pdiags
+  if declined then
+    modify fun st => if st.spans.declined.contains id then st
+      else { st with spans := { st.spans with declined := st.spans.declined.push id } }
   for (code, msg) in pdiags do
     -- A note names a decision, not a construct outside the subset, so the
     -- subset's reach is no help to it.
@@ -9604,10 +9672,19 @@ private def tikzArm (ctx : Ctx) (body : Array Raw) (pos : Pos)
       | .info => none
       | _ => some "the rendered subset is \\fill...rectangle, \\node at, \
 \\foreach, and \\pgfmath(truncate)setmacro"
-    warnOnce ctx ("picture:" ++ msg) code msg pos (help := help)
-  -- A refused boundary (`tool = none`) keeps the subset's diagnostics and
-  -- no door warning: the declaration is the acceptance. W0379 is the
-  -- driver's, for a stated request no available tool can fulfil.
+    -- A withdrawn or declined picture's refusals are keyed under the
+    -- picture (`Ir.picFragmentKey`), so the driver folds them into its one
+    -- line (`Cli.Boundary.foldLines`) and two such pictures never share one.
+    -- premise: pictureRouteChecks — the driver folds every refusal keyed
+    -- under a withdrawn or declined picture into that picture's one line,
+    -- none dropped
+    if ctx.pic.withdrawn.contains id || declined then
+      warnOnce ctx ("picture:" ++ id ++ ":" ++ msg) code msg pos (help := help)
+    else
+      warnOnce ctx ("picture:" ++ msg) code msg pos (help := help)
+  -- A refused boundary (`tool = none`) names no door warning: the
+  -- declaration is the acceptance. W0379 is the driver's, for a stated
+  -- request no available tool can fulfil.
   unless pic.shapes.isEmpty do
     recordNativePictureSpan ctx pos
     blocks := blocks.push (.picture pic)
@@ -9964,6 +10041,59 @@ private def parFollows (raws : Array Raw) (i : Nat) : Bool :=
   | [] => false
   | r :: _ => r matches .par _
 
+/-- The paragraph state an overlay carrier standing at `raws[i]` opens in,
+`body` its content and `blocks` what stood before it once its opening
+flushed the paragraph: inside the paragraph whose text ran on to it with no
+break between (`inPar`), or else right after an environment end that left
+`\@endpe` (`endPe`) — what a display opening the carrier reads, as it
+reads it with no carrier there (`Ir.carrierDisplays`). Content opening on a
+paragraph break is in no paragraph. -/
+private def carrierOpening (raws : Array Raw) (i : Nat) (blocks : Array Block)
+    (body : Array Raw) : Bool × Bool :=
+  let opensOnText := match body.toList.dropWhile (· matches .space) with
+    | .par _ :: _ => false
+    | _ => true
+  let ranOn := match (raws.extract 0 i).toList.reverse.dropWhile (· matches .space) with
+    | [] | .par _ :: _ => false
+    | _ :: _ => true
+  let inPar := opensOnText && ranOn && Ir.flushedText (blocks.size - 1) blocks
+  (inPar, !inPar && blocks.back?.any Ir.Block.leavesEndPe)
+
+/-- A braced overlay's carrier, its group `body` at `raws[jg]`, stood in its
+paragraph (`carrierOpening`) and before the break after the group. Outside
+the block knot, whose compilation is at its budget. -/
+private def carrierInGroup (raws : Array Raw) (i jg : Nat) (blocks : Array Block)
+    (body : Array Raw) (inner : Array Block) : Array Block :=
+  let (inPar, endPe) := carrierOpening raws i blocks body
+  Ir.carrierDisplays inPar endPe (parFollows raws (jg + 1)) inner
+
+/-- An open overlay's carrier, the rest of the scope from `raws[jg]` on,
+stood in its paragraph: nothing follows it in the scope. -/
+private def carrierToEnd (raws : Array Raw) (i jg : Nat) (blocks : Array Block)
+    (inner : Array Block) : Array Block :=
+  let (inPar, endPe) := carrierOpening raws i blocks (raws.extract jg raws.size)
+  Ir.carrierDisplays inPar endPe false inner
+
+/-- An alternation's two groups, each stood in the paragraph the
+alternation opens in and before the break after its second group. -/
+private def altCarriers (raws : Array Raw) (i j3 : Nat) (blocks : Array Block)
+    (spec : Ir.OverlaySpec) (ga gb : Array Raw) (ia ib : Array Block) : Block :=
+  let after := parFollows raws (j3 + 1)
+  let (pa, ea) := carrierOpening raws i blocks ga
+  let (pb, eb) := carrierOpening raws i blocks gb
+  .alternate spec (Ir.carrierDisplays pa ea after ia) (Ir.carrierDisplays pb eb after ib)
+
+/-- `\pause`'s carrier, the rest of the scope from `raws[i]` on, revealed at
+step `n` and stood in its paragraph (`carrierOpening`): nothing follows it
+in the scope, so its last display keeps the break it found there. An empty
+rest pushes nothing. Outside the block knot, whose compilation is at its
+budget. -/
+private def pauseCarrier (raws : Array Raw) (i : Nat) (blocks : Array Block) (n : Nat)
+    (inner : Array Block) : Array Block :=
+  if inner.isEmpty then blocks else
+  let (inPar, endPe) := carrierOpening raws i blocks (raws.extract (i + 1) raws.size)
+  blocks.push (.step n none (Ir.carrierDisplays inPar endPe false inner))
+
 /-- A display formula met between words, outside the knot: the open
 paragraph flushed, the display's own arm, and where the display stands in
 its paragraph (`Ir.markDisplay`) — text before it, and whether a paragraph
@@ -9982,7 +10112,7 @@ private def displayAtBlock (ctx : Ctx) (body : Array Raw) (pos : Pos) (blocks : 
 -- data to that process, never proof material, and unfolding it is what
 -- blows the elaboration budget. Sealed for the knot, unsealed right after.
 seal takeArgs mkPara finishPara flushPara stripMathMeta
-seal blockMacroStep
+seal blockMacroStep pauseCarrier carrierInGroup carrierToEnd altCarriers
 seal closeBlockMacros blockControlContext
 seal splicedFrameScope setFrameSourceBase recordFrameSource keepFrameSourcePrefix
 seal declAlignOf
@@ -10347,7 +10477,7 @@ seal bodyIsBlock bodyIsBlockList bodyIsBlockOne overlayTakesBlocks
 seal renderedBuiltins structuralNames
 seal declCtrl runningCtrl titleCtrls overlayCtrls blockEnvs reservedEnv
 seal displayMathEnvs alignEnvs isMathEnv sectionLevel specWord?
-seal lookupUser lookupUserEnv isArgument isCenteringRaw isParRaw splitAtPars
+seal lookupUser lookupUserEnv isArgument isCenteringRaw isParRaw splitAtPars sizeParScope
 seal isColumnStray
 seal parFollows displayAtBlock
 
@@ -11739,7 +11869,7 @@ private def elabEnvArm (ctx : Ctx) (n : String) (scope : Array Raw)
     blocks ← displayMathArm ctx numbered body pos blocks
   else if let some (kind, numbered) := alignEnvs.lookup n then
     blocks ← alignEnvArm ctx n kind numbered body pos blocks
-  else if Compat.tableEnvs.contains n then
+  else if Compat.tableEnvs.contains n || n == Parse.markdownTableEnv then
     blocks ← tabularArm ctx n body pos blocks
   else if n == "thebibliography" then
     blocks := blocks ++ (← ownBibList ctx body)
@@ -12343,7 +12473,7 @@ private def elabCtrlArm (ctx : Ctx) (raws : Array Raw) (i : Nat)
               rfl, rfl, rfl, rfl⟩
           let ia ← elabBlockScope stepCtx ga
           let ib ← elabBlockScope ctx gb
-          blocks := blocks.push (.alternate spec ia ib)
+          blocks := blocks.push (altCarriers raws i j3 blocks spec ga gb ia ib)
           return (blocks, ⟨j3 + 1, by omega⟩)
         | none =>
           -- One reading at block level too: an unnumberable spec keeps the
@@ -12383,6 +12513,7 @@ when it is empty — '{}'")
             pure ⟨{ ctx with stepBase := max ctx.stepBase (spec.start - 1) },
               rfl, rfl, rfl, rfl⟩
           let inner ← elabBlockScope stepCtx gbody
+          let inner := carrierInGroup raws i jg blocks gbody inner
           unless inner.isEmpty do
             blocks := blocks.push (.onSteps spec inner)
           return (blocks, ⟨jg + 1, by omega⟩)
@@ -12412,6 +12543,7 @@ when it is empty — '{}'")
             pure ⟨{ ctx with stepBase := max ctx.stepBase (spec.start - 1) },
               rfl, rfl, rfl, rfl⟩
           let inner ← elabBlockScope stepCtx (raws.extract jg raws.size)
+          let inner := carrierToEnd raws i jg blocks inner
           unless inner.isEmpty do
             blocks := blocks.push (.onSteps spec inner)
           return (blocks, ⟨raws.size, by omega⟩)
@@ -12508,11 +12640,13 @@ private def elabBlocksGo (ctx : Ctx) (raws : Array Raw) (i : Nat)
         sliceWeight_zero _
       have hg1 : slicePars body 0 = nestedParsList body.toList :=
         slicePars_zero _
-      if hpp : body.any isParRaw && !isArgument cur && (lengthScopeKeys? body).isNone then
+      if hpp : body.any isParRaw && !isArgument cur && (lengthScopeKeys? body).isNone &&
+          !sizeParScope body then
         -- A scope group holding a paragraph end is spliced open first, so
-        -- the `\par` inside it is the boundary it is everywhere else.
+        -- the `\par` inside it is the boundary it is everywhere else — save
+        -- a size scope ending its paragraph inside it (`sizeParScope`).
         have hpp2 : body.any isParRaw = true := by
-          simp only [Bool.and_eq_true] at hpp; exact hpp.1.1
+          simp only [Bool.and_eq_true] at hpp; exact hpp.1.1.1
         have hdec := slicePars_splice h hr hpp2 ctx' gpos
         have hdec2 : slicePars (raws.extract 0 i
             ++ (splitAtPars ctx' body gpos ++ raws.extract (i + 1) raws.size)) i
@@ -12584,7 +12718,7 @@ private def elabBlocksGo (ctx : Ctx) (raws : Array Raw) (i : Nat)
         if (Parse.inputEnvFile? n).isSome then bodyIsBlock body
         else
           blockEnvs.contains n || isMathEnv n || n == Tcolorbox.boxEnv
-            || n == "tabular" || n == "tabular*"
+            || n == "tabular" || n == "tabular*" || n == Parse.markdownTableEnv
             || n == "algorithm" || n == "algorithm*" || n == "algorithm2e"
             || n == "algorithmic"
             || reservedEnv.contains n
@@ -12700,8 +12834,7 @@ private def elabBlocksGo (ctx : Ctx) (raws : Array Raw) (i : Nat)
         let ⟨stepCtx, hm⟩ : MCtx ctx' ←
           pure ⟨{ ctx' with stepBase := ctx'.stepBase + 1 }, rfl, rfl, rfl, rfl⟩
         let inner ← elabBlockScope stepCtx (raws.extract (i + 1) raws.size)
-        let blocks := if inner.isEmpty then blocks
-          else blocks.push (.step (ctx'.stepBase + 2) none inner)
+        let blocks := pauseCarrier raws i blocks (ctx'.stepBase + 2) inner
         have hend : sliceWeight raws raws.size = 0 :=
           sliceWeight_end raws (Nat.le_refl _)
         have hendp : slicePars raws raws.size = 0 :=
@@ -13027,7 +13160,7 @@ public theorem elaboration_total (ctx : Ctx) (raws : Array Raw) (st : ESt) :
     ∃ r, (elabBlocks ctx raws).run st = r :=
   ⟨_, rfl⟩
 
-unseal blockMacroStep
+unseal blockMacroStep pauseCarrier carrierInGroup carrierToEnd altCarriers
 unseal lengthScopeKeys? openLengthScope closeLengthScope openBlockScope closeBlockScope
 unseal closeBlockMacros blockControlContext
 unseal splicedFrameScope setFrameSourceBase recordFrameSource keepFrameSourcePrefix
@@ -13047,7 +13180,7 @@ unseal bodyIsBlock bodyIsBlockList bodyIsBlockOne overlayTakesBlocks
 unseal renderedBuiltins structuralNames
 unseal declCtrl runningCtrl titleCtrls overlayCtrls blockEnvs reservedEnv
 unseal displayMathEnvs alignEnvs isMathEnv sectionLevel specWord? blockHeading?
-unseal lookupUser lookupUserEnv isArgument isCenteringRaw isParRaw splitAtPars
+unseal lookupUser lookupUserEnv isArgument isCenteringRaw isParRaw splitAtPars sizeParScope
 unseal isColumnStray
 unseal parFollows displayAtBlock
 unseal scanBracketArg
@@ -13282,7 +13415,7 @@ private theorem mkPara_recovered_word (ctx : Ctx) (name w : String) (p gp wp : P
       warnUnknownCmd ctx name false p
       noteSalvage (unknownCmdDiag name {}).1 name (rawSrc #[.group #[.word w wp] gp])
       return some (paraUnder (← get).flowLang
-        (Ir.wrapDecls (← get).blockDecls #[sourceInline ctx wp (.text w)]))) := by
+        (Ir.paraAt (← get).blockDecls #[sourceInline ctx wp (.text w)]))) := by
   rw [mkPara]
   simp only [ForIn.forIn]
   rw [Lean.Loop.forIn_eq_of_monadTail]
@@ -13647,7 +13780,7 @@ private theorem elabBlocksGo_recovered_word (ctx : Ctx) (st : ESt) (name w : Str
       warnUnknownCmd ctx name false p
       noteSalvage (unknownCmdDiag name {}).1 name (rawSrc #[.group #[.word w wp] gp])
       return blocks.push (paraUnder (← get).flowLang
-        (Ir.wrapDecls (← get).blockDecls #[sourceInline ctx wp (.text w)]))) :
+        (Ir.paraAt (← get).blockDecls #[sourceInline ctx wp (.text w)]))) :
       EM (Array Block)).run st := by
   rw [elabBlocksGo_recovered_ctrl ctx st name w p gp wp blocks hm hp hb,
     elabBlocksGo_recovered_group ctx st name w p gp wp blocks hm hgp,
@@ -13668,7 +13801,7 @@ private theorem elabBlocksGo_recovered_shape (ctx : Ctx) (st : ESt) (name w : St
     (hb : isBlockStart ctx name #[.ctrl name p, .group #[.word w wp] gp] 0 #[] = false) :
     ∃ lang decls, ((elabBlocksGo ctx #[.ctrl name p, .group #[.word w wp] gp]
       0 blocks #[] st.flowGen).run st).1 =
-      blocks.push (paraUnder lang (Ir.wrapDecls decls #[sourceInline ctx wp (.text w)])) := by
+      blocks.push (paraUnder lang (Ir.paraAt decls #[sourceInline ctx wp (.text w)])) := by
   rw [elabBlocksGo_recovered_word ctx st name w p gp wp blocks hm hp hgp hwp hn hs he hl ht hr hb]
   exact ⟨_, _, rfl⟩
 
@@ -13688,7 +13821,7 @@ private theorem elabBlocks_recovered_shape (ctx : Ctx) (st : ESt) (name w : Stri
     (hr : String.ofList ((w.toList.reverse.dropWhile (· == ' ')).reverse) = w)
     (hb : isBlockStart ctx name #[.ctrl name p, .group #[.word w wp] gp] 0 #[] = false) :
     ∃ lang decls, ((elabBlocks ctx #[.ctrl name p, .group #[.word w wp] gp]).run st).1 =
-      #[paraUnder lang (Ir.wrapDecls decls #[sourceInline ctx wp (.text w)])] := by
+      #[paraUnder lang (Ir.paraAt decls #[sourceInline ctx wp (.text w)])] := by
   let xs : Array Raw := #[.ctrl name p, .group #[.word w wp] gp]
   have henter : {ctx with macroRoles := ctx.macroRoles.enter} = ctx := by
     cases ctx
@@ -13730,6 +13863,17 @@ private theorem mapInlines_wrapDecls (f : Inline → Inline) (ds : List Ir.Decl)
       change #[Inline.colored c name (Ir.mapInlines f (Ir.wrapDecls ds xs))] = _
       rw [ih]
 
+private theorem mapInlines_paraAt (f : Inline → Inline) (ds : List Ir.Decl)
+    (xs : Array Inline) (h : Ir.mapInlines f xs = xs) :
+    Ir.mapInlines f (Ir.paraAt ds xs) = Ir.paraAt ds xs := by
+  unfold Ir.paraAt
+  dsimp only
+  split
+  · change #[Inline.styled (.size "normalsize")
+      (Ir.mapInlines f (Ir.wrapDecls (Ir.dropShadowedSizes ds) xs))] = _
+    rw [mapInlines_wrapDecls f _ xs h]
+  · exact mapInlines_wrapDecls f _ xs h
+
 private theorem mapBlocks_paraUnder (f : Inline → Inline) (lang : Option String)
     (xs : Array Inline) (h : Ir.mapInlines f xs = xs) :
     Ir.mapBlocks f #[paraUnder lang xs] = #[paraUnder lang xs] := by
@@ -13743,26 +13887,26 @@ private theorem mapBlocks_paraUnder (f : Inline → Inline) (lang : Option Strin
 private theorem resolve_recovered_para (ctx : Ctx) (wp : Pos) (w : String)
     (lang : Option String) (ds : List Ir.Decl) (loc : Locale) (table : Ir.RefTable) :
     Ir.resolveRefs loc table
-      #[paraUnder lang (Ir.wrapDecls ds #[sourceInline ctx wp (.text w)])] =
-      #[paraUnder lang (Ir.wrapDecls ds #[sourceInline ctx wp (.text w)])] := by
+      #[paraUnder lang (Ir.paraAt ds #[sourceInline ctx wp (.text w)])] =
+      #[paraUnder lang (Ir.paraAt ds #[sourceInline ctx wp (.text w)])] := by
   rw [Ir.resolveRefs_agree]
   apply mapBlocks_paraUnder
-  apply mapInlines_wrapDecls
+  apply mapInlines_paraAt
   rfl
 
 private theorem recovered_para_census (ctx : Ctx) (wp : Pos) (w : String)
     (lang : Option String) (ds : List Ir.Decl) :
-    Ir.blocksText #[paraUnder lang (Ir.wrapDecls ds #[sourceInline ctx wp (.text w)])] = w := by
+    Ir.blocksText #[paraUnder lang (Ir.paraAt ds #[sourceInline ctx wp (.text w)])] = w := by
   have hw : Ir.plainText #[sourceInline ctx wp (.text w)] = w := by
     simp [sourceInline, Ir.plainText, Ir.plainTextList, Ir.plainTextOne]
   cases lang with
   | none =>
-    change "" ++ Ir.plainText (Ir.wrapDecls ds #[sourceInline ctx wp (.text w)]) = w
-    rw [String.empty_append, Ir.wrapDecls_text ds _, hw]
+    change "" ++ Ir.plainText (Ir.paraAt ds #[sourceInline ctx wp (.text w)]) = w
+    rw [String.empty_append, Ir.paraAt_text ds _, hw]
   | some tag =>
     change "" ++ Ir.plainText (Ir.langWrap tag
-      (Ir.wrapDecls ds #[sourceInline ctx wp (.text w)])) = w
-    rw [String.empty_append, Ir.langWrap_text tag _, Ir.wrapDecls_text ds _, hw]
+      (Ir.paraAt ds #[sourceInline ctx wp (.text w)])) = w
+    rw [String.empty_append, Ir.langWrap_text tag _, Ir.paraAt_text ds _, hw]
 
 private theorem numbered_recovered_para (lang : Option String) (xs : Array Inline) :
     Ir.numberFloats #[paraUnder lang xs] = #[paraUnder lang xs] := by
@@ -13790,6 +13934,27 @@ same value stays silent: it changes nothing and is often synthesized
 their layering mechanism, not a conflict. -/
 private def noteScalar (ctx : Ctx) (decl key value : String) (pos : Pos) : EM Unit :=
   modify fun st => applyEvent ctx st (.scalar decl key value pos)
+
+/-- The page's leading factor as LaTeX's `\selectfont` sets the body's
+`\baselineskip`: the skip the body's size declares (`bodySkip`, a class's
+`\normalsize` — the 6⁄5 rule where none is declared) stretched by
+`\linespread` (`spread`). The declared skip lands as its share of the 6⁄5
+rule at the body size, at milli-point precision (the arithmetic a class's
+`\@setfontsize` arguments are read at), and as the skip column's
+`\normalsize` row, so a named step the document does not declare keeps
+size10.clo's own length (`Ir.stepLead`). Read at the end of each `\page`
+block, so neither the order of its keys nor which of the two came first
+changes the page; they compose, never overwrite. -/
+private def composeLeading (spec : PageSpec) : PageSpec :=
+  match spec.bodySkip with
+  | none => { spec with leading := spec.spread }
+  | some d =>
+    let body := spec.fontSize
+    let ld := (d * 1000 + Dim.pt 1 / 2) / Dim.pt 1
+    let sz := max 1 ((body * 1000 + Dim.pt 1 / 2) / Dim.pt 1)
+    { spec with
+      leading := ((ld * (spec.spread : Int) * 1000 + sz * 600) / (sz * 1200)).toNat
+      skips := some (Ir.setSkip spec.skipScale "normalsize" (Ir.skipRowOf (d * 1000) body)) }
 
 private def applyPage (ctx : Ctx) (spec : PageSpec) (entries : Array Decl.Entry)
     (pos : Pos) (tokens : Array (String × SymGlue) := #[]) : PageSpec × Array PEvent := Id.run do
@@ -13866,16 +14031,28 @@ private def applyPage (ctx : Ctx) (spec : PageSpec) (entries : Array Decl.Entry)
           evs := say evs .E0323
             "'textheight' in '\\page' expects a dimension between zero and the page height"
       else evs := evs.push (.say (Decl.wrongType ctx.file "page" "textheight" "a dimension" v pos))
-    | "leading", .int n => spec := { spec with leading := n.toNat * 1000 }
+    -- `leading` is `\linespread`'s stretch, composed with the body's
+    -- declared skip once the block ends (`composeLeading`).
+    | "leading", .int n => spec := { spec with spread := n.toNat * 1000 }
     | "leading", .dim d =>
       -- A bare decimal like 1.15 reads as a dimension in points; the factor
       -- is what was meant.
-      spec := { spec with leading := (d * 1000 / pt 1).toNat }
+      spec := { spec with spread := (d * 1000 / pt 1).toNat }
     | "leading", .ident f =>
       -- ...and one without a unit reaches here as a name.
       match Decl.parseDecimal f with
-      | some (m, s) => spec := { spec with leading := (m * 1000 / s).toNat }
+      | some (m, s) => spec := { spec with spread := (m * 1000 / s).toNat }
       | none => evs := say evs .E0323 s!"'leading' in '\\page' expects a factor like 1.15, got '{f}'"
+    -- The body's `\baselineskip` as a class's `\normalsize` declares it
+    -- (`\@setfontsize`'s third argument, fntguide), resolved at the body
+    -- size the block ends on (`composeLeading`), whatever order its keys
+    -- stand in.
+    | "baselineskip", v =>
+      if let some d := asDim v then
+        if 0 < d then spec := { spec with bodySkip := some d }
+        else
+          evs := say evs .E0323 "'baselineskip' in '\\page' expects a positive dimension"
+      else evs := evs.push (.say (Decl.wrongType ctx.file "page" "baselineskip" "a dimension" v pos))
     | "parskip", .glue g => spec := { spec with parskip := some g }
     | "parskip", .dim d => spec := { spec with parskip := some { width := Dim.Length.ofSp d } }
     | "fontsize", .dim d =>
@@ -14029,10 +14206,11 @@ private def applyPage (ctx : Ctx) (spec : PageSpec) (entries : Array Decl.Entry)
         -- `modulo` only qualifies `linenumbers` (named beside it in the
         -- lineno translation notes), so it too is accepted without a
         -- listing of its own; `bottom` is `\flushbottom`'s and
-        -- `\raggedbottom`'s, which name it in their translation notes.
+        -- `\raggedbottom`'s, which name it in their translation notes, as a
+        -- class's `\normalsize` names `baselineskip`.
         evs := evs.push (.say (Decl.unknownKey ctx.file "page" key
           (pageKeys.filter
-            (!["headsep", "footskip", "textwidth", "textheight",
+            (!["headsep", "footskip", "textwidth", "textheight", "baselineskip",
                "mark-gap", "mark-thickness", "modulo", "rule", "trim", "bottom"].contains ·)) pos))
     -- Every failing arm above records a diagnostic, so a clean count means
     -- the entry applied: record it, and warn if it overwrote (W0343). A
@@ -14040,7 +14218,7 @@ private def applyPage (ctx : Ctx) (spec : PageSpec) (entries : Array Decl.Entry)
     -- overwrites nothing.
     if evs.size == before && e.key != "rule" then
       evs := evs.push (.scalar "page" e.key (renderValue e.value) pos)
-  return (spec, evs)
+  return (composeLeading spec, evs)
 
 private def fontSlot? (name : String) : Option Nat :=
   match name with
@@ -15276,18 +15454,26 @@ private def applyAllow (ctx : Ctx) (allow : Array String) (src : String) (pos : 
       unless allow.contains c.code do
         allow := allow.push c.code
     | none =>
-      match DiagCode.retired.lookup code with
-      | some (some succ) =>
+      match DiagCode.renumbered.lookup code, DiagCode.retired.lookup code with
+      | some succ, _ =>
+        unless allow.contains succ do
+          allow := allow.push succ
+        evs := evs.push (.say (diagOf ctx .N0105
+          s!"'\\allow' names the renumbered code '{code}'; '{succ}' reports the same loss \
+now, and is accepted in its place"
+          (some pos) (help := s!"write '{succ}' in \\allow instead of '{code}'")
+          (subject := some ("allow:" ++ code))))
+      | none, some (some succ) =>
         evs := evs.push (.say (diagOf ctx .N0105
           s!"'\\allow' names the retired code '{code}'; '{succ}' reports this now, \
 so this accepts nothing"
           (some pos) (help := s!"remove '{code}' from \\allow and review the '{succ}' diagnostic")
           (subject := some ("allow:" ++ code))))
-      | some none =>
+      | none, some none =>
         evs := evs.push (.say (diagOf ctx .N0105
           s!"'\\allow' names the retired code '{code}'; the loss it named cannot occur"
           (some pos) (subject := some ("allow:" ++ code))))
-      | none =>
+      | none, none =>
         evs := evs.push (.say (diagOf ctx .E0329
           s!"'\\allow' names no diagnostic code '{code}'" (some pos)
           (help := "codes look like 'E0333'; each names the one loss it accepts")))
@@ -16254,17 +16440,20 @@ own ladder disorders — step by step through `Ir.setStep`, the offenders
 named (`Ir.size_ladder_monotone`, `Ir.size_ladder_monotone_all`). A landed
 step drops its W0361 and notes what it became (N0100); a step that would
 disorder the named sizes keeps the built-in, its W0361 gaining the clause
-saying why; a body whose head is not the idiom keeps plain rule (b). The
-declared leading is not read:
-the engine's leading is one page-level factor (`Ir.leadingFor`), already
-the venue's own through `\normalsize`'s read-out, and no per-step leading
-exists to declare. A redefinition that later won extracts nothing. -/
+saying why; a body whose head is not the idiom keeps plain rule (b). A
+landed step's declared leading — the idiom's third argument — lands with it
+as the step's row of the document's skip column (`Ir.setSkip`, read as its
+per-mille share of the body, `Ir.skipRowOf`), so its lines lead at the skip
+the venue wrote (`Ir.stepLead`) against the body's own, the venue's
+`\normalsize` read-out (`\page{ baselineskip = … }`); a step it refuses keeps
+size10.clo's size and skip together. A redefinition that later won extracts
+nothing. -/
 private def applyRefusedSizeLadder (s : PreState) : EM PreState := do
   let stash := (← get).refusedSizeBodies
   if stash.isEmpty then return s
   modify fun st => { st with refusedSizeBodies := #[] }
   -- Each stashed body's readable step, in document order — later wins.
-  let mut steps : Array (String × Nat × Span) := #[]
+  let mut steps : Array (String × Nat × Option Nat × Span) := #[]
   for (name, body, span) in stash do
     if (lookupUser s.ctx name).isSome then continue
     let b := skipSpaces body 0
@@ -16278,7 +16467,10 @@ private def applyRefusedSizeLadder (s : PreState) : EM PreState := do
     -- `sz` is milli-points, so `Dim.pt sz` is a thousand times the size in
     -- sp: dividing by the body straight off gives the per-mille step.
     let factor : Nat := ((Dim.pt (Int.ofNat sz) + bodySp / 2) / bodySp).toNat
-    steps := (steps.filter (·.1 != name)).push (name, factor, span)
+    -- The declared leading, as its row of the skip column at the same body.
+    let skip := (fsArgs[2]?.bind Compat.ptMacroArg).filter (0 < ·) |>.map fun ld =>
+      Ir.skipRowOf (Dim.pt (Int.ofNat ld)) bodySp
+    steps := (steps.filter (·.1 != name)).push (name, factor, skip, span)
   if steps.isEmpty then return s
   let land (name : String) (factor : Nat) (span : Span) : EM Unit :=
     modify fun st => { st with
@@ -16302,24 +16494,32 @@ order, so it is not read" }
   -- ladder that disorders whole is salvaged step by step, the offenders
   -- named — both doors ordered by construction (`Ir.size_ladder_monotone`,
   -- `Ir.size_ladder_monotone_all`).
+  -- A landed step's declared skip lands with its size, as one row.
+  let withSkips (skips : List (String × Nat)) (landed : List (String × Option Nat)) :
+      List (String × Nat) :=
+    landed.foldl (fun sk (name, skip) => match skip with
+      | some row => Ir.setSkip sk name row
+      | none => sk) skips
   match Ir.setStepsAll s.page.scale (steps.toList.map fun q => (q.1, q.2.1)) with
   | some ladder =>
-    for (name, factor, span) in steps do
+    for (name, factor, _, span) in steps do
       land name factor span
-    return { s with page := { s.page with sizes := some ladder } }
+    let skips := withSkips s.page.skipScale (steps.toList.map fun q => (q.1, q.2.2.1))
+    return { s with page := { s.page with sizes := some ladder, skips := some skips } }
   | none =>
     let mut ladder := s.page.scale
-    let mut moved := false
-    for (name, factor, span) in steps do
+    let mut landed : Array (String × Option Nat) := #[]
+    for (name, factor, skip, span) in steps do
       match Ir.setStep ladder name factor with
       | some l' =>
         ladder := l'
-        moved := true
+        landed := landed.push (name, skip)
         land name factor span
       | none =>
         refuse name factor
-    if moved then
-      return { s with page := { s.page with sizes := some ladder } }
+    if !landed.isEmpty then
+      return { s with page := { s.page with sizes := some ladder
+                                            skips := some (withSkips s.page.skipScale landed.toList) } }
     else
       return s
 
@@ -16890,12 +17090,14 @@ private def prepareStyledBody (file : String) (decls : Array PDecl)
       diag ctx .W0356
         "class option 'draft' asks for a proofing mode the engine does not have; the document is rendered in full"
         none
+  let surface := Ir.Surface.ofPath file
   if record.model == .flow && !sawPage then
     -- An undeclared letter page takes Bringhurst's text block for a 10pt
     -- text face, 26 picas, not the word-processor inch: the default must
     -- satisfy the measure band the engine checks (W0201). A document that
-    -- declares any \page geometry keeps every value it named.
-    page := { page with hmargin := (page.width - Ir.articleTextBlock) / 2 }
+    -- declares any \page geometry keeps every value it named. A markdown
+    -- source can declare none, so its page is its surface's text block.
+    page := { page with hmargin := (page.width - surface.textBlock) / 2 }
   -- Furniture legality is the class record's, not the geometry's: a class
   -- that carries no running furniture drops the declaration and says so.
   if !record.runningFurniture && (head.isSome || foot.isSome) then
@@ -16920,7 +17122,7 @@ private def prepareStyledBody (file : String) (decls : Array PDecl)
                     frameAlign := classFrameAlign classOpts
                     face := record.model == .face
                     numberHeadings := record.numberHeadings, styles := styles
-                    page := page, tokens := tokens
+                    page := page, tokens := tokens, surface := surface
                     engineTokens := engineLengthTokensOfPage page }
   -- Numbering is a property of the finished document, not of any one
   -- elaboration site: `Ir.numberFloats` fills every captioned float's
@@ -17117,6 +17319,7 @@ private def prepareStyledBody (file : String) (decls : Array PDecl)
       author := fallback info.author st.author }
     let doc : Doc := {
       docClass := docClass
+      surface := surface
       classOptions := classOptions
       page := page
       fonts := fonts
@@ -17224,7 +17427,7 @@ public structure ReqSpans where
   line E0503 names when the driver finds no file. -/
   bib : Array (String × Span) := #[]
   /-- Each image source's first span — file images and boundary pictures
-  alike: where the driver's per-picture N0376 and E0382 point. -/
+  alike: where the driver's per-picture N0376 and W0382 point. -/
   images : Array (String × Span) := #[]
   /-- Openings of top-level frames, keyed by their block index in this
   elaboration's final `Doc.body`, before backend filtering or overlays.
@@ -17237,6 +17440,11 @@ public structure ReqSpans where
   drawn natively instead (`Cli.Boundary.withdraw`, and `runRaws` for a
   caller that fulfils nothing). -/
   fallbacks : Array String := #[]
+  /-- The pictures the rendered subset draws in part because the document
+  declared `\pictures{ tool = none }`, by picture id: each refusal of one is
+  keyed under the picture, as a withdrawn picture's is, and the driver folds
+  them into the picture's one line (`Cli.Boundary.foldLines`). -/
+  declined : Array String := #[]
   /-- Each reference key's first site: where W0349 points. -/
   refs : Array (String × Span) := #[]
   /-- The label table resolution spent, for W0349's cause (`Ir.refDiags`). -/
@@ -17282,7 +17490,7 @@ built-in name, W0303's — ignores its bodies, so its halves raise nothing
 and ship nothing; every other definition's halves settle to the tree a
 plain parse builds, the open half closed at its body's brace and the close
 half dropped, with that parse's diagnostics. A package file's splice drops them, as it drops its
-parse's (`Cli.Input.expandLocalSty`). `skip` counts the groups a refused
+parse's (the style the driver reads for an input request). `skip` counts the groups a refused
 definition still holds at this level: its name and its two bodies. -/
 -- conserves: none — settling rebuilds the parse's recovery tree by design.
 private def settleList (file : String) (skip : Nat) (out : Array Raw)
@@ -17632,7 +17840,7 @@ public def completePrepared (file : String) (p : Prepared) (earlier : Array Diag
   let st := finishPictureKeys report doc p.picSets st
   let outline := Ir.outlineDiags doc
   -- The file-image face only: boundary pictures are judged by the driver
-  -- after fulfilment (`Ir.picAltDiags`), where E0382's outcome is known.
+  -- after fulfilment (`Ir.picAltDiags`), where W0382's outcome is known.
   let alt := Ir.altDiags doc fun src => (st.spans.images.find? (·.1 == src)).map (·.2)
   let links := Ir.linkDiags doc
   let sequences := Ir.footerSequenceDiags doc
@@ -17644,6 +17852,7 @@ public def completePrepared (file : String) (p : Prepared) (earlier : Array Diag
       images := st.spans.images
       frames := st.spans.frames.sites
       fallbacks := st.spans.fallbacks
+      declined := st.spans.declined
       refs := (st.refSites.foldl (init := (#[], (∅ : Std.HashSet String)))
         fun (out, seen) (key, _, pos) =>
           if seen.contains key then (out, seen)
@@ -17754,8 +17963,10 @@ nothing, it has no boundary tool either, so it withdraws every request the
 rendered subset can stand in for (`ReqSpans.fallbacks`) and elaborates
 again, as the driver does on a machine with no tool and a cold cache
 (`Cli.Boundary.withdraw`): the document it returns is the page such a build
-ships, the subset's drawing with its refusals named. The first pass — the
-requests, stated from the document alone — is `runRawsSpanned`'s. -/
+ships, the subset's drawing with its refusals named, keyed under the
+picture — one by one here, where the driver folds them into the picture's
+one line (`Cli.Boundary.fold`). The first pass — the requests, stated from
+the document alone — is `runRawsSpanned`'s. -/
 public def finishPreparedRuns (pass : Array String → Doc × Array Diag × ReqSpans) :
     Doc × Array Diag :=
   let first := pass #[]

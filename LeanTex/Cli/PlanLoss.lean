@@ -33,7 +33,7 @@ public def ledger (store : Image.Store) : Array Diag := Id.run do
 /-- The alternative judge's picture face over a fulfilled store
 (`Ir.picAltDiags`): a boundary picture whose drawn box embeds and carries no
 text alternative. A picture the tool failed on ships a placeholder box, not
-an image, and E0382 has named that loss, so it is not named here again. -/
+an image, and W0382 has named that loss, so it is not named here again. -/
 public def pictureAlts (doc : Ir.Doc) (imageSpans : Array (String × Span))
     (store : Image.Store) : Array Diag :=
   Ir.picAltDiags doc (fun src => (imageSpans.find? (·.1 == src)).map (·.2))

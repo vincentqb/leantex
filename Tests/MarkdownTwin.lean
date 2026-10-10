@@ -221,7 +221,7 @@ def twinBlockChecks (ref : IO.Ref (List String)) : IO Unit := do
     (back.body.any (· matches .quote _))
   -- The corpus list fixture's twin reads back with no refusal.
   let path := "testdata/corpus/lists.tex"
-  let (doc, _) ← elabInputSrc path (← IO.FS.readFile path)
+  let (doc, _) ← elabInputSrc path (← fixtureText path)
   let (tw, _, ds) := roundTrip doc
   t s!"twin: the list fixture's twin reads back unrefused ({(ds.filter (·.severity == .error)).map (·.subject)})"
     (!hasError ds && !tw.isEmpty)
@@ -413,7 +413,7 @@ def twinEdgeChecks (ref : IO.Ref (List String)) : IO Unit := do
       | _ => false)
   -- A reference list's markers are text, so its twin is a fixed point: the
   -- bibliography fixture, its `.bib` resolved as the driver resolves it.
-  let (d, _) ← elabFixture "bibliography" (← IO.FS.readFile "testdata/corpus/bibliography.tex")
+  let (d, _) ← elabFixture "bibliography" (← fixtureText "testdata/corpus/bibliography.tex")
   let tw := MarkdownDoc.emit d
   let (back, _) := elabMd tw
   t s!"twin: a reference list's markers read back as written ({repr tw})"

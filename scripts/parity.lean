@@ -98,7 +98,7 @@ written exactly as the driver writes it, then read back from its bytes.
 def engineSide (oneFace mathSet : Font.FontSet) (shipped : Array FontDb.Face)
     (pats : Hyphen.Patterns) (stem : String) :
     IO (Array Diag × Except String (Array ArtPage)) := do
-  let src ← IO.FS.readFile (System.FilePath.mk parityDir / (stem ++ ".tex"))
+  let src ← fixtureText (System.FilePath.mk parityDir / (stem ++ ".tex")).toString
   let (doc, diags) ← elabFixture stem src
   let geom := Layout.Geom.ofPage doc.page
   let fs ← fixtureFontSet oneFace mathSet shipped doc
