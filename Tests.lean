@@ -222,6 +222,7 @@ import Tests.BigDelim
 import Tests.Regress
 import Tests.RegressionCorpus
 import Tests.Reports
+import Tests.Premises
 import Tests.Natbib
 import Tests.LinkColor
 import Tests.Privacy
@@ -677,6 +678,14 @@ def layoutSuiteChecks (ref : IO.Ref (List String)) : IO Unit := do
   fontSizeAffineChecks ref oneFace
   linkColorChecks ref oneFace
 
+/-- The world premises' blocks, dispatched together so `main`'s spent
+elaboration budget stays flat: the runtime's process boundary, the
+toolchain's spawners, and the registry held to the source. -/
+def worldPremiseChecks (ref : IO.Ref (List String)) : IO Unit := do
+  Tests.processRuntimeChecks ref
+  toolchainSpawnChecks ref
+  premiseChecks ref
+
 /-- The surface-and-math suite: the dispatcher for the compat, class,
 bibliography, and math elaboration blocks, so an added block lands here and
 `main`'s spent elaboration budget stays flat — the regrowth the two suite
@@ -830,6 +839,7 @@ def main (args : List String) : IO UInt32 := do
   siteAccountingChecks ref
   diagAuditChecks ref
   reportChecks ref
+  worldPremiseChecks ref
   optionRunAccountingChecks ref
   visibleRunAccountingChecks ref
   monoSlotChecks ref

@@ -4,8 +4,9 @@ public import LeanTex.Cli.PicCache
 
 namespace LeanTex.Cli.RunBounded
 
--- Operational ceilings: one minute per conversion, two seconds to stop its
--- process group, and 16 MiB per textual stream (including xmllint's SAX dump).
+-- Operational ceilings: one minute per conversion, two seconds for a killed
+-- process group's pipes to close, and 16 MiB per textual stream (including
+-- xmllint's SAX dump).
 public def convBudgetMs : Nat := 60000
 public def convGraceMs : Nat := 2000
 public def maxCaptureBytes : Nat := 16 * 1024 * 1024
@@ -42,20 +43,6 @@ private def finishedBad (t : Task (Except IO.Error Capture)) : BaseIO Bool := do
       | .error _ => true
   return false
 
--- `Child.kill` sends TERM to a setsid child's process group. SIGKILL needs
--- the POSIX utility; neither its lookup nor its wait may escape the budget.
-private def killGroup (pid : UInt32) : IO Unit := do
-  try
-    let child ← IO.Process.spawn {
-      cmd := "/bin/kill", args := #["-KILL", "--", "-" ++ toString pid],
-      stdin := .null, stdout := .null, stderr := .null }
-    for _ in [:20] do
-      if (← child.tryWait).isSome then return
-      IO.sleep 10
-    discard <| child.kill.toBaseIO
-    discard <| child.tryWait.toBaseIO
-  catch _ => pure ()
-
 public def runBounded (tool : String) (args : Array String) (cwd : System.FilePath)
     (budgetMs : Nat := convBudgetMs) (graceMs : Nat := convGraceMs)
     (captureLimit : Nat := maxCaptureBytes)
@@ -84,17 +71,16 @@ public def runBounded (tool : String) (args : Array String) (cwd : System.FilePa
     if elapsed ≥ budgetMs then break
     IO.sleep (min 10 (budgetMs - elapsed)).toUInt32
   unless complete do
+    -- `Child.kill` sends SIGKILL to a setsid child's whole process group, a
+    -- reaped leader's descendants included, so nothing that stays in the
+    -- group can trap it.
     discard <| child.kill.toBaseIO
     let stop ← IO.monoMsNow
+    let mut reaped := code.isSome
     for _ in [:graceMs / 10 + 2] do
-      discard <| child.tryWait.toBaseIO
+      unless reaped do reaped := (← child.tryWait.toBaseIO).toOption.any (·.isSome)
+      if reaped && (← IO.hasFinished outT) && (← IO.hasFinished errT) then break
       if (← IO.monoMsNow) - stop ≥ graceMs then break
-      IO.sleep 10
-    -- The leader may already have exited; its descendants still own the group.
-    killGroup child.pid
-    for _ in [:graceMs / 10 + 2] do
-      discard <| child.tryWait.toBaseIO
-      if (← IO.hasFinished outT) && (← IO.hasFinished errT) then break
       IO.sleep 10
   let read (t : Task (Except IO.Error Capture)) : BaseIO String := do
     if ← IO.hasFinished t then return (t.get.toOption.getD {}).text
