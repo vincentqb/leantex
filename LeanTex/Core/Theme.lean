@@ -328,7 +328,8 @@ public def styleMerge (top base : ElementStyle) : ElementStyle :=
     hover := top.hover <|> base.hover
     focus := top.focus <|> base.focus
     motion := top.motion <|> base.motion
-    slots := if top.slots.isEmpty then base.slots else top.slots }
+    slots := if top.slots.isEmpty then base.slots else top.slots
+    shape := top.shape <|> base.shape }
 
 private def installPalette (p : Palette) : List (String × Color) → Palette
   | [] => p

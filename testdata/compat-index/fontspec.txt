@@ -1,4 +1,5 @@
-# source: fontspec manual §4.1-4.3 (\setmainfont family), §4.4 (\newfontfamily),
+# source: fontspec manual §4.1-4.3 (\setmainfont family), §4.4 (\newfontfamily,
+# \newfontface, and their \set..., \renew... and \provide... forms),
 # §4.5 (\fontspec), §5 (\defaultfontfeatures, \addfontfeatures); FontFace from
 # the fontspec sources (fontspec-preparse key -> \__fontspec_add_nfssfont:nnnn:
 # series, shape, font, features), verified against fontspec-luatex.sty.
@@ -8,7 +9,14 @@ pre impl \setsansfont{Example Sans}
 pre impl \setmonofont{Example Mono}
 pre impl \babelfont{rm}{Example Serif}
 body impl {\fontseries{l}\selectfont x}
-pre refuse:W0301 \newfontfamily\myfont{Example Sans}
+pre impl \newfontfamily\myfont{Example Sans}
+pre impl \setfontfamily\myfont{Example Sans}
+pre impl \renewfontfamily\myfont{Example Sans}
+pre impl \providefontfamily\myfont{Example Sans}
+pre impl \newfontface\myface{Example Sans}
+pre impl \setfontface\myface{Example Sans}
+pre impl \renewfontface\myface{Example Sans}
+pre impl \providefontface\myface{Example Sans}
 body refuse:W0301 {\fontspec{Example Sans} x}
 body refuse:W0301 {\addfontfeatures{Numbers=OldStyle} x}
 pre refuse:W0301 \defaultfontfeatures{Ligatures=TeX}

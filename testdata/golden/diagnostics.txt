@@ -103,7 +103,7 @@
 ── E0328 (dropped) not a styleable element
 ✖ [E0328] - \style
   'banana' is not a styleable element or a '\define'd name
-  suggestion: elements: section, subsection, subsubsection, heading{1,5,6}, abstract, itemize{,2..4}, enumerate{,2..4}, frametitle, sectionpage, standout, titlepage, nav, logo, link, url, cite
+  suggestion: elements: section, subsection, subsubsection, heading{1,5,6}, abstract, itemize{,2..4}, enumerate{,2..4}, frametitle, sectionpage, standout, titlepage, nav, logo, link, url, cite, block, alertblock, exampleblock
 ── E0329 (dropped) unknown diagnostic code in \allow
 ✖ [E0329] - \allow
   '\allow' names no diagnostic code 'W9999'

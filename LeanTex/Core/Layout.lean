@@ -1778,6 +1778,7 @@ private def applyStyle (ladder : List (String × Nat)) (sty : TextStyle) :
   | .sans => { sty with slot := 1 }
   | .smallcaps => { sty with smallcaps := true }
   | .roman => { sty with slot := 0 }
+  | .family s => { sty with slot := s }
   | .medium => { sty with weight := .m }
   | .series w => { sty with weight := w }
   -- NFSS shapes are exclusive (fntguide §2.2): upright clears both.
@@ -7498,6 +7499,12 @@ no inset above. -/
 private inductive RegionKind where
   | link (target : String)
   | surface (color : Ir.Color) (pad x w : Sp) (anchored : Bool)
+  /-- A rule a block template sets beside a box (`Ir.BlockEdge`): painted
+  `x`..`x + w` from the box's top — its first line's TeX box top, and
+  `inset` above it the `\parskip` the box's list opens on — to its last
+  line's TeX box bottom and the glue the box ends on. It spaces nothing:
+  TeX sets the rule in the line beside the box, as tall as the box. -/
+  | edge (color : Ir.Color) (x w inset : Sp)
 
 private structure RegionStart where
   kind : RegionKind
@@ -7578,7 +7585,7 @@ private def RegionSpan.box (s : RegionSpan) (lines : Array LineOut)
   let mut box : Option RegionBox := none
   for l in lines.extract s.lineStart s.lineEnd do
     box := match s.kind, l.regionExtent with
-      | .surface .., some (above, below) =>
+      | .surface .., some (above, below) | .edge .., some (above, below) =>
         addRegionBox box l.x (l.y - above) (l.x + l.setWidth) (l.y + below)
       | _, _ => lineRegionBox box l
   for f in fills.extract s.fillStart s.fillEnd do
@@ -7593,7 +7600,7 @@ private def RegionSpan.linkRect (s : RegionSpan) (lines : Array LineOut)
   | .link target => (s.box lines fills inks).map fun b =>
       { x := b.x0, y := b.y0, w := max 0 (b.x1 - b.x0), h := max 0 (b.y1 - b.y0),
         target := target }
-  | .surface _ _ _ _ _ => none
+  | .surface _ _ _ _ _ | .edge .. => none
 
 /-- Surface extents are read after placement, including page/column breaks
 and vertical distribution: the box's lines (`LineOut.regionExtent`, TeX's
@@ -7614,6 +7621,23 @@ private def RegionSpan.fill (s : RegionSpan) (lines : Array LineOut)
     box.map fun b =>
       let y := if anchored && s.first then b.y0 else b.y0 - pad
       { x := x, y := y, w := w, h := max 0 (b.y1 + s.tail + pad - y), color := color }
+  | .edge color x w inset =>
+    -- The box's own reach: its lines and what paints inside it. Another
+    -- rule beside the same box stands beside it, not in it, and its fill
+    -- already reaches its own inset above the box.
+    let box := children.foldl (fun box (child, f) =>
+      if !(child.kind matches .edge ..) && s.depth < child.depth &&
+          s.lineStart ≤ child.lineStart && child.lineEnd ≤ s.lineEnd &&
+          s.fillStart ≤ child.fillStart && child.fillEnd ≤ s.fillEnd &&
+          s.inkStart ≤ child.inkStart && child.inkEnd ≤ s.inkEnd then
+        addRegionBox box f.x f.y (f.x + f.w) (f.y + f.h)
+      else box) (s.box lines fills inks)
+    -- A box of no height draws its rule nowhere, as TeX's rule of no
+    -- height and depth paints nothing.
+    box.bind fun b =>
+      let y := if s.first then b.y0 - inset else b.y0
+      let h := b.y1 + s.tail - y
+      if h ≤ 0 then none else some { x := x, y := y, w := w, h := h, color := color }
 
 /-- Measure children before their parents, so every enclosing surface owns
 its inset outside its children's paint. The caller paints the reverse order:
@@ -7980,12 +8004,12 @@ fragment owes its top inset once, and every fit owes all open bottom insets. -/
 private def Spacing.Page.surfaceTop (b : B) : Sp :=
   b.openRegions.foldl (fun total s => match s.kind with
     | .surface _ pad _ _ _ => total + if s.begun then 0 else pad
-    | .link _ => total) 0
+    | .link _ | .edge .. => total) 0
 
 private def Spacing.Page.surfaceBottom (b : B) : Sp :=
   b.openRegions.foldl (fun total s => match s.kind with
     | .surface _ pad _ _ _ => total + pad
-    | .link _ => total) 0
+    | .link _ | .edge .. => total) 0
 
 /-- The floor of the text area on the page being built — what every fit
 test, the note block and the page close read: `Geom.bodyBottom`, except on
@@ -9885,6 +9909,24 @@ public structure HeadingRule where
   color : Ir.Color
   deriving Repr, Inhabited
 
+/-- A paragraph that opens a TeX box (a block's title box, or the box holding
+title and body, `Ir.BlockShape`): its first line stands `inset` below the
+box's top — what the box's list opens on before it, the `\parskip` there —
+and TeX's interline rule places the box from its height, or past any
+`\baselineskip` when `more` stands in the box after the paragraph. Its lines
+stand `leading` apart by TeX's rule, the `\baselineskip` of the font the box
+sets them in, and the band after the box is spaced from its depth by TeX's
+rule too. A paragraph of the block's own list, no box's (`boxed` false: a
+template's title set without a box), stands its first line by that rule
+too, from the line above, at the `\baselineskip` TeX reads where the
+paragraph ends: its font's. -/
+public structure TexBox where
+  inset : Sp
+  more : Bool
+  leading : Sp
+  boxed : Bool := true
+  deriving Repr, Inhabited, DecidableEq
+
 /-- One paragraph, measured and ready to break: everything `kp` and line
 placement need, gathered during the block walk so the breaking runs can
 happen in parallel between the walk and placement. -/
@@ -9980,6 +10022,9 @@ public structure Spacing.Paragraph where
   the cell's words onto one overfull line across the next column. Zero
   elsewhere. -/
   private background : Sp := 0
+  /-- The paragraph opens a TeX box (`TexBox`): its first line stands where
+  TeX's interline rule puts that box (`placeParaLine`). -/
+  private texBox : Option TexBox := none
 
 private abbrev ParaJob := Spacing.Paragraph
 
@@ -10376,6 +10421,11 @@ public structure Spacing.Pending where
   channel indexes the array the tagger reads by construction; the walk
   decides only where a block's range starts. -/
   private leafNext : Nat := 0
+  /-- The next paragraph opens a TeX box (`TexBox`): an untitled block's body
+  is the first content of the box its template sets around title and body
+  (`Ir.BlockShape.whole`). Consumed by that paragraph; the block's close
+  clears it. -/
+  private boxOpener : Option TexBox := none
 
 private abbrev Acc := Spacing.Pending
 
@@ -10726,8 +10776,10 @@ private def collectPara (r : Rd) (a : Acc)
     (dispJob : Option DisplayJob := none) (paintPadding : Option Sp := none)
     (rowStrut : Option (Sp × Sp) := none) (strut : Option Sp := none)
     (inserted : Bool := false) (background : Sp := 0)
-    (urlBreaks : Bool := r.surface == .markdown) : Acc :=
-  let a := a.flushGap r
+    (urlBreaks : Bool := r.surface == .markdown)
+    (texBox : Option TexBox := none) : Acc :=
+  let texBox := texBox.orElse fun _ => a.boxOpener
+  let a := { a.flushGap r with boxOpener := none }
   let indent := indent + hangIndent
   -- The measure the paragraph sets against — and what a fraction-of-
   -- `\textwidth` image size resolves against: inside a `column` the
@@ -10888,6 +10940,7 @@ private def collectPara (r : Rd) (a : Acc)
       firstBaseline := firstBaseline
       paintPadding := paintPadding
       strut := strut
+      texBox := texBox
       flushRight := r.geom.flushRight
       justify := r.geom.justify
       rightFil := rightFil
@@ -11005,11 +11058,13 @@ private def collectDisplay (r : Rd) (a : Acc)
     (baseStyle : TextStyle := {})
     (rule : Option HeadingRule := none)
     (leaf : Option Nat := none) (span : Nat := 0) (keepNext : Sp := 0)
-    (paintPadding : Option Sp := none) (inserted : Bool := false) : Acc :=
+    (paintPadding : Option Sp := none) (inserted : Bool := false)
+    (strut : Option Sp := none) (texBox : Option TexBox := none) : Acc :=
   collectPara { r with pats := none, geom := { r.geom with justify := false } }
     a inlines indent center size (baseStyle := baseStyle) (rule := rule)
     (display := true) (leaf := leaf) (span := span) (keepNext := keepNext)
-    (paintPadding := paintPadding) (inserted := inserted)
+    (paintPadding := paintPadding) (inserted := inserted) (strut := strut)
+    (texBox := texBox)
 
 /-- The natural (unstretched, unshrunk) width of a set of items: what the
 cell takes when nothing bends. Penalties add nothing — a pen's width is
@@ -13169,11 +13224,22 @@ the block walk resolves it (`Spacing.Context.xHeight`). -/
 public def titledPaddingOf (fs : FontSet) (geom : Geom) : Sp :=
   titledPadding geom.fontSize (fs.body.xHeight * geom.fontSize / fs.body.unitsPerEm)
 
+/-- A block title's `\baselineskip` under its font template
+(`Ir.blockTitleLeading`), resolved in the body's font: what its box's lines
+stand apart by and its `\strut` reads. The template's size wrapper sets the
+title's runs at that size itself. -/
+private def titleLeading (r : Rd) (font : Option (Array Inline)) : Sp :=
+  (Ir.blockTitleLeading r.geom.scale r.geom.fontSize r.geom.leading
+    (MeasureValues.horizontal r.geom.textWidth r.geom.textHeight) font).resolve
+    r.geom.fontSize r.xHeight
+
 /-- A titled block's title colour box (beamerinnerthemedefault.sty, `block
 begin`), read at the block's epoch: a painted title is a colour box around
 its lines (`RegionKind.surface`), which stand on the measure; an unpainted
-one is its lines; and an untitled block keeps the empty box, `1.5ex` of
-paint or an empty line. `x` and `w` are the paint's reach. -/
+one is its lines in the box TeX's interline rule places from its height
+under the page's `\baselineskip`, its lines its font's `\baselineskip`
+apart (`TexBox`, `titleLeading`); and an untitled block keeps the empty box,
+`1.5ex` of paint or an empty line. `x` and `w` are the paint's reach. -/
 private def collectTitledTitle (r : Rd) (a : Acc) (kind : TitledKind)
     (title : Array Inline) (indent pad x w : Sp) : Acc :=
   let look := Ir.titledLook a.pal kind
@@ -13193,9 +13259,15 @@ private def collectTitledTitle (r : Rd) (a : Acc) (kind : TitledKind)
       | none => a
     let a := { a with fg := r.shown titleInk, ground := bar.orElse fun _ => a.ground }
     let (a, leaf) := a.leafRange (leafCount title)
-    let a := collectDisplay r a title indent false r.geom.fontSize
+    let font := Ir.blockTitleFont r.styles kind
+    let shown := match font with
+      | some tpl => Ir.fillTemplate tpl title
+      | none => title
+    let a := collectDisplay r a shown indent false r.geom.fontSize
       (baseStyle := { weight := .b }) (leaf := leaf) (span := leafCount title)
       (paintPadding := bar.map fun _ => pad)
+      (texBox := if bar.isSome then none
+        else some { inset := 0, more := false, leading := titleLeading r font })
     let a := if bar.isSome then a.pushOp .regionClose else a
     { a with fg := saved.1, ground := saved.2 }
 
@@ -13251,6 +13323,114 @@ private def collectBoxOpen (r : Rd) (a : Acc) (title : Array Inline) (indent : S
       bodyOpen a .flush (if look.bar.isSome then 0 else Ir.tcbBoxsep + Ir.tcbRule)
         (Ir.tcbBoxsep + Ir.tcbTop)
   ({ a with measure := some (measure - Ir.tcbInset) }, indent + Ir.tcbInset)
+
+/-- A block in its kind's template (`Ir.BlockShape`, beamer's `block begin`
+and `block end` as `BlockTemplate.read` read them), opened: the skips above
+in the arm the block takes (`Ir.BlockShape.skipsAbove`); the rules beside
+the box holding title and body, which open first and span the body too; the
+title where the arm sets its box — its paragraph spends `\parskip` as the
+line `\noindent` opens does (at a frame's top the frame's `\vskip-\parskip`
+cancels it), its first line stands where TeX's interline rule puts its box
+(`TexBox`) and its lines its font's `\baselineskip` apart, `\strut` at its
+ends reading that `\baselineskip` when the template struts it, in the kind's
+title font (`Ir.blockTitleFont`) and ink on the page's ground — with the
+rules beside its own box around it; a title with no box is a paragraph of
+the block's own list, its first line too where TeX's interline rule puts it
+under its font's `\baselineskip`. An empty title is the struts' line, or an
+empty line where nothing struts it, whose box then holds no paragraph and
+spends no `\parskip` — with no box, no line at all. Then the arm's skips
+between, and the body's opening:
+an untitled body opening the box around it stands those skips inside that
+box. A rule stands `sep` beside its box and `width` wide; one inside the
+line moves its box in by both. Returns the opened state, the body's indent
+and its measure. -/
+private def collectShapedOpen (r : Rd) (a : Acc) (kind : TitledKind) (shape : Ir.BlockShape)
+    (title : Array Inline) (body : Array Block) (indent : Sp) : Acc × Sp × Sp :=
+  let measure := a.measure.getD r.geom.textWidth
+  let len (g : SymGlue) : Sp := (r.resolve g).width
+  let parskip := (r.resolve r.geom.texParskip).width
+  let wholeL := len (shape.inset .whole .left)
+  let wholeR := len (shape.inset .whole .right)
+  let titleL := len (shape.inset .title .left)
+  let titleR := len (shape.inset .title .right)
+  let titled := !title.isEmpty
+  let showTitle := shape.showsTitle titled
+  -- An empty title with no box of its own sets a paragraph only where
+  -- struts stand in it.
+  let setsTitle := showTitle && (titled || shape.title.boxed || shape.title.strut)
+  let font := Ir.blockTitleFont r.styles kind
+  let titleLeading := titleLeading r font
+  -- An empty title starts a paragraph in its box only where a strut does.
+  let titleInset := if shape.title.parskip && (titled || shape.title.strut) then parskip else 0
+  let between := r.resolve (Ir.blockSkipSum a.tokens (shape.skipsBetween titled))
+  let wholeInset := if setsTitle then titleInset
+    else between.width + (if shape.whole == some true then parskip else 0)
+  -- The boxes' edges, from the page's left: the whole box's, then the
+  -- title box's inside it.
+  let wx0 := r.geom.hmargin + indent + wholeL
+  let wx1 := r.geom.hmargin + measure - wholeR
+  let tx0 := wx0 + titleL
+  let tx1 := wx1 - titleR
+  let ruleX (e : Ir.BlockEdge) (x0 x1 : Sp) : Sp :=
+    if e.side == .left then x0 - len e.sep - len e.width else x1 + len e.sep
+  let opens (a : Acc) (span : Ir.BlockSpan) (x0 x1 inset : Sp) : Acc :=
+    shape.edges.foldl (fun a e =>
+      if e.span == span then
+        a.pushOp (.regionOpen (.edge (r.shown (e.ink a.pal)) (ruleX e x0 x1) (len e.width) inset))
+      else a) a
+  let closes (a : Acc) (span : Ir.BlockSpan) : Acc :=
+    shape.edges.foldl (fun a e => if e.span == span then a.pushOp .regionClose else a) a
+  let above := r.resolve (Ir.blockSkipSum a.tokens (shape.skipsAbove titled))
+  let a := { a.vskip above with wantDefault := !a.frameTop }
+  let a := if shape.whole.isSome then opens (a.flushGap r) .whole wx0 wx1 wholeInset else a
+  let a := if !setsTitle then a else
+    let look := Ir.titledLook a.pal kind
+    let d := Ir.Design.ofPalette a.pal
+    let titleInk := (d.inkOn (kind.roleStem ++ "titlefg")
+      { fg := look.fg, bg := a.ground.getD d.bg }).fg
+    let saved := a.fg
+    let a := if shape.title.boxed then opens (a.flushGap r) .title tx0 tx1 titleInset else a
+    let (ti, tm) := if shape.title.boxed then (tx0, tx1) else (wx0, wx1)
+    let a := { a with fg := r.shown titleInk, measure := some (tm - r.geom.hmargin) }
+    let (a, leaf) := a.leafRange (leafCount title)
+    -- The empty title's line is its struts', a box of nothing else.
+    let shown := if !titled then #[Inline.strut {}] else match font with
+      | some tpl => Ir.fillTemplate tpl title
+      | none => title
+    let texBox : Option TexBox :=
+      if shape.title.boxed then some { inset := titleInset, more := false, leading := titleLeading }
+      else if shape.whole.isSome then
+        some { inset := titleInset, more := true, leading := titleLeading }
+      else some { inset := 0, more := false, leading := titleLeading, boxed := false }
+    let strut := if shape.title.strut then some titleLeading else none
+    let a := collectDisplay r a shown (ti - r.geom.hmargin) false r.geom.fontSize
+      (baseStyle := { weight := .b }) (leaf := leaf) (span := leafCount title)
+      (strut := strut) (texBox := texBox)
+    let a := if shape.title.boxed then closes a .title else a
+    ({ a with fg := saved, measure := some measure } : Acc).wantGap
+  -- An untitled body opens the box the template sets around it: the line
+  -- holding the box spent the page's `\parskip` where the box opened, and
+  -- the body's first paragraph stands below the arm's skips and the box's
+  -- own `\parskip` inside it.
+  let a := if shape.whole.isSome && !setsTitle then
+      -- The box holds more than the body's first paragraph unless the
+      -- body is that one paragraph.
+      let more := !(body.size == 1 && body[0]? matches some (Ir.Block.para _))
+      { a with boxOpener := some { inset := wholeInset, more := more
+                                   leading := Ir.leadingFor r.geom.fontSize r.geom.leading } }
+    else if !setsTitle then a.vskip between
+    else (a.vskip between).wantGap
+  (a, wx0 - r.geom.hmargin, wx1 - r.geom.hmargin)
+
+/-- The template's close: the rules beside the box holding title and body
+close after the glue the body ends on, which the box keeps, and the skips
+below follow; a paragraph after them spends its own `\parskip`. -/
+private def collectShapedClose (r : Rd) (done : Acc) (shape : Ir.BlockShape) : Acc :=
+  let done := { done with boxOpener := none }
+  let done := if shape.whole.isNone then done else
+    shape.edges.foldl (fun d e => if e.span == .whole then d.pushOp .regionClose else d)
+      ({ done with wantDefault := false }.flushGap r)
+  done.vskip (r.resolve (Ir.blockSkipSum done.tokens shape.after))
 
 /-- tcolorbox's box closing: the upper segment's `bottom`, `boxsep` and the
 frame's rule below the body's last line (the body region's pad, or the
@@ -13946,6 +14126,18 @@ private def collectBlock (r : Rd) (a : Acc)
         bodyInk := some (role, (look.resolve parent).fg) }
       restore (collectBoxClose r (collectBlocks rb inner body bodyIndent) (look.bg.map r.shown))
     else
+    match Ir.blockShapeOf r.styles kind with
+    | some shape =>
+      -- The kind's own template: no colour box, so the body keeps the
+      -- page's `\parskip` and its ink stands on the page's ground.
+      let (opened, bodyIndent, bodyMeasure) := collectShapedOpen r a kind shape title body indent
+      let ink := (d.inkOn role { fg := look.fg.getD inherited.2, bg := a.ground.getD d.bg }).fg
+      let inner := { opened with
+        fg := r.shown ink, measure := some bodyMeasure
+        bodyInk := some (role, look.fg.getD inherited.2) }
+      let done := collectBlocks r inner body bodyIndent
+      (restore (collectShapedClose r done shape))
+    | none =>
     -- beamerinnerthemedefault.sty's `block begin`/`block end`: two colour
     -- boxes, the text on the measure and the paint `pad` beyond it.
     let pad := titledPadding r.geom.fontSize r.xHeight
@@ -15012,9 +15204,12 @@ trailer only carries the forced-break skip forward and a decoration paints
 exactly once. -/
 private def placeParaTrailer (_fs : FontSet) (j : ParaJob) (brk : Nat)
     (_segs : Array Seg) (b : B) : B :=
+  -- A line in a TeX box (`TexBox`): what follows is spaced from the box's
+  -- depth by TeX's interline rule.
+  let tex := j.texBox.isSome || b.texAfter
   match j.extras[brk]? with
-  | some extra => { b with skip := { b.skip with width := b.skip.width + extra } }
-  | none => b
+  | some extra => { b with skip := { b.skip with width := b.skip.width + extra }, texAfter := tex }
+  | none => { b with texAfter := tex }
 
 @[simp] private theorem placeParaTrailer_pages (fs : FontSet) (j : ParaJob)
     (brk : Nat) (segs : Array Seg) (b : B) :
@@ -15031,7 +15226,8 @@ private def placeParaTrailer (_fs : FontSet) (j : ParaJob) (brk : Nat)
   all_goals first | rfl | simp
 
 /-- The trailer only carries the forced-break skip, which touches
-`skip.width` alone, so it preserves the complete vertical state exactly:
+`skip.width` alone, and a TeX box's mark on the band, which spaces only the
+next line, so it preserves the complete vertical state exactly:
 the drawn decoration that once rode here as a sibling now paints at the
 page furniture pass (`decorationRiders`) and never feeds back into
 placement. -/
@@ -15047,6 +15243,23 @@ private theorem decoration_no_growth (fs : FontSet) (j : ParaJob)
 
 private def Spacing.Page.withPendingSource (b : B) (source : Option Span) : B :=
   { b with pendingSource := source }
+
+/-- Where a box-opening paragraph's first baseline stands below the band
+above, past the pending skip: TeX's interline rule for the box (`texBoxTop`
+from its height: the inset, the first line's TeX box above its baseline,
+and a second line's baseline skip when the paragraph runs on — the height
+past which a box only ever takes `\lineskip`, which it also takes where more
+of the box follows), then the inset and the first line's height inside the
+box. The band's baseline skip is the page's own, the one the line holding
+the box is set under. -/
+private def texBoxBaseline (fs : FontSet) (b : B) (j : ParaJob) (tb : TexBox) (segs : Array Seg)
+    (last : Bool) : Sp :=
+  let h1 := (lineStrutInk j.strut (segsInk fs segs)).1
+  let bsIn := tb.leading
+  let bsOut := Ir.leadingFor b.geom.fontSize b.geom.leading
+  let height := tb.inset + h1 + (if last then 0 else bsIn)
+  let top := if tb.more then b.boxDepth + inkClearance else texBoxTop bsOut b.boxDepth height
+  top + tb.inset + h1
 
 /-- One break of a paragraph placed: the fold step `placePara` runs over
 `breaks`. The threaded state is (builder, previous break, first line).
@@ -15064,7 +15277,14 @@ private def placeParaLine (fs : FontSet) (j : ParaJob)
   -- follows its mark through fit and spill alike.
   let ns := if j.notes.isEmpty then #[] else
     (j.notes.filter fun n => (st.2.2 || st.2.1 < n.1) && n.1 < brk).map (·.2)
-  let firstBaseline := if st.2.2 then j.firstBaseline else none
+  -- A TeX box's later lines stand its own `\baselineskip` apart, by TeX's
+  -- interline rule from the line above, and so does a boxless paragraph's
+  -- first.
+  let firstBaseline := match j.texBox with
+    | some tb =>
+      if st.2.2 && tb.boxed then some (texBoxBaseline fs b0 j tb g.1 (brk + 1 == j.items.size))
+      else some (texBaselineGap tb.leading b0.boxDepth (lineStrutInk j.strut (segsInk fs g.1)).1)
+    | none => if st.2.2 then j.firstBaseline else none
   let b1 := b1.openDisplayAt j st.2.2 g.2.1 g.1
   let b1 := b1.withPendingSource (lineSource j.itemSources (j.lineStart st.2.2 st.2.1) brk)
   (placeParaTrailer fs j brk g.1
@@ -16439,7 +16659,9 @@ private def Spacing.Page.closeRegion (fs : FontSet) (b : B) : B :=
       span.inkStart == span.inkEnd
     let regions := if empty then b.closedRegions else b.closedRegions.push span
     let children := regionFills regions b.cur.lines b.cur.fills b.cur.inks
-    let bottom := (span.fill b.cur.lines b.cur.fills b.cur.inks children).map (fun f => f.y + f.h)
+    -- A rule beside a box spaces nothing; a painted box's bottom does.
+    let bottom := if span.kind matches .edge .. then none
+      else (span.fill b.cur.lines b.cur.fills b.cur.inks children).map (fun f => f.y + f.h)
     (regions, bottom)
   let closed := { b with
     openRegions := b.openRegions.pop
@@ -22099,20 +22321,27 @@ private theorem line_rise (fs : FontSet) (a b : B) (x size : Sp)
   · simp only [Spacing.Page.displayState, Spacing.Page.keepInk, Spacing.Page.commit,
       h.regions]
 
+/-- A line the rise certificate (`paragraph_step`) covers: an ordinary line,
+spaced by the metric rule. A paragraph opening a painted colour box or a TeX
+box (`TexBox`, a block template's title box and the box holding title and
+body) stands where TeX's box rule puts it, which the certificate does not
+state yet — pending: `paragraphSafeDecision` answers no for such a paragraph
+rather than certify it. -/
 private def ParaFits (fs : FontSet) (j : ParaJob) (s : B × Nat × Bool) (brk : Nat) : Prop :=
   let g := paraLineGeom fs j s.1 s.2.2 s.2.1 brk
-  j.paintPadding = none ∧ j.rowStrut = none ∧
+  (j.paintPadding = none ∧ j.texBox = none) ∧ j.rowStrut = none ∧
     Ready s.1 g.1 ∧ LineFits fs s.1 j.size g.1 (if s.2.2 then j.firstBaseline else none) j.lead
 
 private theorem trailer_rise (fs : FontSet) (j : ParaJob) (brk : Nat)
     (segs : Array Seg) (a b : B) (h : PageRise a b) :
     PageRise (placeParaTrailer fs j brk segs a) (placeParaTrailer fs j brk segs b) := by
   unfold placeParaTrailer
+  dsimp only
   split
   · refine { h with cursor := ?_ }
     dsimp only
     simpa only [Int.add_assoc] using Int.add_le_add_right h.cursor _
-  · exact h
+  · exact { h with }
 
 private theorem paragraph_step (fs : FontSet) (j : ParaJob)
     (a b : B) (prev brk : Nat) (first : Bool)
@@ -22132,7 +22361,7 @@ private theorem paragraph_step (fs : FontSet) (j : ParaJob)
   have hb := hb.2.2
   unfold placeParaLine
   dsimp only
-  simp only [hg, hn, ite_true, Spacing.Page.openDisplayAt, hj, hp, hr, ite_self]
+  simp only [hg, hn, ite_true, Spacing.Page.openDisplayAt, hj, hp.1, hp.2, hr, ite_self]
   apply trailer_rise
   split
   · exact line_rise fs _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _

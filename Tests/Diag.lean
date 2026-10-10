@@ -644,12 +644,12 @@ texts that read well rather than from a round number: the message bound is
 W0315's fired message (124 characters, one clause with the colour in the
 author's own spelling, the ratio, the threshold, and the source), the help
 bound E0328's list of every styleable
-element (189 characters, generated from `styleableElements`, decided again
-when the `link`, `url` and `cite` link kinds joined it; E0322's page-key
-list stands at 187 beneath it; growing either list means deciding this bound
-again). -/
+element (211 characters, generated from `styleableElements`, decided again
+when the `link`, `url` and `cite` link kinds joined it and again when
+beamer's three blocks did; E0322's page-key list stands at 187 beneath it;
+growing either list means deciding this bound again). -/
 def dvMsgMax : Nat := 124
-def dvHelpMax : Nat := 189
+def dvHelpMax : Nat := 211
 
 /-- Sentence case: a message opens lowercase (or with a quoted construct)
 unless its first word is a proper noun the engine speaks of. -/

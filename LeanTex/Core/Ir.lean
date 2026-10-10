@@ -1335,6 +1335,7 @@ package measures in the preamble is measured at this size
 public def optionNormalSize (size : Sp) : Sp :=
   ((displayOptions.find? fun o => Dim.pt o.1 == size).map (·.2)).getD size
 
+
 /-- The option whose point size stands nearest a body size. -/
 private def displaySizeFileOf (size : Sp) : Nat :=
   (displayOptions.foldl (fun (best : Nat × Sp) (o : Nat × Sp) =>
@@ -2302,6 +2303,11 @@ public structure FontSpec where
   `=sym` values survive compatibility rewriting as typed policy. -/
   mathSources : Math.MathAlphabetSources := {}
   dirs : Array String := #[]
+  /-- Families the document names beside the three slots, as fontspec's
+  `\newfontfamily\cmd{Family}` declares them: the command and the family,
+  in declaration order, each the slot `familySlotBase + i` (`Style.family`
+  selects it), its declared faces in `faces` under that slot. -/
+  families : Array (String × String) := #[]
   /-- Per-variant faces the document named (fontspec's `UprightFont=`,
   `BoldFont=`, `ItalicFont=`, `BoldItalicFont=`, `FontFace={series}{shape}`):
   `(slot, weight, italic)` → the face name, resolved like any other named
@@ -2309,6 +2315,25 @@ public structure FontSpec where
   CSS number (`Weight.css`). -/
   faces : Array ((Nat × Nat × Bool) × String) := #[]
   deriving Repr, BEq, Inhabited
+
+/-- The first slot past the body, sans and mono slots: a declared family's. -/
+public def familySlotBase : Nat := 3
+
+/-- The slot a declared family's command selects. -/
+public def FontSpec.familySlot (s : FontSpec) (name : String) : Option Nat :=
+  (s.families.findIdx? (·.1 == name)).map (· + familySlotBase)
+
+/-- The family a declared slot names. -/
+public def FontSpec.slotFamily (s : FontSpec) (slot : Nat) : Option String :=
+  if slot < familySlotBase then none else (s.families[slot - familySlotBase]?).map (·.2)
+
+/-- Declare a family by its command: a redeclaration keeps the command's
+slot and replaces the family (fontspec's `\setfontfamily` and
+`\renewfontfamily` redefine the command in place). -/
+public def FontSpec.declareFamily (s : FontSpec) (name family : String) : FontSpec :=
+  if s.families.any (·.1 == name) then
+    { s with families := s.families.map fun (n, f) => if n == name then (n, family) else (n, f) }
+  else { s with families := s.families.push (name, family) }
 
 /-- Replace-on-redeclare, the same door `Tokens.declare` and
 `Palette.declare` are: a later declaration of the same variant overrides,
@@ -2858,6 +2883,10 @@ public inductive Style where
   (fntguide §2.2: upright, italic, slanted, small caps are one axis), so
   selecting upright clears italic and small caps both. -/
   | upright
+  /-- A family the document declared beside the three slots (fontspec's
+  `\newfontfamily\cmd{Family}`, `FontSpec.families`), by its slot: family
+  selection only, as `\sffamily` is — series and shape stand. -/
+  | family (slot : Nat)
   | size (name : String)
   /-- `\fontsize{size}{leading}\selectfont`: both dimensions stay affine
   until the run's local measure and current font metrics are known. -/
@@ -3311,6 +3340,7 @@ public def Style.label : Style → String
   | .medium => "medium"
   | .series w => s!"series:{w.series}"
   | .upright => "upright"
+  | .family n => s!"family:{n}"
   | .size n => s!"size:{n}"
   | .fontSize _ _ => "fontsize"
   | .lang tag => s!"lang:{tag}"
@@ -7542,6 +7572,133 @@ public def titlePartOf (slots : Array TitleSlot) (n : String) : Option TitlePart
     slot.parts.zipIdx.findSome? fun (part, k) =>
       if titlePartRole i k == n then some part else none
 
+/-! ### A beamer block template, read
+
+beamer sets a block between two templates, `block begin` before its body and
+`block end` after it (beamerbaselocalstructure.sty: `\par\usebeamertemplate{block
+begin}` … `\par\usebeamertemplate{block end}`), one pair per kind. The default
+inner theme's pair sets two colour boxes (beamerinnerthemedefault.sty); a theme
+that replaces the pair writes its own list in TeX's box-and-rule vocabulary,
+which `BlockTemplate.read` interprets into `BlockShape`: the skips the list
+stands in vertical mode, the box the title stands in, the box holding title and
+body when there is one, and the rules beside those boxes. Both backends read the
+record; a style with no shape is the default inner theme's pair. -/
+
+/-- A skip a block template stands in vertical mode: a skip register, read
+where the block stands (`\vskip\medskipamount`, `\smallskip`: `skipAmount`),
+or a glue the template writes. -/
+public inductive BlockSkip where
+  | register (name : String)
+  | glue (g : SymGlue)
+  deriving Repr, BEq, Inhabited
+
+/-- One skip, in force where the block stands. -/
+public def BlockSkip.resolve (tokens : Tokens) : BlockSkip → SymGlue
+  | .register n => skipAmount tokens n
+  | .glue g => g
+
+/-- A run of skips, added as TeX's list adds them. -/
+public def blockSkipSum (tokens : Tokens) (skips : Array BlockSkip) : SymGlue :=
+  skips.foldl (fun acc s => acc.add (s.resolve tokens)) {}
+
+/-- The box a template's rule stands beside: the title's own box
+(`\setbox\B\vbox{… \insertblocktitle …}`), or the box holding title and body
+(`\setbox\B\vbox\bgroup` in `block begin`, `\egroup` in `block end`). -/
+public inductive BlockSpan where
+  | title
+  | whole
+  deriving Repr, BEq, DecidableEq, Inhabited
+
+/-- A rule beside one of a block's boxes, as themes spell it
+(`\llap{\vrule width W height \ht\B depth \dp\B \hskip S}\box\B`): `width`
+wide, `sep` from the box's `side`, from the box's top to its bottom. A hanging
+rule stands outside the box's line (`\llap`, `\rlap`), so the box keeps the
+measure; a rule inside the line moves the box in by `width + sep` on its side,
+the box set that much narrower. `color` is the colour in force at the rule, and
+`name` the palette entry it reads (`BlockEdge.ink`). -/
+public structure BlockEdge where
+  span : BlockSpan
+  side : FlushSide
+  width : SymGlue
+  sep : SymGlue
+  hang : Bool
+  color : Color
+  name : Option String := none
+  deriving Repr, BEq, Inhabited
+
+/-- **The one reading of a template rule's colour**, against the palette in
+force where the block stands: the entry the rule names, else the colour it was
+declared with. The page reads it so, and the stylesheet writes the same lookup
+as `var(--name, colour)`. -/
+public def BlockEdge.ink (e : BlockEdge) (pal : Palette) : Color :=
+  (e.name.bind pal.find?).getD e.color
+
+/-- The title as a block template sets it. `boxed`: in a box of its own,
+`\hsize` wide, which TeX places in its list by the interline rule from the
+box's height (`\setbox\B\vbox{…}` … `\box\B`); otherwise a paragraph of the
+list it stands in. `strut`: `\strut` at both ends of the title, so its first
+line stands at least `.7\baselineskip` tall and its last `.3\baselineskip`
+deep. `parskip`: a node stands before the title's paragraph in its list —
+`\usebeamercolor[fg]` puts a colour change there — so the paragraph spends
+`\parskip` inside its box: TeX adds `\parskip` before a paragraph unless the
+paragraph opens an empty internal list (tex.web §1091). -/
+public structure BlockTitleBox where
+  boxed : Bool := false
+  strut : Bool := false
+  parskip : Bool := false
+  deriving Repr, BEq, Inhabited
+
+/-- The arm an untitled block takes where its template tests the title
+(beamer's `\ifx\insertblocktitle\@empty`) and sets none: the skips that arm
+stands above the body — `before` in the block's list, before the box holding
+the body when the template sets one, and `between` inside that box, before
+the body. -/
+public structure BlockBare where
+  before : Array BlockSkip := #[]
+  between : Array BlockSkip := #[]
+  deriving Repr, BEq, Inhabited
+
+/-- A block template, read (`BlockTemplate.read`). `bare`: how an untitled
+block stands — `none` keeps the title's box, empty, as a template that does
+not test the title does; `some` the arm its title test takes (`BlockBare`).
+`whole`: the box holding title and body, when the template sets one — `some
+true` when the first paragraph of an untitled block's body spends `\parskip`
+inside it, a node standing first. -/
+public structure BlockShape where
+  before : Array BlockSkip := #[]
+  title : BlockTitleBox := {}
+  bare : Option BlockBare := none
+  between : Array BlockSkip := #[]
+  after : Array BlockSkip := #[]
+  whole : Option Bool := none
+  edges : Array BlockEdge := #[]
+  deriving Repr, BEq, Inhabited
+
+/-- Does a block in this template set its title's box: a titled block always,
+an untitled one where the template keeps the box. -/
+public def BlockShape.showsTitle (s : BlockShape) (titled : Bool) : Bool :=
+  titled || s.bare.isNone
+
+/-- **The skips a block stands above its title, and between title and body,
+in the arm it takes** — the one reading both backends make: a block that
+sets its title's box stands the titled arm's, an untitled one whose
+template leaves the title out its bare arm's. -/
+public def BlockShape.skipsAbove (s : BlockShape) (titled : Bool) : Array BlockSkip :=
+  match s.bare, titled with
+  | some b, false => b.before
+  | _, _ => s.before
+
+public def BlockShape.skipsBetween (s : BlockShape) (titled : Bool) : Array BlockSkip :=
+  match s.bare, titled with
+  | some b, false => b.between
+  | _, _ => s.between
+
+/-- How far a span's box stands in from the measure on one side: the rules
+inside its line there, `width + sep` each. -/
+public def BlockShape.inset (s : BlockShape) (span : BlockSpan) (side : FlushSide) : SymGlue :=
+  s.edges.foldl (fun acc e =>
+    if e.span == span && e.side == side && !e.hang then (acc.add e.width).add e.sep else acc) {}
+
 /-- How an element kind looks, from `\style{element}{...}`. Every field a
 backend used to hard-code is here instead, so a design lives in the document.
 `font` is a template: the inline wrappers a declaration like
@@ -7624,6 +7781,9 @@ public structure ElementStyle where
   only: a title page that declares any sets exactly its slots, each where
   it is pinned. Empty is the built-in title page. -/
   slots : Array TitleSlot := #[]
+  /-- A beamer block kind's template (`BlockShape`), read by the three block
+  elements only; `none` is the default inner theme's colour boxes. -/
+  shape : Option BlockShape := none
   deriving Repr, BEq, Inhabited
 
 /-- What of the `titlepage` style the title heading itself takes: every key
@@ -7645,6 +7805,15 @@ they are declared (W0104) rather than dropped in silence. -/
 public def titleUnreadKeys : List String :=
   ["rule", "rule-position", "rule-thickness", "marker", "indent", "gap", "body-size"]
 
+/-- beamer's three blocks, which a `\style` styles by their kind. -/
+public def blockStyleElements : List String := ["block", "alertblock", "exampleblock"]
+
+/-- The `\style` keys a beamer block reads: its title's `font`
+(`blockTitleFont`) and its template (`blockShapeOf`); every other key is
+named where it is declared (W0104) rather than dropped in silence, and kept
+out of the block's style, so nothing reads it. -/
+public def blockStyleKeys : List String := ["font", "shape"]
+
 /-- Elements a document may style. Section levels are `section`, `subsection`,
 `subsubsection`; lists are `itemize` and `enumerate` — those two style every
 nesting level, and `itemize2`..`itemize4` / `enumerate2`..`enumerate4`
@@ -7653,7 +7822,9 @@ override one level, the way `\labelitemii` or `\setlist[itemize,2]` does;
 furniture (their `font` is read; `titlepage` also reads `align` and
 `separator`; the other keys have no meaning there yet); `logo` reads
 `align` only — where the logo stands in the furniture band (`logoAlign`,
-both backends). Beyond this list, a
+both backends); `block`, `alertblock` and `exampleblock`, beamer's three
+blocks, read `font` (the title's) and `shape` (the kind's template). Beyond
+this list, a
 `\define`d name is styleable too (the elaborator admits it once the
 `\define` stands): the role's rhythm rides `before`/`after` on the page,
 and the whole style addresses the `u-<name>` class hook in HTML. -/
@@ -7662,7 +7833,7 @@ public def styleableElements : List String :=
    "abstract", "itemize", "enumerate",
    "itemize2", "itemize3", "itemize4", "enumerate2", "enumerate3", "enumerate4",
    "frametitle", "sectionpage", "standout", "titlepage", "nav", "logo",
-   "link", "url", "cite"]
+   "link", "url", "cite", "block", "alertblock", "exampleblock"]
 
 public structure Styles where
   entries : Array (String × ElementStyle) := #[]
@@ -7670,6 +7841,229 @@ public structure Styles where
 
 public def Styles.find? (s : Styles) (element : String) : Option ElementStyle :=
   (s.entries.find? (·.1 == element)).map (·.2)
+
+/-- The `\style` element a titled block reads: its environment's own name.
+tcolorbox's box reads none of the beamer blocks' styles. -/
+public def TitledKind.styleElement : TitledKind → Option String
+  | .block => some "block"
+  | .alert => some "alertblock"
+  | .example => some "exampleblock"
+  | .box => none
+
+/-- **The template a titled block stands in**: its kind's declared shape, the
+one lookup both backends make; `none` is the default inner theme's pair. -/
+public def blockShapeOf (styles : Styles) (kind : TitledKind) : Option BlockShape :=
+  kind.styleElement.bind fun el => (styles.find? el).bind (·.shape)
+
+/-- beamer's four font axes, in the order `\beamer@usebeamerfont` selects
+them (beamerbasefont.sty): size, shape, series, family. -/
+public inductive FontAxis where
+  | size
+  | shape
+  | series
+  | family
+  deriving Repr, BEq, DecidableEq, Inhabited
+
+/-- The axis a style selects on; `none` for a style that is no one axis's
+selection: `\emph` toggles a shape, `\normalfont` resets every axis, a
+language is no font. -/
+public def Style.fontAxis : Style → Option FontAxis
+  | .size _ | .fontSize _ _ => some .size
+  | .italic | .smallcaps | .upright => some .shape
+  | .bold | .medium | .series _ => some .series
+  | .sans | .roman | .mono | .family _ => some .family
+  | .emph | .normal | .lang _ => none
+
+/-- A font template's selection on each axis, as a beamer font element
+carries one per axis (`\setbeamerfont{…}{size=…, series=…}`). -/
+public structure FontAxes where
+  size : Option Style := none
+  shape : Option Style := none
+  series : Option Style := none
+  family : Option Style := none
+  deriving Repr, BEq, Inhabited
+
+public def FontAxes.get (a : FontAxes) : FontAxis → Option Style
+  | .size => a.size
+  | .shape => a.shape
+  | .series => a.series
+  | .family => a.family
+
+/-- Select `s` on its axis, replacing what the axis held, as a later font
+command replaces an earlier one there. -/
+public def FontAxes.select (a : FontAxes) (s : Style) : FontAxes :=
+  match s.fontAxis with
+  | some .size => { a with size := some s }
+  | some .shape => { a with shape := some s }
+  | some .series => { a with series := some s }
+  | some .family => { a with family := some s }
+  | none => a
+
+/-- `own`'s selection on every axis it makes one, `parent`'s elsewhere: what
+`\beamer@usebeamerfont` leaves selected after running the parent's font and
+then the element's own fields. -/
+public def FontAxes.over (own parent : FontAxes) : FontAxes :=
+  { size := own.size.or parent.size, shape := own.shape.or parent.shape
+    series := own.series.or parent.series, family := own.family.or parent.family }
+
+/-- The selections as a font template, in beamer's selection order: size
+outermost, then shape, series and family around the empty hole. -/
+public def FontAxes.template (a : FontAxes) : Array Inline :=
+  let wrap (s : Option Style) (body : Array Inline) : Array Inline :=
+    match s with
+    | some st => #[.styled st body]
+    | none => body
+  wrap a.size (wrap a.shape (wrap a.series (wrap a.family #[])))
+
+mutual
+
+-- conserves: none — a reading of a font template's wrappers, not a walk over document content.
+private def axesOne (acc : FontAxes) : Inline → Option FontAxes
+  | .styled st body => if st.fontAxis.isSome then axesList (acc.select st) body.toList else none
+  | _ => none
+
+-- conserves: none — the list companion of `axesOne`.
+private def axesList (acc : FontAxes) : List Inline → Option FontAxes
+  | [] => some acc
+  | [x] => axesOne acc x
+  | _ => none
+
+end
+
+/-- A font template's selections, read: style wrappers on beamer's axes, one
+inside another around the empty hole, an inner wrapper replacing an outer
+one on its axis; `none` for a template holding anything else. -/
+public def fontAxesOf (tpl : Array Inline) : Option FontAxes := axesList {} tpl.toList
+
+/-- Every selection stands on its own axis. -/
+public def FontAxes.Sorted (a : FontAxes) : Prop :=
+  ∀ ax s, a.get ax = some s → s.fontAxis = some ax
+
+private theorem FontAxes.select_sorted (a : FontAxes) (s : Style) (h : a.Sorted) :
+    (a.select s).Sorted := by
+  intro ax t ht
+  unfold FontAxes.select at ht
+  cases hs : s.fontAxis with
+  | none => rw [hs] at ht; exact h ax t ht
+  | some sax =>
+    rw [hs] at ht
+    cases sax <;> cases ax <;> simp only [FontAxes.get] at ht <;>
+      first
+      | (simp only [Option.some.injEq] at ht; subst ht; exact hs)
+      | exact h _ t ht
+
+private theorem axesOne_sorted (x : Inline) :
+    ∀ (acc out : FontAxes), acc.Sorted → axesOne acc x = some out → out.Sorted := by
+  induction x using Inline.rec
+    (motive_2 := fun body => ∀ acc out, FontAxes.Sorted acc →
+      axesList acc body.toList = some out → out.Sorted)
+    (motive_3 := fun xs => ∀ acc out, FontAxes.Sorted acc → axesList acc xs = some out →
+      out.Sorted) with
+  | styled st body ih =>
+    intro acc out hacc h
+    simp only [axesOne] at h
+    split at h
+    · exact ih _ _ (FontAxes.select_sorted acc st hacc) h
+    · simp at h
+  | mk xs ih =>
+    rename_i acc out hacc h
+    exact ih acc out hacc h
+  | nil =>
+    rename_i acc out hacc h
+    simp only [axesList, Option.some.injEq] at h
+    subst h
+    exact hacc
+  | cons x xs ihx ihxs =>
+    rename_i acc out hacc h
+    cases xs with
+    | nil => simp only [axesList] at h; exact ihx acc out hacc h
+    | cons y ys => simp [axesList] at h
+  | _ => intro acc out _ h; simp [axesOne] at h
+
+private theorem FontAxes.over_get (o p : FontAxes) (ax : FontAxis) :
+    (o.over p).get ax = (o.get ax).or (p.get ax) := by
+  cases ax <;> rfl
+
+private theorem FontAxes.over_sorted (o p : FontAxes) (ho : o.Sorted) (hp : p.Sorted) :
+    (o.over p).Sorted := by
+  intro ax s h
+  rw [FontAxes.over_get] at h
+  cases hg : o.get ax with
+  | none => rw [hg] at h; exact hp ax s h
+  | some t =>
+    rw [hg] at h
+    simp only [Option.or, Option.some.injEq] at h
+    subst h
+    exact ho ax t hg
+
+private theorem axesList_sorted (xs : List Inline) (acc out : FontAxes) (hacc : acc.Sorted)
+    (h : axesList acc xs = some out) : out.Sorted := by
+  match xs, h with
+  | [], h =>
+    simp only [axesList, Option.some.injEq] at h
+    subst h
+    exact hacc
+  | [x], h =>
+    simp only [axesList] at h
+    exact axesOne_sorted x acc out hacc h
+  | _ :: _ :: _, h => simp [axesList] at h
+
+/-- A template's reading stands every selection on its own axis. -/
+private theorem fontAxesOf_sorted (tpl : Array Inline) (a : FontAxes) (h : fontAxesOf tpl = some a) :
+    a.Sorted :=
+  axesList_sorted tpl.toList {} a (fun ax s h => by cases ax <;> simp [FontAxes.get] at h) h
+
+/-- **A font template written from selections reads back as them**
+(`_exact`): the wrappers `FontAxes.template` writes are what `fontAxesOf`
+reads, axis by axis, wherever each selection stands on its own axis. -/
+public theorem FontAxes.template_exact (a : FontAxes) (h : a.Sorted) :
+    fontAxesOf a.template = some a := by
+  obtain ⟨sz, sh, se, fa⟩ := a
+  have h1 : ∀ s, sz = some s → s.fontAxis = some .size := fun s hs => h .size s hs
+  have h2 : ∀ s, sh = some s → s.fontAxis = some .shape := fun s hs => h .shape s hs
+  have h3 : ∀ s, se = some s → s.fontAxis = some .series := fun s hs => h .series s hs
+  have h4 : ∀ s, fa = some s → s.fontAxis = some .family := fun s hs => h .family s hs
+  cases sz <;> cases sh <;> cases se <;> cases fa <;>
+    simp_all [FontAxes.template, fontAxesOf, axesList, axesOne, FontAxes.select]
+
+/-- **A block title's font template**: the plain block's own; an alerted or
+example title's own selection on each axis it makes one and the plain
+block's on the rest (`blockTitleFont_axes_exact`); `none` is the title's
+built-in bold. -/
+public def blockTitleFont (styles : Styles) (kind : TitledKind) : Option (Array Inline) :=
+  kind.styleElement.bind fun el =>
+    let own := (styles.find? el).bind (·.font)
+    if el == "block" then own else
+    let parent := (styles.find? "block").bind (·.font)
+    match own, parent with
+    | none, p => p
+    | some o, none => some o
+    | some o, some p =>
+      match fontAxesOf o, fontAxesOf p with
+      | some oa, some pa => some (oa.over pa).template
+      -- A template beyond the four axes is the kind's whole font.
+      | _, _ => some o
+
+/-- **An alerted or example block's title font is the plain block's under its
+own, axis by axis** (`_exact`): where both kinds declare fonts of beamer's
+four axes alone, the font the alerted or example title is set in reads back,
+on each of size, shape, series and family, as the kind's own selection where
+it makes one and the plain block's elsewhere. That is beamer's font parent
+chain: `\beamer@usebeamerfont` (beamerbasefont.sty) runs the parents' fonts,
+then the element's own fields, and beamerfontthemedefault.sty gives `block
+title alerted` and `block title example` the parent `block title`. Both
+backends set the title through `blockTitleFont`. -/
+public theorem blockTitleFont_axes_exact (styles : Styles) (kind : TitledKind) (el : String)
+    (hel : kind.styleElement = some el) (hne : el ≠ "block") (o p : Array Inline)
+    (oa pa : FontAxes) (ho : (styles.find? el).bind (·.font) = some o)
+    (hp : (styles.find? "block").bind (·.font) = some p)
+    (hoa : fontAxesOf o = some oa) (hpa : fontAxesOf p = some pa) (ax : FontAxis) :
+    ((blockTitleFont styles kind).bind fontAxesOf).map (·.get ax) =
+      some ((oa.get ax).or (pa.get ax)) := by
+  have hs := FontAxes.over_sorted oa pa (fontAxesOf_sorted o oa hoa) (fontAxesOf_sorted p pa hpa)
+  have hne' : (el == "block") = false := by simpa using hne
+  simp only [blockTitleFont, hel, Option.bind_some, ho, hp, hne', hoa, hpa]
+  simp [FontAxes.template_exact _ hs, FontAxes.over_get]
 
 /-- A link's body in its kind's declared ink (`ElementStyle.color`: `link`
 for a cross-reference, `url` for a URL, `cite` for a citation mark), what
@@ -8037,6 +8431,69 @@ bar's strut reads its size from here rather than from a glyph pass. -/
 public def templateSize (base : Sp) (tpl : Array Inline) : Sp :=
   if let some (Inline.styled (Style.size s) _) := (tpl[0]? : Option Inline)
   then scaleStep base s else base
+
+/-- The `\baselineskip` each named size sets under a class option, in
+milli-points, as its size file's `\@setfontsize` gives it: size10.clo:48-86
+(`\large` is `\@setfontsize\large\@xiipt{14}`), size11.clo and size12.clo
+the same lines, and extsizes' size8.clo, size9.clo, size14.clo, size17.clo
+and size20.clo:12-47 for beamer's other options (beamer.cls:155-166). -/
+private def sizeFileLeadings : Nat → List (String × Nat)
+  | 8 => [("tiny", 6000), ("scriptsize", 6000), ("footnotesize", 7000), ("small", 8000),
+      ("normalsize", 9500), ("large", 10950), ("Large", 12000), ("LARGE", 14000),
+      ("huge", 18000), ("Huge", 22000)]
+  | 9 => [("tiny", 6000), ("scriptsize", 7000), ("footnotesize", 8000), ("small", 9000),
+      ("normalsize", 10950), ("large", 12000), ("Large", 13000), ("LARGE", 14000),
+      ("huge", 18000), ("Huge", 22000)]
+  | 10 => [("tiny", 6000), ("scriptsize", 8000), ("footnotesize", 9500), ("small", 11000),
+      ("normalsize", 12000), ("large", 14000), ("Large", 18000), ("LARGE", 22000),
+      ("huge", 25000), ("Huge", 30000)]
+  | 11 => [("tiny", 7000), ("scriptsize", 9500), ("footnotesize", 11000), ("small", 12000),
+      ("normalsize", 13600), ("large", 14000), ("Large", 18000), ("LARGE", 22000),
+      ("huge", 25000), ("Huge", 30000)]
+  | 12 => [("tiny", 7000), ("scriptsize", 9500), ("footnotesize", 12000), ("small", 13600),
+      ("normalsize", 14500), ("large", 18000), ("Large", 22000), ("LARGE", 25000),
+      ("huge", 30000), ("Huge", 30000)]
+  | 14 => [("tiny", 7000), ("scriptsize", 9500), ("footnotesize", 12000), ("small", 14000),
+      ("normalsize", 17000), ("large", 22000), ("Large", 25000), ("LARGE", 30000),
+      ("huge", 35000), ("Huge", 40000)]
+  | 17 => [("tiny", 9000), ("scriptsize", 11000), ("footnotesize", 14000), ("small", 17000),
+      ("normalsize", 22000), ("large", 25000), ("Large", 30000), ("LARGE", 35000),
+      ("huge", 41000), ("Huge", 52000)]
+  | 20 => [("tiny", 11000), ("scriptsize", 14000), ("footnotesize", 17000), ("small", 22000),
+      ("normalsize", 25000), ("large", 30000), ("Large", 35000), ("LARGE", 41000),
+      ("huge", 52000), ("Huge", 63000)]
+  | _ => []
+
+/-- **The `\baselineskip` a named size sets**, which `\strut` reads (.7 of it
+above the baseline, .3 below) where a template switches to that size: the
+class option's size file's, where the body is that option's point size or the
+`\normalsize` its file sets, stretched by the page's `\linespread` factor;
+elsewhere the engine's own leading of the size (`leadingFor`). -/
+public def sizeFileLeading (body : Sp) (leading : Nat) (name : String) : Sp :=
+  match displayOptions.find? fun o => Dim.pt o.1 == body || o.2 == body with
+  | some (opt, _) =>
+    match (sizeFileLeadings opt).lookup name with
+    | some milli => Dim.pt 1 * (milli : Int) / 1000 * (leading : Int) / 1000
+    | none => leadingFor (scaleStep body name) leading
+  | none => leadingFor (scaleStep body name) leading
+
+/-- **A block title's `\baselineskip`**, which its box's lines stand apart by
+and its `\strut` reads (.7 of it above the baseline, .3 below), from the size
+its font template sets outermost: a `\fontsize`'s own leading (`size*` in
+`\setbeamerfont`), stretched by the page's `\linespread` as `\selectfont`
+stretches `\f@baselineskip`; a named size's, the size file's
+(`sizeFileLeading`) or, on a size ladder of the document's own, the engine's
+leading of that size; with no size, the page's. A length, its font-relative
+parts kept, so each backend resolves them in the font it sets: the one value
+the PDF's title box and the stylesheet's empty title box read. -/
+public def blockTitleLeading (scale : List (String × Nat)) (body : Sp) (leading : Nat)
+    (env : MeasureValues) (font : Option (Array Inline)) : Length :=
+  match (font.bind (·[0]?) : Option Inline) with
+  | some (.styled (.size s) _) =>
+    .ofSp (if scale == sizeScale then sizeFileLeading body leading s
+      else leadingFor (scaleStepIn scale body s) leading)
+  | some (.styled (.fontSize _ lead) _) => (lead.eval env.find).width.scale leading 1000
+  | _ => .ofSp (leadingFor body leading)
 
 /-- The token resolves to the strut it is defined as: at the slides
 class's `\large` title step, `frametitlepadding` and `frameTitleStrut`
@@ -15233,7 +15690,8 @@ body, sans and mono families, and `unicode-math`'s `\setmathfont` for the
 math face — so a picture's text and formulas set in the page's own faces
 (`pictureRefs_design_projects`). A family declared as a file name resolves
 against the document's font dir, which the boundary tool cannot see from
-its build directory; only a named family travels. -/
+its build directory; only a named family travels. A family declared beside
+the three slots travels as fontspec's `\newfontfamily` of its command. -/
 public def fontLines (fonts : FontSpec) : String :=
   let named (f : Option String) : Option String := f.filter fun fam =>
     !(fam.endsWith ".ttf" || fam.endsWith ".otf" || fam.endsWith ".ttc")
@@ -15242,7 +15700,8 @@ public def fontLines (fonts : FontSpec) : String :=
     | some fam => s!"\\{cmd}\{{fam}}\n"
     | none => ""
   let faces := role "setmainfont" fonts.body ++ role "setsansfont" fonts.sans ++
-    role "setmonofont" fonts.mono
+    role "setmonofont" fonts.mono ++
+    String.join (fonts.families.toList.map fun (cmd, fam) => role s!"newfontfamily\\{cmd}" (some fam))
   let math := match named fonts.math with
     | some fam =>
       let opts := fonts.mathSources.options
@@ -17707,7 +18166,8 @@ public def paraStepOne (x : Inline) : Option String :=
   | .styled .bold body | .styled .italic body | .styled .mono body
   | .styled .smallcaps body | .styled .emph body | .styled .sans body
   | .styled .roman body | .styled .medium body | .styled (.series _) body
-  | .styled .upright body | .styled (.lang _) body => paraStepIn body.toList
+  | .styled .upright body | .styled (.lang _) body | .styled (.family _) body =>
+    paraStepIn body.toList
   | .colored _ _ body => paraStepIn body.toList
   | .located _ body => paraStepIn body.toList
   | .text _ | .math _ _ | .formula _ _ _ | .role _ _ | .link _ _ | .label _
@@ -17770,6 +18230,7 @@ public def liftParaStepOne (x : Inline) : Array Inline :=
   | .styled (.series w) body => #[.styled (.series w) (liftParaStepIn body.toList)]
   | .styled .upright body => #[.styled .upright (liftParaStepIn body.toList)]
   | .styled (.lang tag) body => #[.styled (.lang tag) (liftParaStepIn body.toList)]
+  | .styled (.family k) body => #[.styled (.family k) (liftParaStepIn body.toList)]
   | .colored c n body => #[.colored c n (liftParaStepIn body.toList)]
   | .located span body => #[.located span (liftParaStepIn body.toList)]
   | .text s => #[.text s]
@@ -17823,7 +18284,7 @@ private theorem liftParaStepOne_text (x : Inline) :
   | .styled (.bold) body | .styled (.italic) body | .styled (.mono) body
   | .styled (.smallcaps) body | .styled (.emph) body | .styled (.sans) body
   | .styled (.roman) body | .styled (.medium) body | .styled (.series _) body
-  | .styled (.upright) body | .styled (.lang _) body
+  | .styled (.upright) body | .styled (.lang _) body | .styled (.family _) body
   | .colored _ _ body | .located _ body =>
     have ih := liftParaStepIn_text body.toList
     simp only [liftParaStepOne, plainText, plainTextList, plainTextOne] at ih ⊢
@@ -17850,7 +18311,7 @@ public def Decl.setsSize : Decl → Bool
   | .style (.size _) | .style (.fontSize _ _) | .style .normal => true
   | .style .bold | .style .italic | .style .mono | .style .smallcaps | .style .emph
   | .style .sans | .style .roman | .style .medium | .style (.series _) | .style .upright
-  | .style (.lang _) | .color _ _ => false
+  | .style (.lang _) | .style (.family _) | .color _ _ => false
 
 /-- Whether a font-size length reads the size in force (`em`, `ex`): a
 `\fontsize` spelled so scales the size declared before it. -/
@@ -17868,7 +18329,7 @@ public def Decl.shadowsSize : Decl → Bool
   | .style (.fontSize s l) => !affineFontRelative s && !affineFontRelative l
   | .style .bold | .style .italic | .style .mono | .style .smallcaps | .style .emph
   | .style .sans | .style .roman | .style .medium | .style (.series _) | .style .upright
-  | .style (.lang _) | .color _ _ => false
+  | .style (.lang _) | .style (.family _) | .color _ _ => false
 
 /-- Whether a declaration does nothing but set the size: a named step or a
 `\fontsize` — what a later absolute size leaves without effect. -/
@@ -17876,7 +18337,7 @@ public def Decl.onlySize : Decl → Bool
   | .style (.size _) | .style (.fontSize _ _) => true
   | .style .normal | .style .bold | .style .italic | .style .mono | .style .smallcaps
   | .style .emph | .style .sans | .style .roman | .style .medium | .style (.series _)
-  | .style .upright | .style (.lang _) | .color _ _ => false
+  | .style .upright | .style (.lang _) | .style (.family _) | .color _ _ => false
 
 /-- The step a size declaration leaves in force: its named size, or `none`
 under an explicit `\fontsize` or a `\normalfont`, where the run's own
@@ -17886,7 +18347,7 @@ public def Decl.sizeStep? : Decl → Option (Option String)
   | .style (.fontSize _ _) | .style .normal => some none
   | .style .bold | .style .italic | .style .mono | .style .smallcaps | .style .emph
   | .style .sans | .style .roman | .style .medium | .style (.series _) | .style .upright
-  | .style (.lang _) | .color _ _ => none
+  | .style (.lang _) | .style (.family _) | .color _ _ => none
 
 /-- The named step a list of declarations gives the paragraph they stand
 over: the first size declaration's (`Decl.sizeStep?`), `none` under none. -/
@@ -18883,8 +19344,14 @@ public def dump (doc : Doc) (diags : Array Diag) : String :=
     String.join (doc.fonts.dirs.toList.map fun d => fontLine "dir" (some d)) ++
     fontLine "body" doc.fonts.body ++ fontLine "sans" doc.fonts.sans ++
     fontLine "mono" doc.fonts.mono ++
+    String.join (doc.fonts.families.toList.map fun (name, f) => fontLine s!"family.{name}" (some f)) ++
     String.join (doc.fonts.faces.toList.map fun ((slot, weight, italic), f) =>
-      let slotName := match slot with | 0 => "body" | 1 => "sans" | _ => "mono"
+      -- A declared family's slot dumps under the key that declares it.
+      let slotName := match slot with
+        | 0 => "body" | 1 => "sans" | 2 => "mono"
+        | s => match doc.fonts.families[s - familySlotBase]? with
+          | some (name, _) => s!"family.{name}"
+          | none => s!"slot{s}"
       let variant := match weight, italic with
         | 400, false => "upright" | 700, false => "bold"
         | 400, true => "italic" | 700, true => "bolditalic"

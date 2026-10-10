@@ -134,7 +134,9 @@ public def buildFontSet (doc : Ir.Doc) (scan : FaceScan)
   let slots : List (Nat × Option String) :=
     match purpose with
     | .provisional _ => [(0, spec.body)]
-    | .settled => [(0, spec.body), (1, spec.sans), (2, spec.mono)]
+    | .settled => [(0, spec.body), (1, spec.sans), (2, spec.mono)] ++
+      -- Each declared family's own slot (`Ir.FontSpec.families`).
+      spec.families.toList.zipIdx.map fun ((_, fam), i) => (Ir.familySlotBase + i, some fam)
   -- A slot the document did not name falls back to the body family, and the
   -- body's declared per-variant faces come with it.
   -- beamer sets a presentation in its sans family: the class's default
@@ -153,14 +155,16 @@ public def buildFontSet (doc : Ir.Doc) (scan : FaceScan)
     -- (an upright of another weight, a light one) reach the text.
     | 0 => textFamily
     | 1 => spec.sans.orElse fun _ => spec.body
-    | _ => spec.mono.orElse fun _ => spec.body
+    | 2 => spec.mono.orElse fun _ => spec.body
+    | s => spec.slotFamily s
   -- A slot's declared faces live under its *effective* slot: the one its
   -- family resolution reads (a deck's body — or a sans-only document's —
   -- follows the sans declaration).
   let effectiveOf (slot : Nat) : Nat := match slot with
+    | 0 => if (slides || spec.body.isNone) && spec.sans.isSome then 1 else 0
     | 1 => if spec.sans.isSome then 1 else 0
     | 2 => if spec.mono.isSome then 2 else 0
-    | _ => if (slides || spec.body.isNone) && spec.sans.isSome then 1 else 0
+    | s => s
   let declaredFace (slot : Nat) (weight : Nat) (italic : Bool) : Option String :=
     spec.faceFor (effectiveOf slot) weight italic
   -- The off-corner keys this document can ask the index for: the weights
