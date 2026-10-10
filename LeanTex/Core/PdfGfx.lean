@@ -1815,13 +1815,29 @@ private def stampGlyph (cx : Ctx) (st : St) (outline : Nat) (gm : Affine) (rule 
 /-- The most tiles a tiling pattern paints one region with. -/
 public def tileCap : Nat := 4096
 
-/-- A geometry as the subpaths it fills: an ellipse as its arcs, a
-rectangle as its path. -/
-public def subpathsOf (g : Geom) : Array Subpath :=
-  match g.normal with
-  | .path ss => ss
+/-- A geometry as the subpaths it traces (`Geom.traced`): a rectangle as its
+`re` path, an ellipse as its arcs. -/
+public def subpathsOf : Geom → Array Subpath
   | .rect x y w h => #[Kit.rectPath x y w h]
-  | .ellipse _ _ _ _ => #[]
+  | .ellipse cx cy rx ry => Kit.ellipse cx cy rx ry
+  | .path ss => ss
+
+private theorem traced_subpaths (g : Geom) : g.traced = .path (subpathsOf g) := by
+  cases g <;> rfl
+
+/-- Every node but words, which say text and paint nothing. -/
+@[expose] public def notWords {L : Type} : Node L → Bool
+  | .words _ => false
+  | .draw _ _ _ | .group _ _ _ _ | .use _ _ | .stamp _ _ _ _ | .image _ _ | .label _ => true
+
+private theorem marksList_notWords {L : Type} (os : Array (Array Subpath)) (cx : Gfx.Ctx)
+    (acc : Array Mark) (l : List (Node L)) :
+    Node.marksList os cx acc l = Node.marksList os cx acc (l.filter notWords) := by
+  induction l generalizing acc with
+  | nil => rfl
+  | cons n rest ih =>
+    cases n <;> simp only [Node.marksList, List.filter_cons, notWords, Bool.false_eq_true,
+      ↓reduceIte] <;> first | exact ih _ | (simp only [Node.marksOne]; exact ih _)
 
 /-- **What a Type 3 procedure stamps** (§9.6.4): the outline of its one
 fill, when it is a `d1` procedure — whose colour is the text's — whose one
@@ -1830,22 +1846,23 @@ stamp painted in the text's fill reproduces: several fills are not one
 path's nonzero fill where their windings meet, so they stay a symbol. -/
 public def type3Stamp? (isD1 : Bool) (body : Array (Node Run)) : Option (Array Subpath) :=
   if !isD1 then none else
-  match (body.filter fun nd => match nd with
-      | .words _ => false
-      | .draw _ _ _ | .group _ _ _ _ | .use _ _ | .stamp _ _ _ _ | .image _ _ | .label _ => true).toList with
+  match (body.filter notWords).toList with
   | [.draw g (some fl) none] => if fl.rule = .nonzero then some (subpathsOf g) else none
   | _ => none
 
-/-- **A Type 3 procedure's stamp is its one fill** (`_exact`): `type3Stamp?`
-answers only for a `d1` procedure whose reading paints exactly one nonzero
-fill and no stroke, and the outline it answers is that fill's geometry —
-what `type3Glyph` stamps, read with neutral colours, in the text's paints. -/
-public theorem type3_exact (isD1 : Bool) (body : Array (Node Run)) (subs : Array Subpath)
+/-- **A Type 3 stamp paints its procedure's ink** (`_exact`): `type3Stamp?`
+answers only for a `d1` procedure whose reading paints, in every frame,
+exactly one mark — a fill by the nonzero rule and no stroke — and the
+outline it answers is the path that fill's geometry traces, a rectangle as
+its `re` path. So the stamp `type3Glyph` places in the glyph's frame
+(`Node.marksOne`'s stamp arm) paints the procedure's one outline there, in
+the text's fill, which is a `d1` procedure's colour. -/
+public theorem type3_marks_exact (isD1 : Bool) (body : Array (Node Run)) (subs : Array Subpath)
     (h : type3Stamp? isD1 body = some subs) :
-    isD1 = true ∧ ∃ g fl, (body.filter fun nd => match nd with
-        | .words _ => false
-        | .draw _ _ _ | .group _ _ _ _ | .use _ _ | .stamp _ _ _ _ | .image _ _ | .label _ => true).toList =
-        [.draw g (some fl) none] ∧ fl.rule = .nonzero ∧ subs = subpathsOf g := by
+    isD1 = true ∧ ∃ (g : Geom) (fl : Fill), fl.rule = .nonzero ∧ g.traced = .path subs ∧
+      ∀ (os : Array (Array Subpath)) (cx : Gfx.Ctx) (acc : Array Mark),
+        Node.marksList os cx acc body.toList =
+          acc.push (.paint cx.ctm g.normal (some (fl.under cx.ctm)) none cx.clips cx.alphas) := by
   unfold type3Stamp? at h
   cases isD1 with
   | false => simp at h
@@ -1857,7 +1874,9 @@ public theorem type3_exact (isD1 : Bool) (body : Array (Node Run)) (subs : Array
       split at h
       · next hr =>
         simp only [Option.some.injEq] at h
-        exact ⟨g, fl, heq, hr, h.symm⟩
+        refine ⟨g, fl, hr, h ▸ traced_subpaths g, fun os cx acc => ?_⟩
+        rw [marksList_notWords, ← Array.toList_filter, heq]
+        simp [Node.marksList, Node.marksOne, Geom.drawn]
       · simp at h
     · simp at h
 
