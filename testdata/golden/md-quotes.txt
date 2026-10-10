@@ -1,0 +1,37 @@
+class article
+page 612x792 vmargin 72 hmargin 150
+section* h1
+  text "Sayings of an Invented Lighthouse"
+quote
+  para
+    text "The lamp is lit at dusk and put out at dawn, whatever the weather says."
+quote
+  para
+    text "A quotation that holds a list:"
+  list unordered
+    item
+      para
+        text "fog bell"
+    item
+      para
+        text "lamp oil"
+    item
+      para
+        text "a spare wick"
+  para
+    text "and a second paragraph after it."
+quote
+  para
+    text "Outer quotation."
+  quote
+    para
+      text "An inner quotation, nested one deeper."
+  para
+    text "Back in the outer one."
+quote
+  section* 1
+    text "A heading inside a quotation"
+  verbatim
+    "code inside a quotation"
+-- diagnostics
+(none)

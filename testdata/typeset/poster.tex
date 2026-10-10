@@ -1,0 +1,74 @@
+% Invented text. A representative poster: a headline band, three columns of
+% titled blocks holding justified prose, a list, a table, a formula and an
+% image — one printed face at a poster's size.
+\documentclass{poster}
+\theme{gemini}
+\usepackage{booktabs}
+\usepackage{graphicx}
+\fonts{ dir = "../corpus/fonts", sans = "Open Sans", mono = "Source Code Pro",
+  math = "Fira Math" }
+
+\title{Counting Swifts over a Market Town}
+\author{A. Placeholder \quad B. Example}
+\institute{An Invented Field Society}
+\footercontent{An Invented Spring Meeting}
+% A formula's scripts set below the class's body x-height floor; the
+% document takes control of the floor through the documented door.
+\assert{ text.xheight >= 9pt }
+
+\begin{document}
+
+\begin{frame}
+\begin{columns}
+\begin{column}{0.31\textwidth}
+\begin{block}{The question}
+Swifts return to the same roofs every spring, but the roofs are being
+replaced. Volunteers counted the birds entering each street's eaves at
+dusk, every evening for six weeks, to learn which streets still hold
+colonies and which have lost them since the last count a decade ago.
+\end{block}
+\begin{block}{How the counts were made}
+\begin{itemize}
+  \item Two counters per street, one at each end.
+  \item Counts in five-minute bins from sunset.
+  \item A street counted at least three times.
+\end{itemize}
+\end{block}
+\end{column}
+\begin{column}{0.31\textwidth}
+\begin{block}{What was found}
+\centering
+\begin{tabular}{@{}lrr@{}}
+  \toprule
+  \textbf{Street} & \textbf{Then} & \textbf{Now} \\
+  \midrule
+  Mill Lane & 42 & 38 \\
+  Church Row & 27 & 9 \\
+  High Street & 15 & 0 \\
+  \bottomrule
+\end{tabular}
+\end{block}
+\begin{block}{A colony's decline}
+With $n_0$ birds at the first count and a yearly loss $r$, a colony
+counted $t$ years later holds
+\[ n_t = n_0 (1 - r)^t , \]
+so Church Row's fall from 27 to 9 in ten years is a loss of about one
+bird in ten each year.
+\end{block}
+\end{column}
+\begin{column}{0.31\textwidth}
+\begin{block}{Where they nest}
+\centering
+\includegraphics[width=0.6\linewidth, alt={Three coloured rectangles for
+three rows of eaves}]{../corpus/rects.png}
+\end{block}
+\begin{alertblock}{What can be done}
+Nest boxes fitted under new eaves were occupied within two seasons on
+every street that tried them. The cheapest intervention is to leave the
+old gaps open when a roof is repaired.
+\end{alertblock}
+\end{column}
+\end{columns}
+\end{frame}
+
+\end{document}

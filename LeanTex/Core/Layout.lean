@@ -5855,6 +5855,23 @@ hyphen (TeXbook ch. 14, `\finalhyphendemerits`; the plain/LaTeX default
 5000): a hyphen carrying into the paragraph's last line reads worst. -/
 public def finalHyphenDemerits : Int := 5000
 
+/-- Demerits a centred paragraph's last line adds when it holds one word
+(`oneWordLine`): one, below the least demerits any line carries, so it
+decides only among the break sequences TeX's `\centering` ties at — every
+line of badness zero under its fil, the same number of lines — and keeps a
+word alone under a centred block only where every sequence of that many
+lines does. TeX fills each line first and leaves the runt; the page keeps
+TeX's line count and its fill-first choice among the rest. -/
+public def runtDemerits : Int := 1
+
+/-- Whether the line from `a` to the break at `j` holds one word: no
+interword glue stands inside it. -/
+public def oneWordLine (items : Array Item) (a j : Nat) : Bool :=
+  !((List.range (j - a)).any fun i => match items[a + i]? with
+    | some (.glue g) | some (.decoratedGlue g _) => g.word
+    | some (.box ..) | some (.pen ..) | some (.img ..) | some (.rule ..) | some (.poly ..)
+    | none => false)
+
 /-- Prefix sums over item width/stretch/shrink/fil/forced counts, one slot
 past the end, so `kp` measures any line by differencing. -/
 public structure KpSums where
@@ -5965,7 +5982,7 @@ private def kpStart (items : Array Item) (p : Nat) : Nat :=
   lineStart items (if p == items.size then 0 else p + 1)
 
 private def kpCandidate (items : Array Item) (sums : KpSums)
-    (target slack : Sp) (protrude expand fil : Bool)
+    (target slack : Sp) (protrude expand fil runt : Bool)
     (best : Array (Option KpEntry)) (j p : Nat) (c : KpCandidates) : KpCandidates := Id.run do
   let n := items.size
   if p == n || p < j then
@@ -5979,7 +5996,8 @@ private def kpCandidate (items : Array Item) (sums : KpSums)
           doubleHyphenDemerits else 0
         let fin := if p != n && isFlagged items p && j == n - 1 then
           finalHyphenDemerits else 0
-        let d := d0 + lineDemerits items m target j expand fil + dbl + fin
+        let lone := if runt && j == n - 1 && oneWordLine items a j then runtDemerits else 0
+        let d := d0 + lineDemerits items m target j expand fil + dbl + fin + lone
         let ties := if fil then some n else none
         let c := { c with here := kpChoose c.here (d, p) ties }
         if m.natural - (m.shrink + m.ex expand) > target + slack then
@@ -6034,10 +6052,10 @@ private def KpCandidates.Valid (items : Array Item) (best : Array (Option KpEntr
   (∀ p ∈ c.survivors, (p = items.size ∨ p < j) ∧ ((best.getD (p) none)).isSome = true)
 
 private theorem kpCandidate_valid (items : Array Item) (sums : KpSums)
-    (target slack : Sp) (protrude expand fil : Bool) (best : Array (Option KpEntry))
+    (target slack : Sp) (protrude expand fil : Bool) {runt : Bool} (best : Array (Option KpEntry))
     (j p : Nat) (c : KpCandidates) (hc : c.Valid items best j)
     (hp : (p = items.size ∨ p < j) ∧ ((best.getD (p) none)).isSome = true) :
-    (kpCandidate items sums target slack protrude expand fil best j p c).Valid items best j := by
+    (kpCandidate items sums target slack protrude expand fil runt best j p c).Valid items best j := by
   have hpj : (p == items.size || p < j) = true := by simpa using hp.1
   simp only [kpCandidate, hpj, ite_true, pure, Id.run]
   split
@@ -6068,13 +6086,13 @@ private theorem kpCandidate_valid (items : Array Item) (sums : KpSums)
     · exact hc
 
 private theorem kpCandidate_good (items : Array Item) (sums : KpSums)
-    (target slack : Sp) (protrude expand fil : Bool) (best : Array (Option KpEntry))
+    (target slack : Sp) (protrude expand fil : Bool) {runt : Bool} (best : Array (Option KpEntry))
     (j p : Nat) (c : KpCandidates) (hj : j < items.size)
     (hc : c.Valid items best j)
     (hp : (p = items.size ∨ p < j) ∧ ((best.getD (p) none)).isSome = true)
     (hf : ∀ a, a < j → (sums.forced.getD (j) 0) - (sums.forced.getD (a) 0) = 0)
     (hg : c.Good items ∨ kpStart items p < items.size) :
-    (kpCandidate items sums target slack protrude expand fil best j p c).Good items := by
+    (kpCandidate items sums target slack protrude expand fil runt best j p c).Good items := by
   have hpj : (p == items.size || p < j) = true := by simpa using hp.1
   have hn : (kpStart items p < j && (sums.forced.getD (j) 0) - (sums.forced.getD (kpStart items p) 0) > 0) = false := by
     by_cases ha : kpStart items p < j
@@ -6108,12 +6126,12 @@ private theorem kpCandidate_good (items : Array Item) (sums : KpSums)
     · exact Or.inl ⟨p, Array.mem_push_self, hpg⟩
 
 private theorem kpCandidate_here (items : Array Item) (sums : KpSums)
-    (target slack : Sp) (protrude expand fil : Bool) (best : Array (Option KpEntry))
+    (target slack : Sp) (protrude expand fil : Bool) {runt : Bool} (best : Array (Option KpEntry))
     (j p : Nat) (c : KpCandidates)
     (hp : (p = items.size ∨ p < j) ∧ ((best.getD (p) none)).isSome = true)
     (hf : ∀ a, a < j → (sums.forced.getD (j) 0) - (sums.forced.getD (a) 0) = 0)
     (hg : c.here.isSome = true ∨ kpStart items p ≤ j) :
-    (kpCandidate items sums target slack protrude expand fil best j p c).here.isSome = true := by
+    (kpCandidate items sums target slack protrude expand fil runt best j p c).here.isSome = true := by
   have hpj : (p == items.size || p < j) = true := by simpa using hp.1
   have hn : (kpStart items p < j && (sums.forced.getD (j) 0) - (sums.forced.getD (kpStart items p) 0) > 0) = false := by
     by_cases ha : kpStart items p < j
@@ -6134,12 +6152,12 @@ private theorem kpCandidate_here (items : Array Item) (sums : KpSums)
     · simp [hg] at ha
 
 private theorem kpScan_valid (items : Array Item) (sums : KpSums)
-    (target slack : Sp) (protrude expand fil : Bool) (best : Array (Option KpEntry))
+    (target slack : Sp) (protrude expand fil : Bool) {runt : Bool} (best : Array (Option KpEntry))
     (j : Nat) (ps : List Nat) : ∀ c,
     c.Valid items best j →
     (∀ p ∈ ps, (p = items.size ∨ p < j) ∧ ((best.getD (p) none)).isSome = true) →
     (forIn ps c (fun p c => pure (.yield
-      (kpCandidate items sums target slack protrude expand fil best j p c))) : Id KpCandidates).Valid
+      (kpCandidate items sums target slack protrude expand fil runt best j p c))) : Id KpCandidates).Valid
         items best j := by
   induction ps with
   | nil => intro c hc _; exact hc
@@ -6150,7 +6168,7 @@ private theorem kpScan_valid (items : Array Item) (sums : KpSums)
       (fun q hq => hp q (by simp [hq]))
 
 private theorem kpScan_good (items : Array Item) (sums : KpSums)
-    (target slack : Sp) (protrude expand fil : Bool) (best : Array (Option KpEntry))
+    (target slack : Sp) (protrude expand fil : Bool) {runt : Bool} (best : Array (Option KpEntry))
     (j : Nat) (hj : j < items.size)
     (hf : ∀ a, a < j → (sums.forced.getD (j) 0) - (sums.forced.getD (a) 0) = 0)
     (ps : List Nat) : ∀ c,
@@ -6158,7 +6176,7 @@ private theorem kpScan_good (items : Array Item) (sums : KpSums)
     (∀ p ∈ ps, (p = items.size ∨ p < j) ∧ ((best.getD (p) none)).isSome = true) →
     (c.Good items ∨ ∃ p ∈ ps, kpStart items p < items.size) →
     (forIn ps c (fun p c => pure (.yield
-      (kpCandidate items sums target slack protrude expand fil best j p c))) : Id KpCandidates).Good
+      (kpCandidate items sums target slack protrude expand fil runt best j p c))) : Id KpCandidates).Good
         items := by
   induction ps with
   | nil =>
@@ -6176,13 +6194,13 @@ private theorem kpScan_good (items : Array Item) (sums : KpSums)
       · exact Or.inr ⟨q, hq, hqg⟩
 
 private theorem kpScan_here (items : Array Item) (sums : KpSums)
-    (target slack : Sp) (protrude expand fil : Bool) (best : Array (Option KpEntry))
+    (target slack : Sp) (protrude expand fil : Bool) {runt : Bool} (best : Array (Option KpEntry))
     (j : Nat) (hf : ∀ a, a < j → (sums.forced.getD (j) 0) - (sums.forced.getD (a) 0) = 0)
     (ps : List Nat) : ∀ c,
     (∀ p ∈ ps, (p = items.size ∨ p < j) ∧ ((best.getD (p) none)).isSome = true) →
     (c.here.isSome = true ∨ ∃ p ∈ ps, kpStart items p ≤ j) →
     (forIn ps c (fun p c => pure (.yield
-      (kpCandidate items sums target slack protrude expand fil best j p c))) : Id KpCandidates).here.isSome = true := by
+      (kpCandidate items sums target slack protrude expand fil runt best j p c))) : Id KpCandidates).here.isSome = true := by
   induction ps with
   | nil =>
     intro c _ hg
@@ -6308,11 +6326,11 @@ private theorem kpClose_here (j : Nat) (best : Array (Option KpEntry))
   exact hh
 
 private def kpPosition (items : Array Item) (sums : KpSums)
-    (target slack : Sp) (protrude expand fil : Bool) (j : Nat) (st : KpState) : KpState := Id.run do
+    (target slack : Sp) (protrude expand fil runt : Bool) (j : Nat) (st : KpState) : KpState := Id.run do
   if !canBreakAt items j then return st
   let mut c : KpCandidates := {}
   for p in st.active do
-    c := kpCandidate items sums target slack protrude expand fil st.best j p c
+    c := kpCandidate items sums target slack protrude expand fil runt st.best j p c
   return kpClose j st.best c
 
 private theorem kpCandidates_empty (items : Array Item) (best : Array (Option KpEntry))
@@ -6320,9 +6338,9 @@ private theorem kpCandidates_empty (items : Array Item) (best : Array (Option Kp
   simp [KpCandidates.Valid]
 
 private theorem kpPosition_valid (items : Array Item) (sums : KpSums)
-    (target slack : Sp) (protrude expand fil : Bool) (j : Nat) (st : KpState)
+    (target slack : Sp) (protrude expand fil : Bool) {runt : Bool} (j : Nat) (st : KpState)
     (hj : j < items.size) (hs : st.Valid items j) :
-    (kpPosition items sums target slack protrude expand fil j st).Valid items (j+1) := by
+    (kpPosition items sums target slack protrude expand fil runt j st).Valid items (j+1) := by
   by_cases hb : canBreakAt items j = true
   · simp only [kpPosition, hb, Bool.not_true, Bool.false_eq_true, ↓reduceIte,
       bind, pure, Id.run]
@@ -6334,11 +6352,11 @@ private theorem kpPosition_valid (items : Array Item) (sums : KpSums)
       fun p hp => ⟨(hs.2 p hp).1.imp_right (by omega), (hs.2 p hp).2⟩⟩
 
 private theorem kpPosition_good (items : Array Item) (sums : KpSums)
-    (target slack : Sp) (protrude expand fil : Bool) (j : Nat) (st : KpState)
+    (target slack : Sp) (protrude expand fil : Bool) {runt : Bool} (j : Nat) (st : KpState)
     (hj : j < items.size) (hs : st.Valid items j)
     (hf : ∀ a, a < j → (sums.forced.getD (j) 0) - (sums.forced.getD (a) 0) = 0)
     (hg : ∃ p ∈ st.active, kpStart items p < items.size) :
-    ∃ p ∈ (kpPosition items sums target slack protrude expand fil j st).active,
+    ∃ p ∈ (kpPosition items sums target slack protrude expand fil runt j st).active,
       kpStart items p < items.size := by
   by_cases hb : canBreakAt items j = true
   · simp only [kpPosition, hb, Bool.not_true, Bool.false_eq_true, ↓reduceIte,
@@ -6352,12 +6370,12 @@ private theorem kpPosition_good (items : Array Item) (sums : KpSums)
       pure, Id.run] using hg
 
 private theorem kpPosition_here (items : Array Item) (sums : KpSums)
-    (target slack : Sp) (protrude expand fil : Bool) (j : Nat) (st : KpState)
+    (target slack : Sp) (protrude expand fil : Bool) {runt : Bool} (j : Nat) (st : KpState)
     (hj : j < items.size) (hs : st.Valid items j)
     (hb : canBreakAt items j = true)
     (hf : ∀ a, a < j → (sums.forced.getD (j) 0) - (sums.forced.getD (a) 0) = 0)
     (hg : ∃ p ∈ st.active, kpStart items p ≤ j) :
-    (((kpPosition items sums target slack protrude expand fil j st).best.getD j none)).isSome = true := by
+    (((kpPosition items sums target slack protrude expand fil runt j st).best.getD j none)).isSome = true := by
   simp only [kpPosition, hb, Bool.not_true, Bool.false_eq_true, ↓reduceIte,
     bind, pure, Id.run]
   apply kpClose_here _ _ _ (by rw [hs.1.1]; omega)
@@ -6396,34 +6414,34 @@ private theorem kpInit_valid (items : Array Item) :
     simp [kpInit]
 
 private def kpForward (items : Array Item) (sums : KpSums)
-    (target slack : Sp) (protrude expand fil : Bool) (count : Nat) : KpState := Id.run do
+    (target slack : Sp) (protrude expand fil runt : Bool) (count : Nat) : KpState := Id.run do
   let mut st := kpInit items.size
   for j in [0:count] do
-    st := kpPosition items sums target slack protrude expand fil j st
+    st := kpPosition items sums target slack protrude expand fil runt j st
   return st
 
 private theorem kpForward_valid (items : Array Item) (sums : KpSums)
-    (target slack : Sp) (protrude expand fil : Bool) (count : Nat) (hc : count ≤ items.size) :
-    (kpForward items sums target slack protrude expand fil count).Valid items count := by
+    (target slack : Sp) (protrude expand fil : Bool) {runt : Bool} (count : Nat) (hc : count ≤ items.size) :
+    (kpForward items sums target slack protrude expand fil runt count).Valid items count := by
   simp only [kpForward, bind, pure, Id.run, Std.Legacy.Range.forIn_eq_forIn_range']
   simpa only [Std.Legacy.Range.size, Nat.sub_zero, Nat.add_sub_cancel, Nat.div_one, pure, Id.run,
     Nat.zero_add] using
     kpRange_progress (KpState.Valid items) 0 count
-      (kpPosition items sums target slack protrude expand fil) (kpInit items.size)
+      (kpPosition items sums target slack protrude expand fil runt) (kpInit items.size)
       (kpInit_valid items)
       (fun i _ hi st hs => kpPosition_valid _ _ _ _ _ _ _ _ _ (by omega) hs)
 
 private theorem kpForward_good (items : Array Item) (sums : KpSums)
-    (target slack : Sp) (protrude expand fil : Bool) (count : Nat) (hc : count ≤ items.size)
+    (target slack : Sp) (protrude expand fil : Bool) {runt : Bool} (count : Nat) (hc : count ≤ items.size)
     (hf : ∀ a j, a < j → j < items.size → (sums.forced.getD (j) 0) - (sums.forced.getD (a) 0) = 0)
     (hg : kpStart items items.size < items.size) :
-    ∃ p ∈ (kpForward items sums target slack protrude expand fil count).active,
+    ∃ p ∈ (kpForward items sums target slack protrude expand fil runt count).active,
       kpStart items p < items.size := by
   let P := fun i (st : KpState) => st.Valid items i ∧ ∃ p ∈ st.active, kpStart items p < items.size
   have h0 : P 0 (kpInit items.size) :=
     ⟨kpInit_valid items, items.size, by simp [kpInit], hg⟩
   have h := kpRange_progress P 0 count
-    (kpPosition items sums target slack protrude expand fil) (kpInit items.size) h0
+    (kpPosition items sums target slack protrude expand fil runt) (kpInit items.size) h0
     (fun i _ hi st hs => ⟨kpPosition_valid _ _ _ _ _ _ _ _ _ (by omega) hs.1,
       kpPosition_good _ _ _ _ _ _ _ _ _ (by omega) hs.1
         (fun a ha => hf a i ha (by omega)) hs.2⟩)
@@ -6431,39 +6449,39 @@ private theorem kpForward_good (items : Array Item) (sums : KpSums)
     Nat.sub_zero, Nat.add_sub_cancel, Nat.div_one, bind, pure, Id.run] using h.2
 
 private theorem kpForward_succ (items : Array Item) (sums : KpSums)
-    (target slack : Sp) (protrude expand fil : Bool) (count : Nat) :
-    kpForward items sums target slack protrude expand fil (count+1) =
-      kpPosition items sums target slack protrude expand fil count
-        (kpForward items sums target slack protrude expand fil count) := by
+    (target slack : Sp) (protrude expand fil : Bool) {runt : Bool} (count : Nat) :
+    kpForward items sums target slack protrude expand fil runt (count+1) =
+      kpPosition items sums target slack protrude expand fil runt count
+        (kpForward items sums target slack protrude expand fil runt count) := by
   simp only [kpForward, Std.Legacy.Range.forIn_eq_forIn_range', Std.Legacy.Range.size,
     Nat.sub_zero, Nat.add_sub_cancel, Nat.div_one, bind, pure, Id.run]
   rw [List.range'_1_concat]
   change (forIn _ _ (fun j st => pure (.yield
-    (kpPosition items sums target slack protrude expand fil j st))) : Id KpState) =
-    kpPosition items sums target slack protrude expand fil count
+    (kpPosition items sums target slack protrude expand fil runt j st))) : Id KpState) =
+    kpPosition items sums target slack protrude expand fil runt count
       (forIn _ _ (fun j st => pure (.yield
-        (kpPosition items sums target slack protrude expand fil j st))) : Id KpState)
+        (kpPosition items sums target slack protrude expand fil runt j st))) : Id KpState)
   have h1 := List.forIn_pure_yield_eq_foldl (m := Id)
     (l := List.range' 0 count ++ [count])
-    (kpPosition items sums target slack protrude expand fil) (kpInit items.size)
+    (kpPosition items sums target slack protrude expand fil runt) (kpInit items.size)
   have h2 := List.forIn_pure_yield_eq_foldl (m := Id)
     (l := List.range' 0 count)
-    (kpPosition items sums target slack protrude expand fil) (kpInit items.size)
+    (kpPosition items sums target slack protrude expand fil runt) (kpInit items.size)
   simp only [Nat.zero_add] at *
   rw [h1, h2]
   simp only [List.foldl_append, List.foldl_cons, List.foldl_nil, pure]
 
 private theorem kpForward_last (items : Array Item) (sums : KpSums)
-    (target slack : Sp) (protrude expand fil : Bool)
+    (target slack : Sp) (protrude expand fil : Bool) {runt : Bool}
     (hn : 0 < items.size) (hb : canBreakAt items (items.size-1) = true)
     (hf : ∀ a j, a < j → j < items.size → (sums.forced.getD (j) 0) - (sums.forced.getD (a) 0) = 0)
     (hg : kpStart items items.size < items.size) :
-    (((kpForward items sums target slack protrude expand fil items.size).best.getD (items.size-1) none)).isSome = true := by
-  have h := kpPosition_here items sums target slack protrude expand fil (items.size-1)
-    (kpForward items sums target slack protrude expand fil (items.size-1)) (by omega)
+    (((kpForward items sums target slack protrude expand fil runt items.size).best.getD (items.size-1) none)).isSome = true := by
+  have h := kpPosition_here items sums target slack protrude expand fil (runt := runt) (items.size-1)
+    (kpForward items sums target slack protrude expand fil runt (items.size-1)) (by omega)
     (kpForward_valid _ _ _ _ _ _ _ _ (by omega)) hb
     (fun a ha => hf a _ ha (by omega)) (by
-      obtain ⟨p, hp, hg⟩ := kpForward_good items sums target slack protrude expand fil
+      obtain ⟨p, hp, hg⟩ := kpForward_good items sums target slack protrude expand fil (runt := runt)
         (items.size-1) (by omega) hf hg
       exact ⟨p, hp, by omega⟩)
   rw [← kpForward_succ] at h
@@ -6735,10 +6753,10 @@ current position is already overfull beyond shrink can only get worse, so
 it is considered one last time and then deactivated (one node is always
 retained so a solution exists even for unbreakable content). -/
 public def kp (items : Array Item) (target : Sp) (protrude : Bool := false)
-    (expand : Bool := false) (fil : Bool := false) : Array Nat :=
+    (expand : Bool := false) (fil : Bool := false) (runt : Bool := false) : Array Nat :=
   let sums := kpSums items
   let slack : Sp := if protrude then maxProtrudeRight items else 0
-  let st := kpForward items sums target slack protrude expand fil items.size
+  let st := kpForward items sums target slack protrude expand fil runt items.size
   match (st.best.getD (items.size-1) none) with
   | none => #[]
   | some _ => kpBack items.size st.best (items.size-1)
@@ -6746,15 +6764,15 @@ public def kp (items : Array Item) (target : Sp) (protrude : Bool := false)
 /-- The actual breaker retains all box glyphs in source order. The domain
 allows arbitrary widths, costs and overflow; it excludes internal forced
 ends, whose independently authored segments need their own chain. -/
-private theorem kp_boxChars (items : Array Item) (target : Sp) (protrude expand fil : Bool)
+private theorem kp_boxChars (items : Array Item) (target : Sp) (protrude expand fil : Bool) {runt : Bool}
     (hn : 0 < items.size) (hb : canBreakAt items (items.size-1) = true)
     (hf : ∀ k, k+1 < items.size → isForced items k = false) :
-    (breakSpans items (kp items target protrude expand fil).toList).1 =
+    (breakSpans items (kp items target protrude expand fil runt).toList).1 =
       items.toList.flatMap Item.boxChars := by
   let sums := kpSums items
   let slack : Sp := if protrude then maxProtrudeRight items else 0
-  let st := kpForward items sums target slack protrude expand fil items.size
-  have ht := (kpForward_valid items sums target slack protrude expand fil items.size
+  let st := kpForward items sums target slack protrude expand fil runt items.size
+  have ht := (kpForward_valid items sums target slack protrude expand fil (runt := runt) items.size
     (Nat.le_refl _)).1
   have hz : ∀ a j, a < j → j < items.size → (sums.forced.getD (j) 0) - (sums.forced.getD (a) 0) = 0 := by
     intro a j haj hj
@@ -6766,7 +6784,7 @@ private theorem kp_boxChars (items : Array Item) (target : Sp) (protrude expand 
   | none =>
     have hg : ¬ kpStart items items.size < items.size := by
       intro hg
-      have h := kpForward_last items sums target slack protrude expand fil hn hb hz hg
+      have h := kpForward_last items sums target slack protrude expand fil (runt := runt) hn hb hz hg
       change ((st.best.getD (items.size-1) none)).isSome = true at h
       rw [he] at h
       contradiction
@@ -6800,18 +6818,18 @@ hyphens rare — a paragraph that sets cleanly without them never
 hyphenates, whatever small demerit gain a hyphen could buy. Explicit
 hyphens (unflagged pens) and forced breaks keep their pens. -/
 public def kpTwoPass (items : Array Item) (target : Sp) (protrude : Bool := false)
-    (expand : Bool := false) (fil : Bool := false) : Array Nat := Id.run do
+    (expand : Bool := false) (fil : Bool := false) (runt : Bool := false) : Array Nat := Id.run do
   let sealable : Item → Bool := fun it => match it with
     | .pen _ cost flagged _ _ _ => flagged && forcedCost < cost && cost < 10000
     | .box .. | .glue .. | .decoratedGlue .. | .img .. | .rule .. | .poly .. => false
-  if !items.any sealable then return kp items target protrude expand fil
+  if !items.any sealable then return kp items target protrude expand fil runt
   let plain := items.map fun it => match it with
     | .pen w cost flagged f c g =>
       if flagged && forcedCost < cost && cost < 10000 then .pen w 10000 flagged f c g
       else .pen w cost flagged f c g
     | .box .. | .glue .. | .decoratedGlue .. | .img .. | .rule .. | .poly .. => it
-  let breaks := kp plain target protrude expand fil
-  if breaks.isEmpty then return kp items target protrude expand fil
+  let breaks := kp plain target protrude expand fil runt
+  if breaks.isEmpty then return kp items target protrude expand fil runt
   let mut prev := plain.size
   for j in breaks do
     let a := lineStart plain (if prev == plain.size then 0 else prev + 1)
@@ -6824,7 +6842,7 @@ public def kpTwoPass (items : Array Item) (target : Sp) (protrude : Bool := fals
       else if m.shrink + ex < -delta then (pretolerance : Int) + 1
       else badness delta (m.shrink + ex)
     if bad > (pretolerance : Int) then
-      return kp items target protrude expand fil
+      return kp items target protrude expand fil runt
     prev := j
   return breaks
 
@@ -14822,9 +14840,9 @@ private theorem raggedItems_paraItems (items : Array Item) :
     raggedItems (paraItems items) = paraItems (raggedItems items) := by
   simp [raggedItems, paraItems]
 
-private theorem kpTwoPass_unflagged (items : Array Item) (target : Sp) (protrude expand fil : Bool)
+private theorem kpTwoPass_unflagged (items : Array Item) (target : Sp) (protrude expand fil : Bool) {runt : Bool}
     (hp : ∀ it ∈ items, it.UnflaggedEmpty) :
-    kpTwoPass items target protrude expand fil = kp items target protrude expand fil := by
+    kpTwoPass items target protrude expand fil runt = kp items target protrude expand fil runt := by
   unfold kpTwoPass
   dsimp only
   split
@@ -14838,8 +14856,8 @@ private theorem kpTwoPass_unflagged (items : Array Item) (target : Sp) (protrude
     cases it <;> simp_all [Item.UnflaggedEmpty]
 
 private theorem kpTwoPass_paraItems_chars (items : Array Item) (target : Sp)
-    (protrude expand fil : Bool) (hp : ItemsProse items) :
-    (breakSpans (paraItems items) (kpTwoPass (paraItems items) target protrude expand fil).toList).1 =
+    (protrude expand fil : Bool) {runt : Bool} (hp : ItemsProse items) :
+    (breakSpans (paraItems items) (kpTwoPass (paraItems items) target protrude expand fil runt).toList).1 =
       (paraItems items).toList.flatMap Item.boxChars := by
   rw [kpTwoPass_unflagged _ _ _ _ _ (itemsProse_unflagged items hp)]
   exact kp_boxChars _ _ _ _ _ (by simp [paraItems_size]) (paraItems_end items)
@@ -15028,12 +15046,12 @@ private theorem KpChain.members_lt {items : Array Item} {last : Nat} {breaks : L
     · rcases List.mem_singleton.mp hk with rfl
       exact hj
 
-private theorem kp_members_lt (items : Array Item) (target : Sp) (protrude expand fil : Bool)
-    (hn : 0 < items.size) : ∀ k ∈ kp items target protrude expand fil, k < items.size := by
+private theorem kp_members_lt (items : Array Item) (target : Sp) (protrude expand fil : Bool) {runt : Bool}
+    (hn : 0 < items.size) : ∀ k ∈ kp items target protrude expand fil runt, k < items.size := by
   let sums := kpSums items
   let slack : Sp := if protrude then maxProtrudeRight items else 0
-  let st := kpForward items sums target slack protrude expand fil items.size
-  have ht := (kpForward_valid items sums target slack protrude expand fil items.size
+  let st := kpForward items sums target slack protrude expand fil runt items.size
+  have ht := (kpForward_valid items sums target slack protrude expand fil (runt := runt) items.size
     (Nat.le_refl _)).1
   unfold kp
   change ∀ k ∈ (match (KpState.best st).getD (items.size-1) none with
@@ -15160,11 +15178,11 @@ private theorem census_placePara {n : Nat} (pick : Option Nat → Bool → Bool)
 compose without losing or adding glyphs. Collection establishes the job's
 plain-item shape; no alternate paragraph interpreter is used. -/
 private theorem census_placePara_prose {n : Nat} (pick : Option Nat → Bool → Bool)
-    (fs : FontSet) (b : B) (j : ParaJob) (items : Array Item) (protrude expand fil : Bool)
+    (fs : FontSet) (b : B) (j : ParaJob) (items : Array Item) (protrude expand fil : Bool) {runt : Bool}
     (hj : j.SourceBound n) (hb : b.SourceBound n) (hh : Spacing.Paragraph.hangIndent j = 0)
     (hp : ItemsProse items) (he : Spacing.Paragraph.items j = paraItems items) :
     Spacing.Page.census pick (placePara fs b j
-      (kpTwoPass (Spacing.Paragraph.items j) (Spacing.Paragraph.target j) protrude expand fil)) =
+      (kpTwoPass (Spacing.Paragraph.items j) (Spacing.Paragraph.target j) protrude expand fil runt)) =
       Spacing.Page.census pick b ++ (if pick (Spacing.Paragraph.leaf j) (!(Spacing.Paragraph.inFloat j)) then
         (Spacing.Paragraph.items j).toList.flatMap Item.boxChars else []) := by
   rw [census_placePara pick fs b j _ hj hb hh]
@@ -19795,7 +19813,7 @@ private def withLayoutOps {α : Type} (geom : Geom) (fs : FontSet)
     | .progress num den fg bg thick x w => .progress num den fg bg thick x w
     | .para j => .para j (Task.spawn fun _ =>
         kpTwoPass j.items j.target (j.protrude && j.justify && !j.center)
-          (j.expand && j.justify && !j.center) j.rightFil)
+          (j.expand && j.justify && !j.center) j.rightFil (j.center && j.rightFil))
     | .regionOpen target => .regionOpen target
     | .regionClose => .regionClose
     | .colOpen p => .colOpen p
@@ -19983,6 +20001,7 @@ private def StagedOp.Prose : StagedOp → Prop
       (Spacing.Paragraph.protrude j && Spacing.Paragraph.justify j && !Spacing.Paragraph.center j)
       (Spacing.Paragraph.expand j && Spacing.Paragraph.justify j && !Spacing.Paragraph.center j)
       (Spacing.Paragraph.rightFil j)
+      (Spacing.Paragraph.center j && Spacing.Paragraph.rightFil j)
   | StagedOp.skip _ | StagedOp.skipAlt .. | StagedOp.anchorRule _ | StagedOp.anchor _ => True
   | _ => False
 

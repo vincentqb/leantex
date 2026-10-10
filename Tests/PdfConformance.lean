@@ -568,7 +568,7 @@ def pdfConformanceChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet)
     for v in volatileSpellings do
       t s!"pdf deterministic {n}: no {v}" (!bytesContain text v)
     t s!"pdf deterministic {n}: no absolute source path"
-      (!bytesContain text (cwd / "testdata/corpus" / s!"{n}.tex").toString)
+      (!bytesContain text (cwd / goldenFile n).toString)
   -- The gate over every feature the golden set reaches, as one statement.
   if let .ok m := matrix? then
     let gaps := featureGate m reached.toList

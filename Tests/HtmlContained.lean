@@ -537,8 +537,7 @@ def htmlContainedCliChecks (ref : IO.Ref (List String)) : IO Unit := do
 This is a syntax coverage guard; missing captures still owe publication checks. -/
 def htmlContainedCorpusChecks (ref : IO.Ref (List String)) : IO Unit := do
   for name in goldenNames do
-    let src ← IO.FS.readFile s!"testdata/corpus/{name}.tex"
-    let (doc, _) ← elabFixture name src
+    let (doc, _) ← goldenDoc name
     for mode in [HtmlDoc.CssMode.own, .bulma, .none] do
       let (head, body, _) := HtmlDoc.emitTree { css := mode } doc
       let refusals := (HtmlResource.requests head body).filterMap fun

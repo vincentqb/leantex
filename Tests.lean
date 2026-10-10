@@ -419,6 +419,7 @@ def layoutSuiteChecks (ref : IO.Ref (List String)) : IO Unit := do
   Tests.LineRhythm.overlayGapChecks ref oneFace
   Tests.LineRhythm.carrierDisplayChecks ref oneFace
   Tests.LineRhythm.headingLeadChecks ref oneFace
+  Tests.LineRhythm.centredRuntChecks ref oneFace
   displayTexChecks ref oneFace
   titleBarChecks ref geom oneFace font
   slideChecks ref oneFace

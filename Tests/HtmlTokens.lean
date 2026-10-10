@@ -98,8 +98,7 @@ def htmlTokenClosureChecks (ref : IO.Ref (List String)) : IO Unit := do
       (engineTokenNames.contains n)
   let mut pages : List String := []
   for n in goldenNames do
-    let src ← IO.FS.readFile s!"testdata/corpus/{n}.tex"
-    let (doc, _) ← elabFixture n src
+    let (doc, _) ← goldenDoc n
     pages := (HtmlDoc.emit {} doc).1 :: pages
   for tok in engineTokenNames do
     let declared := pages.any fun h => declaresToken h tok

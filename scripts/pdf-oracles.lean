@@ -646,25 +646,21 @@ def main : IO Unit := do
   IO.println s!"pdf-oracles: node {nodeV.getD "absent"}  magick {magickV.getD "absent"}  browsers {if browsers then "on" else "off"}"
   let faces ← FontDiscovery.scanRoots (["testdata/corpus/fonts"] ++ (← FontDiscovery.systemRoots []))
   let pats := Hyphen.english.get
-  -- The fixtures: every corpus document that declares a PDF output or
-  -- declares none, built by the shipped binary.
-  let mut names : Array String := #[]
-  for f in ← System.FilePath.readDir "testdata/corpus" do
-    if f.fileName.endsWith ".tex" then
-      names := names.push ((f.fileName.dropEnd 4).toString)
-  names := names.qsort (· < ·)
+  -- The fixtures: every golden document that declares a PDF output or
+  -- declares none, each read through its own surface (`goldenDoc`), built
+  -- by the shipped binary.
+  let names := goldenNames.toArray.qsort (· < ·)
   let mut fixtures : Array Fixture := #[]
   let mut notBuilt : Array String := #[]
   let mut record : Array String := #[]
   let mut censusDisagree : Array String := #[]
   for n in names do
-    let src ← IO.FS.readFile s!"testdata/corpus/{n}.tex"
-    let (doc, _) ← elabFixture n src
+    let (doc, _) ← goldenDoc n
     let formats := doc.output.formats
     unless formats.isEmpty || formats.contains "pdf" do continue
     let pdfPath := dir / s!"{n}.pdf"
     let built ← IO.Process.output { cmd := bin, args :=
-      #[s!"testdata/corpus/{n}.tex", "-o", pdfPath.toString, "--porcelain", "-q"] }
+      #[goldenFile n, "-o", pdfPath.toString, "--porcelain", "-q"] }
     if built.exitCode != 0 then
       notBuilt := notBuilt.push s!"{n} (exit {built.exitCode})"
       continue
@@ -700,8 +696,13 @@ def main : IO Unit := do
           pure features
       | .error e => die s!"{n}: the engine's reader refuses the built file: {e}"; pure features
     -- Body lines only: furniture (line numbers, running feet) follows
-    -- this font set's line breaks, which the driver's may not share.
-    let shipped := String.intercalate " " ((bodyLines out).toList.map (lineText ·))
+    -- this font set's line breaks, which the driver's may not share. And
+    -- only lines on the medium: what a page sets past its edge is the
+    -- artifact tier's offence (`artKnownOffences`), and a reader that
+    -- extracts only what the page box shows is right not to read it.
+    let onMedium (l : Layout.LineOut) : Bool :=
+      geom.onMedium l.x (l.segs.foldl (fun w s => w + s.advance) 0)
+    let shipped := String.intercalate " " (((bodyLines out).filter onMedium).toList.map (lineText ·))
     let mut fx : Fixture := { name := n, pages, features, shipped }
     -- Poppler: pdfinfo, pdffonts, pdftotext.
     if popplerV.isSome then

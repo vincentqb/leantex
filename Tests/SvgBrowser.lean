@@ -8,6 +8,10 @@ open LeanTex.Core LeanTex.Cli Scoreboard
 /-- Source keys and expected browser identities read captured inputs. The
 filesystem may change after capture, but that cannot alter this build. -/
 def svgBrowserSourceChecks (ref : IO.Ref (List String)) : IO Unit := do
+  let docs ← Hermetic.corpusDocs "testdata/corpus"
+  check ref s!"hermetic corpus: the browser oracle's documents are the golden set, \
+markdown included: {docs.map (·.1)}"
+    (docs.map (·.1) == (goldenNames.toArray.qsort (· < ·)))
   IO.FS.withTempDir fun dir => do
     let moving := svgDocument
       "<rect width=\"20\" height=\"20\"><animate attributeName=\"opacity\" values=\"0;1;0\" dur=\"2s\"/></rect>"

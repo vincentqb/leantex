@@ -559,7 +559,7 @@ def htmlRhythmChecks (ref : IO.Ref (List String)) : IO Unit := do
     | _ => false
   let mut shadows : Array String := #[]
   for n in goldenNames do
-    let (doc, _) ← elabFixture n (← IO.FS.readFile s!"testdata/corpus/{n}.tex")
+    let (doc, _) ← goldenDoc n
     for (sel, decls) in artCssBlocks (HtmlDoc.baseCss {} doc) do
       if !sel.startsWith ":where(" && setsMargin decls &&
           (selParts sel).any (fun part => subjects.any (compoundOverlaps (selSubject part))) then
@@ -809,7 +809,7 @@ def printLiftChecks (ref : IO.Ref (List String)) : IO Unit := do
   let mut missing : Array String := #[]
   let mut wraps := true
   for n in goldenNames do
-    let (doc, _) ← elabFixture n (← IO.FS.readFile s!"testdata/corpus/{n}.tex")
+    let (doc, _) ← goldenDoc n
     let blocks := cssBlocksIn (HtmlDoc.baseCss {} doc)
     for (ctx, sel, decls) in blocks do
       if print ctx || ctx.any (·.startsWith "@media screen") then continue
@@ -1959,8 +1959,7 @@ def agreeChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet)
     (pats : Hyphen.Patterns) : IO Unit := do
   let namingCodes := ["W0007", "W0331", "W0332"]
   for n in goldenNames do
-    let src ← IO.FS.readFile s!"testdata/corpus/{n}.tex"
-    let (doc, docDs) ← elabFixture n src
+    let (doc, docDs) ← goldenDoc n
     let geom := Layout.Geom.ofPage doc.page
     let out := layoutOf oneFace doc geom (some pats)
     let (_, body, htmlDs) := HtmlDoc.emitTree {} doc
@@ -2832,8 +2831,7 @@ structure GoldenArt where
 def goldenArts (oneFace : Font.FontSet) : IO (Array GoldenArt) := do
   let mut arts : Array GoldenArt := Array.emptyWithCapacity goldenNames.length
   for name in goldenNames do
-    let src ← IO.FS.readFile s!"testdata/corpus/{name}.tex"
-    let (doc, _) ← elabFixture name src
+    let (doc, _) ← goldenDoc name
     let geom := Layout.Geom.ofPage doc.page
     let store ← corpusStore doc
     let out := layoutOf oneFace doc geom none store
@@ -2939,7 +2937,19 @@ def pdfCensusTable :
   ("cond-ifdefined", (1, 1, 0, 0, 0, 0, 0, none, ["FlateDecode"])),
   ("cond-ifx", (1, 1, 0, 0, 0, 0, 0, none, ["FlateDecode"])),
   ("cond-ifnum", (1, 1, 0, 0, 0, 0, 0, none, ["FlateDecode"])),
-  ("cond-loaded", (1, 1, 0, 0, 0, 0, 0, none, ["FlateDecode"]))]
+  ("cond-loaded", (1, 1, 0, 0, 0, 0, 0, none, ["FlateDecode"])),
+  ("md-code", (1, 1, 0, 0, 0, 0, 0, none, ["FlateDecode"])),
+  ("md-emphasis", (1, 1, 0, 0, 0, 0, 0, none, ["FlateDecode"])),
+  ("md-headings", (1, 1, 0, 0, 0, 0, 0, none, ["FlateDecode"])),
+  -- no link annotation: the image a link wraps ships without its link, the
+  -- loss `silentLosses` records; this row follows the fix that closes it
+  ("md-images", (1, 1, 4, 0, 1, 0, 0, none, ["DCTDecode", "FlateDecode"])),
+  ("md-links", (1, 1, 0, 0, 0, 4, 0, none, ["FlateDecode"])),
+  ("md-lists", (1, 1, 0, 0, 0, 0, 0, none, ["FlateDecode"])),
+  ("md-quotes", (1, 1, 0, 0, 0, 0, 0, none, ["FlateDecode"])),
+  ("md-readme", (1, 1, 0, 0, 0, 1, 0, none, ["FlateDecode"])),
+  ("md-rules", (1, 1, 0, 0, 0, 0, 0, none, ["FlateDecode"])),
+  ("md-table", (1, 1, 0, 0, 0, 0, 0, none, ["FlateDecode"]))]
 
 /-- The read-side census (`PdfCensus`) and the checked reader beneath it
 (`PdfRead.objects`): the probe the writer never made judges as
@@ -3035,8 +3045,7 @@ def pdfCensusChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO U
   for (n, _) in pdfCensusTable do
     t s!"pdf census row {n} names a golden fixture" (goldenNames.contains n)
   for n in goldenNames do
-    let src ← IO.FS.readFile s!"testdata/corpus/{n}.tex"
-    let (doc, _) ← elabFixture n src
+    let (doc, _) ← goldenDoc n
     let geom := Layout.Geom.ofPage doc.page
     let store ← corpusStore doc
     let out := layoutOf oneFace doc geom none store
@@ -3503,8 +3512,7 @@ def objTableChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Un
   -- Every corpus PDF, read back: the objects the file carries are the
   -- table's ids, in order, and the trailer's /Size is the table's.
   for n in goldenNames do
-    let src ← IO.FS.readFile s!"testdata/corpus/{n}.tex"
-    let (doc, _) ← elabFixture n src
+    let (doc, _) ← goldenDoc n
     let geom := Layout.Geom.ofPage doc.page
     let store ← corpusStore doc
     let out := layoutOf oneFace doc geom none store
@@ -3611,8 +3619,7 @@ def featureCensusChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : 
   -- The census over the corpus: the four unemitted features never, the
   -- bookkeeping five always, and the census is in registry order.
   for n in goldenNames do
-    let src ← IO.FS.readFile s!"testdata/corpus/{n}.tex"
-    let (doc, _) ← elabFixture n src
+    let (doc, _) ← goldenDoc n
     let geom := Layout.Geom.ofPage doc.page
     let store ← corpusStore doc
     let out := layoutOf oneFace doc geom none store
@@ -3809,8 +3816,7 @@ def artifactMarkChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet)
   let mut marks := 0
   let mut furniture := 0
   for n in goldenNames do
-    let src ← IO.FS.readFile s!"testdata/corpus/{n}.tex"
-    let (doc, _) ← elabFixture n src
+    let (doc, _) ← goldenDoc n
     let geom := Layout.Geom.ofPage doc.page
     let out := layoutOf oneFace doc geom (some pats)
     let tree := Struct.ofDoc (Layout.pdfView doc)

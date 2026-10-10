@@ -313,6 +313,13 @@ def deck169Body (body : String) : String :=
 def deck169Frame (body : String) : String :=
   deck169Body ("\\begin{frame}\n" ++ body ++ "\n\\end{frame}")
 
+/-- The golden set's markdown fixtures: `testdata/corpus/<n>.md`, read by the
+markdown reader as `leantex doc.md` reads them, and held to every check the
+golden set is. -/
+def mdGoldenNames : List String :=
+  ["md-code", "md-emphasis", "md-headings", "md-images", "md-links", "md-lists",
+   "md-quotes", "md-readme", "md-rules", "md-table"]
+
 /-- The golden set: every fixture `runGoldens` elaborates and every name
 `censusTable` must carry a row for. Written out rather than globbed so a
 golden run's membership is visible here, and held to `testdata/corpus` by
@@ -335,7 +342,8 @@ def goldenNames : List String :=
    "math-companion", "math-first", "math-text", "math-alpha", "math-cancel", "greek-literal", "abstract", "crossref", "eqnum", "footnotes",
    "redefine", "titlebars", "titleground", "daylight", "blocks", "poster", "poster-headline", "listings",
    "algorithm", "lineno", "lineno-modulo",
-   "cond-newif", "cond-ifdefined", "cond-ifx", "cond-ifnum", "cond-loaded"]
+   "cond-newif", "cond-ifdefined", "cond-ifx", "cond-ifnum", "cond-loaded"] ++
+  mdGoldenNames
 
 -- KP test helpers: word/glue/forced-break item builders and a brute-force
 -- optimum to cross-check the DP against.
@@ -507,6 +515,22 @@ def elabFixture (n src : String) : IO (Ir.Doc × Array Diag) := do
   let (doc, bibDiags) := Bib.apply sources doc
   return (doc, diags ++ bibDiags)
 
+/-- A golden fixture's source file: its surface's extension under
+`testdata/corpus`. -/
+def goldenFile (n : String) : String :=
+  s!"testdata/corpus/{n}.{if mdGoldenNames.contains n then "md" else "tex"}"
+
+/-- A golden fixture elaborated through its own surface's reader: the
+markdown reader for a markdown fixture, which requests no data and no
+bibliography; `elabFixture`'s fulfilments for a `.tex` one. -/
+def goldenDoc (n : String) : IO (Ir.Doc × Array Diag) := do
+  let src ← IO.FS.readFile (goldenFile n)
+  if mdGoldenNames.contains n then
+    let file := s!"{n}.md"
+    let (raws, ds) := Md.read file src
+    return Elab.runRaws file raws ds
+  else elabFixture n src
+
 def firstDiff (expected actual : String) : String := Id.run do
   let e := expected.splitOn "\n"
   let a := actual.splitOn "\n"
@@ -521,8 +545,7 @@ def runGoldens (update : Bool) (fail : String → IO Unit) : IO Unit := do
   if update then
     IO.FS.createDirAll "testdata/golden"
   for n in goldenNames do
-    let src ← IO.FS.readFile s!"testdata/corpus/{n}.tex"
-    let (doc, diags) ← elabFixture n src
+    let (doc, diags) ← goldenDoc n
     let out := Ir.dump doc diags -- ir tier: goldens witness elaboration, not the artifact
     let path := s!"testdata/golden/{n}.txt"
     if update then

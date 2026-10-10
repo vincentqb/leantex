@@ -67,7 +67,8 @@ private def randItems (g : Gen) : Array Item × Gen := Id.run do
   return (items, g)
 
 private def seqCost (items : Array Item) (target : Dim.Sp)
-    (protrude expand fil : Bool) (breaks : List Nat) : Option Int := Id.run do
+    (protrude expand fil : Bool) (breaks : List Nat) (runt : Bool := false) :
+    Option Int := Id.run do
   let mut prev : Nat := 0
   let mut first := true
   let mut prevFlagged := false
@@ -90,6 +91,8 @@ private def seqCost (items : Array Item) (target : Dim.Sp)
       total := total + doubleHyphenDemerits
     if prevFlagged && b == items.size - 1 then
       total := total + finalHyphenDemerits
+    if runt && b == items.size - 1 && oneWordLine items a b then
+      total := total + runtDemerits
     prev := b
     prevFlagged := isFlagged items b
     first := false
@@ -102,7 +105,7 @@ sequences that reach it the one TeX's line breaker keeps — each break's
 predecessor the latest of equal demerits (tex.web §855), which is the
 sequence greatest when compared from its end. -/
 private def bruteBest (items : Array Item) (target : Dim.Sp)
-    (protrude expand fil : Bool) : Option (Int × List Nat) := Id.run do
+    (protrude expand fil : Bool) (runt : Bool := false) : Option (Int × List Nat) := Id.run do
   let n := items.size
   let legal := (List.range n).filter (canBreakAt items ·)
   let optional' := legal.filter (· != n - 1)
@@ -121,7 +124,7 @@ private def bruteBest (items : Array Item) (target : Dim.Sp)
       if mask / 2 ^ idx % 2 == 1 then
         chosen := chosen ++ [b]
     let seq := chosen ++ [n - 1]
-    if let some c := seqCost items target protrude expand fil seq then
+    if let some c := seqCost items target protrude expand fil seq runt then
       match best with
       | some (b0, s0) =>
         if c < b0 || (c == b0 && later seq s0) then best := some (c, seq)
@@ -155,20 +158,22 @@ def main (args : List String) : IO UInt32 := do
     let (tw, g'') := g.next 200
     g := g''
     let target := Dim.pt (tw + 40)
-    -- Justified, ragged as the finite transform the card class uses, and
-    -- LaTeX's `\raggedright` (TeX's own glue under a fil `\rightskip`): the
-    -- same breaker must be optimal over every item shape — with the
-    -- protrusion boundary term and the expansion flexibility on and off,
-    -- independently — and under the fil, where demerits tie, keep TeX's
-    -- own choice among the ties.
-    for (shape, fil) in [(items, false), (raggedItems items, false), (items, true)] do
+    -- Justified, ragged as the finite transform the card class uses,
+    -- LaTeX's `\raggedright` (TeX's own glue under a fil `\rightskip`), and
+    -- a centred paragraph's fil with its lone last word priced: the same
+    -- breaker must be optimal over every item shape — with the protrusion
+    -- boundary term and the expansion flexibility on and off, independently
+    -- — and under the fil, where demerits tie, keep TeX's own choice among
+    -- the ties.
+    for (shape, fil, runt) in [(items, false, false), (raggedItems items, false, false),
+        (items, true, false), (items, true, true)] do
       for (protrude, expand) in [(false, false), (true, false), (false, true), (true, true)] do
-        let kpBreaks := (kp shape target protrude expand fil).toList
-        let kpCost := seqCost shape target protrude expand fil kpBreaks
-        let brute := bruteBest shape target protrude expand fil
+        let kpBreaks := (kp shape target protrude expand fil runt).toList
+        let kpCost := seqCost shape target protrude expand fil kpBreaks runt
+        let brute := bruteBest shape target protrude expand fil runt
         unless kpCost.isSome && kpCost == brute.map (·.1) do
           failures := failures + 1
-          IO.eprintln s!"FAIL case {i} (protrude={protrude}, expand={expand}, fil={fil}): \
+          IO.eprintln s!"FAIL case {i} (protrude={protrude}, expand={expand}, fil={fil}, runt={runt}): \
 target={target} kp={kpCost} brute={brute.map (·.1)}"
           IO.eprintln s!"  breaks={kpBreaks}"
           IO.eprintln s!"  items={shape.size}"
@@ -180,8 +185,8 @@ the fil tie keeps {kpBreaks}, TeX keeps {brute.map (·.2)}"
       failures := failures + 1
       IO.eprintln s!"FAIL case {i}: prefix-sum measure disagrees with direct measure"
   if failures == 0 then
-    IO.println s!"kp-fuzz: {iters} random paragraphs, all optimal (justified, ragged, and \
-LaTeX's fil ragged, its ties as TeX keeps them)"
+    IO.println s!"kp-fuzz: {iters} random paragraphs, all optimal (justified, ragged, \
+LaTeX's fil ragged and centred, their ties as TeX keeps them)"
     return 0
   else
     IO.eprintln s!"kp-fuzz: {failures} failures in {iters} cases"

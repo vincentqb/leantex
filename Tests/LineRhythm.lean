@@ -1140,4 +1140,30 @@ def carrierDisplayChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) :
     t s!"{label} takes the flat frame's gaps on the screen"
       (agree3 (frameFlow fn (treeCssList "" fh.toList)) (frameFlow on (treeCssList "" oh.toList)))
 
+/-- Invented words a centred block of the article's measure sets in three
+lines when each line takes every word that fits, the last word alone. -/
+private def runtPara : String :=
+  "Fern yew spruce elm beech hazel juniper cedar fir oak beech cedar oak juniper " ++
+    "pine larch moss holly hazel alder clover spruce rowan spruce."
+
+/-- **A centred block never leaves its last word alone where TeX's line count
+allows otherwise** (`Layout.runtDemerits`): LaTeX's `\centering` fills each
+line first and can end a block on one word, centred under the rest; the page
+keeps TeX's line count — the same paragraph set flush left, which TeX breaks
+exactly as it breaks it centred, stands the same number of lines — and gives
+the last line a second word. Before, the centred block ended on its last
+word alone. -/
+def centredRuntChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit := do
+  let t := check ref
+  let lines (env : String) : Array Layout.LineOut :=
+    bodyLines (layoutOf oneFace (elabStr ("\\documentclass{article}\n\\begin{document}\n" ++
+      "\\begin{" ++ env ++ "}\n" ++ runtPara ++ "\n\\end{" ++ env ++ "}\n\\end{document}")).1)
+  let words (l : Layout.LineOut) : Nat := ((lineText l).splitOn " ").filter (!·.isEmpty) |>.length
+  let flush := lines "flushleft"
+  let centred := lines "center"
+  t "the block set flush left ends on its last word alone, as TeX fills each line first"
+    (flush.size == 3 && flush.back?.map words == some 1)
+  t "the centred block keeps TeX's line count and sets its last line two words or more"
+    (centred.size == flush.size && (centred.back?.map words).any (2 ≤ ·))
+
 end Tests.LineRhythm

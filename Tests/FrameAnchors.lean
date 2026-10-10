@@ -140,8 +140,7 @@ def frameAnchorChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "frame anchors: every id the invented deck carries is one element's"
     (ids.toList.eraseDups.length == ids.size)
   for name in goldenNames do
-    let src ← IO.FS.readFile s!"testdata/corpus/{name}.tex"
-    let (fixture, _) ← elabFixture name src
+    let (fixture, _) ← goldenDoc name
     unless fixture.docClass.record.model == .frame do continue
     let (_, tree, _) := HtmlDoc.emitTree {} fixture
     let stages := stagesList #[] tree.toList

@@ -25,8 +25,7 @@ the driver builds it: the document's own stylesheet mode and its images from
 picture is its placeholder — what a host with no tool ships. -/
 def a11yCorpusPage (n : String) :
     IO (Ir.Doc × Image.Store × Array Html.Node × Array Html.Node × Array Diag) := do
-  let src ← IO.FS.readFile s!"testdata/corpus/{n}.tex"
-  let (doc, _) ← elabFixture n src
+  let (doc, _) ← goldenDoc n
   let store ← corpusStore doc
   let (head, body, diags) := HtmlDoc.emitTree { css := a11yCssOf doc, imgs := store } doc
   return (doc, store, head, body, diags)

@@ -1,0 +1,181 @@
+% Invented text. A representative article: a title block and abstract,
+% sections of justified prose that hyphenates, footnotes, nested lists, a
+% booktabs table, a figure, display and inline mathematics, a quotation, a
+% description list, and an appendix with a code block whose longest line
+% does not fit and a long URL — the mixed pages an article sets.
+\documentclass{article}
+\usepackage{graphicx}
+\usepackage{booktabs}
+\usepackage{hyperref}
+\fonts{ dir = "../corpus/fonts", body = "Source Serif Pro", sans = "Fira Sans",
+  mono = "Source Code Pro", math = "Fira Math" }
+
+\title{Rainfall on a Terraced Garden}
+\author{A. Placeholder}
+\date{}
+
+\begin{document}
+
+\maketitle
+
+\begin{abstract}
+Four seasons of rain gauge readings from an invented hillside garden are
+compared against the soil moisture recorded on each of its three
+terraces. The upper terrace drains within hours, the lower one holds water
+for days, and the middle terrace behaves like neither: its response depends
+on how much rain fell during the preceding week. A simple storage model
+with one parameter per terrace reproduces the readings closely enough to
+plan irrigation from it.
+\end{abstract}
+
+\section{Introduction}
+
+A garden built on a slope is three gardens. Water that falls on the upper
+terrace runs through it and arrives, later and slower, at the terraces
+below; what each bed receives is therefore not the rainfall but a
+transformation of it, smoothed and delayed by every bed above. Gardeners
+know this without measuring it, and plant accordingly: the thirsty crops
+go to the bottom, the herbs that dislike wet roots go to the top. The
+question this note asks is narrower. Given a season of rainfall, how much
+water reaches each terrace, and when?\footnote{The garden, its terraces
+and every number below are invented for this document.}
+
+The measurements were made with the simplest instruments available: a
+funnel gauge emptied each morning, and a resistive moisture probe pushed
+into each terrace at a fixed depth. Neither instrument is precise, but
+both are consistent, and consistency is what a comparison between
+terraces requires.
+
+\subsection{The site}
+
+The garden faces south-east and drops about four metres over its length.
+Its three terraces are retained by dry-stone walls, which leak freely; no
+terrace is sealed from the one below it. The soil is a sandy loam on the
+upper terrace, grading into a heavier clay loam at the bottom, where
+decades of runoff have carried the fine particles down.
+
+\begin{itemize}
+  \item The upper terrace holds the gauge, a row of rosemary and the
+  compost bins.
+  \item The middle terrace is the vegetable garden proper:
+  \begin{itemize}
+    \item beans and peas along the wall;
+    \item brassicas in the centre beds, rotated yearly;
+    \item a strip of salad leaves at the shaded end.
+  \end{itemize}
+  \item The lower terrace is lawn, with a pond in its wettest corner.
+\end{itemize}
+
+\section{Method}
+
+Readings were taken every morning at the same hour for four seasons. A
+missed morning was recorded as missing rather than interpolated, and the
+model below was fitted only to complete weeks.
+
+\begin{enumerate}
+  \item Empty the gauge and record the depth of water in millimetres.
+  \item Read the probe on each terrace, upper first, wiping the
+  electrodes between readings.
+  \item Note anything unusual: frost on the probe, a blocked funnel,
+  standing water on the lawn.
+\end{enumerate}
+
+Each terrace is modelled as a store that fills with the water arriving
+from above and empties in proportion to what it holds. With $S_t$ the
+water stored on day $t$, $R_t$ the inflow and $k$ the terrace's drainage
+fraction,
+\begin{equation}
+  S_{t+1} = (1 - k)\, S_t + R_t ,
+  \qquad 0 < k < 1 ,
+\end{equation}
+and the outflow $k S_t$ is the inflow of the terrace below. The upper
+terrace receives the rainfall itself; the others receive what the terrace
+above releases.
+
+\section{Results}
+
+Table~\ref{tab:fit} gives the fitted drainage fraction of each terrace,
+with the share of the variation in its moisture readings that the model
+explains. The upper terrace drains fastest, as expected, and the model
+fits it best: its store is small and its response immediate.
+
+\begin{table}
+\centering
+\begin{tabular}{@{}lrrp{0.36\linewidth}@{}}
+  \toprule
+  \textbf{Terrace} & \textbf{$k$} & \textbf{Fit} & \textbf{Remark} \\
+  \midrule
+  Upper & 0.62 & 0.91 & drains within a day of heavy rain \\
+  Middle & 0.31 & 0.78 & depends strongly on the preceding week \\
+  Lower & 0.12 & 0.84 & stays wet through most of the winter \\
+  \bottomrule
+\end{tabular}
+\caption{Drainage fraction and fit for each terrace.}
+\label{tab:fit}
+\end{table}
+
+The middle terrace is the interesting case. In a dry week it behaves like
+the upper terrace, taking water in and passing it on quickly; after a wet
+week it behaves like the lower one, holding what it receives. A single
+fraction cannot describe both, and its fit is correspondingly worse. The
+residuals show the pattern clearly: the model underestimates the middle
+terrace after every run of wet days and overestimates it after every dry
+spell.
+
+\begin{figure}
+\centering
+\includegraphics[width=0.5\textwidth, alt={Three coloured rectangles
+standing for the three terraces}]{../corpus/rects.png}
+\caption{The three terraces, schematically: upper, middle and lower.}
+\end{figure}
+
+A two-store model for the middle terrace, one store for the topsoil and
+one for the clay beneath it, removes most of this structure. Its extra
+parameter is the fraction $f$ of the inflow that reaches the deeper store
+directly, and with $f \approx 0.4$ the fit rises to $0.89$, close to the
+other terraces.
+
+\section{Discussion}
+
+The models are crude, and the instruments cruder, but the comparison they
+support is robust: the terraces differ by a factor of five in how quickly
+they drain, and the middle one remembers the weather. An old gardening
+manual puts the same observation more briefly:
+
+\begin{quote}
+Water the top of a slope often and the bottom seldom; the middle will
+tell you which it wants, if you watch it for a week.
+\end{quote}
+
+\begin{description}
+  \item[Irrigation] On the evidence here, the upper terrace needs water
+  within two dry days in summer, the lower terrace hardly ever.
+  \item[Planting] Crops that tolerate both drought and saturation belong
+  on the middle terrace, or nowhere.
+  \item[Measurement] A second probe at a greater depth on the middle
+  terrace would test the two-store model directly.\footnote{The probe
+  has been ordered; its readings will be compared in a later season.}
+\end{description}
+
+\appendix
+
+\section{Reading the logs}
+
+The daily readings are kept as plain text, one line per morning. The
+script that fits the drainage fractions reads them as follows; its longest
+line is longer than this measure, and is kept as written.
+
+\begin{verbatim}
+def read_log(path):
+    rows = []
+    for line in open(path):
+        day, rain_mm, upper, middle, lower = line.split(",")
+        rows.append((int(day), float(rain_mm), float(upper), float(middle), float(lower)))
+    return rows
+\end{verbatim}
+
+The logs and the fitting script are kept with the garden's other records at
+\url{https://example.org/gardens/terraced-hillside/records/rainfall-and-soil-moisture/2026/daily-log.txt},
+where each season's file is added when the season ends.
+
+\end{document}
