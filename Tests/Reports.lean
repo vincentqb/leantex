@@ -1167,7 +1167,7 @@ def reports : List Report := [
       "over the labels of a presentation deck's diagrams in its own face, measured as lualatex boxes, the mean departure from lualatex fell from 0.94 to 0.55 points and the largest from 1.72 to 1.21",
       "with the band split at the face's baseline restored and the guards kept, six assertions fail: the seat, a word of x-height letters on lualatex's baseline against a rule on the page and in the browser, and the declared bound for a word of capitals, one with an ascender and one of figures"]
     state := .guarded "269bd628" .revert .author },
-  { id := "R128", date := "2026-10-08"
+  { id := "R128", date := "2026-10-10"
     what := "A markdown pipe table shipped as one run-on paragraph, its delimiter row set as dashes"
     pins := [check% Tests.MarkdownTables.markdownTableChecks,
       thm% LeanTex.Core.Md.tableRaws_contract]
@@ -1181,7 +1181,7 @@ def reports : List Report := [
       "a results table of single figures too wide for the measure sets a size step smaller, its figures whole and inside the measure, the HTML stating the same step; one too wide even at the smallest step stands centred across both margins, on paper while no wider than the measure and both margins, and is named, with a remedy markdown can write",
       "on the branch before cells measured their code as they set it and the decision read the table's own measure, invented probes ran off the paper or out of their container: a table whose code holds hyphens kept its body size with its last column past the paper edge, a table in a quotation and one in a list item kept a size their measure could not hold, and a sixteen-column table of figures lost its edge columns; on this tree each fits its measure at the step both artifacts state, or stands centred on the paper at the last step"]
     state := .guarded "2532eb03" .revert .author },
-  { id := "R129", date := "2026-10-08"
+  { id := "R129", date := "2026-10-10"
     what := "A markdown document took the article's narrow measure, leaving two-inch margins on a letter page"
     pins := [check% Tests.MarkdownPage.markdownPageChecks,
       check% Tests.MarkdownCode.markdownCodeChecks]
@@ -1193,7 +1193,7 @@ def reports : List Report := [
       "a wrapped code line continues twenty points in on screen as on paper",
       "a justified paragraph holding a kebab-case flag longer than the measure breaks after the flag's hyphens, every line inside the measure, where on the branch before it the paragraph's rest ran past the paper on one overfull line"]
     state := .guarded "fa516a82" .before .author },
-  { id := "R130", date := "2026-10-08"
+  { id := "R130", date := "2026-10-10"
     what := "A markdown document with no preamble set its code in the proportional text face, hyphenated it, and printed every repeat of a loss as its own warning"
     pins := [check% Tests.MarkdownWarnings.markdownWarningChecks,
       check% Tests.MarkdownWarnings.markdownMonoChecks,
