@@ -2275,6 +2275,33 @@ def compatConservationChecks (ref : IO.Ref (List String)) : IO Unit := do
     ({ bl with natbib := none } == nat &&
       bl.natbib == some #["biblatex", "bbx=numeric", "cbx=numeric", "sorting=nty"])
 
+/-- The decimal printers as they were spelled with `pushn` and
+`dropEndWhile`, kept verbatim: the digit-list printers (`Dim.fracDigits`)
+must spell every value as these did, so no artifact moves. -/
+def legacyPtString (x : Dim.Sp) : String :=
+  let m := x.toPtMilli
+  let milli := m.natAbs
+  let ip := milli / 1000
+  let fr := milli % 1000
+  let sign := if m < 0 then "-" else ""
+  if fr == 0 then s!"{sign}{ip}" else
+    let frs := toString fr
+    let frs := ("".pushn '0' (3 - frs.length)) ++ frs
+    let frs := (frs.dropEndWhile (· == '0')).toString
+    s!"{sign}{ip}.{frs}"
+
+def legacyRatString (p q : Int) : String :=
+  let neg := p < 0
+  let v := (p.natAbs * 1000000000 + q.natAbs / 2) / max 1 q.natAbs
+  let ip := v / 1000000000
+  let fr := v % 1000000000
+  let sign := if neg && v != 0 then "-" else ""
+  if fr == 0 then s!"{sign}{ip}" else
+    let frs := toString fr
+    let frs := ("".pushn '0' (9 - frs.length)) ++ frs
+    let frs := (frs.dropEndWhile (· == '0')).toString
+    s!"{sign}{ip}.{frs}"
+
 /-- Dimension evidence beyond the fixed vectors in `main`.
 
 Cross-unit tests: every unit the table relates must parse to the same sp
@@ -2296,6 +2323,18 @@ def dimChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "dim negative em is exact"
     (Decl.parseLength "-0.25em" == some { em := -250 })
 
+  -- The digit-list printers spell what the String.Slice ones did: every
+  -- thousandth of a point from -3 to 3 points, at the sp each rounds from
+  -- and its neighbours, and a sweep of ratios over three denominators.
+  let ptBad := (List.range 6001).filterMap fun (i : Nat) =>
+    let milli : Int := Int.ofNat i - 3000
+    let x : Int := milli * 65536 / 1000
+    [x - 1, x, x + 1, x + 32].find? fun y => Dim.Sp.toPtString y != legacyPtString y
+  t s!"sp pt string spells as the legacy printer did ({ptBad.take 3})" ptBad.isEmpty
+  let ratBad := (List.range 4001).filterMap fun (i : Nat) =>
+    let p : Int := Int.ofNat i * 7919 - 16000000
+    [1, 7, 65536, 1000000000, 3 * 65536].find? fun q => Dim.ratString p q != legacyRatString p q
+  t s!"rat string spells as the legacy printer did ({ratBad.take 3})" ratBad.isEmpty
   -- toPtString: exact thirds round to the nearest thousandth, tiny values
   -- collapse to "0" without a stray sign, halves round away from zero.
   t "sp pt string thirds" ((Dim.pt 1 / 3).toPtString == "0.333")

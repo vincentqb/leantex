@@ -56,9 +56,20 @@ it, so the pen it tracks is the one the file states. -/
   let milli : Int := ((x.natAbs * 1000 + 32768) / 65536 : Nat)
   if x < 0 then -milli else milli
 
+/-- The last `k` decimal digits of `n`, most significant first, zeros kept. -/
+@[expose] public def kDigits : Nat → Nat → List Char
+  | 0, _ => []
+  | k + 1, n => kDigits k (n / 10) ++ [Nat.digitChar (n % 10)]
+
+/-- The `k` digits of a fraction `fr < 10^k`, most significant first, its
+trailing zeros dropped: what follows a decimal point. Built over the digit
+list, so a statement over the printed form reads it digit by digit. -/
+@[expose] public def fracDigits (k fr : Nat) : List Char :=
+  ((kDigits k fr).reverse.dropWhile (· == '0')).reverse
+
 /-- Render as decimal points with up to three fractional digits (exact sp
 value rounded to the nearest thousandth, `toPtMilli`). -/
-public def Sp.toPtString (x : Sp) : String :=
+@[expose] public def Sp.toPtString (x : Sp) : String :=
   let m := x.toPtMilli
   let milli := m.natAbs
   let ip := milli / 1000
@@ -67,16 +78,10 @@ public def Sp.toPtString (x : Sp) : String :=
   if fr == 0 then
     s!"{sign}{ip}"
   else
-    let frs := toString fr
-    let frs := ("".pushn '0' (3 - frs.length)) ++ frs
-    let frs := (frs.dropEndWhile (· == '0')).toString
-    s!"{sign}{ip}.{frs}"
+    s!"{sign}{ip}." ++ String.ofList (fracDigits 3 fr)
 
 -- The Tests.lean checks these began as, upgraded to the compiler's tier:
--- a decidable ground fact needs no runtime test. The fractional
--- toPtString case does not join them: its String.Slice ops (`pushn`,
--- `dropEndWhile`) reduce for neither `decide`, `decide +kernel`, nor
--- `rfl`, so it stays a runtime check in Tests.lean.
+-- a decidable ground fact needs no runtime test.
 example : mm 254 = inch 10 := by decide
 example : (pt 10).toPtString = "10" := by rfl
 
@@ -85,7 +90,7 @@ digit, half away from zero: the one printer for a matrix entry in both
 artifacts — a PDF form's `/Matrix` and `cm`, an SVG `matrix()` — its scale
 entries the reciprocal of a box in points, where one rounding at 1e-9 lands
 a placed corner within a nanometre of the exact rational. -/
-public def ratString (p q : Int) : String :=
+@[expose] public def ratString (p q : Int) : String :=
   let neg := p < 0
   let v := (p.natAbs * 1000000000 + q.natAbs / 2) / max 1 q.natAbs
   let ip := v / 1000000000
@@ -94,10 +99,7 @@ public def ratString (p q : Int) : String :=
   if fr == 0 then
     s!"{sign}{ip}"
   else
-    let frs := toString fr
-    let frs := ("".pushn '0' (9 - frs.length)) ++ frs
-    let frs := (frs.dropEndWhile (· == '0')).toString
-    s!"{sign}{ip}.{frs}"
+    s!"{sign}{ip}." ++ String.ofList (fracDigits 9 fr)
 
 /-- An exact rational at nine decimals (`ratString`). -/
 public def ratDecimal (r : Rat) : String := ratString r.num r.den

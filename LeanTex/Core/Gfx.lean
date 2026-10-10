@@ -650,7 +650,7 @@ public def quadToCubic (p0 q p1 : Pt) : Seg :=
 
 /-- A dash array as both formats read it: an odd SVG list is doubled, and a
 list with no positive entry or a negative one draws solid. -/
-public def normDash (d : Array Sp) : Array Sp :=
+@[expose] public def normDash (d : Array Sp) : Array Sp :=
   if d.any (· < 0) || !d.any (0 < ·) then #[]
   else if d.size % 2 == 1 then d ++ (d) else d
 

@@ -932,4 +932,617 @@ public theorem scan_render_exact (toks : Array Tok) (h : Spelled toks.toList) :
     (by have := renderL_size toks.toList; omega)]
   simp
 
+
+/-! ## Tokens joined by white space
+
+The content stream's writer (`PdfContent.render`) separates tokens by one
+space within an operation and one line feed between operations, and ends
+the stream with its last token: `renderSep` is that spelling, each token
+with the byte after it, the last at the end. `scan_renderSep_exact` reads it
+back, as `scan_render_exact` reads `render`, by the same steps: the byte
+after a token is white space or the end (`TermByte`), which ends every
+token kind the steps read. -/
+
+/-- Tokens joined by their separators: each token spelled, then its byte,
+but the last, which ends the stream. -/
+@[expose] public def renderSep : List (Tok × UInt8) → ByteArray
+  | [] => .empty
+  | [(t, _)] => spell t
+  | (t, w) :: (u :: rest) => spell t ++ ⟨#[w]⟩ ++ renderSep (u :: rest)
+
+/-- What stands between a token and the next: its separator, or nothing at
+the stream's end. -/
+@[expose] public def sepOf (w : UInt8) : List (Tok × UInt8) → ByteArray
+  | [] => .empty
+  | _ :: _ => ⟨#[w]⟩
+
+theorem renderSep_cons (t : Tok) (w : UInt8) (rest : List (Tok × UInt8)) :
+    renderSep ((t, w) :: rest) = spell t ++ sepOf w rest ++ renderSep rest := by
+  cases rest with
+  | nil => simp [renderSep, sepOf]
+  | cons u rest => rfl
+
+/-- A byte that ends a token: the stream's end, or white space. -/
+def TermByte (c : Nat) : Prop := c = 256 ∨ isWs c = true
+
+theorem TermByte.not_regular {c : Nat} (h : TermByte c) : regular c = false := by
+  rcases h with rfl | h
+  · rfl
+  · exact regular_ws h
+
+theorem TermByte.not_number {c : Nat} (h : TermByte c) : numByte c = false := by
+  rcases h with rfl | h
+  · rfl
+  · simp only [isWs, Bool.or_eq_true, beq_iff_eq] at h
+    simp only [numByte, Bool.or_eq_false_iff, Bool.and_eq_false_iff, decide_eq_false_iff_not,
+      beq_eq_false_iff_ne]
+    omega
+
+theorem TermByte.end_byte {c : Nat} (h : TermByte c) : EndByte c := by
+  rcases h with h | h
+  · exact Or.inl h
+  · exact Or.inr (Or.inl h)
+
+/-- The byte after a token is the first of what follows it. -/
+theorem after_at (P S R : ByteArray) : at? (P ++ S ++ R) (P.size + S.size) = at? R 0 := by
+  have h := at?_append_right (P ++ S) R 0
+  simpa [ByteArray.size_append] using h
+
+theorem single_size (w : UInt8) : (⟨#[w]⟩ : ByteArray).size = 1 := rfl
+
+theorem at_single (w : UInt8) (R : ByteArray) : at? (⟨#[w]⟩ ++ R) 0 = w.toNat := by
+  have h1 : (0 : Nat) < (⟨#[w]⟩ : ByteArray).size := Nat.zero_lt_one
+  rw [at?_append_left _ _ _ h1]
+  rfl
+
+theorem sep_term (w : UInt8) (hw : isWs w.toNat = true) (rest : List (Tok × UInt8)) :
+    TermByte (at? (sepOf w rest ++ renderSep rest) 0) := by
+  cases rest with
+  | nil =>
+    left
+    simp only [sepOf, renderSep, ByteArray.empty_append]
+    exact at?_ge _ 0 (by simp)
+  | cons u rest =>
+    right
+    simp only [sepOf]
+    rw [at_single]
+    exact hw
+
+theorem span_tok' (P S R : ByteArray) : Span (P ++ S ++ R) P.size (octets S) := by
+  have := Span.of_bytes P S R
+  simpa [octets] using this
+
+theorem size_tok' (P S R : ByteArray) : (P ++ S ++ R).size = P.size + S.size + R.size := by
+  simp [ByteArray.size_append]
+
+/-- **A word at a token's start reads whole**, whatever ends it. -/
+theorem word_read' {P R : ByteArray} {w : String} (hw : Word w) (hT : TermByte (at? R 0)) :
+    let B := P ++ w.toUTF8 ++ R
+    ¬ B.size ≤ P.size ∧ numByte (at? B P.size) = false ∧ objStart (at? B P.size) = false ∧
+      regular (at? B P.size) = true ∧ runEnd B P.size = P.size + w.toUTF8.size ∧
+      asciiAt B P.size (P.size + w.toUTF8.size) = w ∧ P.size < P.size + w.toUTF8.size := by
+  intro B
+  have ho := octets_word w hw.ascii
+  have hspan := span_tok' P w.toUTF8 R
+  rw [ho] at hspan
+  have hlen : w.toUTF8.size = w.toList.length := by
+    simpa using congrArg List.length ho
+  obtain ⟨c, cs, hcs⟩ : ∃ c cs, w.toList = c :: cs := by
+    cases h : w.toList with
+    | nil => exact absurd h hw.ne
+    | cons c cs => exact ⟨c, cs, rfl⟩
+  have hhead : at? B P.size = c.toNat := by
+    have hs := hspan
+    rw [hcs, List.map_cons] at hs
+    exact hs.head
+  have hreg : regular c.toNat = true := hw.reg c (by simp [hcs])
+  have hend : regular (at? B (P.size + (w.toList.map Char.toNat).length)) = false := by
+    rw [List.length_map, ← hlen]
+    show regular (at? (P ++ w.toUTF8 ++ R) (P.size + w.toUTF8.size)) = false
+    rw [after_at]
+    exact hT.not_regular
+  have hrun := runEnd_exact hspan (fun d hd => by
+    obtain ⟨e, he, rfl⟩ := List.mem_map.mp hd
+    exact hw.reg e he) hend
+  have hname := asciiAt_exact hspan
+  rw [ascii_name, List.length_map, ← hlen] at hname
+  rw [List.length_map, ← hlen] at hrun
+  have hpos1 : w.toUTF8.size ≥ 1 := by rw [hlen, hcs]; simp
+  refine ⟨by show ¬ (P ++ w.toUTF8 ++ R).size ≤ P.size; rw [size_tok']; omega,
+    by rw [hhead]; exact hw.lead c (by simp [hcs]), by rw [hhead]; exact objStart_not_regular hreg,
+    by rw [hhead]; exact hreg, hrun, hname, ?_⟩
+  have : w.toList.length ≥ 1 := by rw [hcs]; simp
+  omega
+
+theorem step_op' {P R : ByteArray} {n : String} (hn : OpSpelled n) (hT : TermByte (at? R 0)) {q : Nat}
+    (hq : skipWs (P ++ n.toUTF8 ++ R) q = P.size) (out : Array Tok) :
+    step (P ++ n.toUTF8 ++ R) { pos := q, out } =
+      .yield { pos := P.size + n.toUTF8.size, out := out.push (.op n) } := by
+  obtain ⟨hsz, hnum, hobj, hreg, hrun, hname, hpos⟩ := word_read' (P := P) (R := R) hn.word' hT
+  unfold step
+  simp only [hq, hsz, ↓reduceIte, hnum, hobj, hreg, Bool.false_eq_true, hrun, hname]
+  obtain ⟨h1, h2, h3, h4, _⟩ := hn.word
+  simp only [beq_iff_eq, h1, h2, h3, h4, ↓reduceIte]
+  congr
+  omega
+
+theorem step_bool' {P R : ByteArray} (v : Bool) (hT : TermByte (at? R 0)) {q : Nat}
+    (hq : skipWs (P ++ spell (.val (.bool v)) ++ R) q = P.size) (out : Array Tok) :
+    step (P ++ spell (.val (.bool v)) ++ R) { pos := q, out } =
+      .yield { pos := P.size + (spell (.val (.bool v))).size, out := out.push (.val (.bool v)) } := by
+  cases v with
+  | true =>
+    have hs : spell (.val (.bool true)) = "true".toUTF8 := by simp [spell, Obj.render, Obj.renderInto]
+    rw [hs] at hq ⊢
+    obtain ⟨hsz, hnum, hobj, hreg, hrun, hname, hpos⟩ := word_read' (P := P) (R := R) word_true hT
+    unfold step
+    simp only [hq, hsz, ↓reduceIte, hnum, hobj, hreg, Bool.false_eq_true, hrun, hname, beq_self_eq_true]
+  | false =>
+    have hs : spell (.val (.bool false)) = "false".toUTF8 := by simp [spell, Obj.render, Obj.renderInto]
+    rw [hs] at hq ⊢
+    obtain ⟨hsz, hnum, hobj, hreg, hrun, hname, hpos⟩ := word_read' (P := P) (R := R) word_false hT
+    unfold step
+    simp only [hq, hsz, ↓reduceIte, hnum, hobj, hreg, Bool.false_eq_true, hrun, hname]
+    simp
+
+theorem step_null' {P R : ByteArray} (hT : TermByte (at? R 0)) {q : Nat}
+    (hq : skipWs (P ++ spell (.val .null) ++ R) q = P.size) (out : Array Tok) :
+    step (P ++ spell (.val .null) ++ R) { pos := q, out } =
+      .yield { pos := P.size + (spell (.val .null)).size, out := out.push (.val .null) } := by
+  have hs : spell (.val .null) = "null".toUTF8 := by simp [spell, Obj.render, Obj.renderInto]
+  rw [hs] at hq ⊢
+  obtain ⟨hsz, hnum, hobj, hreg, hrun, hname, hpos⟩ := word_read' (P := P) (R := R) word_null hT
+  unfold step
+  simp only [hq, hsz, ↓reduceIte, hnum, hobj, hreg, Bool.false_eq_true, hrun, hname]
+  simp
+
+theorem step_number' {P R : ByteArray} {raw : String} {o : Obj}
+    (hc : ∀ c ∈ raw.toList, numByte c.toNat = true) (hne : raw.toList ≠ [])
+    (ho : numberObj raw = some o) (hT : TermByte (at? R 0)) {q : Nat}
+    (hq : skipWs (P ++ raw.toUTF8 ++ R) q = P.size) (out : Array Tok) :
+    step (P ++ raw.toUTF8 ++ R) { pos := q, out } =
+      .yield { pos := P.size + raw.toUTF8.size, out := out.push (.val o) } := by
+  have hoct := numeric_octets raw hc
+  have hspan := span_tok' P raw.toUTF8 R
+  rw [hoct] at hspan
+  have hlen : raw.toUTF8.size = raw.toList.length := numeric_size raw hc
+  obtain ⟨c, cs, hcs⟩ : ∃ c cs, raw.toList = c :: cs := by
+    cases h : raw.toList with
+    | nil => exact absurd h hne
+    | cons c cs => exact ⟨c, cs, rfl⟩
+  have hhead : at? (P ++ raw.toUTF8 ++ R) P.size = c.toNat := by
+    have hs := hspan
+    rw [hcs, List.map_cons] at hs
+    exact hs.head
+  have hnum : numByte c.toNat = true := hc c (by simp [hcs])
+  have hend : numByte (at? (P ++ raw.toUTF8 ++ R) (P.size + raw.toList.length)) = false := by
+    rw [← hlen, after_at]
+    exact hT.not_number
+  have hscan := scanNumber_exact hspan hc hend
+  have hpos1 : raw.toUTF8.size ≥ 1 := by rw [hlen, hcs]; simp
+  have hsz : ¬ (P ++ raw.toUTF8 ++ R).size ≤ P.size := by
+    rw [size_tok']; omega
+  have hpos : P.size < P.size + raw.toList.length := by
+    have : raw.toList.length ≥ 1 := by rw [hcs]; simp
+    omega
+  unfold step
+  simp only [hq, hsz, ↓reduceIte, hhead, hnum, hscan, String.ofList_toList, ho, hlen]
+  congr
+  omega
+
+theorem step_int' {P R : ByteArray} (n : Int) (hT : TermByte (at? R 0)) {q : Nat}
+    (hq : skipWs (P ++ spell (.val (.int n)) ++ R) q = P.size) (out : Array Tok) :
+    step (P ++ spell (.val (.int n)) ++ R) { pos := q, out } =
+      .yield { pos := P.size + (spell (.val (.int n))).size, out := out.push (.val (.int n)) } := by
+  have hs : spell (.val (.int n)) = (toString n).toUTF8 := by
+    simp [spell, Obj.render, Obj.renderInto]
+  rw [hs] at hq ⊢
+  exact step_number' (int_chars_num n) (Number.int_nonempty n) (numberObj_int n) hT hq out
+
+theorem step_real' {P R : ByteArray} (r : String) (hr : Obj.RealSpelling r) (hT : TermByte (at? R 0)) {q : Nat}
+    (hq : skipWs (P ++ spell (.val (.real r)) ++ R) q = P.size) (out : Array Tok) :
+    step (P ++ spell (.val (.real r)) ++ R) { pos := q, out } =
+      .yield { pos := P.size + (spell (.val (.real r))).size, out := out.push (.val (.real r)) } := by
+  have hs : spell (.val (.real r)) = r.toUTF8 := by
+    simp [spell, Obj.render, Obj.renderInto]
+  rw [hs] at hq ⊢
+  have hne : r.toList ≠ [] := by
+    intro h; have := hr.1; rw [h] at this; simp at this
+  exact step_number' hr.2 hne (numberObj_real r hr) hT hq out
+
+/-- What stands where a joined list of spelled tokens begins: the end, or a
+token's first byte. -/
+theorem renderSep_head {Q : ByteArray} {rest : List (Tok × UInt8)} (hs : ∀ t ∈ rest, TokSpelled t.1) :
+    (at? (Q ++ renderSep rest) Q.size = 256) ∨
+      (isWs (at? (Q ++ renderSep rest) Q.size) = false ∧ at? (Q ++ renderSep rest) Q.size ≠ 37 ∧
+        at? (Q ++ renderSep rest) Q.size < 256 ∧
+        (at? (Q ++ renderSep rest) Q.size = 82 → regular (at? (Q ++ renderSep rest) (Q.size + 1)) = true)) := by
+  cases rest with
+  | nil =>
+    left
+    simp only [renderSep, ByteArray.append_empty]
+    exact at?_ge Q Q.size (Nat.le_refl _)
+  | cons p rest' =>
+    right
+    obtain ⟨u, w⟩ := p
+    obtain ⟨c, cs, hcs, hw, hc, hlt, hr⟩ := head_spell u (hs (u, w) (by simp))
+    have e : Q ++ renderSep ((u, w) :: rest') = Q ++ spell u ++ (sepOf w rest' ++ renderSep rest') := by
+      rw [renderSep_cons]; simp only [ByteArray.append_assoc]
+    have hspan := span_tok' Q (spell u) (sepOf w rest' ++ renderSep rest')
+    rw [hcs] at hspan
+    rw [e, hspan.head]
+    refine ⟨hw, hc, hlt, fun h82 => ?_⟩
+    obtain ⟨_, d, ds, hd, hreg⟩ := hr h82
+    rw [hd] at hspan
+    rw [hspan.tail.head]
+    exact hreg
+
+/-- After a token, the reader stands where the next begins: past its
+separator, or at the end. -/
+theorem skip_after' {P S : ByteArray} {w : UInt8} (hw : isWs w.toNat = true) {rest : List (Tok × UInt8)}
+    (hs : ∀ t ∈ rest, TokSpelled t.1) :
+    skipWs (P ++ S ++ sepOf w rest ++ renderSep rest) (P.size + S.size) =
+      (P ++ S ++ sepOf w rest).size := by
+  cases rest with
+  | nil =>
+    simp only [sepOf, renderSep, ByteArray.append_empty]
+    rw [ByteArray.size_append]
+    have hend : at? (P ++ S) (P.size + S.size) = 256 := at?_ge _ _ (by simp [ByteArray.size_append])
+    exact skipWs_fixed_point (by rw [hend]; rfl) (by rw [hend]; decide)
+  | cons p rest' =>
+    have hh := renderSep_head (Q := P ++ S ++ sepOf w (p :: rest')) hs
+    have hq : (P ++ S ++ sepOf w (p :: rest')).size = P.size + S.size + 1 := by
+      simp [sepOf, ByteArray.size_append, single_size]
+    rw [hq] at hh
+    rw [hq]
+    have hat : at? (P ++ S ++ sepOf w (p :: rest') ++ renderSep (p :: rest')) (P.size + S.size) = w.toNat := by
+      have e : P ++ S ++ sepOf w (p :: rest') ++ renderSep (p :: rest') =
+          P ++ S ++ (⟨#[w]⟩ ++ renderSep (p :: rest')) := by
+        simp only [sepOf, ByteArray.append_assoc]
+      rw [e, after_at, at_single]
+    apply skipWs_whitespace_exact
+    · rw [hat]; exact hw
+    · rcases hh with h | h
+      · rw [h]; rfl
+      · exact h.1
+    · rcases hh with h | h
+      · rw [h]; decide
+      · exact h.2.1
+    · simp only [sepOf, ByteArray.size_append, single_size]; omega
+
+
+/-- **After a token and what separates it from the next, no reference
+completes** — as after a line feed (`tryRef_after`). -/
+theorem tryRef_after' {P S : ByteArray} {w : UInt8} (hw : isWs w.toNat = true) {rest : List (Tok × UInt8)}
+    (hs : ∀ t ∈ rest, TokSpelled t.1) (hws : ∀ t ∈ rest, isWs t.2.toNat = true) :
+    tryRef (P ++ S ++ sepOf w rest ++ renderSep rest) (P.size + S.size) = none := by
+  apply tryRef_none_of
+  intro gen j hp h82
+  rw [skip_after' hw hs] at hp
+  cases rest with
+  | nil =>
+    have h256 : at? (P ++ S ++ sepOf w [] ++ renderSep []) (P ++ S ++ sepOf w []).size = 256 := by
+      apply at?_ge; simp [sepOf, renderSep, ByteArray.size_append]
+    rw [parseUInt_none (by rw [h256]; omega)] at hp
+    exact absurd hp (by simp)
+  | cons p rest' =>
+    obtain ⟨u, w'⟩ := p
+    have hsu : TokSpelled u := hs (u, w') (by simp)
+    have hw' : isWs w'.toNat = true := hws (u, w') (by simp)
+    have hrest : ∀ t ∈ rest', TokSpelled t.1 := fun t ht => hs t (by simp [ht])
+    have e : P ++ S ++ sepOf w ((u, w') :: rest') ++ renderSep ((u, w') :: rest') =
+        (P ++ S ++ sepOf w ((u, w') :: rest')) ++ (spell u ++ (sepOf w' rest' ++ renderSep rest')) := by
+      simp only [renderSep_cons, ByteArray.append_assoc]
+    rw [e] at hp h82 ⊢
+    generalize P ++ S ++ sepOf w ((u, w') :: rest') = Q at hp h82 ⊢
+    obtain ⟨c, cs, hcs, hcw, hc, hlt, hr⟩ := head_spell u hsu
+    have hspan0 := span_tok' Q (spell u) (sepOf w' rest' ++ renderSep rest')
+    simp only [ByteArray.append_assoc] at hspan0
+    have hhead : at? (Q ++ (spell u ++ (sepOf w' rest' ++ renderSep rest'))) Q.size = c := by
+      rw [hcs] at hspan0; exact hspan0.head
+    by_cases hd : 48 ≤ c ∧ c ≤ 57
+    · cases u with
+      | inline _ _ => exact absurd hsu (by simp [TokSpelled])
+      | op m =>
+        exfalso
+        have hm := hsu.word'
+        obtain ⟨c0, cs0, hcs0⟩ : ∃ c0 cs0, m.toList = c0 :: cs0 := by
+          cases h : m.toList with
+          | nil => exact absurd h hm.ne
+          | cons c0 cs0 => exact ⟨c0, cs0, rfl⟩
+        have ho := octets_word m hm.ascii
+        rw [show spell (.op m) = m.toUTF8 from rfl, ho, hcs0] at hcs
+        simp only [List.map_cons, List.cons.injEq] at hcs
+        have := hm.lead c0 (by simp [hcs0])
+        rw [← hcs.1] at hd
+        rw [digit_not_numByte_false hd] at this
+        exact absurd this (by simp)
+      | val o =>
+        obtain ⟨hro, hnr⟩ := hsu
+        have hspan := span_tok' Q (spell (.val o)) (sepOf w' rest' ++ renderSep rest')
+        simp only [ByteArray.append_assoc] at hspan
+        have hterm : TermByte (at? (Q ++ (spell (.val o) ++ (sepOf w' rest' ++ renderSep rest')))
+            (Q.size + (spell (.val o)).size)) := by
+          have h := after_at Q (spell (.val o)) (sepOf w' rest' ++ renderSep rest')
+          simp only [ByteArray.append_assoc] at h
+          rw [h]; exact sep_term w' hw' rest'
+        have nodigit : ∀ d ds, octets (spell (.val o)) = d :: ds → ¬ (48 ≤ d ∧ d ≤ 57) → False := by
+          intro d ds hdd hnd
+          rw [hdd] at hcs
+          simp only [List.cons.injEq] at hcs
+          exact hnd (hcs.1 ▸ hd)
+        cases hro with
+        | null =>
+          exact (nodigit 110 _ (by simp [spell, Obj.render, Obj.renderInto]; rfl) (by omega)).elim
+        | bool v =>
+          cases v with
+          | true => exact (nodigit 116 _ (by simp [spell, Obj.render, Obj.renderInto]; rfl) (by omega)).elim
+          | false => exact (nodigit 102 _ (by simp [spell, Obj.render, Obj.renderInto]; rfl) (by omega)).elim
+        | @str raw hsr =>
+          have hoct : octets (spell (.val (.str raw))) = raw.data.toList.map UInt8.toNat := by
+            rw [show spell (.val (.str raw)) = (Obj.str raw).render from rfl, octets_str]; rfl
+          generalize raw.data.toList.map UInt8.toNat = l at hsr hoct
+          cases hsr with
+          | literal _ => exact (nodigit 40 _ (by rw [hoct]; rfl) (by omega)).elim
+          | hex _ => exact (nodigit 60 _ (by rw [hoct]; rfl) (by omega)).elim
+        | name hn => exact (nodigit 47 _ (octets_name _ hn.1) (by omega)).elim
+        | arr _ => exact (nodigit 91 _ (octets_arr _) (by omega)).elim
+        | dict _ _ => exact (nodigit 60 _ (octets_dict _) (by omega)).elim
+        | ref n g => exact absurd rfl (hnr n g)
+        | int n =>
+          cases n with
+          | negSucc m =>
+            exfalso
+            have hstr : toString (Int.negSucc m) = "-" ++ toString (m + 1) := by
+              simp [Int.toString_eq_repr, Int.repr_eq_ite]
+            have ho := octets_int (Int.negSucc m)
+            rw [hstr] at ho
+            exact nodigit 45 ((toString (m + 1)).toList.map Char.toNat)
+              (by rw [show spell (.val (.int (Int.negSucc m))) = (Obj.int (Int.negSucc m)).render from rfl, ho]
+                  simp [String.toList_append]) (by omega)
+          | ofNat k =>
+            have hsp : octets (spell (.val (.int (Int.ofNat k)))) = octets (toString k).toUTF8 := by
+              rw [show spell (.val (.int (Int.ofNat k))) = (Obj.int (Int.ofNat k)).render from rfl]
+              show octets (ByteArray.empty ++ (toString (Int.ofNat k)).toUTF8) = _
+              rw [ByteArray.empty_append, toString_ofNat_int]
+            have hsz : (spell (.val (.int (Int.ofNat k)))).size = (toString k).toUTF8.size := by
+              have := congrArg List.length hsp
+              simpa using this
+            rw [hsp] at hspan
+            have hpn := parse_nat hspan (by rw [← hsz]; exact hterm.end_byte)
+            rw [hpn] at hp
+            simp only [Option.some.injEq, Prod.mk.injEq] at hp
+            obtain ⟨-, rfl⟩ := hp
+            have hsk := skip_after' (P := Q) (S := spell (.val (.int (Int.ofNat k)))) hw' hrest
+            simp only [ByteArray.append_assoc] at hsk
+            rw [← hsz, hsk] at h82 ⊢
+            have hh := renderSep_head (Q := Q ++ spell (.val (.int (Int.ofNat k))) ++ sepOf w' rest') hrest
+            simp only [ByteArray.append_assoc] at hh
+            rcases hh with h | h
+            · rw [h] at h82; exact absurd h82 (by decide)
+            · exact h.2.2.2 h82
+        | @real r hrs =>
+          exfalso
+          have hoct : octets (spell (.val (.real r))) = r.toList.map Char.toNat := octets_real r hrs
+          rw [hoct] at hspan
+          have hsplit : r.toList = r.toList.takeWhile Char.isDigit ++ r.toList.dropWhile Char.isDigit :=
+            List.takeWhile_append_dropWhile.symm
+          have hdrop : r.toList.dropWhile Char.isDigit ≠ [] := by
+            intro h0
+            have hdot := hrs.1
+            rw [hsplit, h0, List.append_nil] at hdot
+            have := List.all_eq_true.mp (List.all_takeWhile (p := Char.isDigit) (l := r.toList)) '.' hdot
+            exact absurd this (by decide)
+          obtain ⟨c', more, hcm⟩ : ∃ c' more, r.toList.dropWhile Char.isDigit = c' :: more := by
+            cases h : r.toList.dropWhile Char.isDigit with
+            | nil => exact absurd h hdrop
+            | cons c' more => exact ⟨c', more, rfl⟩
+          have hc'nd : c'.isDigit = false := by
+            have := List.head_dropWhile_not Char.isDigit (l := r.toList) hdrop
+            simpa [hcm] using this
+          have hc'num : numByte c'.toNat = true := hrs.2 c' (by rw [hsplit, hcm]; simp)
+          have hdsdig : ∀ c ∈ r.toList.takeWhile Char.isDigit, c.isDigit = true :=
+            fun c hc => List.all_eq_true.mp List.all_takeWhile c hc
+          have hdsne : r.toList.takeWhile Char.isDigit ≠ [] := by
+            intro h0
+            have h1 : r.toList = c' :: more := by rw [hsplit, h0, hcm]; rfl
+            rw [hoct, h1] at hcs
+            simp only [List.map_cons, List.cons.injEq] at hcs
+            have hdig : c'.isDigit = true := by
+              rw [Char.isDigit_iff_toNat]; rw [hcs.1]; simpa using hd
+            rw [hc'nd] at hdig; exact absurd hdig (by simp)
+          rw [hsplit, hcm, List.map_append] at hspan
+          have hspds := hspan.append_left
+          have hat : at? (Q ++ (spell (.val (.real r)) ++ (sepOf w' rest' ++ renderSep rest')))
+              (Q.size + (r.toList.takeWhile Char.isDigit).length) = c'.toNat := by
+            have := hspan.append_right
+            simp only [List.length_map, List.map_cons] at this
+            exact this.head
+          have hpu := parseUInt_exact hspds hdsdig hdsne (by
+            rw [hat]
+            intro hh
+            have : c'.isDigit = true := by rw [Char.isDigit_iff_toNat]; simpa using hh
+            rw [hc'nd] at this; exact absurd this (by simp))
+          rw [hpu] at hp
+          simp only [Option.some.injEq, Prod.mk.injEq] at hp
+          obtain ⟨-, rfl⟩ := hp
+          have hb := number_byte hc'num
+          rw [skipWs_fixed_point (by rw [hat]; exact hb.2.1) (by rw [hat]; exact hb.2.2.1), hat] at h82
+          exact hb.2.2.2.1 h82
+    · rw [parseUInt_none (by rw [hhead]; exact hd)] at hp
+      exact absurd hp (by simp)
+
+/-- The byte after an object operand and its separator is no reference
+marker (`next_not_R`). -/
+theorem next_not_R' {Q : ByteArray} {rest : List (Tok × UInt8)} (hs : ∀ t ∈ rest, TokSpelled t.1)
+    (hR : ∀ u ∈ rest.head?, leadR u.1 = false) : at? (Q ++ renderSep rest) Q.size ≠ 82 := by
+  cases rest with
+  | nil =>
+    simp only [renderSep, ByteArray.append_empty]
+    rw [at?_ge Q Q.size (Nat.le_refl _)]; decide
+  | cons p rest' =>
+    obtain ⟨u, w⟩ := p
+    obtain ⟨c, cs, hcs, -, -, -, hr⟩ := head_spell u (hs (u, w) (by simp))
+    have hspan := span_tok' Q (spell u) (sepOf w rest' ++ renderSep rest')
+    rw [hcs] at hspan
+    have e : Q ++ renderSep ((u, w) :: rest') = Q ++ spell u ++ (sepOf w rest' ++ renderSep rest') := by
+      rw [renderSep_cons]; simp only [ByteArray.append_assoc]
+    rw [e, hspan.head]
+    intro h82
+    have := (hr h82).1
+    rw [hR (u, w) (by simp)] at this
+    exact absurd this (by simp)
+
+theorem step_obj' {P : ByteArray} {o : Obj} {w : UInt8} {rest : List (Tok × UInt8)} (ho : ValSpelled o)
+    (hb : readByObj o = true) (hw : isWs w.toNat = true) (hs : ∀ t ∈ rest, TokSpelled t.1)
+    (hws : ∀ t ∈ rest, isWs t.2.toNat = true) (hR : ∀ u ∈ rest.head?, leadR u.1 = false) {q : Nat}
+    (hq : skipWs (P ++ spell (.val o) ++ sepOf w rest ++ renderSep rest) q = P.size) (out : Array Tok) :
+    step (P ++ spell (.val o) ++ sepOf w rest ++ renderSep rest) { pos := q, out } =
+      .yield { pos := P.size + (spell (.val o)).size, out := out.push (.val o) } := by
+  obtain ⟨c, cs, hcs, hnum, hobj, hcw, hc⟩ := obj_head o ho.1 hb
+  have hcs' : octets (spell (.val o)) = c :: cs := hcs
+  have hspan := span_tok' P (spell (.val o)) (sepOf w rest ++ renderSep rest)
+  rw [← ByteArray.append_assoc] at hspan
+  have hspan0 := hspan
+  rw [hcs'] at hspan0
+  have hhead : at? (P ++ spell (.val o) ++ sepOf w rest ++ renderSep rest) P.size = c := hspan0.head
+  have hfix : skipWs (P ++ spell (.val o) ++ sepOf w rest ++ renderSep rest) P.size = P.size :=
+    skipWs_fixed_point (by rw [hhead]; exact hcw) (by rw [hhead]; exact hc)
+  have hstop : ObjReader.Stop (P ++ spell (.val o) ++ sepOf w rest ++ renderSep rest)
+      (P.size + o.render.size) := by
+    refine ⟨?_, ?_, ?_⟩
+    · show EndByte (at? (P ++ spell (.val o) ++ sepOf w rest ++ renderSep rest) (P.size + (spell (.val o)).size))
+      have h := after_at P (spell (.val o)) (sepOf w rest ++ renderSep rest)
+      simp only [ByteArray.append_assoc] at h ⊢
+      rw [h]; exact (sep_term w hw rest).end_byte
+    · show at? _ (skipWs _ (P.size + (spell (.val o)).size)) ≠ 82
+      rw [skip_after' hw hs]
+      exact next_not_R' hs hR
+    · exact tryRef_after' (S := spell (.val o)) hw hs hws
+  have hpv := parseVal_render_span_exact o ho.1 hspan hstop hfix
+  have hlen1 : (spell (.val o)).size = cs.length + 1 := by
+    have := congrArg List.length hcs'
+    simpa [octets] using this
+  have hsz : ¬ (P ++ spell (.val o) ++ sepOf w rest ++ renderSep rest).size ≤ P.size := by
+    simp only [ByteArray.size_append]
+    omega
+  have hpos : P.size < P.size + o.render.size := by
+    have := congrArg List.length hcs
+    simp at this
+    omega
+  unfold step
+  simp only [hq, hsz, ↓reduceIte, hhead, hnum, hobj, Bool.false_eq_true, hpv, hpos]
+  rfl
+
+/-- **One spelled token read**, whatever separates it from the next. -/
+theorem step_tok' {P : ByteArray} {t : Tok} {w : UInt8} {rest : List (Tok × UInt8)}
+    (hs : Spelled (t :: rest.map (·.1))) (hw : isWs w.toNat = true) (hws : ∀ u ∈ rest, isWs u.2.toNat = true)
+    {q : Nat} (hq : skipWs (P ++ spell t ++ sepOf w rest ++ renderSep rest) q = P.size) (out : Array Tok) :
+    step (P ++ spell t ++ sepOf w rest ++ renderSep rest) { pos := q, out } =
+      .yield { pos := P.size + (spell t).size, out := out.push t } := by
+  obtain ⟨ht, hR, hrest⟩ := hs
+  have hall : ∀ u ∈ rest, TokSpelled u.1 := fun u hu => spelled_all hrest u.1 (List.mem_map_of_mem hu)
+  have hT : TermByte (at? (sepOf w rest ++ renderSep rest) 0) := sep_term w hw rest
+  have e : P ++ spell t ++ sepOf w rest ++ renderSep rest = P ++ spell t ++ (sepOf w rest ++ renderSep rest) := by
+    simp only [ByteArray.append_assoc]
+  cases t with
+  | inline _ _ => exact absurd ht (by simp [TokSpelled])
+  | op n =>
+    rw [e] at hq ⊢
+    exact step_op' ht hT hq out
+  | val o =>
+    have ho : ValSpelled o := ht
+    have hro := ho.1
+    have hR' : readByObj o = true → ∀ u ∈ rest.head?, leadR u.1 = false := by
+      intro hb u hu
+      cases rest with
+      | nil => simp at hu
+      | cons r rs =>
+        simp only [List.head?_cons, Option.mem_def, Option.some.injEq] at hu
+        subst hu
+        exact hR o rfl hb r.1 (by simp)
+    cases hro with
+    | null => rw [e] at hq ⊢; exact step_null' hT hq out
+    | bool v => rw [e] at hq ⊢; exact step_bool' v hT hq out
+    | int n => rw [e] at hq ⊢; exact step_int' n hT hq out
+    | real hr => rw [e] at hq ⊢; exact step_real' _ hr hT hq out
+    | str hsr => exact step_obj' ho rfl hw hall hws (hR' rfl) hq out
+    | name hn => exact step_obj' ho rfl hw hall hws (hR' rfl) hq out
+    | arr hx => exact step_obj' ho rfl hw hall hws (hR' rfl) hq out
+    | dict hk hv => exact step_obj' ho rfl hw hall hws (hR' rfl) hq out
+    | ref n g => exact absurd rfl (ho.2 n g)
+
+/-- **The reading of joined tokens runs to the end** (progress-indexed). -/
+theorem scanSep_stops (P : ByteArray) (rest : List (Tok × UInt8)) (hs : Spelled (rest.map (·.1)))
+    (hws : ∀ u ∈ rest, isWs u.2.toNat = true) (q : Nat)
+    (hq : skipWs (P ++ renderSep rest) q = P.size) (out : Array Tok) :
+    Loop.Stops (fun s => pure (step (P ++ renderSep rest) s)) { pos := q, out } (rest.length + 1)
+      { pos := (P ++ renderSep rest).size, out := out ++ (rest.map (·.1)).toArray } := by
+  induction rest generalizing P q out with
+  | nil =>
+    apply Loop.Stops.done
+    simp only [renderSep, ByteArray.append_empty] at hq ⊢
+    show step P { pos := q, out } = _
+    unfold step
+    simp [hq]
+  | cons p rest' ih =>
+    obtain ⟨t, w⟩ := p
+    have hw : isWs w.toNat = true := hws (t, w) (by simp)
+    have hws' : ∀ u ∈ rest', isWs u.2.toNat = true := fun u hu => hws u (by simp [hu])
+    have e : P ++ renderSep ((t, w) :: rest') = P ++ spell t ++ sepOf w rest' ++ renderSep rest' := by
+      rw [renderSep_cons]; simp only [ByteArray.append_assoc]
+    rw [e] at hq ⊢
+    have hstep := step_tok' (P := P) (by simpa using hs) hw hws' hq out
+    have hall : ∀ u ∈ rest', TokSpelled u.1 := fun u hu =>
+      spelled_all hs.2.2 u.1 (List.mem_map_of_mem hu)
+    have hskip := skip_after' (P := P) (S := spell t) hw hall
+    have hih := ih (P ++ spell t ++ sepOf w rest') hs.2.2 hws' (P.size + (spell t).size)
+      (by rw [hskip]) (out.push t)
+    have hh := Loop.Stops.yield (step := fun s => pure (step (P ++ spell t ++ sepOf w rest' ++ renderSep rest') s))
+      (a := { pos := q, out }) (b := { pos := P.size + (spell t).size, out := out.push t })
+      (by simp only [Id.run, pure]; exact hstep) hih
+    have hout : out.push t ++ (rest'.map (·.1)).toArray = out ++ (((t, w) :: rest').map (·.1)).toArray := by
+      apply Array.ext'; simp
+    rw [hout] at hh
+    simpa [List.length_cons, Nat.add_comm, Nat.add_left_comm, Nat.add_assoc] using hh
+
+theorem renderSep_size (ts : List (Tok × UInt8)) (hs : ∀ t ∈ ts, TokSpelled t.1) :
+    ts.length ≤ (renderSep ts).size + 1 := by
+  induction ts with
+  | nil => simp [renderSep]
+  | cons p rest ih =>
+    obtain ⟨t, w⟩ := p
+    obtain ⟨c, cs, hcs, -⟩ := head_spell t (hs (t, w) (by simp))
+    have hpos : 1 ≤ (spell t).size := by
+      have := congrArg List.length hcs
+      simp [octets] at this
+      omega
+    rw [renderSep_cons]
+    have := ih (fun u hu => hs u (by simp [hu]))
+    cases rest with
+    | nil => simp [ByteArray.size_append, sepOf] at this ⊢
+    | cons q rs => simp [ByteArray.size_append, sepOf, single_size] at this ⊢; omega
+
+/-- **The tokenizer reads back the writer's joined tokens** (`_exact`):
+tokens it spells (`Spelled`) joined by white-space bytes, the last at the
+end — the content stream's own spelling (`PdfContent.render`) — come back
+in order, whole. -/
+public theorem scan_renderSep_exact (ts : List (Tok × UInt8)) (h : Spelled (ts.map (·.1)))
+    (hws : ∀ t ∈ ts, isWs t.2.toNat = true) :
+    scan (renderSep ts) = (ts.map (·.1)).toArray := by
+  unfold scan
+  have hall : ∀ t ∈ ts, TokSpelled t.1 := fun t ht => spelled_all h t.1 (List.mem_map_of_mem ht)
+  have hh := renderSep_head (Q := ByteArray.empty) hall
+  simp only [ByteArray.empty_append, ByteArray.size_empty] at hh
+  have h0 : skipWs (ByteArray.empty ++ renderSep ts) 0 = ByteArray.empty.size := by
+    simp only [ByteArray.empty_append, ByteArray.size_empty]
+    rcases hh with hz | hz
+    · exact skipWs_fixed_point (by rw [hz]; rfl) (by rw [hz]; decide)
+    · exact skipWs_fixed_point hz.1 hz.2.1
+  have hst := scanSep_stops ByteArray.empty ts h hws 0 h0 #[]
+  simp only [ByteArray.empty_append] at hst
+  rw [Loop.forIn_range_stops_exact hst ((renderSep ts).size + 2)
+    (by have := renderSep_size ts hall; omega)]
+  simp
+
 end LeanTex.Core.PdfContentLex

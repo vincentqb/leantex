@@ -218,26 +218,23 @@ digits, at most one point). `none` for anything else. -/
 public def numParts? (o : Obj) : Option (Bool × Nat × Nat) :=
   match o with
   | .int n => some (decide (n < 0), n.natAbs, 1)
-  | .real raw => Id.run do
-    let s := raw.toList
-    let (neg, s) := match s with
+  | .real raw =>
+    let (neg, s) := match raw.toList with
       | '-' :: rest => (true, rest)
       | '+' :: rest => (false, rest)
-      | _ => (false, s)
-    let mut n : Nat := 0
-    let mut scale : Nat := 1
-    let mut seenDot := false
-    let mut seen := false
-    for c in s do
-      if c.isDigit then
-        seen := true
-        n := n * 10 + (c.toNat - 48)
-        if seenDot then scale := scale * 10
-      else if c == '.' && !seenDot then seenDot := true
-      else return none
-    if !seen then return none
-    return some (neg, n, scale)
+      | s => (false, s)
+    (digitsOf s 0 1 false false).map fun (n, scale) => (neg, n, scale)
   | _ => none
+where
+  /-- A real's digits read onto `n`, the point once, `scale` the power of
+  ten the digits after it stand over; `none` past any other character, or
+  with no digit at all. -/
+  digitsOf : List Char → Nat → Nat → Bool → Bool → Option (Nat × Nat)
+    | [], n, scale, _, seen => if seen then some (n, scale) else none
+    | c :: rest, n, scale, dot, seen =>
+      if c.isDigit then digitsOf rest (n * 10 + (c.toNat - 48)) (if dot then scale * 10 else scale) dot true
+      else if c == '.' && !dot then digitsOf rest n scale true seen
+      else none
 
 /-- A number operand as an exact rational (`numParts?`). -/
 public def numRat? (o : Obj) : Option Rat :=

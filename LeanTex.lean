@@ -63,6 +63,7 @@ public import LeanTex.Core.TitleContract
 public import LeanTex.Core.ControlContract
 public import LeanTex.Core.PictureContract
 public import LeanTex.Core.Dim
+public import LeanTex.Core.DimSpell
 public import LeanTex.Core.Font
 public import LeanTex.Core.FontDb
 public import LeanTex.Core.HyphenData
