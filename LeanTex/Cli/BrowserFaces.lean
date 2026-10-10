@@ -57,6 +57,8 @@ public def plan (en : Image.Loaded) : Plan :=
 public structure Outcome where
   bytes : Except String ByteArray
   companionOk : Bool := false
+  /-- The words the drawn page says (`PdfFaces.Face.words`). -/
+  words : String := ""
 
 public def apply (en : Image.Loaded) (p : Plan) (answer : Outcome) : Image.Loaded :=
   match p with
@@ -69,25 +71,28 @@ public def apply (en : Image.Loaded) (p : Plan) (answer : Outcome) : Image.Loade
     | .error why => { en with posterSvg := none, webError := some why }
   | .convertedPrimary _ | .animatedWithCompanion _ =>
     match answer.bytes with
-    | .error why => { en with webSvg := none, posterSvg := none, webError := some why }
+    | .error why => { en with webSvg := none, posterSvg := none, webWords := "", webError := some why }
     | .ok bytes =>
       let companion := match p with
         | .animatedWithCompanion _ => if answer.companionOk then en.companion else none
         | .keep | .movingSvgWithPoster _ | .convertedPrimary _ => none
+      -- The page's words go with the page's face; a companion shows its
+      -- own drawing, whose words are its own.
       { en with webSvg := some (companion.getD bytes)
                 posterSvg := if companion.isSome then some bytes else none
+                webWords := if companion.isSome then "" else answer.words
                 webError := none }
 
 /-- Browser payloads preserve the native plan that the PDF backend reads. -/
 public theorem apply_info_exact (en : Image.Loaded) (p : Plan) (answer : Outcome) :
     (apply en p answer).info = en.info := by
-  rcases answer with ⟨bytes, companionOk⟩
+  rcases answer with ⟨bytes, companionOk, words⟩
   cases p <;> cases bytes <;> rfl
 
 /-- Browser payloads preserve the captured first-frame animation canvas. -/
 public theorem apply_canvas_exact (en : Image.Loaded) (p : Plan) (answer : Outcome) :
     (apply en p answer).canvasSize = en.canvasSize := by
-  rcases answer with ⟨bytes, companionOk⟩
+  rcases answer with ⟨bytes, companionOk, words⟩
   cases p <;> cases bytes <;> rfl
 
 private def Conversion.source? (en : Image.Loaded) : Conversion → Option ByteArray
@@ -120,28 +125,28 @@ private def primarySource? (en : Image.Loaded) : Option ByteArray :=
 private inductive Prepared where
   | keep (entry : Image.Loaded)
   | converted (entry : Image.Loaded) (plan : Plan) (bytes : Except String ByteArray)
-      (diags : Array Diag) (checked : Bool) (route : Option Boundary.Route)
+      (diags : Array Diag) (checked : Bool) (route : Option Boundary.Route) (words : String)
 
 /-- A selected PDF page's face is native first (`PdfFaces.face`): the
 converter runs only for a page whose import names a loss, and its face
 serves only where the page's own check keeps it. Either face stretches onto
 the box the include gives it, as the PDF form does. -/
-private def preparePrimary (en : Image.Loaded) : IO Prepared := do
+private def preparePrimary (decl : Boundary.Refusal) (en : Image.Loaded) : IO Prepared := do
   let p := plan en
   let some conversion := p.conversion? | return .keep en
   match conversion, conversion.source? en with
-  | .svgPoster page, some svg => return .converted en p (← ImageAssets.svgPoster svg page) #[] false none
+  | .svgPoster page, some svg => return .converted en p (← ImageAssets.svgPoster svg page) #[] false none ""
   | .svgPoster _, none =>
-    return .converted en p (.error "the SVG source has no captured bytes") #[] false none
+    return .converted en p (.error "the SVG source has no captured bytes") #[] false none ""
   | .pdfPage page, some pdf =>
     let f ← PdfFaces.face (HtmlDoc.resolvedSrc en) pdf page (ImageAssets.pdfSvg pdf page)
-      ImageAssets.validateSvgResult (stretch := true) (cache := ← PdfFaces.cacheDir) (checkRefused := false)
-    return .converted en p f.bytes f.diags f.checked (some f.route)
+      ImageAssets.validateSvgResult decl (stretch := true) (cache := ← PdfFaces.cacheDir) (checkRefused := false)
+    return .converted en p f.bytes f.diags f.checked (some f.route) f.words
   | .pdfPage _, none =>
-    return .converted en p (.error "the PDF source has no captured bytes") #[] false none
+    return .converted en p (.error "the PDF source has no captured bytes") #[] false none ""
 
 private def Prepared.companion? : Prepared → Option ByteArray
-  | .converted en (.animatedWithCompanion _) (.ok _) _ _ _ => en.companion
+  | .converted en (.animatedWithCompanion _) (.ok _) _ _ _ _ => en.companion
   | _ => none
 
 /-- What one face's preparation leaves: the entry, the diagnostics its
@@ -156,18 +161,18 @@ public structure Finished where
 private def Prepared.finish (prepared : Prepared) : IO Finished := do
   match prepared with
   | .keep en => return { entry := en, diags := #[], checked := none, route := none }
-  | .converted en p bytes diags checked route =>
+  | .converted en p bytes diags checked route words =>
     let companionOk ← match prepared.companion? with
       | some svg => Except.isOk <$> ImageAssets.validateSvg svg
       | none => pure false
-    let entry := apply en p { bytes, companionOk }
+    let entry := apply en p { bytes, companionOk, words }
     let checkedFace := if checked then (match bytes with
       | .ok b => some b
       | .error _ => none) else none
     return { entry, diags, checked := checkedFace, route }
 
 public def prepare (en : Image.Loaded) : IO Image.Loaded := do
-  return (← (← preparePrimary en).finish).entry
+  return (← (← preparePrimary .none en).finish).entry
 
 /-- Prepare browser faces with at most `max 1 limit` concurrent requests,
 returning them in source order, with the diagnostics each route owes and
@@ -177,9 +182,10 @@ Both phases use the same content keys as the conversion cache's source
 prefix and the ordered, exclusive partition checked by `Batch.plan_exact`,
 `Batch.plan_bounded` and `Batch.plan_keys_nodup`. Tool identity memos may
 share a path across keys; ConvCache publishes those atomically too. -/
-public def prepareAllFaces (entries : Array Image.Loaded) (limit : Nat := 4) :
+public def prepareAllFaces (entries : Array Image.Loaded) (limit : Nat := 4)
+    (decl : Boundary.Refusal := .none) :
     IO (Array Image.Loaded × Array (String × Diag) × Array ByteArray × PdfFaces.Tally) := do
-  let prepared ← mapBySource limit primarySource? preparePrimary entries
+  let prepared ← mapBySource limit primarySource? (preparePrimary decl) entries
   let done ← mapBySource limit Prepared.companion? Prepared.finish prepared
   return (done.map (·.entry), done.flatMap (fun f => f.diags.map (f.entry.src, ·)),
     done.filterMap (·.checked), done.foldl (fun t f => (f.route.map t.add).getD t) {})

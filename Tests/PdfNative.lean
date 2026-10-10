@@ -767,7 +767,11 @@ reference PDF (a stand-in lualatex copies it in), build HTML with no
 converter on `PATH`. Neither W0605 nor W0378 fires, and the page embeds
 exactly the engine's own drawing of each page (`PdfFaces.svgOf`) — before
 faces were drawn natively, the first shipped a placeholder (W0605) and the
-second had no face at all (W0378). -/
+second had no face at all (W0378). An include's words ride beside its face
+for find and copy, hidden from assistive technology, and are no description
+(N0376 still names an include with none declared); and a document that
+declares `\figures{ convert = none }` is never drawn by the converter — the
+premise of the driver's refusal, two builds apart by the declaration. -/
 def nativeFigureBuildChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
   let binary ← IO.FS.realPath ".lake/build/bin/leantex"
@@ -817,6 +821,21 @@ exec /bin/cp \"$LEANTEX_NATIVE_PDF\" pic.pdf\n"
         (!named records "W0605" && !named records "W0378" && !named records "W0609")
       t s!"native faces: {name}'s page embeds the engine's own drawing, byte for byte"
         ((faceOf pdf stretch).any fun face => (html.splitOn face).length ≥ 2)
+    -- The figure's words ride the page as its PDF form carries them, for
+    -- find and copy, hidden from sight and from assistive technology; the
+    -- figure's name stays its declared alternative, and an include that
+    -- declares none is still named by N0376 — words are no description.
+    let (_, _, chartHtml) ← build (dir / "figure.tex") (dir / "figure-words.html")
+    let wordsOpen := "<span class=\"" ++ HtmlDoc.figureWordsClass ++ "\" aria-hidden=\"true\">"
+    let carried := ((chartHtml.splitOn wordsOpen)[1]?.map fun rest => (rest.splitOn "</span>")[0]?.getD "").getD ""
+    t s!"native faces: an include's words ride beside its face, hidden from sight and assistive technology ({carried})"
+      ((carried.splitOn "invented chart").length ≥ 2 && (chartHtml.splitOn "alt=\"An invented chart\"").length ≥ 2 &&
+        (chartHtml.splitOn ("." ++ HtmlDoc.figureWordsClass ++ " {")).length == 2)
+    IO.FS.writeFile (dir / "nameless.tex") (String.intercalate "\n" [
+      "\\documentclass{article}", "\\begin{document}", "\\includegraphics{chart.pdf}", "\\end{document}", ""])
+    let (code, records, namelessHtml) ← build (dir / "nameless.tex") (dir / "nameless.html")
+    t s!"native faces: words are no description: an include with none declared is named by N0376 (exit {code})"
+      (code == 0 && named records "N0376" && (namelessHtml.splitOn wordsOpen).length == 2)
     -- A boundary answer whose text is in a font the engine does not draw,
     -- with no converter: a picture the rendered subset draws in part takes
     -- the subset's drawing, its text in the document's faces (W0378 names
@@ -833,3 +852,38 @@ exec /bin/cp \"$LEANTEX_NATIVE_PDF\" pic.pdf\n"
     let (code, records, _) ← build corpus (dir / "diagram-type1.html") "type1.pdf"
     t s!"native faces: a textless answer for a picture the subset cannot draw is the engine's, its loss named (exit {code})"
       (code == 0 && named records "W0609" && !named records "W0378")
+    -- The document refuses the converter by declaration: two builds of one
+    -- lossy include apart by `\figures{ convert = none }` alone. Open, the
+    -- converter is asked; refused, never, and the engine's drawing names the
+    -- loss without offering an install.
+    let ranLog := dir / "converter.log"
+    IO.FS.writeFile (tools / "pdftocairo") ("#!/bin/sh\nif [ \"$1\" = -v ]; then printf '%s\\n' \
+'synthetic converter 1' >&2; exit 0; fi\nprintf 'ran\\n' >> " ++ shQuote ranLog.toString ++
+      "\nfor last; do :; done\nprintf '%s' '<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 10 10\"/>' > \"$last\"\n")
+    let mode ← IO.Process.output { cmd := "chmod", args := #["+x", (tools / "pdftocairo").toString] }
+    unless mode.exitCode == 0 do throw <| IO.userError "could not prepare the stand-in converter"
+    let runs : IO Nat := do
+      if ← ranLog.pathExists then
+        return ((← IO.FS.readFile ranLog).splitOn "ran").length - 1
+      else return 0
+    let lossy (declared : Bool) : String := String.intercalate "\n" ([
+      "\\documentclass{article}"] ++ (if declared then ["\\figures{ convert = none }"] else []) ++ [
+      "\\begin{document}", "\\includegraphics[alt={A lossy figure}]{type1.pdf}", "\\end{document}", ""])
+    IO.FS.writeFile (dir / "open.tex") (lossy false)
+    IO.FS.writeFile (dir / "refused.tex") (lossy true)
+    let before ← runs
+    let (openCode, openRecords, _) ← build (dir / "open.tex") (dir / "open.html")
+    let afterOpen ← runs
+    let (refusedCode, refusedRecords, _) ← build (dir / "refused.tex") (dir / "refused.html")
+    let afterRefused ← runs
+    let lossHelp (records : Array Lean.Json) : String := String.join (records.filterMap fun r =>
+      if r.getObjValAs? String "code" == .ok "W0609" then (r.getObjValAs? String "help").toOption else none).toList
+    let subjects (records : Array Lean.Json) : Array String := records.filterMap fun r =>
+      if r.getObjValAs? String "code" == .ok "W0609" || r.getObjValAs? String "code" == .ok "N0024" then
+        (r.getObjValAs? String "subject").toOption else none
+    t s!"native faces: open, the converter is asked for a lossy include (exit {openCode}, {afterOpen - before} runs)"
+      (openCode == 0 && afterOpen > before && subjects openRecords == #["figure:pdf:font:type1"])
+    t s!"native faces: \\figures\{ convert = none } never asks it, and names the loss on the engine's drawing \
+without offering an install (exit {refusedCode}, {afterRefused - afterOpen} runs, {lossHelp refusedRecords})"
+      (refusedCode == 0 && afterRefused == afterOpen && subjects refusedRecords == #["figure:pdf:font:type1"] &&
+        named refusedRecords "W0609" && ((lossHelp refusedRecords).splitOn "install").length == 1)

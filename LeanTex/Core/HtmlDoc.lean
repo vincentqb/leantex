@@ -5807,6 +5807,24 @@ public def lineThroughThicknessCss : String := s!"{Ir.lineThroughThickness.toPtS
 @[simp] public theorem lineThroughThicknessCss_agree :
     lineThroughThicknessCss = s!"{Ir.lineThroughThickness.toPtString}pt" := by rfl
 
+/-- The class a figure's words stand under (`figureWordsNode`). -/
+public def figureWordsClass : String := "figure-words"
+
+/-- **A figure's words as the page carries them** (`Image.Loaded.webWords`):
+the text its PDF page carries, where find and copy reach it as they reach
+the PDF's form, out of sight (`figureWordsRule`) and out of the
+accessibility tree — the figure's name stays its declared alternative, the
+words being no description of it. -/
+public def figureWordsNode (words : String) : Node :=
+  Html.elem "span" #[Html.text words] #[("class", figureWordsClass), ("aria-hidden", "true")]
+
+/-- Out of flow and clipped to nothing — the visually hidden pattern of
+WCAG 2.2 technique C7 — so a figure's words (`figureWordsNode`) change no
+box and paint nothing, on screen or paper. -/
+public def figureWordsRule : String :=
+  s!".{figureWordsClass} \{ position: absolute; width: 1px; height: 1px; overflow: hidden; \
+clip-path: inset(50%); white-space: nowrap; }\n"
+
 /-- The base stylesheet. Small on purpose: a generated document should not
 ship a framework to use four of its rules. Dark mode is a variant of the same
 token set, not an inversion hack. The typography with an authority behind it
@@ -5927,6 +5945,7 @@ public def baseCss (cfg : Config) (doc : Doc) (pairs : List (Nat × Nat) := []) 
   -- quotation's two edges stand their level's `\leftmargin` in, as the
   -- page sets them (`listIndentCss`).
   listIndentCss doc.docClass.record.lists ++
+  (if cfg.imgs.entries.any (!·.webWords.isEmpty) then figureWordsRule else "") ++
   "li::marker { color: var(--muted); }\n" ++
   -- The class-default list marking, per nesting level, matching the PDF
   -- backend (classes.dtx: bullet, bold en-dash, centered asterisk, centered
@@ -6623,11 +6642,14 @@ private def inlineNodeInto (cfg : Config) (acc : Array Node) (x : Inline) : Arra
        | some st => #[("style", st)]
        | none => #[])
     let img := Html.elem "img" #[] attrs
-    acc.push (match imagePosterHref cfg.imgs (size.request src) with
+    let acc := acc.push (match imagePosterHref cfg.imgs (size.request src) with
       | some poster => Html.elem "picture" #[
           Html.elem "source" #[] #[("media", "print, (prefers-reduced-motion: reduce)"),
             ("srcset", poster)], img]
       | none => img)
+    match loaded? with
+    | some en => if en.webWords.isEmpty then acc else acc.push (figureWordsNode en.webWords)
+    | none => acc
   | .math display src =>
     -- Until native MathML lands for what the parser cannot model, the
     -- element's own text is the floor — the formula's content, never its

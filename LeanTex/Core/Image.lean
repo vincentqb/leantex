@@ -2070,6 +2070,11 @@ public structure Loaded extends Request where
   /-- A static browser face of the selected animation poster. HTML uses
   it for print and reduced motion, while `webSvg` carries the animation. -/
   posterSvg : Option ByteArray := none
+  /-- The words the figure `webSvg` shows says, as its PDF page carries
+  them (`Gfx.Figure.said`): the page lays them beside the face for find
+  and copy, hidden from sight and from assistive technology, whose name for
+  the figure stays its declared alternative. Empty where none were read. -/
+  webWords : String := ""
   /-- A mandatory browser-face conversion failed. Keep the native plan,
   but publish a named placeholder rather than the uncooked source. -/
   webError : Option String := none

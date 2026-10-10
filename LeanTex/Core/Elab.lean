@@ -141,6 +141,11 @@ public structure PicCtx where
   spelling) *pins* a tool, and `\pictures{ tool = none }` refuses the
   boundary: `none` here is the declared refusal. -/
   tool : Option String := some "lualatex"
+  /-- Whether an external converter may draw a figure's web face the engine
+  cannot draw whole: open by default; `\figures{ convert = none }` is the
+  declared refusal, under which the engine's own drawing ships with every
+  loss it names. -/
+  convert : Bool := true
   /-- The boundary requests fulfilment withdrew: pictures the rendered
   subset draws in part whose request no tool drew (`Cli.Boundary.withdraw`).
   Each is drawn natively on the elaboration the driver runs with them, its
@@ -1260,7 +1265,7 @@ private def reservedCtrl : List (String × DiagCode) :=
 /-- Declarations that take a `{...}` block and are handled in the preamble. -/
 public def declCtrl : List String :=
   ["page", "pdfmeta", "assert", "fonts", "palette", "tokens", "style", "output",
-   "theme", "chrome", "pictures", "allow"]
+   "theme", "chrome", "pictures", "figures", "allow"]
 
 /-- The boundary tools the engine will run. A document declares *which* of
 these draws its pictures, never an arbitrary binary: the driver executes
@@ -15669,6 +15674,7 @@ and emits it in scan order. -/
 public inductive PDecl where
   | docclass (options : Option String) (cls : Option String) (pos : Pos)
   | pictures (src : Option String) (pos : Pos)
+  | figures (src : Option String) (pos : Pos)
   | defineCmd (decl : Array Raw) (pos : Pos)
   | defineEnv (name : Option (String × Pos)) (sig : String)
       (beginB : Option (Array Raw)) (endB : Option (Array Raw)) (pos : Pos)
@@ -16035,6 +16041,7 @@ public def scanDecls (file : String) (pre : Array Raw) : Array PDecl := Id.run d
           | "page" => out := out.push (.page src pos)
           | "fonts" => out := out.push (.fonts src pos)
           | "pictures" => out := out.push (.pictures src pos)
+          | "figures" => out := out.push (.figures src pos)
           | _ => out := out.push (.pdfmeta src pos)
         else if name == "urlstyle" then
           let j := skipSpaces preamble i
@@ -16661,6 +16668,35 @@ tool = none refuses the boundary")
       return s
     | none =>
       diag s.ctx .E0304 "'\\pictures' needs a {...} block" pos
+      return s
+  | .figures body pos =>
+    match body with
+    | some src =>
+      -- The converter door: whether pdftocairo may draw a PDF figure's web
+      -- face the engine cannot draw whole. Open by default, as the picture
+      -- boundary is; `convert = none` refuses it, and the only converter
+      -- the engine runs is the one it pins.
+      let mut s := s
+      for e in Decl.splitEntries src do
+        match Decl.splitEntry e with
+        | some ("convert", v) =>
+          let v := v.trimAscii.toString
+          if v == "none" then
+            s := { s with ctx := { s.ctx with pic := { s.ctx.pic with convert := false } } }
+          else if v == "pdftocairo" then
+            s := { s with ctx := { s.ctx with pic := { s.ctx.pic with convert := true } } }
+          else
+            diag s.ctx .E0321
+              s!"cannot read a converter for 'convert' in 'figures': '{v}'" pos
+              (help := "the engine runs only the converter it pins: pdftocairo; \
+convert = none refuses it")
+        | some (key, _) =>
+          let d := Decl.unknownKey s.ctx.file "figures" key ["convert"] pos
+          modify fun st => { st with diags := st.diags.push d }
+        | none => pure ()
+      return s
+    | none =>
+      diag s.ctx .E0304 "'\\figures' needs a {...} block" pos
       return s
   | .pdfmeta (some src) pos => stepDone s.ctx (stepPdfmeta s src pos)
   | .pdfmeta none pos => stepDone s.ctx (stepMissing s "pdfmeta" "a {...} block" pos)
@@ -18108,6 +18144,7 @@ private def prepareStyledBody (file : String) (decls : Array PDecl)
       allow := allow
       natbib := (← get).natbib
       pictureTool := ctx.pic.tool
+      figureConvert := ctx.pic.convert
       pictureSrcs := (← get).pictures
       picturePreamble := ctx.pic.preamble
       -- Request material, so a document that states no request carries none:

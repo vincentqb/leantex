@@ -9463,6 +9463,11 @@ public structure Doc where
   the engine default, the boundary being open by default. `none` is the
   declared refusal (`tool = none`): nothing routes, so no request rides. -/
   pictureTool : Option String := some "lualatex"
+  /-- Whether the document lets an external converter draw a figure's web
+  face the engine cannot draw whole: open by default; `\figures{ convert =
+  none }` is the declared refusal, under which the engine's own drawing
+  ships with every loss named. -/
+  figureConvert : Bool := true
   /-- The boundary requests this document states: `(id, body)` — the
   picture's identity is the content hash of the author's bytes, and the
   body is the picture as written — the `bibRefs` shape. The request the

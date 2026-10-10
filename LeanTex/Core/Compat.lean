@@ -498,7 +498,7 @@ not allowed to drift — `hookSeamChecks` fails the moment the two disagree,
 in either direction. -/
 public def hookPreambleSide : List String :=
   ["page", "pdfmeta", "assert", "fonts", "palette", "tokens", "style", "output",
-   "theme", "chrome", "pictures", "allow", "runninghead", "runningfoot"]
+   "theme", "chrome", "pictures", "figures", "allow", "runninghead", "runningfoot"]
 
 /-- The native declarations a compatibility help text may name, as the
 vocabulary the translation sweep reads. `hookPreambleSide` is the preamble

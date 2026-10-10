@@ -17,9 +17,10 @@ loss, and then no converter runs. A figure whose import named a loss is
 handed to the external converter, and where the converter does not draw it
 the engine's lossy drawing ships with every loss named (`Boundary.route`
 decides; this module runs the decision). The import is a pure function of
-the page's bytes, so what the decision reads of it — the losses and the
-drawing, or the refusal — is kept in the face cache under those bytes and
-the engine that read them (`FigureFace`), and a warm build reads no page. -/
+the page's bytes, so what the decision reads of it — the losses, the
+drawing and its words, or the refusal — is kept in the face cache under
+those bytes and the engine that read them (`FigureFace`), and a warm build
+reads no page. -/
 
 namespace LeanTex.Cli.PdfFaces
 
@@ -38,14 +39,16 @@ public def svgOf (fig : Gfx.Figure Gfx.Run) (stretch : Bool := false) : ByteArra
     (fig.rasters.map fun r => { href := rasterHref r, smooth := r.smooth }) fig stretch).toUTF8
 
 /-- **What a face's decision reads of an import** (`FigureFace.Answer`):
-the losses the import named and the engine's drawing, stretched as the face
-is shown, or why the import refused the page. -/
+the losses the import named, the engine's drawing, stretched as the face is
+shown, and the words the figure says (`Gfx.Figure.said`), or why the import
+refused the page. -/
 public def nativeOf (pdf : ByteArray) (page : PdfRead.PageSelection) (stretch : Bool) : FigureFace.Answer :=
-  (PdfGfx.importPage pdf page).map fun imp => (imp.figure.losses, svgOf imp.figure stretch)
+  (PdfGfx.importPage pdf page).map fun imp =>
+    { losses := imp.figure.losses, face := svgOf imp.figure stretch, words := imp.figure.said fun _ => "" }
 
 /-- An import read as the boundary's verdict. -/
 public def verdictOf : FigureFace.Answer → Boundary.Verdict
-  | .ok (losses, _) => if losses.isEmpty then .exact else .lossy losses
+  | .ok d => if d.losses.isEmpty then .exact else .lossy d.losses
   | .error why => .refused why
 
 /-- What the external converter answered for a figure's web face, read by
@@ -95,15 +98,17 @@ public def answerOf (convert : IO (Except String ByteArray))
 
 /-- A web face as decided: its bytes or why it has none, the route that
 chose it, the diagnostics the choice owes, whether the bytes are the
-engine's own drawing, and whether they need no check at publication — the
+engine's own drawing, whether they need no check at publication — the
 engine's drawing, closed by construction, or a converted face the page's
-check already kept here. -/
+check already kept here — and the words the figure says, which the page
+carries beside the face whoever drew it, as the PDF's form carries them. -/
 public structure Face where
   bytes : Except String ByteArray
   route : Boundary.Route
   diags : Array Diag
   native : Bool
   checked : Bool
+  words : String := ""
 
 /-- **A PDF page's web face, decided** (`Boundary.route`): the import's
 drawing when it is exact, with no converter run; else the converter's face
@@ -117,14 +122,14 @@ and the converter answered are inputs. -/
 public def decide (src : String) (native : FigureFace.Answer) (answer : Answer)
     (decl : Boundary.Refusal) : Face :=
   match Boundary.route (verdictOf native) answer.tool decl, native, answer with
-  | .native, .ok (_, svg), _ =>
-    { bytes := .ok svg, route := .native, diags := #[], native := true, checked := true }
-  | .tool, .ok (losses, _), .drew bytes checked =>
-    { bytes := .ok bytes, route := .tool, native := false, checked
-      diags := FigureLoss.diags (FigureLoss.pdfConvertedDiag src) losses }
-  | .nativeWithLoss, .ok (losses, svg), _ =>
-    { bytes := .ok svg, route := .nativeWithLoss, native := true, checked := true
-      diags := FigureLoss.diags (FigureLoss.pdfLostDiag src answer.unconverted) losses }
+  | .native, .ok d, _ =>
+    { bytes := .ok d.face, route := .native, diags := #[], native := true, checked := true, words := d.words }
+  | .tool, .ok d, .drew bytes checked =>
+    { bytes := .ok bytes, route := .tool, native := false, checked, words := d.words
+      diags := FigureLoss.diags (FigureLoss.pdfConvertedDiag src) d.losses }
+  | .nativeWithLoss, .ok d, _ =>
+    { bytes := .ok d.face, route := .nativeWithLoss, native := true, checked := true, words := d.words
+      diags := FigureLoss.diags (FigureLoss.pdfLostDiag src answer.unconverted) d.losses }
   | .tool, .error _, .drew bytes checked =>
     { bytes := .ok bytes, route := .tool, diags := #[], native := false, checked }
   | r, .error _, .rejected bytes _ =>
@@ -134,15 +139,18 @@ public def decide (src : String) (native : FigureFace.Answer) (answer : Answer)
   | r, .error iw, _ => { bytes := .error iw, route := r, diags := #[], native := false, checked := false }
   | r, .ok _, _ => { bytes := .error "no web face", route := r, diags := #[], native := false, checked := false }
 
-/-- Whether an answer fits the face cache's format (`FigureFace.Bounded`). -/
-private def storable (a : FigureFace.Answer) : Bool :=
+/-- Whether an answer fits the face cache's format under a key
+(`FigureFace.Bounded`). -/
+private def storable (key : Array String) (a : FigureFace.Answer) : Bool :=
   let fits (n : Nat) : Bool := n < 256 ^ 4
-  fits (FigureFace.body a).size && match a with
+  fits (FigureFace.body key a).size && fits key.size && key.all (fun k => fits k.toUTF8.size) &&
+    match a with
     | .error why => fits why.toUTF8.size
-    | .ok (losses, face) =>
-      fits losses.size && fits face.size && losses.all fun l => fits (FigureFace.lossName l).toUTF8.size
+    | .ok d =>
+      fits d.losses.size && fits d.face.size && fits d.words.toUTF8.size &&
+        d.losses.all fun l => fits (FigureFace.lossName l).toUTF8.size
 
-/-- The engine's identity, as the face cache keys its slots: the running
+/-- The engine's identity, as the face cache keys its answers: the running
 binary's path, size and modification time — a rebuilt engine reads every
 figure afresh. `none` where the binary cannot be stated. -/
 public def engineId : IO (Option String) := do
@@ -152,29 +160,40 @@ public def engineId : IO (Option String) := do
     return some s!"{path}\u0000{md.byteSize}\u0000{md.modified.sec}.{md.modified.nsec}"
   catch _ => return none
 
-/-- A face's slot: the page's bytes, the page and stretch read from them,
-and the engine that read them. -/
-public def slotName (pdf : ByteArray) (page : PdfRead.PageSelection) (stretch : Bool) (engine : String) :
-    String :=
+/-- A face's slot, one per figure: the page's bytes, and the page and
+stretch read from them. A later engine's answer replaces an earlier one's
+in it, so the cache holds one face per figure page, however often the
+engine is rebuilt. -/
+public def slotName (pdf : ByteArray) (page : PdfRead.PageSelection) (stretch : Bool) : String :=
   Flate.contentKey pdf ++ "-" ++
-    Flate.contentKey (String.intercalate "\u0000" ["pdf-face-v1", reprStr page, toString stretch, engine]).toUTF8 ++
+    Flate.contentKey (String.intercalate "\u0000" ["pdf-face-v2", reprStr page, toString stretch]).toUTF8 ++
     ".face"
 
+/-- **The key an answer is stored under**: the format, the page's bytes by
+their content key, the page and the stretch, and the engine that read them
+— everything the answer is a function of (`nativeOf`). A slot answers a
+read only where the key it holds is this one (`FigureFace.lookup_exact`). -/
+public def slotKey (pdf : ByteArray) (page : PdfRead.PageSelection) (stretch : Bool) (engine : String) :
+    Array String :=
+  #["pdf-face-v2", Flate.contentKey pdf, reprStr page, toString stretch, engine]
+
 /-- **The import's answer, through the face cache in `dir`** (none: no
-cache): a slot that reads back (`FigureFace.decode`) is the answer this
-engine gave for these bytes (`FigureFace.decode_encode_id`); anything else
-is read afresh and kept, a refusal as much as a drawing — the import is
-pure, so there is no unfinished attempt to keep out. -/
+cache): a slot holding this very key (`slotKey`) is the answer this engine
+gave for these bytes, page and stretch (`FigureFace.lookup_exact`);
+anything else — no slot, another engine's, a damaged one — is read afresh
+and replaces it, a refusal as much as a drawing: the import is pure, so
+there is no unfinished attempt to keep out. -/
 public def nativeCached (dir : Option System.FilePath) (pdf : ByteArray) (page : PdfRead.PageSelection)
     (stretch : Bool) : IO FigureFace.Answer := do
   let fresh := fun (_ : Unit) => nativeOf pdf page stretch
   let some dir := dir | return fresh ()
   let some engine ← engineId | return fresh ()
-  let path := dir / slotName pdf page stretch engine
-  if let some a := (← (IO.FS.readBinFile path).toBaseIO).toOption.bind FigureFace.decode then return a
+  let key := slotKey pdf page stretch engine
+  let path := dir / slotName pdf page stretch
+  if let some a := (← (IO.FS.readBinFile path).toBaseIO).toOption.bind (FigureFace.lookup key) then return a
   let a := fresh ()
-  if storable a then
-    discard <| (do IO.FS.createDirAll dir; AtomicFile.write path (FigureFace.encode a)).toBaseIO
+  if storable key a then
+    discard <| (do IO.FS.createDirAll dir; AtomicFile.write path (FigureFace.encode key a)).toBaseIO
   return a
 
 /-- The face cache's directory, beside the engine's other caches. -/
@@ -237,11 +256,11 @@ open LeanTex.Cli
 (`_exact`): a figure whose import names no loss ships the engine's drawing
 with no diagnostic, whatever the document declares — so a lossless figure
 reads the same on a machine with no converter. -/
-public theorem route_exact (src : String) (svg : ByteArray) (decl : Boundary.Refusal) :
-    (PdfFaces.verdictOf (.ok (#[], svg))).asksTool decl = false ∧
-      PdfFaces.decide src (.ok (#[], svg)) .notAsked decl =
-        { bytes := .ok svg, route := .native, diags := #[], native := true, checked := true } := by
-  have hv : PdfFaces.verdictOf (.ok (#[], svg)) = .exact := by
+public theorem route_exact (src : String) (svg : ByteArray) (words : String) (decl : Boundary.Refusal) :
+    (PdfFaces.verdictOf (.ok { losses := #[], face := svg, words })).asksTool decl = false ∧
+      PdfFaces.decide src (.ok { losses := #[], face := svg, words }) .notAsked decl =
+        { bytes := .ok svg, route := .native, diags := #[], native := true, checked := true, words } := by
+  have hv : PdfFaces.verdictOf (.ok { losses := #[], face := svg, words }) = .exact := by
     simp [PdfFaces.verdictOf]
   refine ⟨by rw [hv]; exact Boundary.asksTool_lossless_exact decl, ?_⟩
   unfold PdfFaces.decide
@@ -251,16 +270,16 @@ public theorem route_exact (src : String) (svg : ByteArray) (decl : Boundary.Ref
 (`_named`): whichever route the face takes — the converter's drawing or the
 engine's own — each loss of the figure has a diagnostic whose subject is
 its census key. -/
-public theorem import_named (src : String) (losses : Array Gfx.Loss) (svg : ByteArray)
+public theorem import_named (src : String) (losses : Array Gfx.Loss) (svg : ByteArray) (words : String)
     (answer : PdfFaces.Answer) (decl : Boundary.Refusal) (l : Gfx.Loss) (h : l ∈ losses) :
-    ∃ d ∈ (PdfFaces.decide src (.ok (losses, svg)) answer decl).diags,
+    ∃ d ∈ (PdfFaces.decide src (.ok { losses, face := svg, words }) answer decl).diags,
       d.subject = some (FigureLoss.subject "pdf" l) := by
   have hne : losses.isEmpty = false := by
     cases hl : losses.isEmpty
     · rfl
     · simp [Array.isEmpty_iff] at hl
       simp [hl] at h
-  have hv : PdfFaces.verdictOf (.ok (losses, svg)) = .lossy losses := by
+  have hv : PdfFaces.verdictOf (.ok { losses, face := svg, words }) = .lossy losses := by
     simp [PdfFaces.verdictOf, hne]
   unfold PdfFaces.decide
   rw [hv]
@@ -275,16 +294,29 @@ public theorem import_named (src : String) (losses : Array Gfx.Loss) (svg : Byte
   · rw [hr]
     exact FigureLoss.pdfDiags_named src answer.unconverted false losses l h
 
-/-- **The cache answers what the import answers** (`_exact`): a fresh
-reading is the import's losses and drawing, or its refusal, and a slot
-that holds what a reading stored reads back as exactly that
-(`FigureFace.decode_encode_id`) — so a warm face is the cold one. -/
+/-- **The cache answers what the import answers** (`_exact`): a slot that
+holds what `nativeCached` stored for these bytes, page and stretch under
+an engine reads back, for that engine, as exactly the fresh reading
+(`FigureFace.lookup_exact`) — so a warm face is the cold one — and the same
+slot read for another engine, another page or stretch, or bytes of another
+content key is a miss, read afresh: never a face this reading did not give. -/
 public theorem nativeOf_exact (pdf : ByteArray) (page : PdfRead.PageSelection) (stretch : Bool)
-    (h : FigureFace.Bounded (PdfFaces.nativeOf pdf page stretch)) :
-    PdfFaces.nativeOf pdf page stretch =
-        (importPage pdf page).map (fun imp => (imp.figure.losses, PdfFaces.svgOf imp.figure stretch)) ∧
-      FigureFace.decode (FigureFace.encode (PdfFaces.nativeOf pdf page stretch)) =
-        some (PdfFaces.nativeOf pdf page stretch) :=
-  ⟨rfl, FigureFace.decode_encode_id _ h⟩
+    (engine : String)
+    (h : FigureFace.Bounded (PdfFaces.slotKey pdf page stretch engine) (PdfFaces.nativeOf pdf page stretch)) :
+    FigureFace.lookup (PdfFaces.slotKey pdf page stretch engine)
+        (FigureFace.encode (PdfFaces.slotKey pdf page stretch engine) (PdfFaces.nativeOf pdf page stretch)) =
+        some (PdfFaces.nativeOf pdf page stretch) ∧
+      ∀ pdf' page' stretch' engine', (Flate.contentKey pdf', reprStr page', toString stretch', engine') ≠
+          (Flate.contentKey pdf, reprStr page, toString stretch, engine) →
+        FigureFace.lookup (PdfFaces.slotKey pdf' page' stretch' engine')
+          (FigureFace.encode (PdfFaces.slotKey pdf page stretch engine) (PdfFaces.nativeOf pdf page stretch)) =
+          none := by
+  obtain ⟨hit, miss⟩ := FigureFace.lookup_exact _ _ h
+  refine ⟨hit, fun pdf' page' stretch' engine' hne => miss _ ?_⟩
+  intro heq
+  apply hne
+  simp only [PdfFaces.slotKey, List.toArray, Array.mk.injEq, List.cons.injEq] at heq
+  obtain ⟨_, h1, h2, h3, h4, _⟩ := heq
+  rw [h1, h2, h3, h4]
 
 end LeanTex.Core.PdfGfx
