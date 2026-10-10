@@ -1174,7 +1174,9 @@ document skip's box, or a step carrier opening on one, the element's own
 space alone: TeX puts the skip on the list after the element's space, and
 the follower past the skip pays its own (`skipNode`). So does a slide's
 spacer after its body (`.fill`, the frame's `\vfill`), which no paragraph
-follows to spend its `\parskip`. Where the element's
+follows to spend its `\parskip`, and a block set in its kind's template
+(`blockShapeCss`), whose first box spends the paragraph's `\parskip` inside
+it, after the template's own skip above. Where the element's
 `peer` folds in TeX's `\parskip` rather than the sheet's peer gap — a list's
 space, a display's — `after` is that term, which the paragraph past the box
 pays in its place. `sels` are the element's own selectors. -/
@@ -1182,7 +1184,7 @@ private def ownsBelow (sels : List String) (peer own : String) (after : Option S
     List GapRule :=
   let follow (tail : String) := ", ".intercalate (sels.map (· ++ tail))
   [.boundary (follow " + *") peer,
-   .boundary (follow s!" + :is(.{skipClass}, {skipCarrier}, .fill)") own] ++
+   .boundary (follow s!" + :is(.{skipClass}, {skipCarrier}, .fill, section.block-shaped)") own] ++
   (after.map fun v =>
     [.boundary (follow s!" + .{skipClass} + p" ++ ", " ++ follow s!" + .{skipClass} + .{skipClass} + p") v]).getD []
 
@@ -1466,7 +1468,9 @@ carrier, as it would with no carrier there. On a page with a block set in
 its kind's template (`shaped`), that block stands its template's skips as
 its own box's padding (`blockShapeCss`), so a boundary beside it pays only
 what the page's walk spends there beyond them: the follower's `\parskip`,
-or a default block's own space; and its body keeps the page's `\parskip`. -/
+or the element above's own space (`ownsBelow`; a trivlist's, whose rules
+stand before these, restated here); and its body keeps the page's
+`\parskip`. -/
 private def blockRules (size : Int) (tokens : Ir.Tokens) (shaped : Bool) : List GapRule :=
   let above := blockAboveMilli size tokens
   let below := screenMilli size (skipSp size tokens "smallskipamount")
@@ -1476,7 +1480,9 @@ private def blockRules (size : Int) (tokens : Ir.Tokens) (shaped : Bool) : List 
   let shapedRules : List GapRule := if !shaped then [] else
     .boundary "* + section.block-shaped" "0rem" ::
       ownsBelow ["section.block-shaped"] s!"calc(0rem + {peerGap})" "0rem" ++
-    [.boundary "section.block + section.block-shaped" (milliRem below),
+    [.boundary s!".{roleClass Ir.trivlistRole} + section.block-shaped, blockquote + section.block-shaped"
+       trivlistOwn,
+     .boundary "section.block + section.block-shaped" (milliRem below),
      .boundary "section.block-shaped + section.block" (milliRem above),
      .boundary "section.block-shaped + section.block-shaped" "0rem",
      .parskip "section.block-shaped > *" "inherit"]
@@ -1502,7 +1508,9 @@ paragraph gap on top. Measured under
 lualatex in a frame at 10 pt: a list stands its 3 pt further below each than
 a paragraph there, a block its `\medskipamount`, a centred block 8 pt below a
 paragraph and 5 below a block or a list. At the top list level, whose items'
-own lists keep the level rules; only beamer's lineage owes them. -/
+own lists keep the level rules; only beamer's lineage owes them. A block set
+in its kind's template stands its template's skips as its own padding
+(`blockShapeCss`), so the pairs leave it to the rules that read those. -/
 private def beamerPairRules (l : Ir.ListLineage) (size : Int) (tokens : Ir.Tokens) :
     List GapRule :=
   match l, Ir.listSkips l size 1 with
@@ -1515,15 +1523,16 @@ private def beamerPairRules (l : Ir.ListLineage) (size : Int) (tokens : Ir.Token
     let top := ":not(li, dd, blockquote) > "
     let lists := s!":is({", ".intercalate (listElems.filter (· != "blockquote"))})"
     let beamerLists := ":is(ul:not(.bibliography), ol:not(.algorithm):not(.algorithm *), dl)"
+    let plainBlock := "section.block:not(.block-shaped)"
     let uppers : List (String × String × Bool) :=
-      [(blockAt "last-child", below, true), (lists, opened, false), (triv, trivlistOwn, false),
+      [(plainBlock, below, true), (lists, opened, false), (triv, trivlistOwn, false),
        (".display", display, false)]
     uppers.flatMap fun (u, own, block) =>
       [.boundary s!"{top}{u} + {beamerLists}" s!"calc({own} + {opened} + var(--parskip, 0rem))",
        .boundary s!"{top}{u} + .{verbatimListClass}"
          s!"calc(max({own}, {opened}) + var(--parskip, 0rem))"] ++
       (if block then [] else
-        [.boundary s!"{top}{u} + {blockAt "first-child"}" s!"calc({own} + {above})"]) ++
+        [.boundary s!"{top}{u} + {plainBlock}" s!"calc({own} + {above})"]) ++
       (if u == triv then [] else
         [.boundary s!"{top}{u} + {triv}" s!"calc(max({own}, {trivlistOwn}) + var(--parskip, 0rem))"])
   | _, _ => []

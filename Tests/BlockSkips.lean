@@ -408,7 +408,7 @@ private def htmlChecks (ref : IO.Ref (List String)) : IO Unit := do
         let parts := cssSelParts sel
         if parts.all (·.endsWith " + *") && v != "0" then
           let want := ", ".intercalate (parts.map fun p =>
-            (p.dropEnd 1).toString ++ s!":is(.vskip, {HtmlDoc.skipCarrier}, .fill)")
+            (p.dropEnd 1).toString ++ s!":is(.vskip, {HtmlDoc.skipCarrier}, .fill, section.block-shaped)")
           let companion := (bounds.drop (i + 1)).find? (·.1 == want)
           check ref s!"block skips HTML ({lname}, {spMilli sz}): '{sel}' owns its space before a skip, without the follower's gap"
             ((companion.map fun (_, own) =>
@@ -421,7 +421,7 @@ private def htmlChecks (ref : IO.Ref (List String)) : IO Unit := do
   let valueOf (p : String → Bool) : Option Int := rules.findSome? fun
     | .boundary sel v => if p sel then remMilliOf v else none
     | _ => none
-  let below := valueOf fun s => s.startsWith "section.block" && s.endsWith s!"+ :is(.vskip, {HtmlDoc.skipCarrier}, .fill)"
+  let below := valueOf fun s => s.startsWith "section.block" && s.endsWith s!"+ :is(.vskip, {HtmlDoc.skipCarrier}, .fill, section.block-shaped)"
   let aboveNext := valueOf fun s => s == "* + section.block"
   let skip := (boxes[2]?.bind fun attrs => boxMilli ((HtmlDoc.attrOf? attrs "style").getD ""))
   match below, aboveNext, skip with

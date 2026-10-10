@@ -199,10 +199,10 @@ private def htmlPairChecks (ref : IO.Ref (List String)) : IO Unit := do
         v.startsWith "calc(var(--topsep" && v.endsWith (" + " ++ opened ++ " + " ++ par ++ ")")),
      ("a list under a display", ".display", s!":is({listL}", fun v =>
         v.startsWith ("calc(" ++ display) && v.endsWith (" + " ++ opened ++ " + " ++ par ++ ")")),
-     ("a block under a list", listL, ":is(section.block", (· == s!"calc({opened} + {above})")),
-     ("a block under a centred block", triv, ":is(section.block", fun v =>
+     ("a block under a list", listL, "section.block:not(.block-shaped)", (· == s!"calc({opened} + {above})")),
+     ("a block under a centred block", triv, "section.block:not(.block-shaped)", fun v =>
         v.startsWith "calc(var(--topsep" && v.endsWith (" + " ++ above ++ ")")),
-     ("a block under a display", ".display", ":is(section.block", fun v =>
+     ("a block under a display", ".display", "section.block:not(.block-shaped)", fun v =>
         v.startsWith ("calc(" ++ display) && v.endsWith (" + " ++ above ++ ")")),
      ("a centred block under a block", blockU, triv, fun v =>
         v.startsWith ("calc(max(" ++ below ++ ", var(--topsep") && v.endsWith (") + " ++ par ++ ")")),
@@ -230,9 +230,30 @@ private def htmlPairChecks (ref : IO.Ref (List String)) : IO Unit := do
   for (name, sel) in [("a list", listL), ("a minted", ".verbatim-list"), ("a centred block", triv),
       ("a block", blockU), ("a display", ".display")] do
     let own := bounds.toList.filter fun (parts, _) => parts.any fun p =>
-      p.startsWith (sel ++ " + :is(") && p.endsWith ", .fill)"
+      p.startsWith (sel ++ " + :is(") && p.endsWith ", .fill, section.block-shaped)"
     check ref s!"element boundaries (beamer, browser): the slide's spacer after {name} meets its own space alone"
       (!own.isEmpty && own.all fun (_, v) => !hasStr v "parskip")
+  -- A block set in its kind's template stands its template's skips as its
+  -- padding and spends the paragraph's `\parskip` inside it: the element
+  -- above meets it on its own space alone, and no adding pair reads it.
+  let shapedBounds := (HtmlDoc.blockGapRules .beamer size {} (shaped := true)).filterMap fun
+    | .boundary sel v => some (cssSelParts sel, v)
+    | _ => none
+  check ref "element boundaries (beamer, browser): a templated block meets the list above it on the list's own space"
+    (shapedBounds.any fun (parts, v) => parts.any (fun p =>
+      p.startsWith (listL ++ " + :is(") && p.endsWith "section.block-shaped)") && !hasStr v "parskip")
+  -- the centred block's own rules stand before the block's, so its pair is
+  -- the last rule it and a templated block meet
+  let lastShaped := (shapedBounds.filter fun (parts, _) =>
+    parts.any (· == s!"{triv} + section.block-shaped")).getLast?
+  check ref "element boundaries (beamer, browser): a templated block meets the centred block above it on its own space"
+    ((lastShaped.map fun (_, v) => !hasStr v "parskip" && hasStr v "--topsep").getD false &&
+      (shapedBounds.reverse.find? fun (parts, _) => parts.any fun p =>
+        p == s!"{triv} + section.block-shaped" || p == "* + section.block-shaped").any fun (parts, _) =>
+          parts.any (· == s!"{triv} + section.block-shaped"))
+  check ref "element boundaries (beamer, browser): no adding pair reads a templated block"
+    (shapedBounds.all fun (parts, _) => parts.all fun p =>
+      !(p.startsWith top && hasStr p "section.block" && !hasStr p "section.block:not(.block-shaped)"))
   check ref "element boundaries (article, browser): the article's sheet owes no adding pair"
     ((HtmlDoc.blockGapRules .sizeFile size {}).all fun
       | .boundary sel _ => !hasStr sel top
