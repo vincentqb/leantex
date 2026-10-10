@@ -121,6 +121,7 @@ public import LeanTex.Core.FigureLoss
 public import LeanTex.Core.FigureFace
 public import LeanTex.Core.Xml
 public import LeanTex.Core.XmlContract
+public import LeanTex.Core.XmlRoundTrip
 public import LeanTex.Core.Css
 public import LeanTex.Core.CssColorData
 public import LeanTex.Core.CssColor

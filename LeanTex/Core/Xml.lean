@@ -21,9 +21,10 @@ namespace declarations stay among the attributes (`resolve` reads them).
 Character data is end-of-line normalized (§2.11) and an attribute value
 whitespace-normalized (§3.3.3), as every conforming reader reports them;
 adjacent character data and CDATA are one text node, and comments are gone.
-`render` writes a tree back canonically — no declaration, no comments, every
-character the reader would rewrite written as a reference — so the reader
-reads a rendered tree back as it stands.
+`render` writes a tree back canonically — no declaration, no comments,
+printable ASCII as itself and every other character of text and attribute
+values as a reference, which no reader normalizes — so the reader reads a
+rendered tree back as it stands (`parse_render_id`).
 
 Budgets bound the work a hostile file can ask for: its size, its depth, its
 node count, a name's and a text's length. Exceeding one is a refusal that
@@ -577,27 +578,22 @@ every token, under the budget (`parseWith_between`). -/
 
 /-! ## Writing -/
 
-/-- Escape character data: the markup characters, and a carriage return the
-reader would normalize away. -/
-public def escapeText (s : String) : String :=
-  s.foldl (fun acc c =>
-    if c == '&' then acc ++ "&amp;"
-    else if c == '<' then acc ++ "&lt;"
-    else if c == '>' then acc ++ "&gt;"
-    else if c == '\r' then acc ++ "&#13;"
-    else acc.push c) ""
+/-- A character as a decimal character reference (§4.1). -/
+@[expose] public def charRef (c : Char) : String := "&#" ++ toString c.toNat ++ ";"
 
-/-- Escape an attribute value for double quotes: the markup characters and
-the white space the reader would normalize to a space. -/
-public def escapeAttr (s : String) : String :=
-  s.foldl (fun acc c =>
-    if c == '&' then acc ++ "&amp;"
-    else if c == '<' then acc ++ "&lt;"
-    else if c == '"' then acc ++ "&quot;"
-    else if c == '\t' then acc ++ "&#9;"
-    else if c == '\n' then acc ++ "&#10;"
-    else if c == '\r' then acc ++ "&#13;"
-    else acc.push c) ""
+/-- A character a canonical spelling writes as itself: printable ASCII but
+the four markup reads, `"`, `&`, `<` and `>`. -/
+@[expose] public def literal (c : Char) : Bool :=
+  32 ≤ c.toNat && c.toNat ≤ 126 && c != '"' && c != '&' && c != '<' && c != '>'
+
+/-- **Text or an attribute value, canonically spelled**: a `literal`
+character as itself, every other one as a reference, which no reader
+normalizes — end-of-line handling (§2.11) and attribute-value normalization
+(§3.3.3) read only literal characters — so every conforming reader, this one
+and the one behind the converter alike, reads exactly these characters back,
+and the spelling is ASCII (`parse_render_id`). -/
+@[expose] public def escapeChars (s : String) : String :=
+  s.foldl (fun acc c => if literal c then acc.push c else acc ++ charRef c) ""
 
 mutual
 
@@ -605,12 +601,12 @@ mutual
 /-- One node written onto `out`. -/
 public def renderOne (out : String) : Node → String
   | .elem name attrs kids =>
-    let out := attrs.foldl (fun o (k, v) => o ++ " " ++ k ++ "=\"" ++ escapeAttr v ++ "\"")
+    let out := attrs.foldl (fun o (k, v) => o ++ " " ++ k ++ "=\"" ++ escapeChars v ++ "\"")
       (out ++ "<" ++ name)
     if kids.isEmpty then out ++ "/>"
     else renderList (out ++ ">") kids.toList ++ "</" ++ name ++ ">"
   | .text s =>
-    let e := escapeText s
+    let e := escapeChars s
     out ++ e
 
 public def renderList (out : String) : List Node → String

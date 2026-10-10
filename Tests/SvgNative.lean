@@ -63,7 +63,10 @@ def svgFixtureFiles : IO (Array System.FilePath) := do
 
 /-- A tree written by the canonical writer reads back as it stands, for
 every construct the writer spells: references in attributes and text,
-white space the reader would normalize, empty and nested elements. -/
+white space the reader would normalize, empty and nested elements. The
+theorem `Xml.parse_render_id` holds the first half for every tree with ASCII
+names; the judged tree's spelling, through its namespaces, is this check's
+alone. -/
 def xmlRoundTripChecks (ref : IO.Ref (List String)) : IO Unit := do
   let trees : List Xml.Node := [
     .elem "svg" #[("xmlns", "http://www.w3.org/2000/svg")] #[],
