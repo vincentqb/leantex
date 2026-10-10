@@ -1415,8 +1415,8 @@ public structure PageOut where
 /-- A page that shows nothing: no line, no fill and no placed picture ink.
 A page that is not blank ships at a boundary and as the last page
 (`brk_ships_exact`, `closeLast_ships_exact`), and the next box stands below
-what it holds: a picture of fills or of strokes alone is content as a line
-is. -/
+what it holds (`gfxContentPageChecks`): a picture that paints fills or
+strokes alone is content as a line is. -/
 @[expose] public def PageOut.blank (p : PageOut) : Bool :=
   p.lines.isEmpty && p.fills.isEmpty && p.inks.isEmpty
 
@@ -16187,9 +16187,7 @@ private def placePicture (fs : FontSet) (imgs : Image.Store) (b0 : B)
     overflow := y + h - bottom
     above := b.pageShrink + b.skip.shrink
     stretch := b.pageStretch + b.skip.stretch
-    -- A page with nothing on it yet takes the picture: a break would ship
-    -- an empty page and gain the picture nothing.
-    if overflow ≤ above ∨ b.noBreak ∨ b.cur.blank then
+    if overflow ≤ above ∨ b.noBreak then
       yTop := y
       overflow := min overflow above
     else
@@ -16750,7 +16748,7 @@ private theorem emptyBreak_pageState (fs : FontSet) (imgs : Image.Store)
 /-- **A boundary ships the page it closes whenever that page is not blank**
 (`_exact`): a line, a fill or a placed picture's ink makes it one shipped
 page, and that page carries every ink the page being built held, so a
-picture alone is never dropped nor merged into what follows. -/
+picture that paints alone is never dropped nor merged into what follows. -/
 private theorem brk_ships_exact (fs : FontSet) (imgs : Image.Store)
     (st : StepSt) (hb : st.b.cur.blank = false) :
     (stepStaged fs imgs st .brk).b.pages.size = st.b.pages.size + 1 ∧
@@ -17020,7 +17018,7 @@ private theorem placePicture_noBreak (fs : FontSet) (imgs : Image.Store)
   simp only [placePicture, Id.run, Id, pure]
   repeat' split
   all_goals first
-    | (exfalso; exact ‹¬(_ ∨ _ = true ∨ _)› (Or.inr (Or.inl h)))
+    | (exfalso; exact ‹¬(_ ∨ _ = true)› (Or.inr h))
     | (constructor <;> simp [h]
        done)
 

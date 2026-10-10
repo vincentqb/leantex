@@ -416,6 +416,10 @@ def goldenNames : List String :=
 -- KP test helpers: word/glue/forced-break item builders and a brute-force
 -- optimum to cross-check the DP against.
 
+/-- A TikZ picture of `body`, its environment on lines of their own. -/
+def tikzPicture (body : String) : String :=
+  "\\begin{tikzpicture}\n" ++ body ++ "\n\\end{tikzpicture}"
+
 /-- The fonts the repository ships, beside the fixtures that name them. Every
 font-dependent check runs on these and only these, so `lake test` sees the
 same faces on every host — a Mac with nothing installed included. -/
