@@ -1,5 +1,8 @@
 module
 
+public import Std.Data.HashMap
+import Std.Data.HashSet
+
 /-!
 # The CSS an SVG file states
 
@@ -70,6 +73,11 @@ public structure Rule where
 
 @[expose] public def isWs (c : Char) : Bool := c == ' ' || c == '\t' || c == '\n' || c == '\r' || c == '\x0c'
 
+/-- A line end (CSS Syntax 3 §3.3: a carriage return and a form feed read
+as a line feed). A string meets one only by breaking: it ends there, a bad
+string, and what follows is CSS again (§4.3.5). -/
+@[expose] public def isLineEnd (c : Char) : Bool := c == '\n' || c == '\r' || c == '\x0c'
+
 /-- `s` with its comments removed: `/* … */`, an unterminated one to the end. -/
 public def stripComments (s : String) : String := Id.run do
   let cs := s.toList.toArray
@@ -82,7 +90,7 @@ public def stripComments (s : String) : String := Id.run do
     match quote with
     | some q =>
       out := out.push c
-      if c == q then quote := none
+      if c == q || isLineEnd c then quote := none
       i := i + 1
     | none =>
       if c == '/' && cs[i + 1]? == some '*' then
@@ -128,7 +136,8 @@ public def admitsCall (name arg : String) : Bool :=
 
 /-- The first spelling in a value or declaration text that this reader
 refuses: an escape, an at-sign, or a function other than those
-`admitsCall` reads. Quoted strings are skipped. -/
+`admitsCall` reads. Quoted strings are skipped, each to its closing quote or
+the line end that breaks it, as CSS reads one (`isLineEnd`). -/
 public def refusedIn (s : String) : Option String := Id.run do
   let cs := s.toList.toArray
   let mut i := 0
@@ -141,7 +150,7 @@ public def refusedIn (s : String) : Option String := Id.run do
     if c == '@' then return some "an at-rule"
     match quote with
     | some q =>
-      if c == q then quote := none
+      if c == q || isLineEnd c then quote := none
       i := i + 1
     | none =>
       if c == '"' || c == '\'' then
@@ -170,9 +179,40 @@ public def refusedIn (s : String) : Option String := Id.run do
   if quote.isSome then return some "an unterminated string"
   return none
 
+/-- Whether a string in `s` is broken by a line end — a bad string (CSS
+Syntax 3 §4.3.5), which makes the declaration holding it invalid. -/
+@[expose] public def brokenString (s : String) : Bool := Id.run do
+  let mut quote : Option Char := none
+  for c in s.toList do
+    match quote with
+    | some q =>
+      if c == q then quote := none
+      else if isLineEnd c then return true
+    | none => if c == '"' || c == '\'' then quote := some c
+  return false
+
+/-- The end of the run from `i` that holds no `stop` outside a string: the
+offset of the first `stop` there, or `cs.size`. A string runs to its quote
+or to the line end that breaks it (`isLineEnd`). -/
+public def scanTo (cs : Array Char) (stop : Char) (i : Nat) : Nat := Id.run do
+  let mut j := i
+  let mut quote : Option Char := none
+  for _ in [0:cs.size + 1] do
+    if j ≥ cs.size then break
+    let c := cs[j]?.getD ' '
+    match quote with
+    | some q =>
+      if c == q || isLineEnd c then quote := none
+    | none =>
+      if c == stop then break
+      if c == '"' || c == '\'' then quote := some c
+    j := j + 1
+  return j
+
 /-- A declaration block's text as declarations, in order. An empty
-declaration is skipped; one with no colon is unsupported; one that
-spells what `refusedIn` refuses is refused. -/
+declaration is skipped; one with no colon, or holding a string a line end
+breaks, is unsupported; one that spells what `refusedIn` refuses is
+refused. -/
 public def parseDecls (text : String) : Except Problem (Array Decl) := do
   let text := stripComments text
   if let some what := refusedIn text then throw (.refused what)
@@ -180,6 +220,7 @@ public def parseDecls (text : String) : Except Problem (Array Decl) := do
   for part in splitTop text ';' do
     let p := part.trimAscii.toString
     if p.isEmpty then continue
+    if brokenString part then throw (.unsupported s!"the declaration '{p}', whose string a line end breaks")
     match p.splitOn ":" with
     | prop :: rest@(_ :: _) =>
       let prop := prop.trimAscii.toString.toLower
@@ -206,7 +247,7 @@ where
       match quote with
       | some q =>
         cur := cur.push c
-        if c == q then quote := none
+        if c == q || isLineEnd c then quote := none
       | none =>
         if c == '"' || c == '\'' then
           quote := some c
@@ -286,7 +327,7 @@ public def parseSelector (s : String) : Except String Selector := do
 subset: a rule whose selector list is outside it is dropped and named. An
 escape, an at-rule or a refused function anywhere refuses the sheet. One
 pass over the text: each rule its selectors up to the next `{` and its
-declarations up to the next `}`. -/
+declarations up to the next `}`, neither inside a string (`scanTo`). -/
 public def parseSheet (text : String) : Except String (Array Rule × Array String) := do
   let text := stripComments text
   if let some what := refusedIn text then throw what
@@ -301,15 +342,11 @@ public def parseSheet (text : String) : Except String (Array Rule × Array Strin
     for _ in [0:n + 1] do
       if j < n && isWs (cs[j]?.getD ' ') then j := j + 1 else break
     if n ≤ j then break
-    let mut o := i
-    for _ in [0:n + 1] do
-      if o < n && cs[o]? != some '{' then o := o + 1 else break
+    let o := scanTo cs '{' i
     if n ≤ o then
       dropped := dropped.push s!"the text '{(slice i n).trimAscii}'"
       break
-    let mut c := o + 1
-    for _ in [0:n + 1] do
-      if c < n && cs[c]? != some '}' then c := c + 1 else break
+    let c := scanTo cs '}' (o + 1)
     if n ≤ c then
       dropped := dropped.push "an unterminated rule"
       break
@@ -365,6 +402,91 @@ public def Selector.matches (sel : Selector) (e : Subject) (up : List Subject) :
   | some subject =>
     let pairs := (combs.zip comps.pop).toList.reverse
     subject.matches e && matchUp pairs up
+
+/-! ## Rules by what their subject needs -/
+
+/-- What a compound requires of an element first: an id, else a class,
+else a type (0, 1, 2 with the name); `none` for a universal compound. An
+element can match the compound only if it has it. -/
+@[expose] public def Compound.key (c : Compound) : Option (Nat × String) :=
+  match c.ids[0]? with
+  | some i => some (0, i)
+  | none =>
+    match c.classes[0]? with
+    | some c => some (1, c)
+    | none => c.type.map ((2 : Nat), ·)
+
+/-- The key a selector's subject compound requires (`Compound.key`). -/
+@[expose] public def Selector.key (sel : Selector) : Option (Nat × String) :=
+  ((sel.rest.back?.map (·.2)).getD sel.head).key
+
+/-- The key the compound nearest the subject requires of an ancestor, for a
+selector with one: `.c rect` can match an element only below one of class
+`c`. -/
+@[expose] public def Selector.upKey (sel : Selector) : Option (Nat × String) :=
+  if sel.rest.isEmpty then none
+  else ((sel.rest.pop.back?.map (·.2)).getD sel.head).key
+
+/-- Every key an element offers a compound: its id, its classes, its type. -/
+@[expose] public def Subject.keys (e : Subject) : Array (Nat × String) :=
+  (e.id.map ((0 : Nat), ·)).toArray ++ e.classes.map ((1 : Nat), ·) ++ #[(2, e.type)]
+
+/-- A sheet's rules, each selector filed under the key its subject needs
+(`Selector.key`), so an element is tried only against the selectors it can
+match: the cascade's cost follows the matches, not rules times elements. -/
+public structure RuleIndex where
+  rules : Array Rule
+  /-- Each rule's first declaration's place among all the sheets'
+  declarations, the cascade's source order. -/
+  offsets : Array Nat
+  /-- The selectors with no keyed ancestor compound, by their subject's key,
+  as (rule, selector) places. -/
+  byKey : Std.HashMap (Nat × String) (Array (Nat × Nat))
+  /-- The selectors with a keyed subject and a keyed compound nearest it,
+  by both keys: an element tries one only below an ancestor with its key,
+  so a sheet of rules each naming its own ancestor class costs what the
+  matches cost (as a browser's ancestor filter keeps it). -/
+  byPair : Std.HashMap ((Nat × String) × (Nat × String)) (Array (Nat × Nat))
+  /-- The selectors whose subject is universal. -/
+  universal : Array (Nat × Nat)
+  deriving Inhabited
+
+/-- The index of a sheet's rules. -/
+public def RuleIndex.ofRules (rules : Array Rule) : RuleIndex := Id.run do
+  let mut offsets : Array Nat := #[]
+  let mut total := 0
+  let mut byKey : Std.HashMap (Nat × String) (Array (Nat × Nat)) := {}
+  let mut byPair : Std.HashMap ((Nat × String) × (Nat × String)) (Array (Nat × Nat)) := {}
+  let mut universal : Array (Nat × Nat) := #[]
+  for h : i in [0:rules.size] do
+    let r := rules[i]
+    offsets := offsets.push total
+    total := total + r.decls.size
+    for h2 : j in [0:r.selectors.size] do
+      let sel := r.selectors[j]
+      match sel.key, sel.upKey with
+      | some k, some u => byPair := byPair.insert (k, u) ((byPair.getD (k, u) #[]).push (i, j))
+      | some k, none => byKey := byKey.insert k ((byKey.getD k #[]).push (i, j))
+      | none, _ => universal := universal.push (i, j)
+  return { rules, offsets, byKey, byPair, universal }
+
+/-- The selectors an element whose ancestors are `up` can match: those
+filed under one of its keys, those filed under one of its keys and one its
+ancestors offer, and the universal ones. A selector filed elsewhere cannot
+match it (`Compound.key`). -/
+public def RuleIndex.candidates (ix : RuleIndex) (e : Subject) (up : List Subject) :
+    Array (Nat × Nat) := Id.run do
+  let keys := e.keys
+  let mut out : Array (Nat × Nat) := keys.foldl (fun acc k => acc ++ ix.byKey.getD k #[]) #[]
+  if !ix.byPair.isEmpty then
+    let mut ups : Std.HashSet (Nat × String) := {}
+    for a in up do
+      for k in a.keys do ups := ups.insert k
+    let upKeys := ups.toArray
+    for k in keys do
+      for u in upKeys do
+        out := out ++ ix.byPair.getD (k, u) #[]
+  return out ++ ix.universal
 
 /-! ## The cascade -/
 

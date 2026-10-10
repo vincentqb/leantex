@@ -104,23 +104,26 @@ public def decodeUtf16 (be : Bool) (b : ByteArray) (start : Nat) : Except Nat By
       i := i + 2
   return .ok out
 
-/-- The encodings the standard names, from its labels. -/
-public def names : Array String :=
+/-- The encodings the standard names, from its labels. It takes `Unit`, so
+the table is read when it is asked for, never when the module initializes
+in every process. -/
+public def names (_ : Unit) : Array String :=
   WhatwgEncodingData.labels.foldl (fun acc (_, n) => if acc.contains n then acc else acc.push n) #[]
 
 /-- **What the tables must hold**, as the faults they would show: every
 index is 128 four-digit scalars, none a surrogate; every label lower case
 and trimmed, in strictly increasing order, so named once; every single-byte encoding one the labels name;
 and the names the decoders here read — `windows-1252` for the labels a
-browser reads as it — among them. The suite holds this empty. -/
-public def dataFaults : Array String := Id.run do
+browser reads as it — among them. The suite holds this empty; it takes
+`Unit`, so no process pays for it at initialization. -/
+public def dataFaults (_ : Unit) : Array String := Id.run do
   let mut out : Array String := #[]
   for (n, idx) in WhatwgEncodingData.singleByte do
     unless idx.length == 512 && idx.all fun c => c.isDigit || ('A' ≤ c && c ≤ 'F') do
       out := out.push s!"{n}: an index of {idx.length} characters, not 128 scalars"
     if (scalarsOf idx).any fun s => 0xD800 ≤ s && s ≤ 0xDFFF then
       out := out.push s!"{n}: an index maps a byte to a surrogate"
-    unless names.contains n do out := out.push s!"{n}: an index no label names"
+    unless (names ()).contains n do out := out.push s!"{n}: an index no label names"
   let labels := WhatwgEncodingData.labels
   for h : k in [0:labels.size] do
     let (l, _) := labels[k]

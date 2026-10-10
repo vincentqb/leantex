@@ -135,6 +135,16 @@ engine does not draw the feature. -/
 @[expose] public def svgConvertedDiag (moving : Bool) (src : String) (l : Gfx.Loss) : Diag :=
   convertedDiag (svgFigures moving) src l
 
+/-- **W0609** for a character of an SVG figure that no face of the document
+covers: the engine's drawing ships without it. A figure's route is taken
+before the faces settle, so no converter stands in for a gap they leave —
+a fact of the font environment, named, and never an error. -/
+@[expose] public def svgGlyphDiag (moving : Bool) (src code : String) : Diag :=
+  Diag.of .W0609
+    s!"figure '{src}' is drawn without its character U+{code}, which no face of the document covers"
+    (help := some "declare a face that covers it in \\fonts, or accept the loss with \\allow{W0609}")
+    (subject := some (subject "svg" (.font s!"U+{code}"))) (output := shipsIn moving)
+
 /-- **N0026**: an SVG names a font family the document does not declare,
 and no family after it in its list is one the document's roles answer; its
 text sets in the document's face `face`. One per family. -/
@@ -143,6 +153,13 @@ text sets in the document's face `face`. One per family. -/
     s!"'{family}' in figure '{src}' is no family of the document; its text is set in '{face}'"
     (help := some "name a generic family (serif, sans-serif or monospace) last in the SVG's font list, or declare the family in \\fonts")
     (subject := some ("svg:font:" ++ family))
+
+/-- **N0027**: an SVG figure holds what its drawing does not carry and no
+ink of the figure needs — a link — named once per figure; the figure draws
+the link's content. -/
+@[expose] public def svgNoteDiag (moving : Bool) (src note : String) : Diag :=
+  Diag.of .N0027 s!"figure '{src}' holds {note}, which its drawing does not carry; its content is drawn"
+    (subject := some ("figure:svg:note:" ++ note)) (output := shipsIn moving)
 
 /-- A figure's losses, each named once, as `diag` says it. -/
 @[expose] public def diags (diag : Gfx.Loss → Diag) (losses : Array Gfx.Loss) : Array Diag :=

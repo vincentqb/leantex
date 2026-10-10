@@ -90,7 +90,13 @@ def featureProbes : List (String × String) := [
   ("font-shorthand", "<text x=\"2\" y=\"20\" style=\"font: italic bold 10px sans-serif\">Label</text>"),
   ("css-url-in-style", "<defs><linearGradient id=\"g\"><stop offset=\"0\" stop-color=\"red\"/><stop offset=\"1\" stop-color=\"blue\"/></linearGradient></defs><rect width=\"40\" height=\"40\" style=\"fill: url(#g)\"/>"),
   ("white-space-pre", "<text x=\"2\" y=\"20\" style=\"white-space: pre\">a  b</text>"),
-  ("filter", "<filter id=\"f\"><feGaussianBlur stdDeviation=\"1\"/></filter><rect width=\"20\" height=\"20\" filter=\"url(#f)\"/>")]
+  ("filter", "<filter id=\"f\"><feGaussianBlur stdDeviation=\"1\"/></filter><rect width=\"20\" height=\"20\" filter=\"url(#f)\"/>"),
+  ("symbol-own-style", "<defs><symbol id=\"s\" viewBox=\"0 0 10 10\" fill=\"none\" stroke=\"currentColor\" class=\"k\"><path d=\"M1 1L9 9\"/></symbol></defs><use href=\"#s\" width=\"20\" height=\"20\" color=\"green\"/>"),
+  ("clip-object-units", "<defs><clipPath id=\"h\" clipPathUnits=\"objectBoundingBox\"><rect width=\"0.5\" height=\"1\"/></clipPath><rect id=\"r\" width=\"20\" height=\"20\"/></defs><use href=\"#r\" clip-path=\"url(#h)\"/><g clip-path=\"url(#h)\"><circle cx=\"30\" cy=\"30\" r=\"5\"/></g>"),
+  ("image-clip-object-units", s!"<defs><clipPath id=\"h\" clipPathUnits=\"objectBoundingBox\"><circle cx=\"0.5\" cy=\"0.5\" r=\"0.5\"/></clipPath></defs><image href=\"data:image/png;base64,{HtmlResource.base64 tinyPng}\" width=\"20\" height=\"20\" clip-path=\"url(#h)\"/>"),
+  ("gradient-stop-cascade", "<style>#g stop.end { stop-color: green }</style><defs color=\"red\"><linearGradient id=\"g\"><stop offset=\"0\" stop-color=\"currentColor\"/><stop class=\"end\" offset=\"1\"/></linearGradient></defs><rect width=\"40\" height=\"40\" fill=\"url(#g)\"/>"),
+  ("nested-svg-transform", "<svg width=\"20\" height=\"20\" transform=\"translate(10 10)\"><rect width=\"10\" height=\"10\"/></svg>"),
+  ("text-line-feed", "<text x=\"2\" y=\"20\">two\n  words</text>")]
 
 /-- Whether the importer draws a probe whole: exact, and something painted
 or set. -/

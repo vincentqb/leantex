@@ -416,13 +416,16 @@ public def svgFetch (src : String) (bytes : ByteArray) (page : PdfRead.PageSelec
   let i := Svg.importTree pose lang
   let (fig, plans) := FigureStore.rasterPlans params i.fig
   let losses := fig.losses
+  -- What the import dropped with no ink of its own — a link — is named
+  -- once, whichever route draws the figure.
+  let notes := i.notes.map (FigureLoss.svgNoteDiag moving src)
   let native : SvgFetch :=
-    { res := .ok (vectorPlan fig), vector := some fig, plans, moving, title := fig.title }
+    { res := .ok (vectorPlan fig), vector := some fig, plans, moving, title := fig.title, diags := notes }
   let verdict : Boundary.Verdict := if losses.isEmpty then .exact else .lossy losses
   let decl : Boundary.Refusal := if convert.isSome then .none else .declared
   if !verdict.asksTool decl then
-    let diags := Boundary.svgRouteDiags moving src .refused losses
-      (Boundary.route verdict .notAsked decl)
+    let owed := Boundary.svgRouteDiags moving src .refused losses (Boundary.route verdict .notAsked decl)
+    let diags := notes ++ owed
     return { native with diags }
   -- premise: Tests.svgRouteChecks — two builds differing only by the converter's
   -- presence: a lossless figure ships one artifact and runs no tool; a lossy one
@@ -437,7 +440,8 @@ public def svgFetch (src : String) (bytes : ByteArray) (page : PdfRead.PageSelec
   -- The route decides what the figure owes (`Boundary.route_losses_exact`,
   -- `svgRouteDiags_named`); the converter's drawing ships exactly when it drew.
   let route := Boundary.route verdict tool decl
-  let diags := Boundary.svgRouteDiags moving src why losses route
+  let owed := Boundary.svgRouteDiags moving src why losses route
+  let diags := notes ++ owed
   match route, answer with
   | .tool, some (.ok plan) => return { res := .ok plan, moving, title := fig.title, diags }
   | _, _ => return { native with diags }

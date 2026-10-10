@@ -291,6 +291,7 @@ public inductive DiagCode where
   | W0609
   | N0024
   | N0026
+  | N0027
   | W0384
   | W0385
   | W0386
@@ -509,6 +510,7 @@ private def DiagCode.spec : DiagCode → String × Loss × String
   | .W0609 => ("0609", .degraded, "a figure is drawn by the engine without a feature it does not draw; the rest of the figure is drawn")
   | .N0024 => ("0024", .info, "a figure is drawn by an external converter, because the engine does not draw one of its features")
   | .N0026 => ("0026", .info, "an SVG's font family is not the document's; its text is set in one of the document's own faces")
+  | .N0027 => ("0027", .info, "an SVG figure holds a link, which its drawing does not carry; the figure draws the link's content")
   | .W0384 => ("0384", .degraded, "a frame taller than its page continues on the next page without a declared break")
   | .W0400 => ("0400", .degraded, "a frame a little taller than its page stands past its text area, in the gap below it")
   | .W0385 => ("0385", .degraded, "a colour or font change inside math is not carried; its content sets in the surrounding style")

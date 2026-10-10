@@ -257,6 +257,9 @@
 ℹ [N0026]
   'Example Grotesk' in figure 'figures/chart.svg' is no family of the document; its text is set in 'Open Sans'
   suggestion: name a generic family (serif, sans-serif or monospace) last in the SVG's font list, or declare the family in \fonts
+── N0027 (info) an SVG figure holds a link, which its drawing does not carry; the figure draws the link's content
+ℹ [N0027]
+  figure 'figures/chart.svg' holds a link, which its drawing does not carry; its content is drawn
 ── N0029 (info) a .bib field the bibliography style prints nowhere for its entry's type; the reference list is the style's own
 ℹ [N0029]
   the bibliography style 'plain' prints no 'url' field in @misc entries; 1 entry keeps one (k)

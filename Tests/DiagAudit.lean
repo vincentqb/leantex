@@ -207,6 +207,9 @@ def registry : List AuditRow :=
    -- An SVG names a family the document does not declare: the text sets in
    -- the document's own face, as LaTeX's svg package sets it, and says so.
    ⟨.N0026, .keep, .rewritten, check% Tests.svgFontMatchChecks⟩,
+   -- A link inside a figure: the drawing carries none yet, and the note
+   -- leaves once links are carried as the page's own.
+   ⟨.N0027, .native, .native, check% Tests.svgLinkNoteChecks⟩,
    ⟨.E0606, .refusal, .fails, check% htmlContainedCliChecks⟩,
    ⟨.E0607, .refusal, .fails, check% pdfBoundsChecks⟩,
    ⟨.E0003, .refusal, .fails, check% publicationPathChecks⟩,

@@ -657,6 +657,8 @@ def diagWitnessWith (w : WitnessRun) (one mapped withMath : Font.FontSet)
     #[FigureLoss.svgConvertedDiag false "figures/chart.svg" (.property "filter")]
   -- A font family the document does not declare, set in its sans face.
   | .N0026 => #[FigureLoss.svgFontDiag "figures/chart.svg" "Example Grotesk" "Open Sans"]
+  -- A link inside a figure, whose content the figure draws.
+  | .N0027 => #[FigureLoss.svgNoteDiag false "figures/chart.svg" "a link"]
   | .W0393 => #[DriverDiag.listingHighlightUnavailable "bash" "Pygments is unavailable"]
   | .W0394 => Tests.LayoutInkContracts.boundaryWitness one .W0394
   | .E0395 => Tests.LayoutInkContracts.boundaryWitness one .E0395

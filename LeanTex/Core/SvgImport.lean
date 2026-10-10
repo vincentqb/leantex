@@ -442,7 +442,8 @@ importer reads or reports. -/
 /-- The properties a style sheet or `style` attribute may set that the
 importer reads only as attributes, or not at all — the geometry properties
 (SVG 2 §10.1.1, §9.2), the CSS transform with its individual and motion
-properties, a mask's longhands — each with the values that change nothing.
+properties, a mask's longhands, and what CSS alone sets on text and on the
+root's box — each with the values that change nothing.
 A declaration of one from CSS with another value is a loss: a geometry
 property's initial value still overrides the attribute it shadows. -/
 @[expose] public def cssLost : List (String × List String) :=
@@ -451,7 +452,19 @@ property's initial value still overrides the attribute it shadows. -/
     "backdrop-filter"].map (·, ["none"])) ++
   (["offset", "offset-distance", "offset-rotate", "offset-anchor", "offset-position",
     "mask-mode", "mask-position", "mask-size", "mask-repeat", "mask-origin", "mask-clip",
-    "mask-composite"].map (·, []))
+    "mask-composite"].map (·, [])) ++
+  -- What a browser applies to a figure's text or its root box from CSS
+  -- alone, read nowhere here: each with its initial value, which changes
+  -- nothing — the spellings exporters write for every run.
+  [("text-transform", ["none"]), ("text-decoration-line", ["none"]),
+   ("text-shadow", ["none"]), ("font-variant-caps", ["normal"]),
+   ("font-variant-ligatures", ["normal"]), ("font-variant-numeric", ["normal"]),
+   ("font-variant-east-asian", ["normal"]), ("font-variant-position", ["normal"]),
+   ("font-variant-alternates", ["normal"]), ("font-feature-settings", ["normal"]),
+   ("font-variation-settings", ["normal"]), ("font-kerning", ["auto", "normal"]),
+   ("background", ["none", "transparent"]), ("background-color", ["transparent"]),
+   ("background-image", ["none"]), ("border", ["none", "0"]), ("box-shadow", ["none"]),
+   ("outline", ["none", "0"])]
 
 /-- The system font keywords: a face only the host names. -/
 @[expose] public def systemFonts : List String :=
@@ -531,7 +544,7 @@ public def subjectOf (name : String) (attrs : Array Xml.Attr) : Css.Subject :=
 attributes (level 0), the sheet rules whose selectors match it in its own
 place (level 1), its `style` attribute (level 2). A sheet rule's order is
 its rule's, then its declaration's, place in the sheets. -/
-public def declsOf (rules : Array Css.Rule) (subject : Css.Subject) (up : List Css.Subject)
+public def declsOf (ix : Css.RuleIndex) (subject : Css.Subject) (up : List Css.Subject)
     (attrs : Array Xml.Attr) : Decls × Array String := Id.run do
   let mut out : Decls := #[]
   let mut problems : Array String := #[]
@@ -540,21 +553,27 @@ public def declsOf (rules : Array Css.Rule) (subject : Css.Subject) (up : List C
     if a.ns == "" && properties.contains a.name then
       out := out.push (a.name, { important := false, level := 0, spec := (0, 0, 0), order := i },
         a.value.trimAscii.toString)
-  let mut order := 0
-  for r in rules do
-    let best := r.selectors.foldl (fun acc (s : Css.Selector) =>
-      if s.matches subject up then
-        match acc with
-        | none => some s.specificity
-        | some sp => if Css.Key.lt { important := false, level := 1, spec := sp, order := 0 }
-            { important := false, level := 1, spec := s.specificity, order := 0 }
-          then some s.specificity else some sp
-      else acc) none
-    if let some sp := best then
-      for d in r.decls do
-        out := out.push (d.prop, { important := d.important, level := 1, spec := sp, order }, d.value)
-        order := order + 1
-    else order := order + r.decls.size
+  -- Only the selectors the element can match are tried (`Css.RuleIndex`):
+  -- each matching rule at its most specific matching selector, in rule
+  -- order, each declaration at its place among the sheets'.
+  let mut best : Std.HashMap Nat (Nat × Nat × Nat) := {}
+  for (i, j) in ix.candidates subject up do
+    let some s := (ix.rules[i]?.bind (·.selectors[j]?)) | continue
+    if s.matches subject up then
+      let sp := s.specificity
+      match best.get? i with
+      | none => best := best.insert i sp
+      | some b =>
+        if Css.Key.lt { important := false, level := 1, spec := b, order := 0 }
+            { important := false, level := 1, spec := sp, order := 0 } then
+          best := best.insert i sp
+  for (i, sp) in best.toArray.qsort (·.1 < ·.1) do
+    let some r := ix.rules[i]? | continue
+    let base := ix.offsets[i]?.getD 0
+    for h : k in [0:r.decls.size] do
+      let d := r.decls[k]
+      out := out.push (d.prop, { important := d.important, level := 1, spec := sp, order := base + k },
+        d.value)
   if let some st := Xml.Attr.get? attrs "" "style" then
     match Css.parseDecls st with
     | .ok ds =>
@@ -1005,13 +1024,16 @@ ancestors in the tree, innermost first, for selector matching. -/
 public structure Entry where
   item : Xml.Item
   up : List Css.Subject
+  /-- The ancestors themselves, innermost first, beside `up`: what an
+  inherited property is computed down. -/
+  upItems : List (String × Array Xml.Attr)
   deriving Inhabited
 
 /-- What every step of the walk reads: the elements by id, the sheets'
 rules, the document language. -/
 public structure Env where
   ids : Std.HashMap String Entry
-  rules : Array Css.Rule
+  rules : Css.RuleIndex
   lang : String
 
 /-- A `use` the walk met, to be read later: the element it names, the
@@ -1030,6 +1052,8 @@ public structure St where
   notes : Array String
   rasters : Array Raster
   requests : Array Request
+  /-- The requests by the id each names: where an equal one is looked for. -/
+  requestIds : Std.HashMap String (Array Nat)
   nodes : Nat
   animated : Bool
   text : Bool
@@ -1051,9 +1075,12 @@ public structure Budget where
 /-- The request a `use` makes, shared with an equal one already made: one
 symbol per element, inherited style and viewport. -/
 public def St.request (s : St) (r : Request) : St × Nat :=
-  match s.requests.findIdx? (· == r) with
+  let same := s.requestIds.getD r.id #[]
+  match same.find? (fun k => s.requests[k]? == some r) with
   | some k => (s, k)
-  | none => ({ s with requests := s.requests.push r }, s.requests.size)
+  | none =>
+    let k := s.requests.size
+    ({ s with requests := s.requests.push r, requestIds := s.requestIds.insert r.id (same.push k) }, k)
 
 @[expose] public def St.lose (s : St) (l : Gfx.Loss) : St :=
   if s.losses.contains l then s else { s with losses := s.losses.push l }
@@ -1083,17 +1110,18 @@ public def unbase64 (s : String) : Option ByteArray := Id.run do
     else if c == '/' || c == '_' then some 63
     else none
   let mut out := ByteArray.emptyWithCapacity (s.length * 3 / 4)
-  let mut acc : Nat := 0
-  let mut bits : Nat := 0
+  -- Bits in a machine word: four characters' 24 bits at most wait here.
+  let mut acc : UInt32 := 0
+  let mut bits : UInt32 := 0
   for c in s.toList do
     if c == '=' then break
     if c == ' ' || c == '\n' || c == '\r' || c == '\t' then continue
     let some v := val c | return none
-    acc := (acc * 64 + v) % 16777216
+    acc := ((acc <<< 6) ||| v.toUInt32) &&& 0xFFFFFF
     bits := bits + 6
     if bits ≥ 8 then
       bits := bits - 8
-      out := out.push ((acc / (2 ^ bits)) % 256).toUInt8
+      out := out.push ((acc >>> bits) &&& 0xFF).toUInt8
   return some out
 
 /-- `%XX` escapes decoded, for a `data:` URI that is not base64. -/
@@ -1148,25 +1176,38 @@ public def gradientAttr (env : Env) (start : Xml.Item) (name : String) : Option 
   return none
 
 /-- A gradient's stops: its own, or the first in its `href` chain that has
-any. -/
-public def gradientStops (env : Env) (start : Xml.Item) : Array Xml.Item := Id.run do
+any, with the gradient element that holds them — whose place in the tree
+the stops' cascade and inheritance read. -/
+public def gradientStops (env : Env) (start : Entry) : Array Xml.Item × Entry := Id.run do
   let mut cur := start
   for _ in [0:env.ids.size + 1] do
-    match cur with
+    match cur.item with
     | .elem _ _ attrs kids =>
       let stops := kids.filter fun k => match k with
         | .elem ns n _ _ => ns == svgNs && n == "stop"
         | .text _ => false
-      if !stops.isEmpty then return stops
+      if !stops.isEmpty then return (stops, cur)
       let href := (Xml.Attr.get? attrs "" "href").orElse fun _ => Xml.Attr.get? attrs xlinkNs "href"
       match href with
       | some h =>
         match env.ids.get? ((normalizeSpace h).drop 1).toString with
-        | some e => cur := e.item
-        | none => return #[]
-      | none => return #[]
-    | .text _ => return #[]
-  return #[]
+        | some e => cur := e
+        | none => return (#[], cur)
+      | none => return (#[], cur)
+    | .text _ => return (#[], cur)
+  return (#[], cur)
+
+/-- The `color` an element computes, down its ancestors from the root —
+`items` the element and its ancestors, innermost first, `up` their
+subjects beside them: the property inherits, so each takes its own
+declaration over its parent's. -/
+public def colorDown (ix : Css.RuleIndex) : List (String × Array Xml.Attr) → List Css.Subject →
+    Ir.Color × Nat
+  | (_, attrs) :: items, s :: up =>
+    let parent := colorDown ix items up
+    let (d, _) := declsOf ix s up attrs
+    pick d "color" true parent (black, 1000) (colorValue? parent)
+  | _, _ => (black, 1000)
 
 /-- A stop's offset in 65536ths, clamped (SVG 2 §14.4.2). -/
 public def stopOffset (s : String) : Nat :=
@@ -1188,13 +1229,23 @@ public def gradientOf (env : Env) (cx : Ctx) (id : String) (bbox : Option Box) (
   let attr (n : String) := gradientAttr env e.item n
   let spread := (attr "spreadMethod").getD "pad"
   unless spread.trimAscii.toString == "pad" do throw (.attribute "spreadMethod")
-  -- Stops: offsets non-decreasing, colours opaque.
+  -- Stops: offsets non-decreasing, colours opaque. A stop stands in the
+  -- tree under its gradient, which inherits from its own ancestors, never
+  -- from the shape that references it: its rules match there, and its
+  -- currentColor is its own `color`.
   let mut stops : Array Stop := #[]
   let mut last := 0
-  for s in gradientStops env e.item do
+  let (stopItems, owner) := gradientStops env e
+  let (oname, oattrs) := match owner.item with
+    | .elem _ n a _ => (n, a)
+    | .text _ => ("", #[])
+  let ownerUp := subjectOf oname oattrs :: owner.up
+  let ownerColor := colorDown env.rules ((oname, oattrs) :: owner.upItems) ownerUp
+  for s in stopItems do
     let .elem _ _ sattrs _ := s | continue
-    let (d, _) := declsOf env.rules (subjectOf "stop" sattrs) [] sattrs
-    let col := pick d "stop-color" false (black, 1000) (black, 1000) (colorValue? cx.parent.color)
+    let (d, _) := declsOf env.rules (subjectOf "stop" sattrs) ownerUp sattrs
+    let stopColor := pick d "color" true ownerColor (black, 1000) (colorValue? ownerColor)
+    let col := pick d "stop-color" false (black, 1000) (black, 1000) (colorValue? stopColor)
     let op := pick d "stop-opacity" false 1000 1000 opacity?
     if op * col.2 / 1000 < 1000 then throw (.property "stop-opacity")
     let off := max last (stopOffset ((Xml.Attr.get? sattrs "" "offset").getD "0"))
@@ -1284,12 +1335,14 @@ public def paintsOf (env : Env) (cx : Ctx) (st : St) (s : Style) (bbox : Option 
            dash := s.dash, phase := s.dashOffset, alpha := mulAlpha a s.strokeOpacity }
   ({ fill := fill, stroke := stroke }, st)
 
-/-- A `clip-path` reference resolved for an element whose fill box is
-`bbox`: the clip, and the frame it stands in relative to the element's —
-the clip child's transform, the clipPath's own, and under
+/-- A `clip-path` reference resolved for an element whose box `bbox` gives
+— asked only under `objectBoundingBox`, and answering the box, no box (an
+empty one), or the loss of an element whose box is not known before the
+figure is set — the clip, and the frame it stands in relative to the
+element's — the clip child's transform, the clipPath's own, and under
 `objectBoundingBox` the box's — or what stops it. `none` inside means the
 clip region is empty: nothing paints. -/
-public def clipOf (env : Env) (cx : Ctx) (id : String) (bbox : Option Box) :
+public def clipOf (env : Env) (cx : Ctx) (id : String) (bbox : Unit → Except Gfx.Loss (Option Box)) :
     Except Gfx.Loss (Option (Affine × Clip)) := do
   let some e := env.ids.get? id | throw (.resource "clip-path")
   let .elem ns name attrs kids := e.item | throw (.resource "clip-path")
@@ -1300,12 +1353,13 @@ public def clipOf (env : Env) (cx : Ctx) (id : String) (bbox : Option Box) :
   let own := aroundOrigin (((Xml.Attr.get? attrs "" "transform").bind transform?).getD Affine.unit)
     rc.origin
   let units := ((Xml.Attr.get? attrs "" "clipPathUnits").getD "userSpaceOnUse").trimAscii.toString
-  let unitOpt : Option Affine :=
-    if units == "objectBoundingBox" then
-      bbox.map fun ((x0, y0), (x1, y1)) =>
+  let unitOpt : Option Affine ←
+    if units == "objectBoundingBox" then do
+      let b ← bbox ()
+      pure (b.map fun ((x0, y0), (x1, y1)) =>
         ⟨((x1 - x0 : Int) : Rat) / (pxSp : Rat), 0, 0, ((y1 - y0 : Int) : Rat) / (pxSp : Rat),
-          (x0 : Rat), (y0 : Rat)⟩
-    else some Affine.unit
+          (x0 : Rat), (y0 : Rat)⟩)
+    else pure (some Affine.unit)
   let some unitFrame := unitOpt | return none
   let shapes := kids.filter fun k => match k with
     | .elem kns _ _ _ => kns == svgNs
@@ -1402,11 +1456,12 @@ public def piecesList (env : Env) (cx : Ctx) (lists : Array PosLists)
 
 end
 
-/-- The characters a text element sets, after SVG 1.1 §10.15's white-space
-rules — `xml:space="default"` drops line feeds, makes tabs spaces, trims
-the element's ends and collapses runs of spaces; `preserve` makes each a
-space — each with the position its innermost positioning element gives it
-by index. -/
+/-- The characters a text element sets, after the white-space rules SVG 2
+§11.11 takes from CSS Text 3 §4 — under `xml:space="default"` a line feed
+is a space, as a tab is, the element's ends are trimmed and runs of spaces
+collapse, as browsers set it (SVG 1.1 dropped the line feed); `preserve`
+makes each a space — each with the position its innermost positioning
+element gives it by index. -/
 public def textChars (pieces : Array (Piece × Array PosLists)) : Array TChar := Id.run do
   let mut out : Array TChar := #[]
   -- How many addressable characters each positioning element has given
@@ -1417,8 +1472,8 @@ public def textChars (pieces : Array (Piece × Array PosLists)) : Array TChar :=
     for c in p.text.toList do
       let c := if c == '\t' then ' ' else c
       let keep : Option Char :=
-        if p.style.preserve then some (if c == '\n' || c == '\r' then ' ' else c)
-        else if c == '\n' || c == '\r' then none
+        let c := if c == '\n' || c == '\r' then ' ' else c
+        if p.style.preserve then some c
         else if c == ' ' && prevSpace then none
         else some c
       let some ch := keep | continue
@@ -1461,6 +1516,21 @@ public def sameText (a b : Style) : Bool :=
     a.fill.same b.fill && a.stroke.same b.stroke &&
     a.anchor == b.anchor && decide (a.color.1 = b.color.1) && a.color.2 == b.color.2
 
+/-- Whether a character is of a script set right to left or joined by
+contextual shaping — Hebrew, Arabic, Syriac, Thaana, N'Ko and their
+neighbours, the Indic scripts, Tibetan, Myanmar, Khmer, Mongolian, their
+presentation forms, and the right-to-left historic planes — which a figure's
+text, set character by character left to right, does not shape. -/
+@[expose] public def needsShaping (c : Char) : Bool :=
+  let n := c.toNat
+  (0x0590 ≤ n && n ≤ 0x08FF) || (0x0900 ≤ n && n ≤ 0x0DFF) || (0x0F00 ≤ n && n ≤ 0x109F) ||
+    (0x1780 ≤ n && n ≤ 0x18AF) || (0xFB1D ≤ n && n ≤ 0xFDFF) || (0xFE70 ≤ n && n ≤ 0xFEFE) ||
+    (0x10800 ≤ n && n ≤ 0x10FFF) || (0x1E800 ≤ n && n ≤ 0x1EFFF)
+
+/-- The loss of text the engine sets in logical order, unjoined, where the
+script asks for bidirectional ordering or contextual joining. -/
+@[expose] public def shapingLoss : Gfx.Loss := .value "text in a right-to-left or joined script"
+
 /-- A text element's runs: a new run wherever a character is positioned or
 its style changes, a new chunk wherever one has an absolute x. The
 current y is known exactly, since horizontal text never moves it by an
@@ -1498,6 +1568,7 @@ public def textRuns (env : Env) (cx : Ctx) (st : St) (x0 y0 : Rat) (cs : Array T
     -- A wholly transparent fill paints nothing: the run keeps its place in
     -- its chunk, its advance moving what follows, and paints no fill.
     let fill := p.fill.filter (·.alpha.val != 0)
+    if text.any needsShaping then st := st.lose shapingLoss
     if s.visible && !text.isEmpty then
       out := out.push (.label { xf, follows, size := spOf s.fontSize, text
                                 face := { families := s.families, weight := s.weight, italic := s.italic }
@@ -1574,6 +1645,71 @@ the authored tree — a pose projected to its end holds none, and the figure
 still moves. -/
 @[expose] public def moves (t : Xml.Item) : Bool := (elemsOne #[] t).any (animations.contains ·.1)
 
+/-- The loss of a clip in object units on an element whose box the importer
+does not know before the figure is set: text, whose box only shaping
+measures, or a use whose content holds such an element. -/
+@[expose] public def unmeasuredClip (what : String) : Gfx.Loss :=
+  .value s!"clip-path in object units on {what}"
+
+/-- The geometry box of what a container painted, in its own frame: its
+marks' hull — or, where it sets text or uses a symbol, which only the
+finished figure measures, the loss of a clip in object units on it. -/
+public def bodyBox (body : Array (Node Run)) : Except Gfx.Loss (Option Box) :=
+  let fig : Figure Run := { box := ((0, 0), (0, 0)), clipToBox := false, nodes := body, outlines := #[]
+                            symbols := #[], rasters := #[], title := none, losses := #[] }
+  if Node.useFreeList body.toList && fig.labels.isEmpty then
+    .ok (hullOf (Mark.geomBox rasterUnit) fig.marks)
+  else .error (unmeasuredClip "a group holding text or a use")
+
+mutual
+
+-- conserves: none — a measure: the geometry box of an element and its
+-- descendants, which a clip in object units reads.
+/-- The geometry box an element adds to `acc`, in its parent's frame (SVG 2
+§8.10, without stroke, clip or filter): a shape's geometry and a container's
+children through its own transform, an image's viewport; what only the
+finished figure measures — text, a use, a nested viewport — is the loss of
+a clip in object units on it. -/
+public def itemBoxOne (env : Env) (cx : Ctx) (acc : Except Gfx.Loss (Option Box)) :
+    Xml.Item → Except Gfx.Loss (Option Box)
+  | .text _ => acc
+  | .elem ns name attrs kids =>
+    match acc with
+    | .error l => .error l
+    | .ok b =>
+      if ns != svgNs || animations.contains name || definitions.contains name then .ok b else
+      let (d, _) := declsOf env.rules (subjectOf name attrs) cx.up attrs
+      let r := computeStyle d cx.parent cx.vp attrs
+      if !r.display then .ok b else
+      let xf := aroundOrigin (ownTransform attrs) r.origin
+      let em := r.style.fontSize
+      match name with
+      | "g" | "a" =>
+        let inner : Ctx := { up := subjectOf name attrs :: cx.up, parent := r.style, vp := cx.vp }
+        match itemBoxList env inner (.ok none) kids.toList with
+        | .error l => .error l
+        | .ok kb => .ok (Box.joinOpt b (kb.map (Box.image xf)))
+      | "image" =>
+        let x := lenAttr attrs "x" em cx.vp.w 0
+        let y := lenAttr attrs "y" em cx.vp.h 0
+        let w := lenAttr attrs "width" em cx.vp.w 0
+        let h := lenAttr attrs "height" em cx.vp.h 0
+        if w ≤ 0 || h ≤ 0 then .ok b
+        else .ok (Box.joinOpt b (some (Box.image xf ((spOf x, spOf y), (spOf (x + w), spOf (y + h))))))
+      | "use" | "text" | "svg" | "switch" | "foreignObject" | "textPath" =>
+        .error (unmeasuredClip "a use whose content holds text, a use or a viewport")
+      | _ =>
+        match (shapeGeom name attrs em cx.vp).1 with
+        | some g => .ok (Box.joinOpt b ((bboxOf g).map (Box.image xf)))
+        | none => .ok b
+
+public def itemBoxList (env : Env) (cx : Ctx) (acc : Except Gfx.Loss (Option Box)) :
+    List Xml.Item → Except Gfx.Loss (Option Box)
+  | [] => acc
+  | n :: rest => itemBoxList env cx (itemBoxOne env cx acc n) rest
+
+end
+
 mutual
 
 -- conserves: none — an importer: what it keeps is the figure's marks, held
@@ -1600,7 +1736,8 @@ public def walkOne (env : Env) (bud : Budget) (cx : Ctx) (acc : St × Array (Nod
     let s := r.style
     let inner : Ctx := { up := subject :: cx.up, parent := s, vp := cx.vp }
     let xf := aroundOrigin (ownTransform attrs) r.origin
-    let clipFor (st : St) (bbox : Option Box) : Option (Option (Affine × Clip)) × St :=
+    let clipFor (st : St) (bbox : Unit → Except Gfx.Loss (Option Box)) :
+        Option (Option (Affine × Clip)) × St :=
       match r.clipPath with
       | none => (some none, st)
       | some id =>
@@ -1610,11 +1747,10 @@ public def walkOne (env : Env) (bud : Budget) (cx : Ctx) (acc : St × Array (Nod
         | .error l => (some none, st.lose l)
     match name with
     | "g" | "a" | "switch" =>
-      let st := if name == "a" then { st with notes := st.notes.push "a link inside the SVG" } else st
+      let st := if name == "a" && !st.notes.contains "a link" then
+          { st with notes := st.notes.push "a link" } else st
       let (st, body) := walkList env bud inner (name == "switch") (st, #[]) kids.toList
-      let (clip, st) := clipFor st (hullOf (Mark.geomBox rasterUnit)
-        ({ box := ((0, 0), (0, 0)), clipToBox := false, nodes := body, outlines := #[], symbols := #[]
-           rasters := #[], title := none, losses := #[] } : Figure Run).marks)
+      let (clip, st) := clipFor st fun _ => bodyBox body
       match clip with
       | none => (st, out)
       | some c => (st, out.append (wrap xf c r.opacity body))
@@ -1637,7 +1773,12 @@ public def walkOne (env : Env) (bud : Budget) (cx : Ctx) (acc : St × Array (Nod
       let clip : Option Clip := if r.overflowVisible == some true then none
         else some { geom := .rect (spOf x) (spOf y) (spOf w) (spOf h), rule := .nonzero }
       let viewport := #[Node.group Affine.unit (clip.toArray) Alpha.opaque #[.group m #[] Alpha.opaque body]]
-      (st, out.append (wrap Affine.unit none r.opacity viewport))
+      -- A nested viewport is transformable and clippable (SVG 2 §8.5): its
+      -- own transform and clip-path stand around it, its box the viewport's.
+      let (clipR, st) := clipFor st fun _ => .ok (some ((spOf x, spOf y), (spOf (x + w), spOf (y + h))))
+      match clipR with
+      | none => (st, out)
+      | some c => (st, out.append (wrap xf c r.opacity viewport))
     | "use" =>
       let href := (Xml.Attr.get? attrs "" "href").orElse fun _ => Xml.Attr.get? attrs xlinkNs "href"
       match href with
@@ -1678,7 +1819,11 @@ public def walkOne (env : Env) (bud : Budget) (cx : Ctx) (acc : St × Array (Nod
               | none => true
             let clip : Array Clip := if overflowHidden
               then #[{ geom := .rect 0 0 (spOf w) (spOf hh), rule := .nonzero }] else #[]
-            let (clipR, st) := clipFor st none
+            let content : Ctx := { up := subjectOf tname tattrs :: target.up, parent := s, vp }
+            let contentBox : Except Gfx.Loss (Option Box) := match target.item with
+              | .elem _ _ _ tkids => itemBoxList env content (.ok none) tkids.toList
+              | .text _ => .ok none
+            let (clipR, st) := clipFor st fun _ => contentBox.map (·.map (Box.image m))
             match clipR with
             | none => (st, out)
             | some c =>
@@ -1686,7 +1831,8 @@ public def walkOne (env : Env) (bud : Budget) (cx : Ctx) (acc : St × Array (Nod
                 #[.group Affine.unit clip Alpha.opaque #[.use k m]]))
           else
             let (st, k) := st.request { id, style := s, vp := cx.vp, children := false }
-            let (clipR, st) := clipFor st none
+            let (clipR, st) := clipFor st fun _ =>
+              itemBoxOne env { up := target.up, parent := s, vp := cx.vp } (.ok none) target.item
             match clipR with
             | none => (st, out)
             | some c => (st, out.append (wrap place c r.opacity #[.use k Affine.unit]))
@@ -1702,7 +1848,7 @@ public def walkOne (env : Env) (bud : Budget) (cx : Ctx) (acc : St × Array (Nod
       let st := if (Xml.Attr.get? attrs "" "textLength").isSome then st.lose (.attribute "textLength") else st
       let chars := textChars pieces
       let (runs, st) := textRuns env inner st 0 0 chars
-      let (clip, st) := clipFor st none
+      let (clip, st) := clipFor st fun _ => .error (unmeasuredClip "text")
       match clip with
       | none => (st, out)
       | some c => (st, out.append (wrap xf c r.opacity runs))
@@ -1727,7 +1873,7 @@ public def walkOne (env : Env) (bud : Budget) (cx : Ctx) (acc : St × Array (Nod
         let st := { st with rasters := st.rasters.push ras }
         let clip : Array Clip := if par.slice && par.align.isSome
           then #[{ geom := .rect (spOf x) (spOf y) (spOf w) (spOf h), rule := .nonzero }] else #[]
-        let (clipR, st) := clipFor st none
+        let (clipR, st) := clipFor st fun _ => .ok (some ((spOf x, spOf y), (spOf (x + w), spOf (y + h))))
         match clipR with
         | none => (st, out)
         | some c =>
@@ -1748,7 +1894,7 @@ public def walkOne (env : Env) (bud : Budget) (cx : Ctx) (acc : St × Array (Nod
         let (p, st) := paintsOf env inner st s bbox
         -- A line has no interior: `fill` has no effect on it (SVG 2 §10.5).
         let p := if name == "line" then { p with fill := none } else p
-        let (clip, st) := clipFor st bbox
+        let (clip, st) := clipFor st fun _ => .ok bbox
         match clip with
         | none => (st, out)
         | some c =>
@@ -1778,24 +1924,24 @@ mutual
 -- conserves: none — an index of a tree's ids, which the walk reads.
 /-- Every element with an id onto `m`, the first in document order winning
 (`getElementById`), with its ancestors. -/
-public def idsOne (m : Std.HashMap String Entry) (up : List Css.Subject) :
-    Xml.Item → Std.HashMap String Entry
+public def idsOne (m : Std.HashMap String Entry) (up : List Css.Subject)
+    (upItems : List (String × Array Xml.Attr)) : Xml.Item → Std.HashMap String Entry
   | .text _ => m
   | n@(.elem _ name attrs kids) =>
     let m := match Xml.Attr.get? attrs "" "id" with
-      | some id => if m.contains id then m else m.insert id { item := n, up := up }
+      | some id => if m.contains id then m else m.insert id { item := n, up, upItems }
       | none => m
-    idsList m (subjectOf name attrs :: up) kids.toList
+    idsList m (subjectOf name attrs :: up) ((name, attrs) :: upItems) kids.toList
 
-public def idsList (m : Std.HashMap String Entry) (up : List Css.Subject) :
-    List Xml.Item → Std.HashMap String Entry
+public def idsList (m : Std.HashMap String Entry) (up : List Css.Subject)
+    (upItems : List (String × Array Xml.Attr)) : List Xml.Item → Std.HashMap String Entry
   | [] => m
-  | n :: rest => idsList (idsOne m up n) up rest
+  | n :: rest => idsList (idsOne m up upItems n) up upItems rest
 
 end
 
 /-- Every element of a tree with an id, with its ancestors. -/
-public def indexIds (t : Xml.Item) : Std.HashMap String Entry := idsOne {} [] t
+public def indexIds (t : Xml.Item) : Std.HashMap String Entry := idsOne {} [] [] t
 
 /-- Every `style` element's sheet, in document order, with what each said
 outside the subset. -/
@@ -1826,21 +1972,33 @@ public def usesList (acc : Array Nat) : List (Node Run) → Array Nat
 end
 
 /-- The symbols the requests painted, ordered so that each body uses only
-symbols before it (`Figure.wf`): repeatedly take every request whose uses
-are all placed. A request left over stands in a reference cycle; its uses
-are dropped and the cycle named. Returns the order, old index to new. -/
+symbols before it (`Figure.wf`): a request is placed once every request its
+body uses is (Kahn's order, each use counted once, so a chain of nested uses
+costs its length and no more). A request left over stands in a reference
+cycle; its uses are dropped and the cycle named. Returns the order, old
+index to new. -/
 public def orderRequests (bodies : Array (Array (Node Run))) : Array (Option Nat) × Bool := Id.run do
-  let deps := bodies.map fun b => usesList #[] b.toList
-  let mut placed : Array (Option Nat) := Array.replicate bodies.size none
+  let n := bodies.size
+  let deps := bodies.map fun b => (usesList #[] b.toList).filter (· < n)
+  -- How many uses of each body wait, and who waits on each body.
+  let mut waiting : Array Nat := deps.map (·.size)
+  let mut users : Array (Array Nat) := Array.replicate n #[]
+  for h : k in [0:deps.size] do
+    for j in deps[k] do
+      users := users.modify j (·.push k)
+  let mut ready : Array Nat := (Array.range n).filter fun k => waiting[k]?.getD 0 == 0
+  let mut placed : Array (Option Nat) := Array.replicate n none
   let mut next := 0
-  for _ in [0:bodies.size + 1] do
-    let mut progress := false
-    for k in [0:bodies.size] do
-      if (placed[k]?.join).isNone && ((deps[k]?.getD #[]).all fun j => (placed[j]?.join).isSome) then
-        placed := placed.set! k (some next)
-        next := next + 1
-        progress := true
-    if !progress then break
+  let mut head := 0
+  for _ in [0:n + 1] do
+    let some k := ready[head]? | break
+    head := head + 1
+    placed := placed.set! k (some next)
+    next := next + 1
+    for u in users[k]?.getD #[] do
+      let w := (waiting[u]?.getD 1) - 1
+      waiting := waiting.set! u w
+      if w == 0 then ready := ready.push u
   return (placed, placed.all Option.isSome)
 
 mutual
@@ -1892,15 +2050,25 @@ public def rootSize (attrs : Array Xml.Attr) (em : Rat) : Rat × Rat :=
   | some v, none, some _ => (h * v.w / v.h, h)
   | _, _, _ => (w, h)
 
+/-- Whether a title reads as words a person wrote to describe the figure:
+two words at least, no identifier's underscore, and not an exporter's own
+boilerplate — a tool's name, `Produced by …`, an artboard's name — which
+names no figure and must not silence the missing alternative. -/
+@[expose] public def describes (t : String) : Bool :=
+  let l := t.toLower
+  ((t.splitOn " ").filter (!·.isEmpty)).length ≥ 2 && !t.contains '_' &&
+    !(["produced by", "created with", "created by", "generated by", "made with", "gnuplot"].any
+      fun (p : String) => l.startsWith p)
+
 /-- The words a figure's title gives it: the root's first `title` child's
-text, trimmed. -/
+text, trimmed, where it describes the figure (`describes`). -/
 public def titleOf (t : Xml.Item) : Option String :=
   match t with
   | .elem _ _ _ kids =>
     kids.findSome? fun k => match k with
       | .elem ns "title" _ _ => if ns == svgNs then
           let s := normalizeSpace (k.textOne "")
-          if s.isEmpty then none else some s
+          if s.isEmpty || !describes s then none else some s
         else none
       | _ => none
   | .text _ => none
@@ -1921,14 +2089,14 @@ public structure Import where
 
 /-- The root viewport's size in pixels, its font size read through the
 cascade. -/
-@[expose] public def rootPx (rules : Array Css.Rule) (attrs : Array Xml.Attr) : Rat × Rat :=
+@[expose] public def rootPx (rules : Css.RuleIndex) (attrs : Array Xml.Attr) : Rat × Rat :=
   let (d, _) := declsOf rules (subjectOf "svg" attrs) [] attrs
   rootSize attrs (computeStyle d Style.initial { w := 300, h := 150 } attrs).style.fontSize
 
 /-- **The figure box an SVG tree reserves**: its root viewport, from the
 origin, in `Sp` (`rootSize`). -/
 @[expose] public def rootBox (t : Xml.Item) : Box :=
-  let px := rootPx (sheetsOf t).1 (rootParts t).1
+  let px := rootPx (Css.RuleIndex.ofRules (sheetsOf t).1) (rootParts t).1
   ((0, 0), (spOf px.1, spOf px.2))
 
 mutual
@@ -1986,7 +2154,8 @@ no symbol — what the drawing paints itself — and whether it was past. -/
 is the root viewport). -/
 public def importTree (t : Xml.Item) (lang : String := "en") (bud : Budget := Budget.standard) : Import :=
   let ids := indexIds t
-  let (rules, dropped) := sheetsOf t
+  let (sheet, dropped) := sheetsOf t
+  let rules := Css.RuleIndex.ofRules sheet
   let env : Env := { ids, rules, lang }
   let (attrs, rootKids) := rootParts t
   let rootSubject := subjectOf "svg" attrs
@@ -1998,8 +2167,8 @@ public def importTree (t : Xml.Item) (lang : String := "en") (bud : Budget := Bu
     | some v => { w := v.w, h := v.h }
     | none => { w, h }
   let r := computeStyle d Style.initial vp attrs
-  let st0 : St := { losses := #[], notes := #[], rasters := #[], requests := #[], nodes := 0
-                    animated := false, text := false }
+  let st0 : St := { losses := #[], notes := #[], rasters := #[], requests := #[], requestIds := {}
+                    nodes := 0, animated := false, text := false }
   let st0 := (dropped ++ problems).foldl (fun s p => s.lose (.property s!"style: {p}")) st0
   let st0 := r.losses.foldl St.lose st0
   let cx : Ctx := { up := [rootSubject], parent := r.style, vp }
@@ -2016,7 +2185,21 @@ public def importTree (t : Xml.Item) (lang : String := "en") (bud : Budget := Bu
       let (st', b) := if req.children then
           match e.item with
           | .elem _ name tattrs kids =>
-            walkList env bud { rcx with up := subjectOf name tattrs :: e.up } false (st, #[]) kids.toList
+            -- The symbol or viewport a use instantiates stands in the use's
+            -- shadow tree (SVG 2 §5.6.3): its own declarations stand over the
+            -- use's style, its children inherit them, and its opacity holds
+            -- them. `display` does not apply to a symbol (§5.5).
+            let subject := subjectOf name tattrs
+            let (d, problems) := declsOf env.rules subject e.up tattrs
+            let st := problems.foldl (fun s p => s.lose (.property s!"style: {p}")) st
+            let r := computeStyle d req.style req.vp tattrs
+            if name != "symbol" && !r.display then (st, #[]) else
+            let st := r.losses.foldl St.lose st
+            let st := if r.clipPath.isSome then st.lose (.property s!"clip-path on a {name} a use names")
+              else st
+            let (st, body) := walkList env bud { up := subject :: e.up, parent := r.style, vp := req.vp }
+              false (st, #[]) kids.toList
+            (st, wrap Affine.unit none r.opacity body)
           | .text _ => (st, #[])
         else walkOne env bud rcx (st, #[]) e.item
       st := st'

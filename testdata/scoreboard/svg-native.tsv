@@ -6,6 +6,7 @@ boundary.encodings	14
 boundary.malformed-refused	18
 boundary.refused	21
 feature.circle	2
+feature.clip-object-units	2
 feature.clip-path	2
 feature.css-important	2
 feature.css-sibling-combinator	1
@@ -20,12 +21,15 @@ feature.fill-stroke-opacity	2
 feature.filter	1
 feature.font-shorthand	2
 feature.gradient-href	2
+feature.gradient-stop-cascade	2
 feature.gradient-user-space	2
+feature.image-clip-object-units	2
 feature.inherit-current-color	2
 feature.line	2
 feature.linear-gradient	2
 feature.named-colors	2
 feature.nested-svg	2
+feature.nested-svg-transform	2
 feature.opacity	2
 feature.path-arc	2
 feature.path-compact-numbers	2
@@ -43,9 +47,11 @@ feature.rect-rounded	2
 feature.stroke-dash	2
 feature.stroke-style	2
 feature.switch	2
+feature.symbol-own-style	2
 feature.symbol-viewbox	2
 feature.text	2
 feature.text-anchor	2
+feature.text-line-feed	2
 feature.text-space	2
 feature.text-transform	2
 feature.text-weight-style	2

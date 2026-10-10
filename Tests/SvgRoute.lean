@@ -152,6 +152,19 @@ def svgRouteChecks (ref : IO.Ref (List String)) : IO Unit := do
   let failed ← Driver.svgFetch "b.svg" svgFilterFixture .first "en" (some (.always failing))
   check ref "figure route: a failed conversion ships the engine's drawing with the loss named"
     (failed.vector.isSome && subjects failed.diags == subjects degraded.diags)
+  -- The help follows why no converter drew the figure: a declared refusal
+  -- is the document's to lift, a missing converter one to install, and a
+  -- failed one says why in its own words.
+  let absent : Driver.Converter := fun _ _ => pure none
+  let missing ← Driver.svgFetch "b.svg" svgFilterFixture .first "en" (some absent)
+  check ref "figure route: a declared refusal's help says how to lift it, and not to install"
+    (!degraded.diags.isEmpty && degraded.diags.all fun d =>
+      d.help.any (hasStr · "convert = none") && !(d.help.any (hasStr · "install")))
+  check ref "figure route: a missing converter's help says to install it"
+    (subjects missing.diags == subjects degraded.diags &&
+      missing.diags.all fun d => d.code == "W0609" && d.help.any (hasStr · "install librsvg"))
+  check ref "figure route: a failed converter's own words say why"
+    (failed.diags.all fun d => hasStr d.message "an invented failure")
   -- A refusal never reaches the converter.
   calls.set #[]
   let refused ← Driver.svgFetch "c.svg" (svgDocument "<script>alert(1)</script>") .first "en" (some (.always fake))
@@ -223,6 +236,38 @@ def svgConverterProbeChecks (ref : IO.Ref (List String)) : IO Unit := do
   check ref "converter probe: lossy figures probe the host once" ((← probes.get) == 1)
   check ref "converter probe: a refusing document offers no converter"
     ((← Driver.svgConverterWith probe (fun _ _ => return pdfPlan) false).isNone && (← probes.get) == 1)
+
+/-- **A character no face covers is a figure loss** (W0609), never an
+error: the figure's route was taken before the faces settled, so the
+engine's drawing ships without it, named under the figure. The defect
+raised E0405, which failed a build whose host lacked a face for a figure's
+text. -/
+def svgGlyphGapChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit := do
+  let bytes := svgDocument "<text x=\"1\" y=\"10\" font-family=\"sans-serif\">Gap 漢</text>" 60 20
+  let doc := (elabStr "\\includegraphics[alt={An invented gap}]{gap.svg}").1
+  let req := (Ir.imageRequests doc)[0]!
+  let f ← Driver.svgFetch "gap.svg" bytes .first "en" none
+  let (store, _) := Image.fulfilRequests #[(req, .decoded "" f.res (some bytes) none (some bytes) none)]
+  let store := FigureStore.attach store #[some f.drawn]
+  let (_, notes) := Layout.shapeStoreNotesBy fonts store
+  let ds := notes.map (·.2)
+  check ref s!"SVG glyph gap: the uncovered character is one W0609 under the figure ({ds.map (·.code)})"
+    (ds.any fun d => d.code == "W0609" && d.subject == some "figure:svg:font:U+6F22")
+  check ref "SVG glyph gap: no error stops the build" (ds.all (·.severity != .error))
+
+/-- **A link a figure holds is named once** (N0027), whichever route draws
+the figure: the figure draws the link's content, exact, so no converter is
+asked for it, and the drawing carries no link. -/
+def svgLinkNoteChecks (ref : IO.Ref (List String)) : IO Unit := do
+  let bytes := svgDocument ("<rect id=\"x\" width=\"1\" height=\"1\"/>" ++
+    "<a href=\"#x\"><rect width=\"9\" height=\"9\" fill=\"red\"/></a>" ++
+    "<a href=\"#x\"><rect x=\"10\" width=\"9\" height=\"9\"/></a>")
+  let f ← Driver.svgFetch "figures/linked.svg" bytes .first "en" none
+  check ref "SVG link note: the figure draws its links' content natively"
+    (f.vector.any fun v => v.losses.isEmpty && v.marks.size == 3)
+  check ref s!"SVG link note: one N0027 names the links, under its subject ({f.diags.map (·.code)})"
+    (f.diags.map (·.code) == #["N0027"] &&
+      f.diags.all (·.subject == some "figure:svg:note:a link"))
 
 /-- `\figures{ convert = none }` is the converter's declared refusal: open
 by default, refused by the declaration, and nothing else accepted. -/

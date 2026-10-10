@@ -495,7 +495,9 @@ def svgFuzz : IO (Nat × Nat) := do
 quadratic in: a long path, a number of three hundred thousand digits in a
 path, a colour and an exponent, a fraction of as many zeros, a long
 transform list and point list, text and an attribute of references, many
-siblings, nesting to the depth budget, a long sheet. Each must reach its
+siblings, nesting to the depth budget, a long sheet, many attributes on
+one element, many distinct use targets, a long chain of nested uses, many
+shapes deep in groups, many rules over many shapes. Each must reach its
 verdict inside `budgetMs` of wall time — far above a linear reader's need
 even interpreted, far below a quadratic one's — and the whole set inside
 `totalMs`. -/
@@ -503,6 +505,8 @@ def svgLargeFuzz (budgetMs totalMs : Nat) : IO Nat := do
   let doc (w : Nat) (body : String) : ByteArray :=
     (s!"<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"{w}\" height=\"{w}\">" ++ body ++ "</svg>").toUTF8
   let digits (n : Nat) (c : Char) : String := String.ofList (List.replicate n c)
+  let lb := "{"
+  let rb := "}"
   let rep (n : Nat) (s : String) : String := String.join (List.replicate n s)
   let cases : List (String × ByteArray) := [
     ("a path of 20,000 segments", doc 100 s!"<path d=\"M0 0{rep 20000 "l1.5 -0.25"}\" stroke=\"red\"/>"),
@@ -517,7 +521,20 @@ def svgLargeFuzz (budgetMs totalMs : Nat) : IO Nat := do
     ("an attribute of 100,000 references", doc 100 s!"<rect width=\"9\" height=\"9\" aria-label=\"{rep 100000 "b&#65;"}\"/>"),
     ("20,000 sibling shapes", doc 100 (rep 20000 "<rect width=\"1\" height=\"1\"/>")),
     ("nesting to the depth budget", doc 100 (rep 250 "<g>" ++ "<rect width=\"1\" height=\"1\"/>" ++ rep 250 "</g>")),
-    ("a sheet of 10,000 rules", doc 100 (s!"<style>{rep 10000 ".k > rect { fill: red } "}</style>" ++ "<rect class=\"k\" width=\"1\" height=\"1\"/>"))]
+    ("a sheet of 10,000 rules", doc 100 (s!"<style>{rep 10000 ".k > rect { fill: red } "}</style>" ++ "<rect class=\"k\" width=\"1\" height=\"1\"/>")),
+    ("50,000 attributes on one element", doc 100 ("<rect width=\"1\" height=\"1\" " ++
+      String.join ((List.range 50000).map fun k => s!"data-a{k}=\"1\" ") ++ "/>")),
+    ("20,000 distinct use targets", doc 100 ("<defs>" ++
+      String.join ((List.range 20000).map fun k => s!"<rect id=\"r{k}\" width=\"1\" height=\"1\"/>") ++
+      "</defs>" ++ String.join ((List.range 20000).map fun k => s!"<use href=\"#r{k}\"/>"))),
+    ("a chain of 5,000 nested uses", doc 100 ("<defs>" ++
+      String.join ((List.range 5000).map fun k => s!"<g id=\"c{k}\"><use href=\"#c{k + 1}\"/></g>") ++
+      "<rect id=\"c5000\" width=\"1\" height=\"1\"/></defs><use href=\"#c0\"/>")),
+    ("20,000 shapes under groups 250 deep", doc 100 (rep 250 "<g>" ++
+      rep 20000 "<rect width=\"1\" height=\"1\"/>" ++ rep 250 "</g>")),
+    ("3,000 class rules over 20,000 shapes", doc 100 ("<style>" ++
+      String.join ((List.range 3000).map fun k => s!".c{k} {lb} fill: red {rb} ") ++ "</style>" ++
+      String.join ((List.range 20000).map fun k => s!"<rect class=\"c{k % 3000}\" width=\"1\" height=\"1\"/>")))]
   let t0 ← IO.monoMsNow
   let mut n := 0
   for (name, bytes) in cases do

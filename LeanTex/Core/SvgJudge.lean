@@ -347,6 +347,146 @@ public theorem closure_covers (bytes : ByteArray) (t : Xml.Item) (h : judge byte
     | error w => simp [hp] at this
     | ok _ => rfl
 
+/-! ## The census reads the whole tree -/
+
+/-- `e` is the tree `t` or an element below it: what the tree holds. -/
+public inductive Holds : Xml.Item → Xml.Item → Prop
+  | self (t : Xml.Item) : Holds t t
+  | kid {e k : Xml.Item} {ns name : String} {attrs : Array Xml.Attr} {kids : Array Xml.Item} :
+      k ∈ kids → Holds e k → Holds e (.elem ns name attrs kids)
+
+private theorem foldlPush (name : String) (l : List Xml.Attr) (acc : Array Site) :
+    l.foldl (fun a at_ => a.push (name, at_)) acc = acc ++ (l.map (name, ·)).toArray := by
+  induction l generalizing acc with
+  | nil => simp
+  | cons x xs ih => simp [List.foldl, ih]
+
+mutual
+private theorem sitesOne_acc (acc : Array Site) (n : Xml.Item) :
+    sitesOne acc n = acc ++ sitesOne #[] n := by
+  cases n with
+  | text _ => simp [sitesOne]
+  | elem ns name attrs kids =>
+    simp only [sitesOne]
+    rw [sitesList_acc _ kids.toList, sitesList_acc (Array.foldl _ #[] attrs) kids.toList,
+      ← Array.foldl_toList, ← Array.foldl_toList, foldlPush, foldlPush]
+    simp [Array.append_assoc]
+private theorem sitesList_acc (acc : Array Site) (l : List Xml.Item) :
+    sitesList acc l = acc ++ sitesList #[] l := by
+  match l with
+  | [] => simp [sitesList]
+  | n :: rest =>
+    simp only [sitesList]
+    rw [sitesList_acc _ rest, sitesList_acc (sitesOne #[] n) rest, sitesOne_acc acc n,
+      Array.append_assoc]
+end
+
+mutual
+private theorem elemsOne_acc (acc : Array (String × String)) (n : Xml.Item) :
+    elemsOne acc n = acc ++ elemsOne #[] n := by
+  cases n with
+  | text _ => simp [elemsOne]
+  | elem ns name attrs kids =>
+    simp only [elemsOne]
+    rw [elemsList_acc _ kids.toList, elemsList_acc (#[].push _) kids.toList]
+    simp
+private theorem elemsList_acc (acc : Array (String × String)) (l : List Xml.Item) :
+    elemsList acc l = acc ++ elemsList #[] l := by
+  match l with
+  | [] => simp [elemsList]
+  | n :: rest =>
+    simp only [elemsList]
+    rw [elemsList_acc _ rest, elemsList_acc (elemsOne #[] n) rest, elemsOne_acc acc n,
+      Array.append_assoc]
+end
+
+private theorem sitesList_mem (l : List Xml.Item) (k : Xml.Item) (hk : k ∈ l) (x : Site)
+    (hx : x ∈ sitesOne #[] k) : x ∈ sitesList #[] l := by
+  induction l with
+  | nil => cases hk
+  | cons n rest ih =>
+    simp only [sitesList]
+    rw [sitesList_acc]
+    rcases List.mem_cons.mp hk with rfl | hr
+    · exact Array.mem_append_left _ hx
+    · exact Array.mem_append_right _ (ih hr)
+
+private theorem elemsList_mem (l : List Xml.Item) (k : Xml.Item) (hk : k ∈ l)
+    (x : String × String) (hx : x ∈ elemsOne #[] k) : x ∈ elemsList #[] l := by
+  induction l with
+  | nil => cases hk
+  | cons n rest ih =>
+    simp only [elemsList]
+    rw [elemsList_acc]
+    rcases List.mem_cons.mp hk with rfl | hr
+    · exact Array.mem_append_left _ hx
+    · exact Array.mem_append_right _ (ih hr)
+
+/-- **The judge's attribute census holds every attribute of every element
+the tree holds** (`_covers`), with its element's local name. -/
+public theorem sites_covers {t e : Xml.Item} (h : Holds e t) :
+    ∀ {ns name : String} {attrs : Array Xml.Attr} {kids : Array Xml.Item},
+      e = .elem ns name attrs kids → ∀ a ∈ attrs, (name, a) ∈ sitesOne #[] t := by
+  induction h with
+  | self =>
+    intro ns name attrs kids he a ha
+    subst he
+    simp only [sitesOne]
+    rw [sitesList_acc, ← Array.foldl_toList, foldlPush]
+    exact Array.mem_append_left _ (by simp [ha])
+  | kid hk _ ih =>
+    intro ns name attrs kids he a ha
+    simp only [sitesOne]
+    rw [sitesList_acc]
+    exact Array.mem_append_right _ (sitesList_mem _ _ (Array.mem_toList_iff.mpr hk) _ (ih he a ha))
+
+/-- **The judge's element census holds every element the tree holds**
+(`_covers`): its local name, and a `style` element's text. -/
+public theorem elems_covers {t e : Xml.Item} (h : Holds e t) :
+    ∀ {ns name : String} {attrs : Array Xml.Attr} {kids : Array Xml.Item},
+      e = .elem ns name attrs kids →
+        (name, if name == "style" then e.textOne "" else "") ∈ elemsOne #[] t := by
+  induction h with
+  | self =>
+    intro ns name attrs kids he
+    subst he
+    simp only [elemsOne]
+    rw [elemsList_acc]
+    exact Array.mem_append_left _ (by simp)
+  | kid hk _ ih =>
+    intro ns name attrs kids he
+    simp only [elemsOne]
+    rw [elemsList_acc]
+    exact Array.mem_append_right _ (elemsList_mem _ _ (Array.mem_toList_iff.mpr hk) _ (ih he))
+
+/-- **No element or attribute of an admitted SVG escapes the judge**
+(`_covers`): every element the tree holds, wherever it stands, is no script
+and no foreign object, a `style` element's sheet passes the CSS reader, and
+every attribute it carries is no base or event handler, references a
+fragment or an image's `data:` raster, and a `style` attribute passes the
+CSS reader's refusals — `closure_covers`, carried from the judge's census
+to the tree itself, which the census reads whole (`sites_covers`,
+`elems_covers`). -/
+public theorem closure_holds (bytes : ByteArray) (t : Xml.Item) (h : judge bytes = .ok t)
+    (e : Xml.Item) (he : Holds e t) (ns name : String) (attrs : Array Xml.Attr)
+    (kids : Array Xml.Item) (hel : e = .elem ns name attrs kids) :
+    name ≠ "script" ∧ name ≠ "foreignObject" ∧
+      (name = "style" → (Css.parseSheet (e.textOne "")).toBool = true) ∧
+      ∀ a ∈ attrs, a.name ≠ "base" ∧ a.name.startsWith "on" = false ∧
+        ((a.name = "href" ∨ a.name = "src") → refOk name a.value = true) ∧
+        (a.name = "style" → ∀ why, Css.parseDecls a.value ≠ .error (.refused why)) := by
+  obtain ⟨_, hel1, hat, href, _, hsty, hsheet⟩ := closure_covers bytes t h
+  have hm := elems_covers he hel
+  obtain ⟨hs, hf⟩ := hel1 _ hm
+  refine ⟨hs, hf, ?_, ?_⟩
+  · intro hn
+    have := hsheet _ hm (by simpa using hn)
+    simpa [hn] using this
+  · intro a ha
+    have hsite := sites_covers he hel a ha
+    obtain ⟨hb, ho⟩ := hat _ hsite
+    exact ⟨hb, ho, href _ hsite, hsty _ hsite⟩
+
 /-- The words a refusal is reported in: the boundary's own, the construct
 named. -/
 public def Refused.message : Refused → String

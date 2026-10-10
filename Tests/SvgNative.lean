@@ -345,8 +345,8 @@ each admitted source's drawing sets its text as spelled, and each refused
 one is refused with what refused it named — a narrowed one with the advice
 to save it as UTF-8. The tables the decoders read hold their contract. -/
 def svgEncodingChecks (ref : IO.Ref (List String)) : IO Unit := do
-  check ref s!"WHATWG tables hold their contract: {WhatwgEncoding.dataFaults.toList.take 3}"
-    WhatwgEncoding.dataFaults.isEmpty
+  check ref s!"WHATWG tables hold their contract: {(WhatwgEncoding.dataFaults ()).toList.take 3}"
+    (WhatwgEncoding.dataFaults ()).isEmpty
   check ref "WHATWG labels: a label is trimmed and folded before it is looked up"
     (WhatwgEncoding.lookup "  Latin1\t" == some "windows-1252" &&
       WhatwgEncoding.lookup "SHIFT_JIS" == some "Shift_JIS" && WhatwgEncoding.lookup "latin-9" == none)
@@ -454,6 +454,227 @@ def svgReadbackChecks (ref : IO.Ref (List String)) : IO Unit := do
       (i.fig.marks.all fun m => marksAgree m m && !marksAgree m (moved m))
   | _ => check ref "SVG readback: the probe imports" false
 
+/-- A paint's solid colour as its channels, for the assertions below. -/
+def solidRgb (p : Paint) : Option (Nat × Nat × Nat) :=
+  match p with
+  | .solid c => some (c.r.toNat, c.g.toNat, c.b.toNat)
+  | .gradient _ => none
+
+/-- The paint marks of an import whose fill and stroke are the named
+colours (`none` for an absent paint). -/
+def paintsWith (ms : Array Mark) (fill stroke : Option (Nat × Nat × Nat)) : Nat :=
+  (ms.filter fun m => match m with
+    | .paint _ _ f s _ _ =>
+      (f.bind (solidRgb ·.paint)) == fill && (s.bind (solidRgb ·.paint)) == stroke
+    | _ => false).size
+
+/-- **A use's instantiated element carries its own declarations** (SVG 2
+§5.6.3): the symbol or nested svg a use names stands in the use's shadow
+tree, so its presentation attributes, its class rules and its `color` stand
+over the use's style and reach its children. A symbol sprite in the common
+icon form — `fill="none" stroke="currentColor"` on the symbol — strokes in
+each use's colour. The defect walked the children under the use's style and
+skipped the symbol's: the squares filled black, unstroked. -/
+def svgShadowStyleChecks (ref : IO.Ref (List String)) : IO Unit := do
+  let red := some (255, 0, 0)
+  let blue := some (0, 0, 255)
+  let green := some (0, 128, 0)
+  let (ms, ls) := svgMarks ("<defs><symbol id=\"s\" viewBox=\"0 0 10 10\" fill=\"red\" stroke=\"blue\" \
+    stroke-width=\"1\"><rect x=\"1\" y=\"1\" width=\"8\" height=\"8\"/></symbol></defs>\
+    <use href=\"#s\" x=\"10\" y=\"10\" width=\"80\" height=\"80\"/>\
+    <use href=\"#s\" x=\"110\" y=\"10\" width=\"80\" height=\"80\" fill=\"green\"/>") 200 100
+  check ref s!"SVG shadow style: a symbol's presentation attributes paint both uses ({repr ls})"
+    (ls.isEmpty && paintsWith ms red blue == 2 && ms.size == 2)
+  let (ms, ls) := svgMarks ("<style>.warn { fill: orange } .dim { opacity: 0.3 }</style>\
+    <defs><symbol id=\"s\" class=\"warn\" viewBox=\"0 0 10 10\"><circle cx=\"5\" cy=\"5\" r=\"4\"/></symbol>\
+    <g id=\"gg\" class=\"dim\"><rect width=\"40\" height=\"40\" fill=\"purple\"/></g></defs>\
+    <use href=\"#s\" x=\"10\" y=\"10\" width=\"80\" height=\"80\"/><use href=\"#gg\" x=\"120\" y=\"30\"/>") 200 100
+  check ref s!"SVG shadow style: a symbol's class rule paints its child ({repr ls})"
+    (ls.isEmpty && paintsWith ms (some (255, 165, 0)) none == 1 &&
+      ms.any fun m => match m with
+        | .paint _ _ (some f) _ _ alphas => solidRgb f.paint == some (128, 0, 128) &&
+            alphas.map (·.val) == #[300]
+        | _ => false)
+  let (ms, ls) := svgMarks ("<defs><symbol id=\"i\" viewBox=\"0 0 10 10\" color=\"green\">\
+    <rect width=\"10\" height=\"10\" fill=\"currentColor\"/></symbol></defs>\
+    <use href=\"#i\" x=\"10\" y=\"10\" width=\"80\" height=\"80\"/>\
+    <use href=\"#i\" x=\"110\" y=\"10\" width=\"80\" height=\"80\" color=\"blue\"/>") 200 100
+  check ref s!"SVG shadow style: a symbol's own colour answers currentColor in both uses ({repr ls})"
+    (ls.isEmpty && paintsWith ms green none == 2)
+  let (ms, ls) := svgMarks ("<defs><symbol id=\"check\" viewBox=\"0 0 24 24\" fill=\"none\" \
+    stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\">\
+    <polyline points=\"20 6 9 17 4 12\"/></symbol></defs>\
+    <use href=\"#check\" width=\"12\" height=\"12\" color=\"green\"/>\
+    <use href=\"#check\" x=\"12\" width=\"12\" height=\"12\" color=\"crimson\"/>") 24 12
+  check ref s!"SVG shadow style: a currentColor sprite strokes in each use's colour ({repr ls})"
+    (ls.isEmpty && paintsWith ms none green == 1 && paintsWith ms none (some (220, 20, 60)) == 1 &&
+      ms.all fun m => match m with
+        | .paint _ _ none (some s) _ _ => s.cap == .round && s.join == .round
+        | _ => false)
+
+/-- A mark's geometry box in the figure's frame, and its first clip's. -/
+def markAndClipBoxes (m : Mark) : Option (Box × Box) :=
+  match m with
+  | .paint ctm g _ _ clips _ =>
+    match g.hull, clips[0]? with
+    | some b, some (cm, c) => c.geom.hull.map fun cb => (Box.image ctm b, Box.image cm cb)
+    | _, _ => none
+  | .raster ctm _ clips _ =>
+    match clips[0]? with
+    | some (cm, c) => c.geom.hull.map fun cb => (Box.image ctm ((0, 0), (65536, 65536)), Box.image cm cb)
+    | none => none
+  | .shading _ _ _ => none
+
+/-- **A clip in object units reads the clipped element's own box**
+(CSS Masking 1 §6.1): a use's content, an image's viewport, a shape's
+geometry; where no box is known before shaping — text — the clip is a named
+loss and the text is still drawn. The defect asked the box of a use, an
+image and text and, given none, drew nothing and named nothing. -/
+def svgObjectClipChecks (ref : IO.Ref (List String)) : IO Unit := do
+  let half := "<clipPath id=\"half\" clipPathUnits=\"objectBoundingBox\"><rect width=\"0.5\" height=\"1\"/></clipPath>"
+  let near (a b : Int) : Bool := (a - b).natAbs ≤ 2
+  let (ms, ls) := svgMarks (s!"<defs>{half}<rect id=\"r\" width=\"80\" height=\"80\" fill=\"navy\"/></defs>" ++
+    "<use href=\"#r\" x=\"10\" y=\"10\" clip-path=\"url(#half)\"/>" ++
+    "<g clip-path=\"url(#half)\"><rect x=\"110\" y=\"10\" width=\"80\" height=\"80\" fill=\"darkred\"/></g>") 200 100
+  let halves (rgb : Nat × Nat × Nat) : Bool := ms.any fun m => match m with
+    | .paint _ _ (some f) _ _ _ =>
+      solidRgb f.paint == some rgb && (markAndClipBoxes m).any fun (b, c) =>
+        near c.1.1 b.1.1 && near c.1.2 b.1.2 && near c.2.2 b.2.2 &&
+          near (2 * (c.2.1 - c.1.1)) (b.2.1 - b.1.1)
+    | _ => false
+  check ref s!"SVG object clip: a use is clipped to the left half of its content ({repr ls})"
+    (ls.isEmpty && halves (0, 0, 128))
+  check ref "SVG object clip: a group is clipped to the left half of its children" (halves (139, 0, 0))
+  let png := HtmlResource.base64 tinyPng
+  let (ms, ls) := svgMarks (s!"<defs>{half}</defs><image href=\"data:image/png;base64,{png}\" " ++
+    "x=\"10\" y=\"10\" width=\"40\" height=\"40\" clip-path=\"url(#half)\"/>") 100 100
+  check ref s!"SVG object clip: an image is clipped to the left half of its viewport ({repr ls})"
+    (ls.isEmpty && ms.any fun m => match m with
+      | .raster .. => (markAndClipBoxes m).any fun (b, c) =>
+          near c.1.1 b.1.1 && near (2 * (c.2.1 - c.1.1)) (b.2.1 - b.1.1)
+      | _ => false)
+  match Svg.importBytes (svgDocument ("<defs><clipPath id=\"c\" clipPathUnits=\"objectBoundingBox\">" ++
+      "<circle cx=\"0.5\" cy=\"0.5\" r=\"0.5\"/></clipPath></defs>" ++
+      "<text x=\"10\" y=\"50\" font-size=\"30\" clip-path=\"url(#c)\">Clipped</text>") 200 100) with
+  | .lossy i =>
+    check ref s!"SVG object clip: text clipped in object units is a named loss, its words still drawn ({repr i.fig.losses})"
+      (i.fig.losses.contains (.value "clip-path in object units on text") && i.text &&
+        i.fig.labels.any fun (_, r) => hasStr r.text "Clipped")
+  | _ => check ref "SVG object clip: text clipped in object units is a named loss" false
+
+/-- **A CSS string ends at its line** (CSS Syntax 3 §4.3.5): a newline in
+a string is a bad string, and what follows it is read as CSS, so the judge
+reads it too. XML admits no form feed, so a line feed and a carriage return
+are the line ends an SVG can hold. A declaration hidden behind a string a line end cut once
+passed the judge and reached every real CSS reader, a network reference
+among them. -/
+def cssLineEndChecks (ref : IO.Ref (List String)) : IO Unit := do
+  let hidden := "fill:url(http://example.invalid/p.svg#g) green"
+  for (name, body) in [
+      ("a style attribute", s!"<rect width=\"9\" height=\"9\" style='font-family:\"x&#10;;{hidden};y:\"'/>"),
+      ("a style attribute ended by a carriage return",
+        s!"<rect width=\"9\" height=\"9\" style='font-family:\"x&#13;;{hidden};y:\"'/>"),
+      ("a style sheet ended by a carriage return reference",
+        s!"<style>rect {lb} font-family: \"x&#13;; {hidden}; y: \" {rb}</style><rect width=\"9\" height=\"9\"/>"),
+      ("a style sheet", s!"<style>rect {lb} font-family: \"x\n; {hidden}; y: \" {rb}</style><rect width=\"9\" height=\"9\"/>")] do
+    check ref s!"CSS line end: {name} cannot hide a reference behind a broken string"
+      (svgBoundaryError (svgJudged (svgDocument body)))
+  check ref "CSS line end: a sheet's own line ends still read"
+    (svgJudged (svgDocument "<style>rect {\n  fill: red;\n}\n</style><rect width=\"9\" height=\"9\"/>")).toBool
+  check ref "CSS line end: a brace inside a string is the string's"
+    (match Css.parseSheet "rect { font-family: \"a}b\"; fill: red }" with
+     | .ok (rules, dropped) => dropped.isEmpty && rules.size == 1 &&
+        (rules[0]?.map (·.decls.size)) == some 2
+     | .error _ => false)
+  check ref "CSS line end: a declaration holding a broken string is not read"
+    (match Css.parseDecls "font-family: \"x\n; fill: red" with
+     | .error (.unsupported _) => true
+     | _ => false)
+where
+  lb : String := "{"
+  rb : String := "}"
+
+/-- **A gradient stop takes its own place in the cascade**: a rule whose
+selector climbs through the gradient element reaches its stops, and a
+stop's `currentColor` is its own `color`, inherited down the gradient's
+ancestors, never the referencing shape's. The defect matched stops against
+no ancestors, and read the shape's colour. -/
+def svgStopStyleChecks (ref : IO.Ref (List String)) : IO Unit := do
+  let stops (ms : Array Mark) : Array (Nat × Nat × Nat) :=
+    ms.foldl (fun acc m => match m with
+      | .paint _ _ (some f) _ _ _ => match f.paint with
+        | .gradient (.linear _ _ ss _) => acc ++ ss.map fun s => (s.color.r.toNat, s.color.g.toNat, s.color.b.toNat)
+        | _ => acc
+      | _ => acc) #[]
+  let (ms, ls) := svgMarks ("<style>#g stop { stop-color: green } #g stop.end { stop-color: yellow }</style>\
+    <defs><linearGradient id=\"g\"><stop offset=\"0\"/><stop class=\"end\" offset=\"1\"/></linearGradient></defs>\
+    <rect width=\"20\" height=\"10\" fill=\"url(#g)\"/>")
+  check ref s!"SVG stop style: a rule through the gradient styles its stops ({repr ls})"
+    (ls.isEmpty && stops ms == #[(0, 128, 0), (255, 255, 0)])
+  let (ms, ls) := svgMarks ("<defs color=\"blue\"><linearGradient id=\"g\">\
+    <stop offset=\"0\" stop-color=\"currentColor\"/><stop offset=\"1\" stop-color=\"red\"/>\
+    </linearGradient></defs><rect width=\"20\" height=\"10\" color=\"lime\" fill=\"url(#g)\"/>")
+  check ref s!"SVG stop style: a stop's currentColor is its own inherited colour ({repr ls})"
+    (ls.isEmpty && stops ms == #[(0, 0, 255), (255, 0, 0)])
+
+/-- **What the importer does not draw is a named loss, never a silent
+one**: text in a script set right to left or joined by contextual shaping,
+which figure text sets character by character left to right; a CSS
+property a browser applies to text or the root's box from CSS alone, at a
+value that changes something; and a nested viewport's own transform, which
+the drawing carries. The defects drew Hebrew reversed and Arabic unjoined
+as exact figures, and dropped `text-transform`, a root background and a
+nested transform with nothing named. -/
+def svgUndrawnNamedChecks (ref : IO.Ref (List String)) : IO Unit := do
+  for (name, word) in [("Hebrew", "שלום"), ("Arabic", "سلام"), ("Devanagari", "नमस्ते")] do
+    let (_, ls) := svgMarks s!"<text x=\"1\" y=\"10\">{word}</text>" 60 20
+    check ref s!"SVG undrawn: {name} text is the shaping loss ({repr ls})" (ls.contains Svg.shapingLoss)
+  let (_, ls) := svgMarks "<text x=\"1\" y=\"10\">Latin ✓ ÅÉ</text>" 60 20
+  check ref s!"SVG undrawn: Latin text with symbols needs no shaping ({repr ls})" ls.isEmpty
+  for (prop, value, initial) in [("text-transform", "uppercase", "none"),
+      ("font-variant-caps", "small-caps", "normal"), ("text-decoration-line", "underline", "none")] do
+    let (_, ls) := svgMarks s!"<text x=\"1\" y=\"10\" style=\"{prop}: {value}\">Word</text>" 60 20
+    check ref s!"SVG undrawn: {prop} from CSS is a loss ({repr ls})" (ls.contains (.property prop))
+    let (_, ls) := svgMarks s!"<text x=\"1\" y=\"10\" style=\"{prop}: {initial}\">Word</text>" 60 20
+    check ref s!"SVG undrawn: {prop} at its initial value changes nothing ({repr ls})"
+      (!ls.contains (.property prop))
+  let rootBg := Svg.importBytes ("<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"20\" " ++
+    "height=\"20\" style=\"background-color: navy\"><rect width=\"5\" height=\"5\"/></svg>").toUTF8
+  check ref "SVG undrawn: a root background is a loss"
+    (match rootBg with
+      | .lossy i => i.fig.losses.contains (.property "background-color")
+      | _ => false)
+  let px (n : Int) : Int := n * Svg.pxSp
+  let (ms, ls) := svgMarks ("<svg x=\"0\" y=\"0\" width=\"10\" height=\"10\" transform=\"translate(5 0)\">" ++
+    "<rect width=\"4\" height=\"4\"/></svg>")
+  check ref s!"SVG undrawn: a nested viewport's transform moves its content ({repr ls})"
+    (ls.isEmpty && ms.any fun m => match markAndClipBoxes m with
+      | some (b, _) => b.1.1 == px 5
+      | none => false)
+
+/-- **A line feed in figure text is a space**, as CSS Text sets white space
+under `white-space: normal` and every browser draws it; SVG 1.1 dropped
+it, joining the words on either side. -/
+def svgTextSpaceChecks (ref : IO.Ref (List String)) : IO Unit := do
+  match Svg.importBytes (svgDocument "<text x=\"1\" y=\"10\">Hello\n  world</text>" 80 20) with
+  | .exact i =>
+    check ref s!"SVG text space: a line feed between words is one space ({i.fig.labels.map (·.2.text)})"
+      (i.fig.labels.map (·.2.text) == #["Hello world"])
+  | _ => check ref "SVG text space: the text imports exact" false
+
+/-- **An exporter's boilerplate title names no figure**: a tool's name, an
+artboard identifier or a one-word label is no description, so the figure's
+missing alternative is still named (N0376); words a person wrote are its
+alternative. -/
+def svgTitleWordsChecks (ref : IO.Ref (List String)) : IO Unit := do
+  for (title, names) in [("Gnuplot", false), ("Produced by GNUPLOT 5.4 patchlevel 2", false),
+      ("artboard_one_final", false), ("Chart", false), ("Monthly rainfall at three invented sites", true)] do
+    let t := match Svg.judge (svgDocument s!"<title>{title}</title><rect width=\"5\" height=\"5\"/>") with
+      | .ok t => Svg.titleOf t
+      | .error _ => none
+    check ref s!"SVG title words: '{title}' {if names then "names" else "names no"} figure"
+      (t.isSome == names)
+
 def svgNativeChecks (ref : IO.Ref (List String)) : IO Unit := do
   svgNativeBoundaryChecks ref
   xmlRoundTripChecks ref
@@ -466,5 +687,12 @@ def svgNativeChecks (ref : IO.Ref (List String)) : IO Unit := do
   pathDataBudgetChecks ref
   svgEncodingChecks ref
   svgReadbackChecks ref
+  svgShadowStyleChecks ref
+  svgObjectClipChecks ref
+  cssLineEndChecks ref
+  svgStopStyleChecks ref
+  svgUndrawnNamedChecks ref
+  svgTextSpaceChecks ref
+  svgTitleWordsChecks ref
 
 end Tests

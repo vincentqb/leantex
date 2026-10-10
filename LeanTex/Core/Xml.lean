@@ -1,6 +1,7 @@
 module
 
 import LeanTex.Core.WhatwgEncoding
+import Std.Data.HashSet
 
 /-!
 # XML, read and written
@@ -331,6 +332,9 @@ public def readStartTag (bud : Budget) (b : ByteArray) (i : Nat) :
     Except Refusal (String × Array (String × String) × Bool × Nat) := do
   let (name, j0) ← readName bud b (i + 1)
   let mut attrs : Array (String × String) := #[]
+  -- The names already read, so a tag of many attributes is read in time
+  -- linear in them.
+  let mut seen : Std.HashSet String := {}
   let mut j := j0
   for _ in [0:b.size + 1] do
     let k := skipSpace b j
@@ -344,7 +348,8 @@ public def readStartTag (bud : Budget) (b : ByteArray) (i : Nat) :
     let k2 := skipSpace b k1
     if at? b k2 != 61 then throw (.syntax k2 "an attribute without '='")
     let (v, k3) ← readValue bud b (skipSpace b (k2 + 1))
-    if attrs.any (·.1 == an) then throw (.syntax k s!"the attribute '{an}' is named twice")
+    if seen.contains an then throw (.syntax k s!"the attribute '{an}' is named twice")
+    seen := seen.insert an
     attrs := attrs.push (an, v)
     j := k3
   throw (.syntax i "an unterminated tag")
@@ -683,6 +688,7 @@ public def resolveOne (scope : Array (String × String)) : Node → Except Strin
         | some u => pure u
         | none => throw s!"the prefix '{p}' of '{name}' is not declared"
     let mut out : Array Attr := #[]
+    let mut seen : Std.HashSet (String × String) := {}
     for (k, v) in attrs do
       if k == "xmlns" || k.startsWith "xmlns:" then continue
       let some (ap, al) := splitName k | throw s!"'{k}' is no qualified name"
@@ -692,8 +698,9 @@ public def resolveOne (scope : Array (String × String)) : Node → Except Strin
           match lookup scope ap with
           | some u => pure u
           | none => throw s!"the prefix '{ap}' of '{k}' is not declared"
-      if out.any (fun a => a.ns == ans && a.name == al) then
+      if seen.contains (ans, al) then
         throw s!"the attribute '{k}' is named twice in its namespace"
+      seen := seen.insert (ans, al)
       out := out.push { ns := ans, name := al, value := v }
     let kids ← resolveList scope #[] kids.toList
     return .elem ns l out kids

@@ -370,11 +370,14 @@ private theorem texts_shapeFrom (fs : FontSet) (shapes : Array (Option (Run × R
       runsList_acc (runsOne #[] n) rest, Array.map_append]
 end
 
-/-- **Shaping sets every word a figure's runs carry, in order** (`_text`):
-the texts of the shaped figure's runs — its nodes', and each symbol body's —
-are its runs' texts, one for one. Shaping chooses glyphs and places them;
-it adds no word and drops none (the census both backends' text reads: the
-PDF's `TJ`, the page's `<text>`). -/
+/-- **Shaping keeps every word a figure's runs carry, in order** (`_text`):
+the texts the shaped figure's runs carry — its nodes', and each symbol
+body's — are its runs' texts, one for one; shaping adds no run and drops
+none. It is a statement about the words a shaped run says, not about the
+glyphs that set them: which characters a face draws is shaping's choice,
+and a character no face covers is named (`ShapeNotes.missing`, W0609)
+rather than set — that the glyphs spell the text less those is pending
+work, held meanwhile by the artifact tier's reading of every corpus form. -/
 public theorem shapeFigure_text (fs : FontSet) (fig : Figure Run) :
     shapedTextsList #[] (shapeFigure fs fig).1.nodes.toList = (runsList #[] fig.nodes.toList).map (·.text) ∧
     (shapeFigure fs fig).1.symbols.map (fun b => shapedTextsList #[] b.toList) =
@@ -410,9 +413,10 @@ private def hex4 (n : Nat) : String :=
 
 /-- Every store entry's figure shaped, with what the shaping reports, one
 diagnostic per family the document's roles do not answer (N0026), per
-substitution (W0009) and per scalar no face covers (E0405), each with the
-figure as its subject's anchor and beside the source the document names
-the figure by — where its span is found. -/
+substitution (W0009) and per scalar no face covers — a figure loss
+(W0609), the engine's drawing shipping without it — each with the figure as
+its subject's anchor and beside the source the document names the figure
+by — where its span is found. -/
 public def shapeStoreNotesBy (fs : FontSet) (imgs : Image.Store) :
     Array (Option (Figure Shaped)) × Array (String × Diag) :=
   imgs.entries.foldl (fun (out, diags) en =>
@@ -427,11 +431,7 @@ public def shapeStoreNotesBy (fs : FontSet) (imgs : Image.Store) :
           (output := FigureLoss.shipsIn en.moving)
           (recovery := some (.replacedBy s!"a glyph from '{(fs.get fb).family}'"))
           (subject := some s!"svg:glyph:{src}:{hex4 c.toNat}")
-      let missing := notes.missing.map fun c =>
-        Diag.of .E0405 s!"no face of the document has a glyph for U+{hex4 c.toNat}"
-          (output := FigureLoss.shipsIn en.moving) (recovery := some .skipped)
-          (help := "declare a face that covers it in \\fonts, or accept the loss with \\allow{E0405}")
-          (subject := some s!"svg:glyph:{src}:{hex4 c.toNat}")
+      let missing := notes.missing.map fun c => FigureLoss.svgGlyphDiag en.moving src (hex4 c.toNat)
       (out.push (some sh), diags ++ (fams ++ substs ++ missing).map (en.src, ·))
     | none => (out.push none, diags)) (#[], #[])
 
