@@ -61,9 +61,9 @@ file's name and nothing else: an include standing as a whole block sequence
 — a document body, a frame's content — with only blank source around the
 call elaborates as the file alone does (`Elab.elabBlocks_input_exact`, and
 at a frame's content by a lemma private to `InputContract`; for a markdown
-file with any content, `Elab.markdownInput_blocks_exact`). Beside other
-content the included blocks are the same and the inner frame-source offsets
-shift, which no statement here claims. Filename normalization
+file whose desugaring is not empty, `Elab.markdownInput_blocks_exact`).
+Beside other content the included blocks are the same and the inner
+frame-source offsets shift, which no statement here claims. Filename normalization
 precedes the surface's extension policy: LaTeX's file-name sanitizer removes
 paired quotes and trims both ends when the name contains a dot, only the
 start otherwise (expl3-code.tex; quotedInputFilenameChecks). -/

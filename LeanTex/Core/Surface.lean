@@ -29,8 +29,8 @@ included file's diagnostics name the file and line that hold the construct.
 The wrapper means nothing but the file's name: an include standing as its
 block sequence, with only blank source around the call, elaborates exactly
 as the file alone does (`Elab.elabBlocks_input_exact`), and a markdown file
-meets that statement's hypotheses by construction once it has content
-(`Elab.markdownInput_blocks_exact`). The same holds at any block
+meets that statement's hypotheses by construction once its desugaring is not
+empty (`Elab.markdownInput_blocks_exact`). The same holds at any block
 accumulator the elaborator opens, a frame's content among them, by a lemma
 private to `InputContract` because the accumulator it speaks of is private
 to the elaborator. -/

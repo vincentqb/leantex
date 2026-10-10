@@ -249,8 +249,8 @@ same accumulator — the included blocks are the same, but the inner
 frame-source offsets shift by the blocks before the include, by design, and
 the marking reads the paragraph the include opens in; that form is a stretch
 lemma, not a claim made here. Markdown meets the hypotheses by construction
-(`markdownInput_blocks_exact`): a nonempty file's desugaring is block-shaped
-and lowers into a vocabulary that holds no length-restore marker. -/
+(`markdownInput_blocks_exact`): a nonempty desugaring is block-shaped and
+lowers into a vocabulary that holds no length-restore marker. -/
 
 open Parse Ir
 
