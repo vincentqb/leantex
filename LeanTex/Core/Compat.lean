@@ -12600,7 +12600,7 @@ private def siCtrl (loc : Locale) (n : String) (pos : Pos) (raws : Array Raw)
     s!"'\\{n}' spells its text natively: locale digits and unit symbols (siunitx)" pos
   let (opt, j) := takeOpt raws start
   if opt.isSome then
-    say .W0110 s!"'\\{n}' options are not honoured; ignored" pos
+    sayOnce ("siopt:" ++ n) .W0110 s!"'\\{n}' options are not honoured; ignored" pos
   let word (s : String) : Raw := .word s pos
   match n with
   | "num" =>

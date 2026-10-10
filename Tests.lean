@@ -137,6 +137,7 @@ import Tests.PdfBounds
 import Tests.PdfFontsProof
 import Tests.RasterPages
 import Tests.Diag
+import Tests.DiagFold
 import Tests.DiagnosticFormat
 import Tests.DiagnosticTrigger
 import Tests.DiagnosticImageOrigins
@@ -864,6 +865,8 @@ def main (args : List String) : IO UInt32 := do
   pendingChecks ref
   salvageChecks ref
   diagSiteCountChecks ref
+  Tests.DiagFold.foldChecks ref
+  Tests.DiagFold.subjectDoorChecks ref
   elabWarningContractChecks ref
   elabTitleBoundaryChecks ref
   frontendTitleContextChecks ref
