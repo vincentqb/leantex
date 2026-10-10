@@ -31,7 +31,7 @@ node count, a name's and a text's length. Exceeding one is a refusal that
 names the budget, never a crash and never a truncation, and an accepted
 document lies within them (`XmlContract`'s `parseWith_between`): no element
 deeper than the depth budget, no more elements and runs of text than the
-node budget.
+node budget, no text longer than the text budget however it is spelled.
 -/
 
 namespace LeanTex.Core.Xml
@@ -474,8 +474,9 @@ the root, the reader at `p`. -/
         if f.name != name then .error (.syntax s.pos s!"the end tag '{name}' closes '{f.name}'")
         else .ok (s.closeAt f (k + 1))
 
-/-- A `<!` construct at `s.pos`: a comment, a CDATA section — one more
-node — or a document type declaration. -/
+/-- A `<!` construct at `s.pos`: a comment, a CDATA section — within the
+text budget as literal text is, one more node — or a document type
+declaration. -/
 @[expose] public def markup (bud : Budget) (b : ByteArray) (s : State) : Except Refusal State :=
   let i := s.pos
   if bytesAt b i "<!--" then (skipComment b i).map s.at
@@ -483,7 +484,11 @@ node — or a document type declaration. -/
     if s.stack.isEmpty then .error (.syntax i "a CDATA section outside the root element")
     else match find b (i + 9) "]]>" with
       | none => .error (.syntax i "an unterminated CDATA section")
-      | some j => ((s.chars (normalizeEol (b.extract (i + 9) j))).tick bud).map (·.at (j + 3))
+      | some j =>
+        let t := normalizeEol (b.extract (i + 9) j)
+        if (s.stack.back?.map (·.text.utf8ByteSize + t.utf8ByteSize)).getD 0 > bud.text then
+          .error (.budget "text length")
+        else ((s.chars t).tick bud).map (·.at (j + 3))
   else if bytesAt b i "<!DOCTYPE" then
     if !s.stack.isEmpty || s.root.isSome || s.doctype then
       .error (.syntax i "a document type declaration out of place")
@@ -504,12 +509,16 @@ budget — empty, given to its parent or made the root, or opened. -/
         else if empty then .ok ((s'.give (.elem name attrs #[])).at j)
         else .ok (s'.openAt { name, attrs, kids := #[], text := "" } j)
 
-/-- A reference at `s.pos` (on `&`): its character, one more node. -/
+/-- A reference at `s.pos` (on `&`): its character, within the text budget
+as literal text is, one more node. -/
 @[expose] public def reference (bud : Budget) (b : ByteArray) (s : State) : Except Refusal State :=
   if s.stack.isEmpty then .error (.syntax s.pos "a reference outside the root element")
   else match readReference b s.pos with
     | .error e => .error e
-    | .ok (ch, j) => ((s.chars (String.singleton ch)).tick bud).map (·.at j)
+    | .ok (ch, j) =>
+      if (s.stack.back?.map (·.text.utf8ByteSize + ch.utf8Size)).getD 0 > bud.text then
+        .error (.budget "text length")
+      else ((s.chars (String.singleton ch)).tick bud).map (·.at j)
 
 /-- Character data at `s.pos`: inside the root, one more node; outside
 it, white space alone. -/

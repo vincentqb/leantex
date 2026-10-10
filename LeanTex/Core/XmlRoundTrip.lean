@@ -1111,18 +1111,21 @@ private theorem step_end (R : List Char) (hl : Ascii R) (bud : Budget) (s : Stat
     bne_self_eq_false]
 
 /-- **A reference is one step**: its character appended to the open
-element's text, one more node counted. -/
+element's text, within the text budget, one more node counted. -/
 private theorem step_ref (R : List Char) (hl : Ascii R) (bud : Budget) (s : State) (c : Char)
     (rest : List Char) (hR : R.drop s.pos = refL c ++ rest) (hc : xmlChar c.toNat = true)
-    (hopen : s.stack.isEmpty = false) (hnodes : s.nodes + 1 ≤ bud.nodes) :
+    (hopen : s.stack.isEmpty = false) (f : Frame) (hf : s.stack.back? = some f)
+    (htext : f.text.utf8ByteSize + c.utf8Size ≤ bud.text) (hnodes : s.nodes + 1 ≤ bud.nodes) :
     step bud (bytesOf R) s = .ok ((bump (s.chars (String.singleton c)) 1).at (s.pos + (refL c).length)) := by
   have h38 : at? (bytesOf R) s.pos = 38 := by
     rw [at?_of_drop R hl s.pos '&' _ (by rw [hR]; rfl)]; rfl
   have hchars : (s.chars (String.singleton c)).nodes = s.nodes := by
     unfold State.chars; split <;> rfl
+  have hnb : ¬ ((s.stack.back?.map fun x => x.text.utf8ByteSize + c.utf8Size).getD 0 > bud.text) := by
+    rw [hf]; simp only [Option.map_some, Option.getD_some]; omega
   unfold step reference
   simp only [h38, show ((38 : Nat) == 60) = false from rfl, show ((38 : Nat) == 38) = true from rfl,
-    Bool.false_eq_true, ↓reduceIte, hopen, readReference_ref R hl s.pos c rest hR hc]
+    Bool.false_eq_true, ↓reduceIte, hopen, readReference_ref R hl s.pos c rest hR hc, hnb]
   rw [tick_ok bud _ (by rw [hchars]; exact hnodes)]
   rfl
 
@@ -1497,14 +1500,19 @@ private theorem text_reads (R : List Char) (hl : Ascii R) (bud : Budget) :
         have hcx : xmlChar c.toNat = true := hx c (by simp)
         have hR' : R.drop s.pos = refL c ++ (escL l' ++ rest) := by
           rw [hR, escL_cons, hpc, List.append_assoc]
-        have hstep := step_ref R hl bud s c (escL l' ++ rest) hR' hcx hstack (by simp at hnodes; omega)
+        have hofl : String.ofList (c :: l') = String.singleton c ++ String.ofList l' := by
+          rw [← String.toList_inj]; simp
+        have hbud : f.text.utf8ByteSize + c.utf8Size ≤ bud.text := by
+          rw [hofl, String.utf8ByteSize_append, String.utf8ByteSize_append] at htext
+          have := String.utf8ByteSize_singleton (c := c)
+          omega
+        have hstep := step_ref R hl bud s c (escL l' ++ rest) hR' hcx hstack f (by rw [hs, Array.back?_push])
+          hbud (by simp at hnodes; omega)
         let s₁ := (bump (s.chars (String.singleton c)) 1).at (s.pos + (refL c).length)
         let f₁ : Frame := { f with text := f.text ++ String.singleton c }
         have hs₁ : s₁.stack = stk.push f₁ := by
           simp only [s₁, f₁, State.at, bump, chars_push s stk f hs]
         have hR₁ : R.drop s₁.pos = escL l' ++ rest := drop_append_of R s.pos (refL c) _ hR'
-        have hofl : String.ofList (c :: l') = String.singleton c ++ String.ofList l' := by
-          rw [← String.toList_inj]; simp
         have htext₁ : (f₁.text ++ String.ofList l').utf8ByteSize ≤ bud.text := by
           simp only [f₁]; rw [String.append_assoc, ← hofl]; exact htext
         have hnodes₁ : s₁.nodes + l'.length ≤ bud.nodes := by

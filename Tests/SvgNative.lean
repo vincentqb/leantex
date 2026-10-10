@@ -89,6 +89,24 @@ def xmlRoundTripChecks (ref : IO.Ref (List String)) : IO Unit := do
          | .error _ => false)
     | _, _ => check ref s!"XML round trip: {f.fileName.getD ""} parses" false
 
+/-- A text's length is bounded however the file spells it: a reference or
+a CDATA section counts toward the text budget as literal characters do. -/
+def xmlBudgetChecks (ref : IO.Ref (List String)) : IO Unit := do
+  let bud : Xml.Budget := { Xml.Budget.standard with text := 8 }
+  let refused (body : String) : Bool :=
+    match Xml.parseWith bud s!"<a>{body}</a>".toUTF8 with
+    | .error (.budget "text length") => true
+    | _ => false
+  let refs (n : Nat) : String := String.join (List.replicate n "&#97;")
+  check ref "XML budget: eight characters fit a text budget of eight" (!refused "abcdefgh")
+  check ref "XML budget: nine characters exceed it" (refused "abcdefghi")
+  check ref "XML budget: eight references fit it" (!refused (refs 8))
+  check ref "XML budget: nine references exceed it, as nine characters do" (refused (refs 9))
+  check ref "XML budget: references after text count with it" (refused ("abcde" ++ refs 4))
+  check ref "XML budget: a CDATA section of eight fits it" (!refused "<![CDATA[abcdefgh]]>")
+  check ref "XML budget: a CDATA section of nine exceeds it" (refused "<![CDATA[abcdefghi]]>")
+  check ref "XML budget: a CDATA section after text counts with it" (refused "abcde<![CDATA[abcd]]>")
+
 /-- What one invented figure's import paints. -/
 def svgMarks (body : String) (w h : Nat := 20) : Array Mark × Array Gfx.Loss :=
   match Svg.importBytes (svgDocument body w h) with
@@ -681,6 +699,7 @@ def svgTitleWordsChecks (ref : IO.Ref (List String)) : IO Unit := do
 def svgNativeChecks (ref : IO.Ref (List String)) : IO Unit := do
   svgNativeBoundaryChecks ref
   xmlRoundTripChecks ref
+  xmlBudgetChecks ref
   svgImportChecks ref
   svgPosterNativeChecks ref
   svgExpansionChecks ref

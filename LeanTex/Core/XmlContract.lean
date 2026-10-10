@@ -7,11 +7,14 @@ import LeanTex.Core.Loop
 # What the XML reader's output holds
 
 An accepted document lies within the reader's budgets (`parseWith_between`):
-no element deeper than the depth budget, and no more nodes — elements and
-runs of text — than the node budget, whatever the bytes ask. Every step the
-reader takes keeps an invariant: the open elements within the depth budget
-and each finished subtree fitting under its frame, every node the state
-holds counted, the count within the budget; the loop carries it.
+no element deeper than the depth budget, no more nodes — elements and runs
+of text — than the node budget, and no text longer than the text budget,
+whatever the bytes ask and however they spell a text: literal, by reference
+or in a CDATA section. Every step the reader takes keeps two invariants: the
+open elements within the depth budget and each finished subtree fitting
+under its frame, every node the state holds counted, the count within the
+budget; and every text the state holds, pending or finished, within the
+text budget. The loop carries both.
 -/
 
 namespace LeanTex.Core.Xml
@@ -347,7 +350,9 @@ private theorem markup_inv (bud : Budget) (b : ByteArray) (s s' : State) (hs : I
         · cases h
         · split at h
           · cases h
-          · next s1 ht => cases h; exact State.charsTick_inv bud s s1 _ hs ht _
+          · split at h
+            · cases h
+            · next s1 ht => cases h; exact State.charsTick_inv bud s s1 _ hs ht _
     · split at h
       · split at h
         · cases h
@@ -387,7 +392,9 @@ private theorem reference_inv (bud : Budget) (b : ByteArray) (s s' : State) (hs 
     · cases h
     · split at h
       · cases h
-      · next s1 ht => cases h; exact State.charsTick_inv bud s s1 _ hs ht _
+      · split at h
+        · cases h
+        · next s1 ht => cases h; exact State.charsTick_inv bud s s1 _ hs ht _
 
 private theorem charData_inv (bud : Budget) (b : ByteArray) (s s' : State) (hs : Inv bud s)
     (h : charData bud b s = .ok s') : Inv bud s' := by
@@ -456,11 +463,271 @@ private theorem run_inv (bud : Budget) (b : ByteArray) (start : Nat) (s : State)
   rw [h] at hc
   exact hc
 
+mutual
+
+-- conserves: none — a condition on a tree's texts, which the budget bounds.
+/-- Every text a node holds within `m` bytes. -/
+@[expose] public def Node.textsWithin (m : Nat) : Node → Prop
+  | .elem _ _ kids => Node.textsWithinList m kids.toList
+  | .text t => t.utf8ByteSize ≤ m
+@[expose] public def Node.textsWithinList (m : Nat) : List Node → Prop
+  | [] => True
+  | n :: rest => Node.textsWithin m n ∧ Node.textsWithinList m rest
+end
+
+private theorem Node.textsWithinList_iff (m : Nat) (l : List Node) :
+    Node.textsWithinList m l ↔ ∀ k ∈ l, k.textsWithin m := by
+  induction l with
+  | nil => simp [Node.textsWithinList]
+  | cons n rest ih => simp [Node.textsWithinList, ih]
+
+/-- A frame's texts within `m` bytes: its pending text and its kids'. -/
+private def Frame.textsWithin (m : Nat) (f : Frame) : Prop :=
+  f.text.utf8ByteSize ≤ m ∧ ∀ k ∈ f.kids.toList, k.textsWithin m
+
+/-- What a reader's state holds of its texts at every step: every open
+element's pending text and finished kids, and the root, within the text
+budget. -/
+private structure TextInv (bud : Budget) (s : State) : Prop where
+  frames : ∀ f ∈ s.stack.toList, f.textsWithin bud.text
+  root : ∀ r, s.root = some r → r.textsWithin bud.text
+
+private theorem Frame.flush_texts (m : Nat) (f : Frame) (h : f.textsWithin m) : f.flush.textsWithin m := by
+  unfold Frame.flush
+  split
+  · exact h
+  · refine ⟨by simp, ?_⟩
+    intro k hk
+    simp only [Array.toList_push, List.mem_append, List.mem_singleton] at hk
+    rcases hk with hk | rfl
+    · exact h.2 k hk
+    · exact h.1
+
+private theorem Frame.close_texts (m : Nat) (f : Frame) (h : f.textsWithin m) : f.close.textsWithin m := by
+  unfold Frame.close
+  simp only [Node.textsWithin]
+  exact (Node.textsWithinList_iff _ _).mpr (Frame.flush_texts m f h).2
+
+private theorem frames_push (m : Nat) (a : Array Frame) (f g : Frame) (hb : a.back? = some f)
+    (h : ∀ x ∈ a.toList, x.textsWithin m) (hg : g.textsWithin m) :
+    ∀ x ∈ (a.pop.push g).toList, x.textsWithin m := by
+  have hsplit := back_split a f hb
+  intro x hx
+  simp only [Array.toList_push, List.mem_append, List.mem_singleton] at hx
+  rcases hx with hx | rfl
+  · exact h x (by rw [hsplit]; exact List.mem_append_left _ hx)
+  · exact hg
+
+private theorem State.chars_texts (bud : Budget) (s : State) (t : String) (h : TextInv bud s)
+    (ht : (s.stack.back?.map fun x => x.text.utf8ByteSize + t.utf8ByteSize).getD 0 ≤ bud.text) :
+    TextInv bud (s.chars t) := by
+  unfold State.chars
+  split
+  · next f hb =>
+    have hsplit := back_split s.stack f hb
+    have hf := h.frames f (by rw [hsplit]; simp)
+    rw [hb] at ht
+    simp only [Option.map_some, Option.getD_some] at ht
+    exact ⟨frames_push _ s.stack f _ hb h.frames ⟨by simp only [String.utf8ByteSize_append]; exact ht, hf.2⟩,
+      h.root⟩
+  · exact h
+
+private theorem State.give_texts (bud : Budget) (s : State) (n : Node) (h : TextInv bud s)
+    (hn : n.textsWithin bud.text) : TextInv bud (s.give n) := by
+  unfold State.give
+  split
+  · next f hb =>
+    have hsplit := back_split s.stack f hb
+    have hf := Frame.flush_texts _ f (h.frames f (by rw [hsplit]; simp))
+    refine ⟨frames_push _ s.stack f _ hb h.frames ⟨hf.1, ?_⟩, h.root⟩
+    intro k hk
+    simp only [Array.toList_push, List.mem_append, List.mem_singleton] at hk
+    rcases hk with hk | rfl
+    · exact hf.2 k hk
+    · exact hn
+  · refine ⟨h.frames, ?_⟩
+    intro r hr
+    simp only [Option.some.injEq] at hr
+    subst hr
+    exact hn
+
+private theorem State.charsTick_texts (bud : Budget) (s s' : State) (t : String) (h : TextInv bud s)
+    (hb : ¬ ((s.stack.back?.map fun x => x.text.utf8ByteSize + t.utf8ByteSize).getD 0 > bud.text))
+    (ht : (s.chars t).tick bud = .ok s') (p : Nat) : TextInv bud { s' with pos := p } := by
+  obtain ⟨rfl, _⟩ := State.tick_ok bud _ _ ht
+  have := State.chars_texts bud s t h (by omega)
+  exact ⟨this.frames, this.root⟩
+
+private theorem State.close_texts (bud : Budget) (s : State) (f : Frame) (h : TextInv bud s)
+    (hb : s.stack.back? = some f) (p : Nat) : TextInv bud { (s.popped.give f.close) with pos := p } := by
+  have hsplit := back_split s.stack f hb
+  have hf := h.frames f (by rw [hsplit]; simp)
+  have hp : TextInv bud s.popped :=
+    ⟨fun x hx => h.frames x (by rw [hsplit]; exact List.mem_append_left _ hx), h.root⟩
+  have := State.give_texts bud s.popped f.close hp (Frame.close_texts _ f hf)
+  exact ⟨this.frames, this.root⟩
+
+private theorem endTag_texts (bud : Budget) (b : ByteArray) (s s' : State) (hs : TextInv bud s)
+    (h : endTag bud b s = .ok s') : TextInv bud s' := by
+  unfold endTag at h
+  split at h
+  · cases h
+  · dsimp only at h
+    split at h
+    · cases h
+    · split at h
+      · cases h
+      · next f hb =>
+        split at h
+        · cases h
+        · cases h
+          exact State.close_texts bud s f hs hb _
+
+private theorem markup_texts (bud : Budget) (b : ByteArray) (s s' : State) (hs : TextInv bud s)
+    (h : markup bud b s = .ok s') : TextInv bud s' := by
+  unfold markup at h
+  dsimp only [Except.map] at h
+  split at h
+  · split at h
+    · cases h
+    · next p _ => cases h; exact ⟨hs.frames, hs.root⟩
+  · split at h
+    · split at h
+      · cases h
+      · split at h
+        · cases h
+        · split at h
+          · cases h
+          · next hb =>
+            split at h
+            · cases h
+            · next s1 ht => cases h; exact State.charsTick_texts bud s s1 _ hs hb ht _
+    · split at h
+      · split at h
+        · cases h
+        · split at h
+          · cases h
+          · next p _ => cases h; exact ⟨hs.frames, hs.root⟩
+      · cases h
+
+private theorem startTag_texts (bud : Budget) (b : ByteArray) (s s' : State) (hs : TextInv bud s)
+    (h : startTag bud b s = .ok s') : TextInv bud s' := by
+  unfold startTag at h
+  split at h
+  · cases h
+  · split at h
+    · cases h
+    · next s1 ht =>
+      obtain ⟨rfl, _⟩ := State.tick_ok bud _ _ ht
+      split at h
+      · cases h
+      · next name attrs empty j _ =>
+        split at h
+        · cases h
+        · split at h
+          · cases h
+            have := State.give_texts bud { s with nodes := s.nodes + 1 } (.elem name attrs #[])
+              ⟨hs.frames, hs.root⟩ (by simp [Node.textsWithin, Node.textsWithinList])
+            exact ⟨this.frames, this.root⟩
+          · cases h
+            refine ⟨?_, hs.root⟩
+            intro x hx
+            simp only [State.openAt, Array.toList_push, List.mem_append, List.mem_singleton] at hx
+            rcases hx with hx | rfl
+            · exact hs.frames x hx
+            · exact ⟨by simp, by simp⟩
+
+private theorem reference_texts (bud : Budget) (b : ByteArray) (s s' : State) (hs : TextInv bud s)
+    (h : reference bud b s = .ok s') : TextInv bud s' := by
+  unfold reference at h
+  dsimp only [Except.map] at h
+  split at h
+  · cases h
+  · split at h
+    · cases h
+    · split at h
+      · cases h
+      · next hb =>
+        split at h
+        · cases h
+        · next s1 ht =>
+          cases h
+          exact State.charsTick_texts bud s s1 _ hs (by rwa [String.utf8ByteSize_singleton]) ht _
+
+private theorem charData_texts (bud : Budget) (b : ByteArray) (s s' : State) (hs : TextInv bud s)
+    (h : charData bud b s = .ok s') : TextInv bud s' := by
+  unfold charData at h
+  dsimp only [Except.map] at h
+  split at h
+  · cases h
+  · split at h
+    · next he =>
+      split at h
+      · cases h
+      · cases h
+        rw [State.chars_none s _ he]
+        exact ⟨hs.frames, hs.root⟩
+    · split at h
+      · cases h
+      · next hb =>
+        split at h
+        · cases h
+        · next s1 ht => cases h; exact State.charsTick_texts bud s s1 _ hs hb ht _
+
+private theorem step_texts (bud : Budget) (b : ByteArray) (s s' : State) (hs : TextInv bud s)
+    (h : step bud b s = .ok s') : TextInv bud s' := by
+  unfold step at h
+  dsimp only at h
+  split at h
+  · split at h
+    · exact endTag_texts bud b s s' hs h
+    · split at h
+      · exact markup_texts bud b s s' hs h
+      · split at h
+        · split at h <;> cases h
+        · exact startTag_texts bud b s s' hs h
+  · split at h
+    · exact reference_texts bud b s s' hs h
+    · exact charData_texts bud b s s' hs h
+
+/-- What the reader's loop carries of its texts: a state that holds them
+within the budget, or a refusal. -/
+private def CarriedTexts (bud : Budget) : Except Refusal State → Prop
+  | .ok s => TextInv bud s
+  | .error _ => True
+
+/-- **Every state the reader reaches holds its texts within the budget.** -/
+private theorem run_texts (bud : Budget) (b : ByteArray) (start : Nat) (s : State)
+    (h : run bud b start = .ok s) : TextInv bud s := by
+  have hc : CarriedTexts bud (run bud b start) := by
+    unfold run
+    dsimp only
+    refine LeanTex.Core.Loop.forIn_range_inv (CarriedTexts bud) _ 0 (b.size + 1) _ ?_ ?_
+    · exact ⟨by simp, by simp⟩
+    · intro i _ _ acc hacc
+      cases acc with
+      | error e => simp [CarriedTexts]
+      | ok s0 =>
+        simp only [CarriedTexts] at hacc
+        dsimp only [pure, Id.run]
+        split
+        · exact hacc
+        · split
+          · simp [CarriedTexts]
+          · next s1 hs1 =>
+            split
+            · simp [CarriedTexts]
+            · exact step_texts bud b s0 s1 hacc hs1
+  rw [h] at hc
+  exact hc
+
 /-- **An accepted document lies within its budgets** (`_between`): no
 element deeper than the depth budget, no more nodes — elements and runs of
-text — than the node budget, whatever the bytes ask. -/
+text — than the node budget, and no text longer than the text budget, however
+the bytes spell it. -/
 public theorem parseWith_between (bud : Budget) (input : ByteArray) (n : Node)
-    (h : parseWith bud input = .ok n) : n.depth ≤ bud.depth ∧ n.size ≤ bud.nodes := by
+    (h : parseWith bud input = .ok n) :
+    n.depth ≤ bud.depth ∧ n.size ≤ bud.nodes ∧ n.textsWithin bud.text := by
   unfold parseWith at h
   split at h
   · cases h
@@ -475,6 +742,7 @@ public theorem parseWith_between (bud : Budget) (input : ByteArray) (n : Node)
           · cases h
           · next s hs =>
             have hinv := run_inv bud bs start s hs
+            have htexts := run_texts bud bs start s hs
             split at h
             · cases h
             · split at h
@@ -483,7 +751,7 @@ public theorem parseWith_between (bud : Budget) (input : ByteArray) (n : Node)
                 split at h
                 · next r hr =>
                   cases h
-                  refine ⟨hinv.root _ hr, ?_⟩
+                  refine ⟨hinv.root _ hr, ?_, htexts.root _ hr⟩
                   have ht := hinv.total
                   have hn := hinv.nodes
                   have : s.stack.toList = [] := by simpa using hempty
