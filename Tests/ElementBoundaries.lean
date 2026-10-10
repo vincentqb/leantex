@@ -157,6 +157,73 @@ private def frames (cls : String) (rows : List Row) : String :=
       unit cls (pairBody x y)) ++
     "\\end{document}\n"
 
+/-- A screen length in the sheet's spelling: thousandths of a rem. -/
+private def rem (m : Nat) : String :=
+  let r := toString (m % 1000)
+  s!"{m / 1000}.{"".pushn '0' (3 - min 3 r.length) ++ r}rem"
+
+/-- The browser's half (`HtmlDoc.blockGapRules`, beamer's lineage at 10 pt):
+at the top list level the last rule a pair of elements meets — every rule
+stands at zero specificity, so the later one wins — composes the upper
+element's own space below with the lower one's opening as the page does: a
+beamer list adds its `\topsep` and a block its `\medskipamount` to a
+block's `\smallskipamount`, a list's `\topsep`, a centred block's or a
+display's space below, and a centred block takes the larger. The article's
+sheet owes none of them. -/
+private def htmlPairChecks (ref : IO.Ref (List String)) : IO Unit := do
+  let size := Dim.pt 10
+  let rules := HtmlDoc.blockGapRules .beamer size {}
+  let bounds := (rules.filterMap fun
+    | .boundary sel v => some (cssSelParts sel, v)
+    | _ => none).toArray
+  let top := ":not(li, dd, blockquote) > "
+  -- the last rule holding a top-level part that names the upper element
+  -- and, after its sibling combinator, the lower one
+  let lastFor (upper lower : String) : Option (Nat × String) :=
+    (bounds.zipIdx.toList.filter fun ((parts, _), _) => parts.any fun p =>
+      p.startsWith top && match (p.drop top.length).toString.splitOn " + " with
+        | [u, l] => hasStr u upper && l.startsWith lower
+        | _ => false).getLast?.map fun ((_, v), i) => (i, v)
+  let below := rem (HtmlDoc.screenMilli size (Dim.pt 3))
+  let opened := rem (HtmlDoc.screenMilli size (Dim.pt 3))
+  let above := rem (HtmlDoc.screenMilli size (Dim.pt 6 + Layout.inkClearance))
+  let par := "var(--parskip, 0rem)"
+  let display := s!"var(--{Ir.displaySkipBelow}"
+  let blockU := "section.block"
+  let listL := "ul:not(.bibliography)"
+  let triv := ".u-trivlist-env"
+  let rows : List (String × String × String × (String → Bool)) :=
+    [("a list under a block", blockU, s!":is({listL}", (· == s!"calc({below} + {opened} + {par})")),
+     ("a list under a list", listL, s!":is({listL}", (· == s!"calc({opened} + {opened} + {par})")),
+     ("a list under a centred block", triv, s!":is({listL}", fun v =>
+        v.startsWith "calc(var(--topsep" && v.endsWith (" + " ++ opened ++ " + " ++ par ++ ")")),
+     ("a list under a display", ".display", s!":is({listL}", fun v =>
+        v.startsWith ("calc(" ++ display) && v.endsWith (" + " ++ opened ++ " + " ++ par ++ ")")),
+     ("a block under a list", listL, ":is(section.block", (· == s!"calc({opened} + {above})")),
+     ("a block under a centred block", triv, ":is(section.block", fun v =>
+        v.startsWith "calc(var(--topsep" && v.endsWith (" + " ++ above ++ ")")),
+     ("a block under a display", ".display", ":is(section.block", fun v =>
+        v.startsWith ("calc(" ++ display) && v.endsWith (" + " ++ above ++ ")")),
+     ("a centred block under a block", blockU, triv, fun v =>
+        v.startsWith ("calc(max(" ++ below ++ ", var(--topsep") && v.endsWith (") + " ++ par ++ ")")),
+     ("a centred block under a list", listL, triv, fun v =>
+        v.startsWith ("calc(max(" ++ opened ++ ", var(--topsep") && v.endsWith (") + " ++ par ++ ")")),
+     ("a centred block under a display", ".display", triv, fun v =>
+        v.startsWith ("calc(max(" ++ display) && v.endsWith (") + " ++ par ++ ")"))]
+  -- every generic rule a pair's lower element meets stands before it
+  let generic := (bounds.zipIdx.toList.filter fun ((parts, _), _) =>
+    parts.any fun p => p == s!"* + {listL}" || p == s!"* + {triv}").map (·.2)
+  for (name, upper, lower, ok) in rows do
+    match lastFor upper lower with
+    | some (i, v) =>
+      check ref s!"element boundaries (beamer, browser): {name} composes both spaces, got {v}"
+        (ok v && generic.all (· < i))
+    | none => check ref s!"element boundaries (beamer, browser): {name} has its pair rule" false
+  check ref "element boundaries (article, browser): the article's sheet owes no adding pair"
+    ((HtmlDoc.blockGapRules .sizeFile size {}).all fun
+      | .boundary sel _ => !hasStr sel top
+      | _ => true)
+
 def elementBoundaryChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit := do
   for cls in ["beamer", "article"] do
     let rows := measured.filter (·.cls == cls)
@@ -179,5 +246,6 @@ def elementBoundaryChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : 
         check ref s!"element boundaries ({cls}): a {y} under a {x} stands {row.lua}{against} (lualatex), got {spMilli (d - b)}"
           ((spMilli (d - b) - row.lua).natAbs ≤ tolerance.toNat)
       | _, _ => check ref s!"element boundaries ({cls}): the {x}/{y} probe ships its marks" false
+  htmlPairChecks ref
 
 end Tests.ElementBoundaries

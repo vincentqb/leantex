@@ -1385,8 +1385,8 @@ private def skipFollowerRule : GapRule :=
     past ":not(section.slide, .step, .step-set) > " ":first-child")) "0"
 
 /-- The boundaries the list levels stand before: the headings', the float's
-and the display's pairs, the float's caption seam, and the heading's
-follower, last. A level-1
+and the display's pairs and the float's caption seam; the skip box's and
+the heading's followers stand after them (`blockGapRules`). A level-1
 heading opens its `<section>` (`sectionize`), so no sibling stands above
 it and `* + h2` never meets it; the heading owns the boundary above its
 section instead, its margin collapsing through the section's edge, which
@@ -1421,9 +1421,11 @@ private def gapAfterLists : List GapRule :=
       s!"section.slide > .fill:first-child + :is(.{skipClass}, {skipCarrier})")
       "calc(0rem - var(--parskip, 0rem))",
     .boundary "section.slide > .frame-body-start"
-      "calc(var(--frame-body-skip) + var(--frame-body-before, 0pt) + var(--frame-body-open, 0pt))",
-    skipFollowerRule,
-    .boundary ":is(h1, h2, h3, h4, h5, h6) + *" "0"]
+      "calc(var(--frame-body-skip) + var(--frame-body-before, 0pt) + var(--frame-body-open, 0pt))"]
+
+/-- The heading's follower, the sheet's last rule: its band below is the
+heading's own. -/
+private def headingFollowerRule : GapRule := .boundary ":is(h1, h2, h3, h4, h5, h6) + *" "0"
 
 /-- A skip register in force for the sheet (`Ir.skipAmount`, the site the
 PDF walk spends), as a print length: its `em` part at the body size; an
@@ -1482,6 +1484,41 @@ private def blockRules (size : Int) (tokens : Ir.Tokens) (shaped : Bool) : List 
   ownsBelow ["section.tcolorbox"] balanced s!"calc({balanced} - {peerGap})" ++
   [.parskip "section.tcolorbox > *" "0rem"]
 
+/-- The boundaries beamer sets by adding where `\addvspace` would take the
+larger, as pair rules standing after every rule they meet: a beamer list
+opens by `\vskip` — its body colour pushed before `\list` opens, so the
+colour's whatsit stands last (`Layout`'s `Spacing.Pending.listOpen`) — and
+a block by its template's `\vskip\medskipamount`, so either one's space adds
+to what the element above owns below it: a block's `\smallskipamount`, a
+list's `\topsep`, a trivlist's, a display's skip below; a trivlist after
+them takes the larger of the two, the paragraph gap on top. Measured under
+lualatex in a frame at 10 pt: a list stands its 3 pt further below each than
+a paragraph there, a block its `\medskipamount`, a centred block 8 pt below a
+paragraph and 5 below a block or a list. At the top list level, whose items'
+own lists keep the level rules; only beamer's lineage owes them. -/
+private def beamerPairRules (l : Ir.ListLineage) (size : Int) (tokens : Ir.Tokens) :
+    List GapRule :=
+  match l, Ir.listSkips l size 1 with
+  | .beamer, some sk =>
+    let opened := milliRem (listOpenGap size sk (Ir.partopsepFor l size 1 tokens))
+    let below := milliRem (screenMilli size (skipSp size tokens "smallskipamount"))
+    let above := milliRem (blockAboveMilli size tokens)
+    let display := s!"var(--{Ir.displaySkipBelow}, {displayGapRem})"
+    let triv := "." ++ roleClass Ir.trivlistRole
+    let top := ":not(li, dd, blockquote) > "
+    let lists := s!":is({", ".intercalate (listElems.filter (· != "blockquote"))})"
+    let beamerLists := ":is(ul:not(.bibliography), ol:not(.algorithm):not(.algorithm *), dl)"
+    let uppers : List (String × String × Bool) :=
+      [(blockAt "last-child", below, true), (lists, opened, false), (triv, trivlistOwn, false),
+       (".display", display, false)]
+    uppers.flatMap fun (u, own, block) =>
+      [.boundary s!"{top}{u} + {beamerLists}" s!"calc({own} + {opened} + var(--parskip, 0rem))"] ++
+      (if block then [] else
+        [.boundary s!"{top}{u} + {blockAt "first-child"}" s!"calc({own} + {above})"]) ++
+      (if u == triv then [] else
+        [.boundary s!"{top}{u} + {triv}" s!"calc(max({own}, {trivlistOwn}) + var(--parskip, 0rem))"])
+  | _, _ => []
+
 /-- The block-boundary sheet, the one emitter of every vertical margin a
 block element carries. The resets come first: the element's own margins
 at zero specificity, so no element rule stands above a boundary rule —
@@ -1494,16 +1531,18 @@ larger: the trivlist's (`\topsep`); a theorem-like block's (`thmRules`);
 the page's list levels (`listRules`), after them, so a list's `\topsep`
 against a centred block is the larger, and before the headings, so a
 heading's space against a list is; the float's (`--floatsep`) and the
-display's (`Ir.displayAbove`/`displayBelow`); and last, the follower of a
-heading, whose band below is the heading's own (the reset's
-`margin-bottom`). Any
+display's (`Ir.displayAbove`/`displayBelow`); beamer's adding pairs
+(`beamerPairRules`); the skip box's follower (`skipFollowerRule`); and last,
+the follower of a heading, whose band below is the heading's own (the
+reset's `margin-bottom`). Any
 consumer rule — a declared `\style` on the bare element or a reader
 stylesheet owning a container's spacing with `gap` — wins without a
 specificity fight, which is the HTML backend's override contract. -/
 public def blockGapRules (l : Ir.ListLineage) (size : Int) (tokens : Ir.Tokens)
     (shaped : Bool := false) : List GapRule :=
   gapResets ++ gapBeforeLists ++ blockRules size tokens shaped ++ thmRules l size ++
-    listRules l size tokens ++ gapAfterLists
+    listRules l size tokens ++ gapAfterLists ++ beamerPairRules l size tokens ++
+    [skipFollowerRule, headingFollowerRule]
 
 /-! ### Overlay carriers
 
@@ -1864,6 +1903,15 @@ private theorem listRules_noReset (l : Ir.ListLineage) (size : Int) (tokens : Ir
     Bool.and_eq_true]
   refine ⟨?_, ?_, ?_⟩ <;> split <;> first | rfl | exact listLevelRules_noReset _ _ _ _
 
+private theorem beamerPairRules_noReset (l : Ir.ListLineage) (size : Int) (tokens : Ir.Tokens) :
+    (beamerPairRules l size tokens).all (fun r => !r.isReset) = true := by
+  unfold beamerPairRules
+  split
+  · simp only [List.all_flatMap, List.all_eq_true]
+    intro u _
+    split <;> split <;> simp [GapRule.isReset]
+  · rfl
+
 private theorem thmRules_noReset (l : Ir.ListLineage) (size : Int) :
     (thmRules l size).all (fun r => !r.isReset) = true := by
   simp only [thmRules, List.all_flatMap, List.all_eq_true]
@@ -1885,19 +1933,20 @@ public theorem blockGap_owner_contract (l : Ir.ListLineage) (size : Int) (tokens
       some (.boundary ":is(h1, h2, h3, h4, h5, h6) + *" "0") := by
   have hbefore : gapBeforeLists.all (fun r => !r.isReset) = true := by decide
   have hafter : gapAfterLists.all (fun r => !r.isReset) = true := by decide
+  have htail : [skipFollowerRule, headingFollowerRule].all (fun r => !r.isReset) = true := by
+    decide
   have hblock : (blockRules size tokens shaped).all (fun r => !r.isReset) = true := by
     cases shaped <;> simp [blockRules, ownsBelow, GapRule.isReset]
   have hall : (gapBeforeLists ++ blockRules size tokens shaped ++ thmRules l size ++
-      listRules l size tokens ++ gapAfterLists).all (fun r => !r.isReset) = true := by
-    simp only [List.all_append, hbefore, hafter, hblock, thmRules_noReset,
-      listRules_noReset, Bool.and_self]
+      listRules l size tokens ++ gapAfterLists ++ beamerPairRules l size tokens ++
+      [skipFollowerRule, headingFollowerRule]).all (fun r => !r.isReset) = true := by
+    simp only [List.all_append, hbefore, hafter, htail, hblock, thmRules_noReset,
+      listRules_noReset, beamerPairRules_noReset, Bool.and_self]
   refine ⟨?_, ?_⟩
   · simp only [blockGapRules, List.append_assoc] at hall ⊢
     rw [dropWhile_append_all _ _ _ (by decide), dropWhile_none _ _ hall]
     exact hall
-  · have hlast : gapAfterLists.getLast? = some (.boundary ":is(h1, h2, h3, h4, h5, h6) + *" "0") := by
-      decide
-    simp only [blockGapRules, List.getLast?_append, hlast, Option.some_or]
+  · simp [blockGapRules, headingFollowerRule]
 
 /-- **Reading through carriers keeps each boundary's emitter** (`_contract`):
 the sheet read through any boundary shapes still stands its resets first and
