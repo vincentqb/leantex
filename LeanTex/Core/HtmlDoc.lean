@@ -1492,7 +1492,8 @@ colour's whatsit stands last (`Layout`'s `Spacing.Pending.listOpen`) — and
 a block by its template's `\vskip\medskipamount`, so either one's space adds
 to what the element above owns below it: a block's `\smallskipamount`, a
 list's `\topsep`, a trivlist's, a display's skip below; a trivlist after
-them takes the larger of the two, the paragraph gap on top. Measured under
+them, and fancyvrb's listing (minted's), take the larger of the two, the
+paragraph gap on top. Measured under
 lualatex in a frame at 10 pt: a list stands its 3 pt further below each than
 a paragraph there, a block its `\medskipamount`, a centred block 8 pt below a
 paragraph and 5 below a block or a list. At the top list level, whose items'
@@ -1513,7 +1514,9 @@ private def beamerPairRules (l : Ir.ListLineage) (size : Int) (tokens : Ir.Token
       [(blockAt "last-child", below, true), (lists, opened, false), (triv, trivlistOwn, false),
        (".display", display, false)]
     uppers.flatMap fun (u, own, block) =>
-      [.boundary s!"{top}{u} + {beamerLists}" s!"calc({own} + {opened} + var(--parskip, 0rem))"] ++
+      [.boundary s!"{top}{u} + {beamerLists}" s!"calc({own} + {opened} + var(--parskip, 0rem))",
+       .boundary s!"{top}{u} + .{verbatimListClass}"
+         s!"calc(max({own}, {opened}) + var(--parskip, 0rem))"] ++
       (if block then [] else
         [.boundary s!"{top}{u} + {blockAt "first-child"}" s!"calc({own} + {above})"]) ++
       (if u == triv then [] else
@@ -8690,10 +8693,10 @@ public def blockNode (cfg : Config) (b : Block) : Node :=
       | none => pre
     -- The environment's space (`Ir.ListingFrame`), a class on the element
     -- it governs: a trivlist's, or a list level's.
-    match spec.frame with
-    | .trivlist => withClass (roleClass Ir.trivlistRole) node
-    | .list => withClass verbatimListClass node
-    | .none => node
+    match spec.frame, cfg.lists with
+    | .trivlist, .beamer => withClass (roleClass Ir.trivlistRole) node
+    | .list, .beamer | .list, .sizeFile => withClass verbatimListClass node
+    | _, _ => node
   | .algorithm numbered semis lines =>
     -- Pseudocode as nested ordered lists: one <ol> per block, depth from
     -- nesting, line numbers by a CSS counter when declared (declarative,

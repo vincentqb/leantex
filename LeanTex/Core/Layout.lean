@@ -13155,28 +13155,29 @@ private def collectVerbatim (r : Rd) (a : Acc) (covered : Option Ir.Color) (s : 
 
 /-- A listing with the space its environment sets around it
 (`Ir.ListingFrame`): a trivlist's `\topsep` at its depth, as a `center`'s,
-or fancyvrb's `\list` one level down, its `\topsep` by `\addvspace` on both sides under TeX's
+under beamer's lineage — the article's trivlists keep the engine's rhythm,
+whose quantum against a paragraph's peer gap is no closer to TeX's for a
+verbatim, so the article's verbatim keeps its paragraph spacing — or
+fancyvrb's `\list` one level down, its `\topsep` by `\addvspace` on both sides under TeX's
 `\parskip`, as a list's — the web's lineage, which has no list levels,
 spacing that as its trivlists. -/
 private def collectListing (r : Rd) (a : Acc) (covered : Option Ir.Color) (s : String)
     (spec : Ir.ListingSpec) (indent : Sp) : Acc :=
   let trivlist (a : Acc) : Glue := r.resolve (Ir.trivlistSkipFor r.lists a.tokens r.geom.fontSize
     (a.itemDepth + a.enumDepth + a.quoteDepth))
-  match spec.frame with
-  | .none => collectVerbatim r a covered s spec indent
-  | .trivlist =>
+  match spec.frame, r.lists with
+  | .trivlist, .beamer =>
     let g := trivlist a
     (collectVerbatim r (a.trivSpace g) covered s spec indent).trivSpace g
-  | .list =>
+  | .list, .beamer | .list, .sizeFile =>
     let lv := a.itemDepth + a.enumDepth + a.quoteDepth + 1
     match Ir.listSkips r.lists r.geom.fontSize lv with
     | some sk =>
       let g := (r.resolve sk.topsep).add (r.resolve (Ir.partopsepFor r.lists r.geom.fontSize lv a.tokens))
       let top := if a.afterHeading then a.flushGap r else (a.listSpace g).flushGap r
       (collectVerbatim r top covered s spec indent).listSpace g
-    | none =>
-      let g := trivlist a
-      (collectVerbatim r (a.trivSpace g) covered s spec indent).trivSpace g
+    | none => collectVerbatim r a covered s spec indent
+  | _, _ => collectVerbatim r a covered s spec indent
 
 private def collectAlgorithm (r : Rd) (a : Acc) (numbered semis : Bool) (lines : Array Ir.AlgLine) (indent : Sp) : Acc :=
   -- Pseudocode: each line one display-type paragraph at the body size —

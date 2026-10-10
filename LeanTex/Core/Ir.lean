@@ -6220,10 +6220,10 @@ public def Block.leavesEndPe : Block → Bool
   | .list .. | .quote _ => true
   | .verbatim _ _ spec => spec.frame == .trivlist || spec.frame == .list
   | .role n body =>
-    (thmSpaceOf? n).isSome || n == trivlistRole ||
+    thmSpaceOf? n == some .kernel || n == trivlistRole ||
       (n == inParagraphRole && match body with
         | #[.list ..] | #[.quote _] => true
-        | #[.role m _] => (thmSpaceOf? m).isSome
+        | #[.role m _] => thmSpaceOf? m == some .kernel
         | _ => false)
   | .onSteps _ body | .only _ body => leavesEndPeLast body.toList
   | _ => false

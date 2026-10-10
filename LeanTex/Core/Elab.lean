@@ -10055,12 +10055,24 @@ private def parFollows (raws : Array Raw) (i : Nat) : Bool :=
   | [] => false
   | r :: _ => r matches .par _
 
+/-- Does a blank line stand just before position `i`, past the spaces? -/
+private def parPrecedes (raws : Array Raw) (i : Nat) : Bool := Id.run do
+  let mut j := i
+  for _ in [0:i] do
+    j := j - 1
+    match raws[j]? with
+    | some .space => pure ()
+    | some (.par _) | some (.ctrl "par" _) => return true
+    | _ => return false
+  return false
+
 /-- The paragraph state an overlay carrier standing at `raws[i]` opens in,
 `body` its content and `blocks` what stood before it once its opening
 flushed the paragraph: inside the paragraph whose text ran on to it with no
 break between (`inPar`), or else right after an environment end that left
 `\@endpe` (`endPe`) — what a display opening the carrier reads, as it
-reads it with no carrier there (`Ir.carrierDisplays`). Content opening on a
+reads it with no carrier there (`Ir.carrierDisplays`), unless a blank line
+stands between, whose `\par` ends it (`parPrecedes`). Content opening on a
 paragraph break is in no paragraph. -/
 private def carrierOpening (raws : Array Raw) (i : Nat) (blocks : Array Block)
     (body : Array Raw) : Bool × Bool :=
@@ -10071,7 +10083,7 @@ private def carrierOpening (raws : Array Raw) (i : Nat) (blocks : Array Block)
     | [] | .par _ :: _ => false
     | _ :: _ => true
   let inPar := opensOnText && ranOn && Ir.flushedText (blocks.size - 1) blocks
-  (inPar, !inPar && blocks.back?.any Ir.Block.leavesEndPe)
+  (inPar, !inPar && blocks.back?.any Ir.Block.leavesEndPe && !parPrecedes raws i)
 
 /-- A braced overlay's carrier, its group `body` at `raws[jg]`, stood in its
 paragraph (`carrierOpening`) and before the break after the group. Outside
@@ -10107,17 +10119,6 @@ private def pauseCarrier (raws : Array Raw) (i : Nat) (blocks : Array Block) (n 
   if inner.isEmpty then blocks else
   let (inPar, endPe) := carrierOpening raws i blocks (raws.extract (i + 1) raws.size)
   blocks.push (.step n none (Ir.carrierDisplays inPar endPe false inner))
-
-/-- Does a blank line stand just before position `i`, past the spaces? -/
-private def parPrecedes (raws : Array Raw) (i : Nat) : Bool := Id.run do
-  let mut j := i
-  for _ in [0:i] do
-    j := j - 1
-    match raws[j]? with
-    | some .space => pure ()
-    | some (.par _) => return true
-    | _ => return false
-  return false
 
 /-- Does an environment's `\@endpe` reach a display at position `i`, so that
 TeX sets no empty line before it (`Ir.DisplayCtx.afterEnv`): no text of the
@@ -11409,7 +11410,8 @@ lookup a body `\setlength` reads — so `\vspace{\baselineskip}`,
 `\vspace{-\parskip}` and `\vspace{0.1\textheight}` read the registers
 LaTeX reads there. Outside the elaboration knot, as `pageMark?` is. -/
 private def blockSkipTokens (ctx : Ctx) : Array (String × Dim.SymGlue) :=
-  ctx.tokens.entries ++ ctx.engineTokens
+  ctx.tokens.entries ++ ctx.engineTokens ++
+    #["smallskipamount", "medskipamount", "bigskipamount"].map fun n => (n, Ir.skipAmount ctx.tokens n)
 
 /-- A `\block`'s option, read: its `before` skip, and whether the skip is
 TeX's primitive `\vskip` (`kind = vskip`, the spelling Compat's `\vskip`
@@ -11428,17 +11430,29 @@ private def blockOptions (ctx : Ctx) (optSrc : Array Raw) (pos : Pos) : EM (SymG
     | "before", .dim d => before := { width := Dim.Length.ofSp d }
     | "kind", .ident "vskip" => primitive := true
     | "kind", .ident "vspace" => primitive := false
+    -- The skip door's mark of an infinite stretch the engine's one order
+    -- cannot rank (Compat's `skipNative`): named here, where the skip is set.
+    | "stretch", .ident "unranked" =>
+      warnOnce ctx "skip:stretch:unranked" .W0104
+        "a skip's infinite stretch has an order or factor other than \\fill's; \
+fills here have one order, so the skip sets at its natural width" pos
+        (help := "write \\vfill or \\vspace{\\fill} for the page's leftover")
     | key, v =>
       let d := if key == "before" then Decl.wrongType ctx.file "block" key "a length" v pos
         else if key == "kind" then Decl.wrongType ctx.file "block" key "vspace or vskip" v pos
-        else Decl.unknownKey ctx.file "block" key ["before", "kind"] pos
+        else Decl.unknownKey ctx.file "block" key ["before", "kind", "stretch"] pos
       modify fun st => { st with diags := st.diags.push d }
   return (before, primitive)
 
-/-- A skip block, and after it, where it is TeX's primitive `\vskip`, the
-page-model mark that keeps its glue the last skip (`Ir.primitiveSkipRole`). -/
+/-- A skip block, and after it, where it is TeX's primitive `\vskip` standing
+alone — a block holding content is the content's own space, no skip on the
+list — the page-model mark that keeps its glue the last skip
+(`Ir.primitiveSkipRole`). -/
 private def pushSkipBlock (blocks : Array Block) (b : Block) (primitive : Bool) : Array Block :=
-  if primitive then (blocks.push b).push (.role Ir.primitiveSkipRole #[]) else blocks.push b
+  let empty := match b with
+    | .spaced _ inner => inner.isEmpty
+    | _ => false
+  if primitive && empty then (blocks.push b).push (.role Ir.primitiveSkipRole #[]) else blocks.push b
 
 seal blockSkipTokens blockOptions pushSkipBlock
 

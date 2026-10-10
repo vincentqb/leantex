@@ -208,6 +208,11 @@ private def htmlPairChecks (ref : IO.Ref (List String)) : IO Unit := do
         v.startsWith ("calc(max(" ++ below ++ ", var(--topsep") && v.endsWith (") + " ++ par ++ ")")),
      ("a centred block under a list", listL, triv, fun v =>
         v.startsWith ("calc(max(" ++ opened ++ ", var(--topsep") && v.endsWith (") + " ++ par ++ ")")),
+     ("a minted under a block", blockU, ".verbatim-list", (· == s!"calc(max({below}, {opened}) + {par})")),
+     ("a minted under a centred block", triv, ".verbatim-list", fun v =>
+        v.startsWith "calc(max(var(--topsep" && v.endsWith (", " ++ opened ++ ") + " ++ par ++ ")")),
+     ("a minted under a display", ".display", ".verbatim-list", fun v =>
+        v.startsWith ("calc(max(" ++ display) && v.endsWith (", " ++ opened ++ ") + " ++ par ++ ")")),
      ("a centred block under a display", ".display", triv, fun v =>
         v.startsWith ("calc(max(" ++ display) && v.endsWith (") + " ++ par ++ ")"))]
   -- every generic rule a pair's lower element meets stands before it

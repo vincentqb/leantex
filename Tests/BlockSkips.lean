@@ -291,7 +291,9 @@ same frame without the skip. -/
 private def registerMoves : List (String × Int × Int) :=
   [("\\vspace{\\baselineskip}", 12000, 12000), ("\\vspace{2\\baselineskip}", 24000, 24001),
    ("\\vspace{-\\baselineskip}", -12000, -12000), ("\\vspace{0.5\\baselineskip}", 6001, 6000),
-   ("\\vspace{\\parskip}", 0, 4000), ("\\vspace{-\\parskip}", 0, -4000)]
+   ("\\vspace{\\parskip}", 0, 4000), ("\\vspace{-\\parskip}", 0, -4000),
+   ("\\vspace{\\smallskipamount}", 3000, 3000), ("\\vspace{\\medskipamount}", 6000, 6000),
+   ("\\vspace{\\bigskipamount}", 12000, 12000)]
 
 /-- The registers a document's skip reads elaborate to their values, with
 no diagnostic, and move what follows as lualatex moves it; TeX's own
@@ -449,6 +451,12 @@ private def inlineChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : I
       ((diags.filter (·.code == "W0329")).size == 1 && diags.all (·.code != "W0301"))
     check ref s!"block skips: a skip inside {name} sets none of its spelling as text"
       (pages.all fun p => p.lines.all fun l => !hasStr (lineText l) "before")
+  -- An infinite skip met there is the same one skipped site: no stretch loss
+  -- of its own beside it.
+  let (_, fdiags) := Elab.run "block-skips-inline-fil.tex"
+    (document "" [frame "\\textbf{bold \\vspace{0pt plus 1fil} words}"])
+  check ref "block skips: an infinite skip inside inline content is named once, W0329, and no stretch loss"
+    ((fdiags.filter (·.code == "W0329")).size == 1 && fdiags.all (·.code != "W0104"))
   let titled := document "" ["\\begin{frame}[t]{Frame \\vskip 3pt title}Words.\\end{frame}\n"]
   let (_, diags) := Elab.run "block-skips-inline-title.tex" titled
   check ref "block skips: a skip inside a frame title builds" (diags.all (·.severity != .error))
@@ -478,6 +486,12 @@ private def filOrderChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) :
   let (vfil, vdiags) := pageOf "\\vspace{0pt plus 1fil}"
   check ref "block skips: \\vspace{0pt plus 1fil} sets at its natural width, named once"
     (vfil.isSome && vfil == vnatural && (vdiags.filter (·.code == "W0104")).size == 1)
+  -- TeX's `\fill` over a natural width is one glue that stretches: its width,
+  -- and a fill after it.
+  let (wfill, wdiags) := pageOf "\\vspace{1em plus 1fill}"
+  let (wsplit, _) := pageOf "\\vspace{1em}\\vfill"
+  check ref "block skips: \\vspace{1em plus 1fill} is its width and a fill, unnamed"
+    (wfill.isSome && wfill == wsplit && wdiags.all (·.code != "W0104"))
 
 /-- The sheet's rules for a skip box where its follower's term is not the
 one the generic boundary assumes: a skip opening an untitled frame pays the

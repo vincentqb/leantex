@@ -1994,6 +1994,21 @@ def displayTexChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO 
     (listend.size == 3 && vsp2.size == 3 && step vsp2 0 == step listend 0 + bs)
   t "a display after a list end and a blank line sets the empty line"
     (listpar.size == 3 && step listpar 0 == step listend 0 + bs)
+  -- An explicit `\par` ends `\@endpe` as a blank line's does.
+  let listParCtrl := linesOf "\\begin{itemize}\\item A\\end{itemize}\n\\par\n\\[ x = 1 \\]\nBravo."
+  t "a display after a list end and an explicit \\par sets the empty line"
+    (listParCtrl.size == 3 && step listParCtrl 0 == step listpar 0)
+  -- amsthm's theorems end on `\@endpefalse` (amsthm.sty `\@endtheorem`): a
+  -- display right after one opens on the empty line, blank line or not, as
+  -- lualatex sets it.
+  let amsLines (body : String) : Array Layout.LineOut :=
+    ((layoutOf fs (elabStr (dvDoc "\\usepackage{amsthm}\n\\newtheorem{theorem}{Theorem}\n" body)).1).pages.flatMap
+      (·.lines)).filter fun l => !l.furniture && l.segs.any (· matches .run ..)
+  let thmEnd := amsLines "\\begin{theorem}A\\end{theorem}\n\\[ x = 1 \\]\nBravo."
+  let thmPar := amsLines "\\begin{theorem}A\\end{theorem}\n\n\\[ x = 1 \\]\nBravo."
+  t "a display right after an amsthm theorem sets the empty line, as after a blank line"
+    (thmEnd.size == thmPar.size && thmEnd.size ≥ 3 &&
+      (thmEnd.zip thmPar).all fun (a, b) => a.y == b.y)
   -- A control between the text and the display opens the display's
   -- paragraph whether or not a blank line follows it: the empty line is the
   -- vertical-mode fact, not a literal blank line in the source.

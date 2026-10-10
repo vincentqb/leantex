@@ -6518,15 +6518,32 @@ it carried an infinite stretch the engine cannot rank: TeX's `\vfill` glue,
 another order or factor ranks against the page's other infinite glues, which
 the engine does not tell apart, so the skip sets at its natural width; any
 other value stands as written. -/
-private def skipSrc (src : String) : String × Bool :=
+private structure SkipSpelling where
+  width : String
+  fill : Bool := false
+  unranked : Bool := false
+
+private def skipSrc (src : String) : SkipSpelling :=
   match src.splitOn " plus " with
   | [w, st] =>
     match Decl.parseLength w, Decl.filFactor? st with
     | some l, some ((m, sc), order) =>
-      if l == {} && order == 2 && m == (sc : Int) then ("fill", false)
-      else (w.trimAscii.toString, true)
-    | _, _ => (src, false)
-  | _ => (src, false)
+      if order == 2 && m == (sc : Int) then
+        if l == {} then { width := "fill" } else { width := w.trimAscii.toString, fill := true }
+      else { width := w.trimAscii.toString, unranked := true }
+    | _, _ => { width := src }
+  | _ => { width := src }
+
+/-- A skip's native spelling (`skipSrc`): its width, a stretch the engine's
+one infinite order cannot rank named by the block reader as it reads it
+(`stretch = unranked`, W0104 where the skip stands between blocks, nothing
+of its own inside inline content, where the skip is not set at all), and
+TeX's `\fill` on top of a natural width as a fill of its own after it, as
+the one glue stretches. `kind` is the block's `kind` option, if any. -/
+private def skipNative (sp : SkipSpelling) (kind : String := "") : String :=
+  let opts := s!"before = {sp.width}" ++ (if kind.isEmpty then "" else s!", kind = {kind}") ++
+    (if sp.unranked then ", stretch = unranked" else "")
+  s!"\\block[{opts}]\{}" ++ (if sp.fill then "\\block[before = fill]{}" else "")
 
 /-- Commands whose whole meaning is one fixed native spelling, synthesised
 in place with a `became` note: each row is an argument-free rewrite.
@@ -7215,14 +7232,7 @@ and patterns stand in" pos
     let start := skipStar raws start
     let (_, j) := takeOpt raws start
     let (args, k) := takeGroups raws j 1
-    let src := lengthSrc (args.getD 0 #[])
-    let (value, unranked) := skipSrc src
-    if unranked then
-      sayOnce "ctrl:vspace:fil" .W0104
-        s!"'\\vspace\{{src}}' has an infinite stretch of an order or factor other than \\fill's; \
-fills here have one order, so the skip sets at its natural width" pos
-        (help := "write \\vfill or \\vspace{\\fill} for the page's leftover")
-    let native := s!"\\block[before = {value}]\{}"
+    let native := skipNative (skipSrc (lengthSrc (args.getD 0 #[])))
     if starred then
       became "\\vspace*" s!"a page-top anchor, then {native}" pos
       return some (#[.ctrl vspaceAnchorMark pos] ++ (← synthAt native pos), k)
@@ -7240,15 +7250,9 @@ fills here have one order, so the skip sets at its natural width" pos
     if (← get).inDef then return none
     let v0 := skipSpaces raws start
     let e := glueEnd raws v0
-    let src := lengthSrc (raws.extract v0 e)
-    let (value, unranked) := skipSrc src
-    if e ≤ v0 || (value != "fill" && (Decl.parseGlue value).isNone) then return none
-    if unranked then
-      sayOnce "ctrl:vskip:fil" .W0104
-        s!"'\\vskip {src}' has an infinite stretch of an order or factor other than \\vfill's; \
-fills here have one order, so the skip sets at its natural width" pos
-        (help := "write \\vfill for the page's leftover")
-    let native := s!"\\block[before = {value}, kind = vskip]\{}"
+    let sp := skipSrc (lengthSrc (raws.extract v0 e))
+    if e ≤ v0 || (sp.width != "fill" && (Decl.parseGlue sp.width).isNone) then return none
+    let native := skipNative sp "vskip"
     became "\\vskip" native pos
     return some (← synthAt native pos, e)
   | "newpage" | "clearpage" =>
