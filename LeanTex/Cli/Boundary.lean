@@ -40,12 +40,13 @@ public def coldPicture (picDir : System.FilePath) (tool key : String)
 
 /-- What the boundary's refusals leave standing, once the rendered subset
 has been asked to stand in: the picture ids whose requests are withdrawn,
-the refusals that still stand, and the notes that say why each withdrawn
-picture is drawn by the subset. -/
+the refusals that still stand, and why each withdrawn picture's request
+came back undrawn — by picture id, the tool's own last words where it ran,
+none where no tool looked. -/
 public structure Withdrawal where
   ids : Array String := #[]
   standing : Array (String × Diag) := #[]
-  notes : Array Diag := #[]
+  said : Array (String × Option String) := #[]
   deriving Repr
 
 /-- How a boundary request came back with no drawing. `answered` is an
@@ -67,23 +68,21 @@ def Undrawn.why : Undrawn → Diag
 /-- One attempt's ending as the withdrawal reads it: a drawing is nothing to
 withdraw, the tool's own no is an answer in its words, and an attempt that
 never finished is no answer at all. -/
-public def undrawnOf (tool : String) (o : PicCache.Outcome) (span : Option Span) : Option Undrawn :=
+public def undrawnOf (tool : String) (o : PicCache.Outcome) (span : Option Span) (src : String) :
+    Option Undrawn :=
   match o with
   | .drawn => none
-  | .refused says => some (.answered (DriverDiag.boundaryFailed tool says span) (some says))
-  | .inconclusive says => some (.unfinished (DriverDiag.boundaryUnfinished tool says span))
+  | .refused says => some (.answered (DriverDiag.boundaryFailed tool says src span) (some says))
+  | .inconclusive says => some (.unfinished (DriverDiag.boundaryUnfinished tool says src span))
 
 /-- One undrawn request folded into the withdrawal: an answered one whose
-picture the subset draws in part is withdrawn, with its note; everything
-else stands. -/
-public def withdrawStep (tool : String) (fallbacks : Array String) (spans : Array (String × Span))
-    (w : Withdrawal) (r : String × Undrawn) : Withdrawal :=
+picture the subset draws in part is withdrawn, with why it came back
+undrawn; everything else stands. -/
+public def withdrawStep (fallbacks : Array String) (w : Withdrawal)
+    (r : String × Undrawn) : Withdrawal :=
   match r.2, fallbacks.find? (Ir.picSrcPrefix ++ · == r.1) with
   | .answered _ said, some id =>
-    { w with
-      ids := w.ids.push id
-      notes := w.notes.push (DriverDiag.boundaryWithdrawn tool said r.1
-        ((spans.find? (·.1 == r.1)).map (·.2))) }
+    { w with ids := w.ids.push id, said := w.said.push (id, said) }
   | u, _ => { w with standing := w.standing.push (r.1, u.why) }
 
 /-- **An attempt that never finished is never withdrawn** (`_exact`): it
@@ -92,9 +91,9 @@ stays as loud as a failed render — the artifact never changes on a fact
 about the machine. The defect withdrew it like the tool's own verdict: a
 killed or crashed tool shipped the subset's drawing with exit 0, its cause
 a note printed only under `-v`. -/
-public theorem withdrawStep_unfinished_exact (tool : String) (fallbacks : Array String)
-    (spans : Array (String × Span)) (w : Withdrawal) (src : String) (d : Diag) :
-    withdrawStep tool fallbacks spans w (src, .unfinished d) =
+public theorem withdrawStep_unfinished_exact (fallbacks : Array String) (w : Withdrawal)
+    (src : String) (d : Diag) :
+    withdrawStep fallbacks w (src, .unfinished d) =
       { w with standing := w.standing.push (src, d) } := by
   unfold withdrawStep
   cases fallbacks.find? (Ir.picSrcPrefix ++ · == src) <;> rfl
@@ -103,16 +102,208 @@ public theorem withdrawStep_unfinished_exact (tool : String) (fallbacks : Array 
 answered request — no tool looked, or the tool said no — whose picture the
 rendered subset draws in part (`fallbacks`, by picture id, the elaborator's
 record) is withdrawn: the driver elaborates again with its id
-(`Elab.runPrepared`'s `picWithdrawn`), the subset's drawing ships with its
-refusals named, and one N0419 at the picture's span says why the boundary
-did not draw it, in the tool's own words where it ran. Every other refusal
-stands: a picture the subset draws nothing of keeps W0379's placeholder, or
-E0382's failed run, and an attempt that never finished keeps its E0382
-(`withdrawStep_unfinished_exact`). Pure, so the decision is a value a test
-runs rather than a sentence about the driver. -/
-public def withdraw (tool : String) (fallbacks : Array String)
-    (undrawn : Array (String × Undrawn)) (spans : Array (String × Span)) : Withdrawal :=
-  undrawn.foldl (withdrawStep tool fallbacks spans) {}
+(`Elab.runPrepared`'s `picWithdrawn`), and the subset's drawing ships with
+one W0419 at the picture's span naming every construct it leaves out, its
+help saying why the boundary did not draw it (`fold`), in the tool's own
+words where it ran. Every other refusal stands: a picture the subset draws
+nothing of keeps W0379's or W0382's placeholder, and an attempt that never
+finished keeps its W0382 (`withdrawStep_unfinished_exact`). Pure, so the
+decision is a value a test runs rather than a sentence about the driver. -/
+public def withdraw (fallbacks : Array String) (undrawn : Array (String × Undrawn)) :
+    Withdrawal :=
+  undrawn.foldl (withdrawStep fallbacks) {}
+
+/-- Is `d` one of withdrawn picture `id`'s losses? The elaborator names each
+refusal the rendered subset states for a withdrawn picture under the
+picture (`Ir.picFragmentKey`), so this reads the structured subject, never
+the message; a note names a decision, not missing ink, and stands as it is. -/
+public def fragmentOf (id : String) (d : Diag) : Bool :=
+  d.subject.any (·.startsWith (Ir.picFragmentKey id "")) && d.kind.floor != .inert
+
+/-- Is `d` the line that names withdrawn picture `id` where it stands in a
+line of text, which the rendered subset never draws (`Ir.picInlineKey`)? -/
+public def inlineOf (id : String) (d : Diag) : Bool :=
+  d.subject == some (Ir.picInlineKey id)
+
+/-- The fragments the fold takes: a loss the document's `\allow` accepts
+(`accepted`) stays the elaborator's line, so its acceptance, and the
+`\allow` entry it fires, are the document's as written. -/
+private def taken (accepted : String → Bool) (id : String) (d : Diag) : Bool :=
+  fragmentOf id d && !accepted d.code
+
+/-- What a picture's one line says beside its refusals: why the boundary drew
+none of it, for the picture in a paragraph of its own (`block`) and in a line
+of text (`inline`; `none` leaves that line's own help). -/
+public structure LineHelp where
+  block : String
+  inline : Option String := none
+  deriving Repr, BEq
+
+/-- A withdrawn picture's: the tool's own last words where it ran, or that
+no tool looked (`DriverDiag.withdrawnHelp`). -/
+public def withdrawnLine (tool : String) (said : Option String) : LineHelp :=
+  { block := DriverDiag.withdrawnHelp tool said
+    inline := some (DriverDiag.withdrawnInlineHelp tool said) }
+
+/-- A declined picture's — one the document's `\pictures{ tool = none }`
+leaves to the rendered subset (`Elab.ReqSpans.declined`): the declaration,
+and what drawing it whole would take (`DriverDiag.declinedHelp`). -/
+public def declinedLine : LineHelp := { block := DriverDiag.declinedHelp }
+
+/-- The pictures whose refusals the driver folds, each with what its line
+says: the withdrawn ones (`Withdrawal.said`) and the declined ones. -/
+public def linesOf (tool : String) (w : Withdrawal) (declined : Array String) :
+    Array (String × LineHelp) :=
+  w.said.map (fun p => (p.1, withdrawnLine tool p.2)) ++ declined.map (·, declinedLine)
+
+/-- One site of a picture as the line that names it: every loss the
+rendered subset states for the picture there, in order, a clause after the
+line's lead — in the record of the site's first fragment, so its span, its
+site count and whether it is a repeat site stay what the elaborator made
+them — under the picture's image source, with why the boundary drew none of
+it (`help`). -/
+public def lineOf (accepted : String → Bool) (help id : String) (ds : Array Diag)
+    (first : Diag) : Diag :=
+  let here := ((ds.filter fun e => taken accepted id e && e.span == first.span).map
+    (·.message)).foldl (fun acc m => if acc.contains m then acc else acc.push m) #[]
+  { first with
+    kind := .W0419
+    message := "the rendered subset draws this picture in part: " ++ " · ".intercalate here.toList
+    help := first.help.map fun _ => help
+    subject := some (Ir.picSrcPrefix ++ id)
+    refused := none
+    recovery := some (.replacedBy "the rendered subset's drawing") }
+
+/-- A picture in a line of text keeps the line its own refusal names it by,
+and takes why the boundary drew nothing as that line's help. -/
+private def inlineHelp (p : String × LineHelp) (d : Diag) : Diag :=
+  match p.2.inline with
+  | some h => if inlineOf p.1 d && d.help.isSome then { d with help := some h } else d
+  | none => d
+
+/-- A refusal the document accepts that still says why the boundary drew
+nothing: the first at a place where every refusal is accepted, since no
+line is built there to say it. -/
+private def voiced (accepted : String → Bool) (id : String) (ds : Array Diag)
+    (spans : Array (Option Span)) (d : Diag) : Bool :=
+  fragmentOf id d && d.help.isSome && !spans.contains d.span &&
+    !ds.any fun e => taken accepted id e && e.span == d.span
+
+/-- One step of one picture's fold: a site's line where its first fragment
+stood, no other fragment, and everything else as it was. -/
+private def placeLine (accepted : String → Bool) (p : String × LineHelp) (ds : Array Diag)
+    (acc : Array Diag × Array (Option Span)) (d : Diag) : Array Diag × Array (Option Span) :=
+  if taken accepted p.1 d then
+    if acc.2.contains d.span then acc
+    else (acc.1.push (lineOf accepted p.2.block p.1 ds d), acc.2.push d.span)
+  else if voiced accepted p.1 ds acc.2 d then
+    (acc.1.push { d with help := some p.2.block }, acc.2.push d.span)
+  else (acc.1.push (inlineHelp p d), acc.2)
+
+/-- One picture folded. -/
+private def foldOne (accepted : String → Bool) (ds : Array Diag) (p : String × LineHelp) :
+    Array Diag :=
+  (ds.foldl (placeLine accepted p ds) (#[], #[])).1
+
+/-- **A picture the rendered subset draws in part is named once at each
+place it stands.** The elaboration names every construct the subset leaves
+out of a withdrawn or declined picture, each keyed under the picture
+(`fragmentOf`); this folds the ones the document does not accept (`allow`,
+`allowAll`, read as `Diag.accept` reads them) into one line per site of the
+picture (W0419, `lineOf`), a degraded warning, so an expression the subset
+could not read no longer fails the document the picture stands in, and a
+repeat site stays a repeat site with its count. Where the document accepts
+every refusal at a place, the first keeps why the boundary drew nothing as
+its help. A picture in a line of text, which the subset never draws, keeps
+the line that says so, with why the boundary did not draw it as its help.
+Every other diagnostic is still there (`foldLines_covers`). The refusals
+once stood beside a note as several lines, an error among them, and a
+picture no renderer could draw cost the whole run. -/
+public def foldLines (allow : Array String) (allowAll : Bool) (lines : Array (String × LineHelp))
+    (ds : Array Diag) : Array Diag :=
+  -- premise: pictureRouteChecks — every refusal folded is a clause of its
+  -- picture's line, and an accepted one is left as the document accepts it
+  lines.foldl (foldOne fun c => allowAll || allow.contains c) ds
+
+/-- The withdrawn pictures alone (`foldLines` over `linesOf tool w #[]`). -/
+public def fold (allow : Array String) (allowAll : Bool) (tool : String) (w : Withdrawal)
+    (ds : Array Diag) : Array Diag :=
+  foldLines allow allowAll (linesOf tool w #[]) ds
+
+private theorem placeLine_keeps (accepted : String → Bool) (p : String × LineHelp)
+    (ds : Array Diag) (d : Diag) :
+    ∀ (xs : List Diag) (acc : Array Diag × Array (Option Span)), d ∈ acc.1 →
+      d ∈ (xs.foldl (placeLine accepted p ds) acc).1 := by
+  intro xs
+  induction xs with
+  | nil => intro acc hd; exact hd
+  | cons x rest ih =>
+    intro acc hd
+    apply ih
+    unfold placeLine
+    split
+    · split
+      · exact hd
+      · exact Array.mem_push_of_mem _ hd
+    · split
+      · exact Array.mem_push_of_mem _ hd
+      · exact Array.mem_push_of_mem _ hd
+
+private theorem placeLine_adds (accepted : String → Bool) (p : String × LineHelp)
+    (ds : Array Diag) (d : Diag) (h : fragmentOf p.1 d = false) (hi : inlineOf p.1 d = false) :
+    ∀ (xs : List Diag) (acc : Array Diag × Array (Option Span)), d ∈ xs →
+      d ∈ (xs.foldl (placeLine accepted p ds) acc).1 := by
+  intro xs
+  induction xs with
+  | nil => intro _ hd; cases hd
+  | cons x rest ih =>
+    intro acc hd
+    rcases List.mem_cons.mp hd with rfl | hr
+    · apply placeLine_keeps accepted p ds d rest
+      have hk : inlineHelp p d = d := by
+        unfold inlineHelp
+        split <;> simp [hi]
+      simp only [placeLine, taken, voiced, h, Bool.false_and, Bool.false_eq_true, ↓reduceIte, hk]
+      exact Array.mem_push_self
+    · exact ih _ hr
+
+/-- **The fold changes only the folded pictures' own lines** (`_covers`):
+every diagnostic that is neither a fragment of a picture the fold names nor
+that picture's line in a line of text is still there after the fold — the
+document's other losses, and the pictures' notes. -/
+public theorem foldLines_covers (allow : Array String) (allowAll : Bool)
+    (lines : Array (String × LineHelp)) (ds : Array Diag) (d : Diag) (hd : d ∈ ds)
+    (h : ∀ p ∈ lines, fragmentOf p.1 d = false ∧ inlineOf p.1 d = false) :
+    d ∈ foldLines allow allowAll lines ds := by
+  unfold foldLines
+  rw [← Array.foldl_toList]
+  have key : ∀ (ps : List (String × LineHelp)) (acc : Array Diag), d ∈ acc →
+      (∀ p ∈ ps, fragmentOf p.1 d = false ∧ inlineOf p.1 d = false) →
+      d ∈ ps.foldl (foldOne fun c => allowAll || allow.contains c) acc := by
+    intro ps
+    induction ps with
+    | nil => intro acc hacc _; exact hacc
+    | cons q rest ih =>
+      intro acc hacc hall
+      have hq := hall q (List.mem_cons_self ..)
+      apply ih _ _ fun p hp => hall p (List.mem_cons_of_mem _ hp)
+      unfold foldOne
+      rw [← Array.foldl_toList]
+      exact placeLine_adds _ q acc d hq.1 hq.2 acc.toList _ (Array.mem_toList_iff.mpr hacc)
+  exact key lines.toList ds hd fun p hp => h p (Array.mem_toList_iff.mp hp)
+
+/-- **The withdrawal's fold changes only the withdrawn pictures' own lines**
+(`_covers`): `foldLines_covers` for the withdrawn pictures alone. -/
+public theorem fold_covers (allow : Array String) (allowAll : Bool) (tool : String)
+    (w : Withdrawal) (ds : Array Diag) (d : Diag) (hd : d ∈ ds)
+    (h : ∀ p ∈ w.said, fragmentOf p.1 d = false ∧ inlineOf p.1 d = false) :
+    d ∈ fold allow allowAll tool w ds := by
+  apply foldLines_covers allow allowAll _ ds d hd
+  intro p hp
+  simp only [linesOf, Array.mem_append, Array.mem_map] at hp
+  rcases hp with ⟨q, hq, rfl⟩ | ⟨id, hid, rfl⟩
+  · exact h q hq
+  · simp at hid
 
 /-- **The HTML face withdraws a drawing it cannot show.** A boundary
 picture's page face is its PDF, and its HTML face the SVG converted from
@@ -167,7 +358,7 @@ public def htmlFace (pdf : ByteArray) : IO (Except String ByteArray) := do
   | .ok svg => return checkedFace svg (← ImageAssets.validateSvgResult svg)
 
 /-- A boundary picture's HTML face is missing whatever the cause — no tool
-drew it (W0379), the tool drew nothing (E0382, accepted), or its face was not
+drew it (W0379), the tool drew nothing or did not finish (W0382), or its face was not
 converted or not checked (W0378) — and that loss was named where it
 happened, so the reason the page records is this constant and adds no
 diagnostic. -/
@@ -182,7 +373,7 @@ public def faceless (en : Image.Loaded) : Bool :=
 
 private def markOne (en : Image.Loaded) : Image.Loaded :=
   -- premise: machineLossChecks — a faceless picture's loss was named where it happened
-  -- (W0379, an accepted E0382, or W0378), so the mark names none
+  -- (W0379, W0382, or W0378), so the mark names none
   if faceless en then { en with webError := some facelessReason } else en
 
 /-- **A missing face degrades the page instead of refusing it.** The closure

@@ -11451,16 +11451,27 @@ guarantee rests on can be stated about it rather than about a closure
 (`label_centre_glyph_free`, `vphantom_absorbed`).
 
 What it reads is the point: the run's font index, its size and its raise —
-and from the face, `capHeight` and `descent`, the metrics it *declares*. The
-glyph payload is not consulted, so the band a label sets in is a function of
-(face, size, raise) alone. -/
+and from the face, the `capHeight` and `descent` it declares and its
+x-height as the engine trusts it (`Font.xHeightOptical`, the ink top of the
+face's own 'x', since OS/2 sxHeight lies in some fonts: the height TeX's box
+gives a word of x-height letters). The run's glyphs are not consulted, so
+the band a label sets in is a function of (face, size, raise) alone. The band is the face's
+capitals-to-descent box, held so its middle stands half an x-height above
+the baseline: pgf's `mid` anchor, the manual's own remedy for the wobble
+(pgfmoduleshapes.code.tex, `mid` at `.5ex` over the baseline), is the point
+a centred label hangs from. The box's height is what a node's border and a
+relative placement measure; the split is where the letters stand in it.
+Split at the face's own baseline instead, the band seated every label half
+the face's descent above where lualatex sets a word of capitals. -/
 public def labelVStep (fs : FontSet) (size : Sp) (acc : Sp × Sp) (seg : Seg) : Sp × Sp :=
   match seg with
   | .run idx _ _ _ _ sz _ _ raise _ _ =>
     let font := fs.get idx
     let sz := if sz == 0 then size else sz
-    (max acc.1 (scaledAt sz font font.capHeight.toNat + max 0 raise),
-     max acc.2 (scaledAt sz font (-font.descent).toNat + max 0 (-raise)))
+    let span := font.capHeight.toNat + (-font.descent).toNat
+    let up := (span + font.xHeightOptical) / 2
+    (max acc.1 (scaledAt sz font up + max 0 raise),
+     max acc.2 (scaledAt sz font (span - up) + max 0 (-raise)))
   | _ => acc
 
 /-- How far a label line's ink reaches above and below its baseline: the
@@ -11599,18 +11610,19 @@ else. `candle` and `misty` place identically; so do `WAX` and `gjpqy`.
 
 This is the guarantee the report asked for, and the sibling of
 `line_box_glyph_free` one layer down: same fold congruence, same reason (no
-arm reads the payload), same accepted cost — a label with no descender keeps
-its full declared depth, so its band is deeper than its ink. Under TeX's
-node centring the reference is the *measured* box instead, which is why
-depth enters at slope one half there and a descender lifts the word
-(pgf manual §17.5.1's "wobbles"; the manual's own remedy, `anchor=mid`, is
-half an x-height — font-derived for exactly this reason, x-height being the
-only vertical shape metric TFM carries at all).
+arm reads the payload). Under TeX's node centring the reference is the
+*measured* box instead, which is why depth enters at slope one half there
+and a descender lifts the word (pgf manual §17.5.1's "wobbles"; the manual's
+own remedy, `anchor=mid`, is half an x-height — font-derived for exactly
+this reason, x-height being the only vertical shape metric TFM carries at
+all). The band hangs from that very anchor, so a word of x-height letters
+sits where TeX sets it, and any other departs from TeX by exactly the
+wobble.
 
 The design that behaviour serves is kept, not discarded: an extent-derived
 box is what stops diacritics and descenders clipping or colliding
 (CSS 2.1 §10.6.1, css-inline-3 §5.2), so the band here is still the face's
-declared ink band rather than a magic fraction, and ink that leaves it is
+declared cap band rather than a magic fraction, and ink that leaves it is
 reserved separately by `labelGlyphExtent_covers`, without moving the
 baseline. -/
 public theorem label_centre_glyph_free (fs : FontSet) (size : Sp) (segs : Array Seg) :

@@ -14,21 +14,28 @@ example : System.FilePath → String → String → Option Span → String → I
   @coldPicture
 example : Repr Withdrawal := inferInstance
 example : Repr Undrawn := inferInstance
-example (ids : Array String) (standing : Array (String × Diag)) (notes : Array Diag) :
-    Withdrawal := { ids, standing, notes }
-example (w : Withdrawal) : Array String × Array (String × Diag) × Array Diag :=
-  (w.ids, w.standing, w.notes)
+example (ids : Array String) (standing : Array (String × Diag))
+    (said : Array (String × Option String)) : Withdrawal := { ids, standing, said }
+example (w : Withdrawal) : Array String × Array (String × Diag) × Array (String × Option String) :=
+  (w.ids, w.standing, w.said)
 example (d : Diag) (said : Option String) : Array Undrawn :=
   #[.answered d said, .unfinished d]
 example (u : Undrawn) : Diag :=
   match u with
   | .answered d _ => d
   | .unfinished d => d
-example : String → PicCache.Outcome → Option Span → Option Undrawn := undrawnOf
-example : String → Array String → Array (String × Span) →
-    Withdrawal → String × Undrawn → Withdrawal := withdrawStep
-example : String → Array String → Array (String × Undrawn) →
-    Array (String × Span) → Withdrawal := withdraw
+example : String → PicCache.Outcome → Option Span → String → Option Undrawn := undrawnOf
+example : Array String → Withdrawal → String × Undrawn → Withdrawal := withdrawStep
+example : Array String → Array (String × Undrawn) → Withdrawal := withdraw
+example : String → Diag → Bool := fragmentOf
+example : String → Diag → Bool := inlineOf
+example : (String → Bool) → String → String → Array Diag → Diag → Diag := lineOf
+example (block : String) (inline : Option String) : LineHelp := { block, inline }
+example : String → Option String → LineHelp := withdrawnLine
+example : LineHelp := declinedLine
+example : String → Withdrawal → Array String → Array (String × LineHelp) := linesOf
+example : Array String → Bool → Array (String × LineHelp) → Array Diag → Array Diag := foldLines
+example : Array String → Bool → String → Withdrawal → Array Diag → Array Diag := fold
 example : Array String → Array String → Array String := htmlWithdraw
 example : ByteArray → PicCache.Outcome → Except String ByteArray := checkedFace
 example : ByteArray → IO (Except String ByteArray) := htmlFace
@@ -70,11 +77,21 @@ example (stopped : Array Image.Request) (s : Image.Store) (k : Nat) (en : Image.
     (markUnplanned stopped s).get? k = some en :=
   markUnplanned_kept_exact stopped s k en h hkept
 
-example (tool : String) (fallbacks : Array String) (spans : Array (String × Span))
-    (w : Withdrawal) (src : String) (d : Diag) :
-    withdrawStep tool fallbacks spans w (src, .unfinished d) =
+example (fallbacks : Array String) (w : Withdrawal) (src : String) (d : Diag) :
+    withdrawStep fallbacks w (src, .unfinished d) =
       { w with standing := w.standing.push (src, d) } :=
-  withdrawStep_unfinished_exact tool fallbacks spans w src d
+  withdrawStep_unfinished_exact fallbacks w src d
+
+example (allow : Array String) (allowAll : Bool) (tool : String) (w : Withdrawal)
+    (ds : Array Diag) (d : Diag) (hd : d ∈ ds)
+    (h : ∀ p ∈ w.said, fragmentOf p.1 d = false ∧ inlineOf p.1 d = false) :
+    d ∈ fold allow allowAll tool w ds :=
+  fold_covers allow allowAll tool w ds d hd h
+example (allow : Array String) (allowAll : Bool) (lines : Array (String × LineHelp))
+    (ds : Array Diag) (d : Diag) (hd : d ∈ ds)
+    (h : ∀ p ∈ lines, fragmentOf p.1 d = false ∧ inlineOf p.1 d = false) :
+    d ∈ foldLines allow allowAll lines ds :=
+  foldLines_covers allow allowAll lines ds d hd h
 
 example : True := by
   fail_if_success have := Boundary.Undrawn.why

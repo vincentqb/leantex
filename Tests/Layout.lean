@@ -5548,7 +5548,7 @@ def labelBaselineChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : 
         l.y == geom.vmargin
           + (hull.2.2 - Ir.Pic.labelBaseline (Dim.pt 5) .center inkS)).getD false)
   -- The same fact at the measurement, where the reason is visible: the band
-  -- is the face's declared cap height and descent, so it cannot vary with
+  -- is the face's declared capitals-to-descent box, so it cannot vary with
   -- the text, while the set width must and does.
   let inkV := m #[.text "candle"] 1000
   let inkI := m #[.text "misty"] 1000
@@ -5559,16 +5559,71 @@ def labelBaselineChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : 
   t "so does the baseline the placement reads"
     (Ir.Pic.labelBaseline (Dim.pt 20) .center inkV
       == Ir.Pic.labelBaseline (Dim.pt 20) .center inkI)
-  -- The seat that remains, as the number it is: a centred label stands
-  -- (depth − height)/2 from its anchor, which is depth/2 above where a band
-  -- trimmed to the alphabetic baseline would put it (css-inline-3 §6).
-  -- Uniform, therefore not a wobble — a declared reference.
+  -- The seat, as the number it is: the band is the face's capitals-to-
+  -- descent box split at its x-height midpoint, so a centred label hangs
+  -- from pgf's `mid` anchor and stands half the face's x-height below its
+  -- anchor. Uniform, therefore not a wobble.
   let seat := Ir.Pic.labelBaseline (Dim.pt 20) .center inkV - Dim.pt 20
-  t "the seat is (depth − height)/2, to within one scaled point"
-    ((inkV.depth - inkV.height) / 2 <= seat
-      && seat <= (inkV.depth - inkV.height) / 2 + 1)
-  t "and it sits depth/2 above a cap-to-baseline band"
-    (seat > -inkV.height / 2 && seat - (-inkV.height / 2) == inkV.depth / 2)
+  let font := oneFace.body
+  let units (u : Int) : Int := u * geom.fontSize / (font.unitsPerEm : Int)
+  t "the band is the face's capitals-to-descent box, as a border measures it"
+    (let span := units (font.capHeight - font.descent)
+     span - 1 <= inkV.height + inkV.depth && inkV.height + inkV.depth <= span + 1)
+  let xh := units (font.xHeightOptical : Int)
+  t "the seat is half the face's measured x-height below the anchor, to within two scaled points"
+    (-xh / 2 - 2 <= seat && seat <= -xh / 2 + 2)
+  -- **Read off the artifact, against a rule drawn at the anchor.** A label
+  -- of x-height letters beside a thin rule centred on the same height: on
+  -- the page and in the SVG its baseline stands half the x-height below the
+  -- rule's middle — where TeX's node centring sets a box of x-height letters
+  -- (pgfmoduleshapes.code.tex, `center` at `.5\ht − .5\dp`), and where pgf's
+  -- `mid` anchor stands for every word. The band once split at the face's
+  -- baseline and set every label half the face's descent higher there.
+  let xInk := m #[.text "xz"] 1000
+  let rule : Ir.Color := { r := 200, g := 40, b := 40 }
+  let ruled : Ir.Pic.Picture := { shapes := #[
+    .rect 0 (Dim.pt 5 - Dim.pt 1 / 10) (Dim.pt 4) (Dim.pt 1 / 5) rule,
+    .label (Dim.pt 20) (Dim.pt 5) #[.text "xz"] Ir.Color.black 1000 .center] }
+  t "x-height letters measure the face's x-height box: its ex, no depth"
+    (xInk.boxDepth == 0 && xInk.boxHeight - 1 <= xInk.ex && xInk.ex <= xInk.boxHeight + 1)
+  t "on the page, x-height letters stand half an ex below the rule at their anchor"
+    (match (run #[.picture ruled]).pages[0]? with
+     | some pg =>
+       match pg.fills[0]?, (pg.lines.filter (!·.furniture))[0]? with
+       | some f, some l =>
+         let below := l.y - (f.y + f.h / 2)
+         xh / 2 - 2 <= below && below <= xh / 2 + 2
+       | _, _ => false
+     | none => false)
+  let milli (s : Option String) : Option Int := s.bind fun v =>
+    (Decl.parseDecimal v).map fun (mant, scale) => mant * 1000 / scale
+  let ruledSvg := HtmlDoc.pictureSvg { labelMetric := m } ruled
+  t "html: and in the SVG, against the same rule"
+    (match (elemAttrsOne (· == "rect") #[] ruledSvg)[0]?,
+        (elemAttrsOne (· == "text") #[] ruledSvg)[0]? with
+     | some (_, ra), some (_, ta) =>
+       match milli (HtmlDoc.attrOf? ra "y"), milli (HtmlDoc.attrOf? ra "height"),
+           milli (HtmlDoc.attrOf? ta "y") with
+       | some ry, some rh, some ty =>
+         let below := ty - (ry + rh / 2)
+         let want := Dim.Sp.toPtMilli (xh / 2)
+         want - 2 <= below && below <= want + 2
+       | _, _, _ => false
+     | _, _ => false)
+  -- **The declared bound on the departure from TeX.** Any other word
+  -- departs from TeX's seat by TeX's own wobble: half the gap between its
+  -- box's height less depth and the face's x-height, so never more than half
+  -- the face's ascender over its x-height or half its descender, whichever is
+  -- larger. Held word by word over the box each label measures.
+  let reach (c : Char) : Option (Int × Int) := (font.gid c).bind font.yExtent
+  let bound : Int := match reach 'l', reach 'p' with
+    | some (_, asc), some (desc, _) => max (units asc - xh) (units (-desc)) / 2 + 2
+    | _, _ => 0
+  for w in ["xz", "HIE", "Hg", "gap", "query", "label", "Fly", "42"] do
+    let ink := m #[.text w] 1000
+    let tex := -((ink.boxHeight - ink.boxDepth) / 2)
+    t s!"the seat departs from TeX's by no more than the declared bound: {w}"
+      (bound > 2 && ((Ir.Pic.labelBaseline 0 .center ink) - tex).natAbs <= bound.toNat)
   -- Constraint two: a hand-written correction must not break. A phantom
   -- whose metrics the label already declares changes no component.
   let dominated : Ir.Pic.LabelInk :=
@@ -5602,7 +5657,7 @@ def labelBaselineChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : 
     (match capTop with
      | some (hi, _) => hi <= font.ascent
      | none => false)
-  t "while the descent band does cover the descenders"
+  t "while the face's declared descent covers its descenders"
     (match (do
       let g ← font.gid 'y'
       let (lo, _) ← font.yExtent g

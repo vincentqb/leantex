@@ -241,7 +241,7 @@ open Tests (mintedSettingsChecks listingHighlightChecks svgAssetChecks svgToolCh
   listDeclarationChecks stringConditionalChecks)
 open TcolorboxChecks (tcolorboxChecks tcolorboxSourceChecks)
 open TcolorboxColors (tcolorboxColorChecks)
-open PictureBoundary (pictureBoundaryChecks)
+open PictureBoundary (pictureBoundaryChecks pictureWrapperChecks pictureShipChecks)
 open Tests (fontDefaultsChecks fontDefaultsOverrideChecks blockBarChecks batchChecks)
 
 /-- The backend blocks, dispatched together so each stays a leaf the
@@ -281,6 +281,7 @@ def backendSuiteChecks (ref : IO.Ref (List String)) : IO Unit := do
   inputUseChecks ref
   backendChecks ref
   pictureBoundaryChecks ref
+  pictureWrapperChecks ref
   fontDefaultsChecks ref
   fontDefaultsOverrideChecks ref
   landmarkChecks ref
@@ -793,6 +794,7 @@ def main (args : List String) : IO UInt32 := do
   diagnosticProducerOriginChecks ref
   diagnosticAggregationOriginChecks ref
   diagnosticPipelineOriginChecks ref
+  pictureShipChecks ref
   sourceAnnotationChecks ref
   buildGraphChecks ref
   inputOriginsChecks ref

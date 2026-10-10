@@ -20,7 +20,7 @@ private def imageLoaderOriginChecks (ref : IO.Ref (List String)) : IO Unit := do
   let locate (src : String) (fetch : Image.Fetch) (spans : Array (String × Span)) :=
     (Image.fulfilRequests #[({ src }, fetch)]).2.map (DriverDiag.atImageRequest spans src)
   let refusal := Diag.demote
-    { DriverDiag.boundaryFailed "lualatex" "synthetic failure" (some own) with
+    { DriverDiag.boundaryFailed "lualatex" "synthetic failure" source (some own) with
       refused := some "synthetic-picture", sites := 3 }
   let located := locate source (.refused refusal) #[(source, request)]
   t "image origins: located refusals keep their diagnostic and location"

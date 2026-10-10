@@ -6412,8 +6412,8 @@ def boundaryChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "the declared math face rides through unicode-math"
     (hasStr (reqOf tdoc) "\\usepackage{unicode-math}" &&
      hasStr (reqOf tdoc) "\\setmathfont{Fira Math}")
-  t "a boundary picture with a formula stays one request with no E0382 of its own"
-    ((Ir.pictureRefs tdoc).size == 1 && tds.all (·.code != "E0382"))
+  t "a boundary picture with a formula stays one request with no W0382 of its own"
+    ((Ir.pictureRefs tdoc).size == 1 && tds.all (·.code != "W0382"))
   let (fdoc, _) := elabStr (dvDoc
     "\\fonts{ body = \"Source Serif Pro\", sans = \"Open Sans\", mono = \"Source Code Pro\" }\n"
     picC)
@@ -6637,8 +6637,9 @@ def pictureDefnReachChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet)
   -- A picture the subset draws partly, with no tool to draw it — this face
   -- fulfils nothing, as a machine with no tool and a cold cache does not:
   -- its request is withdrawn and the subset's drawing is what ships, the
-  -- refusal named beside it. The first pass routes it whole
-  -- (`pictureRouteChecks`).
+  -- refusal named beside it under the picture, where the driver folds it
+  -- into the picture's one line (`Boundary.fold`). The first pass routes it
+  -- whole (`pictureRouteChecks`).
   let partly := "\\begin{tikzpicture}\\node at (0,0) {Alpha};" ++
     "\\shade (0,0) rectangle (1,1);\\end{tikzpicture}"
   let (partDoc, partDs) := elabStr (dvDoc "" partly)
@@ -6649,18 +6650,16 @@ def pictureDefnReachChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet)
     (hasStr (shippedText partDoc) "Alpha")
   t "a picture the subset draws nothing of still routes to the boundary"
     ((Ir.pictureRefs bodyDoc).size == 1 && bodyDoc.pictureSrcs.size == 1)
-  -- A boundary failure is a dropped loss, not a degraded one: `degraded`
-  -- promises the reader sees "something stands here", and an empty
-  -- unlabelled box is the one thing that does not. A picture the engine drew
-  -- part of never meets it — its request is withdrawn and that drawing ships
-  -- (N0419) — so the failure is left for a picture the engine drew nothing
-  -- of, where there is nothing to fall back to, and the run fails rather
-  -- than shipping a page that reads as intentional.
+  -- A boundary failure ships its placeholder: the box marks the picture's
+  -- place, as an image that did not load marks its own, and the loss is
+  -- named once. A picture the engine drew part of never meets it — its
+  -- request is withdrawn and that drawing ships (W0419) — so the failure is
+  -- left for a picture the engine drew nothing of.
   let failed := DriverDiag.boundaryFailed "lualatex"
-    "! Package pgf Error: Unknown arrow tip kind 'plumearrow'."
-  t "a boundary failure is an error the document must declare to accept"
-    (failed.code == "E0382" && failed.severity == .error &&
-     DiagCode.E0382.loss == .dropped)
+    "! Package pgf Error: Unknown arrow tip kind 'plumearrow'." (Ir.picSrcPrefix ++ "aa")
+  t "a boundary failure is a degraded loss: the document ships its placeholder"
+    (failed.code == "W0382" && failed.severity == .warning &&
+     DiagCode.W0382.loss == .degraded && DiagCode.W0382.floor.inks)
   t "the failure carries the tool's own last words"
     (hasStr (failed.help.getD "") "Unknown arrow tip kind")
   -- The converter gap keeps W0378, and keeps it a warning: the PDF is
@@ -6677,10 +6676,11 @@ grid, one shape of five transformed ones). A picture the rendered subset
 draws with a named loss states one request on the first pass, as one it
 draws nothing of always did, so the page is TikZ's wherever a tool draws
 it; one it draws whole stays native; and a request no tool drew is
-withdrawn (`Cli.Boundary.withdraw`), the subset's drawing shipping with its
-refusals named exactly as the refused door names them. The page claims read
-`Layout.Out`: a drawn request ships one image box and none of the subset's
-ink, a withdrawn one the subset's ink and no box. -/
+withdrawn (`Cli.Boundary.withdraw`), the subset's drawing shipping with the
+refusals the refused door names, which the driver folds into the picture's
+one line (`Cli.Boundary.fold`). The page claims read `Layout.Out`: a drawn
+request ships one image box and none of the subset's ink, a withdrawn one
+the subset's ink and no box. -/
 def pictureRouteChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) :
     IO Unit := do
   let t := check ref
@@ -6710,10 +6710,42 @@ def pictureRouteChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) :
       (rs.fallbacks == (Ir.pictureRefs doc).map (·.1))
     let (closed, closedDs) := elabStr (pic "\\pictures{ tool = none }\n" body)
     let (drawn, drawnDs) := elabStr (pic "" body)
-    t s!"withdrawn, it is the refused door's drawing and diagnostics: {name}"
+    let id := (doc.pictureSrcs[0]?.map (·.1)).getD ""
+    let src := Ir.picSrcPrefix ++ id
+    let refusals (ds : Array Diag) : Array (String × String) :=
+      (pictureDiags ds).map fun (c, _, m) => (c, m)
+    t s!"withdrawn, it is the refused door's drawing and refusals: {name}"
       (!(native closed).isEmpty && native drawn == native closed &&
-       !(pictureDiags closedDs).isEmpty && pictureDiags drawnDs == pictureDiags closedDs &&
+       !(refusals closedDs).isEmpty && refusals drawnDs == refusals closedDs &&
        drawn.pictureSrcs.isEmpty)
+    t s!"withdrawn, each refusal is keyed under the picture: {name}"
+      (!id.isEmpty && (drawnDs.filter fun d => d.code == "W0334" || d.code == "E0333").all
+        (Boundary.fragmentOf id))
+    -- The driver's reading of that second pass: one line for the picture,
+    -- each refusal a clause of it, and none left beside it.
+    let folded := Boundary.fold #[] false "lualatex"
+      { ids := #[id], said := #[(id, none)] } drawnDs
+    let lines := folded.filter (·.code == "W0419")
+    t s!"withdrawn, the driver names the picture once: {name}"
+      ((pictureDiags folded).isEmpty && lines.size == 1 && lines.all fun l =>
+        l.severity == .warning && l.subject == some src &&
+        (refusals closedDs).all fun (_, m) => hasStr l.message m)
+    -- Declined, the same picture is the subset's by the document's own
+    -- word: its refusals keyed under it, recorded for the fold, and named in
+    -- the one line the withdrawn picture's names them in.
+    let (_, _, closedRs) := firstPass (pic "\\pictures{ tool = none }\n" body)
+    t s!"declined, the picture is recorded for the fold: {name}"
+      (closedRs.declined == #[id] && closedRs.fallbacks.isEmpty &&
+       (closedDs.filter fun d => d.code == "W0334" || d.code == "E0333").all
+         (Boundary.fragmentOf id))
+    let declinedFold := Boundary.foldLines #[] false
+      (Boundary.linesOf "lualatex" {} closedRs.declined) closedDs
+    let declinedLines := declinedFold.filter (·.code == "W0419")
+    t s!"declined, the driver names the picture in the withdrawn picture's one line: {name}"
+      ((pictureDiags declinedFold).isEmpty && declinedLines.size == 1 &&
+       declinedLines.map (·.message) == lines.map (·.message) &&
+       declinedLines.all fun l => l.subject == some src && l.severity == .warning &&
+         hasStr (l.help.getD "") "tool = none")
   -- The page, both ways, off one first pass: the boundary's answer in the
   -- store ships as its box, and the withdrawn picture as the subset's ink.
   let rounded := pic "" "\\draw[rounded corners] (0,0) rectangle (3,1);"
@@ -6754,22 +6786,70 @@ def pictureRouteChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) :
      Picture.namesLoss #[(.W0012, "x")] && !Picture.namesLoss #[(.N0114, "x")] &&
      !Picture.namesLoss #[])
   -- The withdrawal decision: a refused request the subset can stand in for
-  -- is withdrawn with one note at its span, in the tool's words where it
-  -- ran; any other refusal stands.
-  let span : Span := ⟨"t", { line := 3, col := 1 }⟩
+  -- is withdrawn, with why it came back undrawn; any other refusal stands.
   let (a, b) := (Ir.picSrcPrefix ++ "aa", Ir.picSrcPrefix ++ "bb")
   let cold := DriverDiag.boundaryToolUnavailable "lualatex"
-  let w := Boundary.withdraw "lualatex" #["aa"]
-    #[(a, .answered cold none), (b, .answered cold none)] #[(a, span)]
+  let w := Boundary.withdraw #["aa"] #[(a, .answered cold none), (b, .answered cold none)]
   t "a refusal of a picture the subset draws in part withdraws its request"
-    (w.ids == #["aa"] && w.standing.map (·.1) == #[b] &&
-     (w.notes.map fun d => (d.code, d.subject, d.span)) == #[("N0419", some a, some span)])
-  let failed := DriverDiag.boundaryFailed "lualatex" "! Package pgf Error: an invented failure."
-  let w2 := Boundary.withdraw "lualatex" #["aa"]
-    #[(a, .answered failed (some "! Package pgf Error: an invented failure."))] #[]
-  t "a tool that ran and drew nothing is quoted in the withdrawal's note"
-    (w2.standing.isEmpty && w2.notes.all fun d =>
-      d.code == "N0419" && hasStr (d.help.getD "") "an invented failure")
+    (w.ids == #["aa"] && w.standing.map (·.1) == #[b] && w.said == #[("aa", none)])
+  let failed := DriverDiag.boundaryFailed "lualatex" "! Package pgf Error: an invented failure." a
+  let w2 := Boundary.withdraw #["aa"]
+    #[(a, .answered failed (some "! Package pgf Error: an invented failure."))]
+  -- The second pass's refusals, keyed under the picture, fold into one line
+  -- per place the picture stands, where that place's first refusal stood;
+  -- a repeat site keeps its line, demoted as the elaborator made it, and a
+  -- note and another picture's loss pass through as they were.
+  let here : Span := ⟨"t", { line := 3, col := 1 }⟩
+  let again : Span := ⟨"t", { line := 9, col := 1 }⟩
+  let frag (m : String) (code : DiagCode) : Diag :=
+    Diag.of code m (some here) (help := some "the rendered subset is \\fill...rectangle")
+      (subject := some (Ir.picFragmentKey "aa" m))
+  let shade := frag "'\\shade' is outside the rendered picture subset; not drawn" .W0334
+  let unread := frag "in '\\pgfmathsetmacro' of '\\x', unknown function or name 'mod'" .E0333
+  let repeated (d : Diag) : Diag := Diag.demote { d with span := some again, help := none }
+  let before := Diag.of .W0301 "unknown command '\\zzbefore'" (subject := some "ctrl:zzbefore")
+  let note := frag "a decision" .N0114
+  let elsewhere := Diag.of .W0334 "'\\shade' is outside the rendered picture subset; not drawn"
+    (subject := some (Ir.picFragmentKey "bb" "x"))
+  let folded := Boundary.fold #[] false "lualatex" w2
+    #[before, shade, note, unread, repeated shade, repeated unread, elsewhere]
+  t "a withdrawn picture's refusals fold into one line at each place it stands"
+    (w2.standing.isEmpty &&
+     folded.map (·.code) == #["W0301", "W0419", "N0114", "W0419", "W0334"] &&
+     folded[0]? == some before && folded[2]? == some note && folded[4]? == some elsewhere)
+  t "the first line names every refusal and quotes the tool, the repeat site's is demoted"
+    ((folded[1]?.any fun d => d.subject == some a && d.severity == .warning &&
+      d.span == some here && hasStr d.message "'\\shade'" && hasStr d.message "'mod'" &&
+      hasStr (d.help.getD "") "an invented failure") &&
+     (folded[3]?.any fun d => d.subject == some a && d.severity == .note &&
+      d.span == some again && hasStr d.message "'mod'"))
+  -- A refusal the document accepts stays the elaborator's, so its `\allow`
+  -- entry fires and accepts it as written.
+  let accepted := Boundary.fold #["W0334"] false "lualatex" w2 #[shade, unread]
+  t "an accepted refusal is not folded, and the line names only the rest"
+    (accepted.map (·.code) == #["W0334", "W0419"] &&
+     (accepted[1]?.any fun d => hasStr d.message "'mod'" && !hasStr d.message "'\\shade'"))
+  -- Where the document accepts every refusal at a place, no line is built
+  -- there, so the first of them still says why the boundary drew nothing.
+  let everyOne := Boundary.fold #[] true "lualatex" w2 #[shade, unread]
+  let bothNamed := Boundary.fold #["W0334", "E0333"] false "lualatex" w2 #[shade, unread]
+  t "with every refusal accepted, nothing is folded, and the first quotes the tool"
+    (everyOne.map (fun d => (d.code, d.message)) == #[shade, unread].map (fun d => (d.code, d.message)) &&
+     (everyOne[0]?.any fun d => hasStr (d.help.getD "") "an invented failure") &&
+     everyOne[1]? == some unread && bothNamed == everyOne)
+  t "with no tool, the line says what would draw it whole"
+    ((Boundary.fold #[] false "lualatex" w #[shade]).any fun d =>
+      d.code == "W0419" && hasStr (d.help.getD "") "install lualatex")
+  -- A picture in a line of text, which the subset never draws, keeps the
+  -- line that says so, and takes why the boundary drew nothing as its help.
+  let inline := Diag.of .W0334 "a picture inside a line of text is not drawn"
+    (help := some "a boundary tool (lualatex) draws it in its line")
+    (subject := some (Ir.picInlineKey "aa"))
+  t "a withdrawn picture in a line keeps its line, with the tool's words"
+    (match (Boundary.fold #[] false "lualatex" w2 #[inline]).toList with
+     | [d] => d.code == "W0334" && d.message == inline.message &&
+         hasStr (d.help.getD "") "an invented failure"
+     | _ => false)
 
 /-- **An inline picture never prints its own source.** `\tikz` in either of
 its forms (pgfmanual §12.2.2) — a braced command list, or one command up to
@@ -8814,16 +8894,16 @@ def picCacheChecks (ref : IO.Ref (List String)) : IO Unit := do
   -- The replay is the fresh diagnostic, not a degraded stand-in: same
   -- code, same message, same help carrying the tool's own last words.
   let says := "! Package pgf Error: No shape named `x' is known."
-  let fresh := DriverDiag.boundaryFailed "lualatex" says
+  let fresh := DriverDiag.boundaryFailed "lualatex" says (Ir.picSrcPrefix ++ "aa")
   let replayed := match PicCache.step false (some says) with
-    | .replay s => some (DriverDiag.boundaryFailed "lualatex" s)
+    | .replay s => some (DriverDiag.boundaryFailed "lualatex" s (Ir.picSrcPrefix ++ "aa"))
     | _ => none
   t "a replayed refusal is the fresh diagnostic, word for word"
     (replayed.map (·.code) == some fresh.code &&
      replayed.map (·.message) == some fresh.message &&
      replayed.bind (·.help) == fresh.help)
   t "the replayed help still carries the tool's own words"
-    (fresh.code == "E0382" && (fresh.help.any fun h => hasStr h says))
+    (fresh.code == "W0382" && (fresh.help.any fun h => hasStr h says))
   -- What the tool answered, read off the process ending and what it left
   -- behind. An exit the tool chose *and left a log for* is a verdict;
   -- nothing else is.
@@ -8891,16 +8971,16 @@ def picCacheChecks (ref : IO.Ref (List String)) : IO Unit := do
     (PicCache.probed (.unstarted "no such file") "" == .absent "no such file")
   t "a probe that never came back is no tool"
     (PicCache.probed (.overran 5) "" == .absent "no version within 5 s; killed")
-  -- The two endings route to two different losses, and the absent one is
-  -- the degraded one: a placeholder ships and the run stands. A picture the
-  -- tool ran on and refused keeps the dropped loss, undiminished.
+  -- The two endings route to two different losses, both degraded: a
+  -- placeholder ships and the run stands. A picture the tool ran on and
+  -- refused keeps its own code and the tool's words.
   let unavailable := DriverDiag.boundaryToolUnavailable "lualatex"
   t "a tool that is not there is a degraded loss, not a dropped one"
     (unavailable.code == "W0379" && DiagCode.W0379.loss == .degraded &&
      unavailable.severity == .warning)
-  t "a picture the tool refused is still a dropped loss"
-    ((DriverDiag.boundaryFailed "lualatex" says).code == "E0382" &&
-     DiagCode.E0382.loss == .dropped && unavailable.code != "E0382")
+  t "a picture the tool refused ships its placeholder under a code of its own"
+    ((DriverDiag.boundaryFailed "lualatex" says (Ir.picSrcPrefix ++ "aa")).code == "W0382" &&
+     DiagCode.W0382.loss == .degraded && unavailable.code != "W0382")
   -- The version memo: asked once per tool binary, not once per build. The
   -- version string is still the slot's key
   -- (`PicCache.versionStep_remembered_exact`), and a witness that moved

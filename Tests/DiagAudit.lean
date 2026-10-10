@@ -133,9 +133,12 @@ def registry : List AuditRow :=
    -- picture's constructs beside its placeholder: the siteAccounting rows.
    ⟨.N0100, .merge, .rewritten, check% siteAccountingChecks⟩,
    ⟨.W0362, .merge, .native, check% siteAccountingChecks⟩,
-   -- A boundary refusal the rendered subset stands in for: the note names
-   -- the withdrawal, and the subset's own codes carry the losses.
-   ⟨.N0419, .keep, .degraded, check% pictureRouteChecks⟩,
+   -- A boundary refusal the rendered subset stands in for: one line names
+   -- the picture, every construct the subset leaves out a clause of it.
+   ⟨.W0419, .keep, .degraded, check% pictureRouteChecks⟩,
+   -- A boundary picture no tool drew and the subset draws nothing of: the
+   -- placeholder ships and the line names it, in the tool's words.
+   ⟨.W0382, .keep, .degraded, check% pictureDefnReachChecks⟩,
    -- A line the author ended that the measure split; the paragraph's own
    -- last line is prose and sets as many lines as it needs, unnamed.
    ⟨.W0386, .keep, .degraded, check% titleBreakChecks⟩,

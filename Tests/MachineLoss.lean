@@ -12,22 +12,6 @@ open LeanTex.Core LeanTex.Cli
 
 namespace Tests
 
-/-- The opening tags of a page's failed-face placeholders: the spans that
-carry `data-image-src`. -/
-private def placeholderTags (html : String) : List String :=
-  ((html.splitOn "<span ").drop 1).filterMap fun rest =>
-    let tag := (rest.splitOn ">").headD ""
-    if hasStr tag "data-image-src=" then some tag else none
-
-/-- An attribute's value in one opening tag, as the serializer writes it. -/
-private def attrIn (tag name : String) : Option String :=
-  match (" " ++ tag).splitOn (" " ++ name ++ "=\"") with
-  | _ :: rest :: _ => some ((rest.splitOn "\"").headD "")
-  | _ => none
-
-private def labelled (tag : String) : Bool :=
-  (attrIn tag "aria-label").any (!·.isEmpty)
-
 /-- A boundary renderer that names its version and draws by copying a
 committed PDF beside a log. Shell builtins and `/bin/cp` alone, so a PATH
 holding nothing else still runs it. -/
@@ -193,11 +177,11 @@ validator that cannot start among them (exit 127 from a missing library,
 remembered nowhere, so the next build asks again); and a page icon whose
 check did not finish (W0605). The defects refused the page (E0606) and wrote
 nothing while the PDF shipped, and so did a refused render the document
-accepts (`\allow{E0382}`), which now ships the page's placeholder too. One
-path is not held here: a boundary render that did not finish — killed, a
+accepts (`\allow{E0382}`, the former spelling of W0382), which now ships the
+page's placeholder too. A boundary render that did not finish — killed, a
 spawn that raised, or a nonzero exit with no log, a renderer that cannot
-start after naming its version among them — stays E0382 and fails the run
-by design (`boundaryUnfinishedChecks`). The library
+start after naming its version among them — is W0382 as well, withdrawn
+nowhere and remembered nowhere (`boundaryUnfinishedChecks`). The library
 half holds the pure steps — a faceless boundary picture, or an include whose
 plan stopped, refuses the unmarked page and ships the marked one with no new
 diagnostic and the PDF unchanged, and an omitted face leaves a page that
@@ -419,8 +403,9 @@ def machineLossChecks (ref : IO.Ref (List String))
     let after ← checks
     t s!"machine loss CLI loader-broken SVG check: the next build asks the validator again ({before} then {after} checks)"
       (again.exitCode == 0 && before ≥ 1 && after > before)
-    -- A refused render the document accepts: the faceless picture's loss is
-    -- that E0382, accepted once, and the page ships its placeholder.
+    -- A refused render the document accepts under the code's former
+    -- spelling: the faceless picture's loss is W0382, accepted once, and the
+    -- page ships its placeholder.
     let accepted := dir / "accepted.tex"
     IO.FS.writeFile accepted (acceptedSource (corpus / "fonts"))
     let acceptedOut := dir / "accepted" / "page.html"
@@ -433,7 +418,7 @@ def machineLossChecks (ref : IO.Ref (List String))
       if event j == some "diagnostic" then (j.getObjValAs? String "code").toOption else none
     t s!"machine loss CLI accepted refusal: the build ships (exit {run.exitCode})" (run.exitCode == 0)
     t s!"machine loss CLI accepted refusal: the failed render is accepted once and no machine loss is named ({named})"
-      (acceptedCodes.any (·.any fun c => (c.getObjValAs? String "code").toOption == some "E0382" &&
+      (acceptedCodes.any (·.any fun c => (c.getObjValAs? String "code").toOption == some "W0382" &&
           (c.getObjValAs? Nat "count").toOption == some 1) &&
         !named.any (["E0606", "W0378", "W0379", "W0602", "W0605"].contains ·))
     match ← (IO.FS.readFile acceptedOut).toBaseIO with

@@ -150,7 +150,7 @@ open Tests (mintedSettingsChecks listingHighlightChecks listingPaletteContinuati
   listDeclarationChecks stringConditionalChecks)
 open TcolorboxChecks (tcolorboxChecks tcolorboxSourceChecks)
 open TcolorboxColors (tcolorboxColorChecks)
-open PictureBoundary (pictureBoundaryChecks)
+open PictureBoundary (pictureBoundaryChecks pictureWrapperChecks pictureShipChecks)
 open Tests (fontDefaultsChecks fontDefaultsOverrideChecks blockBarChecks batchChecks)
 
 namespace Reports
@@ -1143,7 +1143,28 @@ def reports : List Report := [
       "review of the fix: a skip inside a table cell, a bold run, a footnote or a frame or block title failed the build, an infinite stretch of another order or factor became the fill command, and in the browser a skip opening an untitled frame or a paused step, or opening an item, stood a paragraph skip deeper, a paragraph past a skip after a list or a theorem paid the sheet's peer gap where the page pays the paragraph skip, and a title bar's skips added a rule's default margins and the title's own; thirty-three assertions fail on the fix and hold now, every reviewed probe moves what follows by the skip in a browser within 0.01 points, and a title bar stands its own skip alone from the title in the browser",
       "second review of the fix: in the browser the follower past a skip right after a heading, or opening a centred block, a flushleft or an item, paid the paragraph gap where its place pays nothing without the skip, six points too far, and moved what followed a negative skip down; a glue keyword run into its dimension shipped the skip's rubber as unnamed text; and a page shipping none of the engine's stylesheet lost every skip; twenty-nine assertions fail on the reviewed tree and hold now, and every reviewed heading and container probe moves what follows by the skip in a browser within 0.01 points"]
     state := .guarded "7284e33a" .before .author },
-  { id := "R125", date := "2026-10-10"
+  { id := "R125", date := "2026-10-09"
+    what := "a picture outside the rendered subset fell back to the subset's drawing because its standalone wrapper loaded the deck's theme, which only the presentation class defines"
+    pins := [check% pictureWrapperChecks]
+    accept := ["with the class family's filter reverted and the guards kept, three wrapper assertions fail: a theme a local style requires, an add-on named for the presentation class, a colour theme the deck loads and a presentation tool's package reach the standalone",
+      "an invented deck whose local style requires its theme draws its picture at the boundary under lualatex, five filled circles and a label, where the base build's standalone stopped on the theme's first command and the page shipped the subset's label alone"]
+    state := .guarded "269bd628" .revert .author },
+  { id := "R126", date := "2026-10-09"
+    what := "a picture the rendered subset drew in part and the boundary tool refused stopped the whole document: the run exited with an error and wrote nothing, and the picture's loss was several lines"
+    pins := [check% pictureShipChecks, check% pictureRouteChecks,
+      thm% LeanTex.Cli.Boundary.fold_covers]
+    accept := ["with the fold, the placeholder's degraded loss and a line's own request reverted and the guards kept, seventy ship, pipeline and registry assertions fail: a picture drawn in part and one drawn by no one exit 1 and write neither artifact on a host whose tool refuses, on one whose tool never finishes and under the document's own declaration of no tool, a picture written twice is not one warning with its count, a refused picture in a table cell leaves its cell empty, and the full pipeline names no single line for a withdrawn picture",
+      "an invented document whose picture has an expression the subset cannot read and a construct outside it, and whose tool refuses it, ships its page with one warning naming every left-out construct and the tool's own words, where the base build exited 1 and wrote nothing"]
+    state := .guarded "269bd628" .revert .author },
+  { id := "R127", date := "2026-10-09"
+    what := "picture node labels sat about one and a half points above where lualatex sets them"
+    pins := [check% labelBaselineChecks, thm% Ir.Pic.labelBaseline_between,
+      thm% Layout.label_centre_glyph_free]
+    accept := ["measured against lualatex in one shared face at ten points on a raster at 1200 dpi, the ink centre from a rule at the anchor: a word of capitals 1.71 points high before and 0.99 after, a word of x-height letters 0.75 and 0.03, one with a descender 0.51 high and 0.21 low, one with an ascender 2.01 and 1.29; the seat is now pgf's own mid anchor, and what remains is the wobble lualatex's centre anchor adds",
+      "over the labels of a presentation deck's diagrams in its own face, measured as lualatex boxes, the mean departure from lualatex fell from 0.94 to 0.55 points and the largest from 1.72 to 1.21",
+      "with the band split at the face's baseline restored and the guards kept, six assertions fail: the seat, a word of x-height letters on lualatex's baseline against a rule on the page and in the browser, and the declared bound for a word of capitals, one with an ascender and one of figures"]
+    state := .guarded "269bd628" .revert .author },
+  { id := "R128", date := "2026-10-10"
     what := "Inter-line spacing came out wider than the reference engine's: a paragraph in a named size stood on the body's leading, the larger sizes and code listings at six fifths of their type, and a slide's lines and gaps on screen at the screen's prose rhythm instead of the page's"
     pins := [check% Tests.LineRhythm.stepLeadingChecks, check% Tests.LineRhythm.htmlStepChecks,
       check% Tests.LineRhythm.htmlGapChecks, check% Tests.LineRhythm.listingPitchChecks,
@@ -1167,7 +1188,7 @@ def reports : List Report := [
       "a venue style's own size ladder: each declared step's lines at the leading it declares, beside the reference engine's",
       "the same deck's slides with pauses measured in a browser: every paragraph gap the declared one through each step, as on the page"]
     state := .guarded "fa516a828a2a36549fc2a56f1e1cb4d138b3b934" .before .author },
-  { id := "R126", date := "2026-10-10"
+  { id := "R129", date := "2026-10-10"
     what := "A slide of running prose read worse than the reference engine's: justified and hyphenated where the slide class sets its text ragged right"
     pins := [check% Tests.LineRhythm.raggedFrameChecks,
       check% Tests.LineRhythm.centredRuntChecks]
