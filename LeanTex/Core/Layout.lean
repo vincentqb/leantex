@@ -1365,6 +1365,14 @@ public structure PageOut where
   band : Option Sp := none
   deriving Repr, Inhabited
 
+/-- A page that shows nothing: no line, no fill and no placed picture ink.
+A page that is not blank ships at a boundary and as the last page
+(`brk_ships_exact`, `closeLast_ships_exact`), and the next box stands below
+what it holds: a picture of fills or of strokes alone is content as a line
+is. -/
+@[expose] public def PageOut.blank (p : PageOut) : Bool :=
+  p.lines.isEmpty && p.fills.isEmpty && p.inks.isEmpty
+
 public def PageOut.frameStamp (p : PageOut) : FrameStamp :=
   (p.frameOrigin, p.frame, p.foot)
 
@@ -7850,10 +7858,10 @@ private def Spacing.Page.noteHang (b : B) (depth : Option Sp := none) : Sp :=
   if b.frameArea == .margins then 0 else depth.getD b.notesDepth
 
 /-- Nothing stands on the page being built that the next band must be
-spaced below: no line and no opened frame body, or a column rewound to the
-page's start. -/
+spaced below: a blank page (`PageOut.blank`) with no opened frame body, or a
+column rewound to the page's start. -/
 private def Spacing.Page.fresh (b : B) : Bool :=
-  (b.cur.lines.isEmpty && !b.opened) || b.freshStart
+  (b.cur.blank && !b.opened) || b.freshStart
 
 /-- Attach a committed line's notes to the open page: each note's lines
 join `pendingNotes` shifted below what already stands, whole — no branch
@@ -8168,7 +8176,7 @@ private def Spacing.Page.finishPage (b : B) (owed : Sp := 0) (flush : Bool := fa
   -- their own glue shares, so a bar and its title stay attached.
   let pageFils := b.pageFils + (if b.skip.fil then 1 else 0)
   let paintedEnd := b.surfaceEnd lines fills inks
-  let leftover := if lines.size > b.pinnedLines then
+  let leftover := if lines.size > b.pinnedLines || inks.size > b.pinnedInks then
       -- the vertical distribution fills down to the note block's top, so
       -- flush or centred bottoms never move a note (they are appended
       -- after the shift, anchored at bodyBottom)
@@ -9204,9 +9212,9 @@ private def Spacing.Page.fitCommit (b : B) (mk : Sp → LineOut) (firstY stepY r
     let y := stepY b + b.surfaceTop
     let overflow := y + inkBelow + b.surfaceBottom - bottom
     let above := b.pageShrink + b.skip.shrink
-    -- An opened page with no line on it yet commits: a break would ship an
+    -- An opened page with nothing on it yet commits: a break would ship an
     -- empty frame page and gain the band nothing.
-    if overflow ≤ above ∨ b.noBreak ∨ b.cur.lines.isEmpty then
+    if overflow ≤ above ∨ b.noBreak ∨ b.cur.blank then
       (b.commit (mk y) depth below rl true (min overflow above)).attachNotes notes
     else
       let b := b.spillPage (overflow - above)
@@ -9491,7 +9499,7 @@ private theorem placeLine_gap_exact (fs : FontSet) (b : B) (x size : Sp)
   rw [hle]
   dsimp only
   simp only [displayState_cur, keepInk_cur]
-  simp only [Spacing.Page.fresh, hcur, hfresh, Bool.false_and, hpr, hrl, hid, Spacing.Page.peerGap, hnn, noteFloor,
+  simp only [Spacing.Page.fresh, PageOut.blank, hcur, hfresh, Bool.false_and, hpr, hrl, hid, Spacing.Page.peerGap, hnn, noteFloor,
     htx, hop, Option.isSome_none, Array.isEmpty_empty, Bool.or_self, Bool.false_eq_true, ite_false,
     ite_true, Int.add_zero, beq_self_eq_true]
   simp only [hfit, true_or, ite_true, Spacing.Page.commit, Spacing.Page.attachNotes,
@@ -9576,7 +9584,7 @@ private theorem finishPage_shift_uniform (b : B) (owed : Sp)
   simp only [hcond, hsf, hfil, hpn, Bool.false_and, Bool.false_eq_true, ite_false, ite_true,
     Array.append_empty, Nat.add_zero,
     Nat.lt_irrefl, Array.back?_push, Option.bind_some]
-  refine ⟨b.vdist.aboveShare (if b.cur.lines.size > b.pinnedLines then
+  refine ⟨b.vdist.aboveShare (if b.cur.lines.size > b.pinnedLines || b.cur.inks.size > b.pinnedInks then
       noteFloor b.bottom b.noteGap b.notesH b.noteHang -
         regionContentEnd (b.contentEnd owed) (b.surfaceEnd b.cur.lines b.cur.fills b.cur.inks)
     else 0), fun i hi => ?_⟩
@@ -15782,9 +15790,9 @@ private def stepStaged (fs : FontSet) (imgs : Image.Store) (st : StepSt)
     -- A boundary closes a page only when the page holds something: two
     -- adjacent frames share one boundary, not an empty page. Frame ground
     -- and distribution clear at an empty boundary; running style waits
-    -- for shipment (`emptyBreak_pageState`). Fills
-    -- are content too: a picture of fills alone is a page.
-    if !b.cur.lines.isEmpty || !b.cur.fills.isEmpty then
+    -- for shipment (`emptyBreak_pageState`). A page that is not blank
+    -- ships: a picture of fills or of strokes alone is a page.
+    if !b.cur.blank then
       b := { b.finishPage b.closingOwed with
                chrome := none, frameBreak := none, frameSource := none, spillWarned := false }
     else
@@ -16066,10 +16074,17 @@ private theorem frameClose_step_projects (fs : FontSet) (imgs : Image.Store) (st
   ⟨rfl, rfl, rfl, rfl⟩
 
 private theorem emptyBreak_pageState (fs : FontSet) (imgs : Image.Store)
-    (st : StepSt) (hl : st.b.cur.lines.isEmpty = true)
-    (hf : st.b.cur.fills.isEmpty = true) :
+    (st : StepSt) (hb : st.b.cur.blank = true) :
     (stepStaged fs imgs st .brk).b.pageState = st.b.pageState := by
-  simp [stepStaged, hl, hf]
+  simp [stepStaged, hb]
+
+/-- **A boundary ships the page it closes whenever that page is not blank**
+(`_exact`): a line, a fill or a placed picture's ink makes it one shipped
+page, so a picture alone is never dropped nor merged into what follows. -/
+private theorem brk_ships_exact (fs : FontSet) (imgs : Image.Store)
+    (st : StepSt) (hb : st.b.cur.blank = false) :
+    (stepStaged fs imgs st .brk).b.pages.size = st.b.pages.size + 1 := by
+  simp [stepStaged, hb, Spacing.Page.finishPage]
 
 /-- Place a float group whole: a float is unbreakable, as LaTeX's floats
 are (a float body is a `\vbox` — placed on one page or deferred, never
@@ -16086,7 +16101,7 @@ private def runFloat (fs : FontSet) (imgs : Image.Store) (st : StepSt)
     -- The float and the page bottom met: close the page and give the
     -- group the next one whole. The glue pending before the float dies
     -- with the boundary, as TeX discards glue at the top of a page.
-    let b := if st.b.cur.lines.isEmpty && st.b.cur.fills.isEmpty then st.b
+    let b := if st.b.cur.blank then st.b
       else st.b.finishPage
     let st2 := group.foldl (stepStaged fs imgs)
       { st with b := { b with noBreak := true } }
@@ -16818,14 +16833,14 @@ private theorem bgStep_runFloat (fs : FontSet) (imgs : Image.Store)
   simp only [LeanTex.Core.Layout.runFloat]
   split
   · exact bgStep_foldSteps fs imgs group st hg
-  · have h1 : BgStep st.b (if st.b.cur.lines.isEmpty && st.b.cur.fills.isEmpty
+  · have h1 : BgStep st.b (if st.b.cur.blank
         then st.b else st.b.finishPage) := by
       split
       · exact BgStep.refl _
       · exact bgStep_finishPage _
     have h2 := bgStep_foldSteps fs imgs group
       { st with b :=
-        { (if st.b.cur.lines.isEmpty && st.b.cur.fills.isEmpty then st.b
+        { (if st.b.cur.blank then st.b
            else st.b.finishPage) with noBreak := true } } hg
     refine (h1.trans ((BgStep.of_eq rfl rfl rfl).trans
       (h2.trans (BgStep.of_eq ?_ ?_ ?_))))
@@ -17588,14 +17603,14 @@ private theorem runFloat_frames (fs : FontSet) (imgs : Image.Store)
   split
   · exact foldSteps_frames fs imgs group st openings hb ho
   · have hc : FramesFooted openings
-        (if st.b.cur.lines.isEmpty && st.b.cur.fills.isEmpty
+        (if st.b.cur.blank
           then st.b else st.b.finishPage) := by
       split
       · exact hb
       · exact hb.step (frameStep_finishPage ..)
     have hr := foldSteps_frames fs imgs group
       { st with b :=
-        { (if st.b.cur.lines.isEmpty && st.b.cur.fills.isEmpty then st.b
+        { (if st.b.cur.blank then st.b
            else st.b.finishPage) with noBreak := true } } openings
       (hc.step (FrameStep.of_eq rfl rfl)) ho
     exact finish _ _ _ hr
@@ -18082,14 +18097,14 @@ private theorem runFloat_reflows (fs : FontSet) (imgs : Image.Store)
   simp only [LeanTex.Core.Layout.runFloat]
   split
   · exact foldSteps_reflows fs imgs group st hb
-  · have hc : (if st.b.cur.lines.isEmpty && st.b.cur.fills.isEmpty
+  · have hc : (if st.b.cur.blank
         then st.b else st.b.finishPage).ReflowsNamed := by
       split
       · exact hb
       · exact hb.step (reflowStep_finishPage ..)
     have hr := foldSteps_reflows fs imgs group
       { st with b :=
-        { (if st.b.cur.lines.isEmpty && st.b.cur.fills.isEmpty then st.b
+        { (if st.b.cur.blank then st.b
            else st.b.finishPage) with noBreak := true } }
       (hc.step (ReflowStep.of_eq rfl rfl))
     exact finish _ _ _ hr
@@ -18197,7 +18212,7 @@ private theorem runFloat_whole (fs : FontSet) (imgs : Image.Store) (st : StepSt)
     -- pre-float flush; under `noBreak` the group closes nothing.
     have hfold := foldSteps_noBreak fs imgs group
       { st with b :=
-        { (if st.b.cur.lines.isEmpty && st.b.cur.fills.isEmpty then st.b
+        { (if st.b.cur.blank then st.b
            else st.b.finishPage) with noBreak := true } } rfl hg
     split at hfold
     · left
@@ -19883,8 +19898,7 @@ private def withLayoutOps {α : Type} (geom : Geom) (fs : FontSet)
     let prose := st.prose
     -- The trailing boundary of a final frame has already closed its page; a
     -- document is never given an empty page for it.
-    let b := if !st.b.cur.lines.isEmpty || !st.b.cur.fills.isEmpty
-        || st.b.pages.isEmpty then
+    let b := if !st.b.cur.blank || st.b.pages.isEmpty then
         st.b.finishPage st.b.closingOwed
       else st.b
     -- The measure, checked against the readable band once the document has
@@ -20180,7 +20194,7 @@ private theorem census_placeFrom {n : Nat} (pick : Option Nat → Bool → Bool)
 
 private theorem census_close {n : Nat} (pick : Option Nat → Bool → Bool)
     (b : B) (hb : b.SourceBound n) :
-    let out := if !(Spacing.Page.cur b).lines.isEmpty || !(Spacing.Page.cur b).fills.isEmpty || (Spacing.Page.pages b).isEmpty
+    let out := if !(Spacing.Page.cur b).blank || (Spacing.Page.pages b).isEmpty
       then b.finishPage b.closingOwed else b
     (Spacing.Page.pages out).toList.flatMap (pageCensus pick) = Spacing.Page.census pick b := by
   dsimp only
@@ -20190,12 +20204,13 @@ private theorem census_close {n : Nat} (pick : Option Nat → Bool → Bool)
     simpa only [List.append_nil] using hc
   · rename_i hn
     have he : (Spacing.Page.cur b).lines = #[] := by
-      simpa using (Bool.or_eq_false_iff.mp (Bool.or_eq_false_iff.mp
-        (Bool.eq_false_iff.mpr hn)).1).1
+      have hb := (Bool.or_eq_false_iff.mp (Bool.eq_false_iff.mpr hn)).1
+      simp only [PageOut.blank, Bool.not_eq_false', Bool.and_eq_true, Array.isEmpty_iff] at hb
+      exact hb.1.1
     simp only [Spacing.Page.census, pageCensus, he, Array.toList_empty, List.flatMap_nil, List.append_nil]
 
 private theorem clean_close (b : B) :
-    let out := if !(Spacing.Page.cur b).lines.isEmpty || !(Spacing.Page.cur b).fills.isEmpty || (Spacing.Page.pages b).isEmpty
+    let out := if !(Spacing.Page.cur b).blank || (Spacing.Page.pages b).isEmpty
       then b.finishPage b.closingOwed else b
     GlyphClean (Spacing.Page.diags out) → GlyphClean (Spacing.Page.diags b) := by
   dsimp only
@@ -21139,7 +21154,7 @@ private theorem line_placement (r : Context) (b : Page) (x size : Sp)
   rw [hle]
   dsimp only
   simp only [displayState_cur, keepInk_cur, displayState_pages, keepInk_pages]
-  simp only [Spacing.Page.fresh, hcur, hfresh, Bool.false_and, hpr, hrl, hid, Spacing.Page.peerGap, hnn,
+  simp only [Spacing.Page.fresh, PageOut.blank, hcur, hfresh, Bool.false_and, hpr, hrl, hid, Spacing.Page.peerGap, hnn,
     noteFloor, htx, hop, Option.isSome_none, Array.isEmpty_empty, Bool.or_self,
     Bool.false_eq_true, ite_false, ite_true, Int.add_zero, beq_self_eq_true,
     Option.getD_none]
@@ -21157,7 +21172,7 @@ public theorem place_exact (a : Pending) (r : Context) (b : Page) (x size : Sp)
     shipped (place a r b x size segs width) = shipped b ∧
       baselines (place a r b x size segs width) =
         (baselines b).push (i.origin + g.width) := by
-  have hf : Spacing.Page.fresh b = false := by simp [Spacing.Page.fresh, h.1, h.2.1]
+  have hf : Spacing.Page.fresh b = false := by simp [Spacing.Page.fresh, PageOut.blank, h.1, h.2.1]
   let g := (flushed a r).foldl Glue.add b.skip
   have hr : Ready { b with skip := g } segs := h
   have hp := line_placement r { b with skip := g } x size segs width hr (by
@@ -21200,7 +21215,7 @@ public def program (geom : Geom) (fs : FontSet) (doc : Ir.Doc) : Program :=
     (fun ops initial _ => ⟨ops, initial⟩)
 
 private def closeLast (b : B) : B :=
-  if !b.cur.lines.isEmpty || !b.cur.fills.isEmpty || b.pages.isEmpty then
+  if !b.cur.blank || b.pages.isEmpty then
     b.finishPage b.closingOwed
   else b
 
@@ -21219,8 +21234,15 @@ private theorem close_natural (b : B)
     (hp : b.pendingNotes.isEmpty = true) :
     (closeLast b).pages.map (fun p => p.lines) =
       (b.pages.map (fun p => p.lines)).push b.cur.lines := by
-  simp [closeLast, hcur, Spacing.Page.finishPage, Int.not_lt.mpr hn, hf, hs,
+  simp [closeLast, PageOut.blank, hcur, Spacing.Page.finishPage, Int.not_lt.mpr hn, hf, hs,
     hv, VDist.aboveShare, VDist.top, filShare, Spacing.Page.noteLines, hp]
+
+/-- **The last page ships whenever it is not blank** (`_exact`), the door
+`ship` closes through (`program_ship`): a document ending on a picture alone
+ends on that picture's page. -/
+private theorem closeLast_ships_exact (b : B) (hb : b.cur.blank = false) :
+    (closeLast b).pages.size = b.pages.size + 1 := by
+  simp [closeLast, hb, Spacing.Page.finishPage]
 
 end LeanTex.Core.Layout.Spacing
 
@@ -21307,7 +21329,7 @@ private theorem ordinary_line (fs : FontSet) (b : B) (x size : Sp)
   rcases h with ⟨hc, hs, hp, hr, hn, hi, ht⟩
   unfold Spacing.Page.placeLine Spacing.Page.fitCommit
   dsimp only
-  simp only [Spacing.Page.fresh, hc, hs, Bool.false_and, hp, hr, hi, Spacing.Page.peerGap, hn,
+  simp only [Spacing.Page.fresh, PageOut.blank, hc, hs, Bool.false_and, hp, hr, hi, Spacing.Page.peerGap, hn,
     noteFloor, ht, Option.isSome_none, Array.isEmpty_empty, Bool.or_self,
     Bool.false_eq_true, ite_false, ite_true, Int.add_zero, beq_self_eq_true]
   simp only [LineFits, nextBaseline] at hf

@@ -29,6 +29,82 @@ def attr? (attrs : Array (String × String)) (key : String) : Option String :=
 end Tests.GfxRegression
 
 open Tests.GfxRegression in
+/-- **A placed picture's ink is its page's content.** A page holding nothing
+but a picture made of fills, or of strokes, ships alone at a page break, at a
+frame boundary and as the document's last page, and a float that does not fit
+after it opens a page of its own; what follows the picture on its page — a
+paragraph, a second picture — stands below it; and the page's vertical
+distribution moves it, a `[c]` frame's centring and fil glue alike. Each
+held over `Layout.Out`,
+each failing while page shipment and placement read only a page's lines and
+fills. Invented pictures. -/
+def gfxContentPageChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit := do
+  let t := check ref
+  let draws (out : Layout.Out) (i : Nat) : Nat := ((out.pages[i]?.map pageDraws).map (·.size)).getD 0
+  let fills := "\\fill[red] (0,0) rectangle (3,2);\n\\fill[blue] (4,0) rectangle (5,1);"
+  let strokes := "\\draw[red, line width=2pt] (0,0) -- (3,2);"
+  let article (body : String) : String :=
+    "\\documentclass{article}\\pictures{ tool = none }\\begin{document}\n" ++ body ++ "\n\\end{document}"
+  let pic (body : String) : String := "\\begin{tikzpicture}\n" ++ body ++ "\n\\end{tikzpicture}"
+  let deck (body : String) : String :=
+    "\\documentclass{beamer}\\pictures{ tool = none }\\begin{document}\n" ++
+    "\\begin{frame}{Opening}\nOpening slide text.\n\\end{frame}\n" ++
+    "\\begin{frame}\n" ++ pic body ++ "\n\\end{frame}\n" ++
+    "\\begin{frame}{Closing}\nClosing slide text.\n\\end{frame}\n\\end{document}"
+  for (kind, body, marks) in [("fills", fills, 2), ("strokes", strokes, 1)] do
+    let last := layoutOf oneFace (elabStr (article ("An opening paragraph.\n\\newpage\n" ++ pic body))).1
+    t s!"a picture of {kind} alone is the document's last page"
+      (last.pages.size == 2 && draws last 0 == 0 && draws last 1 == marks)
+    let middle := layoutOf oneFace (elabStr (article ("An opening paragraph.\n\\newpage\n" ++ pic body ++
+      "\n\\newpage\nA closing paragraph."))).1
+    t s!"a picture of {kind} alone between two page breaks is a page of its own"
+      (middle.pages.size == 3 && draws middle 0 == 0 && draws middle 1 == marks && draws middle 2 == 0)
+    let frames := layoutOf oneFace (elabStr (deck body)).1
+    t s!"a frame holding a picture of {kind} alone is a page of its own"
+      (frames.pages.size == 3 && draws frames 1 == marks && draws frames 2 == 0)
+  let bottomOf (out : Layout.Out) (i : Nat) : Option Dim.Sp := do
+    let ds := (← out.pages[0]?).inks.flatMap fun k =>
+      (pageDraws { inks := #[k] }).map fun (g, _, _) => markExtent g
+    let (_, y, _, h) ← ds[i]?
+    return y + h
+  let after := layoutOf oneFace (elabStr (article (pic fills ++ "\n\nA paragraph after it."))).1
+  t "a paragraph after a picture of fills at a page's top stands below it"
+    (match bottomOf after 0, after.pages[0]?.bind fun p => (p.lines.filter (!·.furniture))[0]? with
+     | some bottom, some l => after.pages.size == 1 && bottom < l.y
+     | _, _ => false)
+  let twice := layoutOf oneFace
+    (elabStr (article (pic "\\fill[red] (0,0) rectangle (3,2);" ++ "\n\n" ++
+      pic "\\fill[blue] (0,0) rectangle (3,2);"))).1
+  let tops := ((twice.pages[0]?.map pageDraws).getD #[]).map fun (g, _, _) => (markExtent g).2.1
+  t "a second picture after a picture of fills stands below it"
+    (match bottomOf twice 0, tops[1]? with
+     | some bottom, some top => twice.pages.size == 1 && bottom ≤ top
+     | _, _ => false)
+  let topOf (out : Layout.Out) (page : Nat) : Option Dim.Sp := do
+    let (g, _, _) ← (pageDraws (← out.pages[page]?))[0]?
+    return (markExtent g).2.1
+  let frameSrc (opt : String) : String :=
+    "\\documentclass{beamer}\\pictures{ tool = none }\\begin{document}\n\\begin{frame}" ++ opt ++
+      "\n" ++ pic "\\fill[red] (0,0) rectangle (3,2);" ++ "\n\\end{frame}\n\\end{document}"
+  let pageH (src : String) : Dim.Sp := (Layout.Geom.ofPage (elabStr src).1.page).pageH
+  let lay (src : String) : Layout.Out := layoutOf oneFace (elabStr src).1
+  t "a frame holding only a picture centres it, as it centres a line"
+    (match topOf (lay (frameSrc "")) 0, topOf (lay (frameSrc "[t]")) 0 with
+     | some c, some top => pageH (frameSrc "") / 8 < c - top
+     | _, _ => false)
+  let filled := article ("\\vspace*{\\fill}\n" ++ pic fills ++ "\n\\vspace*{\\fill}")
+  t "fil glue around a picture alone on its page moves it, as it moves a line"
+    (match topOf (lay filled) 0, topOf (lay (article (pic fills))) 0 with
+     | some f, some b => pageH filled / 8 < f - b
+     | _, _ => false)
+  let tall := layoutOf oneFace (elabStr (article (pic "\\fill[red] (0,0) rectangle (3,14);" ++
+    "\n\n\\begin{figure}[h]\n" ++ pic "\\fill[blue] (0,0) rectangle (3,9);" ++
+    "\n\\caption{An invented figure.}\n\\end{figure}"))).1
+  t "a float after a picture-only page that it cannot share opens a page of its own"
+    (tall.pages.size == 2 && draws tall 0 == 1 && draws tall 1 == 1 &&
+      !tall.diags.any (·.code == "W0358"))
+
+open Tests.GfxRegression in
 /-- **The four cross-backend picture defects the vector model closed**,
 each asserted over the artifact a reader meets — the page's typed stream
 and `Layout.Out`, the typed HTML tree — and each failing before the model
