@@ -29,6 +29,19 @@ grey — and fails unless every mutant lands worse than never-worse while
 its unmutated face stays within. A report, never a gate: it needs
 Poppler, Chromium and ImageMagick, and a missing tool fails the run with
 its name.
+
+  lake env lean --run scripts/pdffig-diff.lean --cmyk [--selftest]
+
+`--cmyk` measures the importer's device CMYK preview (`PdfGfx.cmykRgb`)
+against Poppler's: a probe page of device CMYK patches — the cube's
+sixteen corners, then the lattice {0.2, 0.5, 0.8}⁴ — rasterized by
+`pdftoppm` at one pixel per point and read at each patch's centre. A
+corner must be the table's colour exactly (`PdfGfx.cmykCorners` is this
+measurement), and a lattice colour within one step of a byte per channel
+of the interpolation, which is the rounding apart of two evaluations of
+one multilinear blend. `--cmyk --selftest` moves the measured pixels and
+fails unless the judge catches a corner one step off and a lattice colour
+two steps off, and passes a lattice colour one step off. Poppler only.
 -/
 import LeanTex
 import scripts.RasterJudge
@@ -116,10 +129,175 @@ def measure (chrome : String) (work : System.FilePath) (stem : String) (pdf : Sy
   return { native := ← distance work s!"{stem}-n" native ref.2,
            converter := ← distance work s!"{stem}-c" conv ref.2, eps := eps.1 }
 
+/-- A component in tenths, as a PDF number. -/
+def tenths (t : Nat) : String := if t ≥ 10 then "1" else s!"0.{t}"
+
+/-- The CMYK probe's patches, components in tenths: the cube's sixteen
+corners, index `8c + 4m + 2y + k` as `PdfGfx.cmykCorners` holds them,
+then every colour of the lattice {0.2, 0.5, 0.8}⁴. -/
+def cmykPatches : Array (Nat × Nat × Nat × Nat) := Id.run do
+  let mut ps : Array (Nat × Nat × Nat × Nat) := #[]
+  for i in [0:16] do
+    let bit (j : Nat) : Nat := if (i / 2 ^ (3 - j)) % 2 == 1 then 10 else 0
+    ps := ps.push (bit 0, bit 1, bit 2, bit 3)
+  let lattice : Array Nat := #[2, 5, 8]
+  for c in lattice do
+    for m in lattice do
+      for y in lattice do
+        for k in lattice do
+          ps := ps.push (c, m, y, k)
+  return ps
+
+/-- The probe's grid: patches of `patchSide` points, `patchColumns` to a
+row from the top left. -/
+def patchColumns : Nat := 16
+def patchSide : Nat := 10
+
+def patchRows : Nat := (cmykPatches.size + patchColumns - 1) / patchColumns
+
+/-- A number as an xref offset: ten digits. -/
+def pad10 (n : Nat) : String :=
+  let s := toString n
+  "".pushn '0' (10 - s.length) ++ s
+
+/-- The probe page: each patch filled in device CMYK, nothing else. -/
+def cmykProbe : ByteArray := Id.run do
+  let height := patchRows * patchSide
+  let mut ops := ""
+  for p in [0:cmykPatches.size] do
+    let (c, m, y, k) := cmykPatches[p]?.getD (0, 0, 0, 0)
+    let x := (p % patchColumns) * patchSide
+    let bottom := height - (p / patchColumns + 1) * patchSide
+    ops := ops ++ s!"{tenths c} {tenths m} {tenths y} {tenths k} k {x} {bottom} {patchSide} {patchSide} re f\n"
+  let objs : Array String := #["<< /Type /Catalog /Pages 2 0 R >>",
+    "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+    s!"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 {patchColumns * patchSide} {height}] \
+/Resources << >> /Contents 4 0 R >>",
+    s!"<< /Length {ops.utf8ByteSize} >>\nstream\n{ops}endstream"]
+  let mut out := "%PDF-1.7\n"
+  let mut offsets : Array Nat := #[]
+  for i in [0:objs.size] do
+    offsets := offsets.push out.utf8ByteSize
+    out := out ++ s!"{i + 1} 0 obj\n{objs[i]?.getD ""}\nendobj\n"
+  let xref := out.utf8ByteSize
+  out := out ++ s!"xref\n0 {objs.size + 1}\n0000000000 65535 f \n"
+  for o in offsets do
+    out := out ++ s!"{pad10 o} 00000 n \n"
+  out := out ++ s!"trailer\n<< /Size {objs.size + 1} /Root 1 0 R >>\nstartxref\n{xref}\n%%EOF\n"
+  return out.toUTF8
+
+/-- A binary PPM's width and samples, as `pdftoppm` writes one: `P6`, then
+width, height and 255, each ended by one white-space byte. -/
+def readPpm (b : ByteArray) : Option (Nat × ByteArray) := Id.run do
+  let mut fields : Array Nat := #[]
+  let mut cur : Option Nat := none
+  let mut start : Option Nat := none
+  for i in [2:min b.size 64] do
+    if start.isNone then
+      let c := b[i]!
+      if c ≥ 48 && c ≤ 57 then
+        cur := some (cur.getD 0 * 10 + (c.toNat - 48))
+      else if let some n := cur then
+        fields := fields.push n
+        cur := none
+        if fields.size == 3 then start := some (i + 1)
+  let some s := start | return none
+  let w := fields[0]!
+  let h := fields[1]!
+  if b.size < 2 || b[0]! != 80 || b[1]! != 54 || fields[2]! != 255 || s + w * h * 3 > b.size then
+    return none
+  return some (w, b.extract s (s + w * h * 3))
+
+/-- A patch's centre pixel in a raster `w` pixels wide at one pixel per point. -/
+def patchPixel (w : Nat) (px : ByteArray) (p : Nat) : Option (UInt8 × UInt8 × UInt8) :=
+  let x := (p % patchColumns) * patchSide + patchSide / 2
+  let y := (p / patchColumns) * patchSide + patchSide / 2
+  let o := (y * w + x) * 3
+  if o + 2 < px.size then some (px[o]!, px[o + 1]!, px[o + 2]!) else none
+
+def step (a b : UInt8) : Nat := if a ≥ b then (a - b).toNat else (b - a).toNat
+
+/-- A patch's name: its components. -/
+def patchName (p : Nat) : String :=
+  let (c, m, y, k) := cmykPatches[p]?.getD (0, 0, 0, 0)
+  s!"{tenths c} {tenths m} {tenths y} {tenths k}"
+
+/-- The engine's preview of a patch's colour. -/
+def preview (p : Nat) : UInt8 × UInt8 × UInt8 :=
+  let (c, m, y, k) := cmykPatches[p]?.getD (0, 0, 0, 0)
+  PdfGfx.cmykRgb ((c : Rat) / 10) ((m : Rat) / 10) ((y : Rat) / 10) ((k : Rat) / 10)
+
+/-- How many steps of a byte a pixel stands from a patch's preview, on its
+farthest channel. -/
+def stepsOff (p : Nat) (px : UInt8 × UInt8 × UInt8) : Nat :=
+  let (wr, wg, wb) := preview p
+  let (r, g, b) := px
+  max (step r wr) (max (step g wg) (step b wb))
+
+/-- **The judge of the CMYK preview**: the patches where the measured pixel
+stands from `PdfGfx.cmykRgb` by more than its bound — none for a corner,
+whose colour the table holds as measured, one step of a byte per channel
+for a lattice colour. -/
+def cmykOffences (pixel : Nat → Option (UInt8 × UInt8 × UInt8)) : Array String := Id.run do
+  let mut out : Array String := #[]
+  for p in [0:cmykPatches.size] do
+    let bound := if p < 16 then 0 else 1
+    match pixel p with
+    | none => out := out.push s!"{patchName p}: no pixel"
+    | some (r, g, b) =>
+      let d := stepsOff p (r, g, b)
+      if d > bound then
+        let (wr, wg, wb) := preview p
+        out := out.push s!"{patchName p}: Poppler ({r}, {g}, {b}), preview ({wr}, {wg}, {wb}), \
+{d} steps over a bound of {bound}"
+  return out
+
+/-- The selftest's moves: which patch, how many steps its measured red
+channel is put from the preview's, and whether the judge must catch it. -/
+def cmykMoves : Array (String × Nat × Nat × Bool) :=
+  #[("a corner one step off", 1, 1, true), ("a lattice colour two steps off", 16, 2, true),
+    ("a lattice colour one step off", 40, 1, false)]
+
+def cmykMain (selftest : Bool) : IO UInt32 := do
+  let work ← IO.FS.createTempDir
+  let pdf := work / "cmyk.pdf"
+  IO.FS.writeBinFile pdf cmykProbe
+  let _ ← tool "pdftoppm" #["-r", "72", "-singlefile", "-f", "1", "-l", "1", pdf.toString,
+    (work / "cmyk").toString]
+  let version := ((← runTool "pdftoppm" #["-v"]).map fun out => (out.stderr.splitOn "\n").headD "").getD ""
+  let some (w, px) := readPpm (← IO.FS.readBinFile (work / "cmyk.ppm")) |
+    IO.eprintln "pdffig-diff: pdftoppm's raster of the CMYK probe is no binary PPM"; return 1
+  IO.println s!"pdffig-diff --cmyk: {version}; 16 corners, {cmykPatches.size - 16} lattice colours"
+  let pixel := patchPixel w px
+  let offences := cmykOffences pixel
+  for o in offences do IO.println s!"OFF     {o}"
+  let mut corners := 0
+  let mut lattice := 0
+  for p in [0:cmykPatches.size] do
+    if let some px := pixel p then
+      if p < 16 then corners := max corners (stepsOff p px) else lattice := max lattice (stepsOff p px)
+  IO.println s!"{if offences.isEmpty then "within" else "OFF   "}  corners at most {corners} step(s) \
+from the table, lattice at most {lattice} from the preview"
+  let mut failed := offences.size
+  if selftest then
+    for (what, patch, steps, caught) in cmykMoves do
+      let off := steps.toUInt8
+      let wr := (preview patch).1
+      let moved : Nat → Option (UInt8 × UInt8 × UInt8) := fun p =>
+        (pixel p).map fun (r, g, b) =>
+          if p == patch then (if wr ≥ 128 then wr - off else wr + off, g, b) else (r, g, b)
+      let flagged := (cmykOffences moved).size > offences.size
+      let ok := flagged == caught && offences.isEmpty
+      IO.println s!"{if ok then "held  " else "MISSED"}  {what}: {if flagged then "caught" else "passed"}"
+      unless ok do failed := failed + 1
+  IO.println s!"pdffig-diff: probe and raster under {work}"
+  return if failed == 0 then 0 else 1
+
 end PdfFigDiff
 
 open PdfFigDiff in
 def main (args : List String) : IO UInt32 := do
+  if args.contains "--cmyk" then return ← cmykMain (args.contains "--selftest")
   let some (chrome, version) ← findChrome |
     IO.eprintln "pdffig-diff: no Chrome (LEANTEX_CHROME or Playwright's cache)"; return 2
   let work ← IO.FS.createTempDir
