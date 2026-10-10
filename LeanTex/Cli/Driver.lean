@@ -45,6 +45,7 @@ import LeanTex.Cli.BrowserFaces
 import LeanTex.Cli.ListingHighlight
 import LeanTex.Cli.PublicationPaths
 import LeanTex.Cli.Publication
+import LeanTex.Cli.RunCost
 
 namespace LeanTex.Cli.Driver
 
@@ -56,6 +57,10 @@ structure Ui where
   errStream : IO.FS.Stream
   outStream : IO.FS.Stream
   showOutput : Bool := false
+  /-- Whether the summary states the process's peak: a plain run's process
+  did nothing else, and a watcher's rebuild has one only where its start reset
+  the peak. -/
+  statesPeak : Bool := true
 
 def Ui.mk' (cfg : Config) : IO Ui := do
   let errStream ← IO.getStderr
@@ -66,7 +71,7 @@ def Ui.mk' (cfg : Config) : IO Ui := do
       let noColor := (← IO.getEnv "NO_COLOR").isSome
       let tty ← errStream.isTty
       pure (!noColor && tty)
-  return ⟨cfg, color, errStream, ← IO.getStdout, false⟩
+  return ⟨cfg, color, errStream, ← IO.getStdout, false, true⟩
 
 /-- The sole terminal sink for document diagnostics: keep Diag values from
 DriverDiag and other producers structured through resolution, and render only
@@ -116,17 +121,39 @@ def Ui.phase (ui : Ui) (name detail : String) (ms : Nat) : IO Unit := do
     else
       ui.errStream.putStrLn (Render.humanPhase name detail ms)
 
+/-- The `font` phase. Its porcelain record also names, as typed fields, the
+face files the settled font set loaded and how many faces its scan found: a
+report holds a build to those, where the detail is prose. -/
+def Ui.fontPhase (ui : Ui) (names : String) (paths : Array String) (scanned ms : Nat) :
+    IO Unit := do
+  let detail := s!"{names} ({", ".intercalate paths.toList})"
+  if ui.cfg.porcelain && ui.cfg.verbosity ≥ 1 then
+    ui.outStream.putStrLn (Render.porcelainFontPhase detail ms paths scanned)
+  else ui.phase "font" detail ms
+
+/-- The most memory the process held resident while this build ran. A
+watcher's earlier builds count too, for what they left resident: the process
+keeps memory it has freed. -/
+def Ui.peak (ui : Ui) : IO (Option Nat) :=
+  if ui.statesPeak then RunCost.peakKiB else pure none
+
+/-- A summary ends a run's records, so it is flushed as it is written: under
+`--watch` the process never exits, and a reader on a pipe saw no rebuild until
+the buffer filled. -/
 def Ui.summary (ui : Ui) (file : String) (errors ms : Nat) (written : Array String := #[]) :
     IO Unit := do
   if ui.cfg.porcelain then
-    ui.outStream.putStrLn (Render.porcelainSummary file (errors == 0) errors ms written)
+    ui.outStream.putStrLn
+      (Render.porcelainSummary file (errors == 0) errors ms written (← ui.peak))
+    ui.outStream.flush
   else if !ui.cfg.quiet then
     ui.errStream.putStrLn (Render.humanSummary ui.color file errors ms written)
 
 def Ui.done (ui : Ui) (file output : String) (pages ms : Nat) (notes : Nat := 0) :
     IO Unit := do
   if ui.cfg.porcelain then
-    ui.outStream.putStrLn (Render.porcelainDone file output pages ms)
+    ui.outStream.putStrLn (Render.porcelainDone file output pages ms (← ui.peak))
+    ui.outStream.flush
   else if !ui.cfg.quiet then
     let shown := if ui.cfg.verbosity ≥ 1 then 0 else notes
     ui.errStream.putStrLn (Render.humanDone ui.color file output pages ms shown)
@@ -135,7 +162,8 @@ def Ui.done (ui : Ui) (file output : String) (pages ms : Nat) (notes : Nat := 0)
 choice and quiet policy alongside the other UI writers. -/
 def Ui.werror (ui : Ui) (file : String) (warnings ms : Nat) : IO Unit := do
   if ui.cfg.porcelain then
-    ui.outStream.putStrLn (Render.porcelainWerror file warnings ms)
+    ui.outStream.putStrLn (Render.porcelainWerror file warnings ms (← ui.peak))
+    ui.outStream.flush
   else if !ui.cfg.quiet then
     ui.errStream.putStrLn (Render.humanWerror ui.color file warnings ms)
 
@@ -672,7 +700,7 @@ def build (ui : Ui) (file : String) : IO UInt32 := do
         ui.summary file resolved.errors (← since t0)
         return 1
       let names := ", ".intercalate (fs.fonts.toList.map (·.psName))
-      ui.phase "font" s!"{names} ({paths})" (← since t)
+      ui.fontPhase names paths scan.faces.size (← since t)
       -- The artifact is a function of the document and the font
       -- environment, never of whichever face happened to be resolved first
       -- (`settlement`).
@@ -988,7 +1016,12 @@ def hyphenate (ui : Ui) (words : List String) (file : Option String) : IO UInt32
   return 0
 
 /-- Rebuild whenever the source changes, by polling its mtime every 200 ms —
-no inotify dependency. Each rebuild prints the usual summary line. -/
+no inotify dependency. Each rebuild prints the usual summary line. Its peak is
+reset as the rebuild starts, so it is the most the watcher held from then on,
+and that counts what earlier builds left resident: the first rebuild after a
+heavier revision can read about that revision's peak, and a later one less once
+that memory has been returned to the system. A platform that cannot reset the
+peak states none for a rebuild; the first build's peak is the process's own. -/
 def watch (cfg : Config) (file : String) : IO UInt32 := do
   let mtime : IO (Option IO.FS.SystemTime) := do
     try
@@ -1002,7 +1035,8 @@ def watch (cfg : Config) (file : String) : IO UInt32 := do
     let m ← mtime
     if m != last && m.isSome then
       last := m
-      discard <| build (← Ui.mk' cfg) file
+      let statesPeak ← RunCost.resetPeak
+      discard <| build { (← Ui.mk' cfg) with statesPeak } file
   return 0
 
 public def main (argv : List String) : IO UInt32 := do

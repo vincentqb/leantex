@@ -846,8 +846,8 @@ deleted outright and the gate stayed green.
 Names beyond the ones this agent shipped are the siblings' tiers, declared
 ahead of their arrival so their absence is visible. -/
 def declaredTiers : List String :=
-  ["commonmark", "compat", "coverage", "diagaudit", "diagdebt", "external", "htmla11y",
-   "htmlreader", "mdtwin", "parity", "purity", "rhythm", "typeset"]
+  ["commonmark", "compat", "coverage", "diagaudit", "diagdebt", "doccost", "external",
+   "htmla11y", "htmlreader", "mdtwin", "parity", "purity", "rhythm", "typeset"]
 
 /-- The declared tiers that have not landed yet: only these may be absent,
 and their absence reports `missing`, which the aggregate does not gate — so
@@ -862,10 +862,11 @@ def pendingTiers : List String :=
   []
 
 /-- Build every tier producer and its test dependencies before fan-out.
-Interpreted tools otherwise read stale compiled modules. No tier spawns
-the document executable; a producer that does must add that target here. -/
+Interpreted tools otherwise read stale compiled modules. A producer that
+spawns the document executable needs it built from this tree too: `doccost`
+measures `leantex` itself. -/
 def tierImports : List String :=
-  ["ScriptsModules", "TestsModules"]
+  ["ScriptsModules", "TestsModules", "leantex"]
 
 /-- The `tierImports` this tree actually declares. Read off `lakefile.toml`,
 so a name that has not arrived yet is skipped instead of failing the build

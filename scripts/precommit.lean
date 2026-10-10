@@ -1624,8 +1624,8 @@ Mask strings and nested block comments across lines so documentation and
 multiline help cannot look like output calls. -/
 def diagnosticOutputBypasses (file : String) (lines : Array String) : Array (Nat × String) := Id.run do
   unless file == "Main.lean" || file.startsWith "LeanTex/Cli/" do return #[]
-  let writers := ["Ui.diag", "Ui.accepted", "Ui.phase", "Ui.summary", "Ui.done",
-    "Ui.werror", "main", "dump", "hyphenate"]
+  let writers := ["Ui.diag", "Ui.accepted", "Ui.phase", "Ui.fontPhase", "Ui.summary",
+    "Ui.done", "Ui.werror", "main", "dump", "hyphenate"]
   let names (s : String) := (s.split (fun c => !(isWordChar c || c == '.'))).toList.map
     (·.toString) |>.filter (!·.isEmpty)
   -- Output is also a configuration/path field. Only associate it with

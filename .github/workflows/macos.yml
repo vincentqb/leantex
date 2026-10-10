@@ -1,0 +1,33 @@
+# The README promises macOS, and the push and pull-request gates run on Linux
+# only. Once a week, and on request, this builds and tests on macOS, so a break
+# there shows within a week instead of on a writer's machine. It also holds
+# what only another platform can: the peak a run states for itself where
+# Linux's high-water mark is not the answer (Tests/RunCost.lean), and the
+# document-cost tier's verdicts and sizes from builds on another system.
+name: macos
+
+on:
+  schedule:
+    - cron: '41 6 * * 1'
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: macos-latest
+    timeout-minutes: 300
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Install image test dependencies
+        run: brew install librsvg poppler
+      - uses: leanprover/lean-action@v1
+        with:
+          build: true
+          test: true
+          lint: false
+          build-args: "--wfail LeanTex leantex Tests scoreboard"
+      - name: baseline selftests
+        run: .lake/build/bin/scoreboard --selftest
+      - name: scoreboard ratchet
+        run: .lake/build/bin/scoreboard --check

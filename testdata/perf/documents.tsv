@@ -1,0 +1,3 @@
+# Document-cost history: one run per block, appended by `lake env lean --run scripts/bench.lean --doc-cost --record` from a clean checkout of a commit main holds; never edited by hand.
+# Format: scripts/PerfHistory.lean. Items: <document>-<size>/<format>/{cold,warm,rss,bytes,layout,edit,rebuild,instructions}, growth/footprint/rss, growth/<family>/<format>/{rss,wall}[-16n], corpus/<fixture>/<format>/rss, corpus/all/<format>/ms.
+# Sealed builds (scripts/DocBench.lean): staged corpus fonts and images, no tool on PATH, empty HOME. Host-dependent; nothing here gates.

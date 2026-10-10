@@ -135,6 +135,7 @@ import Tests.RasterPages
 import Tests.Diag
 import Tests.DiagFold
 import Tests.DiagnosticFormat
+import Tests.RunCost
 import Tests.DiagnosticTrigger
 import Tests.DiagnosticImageOrigins
 import Tests.DiagnosticFontScope
@@ -818,6 +819,8 @@ def main (args : List String) : IO UInt32 := do
   inputDecodingChecks ref
   argsChecks ref
   renderChecks ref
+  runCostChecks ref
+  watchDeliveryChecks ref
   diagnosticFormatChecks ref
   diagnosticTriggerChecks ref
   diagnosticImageOriginChecks ref

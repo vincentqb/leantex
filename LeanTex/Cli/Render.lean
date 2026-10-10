@@ -192,17 +192,32 @@ public def porcelainPhase (name detail : String) (ms : Nat) : String :=
   obj [("event", jstr "phase"), ("name", jstr name), ("detail", jstr detail),
     ("ms", toString ms)]
 
+/-- The `font` phase, with the face files the settled font set loaded, in its
+order, and how many faces the scan it chose from found. -/
+public def porcelainFontPhase (detail : String) (ms : Nat) (paths : Array String)
+    (scanned : Nat) : String :=
+  obj [("event", jstr "phase"), ("name", jstr "font"), ("detail", jstr detail),
+    ("ms", toString ms), ("faces", "[" ++ String.intercalate "," (paths.toList.map jstr) ++ "]"),
+    ("scanned", toString scanned)]
+
+/-- A summary's cost: its wall milliseconds, then the most memory the process
+held resident while the build ran, in KiB, wherever the platform measured
+one. -/
+private def costFields (ms : Nat) (rssKiB : Option Nat) : List (String × String) :=
+  ("ms", toString ms) :: (rssKiB.map fun k => [("rssKiB", toString k)]).getD []
+
 public def porcelainSummary (file : String) (ok : Bool) (errors ms : Nat)
-    (written : Array String := #[]) : String :=
+    (written : Array String := #[]) (rssKiB : Option Nat := none) : String :=
   obj ([("event", jstr "summary"), ("file", jstr file),
     ("ok", if ok then "true" else "false")] ++
     (if written.isEmpty then [] else [("output", jstr (", ".intercalate written.toList))]) ++
-    [("errors", toString errors), ("ms", toString ms)])
+    [("errors", toString errors)] ++ costFields ms rssKiB)
 
-public def porcelainDone (file output : String) (pages ms : Nat) : String :=
-  obj [("event", jstr "summary"), ("file", jstr file), ("ok", "true"),
-    ("output", jstr output), ("pages", toString pages), ("errors", "0"),
-    ("ms", toString ms)]
+public def porcelainDone (file output : String) (pages ms : Nat)
+    (rssKiB : Option Nat := none) : String :=
+  obj ([("event", jstr "summary"), ("file", jstr file), ("ok", "true"),
+    ("output", jstr output), ("pages", toString pages), ("errors", "0")] ++
+    costFields ms rssKiB)
 
 public def porcelainAccepted (counts : List (String × Nat)) : String :=
   let total := counts.foldl (fun t (_, n) => t + n) 0
@@ -210,8 +225,9 @@ public def porcelainAccepted (counts : List (String × Nat)) : String :=
   obj [("event", jstr "accepted"), ("count", toString total),
     ("codes", "[" ++ String.intercalate "," codes ++ "]")]
 
-public def porcelainWerror (file : String) (warnings ms : Nat) : String :=
-  obj [("event", jstr "summary"), ("file", jstr file), ("ok", "false"),
-    ("errors", "0"), ("warnings", toString warnings), ("ms", toString ms)]
+public def porcelainWerror (file : String) (warnings ms : Nat)
+    (rssKiB : Option Nat := none) : String :=
+  obj ([("event", jstr "summary"), ("file", jstr file), ("ok", "false"),
+    ("errors", "0"), ("warnings", toString warnings)] ++ costFields ms rssKiB)
 
 end LeanTex.Cli.Render

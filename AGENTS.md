@@ -86,7 +86,12 @@ is skipped.
   segfault: `Ir.Pic.LabelInk` gaining fields took `scripts/html-oracle.lean`
   down that way.
 - Performance claims come only from `scripts/bench.lean` (vs lualatex on the
-  corpus), never from reasoning about the code.
+  corpus; `--doc-cost [--record]` for the invented reference documents and
+  the `testdata/perf` history, recorded only from commits `main` holds),
+  never from reasoning about the code. The bench is a report and never
+  gates a landing (its reference-list growth row fails its own run); of
+  document cost only the hermetic `doccost` tier (peak-memory growth,
+  artifact size) gates one.
 
 ## Conventions
 

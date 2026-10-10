@@ -80,7 +80,7 @@ now the scan's (`scanFaces`). Assembly is a function of the document, the
 faces in hand, the parses already made, and which assembly this is. -/
 public def buildFontSet (doc : Ir.Doc) (scan : FaceScan)
     (cache : FontEnv.Cache) (purpose : Purpose) :
-    IO (Except Diag (Font.FontSet × Ir.Doc × Array Diag × String)) := do
+    IO (Except Diag (Font.FontSet × Ir.Doc × Array Diag × Array String)) := do
   let spec := doc.fonts
   let bare := spec.body.isNone && spec.sans.isNone && spec.mono.isNone
     && spec.math.isNone
@@ -98,7 +98,7 @@ public def buildFontSet (doc : Ir.Doc) (scan : FaceScan)
           fonts := #[f]
           index := singleFaceIndex
           mathAlphabets := coverage }
-        return .ok (set, doc, alphaDiags, path)
+        return .ok (set, doc, alphaDiags, #[path])
   let mut diags : Array Diag := scan.diags
   let docDirs := scan.docDirs
   let faces := scan.faces
@@ -237,7 +237,7 @@ public def buildFontSet (doc : Ir.Doc) (scan : FaceScan)
           fonts := #[f]
           index := singleFaceIndex
           mathAlphabets := coverage }
-        return .ok (set, doc, diags ++ alphaDiags, face.path)
+        return .ok (set, doc, diags ++ alphaDiags, #[face.path])
   -- The math face answers its alphabet ranges once. Resolve the shared IR
   -- before `docScalars`, so a wholly unavailable alphabet never becomes a
   -- request the host fallback scan can answer by accident.
@@ -284,6 +284,6 @@ public def buildFontSet (doc : Ir.Doc) (scan : FaceScan)
     fallback := fallback
     math := mathIdx
     mathAlphabets := mathAlphabets }
-  return .ok (set, doc, diags, String.intercalate ", " paths.toList)
+  return .ok (set, doc, diags, paths)
 
 end LeanTex.Cli.FontAssembly

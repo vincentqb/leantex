@@ -1,0 +1,60 @@
+What the doccost tier's rss-growth items can see: two engine changes that are
+never committed, each applied, measured and reverted.
+
+Each patch makes the engine take, at the end of every build that writes an
+artifact, a block of memory filled from /dev/zero and then dropped, so the
+block reaches the build's peak and nothing else changes:
+
+  u106-quadratic-8k.patch  8 KiB per page squared
+  u106-linear-4m.patch     4 MiB per page
+
+On the deck's 16n document (518 pages) both take about 2 GiB, so the two
+differ in how they grow, not in what they weigh where the gate looks. A term
+quadratic in size fails an item exactly when its coefficient exceeds the
+item's headroom over 8n² (growthWithin_quadratic_exact in
+scripts/DocBench.lean), which doccost --report prints per item: on the deck,
+about 2 to 3 KiB per frame squared for the 16n pair against about 30 KiB
+for the n pair. So the first patch should fail the deck's 16n items and pass its
+n items, and the second should fail nothing: a linear engine passes by
+theorem (growthWithin_phasePeak_covers, growthWithin_doubled_covers).
+
+Reproduce from the repository root:
+
+  git apply testdata/probes/u106/u106-quadratic-8k.patch
+  lake build leantex scripts.doccost
+  lake env lean --run scripts/doccost.lean --report
+  git apply -R testdata/probes/u106/u106-quadratic-8k.patch
+  lake build leantex
+
+and the same for u106-linear-4m.patch. Each report builds up to four 2 GiB
+documents at once. The verdicts are the tier's; the ratios move with the
+host's cores and load.
+
+Measured 2026-10-09 on a shared many-core linux x86_64 host;
+fixed footprint 67.2 to 67.3 MiB; least of 3 builds per size; bound 8x. Three
+runs each, the restored binary byte-identical to the one before.
+
+quadratic-8k: 2 of 16 items over the bound each time
+  deck/pdf/rss-growth-16n    260 MiB -> 2232 MiB  11.1x, 11.4x, 11.2x  over
+  deck/html/rss-growth-16n   272 MiB -> 2285 MiB  10.8x, 10.5x, 10.8x  over
+  deck/pdf/rss-growth                              4.3x, 4.2x, 3.8x    within
+  deck/html/rss-growth                             2.0x, 2.3x, 2.2x    within
+  notes/pdf/rss-growth-16n                         3.2x to 3.3x        within
+  the other eleven: 1.0x to 2.0x, within
+
+linear-4m: 0 of 16 items over the bound each time
+  deck/pdf/rss-growth-16n    646 MiB -> 2222 MiB   3.7x  within
+  deck/html/rss-growth-16n   670 MiB -> 2258 MiB   3.6x  within
+  notes/pdf/rss-growth-16n, notes/html/rss-growth-16n   3.1x to 3.2x  within
+  the other twelve: 1.1x to 3.0x, within
+
+unpatched: 0 of 16 over the bound, 0.9x to 1.9x.
+
+The 16n pair is what catches the first patch: on the deck's 4n document (134
+pages) its block is 140 MiB, inside the n pairs' headroom (225 MiB and more),
+while on the 16n document it is 2 GiB. The other families' 16n documents have
+50 and 123 pages, where 8 KiB per page squared stays far inside their
+headroom; `lake env lean --run scripts/doccost.lean --report` prints their
+least failing terms, from about 300 B per block squared (the notes' PDF,
+16n) to about 6 MiB per section squared (the paper's HTML, n), figures that
+move with the host and the run.
