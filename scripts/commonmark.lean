@@ -982,7 +982,10 @@ locale's figure word (`HtmlDoc.figureWord`), where a reader writes an empty alte
 on the door's side that word as an alternative is compared as none"),
    ("space before a break", "pandoc's writer drops the space before a backslash hard \
 break, which the door and the reference renderer keep: on both sides a space directly \
-before `<br>` is not compared")]
+before `<br>` is not compared"),
+   ("text presentation", "pandoc's writer follows a character that has an emoji \
+presentation with the text presentation selector U+FE0E, which the twin did not write: \
+on the external side the selector is not compared")]
 
 /-- Does an image's source name a PDF? -/
 def pdfSource (attrs : Array (String × String)) : Bool :=
@@ -1091,7 +1094,8 @@ door already reads otherwise. -/
 def hopRead (md html : String) (classified : Bool := false) : HopRead :=
   let breakSpace (s : String) :=
     ((s.replace " <br>" "<br>").replace " <ul>" "<ul>").replace " <ol>" "<ol>"
-  let want := breakSpace (canonList false "" (fromPandocList #[] (hParse html).toList).toList)
+  let want := breakSpace ((canonList false "" (fromPandocList #[] (hParse html).toList).toList).replace
+    "\uFE0E" "")
   let (ns, diags) := engineFragment md
   let got := breakSpace (canonList false "" (bareDoorList #[] ns.toList).toList)
   let routes := routesOf diags
@@ -1117,23 +1121,20 @@ def partAt (a b : String) : String × String := Id.run do
   return (cut xs, cut ys)
 
 /-- The external reader the report runs: pandoc's CommonMark reader, strict
-CommonMark with no extension, through its HTML writer with highlighting off.
-A premise about a tool is checked with one. -/
+CommonMark with no extension, through its HTML writer with highlighting off
+and tabs kept as the text holds them (pandoc's readers otherwise expand
+them). A premise about a tool is checked with one. -/
 def hopTool : String := "pandoc"
 def hopArgs (file : String) : Array String :=
-  #["-f", "commonmark", "-t", "html", "--syntax-highlighting=none", file]
+  #["-f", "commonmark", "-t", "html", "--syntax-highlighting=none", "--preserve-tabs", file]
 
 /-- Every twin the report reads, with the example it is the twin of: each
-corpus document's, its includes fulfilled and elaborated in process, and
-each CommonMark example's the door accepts, read back from the document the
-example elaborates to. -/
+corpus document's, elaborated as the driver elaborates it
+(`corpusTwinDocs`), and each CommonMark example's the door accepts, read
+back from the document the example elaborates to. -/
 def hopTwins (exs : Array Example) : IO (Array (String × String × Option Nat)) := do
-  let mut paths : Array String := #[]
-  for f in ← System.FilePath.readDir "testdata/corpus" do
-    if f.fileName.endsWith ".tex" then paths := paths.push f.path.toString
   let mut out : Array (String × String × Option Nat) := #[]
-  for p in paths.qsort (· < ·) do
-    let (d, _) ← elabInputSrc p (← IO.FS.readFile p)
+  for (p, d) in ← corpusTwinDocs do
     out := out.push (p, MarkdownDoc.emit d, none)
   for ex in exs do
     let (raws, readDiags) := Surface.read .markdown "case.md" ex.md
@@ -1185,7 +1186,8 @@ def twinTableRows (twin : String) : Array (Array String) := Id.run do
 /-- The table pass's reader: CommonMark with GFM's pipe tables and nothing
 else, so the tables are the one difference from the hop's own reader. -/
 def hopTableArgs (file : String) : Array String :=
-  #["-f", "commonmark+pipe_tables", "-t", "html", "--syntax-highlighting=none", file]
+  #["-f", "commonmark+pipe_tables", "-t", "html", "--syntax-highlighting=none",
+    "--preserve-tabs", file]
 
 /-- The twin's pipe tables through an external GFM table reader: every
 twin that writes one, its rows as that reader reads them against the rows
@@ -1747,6 +1749,11 @@ def selftest : IO UInt32 := do
         Hop.agree),
       ("item paragraph, another nested item", "- a\n  - b\n",
         "<ul>\n<li>a\n<ul>\n<li>c</li>\n</ul></li>\n</ul>\n", .differ),
+      ("item paragraph, a loose item", "- a\n  - b\n",
+        "<ul>\n<li><p>a</p>\n<ul>\n<li>b</li>\n</ul></li>\n</ul>\n", .differ),
+      ("text presentation", "`a \u2194 b`\n", "<p><code>a \u2194\uFE0E b</code></p>\n", .agree),
+      ("text presentation, another character", "`a \u2194 b`\n",
+        "<p><code>a \u2192\uFE0E b</code></p>\n", .differ),
       ("undescribed image", "![](/u.png)\n", "<p><img src=\"/u.png\" alt=\"\" /></p>\n", .agree),
       ("undescribed image, another source", "![](/u.png)\n",
         "<p><img src=\"/v.png\" alt=\"\" /></p>\n", .differ),
@@ -1754,7 +1761,7 @@ def selftest : IO UInt32 := do
       ("space before a break, another line", "a \\\nb\n", "<p>a<br />\nc</p>\n", .differ)] do
     unless hopJudge md html == want do
       bad := bad.push s!"reader hop: the door's {what} read as {repr (hopJudge md html)}, want {repr want}"
-  unless hopConventions.length == 8 do
+  unless hopConventions.length == 9 do
     bad := bad.push "reader hop: a convention changed without its selftest row"
   if bad.isEmpty then
     IO.println "commonmark --selftest: ok"

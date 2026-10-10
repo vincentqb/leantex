@@ -599,6 +599,24 @@ def goldenDoc (n : String) : IO (Ir.Doc × Array Diag) := do
     return Elab.runRaws file raws ds
   else elabFixture n src
 
+/-- The corpus documents a markdown twin is measured over, each as the
+driver elaborates it, by path: every tex fixture with its includes, data
+and bibliography fulfilled (`elabFixture`), and every markdown fixture of
+the golden set through its door (`goldenDoc`). The twin tier and the reader
+hop read this one list. -/
+def corpusTwinDocs : IO (Array (String × Ir.Doc)) := do
+  let mut names : Array String := #[]
+  for f in ← System.FilePath.readDir "testdata/corpus" do
+    if f.fileName.endsWith ".tex" then names := names.push (f.fileName.dropEnd 4).toString
+  let mut out := #[]
+  for n in names.qsort (· < ·) do
+    let (d, _) ← elabFixture n (← IO.FS.readFile s!"testdata/corpus/{n}.tex")
+    out := out.push (s!"testdata/corpus/{n}.tex", d)
+  for n in mdGoldenNames do
+    let (d, _) ← goldenDoc n
+    out := out.push (s!"testdata/corpus/{n}.md", d)
+  return out
+
 def firstDiff (expected actual : String) : String := Id.run do
   let e := expected.splitOn "\n"
   let a := actual.splitOn "\n"

@@ -15,10 +15,11 @@ Three measurements, each a level with its own blind spot:
   accepts (no error), how many re-read from their own twin to the same IR
   body. Per section, so one section's fall cannot hide behind another's
   rise.
-* `corpus.reread-clean` — of the tex corpus, its includes fulfilled and
-  elaborated in process, how many twins re-read with no error. The twin
-  erases source locations at its entry, so this is the twin the driver
-  writes from the same document.
+* `corpus.reread-clean` — of the corpus documents, each elaborated as the
+  driver elaborates it (`corpusTwinDocs`: the tex fixtures with their
+  includes, data and bibliography, and the markdown golden fixtures), how
+  many twins re-read with no error. The twin erases source locations at its
+  entry, so this is the twin the driver writes.
 * `corpus.twin-stable` — how many twins are a fixed point of the round
   trip: emitting the re-read document writes the same bytes.
 
@@ -107,17 +108,8 @@ def corpusRows (emit : Ir.Doc → String) (docs : Array Ir.Doc) : Array Row × N
   return (#[{ item := "corpus.reread-clean", value := (clean : Int) },
     { item := "corpus.twin-stable", value := (stable : Int) }], clean, stable)
 
-/-- Every tex fixture of the corpus as the suite runs it: its includes
-fulfilled at their use, then elaboration in process. -/
-def corpusDocs : IO (Array (String × Ir.Doc)) := do
-  let mut paths : Array String := #[]
-  for f in ← System.FilePath.readDir "testdata/corpus" do
-    if f.fileName.endsWith ".tex" then paths := paths.push f.path.toString
-  let mut out := #[]
-  for p in paths.qsort (· < ·) do
-    let (d, _) ← elabInputSrc p (← IO.FS.readFile p)
-    out := out.push (p, d)
-  return out
+/-- Every corpus document as the driver elaborates it (`corpusTwinDocs`). -/
+def corpusDocs : IO (Array (String × Ir.Doc)) := corpusTwinDocs
 
 def measureWith (emit : Ir.Doc → String) : IO (Array String × Array Row) := do
   let cases := readCases (← IO.FS.readFile specPath)
@@ -126,7 +118,7 @@ def measureWith (emit : Ir.Doc → String) : IO (Array String × Array Row) := d
   let (corpus, clean, stable) := corpusRows emit (docs.map (·.2))
   return (#[s!"# source: {cases.size} CommonMark 0.31.2 examples, {accepted} accepted by the \
 reader, {exact} of them re-read from their twin to the same IR body",
-    s!"# source: {docs.size} tex corpus fixtures, {clean} twins re-read with no error, \
+    s!"# source: {docs.size} corpus documents, {clean} twins re-read with no error, \
 {stable} a fixed point of the round trip"], cm ++ corpus)
 
 /-- A twin that writes `*` unescaped: the round trip it fails is the one a
