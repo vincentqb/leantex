@@ -263,10 +263,15 @@ public def directKeyBase : Nat := 2 ^ 32
 public def Store.lose (s : Store) (l : Loss) : Store :=
   if s.losses.contains l then s else { s with losses := s.losses.push l }
 
-/-- The state of one stream's reading. -/
+/-- The state of one stream's reading. `saved` is the graphics-state
+stack (§8.4.2), each entry the state `q` saved and the frame count it saw;
+`level` is the frame count at the innermost `q` — what a `cm` or clip
+folds into — kept beside the stack so that no operator but `q` and `Q`
+reads the stack, which no operator but they writes (`gsave_restore_id`). -/
 public structure St where
   gs : GState
   saved : Array (GState × Nat)
+  level : Nat
   frames : Array Open
   path : Array Pdf.PathOp
   cur : Pt
@@ -315,8 +320,7 @@ private def closeTo (frames : Array Open) (n : Nat) : Array Open := Id.run do
   return fs
 
 /-- The frame count the current `q` level opened groups above. -/
-private def St.levelBase (st : St) : Nat :=
-  (st.saved.back?.map (·.2)).getD 1
+private def St.levelBase (st : St) : Nat := st.level
 
 /-- A node painted into the innermost open group. -/
 private def St.emit (st : St) (n : Node Run) : St :=
@@ -977,7 +981,7 @@ public theorem forms_between {d : Doc} (e : Entered d) :
 
 /-- The initial state of a stream's reading under a graphics state. -/
 private def St.initial (gs : GState) (store : Store) : St :=
-  { gs, saved := #[], frames := #[{ xf := Affine.unit, clips := #[], alpha := Alpha.opaque, kids := #[] }]
+  { gs, saved := #[], level := 1, frames := #[{ xf := Affine.unit, clips := #[], alpha := Alpha.opaque, kids := #[] }]
     path := #[], cur := (0, 0), start := (0, 0), clip := none, tm := Affine.unit, tlm := Affine.unit
     inText := false, words := "", ops := #[], hidden := 0, marks := #[], compat := 0, store }
 
@@ -1387,7 +1391,7 @@ private def St.space (st : St) : St :=
   if st.words.isEmpty || st.words.endsWith " " then st else { st with words := st.words ++ " " }
 
 /-- A font resource read once per font object. -/
-private def fontOf (cx : Ctx) (st : St) : St × Option (PdfFont.Loaded × Nat) :=
+public def fontOf (cx : Ctx) (st : St) : St × Option (PdfFont.Loaded × Nat) :=
   match st.gs.font with
   | none => (st, none)
   | some (fo, _) =>
@@ -1497,7 +1501,7 @@ mutual
 
 /-- **Read a content stream's tokens** from `i`: an operand kept for the
 operator after it, an operator read, an inline image painted. -/
-private def runToks (cx : Ctx) (e : Entered cx.doc) (toks : Array Tok) (i : Nat) (st : St) : St :=
+public def runToks (cx : Ctx) (e : Entered cx.doc) (toks : Array Tok) (i : Nat) (st : St) : St :=
   if h : i < toks.size then
     let st := match toks[i] with
       | .val o => { st with ops := st.ops.push o }
@@ -1516,8 +1520,23 @@ private def runToks (cx : Ctx) (e : Entered cx.doc) (toks : Array Tok) (i : Nat)
   else st
 termination_by (e.room, 3, toks.size - i)
 
-/-- One operator read (ISO 32000-2 Annex A). -/
+/-- **One operator read** (ISO 32000-2 Annex A): `q` saves the graphics
+state, `Q` restores the one saved last, and every other operator is
+`stepRest`'s, which reads and writes the state but its stack: the stack
+and the level it opened stand as they were. -/
 private def stepOp (cx : Ctx) (e : Entered cx.doc) (name : String) (st : St) : St :=
+  if name == "q" then { st with saved := st.saved.push (st.gs, st.frames.size), level := st.frames.size }
+  else if name == "Q" then
+    match st.saved.back? with
+    | some (gs, k) =>
+      { st with gs, saved := st.saved.pop, frames := closeTo st.frames k
+                level := (st.saved.pop.back?.map (·.2)).getD 1 }
+    | none => st
+  else { stepRest cx e name st with saved := st.saved, level := st.level }
+termination_by (e.room, 2, 1)
+
+/-- Every operator but `q` and `Q`. -/
+private def stepRest (cx : Ctx) (e : Entered cx.doc) (name : String) (st : St) : St :=
   let n := st.nums
   let num (i : Nat) : Rat := n[i]?.getD 0
   let sp (i : Nat) : Sp := spOfRat (num i)
@@ -1552,11 +1571,6 @@ private def stepOp (cx : Ctx) (e : Entered cx.doc) (name : String) (st : St) : S
   | "n" => paintPath cx st none false false
   | "W" => { st with clip := some .nonzero }
   | "W*" => { st with clip := some .evenOdd }
-  | "q" => { st with saved := st.saved.push (st.gs, st.frames.size) }
-  | "Q" =>
-    match st.saved.back? with
-    | some (gs, k) => { st with gs, saved := st.saved.pop, frames := closeTo st.frames k }
-    | none => st
   | "cm" => match affineOf n with
     | some m => st.concat m
     | none => st
@@ -1800,14 +1814,18 @@ termination_by (e.room, 1, items.length + 1)
 /-- A string shown (§9.4.3): each code's glyph stamped at the pen, the pen
 advanced by its width, the character and word spacing, and the horizontal
 scale. -/
-private def showString (cx : Ctx) (e : Entered cx.doc) (s : ByteArray) (st : St) : St :=
-  let (st, fo) := fontOf cx st
+public def showString (cx : Ctx) (e : Entered cx.doc) (s : ByteArray) (st : St) : St :=
+  -- Reading the font and painting a glyph change the store and the frames,
+  -- never the words or the hidden depth: those are kept by construction,
+  -- what `words_exact` reads.
+  let (loaded, fo) := fontOf cx st
+  let st := { loaded with words := st.words, hidden := st.hidden }
   match fo with
   | none => st
   | some (font, key) =>
     (font.codes? s).foldl (fun st code =>
       let st := if st.hidden > 0 then st else st.addWords code.text
-      let st := if st.hidden > 0 then st else
+      let painted := if st.hidden > 0 then st else
         match font.program, code.glyph with
         | .ink src m, some (.gid g) =>
           let gm := fontMatrix ((src.cffMatrix g).getD m)
@@ -1817,10 +1835,11 @@ private def showString (cx : Ctx) (e : Entered cx.doc) (s : ByteArray) (st : St)
           | none => st
         | .type3 _ m _, some (.proc pn) => type3Glyph cx e font key pn (fontMatrix m) st
         | _, _ => st
+      let st := { painted with words := st.words, hidden := st.hidden }
       let w : Rat := match font.program with
         | .type3 _ m _ => code.width * (m[0]?.getD (mkRat 1 1000)) * 1000
         | _ => code.width
-      let space := if code.bytes == 1 && code.code == 32 then st.gs.wordSpace else 0
+      let space : Rat := if code.bytes == 1 && code.code == 32 then st.gs.wordSpace else 0
       st.advance (((w / 1000) * st.gs.size + st.gs.charSpace + space) * st.gs.hScale)) st
 termination_by (e.room, 1, 0)
 
@@ -1961,6 +1980,265 @@ decreasing_by
   exact Entered.push_room_between e _ _ _
 
 end
+
+/-! ## The graphics-state stack -/
+
+/-- One token's reading, as `runToks` takes it. -/
+public def tokStep (cx : Ctx) (e : Entered cx.doc) (st : St) (t : Tok) : St :=
+  match t with
+  | .val o => { st with ops := st.ops.push o }
+  | .inline dict data =>
+    let st := { st with ops := #[] }
+    if st.hidden > 0 then st else
+    match rasterOf cx (.dict dict) data (fillColor st) with
+    | .ok r =>
+      let r := smoothAt r st.gs.ctm
+      let k := st.store.rasters.size
+      let st := { st with store := { st.store with rasters := st.store.rasters.push r } }
+      st.emit (.image k Affine.unit)
+    | .error key => { st with store := st.store.lose (.resource key) }
+  | .op name => { stepOp cx e name st with ops := #[] }
+
+/-- `runToks` is the fold of `tokStep` over the tokens it has left. -/
+private theorem runToks_foldl (cx : Ctx) (e : Entered cx.doc) (toks : Array Tok) :
+    ∀ (i : Nat) (st : St), runToks cx e toks i st = (toks.toList.drop i).foldl (tokStep cx e) st := by
+  intro i
+  induction h : toks.size - i generalizing i with
+  | zero =>
+    intro st
+    rw [runToks]
+    have hi : ¬ i < toks.size := by omega
+    simp only [hi, ↓reduceDIte]
+    rw [List.drop_eq_nil_of_le (by simp; omega)]
+    rfl
+  | succ n ih =>
+    intro st
+    rw [runToks]
+    have hi : i < toks.size := by omega
+    have hl : i < toks.toList.length := by simpa using hi
+    rw [List.drop_eq_getElem_cons hl]
+    simp only [hi, ↓reduceDIte, List.foldl_cons]
+    rw [ih (i + 1) (by omega)]
+    simp only [Array.getElem_toList]
+    rfl
+
+private theorem emit_saved (st : St) (nd : Node Run) :
+    (st.emit nd).saved = st.saved ∧ (st.emit nd).gs = st.gs := by
+  unfold St.emit
+  split
+  · exact ⟨rfl, rfl⟩
+  · split <;> exact ⟨rfl, rfl⟩
+
+/-- No token but `q` and `Q` touches the stack. -/
+private theorem tokStep_saved (cx : Ctx) (e : Entered cx.doc) (st : St) (t : Tok)
+    (hq : t ≠ .op "q") (hQ : t ≠ .op "Q") : (tokStep cx e st t).saved = st.saved := by
+  cases t with
+  | val o => rfl
+  | inline dict data =>
+    simp only [tokStep]
+    split
+    · rfl
+    · split
+      · exact (emit_saved _ _).1
+      · rfl
+  | op name =>
+    have h1 : (name == "q") = false := by simpa using fun h => hq (by rw [h])
+    have h2 : (name == "Q") = false := by simpa using fun h => hQ (by rw [h])
+    simp only [tokStep]
+    rw [stepOp]
+    simp [h1, h2]
+
+/-- How deep a run of tokens leaves the stack from depth `d`: one deeper at
+each `q`, one shallower at each `Q`; `none` when a `Q` would pop below the
+run's start. -/
+@[expose] public def qDepth? : List Tok → Nat → Option Nat
+  | [], d => some d
+  | .op n :: ts, d =>
+    if n == "q" then qDepth? ts (d + 1)
+    else if n == "Q" then (if d = 0 then none else qDepth? ts (d - 1))
+    else qDepth? ts d
+  | .val _ :: ts, d => qDepth? ts d
+  | .inline _ _ :: ts, d => qDepth? ts d
+
+/-- **A run reaches no deeper into the stack than it may** — the entries
+below the `d` it may pop are untouched, and it leaves its final depth's
+worth above them. -/
+private theorem foldl_saved (cx : Ctx) (e : Entered cx.doc) :
+    ∀ (ts : List Tok) (d d' : Nat) (st : St), d ≤ st.saved.size → qDepth? ts d = some d' →
+      ∃ ext : List (GState × Nat),
+        (ts.foldl (tokStep cx e) st).saved.toList = st.saved.toList.take (st.saved.size - d) ++ ext ∧
+        ext.length = d' := by
+  intro ts
+  induction ts with
+  | nil =>
+    intro d d' st hd h
+    simp only [qDepth?, Option.some.injEq] at h
+    subst h
+    refine ⟨st.saved.toList.drop (st.saved.size - d), ?_, ?_⟩
+    · simp
+    · simp; omega
+  | cons t ts ih =>
+    intro d d' st hd h
+    simp only [List.foldl_cons]
+    cases t with
+    | op n =>
+      by_cases hq : n = "q"
+      · subst hq
+        simp only [qDepth?, beq_self_eq_true, ↓reduceIte] at h
+        have hs : (tokStep cx e st (.op "q")).saved = st.saved.push (st.gs, st.frames.size) := by
+          simp only [tokStep]; rw [stepOp]; simp
+        obtain ⟨ext, he, hl⟩ := ih (d + 1) d' _ (by rw [hs]; simp; omega) h
+        rw [hs] at he
+        refine ⟨ext, ?_, hl⟩
+        rw [he]
+        simp only [Array.toList_push, Array.size_push]
+        rw [List.take_append_of_le_length (by simp)]
+        congr 2
+        omega
+      · by_cases hQ : n = "Q"
+        · subst hQ
+          simp only [qDepth?, beq_self_eq_true, ↓reduceIte, show ("Q" == "q") = false from rfl,
+            Bool.false_eq_true] at h
+          split at h
+          · exact absurd h (by simp)
+          · next hd0 =>
+            obtain ⟨top, htop⟩ : ∃ top, st.saved.back? = some top := by
+              cases hb : st.saved.back? with
+              | some top => exact ⟨top, rfl⟩
+              | none =>
+                exfalso
+                have : st.saved.size = 0 := by simpa [Array.back?_eq_none_iff] using hb
+                omega
+            have hs : (tokStep cx e st (.op "Q")).saved = st.saved.pop := by
+              simp only [tokStep]; rw [stepOp]; simp [htop]
+            obtain ⟨ext, he, hl⟩ := ih (d - 1) d' _ (by rw [hs]; simp; omega) h
+            rw [hs] at he
+            refine ⟨ext, ?_, hl⟩
+            rw [he]
+            simp only [Array.toList_pop, Array.size_pop]
+            rw [List.dropLast_eq_take, List.take_take]
+            rw [show min (st.saved.size - 1 - (d - 1)) (st.saved.toList.length - 1) = st.saved.size - 1 - (d - 1) by
+              simp]
+            congr 2
+            omega
+        · have hs := tokStep_saved cx e st (.op n) (by simpa using hq) (by simpa using hQ)
+          have h' : qDepth? ts d = some d' := by
+            simp only [qDepth?] at h
+            have h1 : (n == "q") = false := by simpa using hq
+            have h2 : (n == "Q") = false := by simpa using hQ
+            simpa [h1, h2] using h
+          obtain ⟨ext, he, hl⟩ := ih d d' _ (by rw [hs]; exact hd) h'
+          rw [hs] at he
+          exact ⟨ext, he, hl⟩
+    | val o =>
+      have hs := tokStep_saved cx e st (.val o) (by simp) (by simp)
+      obtain ⟨ext, he, hl⟩ := ih d d' _ (by rw [hs]; exact hd) (by simpa [qDepth?] using h)
+      rw [hs] at he
+      exact ⟨ext, he, hl⟩
+    | inline dict data =>
+      have hs := tokStep_saved cx e st (.inline dict data) (by simp) (by simp)
+      obtain ⟨ext, he, hl⟩ := ih d d' _ (by rw [hs]; exact hd) (by simpa [qDepth?] using h)
+      rw [hs] at he
+      exact ⟨ext, he, hl⟩
+
+/-- `Q` restores the state the stack's top saved, and pops it. -/
+private theorem tokStep_Q (cx : Ctx) (e : Entered cx.doc) (st : St) (g : GState) (k : Nat)
+    (h : st.saved.back? = some (g, k)) :
+    (tokStep cx e st (.op "Q")).gs = g ∧ (tokStep cx e st (.op "Q")).saved = st.saved.pop := by
+  simp only [tokStep]
+  rw [stepOp]
+  simp [h]
+
+/-- **A `q … Q` pair restores the graphics state** (`_id`, §8.4.2): reading
+`q`, then a run whose own `q` and `Q` pair up, then `Q`, leaves the graphics
+state, and the stack of states saved before it, as they were — whatever the
+run between painted, clipped, transformed or set. -/
+public theorem gsave_restore_id (cx : Ctx) (e : Entered cx.doc) (inner : List Tok)
+    (h : qDepth? inner 0 = some 0) (st : St) :
+    let st' := runToks cx e (#[.op "q"] ++ inner.toArray ++ #[.op "Q"]) 0 st
+    st'.gs = st.gs ∧ st'.saved = st.saved := by
+  intro st'
+  have hst' : st' = (.op "Q" :: []).foldl (tokStep cx e)
+      ((inner).foldl (tokStep cx e) (tokStep cx e st (.op "q"))) := by
+    show runToks cx e _ 0 st = _
+    rw [runToks_foldl]
+    simp
+  have hq : (tokStep cx e st (.op "q")).saved = st.saved.push (st.gs, st.frames.size) := by
+    simp only [tokStep]; rw [stepOp]; simp
+  let st1 := tokStep cx e st (.op "q")
+  obtain ⟨ext, he, hl⟩ := foldl_saved cx e inner 0 0 st1 (Nat.zero_le _) h
+  have hl0 : ext = [] := List.eq_nil_of_length_eq_zero hl
+  subst hl0
+  have hinner : (inner.foldl (tokStep cx e) st1).saved = st.saved.push (st.gs, st.frames.size) := by
+    apply Array.toList_inj.mp
+    rw [he, List.append_nil, Nat.sub_zero]
+    show List.take (tokStep cx e st (.op "q")).saved.size (tokStep cx e st (.op "q")).saved.toList = _
+    rw [hq, List.take_of_length_le (by simp)]
+  have hback : (inner.foldl (tokStep cx e) st1).saved.back? = some (st.gs, st.frames.size) := by
+    rw [hinner]; simp
+  obtain ⟨hg, hs⟩ := tokStep_Q cx e _ _ _ hback
+  rw [hst']
+  simp only [List.foldl_cons, List.foldl_nil]
+  exact ⟨hg, by rw [hs, hinner]; simp⟩
+
+/-! ## The words a figure says -/
+
+/-- The text a string's codes mean, in order. -/
+@[expose] public def codesText (codes : Array PdfFont.Code) : String :=
+  String.join (codes.toList.map (·.text))
+
+private theorem fold_words (f : St → PdfFont.Code → St)
+    (hf : ∀ st code, (f st code).words = st.words ++ (if st.hidden > 0 then "" else code.text) ∧
+      (f st code).hidden = st.hidden) :
+    ∀ (codes : List PdfFont.Code) (st : St), (codes.foldl f st).words =
+      st.words ++ (if st.hidden > 0 then "" else String.join (codes.map (·.text))) ∧
+      (codes.foldl f st).hidden = st.hidden := by
+  intro codes
+  induction codes with
+  | nil => intro st; simp [String.join_nil]
+  | cons c cs ih =>
+    intro st
+    simp only [List.foldl_cons]
+    obtain ⟨h1, h2⟩ := hf st c
+    obtain ⟨h3, h4⟩ := ih (f st c)
+    refine ⟨?_, h4.trans h2⟩
+    rw [h3, h1, h2]
+    by_cases hh : st.hidden > 0
+    · simp [hh]
+    · simp [hh, String.join_cons, List.map_cons, String.append_assoc]
+
+/-- **A shown string says its codes' text** (`_exact`, §9.10): a string
+shown in visible content adds to the words, in order, the text each of its
+codes means through the font — its `ToUnicode` entry, else its glyph name —
+and in hidden optional content adds none; reading the font and painting
+the glyphs never touch the words. -/
+public theorem words_exact (cx : Ctx) (e : Entered cx.doc) (s : ByteArray) (st : St) :
+    (showString cx e s st).words = st.words ++
+      (match (fontOf cx st).2 with
+       | none => ""
+       | some (font, _) => if st.hidden > 0 then "" else codesText (font.codes? s)) := by
+  rw [showString]
+  rcases hf : fontOf cx st with ⟨loaded, fo⟩
+  simp only
+  rcases fo with _ | ⟨font, key⟩
+  · simp
+  · simp only [codesText]
+    rw [← Array.foldl_toList]
+    have step : ∀ (st' : St) (code : PdfFont.Code),
+        let st'' := if st'.hidden > 0 then st' else st'.addWords code.text
+        st''.words = st'.words ++ (if st'.hidden > 0 then "" else code.text) ∧ st''.hidden = st'.hidden := by
+      intro st' code
+      simp only
+      split
+      · simp
+      · unfold St.addWords
+        split <;> simp_all
+    refine (fold_words _ ?_ (font.codes? s).toList _).1.trans ?_
+    · intro st' code
+      obtain ⟨h1, h2⟩ := step st' code
+      simp only [St.advance]
+      exact ⟨h1, h2⟩
+    · simp
 
 /-! ## A page as a figure -/
 
