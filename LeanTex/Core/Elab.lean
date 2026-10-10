@@ -11738,6 +11738,9 @@ over the heartbeat wall. -/
 private structure FrameOpts where
   standout : Bool := false
   breakable : Bool := false
+  /-- beamer's `[squeeze]` (beamerbaseframesize.sty:21-22): the frame's
+  lists set with `\itemsep0pt`, a trivlist inside an item `\topsep0.5pt`. -/
+  squeeze : Bool := false
   valign : VAlign := .center
   /-- The alignment options the frame names, in order. -/
   aligns : Array String := #[]
@@ -11765,6 +11768,7 @@ private def frameOpts (ctx : Ctx) (body : Array Raw) (pos : Pos) : EM FrameOpts 
         | "fragile" | "fragile=true" => pure ()
         | "standout" => o := { o with standout := true }
         | "allowframebreaks" => o := { o with breakable := true }
+        | "squeeze" => o := { o with squeeze := true }
         | "t" => o := { o with valign := .top, aligns := o.aligns.push opt }
         | "c" => o := { o with valign := .center, aligns := o.aligns.push opt }
         | "b" => o := { o with valign := .bottom, aligns := o.aligns.push opt }
@@ -11989,6 +11993,10 @@ private def closeFramePalette (ctx : Ctx) (pos : Pos) (blocks : Array Block)
     (title : Array Inline) (opts : FrameOpts) (inner : Array Block)
     (aliasScope : Bool) : EM (Array Block) := do
   recordFrameSource ctx pos blocks.size
+  -- A declared `[squeeze]` rides as its marker opening the body
+  -- (`Ir.squeezeRole`), the one reading both backends make.
+  let inner := if opts.squeeze then inner.insertIdx 0 (Block.role Ir.squeezeRole #[]) (Nat.zero_le _)
+    else inner
   let blocks := blocks.push (flattenFrame title opts.standout opts.valign opts.breakable inner)
   if !aliasScope then return blocks
   let colors := (← get).scope.palette

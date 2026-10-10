@@ -1357,6 +1357,8 @@ public structure FrameOpening where
   palette : Ir.Palette
   /-- The text area the frame's pages take (`FrameArea`). -/
   area : FrameArea := .margins
+  /-- The frame's squeezed list spacing (`Ir.frameSqueeze`). -/
+  squeeze : Ir.FrameSqueeze := .none
   deriving Repr, Inhabited
 
 public def FrameOpening.footer (f : FrameOpening) : Option (Array Ir.BandSlot) :=
@@ -1528,6 +1530,10 @@ public structure Out where
   diags : Array Diag
   /-- Actual committed paragraph decisions, retained through furniture. -/
   paragraphBreaks : Array ParagraphBreaks := #[]
+  /-- Per frame not declared breakable whose content reached past its text
+  area at its glue's natural size, by its source index: how far (the
+  overflow ladder's measurement, `Ir.frameFitOf`). -/
+  overruns : Array (Nat × Sp) := #[]
   /-- The document outline: one entry per unpinned-nav link, in document
   order; empty when the document declares no unpinned nav. -/
   outline : Array OutlineEntry := #[]
@@ -8076,6 +8082,17 @@ public structure Spacing.Page where
   /-- The open frame has already been reported once (W0384): a frame three
   pages tall is one loss, named once, not one per page close. -/
   private spillWarned : Bool := false
+  /-- How far the open page's frame content stands past its text area within
+  the gap above its footline (`warnOverhang`), reported when the page closes
+  on the frame's end and dropped when the frame continues past it, so a
+  frame is named once, by what it finally did. -/
+  private overhang : Option Sp := none
+  /-- Per frame not declared breakable, by its source index: how far past
+  its text area its content reached at its glue's natural size — what the
+  overflow ladder reads (`Ir.frameFitOf`, `squeezedFrames`). -/
+  private overruns : Array (Nat × Sp) := #[]
+  /-- The open frame's squeezed list spacing (`Ir.frameSqueeze`). -/
+  private curSqueeze : Ir.FrameSqueeze := .none
   /-- Lines and fills already on the page when `.pin` arrived: page-top
   chrome (the frame title and its bar) the distribution never moves. -/
   private pinnedLines : Nat := 0
@@ -8437,6 +8454,35 @@ private def Spacing.Page.surfaceEnd (b : B) (lines : Array LineOut)
   (regionFills spans lines fills inks).foldl (fun edge (_, f) =>
     some (max (edge.getD (f.y + f.h)) (f.y + f.h))) none
 
+/-- W0384's message for the open frame, `over` past its page: where the
+frame finally stands — `overfull`, in the gap above its footline, else on
+the next page. -/
+private def Spacing.Page.spillDiag (b : B) (over : Sp) (overfull : Bool) : Diag :=
+  let who := match b.curFrameLabel with
+    | some l => s!"frame {l}"
+    | none => "a frame"
+  let squeezed := if b.curSqueeze == .fitted then ", its lists squeezed" else ""
+  let what := if overfull then "it extends into the gap above its footline"
+    else "it continues on the next page"
+  Diag.of .W0384 s!"{who} is {over.toPtString}pt taller than its page{squeezed}; {what}"
+    (span := b.frameSource)
+    (help := "shorten the frame, or declare `[allowframebreaks]` on it to accept the break")
+    (subject := b.curFrameLabel)
+
+/-- The frame overruns as the open page closes: a frame not declared
+breakable whose page took its glue's shrink (`needed`, how far its content
+stood past the floor at natural size) records it, the largest over its
+pages (`Out.overruns`, the overflow ladder's measurement). -/
+private def Spacing.Page.neededOverrun (b : B) : Array (Nat × Sp) :=
+  match b.frameBreak, b.curFrameOrigin with
+  | some false, some origin =>
+    if 0 < b.needed then
+      match b.overruns.findIdx? (·.1 == origin.source) with
+      | some i => b.overruns.modify i fun (k, o) => (k, max o b.needed)
+      | none => b.overruns.push (origin.source, b.needed)
+    else b.overruns
+  | _, _ => b.overruns
+
 /-- Close the current page. A page that overflowed at natural size within
 its shrink is set to fit: every line moves up by its share of the shrink
 above it, the glue set at one ratio like a justified line's. `owed` is the
@@ -8466,6 +8512,7 @@ private def Spacing.Page.finishPage (b : B) (owed : Sp := 0) (flush : Bool := fa
         s!"{b.needed * 100 / b.pageShrink}% of their {b.pageShrink / 65536}pt of shrink")
       (span := b.neededSource) (trigger := b.neededSource.bind (·.pos.command)))
     else b.diags
+
   -- The leftover between the content's bottom and the bottom margin. Fil
   -- glue owns it when any stands on the page: each line moves by its
   -- share (`filShare`) — the \vspace{\fill} sandwich centres, a leading
@@ -8563,7 +8610,7 @@ private def Spacing.Page.finishPage (b : B) (owed : Sp := 0) (flush : Bool := fa
            pinnedLines := 0, pinnedFills := 0, pinnedInks := 0, anchored := false,
            openRegions := b.openRegions.map RegionStart.nextPage, closedRegions := #[],
            pendingNotes := #[], notesH := 0, notesDepth := 0, opened := false, freshStart := false,
-           diags := diags }
+           diags := diags, overruns := b.neededOverrun }
 
 /-- The shipped page records the IR lifecycle before shipment, and the
 builder advances by the shared `PageState.ship` transition. The geometry
@@ -8781,25 +8828,183 @@ public theorem frameBar_exact (pad strut depth : Int) (h : depth ≤ pad) :
   simp only [frameBarHeight]
   omega
 
-/-- W0384, the spill's account: a frame whose author did not declare
-`[allowframebreaks]` has content `over` taller than its page, and it
-continues on the next page — beamer would have clipped it off the frame's
-bottom; this engine ships it and says so. Inside a declared-breakable
-frame, and outside any frame (an article's page close is flow), silent. -/
+/-- How far below its text area a frame's ink may reach before the
+footline's: the gap beamer's `\footheight` keeps above the footline
+(beamerbaseframecomponents.sty:167, `Ir.footline`'s `sep`), wherever a footline
+stands below the frame's text area or beamer's text area ends above the
+paper's edge; nothing on a page whose area is the paper. -/
+private def Spacing.Page.clearance (b : B) : Sp :=
+  match b.frameArea, b.footBox with
+  | .text, _ => b.footGap
+  | .margins, some _ => b.footGap
+  | .margins, none => 0
+  | .paper, _ => 0
+
+/-- Record how far the open frame's content reached past its text area at
+its glue's natural size, the largest over the frame's lines: nothing where
+it stays inside. -/
+private def Spacing.Page.noteOverrun (b : B) (over : Sp) : B :=
+  if over ≤ 0 then b else
+  match b.frameBreak, b.curFrameOrigin with
+  | some false, some origin =>
+    match b.overruns.findIdx? (·.1 == origin.source) with
+    | some i => { b with overruns := b.overruns.modify i fun (k, o) => (k, max o over) }
+    | none => { b with overruns := b.overruns.push (origin.source, over) }
+  | _, _ => b
+
+/-- W0384, the overflow ladder's account: a frame whose author did not
+declare `[allowframebreaks]` has content taller than its page. beamer sets
+such a frame overfull on its one page ("the text just extends unpleasantly
+over the bottom", user guide §8.1); this engine sets it there while the
+overhang stays within the gap above the footline (`warnOverfull`), and past
+that continues it on the next page so nothing is lost to the footline or
+the paper's edge. Named once per frame for each: an overhang, and a
+continuation the frame reaches past its clearance. Inside a
+declared-breakable frame, and outside any frame (an article's page close is
+flow), silent. -/
 private def Spacing.Page.warnSpill (b : B) (over : Sp) : B :=
   match b.frameBreak, b.spillWarned with
   | some false, false =>
-    let who := match b.curFrameLabel with
-      | some l => s!"frame {l}"
-      | none => "a frame"
-    { b with diags := b.diags.push (Diag.of .W0384
-        (s!"{who} is {over.toPtString}pt taller than its page; " ++
-          "it continues on the next page")
-        (span := b.frameSource)
-        (help := "shorten the frame, or declare `[allowframebreaks]` on it to accept the break")
-        (subject := b.curFrameLabel))
-             spillWarned := true }
+    { b with diags := b.diags.push (b.spillDiag over false), spillWarned := true }
   | _, _ => b
+
+/-- Where the page sets a frame overfull within its clearance: the
+overhang, the largest of the page's, reported when the page closes on the
+frame's end (`finishPage`), unless the frame continues past it. -/
+private def Spacing.Page.warnOverhang (b : B) (over : Sp) : B :=
+  match b.frameBreak with
+  | some false => { b with overhang := some (max over (b.overhang.getD over)) }
+  | some true | none => b
+
+/-- The overhang's report (W0384), where the page closes on the frame's end:
+a frame that stood overfull within its clearance and did not continue. -/
+private def Spacing.Page.reportOverhang (b : B) : B :=
+  match b.frameBreak, b.overhang, b.spillWarned with
+  | some false, some o, false => { b with diags := b.diags.push (b.spillDiag o true) }
+  | _, _, _ => b
+
+@[simp] private theorem reportOverhang_pages (b : B) : b.reportOverhang.pages = b.pages := by
+  unfold Spacing.Page.reportOverhang; split <;> rfl
+@[simp] private theorem reportOverhang_cur (b : B) : b.reportOverhang.cur = b.cur := by
+  unfold Spacing.Page.reportOverhang; split <;> rfl
+@[simp] private theorem reportOverhang_geom (b : B) : b.reportOverhang.geom = b.geom := by
+  unfold Spacing.Page.reportOverhang; split <;> rfl
+@[simp] private theorem reportOverhang_docBg (b : B) : b.reportOverhang.docBg = b.docBg := by
+  unfold Spacing.Page.reportOverhang; split <;> rfl
+@[simp] private theorem reportOverhang_noBreak (b : B) : b.reportOverhang.noBreak = b.noBreak := by
+  unfold Spacing.Page.reportOverhang; split <;> rfl
+@[simp] private theorem reportOverhang_pendingNotes (b : B) :
+    b.reportOverhang.pendingNotes = b.pendingNotes := by
+  unfold Spacing.Page.reportOverhang; split <;> rfl
+@[simp] private theorem reportOverhang_paragraphBreaks (b : B) :
+    b.reportOverhang.paragraphBreaks = b.paragraphBreaks := by
+  unfold Spacing.Page.reportOverhang; split <;> rfl
+@[simp] private theorem reportOverhang_pageState (b : B) :
+    b.reportOverhang.pageState = b.pageState := by
+  unfold Spacing.Page.reportOverhang; split <;> rfl
+@[simp] private theorem reportOverhang_curFrameOrigin (b : B) :
+    b.reportOverhang.curFrameOrigin = b.curFrameOrigin := by
+  unfold Spacing.Page.reportOverhang; split <;> rfl
+@[simp] private theorem reportOverhang_curFrame (b : B) :
+    b.reportOverhang.curFrame = b.curFrame := by
+  unfold Spacing.Page.reportOverhang; split <;> rfl
+@[simp] private theorem reportOverhang_curFoot (b : B) :
+    b.reportOverhang.curFoot = b.curFoot := by
+  unfold Spacing.Page.reportOverhang; split <;> rfl
+private theorem reportOverhang_diags_mem (b : B) (d : Diag) (h : d ∈ b.diags) :
+    d ∈ b.reportOverhang.diags := by
+  unfold Spacing.Page.reportOverhang
+  split
+  · exact Array.mem_push.mpr (Or.inl h)
+  · exact h
+
+@[simp] private theorem noteOverrun_pages (b : B) (o : Sp) :
+    (b.noteOverrun o).pages = b.pages := by
+  unfold Spacing.Page.noteOverrun
+  repeat' split
+  all_goals rfl
+
+@[simp] private theorem noteOverrun_cur (b : B) (o : Sp) :
+    (b.noteOverrun o).cur = b.cur := by
+  unfold Spacing.Page.noteOverrun
+  repeat' split
+  all_goals rfl
+
+@[simp] private theorem noteOverrun_noBreak (b : B) (o : Sp) :
+    (b.noteOverrun o).noBreak = b.noBreak := by
+  unfold Spacing.Page.noteOverrun
+  repeat' split
+  all_goals rfl
+
+@[simp] private theorem warnOverhang_pages (b : B) (o : Sp) :
+    (b.warnOverhang o).pages = b.pages := by
+  unfold Spacing.Page.warnOverhang
+  split <;> rfl
+
+@[simp] private theorem warnOverhang_cur (b : B) (o : Sp) :
+    (b.warnOverhang o).cur = b.cur := by
+  unfold Spacing.Page.warnOverhang
+  split <;> rfl
+
+@[simp] private theorem warnOverhang_noBreak (b : B) (o : Sp) :
+    (b.warnOverhang o).noBreak = b.noBreak := by
+  unfold Spacing.Page.warnOverhang
+  split <;> rfl
+
+@[simp] private theorem noteOverrun_geom (b : B) (o : Sp) :
+    (b.noteOverrun o).geom = b.geom := by
+  unfold Spacing.Page.noteOverrun
+  repeat' split
+  all_goals rfl
+
+@[simp] private theorem noteOverrun_docBg (b : B) (o : Sp) :
+    (b.noteOverrun o).docBg = b.docBg := by
+  unfold Spacing.Page.noteOverrun
+  repeat' split
+  all_goals rfl
+
+@[simp] private theorem noteOverrun_pendingNotes (b : B) (o : Sp) :
+    (b.noteOverrun o).pendingNotes = b.pendingNotes := by
+  unfold Spacing.Page.noteOverrun
+  repeat' split
+  all_goals rfl
+
+@[simp] private theorem noteOverrun_diags (b : B) (o : Sp) :
+    (b.noteOverrun o).diags = b.diags := by
+  unfold Spacing.Page.noteOverrun
+  repeat' split
+  all_goals rfl
+
+@[simp] private theorem noteOverrun_paragraphBreaks (b : B) (o : Sp) :
+    (b.noteOverrun o).paragraphBreaks = b.paragraphBreaks := by
+  unfold Spacing.Page.noteOverrun
+  repeat' split
+  all_goals rfl
+
+@[simp] private theorem warnOverhang_geom (b : B) (o : Sp) :
+    (b.warnOverhang o).geom = b.geom := by
+  unfold Spacing.Page.warnOverhang
+  split <;> rfl
+
+@[simp] private theorem warnOverhang_docBg (b : B) (o : Sp) :
+    (b.warnOverhang o).docBg = b.docBg := by
+  unfold Spacing.Page.warnOverhang
+  split <;> rfl
+
+@[simp] private theorem warnOverhang_pendingNotes (b : B) (o : Sp) :
+    (b.warnOverhang o).pendingNotes = b.pendingNotes := by
+  unfold Spacing.Page.warnOverhang
+  split <;> rfl
+
+@[simp] private theorem warnOverhang_paragraphBreaks (b : B) (o : Sp) :
+    (b.warnOverhang o).paragraphBreaks = b.paragraphBreaks := by
+  unfold Spacing.Page.warnOverhang
+  split <;> rfl
+
+@[simp] private theorem warnOverhang_diags (b : B) (o : Sp) :
+    (b.warnOverhang o).diags = b.diags := by
+  unfold Spacing.Page.warnOverhang
+  split <;> rfl
 
 @[simp] private theorem warnSpill_pages (b : B) (o : Sp) :
     (b.warnSpill o).pages = b.pages := by
@@ -8826,13 +9031,14 @@ private def Spacing.Page.warnSpill (b : B) (over : Sp) : B :=
   simp only [Spacing.Page.warnSpill]
   split <;> rfl
 
-/-- `warnSpill_accounts`: the one mid-frame page close, and the diagnostic in
-the same step — the first spill inside a frame that declared no break adds
-exactly one W0384 to the builder, and a spill anywhere else (a declared
-break, an article's flow, the same frame's later pages) adds none.
-The `_accounts` shape (`rewriteCtrl_accounts`): the continuation page is
-paid for by the warning, decided on the same `frameBreak` the builder
-reads, never by inspecting the shipped pages afterwards. -/
+/-- `warnSpill_accounts`: a frame's first overhang or continuation, and the
+diagnostic in the same step — the first report inside a frame that declared
+no break adds exactly one W0384 to the builder, and a report anywhere else
+(a declared break, an article's flow, the same frame's later pages, or its
+continuation after a first continuation) adds none. The `_accounts` shape (`rewriteCtrl_accounts`): the overhang or the
+continuation page is paid for by the warning, decided on the same
+`frameBreak` the builder reads, never by inspecting the shipped pages
+afterwards. -/
 private theorem warnSpill_accounts (b : B) (o : Sp) :
     (b.warnSpill o).diags.size =
       b.diags.size +
@@ -9530,14 +9736,21 @@ private def Spacing.Page.fitCommit (b : B) (mk : Sp → LineOut) (firstY stepY r
     -- empty frame page and gain the band nothing.
     if overflow ≤ above ∨ b.noBreak ∨ b.cur.blank then
       (b.commit (mk y) depth below rl true (min overflow above)).attachNotes notes
+    -- A frame not declared breakable stands overfull on its one page while
+    -- its overhang stays in the gap above its footline (`clearance`), as
+    -- beamer's does, rather than spill a sliver onto a page of its own.
+    else if b.frameBreak == some false ∧ overflow - above ≤ b.clearance then
+      ((((b.commit (mk y) depth below rl true above).attachNotes notes).warnOverhang
+        (overflow - above)).noteOverrun overflow)
     else
-      let b := b.spillPage (overflow - above)
-      if b.cur.blank then
-        ((b.commit (mk (firstY b + b.surfaceTop)) depth below rl false 0).attachNotes
-          notes).warnNoteOverrun (firstY b + b.surfaceTop) (inkBelow + b.surfaceBottom)
+      let s := b.spillPage (overflow - above)
+      (if s.cur.blank then
+        ((s.commit (mk (firstY s + s.surfaceTop)) depth below rl false 0).attachNotes
+          notes).warnNoteOverrun (firstY s + s.surfaceTop) (inkBelow + s.surfaceBottom)
       else
-        ((b.commit (mk (retryY b + b.surfaceTop)) depth below rl false 0).attachNotes
-          notes).warnNoteOverrun (retryY b + b.surfaceTop) (inkBelow + b.surfaceBottom)
+        ((s.commit (mk (retryY s + s.surfaceTop)) depth below rl false 0).attachNotes
+          notes).warnNoteOverrun (retryY s + s.surfaceTop) (inkBelow + s.surfaceBottom)).noteOverrun
+        overflow
 
 /-- TeX's interline rule for the first box below `\vspace*`'s zero rule,
 as the distance from the glue the rule keeps to the box's baseline:
@@ -9724,6 +9937,17 @@ private theorem sourceBound_warnNoteOverrun {n : Nat} (b : B) (y d : Sp)
   simp only [Spacing.Page.warnNoteOverrun]
   split <;> exact hb.of_eq rfl rfl rfl rfl rfl
 
+private theorem sourceBound_noteOverrun {n : Nat} (b : B) (o : Sp)
+    (hb : b.SourceBound n) : (b.noteOverrun o).SourceBound n := by
+  unfold Spacing.Page.noteOverrun
+  repeat' split
+  all_goals exact hb.of_eq rfl rfl rfl rfl rfl
+
+private theorem sourceBound_warnOverhang {n : Nat} (b : B) (o : Sp)
+    (hb : b.SourceBound n) : (b.warnOverhang o).SourceBound n := by
+  unfold Spacing.Page.warnOverhang
+  split <;> exact hb.of_eq rfl rfl rfl rfl rfl
+
 private theorem sourceBound_fitCommit {n : Nat} (b : B) (mk : Sp → LineOut)
     (firstY stepY retryY : B → Sp) (depth below : Sp) (rl : Bool)
     (inkBelow bottom : Sp) (hb : b.SourceBound n) (hl : ∀ y, (mk y).SourceBound n) :
@@ -9733,14 +9957,18 @@ private theorem sourceBound_fitCommit {n : Nat} (b : B) (mk : Sp → LineOut)
   · exact sourceBound_warnNoteOverrun _ _ _ (sourceBound_commit b _ _ _ _ _ _ hb (hl _))
   · split
     · exact sourceBound_commit b _ _ _ _ _ _ hb (hl _)
-    · have hs := sourceBound_spillPage b
-        (stepY b + b.surfaceTop + inkBelow + b.surfaceBottom - bottom -
-          (b.pageShrink + b.skip.shrink)) hb
-      split
-      · exact sourceBound_warnNoteOverrun _ _ _
-          (sourceBound_commit _ _ _ _ _ _ _ hs (hl _))
-      · exact sourceBound_warnNoteOverrun _ _ _
-          (sourceBound_commit _ _ _ _ _ _ _ hs (hl _))
+    · split
+      · exact sourceBound_noteOverrun _ _ (sourceBound_warnOverhang _ _
+          (sourceBound_commit b _ _ _ _ _ _ hb (hl _)))
+      · have hs := sourceBound_spillPage b
+          (stepY b + b.surfaceTop + inkBelow + b.surfaceBottom - bottom -
+            (b.pageShrink + b.skip.shrink)) hb
+        apply sourceBound_noteOverrun
+        split
+        · exact sourceBound_warnNoteOverrun _ _ _
+            (sourceBound_commit _ _ _ _ _ _ _ hs (hl _))
+        · exact sourceBound_warnNoteOverrun _ _ _
+            (sourceBound_commit _ _ _ _ _ _ _ hs (hl _))
 
 private theorem sourceBound_keepInk {n : Nat} (b : B) (d : Sp)
     (hb : b.SourceBound n) : (b.keepInk d).SourceBound n :=
@@ -10384,6 +10612,10 @@ public structure Spacing.Context where
   private frameKeys : Ir.FrameKeys := .beamer
   /-- Every frame's label at its body index (`Ir.Doc.frameLabels`). -/
   private frameLabels : Array (Option String) := #[]
+  /-- The walk is inside a frame whose lists set with beamer's squeezed
+  spacing (`Ir.frameSqueeze`): `\itemsep0pt`, and `\topsep0.5pt` for a
+  trivlist inside an item. -/
+  private squeeze : Bool := false
   /-- The walk is inside a box (`Ir.Block.listScope`), where TeX sets
   content at its natural height, so a fill there stretches nothing the
   page's leftover reaches (`Ir.frameFillsOne` stops at the same boxes). -/
@@ -10486,6 +10718,8 @@ public structure Spacing.Pending where
   private frameNum : Option Nat := none
   /-- The frame's label, from `Ir.Doc.frameLabels` by the same driver. -/
   private frameLabel : Option String := none
+  /-- The open frame's squeezed list spacing (`Ir.frameSqueeze`). -/
+  private frameSqueeze : Ir.FrameSqueeze := .none
   /-- Source frame and overlay from the top-level driver. -/
   private frameOrigin : Option FrameOrigin := none
   /-- Source declaration, before an overlay makes several collected frames. -/
@@ -10937,7 +11171,7 @@ palette, section and counter changes cannot rewrite this opening. -/
 private def Spacing.Pending.frameOpening (a : Acc) (standout : Bool)
     (area : FrameArea := .margins) :
     FrameOpening :=
-  { origin := a.frameOrigin, number := a.frameNum, label := a.frameLabel
+  { origin := a.frameOrigin, number := a.frameNum, label := a.frameLabel, squeeze := a.frameSqueeze
     chrome := { footerLeft := a.chromeL, footerRight := a.chromeR,
                 standoutNote := a.standoutNote }
     note := a.frameFoot, sectionTitle := a.curSection, count := a.frameCount
@@ -13499,8 +13733,11 @@ private def collectTitledTitle (r : Rd) (a : Acc) (kind : TitledKind)
     let shown := match font with
       | some tpl => Ir.fillTemplate tpl title
       | none => title
+    -- A block's title keeps its body's first lines (`Spacing.Paragraph.keepNext`):
+    -- beamer's block is one box, which no frame break splits.
     let a := collectDisplay r a shown indent false r.geom.fontSize
       (baseStyle := { weight := .b }) (leaf := leaf) (span := leafCount title)
+      (keepNext := 2 * Ir.leadingFor r.geom.fontSize r.geom.leading)
       (paintPadding := bar.map fun _ => pad)
       (texBox := if bar.isSome then none
         else some { inset := 0, more := false, leading := titleLeading r font })
@@ -14254,8 +14491,9 @@ private def collectBlock (r : Rd) (a : Acc)
       | some s => { r with inPar := false,
                            geom := { r.geom with parskip := s.parsep, texParskip := s.parsep } }
       | none => { r with inPar := false }
+    -- beamer's squeeze (`\beamer@cramped`): `\itemsep0pt` in every list.
     let a := collectItems ri a items.toList indent st ordered level 1
-      (sk.map fun s => r.resolve s.itemsep) step
+      (sk.map fun s => if r.squeeze then {} else r.resolve s.itemsep) step
     let a := if ordered then { a with enumDepth := depth - 1 }
       else { a with itemDepth := depth - 1 }
     match st.before, top with
@@ -14295,8 +14533,12 @@ private def collectBlock (r : Rd) (a : Acc)
     -- A trivlist environment's scope (`Ir.trivlistRole`): its `\topsep`
     -- stands above and below it, on top of the peer gap (`Spacing.Pending.trivSpace`).
     if n == Ir.trivlistRole then
-      let g := r.resolve (Ir.trivlistSkipFor r.lists a.tokens r.geom.fontSize
-          (a.itemDepth + a.enumDepth + a.quoteDepth))
+      -- Inside a squeezed frame's list item a trivlist takes the
+      -- `\topsep0.5pt` beamer's squeeze leaves in force (`\trivlist` resets
+      -- no list level of its own).
+      let depth := a.itemDepth + a.enumDepth + a.quoteDepth
+      let g := if r.squeeze && depth > 0 then r.resolve Ir.squeezedTopsep
+        else r.resolve (Ir.trivlistSkipFor r.lists a.tokens r.geom.fontSize depth)
       (collectBlocks r (a.trivSpace g) body indent).trivSpace g
     -- A list or quote opened inside an open paragraph: its arm reads the
     -- mode (`Spacing.Context.inPar`) and spends no `\partopsep`.
@@ -14602,6 +14844,13 @@ private def collectBlock (r : Rd) (a : Acc)
         | .object => collectCentered rf a body.toList indent false) a
     a.pushOp .floatClose
   | .frame title standout valign breakable body =>
+    -- The squeeze marker stays in the body, an empty mark the walk passes
+    -- (`Ir.pageMarkerRole`).
+    let squeeze := (Ir.frameSqueeze body).1
+    -- Only a declared squeeze changes the page; the ladder's is the web
+    -- deck's stand-in for the shrink the page's glue takes (`squeezedFrames`).
+    let r := { r with squeeze := squeeze == .declared }
+    let a := { a with frameSqueeze := squeeze }
     -- A frame is a page boundary, not an article paragraph. Content past
     -- the page bottom spills to a continuation page — best effort, never
     -- clipped. The frame's number rides in from `run`'s top-level driver,
@@ -14718,14 +14967,14 @@ private theorem role_transparent_collect (r : Rd) (a : Acc) (n : String)
   have h : (n == Ir.trivlistRole) = false := by simpa using htl
   have h' : (n == Ir.inParagraphRole) = false := by simpa using hip
   have hpa : (n == Ir.pageAnchorRole) = false := by
-    simp only [Ir.pageMarkerRole, Bool.or_eq_false_iff] at hpm; exact hpm.1.1.1
+    simp only [Ir.pageMarkerRole, Bool.or_eq_false_iff] at hpm; exact hpm.1.1.1.1.1
   have hni : (n == Ir.noInterlineRole) = false := by
-    simp only [Ir.pageMarkerRole, Bool.or_eq_false_iff] at hpm; exact hpm.1.1.2
+    simp only [Ir.pageMarkerRole, Bool.or_eq_false_iff] at hpm; exact hpm.1.1.1.1.2
   have hps : (n == Ir.primitiveSkipRole) = false := by
-    simp only [Ir.pageMarkerRole, Bool.or_eq_false_iff] at hpm; exact hpm.1.2
+    simp only [Ir.pageMarkerRole, Bool.or_eq_false_iff] at hpm; exact hpm.1.1.1.2
   have hop : Ir.pageOpeningOfRole? n = none := by
     simp only [Ir.pageMarkerRole, Bool.or_eq_false_iff] at hpm
-    exact Option.isNone_iff_eq_none.mp (Option.isSome_eq_false_iff.mp hpm.2)
+    exact Option.isNone_iff_eq_none.mp (Option.isSome_eq_false_iff.mp hpm.1.1.2)
   simp only [collectBlock, Spacing.Context.style, hst, Option.getD, h, h', hth, hpa, hni, hps,
     hdc, hop, Bool.false_eq_true, ite_false]
 
@@ -16222,6 +16471,17 @@ private theorem census_warnNoteOverrun (pick : Option Nat → Bool → Bool)
   dsimp only
   split <;> exact census_of_eq pick b _ rfl rfl
 
+private theorem census_noteOverrun (pick : Option Nat → Bool → Bool) (b : B) (o : Sp) :
+    Spacing.Page.census pick (Spacing.Page.noteOverrun b o) = Spacing.Page.census pick b := by
+  unfold Spacing.Page.noteOverrun
+  repeat' split
+  all_goals exact census_of_eq pick b _ rfl rfl
+
+private theorem census_warnOverhang (pick : Option Nat → Bool → Bool) (b : B) (o : Sp) :
+    Spacing.Page.census pick (Spacing.Page.warnOverhang b o) = Spacing.Page.census pick b := by
+  unfold Spacing.Page.warnOverhang
+  split <;> exact census_of_eq pick b _ rfl rfl
+
 private theorem census_fitCommit {n : Nat} (pick : Option Nat → Bool → Bool)
     (b : B) (mk : Sp → LineOut) (firstY stepY retryY : B → Sp)
     (depth below : Sp) (rl : Bool) (inkBelow bottom : Sp)
@@ -16233,8 +16493,11 @@ private theorem census_fitCommit {n : Nat} (pick : Option Nat → Bool → Bool)
   · rw [census_warnNoteOverrun, census_commit, hm]
   · split
     · rw [census_commit, hm]
-    · split <;> rw [census_warnNoteOverrun, census_commit, hm,
-        census_spillPage pick b _ hb]
+    · split
+      · rw [census_noteOverrun, census_warnOverhang, census_commit, hm]
+      · rw [census_noteOverrun]
+        split <;> rw [census_warnNoteOverrun, census_commit, hm,
+          census_spillPage pick b _ hb]
 
 private theorem filter_zeroRule_chars (segs : Array Seg) :
     (segs.filter fun s => match s with | .rule w _ _ _ => w != 0 | _ => true).toList.flatMap
@@ -16611,11 +16874,13 @@ reads it (`keepExt`): a paragraph's first two lines as their boxes stand,
 a picture's whole box, a second heading and its own reserve — cannot
 stand on the page within its shrink,
 the page closes before the heading, as TeX's page builder finds no legal
-break between a heading and the box after it and breaks above it. Only in
-flow and outside a float replay: a frame or a float decides its own page.
-`n` is the heading's line count. -/
+break between a heading and the box after it and breaks above it. In flow
+and in a frame declared breakable (`[allowframebreaks]`, whose block keeps
+its title with its body as beamer's one box does), outside a float replay:
+a frame that does not break and a float decide their own page. `n` is the
+heading's line count. -/
 private def Spacing.Page.keepHeading (b : B) (j : ParaJob) (n : Nat) : B :=
-  if 0 < j.keepNext && b.frameBreak.isNone && !b.noBreak &&
+  if 0 < j.keepNext && b.frameBreak != some false && !b.noBreak &&
       !b.fresh &&
       noteFloor b.bottom b.noteGap b.notesH b.noteHang + b.pageShrink + b.skip.shrink
         < b.y + b.prevDepth + b.skip.width
@@ -17006,16 +17271,19 @@ private def stepStaged (fs : FontSet) (imgs : Image.Store) (st : StepSt)
     -- for shipment (`emptyBreak_pageState`). A page that is not blank
     -- ships: a picture of fills or of strokes alone is a page.
     if !b.cur.blank then
-      b := { b.finishPage b.closingOwed with
-               chrome := none, frameBreak := none, frameSource := none, spillWarned := false }
+      b := { (b.finishPage b.closingOwed).reportOverhang with
+               chrome := none, frameBreak := none, frameSource := none, spillWarned := false,
+               overhang := none, curSqueeze := .none }
     else
       b := { b with pageBg := none, vdist := .top, pageFils := 0, filsAbove := #[],
                     pinnedLines := 0, pinnedFills := 0, pinnedInks := 0, chrome := none,
                     openRegions := b.openRegions.map RegionStart.nextPage, closedRegions := #[],
                     frameBreak := none, frameSource := none, spillWarned := false, opened := false,
+                    overhang := none, curSqueeze := .none,
                     freshStart := false }
   | .frameOpen br source opening =>
     b := { b with frameBreak := some br, frameSource := source, spillWarned := false,
+                  overhang := none, curSqueeze := opening.squeeze,
                   curFrame := opening.number, curFrameLabel := opening.label
                   curFrameOrigin := opening.origin
                   curFoot := opening.footer, curFootLook := some opening.look
@@ -17277,7 +17545,10 @@ private theorem break_frame_projects (fs : FontSet) (imgs : Image.Store) (st : S
     next.curFrameOrigin = st.b.curFrameOrigin ∧
       next.curFrame = st.b.curFrame ∧ next.curFoot = st.b.curFoot := by
   simp only [stepStaged, Id.run, pure]
-  split <;> exact ⟨rfl, rfl, rfl⟩
+  split
+  · simp only [reportOverhang_curFrameOrigin, reportOverhang_curFrame, reportOverhang_curFoot]
+    exact ⟨rfl, rfl, rfl⟩
+  · exact ⟨rfl, rfl, rfl⟩
 
 /-- Ending a frame clears the assignment before any following flow content
 is placed. The pages already shipped remain unchanged. -/
@@ -17543,6 +17814,12 @@ private theorem fitCommit_note_with_mark (b : B) (mk : Sp → LineOut)
     | (rw [warnNoteOverrun_pendingNotes]
        exact attachNotes_mem _ ns nb hnb l hl)
     | exact attachNotes_mem _ ns nb hnb l hl
+    | (rw [noteOverrun_pendingNotes, warnOverhang_pendingNotes]
+       exact attachNotes_mem _ ns nb hnb l hl)
+    | (rw [noteOverrun_pendingNotes, warnNoteOverrun_pendingNotes]
+       exact attachNotes_mem _ ns nb hnb l hl)
+    | (rw [noteOverrun_pendingNotes]
+       exact attachNotes_mem _ ns nb hnb l hl)
 
 private theorem placePicture_extends (fs : FontSet) (imgs : Image.Store)
     (b : B) (x : Sp) (pic : Ir.Pic.Picture) (leaf : Option Nat) (origin : Nat) :
@@ -18640,6 +18917,19 @@ private theorem frameStep_warnNoteOverrun (b : B) (y depth : Sp) :
   simp only [Spacing.Page.warnNoteOverrun]
   split <;> exact FrameStep.of_eq rfl rfl
 
+private theorem frameStep_noteOverrun (b : B) (o : Sp) : FrameStep b (b.noteOverrun o) := by
+  unfold Spacing.Page.noteOverrun
+  repeat' split
+  all_goals exact FrameStep.of_eq rfl rfl
+
+private theorem frameStep_warnOverhang (b : B) (o : Sp) : FrameStep b (b.warnOverhang o) := by
+  unfold Spacing.Page.warnOverhang
+  split <;> exact FrameStep.of_eq rfl rfl
+
+private theorem frameStep_reportOverhang (b : B) : FrameStep b b.reportOverhang := by
+  unfold Spacing.Page.reportOverhang
+  split <;> exact FrameStep.of_eq rfl rfl
+
 private theorem frameStep_fitCommit (b : B) (mk : Sp → LineOut)
     (firstY stepY retryY : B → Sp) (depth below : Sp) (rl : Bool)
     (inkBelow bottom : Sp) (ns : Array NoteBlock) :
@@ -18651,12 +18941,16 @@ private theorem frameStep_fitCommit (b : B) (mk : Sp → LineOut)
   · split
     · exact (frameStep_commit b ..).trans (frameStep_attachNotes ..)
     · split
-      · exact (frameStep_spillPage b _).trans
-          (((frameStep_commit _ _ depth below rl false 0).trans
-            (frameStep_attachNotes ..)).trans (frameStep_warnNoteOverrun ..))
-      · exact (frameStep_spillPage b _).trans
-          (((frameStep_commit _ _ depth below rl false 0).trans
-            (frameStep_attachNotes ..)).trans (frameStep_warnNoteOverrun ..))
+      · exact (((frameStep_commit b ..).trans (frameStep_attachNotes ..)).trans
+          (frameStep_warnOverhang ..)).trans (frameStep_noteOverrun ..)
+      · refine FrameStep.trans ?_ (frameStep_noteOverrun ..)
+        split
+        · exact (frameStep_spillPage b _).trans
+            (((frameStep_commit _ _ depth below rl false 0).trans
+              (frameStep_attachNotes ..)).trans (frameStep_warnNoteOverrun ..))
+        · exact (frameStep_spillPage b _).trans
+            (((frameStep_commit _ _ depth below rl false 0).trans
+              (frameStep_attachNotes ..)).trans (frameStep_warnNoteOverrun ..))
 
 private theorem frameStep_placeAnchor (fs : FontSet) (b : B) (h : AnchorRule) (shift : Sp)
     (paints : Bool) : FrameStep b (b.placeAnchor fs h shift paints) := by
@@ -18789,8 +19083,8 @@ private theorem stepStaged_frames (fs : FontSet) (imgs : Image.Store)
   | brk =>
     simp only [stepStaged, Id.run, Id, pure]
     split
-    · exact hb.step ((frameStep_finishPage _ st.b.closingOwed false).trans
-        (FrameStep.of_eq rfl rfl))
+    · exact hb.step (((frameStep_finishPage _ st.b.closingOwed false).trans
+        (frameStep_reportOverhang _)).trans (FrameStep.of_eq rfl rfl))
     · exact hb.step (FrameStep.of_eq rfl rfl)
   | colClose =>
     simp only [stepStaged, Id.run, Id, pure]
@@ -19109,6 +19403,15 @@ private theorem reflowStep_warnNoteOverrun (b : B) (y depth : Sp) :
   · exact ⟨rfl, fun _ h => Array.mem_push.mpr (Or.inl h)⟩
   · exact ReflowStep.refl b
 
+private theorem reflowStep_noteOverrun (b : B) (o : Sp) : ReflowStep b (b.noteOverrun o) :=
+  ReflowStep.of_eq (by simp) (by simp)
+
+private theorem reflowStep_warnOverhang (b : B) (o : Sp) : ReflowStep b (b.warnOverhang o) :=
+  ReflowStep.of_eq (by simp) (by simp)
+
+private theorem reflowStep_reportOverhang (b : B) : ReflowStep b b.reportOverhang :=
+  ⟨by simp, fun d h => reportOverhang_diags_mem b d h⟩
+
 private theorem reflowStep_fitCommit (b : B) (mk : Sp → LineOut)
     (firstY stepY retryY : B → Sp) (depth below : Sp) (rl : Bool)
     (inkBelow bottom : Sp) (ns : Array NoteBlock) :
@@ -19120,12 +19423,16 @@ private theorem reflowStep_fitCommit (b : B) (mk : Sp → LineOut)
   · split
     · exact (reflowStep_commit b ..).trans (reflowStep_attachNotes ..)
     · split
-      · exact (reflowStep_spillPage b _).trans
-          (((reflowStep_commit _ _ depth below rl false 0).trans
-            (reflowStep_attachNotes ..)).trans (reflowStep_warnNoteOverrun ..))
-      · exact (reflowStep_spillPage b _).trans
-          (((reflowStep_commit _ _ depth below rl false 0).trans
-            (reflowStep_attachNotes ..)).trans (reflowStep_warnNoteOverrun ..))
+      · exact (((reflowStep_commit b ..).trans (reflowStep_attachNotes ..)).trans
+          (reflowStep_warnOverhang ..)).trans (reflowStep_noteOverrun ..)
+      · refine ReflowStep.trans ?_ (reflowStep_noteOverrun ..)
+        split
+        · exact (reflowStep_spillPage b _).trans
+            (((reflowStep_commit _ _ depth below rl false 0).trans
+              (reflowStep_attachNotes ..)).trans (reflowStep_warnNoteOverrun ..))
+        · exact (reflowStep_spillPage b _).trans
+            (((reflowStep_commit _ _ depth below rl false 0).trans
+              (reflowStep_attachNotes ..)).trans (reflowStep_warnNoteOverrun ..))
 
 private theorem reflowStep_placeAnchor (fs : FontSet) (b : B) (h : AnchorRule) (shift : Sp)
     (paints : Bool) : ReflowStep b (b.placeAnchor fs h shift paints) := by
@@ -19303,6 +19610,9 @@ private theorem stepStaged_reflows (fs : FontSet) (imgs : Image.Store)
     | (refine hb.step ((reflowStep_finishPage _ st.b.closingOwed false).trans
         (ReflowStep.of_eq ?_ ?_)) <;> simp
        done)
+    | (refine hb.step (((reflowStep_finishPage _ st.b.closingOwed false).trans
+        (reflowStep_reportOverhang _)).trans (ReflowStep.of_eq ?_ ?_)) <;> simp
+       done)
 
 private theorem foldSteps_reflows (fs : FontSet) (imgs : Image.Store)
     (group : Array StagedOp) (st : StepSt) (hb : st.b.ReflowsNamed) :
@@ -19456,6 +19766,8 @@ The public projections of `runPost` carry page invariants across this seam. -/
 public structure Shipped where
   pages : Array PageOut
   footGap : Sp
+  /-- The frames' overruns (`Out.overruns`). -/
+  overruns : Array (Nat × Sp) := #[]
   /-- The diagnostics as of shipping — the builder's own plus the
   measure-band check's. -/
   diags : Array Diag
@@ -20013,7 +20325,7 @@ slot yields in place: shorten the content or drop a slot"))
         page := (destination? out (target.drop 1).toString).map (·.1) }
     else ({ title := title, url := some target } : OutlineEntry)
   return { pages := out, diags := unique, outline := outline
-           paragraphBreaks := sh.paragraphBreaks }
+           paragraphBreaks := sh.paragraphBreaks, overruns := sh.overruns }
 
 /-- Furniture may add diagnostics and deduplication may merge repeated
 reports, but every shipped code and subject still has a representative
@@ -21166,6 +21478,7 @@ private def withLayoutOps {α : Type} (geom : Geom) (fs : FontSet)
     return {
       pages := b.pages
       footGap := b.footGap
+      overruns := b.overruns
       diags := shipDiags
       paragraphBreaks := b.paragraphBreaks
       labelRequests := stagedLabelRequests staged
@@ -21633,6 +21946,41 @@ public def run (geom : Geom) (fs : FontSet) (pats : Option Hyphen.Patterns) (doc
   let (doc, diags) := resolveDocMath fs doc
   let out := addMarks (runCore geom fs pats doc imgs frameSpans pictureSpans) (markFillsOf geom doc)
   { out with diags := diags ++ out.diags }
+
+/-- The body index, in the document, of the `k`-th block the PDF's view
+keeps (`pdfView`): the inverse of `frameSpansForPdf`'s translation. -/
+public def pdfSourceIndex (doc : Doc) (k : Nat) : Option Nat :=
+  ((List.range doc.body.size).filter fun i =>
+    (doc.body[i]?.map (keptBy "pdf")).getD false)[k]?
+
+/-- **The web deck's half of the overflow ladder** (`Ir.frameFitOf`): the
+frames, by their index in `doc.body`, whose content the page set past its
+text area at its glue's natural size — those the page fitted by shrinking
+that glue, set overfull in the gap above their footline, or continued. A web
+stage has no glue to shrink, so these frames' lists set squeezed there
+(`Ir.squeezeFrames`, the IR value the web deck reads), beamer's
+`\itemsep0pt\topsep0.5pt`, the floor its list glue shrinks to. A frame its
+author squeezed already carries its marker. -/
+public def squeezedFrames (doc : Doc) (out : Out) : Array Nat :=
+  out.overruns.filterMap fun (k, o) =>
+    if 0 < o then
+      (pdfSourceIndex doc k).bind fun i => match doc.body[i]? with
+        | some (.frame _ _ _ _ fbody) =>
+          if (Ir.frameSqueeze fbody).1 == .none && Ir.holdsList fbody then some i else none
+        | _ => none
+    else none
+
+/-- A document whose every frame fits at its glue's natural size squeezes
+nothing for the web (`_id`). -/
+public theorem squeezedFrames_id (doc : Doc) (out : Out) (h : out.overruns.all (·.2 ≤ 0)) :
+    squeezedFrames doc out = #[] := by
+  unfold squeezedFrames
+  rw [Array.filterMap_eq_empty_iff]
+  intro x hx
+  obtain ⟨i, hi, rfl⟩ := Array.mem_iff_getElem.mp hx
+  have hle := Array.all_eq_true.mp h i hi
+  simp only [decide_eq_true_eq] at hle
+  simp [Int.not_lt.mpr hle]
 
 private theorem keepFor_plain_body (backend : String) (body : Array Block)
     (h : ∀ b ∈ body, ∃ xs, b = .para xs ∧ PlainInlines xs) :

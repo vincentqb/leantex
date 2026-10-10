@@ -767,6 +767,10 @@ def build (ui : Ui) (file : String) : IO UInt32 := do
       let out := Layout.run geom fs pats doc imgs
         (frameSpans := Layout.frameSpansForPdf doc reqSpans.frames)
         (pictureSpans := Layout.pictureSpansForPdf doc reqSpans.images)
+      -- The frames the page fitted only past their glue's natural size: the
+      -- web deck, which has no glue to shrink, squeezes their lists
+      -- (`Layout.squeezedFrames`, read off the IR as `Ir.squeezeFrames`).
+      let squeezed := Layout.squeezedFrames doc out
       let layoutDiags := out.diags.map sourceDiag
       resolved := resolved.append (← ui.resolve doc.allow allowAll (outputs := outputs) layoutDiags)
       ui.phase "layout" s!"{out.pages.size} pages" (← since t)
@@ -875,6 +879,7 @@ in the HTML" (← since t)
               spans
             (fit.step, fit.overhang > 0)
         }
+        let htmlDoc := { htmlDoc with body := Ir.squeezeFrames htmlDoc.body squeezed }
         let (result, hdiags) ← prepareHtml file hcfg htmlDoc
         resolved := resolved.append (← ui.resolve doc.allow allowAll (outputs := outputs)
           (hdiags.map front.prepared.sourceTriggers.attribute))

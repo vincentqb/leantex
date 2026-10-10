@@ -728,9 +728,9 @@
 ── W0383 (pending) algorithm construct outside the modeled subset; kept as a plain line
 ⚠ [W0383] - \lIf
   '\lIf' is an algorithm construct outside the modeled subset; its content is kept as plain lines
-── W0384 (degraded) a frame taller than its page continues on the next page without a declared break
+── W0384 (degraded) a frame taller than its page without a declared break: its lists squeezed, set into the gap above its footline, or continued on the next page
 ⚠ [W0384]
-  frame 1 is 3.437pt taller than its page; it continues on the next page
+  frame 1 is 16.637pt taller than its page; it continues on the next page
   suggestion: shorten the frame, or declare `[allowframebreaks]` on it to accept the break
 ⚠ [W0384]
   frame standout is 13.714pt taller than its page; it continues on the next page

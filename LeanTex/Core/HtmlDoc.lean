@@ -314,7 +314,7 @@ public def engineClasses : List String :=
    "reveal-scroll", "ruled", "section-page", "separator", "slide",
    "slide-foot", "slide-logo", "slide-track", "slides", "snap", "spaced",
    "standout", "step", "table-float", "tcolorbox", "tcolorbox-body", "titlebar", "verbatim-list", "vskip",
-   "alt-pair", "alt-alike", "frame-body-tail", "frame-flow-end", "fill-before"] ++
+   "alt-pair", "alt-alike", "frame-body-tail", "frame-flow-end", "fill-before", "squeeze"] ++
   Ir.sizeScale.map (fun p => "size-" ++ p.1) ++ Ir.sizeScale.map (fun p => "lead-" ++ p.1)
 
 private theorem engineClasses_no_u_prefix :
@@ -1329,6 +1329,24 @@ public def listRules (l : Ir.ListLineage) (size : Int) (tokens : Ir.Tokens) : Li
         (listLevelGaps size sk) (spaces n).2 (spaces (n + 1))
     | none => []
 
+/-- A squeezed frame's list rules (`Ir.frameSqueeze`): the class's levels
+again under the frame's `squeeze` class, its items with beamer's
+`\itemsep0pt` (`\beamer@cramped`) and every other space the level's own,
+as `\@listii` resets a nested list's `\topsep` before it opens; standing
+after the class's rules at the same specificity, they win where they apply. -/
+public def squeezeListRules (l : Ir.ListLineage) (size : Int) (tokens : Ir.Tokens) :
+    List GapRule :=
+  let squeezed (n : Nat) : Option Ir.ListSkips :=
+    (Ir.listSkips l size n).map fun sk => { sk with itemsep := {} }
+  let spaces (n : Nat) : Nat × Nat := match squeezed n with
+    | some sk => ((listLevelGaps size sk).1, listOpenGap size sk (Ir.partopsepFor l size n tokens))
+    | none => (0, 0)
+  [1, 2, 3].flatMap fun n => match squeezed n with
+    | some sk =>
+      listLevelRules ("section.slide.squeeze " ++ String.join (List.replicate (n - 1) itemAncestor))
+        (listLevelGaps size sk) (spaces n).2 (spaces (n + 1))
+    | none => []
+
 /-- A lineage's list indents as CSS, per level: a list's items, a
 description's `<dd>` and a quotation's two edges stand the level's
 `\leftmargin` in, from the one resolving site the page's margins read
@@ -1576,9 +1594,10 @@ consumer rule — a declared `\style` on the bare element or a reader
 stylesheet owning a container's spacing with `gap` — wins without a
 specificity fight, which is the HTML backend's override contract. -/
 public def blockGapRules (l : Ir.ListLineage) (size : Int) (tokens : Ir.Tokens)
-    (shaped : Bool := false) : List GapRule :=
+    (shaped : Bool := false) (squeezed : Bool := false) : List GapRule :=
   gapResets ++ gapBeforeLists ++ blockRules size tokens shaped ++ thmRules l size ++
-    listRules l size tokens ++ gapAfterLists ++ beamerPairRules l size tokens ++
+    listRules l size tokens ++ (if squeezed then squeezeListRules l size tokens else []) ++
+    gapAfterLists ++ beamerPairRules l size tokens ++
     [skipFollowerRule, headingFollowerRule]
 
 /-! ### Overlay carriers
@@ -1910,8 +1929,10 @@ public theorem GapRule.throughCarriers_isReset (pairs : List (Nat × Nat)) (r : 
 
 /-- The block-boundary sheet read through a tree's boundary shapes. -/
 public def blockGapCss (l : Ir.ListLineage) (size : Int) (tokens : Ir.Tokens)
-    (pairs : List (Nat × Nat) := []) (shaped : Bool := false) : String :=
-  String.join ((blockGapRules l size tokens shaped).map fun r => (r.throughCarriers pairs).render)
+    (pairs : List (Nat × Nat) := []) (shaped : Bool := false) (squeezed : Bool := false) :
+    String :=
+  String.join ((blockGapRules l size tokens shaped squeezed).map fun r =>
+    (r.throughCarriers pairs).render)
 
 private theorem dropWhile_append_all {α : Type} (p : α → Bool) (xs ys : List α)
     (h : xs.all p = true) : (xs ++ ys).dropWhile p = ys.dropWhile p := by
@@ -1949,6 +1970,12 @@ private theorem beamerPairRules_noReset (l : Ir.ListLineage) (size : Int) (token
     split <;> split <;> simp [GapRule.isReset]
   · rfl
 
+private theorem squeezeListRules_noReset (l : Ir.ListLineage) (size : Int)
+    (tokens : Ir.Tokens) : (squeezeListRules l size tokens).all (fun r => !r.isReset) = true := by
+  simp only [squeezeListRules, List.all_flatMap, List.all_cons, List.all_nil, Bool.and_true,
+    Bool.and_eq_true]
+  refine ⟨?_, ?_, ?_⟩ <;> split <;> first | rfl | exact listLevelRules_noReset _ _ _ _
+
 private theorem thmRules_noReset (l : Ir.ListLineage) (size : Int) :
     (thmRules l size).all (fun r => !r.isReset) = true := by
   simp only [thmRules, List.all_flatMap, List.all_eq_true]
@@ -1964,9 +1991,10 @@ rule stands last. That no base-sheet rule outside the emitter declares a
 margin on an element it spaces is the text's to show, and
 `htmlRhythmChecks` reads it off every golden page's sheet. -/
 public theorem blockGap_owner_contract (l : Ir.ListLineage) (size : Int) (tokens : Ir.Tokens)
-    (shaped : Bool) :
-    ((blockGapRules l size tokens shaped).dropWhile GapRule.isReset).all (fun r => !r.isReset) = true ∧
-    (blockGapRules l size tokens shaped).getLast? =
+    (shaped : Bool) (squeezed : Bool := false) :
+    ((blockGapRules l size tokens shaped squeezed).dropWhile GapRule.isReset).all
+        (fun r => !r.isReset) = true ∧
+    (blockGapRules l size tokens shaped squeezed).getLast? =
       some (.boundary ":is(h1, h2, h3, h4, h5, h6) + *" "0") := by
   have hbefore : gapBeforeLists.all (fun r => !r.isReset) = true := by decide
   have hafter : gapAfterLists.all (fun r => !r.isReset) = true := by decide
@@ -1974,11 +2002,17 @@ public theorem blockGap_owner_contract (l : Ir.ListLineage) (size : Int) (tokens
     decide
   have hblock : (blockRules size tokens shaped).all (fun r => !r.isReset) = true := by
     cases shaped <;> simp [blockRules, ownsBelow, GapRule.isReset]
+  have hsq : (if squeezed then squeezeListRules l size tokens else []).all
+      (fun r => !r.isReset) = true := by
+    cases squeezed
+    · rfl
+    · exact squeezeListRules_noReset l size tokens
   have hall : (gapBeforeLists ++ blockRules size tokens shaped ++ thmRules l size ++
-      listRules l size tokens ++ gapAfterLists ++ beamerPairRules l size tokens ++
+      listRules l size tokens ++ (if squeezed then squeezeListRules l size tokens else []) ++
+      gapAfterLists ++ beamerPairRules l size tokens ++
       [skipFollowerRule, headingFollowerRule]).all (fun r => !r.isReset) = true := by
     simp only [List.all_append, hbefore, hafter, htail, hblock, thmRules_noReset,
-      listRules_noReset, beamerPairRules_noReset, Bool.and_self]
+      listRules_noReset, beamerPairRules_noReset, hsq, Bool.and_self]
   refine ⟨?_, ?_⟩
   · simp only [blockGapRules, List.append_assoc] at hall ⊢
     rw [dropWhile_append_all _ _ _ (by decide), dropWhile_none _ _ hall]
@@ -1990,12 +2024,12 @@ the sheet read through any boundary shapes still stands its resets first and
 alone and its heading's follower last, so every carrier variant ranks where
 its boundary ranks — each rides inside its boundary's own rule. -/
 public theorem blockGapThrough_owner_contract (l : Ir.ListLineage) (size : Int)
-    (tokens : Ir.Tokens) (d : List (Nat × Nat)) (shaped : Bool) :
-    (((blockGapRules l size tokens shaped).map (GapRule.throughCarriers d)).dropWhile
+    (tokens : Ir.Tokens) (d : List (Nat × Nat)) (shaped : Bool) (squeezed : Bool := false) :
+    (((blockGapRules l size tokens shaped squeezed).map (GapRule.throughCarriers d)).dropWhile
         GapRule.isReset).all (fun r => !r.isReset) = true ∧
-      ((blockGapRules l size tokens shaped).map (GapRule.throughCarriers d)).getLast? =
+      ((blockGapRules l size tokens shaped squeezed).map (GapRule.throughCarriers d)).getLast? =
         some ((GapRule.boundary ":is(h1, h2, h3, h4, h5, h6) + *" "0").throughCarriers d) := by
-  have hc := blockGap_owner_contract l size tokens shaped
+  have hc := blockGap_owner_contract l size tokens shaped squeezed
   have hp : (GapRule.isReset ∘ GapRule.throughCarriers d) = GapRule.isReset := by
     funext r
     exact GapRule.throughCarriers_isReset d r
@@ -6056,7 +6090,10 @@ public def baseCss (cfg : Config) (doc : Doc) (pairs : List (Nat × Nat) := []) 
   "  padding-top: var(--ltx-capfar-top); padding-bottom: 0;\n" ++
   "  margin-bottom: var(--ltx-capsep-top); }\n" ++
   blockGapCss doc.docClass.record.lists doc.page.fontSize doc.tokens pairs
-    (shaped := [Ir.TitledKind.block, .alert, .example].any fun k => (Ir.blockShapeOf doc.styles k).isSome) ++
+    (shaped := [Ir.TitledKind.block, .alert, .example].any fun k => (Ir.blockShapeOf doc.styles k).isSome)
+    (squeezed := doc.body.any fun b => match b with
+      | .frame _ _ _ _ fbody => (Ir.frameSqueeze fbody).1 != .none
+      | _ => false) ++
   -- Slides: the class-split deck/handout rules, header type included
   -- (`slideCss`); the standout rule below holds on both media.
   slideCss doc ++
@@ -8904,6 +8941,10 @@ public def blockNode (cfg : Config) (b : Block) : Node :=
     let cls := if standout then "slide standout"
       else if valign matches .golden then "slide title-page"
       else if design.frametitle.isSome && !title.isEmpty then "slide titlebar" else "slide"
+    -- beamer's squeezed list spacing, declared or set by the overflow
+    -- ladder (`Ir.frameSqueeze`), read by the sheet's squeezed list rules
+    -- (`squeezeListRules`).
+    let cls := if (Ir.frameSqueeze body).1 != .none then cls ++ " squeeze" else cls
     let listingFg := if standout then some design.standout.fg
       else if valign matches .golden then design.titlepage.map (·.fg) else none
     let bodyCfg := { cfg.into with

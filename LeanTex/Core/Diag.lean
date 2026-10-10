@@ -483,7 +483,7 @@ private def DiagCode.spec : DiagCode → String × Loss × String
   | .W0603 => ("0603", .degraded, "an image's embedded colour profile is dropped; the page reads it as device colour")
   | .W0604 => ("0604", .degraded, "an image's orientation tag is dropped; the page shows the stored orientation")
   | .W0605 => ("0605", .degraded, "an image or the page icon has no usable browser face; the web page shows a placeholder for an image and ships without the icon")
-  | .W0384 => ("0384", .degraded, "a frame taller than its page continues on the next page without a declared break")
+  | .W0384 => ("0384", .degraded, "a frame taller than its page without a declared break: its lists squeezed, set into the gap above its footline, or continued on the next page")
   | .W0385 => ("0385", .degraded, "a colour or font change inside math is not carried; its content sets in the surrounding style")
   | .W0386 => ("0386", .degraded, "a declared line break did not hold: its line did not fit the measure and re-flowed")
   | .W0388 => ("0388", .degraded, "ink is painted off the medium; a viewer clips to the page and cannot show it")
