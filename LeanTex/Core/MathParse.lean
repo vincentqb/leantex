@@ -338,8 +338,10 @@ grid it expands to and the delimiters `\left`/`\right` grow around it
 (amsmath.sty, TeX Live 2026: `\env@matrix` is `\array{*\c@MaxMatrixCols c}`
 with `MaxMatrixCols` 10, the five delimited matrices wrap it in
 `\left…\right`; `\env@cases` is `\left\lbrace\array{@{}l@{\quad}l@{}}`
-closed by `\right.`, under `\def\arraystretch{1.2}`; `aligned`,
-`gathered` and `split` are the display alignments' own column models).
+closed by `\right.`, under `\def\arraystretch{1.2}`; `gathered` and
+`split` are the display alignments' own column models — `split`'s one pair,
+its template no `\tabskip` — and `aligned` stands `\minalignsep` after its
+pairs, `GridKind.aligned`, its trailing read once its rows are).
 `\substack` is `subarray{c}`, one centred column. `smallmatrix` is its own
 grid (`GridKind.small`), undelimited. -/
 public def gridEnvs : List (String × GridKind × Option Char × Option Char) :=
@@ -349,8 +351,8 @@ public def gridEnvs : List (String × GridKind × Option Char × Option Char) :=
    ("vmatrix", matrix, some '|', some '|'),
    ("Vmatrix", matrix, some '\u2016', some '\u2016'),
    ("cases", .array #[.left, .left] 1200, some '{', none),
-   ("aligned", .aligned, none, none), ("gathered", .gather, none, none),
-   ("split", .aligned, none, none), ("substack", .array #[.center] 1000, none, none),
+   ("aligned", .aligned false, none, none), ("gathered", .gather, none, none),
+   ("split", .align, none, none), ("substack", .array #[.center] 1000, none, none),
    ("smallmatrix", .small, none, none)]
 
 /-- amsmath's sized delimiters (amsmath.sty: `\big` is `\bBigg@\@ne`, `\Big`
@@ -1082,16 +1084,48 @@ private def closeCell (kind : GridKind) (cells : Array MList)
     (overNum : Option (Array MItem)) (acc : Array MItem) : Array MList :=
   let body := closeLevel overNum acc
   let body := match kind with
-    | .align | .aligned =>
+    | .align | .aligned _ =>
       if cells.size % 2 == 1 then .cons emptyOrd body else body
     | _ => body
   cells.push body
 
+/-- Whether an `aligned`'s `\tabskip` after its last pair stands, from its
+rows' cell counts and whether a `\\` ends the last row: amsmath's row end
+(`\math@cr@@@aligned`) adds a column of `\kern-\alignsep@`, cancelling that
+skip, where the columns the alignment has opened so far are even —
+`\column@`, which `aligned` counts across its rows and never resets, the
+correction column among them — so the skip stands where the widest rows'
+count is even and none of them takes the correction. Measured under
+lualatex over twenty-one row shapes: a lone pair trails, the same pair ended
+by `\\` does not, and a widest row after a shorter one trails, ended or not. -/
+private def alignedTrails (widths : Array Nat) (endsRow : Bool) : Bool := Id.run do
+  let n := widths.foldl Nat.max 0
+  if n % 2 == 1 then return false
+  let mut opened := 0
+  let mut corrected := false
+  for h : i in [0:widths.size] do
+    opened := opened + widths[i]
+    if (i + 1 < widths.size || endsRow) && opened % 2 == 0 then
+      opened := opened + 1
+      if widths[i] == n then corrected := true
+  return !corrected
+
+/-- An `aligned`'s kind once its rows are read (`alignedTrails`); any other
+grid's as it opened. -/
+private def gridKindOf (kind : GridKind) (widths : Array Nat) (endsRow : Bool) : GridKind :=
+  match kind with
+  | .aligned _ => .aligned (alignedTrails widths endsRow)
+  | .align => .align
+  | .gather => .gather
+  | .array cols s => .array cols s
+  | .small => .small
+
 /-- Rows into a rectangular grid nucleus: a ragged row is named in a note
 and padded with empty cells (`MRows.pad`, whose rectangularity and
 conservation are theorems); a row overrunning an `array`'s column spec is
-named too, its extra columns centring. -/
-private def buildGrid (kind : GridKind) (rows : Array (Array MList)) :
+named too, its extra columns centring; an `aligned` reads its trailing
+separation off its rows (`gridKindOf`). -/
+private def buildGrid (kind : GridKind) (rows : Array (Array MList)) (endsRow : Bool) :
     MNucleus × Array Note := Id.run do
   let mut notes : Array Note := #[]
   let widths := rows.map (·.size)
@@ -1107,10 +1141,10 @@ padded with empty cells")
         s!"a row has {maxCols} cells where the column spec declares \
 {cols.size}; extra columns centre")
   let rs := MRows.ofList (rows.toList.map fun r => MRow.ofList r.toList)
-  return (.grid kind (rs.pad rs.maxCols), notes)
+  return (.grid (gridKindOf kind widths endsRow) (rs.pad rs.maxCols), notes)
 
-private theorem buildGrid_notes (kind : GridKind) (rows : Array (Array MList)) :
-    ParserNotes (buildGrid kind rows).2 := by
+private theorem buildGrid_notes (kind : GridKind) (rows : Array (Array MList)) (endsRow : Bool) :
+    ParserNotes (buildGrid kind rows endsRow).2 := by
   unfold buildGrid
   refine Loop.bind_of_inv ParserNotes (fun (r : MNucleus × Array Note) => ParserNotes r.2)
     _ _ (Loop.forIn_range_inv _ _ _ _ _ (by simp [ParserNotes]) ?_) ?_
@@ -1276,7 +1310,7 @@ private def parseToks (toks : Array MTok) (top : Option GridKind) (display : Boo
         if cells.isEmpty && acc.isEmpty && overNum.isNone then rows
         else rows.push (closeCell kind cells overNum acc)
       if rows.isEmpty then throw "an empty array"
-      let (grid, gnotes) := buildGrid kind rows
+      let (grid, gnotes) := buildGrid kind rows (cells.isEmpty && acc.isEmpty && overNum.isNone)
       notes := notes ++ gnotes
       let atom : MItem := .atom .ord grid .nil .nil false
       acc := frame.acc.push <| if l.isNone && r.isNone then atom
@@ -1498,7 +1532,7 @@ private def parseToks (toks : Array MTok) (top : Option GridKind) (display : Boo
       if cells.isEmpty && acc.isEmpty && overNum.isNone then rows
       else rows.push (closeCell kind cells overNum acc)
     if rows.isEmpty then throw "an empty alignment"
-    let (grid, gnotes) := buildGrid kind rows
+    let (grid, gnotes) := buildGrid kind rows (cells.isEmpty && acc.isEmpty && overNum.isNone)
     return (.cons (.atom .ord grid .nil .nil false) .nil, notes ++ gnotes)
 
 private theorem parseToks_notes (toks : Array MTok) (top : Option GridKind)
@@ -1515,7 +1549,7 @@ private theorem parseToks_notes (toks : Array MTok) (top : Option GridKind)
       | exact hn
       | exact True.intro
       | exact parserNotes_push _ _ hn (by intro w h; cases h)
-      | exact parserNotes_append _ _ hn (buildGrid_notes _ _)
+      | exact parserNotes_append _ _ hn (buildGrid_notes _ _ _)
       | (refine Loop.except_bind_of_inv _ _ _ _
             (readTextGroup_notes _ _ _ _ hn) ?_
          intro r hr
@@ -1529,7 +1563,7 @@ private theorem parseToks_notes (toks : Array MTok) (top : Option GridKind)
     repeat' first
       | exact hn
       | exact True.intro
-      | exact parserNotes_append _ _ hn (buildGrid_notes _ _)
+      | exact parserNotes_append _ _ hn (buildGrid_notes _ _ _)
       | split
 
 /-- Parse a formula's raw body into a math list, or name the construct that

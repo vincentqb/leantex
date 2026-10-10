@@ -408,7 +408,7 @@ private def htmlChecks (ref : IO.Ref (List String)) : IO Unit := do
         let parts := cssSelParts sel
         if parts.all (·.endsWith " + *") && v != "0" then
           let want := ", ".intercalate (parts.map fun p =>
-            (p.dropEnd 1).toString ++ s!":is(.vskip, {HtmlDoc.skipCarrier})")
+            (p.dropEnd 1).toString ++ s!":is(.vskip, {HtmlDoc.skipCarrier}, .fill)")
           let companion := (bounds.drop (i + 1)).find? (·.1 == want)
           check ref s!"block skips HTML ({lname}, {spMilli sz}): '{sel}' owns its space before a skip, without the follower's gap"
             ((companion.map fun (_, own) =>
@@ -421,7 +421,7 @@ private def htmlChecks (ref : IO.Ref (List String)) : IO Unit := do
   let valueOf (p : String → Bool) : Option Int := rules.findSome? fun
     | .boundary sel v => if p sel then remMilliOf v else none
     | _ => none
-  let below := valueOf fun s => s.startsWith "section.block" && s.endsWith s!"+ :is(.vskip, {HtmlDoc.skipCarrier})"
+  let below := valueOf fun s => s.startsWith "section.block" && s.endsWith s!"+ :is(.vskip, {HtmlDoc.skipCarrier}, .fill)"
   let aboveNext := valueOf fun s => s == "* + section.block"
   let skip := (boxes[2]?.bind fun attrs => boxMilli ((HtmlDoc.attrOf? attrs "style").getD ""))
   match below, aboveNext, skip with
@@ -452,11 +452,16 @@ private def inlineChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : I
     check ref s!"block skips: a skip inside {name} sets none of its spelling as text"
       (pages.all fun p => p.lines.all fun l => !hasStr (lineText l) "before")
   -- An infinite skip met there is the same one skipped site: no stretch loss
-  -- of its own beside it.
-  let (_, fdiags) := Elab.run "block-skips-inline-fil.tex"
-    (document "" [frame "\\textbf{bold \\vspace{0pt plus 1fil} words}"])
-  check ref "block skips: an infinite skip inside inline content is named once, W0329, and no stretch loss"
-    ((fdiags.filter (·.code == "W0329")).size == 1 && fdiags.all (·.code != "W0104"))
+  -- of its own beside it, and a width with `\fill` on top one skip.
+  for (name, body) in [("an unranked stretch", "\\textbf{bold \\vspace{0pt plus 1fil} words}"),
+      ("a width and a fill", "\\textbf{bold \\vspace{1em plus 1fill} words}"),
+      ("an emphasis", "\\emph{some \\vspace{1em plus 1fill} words}"),
+      ("a footnote", "Words\\footnote{note \\vspace{1em plus 1fill} words}."),
+      ("a table cell", "\\begin{tabular}{p{3cm}}cell \\vspace{1em plus 1fill} words\\end{tabular}"),
+      ("a primitive skip", "\\textbf{bold \\vskip 1em plus 1fill words}")] do
+    let (_, fdiags) := Elab.run "block-skips-inline-fil.tex" (document "" [frame body])
+    check ref s!"block skips: an infinite skip inside inline content ({name}) is named once, W0329, and no stretch loss"
+      ((fdiags.filter (·.code == "W0329")).size == 1 && fdiags.all (·.code != "W0104"))
   let titled := document "" ["\\begin{frame}[t]{Frame \\vskip 3pt title}Words.\\end{frame}\n"]
   let (_, diags) := Elab.run "block-skips-inline-title.tex" titled
   check ref "block skips: a skip inside a frame title builds" (diags.all (·.severity != .error))
@@ -492,6 +497,29 @@ private def filOrderChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) :
   let (wsplit, _) := pageOf "\\vspace{1em}\\vfill"
   check ref "block skips: \\vspace{1em plus 1fill} is its width and a fill, unnamed"
     (wfill.isSome && wfill == wsplit && wdiags.all (·.code != "W0104"))
+  -- Every spelling TeX reads as that glue: LaTeX's `\stretch`, the fill unit a
+  -- space past its factor, the keywords in capitals, a shrink after the
+  -- stretch, a register for the width; lualatex sets each.
+  for (skip, same) in [("\\vspace{\\stretch{1}}", "\\vfill"), ("\\vspace{0pt plus 1 fill}", "\\vfill"),
+      ("\\vspace{0pt PLUS 1FILL}", "\\vfill"),
+      ("\\vspace{12pt plus 1fill minus 3pt}", "\\vspace{12pt}\\vfill"),
+      ("\\vspace{2\\baselineskip plus 1fill}", "\\vspace{2\\baselineskip}\\vfill"),
+      ("\\vskip 12pt plus 1fill minus 3pt", "\\vskip 12pt\\vfill")] do
+    let (y, ds) := pageOf skip
+    let (want, _) := pageOf same
+    check ref s!"block skips: '{skip}' stands where '{same}' stands, unnamed, got {ds.map (·.code)}"
+      (y.isSome && y == want && ds.all fun d => d.code != "W0104" && d.code != "W0301" &&
+        d.severity != .error)
+  -- The block reader's own key: `stretch = fill` (or `fil`, the native
+  -- reader's one infinite unit) is the fill; any other value is the key's
+  -- wrong type, never an unknown key.
+  let (nfill, nds) := pageOf "\\block[stretch = fil]{}"
+  let (vfill, _) := pageOf "\\vfill"
+  check ref "block skips: \\block[stretch = fil]{} stands where \\vfill stands"
+    (nfill.isSome && nfill == vfill && nds.all (·.severity != .error))
+  let (_, bad) := pageOf "\\block[stretch = 3pt]{}"
+  check ref "block skips: a stretch the block reader does not take names its values"
+    (bad.any fun d => hasStr d.message "fill or unranked" && !hasStr d.message "has no key")
 
 /-- The sheet's rules for a skip box where its follower's term is not the
 one the generic boundary assumes: a skip opening an untitled frame pays the

@@ -272,6 +272,9 @@ public structure Ctx where
   /-- The surface the document was written in, set once with `page`: an
   input wrapper changes `file`, never this. -/
   surface : Ir.Surface := .tex
+  /-- The class's list lineage (`Ir.ClassRecord.lists`), set once with
+  `page`: what a listing's frame reads (`Ir.ListingFrame.onPage`). -/
+  lists : Ir.ListLineage := .sizeFile
   /-- The engine's own length tokens, resolved from the final page: the
   body-side lookup `\setlength` expressions extend theirs with. -/
   engineTokens : Array (String × Dim.SymGlue) := #[]
@@ -9289,7 +9292,7 @@ private def listingBlock (ctx : Ctx) (env s : String) (pos : Pos) : EM Block := 
     return .verbatim none s
       { base with
         fontSize := inherited, source := some (ctx.sourceSpan sourceStart)
-        frame := if ctx.surface == .tex then .trivlist else .none }
+        frame := Ir.ListingFrame.onPage ctx.surface ctx.lists ctx.page.parskip .trivlist }
   let (opts, afterOpt) := (Parse.listingOptHead s).getD ("", 0)
   let mut content := s
   let mut caption : Option String := none
@@ -9415,7 +9418,8 @@ size commands; the current style stands" none
     -- wrap keeps the surface's (none on a tex document).
     -- premise: markdownCodeChecks — a breaklines lstlisting sets every line inside the measure, continuations 20 pt in, with no re-flow named, while minted's wrap keeps no break indent and so the paragraph breaker's W0386
     breakIndent := if env == "lstlisting" then some Ir.listingBreakIndent else base.breakIndent
-    frame := if ctx.surface == .tex && env == "minted" then .list else .none
+    frame := if env == "minted" then Ir.ListingFrame.onPage ctx.surface ctx.lists ctx.page.parskip .list
+      else .none
     source := some (ctx.sourceSpan contentPos) }
   let spec ← match caption with
     | some cap => do
@@ -11413,7 +11417,8 @@ private def blockSkipTokens (ctx : Ctx) : Array (String × Dim.SymGlue) :=
   ctx.tokens.entries ++ ctx.engineTokens ++
     #["smallskipamount", "medskipamount", "bigskipamount"].map fun n => (n, Ir.skipAmount ctx.tokens n)
 
-/-- A `\block`'s option, read: its `before` skip, and whether the skip is
+/-- A `\block`'s option, read: its `before` skip, stretching as `\fill`
+beside its width where `stretch = fill` says so, and whether the skip is
 TeX's primitive `\vskip` (`kind = vskip`, the spelling Compat's `\vskip`
 door writes) — its glue stays the last skip an element's `\addvspace`
 compares with (`Ir.primitiveSkipRole`) — rather than `\vspace`'s
@@ -11424,12 +11429,19 @@ private def blockOptions (ctx : Ctx) (optSrc : Array Raw) (pos : Pos) : EM (SymG
   modify fun st => { st with diags := st.diags ++ ds }
   let mut before : SymGlue := {}
   let mut primitive := false
+  let mut fill := false
   for e in opts do
     match e.key, e.value with
     | "before", .glue g => before := g
     | "before", .dim d => before := { width := Dim.Length.ofSp d }
     | "kind", .ident "vskip" => primitive := true
     | "kind", .ident "vspace" => primitive := false
+    -- `fill` reads as `\fill`'s glue: the skip stretches as it, beside its width.
+    | "stretch", .glue g =>
+      if g == { fil := true } then fill := true
+      else
+        let d := Decl.wrongType ctx.file "block" "stretch" "fill or unranked" (.glue g) pos
+        modify fun st => { st with diags := st.diags.push d }
     -- The skip door's mark of an infinite stretch the engine's one order
     -- cannot rank (Compat's `skipNative`): named here, where the skip is set.
     | "stretch", .ident "unranked" =>
@@ -11440,9 +11452,10 @@ fills here have one order, so the skip sets at its natural width" pos
     | key, v =>
       let d := if key == "before" then Decl.wrongType ctx.file "block" key "a length" v pos
         else if key == "kind" then Decl.wrongType ctx.file "block" key "vspace or vskip" v pos
+        else if key == "stretch" then Decl.wrongType ctx.file "block" key "fill or unranked" v pos
         else Decl.unknownKey ctx.file "block" key ["before", "kind", "stretch"] pos
       modify fun st => { st with diags := st.diags.push d }
-  return (before, primitive)
+  return ({ before with fil := before.fil || fill }, primitive)
 
 /-- A skip block, and after it, where it is TeX's primitive `\vskip` standing
 alone — a block holding content is the content's own space, no skip on the
@@ -17396,7 +17409,7 @@ private def prepareStyledBody (file : String) (decls : Array PDecl)
                     frameAlign := classFrameAlign classOpts
                     face := record.model == .face
                     numberHeadings := record.numberHeadings, styles := styles
-                    page := page, tokens := tokens, surface := surface
+                    page := page, tokens := tokens, surface := surface, lists := record.lists
                     engineTokens := engineLengthTokensOfPage page }
   -- Numbering is a property of the finished document, not of any one
   -- elaboration site: `Ir.numberFloats` fills every captioned float's

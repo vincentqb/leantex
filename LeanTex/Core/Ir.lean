@@ -5785,13 +5785,31 @@ neighbour's. Measured under lualatex: 8 and 3 pt from a paragraph in a
 beamer frame at 10 pt. `{lstlisting}`'s `\medskipamount` above and below
 (listings.sty's `aboveskip` and `belowskip`, 6 pt there) is not yet a
 frame. `none` spaces it as a paragraph — a markdown document's code
-(`Surface.markdown`), which no package sets. Both backends read it: the PDF
-walk's space around the code and the HTML sheet's rules on its element. -/
+(`Surface.markdown`), which no package sets, and a listing whose class does
+not space its frame as TeX does (`ListingFrame.onPage`). Both backends read
+it: the PDF walk's space around the code and the HTML sheet's rules on its
+element; and the display after it reads its `\@endpe` (`Block.leavesEndPe`). -/
 public inductive ListingFrame where
   | none
   | trivlist
   | list
   deriving Repr, BEq, DecidableEq, Inhabited
+
+/-- The frame a listing stands in on a page: its environment's (`env`) where
+the class spaces that frame as TeX does, else `none`, the paragraph spacing,
+whose block leaves no `\@endpe`. A trivlist stands its `\topsep` on top of
+the page's paragraph gap, which is TeX's `\parskip` only where a class or
+document declares one — the article's and the poster's are the engine's
+rhythm mark — and its `\topsep` is TeX's only under beamer's lineage (the
+size file's trivlists keep the quantized one, `trivlistSkipFor`); fancyvrb's
+list stands its level's `\topsep` over TeX's own `\parskip`, wherever the
+class has list levels (`listSkips`). -/
+public def ListingFrame.onPage (surface : Surface) (lists : ListLineage)
+    (parskip : Option Dim.SymGlue) : ListingFrame → ListingFrame
+  | .trivlist =>
+    if surface == .tex && lists == .beamer && parskip.isSome then .trivlist else .none
+  | .list => if surface == .tex && lists != .web then .list else .none
+  | .none => .none
 
 /-- What a code listing declares beside its content — the delta between
 `{verbatim}` and listings' `{lstlisting}` / minted's `{minted}` (listings
@@ -6208,10 +6226,12 @@ public def Block.partopsepEnv : Block → Bool
 mutual
 
 /-- A block whose end leaves TeX's `\@endpe` set (ltlists.dtx `\endtrivlist`,
-`\@doendpe`): a list, a quote, or any theorem-like trivlist. When a display
-opens a paragraph right after one — in vertical mode, possibly across a
-`\vspace` or a blank line but no intervening paragraph of text — the opening
-`\everypar` takes the indent box back, so TeX sets no empty line. One level
+`\@doendpe`): a list, a quote, the kernel's theorem and a trivlist, and a
+listing in its environment's frame (`ListingFrame.onPage`); amsthm's
+theorems end `\@endpefalse`. When a display opens a paragraph right after
+one — in vertical mode, possibly across a `\vspace`, but no blank line,
+whose `\par` ends it, and no paragraph of text — the opening `\everypar`
+takes the indent box back, so TeX sets no empty line. One level
 of the in-paragraph wrapper (`inParagraphRole`) is seen through, as that is
 how a list opened mid-paragraph stands in the block stream; so is an
 overlay's carrier or a backend's group, which the page ends where its last
@@ -11129,7 +11149,7 @@ private def dumpMathNucleus (acc : String) (n : Math.MNucleus) : String :=
   | .grid kind rows =>
     let tag := match kind with
       | .align => "align"
-      | .aligned => "aligned"
+      | .aligned t => if t then "aligned:trail" else "aligned"
       | .gather => "gather"
       | .array cols s =>
         "array:" ++ String.join (cols.toList.map fun a => match a with

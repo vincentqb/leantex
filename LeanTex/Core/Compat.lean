@@ -5082,16 +5082,28 @@ private def keyRun? (w key : String) : Option String :=
 
 /-- A TeX length in the native spelling: `0.75\beat` is `0.75 * beat`,
 `\relax` vanishes, a glue keyword run into its dimension is its own word
-(`keyRun?`). Each control word goes through `ref`, told whether an
-argument group follows it; `none` from `ref` makes the whole value
-unreadable. `\dimexpr … \relax` is its parenthesized expression. -/
+(`keyRun?`), and a word reads in lower case, as TeX reads its keywords and
+units in either case (`PLUS`, `1FILL`, `12PT`). LaTeX's `\stretch{f}` is
+the glue it defines, `0pt plus f fill` (ltspace.dtx). Each other control word
+goes through `ref`, told whether an argument group follows it; `none` from
+`ref` makes the whole value unreadable. `\dimexpr … \relax` is its
+parenthesized expression. -/
 public def lengthSrcBy (ref : String → Bool → Option String) (raws : Array Raw) :
     Option String := Id.run do
   let mut s := ""
   let mut prevNumber := false
   let mut depth := 0
+  let mut past := 0
   for h : k in [0:raws.size] do
+    if k < past then continue
     match raws[k] with
+    | .ctrl "stretch" _ =>
+      let g := skipSpaces raws (k + 1)
+      let some (.group body _) := raws[g]? | return none
+      let lead := if s.isEmpty || s.endsWith " " then "" else " "
+      s := s ++ lead ++ s!"0pt plus {(rawSrc body).trimAscii}fill"
+      past := g + 1
+      prevNumber := false
     | .ctrl "relax" _ =>
       if depth > 0 then
         s := s ++ ")"
@@ -5126,11 +5138,14 @@ public def lengthSrcBy (ref : String → Bool → Option String) (raws : Array R
       s := s ++ pre ++ v
       prevNumber := false
     | .word w _ =>
+      let w := w.toLower
       let lead := if s.isEmpty || s.endsWith " " then "" else " "
+      -- TeX's lexer drops the space after a control word, so a keyword
+      -- after a register stands against its name until it is set apart.
       let (w, num) := match keyRun? w "plus", keyRun? w "minus" with
         | some rest, _ => (lead ++ "plus " ++ rest, rest)
         | none, some rest => (lead ++ "minus " ++ rest, rest)
-        | none, none => (w, w)
+        | none, none => (if w == "plus" || w == "minus" then lead ++ w else w, w)
       s := s ++ w
       prevNumber := num.toList.all fun c => c.isDigit || c == '.'
     | .space => s := s ++ " "
@@ -5159,6 +5174,13 @@ private def nameParam (n why : String) (pos : Pos) : M Unit := do
     -- premise: paramDemoteChecks — a setting in a style file ships the page the
     -- same setting ships from the document, and only its severity moves
     (demote := packageFile (← get).file)
+
+/-- Lengths a package spells as macros, which a document sets by redefining
+them, and whose redefinition no engine site reads: amsmath's `\minalignsep`
+(`\newcommand{\minalignsep}{10pt}`), which `aligned` reads at that default
+(`Math.minAlignSep`). -/
+private def macroParams : List (String × String) :=
+  [("minalignsep", "separates an aligned's column pairs, which stand amsmath's 10 pt apart here")]
 
 /-- The kernel's three vertical skip amounts, the same in every class
 (ltspace.dtx, as plain.tex sets them). -/
@@ -6514,10 +6536,12 @@ public def vspaceAnchorMark : String := "vspace anchor"
 
 /-- A document skip's value as the native `before` spells it, and whether
 it carried an infinite stretch the engine cannot rank: TeX's `\vfill` glue,
-`0pt plus 1fill` (latex.ltx's `\fill`), is the native `fill`; a stretch of
+`0pt plus 1fill` (latex.ltx's `\fill`), is the native `fill`, and `\fill`
+on top of a natural width or a shrink stretches the skip as it; a stretch of
 another order or factor ranks against the page's other infinite glues, which
 the engine does not tell apart, so the skip sets at its natural width; any
-other value stands as written. -/
+other value stands as written. The fill unit may stand a space from its
+factor, as TeX's integer reading takes one optional space after it. -/
 private structure SkipSpelling where
   width : String
   fill : Bool := false
@@ -6526,24 +6550,29 @@ private structure SkipSpelling where
 private def skipSrc (src : String) : SkipSpelling :=
   match src.splitOn " plus " with
   | [w, st] =>
-    match Decl.parseLength w, Decl.filFactor? st with
-    | some l, some ((m, sc), order) =>
+    let (st, shrink) := match st.splitOn " minus " with
+      | [a, b] => (a, " minus " ++ b)
+      | _ => (st, "")
+    match Decl.filFactor? (st.replace " " "") with
+    | some ((m, sc), order) =>
+      let width := w.trimAscii.toString ++ shrink
       if order == 2 && m == (sc : Int) then
-        if l == {} then { width := "fill" } else { width := w.trimAscii.toString, fill := true }
-      else { width := w.trimAscii.toString, unranked := true }
-    | _, _ => { width := src }
+        if (Decl.parseLength w).any (· == ({} : Dim.Length)) && shrink.isEmpty then { width := "fill" }
+        else { width, fill := true }
+      else { width, unranked := true }
+    | none => { width := src }
   | _ => { width := src }
 
-/-- A skip's native spelling (`skipSrc`): its width, a stretch the engine's
-one infinite order cannot rank named by the block reader as it reads it
-(`stretch = unranked`, W0104 where the skip stands between blocks, nothing
-of its own inside inline content, where the skip is not set at all), and
-TeX's `\fill` on top of a natural width as a fill of its own after it, as
-the one glue stretches. `kind` is the block's `kind` option, if any. -/
+/-- A skip's native spelling (`skipSrc`): one block, its width, and its
+infinite stretch as the block reader reads it — TeX's `\fill` stretching
+the skip (`stretch = fill`), or one the engine's one infinite order cannot
+rank (`stretch = unranked`, W0104 where the skip stands between blocks,
+nothing of its own inside inline content, where the skip is not set at
+all). `kind` is the block's `kind` option, if any. -/
 private def skipNative (sp : SkipSpelling) (kind : String := "") : String :=
   let opts := s!"before = {sp.width}" ++ (if kind.isEmpty then "" else s!", kind = {kind}") ++
-    (if sp.unranked then ", stretch = unranked" else "")
-  s!"\\block[{opts}]\{}" ++ (if sp.fill then "\\block[before = fill]{}" else "")
+    (if sp.unranked then ", stretch = unranked" else if sp.fill then ", stretch = fill" else "")
+  s!"\\block[{opts}]\{}"
 
 /-- Commands whose whole meaning is one fixed native spelling, synthesised
 in place with a `became` note: each row is an argument-free rewrite.
@@ -7465,6 +7494,10 @@ were dropped: {dropped}" pos
         if let (some level, some (.group body _)) := (listLevelOf cmd, raws[k]?) then
           if ← listLevelDef level s!"\\{name}\{\\{cmd}}" body pos then
             return some (#[], k + 1)
+      if let some why := macroParams.lookup cmd then
+        if found && arity == some 0 then
+          nameParam cmd why pos
+          return some (#[], k + 1)
       if found && !expanding && arity.isSome then
         let n := arity.getD 0
         let spec := String.ofList (List.replicate n 'm')
@@ -9139,6 +9172,13 @@ skipped, and the length keeps its value" pos
         else s!"'\\{cmd}' is built in and the built-in stands"
       discard s!"\\{name}\{\\{cmd}}" why s!"{name}:{cmd}" pos
       return some (#[], k)
+    if let some why := macroParams.lookup cmd then
+      if !xparse then
+        let (_, j) := takeOpt raws j
+        let (_, j) := takeOpt raws j
+        let (_, k) := takeGroups raws j 1
+        nameParam cmd why pos
+        return some (#[], k)
     if !xparse && cmd == "sectionlinesformat" then
       -- `\renewcommand\sectionlinesformat[4]{...}` is the spelling KOMA
       -- documents: the rule idiom, not a definition.

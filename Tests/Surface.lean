@@ -3698,8 +3698,7 @@ def elabDocChecks (ref : IO.Ref (List String)) : IO Unit := do
   -- verbatim: lexically blind content, kept literally as its own block.
   let verbSrc := "\\begin{verbatim}\ndef f(n):\n    return n\n\nf(2)  # two spaces\n\\end{verbatim}"
   t "elab verbatim is a block, content untouched"
-    ((elabStr verbSrc).1.body == #[.verbatim none "\ndef f(n):\n    return n\n\nf(2)  # two spaces\n"
-      { frame := .trivlist }] &&
+    ((elabStr verbSrc).1.body == #[.verbatim none "\ndef f(n):\n    return n\n\nf(2)  # two spaces\n" {}] &&
      (elabStr verbSrc).2.isEmpty)
   t "verbatim lines trim the delimiters, keep blanks and indentation"
     (Ir.verbatimLines "\nabc\n  in\n\nz\n  " == #["abc", "  in", "", "z"])

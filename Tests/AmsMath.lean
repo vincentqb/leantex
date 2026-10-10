@@ -12,7 +12,7 @@ def gridProbeBody (kind : Math.GridKind) : String :=
   let oneCol := match kind with
     | .gather => true
     | .array cols _ => cols.size == 1
-    | .align | .aligned | .small => false
+    | .align | .aligned _ | .small => false
   if oneCol then "a \\\\ c" else "a & b \\\\ c & d"
 
 def gridProbeCall (env : String) (kind : Math.GridKind) : String :=
@@ -38,10 +38,11 @@ def resmall : Math.MList → Math.MList
   | l => l
 
 /-- The formula with its alignment set as `aligned`'s: the display
-alignment's column model, its pairs `\minalignsep` apart. -/
+alignment's column model, its pairs `\minalignsep` apart, the probe's last
+pair not trailing it (`MathParse.gridEnvs`). -/
 def realigned : Math.MList → Math.MList
   | .cons (.atom c (.grid .align rows) sup sub lim) .nil =>
-    .cons (.atom c (.grid .aligned rows) sup sub lim) .nil
+    .cons (.atom c (.grid (.aligned false) rows) sup sub lim) .nil
   | l => l
 
 /-- amsmath's grid environments are the grids their definitions build
@@ -72,7 +73,7 @@ def amsGridChecks (ref : IO.Ref (List String)) (fs : Font.FontSet) : IO Unit := 
       restretch 1200),
     ("aligned", s!"\\begin\{align*}{cells}\\end\{align*}", realigned),
     ("gathered", "\\begin{gather*}a \\\\ c\\end{gather*}", restretch 1000),
-    ("split", s!"\\begin\{align*}{cells}\\end\{align*}", realigned),
+    ("split", s!"\\begin\{align*}{cells}\\end\{align*}", restretch 1000),
     ("substack", "$\\begin{array}{c}a \\\\ c\\end{array}$", restretch 1000),
     -- `smallmatrix` is its own grid: the matrix's cells, set as it sets them
     ("smallmatrix", s!"${arr}$", resmall)]
@@ -103,8 +104,8 @@ def amsGridChecks (ref : IO.Ref (List String)) (fs : Font.FontSet) : IO Unit := 
   -- `\start@aligned`: `\alignsep@\minalignsep`, 10 pt), lualatex 9.96 bp
   -- between the first pair's end and the second's start: on the page, the
   -- second pair's cell opens 10 pt past the first pair's last glyph; in the
-  -- browser the pair boundary's two cells carry half of it each, in the
-  -- body's em.
+  -- browser the pair boundary's two cells carry half of it each, as the page
+  -- states a print length.
   let pairDoc := dvDoc "" "\\[ \\begin{aligned} a &= b & c &= d \\end{aligned} \\]"
   let runsOf (src : String) : Array (String × Dim.Sp × Dim.Sp) :=
     (bodyLines (layoutOf fs (elabStr src).1)).flatMap fun l =>
@@ -116,9 +117,55 @@ def amsGridChecks (ref : IO.Ref (List String)) (fs : Font.FontSet) : IO Unit := 
       (xc - (xb + wb) == Math.minAlignSep)
   | _, _ => t "amsmath aligned: the two-pair probe ships its cells" false
   let pairHtml := (HtmlDoc.emit {} (elabStr pairDoc).1).1
-  t "amsmath aligned: the browser's pair boundary carries the separation, half a side"
-    (hasStr pairHtml "padding-left: 0; padding-right: 0.500em" &&
-      hasStr pairHtml "padding-right: 0; padding-left: 0.500em")
+  let sep := HtmlDoc.classLengthCss (Dim.pt 10) (Dim.Length.ofSp Math.minAlignSep)
+  t s!"amsmath aligned: the browser's pair boundary carries the separation, half a side, \
+as a print length ({sep})"
+    (hasStr pairHtml s!"padding-left: 0; padding-right: calc({sep} / 2)" &&
+      hasStr pairHtml s!"padding-right: 0; padding-left: calc({sep} / 2)")
+  -- The `\tabskip` after `aligned`'s last pair stands too, unless a row end
+  -- cancels it: `\math@cr@@@aligned` adds a column of `\kern-\alignsep@`
+  -- where the columns opened so far, counted across rows, are even, so a
+  -- widest row that takes it closes on its last pair. lualatex, the gap from
+  -- an inline `aligned`'s last glyph to the next word beyond a two-row one's:
+  -- 9.96 bp for the trailing shapes, under 0.01 bp for the others.
+  let trailing : List (String × Bool) :=
+    [("a &= b", true), ("a &= b \\\\", false),
+     ("c &= b \\\\ c &= d & e &= b", true), ("a &= d & e &= b \\\\ c &= b", false),
+     ("c &= b & e \\\\ c &= d & e &= b \\\\", true), ("a &= d & b", false),
+     ("c &= b & e &= b \\\\ c &= d & e &= b \\\\", false)]
+  let trailDoc (rows : String) : String :=
+    dvDoc "" s!"$x \\begin\{aligned} {rows} \\end\{aligned}$ Zeta"
+  let gapToWord (src : String) : Option Dim.Sp := do
+    let runs := runsOf src
+    let (_, xz, _) ← runs.find? (·.1 == "Zeta")
+    let ends := (runs.filter fun (text, x, _) => text != "Zeta" && !text.isEmpty && x < xz).map
+      fun (_, x, w) => x + w
+    pure (xz - ends.foldl max (ends.getD 0 0))
+  match gapToWord (trailDoc "a &= b \\\\ c &= b") with
+  | some base =>
+    for (rows, trails) in trailing do
+      match gapToWord (trailDoc rows) with
+      | some g =>
+        t s!"amsmath aligned: '{rows}' stands {if trails then "\\minalignsep" else "nothing"} \
+after its last pair, got {spMilli (g - base)}"
+          (g - base == if trails then Math.minAlignSep else 0)
+      | none => t s!"amsmath aligned: the '{rows}' probe ships its marks" false
+    let trailHtml (rows : String) : String := (HtmlDoc.emit {} (elabStr (trailDoc rows)).1).1
+    t "amsmath aligned: the browser stands a trailing pair's \\minalignsep after its last cells"
+      (hasStr (trailHtml "a &= b") s!"padding-left: 0; padding-right: {sep}\"" &&
+        !hasStr (trailHtml "a &= b \\\\ c &= b") s!"padding-right: {sep}\"")
+  | none => t "amsmath aligned: the two-row probe ships its marks" false
+  -- A redefined `\minalignsep` is a setting no engine site reads: named once
+  -- where it stands (W0104), however it is spelled, and the page is the
+  -- page without it.
+  let pairs := "$\\begin{aligned} a &= b & c &= d \\end{aligned}$ Zeta"
+  for redef in ["\\renewcommand{\\minalignsep}{0pt}\n", "\\def\\minalignsep{20pt}\n"] do
+    let (_, ds) := elabStr (dvDoc redef pairs)
+    t s!"amsmath aligned: '{redef.trimAscii}' is named once, W0104, and not defined, got {ds.map (·.code)}"
+      ((ds.filter fun d => d.code == "W0104" && d.subject == some "ctrl:setlength:minalignsep").size == 1 &&
+        ds.all (·.code != "N0100"))
+    t s!"amsmath aligned: '{redef.trimAscii}' ships the page without it"
+      (runsOf (dvDoc redef pairs) == runsOf (dvDoc "" pairs))
   -- An alignment sets its cells in display style wherever it stands
   -- (amsmath.sty, `\start@aligned` and `gathered`: `$\m@th\displaystyle{##}$`),
   -- so a fraction in an inline `aligned` sets its numerator at the formula's

@@ -224,10 +224,44 @@ private def htmlPairChecks (ref : IO.Ref (List String)) : IO Unit := do
       check ref s!"element boundaries (beamer, browser): {name} composes both spaces, got {v}"
         (ok v && generic.all (· < i))
     | none => check ref s!"element boundaries (beamer, browser): {name} has its pair rule" false
+  -- A slide's spacer after its body (`.fill`, the frame's `\vfill`) meets
+  -- an element's own space below it: no paragraph follows to spend its
+  -- `\parskip`, so a `[c]` frame centres the element as TeX's does.
+  for (name, sel) in [("a list", listL), ("a minted", ".verbatim-list"), ("a centred block", triv),
+      ("a block", blockU), ("a display", ".display")] do
+    let own := bounds.toList.filter fun (parts, _) => parts.any fun p =>
+      p.startsWith (sel ++ " + :is(") && p.endsWith ", .fill)"
+    check ref s!"element boundaries (beamer, browser): the slide's spacer after {name} meets its own space alone"
+      (!own.isEmpty && own.all fun (_, v) => !hasStr v "parskip")
   check ref "element boundaries (article, browser): the article's sheet owes no adding pair"
     ((HtmlDoc.blockGapRules .sizeFile size {}).all fun
       | .boundary sel _ => !hasStr sel top
       | _ => true)
+
+/-- A listing whose class does not space its environment's frame as TeX does
+stands as a paragraph there (`Ir.ListingFrame.onPage`), and a paragraph
+leaves no `\@endpe`, so the display after it opens on its empty line whether
+or not a blank line stands between: a verbatim in the article, whose
+paragraphs stand the engine's peer gap apart, the résumé, whose trivlists
+keep the size file's quantized `\topsep`, the web page and the poster, and a
+minted on the web page, which has no list levels. lualatex sets the
+article's 22 and 34 pt, the engine 24 for both. -/
+private def unframedEndPeChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit := do
+  let verbatim := "\\begin{verbatim}\nalpha code\n\\end{verbatim}"
+  let minted := "\\begin{minted}{text}\nalpha code\n\\end{minted}"
+  let display := "\\[ \\text{Omega} = z \\]"
+  let cases := [("article", verbatim), ("resume", verbatim), ("webpage", verbatim),
+    ("poster", verbatim), ("webpage", minted)]
+  for (cls, listing) in cases do
+    let spanOf (sep : String) : Option Dim.Sp :=
+      let src := s!"\\documentclass\{{cls}}\n\\usepackage\{minted}\n\\begin\{document}\n" ++
+        listing ++ sep ++ display ++ "\n\\end{document}\n"
+      let (doc, _) := Elab.run s!"element-boundaries-endpe-{cls}.tex" src
+      ((Layout.run (Layout.Geom.ofPage doc.page) fonts none doc).pages[0]?).bind span
+    let tight := spanOf "\n"
+    let blank := spanOf "\n\n"
+    check ref s!"element boundaries ({cls}): a display right after a {if listing == minted then "minted" else "verbatim"} stands where it stands across a blank line, got {tight.map spMilli} and {blank.map spMilli}"
+      (tight.isSome && tight == blank)
 
 def elementBoundaryChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit := do
   for cls in ["beamer", "article"] do
@@ -252,5 +286,6 @@ def elementBoundaryChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : 
           ((spMilli (d - b) - row.lua).natAbs ≤ tolerance.toNat)
       | _, _ => check ref s!"element boundaries ({cls}): the {x}/{y} probe ships its marks" false
   htmlPairChecks ref
+  unframedEndPeChecks ref fonts
 
 end Tests.ElementBoundaries

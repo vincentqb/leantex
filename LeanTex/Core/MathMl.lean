@@ -214,9 +214,11 @@ public structure Marks where
   metric : MathStyle → CancelSpec → MList → MList → Option CancelMetric :=
     fun _ _ _ _ => none
   style : MathStyle := .text false
-  /-- `\minalignsep` in thousandths of the body's em (`Math.minAlignSep`),
-  the space between an `aligned`'s column pairs: 1000 at the 10 pt base. -/
-  alignSep : Nat := 1000
+  /-- `\minalignsep` (`Math.minAlignSep`), the space after an `aligned`'s
+  column pairs, as a CSS length in the page's unit for print lengths — an
+  absolute length, as TeX's is, which a cell's em under a size change is
+  not (`HtmlDoc.mathMarks`); `1em` at the 10 pt base. -/
+  alignSep : String := "1em"
   /-- Font MATH percentages; the unmeasured default is plain TeX's 7/5 pt
   script sizes at its 10 pt base. -/
   scales : ScriptScales := { script := 70, scriptscript := 50 }
@@ -537,7 +539,7 @@ public def nucNode (mk : Marks) (disp : Bool) (cls : MathClass) : MNucleus → H
     let st := match kind with
       | .array _ _ => if mk.style.rank == 3 then .text mk.style.cramped else mk.style
       | .small => .script false
-      | .align | .aligned | .gather => .display false
+      | .align | .aligned _ | .gather => .display false
     -- `smallmatrix` sets its cells in script style, a thin space each side:
     -- 3 mu of the text size, in the script size's em at a 70% script scale.
     let attrs := relativeStyle mk st
@@ -580,14 +582,16 @@ def rowNodes (mk : Marks) (disp : Bool) (kind : GridKind) (k : Nat)
       | .align, .left => #[("style", "text-align: left; padding-left: 0")]
       | .align, .center => #[]
       -- `aligned`'s pairs stand `\minalignsep` apart, half on each side of
-      -- the pair boundary; its outer edges keep the default.
-      | .aligned, .right =>
+      -- the pair boundary, and the whole after its last pair where it
+      -- trails; its outer edges keep the default.
+      | .aligned _, .right =>
         #[("style", "text-align: right; text-align: -webkit-right; padding-right: 0" ++
-          (if k == 0 then "" else s!"; padding-left: {milliEm (mk.alignSep / 2)}"))]
-      | .aligned, .left =>
+          (if k == 0 then "" else s!"; padding-left: calc({mk.alignSep} / 2)"))]
+      | .aligned t, .left =>
         #[("style", "text-align: left; padding-left: 0" ++
-          (if rest matches .nil then "" else s!"; padding-right: {milliEm (mk.alignSep / 2)}"))]
-      | .aligned, .center => #[]
+          (if rest matches .nil then (if t then s!"; padding-right: {mk.alignSep}" else "")
+           else s!"; padding-right: calc({mk.alignSep} / 2)"))]
+      | .aligned _, .center => #[]
       | .gather, .center => #[]
       | .gather, .left => #[("style", "text-align: left")]
       | .gather, .right =>

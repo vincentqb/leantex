@@ -206,26 +206,6 @@ public def Config.atMeasure (cfg : Config) (width : Sp) : Config :=
 
 @[expose] public def cssColor (c : Color) : String := c.css
 
-/-- What a formula's cancel marks read from the math face, in thousandths
-of an em — its overbar rule and clearance, the two quantities the PDF lays
-the marks with — when the page ships its faces; TeX's own stand-ins
-(`MathMl.Marks`' defaults) where it does not. -/
-public def mathMarks (cfg : Config) : MathMl.Marks :=
-  let marks : MathMl.Marks := {
-    alignSep := (Math.minAlignSep * 1000 / max 1 cfg.page.fontSize).toNat
-    metric := cfg.cancelMetric cfg.measureValues cfg.mathStyles
-    em := cfg.mathEm cfg.measureValues cfg.mathStyles
-    textEm := cfg.mathTextEm cfg.measureValues cfg.mathStyles }
-  match cfg.fonts.bind fun fs => fs.math.bind (fs.fonts[·]?) with
-  | some f =>
-    match f.math with
-    | some mc =>
-      let per (v : Int) : Nat := (v * 1000 / (max 1 f.unitsPerEm : Int)).toNat
-      { marks with rule := per mc.overbarRuleThickness, gap := per mc.overbarVerticalGap
-                   scales := mc.scales }
-    | none => marks
-  | none => marks
-
 /-- The class an authored role wears in the artifact: verbatim after a
 fixed prefix, so the mapping is injective (`roleClass_inj`) and lands in a
 namespace no engine class enters (`roleClass_engine_disjoint`) and no
@@ -431,6 +411,29 @@ not: in points, a 10pt article's rule gap was 0.23 of the body text and a
 public def classLengthCss (size : Sp) (l : Length) : String :=
   if size ≤ 0 then cssLength l
   else cssLengthIn (fun sp => s!"{decMilli (classShareMilli sp size)}rem") l
+
+/-- What a formula's cancel marks read from the math face, in thousandths
+of an em — its overbar rule and clearance, the two quantities the PDF lays
+the marks with — when the page ships its faces; TeX's own stand-ins
+(`MathMl.Marks`' defaults) where it does not. `aligned`'s `\minalignsep`
+is a print length, as the page states one (`stageLengthCss` on a deck,
+`classLengthCss` elsewhere). -/
+public def mathMarks (cfg : Config) : MathMl.Marks :=
+  let marks : MathMl.Marks := {
+    alignSep := if cfg.deck then stageLengthCss cfg.page.height (Dim.Length.ofSp Math.minAlignSep)
+      else classLengthCss cfg.page.fontSize (Dim.Length.ofSp Math.minAlignSep)
+    metric := cfg.cancelMetric cfg.measureValues cfg.mathStyles
+    em := cfg.mathEm cfg.measureValues cfg.mathStyles
+    textEm := cfg.mathTextEm cfg.measureValues cfg.mathStyles }
+  match cfg.fonts.bind fun fs => fs.math.bind (fs.fonts[·]?) with
+  | some f =>
+    match f.math with
+    | some mc =>
+      let per (v : Int) : Nat := (v * 1000 / (max 1 f.unitsPerEm : Int)).toNat
+      { marks with rule := per mc.overbarRuleThickness, gap := per mc.overbarVerticalGap
+                   scales := mc.scales }
+    | none => marks
+  | none => marks
 
 /-- The one resolving site for a document's length basis: a frame-model
 document's stage height, every other document's class size. -/
@@ -1169,7 +1172,9 @@ the follower the sheet assumes — a paragraph, whose peer gap the value folds
 in where the element's space and the paragraph's add — and `own` before a
 document skip's box, or a step carrier opening on one, the element's own
 space alone: TeX puts the skip on the list after the element's space, and
-the follower past the skip pays its own (`skipNode`). Where the element's
+the follower past the skip pays its own (`skipNode`). So does a slide's
+spacer after its body (`.fill`, the frame's `\vfill`), which no paragraph
+follows to spend its `\parskip`. Where the element's
 `peer` folds in TeX's `\parskip` rather than the sheet's peer gap — a list's
 space, a display's — `after` is that term, which the paragraph past the box
 pays in its place. `sels` are the element's own selectors. -/
@@ -1177,7 +1182,7 @@ private def ownsBelow (sels : List String) (peer own : String) (after : Option S
     List GapRule :=
   let follow (tail : String) := ", ".intercalate (sels.map (· ++ tail))
   [.boundary (follow " + *") peer,
-   .boundary (follow s!" + :is(.{skipClass}, {skipCarrier})") own] ++
+   .boundary (follow s!" + :is(.{skipClass}, {skipCarrier}, .fill)") own] ++
   (after.map fun v =>
     [.boundary (follow s!" + .{skipClass} + p" ++ ", " ++ follow s!" + .{skipClass} + .{skipClass} + p") v]).getD []
 
@@ -8693,10 +8698,10 @@ public def blockNode (cfg : Config) (b : Block) : Node :=
       | none => pre
     -- The environment's space (`Ir.ListingFrame`), a class on the element
     -- it governs: a trivlist's, or a list level's.
-    match spec.frame, cfg.lists with
-    | .trivlist, .beamer => withClass (roleClass Ir.trivlistRole) node
-    | .list, .beamer | .list, .sizeFile => withClass verbatimListClass node
-    | _, _ => node
+    match spec.frame with
+    | .trivlist => withClass (roleClass Ir.trivlistRole) node
+    | .list => withClass verbatimListClass node
+    | .none => node
   | .algorithm numbered semis lines =>
     -- Pseudocode as nested ordered lists: one <ol> per block, depth from
     -- nesting, line numbers by a CSS counter when declared (declarative,

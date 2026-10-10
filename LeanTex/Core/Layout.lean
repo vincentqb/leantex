@@ -3829,19 +3829,19 @@ private def gridAssemble (e : MathEnv) (size raise : Sp) (kind : Math.GridKind)
   -- `1.5\ex@`, and rows `6\ex@` apart (`GridKind.small`).
   let gridSkip := match kind with
     | .small => size * 15 / 100
-    | .array _ _ | .align | .aligned | .gather => size / 10
+    | .array _ _ | .align | .aligned _ | .gather => size / 10
   -- LaTeX's `\jot` (latex.ltx: 3pt), the extra opening between display
   -- alignment rows, size-relative — 3 pt at the 10 pt base. An `array` is
   -- inline math's grid and takes none, as LaTeX's array does not.
   let jot := match kind with
     | .array _ _ | .small => 0
-    | .align | .aligned | .gather => size * 3 / 10
+    | .align | .aligned _ | .gather => size * 3 / 10
   -- An array's rows stand `\arraystretch` baselines apart: the stretch
   -- scales the strut every row carries (latex.ltx, `\@arstrutbox`).
   let pitch := match kind with
     | .array _ s => bl * (s : Int) / 1000
     | .small => size * 6 / 10
-    | .align | .aligned | .gather => bl
+    | .align | .aligned _ | .gather => bl
   let rowExtents := cells.map fun row =>
     row.foldl (fun (t, b) cell =>
       let (ct, cb) := mathItemsExtent e.fs cell
@@ -3876,7 +3876,7 @@ private def gridAssemble (e : MathEnv) (size raise : Sp) (kind : Math.GridKind)
   | .small =>
     let thin := mathKern e size (muAt size 3)
     return (#[thin] ++ items).push thin
-  | .array _ _ | .align | .aligned | .gather => return items
+  | .array _ _ | .align | .aligned _ | .gather => return items
 
 /-- Assemble a laid fraction (TeXbook Appendix G rule 15 over the MATH
 constants): numerator shifted up, denominator shifted down, and plain TeX's
@@ -4387,7 +4387,7 @@ private def layMathNucleus (e : MathEnv) (st : Math.MathStyle) (raise : Sp)
     let cellSt : Math.MathStyle := match kind with
       | .array _ _ => if st.rank > 2 then .text st.cramped else st
       | .small => .script false
-      | .align | .aligned | .gather => .display false
+      | .align | .aligned _ | .gather => .display false
     let (cells, missing) := layGridRows e cellSt (#[], acc.2) rows
     (acc.1 ++ gridAssemble e (e.sizeAt st) raise kind cells, missing)
   | .cancel mark spec value body =>
@@ -13153,23 +13153,21 @@ private def collectVerbatim (r : Rd) (a : Acc) (covered : Option Ir.Color) (s : 
     (leaf := leaf) (span := 1) (literalLines := true)
     (strut := if spec.lineStrut then some leading else none)
 
-/-- A listing with the space its environment sets around it
-(`Ir.ListingFrame`): a trivlist's `\topsep` at its depth, as a `center`'s,
-under beamer's lineage — the article's trivlists keep the engine's rhythm,
-whose quantum against a paragraph's peer gap is no closer to TeX's for a
-verbatim, so the article's verbatim keeps its paragraph spacing — or
-fancyvrb's `\list` one level down, its `\topsep` by `\addvspace` on both sides under TeX's
-`\parskip`, as a list's — the web's lineage, which has no list levels,
-spacing that as its trivlists. -/
+/-- A listing with the space its environment sets around it, where the class
+spaces that frame as TeX does (`Ir.ListingFrame.onPage`): a trivlist's
+`\topsep` at its depth, as a `center`'s, on top of the paragraph gap — or
+fancyvrb's `\list` one level down, its `\topsep` by `\addvspace` on both
+sides under TeX's `\parskip`, as a list's. A listing in no frame keeps its
+paragraph spacing. -/
 private def collectListing (r : Rd) (a : Acc) (covered : Option Ir.Color) (s : String)
     (spec : Ir.ListingSpec) (indent : Sp) : Acc :=
   let trivlist (a : Acc) : Glue := r.resolve (Ir.trivlistSkipFor r.lists a.tokens r.geom.fontSize
     (a.itemDepth + a.enumDepth + a.quoteDepth))
-  match spec.frame, r.lists with
-  | .trivlist, .beamer =>
+  match spec.frame with
+  | .trivlist =>
     let g := trivlist a
     (collectVerbatim r (a.trivSpace g) covered s spec indent).trivSpace g
-  | .list, .beamer | .list, .sizeFile =>
+  | .list =>
     let lv := a.itemDepth + a.enumDepth + a.quoteDepth + 1
     match Ir.listSkips r.lists r.geom.fontSize lv with
     | some sk =>
@@ -13177,7 +13175,7 @@ private def collectListing (r : Rd) (a : Acc) (covered : Option Ir.Color) (s : S
       let top := if a.afterHeading then a.flushGap r else (a.listSpace g).flushGap r
       (collectVerbatim r top covered s spec indent).listSpace g
     | none => collectVerbatim r a covered s spec indent
-  | _, _ => collectVerbatim r a covered s spec indent
+  | .none => collectVerbatim r a covered s spec indent
 
 private def collectAlgorithm (r : Rd) (a : Acc) (numbered semis : Bool) (lines : Array Ir.AlgLine) (indent : Sp) : Acc :=
   -- Pseudocode: each line one display-type paragraph at the body size —
