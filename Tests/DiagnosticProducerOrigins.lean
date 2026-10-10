@@ -146,7 +146,7 @@ private def producerJsonAt (j : Lean.Json) (file : String) (line col : Nat)
 
 /-- Full Driver pipeline guards. The caller supplies an already-built binary;
 this check never starts a build. A private synthetic renderer reports its
-version, then refuses with a log, so N0419 is a real withdrawal note without
+version, then refuses with a log, so W0419 is a real withdrawal line without
 depending on TeX, a browser or global caches. Local theme notes are produced
 after elaboration. Direct and included inputs must emit the same HTML bytes. -/
 def diagnosticPipelineOriginChecks (ref : IO.Ref (List String))
@@ -199,7 +199,7 @@ def diagnosticPipelineOriginChecks (ref : IO.Ref (List String))
         for (code, expectedFile, line, col, written) in [
             ("N0020", if included then look else file, if included then 3 else 4, 4, "\\usetheme"),
             ("N0100", if included then body else file, if included then 3 else 7, 3, trigger),
-            ("N0419", if included then body else file, if included then 5 else 9, 5, "\\begin")] do
+            ("W0419", if included then body else file, if included then 5 else 9, 5, "\\begin")] do
           let found := records.filter fun j => j.getObjValAs? String "code" == .ok code &&
             (code != "N0100" || j.getObjValAs? String "subject" == .ok subject)
           t s!"producer pipeline: {subject}/{included}/{code} survives once at its real source"

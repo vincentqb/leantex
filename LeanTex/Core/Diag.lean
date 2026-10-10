@@ -260,7 +260,7 @@ public inductive DiagCode where
   | N0023
   | W0378
   | W0379
-  | E0382
+  | W0382
   | W0380
   | W0381
   | W0383
@@ -278,7 +278,7 @@ public inductive DiagCode where
   | W0391
   | E0390
   | W0392
-  | N0419
+  | W0419
   | W0435
   | W0393
   | W0394 | E0395 | W0396
@@ -453,7 +453,7 @@ private def DiagCode.spec : DiagCode → String × Loss × String
   | .N0023 => ("0023", .info, "a picture is drawn by an external tool at the boundary; the engine measures its box, and its text is not in the document's census")
   | .W0378 => ("0378", .degraded, "a boundary picture has no checked browser face; the web page shows the rendered subset's drawing of it, or its text alternative")
   | .W0379 => ("0379", .degraded, "no boundary tool available for a picture outside the rendered subset; a placeholder box marks the picture")
-  | .E0382 => ("0382", .dropped, "the boundary tool ran and drew nothing for a picture; the page would carry an empty box")
+  | .W0382 => ("0382", .degraded, "the boundary tool ran and drew nothing for a picture, or did not finish it; a placeholder box marks its place")
   | .W0380 => ("0380", .degraded, "a \\cref target of unknown kind; the plain number is set")
   | .W0381 => ("0381", .degraded, "a unit outside the siunitx table; set as its ASCII spelling")
   | .W0383 => ("0383", .pending, "algorithm construct outside the modeled subset; kept as a plain line")
@@ -471,7 +471,7 @@ private def DiagCode.spec : DiagCode → String × Loss × String
   | .W0391 => ("0391", .config, "an unknown LaTeX internal ('@' in its name) in package code is skipped with its [...] and {...} arguments instead of setting them as text")
   | .E0390 => ("0390", .dropped, "a markdown construct this dialect refuses by design; its content is dropped")
   | .W0392 => ("0392", .degraded, "a markdown construct sets with part of its declaration dropped; its content still sets")
-  | .N0419 => ("0419", .info, "a boundary picture no tool drew is drawn by the rendered subset instead; what the subset leaves out is named beside it")
+  | .W0419 => ("0419", .degraded, "a picture the boundary did not draw is drawn in part by the rendered subset; what it leaves out is named in the line")
   | .W0435 => ("0435", .degraded, "a \\qedhere whose QED this engine cannot set where amsthm sets it; the QED stands on a line of its own after the display")
   | .W0393 => ("0393", .degraded, "the installed syntax highlighter cannot classify a listing; its source is set as plain text")
   | .W0394 => ("0394", .degraded, "picture label has glyphs without measured outline bounds")
@@ -574,9 +574,8 @@ went from 1 to 0 on such a document). The note says which code names the
 loss now, and the document widens its acceptance only by writing that code
 itself if acceptance is needed. `none` means the loss cannot occur any more —
 the engine's rule changed — so there is nothing to accept and nothing to fail
-over. A pure
-renumbering, whose successor names exactly the retired loss, would accept
-its successor; no row is one, so the table does not carry that case.
+over. A pure renumbering, whose successor names exactly the retired loss,
+accepts its successor: that is `DiagCode.renumbered`'s, not this table's.
 
 A row leaves this list only when a document naming the old code is
 implausible, which is a judgement about the world and not about this tree, so
@@ -592,7 +591,23 @@ public def DiagCode.retired : List (String × Option String) :=
    -- occur.
    ("W0344", none),
    -- A missing alternative is authoring advice; no acceptance is needed.
-   ("W0376", some "N0376")]
+   ("W0376", some "N0376"),
+   -- The withdrawal note named no loss beside the subset's refusals; the
+   -- picture's one line carries them now, a wider loss than the note's.
+   ("N0419", some "W0419")]
+
+/-- **A code renumbered for its class, whose successor names exactly its
+loss.** The old spelling keeps answering, as a retired one does, and here
+it also accepts the successor: the document accepted that loss, the loss is
+the same, and only what the page carries for it moved — so `\allow` of the
+old spelling accepting nothing would turn an accepted loss back into a
+warning that `--werror` fails on. Disjoint from `retired`, and the successor
+is a live code (both checked where the retired table is). -/
+public def DiagCode.renumbered : List (String × String) :=
+  [-- A picture the boundary tool drew nothing of, or did not finish: the
+   -- run failed with no artifact; it ships its placeholder now, the same
+   -- two events named under the same number.
+   ("E0382", "W0382")]
 
 /-- An artifact whose diagnostics apply only when that output is requested. -/
 public inductive Diag.Output where

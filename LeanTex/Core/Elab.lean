@@ -144,8 +144,9 @@ public structure PicCtx where
   /-- The boundary requests fulfilment withdrew: pictures the rendered
   subset draws in part whose request no tool drew (`Cli.Boundary.withdraw`).
   Each is drawn natively on the elaboration the driver runs with them, its
-  refusals named as a refused door names them. Empty on the first pass,
-  which states every request from the document alone. -/
+  refusals the ones a refused door names, keyed under the picture so the
+  driver folds them into its one line (`Cli.Boundary.fold`). Empty on the
+  first pass, which states every request from the document alone. -/
   withdrawn : Array String := #[]
   /-- The preamble declarations a boundary standalone needs beyond the
   document's design — non-native package loads and the tikz-family set
@@ -456,6 +457,9 @@ public structure SpanRecords where
   /-- The boundary pictures the rendered subset draws in part, by picture
   id: the requests the driver may withdraw (`ReqSpans.fallbacks`). -/
   fallbacks : Array String := #[]
+  /-- The pictures the rendered subset draws in part under the document's
+  `\pictures{ tool = none }`, by picture id (`ReqSpans.declined`). -/
+  declined : Array String := #[]
   /-- Top-level frame openings, maintained with the block accumulator. -/
   frames : FrameSources := {}
   /-- The actual log at the last content-recovery emission. Its persistent
@@ -4558,11 +4562,14 @@ formula {floorWording (Parse.rawSrc raws)}")])
 
 /-- One picture sent to the boundary: its request stated once, a picture
 the subset draws in part recorded as a fallback the driver may withdraw
-(`ReqSpans.fallbacks`), its span, the N0023 note, and the image that stands
-where the picture does — named by the words its own labels set
-(`Ir.Pic.Picture.said`), as the subset's drawing would have been named. -/
-private def routePicture (ctx : Ctx) (body : Array Raw) (pic : Ir.Pic.Picture) (pos : Pos) :
-    EM Ir.Inline := do
+(`ReqSpans.fallbacks`) where it stands as a block (`block`) — the subset
+never sets one in a line, so there a refused request keeps its placeholder,
+which marks the place, rather than an empty line — its span, the N0023
+note, and the image that stands where the picture does — named by the words
+its own labels set (`Ir.Pic.Picture.said`), as the subset's drawing would
+have been named. -/
+private def routePicture (ctx : Ctx) (body : Array Raw) (pic : Ir.Pic.Picture) (pos : Pos)
+    (block : Bool) : EM Ir.Inline := do
   let src := Parse.rawSrc body
   let id := Ir.picHash src
   let tool := ctx.pic.tool.getD "lualatex"
@@ -4570,7 +4577,7 @@ private def routePicture (ctx : Ctx) (body : Array Raw) (pic : Ir.Pic.Picture) (
   modify fun st =>
     let st := if st.pictures.any (fun p => p.1 == id) then st
       else { st with pictures := st.pictures.push (id, src) }
-    if pic.shapes.isEmpty || st.spans.fallbacks.contains id then st
+    if !block || pic.shapes.isEmpty || st.spans.fallbacks.contains id then st
     else { st with spans := { st.spans with fallbacks := st.spans.fallbacks.push id } }
   recordImageSpan ctx img pos
   warnOnce ctx ("picture:boundary:" ++ id) .N0023
@@ -4598,7 +4605,7 @@ private def inlinePicture (ctx : Ctx) (body : Array Raw) (pos : Pos) :
   -- request takes the second door.
   if ctx.pic.tool.isSome && !body.isEmpty && !ctx.pic.withdrawn.contains id then
     let (pic, _) := subsetPicture ctx body
-    return some (← routePicture ctx body { pic with alt := alt } pos)
+    return some (← routePicture ctx body { pic with alt := alt } pos false)
   warnOnce ctx ("picture:inline:" ++ id) .W0334
     "a picture inside a line of text is not drawn: the rendered subset sets a \
 picture only as a block" pos
@@ -9576,27 +9583,36 @@ private def tikzArm (ctx : Ctx) (body : Array Raw) (pos : Pos)
   -- as the request's fallback, not thrown away: when fulfilment draws
   -- nothing — no tool on this machine and a cold cache, or a tool that
   -- failed — the driver withdraws the request and elaborates again with its
-  -- id in `picWithdrawn` (`Cli.Boundary.withdraw`, N0419), and the drawing
-  -- ships with its refusals named exactly as `\pictures{ tool = none }`
-  -- names them. So a boundary failure never costs a page the subset could
-  -- draw in part — the trade that once made native-first the rule.
+  -- id in `picWithdrawn` (`Cli.Boundary.withdraw`), and the drawing ships
+  -- with the refusals `\pictures{ tool = none }` names folded into its one
+  -- line (`Cli.Boundary.fold`, W0419). So a boundary failure never costs a page
+  -- the subset could draw in part — the trade that once made native-first
+  -- the rule — nor the document.
   -- The tool is the build environment's, exactly as fonts are: the request
   -- rides the IR — content hash of the wrapped standalone source — and the
   -- driver fulfils it, cached by content, so a warm cache needs no TeX
   -- installed and a machine with none gets the driver's W0379 with the
   -- placeholder where the subset drew nothing. `\pictures{ tool = none }`
-  -- is the declared refusal that keeps the subset's named diagnostics
-  -- instead. The trust label: the engine claims placement and measurement
-  -- of the returned box, never its contents.
+  -- is the declared refusal: the subset draws every picture, one it draws
+  -- in part shipping with its refusals folded into one line as a withdrawn
+  -- picture's are. The trust label: the engine claims placement and
+  -- measurement of the returned box, never its contents.
   let src := Parse.rawSrc body
   let id := Ir.picHash src
   -- premise: pictureRouteChecks — a routed picture's losses are never dropped
   -- in silence: a drawn request ships the boundary's box, and a withdrawn one
-  -- the refused door's drawing with the refused door's diagnostics.
+  -- the refused door's drawing with the refused door's refusals in its line.
   if ctx.pic.tool.isSome && !body.isEmpty &&
       (pic.shapes.isEmpty ||
         (Picture.namesLoss pdiags && !ctx.pic.withdrawn.contains id)) then
-    return blocks.push (.para #[← routePicture ctx body pic pos])
+    return blocks.push (.para #[← routePicture ctx body pic pos true])
+  -- A picture the subset draws in part under `\pictures{ tool = none }` is
+  -- the subset's as a withdrawn one is: its refusals keyed under it, and its
+  -- id recorded for the driver's fold (`ReqSpans.declined`).
+  let declined := ctx.pic.tool.isNone && !pic.shapes.isEmpty && Picture.namesLoss pdiags
+  if declined then
+    modify fun st => if st.spans.declined.contains id then st
+      else { st with spans := { st.spans with declined := st.spans.declined.push id } }
   for (code, msg) in pdiags do
     -- A note names a decision, not a construct outside the subset, so the
     -- subset's reach is no help to it.
@@ -9604,10 +9620,19 @@ private def tikzArm (ctx : Ctx) (body : Array Raw) (pos : Pos)
       | .info => none
       | _ => some "the rendered subset is \\fill...rectangle, \\node at, \
 \\foreach, and \\pgfmath(truncate)setmacro"
-    warnOnce ctx ("picture:" ++ msg) code msg pos (help := help)
-  -- A refused boundary (`tool = none`) keeps the subset's diagnostics and
-  -- no door warning: the declaration is the acceptance. W0379 is the
-  -- driver's, for a stated request no available tool can fulfil.
+    -- A withdrawn or declined picture's refusals are keyed under the
+    -- picture (`Ir.picFragmentKey`), so the driver folds them into its one
+    -- line (`Cli.Boundary.foldLines`) and two such pictures never share one.
+    -- premise: pictureRouteChecks — the driver folds every refusal keyed
+    -- under a withdrawn or declined picture into that picture's one line,
+    -- none dropped
+    if ctx.pic.withdrawn.contains id || declined then
+      warnOnce ctx ("picture:" ++ id ++ ":" ++ msg) code msg pos (help := help)
+    else
+      warnOnce ctx ("picture:" ++ msg) code msg pos (help := help)
+  -- A refused boundary (`tool = none`) names no door warning: the
+  -- declaration is the acceptance. W0379 is the driver's, for a stated
+  -- request no available tool can fulfil.
   unless pic.shapes.isEmpty do
     recordNativePictureSpan ctx pos
     blocks := blocks.push (.picture pic)
@@ -15276,18 +15301,26 @@ private def applyAllow (ctx : Ctx) (allow : Array String) (src : String) (pos : 
       unless allow.contains c.code do
         allow := allow.push c.code
     | none =>
-      match DiagCode.retired.lookup code with
-      | some (some succ) =>
+      match DiagCode.renumbered.lookup code, DiagCode.retired.lookup code with
+      | some succ, _ =>
+        unless allow.contains succ do
+          allow := allow.push succ
+        evs := evs.push (.say (diagOf ctx .N0105
+          s!"'\\allow' names the renumbered code '{code}'; '{succ}' reports the same loss \
+now, and is accepted in its place"
+          (some pos) (help := s!"write '{succ}' in \\allow instead of '{code}'")
+          (subject := some ("allow:" ++ code))))
+      | none, some (some succ) =>
         evs := evs.push (.say (diagOf ctx .N0105
           s!"'\\allow' names the retired code '{code}'; '{succ}' reports this now, \
 so this accepts nothing"
           (some pos) (help := s!"remove '{code}' from \\allow and review the '{succ}' diagnostic")
           (subject := some ("allow:" ++ code))))
-      | some none =>
+      | none, some none =>
         evs := evs.push (.say (diagOf ctx .N0105
           s!"'\\allow' names the retired code '{code}'; the loss it named cannot occur"
           (some pos) (subject := some ("allow:" ++ code))))
-      | none =>
+      | none, none =>
         evs := evs.push (.say (diagOf ctx .E0329
           s!"'\\allow' names no diagnostic code '{code}'" (some pos)
           (help := "codes look like 'E0333'; each names the one loss it accepts")))
@@ -17224,7 +17257,7 @@ public structure ReqSpans where
   line E0503 names when the driver finds no file. -/
   bib : Array (String × Span) := #[]
   /-- Each image source's first span — file images and boundary pictures
-  alike: where the driver's per-picture N0376 and E0382 point. -/
+  alike: where the driver's per-picture N0376 and W0382 point. -/
   images : Array (String × Span) := #[]
   /-- Openings of top-level frames, keyed by their block index in this
   elaboration's final `Doc.body`, before backend filtering or overlays.
@@ -17237,6 +17270,11 @@ public structure ReqSpans where
   drawn natively instead (`Cli.Boundary.withdraw`, and `runRaws` for a
   caller that fulfils nothing). -/
   fallbacks : Array String := #[]
+  /-- The pictures the rendered subset draws in part because the document
+  declared `\pictures{ tool = none }`, by picture id: each refusal of one is
+  keyed under the picture, as a withdrawn picture's is, and the driver folds
+  them into the picture's one line (`Cli.Boundary.foldLines`). -/
+  declined : Array String := #[]
   /-- Each reference key's first site: where W0349 points. -/
   refs : Array (String × Span) := #[]
   /-- The label table resolution spent, for W0349's cause (`Ir.refDiags`). -/
@@ -17632,7 +17670,7 @@ public def completePrepared (file : String) (p : Prepared) (earlier : Array Diag
   let st := finishPictureKeys report doc p.picSets st
   let outline := Ir.outlineDiags doc
   -- The file-image face only: boundary pictures are judged by the driver
-  -- after fulfilment (`Ir.picAltDiags`), where E0382's outcome is known.
+  -- after fulfilment (`Ir.picAltDiags`), where W0382's outcome is known.
   let alt := Ir.altDiags doc fun src => (st.spans.images.find? (·.1 == src)).map (·.2)
   let links := Ir.linkDiags doc
   let sequences := Ir.footerSequenceDiags doc
@@ -17644,6 +17682,7 @@ public def completePrepared (file : String) (p : Prepared) (earlier : Array Diag
       images := st.spans.images
       frames := st.spans.frames.sites
       fallbacks := st.spans.fallbacks
+      declined := st.spans.declined
       refs := (st.refSites.foldl (init := (#[], (∅ : Std.HashSet String)))
         fun (out, seen) (key, _, pos) =>
           if seen.contains key then (out, seen)
@@ -17754,8 +17793,10 @@ nothing, it has no boundary tool either, so it withdraws every request the
 rendered subset can stand in for (`ReqSpans.fallbacks`) and elaborates
 again, as the driver does on a machine with no tool and a cold cache
 (`Cli.Boundary.withdraw`): the document it returns is the page such a build
-ships, the subset's drawing with its refusals named. The first pass — the
-requests, stated from the document alone — is `runRawsSpanned`'s. -/
+ships, the subset's drawing with its refusals named, keyed under the
+picture — one by one here, where the driver folds them into the picture's
+one line (`Cli.Boundary.fold`). The first pass — the requests, stated from
+the document alone — is `runRawsSpanned`'s. -/
 public def finishPreparedRuns (pass : Array String → Doc × Array Diag × ReqSpans) :
     Doc × Array Diag :=
   let first := pass #[]

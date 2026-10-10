@@ -27,10 +27,11 @@ example : String → String → Diag := DriverDiag.mathFaceCompanion
 example : String → Diag := DriverDiag.mathFaceFirst
 example : String → Option Span → String → Diag := @DriverDiag.boundaryToolUnavailable
 example : String → String → Diag := DriverDiag.outputUnwritable
-example : String → String → Option Span → Diag := @DriverDiag.boundaryFailed
-example : String → String → Option Span → Diag := @DriverDiag.boundaryUnfinished
-example : String → Option String → String → Option Span → Diag :=
-  @DriverDiag.boundaryWithdrawn
+example : String → String → String → Option Span → Diag := @DriverDiag.boundaryFailed
+example : String → String → String → Option Span → Diag := @DriverDiag.boundaryUnfinished
+example : String → Option String → String := DriverDiag.withdrawnHelp
+example : String → Option String → String := DriverDiag.withdrawnInlineHelp
+example : String := DriverDiag.declinedHelp
 example : String → String → Diag := DriverDiag.boundarySvgMissing
 example : String → String → Diag := DriverDiag.pageIconOmitted
 example (src err : String) : (DriverDiag.boundarySvgMissing src err).kind = .W0378 ∧

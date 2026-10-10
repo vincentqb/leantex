@@ -136,12 +136,19 @@ def driverProbes : Array (DiagCode × DriverProbe) :=
       | .ok _ => return #[]),
     -- The withdrawal chain as the driver runs it: the cold decision's own
     -- refusal, for a request the elaborator recorded as a picture the
-    -- subset draws in part, is withdrawn and noted.
-    (.N0419, fun dir => do
-      let id := Ir.picHash "\\draw[rounded corners] (0,0) rectangle (1,1);"
-      let src := Ir.picSrcPrefix ++ id
+    -- subset draws in part, is withdrawn, and the second pass names the
+    -- picture's loss once, with why the boundary drew nothing.
+    (.W0419, fun dir => do
+      let src := dvDoc "" ("\\begin{tikzpicture}\\node at (0,0) {Alpha};" ++
+        "\\shade (0,0) rectangle (1,1);\\end{tikzpicture}")
+      let (raws, _) := Parse.parse "t" (Lex.lex "t" src).1
+      let (doc, _, spans) := Elab.runRawsSpanned "t" raws
+      let some (id, _) := doc.pictureSrcs[0]? | return #[]
       match ← Boundary.coldPicture dir "lualatex" id with
-      | .error d => return (Boundary.withdraw "lualatex" #[id] #[(src, .answered d none)] #[]).notes
+      | .error d =>
+        let w := Boundary.withdraw spans.fallbacks #[(Ir.picSrcPrefix ++ id, .answered d none)]
+        let (_, ds, _) := Elab.runPrepared "t" (Elab.prepare "t" raws) #[] (fun _ _ => {}) w.ids
+        return Boundary.fold #[] false "lualatex" w ds
       | .ok _ => return #[]),
     (.W0011, fun _ => do
       let faces ← FontDiscovery.scanRoots [testFonts]
@@ -539,15 +546,15 @@ def diagWitness (one mapped withMath : Font.FontSet)
     Ir.contractDiags (doc.output.contract.unmet Pdf.profile)
   -- W0379 is the driver's: a stated request no available tool can fulfil.
   | .W0379 => probed .W0379
-  -- N0419 is the driver's: that refusal, for a picture the rendered subset
-  -- draws in part, withdraws the request.
-  | .N0419 => probed .N0419
-  -- E0382 is the driver's too: the tool ran and drew nothing, a dropped
-  -- loss, so the run fails unless the document declares acceptance — and
-  -- so does an attempt that never finished, which is no answer at all.
-  | .E0382 => #[DriverDiag.boundaryFailed "lualatex"
-      "! Undefined control sequence. · l.7 \\nope",
-    DriverDiag.boundaryUnfinished "lualatex" "exit code 3"]
+  -- W0419 is the driver's chain: that refusal, for a picture the rendered
+  -- subset draws in part, withdraws the request and names the picture once.
+  | .W0419 => probed .W0419
+  -- W0382 is the driver's too: the tool ran and drew nothing, so the
+  -- placeholder ships and the loss is named under the picture's source —
+  -- and so does an attempt that never finished, which is no answer at all.
+  | .W0382 => #[DriverDiag.boundaryFailed "lualatex"
+      "! Undefined control sequence. · l.7 \\nope" (Ir.picSrcPrefix ++ "witness"),
+    DriverDiag.boundaryUnfinished "lualatex" "exit code 3" (Ir.picSrcPrefix ++ "witness")]
   | .W0378 => #[DriverDiag.boundarySvgMissing "leantex-pic:0123456789abcdef"
       "not found (error code: 2)"]
   | .W0349 => dvE "\\ref{nowhere}"
@@ -1092,6 +1099,20 @@ def optionRunAccountingChecks (ref : IO.Ref (List String)) : IO Unit := do
       match r.2 with
       | some s => (DiagCode.ofString? s).isSome
       | none => true)
+  -- A renumbering accepts its successor: the same loss under its new class,
+  -- so a document that accepted it keeps passing `--werror`.
+  let (renDoc, renDs) := elabStr (dvDoc "\\allow{E0382}\n" "x")
+  t "renumbered allow: the old spelling accepts its successor, with a note"
+    (renDoc.allow.contains "W0382" && renDs.all (·.code != "E0329") &&
+      (renDs.filter (·.code == "N0105")).size == 1)
+  let renRes := Diag.resolveAll renDoc.allow false
+    #[DriverDiag.boundaryFailed "lualatex" "! an invented failure" (Ir.picSrcPrefix ++ "aa")]
+  t "renumbered allow: the successor is accepted, so --werror passes"
+    (renRes.accepted == #["W0382"] && renRes.warnings == 0 &&
+      exitFor renRes.errors 0 renRes.warnings true == 0)
+  t "renumbered allow: rows name no live code, a live successor, and no retired row"
+    (DiagCode.renumbered.all fun (old, succ) => (DiagCode.ofString? old).isNone &&
+      (DiagCode.ofString? succ).isSome && (DiagCode.retired.lookup old).isNone)
 
 /-- **The mono slot, and what a diagnostic may claim about it.** Two halves
 of one defect, the second the larger.
@@ -1589,7 +1610,7 @@ def a11yChecks (ref : IO.Ref (List String)) : IO Unit := do
     (firedPic.size == 1 && firedPic.all fun d =>
       (d.message.splitOn "picture").length == 2 &&
       (d.message.splitOn Ir.picSrcPrefix).length == 1)
-  t "a picture the tool failed on is not double-named (E0382 spoke)"
+  t "a picture the tool failed on is not double-named (W0382 spoke)"
     ((Ir.picAltDiags picDoc (fun _ => none) (fun _ => false)).isEmpty)
   t "a captioned figure around the picture silences the picture face"
     ((Ir.picAltDiags (elabStr (dvDoc door ("\\begin{figure}" ++ pic ++
@@ -1682,7 +1703,7 @@ def pendingChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "pending: the picture's request stands in the image refs" picSrc.isSome
   let fetched : Array (String × Image.Fetch) := (Ir.imageRefs doc').map fun src =>
     if src.startsWith Ir.picSrcPrefix then
-      (src, .refused (DriverDiag.boundaryFailed "lualatex" "! Undefined control sequence."))
+      (src, .refused (DriverDiag.boundaryFailed "lualatex" "! Undefined control sequence." src))
     else (src, .missing s!"/documents/{src}")
   let (store, imgDs) := Image.fulfil fetched
   t "fulfil_covers: one entry per requested source, in order"
@@ -1694,7 +1715,7 @@ def pendingChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "pending_named: every pending node has a diagnostic naming it"
     (named (ds ++ bibDs ++ imgDs) pend)
   t "pending_named: the refusal's subject is set at the decision, not by its words"
-    (imgDs.any fun d => d.code == "E0382" && (picSrc.map fun s => d.subject == some s).getD false)
+    (imgDs.any fun d => d.code == "W0382" && (picSrc.map fun s => d.subject == some s).getD false)
   -- A resolved document is pending-free: with the label, the file, and no
   -- picture, the census is empty and nothing needs naming.
   let (ok, okDs) := elabStr (dvDoc "" "\\section{A}\\label{a} See \\ref{a}.")

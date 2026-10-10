@@ -2170,6 +2170,32 @@ public def picWalkCtrls : List String :=
   ["fill", "node", "draw", "path", "foreach", "pgfmathsetmacro",
    "pgfmathtruncatemacro", "else", "fi"]
 
+/-- A package that is a theme of the document's class, not a picture's:
+beamer's theme family `beamer<slot>theme<name>` (`themeAsking`, read
+backwards by `themeSlotOfPackage?`; beamer user guide §15). A theme
+presupposes the class — its first lines call `\useinnertheme` and its
+siblings, which only beamer defines — and a boundary standalone is never
+that class, so such a load can only fail there. What a picture reads of a
+theme — its colours, its fonts, its TikZ libraries and styles, its macros —
+reaches the standalone through its own carriers instead. -/
+public def themePackage (p : String) : Bool := (themeSlotOfPackage? p).isSome
+
+/-- A package of the presentation class's own family, which presupposes the
+class: a theme (`themePackage`); one of beamer's own modules or an add-on
+named for it (`beamerbaseoverlay`, `appendixnumberbeamer`, `beamerposter`),
+each of which patches beamer's internals or calls its commands; or pdfpc's,
+whose hyperxmp needs the hyperref beamer loads first. A boundary standalone
+is neither beamer nor carries its hyperref, so such a load can only fail
+there, and the picture with it. `beamerarticle` is the beamer package made
+to load in another class (beamer user guide §21.2), so it is not one. -/
+public def classPackage (p : String) : Bool :=
+  themePackage p || ((p.splitOn "beamer").length > 1 && p != "beamerarticle") || p == "pdfpc"
+
+/-- The package loads a boundary standalone carries: every one the engine
+does not set itself, except one of the class's own family (`classPackage`). -/
+public def boundaryRides (p : String) : Bool :=
+  !p.isEmpty && !nativePackages.contains p && !classPackage p
+
 /-- What one tree walk collects for the renderers of a document's
 pictures: `pre` is the boundary standalone's preamble, as written; `sets`
 is the same collection read natively — one entry per `nativeSetCtrls`
@@ -2207,7 +2233,7 @@ private def boundaryLevel (file : String) (raws : Array Raw) (out : BoundaryScan
       let (opt, j) := takeOpt raws (i + 1)
       let (args, k) := takeGroups raws j 1
       let pkgs := ((rawSrc (args.getD 0 #[])).splitOn ",").map (·.trimAscii.toString)
-        |>.filter (fun p => !p.isEmpty && !nativePackages.contains p)
+        |>.filter boundaryRides
       let out :=
         if pkgs.isEmpty then out
         else
@@ -2258,7 +2284,8 @@ public def boundaryScan (file : String) (raws : Array Raw) : BoundaryScan :=
 the *unrewritten* tree — the compat rewrite drops package loads, so
 collection precedes it. Every non-native `\usepackage` rides with its
 options (pgfplots, genealogytree, circuitikz — whatever the pictures
-need), and each closed-list set line is reconstructed as written.
+need) but one of the class's own family (`boundaryRides`), and each
+closed-list set line is reconstructed as written.
 
 **Wherever they stand.** A set line is a definition the pictures read, and
 where the author wrote it says nothing about which pictures need it: a

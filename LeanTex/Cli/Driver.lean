@@ -283,7 +283,7 @@ def resolvePictures (ui : Ui) (doc : Ir.Doc)
         detail := s!"{tool} ({version}), {id.take 16} as {key.take 16}, {status}" ++
           (if answer.cached then " (cached)" else "")
         elapsed := ← since t0
-        undrawn := (Boundary.undrawnOf tool outcome (spanFor id)).map (src, ·) }
+        undrawn := (Boundary.undrawnOf tool outcome (spanFor id) src).map (src, ·) }
   -- Four TeX processes bound peak memory on a laptop; this changes
   -- scheduling alone, never the request or its cache key.
   let attempts ← Batch.map 4 (fun (_, wrapped) => PictureAssets.key wrapped) fulfil refs
@@ -667,20 +667,26 @@ def build (ui : Ui) (file : String) : IO UInt32 := do
     -- A request no tool drew, for a picture the rendered subset draws in
     -- part, is withdrawn (`Boundary.withdraw`) and the document elaborated
     -- again with it, so what is resolved below is the page that ships: the
-    -- subset's drawing with its refusals named, never a placeholder the
-    -- subset could have filled. A document already failing asks nothing of
-    -- the tool — its build stops at the first resolution either way.
+    -- subset's drawing with its loss named once (`Boundary.foldLines`), never
+    -- a placeholder the subset could have filled — as a picture the document
+    -- keeps to the subset (`\pictures{ tool = none }`) ships its drawing with
+    -- its loss named once. A document already failing asks nothing of the
+    -- tool — its build stops at the first resolution either way.
+    let tool := front.doc.pictureTool.getD "lualatex"
+    let declined := Boundary.linesOf tool {} front.spans.declined
+    let front := { front with diags := Boundary.foldLines front.doc.allow allowAll declined front.diags }
     let failing := (Diag.resolveAll front.doc.allow allowAll (Diag.forOutputs outputs front.diags)).errors > 0
     let (pics, undrawn) ← if failing then pure (#[], #[])
       else resolvePictures ui front.doc front.spans.images
-    let w := Boundary.withdraw (front.doc.pictureTool.getD "lualatex")
-      front.spans.fallbacks undrawn front.spans.images
+    let w := Boundary.withdraw front.spans.fallbacks undrawn
     let front ← if w.ids.isEmpty then pure front else do
       let t ← IO.monoMsNow
       let (doc, diags, spans) ← elaborate ui file front.prepared front.earlier front.spliced
         (front.provisional.getD (fun _ _ => {})) (phases := false) (withdrawn := w.ids)
       ui.phase "withdraw" s!"{w.ids.size} pictures drawn by the rendered subset" (← since t)
-      pure { front with doc := doc, diags := diags ++ w.notes, spans := spans }
+      pure { front with doc := doc, spans := spans
+                        diags := Boundary.foldLines doc.allow allowAll
+                          (Boundary.linesOf tool w spans.declined) diags }
     let refused := w.standing
     let doc := front.doc
     let sourceDiag := front.prepared.sourceTriggers.attribute

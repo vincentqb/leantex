@@ -860,6 +860,23 @@ def censusOf (coveredColors : Array Ir.Color) (out : Layout.Out) :
 
 def hasStr (hay needle : String) : Bool := (hay.splitOn needle).length > 1
 
+/-- The opening tags of a page's failed-face placeholders: the spans that
+carry `data-image-src`. -/
+def placeholderTags (html : String) : List String :=
+  ((html.splitOn "<span ").drop 1).filterMap fun rest =>
+    let tag := (rest.splitOn ">").headD ""
+    if hasStr tag "data-image-src=" then some tag else none
+
+/-- An attribute's value in one opening tag, as the serializer writes it. -/
+def attrIn (tag name : String) : Option String :=
+  match (" " ++ tag).splitOn (" " ++ name ++ "=\"") with
+  | _ :: rest :: _ => some ((rest.splitOn "\"").headD "")
+  | _ => none
+
+/-- Does an opening tag carry a non-empty accessible name? -/
+def labelled (tag : String) : Bool :=
+  (attrIn tag "aria-label").any (!·.isEmpty)
+
 /-- Does a compat-index row's call load the row's own package? Then the
 scaffold does not load it a second time: a duplicate load puts the call's
 whole effect in the baseline as well, and a `\usepackage{times}` row could

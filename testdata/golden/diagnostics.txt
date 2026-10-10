@@ -159,13 +159,6 @@
 ✖ [E0375] - \setlength
   '\dimexpr' division rounds to nearest; this engine's length arithmetic truncates toward zero as TeX's '\divide' does
   suggestion: divide outside '\dimexpr': '(\a - \b) / 2' truncates as TeX does
-── E0382 (dropped) the boundary tool ran and drew nothing for a picture; the page would carry an empty box
-✖ [E0382]
-  'lualatex' drew nothing for this picture; the page would carry an empty box
-  suggestion: lualatex says: ! Undefined control sequence. · l.7 \nope
-✖ [E0382]
-  'lualatex' did not finish this picture; the page would carry an empty box
-  suggestion: exit code 3; nothing is remembered, so a rebuild asks lualatex again; \allow{E0382} accepts the empty box
 ── E0390 (dropped) a markdown construct this dialect refuses by design; its content is dropped
 ✖ [E0390]
   raw HTML in markdown is refused: document content can never become markup here
@@ -291,10 +284,6 @@
 ℹ [N0376]
   this picture ships no text alternative; assistive technology reads nothing in its place (WCAG 2.2 SC 1.1.1)
   suggestion: describe the picture — \begin{tikzpicture}[alt={...}] — mark it decorative with [artifact], or caption a figure around it; an empty alt= says nothing
-── N0419 (info) a boundary picture no tool drew is drawn by the rendered subset instead; what the subset leaves out is named beside it
-ℹ [N0419]
-  no boundary tool drew this picture, so the rendered subset draws it; what the subset leaves out is named beside it
-  suggestion: install lualatex to draw it whole, and a warm cache needs no tool; \pictures{ tool = none } draws every picture this way, asking no tool
 ── W0001 (config) content after \end{document} is ignored
 ⚠ [W0001]
   content after '\end{document}' is ignored
@@ -711,6 +700,15 @@
 ⚠ [W0381] - \qty
   no unit symbol for '\banana'; set as its ASCII spelling
   suggestion: write the symbol as literal text in the unit braces: \qty{1}{kPa}
+── W0382 (degraded) the boundary tool ran and drew nothing for a picture, or did not finish it; a placeholder box marks its place
+⚠ [W0382]
+  'lualatex' drew nothing for this picture; a placeholder box marks its place
+  replaced by: a placeholder box
+  suggestion: lualatex says: ! Undefined control sequence. · l.7 \nope
+⚠ [W0382]
+  'lualatex' did not finish this picture; a placeholder box marks its place
+  replaced by: a placeholder box
+  suggestion: exit code 3; nothing is remembered, so a rebuild asks lualatex again; \allow{W0382} accepts the placeholder
 ── W0383 (pending) algorithm construct outside the modeled subset; kept as a plain line
 ⚠ [W0383] - \lIf
   '\lIf' is an algorithm construct outside the modeled subset; its content is kept as plain lines
@@ -764,6 +762,11 @@
 ⚠ [W0398] - \usepackage
   '\usepackage{booktabs}' follows the main face's declaration; its rule paddings are measured in Latin Modern
   suggestion: load booktabs before '\setmainfont', where LaTeX measures them in Latin Modern too
+── W0419 (degraded) a picture the boundary did not draw is drawn in part by the rendered subset; what it leaves out is named in the line
+⚠ [W0419] - \begin
+  the rendered subset draws this picture in part: '\shade' is outside the rendered picture subset; not drawn
+  replaced by: the rendered subset's drawing
+  suggestion: install lualatex to draw it whole, and a warm cache needs no tool; \pictures{ tool = none } draws every picture this way, asking no tool
 ── W0435 (degraded) a \qedhere whose QED this engine cannot set where amsthm sets it; the QED stands on a line of its own after the display
 ⚠ [W0435] - \qedhere
   '\qedhere' in '{align*}' does not set its QED where amsthm sets it; the QED stands on a line of its own after the display

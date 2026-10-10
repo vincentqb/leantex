@@ -3852,13 +3852,11 @@ baseline is `−(ht − dp)/2` of the *measured* box, so depth enters with
 slope ½ and a word with a descender floats up: 1.155 pt between `candle`
 and `misty` in Latin Modern at 10 pt (pgf manual §17.5.1 calls it
 "wobbles" and offers `anchor=mid` against it). Here `height` and `depth`
-are the face's declared cap height and descent at the run's size, never the
+split the face's declared cap-to-descent band at the run's size, never the
 glyphs present (`Layout.label_centre_glyph_free`), so the same arithmetic
-is content-blind and the wobble is zero. The reference that remains is a
-declared choice, not an accident: the band is cap-to-descent rather than
-cap-to-baseline, which seats every label `depth/2` above where trimming to
-the alphabetic baseline would (css-inline-3 §6's `text-box-trim`);
-`labelBaseline_between` is where that offset is quantified. -/
+is content-blind and the wobble is zero; the split puts the band's middle
+half an x-height above the baseline, so a centred label hangs from `mid`,
+the manual's own anchor, and `labelBaseline_between` quantifies the seat. -/
 public def labelBaseline (y : Sp) (align : LabelAlign) (m : LabelInk) : Sp :=
   (labelInkBox 0 y align m).2.2 - m.height
 
@@ -3943,11 +3941,12 @@ box's odd unit is assigned by (1 sp = 1/65536 pt). No glyph term appears, so
 this is the *whole* vertical story for a centred label: one number per
 (face, size).
 
-Read the other way it is the cost of the cap-to-descent band: against a
-band trimmed to the alphabetic baseline the label sits `depth/2` higher —
-1.67 pt at 10 pt in Source Serif Pro, 1.46 in Open Sans, 1.32 in Fira Sans.
-Uniform, therefore not a wobble; a reference choice, and the one deliberate
-difference from css-inline-3 §6's `text-box-edge: cap alphabetic`. -/
+With the band split at its x-height midpoint (`Layout.labelVStep`) that is
+half the face's x-height below the anchor: the seat pgf's `mid` anchor gives
+every node, and TeX's own for a box of x-height letters. Split at the face's
+baseline instead, the band seated a word of capitals half the face's
+descent above where lualatex sets it — 1.67 pt at 10 pt in Source Serif
+Pro, 1.46 in Open Sans, 1.32 in Fira Sans. -/
 public theorem labelBaseline_between (y : Sp) (m : LabelInk)
     (h : 0 ≤ m.height + m.depth) :
     y + (m.depth - m.height) / 2 ≤ labelBaseline y .center m ∧
@@ -14732,6 +14731,18 @@ source is this prefix plus the request's content hash. The driver fulfils
 it from the boundary cache instead of the filesystem. -/
 public def picSrcPrefix : String := "leantex-pic:"
 
+/-- The key a refusal the rendered subset names for a withdrawn picture is
+named under (`Elab.tikzArm` spells it at the call): the picture's id, then
+the refusal's own words, so the driver reads which picture a refusal
+belongs to off the structured subject (`Cli.Boundary.fragmentOf`), never
+off its message. -/
+public def picFragmentKey (id msg : String) : String := "picture:" ++ id ++ ":" ++ msg
+
+/-- The key a picture in a line of text is named under where it is not
+drawn (`Elab.inlinePicture` spells it at the call): the rendered subset
+sets a picture only as a block. -/
+public def picInlineKey (id : String) : String := "picture:inline:" ++ id
+
 /-- FNV-1a, two seeds, 32 hex digits. Over a picture body it is the
 picture's identity (`pictureSrcs`, the image source); over the wrapped
 request it is the boundary cache key — a content hash, so an unchanged
@@ -15251,7 +15262,7 @@ public def altDiags (doc : Doc) (spanOf : String → Option Span := fun _ => non
 
 /-- The judge's boundary-picture face, read by the driver after fulfilment:
 `shipped` says whether the picture's drawn box embeds — a picture the tool
-failed on ships a placeholder box, not an image, and E0382 has named that
+failed on ships a placeholder box, not an image, and W0382 has named that
 loss, so naming it here too would name one loss twice. -/
 public def picAltDiags (doc : Doc) (spanOf : String → Option Span)
     (shipped : String → Bool) : Array Diag :=
@@ -17734,7 +17745,7 @@ private theorem resolveRefInlines_agree (loc : Locale) (table : RefTable) (xs : 
 What the engine could not resolve and a backend would otherwise ship
 unnamed: a `\ref` no label numbers, a `\cite` no bibliography answered, an
 image no file or tool produced. Each resolver names what it leaves — W0349,
-W0351, W0601/W0602/E0382/W0379 — and `pending_named` (Pending.lean) holds
+W0351, W0601/W0602/W0382/W0379 — and `pending_named` (Pending.lean) holds
 the census to those diagnostics, so "a warning per misunderstood thing" is
 a theorem over the pipeline's pure tail, not a convention each resolver
 keeps by hand. The silent `\cite` with no bibliography was that convention
