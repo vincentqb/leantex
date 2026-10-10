@@ -1356,16 +1356,44 @@ public def ParagraphBreaks.Splits (p : ParagraphBreaks) (k : Nat) : Prop :=
     k ∉ p.forced ∧ k ∉ p.endFills
 
 /-- The actual warning census, over the breaker choices and authored ends
-recorded where the paragraph is placed. -/
+recorded where the paragraph is placed. The last interior end and the set
+of ends are read once: searching both for every break made a listing's
+lines quadratic. -/
 public def ParagraphBreaks.reflows (p : ParagraphBreaks) : Array Nat :=
-  p.chosen.filter fun k =>
-    p.forced.pop.any (k < ·) && !p.forced.contains k && !p.endFills.contains k
+  let top := p.forced.pop.foldl max 0
+  let ends : Std.HashSet Nat := Std.HashSet.ofList (p.forced.toList ++ p.endFills.toList)
+  p.chosen.filter fun k => decide (k < top) && !ends.contains k
+
+private theorem lt_foldl_max (k : Nat) : ∀ (l : List Nat) (acc : Nat),
+    k < l.foldl max acc ↔ k < acc ∨ ∃ x ∈ l, k < x := by
+  intro l
+  induction l with
+  | nil => intro acc; simp
+  | cons x xs ih =>
+    intro acc
+    have hm : k < max acc x ↔ k < acc ∨ k < x := by omega
+    rw [List.foldl_cons, ih, hm]
+    constructor
+    · rintro ((h | h) | ⟨y, hy, h⟩)
+      · exact Or.inl h
+      · exact Or.inr ⟨x, by simp, h⟩
+      · exact Or.inr ⟨y, by simp [hy], h⟩
+    · rintro (h | ⟨y, hy, h⟩)
+      · exact Or.inl (Or.inl h)
+      · simp only [List.mem_cons] at hy
+        rcases hy with rfl | hy
+        · exact Or.inl (Or.inr h)
+        · exact Or.inr ⟨y, hy, h⟩
 
 public theorem ParagraphBreaks.reflows_mem (p : ParagraphBreaks) (k : Nat) :
     k ∈ p.reflows ↔ p.Splits k := by
+  have htop : k < p.forced.pop.foldl max 0 ↔ ∃ stop ∈ p.forced.pop, k < stop := by
+    rw [← Array.foldl_toList, lt_foldl_max]
+    simp only [Nat.not_lt_zero, false_or, Array.mem_def]
   simp only [ParagraphBreaks.reflows, ParagraphBreaks.Splits, Array.mem_filter,
-    Bool.and_eq_true, Bool.not_eq_true', Array.contains_eq_mem,
-    Array.any_eq_true', decide_eq_true_eq, decide_eq_false_iff_not, and_assoc]
+    Bool.and_eq_true, Bool.not_eq_true', decide_eq_true_eq, htop,
+    Std.HashSet.contains_ofList, List.contains_append, Bool.or_eq_false_iff,
+    Array.contains_toList, Array.contains_eq_mem, decide_eq_false_iff_not]
 
 /-- Every actually split authored segment has its paragraph's structured
 diagnostic key. Repeated breaks within a paragraph share one report. -/
@@ -2445,8 +2473,12 @@ private def flushWord (fontIdx : Nat) (color : Ir.Color) (link : Option String)
   if box.isEmpty then return (items, offsets, sources)
   let first := boxOwners[0]?.getD attr
   if boxOwners.all (· == first) then
+    -- The sources read the item count before the box is pushed, so the
+    -- push writes the items in place: read beside it, they were copied at
+    -- every box, quadratic in a line of many boxes.
+    let sources := sources ++ boxSources.map (·, items.size)
     return (items.push (.box w fontIdx color link box size {leading} decorations 0 ground first),
-      offsets, sources ++ boxSources.map (·, items.size))
+      offsets, sources)
   let mut items := items
   let mut offsets := offsets
   let mut sources := sources
@@ -4514,6 +4546,10 @@ private structure ItemsAcc where
   italic correction's kern is set since, even at no width: it writes 0,
   which ends no word (`italicKern`). -/
   wordEnd : Nat := 0
+  /-- The item count before the token being folded in, set by the fold's
+  caller: a count read after the fold kept the items shared through it,
+  and the fold then copied them at every token. -/
+  before : Nat := 0
 
 /-- The pair kern a set glyph declares with its own face's space glyph —
 the box's last glyph when `after` (the space follows it), its first
@@ -4972,12 +5008,12 @@ private def itemsOfToks (pats : Option Hyphen.Patterns) (size xHeight : Sp)
       (anchors : Array (String × Nat)) (origins : Array (Option Span))
       (source : Option Span) : ItemsAcc :=
     let next := itemsOfTok pats size xHeight fs imgs textW textH
-      acc tk owners anchors origins source
+      { acc with before := acc.items.size } tk owners anchors origins source
     match source with
     | none => next
     | some span =>
-      let sites := (Array.range (next.items.size - acc.items.size)).map
-        (fun i => (acc.items.size + i, span))
+      let sites := (Array.range (next.items.size - next.before)).map
+        (fun i => (next.before + i, span))
       { next with itemSources := next.itemSources ++ sites }
   let mut acc := acc
   let mut pending : Option (TextStyle × Array Char × Attribution) := none
@@ -5443,6 +5479,19 @@ private theorem tokenLoop_census (toks : Array Tk) (acc : ItemsAcc)
       (read := fun st : TokenState => st.1.chars ++ pendingItemChars st.2.1)
       (emit := Tk.itemChars) f toks (acc, none, #[], #[], [], #[]) trivial step
 
+/-- `itemsOfTok_none_chars` for the accumulator the fold hands it, whose
+item count before the token is set: the count is no item and no loss. -/
+private theorem itemsOfTok_none_chars_before (size xHeight : Sp)
+    (fs : FontSet) (imgs : Image.Store) (textW textH : Sp)
+    (acc : ItemsAcc) (n : Nat) (tk : Tk) (owners : Array Attribution)
+    (anchors : Array (String × Nat)) (origins : Array (Option Span))
+    (source : Option Span) (ht : tk.TextSource) :
+    let out := itemsOfTok none size xHeight fs imgs textW textH
+      { acc with before := n } tk owners anchors origins source
+    out.Clean → acc.Clean ∧ out.chars = acc.chars ++ tk.itemChars :=
+  itemsOfTok_none_chars size xHeight fs imgs textW textH { acc with before := n } tk owners
+    anchors origins source ht
+
 private theorem itemsOfToks_none_chars (size xHeight : Sp)
     (fs : FontSet) (imgs : Image.Store) (textW textH : Sp)
     (acc : ItemsAcc) (toks : Array Tk) (ht : ∀ tk ∈ toks, tk.TextSource) :
@@ -5481,8 +5530,8 @@ private theorem itemsOfToks_none_chars (size xHeight : Sp)
             exact ⟨hc, by simp [pendingItemChars, Tk.itemChars, List.append_assoc]⟩
           · refine ⟨_, rfl, htk', ?_⟩
             intro hc
-            have hw := itemsOfTok_none_chars size xHeight fs imgs textW textH a
-              (.word prev word first) owners anchors origins none hp hc
+            have hw := itemsOfTok_none_chars_before size xHeight fs imgs textW textH a
+              a.items.size (.word prev word first) owners anchors origins none hp hc
             exact ⟨hw.1, by simp [pendingItemChars, Tk.itemChars, hw.2,
               List.append_assoc]⟩
       case space sty =>
@@ -5492,8 +5541,8 @@ private theorem itemsOfToks_none_chars (size xHeight : Sp)
           all_goals
             refine ⟨_, rfl, trivial, ?_⟩
             intro hc
-            have hw := itemsOfTok_none_chars size xHeight fs imgs textW textH a
-              (.space sty) #[] #[] #[] scope.head? trivial hc
+            have hw := itemsOfTok_none_chars_before size xHeight fs imgs textW textH a
+              a.items.size (.space sty) #[] #[] #[] scope.head? trivial hc
             exact ⟨hw.1, by simpa [pendingItemChars, hs, ItemsAcc.chars] using hw.2⟩
         | some prev =>
           rcases prev with ⟨prev, word, first⟩
@@ -5501,12 +5550,14 @@ private theorem itemsOfToks_none_chars (size xHeight : Sp)
           all_goals
             refine ⟨_, rfl, trivial, ?_⟩
             intro hc
-            have hw := itemsOfTok_none_chars size xHeight fs imgs textW textH
-              (itemsOfTok none size xHeight fs imgs textW textH a
+            have hw := itemsOfTok_none_chars_before size xHeight fs imgs textW textH
+              (itemsOfTok none size xHeight fs imgs textW textH { a with before := a.items.size }
                 (.word prev word first) owners anchors origins none)
+              (itemsOfTok none size xHeight fs imgs textW textH { a with before := a.items.size }
+                (.word prev word first) owners anchors origins none).items.size
               (.space sty) #[] #[] #[] scope.head? trivial hc
-            have hpw := itemsOfTok_none_chars size xHeight fs imgs textW textH a
-              (.word prev word first) owners anchors origins none hp hw.1
+            have hpw := itemsOfTok_none_chars_before size xHeight fs imgs textW textH a
+              a.items.size (.word prev word first) owners anchors origins none hp hw.1
             have heq := hw.2
             rw [hpw.2] at heq
             exact ⟨hpw.1, by simpa [pendingItemChars, Tk.itemChars, hs,
@@ -5517,8 +5568,8 @@ private theorem itemsOfToks_none_chars (size xHeight : Sp)
     | some prev =>
       rcases prev with ⟨sty, word, attr⟩
       intro hout
-      have hw := itemsOfTok_none_chars size xHeight fs imgs textW textH a
-        (.word sty word attr) owners anchors origins none hp hout
+      have hw := itemsOfTok_none_chars_before size xHeight fs imgs textW textH a
+        a.items.size (.word sty word attr) owners anchors origins none hp hout
       obtain ⟨hacc, heq⟩ := hc hw.1
       exact ⟨hacc, hw.2.trans heq⟩
 
@@ -9896,9 +9947,19 @@ private def Spacing.Page.warnOverfull (b : B) (source : Option Span) : B :=
         (trigger := source.bind (·.pos.command)) (subject := some (overfullSubject source))) }
 
 /-- First located item of the line actually set, never a neighbouring line's
-site. Callers shift this map alongside inserted marks and hanging kerns. -/
-private def lineSource (sources : Array (Nat × Span)) (first last : Nat) : Option Span :=
-  (sources.find? fun (i, _) => first ≤ i && i ≤ last).map (·.2)
+site. Callers shift this map alongside inserted marks and hanging kerns.
+Sites are pushed in item order as items are made, so the first at or after
+the line's first item is found by halving: a scan from the start, once per
+line, made a long paragraph's lines quadratic. -/
+private def lineSource (sources : Array (Nat × Span)) (first last : Nat) : Option Span := Id.run do
+  let mut lo := 0
+  let mut hi := sources.size
+  for _ in [0:sources.size + 1] do
+    if lo < hi then
+      let mid := (lo + hi) / 2
+      if ((sources[mid]?.map (·.1)).getD 0) < first then lo := mid + 1 else hi := mid
+    else break
+  return sources[lo]?.bind fun (i, span) => if i ≤ last then some span else none
 
 /-- A heading's declared rule as the line builder reads it: weight,
 position against the baseline, and colour — the print reading of
@@ -15788,7 +15849,7 @@ private theorem itemsOfInlines_none_prose (size xHeight : Sp)
   let st := flatten fs.mathFont?.isSome noteOk
     (FlattenSt.mk #[] false #[] ladder roleMetrics ctr step) baseStyle xs
   let acc := itemsOfToks none size xHeight fs imgs textW textH
-    (ItemsAcc.mk #[] #[] #[] #[] #[] #[] #[] #[] {} {} cache 0) (FlattenSt.toks st)
+    (ItemsAcc.mk #[] #[] #[] #[] #[] #[] #[] #[] {} {} cache 0 0) (FlattenSt.toks st)
   have ht := flatten_textSource fs.mathFont?.isSome noteOk
     (FlattenSt.mk #[] false #[] ladder roleMetrics ctr step)
     baseStyle xs hp hs (by simp)
