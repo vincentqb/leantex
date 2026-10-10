@@ -3997,8 +3997,18 @@ def cardChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet)
     let out := layoutOf oneFace doc
     out.diags.any (·.code == "W0005")
   t "ragged card prose breaks without overfull lines" (!judgeOverfull "")
-  t "the same prose justified at card width cannot break"
-    (judgeOverfull "\\page{ justify = on }\n")
+  -- Justified at card width the prose has no good break: TeX sets such
+  -- lines underfull, its word spaces stretched far past their own width,
+  -- never one line overfull past the measure to spare a loose one.
+  let widestGap (pre : String) : Dim.Sp :=
+    (bodyLines (layoutOf oneFace (elabStr (card "" prose pre)).1)).foldl (fun m l =>
+      l.segs.foldl (fun m s => match s with
+        | .gap w _ => max m w
+        | _ => m) m) 0
+  t s!"the same prose justified at card width sets loose lines, never overfull ones \
+({widestGap "\\page{ justify = on }\n"} against {widestGap ""} ragged)"
+    (!judgeOverfull "\\page{ justify = on }\n"
+      && widestGap "\\page{ justify = on }\n" > 2 * widestGap "")
   t "article leaves hyphenation to the class default"
     ((elabStr "x").1.page.hyphenate == none)
   t "hyphenate is a page key any class may declare"

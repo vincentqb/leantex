@@ -130,6 +130,27 @@ def inlineCodeChecks (ref : IO.Ref (List String)) (text : Font.Font)
         && l.x + l.setWidth ≤ left + measure + Dim.pt 3)
       && !kout.diags.any (·.kind == .W0005)
       && String.join (klines.toList.map (bare ∘ lineText)) == bare (kebab.replace "`" ""))
+  -- A paragraph with long unbreakable runs ships every character on the
+  -- paper: the breaker once packed the text between two such runs onto
+  -- one overfull line past the sheet to save a loose line.
+  let glued := ["orderregistryvaluefactorysearchlimitxx", "policywidgetfactorysearchproxyxx",
+    "valueregistryfactorytokenproxytallyxx"]
+  let filler := "with now them and must if years after may has even many can made back her each"
+  let gluedProse (code : String → String) : String := "Or with her that because of if our you " ++
+    code glued[0]! ++ " if make for two may " ++ filler ++ " " ++ code glued[1]! ++ " " ++
+    code glued[2]! ++ " or your man than well even for the back well you have such so."
+  for (label, src, isMd) in [
+      ("tex typewriter", gluedProse fun c => "\\texttt{" ++ c ++ "}", false),
+      ("tex url", gluedProse fun c => "\\url{https://example.org/" ++ c ++ "/index.html}", false),
+      ("markdown code", gluedProse fun c => "`" ++ c ++ "`", true)] do
+    let gdoc := if isMd then (elabMd (src ++ "\n")).1 else (elabStr (dvDoc "" src)).1
+    let gout := layoutOf fonts gdoc
+    let glines := (bodyLines gout).filter hasGlyphRun
+    let shipped := String.join (glines.toList.map (bare ∘ lineText))
+    let want := bare ((((src.replace "\\texttt{" "").replace "\\url{" "").replace "}" "").replace "`" "")
+    t s!"a paragraph with long unbreakable runs ships every character on the paper ({label})"
+      (!glines.isEmpty && glines.all (fun l => 0 ≤ l.x && l.x + l.setWidth ≤ gdoc.page.width)
+        && shipped == want)
   -- A tex document's typewriter run keeps LaTeX's rule.
   let tex := prose fun c => "\\texttt{" ++ c.replace "_" "\\_" ++ "}"
   let texOut := layoutOf fonts (elabStr (dvDoc "" tex)).1

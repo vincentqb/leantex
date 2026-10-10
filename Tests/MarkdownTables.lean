@@ -89,7 +89,7 @@ def wrapChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit := 
   let note := "Rewrites every gadget it is handed and writes each one back in the order of \
 its label, then counts them"
   let wide := s!"| Key | Count of rewritten gadgets | Note |\n|---|--:|---|\n\
-| `--sort` | 12 | {note} |\n| `-q` | 3 | quiet |\n"
+| `sort_all` | 12 | {note} |\n| `quiet` | 3 | quiet |\n"
   let (doc, _) := elabMd wide
   let out := layoutOf fonts doc
   let lines := bodyLines out
@@ -122,7 +122,7 @@ its label, then counts them"
   -- One word per cell needs no narrowing: the first column keeps its words
   -- whole, code included.
   t "a column of single words keeps them whole and stands at the measure's edge"
-    ((lineOf "--sort").any (·.x == left) && (lineOf "Key").any (·.x == left))
+    ((lineOf "sort_all").any (·.x == left) && (lineOf "Key").any (·.x == left))
   let countRight := (lineOf "12").map fun l => l.x + l.setWidth
   let countLines := lines.filter fun l => (lineRuns l).any fun (_, s, _, _) =>
     ["Count", "rewritten", "gadgets", "12", "3"].contains s
@@ -339,6 +339,36 @@ def fitStepChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit 
 ({repr (decide pdoc)})"
     ((decide pdoc).any (·.step == some Layout.tableLastStep) && !plines.isEmpty
       && plines.all fun l => 0 ≤ l.x && l.x + l.setWidth ≤ pdoc.page.width)
+  -- A table in a list item overhangs its item's measure: it stays on the
+  -- paper, its indent's room on the left, the margin alone on the right.
+  let listed := "- An item holding a table:\n\n" ++
+    "\n".intercalate ((paperWide.splitOn "\n").filter (!·.isEmpty) |>.map ("  " ++ ·)) ++ "\n"
+  let (ldoc, _) := elabMd listed
+  let lout := layoutOf fonts ldoc
+  let llines := (bodyLines lout).filter fun l => hasGlyphRun l && !hasStr (lineText l) "item"
+  let lover := lout.diags.filter (·.kind == .W0338)
+  t s!"a table overhanging its list item stays on the paper and is named as it stands \
+({lover.map (·.message)})"
+    (!llines.isEmpty && llines.all (fun l => 0 ≤ l.x && l.x + l.setWidth ≤ ldoc.page.width)
+      && lover.size == 1 && lover.all fun d => hasStr d.message "overhangs the margins")
+  -- The decision and the page measure a cell's words alike: unhyphenated,
+  -- so a table judged to fit its measure never passes it on the page.
+  let longWords := ["internationalization", "extraordinarily", "characteristically",
+    "incomprehensibility", "counterproductively", "interchangeability"]
+  for k in [0:6] do
+    let cells := (List.range 4).map fun j => " ".intercalate
+      ((List.range (2 + (k + j) % 3)).map fun m => longWords[(k + j + m) % longWords.length]!)
+    let table := "- Item:\n\n  | " ++ " | ".intercalate ((List.range 4).map (s!"h{·}")) ++
+      " |\n  |---|---|---|---|\n  | " ++ " | ".intercalate cells ++ " |\n"
+    let (kdoc, _) := elabMd table
+    let kout := layoutOf fonts kdoc
+    let lm := (Ir.leftMargin kdoc.docClass.record.lists kdoc.page.fontSize 1).getD 0
+    let kfit := (tableOf? kdoc).map fun (cols, padL, padR, rows, spans) =>
+      fitsIn kdoc ((Layout.Geom.ofPage kdoc.page).textWidth - lm) cols padL padR rows spans
+    let kright := kdoc.page.width - kdoc.page.hmargin
+    t s!"a listed table judged to fit its measure sets inside it ({k}: {repr kfit})"
+      (kfit.any (fun f => (0 : Dim.Sp) < f.overhang) ||
+        ((bodyLines kout).filter hasGlyphRun).all fun l => l.x + l.setWidth ≤ kright)
   -- One rule for code on both passes: the decision measures a cell's code as
   -- the page then sets it, breaking only after a hyphen, as a browser's
   -- cell breaks it.

@@ -5566,8 +5566,9 @@ listing keys, and its code takes `\footnotesize`, LaTeX's own step, at
 which the markdown page's measure holds 79 to 80 monospaced columns (the
 0.6 em advance of every default typewriter face, to within 0.003 em) — the
 80-column line most code is written to (PEP 8's limit is 79) — and wraps a
-longer line as listings does: paper has no scroll, so every character
-reaches the page, as the HTML print rule already promises. The HTML's
+longer line as listings does: paper has no scroll, so every character a
+wrap can reach does — a run with no break point at all runs on, as
+listings sets it. The HTML's
 `<pre>` keeps its padding inside the same measure, so a browser at 16 px
 holds about 72 of those columns and wraps the rest. -/
 public def Surface.listing : Surface → ListingSpec

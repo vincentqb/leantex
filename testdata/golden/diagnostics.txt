@@ -721,7 +721,7 @@
   '\textbf' inside math sets in the surrounding style
 ── W0386 (degraded) a declared line break did not hold: its line did not fit the measure and re-flowed
 ⚠ [W0386]
-  a declared line break did not hold: 2 lines were declared, 4 ship
+  a declared line break did not hold: 2 lines were declared, 5 ship
   suggestion: shorten the declared line, reduce \page{ hmargin = ... } to widen the measure, or declare a narrower face
 ── W0387 (config) a known construct was read and had no effect
 ⚠ [W0387] - \thispagestyle

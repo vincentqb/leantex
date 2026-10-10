@@ -825,15 +825,15 @@ public def urlBreak (c : Char) : Option Nat :=
   else if c == ':' then some relPenalty
   else none
 
-/-- Where a browser breaks a table cell's code (UAX #14): after a hyphen
-inside a word, a letter or a digit on either side of it — never after a
-word's leading hyphens (`-q`, `--sort`; rule LB20a) nor before a hyphen
-(LB21) — and after no other character an identifier holds. A cell is as
+/-- Where a browser breaks a table cell's code: after any hyphen that no
+hyphen follows — never before a hyphen (UAX #14, LB21) — so `-q` breaks
+after its hyphen, `--sort` and `a--b` after their second, `café-x` and
+`x-1` after theirs, as Chromium sets each in a cell at its min-content
+width; and after no other character an identifier holds. A cell is as
 wide as its widest unbreakable run, so its code needs no break the page
 could choose and the browser could not. -/
-public def cellCodeBreak (prev : Option Char) (c : Char) (next : Option Char) : Option Nat :=
-  if c == '-' && prev.any Char.isAlphanum && next.any Char.isAlphanum then
-    some hyphenPenalty.toNat
+public def cellCodeBreak (_prev : Option Char) (c : Char) (next : Option Char) : Option Nat :=
+  if c == '-' && next.any (· != '-') then some hyphenPenalty.toNat
   else none
 
 public inductive Seg where
@@ -5922,6 +5922,17 @@ public def Measure.ex (m : Measure) (expand : Bool) : Sp :=
 
 public def overfullDemerits : Int := 100000000
 
+/-- What an overfull line costs: `overfullDemerits` for being overfull and
+as much again for every whole point it overhangs. An overhang priced in sp
+was cheaper than one line too loose to be feasible (TeX's inf_bad, the
+same 10⁸), so a paragraph with two long unbreakable runs packed the text
+between them onto one overfull line, past the paper, to save the loose
+one. Priced per point, a word packed onto an overfull line always costs
+more than the line it saves, and an overfull line ends at its first break
+past its unbreakable run, as TeX's final pass ends one (tex.web §854). -/
+public def overfullCost (overhang : Sp) : Int :=
+  overfullDemerits * (1 + overhang / Dim.pt 1) -- per point: TeX reports an overfull box in pt (tex.web §663)
+
 /-- Demerits of one candidate line. Under font expansion the badness
 denominators grow by the boxes' own flexibility (`Measure.ex`): the form
 of the cost is unchanged, expansion is only more room (Thành tb71 —
@@ -5939,7 +5950,7 @@ public def lineDemerits (items : Array Item) (m : Measure) (target : Sp) (j : Na
       if m.shrink + ex < -delta then -1  -- overfull marker
       else badness delta (m.shrink + ex)
   let base : Int :=
-    if b < 0 then overfullDemerits + (m.natural - target)
+    if b < 0 then overfullCost (m.natural - target)
     else (10 + b) ^ 2
   let penTerm : Int :=
     match items[j]? with
@@ -11281,9 +11292,9 @@ for a wide table is one of these declarations; a markdown source can
 write none. -/
 public def tableSteps : List String := ["small", "footnotesize", "scriptsize"]
 
-/-- The step a markdown table takes only when, centred at the floor, it
-would still run past the paper: LaTeX's `\tiny`, 5 pt at 10 — type hard
-to read beats columns the sheet never shows. -/
+/-- The step a markdown table takes only when, at the floor, it is wider
+than the paper: LaTeX's `\tiny`, 5 pt at 10 — type hard to read beats
+columns the sheet never shows. -/
 public def tableLastStep : String := "tiny"
 
 /-- How a narrowing table (`Ir.ColSpec.narrows`) fits its text block: the
@@ -11343,11 +11354,10 @@ public def tableFit (geom : Geom) (fs : FontSet) (imgs : Image.Store) (colsep av
   for s in tableSteps do
     if need (some s) ≤ avail then return { step := some s }
   let floor := tableSteps.getLast?
-  let over := need floor - avail
-  -- Centred, each half of the overhang stands in a side margin: past the
-  -- margin it leaves the paper, and the last step is the one that keeps
-  -- the columns on it.
-  if over / 2 ≤ geom.hmargin then return { step := floor, overhang := over }
+  -- What still overhangs at the floor stands in the margins while the table
+  -- is no wider than the paper (`collectTable` keeps it on); wider, the
+  -- last step is the one that keeps its columns on the sheet.
+  if need floor ≤ geom.pageW then return { step := floor, overhang := need floor - avail }
   let last := some tableLastStep
   return { step := last, overhang := max 0 (need last - avail) }
 
@@ -11370,9 +11380,12 @@ private def collectTable (r : Rd) (a0 : Acc)
     tableLength ((a.tokens.find? name).map fun g => (r.resolve g).width) r.preamble name
   let colsep := tok "tabcolsep"
   let total := (a.measure.getD r.geom.textWidth) - indent
-  -- A markdown table whose words alone pass the text block sets a step
-  -- smaller (`tableFit`, the decision the HTML states too).
+  -- A markdown table whose words alone pass its measure sets a step
+  -- smaller (`tableFit`, the decision the HTML states too). Its cells take
+  -- no hyphen, on every pass: the decision measures them unhyphenated, and
+  -- a hyphenation point splits a word's box, its kerns with it.
   let web := cols.any (·.narrows)
+  let cellPats := if web then none else r.pats
   let fit := tableFit r.geom r.fs r.imgs colsep total cols padL padR rows spans
   let size := match fit.step with
     | some s => Ir.scaleStepIn r.geom.scale r.geom.fontSize s
@@ -11388,7 +11401,7 @@ private def collectTable (r : Rd) (a0 : Acc)
     for (cell, j) in row.zipIdx do
       -- a measuring pass: these items never ship, so they carry no attribution
       let (items, _, c, _) :=
-        itemsOfInlines r.pats size r.xHeight r.fs
+        itemsOfInlines cellPats size r.xHeight r.fs
           { color := a.fg, ground := a.ground, cellCode := web } cell cache
           (.fixed .unattributed) r.imgs r.geom.textWidth r.geom.textHeight
           (ladder := r.geom.scale) (step := r.step)
@@ -11409,43 +11422,45 @@ private def collectTable (r : Rd) (a0 : Acc)
   let trail : Sp := if padR then colsep else 0
   let innerGaps : Sp := 2 * colsep * ((cols.size : Int) - 1)
   let tableW : Sp := lead + widths.foldl (· + ·) 0 + innerGaps + trail
-  -- A table wider than the measure stays its declared width and is named,
-  -- never squeezed to fit: `\tabcolsep` is a rigid kern (classes.dtx sets
-  -- it as a dimen, no rubber), so TeX itself sets the same source overfull
-  -- and says so: a table whose `p{}` widths and gaps sum past the measure
-  -- is overfull under lualatex too. Shrinking the gaps would fit a box TeX
-  -- does not fit and silently change every gap to hide an error in the
-  -- declared column widths; the honest fix is the author's, and the help
-  -- names it. (The KP breaker's own rule is the same: shrink is spent only
-  -- where the glue declared some.)
-  -- Named at its first located cell, with a remedy its source can write:
-  -- a markdown table declares no width, and its columns already narrowed
-  -- to their longest words at the smallest step. Its overhang is centred
-  -- across both margins, which keeps it on paper while it is no wider than
-  -- the two together.
-  -- Centred, a markdown table's overhang stays on the paper while each half
-  -- is no wider than the margin beside it.
-  let offPaper := r.geom.hmargin + indent - (tableW - total) / 2 < 0
+  -- A tex table wider than the measure stays its declared width and is
+  -- named, never squeezed to fit: `\tabcolsep` is a rigid kern (classes.dtx
+  -- sets it as a dimen, no rubber), so TeX itself sets the same source
+  -- overfull and says so: a table whose `p{}` widths and gaps sum past the
+  -- measure is overfull under lualatex too. Shrinking the gaps would fit a
+  -- box TeX does not fit and silently change every gap to hide an error in
+  -- the declared column widths; the honest fix is the author's, and the
+  -- help names it. (The KP breaker's own rule is the same: shrink is spent
+  -- only where the glue declared some.) A markdown table declares no width:
+  -- its columns narrowed above, and its type stepped down (`tableFit`).
+  -- Named at its first located cell, with a remedy its source can write.
+  -- What a markdown table still overhangs stands centred on its measure,
+  -- moved along the line only as far as keeps it on the paper — a table in
+  -- a list item has its indent's room on the left and the margin alone on
+  -- the right — and it leaves the paper only when it is wider than it.
+  let offPaper := tableW > r.geom.pageW
   if tableW > total then
     a := { a with diags := a.diags.push (Diag.of .W0338
       (if web && fit.overhang > 0 then
           s!"the table's words alone are {(tableW - total).toPtString}pt wider than the \
-measure at its smallest size; centred, it " ++
-            (if offPaper then "runs past both edges of the paper" else "overhangs both margins equally")
+measure at its smallest size; it " ++
+            (if offPaper then "runs past the edges of the paper" else "overhangs the margins")
         else s!"the table is {(tableW - total).toPtString}pt wider than the measure")
       (span := rows.findSome? fun row => row.findSome? Ir.inlineSource)
       (help := if web then
           "shorten the longest word in each column, or split the table into narrower ones"
         else "narrow the p{...} column widths, or widen the text block")) }
   let side : Ir.HAlign := if center then .center else if r.geom.flushRight then .right else .left
-  let x0 : Sp := if web && tableW > total then indent - (tableW - total) / 2
+  let x0 : Sp := if web && tableW > total then
+      if offPaper then (r.geom.pageW - tableW) / 2 - r.geom.hmargin
+      else max (-r.geom.hmargin)
+        (min (indent - (tableW - total) / 2) (r.geom.pageW - r.geom.hmargin - tableW))
     else indent + side.boxOffset (max 0 (total - tableW))
   -- The scope's side places the table box and stops there: a cell sets by
   -- its own spec (`cellSide`), from none of the scope's side, justification
   -- or box centring — `\@arrayparboxrestore` (latex.ltx) zeroes `\leftskip`
   -- and `\rightskip` in every `p` cell, so a `\raggedright` around the
   -- table leaves a wrapped cell justified.
-  let rc := { r with centreBoxes := false
+  let rc := { r with centreBoxes := false, pats := cellPats
                      geom := { r.geom with flushRight := false, justify := true } }
   -- Every row stands on the table's strut (`tableStrut`, `strutBox`).
   let strut := some (tableStrut size r.geom.leading)

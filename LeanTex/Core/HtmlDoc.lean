@@ -181,22 +181,25 @@ public def Config.measureValues (cfg : Config) : MeasureValues :=
     (cfg.page.width - 2 * cfg.page.hmargin) (cfg.page.height - 2 * cfg.page.vmargin))
 
 /-- One list or quotation level deeper: the level's `\leftmargin` (the
-class's, `Ir.leftMargin` at the next `\@listdepth`; the sheet's own
-1.35 em where the lineage declares none, as `listIndentCss` pads) off the
-measure's start, and for a quotation (`both`) off its end too — as the
-page's list and quote arms narrow theirs, so a table's fit reads the
+class's, `Ir.leftMargin` at the next `\@listdepth`; the page's own 1.5 em
+where the lineage declares none, `Layout.listIndentFor`) off the measure's
+start, and for a quotation (`both`) off its end too — the measure the
+page's list and quote arms narrow theirs to, so a table's fit reads the
 measure its page decides against (`tableFit`). A declared
 `\leftmargin⟨n⟩` is not read here. -/
 public def Config.deeper (cfg : Config) (both : Bool) : Config :=
   let lv := cfg.listDepth + 1
-  let lm := (Ir.leftMargin cfg.lists cfg.page.fontSize lv).getD (cfg.page.fontSize * 135 / 100)
+  let lm := (Ir.leftMargin cfg.lists cfg.page.fontSize lv).getD (cfg.page.fontSize * 3 / 2)
   { cfg with listDepth := lv, inset := cfg.inset + (if both then 2 * lm else lm) }
 
 /-- Enter a box with the same horizontal-measure convention as native
 paragraphs. Descendant widths resolve against it; siblings keep their own
-context because only the child's configuration changes. -/
+context because only the child's configuration changes. The box opens at
+list depth zero, its measure its own, as `minipage` resets `\@listdepth`
+(latex.ltx, `\@mplistdepth`). -/
 public def Config.atMeasure (cfg : Config) (width : Sp) : Config :=
-  { cfg with measures := some (MeasureValues.horizontal width cfg.measureValues.textHeight) }
+  { cfg with measures := some (MeasureValues.horizontal width cfg.measureValues.textHeight)
+             listDepth := 0, inset := 0 }
 
 @[expose] public def cssColor (c : Color) : String := c.css
 
