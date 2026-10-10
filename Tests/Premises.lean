@@ -131,8 +131,7 @@ def Premise.watched (p : Premise) : Bool :=
 
 /-- A spawn whose wait has no time limit, by file and declaration, with the
 units retiring it: what `host-bounded` excepts by name. -/
-def unbudgeted : List (String × String × List String) :=
-  [("LeanTex/Cli/Driver.lean", "texFontDirs", ["kpse-free"])]
+def unbudgeted : List (String × String × List String) := []
 
 /-- host-bounded's exception clause, read off the exceptions, so the
 statement names each one while it stands and none once it is gone. -/
@@ -241,10 +240,9 @@ def registry : List Premise := [
     checks := [check% publicationPathChecks]
     owed := some "Publish two formats whose names differ only in case on a case-folding filesystem and require the preflight to refuse them." },
   { name := "tex-font-roots", residue := .host "TeX tree", reach := .render
-    statement := "The host's TeX font directories change only when the kpsewhich binary's modification time does, and no build reads the remembered roots while another rewrites them, because Driver.texFontDirs remembers kpsewhich's answer under that stamp, in place."
-    sites := [("LeanTex/Cli/Driver.lean", "texFontDirs")]
-    owed := some "Change a TeX configuration under the remembered roots and require the next build to ask again."
-    retiring := ["kpse-free"] },
+    statement := "The TeX distribution whose lualatex, luatex or tex comes first on PATH keeps its OpenType and TrueType fonts in the trees TexFontTrees.trees lists beside that program's real path, so the directories TexFontTrees.roots finds hold the faces that distribution's own font search finds."
+    sites := [("LeanTex/Cli/TexFontTrees.lean", "roots"), ("LeanTex/Cli/Driver.lean", "texFontDirs")]
+    scripts := ["scripts/texfonts-report.lean"] },
   { name := "engine-environment", residue := .host "environment", reach := .render
     statement := "The driver reads PATH to choose tools, XDG_CACHE_HOME and HOME to place its cache, HOME, LEANTEX_FONT and LEANTEX_FONT_PATH to extend the font environment, TMPDIR, TMP, TEMP and TEMPDIR to place a run's scratch directory, and NO_COLOR for terminal colour, and the artifact depends on none of them except through the tools and faces they select."
     sites := [("LeanTex/Cli/FontDiscovery.lean", "cacheDir"), ("LeanTex/Cli/FontDiscovery.lean", "extraDirs"),
@@ -260,11 +258,11 @@ def registry : List Premise := [
     guards := [decl% Image.probe, decl% Image.plan]
     sites := [("LeanTex/Cli/PictureAssets.lean", "produce"), ("LeanTex/Cli/Driver.lean", "resolvePictures")]
     owed := some "Compare each fallback picture with the same picture in the document's own lualatex build." },
-  { name := "kpsewhich", residue := .tool "kpsewhich", reach := .render
-    statement := "kpsewhich prints, for --show-path=.otf and --show-path=.ttf, the directories where lualatex finds fonts, and the driver keeps their absolute entries."
-    sites := [("LeanTex/Cli/Driver.lean", "texFontDirs")]
-    owed := some "Compare kpsewhich's font directories with the directories lualatex opens a font from."
-    retiring := ["kpse-free"] },
+  { name := "kpsewhich", residue := .oracle "kpsewhich", reach := .oracle
+    statement := "kpsewhich prints, for --show-path=.otf and --show-path=.ttf, the directories where lualatex finds fonts, which the TeX font report holds the engine's own directories to, and names the files of the TeX tree the generators read."
+    sites := [("scripts/texfonts-report.lean", "kpsewhichRoots"), ("scripts/gen-hyphen-data.lean", "main")]
+    tools := ["kpsewhich"]
+    owed := some "Compare kpsewhich's font directories with the directories lualatex opens a font from." },
   { name := "python3", residue := .tool "python3", reach := .render
     statement := "The Pygments python3 imports, a normal installation before the wheel TeX Live keeps beside latexminted, classifies a listing as a lualatex build's minted does, and ListingReply.decode and ListingReply.lookup_contract check every reply before the IR holds it."
     guards := [decl% ListingReply.decode, decl% ListingReply.lookup_contract]
@@ -296,11 +294,6 @@ def registry : List Premise := [
     checks := [check% htmlContainedSvgColorChecks]
     scriptChecks := [("scripts/svg-check.lean", decl% Tests.svgValidationChecks)]
     scripts := ["scripts/html-oracle.lean"] },
-  { name := "sh", residue := .tool "sh", reach := .render
-    statement := "The POSIX shell answers command -v as POSIX specifies, run as the sh on PATH by Driver.texFontDirs."
-    sites := [("LeanTex/Cli/Driver.lean", "texFontDirs")]
-    owed := some "Run Driver.texFontDirs's command -v under a PATH that holds kpsewhich and one that lacks it, and require the shell's answer to follow PATH."
-    retiring := ["kpse-free"] },
   { name := "browsers", residue := .oracle "browsers", reach := .oracle
     statement := "The target browsers render the emitted HTML, CSS, SVG and MathML as their specifications say and run the slides class's constant keyboard script as ECMAScript says, a premise about the artifact that lies outside the build."
     transfers := [thm% HtmlDoc.backend_gaps_agree, thm% HtmlDoc.deck_script_constant,
@@ -376,9 +369,9 @@ def registry : List Premise := [
 
 /-- Tool rows of render reach, rows no check can falsify, and rows owed a
 check: counts that fall and rise only when this file says so. -/
-def renderToolBaseline : Nat := 7
+def renderToolBaseline : Nat := 5
 def uncheckedBaseline : Nat := 8
-def owedBaseline : Nat := 22
+def owedBaseline : Nat := 20
 
 /-- The spawns that are the budget. -/
 def budgetSites : List (String × String) := [("LeanTex/Cli/RunBounded.lean", "runBounded")]

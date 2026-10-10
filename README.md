@@ -69,6 +69,12 @@ See the [example documents](testdata/corpus) and
 Use installed `.ttf` or `.otf` fonts through `\setmainfont{Family Name}` or
 `\fonts{body="Family Name"}`. List available families with `leantex fonts`;
 add search directories with `--font-dir` or `LEANTEX_FONT_PATH`.
+The fonts of the TeX distribution whose `lualatex` (else `luatex`, else `tex`)
+comes first on `PATH` are found without running TeX: the `fonts/opentype` and
+`fonts/truetype` directories of `~/texmf` (and macOS's `~/Library/texmf`), of
+the site's `texmf-local` (or a package's `/usr/local/share/texmf`), and of the
+distribution's trees in TeX Live's own layout (`texmf-dist`) and in the
+Debian, Fedora, Arch, Homebrew, MacPorts, FreeBSD and Nix packages' layouts.
 To bundle fonts with a document, use `\fonts{dir="fonts",body="Family Name"}`.
 macOS `.ttc` collections are not supported.
 

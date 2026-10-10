@@ -53,7 +53,10 @@ is skipped.
   pristine fixtures decoding to their known sizes), and
   `scripts/fontcache-check.lean` when touching the font scan or its cache
   (it replaces a font under the same name and checks the answer follows
-  the file), and `scripts/typeset.lean --report` (or `--lines <fixture>`,
+  the file), `scripts/texfonts-report.lean` when touching the TeX font
+  directories (`Cli/TexFontTrees.lean`: it lists every face the host's
+  kpsewhich font paths reach that the rule misses), and
+  `scripts/typeset.lean --report` (or `--lines <fixture>`,
   `--pages <fixture>`) when touching line breaking, pagination, protrusion
   or font fallback: the typeset tier's counts per `testdata/typeset` fixture
   and the lines and page turns behind them (the tier itself gates in

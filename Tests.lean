@@ -54,6 +54,7 @@ import Tests.CacheIO
 import Tests.PictureAssets
 import Tests.ToolMemo
 import Tests.World
+import Tests.TexFontTrees
 import Tests.Surface
 import Tests.ElabContracts
 import Tests.FrontendContracts
@@ -752,6 +753,7 @@ def surfaceSuiteChecks (ref : IO.Ref (List String)) : IO Unit := do
   Tests.toolMemoChecks ref
   Tests.World.checks ref
   toolProbeChecks ref
+  Tests.texFontTreeChecks ref
   posterChromeCompatChecks ref
   keyedLookupChecks ref
   compatAccountingChecks ref

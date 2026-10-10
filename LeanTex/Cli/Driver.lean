@@ -1,6 +1,7 @@
 module
 
 import LeanTex.Cli.FontDiscovery
+import LeanTex.Cli.TexFontTrees
 import LeanTex.Version
 import LeanTex.Core.Diag
 import LeanTex.Core.Utf8
@@ -138,44 +139,10 @@ def Ui.werror (ui : Ui) (file : String) (warnings ms : Nat) : IO Unit := do
   else if !ui.cfg.quiet then
     ui.errStream.putStrLn (Render.humanWerror ui.color file warnings ms)
 
-/-- TeX Live's font roots, asked of kpsewhich when it is installed, so
-`--font-dir` is almost never needed. `--show-path` returns the expanded list.
-Two process spawns cost ~120 ms -- measured, not the ~10 ms first assumed --
-so the answer is remembered beside the font cache, keyed by the kpsewhich
-binary's own mtime: a TeX Live upgrade replaces it and the roots are asked
-again. -/
-def texFontDirs : IO (List String) := do
-  let query (ext : String) : IO (List String) := do
-    try
-      let out ← IO.Process.output { cmd := "kpsewhich", args := #["--show-path=" ++ ext] }
-      if out.exitCode != 0 then return []
-      return (out.stdout.trimAscii.toString.splitOn ":").filterMap fun p =>
-        let p := if p.startsWith "!!" then (p.drop 2).toString else p
-        let p := String.ofList (p.toList.reverse.dropWhile (· == '/')).reverse
-        if p.startsWith "/" then some p else none
-    catch _ => return []
-  let cache ← FontDiscovery.cacheDir
-  let stamp ← do
-    let which ← try IO.Process.output { cmd := "sh", args := #["-c", "command -v kpsewhich"] }
-      catch _ => pure { exitCode := 1, stdout := "", stderr := "" }
-    if which.exitCode != 0 then return []
-    let bin := which.stdout.trimAscii.toString
-    match ← (System.FilePath.mk bin).metadata.toBaseIO with
-    | .ok md => pure s!"{bin} {md.modified.sec}"
-    | .error _ => pure bin
-  let memo := cache.map (· / "texroots.txt")
-  if let some m := memo then
-    if let .ok text ← IO.FS.readFile m |>.toBaseIO then
-      match text.splitOn "\n" with
-      | first :: roots => if first == stamp then return roots.filter (!·.isEmpty)
-      | _ => pure ()
-  let roots := ((← query ".otf") ++ (← query ".ttf")).eraseDups
-  if let some m := memo then
-    try
-      if let some parent := m.parent then IO.FS.createDirAll parent
-      IO.FS.writeFile m (String.intercalate "\n" (stamp :: roots) ++ "\n")
-    catch _ => pure ()
-  return roots
+/-- The font directories of the TeX distribution on `PATH`
+(`TexFontTrees.roots`), so a font TeX has rarely needs `--font-dir`; finding
+them starts no process (`TexFontTrees.roots_runless_exact`). -/
+def texFontDirs : IO (List String) := TexFontTrees.hostRoots
 
 /-- Which directories to look in, and what is there. The document's own
 `\fonts{ dir = ... }` outranks the host; both are preamble facts, so this
