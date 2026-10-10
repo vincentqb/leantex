@@ -609,7 +609,7 @@ def diagWitness (one mapped withMath : Font.FontSet)
   -- read: its web face is the engine's drawing without it where no
   -- converter drew the figure (`figureRouteChecks`), the converter's where
   -- one did.
-  | .W0609 => FigureLoss.diags (FigureLoss.pdfLostDiag "figures/plot.pdf" none)
+  | .W0609 => FigureLoss.diags (FigureLoss.pdfLostDiag "plot.pdf" (.noFace "pdftocairo is missing"))
       ((PdfGfx.importPage type1FigurePdf).toOption.map (·.figure.losses) |>.getD #[])
   | .N0024 => FigureLoss.diags (FigureLoss.pdfConvertedDiag "figures/plot.pdf")
       ((PdfGfx.importPage type1FigurePdf).toOption.map (·.figure.losses) |>.getD #[])

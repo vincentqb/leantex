@@ -67,10 +67,14 @@ public def Answer.tool : Answer → Boundary.ToolState
   | .rejected _ why => .failed why
   | .failed why => .failed why
 
-/-- The converter's words, where it was asked and gave no usable face. -/
-public def Answer.failure : Answer → Option String
-  | .rejected _ why | .failed why => some why
-  | .notAsked | .drew _ _ => none
+/-- Why an answer leaves the engine's drawing on the page: no face, in the
+converter's words; a face the check refused, in the check's; and, where it
+was not asked or its drawing was not taken, the document's refusal
+(`Boundary.route_tool_exact`). -/
+public def Answer.unconverted : Answer → FigureLoss.Unconverted
+  | .failed why => .noFace why
+  | .rejected _ why => .unfit why
+  | .notAsked | .drew _ _ => .refused
 
 /-- **The converter's answer, checked** (`ImageAssets.validateSvgResult` in
 the driver) where `check` asks it: its face kept, refused with the check's
@@ -120,7 +124,7 @@ public def decide (src : String) (native : FigureFace.Answer) (answer : Answer)
       diags := FigureLoss.diags (FigureLoss.pdfConvertedDiag src) losses }
   | .nativeWithLoss, .ok (losses, svg), _ =>
     { bytes := .ok svg, route := .nativeWithLoss, native := true, checked := true
-      diags := FigureLoss.diags (FigureLoss.pdfLostDiag src answer.failure) losses }
+      diags := FigureLoss.diags (FigureLoss.pdfLostDiag src answer.unconverted) losses }
   | .tool, .error _, .drew bytes checked =>
     { bytes := .ok bytes, route := .tool, diags := #[], native := false, checked }
   | r, .error _, .rejected bytes _ =>
@@ -264,12 +268,12 @@ public theorem import_named (src : String) (losses : Array Gfx.Loss) (svg : Byte
   · have hd := (Boundary.route_tool_exact _ _ _ hr).1
     rw [hr]
     cases answer with
-    | drew bytes c => exact FigureLoss.pdfDiags_named src none true losses l h
+    | drew bytes c => exact FigureLoss.pdfDiags_named src .refused true losses l h
     | notAsked => simp [PdfFaces.Answer.tool] at hd
     | rejected bytes why => simp [PdfFaces.Answer.tool] at hd
     | failed why => simp [PdfFaces.Answer.tool] at hd
   · rw [hr]
-    exact FigureLoss.pdfDiags_named src answer.failure false losses l h
+    exact FigureLoss.pdfDiags_named src answer.unconverted false losses l h
 
 /-- **The cache answers what the import answers** (`_exact`): a fresh
 reading is the import's losses and drawing, or its refusal, and a slot

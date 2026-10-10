@@ -46,17 +46,30 @@ open LeanTex.Core LeanTex.Core.Gfx
   | .font k => s!"{k} font"
   | .budget w => s!"{w} beyond the reader's budget"
 
+/-- Why a PDF figure's web face is the engine's drawing though the engine
+lacks a feature: the document refused the converter; the converter gave
+no face, in its own words; or it drew one the page cannot carry, in the
+words of the page's check. -/
+public inductive Unconverted where
+  | refused
+  | noFace (why : String)
+  | unfit (why : String)
+
 /-- **W0609**: a PDF figure's web face is the engine's drawing without the
-feature — no converter drew the figure whole; where one was asked and gave
-no face the page can carry, its own words say why. -/
-@[expose] public def pdfLostDiag (src : String) (failure : Option String) (l : Gfx.Loss) : Diag :=
+feature — no converter drew the figure whole; where one was asked, the
+words say why its answer is not on the page. The remedy follows the
+reason: a converter that gave no face is one to install or repair, and
+otherwise the drawing is the document's to accept. -/
+@[expose] public def pdfLostDiag (src : String) (why : Unconverted) (l : Gfx.Loss) : Diag :=
   Diag.of .W0609
     (s!"figure '{src}' is drawn on the web page without its {words l}, which the engine does not draw" ++
-      (match failure with
-       | some why => s!" ({why})"
-       | none => ""))
-    (help := some "install poppler's pdftocairo to draw the figure whole, or accept the engine's \
-      drawing with \\allow{W0609}")
+      (match why with
+       | .noFace w | .unfit w => s!" ({w})"
+       | .refused => ""))
+    (help := some (match why with
+      | .noFace _ => "install poppler's pdftocairo to draw the figure whole, or accept the engine's \
+          drawing with \\allow{W0609}"
+      | .refused | .unfit _ => "accept the engine's drawing with \\allow{W0609}"))
     (subject := some (subject "pdf" l)) (output := some .html)
 
 /-- **N0024**: a PDF figure's web face is the external converter's drawing,
@@ -73,11 +86,11 @@ because the engine does not draw the feature. -/
 /-- **Every loss of a PDF figure is named** (`_named`): each loss of the
 census has a diagnostic whose subject is its key — the one the census is
 counted by — whichever route drew the web face. -/
-public theorem pdfDiags_named (src : String) (failure : Option String) (converted : Bool)
+public theorem pdfDiags_named (src : String) (why : Unconverted) (converted : Bool)
     (losses : Array Gfx.Loss) (l : Gfx.Loss) (h : l ∈ losses) :
-    ∃ d ∈ diags (if converted then pdfConvertedDiag src else pdfLostDiag src failure) losses,
+    ∃ d ∈ diags (if converted then pdfConvertedDiag src else pdfLostDiag src why) losses,
       d.subject = some (subject "pdf" l) := by
-  refine ⟨(if converted then pdfConvertedDiag src else pdfLostDiag src failure) l,
+  refine ⟨(if converted then pdfConvertedDiag src else pdfLostDiag src why) l,
     Array.mem_map_of_mem h, ?_⟩
   cases converted <;> simp [pdfLostDiag, pdfConvertedDiag, Diag.of_subject]
 

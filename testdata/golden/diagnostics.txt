@@ -881,7 +881,7 @@
   suggestion: install the tool the reason names, rebuild if it was interrupted, or \pdfmeta{ favicon = "icon.png" } declares a PNG icon, which needs no tool
 ── W0609 (degraded) a figure is drawn by the engine without a feature it does not draw; the rest of the figure is drawn
 ⚠ [W0609]
-  figure 'figures/plot.pdf' is drawn on the web page without its type1 font, which the engine does not draw
+  figure 'plot.pdf' is drawn on the web page without its type1 font, which the engine does not draw (pdftocairo is missing)
   suggestion: install poppler's pdftocairo to draw the figure whole, or accept the engine's drawing with \allow{W0609}
 ── W0701 (pending) an output contract fact this artifact does not yet realize
 ⚠ [W0701]
