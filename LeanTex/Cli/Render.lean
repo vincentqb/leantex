@@ -153,7 +153,8 @@ rewrites; `subject` is the structured key a census groups by, so no
 consumer has to group by message text. `sites` is how many of the run's
 sites the line accounts for, absent when it is 1: the first line of a loss
 carries them all and each later one 0, so the lines' counts add up to the
-run's sites (`Diag.tallySites_sum_exact`). -/
+run's sites (`Diag.tallySites_sum_exact`). `offsets` lists every byte
+offset a diagnostic names, where its message shows only the first few. -/
 public def porcelainDiag (d : Diag) : String :=
   let base := [("event", jstr "diagnostic"), ("severity", jstr d.severity.label),
     ("code", jstr d.code), ("loss", jstr d.kind.loss.label), ("message", jstr d.message)]
@@ -177,6 +178,8 @@ public def porcelainDiag (d : Diag) : String :=
   let all := match d.output with
     | some output => all ++ [("output", jstr output.label)]
     | none => all
+  let all := if d.offsets.isEmpty then all
+    else all ++ [("offsets", "[" ++ ",".intercalate (d.offsets.toList.map toString) ++ "]")]
   obj all
 
 /-- A `-v` phase line. `detail` can carry a tool's own words (a version

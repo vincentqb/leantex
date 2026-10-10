@@ -545,24 +545,28 @@ def RefFile.parse (text : String) : Except String RefFile := do
 
 def fontsDir : System.FilePath := "testdata/corpus/fonts"
 
-/-- The engine's pages for a fixture, built as the driver builds one —
-lex, parse, `\input` and `\data` beside the file, one preparation, the
-picture-label metric against the preamble's faces, the bibliography — over
-the shipped faces only, then laid out with the document's own patterns. -/
+/-- A fixture's source as the driver reads it, through its front door
+(`Input.readDocument`: decode, lex, parse, `\input` and `\data` beside the
+file). -/
+def engineSource (file : String) : IO Input.Source := do
+  match ← Input.readSource file with
+  | .ok bytes => Input.readDocument file bytes
+  | .error d => throw (IO.userError d.message)
+
+/-- The engine's pages for a fixture, built as the driver builds one — the
+front door, one preparation, the picture-label metric against the
+preamble's faces, the bibliography — over the shipped faces only, then laid
+out with the document's own patterns. -/
 def engineOut (cache : IO.Ref (Array (String × Font.Font))) (faces : Array FontDb.Face)
     (oneFace : Font.FontSet) (file : String) : IO (Layout.Out × Array Diag × Nat) := do
-  let src ← IO.FS.readFile file
-  let (toks, lexDiags) := Lex.lex file src
-  let (raws, parseDiags) := Parse.parse file toks
-  let (executed, inputDiags, _) ← Input.expandInputs file raws
-  let (raws, dataDiags) ← Input.resolveData file executed.raws
-  let prepared := Elab.prepareExecuted file (executed.withRaws raws)
+  let src ← engineSource file
+  let prepared := Elab.prepareExecuted file src.executed
   let pre := Elab.preambleDoc file prepared
   let preFs ← Hermetic.fontSetFor cache oneFace faces fontsDir pre
   let metric := Layout.labelMetric (Layout.Geom.ofPage pre.page) preFs
-  let (doc, elabDiags, spans) := Elab.runPrepared file prepared
-    (lexDiags ++ parseDiags ++ inputDiags ++ dataDiags) metric
-  let (doc, bibDiags) ← Input.resolveBibliography file doc spans.bib
+  let (doc, elabDiags, spans) := Elab.runPrepared file prepared src.diags metric
+  let (doc, bibDiags, ledger) ← Input.resolveBibliography file doc spans.bib src.ledger
+  let bibDiags := bibDiags ++ ledger.notes
   let fs ← Hermetic.fontSetFor cache oneFace faces fontsDir doc
   let (store, imgDiags, _) ← Hermetic.storeFor rhythmDir doc
   let out := Layout.run (Layout.Geom.ofPage doc.page) fs (Hyphen.forTag doc.info.locale.tag) doc store
@@ -840,18 +844,13 @@ measured), with the image bytes it names. -/
 def engineHtml (cache : IO.Ref (Array (String × Font.Font))) (faces : Array FontDb.Face)
     (oneFace : Font.FontSet) (name : String) : IO (String × Array (String × ByteArray)) := do
   let file := s!"{rhythmDir}/{name}.tex"
-  let src ← IO.FS.readFile file
-  let (toks, lexDiags) := Lex.lex file src
-  let (raws, parseDiags) := Parse.parse file toks
-  let (executed, inputDiags, _) ← Input.expandInputs file raws
-  let (raws, dataDiags) ← Input.resolveData file executed.raws
-  let prepared := Elab.prepareExecuted file (executed.withRaws raws)
+  let src ← engineSource file
+  let prepared := Elab.prepareExecuted file src.executed
   let pre := Elab.preambleDoc file prepared
   let preFs ← Hermetic.fontSetFor cache oneFace faces fontsDir pre
   let metric := Layout.labelMetric (Layout.Geom.ofPage pre.page) preFs
-  let (doc, _, spans) := Elab.runPrepared file prepared
-    (lexDiags ++ parseDiags ++ inputDiags ++ dataDiags) metric
-  let (doc, _) ← Input.resolveBibliography file doc spans.bib
+  let (doc, _, spans) := Elab.runPrepared file prepared src.diags metric
+  let (doc, _, _) ← Input.resolveBibliography file doc spans.bib src.ledger
   let fs ← Hermetic.fontSetFor cache oneFace faces fontsDir doc
   let (store, _, read) ← Hermetic.storeFor rhythmDir doc
   let css : HtmlDoc.CssMode := match cssFor doc.output.css with
@@ -868,7 +867,8 @@ leading at the document's body size, the engine's own definition
 (`Ir.rhythmQuantum`). -/
 def pdfQuantumMilli (name : String) : IO Int := do
   let file := s!"{rhythmDir}/{name}.tex"
-  let (doc, _) := Elab.run file (← IO.FS.readFile file)
+  let src ← engineSource file
+  let (doc, _) := Elab.runExecuted file src.executed src.diags
   return milliBpOfSp (Ir.rhythmQuantum doc.page.fontSize)
 
 /-- A number of thousandths as quanta of `q` thousandths, to two decimals. -/

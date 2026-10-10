@@ -13,7 +13,7 @@ namespace LeanTex.Core.CompatContract
 
 /-- Candidate coverage for an actual callback argument, including loads
 introduced by expansion. The request has one executed operand slice: its
-filename, options and the call the driver's `expandLocalSty` scans are
+filename, options and the call the driver's input reader answers are
 projections of that slice. No equality to an unexpanded source census is
 assumed.
 

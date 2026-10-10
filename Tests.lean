@@ -145,6 +145,7 @@ import Tests.DiagnosticListingOrigins
 import Tests.DiagnosticProducerOrigins
 import Tests.SourceAnnotations
 import Tests.InputOrigins
+import Tests.InputDecoding
 import Tests.ImageOrigins
 import Tests.Themes
 import Tests.SeedPalette
@@ -802,6 +803,7 @@ def main (args : List String) : IO UInt32 := do
   let ref ← IO.mkRef ([] : List String)
 
   utf8Checks ref
+  inputDecodingChecks ref
   argsChecks ref
   renderChecks ref
   diagnosticFormatChecks ref

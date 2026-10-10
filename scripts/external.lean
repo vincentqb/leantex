@@ -80,16 +80,15 @@ def parseList (text : String) : Except String (Array Doc) := Id.run do
 -- ## Elaboration alone: the hermetic reading
 
 /-- Elaborate a document as the driver's front end does before any face is
-asked for: lex, parse, splice `\input` and local `.sty` files, resolve
-`\data`, elaborate. Every read is a file beside the document. -/
+asked for: its bytes through the driver's front door (`Input.readDocument`:
+decode, lex, parse, splice `\input` and local `.sty` files, resolve
+`\data`), then elaborate. Every read is a file beside the document. -/
 def elaborate (file : String) : IO (Array Diag) := do
-  let text ← IO.FS.readFile file
-  let (toks, lexDs) := Lex.lex file text
-  let (raws, parseDs) := Parse.parse file toks
-  let (executed, inputDs, _) ← Input.expandInputs file raws
-  let (raws, dataDs) ← Input.resolveData file executed.raws
-  return (Elab.runExecuted file (executed.withRaws raws)
-    (lexDs ++ parseDs ++ inputDs ++ dataDs)).2
+  match ← Input.readSource file with
+  | .error d => return #[d]
+  | .ok bytes =>
+    let src ← Input.readDocument file bytes
+    return (Elab.runExecuted file src.executed src.diags).2
 
 def standing (ds : Array Diag) : Int :=
   if ds.any (·.severity == .error) then 0

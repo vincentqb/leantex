@@ -28,6 +28,8 @@ Its gates are equivalence, invalidation and work counts, never milliseconds.
 stored blocks. Optional `LEANTEX_BENCH_COMPARE_BINARY` runs a second compiler
 on the same fixtures and requires identical artifacts and diagnostics.
 `--slides-selftest` tests those judges without compiling any documents.
+`--decode-only` measures the decode phase alone over invented 3 MiB
+documents: ASCII or accented words, LF or CR LF line ends.
 The slide run also needs sha256sum, pdftocairo and xmllint.
 For before/after runs use this same driver, N, font/tool environment and an
 otherwise idle host; shared-host timings are provisional. Redirect stdout
@@ -115,6 +117,53 @@ def benchBib (n : Nat) (entries : Nat) : IO Nat := do
   let ms := median times
   IO.println s!"{padRight s!"leantex  bib phase, {entries} entries" 42} {padLeft (toString ms) 6} ms (median of {n})"
   return ms
+
+/-- An invented document of about `mib` MiB, its words ASCII or accented and
+its lines ending at LF or at CR LF: the shapes the decode phase's cost turns
+on (a byte past 0x7F, a CR to settle). -/
+def decodeDoc (accented crlf : Bool) (mib : Nat) : String := Id.run do
+  let words := if accented then #["café", "crème", "naïve", "déjà", "señor", "über"]
+    else #["lorem", "ipsum", "dolor", "sitam", "elita", "sedut"]
+  let nl := if crlf then "\r\n" else "\n"
+  let target := mib * 1024 * 1024
+  let mut out := s!"\\documentclass\{article}{nl}\\begin\{document}{nl}"
+  for i in [0:target] do
+    if out.utf8ByteSize ≥ target then break
+    let gap := if i % 120 == 119 then nl ++ nl else if i % 12 == 11 then nl else " "
+    out := out ++ words.getD (i % words.size) "" ++ gap
+  return out ++ s!"\\end\{document}{nl}"
+
+/-- The milliseconds `-v` reports for the phase that reads a document's
+bytes as text: `decode`, or `utf8` in a binary from before the decoding
+door, so a before/after run reads both. -/
+def decodePhaseMs (log : String) : Option Nat :=
+  (log.splitOn "\n").findSome? fun l =>
+    if l.startsWith "decode: " || l.startsWith "utf8: " then ((l.splitOn "(").getLast?.bind
+      fun t => ((t.splitOn " ms").head?).bind (·.trimAscii.toString.toNat?)) else none
+
+/-- The decode phase over an invented 3 MiB document of each shape, the
+median of `n` runs of `-v dump`, which reads and elaborates and lays
+nothing out: the cost of reading bytes as text, which every build pays
+first. -/
+def benchDecode (n : Nat) : IO Unit := do
+  let leantex ← compiler
+  let dir ← IO.FS.createTempDir
+  let src := (dir / "decode.tex").toString
+  for (accented, crlf, label) in [(false, false, "ASCII LF"), (false, true, "ASCII CR LF"),
+      (true, false, "accented LF"), (true, true, "accented CR LF")] do
+    IO.FS.writeFile src (decodeDoc accented crlf 3)
+    let mut times : Array Nat := #[]
+    for _ in [0:n] do
+      let child ← IO.Process.spawn
+        { cmd := leantex, args := #["-v", "dump", src], stdout := .null, stderr := .piped }
+      let err ← child.stderr.readToEnd
+      if (← child.wait) != 0 then die s!"benchmark command failed: {leantex} dump, {label}"
+      match decodePhaseMs err with
+      | some ms => times := times.push ms
+      | none => die "no decode phase in the -v report"
+    IO.println s!"{padRight s!"leantex  decode 3 MiB, {label}" 42} \
+{padLeft (toString (median times)) 6} ms (median of {n})"
+  IO.FS.removeDirAll dir
 
 /-- A repeated image must not repeatedly encode the embedded font programs
 while checking HTML resource closure. Both sizes use the same captured assets. -/
@@ -765,6 +814,9 @@ def main (args : List String) : IO UInt32 := do
     benchPictures n 8
     benchPictures n 16
     return 0
+  if args == ["--decode-only"] then
+    benchDecode n
+    return 0
   if args == ["--concurrency-only"] then
     unless (← hasCmd "pdftocairo" #["-v"]) && (← hasCmd "xmllint") do
       die "HTML vector benchmark needs pdftocairo and xmllint"
@@ -810,6 +862,7 @@ def main (args : List String) : IO UInt32 := do
   IO.FS.removeDirAll outDir
   benchImageDeck n 32
   benchImageDeck n 128
+  benchDecode n
   -- The reference list's growth: a thesis-sized .bib under \nocite{*} is
   -- thousands of entries, and a phase quadratic in them (75 s at 1600)
   -- passed every row above. Four times the entries may cost at most eight

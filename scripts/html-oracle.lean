@@ -925,18 +925,19 @@ where hasSub (hay needle : String) : Bool := (hay.splitOn needle).length > 1
 /-- A deck's frames that declare `[allowframebreaks]`, by the number their
 stages carry (`Ir.Doc.frameNumbers`, as the deck walk numbers them): such a
 frame accepts a continuation page, so its stage may scroll by declaration.
-`none` for a source that is not a deck. The source is elaborated as the build
-elaborates it, its `\input` files fulfilled beside it
-(`LeanTex.Cli.Input.expandInputs`), so a frame an input file holds is read
-and numbered where the build numbers it; a frame is a top-level block of the
-IR, the numbering's own domain. No layout runs here. -/
+`none` for a source that is not a deck. The source is read through the
+driver's front door (`LeanTex.Cli.Input.readDocument`: the decoding door,
+the surface reader, its `\input` files fulfilled beside it), so a frame an
+input file holds is read and numbered where the build numbers it; a frame is
+a top-level block of the IR, the numbering's own domain. No layout runs
+here. -/
 def breakableFrames (path : System.FilePath) : IO (Option (Array String)) := do
   let file := path.toString
-  let src ← IO.FS.readFile path
-  let (toks, lexDiags) := Lex.lex file src
-  let (raws, parseDiags) := Parse.parse file toks
-  let (executed, inputDiags, _) ← LeanTex.Cli.Input.expandInputs file raws
-  let (doc, _) := Elab.runExecuted file executed (lexDiags ++ parseDiags ++ inputDiags)
+  let bytes ← match ← LeanTex.Cli.Input.readSource file with
+    | .ok bytes => pure bytes
+    | .error d => throw (IO.userError d.message)
+  let src ← LeanTex.Cli.Input.readDocument file bytes
+  let (doc, _) := Elab.runExecuted file src.executed src.diags
   unless doc.docClass.record.model == .frame do return none
   let nums := doc.frameNumbers
   let mut out : Array String := #[]

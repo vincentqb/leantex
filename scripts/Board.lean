@@ -1670,6 +1670,14 @@ def declaresExcluded (text : String) : Bool :=
     if l.startsWith "%" then (l.drop 1).toString.trimAscii.toString else l
   ((" ".intercalate header).splitOn excludeMarker).length > 1
 
+/-- A corpus file's text as the driver's decoding door reads it, for a probe
+that reads a document's header before the document is built. -/
+def doorText (path : System.FilePath) : IO String := do
+  let bytes ← IO.FS.readBinFile path
+  let file := path.toString
+  return if file.endsWith ".md" then (LeanTex.Core.Encoding.readMarkdown file bytes).text
+    else (LeanTex.Core.Encoding.readDocument file bytes).1.text
+
 /-- The corpus's documents, in name order: every top-level `.tex` and `.md`
 file whose header does not declare it no fixture, with its name. The suite
 holds this to its golden set (`svgBrowserSourceChecks`). -/
@@ -1678,38 +1686,30 @@ def corpusDocs (corpus : System.FilePath) : IO (Array (String × System.FilePath
   for e in ← corpus.readDir do
     let some ext := [".tex", ".md"].find? (e.fileName.endsWith ·) | continue
     if ← e.path.isDir then continue
-    if declaresExcluded (← IO.FS.readFile e.path) then continue
+    if declaresExcluded (← doorText e.path) then continue
     out := out.push ((e.fileName.dropEnd ext.length).toString, e.path)
   return out.qsort (·.1 < ·.1)
 
 /-- One fixture's page, or `none` where the driver would refuse to write one
-(an error its `\allow` does not accept). The sequence is `Main.frontend`'s:
-the reader the file's extension selects, `\input` and `\data` fulfilled
-beside the file, one preparation, a picture label measured against the
-preamble's set, the bibliography fulfilled; then the emission configured as
-the driver configures it. -/
+(an error its `\allow` does not accept). The sequence is the driver's: the
+front door (`Input.readDocument`: decode, the reader the file's extension
+selects, `\input` and `\data` fulfilled beside the file), one preparation, a
+picture label measured against the preamble's set, the bibliography
+fulfilled; then the emission configured as the driver configures it. -/
 def pageFor (cache : IO.Ref (Array (String × Font.Font))) (oneFace : Font.FontSet)
     (faces : Array FontDb.Face) (fontsDir : System.FilePath) (name : String)
     (path : System.FilePath) : IO (Option PageOutput) := do
   let corpus := path.parent.getD "."
   let file := path.toString
-  let src ← IO.FS.readFile file
-  let (raws, lexDiags, parseDiags) := if file.endsWith ".md" then
-      let (raws, ds) := Md.read file src
-      (raws, ds, #[])
-    else
-      let (toks, lexDiags) := Lex.lex file src
-      let (raws, parseDiags) := Parse.parse file toks
-      (raws, lexDiags, parseDiags)
-  let (executed, inputDiags, _) ← Input.expandInputs file raws
-  let (raws, dataDiags) ← Input.resolveData file executed.raws
-  let prepared := Elab.prepareExecuted file (executed.withRaws raws)
+  let .ok bytes ← Input.readSource file | return none
+  let src ← Input.readDocument file bytes
+  let prepared := Elab.prepareExecuted file src.executed
   let pre := Elab.preambleDoc file prepared
   let preFs ← fontSetFor cache oneFace faces fontsDir pre
   let metric := Layout.labelMetric (Layout.Geom.ofPage pre.page) preFs
-  let (doc, elabDiags, spans) := Elab.runPrepared file prepared
-    (lexDiags ++ parseDiags ++ inputDiags ++ dataDiags) metric
-  let (doc, bibDiags) ← Input.resolveBibliography file doc spans.bib
+  let (doc, elabDiags, spans) := Elab.runPrepared file prepared src.diags metric
+  let (doc, bibDiags, ledger) ← Input.resolveBibliography file doc spans.bib src.ledger
+  let bibDiags := bibDiags ++ ledger.notes
   let fs ← fontSetFor cache oneFace faces fontsDir doc
   let family := fs.math.bind (fs.fonts[·]?) |>.map (·.family) |>.getD "math face"
   let (doc, alphaDiags) := Ir.resolveMathAlphas fs.mathAlphabets family doc

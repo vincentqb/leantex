@@ -566,9 +566,14 @@ structure Ranked where
   erroredClean : Nat
   corpusKey : String
 
-/-- Rank documents, each given as its path and the text read from it. One
-keyed by bytes already seen is a duplicate, counted as such and not again. -/
-def rankDocs (roots : Array String) (resolve : Resolver) (docs : Array (String × String)) :
+/-- Rank documents, each given as its path and the bytes read from it. Each
+is its own text as the driver's decoding door reads it (`Encoding.readDocument`:
+a byte-order mark skipped, bytes that are not text replaced, CR settled, its
+preamble's input encoding honoured), elaborated alone: the ranking is over
+the files the manifest pins, so an `\input` or a local style it names is not
+read, as it never was. One keyed by text already seen is a duplicate,
+counted as such and not again. -/
+def rankDocs (roots : Array String) (resolve : Resolver) (docs : Array (String × ByteArray)) :
     IO Ranked := do
   let mut acc : Array Rank := #[]
   let mut keys : Array String := #[]
@@ -576,16 +581,18 @@ def rankDocs (roots : Array String) (resolve : Resolver) (docs : Array (String �
   let mut unreadable := 0
   let mut blocked := 0
   let mut erroredClean := 0
-  for (path, text) in docs do
-    if text.isEmpty then
+  for (path, bytes) in docs do
+    if bytes.isEmpty then
       unreadable := unreadable + 1
       continue
+    let read := (Encoding.readDocument path bytes).1
+    let text := read.text
     let key := contentKey text
     if keys.contains key then
       duplicates := duplicates + 1
       continue
     keys := keys.push key
-    let ds := (Elab.run path text).2
+    let ds := read.diags ++ (Elab.run path text).2
     let bs := blockersIn ds
     if bs.isEmpty then
       if erroredIn ds then erroredClean := erroredClean + 1
@@ -650,8 +657,8 @@ manifest can only name the distribution's own files, and only the bytes
 they held when they were declared, whatever tree a kpsewhich moved by its
 surroundings calls the distribution. -/
 def resolveManifest (roots : Array String) (entries : Array Entry) :
-    IO (Except String (Array (String × String))) := do
-  let mut out : Array (String × String) := #[]
+    IO (Except String (Array (String × ByteArray))) := do
+  let mut out : Array (String × ByteArray) := #[]
   for e in entries do
     if e.path.startsWith "/" then return .error s!"{manifestPath}: '{e.path}' is absolute"
     let mut hit : Option String := none
@@ -665,9 +672,7 @@ distribution"
     let bytes ← orElse (IO.FS.readBinFile p) ByteArray.empty
     if sha256Hex bytes != e.pin then
       return .error s!"{manifestPath}: '{e.path}' does not hold the bytes its pin names"
-    let some text := String.fromUTF8? bytes
-      | return .error s!"{manifestPath}: '{e.path}' is not UTF-8"
-    out := out.push (p, text)
+    out := out.push (p, bytes)
   return .ok out
 
 /-- A list's entries: one path per line, `#` lines and blank lines skipped. -/
@@ -714,9 +719,9 @@ def rankList (resolve : Resolver) (listPath out : String) : IO UInt32 := do
   unless (← System.FilePath.pathExists listPath) do
     return (← die 3 s!"blockers: {listPath} is missing — run --screen first")
   let roots ← publicRoots
-  let mut docs : Array (String × String) := #[]
+  let mut docs : Array (String × ByteArray) := #[]
   for p in manifestEntries (← IO.FS.readFile listPath) do
-    docs := docs.push (p, ← orElse (IO.FS.readFile p) "")
+    docs := docs.push (p, ← orElse (IO.FS.readBinFile p) ByteArray.empty)
   let r ← rankDocs roots resolve docs
   let corpus := "# corpus-manifest: none — a list outside the declared public corpus; \
 this table does not belong in the tree\n"
@@ -796,7 +801,7 @@ def pinnedManifest (expect : String → Bool → IO Unit) (dir : String) : IO Un
     { cmd := "ln", args := #["-s", dir ++ "/zzpin-outside.tex", root ++ "/tex/latex/zzpin/out.tex"] }
   let roots := #[((← realPath? root).getD root) ++ "/"]
   let pin := sha256Hex "declared bytes\n".toUTF8
-  let resolvesOne (r : Except String (Array (String × String))) : Bool :=
+  let resolvesOne (r : Except String (Array (String × ByteArray))) : Bool :=
     match r with
     | .ok xs => xs.size == 1
     | .error _ => false
@@ -1007,6 +1012,13 @@ def selftest : IO UInt32 := do
   expect "an empty blocker set changes nothing" (tally one #[] #[] == one)
   let bothKinds := tally #[] #[("ctrl", "em"), ("env", "em")] #[]
   expect "a command and an environment of one name are two rows" (bothKinds.size == 2)
+  -- A document in a declared 8-bit encoding is read as the driver's
+  -- decoding door reads it, never skipped as unreadable.
+  let latin := "\\documentclass{article}\n\\usepackage[latin1]{inputenc}\n\\begin{document}\nCaf".toUTF8
+    ++ ⟨#[0xE9]⟩ ++ ".\n\\end{document}\n".toUTF8
+  let latinRank ← rankDocs #[] (fun _ => pure none) #[("latin.tex", latin)]
+  expect "a Latin-1 document is read through the decoding door, not skipped"
+    (latinRank.unreadable == 0 && latinRank.distinct == 1)
   -- The public tree, and the one way into it.
   let roots := #["/r/dist/"]
   expect "a file inside the root is public"

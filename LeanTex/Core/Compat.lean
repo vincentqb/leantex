@@ -11,6 +11,7 @@ import LeanTex.Core.TitleTemplate
 import LeanTex.Core.BibStyle
 public import LeanTex.Core.Tcolorbox
 import LeanTex.Core.LoopProgress
+import LeanTex.Core.EncodingOption
 
 namespace LeanTex.Core.Compat
 
@@ -785,6 +786,9 @@ private structure St where
   delimiters through. A `\selectlanguage` outside the body leaves it:
   `\begin{document}` selects the main language again. -/
   mainLang : String := "en"
+  /-- The option the first `inputenc` load names, the encoding every file
+  reads in: what an `\inputencoding` names again, or switches from. -/
+  inputenc : Option String := none
   /-- Inside the document environment: where a preamble declaration —
   `\usepackage` first among them — is a placement defect (W0340), never
   a support question (W0103). -/
@@ -1062,6 +1066,12 @@ dispatcher's silence guard reads. Every `modify`/`set` in this file outside
 cannot mutate state invisibly to the guard. -/
 private def write (f : St → St) : M Unit :=
   modify fun st => { f st with writes := st.writes + 1 }
+
+/-- The first `inputenc` load's option is the encoding in force; a later
+load's options are not applied. -/
+private def recordInputenc (options : String) : M Unit := do
+  if (← get).inputenc.isNone then
+    write fun st => { st with inputenc := some ((Encoding.lastOption? options).getD "utf8") }
 
 private theorem write_eq (f : St → St) :
     write f = fun st => ((), { f st with writes := st.writes + 1 }) := by rfl
@@ -7831,6 +7841,24 @@ dims (dim-not-hide), it is never hidden" pos
         (help := "\\palette{ covered = <n>% } sets the covered fraction; 'transparent' \
 and 'transparent=<n>' are understood")
       return some (#[], k)
+  | "inputencoding" =>
+    -- inputenc's one user command switches the encoding the rest of the
+    -- input is read in (inputenc manual §4). A file reads in one encoding
+    -- here, so a switch to the encoding in force changes nothing, any other
+    -- is named, and the argument is configuration, never ink.
+    let (args, k) := takeGroups raws start 1
+    let arg := (rawSrc (args.getD 0 #[])).trimAscii.toString
+    if Encoding.sameEncoding arg ((← get).inputenc.getD "utf8") then
+      -- premise: inputDecodingChecks — a switch to the encoding in force
+      -- ships the page of the document without it.
+      discard s!"\\inputencoding\{{arg}}" "the file already reads in that encoding"
+        ("inputencoding:" ++ arg) pos
+    else
+      sayOnce ("inputencoding:" ++ arg) .W0104
+        s!"'\\inputencoding\{{arg}}' is not applied: each file reads in one encoding throughout"
+        pos (help := s!"save the file in one encoding, UTF-8 best, and delete \
+'\\inputencoding\{{arg}}'")
+    return some (#[], k)
   | "KOMAoptions" =>
     -- KOMA's runtime option setter (KOMA-Script manual, \KOMAoptions;
     -- switches take true/on/yes and false/off/no). headsepline and
@@ -8150,7 +8178,12 @@ no package options are supported by the strict native Markdown dialect" pos
 its rule paddings are measured in Latin Modern" pos
       (help := some s!"load booktabs before '{cmd}', where LaTeX measures them in Latin Modern too")
       (subject := some "package:booktabs")
+  else if p == "inputenc" && Encoding.declaresNonUtf8 (opt.getD "") then
+    -- premise: inputDecodingChecks — the driver's one note (N0025) at this
+    -- span names what the declaration did to each file it governed.
+    recordInputenc (opt.getD "")
   else if nativePackages.contains p then
+    if p == "inputenc" then recordInputenc (opt.getD "")
     discard s!"\\{name}\{{p}}" "the engine does this itself" s!"{name}:{p}" pos
   else if boundaryPkgs.contains p && (← get).boundaryOpen then
     -- A picture package's load is the boundary's: `boundaryDecls`
@@ -11687,7 +11720,7 @@ the input path and read it): the file splices into the preamble as an
 it would get written in the document — honoured through an existing arm,
 or named where it stands with the `.sty`'s own positions (the input
 wrapper carries the file name). Reading the file is the driver's effect
-(`Main.expandLocalSty`); the splice and the option machinery are here,
+(the input requests `Cli.Input` answers); the splice and the option machinery are here,
 pure. Where the file does not exist, the CTAN dispatch (W0103) applies
 unchanged. -/
 

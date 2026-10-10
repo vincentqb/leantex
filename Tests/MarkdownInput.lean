@@ -119,7 +119,7 @@ def inputFileChecks (ref : IO.Ref (List String)) : IO Unit := do
         let (_, html, _) := HtmlDoc.emitTree {} doc
         t s!"{command}: filename {name} selects {expected}"
           (treeShownOccurs html expected == 1 && ds.all (·.severity != .error))
-      for (name, kind) in [("invalid.tex", DiagCode.E0002),
+      for (name, kind) in [("invalid.tex", DiagCode.W0002),
           ("directory.tex", DiagCode.E0001)] do
         let result ← (elabInputSrc file
           (dvDoc "\\usepackage{markdown}\n" s!"\\{command}\{{name}}")).toBaseIO

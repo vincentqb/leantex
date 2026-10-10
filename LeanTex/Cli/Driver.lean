@@ -4,13 +4,12 @@ import LeanTex.Cli.FontDiscovery
 import LeanTex.Cli.TexFontTrees
 import LeanTex.Version
 import LeanTex.Core.Diag
-import LeanTex.Core.Utf8
+import LeanTex.Core.Encoding
 import LeanTex.Core.Flate
 import LeanTex.Core.PdfCensus
 import LeanTex.Core.PdfContract
 import LeanTex.Core.Image
 import LeanTex.Core.Parse
-import LeanTex.Core.Surface
 import LeanTex.Core.Ir
 import LeanTex.Core.Struct
 import LeanTex.Core.Theme
@@ -441,7 +440,7 @@ environment (`artifact_flag_free`). -/
 def elaborate (ui : Ui) (file : String) (prepared : Elab.Prepared)
     (earlier : Array Diag) (spliced : Array (String × Option String × Pos))
     (metric : Ir.Pic.LabelMetric) (phases : Bool := true)
-    (withdrawn : Array String := #[]) :
+    (withdrawn : Array String := #[]) (ledger : Encoding.Ledger := {}) :
     IO (Ir.Doc × Array Diag × Elab.ReqSpans) := do
   let t ← IO.monoMsNow
   let (doc, elabDiags, reqSpans) := Elab.runPrepared file prepared earlier metric withdrawn
@@ -455,9 +454,12 @@ def elaborate (ui : Ui) (file : String) (prepared : Elab.Prepared)
   if phases then ui.phase "elab" s!"{doc.body.size} blocks" (← since t)
   let t ← IO.monoMsNow
   let reqSpans := { reqSpans with frames := Bib.remapSources doc reqSpans.frames }
-  let (doc, bibDiags) ← Input.resolveBibliography file doc reqSpans.bib
+  let (doc, bibDiags, ledger) ← Input.resolveBibliography file doc reqSpans.bib ledger
   unless bibDiags.isEmpty && (Ir.bibRefs doc).isEmpty || !phases do
     ui.phase "bib" s!"{(Ir.bibRefs doc).size} sources" (← since t)
+  -- The bibliography is the last file a document reads, so the input
+  -- encoding's one note can name every file now.
+  let bibDiags := bibDiags ++ ledger.notes
   -- The unresolved-reference judge, over the document the backends read
   -- (`Ir.refDiags`): with the images fulfilled below, this is the tail
   -- `pending_named` quantifies over.
@@ -474,6 +476,9 @@ structure Front where
   prepared : Elab.Prepared
   earlier : Array Diag
   spliced : Array (String × Option String × Pos)
+  /-- The input encoding the document declares and the files read under
+  it, which the bibliography joins. -/
+  ledger : Encoding.Ledger
   /-- Parsed faces, shared by the provisional assembly and the final one. -/
   cache : FontEnv.Cache
   /-- The host's answer, taken once — absent where no face was needed yet. -/
@@ -512,87 +517,59 @@ def frontend (ui : Ui) (file : String) : IO (Option Front) := do
     | .ok bytes => pure (some bytes)
   let some bytes := bytes | return none
   ui.phase "read" s!"{bytes.size} bytes" (← since t0)
+  let src ← Input.readDocument file bytes ui.phase
+  let earlier := src.diags
+  let spliced := src.spliced
+  -- One rewrite, one boundary scan, one macro scan: two elaborations of
+  -- one document must read one source, or their agreement would be about
+  -- two (`Elab.prepareExecuted`).
   let t ← IO.monoMsNow
-  match LeanTex.Core.Utf8.validate bytes with
-  | some err =>
-    ui.diag (err.toDiag file)
-    return none
-  | none =>
-    ui.phase "utf8" "valid" (← since t)
-    let input := String.fromUTF8! bytes
-    let t ← IO.monoMsNow
-    -- Which surface a path's extension selects, read through its one door.
-    -- The markdown door hands back the same surface AST the tex door does —
-    -- one elaborator, one place where meaning lives — so everything past
-    -- this point reads raws, never the surface that wrote them; the
-    -- elaborator records the same decision in the document, where only the
-    -- surface's own defaults read it (`Ir.Surface.textBlock`, `Ir.Surface.listing`).
-    -- The tex door's two stages report apart (`Surface.read_tex_exact`).
-    let (raws, frontDiags) ← match Ir.Surface.ofPath file with
-      | .tex => do
-        let (toks, lexDiags) := Surface.texLex file input
-        ui.phase "lex" s!"{toks.size} tokens" (← since t)
-        let t ← IO.monoMsNow
-        let (raws, parseDiags) := Surface.texParse file toks
-        ui.phase "parse" s!"{raws.size} top-level nodes" (← since t)
-        pure (raws, lexDiags ++ parseDiags)
-      | .markdown => do
-        let (raws, ds) := Surface.read .markdown file input
-        ui.phase "md" s!"{raws.size} top-level nodes" (← since t)
-        pure (raws, ds)
-    let t ← IO.monoMsNow
-    let (executed, inputDiags, spliced) ← Input.expandInputs file raws
-    let (raws, dataDiags) ← Input.resolveData file executed.raws
-    ui.phase "input" s!"{raws.size} top-level nodes" (← since t)
-    let earlier := frontDiags ++ inputDiags ++ dataDiags
-    -- One rewrite, one boundary scan, one macro scan: two elaborations of
-    -- one document must read one source, or their agreement would be about
-    -- two (`Elab.prepareExecuted`).
-    let t ← IO.monoMsNow
-    let prepared := Elab.prepareExecuted file (executed.withRaws raws)
-    ui.phase "prepare" s!"{prepared.raws.size} top-level nodes" (← since t)
-    let cache ← FontEnv.Cache.mk'
-    -- Nothing is asked of a face until something might measure against it,
-    -- and a math slot only where a picture body sets a formula
-    -- (`Elab.picWants`): resolving one eagerly costs a MATH-table parse,
-    -- which is the most expensive face a document can load.
-    let wants := Elab.picWants prepared.raws
-    let (scan, provisional) ← if !wants.draws then
-        pure (none, none)
-      else do
-        let pre := Elab.preambleDoc file prepared
-        let scan ← scanFaces ui file pre.fonts
-        let t ← IO.monoMsNow
-        match ← buildFontSet pre scan cache (.provisional wants.math) with
-        | .error _ =>
-          -- A provisional face that will not resolve is not an error here:
-          -- the final assembly reports it, at the document's own spec.
-          pure (some scan, none)
-        | .ok (fsPre, _, _, _) =>
-          let m := Layout.labelMetric (Layout.Geom.ofPage pre.page) fsPre
-          ui.phase "provisional" s!"{fsPre.fonts.size} faces" (← since t)
-          pure (some scan, some m)
-    let (doc, diags, reqSpans) ←
-      elaborate ui file prepared earlier spliced (provisional.getD (fun _ _ => {}))
-    -- Discover through the elaborated document: package options, markdown,
-    -- macros and includes have already settled the language and source. The
-    -- provider returns data only; every later elaboration reuses this exact
-    -- snapshot, including font remeasurement and picture withdrawal.
-    let requests := LeanTex.Core.ListingReply.requests doc
-    let (doc, diags, reqSpans, prepared, earlier) ← if requests.isEmpty then
-        pure (doc, diags, reqSpans, prepared, earlier)
-      else do
-        let t ← IO.monoMsNow
-        let (replies, listingDiags) ← LeanTex.Cli.ListingHighlight.fulfil file requests
-        ui.phase "highlight" s!"{replies.size} of {requests.size} listings" (← since t)
-        let prepared := { prepared with listingReplies := replies }
-        let earlier := earlier ++ listingDiags
-        let (doc, diags, reqSpans) ← elaborate ui file prepared earlier spliced
-          (provisional.getD (fun _ _ => {})) (phases := false)
-        pure (doc, diags, reqSpans, prepared, earlier)
-    return some { doc := doc, diags := diags, spans := reqSpans
-                  prepared := prepared, earlier := earlier, spliced := spliced
-                  cache := cache, scan := scan, provisional := provisional }
+  let prepared := Elab.prepareExecuted file src.executed
+  ui.phase "prepare" s!"{prepared.raws.size} top-level nodes" (← since t)
+  let cache ← FontEnv.Cache.mk'
+  -- Nothing is asked of a face until something might measure against it,
+  -- and a math slot only where a picture body sets a formula
+  -- (`Elab.picWants`): resolving one eagerly costs a MATH-table parse,
+  -- which is the most expensive face a document can load.
+  let wants := Elab.picWants prepared.raws
+  let (scan, provisional) ← if !wants.draws then
+      pure (none, none)
+    else do
+      let pre := Elab.preambleDoc file prepared
+      let scan ← scanFaces ui file pre.fonts
+      let t ← IO.monoMsNow
+      match ← buildFontSet pre scan cache (.provisional wants.math) with
+      | .error _ =>
+        -- A provisional face that will not resolve is not an error here:
+        -- the final assembly reports it, at the document's own spec.
+        pure (some scan, none)
+      | .ok (fsPre, _, _, _) =>
+        let m := Layout.labelMetric (Layout.Geom.ofPage pre.page) fsPre
+        ui.phase "provisional" s!"{fsPre.fonts.size} faces" (← since t)
+        pure (some scan, some m)
+  let (doc, diags, reqSpans) ←
+    elaborate ui file prepared earlier spliced (provisional.getD (fun _ _ => {}))
+      (ledger := src.ledger)
+  -- Discover through the elaborated document: package options, markdown,
+  -- macros and includes have already settled the language and source. The
+  -- provider returns data only; every later elaboration reuses this exact
+  -- snapshot, including font remeasurement and picture withdrawal.
+  let requests := LeanTex.Core.ListingReply.requests doc
+  let (doc, diags, reqSpans, prepared, earlier) ← if requests.isEmpty then
+      pure (doc, diags, reqSpans, prepared, earlier)
+    else do
+      let t ← IO.monoMsNow
+      let (replies, listingDiags) ← LeanTex.Cli.ListingHighlight.fulfil file requests
+      ui.phase "highlight" s!"{replies.size} of {requests.size} listings" (← since t)
+      let prepared := { prepared with listingReplies := replies }
+      let earlier := earlier ++ listingDiags
+      let (doc, diags, reqSpans) ← elaborate ui file prepared earlier spliced
+        (provisional.getD (fun _ _ => {})) (phases := false) (ledger := src.ledger)
+      pure (doc, diags, reqSpans, prepared, earlier)
+  return some { doc := doc, diags := diags, spans := reqSpans
+                prepared := prepared, earlier := earlier, spliced := spliced
+                ledger := src.ledger
+                cache := cache, scan := scan, provisional := provisional }
 
 /-- The reporting scope is the output plan's projection. Markdown has no
 backend-specific diagnostic scope; common source diagnostics still apply. -/
@@ -654,6 +631,7 @@ def build (ui : Ui) (file : String) : IO UInt32 := do
       let t ← IO.monoMsNow
       let (doc, diags, spans) ← elaborate ui file front.prepared front.earlier front.spliced
         (front.provisional.getD (fun _ _ => {})) (phases := false) (withdrawn := w.ids)
+        (ledger := front.ledger)
       ui.phase "withdraw" s!"{w.ids.size} pictures drawn by the rendered subset" (← since t)
       pure { front with doc := doc, spans := spans
                         diags := Boundary.foldLines doc.allow allowAll
@@ -706,7 +684,7 @@ def build (ui : Ui) (file : String) : IO UInt32 := do
         let t ← IO.monoMsNow
         let (doc2, _, spans2) ←
           elaborate ui file front.prepared front.earlier front.spliced metric
-            (phases := false) (withdrawn := w.ids)
+            (phases := false) (withdrawn := w.ids) (ledger := front.ledger)
         ui.phase "remeasure" s!"{Elab.enginePictures doc.body} pictures" (← since t)
         let family := fs.math.bind (fs.fonts[·]?) |>.map (·.family) |>.getD "math face"
         pure ((Ir.resolveMathAlphas fs.mathAlphabets family doc2).1, spans2)
@@ -805,7 +783,7 @@ def build (ui : Ui) (file : String) : IO UInt32 := do
         let htmlDoc ← if htmlOnly.isEmpty then pure doc else do
           let t ← IO.monoMsNow
           let (d, _, _) ← elaborate ui file front.prepared front.earlier front.spliced metric
-            (phases := false) (withdrawn := w.ids ++ htmlOnly)
+            (phases := false) (withdrawn := w.ids ++ htmlOnly) (ledger := front.ledger)
           ui.phase "withdraw" s!"{htmlOnly.size} pictures drawn by the rendered subset \
 in the HTML" (← since t)
           let family := fs.math.bind (fs.fonts[·]?) |>.map (·.family) |>.getD "math face"

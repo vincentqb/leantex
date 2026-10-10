@@ -1,10 +1,6 @@
 ── E0001 (dropped) cannot read an input file
 ✖ [E0001]
   cannot read 'doc.tex': no such file or directory (error code: 2)
-── E0002 (dropped) input is not valid UTF-8
-✖ [E0002]
-  invalid UTF-8: invalid continuation byte 0x28 at byte offset 0
-  suggestion: every input is read as UTF-8; `iconv -t utf-8` re-encodes the file
 ── E0003 (dropped) output formats do not have independent destinations; publication is refused
 ✖ [E0003]
   cannot publish output: HTML and Markdown both name 'out.html'
@@ -244,6 +240,10 @@
 ℹ [N0023] - \begin
   this picture is drawn by lualatex at the boundary; its text is not in the document's census
   suggestion: the box is measured and placed by the engine; alt={...} or artifact on the picture, or a figure caption, names it for assistive technology
+── N0025 (info) an inputenc declaration names an encoding other than UTF-8; each file it governs is listed with how it reads
+ℹ [N0025]
+  '\usepackage[latin1]{inputenc}': 'doc.tex' reads as Windows-1252 (Latin-1)
+  suggestion: save 'doc.tex' as UTF-8 (`iconv -f WINDOWS-1252 -t UTF-8`), then delete the declaration
 ── N0100 (info) LaTeX idiom translated to its native declaration
 ℹ [N0100] - \usepackage
   '\usepackage{geometry}' → \page{ margin = 1in }
@@ -287,10 +287,19 @@
 ── W0001 (config) content after \end{document} is ignored
 ⚠ [W0001]
   content after '\end{document}' is ignored
+── W0002 (degraded) bytes that are not text in the file's encoding, U+0000 among them, are replaced by U+FFFD
+⚠ [W0002]
+  byte 0xE9 at offset 44 is not text in UTF-8
+  replaced by: U+FFFD
+  suggestion: save the file as UTF-8, or name its encoding: \usepackage[latin1]{inputenc} reads Latin-1
 ── W0003 (degraded) no math face available; math set as plain text
 ⚠ [W0003]
   no math font is available; math is set as plain text
   suggestion: declare \fonts{ math = "..." } naming an installed OpenType math face; `leantex fonts` lists families
+── W0004 (degraded) bytes a UTF-8 file holds that UTF-8 cannot read are read in the encoding its document declares, a guess the warning names
+⚠ [W0004]
+  byte 0x92 at offset 83 is read as Windows-1252 (Latin-1), as declared, in a file otherwise UTF-8
+  suggestion: retype the characters at those offsets in UTF-8: the rest of the file is UTF-8
 ── W0005 (degraded) overfull line, no feasible break
 ⚠ [W0005]
   overfull line; no feasible break

@@ -2319,12 +2319,13 @@ def dimChecks (ref : IO.Ref (List String)) : IO Unit := do
   if let some msg := failed then failures ref msg
   t "dim round-trip error reaches the print rounding bound" (worst > 20)
 
-/-- Differential fuzz of the UTF-8 validator against the core decoder
+/-- Differential fuzz of the UTF-8 decoder against the core validator
 (generator: xorshift64*, 400 byte strings — half raw random bytes of length
-0–15, half a valid encoded string with one byte overwritten): `validate`
-must accept exactly what `String.fromUTF8?` decodes. The fixed vectors in
-`main` pin the error kinds and offsets; this pins the accept/reject boundary
-where no fixed vector was written. -/
+0–15, half a valid encoded string with one byte overwritten): `decode`
+replaces nothing exactly where `String.fromUTF8?` decodes, reads valid
+bytes as that string, and names each replacement at a byte of the input,
+in ascending order. The fixed vectors in `utf8Checks` pin the subparts;
+this pins the accept/reject boundary where no fixed vector was written. -/
 def utf8FuzzChecks (ref : IO.Ref (List String)) : IO Unit := do
   let samples : Array String :=
     #["hello", "naïve", "αβγδε", "🎉🌍", "a\nb\nc", "τεχ — done", "𝔸𝔹ℂ"]
@@ -2344,14 +2345,18 @@ def utf8FuzzChecks (ref : IO.Ref (List String)) : IO Unit := do
     else
       let (which, s') := rand s samples.size
       s := s'
-      v := samples[which]!.toUTF8
+      v := (samples[which]?.getD "").toUTF8
       let (at_, s') := rand s v.size
       s := s'
       let (b, s'') := rand s' 256
       s := s''
       v := v.set! at_ (UInt8.ofNat b)
-    unless (validate v == none) == (String.fromUTF8? v).isSome do
-      failed := some s!"utf8 fuzz case {i}: validate and core decoder disagree on {v.toList}"
+    let d := Utf8.decode v
+    let ascending := (d.bad.toList.zip (d.bad.toList.drop 1)).all fun (a, b) => a < b
+    unless d.bad.isEmpty == (String.fromUTF8? v).isSome &&
+        ((String.fromUTF8? v).all (· == d.text)) && ascending &&
+        d.bad.all (· < v.size) do
+      failed := some s!"utf8 fuzz case {i}: decode and core decoder disagree on {v.toList}"
   if let some msg := failed then failures ref msg
 
 /-- The IR-to-IR walks are exhaustive, and each arm below was a wildcard
@@ -2568,35 +2573,49 @@ def scannerChecks (ref : IO.Ref (List String)) : IO Unit := do
   optArgChecks ref
   envBoundaryChecks ref
 
+/-- The decoder against the substitution the Unicode Standard recommends
+for ill-formed UTF-8 (§3.9, "U+FFFD Substitution of Maximal Subparts",
+Table 3-8) and the WHATWG decoder performs: one U+FFFD per maximal subpart,
+each at its first byte's offset, and the text around it read as written. -/
 def utf8Checks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
-  -- utf8: valid inputs
-  t "utf8 empty" (validate (bytes []) == none)
-  t "utf8 ascii" (validate "hello, world".toUTF8 == none)
-  t "utf8 multibyte" (validate "naïve — αβγ — 🎉".toUTF8 == none)
-
-  -- utf8: each error class, with offset
-  t "utf8 bare continuation" (errKindAt (bytes [0x68, 0x80]) == some (1, .invalidStart 0x80))
-  t "utf8 overlong 2-byte" (errKindAt (bytes [0xC0, 0x80]) == some (0, .overlong))
-  t "utf8 overlong 3-byte" (errKindAt (bytes [0xE0, 0x9F, 0x80]) == some (0, .overlong))
-  t "utf8 overlong 4-byte" (errKindAt (bytes [0xF0, 0x8F, 0x80, 0x80]) == some (0, .overlong))
-  t "utf8 surrogate" (errKindAt (bytes [0xED, 0xA0, 0x80]) == some (0, .surrogate))
-  t "utf8 out of range" (errKindAt (bytes [0xF4, 0x90, 0x80, 0x80]) == some (0, .outOfRange))
-  t "utf8 truncated" (errKindAt (bytes [0x61, 0xC3]) == some (1, .truncated))
-  t "utf8 bad continuation" (errKindAt (bytes [0xC3, 0x28]) == some (0, .invalidContinuation 0x28))
-
-  -- utf8: error position tracks lines and columns
-  let afterNewlines := bytes ("ab\ncd\n".toUTF8.toList ++ [0xFF])
-  t "utf8 position" ((validate afterNewlines).map (fun e => (e.pos.line, e.pos.col)) == some (3, 1))
-
-  -- utf8: agreement with core decoder on every vector above
+  let fffd (n : Nat) : String := String.ofList (List.replicate n '\uFFFD')
+  -- valid inputs read unchanged
+  for v in ["", "hello, world", "naïve — αβγ — 🎉"] do
+    t s!"utf8 valid reads unchanged ({v})" (Utf8.decode v.toUTF8 == ⟨v, #[]⟩)
+  -- each error class: the maximal subparts and their offsets
+  for (name, v, text, bad) in ([
+      ("bare continuation", [0x68, 0x80], "h" ++ fffd 1, #[1]),
+      ("overlong 2-byte", [0xC0, 0x80], fffd 2, #[0, 1]),
+      ("overlong 3-byte", [0xE0, 0x9F, 0x80], fffd 3, #[0, 1, 2]),
+      ("overlong 4-byte", [0xF0, 0x8F, 0x80, 0x80], fffd 4, #[0, 1, 2, 3]),
+      ("surrogate", [0xED, 0xA0, 0x80], fffd 3, #[0, 1, 2]),
+      ("out of range", [0xF4, 0x90, 0x80, 0x80], fffd 4, #[0, 1, 2, 3]),
+      ("truncated at end", [0x61, 0xC3], "a" ++ fffd 1, #[1]),
+      ("bad continuation", [0xC3, 0x28], fffd 1 ++ "(", #[0]),
+      ("truncated 3-byte", [0xE2, 0x82, 0x41], fffd 1 ++ "A", #[0]),
+      ("truncated 4-byte", [0xF0, 0x9F, 0x98], fffd 1, #[0]),
+      ("Table 3-8", [0x61, 0xF1, 0x80, 0x80, 0xE1, 0x80, 0xC2, 0x62, 0x80, 0x63, 0x80, 0xBF, 0x64],
+        "a" ++ fffd 3 ++ "b" ++ fffd 1 ++ "c" ++ fffd 2 ++ "d", #[1, 4, 6, 8, 10, 11])] :
+        List (String × List UInt8 × String × Array Nat)) do
+    t s!"utf8 {name}" (Utf8.decode (bytes v) == ⟨text, bad⟩)
+  -- byte-order marks: skipped, every one, and counted in the offsets
+  t "utf8 mark skipped" (Utf8.read (bytes [0xEF, 0xBB, 0xBF, 0x41]) == ⟨"A", #[]⟩)
+  t "utf8 doubled mark skipped"
+    (Utf8.read (bytes [0xEF, 0xBB, 0xBF, 0xEF, 0xBB, 0xBF, 0x41]) == ⟨"A", #[]⟩)
+  t "utf8 offsets count the mark"
+    (Utf8.read (bytes [0xEF, 0xBB, 0xBF, 0x41, 0xFF]) == ⟨"A" ++ fffd 1, #[4]⟩)
+  t "utf8 a mark's prefix is not a mark"
+    (Utf8.read (bytes [0xEF, 0xBB, 0x41]) == ⟨fffd 1 ++ "A", #[0]⟩)
+  t "utf8 a mark mid-text is text" (Utf8.read ("A\uFEFFB".toUTF8) == ⟨"A\uFEFFB", #[]⟩)
+  -- agreement with the core decoder on every vector above
   for (name, v) in [
       ("empty", bytes []), ("ascii", "hello".toUTF8), ("multi", "🎉é".toUTF8),
       ("cont", bytes [0x80]), ("overlong", bytes [0xC0, 0x80]),
       ("surrogate", bytes [0xED, 0xA0, 0x80]),
       ("range", bytes [0xF4, 0x90, 0x80, 0x80]), ("trunc", bytes [0xC3])] do
     t s!"utf8 agrees with core ({name})"
-      ((validate v == none) == (String.fromUTF8? v).isSome)
+      ((Utf8.decode v).bad.isEmpty == (String.fromUTF8? v).isSome)
   utf8FuzzChecks ref
 
 def argsChecks (ref : IO.Ref (List String)) : IO Unit := do
@@ -5788,7 +5807,7 @@ def titleSlotShipChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) :
   -- 100/100 …), `anchor` the box point (the translate), each shift em of
   -- the body. And the title's text edge — the shift plus the inner sep —
   -- agrees with the edge the PDF page sets it at.
-  let tgDoc := (← elabFixture "titleground" (← IO.FS.readFile "testdata/corpus/titleground.tex")).1
+  let tgDoc := (← elabFixture "titleground" (← fixtureText "testdata/corpus/titleground.tex")).1
   let (tgHead, tgBody, _) := HtmlDoc.emitTree {} tgDoc
   let tgCss := treeCssList (treeCssList "" tgHead.toList) tgBody.toList
   let em := tgDoc.page.fontSize

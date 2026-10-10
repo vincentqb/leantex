@@ -108,10 +108,30 @@ def driverProbes : Array (DiagCode × DriverProbe) :=
       match ← Input.readSource "doc.tex" with
       | .error d => return #[d]
       | .ok _ => return #[]),
+    -- The front door over a document's bytes, read the way the driver reads
+    -- them: decoded under the declaration execution settles on, the
+    -- declaration's note made from the ledger once every file is read.
+    -- The bytes are in hand, so no file is opened and the name is the same
+    -- on every host.
+    (.W0002, fun _ => do
+      let src ← Input.readDocument "doc.tex"
+        ("\\documentclass{article}\n\\begin{document}\nCaf".toUTF8 ++ ⟨#[0xE9]⟩ ++
+          ".\n\\end{document}\n".toUTF8)
+      return src.diags),
+    (.W0004, fun _ => do
+      let src ← Input.readDocument "doc.tex" (("\\documentclass{article}\n" ++
+        "\\usepackage[latin1]{inputenc}\n\\begin{document}\nCafé crème").toUTF8 ++
+        ⟨#[0x92]⟩ ++ "s.\n\\end{document}\n".toUTF8)
+      return src.diags),
+    (.N0025, fun _ => do
+      let src ← Input.readDocument "doc.tex" (("\\documentclass{article}\n" ++
+        "\\usepackage[latin1]{inputenc}\n\\begin{document}\nCaf").toUTF8 ++ ⟨#[0xE9]⟩ ++
+        ".\n\\end{document}\n".toUTF8)
+      return src.ledger.notes),
     (.E0503, fun _ => do
       let doc := (elabStr ("\\documentclass{article}\n\\begin{document}\n" ++
         "A claim\\cite{k}.\n\\bibliography{references}\n\\end{document}\n")).1
-      return (← Input.resolveBibliography "doc.tex" doc).2),
+      return (← Input.resolveBibliography "doc.tex" doc).2.1),
     (.E0365, fun _ => do
       let src := "\\documentclass{article}\n\\data{ file = \"records\" }\n" ++
         "\\begin{document}\n\\begin{foreach}{j}{job}\\val{j.role}\\end{foreach}\n" ++
@@ -188,10 +208,8 @@ remaining synthetic driver arguments mirror what Main.lean passes. -/
 def diagWitness (one mapped withMath : Font.FontSet)
     (probed : DiagCode → Array Diag) : DiagCode → Array Diag
   | .E0001 => probed .E0001
-  | .E0002 =>
-    match Utf8.validate (ByteArray.mk #[0xC3, 0x28]) with
-    | some e => #[e.toDiag "doc.tex"]
-    | none => #[]
+  | .W0002 => probed .W0002
+  | .W0004 => probed .W0004
   | .E0003 => #[DriverDiag.outputPathsConflict "HTML and Markdown both name 'out.html'"]
   | .E0004 => #[DriverDiag.outputUnwritable "site/out.pdf" "permission denied"]
   | .E0101 => dvE "a\\"
@@ -536,6 +554,7 @@ def diagWitness (one mapped withMath : Font.FontSet)
   -- routes; the trust label names it.
   | .N0023 => dvE (dvDoc ""
       "\\begin{tikzpicture}\\draw (0,0) circle (1);\\end{tikzpicture}")
+  | .N0025 => probed .N0025
   | .W0383 => dvE (dvDoc ""
       "\\begin{algorithm}\n\\lIf{$x < 0$}{negate $x$}\\;\n\\end{algorithm}")
   | .W0387 => dvE (dvDoc "\\thispagestyle{plain}\n" "x")

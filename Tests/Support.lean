@@ -174,9 +174,6 @@ def rand (s : UInt64) (bound : Nat) : Nat × UInt64 :=
   let (s', v) := nextRand s
   ((v % UInt64.ofNat bound).toNat, s')
 
-def errKindAt (bs : ByteArray) : Option (Nat × ErrKind) :=
-  (validate bs).map fun e => (e.offset, e.kind)
-
 def toks (s : String) : List Lex.Tok :=
   ((Lex.lex "t" s).1.map (·.tok)).toList
 
@@ -540,6 +537,16 @@ def checkXref (pdf : ByteArray) : Except String Nat := do
         throw s!"object {e.num}: {err}"
   return verified
 
+/-- A fixture file's text as the driver's decoding door reads it: a
+byte-order mark skipped, a byte that is not text replaced, a line ended at
+CR as at LF, and a tex file's own preamble declaration of its encoding
+honoured. A fixture the suite reads past the door would read differently
+from the binary the moment it carried any of them. -/
+def fixtureText (path : String) : IO String := do
+  let bytes ← IO.FS.readBinFile path
+  return if path.endsWith ".md" then (Encoding.readMarkdown path bytes).text
+    else (Encoding.readDocument path bytes).1.text
+
 /-- A source whose file includes are fulfilled before elaboration. The
 filename establishes the input directory even when the source itself is
 held in memory, so synthetic probes and file fixtures use the same path. -/
@@ -557,7 +564,7 @@ the `\input`-parity cases and the theme-loading family. -/
 def runStyParity (name : String) :
     IO (Ir.Doc × Array Diag × Array (String × Option String × Pos)) := do
   let path := s!"testdata/corpus/sty-parity/{name}.tex"
-  let src ← IO.FS.readFile path
+  let src ← fixtureText path
   let (raws, _) := Parse.parse path (Lex.lex path src).1
   let (executed, inputDs, spliced) ← Input.expandInputs path raws
   let (doc, ds) := Elab.runExecuted path executed
@@ -581,7 +588,7 @@ def elabFixture (n src : String) : IO (Ir.Doc × Array Diag) := do
     let name := Data.sourceName srcName
     let path := s!"testdata/corpus/{name}"
     if ← System.FilePath.pathExists path then
-      dataSources := dataSources.push (srcName, ← IO.FS.readFile path)
+      dataSources := dataSources.push (srcName, ← fixtureText path)
   let (raws, dataDiags) := Data.expandData file dataSources executed.raws
   let (doc, diags) := Elab.runExecuted file (executed.withRaws raws)
     (readDiags ++ inputDiags ++ dataDiags)
@@ -592,7 +599,7 @@ def elabFixture (n src : String) : IO (Ir.Doc × Array Diag) := do
     let name := Bib.sourceName srcName
     let path := s!"testdata/corpus/{name}"
     if ← System.FilePath.pathExists path then
-      sources := sources.push (srcName, ← IO.FS.readFile path)
+      sources := sources.push (srcName, ← fixtureText path)
   let (doc, bibDiags) := Bib.apply sources doc
   return (doc, diags ++ bibDiags)
 
@@ -605,7 +612,7 @@ def goldenFile (n : String) : String :=
 markdown reader for a markdown fixture, which requests no data and no
 bibliography; `elabFixture`'s fulfilments for a `.tex` one. -/
 def goldenDoc (n : String) : IO (Ir.Doc × Array Diag) := do
-  let src ← IO.FS.readFile (goldenFile n)
+  let src ← fixtureText (goldenFile n)
   if mdGoldenNames.contains n then
     let file := s!"{n}.md"
     let (raws, ds) := Md.read file src
@@ -623,7 +630,7 @@ def corpusTwinDocs : IO (Array (String × Ir.Doc)) := do
     if f.fileName.endsWith ".tex" then names := names.push (f.fileName.dropEnd 4).toString
   let mut out := #[]
   for n in names.qsort (· < ·) do
-    let (d, _) ← elabFixture n (← IO.FS.readFile s!"testdata/corpus/{n}.tex")
+    let (d, _) ← elabFixture n (← fixtureText s!"testdata/corpus/{n}.tex")
     out := out.push (s!"testdata/corpus/{n}.tex", d)
   for n in mdGoldenNames do
     let (d, _) ← goldenDoc n
@@ -1616,6 +1623,15 @@ def metricDoc (body : String) : String :=
 /-- A metric check's source through elaboration and shipped layout. -/
 def metricOut (oneFace : Font.FontSet) (body : String) : Layout.Out :=
   layoutOf oneFace (elabStr (metricDoc body)).1
+
+/-- Every scalar a laid-out document inks, and its layout diagnostics. -/
+def inkedScalars (fs : Font.FontSet) (src : String) : Array Char × Array Diag :=
+  let out := layoutOf fs (elabStr src).1
+  let ink := out.pages.flatMap fun p => p.lines.flatMap fun l => l.segs.flatMap fun s =>
+    match s with
+    | .run _ _ _ _ glyphs _ _ _ _ _ _ => glyphs.map (·.2.1)
+    | _ => #[]
+  (ink, out.diags)
 
 /-- The glyphs a source's body lines ship, in page order — the instrument for
 a claim about what a page shows, read off `Layout.Out` rather than an IR

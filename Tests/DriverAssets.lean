@@ -32,7 +32,7 @@ public def settles (elaborated : Ir.Doc) (provisional : Option Ir.Pic.LabelMetri
     (fs : Font.FontSet) (resolved : Ir.Doc) : IO Bool := do
   let front : LeanTex.Cli.Driver.Front := {
     doc := elaborated, diags := #[], spans := {}, prepared := Elab.prepare "t" #[]
-    earlier := #[], spliced := #[], cache := ← LeanTex.Cli.FontEnv.Cache.mk'
+    earlier := #[], spliced := #[], ledger := {}, cache := ← LeanTex.Cli.FontEnv.Cache.mk'
     scan := none, provisional }
   return (LeanTex.Cli.Driver.settlement front fs resolved).2.2
 

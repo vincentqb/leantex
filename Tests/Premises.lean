@@ -330,6 +330,11 @@ def registry : List Premise := [
     sites := [("scripts/gen-mathsym-data.lean", "main"), ("scripts/gen-textsym-data.lean", "main"),
       ("scripts/gen-hyphen-data.lean", "main")]
     owed := some "Regenerate every data module from the host's TeX tree and require each committed module unchanged." },
+  { name := "iconv-tables", residue := .dev "iconv", reach := .dev
+    statement := "The host's iconv decodes one byte of WINDOWS-1252, ISO-8859-15 and MACINTOSH as the mapping tables it carries do, so the generated encoding tables are those tables, apart from the two Mac OS Roman rows the generator takes from Apple's own table."
+    sites := [("scripts/gen-encoding-data.lean", "iconvByte")]
+    tools := ["iconv"]
+    owed := some "Regenerate the encoding tables from the host's iconv and require the committed module unchanged." },
   { name := "pygments-tables", residue := .dev "Pygments", reach := .dev
     statement := "The installed Pygments answers style queries as a lualatex build's minted reads them, so the generated style table and its oracle file are the reference's own."
     sites := [("scripts/gen-pygments-style-data.lean", "main")]
@@ -371,7 +376,7 @@ def registry : List Premise := [
 check: counts that fall and rise only when this file says so. -/
 def renderToolBaseline : Nat := 5
 def uncheckedBaseline : Nat := 8
-def owedBaseline : Nat := 20
+def owedBaseline : Nat := 21
 
 /-- The spawns that are the budget. -/
 def budgetSites : List (String × String) := [("LeanTex/Cli/RunBounded.lean", "runBounded")]

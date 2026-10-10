@@ -47,6 +47,9 @@ public import LeanTex.Core.LocaleData
 public import LeanTex.Core.LocaleContract
 public import LeanTex.Core.Compat
 public import LeanTex.Core.CompatContract
+public import LeanTex.Core.EncodingOption
+public import LeanTex.Core.EncodingData
+public import LeanTex.Core.Encoding
 public import LeanTex.Core.InputContract
 public import LeanTex.Core.Elab
 public import LeanTex.Core.ElabRegistryContract

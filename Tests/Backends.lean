@@ -1992,11 +1992,11 @@ meaning, and no constructor outlives its last emission site. -/
 def renderChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
   -- render: porcelain is stable, escaped JSONL
-  let d : Diag := Diag.of .E0002 "bad \"quote\"\nline"
+  let d : Diag := Diag.of .E0001 "bad \"quote\"\nline"
     (some ⟨"a.tex", { line := 3, col := 7 }⟩)
     (help := "fix it")
   t "porcelain diag" (Render.porcelainDiag d ==
-    "{\"event\":\"diagnostic\",\"severity\":\"error\",\"code\":\"E0002\",\"loss\":\"dropped\"," ++
+    "{\"event\":\"diagnostic\",\"severity\":\"error\",\"code\":\"E0001\",\"loss\":\"dropped\"," ++
     "\"message\":\"bad \\\"quote\\\"\\nline\",\"file\":\"a.tex\",\"line\":3,\"col\":7," ++
     "\"help\":\"fix it\"}")
   t "porcelain summary" (Render.porcelainSummary "a.tex" false 2 17 ==
@@ -2013,7 +2013,7 @@ def renderChecks (ref : IO.Ref (List String)) : IO Unit := do
 
   -- render: human, no color
   t "human diag plain" (Render.human false d ==
-    "✖ [E0002] - a.tex:3:7\n  bad \"quote\"\n  line\n  suggestion: fix it")
+    "✖ [E0001] - a.tex:3:7\n  bad \"quote\"\n  line\n  suggestion: fix it")
 
 def linkHtmlChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref

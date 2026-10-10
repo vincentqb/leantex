@@ -36,8 +36,11 @@ example (c : Ir.Color) :
     c.css = "#" ++ Ir.Color.hexByte c.r false ++ Ir.Color.hexByte c.g false ++
       Ir.Color.hexByte c.b false := by rfl
 example : String → String := Locale.babelTagOf
-example : ByteArray → Option Utf8.Err := Utf8.validate
-example : Utf8.Err → String → Diag := Utf8.Err.toDiag
+example : ByteArray → Utf8.Decoded := Utf8.decode
+example : ByteArray → Utf8.Decoded := Utf8.read
+example (s : String) : Utf8.decode s.toUTF8 = ⟨s, #[]⟩ := Utf8.decode_valid_id s
+example (bs : ByteArray) : Utf8.read (Utf8.read bs).text.toUTF8 = ⟨(Utf8.read bs).text, #[]⟩ :=
+  Utf8.read_fixed_point bs
 example : ListingHighlight.Language → Array String → Array (Array ListingHighlight.Token) :=
   ListingHighlight.tokenize
 example (tokens : Array ListingHighlight.Token) :
@@ -96,8 +99,9 @@ example (resources : Array HtmlResource.Embedded) (svgChecked : Array ByteArray)
   HtmlResource.close resources svgChecked script lang head body
 
 example : True := by
-  fail_if_success have := Utf8.seq
-  fail_if_success have := Utf8.validate.go
+  fail_if_success have := Utf8.go
+  fail_if_success have := Utf8.subpart
+  fail_if_success have := Utf8.marks
   fail_if_success have := ListingHighlight.tokenAt
   fail_if_success have := ListingHighlight.scanWhile
   fail_if_success have := RunBounded.Capture

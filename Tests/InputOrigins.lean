@@ -45,12 +45,12 @@ def inputOriginsChecks (ref : IO.Ref (List String)) : IO Unit := do
     for command in ["input", "include", "markdownInput"] do
       for nested in [false, true] do
         for (name, kind) in [("directory.tex", DiagCode.E0001),
-            ("absent.tex", DiagCode.E0502), ("invalid.tex", DiagCode.E0002)] do
+            ("absent.tex", DiagCode.E0502), ("invalid.tex", DiagCode.W0002)] do
           let text := "% requesting source\n\n\n    \\" ++ command ++ "{" ++ name ++ "}\n"
           IO.FS.writeFile caller text
           let root := if nested then "% host\n \\input{caller}\n" else text
           let (_, ds, _) ← Input.expandInputs file (parse file root)
-          let expected : Span := if kind == .E0002 then
+          let expected : Span := if kind == .W0002 then
               ⟨(dir / name).toString, { line := 2, col := 3 }⟩
             else ⟨if nested then caller else file, { line := 4, col := 5 }⟩
           t s!"input origins: {command}/{nested}/{name} names the measured source site"

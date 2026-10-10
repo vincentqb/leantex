@@ -17490,7 +17490,7 @@ built-in name, W0303's — ignores its bodies, so its halves raise nothing
 and ship nothing; every other definition's halves settle to the tree a
 plain parse builds, the open half closed at its body's brace and the close
 half dropped, with that parse's diagnostics. A package file's splice drops them, as it drops its
-parse's (`Cli.Input.expandLocalSty`). `skip` counts the groups a refused
+parse's (the style the driver reads for an input request). `skip` counts the groups a refused
 definition still holds at this level: its name and its two bodies. -/
 -- conserves: none — settling rebuilds the parse's recovery tree by design.
 private def settleList (file : String) (skip : Nat) (out : Array Raw)

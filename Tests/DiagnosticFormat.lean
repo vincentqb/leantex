@@ -269,17 +269,41 @@ def diagnosticFormatCliChecks (ref : IO.Ref (List String)) : IO Unit := do
   IO.FS.withTempDir fun dir => do
     let file := (dir / "invalid.tex").toString
     IO.FS.writeBinFile file ⟨#[0xFF]⟩
-    let bad ← run #["dump", file, "--color=never"]
-    t "diagnostic format: emitted error separates location, reason and suggestion and keeps failure exit"
-      (bad.exitCode == 1 && bad.stdout.isEmpty && bad.stderr ==
-        s!"✖ [E0002] - {file}:1:1\n  invalid UTF-8: invalid start byte 0xFF at byte offset 0\n" ++
-        "  suggestion: every input is read as UTF-8; `iconv -t utf-8` re-encodes the file\n")
-    let porcelain ← run #["dump", file, "--porcelain"]
+    -- The one input that stops the run before anything is written is one
+    -- that cannot be read: bytes never do.
+    let unreadable := (dir / "folder.tex").toString
+    IO.FS.createDir unreadable
+    let bad ← run #["dump", unreadable, "--color=never"]
+    t "diagnostic format: an unreadable input separates the code from its reason and keeps failure exit"
+      (bad.exitCode == 1 && bad.stdout.isEmpty &&
+        bad.stderr.startsWith s!"✖ [E0001]\n  cannot read '{unreadable}': " &&
+        (bad.stderr.splitOn "\n").length == 3)
+    let porcelain ← run #["dump", unreadable, "--porcelain"]
+    let records := (porcelain.stdout.splitOn "\n").filter (!·.isEmpty)
     t "diagnostic format: emitted porcelain stays JSONL on stdout"
-      (porcelain.exitCode == 1 && porcelain.stderr.isEmpty && porcelain.stdout ==
-        "{\"event\":\"diagnostic\",\"severity\":\"error\",\"code\":\"E0002\",\"loss\":\"dropped\"," ++
-        "\"message\":\"invalid UTF-8: invalid start byte 0xFF at byte offset 0\",\"file\":\"" ++ file ++
-        "\",\"line\":1,\"col\":1,\"help\":\"every input is read as UTF-8; `iconv -t utf-8` re-encodes the file\"}\n")
+      (porcelain.exitCode == 1 && porcelain.stderr.isEmpty && records.length == 1 &&
+        records.all fun line => (Lean.Json.parse line).toOption.any fun j =>
+          j.getObjValAs? String "code" == .ok "E0001" &&
+          j.getObjValAs? String "severity" == .ok "error")
+    -- A loss with a location, a trigger, a recovery and a suggestion, end
+    -- to end: one bad byte ships a page and names itself.
+    let face ← IO.FS.realPath (testFonts ++ "/OpenSans-Regular.ttf")
+    let runFace (args : Array String) := IO.Process.output {
+      cmd := ".lake/build/bin/leantex", args := args
+      env := #[("LEANTEX_FONT", some face.toString)] }
+    let shipped := (dir / "invalid.html").toString
+    let human ← runFace #[file, "-o", shipped, "--color=never", "-q"]
+    t "diagnostic format: a located loss separates location, reason, recovery and suggestion"
+      (human.exitCode == 0 && human.stdout.isEmpty && human.stderr.startsWith
+        (s!"⚠ [W0002] - {file}:1:1 - \uFFFD\n  byte 0xFF at offset 0 is not text in UTF-8\n" ++
+          "  replaced by: U+FFFD\n  suggestion: save the file as UTF-8, or name its encoding: " ++
+          "\\usepackage[latin1]{inputenc} reads Latin-1\n"))
+    let machine ← runFace #[file, "-o", shipped, "--porcelain"]
+    t "diagnostic format: a located loss stays JSONL on stdout"
+      (machine.exitCode == 0 && machine.stderr.isEmpty && machine.stdout.startsWith
+        ("{\"event\":\"diagnostic\",\"severity\":\"warning\",\"code\":\"W0002\"," ++
+          "\"loss\":\"degraded\",\"message\":\"byte 0xFF at offset 0 is not text in UTF-8\"," ++
+          "\"file\":\"" ++ file ++ "\",\"line\":1,\"col\":1,"))
     let usage ← run #["--not-a-flag"]
     t "diagnostic format: parser-independent argument errors keep their established output"
       (usage.exitCode == 3 && usage.stdout.isEmpty && usage.stderr ==

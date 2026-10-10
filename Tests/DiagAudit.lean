@@ -10,6 +10,7 @@ import Tests.PublicationPaths
 import Tests.HtmlContained
 import Tests.TableSide
 import Tests.PdfBounds
+import Tests.InputDecoding
 import scripts.Rung
 
 /-!
@@ -164,7 +165,18 @@ def registry : List AuditRow :=
    ⟨.E0003, .refusal, .fails, check% publicationPathChecks⟩,
    -- A destination that cannot be written: the artifact is not there, and
    -- the system's words say why; the other artifacts are written.
-   ⟨.E0004, .keep, .fails, check% Tests.publicationWriteChecks⟩]
+   ⟨.E0004, .keep, .fails, check% Tests.publicationWriteChecks⟩,
+   -- Bytes that are not text ship as U+FFFD, listed once per file. A file
+   -- under an inputenc encoding the engine carries a table for reads in it
+   -- byte by byte, as pdfLaTeX reads it, unless its bytes say UTF-8: a
+   -- valid UTF-8 file, or one whose well-formed sequences outnumber its
+   -- stray bytes, where pdfLaTeX garbles every accent and the strays are a
+   -- guess (W0004). latin1's 0x80-0x9F read as Windows-1252, where
+   -- pdfLaTeX refuses them; lualatex reads no declaration at all. The
+   -- declaration's one note says how each file read.
+   ⟨.W0002, .keep, .degraded, check% inputDecodingChecks⟩,
+   ⟨.W0004, .keep, .degraded, check% inputDecodingChecks⟩,
+   ⟨.N0025, .divergence, .native, check% inputDecodingChecks⟩]
 
 /-- An engine source's tier item: `LeanTex/Core/Elab.lean` is `Core.Elab`,
 `Main.lean` is `Main`. -/

@@ -61,6 +61,19 @@ line breaks from the TeX document around it. Include one with:
 \markdownInput{notes.md}
 ```
 
+Source files are read as UTF-8 unless a byte-order mark says UTF-16, and a
+line ends at LF, CR LF or a CR alone. A TeX document that declares
+`\usepackage[latin1]{inputenc}` (or `latin9`, `cp1252`, `ansinew`,
+`applemac`) has every file it reads read in that encoding, byte for byte as
+pdfLaTeX reads it, unless a file is evidently UTF-8: valid UTF-8, or more
+UTF-8 sequences than stray bytes. `applemac` follows Apple's current Mac OS
+Roman table, so 0xDB is the euro sign where pdfLaTeX still prints ¤, and a
+few symbols read as Apple has them where pdfLaTeX prints a near neighbour.
+`\inputencoding` does not switch encodings partway through a file; it is
+named where it stands. Bytes that are not text, U+0000 among them, become
+U+FFFD, and one warning per file lists their offsets. The document still
+builds, as long as one of its fonts has a glyph for U+FFFD.
+
 See the [example documents](testdata/corpus) and
 [package compatibility index](testdata/compat-index) for supported syntax.
 

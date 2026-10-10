@@ -214,7 +214,7 @@ letter itself is derived from the declared `Loss` at the one construction
 site (`DiagCode.code`), and `DiagCode.code_letter` holds the two spellings
 equal. -/
 public inductive DiagCode where
-  | E0001 | E0002 | E0003 | E0004
+  | E0001 | W0002 | E0003 | E0004 | W0004
   | E0101 | E0102 | E0111 | E0112 | E0113
   | E0201 | E0202 | E0205
   | E0303 | E0304 | E0305 | E0306 | E0309 | E0310 | E0311 | E0312 | E0313
@@ -258,6 +258,7 @@ public inductive DiagCode where
   | N0022
   | W0377
   | N0023
+  | N0025
   | W0378
   | W0379
   | W0382
@@ -295,7 +296,8 @@ the compiler holds every projection exhaustive. The class letter is not
 written here: `DiagCode.code` derives it from the loss. -/
 private def DiagCode.spec : DiagCode → String × Loss × String
   | .E0001 => ("0001", .dropped, "cannot read an input file")
-  | .E0002 => ("0002", .dropped, "input is not valid UTF-8")
+  | .W0002 => ("0002", .degraded, "bytes that are not text in the file's encoding, U+0000 among them, are replaced by U+FFFD")
+  | .W0004 => ("0004", .degraded, "bytes a UTF-8 file holds that UTF-8 cannot read are read in the encoding its document declares, a guess the warning names")
   | .E0003 => ("0003", .dropped, "output formats do not have independent destinations; publication is refused")
   | .E0004 => ("0004", .dropped, "an artifact could not be written to its destination")
   | .E0101 => ("0101", .dropped, "lone backslash at end of input")
@@ -451,6 +453,7 @@ private def DiagCode.spec : DiagCode → String × Loss × String
   | .N0022 => ("0022", .info, "a palette role, or a mix of two named colours, is realized on one ground to meet its contrast requirement (WCAG 2.2)")
   | .W0377 => ("0377", .degraded, "a link carries no text to name its purpose (WCAG 2.2)")
   | .N0023 => ("0023", .info, "a picture is drawn by an external tool at the boundary; the engine measures its box, and its text is not in the document's census")
+  | .N0025 => ("0025", .info, "an inputenc declaration names an encoding other than UTF-8; each file it governs is listed with how it reads")
   | .W0378 => ("0378", .degraded, "a boundary picture has no checked browser face; the web page shows the rendered subset's drawing of it, or its text alternative")
   | .W0379 => ("0379", .degraded, "no boundary tool available for a picture outside the rendered subset; a placeholder box marks the picture")
   | .W0382 => ("0382", .degraded, "the boundary tool ran and drew nothing for a picture, or did not finish it; a placeholder box marks its place")
@@ -607,7 +610,10 @@ public def DiagCode.renumbered : List (String × String) :=
   [-- A picture the boundary tool drew nothing of, or did not finish: the
    -- run failed with no artifact; it ships its placeholder now, the same
    -- two events named under the same number.
-   ("E0382", "W0382")]
+   ("E0382", "W0382"),
+   -- Bytes that are not UTF-8: the run refused the file; each sequence ships
+   -- as U+FFFD now, and the warning that lists them names the same bytes.
+   ("E0002", "W0002")]
 
 /-- An artifact whose diagnostics apply only when that output is requested. -/
 public inductive Diag.Output where
@@ -671,6 +677,10 @@ public structure Diag where
   recovery : Option Diag.Recovery := none
   /-- `none` applies to every output; a scoped loss applies only to that artifact. -/
   output : Option Diag.Output := none
+  /-- Every byte offset in the span's file the diagnostic names, where it
+  names more places than its message lists: the porcelain record carries
+  them all for a tool, the message the first few for a reader. -/
+  offsets : Array Nat := #[]
   deriving Repr, BEq
 
 /-- **Is this code's loss part of the site census?** A `degraded` or
