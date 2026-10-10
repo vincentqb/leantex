@@ -1,4 +1,5 @@
 import Tests.Diag
+import Tests.Markdown
 import Tests.Layout
 import Tests.Themes
 import Tests.FontMath
@@ -160,6 +161,10 @@ def registry : List AuditRow :=
    ⟨.W0394, .keep, .degraded, check% layoutInkChecks⟩,
    ⟨.E0395, .keep, .fails, check% layoutInkChecks⟩,
    ⟨.W0396, .keep, .degraded, check% layoutInkChecks⟩,
+   -- Refused by design: E0390 drops exactly the raw HTML, the indented
+   -- line or the lazy line the reader consumed, and its check holds all
+   -- three strict classes and their fix-its.
+   ⟨.E0390, .refusal, .fails, check% mdSurfaceChecks⟩,
    ⟨.E0606, .refusal, .fails, check% htmlContainedCliChecks⟩,
    ⟨.E0607, .refusal, .fails, check% pdfBoundsChecks⟩,
    ⟨.E0003, .refusal, .fails, check% publicationPathChecks⟩,

@@ -300,12 +300,41 @@ def mdFlatten (acc : String) : List Html.Node → String
 
 end
 
+/-- A page's HTML body as the typed tree. -/
+def docNodesOf (doc : Ir.Doc) : Array Html.Node := (HtmlDoc.emitTree {} doc).2.1
+
+/-- The tags and text a document's page carries, in order, flattened as
+`mdFlatten` flattens: what a row comparing two documents' pages — or one
+document reached two ways — reads. -/
+def docTreeOf (doc : Ir.Doc) : String := mdFlatten "" (docNodesOf doc).toList
+
 /-- The tags and text a markdown source's page carries, in order: enough to
 state what shipped and where, which is what every defect below was about. -/
-def mdTreeOf (src : String) : String :=
-  let (doc, _) := elabMd src
-  let (_, body, _) := HtmlDoc.emitTree {} doc
-  mdFlatten "" body.toList
+def mdTreeOf (src : String) : String := docTreeOf (elabMd src).1
+
+/-- A page's HTML body rendered, its text escaped: what tells a hard break
+(`<br>`) from the text `<br>` (`&lt;br&gt;`), which the flattened tree spells
+alike. -/
+def docHtmlOf (doc : Ir.Doc) : String := Html.render (Html.elem "div" (docNodesOf doc)) 0
+
+/-- How many times a build writing `outs` names a markdown disclosure's lost
+collapse: the `W0392`s under `md:disclosure` the driver's projection
+(`Diag.forOutputs`) keeps. -/
+def collapseNamed (outs : Array Diag.Output) (ds : Array Diag) : Nat :=
+  ((Diag.forOutputs outs ds).filter fun d =>
+    d.kind == .W0392 && d.subject == some "md:disclosure").size
+
+/-- The sites the raw-HTML family places a construct at: inside a paragraph,
+opening a paragraph's line, as its own block, inside each container, and
+inside a heading. -/
+def mdHtmlSites : List (String × (String → String)) :=
+  [("mid-paragraph", fun s => s!"Alder {s} Birch\n"),
+   ("line start", fun s => s!"{s} Alder\n"),
+   ("own block", fun s => s!"Alder\n\n{s}\n\nBirch\n"),
+   ("quote", fun s => s!"> {s}\n"),
+   ("list item", fun s => s!"- {s}\n"),
+   ("disclosure body", fun s => s!"<details>\n<summary>Wren</summary>\n\n{s}\n\n</details>\n"),
+   ("heading", fun s => s!"# Alder {s} Birch\n")]
 
 mutual
 
@@ -1417,6 +1446,13 @@ def baselinePitches (out : Layout.Out) : Array Dim.Sp :=
   let lines := bodyLines out
   (lines.zip (lines.extract 1 lines.size)).map fun (a, b) => b.y - a.y
 
+/-- Every shipped line's position, size and text, furniture included, in
+page order: what "two documents set the same page" means to a row that
+compares them. -/
+def shippedLinesOf (fonts : Font.FontSet) (doc : Ir.Doc) :
+    Array (Dim.Sp × Dim.Sp × Dim.Sp × String) :=
+  (allLines (layoutOf fonts doc)).map fun l => (l.x, l.y, l.size, lineText l)
+
 /-- Face indices and character scalars of shipped body glyphs, in paint order. -/
 def bodyGlyphs (out : Layout.Out) : Array (Nat × Char) :=
   (bodyLines out).flatMap fun line => line.segs.flatMap fun seg => match seg with
@@ -1715,6 +1751,19 @@ def sourceTextChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet)
 
 /-- Elaboration diagnostics of a source. -/
 def dvE (src : String) : Array Diag := (elabStr src).2
+
+/-- Spans carrying more than one diagnostic, as `(code, code)` pairs with the
+count — the mechanical first cut the user asked for, needing no judgement
+about any rule: group every diagnostic by its cause site and look at the
+groups larger than one. -/
+def siteCollisions (ds : Array Diag) : Array (String × String) := Id.run do
+  let mut out : Array (String × String) := #[]
+  for d in ds do
+    for e in ds do
+      if d.span.isSome && d.span == e.span && d.code < e.code then
+        let pair := (d.code, e.code)
+        unless out.contains pair do out := out.push pair
+  return out
 
 /-- The shipped-page census of a source laid out with `fonts`: which ink
 each page carries, the artifact a claim about a branch or a label reads. -/

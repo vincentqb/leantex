@@ -2,6 +2,7 @@ module
 
 public import LeanTex.Core.Diag
 public import LeanTex.Core.Heading
+import LeanTex.Core.Loop
 import Std.Data.HashMap
 
 /-! # The markdown surface: source → md AST
@@ -17,12 +18,33 @@ table extension, which the surface AST expresses as a booktabs table. Three
 constructs are refused by design rather than silently diverging, each an
 `E0390` carrying the class as its subject:
 
-* `raw-html` — raw HTML passthrough. What keeps the injection-safety
-  argument short is that document content can never become markup; a
-  passthrough is the one carve-out that would reopen it. Comment-only
-  constructs, empty named targets, and attribute-free disclosures with a
-  plain-text summary are read into typed semantics instead. Disclosures
-  expand their content and name their lost collapse behaviour.
+* `raw-html` — raw HTML is parsed. It is never passed through, never
+  rendered by another engine, never decided per backend, and never dropped
+  in silence. A closed vocabulary lowers at read time onto md constructors
+  that already exist, so the elaborator reads it through those nodes' one
+  resolving site: a comment-only span ships nothing; a `<br>`, `<br/>` or
+  `<br />` with no attribute is a hard break; an empty `<a>` with one `name`
+  or `id` is a target; a `<details>` or `<details open>` around a one-line,
+  attribute-free, plain-text `<summary>` is a disclosure, which sets
+  expanded and names its lost collapse. Every attribute on an accepted
+  element is carried by an existing field, honoured exactly by what ships
+  (a premise pin), routed, or its element is refused. Everything else is
+  one `E0390` at its own `<`, dropping exactly the raw HTML the reader
+  consumed: an inline tag's markup, its neighbouring text still shipping, or
+  an HTML block's lines. What is proved is the inline scan's step: raw HTML
+  lowers to that vocabulary and nothing else (`htmlInlineAt_covers`), and
+  each step ships a token, raises one `E0390` at the position the scan reads
+  its `<` at, or consumes a comment that hides only itself
+  (`htmlInlineAt_accounts`). The loop around that step and the block
+  reader's raw-HTML arms are held by evidence over a generated family of
+  names, shapes and sites (`mdHtmlAccountsChecks`); their statements are
+  pending work. A spelling joins only when it says what markdown cannot, the
+  IR already resolves it, and each artifact sets it as it sets its markdown
+  spelling (`htmlTwinChecks`) — or, where markdown has none, as rows over
+  both artifacts hold it; a loss is named for each artifact that suffers it,
+  the markdown twin included, and for no other. `\markdownInput` reads
+  through the same `Md.read`, so all of this holds for markdown included in
+  tex.
 * `indented-code` — a four-space indent as a code block. Measured
   ambiguity: the same indent means continuation inside a list and code
   outside one.
@@ -33,6 +55,15 @@ Each refusal carries a fix-it in its message, and each is a *data*
 decision: the verdict rows in `testdata/commonmark/verdicts.tsv` say which
 spec cases the class touches, so flipping one is a table change plus a
 reader arm, never a redesign.
+
+Why document content can never become markup: whatever the reader makes of
+a document, raw HTML included, the surface AST it desugars to lies in the
+lowering's declared vocabulary, no formula among it
+(`desugar_vocabulary_mem`), author text crossing as words and spaces
+(`textRaws_covers`); and the HTML backend escapes every text and attribute
+it emits (`Html.escapeText_no_lt`, `Html.escapeAttr_no_quote`). The other
+half — that a link's or an image's destination cannot carry an active URL
+scheme onto the page — is pending work, held by no theorem yet.
 
 Block structure is one pass over the lines with an explicit container
 stack — `Parse.parse`'s frame shape, so totality is immediate and the
@@ -282,15 +313,14 @@ def setextAt (cs : Array Char) (i : Nat) : Option Ir.HeadingLevel := Id.run do
 -- line, and literal text such as `x <y for comparison`. So the tag grammar
 -- (§6.6) is implemented, and anything it does not accept is text.
 
+/-- The characters of `lit` at `i`, case-folded, one step of the source per
+character of the literal: its reach is the literal's length. -/
+def litAtList (cs : Array Char) (i : Nat) : List Char → Bool
+  | [] => true
+  | c :: rest => (cs[i]?.any fun d => d.toLower == c.toLower) && litAtList cs (i + 1) rest
+
 /-- Is the literal `lit` at `i`, case-folded? -/
-def litAt (cs : Array Char) (i : Nat) (lit : String) : Bool := Id.run do
-  let ls := lit.toList.toArray
-  for k in [0:ls.size] do
-    if h : k < ls.size then
-      match cs[i + k]? with
-      | none => return false
-      | some c => unless c.toLower == ls[k].toLower do return false
-  return true
+def litAt (cs : Array Char) (i : Nat) (lit : String) : Bool := litAtList cs i lit.toList
 
 /-- The index past the first occurrence of `lit` at or after `i`. -/
 def findLit (cs : Array Char) (i : Nat) (lit : String) : Option Nat := Id.run do
@@ -304,7 +334,7 @@ def findLit (cs : Array Char) (i : Nat) (lit : String) : Option Nat := Id.run do
 /-- HTML also ends a comment at `--!>`. CommonMark's raw span can extend
 past that boundary, so it cannot be discarded as invisible content.
 Inspect only the consumed span, never the rest of the paragraph. -/
-private def commentOnly (cs : Array Char) (start stop : Nat) : Bool :=
+def commentOnly (cs : Array Char) (start stop : Nat) : Bool :=
   (findLit (cs.extract start stop) 0 "--!>").isNone
 
 /-- What a raw-HTML scan over one stretch remembers: for each of the four
@@ -377,8 +407,11 @@ def attrValueAt (cs : Array Char) (i : Nat) : Option Nat := Id.run do
     | some c => if isAttrValueStop c then break else j := j + 1
   return some j
 
-/-- One attribute at `i`, its leading whitespace already consumed. -/
-def attrAt (cs : Array Char) (i : Nat) : Option Nat := Id.run do
+/-- One attribute at `i`, its leading whitespace already consumed: its name,
+lower-cased; its value as the source spells it, quotes stripped and nothing
+decoded, so a vocabulary row that carries a value decides its decoding and
+owes the check that reads it back; and the index past it. -/
+def attrAt (cs : Array Char) (i : Nat) : Option ((String × Option String) × Nat) := Id.run do
   let some c0 := cs[i]? | return none
   unless isAttrStart c0 do return none
   let mut j := i + 1
@@ -386,44 +419,75 @@ def attrAt (cs : Array Char) (i : Nat) : Option Nat := Id.run do
     match cs[j]? with
     | some c => if isAttrRest c then j := j + 1 else break
     | none => break
+  let name := (sliceStr cs i j).toLower
   -- An optional value, after optional whitespace either side of `=`.
   let k := wsAt cs j
   if cs[k]? == some '=' then
     let v := wsAt cs (k + 1)
     match attrValueAt cs v with
-    | some e => return some e
-    | none => return some j
-  return some j
+    | some e =>
+      let quoted := cs[v]? == some '"' || cs[v]? == some '\''
+      return some ((name, some (if quoted then sliceStr cs (v + 1) (e - 1) else sliceStr cs v e)), e)
+    | none => return some ((name, none), j)
+  return some ((name, none), j)
+
+/-- One tag as the §6.6 grammar reads it: the name, lower-cased; each
+attribute as `attrAt` captured it; whether it closed with `/>`; and the index
+past its `>`. The one reading every recognizer projects — the refusal
+(`htmlTagAtM`), the disclosure and anchor arms, and the vocabulary — so what
+the reader refuses and what it reads cannot drift apart. -/
+structure HtmlTag where
+  name : String
+  attrs : Array (String × Option String)
+  selfClosing : Bool
+  stop : Nat
+
+/-- An open tag at `i` (§6.6). -/
+def tagAt (cs : Array Char) (i : Nat) : Option HtmlTag := Id.run do
+  unless cs[i]? == some '<' do return none
+  let some j := tagNameAt cs (i + 1) | return none
+  let mut k := j
+  let mut attrs : Array (String × Option String) := #[]
+  for _ in [0:cs.size + 1] do
+    let w := wsAt cs k
+    if w == k then break
+    match attrAt cs w with
+    | some (a, k2) =>
+      attrs := attrs.push a
+      k := k2
+    | none => break
+  let e0 := wsAt cs k
+  let selfClosing := cs[e0]? == some '/'
+  let e := if selfClosing then e0 + 1 else e0
+  unless cs[e]? == some '>' do return none
+  return some { name := (sliceStr cs (i + 1) j).toLower, attrs, selfClosing, stop := e + 1 }
+
+/-- A closing tag at `i` (§6.6): its name, lower-cased, and the index past
+its `>`. -/
+def endTagAt (cs : Array Char) (i : Nat) : Option (String × Nat) := do
+  guard (cs[i]? == some '<' && cs[i + 1]? == some '/')
+  let j ← tagNameAt cs (i + 2)
+  let k := wsAt cs j
+  guard (cs[k]? == some '>')
+  return ((sliceStr cs (i + 2) j).toLower, k + 1)
 
 /-- A complete raw-HTML construct at `i` (§6.6): an open tag, a closing tag,
 a comment, a processing instruction, a declaration, or CDATA. The index past
 it, or `none` — and `none` means the text is text. A comment is `<!-->`,
 `<!--->`, or `<!--` … `-->` (0.31.2), so its closer is searched from the
-second character. The memo is `findLitM`'s. -/
-def htmlTagAtM (cs : Array Char) (i : Nat) (m : HtmlMemo) : Option Nat × HtmlMemo := Id.run do
-  unless cs[i]? == some '<' do return (none, m)
-  if litAt cs i "<!--" then return findLitM cs (i + 2) 0 "-->" m
-  if litAt cs i "<![CDATA[" then return findLitM cs (i + 9) 1 "]]>" m
-  if litAt cs i "<?" then return findLitM cs (i + 2) 2 "?>" m
-  if cs[i + 1]? == some '!' then
-    if ((cs[i + 2]?).map isAsciiAlpha).getD false then
-      return findLitM cs (i + 2) 3 ">" m
-    return (none, m)
-  if cs[i + 1]? == some '/' then
-    let some j := tagNameAt cs (i + 2) | return (none, m)
-    let j := wsAt cs j
-    if cs[j]? == some '>' then return (some (j + 1), m) else return (none, m)
-  let some j := tagNameAt cs (i + 1) | return (none, m)
-  let mut k := j
-  for _ in [0:cs.size + 1] do
-    let w := wsAt cs k
-    if w == k then break
-    match attrAt cs w with
-    | some k2 => k := k2
-    | none => break
-  let e0 := wsAt cs k
-  let e := if cs[e0]? == some '/' then e0 + 1 else e0
-  if cs[e]? == some '>' then return (some (e + 1), m) else return (none, m)
+second character. The memo is `findLitM`'s. The two tag arms are `tagAt`
+and `endTagAt` themselves (`htmlTagAtM_tag_exact`). -/
+def htmlTagAtM (cs : Array Char) (i : Nat) (m : HtmlMemo) : Option Nat × HtmlMemo :=
+  if cs[i]? != some '<' then (none, m)
+  else match cs[i + 1]? with
+    | some '!' =>
+      if litAt cs i "<!--" then findLitM cs (i + 2) 0 "-->" m
+      else if litAt cs i "<![CDATA[" then findLitM cs (i + 9) 1 "]]>" m
+      else if ((cs[i + 2]?).map isAsciiAlpha).getD false then findLitM cs (i + 2) 3 ">" m
+      else (none, m)
+    | some '?' => findLitM cs (i + 2) 2 "?>" m
+    | some '/' => ((endTagAt cs i).map (·.2), m)
+    | _ => ((tagAt cs i).map (·.stop), m)
 
 /-- `htmlTagAtM` with nothing remembered: a block start reads one line. -/
 def htmlTagAt (cs : Array Char) (i : Nat) : Option Nat := (htmlTagAtM cs i {}).1
@@ -431,36 +495,330 @@ def htmlTagAt (cs : Array Char) (i : Nat) : Option Nat := (htmlTagAtM cs i {}).1
 /-- An attribute-free, non-self-closing tag. The entire name must match:
 `details-extra` and an attribute that changes visibility are not this node. -/
 private def bareTagAt (cs : Array Char) (i : Nat) (name : String)
-    (closing : Bool := false) : Option Nat := do
-  guard (cs[i]? == some '<')
-  let start := if closing then i + 2 else i + 1
-  if closing then guard (cs[i + 1]? == some '/')
-  let stop ← tagNameAt cs start
-  guard ((sliceStr cs start stop).toLower == name)
-  let end_ := wsAt cs stop
-  guard (cs[end_]? == some '>')
-  return end_ + 1
+    (closing : Bool := false) : Option Nat :=
+  if closing then (endTagAt cs i).bind fun (n, stop) => if n == name then some stop else none
+  else (tagAt cs i).bind fun t =>
+    if t.name == name && t.attrs.isEmpty && !t.selfClosing then some t.stop else none
 
-/-- Only an empty target, with exactly one `name` or `id` attribute.
-The desugaring checks that the existing target semantics preserve its key. -/
-private def emptyAnchorAt (cs : Array Char) (i : Nat) : Option (String × Nat) := do
-  guard (litAt cs i "<a")
-  let start := wsAt cs (i + 2)
-  guard (start > i + 2)
-  let stop ← tagNameAt cs start
-  let name := (sliceStr cs start stop).toLower
-  guard (name == "name" || name == "id")
-  let eq := wsAt cs stop
-  guard (cs[eq]? == some '=')
-  let value := wsAt cs (eq + 1)
-  let endValue ← attrValueAt cs value
-  let quoted := cs[value]? == some '"' || cs[value]? == some '\''
-  let key := sliceStr cs (if quoted then value + 1 else value)
-    (if quoted then endValue - 1 else endValue)
-  let endTag := wsAt cs endValue
-  guard (cs[endTag]? == some '>')
-  let next ← bareTagAt cs (endTag + 1) "a" true
-  return (key, next)
+/-- The spellings of a disclosure's opening tag that the reader accepts: a
+`details`, not self-closing, with no attribute or with exactly one `open`
+whose value is absent, empty, or `open` in any case — every spelling HTML
+reads as the open state, which is the expanded state the disclosure sets. -/
+private def detailsOpen (t : HtmlTag) : Bool :=
+  t.name == "details" && !t.selfClosing &&
+    match t.attrs.toList with
+    | [] => true
+    | [(a, v)] => a == "open" && v.all fun s => s.isEmpty || s.toLower == "open"
+    | _ => false
+
+/-- The key of an empty target's open tag: an `a`, not self-closing, with
+exactly one attribute, a `name` or an `id` carrying a value. -/
+private def anchorKey? (t : HtmlTag) : Option String :=
+  if t.name == "a" && !t.selfClosing then
+    match t.attrs.toList with
+    | [(attr, some key)] => if attr == "name" || attr == "id" then some key else none
+    | _ => none
+  else none
+
+/-- A line break, as HTML spells one: `<br>`, `<br/>` or `<br />`, any case,
+with no attribute. -/
+private def isBr (t : HtmlTag) : Bool := t.name == "br" && t.attrs.isEmpty
+
+/-! Every reading above ends past where it started and inside the source, so
+a scan that resumes at a reading's stop always advances. Each scanner's
+bound is an invariant of its own loop (`Loop.forIn_range_inv`). -/
+
+theorem litAtList_reach {cs : Array Char} :
+    ∀ {i : Nat} {l : List Char}, litAtList cs i l = true → i ≤ cs.size →
+      i + l.length ≤ cs.size
+  | _, [], _, hi => by simpa using hi
+  | i, c :: rest, h, _ => by
+    simp only [litAtList, Bool.and_eq_true] at h
+    obtain ⟨hc, hr⟩ := h
+    have hlt : i < cs.size := by
+      cases hget : cs[i]? with
+      | none => simp [hget] at hc
+      | some d => exact (Array.getElem?_eq_some_iff.mp hget).1
+    have := litAtList_reach hr (by omega)
+    simp only [List.length_cons]
+    omega
+
+theorem findLit_between {cs : Array Char} {i e : Nat} {lit : String}
+    (h : findLit cs i lit = some e) : i + lit.length ≤ e ∧ e ≤ cs.size := by
+  unfold findLit at h
+  have post : ∀ (st : Option (Option Nat) × Nat),
+      (i ≤ st.2 ∧ ∀ r, st.1 = some (some r) → i + lit.length ≤ r ∧ r ≤ cs.size) →
+      st.1 = some (some e) → i + lit.length ≤ e ∧ e ≤ cs.size :=
+    fun _ hP he => hP.2 e he
+  simp only [Id.run_bind] at h
+  split at h
+  · rename_i r heq
+    simp only [Id.run, pure] at h
+    subst h
+    revert heq
+    apply post
+    refine Loop.forIn_range_inv (fun (st : Option (Option Nat) × Nat) => i ≤ st.2 ∧
+        ∀ r, st.1 = some (some r) → i + lit.length ≤ r ∧ r ≤ cs.size)
+      _ _ _ _ ⟨Nat.le_refl _, by simp⟩ ?_
+    intro _ _ _ st hst
+    split
+    · exact ⟨hst.1, fun r hr => by simp [ForInStep.value] at hr⟩
+    · split
+      · rename_i hj hl
+        refine ⟨hst.1, fun r' hr' => ?_⟩
+        simp only [Id.run_pure, ForInStep.value, Option.some.injEq] at hr'
+        subst hr'
+        have := litAtList_reach hl (by omega)
+        rw [String.length_toList] at this
+        exact ⟨by omega, this⟩
+      · exact ⟨(by omega : i ≤ st.2 + 1), fun r hr => by simp [ForInStep.value] at hr⟩
+  · simp [Id.run, pure] at h
+
+theorem findLitM_between {cs : Array Char} {i k e : Nat} {lit : String} {m m' : HtmlMemo}
+    (h : findLitM cs i k lit m = (some e, m')) : i + lit.length ≤ e ∧ e ≤ cs.size := by
+  apply findLit_between
+  unfold findLitM at h
+  cases hf : findLit cs i lit with
+  | none => simp only [hf] at h; split at h <;> (try split at h) <;> simp at h
+  | some e' => simp only [hf] at h; split at h <;> (try split at h) <;> simp_all
+
+theorem wsAt_between (cs : Array Char) (i : Nat) :
+    i ≤ wsAt cs i ∧ wsAt cs i ≤ max i cs.size := by
+  unfold wsAt
+  simp only [Id.run_bind]
+  refine Loop.forIn_range_inv (fun j => i ≤ j ∧ j ≤ max i cs.size) _ _ _ _
+    ⟨Nat.le_refl _, Nat.le_max_left _ _⟩ ?_
+  intro _ _ _ j hj
+  split
+  · rename_i c hc
+    have : j < cs.size := (Array.getElem?_eq_some_iff.mp hc).1
+    split
+    · exact ⟨(by omega : i ≤ j + 1), (by omega : j + 1 ≤ max i cs.size)⟩
+    · exact hj
+  · exact hj
+
+theorem tagNameAt_between {cs : Array Char} {i j : Nat} (h : tagNameAt cs i = some j) :
+    i < j ∧ j ≤ cs.size := by
+  unfold tagNameAt at h
+  split at h
+  · rename_i c0 hc0
+    have hi : i < cs.size := (Array.getElem?_eq_some_iff.mp hc0).1
+    split at h
+    · simp only [Id.run_bind] at h
+      cases h
+      have weaken : ∀ x, i + 1 ≤ x ∧ x ≤ cs.size → i < x ∧ x ≤ cs.size :=
+        fun x hx => ⟨by omega, hx.2⟩
+      apply weaken
+      refine Loop.forIn_range_inv (fun j => i + 1 ≤ j ∧ j ≤ cs.size) _ _ _ _
+        ⟨Nat.le_refl _, hi⟩ ?_
+      intro _ _ _ b hb
+      split
+      · rename_i c hc
+        have : b < cs.size := (Array.getElem?_eq_some_iff.mp hc).1
+        split
+        · exact ⟨(by omega : i + 1 ≤ b + 1), (by omega : b + 1 ≤ cs.size)⟩
+        · exact hb
+      · exact hb
+    · simp at h
+  · simp at h
+
+theorem attrValueAt_between {cs : Array Char} {i e : Nat} (h : attrValueAt cs i = some e) :
+    i ≤ e ∧ e ≤ cs.size := by
+  unfold attrValueAt at h
+  split at h
+  · rename_i c0 hc0
+    have hi : i < cs.size := (Array.getElem?_eq_some_iff.mp hc0).1
+    split at h
+    · simp only [Id.run_bind] at h
+      generalize hst : (forIn (m := Id) [0:cs.size + 1]
+        ((none : Option (Option Nat)), i + 1) _).run = st at h
+      have hP : i + 1 ≤ st.2 ∧ ∀ r, st.1 = some (some r) → i ≤ r ∧ r ≤ cs.size := by
+        rw [← hst]
+        refine Loop.forIn_range_inv (fun (st : Option (Option Nat) × Nat) => i + 1 ≤ st.2 ∧
+          ∀ r, st.1 = some (some r) → i ≤ r ∧ r ≤ cs.size) _ _ _ _ ⟨Nat.le_refl _, by simp⟩ ?_
+        intro _ _ _ st hst
+        split
+        · exact ⟨hst.1, fun r hr => by simp [ForInStep.value] at hr⟩
+        · rename_i c hc
+          have : st.2 < cs.size := (Array.getElem?_eq_some_iff.mp hc).1
+          split
+          · refine ⟨hst.1, fun r hr => ?_⟩
+            simp only [Id.run_pure, ForInStep.value, Option.some.injEq] at hr
+            exact ⟨by omega, by omega⟩
+          · exact ⟨(by omega : i + 1 ≤ st.2 + 1), fun r hr => by simp [ForInStep.value] at hr⟩
+      split at h
+      · rename_i r heq
+        simp only [Id.run_pure] at h
+        subst h
+        exact hP.2 e heq
+      · simp at h
+    · split at h
+      · simp at h
+      · simp only [Id.run_bind] at h
+        generalize hj : (forIn (m := Id) [0:cs.size + 1] i _).run = j at h
+        have hP : i ≤ j ∧ j ≤ cs.size := by
+          rw [← hj]
+          refine Loop.forIn_range_inv (fun j => i ≤ j ∧ j ≤ cs.size) _ _ _ _
+            ⟨Nat.le_refl _, Nat.le_of_lt hi⟩ ?_
+          intro _ _ _ b hb
+          split
+          · exact hb
+          · rename_i c hc
+            have : b < cs.size := (Array.getElem?_eq_some_iff.mp hc).1
+            split
+            · exact hb
+            · exact ⟨(by omega : i ≤ b + 1), (by omega : b + 1 ≤ cs.size)⟩
+        simp only [Id.run_pure, Option.some.injEq] at h
+        subst h
+        exact hP
+  · simp at h
+
+theorem attrAt_between {cs : Array Char} {i e : Nat} {a : String × Option String}
+    (h : attrAt cs i = some (a, e)) : i < e ∧ e ≤ cs.size := by
+  unfold attrAt at h
+  split at h
+  · rename_i c0 hc0
+    have hi : i < cs.size := (Array.getElem?_eq_some_iff.mp hc0).1
+    split at h
+    · simp only [Id.run_bind] at h
+      generalize hj : (forIn (m := Id) [0:cs.size + 1] (i + 1) _).run = j at h
+      have hP : i + 1 ≤ j ∧ j ≤ cs.size := by
+        rw [← hj]
+        refine Loop.forIn_range_inv (fun j => i + 1 ≤ j ∧ j ≤ cs.size) _ _ _ _
+          ⟨Nat.le_refl _, hi⟩ ?_
+        intro _ _ _ b hb
+        split
+        · rename_i c hc
+          have : b < cs.size := (Array.getElem?_eq_some_iff.mp hc).1
+          split
+          · exact ⟨(by omega : i + 1 ≤ b + 1), (by omega : b + 1 ≤ cs.size)⟩
+          · exact hb
+        · exact hb
+      split at h
+      · split at h
+        · rename_i e' he'
+          simp only [Id.run_pure, Option.some.injEq, Prod.mk.injEq] at h
+          obtain ⟨_, rfl⟩ := h
+          have hv := attrValueAt_between he'
+          have hk := wsAt_between cs j
+          have hv0 := wsAt_between cs (wsAt cs j + 1)
+          exact ⟨by omega, hv.2⟩
+        · simp only [Id.run_pure, Option.some.injEq, Prod.mk.injEq] at h
+          obtain ⟨_, rfl⟩ := h
+          exact ⟨by omega, hP.2⟩
+      · simp only [Id.run_pure, Option.some.injEq, Prod.mk.injEq] at h
+        obtain ⟨_, rfl⟩ := h
+        exact ⟨by omega, hP.2⟩
+    · simp at h
+  · simp at h
+
+theorem tagAt_between {cs : Array Char} {i : Nat} {t : HtmlTag} (h : tagAt cs i = some t) :
+    i < t.stop ∧ t.stop ≤ cs.size := by
+  unfold tagAt at h
+  split at h
+  · split at h
+    · rename_i j hj
+      have hjb := tagNameAt_between hj
+      simp only [Id.run_bind] at h
+      generalize hst : (forIn (m := Id) [0:cs.size + 1]
+        (j, (#[] : Array (String × Option String))) _).run = st at h
+      have hP : j ≤ st.1 := by
+        rw [← hst]
+        refine Loop.forIn_range_inv (fun (st : Nat × Array (String × Option String)) => j ≤ st.1)
+          _ _ _ _ (Nat.le_refl _) ?_
+        intro _ _ _ st hst
+        split
+        · exact hst
+        · split
+          · rename_i a k2 hk2
+            have := attrAt_between hk2
+            have := wsAt_between cs st.1
+            exact (by omega : j ≤ k2)
+          · exact hst
+      have he0 := wsAt_between cs st.1
+      split at h
+      all_goals
+        split at h
+        · rename_i hgt
+          have := (Array.getElem?_eq_some_iff.mp (beq_iff_eq.mp hgt)).1
+          simp only [Id.run_pure, Option.some.injEq] at h
+          subst h
+          dsimp only
+          omega
+        · simp at h
+    · simp at h
+  · simp at h
+
+theorem endTagAt_between {cs : Array Char} {i : Nat} {n : String} {stop : Nat}
+    (h : endTagAt cs i = some (n, stop)) : i < stop ∧ stop ≤ cs.size := by
+  unfold endTagAt at h
+  cases hj : tagNameAt cs (i + 2) with
+  | none => simp [hj] at h
+  | some j =>
+    have hjb := tagNameAt_between hj
+    have hk := wsAt_between cs j
+    simp only [hj] at h
+    by_cases hc : cs[i]? = some '<' ∧ cs[i + 1]? = some '/'
+    · by_cases hg : cs[wsAt cs j]? = some '>'
+      · simp [guard, hc, hg] at h
+        obtain ⟨_, rfl⟩ := h
+        have := (Array.getElem?_eq_some_iff.mp hg).1
+        omega
+      · simp [guard, hc, hg, failure] at h
+    · simp [guard, hc, failure] at h
+
+theorem htmlTagAtM_between {cs : Array Char} {i next : Nat} {m m' : HtmlMemo}
+    (h : htmlTagAtM cs i m = (some next, m')) : i < next ∧ next ≤ cs.size := by
+  unfold htmlTagAtM at h
+  split at h
+  · simp at h
+  · split at h
+    · split at h
+      · have := findLitM_between h
+        have hl : "-->".length = 3 := rfl
+        omega
+      · split at h
+        · have := findLitM_between h
+          have hl : "]]>".length = 3 := rfl
+          omega
+        · split at h
+          · have := findLitM_between h
+            have hl : ">".length = 1 := rfl
+            omega
+          · simp at h
+    · have := findLitM_between h
+      have hl : "?>".length = 2 := rfl
+      omega
+    · simp only [Prod.mk.injEq] at h
+      cases he : endTagAt cs i with
+      | none => simp [he] at h
+      | some r =>
+        obtain ⟨n, stop⟩ := r
+        simp [he] at h
+        obtain ⟨rfl, _⟩ := h
+        exact endTagAt_between he
+    · simp only [Prod.mk.injEq] at h
+      cases ht : tagAt cs i with
+      | none => simp [ht] at h
+      | some t =>
+        simp [ht] at h
+        obtain ⟨rfl, _⟩ := h
+        exact tagAt_between ht
+
+theorem htmlTagAtM_tag_exact {cs : Array Char} {i : Nat} {m : HtmlMemo}
+    (h : cs[i]? = some '<') (hb : cs[i + 1]? ≠ some '!') (hq : cs[i + 1]? ≠ some '?') :
+    (htmlTagAtM cs i m).1 =
+      if cs[i + 1]? = some '/' then (endTagAt cs i).map (·.2) else (tagAt cs i).map (·.stop) := by
+  unfold htmlTagAtM
+  simp only [h, bne_self_eq_false, Bool.false_eq_true, ↓reduceIte]
+  split
+  · rename_i heq; exact absurd heq hb
+  · rename_i heq; exact absurd heq hq
+  · rename_i heq; simp [heq]
+  · rename_i _ _ hs
+    split
+    · rename_i hc; exact absurd hc hs
+    · rfl
 
 /-- The tag names §4.6 condition 1 names: their block runs to a closing tag,
 not to a blank line. -/
@@ -488,6 +846,14 @@ private def namedTagAt (cs : Array Char) (i : Nat) (names : List String) : Bool 
       (match cs[j]? with
        | none => true
        | some c => isMdSpace c || c == '>' || (c == '/' && cs[j + 1]? == some '>'))
+
+/-- Does an HTML block of §4.6's sixth condition open at `i` with the tag
+`name`: `<name` or `</name`, the name followed by a space, a tab, `>`, `/>`
+or the line's end? The test `htmlBlockKind` refuses such a line by, read
+where a construct accounts for that refusal, so the two cannot drift. -/
+def blockTagStartsAt (cs : Array Char) (i : Nat) (name : String) : Bool :=
+  cs[i]? == some '<' &&
+    (namedTagAt cs (i + 1) [name] || (cs[i + 1]? == some '/' && namedTagAt cs (i + 2) [name]))
 
 /-- How an HTML block ends (§4.6): at the first line holding one of these
 literals, compared case-folded (conditions 1–5), or at a blank line, which
@@ -927,7 +1293,7 @@ def Strict.message : Strict → String
   | .lazyContinuation => "a lazy continuation line is refused: a paragraph line inside a container repeats the container's marker"
 
 def Strict.fixit : Strict → String
-  | .rawHtml => "quote the text as a code span with `...`, or delete the tag"
+  | .rawHtml => "write it in markdown (**bold**, *emphasis*, [text](url), ![alt](src)), quote it as a code span with `...`, or delete the tags"
   | .indentedCode => "fence the block with ``` instead"
   | .lazyContinuation => "indent the line to its container's content column, or repeat a quote's '>'"
 
@@ -936,6 +1302,143 @@ line with a site count (`Diag.tallySites`), so a document with fifty raw
 tags reports one error naming fifty sites. -/
 def refuse (file : String) (s : Strict) (pos : Pos) : Diag :=
   Diag.of .E0390 s.message (some ⟨file, pos⟩) (some s.fixit) (some s.subject)
+
+/-- What an open tag the inline scan read lowers to, from that one reading:
+a bare break (`isBr`) is a hard break; an empty target — the open tag
+`anchorKey?` reads a key from, with its `</a>` straight after — is a target,
+whose key the desugaring checks the existing target semantics preserve; any
+other open tag ships nothing and is refused at its own `<`. -/
+private def openTagInline (file : String) (cs : Array Char) (p : Pos) (t : HtmlTag) :
+    Nat × Option ITok × Option Diag :=
+  let refused := (t.stop, none, some (refuse file .rawHtml p))
+  if isBr t then (t.stop, some (.hard p), none)
+  else match anchorKey? t with
+    | none => refused
+    | some key =>
+      match endTagAt cs t.stop with
+      | some (n, next) => if n == "a" then (next, some (.anchor key p), none) else refused
+      | none => refused
+
+/-- The three things an open tag can become, and where its reading stops. -/
+private theorem openTagInline_cases {file : String} {cs : Array Char} {p : Pos} {t : HtmlTag}
+    {next : Nat} {tok : Option ITok} {d : Option Diag}
+    (h : openTagInline file cs p t = (next, tok, d)) :
+    (next = t.stop ∧ tok = some (.hard p) ∧ d = none) ∨
+      (∃ key, endTagAt cs t.stop = some ("a", next) ∧ tok = some (.anchor key p) ∧ d = none) ∨
+      (next = t.stop ∧ tok = none ∧ d = some (refuse file .rawHtml p)) := by
+  unfold openTagInline at h
+  simp only [] at h
+  split at h
+  · simp only [Prod.mk.injEq] at h
+    exact Or.inl ⟨h.1.symm, h.2.1.symm, h.2.2.symm⟩
+  · split at h
+    · simp only [Prod.mk.injEq] at h
+      exact Or.inr (Or.inr ⟨h.1.symm, h.2.1.symm, h.2.2.symm⟩)
+    · rename_i key _
+      split at h
+      · rename_i n next' he
+        split at h
+        · rename_i hn
+          simp only [Prod.mk.injEq] at h
+          obtain ⟨rfl, rfl, rfl⟩ := h
+          exact Or.inr (Or.inl ⟨key, by rw [he, beq_iff_eq.mp hn], rfl, rfl⟩)
+        · simp only [Prod.mk.injEq] at h
+          exact Or.inr (Or.inr ⟨h.1.symm, h.2.1.symm, h.2.2.symm⟩)
+      · simp only [Prod.mk.injEq] at h
+        exact Or.inr (Or.inr ⟨h.1.symm, h.2.1.symm, h.2.2.symm⟩)
+
+/-- Raw HTML at `i` inside an inline stretch, after the autolink reading
+failed: the index past what the reader consumed, the token it lowers to,
+and the refusal it raises — or `none`, and the `<` is text. The construct
+is read once: an open tag is `tagAt`'s reading, projected by
+`openTagInline`; a closing tag, a comment, a processing instruction, a
+declaration or CDATA is `htmlTagAtM`'s. A comment-only span ships nothing
+and raises nothing; any other construct the vocabulary does not read ships
+nothing and is refused at its own `<` (`htmlInlineAt_accounts`); what
+lowers is exactly the vocabulary `htmlInlineAt_covers` lists. -/
+def htmlInlineAt (file : String) (cs : Array Char) (i : Nat) (p : Pos) (m : HtmlMemo) :
+    Option (Nat × Option ITok × Option Diag) × HtmlMemo :=
+  if cs[i + 1]? == some '!' || cs[i + 1]? == some '?' || cs[i + 1]? == some '/' then
+    match htmlTagAtM cs i m with
+    | (some next, m') =>
+      -- premise: mdSurfaceChecks — comments hide only their own text.
+      if litAt cs i "<!--" && commentOnly cs i next then (some (next, none, none), m')
+      else (some (next, none, some (refuse file .rawHtml p)), m')
+    | (none, m') => (none, m')
+  else ((tagAt cs i).map (openTagInline file cs p), m)
+
+/-- **Every raw construct the inline scan consumes is accounted for.** The
+reading advances and stays inside the stretch, and then exactly one of: a
+token ships and nothing is raised; nothing ships and one `E0390` names the raw
+HTML at `p`, the position the scan reads its `<` at; or nothing ships,
+nothing is raised, and the span was a comment that hides only itself. The
+third outcome is still the `_accounts` shape, not an unpaid empty result:
+`commentOnly` makes the span exactly one HTML comment — no `--!>` closes it
+early — and HTML itself shows a comment as nothing, so the empty result is
+what the source means, with no lost content to pay for. This is one step of
+the scan; the loop that resumes past each step, and the block reader's
+raw-HTML arms, hold no statement yet. -/
+theorem htmlInlineAt_accounts {file : String} {cs : Array Char} {i next : Nat} {p : Pos}
+    {m m' : HtmlMemo} {tok : Option ITok} {d : Option Diag}
+    (h : htmlInlineAt file cs i p m = (some (next, tok, d), m')) :
+    i < next ∧ next ≤ cs.size ∧
+      ((tok.isSome ∧ d = none) ∨
+        (tok = none ∧ ∃ g, d = some g ∧ g.kind = .E0390 ∧ g.subject = some "md:raw-html" ∧
+          g.span = some ⟨file, p⟩) ∨
+        (tok = none ∧ d = none ∧ litAt cs i "<!--" = true ∧ commentOnly cs i next = true)) := by
+  have refused_named : ∀ {g : Diag}, g = refuse file .rawHtml p →
+      g.kind = .E0390 ∧ g.subject = some "md:raw-html" ∧ g.span = some ⟨file, p⟩ := by
+    intro g hg
+    rw [hg, refuse, Diag.of_record_exact]
+    exact ⟨rfl, rfl, rfl⟩
+  unfold htmlInlineAt at h
+  split at h
+  · split at h
+    · rename_i n m'' htag
+      have hb := htmlTagAtM_between htag
+      split at h
+      · rename_i hc
+        simp only [Prod.mk.injEq, Option.some.injEq] at h
+        obtain ⟨⟨rfl, rfl, rfl⟩, rfl⟩ := h
+        simp only [Bool.and_eq_true] at hc
+        exact ⟨hb.1, hb.2, Or.inr (Or.inr ⟨rfl, rfl, hc.1, hc.2⟩)⟩
+      · simp only [Prod.mk.injEq, Option.some.injEq] at h
+        obtain ⟨⟨rfl, rfl, rfl⟩, rfl⟩ := h
+        exact ⟨hb.1, hb.2, Or.inr (Or.inl ⟨rfl, _, rfl, refused_named rfl⟩)⟩
+    · simp at h
+  · cases ht : tagAt cs i with
+    | none => simp [ht] at h
+    | some t =>
+      have htb := tagAt_between ht
+      simp only [ht, Option.map_some, Prod.mk.injEq, Option.some.injEq] at h
+      rcases openTagInline_cases h.1 with ⟨rfl, rfl, rfl⟩ | ⟨key, he, rfl, rfl⟩ | ⟨rfl, rfl, rfl⟩
+      · exact ⟨htb.1, htb.2, Or.inl ⟨rfl, rfl⟩⟩
+      · have heb := endTagAt_between he
+        exact ⟨by omega, heb.2, Or.inl ⟨rfl, rfl⟩⟩
+      · exact ⟨htb.1, htb.2, Or.inr (Or.inl ⟨rfl, _, rfl, refused_named rfl⟩)⟩
+
+/-- What the inline scan lowers raw HTML to: exactly this vocabulary, each
+token an md node that already exists, so the elaborator reads it through
+that node's one resolving site. That each spelling then ships what its
+markdown twin ships, in both artifacts, is `htmlTwinChecks`' evidence, not
+this theorem's. -/
+theorem htmlInlineAt_covers {file : String} {cs : Array Char} {i next : Nat} {p : Pos}
+    {m m' : HtmlMemo} {tok : ITok} {d : Option Diag}
+    (h : htmlInlineAt file cs i p m = (some (next, some tok, d), m')) :
+    tok = .hard p ∨ ∃ key, tok = .anchor key p := by
+  unfold htmlInlineAt at h
+  split at h
+  · split at h
+    · split at h <;> simp at h
+    · simp at h
+  · cases ht : tagAt cs i with
+    | none => simp [ht] at h
+    | some t =>
+      simp only [ht, Option.map_some, Prod.mk.injEq, Option.some.injEq] at h
+      rcases openTagInline_cases h.1 with ⟨_, h2, _⟩ | ⟨key, _, h2, _⟩ | ⟨_, h2, _⟩
+      · exact Or.inl (Option.some.inj h2)
+      · exact Or.inr ⟨key, Option.some.inj h2⟩
+      · simp at h2
 
 /-- The scan: characters to a flat token array, with brackets resolved
 against a stack as they close and the refusals raised where they are seen. -/
@@ -1004,25 +1507,24 @@ def scanInlines (file : String) (c : Chars) :
           toks := toks.push (.auto dest text p)
           i := next
         | none =>
-          if let some (key, next) := emptyAnchorAt c.cs i then
-            toks := flush toks pending pendingPos
-            pending := ""
-            toks := toks.push (.anchor key p)
+          -- Only a complete tag (§6.6) is raw HTML; anything else is
+          -- literal text. Pending text is flushed only when a token ships,
+          -- so a refused tag or a comment joins the text either side of it.
+          let (r, m) := htmlInlineAt file c.cs i p hmemo
+          hmemo := m
+          match r with
+          | some (next, tok, d) =>
+            if let some tk := tok then
+              -- A break ends its line: the text before it sheds its trailing
+              -- spaces, as the text before a two-space break does.
+              toks := flush toks (if tk matches .hard _ then rstrip pending else pending) pendingPos
+              pending := ""
+              toks := toks.push tk
+            if let some dg := d then diags := diags.push dg
             i := next
-          else
-            -- Only a complete tag (§6.6) is raw HTML; anything else is
-            -- literal text. A complete comment has no visible content.
-            let (tag, m) := htmlTagAtM c.cs i hmemo
-            hmemo := m
-            match tag with
-            | some next =>
-              -- premise: mdSurfaceChecks — comments hide only their own text.
-              unless litAt c.cs i "<!--" && commentOnly c.cs i next do
-                diags := diags.push (refuse file .rawHtml p)
-              i := next
-            | none =>
-              pending := pending.push '<'
-              i := i + 1
+          | none =>
+            pending := pending.push '<'
+            i := i + 1
       else if ch == '\n' then
         -- Two or more trailing spaces before the break make it hard.
         let hard := pending.endsWith "  "
@@ -1527,6 +2029,9 @@ private structure Frame where
   items : Array (Array Blk) := #[]
   tight : Bool := true
   summary : Option (Array Inl) := none
+  /-- A disclosure whose summary line the reader refused: that refusal, at
+  the summary's own `<`, is the construct's one accounting. -/
+  refused : Bool := false
 
 private instance : Inhabited Frame := ⟨{ kind := .quote, pos := {} }⟩
 
@@ -1550,6 +2055,40 @@ private def closeTop (frames : Array Frame) (acc : Array Blk) : Array Frame × A
         (rest.modify (rest.size - 1) (fun lf => { lf with items := lf.items.push acc }), f.outer)
       | _ => (rest, f.outer ++ acc)
     | .list ord st _ => (rest, f.outer.push (.list ord st f.tight f.items f.pos) ++ acc)
+
+/-- Close a disclosure frame the reader refuses: the summary, when one was
+read, ships as a paragraph, then the body, into the accumulator outside it.
+No `Blk.disclosure` is built, so nothing downstream names a collapse the
+reader never accepted: the refusal at its `<` — or at its summary's, when
+the reader refused that line as raw HTML and dropped it — is the construct's
+one accounting, and every other word it held still ships, once, in source
+order. -/
+private def closeRefusedDisclosure (frames : Array Frame) (acc : Array Blk) :
+    Array Frame × Array Blk :=
+  match frames.back? with
+  | none => (frames, acc)
+  | some f =>
+    let outer := match f.summary with
+      | some s => f.outer.push (.para s f.pos)
+      | none => f.outer
+    (frames.pop, outer ++ acc)
+
+/-- Close the innermost frame where its own closer never came — its
+container ended, or the input did. A disclosure is refused there, once, with
+`closeRefusedDisclosure` — unless its summary's refusal already accounted
+for it; any other frame closes as `closeTop` closes it. -/
+private def closeUnclosed (file : String) (frames : Array Frame) (acc : Array Blk) :
+    Array Frame × Array Blk × Option Diag :=
+  match frames.back? with
+  | some f =>
+    if f.kind == .disclosure then
+      let (fs, a) := closeRefusedDisclosure frames acc
+      -- premise: refusedDisclosureChecks — an unclosed disclosure whose summary was refused raises that one E0390 and no second where its container ends
+      (fs, a, if f.refused then none else some (refuse file .rawHtml f.pos))
+    else
+      let (fs, a) := closeTop frames acc
+      (fs, a, none)
+  | none => (frames, acc, none)
 
 /-- Close every list frame that is innermost. A list frame lives only as long
 as its items: a line that opens no item inside it — a thematic break, a
@@ -1772,12 +2311,10 @@ public def blocks (file : String) (input : String) : Array Blk × Array Diag := 
       leaf := .none
       for _ in [0:frames.size] do
         if frames.size > matched then
-          if let some f := frames.back? then
-            if f.kind == .disclosure then
-              diags := diags.push (refuse file .rawHtml f.pos)
-          let (fs, a) := closeTop frames acc
+          let (fs, a, d) := closeUnclosed file frames acc
           frames := fs
           acc := a
+          if let some d := d then diags := diags.push d
     if blank then
       let (a, ds) := closePara leaf acc lpos
       acc := a
@@ -1938,13 +2475,19 @@ public def blocks (file : String) (input : String) : Array Blk × Array Diag := 
     let htmlStart : Option HtmlEnd :=
       (htmlBlockKind cs j).bind fun (e, interrupts) =>
         if leaf.isPara && !interrupts then Option.none else some e
-    let opensDetails := (bareTagAt cs j "details").any (isBlankFrom cs ·)
+    -- premise: htmlTwinChecks — the expanded disclosure is the open state, and one W0392 per artifact that can collapse it names the loss for both spellings
+    let opensDetails := ((tagAt cs j).filter detailsOpen).any (isBlankFrom cs ·.stop)
     let closesDetails := (bareTagAt cs j "details" true).any (isBlankFrom cs ·)
     let inDetails := frames.back?.map Frame.kind == some .disclosure
-    let summary :=
-      if inDetails && !leaf.isPara && acc.isEmpty
-          && (frames.back?.bind Frame.summary).isNone then summaryAt cs j lpos
-      else none
+    let summaryLine := inDetails && !leaf.isPara && acc.isEmpty
+      && (frames.back?.bind Frame.summary).isNone && !(frames.back?.any (·.refused))
+    let summary := if summaryLine then summaryAt cs j lpos else none
+    -- A summary line the reader cannot read is raw HTML, refused below at its
+    -- own `<` as an HTML block, by the block test itself: that refusal
+    -- accounts for its disclosure, its tag on one line or several.
+    -- premise: refusedDisclosureChecks — each refused summary, its tag on one line or spread over two, raises one E0390, at the summary, and its disclosure's body ships
+    if summaryLine && summary.isNone && ind < 4 && blockTagStartsAt cs j "summary" then
+      frames := frames.modify (frames.size - 1) fun f => { f with refused := true }
     if ind ≥ 4 && !leaf.isPara then
       diags := diags.push (refuse file .indentedCode lpos)
     else if ind ≥ 4 && leaf.isPara then
@@ -1965,9 +2508,11 @@ public def blocks (file : String) (input : String) : Array Blk × Array Diag := 
       let (a, ds) := closePara leaf acc lpos
       diags := diags ++ ds
       leaf := .none
+      let summaryless := frames.back?.any (·.summary.isNone)
       if let some f := frames.back? then
-        if f.summary.isNone then diags := diags.push (refuse file .rawHtml f.pos)
-      let (fs, a) := closeTop frames a
+        -- premise: refusedDisclosureChecks — a disclosure whose summary was refused raises that one E0390 and no second at its close
+        if summaryless && !f.refused then diags := diags.push (refuse file .rawHtml f.pos)
+      let (fs, a) := (if summaryless then closeRefusedDisclosure else closeTop) frames a
       frames := fs
       acc := a
     else if let some ss := summary then
@@ -2064,11 +2609,10 @@ public def blocks (file : String) (input : String) : Array Blk × Array Diag := 
   | .comment _ => pure ()
   | .none => pure ()
   for _ in [0:frames.size] do
-    if let some f := frames.back? then
-      if f.kind == .disclosure then diags := diags.push (refuse file .rawHtml f.pos)
-    let (fs, a) := closeTop frames acc
+    let (fs, a, d) := closeUnclosed file frames acc
     frames := fs
     acc := a
+    if let some d := d then diags := diags.push d
   return (acc, diags)
 
 end LeanTex.Core.Md

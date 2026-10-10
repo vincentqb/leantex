@@ -6,6 +6,7 @@ public import LeanTex.Core.Ir
 public import LeanTex.Core.Font
 import LeanTex.Core.Elab
 import LeanTex.Cli.FontEnv
+public import LeanTex.Cli.Args
 import all LeanTex.Cli.Driver
 
 /-! Test access to the driver's captured-image preparation and its settle
@@ -18,6 +19,10 @@ open LeanTex.Core
 
 public def imageBrowserFaces (imgs : Image.Store) : IO Image.Store :=
   LeanTex.Cli.Driver.imageBrowserFaces imgs
+
+/-- The artifacts a run writing `emit` reports scoped diagnostics for. -/
+public def diagnosticOutputs (emit : Array LeanTex.Cli.Emit) : Array Diag.Output :=
+  LeanTex.Cli.Driver.diagnosticOutputs emit
 
 public def picsToSvg (pics : Array (String × ByteArray)) (imgs : Image.Store)
     (imageSpans : Array (String × Span) := #[]) :

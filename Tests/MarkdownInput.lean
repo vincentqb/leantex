@@ -2,6 +2,7 @@ module
 
 public import Tests.Markdown
 public import Tests.Artifact
+public import Tests.DriverAssets
 
 public section
 
@@ -221,5 +222,91 @@ def markdownInputChecks (ref : IO.Ref (List String)) : IO Unit := do
       (dvDoc "\\usepackage[smartEllipses]{markdown}\n" "\\markdownInput{fragment.md}")
     t "markdown input: package options do not silently configure another dialect"
       (packageDs.any (·.kind == .W0110))
+
+/-- The lines a written PDF sets, each its runs' text at one baseline, in
+page order: what the file itself states, read back. -/
+def pdfLineTexts (pdf : ByteArray) : Array String :=
+  match readArtifact pdf with
+  | .error _ => #[]
+  | .ok pages => pages.flatMap fun page => Id.run do
+    let mut lines : Array (Dim.Sp × String) := #[]
+    for run in page.runs do
+      match lines.findIdx? (·.1 == run.y) with
+      | some k => lines := lines.modify k fun (y, s) => (y, s ++ run.text)
+      | none => lines := lines.push (run.y, run.text)
+    return lines.map (·.2)
+
+/-- **Markdown included in tex reads its HTML as the markdown read alone
+does.** `\markdownInput` reads through the same `Md.read`, so a note's
+carried break and its refused tags reach the host's two artifacts exactly as
+they reach the note's own: the same lines in the PDF the host writes and in
+the note's, the same typed HTML, and each refusal at the note's own line. -/
+def markdownInputHtmlChecks (ref : IO.Ref (List String)) : IO Unit := do
+  let t := check ref
+  let some bytes ← findFont | failures ref "markdown input HTML: missing fixture font"
+  let .ok font := Font.parse bytes | failures ref "markdown input HTML: invalid fixture font"
+  let fonts := oneFaceOf font
+  IO.FS.withTempDir fun dir => do
+    let note := "Alder<br>Birch\n\nH<sub>2</sub>O\n"
+    IO.FS.writeFile (dir / "note.md") note
+    let (host, hostDs) ← elabInputSrc (dir / "host.tex").toString
+      (dvDoc "\\usepackage{markdown}\n" "\\markdownInput{note.md}")
+    let (alone, aloneDs) := elabMd note
+    let pdf (doc : Ir.Doc) : Array String :=
+      pdfLineTexts (driverPdf fonts (Layout.Geom.ofPage doc.page) doc (layoutOf fonts doc))
+    let html := docTreeOf
+    t "markdown input: the PDF sets the note's break as the note alone does"
+      (pdf host == pdf alone && (pdf host).extract 0 3 == #["Alder", "Birch", "H2O"])
+    t "markdown input: the typed HTML carries the note's break as the note alone does"
+      (hasStr (html host) "<p>Alder<br>Birch</p><p>H2O</p>"
+        && hasStr (html alone) "<p>Alder<br>Birch</p><p>H2O</p>")
+    let refusals (ds : Array Diag) : Array (Nat × Nat) :=
+      (ds.filter fun d => d.kind == .E0390 && d.subject == some "md:raw-html").map fun d =>
+        ((d.span.map (·.pos.line)).getD 0, (d.span.map (·.pos.col)).getD 0)
+    t "markdown input: each refusal names the note's own line and column"
+      (refusals hostDs == #[(3, 2), (3, 8)] && refusals hostDs == refusals aloneDs
+        && (hostDs.filter (·.kind == .E0390)).all fun d =>
+          d.span.any (·.file == (dir / "note.md").toString))
+
+/-- **A disclosure's lost collapse is named for each artifact that loses it,
+and for no other.** The HTML page and the markdown twin can each spell the
+collapse — a `<details>` element, and the tag the twin's own reader reads —
+and neither does: the page holds no `<details>` and the twin writes none.
+Paper has no collapse to lose, and the PDF sets the disclosure exactly as
+its bold-summary twin sets, every summary and body word in order. So the
+loss is kept for exactly the HTML and the twin, in a markdown document and
+in markdown a tex host includes, and the driver reports for each artifact
+it writes, the twin included: an `-o x.md` build once named nothing, while
+its twin had lost the collapse too. -/
+def disclosurePrintChecks (ref : IO.Ref (List String)) : IO Unit := do
+  let t := check ref
+  let some fonts ← serifFacesSet
+    | t "the disclosure print faces load" false
+      return
+  let body := "\n<summary>Amber</summary>\n\nCedar\n\n</details>\n"
+  let namedRight (ds : Array Diag) : Bool :=
+    collapseNamed #[.pdf] ds == 0 && collapseNamed #[.html] ds == 1
+      && collapseNamed #[.md] ds == 1 && collapseNamed #[.pdf, .html] ds == 1
+      && collapseNamed #[.pdf, .md] ds == 1 && collapseNamed #[.html, .md] ds == 2
+  for opener in ["<details>", "<details open>"] do
+    let (doc, ds) := elabMd (opener ++ body)
+    t s!"{opener}: the page sets the disclosure as its bold-summary twin sets"
+      (shippedLinesOf fonts doc == shippedLinesOf fonts (elabMd "**Amber**\n\nCedar\n").1)
+    t s!"{opener}: neither the HTML page nor the markdown twin carries the collapse"
+      ((elemNodesList (· == "details") #[] (docNodesOf doc).toList).isEmpty
+        && !hasStr (MarkdownDoc.emit doc).toLower "<details")
+    t s!"{opener}: the lost collapse is named once for the HTML and once for the twin"
+      (namedRight ds)
+  t "the driver reports for each artifact it writes, the markdown twin included"
+    (DriverAssets.diagnosticOutputs #[.pdf] == #[.pdf]
+      && DriverAssets.diagnosticOutputs #[.html] == #[.html]
+      && DriverAssets.diagnosticOutputs #[.md] == #[.md]
+      && DriverAssets.diagnosticOutputs #[.pdf, .html, .md] == #[.pdf, .html, .md])
+  IO.FS.withTempDir fun dir => do
+    IO.FS.writeFile (dir / "note.md") ("<details>" ++ body)
+    let (_, ds) ← elabInputSrc (dir / "host.tex").toString
+      (dvDoc "\\usepackage{markdown}\n" "\\markdownInput{note.md}")
+    t "a tex host names its note's lost collapse once for the HTML and once for the twin"
+      (namedRight ds)
 
 end Tests

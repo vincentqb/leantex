@@ -621,15 +621,18 @@ public def DiagCode.renumbered : List (String × String) :=
    -- as U+FFFD now, and the warning that lists them names the same bytes.
    ("E0002", "W0002")]
 
-/-- An artifact whose diagnostics apply only when that output is requested. -/
+/-- An artifact whose diagnostics apply only when that output is requested:
+the two pages and the markdown twin. -/
 public inductive Diag.Output where
   | pdf
   | html
+  | md
   deriving Repr, BEq, DecidableEq, ReflBEq, LawfulBEq
 
 public def Diag.Output.label : Diag.Output → String
   | .pdf => "pdf"
   | .html => "html"
+  | .md => "md"
 
 /-- What the engine actually did after a loss. A proposed action belongs in
 `Diag.help`; neither field is reconstructed from message prose. -/

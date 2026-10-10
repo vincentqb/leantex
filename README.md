@@ -47,10 +47,15 @@ code and GitHub-style pipe tables, which set as booktabs tables. A table too
 wide for the text block narrows its columns and wraps its cells to fit, as
 a browser sets it; one whose words alone are too wide sets smaller, down to
 `\scriptsize` (`\tiny` only to stay on the paper), centred across both
-margins if it still overhangs. A Markdown document sets on a wider text
-block than an article, with its code in the text face's matching monospaced
-face: code blocks at `\footnotesize`, two sizes below the text, with long
-lines wrapped to stay on the page, and inline code free to break after
+margins if it still overhangs. HTML inside Markdown is read, never passed
+through to any output: a comment on lines of its own shows nothing, `<br>`
+breaks the line as a Markdown hard break does, an empty `<a name="…">` is a
+link target, and a `<details>` block with a plain `<summary>` is set
+expanded; any other tag is an error at its position whose help names the
+Markdown to write instead. A Markdown document sets on a wider text block
+than an article, with its code in the text face's matching monospaced face:
+code blocks at `\footnotesize`, two sizes below the text, with long lines
+wrapped to stay on the page, and inline code free to break after
 punctuation such as `_`, `.`, `/` or `-` where a line needs it. A Markdown
 fragment included in TeX keeps its tables' fit and takes its page, code and
 line breaks from the TeX document around it. Include one with:

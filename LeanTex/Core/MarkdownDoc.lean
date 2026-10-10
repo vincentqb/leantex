@@ -25,9 +25,8 @@ stand on one line (`headingText_contract`, `cellText_contract`,
 `titleLine_contract`, `summaryLine_contract`), the metadata written as text
 as the body's text is, and a row reads as exactly its cells under GFM's row
 grammar (`rowLine_cells_exact`), every pipe a cell holds escaped. Where markdown has no spelling for what the IR holds —
-a formula, a footnote, an overlay, a table the reader does not read yet, a
-hard break inside a heading or a cell, which is written as a space — the
-twin writes the nearest one, and the difference is a loss, not a spelling.
+a formula, a footnote, an overlay — the twin writes the nearest one, and
+the difference is a loss, not a spelling.
 The round trip is measured, never assumed: the `mdtwin` tier counts the
 CommonMark examples and corpus documents whose twin re-reads to the same IR,
 and `Tests/MarkdownTwin.lean` pins each spelling class.
@@ -53,9 +52,11 @@ open LeanTex.Core LeanTex.Core.Ir
 /-- Escape the characters that would read as markup anywhere in a line:
 CommonMark's inline punctuation, the pipe table's cell separator where
 `pipes` says the line is not a cell (a cell escapes every pipe it holds
-itself, `rowLine`), and `<` and `&`, so the twin never writes raw HTML
-(§6.6) or reads a character reference (§2.5) into its text — each is a
-valid backslash escape (§2.4: any ASCII punctuation). A line ending inside
+itself, `rowLine`), and `<` and `&`, so text never reads back as raw HTML
+(§6.6) or a character reference (§2.5) — each is a valid backslash escape
+(§2.4: any ASCII punctuation). The twin writes raw HTML only where it means
+the construct: `<br>`, a break where CommonMark has no spelling for one,
+and `<a name>`, a target, both read back by the markdown reader. A line ending inside
 text is the one character it spells as a numeric reference, since it has no
 other spelling. What opens a block only at a line's start is the line's
 business (`escapeLineStart`). -/
@@ -550,8 +551,9 @@ private def spaceSplit (s : String) : String × String × String :=
 /-- Code-set content onto `acc`: one code span for each run between links,
 and each link a link whose text is a code span. A code span holds no link —
 its content is literal (§6.1) — so a link inside code-set text stands
-outside its code, which keeps both its destination and its face. `run` is
-the code-set content since the last link. -/
+outside its code, which keeps both its destination and its face; so does a
+footnote's mark, whose note is written once after the document, and a
+target. `run` is the code-set content since the last of them. -/
 private def monoInto (acc : String) (run : Array Inline) : List Inline → String
   | [] =>
     let span := codeSpan (Ir.plainText run)
@@ -561,6 +563,12 @@ private def monoInto (acc : String) (run : Array Inline) : List Inline → Strin
     let text := codeSpan (Ir.plainText body)
     let dest := linkDest url
     monoInto (acc ++ span ++ "[" ++ text ++ "](" ++ dest ++ ")") #[] rest
+  | .footnote num _ :: rest =>
+    let span := codeSpan (Ir.plainText run)
+    monoInto (acc ++ span ++ s!"[^{num.getD 0}]") #[] rest
+  | .label key :: rest =>
+    let span := codeSpan (Ir.plainText run)
+    monoInto (acc ++ span ++ "<a name=\"" ++ Ir.labelAnchor key ++ "\"></a>") #[] rest
   | x :: rest => monoInto acc (run.push x) rest
 
 /-- The delimiter a style takes in markdown, where it has one. -/
@@ -571,10 +579,13 @@ private def styleMark : Style → Option String
   | _ => none
 
 /-- Where inline content is written. A paragraph's lines (`flow`) hold a
-hard break as a backslash ending its line. A heading (`line`) and a pipe
-table's cell (`cell`) are one line each: a hard break has no spelling there
-and is written as a space, the break a loss, and a cell writes its text's
-pipes bare, since its row escapes every pipe the cell holds (`rowLine`). -/
+hard break as CommonMark spells one, a backslash ending its line. A heading
+(`line`) and a pipe table's cell (`cell`) are one line each, where
+CommonMark has no spelling for a break: there it is `<br>`, the spelling
+GitHub documents for a break in a cell and the markdown reader reads back
+as the same break, so the line stays one line and the break is kept. A cell
+writes its text's pipes bare, since its row escapes every pipe the cell
+holds (`rowLine`). -/
 private inductive Site where
   | flow
   | line
@@ -609,8 +620,10 @@ private def inlineInto (site : Site) (acc : String) : Inline → String
     -- bound first: the append is one-off, not a walk (the cost gate's shape)
     let escaped := escapeText (site != .cell) label
     acc ++ escaped
-  -- an anchor has no prose; a reference is worth what it resolved to
-  | .label _ => acc
+  -- an anchor has no prose, so it is written as the empty target the
+  -- markdown reader reads back, under the id the HTML page gives it; a
+  -- reference is worth what it resolved to
+  | .label key => acc ++ "<a name=\"" ++ Ir.labelAnchor key ++ "\"></a>"
   | .ref _ _ text _ =>
     let escaped := escapeText (site != .cell) text
     acc ++ escaped
@@ -677,8 +690,7 @@ private def inlineInto (site : Site) (acc : String) : Inline → String
   -- as the `[^k]: ...` definition after the document (`noteDefs`).
   | .footnote num _ => acc ++ s!"[^{num.getD 0}]"
   | .linebreak _ =>
-    if site == .flow then acc ++ "\\\n"
-    else if acc.endsWith " " then acc else acc ++ " "
+    if site == .flow then acc ++ "\\\n" else acc ++ "<br>"
 
 /-- The sibling walk. Adjacent runs written with one delimiter are written
 as one run — `**a****b**` reads back as neither two runs nor one — so a run

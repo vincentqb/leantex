@@ -742,6 +742,19 @@ def siteAccountingProbes : List (String × String) :=
       "{Label: \\inserttitle};\\end{tikzpicture}}\\title{Probe}\n") "\\titlepage",
     "a mixed title-page node beside a readable full-page ground")]
 
+/-- Markdown sources the site audit reads through the markdown reader, so the
+one-site rule sees what the reader names: the refused disclosures, which
+named one site twice, beside an accepted one, raw tags inline and as a block,
+and an empty target with its link. Invented words throughout. -/
+def mdSiteAccountingProbes : List (String × String) :=
+  [("<details>\nCedar\n</details>\n", "markdown: a disclosure with no summary"),
+   ("<details>\n<summary>Amber</summary>\nCedar\n", "markdown: an unclosed disclosure"),
+   ("- <details>\n  <summary>Amber</summary>\n  Cedar\n\nFir\n",
+    "markdown: a disclosure its list item cuts off"),
+   ("<details>\n<summary>Amber</summary>\n\nCedar\n\n</details>\n", "markdown: a disclosure"),
+   ("Alder <b>Kestrel</b> Birch\n\n<div>Wren</div>\n", "markdown: raw tags inline and as a block"),
+   ("<a name=\"willow\"></a>\n\n[Willow](#willow)\n", "markdown: an empty target and its link")]
+
 /-- Site collisions that stand today, each with the file that owes the
 change and what the pair is. Read in both directions by
 `siteAccountingChecks`: a row whose collision closes fails the suite, so a
@@ -765,19 +778,6 @@ def independentSiteFacts : List (String × String) :=
 def sitePairClassified (pair : String × String) : Bool :=
   independentSiteFacts.contains pair ||
     siteAccounting.any (fun row => row.1 == pair.1 && row.2.1 == pair.2)
-
-/-- Spans carrying more than one diagnostic, as `(code, code)` pairs with the
-count — the mechanical first cut the user asked for, needing no judgement
-about any rule: group every diagnostic by its cause site and look at the
-groups larger than one. -/
-def siteCollisions (ds : Array Diag) : Array (String × String) := Id.run do
-  let mut out : Array (String × String) := #[]
-  for d in ds do
-    for e in ds do
-      if d.span.isSome && d.span == e.span && d.code < e.code then
-        let pair := (d.code, e.code)
-        unless out.contains pair do out := out.push pair
-  return out
 
 /-- **One construct, one accounting.** A recovery that accounts for all of a
 construct's arguments leaves no fragment for a second diagnostic to name, so
@@ -841,6 +841,8 @@ def siteAccountingChecks (ref : IO.Ref (List String)) : IO Unit := do
       (independentWitnesses.contains pair)
   for (src, what) in siteAccountingProbes do
     sources := sources.push (what, (elabStr src).2)
+  for (src, what) in mdSiteAccountingProbes do
+    sources := sources.push (what, dvMd src)
   -- The whole corpus as well as the probes: a collision a probe never
   -- reproduced is still one site named twice.
   for n in goldenNames do

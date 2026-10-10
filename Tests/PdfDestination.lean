@@ -107,6 +107,16 @@ def pdfDestinationChecks (ref : IO.Ref (List String))
                   (Layout.segsInk fs line.segs).1)).natAbs ≤ tolerance.toNat
             | _, _ => false)
        | _, _ => false)
+  -- A markdown target is the same resolving site: the empty `<a>` the reader
+  -- reads lowers to `\hypertarget`, and a fragment link reaches its page.
+  let filler := String.join (List.replicate 60 "Earlier words fill the page.\n\n")
+  let (mdoc, mds) := elabMd ("[Jump to target.](#destination)\n\n" ++ filler ++
+    "<a name=\"destination\"></a>TARGET words.\n")
+  let mout := layoutOf fs mdoc
+  let mpdf := Pdf.write (Layout.Geom.ofPage mdoc.page) fs mout.pages mdoc.info
+  t "a markdown target: the PDF link reaches the later page carrying it"
+    (mds.all (·.kind != .E0390) && (pageWith mout "TARGET").any (· > 0) &&
+      (linkDestination mpdf).map (·.map (·.1)) == .ok (pageWith mout "TARGET"))
   let doc := (elabStr (dvDoc pre
     ("\\hyperlink{destination}{Jump.}\\par\\newpage" ++
       "\\hypertarget{destination}{\\begin{minipage}{.6\\textwidth}" ++

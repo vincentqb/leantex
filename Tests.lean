@@ -236,7 +236,9 @@ open Tests (mintedSettingsChecks listingHighlightChecks svgAssetChecks svgToolCh
   shellReplyChecks listingProviderChecks listingStyleTableChecks publicationPathChecks
   htmlContainedChecks htmlContainedPublicationChecks htmlContainedSvgColorChecks
   htmlContainedCliChecks htmlContainedCorpusChecks
-  animatedGraphicsChecks animatedFacesChecks markdownInputChecks xparseProvideChecks
+  animatedGraphicsChecks animatedFacesChecks markdownInputChecks markdownInputHtmlChecks
+  disclosurePrintChecks
+  xparseProvideChecks
   xparseIgnoredOperandsChecks macroBindingChecks macroArgumentChecks macroDefaultChecks macroPhaseChecks
   macroRoleChecks macroAccentChecks macroForwardingChecks roleShapingChecks
   macroHookScopeChecks macroDelimiterScopeChecks packageOptionChecks
@@ -273,6 +275,13 @@ def backendSuiteChecks (ref : IO.Ref (List String)) : IO Unit := do
   anchorChecks ref
   markdownChecks ref
   markdownHtmlChecks ref
+  mdHtmlAccountsChecks ref
+  htmlTwinChecks ref
+  refusedDisclosureChecks ref
+  mdRawHtmlHelpChecks ref
+  mdTwinBreakChecks ref
+  breakRunAgreeChecks ref
+  disclosurePrintChecks ref
   markdownHeadingChecks ref
   Tests.MarkdownTables.markdownTableChecks ref
   Tests.MarkdownPage.markdownPageChecks ref
@@ -291,6 +300,7 @@ def backendSuiteChecks (ref : IO.Ref (List String)) : IO Unit := do
   Tests.MarkdownDoors.markdownDoorChecks ref
   Tests.MarkdownDoors.markdownDoorDriverChecks ref
   Tests.MarkdownTwin.markdownTwinChecks ref
+  markdownInputHtmlChecks ref
   inputUseChecks ref
   backendChecks ref
   pictureBoundaryChecks ref

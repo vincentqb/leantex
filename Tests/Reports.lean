@@ -146,7 +146,8 @@ open Tests (mintedSettingsChecks listingHighlightChecks listingPaletteContinuati
   htmlContainedChecks htmlContainedRawContextChecks htmlContainedPublicationChecks htmlContainedSvgColorChecks
   htmlContainedCliChecks htmlContainedCorpusChecks
   listingPaletteAuditChecks listingRoleEpochChecks svgAssetChecks animatedGraphicsChecks
-  animatedFacesChecks imageContentUrlChecks svgToolChecks markdownInputChecks overlaySetChecks overlayStyleChecks
+  animatedFacesChecks imageContentUrlChecks svgToolChecks markdownInputChecks
+  markdownInputHtmlChecks disclosurePrintChecks overlaySetChecks overlayStyleChecks
   overlayContractChecks overlayInputChecks overlaySingletonHtmlChecks diagnosticFormatChecks diagnosticTriggerChecks diagnosticImageOriginChecks diagnosticFontScopeChecks
   diagnosticOriginChecks diagnosticContrastOriginChecks sourceAnnotationChecks inputOriginsChecks imageOriginsChecks
   tableContextChecks linkMacroLayoutChecks inputUseChecks mathAlphaEntryChecks mathAlphaRegionChecks
@@ -1249,7 +1250,24 @@ def reports : List Report := [
     accept := ["twenty-one assertions fail with the fold's subjectless and wording arms and the listing and siunitx subjects reverted onto the recorded commit, the census-keyed fold standing: a listing option's one line and count at five listings, every listing arm's words keying its loss, a siunitx option's one line, a subjectless repeat's one line with its werror, acceptance and porcelain counts, a loss's second wording, which the census-keyed fold hid, a loss that opens on a note, whose warning it hid, and the door scan naming twelve subjectless emissions of a counted code",
       "a presentation deck's build prints its listing option once with its site count and a repeated glyph fallback once, and its porcelain keeps every record, the sites summing to the records",
       "an invented document whose thousands of paragraphs each hold symbols its face lacks prints one line per symbol"]
-    state := .guarded "e942f189" .revert .author }
+    state := .guarded "e942f189" .revert .author },
+  { id := "R134", date := "2026-10-10"
+    what := "Raw HTML in markdown had no decided policy across the two artifacts: harmless spellings were refused, and a refused disclosure was accounted twice"
+    pins := [check% mdHtmlAccountsChecks, check% htmlTwinChecks, check% refusedDisclosureChecks,
+      check% mdRawHtmlHelpChecks, check% mdTwinBreakChecks,
+      check% markdownInputHtmlChecks, check% disclosurePrintChecks,
+      check% markdownHtmlChecks, check% mdSurfaceChecks, check% pdfDestinationChecks,
+      thm% LeanTex.Core.Md.desugar_vocabulary_mem, thm% LeanTex.Core.Md.textRaws_covers]
+    accept := ["one hundred twenty-four guard assertions fail with the fix reverted, the reader, the disclosure's output scoping and the twin's break spelling together: ninety-three twin-spelling, eight help, seven refused-disclosure, four print and inclusion scoping, four tex twin round-trip, three included-markdown and three site-accounting assertions, the accounts family and the diagnostics golden",
+      "fifteen twin round-trip assertions fail with the twin's break spelling alone reverted: a heading split in two, and the next line of a list item or a quotation refused as lazy",
+      "with the refusal's earlier help restored, its assertion fails at all eight sites, and its blank-line advice entered as a fix splits the block it was shown in at four",
+      "every raw HTML element of a generated family of names, shapes and sites is lowered or refused once, at its own position",
+      "the CommonMark verdicts and tier are unchanged: no spec case holds a vocabulary spelling",
+      "thirty guard assertions fail with the review's corrections reverted and the leading-break records removed: fifteen twin round trips, where text spelling a tag or a reference read back as that construct and code read back with its escapes; nine scope assertions, where a build of the markdown twin named no lost collapse; three refused summaries, each a second refusal of its disclosure; and three leading-break records",
+      "one hundred fifty-nine guard assertions fail on the branch's tree before the fourth review with the whole fix reverted",
+      "fourteen fail on the rebased tree with the fourth review's corrections reverted: three refused summaries whose tag spans lines, each refused a second time at its disclosure; a break in a heading or a table cell read back as a space, in six twin round trips and three heading twins; an empty target or its id dropped from the twin, its link left without a page anchor, twice, and a tex label written as no target; and a note inside code-set text copied into the code, its mark lost",
+      "a long markdown report of several hundred disclosures and two presentation decks ship byte-identical PDF and HTML; the report's PDF build names no lost collapse while its HTML and markdown builds name every one, and its markdown twin is its own twin"]
+    state := .guarded "85bcd705" .revert .author }
 ]
 
 /-- The reports guarded but never seen failing: a count that may fall and

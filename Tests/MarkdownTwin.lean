@@ -308,23 +308,24 @@ def twinTableChecks (ref : IO.Ref (List String)) : IO Unit := do
   t s!"twin: a cell's destination keeps its pipe ({repr tw})"
     (hasStr tw "[e](http://example.org/a\\|b)")
 
-/-- Headings: a hard break in a title has no spelling on a heading's line,
-so it is written as a space, and the heading reads back as one heading. -/
+/-- Headings: CommonMark has no spelling for a break on a heading's line,
+so it is written as `<br>`, and the heading reads back as one heading
+holding its break. -/
 def twinHeadingChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
   for (src, title) in [("\\section{Alder\\\\ Birch}", "1 Alder Birch"),
       ("\\section*{Cedar\\\\ Dogwood}", "Cedar Dogwood")] do
     let (tw, back, _) := texRoundTrip src
-    t s!"twin: a heading with a hard break stays one heading ({repr tw})"
+    t s!"twin: a heading with a hard break stays one heading, its break kept ({repr tw})"
       (match back.body.toList with
-        | [.section _ _ _ xs] => Ir.plainText xs == title
+        | [.section _ _ _ xs] => Ir.plainText xs == title && xs.any (· matches .linebreak _)
         | _ => false)
   let (doc, _) := elabStr (dvDeck "" "\\begin{frame}{Elm\\\\ Fir}\nGrove\n\\end{frame}")
   let tw := MarkdownDoc.emit doc
   let (back, _) := elabMd tw
-  t s!"twin: a frame title with a hard break stays one heading ({repr tw})"
-    (hasStr tw "## Elm Fir\n" && back.body.any fun b => match b with
-      | .section _ _ _ xs => Ir.plainText xs == "Elm Fir"
+  t s!"twin: a frame title with a hard break stays one heading, its break kept ({repr tw})"
+    (hasStr tw "## Elm<br>Fir\n" && back.body.any fun b => match b with
+      | .section _ _ _ xs => Ir.plainText xs == "Elm Fir" && xs.any (· matches .linebreak _)
       | _ => false)
 
 /-- The llms.txt head: the metadata title and summary are written as text,
