@@ -129,6 +129,17 @@ def holeDoc (style : Ir.ListingStyle) : Ir.Doc × Array Diag :=
   elabStr (dvDoc ("\\usepackage{minted}\\setminted{style=" ++ style.name ++ "}")
     ("\\begin{minted}{lean4}\n" ++ holeSource ++ "\n\\end{minted}"))
 
+/-- Invented listings that define a function and a class and use them, one
+per language, beside a builtin and a parameter. -/
+def defsPython : String :=
+  "class Basket:\n    pass\n\ndef tally(items):\n    return len(items)\n\nprint(tally(Basket()))"
+def defsLean : String := "def tally (n : Nat) : Nat := n + 1\n#eval tally 2"
+
+def defsDoc (preamble : String) : Ir.Doc :=
+  (elabStr (dvDoc ("\\usepackage{minted}" ++ preamble)
+    ("\\begin{minted}{python}\n" ++ defsPython ++ "\n\\end{minted}\n" ++
+     "\\begin{minted}{lean4}\n" ++ defsLean ++ "\n\\end{minted}"))).1
+
 end Tests.ListingStyleTable
 
 namespace Tests
@@ -254,13 +265,16 @@ colour and weight for every type of one role, in both artifacts. -/
 def codeRoleChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
   let role (path : String) := Kind.role ⟨path⟩
+  t "code roles: each role's style colour is read off a type of that role"
+    (ListingHighlight.Role.all.all fun r => (CodeColor.roleStyleKind r).all (·.role == r))
   t "code roles: a proof hole, a raised not-implemented error and a lexer error are one role"
     (role "Generic.Error" == .error && role "Name.Exception" == .error && role "Error" == .error)
   t "code roles: a type takes its parent's role unless one is named for it"
     (role "Keyword.Type" == .keyword && role "Keyword.Constant" == .literal &&
-      role "Name" == .ink && role "Name.Function" == .name && role "Name.Builtin" == .name &&
-      role "Name.Function.Magic" == .name && role "Name.Decorator" == .name &&
-      role "Name.Namespace" == .name && role "Name.Class" == .name &&
+      role "Name" == .ink && role "Name.Function" == .ink && role "Name.Builtin" == .name &&
+      role "Name.Function.Magic" == .ink && role "Name.Decorator" == .name &&
+      role "Name.Namespace" == .ink && role "Name.Class" == .ink &&
+      role "Name.Attribute" == .name &&
       role "Name.Builtin.Pseudo" == .ink && role "Name.Variable" == .ink &&
       role "Name.Variable.Magic" == .ink && role "Name.Constant" == .literal &&
       role "Literal.Number.Integer" == .literal && role "Literal.String.Doc" == .literal &&
@@ -357,22 +371,20 @@ def codeRoleChecks (ref : IO.Ref (List String)) : IO Unit := do
     let typed := (htmlLines doc).flatten.filter fun (c, _) => ShellHighlight.visible c
     let pdf (w : String) := ShellHighlight.witnessPaint? source w laid
     let html (w : String) := ShellHighlight.witnessPaint? source w typed
-    let one {α : Type} [BEq α] (paint : Option (Array α)) : Option α :=
-      paint.bind fun p => p[0]?.bind fun first => if p.all (· == first) then some first else none
-    let hole := one (pdf "sorry")
-    let raised := one (pdf "NotImplementedError")
+    let hole := onePaint (pdf "sorry")
+    let raised := onePaint (pdf "NotImplementedError")
     t s!"code roles, {label}: the PDF sets the proof hole and the raised error in one colour and weight"
       (hole.isSome && hole == raised)
     t s!"code roles, {label}: the HTML sets them in one colour and weight"
-      ((one (html "sorry")).isSome && one (html "sorry") == one (html "NotImplementedError"))
+      ((onePaint (html "sorry")).isSome && onePaint (html "sorry") == onePaint (html "NotImplementedError"))
     t s!"code roles, {label}: their colour is the error role's, and the bold keyword's is not"
-      (match hole, one (pdf "theorem") with
+      (match hole, onePaint (pdf "theorem") with
         | some (_, c), some (kw, k) =>
           kw == 1 && c != k && some c == Listing.ink doc.palette none .genericError (style := style)
         | _, _ => false)
     if let some w := want then
       t s!"code roles, {label}: the error role ships the document's colour exactly"
-        (hole.any (·.2 == w) && (one (html "sorry")).any (hasStr ·.color.get! (HtmlDoc.cssColor w)))
+        (hole.any (·.2 == w) && (onePaint (html "sorry")).any (hasStr ·.color.get! (HtmlDoc.cssColor w)))
   let formatcom := "\\newcommand{\\codestyle}{}\\setminted{formatcom=\\codestyle}"
   let (_, ds) := markerDoc formatcom
   t "code roles: formatcom is said once, as an info line, and is no warning"
@@ -440,6 +452,52 @@ def codeRoleChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "code roles: no shipped bundle declares a retired key"
     (Theme.builtin.all fun th => th.palette.entries.all fun (k, _) =>
       (CodeColor.retiredKeys.lookup k.key).isNone)
+
+/-- A name reads alike where its listing defines it and where it uses it,
+and from one language to the next: a definition's name sets in the ink, as
+the identifiers that use it do, while a builtin keeps the name role. Held
+over the shipped page and the typed HTML, under a style and a palette. -/
+def definitionNameChecks (ref : IO.Ref (List String)) : IO Unit := do
+  let t := check ref
+  let some fonts ← serifFacesSet | failures ref "definition names: the serif faces load"
+  let source := defsPython ++ "\n" ++ defsLean
+  -- (what, context, name, visible characters of the context before the name)
+  let sites : List (String × String × String × Nat) :=
+    [("the Python function's definition", "def tally(items)", "tally", 3),
+     ("the Python function's call", "print(tally(Basket", "tally", 6),
+     ("the Python class's definition", "class Basket:", "Basket", 5),
+     ("the Python class's use", "tally(Basket())", "Basket", 6),
+     ("a Python parameter", "return len(items)", "items", 10),
+     ("the Lean function's definition", "def tally (n", "tally", 3),
+     ("the Lean function's use", "#eval tally 2", "tally", 5)]
+  for (label, preamble) in [("the default style", ""),
+      ("an invented palette",
+        "\\palette{fg=#202440,bg=#FFFFFF,alert=#B01030,muted=#5A6068,example=#1A6A3A}")] do
+    let doc := defsDoc preamble
+    let laid := ((glyphPaint (layoutOf fonts doc)).filter fun (c, _) =>
+      ShellHighlight.visible c).map fun (c, idx, color) => (c, (idx, color))
+    let typed := (htmlLines doc).flatten.filter fun (c, _) => ShellHighlight.visible c
+    let pdf := sites.map fun (what, context, name, skip) =>
+      (what, onePaint (ShellHighlight.namePaint? source context name skip laid))
+    let html := sites.map fun (what, context, name, skip) =>
+      (what, onePaint (ShellHighlight.namePaint? source context name skip typed))
+    let firstPdf := (pdf.head?.bind (·.2))
+    let firstHtml := (html.head?.bind (·.2))
+    t s!"definition names, {label}: every site is read"
+      (pdf.all (·.2.isSome) && html.all (·.2.isSome))
+    for ((what, p), (_, h)) in pdf.zip html do
+      t s!"definition names, {label}: the PDF sets {what} as the first definition"
+        (p.isSome && p == firstPdf)
+      t s!"definition names, {label}: the HTML sets {what} as the first definition"
+        (h.isSome && h == firstHtml)
+    let builtinInk := (Listing.ink doc.palette none .nameBuiltin).getD (Ir.Design.ofDoc doc).fg
+    let builtin := onePaint (ShellHighlight.namePaint? source "return len(items)" "len" 6 laid)
+    t s!"definition names, {label}: the PDF keeps a builtin's name role paint"
+      (builtin.isSome && builtin != firstPdf && builtin.map (·.2) == some builtinInk)
+    let typedBuiltin := onePaint (ShellHighlight.namePaint? source "return len(items)" "len" 6 typed)
+    t s!"definition names, {label}: the HTML keeps a builtin's name role paint"
+      (typedBuiltin.isSome && typedBuiltin != firstHtml &&
+        typedBuiltin.any fun p => p.color.any (hasStr · (HtmlDoc.cssColor builtinInk)))
 
 /-- The TeX export of a palette's code colours: one redefinition per standard
 token type, every setting stated, each role's colour the one the engine

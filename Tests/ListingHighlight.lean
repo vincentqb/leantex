@@ -227,7 +227,7 @@ def listingFriendlyChecks (ref : IO.Ref (List String)) : IO Unit := do
   let friendly := ListingHighlight.Role.all.map fun r =>
     ((CodeColor.resolve {} Ir.Color.white (some .friendly)).get r).map (·.color)
   t "listing friendly: an undeclared palette's roles take the style's sourced colours"
-    (friendly == [none, some { r := 0, g := 112, b := 32 }, some { r := 6, g := 40, b := 126 },
+    (friendly == [none, some { r := 0, g := 112, b := 32 }, some { r := 0, g := 112, b := 32 },
       some { r := 64, g := 112, b := 160 }, some { r := 96, g := 160, b := 176 },
       some { r := 255, g := 0, b := 0 }])
   let authored := ({} : Ir.Palette).declare (.role .codeKeyword) Ir.Color.black

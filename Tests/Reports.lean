@@ -160,7 +160,7 @@ open Tests (mintedSettingsChecks listingHighlightChecks listingPaletteContinuati
   tableContextChecks linkMacroLayoutChecks inputUseChecks mathAlphaEntryChecks mathAlphaRegionChecks
   mathDiagnosticOriginChecks mathDelimiterTriggerChecks mathDollarSurfaceChecks
   diagnosticProducerOriginChecks diagnosticAggregationOriginChecks diagnosticPipelineOriginChecks
-  listDeclarationChecks stringConditionalChecks codeRoleChecks)
+  listDeclarationChecks stringConditionalChecks codeRoleChecks definitionNameChecks)
 open TcolorboxChecks (tcolorboxChecks tcolorboxSourceChecks)
 open TcolorboxColors (tcolorboxColorChecks)
 open PictureBoundary (pictureBoundaryChecks pictureWrapperChecks pictureShipChecks)
@@ -1370,7 +1370,14 @@ def reports : List Report := [
       thm% Contrast.defaulted_ink_cannot_escape]
     accept := ["eleven of the guard's assertions fail on the tree before the fix: the role's warning named a repair, the pair on the frame-title bar was not reported once naming the bar, the mix and the style's token colours shipped repainted in both artifacts and were noted as realized rather than reported, a document's page text at 3.95:1 drew no warning, and a declared focus ring short of non-text's 3:1 drew none",
       "a presentation deck's declared three-colour palette ships its exact values in both artifacts, as its lualatex build does, its accent passing at the stage's size and its highlighting style's comment colour reported once"]
-    state := .guarded "d16aafc8" .before .author }
+    state := .guarded "d16aafc8" .before .author },
+  { id := "R148", date := "2026-10-11"
+    what := "A function's name shipped in one colour where a listing defined it and in another where it was called, and a name read differently from one language to the next: a definition's own name took the name role, while its uses and every name a Lean listing defines set in the ink"
+    pins := [check% definitionNameChecks, check% codeRoleChecks,
+      thm% Listing.paint_role_exact, thm% Listing.brush_role_exact]
+    accept := ["twenty-four of the guard's assertions fail on the tree before the fix, in PDF and HTML alike, under a style and an invented palette: a Python function's and class's definitions set apart from their call, their use, a parameter and the Lean function, and a builtin sharing the definitions' paint",
+      "a presentation deck's Python function names at their definitions and their calls, a test function's name, and a Lean function at its definition and its recursive call, all in the identifiers' ink in PDF and HTML"]
+    state := .guarded "dbbfba91" .before .author }
 ]
 
 /-- The reports guarded but never seen failing: a count that may fall and

@@ -85,13 +85,19 @@ def witnessIndex? (source needle : String) : Option Nat := Id.run do
       found := some i
   return found
 
-def witnessPaint? (source needle : String) (glyphs : Array (Char × α)) :
+/-- The paint of `name`'s glyphs inside the one occurrence of `context`,
+`name` standing `skip` visible characters into it. -/
+def namePaint? (source context name : String) (skip : Nat) (glyphs : Array (Char × α)) :
     Option (Array α) := do
-  let start ← witnessIndex? source needle
-  let word := visibleText needle
+  let start ← witnessIndex? source context
+  let word := visibleText name
   let kept := glyphs.filter fun (c, _) => visible c
-  let run := kept.extract start (start + word.size)
+  let run := kept.extract (start + skip) (start + skip + word.size)
   if run.map (·.1) == word then some (run.map (·.2)) else none
+
+def witnessPaint? (source needle : String) (glyphs : Array (Char × α)) :
+    Option (Array α) :=
+  namePaint? source needle needle 0 glyphs
 
 mutual
 
@@ -173,7 +179,7 @@ def shellReplyChecks (ref : IO.Ref (List String)) : IO Unit := do
      role "Name.Builtinish" == .name && role "Name" == .ink &&
       role "Name.Builtin.Pseudo.Extra" == .ink && role "Names.Builtin" == .ink &&
       role "Keywordish" == .ink && role "" == .ink &&
-      Listing.ink {} none ⟨"Name.Builtinish"⟩ == Listing.ink {} none .nameFunction &&
+      Listing.ink {} none ⟨"Name.Builtinish"⟩ == Listing.ink {} none .nameBuiltin &&
       (Listing.ink {} none ⟨"Names.Builtin"⟩).isNone &&
       (Listing.ink {} none ⟨"Keywordish"⟩).isNone && (Listing.ink {} none ⟨""⟩).isNone)
   let normalized := ListingReply.Request.ofSource " BaSh " "\r\n\n\techo λ\r\n  \r\n"

@@ -71,7 +71,7 @@ knows the role by. The ink has none: it sets in the listing's own colour. -/
 public def roleStyleKind : ListingHighlight.Role → Option Kind
   | .ink => none
   | .keyword => some .keyword
-  | .name => some .nameFunction
+  | .name => some .nameBuiltin
   | .literal => some .string
   | .comment => some .comment
   | .error => some .genericError

@@ -22,6 +22,10 @@ def failures : IO.Ref (List String) → String → IO Unit :=
 def check (ref : IO.Ref (List String)) (name : String) (ok : Bool) : IO Unit := do
   unless ok do failures ref name
 
+/-- The one paint every glyph of a run shares, where they share one. -/
+def onePaint {α : Type} [BEq α] (paint : Option (Array α)) : Option α :=
+  paint.bind fun p => p[0]?.bind fun first => if p.all (· == first) then some first else none
+
 def bytes (l : List UInt8) : ByteArray := ⟨l.toArray⟩
 
 def svgDocument (body : String) (width : Nat := 20) (height : Nat := 20) : ByteArray :=

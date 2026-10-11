@@ -157,9 +157,12 @@ Optional tools must be on the shell's `PATH`:
 | PDF images in HTML | Poppler's `pdftocairo` |
 | Syntax highlighting beyond Lean, Python, shell scripts and sessions, and plain text | Pygments (`python3 -m pip install Pygments`) |
 
-Highlighted code sets each token in one of six roles: the ink, keywords,
-names, literals, comments, and errors — what must not ship, such as a proof
-hole or an unimplemented branch. A palette names a role's colour directly
+Highlighted code sets each token in one of six roles: the ink (identifiers,
+a function's, a class's or a module's own name among them, so a definition
+reads as the plain uses of its name do), keywords, names (builtins,
+decorators, attributes, labels, properties), literals, comments, and errors
+— what must not ship, such as a proof hole or an unimplemented branch. A
+palette names a role's colour directly
 (`\palette{ codeerror = #RRGGBB }`, and likewise `codeink`, `codekeyword`,
 `codename`, `codeliteral`, `codecomment`); the per-type keys `codestring`,
 `codenumber`, `codebuiltin` and `codeoperator` colour no listing, and a
