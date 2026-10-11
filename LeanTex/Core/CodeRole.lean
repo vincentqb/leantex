@@ -21,14 +21,17 @@ public inductive Role where
 
 public def Role.all : List Role := [.ink, .keyword, .name, .literal, .comment, .error]
 
+/-- The role's name, as a message spells it. -/
+public def Role.word : Role → String
+  | .ink => "ink"
+  | .keyword => "keyword"
+  | .name => "name"
+  | .literal => "literal"
+  | .comment => "comment"
+  | .error => "error"
+
 /-- The palette key a document declares the role's colour under. -/
-public def Role.key : Role → String
-  | .ink => "codeink"
-  | .keyword => "codekeyword"
-  | .name => "codename"
-  | .literal => "codeliteral"
-  | .comment => "codecomment"
-  | .error => "codeerror"
+public def Role.key (r : Role) : String := "code" ++ r.word
 
 /-- A top-level type's own role, and its descendants'. A bare `Name` is an
 identifier, which sets in the ink; the names below it name what a

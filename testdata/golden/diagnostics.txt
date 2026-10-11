@@ -749,6 +749,9 @@
 ⚠ [W0387] - \thispagestyle
   '\thispagestyle' was read and had no effect
   suggestion: \allow{W0387} accepts the skip
+⚠ [W0387] - \palette
+  palette key 'codestring' still names a colour, but listings now colour each token by its code role
+  suggestion: declare \palette{ codeliteral = #RRGGBB } to colour the literal role
 ── W0388 (degraded) ink is painted off the medium; a viewer clips to the page and cannot show it
 ⚠ [W0388]
   the \framefoot note reaches 270.12 pt off the page on page 2: that much of it cannot be shown, whatever reads the file

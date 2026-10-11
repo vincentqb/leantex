@@ -134,7 +134,8 @@ names, literals, comments, and errors — what must not ship, such as a proof
 hole or an unimplemented branch. A palette names a role's colour directly
 (`\palette{ codeerror = #RRGGBB }`, and likewise `codeink`, `codekeyword`,
 `codename`, `codeliteral`, `codecomment`); the per-type keys `codestring`,
-`codenumber`, `codebuiltin` and `codeoperator` are no longer read. Otherwise
+`codenumber`, `codebuiltin` and `codeoperator` colour no listing, and a
+palette declaring one is told the role key to declare instead. Otherwise
 the role follows the palette: errors take `alert`, comments `muted`,
 literals `example` (or one more hue, set apart from the ink and the alert),
 and keywords and names a tone of the ink's own hue, or the ink itself where

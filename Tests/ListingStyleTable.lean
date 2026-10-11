@@ -429,5 +429,32 @@ def codeRoleChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "code roles: a muted step that is the alert quiets comments to the ink 70:30 into the page"
     ((roles (invented.declare "muted" alert)).get .comment ==
       some { color := ink.mix 70 white, role := some "codecomment", declared := false })
+  -- A key that once coloured one token type colours no listing now: named
+  -- once where the palette declares it, its name still a colour, and a
+  -- listing holding a token of each key's type ships as the document
+  -- without the key ships it, where each role's own key repaints it.
+  let typed (preamble : String) : Ir.Doc :=
+    (elabStr (dvDoc ("\\usepackage{minted}" ++ palette ++ preamble)
+      "\\begin{minted}{python}\nprint(\"s\", 1 + len(x))\n\\end{minted}")).1
+  let plainTyped := shipped (typed "")
+  for r in [ListingHighlight.Role.literal, .name, .ink] do
+    t s!"code roles: {r.key} repaints the listing holding each retired key's type"
+      (shipped (typed s!"\\palette\{ {r.key} = #AA0000 }") != plainTyped)
+  for (key, r) in CodeColor.retiredKeys do
+    for spelling in [s!"\\palette\{ {key} = #AA0000 }", s!"\\definecolor\{{key}}\{HTML}\{AA0000}",
+        s!"\\colorlet\{{key}}\{black}"] do
+      let (_, ds) := markerDoc (palette ++ spelling)
+      let named := ds.filter fun d => d.code == "W0387" && d.subject == some s!"listingkey:{key}"
+      t s!"code roles: {spelling} is named once where it stands, pointing to {r.key}"
+        (named.size == 1 && named.all fun d => hasStr (d.help.getD "") r.key)
+      t s!"code roles: {spelling} leaves the listing holding its type as the document without it"
+        (shipped (typed spelling) == plainTyped)
+  let (_, early) := elabStr (dvDoc "\\usepackage{minted}"
+    "\\textcolor{codestring}{x}\n\n\\palette{codestring = #AA0000}\n\n\\textcolor{codestring}{y}")
+  t "code roles: a retired key used before its declaration is still named at full strength"
+    (early.any fun d => d.code == "W0387" && !d.demoted && d.help.isSome)
+  t "code roles: no shipped bundle declares a retired key"
+    (Theme.builtin.all fun th => th.palette.entries.all fun (k, _) =>
+      (CodeColor.retiredKeys.lookup k).isNone)
 
 end Tests

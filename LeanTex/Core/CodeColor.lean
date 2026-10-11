@@ -54,6 +54,13 @@ public structure Paint where
   declared : Bool
   deriving Repr, BEq
 
+/-- The palette keys that once coloured one token type each, and the role
+that type paints in now. They colour no listing: a role is named by its own
+key (`Role.key`), one naming scheme. -/
+public def retiredKeys : List (String × Role) :=
+  [("codestring", .literal), ("codenumber", .literal), ("codebuiltin", .name),
+   ("codeoperator", .ink)]
+
 /-- The type a style's colour for a role is read from: the one a reader
 knows the role by. The ink has none: it sets in the listing's own colour. -/
 public def roleStyleKind : Role → Option Kind

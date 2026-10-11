@@ -628,7 +628,7 @@ def diagWitness (one mapped withMath : Font.FontSet)
   | .N0025 => probed .N0025
   | .W0383 => dvE (dvDoc ""
       "\\begin{algorithm}\n\\lIf{$x < 0$}{negate $x$}\\;\n\\end{algorithm}")
-  | .W0387 => dvE (dvDoc "\\thispagestyle{plain}\n" "x")
+  | .W0387 => dvE (dvDoc "\\thispagestyle{plain}\n\\palette{codestring = #AA0000}\n" "x")
   -- W0701 is the driver's: the declared contract held against the
   -- realization record of each artifact the run emits.
   | .W0701 =>
@@ -811,7 +811,9 @@ def siteAccountingProbes : List (String × String) :=
       "[remember picture,overlay]\\fill[black] (current page.south west) rectangle " ++
       "(current page.north east);\\node[anchor=west] at (current page.west) " ++
       "{Label: \\inserttitle};\\end{tikzpicture}}\\title{Probe}\n") "\\titlepage",
-    "a mixed title-page node beside a readable full-page ground")]
+    "a mixed title-page node beside a readable full-page ground"),
+   (dvDoc "\\definecolor{codestring}{HTML}{AA0000}\n" "Sierra.",
+    "a translated colour declaration of a retired listing key")]
 
 /-- Markdown sources the site audit reads through the markdown reader, so the
 one-site rule sees what the reader names: the refused disclosures, which
@@ -844,7 +846,7 @@ placeholder; name the constructs in W0362, or report each at its own span")]
 /-- Independent facts at one source site, witnessed below by varying the
 translation and the colour realization separately. These are not merge debt. -/
 def independentSiteFacts : List (String × String) :=
-  [("N0022", "N0100")]
+  [("N0022", "N0100"), ("N0100", "W0387")]
 
 def sitePairClassified (pair : String × String) : Bool :=
   independentSiteFacts.contains pair ||
@@ -905,6 +907,17 @@ def siteAccountingChecks (ref : IO.Ref (List String)) : IO Unit := do
         (independentWitnesses == #[("N0022", "N0100")])
     else
       t "independent site facts: translation alone has no collision" (siteCollisions ds == #[])
+  -- A retired listing key spelled as xcolor declares it: the translation
+  -- note and the key's naming are two facts of one declaration, each of
+  -- which stands alone.
+  let (_, keyedDs) := elabStr (dvDoc "\\definecolor{codestring}{HTML}{AA0000}\n" "x")
+  let (_, nativeKeyDs) := elabStr (dvDoc "\\palette{codestring = #AA0000}\n" "x")
+  let (_, plainDefDs) := elabStr (dvDoc "\\definecolor{plum}{HTML}{AA0000}\n" "x")
+  t "independent site facts N0100/W0387: the native key alone is named, untranslated"
+    (nativeKeyDs.any (·.kind == .W0387) && nativeKeyDs.all (·.kind != .N0100))
+  t "independent site facts N0100/W0387: a translated colour of its own is translated, not named"
+    (plainDefDs.any (·.kind == .N0100) && plainDefDs.all (·.kind != .W0387))
+  independentWitnesses := independentWitnesses ++ siteCollisions keyedDs
   t "site accounting: another information-code pair remains unclassified"
     (!sitePairClassified ("N0100", "N0200"))
   for pair in independentSiteFacts do

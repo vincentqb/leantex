@@ -7980,6 +7980,12 @@ private def applyPaletteEntry (ctx : Ctx) (pal : Palette) (key valueSrc entry : 
         (help := "a percentage like: covered = 38\\%")
   else
     let put (pal : Palette) (c : Color) : EM Palette := do
+      -- premise: codeRoleChecks — two builds that differ only by a retired key ship one listing paint, over a listing holding a token of each key's type
+      if let some r := CodeColor.retiredKeys.lookup key then
+        warnOnce ctx ("listingkey:" ++ key) .W0387
+          s!"palette key '{key}' still names a colour, but listings now colour each token \
+by its code role" pos
+          (help := s!"declare \\palette\{ {r.key} = #RRGGBB } to colour the {r.word} role")
       noteDeclared ctx "palette" key
       recordColorDeclaration key c (ctx.sourceSpan pos)
       unless aliasOnly do
