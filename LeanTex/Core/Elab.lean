@@ -479,6 +479,10 @@ public structure SpanRecords where
   palette entry's value, a beamer colour, a listing ground, a picture's
   colours — once each. What `unreadPaletteKeys` judges a key by. -/
   colorReads : Array String := #[]
+  /-- How many of the document's picture settings and macro definitions
+  `colorReads` holds the names of: each is read once, at the first picture
+  elaborated after it is declared (`notePictureReads`). -/
+  pictureContextRead : Nat × Nat := (0, 0)
   /-- The boundary pictures the rendered subset draws in part, by picture
   id: the requests the driver may withdraw (`ReqSpans.fallbacks`). -/
   fallbacks : Array String := #[]
@@ -1198,17 +1202,30 @@ private def recordNativePictureSpan (ctx : Ctx) (pos : Pos) : EM Unit := do
   let k := ((← get).spans.images.filter fun e => e.1.startsWith Ir.picKeyPrefix).size
   recordImageSpan ctx (Ir.picKeyPrefix ++ toString k) pos
 
-/-- Record colour names the engine read (`SpanRecords.colorReads`). -/
-private def noteColorNames (names : Array String) : EM Unit :=
-  modify fun st =>
-    let reads := names.foldl
-      (fun acc n => if acc.contains n then acc else acc.push n) st.spans.colorReads
-    if reads.size == st.spans.colorReads.size then st
-    else { st with spans := { st.spans with colorReads := reads } }
+/-- The `\palette` keys an earlier engine read as the page's text and ground
+on screen alone: author colours now, each judged by whether anything reads it
+(`unreadPaletteKeys`). -/
+private def legacyScreenKeys : List String := ["ink", "surface"]
+
+/-- Whether a read can still matter: a legacy key is declared and not yet
+read. A read before its declaration reads no declared colour. -/
+private def readsOwed : EM Bool := do
+  let spans := (← get).spans
+  return !spans.tokenKeys.isEmpty && spans.colorReads.size < legacyScreenKeys.length
+
+/-- Record the legacy keys among colour names the engine read
+(`SpanRecords.colorReads`): no other name is judged by what reads it. -/
+private def noteColorNames (names : Array String) : EM Unit := do
+  unless ← readsOwed do return
+  let reads := (← get).spans.colorReads
+  let more := names.foldl (fun acc n =>
+    if legacyScreenKeys.contains n && !acc.contains n then acc.push n else acc) reads
+  if more.size != reads.size then
+    modify fun st => { st with spans := { st.spans with colorReads := more } }
 
 /-- Record the colour names an expression the engine resolves spells. -/
-private def noteColorReads (expr : String) : EM Unit :=
-  noteColorNames (Ir.colorNames expr)
+private def noteColorReads (expr : String) : EM Unit := do
+  if ← readsOwed then noteColorNames (Ir.colorNames expr)
 
 /-- Record a colour expression's first use in its source palette. -/
 private def recordColorSpan (ctx : Ctx) (expr : String) (c : Color) (role : Bool)
@@ -1959,23 +1976,22 @@ body is read as the colour it selects — a palette command (`\color{red}`
 reaches here as `\red`), a `\color` marker's expression, or `\color{…}`
 itself — through the palette the text path reads. `.error` carries an
 expression the palette cannot resolve. -/
+private def cancelKey? (ctx : Ctx) : Option String :=
+  (lookupUser ctx "CancelColor").bind fun (_, cmd) =>
+    match (cmd.body.filter fun r => !(r matches .space)).toList with
+    | [] => none
+    | [.ctrl n _] =>
+      some (if n.startsWith "@ink:" then (n.drop "@ink:".length).toString else n)
+    | [.ctrl "color" _, .group g _] => some (rawSrc g).trimAscii.toString
+    | _ => some (rawSrc cmd.body).trimAscii.toString
+
 private def cancelColorOf (ctx : Ctx) : Except String (Option (Color × Option ColorRef)) :=
-  match lookupUser ctx "CancelColor" with
+  match cancelKey? ctx with
   | none => .ok none
-  | some (_, cmd) =>
-    let key? : Option String :=
-      match (cmd.body.filter fun r => !(r matches .space)).toList with
-      | [] => none
-      | [.ctrl n _] =>
-        some (if n.startsWith "@ink:" then (n.drop "@ink:".length).toString else n)
-      | [.ctrl "color" _, .group g _] => some (rawSrc g).trimAscii.toString
-      | _ => some (rawSrc cmd.body).trimAscii.toString
-    match key? with
-    | none => .ok none
-    | some key =>
-      match ctx.palette.resolve key with
-      | some c => .ok (some (c, ctx.palette.refOf? key))
-      | none => .error key
+  | some key =>
+    match ctx.palette.resolve key with
+    | some c => .ok (some (c, ctx.palette.refOf? key))
+    | none => .error key
 
 /-- What a formula reads from its document: colour expressions through the
 palette the text path resolves with — the one resolving site, so the
@@ -1989,6 +2005,15 @@ private def mathEnv (ctx : Ctx) : MathParse.Env :=
   { ink := fun key => (ctx.palette.resolve key).map fun c => (c, ctx.palette.refOf? key)
     cancel := { ctx.cancel with color }
     cancelMiss := miss }
+
+/-- The colour names a formula reads beyond its own expressions (each of
+which `recordColorSpan` notes): `\CancelColor`'s, where the formula spells a
+cancel mark. -/
+private def noteFormulaReads (ctx : Ctx) (expanded : Array Parse.Raw) : EM Unit := do
+  if let some key := cancelKey? ctx then
+    let names := Ir.ctrlNames (Parse.rawSrc expanded)
+    if ["cancel", "bcancel", "xcancel", "cancelto"].any names.contains then
+      noteColorReads key
 
 /-- Source annotations follow the token that contributed content. They carry
 no style and introduce no grouping or shaping boundary. -/
@@ -2010,6 +2035,7 @@ private def elabMathInline (ctx : Ctx) (display : Bool) (body : Array Parse.Raw)
   | .ok (l, notes) =>
     for note in notes do
       mathNote ctx note "" pos
+    noteFormulaReads ctx expanded
     return sourceInline ctx pos (.formula display (Parse.rawSrc body) l)
   | .error what =>
     let src := Parse.rawSrc body
@@ -2030,6 +2056,7 @@ private def elabMathEnv (ctx : Ctx) (name : String) (kind : Math.GridKind)
   | .ok (l, notes) =>
     for note in notes do
       mathNote ctx note s!"'\{{name}}': " pos
+    noteFormulaReads ctx expanded
     if numbered then
       warnOnce ctx ("math:eqnum:" ++ name) .W0015
         s!"equation numbers are not rendered yet; '\{{name}}' sets unnumbered" pos
@@ -4801,13 +4828,21 @@ one the request was stated under. -/
 private def pictureSrcAt (body : Array Raw) : EM Ir.PicSrc := do
   return { kind := .picture, body := Parse.rawSrc body, size := ← pictureSizeInForce }
 
-/-- The colour names a picture reads: what its body, the document's picture
-settings and the macro definitions they reach spell — the closure the
-boundary request exports colours over (`Ir.pictureRequest`). -/
-private def notePictureReads (ctx : Ctx) (body : Array Raw) : EM Unit :=
-  let roots := ctx.pic.sets.foldl (fun acc (_, rs) => acc ++ Parse.rawSrc rs ++ "\n") "" ++
-    Parse.rawSrc body
-  noteColorReads (Ir.macroDeclLines (Ir.macroDecls ctx.pic.macros roots) ++ roots)
+/-- The colour names a picture reads: what its body spells, and what the
+document's picture settings and macro definitions spell, each of those read
+once, at the first picture after its declaration — the names the boundary
+request exports colours over (`Ir.pictureRequest`), its macros taken whole
+rather than as the closure one body reaches. -/
+private def notePictureReads (ctx : Ctx) (body : Array Raw) : EM Unit := do
+  unless ← readsOwed do return
+  noteColorReads (Parse.rawSrc body)
+  let (sets, macros) := (← get).spans.pictureContextRead
+  for (_, rs) in ctx.pic.sets.extract sets ctx.pic.sets.size do
+    noteColorReads (Parse.rawSrc rs)
+  for (_, def_) in ctx.pic.macros.extract macros ctx.pic.macros.size do
+    noteColorReads def_
+  modify fun st => { st with spans := { st.spans with
+    pictureContextRead := (ctx.pic.sets.size, ctx.pic.macros.size) } }
 
 /-- One picture sent to the boundary: its request stated once, a picture
 the subset draws in part recorded as a fallback the driver may withdraw
@@ -7224,7 +7259,9 @@ private def enterBlockDecl (ctx : Ctx) (n : String) (raws : Array Raw) (i : Nat)
       modify fun st => { st with scope := { st.scope with blockDecls := pushDecl saved (.style style) } }
   else
     match declBlockOf ctx n raws i cur with
-    | some d => modify fun st => { st with scope := { st.scope with blockDecls := pushDecl saved d } }
+    | some d =>
+      if let .color _ _ := d then noteColorReads n
+      modify fun st => { st with scope := { st.scope with blockDecls := pushDecl saved d } }
     | none => pure ()
   return saved
 
@@ -7301,8 +7338,9 @@ private def listScopeCtrl (ctx : Ctx) (raws : Array Raw) (i : Nat)
     | .missing => warnPaletteMiss ctx source pos
     | .rejected => pure ()
     return some scope
-  return (namedScopeDecl ctx name raws i).map fun d =>
-    { scope with decls := scope.decls ++ [d] }
+  let decl := namedScopeDecl ctx name raws i
+  if let some (.color _ _) := decl then noteColorReads name
+  return decl.map fun d => { scope with decls := scope.decls ++ [d] }
 
 /-- A `\color` in force from here: the palette carrying its ink, and the
 scope's colour declarations dropped, since one ink stands at a time and the
@@ -8095,7 +8133,7 @@ private def resolveBeamerColors (ctx : Ctx) (pal : Palette)
     (settle : Bool := false) : EM Palette := do
   let (colors, pal, issues) := (← get).scope.palette.resolve pal
   modify fun st => { st with scope := { st.scope with palette := colors } }
-  noteColorNames colors.sourceNames
+  if ← readsOwed then noteColorNames colors.sourceNames
   for (key, c, span) in colors.origins do
     recordColorDeclaration key c span
   if settle then
@@ -8204,7 +8242,7 @@ by its code role" pos
           (help := s!"declare \\palette\{ {Ir.codeKey r} = #RRGGBB } to colour the {r.word} role")
       noteDeclared ctx "palette" key
       recordColorDeclaration key c (ctx.sourceSpan pos)
-      if ref == .color key && !aliasOnly && !xcolor && (key == "ink" || key == "surface") then
+      if ref == .color key && !aliasOnly && !xcolor && legacyScreenKeys.contains key then
         modify fun st => if st.spans.tokenKeys.any (·.1 == key) then st else
           { st with spans := { st.spans with
             tokenKeys := st.spans.tokenKeys.push (key, ctx.sourceSpan pos) } }
@@ -8246,7 +8284,7 @@ private def unreadPaletteKeys (reads : Array String) (keys : Array (String × Sp
     else
       let (what, role) := if key == "ink" then ("text", "fg") else ("ground", "bg")
       some (Diag.of .W0387
-        s!"'\\palette' entry '{key}' declares a colour nothing in the document names; \
+        s!"'\\palette' entry '{key}' declares a colour nothing in the document paints with; \
 the page's {what} colour is the '{role}' key" (span := some span)
         (subject := some s!"palette:{key}")
         (help := some s!"declare \\palette\{ {role} = ... } for the page's {what}, or name \
@@ -9844,8 +9882,7 @@ private def listingBlock (ctx : Ctx) (env s : String) (pos : Pos) : EM Block := 
   let mut label : Option String := none
   let mut numbers := false
   let mut language : Option Ir.ListingLang := none
-  let mut style := Ir.ListingStyle.default
-  let mut styleDeclared := false
+  let mut style : Option Ir.ListingStyle := none
   let mut fontSize := inherited
   let mut tabSize := base.tabSize
   let mut breakLines := base.breakLines
@@ -9899,9 +9936,7 @@ does not draw; lines keep no numbers" "numbers=left draws them"
       let v := listingVal v
       if env == "minted" then
         match Ir.ListingStyle.ofName? v with
-        | some selected =>
-          style := selected
-          styleDeclared := true
+        | some selected => style := some selected
         | none =>
           unhonoured
             s!"listing style '{v}' is not supported; the current style stands"
@@ -10018,11 +10053,11 @@ size commands; the current style stands" none
     | none => (spec.langToken.bind fun language =>
         ListingReply.lookup ctx.listingReplies language content).getD #[]
   -- premise: codeRoleChecks — two builds that differ only by the declared style ship byte-identical pages under a palette that gives every code role its colour, and different pages under one that leaves a role to the style
-  if styleDeclared then
+  if let some declared := style then
     let pal := (← get).scope.palette.current.getD ctx.palette
     if !(ListingHighlight.Role.all.any (CodeColor.styleReads pal)) then
-      warnOnce ctx ("lstopt:style:" ++ style.name) .W0387
-        s!"minted's style '{style.name}' was read and had no effect: the palette names \
+      warnOnce ctx ("lstopt:style:" ++ declared.name) .W0387
+        s!"minted's style '{declared.name}' was read and had no effect: the palette names \
 or derives a colour for every code role" pos
         (help := "\\allow{W0387} accepts the skip")
   return .verbatim none content { spec with highlight }
@@ -10561,6 +10596,7 @@ private def carryOne (ctx : Ctx) (pal : Palette) (cur : Array Raw) (i : Nat) (n 
   else
     let decl := if n.startsWith Compat.fontSizeMark then (fontSizeStyle? ctx n).map .style
       else namedScopeDecl ctx n cur i
+    if let some (.color _ _) := decl then noteColorReads n
     match decl with
     | some d =>
       modify fun st => { st with scope := { st.scope with
@@ -19022,7 +19058,8 @@ public def completePrepared (file : String) (p : Prepared) (earlier : Array Diag
   let links := Ir.linkDiags doc
   let sequences := Ir.footerSequenceDiags doc
   let unread := if st.spans.tokenKeys.isEmpty then #[]
-    else unreadPaletteKeys st.spans.colorReads st.spans.tokenKeys
+    else unreadPaletteKeys (doc.page.drawn.foldl (fun acc r => acc ++ Ir.colorNames r.color)
+      st.spans.colorReads) st.spans.tokenKeys
   (doc, Diag.tallySites ((accountRecovered doc.salvage
     (earlier ++ p.compatDiags ++ st.diags ++ contrast ++ outline ++ alt ++ links ++ sequences ++
       unread)

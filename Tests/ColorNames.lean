@@ -1,6 +1,7 @@
 module
 
 public import Tests.Support
+public import Tests.Artifact
 
 public section
 
@@ -172,5 +173,68 @@ public def unreadKeyChecks (ref : IO.Ref (List String)) : IO Unit := do
 \\begin{frame}{Probe}Probe.\\end{frame}\n\\end{document}")
   t "palette keys: a beamer colour declaration reads both keys"
     ((named beamer "ink").isEmpty && (named beamer "surface").isEmpty)
+
+/-- The artifact two builds are compared by: the PDF's bytes, and the HTML
+body with the stylesheet's rules — every author colour the page declares for
+a host to read left out, since a host's override is not the document's
+read. -/
+private def flipArtifact (fonts : Font.FontSet) (doc : Ir.Doc) : ByteArray × String × String :=
+  let geom := Layout.Geom.ofPage doc.page
+  let pdf := driverPdf fonts geom doc (layoutOf fonts doc)
+  let (head, body, _) := HtmlDoc.emitTree {} doc
+  let rules := (Html.render (Html.elem "head" head) 0).splitOn "\n" |>.filter fun l =>
+    let d := l.trimAscii.toString
+    !(d.startsWith "--ltx-c-" || d.startsWith "--ink:" || d.startsWith "--surface:")
+  (pdf, Html.render (Html.elem "body" body) 0, "\n".intercalate rules)
+
+/-- **W0387 is the two-build oracle** (`unreadPaletteKeys`' premise): a
+document declaring `ink` and `surface` is built again with one key's value
+changed, and the shipped artifact is unchanged exactly when that key draws
+W0387. Each probe states which way it goes: a colour expression, a mix, a
+command named for the colour as an argument or as a declaration, a cancel
+mark, a rule the page draws, a picture's paint, a beamer element and a
+listing ground read the key; prose, a comment, and a colour construct the
+engine paints nothing for do not. -/
+public def unreadKeyFlipChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit := do
+  let t := check ref
+  let probes : List (String × String × String × String × Bool) := [
+    ("prose", "ink", "", "Water beads on the leaf, dark as ink and surface.", false),
+    ("a comment", "surface", "", "% surface\nProbe.", false),
+    ("an expression", "ink", "", "\\textcolor{ink}{Probe}.", true),
+    ("a mix", "surface", "", "\\textcolor{surface!60!black}{Probe}.", true),
+    ("a command with its argument", "ink", "", "\\ink{Probe}.", true),
+    ("a bare command between paragraphs", "ink", "", "First.\n\n\\ink\n\nSecond.", true),
+    ("a declaration", "surface", "", "{\\color{surface!70!black} Probe}.", true),
+    ("a cancel mark", "ink", "\\usepackage{cancel}\n\\renewcommand{\\CancelColor}{\\color{ink}}\n",
+      "Struck: $\\cancel{x}$.", true),
+    ("a rule the page draws", "surface", "\\page{ rule = \"1cm; 1cm; 3cm; 3cm; surface\" }\n",
+      "Probe.", true),
+    ("a picture's paint", "ink", "\\usepackage{tikz}\n",
+      "\\begin{tikzpicture}\\fill[ink] (0,0) rectangle (1,1);\\end{tikzpicture}", true),
+    ("a listing ground", "surface", "\\usepackage{minted}\n",
+      "\\begin{minted}[bgcolor=surface]{python}\nx = 1\n\\end{minted}", true),
+    ("an unpainted box", "surface", "", "\\colorbox{surface}{Probe}.", false)]
+  for (what, key, pre, body, read) in probes do
+    let build (v : String) := Id.run do
+      let (doc, ds) := elabStr (article (s!"\\palette\{ {key} = {v} }\n" ++ pre) body)
+      return (flipArtifact fonts doc, ds)
+    let (a, ds) := build "#2A6F3A"
+    let (b, _) := build "#C0157D"
+    let changed := a.1 != b.1 || a.2.1 != b.2.1 || a.2.2 != b.2.2
+    let warned := ds.any fun d => d.code == "W0387" && d.subject == some s!"palette:{key}"
+    t s!"palette keys, two builds: {what} {if read then "reads" else "leaves unread"} '{key}'"
+      (changed == read)
+    t s!"palette keys, two builds: {what}: W0387 exactly when the artifact ignores '{key}'"
+      (warned == !changed)
+  -- A beamer element's declaration reads the key where the element paints.
+  let deck (v : String) := Id.run do
+    let (doc, ds) := elabStr ("\\documentclass{beamer}\n\\palette{ ink = " ++ v ++ " }\n" ++
+      "\\setbeamercolor{frametitle}{fg=ink, bg=white}\n\\begin{document}\n" ++
+      "\\begin{frame}{Probe}Probe.\\end{frame}\n\\end{document}")
+    return (flipArtifact fonts doc, ds)
+  let (a, ds) := deck "#2A6F3A"
+  let (b, _) := deck "#C0157D"
+  t "palette keys, two builds: a beamer frame title reads 'ink'"
+    ((a.1 != b.1) && !(ds.any fun d => d.code == "W0387" && d.subject == some "palette:ink"))
 
 end Tests.ColorNames

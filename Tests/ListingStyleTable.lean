@@ -196,11 +196,11 @@ def listingStyleTableChecks (ref : IO.Ref (List String)) : IO Unit := do
       t s!"code roles: {style.name} every type of the {repr r} role ships one ink"
         (inks.all (· == inks[0]?.getD none))
   -- The report: a Lean proof hole under minted's styles.
-  let friendlyRed := Listing.ink {} none .genericError (style := .friendly)
+  let friendlyRed := Listing.ink {} none .genericError (style := some .friendly)
   t "pygments styles: friendly's Generic.Error ships its own #FF0000"
     (friendlyRed == some (Ir.Color.ofHtml 255 0 0))
   t "pygments styles: default's Generic.Error ships its own #E40000"
-    (Listing.ink {} none .genericError (style := .default) == some (Ir.Color.ofHtml 228 0 0))
+    (Listing.ink {} none .genericError (style := some .default) == some (Ir.Color.ofHtml 228 0 0))
   for style in Ir.ListingStyle.all do
     let (doc, ds) := holeDoc style
     t s!"listing holes {style.name}: the minted listing elaborates clean"
@@ -281,14 +281,14 @@ def codeRoleChecks (ref : IO.Ref (List String)) : IO Unit := do
     entries.foldl (fun p (k, c) => p.declareKey k c) {}
   let invented := pal [("fg", ink), ("bg", white), ("alert", alert), ("muted", muted),
     ("example", exampleInk)]
-  let roles (p : Ir.Palette) := CodeColor.resolve p white .default
+  let roles (p : Ir.Palette) := CodeColor.resolve p white (some .default)
   let declared (key : Ir.Role) (c : Ir.Color) : Option CodeColor.Paint :=
     some { color := c, role := some key, declared := true }
   let r := roles invented
   t "code roles: on its page, a role the document names no colour for ships the palette role it reads"
     (r.get .error == declared .alert alert && r.get .comment == declared .muted muted &&
       r.get .literal == declared .example exampleInk && r.get .ink == none)
-  let dark := CodeColor.resolve invented Ir.Color.black .default
+  let dark := CodeColor.resolve invented Ir.Color.black (some .default)
   t "code roles: on another ground, the palette role is the code role's own colour to adapt"
     (dark.get .error == some { color := alert, role := some .codeError, declared := false } &&
       dark.get .literal == some { color := exampleInk, role := some .codeLiteral, declared := false })
@@ -335,7 +335,7 @@ def codeRoleChecks (ref : IO.Ref (List String)) : IO Unit := do
   for theme in Theme.builtin do
     let d := Ir.Design.ofPalette theme.palette
     for ground in [d.bg, d.standout.bg] do
-      let r := CodeColor.resolve theme.palette ground .default
+      let r := CodeColor.resolve theme.palette ground (some .default)
       t s!"code roles: {theme.name} on {ground.css}: a declared colour is the palette's, any other ships legible"
         (ListingHighlight.Role.all.all fun role => match r.get role with
           | some p => if p.declared then

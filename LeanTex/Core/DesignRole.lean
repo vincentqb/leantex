@@ -383,9 +383,14 @@ public theorem Role.fallback_depth_monotone :
 public theorem Role.judged_page : Role.all.filter (fun r => r.row.judged == .page) = [.ink] := by
   decide
 
+/-- Every keyed role beside its key, in registry order: the table a key is
+read through, so a lookup compares keys and builds no row. -/
+@[expose] public def Role.keyed : Array (String × Role) :=
+  (Role.all.filterMap fun r => r.row.key.map (·, r)).toArray
+
 /-- The role a `\palette` key declares. -/
 @[expose] public def Role.ofKey? (k : String) : Option Role :=
-  Role.all.find? (·.row.key == some k)
+  (Role.keyed.find? (·.1 == k)).map (·.2)
 
 /-- The registry's role for a listing code role (`ListingHighlight.Role`):
 the role whose `\palette` key declares that code role's colour. -/

@@ -338,7 +338,7 @@ as that role on the page it is declared for — the colour the document
 chose, under its key, judged by the contrast report as its prose uses are
 — and, on any other ground, adapted to that ground under the code role's
 own key, as a colour the document did not choose there. -/
-public def resolve (pal : Palette) (ground : Color) (style : ListingStyle) :
+public def resolve (pal : Palette) (ground : Color) (style : Option ListingStyle) :
     RoleTable (Option Paint) :=
   let page := Design.printPage pal
   let derived := derive pal page ground
@@ -352,13 +352,14 @@ public def resolve (pal : Palette) (ground : Color) (style : ListingStyle) :
           else { color := c, role := some (Ir.Role.ofCode r), declared := false }
       | .color c => some { color := c, role := some (Ir.Role.ofCode r), declared := false }
       | .ink => none
-      | .none => (styleColor style r).map fun c =>
-          { color := c, role := some (Ir.Role.ofCode r), declared := false, styled := true }
+      | .none => (styleColor (style.getD .default) r).map fun c =>
+          { color := c, role := some (Ir.Role.ofCode r), declared := false
+            styled := style.isSome }
 
 /-- **A colour shipped as declared is one the palette declares, under the
 key it ships under**: a code role's own, or the palette role the rule
 reads. -/
-public theorem resolve_declared_mem (pal : Palette) (ground : Color) (style : ListingStyle)
+public theorem resolve_declared_mem (pal : Palette) (ground : Color) (style : Option ListingStyle)
     (r : ListingHighlight.Role) (p : Paint) (h : (resolve pal ground style).get r = some p)
     (hd : p.declared = true) :
     ∃ key, p.role = some key ∧ Design.declared? pal key = some p.color := by
@@ -383,7 +384,7 @@ public theorem resolve_declared_mem (pal : Palette) (ground : Color) (style : Li
 /-- **Every other colour ships under the role's own key**: what the rule
 derives, adapts or takes from the style is the code role's, never a
 palette role's. -/
-public theorem resolve_derived_exact (pal : Palette) (ground : Color) (style : ListingStyle)
+public theorem resolve_derived_exact (pal : Palette) (ground : Color) (style : Option ListingStyle)
     (r : ListingHighlight.Role) (p : Paint) (h : (resolve pal ground style).get r = some p)
     (hd : p.declared = false) : p.role = some (Ir.Role.ofCode r) := by
   rw [resolve, RoleTable.get_ofFn] at h
@@ -411,7 +412,8 @@ public def styleReads (pal : Palette) (r : ListingHighlight.Role) : Bool :=
 /-- **A role no style reads resolves alike under every style**, on every
 ground: the style decides a colour only where `styleReads` says it does,
 so the inert-style diagnostic judges exactly what both artifacts ship. -/
-public theorem resolve_style_exact (pal : Palette) (ground : Color) (style style' : ListingStyle)
+public theorem resolve_style_exact (pal : Palette) (ground : Color)
+    (style style' : Option ListingStyle)
     (r : ListingHighlight.Role) (h : styleReads pal r = false) :
     (resolve pal ground style).get r = (resolve pal ground style').get r := by
   simp only [resolve, RoleTable.get_ofFn]

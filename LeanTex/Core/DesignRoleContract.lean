@@ -41,19 +41,37 @@ public theorem Role.key_inj {a b : Role} {k : String} (ha : a.row.key = some k)
   exact inj_of_nodup_map (·.row.key) _ Role.keyed_nodup a (mem a ha) b (mem b hb)
     (ha.trans hb.symm)
 
+/-- **The registry lists each role at its constructor index**: what a table
+indexed by `Role.ctorIdx` reads a role's entry at (`HtmlDoc.Config.declares`). -/
+public theorem Role.all_ctorIdx (r : Role) : Role.all[r.ctorIdx]? = some r := by
+  cases r <;> rfl
+
 /-- A key reads back the role that declared it. -/
 public theorem Role.ofKey?_key_exact (r : Role) (k : String) (h : r.row.key = some k) :
     Role.ofKey? k = some r := by
   unfold Role.ofKey?
-  have hmem : r ∈ Role.all := List.contains_iff_mem.mp (Role.all_complete r)
-  cases hf : Role.all.find? (·.row.key == some k) with
+  have row (e : String × Role) (he : e ∈ Role.keyed) : e.2.row.key = some e.1 := by
+    simp only [Role.keyed, List.mem_toArray, List.mem_filterMap] at he
+    obtain ⟨r', _, hr'⟩ := he
+    cases hk : r'.row.key with
+    | none => simp [hk] at hr'
+    | some k' =>
+      simp only [hk, Option.map_some, Option.some.injEq] at hr'
+      subst hr'
+      exact hk
+  have hmem : (k, r) ∈ Role.keyed := by
+    simp only [Role.keyed, List.mem_toArray, List.mem_filterMap]
+    exact ⟨r, List.contains_iff_mem.mp (Role.all_complete r), by simp [h]⟩
+  cases hf : Role.keyed.find? (·.1 == k) with
   | none =>
-    have := List.find?_eq_none.mp hf r hmem
-    simp [h] at this
-  | some r' =>
-    have hk := List.find?_some hf
+    have := Array.find?_eq_none.mp hf (k, r) hmem
+    simp at this
+  | some e =>
+    have hk := Array.find?_some hf
     simp only [beq_iff_eq] at hk
-    rw [Role.key_inj hk h]
+    have he := row e (Array.mem_of_find?_eq_some hf)
+    rw [hk] at he
+    simp only [Option.map_some, Role.key_inj he h]
 
 private def hexValue (c : Char) : Option Nat :=
   ("0123456789abcdef".toList.idxOf? c)

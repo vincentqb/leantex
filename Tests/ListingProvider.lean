@@ -121,14 +121,15 @@ def listingProviderChecks (ref : IO.Ref (List String)) : IO Unit := do
   let .ok font := Font.parse bytes | failures ref "listing provider: fixture font invalid"
   let fonts := oneFaceOf font
   let source := ListingProvider.providerSource
-  let cases := [
-    (false, Ir.ListingStyle.default, dvDoc "\\usepackage{minted}"
+  -- The style a listing declares, none where it declares none.
+  let cases : List (Bool × Option Ir.ListingStyle × String) := [
+    (false, none, dvDoc "\\usepackage{minted}"
       ("\\begin{minted}{fish}\n" ++ source ++ "\n\\end{minted}")),
-    (false, Ir.ListingStyle.friendly, dvDoc "\\usepackage{minted}\\setminted{style=friendly}"
+    (false, some .friendly, dvDoc "\\usepackage{minted}\\setminted{style=friendly}"
       ("\\begin{minted}{fishshell}\n" ++ source ++ "\n\\end{minted}")),
-    (false, Ir.ListingStyle.default, dvDoc "\\usepackage{listings}"
+    (false, none, dvDoc "\\usepackage{listings}"
       ("\\begin{lstlisting}[language=tcsh]\n" ++ source ++ "\n\\end{lstlisting}")),
-    (true, Ir.ListingStyle.default, "```fish\n" ++ source ++ "\n```")]
+    (true, none, "```fish\n" ++ source ++ "\n```")]
   for (markdown, style, input) in cases do
     let (base, earlier) := ListingProvider.prepared markdown input
     let (cold, coldDiags, _) := Elab.runPrepared "listing" base earlier

@@ -17,7 +17,7 @@ example : Oklab.Lab → Color := Oklab.toColorOfLab
 example : Nat → Color → Color → Color := Oklab.cover
 example : Design → Cover := Design.cover
 example : Color → Color → Nat := Contrast.contrastMilli
-example : Palette → Option Color → ListingStyle → Bool :=
+example : Palette → Option Color → Option ListingStyle → Bool :=
   fun pal ground style => Listing.contract pal ground (style := style)
 
 example (n : Nat) (h : n ≤ 10^18) :

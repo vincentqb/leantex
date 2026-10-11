@@ -2424,7 +2424,9 @@ invalid read — `transparent` for a background. -/
 private def roleRefOr (r : Ir.Role) (fallback : String) : String :=
   "var(" ++ roleVar r ++ ", " ++ fallback ++ ")"
 
-/-- Whether the page can declare a role's property (`Config.declarable`). -/
+/-- Whether the page can declare a role's property (`Config.declarable`,
+built over `Ir.Role.all`, which lists each role at its constructor index:
+`Ir.Role.all_ctorIdx`). -/
 @[expose] public def Config.declares (cfg : Config) (r : Ir.Role) : Bool :=
   cfg.declarable[r.ctorIdx]?.getD true
 
@@ -2483,7 +2485,9 @@ private def nameEnd (b : ByteArray) (j : Nat) : Nat := Id.run do
 
 /-- Every custom property a CSS text reads, `var(--<name>` with or without a
 fallback and with spaces before the name, in the order it reads them: one
-pass over the text's bytes. -/
+pass over the text's bytes. A name ends at the first byte no name holds, so
+a name running straight into `var(` — which no rule the engine writes
+spells, a name being followed by `,`, `)` or a space — reads as one. -/
 public def varReads (css : String) : Array String := Id.run do
   let mut out : Array String := #[]
   if !css.contains "var(" then return out

@@ -225,21 +225,21 @@ def listingFriendlyChecks (ref : IO.Ref (List String)) : IO Unit := do
      (["", "Friendly", "friendly-extra", "unknown-style"] : List String).all
        fun name => (Ir.ListingStyle.ofName? name).isNone)
   let friendly := ListingHighlight.Role.all.map fun r =>
-    ((CodeColor.resolve {} Ir.Color.white .friendly).get r).map (·.color)
+    ((CodeColor.resolve {} Ir.Color.white (some .friendly)).get r).map (·.color)
   t "listing friendly: an undeclared palette's roles take the style's sourced colours"
     (friendly == [none, some { r := 0, g := 112, b := 32 }, some { r := 6, g := 40, b := 126 },
       some { r := 64, g := 112, b := 160 }, some { r := 96, g := 160, b := 176 },
       some { r := 255, g := 0, b := 0 }])
   let authored := ({} : Ir.Palette).declare (.role .codeKeyword) Ir.Color.black
   t "listing friendly: authored roles take precedence over style defaults"
-    (Listing.ink authored none .keyword (style := .friendly) == some Ir.Color.black)
+    (Listing.ink authored none .keyword (style := some .friendly) == some Ir.Color.black)
   for theme in Theme.builtin do
     let d := Ir.Design.ofPalette theme.palette
     let grounds := [none, some d.standout.bg] ++
       (d.titlepage.toList.map fun pair => some pair.bg)
     for style in [Ir.ListingStyle.default, .friendly] do
       t s!"listing style: {repr style} text AA on every {theme.name} ground"
-        (grounds.all fun ground => Listing.contract theme.palette ground (style := style))
+        (grounds.all fun ground => Listing.contract theme.palette ground (style := some style))
   let some bytes ← findFont | failures ref "listing friendly: fixture font missing"
   let .ok font := Font.parse bytes | failures ref "listing friendly: fixture font invalid"
   let fonts := oneFaceOf font
@@ -516,7 +516,7 @@ def listingPaletteAuditChecks (ref : IO.Ref (List String)) : IO Unit := do
     let source := "return value"
     let large := { entry with body := #[.frame #[] standout valign false
       #[.setPalette light, .verbatim none source
-        { style := .friendly, fontSize := .size "Huge",
+        { style := some .friendly, fontSize := .size "Huge",
           highlight := ListingHighlight.tokenize .python (Ir.verbatimLines source) }]] }
     t s!"listing audit {name}: epoch reset preserves listing size and authored ink priority"
       ((Contrast.judgedPairs large).contains (gray, Ir.Color.white) &&

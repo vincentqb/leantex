@@ -231,7 +231,7 @@ def shellReplyChecks (ref : IO.Ref (List String)) : IO Unit := do
       (as.all fun a => a.tokens.map LeanTex.Core.ListingHighlight.lineText == r.lines)
     t "listing reply: unknown token classes carry no paint"
       (as.all fun a => a.tokens.flatten.all fun token =>
-        (Listing.ink {} none token.kind).isNone && (Listing.ink {} none token.kind (style := .friendly)).isNone)
+        (Listing.ink {} none token.kind).isNone && (Listing.ink {} none token.kind (style := some .friendly)).isNone)
   -- The lexer boundary may be part of the final token or a separate token.
   -- Deliberately bypass normalization here to include authored trailing LFs.
   for source in ["", "\n", "\n\n", "\n\techo λ😀  ", "echo x\n\n", "# tail\t  "] do
@@ -373,12 +373,13 @@ def shellHighlightChecks (ref : IO.Ref (List String))
     let aliases := if probe.name == "basic" || probe.name.startsWith "final-" then
       ["bash", "sh", "shell"] else ["bash"]
     for language in aliases do
-      let inputs := [
-        ("minted/default", Ir.ListingStyle.default,
+      -- The style each listing declares; a markdown fence declares none.
+      let inputs : List (String × Option Ir.ListingStyle × Ir.Doc × Array Diag) := [
+        ("minted/default", some .default,
           ShellHighlight.minted language .default probe.source),
-        ("minted/friendly", Ir.ListingStyle.friendly,
+        ("minted/friendly", some .friendly,
           ShellHighlight.minted language .friendly probe.source),
-        ("markdown/default", Ir.ListingStyle.default,
+        ("markdown/default", none,
           elabMd ("```" ++ language ++ "\n" ++ probe.source ++ "\n```"))]
       for (surface, style, (rawDoc, ds)) in inputs do
         let label := s!"shell {surface}/{language}/{probe.name}"

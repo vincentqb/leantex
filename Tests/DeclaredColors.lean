@@ -92,7 +92,7 @@ public def checks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit 
   let comment := hex 0x60 0xA0 0xB0
   let source := "sorry -- note"
   let spec : Ir.ListingSpec :=
-    { style := .friendly
+    { style := some .friendly
       highlight := #[#[{ kind := .genericError, text := "sorry" }, { kind := .text, text := " " },
         { kind := .comment, text := "-- note" }]] }
   let listing : Ir.Doc :=
@@ -135,6 +135,28 @@ public def checks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit 
       "\\begin{frame}\\textcolor{quiet}{Grey words.}\\end{frame}")).2).isEmpty)
   t "declared colours: a document's page text asks 4.5:1"
     ((reports (elabStr (greySrc "article" "\\textcolor{quiet}{Grey words.}")).2).size == 1)
+  -- A highlighting style the document never declared is the engine's own
+  -- choice of colours: fitted to the ground the listing stands on, in both
+  -- artifacts, with nothing to report. A declared style ships as it states.
+  let darkPage := hex 0x11 0x11 0x11
+  let darkListing (env opts : String) : Ir.Doc × Array Diag :=
+    elabStr ("\\documentclass{article}\\usepackage{minted}\\usepackage{listings}" ++
+      "\\palette{ bg = #111111, fg = #EEEEEE }\\begin{document}\n" ++
+      s!"\\begin\{{env}}{opts}\nx = \"text\"  # note\nprint(len(x))\n\\end\{{env}}\n" ++
+      "\\end{document}")
+  for (what, env, opts) in [("minted with no style", "minted", "{python}"),
+      ("a listings listing", "lstlisting", "[language=Python]")] do
+    let (doc, ds) := darkListing env opts
+    let inks := (ListingHighlight.glyphColors (layoutOf fonts doc)).map (·.2)
+    t s!"declared colours: {what} sets every token legibly on a dark page"
+      (!inks.isEmpty && inks.all fun c => Contrast.aaText ≤ Contrast.contrastMilli c darkPage)
+    t s!"declared colours: {what} draws no contrast report" (reports ds).isEmpty
+  let (declDoc, declDs) := darkListing "minted" "[style=friendly]{python}"
+  let friendlyString := (CodeColor.styleColor .friendly .literal).getD Ir.Color.black
+  t "declared colours: a declared style's literal colour ships as stated on a dark page"
+    ((ListingHighlight.glyphColors (layoutOf fonts declDoc)).any (·.2 == friendlyString))
+  t "declared colours: a declared style's colours short of the dark page are reported"
+    ((reports declDs).any fun d => hasStr d.message "'friendly' highlighting style")
   -- The focus ring a link draws on the HTML page: a declared accent short of
   -- non-text's 3:1 is reported once, where a link ships.
   let focusSrc (body : String) : String :=
@@ -146,6 +168,14 @@ public def checks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit 
        d.code == "W0345" && hasStr d.message "the focus ring" && hasStr d.message "SC 1.4.11")
   t "declared colours: a page with no link draws no focus ring to judge"
     ((reports (elabStr (focusSrc "No link here.")).2).isEmpty)
+  for (what, body) in [("a reference", "\\section{One}\\label{one}See \\ref{one}."),
+      ("a footnote", "Text\\footnote{An invented note}.")] do
+    t s!"declared colours: {what} takes focus, so its ring is judged"
+      ((reports (elabStr (focusSrc body)).2).any fun d => hasStr d.message "the focus ring")
+  t "declared colours: a page shipping no stylesheet of the engine's draws no ring to judge"
+    ((reports (elabStr ("\\documentclass{article}\\output{ css = none }" ++
+      "\\palette{ accent = #FFE000 }\\begin{document}See " ++
+      "\\href{https://example.org}{the probe}.\\end{document}")).2).isEmpty)
   -- A legible document says nothing.
   t "declared colours: a legible document draws no contrast report"
     ((reports (elabStr ("\\documentclass{article}\\palette{ fg = #111111, bg = #FFFFFF, " ++

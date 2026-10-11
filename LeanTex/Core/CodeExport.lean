@@ -47,7 +47,7 @@ private def macroText (stem : String) (brushes : RoleTable Listing.Brush) (k : K
 /-- The colour each role ships on the palette's page, as `Listing.roleBrushes`
 paints it in both artifacts, and its weights. -/
 public def pageBrushes (pal : Palette) (style : Ir.ListingStyle) : RoleTable Listing.Brush :=
-  Listing.roleBrushes pal none none style
+  Listing.roleBrushes pal none none (some style)
 
 /-- **The export**: an xcolor colour per role that has one, and one command,
 `\<stem>Pygments`, redefining every standard type's `\PYG@tok@<name>` macro

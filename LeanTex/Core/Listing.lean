@@ -19,27 +19,27 @@ namespace LeanTex.Core.Listing
 open Ir ListingHighlight PygmentsStyle CodeColor
 
 /-- The colour of a token of type `k` on `ground`: its role's. -/
-public def paint (pal : Palette) (ground : Color) (style : ListingStyle) (k : Kind) :
+public def paint (pal : Palette) (ground : Color) (style : Option ListingStyle) (k : Kind) :
     Option CodeColor.Paint :=
   (resolve pal ground style).get k.role
 
 /-- **Two types of one role paint alike**, under every palette, ground and
 style: a proof hole and a raised not-implemented error, both `error`, ship
 one colour by construction. -/
-public theorem paint_role_exact (pal : Palette) (ground : Color) (style : ListingStyle)
+public theorem paint_role_exact (pal : Palette) (ground : Color) (style : Option ListingStyle)
     (k k' : Kind) (h : k.role = k'.role) : paint pal ground style k = paint pal ground style k' := by
   simp only [paint, h]
 
 /-- **A colour a token ships as declared is one the palette declares**, under
 the key it ships under. -/
-public theorem paint_declared_mem (pal : Palette) (ground : Color) (style : ListingStyle)
+public theorem paint_declared_mem (pal : Palette) (ground : Color) (style : Option ListingStyle)
     (k : Kind) (p : CodeColor.Paint) (h : paint pal ground style k = some p)
     (hd : p.declared = true) :
     ∃ key, p.role = some key ∧ Design.declared? pal key = some p.color :=
   resolve_declared_mem pal ground style k.role p h hd
 
 /-- **Every other colour a token ships is under its role's own key.** -/
-public theorem paint_derived_exact (pal : Palette) (ground : Color) (style : ListingStyle)
+public theorem paint_derived_exact (pal : Palette) (ground : Color) (style : Option ListingStyle)
     (k : Kind) (p : CodeColor.Paint) (h : paint pal ground style k = some p)
     (hd : p.declared = false) : p.role = some (Ir.Role.ofCode k.role) :=
   resolve_derived_exact pal ground style k.role p h hd
@@ -67,7 +67,7 @@ private def shipped (bg : Color) (p : CodeColor.Paint) : Color :=
 
 /-- One type's colour on the actual ground. -/
 public def ink (pal : Palette) (ground : Option Color) (kind : Kind)
-    (style : ListingStyle := .default) : Option Color :=
+    (style : Option ListingStyle := none) : Option Color :=
   let bg := ground.getD (Design.printPage pal)
   (paint pal bg style kind).map (shipped bg)
 
@@ -109,21 +109,21 @@ private def roleBrush (d : Design) (bg : Color) (covered : Option Color)
   | none => { look, ink := covered, role := none }
 
 /-- Every role's brush on one ground, each resolved once. -/
-public def roleBrushes (pal : Palette) (ground covered : Option Color) (style : ListingStyle) :
+public def roleBrushes (pal : Palette) (ground covered : Option Color) (style : Option ListingStyle) :
     RoleTable Brush :=
   let d := Design.ofPalette pal
   let bg := ground.getD d.bg
   let paints := resolve pal bg style
   RoleTable.ofFn fun r => roleBrush d bg covered r (paints.get r)
 
-public def brush (pal : Palette) (ground covered : Option Color) (style : ListingStyle)
+public def brush (pal : Palette) (ground covered : Option Color) (style : Option ListingStyle)
     (k : Kind) : Brush :=
   (roleBrushes pal ground covered style).get k.role
 
 /-- **Two types of one role ship one brush**, the value both backends paint
 from (`brushes`, `paintLine`): one set of weights, one ink, one key. -/
 public theorem brush_role_exact (pal : Palette) (ground covered : Option Color)
-    (style : ListingStyle) (k k' : Kind) (h : k.role = k'.role) :
+    (style : Option ListingStyle) (k k' : Kind) (h : k.role = k'.role) :
     brush pal ground covered style k = brush pal ground covered style k' := by
   simp only [brush, h]
 
@@ -146,7 +146,7 @@ public def Brush.inline (b : Brush) (text : String) : Inline :=
 /-- A classified source token as ordinary typed inlines. Both backends consume
 this projection. -/
 public def tokenInline (pal : Palette) (ground covered : Option Color) (t : Token)
-    (style : ListingStyle := .default) : Inline :=
+    (style : Option ListingStyle := none) : Inline :=
   (brush pal ground covered style t.kind).inline t.text
 
 /-- Painting a classified token conserves its exact scalar sequence, under
@@ -154,7 +154,7 @@ every palette, ground, overlay and style. Together with
 `Ir.listing_source_exact`, this is the source-preservation premise both
 artifact projections consume. -/
 public theorem token_inline_source_exact (pal : Palette) (ground covered : Option Color)
-    (t : Token) (style : ListingStyle := .default) :
+    (t : Token) (style : Option ListingStyle := none) :
     plainTextOne (tokenInline pal ground covered t (style := style)) = t.text := by
   unfold tokenInline Brush.inline
   split
@@ -165,7 +165,7 @@ public theorem token_inline_source_exact (pal : Palette) (ground covered : Optio
 
 /-- One brush per type the lines hold, for a listing painted on one ground:
 each role's resolved once, every type of the role drawing its role's. -/
-public def brushes (pal : Palette) (ground covered : Option Color) (style : ListingStyle)
+public def brushes (pal : Palette) (ground covered : Option Color) (style : Option ListingStyle)
     (lines : Array (Array Token)) : Array (Kind × Brush) :=
   let roles := roleBrushes pal ground covered style
   let kinds := lines.foldl (fun acc line => line.foldl (fun acc t =>
@@ -181,7 +181,7 @@ public def Brush.shipsInk (b : Brush) (text : String) : Option (Color × Option 
   if b.inkFree text then none else b.ink.map (·, b.role)
 
 /-- The brush a type has in `table`, or its own where the table has none. -/
-public def brushIn (pal : Palette) (ground covered : Option Color) (style : ListingStyle)
+public def brushIn (pal : Palette) (ground covered : Option Color) (style : Option ListingStyle)
     (table : Array (Kind × Brush)) (k : Kind) : Brush :=
   match table.find? (fun e => decide (e.1 = k)) with
   | some (_, b) => b
@@ -190,7 +190,7 @@ public def brushIn (pal : Palette) (ground covered : Option Color) (style : List
 /-- A brush drawn from the table is the type's own brush, for any lines the
 table was drawn from. -/
 public theorem brushIn_exact (pal : Palette) (ground covered : Option Color)
-    (style : ListingStyle) (lines : Array (Array Token)) (k : Kind) :
+    (style : Option ListingStyle) (lines : Array (Array Token)) (k : Kind) :
     brushIn pal ground covered style (brushes pal ground covered style lines) k =
       brush pal ground covered style k := by
   unfold brushIn
@@ -265,7 +265,7 @@ private def runsGo (brushOf : Kind → Brush) : List Token → Option Run → Ar
     | none => runsGo brushOf ts (some (Run.start (brushOf t.kind) t)) (acc.push r)
 
 /-- A listing line as runs of tokens that ship alike, painted from `table`. -/
-public def paintLine (pal : Palette) (ground covered : Option Color) (style : ListingStyle)
+public def paintLine (pal : Palette) (ground covered : Option Color) (style : Option ListingStyle)
     (table : Array (Kind × Brush)) (line : Array Token) : Array Run :=
   runsGo (brushIn pal ground covered style table) line.toList none #[]
 
@@ -307,7 +307,7 @@ private theorem runsGo_tokens (B : Kind → Brush) (ts : List Token) :
 
 /-- The runs of a line hold its tokens, in order, each once. -/
 public theorem paintLine_tokens_exact (pal : Palette) (ground covered : Option Color)
-    (style : ListingStyle) (table : Array (Kind × Brush)) (line : Array Token) :
+    (style : Option ListingStyle) (table : Array (Kind × Brush)) (line : Array Token) :
     (paintLine pal ground covered style table line).toList.flatMap (·.tokens.toList) =
       line.toList := by
   simp [paintLine, runsGo_tokens]
@@ -449,7 +449,7 @@ each in its type's weights and, wherever it lays down ink, its type's ink.
 Only white space that is not underlined may change ink, which it does not
 show. -/
 public theorem paintLine_shows_exact (pal : Palette) (ground covered : Option Color)
-    (style : ListingStyle) (lines : Array (Array Token)) (line : Array Token) :
+    (style : Option ListingStyle) (lines : Array (Array Token)) (line : Array Token) :
     (paintLine pal ground covered style (brushes pal ground covered style lines) line).toList.flatMap
         Run.shows =
       line.toList.flatMap fun t => tokenShows (brush pal ground covered style t.kind) t := by
@@ -485,7 +485,7 @@ is text AA there, even where the surrounding frame uses the lower large-text
 threshold: every role's, as it ships — what the rule fits, and what the
 listing's style states. A declared colour is its palette's contract's, and
 the contrast report's to name. -/
-public def contract (pal : Palette) (ground : Option Color) (style : ListingStyle := .default) :
+public def contract (pal : Palette) (ground : Option Color) (style : Option ListingStyle := none) :
     Bool :=
   let bg := ground.getD (Design.printPage pal)
   let paints := resolve pal bg style

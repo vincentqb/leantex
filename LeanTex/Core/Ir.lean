@@ -6164,8 +6164,11 @@ public structure ListingSpec where
   caption : Option (Nat × Array Inline) := none
   numbers : Bool := false
   language : Option ListingLang := none
-  /-- Both backends pass this value to the one shared token painter. -/
-  style : ListingStyle := .default
+  /-- The highlighting style the document declared, which both backends
+  pass to the one shared token painter: its colours ship as it states them.
+  `none` paints from the default style's table as the engine's own choice,
+  fitted to the ground the listing stands on. -/
+  style : Option ListingStyle := none
   /-- minted's `bgcolor`: the listing's own ground, fvextra's colour box
   behind every source line across the line width (`\FV@BGColor@List`), with
   the name it was spelled by when it names one. -/

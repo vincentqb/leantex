@@ -389,8 +389,14 @@ private def usesInline (cx : UseCx) (acc : UseAcc) : Inline → UseAcc
         acc.use cx nm c
       else acc
     | none => acc
-  -- a resolved reference is ink in the current colour, like a number
-  | .math _ _ | .pageNumber | .pageCount | .ref _ _ _ _ =>
+  | .math _ _ | .pageNumber | .pageCount =>
+    match cx.cur with
+    | some (nm, c, _) => acc.use cx nm c
+    | none => acc
+  -- A resolved reference is ink in the current colour, like a number, and a
+  -- link on the HTML page, which draws the focus ring around it.
+  | .ref _ _ _ _ =>
+    let acc := { acc with linkPals := pushUnique acc.linkPals acc.pal }
     match cx.cur with
     | some (nm, c, _) => acc.use cx nm c
     | none => acc
@@ -418,7 +424,8 @@ private def usesInline (cx : UseCx) (acc : UseAcc) : Inline → UseAcc
   | .altSteps _ active otherwise =>
     usesInlines cx (usesInlines cx acc active.toList) otherwise.toList
   -- a note's body is ink like any other; it holds the contrast contract
-  | .footnote _ body => usesInlines cx acc body.toList
+  | .footnote _ body =>
+    usesInlines cx { acc with linkPals := pushUnique acc.linkPals acc.pal } body.toList
   | .fill | .hspace _ _ | .rule _ _ _ | .strut _ | .italicCorr _ | .linebreak _ => acc
   -- An image carries no text; its alt is read by a screen reader, not set
   -- in a colour.
@@ -485,7 +492,8 @@ private def usesBlock (cx : UseCx) (acc : UseAcc) : Block → UseAcc
     usesBlocks bodyCx
       (usesInlines titleCx { acc with runs := acc.runs + 2 } title.toList) body.toList
   | .role _ body => usesBlocks cx acc body.toList
-  | .link _ body => usesBlocks cx acc body.toList
+  | .link _ body =>
+    usesBlocks cx { acc with linkPals := pushUnique acc.linkPals acc.pal } body.toList
   | .spaced _ body => usesBlocks cx acc body.toList
   | .columns cols => usesColumns cx acc cols.toList
   | .onSteps spec body => usesBlocks cx (acc.step spec) body.toList
@@ -591,7 +599,7 @@ private def usesBlock (cx : UseCx) (acc : UseAcc) : Block → UseAcc
       cx.ground.orElse fun _ => some (Design.printPage acc.pal)
     let codeCx := { cx.style spec.fontSize with
       ground, groundName := (spec.ground.map fun _ => "the listing's ground").or cx.groundName
-      codeStyle := some spec.style.name }
+      codeStyle := spec.style.map (·.name) }
     -- One brush per type for the whole listing, as both backends draw it;
     -- the palette changes only at a `.setPalette`, never inside a listing.
     let lines := spec.tokenLines source
@@ -633,7 +641,9 @@ private def docWalk (doc : Doc) : UseAcc :=
       slides := stageOf doc
       chromeFoot := doc.docClass.record.chrome && doc.foot.isNone &&
         (doc.chrome.hasFooter || hasFrameFoot) }
-  usesBlocks cx { pal := doc.palette } doc.body.toList
+  let walk := usesBlocks cx { pal := doc.palette } doc.body.toList
+  -- A page that ships no stylesheet of the engine's draws no focus ring.
+  if doc.output.css == some "none" then { walk with linkPals := #[] } else walk
 
 /-- The uses the document plan enumerates: the body walk's, plus running
 heads and feet and the chrome footer. The chrome footer reads its frame's
@@ -1132,14 +1142,14 @@ by `coveredContract` below. -/
 public def paletteContract (pal : Palette) : Bool :=
   (Design.sites pal .print).all Site.passes
 
-/-- Every listing ink of every shipped style is text-AA on every listing
-ground of a bundle: the page, its standout inversion, and its title page
-when declared. A colour the bundle declares ships as declared, which this
-holds to AA on every such ground; every other colour the shared painter
-adapts there. -/
+/-- Every listing ink of every shipped style, declared or the engine's
+default, is text-AA on every listing ground of a bundle: the page, its
+standout inversion, and its title page when declared. A colour the bundle
+declares ships as declared, which this holds to AA on every such ground;
+every other colour the shared painter adapts there. -/
 public def listingContract (pal : Palette) : Bool :=
   let d := Design.ofPalette pal
-  ListingStyle.all.all fun style =>
+  (none :: ListingStyle.all.map some).all fun style =>
     Listing.contract pal none style && Listing.contract pal (some d.standout.bg) style
       && (match d.titlepage with
           | some p => Listing.contract pal (some p.bg) style
