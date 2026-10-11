@@ -125,6 +125,55 @@ def pictureInlineChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : 
   t "a box and a picture on their own line are a row, not a sentence"
     (!named ("\\parbox[t]{3cm}{Lab}\n" ++ mark))
 
+/-- **A picture a group holds is named in the sentence the group stands
+in.** `\mbox` keeps its content in the line and a brace group is a scope,
+so LaTeX runs a sentence on around a picture inside either; the engine sets
+the group's picture as a block, so the sentence breaks at the group. The
+group's own walk began a sentence of its own and saw none around the
+picture, so the break shipped unnamed — the more often once the subset drew
+more pictures natively. Judged over the shipped page: the sentence ships,
+and wherever its text stands above and below the picture's ink, the break
+is named, once — text inside the group is the group's own to name, never
+named twice — while a group alone in its paragraph names nothing. Invented
+content. -/
+def pictureGroupSentenceChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) :
+    IO Unit := do
+  let t := check ref
+  let mark := "\\begin{tikzpicture}\\fill (0,0) rectangle (0.3,0.3);\\end{tikzpicture}"
+  let doc (body : String) : String :=
+    "\\documentclass{article}\\pictures{ tool = none }\\begin{document}\n" ++ body ++
+      "\n\\end{document}"
+  let namings (body : String) : Nat :=
+    ((elabStr (doc body)).2.filter fun d =>
+      d.code == "W0334" && d.subject == some "picture:inline").size
+  let held : List (String × String) :=
+    [("an \\mbox", "\\mbox{" ++ mark ++ "}"),
+     ("a brace group", "{" ++ mark ++ "}"),
+     ("a group under a colour", "{\\color{red}" ++ mark ++ "}"),
+     ("a group inside an \\mbox", "\\mbox{{" ++ mark ++ "}}"),
+     ("a centring group", "{\\centering " ++ mark ++ "}"),
+     ("text inside the group", "{\\itshape a " ++ mark ++ " b}")]
+  for (what, group) in held do
+    let body := "Some running words " ++ group ++ " and more running words."
+    let c := censusOfSrc oneFace (doc body)
+    let before := lineYOf c 0 "Some running words"
+    let after := lineYOf c 0 "and more running words"
+    let broke := match before, after, (c[0]?.bind (·.pathBoxes[0]?)) with
+      | some a, some b, some (_, fy, _, fh) => decide (a < fy ∧ fy + fh < b)
+      | _, _, _ => false
+    t s!"{what}: the sentence ships around the picture" (before.isSome && after.isSome)
+    t s!"{what}: a break the page ships at the picture is named, once"
+      (!broke || namings body == 1)
+  -- The box's own note says what the box became and promises no line:
+  -- the picture in it is a block, which W0334 names.
+  t "a box holding a picture is noted without a promise its warning breaks"
+    (["\\mbox", "\\makebox", "\\raisebox{2pt}"].all fun box =>
+      !(elabStr (doc ("Some running words " ++ box ++ "{" ++ mark ++ "} more words."))).2.any
+        fun d => hasStr d.message "kept in the line" || hasStr d.message "keeps the line's")
+  t "a group alone in its paragraph names nothing"
+    (namings ("\\mbox{" ++ mark ++ "}") == 0 &&
+      namings ("Before.\n\n{\\color{red}" ++ mark ++ "}\n\nAfter.") == 0)
+
 
 /-- **A dropped picture key is named whole.** Every option catch-all named
 the entry's first token, so `text width=`, `text centered` and `text opacity=`

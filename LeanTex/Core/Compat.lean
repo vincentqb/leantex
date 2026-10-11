@@ -8232,7 +8232,7 @@ defines; those blocks keep beamer's default template" pos
     if args.size != 1 then return none
     let (_, j) := takeOpts raws j 2
     sayOnce "ctrl:raisebox" .W0104
-      "'\\raisebox' lift, height and depth are not applied; its content keeps the line's baseline" pos
+      "'\\raisebox' lift, height and depth are not applied; its content is set as if unboxed" pos
       (help := "remove the box dimensions to use the surrounding line's natural spacing")
     return some (#[], j)
   | "mbox" | "makebox" =>
@@ -8249,7 +8249,7 @@ defines; those blocks keep beamer's default template" pos
       sayOnce ("ctrl:" ++ name) .W0104
         s!"'\\{name}' width and alignment are dropped; its content is kept" pos
         (help := "\\hfill spaces content apart; \\allow{W0104} accepts the drop")
-    became s!"\\{name}" "its content, kept in the line" pos
+    became s!"\\{name}" "its content" pos
     return some (#[], k)
   | "setbeamerfont" =>
     -- Store the fields once for mapped elements and template selection.

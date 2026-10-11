@@ -1784,8 +1784,9 @@ def bibFieldShipChecks (ref : IO.Ref (List String))
             (if load.isEmpty then "" else s!"\\addbibresource\{{r}.bib}\n") ++
             "\\begin{document}\nText" ++ body ++ " \\cite{k}.\n" ++ list r ++ "\n\\end{document}\n"
         IO.FS.writeFile (dir / "field.tex") (docOf "rf" "")
-        -- the body's spelling in a line that stays one, as an entry's does
-        IO.FS.writeFile (dir / "body.tex") (docOf "rb" (" \\mbox{" ++ construct ++ "}"))
+        -- the body's spelling in a line that stays one, as an entry's does: a
+        -- font command's argument, where an `\mbox`'s picture is a block
+        IO.FS.writeFile (dir / "body.tex") (docOf "rb" (" \\textnormal{" ++ construct ++ "}"))
         for ext in ["pdf", "html"] do
           let (fe, fw, fc) ← bibShipRun binary font dir "field.tex" s!"field.{ext}"
           let (be, bw, bc) ← bibShipRun binary font dir "body.tex" s!"body.{ext}"

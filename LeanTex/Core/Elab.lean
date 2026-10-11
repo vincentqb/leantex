@@ -10112,25 +10112,69 @@ private def alignEnvArm (ctx : Ctx) (n : String) (kind : Math.GridKind)
   -- stands before it (tex.web §1206), its rows on amsmath's strut.
   return blocks.push (.role ({ align := true } : Ir.DisplayCtx).role #[.center #[.para content]])
 
+/-- A sentence's text, as the in-sentence naming counts it: a word, a symbol
+or inline math, never a declaration or a spacing command. -/
+private def sentenceText (r : Raw) : Bool :=
+  r matches .word _ _ || r matches .sym _ _ || r matches .math false _ _
+
 /-- **A picture inside a sentence is named where it stands.** LaTeX sets a
 `tikzpicture` as a box of its line, so the sentence runs on around it; the
 engine sets a picture as a block, which breaks the sentence into two
 paragraphs with the picture between. The sentence is the paragraph's text
-before the picture (`cur`, what the block walk holds) and after it, up to
-the next paragraph break or environment; a word, a symbol or inline math
-counts, a declaration or a spacing command does not. A box followed by a
-picture on its own line is a row (`Compat.boxRows`), and never reaches
+(`sentenceText`) before the picture (`cur`, what the block walk holds) and
+after it, up to the next paragraph break or environment. A box followed by
+a picture on its own line is a row (`Compat.boxRows`), and never reaches
 here. Outside the knot. -/
 private def pictureInSentence (ctx : Ctx) (n : String) (cur raws : Array Raw) (i : Nat)
     (pos : Pos) : EM Unit := do
   if n != "tikzpicture" && n != "tikzcd" then return
-  let text (r : Raw) : Bool := r matches .word _ _ || r matches .sym _ _ || r matches .math false _ _
   let after := (raws.extract (i + 1) raws.size).toList.takeWhile fun r =>
     !(r matches .par _) && !(r matches .env _ _ _)
-  if cur.any text || after.any text then
+  if cur.any sentenceText || after.any sentenceText then
     warnOnce ctx "picture:inline" .W0334
       "a picture inside a paragraph is set as its own block: the paragraph's text breaks \
 at it instead of running on beside it" pos
+
+mutual
+
+/-- One raw's picture for `scopePicture?`, `seen` the raws before it in its
+group; the `List` companion below carries the walk. -/
+private def scopePictureOne (seen : Array Raw) : Raw → Option (String × Pos)
+  | .env n _ p => if n == "tikzpicture" || n == "tikzcd" then some (n, p) else none
+  | .group b _ =>
+    if isArgument seen || b.any sentenceText then none else scopePictureList #[] b.toList
+  | _ => none
+
+private def scopePictureList (seen : Array Raw) : List Raw → Option (String × Pos)
+  | [] => none
+  | r :: rest =>
+    match scopePictureOne seen r with
+    | some p => some p
+    | none => scopePictureList (seen.push r) rest
+
+end
+
+/-- The picture a scope group sets as its own block where the group's own
+walk names nothing: a `tikzpicture` or `tikzcd` the group holds beside no
+text of its own (`sentenceText`), through scope groups nested the same way
+— an argument group (`isArgument`) is its command's. Text inside the group
+is the group's own walk's to name (`pictureInSentence`). -/
+private def scopePicture? (body : Array Raw) : Option (String × Pos) :=
+  if body.any sentenceText then none else scopePictureList #[] body.toList
+
+/-- **A picture a group holds is named in the sentence the group stands
+in.** `\mbox` keeps its content in the line, and a brace group is a scope,
+so LaTeX runs the sentence on around a picture inside either; the engine
+sets the group as a block scope (`bodyIsBlock`), so the sentence breaks at
+the group exactly as at a picture written there — but the group's own walk
+begins a sentence of its own and sees none around the picture. The
+sentence is the one the group stands in, the group at `i`. Outside the
+knot. -/
+private def groupPictureInSentence (ctx : Ctx) (body cur raws : Array Raw) (i : Nat) :
+    EM Unit :=
+  match scopePicture? body with
+  | some (n, pos) => pictureInSentence ctx n cur raws i pos
+  | none => pure ()
 
 /-- The in-sentence naming for a command whose body is a picture: expanded
 at the block level (`bodyIsBlock`), the picture is set as its own block and
@@ -13442,6 +13486,7 @@ private def elabBlocksGo (ctx : Ctx) (raws : Array Raw) (i : Nat)
         -- declaration reaches exactly to the group's edge. An argument
         -- group is the command's, as in the par splice above; its own
         -- block sequence, so the declaration stops at the closing brace.
+        groupPictureInSentence ctx' body cur raws i
         let (⟨ctx', hm⟩, blocks) ← flushPara ctx' blocks cur
         let inner ← groupBlocks ctx'.palette
           (splicedFrameScope (some blocks.size) (elabBlockScope ctx' body))

@@ -42,6 +42,11 @@ private theorem pictureInSentence_alone (ctx : Ctx) (n : String) (body : Array R
     pictureInSentence ctx n #[] #[.env n body pos] 0 pos = pure () := by
   simp [pictureInSentence]
 
+private theorem groupPictureInSentence_alone (ctx : Ctx) (body : Array Raw) (pos : Pos) :
+    groupPictureInSentence ctx body #[] #[.group body pos] 0 = pure () := by
+  unfold groupPictureInSentence
+  split <;> simp [pictureInSentence]
+
 /-- The spine at an environment standing alone, nothing open before it:
 the environment's arm through `envGroup`, then the walk past it. -/
 private theorem elabBlocksGo_env_alone (ctx : Ctx) (st : ESt) (n : String) (body : Array Raw)
@@ -72,7 +77,7 @@ private theorem elabBlocksGo_group_alone (ctx : Ctx) (st : ESt) (body : Array Ra
     simp [Std.Legacy.Range.forIn_eq_forIn_range']
   rw [elabBlocksGo, run_get]
   rw [blockMacroStep_idle ctx st _ 0 #[] #[] hm (by simp) (by simpa [Raw.origins?] using hp)]
-  simp [hpar, hb, ha, flushPara_empty ctx _ hm]
+  simp [hpar, hb, ha, groupPictureInSentence_alone, flushPara_empty ctx _ hm]
 
 /-- What the walk's tail does to the state: nothing the declaration state
 reads. -/
