@@ -16850,11 +16850,15 @@ public theorem wrapStandalone_picture_exact (preamble fonts : String)
         "\\end{tikzpicture}\n\\end{document}\n" := by
   simp only [wrapStandalone, PicKind.docOpen, PicKind.docClose]
 
+/-- Beamer's `\alert` as a picture body spells it: a command name, read here
+as one, never as the palette key of the role the command sets. -/
+private def alertCtrl : String := "alert"
+
 /-- What beamer defines that a beamer document's standalone — a deck's, or
 a beamerposter sheet's (`DocClass.poster`) — which is no beamer, does not:
 `\alert`, where the picture spells it, set as the engine
-sets an alert (`Compat.alertStyled`) — the theme's alert colour where the
-palette holds one, bold outside mathematics, an overlay specification read
+sets an alert (`Compat.alertStyled`) — the alert role's colour where the
+palette declares one, bold outside mathematics, an overlay specification read
 and spent, a picture being one step — and beamer's own colour names `fg`
 and `bg` (the normal text's), where the picture spells one the palette does
 not hold, at the value the page resolves (`Design.ofPalette`); a name the
@@ -16862,8 +16866,8 @@ palette holds travels as its role (`paletteDecls`). -/
 public def slideShims (doc : Doc) (roots : String) : String :=
   if doc.docClass != .slides && doc.docClass != .poster then "" else
   let alert :=
-    if !(ctrlNames roots).contains "alert" then ""
-    else if (doc.palette.find? "alert").isSome then
+    if !(ctrlNames roots).contains alertCtrl then ""
+    else if (Design.declared? doc.palette .alert).isSome then
       "\\providecommand{\\alert}{}\\RenewDocumentCommand{\\alert}{d<>m}\
 {\\textcolor{alert}{\\ifmmode#2\\else\\bfseries#2\\fi}}\n"
     else
