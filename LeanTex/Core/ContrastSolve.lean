@@ -55,10 +55,47 @@ public theorem bisect_pass (pass : Int → Bool) :
       · exact bisect_pass pass fuel _ _ ‹_›
       · exact bisect_pass pass fuel _ _ h
 
+/-- The passing side of the boundary nearest a guess: bisected within
+`guess ± span` where that bracket straddles the boundary (its end toward
+`f` failing, its end toward `p` passing), else over the whole axis from the
+failing end `f` to the passing end `p`. A good guess spends a few
+evaluations where the axis would spend many; a bad one costs two. -/
+public def bisectNear (pass : Int → Bool) (fuel : Nat) (f p guess span : Int) : Int :=
+  let dir : Int := if p < f then -1 else 1
+  let a := guess - dir * span
+  let b := guess + dir * span
+  if !pass a && pass b then bisect pass fuel a b else bisect pass (fuel + 8) f p
+
+/-- **A guided bisection answers a passing value** when the axis's passing
+end passes. -/
+public theorem bisectNear_pass (pass : Int → Bool) (fuel : Nat) (f p guess span : Int)
+    (hp : pass p = true) : pass (bisectNear pass fuel f p guess span) = true := by
+  unfold bisectNear
+  dsimp only
+  split <;> split
+  all_goals first
+    | exact bisect_pass pass (fuel + 8) f p hp
+    | (rename_i h
+       simp only [Bool.and_eq_true] at h
+       exact bisect_pass pass fuel _ _ h.2)
+
+/-- The Oklab lightness of the grey whose WCAG luminance is `y` (10⁻⁷ units):
+a grey's linear channels are its lightness cubed, so the lightness is the
+luminance's cube root, at `labOf`'s scale. A first guess for a tint or an
+ink near the neutral axis. -/
+public def greyLightness (y : Nat) : Int := (Oklab.icbrt (min y 10000000 * 10 ^ 11) : Int) * 10 ^ 12
+
+/-- The luminance (10⁻⁷ units) a colour darker than `ground` has at
+`target` contrast to it, or a lighter one's (`lighter`). -/
+public def luminanceAt (ground : Color) (target : Nat) (lighter : Bool) : Nat :=
+  let yg := luminance ground + 500000
+  if lighter then (yg * target / 1000) - 500000 else (yg * 1000 / max target 1) - 500000
+
 /-- The candidate at lightness `L` (the `labOf` 10¹⁸ scale) with chroma
-scaled to `f`% of the colour's own, gamut-mapped at its lightness and hue. -/
+scaled to `f`% of the colour's own, brought into the gamut at its lightness
+and hue. -/
 private def realizeCand (lab : Oklab.Lab) (f : Nat) (L : Int) : Color :=
-  (Oklab.Okl.gamutMap { L, a := lab.a, b := lab.b, f := f * Oklab.fracOne / 100 }).toColor
+  (Oklab.Okl.toGamut { L, a := lab.a, b := lab.b, f := f * Oklab.fracOne / 100 }).toColor
 
 /-- The `labOf` lightness of pure white, the top of the searched axis. -/
 private def realizeLMax : Int := 10 ^ 18
@@ -124,7 +161,7 @@ private theorem realizeAt_cand {req : Nat} {ground : Color} {lab : Oklab.Lab} {f
 
 /-- **The solver holds hue**: what it returns is the colour itself, or a
 colour at the colour's own Oklab direction with no more than its chroma,
-gamut-mapped — a lighter or darker tone, never a turned one. -/
+in gamut — a lighter or darker tone, never a turned one. -/
 public theorem realize_hue_between {req : Nat} {ground c c' : Color}
     (h : realizeNearest req ground c = some c') :
     c' = c ∨ ∃ o : Oklab.Okl, o.a = (Oklab.labOf c).a ∧ o.b = (Oklab.labOf c).b ∧
@@ -147,7 +184,7 @@ public theorem realize_hue_between {req : Nat} {ground c c' : Color}
           have hf100 : f ≤ 100 := by
             simp only [List.mem_cons, List.not_mem_nil, or_false] at hf
             omega
-          have hg := Oklab.Okl.gamutMap_between
+          have hg := Oklab.Okl.toGamut_between
             { L, a := (Oklab.labOf c).a, b := (Oklab.labOf c).b, f := f * Oklab.fracOne / 100 }
           refine ⟨_, hg.2.1, hg.2.2.1, ?_, rfl⟩
           have hle : f * Oklab.fracOne / 100 ≤ Oklab.fracOne := by

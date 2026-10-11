@@ -314,6 +314,9 @@ public structure Ctx where
   stepBase : Nat := 0
   /-- The document class is `slides`: `\maketitle` makes a title frame. -/
   slides : Bool := false
+  /-- How far a palette generated in the body stands its grounds from the
+  page: the class's (`Ir.ClassRecord.groundDepth`). -/
+  groundDepth : GroundDepth := .documents
   /-- The vertical distribution a frame takes when its options name none:
   beamer's class options `t` and `c` (beamer.cls: `\ExecuteOptionsBeamer{c}`
   then the document's options in order, the last winning; `slidestop` and
@@ -629,6 +632,8 @@ public inductive GlobalWrite where
   | entry (ref : ColorRef) (value : Option Color) (decorative : Bool) (native : Bool)
   /-- The cover fraction a body `\palette{ covered = ... }` set. -/
   | covered (fraction : Option Nat)
+  /-- The generated palette a body `\palette[seeds]{...}` installed. -/
+  | seeded (state : Option SeedPalette.SeedState)
   deriving Repr, BEq, Inhabited
 
 /-- The declaration state TeX's save stack governs (TeXbook ch. 24): the local
@@ -687,12 +692,15 @@ of `none` stands for. -/
     | _, _, _ => s
   | .covered fraction =>
     { s with current := some { s.current.getD base with coveredFraction := fraction } }
+  | .seeded state =>
+    { s with current := some { s.current.getD base with seeded := state } }
 
 /-- Does a replayed entry move Beamer's role state, so the named colours
 resolve again over it? -/
 @[expose] public def GlobalWrite.movesRoles : GlobalWrite → Bool
   | .entry _ _ _ native => native
   | .covered _ => false
+  | .seeded _ => false
 
 /-- What a group's end leaves (TeXbook ch. 24): the local fields its start
 held, the global assignments logged since replayed over them in order — a
@@ -8121,20 +8129,25 @@ private def applyTokens (ctx : Ctx) (toks : Tokens) (src : String) (pos : Pos)
 deliberately low-contrast and exempt from the pairing check. An
 unrecognised option skips the block (W0316) rather than applying it as the
 base palette — a variant block applied as base would silently restyle the
-document. Returns (decorative, skipBlock); both `\palette` doors — the
-preamble's `.palette` arm and the body arm — read their options here. -/
+document. `seeds` reads the block as the seeds a palette is generated from
+(`applySeeds`). Returns (decorative, seeds, skipBlock); both `\palette`
+doors — the preamble's `.palette` arm and the body arm — read their options
+here. -/
 private def parsePaletteOpts (ctx : Ctx) (src : String) (pos : Pos) :
-    EM (Bool × Bool) := do
+    EM (Bool × Bool × Bool) := do
   let mut decorative := false
+  let mut seeds := false
   let mut skipBlock := false
   for e in Decl.splitEntries src do
     if e == "decorative" then
       decorative := true
+    else if e == "seeds" then
+      seeds := true
     else
       diag ctx .W0316 s!"unknown option in '\\palette': {e.quote}; block skipped" pos
-        (help := "options: decorative")
+        (help := "options: decorative, seeds")
       skipBlock := true
-  return (decorative, skipBlock)
+  return (decorative, seeds, skipBlock)
 
 /-- Resolve named Beamer colours into the palette in force; report
 unresolved expressions only once declarations have settled. -/
@@ -8307,10 +8320,99 @@ the page's {what} colour is the '{role}' key" (span := some span)
         (help := some s!"declare \\palette\{ {role} = ... } for the page's {what}, or name \
 '{key}' where it is used"))
 
+/-- The seed keys `\palette[seeds]` reads, each a colour. -/
+private def seedKeys : List String := ["ink", "paper", "accent", "alert", "example", "neutral"]
+
+/-- `\palette[seeds]{ ink = …, paper = …, accent = …, blocks = tonal|strong }`,
+and an `alert`, `example` or `neutral` if the author names one: a palette
+generated from its seeds at the class's ground depth (`SeedPalette.generate`)
+and installed where it stands (`Palette.applySeeds`), every role it sets
+declared as a `\palette` entry is, so a later declaration overrides it.
+Seeds that generate none stand as the page's text, ground and accent, and
+the role that failed is named once (W0306). -/
+private def applySeeds (ctx : Ctx) (pal : Palette) (src : String) (pos : Pos)
+    (depth : GroundDepth) : EM Palette := do
+  let mut found : Array (String × Color) := #[]
+  let mut blocks := SeedPalette.Blocks.tonal
+  for entry in Decl.splitEntries src do
+    match Decl.splitEntry entry with
+    | none =>
+      diag ctx .E0320 s!"invalid entry in '\\palette[seeds]': {entry.quote}" pos
+        (help := "entries look like: ink = #RRGGBB")
+    | some (key, valueSrc) =>
+      if key == "blocks" then
+        match SeedPalette.Blocks.ofName? valueSrc.trimAscii.toString with
+        | some b => blocks := b
+        | none =>
+          diag ctx .E0321 s!"cannot read block style {valueSrc.quote}: the styles are tonal and strong" pos
+            (help := "blocks = tonal, or blocks = strong")
+      else if seedKeys.contains key then
+        match ← readColor ctx pal none valueSrc pos with
+        | .resolved c _ => found := (found.filter (·.1 != key)).push (key, c)
+        | .rejected => pure ()
+        | .missing =>
+          diag ctx .E0321 s!"cannot read seed colour for '{key}': {valueSrc.quote}" pos
+            (help := "seeds are #RRGGBB, oklch(L C H), a colour name or a mix like accent!50!black")
+      else
+        diag ctx .E0320 s!"unknown seed '{key}' in '\\palette[seeds]'" pos
+          (help := "seeds: ink, paper, accent, alert, example, neutral, and blocks = tonal|strong")
+  let seed (k : String) := (found.find? (·.1 == k)).map (·.2)
+  let some ink := seed "ink" | missingSeed
+  let some paper := seed "paper" | missingSeed
+  let some accent := seed "accent" | missingSeed
+  let seeds : SeedPalette.Seeds :=
+    { ink, paper, accent, alert := seed "alert", exampleColor := seed "example",
+      neutral := seed "neutral" }
+  let targets := seeds.targets depth
+  let declare (pal : Palette) (r : Role) (c : Color) : EM Palette := do
+    noteDeclared ctx "palette" (ColorRef.role r).key
+    recordColorDeclaration (ColorRef.role r).key c (ctx.sourceSpan pos)
+    modify fun st => { st with scope := { st.scope with
+      palette := st.scope.palette.native r c } }
+    logGlobal (.entry (.role r) (some c) false true)
+    return pal.declare (.role r) c
+  match SeedPalette.generate seeds targets with
+  | .ok g =>
+    let st : SeedPalette.SeedState := { seeds, targets, blocks, colors := g.colors }
+    let installed := pal.applySeeds st
+    let mut out := { pal with seeded := some st }
+    for (ref, c) in installed.entries do
+      if let .role r := ref then
+        if Design.declared? installed r != Design.declared? pal r then
+          out ← declare out r c
+    logGlobal (.seeded (some st))
+    resolveBeamerColors ctx out
+  | .error f =>
+    let what := (ColorRef.role f.role).key
+    modify fun st => { st with diags := st.diags.push (diagOf ctx .W0306
+      s!"'\\palette[seeds]' generates no palette: {f.detail}; the seeds stand as given" (some pos)
+      (help := some "seeds an ink reads on, 4.6:1 to its paper, generate one: \
+\\palette[seeds]{ ink = #1E1B2E, paper = #FFFFFF, accent = #E85D2A }")
+      (subject := some s!"palette:seeds:{what}")) }
+    let pal ← declare pal .ink ink
+    let pal ← declare pal .page paper
+    let pal ← declare pal .accent accent
+    resolveBeamerColors ctx pal
+where
+  missingSeed : EM Palette := do
+    diag ctx .E0320 "'\\palette[seeds]' needs an ink, a paper and an accent" pos
+      (help := "\\palette[seeds]{ ink = #1E1B2E, paper = #FFFFFF, accent = #E85D2A }")
+    return pal
+
+/-- A title's runs on the bar its role names, where one is painted: a
+generated role that does not read there takes its family's tone
+(`groundTitleRuns`); every other run stands as declared. -/
+private def groundedTitle (pal : Palette) (bar : Role) (title : Array Inline) : Array Inline :=
+  match Design.at pal .print bar with
+  | some g => groundTitleRuns pal g title
+  | none => title
+
 /-- Native colour declarations update the same epoch as named Beamer
 colours. Later explicit native declarations retain their precedence. -/
 private def applyPalette (ctx : Ctx) (pal : Palette) (src : String)
-    (pos : Pos) (decorative : Bool := false) : EM Palette := do
+    (pos : Pos) (decorative : Bool := false) (seeds : Bool := false)
+    (depth : GroundDepth := .documents) : EM Palette := do
+  if seeds then return ← applySeeds ctx pal src pos depth
   let mut pal := pal
   for entry in Decl.splitEntries src do
     match Decl.splitEntry entry with
@@ -10817,26 +10919,27 @@ private def flowStyleArm (ctx : Ctx) (n : String) (raws : Array Raw)
       -- The native palette door, also used by `\colorlet`.
       let j0 := skipSpaces raws start
       have hj0 := skipSpaces_ge raws start
-      let ⟨(decorative, skipBlock, jf), hjf⟩ :
-          { t : Bool × Bool × Nat // start ≤ t.2.2 } ←
+      let ⟨((decorative, seeds), skipBlock, jf), hjf⟩ :
+          { t : (Bool × Bool) × Bool × Nat // start ≤ t.2.2 } ←
         if let some (.sym '[' _) := raws[j0]? then do
           let ⟨(opt, k), hk⟩ : { t : Array Raw × Nat // start ≤ t.2 } :=
             match hc : closeBracketFrom raws (j0 + 1) with
             | some c => ⟨(raws.extract (j0 + 1) c, c + 1), by
                 have := closeBracketFrom_ge hc; omega⟩
             | none => ⟨(raws.extract (j0 + 1) raws.size, raws.size), by omega⟩
-          let (decorative, skipBlock) ← parsePaletteOpts ctx (rawSrc opt) pos
+          let (decorative, seeds, skipBlock) ← parsePaletteOpts ctx (rawSrc opt) pos
           have hk2 : start ≤ k := hk
-          pure ⟨(decorative, skipBlock, skipSpaces raws k), by
+          pure ⟨((decorative, seeds), skipBlock, skipSpaces raws k), by
             have := skipSpaces_ge raws k
             show start ≤ skipSpaces raws k
             omega⟩
-        else pure ⟨(false, false, j0), hj0⟩
+        else pure ⟨((false, false), false, j0), hj0⟩
       have hjf2 : start ≤ jf := hjf
       match raws[jf]? with
       | some (.group body _) =>
         let pal? ← if skipBlock then pure none else
           some <$> applyPalette ctx ctx.palette (rawSrc body) pos (decorative := decorative)
+            (seeds := seeds) (depth := ctx.groundDepth)
         pure ⟨(pal?, jf + 1), by omega⟩
       | _ =>
         diag ctx .E0304 "'\\palette' needs a {...} block" pos
@@ -12881,7 +12984,8 @@ private def elabEnvArm (ctx : Ctx) (n : String) (scope : Array Raw)
     -- the only producer of a titleless inner frame is the title arm, whose
     -- `.golden` distribution is the one to keep — as in beamer, where the
     -- title-page template's glue sits inside the frame the author opened.
-    blocks ← closeFramePalette ctx pos blocks title opts inner aliasScope
+    blocks ← closeFramePalette ctx pos blocks
+      (groundedTitle frameCtx.palette .frameTitleBar title) opts inner aliasScope
   else if n == "itemize" || n == "enumerate" || n == "description" then
     -- enumitem's per-instance `[keys]` are consumed and named: the
     -- engine styles lists per element, not per instance, and the
@@ -12998,7 +13102,8 @@ the text width; the box takes the whole measure" pos
     have hx1 : slicePars (body.extract m body.size) 0
         = nestedParsList (body.extract m body.size).toList := slicePars_zero _
     let inner ← elabBlockScope ctx (body.extract m body.size)
-    blocks := blocks ++ selectedCover Block.onSteps spec #[.titled kind title inner]
+    blocks := blocks ++ selectedCover Block.onSteps spec
+      #[.titled kind (groundedTitle ctx.palette (Role.titleBar kind) title) inner]
   else if thmEnv (← get).ctr.thm n then
     -- A theorem-like environment (ltthm.dtx, amsthm.sty): the head, the
     -- counter, the label target and the body font are the scope's own,
@@ -16900,15 +17005,16 @@ the built-in's heading and margins stand{replaced}"
   | .palette opts body pos =>
     -- `\palette[decorative]{...}`: options read by the one door
     -- (`parsePaletteOpts`), the body arm's too.
-    let (decorative, skipBlock) ← match opts with
+    let (decorative, seeds, skipBlock) ← match opts with
       | some opt => parsePaletteOpts s.ctx (rawSrc opt) pos
-      | none => pure (false, false)
+      | none => pure (false, false, false)
     match body with
     | some src =>
       if skipBlock then
         return s
       else
-        let pal ← applyPalette s.ctx s.palette src pos (decorative := decorative)
+        let pal ← applyPalette s.ctx s.palette src pos (decorative := decorative) (seeds := seeds)
+          (depth := s.docClass.record.groundDepth)
         return { s with palette := pal, ctx := { s.ctx with palette := pal } }
     | none =>
       diag s.ctx .E0304 "'\\palette' needs a {...} block" pos
@@ -18341,6 +18447,7 @@ private def prepareStyledBody (file : String) (decls : Array PDecl)
   -- the body's token state starts from the fixed values.
   let tokens := (Ir.PreambleFace.ofClass record page.fontSize).fixTableLengths tokens
   ctx := { ctx with slides := record.model == .frame
+                    groundDepth := record.groundDepth
                     frameAlign := classFrameAlign classOpts
                     face := record.model == .face
                     numberHeadings := record.numberHeadings, styles := styles

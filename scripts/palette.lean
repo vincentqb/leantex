@@ -24,25 +24,49 @@ private meta def rgb (value : String) : Option Ir.Color := do
   let spec ← (Decl.parseColorSpec (some "HTML") value).toOption
   Ir.Palette.resolveSpec {} spec
 
+/-- The flags before the prefix, in any order. -/
+private structure Flags where
+  blocks : Bool := false
+  style : SeedPalette.Blocks := .tonal
+  depth : Ir.GroundDepth := .decks
+  pygments : Option String := none
+  check : Option String := none
+
+private meta def flags : Flags → List String → Except String (Flags × List String)
+  | f, "--beamer-blocks" :: rest => flags { f with blocks := true } rest
+  | f, "--blocks" :: name :: rest =>
+    match SeedPalette.Blocks.ofName? name with
+    | some b => flags { f with style := b } rest
+    | none => .error s!"unknown block style '{name}'; use tonal or strong"
+  | f, "--depth" :: "documents" :: rest => flags { f with depth := .documents } rest
+  | f, "--depth" :: "decks" :: rest => flags { f with depth := .decks } rest
+  | _, "--depth" :: name :: _ => .error s!"unknown depth '{name}'; use documents or decks"
+  | f, "--pygments" :: style :: rest => flags { f with pygments := some style } rest
+  | f, "--check" :: path :: rest => flags { f with check := some path } rest
+  | f, rest => .ok (f, rest)
+
 /-- Export ordinary TeX colours from three RGB seeds:
 `lake env lean --run scripts/palette.lean Prefix INK PAPER ACCENT`.
 Use `Prefix --seeds colors.json` to read exactly `ink`, `paper` and `accent`
-string fields instead of the three RGB arguments.
-Add `--beamer-blocks` before the prefix for filled block bindings; load
-the export after the Beamer theme's initialization. Add `--pygments STYLE`
-for a listing's code colours as the engine derives them from a palette whose
-text, page and alert are the ink, paper and accent (`CodeExport`), with
-STYLE's colours where that palette leaves a role open: the colours and a
-`\<Prefix>Pygments` command to name in minted's `formatcom`.
-Only declarations go to stdout, so the caller can save or compare them.
-The script never rewrites a document or changes its permissions. -/
+string fields instead of the three RGB arguments. Flags, before the prefix:
+`--beamer-blocks` binds every beamer element the palette writes — the page's
+text and ground, the footline, the alert, and the six block elements in the
+style `--blocks tonal|strong` names (load the export after the Beamer theme's
+initialization);
+`--depth documents|decks` picks the class's ground depth (decks by default);
+`--pygments STYLE` adds a listing's code colours as the engine derives them
+from the generated palette (`CodeExport`), with STYLE's colours where the
+palette leaves a role open, and a `\<Prefix>Pygments` command to name in
+minted's `formatcom`; `--check FILE` prints nothing and exits 1 when FILE
+is not what these seeds generate. Only declarations go to stdout, so the
+caller can save or compare them. The script never rewrites a document or
+changes its permissions. -/
 public meta def main (args : List String) : IO UInt32 := do
-  let (blocks, args) := match args with
-    | "--beamer-blocks" :: rest => (true, rest)
-    | rest => (false, rest)
-  let (pygments, args) := match args with
-    | "--pygments" :: style :: rest => (some style, rest)
-    | rest => (none, rest)
+  let (f, args) ← match flags {} args with
+    | .ok r => pure r
+    | .error message =>
+      IO.eprintln message
+      return 2
   let args ← match args with
     | [stem, "--seeds", path] =>
       try
@@ -56,7 +80,8 @@ public meta def main (args : List String) : IO UInt32 := do
         return 2
     | _ => pure args
   let [stem, ink, paper, accent] := args
-    | IO.eprintln ("usage: palette.lean [--beamer-blocks] [--pygments STYLE] Prefix " ++
+    | IO.eprintln ("usage: palette.lean [--beamer-blocks] [--blocks tonal|strong] " ++
+        "[--depth documents|decks] [--pygments STYLE] [--check FILE] Prefix " ++
         "(INK PAPER ACCENT | --seeds colors.json)")
       return 2
   if stem.isEmpty || !(stem.toList.all fun c => c.isAlpha && c.toNat < 128) then
@@ -65,19 +90,32 @@ public meta def main (args : List String) : IO UInt32 := do
   let some ink := rgb ink | IO.eprintln "invalid ink RGB"; return 2
   let some paper := rgb paper | IO.eprintln "invalid paper RGB"; return 2
   let some accent := rgb accent | IO.eprintln "invalid accent RGB"; return 2
-  let seeds : SeedPalette.Seeds := ⟨ink, paper, accent⟩
-  let some palette := SeedPalette.generate seeds
-    | IO.eprintln "could not derive every role; use contrasting ink and paper with a distinct accent"
+  let seeds : SeedPalette.Seeds := { ink, paper, accent }
+  let targets := seeds.targets f.depth
+  let palette ← match SeedPalette.generate seeds targets with
+    | .ok p => pure p
+    | .error failure =>
+      IO.eprintln s!"could not derive {(Ir.ColorRef.role failure.role).key}: {failure.detail}; \
+use contrasting ink and paper with a distinct accent"
       return 1
-  let code ← match pygments with
+  let st : SeedPalette.SeedState := { seeds, targets, blocks := f.style, colors := palette.colors }
+  let code ← match f.pygments with
     | none => pure ""
     | some name =>
       let some style := Ir.ListingStyle.ofName? name
         | IO.eprintln s!"unknown highlighting style '{name}'; use default or friendly"
           return 2
-      let pal : Ir.Palette := ({} : Ir.Palette).declare (.role .ink) ink
-        |>.declare (.role .page) paper |>.declare (.role .alert) accent
-      pure (CodeExport.texDeclarations stem pal style)
-  IO.print ((if blocks then SeedPalette.beamerDeclarations stem seeds palette
-    else SeedPalette.declarations stem seeds palette) ++ code)
-  return 0
+      pure (CodeExport.texDeclarations stem (({} : Ir.Palette).applySeeds st) style)
+  let out := (if f.blocks then SeedPalette.beamerDeclarations stem st
+    else SeedPalette.declarations stem st) ++ code
+  match f.check with
+  | some path =>
+    let current ← try IO.FS.readFile path catch error =>
+      IO.eprintln s!"cannot read '{path}': {error}"
+      return 2
+    if current == out then return 0
+    IO.eprintln s!"'{path}' is not what these seeds generate; regenerate it"
+    return 1
+  | none =>
+    IO.print out
+    return 0

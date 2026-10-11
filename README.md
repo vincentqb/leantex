@@ -104,7 +104,8 @@ is `--ltx-<key>`, named by its `\palette` key (`--ltx-bg`, `--ltx-fg`,
 `--ltx-alert`, `--ltx-frametitlebg`, `--ltx-codekeyword`, …), and a page
 declares exactly the roles something on it reads. Three keys colour the HTML
 page alone, which the PDF does not paint: `tint` the code panel
-(`--ltx-tint`), `accent` the focus ring (`--ltx-accent`), and `rule` a slide's
+(`--ltx-tint`), `focus` the focus ring (`--ltx-focus`), which follows the
+accent (`--ltx-accent`) where nothing declares it, and `rule` a slide's
 border on the paged deck (`--ltx-rule`). A colour from `\definecolor{name}` is
 `--ltx-c-name`, letters and digits as written and any other character as `_`
 and its six hex digits, and text set in it reads that property. A role the
@@ -118,27 +119,57 @@ role — is stated on the element as its value. The previous names (`--bg`, `--f
 name, where the stylesheet reads no property of that name) remain readable for
 one release; override the `--ltx-*` property instead.
 
-Generate a coordinated palette from ink, paper and accent RGB seeds:
+A palette can be generated from three seeds, an ink, a paper and one accent:
+
+```tex
+\palette[seeds]{ ink = #2B2440, paper = #FFFFFF, accent = #E85D2A }
+```
+
+The seeds ship as given; every other colour is derived from them in Oklab
+and holds what its uses owe, 0.10 above WCAG 2.2's ratios: tinted grounds
+for block titles and bodies (a neutral of the ink's or the paper's hue, and
+the accent's own), a muted ink, the accent as text and as an edge on those
+grounds, and their tones on the ink. A darkening amber or yellow turns
+toward orange, at most 20°; any other hue holds. `blocks = tonal` (the
+default) sets block titles in the ink on a tinted band over a lighter body;
+`blocks = strong` sets them on the ink over an accent wash. An `alert`, an
+`example` or a `neutral` seed may be named too. A deck's grounds stand
+further from its page than a document's. An alert on a frame-title or block
+bar the ink paints takes the accent's tone there, and highlighted code takes
+colours derived from the same palette, one tone wherever the listing
+stands. A declaration after `\palette[seeds]` overrides what it generated.
+Colours may also be written as `oklch(L C H)` or `oklab(L a b)`, as CSS
+Color 4 spells them; one outside sRGB loses chroma at its own lightness and
+hue.
+
+To use the same palette under lualatex, export it as xcolor and beamer
+declarations:
 
 ```sh
 lake build scripts.palette
-lake env lean --run scripts/palette.lean --beamer-blocks Slide 192A3D FFFFFF FA9D25 > colors.tex
+lake env lean --run scripts/palette.lean --beamer-blocks Slide 2B2440 FFFFFF E85D2A > colors.tex
 ```
 
-Load `colors.tex` after the Beamer theme. The export keeps the three seeds
-unchanged and derives block surfaces, muted text and accent colors with
-checked contrast. Use `SlideAccent` for decoration and `SlideAccentText` for text
-on `SlidePaper` or `SlideSurface`. Use `SlideAccentEdge` for essential strokes
-on those surfaces or `SlideAccentSoft`; `SlideAccentOnDark` is text on `SlideInk`.
-For a saved palette, replace the three RGB arguments with `--seeds colors.json`,
-where the JSON object has exactly `ink`, `paper` and `accent` hex strings.
-Regenerate the TeX export after changing the seeds.
+Load `colors.tex` after the Beamer theme. It defines one colour per role
+(`SlideInk`, `SlidePaper`, `SlideAccent`, `SlideMuted`, `SlideMutedOnDark`,
+`SlideDiagramMuted`, `SlideSurface`, `SlideSurfaceStrong`, `SlideAccentWash`,
+`SlideAccentSoft`, `SlideAccentText`, `SlideAccentEdge`, `SlideAccentOnDark`,
+`SlideAlert`, `SlideAlertTitle`, `SlideExampleTitle`) and binds beamer's
+`normal text`, `footline`, `alerted text` and six block elements to them.
+Use `SlideAccent` for decoration and `SlideAccentText` for text on
+`SlidePaper` or `SlideSurface`; `SlideAccentEdge` for essential strokes;
+`SlideAccentOnDark` for text on `SlideInk`. `--blocks strong` picks the
+strong block style, and `--depth documents` a document's lighter grounds.
+For a saved palette, replace the three RGB arguments with `--seeds
+colors.json`, where the JSON object has exactly `ink`, `paper` and `accent`
+hex strings. `--check colors.tex` prints nothing and exits 1 when the file
+is not what the seeds generate, so a build can refuse a stale export.
 
-Add `--pygments friendly` (or `default`) to export the code colours the engine
-derives for a palette whose text, page and alert are the ink, paper and accent:
-one colour per code role and a `\SlidePygments` command (named by the prefix)
-redefining the highlighter's token macros, with the style's colours only where
-the palette leaves a role open. Load it after `minted` and apply it with
+Add `--pygments friendly` (or `default`) to export the code colours the
+engine derives from the generated palette: one colour per code role and a
+`\SlidePygments` command (named by the prefix) redefining the highlighter's
+token macros, with the style's colours only where the palette leaves a role
+open. Load it after `minted` and apply it with
 `\setminted{formatcom=\SlidePygments}`, so a lualatex build sets the colours
 leantex sets; leantex reads the palette itself and runs no `formatcom`.
 
@@ -172,7 +203,8 @@ names (`--ltx-c-codekeyword` in HTML) and the role the tokens read
 The per-type keys `codestring`, `codenumber`, `codebuiltin` and
 `codeoperator` colour no listing, and a palette declaring one is told the
 role key to declare instead. Otherwise
-the role follows the palette: errors take `alert`, comments `muted`,
+the role follows the palette: errors take `alert`, comments `muted` (or
+the quietest tone of the ink's own hue that still reads as text),
 literals `example` (or one more hue, set apart from the ink and the alert),
 and keywords and names a tone of the ink's own hue, or the ink itself where
 it has no hue of its own, keywords then set apart by weight alone. A role

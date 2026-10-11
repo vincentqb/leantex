@@ -370,7 +370,8 @@ public def applyUnder (th : Theme) (s : Decls) : Decls :=
       let pal := installPalette th.palette s.palette.entries.toList
       { pal with
         coveredFraction := s.palette.coveredFraction <|> th.palette.coveredFraction
-        decorative := s.palette.decorative ++ pal.decorative }
+        decorative := s.palette.decorative ++ pal.decorative
+        seeded := s.palette.seeded <|> th.palette.seeded }
     tokens := installTokens th.tokens s.tokens.entries.toList
     styles := installStyles th.styles s.styles.entries.toList
     chrome := chromeApply s.chrome th.chrome }
@@ -587,6 +588,16 @@ private theorem installPalette_covered (p : Palette) (es : List (ColorRef × Col
     rw [ih]
     rfl
 
+private theorem installPalette_seeded (p : Palette) (es : List (ColorRef × Color)) :
+    (installPalette p es).seeded = p.seeded := by
+  induction es generalizing p with
+  | nil => rfl
+  | cons e es ih =>
+    obtain ⟨k, c⟩ := e
+    simp only [installPalette]
+    rw [ih]
+    rfl
+
 private theorem installPalette_decorative (p : Palette) (es : List (ColorRef × Color)) :
     (installPalette p es).decorative =
       p.decorative.filter (fun x => !(es.any (fun e => x == e.1))) := by
@@ -712,7 +723,8 @@ private theorem tokens_ext {a b : Tokens} (h : a.entries = b.entries) : a = b :=
   simpa using h
 
 private theorem palette_ext {a b : Palette} (he : a.entries = b.entries)
-    (hc : a.coveredFraction = b.coveredFraction) (hd : a.decorative = b.decorative) :
+    (hc : a.coveredFraction = b.coveredFraction) (hd : a.decorative = b.decorative)
+    (hs : a.seeded = b.seeded) :
     a = b := by
   cases a
   cases b
@@ -771,6 +783,11 @@ private theorem paletteApply_idem (bp p : Palette) :
     congr 1
     funext x
     exact Bool.and_self _
+  · show (installPalette (paletteApply bp p) bp.entries.toList).seeded =
+      (installPalette p bp.entries.toList).seeded
+    rw [installPalette_seeded, installPalette_seeded]
+    show (installPalette p bp.entries.toList).seeded = _
+    rw [installPalette_seeded]
 
 private theorem chromeApply_idem (bc c : Chrome) :
     chromeApply bc (chromeApply bc c) = chromeApply bc c := by

@@ -502,7 +502,7 @@ def goldenNames : List String :=
    "redefine", "titlebars", "titleground", "daylight", "blocks", "poster", "poster-headline", "listings",
    "algorithm", "lineno", "lineno-modulo",
    "cond-newif", "cond-ifdefined", "cond-ifx", "cond-ifnum", "cond-loaded",
-   "md-include", "md-include-deck"] ++
+   "md-include", "md-include-deck", "palette-seeds"] ++
   mdGoldenNames
 
 -- KP test helpers: word/glue/forced-break item builders and a brute-force

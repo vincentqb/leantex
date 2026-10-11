@@ -17,7 +17,8 @@ example : Doc → Array Diag := Contrast.docDiags
 example : Layout.Geom → Font.FontSet → Layout.Out → Bool → Check.Shipped :=
   Check.Shipped.ofOut
 example : Check.Shipped → Array Assertion → Array Diag := Check.all
-example : (s : SeedPalette.Seeds) → Option (SeedPalette.Generated s) := SeedPalette.generate
+example : (s : SeedPalette.Seeds) → (t : SeedPalette.Targets) →
+    Except SeedPalette.Failure (SeedPalette.Generated s t) := SeedPalette.generate
 
 example (doc : Doc) :
     (Contrast.effectivePair doc).fg = (Design.ofDoc doc).fg ∧
@@ -31,10 +32,10 @@ example (geom : Layout.Geom) (fs : Font.FontSet) (out : Layout.Out)
       Contrast.shippedJudgments geom fs out :=
   Contrast.contrast_judged_complete geom fs out paint h
 
-example (s : SeedPalette.Seeds) (p : SeedPalette.Generated s)
-    (ink ground : Color) (req : Nat) (h : (ink, ground, req) ∈ SeedPalette.pairs s p.colors) :
-    req ≤ Contrast.contrastMilli ink ground :=
-  SeedPalette.generated_contract p h
+example (s : SeedPalette.Seeds) (t : SeedPalette.Targets) (p : SeedPalette.Generated s t)
+    (x : Role × Color × Color × Nat) (h : x ∈ SeedPalette.sites s t p.colors) :
+    x.2.2.2 ≤ Contrast.contrastMilli x.2.1 x.2.2.1 :=
+  (SeedPalette.generated_sites_contract p).1 x h
 
 example : True := by
   fail_if_success have := Contrast.realizeCand

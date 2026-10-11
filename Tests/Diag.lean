@@ -408,6 +408,9 @@ def diagWitness (one mapped withMath : Font.FontSet)
   -- spelling. Yellow over white meets no ratio at any mix.
   | .W0315 => dvE (dvDoc "" "\\textcolor{yellow!50}{faint}")
   | .W0316 => dvE (dvDoc "\\palette[dark]{ a = #101010 }\n" "x")
+  -- Seeds whose ink is a mid grey: no neutral tone reads on it, so the
+  -- seeds generate nothing and stand as the page's text, ground and accent.
+  | .W0306 => dvE (dvDoc "\\palette[seeds]{ ink = #808080, paper = #FFFFFF, accent = #E85D2A }\n" "x")
   | .W0317 => dvE ("\\documentclass{card}\n\\runninghead{name}\n" ++
       "\\begin{document}\nx\n\\end{document}")
   | .W0318 => dvE (dvDoc "\\chrome{ footer = { left = \\sectiontitle } }\n" "x")

@@ -430,6 +430,10 @@
 ⚠ [W0304] - \textcolor
   'nope' is not in the palette; content kept uncoloured
   suggestion: declare colours with \palette{ name = #RRGGBB }
+── W0306 (degraded) a palette's seeds generate no palette: a role they derive cannot meet what its sites owe; the seeds stand as the page's text, ground and accent
+⚠ [W0306] - \palette
+  '\palette[seeds]' generates no palette: no neutral tone reads on the ink; the seeds stand as given
+  suggestion: seeds an ink reads on, 4.6:1 to its paper, generate one: \palette[seeds]{ ink = #1E1B2E, paper = #FFFFFF, accent = #E85D2A }
 ── W0307 (pending) construct not implemented yet; its content is not rendered
 ⚠ [W0307] - \begin
   '{external}' is not implemented yet; its content is not rendered
@@ -459,7 +463,7 @@
 ── W0316 (config) unknown option in \palette; block skipped
 ⚠ [W0316] - \palette
   unknown option in '\palette': "dark"; block skipped
-  suggestion: options: decorative
+  suggestion: options: decorative, seeds
 ── W0317 (config) a card carries no running head or foot; declaration dropped
 ⚠ [W0317]
   a card carries no running head or foot; the declaration is dropped

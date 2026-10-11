@@ -1415,6 +1415,14 @@ frame number holds across each frame's step pages",
 
 def censusRows7 :
     List (String × (Layout.Geom → Array CensusPage → List (String × Bool))) := [
+  ("palette-seeds", fun _ c => [
+    ("pages", c.size == 2),
+    ("the seeded frame title ships", pageHas c 0 "Seeded"),
+    ("each block's title ships", pageHas c 0 "A Plain Statement" &&
+      pageHas c 0 "A Loud Statement" && pageHas c 0 "A Worked Instance"),
+    ("three blocks paint a band and a body each, under the title bar",
+      (c[0]?.map fun p => decide (7 ≤ p.fills)).getD false),
+    ("the listing ships", pageHas c 1 "synthetic")]),
   ("trio-deck", fun _ c => [
     ("pages", c.size == 4),
     ("the title ships", pageHas c 0 "Cardamom Press"),

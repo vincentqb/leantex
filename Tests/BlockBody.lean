@@ -150,14 +150,18 @@ private def generatedSourceChecks (ref : IO.Ref (List String))
   let dark : Ir.Color := { r := 25, g := 42, b := 61 }
   let accent : Ir.Color := { r := 196, g := 106, b := 119 }
   for (foreground, paper) in [(dark, Ir.Color.white), (Ir.Color.white, dark)] do
-    let seeds : SeedPalette.Seeds := ⟨foreground, paper, accent⟩
-    let some palette := SeedPalette.generate seeds
+    let seeds : SeedPalette.Seeds := { ink := foreground, paper, accent }
+    let targets := seeds.targets .decks
+    let .ok palette := SeedPalette.generate seeds targets
       | check ref "generated block source: palette exists" false
         continue
-    for env in ["block", "alertblock", "exampleblock"] do
+    let st : SeedPalette.SeedState := { seeds, targets, blocks := .tonal, colors := palette.colors }
+    for (env, kind) in [("block", Ir.TitledKind.block), ("alertblock", .alert), ("exampleblock", .example)] do
+      let ground := ((SeedPalette.bindings seeds targets .tonal).lookup (Ir.Role.bodyGround kind)).bind
+        (SeedPalette.Colors.role seeds palette.colors)
       for title in ["", "TITLE"] do
         let source := "\\documentclass{beamer}" ++
-          SeedPalette.beamerDeclarations "sample" seeds palette ++
+          SeedPalette.beamerDeclarations "sample" st ++
           "\\setbeamercolor{normal text}{fg=sampleInk,bg=samplePaper}" ++
           "\\setbeamercolor{footline}{fg=sampleMuted,bg=samplePaper}" ++
           "\\begin{document}\\begin{frame}" ++
@@ -171,19 +175,18 @@ private def generatedSourceChecks (ref : IO.Ref (List String))
         check ref (label ++ ": content survives once") (body.size == 1)
         check ref (label ++ ": PDF ink and ground")
           (body.any fun line => line.segs.any fun
-            | .run _ c _ _ _ _ _ _ _ g _ =>
-              c == seeds.ink && g == some palette.colors.surface
+            | .run _ c _ _ _ _ _ _ _ g _ => c == seeds.ink && g == ground
             | _ => false)
-        check ref (label ++ ": PDF enclosing surface")
+        check ref (label ++ ": PDF enclosing body fill")
           (out.pages.any fun page => page.lines.any fun line =>
             lineText line == "BODY" && page.fills.any fun fill =>
-              fill.color == palette.colors.surface && fill.x ≤ line.x &&
+              some fill.color == ground && fill.x ≤ line.x &&
               line.x + line.setWidth ≤ fill.x + fill.w &&
               fill.y < line.y && line.y < fill.y + fill.h)
-        check ref (label ++ ": HTML ink and surface")
+        check ref (label ++ ": HTML ink and body fill")
           ((html doc).any fun leaf => leaf.text == "BODY" &&
             leaf.inlineColor == some seeds.ink.css &&
-            leaf.bodyProperty "background" == some palette.colors.surface.css)
+            leaf.bodyProperty "background" == ground.map (·.css))
 
 /-- These four small documents hold the reviewed artifact counterexamples:
 epochs must replace inherited concrete ink, nesting owes every inset, empty

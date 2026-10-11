@@ -1658,9 +1658,11 @@ def contrastChecks (ref : IO.Ref (List String)) : IO Unit := do
   let darkBlock := ((page.splitOn "prefers-color-scheme: dark")[1]?.getD "").splitOn "}"
     |>.headD ""
   t "dark block re-accents"
-    ((darkBlock.splitOn s!"{HtmlDoc.roleVar .focus}: {HtmlDoc.cssColor (screenColor .dark .focus)}").length == 2)
+    ((darkBlock.splitOn s!"{HtmlDoc.roleVar .accent}: {HtmlDoc.cssColor (screenColor .dark .accent)}").length == 2)
   t "light accent comes from the registry's light column"
-    ((page.splitOn s!"{HtmlDoc.roleVar .focus}: {HtmlDoc.cssColor (screenColor .light .focus)}").length == 2)
+    ((page.splitOn s!"{HtmlDoc.roleVar .accent}: {HtmlDoc.cssColor (screenColor .light .accent)}").length == 2)
+  t "the focus ring follows the accent"
+    ((page.splitOn s!"{HtmlDoc.roleVar .focus}: var({HtmlDoc.roleVar .accent})").length == 2)
   -- A page that declares a colour ships one scheme (`HtmlDoc.dualScheme`):
   -- only the engine's own token set has a proven dark variant, and the
   -- dark block once stood a declared ink equal to the light default on

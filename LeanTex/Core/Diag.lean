@@ -307,6 +307,7 @@ public inductive DiagCode where
   | N0030
   | W0428
   | W0429
+  | W0306
   deriving Repr, BEq, DecidableEq
 
 /-- The registry: each code's digits, its declared `Loss`, and its one
@@ -518,6 +519,7 @@ private def DiagCode.spec : DiagCode → String × Loss × String
   | .W0428 => ("0428", .degraded, "a biblatex \\supercite sets as \\cite, in brackets on the line; the style's superscript is not carried")
   | .W0429 => ("0429", .degraded, "a .bib field the document's elaborator refuses where an entry stands; the field sets as its text")
   | .N0030 => ("0030", .info, "a character TeX reserves, in a .bib field, set as the character it is where LaTeX reads it as markup or a comment")
+  | .W0306 => ("0306", .degraded, "a palette's seeds generate no palette: a role they derive cannot meet what its sites owe; the seeds stand as the page's text, ground and accent")
 
 public def DiagCode.digits (c : DiagCode) : String := c.spec.1
 

@@ -457,7 +457,13 @@ def layoutSuiteChecks (ref : IO.Ref (List String)) : IO Unit := do
   Tests.GroupScope.groupScopeChecks ref oneFace
   Tests.ThemeCss.epochChecks ref oneFace
   stringConditionalChecks ref oneFace
-  seedPaletteChecks ref oneFace
+  Tests.SeedPalette.tripleChecks ref
+  Tests.SeedPalette.amberChecks ref
+  Tests.SeedPalette.oklchChecks ref
+  Tests.SeedPalette.deckChecks ref oneFace
+  Tests.SeedPalette.exportChecks ref oneFace
+  Tests.SeedPalette.failureChecks ref
+  Tests.SeedPalette.scriptChecks ref
   Tests.ColourSolve.checks ref
   titleTemplateOptionalChecks ref oneFace
   titleTemplateColorChecks ref oneFace

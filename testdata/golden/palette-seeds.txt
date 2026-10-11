@@ -1,0 +1,78 @@
+class slides
+page 362.835x272.126 vmargin 26.4 hmargin 28.346 fontsize 11 parskip 0 justify off
+palette example #0F7A52
+palette progressfg #0B66C2
+palette progressbg #CDDEEE
+palette separator #0B66C2
+palette standoutfg #FDFCF9
+palette standoutbg #0B66C2
+palette bg #FFFFFF
+palette fg #2B2440
+palette muted #6E6A7E
+palette alert #C0420C
+palette focus #DA501A
+palette accent #E85D2A
+palette surface #F2F1F7
+palette surface-strong #E3E0ED
+palette accent-wash #FFEEE9
+palette accent-soft #FFD9CD
+palette accent-text #C0420C
+palette accent-edge #DA501A
+palette muted-on-inverse #918EA2
+palette accent-on-inverse #F06432
+palette diagram-muted #807C90
+palette alert-band-ink #AF3C0A
+palette example-band-ink #646174
+palette blocktitlebg #E3E0ED
+palette blocktitlefg #2B2440
+palette blockbodybg #F2F1F7
+palette blockbodyfg #2B2440
+palette alerttitlebg #FFD9CD
+palette alerttitlefg #AF3C0A
+palette alertbodybg #FFEEE9
+palette alertbodyfg #2B2440
+palette exampletitlebg #E3E0ED
+palette exampletitlefg #646174
+palette examplebodybg #F2F1F7
+palette examplebodyfg #2B2440
+palette frametitlebg #2B2440
+palette frametitlefg #FFFFFF
+palette covered 38%
+token progressheight 1pt
+token frametitlepadding 840/1000em
+token separatorheight 0.5pt
+token subtitlegap 300/1000em
+token separatorgap 800/1000em
+token authorgap 500/1000em
+token institutegap 1000/1000em
+chrome footer right framenumber
+frame
+  title
+    text "Seeded "
+    color accent-on-inverse #F06432
+      text "Colours"
+  titled block
+    title
+      text "A Plain Statement"
+    para
+      text "The body of the plain block, entirely invented."
+  titled alert
+    title
+      text "A Loud Statement"
+    para
+      text "The alert body stands under its own band."
+  titled example
+    title
+      text "A Worked Instance"
+    para
+      text "The example body stands under its own band."
+frame
+  title
+    text "A Listing"
+  verbatim language python
+    "def probe(n):"
+    "    # an invented comment"
+    "    return \"synthetic\" + str(n + 1)"
+-- diagnostics
+note[N0100] 7:1 '\usepackage{minted}' → nothing: the engine does this itself
+note[N0100] 14:22 '\alert' → the alert colour

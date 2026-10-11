@@ -1223,7 +1223,7 @@ private def readingChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : 
         whole := some true
         edges := #[{ span := .whole, side := .right, width := { width := { em := 250 } }
                      sep := { width := .ofSp (Dim.pt 3) }, hang := false
-                     color := { r := 0x12, g := 0x34, b := 0x56 }, name := some (.role .focus) }] })]
+                     color := { r := 0x12, g := 0x34, b := 0x56 }, name := some (.role .accent) }] })]
   for (src, want) in reads do
     let doc := (Elab.run "block-shape.tex"
       ("\\documentclass{slides}\n\\palette{ accent = #123456 }\n\\style{block}{ shape = " ++ src ++

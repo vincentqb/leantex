@@ -12,6 +12,7 @@ public import LeanTex.Core.ListingHighlight
 public import LeanTex.Core.DesignRole
 public import LeanTex.Core.ContrastRatio
 public import LeanTex.Core.Oklab
+public import LeanTex.Core.SeedPalette
 import LeanTex.Core.Loop
 import Init.Data.Nat.ToString
 public import Std.Data.HashMap
@@ -1911,6 +1912,10 @@ public structure Palette where
   low-contrast — a watermark, a dimmed aside — and exempt from the pairing
   diagnostic, the way WCAG 2.2 SC 1.4.3 exempts pure decoration. -/
   decorative : Array ColorRef := #[]
+  /-- The generated palette its roles were installed from
+  (`\palette[seeds]`), kept so a generated role on another ground can take
+  its family's tone there (`Palette.groundRun`). -/
+  seeded : Option SeedPalette.SeedState := none
   deriving Repr, BEq, Inhabited
 
 /-- The colour a palette declares under one name, of either kind. -/
@@ -2277,6 +2282,8 @@ public def Palette.resolveSpec (p : Palette) : Decl.ColorSpec → Option Color
   | .rgbUnit r g b => some (Color.ofRgbUnit r g b)
   | .gray v => some (Color.ofGray v)
   | .cmyk c m y k => some (Color.ofCmykSource c m y k)
+  | .oklab L a b => (Decl.ColorSpec.oklab L a b).okLab?.map Oklab.ofLab
+  | .oklch L C H => (Decl.ColorSpec.oklch L C H).okLab?.map Oklab.ofLab
 
 /-- Parsing and resolution are one public door for source colour syntax.
 Callers choose their diagnostic for an unsupported/malformed model or an
@@ -9393,6 +9400,10 @@ public structure ClassRecord where
   declarations without a `\maketitle`); every other class waits for
   `\maketitle`. -/
   headline : Bool := false
+  /-- How far the class's tinted grounds stand from its page when a palette is
+  generated from seeds (`SeedPalette.Targets.light`): a document's, or a
+  deck's and a poster's, read across a room. -/
+  groundDepth : GroundDepth := .documents
   /-- Implied contract, checked against the shipped pages exactly as a
   declared `\assert` is; a document declaring an assertion of the same
   form is intent and takes control. The help beside each value is the
@@ -9496,7 +9507,8 @@ what to build the way `\documentclass` already carries the page model. -/
       parskip := some {}
       lists := .beamer
       preambleSans := true
-      chrome := true }
+      chrome := true
+      groundDepth := .decks }
   | .card =>
     { model := .face
       runningFurniture := false
@@ -9532,6 +9544,7 @@ distance (Legge & Bigelow 2011); declare \\assert{ text.xheight >= ... } to take
       lists := .beamer
       preambleSans := true
       headline := true
+      groundDepth := .decks
       pagesBound := some .faces
       inkInArea := some "the margins are the print safe zone: ink past them risks \
 the trim; declare \\assert{ text.in_area } to take control"
@@ -13388,6 +13401,51 @@ secondary ink. Spelled once so a walk reading the epoch palette in force
 design does. -/
 public def mutedOf (pal : Palette) : Color :=
   (Design.at pal .print .muted).getD Color.black
+
+/-! ## A palette generated from seeds -/
+
+/-- **A generated palette installed** (`\palette[seeds]`): every role
+generation sets, as a declaration, then each element role its block style
+binds, at the colour of the role it reads — each an 8-bit sRGB colour, as a
+TeX build reads it from the export's `\definecolor{…}{HTML}{…}`, so both
+spell it alike in the PDF; the generated palette kept, so a later
+declaration overrides as any declaration does and a generated role on
+another ground can re-tone (`groundRun`). -/
+public def Palette.applySeeds (pal : Palette) (st : SeedPalette.SeedState) : Palette := Id.run do
+  let mut p := { pal with seeded := some st }
+  for r in SeedPalette.tierRoles do
+    if let some c := SeedPalette.Colors.role st.seeds st.colors r then
+      p := p.declare (.role r) (Color.ofHtml c.r c.g c.b)
+  for (e, src) in SeedPalette.bindings st.seeds st.targets st.blocks do
+    if let some c := SeedPalette.Colors.role st.seeds st.colors src then
+      p := p.declare (.role e) (Color.ofHtml c.r c.g c.b)
+  return p
+
+/-- A run coloured by a generated role still holding its generated colour,
+on a ground it does not read on (short of the generated text target): its
+family's tone there (`SeedState.toneOn`), shipped under the inverse role on
+the ink or as a value elsewhere. Any other run stands as it is: a colour the
+document declares ships as declared. -/
+public def Palette.groundRun (pal : Palette) (g : Color) (x : Inline) : Inline :=
+  match x, pal.seeded with
+  | .colored c (some (.role r)) body, some st =>
+    if SeedPalette.Colors.role st.seeds st.colors r == some c && Design.declared? pal r == some c &&
+        decide (Contrast.contrastMilli c g < st.targets.text) then
+      match st.toneOn r g with
+      | some (c', ref) => .colored c' (ref.map ColorRef.role) body
+      | none => x
+    else x
+  | _, _ => x
+
+/-- **Grounding a run keeps its text**: only its colour changes. -/
+public theorem Palette.groundRun_text (pal : Palette) (g : Color) (x : Inline) :
+    plainTextOne (pal.groundRun g x) = plainTextOne x := by
+  unfold Palette.groundRun
+  split
+  · split
+    · split <;> rfl
+    · rfl
+  · rfl
 
 end DesignResolve
 
@@ -18678,6 +18736,24 @@ public theorem mapInlines_text (f : Inline → Inline)
     (hf : ∀ x, plainTextOne (f x) = plainTextOne x) :
     Conserves plainText (mapInlines f) :=
   mapInlinesFinish_text f hf id (fun _ => rfl)
+
+/-- A title's runs on the bar it stands on: every sibling list's runs grounded
+(`Palette.groundRun`) once their children are. -/
+public def groundTitleRuns (pal : Palette) (g : Color) (xs : Array Inline) : Array Inline :=
+  mapInlines id xs (finish := fun ys => ys.map (pal.groundRun g))
+
+private theorem groundRunList_text (pal : Palette) (g : Color) :
+    ∀ (ys : List Inline), plainTextList (ys.map (pal.groundRun g)) = plainTextList ys
+  | [] => rfl
+  | y :: rest => by
+    simp only [List.map_cons, plainTextList, Palette.groundRun_text, groundRunList_text pal g rest]
+
+/-- **Grounding a title keeps its text** (`Conserves plainText`). -/
+public theorem groundTitleRuns_text (pal : Palette) (g : Color) :
+    Conserves plainText (groundTitleRuns pal g) :=
+  mapInlinesFinish_text id (fun _ => rfl) _ fun ys => by
+    show plainTextList (ys.map (pal.groundRun g)).toList = plainTextList ys.toList
+    rw [Array.toList_map, groundRunList_text]
 
 private theorem mapAlgLines_text (f : Inline → Inline)
     (hf : ∀ x, plainTextOne (f x) = plainTextOne x)

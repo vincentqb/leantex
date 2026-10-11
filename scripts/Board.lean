@@ -847,8 +847,8 @@ Names beyond the ones this agent shipped are the siblings' tiers, declared
 ahead of their arrival so their absence is visible. -/
 def declaredTiers : List String :=
   ["commonmark", "compat", "coverage", "diagaudit", "diagdebt", "doccost", "external",
-   "htmla11y", "htmlreader", "mdtwin", "parity", "pdf-native", "purity", "rhythm",
-   "svg-native", "tikz-native", "typeset"]
+   "htmla11y", "htmlreader", "mdtwin", "palette-oracle", "parity", "pdf-native", "purity",
+   "rhythm", "svg-native", "tikz-native", "typeset"]
 
 /-- The declared tiers that have not landed yet: only these may be absent,
 and their absence reports `missing`, which the aggregate does not gate — so

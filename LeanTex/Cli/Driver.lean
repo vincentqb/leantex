@@ -15,6 +15,7 @@ import LeanTex.Core.Struct
 import LeanTex.Core.Theme
 import LeanTex.Core.Compat
 import LeanTex.Core.Elab
+import LeanTex.Core.Contrast
 import LeanTex.Core.BibStyle
 import LeanTex.Core.BibElab
 import LeanTex.Core.PictureCensus
@@ -576,6 +577,17 @@ def elaborate (ui : Ui) (file : String) (prepared : Elab.Prepared)
       spliced.map fun (sty, src, pos) =>
         Compat.styRead (src.getD file) sty pos elabDiags
     if phases then ui.phase "elab" s!"{doc.body.size} blocks" (← since t)
+    if phases then
+      -- The palette phase: the generator's own work where the palette is
+      -- generated from seeds (pure, so timing it again times what the
+      -- elaborator spent), and the pairs every scheme the build ships judges.
+      let t := ← IO.monoMsNow
+      let regenerated := match doc.palette.seeded with
+        | some st => (SeedPalette.generate st.seeds st.targets).toOption.isSome
+        | none => false
+      let summary := { Contrast.paletteSummary doc.palette [.print, .light] with
+        seeded := regenerated }
+      ui.phase "palette" summary.detail (← since t)
     let t ← IO.monoMsNow
     let reqSpans := { reqSpans with frames := Bib.remapSources doc reqSpans.frames }
     let (doc, bibDiags, ledger) ← Input.resolveBibliography file doc

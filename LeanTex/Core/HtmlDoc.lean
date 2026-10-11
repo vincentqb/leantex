@@ -10156,12 +10156,12 @@ private def emitTreeCore (cfg : Config) (doc : Doc) (styles : String × Array Di
     -- Bind our tokens onto Bulma's own custom properties so a host page's
     -- theme and ours agree instead of fighting.
     -- Bulma's primary is a host's or the document's own `--primary` (the
-    -- reader alias of an author colour `primary`), else the focus role: an
-    -- override of either reaches it.
-    let primary := "var(--primary, " ++ roleRef .focus ++ ")"
-    let focusDecl := String.join ((roleDefaultVars doc.palette .light [.focus]).map (· ++ "\n"))
-    head := head.push (Node.style (faceRules ++ ":root {\n" ++ tokenVars cfg doc [.focus] ++ "\n" ++
-      focusDecl ++
+    -- reader alias of an author colour `primary`), else the accent role:
+    -- an override of either reaches it.
+    let primary := "var(--primary, " ++ roleRef .accent ++ ")"
+    let accentDecl := String.join ((roleDefaultVars doc.palette .light [.accent]).map (· ++ "\n"))
+    head := head.push (Node.style (faceRules ++ ":root {\n" ++ tokenVars cfg doc [.accent] ++ "\n" ++
+      accentDecl ++
       s!"    --bulma-primary: {primary};\n" ++
       "    --bulma-body-family: var(--font-body, inherit);\n" ++
       "}\n" ++ styled))

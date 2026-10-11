@@ -323,9 +323,16 @@ def codeRoleChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "code roles: a literal hue within 60° of the ink's leaves keywords in the ink"
     (let r := roles (invented.declare (.role .example) teal |>.declare (.role .ink) (Ir.Color.ofHtml 0x1C 0x3A 0x4A))
      hueCosMilli teal (Ir.Color.ofHtml 0x1C 0x3A 0x4A) ≥ 500 && r.get .keyword == none)
-  t "code roles: a muted step that is the ink itself quiets comments to the ink 70:30 into the page"
-    ((roles (invented.declare (.role .muted) ink)).get .comment ==
-      some { color := ink.mix 70 white, role := some .codeComment, declared := false })
+  -- A muted step derived by a rule, never a fixed mix: the quietest tone
+  -- of the ink's own hue that reads as text, 0.10 above WCAG's 4.5:1.
+  let quietTone (p : Option CodeColor.Paint) : Bool :=
+    match p with
+    | some q => !q.declared && q.role == some .codeComment && hueCosMilli q.color ink ≥ 990 &&
+        Contrast.aaText + 100 ≤ Contrast.contrastMilli q.color white &&
+        Contrast.contrastMilli q.color white ≤ Contrast.aaText + 200
+    | none => false
+  t "code roles: a muted step that is the ink itself quiets comments to the quietest tone of the ink's hue"
+    (quietTone ((roles (invented.declare (.role .muted) ink)).get .comment))
   let literalOf (p : Ir.Palette) := ((roles p).get .literal).map (·.color)
   t "code roles: an example that is the ink derives one more hue, far from the ink's and the alert's"
     (match literalOf (invented.declare (.role .example) ink) with
@@ -422,9 +429,8 @@ def codeRoleChecks (ref : IO.Ref (List String)) : IO Unit := do
     ((roles twin).get .error ==
       (CodeColor.styleColor .default .error).map fun c =>
         { color := c, role := some .codeError, declared := false, styled := true })
-  t "code roles: a muted step that is the alert quiets comments to the ink 70:30 into the page"
-    ((roles (invented.declare (.role .muted) alert)).get .comment ==
-      some { color := ink.mix 70 white, role := some .codeComment, declared := false })
+  t "code roles: a muted step that is the alert quiets comments to the quietest tone of the ink's hue"
+    (quietTone ((roles (invented.declare (.role .muted) alert)).get .comment))
   -- A key that once coloured one token type colours no listing now: named
   -- once where the palette declares it, its name still a colour, and a
   -- listing holding a token of each key's type ships as the document

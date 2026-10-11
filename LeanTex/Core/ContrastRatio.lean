@@ -36,6 +36,16 @@ public def contrastMilli (a b : Color) : Nat :=
   let lb := luminance b
   ((max la lb + 500000) * 1000) / (min la lb + 500000)
 
+/-- The same ratio from two luminances already in hand (10⁻⁷ units): what a
+search reads before it quantizes a candidate. -/
+public def ratioOf (la lb : Nat) : Nat :=
+  ((max la lb + 500000) * 1000) / (min la lb + 500000)
+
+public theorem contrastMilli_ratioOf (a b : Color) :
+    contrastMilli a b = ratioOf (luminance a) (luminance b) := by
+  unfold contrastMilli ratioOf
+  rfl
+
 /-- An arithmetic assessment, before a caller's exemption policy. Ratios
 and thresholds use the units of `contrastMilli`. -/
 public structure PairAssessment where

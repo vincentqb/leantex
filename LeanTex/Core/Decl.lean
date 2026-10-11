@@ -2,6 +2,7 @@ module
 
 public import LeanTex.Core.Diag
 public import LeanTex.Core.Dim
+public import LeanTex.Core.Oklab
 
 namespace LeanTex.Core.Decl
 
@@ -115,6 +116,12 @@ public inductive ColorSpec where
   | rgbUnit (r g b : ColorComponent)
   | gray (v : ColorComponent)
   | cmyk (c m y k : ColorComponent)
+  /-- CSS Color 4's `oklab(L a b)` (§9.2): lightness as a fraction of 1, `a`
+  and `b` in Oklab units, each a signed decimal (mantissa, scale). -/
+  | oklab (L a b : Int × Nat)
+  /-- CSS Color 4's `oklch(L C H)` (§9.3): lightness as a fraction of 1,
+  chroma in Oklab units, hue in degrees. -/
+  | oklch (L C H : Int × Nat)
   deriving Repr, BEq
 
 /-- xcolor definitions normalize unit models through `XC@calcR`; direct
@@ -127,6 +134,18 @@ public def ColorSpec.xcolorDefined : ColorSpec → ColorSpec
   | .gray v => .gray v.xcolorDefined
   | .cmyk c m y k =>
     .cmyk c.xcolorDefined m.xcolorDefined y.xcolorDefined k.xcolorDefined
+  | .oklab L a b => .oklab L a b
+  | .oklch L C H => .oklch L C H
+
+/-- A signed decimal (mantissa, scale) at `Oklab.labOf`'s 10¹⁸ scale. -/
+private def okScaled (d : Int × Nat) : Int := d.1 * 10 ^ 18 / (d.2 : Int)
+
+/-- The Oklab value an `oklab()` or `oklch()` source states, at `labOf`'s
+scale; the hue read in millidegrees. -/
+public def ColorSpec.okLab? : ColorSpec → Option Oklab.Lab
+  | .oklab L a b => some { L := okScaled L, a := okScaled a, b := okScaled b }
+  | .oklch L C H => some (Oklab.ofLch (okScaled L) (okScaled C) (H.1 * 1000 / (H.2 : Int)))
+  | .named _ | .html .. | .rgbByte .. | .rgbUnit .. | .gray _ | .cmyk .. => none
 
 /-- Compatibility-only carrier marking a modeled value that passed through
 xcolor's `\definecolor` storage semantics before entering the palette. -/
@@ -297,8 +316,37 @@ private def parseModeledColor (model value : String) : Except ColorSpecError Col
     | _ => malformedColor model "expected four components"
   | _ => .error (.unsupported model)
 
-/-- A no-model source: native `#RGB`/`#RRGGBB`, the modelled `MODEL(...)`
-carrier, or a named xcolor expression. -/
+/-- One `oklab()`/`oklch()` component (CSS Color 4 §9): a decimal, or a
+percentage of `full` (a lightness's 1, a chroma's 0.4). -/
+private def okComponent (model src : String) (full : Int × Nat) (signed : Bool) :
+    Except ColorSpecError (Int × Nat) := do
+  let (pct, body) := if src.endsWith "%" then (true, (src.dropEnd 1).toString) else (false, src)
+  let some (m, scale) := parseDecimal body
+    | return ← malformedColor model s!"'{src}' is not a number"
+  if !signed && m < 0 then return ← malformedColor model s!"'{src}' is negative"
+  if pct then return (m * full.1, scale * 100 * full.2) else return (m, scale)
+
+/-- `oklab(L a b)` and `oklch(L C H)`, space-separated as CSS spells them; an
+alpha (`/ A`) has no meaning for a printed colour and is refused. -/
+private def parseOkColor (model value : String) : Except ColorSpecError ColorSpec := do
+  if value.contains '/' then
+    return ← malformedColor model "an alpha has no meaning for a page colour"
+  let parts := (value.splitOn " ").filterMap fun p =>
+    let p := p.trimAscii.toString
+    if p.isEmpty then none else some p
+  let [l, x, y] := parts
+    | return ← malformedColor model s!"expected 3 components, got {parts.length}"
+  let L ← okComponent model l (1, 1) false
+  if L.1 > (L.2 : Int) then return ← malformedColor model s!"'{l}' is above 1"
+  if model == "oklab" then
+    return .oklab L (← okComponent model x (4, 10) true) (← okComponent model y (4, 10) true)
+  else
+    let h := if y.endsWith "deg" then (y.dropEnd 3).toString else y
+    let some H := parseDecimal h | return ← malformedColor model s!"'{y}' is not a hue in degrees"
+    return .oklch L (← okComponent model x (4, 10) false) H
+
+/-- A no-model source: native `#RGB`/`#RRGGBB`, CSS's `oklab()` and
+`oklch()`, the modelled `MODEL(...)` carrier, or a named xcolor expression. -/
 private def parsePlainColor (value : String) : Except ColorSpecError ColorSpec :=
   if value.startsWith "#" then
     let hex := (value.drop 1).toString
@@ -315,6 +363,8 @@ private def parsePlainColor (value : String) : Except ColorSpecError ColorSpec :
       | .error e => .error e
   else
     match wrappedColor value with
+    | some ("oklab", v) => parseOkColor "oklab" v
+    | some ("oklch", v) => parseOkColor "oklch" v
     | some (m, v) => parseModeledColor m v
     | none => .ok (.named value)
 
@@ -926,6 +976,10 @@ private def parseModeledValue (s : String) : Option Value :=
   | .ok (.rgbUnit r g b) => some (.color r.unitByte g.unitByte b.unitByte)
   | .ok (.gray v) => some (.color v.unitByte v.unitByte v.unitByte)
   | .ok (.cmyk c m y k) => some (.cmyk c.milli m.milli y.milli k.milli)
+  | .ok (.oklab L a b) =>
+    (ColorSpec.oklab L a b).okLab?.map fun l => let c := Oklab.ofLab l; .color c.r c.g c.b
+  | .ok (.oklch L C H) =>
+    (ColorSpec.oklch L C H).okLab?.map fun l => let c := Oklab.ofLab l; .color c.r c.g c.b
   | .ok (.named _) | .error _ => none
 
 /-- `digits:digits` is a name, not a malformed dimension: the slides stage

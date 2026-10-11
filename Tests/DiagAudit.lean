@@ -16,6 +16,7 @@ import Tests.PdfBounds
 import Tests.InputDecoding
 import Tests.BibModel
 import Tests.PdfNative
+import Tests.SeedPalette
 import scripts.Rung
 
 /-!
@@ -169,6 +170,9 @@ def registry : List AuditRow :=
    -- sets it overfull on its one page, over its footline and off the paper:
    -- a decided divergence, named with the whole overrun.
    ⟨.W0384, .divergence, .degraded, check% Tests.FrameFit.overhangChecks⟩,
+   -- Seeds no palette can be generated from: the role that fails is named,
+   -- and the seeds themselves stand as the page's colours.
+   ⟨.W0306, .keep, .degraded, check% Tests.SeedPalette.failureChecks⟩,
    -- Unknown outline data, an absent result and a reservation mismatch
    -- are separate losses. The check mutates each guard's own input and
    -- holds the actual emitted diagnostics to the label and full source.

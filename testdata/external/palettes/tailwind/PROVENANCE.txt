@@ -1,0 +1,19 @@
+# Tailwind CSS v4.3.3's theme, vendored as a reference palette.
+#
+# source:   https://github.com/tailwindlabs/tailwindcss
+# commit:   c2b24dd15fed1c59dd521bd86082f520c9f5ad0d (the v4.3.3 tag)
+# package:  tailwindcss 4.3.3, https://registry.npmjs.org/tailwindcss/-/tailwindcss-4.3.3.tgz,
+#           sha1 c006861611c213c1877893ab5b23daa16be2bb55 as the registry lists it
+# fetched:  2026-10-11
+# license:  MIT, Copyright (c) Tailwind Labs, Inc.; LICENSE beside this file is
+#           the upstream file verbatim, which the licence asks every copy to carry
+# checked:  every file taken is listed in SHA256SUMS with the sha256 of its upstream
+#           bytes; `sha256sum -c SHA256SUMS` run from this directory verifies them
+#
+# Taken, at its upstream name: theme.css, whose `--color-<palette>-<step>` lines
+# are the palette in oklch(), and the licence. The palette oracle
+# (scripts/palette-oracle.lean) reads the colour lines through the engine's own
+# oklch() reader; the theme's other tokens are not read.
+#
+# Left: the compiler (dist), the preflight and utility layers, index.css,
+# package.json and the README.

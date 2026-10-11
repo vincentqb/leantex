@@ -1,0 +1,20 @@
+# Radix Colors 3.0.0, the light scales, vendored as a reference palette.
+#
+# source:   https://github.com/radix-ui/colors
+# commit:   c4d0e50006c71ec51c4d6ff349062ab261b57e67 (the npm package's gitHead)
+# package:  @radix-ui/colors 3.0.0, https://registry.npmjs.org/@radix-ui/colors/-/colors-3.0.0.tgz,
+#           sha1 e8a591a303c44e503bd1212cacf40a09511165e0 as the registry lists it
+# fetched:  2026-10-11
+# license:  MIT, Copyright (c) 2021 Radix; LICENSE beside this file is the
+#           upstream file verbatim, which the licence asks every copy to carry
+# checked:  every file taken is listed in SHA256SUMS with the sha256 of its upstream
+#           bytes; `sha256sum -c SHA256SUMS` run from this directory verifies them
+#
+# Taken, at their upstream names: the 31 light scales (`<scale>.css`, each a
+# `:root` block of twelve sRGB steps and the same steps in Display P3), and the
+# licence. The palette oracle (scripts/palette-oracle.lean) reads the sRGB block.
+#
+# Left: the dark scales, the alpha scales, black-alpha and white-alpha (no
+# light page reads them), the JavaScript and type modules (the same values in
+# another spelling), the README, package.json and its contributor list, and
+# colors.png.

@@ -84,11 +84,36 @@ public inductive Scheme where
 
 @[expose] public def Scheme.all : List Scheme := [.print, .light, .dark]
 
+/-- How far a class's tinted grounds stand from its page, as WCAG 2.2 ratios
+to it ×1000: a body fill, a title band, a rule, and the least ratio a band
+keeps to the body below it (`SeedPalette.Targets`). -/
+public structure GroundDepth where
+  body : Nat
+  band : Nat
+  rule : Nat
+  pair : Nat
+  deriving Repr, BEq, DecidableEq, Inhabited
+
+/-- A document's: a body as deep as GitHub's code ground on white (1.06:1),
+a band at 1.15:1, rules at Tailwind v4 slate-300's 1.49:1
+(https://tailwindcss.com/docs/colors). -/
+@[expose] public def GroundDepth.documents : GroundDepth :=
+  { body := 1060, band := 1150, rule := 1490, pair := 1070 }
+
+/-- A deck's and a poster's, read across a room on a projector: Radix slate
+steps 3 and 5 on white (1.14:1, 1.31:1; https://www.radix-ui.com/colors),
+the same rules. -/
+@[expose] public def GroundDepth.decks : GroundDepth :=
+  { body := 1120, band := 1300, rule := 1490, pair := 1100 }
+
 /-- Every colour role. Palette roles first (the page, the ink, the content
 and furniture colours), then the element roles that paint one site each. -/
 public inductive Role where
   | page | ink | muted | alert | example | covered
-  | marker | codeSurface | rule | focus | paper | printInk
+  | marker | codeSurface | rule | focus
+  | accent | surface | surfaceStrong | accentWash | accentSoft | accentText | accentEdge
+  | mutedOnInverse | accentOnInverse | diagramMuted | alertBandInk | exampleBandInk
+  | paper | printInk
   | frameTitleBar | frameTitleInk | frameSubtitleInk | sectionTitleInk
   | footBand | footInk
   | blockTitleBar | alertTitleBar | exampleTitleBar
@@ -235,6 +260,14 @@ public structure Row where
   { key := none, css, need, ground, fallback, judged, presence := .always, beamer := [],
     exportName := none, noun := none, region := false }
 
+/-- A role a palette's seeds generate (`SeedPalette`): no `\palette` key, no
+default, named `--ltx-<css>` in CSS and `<export>` in a TeX export. -/
+@[expose] public def Row.generated (css : String) (need : Need) (ground : Option Role)
+    (exportName : String) : Row :=
+  { key := none, css, need, ground, fallback := Row.every .absent, judged := .uses,
+    presence := .always, beamer := [], exportName := some exportName, noun := none,
+    region := false }
+
 /-- The candidates a bar's ink is chosen from: the page, then the ink. -/
 @[expose] public def Row.onBar (bar : Role) (unbarred : List Role) : Scheme → Fallback :=
   Row.every (.readable bar [.page, .ink] unbarred)
@@ -258,8 +291,10 @@ ground is the ink as printed and its ink the paper (`paper`, `printInk`). -/
   | .muted => keyed "muted" .text (some .page)
       (screen (.first [.ink]) (Row.hex 0x71 0x71 0x7A) (Row.hex 0xA1 0xA1 0xAA))
       [("footline", .fg), ("page number in head/foot", .fg)] (exportName := some "Muted") (judged := .uses)
-  | .alert => keyed "alert" .text (some .page) (every .absent) [("alerted text", .fg)] (judged := .uses)
-  | .example => keyed "example" .text (some .page) (every .absent) [("example text", .fg)] (judged := .uses)
+  | .alert => keyed "alert" .text (some .page) (every .absent) [("alerted text", .fg)]
+      (exportName := some "Alert") (judged := .uses)
+  | .example => keyed "example" .text (some .page) (every .absent) [("example text", .fg)]
+      (exportName := some "Example") (judged := .uses)
   | .covered => keyed "covered" .state (some .page) (every .absent) (judged := .uses)
   | .marker => engine "marker" .text (some .page)
       (fun s => if s == .print then .first [.ink] else .first [.muted]) (judged := .uses)
@@ -267,9 +302,22 @@ ground is the ink as printed and its ink the paper (`paper`, `printInk`). -/
       (screen .absent (Row.hex 0xF4 0xF4 0xF5) (Row.hex 0x27 0x27 0x2A)) (judged := .uses)
   | .rule => keyed "rule" .decorative none
       (screen .absent (Row.hex 0xE4 0xE4 0xE7) (Row.hex 0x3F 0x3F 0x46)) (judged := .uses)
-  | .focus => keyed "accent" .nonText (some .page)
-      (screen .absent (Row.hex 0x1D 0x4E 0xD8) (Row.hex 0x60 0xA5 0xFA))
+  | .focus => keyed "focus" .nonText (some .page) (every (.first [.accentEdge, .accent]))
       (noun := some "the focus ring") (judged := .element .focusRing)
+  | .accent => keyed "accent" .decorative none
+      (screen .absent (Row.hex 0x1D 0x4E 0xD8) (Row.hex 0x60 0xA5 0xFA))
+      (exportName := some "Accent") (judged := .uses)
+  | .surface => generated "surface" .decorative none "Surface"
+  | .surfaceStrong => generated "surface-strong" .decorative none "SurfaceStrong"
+  | .accentWash => generated "accent-wash" .decorative none "AccentWash"
+  | .accentSoft => generated "accent-soft" .decorative none "AccentSoft"
+  | .accentText => generated "accent-text" .text (some .page) "AccentText"
+  | .accentEdge => generated "accent-edge" .nonText (some .page) "AccentEdge"
+  | .mutedOnInverse => generated "muted-on-inverse" .text (some .ink) "MutedOnDark"
+  | .accentOnInverse => generated "accent-on-inverse" .text (some .ink) "AccentOnDark"
+  | .diagramMuted => generated "diagram-muted" .nonText (some .page) "DiagramMuted"
+  | .alertBandInk => generated "alert-band-ink" .text (some .accentSoft) "AlertTitle"
+  | .exampleBandInk => generated "example-band-ink" .text (some .surfaceStrong) "ExampleTitle"
   | .paper => engine "paper" .decorative none (every (.inPrint .page)) (judged := .uses)
   | .printInk => engine "print-ink" .decorative none (every (.inPrint .ink)) (judged := .uses)
   | .frameTitleBar => keyed "frametitlebg" .decorative none (every .absent)
@@ -342,7 +390,11 @@ ground is the ink as printed and its ink the paper (`paper`, `printInk`). -/
 any scheme. `Role.fallback_depth_monotone` checks the table against every
 row, so the resolver's recursion on it is well founded by the data. -/
 @[expose] public def Role.depth : Role → Nat
-  | .page | .ink | .alert | .example | .covered | .codeSurface | .rule | .focus => 0
+  | .page | .ink | .alert | .example | .covered | .codeSurface | .rule => 0
+  | .accent | .surface | .surfaceStrong | .accentWash | .accentSoft | .accentText => 0
+  | .accentEdge | .mutedOnInverse | .accentOnInverse | .diagramMuted => 0
+  | .alertBandInk | .exampleBandInk => 0
+  | .focus => 1
   | .frameTitleBar | .footBand | .blockTitleBar | .alertTitleBar | .exampleTitleBar => 0
   | .titlePageGround | .progressFill => 0
   | .codeKeyword | .codeName | .codeLiteral | .codeComment | .codeError => 0
@@ -411,7 +463,9 @@ the role whose `\palette` key declares that code role's colour. -/
   | .codeComment => some .comment
   | .codeError => some .error
   | .page | .ink | .muted | .alert | .example | .covered | .marker | .codeSurface
-  | .rule | .focus | .paper | .printInk | .frameTitleBar | .frameTitleInk
+  | .rule | .focus | .accent | .surface | .surfaceStrong | .accentWash | .accentSoft
+  | .accentText | .accentEdge | .mutedOnInverse | .accentOnInverse | .diagramMuted
+  | .alertBandInk | .exampleBandInk | .paper | .printInk | .frameTitleBar | .frameTitleInk
   | .frameSubtitleInk
   | .sectionTitleInk | .footBand | .footInk | .blockTitleBar | .alertTitleBar
   | .exampleTitleBar | .blockTitleInk | .alertTitleInk | .exampleTitleInk

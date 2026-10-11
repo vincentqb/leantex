@@ -16,8 +16,8 @@ colours of its own:
 
 * the error role is the palette's `alert`, where it is not the ink;
 * the comment role is the palette's `muted`, where it is neither the ink
-  nor the alert; else the ink mixed 70:30 into the page, the muted step
-  every shipped bundle declares;
+  nor the alert; else the quietest tone of the ink's own hue that reads as
+  text, a muted step derived by a rule rather than a fixed mix;
 * the literal role is the palette's `example`, where it is neither the ink
   nor the alert; else one more hue, the middle of the widest arc of the hue
   circle the ink's and the alert's hues leave open — the hue farthest from
@@ -150,33 +150,57 @@ private def nearestPass (pass : Int → Bool) (from_ : Int) : Option Int :=
   | none, some u => some u
   | none, none => none
 
-/-- A hue's tone on a ground: at chromatic coordinates `(a, b)`, the
-lightness nearest the ground's at which it clears `req` there, its chroma
-reduced toward the neutral axis by quarters where no lightness does. -/
-public def tone (req : Nat) (ground : Color) (v : Int × Int) : Option Color :=
-  let from_ := (Oklab.labOf ground).L
+/-- A hue's tone on a set of grounds: at chromatic coordinates `(a, b)`, the
+lightness nearest the first ground's at which it clears `req` on every one,
+its chroma reduced toward the neutral axis by quarters where no lightness
+does. -/
+public def toneOn (req : Nat) (grounds : List Color) (v : Int × Int) : Option Color :=
+  let from_ := (Oklab.labOf (grounds.headD Color.white)).L
+  let clears (c : Color) := grounds.all fun g => decide (req ≤ Contrast.contrastMilli c g)
   ([4, 3, 2, 1, 0] : List Int).findSome? fun q =>
     let a := q * v.1 / 4
     let b := q * v.2 / 4
-    (nearestPass (fun L => decide (req ≤ Contrast.contrastMilli (lab a b L) ground)) from_).bind
-      fun L => if req ≤ Contrast.contrastMilli (lab a b L) ground then some (lab a b L) else none
+    (nearestPass (fun L => clears (lab a b L)) from_).bind
+      fun L => if clears (lab a b L) then some (lab a b L) else none
 
-/-- **A tone clears what it was asked to**, on its ground: every answer is
-guarded by the judged ratio itself, so no search argument is load-bearing. -/
-public theorem tone_meets {req : Nat} {ground c : Color} {v : Int × Int}
-    (h : tone req ground v = some c) : req ≤ Contrast.contrastMilli c ground := by
-  unfold tone at h
+/-- **A tone clears what it was asked to on every ground it was asked for**:
+every answer is guarded by the judged ratios themselves, so no search
+argument is load-bearing. -/
+public theorem toneOn_meets {req : Nat} {grounds : List Color} {c : Color} {v : Int × Int}
+    (h : toneOn req grounds v = some c) : ∀ g ∈ grounds, req ≤ Contrast.contrastMilli c g := by
+  unfold toneOn at h
   obtain ⟨q, _, hq⟩ := List.exists_of_findSome?_eq_some h
   simp only [Option.bind_eq_some_iff] at hq
   obtain ⟨L, _, hL⟩ := hq
   split at hL
-  · cases hL; assumption
+  · rename_i hc
+    cases hL
+    intro g hg
+    exact of_decide_eq_true (List.all_eq_true.mp hc g hg)
   · cases hL
 
-/-- A derived hue's tone: the code tone, or text AA where the ground leaves
-no lightness for it. -/
-private def hueTone (ground : Color) (v : Int × Int) : Option Color :=
-  (tone codeTone ground v).orElse fun _ => tone Contrast.aaText ground v
+/-- A hue's tone on one ground. -/
+public def tone (req : Nat) (ground : Color) (v : Int × Int) : Option Color :=
+  toneOn req [ground] v
+
+/-- **A tone clears what it was asked to**, on its ground. -/
+public theorem tone_meets {req : Nat} {ground c : Color} {v : Int × Int}
+    (h : tone req ground v = some c) : req ≤ Contrast.contrastMilli c ground :=
+  toneOn_meets h ground (List.mem_singleton.mpr rfl)
+
+/-- A derived hue's tone on the grounds it must read on: the code tone, or
+text AA where they leave no lightness for it. -/
+private def hueTone (grounds : List Color) (v : Int × Int) : Option Color :=
+  (toneOn codeTone grounds v).orElse fun _ => toneOn Contrast.aaText grounds v
+
+/-- The grounds a derived hue's tone must read on: the listing's own, and,
+under a palette generated from seeds, the paper and the fills a block's body
+stands on, so a token sets in one colour wherever its listing stands — and
+the TeX export's one set of token macros sets it alike. -/
+public def toneGrounds (pal : Palette) (ground : Color) : List Color :=
+  match pal.seeded with
+  | some st => (ground :: [st.seeds.paper, st.colors.surface, st.colors.accentWash]).eraseDups
+  | none => [ground]
 
 /-- What the rule reads a role's colour from the palette as. -/
 public inductive Derived where
@@ -236,31 +260,41 @@ private def Reads.chroma (p : Reads) : Int :=
   | none => codeChroma
 
 /-- The literal role, and the hue it sets in where it has one. -/
-private def literalOf (p : Reads) (ground : Color) : Derived × Option (Int × Int) :=
+private def literalOf (p : Reads) (grounds : List Color) : Derived × Option (Int × Int) :=
   match p.ex with
   | some e => (.role .example, hue? e)
   | none =>
     match openHue p.hues with
-    | some u => ((hueTone ground (scaled p.chroma u)).elim .ink .color, some u)
+    | some u => ((hueTone grounds (scaled p.chroma u)).elim .ink .color, some u)
     | none => (.none, none)
 
 /-- Keywords and names: a tone of the ink's own hue where it stands clear
 of both the literal's hue and the alert's, else the ink. -/
-private def familyOf (p : Reads) (ground : Color) (literal : Option (Int × Int)) : Derived :=
+private def familyOf (p : Reads) (grounds : List Color) (literal : Option (Int × Int)) : Derived :=
   match p.fg with
   | none => .none
   | some _ =>
     match ((p.fg.bind hue?).filter fun u => literal.all (clear u) &&
           (p.alert.bind hue?).all (clear u)).bind
-        (fun u => hueTone ground (scaled p.chroma u)) with
+        (fun u => hueTone grounds (scaled p.chroma u)) with
     | some c => .color c
     | none => .ink
 
-private def commentOf (p : Reads) (page : Color) : Derived :=
+/-- The quietest tone of the ink's own hue and chroma that still reads as
+text on every ground, 0.10 above WCAG 2.2's 4.5:1: a muted step derived from
+the palette by a rule, never a fixed mix. The ink itself where no lighter
+tone reads. -/
+private def quietInk (f : Color) (grounds : List Color) : Derived :=
+  let l := Oklab.labOf f
+  match toneOn (Contrast.aaText + 100) grounds (l.a, l.b) with
+  | some c => .color c
+  | none => .ink
+
+private def commentOf (p : Reads) (grounds : List Color) : Derived :=
   match p.muted, p.fg with
-  | some m, some f => if m == f then .color (f.mix 70 page) else .role .muted
+  | some m, some f => if m == f then quietInk f grounds else .role .muted
   | some _, none => .role .muted
-  | none, some f => .color (f.mix 70 page)
+  | none, some f => quietInk f grounds
   | none, none => .none
 
 private def errorOf (p : Reads) : Derived :=
@@ -268,15 +302,15 @@ private def errorOf (p : Reads) : Derived :=
   | some _ => .role .alert
   | none => .none
 
-private theorem familyOf_none {p : Reads} {ground : Color} {l : Option (Int × Int)}
-    (h : familyOf p ground l = .none) : p.fg = none := by
+private theorem familyOf_none {p : Reads} {grounds : List Color} {l : Option (Int × Int)}
+    (h : familyOf p grounds l = .none) : p.fg = none := by
   unfold familyOf at h
   split at h
   · assumption
   · split at h <;> simp at h
 
-private theorem literalOf_none {p : Reads} {ground : Color}
-    (h : (literalOf p ground).1 = .none) : p.ex = none ∧ p.hues = [] := by
+private theorem literalOf_none {p : Reads} {grounds : List Color}
+    (h : (literalOf p grounds).1 = .none) : p.ex = none ∧ p.hues = [] := by
   unfold literalOf at h
   split at h
   · simp at h
@@ -289,16 +323,24 @@ private theorem literalOf_none {p : Reads} {ground : Color}
       rw [hh] at h
       split at h
       · rename_i v _
-        cases hc : hueTone ground (scaled p.chroma v) <;> simp [hc] at h
+        cases hc : hueTone grounds (scaled p.chroma v) <;> simp [hc] at h
       · rename_i hn; rw [hn] at hs; simp at hs
 
-private theorem commentOf_none {p : Reads} {page : Color}
-    (h : commentOf p page = .none) : p.muted = none ∧ p.fg = none := by
+private theorem quietInk_ne_none (f : Color) (grounds : List Color) :
+    quietInk f grounds ≠ .none := by
+  unfold quietInk
+  dsimp only
+  split <;> simp
+
+private theorem commentOf_none {p : Reads} {grounds : List Color}
+    (h : commentOf p grounds = .none) : p.muted = none ∧ p.fg = none := by
   unfold commentOf at h
   split at h
-  · split at h <;> simp at h
+  · split at h
+    · exact absurd h (quietInk_ne_none _ _)
+    · simp at h
   · simp at h
-  · simp at h
+  · exact absurd h (quietInk_ne_none _ _)
   · rename_i hm hf; exact ⟨hm, hf⟩
 
 private theorem errorOf_none {p : Reads} (h : errorOf p = .none) : p.alert = none := by
@@ -307,20 +349,21 @@ private theorem errorOf_none {p : Reads} (h : errorOf p = .none) : p.alert = non
   · simp at h
   · assumption
 
-/-- The rule, for a palette whose page is `page`, on the ground a listing
-stands on: every role derived at once, each shared value computed once. -/
-public def derive (pal : Palette) (page ground : Color) : RoleTable Derived :=
+/-- The rule, on the ground a listing stands on: every role derived at once,
+each shared value computed once. -/
+public def derive (pal : Palette) (ground : Color) : RoleTable Derived :=
   let p := reads pal
-  let literal := literalOf p ground
-  let family := familyOf p ground literal.2
+  let grounds := toneGrounds pal ground
+  let literal := literalOf p grounds
+  let family := familyOf p grounds literal.2
   { ink := .ink, keyword := family, name := family, literal := literal.1
-    comment := commentOf p page, error := errorOf p }
+    comment := commentOf p grounds, error := errorOf p }
 
 /-- **The rule leaves a role to the style only where it `opens`**: on every
 ground, a role the palette gives the rule something to read for derives a
 colour, or the ink. -/
-public theorem derive_none_opens (pal : Palette) (page ground : Color) (r : ListingHighlight.Role)
-    (h : (derive pal page ground).get r = .none) : opens pal r = true := by
+public theorem derive_none_opens (pal : Palette) (ground : Color) (r : ListingHighlight.Role)
+    (h : (derive pal ground).get r = .none) : opens pal r = true := by
   cases r <;> simp only [derive, RoleTable.get] at h
   · simp at h
   · simp [opens, familyOf_none h]
@@ -341,7 +384,7 @@ own key, as a colour the document did not choose there. -/
 public def resolve (pal : Palette) (ground : Color) (style : Option ListingStyle) :
     RoleTable (Option Paint) :=
   let page := Design.printPage pal
-  let derived := derive pal page ground
+  let derived := derive pal ground
   RoleTable.ofFn fun r =>
     match Design.declared? pal (Ir.Role.ofCode r) with
     | some c => some { color := c, role := some (Ir.Role.ofCode r), declared := true }
@@ -425,7 +468,7 @@ public theorem resolve_style_exact (pal : Palette) (ground : Color)
     · rfl
     · rfl
     · rename_i hd
-      have ho := derive_none_opens pal _ ground r hd
+      have ho := derive_none_opens pal ground r hd
       cases hr : roleStyleKind r with
       | none => simp [styleColor, hr]
       | some _ => simp [styleReads, hk, hr, ho] at h

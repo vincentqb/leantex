@@ -404,6 +404,15 @@ public def Okl.toColor (o : Okl) : Color := toColorOfLab o.lab
 
 public def Okl.inGamut (o : Okl) : Bool := labInGamut o.lab
 
+/-- The WCAG relative luminance (10⁻⁷ units, as `Contrast.luminance` reads
+an 8-bit colour) of the value's linear channels, each clamped into the
+gamut: what its colour's luminance is before quantization. -/
+public def Okl.luminance (o : Okl) : Nat :=
+  let l := o.lab
+  let (r, g, b) := linearOf { L := 100 * l.L, a := 100 * l.a, b := 100 * l.b }
+  let c (v : Int) : Nat := (max 0 (min 10000000 v)).toNat
+  (2126 * c r + 7152 * c g + 722 * c b) / 10000
+
 /-- ΔEOK², at `labOf`'s scale squared. -/
 public def distSq (p q : Lab) : Int :=
   (p.L - q.L) * (p.L - q.L) + (p.a - q.a) * (p.a - q.a) + (p.b - q.b) * (p.b - q.b)
@@ -416,8 +425,9 @@ public def Okl.fits (o : Okl) : Bool :=
   o.inGamut || decide (o.clipErrSq < (okJnd : Int) * okJnd)
 
 /-- Bisection of the fraction on structural fuel: `lo` is in gamut (or 0),
-`hi` is not; 21 halvings close `fracOne`. The test is the exact linear one,
-so a step costs no cube root. -/
+`hi` is not; 12 halvings close it to a 4096th of the colour's chroma, below
+an 8-bit step. The test is the exact linear one, so a step costs no cube
+root. -/
 private def gamutGo (o : Okl) : Nat → Nat → Nat → Nat
   | 0, lo, _ => lo
   | n + 1, lo, hi =>
@@ -426,11 +436,18 @@ private def gamutGo (o : Okl) : Nat → Nat → Nat → Nat
       else gamutGo o n lo ((lo + hi) / 2)
     else lo
 
-/-- **Gamut mapping**: the colour itself where it fits — in gamut, or its clip
-within one JND (§14.2.1's first test) — else the largest in-gamut fraction
-of its chroma at its lightness and direction. -/
+/-- **Into the gamut**: the colour itself where it is an sRGB colour, else the
+largest in-gamut fraction of its chroma at its lightness and direction —
+what a colour the engine derives ships as, so the 8-bit colour it ships is
+the value it was solved at, quantized. -/
+public def Okl.toGamut (o : Okl) : Okl :=
+  if o.inGamut then o else { o with f := gamutGo o 12 0 o.f }
+
+/-- **Gamut mapping** as CSS Color 4 maps a colour a document states: the
+colour itself where it fits — in gamut, or its clip within one JND
+(§14.2.1's first test) — else `toGamut`. -/
 public def Okl.gamutMap (o : Okl) : Okl :=
-  if o.fits then o else { o with f := gamutGo o 21 0 o.f }
+  if o.fits then o else o.toGamut
 
 private theorem gamutGo_spec (o : Okl) :
     ∀ (n lo hi : Nat), lo ≤ hi → (lo = 0 ∨ ({ o with f := lo } : Okl).inGamut = true) →
@@ -448,6 +465,21 @@ private theorem gamutGo_spec (o : Okl) :
         exact ⟨by omega, this.2⟩
     · exact ⟨h1, h2⟩
 
+/-- **Into the gamut, holding lightness and hue**: chroma never rises, and the
+result is in gamut or on the neutral axis at that lightness. -/
+public theorem Okl.toGamut_between (o : Okl) :
+    o.toGamut.L = o.L ∧ o.toGamut.a = o.a ∧ o.toGamut.b = o.b ∧ o.toGamut.f ≤ o.f ∧
+      (o.toGamut.inGamut = true ∨ o.toGamut.f = 0) := by
+  unfold Okl.toGamut
+  split
+  · rename_i h
+    exact ⟨rfl, rfl, rfl, Nat.le_refl _, Or.inl h⟩
+  · have := gamutGo_spec o 12 0 o.f (Nat.zero_le _) (Or.inl rfl)
+    refine ⟨rfl, rfl, rfl, this.1, ?_⟩
+    rcases this.2 with h | h
+    · exact Or.inr h
+    · exact Or.inl h
+
 /-- **Gamut mapping holds lightness and hue and never adds chroma**; what it
 returns fits — in gamut, or within one JND of its clip — or is the neutral
 axis at that lightness. -/
@@ -458,16 +490,23 @@ public theorem Okl.gamutMap_between (o : Okl) :
   split
   · rename_i h
     exact ⟨rfl, rfl, rfl, Nat.le_refl _, Or.inl h⟩
-  · have := gamutGo_spec o 21 0 o.f (Nat.zero_le _) (Or.inl rfl)
-    refine ⟨rfl, rfl, rfl, this.1, ?_⟩
-    rcases this.2 with h | h
-    · exact Or.inr h
+  · have := o.toGamut_between
+    refine ⟨this.1, this.2.1, this.2.2.1, this.2.2.2.1, ?_⟩
+    rcases this.2.2.2.2 with h | h
     · exact Or.inl (by simp [Okl.fits, h])
+    · exact Or.inr h
 
-/-- **An in-gamut colour maps to itself.** -/
-public theorem Okl.gamutMap_id (o : Okl) (h : o.inGamut = true) : o.gamutMap = o := by
-  unfold Okl.gamutMap
+/-- **An in-gamut colour maps to itself**, under either map. -/
+public theorem Okl.gamutMap_id (o : Okl) (h : o.inGamut = true) :
+    o.gamutMap = o ∧ o.toGamut = o := by
+  unfold Okl.gamutMap Okl.toGamut
   simp [Okl.fits, h]
+
+/-- An Oklab value as CSS Color 4 ships a stated one in sRGB: a lightness past
+either end is white or black, and the rest is mapped (`Okl.gamutMap`) and
+quantized. -/
+public def ofLab (lab : Lab) : Color :=
+  (Okl.gamutMap { L := max 0 (min (10 ^ 18) lab.L), a := lab.a, b := lab.b, f := fracOne }).toColor
 
 /-! ## Hue
 

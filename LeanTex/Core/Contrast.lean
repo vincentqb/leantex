@@ -1159,4 +1159,33 @@ private theorem judgeSite_id (site : ColorSite) (stage : Bool) (s : Array Diag Ã
   | none => simp [judgeSite, hst]
   | some st => simp [judgeSite, hst, h st hst]
 
+/-- What a document's palette amounts to in the schemes an artifact ships,
+for the driver's `palette:` phase line: how many roles resolve, how many
+sites their pairs create, and the least margin any site keeps above what its
+need owes, in thousandths of a ratio (none when no site is paired). -/
+public structure PaletteSummary where
+  roles : Nat
+  schemes : Nat
+  sites : Nat
+  margin : Option Int
+  seeded : Bool
+  deriving Repr, BEq
+
+public def paletteSummary (pal : Palette) (schemes : List Scheme) : PaletteSummary :=
+  let sites := schemes.flatMap (Design.sites pal)
+  let margins := sites.map fun st => (contrastMilli st.ink st.ground : Int) - required st.need
+  { roles := (Role.all.filter fun r => schemes.any fun s => (Design.at pal s r).isSome).length
+    schemes := schemes.length
+    sites := sites.length
+    margin := margins.min?
+    seeded := pal.seeded.isSome }
+
+/-- The phase line's words: roles, schemes, sites, the least margin. -/
+public def PaletteSummary.detail (p : PaletteSummary) : String :=
+  let margin := match p.margin with
+    | some m => s!"least margin {ratioString (m.toNat)}" ++ (if m < 0 then " short" else "")
+    | none => "no paired site"
+  s!"{p.roles} roles, {p.schemes} scheme{if p.schemes == 1 then "" else "s"}, {p.sites} sites, " ++
+    margin ++ (if p.seeded then ", generated from seeds" else "")
+
 end LeanTex.Core.Contrast

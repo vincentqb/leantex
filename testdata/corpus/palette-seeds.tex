@@ -1,0 +1,34 @@
+% Invented text. A deck's palette generated from three seeds: an ink, a
+% paper and one accent. The blocks take tinted bands over tinted bodies,
+% the alert's in the accent's own family; the frame-title bar is the ink,
+% where the title's alert takes the accent's inverse tone; the listing's
+% tokens take colours the palette derives for them.
+\documentclass{slides}
+\usepackage{minted}
+
+\palette[seeds]{ ink = #2B2440, paper = #FFFFFF, accent = #E85D2A }
+\palette{ frametitlebg = #2B2440, frametitlefg = #FFFFFF }
+
+\begin{document}
+
+\begin{frame}{Seeded \alert{Colours}}
+\begin{block}{A Plain Statement}
+The body of the plain block, entirely invented.
+\end{block}
+\begin{alertblock}{A Loud Statement}
+The alert body stands under its own band.
+\end{alertblock}
+\begin{exampleblock}{A Worked Instance}
+The example body stands under its own band.
+\end{exampleblock}
+\end{frame}
+
+\begin{frame}[fragile]{A Listing}
+\begin{minted}{python}
+def probe(n):
+    # an invented comment
+    return "synthetic" + str(n + 1)
+\end{minted}
+\end{frame}
+
+\end{document}
