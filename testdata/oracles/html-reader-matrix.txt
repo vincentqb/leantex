@@ -2,13 +2,13 @@
 target: chromium
 tools: node v26.10.0  chromium 151.0.7922.34 (playwright 1.62.0)  firefox untested (browserType.launch: Failed to launch the browser process.)  xmllint: using libxml version 21504  Using libxml 21504, libxslt 10145 and libexslt 825  rsvg-convert version 2.63.2  pdftocairo version 26.09.0  pdftotext version 26.09.0
 date: 2026-10-11
-src-key: 0d096095e2bf6c64
-browser-face-src-key: d10b4299bf6f7dd4
+src-key: ce906a7f1ad5c463
+browser-face-src-key: 223c8572ce98477d
 browser-face-key: 0207f35691a118b2
 browser-face: diagram-boundary diagram-boundary/i0-bb1520d73065ce7ecf58276e0e5761ca2e75276fca849593477370f9d49c6dfb.svg ok:372:a473a562a6bbd5eb62b4dbb92025ce67d2ce5c71b3d63ea4e4f19764a5bc5644
 browser-face: figures figures/i0-796bbca861ab48356fbadcbcae87a11c849aa9b0b28402b5b16076908b033651.svg ok:9883:0eda4a8ef6ab82c77fe69c8cc22542991eb1bd0888325d46d07ab953b45fa648
 browser-face: figures figures/i1-796bbca861ab48356fbadcbcae87a11c849aa9b0b28402b5b16076908b033651.svg ok:9883:0eda4a8ef6ab82c77fe69c8cc22542991eb1bd0888325d46d07ab953b45fa648
-fixtures: 105 built
+fixtures: 106 built
 
 [feature]
 # feature         chromium      firefox
@@ -116,6 +116,7 @@ overlays          pass          untested      load,fonts,lang,landmarks,snaps,co
 overlays-blocks   pass          untested      load,fonts,lang,landmarks,snaps,color-scheme,reduced-motion,print,print-sheets,no-script,stage-fit,deck-links
 overprint         pass          untested      load,fonts,lang,landmarks,snaps,color-scheme,reduced-motion,print,print-sheets,no-script,stage-fit,deck-links
 palette           pass          untested      load,fonts,lang,landmarks,color-scheme,reduced-motion,print,no-script
+palette-seeds     pass          untested      load,fonts,lang,landmarks,snaps,color-scheme,reduced-motion,print,print-sheets,no-script,code-height,stage-fit,deck-links
 paragraphs        pass          untested      load,fonts,mathml,lang,landmarks,color-scheme,reduced-motion,print,no-script
 poster            pass          untested      load,fonts,lang,landmarks,color-scheme,reduced-motion,print,no-script
 poster-headline   pass          untested      load,images,fonts,lang,landmarks,box-side,color-scheme,reduced-motion,print,no-script

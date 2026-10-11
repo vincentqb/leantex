@@ -44,7 +44,7 @@ public def bisect (pass : Int → Bool) : Nat → Int → Int → Int
     else bisect pass fuel mid p
 
 /-- **A bisection answers a passing value** when it starts from one. -/
-public theorem bisect_pass (pass : Int → Bool) :
+public theorem bisect_contract (pass : Int → Bool) :
     ∀ (fuel : Nat) (f p : Int), pass p = true → pass (bisect pass fuel f p) = true
   | 0, _, _, h => h
   | fuel + 1, f, p, h => by
@@ -52,8 +52,8 @@ public theorem bisect_pass (pass : Int → Bool) :
     split
     · exact h
     · split
-      · exact bisect_pass pass fuel _ _ ‹_›
-      · exact bisect_pass pass fuel _ _ h
+      · exact bisect_contract pass fuel _ _ ‹_›
+      · exact bisect_contract pass fuel _ _ h
 
 /-- The passing side of the boundary nearest a guess: bisected within
 `guess ± span` where that bracket straddles the boundary (its end toward
@@ -68,16 +68,16 @@ public def bisectNear (pass : Int → Bool) (fuel : Nat) (f p guess span : Int) 
 
 /-- **A guided bisection answers a passing value** when the axis's passing
 end passes. -/
-public theorem bisectNear_pass (pass : Int → Bool) (fuel : Nat) (f p guess span : Int)
+public theorem bisectNear_contract (pass : Int → Bool) (fuel : Nat) (f p guess span : Int)
     (hp : pass p = true) : pass (bisectNear pass fuel f p guess span) = true := by
   unfold bisectNear
   dsimp only
   split <;> split
   all_goals first
-    | exact bisect_pass pass (fuel + 8) f p hp
+    | exact bisect_contract pass (fuel + 8) f p hp
     | (rename_i h
        simp only [Bool.and_eq_true] at h
-       exact bisect_pass pass fuel _ _ h.2)
+       exact bisect_contract pass fuel _ _ h.2)
 
 /-- The Oklab lightness of the grey whose WCAG luminance is `y` (10⁻⁷ units):
 a grey's linear channels are its lightness cubed, so the lightness is the

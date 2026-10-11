@@ -578,16 +578,14 @@ def elaborate (ui : Ui) (file : String) (prepared : Elab.Prepared)
         Compat.styRead (src.getD file) sty pos elabDiags
     if phases then ui.phase "elab" s!"{doc.body.size} blocks" (← since t)
     if phases then
-      -- The palette phase: the generator's own work where the palette is
-      -- generated from seeds (pure, so timing it again times what the
-      -- elaborator spent), and the pairs every scheme the build ships judges.
+      -- The palette phase: the pairs the schemes this build ships judge —
+      -- the print column, and the screen's light column where a page is
+      -- built. Generation itself is the elaborator's, timed with it.
       let t := ← IO.monoMsNow
-      let regenerated := match doc.palette.seeded with
-        | some st => (SeedPalette.generate st.seeds st.targets).toOption.isSome
-        | none => false
-      let summary := { Contrast.paletteSummary doc.palette [.print, .light] with
-        seeded := regenerated }
-      ui.phase "palette" summary.detail (← since t)
+      let schemes : List Ir.Scheme :=
+        if (ui.cfg.effectiveEmit doc.output.formats).contains .html then [.print, .light]
+        else [.print]
+      ui.phase "palette" (Contrast.paletteSummary doc.palette schemes).detail (← since t)
     let t ← IO.monoMsNow
     let reqSpans := { reqSpans with frames := Bib.remapSources doc reqSpans.frames }
     let (doc, bibDiags, ledger) ← Input.resolveBibliography file doc

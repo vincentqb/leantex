@@ -430,10 +430,10 @@
 ⚠ [W0304] - \textcolor
   'nope' is not in the palette; content kept uncoloured
   suggestion: declare colours with \palette{ name = #RRGGBB }
-── W0306 (degraded) a palette's seeds generate no palette: a role they derive cannot meet what its sites owe; the seeds stand as the page's text, ground and accent
+── W0306 (degraded) a palette's seeds generate no palette — a role they derive cannot meet what its sites owe, or a seed has no sRGB tones to derive from; the seeds stand as the page's text, ground and accent
 ⚠ [W0306] - \palette
-  '\palette[seeds]' generates no palette: no neutral tone reads on the ink; the seeds stand as given
-  suggestion: seeds an ink reads on, 4.6:1 to its paper, generate one: \palette[seeds]{ ink = #1E1B2E, paper = #FFFFFF, accent = #E85D2A }
+  '\palette[seeds]' generates no palette: muted-on-inverse: no neutral tone reads on the ink; the seeds stand as given
+  suggestion: move the ink and the paper further apart, so every tone derived between them reads: \palette[seeds]{ ink = #1E1B2E, paper = #FFFFFF, accent = #E85D2A }
 ── W0307 (pending) construct not implemented yet; its content is not rendered
 ⚠ [W0307] - \begin
   '{external}' is not implemented yet; its content is not rendered

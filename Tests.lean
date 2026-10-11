@@ -462,6 +462,7 @@ def layoutSuiteChecks (ref : IO.Ref (List String)) : IO Unit := do
   Tests.SeedPalette.oklchChecks ref
   Tests.SeedPalette.deckChecks ref oneFace
   Tests.SeedPalette.exportChecks ref oneFace
+  Tests.SeedPalette.seedRoleChecks ref oneFace
   Tests.SeedPalette.failureChecks ref
   Tests.SeedPalette.scriptChecks ref
   Tests.ColourSolve.checks ref

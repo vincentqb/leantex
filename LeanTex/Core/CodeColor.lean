@@ -166,7 +166,7 @@ public def toneOn (req : Nat) (grounds : List Color) (v : Int × Int) : Option C
 /-- **A tone clears what it was asked to on every ground it was asked for**:
 every answer is guarded by the judged ratios themselves, so no search
 argument is load-bearing. -/
-public theorem toneOn_meets {req : Nat} {grounds : List Color} {c : Color} {v : Int × Int}
+public theorem toneOn_contract {req : Nat} {grounds : List Color} {c : Color} {v : Int × Int}
     (h : toneOn req grounds v = some c) : ∀ g ∈ grounds, req ≤ Contrast.contrastMilli c g := by
   unfold toneOn at h
   obtain ⟨q, _, hq⟩ := List.exists_of_findSome?_eq_some h
@@ -186,7 +186,7 @@ public def tone (req : Nat) (ground : Color) (v : Int × Int) : Option Color :=
 /-- **A tone clears what it was asked to**, on its ground. -/
 public theorem tone_meets {req : Nat} {ground c : Color} {v : Int × Int}
     (h : tone req ground v = some c) : req ≤ Contrast.contrastMilli c ground :=
-  toneOn_meets h ground (List.mem_singleton.mpr rfl)
+  toneOn_contract h ground (List.mem_singleton.mpr rfl)
 
 /-- A derived hue's tone on the grounds it must read on: the code tone, or
 text AA where they leave no lightness for it. -/

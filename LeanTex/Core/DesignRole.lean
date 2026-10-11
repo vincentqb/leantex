@@ -96,13 +96,16 @@ public structure GroundDepth where
 
 /-- A document's: a body as deep as GitHub's code ground on white (1.06:1),
 a band at 1.15:1, rules at Tailwind v4 slate-300's 1.49:1
-(https://tailwindcss.com/docs/colors). -/
+(https://tailwindcss.com/docs/colors). The band keeps 1.07:1 to the body
+below it: what the two targets leave (1.15 / 1.06 = 1.085), less the slack
+of the band's quantized answer. -/
 @[expose] public def GroundDepth.documents : GroundDepth :=
   { body := 1060, band := 1150, rule := 1490, pair := 1070 }
 
 /-- A deck's and a poster's, read across a room on a projector: Radix slate
 steps 3 and 5 on white (1.14:1, 1.31:1; https://www.radix-ui.com/colors),
-the same rules. -/
+the same rules. The band keeps 1.10:1 to the body below it, inside what the
+two targets leave (1.30 / 1.12 = 1.16). -/
 @[expose] public def GroundDepth.decks : GroundDepth :=
   { body := 1120, band := 1300, rule := 1490, pair := 1100 }
 

@@ -304,7 +304,8 @@ derived roles, and nothing for a role generation does not set. -/
   | .diagramMuted => some c.diagramMuted
   | .alertBandInk => some c.alertBand
   | .exampleBandInk => some c.exampleBand
-  | .covered | .marker | .codeSurface | .rule | .paper | .printInk
+  | .rule => some c.rule
+  | .covered | .marker | .codeSurface | .paper | .printInk
   | .frameTitleBar | .frameTitleInk | .frameSubtitleInk | .sectionTitleInk | .footBand | .footInk
   | .blockTitleBar | .alertTitleBar | .exampleTitleBar
   | .blockTitleInk | .alertTitleInk | .exampleTitleInk
@@ -314,18 +315,22 @@ derived roles, and nothing for a role generation does not set. -/
   | .progressFill | .progressTrack | .sectionProgressFill | .sectionProgressTrack
   | .codeInk | .codeKeyword | .codeName | .codeLiteral | .codeComment | .codeError => none
 
-/-- The palette roles generation sets, in registry order. -/
-public def tierRoles : List Ir.Role :=
-  [.page, .ink, .muted, .alert, .example, .focus, .accent, .surface, .surfaceStrong, .accentWash,
-   .accentSoft, .accentText, .accentEdge, .mutedOnInverse, .accentOnInverse, .diagramMuted,
-   .alertBandInk, .exampleBandInk]
+/-- The palette roles generation derives: every role it sets but the seeds. -/
+public def derivedRoles : List Ir.Role :=
+  [.muted, .alert, .example, .rule, .focus, .surface, .surfaceStrong, .accentWash, .accentSoft,
+   .accentText, .accentEdge, .mutedOnInverse, .accentOnInverse, .diagramMuted, .alertBandInk,
+   .exampleBandInk]
 
-/-- **The seeds ship exactly**: the page's text, ground and accent are the
-author's colours, whatever else the generator derives. -/
-public theorem generate_seeds_exact (s : Seeds) (c : Colors) :
-    Colors.role s c .ink = some s.ink ∧ Colors.role s c .page = some s.paper ∧
-      Colors.role s c .accent = some s.accent :=
-  ⟨rfl, rfl, rfl⟩
+/-- The palette roles generation sets: the seeds' three, then what it derives. -/
+public def tierRoles : List Ir.Role := [.page, .ink, .accent] ++ derivedRoles
+
+/-- The colours a generated palette paints its furniture in, each element
+role bound to the palette role it reads, in both block styles: the progress
+bar in the accent over the accent's band, the title separator in the
+accent. Decorative marks, so no contrast is owed; their hue is the seeds'
+rather than any bundle's, the one entry point every colour comes through. -/
+@[expose] public def furniture : List (Ir.Role × Ir.Role) :=
+  [(.progressFill, .accent), (.progressTrack, .accentSoft), (.separator, .accent)]
 
 /-- The element roles a block style binds, each to the palette role it reads:
 the title's bar and ink and the body's ground and ink, for each kind. Under
@@ -398,9 +403,10 @@ public def sites (s : Seeds) (t : Targets) (c : Colors) : List (Ir.Role × Color
   | some e => [(.example, e, s.paper, t.text), (.example, e, c.surface, t.text)]
   | none => []
 
-/-- How far above its target a ground may stand: a fiftieth of the target,
-the most one 8-bit step moves a tint's ratio to its page — about 0.01 at a
-light page's 1.12:1, and three times that near a dark page. -/
+/-- How far above its target a ground may stand: a fiftieth of the target —
+0.022 at a deck body's 1.12:1, about two and a half 8-bit steps of a light
+tint, the room the search's quantized answer needs — and proportionally more
+near a dark page, where a step moves the ratio further. -/
 public def groundSlack (target : Nat) : Nat := target / 50
 
 /-- One 8-bit step's worth of chroma near the page, `labOf`'s scale. -/
@@ -469,10 +475,15 @@ or does not meet what its sites owe. -/
 public structure Failure where
   role : Ir.Role
   detail : String
+  /-- The seed is a CMYK colour, which has no sRGB tones to derive. -/
+  cmyk : Bool := false
   deriving Repr, BEq
 
 private def fail {α : Type} (role : Ir.Role) (detail : String) : Except Failure α :=
   .error { role, detail }
+
+private def failCmyk {α : Type} (role : Ir.Role) : Except Failure α :=
+  .error { role, detail := "a CMYK seed has no sRGB tones to derive", cmyk := true }
 
 private def need {α : Type} (role : Ir.Role) (detail : String) : Option α → Except Failure α
   | some v => .ok v
@@ -563,9 +574,9 @@ private def candidate (s : Seeds) (t : Targets) : Except Failure Colors := do
 and the paper's polarity. A CMYK seed is refused: this sRGB operation cannot
 keep its print components. -/
 public def generate (s : Seeds) (t : Targets) : Except Failure (Generated s t) := do
-  if s.ink.cmyk.isSome then fail .ink "a CMYK seed has no sRGB tones to derive"
-  if s.paper.cmyk.isSome then fail .page "a CMYK seed has no sRGB tones to derive"
-  if s.accent.cmyk.isSome then fail .accent "a CMYK seed has no sRGB tones to derive"
+  if s.ink.cmyk.isSome then failCmyk .ink
+  if s.paper.cmyk.isSome then failCmyk .page
+  if s.accent.cmyk.isSome then failCmyk .accent
   let c ← candidate s t
   if h : contract s t c = true then return ⟨c, h⟩
   else
@@ -582,6 +593,65 @@ public structure SeedState where
   blocks : Blocks
   colors : Colors
   deriving Repr, BEq, Inhabited
+
+/-- What a generated palette installs after its seeds: each role generation
+derives, at its colour, then each element role its block style and its
+furniture bind, at the colour of the role it reads. -/
+@[expose] public def derivedEntries (st : SeedState) : List (Ir.Role × Color) :=
+  (derivedRoles.filterMap fun r => (Colors.role st.seeds st.colors r).map (r, ·)) ++
+    ((bindings st.seeds st.targets st.blocks ++ furniture).filterMap fun (e, src) =>
+      (Colors.role st.seeds st.colors src).map (e, ·))
+
+/-- Every declaration a generated palette installs, in order: the seeds as
+the page's ground, text and accent, then what is derived from them. -/
+@[expose] public def entries (st : SeedState) : List (Ir.Role × Color) :=
+  [(.page, st.seeds.paper), (.ink, st.seeds.ink), (.accent, st.seeds.accent)] ++
+    derivedEntries st
+
+/-- The element roles a block style and the furniture bind, in either style. -/
+private theorem bound_elements (s : Seeds) (t : Targets) (b : Blocks) :
+    (bindings s t b ++ furniture).map Prod.fst =
+      [.blockTitleBar, .blockTitleInk, .blockBodyGround, .blockBodyInk, .alertTitleBar,
+       .alertTitleInk, .alertBodyGround, .alertBodyInk, .exampleTitleBar, .exampleTitleInk,
+       .exampleBodyGround, .exampleBodyInk, .progressFill, .progressTrack, .separator] := by
+  cases b <;> rfl
+
+/-- **No binding rewrites a seed**: the element roles a block style and the
+furniture bind are never the page's text, ground or accent. -/
+public theorem bindings_seeds_exact (s : Seeds) (t : Targets) (b : Blocks) :
+    ∀ x ∈ bindings s t b ++ furniture, x.1 ≠ .ink ∧ x.1 ≠ .page ∧ x.1 ≠ .accent := by
+  intro x hx
+  have hm := List.mem_map_of_mem (f := Prod.fst) hx
+  rw [bound_elements] at hm
+  have hall : ∀ r ∈ ([.blockTitleBar, .blockTitleInk, .blockBodyGround, .blockBodyInk,
+      .alertTitleBar, .alertTitleInk, .alertBodyGround, .alertBodyInk, .exampleTitleBar,
+      .exampleTitleInk, .exampleBodyGround, .exampleBodyInk, .progressFill, .progressTrack,
+      .separator] : List Ir.Role), r ≠ .ink ∧ r ≠ .page ∧ r ≠ .accent := by decide
+  exact hall _ hm
+
+/-- Nothing derived rewrites a seed: after the seeds, a generated palette
+installs no declaration of the page's text, ground or accent. -/
+private theorem derivedEntries_seeds (st : SeedState) :
+    ∀ x ∈ derivedEntries st, x.1 ≠ .ink ∧ x.1 ≠ .page ∧ x.1 ≠ .accent := by
+  intro x hx
+  rcases List.mem_append.mp hx with h | h
+  · obtain ⟨r, hr, he⟩ := List.mem_filterMap.mp h
+    obtain ⟨c, -, rfl⟩ := Option.map_eq_some_iff.mp he
+    have hall : ∀ r ∈ derivedRoles, r ≠ .ink ∧ r ≠ .page ∧ r ≠ .accent := by decide
+    exact hall r hr
+  · obtain ⟨⟨e, src⟩, he, hx'⟩ := List.mem_filterMap.mp h
+    obtain ⟨c, -, rfl⟩ := Option.map_eq_some_iff.mp hx'
+    exact bindings_seeds_exact st.seeds st.targets st.blocks (e, src) he
+
+/-- **The seeds ship exactly**: a generated palette installs the page's
+ground, text and accent as the seeds, first, and nothing it derives or binds
+after them names those three roles (`Ir.Palette.applySeeds_seeds_exact` reads
+what the install leaves). -/
+public theorem generate_seeds_exact (st : SeedState) :
+    entries st = [(.page, st.seeds.paper), (.ink, st.seeds.ink), (.accent, st.seeds.accent)] ++
+        derivedEntries st ∧
+      ∀ x ∈ derivedEntries st, x.1 ≠ .ink ∧ x.1 ≠ .page ∧ x.1 ≠ .accent :=
+  ⟨rfl, derivedEntries_seeds st⟩
 
 /-- Whether a ground is the light side: white stands less apart from it than black. -/
 private def lightGround (g : Color) : Bool :=
@@ -673,13 +743,13 @@ private theorem beamerBlocks_pair {s : Seeds} {t : Targets} {c : Colors} {b : Bl
 
 /-- Every beamer element the generated palette writes, in first-written
 order, with the roles its two channels read: each generated role's own
-elements (`Row.beamer`), then each element role its block style binds, at
-the role it reads. -/
+elements (`Row.beamer`), then each element role its block style and its
+furniture bind, at the role it reads. -/
 public def beamerChannels (st : SeedState) : List (String × Option Ir.Role × Option Ir.Role) :=
   let writes : List (String × Ir.Channel × Ir.Role) :=
     (tierRoles.filter fun r => (Colors.role st.seeds st.colors r).isSome).flatMap
         (fun r => r.row.beamer.map fun (e, ch) => (e, ch, r)) ++
-      (bindings st.seeds st.targets st.blocks).flatMap fun (el, src) =>
+      (bindings st.seeds st.targets st.blocks ++ furniture).flatMap fun (el, src) =>
         el.row.beamer.map fun (e, ch) => (e, ch, src)
   writes.foldl (fun acc (e, ch, r) =>
     match acc.find? (·.1 == e) with
@@ -703,7 +773,8 @@ public def declarations (stem : String) (st : SeedState) : String :=
 
 /-- The export with every beamer element the palette writes bound to the
 colours its channels read (`beamerChannels`): the page's text and ground,
-the muted footline, the alert, and the six block elements in the style. -/
+the muted footline, the alert, the six block elements in the style, the
+progress bar and the title separator. -/
 public def beamerDeclarations (stem : String) (st : SeedState) : String :=
   let name (r : Ir.Role) := stem ++ r.row.exportName.getD ""
   declarations stem st ++ String.join ((beamerChannels st).map fun (e, fg, bg) =>

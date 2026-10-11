@@ -41,7 +41,7 @@ search reads before it quantizes a candidate. -/
 public def ratioOf (la lb : Nat) : Nat :=
   ((max la lb + 500000) * 1000) / (min la lb + 500000)
 
-public theorem contrastMilli_ratioOf (a b : Color) :
+public theorem contrastMilli_ratioOf_exact (a b : Color) :
     contrastMilli a b = ratioOf (luminance a) (luminance b) := by
   unfold contrastMilli ratioOf
   rfl

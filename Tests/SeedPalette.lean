@@ -202,17 +202,54 @@ def deckChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit := 
   t "seed deck: the web title's alert reads the inverse role"
     (html.contains (Ir.ColorRef.role .accentOnInverse).property)
 
-/-- **The export is a projection of the native palette**: the invented deck
-built from `\palette[seeds]` and built from the include the generator
-exports, through beamer's own colour elements, ship identical PDF bytes and
-an identical typed HTML body in both block styles, and their stylesheets
-declare the same properties at the same values. What the include adds is
-its own xcolor names, which the web page exposes as named colours for a host
-to override (`--ltx-c-<name>` and the name itself) and the native build has
-none of. Both declare the focus ring alike: the ring is the web page's own,
-with no element in a TeX build. -/
+/-- **The export is the native palette's print projection**: every colour
+the include declares is the colour the native `\palette[seeds]` build
+resolves the role it names to in print, every beamer element it binds is set
+in the native build's colours for that element's roles, and the code colours
+`--pygments` writes are the colours the native build paints each code role in
+on the page — the values a TeX build consumes. Built from the include, the
+invented deck, which reads only exported roles, ships the native build's PDF
+bytes and typed HTML body in both block styles, and every role the include
+binds resolves alike in both stylesheets. What the engine derives at a use site
+is the native build's alone: a generated role's tone on a ground it does not
+read on, a code tone on the palette's own fills, and the web page's focus ring
+(both builds declare it alike here), for the include declares colours, and a
+declared colour ships as declared. -/
 def exportChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit := do
   let t := check ref
+  -- The include's values, role by role and element by element.
+  for style in LeanTex.Core.SeedPalette.Blocks.all do
+    let some g := (generate deckSeeds).toOption | t "export: the seeds generate" false; return
+    let st : LeanTex.Core.SeedPalette.SeedState :=
+      { seeds := deckSeeds, targets := deckSeeds.targets .decks, blocks := style, colors := g.colors }
+    let (nd, _) := elabStr ("\\documentclass{beamer}\n\\palette[seeds]{ ink = #2B2440, " ++
+      s!"paper = #FFFFFF, accent = #E85D2A, blocks = {style.name} }\n" ++
+      "\\begin{document}\n\\begin{frame}x\\end{frame}\n\\end{document}")
+    let decls := LeanTex.Core.SeedPalette.declarations "seed" st
+    for r in Ir.Role.all do
+      if let some name := r.row.exportName then
+        if let some c := LeanTex.Core.SeedPalette.Colors.role st.seeds st.colors r then
+          let native := (Ir.Design.at nd.palette .print r).map fun n =>
+            Ir.Color.hexByte n.r ++ Ir.Color.hexByte n.g ++ Ir.Color.hexByte n.b
+          t s!"export {style.name}: {name} is the native build's print {name}"
+            (hasStr decls ("\\definecolor{seed" ++ name ++ "}{HTML}{" ++ Ir.Color.hexByte c.r ++
+              Ir.Color.hexByte c.g ++ Ir.Color.hexByte c.b ++ "}") &&
+              native == some (Ir.Color.hexByte c.r ++ Ir.Color.hexByte c.g ++ Ir.Color.hexByte c.b))
+    for (element, fg, bg) in LeanTex.Core.SeedPalette.beamerElements do
+      match (LeanTex.Core.SeedPalette.beamerChannels st).find? (·.1 == element) with
+      | some (_, some f, some b) =>
+        t s!"export {style.name}: '{element}' binds the native build's colours"
+          ((Ir.Design.at nd.palette .print fg) ==
+              (LeanTex.Core.SeedPalette.Colors.role st.seeds st.colors f) &&
+            (Ir.Design.at nd.palette .print bg) ==
+              (LeanTex.Core.SeedPalette.Colors.role st.seeds st.colors b))
+      | _ => t s!"export {style.name}: '{element}' is bound" false
+    -- The code colours a TeX build's minted reads are the native page's.
+    for ls in Ir.ListingStyle.all do
+      let exported := CodeExport.pageBrushes (({} : Ir.Palette).applySeeds st) ls
+      let native := CodeExport.pageBrushes nd.palette ls
+      t s!"export {style.name}: the {ls.name} code colours are the native page's"
+        (ListingHighlight.Role.all.all fun r => (exported.get r).ink == (native.get r).ink)
   let body := "\\begin{document}\n\\begin{frame}{Rates}\nPlain text and \\alert{an alert}.\n" ++
     "\\begin{block}{Plain}Kilo body.\\end{block}\n" ++
     "\\begin{alertblock}{Alerted}Lima body.\\end{alertblock}\n" ++
@@ -237,15 +274,74 @@ def exportChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit :
     let parts (d : Ir.Doc) :=
       let (head, nodes, _) := HtmlDoc.emitTree {} d
       (Html.render (Html.elem "head" head) 0, Html.render (Html.elem "body" nodes) 0)
-    let declarations (head : String) : List String :=
-      ((head.splitOn "\n").map (·.trimAscii.toString)).filter (fun l =>
-        !l.isEmpty && (l.splitOn "--ltx-c-seed").length == 1 && !l.startsWith "--seed")
-        |>.mergeSort (· ≤ ·)
-    let (nh, nb) := parts nd
-    let (eh, eb) := parts ed
+    let (_, nb) := parts nd
+    let (_, eb) := parts ed
     t s!"export {style.name}: identical typed HTML body" (nb == eb)
-    t s!"export {style.name}: the stylesheets declare alike, the include's own names aside"
-      (declarations nh == declarations eh)
+    -- Every role the include binds through a beamer element resolves alike
+    -- wherever both stylesheets declare it; a role no element carries (the
+    -- accent, the rule) and one the include leaves to the default theme are
+    -- the native build's own.
+    let bound : List Ir.Role := [.page, .ink, .muted, .alert, .blockTitleBar, .blockTitleInk,
+      .blockBodyGround, .blockBodyInk, .alertTitleBar, .alertTitleInk, .alertBodyGround,
+      .alertBodyInk, .exampleTitleBar, .exampleTitleInk, .exampleBodyGround, .exampleBodyInk,
+      .progressFill, .progressTrack, .separator]
+    let value (d : Ir.Doc) (r : Ir.Role) : Option String :=
+      chaseCssValue (screenRootVars (HtmlDoc.emit {} d).1) (HtmlDoc.roleRef r)
+    t s!"export {style.name}: every role the include binds resolves alike in both stylesheets"
+      (bound.all fun r => match value nd r, value ed r with
+        | some a, some b => a == b
+        | _, _ => true)
+
+/-- **A generated palette is the palette the seeds make, under what the
+document declares**: a role the document declared before the seeds keeps its
+colour, one declared after replaces the generated colour, and a theme's
+colour gives way to the seeds' (document > generated > bundle); the default
+bundle's colours stay out of a seeded deck, whose rule, progress bar and title
+separator are the seeds' own; a generated role on the standout inversion takes
+its family's tone there, legible, with nothing to report; and `decorative`,
+which a generated palette has nothing to exempt from, is named and ignored.
+Read off the palette both artifacts resolve, `Layout.Out` and the log. -/
+def seedRoleChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit := do
+  let t := check ref
+  let seeds := "\\palette[seeds]{ ink = #2B2440, paper = #FFFFFF, accent = #E85D2A }\n"
+  let deck (pre body : String) : String :=
+    "\\documentclass{beamer}\n" ++ pre ++ "\\begin{document}\n" ++ body ++ "\n\\end{document}"
+  let frame := "\\begin{frame}{Probe}Probe.\\end{frame}"
+  let declared (d : Ir.Doc) (r : Ir.Role) := Ir.Design.declared? d.palette r
+  let (before, _) := elabStr (deck ("\\palette{ muted = #AA0000, blocktitlebg = #00AA00 }\n" ++ seeds) frame)
+  t "seed roles: a role declared before the seeds keeps its colour"
+    (declared before .muted == some (hex "AA0000") && declared before .blockTitleBar == some (hex "00AA00"))
+  let (after, _) := elabStr (deck (seeds ++ "\\palette{ muted = #AA0000 }\n") frame)
+  t "seed roles: a role declared after the seeds replaces the generated colour"
+    (declared after .muted == some (hex "AA0000"))
+  let some g := (generate deckSeeds).toOption | t "seed roles: the seeds generate" false; return
+  let c := g.colors
+  let (themed, _) := elabStr (deck ("\\theme{moloch}\n" ++ seeds) frame)
+  t "seed roles: the seeds' alert replaces a theme's"
+    (declared themed .alert == some c.alert)
+  let (plain, _) := elabStr (deck seeds frame)
+  t "seed roles: the rule a seeded deck ships is the generated rule"
+    (declared plain .rule == some c.rule)
+  t "seed roles: the progress bar and the separator are the seeds' accent"
+    (declared plain .progressFill == some deckSeeds.accent &&
+      declared plain .progressTrack == some c.accentSoft && declared plain .separator == some deckSeeds.accent)
+  t "seed roles: no colour of the default bundle reaches a seeded deck"
+    ((declared plain .standoutGround).isNone && (declared plain .example).isNone)
+  -- A generated role on the standout inversion: its family's tone there.
+  let (so, soDs) := elabStr (deck seeds
+    "\\begin{frame}[standout]\\alert{Loud} and \\textcolor{muted}{quiet}.\\end{frame}")
+  let ground := (Ir.Design.ofPalette so.palette).standout.bg
+  let inks := (allLines (Layout.run (Layout.Geom.ofPage so.page) fonts none so)).flatMap
+    (·.segs) |>.filterMap fun
+      | .run _ ink _ _ glyphs .. => if glyphs.isEmpty then none else some ink
+      | _ => none
+  t s!"seed roles: every run on the standout inversion reads there ({inks.map (·.css)})"
+    (!inks.isEmpty && inks.all fun i => Contrast.aaText ≤ Contrast.contrastMilli i ground)
+  t "seed roles: the standout frame has nothing to report" (soDs.all (·.code != "W0315"))
+  let (_, decoDs) := elabStr (deck ("\\palette[seeds, decorative]{ ink = #2B2440, " ++
+    "paper = #FFFFFF, accent = #E85D2A }\n") frame)
+  t "seed roles: decorative is named once and ignored"
+    ((decoDs.filter (·.code == "W0110")).size == 1)
 
 /-- Seeds that generate no palette are named once, by the role that fails,
 and stand as the page's text, ground and accent. -/

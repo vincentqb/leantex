@@ -1180,10 +1180,13 @@ public def paletteSummary (pal : Palette) (schemes : List Scheme) : PaletteSumma
     margin := margins.min?
     seeded := pal.seeded.isSome }
 
-/-- The phase line's words: roles, schemes, sites, the least margin. -/
+/-- The phase line's words: roles, schemes, sites, the least margin — or,
+where a site falls short of its need, by how much. -/
 public def PaletteSummary.detail (p : PaletteSummary) : String :=
   let margin := match p.margin with
-    | some m => s!"least margin {ratioString (m.toNat)}" ++ (if m < 0 then " short" else "")
+    | some m =>
+      if m < 0 then s!"a site {ratioString (-m).toNat} short of its need"
+      else s!"least margin {ratioString m.toNat}"
     | none => "no paired site"
   s!"{p.roles} roles, {p.schemes} scheme{if p.schemes == 1 then "" else "s"}, {p.sites} sites, " ++
     margin ++ (if p.seeded then ", generated from seeds" else "")

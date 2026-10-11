@@ -1,17 +1,12 @@
 class slides
 page 362.835x272.126 vmargin 26.4 hmargin 28.346 fontsize 11 parskip 0 justify off
-palette example #0F7A52
-palette progressfg #0B66C2
-palette progressbg #CDDEEE
-palette separator #0B66C2
-palette standoutfg #FDFCF9
-palette standoutbg #0B66C2
 palette bg #FFFFFF
 palette fg #2B2440
+palette accent #E85D2A
 palette muted #6E6A7E
 palette alert #C0420C
+palette rule #D5D1E4
 palette focus #DA501A
-palette accent #E85D2A
 palette surface #F2F1F7
 palette surface-strong #E3E0ED
 palette accent-wash #FFEEE9
@@ -35,9 +30,11 @@ palette exampletitlebg #E3E0ED
 palette exampletitlefg #646174
 palette examplebodybg #F2F1F7
 palette examplebodyfg #2B2440
+palette progressfg #E85D2A
+palette progressbg #FFD9CD
+palette separator #E85D2A
 palette frametitlebg #2B2440
 palette frametitlefg #FFFFFF
-palette covered 38%
 token progressheight 1pt
 token frametitlepadding 840/1000em
 token separatorheight 0.5pt

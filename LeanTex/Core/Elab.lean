@@ -298,6 +298,11 @@ public structure Ctx where
   /-- Inside a speaker note, absorbed as beamer absorbs it: a reserved
   character is literal text there, never a build error. -/
   noteBody : Bool := false
+  /-- The ground the content being elaborated stands on, where a region
+  paints one of its own — a title's bar, a block's body, the standout
+  inversion: a generated role's run takes its family's tone there
+  (`coloredRun`). -/
+  ground : Option Color := none
   /-- The position of the `\note` whose body is being elaborated, when
   `noteBody` is set: where E0359 names the note whose frame tried to carry
   another note. -/
@@ -499,6 +504,11 @@ public structure SpanRecords where
   array retains every site's source, aggregate wording, help and demotion
   for completion after a caller discards the ordinary log. -/
   recoveryDiags : Array Diag := #[]
+  /-- Each palette `\palette[seeds]` generated, by its seeds and targets, with
+  the colours or the failure: one generation per seeds however many epochs
+  declare them (`generated`). -/
+  seedPalettes : Array (SeedPalette.Seeds × SeedPalette.Targets ×
+    Option SeedPalette.Colors × Option SeedPalette.Failure) := #[]
   deriving Repr, BEq
 
 /-- beamer's `\logo` (`main`), a declaration legal in the preamble and the
@@ -4641,6 +4651,15 @@ private def readColor (ctx : Ctx) (pal : Palette) (model : Option String)
       (help := "model values use their documented component count and range")
     return .rejected
 
+/-- A run in a colour as it ships on the ground it is elaborated on: a
+generated role's run that does not read there takes its family's tone
+(`Palette.groundRun`); every other run stands as written. -/
+private def coloredRun (ctx : Ctx) (c : Color) (ref : Option ColorRef) (body : Array Inline) :
+    Inline :=
+  match ctx.ground with
+  | some g => ctx.palette.groundRun g (.colored c ref body)
+  | none => .colored c ref body
+
 /-- A conditional alert derives both readings from the same elaborated
 body. Ordinary font commands retain their measured correction edges. -/
 private def modifierInlines (ctx : Ctx) (name : String) (style : Style)
@@ -4654,7 +4673,7 @@ private def modifierInlines (ctx : Ctx) (name : String) (style : Style)
   match Ir.Design.declared? ctx.palette .alert with
   | some c =>
     recordColorSpan ctx "alert" c true pos
-    return #[.colored c (some (.role .alert)) inner]
+    return #[coloredRun ctx c (some (.role .alert)) inner]
   | none =>
     warnPaletteMiss ctx "alert" pos
     return #[.styled .bold inner]
@@ -5968,7 +5987,7 @@ private def elabInlinesCtrl (ctx : Ctx) (raws : Array Raw) (i : Nat)
         let acc := flushText acc sb
         let inner ← elabInlinesCore ctx body
         elabInlinesFrom ctx raws (j2 + 1)
-          (pushModifier acc spec #[.colored c cssName inner] inner) ""
+          (pushModifier acc spec #[coloredRun ctx c cssName inner] inner) ""
       | .missing =>
         warnPaletteMiss ctx source pos
         let acc := flushText acc sb
@@ -6027,7 +6046,7 @@ private def elabInlinesCtrl2 (ctx : Ctx) (raws : Array Raw) (i : Nat)
       let inner ← elabInlinesCore ctx body
       have hadv : sliceWeight raws (j + 1) < sliceWeight raws i :=
         sliceWeight_lt raws h (by omega)
-      elabInlinesFrom ctx raws (j + 1) (acc.push (.colored c cssName inner)) ""
+      elabInlinesFrom ctx raws (j + 1) (acc.push (coloredRun ctx c cssName inner)) ""
     | _ =>
       have hw : rawWeightList (raws.extract (i + 1) raws.size).toList
           < sliceWeight raws i :=
@@ -6035,7 +6054,7 @@ private def elabInlinesCtrl2 (ctx : Ctx) (raws : Array Raw) (i : Nat)
       let (roles, acc, _) := inlineMacroStep ctx.macroRoles none (flushText acc sb) ""
       let ctx := { ctx with macroRoles := roles }
       let rest ← elabInlinesCore ctx (raws.extract (i + 1) raws.size)
-      let acc := acc.push (.colored c cssName rest)
+      let acc := acc.push (coloredRun ctx c cssName rest)
       have hadv : sliceWeight raws raws.size < sliceWeight raws i :=
         sliceWeight_lt raws h h
       elabInlinesFrom ctx raws raws.size acc ""
@@ -8147,6 +8166,15 @@ private def parsePaletteOpts (ctx : Ctx) (src : String) (pos : Pos) :
       diag ctx .W0316 s!"unknown option in '\\palette': {e.quote}; block skipped" pos
         (help := "options: decorative, seeds")
       skipBlock := true
+  -- A generated palette meets every contrast its sites owe, so the
+  -- exemption `decorative` declares has nothing to exempt there.
+  if seeds && decorative then
+    warnOnce ctx "palette:seeds:decorative" .W0110 "'decorative' exempts nothing in \
+'\\palette[seeds]': a generated palette meets the contrast its sites owe; the option is \
+ignored" pos
+      (help := "drop 'decorative', or declare a deliberately quiet colour in a \
+'\\palette[decorative]{...}' block of its own")
+    decorative := false
   return (decorative, seeds, skipBlock)
 
 /-- Resolve named Beamer colours into the palette in force; report
@@ -8320,6 +8348,32 @@ the page's {what} colour is the '{role}' key" (span := some span)
         (help := some s!"declare \\palette\{ {role} = ... } for the page's {what}, or name \
 '{key}' where it is used"))
 
+/-- The palette seeds generate at their targets, generated once per seeds
+and targets in a document (`SpanRecords.seedPalettes`). -/
+private def generated (seeds : SeedPalette.Seeds) (targets : SeedPalette.Targets) :
+    EM (Except SeedPalette.Failure SeedPalette.Colors) := do
+  let memo := (← get).spans.seedPalettes
+  match memo.find? fun (s, t, _, _) => s == seeds && t == targets with
+  | some (_, _, some colors, _) => return .ok colors
+  | some (_, _, none, some f) => return .error f
+  | _ =>
+    let result := (SeedPalette.generate seeds targets).map (·.colors)
+    let entry := match result with
+      | .ok colors => (seeds, targets, some colors, none)
+      | .error f => (seeds, targets, none, some f)
+    modify fun st => { st with spans := { st.spans with seedPalettes := memo.push entry } }
+    return result
+
+/-- What to change when seeds generate no palette, by why they did not. -/
+private def seedHelp (f : SeedPalette.Failure) : String :=
+  if f.cmyk then "declare the seed in sRGB: #RRGGBB or oklch(L C H)"
+  else if [Role.surface, .surfaceStrong, .rule, .accentWash, .accentSoft].contains f.role then
+    "move the paper further from the ink, so its tints have room to stand apart: \
+\\palette[seeds]{ ink = #1E1B2E, paper = #FFFFFF, accent = #E85D2A }"
+  else
+    "move the ink and the paper further apart, so every tone derived between them reads: \
+\\palette[seeds]{ ink = #1E1B2E, paper = #FFFFFF, accent = #E85D2A }"
+
 /-- The seed keys `\palette[seeds]` reads, each a colour. -/
 private def seedKeys : List String := ["ink", "paper", "accent", "alert", "example", "neutral"]
 
@@ -8364,30 +8418,32 @@ private def applySeeds (ctx : Ctx) (pal : Palette) (src : String) (pos : Pos)
     { ink, paper, accent, alert := seed "alert", exampleColor := seed "example",
       neutral := seed "neutral" }
   let targets := seeds.targets depth
+  -- A role the document declared before the seeds keeps its declaration:
+  -- the document's own colour outranks what is generated, which outranks a
+  -- bundle's (`declaredKeys` holds the document's declarations, never a
+  -- bundle's or the seeds').
+  let own := (← get).declaredKeys
   let declare (pal : Palette) (r : Role) (c : Color) : EM Palette := do
-    noteDeclared ctx "palette" (ColorRef.role r).key
+    if own.contains ("palette", (ColorRef.role r).key) then return pal
+    noteDeclared ctx "seeds" (ColorRef.role r).key
     recordColorDeclaration (ColorRef.role r).key c (ctx.sourceSpan pos)
     modify fun st => { st with scope := { st.scope with
       palette := st.scope.palette.native r c } }
     logGlobal (.entry (.role r) (some c) false true)
     return pal.declare (.role r) c
-  match SeedPalette.generate seeds targets with
-  | .ok g =>
-    let st : SeedPalette.SeedState := { seeds, targets, blocks, colors := g.colors }
-    let installed := pal.applySeeds st
+  match ← generated seeds targets with
+  | .ok colors =>
+    let st : SeedPalette.SeedState := { seeds, targets, blocks, colors }
     let mut out := { pal with seeded := some st }
-    for (ref, c) in installed.entries do
-      if let .role r := ref then
-        if Design.declared? installed r != Design.declared? pal r then
-          out ← declare out r c
+    for (r, c) in SeedPalette.entries st do
+      out ← declare out r (Color.ofHtml c.r c.g c.b)
     logGlobal (.seeded (some st))
     resolveBeamerColors ctx out
   | .error f =>
     let what := (ColorRef.role f.role).key
     modify fun st => { st with diags := st.diags.push (diagOf ctx .W0306
-      s!"'\\palette[seeds]' generates no palette: {f.detail}; the seeds stand as given" (some pos)
-      (help := some "seeds an ink reads on, 4.6:1 to its paper, generate one: \
-\\palette[seeds]{ ink = #1E1B2E, paper = #FFFFFF, accent = #E85D2A }")
+      s!"'\\palette[seeds]' generates no palette: {what}: {f.detail}; the seeds stand as given"
+      (some pos) (help := some (seedHelp f))
       (subject := some s!"palette:seeds:{what}")) }
     let pal ← declare pal .ink ink
     let pal ← declare pal .page paper
@@ -8399,13 +8455,6 @@ where
       (help := "\\palette[seeds]{ ink = #1E1B2E, paper = #FFFFFF, accent = #E85D2A }")
     return pal
 
-/-- A title's runs on the bar its role names, where one is painted: a
-generated role that does not read there takes its family's tone
-(`groundTitleRuns`); every other run stands as declared. -/
-private def groundedTitle (pal : Palette) (bar : Role) (title : Array Inline) : Array Inline :=
-  match Design.at pal .print bar with
-  | some g => groundTitleRuns pal g title
-  | none => title
 
 /-- Native colour declarations update the same epoch as named Beamer
 colours. Later explicit native declarations retain their precedence. -/
@@ -9677,6 +9726,20 @@ private def MCtx (ctx : Ctx) := { c : Ctx // c.envLimit = ctx.envLimit
   ∧ noteFlag c = noteFlag ctx
   ∧ visParsGo c.user c.limit = visParsGo ctx.user ctx.limit
   ∧ visWeightGo c.user c.limit = visWeightGo ctx.user ctx.limit }
+
+/-- A region's context: its content stands on `ground` where the region
+paints one, else on what stands around it. -/
+private def regionCtx (ctx : Ctx) (ground : Option Color) : MCtx ctx :=
+  ⟨{ ctx with ground := ground.or ctx.ground }, rfl, rfl, rfl, rfl⟩
+
+/-- A title on the bar its role paints, where the palette declares one. -/
+private def barCtx (ctx : Ctx) (bar : Role) : Ctx :=
+  (regionCtx ctx (Design.declared? ctx.palette bar)).1
+
+/-- A titled block's body on the ground its kind paints, where the palette
+declares one. -/
+private def titledBodyCtx (ctx : Ctx) (kind : TitledKind) : MCtx ctx :=
+  regionCtx ctx (Design.declared? ctx.palette (Role.bodyGround kind))
 
 /-- Keep the refreshed context beside its unchanged termination fields.
 An equation about the value can then rewrite both together. -/
@@ -12472,8 +12535,12 @@ retaining their source expressions for resolution after the group closes. -/
 private def openStandoutPalette (ctx : Ctx) (standout : Bool) (blocks : Array Block) :
     EM (MCtx ctx × Array Block × Bool) := do
   let aliases := (← get).scope.palette.standoutAliases
-  if !standout || aliases.isEmpty then
+  if !standout then
     return (⟨ctx, rfl, rfl, rfl, rfl⟩, blocks, false)
+  -- A standout frame's content stands on the inversion its frame paints.
+  let ground (pal : Palette) : Option Color := some (Design.ofPalette pal).standout.bg
+  if aliases.isEmpty then
+    return (⟨{ ctx with ground := ground ctx.palette }, rfl, rfl, rfl, rfl⟩, blocks, false)
   let mut pal := ctx.palette
   for alias in aliases do
     let origin := { ctx with file := alias.span.file, callSite := none }
@@ -12482,7 +12549,8 @@ private def openStandoutPalette (ctx : Ctx) (standout : Bool) (blocks : Array Bl
     pal ← resolveBeamerColors origin pal
   modify fun st => { st with scope := { st.scope with palette := { st.scope.palette with current := some pal } },
                              flowGen := st.flowGen + 1 }
-  return (⟨{ ctx with palette := pal }, rfl, rfl, rfl, rfl⟩, blocks.push (.setPalette pal), true)
+  return (⟨{ ctx with palette := pal, ground := ground pal }, rfl, rfl, rfl, rfl⟩,
+    blocks.push (.setPalette pal), true)
 
 private def closeFramePalette (ctx : Ctx) (pos : Pos) (blocks : Array Block)
     (title : Array Inline) (opts : FrameOpts) (inner : Array Block)
@@ -12938,10 +13006,10 @@ private def elabEnvArm (ctx : Ctx) (n : String) (scope : Array Raw)
     let mut k := skipSpaces body opts.next
     let mut title : Array Inline := #[]
     if let some (.group t _) := body[k]? then
-      title ← elabInlines frameCtx t
+      title ← elabInlines (barCtx frameCtx .frameTitleBar) t
       k := k + 1
     -- \frametitle{...} anywhere in the frame names it too.
-    let (title2, ⟨rest, hrf⟩) ← frameRestGo frameCtx body k title #[] #[]
+    let (title2, ⟨rest, hrf⟩) ← frameRestGo (barCtx frameCtx .frameTitleBar) body k title #[] #[]
       (sliceWeight body k) (slicePars body k)
       (by simp [rawWeightList]) (by simp [nestedParsList])
     title := title2
@@ -12984,8 +13052,7 @@ private def elabEnvArm (ctx : Ctx) (n : String) (scope : Array Raw)
     -- the only producer of a titleless inner frame is the title arm, whose
     -- `.golden` distribution is the one to keep — as in beamer, where the
     -- title-page template's glue sits inside the frame the author opened.
-    blocks ← closeFramePalette ctx pos blocks
-      (groundedTitle frameCtx.palette .frameTitleBar title) opts inner aliasScope
+    blocks ← closeFramePalette ctx pos blocks title opts inner aliasScope
   else if n == "itemize" || n == "enumerate" || n == "description" then
     -- enumitem's per-instance `[keys]` are consumed and named: the
     -- engine styles lists per element, not per instance, and the
@@ -13088,7 +13155,7 @@ the text width; the box takes the whole measure" pos
     let mut m := k
     match body[k]? with
     | some (.group t _) =>
-      title ← elabInlines ctx t
+      title ← elabInlines (barCtx ctx (Role.titleBar kind)) t
       m := k + 1
     | _ =>
       diag ctx .E0304 s!"'\\begin\{{n}}' needs a \{title} group" pos
@@ -13101,9 +13168,13 @@ the text width; the box takes the whole measure" pos
         = rawWeightList (body.extract m body.size).toList := sliceWeight_zero _
     have hx1 : slicePars (body.extract m body.size) 0
         = nestedParsList (body.extract m body.size).toList := slicePars_zero _
-    let inner ← elabBlockScope ctx (body.extract m body.size)
-    blocks := blocks ++ selectedCover Block.onSteps spec
-      #[.titled kind (groundedTitle ctx.palette (Role.titleBar kind) title) inner]
+    let ⟨bodyCtx, hb⟩ := titledBodyCtx ctx kind
+    have hb1 := hb.1
+    have hb2 := hb.2.1
+    have hb3 := hb.2.2.1
+    have hb4 := hb.2.2.2
+    let inner ← elabBlockScope bodyCtx (body.extract m body.size)
+    blocks := blocks ++ selectedCover Block.onSteps spec #[.titled kind title inner]
   else if thmEnv (← get).ctr.thm n then
     -- A theorem-like environment (ltthm.dtx, amsthm.sty): the head, the
     -- counter, the label target and the body font are the scope's own,
@@ -18332,10 +18403,15 @@ private def prepareStyledBody (file : String) (decls : Array PDecl)
   -- résumé). A `\theme` of any spelling is the author's choice and
   -- stands, unknown names included (W0319 already spoke).
   let defaultBundle := s.docClass == Ir.DocClass.slides && !s.sawTheme
+  -- A palette generated from seeds is the whole palette: the default
+  -- bundle's rhythm and furniture still install, its colours do not, so no
+  -- colour reaches the page but through the seeds.
+  let bundle := if s.palette.seeded.isSome then { Theme.daylight with palette := {} }
+    else Theme.daylight
   let themedDs : Theme.Decls :=
     let own : Theme.Decls := { palette := s.palette, tokens := s.tokens
                                styles := s.styles, chrome := s.chrome }
-    if defaultBundle then Theme.applyUnder Theme.daylight own else own
+    if defaultBundle then Theme.applyUnder bundle own else own
   let basePalette ← resolveBeamerColors ctx themedDs.palette true
   let palette := match s.pageGround with
     | some c => basePalette.declare (.role .page) c

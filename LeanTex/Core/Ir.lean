@@ -13404,6 +13404,10 @@ public def mutedOf (pal : Palette) : Color :=
 
 /-! ## A palette generated from seeds -/
 
+/-- One generated declaration installed, at its 8-bit sRGB colour. -/
+@[expose] public def Palette.declareSeeded (p : Palette) (e : Role × Color) : Palette :=
+  p.declare (.role e.1) (Color.ofHtml e.2.r e.2.g e.2.b)
+
 /-- **A generated palette installed** (`\palette[seeds]`): every role
 generation sets, as a declaration, then each element role its block style
 binds, at the colour of the role it reads — each an 8-bit sRGB colour, as a
@@ -13411,15 +13415,46 @@ TeX build reads it from the export's `\definecolor{…}{HTML}{…}`, so both
 spell it alike in the PDF; the generated palette kept, so a later
 declaration overrides as any declaration does and a generated role on
 another ground can re-tone (`groundRun`). -/
-public def Palette.applySeeds (pal : Palette) (st : SeedPalette.SeedState) : Palette := Id.run do
-  let mut p := { pal with seeded := some st }
-  for r in SeedPalette.tierRoles do
-    if let some c := SeedPalette.Colors.role st.seeds st.colors r then
-      p := p.declare (.role r) (Color.ofHtml c.r c.g c.b)
-  for (e, src) in SeedPalette.bindings st.seeds st.targets st.blocks do
-    if let some c := SeedPalette.Colors.role st.seeds st.colors src then
-      p := p.declare (.role e) (Color.ofHtml c.r c.g c.b)
-  return p
+public def Palette.applySeeds (pal : Palette) (st : SeedPalette.SeedState) : Palette :=
+  (SeedPalette.entries st).foldl Palette.declareSeeded { pal with seeded := some st }
+
+private theorem Palette.declareSeeded_keeps (es : List (Role × Color)) (p : Palette) (r : Role)
+    (h : ∀ e ∈ es, e.1 ≠ r) :
+    (es.foldl Palette.declareSeeded p).lookup (.role r) = p.lookup (.role r) := by
+  induction es generalizing p with
+  | nil => rfl
+  | cons e es ih =>
+    rw [List.foldl_cons, ih _ (fun e' he' => h e' (List.mem_cons_of_mem _ he'))]
+    exact Palette.declare_keeps_others _ _ _ _ _ fun heq =>
+      h e (List.mem_cons_self ..) (ColorRef.role.inj heq).symm
+
+/-- **The seeds ship exactly**: what `\palette[seeds]` installs declares the
+page's text, ground and accent as the author's seeds, at the 8-bit colour a
+TeX build reads from the export; nothing the generator derives or a block
+style binds rewrites them (`SeedPalette.generate_seeds_exact`). -/
+public theorem Palette.applySeeds_seeds_exact (pal : Palette) (st : SeedPalette.SeedState) :
+    Design.declared? (pal.applySeeds st) .ink =
+        some (Color.ofHtml st.seeds.ink.r st.seeds.ink.g st.seeds.ink.b) ∧
+      Design.declared? (pal.applySeeds st) .page =
+        some (Color.ofHtml st.seeds.paper.r st.seeds.paper.g st.seeds.paper.b) ∧
+      Design.declared? (pal.applySeeds st) .accent =
+        some (Color.ofHtml st.seeds.accent.r st.seeds.accent.g st.seeds.accent.b) := by
+  have hd := (SeedPalette.generate_seeds_exact st).2
+  simp only [Design.declared?, Palette.applySeeds, SeedPalette.entries, List.foldl_append,
+    List.foldl_cons, List.foldl_nil]
+  refine ⟨?_, ?_, ?_⟩
+  · rw [Palette.declareSeeded_keeps _ _ _ fun e he => (hd e he).1]
+    unfold Palette.declareSeeded
+    rw [Palette.declare_keeps_others _ (.role .accent) (.role .ink) _ _ (by simp),
+      Palette.declare_last_wins]
+  · rw [Palette.declareSeeded_keeps _ _ _ fun e he => (hd e he).2.1]
+    unfold Palette.declareSeeded
+    rw [Palette.declare_keeps_others _ (.role .accent) (.role .page) _ _ (by simp),
+      Palette.declare_keeps_others _ (.role .ink) (.role .page) _ _ (by simp),
+      Palette.declare_last_wins]
+  · rw [Palette.declareSeeded_keeps _ _ _ fun e he => (hd e he).2.2]
+    unfold Palette.declareSeeded
+    rw [Palette.declare_last_wins]
 
 /-- A run coloured by a generated role still holding its generated colour,
 on a ground it does not read on (short of the generated text target): its
@@ -18736,24 +18771,6 @@ public theorem mapInlines_text (f : Inline → Inline)
     (hf : ∀ x, plainTextOne (f x) = plainTextOne x) :
     Conserves plainText (mapInlines f) :=
   mapInlinesFinish_text f hf id (fun _ => rfl)
-
-/-- A title's runs on the bar it stands on: every sibling list's runs grounded
-(`Palette.groundRun`) once their children are. -/
-public def groundTitleRuns (pal : Palette) (g : Color) (xs : Array Inline) : Array Inline :=
-  mapInlines id xs (finish := fun ys => ys.map (pal.groundRun g))
-
-private theorem groundRunList_text (pal : Palette) (g : Color) :
-    ∀ (ys : List Inline), plainTextList (ys.map (pal.groundRun g)) = plainTextList ys
-  | [] => rfl
-  | y :: rest => by
-    simp only [List.map_cons, plainTextList, Palette.groundRun_text, groundRunList_text pal g rest]
-
-/-- **Grounding a title keeps its text** (`Conserves plainText`). -/
-public theorem groundTitleRuns_text (pal : Palette) (g : Color) :
-    Conserves plainText (groundTitleRuns pal g) :=
-  mapInlinesFinish_text id (fun _ => rfl) _ fun ys => by
-    show plainTextList (ys.map (pal.groundRun g)).toList = plainTextList ys.toList
-    rw [Array.toList_map, groundRunList_text]
 
 private theorem mapAlgLines_text (f : Inline → Inline)
     (hf : ∀ x, plainTextOne (f x) = plainTextOne x)

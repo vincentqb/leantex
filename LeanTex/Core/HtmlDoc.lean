@@ -2738,7 +2738,7 @@ private def readerAliases (pal : Ir.Palette) (roles : List Ir.Role) (taken : Lis
     List String :=
   let roleNames : List (String × Ir.Role) :=
     [("fg", .ink), ("bg", .page), ("muted", .muted), ("ink", .ink), ("surface", .page),
-     ("accent", .focus), ("tint", .codeSurface), ("rule", .rule)]
+     ("accent", .accent), ("tint", .codeSurface), ("rule", .rule)]
   let authored (n : String) := pal.colors.any (·.1 == n)
   -- An author colour's own name stands only where the engine's stylesheet
   -- does not read that property itself (`--topsep`, `--measure`): there
@@ -6429,7 +6429,7 @@ color: {cssColor ((Ir.Design.at {} .print .ink).getD Ir.Color.black)}; padding: 
 
 /-- The roles the reader aliases read (`readerAliases`): roots of every page's
 set, so a host stylesheet's `var(--bg)` resolves. -/
-public def readerRoles : List Ir.Role := [.page, .ink, .muted, .focus, .codeSurface, .rule]
+public def readerRoles : List Ir.Role := [.page, .ink, .muted, .accent, .codeSurface, .rule]
 
 /-- **The roles a page's own stylesheet declares**: every role its rules read
 (`rolesRead` over `baseRules` and `themeCss`), the roles the reader aliases

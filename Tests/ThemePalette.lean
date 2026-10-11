@@ -1,6 +1,7 @@
 module
 
 import LeanTex.Core.SeedPalette
+import LeanTex.Core.Ir
 
 open LeanTex.Core
 
@@ -20,9 +21,10 @@ example {s : SeedPalette.Seeds} {t : SeedPalette.Targets} (p : SeedPalette.Gener
     ∀ x ∈ SeedPalette.blockPairs s t p.colors b, t.text ≤ Contrast.contrastMilli x.1 x.2 :=
   (SeedPalette.generated_sites_contract p).2 b
 
-example (s : SeedPalette.Seeds) (c : SeedPalette.Colors) :
-    SeedPalette.Colors.role s c .accent = some s.accent :=
-  (SeedPalette.generate_seeds_exact s c).2.2
+example (pal : Ir.Palette) (st : SeedPalette.SeedState) :
+    Ir.Design.declared? (pal.applySeeds st) .accent =
+      some (Ir.Color.ofHtml st.seeds.accent.r st.seeds.accent.g st.seeds.accent.b) :=
+  (Ir.Palette.applySeeds_seeds_exact pal st).2.2
 
 private def hex (r g b : UInt8) : Ir.Color := { r, g, b }
 

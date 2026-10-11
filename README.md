@@ -134,10 +134,14 @@ toward orange, at most 20°; any other hue holds. `blocks = tonal` (the
 default) sets block titles in the ink on a tinted band over a lighter body;
 `blocks = strong` sets them on the ink over an accent wash. An `alert`, an
 `example` or a `neutral` seed may be named too. A deck's grounds stand
-further from its page than a document's. An alert on a frame-title or block
-bar the ink paints takes the accent's tone there, and highlighted code takes
-colours derived from the same palette, one tone wherever the listing
-stands. A declaration after `\palette[seeds]` overrides what it generated.
+further from its page than a document's. The rule, the progress bar and the
+title separator are the seeds' too, and a deck that generates its palette
+takes none of its default theme's colours. A generated colour standing on a
+ground it does not read on — a frame-title or block bar, the standout frame —
+takes its family's tone there, and highlighted code takes colours derived
+from the same palette, one tone wherever the listing stands. A colour the
+document declares before `\palette[seeds]` keeps its value; one declared
+after overrides what the seeds generated.
 Colours may also be written as `oklch(L C H)` or `oklab(L a b)`, as CSS
 Color 4 spells them; one outside sRGB loses chroma at its own lightness and
 hue.
@@ -155,7 +159,8 @@ Load `colors.tex` after the Beamer theme. It defines one colour per role
 `SlideDiagramMuted`, `SlideSurface`, `SlideSurfaceStrong`, `SlideAccentWash`,
 `SlideAccentSoft`, `SlideAccentText`, `SlideAccentEdge`, `SlideAccentOnDark`,
 `SlideAlert`, `SlideAlertTitle`, `SlideExampleTitle`) and binds beamer's
-`normal text`, `footline`, `alerted text` and six block elements to them.
+`normal text`, `footline`, `alerted text`, six block elements, `progress bar`
+and `title separator` to them.
 Use `SlideAccent` for decoration and `SlideAccentText` for text on
 `SlidePaper` or `SlideSurface`; `SlideAccentEdge` for essential strokes;
 `SlideAccentOnDark` for text on `SlideInk`. `--blocks strong` picks the
