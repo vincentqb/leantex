@@ -474,10 +474,11 @@ public structure SpanRecords where
   its first declaration: the judge names one the document names nowhere
   else (`unreadPaletteKeys`). -/
   tokenKeys : Array (String × Span) := #[]
-  /-- The colour names the engine read: each name a colour expression it
-  resolved spells (`Ir.colorNames`) — a run's or a declaration's colour, a
-  palette entry's value, a beamer colour, a listing ground, a picture's
-  colours — once each. What `unreadPaletteKeys` judges a key by. -/
+  /-- The declared `tokenKeys` the engine read, once each: a name a colour
+  expression it resolved spells (`Ir.colorNames`) — a run's or a
+  declaration's colour, a palette entry's value, a beamer colour, a listing
+  ground, a picture's colours — recorded only while a declared key is still
+  unread. What `unreadPaletteKeys` judges a key by. -/
   colorReads : Array String := #[]
   /-- How many of the document's picture settings and macro definitions
   `colorReads` holds the names of: each is read once, at the first picture
@@ -1207,25 +1208,33 @@ on screen alone: author colours now, each judged by whether anything reads it
 (`unreadPaletteKeys`). -/
 private def legacyScreenKeys : List String := ["ink", "surface"]
 
-/-- Whether a read can still matter: a legacy key is declared and not yet
-read. A read before its declaration reads no declared colour. -/
-private def readsOwed : EM Bool := do
+/-- The legacy keys the document declares that the engine has not read yet:
+what a read can still matter for. A read before a key's declaration reads no
+declared colour. -/
+private def owedKeys : EM (List String) := do
   let spans := (← get).spans
-  return !spans.tokenKeys.isEmpty && spans.colorReads.size < legacyScreenKeys.length
+  return spans.tokenKeys.toList.filterMap fun (k, _) =>
+    if spans.colorReads.contains k then none else some k
 
-/-- Record the legacy keys among colour names the engine read
+/-- Whether a read can still matter: a declared legacy key is still unread. -/
+private def readsOwed : EM Bool := return !(← owedKeys).isEmpty
+
+/-- Record the owed keys among colour names the engine read
 (`SpanRecords.colorReads`): no other name is judged by what reads it. -/
 private def noteColorNames (names : Array String) : EM Unit := do
-  unless ← readsOwed do return
+  let owed ← owedKeys
+  if owed.isEmpty then return
   let reads := (← get).spans.colorReads
   let more := names.foldl (fun acc n =>
-    if legacyScreenKeys.contains n && !acc.contains n then acc.push n else acc) reads
+    if owed.contains n && !acc.contains n then acc.push n else acc) reads
   if more.size != reads.size then
     modify fun st => { st with spans := { st.spans with colorReads := more } }
 
-/-- Record the colour names an expression the engine resolves spells. -/
+/-- Record the colour names an expression the engine resolves spells: an
+expression that spells no owed key anywhere is never split into names. -/
 private def noteColorReads (expr : String) : EM Unit := do
-  if ← readsOwed then noteColorNames (Ir.colorNames expr)
+  let owed ← owedKeys
+  if owed.any (expr.contains ·) then noteColorNames (Ir.colorNames expr)
 
 /-- Record a colour expression's first use in its source palette. -/
 private def recordColorSpan (ctx : Ctx) (expr : String) (c : Color) (role : Bool)
@@ -8278,7 +8287,7 @@ holds no role for, so one the document names nowhere else changes no page;
 the page's text and ground are `fg` and `bg`. -/
 private def unreadPaletteKeys (reads : Array String) (keys : Array (String × Span)) :
     Array Diag :=
-  -- premise: Tests.ColorNames.unreadKeyChecks — a key a colour expression, a palette value, a command, a beamer colour or a picture reads draws no W0387, nor one \definecolor declares; unread, or named only in prose or a comment, it draws one at its declaration
+  -- premise: Tests.ColorNames.unreadKeyFlipChecks — two builds apart by the key's value ship one artifact exactly where the key draws W0387: what the engine paints with reads it, prose, a comment and an unpainted construct do not
   keys.filterMap fun (key, span) =>
     if reads.contains key then none
     else

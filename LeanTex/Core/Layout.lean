@@ -13627,10 +13627,12 @@ private def collectVerbatim (r : Rd) (a : Acc) (covered : Option Ir.Color) (s : 
     | none => inner
   -- the code is one leaf, its whole content; line numbers are generated
   let (a, leaf) := a.leafRange 1
+  -- The plain text on a ground the listing declares is fitted to it
+  -- (`Listing.groundInk`), as the HTML's listing colour is.
   let a := match spec.ground with
     | some (g, _) =>
       { a.pushOp (.regionOpen (.surface (r.shown g) 0 (r.geom.hmargin + indent) avail false))
-        with ground := some g }
+        with ground := some g, fg := Listing.groundInk a.pal g a.fg }
     | none => a
   let done := collectPara { r with pats := none, geom := { r.geom with justify := false } }
     a inner indent false size
@@ -13638,7 +13640,7 @@ private def collectVerbatim (r : Rd) (a : Acc) (covered : Option Ir.Color) (s : 
     (leaf := leaf) (span := 1) (literalLines := true)
     (strut := if spec.lineStrut then some leading else none)
   match spec.ground with
-  | some _ => { done.pushOp .regionClose with ground := a0.ground }
+  | some _ => { done.pushOp .regionClose with ground := a0.ground, fg := a0.fg }
   | none => done
 
 /-- A listing with the space its environment sets around it, where the class

@@ -9336,7 +9336,8 @@ public def blockNode (cfg : Config) (b : Block) : Node :=
     let paint := match spec.ground with
       | some (g, ref) =>
         s!"background: {colorRead cfg ref g}; " ++
-        s!"color: {cssColor (covered.getD (cfg.listingFg.getD design.fg))};"
+        s!"color: {cssColor (covered.getD
+          (Listing.groundInk cfg.pal g (cfg.listingFg.getD design.fg)))};"
       | none =>
         if spec.highlight.isEmpty then
           (covered.map fun c => s!"color: {cssColor c};").getD ""

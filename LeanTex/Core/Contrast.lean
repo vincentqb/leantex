@@ -597,8 +597,18 @@ private def usesBlock (cx : UseCx) (acc : UseAcc) : Block → UseAcc
       | none => acc
     let ground := (spec.ground.map (·.1)).orElse fun _ =>
       cx.ground.orElse fun _ => some (Design.printPage acc.pal)
+    -- On a ground of its own the plain text sets in the colour both
+    -- backends fit to it (`Listing.groundInk`), and is judged as such.
+    let cur := match spec.ground with
+      | some (g, _) =>
+        let inherited := (cx.cur.map (·.2.1)).getD
+          ((cx.inheritedInk.map (·.2)).getD (Design.printInk acc.pal))
+        let name := if (Design.declared? acc.pal .codeInk).isSome then some (.role .codeInk)
+          else cx.cur.bind (·.1)
+        some (name, Listing.groundInk acc.pal g inherited, acc.runs)
+      | none => cx.cur
     let codeCx := { cx.style spec.fontSize with
-      ground, groundName := (spec.ground.map fun _ => "the listing's ground").or cx.groundName
+      ground, cur, groundName := (spec.ground.map fun _ => "the listing's ground").or cx.groundName
       codeStyle := spec.style.map (·.name) }
     -- One brush per type for the whole listing, as both backends draw it;
     -- the palette changes only at a `.setPalette`, never inside a listing.
@@ -642,8 +652,12 @@ private def docWalk (doc : Doc) : UseAcc :=
       chromeFoot := doc.docClass.record.chrome && doc.foot.isNone &&
         (doc.chrome.hasFooter || hasFrameFoot) }
   let walk := usesBlocks cx { pal := doc.palette } doc.body.toList
-  -- A page that ships no stylesheet of the engine's draws no focus ring.
-  if doc.output.css == some "none" then { walk with linkPals := #[] } else walk
+  -- A page that ships no stylesheet of the engine's draws no focus ring, and
+  -- a document whose declared formats name no HTML ships no page to draw it.
+  -- premise: Tests.DeclaredColors.focusGateChecks — the css=none page holds no focus rule where the default page holds one, and a pdf-only declaration builds no HTML
+  if doc.output.css == some "none" ||
+      (!doc.output.formats.isEmpty && !doc.output.formats.contains "html") then
+    { walk with linkPals := #[] } else walk
 
 /-- The uses the document plan enumerates: the body walk's, plus running
 heads and feet and the chrome footer. The chrome footer reads its frame's

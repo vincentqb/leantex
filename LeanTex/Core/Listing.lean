@@ -58,6 +58,22 @@ public def defaultInk (ground seed : Color) : Color := Id.run do
     if Contrast.contrastMilli c ground ≥ Contrast.aaText then return c
   return pole
 
+/-- The colour a listing's plain text sets in on a ground the listing
+declares for itself (minted's `bgcolor`): the code ink the document declares
+(`codeink`), as declared; else the text colour around the listing, fitted to
+that ground — a pairing the document never stated, the engine's to make
+legible, as every colour it derives for the code is. -/
+public def groundInk (pal : Palette) (ground inherited : Color) : Color :=
+  match Design.declared? pal .codeInk with
+  | some c => c
+  | none => defaultInk ground inherited
+
+/-- **A declared code ink ships as declared** on the listing's own ground:
+the engine fits only the colour it chose. -/
+public theorem groundInk_declared_exact (pal : Palette) (ground inherited c : Color)
+    (h : Design.declared? pal .codeInk = some c) : groundInk pal ground inherited = c := by
+  simp [groundInk, h]
+
 /-- A paint's colour on the actual ground: a colour the document or the
 listing's style states as stated, the contrast report naming a pairing that
 falls short; a colour the rule derives fitted here once, identically for
@@ -483,8 +499,9 @@ public theorem paintRun_text (r : Run) : Conserves plainText (paintRun r) := fun
 /-- Every colour a listing ships on a ground and the palette does not declare
 is text AA there, even where the surrounding frame uses the lower large-text
 threshold: every role's, as it ships — what the rule fits, and what the
-listing's style states. A declared colour is its palette's contract's, and
-the contrast report's to name. -/
+listing's style states. A colour the palette declares — the document's own, or
+a bundle's installed under it — ships as declared and is judged by the contrast
+report at its medium's need, a deck's stage asking 3:1. -/
 public def contract (pal : Palette) (ground : Option Color) (style : Option ListingStyle := none) :
     Bool :=
   let bg := ground.getD (Design.printPage pal)

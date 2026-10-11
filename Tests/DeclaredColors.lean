@@ -181,4 +181,84 @@ public def checks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit 
     ((reports (elabStr ("\\documentclass{article}\\palette{ fg = #111111, bg = #FFFFFF, " ++
       "quiet = #444444 }\\begin{document}\\textcolor{quiet}{Dark words.}\\end{document}")).2).isEmpty)
 
+/-- **The focus ring is judged where a page draws it** (the gate in
+`Contrast.docWalk`): two builds apart by the gate's own condition. The page
+the engine styles holds the ring's rule and its declared accent is reported;
+the page that ships no stylesheet of the engine's holds no ring rule, and a
+document declaring only PDF builds no page at all, so neither is reported. -/
+public def focusGateChecks (ref : IO.Ref (List String)) : IO Unit := do
+  let t := check ref
+  let src (output : String) : String :=
+    "\\documentclass{article}" ++ output ++ "\\palette{ accent = #FFE000 }\\begin{document}See " ++
+      "\\href{https://example.org}{the probe}.\\end{document}"
+  -- The page as the driver emits it: the stylesheet the document declares.
+  let ring (doc : Ir.Doc) : Bool :=
+    let css := match LeanTex.Cli.cssFor doc.output.css with
+      | .own => HtmlDoc.CssMode.own
+      | .bulma => HtmlDoc.CssMode.bulma
+      | .none => HtmlDoc.CssMode.none
+    hasStr (HtmlDoc.emit { css } doc).1 ":focus-visible"
+  let (styled, styledDs) := elabStr (src "")
+  let (bare, bareDs) := elabStr (src "\\output{ css = none }")
+  t "focus gate: the page the engine styles draws the ring and reports its accent"
+    (ring styled && (reports styledDs).any (·.code == "W0345"))
+  t "focus gate: the page with no engine stylesheet draws no ring and reports none"
+    (!ring bare && !(reports bareDs).any (·.code == "W0345"))
+  let (_, pdfDs) := elabStr (src "\\output{ formats = pdf }")
+  t "focus gate: a document declaring only PDF builds no page and reports no ring"
+    (!(({ cmd := .build "probe.tex" } : LeanTex.Cli.Config).effectiveEmit #["pdf"]).contains .html &&
+      !(reports pdfDs).any (·.code == "W0345"))
+  let (_, bothDs) := elabStr (src "\\output{ formats = pdf, html }")
+  t "focus gate: a document declaring HTML among its formats has its ring judged"
+    ((({ cmd := .build "probe.tex" } : LeanTex.Cli.Config).effectiveEmit #["pdf", "html"]).contains .html &&
+      (reports bothDs).any (·.code == "W0345"))
+
+/-- The ink of every glyph of `c` the pages set, outside furniture. -/
+private def charInks (out : Layout.Out) (c : Char) : Array Ir.Color :=
+  (ListingHighlight.glyphColors out).filterMap fun (g, ink) => if g == c then some ink else none
+
+/-- **A listing's plain text reads on the ground the listing declares**
+(minted's `bgcolor`): the punctuation and operators no code role colours set
+in the text colour around the listing fitted to that ground, one colour in
+both artifacts, with nothing to report — a pairing the document never stated.
+A code ink the document declares ships as declared there and is reported
+once. The ground once took the code roles' colours fitted to it while the
+plain text kept the page's ink, black on black among them, unreported. Read
+off `Layout.Out` and the typed HTML tree. -/
+public def listingGroundChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit := do
+  let t := check ref
+  let listing (cls pre opts : String) : String :=
+    "\\documentclass{" ++ cls ++ "}\\usepackage{minted}" ++ pre ++ "\\begin{document}\n" ++
+      (if cls == "beamer" then "\\begin{frame}\n" else "") ++
+      s!"\\begin\{minted}[{opts}]\{python}\ndef f(x):\n    return x + 1\n\\end\{minted}\n" ++
+      (if cls == "beamer" then "\\end{frame}\n" else "") ++ "\\end{document}"
+  let probes : List (String × String × String × String × Ir.Color) := [
+    ("no palette on a black ground", "article", "", "bgcolor=black", Ir.Color.black),
+    ("a declared ink on a black ground", "article", "\\palette{ fg = #111111 }", "bgcolor=black",
+      Ir.Color.black),
+    ("an author colour as the ground", "article", "\\definecolor{bg}{HTML}{282C34}", "bgcolor=bg",
+      hex 0x28 0x2C 0x34),
+    ("a dark page under a white ground", "article", "\\palette{ bg = #111111, fg = #EEEEEE }",
+      "bgcolor=white", Ir.Color.white),
+    ("a deck on a black ground", "beamer", "", "bgcolor=black", Ir.Color.black)]
+  for (what, cls, pre, opts, ground) in probes do
+    let (doc, ds) := elabStr (listing cls pre opts)
+    let out := layoutOf fonts doc
+    let inks := charInks out '+' ++ charInks out '('
+    t s!"listing ground: {what}: the plain text reads on the ground in the PDF"
+      (!inks.isEmpty && inks.all fun c => Contrast.aaText ≤ Contrast.contrastMilli c ground)
+    t s!"listing ground: {what}: the HTML listing sets the PDF's plain-text colour"
+      (let styles := (htmlStyles doc "return").filter (hasStr · "background:")
+       !styles.isEmpty && inks.all fun c =>
+         styles.all fun st => cssDeclOf st "color" == some (HtmlDoc.cssColor c))
+    t s!"listing ground: {what}: nothing to report" (reports ds).isEmpty
+  let declared := hex 0x22 0x22 0x22
+  let (keyDoc, keyDs) := elabStr (listing "article" "\\palette{ codeink = #222222 }" "bgcolor=black")
+  t "listing ground: a declared code ink ships as declared on the ground"
+    (let inks := charInks (layoutOf fonts keyDoc) '+'
+     !inks.isEmpty && inks.all (· == declared))
+  t "listing ground: a declared code ink short of the ground is reported once"
+    (let rs := reports keyDs
+     rs.size == 1 && rs.all fun d => hasStr d.message "'codeink'")
+
 end Tests.DeclaredColors
