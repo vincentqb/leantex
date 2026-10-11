@@ -1368,9 +1368,9 @@ def reports : List Report := [
     pins := [check% Tests.DeclaredColors.checks, check% listingRoleEpochChecks,
       thm% Elab.completePrepared_doc_exact, thm% Listing.paint_declared_mem,
       thm% Contrast.defaulted_ink_cannot_escape]
-    accept := ["ten of the seventeen guard assertions fail on the tree before the fix: the role's warning named a repair, the pair on the frame-title bar was not reported once naming the bar, the mix and the style's token colours shipped repainted in both artifacts and were noted as realized rather than reported, and a document's page text at 3.95:1 drew no warning",
+    accept := ["eleven of the twenty-one guard assertions fail on the tree before the fix: the role's warning named a repair, the pair on the frame-title bar was not reported once naming the bar, the mix and the style's token colours shipped repainted in both artifacts and were noted as realized rather than reported, a document's page text at 3.95:1 drew no warning, and a declared focus ring short of non-text's 3:1 drew none",
       "a presentation deck's declared three-colour palette ships its exact values in both artifacts, as its lualatex build does, its accent passing at the stage's size and its highlighting style's comment colour reported once"]
-    state := .guarded "6bc5f128" .before .author }
+    state := .guarded "d16aafc8" .before .author }
 ]
 
 /-- The reports guarded but never seen failing: a count that may fall and

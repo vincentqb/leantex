@@ -144,5 +144,33 @@ public def unreadKeyChecks (ref : IO.Ref (List String)) : IO Unit := do
   let (_, roles) := elabStr (article "\\palette{ fg = #333333, bg = #FFFFFF }\n" "Probe.")
   t "palette keys: the role keys say nothing"
     (roles.all fun d => d.code != "W0387")
+  -- A read is the engine's: a colour expression, a palette value, a command
+  -- named for the colour, a beamer declaration, a picture's colour. The
+  -- word in prose or a comment reads nothing.
+  let declared := "\\palette{ ink = #333333, surface = #F4F4F4 }\n"
+  let (_, prose) := elabStr (article declared
+    "Water beads on the surface of the leaf, dark as ink.")
+  t "palette keys: the word in prose reads neither key"
+    ((named prose "ink").size == 1 && (named prose "surface").size == 1)
+  let (_, comment) := elabStr (article declared "% ink and surface\nProbe.")
+  t "palette keys: the word in a comment reads neither key"
+    ((named comment "ink").size == 1 && (named comment "surface").size == 1)
+  let reads : List (String × String × String) := [
+    ("a mix", "", "\\textcolor{ink!50!white}{Probe} \\textcolor{surface!80!black}{probe}."),
+    ("a palette value", "\\palette{ fg = ink, bg = surface }\n", "Probe."),
+    ("a command named for the colour", "", "\\ink{Probe} \\surface{probe}."),
+    ("a declaration", "", "{\\color{ink} Probe} {\\color{surface!80!black} probe}."),
+    ("a picture", "\\usepackage{tikz}\n",
+      "\\begin{tikzpicture}\\draw[ink] (0,0) -- (1,1);\
+\\fill[surface] (0,0) rectangle (1,1);\\end{tikzpicture}")]
+  for (what, pre, body) in reads do
+    let (_, ds) := elabStr (article (declared ++ pre) body)
+    t s!"palette keys: {what} reads both keys"
+      ((named ds "ink").isEmpty && (named ds "surface").isEmpty)
+  let (_, beamer) := elabStr ("\\documentclass{beamer}\n" ++ declared ++
+    "\\setbeamercolor{frametitle}{fg=ink, bg=surface}\n\\begin{document}\n\
+\\begin{frame}{Probe}Probe.\\end{frame}\n\\end{document}")
+  t "palette keys: a beamer colour declaration reads both keys"
+    ((named beamer "ink").isEmpty && (named beamer "surface").isEmpty)
 
 end Tests.ColorNames

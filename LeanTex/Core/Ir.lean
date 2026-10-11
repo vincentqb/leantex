@@ -12837,6 +12837,21 @@ declarations. -/
 /-- The print design, which the PDF paints and the contrast judge reads. -/
 @[expose] public def Design.ofPalette (pal : Palette) : Design := Design.resolve pal .print
 
+/-- The printed ink alone: `(Design.ofPalette pal).fg` without resolving the
+rest of the design. -/
+@[expose] public def Design.printInk (pal : Palette) : Color :=
+  (Design.at pal .print .ink).getD Color.black
+
+/-- The printed page alone: `(Design.ofPalette pal).bg`. -/
+@[expose] public def Design.printPage (pal : Palette) : Color :=
+  (Design.at pal .print .page).getD Color.white
+
+public theorem Design.ofPalette_fg (pal : Palette) :
+    (Design.ofPalette pal).fg = Design.printInk pal := rfl
+
+public theorem Design.ofPalette_bg (pal : Palette) :
+    (Design.ofPalette pal).bg = Design.printPage pal := rfl
+
 /-- **An author colour never repaints a role.** Declaring a colour under any
 name — `\definecolor{bg}`, the minted manual's own idiom included — leaves
 the resolved design exactly as it was, in every scheme: names are scoped by

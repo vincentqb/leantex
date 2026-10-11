@@ -206,6 +206,10 @@ private structure Use where
   /-- The coloured run the use stands in (one per `.colored` inline and per
   furniture use): what a pairing's site count counts. -/
   site : Nat := 0
+  /-- The highlighting style a listing token's colour is the style's own
+  under — a code role the palette leaves undeclared, which the style
+  states: what the report names it by, since the document wrote no key. -/
+  styleName : Option String := none
   deriving BEq
 
 /-- The walk's fold state: the palette in force (epoch), the uses with
@@ -229,6 +233,8 @@ private structure UseAcc where
   /-- Epochs that shipped a title page with a declared ground of its own:
   the site the judge reads there, against the palette in force. -/
   titlePagePals : Array Palette := #[]
+  /-- Epochs that shipped a link: where the HTML page draws a focus ring. -/
+  linkPals : Array Palette := #[]
   pendingPals : Array Palette := #[]
   /-- The coloured runs met so far: the next run's site number. -/
   runs : Nat := 0
@@ -268,10 +274,12 @@ private structure UseCx where
   /-- Frame default for a nested surface; the frame's own default pair is
   already judged by its design-site contract. -/
   inheritedInk : Option (ColorRef × Color) := none
+  /-- The highlighting style of the listing this content is a token of. -/
+  codeStyle : Option String := none
 
 private def UseCx.atEpoch (cx : UseCx) (pal : Palette) (epoch : Nat) : UseCx :=
   let cx := if cx.inkEpoch.any (· != epoch) then
-    { cx with cur := some (some (.role .ink), (Design.ofPalette pal).fg,
+    { cx with cur := some (some (.role .ink), Design.printInk pal,
         (cx.cur.map (·.2.2)).getD 0), inkEpoch := some epoch }
     else cx
   -- premise: listingPaletteAuditChecks — a body declaration replaces the
@@ -314,6 +322,10 @@ private def UseAcc.use (acc : UseAcc) (cx : UseCx) (nm : Option ColorRef)
   let exempt := match nm with
     | some n => n == .role .covered || acc.pal.decorative.contains n
     | none => acc.pal.decorative.any (fun n => acc.pal.lookup n == some c)
+  let styleName := match nm with
+    | some (.role r) =>
+      if r.code?.isSome && (Design.declared? acc.pal r).isNone then cx.codeStyle else none
+    | _ => none
   let u : Use := { name := nm
                    color := c
                    large := cx.large
@@ -323,7 +335,8 @@ private def UseAcc.use (acc : UseAcc) (cx : UseCx) (nm : Option ColorRef)
                    pal := acc.pal
                    site := match cx.cur with
                      | some (_, _, k) => k
-                     | none => acc.runs }
+                     | none => acc.runs
+                   styleName }
   { acc with uses := acc.uses.push u }
 
 /-- Pending overlay content: a step whose range starts (or ends) past the
@@ -396,7 +409,8 @@ private def usesInline (cx : UseCx) (acc : UseAcc) : Inline → UseAcc
   -- a role names its content; the ink inside keeps the current colour
   | .located _ body => usesInlines cx acc body.toList
   | .role _ body => usesInlines cx acc body.toList
-  | .link _ body => usesInlines cx acc body.toList
+  | .link _ body =>
+    usesInlines cx { acc with linkPals := pushUnique acc.linkPals acc.pal } body.toList
   | .decorated _ body => usesInlines cx acc body.toList
   | .onSteps spec body => usesInlines cx (acc.step spec) body.toList
   -- An alternative is never covered: it is inked at full colour or not
@@ -574,9 +588,10 @@ private def usesBlock (cx : UseCx) (acc : UseAcc) : Block → UseAcc
       | some (_, cap) => usesInlines cx acc cap.toList
       | none => acc
     let ground := (spec.ground.map (·.1)).orElse fun _ =>
-      cx.ground.orElse fun _ => some (Design.ofPalette acc.pal).bg
+      cx.ground.orElse fun _ => some (Design.printPage acc.pal)
     let codeCx := { cx.style spec.fontSize with
-      ground, groundName := (spec.ground.map fun _ => "the listing's ground").or cx.groundName }
+      ground, groundName := (spec.ground.map fun _ => "the listing's ground").or cx.groundName
+      codeStyle := some spec.style.name }
     -- One brush per type for the whole listing, as both backends draw it;
     -- the palette changes only at a `.setPalette`, never inside a listing.
     let lines := spec.tokenLines source
@@ -739,13 +754,15 @@ private def pageEvents (doc : Doc) (walk : UseAcc) : Array (Judged × Palette) :
 cannot see because no body text is coloured with them: each titled block's
 title (bold at the body size, under WCAG 2.2's large-scale sizes, so 4.5:1),
 each frame title on its bar (`\large\bfseries` is 12pt bold, so 4.5:1), each
-standout frame (`\Large\bfseries`, 14.4pt bold, large-scale, so 3:1) and each
-declared title page (mixed matter, so the body threshold). -/
+standout frame (`\Large\bfseries`, 14.4pt bold, large-scale, so 3:1), each
+declared title page (mixed matter, so the body threshold) and the focus ring
+of each epoch that ships a link (non-text, 3:1, SC 1.4.11). -/
 private def elementEvents (walk : UseAcc) : Array (Judged × Palette) :=
   walk.blockPals.map (fun (k, pal) => (.element (Element.ofTitled k), pal)) ++
     walk.titledPals.map (.element .frameTitle, ·) ++
     walk.standoutPals.map (.element .standout, ·) ++
-    walk.titlePagePals.map (.element .titlePage, ·)
+    walk.titlePagePals.map (.element .titlePage, ·) ++
+    walk.linkPals.map (.element .focusRing, ·)
 
 private def pageSites (doc : Doc) (walk : UseAcc) : Array (Role × Palette) :=
   (pageEvents doc walk).flatMap fun (ev, pal) => eventSites ev pal
@@ -903,9 +920,10 @@ private def useStep (site : ColorSite) (large : Std.HashMap UseKey Bool)
       let spelled : Option String := match u.name with
         | some role => some role.key
         | none => origin.map Prod.fst
-      let label := match spelled with
-        | some e => s!"'{e}' ({hexOf u.color})"
-        | none => hexOf u.color
+      let label := match u.styleName, spelled with
+        | some st, _ => s!"by the '{st}' highlighting style ({hexOf u.color})"
+        | none, some e => s!"'{e}' ({hexOf u.color})"
+        | none, none => hexOf u.color
       let s := s.pairing dup key u.site
         (inkKey (spelled.getD (hexOf u.color)) u.color u.surface)
         (s!"text coloured {label} reads at {ratioString assessment.ratio} " ++

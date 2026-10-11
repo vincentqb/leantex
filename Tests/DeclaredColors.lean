@@ -114,6 +114,18 @@ public def checks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit 
   t "declared colours: each failing token colour is reported once"
     (let rs := reports (Contrast.docDiags listing)
      rs.size == 2 && rs.all (·.code == "W0315"))
+  -- The document wrote no key for a style's colour: the report names the
+  -- style, and a code role the palette declares is named by its key.
+  t "declared colours: a style's token colour is reported under the style"
+    (let rs := reports (Contrast.docDiags listing)
+     rs.all fun d => hasStr d.message "'friendly' highlighting style" &&
+       !hasStr d.message "'codeerror'" && !hasStr d.message "'codecomment'")
+  let keyed : Ir.Doc :=
+    { (elabStr ("\\documentclass{article}\\palette{ codecomment = #C0C0C0 }" ++
+        "\\begin{document}x\\end{document}")).1 with body := #[.verbatim none source spec] }
+  t "declared colours: a declared code role is reported under its key"
+    ((reports (Contrast.docDiags keyed)).any fun d =>
+      hasStr d.message "'codecomment' (#C0C0C0)")
   -- The medium's size: a grey between 3:1 and 4.5:1 on white.
   let greySrc (cls body : String) : String :=
     "\\documentclass{" ++ cls ++ "}\\palette{ bg = #FFFFFF }\\definecolor{quiet}{HTML}{808080}" ++
@@ -123,6 +135,17 @@ public def checks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit 
       "\\begin{frame}\\textcolor{quiet}{Grey words.}\\end{frame}")).2).isEmpty)
   t "declared colours: a document's page text asks 4.5:1"
     ((reports (elabStr (greySrc "article" "\\textcolor{quiet}{Grey words.}")).2).size == 1)
+  -- The focus ring a link draws on the HTML page: a declared accent short of
+  -- non-text's 3:1 is reported once, where a link ships.
+  let focusSrc (body : String) : String :=
+    "\\documentclass{article}\\palette{ accent = #FFE000 }\\begin{document}" ++ body ++
+      "\\end{document}"
+  t "declared colours: a failing focus ring is reported once, as the focus ring"
+    (let rs := reports (elabStr (focusSrc "See \\href{https://example.org}{the probe}.")).2
+     rs.size == 1 && rs.all fun d =>
+       d.code == "W0345" && hasStr d.message "the focus ring" && hasStr d.message "SC 1.4.11")
+  t "declared colours: a page with no link draws no focus ring to judge"
+    ((reports (elabStr (focusSrc "No link here.")).2).isEmpty)
   -- A legible document says nothing.
   t "declared colours: a legible document draws no contrast report"
     ((reports (elabStr ("\\documentclass{article}\\palette{ fg = #111111, bg = #FFFFFF, " ++

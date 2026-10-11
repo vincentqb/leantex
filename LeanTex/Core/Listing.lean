@@ -68,7 +68,7 @@ private def shipped (bg : Color) (p : CodeColor.Paint) : Color :=
 /-- One type's colour on the actual ground. -/
 public def ink (pal : Palette) (ground : Option Color) (kind : Kind)
     (style : ListingStyle := .default) : Option Color :=
-  let bg := ground.getD (Design.ofPalette pal).bg
+  let bg := ground.getD (Design.printPage pal)
   (paint pal bg style kind).map (shipped bg)
 
 /-- A role's weights around a token's text, nested as `\PYG@do` nests
@@ -487,7 +487,7 @@ listing's style states. A declared colour is its palette's contract's, and
 the contrast report's to name. -/
 public def contract (pal : Palette) (ground : Option Color) (style : ListingStyle := .default) :
     Bool :=
-  let bg := ground.getD (Design.ofPalette pal).bg
+  let bg := ground.getD (Design.printPage pal)
   let paints := resolve pal bg style
   ListingHighlight.Role.all.all fun r => match paints.get r with
     | some p => p.declared || decide (Contrast.aaText ≤ Contrast.contrastMilli (shipped bg p) bg)

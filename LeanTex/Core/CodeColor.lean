@@ -340,7 +340,7 @@ chose, under its key, judged by the contrast report as its prose uses are
 own key, as a colour the document did not choose there. -/
 public def resolve (pal : Palette) (ground : Color) (style : ListingStyle) :
     RoleTable (Option Paint) :=
-  let page := (Design.ofPalette pal).bg
+  let page := Design.printPage pal
   let derived := derive pal page ground
   RoleTable.ofFn fun r =>
     match Design.declared? pal (Ir.Role.ofCode r) with

@@ -474,6 +474,11 @@ public structure SpanRecords where
   its first declaration: the judge names one the document names nowhere
   else (`unreadPaletteKeys`). -/
   tokenKeys : Array (String × Span) := #[]
+  /-- The colour names the engine read: each name a colour expression it
+  resolved spells (`Ir.colorNames`) — a run's or a declaration's colour, a
+  palette entry's value, a beamer colour, a listing ground, a picture's
+  colours — once each. What `unreadPaletteKeys` judges a key by. -/
+  colorReads : Array String := #[]
   /-- The boundary pictures the rendered subset draws in part, by picture
   id: the requests the driver may withdraw (`ReqSpans.fallbacks`). -/
   fallbacks : Array String := #[]
@@ -1193,9 +1198,22 @@ private def recordNativePictureSpan (ctx : Ctx) (pos : Pos) : EM Unit := do
   let k := ((← get).spans.images.filter fun e => e.1.startsWith Ir.picKeyPrefix).size
   recordImageSpan ctx (Ir.picKeyPrefix ++ toString k) pos
 
+/-- Record colour names the engine read (`SpanRecords.colorReads`). -/
+private def noteColorNames (names : Array String) : EM Unit :=
+  modify fun st =>
+    let reads := names.foldl
+      (fun acc n => if acc.contains n then acc else acc.push n) st.spans.colorReads
+    if reads.size == st.spans.colorReads.size then st
+    else { st with spans := { st.spans with colorReads := reads } }
+
+/-- Record the colour names an expression the engine resolves spells. -/
+private def noteColorReads (expr : String) : EM Unit :=
+  noteColorNames (Ir.colorNames expr)
+
 /-- Record a colour expression's first use in its source palette. -/
 private def recordColorSpan (ctx : Ctx) (expr : String) (c : Color) (role : Bool)
-    (pos : Pos) : EM Unit :=
+    (pos : Pos) : EM Unit := do
+  noteColorReads expr
   modify fun st =>
     if st.spans.colors.any (fun (p, e, v, _, _) =>
       p == ctx.palette && e == expr && v.sameSource c) then st
@@ -4560,10 +4578,11 @@ how an unresolved named expression is reported. -/
 private def readColor (ctx : Ctx) (pal : Palette) (model : Option String)
     (src : String) (pos : Pos) : EM ColorRead := do
   if model.isNone && src == Compat.normalInkSource then
-    return .resolved (Ir.Design.ofPalette ctx.basePalette).fg none
+    return .resolved (Ir.Design.printInk ctx.basePalette) none
   let label := match model with
     | some m => s!"{m.trimAscii.toString}({src.trimAscii.toString})"
     | none => src.trimAscii.toString
+  if model.isNone then noteColorReads src
   match pal.resolveSource model src with
   | .ok (some c) =>
     let token := if model.isNone then pal.refOf? label else none
@@ -4782,6 +4801,14 @@ one the request was stated under. -/
 private def pictureSrcAt (body : Array Raw) : EM Ir.PicSrc := do
   return { kind := .picture, body := Parse.rawSrc body, size := ← pictureSizeInForce }
 
+/-- The colour names a picture reads: what its body, the document's picture
+settings and the macro definitions they reach spell — the closure the
+boundary request exports colours over (`Ir.pictureRequest`). -/
+private def notePictureReads (ctx : Ctx) (body : Array Raw) : EM Unit :=
+  let roots := ctx.pic.sets.foldl (fun acc (_, rs) => acc ++ Parse.rawSrc rs ++ "\n") "" ++
+    Parse.rawSrc body
+  noteColorReads (Ir.macroDeclLines (Ir.macroDecls ctx.pic.macros roots) ++ roots)
+
 /-- One picture sent to the boundary: its request stated once, a picture
 the subset draws in part recorded as a fallback the driver may withdraw
 (`ReqSpans.fallbacks`) where it stands as a block (`block`) — the subset
@@ -4826,6 +4853,7 @@ private def inlinePicture (ctx : Ctx) (body : Array Raw) (pos : Pos) :
   -- boundary's image there or names that it is not drawn, and a withdrawn
   -- request takes the second door.
   if ctx.pic.tool.isSome && !body.isEmpty && !ctx.pic.withdrawn.contains id then
+    notePictureReads ctx body
     let (pic, _) := subsetPicture ctx body (← pictureSizeInForce)
     return some (← routePicture ctx body { pic with alt := alt } pos false)
   warnOnce ctx ("picture:inline:" ++ id) .W0334
@@ -8067,6 +8095,7 @@ private def resolveBeamerColors (ctx : Ctx) (pal : Palette)
     (settle : Bool := false) : EM Palette := do
   let (colors, pal, issues) := (← get).scope.palette.resolve pal
   modify fun st => { st with scope := { st.scope with palette := colors } }
+  noteColorNames colors.sourceNames
   for (key, c, span) in colors.origins do
     recordColorDeclaration key c span
   if settle then
@@ -8204,31 +8233,16 @@ by its code role" pos
           (help := "colours are #RRGGBB, a palette name, or a mix like accent!50!black")
   return pal
 
-/-- Whether a source names `key` anywhere but where it declares it: an
-occurrence of the word that is not the key of an entry (`key =`). -/
-private def namesElsewhere (src key : String) : Bool :=
-  let word (c : Char) : Bool := c.isAlphanum || c == '_' || c == '@'
-  let cs := src.toList.toArray
-  let ks := key.toList.toArray
-  Id.run do
-    for i in [0:cs.size] do
-      let hit := (List.range ks.size).all fun k => cs[i + k]? == ks[k]?
-      let before := if i == 0 then false else (cs[i - 1]?.map word).getD false
-      let after := (cs[i + ks.size]?.map word).getD false
-      if hit && !before && !after then
-        let rest := (cs.extract (i + ks.size) cs.size).toList.dropWhile (·.isWhitespace)
-        if rest.head? != some '=' then return true
-    return false
-
 /-- **A `\palette` name nothing reads is named where it stands** (W0387):
 `ink` and `surface`, which an earlier engine read as the page's text and
 ground on screen alone, are author colours like any other name the registry
 holds no role for, so one the document names nowhere else changes no page;
 the page's text and ground are `fg` and `bg`. -/
-private def unreadPaletteKeys (src : String) (keys : Array (String × Span)) : Array Diag :=
-  -- premise: Tests.ColorNames.unreadKeyChecks — the same key read by name, or declared by \definecolor, draws no W0387, and unread draws one at its declaration
+private def unreadPaletteKeys (reads : Array String) (keys : Array (String × Span)) :
+    Array Diag :=
+  -- premise: Tests.ColorNames.unreadKeyChecks — a key a colour expression, a palette value, a command, a beamer colour or a picture reads draws no W0387, nor one \definecolor declares; unread, or named only in prose or a comment, it draws one at its declaration
   keys.filterMap fun (key, span) =>
-    if namesElsewhere src key then none
+    if reads.contains key then none
     else
       let (what, role) := if key == "ink" then ("text", "fg") else ("ground", "bg")
       some (Diag.of .W0387
@@ -9920,6 +9934,7 @@ the current tab stops stand" none
         unhonoured "listing key 'bgcolor' is not honoured; ignored" none
       else if v == "none" || v.isEmpty then ground := none
       else
+        noteColorReads v
         match ctx.palette.resolveSource none v with
         | .ok (some c) => ground := some (c, ctx.palette.refOf? v)
         | _ =>
@@ -10263,6 +10278,7 @@ private def tikzArm (ctx : Ctx) (body : Array Raw) (pos : Pos)
     (blocks : Array Block) : EM (Array Block) := do
   let mut blocks := blocks
   let (alt, body) := splitPictureAlt body pos
+  notePictureReads ctx body
   let (pic, pdiags) := subsetPicture ctx body (← pictureSizeInForce)
   let pic := { pic with alt := alt }
   -- **The boundary draws what the subset would draw with a loss.** A
@@ -10528,6 +10544,7 @@ private def carryOne (ctx : Ctx) (pal : Palette) (cur : Array Raw) (i : Nat) (n 
     (blocks : Array Block) : EM (Array Block × Palette) := do
   if n.startsWith "@ink:" then
     let source := (n.drop "@ink:".length).toString
+    unless source == Compat.normalInkSource do noteColorReads source
     let ink := if source == Compat.normalInkSource then
         some (pal.restore ctx.basePalette (.role .ink))
       else match pal.resolveSource none source with
@@ -19005,7 +19022,7 @@ public def completePrepared (file : String) (p : Prepared) (earlier : Array Diag
   let links := Ir.linkDiags doc
   let sequences := Ir.footerSequenceDiags doc
   let unread := if st.spans.tokenKeys.isEmpty then #[]
-    else unreadPaletteKeys (rawSrc p.raws) st.spans.tokenKeys
+    else unreadPaletteKeys st.spans.colorReads st.spans.tokenKeys
   (doc, Diag.tallySites ((accountRecovered doc.salvage
     (earlier ++ p.compatDiags ++ st.diags ++ contrast ++ outline ++ alt ++ links ++ sequences ++
       unread)

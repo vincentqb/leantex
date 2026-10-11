@@ -76,6 +76,12 @@ public structure Config where
   /-- The roles the page's stylesheet declares (`pageRoles`): what a body
   epoch re-declares when its palette moves one of their defaults. -/
   cssRoles : List Ir.Role := []
+  /-- Whether the page can declare a role's property, by the role's
+  constructor index (`roleDeclarable`): an element's read of a role it
+  cannot is written as the value CSS would fall back to (`colorRead`).
+  Empty outside the engine's own stylesheet, where every read keeps its
+  fallback. -/
+  declarable : Array Bool := #[]
   /-- A painted body keeps its ground across palette declarations. Its
   inherited ink retains the declared role, the name a nested run's colour
   property reads. -/
@@ -2418,19 +2424,80 @@ invalid read — `transparent` for a background. -/
 private def roleRefOr (r : Ir.Role) (fallback : String) : String :=
   "var(" ++ roleVar r ++ ", " ++ fallback ++ ")"
 
+/-- Whether the page can declare a role's property (`Config.declarable`). -/
+@[expose] public def Config.declares (cfg : Config) (r : Ir.Role) : Bool :=
+  cfg.declarable[r.ctorIdx]?.getD true
+
+/-- A named colour as an element's own style reads it: through its custom
+property, the literal as the fallback, so a host page can restyle it — and
+for a role the page cannot declare, the literal alone, which is what CSS
+reads for a property nothing declares. -/
+@[expose] public def colorRead (cfg : Config) (name : Option Ir.ColorRef) (c : Ir.Color) :
+    String :=
+  match name with
+  | some (.role r) => if cfg.declares r then s!"var({roleVar r}, {cssColor c})" else cssColor c
+  | some n => s!"var({n.property}, {cssColor c})"
+  | none => cssColor c
+
+/-- **A named colour reads its property wherever the page can declare it**:
+an author colour always, a role where some palette of the page gives it a
+value in a shipped scheme. -/
+public theorem colorRead_names (cfg : Config) (n : Ir.ColorRef) (c : Ir.Color)
+    (h : ∀ r, n = .role r → cfg.declares r = true) :
+    colorRead cfg (some n) c = s!"var({n.property}, {cssColor c})" := by
+  cases n with
+  | role r => simp only [colorRead, h r rfl, ite_true]; rfl
+  | color m => rfl
+
 /-- One declaration's CSS value: a colour, or the alias of its parent. -/
 @[expose] public def cssDeclValue : Ir.CssDecl → String
   | .value c => cssColor c
   | .alias r => roleRef r
 
+/-- Whether `pat` stands in `b` at byte `i`. -/
+private def bytesAt (b pat : ByteArray) (i : Nat) : Bool := Id.run do
+  if b.size < i + pat.size then return false
+  for k in [0:pat.size] do
+    if (b[i + k]?.getD 0) != (pat[k]?.getD 0) then return false
+  return true
+
+/-- A byte a custom property's name holds: an ASCII letter or digit, `-` or
+`_` — `Char.isAlphanum`'s letters and digits are ASCII's. -/
+private def nameByte (c : UInt8) : Bool :=
+  (48 ≤ c && c ≤ 57) || (65 ≤ c && c ≤ 90) || (97 ≤ c && c ≤ 122) || c == 45 || c == 95
+
+/-- Where `pat` (non-empty) stands in `b`, every byte offset in order. -/
+private def bytePositions (b pat : ByteArray) : Array Nat := Id.run do
+  let mut out := #[]
+  let first := (pat[0]?.getD 0)
+  for i in [0:b.size] do
+    if (b[i]?.getD 0) == first && bytesAt b pat i then out := out.push i
+  return out
+
+/-- The end of the name a custom property's spelling starts at `j`. -/
+private def nameEnd (b : ByteArray) (j : Nat) : Nat := Id.run do
+  let mut k := j
+  for _ in [j:b.size] do
+    if k < b.size && nameByte (b[k]?.getD 0) then k := k + 1 else break
+  return k
+
 /-- Every custom property a CSS text reads, `var(--<name>` with or without a
-fallback, in the order it reads them: one pass over the text. -/
+fallback and with spaces before the name, in the order it reads them: one
+pass over the text's bytes. -/
 public def varReads (css : String) : Array String := Id.run do
   let mut out : Array String := #[]
-  for piece in (css.splitOn "var(").drop 1 do
-    let t := piece.toList.dropWhile (· == ' ')
-    if t.take 2 == ['-', '-'] then
-      out := out.push (String.ofList (t.takeWhile fun c => c.isAlphanum || c == '-' || c == '_'))
+  if !css.contains "var(" then return out
+  let b := css.toUTF8
+  let mut from_ := 0
+  for i in bytePositions b "var(".toUTF8 do
+    if from_ ≤ i then
+      let mut j := i + 4
+      for _ in [j:b.size] do
+        if j < b.size && (b[j]?.getD 0) == 32 then j := j + 1 else break
+      if j + 1 < b.size && (b[j]?.getD 0) == 45 && (b[j + 1]?.getD 0) == 45 then
+        let k := nameEnd b j
+        out := out.push (String.Pos.Raw.extract css ⟨j⟩ ⟨k⟩)
+        from_ := k
   return out
 
 /-- Every role by its custom property. -/
@@ -2514,6 +2581,7 @@ dropped (`keepRoleStyle`). -/
 /-- A style attribute's references: what its ordinary declarations read,
 and each custom property it declares with what that declaration reads. -/
 private def styleRefs (style : String) : Array String × Array (String × Array String) :=
+  if !style.contains "--" then (#[], #[]) else
   (style.splitOn ";").foldl (fun (acc : Array String × Array (String × Array String)) piece =>
     let t := piece.trimAscii.toString
     if t.startsWith "--" then
@@ -2577,69 +2645,67 @@ public def pageRoleSet (pals : List Ir.Palette) (schemes : List Ir.Scheme)
     set := next
   return Ir.Role.all.filter fun r => set.contains r && roleDeclarable pals schemes r
 
+/-- One pass of `resolveRoleVars` over a text's bytes: each read of a role
+outside `keep` replaced by its fallback, trimmed, or `initial` where it has
+none; a kept read, or a read of no role, stays whole, its fallback as
+written. The text, and whether anything was replaced. -/
+private def resolveRoleVarsPass (keep : Ir.Role → Bool) (s : String) : String × Bool := Id.run do
+  let b := s.toUTF8
+  let mut out := ""
+  let mut copied := 0
+  let mut from_ := 0
+  let mut changed := false
+  for i in bytePositions b "var(--ltx-".toUTF8 do
+    if from_ ≤ i then
+      let j := nameEnd b (i + 4)
+      let mut depth := 1
+      let mut k := j
+      let mut comma : Option Nat := none
+      for _ in [j:b.size] do
+        if b.size ≤ k then break
+        let c := (b[k]?.getD 0)
+        if c == 40 then depth := depth + 1
+        else if c == 41 then
+          depth := depth - 1
+          if depth == 0 then break
+        else if c == 44 && depth == 1 && comma.isNone then comma := some k
+        k := k + 1
+      if let some r := roleOfVar? (String.Pos.Raw.extract s ⟨i + 4⟩ ⟨j⟩) then
+        if !keep r then
+          changed := true
+          let fallback := match comma with
+            | some c0 => (String.Pos.Raw.extract s ⟨c0 + 1⟩ ⟨k⟩).trimAscii.toString
+            | none => "initial"
+          out := out ++ String.Pos.Raw.extract s ⟨copied⟩ ⟨i⟩ ++ fallback
+          copied := k + 1
+      from_ := k + 1
+  if !changed then return (s, false)
+  return (out ++ String.Pos.Raw.extract s ⟨copied⟩ ⟨b.size⟩, true)
+
+/-- How many reads of a role a text spells, `var(--ltx-`: the bound on the
+passes `resolveRoleVars` needs, since each pass that changes the text takes
+away one read at least and a fallback it puts in place was in the text. -/
+private def roleReadCount (s : String) : Nat :=
+  (bytePositions s.toUTF8 "var(--ltx-".toUTF8).size
+
 /-- A CSS text with every read of a role outside `keep` replaced by its
 fallback (`initial` where it has none): a property the page never declares
 reads as its fallback anyway, and stating that keeps every read pointed at a
 declaration. A text that reads no such role is returned as it stands; else
-one pass per read it holds. -/
+one pass per read it holds, at most. -/
 public def resolveRoleVars (keep : Ir.Role → Bool) (s : String) : String := Id.run do
-  let stray := (varReads s).any fun n => (roleOfVar? n).any (!keep ·)
-  if !stray then return s
-  let opener := "var(--ltx-".toList.toArray
+  if !s.contains "var(--ltx-" then return s
   let mut text := s
-  for _ in [0:(varReads s).size] do
-    let cs := text.toList.toArray
-    let opensAt (i : Nat) : Bool := Id.run do
-      for k in [0:opener.size] do
-        if cs[i + k]? != opener[k]? then return false
-      return true
-    let mut out := ""
-    let mut i := 0
-    let mut changed := false
-    for _ in [0:cs.size] do
-      if i ≥ cs.size then break
-      if cs[i]? == some 'v' && opensAt i then
-        let nameStart := i + 4
-        let mut j := nameStart
-        for _ in [nameStart:cs.size] do
-          match cs[j]? with
-          | some c => if c.isAlphanum || c == '-' || c == '_' then j := j + 1 else break
-          | none => break
-        let name := String.ofList (cs.extract nameStart j).toList
-        let mut depth := 1
-        let mut k := j
-        let mut comma : Option Nat := none
-        for _ in [j:cs.size] do
-          match cs[k]? with
-          | some '(' => depth := depth + 1
-          | some ')' =>
-            depth := depth - 1
-            if depth == 0 then break
-          | some ',' => if depth == 1 && comma.isNone then comma := some k
-          | _ => pure ()
-          k := k + 1
-        let whole := String.ofList (cs.extract i (k + 1)).toList
-        match roleOfVar? name with
-        | some r =>
-          if keep r then out := out ++ whole
-          else
-            changed := true
-            out := out ++ match comma with
-              | some c0 => (String.ofList (cs.extract (c0 + 1) k).toList).trimAscii.toString
-              | none => "initial"
-        | none => out := out ++ whole
-        i := k + 1
-      else
-        out := out.push (cs[i]?.getD ' ')
-        i := i + 1
-    text := out
+  for _ in [0:roleReadCount s] do
+    let (t, changed) := resolveRoleVarsPass keep text
     if !changed then break
+    text := t
   return text
 
 /-- A style attribute with its declarations of roles outside `keep` dropped
 and its reads of them resolved (`resolveRoleVars`). -/
 private def keepRoleStyle (keep : Ir.Role → Bool) (style : String) : String :=
-  if (style.splitOn "--ltx-").length ≤ 1 then style else
+  if !style.contains "--ltx-" then style else
   let pieces := (style.splitOn ";").filter fun piece =>
     let t := piece.trimAscii.toString
     match (t.splitOn ":").head? with
@@ -6390,7 +6456,8 @@ furniture — stated as the engine's choices, no external authority names
 them, and each is overridable by a reader stylesheet, which is the HTML
 backend's contract. -/
 public def baseCss (cfg : Config) (doc : Doc) (pairs : List (Nat × Nat) := [])
-    (roles : Option (List Ir.Role) := none) (taken : List String := []) : String :=
+    (roles : Option (List Ir.Role) := none) (taken : List String := [])
+    (rules : Option String := none) : String :=
   let parskip := parskipVar doc.page
   let dual := dualScheme cfg.imgs doc
   let roles := roles.getD (pageRoles cfg doc)
@@ -6426,7 +6493,7 @@ public def baseCss (cfg : Config) (doc : Doc) (pairs : List (Nat × Nat) := [])
   (let tv := tokenVars cfg doc roles taken
    if tv.isEmpty then "" else ":root {\n" ++ tv ++ "\n}\n") ++
   lineageLevelRules doc ++
-  baseRules doc pairs (cfg.imgs.entries.any (!·.webWords.isEmpty))
+  rules.getD (baseRules doc pairs (cfg.imgs.entries.any (!·.webWords.isEmpty)))
 
 private def styleClass : Style → String
   | .bold => "b"
@@ -6957,10 +7024,8 @@ private def inlineNodeInto (cfg : Config) (acc : Array Node) (x : Inline) : Arra
     -- A named colour becomes a custom-property reference with the literal as
     -- fallback, so the token really is the styling API: a host page can
     -- restyle the document by redefining --primary.
-    let value := match name with
-      | some n => s!"color: var({n.property}, {cssColor c})"
-      | none => s!"color: {cssColor c}"
-    acc.push (Html.elem "span" (inlineNodesInto cfg #[] body.toList) #[("style", value)])
+    acc.push (Html.elem "span" (inlineNodesInto cfg #[] body.toList)
+      #[("style", "color: " ++ colorRead cfg name c)])
   | .located _ body => inlineNodesInto cfg acc body.toList
   | .link url body =>
     acc.push (Html.elem "a" (inlineNodesInto cfg #[] body.toList)
@@ -7336,12 +7401,28 @@ value: the emitted span's colour is `var(--n, …)`, resolved against the
 only the fallback. Together with `role_use_is_palette_dependent` this is
 the contrapositive of "frozen at authoring time"; a colour that arrived
 with no palette name (`name = none`) has no variable to follow and really
-is frozen. -/
+is frozen. The reference stands wherever the page can declare the property:
+a role no palette of the page gives a value in a shipped scheme has nothing
+to follow, and its span states the value CSS would fall back to
+(`role_use_undeclarable_value`). -/
 private theorem role_use_names_its_token (cfg : Config) (acc : Array Node)
-    (c : Ir.Color) (n : Ir.ColorRef) (body : Array Inline) :
+    (c : Ir.Color) (n : Ir.ColorRef) (body : Array Inline)
+    (h : ∀ r, n = .role r → cfg.declares r = true) :
     inlineNodeInto cfg acc (.colored c (some n) body) =
       acc.push (Html.elem "span" (inlineNodesInto cfg #[] body.toList)
-        #[("style", s!"color: var({n.property}, {cssColor c})")]) := by
+        #[("style", "color: " ++ s!"var({n.property}, {cssColor c})")]) := by
+  rw [← colorRead_names cfg n c h]
+  simp [inlineNodeInto]
+
+/-- A use of a role the page cannot declare states its value: the read CSS
+would make of a property nothing declares, written as itself. -/
+private theorem role_use_undeclarable_value (cfg : Config) (acc : Array Node)
+    (c : Ir.Color) (r : Ir.Role) (body : Array Inline) (h : cfg.declares r = false) :
+    inlineNodeInto cfg acc (.colored c (some (.role r)) body) =
+      acc.push (Html.elem "span" (inlineNodesInto cfg #[] body.toList)
+        #[("style", "color: " ++ cssColor c)]) := by
+  have hv : colorRead cfg (some (.role r)) c = cssColor c := by simp [colorRead, h]
+  rw [← hv]
   simp [inlineNodeInto]
 
 /-- The class hook's emission half: an authored role (not an internal
@@ -7387,14 +7468,12 @@ private theorem linkLeafAfford_projects (cfg : Config) (acc : Array Node)
          | some (c, n) =>
              acc.push (Html.elem "span"
                #[Html.elem "u" (inlineNodesInto cfg #[] [x])]
-               #[("style", match n with
-                  | some nm => s!"color: var({nm.property}, {cssColor c})"
-                  | none => s!"color: {cssColor c}")])
+               #[("style", "color: " ++ colorRead cfg n c)])
          | none => acc.push (Html.elem "u" (inlineNodesInto cfg #[] [x]))) := by
   rw [Ir.Styles.linkLeafAfford_afford s kind x h]
   cases hc : (s.find? kind).bind (·.color) with
   | none => simp [inlineNodeInto, inlineNodesInto]
-  | some p => obtain ⟨c, n⟩ := p; cases n <;> simp [inlineNodeInto, inlineNodesInto]
+  | some p => obtain ⟨c, n⟩ := p; simp [inlineNodeInto, inlineNodesInto]
 
 /-- Does this paragraph use `\hfill`? If so it becomes a flex row, which is
 the CSS equivalent of the stretch it asked for. -/
@@ -7573,7 +7652,7 @@ a custom property does not recompute an ancestor's inherited CSS color;
 a deck stage instead reads the tokens through its own paint rules. -/
 public def Config.advancePalette (cfg : Config) (p : Ir.Palette) : Config :=
   let diff := epochPaletteDiff cfg.cssRoles cfg.pal p
-  let fg := (Design.ofPalette p).fg
+  let fg := Design.printInk p
   let home := cfg.bodyGround.isNone && p.sameAs cfg.docPal
   { cfg with pal := p
              listingGround := cfg.bodyGround.or (Ir.Design.declared? p .page)
@@ -9252,7 +9331,7 @@ public def blockNode (cfg : Config) (b : Block) : Node :=
     let design := Ir.Design.ofPalette cfg.pal
     let paint := match spec.ground with
       | some (g, ref) =>
-        s!"background: {(ref.map fun n => s!"var({n.property}, {cssColor g})").getD (cssColor g)}; " ++
+        s!"background: {colorRead cfg ref g}; " ++
         s!"color: {cssColor (covered.getD (cfg.listingFg.getD design.fg))};"
       | none =>
         if spec.highlight.isEmpty then
@@ -9322,9 +9401,7 @@ public def blockNode (cfg : Config) (b : Block) : Node :=
     -- its colour and the token variable for its thickness, so a host page
     -- can override either. The thickness deferred to nothing until the IR
     -- carried its token name beside the resolved length.
-    let c := match name with
-      | some n => s!"var({n.property}, {cssColor color})"
-      | none => cssColor color
+    let c := colorRead cfg name color
     Html.elem "hr" #[] #[("class", "separator"),
       ("style", s!"border: none; height: {cssSourced thickness}; background: {c}")]
   | .frame title standout valign breakable body =>
@@ -10106,10 +10183,16 @@ private def emitTreeCore (cfg : Config) (doc : Doc) (styles : String × Array Di
     | _ => ""
   -- Every role is the walk's to re-declare where an epoch moves it; the page
   -- then keeps the roles something on it reads (`pageRoleSet`).
+  let shippedSchemes : List Ir.Scheme :=
+    if dualScheme cfg.imgs doc then [.light, .dark] else [.light]
   let cfg := { cfg with styles := doc.styles
                         cssRoles := match cfg.css with
                           | .own => Ir.Role.all
                           | _ => []
+                        declarable := match cfg.css with
+                          | .own => (Ir.Role.all.map
+                              (roleDeclarable (pagePalettes doc) shippedSchemes)).toArray
+                          | _ => #[]
                         pal := doc.palette
                         docPal := doc.palette
                         tokens := doc.tokens
@@ -10457,8 +10540,8 @@ one in the article class"
   if cssCfg.css == .own then
     let pairs := carrierPairs body
     let theme := themeCss doc
-    let rules := baseRules doc pairs (cssCfg.imgs.entries.any (!·.webWords.isEmpty)) ++ "\n" ++
-      theme ++ styled
+    let base := baseRules doc pairs (cssCfg.imgs.entries.any (!·.webWords.isEmpty))
+    let rules := base ++ "\n" ++ theme ++ styled
     let (bodyReads, bodyDecls) := nodeRefsList (#[], #[]) body.toList
     let sheetReads := varReads rules
     let roots := (sheetReads ++ bodyReads).toList.filterMap roleOfVar? ++ readerRoles
@@ -10467,10 +10550,14 @@ one in the article class"
     let schemes : List Ir.Scheme :=
       if dualScheme cssCfg.imgs doc then [.light, .dark] else [.light]
     let roles := pageRoleSet (pagePalettes doc) schemes roots edges
-    shipped := keepRolesList roles.contains #[] body.toList
+    -- The tree changes only where it reads or declares a role outside the
+    -- set; with none, keeping it to the set is the identity.
+    let outside (name : String) : Bool := (roleOfVar? name).any (!roles.contains ·)
+    if bodyReads.any outside || bodyDecls.any (outside ·.1) then
+      shipped := keepRolesList roles.contains #[] body.toList
     head := head.modify styleAt fun _ => Node.style (faceRules ++ resolveRoleVars roles.contains
-      (baseCss cssCfg doc pairs (roles := some roles) (taken := sheetReads.toList) ++
-        "\n" ++ theme ++ styled))
+      (baseCss cssCfg doc pairs (roles := some roles) (taken := sheetReads.toList)
+        (rules := some base) ++ "\n" ++ theme ++ styled))
   return (head, shipped, diags)
 
 /-- Normalize the shared IR at the public entry, before any backend walk. -/

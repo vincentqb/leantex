@@ -164,6 +164,15 @@ public def State.addSite (s : State) (chain : List String) (channel key : String
   let site := if channel == "fg" then (chain, key, "") else (chain, "", key)
   { s with sites := s.sites.filter (fun (_, f, b) => f != key && b != key) ++ [site] }
 
+/-- The colour names the declarations' expressions spell (`Ir.colorNames`):
+what `\setbeamercolor{…}{fg=…}` reads from the palette when it resolves. -/
+public def State.sourceNames (s : State) : Array String :=
+  s.elements.foldl (fun acc e =>
+    [e.fg, e.bg].foldl (fun acc v => match v with
+      | some (.source src) => (Ir.colorNames src).foldl
+          (fun acc n => if acc.contains n then acc else acc.push n) acc
+      | some (.native _) | none => acc) acc) #[]
+
 private def unbrace (s : String) : String :=
   let s := s.trimAscii.toString
   if s.startsWith "{" && s.endsWith "}" then
@@ -285,9 +294,10 @@ private def read (theme : String) (pal : Palette) (path : List (String × Option
     -- bind the current foreground/background, rather than no alias.
     for used in e.uses do
       let u := read theme aliases ((name, e.sites.lookup "use") :: path) rest used
-      let current := Design.ofPalette aliases
-      aliases := aliases.declare (.color (used ++ ".fg")) ((u.fg.bind (·.color)).getD current.fg)
-      aliases := aliases.declare (.color (used ++ ".bg")) ((u.bg.bind (·.color)).getD current.bg)
+      let fgNow := Design.printInk aliases
+      let bgNow := Design.printPage aliases
+      aliases := aliases.declare (.color (used ++ ".fg")) ((u.fg.bind (·.color)).getD fgNow)
+      aliases := aliases.declare (.color (used ++ ".bg")) ((u.bg.bind (·.color)).getD bgNow)
       r := { r with issues := r.issues ++ u.issues }
     for parent in e.parents.getD (if e.reset then [] else defaultParents name) do
       r := r.over (read theme aliases ((name, e.sites.lookup "parent") :: path) rest parent)
@@ -393,18 +403,17 @@ public def State.resolve (s : State) (pal : Palette) : State × Palette × List 
     | none => p
     | some none => p.erase (.role key)
     | some (some c) => p.declare (.role key) c) base
-  let normalFg := (Design.ofPalette context).fg
+  let normalFg := Design.printInk context
   let context := startColors.foldl
     (fun p name =>
       let r := read s.theme p [] es name
-      let d := Design.ofPalette p
-      (p.declare (.color (name ++ ".fg")) ((r.fg.bind (·.color)).getD d.fg)).declare
-        (.color (name ++ ".bg")) ((r.bg.bind (·.color)).getD d.bg)) context
+      (p.declare (.color (name ++ ".fg")) ((r.fg.bind (·.color)).getD (Design.printInk p))).declare
+        (.color (name ++ ".bg")) ((r.bg.bind (·.color)).getD (Design.printPage p))) context
   let rank (name : String) : Nat :=
     let i := s.elements.findIdx (·.name == name)
     if i < s.elements.length then i + 1 else 0
   let ordered := roles.mergeSort fun a b => rank a.1 ≤ rank b.1
-  let normalBg := (Design.ofPalette context).bg
+  let normalBg := Design.printPage context
   -- A template's site always paints, as beamerbasecolor.sty's
   -- `\usebeamercolor` binds `fg` and `bg`: each element binds the channels
   -- it sets and keeps the one in force where it sets none, so a channel is

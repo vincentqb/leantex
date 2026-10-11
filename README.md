@@ -101,17 +101,19 @@ List themes with `leantex themes` and select one with `\theme{moloch}`.
 In HTML, the colours the stylesheet's rules paint and every named colour are
 CSS custom properties a host stylesheet can override on `:root`. A colour role
 is `--ltx-<key>`, named by its `\palette` key (`--ltx-bg`, `--ltx-fg`,
-`--ltx-alert`, `--ltx-frametitlebg`, `--ltx-tint` for the code panel,
-`--ltx-accent` for the focus ring, `--ltx-rule` for rules and frame borders,
-`--ltx-codekeyword`, …), and a page declares exactly the roles something on it
-reads; a colour from `\definecolor{name}` is `--ltx-c-name`,
-letters and digits as written and any other character as `_` and its six hex
-digits, and text set in it reads that property. A role the document leaves
-undeclared is declared as the role it defaults to, so overriding `--ltx-fg`
-also moves the code and section-title ink that follow it. A paint the palette
-in force decides for one element — a block's title band and body, a listing's
-panel, a standout frame's footline, an overlay's covered ink — is stated on
-the element as its value. The previous names (`--bg`, `--fg`, `--muted`,
+`--ltx-alert`, `--ltx-frametitlebg`, `--ltx-codekeyword`, …), and a page
+declares exactly the roles something on it reads. Three keys colour the HTML
+page alone, which the PDF does not paint: `tint` the code panel
+(`--ltx-tint`), `accent` the focus ring (`--ltx-accent`), and `rule` a slide's
+border on the paged deck (`--ltx-rule`). A colour from `\definecolor{name}` is
+`--ltx-c-name`, letters and digits as written and any other character as `_`
+and its six hex digits, and text set in it reads that property. A role the
+document leaves undeclared is declared as the role it defaults to, so
+overriding `--ltx-fg` also moves the code and section-title ink that follow
+it. A paint the palette in force decides for one element — a block's title
+band and body, a listing's panel, a standout frame's footline, an overlay's
+covered ink, a code colour the engine derives where nothing declares its
+role — is stated on the element as its value. The previous names (`--bg`, `--fg`, `--muted`,
 `--ink`, `--surface`, `--accent`, `--tint`, `--rule` and each colour's own
 name, where the stylesheet reads no property of that name) remain readable for
 one release; override the `--ltx-*` property instead.

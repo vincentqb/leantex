@@ -160,9 +160,11 @@ through `look`. -/
 /-- An element whose shipping the document's contrast report reads off the
 body, per epoch: a titled block's title (by the title's colour kind), a
 frame title on its bar, a standout frame, a title page with a ground of its
-own. -/
+own, a link's focus ring. -/
 public inductive Element where
   | blockTitle | alertTitle | exampleTitle | frameTitle | standout | titlePage
+  /-- The ring the HTML page draws around a link that takes focus. -/
+  | focusRing
   deriving Repr, DecidableEq, Inhabited
 
 /-- The element a titled block's title ships as: tcolorbox's box takes the
@@ -266,7 +268,8 @@ ground is the ink as printed and its ink the paper (`paper`, `printInk`). -/
   | .rule => keyed "rule" .decorative none
       (screen .absent (Row.hex 0xE4 0xE4 0xE7) (Row.hex 0x3F 0x3F 0x46)) (judged := .uses)
   | .focus => keyed "accent" .nonText (some .page)
-      (screen .absent (Row.hex 0x1D 0x4E 0xD8) (Row.hex 0x60 0xA5 0xFA)) (judged := .uses)
+      (screen .absent (Row.hex 0x1D 0x4E 0xD8) (Row.hex 0x60 0xA5 0xFA))
+      (noun := some "the focus ring") (judged := .element .focusRing)
   | .paper => engine "paper" .decorative none (every (.inPrint .page)) (judged := .uses)
   | .printInk => engine "print-ink" .decorative none (every (.inPrint .ink)) (judged := .uses)
   | .frameTitleBar => keyed "frametitlebg" .decorative none (every .absent)
