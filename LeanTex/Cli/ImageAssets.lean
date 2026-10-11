@@ -16,7 +16,10 @@ namespace LeanTex.Cli.ImageAssets
 open LeanTex.Core
 
 /-- A deliberately narrow support boundary, evaluated over libxml's parsed
-XML, never the source spelling. Only fragment references are supported.
+XML, never the source spelling. Only fragment references are supported,
+and a raster an `<image>` carries in its own reference — a base64 PNG or
+JPEG `data:` URL (RFC 2397), the spelling pdftocairo gives every raster a
+PDF draws — which names nothing outside the file.
 CSS is plain declarations/rules without functions, escapes or at-rules.
 Color presentation attributes also admit wholly numeric `rgb()`/`rgba()`
 (CSS Color, numeric RGB notation); their alphabet cannot name a resource. This checks
@@ -42,11 +45,17 @@ private def supportedSvg : String :=
       "string-length(" ++ channels ++ ")>0 and " ++
       "translate(" ++ channels ++ ",'0123456789.%eE+-,/ ','')='')"
   let cssSyntax := "(contains(.,'(') or contains(.,'\\') or contains(.,'@'))"
+  let dataRaster := "(local-name()='href' and local-name(..)='image' and " ++
+    "(starts-with(normalize-space(.),'data:image/png;base64,') or " ++
+    "starts-with(normalize-space(.),'data:image/jpeg;base64,')) and " ++
+    "translate(substring-after(normalize-space(.),';base64,')," ++
+    "'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/= ','')='')"
   let unsupported :=
     "//processing-instruction() | " ++
     "//*[local-name()='script' or local-name()='foreignObject'] | " ++
     "//@*[local-name()='base' or starts-with(local-name(),'on')] | " ++
-    "//@*[local-name()='href' or local-name()='src'][not(starts-with(normalize-space(.),'#'))] | " ++
+    "//@*[local-name()='href' or local-name()='src']" ++
+      "[not(starts-with(normalize-space(.),'#') or " ++ dataRaster ++ ")] | " ++
     "//*[local-name()='style'][" ++ cssSyntax ++ "] | " ++
     "//@*[not(local-name()='transform' or local-name()='gradientTransform' or " ++
       "local-name()='patternTransform' or local-name()='begin' or local-name()='end')]" ++

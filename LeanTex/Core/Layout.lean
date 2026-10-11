@@ -8398,6 +8398,20 @@ private def Spacing.Page.displaySkip (b : B) (dj : DisplayJob) (left size : Sp) 
     (b.displaySkip dj l s).pages = b.pages := rfl
 @[simp] private theorem displaySkip_noBreak (b : B) (dj : DisplayJob) (l s : Sp) :
     (b.displaySkip dj l s).noBreak = b.noBreak := rfl
+@[simp] private theorem displaySkip_geom (b : B) (dj : DisplayJob) (l s : Sp) :
+    (b.displaySkip dj l s).geom = b.geom := rfl
+@[simp] private theorem displaySkip_docBg (b : B) (dj : DisplayJob) (l s : Sp) :
+    (b.displaySkip dj l s).docBg = b.docBg := rfl
+@[simp] private theorem displaySkip_curFrameOrigin (b : B) (dj : DisplayJob) (l s : Sp) :
+    (b.displaySkip dj l s).curFrameOrigin = b.curFrameOrigin := rfl
+@[simp] private theorem displaySkip_curFrame (b : B) (dj : DisplayJob) (l s : Sp) :
+    (b.displaySkip dj l s).curFrame = b.curFrame := rfl
+@[simp] private theorem displaySkip_curFoot (b : B) (dj : DisplayJob) (l s : Sp) :
+    (b.displaySkip dj l s).curFoot = b.curFoot := rfl
+@[simp] private theorem displaySkip_paragraphBreaks (b : B) (dj : DisplayJob) (l s : Sp) :
+    (b.displaySkip dj l s).paragraphBreaks = b.paragraphBreaks := rfl
+@[simp] private theorem displaySkip_diags (b : B) (dj : DisplayJob) (l s : Sp) :
+    (b.displaySkip dj l s).diags = b.diags := rfl
 
 /-- **A band just set as a line answers its glyph box's depth** (`_exact`):
 `keepInk`'s key is the band's own baseline and depth, so the page's
@@ -10593,6 +10607,11 @@ private inductive Op where
   /-- `\nointerlineskip` (`Ir.noInterlineRole`): the next box takes no
   interline glue (`Spacing.Page.ignoreDepth`). -/
   | noInterline
+  /-- A display a picture stands for opens here (`Ir.displayPicture?`): the
+  skip above is TeX's choice against the line before, as a display line's
+  is (`Spacing.Page.openDisplayAt`), `left` the picture's left edge on the
+  measure and `size` the face two quads of which the choice reads. -/
+  | displayOpen (dj : DisplayJob) (left size : Sp)
 
 /-- The block walk owes a gap before the next line rather than emitting one
 as it goes, because what the gap is depends on everything declared between
@@ -12899,7 +12918,7 @@ half a label at each edge — and both halves of that were silent. The
 reserved box fitted while glyphs left the page, and the centring it drives
 put the leftmost label's ink at negative page x. -/
 private def collectPicture (r : Rd) (a : Acc) (pic : Ir.Pic.Picture)
-    (indent : Sp) (center : Bool) : Acc :=
+    (indent : Sp) (center : Bool) (display : Option DisplayJob := none) : Acc :=
   let metric := picMetric r.fs r.imgs r.geom r.xHeight
   let boxes := pic.inkBoxes metric
   let bb := pictureBox r.geom r.fs r.imgs r.xHeight pic
@@ -12931,6 +12950,9 @@ separation ([node distance = ...])")) }
   let side : Ir.HAlign := if center then .center else if r.geom.flushRight then .right else .left
   let x := indent + side.boxOffset (max 0 (avail - w))
   let a := a.flushGap r
+  let a := match display with
+    | some dj => { a with ops := a.ops.push (.displayOpen dj x r.geom.fontSize) }
+    | none => a
   -- The picture's one `.picture` leaf: its label lines name it.
   let (a, leaf) := a.leafRange 1
   { a with ops := a.ops.push (.picture (r.geom.hmargin + x) pic leaf) }
@@ -13046,6 +13068,20 @@ private def collectDisplayFormula (r : Rd) (a : Acc)
   let a := collectPara r a content indent true r.geom.fontSize
     (leaf := leaf) (span := leafCount content) (dispJob := some dj)
   a.closeDisplay r
+
+/-- A display a picture stands for (`Ir.displayPicture?`): TeX's display of
+an `\hbox`, placed as a display formula's line is (`collectDisplayFormula`)
+— the boundary's own skips, TeX's choice of the one above, the picture
+centred on the measure, its labels' anchors where the formula's would stand,
+and the skip below owed to what follows. -/
+private def collectDisplayPicture (r : Rd) (a : Acc) (anchors : Array Inline)
+    (pic : Ir.Pic.Picture) (indent : Sp) : Acc :=
+  let dj := a.displayJob r
+  let a := a.openDisplay r dj
+  let a := { a with ops := a.ops ++ anchors.filterMap fun x => match x with
+    | .label name => some (.anchor name)
+    | _ => none }
+  (collectPicture r a pic indent true (display := some dj)).closeDisplay r
 
 /-- **A display inside a paragraph opens no gap of the walk's own**
 (`_exact`): with nothing owed and no `\vspace*` anchor pending, the ops
@@ -14567,6 +14603,10 @@ private def collectBlock (r : Rd) (a : Acc)
     -- A display's context (`Ir.DisplayCtx`): where TeX's placement reads it.
     if let some c := Ir.DisplayCtx.ofRole? n then collectBlocks { r with display := c } a body indent
     else
+    -- A display a picture stands for: the display arm's.
+    if let some (anchors, pic) := Ir.displayPicture? (.role n body) then
+      collectDisplayPicture r a anchors pic indent
+    else
     -- A trivlist environment's scope (`Ir.trivlistRole`): its `\topsep`
     -- stands above and below it, on top of the peer gap (`Spacing.Pending.trivSpace`).
     if n == Ir.trivlistRole then
@@ -15008,8 +15048,9 @@ private theorem role_transparent_collect (r : Rd) (a : Acc) (n : String)
     (body : Array Block) (indent : Sp) (hst : r.styles.find? n = none)
     (htl : n ≠ Ir.trivlistRole) (hip : n ≠ Ir.inParagraphRole)
     (hth : Ir.thmSpaceOf? n = none) (hpm : Ir.pageMarkerRole n = false)
-    (hdc : Ir.DisplayCtx.ofRole? n = none) :
+    (hdc : Ir.DisplayCtx.ofRole? n = none) (hdp : n ≠ Ir.displayPictureRole) :
     collectBlock r a (.role n body) indent = collectBlocks r a body indent := by
+  have hpic := Ir.displayPicture?_role_exact n body hdp
   have h : (n == Ir.trivlistRole) = false := by simpa using htl
   have h' : (n == Ir.inParagraphRole) = false := by simpa using hip
   simp only [Ir.pageMarkerRole, Bool.or_eq_false_iff] at hpm
@@ -15017,7 +15058,7 @@ private theorem role_transparent_collect (r : Rd) (a : Acc) (n : String)
   have hop : Ir.pageOpeningOfRole? n = none :=
     Option.isNone_iff_eq_none.mp (Option.isSome_eq_false_iff.mp hos)
   simp only [collectBlock, Spacing.Context.style, hst, Option.getD, h, h', hth, hpa, hni, hps,
-    hdc, hop, Bool.false_eq_true, ite_false]
+    hdc, hop, hpic, Bool.false_eq_true, ite_false]
 
 /-- Collection carries the shared opening value to placement verbatim:
 the backend has no second reading of the titlepage's boundary spelling. -/
@@ -16783,6 +16824,7 @@ private inductive StagedOp where
   | slotClose (spec : SlotSpec)
   | anchorRule (parskip : Glue)
   | noInterline
+  | displayOpen (dj : DisplayJob) (left size : Sp)
 
 /-- The operations emitted by a plain source paragraph and its boundary.
 The source bound belongs to the paragraph job; boundary operations carry
@@ -16819,7 +16861,7 @@ private def stagedLabelRequests (ops : Array StagedOp) : Array LabelAudit.Reques
       | .pin | .progress _ _ _ _ _ _ _ | .para _ _ | .regionOpen _
       | .regionClose | .colOpen _ | .colNext | .colClose | .setLogo _
       | .floatOpen | .floatClose | .anchor _ | .slotOpen | .slotClose _
-      | .anchorRule _ | .noInterline => #[]
+      | .anchorRule _ | .noInterline | .displayOpen _ _ _ => #[]
 
 /-- One column of a row as placed: where its ink starts in the page's
 arrays, its first baseline when a picture opened it (a label line is no
@@ -17305,6 +17347,18 @@ private def stepStaged (fs : FontSet) (imgs : Image.Store) (st : StepSt)
     -- `\parskip` stands after it; mid-page it is invisible and holds nothing.
     if b.fresh then b := { b with anchored := true, skip := g }
   | .noInterline => b := { b with ignoreDepth := true }
+  | .displayOpen dj left size =>
+    -- TeX's skip above, over the empty line amsmath's `$$` sets first where
+    -- the display opens a paragraph (a box of no height or depth the
+    -- picture stands below as any box does); the line after the picture
+    -- then stands by TeX's interline rule from its depth (`texAfter`), and
+    -- no text line ends before what follows.
+    let b1 := b.displaySkip dj left size
+    let empty := if dj.emptyLine then
+        texBaselineGap (Ir.leadingFor size b1.geom.leading) b1.boxDepth 0 - b1.prevDepth
+      else 0
+    b := { b1 with skip := { b1.skip with width := b1.skip.width + empty },
+                   texAfter := true, lineEnd := none }
   | .skipAlt long short =>
     let g := if b.dispShort then short else long
     unless b.fresh && !(b.skip.fil || g.fil) do
@@ -21423,6 +21477,7 @@ private def withLayoutOps {α : Type} (geom : Geom) (fs : FontSet)
     | .slotClose spec => .slotClose spec
     | .anchorRule g => .anchorRule g
     | .noInterline => .noInterline
+    | .displayOpen dj left size => .displayOpen dj left size
   -- A declared asymmetry that survives the reading is named: equal gaps
   -- are the default, and a difference is exactly what the document asked
   -- for — the hand-struck footskip patch made visible instead of doubled.

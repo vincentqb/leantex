@@ -8269,9 +8269,26 @@ private theorem treeOne_lift_one {L : Type} (lab : GfxSvg.SFrame → L → Node)
   | label l => exact nomatch l
   | words w => simp [Gfx.shapeOneEl] at h
 
+/-- Ink no picture tree spells — a recovered word, or a symbol use where the
+tree has no symbol to clone — lowers to no element. -/
+private theorem treeOne_lift_none {L : Type} (lab : GfxSvg.SFrame → L → Node)
+    (fr : GfxSvg.SFrame) (acc : Array GfxSvg.El) (n : Gfx.Node Empty)
+    (h : Gfx.shapeOneEl (.ink n) = false) :
+    GfxSvg.treeOne lab #[] #[] #[] fr acc (Gfx.Node.lift n) = acc := by
+  cases n with
+  | draw g fl st => simp [Gfx.shapeOneEl] at h
+  | group xf clips alpha kids => simp [Gfx.shapeOneEl] at h
+  | use k xf => simp [Gfx.Node.lift, GfxSvg.treeOne]
+  | stamp o xf fl st => simp [Gfx.shapeOneEl] at h
+  | image k xf => simp [Gfx.shapeOneEl] at h
+  | label l => exact nomatch l
+  | words w => simp [Gfx.Node.lift, GfxSvg.treeOne]
+
 /-- A picture's shapes lower, at its root, to elements whose every raw node
-is a label's node; and where each shape lowers to one element — a label, or
-ink that draws or groups — element `i` is shape `i`'s, a label's its node. -/
+is a label's node; and each shape lowers to one element or none — a label,
+or ink that draws, groups, stamps or maps a raster, one; a recovered word or
+a symbol use, none — so a label shape `i` is the element at the count of the
+shapes before it that lower to one (`Gfx.shapeOneEl`), its node. -/
 private theorem pictureShapes_tree (metric : Ir.Pic.LabelMetric) (cfg : Config) (box : Ir.Pic.Box) :
     ∀ (acc : Array GfxSvg.El) (ss : List Ir.Pic.Shape),
       let lab := pictureLabelNode metric cfg
@@ -8279,51 +8296,64 @@ private theorem pictureShapes_tree (metric : Ir.Pic.LabelMetric) (cfg : Config) 
       let t := GfxSvg.treeList lab #[] #[] #[] fr acc (ss.map Gfx.ofShape)
       (∀ q : Node → Bool, (∀ l, q (lab fr l) = true) →
           GfxSvg.El.rawsAllList q t.toList = GfxSvg.El.rawsAllList q acc.toList) ∧
-        ((∀ s ∈ ss, Gfx.shapeOneEl s = true) →
-          ∃ es : Array GfxSvg.El, t = acc ++ es ∧
+        (∃ es : Array GfxSvg.El, t = acc ++ es ∧
             ∀ (i : Nat) (l : Gfx.LabelSpec), (ss[i]?.bind Gfx.labelOf?) = some l →
-              es[i]? = some (GfxSvg.El.raw (lab fr l)))
-  | acc, [] => ⟨fun _ _ => rfl, fun _ => ⟨#[], by simp [GfxSvg.treeList], fun i l hl => by simp at hl⟩⟩
+              es[(ss.take i).countP Gfx.shapeOneEl]? = some (GfxSvg.El.raw (lab fr l)))
+  | acc, [] => ⟨fun _ _ => rfl, ⟨#[], by simp [GfxSvg.treeList], fun i l hl => by simp at hl⟩⟩
   | acc, s :: rest => by
     intro lab fr t
     have hcons : t = GfxSvg.treeList lab #[] #[] #[] fr
         (GfxSvg.treeOne lab #[] #[] #[] fr acc (Gfx.ofShape s)) (rest.map Gfx.ofShape) := rfl
-    obtain ⟨ih1, ih2⟩ := pictureShapes_tree metric cfg box
+    obtain ⟨ih1, es, hes, hidx⟩ := pictureShapes_tree metric cfg box
       (GfxSvg.treeOne lab #[] #[] #[] fr acc (Gfx.ofShape s)) rest
-    refine ⟨fun q hq => ?_, fun hs => ?_⟩
+    refine ⟨fun q hq => ?_, ?_⟩
     · rw [hcons, ih1 q hq]
       cases s with
       | label x y content color scale align =>
         simp [Gfx.ofShape, GfxSvg.treeOne, GfxSvg.El.rawsAllList_append, GfxSvg.El.rawsAll,
           GfxSvg.El.rawsAllList, hq]
       | ink n => exact treeOne_lift_rawsAll lab q fr acc n
-    · have hrest : ∀ s' ∈ rest, Gfx.shapeOneEl s' = true :=
-        fun s' hs' => hs s' (List.mem_cons_of_mem _ hs')
-      obtain ⟨es, hes, hidx⟩ := ih2 hrest
-      have hone : ∃ e, GfxSvg.treeOne lab #[] #[] #[] fr acc (Gfx.ofShape s) = acc.push e ∧
-          ∀ l, Gfx.labelOf? s = some l → e = GfxSvg.El.raw (lab fr l) := by
+    · cases hso : Gfx.shapeOneEl s with
+      | true =>
+        have hone : ∃ e, GfxSvg.treeOne lab #[] #[] #[] fr acc (Gfx.ofShape s) = acc.push e ∧
+            ∀ l, Gfx.labelOf? s = some l → e = GfxSvg.El.raw (lab fr l) := by
+          cases s with
+          | label x y content color scale align =>
+            exact ⟨_, rfl, fun l hl => by
+              simp only [Gfx.labelOf?, Option.some.injEq] at hl
+              subst hl
+              rfl⟩
+          | ink n =>
+            obtain ⟨e, he⟩ := treeOne_lift_one lab fr acc n hso
+            exact ⟨e, he, fun l hl => by simp [Gfx.labelOf?] at hl⟩
+        obtain ⟨e, he, hel⟩ := hone
+        refine ⟨#[e] ++ es, ?_, fun i l hl => ?_⟩
+        · rw [hcons, hes, he]
+          simp
+        · cases i with
+          | zero =>
+            simp only [List.getElem?_cons_zero, Option.bind_some] at hl
+            rw [hel l hl, List.take_zero, List.countP_nil, Array.getElem?_append_left (by simp)]
+            rfl
+          | succ i =>
+            simp only [List.getElem?_cons_succ] at hl
+            simp only [List.take_succ_cons, List.countP_cons, hso, ↓reduceIte]
+            rw [Array.getElem?_append_right (by simp)]
+            simpa using hidx i l hl
+      | false =>
         cases s with
-        | label x y content color scale align =>
-          exact ⟨_, rfl, fun l hl => by
-            simp only [Gfx.labelOf?, Option.some.injEq] at hl
-            subst hl
-            rfl⟩
+        | label x y content color scale align => simp [Gfx.shapeOneEl] at hso
         | ink n =>
-          obtain ⟨e, he⟩ := treeOne_lift_one lab fr acc n (hs _ (List.mem_cons_self ..))
-          exact ⟨e, he, fun l hl => by simp [Gfx.labelOf?] at hl⟩
-      obtain ⟨e, he, hel⟩ := hone
-      refine ⟨#[e] ++ es, ?_, fun i l hl => ?_⟩
-      · rw [hcons, hes, he]
-        simp
-      · cases i with
-        | zero =>
-          simp only [List.getElem?_cons_zero, Option.bind_some] at hl
-          rw [hel l hl, Array.getElem?_append_left (by simp)]
-          rfl
-        | succ i =>
-          simp only [List.getElem?_cons_succ] at hl
-          rw [Array.getElem?_append_right (by simp)]
-          simpa using hidx i l hl
+          have hnone : GfxSvg.treeOne lab #[] #[] #[] fr acc (Gfx.ofShape (.ink n)) = acc :=
+            treeOne_lift_none lab fr acc n hso
+          refine ⟨es, ?_, fun i l hl => ?_⟩
+          · rw [hcons, hes, hnone]
+          · cases i with
+            | zero => simp [Gfx.labelOf?] at hl
+            | succ i =>
+              simp only [List.getElem?_cons_succ] at hl
+              simp only [List.take_succ_cons, List.countP_cons, hso]
+              simpa using hidx i l hl
 
 /-- A picture's tree is its shapes' elements at the root. -/
 private theorem pictureTree_shapes (pic : Ir.Pic.Picture) (box : Ir.Pic.Box)
@@ -8385,9 +8415,11 @@ public theorem pictureKids_unnested_contract (pic : Ir.Pic.Picture) (box : Ir.Pi
   rfl
 
 /-- **Every shipped label baseline projects the IR's measured band**
-(`_projects`): the node a picture's label shape ships at its index in the
-picture's SVG children — the spelled tree, its elements naming no
-definition, one node per shape — declares the alphabetic baseline at
+(`_projects`): the node a picture's label shape ships at its element index
+in the picture's SVG children — the spelled tree, its elements naming no
+definition, one node per shape that lowers to one (`Gfx.shapeOneEl`: every
+shape but a recovered word or an unresolvable symbol use), so the count of
+those before it — declares the alphabetic baseline at
 `labelBaseline` carried by the picture's isometry, whose
 `Ir.Pic.labelBaseline_box_exact` also identifies the native page's
 box-top-plus-height placement after its y flip — independent of alignment,
@@ -8395,25 +8427,23 @@ font, scale and the surrounding shapes. -/
 public theorem pictureLabelBaseline_projects (pic : Ir.Pic.Picture) (box : Ir.Pic.Box)
     (metric : Ir.Pic.LabelMetric) (i : Nat) (x y : Dim.Sp)
     (content : Array Inline) (color : Ir.Color) (scale : Nat) (align : Ir.Pic.LabelAlign)
-    (h : pic.shapes[i]? = some (.label x y content color scale align))
-    (hs : ∀ s ∈ pic.shapes, Gfx.shapeOneEl s = true) (cfg : Config := {}) :
-    (match (pictureKids pic box metric cfg)[i]? with
+    (h : pic.shapes[i]? = some (.label x y content color scale align)) (cfg : Config := {}) :
+    (match (pictureKids pic box metric cfg)[(pic.shapes.toList.take i).countP Gfx.shapeOneEl]? with
       | some (.elem _ attrs _) => (attrOf? attrs "y", attrOf? attrs "dominant-baseline")
       | _ => (none, none)) =
       (some (box.2.2 - Ir.Pic.labelBaseline y align (metric content scale)).toPtString,
         some "alphabetic") := by
-  obtain ⟨_, hone⟩ := pictureShapes_tree metric cfg box #[] pic.shapes.toList
-  obtain ⟨es, hes, hidx⟩ := hone fun s hm => hs s (Array.mem_toList_iff.mp hm)
+  obtain ⟨_, es, hes, hidx⟩ := pictureShapes_tree metric cfg box #[] pic.shapes.toList
   let l : Gfx.LabelSpec :=
     { x := x, y := y, content := content, color := color, scale := scale, align := align }
   have hl : pic.shapes.toList[i]?.bind Gfx.labelOf? = some l := by
     simp only [Array.getElem?_toList, h, Option.bind_some, Gfx.labelOf?]
     rfl
-  have hk : (pictureKids pic box metric cfg)[i]? =
+  have hk : (pictureKids pic box metric cfg)[(pic.shapes.toList.take i).countP Gfx.shapeOneEl]? =
       some (pictureLabelNode metric cfg { iso := some (pictureIso box) } l) := by
     unfold pictureKids
     rw [pictureTree_shapes]
-    refine GfxSvg.spell_raw_exact 0 _ i _ ?_
+    refine GfxSvg.spell_raw_exact 0 _ _ _ ?_
     rw [hes, Array.empty_append]
     exact hidx i l hl
   rw [hk]
@@ -8718,6 +8748,13 @@ public def blockNode (cfg : Config) (b : Block) : Node :=
   -- without it, and the list levels read the in-paragraph one to spend
   -- `\topsep` without `\partopsep` (`listLevelRules`).
   | .role n body =>
+    -- A display a picture stands for is the `.display` paragraph a display
+    -- formula is (`Ir.displayPicture?`, the PDF walk's reading too): its
+    -- labels' anchors where the formula's stand, then the picture's svg.
+    if let some (anchors, pic) := Ir.displayPicture? (.role n body) then
+      Html.elem "p" ((inlines cfg anchors).push (pictureSvg cfg pic))
+        #[("class", "display")]
+    else
     -- A title slot's role marks its content as the slot's own: set under
     -- the slot's template alone (`Config.slotTitle`), placed by the rule
     -- `titleSlotCss` writes for this class hook.

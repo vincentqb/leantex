@@ -2186,7 +2186,7 @@ carries the roles a picture mentions with their resolved values
 (`Ir.paletteDecls`), so a `\definecolor` and its `\palette` spelling
 state one request (the conservation oracle holds them equal). -/
 public def boundaryCtrls : List String :=
-  ["usetikzlibrary", "tikzset", "tikzcdset", "gtrset", "pgfplotsset"]
+  ["usetikzlibrary", "tikzset", "tikzcdset", "gtrset", "pgfplotsset", "graphicspath"]
 
 /-- The set lines the engine reads *itself*: their key lists address the
 picture machinery, and the engine has picture machinery of its own
@@ -2199,11 +2199,13 @@ A subset of `boundaryCtrls`. -/
 public def nativeSetCtrls : List String := ["tikzset"]
 
 /-- The picture-family lines the engine reads itself and so never names as
-unknown, whichever renderer draws: the set lines it reads (`nativeSetCtrls`)
-and `\usetikzlibrary`, whose libraries the picture reader implements or
-names where a picture uses them, and whose `arrows.meta` changes the head
-the `->` shorthand draws (`Picture.tipKindOf`). -/
-public def nativeReadCtrls : List String := nativeSetCtrls ++ ["usetikzlibrary"]
+unknown, whichever renderer draws: the set lines it reads (`nativeSetCtrls`),
+`\usetikzlibrary`, whose libraries the picture reader implements or names
+where a picture uses them, and whose `arrows.meta` changes the head the `->`
+shorthand draws (`Picture.tipKindOf`), and graphicx's `\graphicspath`,
+whose directories the engine's own image lookup searches
+(`Ir.Doc.graphicsPath`) as a standalone's TeX does. -/
+public def nativeReadCtrls : List String := nativeSetCtrls ++ ["usetikzlibrary", "graphicspath"]
 
 /-- Picture packages, whose whole meaning is drawing: with the boundary
 open (the default), their loads belong to the boundary standalone's
@@ -2298,6 +2300,14 @@ does not set itself, and the native ones a picture's own TeX reads
 public def boundaryRides (p : String) : Bool :=
   !p.isEmpty && (!nativePackages.contains p || boundaryMathPkgs.contains p) && !classPackage p
 
+/-- The directories a `\graphicspath` argument names: each group it holds,
+as written (grfguide §4.5: `\graphicspath{{dir1/}{dir2/}}`); anything
+between the groups names none. -/
+public def graphicsDirs (arg : Array Raw) : Array String :=
+  arg.filterMap fun r => match r with
+    | .group body _ => some (rawSrc body).trimAscii.toString
+    | _ => none
+
 /-- What one tree walk collects for the renderers of a document's
 pictures: `pre` is the boundary standalone's preamble, as written; `sets`
 is the same collection read natively — one entry per `nativeSetCtrls`
@@ -2309,6 +2319,9 @@ picture. -/
 public structure BoundaryScan where
   pre : String := ""
   sets : Array (Span × Array Raw) := #[]
+  /-- The last `\graphicspath` line's directories, as written: one per
+  group its argument holds (`graphicsDirs`). -/
+  graphics : Array String := #[]
 
 mutual
 
@@ -2350,6 +2363,8 @@ private def boundaryLevel (file : String) (raws : Array Raw) (out : BoundaryScan
       let out :=
         if nativeSetCtrls.contains name then
           { out with sets := out.sets.push (⟨file, p⟩, args.getD 0 #[]) }
+        else if name == "graphicspath" then
+          { out with graphics := graphicsDirs (args.getD 0 #[]) }
         else out
       boundaryLevel file raws out rest (i + 1) (k - (i + 1))
     else boundaryLevel file raws out rest (i + 1) 0
@@ -2412,6 +2427,13 @@ it. The one consumer is the elaborator, which folds the
 and names what it could not read at the line above. -/
 public def tikzsetKeys (file : String) (raws : Array Raw) : Array (Span × Array Raw) :=
   (boundaryScan file raws).sets
+
+/-- The directories the document's last `\graphicspath` names, read from
+the unrewritten tree by the walk that collects the boundary's set lines —
+the same line rides into every standalone, so the engine's lookup and the
+boundary's TeX search the same directories. -/
+public def graphicsPath (file : String) (raws : Array Raw) : Array String :=
+  (boundaryScan file raws).graphics
 
 /-- **A set line reaches the boundary wherever it stands.** Wrapping a run
 of declarations in the document environment leaves the standalone's

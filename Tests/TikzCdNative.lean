@@ -119,6 +119,61 @@ def tikzcdNativeChecks (ref : IO.Ref (List String)) (mathSet : Font.FontSet) : I
   let lpages := (layoutOf mathSet ldoc).pages
   t "diagram natively: and on the PDF's page, where its link lands"
     ((Layout.destination? lpages "cd").isSome && (Layout.destination? lpages "al").isSome)
+  -- A drawn display is placed as a display: the boundary's own skips, the
+  -- short pair after a line that ends left of the drawing (tex.web §1146,
+  -- §1203), and on the web page the display paragraph a formula's is. The
+  -- invariant whose absence set every drawn display with the `center`
+  -- environment's spacing, the same distance after a short line and a long
+  -- one.
+  let diagram := "\\[\\begin{tikzcd} \\mathrm{Alpha} \\arrow[r] & \\mathrm{Beta} \\end{tikzcd}\\]"
+  let around (lead : String) : Option Dim.Sp :=
+    let c := page (firstPass (dvDoc pre (lead ++ "\n" ++ diagram ++ "\nAfter."))).1
+    match (c[0]?.bind fun p => p.lines.find? (·.text.trimAscii.toString == lead)),
+          (c[0]?.bind fun p => p.lines.find? (·.text.trimAscii.toString == "After.")) with
+    | some a, some b => some (b.y - a.y)
+    | _, _ => none
+  let skips := Ir.displaySkipsFor {} (Dim.pt 10)
+  let short := "Short."
+  let long := "Words enough to stand past the middle of the measure here."
+  t "diagram display: after a long line the long skips, after a short one the short pair"
+    (match around long, around short with
+     | some l, some sh =>
+       l - sh == (skips.above.width.sp - skips.aboveShort.width.sp) +
+         (skips.below.width.sp - skips.belowShort.width.sp)
+     | _, _ => false)
+  -- A description label's box is tikz-cd's `background color`, white
+  -- whatever the page's ground (tikzlibrarycd.code.tex's default), as LaTeX
+  -- paints it.
+  let (desc, _) := firstPass (dvDoc ("\\palette{ bg = #202020, fg = #F0F0F0 }\n" ++ pre)
+    "\\[\\begin{tikzcd} \\mathrm{Alpha} \\arrow[r, \"f\" description] & \\mathrm{Beta} \\end{tikzcd}\\]")
+  let fills := ((layoutOf mathSet desc).pages.flatMap pageDraws).filterMap fun (_, f, _) =>
+    f.bind fillColor?
+  t "diagram description: its label's box is tikz-cd's white, whatever the page's ground"
+    (fills.contains Ir.Color.white && !((desc.palette.find? "bg").any fills.contains))
+  -- The manual's own spelling, outside mathematics: a diagram in a
+  -- paragraph of its own or a `center` is a picture block the reader draws,
+  -- and one among a paragraph's text breaks it, named, as a picture there
+  -- does — never an unknown environment whose cells' `&` are reserved.
+  let bare := "\\begin{tikzcd} \\mathrm{Alpha} \\arrow[r] & \\mathrm{Beta} \\end{tikzcd}"
+  for (what, body) in [("in a paragraph of its own", "Before.\n\n" ++ bare ++ "\n\nAfter."),
+      ("in a center", "Before.\n\n\\begin{center}" ++ bare ++ "\\end{center}\n\nAfter."),
+      ("among a paragraph's text", "Before " ++ bare ++ " after.")] do
+    let (bdoc, bds) := firstPass (dvDoc pre body)
+    let bc := page bdoc
+    t s!"diagram block: {what}: drawn by the reader, no unknown environment or reserved character"
+      ((Ir.pictureRefs bdoc).isEmpty &&
+        bds.all (fun d => !["E0311", "W0302", "W0012", "N0023"].contains d.code) &&
+        ["Alpha", "Beta"].all (fun w => hasStr (censusText bc) w) &&
+        (bc[0]?.map (·.paths == 2)).getD false)
+    if what == "among a paragraph's text" then
+      t "diagram block: among a paragraph's text, the break is named"
+        (bds.any fun d => d.code == "W0334" && hasStr d.message "inside a paragraph")
+  let (sdoc, _) := firstPass (dvDoc pre (short ++ "\n" ++ diagram ++ "\nAfter."))
+  t "diagram display: on the web page the display paragraph holds the drawing"
+    (sdoc.body.any fun b =>
+      let n := HtmlDoc.blockNode {} b
+      (attrValuesOf (· == "p") "class" n).contains "display" &&
+        (elemNodesOne (· == "svg") #[] n).size == 1)
   -- A drawing sets in the size in force where it stands, as a diagram's
   -- cells and a picture's nodes set in the font current at their statement
   -- — the size the boundary's request carries too (`pictureSizeInForce`).

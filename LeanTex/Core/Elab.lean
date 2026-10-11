@@ -163,6 +163,10 @@ public structure PicCtx where
   written (`macroScan`). One entry per name; the request site carries the
   subset a picture body reaches. -/
   macros : Array (String × String) := #[]
+  /-- The directories the document's last `\graphicspath` names
+  (`Compat.graphicsPath`), which the finished document carries for the
+  driver's image lookup (`Ir.Doc.graphicsPath`). -/
+  graphics : Array String := #[]
   /-- The key lists the document's `\tikzset` lines wrote, in source order
   and wherever they stood, each beside the span of its line in the file
   that holds it (`Compat.tikzsetKeys`). Their `/.style` definitions are
@@ -1318,8 +1322,12 @@ private def slidesStageOf (opts : List String) : Sp × Sp :=
       Ir.slidesStageNamed ((o.drop "aspectratio=".length).toString)
     else none).getD Ir.slidesStage43
 
+/-- The picture environments, whose body is the boundary's or the
+picture reader's and never a paragraph's text: a `tikzpicture`, a
+`tikzcd` (outside mathematics, the tikz-cd manual's own spelling), and the
+externalized picture. -/
 private def reservedEnv : List String :=
-  ["external", "tikzpicture"]
+  ["external", "tikzpicture", "tikzcd"]
 
 /-- The alignment environments this slice renders as grids: the column
 model, and whether LaTeX numbers the rows (numbers are owed, W0014).
@@ -4830,6 +4838,71 @@ private def soleTikzcd (body : Array Raw) : Option (Array Raw × Pos) :=
   | [.env "tikzcd" b p] => some (b, p)
   | _ => none
 
+/-- A diagram's request and the reader's drawing of it: its source as the
+boundary states it (`Ir.PicKind.cd`, at the size in force), its identity,
+and what `Picture.Cd.elabCd` draws with the losses it names — the
+document's `\tikzcdset` lines among them, whose keys the reader does not
+read, so the boundary reads them or the drawing ships without them, named.
+A `description` label's box is tikz-cd's `background color`, white unless a
+`\tikzcdset` changes it (tikzlibrarycd.code.tex), which routes the diagram
+whole. -/
+private def cdReading (ctx : Ctx) (b : Array Raw) :
+    EM (Ir.PicSrc × String × Ir.Pic.Picture × Array Picture.PDiag) := do
+  let src : Ir.PicSrc :=
+    { kind := .cd, body := Parse.rawSrc b, size := ← pictureSizeInForce }
+  let (pic, pdiags) := Picture.Cd.elabCd ctx.palette b (pictureMath ctx) ctx.pic.metric
+    ctx.page.fontSize Ir.Color.white ((src.size.bind fun n => ctx.page.scale.lookup n).getD 1000)
+  let pdiags := if (ctx.pic.preamble.splitOn "\\tikzcdset").length > 1 then
+      pdiags.push (.W0334, "the document's '\\tikzcdset' settings are outside the native \
+diagram reader; the diagram is drawn without them")
+    else pdiags
+  return (src, Ir.picHash src.source, pic, pdiags)
+
+/-- The reader's losses where its drawing ships, each named once: keyed under
+the picture where the boundary withdrew its request or the document declined
+the boundary (`\pictures{ tool = none }`), so the driver folds them into the
+picture's one line as it folds a `tikzpicture`'s (`Cli.Boundary.foldLines`),
+and the drawing's span recorded. -/
+private def cdNamed (ctx : Ctx) (id : String) (pic : Ir.Pic.Picture)
+    (pdiags : Array Picture.PDiag) (pos : Pos) : EM Unit := do
+  let declined := ctx.pic.tool.isNone && !pic.shapes.isEmpty && Picture.namesLoss pdiags
+  if declined then
+    modify fun st => if st.spans.declined.contains id then st
+      else { st with spans := { st.spans with declined := st.spans.declined.push id } }
+  for (code, msg) in pdiags do
+    let help : Option String := match code with
+      | .W0334 => some "write it with arrows, labels and keys the diagram reader draws, \
+or let a boundary tool draw it"
+      | _ => none
+    -- premise: pictureRouteChecks — the driver folds every refusal keyed
+    -- under a withdrawn or declined picture into that picture's one line,
+    -- none dropped
+    if ctx.pic.withdrawn.contains id || declined then
+      warnOnce ctx ("picture:" ++ id ++ ":" ++ msg) code msg pos (help := help)
+    else
+      warnOnce ctx ("picture:" ++ msg) code msg pos (help := help)
+  recordNativePictureSpan ctx pos
+
+/-- A diagram's boundary request, stated once: its source, a fallback the
+driver may withdraw when `fallback`, its span and the N0023 note. The image
+source that stands where the diagram does. -/
+private def cdRequest (ctx : Ctx) (src : Ir.PicSrc) (id : String) (pos : Pos)
+    (fallback : Bool) : EM String := do
+  let tool := ctx.pic.tool.getD "lualatex"
+  let img := Ir.picSrcPrefix ++ id
+  modify fun st =>
+    let st := if st.pictures.any (fun p => p.1 == id) then st
+      else { st with pictures := st.pictures.push (id, src) }
+    if !fallback || st.spans.fallbacks.contains id then st
+    else { st with spans := { st.spans with fallbacks := st.spans.fallbacks.push id } }
+  recordImageSpan ctx img pos
+  warnOnce ctx ("picture:boundary:" ++ id) .N0023
+    s!"this diagram is drawn by {tool} at the boundary; its text is not \
+in the document's census" pos
+    (help := "the box is measured and placed by the engine; a figure caption \
+names it for assistive technology")
+  return img
+
 /-- **A commutative diagram the engine draws whole is its own picture.** The
 diagram reader (`Picture.Cd.elabCd`) lays the cells out and draws the
 arrows; where it names no loss, the display ships its drawing and asks the
@@ -4841,32 +4914,14 @@ formula's text where the reader drew something. -/
 private def tikzcdNative (ctx : Ctx) (body : Array Raw) (pos : Pos) :
     EM (Option Ir.Pic.Picture) := do
   let some (b, _) := soleTikzcd body | return none
-  let src : Ir.PicSrc :=
-    { kind := .cd, body := Parse.rawSrc b, size := ← pictureSizeInForce }
-  let id := Ir.picHash src.source
-  let ground := (ctx.palette.find? "bg").getD Ir.Color.white
-  let (pic, pdiags) := Picture.Cd.elabCd ctx.palette b (pictureMath ctx) ctx.pic.metric
-    ctx.page.fontSize ground ((src.size.bind fun n => ctx.page.scale.lookup n).getD 1000)
-  -- The document's `\tikzcdset` lines set keys this reader does not read:
-  -- the diagram is the boundary's, which reads them, or is drawn here with
-  -- them named.
-  let pdiags := if (ctx.pic.preamble.splitOn "\\tikzcdset").length > 1 then
-      pdiags.push (.W0334, "the document's '\\tikzcdset' settings are outside the native \
-diagram reader; the diagram is drawn without them")
-    else pdiags
+  let (_, id, pic, pdiags) ← cdReading ctx b
   if pic.shapes.isEmpty then return none
   -- premise: tikzcdNativeChecks — a diagram the reader draws with a named
   -- loss goes to the open boundary whole, and draws here, named, where it
   -- is closed or the request was withdrawn.
   if Picture.namesLoss pdiags && ctx.pic.tool.isSome && !ctx.pic.withdrawn.contains id then
     return none
-  for (code, msg) in pdiags do
-    let help : Option String := match code with
-      | .W0334 => some "write it with arrows, labels and keys the diagram reader draws, \
-or let a boundary tool draw it"
-      | _ => none
-    warnOnce ctx ("picture:" ++ msg) code msg pos (help := help)
-  recordNativePictureSpan ctx pos
+  cdNamed ctx id pic pdiags pos
   return some pic
 
 /-- **A commutative diagram standing alone in a display is a picture.**
@@ -4889,20 +4944,37 @@ private def tikzcdDisplay (ctx : Ctx) (body : Array Raw) (pos : Pos) :
   -- door refuses keeps the text floor and its W0012, and a drawn one ships
   -- the boundary's box with no floor.
   if ctx.pic.tool.isNone || ctx.pic.withdrawn.contains id then return none
-  let tool := ctx.pic.tool.getD "lualatex"
-  let img := Ir.picSrcPrefix ++ id
-  modify fun st =>
-    let st := if st.pictures.any (fun p => p.1 == id) then st
-      else { st with pictures := st.pictures.push (id, src) }
-    if st.spans.fallbacks.contains id then st
-    else { st with spans := { st.spans with fallbacks := st.spans.fallbacks.push id } }
-  recordImageSpan ctx img pos
-  warnOnce ctx ("picture:boundary:" ++ id) .N0023
-    s!"this diagram is drawn by {tool} at the boundary; its text is not \
-in the document's census" pos
-    (help := "the box is measured and placed by the engine; a figure caption \
-names it for assistive technology")
+  let img ← cdRequest ctx src id pos true
   return some (.role Ir.displayPictureRole #[.image img {} .undeclared])
+
+/-- **A commutative diagram standing as a block is a picture**, as a
+`tikzpicture` there is: the tikz-cd manual's own spelling, `\begin{tikzcd}`
+outside mathematics — in a paragraph of its own or a `center`, or among a
+paragraph's text, which breaks at it and is named so (`pictureInSentence`).
+The reader draws it where it names no loss; where it names one, or draws
+nothing, and the boundary is open, the boundary draws it whole as its own
+request kind, the reader's drawing the fallback a withdrawal returns to;
+where the boundary is closed or the request withdrawn, the drawing ships
+with its losses named, and a diagram the reader draws nothing of is the
+placeholder a `tikzpicture`'s is (W0362). -/
+private def tikzcdArm (ctx : Ctx) (body : Array Raw) (pos : Pos)
+    (blocks : Array Block) : EM (Array Block) := do
+  let (src, id, pic, pdiags) ← cdReading ctx body
+  -- premise: tikzcdNativeChecks — a diagram the reader draws with a named
+  -- loss goes to the open boundary whole, and draws here, named, where it
+  -- is closed or the request was withdrawn.
+  if ctx.pic.tool.isSome && !body.isEmpty &&
+      (pic.shapes.isEmpty || (Picture.namesLoss pdiags && !ctx.pic.withdrawn.contains id)) then
+    let img ← cdRequest ctx src id pos !pic.shapes.isEmpty
+    return blocks.push (.para #[.image img {} pic.alternative])
+  cdNamed ctx id pic pdiags pos
+  if pic.shapes.isEmpty then
+    warnOnce ctx "picture:placeholder" .W0362
+      "no part of this diagram is inside the rendered subset; a placeholder box marks \
+its place" pos
+      (help := "the box holds the diagram's place; \\allow{W0362} accepts the loss")
+    return blocks.push (.picture (Picture.placeholder DiagCode.W0362.code))
+  return blocks.push (.picture pic)
 
 seal pictureOptEntries splitPictureAlt subsetPicture routePicture inlinePicture
 seal secFmtOfBody applySecFmt applyCounter counterCtrl counterArm runInHead
@@ -9957,13 +10029,6 @@ private def stepEquation : EM String := do
   modify fun st => { st with ctr := { st.ctr with eqNum := v, eqSnap := snap } }
   return withinNumber st.ctr st.ctr.eqWithin v
 
-/-- A display's label anchors where a drawing stands for its formula: the
-paragraph of anchors alone, which ships no ink and opens no gap in either
-backend (`collectParaBlock`, `paragraphNode`) — the anchors a formula's
-paragraph carries before its formula. -/
-private def labelAnchors (keys : Array String) : Array Block :=
-  if keys.isEmpty then #[] else #[.para (keys.map Ir.Inline.label)]
-
 /-- A display-math environment, outside the knot to keep the pack small. -/
 private def displayMathArm (ctx : Ctx) (numbered : Bool) (body : Array Raw) (pos : Pos)
     (blocks : Array Block) : EM (Array Block) := do
@@ -9976,7 +10041,7 @@ private def displayMathArm (ctx : Ctx) (numbered : Bool) (body : Array Raw) (pos
     if let some pic ← tikzcdNative ctx cleaned pos then
       for key in keys do
         recordLabel ctx key (← get).refTarget pos
-      return (blocks ++ labelAnchors keys).push (.center #[.picture pic])
+      return blocks.push (Ir.displayPictureBlock keys pic)
   let inl ← match ← tikzcdDisplay ctx cleaned pos with
     | some pic => pure pic
     | none => elabMathInline ctx true cleaned pos
@@ -10036,7 +10101,8 @@ private def alignEnvArm (ctx : Ctx) (n : String) (kind : Math.GridKind)
   -- unnumbered alignment's lone diagram takes the picture's door.
   if !numbered && tag.isNone then
     if let some native ← tikzcdNative ctx cleaned pos then
-      return (blocks ++ labelAnchors keys).push (.center #[.picture native])
+      return blocks.push (.role ({ align := true } : Ir.DisplayCtx).role
+        #[Ir.displayPictureBlock keys native])
   let pic ← if numbered || tag.isSome then pure none else tikzcdDisplay ctx cleaned pos
   let inl ← match pic with
     | some pic => pure pic
@@ -10057,7 +10123,7 @@ picture on its own line is a row (`Compat.boxRows`), and never reaches
 here. Outside the knot. -/
 private def pictureInSentence (ctx : Ctx) (n : String) (cur raws : Array Raw) (i : Nat)
     (pos : Pos) : EM Unit := do
-  if n != "tikzpicture" then return
+  if n != "tikzpicture" && n != "tikzcd" then return
   let text (r : Raw) : Bool := r matches .word _ _ || r matches .sym _ _ || r matches .math false _ _
   let after := (raws.extract (i + 1) raws.size).toList.takeWhile fun r =>
     !(r matches .par _) && !(r matches .env _ _ _)
@@ -10162,6 +10228,14 @@ accepts the loss")
     recordNativePictureSpan ctx pos
     blocks := blocks.push (.picture (Picture.placeholder DiagCode.W0362.code))
   return blocks
+
+
+/-- The picture environments a block stands for: a `tikzpicture`
+(`tikzArm`) and a commutative diagram outside mathematics (`tikzcdArm`).
+One door in the block knot, whose compilation is at its budget. -/
+private def pictureEnvArm (ctx : Ctx) (n : String) (body : Array Raw) (pos : Pos)
+    (blocks : Array Block) : EM (Array Block) :=
+  if n == "tikzcd" then tikzcdArm ctx body pos blocks else tikzArm ctx body pos blocks
 
 /-- The `\maketitle`/`\titlepage` arm, outside the knot: no recursion
 into the block walk. LaTeX typesets the title once: \maketitle disables
@@ -12943,8 +13017,8 @@ prefer the construct or the class, and keep '\\begin{ifbackend}' for the true re
     blocks := blocks ++ (← splicedFrameScope (some blocks.size)
       (elabBlockScope ctx (body.extract j body.size)))
     blocks := blocks ++ (← splicedFrameScope (some blocks.size) (elabBlockScope envCtx env.endBody))
-  else if n == "tikzpicture" then
-    blocks ← tikzArm ctx body pos blocks
+  else if n == "tikzpicture" || n == "tikzcd" then
+    blocks ← pictureEnvArm ctx n body pos blocks
   else if reservedEnv.contains n then
     warnOnce ctx ("env:" ++ n) .W0307
       s!"'\{{n}}' is not implemented yet; its content is not rendered" pos
@@ -17946,7 +18020,7 @@ private def beginDoc (file : String) (raws : Array Raw) (picPre : String := "")
     { ctx := { file := file, listingReplies := listingReplies
                pic := { tool := picTool0, preamble := picPre, metric := picMetric
                         withdrawn := picWithdrawn, macros := picMacros
-                        sets := picSets } } }
+                        sets := picSets, graphics := Compat.graphicsPath file raws } } }
   return { state := s, decls, body, trailing }
 
 private def prepareStyledBody (file : String) (decls : Array PDecl)
@@ -18312,6 +18386,7 @@ private def prepareStyledBody (file : String) (decls : Array PDecl)
       figureConvert := ctx.pic.convert
       pictureSrcs := (← get).pictures
       picturePreamble := ctx.pic.preamble
+      graphicsPath := ctx.pic.graphics
       -- Request material, so a document that states no request carries none:
       -- a `\newcommand` is otherwise a change to every document's `Doc`, and
       -- the definer family's whole point is that it moves no ink by itself.

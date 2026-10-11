@@ -97,4 +97,80 @@ def boundaryFaceChecks (ref : IO.Ref (List String)) : IO Unit := do
       (es.val.all fun e => !(e.val.get? "Type" == some (.name "Font") &&
         e.val.get? "Subtype" == some (.name "Type1")))
 
+/-- A boundary renderer that refuses every request naming a text face, as a
+document's own package refuses one beside it — newtxtext under LuaTeX loads
+fontspec with `.otf` defaults, so the face is looked for as a file — and
+draws every other by copying a committed PDF; each request it reads appends
+a line to `runs`. Shell builtins and `/bin/cp` alone. -/
+def faceRefusingRenderer (pdf runs : System.FilePath) : String :=
+  "#!/bin/sh\n" ++
+  "if [ \"$1\" = --version ]; then\n" ++
+  "  printf '%s\\n' 'synthetic boundary renderer 1'\n" ++
+  "  exit 0\n" ++
+  "fi\n" ++
+  "printf '%s\\n' run >> " ++ shQuote runs.toString ++ "\n" ++
+  "faced=0\n" ++
+  "while IFS= read -r line || [ -n \"$line\" ]; do\n" ++
+  "  case \"$line\" in *setmainfont*) faced=1 ;; esac\n" ++
+  "done < pic.tex\n" ++
+  "if [ $faced = 1 ]; then\n" ++
+  "  printf '%s\\n' '! Package fontspec Error: The font cannot be found.' > pic.log\n" ++
+  "  exit 1\n" ++
+  "fi\n" ++
+  "/bin/cp " ++ shQuote pdf.toString ++ " pic.pdf || exit 3\n" ++
+  "printf '%s\\n' 'Output written on pic.pdf (1 page).' > pic.log\n"
+
+/-- **The page's faces never cost a picture its drawing.** The invariant whose
+absence withdrew every picture of a document loading newtxtext, txfonts,
+newpxmath, mathabx, libertinust1math or stix: the boundary request carries
+the faces the page sets in, a package the document loads refuses fontspec or
+unicode-math beside them, and the picture the document's own request draws
+fell back to the rendered subset with its losses named. The built binary, on
+a machine whose renderer refuses every request naming a face
+(`faceRefusingRenderer`), for a deck whose engine-resolved face travels (a
+face under the user's own font directory): the picture is the boundary's —
+no withdrawal, no placeholder, no refusal — after two requests, the page's
+and the document's own; and a warm rebuild asks the renderer nothing, both
+answers remembered. The caller supplies an already-built binary. -/
+def boundaryFaceRetryChecks (ref : IO.Ref (List String))
+    (binary : System.FilePath := ".lake/build/bin/leantex") : IO Unit := do
+  let t := check ref
+  let binary ← IO.FS.realPath binary
+  let font ← IO.FS.realPath "testdata/corpus/fonts/OpenSans-Regular.ttf"
+  let pdf ← IO.FS.realPath "testdata/boundary/cd-faces.pdf"
+  IO.FS.withTempDir fun dir => do
+    let dir ← IO.FS.realPath dir
+    let runs := dir / "runs"
+    writeScript (dir / "bin" / "lualatex") (faceRefusingRenderer pdf runs)
+    let face := dir / "home" / ".fonts" / "OpenSans-Regular.ttf"
+    IO.FS.createDirAll (dir / "home" / ".fonts")
+    IO.FS.writeBinFile face (← IO.FS.readBinFile font)
+    IO.FS.writeFile (dir / "doc.tex") ("\\documentclass{article}\n\\usepackage{newtxtext}\n" ++
+      "\\begin{document}\nBefore.\n\n\\begin{tikzpicture}\\node at (0,0) {Alpha};" ++
+      "\\pattern (0,0) rectangle (1,1);\\end{tikzpicture}\n\nAfter.\n\\end{document}\n")
+    let build : IO (UInt32 × Bool × Array (String × String) × Nat) := do
+      let out := dir / "doc.pdf"
+      if ← out.pathExists then IO.FS.removeFile out
+      let r ← IO.Process.output {
+        cmd := binary.toString, cwd := some dir
+        args := #["doc.tex", "-o", out.toString, "--porcelain"]
+        env := #[("PATH", some (dir / "bin").toString),
+          ("XDG_CACHE_HOME", some (dir / "cache").toString),
+          ("HOME", some (dir / "home").toString), ("LEANTEX_FONT", some face.toString)] }
+      let mut n := 0
+      if ← runs.pathExists then
+        n := (((← IO.FS.readFile runs).splitOn "\n").filter (!·.isEmpty)).length
+      return (r.exitCode, ← out.pathExists, porcelainCodes r.stdout, n)
+    let undrawn (cs : Array (String × String)) : Bool :=
+      cs.any fun (c, _) => ["W0382", "W0419", "N0419", "W0379", "W0362"].contains c
+    let (e1, w1, c1, n1) ← build
+    t s!"boundary face retry: the cold build ships ({e1}; {c1})" (e1 == 0 && w1)
+    t s!"boundary face retry: the picture is the boundary's drawing ({c1})" (!undrawn c1)
+    t s!"boundary face retry: the page's request, then the document's own ({n1} runs)" (n1 == 2)
+    let (e2, w2, c2, n2) ← build
+    t s!"boundary face retry: the warm build ships the same drawing ({e2}; {c2})"
+      (e2 == 0 && w2 && !undrawn c2)
+    t s!"boundary face retry: the warm build asks the renderer nothing ({n2 - n1} runs)"
+      (n2 == n1)
+
 end Tests

@@ -572,6 +572,15 @@ def fakeRenderer (pdf : System.FilePath) : String :=
   "/bin/cp " ++ shQuote pdf.toString ++ " pic.pdf || exit 3\n" ++
   "printf '%s\\n' 'Output written on pic.pdf (1 page).' > pic.log\n"
 
+/-- A build's diagnostics as its porcelain records them: each record's code
+and severity. -/
+def porcelainCodes (stdout : String) : Array (String × String) :=
+  (((stdout.splitOn "\n").filter (!·.isEmpty)).filterMap fun l =>
+    (Lean.Json.parse l).toOption.bind fun j =>
+      if j.getObjValAs? String "event" != .ok "diagnostic" then none
+      else some ((j.getObjValAs? String "code").toOption.getD "",
+        (j.getObjValAs? String "severity").toOption.getD "")).toArray
+
 /-- A PDF-to-SVG converter that names its version and converts by copying
 one SVG to the output it is given (`-svg <input> <output>`). -/
 def fakeConverter (svg : System.FilePath) : String :=

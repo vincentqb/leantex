@@ -280,9 +280,16 @@ private theorem inputEnv_ne_tikzpicture (f : String) :
   have := congrArg (fun s => s.toList.head?) h
   simp [Parse.inputEnv] at this
 
+private theorem inputEnv_ne_tikzcd (f : String) :
+    (Parse.inputEnv f != "tikzcd") = true := by
+  simp only [bne_iff_ne, ne_eq]
+  intro h
+  have := congrArg (fun s => s.toList.head?) h
+  simp [Parse.inputEnv] at this
+
 private theorem pictureInSentence_input (ctx : Ctx) (f : String) (cur raws : Array Raw) (i : Nat)
     (pos : Pos) : pictureInSentence ctx (Parse.inputEnv f) cur raws i pos = pure () := by
-  simp [pictureInSentence, inputEnv_ne_tikzpicture]
+  simp [pictureInSentence, inputEnv_ne_tikzpicture, inputEnv_ne_tikzcd]
 
 private theorem openLengthScope_inert (ctx : Ctx) (raws : Array Raw)
     (h : lengthScopeKeys? raws = none) :

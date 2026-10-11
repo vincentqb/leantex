@@ -13,8 +13,9 @@ section 1 number "1"
   text "A square"
 para
   text "Before the square."
-center
+role display-picture
   picture 13 shapes
+    baseline -9
     border 0 0 0 0
     border 36 0 36 0
     border 0 -18 0 -18
@@ -64,32 +65,34 @@ para
   text "After the square."
 section 1 number "2"
   text "A triangle"
-center
-  picture 7 shapes
-    border 0 0 0 0
-    border 24 0 24 0
-    border 24 -18 24 -18
-    border 12 3.523 12 3.523
-    label 0 0 #000000 1000 west
-      formula inline "K"
-        ord:𝐾
-    label 24 0 #000000 1000 west
-      formula inline "L"
-        ord:𝐿
-    label 24 -18 #000000 1000 west
-      formula inline "M"
-        ord:𝑀
-    group
-      draw path (0,0)~(23.654,0.2) stroke #000000 0.4
-      draw path (23.228,3.221)~(23.827,0.1)~(20.823,-0.936) stroke #000000 0.4 cap round join round
-    label 12 3.523 #000000 700 west
-      formula inline "m"
-        ord:𝑚
-    group
-      draw path (0,0)--(23.68,-17.76) stroke #FF0000 0.4
-      draw path (23.616,-14.712)~(23.84,-17.88)~(20.736,-18.552) stroke #FF0000 0.4 cap round join round
-    group
-      draw path (24,0)--(24,-17.6) stroke #000000 0.4
-      draw path (26.4,-15.72)~(24,-17.8)~(21.6,-15.72) stroke #000000 0.4 cap round join round
+role display-vefo
+  role display-picture
+    picture 7 shapes
+      baseline -9
+      border 0 0 0 0
+      border 24 0 24 0
+      border 24 -18 24 -18
+      border 12 3.523 12 3.523
+      label 0 0 #000000 1000 west
+        formula inline "K"
+          ord:𝐾
+      label 24 0 #000000 1000 west
+        formula inline "L"
+          ord:𝐿
+      label 24 -18 #000000 1000 west
+        formula inline "M"
+          ord:𝑀
+      group
+        draw path (0,0)~(23.654,0.2) stroke #000000 0.4
+        draw path (23.228,3.221)~(23.827,0.1)~(20.823,-0.936) stroke #000000 0.4 cap round join round
+      label 12 3.523 #000000 700 west
+        formula inline "m"
+          ord:𝑚
+      group
+        draw path (0,0)--(23.68,-17.76) stroke #FF0000 0.4
+        draw path (23.616,-14.712)~(23.84,-17.88)~(20.736,-18.552) stroke #FF0000 0.4 cap round join round
+      group
+        draw path (24,0)--(24,-17.6) stroke #000000 0.4
+        draw path (26.4,-15.72)~(24,-17.8)~(21.6,-15.72) stroke #000000 0.4 cap round join round
 -- diagnostics
 note[N0100] 11:1 '\usepackage{tikz-cd}' → nothing: the engine does this itself

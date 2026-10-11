@@ -36,6 +36,7 @@ import LeanTex.Cli.FontAssembly
 import LeanTex.Cli.FontFix
 import LeanTex.Cli.PlanLoss
 import LeanTex.Cli.Boundary
+import LeanTex.Cli.Host
 import LeanTex.Cli.Batch
 import LeanTex.Cli.Compression
 import LeanTex.Cli.PictureAssets
@@ -243,25 +244,21 @@ def resolvePictures (ui : Ui) (file : String) (doc : Ir.Doc)
     IO (Array PicResult × Array (String × Boundary.Undrawn)) := do
   let refs := Ir.pictureRefs doc faces
   if refs.isEmpty then return (#[], #[])
-  -- The files each request reads (`Ir.pictureInputs`), resolved as an
-  -- image of the document is — against its own directory, through
-  -- graphicx's extensions — and read once: staged beside the standalone and
-  -- keyed by their bytes (`PictureAssets.keyed`). One the document's
-  -- directory does not hold is left for the tool to name.
-  let dir := (System.FilePath.mk file).parent.getD "."
-  let inputsOf (wrapped : String) : IO (Array (String × ByteArray)) := do
-    let mut out : Array (String × ByteArray) := #[]
-    for p in Ir.pictureInputs wrapped do
-      for cand in Image.sourceCandidates p do
-        let path := if (System.FilePath.mk cand).isAbsolute then System.FilePath.mk cand
-          else dir / cand
-        if ← path.pathExists then
-          if let .ok bytes ← (IO.FS.readBinFile path).toBaseIO then
-            out := out.push (cand, bytes)
-          break
-    return out
+  -- **The page's faces never cost a picture its drawing.** Where they
+  -- changed a request, the document's own stands behind it, asked only
+  -- where the tool refused the faced one (`Boundary.ownRequest?`).
+  -- premise: boundaryFaceRetryChecks — a tool that refuses every request
+  -- naming a face draws the document's own, warm and cold, and is asked for
+  -- nothing more once both answers are remembered
+  let own := Ir.pictureRefs doc
+  -- The files each request reads, staged beside its standalone
+  -- (`Boundary.requestInputs`); one the document's directory does not hold
+  -- is left for the tool to name.
+  let dir := ((System.FilePath.mk file).parent.getD ".").toString
   let keyedRefs ← refs.mapM fun (id, wrapped) => do
-    return (id, wrapped, ← inputsOf wrapped)
+    let ownWrapped := ((own.find? (·.1 == id)).map (·.2)).getD wrapped
+    return (id, wrapped, ownWrapped,
+      ← Host.runIO (Boundary.requestInputs dir doc.graphicsPath wrapped))
   let spanFor (hash : String) : Option Span :=
     (imageSpans.find? (·.1 == Ir.picSrcPrefix ++ hash)).map (·.2)
   let tool := doc.pictureTool.getD "lualatex"
@@ -273,8 +270,9 @@ def resolvePictures (ui : Ui) (file : String) (doc : Ir.Doc)
       ToolProbe.identify (dir / PicCache.versionName (Ir.picHash tool))
         stamp (ToolProbe.probeVersion tool)
     | none => ToolProbe.probeVersion tool
-  let fulfil (request : String × String × Array (String × ByteArray)) : IO PicAttempt := do
-    let (id, wrapped, inputs) := request
+  let fulfil (request : String × String × String × Array (String × ByteArray)) :
+      IO PicAttempt := do
+    let (id, wrapped, ownWrapped, inputs) := request
     let src := Ir.picSrcPrefix ++ id
     -- The cache key is the *request* — the body wrapped with the design it
     -- reads, and the bytes of the files it reads — so a palette or font
@@ -287,8 +285,14 @@ def resolvePictures (ui : Ui) (file : String) (doc : Ir.Doc)
       -- No tool: the cold decision is `Boundary.coldPicture`'s — an earlier
       -- render of this request serves, and where none exists W0379 names
       -- the loss it returns.
+      let ownKey := PictureAssets.key (PictureAssets.keyed ownWrapped inputs)
       let earlier ← match picDir with
-        | some dir => Boundary.coldPicture dir tool key (spanFor id) why
+        | some dir => do
+          match ← Boundary.coldPicture dir tool key (spanFor id) why with
+          | .error d =>
+            if ownKey == key then pure (.error d)
+            else Boundary.coldPicture dir tool ownKey (spanFor id) why
+          | drawn => pure drawn
         | none => pure (.error (DriverDiag.boundaryToolUnavailable tool (spanFor id) why))
       match earlier with
       | .ok bytes =>
@@ -302,7 +306,10 @@ def resolvePictures (ui : Ui) (file : String) (doc : Ir.Doc)
           detail := s!"{tool} unavailable ({why}), {id.take 16} as {key.take 16}, placeholder"
           elapsed := ← since t0 }
     | .present version =>
-      let answer ← PictureAssets.fulfil picDir tool stamp version wrapped inputs
+      let first ← PictureAssets.fulfil picDir tool stamp version wrapped inputs
+      let (answer, owned) ← match Boundary.ownRequest? wrapped ownWrapped first.result.outcome with
+        | some r => pure ((← PictureAssets.fulfil picDir tool stamp version r inputs), true)
+        | none => pure (first, false)
       let outcome := answer.result.outcome
       let bytes := answer.result.bytes
       let result := match outcome with
@@ -315,12 +322,13 @@ def resolvePictures (ui : Ui) (file : String) (doc : Ir.Doc)
       return {
         result
         detail := s!"{tool} ({version}), {id.take 16} as {key.take 16}, {status}" ++
+          (if owned then ", asked again without the page's faces" else "") ++
           (if answer.cached then " (cached)" else "")
         elapsed := ← since t0
         undrawn := (Boundary.undrawnOf tool outcome (spanFor id) src).map (src, ·) }
   -- Four TeX processes bound peak memory on a laptop; this changes
   -- scheduling alone, never the request or its cache key.
-  let attempts ← Batch.map 4 (fun (_, wrapped, inputs) =>
+  let attempts ← Batch.map 4 (fun (_, wrapped, _, inputs) =>
     PictureAssets.key (PictureAssets.keyed wrapped inputs)) fulfil keyedRefs
   let mut results := #[]
   let mut undrawn := #[]
@@ -379,7 +387,8 @@ expensive kind. Returns whether the cache answered, for the phase line, and
 whether a fact about the machine stopped an included SVG's plan, for the
 page's placeholder (`Boundary.markUnplanned`). -/
 def fetchImage (dir : System.FilePath) (pics : Array PicResult)
-    (refused : Array (String × Diag)) (params : Image.PlanParams) (req : Image.Request) :
+    (refused : Array (String × Diag)) (params : Image.PlanParams) (req : Image.Request)
+    (paths : Array String := #[]) :
     IO (Image.Fetch × Bool × Bool) := do
   let src := req.src
   if src.startsWith Ir.picSrcPrefix then
@@ -393,7 +402,7 @@ def fetchImage (dir : System.FilePath) (pics : Array PicResult)
       | none =>
         return (.missing "the boundary cache (no picture declares this source)", false, false)
   let mut hit : Option (String × System.FilePath) := none
-  for cand in Image.sourceCandidates src do
+  for cand in Image.searchCandidates paths src do
     let p := if (System.FilePath.mk cand).isAbsolute then System.FilePath.mk cand
       else dir / cand
     if ← p.pathExists then
@@ -452,7 +461,7 @@ def loadImages (file : String) (doc : Ir.Doc) (pics : Array PicResult := #[])
   let mut stopped : Array Image.Request := #[]
   let mut hits := 0
   for req in Ir.imageRequests doc do
-    let (f, fromCache, machine) ← fetchImage dir pics refused params req
+    let (f, fromCache, machine) ← fetchImage dir pics refused params req doc.graphicsPath
     if fromCache then hits := hits + 1
     if machine then stopped := stopped.push req
     fetched := fetched.push (req, f)

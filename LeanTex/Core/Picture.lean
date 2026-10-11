@@ -7601,68 +7601,137 @@ private def labelAutoAnchor (ux uy : Int) (swap : Bool) : NodeAnchor :=
     else if nx then (if py then .southWest else if ny then .southEast else .south)
     else (if uy > 0 then .west else .east)
 
+/-- `acc` with the clip group one run of consecutive ink stands in, nothing
+for no ink. -/
+private def clipFlush (g : Gfx.Geom) (run : Array (Gfx.Node Empty))
+    (acc : Array Ir.Pic.Shape) : Array Ir.Pic.Shape :=
+  if run.isEmpty then acc
+  else acc.push (.ink (.group Gfx.Affine.unit #[{ geom := g, rule := .nonzero }] Gfx.Alpha.opaque run))
+
+/-- The shapes after a clip, in statement order: each run of consecutive ink
+one group the clip path clips, each label between them where it stood — a
+node written before a fill still paints under it, as in pgf. Accumulates,
+`run` the ink since the last label. -/
+private def clipRuns (g : Gfx.Geom) (run : Array (Gfx.Node Empty))
+    (acc : Array Ir.Pic.Shape) : List Ir.Pic.Shape → Array Ir.Pic.Shape
+  | [] => clipFlush g run acc
+  | .ink n :: rest => clipRuns g (run.push n) acc rest
+  | s@(.label ..) :: rest => clipRuns g #[] ((clipFlush g run acc).push s) rest
+
 /-- What a clip does to the statements after it in its scope (pgf manual
 §15.9; pgfcorepathusage.code.tex): their ink paints inside the clip path —
-one group of the model, clipped by it — and nothing after it reaches the
-picture's size, the clip path's own box standing for it. A node's letters
-are set as text, outside the model, so a label the clip would cut is named;
-one inside a rectangular clip is cut by nothing. -/
+each run of it one group of the model, clipped by it, so a label between two
+runs keeps its place in the painting order (`clipRuns`) — and nothing after
+it reaches the picture's size, the clip path's own box standing for it. A
+node's letters are set as text, outside the model, so a label the clip
+would cut is named; one inside a rectangular clip is cut by nothing. -/
 private def clipAfter (cx : Cx) (before : Ev) (g : Gfx.Geom) (inner : Ev) : Ev :=
-  let inks := inner.shapes.filterMap inkOf
   let labels := inner.shapes.filter isLabelShape
-  let group : Array Ir.Pic.Shape := if inks.isEmpty then #[] else
-    #[.ink (.group Gfx.Affine.unit #[{ geom := g, rule := .nonzero }] Gfx.Alpha.opaque inks)]
   let inside (s : Ir.Pic.Shape) : Bool := match s, g with
     | .label x y content _ scale align, .rect rx ry rw rh =>
       let ((a, b), (c, d)) := Ir.Pic.labelGlyphBox x y align (cx.metric content scale)
       rx ≤ a && ry ≤ b && c ≤ rx + rw && d ≤ ry + rh
     | _, _ => false
-  let ev := { inner with shapes := before.shapes ++ group ++ labels
+  let ev := { inner with shapes := before.shapes ++ clipRuns g #[] #[] inner.shapes.toList
                          borders := before.borders ++ g.hull.toArray }
   if labels.all inside then ev
   else ev.diag (.W0334, "a node after a '\\clip' is set whole; the clip reaches only the \
 picture's paths")
 
+/-- A flush keeps what it was handed, and adds the run's group where the run
+holds ink. -/
+private theorem clipFlush_mem (g : Gfx.Geom) (run : Array (Gfx.Node Empty))
+    (acc : Array Ir.Pic.Shape) :
+    (∀ s ∈ acc, s ∈ clipFlush g run acc) ∧
+      (run.isEmpty = false → Ir.Pic.Shape.ink (.group Gfx.Affine.unit
+        #[{ geom := g, rule := .nonzero }] Gfx.Alpha.opaque run) ∈ clipFlush g run acc) := by
+  unfold clipFlush
+  split
+  · rename_i h
+    exact ⟨fun _ hs => hs, fun hne => by simp [h] at hne⟩
+  · exact ⟨fun _ hs => Array.mem_push.mpr (.inl hs), fun _ => Array.mem_push_self⟩
+
+private theorem run_nonempty {α : Type} (run : Array α) (a : α) (h : a ∈ run) :
+    run.isEmpty = false := by
+  cases hr : run.isEmpty with
+  | false => rfl
+  | true => simp [Array.isEmpty_iff.mp hr] at h
+
+/-- Every shape `clipRuns` was handed past `acc` ships: a label as itself,
+a mark of ink inside a group the clip path clips. -/
+private theorem clipRuns_covers (g : Gfx.Geom) :
+    ∀ (run : Array (Gfx.Node Empty)) (acc : Array Ir.Pic.Shape) (ss : List Ir.Pic.Shape),
+      (∀ s ∈ acc, s ∈ clipRuns g run acc ss) ∧
+      (∀ n ∈ run, ∃ r, n ∈ r ∧ Ir.Pic.Shape.ink (.group Gfx.Affine.unit
+          #[{ geom := g, rule := .nonzero }] Gfx.Alpha.opaque r) ∈ clipRuns g run acc ss) ∧
+      (∀ s ∈ ss, isLabelShape s → s ∈ clipRuns g run acc ss) ∧
+      (∀ n, Ir.Pic.Shape.ink n ∈ ss → ∃ r, n ∈ r ∧ Ir.Pic.Shape.ink (.group Gfx.Affine.unit
+          #[{ geom := g, rule := .nonzero }] Gfx.Alpha.opaque r) ∈ clipRuns g run acc ss)
+  | run, acc, [] => by
+    obtain ⟨hkeep, hgroup⟩ := clipFlush_mem g run acc
+    exact ⟨hkeep, fun n hn => ⟨run, hn, hgroup (run_nonempty run n hn)⟩,
+      fun s hs => by simp at hs, fun n hn => by simp at hn⟩
+  | run, acc, .ink m :: rest => by
+    obtain ⟨hacc, hrun, hlab, hink⟩ := clipRuns_covers g (run.push m) acc rest
+    refine ⟨hacc, fun n hn => hrun n (Array.mem_push.mpr (.inl hn)), fun s hs hl => ?_,
+      fun n hn => ?_⟩
+    · simp only [List.mem_cons] at hs
+      rcases hs with rfl | hs
+      · simp [isLabelShape] at hl
+      · exact hlab s hs hl
+    · simp only [List.mem_cons] at hn
+      rcases hn with hn | hn
+      · have he : n = m := Ir.Pic.Shape.ink.inj hn
+        subst he
+        exact hrun n (Array.mem_push_self)
+      · exact hink n hn
+  | run, acc, (.label x y content color scale align) :: rest => by
+    obtain ⟨hacc, _, hlab, hink⟩ := clipRuns_covers g #[]
+      ((clipFlush g run acc).push (.label x y content color scale align)) rest
+    obtain ⟨hkeep, hgroup⟩ := clipFlush_mem g run acc
+    have hin : ∀ s ∈ clipFlush g run acc, s ∈
+        clipRuns g #[] ((clipFlush g run acc).push (.label x y content color scale align))
+          rest := fun s hs => hacc s (Array.mem_push.mpr (.inl hs))
+    refine ⟨fun s hs => hin s (hkeep s hs), fun n hn => ⟨run, hn, hin _
+      (hgroup (run_nonempty run n hn))⟩, fun s hs hl => ?_, fun n hn => ?_⟩
+    · simp only [List.mem_cons] at hs
+      rcases hs with rfl | hs
+      · exact hacc _ (Array.mem_push_self)
+      · exact hlab s hs hl
+    · simp only [List.mem_cons] at hn
+      rcases hn with hn | hn
+      · cases hn
+      · exact hink n hn
+
 /-- **A clip covers what follows it** (`_covers`): every shape before the
 clip ships as it was, every label after it ships, and every mark of ink
-after it ships inside the one group the clip path clips. -/
+after it ships inside a group the clip path clips. -/
 private theorem clip_covers (cx : Cx) (before inner : Ev) (g : Gfx.Geom) :
     (∀ s ∈ before.shapes, s ∈ (clipAfter cx before g inner).shapes) ∧
     (∀ s ∈ inner.shapes, isLabelShape s → s ∈ (clipAfter cx before g inner).shapes) ∧
     (∀ n, Ir.Pic.Shape.ink n ∈ inner.shapes →
-      Ir.Pic.Shape.ink (.group Gfx.Affine.unit #[{ geom := g, rule := .nonzero }]
-        Gfx.Alpha.opaque (inner.shapes.filterMap inkOf)) ∈ (clipAfter cx before g inner).shapes ∧
-      n ∈ inner.shapes.filterMap inkOf) := by
+      ∃ r, n ∈ r ∧ Ir.Pic.Shape.ink (.group Gfx.Affine.unit #[{ geom := g, rule := .nonzero }]
+        Gfx.Alpha.opaque r) ∈ (clipAfter cx before g inner).shapes) := by
   have hdiag : ∀ (e : Ev) (d : PDiag), (e.diag d).shapes = e.shapes := by
     intro e d
     unfold Ev.diag
     split <;> rfl
   have hshapes : (clipAfter cx before g inner).shapes =
-      before.shapes ++ (if (inner.shapes.filterMap inkOf).isEmpty then #[] else
-        #[.ink (.group Gfx.Affine.unit #[{ geom := g, rule := .nonzero }] Gfx.Alpha.opaque
-          (inner.shapes.filterMap inkOf))]) ++ inner.shapes.filter isLabelShape := by
+      before.shapes ++ clipRuns g #[] #[] inner.shapes.toList := by
     unfold clipAfter
     dsimp only
     split
     · rfl
     · exact hdiag _ _
+  obtain ⟨_, _, hlab, hink⟩ := clipRuns_covers g #[] #[] inner.shapes.toList
   refine ⟨fun s hs => ?_, fun s hs hl => ?_, fun n hn => ?_⟩
   · rw [hshapes]
-    exact Array.mem_append_left _ (Array.mem_append_left _ hs)
+    exact Array.mem_append_left _ hs
   · rw [hshapes]
-    exact Array.mem_append_right _ (Array.mem_filter.mpr ⟨hs, hl⟩)
-  · have hmem : n ∈ inner.shapes.filterMap inkOf := Array.mem_filterMap.mpr ⟨_, hn, rfl⟩
-    refine ⟨?_, hmem⟩
+    exact Array.mem_append_right _ (hlab s (Array.mem_toList_iff.mpr hs) hl)
+  · obtain ⟨r, hr, hg⟩ := hink n (Array.mem_toList_iff.mpr hn)
     rw [hshapes]
-    have hne : (inner.shapes.filterMap inkOf).isEmpty = false := by
-      cases h : (inner.shapes.filterMap inkOf).isEmpty with
-      | false => rfl
-      | true =>
-        rw [Array.isEmpty_iff] at h
-        rw [h] at hmem
-        simp at hmem
-    rw [hne]
-    exact Array.mem_append_left _ (Array.mem_append_right _ (by simp))
+    exact ⟨r, hr, Array.mem_append_right _ hg⟩
 
 mutual
 
@@ -9240,7 +9309,19 @@ public def elabCd (pal : Ir.Palette) (raws : Array Parse.Raw)
     | _, _ =>
       diags := note (.E0333, s!"an arrow from row {r + 1}, column {c + 1} reaches no cell; \
 it is not drawn") diags
-  return ({ shapes, borders }, diags)
+  -- Where the diagram stands on its line: tikz-cd's `every diagram` sets
+  -- `baseline=+0pt` around a matrix centred on the origin, so the baseline
+  -- runs through the matrix's centre, and a 1-row diagram's on its row's
+  -- base (`1-row diagram`).
+  let baseline : Option Sp :=
+    if ys.isEmpty then none
+    else if cells.size == 1 then
+      let axis := ((cells.getD 0 #[]).findSome? fun cell => cell.map (·.2.axis)).getD probe.axis
+      some (ys.getD 0 0 - axis)
+    else
+      some ((ys.getD 0 0 + rowUp.getD 0 0 + ys.getD (ys.size - 1) 0 -
+        rowDown.getD (ys.size - 1) 0) / 2)
+  return ({ shapes, borders, baseline }, diags)
 
 end Cd
 

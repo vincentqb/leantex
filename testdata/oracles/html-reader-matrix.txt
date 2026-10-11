@@ -57,11 +57,14 @@ declared          pass          untested      load,fonts,lang,landmarks,color-sc
 diagram           pass          untested      load,fonts,lang,landmarks,color-scheme,reduced-motion,print,no-script
 diagram-boundary  pass          untested      load,images,fonts,lang,landmarks,color-scheme,reduced-motion,print,no-script
 diagram-cd        pass          untested      load,fonts,mathml,lang,landmarks,color-scheme,reduced-motion,print,no-script
+diagram-longtail  pass          untested      load,fonts,lang,landmarks,color-scheme,reduced-motion,print,no-script
 diagram-overflow  pass          untested      load,fonts,lang,landmarks,color-scheme,reduced-motion,print,no-script
 diagram-refused   pass          untested      load,fonts,lang,landmarks,color-scheme,reduced-motion,print,no-script
+diagram-scope     pass          untested      load,fonts,lang,landmarks,color-scheme,reduced-motion,print,no-script
 diagram-shapes    pass          untested      load,fonts,mathml,mathAlpha,lang,landmarks,color-scheme,reduced-motion,print,no-script
 diagram-strokes   pass          untested      load,fonts,lang,landmarks,color-scheme,reduced-motion,print,no-script
 diagram-tikzset   pass          untested      load,fonts,lang,landmarks,color-scheme,reduced-motion,print,no-script
+diagram-tree      pass          untested      load,fonts,mathml,lang,landmarks,color-scheme,reduced-motion,print,no-script
 eqnum             pass          untested      load,fonts,mathml,lang,landmarks,color-scheme,reduced-motion,print,no-script
 figures           pass          untested      load,images,fonts,lang,landmarks,color-scheme,reduced-motion,print,no-script
 fill              pass          untested      load,fonts,lang,landmarks,color-scheme,reduced-motion,print,no-script

@@ -3,11 +3,13 @@ The invented probes of the picture subset, one per construct: what the
 `tikz-native` tier elaborates in-process and what `tikz-diff` draws with
 both engines. Data only; each consumer owns what it measures.
 -/
-/-- A probe's kind: a `tikzpicture` body, or a `tikzcd` body standing alone
-in a display. -/
+/-- A probe's kind: a `tikzpicture` body, a `tikzcd` body standing alone
+in a display, or one standing as a block outside mathematics (the tikz-cd
+manual's own spelling). -/
 inductive ProbeKind where
   | picture
   | cd
+  | cdBlock
 
 /-- The constructs, each with its invented probe. -/
 def probes : Array (String × ProbeKind × String) := #[
@@ -22,6 +24,7 @@ def probes : Array (String × ProbeKind × String) := #[
   ("cd-ampersand", .cd, "[ampersand replacement=\\&] A \\arrow[r] \\& B"),
   ("cd-arrow", .cd, "A \\arrow[r] & B"),
   ("cd-bend", .cd, "A \\arrow[r, bend left] & B"),
+  ("cd-block", .cdBlock, "A \\arrow[r, \"f\"] & B \\\\ & C"),
   ("cd-color", .cd, "A \\arrow[r, red] & B"),
   ("cd-description", .cd, "A \\arrow[r, \"f\" description] & B"),
   ("cd-diagonal", .cd, "A \\arrow[dr] & B \\\\ & C"),
@@ -31,6 +34,8 @@ def probes : Array (String × ProbeKind × String) := #[
   ("circle-op", .picture, "\\draw (0,0) circle (1);"),
   ("circle-radius-key", .picture, "\\draw (0,0) circle [radius=3mm];"),
   ("clip", .picture, "\\clip (0,0) rectangle (1,1);\\fill (0,0) circle (1);"),
+  ("clip-order", .picture,
+    "\\clip (0,0) rectangle (2,2);\\node at (1,1) {a};\\fill[grid] (0,0) rectangle (2,1);"),
   ("color-decl", .picture, "{\\color{grid}\\draw (0,0) -- (1,0);}\\draw (0,1) -- (1,1);"),
   ("color-group", .picture, "\\textcolor{grid}{\\draw (0,0) -- (1,0);}"),
   ("coordinate", .picture, "\\coordinate (c) at (1,1);\\draw (0,0) -- (c);"),
@@ -82,4 +87,5 @@ def probeDoc (kind : ProbeKind) (body : String) : String :=
   match kind with
   | .picture => pre ++ "\\begin{tikzpicture}\n" ++ body ++ "\n\\end{tikzpicture}\n\\end{document}"
   | .cd => pre ++ "\\[\\begin{tikzcd}" ++ body ++ "\\end{tikzcd}\\]\n\\end{document}"
+  | .cdBlock => pre ++ "\\begin{tikzcd}" ++ body ++ "\\end{tikzcd}\n\\end{document}"
 

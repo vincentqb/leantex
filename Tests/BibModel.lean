@@ -1727,15 +1727,6 @@ def bibFieldContentChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) 
     t s!"{what}: the page's entry marks it, linked to its endnote"
       (marks.any fun (_, a) => HtmlDoc.attrOf? a "href" == some "#fn2")
 
-/-- A build's diagnostics as its porcelain records them: each record's code
-and severity. -/
-def porcelainCodes (stdout : String) : Array (String × String) :=
-  (((stdout.splitOn "\n").filter (!·.isEmpty)).filterMap fun l =>
-    (Lean.Json.parse l).toOption.bind fun j =>
-      if j.getObjValAs? String "event" != .ok "diagnostic" then none
-      else some ((j.getObjValAs? String "code").toOption.getD "",
-        (j.getObjValAs? String "severity").toOption.getD "")).toArray
-
 /-- One run of the built binary over `doc` in `dir`, writing `out`: its exit
 code, whether the artifact was written, and its diagnostics' codes and
 severities. The machine holds only `dir/bin` on its PATH. -/
@@ -1778,7 +1769,7 @@ def bibFieldShipChecks (ref : IO.Ref (List String))
        ("biblatex", "\\usepackage[style=numeric]{biblatex}\n", fun _ => "\\printbibliography")]
     let cases : List (String × String) :=
       [("an image", "\\includegraphics[width=1cm]{img.png}"),
-       ("a picture", "\\tikz \\draw (0,0) circle (2pt);"),
+       ("a picture", "\\tikz \\pattern (0,0) rectangle (2pt,2pt);"),
        ("a footnote", "with\\footnote{a note} here")]
     let entry (note : String) : String :=
       s!"@misc\{k, author = \{Ann Alpha}, title = \{Tee}, note = \{{note}}, year = 2001}\n"

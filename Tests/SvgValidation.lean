@@ -252,7 +252,15 @@ def svgValidationChecks (ref : IO.Ref (List String)) : IO Unit := do
       ("aliased fragment", "<defs><path id=\"p\" d=\"M0 0h20v20z\"/></defs><use xmlns:l=\"http://www.w3.org/1999/xlink\" l:href=\"&#35;p\"/>"),
       ("predefined and numeric references", "<title>&quot;&apos;&amp;&lt;&gt;&#65;&#x42;</title><rect aria-label=\"&quot;&apos;&amp;&lt;&gt;&#65;&#x42;\" width=\"20\" height=\"20\" fill=\"red\"/>"),
       ("plain style CDATA", "<style><![CDATA[rect { fill: red }]]></style>" ++ rect),
-      ("XML comments and prose", "<!-- <image href=\"outside.png\"/> --><title>url(outside.png)</title>" ++ rect)] do
+      ("XML comments and prose", "<!-- <image href=\"outside.png\"/> --><title>url(outside.png)</title>" ++ rect),
+      -- pdftocairo's spelling of a raster a boundary picture draws: the
+      -- bytes ride in the reference, which names nothing outside the file.
+      ("inline PNG raster", "<image width=\"1\" height=\"1\" xmlns:l=\"http://www.w3.org/1999/xlink\" " ++
+        "l:href=\"data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAIAAAACAQMAAABIeJ9nAAAAA1BMVEUzZpk7I4HSAAAADElEQVQI12NgYGAAAAAEAAEnNCcKAAAAAElFTkSuQmCC\"/>"),
+      ("inline JPEG raster", "<image width=\"2\" height=\"2\" href=\"data:image/jpeg;base64," ++
+        "/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAAMCAgMCAgMDAwMEAwMEBQgFBQQEBQoHBwYIDAoMDAsKCwsNDhIQDQ4RDgsLEBYQERMUFRUVDA8XGB" ++
+        "YUGBIUFRT/2wBDAQMEBAUEBQkFBQkUDQsNFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBT/wAARCAAC" ++
+        "AAIDAREAAhEBAxEB/8QAFAABAAAAAAAAAAAAAAAAAAAAB//EABQQAQAAAAAAAAAAAAAAAAAAAAD/xAAUAQEAAAAAAAAAAAAAAAAAAAAH/8QAFBEBAAAAAAAAAAAAAAAAAAAAAP/aAAwDAQACEQMRAD8AIi2L3//Z\"/>")] do
     let result ← LeanTex.Cli.ImageAssets.validateSvg (svgDocument body)
     check ref s!"SVG validation admits {name}" result.isOk
   for (name, body) in [
@@ -271,6 +279,11 @@ def svgValidationChecks (ref : IO.Ref (List String)) : IO Unit := do
       ("animated href", "<image><set attributeName=\"l:href\" to=\"tile.png\"/></image>"),
       ("animated style", "<rect><set attributeName=\"style\" to=\"fill:red\"/></rect>"),
       ("embedded SVG", "<image href=\"data:image/svg+xml,%3Csvg/%3E\"/>"),
+      ("embedded base64 SVG", "<image href=\"data:image/svg+xml;base64,PHN2Zy8+\"/>"),
+      ("inline raster on a use", "<use href=\"data:image/png;base64,iVBORw0KGgo=\"/>"),
+      ("inline raster as a source", "<image src=\"data:image/png;base64,iVBORw0KGgo=\"/>"),
+      ("inline raster outside base64", "<image href=\"data:image/png;base64,iVBOR(w0KGgo=\"/>"),
+      ("inline raster unencoded", "<image href=\"data:image/png,raw\"/>"),
       ("foreign object", "<foreignObject><img src=\"tile.png\"/></foreignObject>"),
       ("script", "<script>fetch('tile.png')</script>"),
       ("event handler", "<rect onload=\"fetch('tile.png')\"/>")] do

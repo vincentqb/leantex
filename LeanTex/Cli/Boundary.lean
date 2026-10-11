@@ -4,6 +4,7 @@ public import LeanTex.Core.Diag
 public import LeanTex.Core.Ir
 public import LeanTex.Core.Gfx
 public import LeanTex.Cli.PicCache
+public import LeanTex.Cli.World
 import LeanTex.Cli.DriverDiag
 import LeanTex.Cli.ImageAssets
 import LeanTex.Cli.PictureAssets
@@ -38,6 +39,61 @@ public def coldPicture (picDir : System.FilePath) (tool key : String)
   match ← PictureAssets.previous picDir key with
   | some bytes => return .ok bytes
   | none => return .error (DriverDiag.boundaryToolUnavailable tool span why)
+
+/-- The first of a path's graphicx candidates that stands, read once, by the
+path it spells, against the document's directory `dir` unless absolute;
+none standing leaves `out` as it was, for the tool to name. -/
+public def firstInput (dir : String) (out : Array (String × ByteArray)) :
+    List String → World.Prog (Array (String × ByteArray))
+  | [] => .pure out
+  | cand :: rest =>
+    let path := if cand.startsWith "/" then cand else World.ToolPath.join dir cand
+    .ask (.stat path) fun
+      | .ok _ => .ask (.readFile path) fun
+        | .ok bytes => .pure (out.push (cand, bytes))
+        | .error _ => .pure out
+      | .error _ => firstInput dir out rest
+
+/-- The files a boundary request reads (`Ir.pictureInputs`), as the host
+answers for them: resolved as an image of the document is — against its
+own directory, through graphicx's extensions and the document's
+`\graphicspath` (`Image.searchCandidates`), which rides into the
+standalone too (`Compat.boundaryCtrls`) — and read once, to be staged
+beside the standalone where the path it was found by puts it, and keyed by
+their bytes (`PictureAssets.keyed`). -/
+public def requestInputs (dir : String) (paths : Array String) (wrapped : String) :
+    World.Prog (Array (String × ByteArray)) :=
+  (Ir.pictureInputs wrapped).foldlM (init := #[]) fun out p =>
+    firstInput dir out (Image.searchCandidates paths p)
+
+/-- The document's own request, where the tool refused one set in the
+faces the page sets in (`FontAssembly.boundaryFonts`): a package the
+document loads can refuse fontspec or unicode-math beside it — newtxtext
+loads fontspec under LuaTeX with `.otf` defaults, so the page's face is
+looked for as a file; newtxmath, txfonts or mathabx define what
+unicode-math defines — and the document's own request is the one LaTeX
+itself would set. Only the tool's own refusal falls back: an attempt that
+never finished is asked again next build, and a request the faces left
+unchanged has nothing to fall back to. -/
+public def ownRequest? (wrapped own : String) : PicCache.Outcome → Option String
+  | .refused _ => if own == wrapped then none else some own
+  | .drawn | .inconclusive _ => none
+
+/-- **Only the tool's refusal of a faced request asks the document's own**
+(`_exact`): the fallback is asked exactly when the faced request came back
+refused and differs from the document's own, and it is that request. -/
+public theorem ownRequest?_exact (wrapped own r : String) (o : PicCache.Outcome) :
+    ownRequest? wrapped own o = some r ↔ (∃ why, o = .refused why) ∧ own ≠ wrapped ∧ r = own := by
+  cases o with
+  | refused why =>
+    by_cases h : own = wrapped
+    · subst h
+      simp [ownRequest?]
+    · have hb : (own == wrapped) = false := by simpa using h
+      simp only [ownRequest?, hb, Bool.false_eq_true, ↓reduceIte, Option.some.injEq]
+      exact ⟨fun e => ⟨⟨why, rfl⟩, h, e.symm⟩, fun ⟨_, _, e⟩ => e.symm⟩
+  | drawn => simp [ownRequest?]
+  | inconclusive _ => simp [ownRequest?]
 
 /-- What the boundary's refusals leave standing, once the rendered subset
 has been asked to stand in: the picture ids whose requests are withdrawn,

@@ -2,7 +2,7 @@
 # the rotation and scaling commands.
 body impl \includegraphics{x.png}
 body impl \includegraphics[width=0.5\textwidth]{x.png}
-pre refuse:W0301 \graphicspath{{figs/}}
+pre impl \graphicspath{{figs/}}
 body refuse:W0301 \rotatebox{90}{x}
 body refuse:W0301 \scalebox{2}{x}
 body refuse:W0301 \resizebox{2cm}{!}{x}

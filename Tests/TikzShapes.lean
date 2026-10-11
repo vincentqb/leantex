@@ -111,6 +111,29 @@ def tikzShapeChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO U
   let leak := picDoc "" "{\\clip (0,0) rectangle (1,1);}\\fill (0,0) circle (1);"
   t "clip: one inside a group, which pgf carries past it, is named"
     ((lossesOf leak).any fun d => d.code == "W0334" && hasStr d.message "clip")
+  -- A node written between two fills in a clip's scope keeps its place
+  -- between them, as in pgf: each run of ink its own group the clip path
+  -- clips, the label standing between the runs. The invariant whose absence
+  -- moved every label after all the clip's ink, so a fill the node preceded
+  -- painted under it in both artifacts.
+  let order := picDoc "" ("\\clip (0,0) rectangle (2,2);\\fill[blue] (0,0) rectangle (1,1);" ++
+    "\\node at (1,1) {a};\\fill[red] (0,0) rectangle (2,2);")
+  let kind : Gfx.Node (Nat × Nat) → String := fun n => match n with
+    | .label _ => "label"
+    | .group _ cs _ _ => if cs.isEmpty then "group" else "clip"
+    | _ => "other"
+  t "clip: a node between two fills keeps its place between them on the PDF's page"
+    ((lossesOf order).isEmpty && match (figsOf oneFace order).toList with
+     | [f] => f.nodes.toList.map kind == ["clip", "label", "clip"]
+     | _ => false)
+  let svgKids (src : String) : List String :=
+    match elemNodesList (· == "svg") #[] (HtmlDoc.emitTree {} (elabStr src).1).2.1.toList |>.toList with
+    | [.elem _ _ kids] => kids.toList.filterMap fun k => match k with
+      | .elem tag _ _ => some tag
+      | _ => none
+    | _ => []
+  t "clip: and on the web page"
+    ((svgKids order).filter (· != "defs") == ["g", "text", "g"])
   -- The web page paints the same, read over the typed HTML tree: each
   -- shading a gradient element carrying pgf's stops, which the shape it
   -- fills names; each clip a `clipPath` the clipped group names. The

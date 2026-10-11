@@ -8,9 +8,11 @@
 # the rest; dashed; colours; description labels; \tikzcdset), §3 advanced
 # usage (bend left and bend right, start anchor and end anchor, shift left
 # and shift right, crossing over, phantom, marking, to= and from=, cell
-# options |[...]|). A diagram standing alone in a display is drawn by the
-# engine's diagram reader where it reads every key (tikzlibrarycd.code.tex's
-# matrix and arrow semantics); a key it does not read routes the diagram
+# options |[...]|). A diagram standing alone in a display, or as a block
+# outside mathematics (the manual's own spelling, in a paragraph of its own
+# or a center), is drawn by the engine's diagram reader where it reads every
+# key (tikzlibrarycd.code.tex's matrix and arrow semantics); a key it does
+# not read routes the diagram
 # whole to the graphics boundary (N0023), and where no tool draws it — these
 # probes fulfil nothing — the request is withdrawn and the reader's drawing
 # ships with the key named, so those rows are refusals.
@@ -47,6 +49,8 @@ body impl \[\begin{tikzcd} A \arrow[r, start anchor=north east, end anchor=north
 body impl \[\begin{tikzcd} A \arrow[r, phantom, "\cong"] & B \end{tikzcd}\]
 body impl \begin{equation*}\begin{tikzcd} A \arrow[r] & B \end{tikzcd}\end{equation*}
 body impl \begin{align*}\begin{tikzcd} A \arrow[r] & B \end{tikzcd}\end{align*}
+body impl \begin{tikzcd} A \arrow[r] & B \end{tikzcd}
+body impl \begin{center}\begin{tikzcd} A \arrow[r, "f"] & B \end{tikzcd}\end{center}
 body refuse:W0334 \[\begin{tikzcd} A \arrow[r, hook] & B \end{tikzcd}\]
 body refuse:W0334 \[\begin{tikzcd} A \arrow[r, two heads] & B \end{tikzcd}\]
 body refuse:W0334 \[\begin{tikzcd} A \arrow[r, maps to] & B \end{tikzcd}\]

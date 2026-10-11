@@ -138,6 +138,7 @@ def referenceDoc (kind : ProbeKind) (body : String) : String :=
   match kind with
   | .picture => pre ++ "\\begin{tikzpicture}\n" ++ body ++ "\n\\end{tikzpicture}\n\\end{document}\n"
   | .cd => pre ++ "$\\begin{tikzcd}" ++ body ++ "\\end{tikzcd}$\n\\end{document}\n"
+  | .cdBlock => pre ++ "\\begin{tikzcd}" ++ body ++ "\\end{tikzcd}\n\\end{document}\n"
 
 /-- The engine's document: the tier's own, loading the libraries the
 reference loads — arrows.meta changes the head `->` draws in both — with no

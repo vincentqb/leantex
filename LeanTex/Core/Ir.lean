@@ -6700,11 +6700,53 @@ public theorem displayContent_projects (body : Array Block) (content : Array Inl
     · exact absurd h (by simp)
   · exact absurd h (by simp)
 
-/-- A display: the unnumbered shape (`displayContent?`) or a numbered
-equation. -/
+/-- A display a picture stands for: a diagram the engine draws itself,
+alone in `\[…\]` or an unnumbered alignment, is TeX's display of an
+`\hbox`, so it rides as a block in the role its boundary image rides in
+(`displayPictureRole`): the label anchors its display carries, then the
+picture. The one reading both backends open the display skips by (`Layout`'s
+display arm, the HTML `.display` paragraph), as `displayContent?` is the
+formula's. -/
+public def displayPicture? : Block → Option (Array Inline × Pic.Picture)
+  | .role n body =>
+    if n != displayPictureRole then none else
+    match body.toList with
+    | [.picture p] => some (#[], p)
+    | [.para anchors, .picture p] =>
+      if !anchors.isEmpty && anchors.all (· matches .label _) then some (anchors, p) else none
+    | _ => none
+  | _ => none
+
+/-- The block a display picture is (`displayPicture?`): the paragraph of its
+label anchors where it carries any — which ships no ink and opens no gap in
+either backend — then the picture, in the display picture's role. -/
+public def displayPictureBlock (keys : Array String) (p : Pic.Picture) : Block :=
+  .role displayPictureRole
+    ((if keys.isEmpty then #[] else #[.para (keys.map Inline.label)]).push (.picture p))
+
+/-- **A display picture reads back as itself** (`_id`): its labels' anchors
+and its picture, whatever labels the display carried. -/
+public theorem displayPicture?_block_id (keys : Array String) (p : Pic.Picture) :
+    displayPicture? (displayPictureBlock keys p) = some (keys.map Inline.label, p) := by
+  by_cases h : keys.isEmpty
+  · have he : keys = #[] := by simpa using h
+    subst he
+    simp [displayPicture?, displayPictureBlock]
+  · have hne : keys ≠ #[] := fun he => h (by simp [he])
+    simp [displayPicture?, displayPictureBlock, h, hne]
+
+/-- **Only the display picture's role reads as one** (`_exact`): any other
+role is no display picture, whatever it holds. -/
+public theorem displayPicture?_role_exact (n : String) (body : Array Block)
+    (h : n ≠ displayPictureRole) : displayPicture? (.role n body) = none := by
+  simp [displayPicture?, h]
+
+/-- A display: the unnumbered shape (`displayContent?`), a picture standing
+for one (`displayPicture?`), or a numbered equation. -/
 public def Block.isDisplay : Block → Bool
   | .center body => (displayContent? body).isSome
   | .equation .. => true
+  | b@(.role _ _) => (displayPicture? b).isSome
   | _ => false
 
 /-- The context a display block carries (`DisplayCtx.role`) with the display
@@ -9723,6 +9765,12 @@ public structure Doc where
   design: non-native package loads and the tikz-family set lines, as
   written (`Compat.boundaryDecls`). Set once by the elaborator. -/
   picturePreamble : String := ""
+  /-- The directories graphicx searches for an included file after the
+  document's own (`\graphicspath{{dir/}…}`, grfguide §4.5), in its order:
+  each graphics extension is looked for as written, then under each
+  directory (`Image.searchCandidates`). The last declaration stands, as
+  graphics.sty's `\def\Ginput@path` does. Set once by the elaborator. -/
+  graphicsPath : Array String := #[]
   /-- The document's own macro definitions, in document order: the name,
   and the declaration as the boundary standalone reads it. Captured as the
   document wrote it rather than spelled back from a native `UserCmd`,
@@ -16764,19 +16812,29 @@ public theorem wrapStandalone_picture_exact (preamble fonts : String)
         "\\end{tikzpicture}\n\\end{document}\n" := by
   simp only [wrapStandalone, PicKind.docOpen, PicKind.docClose]
 
-/-- beamer's `\alert`, for a slides document's standalone whose picture
-spells it: the standalone is no beamer, so the name is undefined there. It
-sets as the engine sets an alert (`Compat.alertStyled`): the theme's alert
-colour where the palette holds one, bold outside mathematics, an overlay
-specification read and spent — a picture is one step. -/
+/-- What beamer defines that a beamer document's standalone — a deck's, or
+a beamerposter sheet's (`DocClass.poster`) — which is no beamer, does not:
+`\alert`, where the picture spells it, set as the engine
+sets an alert (`Compat.alertStyled`) — the theme's alert colour where the
+palette holds one, bold outside mathematics, an overlay specification read
+and spent, a picture being one step — and beamer's own colour names `fg`
+and `bg` (the normal text's), where the picture spells one the palette does
+not hold, at the value the page resolves (`Design.ofPalette`); a name the
+palette holds travels as its role (`paletteDecls`). -/
 public def slideShims (doc : Doc) (roots : String) : String :=
-  if doc.docClass != .slides || !(ctrlNames roots).contains "alert" then ""
-  else if (doc.palette.find? "alert").isSome then
-    "\\providecommand{\\alert}{}\\RenewDocumentCommand{\\alert}{d<>m}\
+  if doc.docClass != .slides && doc.docClass != .poster then "" else
+  let alert :=
+    if !(ctrlNames roots).contains "alert" then ""
+    else if (doc.palette.find? "alert").isSome then
+      "\\providecommand{\\alert}{}\\RenewDocumentCommand{\\alert}{d<>m}\
 {\\textcolor{alert}{\\ifmmode#2\\else\\bfseries#2\\fi}}\n"
-  else
-    "\\providecommand{\\alert}{}\\RenewDocumentCommand{\\alert}{d<>m}\
+    else
+      "\\providecommand{\\alert}{}\\RenewDocumentCommand{\\alert}{d<>m}\
 {\\ifmmode#2\\else{\\bfseries#2}\\fi}\n"
+  let d := Design.ofPalette doc.palette
+  let named := colorNames roots
+  alert ++ ([("fg", d.fg), ("bg", d.bg)].filter fun (n, _) =>
+    named.contains n && (doc.palette.find? n).isNone).foldl (fun s c => s ++ colorDeclLine c) ""
 
 /-- The request one picture body states, formed from the finished
 document: the driver calls `pictureRefs` after contrast realization, so a

@@ -2113,6 +2113,20 @@ public def sourceCandidates (src : String) : List String :=
   [src, src ++ ".pdf", src ++ ".png", src ++ ".jpg", src ++ ".jpeg",
    src ++ ".PDF", src ++ ".PNG", src ++ ".JPG", src ++ ".JPEG", src ++ ".svg", src ++ ".SVG"]
 
+/-- Where graphicx looks for an included file under a `\graphicspath`
+(`paths`, as written): each of the extension candidates
+(`sourceCandidates`) as written, then under each directory in order —
+graphics.sty's `\Gin@getbase` tries one extension at a time through
+`\IfFileExists`, which reads the file as named before `\input@path`,
+the directories `\graphicspath` sets. -/
+public def searchCandidates (paths : Array String) (src : String) : List String :=
+  (sourceCandidates src).flatMap fun c => c :: paths.toList.map (· ++ c)
+
+/-- **No search path, the candidates as they were** (`_id`). -/
+public theorem searchCandidates_empty_id (src : String) :
+    searchCandidates #[] src = sourceCandidates src := by
+  simp [searchCandidates]
+
 public structure Store where
   entries : Array Loaded := #[]
   /-- Each entry's copied PDF page content deflated, when the driver

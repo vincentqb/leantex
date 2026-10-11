@@ -230,6 +230,7 @@ import Tests.PictureKeys
 import Tests.TikzCd
 import Tests.TikzCoverage
 import Tests.BoundaryFaces
+import Tests.GraphicsPath
 import Tests.TikzLongTail
 import Tests.TikzShapes
 import Tests.TikzTips
@@ -911,6 +912,8 @@ def main (args : List String) : IO UInt32 := do
   diagnosticAggregationOriginChecks ref
   diagnosticPipelineOriginChecks ref
   pictureShipChecks ref
+  Tests.boundaryFaceRetryChecks ref
+  Tests.graphicsPathChecks ref
   bibFieldShipChecks ref
   bibFuzzShipChecks ref
   sourceAnnotationChecks ref
