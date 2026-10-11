@@ -594,19 +594,22 @@ public structure SeedState where
   colors : Colors
   deriving Repr, BEq, Inhabited
 
-/-- What a generated palette installs after its seeds: each role generation
-derives, at its colour, then each element role its block style and its
-furniture bind, at the colour of the role it reads. -/
+/-- What a generated palette derives from its seeds: each role generation
+derives, at its colour. -/
 @[expose] public def derivedEntries (st : SeedState) : List (Ir.Role × Color) :=
-  (derivedRoles.filterMap fun r => (Colors.role st.seeds st.colors r).map (r, ·)) ++
-    ((bindings st.seeds st.targets st.blocks ++ furniture).filterMap fun (e, src) =>
-      (Colors.role st.seeds st.colors src).map (e, ·))
+  derivedRoles.filterMap fun r => (Colors.role st.seeds st.colors r).map (r, ·)
 
-/-- Every declaration a generated palette installs, in order: the seeds as
+/-- Every palette role a generated palette installs, in order: the seeds as
 the page's ground, text and accent, then what is derived from them. -/
 @[expose] public def entries (st : SeedState) : List (Ir.Role × Color) :=
   [(.page, st.seeds.paper), (.ink, st.seeds.ink), (.accent, st.seeds.accent)] ++
     derivedEntries st
+
+/-- Each element role a generated palette's block style and furniture bind,
+beside the palette role it reads: the element takes that role's colour as the
+palette holds it once the palette roles are installed (`Ir.Palette.applySeedsUnder`). -/
+@[expose] public def bound (st : SeedState) : List (Ir.Role × Ir.Role) :=
+  bindings st.seeds st.targets st.blocks ++ furniture
 
 /-- The element roles a block style and the furniture bind, in either style. -/
 private theorem bound_elements (s : Seeds) (t : Targets) (b : Blocks) :
@@ -629,29 +632,18 @@ public theorem bindings_seeds_exact (s : Seeds) (t : Targets) (b : Blocks) :
       .separator] : List Ir.Role), r ≠ .ink ∧ r ≠ .page ∧ r ≠ .accent := by decide
   exact hall _ hm
 
-/-- Nothing derived rewrites a seed: after the seeds, a generated palette
-installs no declaration of the page's text, ground or accent. -/
-private theorem derivedEntries_seeds (st : SeedState) :
-    ∀ x ∈ derivedEntries st, x.1 ≠ .ink ∧ x.1 ≠ .page ∧ x.1 ≠ .accent := by
-  intro x hx
-  rcases List.mem_append.mp hx with h | h
-  · obtain ⟨r, hr, he⟩ := List.mem_filterMap.mp h
-    obtain ⟨c, -, rfl⟩ := Option.map_eq_some_iff.mp he
-    have hall : ∀ r ∈ derivedRoles, r ≠ .ink ∧ r ≠ .page ∧ r ≠ .accent := by decide
-    exact hall r hr
-  · obtain ⟨⟨e, src⟩, he, hx'⟩ := List.mem_filterMap.mp h
-    obtain ⟨c, -, rfl⟩ := Option.map_eq_some_iff.mp hx'
-    exact bindings_seeds_exact st.seeds st.targets st.blocks (e, src) he
-
-/-- **The seeds ship exactly**: a generated palette installs the page's
-ground, text and accent as the seeds, first, and nothing it derives or binds
-after them names those three roles (`Ir.Palette.applySeeds_seeds_exact` reads
-what the install leaves). -/
+/-- **The seeds ship exactly**: after the seeds, a generated palette derives
+and binds nothing that names the page's text, ground or accent, so what it
+installs for those three roles is the author's colours
+(`Ir.Palette.applySeedsUnder_seeds_exact` reads it off the install). -/
 public theorem generate_seeds_exact (st : SeedState) :
-    entries st = [(.page, st.seeds.paper), (.ink, st.seeds.ink), (.accent, st.seeds.accent)] ++
-        derivedEntries st ∧
-      ∀ x ∈ derivedEntries st, x.1 ≠ .ink ∧ x.1 ≠ .page ∧ x.1 ≠ .accent :=
-  ⟨rfl, derivedEntries_seeds st⟩
+    (∀ x ∈ derivedEntries st, x.1 ≠ .ink ∧ x.1 ≠ .page ∧ x.1 ≠ .accent) ∧
+      ∀ x ∈ bound st, x.1 ≠ .ink ∧ x.1 ≠ .page ∧ x.1 ≠ .accent := by
+  refine ⟨fun x hx => ?_, bindings_seeds_exact st.seeds st.targets st.blocks⟩
+  obtain ⟨r, hr, he⟩ := List.mem_filterMap.mp hx
+  obtain ⟨c, -, rfl⟩ := Option.map_eq_some_iff.mp he
+  have hall : ∀ r ∈ derivedRoles, r ≠ .ink ∧ r ≠ .page ∧ r ≠ .accent := by decide
+  exact hall r hr
 
 /-- Whether a ground is the light side: white stands less apart from it than black. -/
 private def lightGround (g : Color) : Bool :=
@@ -773,8 +765,8 @@ public def declarations (stem : String) (st : SeedState) : String :=
 
 /-- The export with every beamer element the palette writes bound to the
 colours its channels read (`beamerChannels`): the page's text and ground,
-the muted footline, the alert, the six block elements in the style, the
-progress bar and the title separator. -/
+the canvas, the muted footline and its page number, the alert, the six block
+elements in the style, the progress bar and the title separator. -/
 public def beamerDeclarations (stem : String) (st : SeedState) : String :=
   let name (r : Ir.Role) := stem ++ r.row.exportName.getD ""
   declarations stem st ++ String.join ((beamerChannels st).map fun (e, fg, bg) =>

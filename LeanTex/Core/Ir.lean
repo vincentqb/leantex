@@ -13408,51 +13408,148 @@ public def mutedOf (pal : Palette) : Color :=
 @[expose] public def Palette.declareSeeded (p : Palette) (e : Role × Color) : Palette :=
   p.declare (.role e.1) (Color.ofHtml e.2.r e.2.g e.2.b)
 
-/-- **A generated palette installed** (`\palette[seeds]`): every role
-generation sets, as a declaration, then each element role its block style
-binds, at the colour of the role it reads — each an 8-bit sRGB colour, as a
-TeX build reads it from the export's `\definecolor{…}{HTML}{…}`, so both
-spell it alike in the PDF; the generated palette kept, so a later
-declaration overrides as any declaration does and a generated role on
-another ground can re-tone (`groundRun`). -/
-public def Palette.applySeeds (pal : Palette) (st : SeedPalette.SeedState) : Palette :=
-  (SeedPalette.entries st).foldl Palette.declareSeeded { pal with seeded := some st }
+/-- One derived role installed, unless the document declared it (`keep`). -/
+private def Palette.installDerived (keep : Role → Bool) (p : Palette) (e : Role × Color) :
+    Palette :=
+  if keep e.1 then p else p.declareSeeded e
 
-private theorem Palette.declareSeeded_keeps (es : List (Role × Color)) (p : Palette) (r : Role)
-    (h : ∀ e ∈ es, e.1 ≠ r) :
-    (es.foldl Palette.declareSeeded p).lookup (.role r) = p.lookup (.role r) := by
+/-- One element role a style binds, at the colour its source role stands at in
+the palette as installed, unless the document declared the element (`keep`). -/
+private def Palette.installBound (keep : Role → Bool) (p : Palette) (e : Role × Role) : Palette :=
+  if keep e.1 then p else
+    match Design.declared? p e.2 with
+    | some c => p.declare (.role e.1) c
+    | none => p
+
+/-- **A generated palette installed** (`\palette[seeds]`, `Elab.applySeeds`
+calls exactly this): the seeds as the page's ground, text and accent — the
+declarations they are, so the latest wins — then every role generation
+derives, then each element role the block style and the furniture bind, at
+the colour its source role stands at once installed; a derived or bound role
+the document declared (`keep`) keeps the document's colour. Each generated
+colour is an 8-bit sRGB colour, as a TeX build reads it from the export's
+`\definecolor{…}{HTML}{…}`, so both spell it alike in the PDF; the generated
+palette is kept, so a generated role on another ground can re-tone
+(`groundRun`). -/
+public def Palette.applySeedsUnder (pal : Palette) (st : SeedPalette.SeedState)
+    (keep : Role → Bool) : Palette :=
+  let seeds : List (Role × Color) :=
+    [(.page, st.seeds.paper), (.ink, st.seeds.ink), (.accent, st.seeds.accent)]
+  let withSeeds := seeds.foldl Palette.declareSeeded { pal with seeded := some st }
+  let withDerived := (SeedPalette.derivedEntries st).foldl (Palette.installDerived keep) withSeeds
+  (SeedPalette.bound st).foldl (Palette.installBound keep) withDerived
+
+/-- A generated palette installed over a palette that declares nothing the
+seeds derive: the export's and a bundle's install. -/
+public def Palette.applySeeds (pal : Palette) (st : SeedPalette.SeedState) : Palette :=
+  pal.applySeedsUnder st fun _ => false
+
+private theorem Palette.installDerived_keeps (keep : Role → Bool) (es : List (Role × Color))
+    (p : Palette) (r : Role) (h : ∀ e ∈ es, e.1 ≠ r) :
+    (es.foldl (Palette.installDerived keep) p).lookup (.role r) = p.lookup (.role r) := by
   induction es generalizing p with
   | nil => rfl
   | cons e es ih =>
     rw [List.foldl_cons, ih _ (fun e' he' => h e' (List.mem_cons_of_mem _ he'))]
-    exact Palette.declare_keeps_others _ _ _ _ _ fun heq =>
-      h e (List.mem_cons_self ..) (ColorRef.role.inj heq).symm
+    unfold Palette.installDerived Palette.declareSeeded
+    split
+    · rfl
+    · exact Palette.declare_keeps_others _ _ _ _ _ fun heq =>
+        h e (List.mem_cons_self ..) (ColorRef.role.inj heq).symm
 
-/-- **The seeds ship exactly**: what `\palette[seeds]` installs declares the
-page's text, ground and accent as the author's seeds, at the 8-bit colour a
-TeX build reads from the export; nothing the generator derives or a block
-style binds rewrites them (`SeedPalette.generate_seeds_exact`). -/
-public theorem Palette.applySeeds_seeds_exact (pal : Palette) (st : SeedPalette.SeedState) :
-    Design.declared? (pal.applySeeds st) .ink =
+private theorem Palette.installBound_keeps (keep : Role → Bool) (es : List (Role × Role))
+    (p : Palette) (r : Role) (h : ∀ e ∈ es, e.1 ≠ r) :
+    (es.foldl (Palette.installBound keep) p).lookup (.role r) = p.lookup (.role r) := by
+  induction es generalizing p with
+  | nil => rfl
+  | cons e es ih =>
+    rw [List.foldl_cons, ih _ (fun e' he' => h e' (List.mem_cons_of_mem _ he'))]
+    unfold Palette.installBound
+    split
+    · rfl
+    · split
+      · exact Palette.declare_keeps_others _ _ _ _ _ fun heq =>
+          h e (List.mem_cons_self ..) (ColorRef.role.inj heq).symm
+      · rfl
+
+private theorem Palette.installDerived_kept (keep : Role → Bool) (es : List (Role × Color))
+    (p : Palette) (r : Role) (hk : keep r = true) :
+    (es.foldl (Palette.installDerived keep) p).lookup (.role r) = p.lookup (.role r) := by
+  induction es generalizing p with
+  | nil => rfl
+  | cons e es ih =>
+    rw [List.foldl_cons, ih]
+    unfold Palette.installDerived Palette.declareSeeded
+    split
+    · rfl
+    · rename_i hne
+      refine Palette.declare_keeps_others _ _ _ _ _ fun heq => hne ?_
+      rw [← ColorRef.role.inj heq]
+      exact hk
+
+private theorem Palette.installBound_kept (keep : Role → Bool) (es : List (Role × Role))
+    (p : Palette) (r : Role) (hk : keep r = true) :
+    (es.foldl (Palette.installBound keep) p).lookup (.role r) = p.lookup (.role r) := by
+  induction es generalizing p with
+  | nil => rfl
+  | cons e es ih =>
+    rw [List.foldl_cons, ih]
+    unfold Palette.installBound
+    split
+    · rfl
+    · rename_i hne
+      split
+      · refine Palette.declare_keeps_others _ _ _ _ _ fun heq => hne ?_
+        rw [← ColorRef.role.inj heq]
+        exact hk
+      · rfl
+
+/-- **The document's colour outranks the generated one**: a role the document
+declared (`keep`) that is not one of the seeds' own — the page's text,
+ground and accent, which the seeds declare — stands after the install as the
+document declared it, whatever the seeds derive or bind. -/
+public theorem Palette.applySeedsUnder_keep_exact (pal : Palette) (st : SeedPalette.SeedState)
+    (keep : Role → Bool) (r : Role) (hk : keep r = true)
+    (hs : r ≠ .ink ∧ r ≠ .page ∧ r ≠ .accent) :
+    (pal.applySeedsUnder st keep).lookup (.role r) = pal.lookup (.role r) := by
+  simp only [Palette.applySeedsUnder, List.foldl_cons, List.foldl_nil]
+  rw [Palette.installBound_kept _ _ _ _ hk, Palette.installDerived_kept _ _ _ _ hk]
+  unfold Palette.declareSeeded
+  rw [Palette.declare_keeps_others _ (.role .accent) (.role r) _ _ (by simpa using hs.2.2),
+    Palette.declare_keeps_others _ (.role .ink) (.role r) _ _ (by simpa using hs.1),
+    Palette.declare_keeps_others _ (.role .page) (.role r) _ _ (by simpa using hs.2.1)]
+  rfl
+
+/-- **The seeds ship exactly**, on the install `\palette[seeds]` runs: whatever
+the document declared before, the palette declares the page's text, ground
+and accent as the author's seeds, at the 8-bit colour a TeX build reads from
+the export; nothing the generator derives or a style binds names them
+(`SeedPalette.generate_seeds_exact`). -/
+public theorem Palette.applySeedsUnder_seeds_exact (pal : Palette) (st : SeedPalette.SeedState)
+    (keep : Role → Bool) :
+    Design.declared? (pal.applySeedsUnder st keep) .ink =
         some (Color.ofHtml st.seeds.ink.r st.seeds.ink.g st.seeds.ink.b) ∧
-      Design.declared? (pal.applySeeds st) .page =
+      Design.declared? (pal.applySeedsUnder st keep) .page =
         some (Color.ofHtml st.seeds.paper.r st.seeds.paper.g st.seeds.paper.b) ∧
-      Design.declared? (pal.applySeeds st) .accent =
+      Design.declared? (pal.applySeedsUnder st keep) .accent =
         some (Color.ofHtml st.seeds.accent.r st.seeds.accent.g st.seeds.accent.b) := by
-  have hd := (SeedPalette.generate_seeds_exact st).2
-  simp only [Design.declared?, Palette.applySeeds, SeedPalette.entries, List.foldl_append,
-    List.foldl_cons, List.foldl_nil]
+  have hd := (SeedPalette.generate_seeds_exact st).1
+  have hb := (SeedPalette.generate_seeds_exact st).2
+  simp only [Design.declared?, Palette.applySeedsUnder, List.foldl_cons, List.foldl_nil]
   refine ⟨?_, ?_, ?_⟩
-  · rw [Palette.declareSeeded_keeps _ _ _ fun e he => (hd e he).1]
+  · rw [Palette.installBound_keeps _ _ _ _ fun e he => (hb e he).1,
+      Palette.installDerived_keeps _ _ _ _ fun e he => (hd e he).1]
     unfold Palette.declareSeeded
     rw [Palette.declare_keeps_others _ (.role .accent) (.role .ink) _ _ (by simp),
       Palette.declare_last_wins]
-  · rw [Palette.declareSeeded_keeps _ _ _ fun e he => (hd e he).2.1]
+  · rw [Palette.installBound_keeps _ _ _ _ fun e he => (hb e he).2.1,
+      Palette.installDerived_keeps _ _ _ _ fun e he => (hd e he).2.1]
     unfold Palette.declareSeeded
     rw [Palette.declare_keeps_others _ (.role .accent) (.role .page) _ _ (by simp),
       Palette.declare_keeps_others _ (.role .ink) (.role .page) _ _ (by simp),
       Palette.declare_last_wins]
-  · rw [Palette.declareSeeded_keeps _ _ _ fun e he => (hd e he).2.2]
+  · rw [Palette.installBound_keeps _ _ _ _ fun e he => (hb e he).2.2,
+      Palette.installDerived_keeps _ _ _ _ fun e he => (hd e he).2.2]
     unfold Palette.declareSeeded
     rw [Palette.declare_last_wins]
 

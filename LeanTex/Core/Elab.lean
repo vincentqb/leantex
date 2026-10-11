@@ -509,6 +509,12 @@ public structure SpanRecords where
   declare them (`generated`). -/
   seedPalettes : Array (SeedPalette.Seeds × SeedPalette.Targets ×
     Option SeedPalette.Colors × Option SeedPalette.Failure) := #[]
+  /-- The roles the document has declared through a role door — a
+  `\palette` role key, an xcolor colour of a code role's key, a
+  `\setbeamercolor` channel, `\pagecolor`, the seeds' own ink, paper and
+  accent — and no theme has installed over since: what a generated palette
+  keeps (`Elab.applySeeds`). Any other author colour's name is no role door. -/
+  docRoles : Array Role := #[]
   deriving Repr, BEq
 
 /-- beamer's `\logo` (`main`), a declaration legal in the preamble and the
@@ -1253,6 +1259,13 @@ expression that spells no owed key anywhere is never split into names. -/
 private def noteColorReads (expr : String) : EM Unit := do
   let owed ← owedKeys
   if owed.any (expr.contains ·) then noteColorNames (Ir.colorNames expr)
+
+/-- Roles the document declares through a role door (`SpanRecords.docRoles`). -/
+private def noteDocRoles (rs : List Role) : EM Unit :=
+  modify fun st =>
+    let roles := rs.foldl (fun acc r => if acc.contains r then acc else acc.push r)
+      st.spans.docRoles
+    { st with spans := { st.spans with docRoles := roles } }
 
 /-- Record a colour expression's first use in its source palette. -/
 private def recordColorSpan (ctx : Ctx) (expr : String) (c : Color) (role : Bool)
@@ -6306,7 +6319,9 @@ a side channel, never slide content" pos
       if hasParRaw body then
         footnoteWarnPar ctx pos
       let acc := flushText acc sb
-      let inner ← elabInlinesCore ctx body
+      -- A note ships at the page's foot, on the page, wherever its mark
+      -- stands; on a card it sets in the flow, on the flow's ground.
+      let inner ← elabInlinesCore { ctx with ground := if ctx.face then ctx.ground else none } body
       have hadv : sliceWeight raws (j + 1) < sliceWeight raws i :=
         sliceWeight_lt raws h (by omega)
       if ctx.face then
@@ -7424,6 +7439,7 @@ private def pageGroundDecl (ctx : Ctx) (marker : String) (pos : Pos) :
   match ← readColor ctx ctx.palette none source pos with
   | .resolved c _ =>
     logGlobal (.entry (.role .page) (some c) false false)
+    noteDocRoles [.page]
     return some (ctx.palette.declare (.role .page) c)
   | .missing =>
     warnPageColorMiss ctx source pos
@@ -8166,8 +8182,7 @@ private def parsePaletteOpts (ctx : Ctx) (src : String) (pos : Pos) :
       diag ctx .W0316 s!"unknown option in '\\palette': {e.quote}; block skipped" pos
         (help := "options: decorative, seeds")
       skipBlock := true
-  -- A generated palette meets every contrast its sites owe, so the
-  -- exemption `decorative` declares has nothing to exempt there.
+  -- premise: seedRoleChecks — the decorative and the plain seeded builds install one palette and judge it alike
   if seeds && decorative then
     warnOnce ctx "palette:seeds:decorative" .W0110 "'decorative' exempts nothing in \
 '\\palette[seeds]': a generated palette meets the contrast its sites owe; the option is \
@@ -8206,6 +8221,8 @@ private def applyBeamerColor (ctx : Ctx) (pal : Palette) (name : String)
   if let some (fg, bg) := BeamerColor.roles.lookup name then
     for entry in Decl.splitEntries src do
       if let some (key, _) := Decl.splitEntry entry then
+        if key == "fg" then noteDocRoles fg.toList
+        if key == "bg" then noteDocRoles bg.toList
         if (key == "fg" && fg.isNone) || (key == "bg" && bg.isNone) then
           warnOnce ctx ("beamercolor:channel:" ++ name ++ ":" ++ key) .W0104
             s!"'\\setbeamercolor' {key} on '{name}' has no paint site; that channel is kept only for inheritance" pos
@@ -8307,6 +8324,7 @@ by its code role" pos
           if let .role r := k then
             modify fun st => { st with scope := { st.scope with
               palette := st.scope.palette.native r c } }
+            noteDocRoles [r]
           -- A body `\palette` keeps its flow scope past every group's end:
           -- a global assignment (`GlobalWrite`).
           logGlobal (.entry k (some c) decorative true)
@@ -8418,37 +8436,46 @@ private def applySeeds (ctx : Ctx) (pal : Palette) (src : String) (pos : Pos)
     { ink, paper, accent, alert := seed "alert", exampleColor := seed "example",
       neutral := seed "neutral" }
   let targets := seeds.targets depth
-  -- A role the document declared before the seeds keeps its declaration:
-  -- the document's own colour outranks what is generated, which outranks a
-  -- bundle's (`declaredKeys` holds the document's declarations, never a
-  -- bundle's or the seeds').
-  let own := (← get).declaredKeys
-  let declare (pal : Palette) (r : Role) (c : Color) : EM Palette := do
-    if own.contains ("palette", (ColorRef.role r).key) then return pal
-    noteDeclared ctx "seeds" (ColorRef.role r).key
-    recordColorDeclaration (ColorRef.role r).key c (ctx.sourceSpan pos)
-    modify fun st => { st with scope := { st.scope with
-      palette := st.scope.palette.native r c } }
-    logGlobal (.entry (.role r) (some c) false true)
-    return pal.declare (.role r) c
+  -- A role the seeds derive or bind keeps the colour the document declared
+  -- for it through any role door, before or after (`SpanRecords.docRoles`;
+  -- an author colour's name never counts): the document's colour outranks
+  -- what is generated, which outranks a bundle's. The seeds' own ink,
+  -- paper and accent are declarations, the latest winning.
+  let docRoles := (← get).spans.docRoles
+  let keep (r : Role) : Bool := docRoles.contains r
+  -- Each role the install changed is a declaration the log and the report
+  -- read, and a later theme replacing it says so (W0348).
+  let note (before after : Palette) : EM Unit := do
+    for r in Role.all do
+      if let some c := Design.declared? after r then
+        if Design.declared? before r != some c then
+          noteDeclared ctx "palette" (ColorRef.role r).key
+          recordColorDeclaration (ColorRef.role r).key c (ctx.sourceSpan pos)
+          modify fun st => { st with scope := { st.scope with
+            palette := st.scope.palette.native r c } }
+          logGlobal (.entry (.role r) (some c) false true)
+  noteDocRoles [.ink, .page, .accent]
   match ← generated seeds targets with
   | .ok colors =>
     let st : SeedPalette.SeedState := { seeds, targets, blocks, colors }
-    let mut out := { pal with seeded := some st }
-    for (r, c) in SeedPalette.entries st do
-      out ← declare out r (Color.ofHtml c.r c.g c.b)
+    let out := pal.applySeedsUnder st keep
+    note pal out
     logGlobal (.seeded (some st))
     resolveBeamerColors ctx out
   | .error f =>
-    let what := (ColorRef.role f.role).key
+    let what := match f.role with
+      | .ink => "ink"
+      | .page => "paper"
+      | .accent => "accent"
+      | r => (ColorRef.role r).key
     modify fun st => { st with diags := st.diags.push (diagOf ctx .W0306
       s!"'\\palette[seeds]' generates no palette: {what}: {f.detail}; the seeds stand as given"
       (some pos) (help := some (seedHelp f))
       (subject := some s!"palette:seeds:{what}")) }
-    let pal ← declare pal .ink ink
-    let pal ← declare pal .page paper
-    let pal ← declare pal .accent accent
-    resolveBeamerColors ctx pal
+    let out := [(Role.page, paper), (.ink, ink), (.accent, accent)].foldl
+      (fun p (r, c) => p.declare (.role r) c) pal
+    note pal out
+    resolveBeamerColors ctx out
 where
   missingSeed : EM Palette := do
     diag ctx .E0320 "'\\palette[seeds]' needs an ink, a paper and an accent" pos
@@ -12537,8 +12564,12 @@ private def openStandoutPalette (ctx : Ctx) (standout : Bool) (blocks : Array Bl
   let aliases := (← get).scope.palette.standoutAliases
   if !standout then
     return (⟨ctx, rfl, rfl, rfl, rfl⟩, blocks, false)
-  -- A standout frame's content stands on the inversion its frame paints.
-  let ground (pal : Palette) : Option Color := some (Design.ofPalette pal).standout.bg
+  -- A standout frame's content stands on the inversion its frame paints,
+  -- which only a generated palette re-tones a run against.
+  let ground (pal : Palette) : Option Color :=
+    if pal.seeded.isSome then
+      some ((Design.at pal .print .standoutGround).getD (Design.printInk pal))
+    else none
   if aliases.isEmpty then
     return (⟨{ ctx with ground := ground ctx.palette }, rfl, rfl, rfl, rfl⟩, blocks, false)
   let mut pal := ctx.palette
@@ -17158,7 +17189,9 @@ the built-in's heading and margins stand{replaced}"
         -- the document, whatever they replaced.
         let installed := Theme.declares th
         modify fun st => { st with
-          declaredKeys := st.declaredKeys.filter (fun e => !installed.contains e) }
+          declaredKeys := st.declaredKeys.filter (fun e => !installed.contains e)
+          spans := { st.spans with docRoles := st.spans.docRoles.filter fun r =>
+            (Design.declared? th.palette r).isNone } }
         let ds := Theme.apply th before
         -- The bundle's colour theme declares its own relationships under the
         -- document's (`BeamerColor.themeElement`).

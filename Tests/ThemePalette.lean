@@ -21,10 +21,10 @@ example {s : SeedPalette.Seeds} {t : SeedPalette.Targets} (p : SeedPalette.Gener
     ∀ x ∈ SeedPalette.blockPairs s t p.colors b, t.text ≤ Contrast.contrastMilli x.1 x.2 :=
   (SeedPalette.generated_sites_contract p).2 b
 
-example (pal : Ir.Palette) (st : SeedPalette.SeedState) :
-    Ir.Design.declared? (pal.applySeeds st) .accent =
+example (pal : Ir.Palette) (st : SeedPalette.SeedState) (keep : Ir.Role → Bool) :
+    Ir.Design.declared? (pal.applySeedsUnder st keep) .accent =
       some (Ir.Color.ofHtml st.seeds.accent.r st.seeds.accent.g st.seeds.accent.b) :=
-  (Ir.Palette.applySeeds_seeds_exact pal st).2.2
+  (Ir.Palette.applySeedsUnder_seeds_exact pal st keep).2.2
 
 private def hex (r g b : UInt8) : Ir.Color := { r, g, b }
 

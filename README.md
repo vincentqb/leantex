@@ -139,9 +139,13 @@ title separator are the seeds' too, and a deck that generates its palette
 takes none of its default theme's colours. A generated colour standing on a
 ground it does not read on — a frame-title or block bar, the standout frame —
 takes its family's tone there, and highlighted code takes colours derived
-from the same palette, one tone wherever the listing stands. A colour the
-document declares before `\palette[seeds]` keeps its value; one declared
-after overrides what the seeds generated.
+from the same palette, one tone wherever the listing stands. The seeds'
+ink, paper and accent declare the page's text, ground and accent, so the later
+of a seed and the document's own declaration of that role wins. Any other
+colour the document declares, before `\palette[seeds]` or after it, keeps its
+value over the generated one, and an element the seeds bind (a block's bar or
+body, the progress bar) reads the role it is bound to as the document leaves
+it.
 Colours may also be written as `oklch(L C H)` or `oklab(L a b)`, as CSS
 Color 4 spells them; one outside sRGB loses chroma at its own lightness and
 hue.
@@ -159,8 +163,9 @@ Load `colors.tex` after the Beamer theme. It defines one colour per role
 `SlideDiagramMuted`, `SlideSurface`, `SlideSurfaceStrong`, `SlideAccentWash`,
 `SlideAccentSoft`, `SlideAccentText`, `SlideAccentEdge`, `SlideAccentOnDark`,
 `SlideAlert`, `SlideAlertTitle`, `SlideExampleTitle`) and binds beamer's
-`normal text`, `footline`, `alerted text`, six block elements, `progress bar`
-and `title separator` to them.
+`normal text`, `background canvas`, `footline`, `page number in head/foot`,
+`alerted text`, six block elements, `progress bar` and `title separator` to
+them.
 Use `SlideAccent` for decoration and `SlideAccentText` for text on
 `SlidePaper` or `SlideSurface`; `SlideAccentEdge` for essential strokes;
 `SlideAccentOnDark` for text on `SlideInk`. `--blocks strong` picks the
