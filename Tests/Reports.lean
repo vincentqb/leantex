@@ -1,6 +1,7 @@
 import Tests.DiagAudit
 import Tests.BuildGraph
 import Tests.DeclaredColors
+import Tests.ColorNames
 import LeanTex.Core.ControlContract
 import Tests.Surface
 import Tests.Regress
@@ -1377,6 +1378,13 @@ def reports : List Report := [
       thm% Listing.paint_role_exact, thm% Listing.brush_role_exact]
     accept := ["twenty-four of the guard's assertions fail on the tree before the fix, in PDF and HTML alike, under a style and an invented palette: a Python function's and class's definitions set apart from their call, their use, a parameter and the Lean function, and a builtin sharing the definitions' paint",
       "a presentation deck's Python function names at their definitions and their calls, a test function's name, and a Lean function at its definition and its recursive call, all in the identifiers' ink in PDF and HTML"]
+    state := .guarded "dbbfba91" .before .author },
+  { id := "R149", date := "2026-10-11"
+    what := "a listing's code colours declared by xcolor definitions of the code roles' keys, the one spelling both engines compile, reached no listing: its tokens shipped the colours the palette derives, with nothing reported, where the same declarations had coloured them before the colour registry"
+    pins := [check% Tests.ColorNames.xcolorCodeRoleChecks, thm% Ir.Palette.defineXcolor_role_exact,
+      thm% Ir.Palette.defineXcolor_design_id]
+    accept := ["six of the guard's assertions fail on the tree before the fix: the two roles undeclared, the keyword and the literals in derived colours on the page, the page and the HTML body apart from the palette spelling's, and the stylesheet's two roles not the declared colours",
+      "a presentation deck whose theme declares its code roles by xcolor definitions ships its declared code colours in both artifacts"]
     state := .guarded "dbbfba91" .before .author }
 ]
 

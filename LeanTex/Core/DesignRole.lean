@@ -420,6 +420,17 @@ the role whose `\palette` key declares that code role's colour. -/
   | .titlePageGround | .titlePageInk | .separator | .progressFill | .progressTrack
   | .sectionProgressFill | .sectionProgressTrack => none
 
+/-- **The role an xcolor colour of a key declares**: a listing's code role,
+whose colour a document declares by an xcolor colour of its key
+(`\definecolor{codekeyword}`, `\colorlet{codecomment}{…}`) — the spelling
+both engines compile, no beamer element carrying the role: leantex reads the
+role, and a TeX build the colour wherever the document's own highlighting
+names it. Every other name an xcolor definition gives stays an author colour,
+as xcolor keeps it: the minted manual's `\definecolor{bg}` paints no page,
+and beamer's `\alert` reads its `alerted text`, never a colour named alert. -/
+@[expose] public def Role.ofXcolor? (k : String) : Option Role :=
+  (Role.ofKey? k).filter fun r => (Role.code? r).isSome
+
 public theorem Role.code?_ofCode (r : ListingHighlight.Role) : (Role.ofCode r).code? = some r := by
   cases r <;> rfl
 

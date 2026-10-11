@@ -24,9 +24,10 @@ private def runInks (out : Layout.Out) (text : String) : Array Ir.Color :=
       | .run _ ink _ _ glyphs .. => if glyphs.isEmpty then none else some ink
       | _ => none
 
-/-- **An author colour never binds a role.** `\definecolor` and `\colorlet`
-name xcolor colours, a namespace apart from the roles `\palette` keys
-declare (`Palette.defineColor_design_id`): the minted manual's own
+/-- **An author colour binds no role but a code role's.** `\definecolor` and
+`\colorlet` name xcolor colours, a namespace apart from the roles `\palette`
+keys declare (`Palette.defineXcolor_design_id`; a code role's key declares
+that role too, `xcolorCodeRoleChecks`): the minted manual's own
 `\definecolor{bg}` paints no page, a colour named `fg` sets no text, a
 `\colorlet{alert}` leaves the alert role as declared and `\alert` reads that
 role (beamer's `alerted text`), while an expression (`\textcolor{bg}`,
@@ -120,6 +121,83 @@ public def checks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit 
       ("a:focus-visible", "outline", .focus, "focus ring")] do
     t s!"author colours: an author colour leaves the HTML {what} the registry's"
       (ruleColor sel prop == some (HtmlDoc.cssColor (screenColor .light role)))
+
+/-- Each glyph run the lines holding `word` set, as its text beside its ink. -/
+private def runTexts (out : Layout.Out) (word : String) : Array (String × Ir.Color) :=
+  ((allLines out).filter fun l => hasStr (lineText l) word).flatMap fun l =>
+    l.segs.filterMap fun
+      | .run _ ink _ _ glyphs .. =>
+        if glyphs.isEmpty then none else some (String.ofList (glyphs.map (·.2.1)).toList, ink)
+      | _ => none
+
+/-- **An xcolor colour of a code role's key declares the role** (R149), the
+one spelling both engines compile: a listing under
+`\definecolor{codekeyword}` and `\colorlet{codeliteral}{blue}` sets its
+keywords and literals in them, on the page and in the HTML alike, as the
+`\palette` spelling of the two roles does, says nothing, and keeps both names
+readable as colours; without them the same tokens take what the palette
+derives. Read off `Layout.Out`, the typed HTML body and the stylesheet. -/
+public def xcolorCodeRoleChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit := do
+  let t := check ref
+  let doc (pre : String) := elabStr (article ("\\usepackage{minted}\n" ++ pre)
+    "\\begin{minted}{lean4}\ntheorem probe : 1 + 1 = 2 := by\n  sorry\n\\end{minted}")
+  let (xd, xds) := doc "\\definecolor{codekeyword}{HTML}{A63D24}\n\\colorlet{codeliteral}{blue}\n"
+  let (pd, _) := doc "\\palette{ codekeyword = #A63D24, codeliteral = #0000FF }\n"
+  let (bare, _) := doc ""
+  let red := Ir.Color.ofHtml 0xA6 0x3D 0x24
+  let blue := Ir.Color.ofHtml 0 0 0xFF
+  t "xcolor code roles: the two definitions declare the two roles"
+    (Ir.Design.declared? xd.palette .codeKeyword == some red &&
+      Ir.Design.declared? xd.palette .codeLiteral == some blue)
+  t "xcolor code roles: both names stay colours an expression reads"
+    (xd.palette.lookup (.color "codekeyword") == some red &&
+      xd.palette.lookup (.color "codeliteral") == some blue)
+  t "xcolor code roles: the definitions say nothing"
+    (xds.all (·.severity == .note))
+  let runs (d : Ir.Doc) := runTexts (layoutOf fonts d) "probe"
+  let inksOf (d : Ir.Doc) (p : String → Bool) := ((runs d).filter (p ·.1)).map (·.2)
+  let keyword (s : String) := hasStr s "theorem"
+  let literal (s : String) := s.any Char.isDigit
+  t "xcolor code roles: the page sets the keyword in the declared colour"
+    (!(inksOf xd keyword).isEmpty && (inksOf xd keyword).all (· == red))
+  t "xcolor code roles: the page sets the literals in the declared colour"
+    (!(inksOf xd literal).isEmpty && (inksOf xd literal).all (· == blue))
+  t "xcolor code roles: the page is the palette spelling's"
+    (runs xd == runs pd)
+  t "xcolor code roles: undeclared, the keyword takes another colour"
+    (!(inksOf bare keyword).isEmpty && (inksOf bare keyword).all (· != red))
+  let body (d : Ir.Doc) :=
+    let (_, nodes, _) := HtmlDoc.emitTree {} d
+    Html.render (Html.elem "body" nodes) 0
+  t "xcolor code roles: the HTML body is the palette spelling's" (body xd == body pd)
+  let css := (HtmlDoc.emit {} xd).1
+  let vars := screenRootVars css
+  t "xcolor code roles: the stylesheet's two roles are the declared colours"
+    (chaseCssValue vars (HtmlDoc.roleRef .codeKeyword) == some (HtmlDoc.cssColor red) &&
+      chaseCssValue vars (HtmlDoc.roleRef .codeLiteral) == some (HtmlDoc.cssColor blue))
+  -- Declared in the body, inside a group: the role reaches a listing after
+  -- the group ends, as the colour of that name does and as the role's
+  -- `\palette` spelling does — a frame's end and an environment's alike.
+  let listing := "\\begin{minted}{lean4}\ntheorem probe : 1 + 1 = 2 := by\n  sorry\n\\end{minted}"
+  let groups : List (String × (String → String)) := [
+    ("a frame", fun decl => dvDeck "\\usepackage{minted}\n"
+      ("\\begin{frame}{One}" ++ decl ++ "Declared here.\\end{frame}\n" ++
+       "\\begin{frame}[fragile]{Two}\n" ++ listing ++ "\n\\end{frame}")),
+    ("an environment", fun decl => article "\\usepackage{minted}\n"
+      ("\\begin{center}" ++ decl ++ "Declared here.\\end{center}\n\n" ++ listing))]
+  for (what, src) in groups do
+    let (gx, _) := elabStr (src "\\definecolor{codekeyword}{HTML}{A63D24}")
+    let (gp, _) := elabStr (src "\\palette{ codekeyword = #A63D24 }")
+    t s!"xcolor code roles: declared inside {what}, the keyword after it ships the declared colour"
+      (!(inksOf gx keyword).isEmpty && (inksOf gx keyword).all (· == red))
+    -- The page and the listing's HTML are the role's `\palette` spelling's;
+    -- the colour of that name is declared beside the role, the one place the
+    -- two spellings' HTML differs.
+    let code (d : Ir.Doc) := ((body d).splitOn "<code").getD 1 "" |>.splitOn "</code>" |>.headD ""
+    t s!"xcolor code roles: declared inside {what}, the page and the listing are the palette spelling's"
+      (runs gx == runs gp && !(code gx).isEmpty && code gx == code gp)
+    t s!"xcolor code roles: declared inside {what}, the HTML declares the colour beside the role"
+      (hasStr (body gx) "--ltx-c-codekeyword: " && !hasStr (body gp) "--ltx-c-codekeyword: ")
 
 /-- **A `\palette` name nothing reads is named where it stands**: `ink` and
 `surface` declare author colours, never the page's text and ground, so one

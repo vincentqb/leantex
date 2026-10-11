@@ -164,9 +164,14 @@ decorators, attributes, labels, properties), literals, comments, and errors
 — what must not ship, such as a proof hole or an unimplemented branch. A
 palette names a role's colour directly
 (`\palette{ codeerror = #RRGGBB }`, and likewise `codeink`, `codekeyword`,
-`codename`, `codeliteral`, `codecomment`); the per-type keys `codestring`,
-`codenumber`, `codebuiltin` and `codeoperator` colour no listing, and a
-palette declaring one is told the role key to declare instead. Otherwise
+`codename`, `codeliteral`, `codecomment`), or by an xcolor colour of the
+same name (`\definecolor{codekeyword}{HTML}{A63D24}`, `\colorlet{codecomment}{gray}`),
+the spelling a TeX build compiles too. Such a colour is both the colour text
+names (`--ltx-c-codekeyword` in HTML) and the role the tokens read
+(`--ltx-codekeyword`); a later `\palette` key re-declares the role alone.
+The per-type keys `codestring`, `codenumber`, `codebuiltin` and
+`codeoperator` colour no listing, and a palette declaring one is told the
+role key to declare instead. Otherwise
 the role follows the palette: errors take `alert`, comments `muted`,
 literals `example` (or one more hue, set apart from the ink and the alert),
 and keywords and names a tone of the ink's own hue, or the ink itself where

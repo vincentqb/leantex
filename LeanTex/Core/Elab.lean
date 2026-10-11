@@ -8239,16 +8239,22 @@ private def applyPaletteEntry (ctx : Ctx) (pal : Palette) (key valueSrc entry : 
   else
     -- An xcolor definition (`\definecolor`, `\colorlet`) and a standout
     -- alias name an author colour whatever their spelling; a `\palette`
-    -- key declares the role it is the key of.
+    -- key declares the role it is the key of, and so does an xcolor
+    -- definition of a code role's key, beside its colour (`Role.ofXcolor?`).
     let xcolor := valueSrc.trimAscii.toString.startsWith Decl.xcolorDefinitionPrefix
     let ref : ColorRef := if aliasOnly || xcolor then .color key else ColorRef.ofKey key
+    -- Every name the declaration declares: the palette, the flow scope and
+    -- the global log are written through this one list.
+    let refs : List ColorRef := if xcolor && !aliasOnly then Palette.xcolorRefs key else [ref]
     let put (pal : Palette) (c : Color) : EM Palette := do
       -- premise: codeRoleChecks — two builds that differ only by a retired key ship one listing paint, over a listing holding a token of each key's type
       if let some r := CodeColor.retiredKeys.lookup key then
         warnOnce ctx ("listingkey:" ++ key) .W0387
           s!"palette key '{key}' still names a colour, but listings now colour each token \
 by its code role" pos
-          (help := s!"declare \\palette\{ {Ir.codeKey r} = #RRGGBB } to colour the {r.word} role")
+          (help := if xcolor then
+              s!"declare \\definecolor\{{Ir.codeKey r}}\{HTML}\{RRGGBB} to colour the {r.word} role"
+            else s!"declare \\palette\{ {Ir.codeKey r} = #RRGGBB } to colour the {r.word} role")
       noteDeclared ctx "palette" key
       recordColorDeclaration key c (ctx.sourceSpan pos)
       if ref == .color key && !aliasOnly && !xcolor && legacyScreenKeys.contains key then
@@ -8256,13 +8262,15 @@ by its code role" pos
           { st with spans := { st.spans with
             tokenKeys := st.spans.tokenKeys.push (key, ctx.sourceSpan pos) } }
       unless aliasOnly do
-        if let .role r := ref then
-          modify fun st => { st with scope := { st.scope with
-            palette := st.scope.palette.native r c } }
-        -- A body `\palette` keeps its flow scope past every group's end:
-        -- a global assignment (`GlobalWrite`).
-        logGlobal (.entry ref (some c) decorative true)
-      return pal.declare ref c decorative
+        for k in refs do
+          if let .role r := k then
+            modify fun st => { st with scope := { st.scope with
+              palette := st.scope.palette.native r c } }
+          -- A body `\palette` keeps its flow scope past every group's end:
+          -- a global assignment (`GlobalWrite`).
+          logGlobal (.entry k (some c) decorative true)
+      return if xcolor && !aliasOnly then pal.defineXcolor key c decorative
+        else pal.declare ref c decorative
     match ← readColor ctx pal none valueSrc pos with
     | .resolved c _ => pal := ← put pal c
     | .rejected => pure ()

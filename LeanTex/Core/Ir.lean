@@ -12855,26 +12855,84 @@ public theorem Design.ofPalette_fg (pal : Palette) :
 public theorem Design.ofPalette_bg (pal : Palette) :
     (Design.ofPalette pal).bg = Design.printPage pal := rfl
 
-/-- **An author colour never repaints a role.** Declaring a colour under any
-name — `\definecolor{bg}`, the minted manual's own idiom included — leaves
-the resolved design exactly as it was, in every scheme: names are scoped by
-kind (`ColorRef`), and the resolver reads only roles. Before the split the
-same declaration bound the page role and painted the whole page. -/
-public theorem Palette.defineColor_design_id (pal : Palette) (n : String) (c : Color)
-    (d : Bool) (s : Scheme) :
-    Design.resolve (pal.declare (.color n) c d) s = Design.resolve pal s := by
-  have hd : ∀ r, Design.declared? (pal.declare (.color n) c d) r = Design.declared? pal r :=
-    fun r => Palette.declare_keeps_others pal (.color n) (.role r) c d (by simp)
-  have hdepth : ∀ m, Design.atDepth (pal.declare (.color n) c d) m = Design.atDepth pal m := by
+/-- Two palettes whose roles are declared alike, at one covered fraction,
+resolve alike in every scheme: the resolver reads a palette through its
+role declarations alone. -/
+private theorem Design.resolve_congr (p q : Palette) (s : Scheme)
+    (hd : ∀ r, Design.declared? p r = Design.declared? q r)
+    (hc : p.coveredFraction = q.coveredFraction) :
+    Design.resolve p s = Design.resolve q s := by
+  have hdepth : ∀ m, Design.atDepth p m = Design.atDepth q m := by
     intro m
     induction m with
     | zero => funext s r; simp only [Design.atDepth, hd]
     | succ m ih => funext s r; simp only [Design.atDepth, hd, ih]
-  have hat : Design.at (pal.declare (.color n) c d) s = Design.at pal s := by
+  have hat : Design.at p s = Design.at q s := by
     funext r
     simp only [Design.at, hdepth]
-  simp only [Design.resolve, titledBodyLook, hat, hd]
-  rfl
+  simp only [Design.resolve, titledBodyLook, hat, hd, hc]
+
+/-- **An author colour never repaints a role.** Declaring a colour under any
+name — `\definecolor{bg}`, the minted manual's own idiom included — leaves
+the resolved design exactly as it was, in every scheme: names are scoped by
+kind (`ColorRef`), and the resolver reads only roles. Before the split the
+same declaration bound the page role and painted the whole page. The one
+role an xcolor definition declares beside its colour is a code role's, by
+that role's key (`Palette.defineXcolor`). -/
+public theorem Palette.defineColor_design_id (pal : Palette) (n : String) (c : Color)
+    (d : Bool) (s : Scheme) :
+    Design.resolve (pal.declare (.color n) c d) s = Design.resolve pal s :=
+  Design.resolve_congr _ _ s
+    (fun r => Palette.declare_keeps_others pal (.color n) (.role r) c d (by simp)) rfl
+
+/-- The names an xcolor definition of `n` declares (`\definecolor`,
+`\colorlet`): the author colour, and the role an xcolor colour of that name
+declares (`Role.ofXcolor?`, a listing's code role). The elaborator writes the
+palette, the flow scope and the global log through this one list. -/
+@[expose] public def Palette.xcolorRefs (n : String) : List ColorRef :=
+  .color n :: ((Role.ofXcolor? n).map ColorRef.role).toList
+
+/-- An xcolor definition of `n`: every name it declares, at one colour. -/
+@[expose] public def Palette.defineXcolor (pal : Palette) (n : String) (c : Color)
+    (d : Bool := false) : Palette :=
+  (Palette.xcolorRefs n).foldl (fun p k => p.declare k c d) pal
+
+/-- **An xcolor colour of a code role's key declares the role**, as the
+`\palette` key does: the listing paints that role in it. -/
+public theorem Palette.defineXcolor_role_exact (pal : Palette) (n : String) (c : Color)
+    (d : Bool) (r : Role) (h : Role.ofXcolor? n = some r) :
+    Design.declared? (pal.defineXcolor n c d) r = some c := by
+  simp only [Palette.defineXcolor, Palette.xcolorRefs, h, Option.map_some, Option.toList_some,
+    List.foldl_cons, List.foldl_nil, Design.declared?]
+  exact Palette.declare_find_exact _ _ _ _
+
+/-- **The xcolor spelling of a code role resolves as the `\palette` one**: the
+design an xcolor definition of a code role's key leaves is the design the
+role's own declaration leaves, in every scheme — the author colour it also
+names repaints nothing (`Palette.defineColor_design_id`). -/
+public theorem Palette.defineXcolor_resolve_exact (pal : Palette) (n : String) (c : Color)
+    (d : Bool) (s : Scheme) (r : Role) (h : Role.ofXcolor? n = some r) :
+    Design.resolve (pal.defineXcolor n c d) s = Design.resolve (pal.declare (.role r) c d) s := by
+  simp only [Palette.defineXcolor, Palette.xcolorRefs, h, Option.map_some, Option.toList_some,
+    List.foldl_cons, List.foldl_nil]
+  refine Design.resolve_congr _ _ s (fun r' => ?_) rfl
+  simp only [Design.declared?]
+  by_cases hr : r' = r
+  · subst hr
+    rw [Palette.declare_find_exact, Palette.declare_find_exact]
+  · have hne : ColorRef.role r' ≠ .role r := fun he => hr (ColorRef.role.inj he)
+    rw [Palette.declare_keeps_others _ _ _ _ _ hne, Palette.declare_keeps_others _ _ _ _ _ hne,
+      Palette.declare_keeps_others pal (.color n) (.role r') c d (by simp)]
+
+/-- **Any other xcolor colour repaints no role**: an xcolor definition of a
+name no code role is keyed by leaves the resolved design as it was, in every
+scheme (`Palette.defineColor_design_id`). -/
+public theorem Palette.defineXcolor_design_id (pal : Palette) (n : String) (c : Color)
+    (d : Bool) (s : Scheme) (h : Role.ofXcolor? n = none) :
+    Design.resolve (pal.defineXcolor n c d) s = Design.resolve pal s := by
+  simp only [Palette.defineXcolor, Palette.xcolorRefs, h, Option.map_none, Option.toList_none,
+    List.foldl_cons, List.foldl_nil]
+  exact Palette.defineColor_design_id pal n c d s
 
 /-- A declaration is what a role resolves to, in every scheme. -/
 public theorem Design.at_declared (pal : Palette) (s : Scheme) (r : Role) (c : Color)
