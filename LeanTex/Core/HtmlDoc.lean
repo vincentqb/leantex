@@ -1491,7 +1491,7 @@ private def skipSp (size : Int) (tokens : Ir.Tokens) (name : String) : Int :=
 `\medskipamount` and TeX's `\lineskip` between its title box and what
 stands above, the print length's screen multiple (`screenMilli`). -/
 private def blockAboveMilli (size : Int) (tokens : Ir.Tokens) : Nat :=
-  screenMilli size (skipSp size tokens "medskipamount" + Layout.inkClearance)
+  screenMilli size (skipSp size tokens "medskipamount" + Ir.inkClearance)
 
 /-- What stands for a block at a frame's opening: the block, or the overlay
 step carrier (`overlayNode`: `.step` or `.step-set`, a range's end nested in
@@ -2210,18 +2210,9 @@ public theorem titledBodyPaint_projects (pal : Ir.Palette) (kind : Ir.TitledKind
     titledBodyPaint pal kind parent = (Ir.Design.ofPalette pal).titledBodyPaint kind parent := by
   rfl
 
-/-- Both body painters project one IR design value, including independent
-channel inheritance. -/
-public theorem titledBodyPaint_agree (pal : Ir.Palette) (kind : Ir.TitledKind)
-    (parent : Ir.ColorPair) :
-    titledBodyPaint pal kind parent = Layout.titledBodyPaint pal kind parent := by rfl
-
 /-- HTML retains the shared inset's font-relative unit. At the same body
 font size, its length is exactly the PDF inset, independent of leading. -/
 @[expose] public def titledPadding : Length := Ir.titledPadding
-
-public theorem titledPadding_agree (fontSize xHeight : Sp) :
-    titledPadding.resolve fontSize xHeight = Layout.titledPadding fontSize xHeight := by rfl
 
 /-- A painted block colour box as CSS, `titledPadding` on every side and
 reaching it beyond the measure, so the text stays on the measure. A body

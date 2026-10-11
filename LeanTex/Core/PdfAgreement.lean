@@ -139,3 +139,18 @@ public theorem fontPolicy_projects (doc : Ir.Doc) (fs : FontSet) (pages : Array 
   exact html_fonts_cover_pdf fs pages h
 
 end LeanTex.Core.Pdf
+
+namespace LeanTex.Core.HtmlDoc
+
+/-- Both body painters project one IR design value, including independent
+channel inheritance. -/
+public theorem titledBodyPaint_agree (pal : Ir.Palette) (kind : Ir.TitledKind)
+    (parent : Ir.ColorPair) :
+    titledBodyPaint pal kind parent = Layout.titledBodyPaint pal kind parent := by rfl
+
+/-- HTML retains the shared inset's font-relative unit: at the same body
+font size, its length is exactly the PDF inset, independent of leading. -/
+public theorem titledPadding_agree (fontSize xHeight : Dim.Sp) :
+    titledPadding.resolve fontSize xHeight = Layout.titledPadding fontSize xHeight := by rfl
+
+end LeanTex.Core.HtmlDoc

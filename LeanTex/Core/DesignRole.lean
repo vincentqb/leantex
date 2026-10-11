@@ -1,7 +1,7 @@
 module
 
 public import LeanTex.Core.Color
-public import LeanTex.Core.CodeRole
+public import LeanTex.Core.CodeRoles
 
 /-!
 The colour roles every artifact paints, as one typed registry. A role is a

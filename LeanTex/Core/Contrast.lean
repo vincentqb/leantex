@@ -1,9 +1,7 @@
 module
 
 public import LeanTex.Core.ContrastRatio
-public import LeanTex.Core.ContrastPaint
 public import LeanTex.Core.Theme
-import LeanTex.Core.Layout
 import LeanTex.Core.Listing
 import LeanTex.Core.Oklab
 import Std.Data.HashMap
@@ -65,114 +63,6 @@ public abbrev ColorSite := Palette → Option String → Color → Option (Strin
 public def ratioString (milli : Nat) : String :=
   let frac := (milli % 1000) / 10
   s!"{milli / 1000}.{if frac < 10 then "0" else ""}{frac}:1"
-
-/-! ## The nearest legible colour: a role names a hue, a ground its lightness
-
-A colour a document states ships as stated: the judge below reports a
-pairing that falls short of its ground and never repaints it. What the
-engine derives itself — a palette generated from seeds (`SeedPalette`) —
-takes the tone that meets its ground, by the search here. Sources, and the
-rule taken from each:
-
-* https://m3.material.io/styles/color/system/how-the-system-works —
-  Material 3 tonal palettes: a key color fixes hue and chroma, and each
-  role takes a *tone* (lightness) chosen against its surface so the pair
-  meets its contrast; the 40/100 and 90/10 tone pairings exist exactly to
-  make the on-color legible on its container.
-* https://www.radix-ui.com/colors — one named scale realizes differently
-  on light and dark grounds; the hue is the identity, the lightness the
-  ground's choice.
-* https://tailwindcss.com/docs/colors (v4) — each named hue is an OKLCH
-  ladder: one (hue, chroma) family, eleven lightness steps, picked per
-  ground.
-* https://www.w3.org/TR/WCAG22/#contrast-minimum — the requirement judged:
-  SC 1.4.3's 4.5:1 (text) and 3:1 (large-scale text); SC 1.4.11's 3:1 for
-  non-text state information. The judged quantity is `contrastMilli`, the
-  WCAG relative-luminance ratio — monotone in lightness moving away from
-  the ground, which is what the binary search below rides.
-
-The solver searches the Oklab lightness axis at the colour's `(a, b)` (hue
-and chroma held fixed, exactly Material's tonal walk), taking the nearest
-passing lightness; when no lightness at that chroma reaches the ratio (a
-saturated hue against a mid ground), chroma reduces stepwise toward the
-neutral axis before giving up. Every returned colour re-judges against the
-requirement (`realizeNearest_meets`). -/
-
-/-- The candidate at lightness `L` (the `labOf` 10¹⁸ scale) with chroma
-scaled to `f`% of the declared: hue held, tone the variable. -/
-private def realizeCand (lab : Oklab.Lab) (f : Nat) (L : Int) : Color :=
-  Oklab.toColorOfLab
-    { L := L, a := (f : Int) * lab.a / 100, b := (f : Int) * lab.b / 100 }
-
-/-- Binary search on structural fuel between a failing lightness and a
-passing one, returning the passing side of the boundary; 60 halvings close
-the 10¹⁸ lightness range. The monotonicity assumption only steers the
-search — correctness is the caller's re-judgement of the result. -/
-private def realizeBisect (pass : Int → Bool) : Nat → Int → Int → Int
-  | 0, _, p => p
-  | fuel + 1, f, p =>
-    let mid := (f + p) / 2
-    if mid == f || mid == p then p
-    else if pass mid then realizeBisect pass fuel f mid
-    else realizeBisect pass fuel mid p
-
-/-- The `labOf` lightness of pure white, the top of the searched axis. -/
-private def realizeLMax : Int := 10 ^ 18
-
-/-- The nearest passing lightness at one chroma fraction: both directions
-searched, the boundary nearer the declared lightness taken; `none` when
-neither end of the axis reaches the requirement at this chroma. -/
-private def realizeAt (req : Nat) (ground : Color) (lab : Oklab.Lab)
-    (f : Nat) : Option Color :=
-  let pass := fun L => decide (req ≤ contrastMilli (realizeCand lab f L) ground)
-  if pass lab.L then some (realizeCand lab f lab.L)
-  else
-    let up := if pass realizeLMax then
-        some (realizeBisect pass 60 lab.L realizeLMax) else none
-    let down := if pass 0 then some (realizeBisect pass 60 lab.L 0) else none
-    match up, down with
-    | some u, some d =>
-      some (realizeCand lab f (if u - lab.L ≤ lab.L - d then u else d))
-    | some u, none => some (realizeCand lab f u)
-    | none, some d => some (realizeCand lab f d)
-    | none, none => none
-
-/-- The nearest legible colour on a ground: the colour itself when the
-pair already meets `req` (milli-ratio, `contrastMilli`'s scale); otherwise
-the nearest lightness at its hue and chroma that does, reducing chroma
-toward the neutral axis when the full-chroma axis never reaches it; `none`
-when nothing does. What the generator realizes a derived role with. -/
-public def realizeNearest (req : Nat) (ground c : Color) : Option Color :=
-  if req ≤ contrastMilli c ground then some c
-  -- A colour carrying a print model is declared in DeviceCMYK: realizing
-  -- it would repaint the declaration in sRGB and silently drop the
-  -- declared components, so the pair keeps its warning instead.
-  else if c.cmyk.isSome then none
-  else
-    (([100, 75, 50, 25, 0] : List Nat).findSome? fun f =>
-        realizeAt req ground (Oklab.labOf c) f).bind fun cand =>
-      if req ≤ contrastMilli cand ground then some cand else none
-
-/-- The solver's answer meets the requirement: every return is guarded by
-the judged quantity itself, so no monotonicity or search argument is
-load-bearing. -/
-public theorem realizeNearest_meets {req : Nat} {ground c c' : Color}
-    (h : realizeNearest req ground c = some c') : req ≤ contrastMilli c' ground := by
-  unfold realizeNearest at h
-  split at h
-  next hp => cases h; exact hp
-  next =>
-    split at h
-    next => cases h
-    next =>
-      match hb : ([100, 75, 50, 25, 0] : List Nat).findSome? fun f =>
-          realizeAt req ground (Oklab.labOf c) f with
-      | none => rw [hb] at h; cases h
-      | some cand =>
-        rw [hb, Option.bind_some] at h
-        split at h
-        next hp => cases h; exact hp
-        next => cases h
 
 -- The document-level check: the pairings a document's own colours create.
 
@@ -347,29 +237,31 @@ private def UseAcc.step (acc : UseAcc) (spec : Ir.OverlaySpec) : UseAcc :=
     { acc with pendingPals := pushUnique acc.pendingPals acc.pal }
   else acc
 
-/-- The context a heading's title sets: the layout's own per-level sizes —
-`Layout.sectionSize`, the one function titles are set with — in bold. The
-level-0 title takes the scale's LARGE step, the elaborator's `\maketitle`
-size, which `sectionSize` does not serve. Judging at the size the page
+/-- The context a heading's title sets: the type scale's per-level sizes —
+`Ir.headingSize`, the one function the page sets titles with
+(`Layout.sectionSize`) — in bold. The level-0 title takes the scale's LARGE
+step, the elaborator's `\maketitle` size, which `headingSize` does not
+serve here. Judging at the size the page
 ships is what makes the large-scale call (WCAG 2.2 glossary: ≥ 18pt, or
 bold ≥ 14pt) the page's own: a re-spelled absolute here once judged a
 phantom 14 pt bold while a 9 pt base set its sections at 12.96 pt. -/
 private def headingCx (base : Sp) : Ir.HeadingLevel → UseCx
   | 0 => { base, size := scaleStep base "LARGE"
            bold := true }
-  | l => { base, size := Layout.sectionSize { fontSize := base } l, bold := true }
+  | l => { base, size := Ir.headingSize base l, bold := true }
 
 /-- The judge and the page agree on heading sizes by construction: for the
-sectioning levels, `headingCx` reads `Layout.sectionSize` — the function
-the layout sets titles with — so the WCAG large-scale judgement is made at
-the size the page ships, never at a re-spelled absolute. Stated so the
+sectioning levels, `headingCx` reads `Ir.headingSize` — the function the
+layout sets titles with (`Layout.sectionSize`) — so the WCAG large-scale
+judgement is made at the size the page ships, never at a re-spelled
+absolute. Stated so the
 derivation cannot drift back: the old 14 pt / 12 pt absolutes passed a
 9 pt-base section (12.96 pt on the page, not large-scale) as a phantom
 14 pt bold, which is — the judge passing text the page fails, the exact
 defect class it exists to catch. -/
 private theorem contrast_judges_what_layout_sets (base : Sp) :
     ∀ l : Ir.HeadingLevel, l ≠ .title →
-      (headingCx base l).size = Layout.sectionSize { fontSize := base } l
+      (headingCx base l).size = Ir.headingSize base l
   | .title, h => absurd rfl h
   | .h1, _ | .h2, _ | .h3, _ | .h4, _ | .h5, _ | .h6, _ => rfl
 
@@ -1266,22 +1158,5 @@ private theorem judgeSite_id (site : ColorSite) (stage : Bool) (s : Array Diag �
   cases hst : judgedSite? stage pal r with
   | none => simp [judgeSite, hst]
   | some st => simp [judgeSite, hst, h st hst]
-
-/-- Every nonempty glyph run returned by the actual layout entry has an
-arithmetic assessment with its recorded paint and address. The only
-premises locate the run and say it is nonempty. An absent ground uses the
-effective document page; this does not certify overlapping picture fills
-or infer exemptions from a colour value. -/
-public theorem layoutAudit_covers (geom : Layout.Geom) (fs : Font.FontSet)
-    (pats : Option Hyphen.Patterns) (doc : Doc) (imgs : Image.Store) (required : Nat)
-    (hp : (Layout.run geom fs pats doc imgs).pages[p]? = some page)
-    (hl : page.lines[l]? = some line)
-    (hs : line.segs[s]? =
-      some (.run font ink link width glyphs size leading decorations raise ground attr))
-    (hne : glyphs.isEmpty = false) :
-    assessRun (effectivePair doc).bg required
-      { page := p, line := l, segment := s, ink, ground } ∈
-        shippedAudit (effectivePair doc).bg required (Layout.run geom fs pats doc imgs) :=
-  shippedAudit_covers _ _ _ hp hl hs hne
 
 end LeanTex.Core.Contrast

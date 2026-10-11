@@ -1,6 +1,7 @@
 module
 
 public import LeanTex.Core.ListingHighlight
+public import LeanTex.Core.CodeRoles
 
 /-!
 The roles a listing's tokens paint in. Every Pygments token type maps, by
@@ -15,21 +16,6 @@ alike: a Lean proof hole (`Generic.Error`) and Python's
 `NotImplementedError` (`Name.Exception`) are both `error`.
 -/
 namespace LeanTex.Core.ListingHighlight
-
-public inductive Role where
-  | ink | keyword | name | literal | comment | error
-  deriving Repr, BEq, DecidableEq, Inhabited, Hashable
-
-public def Role.all : List Role := [.ink, .keyword, .name, .literal, .comment, .error]
-
-/-- The role's name, as a message spells it. -/
-public def Role.word : Role → String
-  | .ink => "ink"
-  | .keyword => "keyword"
-  | .name => "name"
-  | .literal => "literal"
-  | .comment => "comment"
-  | .error => "error"
 
 /-- A top-level type's own role, and its descendants'. A bare `Name` is an
 identifier, which sets in the ink; the names below it — builtins,
@@ -77,39 +63,5 @@ public def Kind.role (k : Kind) : Role :=
     | [] => .ink
     | [top] => (topRole top.path).1
     | top :: _ :: _ => (topRole top.path).2
-
-/-- A role's weights, bold and italic: a keyword is bold and a comment
-italic, as every style the engine ships sets them; the rest are upright and
-regular, their colour alone telling them apart. -/
-public def Role.weights : Role → Bool × Bool
-  | .keyword => (true, false)
-  | .comment => (false, true)
-  | .ink | .name | .literal | .error => (false, false)
-
-/-- One value per role. -/
-public structure RoleTable (α : Type) where
-  ink : α
-  keyword : α
-  name : α
-  literal : α
-  comment : α
-  error : α
-
-@[expose] public def RoleTable.get {α : Type} (t : RoleTable α) : Role → α
-  | .ink => t.ink
-  | .keyword => t.keyword
-  | .name => t.name
-  | .literal => t.literal
-  | .comment => t.comment
-  | .error => t.error
-
-/-- Every role's value, each computed once. -/
-public def RoleTable.ofFn {α : Type} (f : Role → α) : RoleTable α :=
-  { ink := f .ink, keyword := f .keyword, name := f .name, literal := f .literal
-    comment := f .comment, error := f .error }
-
-public theorem RoleTable.get_ofFn {α : Type} (f : Role → α) (r : Role) :
-    (RoleTable.ofFn f).get r = f r := by
-  cases r <;> rfl
 
 end LeanTex.Core.ListingHighlight

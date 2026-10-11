@@ -165,6 +165,7 @@ import Tests.InputDecoding
 import Tests.ImageOrigins
 import Tests.Themes
 import Tests.SeedPalette
+import Tests.ColourSolve
 import Tests.ThemePalette
 import Tests.ThemeCss
 import Tests.SlideLabels
@@ -457,6 +458,7 @@ def layoutSuiteChecks (ref : IO.Ref (List String)) : IO Unit := do
   Tests.ThemeCss.epochChecks ref oneFace
   stringConditionalChecks ref oneFace
   seedPaletteChecks ref oneFace
+  Tests.ColourSolve.checks ref
   titleTemplateOptionalChecks ref oneFace
   titleTemplateColorChecks ref oneFace
   headingRhythmChecks ref oneFace

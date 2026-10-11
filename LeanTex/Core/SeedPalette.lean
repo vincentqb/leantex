@@ -1,9 +1,10 @@
 module
 
-public import LeanTex.Core.Ir
+public import LeanTex.Core.Color
+public import LeanTex.Core.DesignRole
 public import LeanTex.Core.ContrastRatio
 public import LeanTex.Core.Oklab
-import LeanTex.Core.Contrast
+import LeanTex.Core.ContrastSolve
 
 namespace LeanTex.Core.SeedPalette
 
@@ -147,7 +148,7 @@ private def realizeOn (req : Nat) (grounds : List Color) (accent : Color) : Opti
     decide (req ≤ Contrast.contrastMilli c ground)
   if meets accent then some accent
   else grounds.findSome? fun ground => do
-    let c ← Contrast.realizeNearest req ground accent
+    let c ← ContrastSolve.realizeNearest req ground accent
     if meets c then some c else none
 
 private def candidate (s : Seeds) : Option Colors := do

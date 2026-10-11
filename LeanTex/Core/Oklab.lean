@@ -1,6 +1,7 @@
 module
 
 public import LeanTex.Core.Color
+import LeanTex.Core.Trig
 
 /-!
 Oklab as pure integer arithmetic over the engine's 8-bit `Color`, for one
@@ -207,7 +208,7 @@ private def rdiv (t d : Int) : Int := (2 * t + d).fdiv (2 * d)
 full intensity): the inverse M2 and inverse LMS matrices (Ottosson) and the
 cube undoing `icbrt`, each stage rounding to nearest, before any channel is
 clamped — what `toColor` inverts the transfer function of and
-`inGamutOfLab` reads. -/
+`labInGamut` reads. -/
 private def linearOf (lab : Lab) : Int × Int × Int :=
   let lp := rdiv (10000000000 * lab.L + 3963377774 * lab.a + 2158037573 * lab.b) (10 ^ 24)
   let mp := rdiv (10000000000 * lab.L - 1055613458 * lab.a - 638541728 * lab.b) (10 ^ 24)
@@ -241,19 +242,18 @@ private def toColor (lab : Lab) : Color :=
 
 /-- `toColor` for a value at `labOf`'s own 10¹⁸ scale: the ×100 scale
 conversion spelled once (F8's wrapper), so a caller holding forward-space
-coordinates — the lightness search in `Contrast.realizeNearest` — cannot be
+coordinates — the lightness search in `ContrastSolve.realizeNearest` — cannot be
 silently wrong by 100×. -/
 public def toColorOfLab (lab : Lab) : Color :=
   toColor { L := 100 * lab.L, a := 100 * lab.a, b := 100 * lab.b }
 
-/-- Whether a value at `labOf`'s 10¹⁸ scale is an sRGB colour: every
-linear channel inside [0, 1] before `toColor` clamps it, to within 5·10⁻⁶,
-under the pipeline's own rounding and a fifth of one 8-bit step. CSS Color
-4's gamut mapping reads it (§13.2: chroma reduced at constant lightness and
-hue until it holds). -/
-public def inGamutOfLab (lab : Lab) : Bool :=
+/-- Whether a value at `labOf`'s 10¹⁸ scale is an sRGB colour: every linear
+channel inside [0, 10⁷] exactly, before any channel is clamped or quantized.
+CSS Color 4's gamut mapping reads it (§14.2: chroma reduced at constant
+lightness and hue until it holds). -/
+public def labInGamut (lab : Lab) : Bool :=
   let (r, g, b) := linearOf { L := 100 * lab.L, a := 100 * lab.a, b := 100 * lab.b }
-  let ok (v : Int) : Bool := decide (-50 ≤ v) && decide (v ≤ 10000050)
+  let ok (v : Int) : Bool := decide (0 ≤ v) && decide (v ≤ 10000000)
   ok r && ok g && ok b
 
 /-- The cover of a colour: `f`% of its own Oklab value over the surface —
@@ -371,5 +371,156 @@ public theorem toward_surface_light (f : Nat) (hf : f ≤ 100) (c s : Lab) (h : 
     exact Int.mul_le_mul_of_nonpos_right hf' hc
   generalize hp : (f : Int) * (c.L - s.L) = p at h1 h2
   omega
+
+/-! ## Polar Oklab and gamut mapping
+
+A colour at a lightness, a hue direction `(a, b)` and a fraction of that
+direction's chroma (`Okl`). Gamut mapping is CSS Color 4's (§14.2,
+https://www.w3.org/TR/css-color-4/#gamut-mapping): the fraction falls at
+constant lightness and direction until the colour is an sRGB colour, or the
+colour its channels clip to stands within one JND of it (§14.2.1's
+shortcut). Hue and lightness are therefore held by construction
+(`Okl.gamutMap_between`), never by a per-channel clip that turns a saturated
+orange toward red. -/
+
+/-- The scale of `Okl.f`: `f = fracOne` is the direction's whole length. -/
+public def fracOne : Nat := 1048576
+
+/-- A lightness, a hue direction and a chroma fraction, at `labOf`'s scale. -/
+public structure Okl where
+  L : Int
+  a : Int
+  b : Int
+  f : Nat
+  deriving Repr, BEq, DecidableEq, Inhabited
+
+/-- The Oklab value an `Okl` names. -/
+@[expose] public def Okl.lab (o : Okl) : Lab :=
+  { L := o.L, a := (o.f : Int) * o.a / fracOne, b := (o.f : Int) * o.b / fracOne }
+
+/-- The 8-bit colour: each linear channel clamped into the gamut, then
+quantized. -/
+public def Okl.toColor (o : Okl) : Color := toColorOfLab o.lab
+
+public def Okl.inGamut (o : Okl) : Bool := labInGamut o.lab
+
+/-- ΔEOK², at `labOf`'s scale squared. -/
+public def distSq (p q : Lab) : Int :=
+  (p.L - q.L) * (p.L - q.L) + (p.a - q.a) * (p.a - q.a) + (p.b - q.b) * (p.b - q.b)
+
+/-- How far the shipped colour stands from the value it ships for, squared. -/
+public def Okl.clipErrSq (o : Okl) : Int := distSq (labOf o.toColor) o.lab
+
+/-- An acceptable mapping: in gamut, or shipping within one JND of itself. -/
+public def Okl.fits (o : Okl) : Bool :=
+  o.inGamut || decide (o.clipErrSq < (okJnd : Int) * okJnd)
+
+/-- Bisection of the fraction on structural fuel: `lo` is in gamut (or 0),
+`hi` is not; 21 halvings close `fracOne`. The test is the exact linear one,
+so a step costs no cube root. -/
+private def gamutGo (o : Okl) : Nat → Nat → Nat → Nat
+  | 0, lo, _ => lo
+  | n + 1, lo, hi =>
+    if lo + 1 < hi then
+      if ({ o with f := (lo + hi) / 2 } : Okl).inGamut then gamutGo o n ((lo + hi) / 2) hi
+      else gamutGo o n lo ((lo + hi) / 2)
+    else lo
+
+/-- **Gamut mapping**: the colour itself where it fits — in gamut, or its clip
+within one JND (§14.2.1's first test) — else the largest in-gamut fraction
+of its chroma at its lightness and direction. -/
+public def Okl.gamutMap (o : Okl) : Okl :=
+  if o.fits then o else { o with f := gamutGo o 21 0 o.f }
+
+private theorem gamutGo_spec (o : Okl) :
+    ∀ (n lo hi : Nat), lo ≤ hi → (lo = 0 ∨ ({ o with f := lo } : Okl).inGamut = true) →
+      gamutGo o n lo hi ≤ hi ∧
+        (gamutGo o n lo hi = 0 ∨ ({ o with f := gamutGo o n lo hi } : Okl).inGamut = true)
+  | 0, _, _, h1, h2 => ⟨h1, h2⟩
+  | n + 1, lo, hi, h1, h2 => by
+    simp only [gamutGo]
+    split
+    · split
+      · rename_i hfit
+        have := gamutGo_spec o n ((lo + hi) / 2) hi (by omega) (Or.inr hfit)
+        exact ⟨this.1, this.2⟩
+      · have := gamutGo_spec o n lo ((lo + hi) / 2) (by omega) h2
+        exact ⟨by omega, this.2⟩
+    · exact ⟨h1, h2⟩
+
+/-- **Gamut mapping holds lightness and hue and never adds chroma**; what it
+returns fits — in gamut, or within one JND of its clip — or is the neutral
+axis at that lightness. -/
+public theorem Okl.gamutMap_between (o : Okl) :
+    o.gamutMap.L = o.L ∧ o.gamutMap.a = o.a ∧ o.gamutMap.b = o.b ∧ o.gamutMap.f ≤ o.f ∧
+      (o.gamutMap.fits = true ∨ o.gamutMap.f = 0) := by
+  unfold Okl.gamutMap
+  split
+  · rename_i h
+    exact ⟨rfl, rfl, rfl, Nat.le_refl _, Or.inl h⟩
+  · have := gamutGo_spec o 21 0 o.f (Nat.zero_le _) (Or.inl rfl)
+    refine ⟨rfl, rfl, rfl, this.1, ?_⟩
+    rcases this.2 with h | h
+    · exact Or.inr h
+    · exact Or.inl (by simp [Okl.fits, h])
+
+/-- **An in-gamut colour maps to itself.** -/
+public theorem Okl.gamutMap_id (o : Okl) (h : o.inGamut = true) : o.gamutMap = o := by
+  unfold Okl.gamutMap
+  simp [Okl.fits, h]
+
+/-! ## Hue
+
+`oklch()`'s hue in millidegrees, read through the CORDIC every figure
+producer shares (`Gfx.Trig`, bounded by `scripts/trig-oracle.lean`). -/
+
+/-- Millidegrees as the CORDIC's 2⁻³⁰ radians. -/
+private def radOf (milliDeg : Int) : Int := milliDeg * Gfx.Trig.pi / 180000
+
+/-- The Oklab value at lightness `L`, chroma `C` (both at `labOf`'s scale)
+and hue `H` (millidegrees): CSS `oklch(L C H)`. -/
+public def ofLch (L C H : Int) : Lab :=
+  let cs := Gfx.Trig.cosSin (radOf H)
+  { L, a := C * cs.1 / Gfx.Trig.unit, b := C * cs.2 / Gfx.Trig.unit }
+
+/-- A direction's hue in millidegrees, in [0°, 360°); 0 for the neutral axis. -/
+public def hueMilli (a b : Int) : Int :=
+  let h := Gfx.Trig.atan2 b a * 180000 / Gfx.Trig.pi
+  if h < 0 then h + 360000 else h
+
+/-- `(a, b)` turned counter-clockwise by `θ` millidegrees. -/
+public def turnBy (θ : Int) (a b : Int) : Int × Int :=
+  let cs := Gfx.Trig.cosSin (radOf θ)
+  ((a * cs.1 - b * cs.2) / Gfx.Trig.unit, (a * cs.2 + b * cs.1) / Gfx.Trig.unit)
+
+/-- How far a warm hue at `H` (millidegrees) turns toward red at `depth`
+(of `fracOne`): a sine bump over 40°–120° peaking at 80°, at most 20°. A
+darker tone of amber or yellow reads as itself only turned toward orange:
+Tailwind's amber and yellow 500 → 700 and Radix amber 9 → 11 turn their
+hue about 20° as they darken (84.1° → 63.9°). -/
+public def Okl.turn (H : Int) (depth : Nat) : Int :=
+  if H ≤ 40000 ∨ 120000 ≤ H then 0
+  else
+    let s := max 0 (min (Gfx.Trig.cosSin (radOf ((H - 40000) * 9 / 4))).2 Gfx.Trig.unit)
+    min 20000 (20000 * s / Gfx.Trig.unit * (min depth fracOne : Nat) / fracOne)
+
+/-- **The warm turn is bounded**: never negative, at most 20°, and nothing
+outside 40°–120°. -/
+public theorem Okl.turn_between (H : Int) (depth : Nat) :
+    0 ≤ Okl.turn H depth ∧ Okl.turn H depth ≤ 20000 ∧
+      (H ≤ 40000 ∨ 120000 ≤ H → Okl.turn H depth = 0) := by
+  unfold Okl.turn
+  split
+  · exact ⟨Int.le_refl _, by decide, fun _ => rfl⟩
+  · rename_i hH
+    refine ⟨?_, Int.min_le_left _ _, fun h => absurd h hH⟩
+    have hs : (0 : Int) ≤ max 0 (min (Gfx.Trig.cosSin (radOf ((H - 40000) * 9 / 4))).2 Gfx.Trig.unit) :=
+      Int.le_max_left _ _
+    have h1 : (0 : Int) ≤ 20000 * max 0 (min (Gfx.Trig.cosSin (radOf ((H - 40000) * 9 / 4))).2
+        Gfx.Trig.unit) / Gfx.Trig.unit :=
+      Int.ediv_nonneg (Int.mul_nonneg (by decide) hs) (by decide)
+    have h2 := Int.ediv_nonneg (Int.mul_nonneg h1 (Int.natCast_nonneg (min depth fracOne)))
+      (Int.natCast_nonneg fracOne)
+    exact Int.le_min.mpr ⟨by decide, h2⟩
 
 end LeanTex.Core.Oklab

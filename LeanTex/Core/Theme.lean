@@ -108,7 +108,7 @@ public def moloch : Theme :=
   -- moloch's own alert is #EB811B, which reads at 2.61:1 on this page —
   -- under the 4.5:1 WCAG 2.2 SC 1.4.3 asks of text. This value is the
   -- same hue at a lightness that clears it (a role names a hue; its
-  -- ground chooses the lightness — Contrast.realizeNearest), and
+  -- ground chooses the lightness — ContrastSolve.realizeNearest), and
   -- Contrast.builtin_palettes_contract holds it, with every shipped
   -- pair, to the ratio by kernel check.
   let alert : Color := { r := 0xA5, g := 0x5A, b := 0x13 }
@@ -243,7 +243,7 @@ public def gemini : Theme :=
         -- text` fg=green!50!black). red reads 4.00:1 on this page, under
         -- the 4.5:1 WCAG 2.2 SC 1.4.3 asks of text; this is the same hue
         -- at the nearest lightness that clears it on this ground
-        -- (Contrast.realizeNearest; 4.53:1), moloch's alert precedent.
+        -- (ContrastSolve.realizeNearest; 4.53:1), moloch's alert precedent.
         (.role .alert, { r := 0xEE, g := 0x00, b := 0x00 }),
         (.role .example, { r := 0x00, g := 0x80, b := 0x00 }),      -- green!50!black
         -- The same 70:30 ink-into-page muted rule the other bundles use

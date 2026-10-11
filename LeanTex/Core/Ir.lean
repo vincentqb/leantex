@@ -3290,6 +3290,24 @@ line whose breaks the author declared. -/
 @[expose] public def titleSize (base : Sp) (slides : Bool) : Sp :=
   scaleStep base (if slides then "Large" else "LARGE")
 
+/-- The furniture ink-clearance floor (`Layout.inkClearance`): TeX's own
+collision floor, `\lineskip=1pt` (TeXbook p.78), the one value both
+artifacts read. -/
+@[expose] public def inkClearance : Sp := Dim.pt 1 -- TeXbook p.78: `\lineskip=1pt`, TeX's own floor
+
+/-- Heading display sizes from the type scale, never loose constants:
+article.cls sets `\section` in `\Large`, `\subsection` in `\large`, and
+`\subsubsection` in `\normalsize` (classes.dtx, §Sectioning), so the
+hierarchy holds at every base size. Deeper ranks keep the body size rather
+than shrink below readable text; their structural rank stays distinct in
+both artifacts. The page sets its titles with it (`Layout.sectionSize`) and
+the contrast report judges them at it. -/
+@[expose] public def headingSize (base : Sp) : HeadingLevel → Sp
+  | .title | .h1 => scaleStep base "LARGE"
+  | .h2 => scaleStep base "Large"
+  | .h3 => scaleStep base "large"
+  | .h4 | .h5 | .h6 => base
+
 /-- The reach below its bar's top of moloch's section-page template's last
 line, the subsection title's strut (`\strut` before
 `\ifx\insertsubsectionhead\@empty`, beamerinnerthememoloch.dtx): its baseline

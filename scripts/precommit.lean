@@ -1813,6 +1813,51 @@ def roleReads (f : String) (lines : Array String) : Array (Nat × String) := Id.
     else if !inRegion && roleReadLine l then out := out.push (i, l)
   return out
 
+/-- Import floors: a module whose import closure must not reach another.
+The colour arithmetic — the registry, Oklab, the WCAG ratio, the solver and
+the seed generator — stands below the IR, so it compiles before the IR and
+an IR edit rebuilds none of it; the contrast judge stands off the PDF layout
+engine, so the elaborator and the HTML backend never wait on it. -/
+def importFloors : List (String × String) :=
+  [("LeanTex.Core.DesignRole", "LeanTex.Core.Ir"),
+   ("LeanTex.Core.Oklab", "LeanTex.Core.Ir"),
+   ("LeanTex.Core.ContrastRatio", "LeanTex.Core.Ir"),
+   ("LeanTex.Core.ContrastSolve", "LeanTex.Core.Ir"),
+   ("LeanTex.Core.SeedPalette", "LeanTex.Core.Ir"),
+   ("LeanTex.Core.Contrast", "LeanTex.Core.Layout")]
+
+/-- The module a library path names: `LeanTex/Core/Oklab.lean` is
+`LeanTex.Core.Oklab`. -/
+def moduleOfPath (f : String) : String :=
+  ((f.dropEnd ".lean".length).toString.splitOn "/").foldl
+    (fun acc p => if acc.isEmpty then p else acc ++ "." ++ p) ""
+
+/-- One chain from `root` to `banned` through the modules' import lines, if
+the closure reaches it: breadth first, each module visited once, so the walk
+ends after as many rounds as there are modules. -/
+def importChain (imports : List (String × Array String)) (root banned : String) :
+    Option (List String) := Id.run do
+  let mut seen : Array String := #[root]
+  let mut frontier : Array (String × List String) := #[(root, [root])]
+  for _ in [0:imports.length + 1] do
+    let mut next : Array (String × List String) := #[]
+    for (m, path) in frontier do
+      for d in (imports.lookup m).getD #[] do
+        if d == banned then return some (path ++ [d])
+        unless seen.contains d do
+          seen := seen.push d
+          next := next.push (d, path ++ [d])
+    if next.isEmpty then return none
+    frontier := next
+  return none
+
+/-- The floors a tree breaks, each with the chain that breaks it. -/
+def floorBreaks (texts : Array (String × Array String)) : Array (String × String × List String) :=
+  let imports := texts.toList.map fun (f, lines) =>
+    (moduleOfPath f, lines.filterMap fun l => importedModule l.trimAscii.toString)
+  importFloors.toArray.filterMap fun (root, banned) =>
+    (importChain imports root banned).map fun chain => (root, banned, chain)
+
 /-- A catch-all arm in the registry's `Role.row`: a role added without its
 row would take some other row's data in silence. -/
 def roleRowWildcards (lines : Array String) : Array Nat := Id.run do
@@ -1872,6 +1917,22 @@ def selftest : IO UInt32 := do
     fails.modify ("roleReads missed a read after the resolving region" :: ·)
   if !(roleReads "LeanTex/Core/DesignRole.lean" #["  pal.find? \"bg\""]).isEmpty then
     fails.modify ("roleReads fired in the registry" :: ·)
+  let floorTree : Array (String × Array String) :=
+    #[("LeanTex/Core/Oklab.lean", #["module", "public import LeanTex.Core.Color"]),
+      ("LeanTex/Core/Color.lean", #["module"]),
+      ("LeanTex/Core/Contrast.lean", #["module", "public import LeanTex.Core.Theme"]),
+      ("LeanTex/Core/Theme.lean", #["module", "public import LeanTex.Core.Ir"])]
+  if !(floorBreaks floorTree).isEmpty then
+    fails.modify ("floorBreaks fired on a tree that keeps every floor" :: ·)
+  let planted := floorTree.map fun (f, ls) =>
+    if f == "LeanTex/Core/Oklab.lean" then (f, ls.push "import LeanTex.Core.Ir") else (f, ls)
+  unless (floorBreaks planted).any (·.1 == "LeanTex.Core.Oklab") do
+    fails.modify ("floorBreaks missed a planted `import LeanTex.Core.Ir` in Oklab" :: ·)
+  let throughLayout := floorTree.map fun (f, ls) =>
+    if f == "LeanTex/Core/Theme.lean" then (f, ls.push "public import all LeanTex.Core.Layout")
+    else (f, ls)
+  unless (floorBreaks throughLayout).any (·.1 == "LeanTex.Core.Contrast") do
+    fails.modify ("floorBreaks missed Layout reached through a dependency of Contrast" :: ·)
   if (roleRowWildcards #["@[expose] public def Role.row : Role → Row", "  | .page => x",
       "  | _ => y"]).isEmpty then
     fails.modify ("roleRowWildcards missed a catch-all in Role.row" :: ·)
@@ -3101,6 +3162,14 @@ the privacy check is skipped."
     for i in [0:lines.size] do
       if let some name := walkEntry lines[i]! then
         walkSites := walkSites.push (f, i, name, lines)
+  for (root, banned, chain) in floorBreaks coreTexts do
+    say s!"pre-commit: {root} reaches {banned} through its imports:
+  {String.intercalate " → " chain}
+  The colour arithmetic stands below the IR and the contrast judge off the
+  PDF layout engine (`importFloors`): an import that crosses the floor puts
+  the module back on the critical path it was moved off.
+  Fix: import the leaf that holds what the module needs, or move it below
+  the floor."
   for (f, i, name, lines) in walkSites do
     let hasThm := conservesSuffixes.any fun suf =>
       containsSub allCore s!"theorem {name}{suf}"

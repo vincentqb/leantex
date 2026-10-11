@@ -163,7 +163,7 @@ is TeX's own collision floor (`\lineskip=1pt`, TeXbook p.78), surviving
 here as clearance — the interline rule is metric (`Spacing.Page.placeLine`) — and as
 TeX's `\lineskip` on either side of display math, where TeX's own interline
 rule stands (`texBaselineGap`). -/
-public def inkClearance : Sp := pt 1 -- TeXbook p.78: `\lineskip=1pt`, TeX's own floor
+@[expose] public def inkClearance : Sp := Ir.inkClearance
 
 /-- The lowest y a body line's ink may reach: the bottom margin, less the
 band a footer reserves. Every placement decision reads the page bottom from
@@ -11439,19 +11439,11 @@ against the document's declared size. One spelling — it was once written
 twice. -/
 private def headingRuleWeight (base : Sp) : Sp := base * 6 / 100
 
-/-- Heading display sizes from the type scale, never loose constants:
-article.cls sets `\section` in `\Large`, `\subsection` in `\large`, and
-`\subsubsection` in `\normalsize` (classes.dtx, §Sectioning), so the
-hierarchy holds at every base size — the old 14/12-point constants
-made a 12 pt subsection equal its body and a >14 pt body outgrow its own
-sections. -/
-public def sectionSize (geom : Geom) : Ir.HeadingLevel → Sp
-  | .title | .h1 => Ir.scaleStep geom.fontSize "LARGE"
-  | .h2 => Ir.scaleStep geom.fontSize "Large"
-  | .h3 => Ir.scaleStep geom.fontSize "large"
-  -- Deeper ranks retain body size, rather than shrinking below readable
-  -- body text. Their structural rank remains distinct in both artifacts.
-  | .h4 | .h5 | .h6 => geom.fontSize
+/-- Heading display sizes at the page's body size: the type scale's steps
+(`Ir.headingSize`) — the old 14/12-point constants made a 12 pt subsection
+equal its body and a >14 pt body outgrow its own sections. -/
+@[expose] public def sectionSize (geom : Geom) : Ir.HeadingLevel → Sp :=
+  Ir.headingSize geom.fontSize
 
 /-- The applied scale is strictly monotone at every base size of at least
 one point: between each named step of `Ir.sizeScale` and the next, the

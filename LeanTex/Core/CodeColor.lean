@@ -30,7 +30,7 @@ colours of its own:
 A derived hue ships as a tone (`tone`): its hue at `codeChroma`, never
 louder than the alert, and the lightness nearest the ground that clears
 `codeTone` there — Material 3's tonal rule (a key colour fixes hue and
-chroma, the ground chooses the tone), the rule `Contrast.realizeNearest`
+chroma, the ground chooses the tone), the rule `ContrastSolve.realizeNearest`
 follows too. A role the palette gives the rule nothing to read for takes the
 listing style's colour for the type a reader knows the role by
 (`roleStyleKind`).
