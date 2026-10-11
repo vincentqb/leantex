@@ -71,24 +71,80 @@ driver sees the colour; direct modeled uses retain their source values. -/
 public def ColorComponent.xcolorDefined (c : ColorComponent) : ColorComponent :=
   { num := c.num * 100000 / c.scale, scale := 100000 }
 
-private def texScaledDecimal (sp : Nat) : String := Id.run do
-  let mut out := toString (sp / 65536) ++ "."
+/-- TeX's printer of scaled points (tex.web §103): the whole part and the
+fraction's decimal digits it prints. -/
+private def texScaledParts (sp : Nat) : Nat × List Nat := Id.run do
+  let mut digits : Array Nat := #[]
   let mut rem := 10 * (sp % 65536) + 5
   let mut delta := 10
   for _ in [0:6] do
     if delta > 65536 then rem := rem - 17232
-    out := out ++ toString (rem / 65536)
+    digits := digits.push (rem / 65536)
     rem := 10 * (rem % 65536)
     delta := delta * 10
-    if rem ≤ delta then return out
-  return out
+    if rem ≤ delta then break
+  return (sp / 65536, digits.toList)
 
-/-- xcolor's RGB/HTML driver conversion: read the source number at TeX's
-scaled-point precision, divide by 255 as the driver does, then use TeX's own
-scaled-decimal printer. -/
+/-- The printed scaled points as `\strip@pt` leaves them: a whole number
+loses its `.0`. -/
+private def texScaledDecimal (sp : Nat) : String :=
+  let (whole, digits) := texScaledParts sp
+  if digits == [0] then toString whole
+  else toString whole ++ "." ++ String.join (digits.map toString)
+
+/-- The printed scaled points as a component: what a TeX macro storing the
+printed decimal holds. -/
+private def texScaledComponent (sp : Nat) : ColorComponent :=
+  let (whole, digits) := texScaledParts sp
+  if digits == [0] then { num := whole, scale := 1 }
+  else { num := digits.foldl (fun n d => n * 10 + d) whole, scale := 10 ^ digits.length }
+
+/-- TeX's rounding of a decimal fraction to scaled points (tex.web §102): the
+scaled points `.d₁d₂…` denotes, its digits most significant first. -/
+private def roundDecimals (digits : List Nat) : Nat :=
+  (digits.foldr (fun d a => (a + d * 131072) / 10) 0 + 1) / 2
+
+/-- xcolor's `\rdivide` (xcolor.sty) of two scaled-point values: the
+quotient's integer part and five decimals by long division, read back as a
+TeX length, and one scaled point more when the sixth decimal is five or
+more. Exact for a quotient under one, the RGB models' only use (a 0–255
+value over 255). -/
+private def xcolorDivide (a b : Nat) : Nat := Id.run do
+  let q := a / b
+  let mut rem := a - q * b
+  let mut digits : Array Nat := #[]
+  for _ in [0:5] do
+    rem := rem * 10
+    digits := digits.push (rem / b)
+    rem := rem - (rem / b) * b
+  let sixth := rem * 10 / b
+  return q * 65536 + roundDecimals digits.toList + (if sixth > 4 then 1 else 0)
+
+/-- The graphics driver's conversion of an RGB-range component used directly
+(`\textcolor[RGB]{…}`, `\pagecolor[RGB]{…}`): read the source number at TeX's
+scaled-point precision, divide its scaled points by 255, then print the
+result with TeX's own scaled-decimal printer. -/
 public def ColorComponent.pdfRgb (c : ColorComponent) : String :=
   let sourceSp := (c.num * 65536 + c.scale / 2) / c.scale
   texScaledDecimal (sourceSp / 255)
+
+/-- The scaled points xcolor's own conversion of an RGB-range component
+(xcolor.sty's `XC@calcD`) arrives at: the source read at TeX's scaled-point
+precision, divided by 255 by `\rdivide`. -/
+private def ColorComponent.xcolorRgbSp (c : ColorComponent) : Nat :=
+  xcolorDivide ((c.num * 65536 + c.scale / 2) / c.scale) (255 * 65536)
+
+/-- xcolor's own conversion of an RGB-range component, which an HTML colour
+and an RGB colour a `\definecolor` stores go through, as TeX prints it: every
+HTML byte lands on the decimal lualatex writes (`Tests.ColorNames.htmlDecimalChecks`
+holds the table). -/
+public def ColorComponent.xcolorRgb (c : ColorComponent) : String :=
+  texScaledDecimal c.xcolorRgbSp
+
+/-- The unit value xcolor stores for an RGB-range component it converts: the
+decimal `xcolorRgb` prints, as the component a macro holding it reads. -/
+public def ColorComponent.xcolorRgbUnit (c : ColorComponent) : ColorComponent :=
+  texScaledComponent c.xcolorRgbSp
 
 /-- xcolor's HTML projection of a unit component. Parsing to TeX's 16-bit
 fixed point before scaling reproduces the package's half-boundary behavior. -/
@@ -124,12 +180,13 @@ public inductive ColorSpec where
   | oklch (L C H : Int × Nat)
   deriving Repr, BEq
 
-/-- xcolor definitions normalize unit models through `XC@calcR`; direct
+/-- xcolor definitions normalize unit models through `XC@calcR` and store an
+RGB-range colour as the unit values `XC@calcD` converts it to; direct
 modelled uses retain their source values. -/
 public def ColorSpec.xcolorDefined : ColorSpec → ColorSpec
   | .named expr => .named expr
   | .html r g b => .html r g b
-  | .rgbByte r g b => .rgbByte r g b
+  | .rgbByte r g b => .rgbUnit r.xcolorRgbUnit g.xcolorRgbUnit b.xcolorRgbUnit
   | .rgbUnit r g b => .rgbUnit r.xcolorDefined g.xcolorDefined b.xcolorDefined
   | .gray v => .gray v.xcolorDefined
   | .cmyk c m y k =>

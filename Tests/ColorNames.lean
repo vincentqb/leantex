@@ -199,6 +199,51 @@ public def xcolorCodeRoleChecks (ref : IO.Ref (List String)) (fonts : Font.FontS
     t s!"xcolor code roles: declared inside {what}, the HTML declares the colour beside the role"
       (hasStr (body gx) "--ltx-c-codekeyword: " && !hasStr (body gp) "--ltx-c-codekeyword: ")
 
+/-- **An HTML colour's PDF decimals are lualatex's**: for every byte, the
+DeviceRGB decimal the engine writes is the one lualatex's xcolor writes
+(`testdata/oracles/xcolor-html-decimals.tsv`, from
+`scripts/gen-xcolor-decimals.lean`), a whole one without its `.0`, for an
+HTML colour and for an RGB colour a `\definecolor` stores, which xcolor
+converts alike, and such a stored RGB colour shows the HTML byte xcolor
+converts its stored decimals to; and a document's `\definecolor` of an HTML
+colour ships that operator. -/
+public def htmlDecimalChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit := do
+  let t := check ref
+  let rows := (← IO.FS.readFile "testdata/oracles/xcolor-html-decimals.tsv").splitOn "\n" |>.filter
+    fun l => !l.isEmpty && !l.startsWith "#" && !l.startsWith "byte"
+  t s!"xcolor decimals: the table holds every byte ({rows.length})" (rows.length == 256)
+  let mut wrong : Array String := #[]
+  for row in rows do
+    match row.splitOn "\t" with
+    | [byte, dec] =>
+      let v := (byte.toList.foldl (fun n c => n * 16 + (if c.isDigit then c.toNat - 48
+        else c.toNat - 55)) 0)
+      let html := (Ir.Color.ofHtml (UInt8.ofNat v) 0 0).pdfFill
+      -- An RGB colour a `\\definecolor` stores goes through the same conversion.
+      let defined := match Decl.parseColorSpec none (Decl.xcolorDefinitionPrefix ++ s!"RGB({v},0,0)") with
+        | .ok spec => (({} : Ir.Palette).resolveSpec spec).map (·.pdfFill)
+        | .error _ => none
+      unless html == s!"{dec} 0 0 rg" && defined == some html do
+        wrong := wrong.push s!"{byte}: {html} {defined}"
+    | _ => wrong := wrong.push row
+  t s!"xcolor decimals: every byte writes lualatex's decimal ({wrong.toList.take 4})" wrong.isEmpty
+  -- An RGB colour a definition stores shows xcolor's own HTML conversion of
+  -- the decimals it stores, as lualatex's `\\convertcolorspec{named}{x}{HTML}`
+  -- reports them (measured: 133.5 stores 0.52353 and reports 85).
+  for (v, byte) in [("0.5", 0x00), ("127.5", 0x80), ("133.5", 0x85), ("136.5", 0x88),
+      ("139.5", 0x8B), ("146.5", 0x92), ("152.5", 0x98), ("178.5", 0xB2), ("229.5", 0xE5),
+      ("254.5", 0xFF)] do
+    let shown := match Decl.parseColorSpec none (Decl.xcolorDefinitionPrefix ++ s!"RGB({v},0,0)") with
+      | .ok spec => (({} : Ir.Palette).resolveSpec spec).map (·.r)
+      | .error _ => none
+    t s!"xcolor decimals: a defined RGB {v} shows xcolor's own HTML byte ({shown})"
+      (shown == some (UInt8.ofNat byte))
+  let (doc, _) := elabStr (article "\\definecolor{probe}{HTML}{EB811B}\n" "\\textcolor{probe}{Probe words.}")
+  let geom := Layout.Geom.ofPage doc.page
+  let pdf := pdfText (Pdf.write geom fonts (layoutOf fonts doc geom).pages doc.info)
+  t "xcolor decimals: a defined HTML colour ships lualatex's operator"
+    (bytesContain pdf "0.92157 0.50587 0.10588 rg")
+
 /-- **A `\palette` name nothing reads is named where it stands**: `ink` and
 `surface` declare author colours, never the page's text and ground, so one
 the document names nowhere else is one W0387 at its declaration naming the

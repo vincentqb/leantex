@@ -477,11 +477,11 @@ HTML keeps apart. -/
 public def Color.milli (v : UInt8) : Nat := (v.toNat * 1000 + 127) / 255
 
 /-- An HTML byte triple keeps its exact screen bytes and the five-decimal
-DeviceRGB values xcolor's PDF driver derives from them. -/
+DeviceRGB values xcolor converts them to (`Decl.ColorComponent.xcolorRgb`). -/
 public def Color.ofHtml (r g b : UInt8) : Color :=
   let part (v : UInt8) : Decl.ColorComponent := { num := v.toNat, scale := 1 }
   { r := r, g := g, b := b,
-    pdfModel := some (.rgb (part r).pdfRgb (part g).pdfRgb (part b).pdfRgb) }
+    pdfModel := some (.rgb (part r).xcolorRgb (part g).xcolorRgb (part b).xcolorRgb) }
 
 /-- An RGB-range source keeps decimal components until the PDF driver's
 0–255 conversion and projects each independently to the HTML byte view. -/

@@ -440,6 +440,7 @@ def layoutSuiteChecks (ref : IO.Ref (List String)) : IO Unit := do
   Tests.ReadableBar.checks ref oneFace
   Tests.ColorNames.checks ref oneFace
   Tests.ColorNames.xcolorCodeRoleChecks ref oneFace
+  Tests.ColorNames.htmlDecimalChecks ref oneFace
   Tests.ColorNames.unreadKeyChecks ref
   Tests.ColorNames.unreadKeyFlipChecks ref oneFace
   Tests.DeclaredColors.checks ref oneFace
