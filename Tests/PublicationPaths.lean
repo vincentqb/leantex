@@ -190,6 +190,46 @@ def publicationInputChecks (ref : IO.Ref (List String)) : IO Unit := do
       (run.exitCode == 0 && (← (dir / "twin.md").pathExists) &&
         (← IO.FS.readFile (dir / "doc.md")) == note)
 
+/-- **An output name the engine cannot write is a typed refusal.** `-o`
+naming a file whose extension names no format is E0006, through the
+diagnostic stream — a porcelain record under `--porcelain`, the rendered
+form otherwise — exit 3, nothing written, and its help lists every
+extension a run can take (`Emit.all`), each of which `emitOfPath` reads
+back. The defect: the refusal was a line on plain standard error, outside
+the porcelain stream, and it named `*.pdf` and `*.html` but not `.md`. -/
+def outputNameChecks (ref : IO.Ref (List String)) : IO Unit := do
+  let binary ← IO.FS.realPath ".lake/build/bin/leantex"
+  let font ← IO.FS.realPath "testdata/corpus/fonts/OpenSans-Regular.ttf"
+  check ref "output names: every format's extension reads back as that format"
+    (LeanTex.Cli.Emit.all.all fun e => LeanTex.Cli.emitOfPath ("out." ++ e.ext) == some e)
+  IO.FS.withTempDir fun dir => do
+    IO.FS.writeFile (dir / "source.tex")
+      "\\documentclass{article}\n\\begin{document}\nAn invented name probe.\n\\end{document}\n"
+    let run (args : Array String) := IO.Process.output {
+      cmd := binary.toString, cwd := some dir, args := #["source.tex", "-o", "notes.tex"] ++ args,
+      env := #[("LEANTEX_FONT", some font.toString),
+        ("XDG_CACHE_HOME", some (dir / "cache").toString)] }
+    let porcelain ← run #["--porcelain"]
+    let records := (porcelain.stdout.splitOn "\n").filter (!·.isEmpty)
+    let refusal := records.filter (hasStr · "\"code\":\"E0006\"")
+    check ref s!"output names: an unknown extension is one E0006 record and exit 3 ({porcelain.exitCode}): {porcelain.stdout}{porcelain.stderr}"
+      (porcelain.exitCode == 3 && refusal.length == 1 && porcelain.stderr.isEmpty &&
+        records.all fun r => r.startsWith "{")
+    check ref s!"output names: the refusal lists every extension a run can take: {refusal}"
+      (!refusal.isEmpty && refusal.all fun r => LeanTex.Cli.Emit.all.all fun e => hasStr r ("'." ++ e.ext ++ "'"))
+    let human ← run #[]
+    check ref s!"output names: the rendered refusal reaches standard error as E0006 ({human.exitCode}): {human.stderr}"
+      (human.exitCode == 3 && hasStr human.stderr "[E0006]" && hasStr human.stderr "notes.tex" &&
+        human.stdout.isEmpty)
+    check ref "output names: nothing is written for a refused name"
+      (!(← (dir / "notes.tex").pathExists) && !(← (dir / "source.pdf").pathExists))
+    let md ← IO.Process.output {
+      cmd := binary.toString, cwd := some dir, args := #["source.tex", "-o", "notes.md"],
+      env := #[("LEANTEX_FONT", some font.toString),
+        ("XDG_CACHE_HOME", some (dir / "cache").toString)] }
+    check ref s!"output names: a markdown name builds the twin ({md.exitCode}): {md.stderr}"
+      (md.exitCode == 0 && (← (dir / "notes.md").pathExists))
+
 /-- Different formats must reach independent files. The CLI must reject a
 collision before any write, including existing-file and directory aliases;
 accepting diagnostics cannot authorize overwriting a different artifact. -/

@@ -198,12 +198,24 @@ public def Emit.ext : Emit → String
   | .html => "html"
   | .md => "md"
 
-/-- The backend an output name asks for, when it names one. -/
+/-- Every backend, in the order the help and a refusal list them. -/
+public def Emit.all : List Emit := [.pdf, .html, .md]
+
+public theorem Emit.all_complete (e : Emit) : e ∈ Emit.all := by
+  cases e <;> simp [Emit.all]
+
+/-- The backend an output name asks for, when it names one: the one whose
+extension ends it. -/
 public def emitOfPath (o : String) : Option Emit :=
-  if o.endsWith ".pdf" then some .pdf
-  else if o.endsWith ".html" then some .html
-  else if o.endsWith ".md" then some .md
-  else none
+  Emit.all.find? fun e => o.endsWith ("." ++ e.ext)
+
+/-- The output names a run can take, as a refusal lists them: each
+backend's extension, from `Emit.all`. -/
+public def Emit.extensions : String :=
+  match (Emit.all.map fun e => "'." ++ e.ext ++ "'").reverse with
+  | [] => ""
+  | [one] => one
+  | last :: rest => ", ".intercalate rest.reverse ++ " or " ++ last
 
 /-- Backends to run: the output name (`-o out.html`) > the document's
 `\output{ formats = ... }` > PDF. -/

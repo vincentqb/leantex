@@ -320,15 +320,22 @@ def diagnosticFormatCliChecks (ref : IO.Ref (List String)) : IO Unit := do
     t "diagnostic format: argument errors preserve porcelain-mode stderr"
       (machineUsage.exitCode == 3 && machineUsage.stdout.isEmpty && machineUsage.stderr ==
         "leantex: unknown flag '--not-a-flag'\ntry 'leantex --help'\n")
+    -- An output name no format reads is a document run's refusal, not an
+    -- argument error: a typed diagnostic, rendered or a record.
     let output := (dir / "output.bad").toString
     let dest ← run #[file, "-o", output, "--color=never"]
-    t "diagnostic format: parser-independent output preflight keeps its established output"
-      (dest.exitCode == 3 && dest.stdout.isEmpty && dest.stderr ==
-        s!"leantex: cannot tell the output format of '{output}'; name it *.pdf or *.html, or pass a directory\n")
+    t "diagnostic format: an output name no format reads renders as E0006 and keeps usage exit"
+      (dest.exitCode == 3 && dest.stdout.isEmpty && dest.stderr.startsWith
+        (s!"✖ [E0006]\n  cannot tell the output format of '{output}'\n" ++
+          "  suggestion: name an output file ending in '.pdf', '.html' or '.md' with -o, " ++
+          "or a directory ending in '/'\n"))
     let machineDest ← run #[file, "-o", output, "--porcelain"]
-    t "diagnostic format: output preflight preserves porcelain-mode stderr"
-      (machineDest.exitCode == 3 && machineDest.stdout.isEmpty && machineDest.stderr ==
-        s!"leantex: cannot tell the output format of '{output}'; name it *.pdf or *.html, or pass a directory\n")
+    let destRecords := (machineDest.stdout.splitOn "\n").filter (!·.isEmpty)
+    t "diagnostic format: an output name no format reads stays JSONL on stdout"
+      (machineDest.exitCode == 3 && machineDest.stderr.isEmpty &&
+        destRecords.all (fun line => (Lean.Json.parse line).toOption.isSome) &&
+        (destRecords.filter fun line => (Lean.Json.parse line).toOption.any fun j =>
+          j.getObjValAs? String "code" == .ok "E0006").length == 1)
     let triggered := dir / "triggered.tex"
     IO.FS.writeFile triggered ("\\documentclass{article}\n\\directlua{local value = 1}\n" ++
       "\\begin{document}\n}\n\\end{document}\n")

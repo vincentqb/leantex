@@ -196,6 +196,9 @@ def registry : List AuditRow :=
    -- A destination that is a file the build reads: refused before any write,
    -- every input keeping its bytes; the run is the user's to point elsewhere.
    ⟨.E0005, .refusal, .fails, check% Tests.publicationInputChecks⟩,
+   -- An output name no format reads: refused before the build, as a typed
+   -- record, its help the extensions a run can take.
+   ⟨.E0006, .refusal, .fails, check% Tests.outputNameChecks⟩,
    -- Bytes that are not text ship as U+FFFD, listed once per file. A file
    -- under an inputenc encoding the engine carries a table for reads in it
    -- byte by byte, as pdfLaTeX reads it, unless its bytes say UTF-8: a

@@ -4,6 +4,7 @@ public import LeanTex.Core.Diag
 public import LeanTex.Core.FontDb
 public import LeanTex.Core.PdfWriteContract
 public import LeanTex.Cli.PublicationPaths
+import LeanTex.Cli.Args
 import LeanTex.Core.PdfRead
 
 /-! The driver's diagnostics, as pure builders: every message the CLI can
@@ -38,6 +39,14 @@ public def outputUnwritable (path err : String) : Diag :=
   Diag.of .E0004 s!"cannot write '{path}': {err}"
     (help := "choose a destination this user can write with -o, or the markdown twin's with \\output{ md = ... }")
     (subject := some path)
+
+/-- E0006: `-o` names a file whose extension names no format the engine
+writes, so nothing is built; the help lists the extensions `emitOfPath`
+reads (`Emit.all`). -/
+public def outputFormatUnknown (name : String) : Diag :=
+  Diag.of .E0006 s!"cannot tell the output format of '{name}'"
+    (help := s!"name an output file ending in {Emit.extensions} with -o, or a directory ending in '/'")
+    (subject := some name)
 
 /-- E0003: distinct artifacts would overwrite the same file. -/
 public def outputPathsConflict (detail : String) : Diag :=

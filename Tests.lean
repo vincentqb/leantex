@@ -382,6 +382,7 @@ def backendSuiteChecks (ref : IO.Ref (List String)) : IO Unit := do
   publicationPathChecks ref
   Tests.publicationWriteChecks ref
   Tests.publicationInputChecks ref
+  Tests.outputNameChecks ref
   anchorCostChecks ref
   htmlTokenClosureChecks ref
   htmlRoleClosureChecks ref

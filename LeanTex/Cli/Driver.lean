@@ -1241,12 +1241,14 @@ public def main (argv : List String) : IO UInt32 := do
       IO.println s!"leantex {LeanTex.version}"
       return 0
     | .build file =>
+      -- premise: outputNameChecks — a name no format's extension ends is one E0006, exit 3,
+      -- nothing written, and every extension the help lists builds
       if let some o := cfg.output then
         unless o.endsWith "/" || (← (System.FilePath.mk o).isDir) ||
             (emitOfPath o).isSome do
-          let stderr ← IO.getStderr
-          stderr.putStrLn
-            s!"leantex: cannot tell the output format of '{o}'; name it *.pdf or *.html, or pass a directory"
+          let ui ← Ui.mk' cfg
+          ui.diag (DriverDiag.outputFormatUnknown o)
+          ui.summary file 1 0
           return 3
       if cfg.watch then
         watch cfg file
