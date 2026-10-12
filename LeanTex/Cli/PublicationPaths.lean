@@ -69,50 +69,44 @@ public inductive Overwrite where
   /-- The destination stands with several hard links and agrees with the
   input on every fact the portable metadata gives of a file (`mayAlias`). -/
   | linked (format destination input : String)
-  /-- A file the build read cannot be resolved again, so no destination can
-  be shown to be none of the inputs. -/
-  | unresolved (why : String)
   deriving Repr, BEq
 
-/-- Could two standing files be one under two names? Two names of one file
-share its kind, link count, size and modification time, and its link count
-is at least two. With no inode number to compare, this reading misses no
-alias, and it takes an unrelated file for one only where all four agree. -/
+/-- Could two standing files be one under two names? Two hard links of one
+file share its kind, link count, size and modification time, and its link
+count is at least two. With no inode number to compare, this reading misses
+no hard-link alias, and it takes an unrelated file for one only where all
+four agree. A second mount of one directory is another matter: its paths
+resolve apart and its files keep one link (`path-identity`). -/
 private def mayAlias (a b : IO.FS.Metadata) : Bool :=
   a.type == .file && b.type == .file && a.numLinks > 1 && a.numLinks == b.numLinks &&
     a.byteSize == b.byteSize && a.modified == b.modified
 
 /-- Nothing means no destination names a file the build reads (`inputs`):
-none resolves to an input's own path, and none could be another name of an
-input's file (`mayAlias`). An input no longer standing holds nothing a write
-could destroy. A destination that does not resolve — a link to nothing, a
-component that is no directory or that this user cannot search — names no
-standing file a write could open either, so its write is the one that
-fails, under its own path. One output owes this as much as several:
-writing it would replace the document or a file it reads. -/
+none resolves to an input's own path, and none could be another hard link of
+an input's file (`mayAlias`). An input that does not stand, or that this
+user cannot stat or resolve, was not read by that spelling and holds nothing
+a write could destroy. A destination that does not resolve — a component
+that is no directory, or one this user cannot search — names no standing
+file a write could open, so its write is the one that fails, under its own
+path; one behind a link to nothing creates the link's target and replaces
+nothing. One output owes this as much as several: writing it would replace
+the document or a file it reads. -/
 public def overwrite (destinations : Array (String × String)) (inputs : Array String) :
     IO (Option Overwrite) := do
-  let read ← try
-      let mut read : Array (String × System.FilePath × IO.FS.Metadata) := #[]
-      for input in inputs do
-        if read.any (·.1 == input) then continue
-        match ← (System.FilePath.mk input).metadata.toBaseIO with
-        | .error (.noFileOrDirectory ..) => pure ()
-        | .error err => throw err
-        | .ok metadata => read := read.push (input, ← IO.FS.realPath input, metadata)
-      pure (Except.ok read)
-    catch err => pure (.error (toString err))
-  match read with
-  | .error why => return some (.unresolved why)
-  | .ok read =>
-    for (format, name) in destinations do
-      let .ok (.ok path) ← (resolve name).toBaseIO | continue
-      if let some (input, _, _) := read.find? (·.2.1 == path) then
-        return some (.same format name input)
-      if let .ok metadata ← path.metadata.toBaseIO then
-        if let some (input, _, _) := read.find? (mayAlias metadata ·.2.2) then
-          return some (.linked format name input)
-    return none
+  let mut read : Array (String × System.FilePath × IO.FS.Metadata) := #[]
+  for input in inputs do
+    if read.any (·.1 == input) then continue
+    let .ok metadata ← (System.FilePath.mk input).metadata.toBaseIO | continue
+    let .ok real ← (IO.FS.realPath input).toBaseIO | continue
+    read := read.push (input, real, metadata)
+  for (format, name) in destinations do
+    let .ok (.ok path) ← (resolve name).toBaseIO | continue
+    if let some (input, _, _) := read.find? (·.2.1 == path) then
+      return some (.same format name input)
+    if let .ok metadata ← path.metadata.toBaseIO then
+      if let some (input, _, _) := read.find? (mayAlias metadata ·.2.2) then
+        return some (.linked format name input)
+  return none
 
 /-- One path segment as a URL reads it back: each character a relative
 URL's path would read as something else (`%`, `#`, `?`, `\`, `:`, white

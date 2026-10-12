@@ -1387,14 +1387,14 @@ def reports : List Report := [
       "a presentation deck whose theme declares its code roles by xcolor definitions ships its declared code colours in both artifacts"]
     state := .guarded "dbbfba91" .before .author },
   { id := "R150", date := "2026-10-12"
-    what := "a build wrote its artifact over the file it was built from: a markdown source built onto its own name was replaced by its markdown twin, and a markdown twin declared under the source's name, an include's, the bibliography's, an image's, the face's or the stylesheet's replaced that file"
+    what := "a build wrote its artifact over the file it was built from: a markdown source built onto its own name was replaced by its markdown twin, and a markdown twin declared under the source's name, an include's, the bibliography's, an image's, a face's or the stylesheet's replaced that file"
     pins := [check% Tests.publicationInputChecks]
-    accept := ["all twenty of the guard's assertions fail on the tree before the fix: each of ten destinations, among them a link to the source, a link to its directory and a hard link of it, is published over the file the build read, which then differs"]
+    accept := ["run against the binary built from the tree before the fix, twenty-two of the guard's assertions fail: each of eleven destinations, among them a link to the source, a link to its directory, a hard link of it and a face the run's font directory holds, is published over the file the build read, which then differs; the destinations that are no input publish as before"]
     state := .guarded "1f801005" .before .author },
   { id := "R151", date := "2026-10-12"
     what := "an output name with no format's extension was refused on plain standard error, outside the porcelain stream a tool reads and with no code, and the refusal named the PDF and HTML extensions but not the markdown one"
     pins := [check% Tests.outputNameChecks]
-    accept := ["three of the guard's assertions fail on the tree before the fix: no porcelain record carries the refusal, the rendered refusal bears no code, and no refusal lists the markdown extension"]
+    accept := ["run against the binary built from the tree before the fix, three of the guard's assertions fail: no porcelain record carries the refusal, the rendered refusal bears no code, and no refusal lists the markdown extension"]
     state := .guarded "1f801005" .before .author }
 ]
 

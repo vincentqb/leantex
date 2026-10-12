@@ -81,7 +81,7 @@ private structure InputLog where
   its losses named once. -/
   decoded : Array (String × Encoding.FileText) := #[]
   /-- Each file read, by the path it was read at: what publication must
-  never write over (`PublicationPaths.overwritten`). -/
+  never write over (`PublicationPaths.overwrite`). -/
   reads : Array String := #[]
 
 private abbrev ReadM := StateT InputLog IO
@@ -420,6 +420,7 @@ public def readDocument (file : String) (bytes : ByteArray)
     if markdown then {} else { reads := #[read.read file under] }
   let (executed, log) ← executeWith file raws { guess, ledger := seeded first guess }
   let settled := log.ledger.declared
+  let firstReads := log.reads
   let (read, frontDiags, executed, log) ← if !log.ledger.stale then
       pure (first, frontDiags, executed, log)
     else
@@ -435,6 +436,7 @@ public def readDocument (file : String) (bytes : ByteArray)
   return { text := read.text
            executed := executed.withRaws raws
            diags := read.diags ++ frontDiags ++ log.diags ++ dataDiags
-           spliced := log.spliced, ledger, reads := log.reads ++ dataReads }
+           spliced := log.spliced, ledger,
+           reads := (firstReads ++ log.reads ++ dataReads).toList.eraseDups.toArray }
 
 end LeanTex.Cli.Input

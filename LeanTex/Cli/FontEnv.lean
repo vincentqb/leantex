@@ -57,6 +57,10 @@ public def Cache.resolveWeight (c : Cache) (faces : Array FontDb.Face) (family :
   c.weights.modify (·.push (key, answer))
   return answer
 
+/-- The face files this cache parsed, by the paths they were read at. -/
+public def Cache.parsedPaths (c : Cache) : IO (Array String) :=
+  return (← c.ref.get).map (·.1)
+
 /-- Parse a face, or hand back the parse already made for that path. -/
 public def Cache.parse (c : Cache) (path : String) : IO (Except String Font.Font) := do
   if let some f := (← c.ref.get).find? (·.1 == path) then

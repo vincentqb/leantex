@@ -61,14 +61,12 @@ public def outputOverwritesInput : PublicationPaths.Overwrite → Diag
     s!"the {format} destination '{dest}' is '{input}', which this build reads"
   | .linked format dest input => overwrite dest
     s!"the {format} destination '{dest}' may be a hard link to '{input}', which this build reads"
-  | .unresolved why => overwrite ""
-    s!"a file this build read cannot be resolved again, so no destination is known to spare it: {why}"
 where
   overwrite (dest detail : String) : Diag :=
     Diag.of .E0005 s!"cannot publish output: {detail}"
       (help := "name another destination with -o, or the markdown twin with \\output{ md = ... }; \
 the build never writes over a file it reads")
-      (subject := if dest.isEmpty then none else some dest)
+      (subject := some dest)
 
 /-- A whole-artifact representation refusal. Aggregate storage limits and
 font metadata do not identify a source command, so no span is invented. -/

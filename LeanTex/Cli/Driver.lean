@@ -779,15 +779,22 @@ def boundaryFaces (ui : Ui) (file : String) (front : Front) : IO (Ir.FontSpec ×
 its execution read (`Front.reads`: an include, a local style, a `\data` file);
 its bibliography (`Input.bibPaths`); the images it read and an animation's
 companion beside one (`imgReads`); the files its boundary pictures staged
-(`staged`); the faces its font set loaded (`faces`); and the stylesheet and
-icon its page captures (`Publication.localPath?`). Publication writes over
-none of them (`PublicationPaths.overwrite`). -/
-def buildInputs (file : String) (front : Front) (doc : Ir.Doc)
-    (imgReads staged faces : Array String) : Array String :=
-  let declared := (doc.output.stylesheet.toArray ++ doc.info.favicon.toArray).filterMap fun name =>
-    (Publication.localPath? file name).map (·.toString)
+(`staged`); every face it parsed, in any assembly (`FontEnv.Cache.parsedPaths`),
+with the settled set's (`faces`); every face the scan found under the
+document's own font directories and the run's (`FaceScan.docDirs`,
+`privateDirs`); and, where it emits a page, the stylesheet and icon the page
+captures (`Publication.localPath?`). Publication writes over none of them
+(`PublicationPaths.overwrite`), which skips a listed name no file stands at. -/
+def buildInputs (file : String) (front : Front) (doc : Ir.Doc) (emit : Array Emit)
+    (scan : FaceScan) (parsed imgReads staged faces : Array String) : Array String :=
+  let owned := scan.docDirs ++ scan.privateDirs
+  let scanned := (scan.faces.filter fun face =>
+    owned.any fun dir => face.path.startsWith (if dir.endsWith "/" then dir else dir ++ "/")).map (·.path)
+  let declared := if !emit.contains .html then #[] else
+    (doc.output.stylesheet.toArray ++ doc.info.favicon.toArray).filterMap fun name =>
+      (Publication.localPath? file name).map (·.toString)
   #[file] ++ front.reads ++ (Input.bibPaths file doc).map (·.toString) ++ imgReads ++ staged ++
-    faces ++ declared
+    faces ++ parsed ++ scanned ++ declared
 
 def build (ui : Ui) (file : String) : IO UInt32 := do
   let t0 ← IO.monoMsNow
@@ -932,7 +939,7 @@ def build (ui : Ui) (file : String) : IO UInt32 := do
       -- premise: publicationInputChecks — a destination naming the document, a file it
       -- reads or another name of one is refused with every input byte for byte as it was
       if let some clash ← PublicationPaths.overwrite destinations
-          (buildInputs file front doc imgReads staged paths) then
+          (buildInputs file front doc emit scan (← front.cache.parsedPaths) imgReads staged paths) then
         ui.diag (DriverDiag.outputOverwritesInput clash)
         ui.summary file 1 (← since t0)
         return 1
@@ -1242,7 +1249,7 @@ public def main (argv : List String) : IO UInt32 := do
       return 0
     | .build file =>
       -- premise: outputNameChecks — a name no format's extension ends is one E0006, exit 3,
-      -- nothing written, and every extension the help lists builds
+      -- nothing written, and a name ending in each extension the refusal and the help list builds
       if let some o := cfg.output then
         unless o.endsWith "/" || (← (System.FilePath.mk o).isDir) ||
             (emitOfPath o).isSome do

@@ -546,6 +546,15 @@ def writeScript (path : System.FilePath) (body : String) (exec : Bool := true) :
   IO.FS.writeFile path body
   IO.setAccessRights path { user := ⟨true, true, exec⟩ }
 
+/-- The engine this build made, run in `dir` over `args` with `font` as its one
+face and its caches under `cache`: how a CLI check runs it. -/
+def engineRun (dir : System.FilePath) (args : Array String) (font cache : System.FilePath) :
+    IO IO.Process.Output := do
+  let binary ← IO.FS.realPath ".lake/build/bin/leantex"
+  IO.Process.output {
+    cmd := binary.toString, cwd := some dir, args,
+    env := #[("LEANTEX_FONT", some font.toString), ("XDG_CACHE_HOME", some cache.toString)] }
+
 /-- A symbolic link at `link` naming `target`: Lean has no call that makes one. -/
 def symlink (target link : System.FilePath) : IO Unit := do
   let out ← IO.Process.output { cmd := "ln", args := #["-s", target.toString, link.toString] }

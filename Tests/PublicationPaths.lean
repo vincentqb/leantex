@@ -100,22 +100,47 @@ def publicationWriteChecks (ref : IO.Ref (List String)) : IO Unit := do
 /-- **No artifact is written over a file the build reads.** A destination
 that is the document, another name of it — a link to it, a link to the
 directory above it, a hard link — or a file the document reads — an
-include, its bibliography, an image, its face, its stylesheet — is E0005
-before anything is written, whatever the run accepts: every input keeps its
-bytes and no artifact appears. A distinct destination still publishes. The
-defect: `leantex doc.md -o doc.md` replaced the source with its markdown
-twin, and `\output{ md = "doc.tex" }` replaced the source it was built from. -/
+include, its bibliography, an image, its face, a face its font directory
+holds, its stylesheet — is E0005 before anything is written, whatever the
+run accepts: every input keeps its bytes and no artifact appears. A
+destination that is none of them still publishes, beside a stylesheet a run
+with no page never reads, a bibliography no file stands for, and an
+unrelated hard link. The defect: `leantex doc.md -o doc.md` replaced the
+source with its markdown twin, and `\output{ md = "doc.tex" }` replaced the
+source it was built from. -/
 def publicationInputChecks (ref : IO.Ref (List String)) : IO Unit := do
-  let binary ← IO.FS.realPath ".lake/build/bin/leantex"
   let font ← IO.FS.realPath "testdata/corpus/fonts/OpenSans-Regular.ttf"
+  let spare ← IO.FS.realPath "testdata/corpus/fonts/SourceSerifPro-Regular.otf"
   let png ← IO.FS.realPath "testdata/corpus/rects.png"
   IO.FS.withTempDir fun root => do
     let root ← IO.FS.realPath root
     let tex (preamble body : String) : String :=
       "\\documentclass{article}\n" ++ preamble ++ "\\begin{document}\n" ++ body ++
         "\n\\end{document}\n"
-    -- The cases: the source and the files beside it, the arguments, the
-    -- files the build reads that must keep their bytes, and the links to make.
+    -- Every file under a case's directory, one level of real directories
+    -- down; a link is kept by its name, its target compared where it stands.
+    let snapshot (dir : System.FilePath) : IO (Array (String × ByteArray)) := do
+      let mut out : Array (String × ByteArray) := #[]
+      for e in ← dir.readDir do
+        let md ← e.path.symlinkMetadata
+        if md.type == .dir then
+          for f in ← e.path.readDir do
+            out := out.push (e.fileName ++ "/" ++ f.fileName, ← IO.FS.readBinFile f.path)
+        else if md.type == .symlink then out := out.push (e.fileName, ByteArray.empty)
+        else out := out.push (e.fileName, ← IO.FS.readBinFile e.path)
+      return out.qsort (·.1 < ·.1)
+    let prepare (name : String) (files : List (String × String))
+        (links : List (String × String × Bool)) : IO System.FilePath := do
+      let dir := root / (name.replace " " "-").replace "'" ""
+      IO.FS.createDirAll (dir / "fonts")
+      for (file, text) in files do IO.FS.writeFile (dir / file) text
+      IO.FS.writeBinFile (dir / "figure.png") (← IO.FS.readBinFile png)
+      IO.FS.writeBinFile (dir / "face.ttf") (← IO.FS.readBinFile font)
+      IO.FS.writeBinFile (dir / "fonts" / "Spare.otf") (← IO.FS.readBinFile spare)
+      for (target, link, hard) in links do
+        if hard then IO.FS.hardLink (dir / target) (dir / link)
+        else symlink (if target == "." then dir else dir / target) (dir / link)
+      return dir
     -- A source whose markdown twin differs from it, so a write over it shows.
     let note := "# An invented note\n\nA *probe* line.\n\n* one\n* two\n"
     -- The cases: the source and the files beside it, the arguments, the
@@ -149,46 +174,47 @@ def publicationInputChecks (ref : IO.Ref (List String)) : IO Unit := do
       ("the face the build sets in",
         [("doc.tex", tex "\\output{ formats = md, md = \"face.ttf\" }\n" "An invented probe.")],
         #["doc.tex"], ["face.ttf"], []),
+      ("a face the run's font directory holds",
+        [("doc.tex", tex "\\output{ formats = md, md = \"fonts/Spare.otf\" }\n" "An invented probe.")],
+        #["doc.tex", "--font-dir", "fonts"], ["fonts/Spare.otf"], []),
       ("the declared stylesheet",
         [("doc.tex", tex "\\output{ formats = html, md, stylesheet = \"site.css\", md = \"site.css\" }\n"
             "An invented probe."),
          ("site.css", "p { color: rgb(1, 2, 3) }\n")],
         #["doc.tex"], ["site.css"], [])]
     for (name, files, args, guarded, links) in cases do
-      let dir := root / (name.replace " " "-").replace "'" ""
-      IO.FS.createDirAll dir
-      for (file, text) in files do IO.FS.writeFile (dir / file) text
-      IO.FS.writeBinFile (dir / "figure.png") (← IO.FS.readBinFile png)
-      IO.FS.writeBinFile (dir / "face.ttf") (← IO.FS.readBinFile font)
-      for (target, link, hard) in links do
-        if hard then IO.FS.hardLink (dir / target) (dir / link)
-        else symlink (if target == "." then dir else dir / target) (dir / link)
-      let before ← (← dir.readDir).mapM fun e => do
-        return (e.fileName, ← if ← e.path.isDir then pure ByteArray.empty else IO.FS.readBinFile e.path)
-      let run ← IO.Process.output {
-        cmd := binary.toString, cwd := some dir, args := args ++ #["--porcelain"],
-        env := #[("LEANTEX_FONT", some (dir / "face.ttf").toString),
-          ("XDG_CACHE_HOME", some (root / "cache").toString)] }
-      let after ← (← dir.readDir).mapM fun e => do
-        return (e.fileName, ← if ← e.path.isDir then pure ByteArray.empty else IO.FS.readBinFile e.path)
+      let dir ← prepare name files links
+      let before ← snapshot dir
+      let run ← engineRun dir (args ++ #["--porcelain"]) (dir / "face.ttf") (root / "cache")
+      let after ← snapshot dir
       let refused := run.stdout.splitOn "\n" |>.filter (hasStr · "\"E0005\"")
       check ref s!"publication inputs: {name} is refused as E0005 ({run.exitCode}): {run.stdout}{run.stderr}"
         (run.exitCode != 0 && refused.length == 1)
       check ref s!"publication inputs: {name} leaves every file as it was"
-        (guarded.all (fun g => before.any (·.1 == g)) &&
-          after.map (·.1) == before.map (·.1) && after.toList.all (before.contains ·))
-    -- A destination that is no input still publishes, beside a source
-    -- whose twin would differ from it.
-    let dir := root / "distinct"
-    IO.FS.createDirAll dir
-    IO.FS.writeFile (dir / "doc.md") note
-    let run ← IO.Process.output {
-      cmd := binary.toString, cwd := some dir, args := #["doc.md", "-o", "twin.md"],
-      env := #[("LEANTEX_FONT", some font.toString),
-        ("XDG_CACHE_HOME", some (root / "cache").toString)] }
-    check ref s!"publication inputs: a distinct destination publishes ({run.exitCode}): {run.stderr}"
-      (run.exitCode == 0 && (← (dir / "twin.md").pathExists) &&
-        (← IO.FS.readFile (dir / "doc.md")) == note)
+        (guarded.all (fun g => before.any (·.1 == g)) && after == before)
+    -- Destinations that are no input publish, whatever the inputs a run
+    -- with no use for them names.
+    let publishes : List (String × List (String × String) × Array String × String ×
+        List (String × String × Bool)) := [
+      ("a distinct destination beside its source", [("doc.md", note)],
+        #["doc.md", "-o", "twin.md"], "twin.md", []),
+      ("a stylesheet a run with no page never reads",
+        [("doc.tex", tex "\\output{ formats = pdf, stylesheet = \"doc.tex/site.css\" }\n"
+            "An invented probe.")],
+        #["doc.tex"], "doc.pdf", []),
+      ("a bibliography no file stands for",
+        [("doc.tex", tex "" "An invented claim~\\cite{probe}.\n\\bibliographystyle{plain}\n\\bibliography{doc.tex/refs}")],
+        #["doc.tex", "--best-effort"], "doc.pdf", []),
+      ("an unrelated hard-linked destination", [("doc.md", note), ("other.md", "An unrelated file.\n")],
+        #["doc.md", "-o", "out.md"], "out.md", [("other.md", "out.md", true)])]
+    for (name, files, args, output, links) in publishes do
+      let dir ← prepare name files links
+      let run ← engineRun dir args (dir / "face.ttf") (root / "cache")
+      check ref s!"publication inputs: {name} publishes ({run.exitCode}): {run.stderr}"
+        (run.exitCode == 0 && (← (dir / output).pathExists))
+      if let some (_, text) := files.find? (·.1 == "doc.md") then
+        check ref s!"publication inputs: {name} keeps its source"
+          ((← IO.FS.readFile (dir / "doc.md")) == text)
 
 /-- **An output name the engine cannot write is a typed refusal.** `-o`
 naming a file whose extension names no format is E0006, through the
@@ -198,17 +224,17 @@ extension a run can take (`Emit.all`), each of which `emitOfPath` reads
 back. The defect: the refusal was a line on plain standard error, outside
 the porcelain stream, and it named `*.pdf` and `*.html` but not `.md`. -/
 def outputNameChecks (ref : IO.Ref (List String)) : IO Unit := do
-  let binary ← IO.FS.realPath ".lake/build/bin/leantex"
   let font ← IO.FS.realPath "testdata/corpus/fonts/OpenSans-Regular.ttf"
-  check ref "output names: every format's extension reads back as that format"
-    (LeanTex.Cli.Emit.all.all fun e => LeanTex.Cli.emitOfPath ("out." ++ e.ext) == some e)
+  let extensions := LeanTex.Cli.Emit.all.map fun e => "." ++ e.ext
+  check ref "output names: the help's output line lists every format's extension"
+    (hasStr LeanTex.Cli.helpText ("output file (" ++ " | ".intercalate extensions ++ ")"))
+  check ref "output names: a name with no format's extension names no format"
+    (LeanTex.Cli.emitOfPath "notes.tex" == none && LeanTex.Cli.emitOfPath "notes" == none)
   IO.FS.withTempDir fun dir => do
     IO.FS.writeFile (dir / "source.tex")
       "\\documentclass{article}\n\\begin{document}\nAn invented name probe.\n\\end{document}\n"
-    let run (args : Array String) := IO.Process.output {
-      cmd := binary.toString, cwd := some dir, args := #["source.tex", "-o", "notes.tex"] ++ args,
-      env := #[("LEANTEX_FONT", some font.toString),
-        ("XDG_CACHE_HOME", some (dir / "cache").toString)] }
+    let run (args : Array String) :=
+      engineRun dir (#["source.tex", "-o", "notes.tex"] ++ args) font (dir / "cache")
     let porcelain ← run #["--porcelain"]
     let records := (porcelain.stdout.splitOn "\n").filter (!·.isEmpty)
     let refusal := records.filter (hasStr · "\"code\":\"E0006\"")
@@ -223,12 +249,11 @@ def outputNameChecks (ref : IO.Ref (List String)) : IO Unit := do
         human.stdout.isEmpty)
     check ref "output names: nothing is written for a refused name"
       (!(← (dir / "notes.tex").pathExists) && !(← (dir / "source.pdf").pathExists))
-    let md ← IO.Process.output {
-      cmd := binary.toString, cwd := some dir, args := #["source.tex", "-o", "notes.md"],
-      env := #[("LEANTEX_FONT", some font.toString),
-        ("XDG_CACHE_HOME", some (dir / "cache").toString)] }
-    check ref s!"output names: a markdown name builds the twin ({md.exitCode}): {md.stderr}"
-      (md.exitCode == 0 && (← (dir / "notes.md").pathExists))
+    for e in LeanTex.Cli.Emit.all do
+      let name := "notes." ++ e.ext
+      let built ← engineRun dir #["source.tex", "-o", name] font (dir / "cache")
+      check ref s!"output names: a name ending in '.{e.ext}' builds ({built.exitCode}): {built.stderr}"
+        (built.exitCode == 0 && (← (dir / name).pathExists))
 
 /-- Different formats must reach independent files. The CLI must reject a
 collision before any write, including existing-file and directory aliases;
