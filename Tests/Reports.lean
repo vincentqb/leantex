@@ -1494,9 +1494,9 @@ def reports : List Report := [
     state := .guarded "bcfef652" .before .author },
   { id := "R165", date := "2026-10-12"
     what := "a declared line that re-flowed and still ran past the measure drew a re-flow warning and an overfull warning per overrunning line, one construct accounted twice, where the re-flow can say the overrun"
-    pins := [check% Tests.DiagFold.reflowAccountChecks]
-    accept := ["ten of the guard's assertions fail with the fix's behaviour reverted onto the recorded commit, its records kept: one re-flow per paragraph at its first declared line, an overfull warning for each line a re-flow accounts for, no re-flow saying its overrun or carrying the overfull loss, the log and the HTML build counting the overrun on a line of its own, accepting the re-flow leaving that overrun a warning, an acceptance of the overfull warning reading stale, and an overlay's steps measuring one declared line apart"]
-    state := .guarded "e13488b1" .revert .author }
+    pins := [check% Tests.DiagFold.reflowAccountChecks, check% siteAccountingChecks]
+    accept := ["twelve of the guards' assertions fail with the fix's behaviour reverted onto the recorded commit, its records kept: no re-flow saying its overrun, carrying it or naming where it opens; an overfull warning for each line a re-flow accounts for, so the page's overruns count twice, the log and the HTML and PDF builds print it on a line of its own, accepting the re-flow leaves it a warning and an acceptance of the overfull warning reads stale; a paragraph's re-flowed lines and their overruns as more than one diagnostic; overlay steps that measure one declared line apart, that differ in whether it runs past, or that re-flow different declared lines, each drawing a record of their own; and a macro's re-flowed line that runs past drawing an overfull warning beside its re-flow"]
+    state := .guarded "373b2f34" .revert .author }
 ]
 
 /-- The reports guarded but never seen failing: a count that may fall and
