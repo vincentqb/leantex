@@ -2031,7 +2031,7 @@ private def mathNote (ctx : Ctx) (note : MathParse.Note) (where_ : String)
     (pos : Pos) : EM Unit := do
   match note with
   | .ragged kind detail =>
-    warnOnce ctx ("math:ragged:" ++ kind.key) .W0014
+    warnOnce ctx ("math:ragged:" ++ where_ ++ kind.key) .W0014
       (if where_.isEmpty then s!"an alignment {kind.words}" else s!"{where_}a {kind.words}") pos
       (detail := some detail)
   | .styleDropped what =>

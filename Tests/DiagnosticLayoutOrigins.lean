@@ -88,7 +88,19 @@ def diagnosticLayoutOriginChecks (ref : IO.Ref (List String))
     ((bareOut.diags.filter (·.kind == .W0005)).size == 1 &&
       (bareOut.diags.filter (·.kind == .W0005)).all fun d =>
       d.span.isNone && d.trigger.isNone &&
-        d.message == "overfull line; no feasible break" && d.detail == some "2 overfull lines")
+        d.message == "overfull lines that no source site names; no feasible break" &&
+        d.detail == some "2 overfull lines")
+  -- Located and unlocated overfull lines in one document: the unlocated
+  -- lines' one record keeps words of its own, so the log's lines account
+  -- for every overfull line.
+  let mixed : Ir.Doc := { doc with body := doc.body ++ bare.body }
+  let mixedW := (Layout.run geom fs none mixed).diags.filter (·.kind == .W0005)
+  let shown := (Diag.foldRepeats mixedW).filter (·.severity.isWarning)
+  t s!"layout origins: located and unlocated overfull lines both reach the log's lines \
+({shown.map fun d => (d.message, d.sites, d.detail)})"
+    (shown.size == 2 &&
+      shown.any (fun d => d.span.isSome && d.sites == 2) &&
+      shown.any (fun d => d.span.isNone && d.sites == 1 && d.detail == some "2 overfull lines"))
   let pictureSource :=
     "\\documentclass{article}\\pictures{tool=none}\\begin{document}\n" ++
     DiagnosticLayoutOrigins.picture ++ "\n" ++ DiagnosticLayoutOrigins.picture ++

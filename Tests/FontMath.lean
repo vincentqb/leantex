@@ -2339,6 +2339,11 @@ def mathChecks (ref : IO.Ref (List String)) : IO Unit := do
         | _ => false))
   t "a ragged align row is W0014 and still renders"
     (warnCodes "\\begin{align*}a &= b \\\\ z\\end{align*}" == ["W0014"])
+  -- Ragged rows of two environments are two losses, each warned in its own
+  -- words: the once-key names the environment.
+  t "ragged rows of two environments each warn in their own words"
+    (warnCodes ("\\begin{align*}a &= b \\\\ z\\end{align*}\n\n" ++
+      "$\\begin{pmatrix}a & b \\\\ c\\end{pmatrix}$") == ["W0014", "W0014"])
   -- Per-glyph positions: (char, gid, x, raise, advance) over every line.
   let glyphInfo (src : String) : Array (Char × Nat × Dim.Sp × Dim.Sp × Dim.Sp) := Id.run do
     let (d, _) := Elab.run "t" src

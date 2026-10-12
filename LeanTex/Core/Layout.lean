@@ -21189,9 +21189,15 @@ private def diagKey (d : Diag) : DiagKey :=
     (s.file, s.pos.line, s.pos.col, s.pos.origins.map (fun o => (o.id, o.name)), s.pos.command)),
     d.detail)
 
+/-- The one record the unlocated overfull lines collapse into
+(`uniqueDiags`) stands for all of them, so it says so in words of its own:
+in the located lines' words it would fold onto their line as one site, and
+the log would count fewer overfull lines than the page holds. How many is
+its detail. -/
 private def summarizeOverfull (overfull : Nat) (d : Diag) : Diag :=
   if d.code == "W0005" && d.span.isNone && overfull > 1 then
-    { d with detail := some s!"{overfull} overfull lines" }
+    { d with message := "overfull lines that no source site names; no feasible break"
+             detail := some s!"{overfull} overfull lines" }
   else d
 
 /-- Repeated overlay pages can report one source site several times.
