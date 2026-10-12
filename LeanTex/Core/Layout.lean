@@ -1422,6 +1422,12 @@ public structure ParagraphBreaks where
   items say: the paragraph's census key, so the one paragraph an overlay's
   steps set again is one loss, and two paragraphs are two. -/
   key : Option Span := none
+  /-- How many lines of its re-flowed declared lines set past the measure,
+  and by how much the widest overruns it: the overrun is the declared
+  line's, which its re-flow names (W0386's detail), never a second
+  diagnostic. -/
+  overruns : Nat := 0
+  overrunMax : Sp := 0
   deriving Repr, Inhabited
 
 public def ParagraphBreaks.subject (p : ParagraphBreaks) : String :=
@@ -10549,7 +10555,7 @@ public structure TexBox where
   far below that baseline. TeX's line holding the box and the rule is as tall
   and as deep as the taller and the deeper of the two. -/
   reach : Option (Sp × Sp) := none
-  /-- The box's last line's depth, its strut's or its ink's (`withLastDepth`):
+  /-- The box's last line's depth, its strut's or its ink's (`placedJob`):
   what a rule's reach past the box's top is measured with. -/
   lastDepth : Sp := 0
   deriving Repr, Inhabited, DecidableEq
@@ -10620,6 +10626,10 @@ public structure Spacing.Paragraph where
   galley lines, and the line-number census must not count them
   (`LineOut.counted`). -/
   private inFloat : Bool := false
+  /-- The breaks ending a line of a declared line that re-flowed
+  (`carriedBreaks`): their overrun is that declared line's, named by its
+  re-flow (W0386), so no W0005 names the line again. -/
+  private carried : Array Bool := #[]
   /-- The first `Struct` leaf of the block this paragraph sets — what every
   line placed from it names (`LineOut.leaf`). `none` for generated ink. -/
   private leaf : Option Nat := none
@@ -16847,7 +16857,7 @@ private def placeParaLine (fs : FontSet) (j : ParaJob)
     (st : B × Nat × Bool) (brk : Nat) : B × Nat × Bool :=
   let b0 := st.1
   let g := paraLineGeom fs j b0 st.2.2 st.2.1 brk
-  let b1 := if g.2.2.2.1 then
+  let b1 := if g.2.2.2.1 && !(j.carried[brk]?.getD false) then
       b0.warnOverfull (lineSource j.itemSources (j.lineStart st.2.2 st.2.1) brk)
     else b0
   -- The notes whose marks this line carries: mark boxes strictly between
@@ -16944,7 +16954,10 @@ private def Spacing.Page.warnReflow (b : B) (p : ParagraphBreaks) (reflowed : Bo
         "a declared line did not fit the measure and re-flowed" p.key
         (help := "shorten the declared line, reduce \\page{ hmargin = ... } \
 to widen the measure, or declare a narrower face")
-        (detail := some s!"{loc}{p.forced.size} lines declared, {p.chosen.size} ship")
+        (detail := some (s!"{loc}{p.forced.size} lines declared, {p.chosen.size} ship" ++
+          (if p.overruns == 0 then "" else
+            s!"; {p.overruns} {if p.overruns == 1 then "line runs" else "lines run"} past the \
+measure, by up to {p.overrunMax.toPtString}pt")))
         (output := some .pdf)) }
   else b
 
@@ -16987,88 +17000,86 @@ private theorem warnReflow_accounts (b : B) (q : ParagraphBreaks) (reflowed : Bo
   unfold Spacing.Page.warnReflow
   split <;> simp_all
 
-/-- Whether a paragraph's line sets wider than its measure: the overrun
-flag `paraLineGeom` reads, which no builder field enters
-(`paraLineGeom_overruns`). -/
-private def lineOverruns (j : ParaJob) (first : Bool) (prev brk : Nat) : Bool :=
+/-- How far a paragraph's line sets past its measure, where it does: the
+excess of the width `setLine` gives it over the measure, when its overrun
+flag, the one `paraLineGeom` reads, is set (`paraLineGeom_overruns`). -/
+private def lineOverrunBy (j : ParaJob) (first : Bool) (prev brk : Nat) : Option Sp :=
   let lead := if first then j.hangIndent else 0
   let width := j.target + lead
   let a := j.lineStart first prev
   let shrinks := j.rightFil && width < (measure j.items a brk).natural
-  (setLine j.items a brk width
+  let set := setLine j.items a brk width
       (setsToMeasure (!j.center && !j.flushRight && j.justify) j.items a brk || shrinks)
-      (j.protrude && !shrinks) (j.expand && !shrinks) j.wordOffsets).2.2.1
+      (j.protrude && !shrinks) (j.expand && !shrinks) j.wordOffsets
+  if set.2.2.1 then some (set.2.1 - width) else none
 
 private theorem paraLineGeom_overruns (fs : FontSet) (j : ParaJob) (b : B) (first : Bool)
     (prev brk : Nat) :
-    (paraLineGeom fs j b first prev brk).2.2.2.1 = lineOverruns j first prev brk := by
-  unfold paraLineGeom lineOverruns
+    (paraLineGeom fs j b first prev brk).2.2.2.1 = (lineOverrunBy j first prev brk).isSome := by
+  unfold paraLineGeom lineOverrunBy
   dsimp only
   repeat' split
-  all_goals rfl
+  all_goals simp_all
 
-/-- The sites of a line's located items, in item order: `lineSource`'s
-answer first. -/
-private def lineSites (sources : Array (Nat × Span)) (first last : Nat) : Array Span := Id.run do
-  let mut lo := 0
-  let mut hi := sources.size
-  for _ in [0:sources.size + 1] do
-    if lo < hi then
-      let mid := (lo + hi) / 2
-      if ((sources[mid]?.map (·.1)).getD 0) < first then lo := mid + 1 else hi := mid
-    else break
-  let mut out : Array Span := #[]
-  for k in [lo:sources.size] do
-    match sources[k]? with
-    | some (i, span) => if i ≤ last then out := out.push span else break
-    | none => break
-  return out
-
-/-- A site as a reader finds it: file, line and column. -/
-private def siteKey (s : Span) : String × Nat × Nat := (s.file, s.pos.line, s.pos.col)
-
-/-- Where a re-flowed paragraph's W0386 stands: the first located item of a
-line of a declared line that re-flowed — a line its split ends, or the one
-after a split — at a site no overrunning line of the paragraph opens on.
-An overrun (W0005) names the first located item of its own line, so the
-re-flow and an overrun are never named at one site: a declared line that
-opens on a word wider than the measure is named where its next line opens.
-A paragraph whose re-flowed lines offer no other located site leaves its
-re-flow unlocated, keyed by its index. -/
-private def reflowSource (j : ParaJob) (p : ParagraphBreaks) : Option Span := Id.run do
-  let top := p.forced.pop.foldl max 0
+/-- The breaks ending a line of a declared line that re-flowed, marked by
+item index: a line its split ends, or the one after a split
+(`ParagraphBreaks.Splits`, read off the same forced ends and fills
+`paragraphBreaksOf` records). A paragraph that declares no lines re-flows
+none. -/
+private def carriedBreaks (j : ParaJob) (breaks : Array Nat) : Array Bool := Id.run do
+  if !j.declaresLines then return #[]
+  let forced := (Array.range j.items.size).filter (isForced j.items)
+  let top := forced.pop.foldl max 0
   let splits (k : Nat) : Bool := k < top && !isForced j.items k && !isEndFill j.items k
-  let mut taken : Std.HashSet (String × Nat × Nat) := {}
+  let mut out : Array Bool := Array.replicate (j.items.size + 1) false
   let mut prev := 0
   let mut first := true
-  for brk in p.chosen do
-    if lineOverruns j first prev brk then
-      if let some src := lineSource j.itemSources (j.lineStart first prev) brk then
-        taken := taken.insert (siteKey src)
+  for brk in breaks do
+    if splits brk || (!first && splits prev) then out := out.set! brk true
     prev := brk
     first := false
-  prev := 0
-  first := true
-  for brk in p.chosen do
-    if splits brk || (!first && splits prev) then
-      for src in lineSites j.itemSources (j.lineStart first prev) brk do
-        unless taken.contains (siteKey src) do return some src
+  return out
+
+/-- Where a re-flowed paragraph's W0386 stands, and the overrun it carries:
+the first located item of the first line of a declared line that re-flowed,
+where the author finds the declared line, and how many of those lines set
+past the measure and by how much the widest does. No W0005 names such a
+line (`carried`), so the declared line is one diagnostic wherever its
+lines run. -/
+private def reflowAccount (j : ParaJob) (breaks : Array Nat) (carried : Array Bool) :
+    Option Span × Nat × Sp := Id.run do
+  let mut site : Option Span := none
+  let mut count := 0
+  let mut widest : Sp := 0
+  let mut prev := 0
+  let mut first := true
+  for brk in breaks do
+    if carried[brk]?.getD false then
+      if site.isNone then site := lineSource j.itemSources (j.lineStart first prev) brk
+      if let some excess := lineOverrunBy j first prev brk then
+        count := count + 1
+        widest := max widest excess
     prev := brk
     first := false
-  return none
+  return (site, count, widest)
 
 /-- The paragraph's record of its breaks, keyed by where a declared line of
-it re-flowed. -/
+it re-flowed, with the overrun its re-flowed lines carry. -/
 private def paragraphRecord (b : B) (j : ParaJob) (breaks : Array Nat) : ParagraphBreaks :=
   let p := paragraphBreaksOf b.paragraphBreaks.size j.leaf b.curFrameOrigin j.declaresLines j.items breaks
-  if p.reflows.isEmpty then p else { p with key := reflowSource j p }
+  if p.reflows.isEmpty then p else
+    let (site, count, widest) := reflowAccount j breaks (carriedBreaks j breaks)
+    { p with key := site, overruns := count, overrunMax := widest }
 
-/-- A TeX box whose rule reaches by its lines (`TexBox.reach`) learns its
-last line's depth, its strut's or its ink's, before its first line stands:
-TeX builds the box before the line holding it, so how far the rule reaches
-past the box's top is known where that line is placed (`texBoxBaseline`). -/
-private def withLastDepth (fs : FontSet) (b : B) (j : ParaJob) (breaks : Array Nat) : ParaJob :=
-  { j with texBox := j.texBox.map fun tb =>
+/-- The job as its lines are placed. A TeX box whose rule reaches by its
+lines (`TexBox.reach`) learns its last line's depth, its strut's or its
+ink's, before its first line stands: TeX builds the box before the line
+holding it, so how far the rule reaches past the box's top is known where
+that line is placed (`texBoxBaseline`). And the lines of a declared line
+that re-flowed are marked (`carriedBreaks`): their overrun is the re-flow's
+to name. -/
+private def placedJob (fs : FontSet) (b : B) (j : ParaJob) (breaks : Array Nat) : ParaJob :=
+  { j with carried := carriedBreaks j breaks, texBox := j.texBox.map fun tb =>
       if tb.reach.isNone then tb else
       match breaks.back? with
       | none => tb
@@ -17080,11 +17091,11 @@ private def withLastDepth (fs : FontSet) (b : B) (j : ParaJob) (breaks : Array N
 private def placePara (fs : FontSet) (b : B) (j : ParaJob) (breaks : Array Nat) : B :=
   let p := paragraphRecord b j breaks
   let start := ({ b with diags := b.diags ++ j.diags }).warnReflow p (!p.reflows.isEmpty)
-  (breaks.foldl (placeParaLine fs (withLastDepth fs b j breaks))
+  (breaks.foldl (placeParaLine fs (placedJob fs b j breaks))
     ({ start with paragraphBreaks := b.paragraphBreaks.push p }, 0, true)).1
 
-private theorem sourceBound_withLastDepth {n : Nat} {fs : FontSet} {b : B} {j : ParaJob}
-    {breaks : Array Nat} (hj : j.SourceBound n) : (withLastDepth fs b j breaks).SourceBound n :=
+private theorem sourceBound_placedJob {n : Nat} {fs : FontSet} {b : B} {j : ParaJob}
+    {breaks : Array Nat} (hj : j.SourceBound n) : (placedJob fs b j breaks).SourceBound n :=
   ⟨hj.source, hj.notes, hj.marker, hj.rule⟩
 
 private theorem sourceBound_paraLineGeom {n : Nat} (fs : FontSet) (j : ParaJob)
@@ -17141,7 +17152,7 @@ private theorem sourceBound_placePara {n : Nat} (fs : FontSet) (b : B)
   · simp only [Spacing.Page.warnReflow]
     split <;> exact hb.of_eq rfl rfl rfl rfl rfl
   · intro i st h
-    exact sourceBound_placeParaLine fs _ st breaks[i] (sourceBound_withLastDepth hj) h
+    exact sourceBound_placeParaLine fs _ st breaks[i] (sourceBound_placedJob hj) h
 
 /-- Plain text can introduce discretionary spacing penalties, but no
 authored break or hyphen glyph. The final forced penalty is added separately. -/
@@ -17800,8 +17811,8 @@ private theorem census_placePara {n : Nat} (pick : Option Nat → Bool → Bool)
   unfold placePara
   dsimp only
   rw [← Array.foldl_toList]
-  rw [census_paraFold pick fs (withLastDepth fs b j breaks) breaks.toList _
-    (sourceBound_withLastDepth hj)]
+  rw [census_paraFold pick fs (placedJob fs b j breaks) breaks.toList _
+    (sourceBound_placedJob hj)]
   · simp only [breakSpans, ite_true, Spacing.Page.warnReflow]
     split <;> rfl
   · unfold Spacing.Page.warnReflow
@@ -19093,7 +19104,7 @@ private theorem placePara_noBreak (fs : FontSet) (b : B) (j : ParaJob)
       acc.1.pages = b.pages ∧ acc.1.noBreak = true)
     ⟨by simp, by simp [h]⟩
     (fun _ acc hacc =>
-      have step := placeParaLine_noBreak fs (withLastDepth fs b j breaks) acc _ hacc.2
+      have step := placeParaLine_noBreak fs (placedJob fs b j breaks) acc _ hacc.2
       ⟨step.1.trans hacc.1, step.2⟩)
 
 private theorem keepHeading_extends (b : B) (j : ParaJob) (n : Nat) :
@@ -20680,7 +20691,7 @@ private theorem placePara_reflows (fs : FontSet) (b : B) (j : ParaJob)
           d.code = "W0386" ∧ d.subject = some p.subject
       rw [he]
       exact warnReflow_diag { b with diags := b.diags ++ j.diags } p
-  exact named.step (reflowStep_paraLines fs (withLastDepth fs b j breaks) breaks (_, 0, true))
+  exact named.step (reflowStep_paraLines fs (placedJob fs b j breaks) breaks (_, 0, true))
 
 private theorem reflowStep_placePicture (fs : FontSet) (imgs : Image.Store)
     (b : B) (x : Sp) (pic : Ir.Pic.Picture) (leaf : Option Nat) (origin : Nat) :
@@ -22739,7 +22750,7 @@ private theorem placePara_diags (fs : FontSet) (b : B) (j : ParaJob)
     ∀ d ∈ Spacing.Page.diags b ++ Spacing.Paragraph.diags j, d ∈ Spacing.Page.diags (placePara fs b j breaks) := by
   intro d hd
   unfold placePara
-  exact (reflowStep_paraLines fs (withLastDepth fs b j breaks) breaks _).2 d
+  exact (reflowStep_paraLines fs (placedJob fs b j breaks) breaks _).2 d
     ((reflowStep_warnReflow { b with diags := b.diags ++ j.diags } (paragraphRecord b j breaks)
       (!(paragraphRecord b j breaks).reflows.isEmpty)).2 d hd)
 
@@ -24409,18 +24420,18 @@ private def paragraphStart (b : B) (j : ParaJob) (breaks : Array Nat) : B × Nat
 
 private theorem paragraph_rise (fs : FontSet) (j : ParaJob) (breaks : Array Nat)
     (a b : B) (hj : j.display = none) (hn : j.notes.isEmpty = true) (h : PageRise a b)
-    (ha : ParagraphInputs fs (withLastDepth fs a j breaks) breaks.toList (paragraphStart a j breaks))
-    (hb : ParagraphInputs fs (withLastDepth fs b j breaks) breaks.toList (paragraphStart b j breaks)) :
+    (ha : ParagraphInputs fs (placedJob fs a j breaks) breaks.toList (paragraphStart a j breaks))
+    (hb : ParagraphInputs fs (placedJob fs b j breaks) breaks.toList (paragraphStart b j breaks)) :
     PageRise (placePara fs a j breaks) (placePara fs b j breaks) := by
   have hs : PageRise (paragraphStart a j breaks).1 (paragraphStart b j breaks).1 := by
     dsimp only [paragraphStart]
     unfold Spacing.Page.warnReflow
     repeat' split
     all_goals exact { h with }
-  have hw : withLastDepth fs a j breaks = withLastDepth fs b j breaks := by
-    simp only [withLastDepth, paraLineGeom, h.geom, h.xHeight]
+  have hw : placedJob fs a j breaks = placedJob fs b j breaks := by
+    simp only [placedJob, paraLineGeom, h.geom, h.xHeight]
   rw [hw] at ha
-  have hp := paragraph_fold fs (withLastDepth fs b j breaks) hj hn breaks.toList _ _ hs rfl ha hb
+  have hp := paragraph_fold fs (placedJob fs b j breaks) hj hn breaks.toList _ _ hs rfl ha hb
   simpa only [placePara, paragraphStart, Array.foldl_toList, hw] using hp
 
 end LeanTex.Core.Layout.Spacing
@@ -24720,7 +24731,7 @@ natural-size fixed-top closing. No output ordering is assumed. -/
 public def ParagraphSafe (fs : FontSet) (b : Page) (j : Paragraph)
     (breaks : Array Nat) (gs : Array Glue) : Prop :=
   Spacing.Page.fresh b = false ∧ j.keepNext ≤ 0 ∧ j.display = none ∧ j.notes.isEmpty = true ∧
-    ParagraphInputs fs (withLastDepth fs (boundaryStart b gs) j breaks) breaks.toList
+    ParagraphInputs fs (placedJob fs (boundaryStart b gs) j breaks) breaks.toList
       (paragraphStart (boundaryStart b gs) j breaks) ∧
     NaturalClose (boundaryEnd fs b j breaks gs)
 
@@ -24929,7 +24940,7 @@ public def paragraphSafeDecision (fs : FontSet) (b : Page) (j : Paragraph)
     match j.display with
     | none => isTrue rfl
     | some _ => isFalse fun h => by contradiction
-  letI := paragraphInputsDecidable fs (withLastDepth fs (boundaryStart b gs) j breaks)
+  letI := paragraphInputsDecidable fs (placedJob fs (boundaryStart b gs) j breaks)
     breaks.toList (paragraphStart (boundaryStart b gs) j breaks)
   let last := boundaryEnd fs b j breaks gs
   letI : Decidable (last.vdist = .top) :=

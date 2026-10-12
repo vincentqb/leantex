@@ -231,16 +231,18 @@ def foldChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "an error keyed per site still prints at every site"
     ((headLines err "E0304").length == 3 && r.errors == 3)
 
-/-- **A re-flowed declared line and an overrun are two losses, each named
-once at its own site.** W0386 says a declared line did not hold, at that
-declared line, its counts the site's detail; W0005 says ink runs past the
-measure, at the item that overruns. The two never share a site: a declared
-line that opens on an overrun is named where it goes on, and one that offers
-no other site leaves its re-flow unlocated. Accepting one never accepts the other,
-and each census holds: one W0386 per paragraph that re-flowed — the one
-paragraph an overlay's steps set again is one — and one W0005 per line the
-page shows past its margin. The log prints each wording once, located,
-carrying its sites. Every word here is invented. -/
+/-- **A declared line is one diagnostic, wherever its lines run.** W0386
+says a declared line did not hold, at that declared line, its counts in its
+detail; where a line it re-flowed onto still runs past the measure, that
+overrun is the declared line's too, and W0386's detail carries it — how
+many lines run past and by how much the widest does — so no W0005 names
+the same declared line again. W0005 names an overrun no re-flow accounts
+for: a declared line of one word wider than the measure, which cannot
+re-flow. Every line the page shows past its margin is accounted once: a
+W0005 at its site, or the count in its paragraph's W0386. Accepting the
+re-flow accepts the overrun it carries and nothing else; the one paragraph
+an overlay's steps set again is one W0386; the log prints each wording
+once, located, carrying its sites. Every word here is invented. -/
 def reflowAccountChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
   let some font ← loadTestFont "OpenSans-Regular.ttf"
@@ -252,6 +254,15 @@ def reflowAccountChecks (ref : IO.Ref (List String)) : IO Unit := do
   let located (src : String) : Ir.Doc :=
     let prepared := Elab.prepare file (Parse.parse file (Lex.lex file src).1).1
     (Elab.runPrepared file prepared).1
+  let siteOf (d : Diag) := d.span.map fun s => (s.pos.line, s.pos.col)
+  -- The overruns a W0386 carries, read off its detail.
+  let carried (d : Diag) : Nat :=
+    match d.detail with
+    | some x =>
+      match (x.splitOn "; ").drop 1 with
+      | part :: _ => ((part.splitOn " ").headD "").toNat?.getD 0
+      | [] => 0
+    | none => 0
   let source := String.intercalate "\n" [
     "\\documentclass{article}", "\\page{ width = 220pt, margin = 20pt }",
     "\\begin{document}",
@@ -262,25 +273,28 @@ def reflowAccountChecks (ref : IO.Ref (List String)) : IO Unit := do
   let out := layoutOf fs doc
   let reflows := out.diags.filter (·.kind == .W0386)
   let overfull := out.diags.filter (·.kind == .W0005)
-  let siteOf (d : Diag) := d.span.map fun s => (s.pos.line, s.pos.col)
   t s!"reflow account: each re-flowed paragraph has one W0386 at its declared line ({reflows.map siteOf})"
     (reflows.size == 2 && reflows.map siteOf == #[some (5, 1), some (9, 1)] &&
       reflows.all fun d => d.span.any (·.file == file) &&
         d.message == "a declared line did not fit the measure and re-flowed" &&
         d.trigger.isNone && d.detail.isSome)
-  t s!"reflow account: W0005 names each overrunning item at its own site ({overfull.map siteOf})"
-    (overfull.map siteOf == #[some (9, 47), some (12, 1)] && overfull.all (·.trigger.isNone))
-  -- The page: each W0005 is a line the page shows past its margin.
+  t s!"reflow account: the re-flow carries its declared line's overrun ({reflows.map (·.detail)})"
+    (reflows.map carried == #[0, 1] &&
+      reflows.all fun d => (carried d == 0) == !(d.detail.any (hasStr · "past the measure")))
+  t s!"reflow account: W0005 names only the overrun no re-flow accounts for ({overfull.map siteOf})"
+    (overfull.map siteOf == #[some (12, 1)] && overfull.all (·.trigger.isNone))
+  -- The page: every line past its margin is accounted once.
   let right := doc.page.width - doc.page.hmargin
   let past := (bodyLines out).filter fun l => l.x + l.setWidth > right + Dim.pt 3
-  t s!"reflow account: the page holds exactly the overruns W0005 names ({past.size})"
-    (past.size == overfull.size && past.all (fun l => hasStr (lineText l) wide))
+  t s!"reflow account: the page's overruns are W0005's and the re-flows' counts ({past.size})"
+    (past.size == overfull.size + (reflows.map carried).foldl (· + ·) 0 &&
+      past.all (fun l => hasStr (lineText l) wide))
   let plain : Config := { cmd := .build file, color := .never }
   let (err, _, _) ← sink plain #[] out.diags
   t "reflow account: the log prints each wording once, located, carrying its sites"
     ((headLines err "W0386").length == 1 && (headLines err "W0005").length == 1 &&
       (headLines err "W0386").all (fun l => hasStr l s!"{file}:5:1" && hasStr l "(2 sites)") &&
-      (headLines err "W0005").all (fun l => hasStr l s!"{file}:9:47" && hasStr l "(2 sites)"))
+      (headLines err "W0005").all (fun l => hasStr l s!"{file}:12:1" && !hasStr l "sites)"))
   -- Both are losses of the PDF's page: a build that writes no PDF prints
   -- neither, and one that writes it prints both.
   let (htmlErr, _, _) ← sink plain #[] out.diags #[.html]
@@ -291,9 +305,10 @@ def reflowAccountChecks (ref : IO.Ref (List String)) : IO Unit := do
       (headLines pdfErr "W0005").length == 1 &&
       (reflows ++ overfull).all (·.output == some .pdf))
   let (err, _, r) ← sink plain #["W0386"] out.diags
-  t s!"reflow account: accepting the re-flow leaves the overrun a warning, each paragraph a loss \
+  t s!"reflow account: accepting the re-flow accepts the overrun it carries and no other \
 ({Diag.acceptedLosses r.accepted})"
     ((headLines err "W0386").isEmpty && (warningLines err "W0005").length == 1 &&
+      (warningLines err "W0005").all (hasStr · s!"{file}:12:1") &&
       Diag.acceptedLosses r.accepted == #["W0386", "W0386"])
   -- An overlay's steps set the one paragraph again: one loss, one record.
   let deck := String.intercalate "\n" [
@@ -306,10 +321,9 @@ def reflowAccountChecks (ref : IO.Ref (List String)) : IO Unit := do
   t s!"reflow account: a paragraph three steps set is one W0386 ({deckOut.pages.size} pages, \
 {deckReflows.map siteOf})"
     (deckOut.pages.size == 3 && deckReflows.size == 1 && deckReflows.all (siteOf · == some (5, 1)))
-  -- A declared line that opens on a word wider than the measure: the
-  -- overrun is named at the word, the re-flow where the declared line goes
-  -- on, never both at one site; two wide words leave the re-flow no site
-  -- but theirs, and it stands unlocated.
+  -- A declared line that opens on a word wider than the measure, and one of
+  -- two such words: each is one W0386 at the declared line, carrying the
+  -- lines it runs past the measure on, and no W0005 names them.
   let collide := String.intercalate "\n" [
     "\\documentclass{article}", "\\page{ width = 220pt, margin = 20pt }",
     "\\begin{document}",
@@ -317,15 +331,15 @@ def reflowAccountChecks (ref : IO.Ref (List String)) : IO Unit := do
     "Two wide words.\\\\", wide ++ " " ++ wide ++ "\\\\", "End.",
     "\\end{document}"]
   let cOut := layoutOf fs (located collide)
-  let sitesOf (k : DiagCode) := (cOut.diags.filter (·.kind == k)).map siteOf
-  t s!"reflow account: a re-flow and an overrun never share a site \
-({sitesOf .W0386} beside {sitesOf .W0005})"
-    (sitesOf .W0386 == #[some (5, 72), none] &&
-      sitesOf .W0005 == #[some (5, 1), some (9, 1), some (9, 72)])
+  let cReflows := cOut.diags.filter (·.kind == .W0386)
+  t s!"reflow account: a declared line that re-flows and overruns is one diagnostic \
+({cReflows.map siteOf}, {cReflows.map carried}, {(cOut.diags.filter (·.kind == .W0005)).map siteOf})"
+    (cReflows.map siteOf == #[some (5, 1), some (9, 1)] && cReflows.map carried == #[1, 2] &&
+      !cOut.diags.any (·.kind == .W0005) && siteCollisions cOut.diags == #[])
   let cRight := doc.page.width - doc.page.hmargin
   let cPast := (bodyLines cOut).filter fun l => l.x + l.setWidth > cRight + Dim.pt 3
-  t s!"reflow account: the overruns named are the page's ({cPast.size})"
-    (cPast.size == (sitesOf .W0005).size)
+  t s!"reflow account: the re-flows carry every overrun the page shows ({cPast.size})"
+    (cPast.size == (cReflows.map carried).foldl (· + ·) 0)
 
 /-- The doors a diagnostic is made through, by their call heads, and whether
 each takes a subject: a door named before its receiver (`diag ctx .`,
