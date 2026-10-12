@@ -43,9 +43,9 @@ def colors (c : SeedPalette.Colors) (ind : String) : String :=
     f "exampleBand" (color c.exampleBand)] ++ s!" }"
 
 def seeds (s : SeedPalette.Seeds) : String :=
-  s!"\{ ink := {color s.ink}, paper := {color s.paper}, accent := {color s.accent}, " ++
-    s!"alert := {optColor s.alert}, exampleColor := {optColor s.exampleColor}, " ++
-    s!"neutral := {optColor s.neutral} }"
+  s!"\{ ink := {color s.ink}\n      paper := {color s.paper}\n      accent := {color s.accent}\n" ++
+    s!"      alert := {optColor s.alert}\n      exampleColor := {optColor s.exampleColor}\n" ++
+    s!"      neutral := {optColor s.neutral} }"
 
 def depthName (d : Ir.GroundDepth) : String :=
   if d == .documents then ".documents" else if d == .decks then ".decks" else "{}"
@@ -54,20 +54,36 @@ def roleName (r : Ir.Role) : String := "." ++ (reprStr r).replace "LeanTex.Core.
 
 def depths : List Ir.GroundDepth := [.documents, .decks]
 
+def screens : List Ir.Scheme := [.light, .dark, .lightMore, .darkMore]
+
+def schemeName (s : Ir.Scheme) : String := "." ++ s.name
+
 def render : Except String String := do
   let mut cls : Array String := #[]
   for d in depths do
-    match SeedPalette.generate SeedPalette.classSeeds (SeedPalette.classSeeds.targets d) with
-    | .ok g => cls := cls.push s!"  ({depthName d}, {colors g.colors "  "})"
-    | .error f => throw s!"the class's seeds generate no palette at {depthName d}: {f.detail}"
+    for sc in screens do
+      let sd := SeedPalette.classSeedsIn sc
+      match SeedPalette.generate sd (sd.targetsIn d sc) with
+      | .ok g =>
+        let entry := s!"  ({depthName d}, {schemeName sc},\n    {seeds sd},\n    {colors g.colors "  "})"
+        cls := cls.push entry
+      | .error f =>
+        throw s!"the class's seeds generate no palette at {depthName d} in {sc.name}: {f.detail}"
   let mut gen : Array String := #[]
   let mut der : Array String := #[]
   for th in Theme.builtin do
-    if let some (sd, _) := th.seeds then
+    if let some (own, _) := th.seeds then
       for d in depths do
-        match th.generatedFresh d with
-        | some c => gen := gen.push s!"  ({seeds sd}, {depthName d}, {colors c "  "})"
-        | none => throw s!"'{th.name}''s seeds generate no palette at {depthName d}"
+        for sc in screens do
+          match own.carry sc.onDark with
+          | some sd =>
+            match SeedPalette.generate sd (sd.targetsIn d sc) with
+            | .ok g =>
+              let entry := s!"  (\n    {seeds sd},\n    {depthName d}, {schemeName sc},\n    {colors g.colors "  "})"
+              gen := gen.push entry
+            | .error f =>
+              throw s!"'{th.name}''s seeds generate no palette at {depthName d} in {sc.name}: {f.detail}"
+          | none => throw s!"'{th.name}''s seeds reach no legible tone in {sc.name}"
     for (r, seed) in th.derived do
       der := der.push s!"  (\"{th.name}\", {roleName r}, {color (th.derivedFresh r seed)})"
   let list (xs : Array String) : String :=
@@ -80,7 +96,8 @@ def render : Except String String := do
     "the shipped bundles' relations; do not edit by hand. Regenerate with:\n" ++
     "lake env lean --run scripts/gen-palette-data.lean\n\n" ++
     "The palettes the class's default seeds generate at the classes' two ground\n" ++
-    "depths, the palettes a bundle's seeds generate, and the colours a bundle\n" ++
+    "depths in each screen scheme, the palettes a bundle's seeds generate there,\n" ++
+    "each beside the seeds as the scheme carries them, and the colours a bundle\n" ++
     "derives: each the generator's own answer (`SeedPalette.generate`,\n" ++
     "`SeedPalette.mutedFor`, `ContrastSolve.realizeNearest`), kept here so no\n" ++
     "build pays to derive a constant again. This module carries only data; the\n" ++
@@ -88,11 +105,15 @@ def render : Except String String := do
     "`Tests.PaletteData.checks` holds every entry to a fresh derivation.\n-/\n" ++
     "public import LeanTex.Core.SeedPalette\n\n" ++
     "namespace LeanTex.Core.PaletteData\n\nopen Ir\n\n" ++
-    "/-- The class's default palette at each depth a class takes. -/\n" ++
-    "@[expose] public def classGenerated : List (GroundDepth × SeedPalette.Colors) := " ++
+    "/-- The class's default palette at each depth a class takes, in each screen\n" ++
+    "scheme, beside the class's seeds as that scheme carries them. -/\n" ++
+    "@[expose] public def classGenerated :\n" ++
+    "    List (GroundDepth × Scheme × SeedPalette.Seeds × SeedPalette.Colors) := " ++
       clsList ++ "\n\n" ++
-    "/-- Each bundle's generated palette at each depth, by the seeds it is generated from. -/\n" ++
-    "@[expose] public def bundleGenerated : List (SeedPalette.Seeds × GroundDepth × SeedPalette.Colors) := " ++
+    "/-- Each bundle's generated palette at each depth in each screen scheme, by\n" ++
+    "the seeds it is generated from there. -/\n" ++
+    "@[expose] public def bundleGenerated :\n" ++
+    "    List (SeedPalette.Seeds × GroundDepth × Scheme × SeedPalette.Colors) := " ++
       genList ++ "\n\n" ++
     "/-- Each colour a bundle derives, by the bundle's name. -/\n" ++
     "@[expose] public def bundleDerived : List (String × Role × Color) := " ++ derList ++ "\n\n" ++

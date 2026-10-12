@@ -99,18 +99,32 @@ public def margin : Nat := 100
     pair := d.pair, text := aaText + margin, edge := aaNonText + margin }
 
 /-- A dark page: grounds stand further from a dark page to read as apart,
-and text at 6.9:1, where WCAG 2's ratio understates how faint light text on
-a dark ground reads — calibrated against the screen's shipped dark colours
-(`Ir.Role.row`'s dark column), within ΔEOK 0.025. -/
+and text at 6.5:1, where WCAG 2's ratio understates how faint light text on
+a dark ground reads — calibrated against the screen's former dark constants
+(a zinc page, ink, muted ink, rule, code ground and blue accent), which the
+class's seeds carried to a dark page now reproduce within ΔEOK 0.026
+(`Tests.Schemes`): 6.9:1, the first calibration's, put the muted ink 0.042
+away, the generator solving it on every ground it stands on. -/
 @[expose] public def Targets.dark : Targets :=
   { body := 1190, band := 1400, rule := 1700, wash := 1120, soft := 1300, pair := 1100,
-    text := 6900, edge := aaNonText + margin }
+    text := 6500, edge := aaNonText + margin }
+
+/-- The same polarity where the reader asks more contrast: text at SC
+1.4.6's 7:1 and edges at the engine's 4.5:1 (`Contrast.moreNonText`), each
+with the margin, and rules at 3:1 so a rule reads as an edge; grounds stand
+as the polarity's. -/
+@[expose] public def Targets.more (t : Targets) : Targets :=
+  { t with rule := 3000, text := aaaText + margin, edge := moreNonText + margin }
 
 /-- Whether the paper is the darker of the two seeds. -/
 @[expose] public def Seeds.dark (s : Seeds) : Bool := decide (luminance s.paper < luminance s.ink)
 
 @[expose] public def Seeds.targets (s : Seeds) (d : GroundDepth) : Targets :=
   if s.dark then Targets.dark else Targets.light d
+
+/-- The targets in a scheme: the polarity's, more where the scheme asks it. -/
+@[expose] public def Seeds.targetsIn (s : Seeds) (d : GroundDepth) (sc : Ir.Scheme) : Targets :=
+  if sc.more then (s.targets d).more else s.targets d
 
 /-! ## Families -/
 
@@ -306,6 +320,25 @@ derived roles, and nothing for a role generation does not set. -/
   | .exampleBandInk => some c.exampleBand
   | .rule => some c.rule
   | .covered | .marker | .codeSurface | .paper | .printInk
+  | .frameTitleBar | .frameTitleInk | .frameSubtitleInk | .sectionTitleInk | .footBand | .footInk
+  | .blockTitleBar | .alertTitleBar | .exampleTitleBar
+  | .blockTitleInk | .alertTitleInk | .exampleTitleInk
+  | .blockBodyInk | .alertBodyInk | .exampleBodyInk
+  | .blockBodyGround | .alertBodyGround | .exampleBodyGround
+  | .standoutGround | .standoutInk | .titlePageGround | .titlePageInk | .separator
+  | .progressFill | .progressTrack | .sectionProgressFill | .sectionProgressTrack
+  | .codeInk | .codeKeyword | .codeName | .codeLiteral | .codeComment | .codeError => none
+
+/-- A registry role's colour among the seeds alone: the page's ground, text
+and accent, and nothing for a role generation derives. -/
+@[expose] public def seedRole (s : Seeds) : Ir.Role → Option Color
+  | .page => some s.paper
+  | .ink => some s.ink
+  | .accent => some s.accent
+  | .muted | .alert | .example | .covered | .marker | .codeSurface | .rule | .focus
+  | .surface | .surfaceStrong | .accentWash | .accentSoft | .accentText | .accentEdge
+  | .mutedOnInverse | .accentOnInverse | .diagramMuted | .alertBandInk | .exampleBandInk
+  | .paper | .printInk
   | .frameTitleBar | .frameTitleInk | .frameSubtitleInk | .sectionTitleInk | .footBand | .footInk
   | .blockTitleBar | .alertTitleBar | .exampleTitleBar
   | .blockTitleInk | .alertTitleInk | .exampleTitleInk
@@ -599,6 +632,49 @@ public def mutedFor (ink paper : Color) : Option Color :=
 document declares none (`Ir.ClassColors.ink`, `.paper`, `.accent`). -/
 @[expose] public def classSeeds : Seeds :=
   { ink := ClassColors.ink, paper := ClassColors.paper, accent := ClassColors.accent }
+
+/-! ## Seeds in a scheme of the other polarity -/
+
+/-- The lightness of a dark screen's page, 0.20 at `labOf`'s scale, and the
+most chroma it keeps, 0.012: a near-neutral of the document's own hue. -/
+public def darkPageL : Int := 2 * 10 ^ 17
+
+public def darkPageChroma : Int := 12 * 10 ^ 15
+
+/-- The page a scheme of the given polarity stands on where the seeds' own
+is the other one: on a dark screen the neutral family at `darkPageL` with no
+more than `darkPageChroma`, brought into the gamut; on a light one white,
+the class's page. -/
+public def schemePaper (s : Seeds) (dark : Bool) : Color :=
+  if dark then
+    let fam := neutralFamily s
+    let f := fam.frac (min fam.peak darkPageChroma)
+    (Okl.toGamut { L := darkPageL, a := fam.a, b := fam.b, f }).toColor
+  else ClassColors.paper
+
+/-- **Seeds carried to a scheme of the given polarity**: the scheme's page
+(`schemePaper`), and every other seed carried to it — the ink, and an alert
+or an example where named, adapted at the text target on that page
+(`ContrastSolve.adapt`), the accent and a named neutral reflected
+(`ContrastSolve.reflect`); `none` where a text seed reaches no legible tone
+there. Seeds already of that polarity stand as they are. -/
+public def Seeds.carry (s : Seeds) (dark : Bool) : Option Seeds :=
+  if s.dark == dark then some s else
+  let paper := schemePaper s dark
+  let text (c : Color) := ContrastSolve.adapt (aaText + margin) s.paper paper c paper
+  let named (c : Option Color) : Option (Option Color) := match c with
+    | some c => (text c).map some
+    | none => some none
+  match text s.ink, named s.alert, named s.exampleColor with
+  | some ink, some alert, some exampleColor =>
+    some { ink, paper, accent := ContrastSolve.reflect s.paper paper s.accent, alert, exampleColor
+           neutral := s.neutral.map (ContrastSolve.reflect s.paper paper) }
+  | _, _, _ => none
+
+/-- The class's default seeds as a scheme carries them: as they are on the
+printed page and a light screen, carried to a dark page on a dark one. -/
+public def classSeedsIn (s : Ir.Scheme) : Seeds :=
+  if s.onDark then (classSeeds.carry true).getD classSeeds else classSeeds
 
 /-- A generated palette as a document keeps it: the seeds, the targets they
 were generated to, the block style, and the colours, so a generated role

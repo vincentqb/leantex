@@ -623,7 +623,7 @@ was never declared: the remedy is then the declaration, which its help
 names. The colours ship as stated — the judge reports and never repaints. -/
 private def siteVerdict (site : ColorSite) (r : Role) (pal : Palette) (st : Site) : Diag :=
   let key := (ColorRef.role r).key
-  let req := required st.need
+  let req := requiredIn st.scheme st.need
   let milli := contrastMilli st.ink st.ground
   let clause := needClause st.need
   let span := (site pal (some key) st.ink).map (·.2)
@@ -948,7 +948,8 @@ its medium's need. -/
 private theorem judgedSite_ink (stage : Bool) (doc : Doc) :
     judgedSite? stage doc.palette .ink =
       some { role := .ink, ink := (effectivePair doc).fg, on := .page
-             ground := (effectivePair doc).bg, need := Need.text.atStage stage } := by
+             ground := (effectivePair doc).bg, need := Need.text.atStage stage
+             scheme := .print } := by
   have hink : Design.at doc.palette .print .ink = some (effectivePair doc).fg := by
     have hfg : (effectivePair doc).fg = (Design.at doc.palette .print .ink).getD Color.black := rfl
     obtain ⟨c', hc'⟩ := Option.isSome_iff_exists.mp (Design.at_ink_isSome doc.palette .print)
@@ -1025,9 +1026,9 @@ public theorem defaulted_ink_cannot_escape (doc : Doc)
       required (Need.text.atStage (stageOf doc))) :
     0 < (docDiags doc).size := by
   have hp : ({ role := .ink, ink := (effectivePair doc).fg, on := .page
-               ground := (effectivePair doc).bg, need := Need.text.atStage (stageOf doc) } :
-      Site).passes = false := by
-    simp [Site.passes, Nat.not_le.mpr hfail]
+               ground := (effectivePair doc).bg, need := Need.text.atStage (stageOf doc)
+               scheme := .print } : Site).passes = false := by
+    simp [Site.passes, requiredIn, Scheme.more, Nat.not_le.mpr hfail]
   have hdec' : ColorRef.role Role.ink ∉ doc.palette.decorative := by simpa using hdec
   have h1 : 0 < (judgeSite (fun _ _ _ => none) (stageOf doc) (#[], #[])
       (Role.ink, doc.palette)).1.size := by
@@ -1205,7 +1206,7 @@ public structure PaletteSummary where
 
 public def paletteSummary (pal : Palette) (schemes : List Scheme) : PaletteSummary :=
   let sites := schemes.flatMap (Design.sites pal)
-  let margins := sites.map fun st => (contrastMilli st.ink st.ground : Int) - required st.need
+  let margins := sites.map fun st => (contrastMilli st.ink st.ground : Int) - requiredIn st.scheme st.need
   { roles := (Role.all.filter fun r => schemes.any fun s => (Design.at pal s r).isSome).length
     schemes := schemes.length
     sites := sites.length

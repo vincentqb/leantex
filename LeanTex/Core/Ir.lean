@@ -12657,40 +12657,48 @@ recursion is on the role's stratum. -/
 public def Design.declared? (pal : Palette) (r : Role) : Option Color :=
   pal.lookup (.role r)
 
-/-- The palette the class's default seeds generate at a depth: the
-generator's answer for each depth a class takes, kept in `PaletteData` (held
-to a fresh derivation by its check), and any other depth generated as asked. -/
-@[expose] public def Design.classDefaults (d : GroundDepth) : Option SeedPalette.Colors :=
-  match PaletteData.classGenerated.lookup d with
-  | some c => some c
-  | none => ((SeedPalette.generate SeedPalette.classSeeds
-      (SeedPalette.classSeeds.targets d)).toOption).map (·.colors)
+/-- The palette the class's default seeds generate at a depth in a scheme:
+the seeds as the scheme carries them (`SeedPalette.classSeedsIn`) and what
+they generate there — the generator's answer for each depth and screen
+scheme a class takes, kept in `PaletteData` (held to a fresh derivation by
+its check), and any other generated as asked. Print reads the light
+screen's: a class's printed code ground is the one its screen shows. -/
+@[expose] public def Design.classDefaults (d : GroundDepth) (s : Scheme) :
+    SeedPalette.Seeds × Option SeedPalette.Colors :=
+  let s := if s == .print then .light else s
+  match PaletteData.classGenerated.find? (fun e => e.1 == d && e.2.1 == s) with
+  | some e => (e.2.2.1, some e.2.2.2)
+  | none =>
+    let seeds := SeedPalette.classSeedsIn s
+    (seeds, ((SeedPalette.generate seeds (seeds.targetsIn d s)).toOption).map (·.colors))
 
-/-- **The colour the palette's seeds generate for a role**: the document's
-own seeds where it declares them (`\palette[seeds]`), else the class's
-default seeds at the class's depth (`Design.classDefaults`), each at the
-8-bit colour a TeX build reads from the export. -/
-@[expose] public def Design.seededColor (pal : Palette) (r : Role) : Option Color :=
+/-- **The colour the palette's seeds generate for a role** in a scheme: the
+document's own seeds where it declares them (`\palette[seeds]`; a palette
+carried to a scheme carries its seeds there), else the class's default seeds
+as the scheme carries them, at the class's depth (`Design.classDefaults`),
+each at the 8-bit colour a TeX build reads from the export. -/
+@[expose] public def Design.seededColor (pal : Palette) (s : Scheme) (r : Role) : Option Color :=
   let raw := match pal.seeded with
     | some st => SeedPalette.Colors.role st.seeds st.colors r
-    | none => (Design.classDefaults pal.classColors.depth).bind fun c =>
-        SeedPalette.Colors.role SeedPalette.classSeeds c r
+    | none =>
+      let cd := Design.classDefaults pal.classColors.depth s
+      (SeedPalette.seedRole cd.1 r).or (cd.2.bind fun c => SeedPalette.Colors.role cd.1 c r)
   raw.map fun c => Color.ofHtml c.r c.g c.b
 
 /-- One default, read through `look` for the roles it names in the scheme
 asked for, and through `printLook` for a role it reads as printed
 (`inPrint`). A bar's ink is the first candidate that meets the role's need
-on the bar (WCAG 2.2's ratio, `Contrast.required`), else the first
-candidate — the choice the engine shipped before it judged. A role the
-palette's seeds generate reads `gen` (`Design.seededColor`). -/
-@[expose] public def Design.fallbackWith (need : Need) (gen look printLook : Role → Option Color) :
-    Fallback → Option Color
+on the bar (WCAG 2.2's ratio in the scheme, `Contrast.requiredIn`), else
+the first candidate — the choice the engine shipped before it judged. A
+role the palette's seeds generate reads `gen` (`Design.seededColor`). -/
+@[expose] public def Design.fallbackWith (s : Scheme) (need : Need)
+    (gen look printLook : Role → Option Color) : Fallback → Option Color
   | .first rs => rs.findSome? look
   | .readable bar cands unbarred =>
     match look bar with
     | some g =>
       let vals := cands.filterMap look
-      (vals.find? fun c => decide (Contrast.required need ≤ Contrast.contrastMilli c g)).or
+      (vals.find? fun c => decide (Contrast.requiredIn s need ≤ Contrast.contrastMilli c g)).or
         vals.head?
     | none => unbarred.findSome? look
   | .inPrint r => printLook r
@@ -12705,10 +12713,10 @@ read as printed, in print. Structural on the stratum, so the kernel can
 evaluate it. -/
 @[expose] public def Design.atDepth (pal : Palette) : Nat → Scheme → Role → Option Color
   | 0, s, r => (Design.declared? pal r).or
-      (Design.fallbackWith r.row.need (Design.seededColor pal) (fun _ => none) (fun _ => none)
+      (Design.fallbackWith s r.row.need (Design.seededColor pal s) (fun _ => none) (fun _ => none)
         (r.row.fallback pal.classColors.row s))
   | n + 1, s, r => (Design.declared? pal r).or
-      (Design.fallbackWith r.row.need (Design.seededColor pal) (Design.atDepth pal n s)
+      (Design.fallbackWith s r.row.need (Design.seededColor pal s) (Design.atDepth pal n s)
         (Design.atDepth pal n .print) (r.row.fallback pal.classColors.row s))
 
 /-- **The one resolving site.** A role's colour in a scheme: the palette's
@@ -12733,9 +12741,9 @@ private theorem findSome?_ext_mem {α β : Type} (f g : α → Option β) :
     rw [h a (List.mem_cons_self ..),
       findSome?_ext_mem f g rest (fun a' ha' => h a' (List.mem_cons_of_mem _ ha'))]
 
-private theorem Design.fallbackWith_congr (need : Need) (gen f g f' g' : Role → Option Color)
+private theorem Design.fallbackWith_congr (s : Scheme) (need : Need) (gen f g f' g' : Role → Option Color)
     (fb : Fallback) (h : ∀ r ∈ fb.refs, f r = g r) (h' : ∀ r ∈ fb.refs, f' r = g' r) :
-    Design.fallbackWith need gen f f' fb = Design.fallbackWith need gen g g' fb := by
+    Design.fallbackWith s need gen f f' fb = Design.fallbackWith s need gen g g' fb := by
   cases fb with
   | first rs => exact findSome?_ext_mem f g rs h
   | readable bar cands unbarred =>
@@ -12768,7 +12776,7 @@ private theorem Design.atDepth_stable (pal : Palette) :
     intro s r hr
     have refs := Role.refs_shallower r pal.classColors.row s
     have rhs : Design.at pal s r = (Design.declared? pal r).or
-        (Design.fallbackWith r.row.need (Design.seededColor pal) (Design.at pal s)
+        (Design.fallbackWith s r.row.need (Design.seededColor pal s) (Design.at pal s)
           (Design.at pal .print) (r.row.fallback pal.classColors.row s)) := by
       show Design.atDepth pal r.depth s r = _
       cases hd : r.depth with
@@ -12819,7 +12827,7 @@ private theorem Design.atDepth_stable (pal : Palette) :
 resolver's equation, the one place a default chain is read. -/
 public theorem Design.resolve_unfold_exact (pal : Palette) (s : Scheme) (r : Role) :
     Design.at pal s r = (Design.declared? pal r).or
-      (Design.fallbackWith r.row.need (Design.seededColor pal) (Design.at pal s)
+      (Design.fallbackWith s r.row.need (Design.seededColor pal s) (Design.at pal s)
         (Design.at pal .print) (r.row.fallback pal.classColors.row s)) := by
   have refs := Role.refs_shallower r pal.classColors.row s
   show Design.atDepth pal r.depth s r = _
@@ -13210,13 +13218,29 @@ ink. -/
 public theorem Design.at_ink_isSome (pal : Palette) (s : Scheme) :
     (Design.at pal s .ink).isSome = true := by
   rw [Design.resolve_unfold_exact]
-  cases Design.declared? pal .ink <;> cases s <;> rfl
+  cases Design.declared? pal .ink with
+  | some _ => rfl
+  | none =>
+    cases s
+    · rfl
+    all_goals
+      simp only [Option.none_or, Role.row, Row.keyed, Row.screen, Design.fallbackWith,
+        Design.seededColor]
+      cases pal.seeded <;> simp [SeedPalette.Colors.role, SeedPalette.seedRole]
 
 /-- The page always resolves: its declaration, else the scheme's own page. -/
 public theorem Design.at_page_isSome (pal : Palette) (s : Scheme) :
     (Design.at pal s .page).isSome = true := by
   rw [Design.resolve_unfold_exact]
-  cases Design.declared? pal .page <;> cases s <;> rfl
+  cases Design.declared? pal .page with
+  | some _ => rfl
+  | none =>
+    cases s
+    · rfl
+    all_goals
+      simp only [Option.none_or, Role.row, Row.keyed, Row.screen, Design.fallbackWith,
+        Design.seededColor]
+      cases pal.seeded <;> simp [SeedPalette.Colors.role, SeedPalette.seedRole]
 
 /-- One pair a design ships: a role's ink on the ground it stands on — `on`
 is the role that ground is, the role's own where it resolves and the page
@@ -13227,11 +13251,13 @@ public structure Site where
   on : Role
   ground : Color
   need : Need
+  scheme : Scheme
   deriving Repr, BEq
 
-/-- A site's pair meets its need (WCAG 2.2's ratio, `Contrast.required`). -/
+/-- A site's pair meets its need in its scheme (WCAG 2.2's ratio,
+`Contrast.requiredIn`). -/
 @[expose] public def Site.passes (st : Site) : Bool :=
-  decide (Contrast.required st.need ≤ Contrast.contrastMilli st.ink st.ground)
+  decide (Contrast.requiredIn st.scheme st.need ≤ Contrast.contrastMilli st.ink st.ground)
 
 /-- The site one role ships in a scheme, when it ships one: its row pairs it
 with a ground, its presence holds, and its ink resolves. -/
@@ -13240,10 +13266,10 @@ with a ground, its presence holds, and its ink resolves. -/
     if r.row.need.paired && r.row.presence.holds (Design.at pal s) then
       (Design.at pal s r).map fun ink =>
         match Design.at pal s g with
-        | some c => { role := r, ink, on := g, ground := c, need := r.row.need }
+        | some c => { role := r, ink, on := g, ground := c, need := r.row.need, scheme := s }
         | none =>
           { role := r, ink, on := .page, ground := (Design.at pal s .page).getD Color.white,
-            need := r.row.need }
+            need := r.row.need, scheme := s }
     else none
 
 /-- **Every pair a design ships**, generated from the registry's rows: the
@@ -13263,11 +13289,11 @@ public theorem Design.sites_covers (pal : Palette) (s : Scheme) (r g : Role) (c 
   have hmem : r ∈ Role.all := List.contains_iff_mem.mp (Role.all_complete r)
   cases hgr : Design.at pal s g with
   | some b =>
-    exact ⟨{ role := r, ink := c, on := g, ground := b, need := r.row.need },
+    exact ⟨{ role := r, ink := c, on := g, ground := b, need := r.row.need, scheme := s },
       List.mem_filterMap.mpr ⟨r, hmem, by simp [Design.site?, hg, hn, hp, hc, hgr]⟩, rfl, rfl⟩
   | none =>
     exact ⟨{ role := r, ink := c, on := .page
-             ground := (Design.at pal s .page).getD Color.white, need := r.row.need },
+             ground := (Design.at pal s .page).getD Color.white, need := r.row.need, scheme := s },
       List.mem_filterMap.mpr ⟨r, hmem, by simp [Design.site?, hg, hn, hp, hc, hgr]⟩, rfl, rfl⟩
 
 /-- The grounds body content flows on in a design — the page, the standout
@@ -13306,7 +13332,7 @@ the bar, else the first that resolves, and the `unbarred` list off a bar; a
 role read as printed as its alias where the palette declares it (a
 declaration ships in every scheme), else as its printed value; a scheme
 constant as its value; nothing for an absent or style default. -/
-@[expose] public def Design.fallbackDecl (need : Need) (pal : Palette)
+@[expose] public def Design.fallbackDecl (s : Scheme) (need : Need) (pal : Palette)
     (look printLook : Role → Option Color) : Fallback → Option CssDecl
   | .first rs => (rs.find? fun r => (look r).isSome).map .alias
   | .readable bar cands unbarred =>
@@ -13314,7 +13340,7 @@ constant as its value; nothing for an absent or style default. -/
     | some g =>
       let live := cands.filter fun r => (look r).isSome
       ((live.find? fun r => (look r).any fun c =>
-          decide (Contrast.required need ≤ Contrast.contrastMilli c g)).or live.head?).map .alias
+          decide (Contrast.requiredIn s need ≤ Contrast.contrastMilli c g)).or live.head?).map .alias
     | none => (unbarred.find? fun r => (look r).isSome).map .alias
   | .inPrint r =>
     match Design.declared? pal r with
@@ -13323,7 +13349,7 @@ constant as its value; nothing for an absent or style default. -/
   | .const c => some (.value c)
   | .absent => none
   | .code => none
-  | .seeded r => (Design.seededColor pal r).map .value
+  | .seeded r => (Design.seededColor pal s r).map .value
 
 /-- **The declaration a role's property carries in a scheme**: its declared
 colour, else its row's default as an alias or a constant; `none` for a role
@@ -13331,7 +13357,7 @@ nothing paints there. -/
 @[expose] public def Design.cssDecl (pal : Palette) (s : Scheme) (r : Role) : Option CssDecl :=
   match Design.declared? pal r with
   | some c => some (.value c)
-  | none => Design.fallbackDecl r.row.need pal (Design.at pal s) (Design.at pal .print)
+  | none => Design.fallbackDecl s r.row.need pal (Design.at pal s) (Design.at pal .print)
       (r.row.fallback pal.classColors.row s)
 
 /-- Chasing a table of declarations at a stratum: a value is itself, an
@@ -13388,12 +13414,12 @@ private theorem or_bind_of_live {α β : Type} (f : α → Option β) (a b : Opt
     obtain ⟨y, hy⟩ := Option.isSome_iff_exists.mp (h x rfl)
     simp [hy]
 
-private theorem Design.fallbackDecl_resolve (need : Need) (pal : Palette)
+private theorem Design.fallbackDecl_resolve (s : Scheme) (need : Need) (pal : Palette)
     (look printLook : Role → Option Color)
     (hdecl : ∀ r c, Design.declared? pal r = some c → look r = some c ∧ printLook r = some c)
     (fb : Fallback) :
-    (Design.fallbackDecl need pal look printLook fb).bind (CssDecl.resolve look) =
-      Design.fallbackWith need (Design.seededColor pal) look printLook fb := by
+    (Design.fallbackDecl s need pal look printLook fb).bind (CssDecl.resolve look) =
+      Design.fallbackWith s need (Design.seededColor pal s) look printLook fb := by
   cases fb with
   | first rs =>
     simp only [Design.fallbackDecl, Design.fallbackWith, Option.bind_map]
@@ -13407,7 +13433,7 @@ private theorem Design.fallbackDecl_resolve (need : Need) (pal : Palette)
     | some g =>
       simp only [Option.bind_map]
       have hlive : ∀ x, ((cands.filter fun r => (look r).isSome).find? fun r =>
-          (look r).any fun c => decide (Contrast.required need ≤ Contrast.contrastMilli c g)) =
+          (look r).any fun c => decide (Contrast.requiredIn s need ≤ Contrast.contrastMilli c g)) =
             some x → (look x).isSome := by
         intro x hx
         exact (List.mem_filter.mp (List.mem_of_find?_eq_some hx)).2
@@ -13426,11 +13452,11 @@ private theorem Design.fallbackDecl_resolve (need : Need) (pal : Palette)
   | code => rfl
   | seeded r =>
     simp only [Design.fallbackDecl, Design.fallbackWith]
-    cases Design.seededColor pal r <;> rfl
+    cases Design.seededColor pal s r <;> rfl
 
-private theorem Design.fallbackDecl_alias_mem (need : Need) (pal : Palette)
+private theorem Design.fallbackDecl_alias_mem (s : Scheme) (need : Need) (pal : Palette)
     (look printLook : Role → Option Color) (fb : Fallback) (r : Role)
-    (h : Design.fallbackDecl need pal look printLook fb = some (.alias r)) :
+    (h : Design.fallbackDecl s need pal look printLook fb = some (.alias r)) :
     r ∈ fb.refs := by
   cases fb with
   | first rs =>
@@ -13449,7 +13475,7 @@ private theorem Design.fallbackDecl_alias_mem (need : Need) (pal : Palette)
       obtain ⟨r', hr', rfl⟩ := h
       have hmem : r' ∈ cands.filter fun r => (look r).isSome := by
         cases hf : (cands.filter fun r => (look r).isSome).find? fun r =>
-            (look r).any fun c => decide (Contrast.required need ≤ Contrast.contrastMilli c g) with
+            (look r).any fun c => decide (Contrast.requiredIn s need ≤ Contrast.contrastMilli c g) with
         | some x =>
           rw [hf] at hr'
           cases hr'
@@ -13491,7 +13517,7 @@ public theorem Design.cssDecl_alias_shallower (pal : Palette) (s : Scheme) (r r'
   | none =>
     rw [hd] at h
     exact Role.refs_shallower r pal.classColors.row s r'
-      (Design.fallbackDecl_alias_mem _ _ _ _ _ r' h)
+      (Design.fallbackDecl_alias_mem _ _ _ _ _ _ r' h)
 
 /-- One step of the table reads the resolver's value. -/
 public theorem Design.cssDecl_resolve (pal : Palette) (s : Scheme) (r : Role) :
@@ -13501,7 +13527,7 @@ public theorem Design.cssDecl_resolve (pal : Palette) (s : Scheme) (r : Role) :
   cases hd : Design.declared? pal r with
   | some c => rfl
   | none =>
-    simpa using Design.fallbackDecl_resolve r.row.need pal (Design.at pal s) (Design.at pal .print)
+    simpa using Design.fallbackDecl_resolve s r.row.need pal (Design.at pal s) (Design.at pal .print)
       (fun r c h => ⟨Design.at_declared pal s r c h, Design.at_declared pal .print r c h⟩)
       (r.row.fallback pal.classColors.row s)
 

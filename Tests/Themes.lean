@@ -1619,13 +1619,13 @@ def contrastChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "ratio string" (Contrast.ratioString 4627 == "4.62:1" &&
     Contrast.ratioString 21000 == "21.00:1" && Contrast.ratioString 1005 == "1.00:1")
   -- The dark column re-accents: the light focus ring on the dark page is
-  -- the defect `default_sites_contract` guards against (2.64:1, under
+  -- the defect `default_sites_contract` guards against (2.70:1, under
   -- SC 1.4.11's 3:1).
   t "the light focus ring fails the dark page"
     (Contrast.contrastMilli (screenColor .light .focus) (screenColor .dark .page) <
       Contrast.aaNonText)
   t "illegible focus ring names its ratio" (Contrast.ratioString
-    (Contrast.contrastMilli (screenColor .light .focus) (screenColor .dark .page)) == "2.64:1")
+    (Contrast.contrastMilli (screenColor .light .focus) (screenColor .dark .page)) == "2.70:1")
 
   -- The covered contract fires on the finding it encodes: moloch at
   -- Material's 38% leaves alert (2.89:1) and example (2.75:1) under the

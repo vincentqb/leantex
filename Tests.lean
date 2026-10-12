@@ -88,6 +88,7 @@ import Tests.ReadableBar
 import Tests.ColorNames
 import Tests.PaletteData
 import Tests.PaletteDefaults
+import Tests.Schemes
 import Tests.DeclaredColors
 import Tests.BlockBody
 import Tests.BlockRegionFit
@@ -461,6 +462,7 @@ def layoutSuiteChecks (ref : IO.Ref (List String)) : IO Unit := do
   Tests.PaletteDefaults.checks ref oneFace
   Tests.PaletteDefaults.yieldChecks ref
   Tests.PaletteDefaults.reseedChecks ref
+  Tests.Schemes.checks ref
   Tests.ColorNames.xcolorCodeRoleChecks ref oneFace
   Tests.ColorNames.htmlDecimalChecks ref oneFace
   Tests.ColorNames.unreadKeyChecks ref

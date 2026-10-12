@@ -77,12 +77,40 @@ its colours. -/
   | .example => "example"
 
 /-- The medium a resolution is for: print is the PDF's (LaTeX's black ink on
-unpainted paper), light and dark are the screen's two colour schemes. -/
+unpainted paper); light and dark are the screen's two colour schemes, and
+lightMore and darkMore the same two where the reader asks for more contrast
+(`prefers-contrast: more`, Media Queries Level 5). -/
 public inductive Scheme where
-  | print | light | dark
+  | print | light | dark | lightMore | darkMore
   deriving Repr, DecidableEq, Inhabited
 
-@[expose] public def Scheme.all : List Scheme := [.print, .light, .dark]
+@[expose] public def Scheme.all : List Scheme := [.print, .light, .dark, .lightMore, .darkMore]
+
+/-- Whether a scheme stands on a dark page. -/
+@[expose] public def Scheme.onDark : Scheme → Bool
+  | .dark | .darkMore => true
+  | .print | .light | .lightMore => false
+
+/-- Whether a scheme is one the reader asks more contrast of, judged by WCAG
+2.2's enhanced criterion (SC 1.4.6). -/
+@[expose] public def Scheme.more : Scheme → Bool
+  | .lightMore | .darkMore => true
+  | .print | .light | .dark => false
+
+/-- The scheme of the same polarity that asks no more contrast: what a more
+scheme starts from. -/
+@[expose] public def Scheme.base : Scheme → Scheme
+  | .print => .print
+  | .light | .lightMore => .light
+  | .dark | .darkMore => .dark
+
+/-- The scheme's one spelling: a diagnostic's subject, a report's column. -/
+@[expose] public def Scheme.name : Scheme → String
+  | .print => "print"
+  | .light => "light"
+  | .dark => "dark"
+  | .lightMore => "lightMore"
+  | .darkMore => "darkMore"
 
 /-- How far a class's tinted grounds stand from its page, as WCAG 2.2 ratios
 to it ×1000: a body fill, a title band, a rule, and the least ratio a band
@@ -110,11 +138,12 @@ two targets leave (1.30 / 1.12 = 1.16). -/
   { body := 1120, band := 1300, rule := 1490, pair := 1100 }
 
 /-- What a class asks of the colours nothing declares, beside its ground
-depth: LaTeX's standard classes and the résumé print every line in the ink
-and leave verbatim unpainted; a deck, a poster and a card keep a quieter
-secondary ink and unpainted verbatim; the web's page and a markdown note set
-verbatim on a tinted ground, in print as on screen — GitHub's practice. One
-row per class, read by both artifacts (`Role.row`'s fallbacks take it). -/
+depth: LaTeX's standard classes and the résumé, a deck, a poster and a card
+set their secondary ink in the ink and leave verbatim unpainted, as LaTeX
+prints them; the web's page and a markdown note keep a quieter generated
+secondary ink and set verbatim on a tinted ground, in print as on screen —
+GitHub's practice. One row per class, read by both artifacts (`Role.row`'s
+fallbacks take it). -/
 public inductive ClassRow where
   | latex
   | stage
@@ -279,12 +308,11 @@ public structure Row where
 /-- A default that is the same in every class and scheme. -/
 @[expose] public def Row.every (f : Fallback) : ClassRow → Scheme → Fallback := fun _ _ => f
 
-/-- A print default beside the screen pair (light, dark), in every class. -/
-@[expose] public def Row.screen (print light : Fallback) (dark : Color) :
-    ClassRow → Scheme → Fallback
+/-- A print default beside the screen's, in every class: one default for
+every screen scheme, which resolves against that scheme's own seeds. -/
+@[expose] public def Row.screen (print screen : Fallback) : ClassRow → Scheme → Fallback
   | _, .print => print
-  | _, .light => light
-  | _, .dark => .const dark
+  | _, .light | _, .dark | _, .lightMore | _, .darkMore => screen
 
 /-- A palette key's row: declared by `\palette{<key> = …}` and named
 `--ltx-<key>` in CSS. -/
@@ -314,52 +342,44 @@ default, named `--ltx-<css>` in CSS and `<export>` in a TeX export. -/
     ClassRow → Scheme → Fallback :=
   Row.every (.readable bar [.page, .ink] unbarred)
 
-/-- A secondary ink where nothing declares one, one relation in print and on
-the light screen: the ink in LaTeX's classes, as they print every line, and
-on a stage, as beamer's default theme does; on the web's row, which no LaTeX
-class prints, the quietest tone the seeds generate that reads
+/-- A secondary ink where nothing declares one, one relation in every
+scheme: the ink in LaTeX's classes, as they print every line, and on a stage,
+as beamer's default theme does; on the web's row, which no LaTeX class
+prints, the quietest tone the scheme's seeds generate that reads
 (`SeedPalette`). -/
 @[expose] public def Row.mutedFallback : ClassRow → Scheme → Fallback
-  | .latex, _ => .first [.ink]
-  | .stage, .dark => .const (Row.hex 0xA1 0xA1 0xAA)
-  | .stage, _ => .first [.ink]
-  | .web, .dark => .const (Row.hex 0xA1 0xA1 0xAA)
+  | .latex, _ | .stage, _ => .first [.ink]
   | .web, _ => .seeded .muted
 
-/-- A list marker's ink: the printed ink on paper and on the light screen —
+/-- A list marker's ink: the printed ink on paper and on a light screen —
 one mark in both artifacts, as LaTeX sets a label in the running ink — and
-the dark screen's own ink there. -/
+a dark screen's own ink there. -/
 @[expose] public def Row.markerFallback : ClassRow → Scheme → Fallback
   | _, .print => .first [.ink]
-  | _, .light => .inPrint .ink
-  | _, .dark => .first [.ink]
+  | _, .light | _, .lightMore => .inPrint .ink
+  | _, .dark | _, .darkMore => .first [.ink]
 
 /-- The ground verbatim stands on where nothing declares one: none in LaTeX's
 classes and on a stage, as they print it; on the web the documents' surface
-the seeds generate, in print and on screen. -/
+the scheme's seeds generate, in print and on every screen. -/
 @[expose] public def Row.codeGround : ClassRow → Scheme → Fallback
-  | .web, .print => .seeded .surface
-  | .web, .light => .seeded .surface
-  | .web, .dark => .const (Row.hex 0x27 0x27 0x2A)
-  | .latex, _ => .absent
-  | .stage, _ => .absent
+  | .web, _ => .seeded .surface
+  | .latex, _ | .stage, _ => .absent
 
 open Row in
 
 /-- **The registry.** One row per role, written out per constructor — an
 added role is a missing arm, never a silent default. The print column is
-the PDF's: black ink on unpainted (white) paper. The light column is the
-screen's: the class's default seeds (`ClassColors.ink`, `.paper`, `.accent`)
-and what they generate; the dark column the screen stylesheet's own colours.
+the PDF's: black ink on unpainted (white) paper. The screen columns are the
+class's default seeds (`ClassColors.ink`, `.paper`, `.accent`) as each
+scheme carries them, and what they generate there (`Design.classDefaults`).
 The standout frame keeps the printed inversion in every scheme: its ground is
 the ink as printed and its ink the paper (`paper`, `printInk`). -/
 @[expose] public def Role.row : Role → Row
-  | .page => keyed "bg" .decorative none
-      (screen (.const Color.white) (.const ClassColors.paper) (Row.hex 0x18 0x18 0x1B))
+  | .page => keyed "bg" .decorative none (screen (.const Color.white) (.seeded .page))
       [("normal text", .bg), ("background canvas", .bg)] (exportName := some "Paper")
       (region := true) (judged := .uses)
-  | .ink => keyed "fg" .text (some .page)
-      (screen (.const Color.black) (.const ClassColors.ink) (Row.hex 0xFA 0xFA 0xF9))
+  | .ink => keyed "fg" .text (some .page) (screen (.const Color.black) (.seeded .ink))
       [("normal text", .fg)] (exportName := some "Ink") (judged := .page)
   | .muted => keyed "muted" .text (some .page) mutedFallback
       [("footline", .fg), ("page number in head/foot", .fg)] (exportName := some "Muted") (judged := .uses)
@@ -370,12 +390,10 @@ the ink as printed and its ink the paper (`paper`, `printInk`). -/
   | .covered => keyed "covered" .state (some .page) (every .absent) (judged := .uses)
   | .marker => engine "marker" .text (some .page) markerFallback (judged := .uses)
   | .codeSurface => keyed "tint" .decorative none codeGround (judged := .uses)
-  | .rule => keyed "rule" .decorative none
-      (screen .absent (.seeded .rule) (Row.hex 0x3F 0x3F 0x46)) (judged := .uses)
+  | .rule => keyed "rule" .decorative none (screen .absent (.seeded .rule)) (judged := .uses)
   | .focus => keyed "focus" .nonText (some .page) (every (.first [.accentEdge, .accent]))
       (noun := some "the focus ring") (judged := .element .focusRing)
-  | .accent => keyed "accent" .decorative none
-      (screen .absent (.const ClassColors.accent) (Row.hex 0x60 0xA5 0xFA))
+  | .accent => keyed "accent" .decorative none (screen .absent (.seeded .accent))
       (exportName := some "Accent") (judged := .uses)
   | .surface => generated "surface" .decorative none "Surface"
   | .surfaceStrong => generated "surface-strong" .decorative none "SurfaceStrong"

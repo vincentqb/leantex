@@ -90,6 +90,40 @@ clears whatever its need asks. -/
 public theorem required_le_aaText (n : Ir.Need) : required n ≤ aaText := by
   cases n <;> decide
 
+/-- SC 1.4.6 (AAA), normal text: 7:1. -/
+public def aaaText : Nat := 7000
+/-- SC 1.4.6 (AAA), large-scale text: 4.5:1. -/
+public def aaaLargeText : Nat := 4500
+/-- Non-text information where the reader asks more contrast: 4.5:1, an
+engine choice — WCAG 2.2 sets no enhanced level for SC 1.4.11, and this
+holds an edge to the enhanced large-text ratio beside it. -/
+public def moreNonText : Nat := 4500
+
+/-- The ratio a need owes in a scheme: `required`'s in print and the plain
+screens, and where the reader asks more contrast (`Scheme.more`) SC 1.4.6's
+7:1 for text and 4.5:1 for large-scale text, with non-text information and
+a state change at `moreNonText`. -/
+@[expose] public def requiredIn (s : Ir.Scheme) (n : Ir.Need) : Nat :=
+  if s.more then
+    match n with
+    | .text => aaaText
+    | .largeText => aaaLargeText
+    | .nonText => moreNonText
+    | .state => moreNonText
+    | .decorative => 0
+  else required n
+
+/-- A scheme that asks no more contrast owes what `required` owes. -/
+public theorem requiredIn_plain (s : Ir.Scheme) (h : s.more = false) (n : Ir.Need) :
+    requiredIn s n = required n := by
+  simp [requiredIn, h]
+
+/-- **A more scheme never owes less** (`_monotone`): each need's ratio there
+is at least its plain one. -/
+public theorem requiredIn_monotone (s : Ir.Scheme) (n : Ir.Need) : required n ≤ requiredIn s n := by
+  unfold requiredIn
+  cases s.more <;> cases n <;> decide
+
 /-- A pair that clears the normal-text requirement also clears the
 large-scale text requirement. Consumers need this ordering, not the
 implementation of either threshold. -/

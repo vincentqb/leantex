@@ -6,9 +6,10 @@ the shipped bundles' relations; do not edit by hand. Regenerate with:
 lake env lean --run scripts/gen-palette-data.lean
 
 The palettes the class's default seeds generate at the classes' two ground
-depths, the palettes a bundle's seeds generate, and the colours a bundle
-derives: each the generator's own answer (`SeedPalette.generate`,
-`SeedPalette.mutedFor`, `ContrastSolve.realizeNearest`), kept here so no
+depths in each screen scheme, the palettes a bundle's seeds generate there,
+each beside the seeds as the scheme carries them, and the colours a bundle
+derives from a lineage colour: each the generator's own answer
+(`SeedPalette.generate`, `ContrastSolve.realizeNearest`), kept here so no
 build pays to derive a constant again. This module carries only data; the
 lookups over it live in the hand-owned Ir.lean and Theme.lean, and
 `Tests.PaletteData.checks` holds every entry to a fresh derivation.
@@ -19,9 +20,18 @@ namespace LeanTex.Core.PaletteData
 
 open Ir
 
-/-- The class's default palette at each depth a class takes. -/
-@[expose] public def classGenerated : List (GroundDepth × SeedPalette.Colors) := [
-  (.documents, {
+/-- The class's default palette at each depth a class takes, in each screen
+scheme, beside the class's seeds as that scheme carries them. -/
+@[expose] public def classGenerated :
+    List (GroundDepth × Scheme × SeedPalette.Seeds × SeedPalette.Colors) := [
+  (.documents, .light,
+    { ink := { r := 0x18, g := 0x18, b := 0x1B }
+      paper := { r := 0xFF, g := 0xFF, b := 0xFF }
+      accent := { r := 0x1D, g := 0x4E, b := 0xD8 }
+      alert := none
+      exampleColor := none
+      neutral := none },
+    {
     surface := { r := 0xF7, g := 0xF8, b := 0xFB }
     surfaceStrong := { r := 0xEC, g := 0xEF, b := 0xF6 }
     rule := { r := 0xCC, g := 0xD3, b := 0xE1 }
@@ -37,7 +47,83 @@ open Ir
     alertBand := { r := 0x1D, g := 0x4E, b := 0xD8 }
     exampleText := none
     exampleBand := { r := 0x66, g := 0x6B, b := 0x77 } }),
-  (.decks, {
+  (.documents, .dark,
+    { ink := { r := 0xFB, g := 0xFB, b := 0xFF }
+      paper := { r := 0x13, g := 0x16, b := 0x1C }
+      accent := { r := 0x72, g := 0x9E, b := 0xFF }
+      alert := none
+      exampleColor := none
+      neutral := none },
+    {
+    surface := { r := 0x22, g := 0x26, b := 0x2C }
+    surfaceStrong := { r := 0x2E, g := 0x32, b := 0x38 }
+    rule := { r := 0x3B, g := 0x3F, b := 0x46 }
+    accentWash := { r := 0x18, g := 0x21, b := 0x33 }
+    accentSoft := { r := 0x19, g := 0x2B, b := 0x53 }
+    muted := { r := 0xA5, g := 0xAA, b := 0xB2 }
+    diagramMuted := { r := 0x79, g := 0x7D, b := 0x84 }
+    mutedOnInverse := { r := 0x58, g := 0x5C, b := 0x63 }
+    accentText := { r := 0x80, g := 0xA9, b := 0xFF }
+    accentEdge := { r := 0x72, g := 0x9E, b := 0xFF }
+    accentOnInverse := { r := 0x31, g := 0x57, b := 0xB1 }
+    alert := { r := 0x80, g := 0xA9, b := 0xFF }
+    alertBand := { r := 0x8C, g := 0xB1, b := 0xFF }
+    exampleText := none
+    exampleBand := { r := 0xB4, g := 0xB9, b := 0xC1 } }),
+  (.documents, .lightMore,
+    { ink := { r := 0x18, g := 0x18, b := 0x1B }
+      paper := { r := 0xFF, g := 0xFF, b := 0xFF }
+      accent := { r := 0x1D, g := 0x4E, b := 0xD8 }
+      alert := none
+      exampleColor := none
+      neutral := none },
+    {
+    surface := { r := 0xF7, g := 0xF8, b := 0xFB }
+    surfaceStrong := { r := 0xEC, g := 0xEF, b := 0xF6 }
+    rule := { r := 0x8F, g := 0x95, b := 0xA2 }
+    accentWash := { r := 0xF5, g := 0xF8, b := 0xFF }
+    accentSoft := { r := 0xE8, g := 0xEF, b := 0xFF }
+    muted := { r := 0x4F, g := 0x54, b := 0x60 }
+    diagramMuted := { r := 0x66, g := 0x6B, b := 0x77 }
+    mutedOnInverse := { r := 0x9E, g := 0xA5, b := 0xB1 }
+    accentText := { r := 0x16, g := 0x45, b := 0xCE }
+    accentEdge := { r := 0x1D, g := 0x4E, b := 0xD8 }
+    accentOnInverse := { r := 0x78, g := 0xA3, b := 0xFF }
+    alert := { r := 0x16, g := 0x45, b := 0xCE }
+    alertBand := { r := 0x11, g := 0x3E, b := 0xC8 }
+    exampleText := none
+    exampleBand := { r := 0x4A, g := 0x4F, b := 0x5B } }),
+  (.documents, .darkMore,
+    { ink := { r := 0xFB, g := 0xFB, b := 0xFF }
+      paper := { r := 0x13, g := 0x16, b := 0x1C }
+      accent := { r := 0x72, g := 0x9E, b := 0xFF }
+      alert := none
+      exampleColor := none
+      neutral := none },
+    {
+    surface := { r := 0x22, g := 0x26, b := 0x2C }
+    surfaceStrong := { r := 0x2E, g := 0x32, b := 0x38 }
+    rule := { r := 0x5F, g := 0x63, b := 0x6A }
+    accentWash := { r := 0x18, g := 0x21, b := 0x33 }
+    accentSoft := { r := 0x19, g := 0x2B, b := 0x53 }
+    muted := { r := 0xAD, g := 0xB2, b := 0xBA }
+    diagramMuted := { r := 0x96, g := 0x9B, b := 0xA3 }
+    mutedOnInverse := { r := 0x53, g := 0x56, b := 0x5E }
+    accentText := { r := 0x8C, g := 0xB1, b := 0xFF }
+    accentEdge := { r := 0x72, g := 0x9E, b := 0xFF }
+    accentOnInverse := { r := 0x2C, g := 0x51, b := 0xAA }
+    alert := { r := 0x8C, g := 0xB1, b := 0xFF }
+    alertBand := { r := 0x98, g := 0xBA, b := 0xFF }
+    exampleText := none
+    exampleBand := { r := 0xBC, g := 0xC1, b := 0xC9 } }),
+  (.decks, .light,
+    { ink := { r := 0x18, g := 0x18, b := 0x1B }
+      paper := { r := 0xFF, g := 0xFF, b := 0xFF }
+      accent := { r := 0x1D, g := 0x4E, b := 0xD8 }
+      alert := none
+      exampleColor := none
+      neutral := none },
+    {
     surface := { r := 0xEF, g := 0xF2, b := 0xF8 }
     surfaceStrong := { r := 0xDB, g := 0xE1, b := 0xEE }
     rule := { r := 0xCC, g := 0xD3, b := 0xE1 }
@@ -52,11 +138,90 @@ open Ir
     alert := { r := 0x1D, g := 0x4E, b := 0xD8 }
     alertBand := { r := 0x1D, g := 0x4E, b := 0xD8 }
     exampleText := none
-    exampleBand := { r := 0x5D, g := 0x63, b := 0x6F } })]
+    exampleBand := { r := 0x5D, g := 0x63, b := 0x6F } }),
+  (.decks, .dark,
+    { ink := { r := 0xFB, g := 0xFB, b := 0xFF }
+      paper := { r := 0x13, g := 0x16, b := 0x1C }
+      accent := { r := 0x72, g := 0x9E, b := 0xFF }
+      alert := none
+      exampleColor := none
+      neutral := none },
+    {
+    surface := { r := 0x22, g := 0x26, b := 0x2C }
+    surfaceStrong := { r := 0x2E, g := 0x32, b := 0x38 }
+    rule := { r := 0x3B, g := 0x3F, b := 0x46 }
+    accentWash := { r := 0x18, g := 0x21, b := 0x33 }
+    accentSoft := { r := 0x19, g := 0x2B, b := 0x53 }
+    muted := { r := 0xA5, g := 0xAA, b := 0xB2 }
+    diagramMuted := { r := 0x79, g := 0x7D, b := 0x84 }
+    mutedOnInverse := { r := 0x58, g := 0x5C, b := 0x63 }
+    accentText := { r := 0x80, g := 0xA9, b := 0xFF }
+    accentEdge := { r := 0x72, g := 0x9E, b := 0xFF }
+    accentOnInverse := { r := 0x31, g := 0x57, b := 0xB1 }
+    alert := { r := 0x80, g := 0xA9, b := 0xFF }
+    alertBand := { r := 0x8C, g := 0xB1, b := 0xFF }
+    exampleText := none
+    exampleBand := { r := 0xB4, g := 0xB9, b := 0xC1 } }),
+  (.decks, .lightMore,
+    { ink := { r := 0x18, g := 0x18, b := 0x1B }
+      paper := { r := 0xFF, g := 0xFF, b := 0xFF }
+      accent := { r := 0x1D, g := 0x4E, b := 0xD8 }
+      alert := none
+      exampleColor := none
+      neutral := none },
+    {
+    surface := { r := 0xEF, g := 0xF2, b := 0xF8 }
+    surfaceStrong := { r := 0xDB, g := 0xE1, b := 0xEE }
+    rule := { r := 0x8F, g := 0x95, b := 0xA2 }
+    accentWash := { r := 0xEC, g := 0xF2, b := 0xFF }
+    accentSoft := { r := 0xD4, g := 0xE2, b := 0xFF }
+    muted := { r := 0x4B, g := 0x51, b := 0x5C }
+    diagramMuted := { r := 0x5D, g := 0x63, b := 0x6F }
+    mutedOnInverse := { r := 0x9E, g := 0xA5, b := 0xB1 }
+    accentText := { r := 0x13, g := 0x40, b := 0xCA }
+    accentEdge := { r := 0x1D, g := 0x4E, b := 0xD8 }
+    accentOnInverse := { r := 0x78, g := 0xA3, b := 0xFF }
+    alert := { r := 0x13, g := 0x40, b := 0xCA }
+    alertBand := { r := 0x0A, g := 0x34, b := 0xBF }
+    exampleText := none
+    exampleBand := { r := 0x42, g := 0x47, b := 0x52 } }),
+  (.decks, .darkMore,
+    { ink := { r := 0xFB, g := 0xFB, b := 0xFF }
+      paper := { r := 0x13, g := 0x16, b := 0x1C }
+      accent := { r := 0x72, g := 0x9E, b := 0xFF }
+      alert := none
+      exampleColor := none
+      neutral := none },
+    {
+    surface := { r := 0x22, g := 0x26, b := 0x2C }
+    surfaceStrong := { r := 0x2E, g := 0x32, b := 0x38 }
+    rule := { r := 0x5F, g := 0x63, b := 0x6A }
+    accentWash := { r := 0x18, g := 0x21, b := 0x33 }
+    accentSoft := { r := 0x19, g := 0x2B, b := 0x53 }
+    muted := { r := 0xAD, g := 0xB2, b := 0xBA }
+    diagramMuted := { r := 0x96, g := 0x9B, b := 0xA3 }
+    mutedOnInverse := { r := 0x53, g := 0x56, b := 0x5E }
+    accentText := { r := 0x8C, g := 0xB1, b := 0xFF }
+    accentEdge := { r := 0x72, g := 0x9E, b := 0xFF }
+    accentOnInverse := { r := 0x2C, g := 0x51, b := 0xAA }
+    alert := { r := 0x8C, g := 0xB1, b := 0xFF }
+    alertBand := { r := 0x98, g := 0xBA, b := 0xFF }
+    exampleText := none
+    exampleBand := { r := 0xBC, g := 0xC1, b := 0xC9 } })]
 
-/-- Each bundle's generated palette at each depth, by the seeds it is generated from. -/
-@[expose] public def bundleGenerated : List (SeedPalette.Seeds × GroundDepth × SeedPalette.Colors) := [
-  ({ ink := { r := 0x29, g := 0x25, b := 0x24 }, paper := { r := 0xFD, g := 0xFC, b := 0xF9 }, accent := { r := 0x0B, g := 0x66, b := 0xC2 }, alert := none, exampleColor := some { r := 0x0F, g := 0x7A, b := 0x52 }, neutral := none }, .documents, {
+/-- Each bundle's generated palette at each depth in each screen scheme, by
+the seeds it is generated from there. -/
+@[expose] public def bundleGenerated :
+    List (SeedPalette.Seeds × GroundDepth × Scheme × SeedPalette.Colors) := [
+  (
+    { ink := { r := 0x29, g := 0x25, b := 0x24 }
+      paper := { r := 0xFD, g := 0xFC, b := 0xF9 }
+      accent := { r := 0x0B, g := 0x66, b := 0xC2 }
+      alert := none
+      exampleColor := some { r := 0x0F, g := 0x7A, b := 0x52 }
+      neutral := none },
+    .documents, .light,
+    {
     surface := { r := 0xF7, g := 0xF5, b := 0xEF }
     surfaceStrong := { r := 0xEF, g := 0xEC, b := 0xE3 }
     rule := { r := 0xD3, g := 0xD1, b := 0xC8 }
@@ -72,7 +237,87 @@ open Ir
     alertBand := { r := 0x0B, g := 0x66, b := 0xC2 }
     exampleText := some { r := 0x0F, g := 0x7A, b := 0x52 }
     exampleBand := { r := 0x0B, g := 0x78, b := 0x50 } }),
-  ({ ink := { r := 0x29, g := 0x25, b := 0x24 }, paper := { r := 0xFD, g := 0xFC, b := 0xF9 }, accent := { r := 0x0B, g := 0x66, b := 0xC2 }, alert := none, exampleColor := some { r := 0x0F, g := 0x7A, b := 0x52 }, neutral := none }, .decks, {
+  (
+    { ink := { r := 0xEA, g := 0xE4, b := 0xE3 }
+      paper := { r := 0x18, g := 0x16, b := 0x10 }
+      accent := { r := 0x48, g := 0x98, b := 0xF8 }
+      alert := none
+      exampleColor := some { r := 0x50, g := 0xAC, b := 0x81 }
+      neutral := none },
+    .documents, .dark,
+    {
+    surface := { r := 0x28, g := 0x26, b := 0x1F }
+    surfaceStrong := { r := 0x34, g := 0x32, b := 0x2B }
+    rule := { r := 0x41, g := 0x3F, b := 0x38 }
+    accentWash := { r := 0x14, g := 0x22, b := 0x32 }
+    accentSoft := { r := 0x0E, g := 0x2D, b := 0x51 }
+    muted := { r := 0xAC, g := 0xAA, b := 0xA2 }
+    diagramMuted := { r := 0x7F, g := 0x7D, b := 0x75 }
+    mutedOnInverse := { r := 0x51, g := 0x4F, b := 0x48 }
+    accentText := { r := 0x6A, g := 0xAD, b := 0xFF }
+    accentEdge := { r := 0x48, g := 0x98, b := 0xF8 }
+    accentOnInverse := { r := 0x01, g := 0x4E, b := 0x9A }
+    alert := { r := 0x6A, g := 0xAD, b := 0xFF }
+    alertBand := { r := 0x79, g := 0xB5, b := 0xFF }
+    exampleText := some { r := 0x60, g := 0xBC, b := 0x90 }
+    exampleBand := { r := 0x6F, g := 0xCB, b := 0x9E } }),
+  (
+    { ink := { r := 0x29, g := 0x25, b := 0x24 }
+      paper := { r := 0xFD, g := 0xFC, b := 0xF9 }
+      accent := { r := 0x0B, g := 0x66, b := 0xC2 }
+      alert := none
+      exampleColor := some { r := 0x0F, g := 0x7A, b := 0x52 }
+      neutral := none },
+    .documents, .lightMore,
+    {
+    surface := { r := 0xF7, g := 0xF5, b := 0xEF }
+    surfaceStrong := { r := 0xEF, g := 0xEC, b := 0xE3 }
+    rule := { r := 0x95, g := 0x92, b := 0x8A }
+    accentWash := { r := 0xEF, g := 0xF6, b := 0xFF }
+    accentSoft := { r := 0xE0, g := 0xED, b := 0xFF }
+    muted := { r := 0x55, g := 0x52, b := 0x4B }
+    diagramMuted := { r := 0x6C, g := 0x69, b := 0x62 }
+    mutedOnInverse := { r := 0xB4, g := 0xB2, b := 0xA9 }
+    accentText := { r := 0x00, g := 0x51, b := 0xA0 }
+    accentEdge := { r := 0x0B, g := 0x66, b := 0xC2 }
+    accentOnInverse := { r := 0x7A, g := 0xB5, b := 0xFF }
+    alert := { r := 0x00, g := 0x51, b := 0xA0 }
+    alertBand := { r := 0x01, g := 0x4C, b := 0x96 }
+    exampleText := some { r := 0x00, g := 0x5F, b := 0x3E }
+    exampleBand := { r := 0x00, g := 0x59, b := 0x3A } }),
+  (
+    { ink := { r := 0xEA, g := 0xE4, b := 0xE3 }
+      paper := { r := 0x18, g := 0x16, b := 0x10 }
+      accent := { r := 0x48, g := 0x98, b := 0xF8 }
+      alert := none
+      exampleColor := some { r := 0x50, g := 0xAC, b := 0x81 }
+      neutral := none },
+    .documents, .darkMore,
+    {
+    surface := { r := 0x28, g := 0x26, b := 0x1F }
+    surfaceStrong := { r := 0x34, g := 0x32, b := 0x2B }
+    rule := { r := 0x65, g := 0x63, b := 0x5B }
+    accentWash := { r := 0x14, g := 0x22, b := 0x32 }
+    accentSoft := { r := 0x0E, g := 0x2D, b := 0x51 }
+    muted := { r := 0xB4, g := 0xB2, b := 0xA9 }
+    diagramMuted := { r := 0x9D, g := 0x9B, b := 0x93 }
+    mutedOnInverse := { r := 0x4C, g := 0x49, b := 0x42 }
+    accentText := { r := 0x7A, g := 0xB5, b := 0xFF }
+    accentEdge := { r := 0x48, g := 0x98, b := 0xF8 }
+    accentOnInverse := { r := 0x01, g := 0x49, b := 0x8F }
+    alert := { r := 0x7A, g := 0xB5, b := 0xFF }
+    alertBand := { r := 0x88, g := 0xBD, b := 0xFF }
+    exampleText := some { r := 0x68, g := 0xC4, b := 0x98 }
+    exampleBand := { r := 0x77, g := 0xD3, b := 0xA6 } }),
+  (
+    { ink := { r := 0x29, g := 0x25, b := 0x24 }
+      paper := { r := 0xFD, g := 0xFC, b := 0xF9 }
+      accent := { r := 0x0B, g := 0x66, b := 0xC2 }
+      alert := none
+      exampleColor := some { r := 0x0F, g := 0x7A, b := 0x52 }
+      neutral := none },
+    .decks, .light,
+    {
     surface := { r := 0xF2, g := 0xEF, b := 0xE6 }
     surfaceStrong := { r := 0xE1, g := 0xDF, b := 0xD6 }
     rule := { r := 0xD3, g := 0xD1, b := 0xC8 }
@@ -87,12 +332,82 @@ open Ir
     alert := { r := 0x0B, g := 0x66, b := 0xC2 }
     alertBand := { r := 0x01, g := 0x60, b := 0xBB }
     exampleText := some { r := 0x0F, g := 0x7A, b := 0x52 }
-    exampleBand := { r := 0x00, g := 0x70, b := 0x4A } })]
+    exampleBand := { r := 0x00, g := 0x70, b := 0x4A } }),
+  (
+    { ink := { r := 0xEA, g := 0xE4, b := 0xE3 }
+      paper := { r := 0x18, g := 0x16, b := 0x10 }
+      accent := { r := 0x48, g := 0x98, b := 0xF8 }
+      alert := none
+      exampleColor := some { r := 0x50, g := 0xAC, b := 0x81 }
+      neutral := none },
+    .decks, .dark,
+    {
+    surface := { r := 0x28, g := 0x26, b := 0x1F }
+    surfaceStrong := { r := 0x34, g := 0x32, b := 0x2B }
+    rule := { r := 0x41, g := 0x3F, b := 0x38 }
+    accentWash := { r := 0x14, g := 0x22, b := 0x32 }
+    accentSoft := { r := 0x0E, g := 0x2D, b := 0x51 }
+    muted := { r := 0xAC, g := 0xAA, b := 0xA2 }
+    diagramMuted := { r := 0x7F, g := 0x7D, b := 0x75 }
+    mutedOnInverse := { r := 0x51, g := 0x4F, b := 0x48 }
+    accentText := { r := 0x6A, g := 0xAD, b := 0xFF }
+    accentEdge := { r := 0x48, g := 0x98, b := 0xF8 }
+    accentOnInverse := { r := 0x01, g := 0x4E, b := 0x9A }
+    alert := { r := 0x6A, g := 0xAD, b := 0xFF }
+    alertBand := { r := 0x79, g := 0xB5, b := 0xFF }
+    exampleText := some { r := 0x60, g := 0xBC, b := 0x90 }
+    exampleBand := { r := 0x6F, g := 0xCB, b := 0x9E } }),
+  (
+    { ink := { r := 0x29, g := 0x25, b := 0x24 }
+      paper := { r := 0xFD, g := 0xFC, b := 0xF9 }
+      accent := { r := 0x0B, g := 0x66, b := 0xC2 }
+      alert := none
+      exampleColor := some { r := 0x0F, g := 0x7A, b := 0x52 }
+      neutral := none },
+    .decks, .lightMore,
+    {
+    surface := { r := 0xF2, g := 0xEF, b := 0xE6 }
+    surfaceStrong := { r := 0xE1, g := 0xDF, b := 0xD6 }
+    rule := { r := 0x95, g := 0x92, b := 0x8A }
+    accentWash := { r := 0xE5, g := 0xF0, b := 0xFF }
+    accentSoft := { r := 0xCA, g := 0xE1, b := 0xFF }
+    muted := { r := 0x51, g := 0x4F, b := 0x48 }
+    diagramMuted := { r := 0x64, g := 0x61, b := 0x5A }
+    mutedOnInverse := { r := 0xB4, g := 0xB2, b := 0xA9 }
+    accentText := { r := 0x01, g := 0x4E, b := 0x9A }
+    accentEdge := { r := 0x01, g := 0x60, b := 0xBB }
+    accentOnInverse := { r := 0x7A, g := 0xB5, b := 0xFF }
+    alert := { r := 0x01, g := 0x4E, b := 0x9A }
+    alertBand := { r := 0x01, g := 0x45, b := 0x89 }
+    exampleText := some { r := 0x00, g := 0x5B, b := 0x3B }
+    exampleBand := { r := 0x00, g := 0x50, b := 0x34 } }),
+  (
+    { ink := { r := 0xEA, g := 0xE4, b := 0xE3 }
+      paper := { r := 0x18, g := 0x16, b := 0x10 }
+      accent := { r := 0x48, g := 0x98, b := 0xF8 }
+      alert := none
+      exampleColor := some { r := 0x50, g := 0xAC, b := 0x81 }
+      neutral := none },
+    .decks, .darkMore,
+    {
+    surface := { r := 0x28, g := 0x26, b := 0x1F }
+    surfaceStrong := { r := 0x34, g := 0x32, b := 0x2B }
+    rule := { r := 0x65, g := 0x63, b := 0x5B }
+    accentWash := { r := 0x14, g := 0x22, b := 0x32 }
+    accentSoft := { r := 0x0E, g := 0x2D, b := 0x51 }
+    muted := { r := 0xB4, g := 0xB2, b := 0xA9 }
+    diagramMuted := { r := 0x9D, g := 0x9B, b := 0x93 }
+    mutedOnInverse := { r := 0x4C, g := 0x49, b := 0x42 }
+    accentText := { r := 0x7A, g := 0xB5, b := 0xFF }
+    accentEdge := { r := 0x48, g := 0x98, b := 0xF8 }
+    accentOnInverse := { r := 0x01, g := 0x49, b := 0x8F }
+    alert := { r := 0x7A, g := 0xB5, b := 0xFF }
+    alertBand := { r := 0x88, g := 0xBD, b := 0xFF }
+    exampleText := some { r := 0x68, g := 0xC4, b := 0x98 }
+    exampleBand := { r := 0x77, g := 0xD3, b := 0xA6 } })]
 
-/-- Each colour a bundle derives, by the bundle's name. -/
+/-- Each colour a bundle derives from a lineage colour, by the bundle's name. -/
 @[expose] public def bundleDerived : List (String × Role × Color) := [
-  ("moloch", .muted, { r := 0x60, g := 0x76, b := 0x7A }),
-  ("plain", .muted, { r := 0x74, g := 0x74, b := 0x81 }),
-  ("gemini", .muted, { r := 0x75, g := 0x75, b := 0x75 })]
+  ("moloch", .alert, { r := 0xAF, g := 0x5C, b := 0x00 })]
 
 end LeanTex.Core.PaletteData

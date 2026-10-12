@@ -92,8 +92,8 @@ kept in `PaletteData` for those seeds, else derived as asked (a bundle over
 a document's own seeds, `daylightWith`). -/
 public def Theme.generated (th : Theme) (d : GroundDepth) : Option SeedPalette.Colors :=
   th.seeds.bind fun (s, _) =>
-    match PaletteData.bundleGenerated.find? (fun e => e.1 == s && e.2.1 == d) with
-    | some e => some e.2.2
+    match PaletteData.bundleGenerated.find? (fun e => e.1 == s && e.2.1 == d && e.2.2.1 == .light) with
+    | some e => some e.2.2.2
     | none => th.generatedFresh d
 
 /-- The colour a bundle derives for a role: the realization kept in
