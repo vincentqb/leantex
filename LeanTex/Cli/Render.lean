@@ -178,7 +178,10 @@ sites the line accounts for, absent when it is 1: a repeated wording's first
 line carries its repeats and each later one 0, so the lines' counts add up to
 the run's sites (`Diag.foldRepeats_sum_exact`). `offsets` lists every byte
 offset a diagnostic names, where its message shows only the first few;
-`detail` is the site's own particulars, beside the words its line shares. -/
+`detail` is the site's own particulars, beside the words its line shares;
+`carries` lists the codes whose losses the record accounts for as one
+construct's one diagnostic (`Diag.carries`), so a reader keyed on such a
+code finds its loss without reading the words. -/
 public def porcelainDiag (d : Diag) : String :=
   let base := [("event", jstr "diagnostic"), ("severity", jstr d.severity.label),
     ("code", jstr d.code), ("loss", jstr d.kind.loss.label), ("message", jstr d.message)]
@@ -207,6 +210,8 @@ public def porcelainDiag (d : Diag) : String :=
     | none => all
   let all := if d.offsets.isEmpty then all
     else all ++ [("offsets", "[" ++ ",".intercalate (d.offsets.toList.map toString) ++ "]")]
+  let all := if d.carries.isEmpty then all
+    else all ++ [("carries", "[" ++ ",".intercalate (d.carries.map (jstr ·.code)) ++ "]")]
   obj all
 
 /-- A `-v` phase line. `detail` can carry a tool's own words (a version

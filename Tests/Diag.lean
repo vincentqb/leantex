@@ -839,15 +839,20 @@ def siteAccountingProbes : List (String × String) :=
    (dvDoc "\\definecolor{codestring}{HTML}{AA0000}\n" "Sierra.",
     "a translated colour declaration of a retired listing key")]
 
-/-- Sources the site audit lays out, so it reads the losses a page names
-beside elaboration's: declared lines that open on a word wider than the
-measure, where a re-flow and an overrun meet. Invented words throughout. -/
+/-- Sources the site audit lays out, elaborated with their locations kept
+(`elabLocated`: a page's losses stand at sites only there), so it reads the
+losses a page names beside elaboration's: declared lines that open on a
+word wider than the measure, where a re-flow and an overrun meet, and a
+macro whose call sets both. Invented words throughout. -/
 def layoutSiteAccountingProbes : List (String × String) :=
   let wide := String.ofList (List.replicate 70 'w')
   [(dvDoc "\\page{ width = 220pt, margin = 20pt }\n"
       ("Short opening line.\\\\\n" ++ wide ++ " alpha beta gamma delta alpha beta.\\\\\n" ++
         "Short closing line.\n\nTwo wide words.\\\\\n" ++ wide ++ " " ++ wide ++ "\\\\\nEnd."),
-    "layout: declared lines opening on an overrun")]
+    "layout: declared lines opening on an overrun"),
+   (dvDoc ("\\page{ width = 220pt, margin = 20pt }\n\\newcommand{\\zztwolines}{alpha beta " ++
+      wide ++ " gamma.\\\\ delta " ++ wide ++ " epsilon.}\n") "Short.\\\\\n\\zztwolines",
+    "layout: a macro setting a re-flowed declared line and an overrunning last line")]
 
 /-- Markdown sources the site audit reads through the markdown reader, so the
 one-site rule sees what the reader names: the refused disclosures, which
@@ -878,9 +883,11 @@ construct is reported at the picture's position, where W0362 already names the p
 placeholder; name the constructs in W0362, or report each at its own span")]
 
 /-- Independent facts at one source site, witnessed below by varying the
-translation and the colour's contrast separately. These are not merge debt. -/
+translation and the colour's contrast separately, and a macro's re-flowed
+declared line and its overrunning last line separately. These are not
+merge debt. -/
 def independentSiteFacts : List (String × String) :=
-  [("N0100", "W0315"), ("N0100", "W0387")]
+  [("N0100", "W0315"), ("N0100", "W0387"), ("W0005", "W0386")]
 
 def sitePairClassified (pair : String × String) : Bool :=
   independentSiteFacts.contains pair ||
@@ -953,6 +960,34 @@ def siteAccountingChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "independent site facts N0100/W0387: a translated colour of its own is translated, not named"
     (plainDefDs.any (·.kind == .N0100) && plainDefDs.all (·.kind != .W0387))
   independentWitnesses := independentWitnesses ++ siteCollisions keyedDs
+  -- A macro whose expansion sets a declared line that re-flows and a last
+  -- line that runs past the measure stands both at its call: the
+  -- paragraph's re-flow and the last line's overrun, two facts, each of
+  -- which stands alone without the other, and which stand apart written out.
+  let some macroFace ← loadTestFont "OpenSans-Regular.ttf"
+    | t "independent site facts W0005/W0386: the face loads" false
+  let wide := String.ofList (List.replicate 70 'w')
+  let laid (pre body : String) : Array Diag :=
+    let (doc, ds) :=
+      elabLocated "t" (dvDoc ("\\page{ width = 220pt, margin = 20pt }\n" ++ pre) body)
+    ds ++ (layoutOf (oneFaceOf macroFace) doc).diags
+  let macroOf (first last : String) : String :=
+    "\\newcommand{\\zztwolines}{" ++ first ++ "\\\\ " ++ last ++ "}\n"
+  let reflowing := "alpha beta " ++ wide ++ " gamma."
+  let overrunning := "delta " ++ wide ++ " epsilon."
+  let called := "Short.\\\\\n\\zztwolines"
+  let both := laid (macroOf reflowing overrunning) called
+  let reflowOnly := laid (macroOf reflowing "delta epsilon.") called
+  let overrunOnly := laid (macroOf "alpha gamma." overrunning) called
+  let written := laid "" ("Short.\\\\\n" ++ reflowing ++ "\\\\ " ++ overrunning)
+  t "independent site facts W0005/W0386: the re-flow stands alone without the overrun"
+    (reflowOnly.any (·.kind == .W0386) && !reflowOnly.any (·.kind == .W0005))
+  t "independent site facts W0005/W0386: the overrun stands alone without the re-flow"
+    (overrunOnly.any (·.kind == .W0005) && !overrunOnly.any (·.kind == .W0386))
+  t "independent site facts W0005/W0386: written out, the re-flow and the overrun stand apart"
+    (written.any (·.kind == .W0386) && written.any (·.kind == .W0005) &&
+      siteCollisions written == #[])
+  independentWitnesses := independentWitnesses ++ siteCollisions both
   t "site accounting: another information-code pair remains unclassified"
     (!sitePairClassified ("N0100", "N0200"))
   for pair in independentSiteFacts do
@@ -973,7 +1008,7 @@ def siteAccountingChecks (ref : IO.Ref (List String)) : IO Unit := do
     let out := layoutOf fs doc (imgs := ← corpusStore doc)
     sources := sources.push (s!"fixture {n}", ds ++ out.diags)
   for (src, what) in layoutSiteAccountingProbes do
-    let (doc, ds) := elabStr src
+    let (doc, ds) := elabLocated "t" src
     sources := sources.push (what, ds ++ (layoutOf fs doc).diags)
   for (what, ds) in sources do
     for pair in siteCollisions ds do

@@ -798,10 +798,12 @@ public structure Diag where
   site's own under `-v`. -/
   detail : Option String := none
   /-- Other codes' losses this record accounts for, as one construct's one
-  diagnostic: a re-flowed declared line's overrun (W0005) in its re-flow
-  (W0386). Each is fired with it, so a document's acceptance of that code
-  is never stale for it (`Diag.unfired`), and a judge of that code's loss
-  reads it here; acceptance reads the record's own code. -/
+  diagnostic: a re-flowed declared line's overrun (W0005) in its
+  paragraph's re-flow (W0386). Each is fired with it, so a document's
+  acceptance of that code is never stale for it (`Diag.unfired`), and a
+  judge of that code's loss reads it here. Acceptance reads the record's
+  own code: accepting the carrier accepts what it carries, and accepting
+  the carried code alone leaves the carrier standing. -/
   carries : List DiagCode := []
   deriving Repr, BEq
 
@@ -1877,7 +1879,10 @@ public theorem Diag.resolveAll_append_exact (allowed : Array String) (allowAll :
 /-- The `\allow` entries no emitted diagnostic ever matched: each is stale
 acceptance the document no longer needs, and warning about it is one of the
 hatch's teeth — an allow that silences nothing today may silence something
-real tomorrow. -/
+real tomorrow. A code another record carries (`Diag.carries`) is matched by
+that record's firing, though that allow accepts nothing there: the carrier's
+own code decides it, so such an allow is never called stale while the loss
+stands under its carrier. -/
 public def Diag.unfired (allowed : Array String) (fired : Array String) : Array String :=
   allowed.filter (!fired.contains ·)
 

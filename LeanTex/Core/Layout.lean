@@ -1407,16 +1407,27 @@ match a real collected opening, including the footer selected there. -/
 public def SelectedFrame (openings : Array FrameOpening) (stamp : FrameStamp) : Prop :=
   stamp = (none, none, none) ∨ ∃ f ∈ openings, stamp = f.stamp
 
+/-- A line of a re-flowed declared line that runs past the measure: its
+rank among the lines the declared line ships as, where it opens (its first
+located item, where W0005 would name it), and how far past. -/
+public structure Overrun where
+  rank : Nat := 0
+  site : Option Span := none
+  excess : Sp := 0
+  deriving Repr, Inhabited
+
 /-- One declared line that re-flowed, as its paragraph's record holds it:
+which declared line of the paragraph it is (the rank of the end that
+closes it, the same in every overlay step that sets the paragraph again),
 where the author finds it (its first located item), how many lines it
-ships as, and how many of those run past the measure and by how much the
-widest does — the overrun is the declared line's, which its re-flow names
+ships as, and each of those that runs past the measure, in rank order. The
+overrun is the declared line's, which its paragraph's re-flow names
 (W0386), never a second diagnostic (W0005). -/
 public structure ReflowedLine where
+  ordinal : Nat := 0
   site : Option Span := none
   ships : Nat := 0
-  overruns : Nat := 0
-  widest : Sp := 0
+  over : Array Overrun := #[]
   deriving Repr, Inhabited
 
 /-- The break decisions committed by one paragraph placement. Positions
@@ -1430,19 +1441,27 @@ public structure ParagraphBreaks where
   forced : Array Nat
   chosen : Array Nat
   endFills : Array Nat
-  /-- Where a declared line that re-flowed stands in the source, when its
-  items say: the paragraph's census key, so the one paragraph an overlay's
-  steps set again is one loss, and two paragraphs are two. -/
+  /-- Where its first declared line that re-flowed stands in the source,
+  when its items say: the census key of a paragraph no structure leaf
+  names. -/
   key : Option Span := none
   /-- Each declared line of it that re-flowed (`ReflowedLine`), in order:
-  each is one diagnostic, its re-flow, carrying its own overrun. -/
+  what its one re-flow diagnostic names, each with its own overrun. -/
   lines : Array ReflowedLine := #[]
+  /-- The frame number its page shows, which its re-flow's detail names. -/
+  frameNumber : Option Nat := none
   deriving Repr, Inhabited
 
+/-- A paragraph's re-flow census key: its structure leaf, the one identity
+every overlay step that sets the paragraph again shares (each step is
+collected from its frame's first leaf, `collectDocBlock`), so the one
+paragraph is one loss and two paragraphs are two; where no leaf names it,
+where its first re-flowed declared line stands, else its index. -/
 public def ParagraphBreaks.subject (p : ParagraphBreaks) : String :=
-  match p.key with
-  | some s => s!"reflow:{s.file}:{s.pos.line}:{s.pos.col}"
-  | none => s!"paragraph:{p.site}"
+  match p.leaf, p.key with
+  | some n, _ => s!"reflow:leaf:{n}"
+  | none, some s => s!"reflow:{s.file}:{s.pos.line}:{s.pos.col}"
+  | none, none => s!"paragraph:{p.site}"
 
 /-- A chosen break splits an authored segment if it occurs before an
 interior forced end and is neither a forced end nor its preceding fill.
@@ -1451,14 +1470,20 @@ public def ParagraphBreaks.Splits (p : ParagraphBreaks) (k : Nat) : Prop :=
   k ∈ p.chosen ∧ (∃ stop ∈ p.forced.pop, k < stop) ∧
     k ∉ p.forced ∧ k ∉ p.endFills
 
-/-- The actual warning census, over the breaker choices and authored ends
-recorded where the paragraph is placed. The last interior end and the set
-of ends are read once: searching both for every break made a listing's
-lines quadratic. -/
-public def ParagraphBreaks.reflows (p : ParagraphBreaks) : Array Nat :=
+/-- Whether a break splits an authored segment, as `Splits` reads a chosen
+one: before the last interior forced end, and neither a forced end nor its
+preceding fill. The last interior end and the set of ends are read once,
+however many breaks it is asked of: searching both for every break made a
+listing's lines quadratic. -/
+public def ParagraphBreaks.splitAt (p : ParagraphBreaks) : Nat → Bool :=
   let top := p.forced.pop.foldl max 0
   let ends : Std.HashSet Nat := Std.HashSet.ofList (p.forced.toList ++ p.endFills.toList)
-  p.chosen.filter fun k => decide (k < top) && !ends.contains k
+  fun k => decide (k < top) && !ends.contains k
+
+/-- The actual warning census, over the breaker choices and authored ends
+recorded where the paragraph is placed. -/
+public def ParagraphBreaks.reflows (p : ParagraphBreaks) : Array Nat :=
+  p.chosen.filter p.splitAt
 
 private theorem lt_foldl_max (k : Nat) : ∀ (l : List Nat) (acc : Nat),
     k < l.foldl max acc ↔ k < acc ∨ ∃ x ∈ l, k < x := by
@@ -1486,13 +1511,14 @@ public theorem ParagraphBreaks.reflows_mem (p : ParagraphBreaks) (k : Nat) :
   have htop : k < p.forced.pop.foldl max 0 ↔ ∃ stop ∈ p.forced.pop, k < stop := by
     rw [← Array.foldl_toList, lt_foldl_max]
     simp only [Nat.not_lt_zero, false_or, Array.mem_def]
-  simp only [ParagraphBreaks.reflows, ParagraphBreaks.Splits, Array.mem_filter,
-    Bool.and_eq_true, Bool.not_eq_true', decide_eq_true_eq, htop,
+  simp only [ParagraphBreaks.reflows, ParagraphBreaks.splitAt, ParagraphBreaks.Splits,
+    Array.mem_filter, Bool.and_eq_true, Bool.not_eq_true', decide_eq_true_eq, htop,
     Std.HashSet.contains_ofList, List.contains_append, Bool.or_eq_false_iff,
     Array.contains_toList, Array.contains_eq_mem, decide_eq_false_iff_not]
 
 /-- Every actually split authored segment has its paragraph's structured
-diagnostic key. Repeated breaks within a paragraph share one report. -/
+diagnostic key. Repeated breaks within a paragraph share one report, and so
+do the overlay steps that set the paragraph again. -/
 public def ReflowsNamed (paragraphs : Array ParagraphBreaks) (diags : Array Diag) : Prop :=
   ∀ p ∈ paragraphs, ∀ k, p.Splits k →
     ∃ d ∈ diags, d.code = "W0386" ∧ d.subject = some p.subject
@@ -16867,7 +16893,7 @@ private def placeParaLine (fs : FontSet) (j : ParaJob)
     (st : B × Nat × Bool) (brk : Nat) : B × Nat × Bool :=
   let b0 := st.1
   let g := paraLineGeom fs j b0 st.2.2 st.2.1 brk
-  -- premise: reflowAccountChecks — every line the page shows past its margin is named once, by a W0005 at its site or by its declared line's re-flow carrying it, and a carried line draws no W0005
+  -- premise: reflowAccountChecks — every line the page shows past its margin is named once, by a W0005 at its site or by its paragraph's re-flow carrying it, and a carried line draws no W0005
   let b1 := if g.2.2.2.1 && !(j.carried[brk]?.getD false) then
       b0.warnOverfull (lineSource j.itemSources (j.lineStart st.2.2 st.2.1) brk)
     else b0
@@ -16943,62 +16969,53 @@ public theorem paragraphBreaksOf_undeclared_exact (site : Nat) (leaf : Option Na
     apply Array.eq_empty_of_size_eq_zero
     simp only [Array.size_pop, Array.size_extract]
     omega
-  simp [hpop]
+  simp [ParagraphBreaks.splitAt, hpop]
 
-/-- One re-flowed declared line's diagnostic: its re-flow, at the declared
-line, in the paragraph's census key, saying in its words whether a line of
-it still runs past the measure — an overrun the re-flow carries for W0005
-(`Diag.carries`) — and in its detail how many lines it ships as and by how
-much the widest runs past. -/
-private def reflowRecord (p : ParagraphBreaks) (site : Option Span) (detail : String)
-    (over : Bool) : Diag :=
-  Diag.of .W0386 (subject := some p.subject)
-    (if over then "a declared line did not fit the measure and re-flowed, and a line of it \
-still runs past the measure"
-      else "a declared line did not fit the measure and re-flowed") site
+/-- Places a re-flow's detail names beside the record's own location: line
+and column in the record's file, else the file too; the first three, and
+how many more. -/
+private def placesSaid (file : Option String) (sites : Array Span) : String :=
+  let said := (sites.extract 0 3).toList.map fun s =>
+    if file == some s.file then s!"{s.pos.line}:{s.pos.col}"
+    else s!"{s.file}:{s.pos.line}:{s.pos.col}"
+  match said.reverse with
+  | [] => ""
+  | [one] => one
+  | last :: rest =>
+    if sites.size > 3 then String.intercalate ", " said ++ s!" and {sites.size - 3} more"
+    else String.intercalate ", " rest.reverse ++ " and " ++ last
+
+/-- A paragraph's re-flow diagnostic (W0386), made from its re-flowed
+declared lines: at the first of them, in the paragraph's census key, saying
+in its words whether a line of them still runs past the measure — an
+overrun it carries for W0005 (`Diag.carries`) — and in its detail how many
+lines they ship as, how many of those run past the measure, by how much the
+widest does, and where they open. Placement makes it for one setting of the
+paragraph (`warnReflow`), and the postlude again for the overlay steps that
+set it more than once (`reflowsMerged`): one maker, one wording. -/
+private def reflowRecord (subject : String) (frame : Option Nat) (lines : Array ReflowedLine) :
+    Diag :=
+  let site := lines.findSome? (·.site)
+  let over := lines.foldl (fun acc l => acc ++ l.over) #[]
+  let ships := lines.foldl (fun n l => n + l.ships) 0
+  let loc := match frame with
+    | some n => s!"in frame {n}: "
+    | none => ""
+  let shape := if lines.size == 1 then s!"it ships as {ships} lines"
+    else s!"{lines.size} declared lines ship as {ships} lines"
+  let widest := over.foldl (fun m o => max m o.excess) 0
+  let places := placesSaid (site.map (·.file)) (over.filterMap (·.site))
+  let past := if over.isEmpty then "" else
+    s!"; {over.size} {if over.size == 1 then "line runs" else "lines run"} past the measure, \
+by up to {widest.toPtString}pt" ++ (if places.isEmpty then "" else s!", at {places}")
+  Diag.of .W0386 (subject := some subject)
+    (if over.isEmpty then "a declared line did not fit the measure and re-flowed"
+      else "a declared line did not fit the measure and re-flowed, and a line of it \
+still runs past the measure") site
     (help := "shorten the declared line, reduce \\page{ hmargin = ... } \
 to widen the measure, or declare a narrower face")
-    (detail := some detail) (output := some .pdf) (carries := if over then [.W0005] else [])
-
-/-- A paragraph's re-flow diagnostics: one per declared line of it that
-re-flowed, or, where no line of it reads as one, one for the paragraph. -/
-private def reflowRecords (loc : String) (p : ParagraphBreaks) : Array Diag :=
-  if p.lines.isEmpty then
-    #[reflowRecord p p.key s!"{loc}{p.forced.size} lines declared, {p.chosen.size} ship" false]
-  else p.lines.map fun l =>
-    reflowRecord p l.site
-      (s!"{loc}it ships as {l.ships} lines" ++
-        (if l.overruns == 0 then "" else
-          s!"; {l.overruns} {if l.overruns == 1 then "line runs" else "lines run"} past the \
-measure, by up to {l.widest.toPtString}pt"))
-      (l.overruns > 0)
-
-private theorem reflowRecords_named (loc : String) (p : ParagraphBreaks) :
-    ∀ d ∈ reflowRecords loc p, d.code = "W0386" ∧ d.subject = some p.subject := by
-  intro d hd
-  unfold reflowRecords at hd
-  split at hd
-  · simp only [Array.mem_singleton] at hd
-    subst hd
-    exact ⟨rfl, rfl⟩
-  · obtain ⟨l, _, rfl⟩ := Array.mem_map.mp hd
-    exact ⟨rfl, rfl⟩
-
-private theorem reflowRecords_nonempty (loc : String) (p : ParagraphBreaks) :
-    ∃ d, d ∈ reflowRecords loc p := by
-  unfold reflowRecords
-  split
-  · exact ⟨_, Array.mem_singleton.mpr rfl⟩
-  · rename_i h
-    have hs : 0 < p.lines.size :=
-      Nat.pos_of_ne_zero fun h0 => h (by simp [Array.isEmpty, h0])
-    exact ⟨_, Array.mem_map_of_mem (Array.getElem_mem hs)⟩
-
-/-- The frame a page's diagnostics name in their detail, where one is open. -/
-private def frameLoc (b : B) : String :=
-  match b.curFrame with
-  | some n => s!"in frame {n}: "
-  | none => ""
+    (detail := some (loc ++ shape ++ past)) (output := some .pdf)
+    (carries := if over.isEmpty then [] else [.W0005])
 
 /-- W0386, the declared shape's account: the author ended a line where they
 meant it to end, the segment did not fit the measure, and the breaker found
@@ -17012,7 +17029,8 @@ set as many as it needs — where every declared break held, and where only
 the paragraph's last line, which its own end closes, sets more lines than
 one: that is the shape LaTeX sets, and it declared nothing to lose. -/
 private def Spacing.Page.warnReflow (b : B) (p : ParagraphBreaks) (reflowed : Bool) : B :=
-  if reflowed then { b with diags := b.diags ++ reflowRecords (frameLoc b) p }
+  if reflowed then
+    { b with diags := b.diags.push (reflowRecord p.subject p.frameNumber p.lines) }
   else b
 
 @[simp] private theorem warnReflow_pages (b : B) (q : ParagraphBreaks) (r : Bool) :
@@ -17050,7 +17068,7 @@ in the items it is about to place and the breaks the breaker returned
 (`ParagraphBreaks.reflows`) — never by reading the shipped pages back afterwards. -/
 private theorem warnReflow_accounts (b : B) (q : ParagraphBreaks) (reflowed : Bool) :
     (b.warnReflow q reflowed).diags.size =
-      b.diags.size + (if reflowed then (reflowRecords (frameLoc b) q).size else 0) := by
+      b.diags.size + (if reflowed then 1 else 0) := by
   unfold Spacing.Page.warnReflow
   split <;> simp_all
 
@@ -17075,62 +17093,64 @@ private theorem paraLineGeom_overruns (fs : FontSet) (j : ParaJob) (b : B) (firs
   repeat' split
   all_goals simp_all
 
-/-- The breaks ending a line of a declared line that re-flowed, marked by
-item index: a line its split ends, or the one after a split
-(`ParagraphBreaks.Splits`, read off the same forced ends and fills
-`paragraphBreaksOf` records). A paragraph that declares no lines re-flows
-none. -/
-private def carriedBreaks (j : ParaJob) (breaks : Array Nat) : Array Bool := Id.run do
-  if !j.declaresLines then return #[]
-  let forced := (Array.range j.items.size).filter (isForced j.items)
-  let top := forced.pop.foldl max 0
-  let splits (k : Nat) : Bool := k < top && !isForced j.items k && !isEndFill j.items k
-  let mut out : Array Bool := Array.replicate (j.items.size + 1) false
-  let mut prev := 0
-  let mut first := true
-  for brk in breaks do
-    if splits brk || (!first && splits prev) then out := out.set! brk true
-    prev := brk
-    first := false
-  return out
-
-/-- The declared lines of a paragraph that re-flowed, each with its site,
-the lines it ships as and the overrun they carry: a run of lines whose ends
-split one declared line (`ParagraphBreaks.Splits`), read off the same
-forced ends and fills `carriedBreaks` marks. -/
-private def reflowAccount (j : ParaJob) (breaks : Array Nat) : Array ReflowedLine := Id.run do
-  let forced := (Array.range j.items.size).filter (isForced j.items)
-  let top := forced.pop.foldl max 0
-  let splits (k : Nat) : Bool := k < top && !isForced j.items k && !isEndFill j.items k
+/-- The one walk a re-flowed paragraph's account comes from, over the
+breaks its record holds and by the one predicate its census reads
+(`ParagraphBreaks.splitAt`, `reflows_mem`): which breaks end a line of a
+declared line that re-flowed — a line its split ends, or the one after a
+split — and each such declared line, with its rank among the paragraph's
+declared lines, its first located item, the lines it ships as, and where
+and how far each of those runs past the measure. The marks keep W0005 off
+those lines (`placeParaLine`); the lines are what the re-flow names. -/
+private def reflowWalk (j : ParaJob) (p : ParagraphBreaks) : Array Bool × Array ReflowedLine :=
+  Id.run do
+  let split := p.splitAt
+  let ends : Std.HashSet Nat := Std.HashSet.ofList (p.forced.toList ++ p.endFills.toList)
+  let mut marks : Array Bool := Array.replicate (j.items.size + 1) false
   let mut out : Array ReflowedLine := #[]
   let mut cur : Option ReflowedLine := none
+  let mut ordinal := 0
   let mut prev := 0
   let mut first := true
-  for brk in breaks do
-    if splits brk || (!first && splits prev) then
-      let line := cur.getD {}
+  for brk in p.chosen do
+    if split brk || (!first && split prev) then
+      marks := marks.set! brk true
+      let start := j.lineStart first prev
+      let line := cur.getD { ordinal := ordinal }
+      let rank := line.ships
       let line := { line with
-        site := line.site.orElse fun _ => lineSource j.itemSources (j.lineStart first prev) brk
-        ships := line.ships + 1 }
+        site := line.site.orElse fun _ => lineSource j.itemSources start brk
+        ships := rank + 1 }
       let line := match lineOverrunBy j first prev brk with
-        | some excess => { line with overruns := line.overruns + 1, widest := max line.widest excess }
+        | some excess =>
+          let o : Overrun := { rank := rank, site := lineSource j.itemSources start brk,
+                               excess := excess }
+          { line with over := line.over.push o }
         | none => line
-      if splits brk then cur := some line
+      if split brk then cur := some line
       else
         out := out.push line
         cur := none
+    if ends.contains brk then ordinal := ordinal + 1
     prev := brk
     first := false
   if let some line := cur then out := out.push line
-  return out
+  return (marks, out)
 
-/-- The paragraph's record of its breaks, keyed by where its first declared
-line that re-flowed stands, with each such line's own account. -/
+/-- The breaks ending a line of a declared line that re-flowed, marked by
+item index (`reflowWalk`, over the forced ends and fills `paragraphBreaksOf`
+records, which no builder field enters). A paragraph that declares no
+lines, or whose declared lines all held, marks none. -/
+private def carriedBreaks (j : ParaJob) (breaks : Array Nat) : Array Bool :=
+  let p := paragraphBreaksOf 0 none none j.declaresLines j.items breaks
+  if p.reflows.isEmpty then #[] else (reflowWalk j p).1
+
+/-- The paragraph's record of its breaks, with each declared line that
+re-flowed (`reflowWalk`) and the frame its page shows. -/
 private def paragraphRecord (b : B) (j : ParaJob) (breaks : Array Nat) : ParagraphBreaks :=
   let p := paragraphBreaksOf b.paragraphBreaks.size j.leaf b.curFrameOrigin j.declaresLines j.items breaks
   if p.reflows.isEmpty then p else
-    let lines := reflowAccount j breaks
-    { p with key := lines.findSome? (·.site), lines := lines }
+    let lines := (reflowWalk j p).2
+    { p with key := lines.findSome? (·.site), lines := lines, frameNumber := b.curFrame }
 
 /-- The job as its lines are placed. A TeX box whose rule reaches by its
 lines (`TexBox.reach`) learns its last line's depth, its strut's or its
@@ -20720,14 +20740,13 @@ private theorem reflowStep_warnReflow (b : B) (q : ParagraphBreaks) (split : Boo
     ReflowStep b (b.warnReflow q split) := by
   unfold Spacing.Page.warnReflow
   split
-  · exact ⟨rfl, fun _ h => Array.mem_append_left _ h⟩
+  · exact ⟨rfl, fun _ h => Array.mem_push.mpr (Or.inl h)⟩
   · exact ReflowStep.refl b
 
 private theorem warnReflow_diag (b : B) (q : ParagraphBreaks) :
     ∃ d ∈ (b.warnReflow q true).diags, d.code = "W0386" ∧ d.subject = some q.subject := by
   unfold Spacing.Page.warnReflow
-  obtain ⟨d, hd⟩ := reflowRecords_nonempty (frameLoc b) q
-  exact ⟨d, Array.mem_append_right _ hd, reflowRecords_named (frameLoc b) q d hd⟩
+  exact ⟨_, Array.mem_push_self, rfl, rfl⟩
 
 private theorem placePara_reflows (fs : FontSet) (b : B) (j : ParaJob)
     (breaks : Array Nat) (hb : b.ReflowsNamed) :
@@ -21167,9 +21186,7 @@ private abbrev DiagKey :=
 private def diagKey (d : Diag) : DiagKey :=
   (d.code, d.message, d.subject, d.span.map (fun s =>
     (s.file, s.pos.line, s.pos.col, s.pos.origins.map (fun o => (o.id, o.name)), s.pos.command)),
-    -- A re-flowed declared line is one loss however far each step that sets
-    -- it again runs past the measure: its measure is no part of its key.
-    if d.kind == .W0386 then none else d.detail)
+    d.detail)
 
 private def summarizeOverfull (overfull : Nat) (d : Diag) : Diag :=
   if d.code == "W0005" && d.span.isNone && overfull > 1 then
@@ -21255,6 +21272,114 @@ private theorem uniqueDiags_covers (diags : Array Diag) :
   have ht : diags.toList.take diags.size = diags.toList := by
     simpa only [Array.length_toList] using (List.take_length (l := diags.toList))
   simpa only [ht, Array.mem_toList_iff, overfull, Id.run, bind, pure, Id] using h.2
+
+/-- Two settings' overruns of one declared line, merged by rank, in rank
+order: a line of it runs past the measure where some setting runs it past,
+by the most any does, opening where the setting that runs it furthest
+says. -/
+private def mergeOverruns (a b : Array Overrun) : Array Overrun := Id.run do
+  let mut out : Array Overrun := #[]
+  let mut i := 0
+  let mut k := 0
+  for _ in [0:a.size + b.size] do
+    match a[i]?, b[k]? with
+    | some x, some y =>
+      if x.rank < y.rank then
+        out := out.push x
+        i := i + 1
+      else if y.rank < x.rank then
+        out := out.push y
+        k := k + 1
+      else
+        out := out.push (if x.excess < y.excess then
+            { y with site := y.site.orElse fun _ => x.site }
+          else { x with site := x.site.orElse fun _ => y.site })
+        i := i + 1
+        k := k + 1
+    | some x, none =>
+      out := out.push x
+      i := i + 1
+    | none, some y =>
+      out := out.push y
+      k := k + 1
+    | none, none => break
+  return out
+
+/-- One declared line's account across the settings of its paragraph that
+re-flowed it: as many lines as the most any setting ships, and its
+overruns merged by rank (`mergeOverruns`). -/
+private def ReflowedLine.mergeWith (a b : ReflowedLine) : ReflowedLine :=
+  { a with site := a.site.orElse fun _ => b.site, ships := max a.ships b.ships,
+           over := mergeOverruns a.over b.over }
+
+/-- A paragraph's re-flowed declared lines across its settings, merged by
+rank (`ReflowedLine.ordinal`), in rank order. -/
+private def mergeReflowLines (a b : Array ReflowedLine) : Array ReflowedLine := Id.run do
+  let mut out := a
+  let mut rank : Std.HashMap Nat Nat := {}
+  let mut i := 0
+  for l in a do
+    rank := rank.insert l.ordinal i
+    i := i + 1
+  for l in b do
+    match rank.get? l.ordinal with
+    | some k => out := out.modify k (·.mergeWith l)
+    | none =>
+      rank := rank.insert l.ordinal out.size
+      out := out.push l
+  return out.qsort (·.ordinal < ·.ordinal)
+
+/-- The re-flow records the postlude makes again: one per census key that
+overlay steps of one frame each named — the steps that set one paragraph
+again — from their declared lines merged (`mergeReflowLines`), by the maker
+placement uses (`reflowRecord`). A key one placement named keeps its
+record, and so does a key two placements of one step named, which are not
+one paragraph set again. -/
+private def reflowsMerged (ps : Array ParagraphBreaks) : Std.HashMap String Diag := Id.run do
+  let mut groups : Std.HashMap String
+      (Option Nat × Array ReflowedLine × Array (Option FrameOrigin) × Bool) := {}
+  for p in ps do
+    unless p.lines.isEmpty do
+      let s := p.subject
+      groups := groups.insert s <| match groups.get? s with
+        | some (f, ls, steps, apart) =>
+          (f, mergeReflowLines ls p.lines, steps.push p.frame, apart && !steps.contains p.frame)
+        | none => (p.frameNumber, p.lines, #[p.frame], p.frame.isSome)
+  let mut out : Std.HashMap String Diag := {}
+  for (s, f, ls, steps, apart) in groups do
+    if apart && steps.size > 1 then out := out.insert s (reflowRecord s f ls)
+  return out
+
+/-- A W0386 record as its census key's merged record says it
+(`reflowsMerged`), its code and key kept: the settings of one paragraph
+report one re-flow, at its first re-flowed declared line in any of them,
+carrying every overrun any of them runs. -/
+private def mergeReflow (merged : Std.HashMap String Diag) (d : Diag) : Diag :=
+  if d.kind == .W0386 then
+    match d.subject.bind merged.get? with
+    | some m => { d with message := m.message, span := m.span, detail := m.detail,
+                         carries := m.carries }
+    | none => d
+  else d
+
+private theorem mergeReflow_names (merged : Std.HashMap String Diag) (d : Diag) :
+    (mergeReflow merged d).code = d.code ∧ (mergeReflow merged d).subject = d.subject := by
+  unfold mergeReflow
+  split
+  · split <;> exact ⟨rfl, rfl⟩
+  · exact ⟨rfl, rfl⟩
+
+/-- One report per problem: the settings of one paragraph its re-flow
+merged (`mergeReflow`), then repeats dropped (`uniqueDiags`). -/
+private def reportOnce (ps : Array ParagraphBreaks) (diags : Array Diag) : Array Diag :=
+  uniqueDiags (diags.map (mergeReflow (reflowsMerged ps)))
+
+private theorem reportOnce_covers (ps : Array ParagraphBreaks) (diags : Array Diag) :
+    ∀ d ∈ diags, diagReported (reportOnce ps diags) d.code d.subject := by
+  intro d hd
+  obtain ⟨e, he, hc, hs⟩ :=
+    uniqueDiags_covers _ _ (Array.mem_map_of_mem (f := mergeReflow (reflowsMerged ps)) hd)
+  exact ⟨e, he, hc.trans (mergeReflow_names _ d).1, hs.trans (mergeReflow_names _ d).2⟩
 
 /-- The postlude: running furniture per page (through `furnishFrom`, so
 it can only add lines — `furnishFrom_keeps`), one report per problem,
@@ -21478,7 +21603,7 @@ public def runPost (sh : Shipped) : Out := Id.run do
     -- not move and at a width it does not control: the band holds one line,
     -- so a token with no legal break sets at its natural width wherever
     -- that reaches. Body ink that overruns is already named where it breaks
-    -- (W0005, or its declared line's re-flow, W0386); a slot's had no name,
+    -- (W0005, or its paragraph's re-flow, W0386); a slot's had no name,
     -- and a page whose ink leaves the medium
     -- loses it to every viewer's clip — so `onMedium` is checked here and
     -- the loss reported with the distance (W0388).
@@ -21536,7 +21661,7 @@ slot yields in place: shorten the content or drop a slot")
   let fout := furnishFrom (furnishStep fs furnishPage) pages (sh.diags, sh.hyphCache, 0) 0
   let out := fout.1
   let diags := fout.2.1
-  let unique := uniqueDiags diags
+  let unique := reportOnce sh.paragraphBreaks diags
   -- The document outline, resolved: an in-document target (`#anchor`)
   -- resolves against finalized lines, just like a PDF link annotation;
   -- any other target rides as its URL.
@@ -21558,7 +21683,7 @@ public theorem runPost_diags_covers (sh : Shipped) :
   intro d hd
   unfold runPost
   dsimp only [Id.run, bind, pure, Id]
-  apply uniqueDiags_covers
+  apply reportOnce_covers
   apply furnishFrom_inv _
     (fun s : Array Diag × Std.HashMap String (Array Nat) × Nat => d ∈ s.1)
   · intro i page s hs

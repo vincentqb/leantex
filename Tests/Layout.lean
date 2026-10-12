@@ -5913,8 +5913,8 @@ def titleBreakChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) :
     (decide (titleLines lostC > 2))
   t "a declared break destroyed by re-flow is named"
     (lostOut.diags.any (·.code == "W0386"))
-  t "the re-flow is not an overfull line, so W0005 stays silent"
-    (!lostOut.diags.any (·.code == "W0005"))
+  t "the re-flow is not an overfull line, so W0005 stays silent and no record carries one"
+    (!lostOut.diags.any (·.code == "W0005") && !lostOut.diags.any (·.carries.contains .W0005))
   t "the loss is named once for the paragraph that lost it"
     ((lostOut.diags.filter (·.code == "W0386")).size == 1)
   -- Two floors the account must not cross: a declared break that holds is

@@ -242,6 +242,13 @@ def toks (s : String) : List Lex.Tok :=
 def elabStr (s : String) : Ir.Doc × Array Diag :=
   Elab.run "t" s
 
+/-- A source elaborated with its locations kept, as a build lays it out: the
+document whose page losses stand at their sites, and its diagnostics. -/
+def elabLocated (file src : String) : Ir.Doc × Array Diag :=
+  let prepared := Elab.prepare file (Parse.parse file (Lex.lex file src).1).1
+  let (doc, ds, _) := Elab.runPrepared file prepared
+  (doc, ds)
+
 /-- The first elaborated formula in a document's paragraphs, equations,
 and centred display blocks (a display alignment sets under `.center`):
 enough reach for a one-formula snippet. -/
