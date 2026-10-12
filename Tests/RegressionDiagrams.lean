@@ -354,11 +354,11 @@ private def fieldSheetChecks (ref : IO.Ref (List String)) (a : Regression.Artifa
   let decoration := a.diags.filter (·.kind == .W0110)
   t "only the unsupported tcolorbox package declaration is allowlisted"
     (skipped.size == 1 && skipped.all fun d =>
-      d.trigger == some "\\usepackage" &&
+      d.triggerText == some "\\usepackage" &&
         d.message == "package 'tcolorbox' is not supported; skipped")
   t "only the four requested box decoration keys are allowlisted"
     (decoration.size == 1 && decoration.all fun d =>
-      d.subject == some "tcolorbox:fieldpanel" && d.trigger == some "\\begin" &&
+      d.subject == some "tcolorbox:fieldpanel" && d.triggerText == some "\\begin" &&
         d.message == "these box keys are not fully applied: enhanced, arc, colback, colframe")
 
 end Tests.RegressionDiagrams

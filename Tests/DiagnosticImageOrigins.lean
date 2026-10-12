@@ -27,7 +27,7 @@ def diagnosticImageOriginChecks (ref : IO.Ref (List String)) : IO Unit := do
     unless ok do ref.modify (name :: ·)
   let missing (ds : Array Diag) := ds.filter (·.kind == .N0376)
   let hasTrigger (ds : Array Diag) (trigger : String) :=
-    ds.size == 1 && ds.all (·.trigger == some trigger)
+    ds.size == 1 && ds.all (·.triggerText == some trigger)
   let hasHeader (ds : Array Diag) (location trigger : String) :=
     hasTrigger ds trigger && ds.all fun d =>
       (Render.human false d).startsWith s!"ℹ [N0376] - {location} - {trigger}\n"
@@ -93,8 +93,10 @@ def diagnosticImageOriginChecks (ref : IO.Ref (List String)) : IO Unit := do
         let expected := match tok.tok with
           | .word s => some s
           | _ => none
+        -- The lexer keeps a word's evidence; a word names no construct, so the
+        -- index a header reads holds none.
         tok.pos.command == expected &&
-          prepared.sourceTriggers[(file, tok.pos.line, tok.pos.col)]? == expected)
+          prepared.sourceTriggers[(file, tok.pos.line, tok.pos.col)]?.isNone)
   let (animated, animatedDs, spans) := imageOriginTex "animation.tex"
     "before\n\n\\animategraphics{12}{poster.pdf}{}{}"
   let ads := missing animatedDs
@@ -242,7 +244,7 @@ def diagnosticImageOriginChecks (ref : IO.Ref (List String)) : IO Unit := do
     | .ok (.obj after), .ok (.obj before) =>
       t "image origin: porcelain differs only by the optional trigger field"
         (Lean.Json.obj (after.erase "trigger") == Lean.Json.obj before &&
-          ((Lean.Json.obj after).getObjValAs? String "trigger").toOption == d.trigger)
+          ((Lean.Json.obj after).getObjValAs? String "trigger").toOption == d.triggerText)
     | _, _ => t "image origin: porcelain remains valid JSON" false
   t "image origin: human animation header quotes the authored animategraphics token"
     (ads.any fun d =>

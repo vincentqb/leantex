@@ -26,7 +26,7 @@ private def producerParse (file text : String) : Array Parse.Raw :=
   (Parse.parse file (Lex.lex file text).1).1
 
 private def producerAt (d : Diag) (expected : Span) (trigger : String) : Bool :=
-  d.trigger == some trigger && d.span.any fun actual =>
+  d.triggerText == some trigger && d.span.any fun actual =>
     actual == expected && actual.pos.origins == expected.pos.origins &&
       actual.pos.command == expected.pos.command
 
@@ -126,13 +126,13 @@ def diagnosticAggregationOriginChecks (ref : IO.Ref (List String)) : IO Unit := 
     (refused := "synthetic name") (recovery := some .ignored) (output := some .html)
   let compat := { earlier with subject := some "producer:compat" }
   let absent := Diag.of .N0020 "an unlocated earlier note" (subject := "producer:unlocated")
-  let explicit := { absent with subject := some "producer:explicit", trigger := some "\\recorded" }
+  let explicit := { absent with subject := some "producer:explicit", trigger := Diag.Spelling.ofWritten? "\\recorded" }
   let (_, ds, _) := Elab.runPrepared file
     { prepared with compatDiags := prepared.compatDiags.push compat }
     #[earlier, absent, explicit]
   for d in [earlier, compat, absent, explicit] do
     let found := ds.filter (·.subject == d.subject)
-    let expected := if d.span.isSome then { d with trigger := some "\\textbf" } else d
+    let expected := if d.span.isSome then { d with trigger := Diag.Spelling.ofWritten? "\\textbf" } else d
     t s!"producer aggregation: {d.subject.getD ""} survives once with exact attribution"
       (found.size == 1 && found.all fun actual =>
         actual == expected && if let some sp := d.span then producerAt actual sp "\\textbf"

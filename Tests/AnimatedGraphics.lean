@@ -114,13 +114,13 @@ def animatedGraphicsChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) :
   t "animation PDF diagnostic names only its actual static recovery"
     (pdfPlayback.size == 1 && pdfPlayback.all fun d =>
       d.code == "W0110" && d.severity == .warning &&
-      d.output == some .pdf && d.trigger == some "\\animategraphics" &&
+      d.output == some .pdf && d.triggerText == some "\\animategraphics" &&
       d.recovery == some (.replacedBy "the selected static poster") &&
       !hasStr d.message "HTML" && !hasStr d.message "SVG" && d.help.isNone)
   t "animation HTML diagnostic names only its ignored playback settings"
     (htmlPlayback.size == 1 && htmlPlayback.all fun d =>
       d.code == "W0110" && d.severity == .warning &&
-      d.output == some .html && d.trigger == some "\\animategraphics" &&
+      d.output == some .html && d.triggerText == some "\\animategraphics" &&
       d.recovery == some .ignored && hasStr d.message "frame rate '17'" &&
       !hasStr d.message "PDF" && d.help.any (hasStr · "SVG"))
   let (_, repeatedDiags) := elabStr (dvDoc ""

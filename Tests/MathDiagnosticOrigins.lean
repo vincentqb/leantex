@@ -215,7 +215,7 @@ def mathDiagnosticOriginChecks (ref : IO.Ref (List String)) : IO Unit := do
         t ("N0016 " ++ origin.claim)
           (faceNotes.any (mathOriginAt file origin))
         t "N0016 retains the original lexical trigger"
-          (faceNotes.any fun d => d.trigger == origin.trigger)
+          (faceNotes.any fun d => d.triggerText == origin.trigger)
       let alphaNotes := diags.filter (·.kind == .N0018)
       t "alphabet notes retain first-use order and deduplication"
         (alphaNotes.map (·.subject) ==
@@ -225,7 +225,7 @@ def mathDiagnosticOriginChecks (ref : IO.Ref (List String)) : IO Unit := do
         t (name ++ " N0018 " ++ origin.claim)
           (notes.any (mathOriginAt file origin))
         t (name ++ " N0018 retains the original lexical trigger")
-          (notes.any fun d => d.trigger == origin.trigger)
+          (notes.any fun d => d.triggerText == origin.trigger)
       let mathFamily := fs.mathFont?.map (fun (_, font, _) => font.family) |>.getD "math face"
       let plain := Ir.eraseLocations doc
       let (plainResolved, plainDiags) := Ir.resolveMathAlphas fs.mathAlphabets mathFamily plain
@@ -247,7 +247,7 @@ def mathDiagnosticOriginChecks (ref : IO.Ref (List String)) : IO Unit := do
   for (kind, line) in [(DiagCode.N0016, 1), (.N0018, 3)] do
     check ref s!"math origins include: {repr kind} keeps the child origin and trigger"
       (diags.any fun d => d.kind == kind &&
-        mathOriginAt file (.at line 7 (some "\\(")) d && d.trigger == some "\\(")
+        mathOriginAt file (.at line 7 (some "\\(")) d && d.triggerText == some "\\(")
   -- A document style's formula is located in the file that wrote the style,
   -- wherever the picture applying it stands: the style an included file
   -- wrote, and the root's style applied in a picture an included file holds.
@@ -270,7 +270,7 @@ def mathDiagnosticOriginChecks (ref : IO.Ref (List String)) : IO Unit := do
     for kind in [DiagCode.N0016, .N0018] do
       check ref s!"math origins {name}: {repr kind} names the style's own file and opener"
         (diags.any fun d => d.kind == kind &&
-          mathOriginAt owner (.at line 43 (some "$")) d && d.trigger == some "$")
+          mathOriginAt owner (.at line 43 (some "$")) d && d.triggerText == some "$")
   -- A provisional request can precede source elaboration. Such a request
   -- must remain unlocated, rather than borrowing an unrelated text span.
   let (preamble, _, _) := Elab.runRawsSpanned "synthetic/provisional.tex"

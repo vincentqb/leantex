@@ -16,8 +16,10 @@ private def literalSources (file source : String) : Compat.SourceTriggers :=
   (Compat.execute file (literalRaws file source)).sourceTriggers
 
 /-- Delayed diagnostics can originate at plain text or a special character.
-Their source is the original lexical spelling and coordinates, including
-when normalization changes the rendered word. Synthetic surface values do
+Their source is the original coordinates, including when normalization
+changes the rendered word; their header names a construct the author wrote
+there — a special character TeX gives a role — and never a word of text or a
+bracket, which the location already points at. Synthetic surface values do
 not supply evidence merely by resembling authored text. -/
 def diagnosticLiteralOriginChecks (ref : IO.Ref (List String))
     (fs : Font.FontSet) : IO Unit := do
@@ -31,13 +33,14 @@ def diagnosticLiteralOriginChecks (ref : IO.Ref (List String))
   for (source, sites) in cases do
     let sources := literalSources file source
     for (line, col, spelling) in sites do
-      t s!"literal origins: exact authored token {spelling} at {line}:{col}"
-        (sources[(file, line, col)]? == some spelling)
+      let construct := Diag.constructSpelling spelling
+      t s!"literal origins: authored token {spelling} at {line}:{col} is indexed exactly when it spells a construct"
+        (sources[(file, line, col)]? == if construct then some spelling else none)
       let d := Diag.of .N0200 "The page uses its declared shrink."
         (some ⟨file, { line, col }⟩)
       let attributed := sources.attribute d
       t s!"literal origins: delayed token {spelling} preserves the entire record"
-        (attributed.trigger == some spelling &&
+        (attributed.triggerText == (if construct then some spelling else none) &&
           { attributed with trigger := d.trigger } == d &&
           decide (attributed.span = d.span))
       let foreign := { d with span := some ⟨file ++ ".other", { line, col }⟩ }
@@ -45,11 +48,11 @@ def diagnosticLiteralOriginChecks (ref : IO.Ref (List String))
         ((sources.attribute foreign).trigger.isNone)
   let child := "synthetic/literal-child.tex"
   let sources := (Compat.execute file
-    (#[.env (Parse.inputEnv child) (literalRaws child "\n  Child") {}] ++
-      literalRaws file "\n  Parent")).sourceTriggers
-  t "literal origins: includes retain different written words at equal coordinates"
-    (sources[(file, 2, 3)]? == some "Parent" &&
-      sources[(child, 2, 3)]? == some "Child")
+    (#[.env (Parse.inputEnv child) (literalRaws child "\n  \\childword") {}] ++
+      literalRaws file "\n  \\parentword")).sourceTriggers
+  t "literal origins: includes retain different written constructs at equal coordinates"
+    (sources[(file, 2, 3)]? == some "\\parentword" &&
+      sources[(child, 2, 3)]? == some "\\childword")
   for raw in [Parse.Raw.word "invented" { line := 2, col := 3 },
       .sym '*' { line := 2, col := 3 }] do
     let sources := (Compat.execute file #[raw]).sourceTriggers
@@ -57,7 +60,7 @@ def diagnosticLiteralOriginChecks (ref : IO.Ref (List String))
       (some ⟨file, { line := 2, col := 3 }⟩)
     t "literal origins: synthetic values cannot invent written evidence"
       (sources.isEmpty && (sources.attribute d).trigger.isNone)
-    let explicit := { d with trigger := some "\\authored" }
+    let explicit := { d with trigger := Diag.Spelling.ofWritten? "\\authored" }
     t "literal origins: existing producer evidence survives a synthetic surface"
       (sources.attribute explicit == explicit)
 
@@ -80,7 +83,7 @@ def diagnosticLiteralOriginChecks (ref : IO.Ref (List String))
       t "literal origins: an unmapped fragment cannot borrow a neighboring token"
         ((sources.attribute d).trigger.isNone &&
           (sources.atSource file token.pos d).trigger.isNone)
-      let explicit := { d with trigger := some "\\authored" }
+      let explicit := { d with trigger := Diag.Spelling.ofWritten? "\\authored" }
       t "literal origins: failed mapping preserves explicit producer evidence"
         (sources.attribute explicit == explicit &&
           sources.atSource file token.pos explicit == explicit)
@@ -98,11 +101,11 @@ def diagnosticLiteralOriginChecks (ref : IO.Ref (List String))
     (ds.all (·.severity != .error) && out.pages.size == 1 && notes.size == 1 &&
       notes.all fun d =>
         d.span.any (fun s => s.file == file && s.pos.line == 8 && s.pos.col == 1) &&
-        d.trigger == some "Third.")
-  t "literal origins: human and JSON compression records name the written text"
+        d.trigger.isNone)
+  t "literal origins: human and JSON compression records stand at the text and quote none of it"
     (notes.any fun d =>
-      hasStr (Render.human false d) "literal-origins.tex:8:1 - Third." &&
-      hasStr (Render.porcelainDiag d) "\"trigger\":\"Third.\"")
+      hasStr (Render.human false d) "literal-origins.tex:8:1\n" &&
+      !hasStr (Render.porcelainDiag d) "\"trigger\":")
   let bare := Ir.eraseLocations doc
   let bareOut := Layout.run geom fs none bare
   t "literal origins: source evidence preserves shipped layout and PDF bytes"
@@ -123,9 +126,9 @@ def diagnosticLiteralOriginChecks (ref : IO.Ref (List String))
     fontSize := Dim.pt 10, justify := false, hyphenate := false }
   let out := Layout.run geom fs none doc
   let warnings := (out.diags.filter (·.kind == .W0005)).map prepared.sourceTriggers.attribute
-  t "literal origins: unbreakable text reports its exact written word"
+  t "literal origins: unbreakable text stands at its written word and quotes none of it"
     (warnings.size == 1 && warnings.all fun d =>
       d.span.any (fun s => s.file == file && s.pos.line == 2 && s.pos.col == 3) &&
-      d.trigger == some word)
+      d.trigger.isNone)
 
 end Tests

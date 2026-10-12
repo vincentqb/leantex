@@ -1260,7 +1260,7 @@ def reports : List Report := [
   { id := "R134", date := "2026-10-10"
     what := "A beamer deck's build printed one warning per listing for a listing option the engine does not honour, while other repeated losses printed once with a site count: the option's emitter named no subject, and a repeat in the same words with no subject printed at every site"
     pins := [check% Tests.DiagFold.foldChecks, check% Tests.DiagFold.subjectDoorChecks,
-      thm% Diag.foldRepeats_sum_exact, thm% Diag.foldRepeats_loss_sum_exact,
+      thm% Diag.foldRepeats_sum_exact, thm% Diag.foldRepeats_line_exact,
       thm% Diag.foldRepeats_wording_between, thm% Diag.foldRepeats_visible_inj]
     accept := ["twenty-one assertions fail with the fold's subjectless and wording arms and the listing and siunitx subjects reverted onto the recorded commit, the census-keyed fold standing: a listing option's one line and count at five listings, every listing arm's words keying its loss, a siunitx option's one line, a subjectless repeat's one line with its werror, acceptance and porcelain counts, a loss's second wording, which the census-keyed fold hid, a loss that opens on a note, whose warning it hid, and the door scan naming twelve subjectless emissions of a counted code",
       "a presentation deck's build prints its listing option once with its site count and a repeated glyph fallback once, and its porcelain keeps every record, the sites summing to the records",
@@ -1395,6 +1395,16 @@ def reports : List Report := [
     what := "an output name with no format's extension was refused on plain standard error, outside the porcelain stream a tool reads and with no code, and the refusal named the PDF and HTML extensions but not the markdown one"
     pins := [check% Tests.outputNameChecks]
     accept := ["run against the binary built from the tree before the fix, three of the guard's assertions fail: no porcelain record carries the refusal, the rendered refusal bears no code, and no refusal lists the markdown extension"]
+    state := .guarded "1f801005" .before .author },
+  { id := "R152", date := "2026-10-12"
+    what := "a long markdown report's build printed an overfull-line warning for every line of its code blocks, each header quoting a fragment of that line's code, beside unlocated re-flow warnings whose words changed at every site and which named declared lines the overfull warnings also named: a census key that told sites apart split one wording into a line per site, a header quoted whatever text stood at the site, and two codes accounted for one declared line"
+    pins := [check% Tests.DiagFold.foldChecks, check% Tests.DiagFold.reflowAccountChecks,
+      check% repeatFoldChecks, check% Tests.diagnosticListingOriginChecks,
+      check% Tests.diagnosticLiteralOriginChecks, thm% Diag.foldRepeats_line_exact,
+      thm% Diag.foldRepeats_visible_inj, thm% Diag.Spelling.ofWritten?_exact]
+    accept := ["twenty-two of the guards' assertions fail on the tree before the fix: a wording whose census keys tell its sites apart printed once per site, two constructs in one wording printed apart, the re-flow account unlocated, without its overrun clause and beside a second account of its declared line, and nine codes whose witness written twice printed a line per site — an overfull line keyed by its position among them",
+      "an invented markdown document whose code lines overrun prints one overfull warning carrying their sites, its header ending at its location, where the tree before printed one per line quoting each line's code",
+      "a long private markdown report builds to HTML with one line per loss"]
     state := .guarded "1f801005" .before .author }
 ]
 

@@ -143,7 +143,7 @@ private def sourceCaseChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet)
       (ds.any (fun d => d.kind == code && d.subject.isSome))
     if let some command := trigger then
       t s!"tcolorbox source: {label}: loss belongs to written command"
-        (ds.filter (·.kind == code) |>.all (·.trigger == some command))
+        (ds.filter (·.kind == code) |>.all (·.triggerText == some command))
     if let some name := subject then
       t s!"tcolorbox source: {label}: subject names authored environment"
         (ds.filter (·.kind == code) |>.all fun d =>

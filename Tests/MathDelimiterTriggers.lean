@@ -69,7 +69,7 @@ public def mathDelimiterTriggerChecks (ref : IO.Ref (List String)) : IO Unit := 
           (some ⟨file, token.pos⟩) (subject := "math-request")
         let attributed := sources.attribute original
         t (kind.code ++ " restores the exact opener")
-          (attributed.trigger == some site.spelling)
+          (attributed.triggerText == some site.spelling)
         t (kind.code ++ " preserves the entire position and other fields")
           (decide (attributed.span = original.span) &&
             { attributed with trigger := original.trigger } == original)
@@ -112,7 +112,7 @@ public def mathDelimiterTriggerChecks (ref : IO.Ref (List String)) : IO Unit := 
         (some ⟨file, token.pos⟩)
       let attributed := sources.attribute original
       t (kind.code ++ " retains the file, exact position and opener")
-        (decide (attributed.span = original.span) && attributed.trigger == some spelling)
+        (decide (attributed.span = original.span) && attributed.triggerText == some spelling)
   -- A display flag is not lexical evidence. Erasing the evidence from
   -- a real opener must not turn either kind of synthetic math into a
   -- guessed dollar or escaped delimiter.
@@ -127,7 +127,7 @@ public def mathDelimiterTriggerChecks (ref : IO.Ref (List String)) : IO Unit := 
     let d := Diag.of .N0016 "The formula needs font resolution." (some ⟨root, p⟩)
     delimiterCheck ref s!"synthetic display={display}: no invented diagnostic trigger"
       ((sources.attribute d).trigger.isNone)
-    let explicit := { d with trigger := some "\\request" }
+    let explicit := { d with trigger := Diag.Spelling.ofWritten? "\\request" }
     delimiterCheck ref s!"synthetic display={display}: explicit producer evidence survives"
       ((sources.attribute explicit) == explicit)
 
@@ -257,14 +257,14 @@ public def mathDollarSurfaceChecks (ref : IO.Ref (List String)) : IO Unit := do
       if f.needsFace then
         t "N0016 keeps the first formula's source and written trigger"
           ((notes.zip f.sites).any fun (d, site) =>
-            dollarAt file site d.span && d.trigger == some site.spelling)
+            dollarAt file site d.span && d.triggerText == some site.spelling)
       let alphas := diags.filter (·.kind == .N0018)
       t "only actual alphabet requests produce alphabet notes"
         (alphas.size == if f.alphabet.isSome then 1 else 0)
       if let some site := f.alphabet then
         t "N0018 keeps the failing formula's source and written trigger"
           (alphas.any fun d => d.subject == some "math-alpha:cal" &&
-            dollarAt file site d.span && d.trigger == some site.spelling)
+            dollarAt file site d.span && d.triggerText == some site.spelling)
     -- Includes traverse Input.readInput, rather than an invented Raw wrapper.
     let child := (dir / "child.tex").toString
     IO.FS.writeFile child "First $x$.\nThen $$\\mathcal{A}$$."
@@ -291,7 +291,7 @@ public def mathDollarSurfaceChecks (ref : IO.Ref (List String)) : IO Unit := do
     for (kind, site) in #[DiagCode.N0016, .N0018].zip sites do
       delimiterCheck ref s!"CLI include: {kind.code} retains child source and delimiter"
         (diags.any fun d => d.kind == kind && dollarAt child site d.span &&
-          d.trigger == some site.spelling)
+          d.triggerText == some site.spelling)
     let markdown := (dir / "literal.md").toString
     IO.FS.writeFile markdown "Price $5. Written $x$ and $$y$$."
     let some front ← LeanTex.Cli.Driver.frontend ui markdown |

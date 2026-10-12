@@ -270,8 +270,33 @@ def elabMd (s : String) : Ir.Doc × Array Diag :=
   let (raws, ds) := Surface.read .markdown "t.md" s
   Elab.runRaws "t.md" raws ds
 
+/-- How a witness runs: its source as written or transformed (`rep`, a
+witness written twice, `Tests.twice`), and elaborated as the span-free
+helpers elaborate or with its sources kept (`located`), as the driver keeps
+them for the layout's diagnostics. -/
+structure WitnessRun where
+  rep : String → String := id
+  located : Bool := false
+
+/-- A tex source elaborated as `w` runs it. -/
+def WitnessRun.elab (w : WitnessRun) (src : String) : Ir.Doc × Array Diag :=
+  if w.located then
+    let (toks, lexDs) := Lex.lex "t" (w.rep src)
+    let (raws, parseDs) := Parse.parse "t" toks
+    let (doc, ds, _) := Elab.runRawsSpanned "t" raws (lexDs ++ parseDs)
+    (doc, ds)
+  else elabStr (w.rep src)
+
+/-- A markdown source elaborated as `w` runs it. -/
+def WitnessRun.elabMarkdown (w : WitnessRun) (src : String) : Ir.Doc × Array Diag :=
+  if w.located then
+    let (raws, ds) := Md.read "t.md" (w.rep src)
+    let (doc, ds, _) := Elab.runRawsSpanned "t.md" raws ds
+    (doc, ds)
+  else elabMd (w.rep src)
+
 /-- Diagnostics of a markdown source. -/
-def dvMd (s : String) : Array Diag := (elabMd s).2
+def dvMd (s : String) (w : WitnessRun := {}) : Array Diag := (w.elabMarkdown s).2
 
 /-! ## The markdown doors
 
@@ -2037,7 +2062,7 @@ def sourceTextChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet)
     (ink (shownTextList "" tree.toList) == ink (shownTextList "" expectedTree.toList))
 
 /-- Elaboration diagnostics of a source. -/
-def dvE (src : String) : Array Diag := (elabStr src).2
+def dvE (src : String) (w : WitnessRun := {}) : Array Diag := (w.elab src).2
 
 /-- Spans carrying more than one diagnostic, as `(code, code)` pairs with the
 count — the mechanical first cut the user asked for, needing no judgement
@@ -2087,19 +2112,19 @@ def inTitleBlock (doc : Ir.Doc) (p : Ir.Block → Bool) : Bool :=
 
 /-- Diagnostics after layout too, through the same pre-layout alphabet
 resolution as every test artifact. -/
-def dvL (fonts : Font.FontSet) (src : String) : Array Diag :=
-  let (doc, ds) := elabStr src
+def dvL (fonts : Font.FontSet) (src : String) (w : WitnessRun := {}) : Array Diag :=
+  let (doc, ds) := w.elab src
   ds ++ (layoutOf fonts doc).diags
 
 /-- Diagnostics after layout through the overflow ladder (`fittedOf`), as
 the driver reports them. -/
-def dvF (fonts : Font.FontSet) (src : String) : Array Diag :=
-  let (doc, ds) := elabStr src
+def dvF (fonts : Font.FontSet) (src : String) (w : WitnessRun := {}) : Array Diag :=
+  let (doc, ds) := w.elab src
   ds ++ (fittedOf fonts doc).out.diags
 
 /-- Diagnostics after the HTML backend. -/
-def dvH (src : String) : Array Diag :=
-  let (doc, ds) := elabStr src
+def dvH (src : String) (w : WitnessRun := {}) : Array Diag :=
+  let (doc, ds) := w.elab src
   ds ++ (HtmlDoc.emit {} doc).2
 
 /-- A one-face set: every slot and variant maps to index 0. Both

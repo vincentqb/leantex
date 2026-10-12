@@ -61,18 +61,18 @@ def diagnosticLayoutOriginChecks (ref : IO.Ref (List String))
   t "layout origins: body overflow keeps each line's command and expansion"
     (overfull.size == 2 &&
       overfull.any (fun d => DiagnosticLayoutOrigins.sameSource d.span first &&
-        d.trigger == first.pos.command) &&
+        d.triggerText == first.pos.command) &&
       overfull.any (fun d => DiagnosticLayoutOrigins.sameSource d.span second &&
-        d.trigger == second.pos.command))
+        d.triggerText == second.pos.command))
   let notes : Ir.Doc := { body := #[.para #[.text "Note", .footnote (some 1) content]] }
   let noteOut := Layout.run geom fs none notes
   let noteDiags := noteOut.diags.filter (·.kind == .W0005)
   t "layout origins: footnote overflow keeps commands after generated mark insertion"
     (noteDiags.size == 2 &&
       noteDiags.any (fun d => DiagnosticLayoutOrigins.sameSource d.span first &&
-        d.trigger == first.pos.command) &&
+        d.triggerText == first.pos.command) &&
       noteDiags.any (fun d => DiagnosticLayoutOrigins.sameSource d.span second &&
-        d.trigger == second.pos.command))
+        d.triggerText == second.pos.command))
   t "layout origins: overflow CLI human and JSON retain the written command"
     (overfull.any fun d =>
       (Render.human false d).startsWith "⚠ [W0005] - line-origin.tex:2:1 - \\wideword\n" &&
@@ -100,11 +100,11 @@ def diagnosticLayoutOriginChecks (ref : IO.Ref (List String))
       picDiags.any (fun d =>
         DiagnosticLayoutOrigins.sameSource d.span
           (DiagnosticLayoutOrigins.sourceAt "picture-origin.tex" 2 1 "\\begin") &&
-        d.trigger == some "\\begin") &&
+        d.triggerText == some "\\begin") &&
       picDiags.any (fun d =>
         DiagnosticLayoutOrigins.sameSource d.span
           (DiagnosticLayoutOrigins.sourceAt "picture-origin.tex" 3 1 "\\begin") &&
-        d.trigger == some "\\begin"))
+        d.triggerText == some "\\begin"))
   let plainPics := Layout.run picGeom fs none picDoc
   t "layout origins: picture metadata preserves shipped paint and PDF bytes"
     (reprStr pics.pages == reprStr plainPics.pages &&
@@ -117,14 +117,14 @@ def diagnosticLayoutOriginChecks (ref : IO.Ref (List String))
       (sparseDiags.filter fun d => d.span.isNone && d.trigger.isNone).size == 1 &&
       (sparseDiags.filter fun d =>
         DiagnosticLayoutOrigins.sameSource d.span secondPicture &&
-        d.trigger == some "\\begin").size == 1)
+        d.triggerText == some "\\begin").size == 1)
   let hidden := { picDoc with body := #[
     .para #[.text "Prefix"], .only #["html"] #[picDoc.body[0]!], picDoc.body[1]!] }
   let hiddenOut := DiagnosticLayoutOrigins.run fs picGeom hidden picSites
   let hiddenDiags := hiddenOut.diags.filter (·.kind == .W0335)
   t "layout origins: PDF filtering preserves authored picture ordinals"
     (hiddenDiags.size == 1 && hiddenDiags.all fun d =>
-      DiagnosticLayoutOrigins.sameSource d.span secondPicture && d.trigger == some "\\begin")
+      DiagnosticLayoutOrigins.sameSource d.span secondPicture && d.triggerText == some "\\begin")
   let steps := { picDoc with docClass := .slides, body := #[
     .frame #[] false .top false (picDoc.body.push
       (.onSteps { first := 2, last := none } #[.para #[.text "Next step"]]))] }
@@ -136,7 +136,7 @@ def diagnosticLayoutOriginChecks (ref : IO.Ref (List String))
         (stepDiags.filter fun d =>
           DiagnosticLayoutOrigins.sameSource d.span
             (DiagnosticLayoutOrigins.sourceAt "picture-origin.tex" line 1 "\\begin") &&
-          d.trigger == some "\\begin").size == 1)
+          d.triggerText == some "\\begin").size == 1)
   let (picShrinkDoc, picShrinkDs, picShrinkSites, _) := DiagnosticLayoutOrigins.parse fs
     "picture-shrink-origin.tex"
     ("\\documentclass{article}\\pictures{tool=none}\\begin{document}\nLead.\n\n" ++
@@ -155,7 +155,7 @@ def diagnosticLayoutOriginChecks (ref : IO.Ref (List String))
       picShrinkDiags.size == 1 && picShrinkDiags.all fun d =>
         DiagnosticLayoutOrigins.sameSource d.span
           (DiagnosticLayoutOrigins.sourceAt "picture-shrink-origin.tex" 5 1 "\\begin") &&
-        d.trigger == some "\\begin")
+        d.triggerText == some "\\begin")
   let shrinkSource :=
     "\\documentclass{article}\\page{height=127pt,margin=20pt}" ++
     "\\newcommand{\\firstline}{First.}\\newcommand{\\secondline}{Second.}" ++
@@ -171,7 +171,7 @@ def diagnosticLayoutOriginChecks (ref : IO.Ref (List String))
     (shrinkDs.all (·.severity != .error) && shrunk.pages.size == 1 && shrinkDiags.size == 1 &&
       shrinkDiags.all fun d =>
         d.span.any (fun s => s.file == "shrink-origin.tex" && s.pos.line == 8 && s.pos.col == 1) &&
-        d.trigger == some "\\thirdline")
+        d.triggerText == some "\\thirdline")
   t "layout origins: shrink CLI emits the exact authored macro call"
     (shrinkDiags.any fun d =>
       hasStr (Render.porcelainDiag d) "\"file\":\"shrink-origin.tex\"" &&
@@ -198,7 +198,7 @@ def diagnosticLayoutOriginChecks (ref : IO.Ref (List String))
   t "layout origins: a later short column cannot steal the shrink source"
     (columnOut.pages.size == 1 && columnDiags.size == 1 && columnDiags.all fun d =>
       d.span.any (fun s => s.file == "shrink-origin.tex" && s.pos.line == 8 && s.pos.col == 1) &&
-      d.trigger == some "\\thirdline")
+      d.triggerText == some "\\thirdline")
   t "layout origins: column provenance preserves shipped paint and PDF bytes"
     (reprStr columnOut.pages == reprStr bareColumnOut.pages &&
       driverPdf fs shrinkGeom columns columnOut ==

@@ -203,7 +203,8 @@ public def resolveMath (faces : Array FontDb.Face) (declared : Option String)
           let note := match companionOf with
             | some named => DriverDiag.mathFaceCompanion f.family named
             | none => DriverDiag.mathFaceFirst f.family
-          diags := diags.push { note with span := source, trigger := source.bind (·.pos.command) }
+          let written := (source.bind (·.pos.command)).bind Diag.Spelling.ofWritten?
+          diags := diags.push { note with span := source, trigger := written }
   return { fonts, paths, index := mathIdx, missing, diags }
 
 end LeanTex.Cli.FontEnv

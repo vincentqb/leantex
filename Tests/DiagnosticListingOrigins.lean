@@ -9,18 +9,19 @@ open LeanTex.Core LeanTex.Cli
 
 namespace Tests
 
-private def listingSourceExact (file source : String) (d : Diag) : Bool := Id.run do
+/-- The diagnostic stands where `text` is written in the source, and names no
+construct: code is no markup, so its header quotes none of it. -/
+private def listingSourceExact (file source text : String) (d : Diag) : Bool := Id.run do
   let some span := d.span | return false
-  let some trigger := d.trigger | return false
   let some line := (source.splitOn "\n")[span.pos.line - 1]? | return false
-  return span.file == file && span.pos.line > 0 && span.pos.col > 0 &&
-    !trigger.isEmpty &&
-    (String.ofList (line.toList.drop (span.pos.col - 1))).startsWith trigger
+  return span.file == file && span.pos.line > 0 && span.pos.col > 0 && d.trigger.isNone &&
+    (String.ofList (line.toList.drop (span.pos.col - 1))).startsWith text
 
 /-- Listing diagnostics carry source coordinates, independently of tab
-expansion, generated line numbers, line endings and lexical paint. Both the
-human and machine record identify text actually present at those coordinates;
-adding that evidence leaves shipped layout and PDF/HTML bytes unchanged. -/
+expansion, generated line numbers, line endings and lexical paint, and their
+headers quote none of the code: the location points at the text, so a header
+that quoted a fragment of a code line read differently at every site. Adding
+that evidence leaves shipped layout and PDF/HTML bytes unchanged. -/
 def diagnosticListingOriginChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
   let load (name : String) : IO Font.Font := do
@@ -54,19 +55,19 @@ def diagnosticListingOriginChecks (ref : IO.Ref (List String)) : IO Unit := do
       let losses := (out.diags.filter (·.kind == .W0009)).map
         prepared.sourceTriggers.attribute
       let label := name ++ (if newline == "\n" then "/LF" else "/CRLF")
-      t s!"listing origins {label}: fallback names exact source text"
+      -- A plain line is one token, standing where the line does; a
+      -- highlighted one stands at the token that holds the scalar.
+      t s!"listing origins {label}: fallback stands at its source text"
         (ds.all (·.severity != .error) && losses.size == 1 &&
-          losses.all (listingSourceExact file source))
+          losses.all (listingSourceExact file source (if highlighted then "∀" else "prefix")))
       if highlighted then
         let col := line.toList.takeWhile (· != '∀') |>.length |>.succ
         t s!"listing origins {label}: tab and Unicode count authored scalars"
-          (losses.all fun d => d.trigger == some "∀" &&
-            d.span.any fun span => span.pos.line == 4 && span.pos.col == col)
-      t s!"listing origins {label}: rendered record includes its evidence"
-        (losses.all fun d => d.span.any fun span => d.trigger.any fun trigger =>
-          hasStr (Render.human false d)
-            s!"{file}:{span.pos.line}:{span.pos.col} - {trigger}" &&
-          hasStr (Render.porcelainDiag d) "\"trigger\":")
+          (losses.all fun d => d.span.any fun span => span.pos.line == 4 && span.pos.col == col)
+      t s!"listing origins {label}: rendered record ends its header at its location"
+        (losses.all fun d => d.span.any fun span =>
+          hasStr (Render.human false d) s!"{file}:{span.pos.line}:{span.pos.col}\n" &&
+          !hasStr (Render.porcelainDiag d) "\"trigger\":")
       let bare := Ir.eraseLocations doc
       let bareOut := Layout.run geom fs none bare
       t s!"listing origins {label}: provenance preserves PDF paint and bytes"
@@ -89,12 +90,11 @@ def diagnosticListingOriginChecks (ref : IO.Ref (List String)) : IO Unit := do
     let out := Layout.run geom fs none doc
     let losses := (out.diags.filter (·.kind == .W0005)).map
       prepared.sourceTriggers.attribute
-    t s!"listing origins {env}: overflow cannot inherit the environment opener"
+    t s!"listing origins {env}: overflow stands at its line and names no opener"
       (losses.size == 1 && losses.all fun d =>
-        listingSourceExact file source d && d.trigger != some "\\begin" &&
-          d.span.any fun span => span.pos.line == 4)
-  -- A highlighted line's indentation is its own token: the overflow names
-  -- the first token that lays down ink, at its column, never the blanks.
+        listingSourceExact file source "  build" d && d.span.any fun span => span.pos.line == 4)
+  -- A highlighted line's indentation is its own token: the overflow stands
+  -- at the first token that lays down ink, never at the blanks.
   for (lang, indent) in [("python", "    "), ("lean4", "  "), ("bash", "\t ")] do
     let line := indent ++ "build_all(" ++ "".pushn 'W' 96 ++ ")"
     let source := String.intercalate "\n" [
@@ -108,9 +108,9 @@ def diagnosticListingOriginChecks (ref : IO.Ref (List String)) : IO Unit := do
     let out := Layout.run geom fs none doc
     let losses := (out.diags.filter (·.kind == .W0005)).map
       prepared.sourceTriggers.attribute
-    t s!"listing origins minted {lang}: an indented overflow names its first inked token"
+    t s!"listing origins minted {lang}: an indented overflow stands at its first inked token"
       (losses.size == 1 && losses.all fun d =>
-        listingSourceExact file source d && d.trigger == some "build_all" &&
+        listingSourceExact file source "build_all" d &&
           d.span.any fun span => span.pos.line == 4 && span.pos.col == indent.length + 1)
 
 end Tests

@@ -9788,10 +9788,11 @@ private def snapWalk (id text label : String) (kids : Array Node)
     let (sid, sclash) := claimId taken s!"{id}-{k}" text
     let diags := match sclash with
       | some holder => diags.push (Diag.of .W0327
-          s!"frames {holder.quote} and {text.quote} share the \
-anchor '{id}-{k}'; the step anchor becomes '{sid}'"
-          (help := some s!"an in-page link '#{id}-{k}' reaches only \
-the first; retitle one frame, or link to '#{sid}'"))
+          s!"frames share the step anchor '{id}-{k}'; each after the first takes a \
+numbered anchor"
+          (help := some s!"an in-page link '#{id}-{k}' reaches only the first; \
+retitle the frames apart")
+          (detail := some s!"{text.quote} takes '{sid}', after {holder.quote}"))
       | none => diags
     snapWalk id text label
       (kids.push (Html.elem "div" #[]
@@ -9876,10 +9877,10 @@ private def sectionize (cfg : Config) (blocks : Array Block) :
       let (id, clash) := claimId taken base text
       if let some holder := clash then
         diags := diags.push (Diag.of .W0327
-          s!"sections {holder.quote} and {text.quote} share the \
-anchor '{base}'; the second becomes '{id}'"
+          s!"sections share the anchor '{base}'; each after the first takes a numbered anchor"
           (help := some s!"an in-page link '#{base}' reaches only the first; \
-retitle one section, or link to '#{id}'"))
+retitle the sections apart")
+          (detail := some s!"{text.quote} takes '{id}', after {holder.quote}"))
       taken := taken.insert id text
       openId := some id
       cur := #[cfg.applyEpoch (blockNode cfg b)]
@@ -10275,11 +10276,11 @@ via \\chrome is the sequence both backends share"))
           let lists := doc.docClass.record.lists
           if Ir.frameFills lists doc.styles .deck fbody <
               Ir.frameFills lists doc.styles .every fbody then
-            walkDiags := walkDiags.push (Diag.of .W0399
-              s!"frame {label}: a \\vfill before more of its list item, or inside \\alt, \
-spaces nothing on the web slide"
+            walkDiags := walkDiags.push (Diag.of .W0399 (subject := some label)
+              "a \\vfill before more of its list item, or inside \\alt, spaces nothing \
+on the web slide"
               (help := some "end the item at the \\vfill, or move it outside the \\alt")
-              (subject := some label))
+              (detail := some s!"in frame {label}"))
           -- One `section` per frame: the deck's steps reveal *in place*
           -- under the class-gated uncover rules (`deckStepCss`), so the
           -- HTML section count is the source frame count (`frames_sections`
@@ -10305,10 +10306,10 @@ spaces nothing on the web slide"
           let (id, clash) := claimId taken base text
           if let some holder := clash then
             walkDiags := walkDiags.push (Diag.of .W0327
-              s!"frames {holder.quote} and {text.quote} share the \
-anchor '{base}'; the second becomes '{id}'"
-              (help := some s!"an in-page link '#{base}' reaches only the \
-first; retitle one frame, or link to '#{id}'"))
+              s!"frames share the anchor '{base}'; each after the first takes a numbered anchor"
+              (help := some s!"an in-page link '#{base}' reaches only the first; \
+retitle the frames apart")
+              (detail := some s!"{text.quote} takes '{id}', after {holder.quote}"))
           taken := taken.insert id text
           -- The spacer anchors `<frame>-k`, claimed and built by the one
           -- walk whose count is a statement (`track_snaps_exact`); each

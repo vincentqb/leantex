@@ -172,17 +172,24 @@ is skipped.
   `Ui.diag`; only `Render` formats them. Reports read porcelain JSON records,
   never human headers. `diagnosticOutputBypasses` and its mutation selftest
   enforce this CLI source convention, including early formatting and direct
-  printing of diagnostic fields. A phase's log folds repeated warnings:
-  `Ui.resolve` delivers a warning as a note when an earlier warning of its
-  loss — the census's where a subject names one, the same words where none
-  does — says the same words (`Diag.foldRepeats`), and that first warning
-  carries their count; a loss's notes count on its first record, its lines add
-  up to its records, and porcelain keeps every record (`foldRepeats_sum_exact`,
-  `foldRepeats_loss_sum_exact`, `foldRepeats_shown_exact`,
-  `foldRepeats_visible_inj`). An emitter that keys once per construct
-  (`warnOnce`, `sayOnce`) delivers its later sites as notes itself, whatever
-  their words. Errors print at every site; acceptance and `--werror` count a
-  folded repeat once, as they count a census repeat.
+  printing of diagnostic fields. A phase's log folds repeated warnings by
+  their wording, never by their census key: `Ui.resolve` delivers a warning
+  as a note when an earlier warning of its code and output scope says the
+  same words (`Diag.sameLine`, `Diag.foldRepeats`), whatever subject either
+  carries, and that first warning carries their count; a census loss's notes
+  count on the line its first record prints on, a line's count is what it
+  stands for, and porcelain keeps every record (`foldRepeats_sum_exact`,
+  `foldRepeats_line_exact`, `foldRepeats_shown_exact`,
+  `foldRepeats_visible_inj`). So a message never names its site — a page, a
+  frame number, a measure, a renamed anchor: those are the record's `detail`,
+  printed beside the words and kept out of them, or one loss prints a line per
+  site; every code's witness written twice prints no more warning lines
+  (`repeatFoldChecks`). A header names a construct the author wrote — a
+  control sequence, an environment opener, a math shift — or nothing, never a
+  word of text or a fragment of code (`Diag.Spelling`). An emitter that keys
+  once per construct (`warnOnce`, `sayOnce`) delivers its later sites as notes
+  itself, whatever their words. Errors print at every site; acceptance and
+  `--werror` count a folded repeat once, as they count a census repeat.
 
 - A run never carries a leading of its own: its line box leads at its
   paragraph's leading in its own size's proportion (`Ir.runLead`), as LaTeX

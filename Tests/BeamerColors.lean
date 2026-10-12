@@ -63,7 +63,7 @@ def beamerColorOriginChecks (ref : IO.Ref (List String)) : IO Unit := do
     let ds := (Elab.runRawsSpanned "root.tex" raws).2.1.filter (·.kind == .W0104)
     t s!"beamer color origin: {name} is still diagnosed" (!ds.isEmpty)
     t s!"beamer color origin: {name} names its command"
-      (ds.all (·.trigger == some "\\setbeamercolor"))
+      (ds.all (·.triggerText == some "\\setbeamercolor"))
     t s!"beamer color origin: {name} names its included declaration"
       (ds.all fun d => d.span.any fun span =>
         span.file == child && lines.contains span.pos.line && span.pos.col == 1)

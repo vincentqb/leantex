@@ -74,4 +74,4 @@ def frontendPictureCompositionChecks (ref : IO.Ref (List String)) : IO Unit := d
   t "a setting line an included file wrote is named in that file, at its own token"
     (!sloped.isEmpty && sloped.all fun d =>
       d.span.any (fun s => s.file == keyFile && s.pos.line == 2 && s.pos.col == 1) &&
-        d.trigger == some "\\tikzset")
+        d.triggerText == some "\\tikzset")

@@ -3590,7 +3590,7 @@ def tableChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit 
   let shipsMark (src mark : String) : Array Bool :=
     (pageTexts (layoutOut src)).map fun txt => (txt.splitOn mark).length > 1
   let spillTexts (src : String) : Array String :=
-    ((layoutDiags src).filter (·.code == "W0384")).map (·.message)
+    ((layoutDiags src).filter (·.code == "W0384")).map fun d => d.message ++ " " ++ d.detail.getD ""
   let one := "Alphafill"
   let two := "Bravofill"
   let shortA := altFiller one 1 1
@@ -3622,9 +3622,9 @@ def tableChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit 
   -- alternation neither invents a spill nor inflates one. The groups spill
   -- by different amounts — one is set larger, so a different band is the
   -- one that fails to fit — because equal numbers would let a wrong
-  -- attribution pass: W0384 dedupes by message, which is exactly how the
-  -- stacked shape reported one figure for a frame whose two readings
-  -- overflow by two.
+  -- attribution pass: W0384 dedupes by its words and its site's detail,
+  -- which is exactly how the stacked shape reported one figure for a frame
+  -- whose two readings overflow by two.
   let overA := altFiller one 20 3
   let overB := "{\\Large " ++ altFiller two 9 3 ++ "}"
   t "alternation: a step page's spill is the selected group's own, not the stack's"

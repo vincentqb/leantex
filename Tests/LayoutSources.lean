@@ -48,4 +48,4 @@ def layoutSourceChecks (ref : IO.Ref (List String)) (fs : Font.FontSet) : IO Uni
       (out.pages.size > 2 && spills.size == 2)
     for (_, site) in sites.frames do
       t s!"citation removal preserves opening line {site.pos.line} through actual layout"
-        (spills.any fun d => sameOpening d.span site && d.trigger == some "\\begin")
+        (spills.any fun d => sameOpening d.span site && d.triggerText == some "\\begin")

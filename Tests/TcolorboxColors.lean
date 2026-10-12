@@ -97,7 +97,7 @@ private def caseChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet)
   for key in refused do
     t s!"tcolorbox colors: {label}: {key} loss named"
       (ds.any fun d => d.kind == .W0110 && d.subject == some "tcolorbox:panel" &&
-        d.trigger == some "\\begin" && hasStr d.message key)
+        d.triggerText == some "\\begin" && hasStr d.message key)
 
 /-- tcolorbox 6.9.0 captures color keys at each use, before executing font
 hooks. Its savebox selects that captured color before the font hook, so a

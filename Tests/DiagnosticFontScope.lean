@@ -83,10 +83,12 @@ def diagnosticFontScopeChecks (ref : IO.Ref (List String))
             (reports.length == (if native then 1 else 0) &&
              diags.length == (if native || stale then 1 else 0) &&
              (!stale || diags.all (fontScopeString · "code" == "W0013")))
-          t "native records have PDF scope and the real triggering source"
+          -- The glyph is document text, which its location points at and its
+          -- message names: the record quotes no construct.
+          t "native records have PDF scope and the real source, and name no construct"
             (reports.all fun d => fontScopeString d "output" == "pdf" &&
               fontScopeString d "file" == source.toString && fontScopeCount d "line" == 6 &&
-              fontScopeCount d "col" == 8 && fontScopeString d "trigger" == glyph &&
+              fontScopeCount d "col" == 8 && (d.getObjVal? "trigger").toOption.isNone &&
               fontScopeString d "severity" == (if allow then "note"
                 else if fallback then "warning" else "error"))
           let accepted := records.filter (fontScopeString · "event" == "accepted")

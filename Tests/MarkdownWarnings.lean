@@ -161,7 +161,8 @@ three sites ({routes.size})"
 {textBreaks.size} text lines end hyphenated)"
     (!codeEnds.isEmpty && !textBreaks.isEmpty && codeEnds.all fun (_, s, _, _) => !s.endsWith "-")
   -- Four paragraphs, each holding one token no measure line can hold: four
-  -- overfull lines, each its own loss with its own fix, as TeX logs each.
+  -- overfull lines, each a site of its own in the census, and one wording on
+  -- the log — one warning carrying the four sites, each listed under -v.
   let wide := String.ofList (List.replicate 90 '7')
   let paras := String.intercalate "\n\n" (List.replicate 4 s!"Before {wide} after.") ++ "\n"
   -- The located document, as the driver lays it out: every overfull line
@@ -174,9 +175,12 @@ three sites ({routes.size})"
     (overfull.size == 4
       && (overfull.map (·.span.map (·.pos.line))).toList == [some 1, some 3, some 5, some 7]
       && (overfull.toList.filterMap (·.subject)).eraseDups.length == 4)
-  let shown := (Diag.foldRepeats overfull).filter (·.severity == .warning)
-  t "the default log shows each overfull line, none folded into another"
-    (shown.size == 4 && shown.all (·.sites == 1))
+  let folded := Diag.foldRepeats overfull
+  let shown := folded.filter (·.severity == .warning)
+  t "the default log shows the four overfull lines as one warning at the first, carrying four sites"
+    (shown.size == 1 && shown.all (fun d => d.sites == 4 &&
+        d.span.map (·.pos.line) == some 1) &&
+      (folded.filter (·.severity == .note)).size == 3)
   -- A markdown hard break is HTML's `<br>`: it ends a line and declares
   -- nothing about the line it ends. Two builds apart, the page is its tex
   -- twin's — the measure set equal, the break held, the long line before it

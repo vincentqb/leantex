@@ -19,7 +19,7 @@ private def triggerAt (ds : Array Diag) (kind : DiagCode) (file : String)
   let found := ds.filter fun d =>
     d.kind == kind && d.span.any fun s => s.file == file &&
       s.pos.line == line && s.pos.col == col
-  found.size == 1 && found.all (·.trigger == some trigger)
+  found.size == 1 && found.all (·.triggerText == some trigger)
 
 /-- Replacement text crossing from execution into compatibility rewriting
 names its actual macro use, even when definition coordinates collide with
@@ -105,7 +105,7 @@ def diagnosticElabMacroChecks (ref : IO.Ref (List String)) : IO Unit := do
   let owns (ds : Array Diag) (file : String) (line col : Nat) (trigger : String) :=
     let ds := ds.filter (·.kind == .W0110)
     ds.size == 2 && ds.all fun d =>
-      d.span == some ⟨file, { line, col }⟩ && d.trigger == some trigger
+      d.span == some ⟨file, { line, col }⟩ && d.triggerText == some trigger
   for (label, body, extra, call, col) in [
       ("inline", animation, "", "before \\movie", 8),
       ("block", "\\block{" ++ animation ++ "}", "", "\\movie", 1),
@@ -217,7 +217,7 @@ def diagnosticTriggerChecks (ref : IO.Ref (List String)) : IO Unit := do
   for d in lua do
     let (accepted, didAccept) := Diag.accept #["W0104"] false d
     t "diagnostic trigger: acceptance retains the trigger and its existing policy"
-      (didAccept && accepted.demoted && accepted.trigger == some "\\directlua" &&
+      (didAccept && accepted.demoted && accepted.triggerText == some "\\directlua" &&
         { accepted with trigger := none } == original.demote)
     for outputs in [#[], #[Diag.Output.pdf], #[.html], #[.pdf, .html]] do
       t "diagnostic trigger: unscoped diagnostics retain their output selection"

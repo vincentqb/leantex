@@ -54,12 +54,12 @@ def beamerColorOriginsChecks (ref : IO.Ref (List String)) : IO Unit := do
           d.subject == some (Ir.inkKey "frametitlefg" soft white))
       let observed := String.intercalate ", " (reports.toList.map fun d =>
         let location := d.span.map (fun s => s!"{s.file}:{s.pos.line}:{s.pos.col}")
-        s!"{location.getD "<no span>"} {d.trigger.getD "<no trigger>"}")
+        s!"{location.getD "<no span>"} {d.triggerText.getD "<no trigger>"}")
       t s!"beamer origins: {name}: owner {child}:{line}:1 {trigger}; observed {observed}"
         (reports.size == 1 && reports.all fun d =>
           d.span.any (fun s =>
             s.file == child && s.pos.line == line && s.pos.col == 1) &&
-          d.trigger == some trigger)
+          d.triggerText == some trigger)
   for (first, last) in [("frametitle", "headline"), ("headline", "frametitle")] do
     exercise s!"{first} then {last}"
       (declare first "fg=black,bg=white" ++ "\n" ++

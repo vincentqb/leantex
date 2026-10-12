@@ -189,7 +189,7 @@
 ✖ [E0404]
   cannot use 'fonts/Broken-Regular.otf': not a TrueType or OpenType file
 ── E0405 (dropped) font has no glyph for a character; dropped
-✖ [E0405] - ⟨
+✖ [E0405]
   'Open Sans' has no glyph for U+27E8
   skipped
   suggestion: declare a face that covers it in \fonts, or accept the loss with \allow{E0405}
@@ -330,7 +330,7 @@
 ⚠ [W0008]
   '\fonts' dir 'fonts' is not a directory (./fonts); looking elsewhere
 ── W0009 (degraded) no glyph in the declared face; set from a fallback face
-⚠ [W0009] - ∀
+⚠ [W0009]
   'Open Sans' has no glyph for U+2200
   replaced by: a glyph from 'Source Code Pro'
 ── W0010 (degraded) lists nest four levels; deeper levels reuse the fourth marker
@@ -358,7 +358,7 @@
   equation numbers are not rendered yet; '{align}' sets unnumbered
   suggestion: '{align*}' spells the unnumbered form, which renders the same
 ── W0016 (degraded) math alphabet glyph absent from the covered face; a stand-in keeps the letter
-⚠ [W0016] - 𝔸
+⚠ [W0016]
   'Fira Math' has no double-struck glyph for U+1D538
   replaced by: the base letter 'A'
   suggestion: declare a math face that carries this alphabet: \fonts{ math = ... }
@@ -450,7 +450,7 @@
   '\maketitle' with nothing declared; no title is set
   suggestion: declare \title{...} (and \author, \date, ...) before it
 ── W0310 (degraded) '[' never closes; not an argument
-⚠ [W0310] - [
+⚠ [W0310]
   '[' after '\section' never closes; it is not an argument
   suggestion: add the matching ']'
 ── W0311 (degraded) a second \frametitle replaces the first
@@ -509,8 +509,9 @@
   suggestion: this page has no anchors: a level-1 \section title becomes one in the article class
 ── W0327 (degraded) two distinct section titles fold to the same anchor
 ⚠ [W0327]
-  sections "Signal Path" and "Signal, Path" share the anchor 'signal-path'; the second becomes 'signal-path-2'
-  suggestion: an in-page link '#signal-path' reaches only the first; retitle one section, or link to '#signal-path-2'
+  sections share the anchor 'signal-path'; each after the first takes a numbered anchor
+  "Signal, Path" takes 'signal-path-2', after "Signal Path"
+  suggestion: an in-page link '#signal-path' reaches only the first; retitle the sections apart
 ── W0328 (degraded) one-line content wraps; only its first line is kept
 ⚠ [W0328]
   running content wraps at the text width; only its first line is kept
@@ -532,7 +533,8 @@
   suggestion: declare the footer's slots yourself (\chrome{ footer = { left = ..., right = \framenumber } }) to say the mixing is meant, or drop \pagenumber from \framefoot
 ── W0333 (degraded) band slots collide; the lower-priority slot is painted over
 ⚠ [W0333]
-  the footer's slots collide on page 2: framenumber yields, painted over by the \framefoot note
+  the footer's slots collide: framenumber yields, painted over by the \framefoot note
+  on page 2
   suggestion: slot positions are fixed and the lower-priority slot yields in place: shorten the content or drop a slot
 ── W0334 (pending) picture construct outside the rendered subset; not drawn
 ⚠ [W0334] - \begin
@@ -638,7 +640,8 @@
   suggestion: \define \name(...) {body} declares typed commands
 ── W0358 (degraded) a float taller than the text block overruns its page
 ⚠ [W0358]
-  a figure or table is 289.409pt taller than the text block; it overruns its page
+  a figure or table is taller than the text block; it overruns its page
+  289.409pt taller
   suggestion: shrink the float's content, or raise the text height (\page{ vmargin = ... })
 ── W0361 (config) a built-in is not replaced by a redefinition the engine cannot run
 ⚠ [W0361] - \newcommand
@@ -740,17 +743,19 @@
   '\lIf' is an algorithm construct outside the modeled subset; its content is kept as plain lines
 ── W0384 (degraded) a frame taller than its page continues on the next page without a declared break
 ⚠ [W0384]
-  frame 1 is 175.037pt taller than its page; it continues on the next page
+  a frame is taller than its page; it continues on the next page
+  frame 1: 175.037pt taller
   suggestion: shorten the frame, or declare `[allowframebreaks]` on it to accept the break
 ⚠ [W0384]
-  frame standout is 330.514pt taller than its page; it continues on the next page
+  a frame is taller than its page; it continues on the next page
+  frame standout: 330.514pt taller
   suggestion: shorten the frame, or declare `[allowframebreaks]` on it to accept the break
 ── W0385 (degraded) a colour or font change inside math is not carried; its content sets in the surrounding style
 ⚠ [W0385] - $
   '\textbf' inside math sets in the surrounding style
 ── W0386 (degraded) a declared line break did not hold: its line did not fit the measure and re-flowed
 ⚠ [W0386]
-  a declared line break did not hold: 2 lines were declared, 5 ship
+  a declared line did not fit the measure and re-flowed
   suggestion: shorten the declared line, reduce \page{ hmargin = ... } to widen the measure, or declare a narrower face
 ── W0387 (config) a known construct was read and had no effect
 ⚠ [W0387] - \thispagestyle
@@ -761,7 +766,8 @@
   suggestion: declare \palette{ codeliteral = #RRGGBB } to colour the literal role
 ── W0388 (degraded) ink is painted off the medium; a viewer clips to the page and cannot show it
 ⚠ [W0388]
-  the \framefoot note reaches 270.12 pt off the page on page 2: that much of it cannot be shown, whatever reads the file
+  the \framefoot note reaches off the page: what stands past its edge cannot be shown, whatever reads the file
+  on page 2, 270.12 pt past its edge
   suggestion: a band holds one line at a fixed position: shorten the content, or widen the page (\page{ width = ... })
 ── W0389 (degraded) a math construct whose operands the floor has ruled on; its content operand sets in its place and the formula still sets as mathematics
 ⚠ [W0389] - $
@@ -793,11 +799,13 @@
   suggestion: load booktabs before '\setmainfont', where LaTeX measures them in Latin Modern too
 ── W0399 (degraded) a fill the web slide cannot grow where it stands spaces nothing; the slide sets its frame as if it were absent
 ⚠ [W0399]
-  frame 1: a \vfill before more of its list item, or inside \alt, spaces nothing on the web slide
+  a \vfill before more of its list item, or inside \alt, spaces nothing on the web slide
+  in frame 1
   suggestion: end the item at the \vfill, or move it outside the \alt
 ── W0400 (degraded) a frame a little taller than its page stands past its text area, in the gap below it
 ⚠ [W0400]
-  frame 1 stands 2.237pt past its text area, in the gap below it
+  a frame stands past its text area, in the gap below it
+  frame 1: 2.237pt past
   suggestion: shorten the frame, or declare `[allowframebreaks]` on it to accept a break
 ── W0419 (degraded) a picture the boundary did not draw is drawn in part by the rendered subset; what it leaves out is named in the line
 ⚠ [W0419] - \begin
@@ -856,7 +864,7 @@
 ⚠ [W0428] - \supercite
   '\supercite' sets its citation as '\cite' does, in brackets on the line, where the style sets it as a superscript
 ── W0429 (degraded) a .bib field the document's elaborator refuses where an entry stands; the field sets as its text
-⚠ [W0429] - \section{S}
+⚠ [W0429]
   the 'note' field of 'k' holds markup this engine sets only between paragraphs; it sets as its text, run into the entry
 ── W0435 (degraded) a \qedhere whose QED this engine cannot set where amsthm sets it; the QED stands on a line of its own after the display
 ⚠ [W0435] - \qedhere

@@ -146,19 +146,22 @@ public def plainReading : FieldReading := fun _ => plainField
 the field it stands for (`nameUnread`). -/
 private def unreadWho : String := "a .bib field"
 
+/-- The key prefix a refused field's text stands under until the list names
+the field it was read from (`nameUnread`). -/
+private def unreadKey : String := "bibfield:unread:"
+
 /-- A field the document's elaborator refused where an entry stands, set
 as its text (W0429): the blocks the body would set read run into the entry
 where `cause` is none, else, where those did not read either, the reading
-with no elaborator, and the refusal's own words. The field's text is the
-literal it stands for (`trigger`), keyed by it until the list names the
-field (`nameUnread`). -/
+with no elaborator, and the refusal's own words. It is keyed by the field's
+text until the list names the field (`nameUnread`). -/
 public def unreadDiag (span : Span) (src : String) (cause : Option String) : Diag :=
   let what := match cause with
     | none => "holds markup this engine sets only between paragraphs; it sets as its text, \
         run into the entry"
     | some c => s!"is not TeX this engine sets in an entry ({c}); it sets as its plain text"
   Diag.of .W0429 s!"{unreadWho} {what}" (some span)
-    (subject := some ("bibfield:unread:" ++ src)) (trigger := some src)
+    (subject := some (unreadKey ++ src))
 
 /-- A refused field's diagnostic is a warning, never an error. -/
 public theorem unreadDiag_ships (span : Span) (src : String) (cause : Option String) :
@@ -174,7 +177,9 @@ field holds whole (a name list as the style writes it) is keyed by the
 entry. Every other diagnostic is returned as it is. -/
 public def nameUnread (written : Option Entry) (e : Entry) (d : Diag) : Diag :=
   if d.kind != .W0429 then d else
-  let src := d.trigger.getD ""
+  let src := match d.subject with
+    | some k => if k.startsWith unreadKey then (k.drop unreadKey.length).toString else ""
+    | none => ""
   let holds (x : Entry) : Option String :=
     (x.fields.find? (·.2.trimAscii.toString == src)).map (·.1)
   match (written.bind holds).orElse fun _ => holds e with

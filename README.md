@@ -32,8 +32,10 @@ Declare `\output{formats=pdf,html}` in a document to build both formats.
 A successful HTML build is one portable file containing its fonts, images
 and styles. Ordinary hyperlinks remain links.
 
-Diagnostics identify the source location and unsupported construct. Use `-v`
-for more detail, `--porcelain` for JSON output, or `leantex --help` for all options.
+Diagnostics identify the source location and unsupported construct. A loss
+repeated across the document prints once, at its first site, with its count;
+`-v` lists every site, `--porcelain` gives JSON output, and `leantex --help`
+shows all options.
 
 ## TeX and Markdown
 

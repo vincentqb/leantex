@@ -666,10 +666,10 @@ fragment's fallback coordinates can coincide with an unrelated written token. -/
   if pos.sourceMapped then sources[(file, pos.line, pos.col)]? else none
 
 /-- Restore a downstream diagnostic's written trigger from lexical evidence,
-retaining an explicit trigger when no source token owns its span. -/
+retaining an explicit trigger when no construct token owns its span. -/
 @[expose] public def SourceTriggers.attribute (sources : SourceTriggers) (d : Diag) : Diag :=
-  { d with trigger := (d.span.bind fun s =>
-      sources.writtenAt s.file s.pos).orElse (fun _ => d.trigger) }
+  { d with trigger := ((d.span.bind fun s =>
+      sources.writtenAt s.file s.pos).bind Diag.Spelling.ofWritten?).orElse (fun _ => d.trigger) }
 
 /-- Attribution changes presentation only, including for accepted or scoped
 records; every other diagnostic field is exactly the input field. -/
@@ -680,7 +680,8 @@ public theorem SourceTriggers.attribute_record_exact (sources : SourceTriggers) 
 public theorem SourceTriggers.attribute_fixed_point (sources : SourceTriggers) (d : Diag) :
     sources.attribute (sources.attribute d) = sources.attribute d := by
   unfold SourceTriggers.attribute
-  cases d.span.bind (fun s => sources.writtenAt s.file s.pos) <;> simp
+  cases (d.span.bind (fun s => sources.writtenAt s.file s.pos)).bind
+    Diag.Spelling.ofWritten? <;> simp
 
 /-- Failed source mapping cannot borrow any token from the index, regardless
 of its contents; all diagnostic fields, including explicit evidence, survive. -/
@@ -703,8 +704,9 @@ Markdown command has no lexical evidence, so its generated TeX spelling is
 never reported as authored. Environments keep the literal opening control
 word, without reconstructing braces or whitespace the parser consumed.
 Math keeps its recorded opener, never a spelling inferred from display mode.
-Words and symbols need the same original evidence: their rendered values can
-be normalized or synthesized and cannot establish what the author wrote. -/
+A special character is indexed only where it spells a construct, and a word
+of text never is: a diagnostic's header names the construct its loss is
+about (`Diag.Spelling`), and the location already points at the text. -/
 -- conserves: none — an index of the parsed surface, before IR exists.
 private def sourceTriggers (file : String) (acc : SourceTriggers) :
     List Raw → SourceTriggers
@@ -712,10 +714,13 @@ private def sourceTriggers (file : String) (acc : SourceTriggers) :
   | r :: rest => sourceTriggers file (sourceTrigger file acc r) rest
 
 private def sourceTrigger (file : String) (acc : SourceTriggers) : Raw → SourceTriggers
-  | .ctrl _ p | .verb _ _ p | .word _ p | .sym _ p =>
+  | .ctrl _ p | .verb _ _ p | .sym _ p =>
     match p.command with
-    | some command => acc.insertIfNew (file, p.line, p.col) command
+    | some command =>
+      if Diag.constructSpelling command then acc.insertIfNew (file, p.line, p.col) command
+      else acc
     | none => acc
+  | .word _ _ => acc
   | .group body _ => sourceTriggers file acc body.toList
   | .math _ body p =>
     let acc := match p.command with
@@ -1258,7 +1263,8 @@ public def styInternal (file name : String) : Bool :=
 /-- Attribute a diagnostic by its source site, preserving an explicit trigger. -/
 public def SourceTriggers.atSource (sources : SourceTriggers) (file : String)
     (pos : Pos) (d : Diag) : Diag :=
-  { d with trigger := d.trigger.orElse fun _ => sources.writtenAt file pos }
+  { d with trigger := d.trigger.orElse fun _ =>
+      (sources.writtenAt file pos).bind Diag.Spelling.ofWritten? }
 
 /-- Immediate attribution has the same failed-mapping boundary as delayed
 attribution: an unavailable original coordinate leaves the record untouched. -/

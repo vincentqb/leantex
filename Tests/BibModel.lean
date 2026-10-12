@@ -1882,7 +1882,7 @@ def bibFieldBackstopChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet)
       let named := ds.filter (·.code == "W0429")
       t s!"{what}: one warning names the note of 'k' ({named.map (·.message)})"
         (named.size == 1 && named.all fun d => d.subject == some "bibfield:unread:k:note" &&
-          hasStr d.message "'note' field of 'k'" && d.trigger == some field)
+          hasStr d.message "'note' field of 'k'" && d.trigger.isNone)
   let skip := "\\hspace{1em}x\\vspace{2pt}"
   for (name, pre, list) in lists do
     let (doc, ds) := bibBuild (bibProbeDoc pre list "k") #[("r", bibOf skip), ("r.bib", bibOf skip)]

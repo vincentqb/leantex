@@ -17,7 +17,7 @@ def diagnosticContrastOriginChecks (ref : IO.Ref (List String)) : IO Unit := do
     (Elab.runRawsSpanned file (Parse.parse file (Lex.lex file source).1).1).2.1
   let atSource (d : Diag) (line : Nat) (trigger : String) : Bool :=
     d.span.any (fun s => s.file == file && s.pos.line == line) &&
-      d.trigger == some trigger
+      d.triggerText == some trigger
   let doc (palette body : String) : String :=
     "\\documentclass{article}\n" ++ palette ++ "\n\\begin{document}\n" ++
       body ++ "\n\\end{document}"

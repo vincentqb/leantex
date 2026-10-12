@@ -163,16 +163,16 @@ def diagnosticRecordChecks (ref : IO.Ref (List String)) : IO Unit := do
       Render.human false { empty with recovery := some (.replacedBy "") } ==
         "⚠ [W0301]\n  replaced")
   let payload := "\\oddity\r\nError - forged\t\x1b[31m\x9b0m\u2028\u2029"
-  let safe := "\\oddity\\r\\nError - forged\\t\\x1b[31m\\x9b0m\\u2028\\u2029"
   let hostile := { d with
-    trigger := some payload
+    trigger := Diag.Spelling.ofWritten? payload
     recovery := some (.replacedBy payload)
     help := none }
-  t "diagnostic record: trigger cannot create a line or terminal escape"
-    ((Render.human false hostile).splitOn "\n" ==
-      ["⚠ [W0301] - example.tex:4:7 - " ++ safe,
-        "  command is unknown", "  replaced by: \\oddity",
-        "    Error - forged\\t\\x1b[31m\\x9b0m\\u2028\\u2029"])
+  t "diagnostic record: a header names no text that is not one construct token"
+    ((Diag.Spelling.ofWritten? payload).isNone &&
+      (Render.human false hostile).splitOn "\n" ==
+        ["⚠ [W0301] - example.tex:4:7",
+          "  command is unknown", "  replaced by: \\oddity",
+          "    Error - forged\\t\\x1b[31m\\x9b0m\\u2028\\u2029"])
   for sample in [d, hostile, empty] do
     let stripped := ["\x1b[1;31m", "\x1b[1;33m", "\x1b[1;36m", "\x1b[1;34m",
       "\x1b[1m", "\x1b[0m"].foldl (fun s code => s.replace code "") (Render.human true sample)
@@ -198,11 +198,14 @@ def diagnosticRecordChecks (ref : IO.Ref (List String)) : IO Unit := do
     let sample := Diag.of .W0301 text
       (some ⟨text, { line := 0, col := 0 }⟩) (help := text) (subject := text)
       (trigger := text) (recovery := some (.replacedBy text)) (output := some .pdf)
+      (detail := text)
     let encoded := Render.porcelainDiag sample
     let parsed := Lean.Json.parse encoded
-    for key in ["message", "file", "help", "subject", "trigger"] do
+    for key in ["message", "file", "help", "subject", "detail"] do
       let actual := parsed.bind fun j => (j.getObjVal? key).bind Lean.Json.getStr?
       t s!"diagnostic record: JSON round-trip {key}" (actual.toOption == some text)
+    t "diagnostic record: text that spells no construct is no trigger"
+      ((parsed.bind fun j => j.getObjVal? "trigger").toOption.isNone)
     let actual := parsed.bind fun j => (j.getObjVal? "recovery").bind fun r =>
       (r.getObjVal? "replacement").bind Lean.Json.getStr?
     t "diagnostic record: JSON round-trip empty or hostile replacement"
@@ -293,8 +296,9 @@ def diagnosticFormatCliChecks (ref : IO.Ref (List String)) : IO Unit := do
         records.all fun line => (Lean.Json.parse line).toOption.any fun j =>
           j.getObjValAs? String "code" == .ok "E0001" &&
           j.getObjValAs? String "severity" == .ok "error")
-    -- A loss with a location, a trigger, a recovery and a suggestion, end
-    -- to end: one bad byte ships a page and names itself.
+    -- A loss with a location, a recovery and a suggestion, end to end: one
+    -- bad byte ships a page and names itself. Its header quotes no text: a
+    -- replaced byte is no construct.
     let face ← IO.FS.realPath (testFonts ++ "/OpenSans-Regular.ttf")
     let runFace (args : Array String) := IO.Process.output {
       cmd := ".lake/build/bin/leantex", args := args
@@ -303,7 +307,7 @@ def diagnosticFormatCliChecks (ref : IO.Ref (List String)) : IO Unit := do
     let human ← runFace #[file, "-o", shipped, "--color=never", "-q"]
     t "diagnostic format: a located loss separates location, reason, recovery and suggestion"
       (human.exitCode == 0 && human.stdout.isEmpty && human.stderr.startsWith
-        (s!"⚠ [W0002] - {file}:1:1 - \uFFFD\n  byte 0xFF at offset 0 is not text in UTF-8\n" ++
+        (s!"⚠ [W0002] - {file}:1:1\n  byte 0xFF at offset 0 is not text in UTF-8\n" ++
           "  replaced by: U+FFFD\n  suggestion: save the file as UTF-8, or name its encoding: " ++
           "\\usepackage[latin1]{inputenc} reads Latin-1\n"))
     let machine ← runFace #[file, "-o", shipped, "--porcelain"]

@@ -77,13 +77,18 @@ public def human (color : Bool) (d : Diag) (showOutput : Bool := false) : String
         s!"{humanText "\\n" sp.file}:{sp.pos.line}:{sp.pos.col}"
     | none => ""
   let trigger := match d.trigger with
-    | some text => if text.isEmpty then "" else " - " ++ humanText "\\n" text
+    | some t => " - " ++ humanText "\\n" t.text
     | none => ""
   -- A loss's first line carries its total; `Ui.resolve` delivers its repeats
   -- as notes (`Diag.foldRepeats`).
   let count := if d.sites ≤ 1 then "" else sgr color "1" s!" ({d.sites} sites)"
   let reason := if d.message.isEmpty then "" else
     "\n  " ++ humanText "\n  " (d.message.replace "\r\n" "\n")
+  -- This site's own particulars, beside the words its line shares.
+  let detail := match d.detail with
+    | some text => if text.isEmpty then "" else
+        "\n  " ++ humanText "\n  " (text.replace "\r\n" "\n")
+    | none => ""
   let recovery := match d.recovery with
     | none => ""
     | some .ignored => "\n  ignored"
@@ -97,7 +102,7 @@ public def human (color : Bool) (d : Diag) (showOutput : Bool := false) : String
         "\n  " ++ sgr color "1" "suggestion:" ++ " " ++
           humanText "\n    " (text.replace "\r\n" "\n")
     | none => ""
-  head ++ scope ++ location ++ trigger ++ count ++ reason ++ recovery ++ suggestion
+  head ++ scope ++ location ++ trigger ++ count ++ reason ++ detail ++ recovery ++ suggestion
 
 /-- A run's verdict line. `written` names the artifacts a failed run still
 wrote, so a reader can tell them from stale ones. -/
@@ -172,7 +177,8 @@ consumer has to group by message text. `sites` is how many of the run's
 sites the line accounts for, absent when it is 1: a repeated wording's first
 line carries its repeats and each later one 0, so the lines' counts add up to
 the run's sites (`Diag.foldRepeats_sum_exact`). `offsets` lists every byte
-offset a diagnostic names, where its message shows only the first few. -/
+offset a diagnostic names, where its message shows only the first few;
+`detail` is the site's own particulars, beside the words its line shares. -/
 public def porcelainDiag (d : Diag) : String :=
   let base := [("event", jstr "diagnostic"), ("severity", jstr d.severity.label),
     ("code", jstr d.code), ("loss", jstr d.kind.loss.label), ("message", jstr d.message)]
@@ -188,13 +194,16 @@ public def porcelainDiag (d : Diag) : String :=
     | none => all
   let all := if d.sites == 1 then all else all ++ [("sites", toString d.sites)]
   let all := match d.trigger with
-    | some text => all ++ [("trigger", jstr text)]
+    | some t => all ++ [("trigger", jstr t.text)]
     | none => all
   let all := match d.recovery with
     | some recovery => all ++ [("recovery", recoveryJson recovery)]
     | none => all
   let all := match d.output with
     | some output => all ++ [("output", jstr output.label)]
+    | none => all
+  let all := match d.detail with
+    | some text => all ++ [("detail", jstr text)]
     | none => all
   let all := if d.offsets.isEmpty then all
     else all ++ [("offsets", "[" ++ ",".intercalate (d.offsets.toList.map toString) ++ "]")]
