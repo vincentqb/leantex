@@ -8,8 +8,9 @@ open LeanTex.Core LeanTex.Core.Utf8 LeanTex.Cli
 
 /-! A supported HTML spelling is a typed Markdown construct, never markup
 passed to the backend. These invented cases hold its visible content to the
-shipped tree and layout. The disclosure loses interactivity, so its route
-must name that loss even when every word ships. -/
+shipped tree and layout. A disclosure is one construct both artifacts read:
+the page ships the platform's element, paper sets every word expanded, and
+no artifact loses anything to name. -/
 
 def markdownHtmlChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
@@ -19,32 +20,31 @@ def markdownHtmlChecks (ref : IO.Ref (List String)) : IO Unit := do
 \nCedar body.\n\n```\n<sample> & literal\n```\n\n- Elm item\n\
 \n</details>\n\nFir after.\n"
   let tree := mdTreeOf disclosure
-  t "a disclosure's summary ships before its complete body"
-    (hasStr tree "<p><strong>Amber & linen</strong></p><p>Cedar body.</p>")
+  t "a disclosure ships as the platform's element, its summary first and its body inside it"
+    (hasStr tree "<details><summary>Amber & linen</summary><p>Cedar body.</p>")
   t "a disclosure preserves its code, list and following block"
     (mdCodeBlocks disclosure == #[some "<sample> & literal"]
       && mdCodeBlocks disclosure == mdCodeBlocks "```\n<sample> & literal\n```\n"
-      && hasStr tree "<ul><li>Elm item</li></ul><p>Fir after.</p>")
-  t "supported disclosures compile and name their lost collapse for the HTML and the twin"
-    (!refused disclosure
-      && collapseNamed #[.html] (dvMd disclosure) == 1 && collapseNamed #[.md] (dvMd disclosure) == 1
-      && collapseNamed #[.pdf] (dvMd disclosure) == 0)
+      && hasStr tree "<ul><li>Elm item</li></ul></details><p>Fir after.</p>")
+  t "a supported disclosure compiles and names nothing, for any artifact"
+    (!refused disclosure && (dvMd disclosure).isEmpty)
   t "a disclosure with no blank lines still ships its summary and body"
     (hasStr (mdTreeOf "<details>\n<summary>Grove</summary>\nHazel\n</details>\nIris\n")
-      "<p><strong>Grove</strong></p><p>Hazel</p><p>Iris</p>")
+      "<details><summary>Grove</summary><p>Hazel</p></details><p>Iris</p>")
   t "adjacent disclosures remain separate and preserve source order"
     (hasStr (mdTreeOf "<details>\n<summary>Juniper</summary>\nKelp\n</details>\n\
 <details>\n<summary>Larch</summary>\nMoss\n</details>\n")
-      "<p><strong>Juniper</strong></p><p>Kelp</p>\
-<p><strong>Larch</strong></p><p>Moss</p>")
+      "<details><summary>Juniper</summary><p>Kelp</p></details>\
+<details><summary>Larch</summary><p>Moss</p></details>")
   let nested := "<details>\n<summary>Outer</summary>\nBefore\n\
 <details>\n<summary>Inner</summary>\nInside\n</details>\nAfter\n</details>\nEnd\n"
-  t "nested disclosures preserve all summaries, bodies and following text"
+  t "nested disclosures nest, each keeping its summary, body and the text after it"
     (!refused nested
       && hasStr (mdTreeOf nested)
-        "<p><strong>Outer</strong></p><p>Before</p>\
-<p><strong>Inner</strong></p><p>Inside</p><p>After</p><p>End</p>"
-      && collapseNamed #[.html] (dvMd nested) == 2 && collapseNamed #[.md] (dvMd nested) == 2)
+        "<details><summary>Outer</summary><p>Before</p>\
+<details><summary>Inner</summary><p>Inside</p></details><p>After</p></details>\
+<p>End</p>"
+      && (dvMd nested).isEmpty)
   for src in [
       "> <details>\n> <summary>Amber</summary>\n>\n> Cedar\n> </details>\n\nFir\n",
       "- <details>\n  <summary>Amber</summary>\n\n  Cedar\n  </details>\n\nFir\n"] do
@@ -52,15 +52,15 @@ def markdownHtmlChecks (ref : IO.Ref (List String)) : IO Unit := do
       (!refused src
         && (hasStr (mdTreeOf src) "</blockquote><p>Fir</p>"
           || hasStr (mdTreeOf src) "</li></ul><p>Fir</p>")
-        && hasStr (mdTreeOf src) "<strong>Amber</strong>"
+        && hasStr (mdTreeOf src) "<details><summary>Amber</summary>"
         && hasStr (mdTreeOf src) "Cedar")
   t "supported HTML names are case insensitive"
     (!refused "<DETAILS >\n<SUMMARY >Amber</SUMMARY >\nCedar\n</DETAILS >\n"
       && hasStr (mdTreeOf "<DETAILS >\n<SUMMARY >Amber</SUMMARY >\nCedar\n</DETAILS >\n")
-        "<p><strong>Amber</strong></p><p>Cedar</p>")
+        "<details><summary>Amber</summary><p>Cedar</p></details>")
   t "a summary is HTML text, not another Markdown or TeX parse"
     (hasStr (mdTreeOf "<details>\n<summary>*Oak* \\textbf{literal} &lt;sample&gt;</summary>\n\
-Pine\n</details>\n") "<strong>*Oak* \\textbf{literal} <sample></strong>")
+Pine\n</details>\n") "<summary>*Oak* \\textbf{literal} <sample></summary>")
   let quoted := "<details>\n<summary>&lt;script&gt;alert(7)&lt;/script&gt; \
 \\input{literal} &amp; &#60;img&#62;</summary>\nBody\n</details>\n"
   let (_, safeBody, _) := HtmlDoc.emitTree {} (elabMd quoted).1
@@ -133,9 +133,10 @@ Pine\n</details>\n") "<strong>*Oak* \\textbf{literal} <sample></strong>")
   t "distinct Unicode target keys do not collapse to the same native anchor"
     (hasStr (mdTreeOf "<a id=\"fern₈\"></a><a id=\"fern₉\"></a>\n")
       "id=fern₈></span><span id=fern₉>")
-  -- `open` on a disclosure is its expanded state, which the disclosure sets
-  -- (`htmlTwinChecks`); on any other element, and beside another attribute,
-  -- it is refused like every attribute the vocabulary does not read.
+  -- `open` on a disclosure is its open state, which the element ships
+  -- (`disclosurePrintChecks`); on any other element, and beside another
+  -- attribute, it is refused like every attribute the vocabulary does not
+  -- read.
   for attrs in ["open", "hidden", "aria-hidden=\"true\"", "role=\"none\"",
       "lang=\"de\"", "style=\"display:none\"", "onclick=\"evil()\""] do
     for src in (if attrs == "open" then [] else
@@ -168,6 +169,8 @@ Pine\n</details>\n") "<strong>*Oak* \\textbf{literal} <sample></strong>")
       "<details>\n<summary>Amber &NotEqualTilde;</summary>\nCedar\n</details>\n",
       "<details>\n<summary>Amber &copy</summary>\nCedar\n</details>\n",
       "<details>\n<summary>Amber &#128;</summary>\nCedar\n</details>\n",
+      "<details>\n<summary></summary>\nCedar\n</details>\n",
+      "<details>\n<summary> &#32; </summary>\nCedar\n</details>\n",
       "<details>\nCedar\n</details>\n",
       "<details>\n<summary>Amber</summary>\nCedar\n",
       "</details>\n"] do
@@ -305,8 +308,8 @@ def htmlTwinChecks (ref : IO.Ref (List String)) : IO Unit := do
   let rows : List (List String × String × List (String × String × String × String)) :=
     [(["Alder<br>Birch", "Alder<br/>Birch", "Alder<BR />Birch", "Alder <br>\nBirch"],
       "Alder  \nBirch", mdInlineContexts),
-     (["<details open>", "<details open=\"\">", "<DETAILS OPEN=open>"].map disclosure,
-      disclosure "<details>", mdBlockContexts)]
+     (["<details open=\"\">", "<DETAILS OPEN=open>", "<details OPEN=\"OPEN\">"].map disclosure,
+      disclosure "<details open>", mdBlockContexts)]
   for (spellings, twin, contexts) in rows do
     for spelling in spellings do
       for ctx in contexts do
@@ -316,10 +319,18 @@ def htmlTwinChecks (ref : IO.Ref (List String)) : IO Unit := do
         t s!"an accepted HTML spelling ships its twin's HTML ({label})" (ah == bh)
         t s!"an accepted HTML spelling ships its twin's lines ({label})" (al == bl)
         t s!"an accepted HTML spelling names what its twin names ({label})" (ad == bd)
-  for opener in ["<details open>", "<details open=\"\">", "<DETAILS OPEN=open>"] do
-    let ds := dvMd (disclosure opener)
-    t s!"{opener} names its lost collapse once for each artifact that loses it"
-      (collapseNamed #[.html] ds == 1 && collapseNamed #[.md] ds == 1 && collapseNamed #[.pdf] ds == 0)
+  -- The bare tag is the closed state: its page differs from the open one's
+  -- by the element's `open` alone, and paper sets both alike.
+  for ctx in mdBlockContexts do
+    let (oh, ol, od) := mdArtifactsOf fonts (mdInContext ctx (disclosure "<details open>"))
+    let (ch, cl, cd) := mdArtifactsOf fonts (mdInContext ctx (disclosure "<details>"))
+    t s!"an open and a closed disclosure ship one page apart by `open` alone ({ctx.1})"
+      (oh != ch && oh.replace "<details open>" "<details>" == ch)
+    t s!"an open and a closed disclosure set the same lines on paper ({ctx.1})" (ol == cl)
+    -- A list item whose disclosure holds blank lines is loose, as CommonMark
+    -- reads its raw lines; that is the list's, named alike for both.
+    t s!"an open and a closed disclosure name nothing of their own ({ctx.1})"
+      (od == cd && od.all (·.2 == some "md:loose-list"))
   -- A break before a bracket reads no length: the bracket is text.
   let (xh, _, xd) := mdArtifactsOf fonts "Alder<br>[x]\n"
   t "a <br> before a bracket ships the bracket as text"
@@ -419,12 +430,13 @@ def mdOnceInOrder (hay : String) (ws : List String) : Bool :=
 /-- **A refused disclosure is accounted once.** A disclosure with no
 summary, one its input ends inside, and one its list item cuts off are each
 refused at their opening `<`, the document's one diagnostic, and each ships
-every word it held, once, in source order — with no disclosure of its own,
-so no collapse is named and no empty summary sets. A summary line the reader
-cannot read — a tag inside it, an attribute on it, a summary over several
-lines — is raw HTML: refused at its own `<` and its lines dropped, as an HTML
-block's are, and that refusal is the disclosure's one diagnostic too, every
-other word still shipping once, in order. -/
+every word it held, once, in source order — with no element of its own, so
+no empty summary sets. A summary line the reader cannot read — a tag inside
+it, an attribute on it, a summary over several lines, one with no text,
+which would label the element's control with nothing — is raw HTML: refused
+at its own `<` and its lines dropped, as an HTML block's are, and that
+refusal is the disclosure's one diagnostic too, every other word still
+shipping once, in order. -/
 def refusedDisclosureChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
   for (label, src, words, dropped, at_) in [
@@ -448,17 +460,21 @@ def refusedDisclosureChecks (ref : IO.Ref (List String)) : IO Unit := do
         ["Cedar"], ["Amber"], (2, 1)),
       ("an unclosed disclosure whose summary tag spans lines",
         "<details>\n<summary\nclass=\"x\">Amber</summary>\n\nCedar\n",
-        ["Cedar"], ["Amber"], (2, 1))] do
+        ["Cedar"], ["Amber"], (2, 1)),
+      ("an empty summary", "<details>\n<summary></summary>\n\nCedar\n\n</details>\nFir\n",
+        ["Cedar", "Fir"], [], (2, 1)),
+      ("a summary of spaces", "<details>\n<summary> &#32; </summary>\n\nCedar\n\n</details>\n",
+        ["Cedar"], [], (2, 1))] do
     let (doc, ds) := elabMd src
     let shown := docTreeOf doc
     t s!"a refused disclosure ({label}) is its document's one diagnostic, at its <"
       (ds.size == 1 && ds.all fun d => d.kind == .E0390 && d.subject == some "md:raw-html"
         && d.span.map (fun sp => (sp.pos.line, sp.pos.col)) == some at_)
-    t s!"a refused disclosure ({label}) names no collapse and no site twice"
-      (ds.all (·.subject != some "md:disclosure") && siteCollisions ds == #[])
+    t s!"a refused disclosure ({label}) names no site twice" (siteCollisions ds == #[])
     t s!"a refused disclosure ({label}) ships every other word once, in source order"
       (mdOnceInOrder shown words && dropped.all (!hasStr shown ·))
-    t s!"a refused disclosure ({label}) sets no empty summary" (!hasStr shown "<strong></strong>")
+    t s!"a refused disclosure ({label}) ships no element and no empty summary"
+      (!hasStr shown "<strong></strong>" && !hasStr shown "<details" && !hasStr shown "<summary")
 
 /-- The fixes the raw-HTML help names, each as the rewrite of a refused
 construct it asks the author for. The help is exactly these phrases, in

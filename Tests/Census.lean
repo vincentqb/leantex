@@ -199,7 +199,16 @@ its comment included",
     ("the option table ships as a booktabs table, its delimiter row read and not set",
       booktabsBrackets c ((pageRuleSegs c 0).toList.take 3) "Default" "the day to report"
         "print the numbers and no words" && !hasStr (censusText c) "| |"),
-    ("the task items' text ships", hasStr (censusText c) "read the log format")]),
+    ("the task items' text ships", hasStr (censusText c) "read the log format"),
+    ("each disclosure ships its summary on a line above its whole body, closed or open",
+      [("The log reads as empty", "Check that each line",
+          "Check that each line carries a timestamp and a height, a tab between them."),
+        ("Reading in other units", "Heights print in metres",
+          "Heights print in metres unless --units feet is given.")].all fun (summary, first, body) =>
+        hasStr (censusProse c) body &&
+        match lineYOf c 0 summary, lineYOf c 0 first with
+        | some a, some b => decide (a < b)
+        | _, _ => false)]),
   ("md-rules", fun _ c => [
     ("one page", c.size == 1),
     ("every section the rules divide ships",

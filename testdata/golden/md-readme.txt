@@ -101,5 +101,20 @@ para
   link "https://example.org/tidegauge/log-format"
     text "the log format"
   text " for the columns each line carries."
+disclosure
+  summary
+    text "The log reads as empty"
+  para
+    text "Check that each line carries a timestamp and a height, a tab between them."
+disclosure open
+  summary
+    text "Reading in other units"
+  para
+    text "Heights print in metres unless "
+    styled mono
+      italicCorr maybe
+      text "--units feet"
+    italicCorr maybe
+    text " is given."
 -- diagnostics
 (none)

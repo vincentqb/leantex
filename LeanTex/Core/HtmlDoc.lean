@@ -1142,7 +1142,7 @@ float or a second heading directly under a heading realizes 1 quantum
 here where the PDF walk gives that element its own larger gap. -/
 public def blockGapKinds : List (String × String) :=
   [("p", "peer"), ("ul", "peer"), ("ol", "peer"), ("dl", "peer"), ("pre", "peer"),
-   ("table.booktabs", "peer"),
+   ("table.booktabs", "peer"), ("details", "peer"),
    ("h1", "heading"), ("h2", "heading"), ("h3", "heading"), ("h4", "heading"),
    ("h5", "heading"), ("h6", "heading")]
 
@@ -6031,6 +6031,25 @@ private def docHasNarrowingTable (doc : Doc) : Bool :=
       | _ => false)
     (fun b _ => b) false doc.body
 
+/-- Whether the document carries a disclosure: the gate on its rules, so a
+document without one ships exactly the stylesheet it shipped before. -/
+private def docHasDisclosure (doc : Doc) : Bool :=
+  Ir.foldBlocks (fun b bl => b || bl matches .disclosure ..) (fun b _ => b) false doc.body
+
+/-- A disclosure's summary in its style (`Ir.disclosureSummaryStyle`), the
+one the page's summary line sets in, through the one map a style reads to
+CSS by. -/
+private def disclosureCss : String :=
+  s!"summary \{ {" ".intercalate ((fontStyleDecls [] Ir.disclosureSummaryStyle).getD #[]).toList} }\n"
+
+/-- Paper has no collapse: a disclosure prints its body whether or not the
+reader opened it, as the page sets it, and its summary without the marker
+that offers a toggle paper cannot give. -/
+private def disclosurePrintCss : String :=
+  "  details::details-content { content-visibility: visible; }\n" ++
+  "  summary { list-style: none; }\n" ++
+  "  summary::-webkit-details-marker { display: none; }\n"
+
 /-- Whether the document carries a reference list: the gate on its rules,
 so a document without one ships exactly the stylesheet it shipped before. -/
 private def docHasBibliography (doc : Doc) : Bool :=
@@ -6352,6 +6371,7 @@ public def baseRules (doc : Doc) (pairs : List (Nat × Nat) := []) (figureWords 
   ".rm { font-family: var(--font-body); }\n" ++
   ".md { font-weight: 400; }\n" ++
   ".up { font-style: normal; font-variant-caps: normal; }\n" ++
+  (if docHasDisclosure doc then disclosureCss else "") ++
   ".ruled::after { content: \"\"; flex: 1; border-top: 1px solid var(--rule-color);\n" ++
   -- Half the x-height up from the baseline, in the rule's own inherited
   -- ex — the heading's face — where the PDF draws it (Layout.paraLineGeom;
@@ -6499,6 +6519,7 @@ color: {cssColor ((Ir.Design.at {} .print .ink).getD Ir.Color.black)}; padding: 
   -- overruns the measure: only such a line moves, and every character
   -- reaches the sheet.
   "  pre { overflow-x: visible; white-space: pre-wrap; overflow-wrap: anywhere; }\n" ++
+  (if docHasDisclosure doc then disclosurePrintCss else "") ++
   -- A markdown table whose words alone pass the column at its smallest
   -- step stands centred on it, overhanging both margins equally, as its
   -- page sets it (`Layout.tableFit`): on paper both margins are room, and
@@ -9219,6 +9240,15 @@ public def blockNode (cfg : Config) (b : Block) : Node :=
   | .quote body =>
     fillCarrier cfg (Ir.frameFillsOne cfg.lists cfg.styles .deck 0 b)
       (Html.elem "blockquote" (blockNodesInto (cfg.deeper true).into #[] body.toList))
+  -- The platform's own disclosure: its summary stays in view, its body is
+  -- the reader's to open and close, open from the start where it is
+  -- expanded. Its summary's style and the print sheet's expanded body are
+  -- the stylesheet's (`disclosureCss`).
+  | .disclosure summary expanded body =>
+    fillCarrier cfg (Ir.frameFillsOne cfg.lists cfg.styles .deck 0 b)
+      (Html.elem "details"
+        (#[Html.elem "summary" (inlines cfg summary)] ++ blockNodesInto cfg.into #[] body.toList)
+        (if expanded then #[("open", "")] else #[]))
   -- beamer's titled block: a <section> with its header, through the typed
   -- tree and the escaper; the kind rides as a class so the stylesheet (a
   -- reader's own included) can address each. Its two colour boxes stand
@@ -10820,7 +10850,30 @@ public structure A11yFacts where
   a deck stage (a named region once focusable), that carry no name: axe's
   `scrollable-region-focusable`, SC 2.1.1. -/
   scrollsUnreachable : Nat := 0
+  /-- `<summary>` elements: a disclosure's control. -/
+  summaries : Nat := 0
+  /-- Summaries with no text to name their control (`holdsTextOne`) and no
+  name of their own (`carriesName`): axe's `summary-name`, SC 4.1.2. -/
+  summariesUnnamed : Nat := 0
   deriving Repr, BEq, Inhabited
+
+mutual
+
+/-- Does a subtree hold text a reader is shown: a text node that is not
+blank, outside a `hidden` subtree, which is not rendered. A hand-rolled walk
+because `Html.Node` has no generic fold; the list companion keeps it
+structural. -/
+public def holdsTextOne : Node → Bool
+  | .elem _ attrs kids => (attrOf? attrs "hidden").isNone && holdsTextList kids.toList
+  | .text s => nonBlank s
+  | .style _ => false
+  | .script _ _ => false
+
+public def holdsTextList : List Node → Bool
+  | [] => false
+  | k :: rest => holdsTextOne k || holdsTextList rest
+
+end
 
 /-- The class tokens of an attribute list. -/
 public def classTokens (attrs : Array (String × String)) : List String :=
@@ -10864,6 +10917,12 @@ private def a11yElem (own deck : Bool) (tag : String) (attrs : Array (String × 
       { acc with svgs := acc.svgs + 1
                  svgsUnnamed := acc.svgsUnnamed +
                    (if carriesName (.elem tag attrs kids) then 0 else 1) }
+    else acc
+  let acc := if tag == "summary" then
+      { acc with summaries := acc.summaries + 1
+                 summariesUnnamed := acc.summariesUnnamed +
+                   (if holdsTextList kids.toList || carriesName (.elem tag attrs kids) then 0
+                    else 1) }
     else acc
   if declaresScroll own deck tag attrs then
     { acc with scrolls := acc.scrolls + 1

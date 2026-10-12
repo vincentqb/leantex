@@ -25,8 +25,8 @@ constructs are refused by design rather than silently diverging, each an
   resolving site: a comment-only span ships nothing; a `<br>`, `<br/>` or
   `<br />` with no attribute is a hard break; an empty `<a>` with one `name`
   or `id` is a target; a `<details>` or `<details open>` around a one-line,
-  attribute-free, plain-text `<summary>` is a disclosure, which sets
-  expanded and names its lost collapse. Every attribute on an accepted
+  attribute-free, plain-text `<summary>` is a disclosure, open where its tag
+  says so. Every attribute on an accepted
   element is carried by an existing field, honoured exactly by what ships
   (a premise pin), routed, or its element is refused. Everything else is
   one `E0390` at its own `<`, dropping exactly the raw HTML the reader
@@ -108,7 +108,7 @@ public inductive Blk where
   | code (info : String) (text : String) (pos : Pos)
   | rule (pos : Pos)
   | quote (body : Array Blk) (pos : Pos)
-  | disclosure (summary : Array Inl) (body : Array Blk) (pos : Pos)
+  | disclosure (summary : Array Inl) (expanded : Bool) (body : Array Blk) (pos : Pos)
   | list (ordered : Bool) (start : Nat) (tight : Bool) (items : Array (Array Blk))
       (pos : Pos)
   | table (aligns : Array TableAlign) (header : Array (Array Inl))
@@ -503,7 +503,7 @@ private def bareTagAt (cs : Array Char) (i : Nat) (name : String)
 /-- The spellings of a disclosure's opening tag that the reader accepts: a
 `details`, not self-closing, with no attribute or with exactly one `open`
 whose value is absent, empty, or `open` in any case — every spelling HTML
-reads as the open state, which is the expanded state the disclosure sets. -/
+reads as the open state (`Blk.disclosure`'s `expanded`). -/
 private def detailsOpen (t : HtmlTag) : Bool :=
   t.name == "details" && !t.selfClosing &&
     match t.attrs.toList with
@@ -1870,9 +1870,10 @@ private def htmlText (s : String) : Option String := Id.run do
       i := i + 1
   return some out
 
-/-- A complete, attribute-free summary on one line. Requiring the closing
-tag and blank suffix prevents a supported prefix from swallowing markup or
-visible text outside it. -/
+/-- A complete, attribute-free summary on one line, holding text. Requiring
+the closing tag and blank suffix prevents a supported prefix from swallowing
+markup or visible text outside it; a summary with no text would label the
+disclosure's control with nothing. -/
 private def summaryAt (cs : Array Char) (i : Nat) (p : Pos) : Option (Array Inl) := do
   let start ← bareTagAt cs i "summary"
   let closeEnd ← findLit cs start "</summary"
@@ -1880,6 +1881,7 @@ private def summaryAt (cs : Array Char) (i : Nat) (p : Pos) : Option (Array Inl)
   let next ← bareTagAt cs stop "summary" true
   guard (isBlankFrom cs next)
   let text ← htmlText (sliceStr cs start stop)
+  guard (text.any (!·.isWhitespace))
   return #[.text text { p with col := start + 1 }]
 
 end LeanTex.Core.Md
@@ -2032,6 +2034,9 @@ private structure Frame where
   /-- A disclosure whose summary line the reader refused: that refusal, at
   the summary's own `<`, is the construct's one accounting. -/
   refused : Bool := false
+  /-- A disclosure opened by a tag that carries `open`: its body shows until
+  the reader closes it. -/
+  expanded : Bool := false
 
 private instance : Inhabited Frame := ⟨{ kind := .quote, pos := {} }⟩
 
@@ -2048,7 +2053,7 @@ private def closeTop (frames : Array Frame) (acc : Array Blk) : Array Frame × A
     let rest := frames.pop
     match f.kind with
     | .quote => (rest, f.outer.push (.quote acc f.pos))
-    | .disclosure => (rest, f.outer.push (.disclosure (f.summary.getD #[]) acc f.pos))
+    | .disclosure => (rest, f.outer.push (.disclosure (f.summary.getD #[]) f.expanded acc f.pos))
     | .item _ =>
       match rest.back?.map Frame.kind with
       | some (FKind.list _ _ _) =>
@@ -2058,7 +2063,7 @@ private def closeTop (frames : Array Frame) (acc : Array Blk) : Array Frame × A
 
 /-- Close a disclosure frame the reader refuses: the summary, when one was
 read, ships as a paragraph, then the body, into the accumulator outside it.
-No `Blk.disclosure` is built, so nothing downstream names a collapse the
+No `Blk.disclosure` is built, so nothing downstream ships an element the
 reader never accepted: the refusal at its `<` — or at its summary's, when
 the reader refused that line as raw HTML and dropped it — is the construct's
 one accounting, and every other word it held still ships, once, in source
@@ -2475,8 +2480,9 @@ public def blocks (file : String) (input : String) : Array Blk × Array Diag := 
     let htmlStart : Option HtmlEnd :=
       (htmlBlockKind cs j).bind fun (e, interrupts) =>
         if leaf.isPara && !interrupts then Option.none else some e
-    -- premise: htmlTwinChecks — the expanded disclosure is the open state, and one W0392 per artifact that can collapse it names the loss for both spellings
-    let opensDetails := ((tagAt cs j).filter detailsOpen).any (isBlankFrom cs ·.stop)
+    -- premise: disclosurePrintChecks — every spelling of `open` ships the element open and the bare tag ships it closed, the page setting both expanded and the twin writing each back
+    let detailsTag := (tagAt cs j).filter fun t => detailsOpen t && isBlankFrom cs t.stop
+    let opensDetails := detailsTag.isSome
     let closesDetails := (bareTagAt cs j "details" true).any (isBlankFrom cs ·)
     let inDetails := frames.back?.map Frame.kind == some .disclosure
     let summaryLine := inDetails && !leaf.isPara && acc.isEmpty
@@ -2502,7 +2508,8 @@ public def blocks (file : String) (input : String) : Array Blk × Array Diag := 
       diags := diags ++ ds
       leaf := .none
       frames := frames.push
-        { kind := .disclosure, pos := { lpos with col := j + 1 }, outer := a }
+        { kind := .disclosure, pos := { lpos with col := j + 1 }, outer := a
+          expanded := detailsTag.any (!·.attrs.isEmpty) }
       acc := #[]
     else if closesDetails && inDetails then
       let (a, ds) := closePara leaf acc lpos

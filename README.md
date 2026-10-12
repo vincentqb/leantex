@@ -54,9 +54,11 @@ a browser sets it; one whose words alone are too wide sets smaller, down to
 margins if it still overhangs. HTML inside Markdown is read, never passed
 through to any output: a comment on lines of its own shows nothing, `<br>`
 breaks the line as a Markdown hard break does, an empty `<a name="…">` is a
-link target, and a `<details>` block with a plain `<summary>` is set
-expanded; any other tag is an error at its position whose help names the
-Markdown to write instead. A Markdown document sets on a wider text block
+link target, and a `<details>` block with a plain `<summary>` is a
+disclosure: the HTML page ships the browser's own collapsible element, open
+where the tag says `open`, and the PDF and the printed page set it expanded;
+any other tag is an error at its position whose help names the Markdown to
+write instead. A Markdown document sets on a wider text block
 than an article, with its code in a monospaced face (see Fonts and themes):
 code blocks at `\footnotesize`, two sizes below the text, with long lines
 wrapped to stay on the page — in the PDF at a space where one fits, never

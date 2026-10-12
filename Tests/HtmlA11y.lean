@@ -149,6 +149,7 @@ def htmlA11yChecks (ref : IO.Ref (List String)) : IO Unit := do
   -- Non-vacuous only if the corpus ships pictures and scrollers at all.
   let mut svgsSeen := 0
   let mut scrollsSeen := 0
+  let mut summariesSeen := 0
   let mut undecodableSeen := 0
   for n in goldenNames do
     let (doc, store, _, body, diags) ← a11yCorpusPage n
@@ -164,6 +165,9 @@ def htmlA11yChecks (ref : IO.Ref (List String)) : IO Unit := do
     -- are what fire it.
     t s!"html a11y {n}: no tab stop is hidden from assistive technology \
 ({f.hiddenTabStops})" (f.hiddenTabStops == 0)
+    summariesSeen := summariesSeen + f.summaries
+    t s!"html a11y {n}: every disclosure's control is named \
+({f.summariesUnnamed} of {f.summaries} not)" (f.summariesUnnamed == 0)
     -- No two stages share a name (a floor: the corpus repeats no title).
     let names := (stageMarks body).filterMap (·.2)
     t s!"html a11y {n}: no two stages share a name"
@@ -176,6 +180,17 @@ def htmlA11yChecks (ref : IO.Ref (List String)) : IO Unit := do
     undecodableSeen := undecodableSeen + (← browserImageChecks ref n store body diags)
   t s!"html a11y: the corpus ships inline pictures ({svgsSeen})" (0 < svgsSeen)
   t s!"html a11y: the corpus ships scroll containers ({scrollsSeen})" (0 < scrollsSeen)
+  t s!"html a11y: the corpus ships disclosures ({summariesSeen})" (0 < summariesSeen)
+  -- The judge breaks once: a summary holding no text, or only text the page
+  -- hides, names nothing; text, or a name of its own, names it.
+  let judged (kids : Array Html.Node) (attrs : Array (String × String)) : Nat :=
+    (HtmlDoc.a11yFacts true false #[Html.elem "details" #[Html.elem "summary" kids attrs]]).summariesUnnamed
+  t "html a11y: a summary with no text is unnamed"
+    (judged #[] #[] == 1 && judged #[Html.text "  "] #[] == 1
+      && judged #[Html.elem "span" #[Html.text "Amber"] #[("hidden", "")]] #[] == 1)
+  t "html a11y: a summary's text or its own name names it"
+    (judged #[Html.elem "strong" #[Html.text "Amber"]] #[] == 0
+      && judged #[] #[("aria-label", "Amber")] == 0)
   t s!"html a11y: the corpus ships an image no browser decodes ({undecodableSeen})"
     (0 < undecodableSeen)
   let imageBytes ← IO.FS.readBinFile "testdata/corpus/figures/box.pdf"

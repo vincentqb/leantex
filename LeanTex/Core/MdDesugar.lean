@@ -33,11 +33,14 @@ reaches the page, which is the registry's rule and not a habit:
   One today: `md:thematic-break`, which has no block in this engine.
 * `W0392` (`degraded`, floor `content`) for a construct that ships,
   diminished: `md:list-start`, `md:loose-list`,
-  `md:link-title`, `md:image-title`, `md:code-info`, `md:image-alt`,
-  `md:disclosure`, which is named once for each artifact that loses the
-  collapse: the HTML page and the markdown twin, which can each spell one,
-  and not the PDF, where paper has no collapse to lose and every word
-  ships. Shipping content cannot take an absent-content loss.
+  `md:link-title`, `md:image-title`, `md:code-info`, `md:image-alt`.
+  Shipping content cannot take an absent-content loss.
+
+A disclosure is expressible, and crosses as the markdown disclosure
+environment (`Parse.markdownDisclosureEnv`, `disclosureRaws`) to its own IR
+node, which the HTML ships as the platform's element and the twin writes
+back, and paper sets expanded: it has no collapse to lose, and every word
+ships.
 
 A GFM table is expressible, and crosses as the booktabs `{tabular}` it
 means, every cell's content inside a group of its own (`tableRaws_contract`),
@@ -198,18 +201,25 @@ public theorem anchorRaws_fixed_point (key : String) (p : Pos) (rs : Array Raw)
   · simpa using ‹(Ir.labelAnchor key == key) = true›
   · contradiction
 
-/-- Disclosure framing, over the surface AST before IR exists. Its only
-new control is fixed; all summary raws stay inside one bold group, and the
-entire body follows it in order. -/
-public def disclosureRaws (summary body : Array Raw) (p : Pos) : Array Raw :=
-  #[.ctrl "textbf" p, .group summary p, .par p] ++ body
+/-- A disclosure over the surface AST before IR exists: the markdown
+disclosure environment (`Parse.markdownDisclosureEnv`), its `[open]` option
+where the disclosure stands open, all summary raws inside one group, and the
+entire body after it, in order. -/
+public def disclosureRaws (summary body : Array Raw) (expanded : Bool) (p : Pos) : Array Raw :=
+  #[.env Parse.markdownDisclosureEnv
+    ((if expanded then #[.sym '[' p, .word "open" p, .sym ']' p] else #[]) ++
+      #[.group summary p] ++ body) p]
 
 /-- Framing cannot discard or reorder any body raw, or extract author text
-from the summary's group. These are facts of lowering, not backend layout. -/
-public theorem disclosureRaws_contract (summary body : Array Raw) (p : Pos) :
-    (disclosureRaws summary body p).toList.drop 3 = body.toList ∧
-    (disclosureRaws summary body p)[1]? = some (.group summary p) := by
-  simp [disclosureRaws, Array.getElem?_append]
+from the summary's group: the environment holds its option, then the
+summary's one group, then the body whole. These are facts of lowering, not
+backend layout. -/
+public theorem disclosureRaws_contract (summary body : Array Raw) (expanded : Bool) (p : Pos) :
+    ∃ opts, disclosureRaws summary body expanded p =
+        #[.env Parse.markdownDisclosureEnv (opts ++ #[.group summary p] ++ body) p] ∧
+      (opts = #[] ∨ opts = #[.sym '[' p, .word "open" p, .sym ']' p]) := by
+  refine ⟨if expanded then #[.sym '[' p, .word "open" p, .sym ']' p] else #[], rfl, ?_⟩
+  cases expanded <;> simp
 
 mutual
 
@@ -491,14 +501,10 @@ without a language" p
   | .quote body p =>
     let (rs, ds) := blkListRaws file #[] #[] body.toList
     (#[.env "quote" rs p], ds)
-  | .disclosure summary body p =>
+  | .disclosure summary expanded body p =>
     let (ss, sds) := inlListRaws file #[] #[] summary.toList
     let (rs, ds) := blkListRaws file #[] #[] body.toList
-    let lost (o : Diag.Output) : Diag := routeDegraded file "disclosure"
-      "a disclosure sets its summary and body expanded: collapse behaviour is not carried" p
-      (output := some o)
-    -- premise: disclosurePrintChecks — its shipped-line rows set the disclosure as its bold-summary twin, every word in order, so the PDF loses nothing; its artifact rows find no collapse in the HTML page or the markdown twin, and its forOutputs rows name the loss for exactly those two, alone and through a tex host
-    (disclosureRaws ss rs p, ((sds ++ ds).push (lost .html)).push (lost .md))
+    (disclosureRaws ss rs expanded p, sds ++ ds)
   | .list ordered start tight items p =>
     let (rs, ds) := itemsRaws file #[] #[] items.toList p
     let ds := if ordered && start != 1 then

@@ -383,6 +383,8 @@ private def usesBlock (cx : UseCx) (acc : UseAcc) : Block → UseAcc
       groundEpoch := if bodyLook.bg.isSome then none else cx.groundEpoch }
     usesBlocks bodyCx
       (usesInlines titleCx { acc with runs := acc.runs + 2 } title.toList) body.toList
+  | .disclosure summary _ body =>
+    usesBlocks cx (usesInlines cx acc (Ir.disclosureSummary summary).toList) body.toList
   | .role _ body => usesBlocks cx acc body.toList
   | .link _ body =>
     usesBlocks cx { acc with linkPals := pushUnique acc.linkPals acc.pal } body.toList

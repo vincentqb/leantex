@@ -420,7 +420,31 @@ def twinEdgeChecks (ref : IO.Ref (List String)) : IO Unit := do
   t s!"twin: a reference list's markers read back as written ({repr tw})"
     (hasStr tw "\n\\[1\\] " && MarkdownDoc.emit back == tw)
 
+/-- A disclosure's twin is the element its reader reads back: `open` where it
+is expanded, its summary's ampersand and angle bracket written as the
+references the reader decodes, its body and nesting kept, in a document, a
+quotation and a list item — where no blank line stands before its closing
+tag, which would make the list loose. -/
+def twinDisclosureChecks (ref : IO.Ref (List String)) : IO Unit := do
+  let t := check ref
+  let inner := "\n<summary>Q&amp;A &lt;now></summary>\n\nAlder.\n\n- Birch\n\n\
+<details>\n<summary>Inner</summary>\n\nCedar.\n\n</details>\n\n</details>\n"
+  for (opener, label) in [("<details>", "closed"), ("<details open>", "open")] do
+    let (doc, ds0) := elabMd (opener ++ inner)
+    let (tw, back, ds) := roundTrip doc
+    t s!"twin: a {label} disclosure reads back to itself ({repr tw})"
+      (ds0.isEmpty && back.body == doc.body && ds.isEmpty && MarkdownDoc.emit back == tw)
+    t s!"twin: a {label} disclosure keeps its tag and its summary's references ({repr tw})"
+      (tw.startsWith (opener ++ "\n<summary>Q&amp;A &lt;now></summary>\n"))
+  for src in ["> <details>\n> <summary>Elm</summary>\n>\n> Fir.\n> </details>\n",
+      "- <details>\n  <summary>Elm</summary>\n\n  Fir.\n  </details>\n- Gorse\n"] do
+    let (doc, ds0) := elabMd src
+    let (tw, back, ds) := roundTrip doc
+    t s!"twin: a disclosure in a container reads back to itself, nothing named ({repr tw})"
+      (ds0.isEmpty && back.body == doc.body && ds.isEmpty)
+
 def markdownTwinChecks (ref : IO.Ref (List String)) : IO Unit := do
+  twinDisclosureChecks ref
   twinInlineChecks ref
   twinBlockChecks ref
   twinLineStartChecks ref

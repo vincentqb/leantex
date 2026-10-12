@@ -7098,7 +7098,7 @@ private def bodyIsBlockOne : Raw → Bool
     if (Parse.inputEnvFile? n).isSome then bodyIsBlockList body.toList
     else
       blockEnvs.contains n || isMathEnv n || n == Tcolorbox.boxEnv
-        || n == "tabular" || n == "tabular*" || n == Parse.markdownTableEnv
+        || n == "tabular" || n == "tabular*" || Parse.markdownEnv n
         || n == "algorithm" || n == "algorithm*" || n == "algorithm2e"
         || n == "algorithmic"
         || reservedEnv.contains n || bodyIsBlockList body.toList
@@ -11400,6 +11400,46 @@ private def thmClose (ctx : Ctx) (n : String) (o : ThmOpen) (inner : Array Block
     else pure inner
   return #[.role (Ir.thmSpaceRole o.space) #[.role n inner]]
 
+/-- A markdown disclosure's head (`Md.disclosureRaws`): whether its `[open]`
+option stands first, and where its summary's group stands. -/
+private def disclosureHead (body : Array Raw) : Bool × Nat :=
+  match (body[0]? : Option Raw), (body[1]? : Option Raw), (body[2]? : Option Raw) with
+  | some (Raw.sym '[' _), some (Raw.word "open" _), some (Raw.sym ']' _) => (true, 3)
+  | _, _, _ => (false, 0)
+
+/-- What a scope the block knot opens and closes outside itself carries
+across its body: a theorem-like scope's opening, or a markdown disclosure's
+summary and whether it stands open. -/
+private inductive ScopeOpen where
+  | thm (o : ThmOpen)
+  | disclosure (summary : Array Inline) (expanded : Bool)
+
+/-- The environments the knot's scoped arm reads: the theorem-like ones and
+the markdown disclosure. -/
+private def scopedEnv (thm : ThmDecls) (n : String) : Bool :=
+  n == Parse.markdownDisclosureEnv || thmEnv thm n
+
+/-- Open a scoped environment: a markdown disclosure reads its option and its
+summary's group, a theorem-like scope its head (`thmOpen`). Returns the index
+where the body starts. -/
+private def scopeOpen (ctx : Ctx) (n : String) (body : Array Raw) (pos : Pos) :
+    EM (ScopeOpen × Nat) := do
+  if n == Parse.markdownDisclosureEnv then
+    let (expanded, k) := disclosureHead body
+    match body[k]? with
+    | some (.group t _) => return (.disclosure (← elabInlines ctx t) expanded, k + 1)
+    | _ => return (.disclosure #[] expanded, k)
+  else
+    let (o, k) ← thmOpen ctx n body pos
+    return (.thm o, k)
+
+/-- Close a scoped environment over its elaborated body. -/
+private def scopeClose (ctx : Ctx) (n : String) (o : ScopeOpen) (inner : Array Block)
+    (pos : Pos) : EM (Array Block) :=
+  match o with
+  | .thm o => thmClose ctx n o inner pos
+  | .disclosure summary expanded => pure #[.disclosure summary expanded inner]
+
 /-- The labels a description list's `\item`s carry, one per item in the
 order `itemSplitGo` splits them: the `[...]` run after each top-level
 `\item`, past an overlay spec, `none` where the item carries none. -/
@@ -13200,11 +13240,12 @@ the text width; the box takes the whole measure" pos
     have hb4 := hb.2.2.2
     let inner ← elabBlockScope bodyCtx (body.extract m body.size)
     blocks := blocks ++ selectedCover Block.onSteps spec #[.titled kind title inner]
-  else if thmEnv (← get).ctr.thm n then
+  else if scopedEnv (← get).ctr.thm n then
     -- A theorem-like environment (ltthm.dtx, amsthm.sty): the head, the
     -- counter, the label target and the body font are the scope's own,
-    -- opened and closed outside the knot; the body recurses here.
-    let (o, k) ← thmOpen ctx n body pos
+    -- opened and closed outside the knot; the body recurses here. A
+    -- markdown disclosure shares the arm: its summary is read outside.
+    let (o, k) ← scopeOpen ctx n body pos
     have hxw : rawWeightList (body.extract k body.size).toList
         ≤ rawWeightList body.toList := extract_weight_le ..
     have hxp : nestedParsList (body.extract k body.size).toList
@@ -13214,7 +13255,7 @@ the text width; the box takes the whole measure" pos
     have hx1 : slicePars (body.extract k body.size) 0
         = nestedParsList (body.extract k body.size).toList := slicePars_zero _
     let inner ← elabBlockScope ctx (body.extract k body.size)
-    blocks := blocks ++ (← thmClose ctx n o inner pos)
+    blocks := blocks ++ (← scopeClose ctx n o inner pos)
   else if n == "quote" || n == "quotation" || n == "verse" || n == "abstract"
       || n == "appendices" then
     -- Three same-shaped block-sequence wrappers, one branch and one
@@ -13874,7 +13915,7 @@ private def elabBlocksGo (ctx : Ctx) (raws : Array Raw) (i : Nat)
         if (Parse.inputEnvFile? n).isSome then bodyIsBlock body
         else
           blockEnvs.contains n || isMathEnv n || n == Tcolorbox.boxEnv
-            || n == "tabular" || n == "tabular*" || n == Parse.markdownTableEnv
+            || n == "tabular" || n == "tabular*" || Parse.markdownEnv n
             || n == "algorithm" || n == "algorithm*" || n == "algorithm2e"
             || n == "algorithmic"
             || reservedEnv.contains n

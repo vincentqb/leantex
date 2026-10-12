@@ -941,6 +941,15 @@ private def paraText (first ind text : String) : String :=
   | l :: ls =>
     ls.foldl (fun acc x => acc ++ "\n" ++ ind ++ escapeLineStart x) (first ++ escapeLineStart l)
 
+/-- A disclosure's summary as its line in the twin: its text on one line,
+`&` and `<` written as the references its reader reads back. -/
+private def summaryHtml (head : Array Inline) : String :=
+  (plainText head).foldl (fun acc c => match c with
+    | '&' => acc ++ "&amp;"
+    | '<' => acc ++ "&lt;"
+    | '\n' | '\r' => acc.push ' '
+    | c => acc.push c) ""
+
 /-- Two blank lines in a row: what the tightening folds into one. -/
 private def blankRun : List String → Bool
   | a :: b :: rest => (a.isEmpty && b.isEmpty) || blankRun (b :: rest)
@@ -1018,6 +1027,7 @@ private def leadsWithList : Block → Bool
   | .ragged _ body => leadsWithListList body.toList
   | .link _ body => leadsWithListList body.toList
   | .titled _ title body => title.isEmpty && leadsWithListList body.toList
+  | .disclosure _ _ _ => false
   | .frame title _ _ _ body => title.isEmpty && leadsWithListList body.toList
   | .float _ _ capAbove body caption =>
     (caption.isEmpty || !capAbove) && leadsWithListList body.toList
@@ -1124,6 +1134,19 @@ private def blockInto (loc : Locale) (summary ind acc : String) : Block → Stri
     let head := if title.isEmpty then "" else
       paraText ind ind (inlineText #[.styled .bold title]) ++ "\n\n"
     blocksInto loc summary ind (acc ++ head) none body.toList
+  -- The disclosure as the element its reader reads back (`Md.read`'s
+  -- disclosure frame): the opening tag, `open` where it is expanded, its
+  -- summary's text on one line — a summary holds no markdown markup — and
+  -- its body, then the closing tag, every line under the container's
+  -- prefix. The closing tag follows the body's last block directly, which
+  -- the reader closes there: a blank line before it would make a list
+  -- holding the disclosure loose.
+  | .disclosure head expanded body =>
+    let inner := blocksInto loc summary ind "" none body.toList
+    let inner := if inner.endsWith "\n\n" then (inner.dropEnd 1).toString else inner
+    acc ++ (ind ++ (if expanded then "<details open>" else "<details>") ++ "\n" ++
+      ind ++ "<summary>" ++ summaryHtml head ++ "</summary>\n\n" ++ inner ++
+      ind ++ "</details>\n\n")
   -- the role's class is a web styling hook; the twin keeps the content
   | .role _ body => blocksInto loc summary ind acc none body.toList
   -- CommonMark has no block-link construct; the twin preserves the body.
@@ -1289,6 +1312,7 @@ private def itemSeq (loc : Locale) (summary cont : String) (pen : ItemPen) :
       | .quote _ => write ()
       | .abstract _ => write ()
       | .titled _ _ _ => write ()
+      | .disclosure _ _ _ => write ()
       | .bibliography _ _ _ => write ()
       | .verbatim _ _ _ => write ()
       | .algorithm _ _ _ => write ()
@@ -1473,6 +1497,7 @@ private theorem blockInto_extends (loc : Locale) (summary ind acc : String) :
       (acc ++ if title.isEmpty then "" else
         paraText ind ind (inlineText #[.styled .bold title]) ++ "\n\n")
       none body.toList)
+  | .disclosure _ _ _ => ⟨_, rfl⟩
   | .spaced _ body => blocksInto_extends loc summary ind acc none body.toList
   | .bibliography _ _ items => ⟨bibItemsText ind items, rfl⟩
   | .role _ body => blocksInto_extends loc summary ind acc none body.toList
@@ -1710,6 +1735,7 @@ private theorem headingLevelOne_mem (x : Ir.HeadingLevel) :
   | .quote body, out, h => headingLevelList_mem x body.toList out h
   | .abstract body, out, h => headingLevelList_mem x body.toList out h
   | .titled _ _ body, out, h => headingLevelList_mem x body.toList out h
+  | .disclosure _ _ body, out, h => headingLevelList_mem x body.toList out h
   | .role _ body, out, h => headingLevelList_mem x body.toList out h
   | .link _ body, out, h => headingLevelList_mem x body.toList out h
   | .spaced _ body, out, h => headingLevelList_mem x body.toList out h

@@ -543,6 +543,17 @@ table's do (`Ir.ColSpec.narrows`). The space keeps it outside the
 environment names a document can spell, as with `inputEnv`. -/
 public def markdownTableEnv : String := "markdown tabular"
 
+/-- The environment a markdown disclosure desugars to (`Md.disclosureRaws`):
+an `[open]` option where the disclosure stands open, its summary's one group,
+then its body, read as one disclosure (`Ir.Block.disclosure`). The space
+keeps it outside the environment names a document can spell, as with
+`inputEnv`. -/
+public def markdownDisclosureEnv : String := "markdown details"
+
+/-- The environments only the markdown reader writes, each a block. -/
+@[expose] public def markdownEnv (name : String) : Bool :=
+  name == markdownTableEnv || name == markdownDisclosureEnv
+
 /-- The index past the leading run of `.space` raws at `i`: the one spaces
 scan over sibling raws, shared by every consumer of `Raw` — a caller never
 hand-rolls its own. -/

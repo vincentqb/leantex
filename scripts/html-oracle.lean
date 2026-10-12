@@ -48,7 +48,8 @@ def readers : List String := ["chromium", "firefox"]
 def features : List String :=
   ["load", "images", "fonts", "mathml", "mathAlpha", "lang", "landmarks", "snaps", "box-side",
    "affine-screen", "affine-print", "color-scheme", "reduced-motion", "print", "print-spill",
-   "print-sheets", "no-script", "code-height", "stage-fit", "deck-links"]
+   "print-sheets", "no-script", "code-height", "stage-fit", "deck-links", "disclosure",
+   "print-disclosure"]
 
 def die (code : UInt32) (msg : String) : IO UInt32 := do
   IO.eprintln msg
@@ -317,6 +318,28 @@ const checks = {
         judge('headline matter', outer(m), inner(m.parentElement), 'center');
     return { ok: off.length === 0, n, why: off.join('; ') };
   },
+  // A disclosure is the platform's own: on screen a closed one shows its
+  // summary alone and an open one its body too, and its summary opens and
+  // closes it. Each is put back as it stood.
+  disclosure: async () => {
+    const frame = () => new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));
+    const ds = [...document.querySelectorAll('details')];
+    const body = (d) => [...d.children].filter(c => c.tagName !== 'SUMMARY');
+    const shown = (d) => body(d).every(c => c.checkVisibility());
+    const bad = [];
+    for (const d of ds) {
+      const s = d.querySelector(':scope > summary');
+      if (!s || !s.checkVisibility()) { bad.push('summary not shown'); continue; }
+      const was = d.open;
+      if (body(d).length && shown(d) !== was) bad.push(was ? 'open hides its body' : 'closed shows its body');
+      s.click(); await frame();
+      if (d.open === was || (body(d).length && shown(d) === was)) bad.push('summary does not toggle');
+      s.click(); await frame();
+      if (d.open !== was) bad.push('not restored');
+    }
+    return { ok: bad.length === 0, n: ds.length > 0 ? 1 : 0,
+      why: `${ds.length} disclosures` + (bad.length ? ': ' + [...new Set(bad)].join(', ') : '') };
+  },
 };
 
 // A CSS-pixel half is the declared browser bound: deviceScaleFactor=1,
@@ -452,6 +475,17 @@ const mediaChecks = {
     const bodyOk = !screenFollows || (b.backgroundColor === 'rgb(255, 255, 255)' && b.color === 'rgb(0, 0, 0)');
     const ok = bodyOk && dim === 0 && spacers === 0 && unbroken === 0;
     return { ok, n: 1, why: `bg=${b.backgroundColor} fg=${b.color} (${screenFollows ? 'default tokens' : 'declared colours'}) dim-steps x${dim} visible-spacers x${spacers} slides-without-break x${unbroken}/${slides.length}` };
+  },
+  // Paper has no collapse: printed, every disclosure shows its body, open or
+  // not, and its summary no toggle's marker.
+  'print-disclosure': () => {
+    const ds = [...document.querySelectorAll('details')];
+    const hidden = ds.flatMap(d => [...d.children].filter(c => c.tagName !== 'SUMMARY'))
+      .filter(c => !c.checkVisibility()).length;
+    const marked = ds.map(d => d.querySelector(':scope > summary'))
+      .filter(s => s && getComputedStyle(s).listStyleType !== 'none').length;
+    return { ok: hidden === 0 && marked === 0, n: ds.length > 0 ? 1 : 0,
+      why: `${ds.length} disclosures, ${hidden} body blocks hidden on paper, ${marked} toggle markers` };
   },
 };
 
@@ -813,6 +847,22 @@ async function runReader(name) {
       document.querySelector('math').replaceWith(wrong);
     });
     if ((await control.evaluate(checks.mathml)).ok) throw new Error('mathml control: namespace');
+    // Both disclosure judges break once: a closed body forced into view on
+    // screen, and a closed body printed with no print rule to show it.
+    const closed = '<details><summary>A</summary><p>B</p></details>';
+    const lift = '<style>@media print { details::details-content { content-visibility: visible; } ' +
+      'summary { list-style: none; } }</style>';
+    await control.setContent(closed);
+    if (!(await control.evaluate(checks.disclosure)).ok) throw new Error('disclosure control: native');
+    await control.setContent('<style>details::details-content { content-visibility: visible; }</style>' + closed);
+    if ((await control.evaluate(checks.disclosure)).ok) throw new Error('disclosure control: forced open');
+    await control.emulateMedia({ media: 'print' });
+    await control.setContent(closed);
+    if ((await control.evaluate(mediaChecks['print-disclosure'])).ok)
+      throw new Error('print-disclosure control: no print rule');
+    await control.setContent(lift + closed);
+    if (!(await control.evaluate(mediaChecks['print-disclosure'])).ok)
+      throw new Error('print-disclosure control: the print rule');
   } finally { await control.close(); }
   for (const fx of fixtures) {
     const url = 'file://' + path.join(dir, fx + '.html');
@@ -845,6 +895,7 @@ async function runReader(name) {
       await page.emulateMedia({ reducedMotion: 'no-preference', media: 'print' });
       out(fx, name, 'affine-print', cell(await page.evaluate(affineGeometry)));
       out(fx, name, 'print', cell(await page.evaluate(mediaChecks.print, light.deck)));
+      out(fx, name, 'print-disclosure', cell(await page.evaluate(mediaChecks['print-disclosure'])));
       const printed = light.deck ? await printDeck(page, name, fx)
         : { spill: { n: 0 }, sheets: { n: 0 } };
       out(fx, name, 'print-spill', cell(printed.spill));

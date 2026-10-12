@@ -3359,6 +3359,8 @@ private def scalarTextOne (out : ScalarAcc) (itemD enumD : Nat) :
   -- The block's title is set in the bold face at the body size; its
   -- glyphs are asked for like a heading's.
   | .titled _ title body => scalarTextList (textAndMath out title) itemD enumD body.toList
+  | .disclosure summary _ body =>
+    scalarTextList (textAndMath out (Ir.disclosureSummary summary)) itemD enumD body.toList
   | .role _ body => scalarTextList out itemD enumD body.toList
   | .link _ body => scalarTextList out itemD enumD body.toList
   | .spaced _ body => scalarTextList out itemD enumD body.toList
@@ -3588,6 +3590,9 @@ private def weightKeysBlock (acc : Array (Nat × Nat × Bool)) :
   | .abstract body => weightKeysBlockList acc body.toList
   | .titled _ title body =>
     weightKeysBlockList (weightKeysInlineList acc {} title.toList) body.toList
+  | .disclosure summary _ body =>
+    weightKeysBlockList (weightKeysInlineList acc {} (Ir.disclosureSummary summary).toList)
+      body.toList
   | .role _ body => weightKeysBlockList acc body.toList
   | .link _ body => weightKeysBlockList acc body.toList
   | .spaced _ body => weightKeysBlockList acc body.toList
@@ -15408,6 +15413,12 @@ private def collectBlock (r : Rd) (a : Acc)
       let sub := collectBlocks { r with inPar := false }
         { a.trivSpace g with measure := narrow, quoteDepth := a.quoteDepth + 1 } body (indent + lm)
       { sub.trivSpace g with measure := saved, quoteDepth := a.quoteDepth }
+  -- Paper has no collapse: a disclosure sets its summary as a paragraph
+  -- (`Ir.disclosureSummary`) and its body after it, every word it holds on
+  -- the page, open or not.
+  | .disclosure summary _ body =>
+    collectBlockList r (collectParaBlock r a (Ir.disclosureSummary summary) indent)
+      body.toList indent false false
   | .titled kind title body =>
     let d := Ir.Design.ofPalette a.pal
     let look := d.titledBody kind

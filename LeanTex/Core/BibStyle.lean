@@ -2218,6 +2218,9 @@ private def resolveBlock (p : CitePunct) (find : Resolver)
   | .titled kind title body =>
     out.push (.titled kind (resolveArr p find title)
       (resolveBlocks p find items #[] body.toList))
+  | .disclosure summary expanded body =>
+    out.push (.disclosure (resolveArr p find summary) expanded
+      (resolveBlocks p find items #[] body.toList))
   | .role nm body => out.push (.role nm (resolveBlocks p find items #[] body.toList))
   | .link target body => out.push (.link target (resolveBlocks p find items #[] body.toList))
   | .spaced g body => out.push (.spaced g (resolveBlocks p find items #[] body.toList))
@@ -2301,7 +2304,7 @@ this decision, independently of the citation style or external entries. -/
 public def keepsBlock : Ir.Block → Bool
   | .para content => !nociteOnly content
   | .bibliography .. | .equation .. | .section .. | .abstract .. | .list ..
-  | .center .. | .ragged .. | .quote .. | .titled .. | .role .. | .link ..
+  | .center .. | .ragged .. | .quote .. | .titled .. | .disclosure .. | .role .. | .link ..
   | .spaced .. | .columns .. | .onSteps .. | .altSteps .. | .only .. | .nav ..
   | .note .. | .frame .. | .framefoot .. | .float .. | .table .. | .algorithm ..
   | .logo .. | .verbatim .. | .setPalette .. | .setTokens .. | .pagebreak
@@ -3499,7 +3502,7 @@ private theorem resolveBlock_pending (p : CitePunct) (find : Resolver) (items : 
     rcases resolveBlocks_pending p find items otherwise.toList #[] _ q h with h' | hc
     · exact resolveBlocks_pending p find items active.toList #[] _ q h'
     · exact .inr hc
-  | .titled _ title body | .frame title _ _ _ body =>
+  | .titled _ title body | .disclosure title _ body | .frame title _ _ _ body =>
     intro out acc q h
     simp only [resolveBlock, Ir.foldBlockList_push, Ir.foldBlock] at h
     rcases resolveBlocks_pending p find items body.toList #[] _ q h with h' | hc

@@ -404,13 +404,6 @@ def mdTreeOf (src : String) : String := docTreeOf (elabMd src).1
 alike. -/
 def docHtmlOf (doc : Ir.Doc) : String := Html.render (Html.elem "div" (docNodesOf doc)) 0
 
-/-- How many times a build writing `outs` names a markdown disclosure's lost
-collapse: the `W0392`s under `md:disclosure` the driver's projection
-(`Diag.forOutputs`) keeps. -/
-def collapseNamed (outs : Array Diag.Output) (ds : Array Diag) : Nat :=
-  ((Diag.forOutputs outs ds).filter fun d =>
-    d.kind == .W0392 && d.subject == some "md:disclosure").size
-
 /-- The sites the raw-HTML family places a construct at: inside a paragraph,
 opening a paragraph's line, as its own block, inside each container, and
 inside a heading. -/

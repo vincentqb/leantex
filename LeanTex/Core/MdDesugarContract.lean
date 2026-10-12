@@ -45,7 +45,7 @@ public structure Vocab where
   ctrls := ["emph", "textbf", "texttt", "href", "includegraphics", "item", "hypertarget", "\\",
     "toprule", "midrule", "bottomrule"]
   bridged := [Ir.HeadingLevel.title, .h1, .h2, .h3, .h4, .h5, .h6].map Parse.headingControl
-  envs := ["quote", "itemize", "enumerate", Parse.markdownTableEnv]
+  envs := ["quote", "itemize", "enumerate", Parse.markdownDisclosureEnv, Parse.markdownTableEnv]
   verbs := ["verbatim", "lstlisting"]
   syms := ['[', ']', '&', '@']
 
@@ -337,17 +337,30 @@ private theorem blkRaws_adm (file : String) : (b : Blk) → Adm (blkRaws file b)
       simp only [Vocab.admits, Bool.and_eq_true]
       exact ⟨by simp [vocabulary],
         admitsList_of_adm _ fun r hr => h r (Array.mem_toList_iff.mp hr)⟩)
-  | .disclosure summary body p => by
+  | .disclosure summary expanded body p => by
     simp only [blkRaws, disclosureRaws]
     have hs := inlListRaws_adm file summary.toList #[] #[] adm_empty
     have hb := blkListRaws_adm file body.toList #[] #[] adm_empty
-    refine adm_append (adm_lit ?_) hb
-    intro r hr
-    simp only [List.mem_cons, List.not_mem_nil, or_false] at hr
-    rcases hr with rfl | rfl | rfl
-    · exact ctrl_mem _ _ (by simp [vocabulary])
-    · exact adm_group _ _ hs
-    · rfl
+    have ho : Adm (if expanded then #[.sym '[' p, .word "open" p, .sym ']' p] else #[]) := by
+      cases expanded
+      · exact adm_empty
+      · refine adm_lit ?_
+        intro r hr
+        simp only [List.mem_cons, List.not_mem_nil, or_false] at hr
+        rcases hr with rfl | rfl | rfl
+        · exact sym_mem _ _ (by simp [vocabulary])
+        · rfl
+        · exact sym_mem _ _ (by simp [vocabulary])
+    have hall := adm_append (adm_append ho (adm_lit (l := [.group _ p])
+      (by intro r hr; simp only [List.mem_cons, List.not_mem_nil, or_false] at hr; subst hr
+          exact adm_group _ _ hs))) hb
+    exact adm_lit (by
+      intro r hr
+      simp only [List.mem_cons, List.not_mem_nil, or_false] at hr
+      subst hr
+      simp only [Vocab.admits, Bool.and_eq_true]
+      exact ⟨by simp [vocabulary],
+        admitsList_of_adm _ fun r hr => hall r (Array.mem_toList_iff.mp hr)⟩)
   | .list ordered start tight items p => by
     simp only [blkRaws]
     have h := itemsRaws_adm file items.toList p #[] #[] adm_empty
@@ -445,9 +458,9 @@ private theorem blkRaws_starts (file : String) (b : Blk) : Starts (blkRaws file 
   | quote body p =>
     simp only [blkRaws]
     exact starts_single (env_start _ _ _ (by simp [vocabulary]))
-  | disclosure summary body p =>
+  | disclosure summary expanded body p =>
     simp only [blkRaws, disclosureRaws]
-    exact Or.inr ⟨.par p, by simp, Or.inl ⟨p, rfl⟩⟩
+    exact starts_single (env_start _ _ _ (by simp [vocabulary]))
   | list ordered start tight items p =>
     simp only [blkRaws]
     exact starts_single (env_start _ _ _ (by cases ordered <;> simp [vocabulary]))
@@ -485,9 +498,9 @@ public theorem vocabulary_contract :
   refine ⟨?_, ?_, ?_⟩
   · intro n hn
     simp only [vocabulary, List.mem_cons, List.not_mem_nil, or_false] at hn
-    rcases hn with rfl | rfl | rfl | rfl <;>
+    rcases hn with rfl | rfl | rfl | rfl | rfl <;>
       simp [Parse.inputEnvFile?, Parse.scopeEnv, Parse.splitOpen?, Parse.splitClose?,
-        Parse.markdownTableEnv]
+        Parse.markdownTableEnv, Parse.markdownDisclosureEnv]
   · intro n hn
     simp only [vocabulary, List.mem_cons, List.not_mem_nil, or_false] at hn
     rcases hn with rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl <;> simp

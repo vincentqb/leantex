@@ -245,6 +245,7 @@ private def runIn (acc : Array Ir.Inline) (b : Ir.Block) : Array Ir.Inline :=
   | .equation _ c => put acc c
   | .table _ _ _ rows _ _ => rows.foldl (fun acc row => row.foldl put acc) acc
   | .titled _ t _ => put acc t
+  | .disclosure s _ _ => put acc s
   | .float _ _ _ _ c => put acc c
   | .verbatim _ s _ => put acc #[.text s]
   | _ => acc

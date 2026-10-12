@@ -1861,20 +1861,20 @@ def selftest : IO UInt32 := do
   let disclosureMd := "<details>\n<summary>Amber</summary>\n\nCedar\n\n</details>\n"
   let disclosureCase := classify #[]
     (ex disclosureMd "<details>\n<summary>Amber</summary>\n<p>Cedar</p>\n</details>\n")
-  unless disclosureCase.verdict == .owed && disclosureCase.refusals.isEmpty
-      && disclosureCase.routes.contains "md:disclosure" do
-    bad := bad.push "typed HTML: expanded disclosure content was certified as a CommonMark match"
+  unless disclosureCase.verdict == .match_ && disclosureCase.refusals.isEmpty
+      && disclosureCase.routes.isEmpty do
+    bad := bad.push "typed HTML: a disclosure did not match the element it spells"
   let expandedCase := classify #[]
     (ex disclosureMd "<p><strong>Amber</strong></p><p>Cedar</p>")
-  unless expandedCase.verdict == .owed && expandedCase.note == "blocked-by:md:disclosure" do
-    bad := bad.push "typed HTML: agreeing expanded trees hid the disclosure's declared loss"
+  if expandedCase.verdict == .match_ then
+    bad := bad.push "typed HTML: a disclosure matched its expanded bold spelling"
   -- The HTML vocabulary, judged as a spec case is: a carried spelling
   -- matches its page with nothing refused; one carrying an attribute the
   -- vocabulary does not read is refused, and the spec's own passthrough
-  -- corroborates the refusal; an open disclosure is owed under its route;
-  -- a refused disclosure is rejected and names no disclosure route. Every
-  -- attribute that decides whether content reaches a reader refuses both
-  -- spellings it could ride.
+  -- corroborates the refusal; an open disclosure matches its open element;
+  -- a refused disclosure is rejected and names no route. Every attribute
+  -- that decides whether content reaches a reader refuses both spellings
+  -- it could ride.
   let brCase := classify #[] (ex "Alder<br>Birch\n" "<p>Alder<br>Birch</p>\n")
   unless brCase.verdict == .match_ && brCase.refusals.isEmpty do
     bad := bad.push "vocabulary: a carried <br> did not match its page"
@@ -1888,14 +1888,12 @@ def selftest : IO UInt32 := do
   let openHtml (attrs : String) : String :=
     s!"<details open{attrs}>\n<summary>Amber</summary>\n<p>Cedar</p>\n</details>\n"
   let openCase := classify #[] (ex (openMd "") (openHtml ""))
-  unless openCase.verdict == .owed && openCase.refusals.isEmpty
-      && openCase.routes.contains "md:disclosure" do
-    bad := bad.push "vocabulary: an open disclosure was not owed under its route"
+  unless openCase.verdict == .match_ && openCase.refusals.isEmpty && openCase.routes.isEmpty do
+    bad := bad.push "vocabulary: an open disclosure did not match its open element"
   let refusedDisclosure := classify #[]
     (ex "<details>\nCedar\n</details>\n" "<details>\nCedar\n</details>\n")
-  unless corroboratedRefusal refusedDisclosure
-      && !refusedDisclosure.routes.contains "md:disclosure" do
-    bad := bad.push "vocabulary: a refused disclosure was not rejected, or named its route"
+  unless corroboratedRefusal refusedDisclosure && refusedDisclosure.routes.isEmpty do
+    bad := bad.push "vocabulary: a refused disclosure was not rejected, or named a route"
   for a in readerAttrs do
     unless corroboratedRefusal (classify #[]
         (ex s!"Alder<br {a}>Birch\n" s!"<p>Alder<br {a}>Birch</p>\n")) do

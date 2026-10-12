@@ -276,6 +276,8 @@ mutual
   | .abstract body => out.push (.node .section (blocksRaw #[] body.toList))
   | .titled _ title body =>
     out.push (.node .section (blocksRaw (titleRaw title) body.toList))
+  | .disclosure title _ body =>
+    out.push (.node .section (blocksRaw (titleRaw title) body.toList))
   -- the number is census text, set beside the formula in every backend: a
   -- counter's digits, or an author's tag elaborated as inline content
   | .equation number content =>
@@ -933,6 +935,9 @@ theorem blockRaw_text (acc : String) (out : Array Node) (b : Block) :
   | .titled kind title body =>
     simp only [blockRaw, leafTextList_push, leafTextOne_node_exact, blockTextOne]
     rw [blocksRaw_text, titleRaw_text]
+  | .disclosure title _ body =>
+    simp only [blockRaw, leafTextList_push, leafTextOne_node_exact, blockTextOne]
+    rw [blocksRaw_text, titleRaw_text]
   | .equation number content =>
     simp only [blockRaw, leafTextList_push, leafTextOne_node_exact, blockTextOne]
     rw [inlinesRaw_text_nil, inlinesRaw_text_nil]
@@ -1268,6 +1273,10 @@ theorem blockRaw_headings (hs : Array Ir.HeadingLevel) (out : Array Node) (b : B
     simp only [blockRaw, headingsList_push, headingsOne_node_exact, Kind.outlineDescends,
       Kind.outlineEmit, headingLevelOne]
     rw [blocksRaw_headings, titleRaw_headings]
+  | .disclosure title _ body =>
+    simp only [blockRaw, headingsList_push, headingsOne_node_exact, Kind.outlineDescends,
+      Kind.outlineEmit, headingLevelOne]
+    rw [blocksRaw_headings, titleRaw_headings]
   | .equation number content =>
     simp only [blockRaw, headingsList_push, headingsOne_node_exact, Kind.outlineDescends,
       Kind.outlineEmit, headingLevelOne]
@@ -1597,6 +1606,9 @@ theorem blockRaw_alts (is : Array (Option String × Alt)) (out : Array Node) (b 
   | .titled kind title body =>
     simp only [blockRaw, altsList_push, altsOne_node_exact, foldBlock, altPicPush]
     rw [blocksRaw_alts, titleRaw_alts]
+  | .disclosure title _ body =>
+    simp only [blockRaw, altsList_push, altsOne_node_exact, foldBlock, altPicPush]
+    rw [blocksRaw_alts, titleRaw_alts]
   | .equation number content =>
     simp only [blockRaw, altsList_push, altsOne_node_exact, foldBlock, altPicPush]
     rw [inlinesRaw_alts_nil]
@@ -1909,6 +1921,7 @@ public theorem blockRaw_acc (out : Array Node) (b : Block) :
   | .quote body => simp [blockRaw]
   | .abstract body => simp [blockRaw]
   | .titled kind title body => simp [blockRaw]
+  | .disclosure title _ body => simp [blockRaw]
   | .equation number content => simp [blockRaw]
   | .verbatim c content spec =>
     simp only [blockRaw]

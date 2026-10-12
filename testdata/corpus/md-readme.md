@@ -38,3 +38,17 @@ make install PREFIX=$HOME/.local
 
 See [the log format](https://example.org/tidegauge/log-format) for the
 columns each line carries.
+
+<details>
+<summary>The log reads as empty</summary>
+
+Check that each line carries a timestamp and a height, a tab between them.
+
+</details>
+
+<details open>
+<summary>Reading in other units</summary>
+
+Heights print in metres unless `--units feet` is given.
+
+</details>

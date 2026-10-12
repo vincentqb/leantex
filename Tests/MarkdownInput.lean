@@ -268,35 +268,41 @@ def markdownInputHtmlChecks (ref : IO.Ref (List String)) : IO Unit := do
         && (hostDs.filter (·.kind == .E0390)).all fun d =>
           d.span.any (·.file == (dir / "note.md").toString))
 
-/-- **A disclosure's lost collapse is named for each artifact that loses it,
-and for no other.** The HTML page and the markdown twin can each spell the
-collapse — a `<details>` element, and the tag the twin's own reader reads —
-and neither does: the page holds no `<details>` and the twin writes none.
-Paper has no collapse to lose, and the PDF sets the disclosure exactly as
-its bold-summary twin sets, every summary and body word in order. So the
-loss is kept for exactly the HTML and the twin, in a markdown document and
-in markdown a tex host includes, and the driver reports for each artifact
-it writes, the twin included: an `-o x.md` build once named nothing, while
-its twin had lost the collapse too. -/
+/-- **A disclosure is one construct both artifacts read, and paper sets it
+expanded.** The HTML page ships the platform's element — its summary first,
+then its body inside it, `open` exactly where the markdown's tag carries it —
+so its collapse is the reader's; the page sets the summary as a bold line
+above the body, every word in order, open or not, exactly as its
+bold-summary spelling sets; the print sheet shows the body whether or not it
+was opened; and the markdown twin writes the element back, which its reader
+reads to the same document. No artifact loses anything, so nothing is named:
+in a markdown document, in markdown a tex host includes, and for each
+artifact the driver writes, the twin included. -/
 def disclosurePrintChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
   let some fonts ← serifFacesSet
     | t "the disclosure print faces load" false
       return
   let body := "\n<summary>Amber</summary>\n\nCedar\n\n</details>\n"
-  let namedRight (ds : Array Diag) : Bool :=
-    collapseNamed #[.pdf] ds == 0 && collapseNamed #[.html] ds == 1
-      && collapseNamed #[.md] ds == 1 && collapseNamed #[.pdf, .html] ds == 1
-      && collapseNamed #[.pdf, .md] ds == 1 && collapseNamed #[.html, .md] ds == 2
-  for opener in ["<details>", "<details open>"] do
+  let element (opener : String) : String :=
+    opener ++ "<summary>Amber</summary><p>Cedar</p></details>"
+  for (opener, tag) in [("<details>", "<details>"), ("<details open>", "<details open=>")] do
     let (doc, ds) := elabMd (opener ++ body)
-    t s!"{opener}: the page sets the disclosure as its bold-summary twin sets"
+    t s!"{opener}: the page sets the disclosure as its bold-summary spelling sets"
       (shippedLinesOf fonts doc == shippedLinesOf fonts (elabMd "**Amber**\n\nCedar\n").1)
-    t s!"{opener}: neither the HTML page nor the markdown twin carries the collapse"
-      ((elemNodesList (· == "details") #[] (docNodesOf doc).toList).isEmpty
-        && !hasStr (MarkdownDoc.emit doc).toLower "<details")
-    t s!"{opener}: the lost collapse is named once for the HTML and once for the twin"
-      (namedRight ds)
+    t s!"{opener}: the HTML page ships the element, open exactly where the tag is"
+      (hasStr (docTreeOf doc) (element tag)
+        && (elemNodesList (· == "details") #[] (docNodesOf doc).toList).size == 1)
+    let twin := MarkdownDoc.emit doc
+    t s!"{opener}: the twin writes the element back, read to the same document"
+      (hasStr twin (opener ++ "\n<summary>Amber</summary>\n") && (elabMd twin).1.body == doc.body
+        && (elabMd twin).2.isEmpty)
+    t s!"{opener}: no artifact loses anything, and nothing is named" ds.isEmpty
+  let css := HtmlDoc.baseCss {} (elabMd ("<details>" ++ body)).1
+  let print := ((css.splitOn "@media print {").drop 1).headD ""
+  t "the print sheet shows a closed disclosure's body and no toggle marker"
+    (hasStr ((print.splitOn "\n}\n").headD "") "details::details-content { content-visibility: visible; }"
+      && hasStr ((print.splitOn "\n}\n").headD "") "summary { list-style: none; }")
   t "the driver reports for each artifact it writes, the markdown twin included"
     (DriverAssets.diagnosticOutputs #[.pdf] == #[.pdf]
       && DriverAssets.diagnosticOutputs #[.html] == #[.html]
@@ -304,9 +310,9 @@ def disclosurePrintChecks (ref : IO.Ref (List String)) : IO Unit := do
       && DriverAssets.diagnosticOutputs #[.pdf, .html, .md] == #[.pdf, .html, .md])
   IO.FS.withTempDir fun dir => do
     IO.FS.writeFile (dir / "note.md") ("<details>" ++ body)
-    let (_, ds) ← elabInputSrc (dir / "host.tex").toString
+    let (host, ds) ← elabInputSrc (dir / "host.tex").toString
       (dvDoc "\\usepackage{markdown}\n" "\\markdownInput{note.md}")
-    t "a tex host names its note's lost collapse once for the HTML and once for the twin"
-      (namedRight ds)
+    t "a tex host ships its note's disclosure as the element and names no loss"
+      (hasStr (docTreeOf host) (element "<details>") && ds.all (·.severity == .note))
 
 end Tests

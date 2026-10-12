@@ -672,8 +672,8 @@ public theorem markdownVocabulary_contract :
   refine ⟨?_, ?_⟩
   · intro n hn
     simp only [Md.vocabulary, List.mem_cons, List.not_mem_nil, or_false] at hn
-    rcases hn with rfl | rfl | rfl | rfl <;>
-      simp [builtinEnvNames, blockEnvs, Parse.markdownTableEnv]
+    rcases hn with rfl | rfl | rfl | rfl | rfl <;>
+      simp [builtinEnvNames, blockEnvs, Parse.markdownTableEnv, Parse.markdownDisclosureEnv]
   · intro n hn
     rcases List.mem_append.mp hn with hn | hn
     · simp only [Md.vocabulary, List.mem_cons, List.not_mem_nil, or_false] at hn
@@ -700,8 +700,9 @@ private theorem bodyIsBlockOne_of_blockStart (r : Raw) (h : Md.BlockStart r) :
   · simp only [Md.vocabulary, List.mem_cons, List.not_mem_nil, or_false] at he
     rcases he with rfl | rfl <;> simp [bodyIsBlockOne]
   · simp only [Md.vocabulary, List.mem_cons, List.not_mem_nil, or_false] at hn
-    rcases hn with rfl | rfl | rfl | rfl <;>
-      simp [bodyIsBlockOne, Parse.inputEnvFile?, blockEnvs, Parse.markdownTableEnv]
+    rcases hn with rfl | rfl | rfl | rfl | rfl <;>
+      simp [bodyIsBlockOne, Parse.inputEnvFile?, blockEnvs, Parse.markdownEnv,
+        Parse.markdownTableEnv, Parse.markdownDisclosureEnv]
 
 private theorem bodyIsBlock_of_blockStart (body : Array Raw) (h : ∃ r ∈ body, Md.BlockStart r) :
     bodyIsBlock body = true := by
