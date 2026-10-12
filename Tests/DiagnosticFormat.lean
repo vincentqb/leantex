@@ -273,7 +273,8 @@ def diagnosticRecordChecks (ref : IO.Ref (List String)) : IO Unit := do
     t "diagnostic record: census preserves the entire payload"
       ({ counted with sites := raw.sites } == raw)
   t "diagnostic record: HTML driver failures are scoped to HTML"
-    ((DriverDiag.boundarySvgMissing "leantex-pic:probe" "unavailable").output == some .html &&
+    ((DriverDiag.boundarySvgMissing "leantex-pic:probe" (.unconverted "unavailable")).output ==
+        some .html &&
       (DriverDiag.htmlResourceUnavailable "missing resource").output == some .html)
 
 /-- Exercise the emitted stderr, stream routing and exits of the built CLI.
@@ -317,7 +318,7 @@ def diagnosticFormatCliChecks (ref : IO.Ref (List String)) : IO Unit := do
     let human ← runFace #[file, "-o", shipped, "--color=never", "-q"]
     t "diagnostic format: a located loss separates location, reason, recovery and suggestion"
       (human.exitCode == 0 && human.stdout.isEmpty && human.stderr.startsWith
-        (s!"⚠ [W0002] - {file}:1:1\n  the file holds bytes that are not text in UTF-8\n" ++
+        (s!"⚠ [W0002] - {file}:1:1\n  '{file}' holds bytes that are not text in UTF-8\n" ++
           "  byte 0xFF at offset 0\n" ++
           "  replaced by: U+FFFD\n  suggestion: save the file as UTF-8, or name its encoding: " ++
           "\\usepackage[latin1]{inputenc} reads Latin-1\n"))
@@ -325,7 +326,7 @@ def diagnosticFormatCliChecks (ref : IO.Ref (List String)) : IO Unit := do
     t "diagnostic format: a located loss stays JSONL on stdout"
       (machine.exitCode == 0 && machine.stderr.isEmpty && machine.stdout.startsWith
         ("{\"event\":\"diagnostic\",\"severity\":\"warning\",\"code\":\"W0002\"," ++
-          "\"loss\":\"degraded\",\"message\":\"the file holds bytes that are not text in UTF-8\"," ++
+          "\"loss\":\"degraded\",\"message\":\"'" ++ file ++ "' holds bytes that are not text in UTF-8\"," ++
           "\"file\":\"" ++ file ++ "\",\"line\":1,\"col\":1,"))
     let usage ← run #["--not-a-flag"]
     t "diagnostic format: parser-independent argument errors keep their established output"

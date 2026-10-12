@@ -88,7 +88,7 @@ def diagnosticLayoutOriginChecks (ref : IO.Ref (List String))
     ((bareOut.diags.filter (·.kind == .W0005)).size == 1 &&
       (bareOut.diags.filter (·.kind == .W0005)).all fun d =>
       d.span.isNone && d.trigger.isNone &&
-        d.message == "2 overfull lines (no feasible break)")
+        d.message == "overfull line; no feasible break" && d.detail == some "2 overfull lines")
   let pictureSource :=
     "\\documentclass{article}\\pictures{tool=none}\\begin{document}\n" ++
     DiagnosticLayoutOrigins.picture ++ "\n" ++ DiagnosticLayoutOrigins.picture ++

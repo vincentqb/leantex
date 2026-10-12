@@ -304,7 +304,7 @@
   content after '\end{document}' is ignored
 ── W0002 (degraded) bytes that are not text in the file's encoding, U+0000 among them, are replaced by U+FFFD
 ⚠ [W0002]
-  the file holds bytes that are not text in UTF-8
+  'doc.tex' holds bytes that are not text in UTF-8
   byte 0xE9 at offset 44
   replaced by: U+FFFD
   suggestion: save the file as UTF-8, or name its encoding: \usepackage[latin1]{inputenc} reads Latin-1
@@ -314,7 +314,7 @@
   suggestion: declare \fonts{ math = "..." } naming an installed OpenType math face; `leantex fonts` lists families
 ── W0004 (degraded) bytes a UTF-8 file holds that UTF-8 cannot read are read in the encoding its document declares, a guess the warning names
 ⚠ [W0004]
-  bytes are read as Windows-1252 (Latin-1), as declared, in a file otherwise UTF-8
+  bytes are read as Windows-1252 (Latin-1), as declared, in 'doc.tex', otherwise UTF-8
   byte 0x92 at offset 83
   suggestion: retype the characters at those offsets in UTF-8: the rest of the file is UTF-8
 ── W0005 (degraded) overfull line, no feasible break, where no re-flowed declared line accounts for it
@@ -358,6 +358,9 @@
 ⚠ [W0014] - \begin
   '{align*}': a row has fewer cells than its widest; padded with empty cells
   row 2 has 1 cell(s) where 2 align
+⚠ [W0014] - $
+  an alignment row has more cells than the column spec declares; extra columns centre
+  2 cells where the column spec declares 1
 ── W0015 (degraded) equation numbers not rendered yet; rows set unnumbered
 ⚠ [W0015] - \begin
   equation numbers are not rendered yet; '{align}' sets unnumbered
@@ -447,7 +450,8 @@
   suggestion: declare colours with \palette{ name = #RRGGBB }
 ── W0306 (degraded) a palette's seeds generate no palette — a role they derive cannot meet what its sites owe, or a seed has no sRGB tones to derive from; the seeds stand as the page's text, ground and accent
 ⚠ [W0306] - \palette
-  '\palette[seeds]' generates no palette: muted-on-inverse: no neutral tone reads on the ink; the seeds stand as given
+  '\palette[seeds]' generates no palette: its muted-on-inverse fails its check; the seeds stand as given
+  no neutral tone reads on the ink
   suggestion: move the ink and the paper further apart, so every tone derived between them reads: \palette[seeds]{ ink = #1E1B2E, paper = #FFFFFF, accent = #E85D2A }
 ── W0307 (pending) construct not implemented yet; its content is not rendered
 ⚠ [W0307] - \begin
@@ -599,6 +603,18 @@
 ⚠ [W0345] - \palette
   covering 'covered' does not quiet it: the covered form reads as loud on the page as the active one
   suggestion: a cover is a declaration too: lower 'covered = <n>%', or declare \palette{ covered = ... } quieter than the ink it stands for
+⚠ [W0345]
+  covered 'fg' reads against its active form below the contrast WCAG 2.2 asks of a state change (SC 1.4.11)
+  #4E4A49 against #292524: 1.73:1, below 3.00:1
+  suggestion: a cover is a declaration too: lower 'covered = <n>%', or declare \palette{ covered = ... } quieter than the ink it stands for
+⚠ [W0345]
+  covered 'alert' reads against its active form below the contrast WCAG 2.2 asks of a state change (SC 1.4.11)
+  #4985CF against #0B66C2: 1.49:1, below 3.00:1
+  suggestion: a cover is a declaration too: lower 'covered = <n>%', or declare \palette{ covered = ... } quieter than the ink it stands for
+⚠ [W0345]
+  covered 'example' reads against its active form below the contrast WCAG 2.2 asks of a state change (SC 1.4.11)
+  #4E9371 against #0F7A52: 1.46:1, below 3.00:1
+  suggestion: a cover is a declaration too: lower 'covered = <n>%', or declare \palette{ covered = ... } quieter than the ink it stands for
 ── W0346 (config) a declaration inside inline content is ignored
 ⚠ [W0346] - \palette
   '\palette' is a declaration; inside inline content it is ignored
@@ -734,12 +750,23 @@
   suggestion: give the link visible text — \href{...}{words} — or an image with alt inside it
 ── W0378 (degraded) a boundary picture has no checked browser face; the web page shows the rendered subset's drawing of it, or its text alternative
 ⚠ [W0378]
-  this boundary picture has no browser face for the HTML artifact
-  not found (error code: 2)
+  this boundary picture has no browser face: its text is in a font the engine does not draw, and no converter drew it
+  suggestion: install poppler's pdftocairo, which draws the picture whole, rebuild if a conversion was interrupted, or \allow{W0378} accepts the loss
+⚠ [W0378]
+  this boundary picture has no browser face: its text is in a font the engine does not draw, and the converter is declined
+  suggestion: \figures{ convert = none } declines the converter; without it, pdftocairo draws the picture whole, or \allow{W0378} accepts the loss
+⚠ [W0378]
+  this boundary picture has no browser face: its conversion to SVG failed, or the check its SVG must pass did not finish
+  pdftocairo: not found (error code: 2)
   suggestion: install the tool the reason names (poppler's pdftocairo, libxml2's xmllint, librsvg's rsvg-convert), rebuild if it was interrupted, or \allow{W0378} accepts the loss
+⚠ [W0378]
+  this boundary picture has no browser face: the check its SVG must pass did not finish when the page was published
+  xmllint did not finish
+  suggestion: rebuild to run the check again, install libxml2's xmllint if the reason says it is missing, or \allow{W0378} accepts the loss
 ── W0379 (degraded) no boundary tool available for a picture outside the rendered subset; a placeholder box marks the picture
 ⚠ [W0379]
-  no boundary tool is available for this picture: lualatex's version was not read (no executable file by this name on PATH)
+  no boundary tool is available for this picture: lualatex's version was not read
+  no executable file by this name on PATH
   replaced by: a placeholder box
   suggestion: install lualatex if it is missing, or \pictures{ tool = none } accepts the placeholder; a warm cache needs no tool
 ── W0380 (degraded) a \cref target of unknown kind; the plain number is set
@@ -918,7 +945,8 @@
   permission denied (error code: 13)
 ── W0602 (degraded) image format unusable; placeholder box placed
 ⚠ [W0602]
-  cannot use image 'figures/plot.gif': not a PNG, JPEG, or PDF file; a placeholder box holds its place
+  cannot use image 'figures/plot.gif'; a placeholder box holds its place
+  not a PNG, JPEG, or PDF file
 ── W0603 (degraded) an image's embedded colour profile is dropped; the page reads it as device colour
 ⚠ [W0603]
   image 'figures/plot.png' carries an embedded colour profile; the page reads its samples as device colour

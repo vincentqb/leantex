@@ -75,10 +75,10 @@ def svgToolChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit 
       let (before, beforePdf) := artifact missing
       check ref (label ++ " stops at the unavailable tool") ((← calls.get) == stopped)
       check ref (label ++ " names the executable and dependency recovery")
-        (diag.any fun d => hasStr d.message tool &&
-          hasStr d.message ("brew install " ++ package) && hasStr d.message "PATH")
+        (diag.any fun d => hasStr (diagWords d) tool &&
+          hasStr (diagWords d) ("brew install " ++ package) && hasStr (diagWords d) "PATH")
       check ref (label ++ " does not ask the author to re-export")
-        (diag.any fun d => !hasStr d.message "re-export" &&
+        (diag.any fun d => !hasStr (diagWords d) "re-export" &&
           !(d.help.any (hasStr · "re-export")))
       check ref (label ++ " keeps W0602 and its source subject")
         (diag.any fun d => d.kind == .W0602 && !d.demoted && d.subject == some req.src)
@@ -110,8 +110,8 @@ def svgToolChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit 
       (runTool := some (svgToolRunner calls "rsvg-convert" failure source))
     let (_, diag) := fulfil result
     check ref s!"SVG converter error {code}/{stderr} keeps its evidence without install advice"
-      (diag.any fun d => hasStr d.message s!"rsvg-convert exited {code}: {stderr}" &&
-        !hasStr d.message "brew install" && d.kind == .W0602)
+      (diag.any fun d => hasStr (diagWords d) s!"rsvg-convert exited {code}: {stderr}" &&
+        !hasStr (diagWords d) "brew install" && d.kind == .W0602)
   let calls ← IO.mkRef #[]
   let failure ← IO.mkRef (some (.error (IO.Error.resourceExhausted none 24 "open files")))
   let result ← ImageAssets.svgPlan {} source .last

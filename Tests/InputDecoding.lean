@@ -102,7 +102,7 @@ def inputDecodingChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "input decoding: one bad byte reads as one U+FFFD" (count bad.text '\uFFFD' == 1)
   t "input decoding: one bad byte is one warning naming its offset and place"
     (bad.diags.size == 1 && codes bad.diags .W0002 == 1 && bad.diags.all fun d =>
-      d.message == "the file holds bytes that are not text in UTF-8" &&
+      d.message == "'u96-badbyte.tex' holds bytes that are not text in UTF-8" &&
       d.detail == some "byte 0xFF at offset 49" &&
       d.span == some ⟨"u96-badbyte.tex", { line := 3, col := 9 }⟩ &&
       d.recovery == some (.replacedBy "U+FFFD") && d.offsets == #[49])
@@ -113,6 +113,22 @@ def inputDecodingChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "input decoding: a warning lists three offsets and gives a tool all of them"
     (five.diags.any fun d => d.kind == .W0002 && d.offsets == #[1, 3, 5, 7, 9] &&
       d.detail == some "5 byte sequences, at offsets 1 (0xFF), 3 (0xFE), 5 (0xFF) and 2 more")
+  -- A file is a loss of its own, named in its words: the same bytes in two
+  -- files print a line each, where a second site in one file is one more
+  -- offset of that file's one record.
+  for (code, preamble, body) in [
+      (DiagCode.W0002, "", "Caf".toUTF8 ++ bytes [0xE9] ++ ".".toUTF8),
+      (.W0004, "\\usepackage[latin1]{inputenc}\n", "Café crème".toUTF8 ++ bytes [0x92] ++ "s.".toUTF8)] do
+    let read (file : String) (b : ByteArray) : Array Diag :=
+      (readTexFile file (doc preamble b)).diags.filter (·.kind == code)
+    let shown := (Diag.foldRepeats (read "doc.tex" body ++ read "chapter.tex" body)).filter
+      (·.severity.isWarning)
+    t s!"input decoding: {code.code} in two files prints a line naming each"
+      (shown.map (·.sites) == #[1, 1] && hasStr (shown[0]?.map (·.message) |>.getD "") "'doc.tex'" &&
+        hasStr (shown[1]?.map (·.message) |>.getD "") "'chapter.tex'")
+    let sites := read "doc.tex" (body ++ "\n\nProse.\n\n  ".toUTF8 ++ body)
+    t s!"input decoding: {code.code} at two sites of one file is one record"
+      (sites.size == 1 && sites.all (·.offsets.size == 2))
   let cut := Encoding.readTex none "cut.tex" ("a".toUTF8 ++ bytes [0xE2, 0x82] ++ "b".toUTF8)
   t "input decoding: a truncated sequence is one U+FFFD naming its bytes"
     (cut.text == "a\uFFFDb" && cut.diags.any fun d =>
@@ -182,8 +198,8 @@ encoding in that load, as \\usepackage[latin1]{inputenc} reads Latin-1")
       codes mixed.diags .W0002 == 0)
   t "input decoding: the stray byte a UTF-8 file read as declared is named, a guess"
     (mixed.diags.size == 1 && mixed.diags.all fun d => d.kind == .W0004 &&
-      d.message == "bytes are read as Windows-1252 (Latin-1), as declared, in a file otherwise \
-UTF-8" && d.detail == some "byte 0x92 at offset 83" && d.offsets == #[83])
+      d.message == "bytes are read as Windows-1252 (Latin-1), as declared, in 'u96-mixed.tex', \
+otherwise UTF-8" && d.detail == some "byte 0x92 at offset 83" && d.offsets == #[83])
   -- A tie is no evidence: it goes to the declaration.
   let tie := readTexFile "tie.tex"
     (doc "\\usepackage[latin1]{inputenc}\n" ("x".toUTF8 ++ bytes [0xC3, 0xA9, 0x20, 0xE9]))
@@ -207,7 +223,7 @@ UTF-8" && d.detail == some "byte 0x92 at offset 83" && d.offsets == #[83])
   let hole := readTexFile "hole.tex" ("\\usepackage[cp1252]{inputenc}\n".toUTF8 ++ bytes [0x81])
   t "input decoding: a byte Windows-1252 leaves undefined is U+FFFD, named"
     (hole.text.endsWith "\uFFFD" && hole.diags.any fun d => d.kind == .W0002 &&
-      d.message == "the file holds bytes that are not text in Windows-1252 (Latin-1)" &&
+      d.message == "'hole.tex' holds bytes that are not text in Windows-1252 (Latin-1)" &&
       d.detail == some "byte 0x81 at offset 30")
   let unread := readTexFile "latin2.tex"
     ("\\usepackage[latin2]{inputenc}\n".toUTF8 ++ bytes [0xB1])
@@ -219,7 +235,7 @@ UTF-8" && d.detail == some "byte 0x92 at offset 83" && d.offsets == #[83])
     (Utf8.bom ++ "\\usepackage[latin1]{inputenc}\n".toUTF8 ++ bytes [0xE9])
   t "input decoding: a file its byte-order mark calls UTF-8 reads its stray bytes as declared"
     (marked.text.endsWith "é" && marked.reading == .utf8 && marked.diags.any fun d =>
-      d.kind == .W0004 && hasStr d.message "in a file its byte-order mark calls UTF-8")
+      d.kind == .W0004 && hasStr d.message "in 'marked.tex', which its byte-order mark calls UTF-8")
   -- UTF-16 by its byte-order mark, whatever the file declares.
   let u16 := Encoding.readTex none "u96-utf16.tex" (← probe "u96-utf16.tex")
   t "input decoding: a UTF-16 byte-order mark reads UTF-16"
@@ -236,7 +252,7 @@ UTF-8" && d.detail == some "byte 0x92 at offset 83" && d.offsets == #[83])
   let odd := Encoding.readMarkdown "u96-odd16.md" (← probe "u96-odd16.md")
   t "input decoding: a trailing odd byte of UTF-16 is the one byte it is"
     (odd.text == "Hi\uFFFD" && odd.diags.all fun d =>
-      d.message == "the file holds bytes that are not text in UTF-16LE" &&
+      d.message == "'u96-odd16.md' holds bytes that are not text in UTF-16LE" &&
       d.detail == some "byte 0x41 at offset 6" && d.offsets == #[6])
   let bare := Encoding.readTex none "bare.tex"
     ("Hi there".toList.foldl (fun b c => b ++ bytes [c.toNat.toUInt8, 0]) ByteArray.empty)
@@ -248,7 +264,7 @@ UTF-8" && d.detail == some "byte 0x92 at offset 83" && d.offsets == #[83])
   let nul := Encoding.readMarkdown "u96-nul.md" (← probe "u96-nul.md")
   t "input decoding: U+0000 in markdown is U+FFFD, named once as what it is"
     (!nul.text.contains '\x00' && count nul.text '\uFFFD' == 1 && codes nul.diags .W0002 == 1 &&
-      nul.diags.all (fun d => d.message == "the file holds U+0000, which is not text" &&
+      nul.diags.all (fun d => d.message == "'u96-nul.md' holds U+0000, which is not text" &&
         d.detail == some "U+0000 at offset 8") &&
       treeShownOccurs (HtmlDoc.emitTree {} (elabMd nul.text).1).2.1 "A\uFFFDB" == 1)
   let texNul := Encoding.readTex none "nul.tex" ("A".toUTF8 ++ bytes [0] ++ "B".toUTF8)

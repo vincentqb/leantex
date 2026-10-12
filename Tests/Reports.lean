@@ -168,7 +168,8 @@ open Tests (mintedSettingsChecks listingHighlightChecks listingPaletteContinuati
 open TcolorboxChecks (tcolorboxChecks tcolorboxSourceChecks)
 open TcolorboxColors (tcolorboxColorChecks)
 open PictureBoundary (pictureBoundaryChecks pictureWrapperChecks pictureShipChecks)
-open Tests (fontDefaultsChecks fontDefaultsOverrideChecks blockBarChecks batchChecks)
+open Tests (fontDefaultsChecks fontDefaultsOverrideChecks weightSubstitutionRecordChecks
+  blockBarChecks batchChecks)
 
 namespace Reports
 
@@ -1499,8 +1500,10 @@ def reports : List Report := [
     state := .guarded "373b2f34" .revert .author },
   { id := "R166", date := "2026-10-12"
     what := "a build printed a warning line per site for losses whose words stated a site's particulars, a byte offset, an alignment row, a data record's index, a count or a measure taken there, so one loss printed as several; the witness check repeated identical content at one site and could not see them"
-    pins := [check% repeatFoldChecks, check% diagVoiceChecks, check% inputDecodingChecks]
-    accept := ["on the tree before the fix, with the guards as first written, twenty-nine of their assertions fail: the byte-level and data warnings' witnesses written again at another site print a line per site, six with and without their sources, and twenty-two codes' witnesses state a number outside what they quote, twenty-three in all, two of them a standard's citation and a code name, which the lint then allowed"]
+    pins := [check% repeatFoldChecks, check% diagVoiceChecks, check% inputDecodingChecks,
+      check% weightSubstitutionRecordChecks]
+    accept := ["on the tree before the fix, the guards as they stand after the first review, forty-one of their assertions fail: two where the data warning's witness written again at another site prints a line per site, with and without its sources; twenty-five where twenty-one codes' witnesses state a number outside what they quote; twelve of the input decoding's, where a file's warning stated an offset in its words and two files' losses folded to one line naming neither; and two where two weights a family lacks, served by one face, printed two lines whose words named each weight",
+      "the first review's guards: two weights served by one face keep a record each through the font assembly and fold to one line; a covered form's ratio is its detail; a boundary picture's missing face has one wording per reason, each with its remedy; each file's byte-level loss names the file; the codes whose witness cannot repeat are a baseline read in both directions, each with its reason; and the number lint reads a quote before a possessive and an apostrophe inside double quotes"]
     state := .guarded "fb46f760" .before .author }
 ]
 

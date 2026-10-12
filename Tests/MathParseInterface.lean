@@ -32,9 +32,12 @@ example (env : Env) :
 
 example (note : Note) : String :=
   match note with
-  | .ragged message _ | .styleDropped message | .constructFloored message
+  | .ragged kind _ => kind.words
+  | .styleDropped message | .constructFloored message
   | .inkMissed message => message
   | .inkUsed expression _ _ => expression
+
+example : Ragged → String := Ragged.key
 
 example : Bool → Array Parse.Raw → Env → Except String (MList × Array Note) :=
   fun display raws env => parseMath display raws env

@@ -228,15 +228,32 @@ public def alphaCtrl : List (String × Math.MathAlphabet × Math.AlphaSource) :=
    ("textbf", .bf, .doc), ("textit", .it, .doc), ("textsf", .sf, .doc), ("texttt", .tt, .doc),
    ("textnormal", .rm, .doc), ("emph", .it, .doc)]
 
+/-- How an alignment's rows are ragged: a row short of the widest, or rows
+wider than an `array`'s column spec. -/
+public inductive Ragged where
+  | short
+  | overrun
+  deriving Repr, BEq
+
+/-- The name a ragged alignment is counted under, the same at every site. -/
+public def Ragged.key : Ragged → String
+  | .short => "short"
+  | .overrun => "overrun"
+
+/-- The words every row ragged this way is named in. -/
+public def Ragged.words : Ragged → String
+  | .short => "row has fewer cells than its widest; padded with empty cells"
+  | .overrun => "row has more cells than the column spec declares; extra columns centre"
+
 /-- A loss the parser can name without failing the formula: the
 mathematics renders, something about its presentation does not. Typed
 rather than a bare string so the elaborator dispatches each kind to its own
 diagnostic — a ragged alignment row and a dropped colour are different
 losses and may not share a code. -/
 public inductive Note where
-  /-- A ragged alignment: the words a message gives every such row, and
-  the row's own particulars, its detail. -/
-  | ragged (msg detail : String)
+  /-- A ragged alignment: how it is ragged, and the row's own particulars,
+  its detail. -/
+  | ragged (kind : Ragged) (detail : String)
   /-- A colour or font change inside math whose content renders in the
   surrounding style: `what` names the change for the message. -/
   | styleDropped (what : String)
@@ -1134,13 +1151,11 @@ private def buildGrid (kind : GridKind) (rows : Array (Array MList)) (endsRow : 
   let maxCols := widths.foldl Nat.max 0
   for k in [0:rows.size] do
     if widths[k]! != maxCols then
-      notes := notes.push (.ragged
-        "row has fewer cells than its widest; padded with empty cells"
+      notes := notes.push (.ragged .short
         s!"row {k + 1} has {widths[k]!} cell(s) where {maxCols} align")
   if let GridKind.array cols _ := kind then
     if maxCols > cols.size then
-      notes := notes.push (.ragged
-        "row has more cells than the column spec declares; extra columns centre"
+      notes := notes.push (.ragged .overrun
         s!"{maxCols} cells where the column spec declares {cols.size}")
   let rs := MRows.ofList (rows.toList.map fun r => MRow.ofList r.toList)
   return (.grid (gridKindOf kind widths endsRow) (rs.pad rs.maxCols), notes)

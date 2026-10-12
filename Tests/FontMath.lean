@@ -1242,7 +1242,7 @@ def fontSuiteChecks (ref : IO.Ref (List String)) : IO Unit := do
       let ofOut := layoutOf oneFace ofDoc narrow
       t "overfull warning carries the count"
         ((ofOut.diags.filter (·.code == "W0005")).size == 1 &&
-         ofOut.diags.any (·.message == "2 overfull lines (no feasible break)"))
+         ofOut.diags.any (·.detail == some "2 overfull lines"))
 
       let visualSrc := "\\section{Heading}\nBody text.\n\n" ++
         "\\begin{itemize}\\item A list item.\\end{itemize}"

@@ -21191,7 +21191,7 @@ private def diagKey (d : Diag) : DiagKey :=
 
 private def summarizeOverfull (overfull : Nat) (d : Diag) : Diag :=
   if d.code == "W0005" && d.span.isNone && overfull > 1 then
-    { d with message := s!"{overfull} overfull lines (no feasible break)" }
+    { d with detail := some s!"{overfull} overfull lines" }
   else d
 
 /-- Repeated overlay pages can report one source site several times.

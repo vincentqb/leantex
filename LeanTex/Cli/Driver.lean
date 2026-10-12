@@ -504,7 +504,7 @@ def picsToSvgNative (pics : Array PicResult) (imgs : Image.Store)
       fallbacks.any (fun id => Ir.picSrcPrefix ++ id == r.src)
     if textless then
       diags := diags.push (DriverDiag.atImageRequest imageSpans r.src (DriverDiag.boundarySvgMissing r.src
-        "its text is in a font the engine does not draw, and no converter drew it"))
+        (if decl == .declared then .textlessDeclined else .textless)))
       unconverted := unconverted.push r.src
       continue
     tally := tally.add f.route
@@ -515,7 +515,8 @@ def picsToSvgNative (pics : Array PicResult) (imgs : Image.Store)
         if en.src == r.src then { en with webSvg := some bytes, webWords := f.words } else en
       if f.checked then natives := natives.push bytes
     | .error why =>
-      diags := diags.push (DriverDiag.atImageRequest imageSpans r.src (DriverDiag.boundarySvgMissing r.src why))
+      diags := diags.push (DriverDiag.atImageRequest imageSpans r.src
+        (DriverDiag.boundarySvgMissing r.src (.unconverted why)))
       unconverted := unconverted.push r.src
   return (Boundary.markFaceless { imgs with entries }, diags, unconverted, natives, tally)
 

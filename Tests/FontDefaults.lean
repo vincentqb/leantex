@@ -137,6 +137,30 @@ def fontDefaultsChecks (ref : IO.Ref (List String)) : IO Unit := do
        | .error d => d.kind == .E0403 && hasStr d.message missing
        | .ok _ => false)
 
+/-- Two weights the family lacks, served by one nearest face, are two losses
+in one wording: the assembly keeps a record for each — the weights in their
+particulars — and the log folds them to one line counting both. The same
+substitution met again from a second slot is one record. -/
+def weightSubstitutionRecordChecks (ref : IO.Ref (List String)) : IO Unit := do
+  let faces ← FontDiscovery.scanRootsIn none [testFonts]
+  let scan : FaceScan := { faces, docDirs := [], dirs := #[], diags := #[] }
+  let doc := (elabStr (String.intercalate "\n" [
+    "\\documentclass{article}", "\\usepackage{fontspec}",
+    "\\setmainfont{Open Sans}", "\\setsansfont{Open Sans}", "\\begin{document}",
+    "{\\fontseries{el}\\selectfont Extra light.} {\\fontseries{l}\\selectfont Light.}",
+    "\\textsf{\\fontseries{l}\\selectfont Light again.}", "\\end{document}"])).1
+  let t := fun why ok => check ref ("weight substitution records: " ++ why) ok
+  let .ok (_, _, diags, _) ← buildFontSet doc scan (← FontEnv.Cache.mk') .settled |
+    t "the assembly succeeds" false
+  let subs := diags.filter (·.kind == .W0366)
+  t s!"one record per substituted weight: {subs.map (·.detail)}"
+    (subs.map (·.detail) == #[some "weight 200 asked, weight 400 the nearest",
+      some "weight 300 asked, weight 400 the nearest"])
+  let folded := Diag.foldRepeats subs
+  t "the log prints them as one line counting both"
+    ((folded.filter (·.severity.isWarning)).map (·.sites) == #[2] &&
+     (folded.filter (·.demoted)).size == 1)
+
 /-- End-to-end guard for the environment boundary: the single-face override
 applies only with no declared family. With mono or math alone, even an invalid
 override must be ignored and the PDF/HTML text must keep the ordinary default.

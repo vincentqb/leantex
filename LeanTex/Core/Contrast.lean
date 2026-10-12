@@ -730,10 +730,11 @@ private def pendingCoverDiags (site : ColorSite) (doc : Doc) (pending : Array Pa
         let milli := contrastMilli active covered
         if milli < aaNonText then
           #[Diag.of .W0345
-            (s!"covered '{nm}' reads at {ratioString milli} against its " ++
-              s!"active form, below the {ratioString aaNonText} " ++
+            (s!"covered '{nm}' reads against its active form below the contrast " ++
               "WCAG 2.2 asks of a state change (SC 1.4.11)")
             (span := origin.map (·.2))
+            (detail := some (s!"{hexOf covered} against {hexOf active}: " ++
+              s!"{ratioString milli}, below {ratioString aaNonText}"))
             (help := coverHelp)]
         else #[]
     out := out ++ judge "fg" d.fg (cov.of d.fg)

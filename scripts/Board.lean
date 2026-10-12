@@ -1132,8 +1132,10 @@ def parse (line : String) : Option BrowserFace := do
 end BrowserFace
 
 /-- Read browser-face failures from the CLI's structured diagnostic stream.
-Codes are fields, never snippets of human output or quoted message text.
-An unnamed or ambiguous converter remains unattributed. -/
+Codes are fields, never snippets of human output or quoted message text, and
+the converter is named by the record's words or its detail, where a loss
+states the tool's own words. An unnamed or ambiguous converter remains
+unattributed. -/
 def browserFaceFailures (fixture log : String) : Array BrowserFace :=
   ((log.splitOn "\n").filterMap fun line => do
     let record ← (Lean.Json.parse line).toOption
@@ -1142,8 +1144,9 @@ def browserFaceFailures (fixture log : String) : Array BrowserFace :=
     let code ← (record.getObjValAs? String "code").toOption
     if !["W0605", "W0378"].contains code then none else do
     let message ← (record.getObjValAs? String "message").toOption
+    let said := message ++ ((record.getObjValAs? String "detail").toOption.map ("\n" ++ ·)).getD ""
     let tools := ["rsvg-convert", "pdftocairo", "xmllint"].filter fun tool =>
-      (message.splitOn tool).length > 1
+      (said.splitOn tool).length > 1
     return BrowserFace.failed fixture
       (match tools with | [tool] => tool | _ => "unattributed")).toArray
 

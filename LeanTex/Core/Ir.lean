@@ -20983,10 +20983,13 @@ private def dumpDiag (d : Diag) : String :=
   let where' := match d.span with
     | some sp => s!"{sp.pos.line}:{sp.pos.col}"
     | none => "-"
+  let detail := match d.detail with
+    | some t => s!" | detail: {t}"
+    | none => ""
   let help := match d.help with
     | some h => s!" | help: {h}"
     | none => ""
-  s!"{d.severity.label}[{d.code}] {where'} {d.message}{help}\n"
+  s!"{d.severity.label}[{d.code}] {where'} {d.message}{detail}{help}\n"
 
 public def dump (doc : Doc) (diags : Array Diag) : String :=
   let opts := if doc.classOptions == "" then "" else s!" [{doc.classOptions}]"

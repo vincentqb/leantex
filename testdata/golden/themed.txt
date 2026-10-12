@@ -144,4 +144,4 @@ note[N0100] 8:1 '\usepackage{amsthm}' → \theoremstyle{plain}
 note[N0100] 10:1 '\usetheme' → \theme{moloch}
 note[N0100] 36:11 '\alert' → the alert colour
 note[N0100] 43:6 '\alert' → the alert colour
-warning[W0315] 36:44 text coloured 'fg!50!bg' reads on the page below the contrast WCAG 2.2 asks of large-scale text (SC 1.4.3)
+warning[W0315] 36:44 text coloured 'fg!50!bg' reads on the page below the contrast WCAG 2.2 asks of large-scale text (SC 1.4.3) | detail: #8F999B on #FAFAFA: 2.79:1, below 3.00:1

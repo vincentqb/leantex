@@ -212,27 +212,6 @@ def driverProbes : Array (DiagCode × DriverProbe) :=
           "A \\texttt{fixed pitch} run.\n\\end{document}\n")).1
         return SlotLoss.diags doc.fonts fs doc (SlotLoss.carries #[.pdf] doc.fontPolicy))]
 
-/-- The probed warnings again with their loss at a second site: the same
-bytes read in a second file, a line further down and two columns further
-in, so the site's offset, line and column differ while the loss stands
-(`repeatFoldChecks`). -/
-def driverProbesElsewhere : Array (DiagCode × DriverProbe) :=
-  let read (name : String) (bytes : ByteArray) : IO (Array Diag) := do
-    return (← Input.readDocument name bytes).diags
-  #[(.W0002, fun _ => do
-      let tail := "\\documentclass{article}\n\\begin{document}\n".toUTF8
-      return (← read "doc.tex" (tail ++ "Caf".toUTF8 ++ ⟨#[0xE9]⟩ ++
-          ".\n\\end{document}\n".toUTF8)) ++
-        (← read "chapter.tex" (tail ++ "Prose first.\n  Caf".toUTF8 ++ ⟨#[0xE9]⟩ ++
-          ".\n\\end{document}\n".toUTF8))),
-    (.W0004, fun _ => do
-      let head := ("\\documentclass{article}\n" ++
-        "\\usepackage[latin1]{inputenc}\n\\begin{document}\n").toUTF8
-      return (← read "doc.tex" (head ++ "Café crème".toUTF8 ++ ⟨#[0x92]⟩ ++
-          "s.\n\\end{document}\n".toUTF8)) ++
-        (← read "chapter.tex" (head ++ "Prose first.\n  Café crème".toUTF8 ++ ⟨#[0x92]⟩ ++
-          "s.\n\\end{document}\n".toUTF8)))]
-
 /-- Every probe run once, each in its own sandbox, removed afterwards. -/
 def runDriverProbes : IO (Array (DiagCode × Array Diag)) :=
   driverProbes.mapM fun (c, probe) => do
@@ -395,7 +374,8 @@ def diagWitnessWith (w : WitnessRun) (one mapped withMath : Font.FontSet)
     -- the floor is the declared placeholder and the warning says so
     dvE (w := w) "$\\overset{\\alpha}{\\beta}$"
   | .W0013 => #[DriverDiag.allowUnfired "E0333"]
-  | .W0014 => dvE (w := w) "\\begin{align*}a &= b \\\\ c\\end{align*}"
+  | .W0014 => dvE (w := w) "\\begin{align*}a &= b \\\\ c\\end{align*}" ++
+    dvE (w := w) "$\\begin{array}{c}a & b\\end{array}$"
   | .W0015 => dvE (w := w) "\\begin{align}a &= b\\end{align}"
   | .W0101 => dvE (w := w) (dvDoc "\\usepackage[voffset=1in]{geometry}\n" "x")
   | .W0102 => dvE (w := w) (dvDoc "\\definecolor{c}{hsb}{0.5,0.5,0.5}\n" "x")
@@ -602,6 +582,8 @@ def diagWitnessWith (w : WitnessRun) (one mapped withMath : Font.FontSet)
   -- overlays ship.
   | .W0345 =>
     dvE (w := w) (dvDeck "\\palette{ covered = #000000 }\n"
+      "\\begin{frame}{T}\n\\uncover<2>{x}\n\\end{frame}") ++
+    dvE (w := w) (dvDeck "\\palette{ covered = 80\\% }\n"
       "\\begin{frame}{T}\n\\uncover<2>{x}\n\\end{frame}")
   | .W0346 =>
     dvE (w := w) (dvDoc "" "a {\\palette{ q = #112233 } b} c") ++
@@ -671,8 +653,12 @@ def diagWitnessWith (w : WitnessRun) (one mapped withMath : Font.FontSet)
   | .W0382 => #[DriverDiag.boundaryFailed "lualatex"
       "! Undefined control sequence. · l.7 \\nope" (Ir.picSrcPrefix ++ "witness"),
     DriverDiag.boundaryUnfinished "lualatex" "exit code 3" (Ir.picSrcPrefix ++ "witness")]
-  | .W0378 => #[DriverDiag.boundarySvgMissing "leantex-pic:0123456789abcdef"
-      "not found (error code: 2)"]
+  | .W0378 => #[DriverDiag.boundarySvgMissing "leantex-pic:0123456789abcdef" .textless,
+      DriverDiag.boundarySvgMissing "leantex-pic:0123456789abcdef" .textlessDeclined,
+      DriverDiag.boundarySvgMissing "leantex-pic:0123456789abcdef"
+        (.unconverted "pdftocairo: not found (error code: 2)"),
+      DriverDiag.boundarySvgMissing "leantex-pic:0123456789abcdef"
+        (.unchecked "xmllint did not finish")]
   | .W0349 => dvE (w := w) "\\ref{nowhere}"
   | .W0350 => dvE (w := w) "\\section{A}\\label{twice}\\label{twice}"
   | .W0380 => dvE (w := w) "\\refstepcounter{section}\n\\label{stepped} see \\cref{stepped}"
@@ -793,22 +779,38 @@ def dvMeasured (s : String) : Bool := Id.run do
       if ["pt", "bp", "mm", "cm", "in", "px", "em", "ex"].contains unit then return true
   return false
 
-/-- Spellings with a digit in them that name no site's particular: the
-encodings a message names a reading by — UTF-8, UTF-16 and the words of every
-legacy encoding's name — which every site of the loss shares. -/
+/-- Every reading a file's bytes can take (`Encoding.Reading`), whose names a
+message reads a file by (`dvReadings_covers`). -/
+def dvReadings : List Encoding.Reading :=
+  [.ascii, .utf8, .utf16 true, .utf16 false, .replaced] ++
+    [Encoding.Legacy.windows1252, .iso885915, .macRoman].map .legacy
+
+theorem dvReadings_covers (r : Encoding.Reading) : r ∈ dvReadings := by
+  cases r with
+  | utf16 big => cases big <;> simp [dvReadings]
+  | legacy e => cases e <;> simp [dvReadings]
+  | _ => simp [dvReadings]
+
+/-- Spellings with a digit in them that name no site's particular: the words
+of every reading's own name (`Encoding.Reading.name`: UTF-8, UTF-16LE,
+UTF-16BE and each legacy encoding's), which every site of the loss shares. -/
 def dvNumberSpellings : List String :=
-  ["UTF-8", "UTF-16"] ++ ([Encoding.Legacy.windows1252, .iso885915, .macRoman].flatMap fun e =>
-    (e.name.split (fun c => c == ' ' || c == '(' || c == ')')).toList.map (·.toString))
+  dvReadings.flatMap fun r =>
+    (r.name.split (fun c => c == ' ' || c == '(' || c == ')')).toList.map (·.toString)
 
 /-- The first number a text states outside what it quotes: a row, an index,
 a count, an offset, a measure taken at a site — the particulars that tell two
 sites of one loss apart, which belong in the record's detail. What a message
 quotes (`'...'`) is the author's own declaration and may hold digits; so may
-a scalar it names (`U+2705`, the character itself, not a site of it) and the
-spellings above (`dvNumberSpellings`). -/
+a scalar it names (`U+2705`, the character itself, not a site of it), a
+standard's citation (`WCAG 2.2`, `SC 1.4.3`) and the spellings above
+(`dvNumberSpellings`). A quote closes before a possessive (`'name's`), and
+an apostrophe inside double quotes quotes nothing, so neither leaves the rest
+of the text unread; what double quotes hold is read as the rest is. -/
 def dvNumber? (s : String) : Option String := Id.run do
   let cs := (s.toList ++ [' ']).toArray
   let mut quoted := false
+  let mut doubled := false
   let mut word := ""
   let mut out : Option String := none
   let mut prev := ""
@@ -817,7 +819,9 @@ def dvNumber? (s : String) : Option String := Id.run do
     -- An apostrophe inside a word (`frame's`) quotes nothing.
     let before := i > 0 && (cs[i - 1]?.getD ' ').isAlphanum
     let after := (cs[i + 1]?.getD ' ').isAlphanum
-    if c == '\'' && !(before && after) && (quoted || !before) then
+    let possessive := cs[i + 1]?.getD ' ' == 's' && !(cs[i + 2]?.getD ' ').isAlphanum
+    if c == '\'' && !doubled &&
+        (if quoted then !(before && after) || possessive else !before) then
       quoted := !quoted
       word := ""
     else if quoted then pure ()
@@ -827,14 +831,31 @@ def dvNumber? (s : String) : Option String := Id.run do
       let w := (word.dropWhile (fun x => x == '.' || x == '-')).toString
       let w := String.ofList (w.toList.reverse.dropWhile (fun x => x == '.' || x == '-')).reverse
       let scalar := w.startsWith "U+" && w.length > 2 && (w.drop 2).all fun x => x.isDigit || ('A' ≤ x && x ≤ 'F')
-      -- A standard's citation (`WCAG 2.2`, `SC 1.4.3`) and a code name are
-      -- the same at every site.
-      let cited := prev == "WCAG" || prev == "SC" || isDiagCode w
+      -- A standard's citation and a code name are the same at every site:
+      -- WCAG's version, a success criterion's three-part number.
+      let criterion := (w.splitOn ".").length == 3 && (w.splitOn ".").all fun p =>
+        !p.isEmpty && p.all Char.isDigit
+      let cited := (prev == "WCAG" && ["2.0", "2.1", "2.2"].contains w) ||
+        (prev == "SC" && criterion) || isDiagCode w
       if out.isNone && w.any Char.isDigit && !scalar && !cited && !dvNumberSpellings.contains w then
         out := some w
       if !w.isEmpty then prev := w
       word := ""
+      if c == '"' then doubled := !doubled
   return out
+
+/-- The number lint read in both directions: what it must name, and what it
+must let stand, the two quote holes it once had among them. -/
+def dvNumberSelfChecks (ref : IO.Ref (List String)) : IO Unit := do
+  for (text, expected) in [
+      ("row 3 is short", some "3"), ("'row 3' is short", none),
+      ("the frame's 3 rows", some "3"), ("'name's 3 rows", some "3"),
+      ("the key \"'x\" holds 3 rows", some "3"),
+      ("below the contrast WCAG 2.2 asks of text (SC 1.4.3)", none),
+      ("WCAG 5 rows", some "5"), ("SC 3 rows", some "3"),
+      ("bytes read as UTF-16LE and Windows-1252 (Latin-1)", none),
+      ("no glyph for U+2705", none), ("W0378 names it", none)] do
+    check ref s!"diag voice number lint: {text} reads {expected}" (dvNumber? text == expected)
 
 /-- The lint over one fired diagnostic. `\allow`-teeth codes (W0013, E0329,
 N0105) quote codes the user wrote in their own document, so the foreign-code
@@ -1588,15 +1609,76 @@ def subjectCensusChecks (ref : IO.Ref (List String))
     t s!"subject census {code}: the baseline row still describes a real gap"
       (owing.contains code)
 
-/-- How many codes the witnesses repeat (`repeatFoldChecks`): a floor, so a
-witness that stops repeating its construct is seen. -/
-def repeatFoldFloor : Nat := 44
+/-- Codes the repetition cannot exercise, each with the one reason. -/
+private def unexercisedAs (why : String) (codes : List String) : List (String × String) :=
+  codes.map (·, why)
 
-/-- The codes whose wording or census key once told the sites of one loss
-apart, each of which the repetition must still exercise. -/
-def repeatFoldWitnessed : List String :=
-  ["W0002", "W0004", "W0005", "W0014", "W0327", "W0333", "W0358", "W0364", "W0384", "W0388",
-   "W0399", "W0400"]
+/-- **The codes the repetition cannot exercise.** Warning codes whose witness
+written twice (`twice`) carries no more records of the code than written
+once, each with why, as measured on 2026-10-12: 86 of the 131 warning codes.
+This is the subject baseline's pattern (`subjectDebt`), read in both
+directions: every other warning code's witness must repeat, and a row whose
+witness starts repeating is removed in the same commit. It may fall and never
+rise — a row added is a code whose fold no check sees, and the review reads
+it as one. That these codes print a line per loss rests on review and on the
+checks their rows name: pending work. -/
+def repeatFoldUnexercised : List (String × String) :=
+  unexercisedAs "its construct is a preamble declaration, which the repetition does not write twice"
+    ["W0007", "W0101", "W0102", "W0103", "W0104", "W0106", "W0111", "W0202", "W0303", "W0306",
+     "W0312", "W0316", "W0317", "W0318", "W0319", "W0328", "W0329", "W0330", "W0331", "W0342",
+     "W0343", "W0348", "W0354", "W0355", "W0357", "W0361", "W0363", "W0367", "W0368", "W0369",
+     "W0373", "W0387", "W0398"] ++
+  unexercisedAs "its construct is a class option, which the repetition does not write twice"
+    ["W0356"] ++
+  unexercisedAs "its witness is the emitter's own record, with no source to write twice"
+    ["W0006", "W0013", "W0378", "W0382", "W0391", "W0393", "W0394", "W0396", "W0601", "W0602",
+     "W0603", "W0604", "W0605", "W0609", "W0701"] ++
+  unexercisedAs ("its witness is the emitter's own record, with no source to write twice; the \
+font assembly's records are held by `weightSubstitutionRecordChecks`")
+    ["W0366"] ++
+  unexercisedAs "its witness is one driver run, with no source to write twice"
+    ["W0008", "W0011", "W0379", "W0390", "W0419", "W0424"] ++
+  unexercisedAs ("one record per file, its sites the offsets in its detail; a second file is a \
+second loss, named in its words")
+    ["W0002", "W0004"] ++
+  unexercisedAs "a layout record with no source, which the layout keeps once (`Layout.uniqueDiags`)"
+    ["W0010", "W0336", "W0372"] ++
+  unexercisedAs ("a layout record whose witness carries no picture source, which the layout \
+keeps once (`Layout.uniqueDiags`)")
+    ["W0335"] ++
+  unexercisedAs "content after '\\end{document}' is one loss of the document, named once"
+    ["W0001"] ++
+  unexercisedAs "a fact of the font set, named once per document (`warnedMath`)"
+    ["W0003"] ++
+  unexercisedAs "a judgement of the page's measure, made once per document"
+    ["W0201"] ++
+  unexercisedAs "judged once per document: the outline walk keeps one latch per code"
+    ["W0320", "W0321"] ++
+  unexercisedAs "judged once per page: a repeated landmark is a fact of the page"
+    ["W0325"] ++
+  unexercisedAs "judged once per palette in force: the repetition adds frames, not palettes"
+    ["W0345"] ++
+  unexercisedAs "a judgement of the declared footer, which a second '\\framefoot' replaces"
+    ["W0332"] ++
+  unexercisedAs ("its declared lines are the preamble's '\\title', which a second \
+'\\maketitle' sets again as one record")
+    ["W0386"] ++
+  unexercisedAs "one record per link target, which the repetition links again"
+    ["W0326", "W0377"] ++
+  unexercisedAs "one record per label key, which the repetition refers to again"
+    ["W0349", "W0380"] ++
+  unexercisedAs "one record per citation key, which the repetition cites again"
+    ["W0351"] ++
+  unexercisedAs "a loss of a reference-list entry, which the list sets once however often it is cited"
+    ["W0420", "W0422", "W0423", "W0425", "W0426", "W0429"] ++
+  unexercisedAs "a loss of the .bib file, read once however often the body cites it"
+    ["W0352"] ++
+  unexercisedAs "a judgement of the bibliography style, made once per list"
+    ["W0353"] ++
+  unexercisedAs "a judgement of the reference list's language, made once per list"
+    ["W0421"] ++
+  unexercisedAs "a judgement of the reference list's collation, made once per list"
+    ["W0427"]
 
 /-- **A loss written twice is one line.** Every code's witness written twice —
 its construct at a second site (`twice`) — prints no more warning lines on the
@@ -1606,20 +1688,18 @@ census key or a word that tells two sites of one loss apart — a position, a
 page, a frame, a renamed anchor — is seen. A measure taken from identical
 content is identical at both sites, so the measures in a message are the
 voice lint's to judge (`dvLint`). An overfull line keyed by its own position
-once printed a warning per line of a listing. A witness whose code fires once
-per document whatever its body holds is not exercised; the count that is
-stands above a floor, and the codes this check was written for are each
-exercised, so it cannot pass by repeating nothing. -/
+once printed a warning per line of a listing. The codes exercised are a set,
+held in both directions: every warning code's witness repeats, or the
+baseline names it and why (`repeatFoldUnexercised`), never both. -/
 def repeatFoldChecks (ref : IO.Ref (List String))
-    (one mapped withMath : Font.FontSet) (probed : DiagCode → Array Diag)
-    (probedElsewhere : DiagCode → Array Diag := probed) : IO Unit := do
+    (one mapped withMath : Font.FontSet) (probed : DiagCode → Array Diag) : IO Unit := do
   let t := check ref
   let mut exercised : Array String := #[]
   for located in [false, true] do
     for c in DiagCode.all do
       unless c.loss.severity.isWarning do continue
       let once := diagWitnessWith { located } one mapped withMath probed c
-      let doubled := diagWitnessWith { rep := twice, located } one mapped withMath probedElsewhere c
+      let doubled := diagWitnessWith { rep := twice, located } one mapped withMath probed c
       unless (once.filter (·.kind == c)).size < (doubled.filter (·.kind == c)).size do continue
       unless exercised.contains c.code do exercised := exercised.push c.code
       let shown (ds : Array Diag) : Array String :=
@@ -1627,9 +1707,19 @@ def repeatFoldChecks (ref : IO.Ref (List String))
       t s!"repeat fold {c.code}{if located then " (located)" else ""}: its witness written twice \
 prints no more warning lines ({shown once} once, {shown doubled} twice)"
         ((shown doubled).size ≤ (shown once).size)
-  t s!"repeat fold: the witnesses repeat {exercised.size} codes" (exercised.size ≥ repeatFoldFloor)
-  for code in repeatFoldWitnessed do
-    t s!"repeat fold: {code}'s witness is written twice" (exercised.contains code)
+  for c in DiagCode.all do
+    unless c.loss.severity.isWarning do continue
+    let row := repeatFoldUnexercised.find? (·.1 == c.code)
+    if exercised.contains c.code then
+      t s!"repeat fold {c.code}: its witness repeats, so the baseline holds no row for it"
+        row.isNone
+    else
+      t s!"repeat fold {c.code}: its witness written twice repeats nothing, and no baseline \
+row says why" (row.any (!·.2.isEmpty))
+  for (code, _) in repeatFoldUnexercised do
+    t s!"repeat fold: the baseline row {code} names a warning code, once"
+      ((DiagCode.all.filter fun c => c.code == code && c.loss.severity.isWarning).length == 1 &&
+        (repeatFoldUnexercised.filter (·.1 == code)).length == 1)
 
 /-- **A refusal about a name says so, and the set of them is closed against
 the code list.** `\usetheme{X}` was refusable — W0319, "unknown theme", the
@@ -1726,11 +1816,8 @@ def diagVoiceChecks (ref : IO.Ref (List String)) (update : Bool) : IO Unit := do
   -- voice lint, and the name-refusal registry's closure against the code list.
   nameRefusalRegistryChecks ref one mapped withMath probeOf
   subjectCensusChecks ref one mapped withMath probeOf
-  let elsewhere ← driverProbesElsewhere.mapM fun (c, probe) => do
-    return (c, ← IO.FS.withTempDir probe)
-  let elsewhereOf (c : DiagCode) : Array Diag :=
-    ((elsewhere.find? (·.1 == c)).map (·.2)).getD (probeOf c)
-  repeatFoldChecks ref one mapped withMath probeOf elsewhereOf
+  dvNumberSelfChecks ref
+  repeatFoldChecks ref one mapped withMath probeOf
   let mut blocks : Array (String × String) := #[]
   for c in DiagCode.all do
     let fired := (diagWitness one mapped withMath probeOf c).filter (·.code == c.code)

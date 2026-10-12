@@ -299,6 +299,13 @@ browser-face: figures missing-fields\n"
       (message "W0605" "rsvg-convert exited 2" ++ "\n" ++
         message "W0378" "pdftocairo exited 3") ==
       #[BrowserFace.failed "figures" "rsvg-convert", BrowserFace.failed "figures" "pdftocairo"])
+  let detailed (code text detail : String) := Lean.Json.compress <| Lean.Json.mkObj
+    [("event", .str "diagnostic"), ("code", .str code), ("message", .str text),
+      ("detail", .str detail)]
+  no "browser failure: a tool the record's detail names is the record's tool"
+    (browserFaceFailures "figures"
+      (detailed "W0378" "this boundary picture has no browser face" "pdftocairo exited 3") ==
+      #[BrowserFace.failed "figures" "pdftocairo"])
   no "browser failure: quoted codes and tool names in other records cannot become diagnostics"
     (browserFaceFailures "figures"
       (message "W0301" "warning[W0605]: rsvg-convert exited 2\n" ++ "\n" ++

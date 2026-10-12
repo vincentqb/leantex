@@ -6754,7 +6754,7 @@ def pictureDefnReachChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet)
   -- unaffected, and the HTML page shows the subset's drawing where it has
   -- one (`pictureHtmlFaceChecks`) and each other picture's alternative.
   t "the HTML converter gap is a different code, and still a warning"
-    ((DriverDiag.boundarySvgMissing "leantex-pic:probe" "not found").code == "W0378" &&
+    ((DriverDiag.boundarySvgMissing "leantex-pic:probe" (.unconverted "not found")).code == "W0378" &&
      DiagCode.W0378.loss == .degraded)
 
 /-- **The boundary draws what the subset would draw with a loss** — the

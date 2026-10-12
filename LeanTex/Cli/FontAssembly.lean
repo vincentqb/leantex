@@ -208,8 +208,9 @@ public def buildFontSet (doc : Ir.Doc) (scan : FaceScan)
       | some (face, sub) =>
         if let some s := sub then
           let d := DriverDiag.substituted s
-          -- Slots share families, so the same substitution surfaces repeatedly.
-          unless diags.any (·.message == d.message) do
+          -- Slots share families, so the same substitution surfaces
+          -- repeatedly; two weights sharing a nearest face are two records.
+          unless diags.any (fun e => e.message == d.message && e.detail == d.detail) do
             diags := diags.push d
         match paths.findIdx? (· == face.path) with
         | some i => index := index.push ((slot, weight, italic), i)

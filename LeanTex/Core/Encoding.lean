@@ -588,10 +588,10 @@ private def nulAdvice : String := "remove the U+0000 characters: no encoding rea
 each standing as one U+FFFD; positioned at the first. -/
 private def replacedDiag (file encoding help : String) (bytes : ByteArray) (runs : Array Run)
     (pos : Pos) : Diag :=
-  -- The words are the loss's, the same at every file it stands in; which
-  -- bytes, and where, is the site's detail.
-  let message := if runs.all (·.nul) then "the file holds U+0000, which is not text"
-    else s!"the file holds bytes that are not text in {encoding}"
+  -- The words name the file, whose loss this is and whose bytes the help
+  -- corrects; which bytes, and where, is the detail.
+  let message := if runs.all (·.nul) then s!"'{file}' holds U+0000, which is not text"
+    else s!"'{file}' holds bytes that are not text in {encoding}"
   let detail := match runs.toList with
     | [r] =>
       if r.nul then s!"U+0000 at offset {r.offset}"
@@ -681,9 +681,9 @@ private def strayDiag (file : String) (e : Legacy) (bytes : ByteArray) (c : Chos
   match c.minority[0]? with
   | none => #[]
   | some (first, _) =>
-    let rest := if c.byMark then "in a file its byte-order mark calls UTF-8"
-      else "in a file otherwise UTF-8"
-    let message := s!"bytes are read as {e.name}, as declared, {rest}"
+    let rest := if c.byMark then "which its byte-order mark calls UTF-8"
+      else "otherwise UTF-8"
+    let message := s!"bytes are read as {e.name}, as declared, in '{file}', {rest}"
     let detail := match c.minority.toList with
       | [(o, _)] => s!"byte {hexByte (bytes[o]?.getD 0)} at offset {o}"
       | _ => s!"{c.minority.size} bytes, at offsets {runList bytes c.minority true}"

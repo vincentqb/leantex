@@ -317,6 +317,10 @@ def machineLossChecks (ref : IO.Ref (List String))
           ("LEANTEX_FONT", some font.toString)] }
     let recordsOf (run : IO.Process.Output) : List Lean.Json :=
       ((run.stdout.splitOn "\n").filter (!·.isEmpty)).filterMap fun line => (Lean.Json.parse line).toOption
+    -- A loss's reason is its detail, beside the words it shares with every site.
+    let wordsOf (j : Lean.Json) : Option String :=
+      (j.getObjValAs? String "message").toOption.map fun m =>
+        m ++ ((j.getObjValAs? String "detail").toOption.map ("\n" ++ ·)).getD ""
     let loaderCase : MachineCase :=
       { name := "loader-broken SVG check", doc := svgInclude, path := loader, cache := "loader"
         code := "W0602", subject := some "square.svg", located := true, placeholders := 1
@@ -371,7 +375,8 @@ def machineLossChecks (ref : IO.Ref (List String))
           j.getObjValAs? String "code" == .ok c.code &&
             (j.getObjValAs? String "subject").toOption == subject)
       t s!"machine loss CLI {c.name}: the loss's reason reads as one clause"
-        (losses.all fun j => (j.getObjValAs? String "message").toOption.any (!hasStr · ": ;"))
+        (losses.all fun j => (wordsOf j).any (!hasStr · ": ;") &&
+          (j.getObjValAs? String "detail").toOption.all (!·.trimAscii.isEmpty))
       let place := if c.located then "at its picture's source line" else "with no source line"
       t s!"machine loss CLI {c.name}: the loss is named {place}"
         (losses.all fun j => (j.getObjValAs? Nat "line").isOk == c.located)
@@ -432,7 +437,7 @@ def machineLossChecks (ref : IO.Ref (List String))
           ("LEANTEX_FONT", some font.toString), ("TMPDIR", some (dir / "no-such-root").toString)] }
     let codeOf (j : Lean.Json) := (j.getObjValAs? String "code").toOption
     let included ← rootless svgInclude loader "rootless-include" (dir / "rootless-include" / "page.html")
-    let namesRoot (j : Lean.Json) := (j.getObjValAs? String "message").toOption.any fun m =>
+    let namesRoot (j : Lean.Json) := (wordsOf j).any fun m =>
       hasStr m "no-such-root" && hasStr m "(TMPDIR)" && !hasStr m "leantex-"
     t s!"machine loss CLI no scratch root: an SVG include degrades under W0602, naming the root and not the image (exit {included.exitCode})"
       (included.exitCode == 0 && (recordsOf included).any fun j => codeOf j == some "W0602" && namesRoot j)
@@ -502,7 +507,7 @@ def machineLossChecks (ref : IO.Ref (List String))
     let unloaded ← build boundary unversioned "unversioned" (dir / "unversioned-out" / "page.html")
     t s!"machine loss CLI renderer a loader stops at its version: W0379 carries the loader's words (exit {unloaded.exitCode})"
       (unloaded.exitCode == 0 && (recordsOf unloaded).any fun j => codeOf j == some "W0379" &&
-        ((j.getObjValAs? String "message").toOption.any (hasStr · "error while loading shared libraries")))
+        ((wordsOf j).any (hasStr · "error while loading shared libraries")))
     -- A renderer whose version question never ends: the help says so, rather
     -- than only telling the user to install a tool that is there.
     let hanging := dir / "hanging"
@@ -510,7 +515,8 @@ def machineLossChecks (ref : IO.Ref (List String))
     let slow ← build boundary hanging "hanging" (dir / "hanging-out" / "page.html")
     t s!"machine loss CLI killed version question: W0379 names how the question ended (exit {slow.exitCode})"
       (slow.exitCode == 0 && (recordsOf slow).any fun j => codeOf j == some "W0379" &&
-        ((j.getObjValAs? String "message").toOption.any (hasStr · "version was not read (no version within")))
+        ((j.getObjValAs? String "message").toOption.any (hasStr · "version was not read") &&
+          (j.getObjValAs? String "detail").toOption.any (hasStr · "no version within")))
     -- A renderer that names its version and then cannot start the render (a
     -- shared library gone since): it leaves no log, so the attempt is no
     -- verdict, and W0382 says what stopped it in the loader's words.

@@ -283,7 +283,8 @@ open Tests (mintedSettingsChecks listingHighlightChecks pygmentsLexerChecks pygm
 open TcolorboxChecks (tcolorboxChecks tcolorboxSourceChecks)
 open TcolorboxColors (tcolorboxColorChecks)
 open PictureBoundary (pictureBoundaryChecks pictureWrapperChecks pictureShipChecks)
-open Tests (fontDefaultsChecks fontDefaultsOverrideChecks blockBarChecks batchChecks)
+open Tests (fontDefaultsChecks fontDefaultsOverrideChecks weightSubstitutionRecordChecks
+  blockBarChecks batchChecks)
 
 /-- The backend blocks, dispatched together so each stays a leaf the
 module split can place; main runs this right after compatChecks, which
@@ -347,6 +348,7 @@ def backendSuiteChecks (ref : IO.Ref (List String)) : IO Unit := do
   pictureWrapperChecks ref
   fontDefaultsChecks ref
   fontDefaultsOverrideChecks ref
+  weightSubstitutionRecordChecks ref
   landmarkChecks ref
   pinChecks ref
   mdNameChecks ref

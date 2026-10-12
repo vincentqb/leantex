@@ -2030,9 +2030,9 @@ alignment body. -/
 private def mathNote (ctx : Ctx) (note : MathParse.Note) (where_ : String)
     (pos : Pos) : EM Unit := do
   match note with
-  | .ragged msg detail =>
-    warnOnce ctx ("math:ragged:" ++ msg) .W0014
-      (if where_.isEmpty then s!"an alignment {msg}" else s!"{where_}a {msg}") pos
+  | .ragged kind detail =>
+    warnOnce ctx ("math:ragged:" ++ kind.key) .W0014
+      (if where_.isEmpty then s!"an alignment {kind.words}" else s!"{where_}a {kind.words}") pos
       (detail := some detail)
   | .styleDropped what =>
     warnOnce ctx ("math:style:" ++ what) .W0385
@@ -8756,9 +8756,9 @@ private def applySeeds (ctx : Ctx) (pal : Palette) (src : String) (pos : Pos)
       | .accent => "accent"
       | r => (ColorRef.role r).key
     modify fun st => { st with diags := st.diags.push (diagOf ctx .W0306
-      s!"'\\palette[seeds]' generates no palette: {what}: {f.detail}; the seeds stand as given"
+      s!"'\\palette[seeds]' generates no palette: its {what} fails its check; the seeds stand as given"
       (some pos) (help := some (seedHelp f))
-      (subject := some s!"palette:seeds:{what}")) }
+      (subject := some s!"palette:seeds:{what}") (detail := some f.detail)) }
     let out := [(Role.page, paper), (.ink, ink), (.accent, accent)].foldl
       (fun p (r, c) => p.declare (.role r) c) pal
     note pal out

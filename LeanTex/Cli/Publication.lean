@@ -163,7 +163,8 @@ private def omitEntry (omitted : Array (ByteArray × String)) (en : Image.Loaded
   | some why => ({ en with webError := some why },
       -- premise: machineLossChecks — the page names an image's omitted face (W0605) and
       -- never a boundary picture's, which is named here
-      if en.src.startsWith Ir.picSrcPrefix then some (DriverDiag.boundarySvgMissing en.src why)
+      if en.src.startsWith Ir.picSrcPrefix then
+        some (DriverDiag.boundarySvgMissing en.src (.unchecked why))
       else none)
   | none => (en, none)
 
@@ -211,7 +212,7 @@ public theorem omitFaces_named (omitted : Array (ByteArray × String)) (cfg : Ht
         ∃ d ∈ (omitFaces omitted cfg doc).2.2, d.kind = .W0378 ∧ d.subject = some en.src) := by
   have hentry : omitEntry omitted en = ({ en with webError := some why },
       if en.src.startsWith Ir.picSrcPrefix then
-        some (DriverDiag.boundarySvgMissing en.src why) else none) := by
+        some (DriverDiag.boundarySvgMissing en.src (.unchecked why)) else none) := by
     simp [omitEntry, hwhy]
   simp only [Image.Store.get?] at h
   have hmem : omitEntry omitted en ∈ cfg.imgs.entries.map (omitEntry omitted) :=
@@ -220,11 +221,11 @@ public theorem omitFaces_named (omitted : Array (ByteArray × String)) (cfg : Ht
   · unfold omitFaces
     split <;> simp [Image.Store.get?, Array.getElem?_map, h, hentry]
   · intro hsrc
-    have hnamed : DriverDiag.boundarySvgMissing en.src why ∈
+    have hnamed : DriverDiag.boundarySvgMissing en.src (.unchecked why) ∈
         (cfg.imgs.entries.map (omitEntry omitted)).filterMap (·.2) :=
       Array.mem_filterMap.mpr ⟨_, hmem, by simp [hentry, hsrc]⟩
-    refine ⟨DriverDiag.boundarySvgMissing en.src why, ?_,
-      DriverDiag.boundarySvgMissing_subject en.src why⟩
+    refine ⟨DriverDiag.boundarySvgMissing en.src (.unchecked why), ?_,
+      DriverDiag.boundarySvgMissing_subject en.src (.unchecked why)⟩
     unfold omitFaces
     split
     · exact Array.mem_push_of_mem _ hnamed

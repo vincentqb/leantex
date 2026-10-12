@@ -2173,10 +2173,11 @@ public def imageMissing (src looked : String) : Diag :=
     (help := s!"looked at: {looked}, also with .pdf/.png/.jpg/.jpeg/.svg added")
     (subject := some src)
 
-/-- W0602: image decoding or conversion failed; the cause carries its recovery. -/
+/-- W0602: image decoding or conversion failed; the cause, its detail,
+carries its recovery. -/
 public def imageUndecodable (src err : String) : Diag :=
-  Diag.of .W0602 s!"cannot use image '{src}': {err}; a placeholder box holds its place"
-    (subject := some src)
+  Diag.of .W0602 s!"cannot use image '{src}'; a placeholder box holds its place"
+    (subject := some src) (detail := some err)
 
 /-- W0603: the source carries a colour profile the plan did not. -/
 public def imageIccDropped (src : String) : Diag :=

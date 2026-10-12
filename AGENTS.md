@@ -181,26 +181,32 @@ is skipped.
   stands for, and porcelain keeps every record (`foldRepeats_sum_exact`,
   `foldRepeats_line_exact`, `foldRepeats_shown_exact`,
   `foldRepeats_visible_inj`). So a site's particulars — the page or frame it
-  stands on, how far it overruns, a renamed anchor, a count measured there —
-  are the record's `detail`, printed beside the words and kept out of them, or
-  one loss prints a line per site; a value the author declared may stand in
-  the words, as the construct's own. Every code's witness written twice, its
-  second copy at another site — another line, column and byte offset, another
-  file for a byte-level loss — prints no more warning lines
-  (`repeatFoldChecks`), and a warning's words state no number outside what they
-  quote, save an encoding's name, a scalar, a standard's citation and a code
-  (`dvLint`, `dvNumber?`): a row, an index or a count, which no shifted copy
-  varies, is detail too. A header names a construct the author wrote —
-  a control sequence, an environment opener, a math shift — or nothing, never
-  a word of text or a fragment of code (`Diag.Spelling`); a loss about a place
-  — an overfull line, a declared line that re-flowed, a table wider than the
-  measure, a page set short — names none (`DiagCode.namesPlace`), and a loss
-  of the PDF's page names that output, so a build that ships no PDF prints
-  none. An emitter that keys once per construct (`warnOnce`, `sayOnce`)
-  delivers its later sites as notes itself, whatever their words. Errors print
-  at every site; `--werror` counts a folded line once; acceptance accepts every
-  site of a code it names and counts each loss once — one census key, or a
-  subjectless repeat in the same words (`Diag.acceptedLosses`).
+  stands on, how far it overruns, a renamed anchor, a count measured there, a
+  tool's reason — are the record's `detail`, printed beside the words and kept
+  out of them, or one loss prints a line per site; a value the author declared
+  may stand in the words, as the construct's own, and so does the file a
+  byte-level loss stands in, each file a loss of its own. A warning code whose
+  witness repeats its construct at another site — another line, column and
+  byte offset — prints no more warning lines written twice than once
+  (`repeatFoldChecks`); the codes whose witness cannot repeat — a record its
+  emitter builds alone, a preamble declaration, a loss judged once per
+  document, page, file or name — are a baseline read in both directions, each
+  row with its reason (`repeatFoldUnexercised`), and that each prints a line
+  per loss is pending work. A warning's witnessed words state no number
+  outside what they quote, save a reading's name, a scalar, a standard's
+  citation and a code (`dvLint`, `dvNumber?`): a row, an index or a count,
+  which no shifted copy varies, is detail too. A header names a construct
+  the author wrote — a control sequence, an environment opener, a math shift
+  — or nothing, never a word of text or a fragment of code (`Diag.Spelling`);
+  a loss about a place — an overfull line, a declared line that re-flowed, a
+  table wider than the measure, a page set short — names none
+  (`DiagCode.namesPlace`), and a loss of the PDF's page names that output, so
+  a build that ships no PDF prints none. An emitter that keys once per
+  construct (`warnOnce`, `sayOnce`) delivers its later sites as notes itself,
+  whatever their words. Errors print at every site; `--werror` counts a
+  folded line once; acceptance accepts every site of a code it names and
+  counts each loss once — one census key, or a subjectless repeat in the same
+  words (`Diag.acceptedLosses`).
 
 - A run never carries a leading of its own: its line box leads at its
   paragraph's leading in its own size's proportion (`Ir.runLead`), as LaTeX

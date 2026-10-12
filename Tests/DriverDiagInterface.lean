@@ -33,11 +33,12 @@ example : String → String → String → Option Span → Diag := @DriverDiag.b
 example : String → Option String → String := DriverDiag.withdrawnHelp
 example : String → Option String → String := DriverDiag.withdrawnInlineHelp
 example : String := DriverDiag.declinedHelp
-example : String → String → Diag := DriverDiag.boundarySvgMissing
+example : String → DriverDiag.SvgFaceLoss → Diag := DriverDiag.boundarySvgMissing
 example : String → String → Diag := DriverDiag.pageIconOmitted
-example (src err : String) : (DriverDiag.boundarySvgMissing src err).kind = .W0378 ∧
-    (DriverDiag.boundarySvgMissing src err).subject = some src :=
-  DriverDiag.boundarySvgMissing_subject src err
+example (src : String) (loss : DriverDiag.SvgFaceLoss) :
+    (DriverDiag.boundarySvgMissing src loss).kind = .W0378 ∧
+      (DriverDiag.boundarySvgMissing src loss).subject = some src :=
+  DriverDiag.boundarySvgMissing_subject src loss
 example (name why : String) : (DriverDiag.pageIconOmitted name why).kind = .W0605 ∧
     (DriverDiag.pageIconOmitted name why).subject = some name :=
   DriverDiag.pageIconOmitted_subject name why
