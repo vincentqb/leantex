@@ -19,9 +19,9 @@ example : String → String → Diag := DriverDiag.fontsDirMissing
 example : String → List String → Nat → Diag := DriverDiag.familyMissing
 example : String → String → Diag := DriverDiag.fontFileUnusable
 example : String → Nat → FontDb.Face → Diag := DriverDiag.weightSubstituted
-example : String → String → String → String → Option String → Bool → Diag :=
-  fun key runs served note only declarable =>
-    DriverDiag.slotCollapsed key runs served note only declarable
+example : String → String → String → String → Option String → Bool → Bool → Diag :=
+  fun key runs served note only declarable ships =>
+    DriverDiag.slotCollapsed key runs served note only declarable ships
 example : FontDb.Substituted → Diag := DriverDiag.substituted
 example : String → String → Diag := DriverDiag.mathFaceNoTable
 example : String → String → Diag := DriverDiag.mathFaceCompanion

@@ -796,18 +796,19 @@ host: a face is taken because the font environment holds it, never because
 of the operating system's name, so the artifact stays a function of the
 document and its font environment. The engine ships none of these faces.
 
-A departure from lualatex on a tex document, decided on one axis: fontspec
-leaves an undeclared typewriter slot in Latin Modern Mono, whose family
-serves no bold corner, so lualatex sets every bold code run in its medium
-weight; a family taken here serves every corner in its own fixed-pitch face
-(`monoDefault_contract`). The engine's earlier answer, the text face, was
-the larger departure: proportional code, named W0390.
+A departure from lualatex on a tex document, decided and not measured
+better: fontspec leaves an undeclared typewriter slot in Latin Modern Mono,
+its bold from the Light family's (`tulmtt.fd` maps `b/n` to
+`lmmonolt10-bold`), where this list takes the platform's own monospace.
+Whether a tex document takes Latin Modern Mono first, wherever the scan
+serves it, is pending the user's decision. The engine's earlier answer, the
+text face, was the larger departure: proportional code, named W0390.
 Sources:
 - developer.apple.com/fonts — SF Mono, Apple's monospaced system family,
   where a user has installed it into a font directory.
 - en.wikipedia.org/wiki/Menlo_(typeface) — Menlo, the monospaced face macOS
-  has shipped since 10.6, as the system font collection `Menlo.ttc` (the
-  collection's members are not read here: no Mac served this list's check).
+  has shipped since 10.6, as the system font collection `Menlo.ttc`; that
+  file's layout is unverified here, since no Mac was available to read it.
 - github.com/dejavu-fonts/dejavu-fonts — DejaVu Sans Mono, the monospace
   Linux distributions install and fontconfig's `monospace` alias resolves
   to on them (fontconfig, `conf.d/60-latin.conf`).

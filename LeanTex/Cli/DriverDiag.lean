@@ -134,8 +134,13 @@ public def weightSubstituted (asked : String) (requested : Nat) (face : FontDb.F
 that is not of its kind.** A distinct axis from W0006 and W0366, which is
 why it is a distinct code. Those two are within a family the document
 named: a variant missing (W0006) or a weight missing (W0366), with "install
-the face" as the remedy. This is the family slot itself never named, and
-the remedy is a declaration — `\fonts{ mono = "..." }` — not an install.
+the face" as the remedy. This is the family slot itself never named: its
+remedy is a declaration — `\fonts{ mono = "..." }` — or, for the typewriter
+slot, whose default is a platform monospace served at every corner
+(`FontDb.monoDefaults`), one of those families installed whole, or shipped
+whole in its font directory by a document that ships its fonts, the only
+faces its default reads. A markdown source can declare nothing, so its help
+offers no declaration.
 One code, one meaning, and `\allow{W0390}` accepts this loss without also
 accepting every future bold substitution.
 
@@ -149,21 +154,19 @@ undeclared slot is the host's answer, and a message that varies by host
 cannot be witnessed. The subject is the slot, so the loss is counted once
 however many runs set it. -/
 public def slotCollapsed (key runs served note : String) (only : Option String)
-    (declarable : Bool := true) : Diag :=
+    (declarable : Bool := true) (shipsFonts : Bool := false) : Diag :=
   let whereLost := match only with
     | some a => s!"in {a}, "
     | none => ""
   let declare := s!"\\fonts\{ {key} = \"<family>\" }"
-  -- The typewriter slot has a default the scan answers (`FontDb.monoDefaults`):
-  -- installing one of those families is a remedy any source can take, and the
-  -- declaration only one that can declare faces.
   let families := match FontDb.monoDefaults.reverse with
     | last :: rest@(_ :: _) => String.intercalate ", " rest.reverse ++ " or " ++ last
     | _ => String.intercalate ", " FontDb.monoDefaults
+  let whole := s!"one of {families}, with its bold and italic"
+  let declared := if declarable then s!", or give the slot its own face: {declare}" else ""
   let help := if key == "mono" then
-      s!"install one of {families} to set code in it" ++
-        (if declarable then s!", or give the slot its own face: {declare}" else "") ++
-        "; `leantex fonts` lists the installed families"
+      if shipsFonts then s!"put {whole}, in the document's font directory{declared}"
+      else s!"install {whole}{declared}; `leantex fonts` lists the installed families"
     else s!"{declare} gives the slot its own face; `leantex fonts` lists the installed families"
   Diag.of .W0390
     s!"nothing declares a '{key}' family; {whereLost}{runs} set in {served}, {note}"

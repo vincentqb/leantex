@@ -118,7 +118,9 @@ public def buildFontSet (doc : Ir.Doc) (scan : FaceScan)
   -- `SlotLoss` reports from) takes, on either surface, the text family's
   -- designed companion, else the first platform monospace, that the scan
   -- serves whole and fixed-pitch (`FontDb.monoFor`, held to the resolver
-  -- call below by `monoFor_contract`). A document that ships its fonts
+  -- call below by `monoFor_contract`: over `own`, which the resolver reads
+  -- first, as it reads a document's directories before the host's). A
+  -- document that ships its fonts
   -- (`\fonts{ dir = ... }`) is answered from its own faces alone, so it
   -- renders the same on every host; one that ships none, from the whole
   -- scan. Neither answering leaves the slot to the body family, the loss

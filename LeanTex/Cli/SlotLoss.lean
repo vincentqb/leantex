@@ -281,6 +281,6 @@ public def diags (spec : Ir.FontSpec) (fs : Font.FontSet) (doc : Ir.Doc)
     (c : Carry) : Array Diag :=
   (losses spec fs (slotsUsed doc) c).map fun w =>
     DriverDiag.slotCollapsed w.key w.runs (served fs w.slot).words w.note c.only
-      (doc.surface != .markdown)
+      (doc.surface != .markdown) (!doc.fonts.dirs.isEmpty)
 
 end LeanTex.Cli.SlotLoss

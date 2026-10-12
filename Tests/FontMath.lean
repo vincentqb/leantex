@@ -2848,7 +2848,7 @@ got {o.reports.size} W0390" (o.reports.size == (if want then 1 else 0))
           some (Tests.SlotLossWording.artifactWord .pdf) else none
         let expect := Render.porcelainDiag
           (DriverDiag.slotCollapsed word.key word.runs
-            (Tests.SlotLossWording.servedWords served) word.note only)
+            (Tests.SlotLossWording.servedWords served) word.note only true (!r.decl.isEmpty))
         t s!"slot matrix {r.label}: the report says {Tests.SlotLossWording.servedWords served}{if only.isSome then " in the PDF" else ""}: \
 {o.reports}" (o.reports.map (·.trimAscii.toString) == #[expect])
     | some (.error e) => t s!"slot matrix {r.label}: the row runs: {e}" false

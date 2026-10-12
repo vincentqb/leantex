@@ -119,6 +119,12 @@ def monoDefaultChecks (ref : IO.Ref (List String)) : IO Unit := do
           && pathsA.contains code && !diagsA.any (·.kind == .W0006))
       t s!"{surface}: a scan with no platform monospace leaves the slot to the text face, and W0390 names it"
         (fsB.slotCollapsed 2 && (loss fsB docB).any (·.kind == .W0390))
+      -- The help names what its source can do: install a listed family whole,
+      -- and, where the source can declare a face, declare one.
+      let help := (((loss fsB docB).find? (·.kind == .W0390)).bind (·.help)).getD ""
+      t s!"{surface}: W0390's help offers what this source can do ({help})"
+        (hasStr help "install one of SF Mono" && hasStr help "with its bold and italic"
+          && hasStr help "\\fonts{ mono" == (surface == "tex"))
       t s!"{surface}: a listed family short of a corner is no default, and W0390 names the slot"
         (fsC.slotCollapsed 2 && (loss fsC docC).any (·.kind == .W0390)
           && !diagsC.any (·.kind == .W0006))
@@ -145,11 +151,12 @@ def monoDefaultChecks (ref : IO.Ref (List String)) : IO Unit := do
     let ownText := unpaired
     let ownMono := family4 "DejaVu Sans Mono" code true
     let hostMenlo := family4 "Menlo" hostCode true
-    let doc := (codeDocs.lookup "tex").getD {}
-    match ← buildFontSet doc (shipped (ownText ++ ownMono) hostMenlo) cache .settled,
-        ← buildFontSet doc (shipped (ownText ++ ownMono) #[]) cache .settled,
-        ← buildFontSet doc (shipped ownText hostMenlo) cache .settled,
-        ← buildFontSet doc (shipped ownText #[]) cache .settled with
+    let doc := (elabStr (dvDoc "\\fonts{ dir = \"fonts\" }\n" ("Words with \\texttt{inline code} \
+beside them.\n\n\\begin{verbatim}\nfenced code\n\\end{verbatim}"))).1
+    -- A fresh cache per assembly: a cache is one run's, over one scan.
+    let build (scan : FaceScan) := do buildFontSet doc scan (← FontEnv.Cache.mk') .settled
+    match ← build (shipped (ownText ++ ownMono) hostMenlo), ← build (shipped (ownText ++ ownMono) #[]),
+        ← build (shipped ownText hostMenlo), ← build (shipped ownText #[]) with
     | .ok (fsA, _, _, pathsA), .ok (fsB, _, _, pathsB), .ok (fsC, docC, _, pathsC),
         .ok (fsD, docD, _, _) =>
       let loss (fs : Font.FontSet) (d : Ir.Doc) :=
@@ -160,6 +167,11 @@ def monoDefaultChecks (ref : IO.Ref (List String)) : IO Unit := do
       t "a document shipping no typewriter face sets its code in its text face on every host"
         (!pathsC.contains hostCode && fsC.slotCollapsed 2 && fsD.slotCollapsed 2
           && (loss fsC docC).any (·.kind == .W0390) && (loss fsD docD).any (·.kind == .W0390))
+      -- Its help names the remedy its default reads: its own font directory.
+      let help := (((loss fsC docC).find? (·.kind == .W0390)).bind (·.help)).getD ""
+      t s!"a document shipping its fonts is told to put a monospace in its font directory ({help})"
+        (hasStr help "in the document's font directory" && hasStr help "with its bold and italic"
+          && !hasStr help "install one of" && hasStr help "\\fonts{ mono")
     | _, _, _, _ => t "the shipped-fonts assemblies succeed" false
   -- The census reaches every typewriter run a document sets, among them a
   -- picture's label and a formula's typewriter alphabet: each alone moves
