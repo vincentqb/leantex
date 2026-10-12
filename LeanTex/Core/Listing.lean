@@ -559,4 +559,105 @@ public def contract (pal : Palette) (ground : Option Color) (style : Option List
     | some p => p.declared || decide (Contrast.aaText ≤ Contrast.contrastMilli (shipped bg p) bg)
     | none => true
 
+/-- How the fallback lexer reads a character: a run of word characters
+(letters, digits, `_`, `'`, every scalar past ASCII) is one token, a run of
+operator characters — the ASCII symbols of the Haskell 2010 report's lexical
+syntax (§2.2, `ascSymbol`) — is one, so `:=`, `->`, `==` and `<=` hold
+together, and any other character, a bracket, a quote, a comma, is a token
+of its own. -/
+public inductive CodeClass where
+  | space | word | op | single
+  deriving BEq
+
+public def codeClass (c : Char) : CodeClass :=
+  if c == ' ' || c == '\t' then .space
+  else if c.isAlphanum || c == '_' || c == '\'' || c.toNat > 127 then .word
+  else if "!#$%&*+-./:<=>?@\\^|~".contains c then .op
+  else .single
+
+/-- How listings.sty's standard character table reads a character into its
+output units (`\lst@SelectStdCharTable`): a letter (`a`–`z`, `A`–`Z`, `@`,
+`$`, `_`), a digit, a space, or another character. A scalar past ASCII is
+read as a letter, a departure: the table names none, and under LuaLaTeX
+listings sets such a scalar outside its units, out of order where a line
+wraps; read as a letter it stays in place, whole with the letters beside
+it. -/
+public inductive LstClass where
+  | letter | digit | space | other
+  deriving BEq
+
+public def lstClass (c : Char) : LstClass :=
+  if c == ' ' || c == '\t' then .space
+  else if c.isAlpha || c == '@' || c == '$' || c == '_' || c.toNat > 127 then .letter
+  else if c.isDigit then .digit
+  else .other
+
+/-- One source character of a code line as both backends' wraps read it: the
+highlighter token it stands in, its run under the listing's wrap
+(`Ir.ListingWrap`), its fallback token (`codeClass`), and whether it is
+white space. A wrap may fall only after a space or between two runs, or, in
+a run wider than a line, between two fallback tokens: the page's wrap reads
+these (`Layout.codeWraps`) and the web page's line boxes do too, each
+fallback token or run a line may not break inside held together. -/
+public structure CodeMark where
+  c : Char
+  token : Nat
+  lex : Nat
+  fb : Nat
+  space : Bool
+  deriving Repr, Inhabited
+
+/-- A source line's characters as `CodeMark`s. Its runs follow the listing's
+wrap: listings' output units — letters run on and digits continue them
+(`\lst@AppendLetter`, `\lst@ProcessDigit`), other characters run on with the
+digits among them (`\lst@AppendOther`), a space is a unit of its own
+(`\lst@AppendSpecialSpace`), and a `)` closes the run it ends
+(`\lst@breakProcessOther`) — or, under whitespace first, each of the
+highlighter's tokens and each fallback token of untyped text. -/
+public def codeMarks (wrap : Ir.ListingWrap) (line : Array ListingHighlight.Token) :
+    Array CodeMark := Id.run do
+  let units := match wrap with
+    | .units => true
+    | .whitespaceFirst => false
+  let mut out : Array CodeMark := #[]
+  let mut k := 0
+  let mut lex := 0
+  let mut fb := 0
+  let mut prev : Option CodeClass := none
+  -- listings' unit in progress: a run of letters, an open run of others,
+  -- or neither (the line's start, a space, a closing `)`)
+  let mut letters := false
+  let mut others := false
+  for token in line do
+    let typed := token.kind != .text
+    if !units then lex := lex + 1
+    for c in token.text.toList do
+      let cl := codeClass c
+      let fresh := prev != some cl || cl == .single
+      if fresh then fb := fb + 1
+      prev := some cl
+      if !units then
+        if !typed && fresh then lex := lex + 1
+      else
+        match lstClass c with
+        | .space =>
+          lex := lex + 1
+          letters := false
+          others := false
+        | .letter =>
+          unless letters do lex := lex + 1
+          letters := true
+          others := false
+        | .digit =>
+          unless letters || others do
+            lex := lex + 1
+            others := true
+        | .other =>
+          unless others do lex := lex + 1
+          letters := false
+          others := c != ')'
+      out := out.push { c := c, token := k, lex := lex, fb := fb, space := c == ' ' || c == '\t' }
+    k := k + 1
+  return out
+
 end LeanTex.Core.Listing

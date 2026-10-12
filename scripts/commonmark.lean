@@ -187,6 +187,15 @@ page sets left to right and centres no scope around its table. Hides: the \
 spelling alone, and a left cell inside a scope that centres or right-aligns its \
 text, which no spec example has — two different alignments, or a centre or a \
 right alignment against none, still differ."),
+   ("a code atom held on one line",
+    "inside a code block the engine holds each atom a line may not wrap \
+inside — a fallback token or a listings unit of two characters or more — in \
+a `<span>` whose one attribute is the class `tok` (`HtmlDoc.codeTokClass`), \
+which its stylesheet sets `nowrap`, and parts two listings units with a \
+`<wbr>`; inside <pre> such a span is read through, its children compared in \
+place, and a `<wbr>` dropped. Hides: nothing that reads — the characters \
+stand once, in order — and a span carrying anything else, or outside <pre>, \
+stays compared."),
    ("a column group of bare columns",
     "the engine opens every table with a `<colgroup>` of one `<col>` per \
 column; a column that carries no attribute adds nothing to the columns HTML's \
@@ -230,6 +239,12 @@ def cellAlignAttrs (tag : String) (attrs : Array (String × String)) :
     | some "left" => rest
     | some a => rest.push ("align", a)
     | none => rest
+
+/-- A code atom the engine holds on one line: a `<span>` whose one attribute
+is the class `tok` (`HtmlDoc.codeTokClass`), the declared code-atom
+normalization. -/
+def heldAtom (tag : String) (attrs : Array (String × String)) : Bool :=
+  tag == "span" && attrs == #[("class", HtmlDoc.codeTokClass)]
 
 /-- A `<colgroup>` whose every child is a `<col>` carrying no attribute (or
 whitespace between them), and which carries none itself. -/
@@ -587,7 +602,9 @@ def canonN (gaps : List String) (pre inLi inHeadRow : Bool) (n : Html.Node) : St
     "<script" ++ keep.foldl (fun s a => s ++ " " ++ a.1 ++ "=" ++ a.2) "" ++ ">"
       ++ squeeze js ++ "</script>"
   | .elem tag attrs kids =>
-    if tag == "hr" && gaps.contains "md:thematic-break" then ""
+    if pre && heldAtom tag attrs then canonNList gaps pre inLi "" inHeadRow "" kids.toList
+    else if pre && tag == "wbr" && attrs.isEmpty then ""
+    else if tag == "hr" && gaps.contains "md:thematic-break" then ""
     else if tag == "p" && inLi && gaps.contains "md:loose-list" then
       canonNList gaps pre false "" false "" kids.toList
     else
@@ -1602,6 +1619,20 @@ def selftest : IO UInt32 := do
      differ "cell alignment: a side class against none still differs"
        "<table><tr><td align=\"center\">a</td></tr></table>"
        "<table><tr><td class=\"bt-cmid\">a</td></tr></table>",
+     -- a code atom held on one line
+     same "code atom: a held atom is read through inside <pre>"
+       "<pre><code>a <span class=\"tok\">-&gt;</span><wbr>b</code></pre>"
+       "<pre><code>a -&gt;b</code></pre>",
+     differ "code atom: a span carrying anything else stays"
+       "<pre><code>a <span class=\"tok\" hidden>-&gt;</span>b</code></pre>"
+       "<pre><code>a -&gt;b</code></pre>",
+     differ "code atom: only a code block's atoms are read through"
+       "<p><span class=\"tok\">ab</span></p>" "<p>ab</p>",
+     differ "code atom: a span of another class stays"
+       "<pre><code><span class=\"line\">ab</span></code></pre>" "<pre><code>ab</code></pre>",
+     differ "code atom: a <wbr> outside a code block stays" "<p>a<wbr>b</p>" "<p>ab</p>",
+     differ "code atom: a <wbr> carrying anything stays"
+       "<pre><code>a<wbr class=\"x\">b</code></pre>" "<pre><code>ab</code></pre>",
      -- a column group of bare columns
      same "colgroup: a group of bare columns is dropped"
        "<table><colgroup><col><col></colgroup><tr><td>a</td></tr></table>"

@@ -316,7 +316,7 @@ def mdSurfaceChecks (ref : IO.Ref (List String)) : IO Unit := do
       && codeInfo (fence ++ "python,numbers=left\ncode\n" ++ fence ++ "\n"))
   t "a chunk header's braces do not ship as the code's first line"
     (!has (fence ++ "{r, echo=FALSE}\nx <- 1\n" ++ fence ++ "\n") "[language"
-      && has (fence ++ "{r, echo=FALSE}\nx <- 1\n" ++ fence ++ "\n") "<code>x <- 1</code>")
+      && mdCodeBlocks (fence ++ "{r, echo=FALSE}\nx <- 1\n" ++ fence ++ "\n") == #[some "x <- 1"])
   t "a lone brace for an info string does not ship as code"
     (!has (fence ++ "{\ncode line\n" ++ fence ++ "\n") "[language")
   t "the info string's first word ends at a tab"

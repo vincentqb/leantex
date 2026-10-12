@@ -98,8 +98,7 @@ Pine\n</details>\n") "<summary>*Oak* \\textbf{literal} <sample></summary>")
     (!refused fence && match mdPresList #[] fenceBody.toList with
       | #[.elem "pre" attrs #[.elem "code" cas kids]] =>
         attrs == mdCodeBlockPreAttrs && cas.isEmpty
-          && kids.all (fun n => match n with | .text _ => true | _ => false)
-          && nodeTextList "" kids.toList == "<!-- visible -->\n<details>"
+          && plainCodeText kids == some "<!-- visible -->\n<details>"
       | _ => false)
   t "an empty named anchor becomes a typed target and its link still resolves"
     (!refused "<a name=\"willow\"></a>\n\n[Willow](#willow)\n"

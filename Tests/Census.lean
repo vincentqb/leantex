@@ -123,6 +123,10 @@ its comment included",
       hasStr (censusInk c) "andentry.verified)#onelongline" &&
         ["returnsum(", "longline"].all fun n =>
           (lineRightOf c 0 n).any fun r => decide (r ≤ geom.pageW - geom.hmargin)),
+    ("the long lines with an arrow, a comparison, a path and a formula ship every character",
+      hasStr (censusInk c) "->dict:" && hasStr (censusInk c) ")==expected" &&
+        hasStr (censusInk c) "season/report.txt\"" && hasStr (censusInk c) "String->String:=funpath=>" &&
+        hasStr (censusInk c) "(1:Nat)≤2:=bydecide"),
     ("a tilde fence keeps its indented line", hasStr (censusText c) "indentedlineinsidethefence"),
     ("prose resumes after the code", hasStr (censusText c) "A paragraph after the code.")]),
   ("md-emphasis", fun _ c => [

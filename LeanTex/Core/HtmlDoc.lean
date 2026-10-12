@@ -350,7 +350,8 @@ public def engineClasses : List String :=
    "reveal-scroll", "ruled", "section-page", "separator", "slide",
    "slide-foot", "slide-logo", "slide-track", "slides", "snap", "spaced",
    "standout", "step", "table-float", "tcolorbox", "tcolorbox-body", "titlebar", "verbatim-list", "vskip",
-   "alt-pair", "alt-alike", "frame-body-tail", "frame-flow-end", "fill-before", "squeeze"] ++
+   "alt-pair", "alt-alike", "frame-body-tail", "frame-flow-end", "fill-before", "squeeze",
+   "tok"] ++
   Ir.sizeScale.map (fun p => "size-" ++ p.1) ++ Ir.sizeScale.map (fun p => "lead-" ++ p.1)
 
 private theorem engineClasses_no_u_prefix :
@@ -1216,6 +1217,11 @@ private def trivlistGap : String := s!"calc({trivlistOwn} + {peerGap})"
 /-- The class of fancyvrb's `\list` around a listing's code
 (`Ir.ListingFrame.list`): the list levels space it (`listElems`). -/
 public def verbatimListClass : String := "verbatim-list"
+
+/-- The class of a code atom a line may not break inside (`codeLineNodes`):
+its rule holds the atom on one line (`pre .tok`), and the line wraps
+only where the page's own wrap may. -/
+public def codeTokClass : String := "tok"
 
 /-- The class of a document skip's box (`skipNode`). -/
 public def skipClass : String := "vskip"
@@ -6405,6 +6411,9 @@ public def baseRules (doc : Doc) (pairs : List (Nat × Nat) := []) (figureWords 
   -- size around it, as the page sets it (`Ir.Style.mono` changes the slot
   -- alone), and a listing states its own (`fontStyleDecls`).
   "code, pre { font-family: var(--font-mono); }\n" ++
+  -- A code atom a line may not break inside (`codeLineNodes`): the line
+  -- wraps only where the page's own wrap may (`Listing.codeMarks`).
+  s!"pre .{codeTokClass} \{ white-space: nowrap; }\n" ++
   -- Flexbox 1 §4.5 gives scroll containers no automatic minimum size.
   -- Keep code at its content height; a crowded stage owns vertical scrolling.
   s!"pre \{ background: {roleRef .codeSurface}; padding: {quantaRem 1} 1rem; overflow-x: auto;\n" ++
@@ -9240,6 +9249,105 @@ public def abstractClass (styles : Ir.Styles) : String :=
   let step := Ir.abstractBodySize styles
   "abstract size-" ++ step
 
+/-- Does a code atom need holding together: two characters or more. A line
+may break only where the page's own wrap may (`Listing.codeMarks`), and a
+browser breaks inside a word that overruns its line (`overflow-wrap`)
+wherever no element holds it, so every atom longer than a character is
+held, and the line breaks inside a run wider than itself between atoms. -/
+private def codeAtomHolds (text : String) : Bool := text.length ≥ 2
+
+mutual
+
+/-- `acc` and a node with its text `hole` filled by `fill`. -/
+private def fillHoleOne (hole : String) (fill : Array Node) (acc : Array Node) : Node → Array Node
+  | .elem tag attrs kids => acc.push (.elem tag attrs (fillHoleList hole fill #[] kids.toList))
+  | .text s => if s == hole then acc ++ fill else acc.push (.text s)
+  | .style css => acc.push (.style css)
+  | .script attrs js => acc.push (.script attrs js)
+
+-- conserves: none — a run's paint around its atoms (`codeLineNodes`); every node of its, once.
+private def fillHoleList (hole : String) (fill : Array Node) (acc : Array Node) :
+    List Node → Array Node
+  | [] => acc
+  | k :: rest => fillHoleList hole fill (fillHoleOne hole fill acc k) rest
+
+end
+
+/-- `nodes` with a text node `t` after them, joined to a text node they end on. -/
+private def pushCodeText (nodes : Array Node) (t : String) : Array Node :=
+  match nodes.back? with
+  | some (.text u) => nodes.pop.push (.text (u ++ t))
+  | _ => nodes.push (.text t)
+
+/-- A code line's nodes: its highlighter runs painted as `Listing.paintRun`
+paints them, every atom of the line's wrap (`Listing.codeMarks`: a fallback
+token under whitespace first, a unit under listings' rule) longer than a
+character held in a `tok` span, and under listings' rule a `<wbr>` between
+two atoms that are no space, where listings may break and a browser
+might not. -/
+private def codeLineNodes (cfg : Config) (wrap : Ir.ListingWrap) (runs : Array Listing.Run)
+    (line : Array ListingHighlight.Token) : Array Node := Id.run do
+  let marks := Listing.codeMarks wrap line
+  let atomOf (m : Listing.CodeMark) : Nat := match wrap with
+    | .units => m.lex
+    | .whitespaceFirst => m.fb
+  -- The line's atoms in order, each its pieces — its characters inside one
+  -- run, by run — and whether it is white space.
+  let mut atoms : Array (Nat × Bool × Array (Nat × String)) := #[]
+  let mut i := 0
+  for (r, ri) in runs.zipIdx do
+    for c in r.text.toList do
+      let m := marks[i]?.getD { c := c, token := 0, lex := 0, fb := 0, space := false }
+      i := i + 1
+      let a := atomOf m
+      match atoms.back? with
+      | some (a', sp, ps) =>
+        if a' == a then
+          let ps := match ps.back? with
+            | some (ri', t) =>
+              if ri' == ri then ps.pop.push (ri', t.push c) else ps.push (ri, String.singleton c)
+            | none => ps.push (ri, String.singleton c)
+          atoms := atoms.pop.push (a', sp, ps)
+        else atoms := atoms.push (a, m.space, #[(ri, String.singleton c)])
+      | none => atoms := atoms.push (a, m.space, #[(ri, String.singleton c)])
+  -- A run's paint, once, around what it holds: its text, the atoms inside
+  -- it held, and under listings' rule a `<wbr>` between two atoms.
+  let hole := "\uE000\uE001\uE002"
+  let paint (ri : Nat) (content : Array Node) : Array Node :=
+    match runs[ri]? with
+    | some r => fillHoleList hole content #[] (inlines cfg (Listing.paintRun r #[.text hole])).toList
+    | none => content
+  let held (kids : Array Node) : Node := Html.elem "span" kids #[("class", codeTokClass)]
+  let mut out : Array Node := #[]
+  -- the run being filled, and what it holds so far
+  let mut cur : Option (Nat × Array Node) := none
+  let mut prevSpace : Option Bool := none
+  for (_, sp, ps) in atoms do
+    let text := ps.foldl (fun acc p => acc ++ p.2) ""
+    let hold := !sp && codeAtomHolds text
+    let gap := wrap matches .units && prevSpace == some false && !sp
+    match ps with
+    | #[(ri, t)] =>
+      -- inside one run: in that run's paint
+      let content := match cur with
+        | some (ri', c) => if ri' == ri then c else #[]
+        | none => #[]
+      if let some (ri', c) := cur then
+        if ri' != ri then out := out ++ paint ri' c
+      let content := if gap then content.push (Html.elem "wbr" #[] #[]) else content
+      let content := if hold then content.push (held #[.text t]) else pushCodeText content t
+      cur := some (ri, content)
+    | _ =>
+      -- across runs: each piece in its own run's paint, the atom around them
+      if let some (ri', c) := cur then out := out ++ paint ri' c
+      cur := none
+      if gap then out := out.push (Html.elem "wbr" #[] #[])
+      let pieces := ps.foldl (fun acc (ri, t) => acc ++ paint ri #[.text t]) #[]
+      out := if hold then out.push (held pieces) else out ++ pieces
+    prevSpace := some sp
+  if let some (ri, c) := cur then out := out ++ paint ri c
+  return out
+
 -- Shared by ordinary paragraphs and description items after their label
 -- is removed. The block walk recurses only over source children.
 /-- A block of content set wholly in one named size (`Ir.paraStep?`) carries
@@ -9599,9 +9707,8 @@ public def blockNode (cfg : Config) (b : Block) : Node :=
       let mut kids := #[]
       for i in [:lines.size] do
         if i > 0 then kids := kids.push (Html.text "\n")
-        let line := inlines cfg
-          ((Listing.paintLine cfg.pal ground covered spec.style brushes
-            lines[i]!).flatMap fun r => Listing.paintRun r #[.text r.text])
+        let line := codeLineNodes cfg spec.wrapAt
+          (Listing.paintLine cfg.pal ground covered spec.style brushes lines[i]!) lines[i]!
         kids := if spec.numbers then
           kids.push (Html.elem "span" line #[("class", "line")])
           else kids ++ line
@@ -9626,10 +9733,11 @@ public def blockNode (cfg : Config) (b : Block) : Node :=
         | .size n => s!" line-height: {listingLineHeight cfg.page spec n};"
         | _ => s!" line-height: {decMilli (printLeadingMilli cfg.page)};") ++
       s!" tab-size: {spec.tabSize};" ++
-      -- Pending: a browser wraps at its own break points, after the hyphen
-      -- of `->` among them; the page's rule (`Ir.ListingWrap`) reaches no
-      -- HTML yet.
-      (if spec.breakLines then " white-space: pre-wrap;" else "") ++
+      -- A wrapping block wraps only where the page's rule may
+      -- (`Ir.ListingWrap`): at a space or between two atoms
+      -- (`codeLineNodes`), a run wider than the line between its atoms
+      -- (`overflow-wrap`), never inside one.
+      (if spec.breakLines then " white-space: pre-wrap; overflow-wrap: break-word;" else "") ++
       -- A wrapped line's continuation hangs `breakIndent` in, as listings
       -- sets it on the page: CSS indents every line but the first after
       -- each forced break (`hanging each-line`). It measures from the

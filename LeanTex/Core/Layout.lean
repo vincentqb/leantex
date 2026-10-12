@@ -13802,99 +13802,22 @@ private structure CodeUnit where
   space : Bool
   deriving Inhabited
 
-/-- How the fallback lexer reads a character: a run of word characters
-(letters, digits, `_`, `'`, every scalar past ASCII) is one token, a run of
-operator characters — the ASCII symbols of the Haskell 2010 report's lexical
-syntax (§2.2, `ascSymbol`) — is one, so `:=`, `->`, `==` and `<=` hold
-together, and any other character, a bracket, a quote, a comma, is a token
-of its own. -/
-private inductive CodeClass where
-  | space | word | op | single
-  deriving BEq
-
-private def codeClass (c : Char) : CodeClass :=
-  if c == ' ' || c == '\t' then .space
-  else if c.isAlphanum || c == '_' || c == '\'' || c.toNat > 127 then .word
-  else if "!#$%&*+-./:<=>?@\\^|~".contains c then .op
-  else .single
-
-/-- How listings.sty's standard character table reads a character into its
-output units (`\lst@SelectStdCharTable`): a letter (`a`–`z`, `A`–`Z`, `@`,
-`$`, `_`), a digit, a space, or another character. A scalar past ASCII is
-read as a letter, a departure: the table names none, and under LuaLaTeX
-listings sets such a scalar outside its units, out of order where a line
-wraps; read as a letter it stays in place, whole with the letters beside
-it. -/
-private inductive LstClass where
-  | letter | digit | space | other
-  deriving BEq
-
-private def lstClass (c : Char) : LstClass :=
-  if c == ' ' || c == '\t' then .space
-  else if c.isAlpha || c == '@' || c == '$' || c == '_' || c.toNat > 127 then .letter
-  else if c.isDigit then .digit
-  else .other
-
 /-- A source line as display units, each character spelled as `layoutText`
-spells the whole line, the column threaded through the tokens. Its runs
-follow the listing's wrap (`Ir.ListingWrap`): listings' output units —
-letters run on and digits continue them (`\lst@AppendLetter`,
-`\lst@ProcessDigit`), other characters run on with the digits among them
-(`\lst@AppendOther`), a space is a unit of its own
-(`\lst@AppendSpecialSpace`), and a `)` closes the run it ends
-(`\lst@breakProcessOther`) — or, under whitespace first, each of the
-highlighter's tokens and each fallback token of untyped text. -/
+spells the whole line, the column threaded through the tokens, each read as
+both backends' wraps read it (`Listing.codeMarks`): its fallback token, its
+run under the listing's wrap, and whether it is white space. -/
 private def codeUnits (spec : Ir.ListingSpec) (line : Array ListingHighlight.Token) :
     Array CodeUnit := Id.run do
-  let units := match spec.wrapAt with
-    | .units => true
-    | .whitespaceFirst => false
   let mut out : Array CodeUnit := #[]
   let mut col := 0
   let mut src := 0
-  let mut k := 0
-  let mut lex := 0
-  let mut fb := 0
-  let mut prev : Option CodeClass := none
-  -- listings' unit in progress: a run of letters, an open run of others,
-  -- or neither (the line's start, a space, a closing `)`)
-  let mut letters := false
-  let mut others := false
-  for token in line do
-    let typed := token.kind != .text
-    if !units then lex := lex + 1
-    for c in token.text.toList do
-      let cl := codeClass c
-      let fresh := prev != some cl || cl == .single
-      if fresh then fb := fb + 1
-      prev := some cl
-      if !units then
-        if !typed && fresh then lex := lex + 1
-      else
-        match lstClass c with
-        | .space =>
-          lex := lex + 1
-          letters := false
-          others := false
-        | .letter =>
-          unless letters do lex := lex + 1
-          letters := true
-          others := false
-        | .digit =>
-          unless letters || others do
-            lex := lex + 1
-            others := true
-        | .other =>
-          unless others do lex := lex + 1
-          letters := false
-          others := c != ')'
-      let (kept, next) := spec.layoutText col (String.singleton c)
-      for d in kept.toList do
-        out := out.push { c := d, token := k, lex := lex, fb := fb, sourceCol := src
-                          space := c == ' ' || c == '\t' }
-      col := next
-      src := src + 1
-    k := k + 1
+  for m in Listing.codeMarks spec.wrapAt line do
+    let (kept, next) := spec.layoutText col (String.singleton m.c)
+    for d in kept.toList do
+      out := out.push { c := d, token := m.token, lex := m.lex, fb := m.fb, sourceCol := src
+                        space := m.space }
+    col := next
+    src := src + 1
   return out
 
 /-- How a wrap before unit `b` ranks, read off the units on either side:

@@ -49,7 +49,7 @@ def features : List String :=
   ["load", "images", "fonts", "mathml", "mathAlpha", "lang", "landmarks", "snaps", "box-side",
    "affine-screen", "affine-print", "color-scheme", "reduced-motion", "print", "print-spill",
    "print-sheets", "no-script", "code-height", "stage-fit", "deck-links", "disclosure",
-   "print-disclosure"]
+   "print-disclosure", "code-wrap"]
 
 def die (code : UInt32) (msg : String) : IO UInt32 := do
   IO.eprintln msg
@@ -600,6 +600,83 @@ const printDeck = async (page, name, fx) => {
     why: `${laid.spill} stage(s) taller than the sheet, ${short} laid-out characters missing on paper` } };
 };
 
+// A code block's lines wrap only where the page's own wrap may: every line
+// box break inside a code line falls at a space or between two fallback
+// tokens, read off the line's text — a word (letters, digits, `_`, `'`,
+// every scalar past ASCII), a run of operator characters, any other
+// character alone — never inside `:=`, `->` or an identifier; or, in a
+// declared listing that wraps at listings' units, at the `<wbr>` the page
+// stands between two of them (a unit may part a fallback token: `0x1F` is
+// the units `0` and `x1F`).
+const codeWrapJudge = () => {
+  const cls = (c) => {
+    if (c === ' ' || c === '\t') return 'space';
+    if (/[A-Za-z0-9_']/.test(c) || c.codePointAt(0) > 127) return 'word';
+    if ('!#$%&*+-./:<=>?@\\^|~'.includes(c)) return 'op';
+    return 'single';
+  };
+  const blocks = [...document.querySelectorAll('pre > code')]
+    .filter(c => c.getBoundingClientRect().width > 0);
+  let wraps = 0;
+  const bad = [];
+  for (const code of blocks) {
+    const chars = [];
+    let wbr = false;
+    const walker = document.createTreeWalker(code, NodeFilter.SHOW_TEXT | NodeFilter.SHOW_ELEMENT);
+    for (let t = walker.nextNode(); t; t = walker.nextNode()) {
+      if (t.nodeType === Node.ELEMENT_NODE) { if (t.tagName === 'WBR') wbr = true; continue; }
+      let i = 0;
+      for (const ch of t.data) {
+        const r = document.createRange();
+        r.setStart(t, i); r.setEnd(t, i + ch.length);
+        const rect = [...r.getClientRects()].find(x => x.width > 0 || x.height > 0);
+        chars.push({ ch, top: rect ? rect.top : null, wbr });
+        wbr = false;
+        i += ch.length;
+      }
+    }
+    let prev = null;
+    for (const c of chars) {
+      if (c.ch === '\n') { prev = null; continue; }
+      if (c.top === null) continue;
+      if (prev && c.top > prev.top + 2) {
+        wraps++;
+        const a = cls(prev.ch), b = cls(c.ch);
+        if (!(a === 'space' || b === 'space' || a !== b || a === 'single' || c.wbr))
+          bad.push(JSON.stringify(prev.ch + '|' + c.ch));
+      }
+      prev = c;
+    }
+  }
+  return { ok: bad.length === 0, n: blocks.length, wraps,
+    why: `${blocks.length} code blocks, ${wraps} wraps` +
+      (bad.length ? ', inside a token at ' + [...new Set(bad)].slice(0, 6).join(' ') : '') };
+};
+
+// The judge at narrow screens, where long lines wrap, and on paper.
+const codeWrap = async (page) => {
+  const widths = [360, 600, 900];
+  const runs = [];
+  try {
+    for (const w of widths) {
+      await page.setViewportSize({ width: w, height: 720 });
+      await page.evaluate(() => new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r))));
+      runs.push(['screen ' + w, await page.evaluate(codeWrapJudge)]);
+    }
+    await page.emulateMedia({ media: 'print' });
+    await page.setViewportSize({ width: 600, height: 720 });
+    await page.evaluate(() => new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r))));
+    runs.push(['print 600', await page.evaluate(codeWrapJudge)]);
+  } finally {
+    await page.emulateMedia({ media: 'screen' });
+    await page.setViewportSize({ width: 1280, height: 720 });
+  }
+  const n = runs.some(([, r]) => r.n > 0 && r.wraps > 0) ? 1 : 0;
+  const off = runs.filter(([, r]) => !r.ok);
+  return { ok: off.length === 0, n,
+    why: (off.length ? off : runs).map(([k, r]) => k + ': ' + r.why).join('; ') };
+};
+
 // A frame its PDF page holds is held by its stage: at the deck's own aspect
 // (1280 CSS px wide, the height the PDF page's ratio gives), no stage's
 // content runs past its foot, by as much as one pixel — the stage scrolls
@@ -866,6 +943,29 @@ async function runReader(name) {
     await control.setContent(lift + closed);
     if (!(await control.evaluate(mediaChecks['print-disclosure'])).ok)
       throw new Error('print-disclosure control: the print rule');
+    // The code-wrap judge breaks once: a narrow block whose atoms are held
+    // wraps between them, and the same block with nothing held wraps
+    // inside a token.
+    const atoms = '<span class="tok">alpha_beta</span><span class="tok">-&gt;</span>'.repeat(6);
+    await control.emulateMedia({ media: 'screen' });
+    const block = (rule) => '<style>' + rule + '</style><pre style="width: 120px; ' +
+      'white-space: pre-wrap; overflow-wrap: break-word; font: 14px monospace"><code>' +
+      atoms + '</code></pre>';
+    await control.setViewportSize({ width: 400, height: 300 });
+    await control.setContent(block('pre .tok { white-space: nowrap; }'));
+    const held = await control.evaluate(codeWrapJudge);
+    if (!held.ok || held.wraps === 0) throw new Error('code-wrap control: held atoms ' + held.why);
+    await control.setContent(block(''));
+    if ((await control.evaluate(codeWrapJudge)).ok) throw new Error('code-wrap control: nothing held');
+    // Two units of one fallback token part only at the `<wbr>` between them.
+    const units = (sep) => '<pre style="width: 120px; white-space: pre-wrap; overflow-wrap: break-word; ' +
+      'font: 14px monospace"><code>' + ('<span class="tok">0000000</span>' + sep +
+      '<span class="tok">xxxxxxx</span>' + sep).repeat(6) + '</code></pre>';
+    await control.setContent('<style>pre .tok { white-space: nowrap; }</style>' + units('<wbr>'));
+    const marked = await control.evaluate(codeWrapJudge);
+    if (!marked.ok || marked.wraps === 0) throw new Error('code-wrap control: units at their wbr ' + marked.why);
+    await control.setContent('<style>pre .tok { white-space: nowrap; }</style>' + units(''));
+    if ((await control.evaluate(codeWrapJudge)).ok) throw new Error('code-wrap control: units unmarked');
   } finally { await control.close(); }
   for (const fx of fixtures) {
     const url = 'file://' + path.join(dir, fx + '.html');
@@ -887,6 +987,7 @@ async function runReader(name) {
       }
       out(fx, name, 'stage-fit', cell(await stageFit(page, fx)));
       out(fx, name, 'deck-links', cell(await deckLinks(page, url)));
+      out(fx, name, 'code-wrap', cell(await codeWrap(page)));
       const light = await page.evaluate(readColors);
       await page.evaluate((follows) => { document.documentElement.dataset.ltxFollows = follows; },
         light.bg === lightSurface && light.fg === lightInk ? 'tokens' : 'declared');

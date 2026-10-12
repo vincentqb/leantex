@@ -49,8 +49,15 @@ private def ground (a : Artifact) (page : Nat) (color : Ir.Color) : Bool :=
     f.color == color && f.x ≤ 0 && f.y ≤ 0 &&
       f.x + f.w ≥ a.geom.pageW && f.y + f.h ≥ a.geom.pageH
 
+/-- Does `text` stand in `nodes` with every character of it inside an element
+whose style declares `css`: a token's ink, however the page parts the token's
+characters into elements (a code atom's, `HtmlDoc.codeLineNodes`). -/
 private def styled (nodes : List Html.Node) (text css : String) : Bool :=
-  (elemStylesList #[] nodes).any fun (t, s) => t == text && hasStr s css
+  let chars := shownChars nodes
+  let want := text.toList.toArray
+  (List.range (chars.size + 1 - want.size)).any fun start =>
+    (List.range want.size).all fun k =>
+      chars[start + k]?.any fun (c, styles) => c == want[k]! && styles.any (hasStr · css)
 
 private def stages (ref : IO.Ref (List String)) (name : String) (a : Artifact)
     (frames : Array (Option Nat)) (labels : Array String)

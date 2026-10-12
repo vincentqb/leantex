@@ -401,7 +401,88 @@ def codeTokenWrapChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO
         #["".pushn 'a' 62, "".pushn 'b' 58, "c", "".pushn 'a' 58, "".pushn 'b' 50 ++ "cccc"] &&
       [1, 2, 4].all fun k => (carryLines[k]?.bind firstGlyphX) == x0.map (· + Ir.listingBreakIndent))
 
+mutual
+
+/-- The atoms a code tree holds on one line (`HtmlDoc.codeTokClass`), in
+order, by their text, and how many `<wbr>` it carries. -/
+def heldAtomsOne (acc : Array String × Nat) : Html.Node → Array String × Nat
+  | .elem "span" #[("class", c)] kids =>
+    if c == HtmlDoc.codeTokClass then (acc.1.push (nodeTextList "" kids.toList), acc.2)
+    else heldAtomsList acc kids.toList
+  | .elem "wbr" _ _ => (acc.1, acc.2 + 1)
+  | .elem _ _ kids => heldAtomsList acc kids.toList
+  | .text _ | .style _ | .script _ _ => acc
+
+def heldAtomsList (acc : Array String × Nat) : List Html.Node → Array String × Nat
+  | [] => acc
+  | k :: rest => heldAtomsList (heldAtomsOne acc k) rest
+
+end
+
+/-- The code elements of a document's HTML body, each its text and what it
+holds (`heldAtomsOne`). -/
+def codeAtomsOf (doc : Ir.Doc) : Array (String × Array String × Nat) :=
+  (elemNodesList (· == "code") #[] (docNodesOf doc).toList).filterMap fun n =>
+    match n with
+    | .elem _ _ kids => some (nodeTextList "" kids.toList, heldAtomsList (#[], 0) kids.toList)
+    | _ => none
+
+/-- **The web page wraps a code line where the page may.** A code block's
+line holds on one line every atom the page's wrap may not break inside
+(`Listing.codeMarks`): under whitespace first each fallback token of two
+characters or more — `:=`, `->`, `==`, a path's `://`, an identifier — in a
+`tok` element the stylesheet sets `nowrap`, and the block's own wrap
+declaration lets a browser part a run wider than its line only between them
+(`overflow-wrap`); under listings' rule each unit of two characters or more,
+and a `<wbr>` between two units, where listings may break. The code's text
+is the source's, character for character, and inline code is untouched.
+Read off the typed HTML tree, against the fallback lexer the layout's
+checks read (`fallbackTokens`); the browser's own wraps are the oracle's
+`code-wrap` row. Every word here is invented. -/
+def htmlCodeAtomChecks (ref : IO.Ref (List String)) : IO Unit := do
+  let t := check ref
+  let lines := [
+    "theorem add_zero_right (n : Nat) : n + 0 = n := by simp  -- every n",
+    "def route : String → String := fun path => path ++ \"/usr/local/share/a/file.txt\"",
+    "example : (1 : Nat) ≤ 2 ∧ 2 ≤ 3 := ⟨by decide, by decide⟩",
+    "def handler(event, context) -> dict:",
+    "    return fetch(\"https://example.org/some/path?q=1&r=2\") == expected",
+    "alpha_beta->gamma_delta->epsilon_zeta==eta_theta<=iota"]
+  for (lang, label) in [("", "plain"), ("python", "python"), ("lean", "lean")] do
+    for line in lines do
+      let (doc, _) := elabMd s!"```{lang}\n{line}\n```\n"
+      match codeAtomsOf doc with
+      | #[(text, held, wbrs)] =>
+        t s!"{label} code holds each fallback token of its line on one line ({repr line}: {held})"
+          (text == line && wbrs == 0 && held == (fallbackTokens line).filter (·.length ≥ 2)
+            && held.all fun a => !a.any (· == ' '))
+      | other => t s!"{label} code is one code element ({other.size})" false
+  -- Listings' rule: its units held, a `<wbr>` between two.
+  for (line, units, wbrs) in [("x:=y->z", #[":=", "->"], 4),
+      ("f(a1)=b2", #["a1", "b2"], 5), ("p ->q", #["->"], 1)] do
+    let (doc, _) := elabStr (dvDoc "\\usepackage{listings}\n"
+      s!"\\begin\{lstlisting}[breaklines=true]\n{line}\n\\end\{lstlisting}")
+    match codeAtomsOf doc with
+    | #[(text, held, w)] =>
+      t s!"a breaking lstlisting holds its units and parts them as listings may ({repr line}: {held}, {w})"
+        (text == line && held == units && w == wbrs)
+    | other => t s!"a breaking lstlisting is one code element ({other.size})" false
+  -- The declarations a browser reads.
+  let (doc, _) := elabMd "```\na->b\n```\n\nInline `c->d` code.\n"
+  let css := HtmlDoc.baseCss {} doc
+  t "the stylesheet holds a code atom on one line"
+    (hasStr css s!"pre .{HtmlDoc.codeTokClass} \{ white-space: nowrap; }")
+  let pres := elemNodesList (· == "pre") #[] (docNodesOf doc).toList
+  t "a wrapping code block wraps a run wider than its line between its atoms"
+    (pres.all fun n => match n with
+      | .elem _ attrs _ => (attrs.find? (·.1 == "style")).any fun (_, v) =>
+          hasStr v "white-space: pre-wrap;" && hasStr v "overflow-wrap: break-word;"
+      | _ => false)
+  t "inline code holds no atom"
+    ((codeAtomsOf doc).map (·.2.1) == #[#["->"], #[]])
+
 def markdownCodeChecks (ref : IO.Ref (List String)) : IO Unit := do
+  htmlCodeAtomChecks ref
   let t := check ref
   -- The surface: one decision, read by the reader choice and the document.
   t "the surface is the path's: a .md source is markdown, any other tex"

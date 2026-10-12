@@ -448,15 +448,25 @@ attribute check also rejects leaked language text or an attribute hiding
 the code. A markdown fence sets as its surface's code does
 (`Ir.Surface.listing`): at `\footnotesize`, `0.8em`, on that size's own
 leading (9.5 pt over 8, `Ir.stepSkip`), wrapping its long lines with their
-continuations hung 20 pt in. -/
+continuations hung 20 pt in, a run wider than a line parted between its
+atoms (`overflow-wrap`). -/
 def mdCodeBlockPreAttrs : Array (String × String) :=
   #[("style", "font-size: 0.8em; line-height: 1.187; tab-size: 8; white-space: pre-wrap; \
-text-indent: 20pt hanging each-line;"),
+overflow-wrap: break-word; text-indent: 20pt hanging each-line;"),
     ("tabindex", "0")]
+
+/-- A plain code block's text: its text, and the atoms the page holds on one
+line (`HtmlDoc.codeTokClass`) read through — `none` where it carries any
+other element, such as a highlighter's ink. -/
+def plainCodeText (kids : Array Html.Node) : Option String :=
+  kids.foldl (fun acc k => acc.bind fun t => match k with
+    | .text s => some (t ++ s)
+    | .elem "span" #[("class", c)] #[.text s] => if c == HtmlDoc.codeTokClass then some (t ++ s) else none
+    | _ => none) (some "")
 
 /-- The page's code blocks, in order, each as the one text its `<code>`
 holds — when the block is exactly a `<pre>` carrying `mdCodeBlockPreAttrs`
-whose only child is a `<code>` with no attribute holding one text node, and
+whose only child is a `<code>` with no attribute holding its text — one text node, or text and the atoms the page holds on one line (`plainCodeText`) — and
 `none` for any other shape: a node before or after the `<code>`, an
 attribute leaked onto either element, content split or nested. A needle
 anchored at `</code></pre>` passed a page whose every `<pre>` opened with
@@ -466,8 +476,8 @@ def mdCodeBlocks (src : String) : Array (Option String) :=
   let (_, body, _) := HtmlDoc.emitTree {} doc
   (mdPresList #[] body.toList).map fun n =>
     match n with
-    | .elem "pre" attrs #[.elem "code" cattrs #[.text s]] =>
-      if attrs == mdCodeBlockPreAttrs && cattrs.isEmpty then some s else none
+    | .elem "pre" attrs #[.elem "code" cattrs kids] =>
+      if attrs == mdCodeBlockPreAttrs && cattrs.isEmpty then plainCodeText kids else none
     | _ => none
 
 def errCodes (s : String) : List String :=
@@ -1542,6 +1552,24 @@ def dedupConsecutive (xs : Array (String × String)) : Array (String × String) 
 
 mutual
 
+/-- Every character a tree's text nodes hold, in order, with the styles of
+the elements around it, innermost last. -/
+def shownCharsOne (styles : List String) (acc : Array (Char × List String)) :
+    Html.Node → Array (Char × List String)
+  | .text s => s.toList.foldl (fun a c => a.push (c, styles)) acc
+  | .style _ => acc
+  | .script _ _ => acc
+  | .elem _ attrs kids =>
+    let styles := match attrs.find? (·.1 == "style") with
+      | some (_, v) => styles ++ [v]
+      | none => styles
+    shownCharsList styles acc kids.toList
+
+def shownCharsList (styles : List String) (acc : Array (Char × List String)) :
+    List Html.Node → Array (Char × List String)
+  | [] => acc
+  | k :: rest => shownCharsList styles (shownCharsOne styles acc k) rest
+
 /-- Every element of an emitted tree with its subtree text and its own
 style attribute, for the epoch checks: which node carries a redefinition
 is a fact of the typed tree, never of a rendered string. -/
@@ -1559,6 +1587,10 @@ def elemStylesList (acc : Array (String × String)) : List Html.Node → Array (
   | k :: rest => elemStylesList (elemStylesOne acc k) rest
 
 end
+
+/-- Every character a list of nodes holds, with its elements' styles. -/
+def shownChars (nodes : List Html.Node) : Array (Char × List String) :=
+  shownCharsList [] #[] nodes
 
 /-- The source with string literals, char literals, and comments blanked, so
 the emission scan below reads code proper: a code named in a docstring or a
