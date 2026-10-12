@@ -639,7 +639,9 @@ const codeWrapJudge = (tables) => {
   for (const code of blocks) {
     const pre = code.parentElement;
     const cs = getComputedStyle(pre);
-    const room = pre.clientWidth - parseFloat(cs.paddingLeft) - parseFloat(cs.paddingRight);
+    // a continuation line's room, the block's less the hang its continuations take
+    const room = pre.clientWidth - parseFloat(cs.paddingLeft) - parseFloat(cs.paddingRight) -
+      Math.abs(parseFloat(cs.textIndent) || 0);
     if (/^(pre-wrap|break-spaces)$/.test(cs.whiteSpace) && pre.scrollWidth > pre.clientWidth + 1)
       over.push(pre.scrollWidth - pre.clientWidth);
     const chars = [];
