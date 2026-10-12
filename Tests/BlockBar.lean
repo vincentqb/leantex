@@ -32,8 +32,11 @@ def blockBarChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit
           let out := layoutOf fonts doc
           check ref (label ++ ": source elaborates without errors")
             (!(ds ++ out.diags).any (·.severity == .error))
+          -- A painted body opens on a line that sets nothing (its ground's
+          -- top): the text lines are the title's and the body's.
           check ref (label ++ ": title and body share one page")
-            (out.pages.size == 1 && (bodyLines out).map lineText == #["Hg", "BODY"])
+            (out.pages.size == 1 &&
+              ((bodyLines out).filter (!·.segs.isEmpty)).map lineText == #["Hg", "BODY"])
           let bars := out.pages.flatMap fun p =>
             p.fills.filter fun f => f.color == { r := 255, g := 0, b := 0 : Ir.Color }
           check ref (label ++ ": exactly one title background") (bars.size == 1)

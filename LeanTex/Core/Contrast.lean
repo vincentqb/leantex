@@ -489,11 +489,12 @@ private def usesBlock (cx : UseCx) (acc : UseAcc) : Block → UseAcc
     let acc := match spec.caption with
       | some (_, cap) => usesInlines cx acc cap.toList
       | none => acc
-    let ground := (spec.ground.map (·.1)).orElse fun _ =>
+    let own := spec.groundIn acc.pal .print
+    let ground := (own.map (·.1)).orElse fun _ =>
       cx.ground.orElse fun _ => some (Design.printPage acc.pal)
     -- On a ground of its own the plain text sets in the colour both
     -- backends fit to it (`Listing.groundInk`), and is judged as such.
-    let cur := match spec.ground with
+    let cur := match own with
       | some (g, _) =>
         let inherited := (cx.cur.map (·.2.1)).getD
           ((cx.inheritedInk.map (·.2)).getD (Design.printInk acc.pal))
@@ -502,7 +503,7 @@ private def usesBlock (cx : UseCx) (acc : UseAcc) : Block → UseAcc
         some (name, Listing.groundInk acc.pal g inherited, acc.runs)
       | none => cx.cur
     let codeCx := { cx.style spec.fontSize with
-      ground, cur, groundName := (spec.ground.map fun _ => "the listing's ground").or cx.groundName
+      ground, cur, groundName := (own.map fun _ => "the listing's ground").or cx.groundName
       codeStyle := spec.style.map (·.name) }
     -- One brush per type for the whole listing, as both backends draw it;
     -- the palette changes only at a `.setPalette`, never inside a listing.
@@ -1066,7 +1067,7 @@ public def listingContract (pal : Palette) : Bool :=
           | none => true)
 
 public def Theme.contractHolds (th : LeanTex.Core.Theme.Theme) : Bool :=
-  paletteContract th.palette
+  paletteContract (th.realize .documents) && paletteContract (th.realize .decks)
 
 /-- Covered reads as covered on the design's own page, per colour — the
 contract ranges over the cover of every colour the bundle puts on text

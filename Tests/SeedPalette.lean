@@ -22,14 +22,6 @@ private def hex (s : String) : Ir.Color :=
   | .ok (.html r g b) => { r, g, b }
   | _ => Ir.Color.black
 
-private def lchOf (c : Ir.Color) : Int × Int :=
-  let l := Oklab.labOf c
-  (Nat.sqrt (Oklab.chromaSq l).toNat, Oklab.hueMilli l.a l.b)
-
-/-- Millidegrees between two hues, the short way round. -/
-private def hueGap (h h' : Int) : Int :=
-  let d := (h - h' + 540000) % 360000 - 180000
-  if d < 0 then -d else d
 
 private def generate (s : LeanTex.Core.SeedPalette.Seeds) (d : Ir.GroundDepth := .decks) :=
   LeanTex.Core.SeedPalette.generate s (s.targets d)

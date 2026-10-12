@@ -128,6 +128,8 @@ its comment included",
         hasStr (censusInk c) "season/report.txt\"" && hasStr (censusInk c) "String->String:=funpath=>" &&
         hasStr (censusInk c) "(1:Nat)≤2:=bydecide"),
     ("a tilde fence keeps its indented line", hasStr (censusText c) "indentedlineinsidethefence"),
+    -- A note's class paints a code ground: the fenced blocks stand on it.
+    ("the fenced code stands on its code ground", (c[0]?.map fun p => decide (p.fills ≥ 1)).getD false),
     ("prose resumes after the code", hasStr (censusText c) "A paragraph after the code.")]),
   ("md-emphasis", fun _ c => [
     ("one page", c.size == 1),
@@ -771,7 +773,7 @@ def censusRows2 :
         (lineYOf c 6 "eighteen").map fun by' => decide (by' > ty)).getD false),
     ("the standout frame fills its background", (c[7]?.map fun p => decide (p.fills ≥ 1)).getD false)]),
   ("daylight", fun _ c => [
-    ("pages", c.size == 4),
+    ("pages", c.size == 5),
     -- The default bundle declares a page colour: every page paints.
     ("every page paints the warm paper", c.all fun p => decide (p.fills ≥ 1)),
     -- Variant A: no frame-title bar — the frame page carries the page
@@ -780,7 +782,10 @@ def censusRows2 :
     ("the frame title ships as a plain heading", pageHas c 2 "A default bundle"),
     ("the section page draws its progress track",
       (c[1]?.map fun p => decide (p.fills ≥ 2)).getD false),
-    ("the standout page fills its azure room", (c[3]?.map fun p => decide (p.fills ≥ 1)).getD false),
+    -- Every block a tinted card: the page, then each block's band and body.
+    ("each block paints its title band and its body",
+      (c[3]?.map fun p => decide (p.fills ≥ 7)).getD false && pageHas c 3 "An alerted card"),
+    ("the standout page fills its azure room", (c[4]?.map fun p => decide (p.fills ≥ 1)).getD false),
     ("the accent beats ship", pageHas c 2 "azure emphasis" && pageHas c 2 "green example")]),
   ("latex-idioms", fun _ c => [
     ("one page", c.size == 1),

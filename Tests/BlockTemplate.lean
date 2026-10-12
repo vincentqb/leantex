@@ -946,7 +946,7 @@ private def edgeTwoColor : Ir.Color := { r := 0x8B, g := 0x2E, b := 0x57 }
 
 /-- The moloch bundle's alerted ink, the right-hand rule's colour. -/
 private def alertColor : Ir.Color :=
-  (((Theme.find? "moloch").map (·.palette)).bind (·.find? "alert")).getD Ir.Color.black
+  (((Theme.find? "moloch").map (·.realize .decks)).bind (·.find? "alert")).getD Ir.Color.black
 
 /-- A mark on a shipped page: a line's baseline or left edge, by its letters;
 the `n`th rule of a colour down the page, its top, bottom, left or right; the

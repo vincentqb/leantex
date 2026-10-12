@@ -285,7 +285,7 @@ private def colorChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO
   check ref "block colours: moloch's fill paints six boxes, titles and bodies alternating"
     (paint.size == 6 && (paint.toList.zipIdx.all fun (c, i) =>
       if i % 2 == 0 then c == title else near c body))
-  let fg := ((Theme.find? "moloch").map (·.palette)).bind (·.find? "fg")
+  let fg := ((Theme.find? "moloch").map (·.realize .decks)).bind (·.find? "fg")
   check ref "block colours: titles take structure's and the text roles' ink"
     (ink[0]? == some fg && fg.isSome && ink.all Option.isSome &&
       ink[1]? != ink[0]? && ink[2]? != ink[0]? && ink[1]? != ink[2]?)
@@ -410,7 +410,8 @@ private def textGroundChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet)
   let src (theme : String) := "\\documentclass{beamer}\n" ++ theme ++ decl ++ frame
   let alertInk : Ir.Color := { r := 0xE4, g := 0xC7, b := 0x6B }
   let exampleInk : Ir.Color := { r := 0x8F, g := 0xD3, b := 0xC1 }
-  for (name, theme) in [("moloch", "\\usetheme{moloch}\n"), ("the default theme", "")] do
+  for (name, theme) in [("moloch", "\\usetheme{moloch}\n"),
+      ("the default theme", "\\usetheme{default}\n")] do
     let (paint, _, _) := blockPaint fonts (src theme)
     check ref s!"block text grounds: under {name} the text roles' fills paint the alerted and example bars"
       (paint == #[alertInk, exampleInk])
@@ -435,7 +436,7 @@ private def parentChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : I
   let frame := "\\begin{document}\\begin{frame}[t]{Kinds}\\begin{block}{Plain}P\\end{block}" ++
     "\\begin{alertblock}{Loud}A\\end{alertblock}" ++
     "\\begin{exampleblock}{Shown}E\\end{exampleblock}\\end{frame}\\end{document}\n"
-  let plain := "\\documentclass{beamer}\n"
+  let plain := "\\documentclass{beamer}\n\\usetheme{default}\n"
   let moloch := "\\documentclass{beamer}\n\\usetheme{moloch}\n"
   let surface : Ir.Color := { r := 0xE8, g := 0xEE, b := 0xF6 }
   let accent : Ir.Color := { r := 0x7A, g := 0x3E, b := 0x9D }
@@ -449,10 +450,15 @@ private def parentChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : I
   let (molochBodies, _, _) := blockPaint fonts (moloch ++ body ++ frame)
   check ref "block parents: under moloch the alerted and example bodies inherit the block body"
     (molochBodies == #[surface, surface, surface])
-  let (plainDoc, _) := Elab.run "block-parents.tex" (plain ++ frame)
-  let (_, plainInk, _) := blockPaint fonts (plain ++ accentDecl ++ frame)
+  -- Under the deck's default bundle a declared `structure` still reaches
+  -- the plain title, as beamer's default colour theme hangs it there; the
+  -- alerted and example titles stand in the bundle's own band inks.
+  let deck := "\\documentclass{beamer}\n"
+  let (deckDoc, _) := Elab.run "block-parents.tex" (deck ++ accentDecl ++ frame)
+  let (_, plainInk, _) := blockPaint fonts (deck ++ accentDecl ++ frame)
   check ref "block parents: the default theme's block title takes structure's ink"
-    (plainInk == #[some accent, plainDoc.palette.find? "alert", plainDoc.palette.find? "example"])
+    (plainInk == #[some accent, deckDoc.palette.find? "alerttitlefg",
+      deckDoc.palette.find? "exampletitlefg"])
   let (out, _) := layout fonts (plain ++ accentDecl ++ frame)
   let page := out.pages[0]?.getD {}
   let titleInk := (page.lines.find? (lineText · false == "Kinds")).bind fun l =>
@@ -461,7 +467,7 @@ private def parentChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : I
       | _ => none
   check ref "block parents: the default theme's frame title takes structure's ink"
     (titleInk == some accent)
-  let bundle := (Theme.find? "moloch").map (·.palette)
+  let bundle := (Theme.find? "moloch").map (·.realize .decks)
   let (_, molochInk, _) := blockPaint fonts (moloch ++ accentDecl ++ frame)
   check ref "block parents: moloch's block title keeps normal text's ink whatever structure holds"
     (molochInk == #[bundle.bind (·.find? "fg"), bundle.bind (·.find? "alert"),

@@ -124,15 +124,28 @@ directory first, then from the computer's.
 
 List themes with `leantex themes` and select one with `\theme{moloch}`.
 
+A document that declares no colours ships what its class prints. Its HTML
+page is white, as its PDF's paper is; list markers are the ink in every
+class, and so are the article, report and book classes' secondary ink (line
+numbers, footers). A deck that declares no theme takes the `daylight`
+bundle: warm paper, warm ink and one azure accent, its blocks tinted cards
+generated from those seeds as `\palette[seeds]` generates them. `moloch`
+draws its progress bar and title separator in its lineage's orange, exactly
+as lualatex draws them, the bar's track in moloch's own mix of it, and sets
+its alert in that orange realized as text on its page, where the orange
+itself reads at 2.6:1.
+
 In HTML, the colours the stylesheet's rules paint and every named colour are
 CSS custom properties a host stylesheet can override on `:root`. A colour role
 is `--ltx-<key>`, named by its `\palette` key (`--ltx-bg`, `--ltx-fg`,
 `--ltx-alert`, `--ltx-frametitlebg`, `--ltx-codekeyword`, …), and a page
-declares exactly the roles something on it reads. Three keys colour the HTML
-page alone, which the PDF does not paint: `tint` the code panel
-(`--ltx-tint`), `focus` the focus ring (`--ltx-focus`), which follows the
-accent (`--ltx-accent`) where nothing declares it, and `rule` a slide's
-border on the paged deck (`--ltx-rule`). A colour from `\definecolor{name}` is
+declares exactly the roles something on it reads. Two keys colour the HTML
+page alone, which the PDF does not paint: `focus` the focus ring
+(`--ltx-focus`), which follows the accent (`--ltx-accent`) where nothing
+declares it, and `rule` a slide's border on the paged deck (`--ltx-rule`).
+`tint` (`--ltx-tint`) is the ground a listing stands on: a markdown note
+and a web page paint it in both artifacts, and the LaTeX classes, slides,
+posters and cards leave verbatim unpainted, as LaTeX does. A colour from `\definecolor{name}` is
 `--ltx-c-name`, letters and digits as written and any other character as `_`
 and its six hex digits, and text set in it reads that property. A role the
 document leaves undeclared is declared as the role it defaults to, so

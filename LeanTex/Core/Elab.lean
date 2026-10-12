@@ -17317,7 +17317,11 @@ public def applyDecl (s : PreState) (d : PDecl) : EM PreState := do
     match cls with
     | some named =>
       match Ir.DocClass.ofString? named with
-      | some c => return { s with docClass := c }
+      | some c =>
+        -- The class's defaults ride on the palette from here, so a bundle the
+        -- preamble installs realizes at the class's depth.
+        return { s with docClass := c, palette := { s.palette with
+          classColors := c.classColors (Ir.Surface.ofPath s.ctx.file) } }
       | none =>
         diag s.ctx .E0309 s!"unknown document class '{named}'" pos
           (help := "classes: article, slides, card, resume, webpage")
@@ -17584,23 +17588,25 @@ the built-in's heading and margins stand{replaced}"
         -- Judged against what the DOCUMENT declared — a value
         -- standing from an earlier bundle warns nothing.
         for (kind, key) in Theme.replaces th before do
-          if (← get).declaredKeys.contains (kind, key) then
+          if (← get).declaredKeys.contains (kind.name, key) then
             diag s.ctx .W0348
-              s!"theme '{tname}' replaces the document's earlier '{key}' from '\\{kind}'"
+              s!"theme '{tname}' replaces the document's earlier '{key}' from '\\{kind.name}'"
               (some pos)
               (help := "overrides go after '\\theme': move the declaration below it")
         -- The keys the bundle installs now stand from it, not from
         -- the document, whatever they replaced.
-        let installed := Theme.declares th
+        let installed := (Theme.declares th s.palette.classColors.depth).map
+          fun (k, key) => (k.name, key)
+        let ownRoles (rs : Array Role) : Array Role :=
+          rs.filter fun r => !installed.contains ("palette", (ColorRef.role r).key)
         modify fun st => { st with
           declaredKeys := st.declaredKeys.filter (fun e => !installed.contains e)
-          spans := { st.spans with docRoles := st.spans.docRoles.filter fun r =>
-            (Design.declared? th.palette r).isNone } }
+          spans := { st.spans with docRoles := ownRoles st.spans.docRoles } }
         let ds := Theme.apply th before
         -- The bundle's colour theme declares its own relationships under the
         -- document's (`BeamerColor.themeElement`).
         modify fun st => { st with scope := { st.scope with palette := { st.scope.palette with theme := tname } } }
-        for (key, c) in th.palette.entries do
+        for (key, c) in (th.realize s.palette.classColors.depth).entries do
           recordColorDeclaration key.key c (s.ctx.sourceSpan pos)
           if let .role r := key then
             modify fun st => { st with scope := { st.scope with
@@ -18843,10 +18849,14 @@ private def prepareStyledBody (file : String) (decls : Array PDecl)
   -- A palette generated from seeds is the whole palette: the default
   -- bundle's rhythm and furniture still install, its colours do not, so no
   -- colour reaches the page but through the seeds.
-  let bundle := if s.palette.seeded.isSome then { Theme.daylight with palette := {} }
+  let bundle := if s.palette.seeded.isSome then
+      { Theme.daylight with palette := {}, seeds := none, derived := [] }
     else Theme.daylight
+  -- The class's defaults ride on the palette every artifact reads: what a
+  -- role nothing declares resolves to (`Ir.DocClass.classColors`).
+  let classColors := s.docClass.classColors (Ir.Surface.ofPath file)
   let themedDs : Theme.Decls :=
-    let own : Theme.Decls := { palette := s.palette, tokens := s.tokens
+    let own : Theme.Decls := { palette := { s.palette with classColors }, tokens := s.tokens
                                styles := s.styles, chrome := s.chrome }
     if defaultBundle then Theme.applyUnder bundle own else own
   let basePalette ← resolveBeamerColors ctx themedDs.palette true

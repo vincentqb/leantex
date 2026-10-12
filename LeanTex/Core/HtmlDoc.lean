@@ -2709,6 +2709,19 @@ public theorem role_css_projects (pal : Ir.Palette) (schemes : List Ir.Scheme)
   rw [Ir.Design.chase_restrict_exact _ _ (cssRoles_closed pal schemes seed s hs) r hr]
   exact Ir.Design.cssDecl_chase_exact pal s r
 
+/-- **The HTML list marker is the PDF's** (`_agree`): the light
+stylesheet's marker, aliases chased, is the marker the printed page paints,
+for every palette (`Ir.Design.marker_print_light_exact` projected through
+`role_css_projects`). -/
+public theorem marker_css_agree (pal : Ir.Palette) (schemes : List Ir.Scheme)
+    (seed : List Ir.Role) (hs : Ir.Scheme.light ∈ schemes)
+    (hr : Ir.Role.marker ∈ cssRoles pal schemes seed) :
+    Ir.Design.chase (Ir.Design.restrict (Ir.Design.cssDecl pal .light)
+        (cssRoles pal schemes seed)) .marker =
+      Ir.Design.at pal .print .marker := by
+  rw [role_css_projects pal schemes seed .light hs .marker hr,
+    Ir.Design.marker_print_light_exact]
+
 /-- **The declarations a page's stylesheet carries for its roles, in one
 scheme**: each role of the set the palette leaves undeclared, as its
 default — an alias or the scheme's constant. A declared role is declared
@@ -6436,8 +6449,12 @@ public def baseRules (doc : Doc) (pairs : List (Nat × Nat) := []) (figureWords 
   s!"@container (width < {codeReleaseWidth}) \{ pre .{codeLongTokClass} \{ white-space: inherit; } }\n" ++
   -- Flexbox 1 §4.5 gives scroll containers no automatic minimum size.
   -- Keep code at its content height; a crowded stage owns vertical scrolling.
-  s!"pre \{ background: {roleRef .codeSurface}; padding: {quantaRem 1} 1rem; overflow-x: auto;\n" ++
-  "      border-radius: 4px; flex-shrink: 0; }\n" ++
+  -- A class that paints a code ground (the web's) sets its listings in a
+  -- box on it; one that paints none pads no listing, as its page does not.
+  (if (Design.at doc.palette .light .codeSurface).isSome then
+    s!"pre \{ background: {roleRef .codeSurface}; padding: {quantaRem 1} 1rem; overflow-x: auto;\n" ++
+    "      border-radius: 4px; flex-shrink: 0; }\n"
+   else "pre { background: none; padding: 0; overflow-x: auto; flex-shrink: 0; }\n") ++
   -- A captioned listing wears the figure-caption shape, caption above
   -- (listings' captionpos default); declared line numbers are a CSS
   -- counter the stylesheet draws before each line — furniture, outside
@@ -9779,8 +9796,10 @@ public def blockNode (cfg : Config) (b : Block) : Node :=
     -- IR projection the markdown fence reads too (`listing_language_agree`);
     -- the attribute value goes through the escaper as every attribute does.
     let lines := spec.tokenLines s
-    -- minted's `bgcolor` is the ground the listing's own tokens stand on.
-    let ground := (spec.ground.map (·.1)).or cfg.listingGround
+    -- minted's `bgcolor` is the ground the listing's own tokens stand on,
+    -- and so is the code ground a class paints (`Ir.ListingSpec.groundIn`).
+    let own := spec.groundIn cfg.pal .light
+    let ground := (own.map (·.1)).or cfg.listingGround
     let brushes := Listing.brushes cfg.pal ground covered spec.style lines
     let codeAttrs : Array (String × String) := match spec.htmlClass with
       | some c => #[("class", c)]
@@ -9797,12 +9816,22 @@ public def blockNode (cfg : Config) (b : Block) : Node :=
       return kids
     let code := Html.elem "code" codeKids codeAttrs
     let design := Ir.Design.ofPalette cfg.pal
-    let paint := match spec.ground with
-      | some (g, ref) =>
+    let paint := match spec.ground, own with
+      | some (g, ref), _ =>
         s!"background: {colorRead cfg ref g}; " ++
         s!"color: {cssColor (covered.getD
           (Listing.groundInk cfg.pal g (cfg.listingFg.getD design.fg)))};"
-      | none =>
+      | none, some (g, _) =>
+        -- The class's code ground: the base `pre` rule paints it under plain
+        -- verbatim; a highlighted listing states the ground its tokens were
+        -- fitted to, as it states the page's.
+        if spec.highlight.isEmpty then
+          (covered.map fun c => s!"color: {cssColor c};").getD ""
+        else
+          s!"background: {cssColor g}; " ++
+          s!"color: {cssColor (covered.getD
+            (Listing.groundInk cfg.pal g (cfg.listingFg.getD design.fg)))};"
+      | none, none =>
         if spec.highlight.isEmpty then
           (covered.map fun c => s!"color: {cssColor c};").getD ""
         else
@@ -11323,8 +11352,10 @@ one takes the scheme's own column. -/
 public def themePairs (pal : Ir.Palette) (s : Ir.Scheme) : List (String × Ir.Color × Ir.Color × Nat) :=
   let look (r : Ir.Role) := (Ir.Design.at pal s r).getD Ir.Color.black
   [("text", look .ink, look .page, Contrast.aaText),
-   ("muted", look .marker, look .page, Contrast.aaText),
-   ("code", look .codeInk, look .codeSurface, Contrast.aaText),
+   ("muted", look .muted, look .page, Contrast.aaText),
+   ("marker", look .marker, look .page, Contrast.aaText),
+   -- A listing a class paints no ground under stands on the page.
+   ("code", look .codeInk, (Ir.Design.at pal s .codeSurface).getD (look .page), Contrast.aaText),
    ("accent", look .focus, look .page, Contrast.aaNonText)]
 
 /-- The pairings a page fails, in each colour scheme it ships: `themePairs`

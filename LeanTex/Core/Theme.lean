@@ -2,6 +2,7 @@ module
 
 public import LeanTex.Core.Ir
 import all LeanTex.Core.Ir
+import LeanTex.Core.ContrastSolve
 
 namespace LeanTex.Core.Theme
 
@@ -19,8 +20,8 @@ nothing a theme may override. This structure is `apply`'s whole domain and
 codomain, and it carries no page, no class, and no assertion, so a bundle
 *cannot* reach the geometry or the class's implied contract
 (`Ir.DocClass.record`) — the compiler enforces the rule at the type, the
-same way `DocClass` closes the class set; `theme_layer_contract` is the
-checkable half over the shipped bundles. Keep it that way: a bundle wanting
+same way `DocClass` closes the class set, and a key a bundle installs names
+its surface by the closed `DeclSurface`. Keep it that way: a bundle wanting
 geometry is a genre or class question, never a theme field (the
 value-vs-consumer layering rule; audit-layer's `Theme.apply`/W0348 fixed
 the value-vs-value face, and W0355 names the consumer face at install). -/
@@ -54,6 +55,51 @@ public structure Theme extends Decls where
   /-- The frame-alignment keys the bundle's inner theme sets: beamer's own
   unless the lineage redefines them, as moloch's `[c]` does. -/
   frameKeys : Ir.FrameKeys := .beamer
+  /-- The seeds the bundle's palette is generated from, with its block style
+  (`SeedPalette`): the bundle's own palette entries stand over what they
+  generate. -/
+  seeds : Option (SeedPalette.Seeds × SeedPalette.Blocks) := none
+  /-- The roles the bundle derives from a lineage colour rather than states:
+  each the colour realized as text on the bundle's page at the generated
+  text target, its hue held (`ContrastSolve.realizeNearest`). -/
+  derived : List (Ir.Role × Color) := []
+
+/-- The palette a bundle's seeds generate at a depth, derived afresh. -/
+public def Theme.generatedFresh (th : Theme) (d : GroundDepth) : Option SeedPalette.Colors :=
+  th.seeds.bind fun (s, _) => ((SeedPalette.generate s (s.targets d)).toOption).map (·.colors)
+
+/-- The colour a bundle derives from a lineage colour, derived afresh: the
+colour realized as text on the bundle's page at the generated text target,
+its hue held; the colour itself where nothing realizes it. -/
+public def Theme.derivedFresh (th : Theme) (seed : Color) : Color :=
+  (ContrastSolve.realizeNearest (Contrast.aaText + SeedPalette.margin)
+    (Design.printPage th.palette) seed).getD seed
+
+/-- The palette a bundle's seeds generate at a depth: the generator's answer
+kept in `PaletteData`, else derived as asked. -/
+public def Theme.generated (th : Theme) (d : GroundDepth) : Option SeedPalette.Colors :=
+  match PaletteData.bundleGenerated.find? (fun e => e.1 == th.name && e.2.1 == d) with
+  | some e => some e.2.2
+  | none => th.generatedFresh d
+
+/-- The colour a bundle derives for a role: the realization kept in
+`PaletteData`, else derived as asked. -/
+public def Theme.derivedColor (th : Theme) (r : Ir.Role) (seed : Color) : Color :=
+  match PaletteData.bundleDerived.find? (fun e => e.1 == th.name && e.2.1 == r) with
+  | some e => e.2.2
+  | none => th.derivedFresh seed
+
+/-- **What a bundle declares at a depth**: the palette its seeds generate,
+its own entries over it, and each colour it derives from a lineage colour —
+seeds and relations, realized where a document installs the bundle. -/
+public def Theme.realize (th : Theme) (d : GroundDepth) : Palette :=
+  let gen : Palette := match th.seeds, th.generated d with
+    | some (seeds, blocks), some colors =>
+      ({} : Palette).applySeeds { seeds, targets := seeds.targets d, blocks, colors }
+    | _, _ => {}
+  let lit := th.palette.entries.foldl (fun p e => p.declare e.1 e.2) gen
+  let full := th.derived.foldl (fun p e => p.declare (.role e.1) (th.derivedColor e.1 e.2)) lit
+  { full with coveredFraction := th.palette.coveredFraction, decorative := th.palette.decorative }
 
 /-- `{\large\bfseries}` (`{\Large\bfseries}` for `large := "Large"`) as the
 elaborator reads a `\style` font value: nested wrappers with an empty body
@@ -101,43 +147,43 @@ private def builtinChrome : Chrome :=
 /-- The Metropolis lineage as a token bundle: an inverted frame-title bar,
 one warm accent, a near-white page. Values map the moloch beamer theme's
 light preset onto the semantic keys, mixes evaluated (the original xcolor
-spelling rides in the comment beside each). -/
+spelling rides in the comment beside each); the lineage's warm colour is a
+seed its decorative marks take exactly and its alert derives from. -/
 public def moloch : Theme :=
   let fg : Color := { r := 0x23, g := 0x37, b := 0x3B }
   let bg := Color.black.mix 2 Color.white                     -- black!2
-  -- moloch's own alert is #EB811B, which reads at 2.61:1 on this page —
-  -- under the 4.5:1 WCAG 2.2 SC 1.4.3 asks of text. This value is the
-  -- same hue at a lightness that clears it (a role names a hue; its
-  -- ground chooses the lightness — ContrastSolve.realizeNearest), and
-  -- Contrast.builtin_palettes_contract holds it, with every shipped
-  -- pair, to the ratio by kernel check.
-  let alert : Color := { r := 0xA5, g := 0x5A, b := 0x13 }
-  let progressfg := alert
-  let progressbg := (progressfg.mix 50 .black).mix 30 .white  -- progressfg!50!black!30
+  -- mLightBrown (beamercolorthememoloch.sty), the lineage's one warm colour:
+  -- the progress bar and the title separator in it exactly, as lualatex
+  -- draws them — decorative marks, owing no contrast.
+  let lineage := Color.ofHtml 0xEB 0x81 0x1B
+  let progressbg := (lineage.mix 50 .black).mix 30 .white      -- progressfg!50!black!30
   { name := "moloch"
     palette := {
       entries := #[
-        (.role .ink, fg), (.role .page, bg), (.role .alert, alert),
+        (.role .ink, fg), (.role .page, bg),
         (.role .example, { r := 0x00, g := 0x80, b := 0x80 }),
-        -- The muted step: the theme's own ink mixed 70:30 into its page, the
-        -- strongest quieting that still clears the 4.5:1 WCAG 2.2 SC 1.4.3
-        -- asks of the small footer text (4.79:1 here;
-        -- Contrast.builtin_palettes_contract is the kernel check, and
-        -- 60:40 already fails at 3.65:1).
+        -- The muted step: the theme's own ink mixed 70:30 into its page, a
+        -- declared quieting that keeps 4.79:1 on this page, a pinned margin
+        -- over the 4.6:1 a generated text ink stands at
+        -- (`ThemeContract.builtin_muted_margin`).
         (.role .muted, fg.mix 70 bg),                              -- fg!70!bg
         (.role .frameTitleInk, bg), (.role .frameTitleBar, fg),
-        (.role .progressFill, progressfg), (.role .progressTrack, progressbg),
-        (.role .separator, progressfg),
+        (.role .progressFill, lineage), (.role .progressTrack, progressbg),
+        (.role .separator, lineage),
         (.role .standoutInk, bg), (.role .standoutGround, fg)]
       -- Covered overlay content keeps each colour at 31% of itself over
       -- the page, mixed in Oklab (Core/Oklab.lean). Material's
       -- disabled-state opacity is 38% (m2.material.io/design/interaction/
       -- states.html#disabled), but at 38% this bundle's alert and example
-      -- read at 2.89:1 and 2.75:1 against their active forms — under the
-      -- 3:1 WCAG 2.2 SC 1.4.11 asks of state-identifying information; 31%
-      -- is the largest fraction where every text role clears it
-      -- (Contrast.builtin_designs_covered is the kernel check).
+      -- read under the 3:1 WCAG 2.2 SC 1.4.11 asks of state-identifying
+      -- information against their active forms; 31% is the largest
+      -- fraction where every text role clears it
+      -- (`Contrast.builtin_designs_covered` is the check).
       coveredFraction := some 31 }
+    -- The lineage's alert is the warm colour itself, which reads at 2.61:1 on
+    -- this page, under the 4.5:1 WCAG 2.2 SC 1.4.3 asks of text: the alert
+    -- is that colour realized as text here, its hue held.
+    derived := [(.alert, lineage)]
     tokens := lineageTokens
     frameKeys := .moloch
     styles := { entries := #[
@@ -146,10 +192,9 @@ public def moloch : Theme :=
       ("standout", boldFont "Large"),
       -- moloch's `title page` template sets the title matter ragged left
       -- and draws a separator rule between the title block and the author
-      -- block, in the palette's separator colour (resolved here, exactly
-      -- what `separator = separator` resolved to at install time).
+      -- block, in the palette's separator colour.
       ("titlepage", { align := some .left
-                      separator := some (progressfg, some (.role .separator)) })] }
+                      separator := some (lineage, some (.role .separator)) })] }
     chrome := builtinChrome }
 
 /-- A quieter default: near-black ink on white, one restrained accent, no
@@ -182,29 +227,22 @@ public def plain : Theme :=
 
 /-- A bright, warm default for decks: warm paper, warm near-black ink, one
 azure accent — quiet chrome, no title bar (the bar key is deliberately
-absent: hierarchy rides size and weight). Sources per value: the page and
-ink are the warm-neutral family practice (Tailwind's `stone`; Material's
-own on-surface is never pure black), the accent is a link-blue azure at
-5.54:1 on this page, `example` is GOV.UK's `success` green verbatim, and
-`muted` is the same 70:30 ink-into-page rule both other bundles use.
-`covered` keeps the engine's Material 38% default — every text role here
-clears the 3:1 state change at it (`Contrast.builtin_designs_covered`
-re-decides on entry). The slides class installs this bundle when a deck
-declares no theme; `moloch` stays by name. -/
+absent: hierarchy rides size and weight). Its palette is generated from its
+four seeds (`SeedPalette`): the page and ink are the warm-neutral family
+practice (Tailwind's `stone`; Material's own on-surface is never pure black),
+the accent a link-blue azure, the example GOV.UK's `success` green verbatim;
+its blocks are tonal cards, its secondary ink the quietest tone that reads,
+and its standout frame the inversion on the accent. The slides class installs
+this bundle when a deck declares no theme; `moloch` stays by name. -/
 public def daylight : Theme :=
   let fg : Color := { r := 0x29, g := 0x25, b := 0x24 }     -- stone-800
   let bg : Color := { r := 0xFD, g := 0xFC, b := 0xF9 }     -- warm near-white
-  let accent : Color := { r := 0x0B, g := 0x66, b := 0xC2 } -- azure, 5.54:1 on bg
+  let accent : Color := { r := 0x0B, g := 0x66, b := 0xC2 } -- azure
+  let success : Color := { r := 0x0F, g := 0x7A, b := 0x52 } -- GOV.UK success
   { name := "daylight"
+    seeds := some ({ ink := fg, paper := bg, accent, exampleColor := some success }, .tonal)
     palette := {
-      entries := #[
-        (.role .ink, fg), (.role .page, bg), (.role .alert, accent),
-        (.role .example, { r := 0x0F, g := 0x7A, b := 0x52 }),   -- GOV.UK success
-        (.role .muted, fg.mix 70 bg),                            -- fg!70!bg, 5.55:1
-        (.role .progressFill, accent),
-        (.role .progressTrack, accent.mix 20 bg),                   -- accent!20!bg
-        (.role .separator, accent),
-        (.role .standoutInk, bg), (.role .standoutGround, accent)]
+      entries := #[(.role .standoutInk, bg), (.role .standoutGround, accent)]
       coveredFraction := some 38 }
     -- The lineage's rhythm, not this bundle's own knob: the shared table
     -- makes the docstring's claim true in code.
@@ -333,7 +371,8 @@ the bundle's covered fraction rides with them (`<|>`: a document's earlier
 layering statements below take it whole. -/
 private def paletteApply (bp p : Palette) : Palette :=
   let pal := installPalette p bp.entries.toList
-  { pal with coveredFraction := bp.coveredFraction <|> pal.coveredFraction }
+  { pal with coveredFraction := bp.coveredFraction <|> pal.coveredFraction
+             seeded := bp.seeded <|> pal.seeded }
 
 /-- The bundle-chrome install: per slot, the same shape as every palette
 entry — the bundle's slot wins where it declares one, the document's
@@ -355,10 +394,27 @@ elaborator state — effects as data: `Elab` calls exactly this function at
 the `\theme` site, so a statement about layering ranges over the install
 the engine runs. -/
 public def apply (th : Theme) (s : Decls) : Decls :=
-  { palette := paletteApply th.palette s.palette
+  { palette := paletteApply (th.realize s.palette.classColors.depth) s.palette
     tokens := installTokens s.tokens th.tokens.entries.toList
     styles := installStyles s.styles th.styles.entries.toList
     chrome := chromeApply th.chrome s.chrome }
+
+/-- A bundle's generated palette under a document: an element's generated
+ink whose ground the document declares gives way, for it was chosen for the
+bundle's ground (`SeedPalette.bindings`), and an ink the engine derives is
+solved on the ground it stands on — the registry's default for the declared
+ground (`Row.ground`). A bundle that generates nothing installs as it is. -/
+private def underDocument (th : Theme) (real doc : Palette) : Palette :=
+  if th.seeds.isNone then real else
+    { real with entries := real.entries.filter fun (k, _) => match k with
+        | .role r => !(SeedPalette.elementRoles.contains r && r.row.ground.any fun g =>
+            SeedPalette.elementRoles.contains g && (Design.declared? doc g).isSome)
+        | .color _ => true }
+
+private theorem underDocument_decorative (th : Theme) (real doc : Palette) :
+    (underDocument th real doc).decorative = real.decorative := by
+  unfold underDocument
+  split <;> rfl
 
 /-- A class-default bundle installs *under* the document: the document's
 own declarations win per key — `apply` with the priorities mirrored,
@@ -367,32 +423,52 @@ a declaration. `\theme{...}` keeps `apply`'s positional rule; only the
 class-default site calls this. -/
 public def applyUnder (th : Theme) (s : Decls) : Decls :=
   { palette :=
-      let pal := installPalette th.palette s.palette.entries.toList
+      let real := underDocument th (th.realize s.palette.classColors.depth) s.palette
+      let pal := installPalette real s.palette.entries.toList
       { pal with
-        coveredFraction := s.palette.coveredFraction <|> th.palette.coveredFraction
+        coveredFraction := s.palette.coveredFraction <|> real.coveredFraction
         decorative := s.palette.decorative ++ pal.decorative
-        seeded := s.palette.seeded <|> th.palette.seeded }
+        seeded := s.palette.seeded <|> real.seeded
+        classColors := s.palette.classColors }
     tokens := installTokens th.tokens s.tokens.entries.toList
     styles := installStyles th.styles s.styles.entries.toList
     chrome := chromeApply s.chrome th.chrome }
 
-/-- Every `(declaration, key)` the bundle installs — `("palette", "alert")`,
-`("chrome", "footer.left")` — whatever stood there before: the keys whose
-standing value is the theme's after `apply`. -/
-public def declares (th : Theme) : Array (String × String) := Id.run do
-  let mut out : Array (String × String) := #[]
-  for (k, _) in th.palette.entries do
-    out := out.push ("palette", k.key)
-  if th.palette.coveredFraction.isSome then
-    out := out.push ("palette", "covered")
+/-- The four declaration surfaces a `\theme` installs onto (`Decls`), closed:
+a key a bundle declares lives on one of them by type, so a bundle cannot
+reach the page model or the class's contract. -/
+public inductive DeclSurface where
+  | palette
+  | tokens
+  | style
+  | chrome
+  deriving Repr, DecidableEq, Inhabited
+
+/-- The surface's spelling: the declaration block it is written in. -/
+public def DeclSurface.name : DeclSurface → String
+  | .palette => "palette"
+  | .tokens => "tokens"
+  | .style => "style"
+  | .chrome => "chrome"
+
+/-- Every `(surface, key)` the bundle installs at a depth — `(.palette,
+"alert")`, `(.chrome, "footer.left")` — whatever stood there before: the
+keys whose standing value is the theme's after `apply`. -/
+public def declares (th : Theme) (d : GroundDepth) : Array (DeclSurface × String) := Id.run do
+  let mut out : Array (DeclSurface × String) := #[]
+  let real := th.realize d
+  for (k, _) in real.entries do
+    out := out.push (.palette, k.key)
+  if real.coveredFraction.isSome then
+    out := out.push (.palette, "covered")
   for (k, _) in th.tokens.entries do
-    out := out.push ("tokens", k)
+    out := out.push (.tokens, k)
   for (element, _) in th.styles.entries do
-    out := out.push ("style", element)
+    out := out.push (.style, element)
   if th.chrome.footerLeft.isSome then
-    out := out.push ("chrome", "footer.left")
+    out := out.push (.chrome, "footer.left")
   if th.chrome.footerRight.isSome then
-    out := out.push ("chrome", "footer.right")
+    out := out.push (.chrome, "footer.right")
   return out
 
 /-- The `(declaration, key)` pairs `apply` would overwrite with a
@@ -402,32 +478,33 @@ says so out loud when the loser was the document's own declaration. A key
 the theme re-declares at the standing value replaces nothing and is not
 listed. Install order: palette entries, `covered`, tokens, styles,
 chrome. -/
-public def replaces (th : Theme) (s : Decls) : Array (String × String) := Id.run do
-  let mut out : Array (String × String) := #[]
-  for (k, c) in th.palette.entries do
+public def replaces (th : Theme) (s : Decls) : Array (DeclSurface × String) := Id.run do
+  let mut out : Array (DeclSurface × String) := #[]
+  let real := th.realize s.palette.classColors.depth
+  for (k, c) in real.entries do
     if let some c0 := s.palette.lookup k then
       if c0 != c then
-        out := out.push ("palette", k.key)
-  if let some n := th.palette.coveredFraction then
+        out := out.push (.palette, k.key)
+  if let some n := real.coveredFraction then
     if let some m := s.palette.coveredFraction then
       if n != m then
-        out := out.push ("palette", "covered")
+        out := out.push (.palette, "covered")
   for (k, g) in th.tokens.entries do
     if let some g0 := s.tokens.find? k then
       if g0 != g then
-        out := out.push ("tokens", k)
+        out := out.push (.tokens, k)
   for (element, st) in th.styles.entries do
     if let some cur := s.styles.find? element then
       if styleMerge st cur != cur then
-        out := out.push ("style", element)
+        out := out.push (.style, element)
   if let some d := th.chrome.footerLeft then
     if let some d0 := s.chrome.footerLeft then
       if d0 != d then
-        out := out.push ("chrome", "footer.left")
+        out := out.push (.chrome, "footer.left")
   if let some d := th.chrome.footerRight then
     if let some d0 := s.chrome.footerRight then
       if d0 != d then
-        out := out.push ("chrome", "footer.right")
+        out := out.push (.chrome, "footer.right")
   return out
 
 /-! ## The layering contract over the install
@@ -598,6 +675,16 @@ private theorem installPalette_seeded (p : Palette) (es : List (ColorRef × Colo
     rw [ih]
     rfl
 
+private theorem installPalette_classColors (p : Palette) (es : List (ColorRef × Color)) :
+    (installPalette p es).classColors = p.classColors := by
+  induction es generalizing p with
+  | nil => rfl
+  | cons e es ih =>
+    obtain ⟨k, c⟩ := e
+    simp only [installPalette]
+    rw [ih]
+    rfl
+
 private theorem installPalette_decorative (p : Palette) (es : List (ColorRef × Color)) :
     (installPalette p es).decorative =
       p.decorative.filter (fun x => !(es.any (fun e => x == e.1))) := by
@@ -724,7 +811,7 @@ private theorem tokens_ext {a b : Tokens} (h : a.entries = b.entries) : a = b :=
 
 private theorem palette_ext {a b : Palette} (he : a.entries = b.entries)
     (hc : a.coveredFraction = b.coveredFraction) (hd : a.decorative = b.decorative)
-    (hs : a.seeded = b.seeded) :
+    (hs : a.seeded = b.seeded) (hk : a.classColors = b.classColors) :
     a = b := by
   cases a
   cases b
@@ -783,11 +870,16 @@ private theorem paletteApply_idem (bp p : Palette) :
     congr 1
     funext x
     exact Bool.and_self _
-  · show (installPalette (paletteApply bp p) bp.entries.toList).seeded =
-      (installPalette p bp.entries.toList).seeded
-    rw [installPalette_seeded, installPalette_seeded]
-    show (installPalette p bp.entries.toList).seeded = _
+  · show (bp.seeded <|> (installPalette (paletteApply bp p) bp.entries.toList).seeded) =
+      (bp.seeded <|> (installPalette p bp.entries.toList).seeded)
     rw [installPalette_seeded]
+    show (bp.seeded <|> (bp.seeded <|> (installPalette p bp.entries.toList).seeded)) = _
+    exact orElse_absorb ..
+  · show (installPalette (paletteApply bp p) bp.entries.toList).classColors =
+      (installPalette p bp.entries.toList).classColors
+    rw [installPalette_classColors, installPalette_classColors]
+    show (installPalette p bp.entries.toList).classColors = _
+    rw [installPalette_classColors]
 
 private theorem chromeApply_idem (bc c : Chrome) :
     chromeApply bc (chromeApply bc c) = chromeApply bc c := by
@@ -841,10 +933,11 @@ decorative entry is judged on its own declaration, as `Palette.declare`
 judges every redeclaration. -/
 public theorem applyUnder_decorative_exact (th : Theme) (s : Decls) (k : ColorRef) :
     k ∈ (applyUnder th s).palette.decorative ↔
-      (k ∈ s.palette.decorative ∨ (k ∈ th.palette.decorative ∧ s.palette.lookup k = none)) := by
-  show k ∈ s.palette.decorative ++ (installPalette th.palette s.palette.entries.toList).decorative
-    ↔ _
-  rw [Array.mem_append, installPalette_decorative, Array.mem_filter]
+      (k ∈ s.palette.decorative ∨ (k ∈ (th.realize s.palette.classColors.depth).decorative ∧
+        s.palette.lookup k = none)) := by
+  show k ∈ s.palette.decorative ++ (installPalette (underDocument th
+    (th.realize s.palette.classColors.depth) s.palette) s.palette.entries.toList).decorative ↔ _
+  rw [Array.mem_append, installPalette_decorative, underDocument_decorative, Array.mem_filter]
   have hnone : (!(s.palette.entries.toList.any fun e => k == e.1)) = true ↔
       s.palette.lookup k = none := by
     simp only [Palette.lookup, Option.map_eq_none_iff, Array.find?_eq_none, Bool.not_eq_true',
@@ -860,13 +953,13 @@ public theorem applyUnder_decorative_exact (th : Theme) (s : Decls) (k : ColorRe
 bundle changes only the keys it declares — a key the theme does not name
 resolves after `\theme` exactly as before it. -/
 public theorem apply_palette_keeps_others (th : Theme) (s : Decls) (k : ColorRef)
-    (h : th.palette.lookup k = none) :
+    (h : (th.realize s.palette.classColors.depth).lookup k = none) :
     (apply th s).palette.lookup k = s.palette.lookup k := by
-  have hall : ∀ e ∈ th.palette.entries.toList, e.1 ≠ k := by
+  have hall : ∀ e ∈ (th.realize s.palette.classColors.depth).entries.toList, e.1 ≠ k := by
     apply find?_none_keys
     simp only [Palette.lookup, Option.map_eq_none_iff] at h
     exact h
-  show ((installPalette s.palette th.palette.entries.toList).entries.find?
+  show ((installPalette s.palette (th.realize s.palette.classColors.depth).entries.toList).entries.find?
       (·.1 == k)).map (·.2) = _
   rw [installPalette_entries, installEntries_keeps _ _ _ hall]
   rfl
@@ -877,7 +970,8 @@ public theorem apply_keeps_covered (th : Theme) (s : Decls)
     (h : th.palette.coveredFraction = none) :
     (apply th s).palette.coveredFraction = s.palette.coveredFraction := by
   show (th.palette.coveredFraction <|>
-      (installPalette s.palette th.palette.entries.toList).coveredFraction) = _
+      (installPalette s.palette
+        (th.realize s.palette.classColors.depth).entries.toList).coveredFraction) = _
   rw [h, installPalette_covered]
   rfl
 
@@ -885,13 +979,14 @@ public theorem apply_keeps_covered (th : Theme) (s : Decls)
 (`declare_decorative_rides`); a bundle that does not declare a key never
 touches its exemption. -/
 public theorem apply_palette_keeps_decorative (th : Theme) (s : Decls) (k : ColorRef)
-    (h : th.palette.lookup k = none) :
+    (h : (th.realize s.palette.classColors.depth).lookup k = none) :
     (k ∈ (apply th s).palette.decorative) ↔ k ∈ s.palette.decorative := by
-  have hall : ∀ e ∈ th.palette.entries.toList, e.1 ≠ k := by
+  have hall : ∀ e ∈ (th.realize s.palette.classColors.depth).entries.toList, e.1 ≠ k := by
     apply find?_none_keys
     simp only [Palette.lookup, Option.map_eq_none_iff] at h
     exact h
-  show k ∈ (installPalette s.palette th.palette.entries.toList).decorative ↔ _
+  show k ∈ (installPalette s.palette
+    (th.realize s.palette.classColors.depth).entries.toList).decorative ↔ _
   rw [installPalette_decorative]
   constructor
   · intro hm
@@ -954,7 +1049,9 @@ pins the style fold's read-back to the pre-install state. -/
 public theorem apply_fixed_point (th : Theme) (s : Decls)
     (h : nodupKeys th.styles.entries.toList = true) :
     apply th (apply th s) = apply th s := by
+  have hk : (paletteApply (th.realize s.palette.classColors.depth) s.palette).classColors =
+      s.palette.classColors := installPalette_classColors ..
   simp only [apply]
-  rw [paletteApply_idem, installTokens_idem, installStyles_idem _ _ h, chromeApply_idem]
+  rw [hk, paletteApply_idem, installTokens_idem, installStyles_idem _ _ h, chromeApply_idem]
 
 end LeanTex.Core.Theme

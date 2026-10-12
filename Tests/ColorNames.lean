@@ -119,8 +119,13 @@ public def checks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit 
   for (sel, prop, role, what) in [("body", "background", Ir.Role.page, "page"),
       ("body", "color", .ink, "text"), ("pre", "background", .codeSurface, "code ground"),
       ("a:focus-visible", "outline", .focus, "focus ring")] do
+    -- A role the class leaves unpainted (an article's code ground) is no
+    -- colour at all: the rule paints nothing there.
+    let registry := match Ir.Design.at hjDoc.palette .light role with
+      | some c => HtmlDoc.cssColor c
+      | none => "none"
     t s!"author colours: an author colour leaves the HTML {what} the registry's"
-      (ruleColor sel prop == some (HtmlDoc.cssColor (screenColor .light role)))
+      (ruleColor sel prop == some registry)
 
 /-- Each glyph run the lines holding `word` set, as its text beside its ink. -/
 private def runTexts (out : Layout.Out) (word : String) : Array (String × Ir.Color) :=

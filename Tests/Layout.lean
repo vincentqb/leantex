@@ -1033,14 +1033,14 @@ def colorModelChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO 
     (namedDs.all (·.severity != .error) &&
       (colorsOf namedDoc).contains ({ r := 0x33, g := 0x66, b := 0x99 } : Ir.Color))
   let (contrastDoc, contrastDs) := elabStr (article
-    "\\palette{ muted = #737380 }" "\\color{black}\\textcolor{muted}{Muted Ink}")
+    "\\palette{ muted = #8A8A99 }" "\\color{black}\\textcolor{muted}{Muted Ink}")
   let contrastEpoch := contrastDoc.body.foldl (fun p b => match b with
     | .setPalette q => some q
     | _ => p) none
   let declaredMuted := contrastDoc.palette.find? "muted"
   t "a role failing in one epoch is reported, both palettes keeping its declared value"
     (contrastDs.any (·.code == "W0315") &&
-      declaredMuted == some { r := 0x73, g := 0x73, b := 0x80 } &&
+      declaredMuted == some { r := 0x8A, g := 0x8A, b := 0x99 } &&
       contrastEpoch.bind (·.find? "muted") == declaredMuted)
   t "the accessibility colour judge reads the declared root pair"
     (!(HtmlDoc.schemeFailures true {} contrastDoc).isEmpty)

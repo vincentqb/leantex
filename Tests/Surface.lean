@@ -5106,16 +5106,19 @@ def themeStyChecks (ref : IO.Ref (List String)) : IO Unit := do
   -- \usetheme[options]{name} passes its options to the file, as
   -- \usepackage[options]{} does: the option's body runs, and only then.
   let (docO, _, _) ← run "themeopt"
+  -- The option's block title ground (the fixture's own colour): read under
+  -- the option and only there.
+  let optionBar : Ir.Color := { r := 0x2C, g := 0x4A, b := 0x66 }
   t "\\usetheme[option]{name} passes the option to the file"
-    ((docO.palette.find? "blocktitlebg").isSome &&
-     (docL.palette.find? "blocktitlebg").isNone)
+    (docO.palette.find? "blocktitlebg" == some optionBar &&
+     docL.palette.find? "blocktitlebg" != some optionBar)
   -- Precedence: the shipped bundle is the floor, the local file the override.
   let (docS, dsS, splicedS) ← run "themeshadow"
   t "a file shadowing a shipped bundle overrides the roles it declares"
     (docS.palette.find? "frametitlebg" == some { r := 0x12, g := 0x34, b := 0x56 } &&
      splicedS.toList.map (·.1) == ["beamerthememoloch.sty"])
   t "the shipped bundle still supplies the roles the file leaves alone"
-    (docS.palette.find? "alert" == some { r := 0xA5, g := 0x5A, b := 0x13 })
+    (docS.palette.find? "alert" == Ir.Design.declared? (Theme.moloch.realize .decks) .alert)
   t "neither side is silent: N0020 names the file and the bundle it overrides"
     (dsS.any fun d => d.code == "N0020" &&
       (d.message.splitOn "beamerthememoloch.sty").length == 2 &&
@@ -5199,7 +5202,7 @@ def themeSpellingChecks (ref : IO.Ref (List String)) : IO Unit := do
   let (docP, dsP) := Elab.run "d.tex" (deck169 "\\usepackage{beamerthememoloch}" "x")
   t "a shipped bundle under its file name installs the bundle — never W0103"
     (dsP.all (·.code != "W0103") &&
-     docP.palette.find? "alert" == some { r := 0xA5, g := 0x5A, b := 0x13 })
+     docP.palette.find? "alert" == Ir.Design.declared? (Theme.moloch.realize .decks) .alert)
   -- The equivalence itself, both directions of one name.
   let (docS, _) := Elab.run "d.tex" (deck169 "\\usetheme{moloch}" "x")
   t "the file-name spelling and the slot spelling resolve to one palette"
@@ -5209,7 +5212,7 @@ def themeSpellingChecks (ref : IO.Ref (List String)) : IO Unit := do
   -- former name, and a deck writing either reaches the shipped bundle.
   let (docM, _) := Elab.run "d.tex" (deck169 "\\usepackage{beamerthememetropolis}" "x")
   t "the metropolis alias resolves under the file-name spelling"
-    (docM.palette.find? "alert" == some { r := 0xA5, g := 0x5A, b := 0x13 })
+    (docM.palette.find? "alert" == Ir.Design.declared? (Theme.moloch.realize .decks) .alert)
   -- The registry quantification: no member of the family is a CTAN
   -- support question under its file name. The four sub-theme slots have
   -- no bundle concept here, so what they owe is the slot's own named
@@ -5226,7 +5229,7 @@ def themeSpellingChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "a local file under the file-name spelling still floors on the bundle"
     (splicedF.toList.map (·.1) == ["beamerthememoloch.sty"] &&
      docF.palette.find? "frametitlebg" == some { r := 0x12, g := 0x34, b := 0x56 } &&
-     docF.palette.find? "alert" == some { r := 0xA5, g := 0x5A, b := 0x13 })
+     docF.palette.find? "alert" == Ir.Design.declared? (Theme.moloch.realize .decks) .alert)
 
 /-- **A construct whose diagnostic names its own translation is translated,
 not dropped.** `\setbeamercolor`'s help text named `\palette` and told the
@@ -6484,9 +6487,10 @@ def boundaryChecks (ref : IO.Ref (List String)) : IO Unit := do
   let (tdoc, tds) := elabStr (dvDoc "\\theme{moloch}\n\\fonts{ math = \"Fira Math\" }\n"
     ("\\begin{tikzpicture}\\pattern[\\alert{x} $y$]" ++
      " (0,0) rectangle (1,1);\\end{tikzpicture}"))
+  let bundleAlert := (Ir.Design.declared? (Theme.moloch.realize .documents) .alert).getD .black
   t "a theme role reached through alert's rewrite is declared with the bundle's value"
     (hasStr (reqOf tdoc) "\\textcolor {alert}" &&
-     hasStr (reqOf tdoc) "\\definecolor{alert}{RGB}{165,90,19}")
+     hasStr (reqOf tdoc) s!"\\definecolor\{alert}\{RGB}\{{bundleAlert.r},{bundleAlert.g},{bundleAlert.b}}")
   t "the declared math face rides through unicode-math"
     (hasStr (reqOf tdoc) "\\usepackage{unicode-math}" &&
      hasStr (reqOf tdoc) "\\setmathfont{Fira Math}")

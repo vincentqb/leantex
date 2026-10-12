@@ -462,8 +462,12 @@ def groupScopeChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Un
   let (mdoc, _) := Elab.run "group-scope.tex" (dvDoc "\\usepackage{xcolor}\n" many)
   let (_, mnodes, _) := HtmlDoc.emitTree { fonts := some fonts } mdoc
   let (longest, deepest) := treeMeasureList 0 (0, 0) mnodes.toList
+  -- A colour epoch restates the ink and every role that follows it (the
+  -- muted step, the list marker, the printed ink, the standout ground): a
+  -- custom property resolves where it is declared, so a dependent declared
+  -- at the root would keep the root's ink.
   t s!"group scope/forty closed groups keep every style short ({longest} characters)"
-    (longest ≤ 160)
+    (longest ≤ 200)
   t s!"group scope/forty carried sizes keep the tree shallow ({deepest} levels)"
     (deepest ≤ 12)
 

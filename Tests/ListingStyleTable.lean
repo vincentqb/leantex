@@ -354,13 +354,13 @@ def codeRoleChecks (ref : IO.Ref (List String)) : IO Unit := do
     (Ir.ListingStyle.all.all fun style => ListingHighlight.Role.all.all fun r =>
       ((CodeColor.resolve {} white style).get r).map (·.color) == CodeColor.styleColor style r)
   for theme in Theme.builtin do
-    let d := Ir.Design.ofPalette theme.palette
+    let d := Ir.Design.ofPalette (deckBundle theme)
     for ground in [d.bg, d.standout.bg] do
-      let r := CodeColor.resolve theme.palette ground (some .default)
+      let r := CodeColor.resolve (deckBundle theme) ground (some .default)
       t s!"code roles: {theme.name} on {ground.css}: a declared colour is the palette's, any other ships legible"
         (ListingHighlight.Role.all.all fun role => match r.get role with
           | some p => if p.declared then
-              ground == d.bg && p.role.any fun key => Ir.Design.declared? theme.palette key == some p.color
+              ground == d.bg && p.role.any fun key => Ir.Design.declared? (deckBundle theme) key == some p.color
             else p.role == some (Ir.Role.ofCode role) &&
               Contrast.contrastMilli (Listing.defaultInk ground p.color) ground ≥ Contrast.aaText
           | none => true)
@@ -456,7 +456,7 @@ def codeRoleChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "code roles: a retired key used before its declaration is still named at full strength"
     (early.any fun d => d.code == "W0387" && !d.demoted && d.help.isSome)
   t "code roles: no shipped bundle declares a retired key"
-    (Theme.builtin.all fun th => th.palette.entries.all fun (k, _) =>
+    (Theme.builtin.all fun th => (deckBundle th).entries.all fun (k, _) =>
       (CodeColor.retiredKeys.lookup k.key).isNone)
 
 /-- A name reads alike where its listing defines it and where it uses it,

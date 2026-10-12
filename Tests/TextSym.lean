@@ -66,7 +66,7 @@ def textSymChecks (ref : IO.Ref (List String)) : IO Unit := do
   -- A role is invocable only while no symbol spells its name first: the
   -- inline dispatch reads the symbol tables before the palette.
   t "no shipped palette role is spelled by a text symbol"
-    (Theme.builtin.all fun th => th.palette.entries.toList.all fun e =>
+    (Theme.builtin.all fun th => (deckBundle th).entries.toList.all fun e =>
       (Elab.escapeOf e.1.key).isNone)
   t "a document palette role a text symbol spells is refused by name"
     ((elabStr ("\\documentclass{article}\n\\palette{ dag = #112233 }\n" ++

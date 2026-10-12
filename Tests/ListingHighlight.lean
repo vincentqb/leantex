@@ -234,12 +234,12 @@ def listingFriendlyChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "listing friendly: authored roles take precedence over style defaults"
     (Listing.ink authored none .keyword (style := some .friendly) == some Ir.Color.black)
   for theme in Theme.builtin do
-    let d := Ir.Design.ofPalette theme.palette
+    let d := Ir.Design.ofPalette (deckBundle theme)
     let grounds := [none, some d.standout.bg] ++
       (d.titlepage.toList.map fun pair => some pair.bg)
     for style in [Ir.ListingStyle.default, .friendly] do
       t s!"listing style: {repr style} text AA on every {theme.name} ground"
-        (grounds.all fun ground => Listing.contract theme.palette ground (style := some style))
+        (grounds.all fun ground => Listing.contract (deckBundle theme) ground (style := some style))
   let some bytes ← findFont | failures ref "listing friendly: fixture font missing"
   let .ok font := Font.parse bytes | failures ref "listing friendly: fixture font invalid"
   let fonts := oneFaceOf font
@@ -703,16 +703,16 @@ def listingHighlightChecks (ref : IO.Ref (List String)) : IO Unit := do
       (ListingHighlight.coloredSpansList #[] codes.toList).isEmpty)
   for theme in Theme.builtin do
     t s!"highlight palette: text AA on every {theme.name} listing ground"
-      (Contrast.listingContract theme.palette)
+      (Contrast.listingContract (deckBundle theme))
     let standout := { (elabStr (dvDeck ""
         ("\\begin{frame}[standout]\n\\begin{minted}{python}\n" ++ code ++
-         "\n\\end{minted}\n\\end{frame}"))).1 with palette := theme.palette }
+         "\n\\end{minted}\n\\end{frame}"))).1 with palette := deckBundle theme }
     let ground := (Ir.Design.ofDoc standout).standout.bg
     let (_, html, _) := HtmlDoc.emitTree {} standout
     let spans := ListingHighlight.coloredSpansList #[]
       (ListingHighlight.codeNodesList #[] html.toList).toList
     let glyphs := ListingHighlight.glyphColors (layoutOf fonts standout)
-    let literal := (Listing.ink theme.palette (some ground) .string).getD Ir.Color.black
+    let literal := (Listing.ink (deckBundle theme) (some ground) .string).getD Ir.Color.black
     t s!"highlight standout: {theme.name} typed HTML projects the local ink"
       (spans.any fun (text, style) =>
         text.trimAscii.toString == "\"hello\"" && hasStr style (HtmlDoc.cssColor literal))
@@ -720,7 +720,7 @@ def listingHighlightChecks (ref : IO.Ref (List String)) : IO Unit := do
       (glyphs.any (fun (c, color) => c == 'h' && color == literal) &&
        glyphs.all (fun (_, color) => Contrast.contrastMilli color ground ≥ Contrast.aaText))
     let doc := { ListingHighlight.sourceDoc "python" "def value(): return \"x\""
-      with palette := theme.palette }
+      with palette := deckBundle theme }
     let active := layoutOf fonts doc
     let coveredBody := doc.body.map fun b => match b with
       | .verbatim _ source spec =>

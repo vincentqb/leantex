@@ -97,7 +97,7 @@ public def checks (ref : IO.Ref (List String)) : IO Unit := do
     ("ink-only", empty.declareKey "fg" dark),
     ("ground-only", empty.declareKey "bg" pale),
     ("pair", (empty.declareKey "fg" dark).declareKey "bg" pale)]
-  let palettes := sparse ++ Theme.builtin.map fun theme => (theme.name, theme.palette)
+  let palettes := sparse ++ Theme.builtin.map fun theme => (theme.name, deckBundle theme)
   for (name, pal) in palettes do
     let doc := probe pal
     let css := sheet {} doc

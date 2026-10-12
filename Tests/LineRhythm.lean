@@ -314,7 +314,8 @@ private def lastDeclared (css sel prop : String) : Option String :=
 
 /-- **A deck's listing is the page's**: on the stage a `pre` carries none of
 the reading page's code box — no padding, no ground — as the page pads no
-listing and paints none under one, where a reading page keeps its box. The
+listing and paints none under one, and neither does an article's, where a
+reading page of the web's classes keeps its box. The
 stage's root is its rhythm unit, so the box's rem padding grew with it and
 pushed a slide that fits its page past its stage. -/
 def deckListingChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit := do
@@ -330,10 +331,17 @@ def deckListingChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO
   t "the stage pads no listing" (lastDeclared deck "pre" "padding" == some "0")
   t "the stage paints no ground under a listing"
     (lastDeclared deck "pre" "background" == some "none")
+  -- An article paints no code ground on its page either, so its listing
+  -- is the page's too; the web's classes paint one, in both artifacts, and
+  -- keep the code box on it.
   let art := (HtmlDoc.emit {} (elabStr (dvDoc "" body)).1).1
+  t "an article's listing is the page's"
+    (lastDeclared art "pre" "padding" == some "0" &&
+      lastDeclared art "pre" "background" == some "none")
+  let web := (HtmlDoc.emit {} (elabMd ("Opening words.\n\n```\n" ++ code ++ "```\n")).1).1
   t "a reading page keeps its code box"
-    ((lastDeclared art "pre" "padding").any (· != "0") &&
-      lastDeclared art "pre" "background" == some (HtmlDoc.roleRef .codeSurface))
+    ((lastDeclared web "pre" "padding").any (· != "0") &&
+      lastDeclared web "pre" "background" == some (HtmlDoc.roleRef .codeSurface))
 
 /-- The distinct baselines a source's body lines stand on, in page order, and
 the distances between them: a table's row pitch, one per row, whatever the

@@ -2948,7 +2948,7 @@ def pdfCensusTable :
   ("redefine", (1, 1, 0, 0, 0, 0, 0, none, ["FlateDecode"])),
   ("titlebars", (1, 1, 0, 0, 0, 0, 0, none, ["FlateDecode"])),
   ("titleground", (2, 1, 0, 0, 0, 0, 0, none, ["FlateDecode"])),
-  ("daylight", (4, 1, 0, 0, 0, 0, 0, none, ["FlateDecode"])),
+  ("daylight", (5, 1, 0, 0, 0, 0, 0, none, ["FlateDecode"])),
   ("blocks", (1, 1, 0, 0, 0, 0, 0, none, ["FlateDecode"])),
   ("poster", (1, 1, 0, 0, 0, 0, 0, none, ["FlateDecode"])),
   ("poster-headline", (1, 1, 1, 0, 0, 0, 0, none, ["FlateDecode"])),

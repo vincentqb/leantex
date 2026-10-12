@@ -86,6 +86,8 @@ import Tests.TcolorboxColors
 import Tests.BlockBar
 import Tests.ReadableBar
 import Tests.ColorNames
+import Tests.PaletteData
+import Tests.PaletteDefaults
 import Tests.DeclaredColors
 import Tests.BlockBody
 import Tests.BlockRegionFit
@@ -455,6 +457,8 @@ def layoutSuiteChecks (ref : IO.Ref (List String)) : IO Unit := do
   blockBarChecks ref oneFace
   Tests.ReadableBar.checks ref oneFace
   Tests.ColorNames.checks ref oneFace
+  Tests.PaletteData.checks ref
+  Tests.PaletteDefaults.checks ref oneFace
   Tests.ColorNames.xcolorCodeRoleChecks ref oneFace
   Tests.ColorNames.htmlDecimalChecks ref oneFace
   Tests.ColorNames.unreadKeyChecks ref

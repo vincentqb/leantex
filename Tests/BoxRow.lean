@@ -69,9 +69,12 @@ def minipageRowChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO
   let (fdoc, fds) := elabStr frameSrc
   let fout := layoutOf oneFace fdoc
   let fls := (allLines fout).filter fun l => !l.furniture && !l.segs.isEmpty
+  -- Side by side, not stacked: the second title starts on the first's row,
+  -- right of it. A painted block's box is as tall as its title's glyphs, so
+  -- two titles of different letters stand a fraction of a point apart.
   t "two titled panels in a frame stand side by side"
     (match lineWith fls "First", lineWith fls "Second" with
-     | some a, some b => a.y == b.y && decide (a.x < b.x)
+     | some a, some b => decide ((a.y - b.y).natAbs < (Dim.pt 1).natAbs) && decide (a.x < b.x)
      | _, _ => false)
   t "the frame of two side-by-side panels is one page, with no spill named"
     (fout.pages.size == 1 && (fds ++ fout.diags).all (·.code != "W0384"))

@@ -8,6 +8,9 @@ import all LeanTex.Core.ContrastRatio
 import all LeanTex.Core.Oklab
 import all LeanTex.Core.Listing
 import all LeanTex.Core.DesignRole
+import all LeanTex.Core.SeedPalette
+import all LeanTex.Core.PaletteData
+import all LeanTex.Core.Color
 
 /-!
 Kernel-checked contrast contracts for the shipped design constants and
@@ -26,29 +29,24 @@ registry is only a registry if a suffix has one meaning.) -/
 public theorem pdf_default_aa : contrastMilli Color.black Color.white ≥ aaText := by
   decide +kernel
 
--- The theorems range over the bundles the engine installs: `Theme.builtin`
--- carries each palette as values (mixes evaluated at definition time), so
--- the kernel walks the same entries `\theme` declares — no transcription
--- stands between the statement and the engine. Each contract quantifies
--- over the shipped list itself, so a third bundle enters every contract by
--- being added, not by someone remembering three theorems; only the default
--- surface (`{}` is not in `builtin`) keeps its own statements.
+-- The theorems range over the palettes the engine installs: each bundle in
+-- `Theme.builtin` realized as `\theme` realizes it (`Theme.realize`, its
+-- seeds generated and its relations derived, the values `PaletteData`
+-- keeps), at a document's depth and a deck's, so the kernel walks the
+-- entries the install declares — no transcription stands between the
+-- statement and the engine. Each contract quantifies over the shipped list
+-- itself, so a bundle enters every contract by being added; only the
+-- default surface (`{}` is not in `builtin`) keeps its own statements, and
+-- each site a realized bundle ships is `Theme.builtin_sites_contract`'s.
 
-/-- No shipped bundle's pairing is illegible: every built-in palette — the
-content colours (`alert`, `example`) and the resolved design's semantic
-pairings, defaults applied — clears its WCAG 2.2 threshold. Moloch's alert
-is the corrected one: the lineage's own #EB811B read at 2.61:1 on this
-page, under SC 1.4.3. -/
+/-- No shipped bundle's pairing is illegible: every built-in palette as it
+installs — the content colours (`alert`, `example`) and the resolved
+design's semantic pairings, defaults applied — clears its WCAG 2.2
+threshold. Moloch's alert is its lineage's #EB811B realized as text on its
+page: the colour itself reads at 2.61:1 there, under SC 1.4.3. -/
 public theorem builtin_palettes_contract :
-    Theme.builtin.all (fun th => paletteContract th.palette) = true := by decide +kernel
-
-/-- **Every shipped bundle is legible on screen too**: each pair its design
-ships in the stylesheet's light column — the column a page declaring
-colours ships, since such a page ships one scheme (`HtmlDoc.dualScheme`) —
-meets its need, the screen's own code panel and focus ring included. -/
-public theorem builtin_palettes_light_contract :
-    Theme.builtin.all (fun th => (Design.sites th.palette .light).all Site.passes) = true := by
-  decide +kernel
+    Theme.builtin.all (fun th => paletteContract (th.realize .documents) &&
+      paletteContract (th.realize .decks)) = true := by decide +kernel
 
 /-- The default surface: black ink, white page, covered at
 `coveredFractionDefault` — 38% of the ink over the page, mixed in Oklab
@@ -61,12 +59,14 @@ public theorem default_cover_monotone : coverMonotone {} = true := by decide +ke
 /-- Cover monotonicity, quantified over the shipped list: covering twice
 quiets further for every built-in bundle's text roles. -/
 public theorem builtin_covers_monotone :
-    Theme.builtin.all (fun th => coverMonotone th.palette) = true := by decide +kernel
+    Theme.builtin.all (fun th => coverMonotone (th.realize .documents) &&
+      coverMonotone (th.realize .decks)) = true := by decide +kernel
 
 /-- The covered contract, quantified the same way: every built-in
 bundle's palette is visibly covered when dimmed, per colour. -/
 public theorem builtin_designs_covered :
-    Theme.builtin.all (fun th => coveredContract th.palette) = true := by decide +kernel
+    Theme.builtin.all (fun th => coveredContract (th.realize .documents) &&
+      coveredContract (th.realize .decks)) = true := by decide +kernel
 
 /-- Both contracts over what `\theme` installs, for every shipped bundle
 (arch-provable I2): stated over `Theme.apply t {}` — the exact function

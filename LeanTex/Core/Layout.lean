@@ -14383,8 +14383,11 @@ private def collectVerbatim (r : Rd) (a : Acc) (covered : Option Ir.Color) (s : 
   -- listing's first two lines stand 0.5 pt under the step's skip and every
   -- later pair 0.25 pt, the gaps around the listing a bare `verbatim`'s.
   -- minted's `bgcolor` is the code's own ground: fvextra's colour box
-  -- behind each line, across the line width, the lines' struts deep.
-  let ground := (spec.ground.map (·.1)).or a.ground
+  -- behind each line, across the line width, the lines' struts deep; a
+  -- class that paints verbatim (the web's) stands it on its code ground the
+  -- same way (`Ir.ListingSpec.groundIn`, the one reading).
+  let own := spec.groundIn a.pal .print
+  let ground := (own.map (·.1)).or a.ground
   let sty := applyStyle r.geom.scale {} spec.fontSize
   let overlap := if sty.leading.isSome then 0 else spec.lineOverlap
   -- A listing owns its line box, not the enclosing body's strut.
@@ -14516,9 +14519,9 @@ private def collectVerbatim (r : Rd) (a : Acc) (covered : Option Ir.Color) (s : 
     | none => inner
   -- the code is one leaf, its whole content; line numbers are generated
   let (a, leaf) := a.leafRange 1
-  -- The plain text on a ground the listing declares is fitted to it
-  -- (`Listing.groundInk`), as the HTML's listing colour is.
-  let a := match spec.ground with
+  -- The plain text on a ground the listing stands on of its own is fitted
+  -- to it (`Listing.groundInk`), as the HTML's listing colour is.
+  let a := match own with
     | some (g, _) =>
       { a.pushOp (.regionOpen (.surface (r.shown g) 0 (r.geom.hmargin + indent) avail false))
         with ground := some g, fg := Listing.groundInk a.pal g a.fg }
@@ -14528,7 +14531,7 @@ private def collectVerbatim (r : Rd) (a : Acc) (covered : Option Ir.Color) (s : 
     (baseStyle := { leading := some (.lit { width := .ofSp leading }) })
     (leaf := leaf) (span := 1) (literalLines := true)
     (strut := if spec.lineStrut then some leading else none)
-  match spec.ground with
+  match own with
   | some _ => { done.pushOp .regionClose with ground := a0.ground, fg := a0.fg }
   | none => done
 

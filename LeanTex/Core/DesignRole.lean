@@ -109,6 +109,38 @@ two targets leave (1.30 / 1.12 = 1.16). -/
 @[expose] public def GroundDepth.decks : GroundDepth :=
   { body := 1120, band := 1300, rule := 1490, pair := 1100 }
 
+/-- What a class asks of the colours nothing declares, beside its ground
+depth: LaTeX's standard classes and the résumé print every line in the ink
+and leave verbatim unpainted; a deck, a poster and a card keep a quieter
+secondary ink and unpainted verbatim; the web's page and a markdown note set
+verbatim on a tinted ground, in print as on screen — GitHub's practice. One
+row per class, read by both artifacts (`Role.row`'s fallbacks take it). -/
+public inductive ClassRow where
+  | latex
+  | stage
+  | web
+  deriving Repr, DecidableEq, Inhabited
+
+@[expose] public def ClassRow.all : List ClassRow := [.latex, .stage, .web]
+
+/-- A palette's class defaults: the class's row and the depth its generated
+grounds stand at. -/
+public structure ClassColors where
+  row : ClassRow := .latex
+  depth : GroundDepth := .documents
+  deriving Repr, DecidableEq, Inhabited
+
+public instance : BEq ClassColors := ⟨fun a b => decide (a = b)⟩
+
+/-- The seeds the engine's own screen colours are generated from where a
+document declares none, invented here: an ink, a paper and an accent —
+Tailwind v4's zinc-900, white, and blue-700 (https://tailwindcss.com/docs/colors). -/
+@[expose] public def ClassColors.ink : Color := { r := 0x18, g := 0x18, b := 0x1B }
+
+@[expose] public def ClassColors.paper : Color := { r := 0xFF, g := 0xFF, b := 0xFF }
+
+@[expose] public def ClassColors.accent : Color := { r := 0x1D, g := 0x4E, b := 0xD8 }
+
 /-- Every colour role. Palette roles first (the page, the ink, the content
 and furniture colours), then the element roles that paint one site each. -/
 public inductive Role where
@@ -155,7 +187,8 @@ the first candidate, and the `unbarred` list where no bar resolves; `inPrint`
 is a role's value in the print column whatever the scheme asked for — the
 paper and ink as printed; `code` is a listing code role's colour, which the
 code rule derives from the palette's roles on the ground the listing stands
-on (`CodeColor.resolve`), the listing's style holding what it leaves open. -/
+on (`CodeColor.resolve`), the listing's style holding what it leaves open;
+`seeded` is the colour the palette's seeds generate for a role. -/
 public inductive Fallback where
   | first (roles : List Role)
   | readable (bar : Role) (candidates : List Role) (unbarred : List Role)
@@ -163,6 +196,10 @@ public inductive Fallback where
   | const (c : Color)
   | absent
   | code
+  /-- The colour the palette's seeds generate for a role: the document's own
+  seeds where it declares them, else the class's default seeds at the class's
+  depth (`SeedPalette`). -/
+  | seeded (role : Role)
   deriving Repr, BEq
 
 /-- The roles a default reads. -/
@@ -170,7 +207,7 @@ public inductive Fallback where
   | .first rs => rs
   | .readable bar cs us => bar :: cs ++ us
   | .inPrint r => [r]
-  | .const _ | .absent | .code => []
+  | .const _ | .absent | .code | .seeded _ => []
 
 /-- When a role's site exists: always, or only where another role resolves —
 a title page's ink stands only on a declared title-page ground. -/
@@ -229,7 +266,7 @@ public structure Row where
   css : String
   need : Need
   ground : Option Role
-  fallback : Scheme → Fallback
+  fallback : ClassRow → Scheme → Fallback
   judged : Judged
   presence : Presence
   beamer : List (String × Channel)
@@ -239,19 +276,20 @@ public structure Row where
 
 @[expose] public def Row.hex (r g b : UInt8) : Color := { r, g, b }
 
-/-- A default that is the same in every scheme. -/
-@[expose] public def Row.every (f : Fallback) : Scheme → Fallback := fun _ => f
+/-- A default that is the same in every class and scheme. -/
+@[expose] public def Row.every (f : Fallback) : ClassRow → Scheme → Fallback := fun _ _ => f
 
-/-- A print default beside the screen pair (light, dark). -/
-@[expose] public def Row.screen (print : Fallback) (light dark : Color) : Scheme → Fallback
-  | .print => print
-  | .light => .const light
-  | .dark => .const dark
+/-- A print default beside the screen pair (light, dark), in every class. -/
+@[expose] public def Row.screen (print light : Fallback) (dark : Color) :
+    ClassRow → Scheme → Fallback
+  | _, .print => print
+  | _, .light => light
+  | _, .dark => .const dark
 
 /-- A palette key's row: declared by `\palette{<key> = …}` and named
 `--ltx-<key>` in CSS. -/
 @[expose] public def Row.keyed (key : String) (need : Need) (ground : Option Role)
-    (fallback : Scheme → Fallback) (judged : Judged) (beamer : List (String × Channel) := [])
+    (fallback : ClassRow → Scheme → Fallback) (judged : Judged) (beamer : List (String × Channel) := [])
     (presence : Presence := .always) (exportName : Option String := none)
     (noun : Option String := none) (region : Bool := false) : Row :=
   { key := some key, css := key, need, ground, fallback, judged, presence, beamer, exportName,
@@ -259,7 +297,7 @@ public structure Row where
 
 /-- An engine role no `\palette` key declares, named `--ltx-<css>` in CSS. -/
 @[expose] public def Row.engine (css : String) (need : Need) (ground : Option Role)
-    (fallback : Scheme → Fallback) (judged : Judged) : Row :=
+    (fallback : ClassRow → Scheme → Fallback) (judged : Judged) : Row :=
   { key := none, css, need, ground, fallback, judged, presence := .always, beamer := [],
     exportName := none, noun := none, region := false }
 
@@ -272,43 +310,69 @@ default, named `--ltx-<css>` in CSS and `<export>` in a TeX export. -/
     region := false }
 
 /-- The candidates a bar's ink is chosen from: the page, then the ink. -/
-@[expose] public def Row.onBar (bar : Role) (unbarred : List Role) : Scheme → Fallback :=
+@[expose] public def Row.onBar (bar : Role) (unbarred : List Role) :
+    ClassRow → Scheme → Fallback :=
   Row.every (.readable bar [.page, .ink] unbarred)
+
+/-- A secondary ink where nothing declares one: the ink in LaTeX's classes,
+in every scheme, as they print every line; elsewhere the ink in print and,
+on screen, the quietest tone the seeds generate that reads (`SeedPalette`). -/
+@[expose] public def Row.mutedFallback : ClassRow → Scheme → Fallback
+  | .latex, _ => .first [.ink]
+  | _, .print => .first [.ink]
+  | _, .light => .seeded .muted
+  | _, .dark => .const (Row.hex 0xA1 0xA1 0xAA)
+
+/-- A list marker's ink: the printed ink on paper and on the light screen —
+one mark in both artifacts, as LaTeX sets a label in the running ink — and
+the dark screen's own ink there. -/
+@[expose] public def Row.markerFallback : ClassRow → Scheme → Fallback
+  | _, .print => .first [.ink]
+  | _, .light => .inPrint .ink
+  | _, .dark => .first [.ink]
+
+/-- The ground verbatim stands on where nothing declares one: none in LaTeX's
+classes and on a stage, as they print it; on the web the documents' surface
+the seeds generate, in print and on screen. -/
+@[expose] public def Row.codeGround : ClassRow → Scheme → Fallback
+  | .web, .print => .seeded .surface
+  | .web, .light => .seeded .surface
+  | .web, .dark => .const (Row.hex 0x27 0x27 0x2A)
+  | .latex, _ => .absent
+  | .stage, _ => .absent
 
 open Row in
 
 /-- **The registry.** One row per role, written out per constructor — an
 added role is a missing arm, never a silent default. The print column is
-the PDF's: black ink on unpainted (white) paper. The light and dark columns
-are the screen stylesheet's own colours where nothing is declared, except
-that the standout frame keeps the printed inversion in every scheme: its
-ground is the ink as printed and its ink the paper (`paper`, `printInk`). -/
+the PDF's: black ink on unpainted (white) paper. The light column is the
+screen's: the class's default seeds (`ClassColors.ink`, `.paper`, `.accent`)
+and what they generate; the dark column the screen stylesheet's own colours.
+The standout frame keeps the printed inversion in every scheme: its ground is
+the ink as printed and its ink the paper (`paper`, `printInk`). -/
 @[expose] public def Role.row : Role → Row
   | .page => keyed "bg" .decorative none
-      (screen (.const Color.white) (Row.hex 0xFA 0xFA 0xF9) (Row.hex 0x18 0x18 0x1B))
+      (screen (.const Color.white) (.const ClassColors.paper) (Row.hex 0x18 0x18 0x1B))
       [("normal text", .bg), ("background canvas", .bg)] (exportName := some "Paper")
       (region := true) (judged := .uses)
   | .ink => keyed "fg" .text (some .page)
-      (screen (.const Color.black) (Row.hex 0x18 0x18 0x1B) (Row.hex 0xFA 0xFA 0xF9))
+      (screen (.const Color.black) (.const ClassColors.ink) (Row.hex 0xFA 0xFA 0xF9))
       [("normal text", .fg)] (exportName := some "Ink") (judged := .page)
-  | .muted => keyed "muted" .text (some .page)
-      (screen (.first [.ink]) (Row.hex 0x71 0x71 0x7A) (Row.hex 0xA1 0xA1 0xAA))
+  | .muted => keyed "muted" .text (some .page) mutedFallback
       [("footline", .fg), ("page number in head/foot", .fg)] (exportName := some "Muted") (judged := .uses)
   | .alert => keyed "alert" .text (some .page) (every .absent) [("alerted text", .fg)]
       (exportName := some "Alert") (judged := .uses)
   | .example => keyed "example" .text (some .page) (every .absent) [("example text", .fg)]
       (exportName := some "Example") (judged := .uses)
   | .covered => keyed "covered" .state (some .page) (every .absent) (judged := .uses)
-  | .marker => engine "marker" .text (some .page)
-      (fun s => if s == .print then .first [.ink] else .first [.muted]) (judged := .uses)
-  | .codeSurface => keyed "tint" .decorative none
-      (screen .absent (Row.hex 0xF4 0xF4 0xF5) (Row.hex 0x27 0x27 0x2A)) (judged := .uses)
+  | .marker => engine "marker" .text (some .page) markerFallback (judged := .uses)
+  | .codeSurface => keyed "tint" .decorative none codeGround (judged := .uses)
   | .rule => keyed "rule" .decorative none
-      (screen .absent (Row.hex 0xE4 0xE4 0xE7) (Row.hex 0x3F 0x3F 0x46)) (judged := .uses)
+      (screen .absent (.seeded .rule) (Row.hex 0x3F 0x3F 0x46)) (judged := .uses)
   | .focus => keyed "focus" .nonText (some .page) (every (.first [.accentEdge, .accent]))
       (noun := some "the focus ring") (judged := .element .focusRing)
   | .accent => keyed "accent" .decorative none
-      (screen .absent (Row.hex 0x1D 0x4E 0xD8) (Row.hex 0x60 0xA5 0xFA))
+      (screen .absent (.const ClassColors.accent) (Row.hex 0x60 0xA5 0xFA))
       (exportName := some "Accent") (judged := .uses)
   | .surface => generated "surface" .decorative none "Surface"
   | .surfaceStrong => generated "surface-strong" .decorative none "SurfaceStrong"
@@ -406,7 +470,8 @@ row, so the resolver's recursion on it is well founded by the data. -/
   | .blockBodyInk | .alertBodyInk | .exampleBodyInk => 1
   | .blockBodyGround | .alertBodyGround | .exampleBodyGround => 1
   | .titlePageInk | .separator | .progressTrack | .sectionProgressFill => 1
-  | .marker | .frameSubtitleInk | .footInk | .standoutGround | .sectionProgressTrack => 2
+  | .marker => 1
+  | .frameSubtitleInk | .footInk | .standoutGround | .sectionProgressTrack => 2
   | .standoutInk => 3
 
 /-- A number at or past the last constructor's index: `ofNat` saturates, so
@@ -427,11 +492,11 @@ by `Role.all_complete` and duplicate-free by `Role.all_nodup`
 public theorem Role.all_complete (r : Role) : Role.all.contains r := by
   cases r <;> rfl
 
-/-- **Every default reads only shallower roles**, in every scheme: the
-measure `Design.at` recurses on. -/
+/-- **Every default reads only shallower roles**, in every class and scheme:
+the measure `Design.at` recurses on. -/
 public theorem Role.fallback_depth_monotone :
-    (Role.all.all fun r => Scheme.all.all fun s =>
-      ((r.row.fallback s).refs.all fun r' => decide (r'.depth < r.depth))) = true := by
+    (Role.all.all fun r => ClassRow.all.all fun c => Scheme.all.all fun s =>
+      ((r.row.fallback c s).refs.all fun r' => decide (r'.depth < r.depth))) = true := by
   decide +kernel
 
 /-- **The page's text is the one role read at every page**: the ink. -/

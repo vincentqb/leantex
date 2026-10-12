@@ -2346,6 +2346,30 @@ def treeCssOne (acc : String) : Html.Node → String
 
 end
 
+/-- A colour's Oklab chroma (at `Oklab.labOf`'s scale) and hue in
+millidegrees. -/
+def lchOf (c : Ir.Color) : Int × Int :=
+  let l := Oklab.labOf c
+  (Nat.sqrt (Oklab.chromaSq l).toNat, Oklab.hueMilli l.a l.b)
+
+/-- A colour's Oklab hue in millidegrees. -/
+def hueOf (c : Ir.Color) : Int := (lchOf c).2
+
+/-- Millidegrees between two hues, the short way round. -/
+def hueGap (h h' : Int) : Int :=
+  let d := (h - h' + 540000) % 360000 - 180000
+  if d < 0 then -d else d
+
+/-- A shipped bundle's palette as a deck installs it: its seeds generated,
+its relations realized (`Theme.realize`). -/
+def deckBundle (th : Theme.Theme) : Ir.Palette := th.realize .decks
+
+/-- moloch's progress bar as a deck installs it: its fill and its track. -/
+def molochProgress (_ : Unit) : Ir.Color × Ir.Color :=
+  match (Ir.Design.ofPalette (deckBundle Theme.moloch)).progress with
+  | some p => (p.fg, p.bg)
+  | none => (Ir.Color.black, Ir.Color.black)
+
 /-- A registry role's colour where nothing declares it, in one scheme: the
 screen stylesheet's own value (`Ir.Role.row`'s columns). -/
 def screenColor (s : Ir.Scheme) (r : Ir.Role) : Ir.Color :=

@@ -13,6 +13,7 @@ public import LeanTex.Core.DesignRole
 public import LeanTex.Core.ContrastRatio
 public import LeanTex.Core.Oklab
 public import LeanTex.Core.SeedPalette
+public import LeanTex.Core.PaletteData
 import LeanTex.Core.Loop
 import Init.Data.Nat.ToString
 public import Std.Data.HashMap
@@ -1917,6 +1918,11 @@ public structure Palette where
   (`\palette[seeds]`), kept so a generated role on another ground can take
   its family's tone there (`Palette.groundRun`). -/
   seeded : Option SeedPalette.SeedState := none
+  /-- The class's defaults where nothing declares a role (`Role.row`'s
+  fallbacks read its row, and the class's default seeds its depth): set
+  once from the document's class and surface, so every palette a document
+  derives — an epoch's, a bundle's install — carries it. -/
+  classColors : ClassColors := {}
   deriving Repr, BEq, Inhabited
 
 /-- The colour a palette declares under one name, of either kind. -/
@@ -9542,6 +9548,10 @@ public structure ClassRecord where
   generated from seeds (`SeedPalette.Targets.light`): a document's, or a
   deck's and a poster's, read across a room. -/
   groundDepth : GroundDepth := .documents
+  /-- What the class asks of the colours nothing declares (`ClassRow`): the
+  standard classes' and the résumé's ink-only secondary text and unpainted
+  verbatim unless the class says otherwise. -/
+  colorRow : ClassRow := .latex
   /-- Implied contract, checked against the shipped pages exactly as a
   declared `\assert` is; a document declaring an assertion of the same
   form is intent and takes control. The help beside each value is the
@@ -9646,9 +9656,11 @@ what to build the way `\documentclass` already carries the page model. -/
       lists := .beamer
       preambleSans := true
       chrome := true
-      groundDepth := .decks }
+      groundDepth := .decks
+      colorRow := .stage }
   | .card =>
     { model := .face
+      colorRow := .stage
       runningFurniture := false
       pagesBound := some .faces
       inkInArea := some "the margins are the print safe zone: ink past them risks \
@@ -9674,12 +9686,14 @@ distance (Legge & Bigelow 2011); declare \\assert{ text.xheight >= ... } to take
     { model := .flow
       measureBand := true
       lists := .web
+      colorRow := .web
       formats := #["html", "md"]
       mdName := some "llms.txt" }
   | .poster =>
     { model := .face
       fontSize := some posterFontSize
       lists := .beamer
+      colorRow := .stage
       preambleSans := true
       headline := true
       groundDepth := .decks
@@ -9696,6 +9710,13 @@ calibration reads fluently; declare \
       -- width, and a poster's column is the real measure.
       trimDefault := some (Dim.mm 1189, Dim.mm 841)
       safeMargin := some (Dim.mm 10) }
+
+/-- **A document's class defaults**: its class's colour row and ground depth,
+a markdown note on the web's row whatever its class — a markdown source can
+declare nothing, and what its surface defaults is the web's. -/
+@[expose] public def DocClass.classColors (c : DocClass) (surface : Surface) : ClassColors :=
+  { row := if surface == .markdown then .web else c.record.colorRow
+    depth := c.record.groundDepth }
 
 /-- The class fixes the page model: a poster is a face — one fixed,
 printed, trimmed surface — by the record, definitionally. -/
@@ -12633,12 +12654,33 @@ recursion is on the role's stratum. -/
 public def Design.declared? (pal : Palette) (r : Role) : Option Color :=
   pal.lookup (.role r)
 
+/-- The palette the class's default seeds generate at a depth: the
+generator's answer for each depth a class takes, kept in `PaletteData` (held
+to a fresh derivation by its check), and any other depth generated as asked. -/
+@[expose] public def Design.classDefaults (d : GroundDepth) : Option SeedPalette.Colors :=
+  match PaletteData.classGenerated.lookup d with
+  | some c => some c
+  | none => ((SeedPalette.generate SeedPalette.classSeeds
+      (SeedPalette.classSeeds.targets d)).toOption).map (·.colors)
+
+/-- **The colour the palette's seeds generate for a role**: the document's
+own seeds where it declares them (`\palette[seeds]`), else the class's
+default seeds at the class's depth (`Design.classDefaults`), each at the
+8-bit colour a TeX build reads from the export. -/
+@[expose] public def Design.seededColor (pal : Palette) (r : Role) : Option Color :=
+  let raw := match pal.seeded with
+    | some st => SeedPalette.Colors.role st.seeds st.colors r
+    | none => (Design.classDefaults pal.classColors.depth).bind fun c =>
+        SeedPalette.Colors.role SeedPalette.classSeeds c r
+  raw.map fun c => Color.ofHtml c.r c.g c.b
+
 /-- One default, read through `look` for the roles it names in the scheme
 asked for, and through `printLook` for a role it reads as printed
 (`inPrint`). A bar's ink is the first candidate that meets the role's need
 on the bar (WCAG 2.2's ratio, `Contrast.required`), else the first
-candidate — the choice the engine shipped before it judged. -/
-@[expose] public def Design.fallbackWith (need : Need) (look printLook : Role → Option Color) :
+candidate — the choice the engine shipped before it judged. A role the
+palette's seeds generate reads `gen` (`Design.seededColor`). -/
+@[expose] public def Design.fallbackWith (need : Need) (gen look printLook : Role → Option Color) :
     Fallback → Option Color
   | .first rs => rs.findSome? look
   | .readable bar cands unbarred =>
@@ -12652,6 +12694,7 @@ candidate — the choice the engine shipped before it judged. -/
   | .const c => some c
   | .absent => none
   | .code => none
+  | .seeded r => gen r
 
 /-- The resolver at a stratum: a role of depth `d` resolves at `d`, reading
 the roles its default names at `d - 1`, in its own scheme or, for a role
@@ -12659,10 +12702,11 @@ read as printed, in print. Structural on the stratum, so the kernel can
 evaluate it. -/
 @[expose] public def Design.atDepth (pal : Palette) : Nat → Scheme → Role → Option Color
   | 0, s, r => (Design.declared? pal r).or
-      (Design.fallbackWith r.row.need (fun _ => none) (fun _ => none) (r.row.fallback s))
+      (Design.fallbackWith r.row.need (Design.seededColor pal) (fun _ => none) (fun _ => none)
+        (r.row.fallback pal.classColors.row s))
   | n + 1, s, r => (Design.declared? pal r).or
-      (Design.fallbackWith r.row.need (Design.atDepth pal n s) (Design.atDepth pal n .print)
-        (r.row.fallback s))
+      (Design.fallbackWith r.row.need (Design.seededColor pal) (Design.atDepth pal n s)
+        (Design.atDepth pal n .print) (r.row.fallback pal.classColors.row s))
 
 /-- **The one resolving site.** A role's colour in a scheme: the palette's
 declaration, else its row's default there. `none` is a role nothing paints
@@ -12686,9 +12730,9 @@ private theorem findSome?_ext_mem {α β : Type} (f g : α → Option β) :
     rw [h a (List.mem_cons_self ..),
       findSome?_ext_mem f g rest (fun a' ha' => h a' (List.mem_cons_of_mem _ ha'))]
 
-private theorem Design.fallbackWith_congr (need : Need) (f g f' g' : Role → Option Color)
+private theorem Design.fallbackWith_congr (need : Need) (gen f g f' g' : Role → Option Color)
     (fb : Fallback) (h : ∀ r ∈ fb.refs, f r = g r) (h' : ∀ r ∈ fb.refs, f' r = g' r) :
-    Design.fallbackWith need f f' fb = Design.fallbackWith need g g' fb := by
+    Design.fallbackWith need gen f f' fb = Design.fallbackWith need gen g g' fb := by
   cases fb with
   | first rs => exact findSome?_ext_mem f g rs h
   | readable bar cands unbarred =>
@@ -12701,12 +12745,14 @@ private theorem Design.fallbackWith_congr (need : Need) (f g f' g' : Role → Op
   | const c => rfl
   | absent => rfl
   | code => rfl
+  | seeded r => rfl
 
-private theorem Role.refs_shallower (r : Role) (s : Scheme) :
-    ∀ r' ∈ (r.row.fallback s).refs, r'.depth < r.depth := by
+private theorem Role.refs_shallower (r : Role) (c : ClassRow) (s : Scheme) :
+    ∀ r' ∈ (r.row.fallback c s).refs, r'.depth < r.depth := by
   have h := List.all_eq_true.mp Role.fallback_depth_monotone r
     (List.contains_iff_mem.mp (Role.all_complete r))
-  have hs := List.all_eq_true.mp h s (by cases s <;> simp [Scheme.all])
+  have hc := List.all_eq_true.mp h c (by cases c <;> simp [ClassRow.all])
+  have hs := List.all_eq_true.mp hc s (by cases s <;> simp [Scheme.all])
   intro r' hr'
   exact of_decide_eq_true (List.all_eq_true.mp hs r' hr')
 
@@ -12717,10 +12763,10 @@ private theorem Design.atDepth_stable (pal : Palette) :
   induction n using Nat.strongRecOn with
   | ind n ih =>
     intro s r hr
-    have refs := Role.refs_shallower r s
+    have refs := Role.refs_shallower r pal.classColors.row s
     have rhs : Design.at pal s r = (Design.declared? pal r).or
-        (Design.fallbackWith r.row.need (Design.at pal s) (Design.at pal .print)
-          (r.row.fallback s)) := by
+        (Design.fallbackWith r.row.need (Design.seededColor pal) (Design.at pal s)
+          (Design.at pal .print) (r.row.fallback pal.classColors.row s)) := by
       show Design.atDepth pal r.depth s r = _
       cases hd : r.depth with
       | zero =>
@@ -12770,9 +12816,9 @@ private theorem Design.atDepth_stable (pal : Palette) :
 resolver's equation, the one place a default chain is read. -/
 public theorem Design.resolve_unfold_exact (pal : Palette) (s : Scheme) (r : Role) :
     Design.at pal s r = (Design.declared? pal r).or
-      (Design.fallbackWith r.row.need (Design.at pal s) (Design.at pal .print)
-        (r.row.fallback s)) := by
-  have refs := Role.refs_shallower r s
+      (Design.fallbackWith r.row.need (Design.seededColor pal) (Design.at pal s)
+        (Design.at pal .print) (r.row.fallback pal.classColors.row s)) := by
+  have refs := Role.refs_shallower r pal.classColors.row s
   show Design.atDepth pal r.depth s r = _
   cases hd : r.depth with
   | zero =>
@@ -13035,6 +13081,15 @@ rest of the design. -/
 @[expose] public def Design.printPage (pal : Palette) : Color :=
   (Design.at pal .print .page).getD Color.white
 
+/-- **The ground a listing stands on** in a scheme, one value both backends
+and the contrast report read: the ground it declares (minted's `bgcolor`),
+else the verbatim ground the class paints (`Role.codeSurface`: the web's
+documents' surface, in print as on screen), else none — the listing stands
+on what surrounds it. -/
+@[expose] public def ListingSpec.groundIn (spec : ListingSpec) (pal : Palette) (s : Scheme) :
+    Option (Color × Option ColorRef) :=
+  spec.ground.orElse fun _ => (Design.at pal s .codeSurface).map (·, some (.role .codeSurface))
+
 public theorem Design.ofPalette_fg (pal : Palette) :
     (Design.ofPalette pal).fg = Design.printInk pal := rfl
 
@@ -13042,17 +13097,20 @@ public theorem Design.ofPalette_bg (pal : Palette) :
     (Design.ofPalette pal).bg = Design.printPage pal := rfl
 
 /-- Two palettes whose roles are declared alike, at one covered fraction,
-resolve alike in every scheme: the resolver reads a palette through its
-role declarations alone. -/
+over one generated palette and one class row, resolve alike in every
+scheme: the resolver reads a palette through its role declarations, its
+generated roles and its class's defaults alone. -/
 private theorem Design.resolve_congr (p q : Palette) (s : Scheme)
     (hd : ∀ r, Design.declared? p r = Design.declared? q r)
-    (hc : p.coveredFraction = q.coveredFraction) :
+    (hc : p.coveredFraction = q.coveredFraction)
+    (hg : Design.seededColor p = Design.seededColor q)
+    (hk : p.classColors = q.classColors) :
     Design.resolve p s = Design.resolve q s := by
   have hdepth : ∀ m, Design.atDepth p m = Design.atDepth q m := by
     intro m
     induction m with
-    | zero => funext s r; simp only [Design.atDepth, hd]
-    | succ m ih => funext s r; simp only [Design.atDepth, hd, ih]
+    | zero => funext s r; simp only [Design.atDepth, hd, hg, hk]
+    | succ m ih => funext s r; simp only [Design.atDepth, hd, ih, hg, hk]
   have hat : Design.at p s = Design.at q s := by
     funext r
     simp only [Design.at, hdepth]
@@ -13069,7 +13127,7 @@ public theorem Palette.defineColor_design_id (pal : Palette) (n : String) (c : C
     (d : Bool) (s : Scheme) :
     Design.resolve (pal.declare (.color n) c d) s = Design.resolve pal s :=
   Design.resolve_congr _ _ s
-    (fun r => Palette.declare_keeps_others pal (.color n) (.role r) c d (by simp)) rfl
+    (fun r => Palette.declare_keeps_others pal (.color n) (.role r) c d (by simp)) rfl rfl rfl
 
 /-- The names an xcolor definition of `n` declares (`\definecolor`,
 `\colorlet`): the author colour, and the role an xcolor colour of that name
@@ -13101,7 +13159,7 @@ public theorem Palette.defineXcolor_resolve_exact (pal : Palette) (n : String) (
     Design.resolve (pal.defineXcolor n c d) s = Design.resolve (pal.declare (.role r) c d) s := by
   simp only [Palette.defineXcolor, Palette.xcolorRefs, h, Option.map_some, Option.toList_some,
     List.foldl_cons, List.foldl_nil]
-  refine Design.resolve_congr _ _ s (fun r' => ?_) rfl
+  refine Design.resolve_congr _ _ s (fun r' => ?_) rfl rfl rfl
   simp only [Design.declared?]
   by_cases hr : r' = r
   · subst hr
@@ -13119,6 +13177,24 @@ public theorem Palette.defineXcolor_design_id (pal : Palette) (n : String) (c : 
   simp only [Palette.defineXcolor, Palette.xcolorRefs, h, Option.map_none, Option.toList_none,
     List.foldl_cons, List.foldl_nil]
   exact Palette.defineColor_design_id pal n c d s
+
+/-- **A list marks alike on paper and on the light screen**: in every class,
+a list marker's paint is one value in print and light — the marker the
+document declares, else the printed ink (`Row.markerFallback`). -/
+public theorem Design.marker_print_light_exact (pal : Palette) :
+    Design.at pal .light .marker = Design.at pal .print .marker := by
+  rw [Design.resolve_unfold_exact pal .light, Design.resolve_unfold_exact pal .print]
+  cases pal.classColors.row <;>
+    simp [Role.row, Row.engine, Row.markerFallback, Design.fallbackWith]
+
+/-- The marker both artifacts paint is the printed ink where the document
+declares no marker: the PDF sets a label in the running ink, and the light
+stylesheet's marker is that ink (`Design.marker_print_light_exact`). -/
+public theorem Design.marker_printInk_exact (pal : Palette) (h : Design.declared? pal .marker = none) :
+    Design.at pal .light .marker = Design.at pal .print .ink := by
+  rw [Design.resolve_unfold_exact pal .light, h]
+  cases pal.classColors.row <;>
+    simp [Role.row, Row.engine, Row.markerFallback, Design.fallbackWith]
 
 /-- A declaration is what a role resolves to, in every scheme. -/
 public theorem Design.at_declared (pal : Palette) (s : Scheme) (r : Role) (c : Color)
@@ -13244,6 +13320,7 @@ constant as its value; nothing for an absent or style default. -/
   | .const c => some (.value c)
   | .absent => none
   | .code => none
+  | .seeded r => (Design.seededColor pal r).map .value
 
 /-- **The declaration a role's property carries in a scheme**: its declared
 colour, else its row's default as an alias or a constant; `none` for a role
@@ -13252,7 +13329,7 @@ nothing paints there. -/
   match Design.declared? pal r with
   | some c => some (.value c)
   | none => Design.fallbackDecl r.row.need pal (Design.at pal s) (Design.at pal .print)
-      (r.row.fallback s)
+      (r.row.fallback pal.classColors.row s)
 
 /-- Chasing a table of declarations at a stratum: a value is itself, an
 alias the chase of its target one stratum down. Structural on the stratum,
@@ -13313,7 +13390,7 @@ private theorem Design.fallbackDecl_resolve (need : Need) (pal : Palette)
     (hdecl : ∀ r c, Design.declared? pal r = some c → look r = some c ∧ printLook r = some c)
     (fb : Fallback) :
     (Design.fallbackDecl need pal look printLook fb).bind (CssDecl.resolve look) =
-      Design.fallbackWith need look printLook fb := by
+      Design.fallbackWith need (Design.seededColor pal) look printLook fb := by
   cases fb with
   | first rs =>
     simp only [Design.fallbackDecl, Design.fallbackWith, Option.bind_map]
@@ -13344,6 +13421,9 @@ private theorem Design.fallbackDecl_resolve (need : Need) (pal : Palette)
   | const c => rfl
   | absent => rfl
   | code => rfl
+  | seeded r =>
+    simp only [Design.fallbackDecl, Design.fallbackWith]
+    cases Design.seededColor pal r <;> rfl
 
 private theorem Design.fallbackDecl_alias_mem (need : Need) (pal : Palette)
     (look printLook : Role → Option Color) (fb : Fallback) (r : Role)
@@ -13390,6 +13470,7 @@ private theorem Design.fallbackDecl_alias_mem (need : Need) (pal : Palette)
   | const c => simp [Design.fallbackDecl] at h
   | absent => simp [Design.fallbackDecl] at h
   | code => simp [Design.fallbackDecl] at h
+  | seeded r' => simp [Design.fallbackDecl] at h
 
 private theorem bind_congr_some {α β : Type} (o : Option α) (f g : α → Option β)
     (h : ∀ x, o = some x → f x = g x) : o.bind f = o.bind g := by
@@ -13406,7 +13487,8 @@ public theorem Design.cssDecl_alias_shallower (pal : Palette) (s : Scheme) (r r'
   | some c => simp [hd] at h
   | none =>
     rw [hd] at h
-    exact Role.refs_shallower r s r' (Design.fallbackDecl_alias_mem _ _ _ _ _ r' h)
+    exact Role.refs_shallower r pal.classColors.row s r'
+      (Design.fallbackDecl_alias_mem _ _ _ _ _ r' h)
 
 /-- One step of the table reads the resolver's value. -/
 public theorem Design.cssDecl_resolve (pal : Palette) (s : Scheme) (r : Role) :
@@ -13418,7 +13500,7 @@ public theorem Design.cssDecl_resolve (pal : Palette) (s : Scheme) (r : Role) :
   | none =>
     simpa using Design.fallbackDecl_resolve r.row.need pal (Design.at pal s) (Design.at pal .print)
       (fun r c h => ⟨Design.at_declared pal s r c h, Design.at_declared pal .print r c h⟩)
-      (r.row.fallback s)
+      (r.row.fallback pal.classColors.row s)
 
 private theorem Design.chaseAt_stable (pal : Palette) (s : Scheme) :
     ∀ (n : Nat) (r : Role), r.depth ≤ n →

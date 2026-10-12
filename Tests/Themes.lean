@@ -779,7 +779,7 @@ def chromeDeclChecks (ref : IO.Ref (List String)) : IO Unit := do
   -- The muted rule is load-bearing: one step weaker (fg!60!bg) fails the
   -- bundle contract the theorems hold.
   let weaker : Ir.Palette := { entries :=
-    Theme.moloch.palette.entries.map fun (k, c) =>
+    (deckBundle Theme.moloch).entries.map fun (k, c) =>
       if k == (.role .muted : Ir.ColorRef) then (k, { r := 121, g := 133, b := 135 }) else (k, c) }
   t "the palette contract rejects a muted one step weaker"
     (!Contrast.paletteContract weaker)
@@ -805,8 +805,10 @@ def layerDiagChecks (ref : IO.Ref (List String)) : IO Unit := do
     (!(ds "\\theme{moloch}").any (·.code == "W0348"))
   t "an override after the theme is silent"
     (!(ds "\\theme{moloch}\\palette{ alert = #112233 }").any (·.code == "W0348"))
+  let molochAlert := (Ir.Design.declared? (deckBundle Theme.moloch) .alert).getD .black
   t "a declaration the theme agrees with replaces nothing"
-    (!(ds "\\palette{ alert = #A55A13 }\\theme{moloch}").any (·.code == "W0348"))
+    (!(ds ("\\palette{ alert = #" ++ Ir.Color.hexByte molochAlert.r ++ Ir.Color.hexByte molochAlert.g ++
+      Ir.Color.hexByte molochAlert.b ++ " }\\theme{moloch}")).any (·.code == "W0348"))
   t "a second theme replacing the first theme's values is silent"
     (!(ds "\\theme{plain}\\theme{moloch}").any (·.code == "W0348"))
   t "a replaced chrome slot is named as its slot"
@@ -846,7 +848,7 @@ def styleMergeChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "an install that changes the link colour is a replacement"
     (Theme.replaces probe
       { styles := ({} : Ir.Styles).declare "link" { color := some (Ir.Color.black, none) } }
-      == #[("style", "link")])
+      == #[(.style, "link")])
   let exemptPalette := ({} : Ir.Palette).declareKey "alert" ink (decorative := true)
   let exempt : Theme.Theme := { name := "exempt", palette := exemptPalette }
   let doc : Theme.Decls := { palette := ({} : Ir.Palette).declareKey "alert" Ir.Color.black }
@@ -1037,8 +1039,8 @@ def numberingChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO U
     ((out.pages[2]?.bind (·.foot)).map (fun f => Ir.plainText (Ir.bandInlines f)) == some "S1")
   t "the progress bar shows 0 of 1 before any content frame"
     (match out.pages[1]? with
-     | some p => (p.fills.any fun f => f.color == ({ r := 0xCB, g := 0xC0, b := 0xB6 } : Ir.Color)) &&
-         !(p.fills.any fun f => f.color == ({ r := 0xA5, g := 0x5A, b := 0x13 } : Ir.Color))
+     | some p => (p.fills.any fun f => f.color == (molochProgress ()).2) &&
+         !(p.fills.any fun f => f.color == (molochProgress ()).1)
      | none => false)
   let (html, _) := HtmlDoc.emit {} doc
   t "html gives the title and standout frames no footer"
@@ -1091,14 +1093,14 @@ def numberingChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO U
   let mp : Dim.Sp := fGeom.textWidth * 7875 / 10000
   t "a section after every frame fills the bar exactly"
     (fOut.pages.any fun p => p.fills.any fun f =>
-      f.w == mp && f.color == ({ r := 0xA5, g := 0x5A, b := 0x13 } : Ir.Color))
+      f.w == mp && f.color == (molochProgress ()).1)
   let (zDoc, zDs) := elabStr (deck169 "\\theme{moloch}\\title{T}\\author{A}"
     "\\maketitle\n\\section{S}\n")
   t "zero-count deck source clean" zDs.isEmpty
   t "a deck with no countable frame draws no progress bar"
     (zDoc.frameCount == 0 &&
      (layoutOf oneFace zDoc).pages.all fun p =>
-       !(p.fills.any fun f => f.color == ({ r := 0xCB, g := 0xC0, b := 0xB6 } : Ir.Color)))
+       !(p.fills.any fun f => f.color == (molochProgress ()).2))
   t "html draws no progress bar with no countable frame"
     (((HtmlDoc.emit {} zDoc).1.splitOn "class=\"progress\"").length == 1)
   -- appendixnumberbeamer's `\appendix` starts the count over
@@ -1629,7 +1631,7 @@ def contrastChecks (ref : IO.Ref (List String)) : IO Unit := do
   -- 3:1 state change — the fraction is the bundle's, the bound is not.
   t "covered contract rejects moloch at 38%"
     (!Contrast.coveredContract
-      { Theme.moloch.palette with coveredFraction := some 38 })
+      { deckBundle Theme.moloch with coveredFraction := some 38 })
   -- Monotone quieting as a property over pseudo-random colours: covering
   -- never raises contrast against the page, and covering a cover quiets
   -- further (≤: equality is reachable at the page itself). The per-bundle
@@ -1676,7 +1678,7 @@ def contrastChecks (ref : IO.Ref (List String)) : IO Unit := do
     | Html.Node.style s => acc ++ s
     | _ => acc
   let deckCss := headCss deckHead
-  let themeMuted := match Theme.moloch.palette.find? "muted" with
+  let themeMuted := match (deckBundle Theme.moloch).find? "muted" with
     | some c => s!"{HtmlDoc.roleVar .muted}: {HtmlDoc.cssColor c};"
     | none => "no muted key"
   let darkMuted := s!"{HtmlDoc.roleVar .muted}: {HtmlDoc.cssColor (screenColor .dark .muted)};"
@@ -1848,10 +1850,10 @@ def contrastChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "unknown palette option warns and skips the block"
     (warnCodes ("\\documentclass{article}\\palette[dark]{ a = #101010 }" ++
       "\\begin{document}x\\end{document}") == ["W0316"])
-  -- #767676 on the shipped surface is 4.34:1 -- under 4.5 but over 3: as
+  -- #808080 on the shipped page is 3.95:1 -- under 4.5 but over 3: as
   -- body text it warns, as Huge (24.9pt) large-scale text it passes.
   let grey (body : String) := "\\documentclass{article}" ++
-    "\\palette{ grey = #767676 }\\begin{document}" ++ body ++ "\\end{document}"
+    "\\palette{ grey = #808080 }\\begin{document}" ++ body ++ "\\end{document}"
   t "borderline grey warns as body text"
     ((warnCodes (grey "\\textcolor{grey}{x}")).contains "W0315")
   t "borderline grey passes as large-scale text"
@@ -1867,11 +1869,11 @@ def contrastChecks (ref : IO.Ref (List String)) : IO Unit := do
   -- The judge reads the layout's own scale (contrast_judges_what_layout_sets):
   -- at a 9 pt base a section sets at 12.96 pt — not WCAG large-scale — while
   -- the old absolute 14 pt bold was, so the judge passed text the page fails.
-  -- #767676 reads at 4.34:1 on the shipped surface: over 3:1, under 4.5:1.
+  -- #808080 reads at 3.95:1 on the shipped page: over 3:1, under 4.5:1.
   -- At the 10 pt base the section sets at 14.4 pt bold, large-scale either
   -- way: the verdicts agree, which is why the drift went unseen.
   let sizedSection (size : String) := "\\documentclass{article}" ++
-    "\\page{ fontsize = " ++ size ++ " }\\palette{ grey = #767676 }" ++
+    "\\page{ fontsize = " ++ size ++ " }\\palette{ grey = #808080 }" ++
     "\\begin{document}\\section{\\textcolor{grey}{Head}}x\\end{document}"
   t "a 9pt-base section title is judged at the size the layout sets"
     ((warnCodes (sizedSection "9pt")).contains "W0315")
@@ -2045,11 +2047,12 @@ def contrastChecks (ref : IO.Ref (List String)) : IO Unit := do
     let (thDoc, _) := elabStr ("\\documentclass{slides}\\theme{" ++ th.name ++
       "}\\begin{document}\\begin{frame}x\\end{frame}\\end{document}")
     t s!"\\theme installs the {th.name} bundle's own values"
-      (thDoc.palette == th.palette)
+      (thDoc.palette.entries == (deckBundle th).entries &&
+        thDoc.palette.coveredFraction == (deckBundle th).coveredFraction)
   -- The check fires on the illegible bundle it exists for: moloch's own
   -- alert (#EB811B, 2.61:1 as body text) fails the contract.
   t "the contract rejects moloch's original alert"
-    (let badEntries := (Theme.moloch.palette.entries.filter (·.1 != (.role .alert))).push
+    (let badEntries := ((deckBundle Theme.moloch).entries.filter (·.1 != (.role .alert))).push
         ((.role .alert), ({ r := 0xEB, g := 0x81, b := 0x1B } : Ir.Color))
      !Contrast.paletteContract { entries := badEntries })
   -- Themed \alert is the alert colour alone, as beamer's `alerted text`
@@ -2151,7 +2154,8 @@ def themeChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "theme moloch resolves its own mixes"
     (mDoc.palette.find? "bg" == some { r := 0xFA, g := 0xFA, b := 0xFA } &&
      mDoc.palette.find? "frametitlebg" == some { r := 0x23, g := 0x37, b := 0x3B } &&
-     mDoc.palette.find? "progressbg" == some { r := 0xCB, g := 0xC0, b := 0xB6 })
+     mDoc.palette.find? "progressbg" ==
+       some ((Ir.Color.ofHtml 0xEB 0x81 0x1B |>.mix 50 .black).mix 30 .white))
   t "theme moloch declares the progress token"
     (((mDoc.tokens.find? "progressheight").map (·.width)) ==
       some (Dim.Length.ofSp (Dim.pt 1)))
@@ -2185,7 +2189,7 @@ def themeChecks (ref : IO.Ref (List String)) : IO Unit := do
     (match aDoc.body with
      | #[.frame _ _ _ _ body] => body.any fun b => match b with
         | .para xs => xs.any fun x => match x with
-          | .colored c (some (.role .alert)) _ => c == { r := 0xA5, g := 0x5A, b := 0x13 }
+          | .colored c (some (.role .alert)) _ => some c == Ir.Design.declared? (deckBundle Theme.moloch) .alert
           | _ => false
         | _ => false
      | _ => false)
@@ -2197,7 +2201,7 @@ def themeChecks (ref : IO.Ref (List String)) : IO Unit := do
     (match (elabStr (deck169 "" "\\begin{frame}{T}\n\\alert{hot}\n\\end{frame}")).1.body with
      | #[.frame _ _ _ _ body] => body.any fun b => match b with
         | .para xs => xs.any fun x => match x with
-          | .colored c (some (.role .alert)) _ => some c == Theme.daylight.palette.lookup (.role .alert)
+          | .colored c (some (.role .alert)) _ => some c == Ir.Design.declared? (deckBundle Theme.daylight) .alert
           | _ => false
         | _ => false
      | _ => false)
@@ -2241,10 +2245,13 @@ def designChecks (ref : IO.Ref (List String)) : IO Unit := do
   let themed := designOf "\\theme{moloch}"
   t "themed design carries the bundle's bar pair"
     (themed.frametitle == some { fg := { r := 0xFA, g := 0xFA, b := 0xFA }, bg := { r := 0x23, g := 0x37, b := 0x3B } })
+  -- moloch's lineage colour, exactly, as lualatex draws its progress bar and
+  -- its title separator; the track is moloch's own mix of it.
+  let lineage := Ir.Color.ofHtml 0xEB 0x81 0x1B
   t "themed design carries the progress pair"
-    (themed.progress == some { fg := { r := 0xA5, g := 0x5A, b := 0x13 }, bg := { r := 0xCB, g := 0xC0, b := 0xB6 } })
+    (themed.progress == some { fg := lineage, bg := (lineage.mix 50 .black).mix 30 .white })
   t "themed design reads the declared separator"
-    (themed.separator == { r := 0xA5, g := 0x5A, b := 0x13 })
+    (themed.separator == lineage)
   t "themed design reads the declared muted step"
     (themed.muted == { r := 0x64, g := 0x72, b := 0x74 })
   -- A half-declared standout keeps the declared half and defaults the rest
@@ -2345,10 +2352,13 @@ expects fails the suite. The ledger is empty today — `separator` left it
 when the title-page rule landed with the vertical-distribution slice
 (`Elab.titleBlocks` reads it through the titlepage style). -/
 def roleChecks (ref : IO.Ref (List String)) : IO Unit := do
-  let contentColours := ["alert", "example"]
+  -- A generated palette's roles are colours a document names (the export
+  -- names each for a TeX build: the accent as text, the tones on the ink).
+  let contentColours := ["alert", "example"] ++
+    SeedPalette.tierRoles.map fun r => (Ir.ColorRef.role r).key
   let pendingConsumer : List (String × String) := []
   for th in Theme.builtin do
-    for (named, _) in th.palette.entries do
+    for (named, _) in (deckBundle th).entries do
       let role := named.key
       if contentColours.contains role || Ir.Design.consumedRoles.contains role then
         pure ()
@@ -2371,8 +2381,13 @@ naming the key. -/
 def roleInvocationChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
   for th in Theme.builtin do
-    for (named, c) in th.palette.entries do
+    -- What an article installs (`Theme.realize` at a document's depth), each
+    -- role a command spells: a key with a hyphen names its colour only.
+    for (named, c) in (th.realize .documents).entries do
       let key := named.key
+      -- A generated role is a colour a document names (`\\textcolor{surface}`).
+      if SeedPalette.derivedRoles.any (fun r => (Ir.ColorRef.role r).key == key) then continue
+      unless key.all Char.isAlpha do continue
       let (doc, _) := elabStr ("\\documentclass{article}\\theme{" ++ th.name ++
         s!"}\\begin\{document}\\{key}\{x}\\end\{document}")
       -- `\alert` is a compat idiom (colour and bold, W3C SC 1.4.1): the
@@ -3113,26 +3128,26 @@ def geminiChecks (ref : IO.Ref (List String)) : IO Unit := do
 The artifact half is read off `Layout.Out`: with no bar and no declared
 page, the title run's declared ground is `none` and the page paints no
 fill, so what the reader sees is the surface each backend puts under a
-`none` ground — `light.surface` in HTML (`--surface`, `HtmlDoc.baseCss`),
-white paper in the PDF. `#757575` sits between the two ratios (4.61:1 on
-white, 4.41:1 on `#FAFAF9`), so grounding the judge on white passed a title
-the HTML page fails — silently, since neither a theorem nor a census row
-read that pair. Own function: `main`'s elaboration budget. -/
+`none` ground — the light page in HTML (`HtmlDoc.baseCss`), white paper in
+the PDF, one colour since the HTML page is the printed page. `#757575`
+once sat between the two (4.61:1 on white, 4.41:1 on the HTML page's
+`#FAFAF9`), so grounding the judge on white passed a title the HTML page
+failed; on one page it passes in both, and `#808080` (3.95:1) fails in
+both. Own function: `main`'s elaboration budget. -/
 def titledGroundChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) :
     IO Unit := do
   let t := check ref
-  let grey : Ir.Color := { r := 0x75, g := 0x75, b := 0x75 }
   let surface := screenColor .light .page
-  -- The discriminator: this colour passes on white and fails on the
-  -- surface the page ships, so the two groundings cannot both be right.
-  t "the probe colour passes on white"
-    (Contrast.aaText ≤ Contrast.contrastMilli grey Ir.Color.white)
-  t "the probe colour fails on the shipped surface"
-    (Contrast.contrastMilli grey surface < Contrast.aaText)
-  let pal := ({} : Ir.Palette).declareKey "blocktitlefg" grey
-  let doc : Ir.Doc :=
-    { palette := pal
+  t "the HTML page an undeclared document ships is the printed page"
+    (surface == Ir.Color.white)
+  let titled (grey : Ir.Color) : Ir.Doc :=
+    { palette := ({} : Ir.Palette).declareKey "blocktitlefg" grey
       body := #[.titled .block #[.text "Title"] #[.para #[.text "body text"]]] }
+  let passing : Ir.Color := { r := 0x75, g := 0x75, b := 0x75 }
+  let grey : Ir.Color := { r := 0x80, g := 0x80, b := 0x80 }
+  t "a title legible on the page both artifacts ship draws nothing"
+    (Contrast.docDiags (titled passing)).isEmpty
+  let doc := titled grey
   let out := layoutOf oneFace doc
   -- The artifact half: the title ships on no fill of its own.
   let runs := out.pages.flatMap fun p => p.lines.flatMap fun l =>
@@ -3144,15 +3159,13 @@ def titledGroundChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) :
     (runs.any fun (color, ground) => color == grey && ground == none)
   t "the undeclared page paints no fill"
     (out.pages.all fun p => p.fills.isEmpty)
-  -- The judge half: it speaks for the pair the reader sees. Grounded on
-  -- white it said nothing at all.
+  -- The judge half: it speaks for the pair the reader sees.
   let ds := Contrast.docDiags doc
   t "the judge speaks for the shipped titled pair" (!ds.isEmpty)
   t "the judge names the ground the page ships"
-    (ds.any fun d => d.code == "W0345" && hasStr (diagWords d) "#FAFAF9")
-  -- A declared bar is still the ground: the fix resolves the undeclared
-  -- page, it does not override a bar.
-  let barPal := (pal.declareKey "blocktitlebg" { r := 0xEE, g := 0xEE, b := 0xEE })
+    (ds.any fun d => d.code == "W0345" && hasStr (diagWords d) "#FFFFFF")
+  -- A declared bar is still the ground: the page does not override a bar.
+  let barPal := (doc.palette.declareKey "blocktitlebg" { r := 0xEE, g := 0xEE, b := 0xEE })
   let barDoc := { doc with palette := barPal }
   let barOut := layoutOf oneFace barDoc
   t "a declared bar is the title's ground"
@@ -3163,11 +3176,7 @@ def titledGroundChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) :
           ground == some { r := 0xEE, g := 0xEE, b := 0xEE }
       | _ => false)
   t "the judge grounds the barred title on the bar"
-    ((Contrast.docDiags barDoc).all fun d => !hasStr (diagWords d) "#FAFAF9")
-  -- A declared page is the ground where one is declared, white nowhere.
-  let pagePal := (pal.declareKey "bg" { r := 0xFF, g := 0xFF, b := 0xFF })
-  t "a declared white page is judged as declared"
-    ((Contrast.docDiags { doc with palette := pagePal }).isEmpty)
+    ((Contrast.docDiags barDoc).any fun d => hasStr (diagWords d) "#EEEEEE")
 
 
 /-- A legible document draws no contrast report, and a failing one does:

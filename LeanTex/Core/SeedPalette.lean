@@ -107,9 +107,9 @@ a dark ground reads — calibrated against the screen's shipped dark colours
     text := 6900, edge := aaNonText + margin }
 
 /-- Whether the paper is the darker of the two seeds. -/
-public def Seeds.dark (s : Seeds) : Bool := decide (luminance s.paper < luminance s.ink)
+@[expose] public def Seeds.dark (s : Seeds) : Bool := decide (luminance s.paper < luminance s.ink)
 
-public def Seeds.targets (s : Seeds) (d : GroundDepth) : Targets :=
+@[expose] public def Seeds.targets (s : Seeds) (d : GroundDepth) : Targets :=
   if s.dark then Targets.dark else Targets.light d
 
 /-! ## Families -/
@@ -316,13 +316,13 @@ derived roles, and nothing for a role generation does not set. -/
   | .codeInk | .codeKeyword | .codeName | .codeLiteral | .codeComment | .codeError => none
 
 /-- The palette roles generation derives: every role it sets but the seeds. -/
-public def derivedRoles : List Ir.Role :=
+@[expose] public def derivedRoles : List Ir.Role :=
   [.muted, .alert, .example, .rule, .focus, .surface, .surfaceStrong, .accentWash, .accentSoft,
    .accentText, .accentEdge, .mutedOnInverse, .accentOnInverse, .diagramMuted, .alertBandInk,
    .exampleBandInk]
 
 /-- The palette roles generation sets: the seeds' three, then what it derives. -/
-public def tierRoles : List Ir.Role := [.page, .ink, .accent] ++ derivedRoles
+@[expose] public def tierRoles : List Ir.Role := [.page, .ink, .accent] ++ derivedRoles
 
 /-- The colours a generated palette paints its furniture in, each element
 role bound to the palette role it reads, in both block styles: the progress
@@ -584,6 +584,13 @@ public def generate (s : Seeds) (t : Targets) : Except Failure (Generated s t) :
     | some f => .error f
     | none => fail .surface "the palette does not meet its contract"
 
+/-! ## The class's default palette -/
+
+/-- The seeds the engine's own screen colours are generated from where a
+document declares none (`Ir.ClassColors.ink`, `.paper`, `.accent`). -/
+@[expose] public def classSeeds : Seeds :=
+  { ink := ClassColors.ink, paper := ClassColors.paper, accent := ClassColors.accent }
+
 /-- A generated palette as a document keeps it: the seeds, the targets they
 were generated to, the block style, and the colours, so a generated role
 standing on another ground can take its family's tone there (`toneOn`). -/
@@ -611,12 +618,15 @@ palette holds it once the palette roles are installed (`Ir.Palette.applySeedsUnd
 @[expose] public def bound (st : SeedState) : List (Ir.Role × Ir.Role) :=
   bindings st.seeds st.targets st.blocks ++ furniture
 
+/-- The element roles a generated palette's block style and furniture bind. -/
+@[expose] public def elementRoles : List Ir.Role :=
+  [.blockTitleBar, .blockTitleInk, .blockBodyGround, .blockBodyInk, .alertTitleBar,
+   .alertTitleInk, .alertBodyGround, .alertBodyInk, .exampleTitleBar, .exampleTitleInk,
+   .exampleBodyGround, .exampleBodyInk, .progressFill, .progressTrack, .separator]
+
 /-- The element roles a block style and the furniture bind, in either style. -/
-private theorem bound_elements (s : Seeds) (t : Targets) (b : Blocks) :
-    (bindings s t b ++ furniture).map Prod.fst =
-      [.blockTitleBar, .blockTitleInk, .blockBodyGround, .blockBodyInk, .alertTitleBar,
-       .alertTitleInk, .alertBodyGround, .alertBodyInk, .exampleTitleBar, .exampleTitleInk,
-       .exampleBodyGround, .exampleBodyInk, .progressFill, .progressTrack, .separator] := by
+public theorem bound_elements (s : Seeds) (t : Targets) (b : Blocks) :
+    (bindings s t b ++ furniture).map Prod.fst = elementRoles := by
   cases b <;> rfl
 
 /-- **No binding rewrites a seed**: the element roles a block style and the
@@ -626,10 +636,7 @@ public theorem bindings_seeds_exact (s : Seeds) (t : Targets) (b : Blocks) :
   intro x hx
   have hm := List.mem_map_of_mem (f := Prod.fst) hx
   rw [bound_elements] at hm
-  have hall : ∀ r ∈ ([.blockTitleBar, .blockTitleInk, .blockBodyGround, .blockBodyInk,
-      .alertTitleBar, .alertTitleInk, .alertBodyGround, .alertBodyInk, .exampleTitleBar,
-      .exampleTitleInk, .exampleBodyGround, .exampleBodyInk, .progressFill, .progressTrack,
-      .separator] : List Ir.Role), r ≠ .ink ∧ r ≠ .page ∧ r ≠ .accent := by decide
+  have hall : ∀ r ∈ elementRoles, r ≠ .ink ∧ r ≠ .page ∧ r ≠ .accent := by decide
   exact hall _ hm
 
 /-- **The seeds ship exactly**: after the seeds, a generated palette derives

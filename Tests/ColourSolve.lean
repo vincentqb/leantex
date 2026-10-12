@@ -9,14 +9,6 @@ open LeanTex.Core
 
 namespace Tests.ColourSolve
 
-private def hueOf (c : Ir.Color) : Int :=
-  let l := Oklab.labOf c
-  Oklab.hueMilli l.a l.b
-
-/-- Millidegrees between two hues, the short way round. -/
-private def hueGap (h h' : Int) : Int :=
-  let d := (h - h' + 540000) % 360000 - 180000
-  if d < 0 then -d else d
 
 /-- Gamut mapping holds a colour's lightness and hue and loses only chroma;
 the solver that derives a legible tone holds the hue it was given. Before,
