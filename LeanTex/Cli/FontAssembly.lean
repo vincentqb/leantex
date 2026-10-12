@@ -116,30 +116,40 @@ public def buildFontSet (doc : Ir.Doc) (scan : FaceScan)
     else spec.body.orElse fun _ => spec.sans
   -- An undeclared typewriter slot the document sets runs in (the census
   -- `SlotLoss` reports from) takes a typewriter default (`FontDb.monoPick`):
-  -- for a tex document lualatex's own Latin Modern Mono shapes wherever the
-  -- scan holds them, else the text family's designed companion, else the
-  -- first platform monospace, each served at its upright corners in its own
-  -- fixed-pitch faces (`monoPick_contract`, over the pool the resolver reads
-  -- first, as it reads a document's directories before the host's). A
-  -- document that ships its fonts (`\fonts{ dir = ... }`) is answered from
-  -- its own faces first and from the whole scan after them, so a monospace
-  -- it ships is never displaced by the host's, and its code is never set
+  -- for a tex document declaring its text family lualatex's own Latin
+  -- Modern Mono shapes first, as lualatex sets them beside its
+  -- `\setmainfont`; for any other document the text family's designed
+  -- companion first, else the first platform monospace, a tex document's
+  -- lualatex shapes after them. Each is served at its upright corners in its
+  -- own fixed-pitch faces, and at its italic corners whole or upright
+  -- (`monoPick_contract`, over the pool the resolver reads first, as it
+  -- reads a document's directories before the host's). A document that
+  -- ships its fonts (`\fonts{ dir = ... }`) is answered from its own faces
+  -- first, and a monospace it ships is resolved from them alone, its italic
+  -- corners too, so the host neither displaces it nor lends it a face;
+  -- where it ships none the whole scan answers, so its code is never set
   -- proportional where the host holds a monospace. Neither answering leaves
-  -- the slot to the body family, the loss W0390 names; a slot no run reaches
-  -- loads no face, so no page ships one it never sets.
-  -- premise: monoDefaultChecks — two builds of one document, a platform monospace in the scan and not, set its code in different faces and only the second names W0390; a document setting no typewriter run loads no typewriter face and names nothing; a document shipping its fonts sets the monospace it ships whatever the host holds, and the host's where it ships none
+  -- the slot to the body family, the loss W0390 names; a slot no run
+  -- reaches loads no face, so no page ships one it never sets.
+  -- premise: monoDefaultChecks — two builds of one document, a platform monospace in the scan and not, set its code in different faces and only the second names W0390; a document setting no typewriter run loads no typewriter face and names nothing; a document shipping its fonts sets the monospace it ships whatever the host holds, its italics upright where it ships none, and the host's monospace where it ships none
   let tex := doc.surface != .markdown
+  let declaredText := doc.fonts.body.isSome || doc.fonts.sans.isSome
   let own := if docDirs.isEmpty then faces else faces.filter fun f =>
     docDirs.any fun dir => f.path.startsWith (if dir.endsWith "/" then dir else dir ++ "/")
-  let pick := if spec.mono.isNone && (SlotLoss.slotsUsed doc).contains 2 then
-      (FontDb.monoPick tex own textFamily).orElse fun _ => FontDb.monoPick tex faces textFamily
-    else none
+  let wantsMono := spec.mono.isNone && (SlotLoss.slotsUsed doc).contains 2
+  let ownPick := if wantsMono then FontDb.monoPick tex declaredText own textFamily else none
+  let pick := ownPick.orElse fun _ =>
+    if wantsMono then FontDb.monoPick tex declaredText faces textFamily else none
+  let monoOwn := !docDirs.isEmpty && ownPick.isSome
   let spec := match pick with
     | some p =>
       { spec with mono := some p.family
                   faces := spec.faces ++ (p.faces.map fun (c : (Nat × Bool) × String) =>
                     ((2, c.1.1, c.1.2), c.2)).toArray }
     | none => spec
+  -- Whether a run sets italic code, read once and only where the default's
+  -- italic answers upright.
+  let mut italicCode : Option Bool := none
   let mut fonts : Array Font.Font := #[]
   let mut paths : Array String := #[]
   let mut index : Array ((Nat × Nat × Bool) × Nat) := #[]
@@ -202,8 +212,10 @@ public def buildFontSet (doc : Ir.Doc) (scan : FaceScan)
   for (slot, _) in slots do
     let some family := resolveName slot | continue
     for (weight, italic) in standard ++ (extraKeysFor slot).eraseDups do
-      match ← cache.resolveWeight faces family (declaredFace slot weight italic)
-          weight italic with
+      let answer ← if slot == 2 && monoOwn then
+          pure (FontDb.resolveWeight own family (declaredFace slot weight italic) weight italic)
+        else cache.resolveWeight faces family (declaredFace slot weight italic) weight italic
+      match answer with
       | none =>
         unless missing.contains family do
           missing := missing.push family
@@ -214,20 +226,27 @@ public def buildFontSet (doc : Ir.Doc) (scan : FaceScan)
           diags := diags.push (DriverDiag.familyMissing family
             (FontDb.nearest all family).toList all.size)
       | some (face, sub) =>
+        -- The engine's own typewriter default may hold no italic
+        -- (`FontDb.italicCorners`): its italic corners set upright in it,
+        -- unslanted, named once as a note (N0031) where a run sets italic
+        -- code (`Layout.docFaceKeys`) — a variant the document never asked
+        -- of a family it never named is no W0006.
+        -- premise: monoDefaultChecks — the same faces declared as the document's typewriter family name each italic corner's substitution (W0006) where the undeclared slot names one note, both pages setting the code in the same faces; a document setting no italic code names nothing
+        let upright := slot == 2 && pick.isSome && italic && !face.italic
+        if upright && !diags.any (·.kind == .N0031) then
+          let asked := match italicCode with
+            | some a => a
+            | none => (Layout.docFaceKeys doc).any fun (s, _, i) => s == 2 && i
+          italicCode := some asked
+          if asked then
+            diags := diags.push (DriverDiag.monoUpright family tex)
         if let some s := sub then
-          -- The engine's own typewriter default may lack italics
-          -- (`FontDb.uprightCorners`): its italic corners set upright in
-          -- it, unslanted, named once as a note (N0031) — a variant the
-          -- document never asked of a family it never named is no W0006.
-          if slot == 2 && pick.isSome && italic && !face.italic && s matches .variant _ then
-            unless diags.any (·.kind == .N0031) do
-              diags := diags.push (DriverDiag.monoUpright family tex)
-          else
-          let d := DriverDiag.substituted s
-          -- Slots share families, so the same substitution surfaces
-          -- repeatedly; two weights sharing a nearest face are two records.
-          unless diags.any (fun e => e.message == d.message && e.detail == d.detail) do
-            diags := diags.push d
+          unless upright && s matches .variant _ do
+            let d := DriverDiag.substituted s
+            -- Slots share families, so the same substitution surfaces
+            -- repeatedly; two weights sharing a nearest face are two records.
+            unless diags.any (fun e => e.message == d.message && e.detail == d.detail) do
+              diags := diags.push d
         match paths.findIdx? (· == face.path) with
         | some i => index := index.push ((slot, weight, italic), i)
         | none =>

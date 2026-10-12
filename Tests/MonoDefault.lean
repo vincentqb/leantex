@@ -17,7 +17,8 @@ proportional text face, and W0390 named it, whenever its text family had
 no designed companion the scan served: on macOS, where the system's own
 monospace faces ship as font collections the scan skipped, that was every
 such document. The invariants: the platform list is read in order, the
-first family the scan serves whole fills the slot, and W0390 names only a
+first family the scan serves — its upright corners its own, its italics
+both its own or none — fills the slot, and W0390 names only a
 scan that serves none — two builds apart, on either surface — while both
 artifacts set the code in the chosen face: its runs on `Layout.Out`, and
 the HTML's typewriter stack and the face it ships. A collection's faces are
@@ -72,14 +73,18 @@ def scanOf (faces : Array FontDb.Face) : FaceScan :=
 
 /-- **The platform monospace, read in order, and its premise two builds
 apart.** Over scan records: the list's order, a listed family passed over
-for a missing corner or a proportional face, a fixed-pitch family off the
-list never taken, and the companion before the list. Through the driver's
-assembly, on either surface: with a platform monospace in the scan the
-slot is that face, fixed-pitch, and no loss is named; without it, or with
-it short of a corner, the slot is the text face and W0390 names it — the
-default moves ink, it never silences a loss. Both artifacts carry the
-decision: the code's runs on the shipped page, and the HTML's typewriter
-stack and the face its `@font-face` ships. -/
+for a missing upright corner, a proportional face or one italic of two, a
+fixed-pitch family off the list never taken, and the companion before the
+list. Through the driver's assembly, on either surface: with a platform
+monospace in the scan the slot is that face, fixed-pitch, and no loss is
+named; without it, or with it short of a corner, the slot is the text face
+and W0390 names it — the default moves ink, it never silences a loss. Both
+artifacts carry the decision: the code's runs on the shipped page, and the
+HTML's typewriter stack and the face its `@font-face` ships. A default with
+no italic names its upright italics once, only where a run sets italic
+code, a listing's comment among them, where the same faces declared name
+each italic corner's substitution; lualatex's shapes stand first beside a
+declared text face, and last beside the engine's own. -/
 def monoDefaultChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
   let menlo := family4 "Menlo" "m.ttc#0" true
@@ -178,6 +183,20 @@ beside them.\n\n\\begin{verbatim}\nfenced code\n\\end{verbatim}"))).1
         (hasStr help "install one of Latin Modern Mono" && hasStr help "with its bold"
           && hasStr help "or put it in the document's font directory" && hasStr help "\\fonts{ mono")
     | _, _, _, _ => t "the shipped-fonts assemblies succeed" false
+    -- A monospace it ships without italics sets its italic code upright in
+    -- the faces it ships, never in an italic the host holds.
+    let italicDoc := (elabStr (dvDoc "\\fonts{ dir = \"fonts\" }\n"
+      "Plain \\texttt{upright code} and \\textit{\\texttt{slanted code}}.")).1
+    let ownUpright := #[face "DejaVu Sans Mono" true (path := code),
+      face "DejaVu Sans Mono" true (bold := true) (path := code)]
+    match ← buildFontSet italicDoc (shipped (ownText ++ ownUpright) (family4 "DejaVu Sans Mono" hostCode true))
+        (← FontEnv.Cache.mk') .settled with
+    | .ok (fs, _, diags, paths) =>
+      t "a shipped monospace without italics sets its italic code upright in it, never in the host's italic"
+        (!paths.contains hostCode && fs.lookup 2 400 true == fs.lookup 2 400 false
+          && fs.lookup 2 700 true == fs.lookup 2 700 false
+          && (diags.filter (·.kind == .N0031)).size == 1 && !diags.any (·.kind == .W0006))
+    | .error d => t s!"the shipped upright assembly succeeds ({d.message})" false
   -- A listed family that lacks italics still serves: its upright corners are
   -- its own, italic code sets upright in it — the page's italic run in the
   -- upright face, the web page shipping no italic face and synthesising no
@@ -206,10 +225,86 @@ beside them.\n\n\\begin{verbatim}\nfenced code\n\\end{verbatim}"))).1
         (!hasStr html "font-family: \"ltx-mono\"; font-weight: 400; font-style: italic"
           && hasStr html "font-synthesis: small-caps;")
     | .error d => t s!"{surface}: the upright-only assembly succeeds ({d.message})" false
-  -- A tex document takes lualatex's own typewriter shapes first, where the
-  -- scan holds them, its bold from the Light family's, as lualatex sets them;
-  -- a markdown document takes the platform list; a scan short of one shape
-  -- answers with the platform list.
+  -- The note is the census's: a document setting no italic code names
+  -- nothing, its italic corners still answered upright, and a listing's
+  -- comment, set italic by its role, is italic code.
+  for (what, doc, named) in
+      [("tex code with no italic run", (elabStr (dvDoc "" ("Plain \\texttt{upright code}, " ++
+          "\\textit{slanted words} and \\textbf{\\texttt{heavy code}}."))).1, false),
+       ("markdown code with no italic run",
+          (elabMd "Plain `upright code`, *slanted words* and **`heavy code`**.\n").1, false),
+       ("a listing with no comment", (elabStr (dvDoc "" ("\\begin{lstlisting}[language=Python]\n" ++
+          "x = 1\n\\end{lstlisting}"))).1, false),
+       ("a listing's comment", (elabStr (dvDoc "" ("\\begin{lstlisting}[language=Python]\n" ++
+          "# a remark\nx = 1\n\\end{lstlisting}"))).1, true),
+       ("a markdown fence's comment", (elabMd "```python\n# a remark\nx = 1\n```\n").1, true)] do
+    match ← buildFontSet doc uprightOnly (← FontEnv.Cache.mk') .settled with
+    | .ok (fs, _, diags, _) =>
+      t s!"{what}: the italic note is named exactly where italic code is set"
+        ((diags.filter (·.kind == .N0031)).size == (if named then 1 else 0)
+          && !diags.any (·.kind == .W0006) && fs.slotIsFixedPitch 2
+          && fs.lookup 2 400 true == fs.lookup 2 400 false
+          && fs.lookup 2 700 true == fs.lookup 2 700 false)
+    | .error d => t s!"{what}: the assembly succeeds ({d.message})" false
+  -- The note demotes what a declaration names: the same faces declared as
+  -- the typewriter family name each italic corner's substitution (W0006),
+  -- the undeclared slot one note, and both pages set the code alike.
+  let italicSrc := "Plain \\texttt{upright code} and \\textit{\\texttt{slanted code}}."
+  let declaredDoc := (elabStr (dvDoc "\\fonts{ mono = \"DejaVu Sans Mono\" }\n" italicSrc)).1
+  let undeclaredDoc := (elabStr (dvDoc "" italicSrc)).1
+  match ← buildFontSet declaredDoc uprightOnly (← FontEnv.Cache.mk') .settled,
+      ← buildFontSet undeclaredDoc uprightOnly (← FontEnv.Cache.mk') .settled with
+  | .ok (fsD, docD, diagsD, pathsD), .ok (fsU, docU, diagsU, pathsU) =>
+    let subs := diagsD.filter (·.kind == .W0006)
+    t s!"a declared family without italics names each italic corner ({subs.size}), and no note"
+      (subs.size == 2 && !diagsD.any (·.kind == .N0031))
+    t "the undeclared default names one note, and no substitution"
+      ((diagsU.filter (·.kind == .N0031)).size == 1 && !diagsU.any (·.kind == .W0006))
+    let outD := layoutOf fsD docD
+    let outU := layoutOf fsU docU
+    t "declared and undeclared, the italic code sets in the same upright face"
+      (runFace outD "slanted" == some (fsD.lookup 2 400 false)
+        && runFace outU "slanted" == some (fsU.lookup 2 400 false)
+        && pathsD[fsD.lookup 2 400 true]? == pathsU[fsU.lookup 2 400 true]?)
+  | _, _ => t "the declared and undeclared assemblies succeed" false
+  -- A listed family holding one italic of the two is passed over, never
+  -- served with its missing corner substituted: the next listed family
+  -- fills the slot, and with none the slot is the text face, W0390 naming
+  -- it — no substitution named either way.
+  let menloFaces := family4 "Menlo" code true
+  let noBoldItalic : Array FontDb.Face := #[face "SF Mono" true (path := code),
+    face "SF Mono" true (bold := true) (path := code),
+    face "SF Mono" true (italic := true) (path := code)]
+  let noItalic : Array FontDb.Face := #[face "SF Mono" true (path := code),
+    face "SF Mono" true (bold := true) (path := code),
+    face "SF Mono" true (bold := true) (italic := true) (path := code)]
+  t "a listed family missing its bold italic is no default"
+    (!FontDb.servesMono noBoldItalic "SF Mono" && FontDb.monoDefault (noBoldItalic ++ menloFaces) == some "Menlo")
+  t "a listed family missing its regular italic is no default"
+    (!FontDb.servesMono noItalic "SF Mono" && FontDb.monoDefault (noItalic ++ menloFaces) == some "Menlo")
+  t "a listed family with no italic at all serves upright"
+    (FontDb.servesMono #[face "SF Mono" true (path := code), face "SF Mono" true (bold := true) (path := code)]
+      "SF Mono")
+  for (surface, doc) in codeDocs do
+    match ← buildFontSet doc (scanOf (unpaired ++ noBoldItalic ++ menloFaces)) (← FontEnv.Cache.mk') .settled,
+        ← buildFontSet doc (scanOf (unpaired ++ noBoldItalic)) (← FontEnv.Cache.mk') .settled with
+    | .ok (fsA, docA, diagsA, _), .ok (fsB, docB, diagsB, _) =>
+      let loss (fs : Font.FontSet) (d : Ir.Doc) :=
+        SlotLoss.diags d.fonts fs d (SlotLoss.carries #[.pdf, .html] d.fontPolicy)
+      t s!"{surface}: a family missing one italic is passed over for the next, naming nothing"
+        (fsA.slotIsFixedPitch 2 && (loss fsA docA).isEmpty
+          && !diagsA.any (fun d => d.kind == .W0006 || d.kind == .N0031))
+      t s!"{surface}: with no other, the slot is the text face and W0390 names it, no substitution"
+        (fsB.slotCollapsed 2 && (loss fsB docB).any (·.kind == .W0390)
+          && !diagsB.any (fun d => d.kind == .W0006 || d.kind == .N0031))
+    | _, _ => t s!"{surface}: the one-italic assemblies succeed" false
+  -- A tex document declaring its text family takes lualatex's own
+  -- typewriter shapes first, where the scan holds them, its bold from the
+  -- Light family's, as lualatex sets them; one declaring none, as a markdown
+  -- document, takes the platform list first, and a tex one lualatex's
+  -- shapes only after it; a scan short of one italic shape answers with the
+  -- platform list, and one holding neither sets the italics upright in the
+  -- upright shapes.
   IO.FS.withTempDir fun tree => do
     let lm : List (String × String × Bool × Bool) :=
       [("lmmono10-regular.otf", "Latin Modern Mono", false, false),
@@ -225,19 +320,27 @@ beside them.\n\n\\begin{verbatim}\nfenced code\n\\end{verbatim}"))).1
     IO.FS.writeBinFile menloAt (← IO.FS.readBinFile code)
     let withLm := scanOf (unpaired ++ lmFaces ++ family4 "Menlo" menloAt true)
     let shortLm := scanOf (unpaired ++ lmFaces.pop ++ family4 "Menlo" menloAt true)
-    let texDoc := (elabStr (dvDoc "" ("Plain \\texttt{upright code}, \\textbf{\\texttt{heavy code}}, " ++
-      "\\textit{\\texttt{slanted code}} and \\textbf{\\textit{\\texttt{heavy slanted code}}}."))).1
+    let uprightLm := scanOf (unpaired ++ lmFaces.extract 0 2)
+    let src := "Plain \\texttt{upright code}, \\textbf{\\texttt{heavy code}}, " ++
+      "\\textit{\\texttt{slanted code}} and \\textbf{\\textit{\\texttt{heavy slanted code}}}."
+    let texDoc := (elabStr (dvDoc "\\fonts{ body = \"Open Sans\" }\n" src)).1
+    let texDefault := (elabStr (dvDoc "" src)).1
     let mdDoc := (elabMd "Plain `upright code` and **`heavy code`**.\n").1
     -- The file a slot-2 corner sets in: the assembly's paths run beside its faces.
     let fileOf (fs : Font.FontSet) (paths : Array String) (w : Nat) (i : Bool) : String :=
       ((paths[fs.lookup 2 w i]?.getD "").splitOn "/").getLast?.getD ""
+    let lmIn (paths : Array String) : Bool := paths.any fun p => hasStr p "lmmono"
     match ← buildFontSet texDoc withLm (← FontEnv.Cache.mk') .settled,
         ← buildFontSet mdDoc withLm (← FontEnv.Cache.mk') .settled,
-        ← buildFontSet texDoc shortLm (← FontEnv.Cache.mk') .settled with
-    | .ok (fsT, docT, diagsT, pathsT), .ok (_, _, _, pathsM), .ok (_, _, _, pathsS) =>
+        ← buildFontSet texDoc shortLm (← FontEnv.Cache.mk') .settled,
+        ← buildFontSet texDefault withLm (← FontEnv.Cache.mk') .settled,
+        ← buildFontSet texDefault (scanOf (unpaired ++ lmFaces)) (← FontEnv.Cache.mk') .settled,
+        ← buildFontSet texDoc uprightLm (← FontEnv.Cache.mk') .settled with
+    | .ok (fsT, docT, diagsT, pathsT), .ok (_, _, _, pathsM), .ok (_, _, _, pathsS),
+        .ok (_, _, _, pathsU), .ok (fsL, _, diagsL, pathsL), .ok (fsR, docR, diagsR, pathsR) =>
       let f := fileOf fsT pathsT
-      t s!"tex: an undeclared typewriter slot takes lualatex's Latin Modern Mono shapes \
-({f 400 false}, {f 700 false}, {f 400 true}, {f 700 true})"
+      t s!"tex: an undeclared typewriter slot beside a declared text face takes lualatex's \
+Latin Modern Mono shapes ({f 400 false}, {f 700 false}, {f 400 true}, {f 700 true})"
         (f 400 false == "lmmono10-regular.otf" && f 700 false == "lmmonolt10-bold.otf"
           && f 400 true == "lmmono10-italic.otf" && f 700 true == "lmmonolt10-boldoblique.otf"
           && !diagsT.any (fun d => d.kind == .W0006 || d.kind == .N0031))
@@ -246,10 +349,24 @@ beside them.\n\n\\begin{verbatim}\nfenced code\n\\end{verbatim}"))).1
         (runFace out "heavy" == some (fsT.lookup 2 700 false)
           && runFace out "upright" == some (fsT.lookup 2 400 false))
       t "markdown: the platform list, never lualatex's shapes"
-        (pathsM.contains menloAt && !pathsM.any (fun p => hasStr p "lmmono"))
-      t "tex: a scan short of one of lualatex's shapes takes the platform list"
-        (pathsS.contains menloAt && !pathsS.any (fun p => hasStr p "lmmono"))
-    | _, _, _ => t "the Latin Modern assemblies succeed" false
+        (pathsM.contains menloAt && !lmIn pathsM)
+      t "tex: a scan short of one of lualatex's italic shapes takes the platform list"
+        (pathsS.contains menloAt && !lmIn pathsS)
+      t "tex: a document on the engine's own text face takes the platform list before lualatex's shapes"
+        (pathsU.contains menloAt && !lmIn pathsU)
+      let l := fileOf fsL pathsL
+      t s!"tex: lualatex's shapes are its last answer before the text face ({l 400 false}, {l 700 true})"
+        (l 400 false == "lmmono10-regular.otf" && l 700 true == "lmmonolt10-boldoblique.otf"
+          && fsL.slotIsFixedPitch 2 && !diagsL.any (fun d => d.kind == .W0006 || d.kind == .N0031))
+      let r := fileOf fsR pathsR
+      t s!"tex: lualatex's upright shapes alone serve, the italics upright in them, named once \
+({r 400 true}, {r 700 true})"
+        (r 400 false == "lmmono10-regular.otf" && r 700 false == "lmmonolt10-bold.otf"
+          && r 400 true == "lmmono10-regular.otf" && r 700 true == "lmmonolt10-bold.otf"
+          && (diagsR.filter (·.kind == .N0031)).size == 1 && !diagsR.any (·.kind == .W0006))
+      t "tex page: italic code sets upright in lualatex's upright shapes"
+        (runFace (layoutOf fsR docR) "slanted" == some (fsR.lookup 2 400 false))
+    | _, _, _, _, _, _ => t "the Latin Modern assemblies succeed" false
   -- The census reaches every typewriter run a document sets, among them a
   -- picture's label and a formula's typewriter alphabet: each alone moves
   -- the slot to the platform monospace, and without the run nothing loads.

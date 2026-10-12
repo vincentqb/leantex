@@ -30,6 +30,7 @@ example : Shipped → Out := runPost
 example : Ir.Doc → Array Char := docScalars
 example : Ir.Doc → Array Char := docMathScalars
 example : Ir.Doc → Array (Nat × Nat × Bool) := docWeightKeys
+example : Ir.Doc → Array (Nat × Nat × Bool) := docFaceKeys
 example : Array Item → KpSums := kpSums
 
 -- The conservation domain is determined by source constructors alone.

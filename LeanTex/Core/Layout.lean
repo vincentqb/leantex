@@ -3579,12 +3579,13 @@ public def docScalars (doc : Doc) : Array Char := Id.run do
 
 -- Weight keys ------------------------------------------------------------------
 
-/-- Push the face key a styled context resolves to, when its weight is off
-the standard corners the driver always loads (regular 400 and bold 700). -/
-private def pushWeightKey (acc : Array (Nat × Nat × Bool)) (sty : TextStyle) :
+/-- Push the face key a styled context resolves to: every key in the full
+census (`corners`), else only one whose weight is off the standard corners
+the driver always loads (regular 400 and bold 700). -/
+private def pushWeightKey (corners : Bool) (acc : Array (Nat × Nat × Bool)) (sty : TextStyle) :
     Array (Nat × Nat × Bool) :=
   let w := sty.weight.css
-  if w == 400 || w == 700 then acc
+  if !corners && (w == 400 || w == 700) then acc
   else
     let key := (sty.slot, w, sty.italic)
     if acc.contains key then acc else acc.push key
@@ -3595,106 +3596,135 @@ mutual
 -- `foldInlines` leaf because the key is a function of the styled
 -- *ancestry* (`applyStyle` folded down the spine), which a context-free
 -- leaf fold cannot see.
-private def weightKeysInline (acc : Array (Nat × Nat × Bool)) (sty : TextStyle) :
+private def weightKeysInline (corners : Bool) (acc : Array (Nat × Nat × Bool)) (sty : TextStyle) :
     Ir.Inline → Array (Nat × Nat × Bool)
   | .styled st body =>
     -- the ladder never moves a weight (`weight_agree`), so the census may
     -- pass the engine scale
     let sty := applyStyle Ir.sizeScale sty st
-    weightKeysInlineList (pushWeightKey acc sty) sty body.toList
-  | .located _ body => weightKeysInlineList acc sty body.toList
-  | .colored _ _ body => weightKeysInlineList acc sty body.toList
-  | .role _ body => weightKeysInlineList acc sty body.toList
-  | .link _ body => weightKeysInlineList acc sty body.toList
-  | .decorated _ body => weightKeysInlineList acc sty body.toList
-  | .onSteps _ body => weightKeysInlineList acc sty body.toList
+    weightKeysInlineList corners (pushWeightKey corners acc sty) sty body.toList
+  | .located _ body => weightKeysInlineList corners acc sty body.toList
+  | .colored _ _ body => weightKeysInlineList corners acc sty body.toList
+  | .role _ body => weightKeysInlineList corners acc sty body.toList
+  | .link _ body => weightKeysInlineList corners acc sty body.toList
+  | .decorated _ body => weightKeysInlineList corners acc sty body.toList
+  | .onSteps _ body => weightKeysInlineList corners acc sty body.toList
   | .altSteps _ active otherwise =>
-    weightKeysInlineList (weightKeysInlineList acc sty active.toList) sty otherwise.toList
+    weightKeysInlineList corners (weightKeysInlineList corners acc sty active.toList) sty otherwise.toList
   -- A note body sets at the page foot in the base style, not the mark's.
-  | .footnote _ body => weightKeysInlineList acc {} body.toList
+  | .footnote _ body => weightKeysInlineList corners acc {} body.toList
   | .text _ | .math _ _ | .formula _ _ _ | .image _ _ _ | .icon _ _
   | .label _ | .ref _ _ _ _ | .cite _ _
   | .fill | .hspace _ _ | .rule _ _ _ | .strut _ | .italicCorr _ | .pageNumber | .pageCount | .linebreak _ => acc
 
-private def weightKeysInlineList (acc : Array (Nat × Nat × Bool))
+private def weightKeysInlineList (corners : Bool) (acc : Array (Nat × Nat × Bool))
     (sty : TextStyle) : List Ir.Inline → Array (Nat × Nat × Bool)
   | [] => acc
-  | x :: rest => weightKeysInlineList (weightKeysInline acc sty x) sty rest
+  | x :: rest => weightKeysInlineList corners (weightKeysInline corners acc sty x) sty rest
 end
 
 mutual
-private def weightKeysBlock (acc : Array (Nat × Nat × Bool)) :
+private def weightKeysBlock (corners : Bool) (acc : Array (Nat × Nat × Bool)) :
     Ir.Block → Array (Nat × Nat × Bool)
-  | .para content => weightKeysInlineList acc {} content.toList
+  | .para content => weightKeysInlineList corners acc {} content.toList
   | .equation num content =>
-    weightKeysInlineList (weightKeysInlineList acc {} content.toList) {} num.toList
-  | .section _ _ _ title => weightKeysInlineList acc {} title.toList
-  | .list _ items => weightKeysBlockItems acc items.toList
-  | .center body => weightKeysBlockList acc body.toList
-  | .ragged _ body => weightKeysBlockList acc body.toList
-  | .quote body => weightKeysBlockList acc body.toList
-  | .abstract body => weightKeysBlockList acc body.toList
+    weightKeysInlineList corners (weightKeysInlineList corners acc {} content.toList) {} num.toList
+  | .section _ _ _ title => weightKeysInlineList corners acc {} title.toList
+  | .list _ items => weightKeysBlockItems corners acc items.toList
+  | .center body => weightKeysBlockList corners acc body.toList
+  | .ragged _ body => weightKeysBlockList corners acc body.toList
+  | .quote body => weightKeysBlockList corners acc body.toList
+  | .abstract body => weightKeysBlockList corners acc body.toList
   | .titled _ title body =>
-    weightKeysBlockList (weightKeysInlineList acc {} title.toList) body.toList
+    weightKeysBlockList corners (weightKeysInlineList corners acc {} title.toList) body.toList
   | .disclosure summary _ body =>
-    weightKeysBlockList (weightKeysInlineList acc {} (Ir.disclosureSummary summary).toList)
+    weightKeysBlockList corners (weightKeysInlineList corners acc {} (Ir.disclosureSummary summary).toList)
       body.toList
-  | .role _ body => weightKeysBlockList acc body.toList
-  | .link _ body => weightKeysBlockList acc body.toList
-  | .spaced _ body => weightKeysBlockList acc body.toList
-  | .columns cols => weightKeysBlockCols acc cols.toList
-  | .onSteps _ body => weightKeysBlockList acc body.toList
+  | .role _ body => weightKeysBlockList corners acc body.toList
+  | .link _ body => weightKeysBlockList corners acc body.toList
+  | .spaced _ body => weightKeysBlockList corners acc body.toList
+  | .columns cols => weightKeysBlockCols corners acc cols.toList
+  | .onSteps _ body => weightKeysBlockList corners acc body.toList
   | .altSteps _ active otherwise =>
-    weightKeysBlockList (weightKeysBlockList acc active.toList) otherwise.toList
-  | .only _ body => weightKeysBlockList acc body.toList
-  | .nav _ body => weightKeysBlockList acc body.toList
-  | .note body => weightKeysBlockList acc body.toList
+    weightKeysBlockList corners (weightKeysBlockList corners acc active.toList) otherwise.toList
+  | .only _ body => weightKeysBlockList corners acc body.toList
+  | .nav _ body => weightKeysBlockList corners acc body.toList
+  | .note body => weightKeysBlockList corners acc body.toList
   | .frame title _ _ _ body =>
-    weightKeysBlockList (weightKeysInlineList acc {} title.toList) body.toList
-  | .framefoot content => weightKeysInlineList acc {} content.toList
+    weightKeysBlockList corners (weightKeysInlineList corners acc {} title.toList) body.toList
+  | .framefoot content => weightKeysInlineList corners acc {} content.toList
   | .float _ _ _ body caption =>
-    weightKeysBlockList (weightKeysInlineList acc {} caption.toList) body.toList
-  | .table _ _ _ rows _ _ => weightKeysTableRows acc rows.toList
+    weightKeysBlockList corners (weightKeysInlineList corners acc {} caption.toList) body.toList
+  | .table _ _ _ rows _ _ => weightKeysTableRows corners acc rows.toList
   -- A line's content and comment set at the base style; the generated
   -- keyword bold is a corner face, not an off-corner key.
   | .algorithm _ _ lines =>
     lines.foldl (fun a l =>
-      let a := weightKeysInlineList a {} l.content.toList
+      let a := weightKeysInlineList corners a {} l.content.toList
       match l.comment with
-      | some c => weightKeysInlineList a {} c.toList
+      | some c => weightKeysInlineList corners a {} c.toList
       | none => a) acc
-  | .logo content => weightKeysInlineList acc {} content.toList
+  | .logo content => weightKeysInlineList corners acc {} content.toList
   | .picture pic =>
-    pic.labelContents.foldl (fun a c => weightKeysInlineList a {} c.toList) acc
+    pic.labelContents.foldl (fun a c => weightKeysInlineList corners a {} c.toList) acc
   -- A field is body text, set at the base style: its `\fontseries` asks
   -- the faces the body's would.
   | .bibliography _ _ items =>
-    items.foldl (fun a it => weightKeysInlineList a {} it.content.toList) acc
-  | .verbatim _ _ _ | .setPalette _ | .setTokens _ | .pagebreak
+    items.foldl (fun a it => weightKeysInlineList corners a {} it.content.toList) acc
+  -- A listing sets in the mono slot, each token in its role's weights
+  -- (`Listing.paintRun` over `Role.weights`): corners all, so only the full
+  -- census lexes it. Its caption is body text.
+  | .verbatim _ s spec =>
+    let acc := match spec.caption with
+      | some (_, caption) => weightKeysInlineList corners acc {} caption.toList
+      | none => acc
+    if corners then
+      let mono := applyStyle Ir.sizeScale {} .mono
+      (spec.tokenLines s).foldl (fun a line => line.foldl (fun a t =>
+        let (bold, italic) := t.kind.role.weights
+        let sty := if bold then applyStyle Ir.sizeScale mono .bold else mono
+        pushWeightKey true a (if italic then applyStyle Ir.sizeScale sty .italic else sty)) a) acc
+    else acc
+  | .setPalette _ | .setTokens _ | .pagebreak
   | .rule _ _ _ => acc
 
-private def weightKeysBlockList (acc : Array (Nat × Nat × Bool)) :
+private def weightKeysBlockList (corners : Bool) (acc : Array (Nat × Nat × Bool)) :
     List Ir.Block → Array (Nat × Nat × Bool)
   | [] => acc
-  | b :: rest => weightKeysBlockList (weightKeysBlock acc b) rest
+  | b :: rest => weightKeysBlockList corners (weightKeysBlock corners acc b) rest
 
-private def weightKeysBlockItems (acc : Array (Nat × Nat × Bool)) :
+private def weightKeysBlockItems (corners : Bool) (acc : Array (Nat × Nat × Bool)) :
     List (Array Ir.Block) → Array (Nat × Nat × Bool)
   | [] => acc
-  | item :: rest => weightKeysBlockItems (weightKeysBlockList acc item.toList) rest
+  | item :: rest => weightKeysBlockItems corners (weightKeysBlockList corners acc item.toList) rest
 
-private def weightKeysBlockCols (acc : Array (Nat × Nat × Bool)) :
+private def weightKeysBlockCols (corners : Bool) (acc : Array (Nat × Nat × Bool)) :
     List (Ir.BoxWidth × Array Ir.Block) → Array (Nat × Nat × Bool)
   | [] => acc
-  | (_, body) :: rest => weightKeysBlockCols (weightKeysBlockList acc body.toList) rest
+  | (_, body) :: rest => weightKeysBlockCols corners (weightKeysBlockList corners acc body.toList) rest
 
-private def weightKeysTableRows (acc : Array (Nat × Nat × Bool)) :
+private def weightKeysTableRows (corners : Bool) (acc : Array (Nat × Nat × Bool)) :
     List (Array (Array Ir.Inline)) → Array (Nat × Nat × Bool)
   | [] => acc
   | row :: rest =>
-    weightKeysTableRows (row.foldl
-      (fun a cell => weightKeysInlineList a {} cell.toList) acc) rest
+    weightKeysTableRows corners (row.foldl
+      (fun a cell => weightKeysInlineList corners a {} cell.toList) acc) rest
 end
+
+/-- The face keys the document's runs ask, every key or only the off-corner
+ones (`pushWeightKey`). -/
+private def docKeys (corners : Bool) (doc : Doc) : Array (Nat × Nat × Bool) := Id.run do
+  let mut acc := weightKeysBlockList corners #[] doc.body.toList
+  if let some h := doc.head then
+    acc := weightKeysInlineList corners acc {} h.toList
+  if let some f := doc.foot then
+    acc := weightKeysInlineList corners acc {} f.toList
+  for (_, st) in doc.styles.entries do
+    if let some tpl := st.font then
+      acc := weightKeysInlineList corners acc {} tpl.toList
+    if let some tpl := st.authorFont then
+      acc := weightKeysInlineList corners acc {} tpl.toList
+  return acc
 
 /-- Every off-corner face key the document's styles can ask
 `FontSet.lookup` for: `(slot, weight, italic)` with the styled ancestry
@@ -3706,18 +3736,14 @@ silently falling back to the regular face, and keeps the never-silent
 substitution warning (W0366) firing only for weights the document
 really uses. Style templates (`\style{...}{ font = ... }`) join at the
 base style, as their elaboration does. -/
-public def docWeightKeys (doc : Doc) : Array (Nat × Nat × Bool) := Id.run do
-  let mut acc := weightKeysBlockList #[] doc.body.toList
-  if let some h := doc.head then
-    acc := weightKeysInlineList acc {} h.toList
-  if let some f := doc.foot then
-    acc := weightKeysInlineList acc {} f.toList
-  for (_, st) in doc.styles.entries do
-    if let some tpl := st.font then
-      acc := weightKeysInlineList acc {} tpl.toList
-    if let some tpl := st.authorFont then
-      acc := weightKeysInlineList acc {} tpl.toList
-  return acc
+public def docWeightKeys (doc : Doc) : Array (Nat × Nat × Bool) := docKeys false doc
+
+/-- Every face key the document's runs ask `FontSet.lookup` for, the
+corners among them, by the same walk as `docWeightKeys`: a listing's tokens
+in their roles' weights too. The italic of a key is exact — no layout base
+style sets italic — while a heading's weight is read at the base style its
+walk passes. -/
+public def docFaceKeys (doc : Doc) : Array (Nat × Nat × Bool) := docKeys true doc
 
 -- Math -------------------------------------------------------------------------
 

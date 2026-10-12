@@ -108,13 +108,19 @@ def fontSetFor (faces : Array FontDb.Face) (doc : Ir.Doc) : IO (Option Font.Font
   let mut fonts : Array Font.Font := #[]
   let mut paths : Array String := #[]
   let mut index : Array ((Nat × Nat × Bool) × Nat) := #[]
+  let pick := if spec.mono.isNone then
+      FontDb.monoPick (doc.surface != .markdown) (spec.body.isSome || spec.sans.isSome) faces
+        (some family)
+    else none
   let famOf (slot : Nat) : String := match slot with
     | 1 => spec.sans.getD family
-    | 2 => spec.mono.getD ((FontDb.monoFor faces (some family)).getD family)
+    | 2 => spec.mono.getD ((pick.map (·.family)).getD family)
     | _ => family
+  let fileOf (slot w : Nat) (i : Bool) : Option String :=
+    if slot == 2 then pick.bind fun p => List.lookup (w, i) p.faces else none
   for slot in [0:3] do
     for (w, i) in [(400, false), (700, false), (400, true), (700, true)] do
-      if let some (face, _) := FontDb.resolveWeight faces (famOf slot) none w i then
+      if let some (face, _) := FontDb.resolveWeight faces (famOf slot) (fileOf slot w i) w i then
         match paths.findIdx? (· == face.path) with
         | some k => index := index.push ((slot, w, i), k)
         | none =>

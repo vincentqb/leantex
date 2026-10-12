@@ -726,8 +726,9 @@ public def monoCompanions : Array Pairing := #[
 
 /-- The default text families no project ships a designed typewriter face
 beside: their documents' undeclared slot takes the first platform monospace
-the scan serves (`monoDefault`), and keeps the text family, which W0390
-names, where it serves none. -/
+the scan serves (`monoDefault`) — a tex document's, where it serves none,
+lualatex's own shapes (`monoPick`) — and keeps the text family, which W0390
+names, where nothing serves. -/
 public def monoUnpaired : List String := ["Helvetica Neue", "Inter"]
 
 /-- The four corners NFSS names for every family — regular, bold, italic,
@@ -735,10 +736,17 @@ bold italic — at the weights the driver's assembly asks them at. -/
 public def corners : List (Nat × Bool) := [(400, false), (700, false), (400, true), (700, true)]
 
 /-- The upright corners, regular and bold: what a typewriter default must
-serve with its own faces. Its italic corners may be missing — Debian's
-`fonts-dejavu-core` ships DejaVu Sans Mono's Regular and Bold alone — and
-then italic code sets upright in it, never slanted, named once (N0031). -/
+serve with its own faces. -/
 public def uprightCorners : List (Nat × Bool) := [(400, false), (700, false)]
+
+/-- The italic corners, regular and bold: a typewriter default serves both
+with its own faces, or holds no italic face at all — Debian's
+`fonts-dejavu-core` ships DejaVu Sans Mono's Regular and Bold alone — and
+sets both upright in it, never slanted, named once where a document sets
+italic code (N0031). A family holding one italic of the two is no default:
+the corner it lacks would set in its other italic, a substitution of a
+family the document never named. -/
+public def italicCorners : List (Nat × Bool) := [(400, true), (700, true)]
 
 /-- Does the assembly's own resolver (`resolveWeight`, with nothing
 declared) answer this corner of `family` with the family's own face,
@@ -757,11 +765,58 @@ private theorem cornerFixed_fixedPitch (faces : Array Face) (family : String) (c
     exact ⟨f, heq, h⟩
   · exact absurd h Bool.false_ne_true
 
+/-- Does the same resolver answer this corner with an upright fixed-pitch
+face — its answer for an italic corner of a family holding no italic face,
+since italic is categorical and only an italic-free family's upright faces
+answer one? -/
+public def cornerUpright (faces : Array Face) (family : String) (c : Nat × Bool) : Bool :=
+  match resolveWeight faces family none c.1 c.2 with
+  | some (f, _) => !f.italic && f.fixedPitch
+  | none => false
+
+private theorem cornerUpright_upright (faces : Array Face) (family : String) (c : Nat × Bool)
+    (h : cornerUpright faces family c = true) :
+    ∃ f s, resolveWeight faces family none c.1 c.2 = some (f, s) ∧ f.italic = false ∧
+      f.fixedPitch = true := by
+  unfold cornerUpright at h
+  split at h
+  · rename_i f s heq
+    simp only [Bool.and_eq_true, Bool.not_eq_true'] at h
+    exact ⟨f, s, heq, h.1, h.2⟩
+  · exact absurd h Bool.false_ne_true
+
 /-- Does the scan serve `family` as a typewriter family: its upright
 corners (`uprightCorners`) each its own face, unsubstituted and fixed-pitch
-(`cornerFixed`)? -/
+(`cornerFixed`), and its italic corners (`italicCorners`) both so, or both
+upright in it (`cornerUpright`)? -/
 public def servesMono (faces : Array Face) (family : String) : Bool :=
-  uprightCorners.all (cornerFixed faces family)
+  uprightCorners.all (cornerFixed faces family) &&
+    (italicCorners.all (cornerFixed faces family) || italicCorners.all (cornerUpright faces family))
+
+/-- What a typewriter default serves, through the resolver call the
+assembly makes for each corner: its upright corners each its own
+fixed-pitch face, unsubstituted, and its italic corners both so, or both an
+upright fixed-pitch face of it. It never sets code in a proportional face
+or a substituted weight, and never in a family missing one italic of two. -/
+public def MonoServed (faces : Array Face) (family : String) : Prop :=
+  (∀ c ∈ uprightCorners, ∃ f, resolveWeight faces family none c.1 c.2 = some (f, none) ∧
+      f.fixedPitch = true) ∧
+    ((∀ c ∈ italicCorners, ∃ f, resolveWeight faces family none c.1 c.2 = some (f, none) ∧
+        f.fixedPitch = true) ∨
+      (∀ c ∈ italicCorners, ∃ f s, resolveWeight faces family none c.1 c.2 = some (f, s) ∧
+        f.italic = false ∧ f.fixedPitch = true))
+
+/-- **A family the scan serves as a typewriter family is served whole or
+upright** (`MonoServed`). -/
+public theorem servesMono_contract (faces : Array Face) (family : String)
+    (h : servesMono faces family = true) : MonoServed faces family := by
+  unfold servesMono at h
+  simp only [Bool.and_eq_true, Bool.or_eq_true] at h
+  obtain ⟨hu, hi⟩ := h
+  refine ⟨fun c hc => cornerFixed_fixedPitch faces family c (List.all_eq_true.mp hu c hc), ?_⟩
+  rcases hi with hown | hup
+  · exact Or.inl fun c hc => cornerFixed_fixedPitch faces family c (List.all_eq_true.mp hown c hc)
+  · exact Or.inr fun c hc => cornerUpright_upright faces family c (List.all_eq_true.mp hup c hc)
 
 /-- The typewriter family an undeclared slot takes first (`monoFor`): its
 text family's designed companion (`monoCompanions`), when the scan serves
@@ -771,23 +826,19 @@ public def monoCompanion (faces : Array Face) (text : String) : Option String :=
   (companionRow monoCompanions text).bind fun row =>
     if servesMono faces row.companion then some row.companion else none
 
-/-- **The default sets no upright corner it cannot serve.** A family the
-default picks answers its regular and bold, through the same resolver call
-the assembly makes, with its own face, unsubstituted and fixed-pitch: it
-never sets code in a proportional face or a substituted weight, and it is
-never a guess beyond the sourced rows. An italic it lacks sets upright in
-it, named once (N0031). -/
+/-- **The default sets no corner it cannot serve.** A family the default
+picks is served (`MonoServed`) through the same resolver call the assembly
+makes: it never sets code in a proportional face or a substituted weight,
+and it is never a guess beyond the sourced rows. An italic it lacks sets
+upright in it, named once (N0031). -/
 public theorem monoCompanion_contract (faces : Array Face) (text family : String)
-    (h : monoCompanion faces text = some family) :
-    ∀ c ∈ uprightCorners, ∃ f, resolveWeight faces family none c.1 c.2 = some (f, none) ∧
-      f.fixedPitch = true := by
+    (h : monoCompanion faces text = some family) : MonoServed faces family := by
   unfold monoCompanion at h
   rcases Option.bind_eq_some_iff.mp h with ⟨row, _, hrow⟩
   split at hrow
-  · rename_i hall
+  · rename_i hs
     cases hrow
-    intro c hc
-    exact cornerFixed_fixedPitch faces _ c (List.all_eq_true.mp hall c hc)
+    exact servesMono_contract faces _ hs
   · cases hrow
 
 /-- The default is drawn from the sourced rows: a family it picks is the
@@ -809,9 +860,8 @@ host: a face is taken because the font environment holds it, never because
 of the operating system's name, so the artifact stays a function of the
 document and its font environment. The engine ships none of these faces.
 
-A tex document takes lualatex's own answer first wherever the scan holds
-it (`latinModernMonoFaces`): this list is what a markdown document takes,
-and what a tex document takes where no TeX tree serves Latin Modern Mono.
+A tex document declaring its text family reads lualatex's own shapes
+before this list, and any other tex document after it (`monoPick`).
 Sources:
 - developer.apple.com/fonts — SF Mono, Apple's monospaced system family,
   where a user has installed it into a font directory.
@@ -834,20 +884,17 @@ public def monoDefault (faces : Array Face) : Option String :=
 /-- The typewriter family an undeclared slot the document sets runs in
 takes, on either surface: the text family's designed companion where the
 scan serves it, else the first platform monospace it serves, else none —
-and the slot falls to the text family, the loss W0390 names. -/
+and the slot falls to the text family, the loss W0390 names, unless a tex
+document's lualatex shapes answer (`monoPick`). -/
 public def monoFor (faces : Array Face) (text : Option String) : Option String :=
   (text.bind (monoCompanion faces ·)).orElse fun _ => monoDefault faces
 
-/-- **The platform default sets no upright corner it cannot serve**, as the
+/-- **The platform default sets no corner it cannot serve**, as the
 companion does not (`monoCompanion_contract`): never a proportional face,
-never a substituted weight. -/
+never a substituted weight, never one italic of two. -/
 public theorem monoDefault_contract (faces : Array Face) (family : String)
-    (h : monoDefault faces = some family) :
-    ∀ c ∈ uprightCorners, ∃ f, resolveWeight faces family none c.1 c.2 = some (f, none) ∧
-      f.fixedPitch = true := by
-  have hs := List.find?_some h
-  intro c hc
-  exact cornerFixed_fixedPitch faces family c (List.all_eq_true.mp hs c hc)
+    (h : monoDefault faces = some family) : MonoServed faces family :=
+  servesMono_contract faces family (List.find?_some h)
 
 /-- The platform default is drawn from the sourced list, and every family
 listed before it is one the scan does not serve: the list is read in
@@ -860,13 +907,11 @@ public theorem monoDefault_mem (faces : Array Face) (family : String)
   obtain ⟨before, after, hsplit, hbefore⟩ := List.find?_eq_some_iff_append.mp h |>.2
   exact ⟨before, after, hsplit, fun g hg => by simpa using hbefore g hg⟩
 
-/-- **Whatever family fills an undeclared typewriter slot serves its
-upright corners** in its own fixed-pitch faces: the companion's contract and
-the platform default's, one statement for the assembly's one call. -/
+/-- **Whatever family `monoFor` answers is served** (`MonoServed`): the
+companion's contract and the platform default's, one statement for the
+assembly's one call. -/
 public theorem monoFor_contract (faces : Array Face) (text : Option String) (family : String)
-    (h : monoFor faces text = some family) :
-    ∀ c ∈ uprightCorners, ∃ f, resolveWeight faces family none c.1 c.2 = some (f, none) ∧
-      f.fixedPitch = true := by
+    (h : monoFor faces text = some family) : MonoServed faces family := by
   unfold monoFor at h
   generalize hc : text.bind (monoCompanion faces ·) = pick at h
   match pick, hc, h with
@@ -878,35 +923,95 @@ public theorem monoFor_contract (faces : Array Face) (text : Option String) (fam
   | none, _, h =>
     exact monoDefault_contract faces family (by simpa [Option.orElse] using h)
 
+/-- The family lualatex's typewriter shapes are filed under here: the
+typographic family of the regular and italic files, whose bold is the
+Light family's (`latinModernMonoFaces`). -/
+public def latinModernMono : String := "Latin Modern Mono"
+
 /-- lualatex's own typewriter shapes for a tex document that declares none,
-as measured (TeX Live 2026, with and without fontspec's `\setmainfont`):
-`\texttt` sets in LMMono10-Regular, `\textit` over it in LMMono10-Italic, and
-`\textbf` and bold italic in the Light family's bold, LMMonoLt10-Bold and
-LMMonoLt10-BoldOblique (`tulmtt.fd` maps `b/n` to `lmmonolt10-bold`, and
-substitutes `b/sl` for the missing `bx/it`). The shapes span two families,
-so they are named by their files, the files every TeX distribution
-installs: a corner's face file, regular, bold, italic, bold italic. -/
+measured under lualatex (TeX Live 2026, with and without fontspec's
+`\setmainfont`; `\fontname\font` at each size and shape) and read in
+`tulmtt.fd`: `\textit` over `\texttt` sets in LMMono10-Italic at every size,
+`\textbf` in the Light family's bold, LMMonoLt10-Bold (`b/n`), and bold
+italic in LMMonoLt10-BoldOblique (`tulmtt.fd` substitutes `b/sl` for
+`b/it`), each at every size; the regular upright sets in LMMono10-Regular
+from 9.5 pt up to 11 pt. The shapes span two families, so they are named by
+their files, the files every TeX distribution installs: a corner's face
+file, regular, bold, italic, bold italic.
+
+Pending work, where the page departs from lualatex's: the regular upright
+is the 10-point design at every size, where lualatex takes LMMono8-Regular
+below 8.5 pt (a `\footnotesize` listing in a 10-point class), LMMono9-Regular
+from 8.5 pt (a `\small` one) and LMMono12-Regular from 11 pt (the `12pt`
+class option's text): each advance is 0.531 em, 0.525 em and 0.515 em of
+its file's, against LMMono10's 0.525 em, so a line of code sets 1.1% narrower
+than lualatex's below 8.5 pt, as wide from 8.5 pt to 11 pt, and 1.9% wider
+from 11 pt, in the 10-point design's strokes throughout. `\textsl` over
+`\texttt` sets in the italic, LMMono10-Italic, where lualatex takes
+LMMonoSlant10-Regular (`m/sl`), on the same 0.525 em advance; and `\textsc`
+in the regular's capitals scaled to a small capital's size
+(`smallCapScaleFor`), their advance scaled with them, where lualatex takes
+LMMonoCaps10-Regular (`m/sc`), whose small capitals keep the 0.525 em
+advance: the engine's style carries no slanted shape beside the italic and
+no small-capital face. -/
 public def latinModernMonoFaces : List ((Nat × Bool) × String) :=
   [((400, false), "lmmono10-regular.otf"), ((700, false), "lmmonolt10-bold.otf"),
    ((400, true), "lmmono10-italic.otf"), ((700, true), "lmmonolt10-boldoblique.otf")]
 
-/-- Does the scan hold every one of lualatex's typewriter shapes
-(`latinModernMonoFaces`), each a fixed-pitch face the resolver finds by its
-file's name (`resolveNamed`)? -/
-public def servesLatinModernMono (faces : Array Face) : Bool :=
-  latinModernMonoFaces.all fun (_, file) => (resolveNamed faces file).any (·.fixedPitch)
+/-- lualatex's shapes where neither italic file is installed: each italic
+corner set in its upright's file, as a platform monospace with no italic
+face sets its italic corners upright (`italicCorners`). -/
+public def latinModernMonoUpright : List ((Nat × Bool) × String) :=
+  [((400, false), "lmmono10-regular.otf"), ((700, false), "lmmonolt10-bold.otf"),
+   ((400, true), "lmmono10-regular.otf"), ((700, true), "lmmonolt10-bold.otf")]
 
-/-- **lualatex's shapes are met where they are taken**: every corner's file
-is a face of the scan, fixed-pitch, the face the resolver answers a corner
-declared by that file with. -/
+/-- Does the assembly's resolver answer a corner declared by its file — the
+call it makes for each of a pick's files — with a fixed-pitch face,
+unsubstituted: the file's own face (`resolveNamed`)? -/
+public def fileFixed (faces : Array Face) (c : (Nat × Bool) × String) : Bool :=
+  match resolveWeight faces latinModernMono (some c.2) c.1.1 c.1.2 with
+  | some (f, none) => f.fixedPitch
+  | _ => false
+
+/-- lualatex's shapes as the scan serves them, corner by corner: all four
+files (`latinModernMonoFaces`), or — where neither italic file is
+installed — the upright two at every corner (`latinModernMonoUpright`);
+none where an upright file is missing, or one italic file of the two. -/
+public def latinModernMonoServed (faces : Array Face) :
+    Option (List ((Nat × Bool) × String)) :=
+  if latinModernMonoFaces.all (fileFixed faces) then some latinModernMonoFaces
+  else if latinModernMonoUpright.all (fileFixed faces) &&
+      (latinModernMonoFaces.filter (·.1.2)).all fun c => (resolveNamed faces c.2).isNone then
+    some latinModernMonoUpright
+  else none
+
+/-- **lualatex's shapes are met where they are taken**: every corner's
+file answers the resolver call the assembly makes for it — the family, the
+file declared, the corner — with a fixed-pitch face, unsubstituted. -/
 public theorem latinModernMono_contract (faces : Array Face)
-    (h : servesLatinModernMono faces = true) :
-    ∀ c ∈ latinModernMonoFaces, ∃ f, resolveNamed faces c.2 = some f ∧ f.fixedPitch = true := by
-  intro c hc
-  have hc' := List.all_eq_true.mp h c hc
-  cases hr : resolveNamed faces c.2 with
-  | none => simp [hr] at hc'
-  | some f => exact ⟨f, rfl, by simpa [hr] using hc'⟩
+    (files : List ((Nat × Bool) × String)) (h : latinModernMonoServed faces = some files) :
+    ∀ c ∈ files, ∃ f, resolveWeight faces latinModernMono (some c.2) c.1.1 c.1.2 = some (f, none) ∧
+      f.fixedPitch = true := by
+  have fixed : ∀ c, fileFixed faces c = true →
+      ∃ f, resolveWeight faces latinModernMono (some c.2) c.1.1 c.1.2 = some (f, none) ∧
+        f.fixedPitch = true := by
+    intro c hc
+    unfold fileFixed at hc
+    split at hc
+    · rename_i f heq
+      exact ⟨f, heq, hc⟩
+    · exact absurd hc Bool.false_ne_true
+  unfold latinModernMonoServed at h
+  split at h
+  · rename_i hall
+    cases h
+    exact fun c hc => fixed c (List.all_eq_true.mp hall c hc)
+  · split at h
+    · rename_i hup
+      cases h
+      simp only [Bool.and_eq_true] at hup
+      exact fun c hc => fixed c (List.all_eq_true.mp hup.1 c hc)
+    · cases h
 
 /-- What fills an undeclared typewriter slot: a family, and the face files
 it is set in corner by corner where the answer is a set of files rather than
@@ -916,30 +1021,67 @@ public structure MonoPick where
   faces : List ((Nat × Bool) × String) := []
   deriving Repr, BEq
 
-/-- **The typewriter default, read over one pool of faces**: for a tex
-document lualatex's own shapes where the pool holds them all
-(`servesLatinModernMono`), else the family `monoFor` answers — the text
-family's designed companion, else the first platform monospace the pool
-serves. A markdown document has no lualatex answer to keep and reads the
-platform list alone. -/
-public def monoPick (tex : Bool) (faces : Array Face) (text : Option String) : Option MonoPick :=
-  if tex && servesLatinModernMono faces then
-    some { family := "Latin Modern Mono", faces := latinModernMonoFaces }
-  else (monoFor faces text).map fun family => { family }
+/-- lualatex's shapes as a pick, for a tex document. -/
+private def lmPick (tex : Bool) (faces : Array Face) : Option MonoPick :=
+  if tex then (latinModernMonoServed faces).map fun files => { family := latinModernMono, faces := files }
+  else none
 
-/-- A pick is lualatex's shapes, met by their files, or a family that
-serves its upright corners in its own fixed-pitch faces. -/
-public theorem monoPick_contract (tex : Bool) (faces : Array Face) (text : Option String)
-    (p : MonoPick) (h : monoPick tex faces text = some p) :
-    (p.faces = latinModernMonoFaces ∧ servesLatinModernMono faces = true) ∨
-      (p.faces = [] ∧ ∀ c ∈ uprightCorners, ∃ f,
-        resolveWeight faces p.family none c.1 c.2 = some (f, none) ∧ f.fixedPitch = true) := by
+/-- The family `monoFor` answers, as a pick. -/
+private def listedPick (faces : Array Face) (text : Option String) : Option MonoPick :=
+  (monoFor faces text).map fun family => { family }
+
+/-- **The typewriter default, read over one pool of faces.** A tex document
+that declares its text family takes lualatex's own shapes first
+(`latinModernMonoServed`), as lualatex sets them beside a `\setmainfont`,
+and the family `monoFor` answers after them. Any other document takes the
+family `monoFor` answers first — the text family's designed companion, else
+the first platform monospace the pool serves — and a tex document
+lualatex's shapes after it, the last answer before its slot falls to the
+text face; a markdown document has no lualatex answer to keep. A document
+whose text family is the engine's own (`defaultFamily`) does not set its
+text in lualatex's Latin Modern Roman, so lualatex's pairing is not its
+page's: its default's companion is drawn to the text it sits beside —
+DejaVu Sans Mono's x-height is DejaVu Sans's own, 0.547 em, where Latin
+Modern Mono's 0.431 em stands at 79% of it. -/
+public def monoPick (tex declared : Bool) (faces : Array Face) (text : Option String) :
+    Option MonoPick :=
+  if declared then (lmPick tex faces).orElse fun _ => listedPick faces text
+  else (listedPick faces text).orElse fun _ => lmPick tex faces
+
+private theorem orElse_some {α : Type} {o : Option α} {f : Unit → Option α} {a : α}
+    (h : o.orElse f = some a) : o = some a ∨ f () = some a := by
+  cases o with
+  | some x => exact Or.inl (by simpa [Option.orElse] using h)
+  | none => exact Or.inr (by simpa [Option.orElse] using h)
+
+/-- A pick is lualatex's shapes, each file met by the assembly's call for
+its corner, or a family served as a typewriter family (`MonoServed`). -/
+public theorem monoPick_contract (tex declared : Bool) (faces : Array Face)
+    (text : Option String) (p : MonoPick) (h : monoPick tex declared faces text = some p) :
+    (p.family = latinModernMono ∧ ∀ c ∈ p.faces, ∃ f,
+        resolveWeight faces p.family (some c.2) c.1.1 c.1.2 = some (f, none) ∧ f.fixedPitch = true) ∨
+      (p.faces = [] ∧ MonoServed faces p.family) := by
+  have lm : lmPick tex faces = some p → p.family = latinModernMono ∧ ∀ c ∈ p.faces, ∃ f,
+      resolveWeight faces p.family (some c.2) c.1.1 c.1.2 = some (f, none) ∧
+        f.fixedPitch = true := by
+    intro hp
+    unfold lmPick at hp
+    split at hp
+    · obtain ⟨files, hf, rfl⟩ := Option.map_eq_some_iff.mp hp
+      exact ⟨rfl, latinModernMono_contract faces files hf⟩
+    · cases hp
+  have listed : listedPick faces text = some p → p.faces = [] ∧ MonoServed faces p.family := by
+    intro hp
+    unfold listedPick at hp
+    obtain ⟨family, hm, rfl⟩ := Option.map_eq_some_iff.mp hp
+    exact ⟨rfl, monoFor_contract faces text family hm⟩
   unfold monoPick at h
   split at h
-  · rename_i hs
-    cases h
-    exact Or.inl ⟨rfl, (Bool.and_eq_true _ _ ▸ hs).2⟩
-  · obtain ⟨family, hm, rfl⟩ := Option.map_eq_some_iff.mp h
-    exact Or.inr ⟨rfl, monoFor_contract faces text family hm⟩
+  · rcases orElse_some h with hp | hp
+    · exact Or.inl (lm hp)
+    · exact Or.inr (listed hp)
+  · rcases orElse_some h with hp | hp
+    · exact Or.inr (listed hp)
+    · exact Or.inl (lm hp)
 
 end LeanTex.Core.FontDb

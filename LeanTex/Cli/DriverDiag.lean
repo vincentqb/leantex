@@ -137,11 +137,12 @@ why it is a distinct code. Those two are within a family the document
 named: a variant missing (W0006) or a weight missing (W0366), with "install
 the face" as the remedy. This is the family slot itself never named: its
 remedy is a declaration — `\fonts{ mono = "..." }` — or, for the typewriter
-slot, whose default is a platform monospace served at every corner
-(`FontDb.monoDefaults`), one of those families installed whole, or shipped
-whole in its font directory by a document that ships its fonts, the only
-faces its default reads. A markdown source can declare nothing, so its help
-offers no declaration.
+slot, whose default is a monospace served at its upright corners
+(`FontDb.monoPick`) — a platform monospace (`FontDb.monoDefaults`), or for a
+tex document lualatex's Latin Modern Mono — one of those families installed
+with its bold, or put in its font directory by a document that ships its
+fonts, which its default reads before the host's. A markdown source can
+declare nothing, so its help offers no declaration.
 One code, one meaning, and `\allow{W0390}` accepts this loss without also
 accepting every future bold substitution.
 
@@ -163,8 +164,8 @@ public def slotCollapsed (key runs served note : String) (only : Option String)
   let families := match FontDb.monoDefaults.reverse with
     | last :: rest@(_ :: _) => String.intercalate ", " rest.reverse ++ " or " ++ last
     | _ => String.intercalate ", " FontDb.monoDefaults
-  -- A tex document's default reads lualatex's own typewriter shapes first
-  -- (`FontDb.latinModernMonoFaces`), which every TeX distribution installs.
+  -- A tex document's default reads lualatex's own typewriter shapes too
+  -- (`FontDb.latinModernMonoServed`), which every TeX distribution installs.
   let listed := if declarable then s!"Latin Modern Mono, {families}" else families
   let declared := if declarable then s!", or declare one: {declare}" else ""
   let help := if key == "mono" then
@@ -176,10 +177,12 @@ public def slotCollapsed (key runs served note : String) (only : Option String)
     s!"nothing declares a '{key}' family; {whereLost}{runs} set in {served}, {note}"
     (subject := some s!"slot:{key}") (help := help)
 
-/-- **N0031: the engine's typewriter default has no italic face.** A listed
-monospace served at its upright corners fills an undeclared slot
-(`FontDb.servesMono`); its italic corners set upright in it, unslanted —
-both backends never fake a slant — named once per build rather than as a
+/-- **N0031: the engine's typewriter default has no italic face.** A
+default holding no italic — a listed monospace served at its upright
+corners (`FontDb.servesMono`), or Latin Modern Mono without its italic files
+(`FontDb.latinModernMonoServed`) — fills an undeclared slot; its italic
+corners set upright in it, unslanted — both backends never fake a slant —
+named once per build where the document sets italic code, rather than as a
 substitution warning per corner (W0006), which is about a family the
 document named. `declarable` is whether the source can declare a face. -/
 public def monoUpright (family : String) (declarable : Bool := true) : Diag :=

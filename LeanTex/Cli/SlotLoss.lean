@@ -12,10 +12,12 @@ document declares no family for is filled by the body family
 (`resolveName` in the driver's assembly), so a `\texttt`, `\url` or
 verbatim run in a document with no `\fonts{ mono = ... }` sets in body
 prose — unless the scan serves a typewriter family first: an undeclared
-typewriter slot, on either surface, takes the text family's designed
-companion or the first platform monospace served at every corner in fixed
-pitch (`FontDb.monoFor_contract`), and a fixed-pitch slot is no loss — so
-every slot this module reports was served by the body family. This module
+typewriter slot, on either surface, takes a typewriter default
+(`FontDb.monoPick`) — the text family's designed companion, the first
+platform monospace, or for a tex document lualatex's Latin Modern Mono —
+served at its upright corners in fixed pitch (`FontDb.monoPick_contract`),
+and a fixed-pitch slot is no loss — so every slot this module reports was
+served by the body family. This module
 is the decision; the diagnostic is `DriverDiag.slotCollapsed` (W0390).
 
 The decision reads the face, never the slot index. An index says which
