@@ -13432,6 +13432,10 @@ private structure TextSt where
   inlineLangOpts : Array (String × Array String) := #[]
   /-- Names the document defines; a defined `\num` is the document's. -/
   defined : Array String := #[]
+  /-- The document's argument-free commands that stand for a minted call
+  short of its code (`\newcommand{\py}{\mintinline{python}}`), each with
+  that call's head: a use is the call the head and the raws after it make. -/
+  shortcuts : Array (String × Array Raw) := #[]
 
 /-- Standing entries precede the environment's own options, which win.
 Appending declarations within a layer updates keys individually. -/
@@ -13488,6 +13492,85 @@ private def siCtrl (loc : Locale) (n : String) (pos : Pos) (raws : Array Raw)
 private def siCtrls : List String :=
   ["num", "ang", "si", "unit", "SI", "qty", "numrange", "qtyrange", "SIrange"]
 
+/-- A minted listing's or command's call with the defaults standing over it
+injected ahead of its own options: `\setminted`'s global layer, then its
+lexer's, and for inline code `\setmintedinline`'s two after them
+(minted.sty: `\minted@optscopes`). -/
+private def injectMinted (st : TextSt) (env s : String) : String :=
+  let afterOpt := ((Parse.listingOptHead s).map (·.2)).getD 0
+  let lang := ((Parse.mintedLangHead s afterOpt).map (·.1.trimAscii.toString)).getD ""
+  let layer (l : Array (String × Array String)) := ((l.find? (·.1 == lang)).map (·.2)).getD #[]
+  let block := st.mintedOpts ++ layer st.mintedLangOpts
+  injectListingOpts (if env == "mintinline" then
+    block ++ st.inlineOpts ++ layer st.inlineLangOpts else block) s
+
+/-- The head of a minted call a definition's text is, alone — its command,
+an option head and a `{language}` group, the code left to the use — or
+`none`. The definition reads `\define \name() {…}`, as the rewrite spells an
+argument-free `\newcommand`. -/
+private def shortcutHead (raws : Array Raw) (j : Nat) : Option (Array Raw) := do
+  let k := skipSpaces raws (j + 1)
+  guard (raws[k]? matches some (.word "()" _))
+  let some (.group body _) := raws[skipSpaces raws (k + 1)]? | none
+  let body := body.filter fun (r : Raw) => !(r matches .space)
+  let some (Raw.ctrl c _) := body[0]? | none
+  guard (c == "mintinline" || c == "mint")
+  guard (body.back? matches some (.group _ _))
+  guard (body.extract 1 (body.size - 1) |>.all fun r =>
+    match r with
+    | .group .. => false
+    | _ => true)
+  return body
+
+/-- minted's command met as a control word, its call assembled by a
+definition's text (`\newcommand{\py}{\mintinline{python}}`, then `\py{x}`),
+read from the raws after it as minted reads its arguments when it runs:
+`[options]`, `{language}`, then a group's text or the text up to the next
+copy of its first character — the call as the lexer captures one written
+whole (`Lex.mintedCall`), the index past it, and what a word holds past the
+closing delimiter. `none` when the call is not there. -/
+private def mintedRaws (raws : Array Raw) (start : Nat) : Option (String × Nat × Option Raw) := Id.run do
+  let mut k := skipSpaces raws start
+  let mut head := ""
+  if raws[k]? matches some (.sym '[' _) then
+    let mut m := k + 1
+    let mut shut := false
+    for _ in [k + 1:raws.size] do
+      match raws[m]? with
+      | some (.sym ']' _) =>
+        shut := true
+        break
+      | some _ => m := m + 1
+      | none => break
+    unless shut do return none
+    head := "[" ++ Parse.rawSrcList (raws.extract (k + 1) m).toList ++ "]"
+    k := skipSpaces raws (m + 1)
+  let some (.group lang _) := raws[k]? | return none
+  head := head ++ "{" ++ Parse.rawSrc lang ++ "}"
+  let c := skipSpaces raws (k + 1)
+  match raws[c]? with
+  | some (.group code _) => return some (head ++ "{" ++ Parse.rawSrcList code.toList ++ "}", c + 1, none)
+  | some (.word w p) =>
+    let some d := w.toList.head? | return none
+    let mut text := ""
+    let mut rest := (w.drop 1).toString
+    let mut m := c
+    for _ in [c:raws.size] do
+      match rest.splitOn (String.singleton d) with
+      | before :: after :: more =>
+        let tail := String.intercalate (String.singleton d) (after :: more)
+        return some (head ++ String.singleton d ++ text ++ before ++ String.singleton d, m + 1,
+          if tail.isEmpty then none else some (.word tail p))
+      | _ =>
+        text := text ++ rest
+        m := m + 1
+        match raws[m]? with
+        | some (.par _) | none => return none
+        | some (.word w' _) => rest := w'
+        | some r => rest := Parse.rawSrcOne r
+    return none
+  | _ => return none
+
 mutual
 
 /-- The listings/siunitx pass, `rewriteList`'s shape with the flow state
@@ -13504,9 +13587,25 @@ private def textList (loc : Locale) (st : TextSt) (raws : Array Raw)
       -- The definition wins: its name is the document's from here on.
       let j := skipSpaces raws (i + 1)
       let st := match raws[j]?.bind boundName with
-        | some b => { st with defined := st.defined.push b }
+        | some b =>
+          let shortcuts := st.shortcuts.filter (·.1 != b)
+          { st with defined := st.defined.push b
+                    shortcuts := match shortcutHead raws j with
+                      | some head => shortcuts.push (b, head)
+                      | none => shortcuts }
         | none => st
-      textList loc st raws (out.push (.ctrl n pos)) rest (i + 1) 0
+      -- The name it binds is no use of it.
+      textList loc st raws ((out.push (.ctrl n pos)) ++ raws.extract (i + 1) (j + 1)) rest (i + 1)
+        (j - i)
+    else if let some (_, head) := st.shortcuts.find? (·.1 == n) then
+      -- A shortcut's use is the minted call its head and the raws after it make.
+      let joined := head ++ raws.extract (i + 1) raws.size
+      match head[0]?, mintedRaws joined 1 with
+      | some (Raw.ctrl c _), some (call, k, tail) =>
+        let used := k - head.size
+        let out := out.push (.verb c (injectMinted st c call) pos)
+        textList loc st raws (match tail with | some r => out.push r | none => out) rest (i + 1) used
+      | _, _ => textList loc st raws (out.push (.ctrl n pos)) rest (i + 1) 0
     else if (n == "lstset" || n == "setminted" || n == "setmintedinline") &&
         !st.defined.contains n then
       let (lang, j) := if n == "lstset" then (none, i + 1) else takeOpt raws (i + 1)
@@ -13527,20 +13626,25 @@ private def textList (loc : Locale) (st : TextSt) (raws : Array Raw)
           | none => { st with inlineOpts := st.inlineOpts ++ entries }
           | some lang => { st with inlineLangOpts := layered st.inlineLangOpts lang.trimAscii.toString }
       textList loc st raws out rest (i + 1) (k - (i + 1))
+    else if (n == "mintinline" || n == "mint") && !st.defined.contains n &&
+        (mintedRaws raws (i + 1)).isSome then
+      let (call, k, tail) := (mintedRaws raws (i + 1)).getD ("", i + 1, none)
+      let out := out.push (.verb n (injectMinted st n call) pos)
+      textList loc st raws (match tail with | some r => out.push r | none => out) rest (i + 1)
+        (k - (i + 1))
     else if siCtrls.contains n && !st.defined.contains n then
       let (repl, k) ← siCtrl loc n pos raws (i + 1)
       textList loc st raws (out ++ repl) rest (i + 1) (k - (i + 1))
     else
       textList loc st raws (out.push (.ctrl n pos)) rest (i + 1) 0
-  | .verb env s vpos :: rest, i, 0 =>
+  | .verb env s vpos :: rest, i, 0 => do
+    -- The definition wins here too: a document's own `\mintinline` is the
+    -- command its calls run, their captured text read again as tokens.
+    if (env == "mintinline" || env == "mint") && st.defined.contains env then
+      let args := (← synth s).map (rebase (fun _ => vpos) true)
+      return ← textList loc st raws ((out.push (.ctrl env vpos)) ++ args) rest (i + 1) 0
     let s := if env == "lstlisting" then injectListingOpts st.lstOpts s
-      else if env == "minted" || env == "mint" || env == "mintinline" then
-        let afterOpt := ((Parse.listingOptHead s).map (·.2)).getD 0
-        let lang := ((Parse.mintedLangHead s afterOpt).map (·.1.trimAscii.toString)).getD ""
-        let layer (l : Array (String × Array String)) := ((l.find? (·.1 == lang)).map (·.2)).getD #[]
-        let block := st.mintedOpts ++ layer st.mintedLangOpts
-        injectListingOpts (if env == "mintinline" then
-          block ++ st.inlineOpts ++ layer st.inlineLangOpts else block) s
+      else if env == "minted" || env == "mint" || env == "mintinline" then injectMinted st env s
       else s
     textList loc st raws (out.push (.verb env s vpos)) rest (i + 1) 0
   | r :: rest, i, 0 => do
@@ -13605,6 +13709,9 @@ private def textNeededList : List Raw → Bool
   | [] => false
   | .ctrl n _ :: rest =>
     n == "lstset" || n == "setminted" || n == "setmintedinline" || siCtrls.contains n ||
+      n == "mintinline" || n == "mint" ||
+      (n == "define" && ((rest.dropWhile (· matches .space)).head?.bind boundName).any
+        (fun b => b == "mintinline" || b == "mint")) ||
       textNeededList rest
   | r :: rest => textNeededOne r || textNeededList rest
 

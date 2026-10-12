@@ -164,16 +164,50 @@ private def lineEndAt (cs : Array Char) (k : Nat) : Option Nat :=
   | _ => none
 
 /-- Past the spaces at `k` and at most one line end among them, as TeX's
-argument reader skips them; `none` at a blank line, which ends a
+argument reader skips them, and — where `comments` — any comment, which
+spends its own line end (TeX's `%`); `none` at a blank line, which ends a
 paragraph there. -/
-private def argGap (cs : Array Char) (k : Nat) : Option Nat :=
+private def argGap (cs : Array Char) (k : Nat) (comments : Bool := true) : Option Nat := Id.run do
   let blank (c : Char) := c == ' ' || c == '\t'
-  let a := scanWhile cs k blank
-  match lineEndAt cs a with
-  | none => some a
-  | some b =>
-    let c := scanWhile cs b blank
-    if (lineEndAt cs c).isSome then none else some c
+  let mut a := scanWhile cs k blank
+  let mut ends := 0
+  for _ in [0:cs.size] do
+    if comments && cs[a]? == some '%' then
+      let eol := scanWhile cs a (fun c => c != '\n' && c != '\r')
+      a := scanWhile cs ((lineEndAt cs eol).getD eol) blank
+      -- The comment spent its line end; a line end now is a blank line.
+      ends := 1
+    else
+      match lineEndAt cs a with
+      | some b =>
+        if ends > 0 then return none
+        ends := ends + 1
+        a := scanWhile cs b blank
+      | none => break
+  return some a
+
+/-- The commands whose next token is the name they define or show, never a
+call: `\renewcommand\mintinline[2]{…}` names minted's command, so its
+arguments are the definition's, not code. -/
+private def definers : List String :=
+  ["newcommand", "renewcommand", "providecommand", "DeclareRobustCommand",
+   "NewDocumentCommand", "RenewDocumentCommand", "ProvideDocumentCommand",
+   "DeclareDocumentCommand", "NewCommandCopy", "RenewCommandCopy", "DeclareCommandCopy",
+   "LetLtxMacro", "newrobustcmd", "renewrobustcmd", "providerobustcmd",
+   "def", "gdef", "edef", "xdef", "let", "define", "show", "meaning", "string", "noexpand"]
+
+/-- Whether the last token, past white space and a definer's star, is a
+definer. -/
+private def definesNext (toks : Array Token) : Bool := Id.run do
+  let mut k := toks.size
+  for _ in [0:toks.size] do
+    if k == 0 then break
+    k := k - 1
+    match toks[k]? with
+    | some { tok := .space, .. } | some { tok := .word "*", .. } => continue
+    | some { tok := .ctrl n, .. } => return definers.contains n
+    | _ => return false
+  return false
 
 /-- minted's one-line commands, `\mintinline` and `\mint`, read from just
 past the command name as minted.sty (v3.7) reads them: `[options]`, braces
@@ -212,7 +246,10 @@ private def mintedCall (cs : Array Char) (j : Nat) : Option (Nat × Bool × Stri
   let close := scanWhile cs (k + 1) (fun c => c != '}' && c != '\n' && c != '\r')
   unless cs[close]? == some '}' do return none
   head := head ++ strFrom cs k (close + 1)
-  let some code := argGap cs (close + 1) | return some (close + 1, false, head)
+  let some code := argGap cs (close + 1) (comments := false) | return some (close + 1, false, head)
+  -- A closing brace opens no code: the call's code is not here, as in a
+  -- definition that stops at the language (`\newcommand{\py}{\mintinline{python}}`).
+  if cs[code]? == some '}' then return none
   -- A blank line ends the code: a line end, then only spaces, then another.
   let blankAt (m : Nat) : Bool :=
     match lineEndAt cs m with
@@ -456,7 +493,8 @@ public def lex (file : String) (input : String) : Array Token × Array Diag := I
               pos := posOver cs i stop pos
               i := stop
             else if let some (stop, closed, call) :=
-                (if name == "mintinline" || name == "mint" then mintedCall cs j else none) then
+                (if (name == "mintinline" || name == "mint") && !definesNext toks then
+                  mintedCall cs j else none) then
               -- minted's commands read their code raw, as `\verb` does.
               unless closed do
                 diags := diags.push (Diag.of .E0102

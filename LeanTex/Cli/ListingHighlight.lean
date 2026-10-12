@@ -2,6 +2,7 @@ module
 
 public import LeanTex.Core.ListingReply
 public import LeanTex.Core.Diag
+import LeanTex.Core.LexerName
 import LeanTex.Cli.DriverDiag
 import LeanTex.Cli.Host
 import LeanTex.Cli.RunBounded
@@ -95,12 +96,31 @@ private def diagnostic (request : ListingReply.Request)
     (failure : ListingReply.Failure) : Diag :=
   DriverDiag.listingHighlightUnavailable request.language failure.reason
 
+/-- The requests whose loss is the driver's to name: a language outside the
+registry of the release the mirror tracks is named where it stands, by the
+elaborator, when the installed highlighter did not classify it either
+(`LexerName.known`), so one accounting stands for it. -/
+public def driverNamed (request : ListingReply.Request) : Bool :=
+  -- premise: Tests.inlineCodeRequestChecks — a refused language outside the registry is named by the elaborator once, with no placeholder answer to hide it
+  LexerName.known request.language
+
+/-- A decoded batch as the run keeps it: every answer and the driver's named
+refusals, but for a refusal of a language outside the registry, which leaves
+neither a placeholder answer nor a line behind — the elaborator names it
+where it stands (`driverNamed`). -/
+public def settle (answers : Array ListingReply.Answer)
+    (failures : Array (ListingReply.Request × ListingReply.Failure)) :
+    Array ListingReply.Answer × Array Diag :=
+  let unnamed := (failures.filter (!driverNamed ·.1)).map (·.1)
+  (answers.filter (!unnamed.contains ·.request),
+    (failures.filter (driverNamed ·.1)).map fun (request, failure) => diagnostic request failure)
+
 /-- Unfinished, absent or malformed batches produce no reusable answers.
 Every affected request keeps the driver's named loss; completed per-request
 refusals instead come from the decoder alongside source-valid plain answers. -/
 private def failed (requests : Array ListingReply.Request)
     (failure : ListingReply.Failure) : Array ListingReply.Answer × Array Diag :=
-  (#[], requests.map fun request => diagnostic request failure)
+  (#[], (requests.filter driverNamed).map fun request => diagnostic request failure)
 
 /-- Fulfil content-keyed requests through the installed provider — the first
 python3 on PATH the OS starts, as execvp chooses it (`ToolPath.probeGo_exact`) —
@@ -129,8 +149,7 @@ public def fulfil (_file : String) (requests : Array ListingReply.Request) :
   match got.ran with
   | .exited 0 =>
     match ListingReply.decode requests got.out (terminalLf := true) with
-    | .ok (answers, failures) =>
-      return (answers, failures.map fun (request, failure) => diagnostic request failure)
+    | .ok (answers, failures) => return settle answers failures
     | .error _ => return failed requests .invalidReply
   | .exited 3 => return failed requests .unavailable
   | .exited 4 | .overran _ => return failed requests .budget

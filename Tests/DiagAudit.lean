@@ -161,6 +161,9 @@ def registry : List AuditRow :=
    -- A language no lexer reads: the code ships plain and the nearest known
    -- name is the help; the document's to correct, never the boundary's.
    ⟨.W0412, .keep, .degraded, check% Tests.inlineCodeChecks⟩,
+   -- `\mint` within a line of text: LaTeX breaks the paragraph for its
+   -- display, or fails in a box; a decided divergence, set as inline code.
+   ⟨.W0413, .divergence, .degraded, check% Tests.inlineCodeChecks⟩,
    -- A face declared before booktabs loads: measuring that face's ex at
    -- the class size (the driver holds the font environment) retires it.
    ⟨.W0398, .native, .native, check% Tests.tableFaceOrderChecks⟩,

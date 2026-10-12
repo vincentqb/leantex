@@ -39,6 +39,10 @@ public structure Param where
   argument is consumed without elaboration, as in TeX substitution.
   Environment parameters conservatively retain the ordinary binding. -/
   referenced : Bool := true
+  /-- A minted command in the replacement reads this parameter as code
+  (`#k` in its capture): a call binds the argument's source beside its
+  elaboration (`bindParam`), which the code takes as TeX binds it. -/
+  code : Bool := false
   deriving Repr, BEq
 
 public structure UserCmd where
@@ -304,6 +308,11 @@ public structure Ctx where
   inversion: a generated role's run takes its family's tone there
   (`coloredRun`). -/
   ground : Option Color := none
+  /-- The ground a frame paints under its content where `ground` stays
+  unset for the generated roles' re-toning — a standout frame's inversion
+  under a palette with no seeds: what inline code's derived colours fit to
+  (`inlineCodeOf`), as a listing's are fitted to the frame's ground. -/
+  codeGround : Option Color := none
   /-- The position of the `\note` whose body is being elaborated, when
   `noteBody` is set: where E0359 names the note whose frame tried to carry
   another note. -/
@@ -1574,7 +1583,7 @@ public def renderedBuiltins : List String :=
    "bibliography", "bibliographystyle", "textcolor",
    "refstepcounter", "stepcounter", "addtocounter", "setcounter",
    "section", "subsection", "subsubsection",
-   "vphantom", "hphantom", "phantom"] ++ Ir.natbibCites.map (·.1) ++
+   "vphantom", "hphantom", "phantom", "mintinline", "mint"] ++ Ir.natbibCites.map (·.1) ++
   titleCtrls ++ overlayCtrls ++ runningCtrl ++ (argStyles.map (·.1)) ++
   (declStyles.map (·.1)) ++ (Lex.textSymbols.map (·.1))
 
@@ -1859,6 +1868,24 @@ private def trimLead (raws : Array Raw) : Array Raw :=
 private def trimTail (raws : Array Raw) : Array Raw :=
   raws.extract 0 (spanRawsEnd raws isSpaceOrPar)
 
+/-- Whether a minted command in `rs` reads parameter `name` as code: `#k`
+inside its capture is the native `\ak` (`bindCodeParams`). -/
+private def referencesParamCode (name : String) : List Raw → Bool
+  | [] => false
+  | .verb e s _ :: rest =>
+    ((e == "mintinline" || e == "mint") && name.startsWith "a" &&
+      (s.splitOn ("#" ++ (name.drop 1).toString)).length > 1) || referencesParamCode name rest
+  | .group body _ :: rest => referencesParamCode name body.toList || referencesParamCode name rest
+  | .env _ body _ :: rest => referencesParamCode name body.toList || referencesParamCode name rest
+  | .math _ body _ :: rest => referencesParamCode name body.toList || referencesParamCode name rest
+  | _ :: rest => referencesParamCode name rest
+termination_by l => sizeOf l
+decreasing_by
+  all_goals simp_wf
+  all_goals try omega
+  all_goals
+    (have hb : sizeOf body = 1 + sizeOf body.toList := rfl; omega)
+
 /-- A defined environment from its halves, with the space rules TeX's own
 commands state at its seams, each command spent here so none reaches a
 half as an unknown word: `\ignorespaces` closing the begin code skips the
@@ -1877,6 +1904,7 @@ private def envOfHalves (name : String) (params : Array Param) (b e : Array Raw)
   let closing := if ink > 0 then b[ink - 1]? else none
   let environ := closing.any (isCtrl Compat.environBodyMark)
   let lead := environ || closing.any (isCtrl "ignorespaces")
+  let params := params.map fun p => { p with code := referencesParamCode p.name (b.toList ++ e.toList) }
   { name, params, cmdLimit := limit,
     beginBody := if lead then b.extract 0 (ink - 1) else b
     endBody := e.filter (!isCtrl "ignorespacesafterend" ·)
@@ -5100,10 +5128,10 @@ its place" pos
   return blocks.push (.picture pic)
 
 /-- A definition's parameter in the code minted's command reads (`#1` in
-`\newcommand{\py}[1]{\mintinline{python}{#1}}`): the argument's text where
-the call bound it — TeX binds the parameter before minted reads the code —
-and `##` one `#`. Nothing is bound outside a body, where `#1` is the code
-it spells. -/
+`\NewDocumentCommand{\py}{m}{\mintinline{python}{#1}}`): the argument's
+source where the call bound it (`bindParam`) — TeX binds the parameter
+before minted reads the code — and `##` one `#`. Nothing is bound outside a
+body, where `#1` is the code it spells. -/
 private def bindCodeParams (ctx : Ctx) (code : String) : String := Id.run do
   if ctx.args.isEmpty || !code.contains '#' then return code
   let cs := code.toList.toArray
@@ -5117,11 +5145,12 @@ private def bindCodeParams (ctx : Ctx) (code : String) : String := Id.run do
       i := i + 2
     else if c == '#' && next.any (fun d => '1' ≤ d && d ≤ '9') then
       let k := (next.map Char.toString).getD ""
-      match ctx.args.find? (·.1 == "a" ++ k) with
-      | some (_, bound) =>
+      match ctx.args.find? (·.1 == "a" ++ k ++ " source"),
+          ctx.args.find? (·.1 == "a" ++ k) with
+      | some (_, bound), _ | none, some (_, bound) =>
         out := out ++ Ir.plainText (bound.getD #[])
         i := i + 2
-      | none =>
+      | none, none =>
         out := out.push c
         i := i + 1
     else
@@ -5158,14 +5187,20 @@ engine runs; the listing's tokens paint by their code roles" pos
 codename, codeliteral, codecomment or codeerror")
 
 /-- A listing's language selects a lexer only where the engine or Pygments'
-registry has one (`LexerName.known`): any other name is the document's to
-correct, named once with the known name nearest its spelling, and its code
-sets as plain text. -/
-private def nameUnknownLexer (ctx : Ctx) (lang : String) (pos : Pos) : EM Unit := do
-  if LexerName.known lang then return
-  let help := match LexerName.nearest? lang with
-    | some near => s!"spell it '{near}', the lexer name nearest it"
-    | none => "name a lexer Pygments registers, such as 'python' or 'lean4'"
+registry has one (`LexerName.known`), or where the installed highlighter
+answered for it (`listingReplies`): any other name is named once, its code
+set as plain text. minted's language is a lexer's name, so its help is the
+known name nearest the spelling; a listings language or a fence's word
+names no lexer by its spelling, and its help is none. The suggestion is
+sought at the first site alone (`warnOnce` drops the help of a repeat). -/
+private def nameUnknownLexer (ctx : Ctx) (lang : String) (minted : Bool) (pos : Pos) :
+    EM Unit := do
+  -- premise: Tests.inlineCodeRequestChecks — a language the installed highlighter classified ships its classes and is named nothing; one it refused is named here once and nowhere else
+  if LexerName.known lang || ctx.listingReplies.any (·.request.language == lang) then return
+  let help := if !minted || (← get).warnedUnknown.contains ("listing-language:" ++ lang) then none
+    else match LexerName.nearest? lang with
+      | some near => some s!"spell it '{near}', the lexer name nearest it"
+      | none => some "name a lexer Pygments registers, such as 'python' or 'lean4'"
   warnOnce ctx ("listing-language:" ++ lang) .W0412
     s!"'{lang}' names no lexer the engine or Pygments has; its code is set as plain text" pos
     (help := help)
@@ -5173,11 +5208,11 @@ private def nameUnknownLexer (ctx : Ctx) (lang : String) (pos : Pos) : EM Unit :
 /-- An author's language spelling as the token a listing or inline code
 carries, the spelling outside the token grammar named and carried by
 neither, and a name no lexer reads named too (`nameUnknownLexer`). -/
-private def codeLanguage (ctx : Ctx) (raw : String) (pos : Pos) :
+private def codeLanguage (ctx : Ctx) (raw : String) (minted : Bool) (pos : Pos) :
     EM (Option Ir.ListingLang) := do
   match Ir.listingLang? raw with
   | some l =>
-    nameUnknownLexer ctx l.val pos
+    nameUnknownLexer ctx l.val minted pos
     return some l
   | none =>
     let msg := s!"listing language '{raw.trimAscii.toString}' is not a plain name; the \
@@ -5198,12 +5233,12 @@ private structure InlineCodeOpts where
 
 /-- minted's keys that configure a display alone — its numbering, frame,
 margins, line range, page breaking — which minted reads for no inline
-code; and the caption a listing carries. -/
+code. -/
 private def displayOnlyKeys : List String :=
   ["linenos", "numbers", "firstnumber", "stepnumber", "numbersep", "numberblanklines",
    "numberfirstline", "frame", "framerule", "framesep", "rulecolor", "label",
    "labelposition", "xleftmargin", "xrightmargin", "resetmargins", "samepage", "vspace",
-   "listparameters", "firstline", "lastline", "highlightlines", "highlightcolor", "caption"]
+   "listparameters", "firstline", "lastline", "highlightlines", "highlightcolor"]
 
 /-- Inline code's options, each read as minted reads it there; a key no
 inline code honours is named W0110, never a silent drop. -/
@@ -5288,7 +5323,7 @@ private def inlineCodeOf (ctx : Ctx) (lang : Option Ir.ListingLang) (lines : Arr
     | some lexer => some (ListingHighlight.tokenize lexer lines)
     | none => ListingReply.lookup ctx.listingReplies l.val source
   if let some l := lang then
-    if classified.isNone && LexerName.known l.val then
+    if classified.isNone then
       modify fun st => if st.spans.code.contains (l.val, source) then st
         else { st with spans := { st.spans with code := st.spans.code.push (l.val, source) } }
   let tokenLines := classified.getD (lines.map fun line => #[{ text := line }])
@@ -5304,7 +5339,7 @@ private def inlineCodeOf (ctx : Ctx) (lang : Option Ir.ListingLang) (lines : Arr
       let laid := (line.foldl (fun (acc, column) t =>
         let (text, column) := spec.layoutText column t.text
         (acc.push { t with text }, column)) ((#[] : Array ListingHighlight.Token), 0)).1
-      body := body ++ Listing.inlineCode pal ctx.ground o.style laid
+      body := body ++ Listing.inlineCode pal (ctx.ground.or ctx.codeGround) o.style laid
   let code := #[Inline.styled .mono body]
   return match o.size with
     | some size => #[.styled size code]
@@ -5323,12 +5358,13 @@ private def inlineVerbatim (ctx : Ctx) (env s : String) (pos : Pos) : EM (Array 
   if env == "mintinline" || env == "mint" then
     let some (rawLang, afterLang) := Parse.mintedLangHead s afterOpt | return #[]
     if env == "mint" then
-      warnOnce ctx "listing-inline:mint" .W0411
-        "'\\mint' sets a display, which a line of text or an argument cannot hold; it is \
-set as inline code" pos
-        (help := s!"write \\mintinline\{{rawLang.trimAscii.toString}}\{…} for inline code")
+      warnOnce ctx "listing-inline:mint" .W0413
+        "'\\mint' within a line of text or an argument is set as inline code; LaTeX sets a \
+display there, or cannot set it" pos
+        (help := s!"write \\mintinline\{{rawLang.trimAscii.toString}}\{…} for inline code, or put \
+'\\mint' on a line of its own for a display")
     let o ← inlineCodeOpts ctx opts pos
-    let lang ← codeLanguage ctx rawLang pos
+    let lang ← codeLanguage ctx rawLang true pos
     return ← inlineCodeOf ctx lang #[bindCodeParams ctx (Parse.mintedCode s afterLang)] o
   let lines := Ir.verbatimLines (s.drop (listingContentStart env s)).toString
   let (rawLang, opts) : Option String × String :=
@@ -5342,12 +5378,12 @@ set as inline code" pos
   warnOnce ctx ("listing-inline:" ++ env) .W0411
     s!"'\\begin\{{env}}' within a line of text or an argument does not compile under LaTeX; \
 it is set as inline code" pos
-    (help := match rawLang with
-      | some l => s!"write \\mintinline\{{l.trimAscii.toString}}\{…} for inline code"
-      | none => "write \\verb|…| for inline code")
+    (help := match rawLang, env == "minted" with
+      | some l, true => s!"write \\mintinline\{{l.trimAscii.toString}}\{…} for inline code"
+      | _, _ => "write \\verb|…| for inline code")
   let o ← inlineCodeOpts ctx opts pos
   let lang ← match rawLang with
-    | some l => codeLanguage ctx l pos
+    | some l => codeLanguage ctx l (env == "minted") pos
     | none => pure none
   inlineCodeOf ctx lang lines o
 
@@ -5393,6 +5429,15 @@ private def splitTrailingDecls (xs : Array Ir.Inline) :
     | none => (xs, #[])
   | none => (xs, #[])
 
+/-- A parameter's binding: its elaboration, and — where a minted command in
+the replacement reads it as code (`Param.code`) — its source beside it,
+under its name and a space, which no document's name holds, for
+`bindCodeParams`. -/
+private def bindParam (p : Param) (v : Array Inline) (source : Unit → String)
+    (bindings : Array (String × Option (Array Inline))) : Array (String × Option (Array Inline)) :=
+  let bindings := bindings.push (p.name, some v)
+  if p.code then bindings.push (p.name ++ " source", some #[.text (source ())]) else bindings
+
 mutual
 
 /-- One parameter binding at a time — `takeArgs`' recursion spelled so the
@@ -5426,7 +5471,7 @@ private def takeArgsFrom (ctx : Ctx) (params : Array Param) (k : Nat) (name : St
           have hadv : sliceWeight raws (c + 1) < sliceWeight raws start :=
             sliceWeight_lt raws (by omega) (by omega)
           let (bs, ⟨j2, hj2⟩) ← takeArgsFrom ctx params (k + 1) name raws (c + 1)
-            pos (bindings.push (p.name, some v))
+            pos (bindParam p v (fun _ => rawSrc (raws.extract (j + 1) c)) bindings)
           return (bs, ⟨j2, by omega⟩)
         | none =>
           diag ctx .E0316 s!"unclosed optional argument for '\\{name}'" pos
@@ -5441,7 +5486,7 @@ private def takeArgsFrom (ctx : Ctx) (params : Array Param) (k : Nat) (name : St
           have hadv : sliceWeight raws raws.size < sliceWeight raws start :=
             sliceWeight_lt raws (by omega) (by omega)
           let (bs, ⟨j2, hj2⟩) ← takeArgsFrom ctx params (k + 1) name raws raws.size
-            pos (bindings.push (p.name, some v))
+            pos (bindParam p v (fun _ => rawSrc (raws.extract (j + 1) raws.size)) bindings)
           return (bs, ⟨j2, by omega⟩)
       | _ =>
         takeArgsFrom ctx params (k + 1) name raws start pos
@@ -5462,14 +5507,15 @@ private def takeArgsFrom (ctx : Ctx) (params : Array Param) (k : Nat) (name : St
         have hadv : sliceWeight raws (j + 1) < sliceWeight raws start :=
           sliceWeight_lt raws (by omega) (by omega)
         let (bs, ⟨j2, hj2⟩) ← takeArgsFrom ctx params (k + 1) name raws (j + 1)
-          pos (bindings.push (p.name, some v))
+          pos (bindParam p v (fun _ => Parse.rawSrcList body.toList) bindings)
         return (bs, ⟨j2, by omega⟩)
       | some (.word s pword) =>
         have hjlt := getElem?_lt hj
         have hadv : sliceWeight raws (j + 1) < sliceWeight raws start :=
           sliceWeight_lt raws (by omega) (by omega)
         let (bs, ⟨j2, hj2⟩) ← takeArgsFrom ctx params (k + 1) name raws (j + 1)
-          pos (bindings.push (p.name, some (if p.referenced then wordInlines ctx s pword else #[])))
+          pos (bindParam p (if p.referenced then wordInlines ctx s pword else #[]) (fun _ => s)
+            bindings)
         return (bs, ⟨j2, by omega⟩)
       | _ =>
         diag ctx .E0304 s!"missing argument '{p.name}' for '\\{name}'" pos
@@ -9319,11 +9365,6 @@ public def refusedTitleReadout (user : Array UserCmd) (bound : Nat) (body : Arra
 private def referencesParam (name : String) : List Raw → Bool
   | [] => false
   | .ctrl n _ :: rest => n == name || referencesParam name rest
-  -- minted's commands take their code where TeX has bound the parameters
-  -- (`bindCodeParams`): `#k` there is the native `\ak`.
-  | .verb e s _ :: rest =>
-    ((e == "mintinline" || e == "mint") && name.startsWith "a" &&
-      (s.splitOn ("#" ++ (name.drop 1).toString)).length > 1) || referencesParam name rest
   | .group body _ :: rest => referencesParam name body.toList || referencesParam name rest
   | .env _ body _ :: rest => referencesParam name body.toList || referencesParam name rest
   | .math _ body _ :: rest => referencesParam name body.toList || referencesParam name rest
@@ -9372,7 +9413,8 @@ private def takeDefine (ctx : Ctx) (raws : Array Raw) (i : Nat) (pos : Pos) :
             ≤ slicePars raws (j + 1) := hf.2.2
         let sigRaws := raws.extract (j + 1) (k' - 1)
         let params ← parseSig ctx (rawSrc sigRaws) pos
-        let params := params.map fun p => { p with referenced := referencesParam p.name b.toList }
+        let params := params.map fun p =>
+          { p with referenced := referencesParam p.name b.toList, code := referencesParamCode p.name b.toList }
         return ⟨(some ⟨newName, params, trimRaws b, ⟨ctx.file, npos⟩⟩, k'), by
           refine ⟨show i ≤ k' by omega, ?_⟩
           intro cmd h
@@ -10286,12 +10328,23 @@ private def tabularArm (ctx : Ctx) (n : String) (body : Array Raw)
 /-- Whether a verbatim the block walk meets runs inline in the paragraph
 it stands in: `\verb` and `\mintinline` always; a listing environment
 written all on one line, which LaTeX cannot set, where text shares its
-paragraph — its evident intent then inline code (`inlineVerbatim`). -/
+paragraph — a word, an inline formula or inline code before it, or after it
+before the paragraph ends — its evident intent then inline code
+(`inlineVerbatim`). A heading, a label or a list beside it is no text. -/
 private def verbRunsInline (env s : String) (cur raws : Array Raw) (i : Nat) : Bool :=
-  let inks (r : Raw) : Bool := !(r matches .space) && !(r matches .par _)
+  let text (r : Raw) : Bool := match r with
+    | .word .. => true
+    | .math display _ _ => !display
+    | .verb e _ _ => e == "verb" || e == "mintinline"
+    | _ => false
+  let after : Bool := Id.run do
+    for k in [i + 1:raws.size] do
+      let some r := raws[k]? | break
+      if text r then return true
+      if bodyIsBlockOne r then return false
+    return false
   env == "verb" || env == "mintinline" ||
-    ((env == "minted" || env == "lstlisting") && !s.contains '\n' &&
-      (cur.any inks || (raws[skipSpaces raws (i + 1)]?).any inks))
+    ((env == "minted" || env == "lstlisting") && !s.contains '\n' && (cur.any text || after))
 
 /-- One listing block from a lexically blind capture. `{verbatim}` is the
 default spec, as always. `{lstlisting}` reads listings' per-environment
@@ -10370,7 +10423,7 @@ is set as a display listing" pos
   -- Keyed by its words: two listings share a loss exactly when they print the same.
   let unhonoured (msg : String) (help : Option String) : EM Unit :=
     warnOnce ctx ("lstopt:" ++ msg) .W0110 msg pos (help := help)
-  let langOf (raw : String) : EM (Option Ir.ListingLang) := codeLanguage ctx raw pos
+  let langOf (raw : String) : EM (Option Ir.ListingLang) := codeLanguage ctx raw (env == "minted") pos
   for entry in Decl.splitEntries opts do
     let bare := entry.trimAscii.toString
     if bare.isEmpty then
@@ -12869,7 +12922,10 @@ private def openStandoutPalette (ctx : Ctx) (standout : Bool) (blocks : Array Bl
       some ((Design.at pal .print .standoutGround).getD (Design.printInk pal))
     else none
   if aliases.isEmpty then
-    return (⟨{ ctx with ground := ground ctx.palette }, rfl, rfl, rfl, rfl⟩, blocks, false)
+    let inner : Ctx := { ctx with
+      ground := ground ctx.palette
+      codeGround := some (Design.ofPalette ctx.palette).standout.bg }
+    return (⟨inner, rfl, rfl, rfl, rfl⟩, blocks, false)
   let mut pal := ctx.palette
   for alias in aliases do
     let origin := { ctx with file := alias.span.file, callSite := none }
@@ -12878,8 +12934,11 @@ private def openStandoutPalette (ctx : Ctx) (standout : Bool) (blocks : Array Bl
     pal ← resolveBeamerColors origin pal
   modify fun st => { st with scope := { st.scope with palette := { st.scope.palette with current := some pal } },
                              flowGen := st.flowGen + 1 }
-  return (⟨{ ctx with palette := pal, ground := ground pal }, rfl, rfl, rfl, rfl⟩,
-    blocks.push (.setPalette pal), true)
+  let inner : Ctx := { ctx with
+    palette := pal
+    ground := ground pal
+    codeGround := some (Design.ofPalette pal).standout.bg }
+  return (⟨inner, rfl, rfl, rfl, rfl⟩, blocks.push (.setPalette pal), true)
 
 private def closeFramePalette (ctx : Ctx) (pos : Pos) (blocks : Array Block)
     (title : Array Inline) (opts : FrameOpts) (inner : Array Block)

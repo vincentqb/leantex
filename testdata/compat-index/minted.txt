@@ -7,9 +7,10 @@
 # line; \mintinline is inline code, set in the mono family alone, so it takes
 # the size, weight, slant and colour around it. Lean 4, Python, Bash, shell
 # sessions and plain text are classified after capture by mirrors of
-# Pygments' own lexers; another name Pygments' registry holds asks the
-# installed Pygments and ships plain source where none answers; a name the
-# registry does not hold is named (W0412) with the nearest one it does.
+# Pygments' own lexers; another name asks the installed Pygments and ships
+# plain source where none answers; a name neither the installed Pygments
+# nor the registry of the release the mirror tracks holds is named (W0412),
+# with the registry's nearest name.
 # \inputminted reads a file — a driver request later; the short forms and
 # external Pygments machinery refuse by name.
 body impl \begin{minted}{python} print(1) \end{minted}
@@ -40,6 +41,9 @@ body refuse:W0110 \setminted{unknownsetting=on}\begin{minted}{text} Alpha Bravo 
 body refuse:N0102 \begin{minted}[formatcom=\itshape]{python} print(1) \end{minted}
 pre refuse:W0301 \usemintedstyle{tango}
 pre refuse:W0301 \newminted{python}{linenos}
+pre refuse:W0301 \newmint{python}{linenos}
+pre refuse:W0301 \newmintinline{python}{fontsize=\small}
+pre refuse:W0301 \newmintedfile{python}{linenos}
 # \setminted binds global or exact-lexer defaults. Environment options win;
 # language defaults beat global defaults even when the latter are newer.
 # \setmintedinline binds inline code's own layers after both of them, and

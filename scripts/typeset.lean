@@ -126,8 +126,8 @@ def stem (file : String) : String :=
 
 /-- What a document needs that only a tool supplies, in words: a listing in a
 language no built-in highlighter reads, a picture outside the rendered subset. -/
-def toolNeeds (doc : Ir.Doc) : Array String :=
-  let listings := (ListingReply.requests doc).size
+def toolNeeds (doc : Ir.Doc) (inline : Array (String × String) := #[]) : Array String :=
+  let listings := (ListingReply.requests doc inline).size
   let pictures := ((Ir.imageRequests doc).filter (·.src.startsWith Ir.picSrcPrefix)).size
   (if listings == 0 then #[] else
     #[s!"{listings} listing(s) in a language no built-in highlighter reads"]) ++
@@ -181,7 +181,7 @@ def build (cache : FontEnv.Cache) (faces : Array FontDb.Face) (file : String) :
       (Bib.FieldDoor.of file prepared).read spans.labels spans.bib src.ledger
     return (doc, ds ++ bibDiags ++ ledger.notes ++ Bib.refJudge spans doc, spans)
   let (doc, elabDiags, spans) ← elaborate (provisional.getD fun _ _ => {})
-  let needs := toolNeeds doc
+  let needs := toolNeeds doc spans.code
   unless needs.isEmpty do
     return .error s!"{file}: needs a tool, and this tier runs none: {", ".intercalate needs.toList}"
   let declared := ({ cmd := .help } : Config).effectiveEmit doc.output.formats

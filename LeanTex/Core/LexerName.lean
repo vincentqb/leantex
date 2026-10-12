@@ -7,9 +7,9 @@ import LeanTex.Core.PygmentsLexData
 The lexer names a listing's language may spell: a native lexer's
 (`Highlight.Lexer.ofName?`), or an alias Pygments' registry holds for the
 release the mirror tracks (`PygmentsLexData.registryAliases`). A name
-outside both selects no lexer anywhere, so the document is told where it
-stands, with the known name nearest its spelling, rather than the boundary
-asked a question no provider of that release answers.
+outside both is still asked of the installed highlighter, a later release
+perhaps; where it does not answer either, the document is told where the
+name stands, with the known name nearest its spelling.
 -/
 namespace LeanTex.Core.LexerName
 
@@ -47,17 +47,22 @@ private def editDistance (a b : Array Char) : Nat := Id.run do
     prev := cur
   return prev.getD n 0
 
-/-- The known name a misspelt one most likely meant: fewest edits away,
-within two edits and a third of the name's length (one at least), a native
-lexer's spelling first among equals, then the registry's order. `none` when
-nothing stands that near. -/
+/-- The known name a misspelt one most likely meant: one sharing its first
+letter (a slip rarely moves it), fewest edits away — one edit for a name of
+five letters or fewer, two for a longer one — a native lexer's spelling
+first among equals, then the registry's order. A name of three letters or
+fewer is too short to judge a slip in (`csv` is no misspelt `cs`), and
+`none` answers it, as when nothing stands that near. -/
 public def nearest? (name : String) : Option String :=
   let cs := name.trimAscii.toString.toLower.toList.toArray
-  let bound := max 1 (min 2 (cs.size / 3))
+  let bound := if cs.size ≤ 5 then 1 else 2
   let natives := Lexer.all.toArray.flatMap (·.aliases)
   let pool := natives ++ (registry ()).filter (!natives.contains ·)
+  if cs.size ≤ 3 then none else
   (pool.foldl (fun (best : Option (String × Nat)) alias =>
-    let d := editDistance cs alias.toList.toArray
+    let a := alias.toList.toArray
+    if a[0]? != cs[0]? then best else
+    let d := editDistance cs a
     if d == 0 || d > bound then best else
     match best with
     | some (_, b) => if d < b then some (alias, d) else best

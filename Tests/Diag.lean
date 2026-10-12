@@ -416,8 +416,8 @@ def diagWitnessWith (w : WitnessRun) (one mapped withMath : Font.FontSet)
   | .W0306 => dvE (w := w) (dvDoc "\\palette[seeds]{ ink = #808080, paper = #FFFFFF, accent = #E85D2A }\n" "x")
   | .W0411 => dvE (w := w) (dvDoc "\\usepackage{minted}\n"
       "Alpha \\begin{minted}{python}x = 1\\end{minted} omega.") ++
-    dvE (w := w) (dvDoc "\\usepackage{minted}\n" "\\textbf{Alpha \\mint{python}{x = 1} omega}") ++
     dvE (w := w) (dvDoc "\\usepackage{minted}\n" "\\begin{minted}{python}x = 1\\end{minted}")
+  | .W0413 => dvE (w := w) (dvDoc "\\usepackage{minted}\n" "\\textbf{Alpha \\mint{python}{x = 1} omega}")
   | .W0412 => dvE (w := w) (dvDoc "\\usepackage{minted}\n" "Alpha \\mintinline{pyhton}{x} omega.")
   | .W0317 => dvE (w := w) ("\\documentclass{card}\n\\runninghead{name}\n" ++
       "\\begin{document}\nx\n\\end{document}")

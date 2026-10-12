@@ -2,7 +2,6 @@ module
 
 import Lean.Data.Json
 public import LeanTex.Core.Ir
-import LeanTex.Core.LexerName
 
 /-!
 The pure boundary for external listing classification. Source is normalized
@@ -43,15 +42,13 @@ public structure Answer where
 
 /-- Requests are leaves of the one generic document fold, including listings
 inside captions, notes and nested containers, for the languages no native
-lexer reads and Pygments' registry holds — a name outside the registry is the
-document's to correct, named where it stands (`LexerName.known`) — then
-the inline code the elaborator met in such a language (`inline`, language
-and source). Styles share a classification. -/
+lexer reads, then the inline code the elaborator met in such a language
+(`inline`, language and source). Styles share a classification. -/
 -- conserves: none — this collector returns requests, not a rewritten document.
 public def requests (doc : Ir.Doc) (inline : Array (String × String) := #[]) :
     Array Request :=
   let asked (acc : Array Request) (language source : String) : Array Request :=
-    if (ListingHighlight.language? language).isSome || !LexerName.known language then acc
+    if (ListingHighlight.language? language).isSome then acc
     else
       let request := Request.ofSource language source
       if acc.contains request then acc else acc.push request
