@@ -109,7 +109,7 @@ To bundle fonts with a document, use `\fonts{dir="fonts",body="Family Name"}`.
 A document that declares no typewriter face sets its code in the text face's
 matching monospaced face where one is installed, else in the first of SF
 Mono, Menlo, DejaVu Sans Mono and Liberation Mono that is installed with
-its bold, else, for a TeX document, in Latin Modern Mono where a TeX
+its bold and both its italics or neither, else, for a TeX document, in Latin Modern Mono where a TeX
 distribution installs it, and warns only when none is; a TeX document that
 declares its text face takes Latin Modern Mono first, as lualatex does. A
 family installed without italics still serves: italic code sets upright in

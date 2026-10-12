@@ -165,7 +165,8 @@ private def fontPackages : List (String × String) :=
    ("mathpazo", "body = \"TeX Gyre Pagella\", math = \"TeX Gyre Pagella Math\""),
    ("helvet", "sans = \"TeX Gyre Heros\""),
    ("courier", "mono = \"TeX Gyre Cursor\""),
-   ("libertine", "body = \"Linux Libertine O\", sans = \"Linux Biolinum O\""),
+   ("libertine", "body = \"Linux Libertine O\", sans = \"Linux Biolinum O\", \
+mono = \"Linux Libertine Mono O\""),
    ("carlito", "sans = \"Carlito\"")]
 
 /-- Commands that configure TeX's own machinery and change nothing this

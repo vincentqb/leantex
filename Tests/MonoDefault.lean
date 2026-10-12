@@ -129,7 +129,7 @@ def monoDefaultChecks (ref : IO.Ref (List String)) : IO Unit := do
       let help := (((loss fsB docB).find? (·.kind == .W0390)).bind (·.help)).getD ""
       t s!"{surface}: W0390's help offers what this source can do ({help})"
         (hasStr help (if surface == "tex" then "install one of Latin Modern Mono, SF Mono"
-            else "install one of SF Mono") && hasStr help "with its bold"
+            else "install one of SF Mono") && hasStr help "its bold and both or no italics"
           && hasStr help "\\fonts{ mono" == (surface == "tex"))
       t s!"{surface}: a listed family short of a corner is no default, and W0390 names the slot"
         (fsC.slotCollapsed 2 && (loss fsC docC).any (·.kind == .W0390)
@@ -180,7 +180,7 @@ beside them.\n\n\\begin{verbatim}\nfenced code\n\\end{verbatim}"))).1
       -- font directory.
       let help := (((loss fsD docD).find? (·.kind == .W0390)).bind (·.help)).getD ""
       t s!"a document shipping its fonts is told to install a monospace or ship one ({help})"
-        (hasStr help "install one of Latin Modern Mono" && hasStr help "with its bold"
+        (hasStr help "install one of Latin Modern Mono" && hasStr help "its bold and both or no italics"
           && hasStr help "or put it in the document's font directory" && hasStr help "\\fonts{ mono")
     | _, _, _, _ => t "the shipped-fonts assemblies succeed" false
     -- A monospace it ships without italics sets its italic code upright in
@@ -196,6 +196,14 @@ beside them.\n\n\\begin{verbatim}\nfenced code\n\\end{verbatim}"))).1
         (!paths.contains hostCode && fs.lookup 2 400 true == fs.lookup 2 400 false
           && fs.lookup 2 700 true == fs.lookup 2 700 false
           && (diags.filter (·.kind == .N0031)).size == 1 && !diags.any (·.kind == .W0006))
+      -- Its note says where the italics are missing — the document's font
+      -- directory, the faces it reads them from — whatever the host holds.
+      let note := diags.find? (·.kind == .N0031)
+      t s!"the note on a shipped monospace names the document's font directory \
+({note.map (·.message)}, {note.bind (·.help)})"
+        (note.any fun d => hasStr d.message "the document's font directory" &&
+          hasStr (d.help.getD "") "put the family's italic faces in the document's font directory" &&
+          !hasStr (d.help.getD "") "install")
     | .error d => t s!"the shipped upright assembly succeeds ({d.message})" false
   -- A listed family that lacks italics still serves: its upright corners are
   -- its own, italic code sets upright in it — the page's italic run in the
@@ -237,7 +245,20 @@ beside them.\n\n\\begin{verbatim}\nfenced code\n\\end{verbatim}"))).1
           "x = 1\n\\end{lstlisting}"))).1, false),
        ("a listing's comment", (elabStr (dvDoc "" ("\\begin{lstlisting}[language=Python]\n" ++
           "# a remark\nx = 1\n\\end{lstlisting}"))).1, true),
-       ("a markdown fence's comment", (elabMd "```python\n# a remark\nx = 1\n```\n").1, true)] do
+       ("a markdown fence's comment", (elabMd "```python\n# a remark\nx = 1\n```\n").1, true),
+       ("a heading's italic template over its code", (elabStr (dvDoc
+          "\\style{section}{ font = {\\itshape} }\n" "\\section{About \\texttt{code}}\nText.")).1,
+          true),
+       ("a KOMA heading font over its code", (elabStr ("\\documentclass{scrartcl}\n" ++
+          "\\setkomafont{section}{\\itshape}\n\\begin{document}\n" ++
+          "\\section{About \\texttt{code}}\nText.\n\\end{document}")).1, true),
+       ("a template no element uses", (elabStr (dvDoc
+          "\\style{subsubsection}{ font = {\\itshape\\ttfamily} }\n"
+          "Plain \\texttt{upright code} and no such heading.")).1, false),
+       ("an italic over empty code", (elabStr (dvDoc ""
+          "Plain \\texttt{upright code} and \\textit{words \\texttt{}} here.")).1, false),
+       ("a typewriter switch with nothing after it", (elabStr (dvDoc ""
+          "Plain \\texttt{upright code} and {\\itshape words\\ttfamily}.")).1, false)] do
     match ← buildFontSet doc uprightOnly (← FontEnv.Cache.mk') .settled with
     | .ok (fs, _, diags, _) =>
       t s!"{what}: the italic note is named exactly where italic code is set"
@@ -267,6 +288,25 @@ beside them.\n\n\\begin{verbatim}\nfenced code\n\\end{verbatim}"))).1
         && runFace outU "slanted" == some (fsU.lookup 2 400 false)
         && pathsD[fsD.lookup 2 400 true]? == pathsU[fsU.lookup 2 400 true]?)
   | _, _ => t "the declared and undeclared assemblies succeed" false
+  -- The same twin where only a heading's template sets the code italic:
+  -- the template is the document's request, so the undeclared slot names
+  -- it as the declared one does, over the same page.
+  let templateSrc := "\\section{About \\texttt{code}}\nText."
+  let templatePre := "\\style{section}{ font = {\\itshape} }\n"
+  match ← buildFontSet (elabStr (dvDoc (templatePre ++ "\\fonts{ mono = \"DejaVu Sans Mono\" }\n")
+        templateSrc)).1 uprightOnly (← FontEnv.Cache.mk') .settled,
+      ← buildFontSet (elabStr (dvDoc templatePre templateSrc)).1 uprightOnly
+        (← FontEnv.Cache.mk') .settled with
+  | .ok (fsD, docD, diagsD, pathsD), .ok (fsU, docU, diagsU, pathsU) =>
+    let outD := layoutOf fsD docD
+    let outU := layoutOf fsU docU
+    t "a heading template's italic code: declared names its corners, undeclared one note, one page"
+      ((diagsD.filter (·.kind == .W0006)).size == 2 && !diagsD.any (·.kind == .N0031)
+        && (diagsU.filter (·.kind == .N0031)).size == 1 && !diagsU.any (·.kind == .W0006)
+        && runFace outD "code" == some (fsD.lookup 2 400 false)
+        && runFace outU "code" == some (fsU.lookup 2 400 false)
+        && pathsD[fsD.lookup 2 400 true]? == pathsU[fsU.lookup 2 400 true]?)
+  | _, _ => t "the template twin's assemblies succeed" false
   -- A listed family holding one italic of the two is passed over, never
   -- served with its missing corner substituted: the next listed family
   -- fills the slot, and with none the slot is the text face, W0390 naming
@@ -367,6 +407,18 @@ Latin Modern Mono shapes ({f 400 false}, {f 700 false}, {f 400 true}, {f 700 tru
       t "tex page: italic code sets upright in lualatex's upright shapes"
         (runFace (layoutOf fsR docR) "slanted" == some (fsR.lookup 2 400 false))
     | _, _, _, _, _, _ => t "the Latin Modern assemblies succeed" false
+    -- A weight off lualatex's corners sets in the nearest corner's file, its
+    -- substitution named, never in another file the family's weight order
+    -- ranks first.
+    let semibold := (elabStr (dvDoc "\\fonts{ body = \"Open Sans\" }\n"
+      "Plain \\texttt{upright code} and \\texttt{\\fontseries{sb}\\selectfont semibold code}.")).1
+    match ← buildFontSet semibold withLm (← FontEnv.Cache.mk') .settled with
+    | .ok (fsB, docB, diagsB, pathsB) =>
+      let b := fileOf fsB pathsB
+      t s!"tex: a weight off lualatex's corners sets in the nearest corner's file, named ({b 600 false})"
+        (b 600 false == "lmmonolt10-bold.otf" && diagsB.any (·.kind == .W0366)
+          && runFace (layoutOf fsB docB) "semibold" == some (fsB.lookup 2 600 false))
+    | .error d => t s!"the off-corner Latin Modern assembly succeeds ({d.message})" false
   -- The census reaches every typewriter run a document sets, among them a
   -- picture's label and a formula's typewriter alphabet: each alone moves
   -- the slot to the platform monospace, and without the run nothing loads.
@@ -523,5 +575,79 @@ def fontCollectionChecks (ref : IO.Ref (List String)) : IO Unit := do
           && (HtmlDoc.fontResource face).bytes == standalone
           && Font.collectionCount (HtmlDoc.fontResource face).bytes == none)
     | _, _ => t "a collection's face assembles and reads" false
+
+/-- A face set whose every key is a face of its own — each slot, every
+weight a `\fontseries` names, both slopes — so a shipped run's face index
+reads back to the key its style asked (`FontSet.lookup`'s exact arm always
+answers), and the keys it answers by. -/
+def keyedFaces (font : Font.Font) : Font.FontSet × Array (Nat × Nat × Bool) :=
+  let keys := ((List.range 3).flatMap fun slot =>
+    ([100, 200, 300, 400, 500, 600, 700, 800, 900] : List Nat).flatMap fun w =>
+      [(slot, w, false), (slot, w, true)]).toArray
+  ({ fonts := Array.replicate keys.size font, index := keys.zipIdx }, keys)
+
+/-- The keys a laid-out document's shipped runs asked, read back off their
+face indices. -/
+def shippedKeys (keys : Array (Nat × Nat × Bool)) (out : Layout.Out) :
+    Array (Nat × Nat × Bool) :=
+  out.pages.foldl (init := #[]) fun acc p => p.lines.foldl (init := acc) fun acc l =>
+    l.segs.foldl (init := acc) fun acc s =>
+      match s with
+      | .run idx _ _ _ glyphs _ _ _ _ _ _ =>
+        match keys[idx]? with
+        | some k => if glyphs.isEmpty || acc.contains k then acc else acc.push k
+        | none => acc
+      | _ => acc
+
+/-- Invented documents whose italic code stands where a census could miss
+it, or seem to stand where none is set. -/
+def faceKeyProbes : List (String × String) :=
+  [("a heading's italic template", dvDoc "\\style{section}{ font = {\\itshape} }\n"
+      "\\section{About \\texttt{code}}\nText."),
+   ("a KOMA heading font", "\\documentclass{scrartcl}\n\\setkomafont{section}{\\itshape}\n" ++
+      "\\begin{document}\n\\section{About \\texttt{code}}\nText.\n\\end{document}"),
+   ("a title's template", dvDoc "\\style{titlepage}{ font = {\\itshape} }\n\\title{About \\texttt{code}}\n"
+      "\\maketitle\nText."),
+   ("a block title's template", "\\documentclass{slides}\n\\style{block}{ font = {\\itshape} }\n" ++
+      "\\begin{document}\n\\begin{frame}\n\\begin{block}{About \\texttt{code}}\nText.\n" ++
+      "\\end{block}\n\\end{frame}\n\\end{document}"),
+   ("a template no element uses", dvDoc "\\style{subsubsection}{ font = {\\itshape\\ttfamily} }\n"
+      "Plain \\texttt{upright code} and no such heading."),
+   ("an italic over empty code", dvDoc "" "Plain \\texttt{upright code} and \\textit{words \\texttt{}}."),
+   ("a switch with nothing after it", dvDoc "" "Plain \\texttt{upright code} and {\\itshape words\\ttfamily}."),
+   ("italic code in a footnote and a caption", dvDoc ""
+      ("Text\\footnote{A \\textit{\\texttt{noted}} run.}.\n\n\\begin{figure}\\centering x" ++
+       "\\caption{A \\textit{\\texttt{captioned}} run.}\\end{figure}")),
+   ("a listing's comment", dvDoc "" "\\begin{lstlisting}[language=Python]\n# a remark\nx = 1\n\\end{lstlisting}"),
+   ("a theorem's italic body", dvDoc "\\newtheorem{theorem}{Theorem}\n"
+      "\\begin{theorem}A \\texttt{coded} claim.\\end{theorem}")]
+
+/-- **The italic census is what the page asks.** `Layout.docFaceKeys`, read
+before layout to decide whether the typewriter default's upright italics are
+named (N0031), says italic code is set exactly where a shipped run asked the
+typewriter slot's italic: over invented documents where a template, an empty
+run or a switch with nothing after it could make the two part, and over the
+whole golden corpus, each laid out in a face set whose every key is a face
+of its own (`keyedFaces`), so each run's face index is the key it asked. -/
+def faceKeyAgreementChecks (ref : IO.Ref (List String)) : IO Unit := do
+  let t := check ref
+  let some font ← loadTestFont "OpenSans-Regular.ttf"
+    | t "face key agreement: the face loads" false
+  let (fs, keys) := keyedFaces font
+  let italicMono (ks : Array (Nat × Nat × Bool)) : Bool := ks.any fun (s, _, i) => s == 2 && i
+  let mut docs : Array (String × Ir.Doc) := #[]
+  for (what, src) in faceKeyProbes do
+    docs := docs.push (what, (elabStr src).1)
+  for n in goldenNames do
+    docs := docs.push (s!"fixture {n}", (← goldenDoc n).1)
+  let mut set := 0
+  for (what, doc) in docs do
+    let shipped := italicMono (shippedKeys keys (layoutOf fs doc))
+    let census := italicMono (Layout.docFaceKeys doc)
+    if shipped then set := set + 1
+    t s!"face key agreement {what}: the census names italic code where the page sets it \
+(census {census}, page {shipped})" (census == shipped)
+  t s!"face key agreement: the documents set italic code and not ({set} of {docs.size})"
+    (set ≥ 6 && set < docs.size)
 
 end Tests.MonoDefault

@@ -140,9 +140,10 @@ remedy is a declaration — `\fonts{ mono = "..." }` — or, for the typewriter
 slot, whose default is a monospace served at its upright corners
 (`FontDb.monoPick`) — a platform monospace (`FontDb.monoDefaults`), or for a
 tex document lualatex's Latin Modern Mono — one of those families installed
-with its bold, or put in its font directory by a document that ships its
-fonts, which its default reads before the host's. A markdown source can
-declare nothing, so its help offers no declaration.
+with its bold and both its italics or neither (a family holding one italic
+of the two is passed over), or put in its font directory by a document that
+ships its fonts, which its default reads before the host's. A markdown
+source can declare nothing, so its help offers no declaration.
 One code, one meaning, and `\allow{W0390}` accepts this loss without also
 accepting every future bold substitution.
 
@@ -170,8 +171,10 @@ public def slotCollapsed (key runs served note : String) (only : Option String)
   let declared := if declarable then s!", or declare one: {declare}" else ""
   let help := if key == "mono" then
       if shipsFonts then
-        s!"install one of {listed} with its bold, or put it in the document's font directory{declared}"
-      else s!"install one of {listed} with its bold{declared}; `leantex fonts` lists the installed families"
+        s!"install one of {listed}, its bold and both or no italics, or put it in the document's \
+font directory{declared}"
+      else s!"install one of {listed}, its bold and both or no italics{declared}; `leantex fonts` \
+lists the installed families"
     else s!"{declare} gives the slot its own face; `leantex fonts` lists the installed families"
   Diag.of .W0390
     s!"nothing declares a '{key}' family; {whereLost}{runs} set in {served}, {note}"
@@ -184,14 +187,20 @@ corners (`FontDb.servesMono`), or Latin Modern Mono without its italic files
 corners set upright in it, unslanted — both backends never fake a slant —
 named once per build where the document sets italic code, rather than as a
 substitution warning per corner (W0006), which is about a family the
-document named. `declarable` is whether the source can declare a face. -/
-public def monoUpright (family : String) (declarable : Bool := true) : Diag :=
+document named. `declarable` is whether the source can declare a face;
+`own` whether the family is one the document ships, whose italic corners
+are read from its own faces alone, so what it lacks is in its font
+directory, whatever the host holds. -/
+public def monoUpright (family : String) (declarable : Bool := true) (own : Bool := false) : Diag :=
+  let declare := "declare a typewriter family that has them: \\fonts{ mono = \"<family>\" }"
+  let remedy := if own then "put the family's italic faces in the document's font directory"
+    else "install the family's italic faces"
   Diag.of .N0031
-    s!"'{family}' has no italic face; italic code sets upright in it"
+    (if own then s!"'{family}' in the document's font directory has no italic face; italic code \
+sets upright in it"
+      else s!"'{family}' has no italic face; italic code sets upright in it")
     (subject := some "slot:mono:italic")
-    (help := if declarable then
-        "install the family's italic faces, or declare a typewriter family that has them: \\fonts{ mono = \"<family>\" }"
-      else "install the family's italic faces")
+    (help := if declarable then s!"{remedy}, or {declare}" else remedy)
 
 /-- The two substitution codes off one resolution result: a missing
 variant is W0006, a missing weight W0366 — the one door

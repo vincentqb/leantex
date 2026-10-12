@@ -985,11 +985,19 @@ public def latinModernMonoServed (faces : Array Face) :
     some latinModernMonoUpright
   else none
 
-/-- **lualatex's shapes are met where they are taken**: every corner's
-file answers the resolver call the assembly makes for it — the family, the
-file declared, the corner — with a fixed-pitch face, unsubstituted. -/
+private theorem latinModernMonoFaces_cover :
+    ∀ k ∈ corners, ∃ c ∈ latinModernMonoFaces, c.1 = k := by decide
+
+private theorem latinModernMonoUpright_cover :
+    ∀ k ∈ corners, ∃ c ∈ latinModernMonoUpright, c.1 = k := by decide
+
+/-- **lualatex's shapes are met where they are taken**: they name a file
+for every corner, and every corner's file answers the resolver call the
+assembly makes for it — the family, the file declared, the corner — with a
+fixed-pitch face, unsubstituted. -/
 public theorem latinModernMono_contract (faces : Array Face)
     (files : List ((Nat × Bool) × String)) (h : latinModernMonoServed faces = some files) :
+    (∀ k ∈ corners, ∃ c ∈ files, c.1 = k) ∧
     ∀ c ∈ files, ∃ f, resolveWeight faces latinModernMono (some c.2) c.1.1 c.1.2 = some (f, none) ∧
       f.fixedPitch = true := by
   have fixed : ∀ c, fileFixed faces c = true →
@@ -1005,12 +1013,12 @@ public theorem latinModernMono_contract (faces : Array Face)
   split at h
   · rename_i hall
     cases h
-    exact fun c hc => fixed c (List.all_eq_true.mp hall c hc)
+    exact ⟨latinModernMonoFaces_cover, fun c hc => fixed c (List.all_eq_true.mp hall c hc)⟩
   · split at h
     · rename_i hup
       cases h
       simp only [Bool.and_eq_true] at hup
-      exact fun c hc => fixed c (List.all_eq_true.mp hup.1 c hc)
+      exact ⟨latinModernMonoUpright_cover, fun c hc => fixed c (List.all_eq_true.mp hup.1 c hc)⟩
     · cases h
 
 /-- What fills an undeclared typewriter slot: a family, and the face files
@@ -1054,14 +1062,16 @@ private theorem orElse_some {α : Type} {o : Option α} {f : Unit → Option α}
   | some x => exact Or.inl (by simpa [Option.orElse] using h)
   | none => exact Or.inr (by simpa [Option.orElse] using h)
 
-/-- A pick is lualatex's shapes, each file met by the assembly's call for
-its corner, or a family served as a typewriter family (`MonoServed`). -/
+/-- A pick is lualatex's shapes, a file for every corner, each met by the
+assembly's call for its corner, or a family served as a typewriter family
+(`MonoServed`). -/
 public theorem monoPick_contract (tex declared : Bool) (faces : Array Face)
     (text : Option String) (p : MonoPick) (h : monoPick tex declared faces text = some p) :
-    (p.family = latinModernMono ∧ ∀ c ∈ p.faces, ∃ f,
+    (p.family = latinModernMono ∧ (∀ k ∈ corners, ∃ c ∈ p.faces, c.1 = k) ∧ ∀ c ∈ p.faces, ∃ f,
         resolveWeight faces p.family (some c.2) c.1.1 c.1.2 = some (f, none) ∧ f.fixedPitch = true) ∨
       (p.faces = [] ∧ MonoServed faces p.family) := by
-  have lm : lmPick tex faces = some p → p.family = latinModernMono ∧ ∀ c ∈ p.faces, ∃ f,
+  have lm : lmPick tex faces = some p → p.family = latinModernMono ∧
+      (∀ k ∈ corners, ∃ c ∈ p.faces, c.1 = k) ∧ ∀ c ∈ p.faces, ∃ f,
       resolveWeight faces p.family (some c.2) c.1.1 c.1.2 = some (f, none) ∧
         f.fixedPitch = true := by
     intro hp

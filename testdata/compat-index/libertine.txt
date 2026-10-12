@@ -1,6 +1,7 @@
 # source: libertine package README (CTAN): Linux Libertine as the roman
-# family and Linux Biolinum as the sans family. The font-switching commands
-# it defines stay refused by name.
+# family, Linux Biolinum as the sans family and Linux Libertine Mono as the
+# typewriter family (libertine.sty's \setmonofont, on by default). The
+# font-switching commands it defines stay refused by name.
 pre impl \usepackage{libertine}
 body refuse:W0301 \libertine{}
 body refuse:W0301 \biolinum{}

@@ -209,12 +209,30 @@ public def buildFontSet (doc : Ir.Doc) (scan : FaceScan)
     (spec.faces.toList.filterMap fun ((s, w, i), _) =>
       if s == effectiveOf slot && !(standard.contains (w, i)) then some (w, i)
       else none)
+  -- lualatex's shapes are named by their files, one family of several
+  -- optical sizes and weights: a weight off their corners is set in the
+  -- nearest corner's file, the substitution named (W0366), never in a file
+  -- of another design size the family's weight order happens to rank first.
+  let nearestFile (slot weight : Nat) (italic : Bool) : Option (Nat × String) :=
+    if slot != 2 || weight == 400 || weight == 700 then none else
+    match pick with
+    | some p =>
+      let corner := if weight < 550 then 400 else 700
+      (p.faces.find? (·.1 == (corner, italic))).map fun c => (corner, c.2)
+    | none => none
   for (slot, _) in slots do
     let some family := resolveName slot | continue
     for (weight, italic) in standard ++ (extraKeysFor slot).eraseDups do
-      let answer ← if slot == 2 && monoOwn then
-          pure (FontDb.resolveWeight own family (declaredFace slot weight italic) weight italic)
-        else cache.resolveWeight faces family (declaredFace slot weight italic) weight italic
+      let pool := if slot == 2 && monoOwn then own else faces
+      let answer ← match nearestFile slot weight italic with
+        | some (corner, file) =>
+          pure ((FontDb.resolveWeight pool family (some file) corner italic).map fun (f, s) =>
+            (f, s.orElse fun _ => if f.weight == weight then none
+              else some (.weight family weight f)))
+        | none =>
+          if slot == 2 && monoOwn then
+            pure (FontDb.resolveWeight own family (declaredFace slot weight italic) weight italic)
+          else cache.resolveWeight faces family (declaredFace slot weight italic) weight italic
       match answer with
       | none =>
         unless missing.contains family do
@@ -239,7 +257,7 @@ public def buildFontSet (doc : Ir.Doc) (scan : FaceScan)
             | none => (Layout.docFaceKeys doc).any fun (s, _, i) => s == 2 && i
           italicCode := some asked
           if asked then
-            diags := diags.push (DriverDiag.monoUpright family tex)
+            diags := diags.push (DriverDiag.monoUpright family tex (own := monoOwn))
         if let some s := sub then
           unless upright && s matches .variant _ do
             let d := DriverDiag.substituted s

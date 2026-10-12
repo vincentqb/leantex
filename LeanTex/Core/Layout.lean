@@ -3590,6 +3590,9 @@ private def pushWeightKey (corners : Bool) (acc : Array (Nat × Nat × Bool)) (s
     let key := (sty.slot, w, sty.italic)
     if acc.contains key then acc else acc.push key
 
+/-- Does a text run set anything: a character other than white space? -/
+private def setsText (s : String) : Bool := s.any fun c => !c.isWhitespace
+
 mutual
 -- conserves: none — a key census, not a tree rewrite: the walk reads and
 -- collects, ships no ink, and returns no tree. Hand-rolled rather than a
@@ -3600,9 +3603,11 @@ private def weightKeysInline (corners : Bool) (acc : Array (Nat × Nat × Bool))
     Ir.Inline → Array (Nat × Nat × Bool)
   | .styled st body =>
     -- the ladder never moves a weight (`weight_agree`), so the census may
-    -- pass the engine scale
+    -- pass the engine scale; the full census counts a face where text sets
+    -- in it, so a style over nothing asks none
     let sty := applyStyle Ir.sizeScale sty st
-    weightKeysInlineList corners (pushWeightKey corners acc sty) sty body.toList
+    weightKeysInlineList corners (if corners then acc else pushWeightKey corners acc sty) sty
+      body.toList
   | .located _ body => weightKeysInlineList corners acc sty body.toList
   | .colored _ _ body => weightKeysInlineList corners acc sty body.toList
   | .role _ body => weightKeysInlineList corners acc sty body.toList
@@ -3613,9 +3618,15 @@ private def weightKeysInline (corners : Bool) (acc : Array (Nat × Nat × Bool))
     weightKeysInlineList corners (weightKeysInlineList corners acc sty active.toList) sty otherwise.toList
   -- A note body sets at the page foot in the base style, not the mark's.
   | .footnote _ body => weightKeysInlineList corners acc {} body.toList
-  | .text _ | .math _ _ | .formula _ _ _ | .image _ _ _ | .icon _ _
-  | .label _ | .ref _ _ _ _ | .cite _ _
-  | .fill | .hspace _ _ | .rule _ _ _ | .strut _ | .italicCorr _ | .pageNumber | .pageCount | .linebreak _ => acc
+  -- Text, and the numbers and marks a reference, a citation and the page
+  -- counters set as text, ask the face of the style around them.
+  | .text s => if corners && setsText s then pushWeightKey true acc sty else acc
+  | .ref _ _ _ _ => if corners then pushWeightKey true acc sty else acc
+  | .cite _ _ => if corners then pushWeightKey true acc sty else acc
+  | .pageNumber => if corners then pushWeightKey true acc sty else acc
+  | .pageCount => if corners then pushWeightKey true acc sty else acc
+  | .math _ _ | .formula _ _ _ | .image _ _ _ | .icon _ _ | .label _
+  | .fill | .hspace _ _ | .rule _ _ _ | .strut _ | .italicCorr _ | .linebreak _ => acc
 
 private def weightKeysInlineList (corners : Bool) (acc : Array (Nat × Nat × Bool))
     (sty : TextStyle) : List Ir.Inline → Array (Nat × Nat × Bool)
@@ -3623,38 +3634,95 @@ private def weightKeysInlineList (corners : Bool) (acc : Array (Nat × Nat × Bo
   | x :: rest => weightKeysInlineList corners (weightKeysInline corners acc sty x) sty rest
 end
 
+/-- The content an element sets, as layout fills it: in its template
+(`Ir.fillTemplate`) where one is declared, else as written. -/
+private def templated (tpl : Option (Array Ir.Inline)) (content : Array Ir.Inline) :
+    Array Ir.Inline :=
+  match tpl with
+  | some t => Ir.fillTemplate t content
+  | none => content
+
+/-- A heading's base style where no template sets it: bold, as layout sets
+an untemplated heading (`collectSection`, `collectTitle`). -/
+private def headingBase (tpl : Option (Array Ir.Inline)) : TextStyle :=
+  if tpl.isSome then {} else { weight := .b }
+
 mutual
-private def weightKeysBlock (corners : Bool) (acc : Array (Nat × Nat × Bool)) :
-    Ir.Block → Array (Nat × Nat × Bool)
+-- conserves: none — the key census over blocks, as above: it reads and
+-- collects, ships no ink and returns no tree. The full census (`corners`)
+-- reads each element in the template layout fills it with, where the
+-- element stands (`styles`; a deck's section pages and frame titles by
+-- `slides`), so a template counts where its element is set and nowhere
+-- else.
+private def weightKeysBlock (corners : Bool) (styles : Ir.Styles) (slides : Bool)
+    (acc : Array (Nat × Nat × Bool)) : Ir.Block → Array (Nat × Nat × Bool)
   | .para content => weightKeysInlineList corners acc {} content.toList
   | .equation num content =>
     weightKeysInlineList corners (weightKeysInlineList corners acc {} content.toList) {} num.toList
-  | .section _ _ _ title => weightKeysInlineList corners acc {} title.toList
-  | .list _ items => weightKeysBlockItems corners acc items.toList
-  | .center body => weightKeysBlockList corners acc body.toList
-  | .ragged _ body => weightKeysBlockList corners acc body.toList
-  | .quote body => weightKeysBlockList corners acc body.toList
-  | .abstract body => weightKeysBlockList corners acc body.toList
-  | .titled _ title body =>
-    weightKeysBlockList corners (weightKeysInlineList corners acc {} title.toList) body.toList
-  | .disclosure summary _ body =>
-    weightKeysBlockList corners (weightKeysInlineList corners acc {} (Ir.disclosureSummary summary).toList)
+  | .section level _ _ title =>
+    if corners then
+      let own := (styles.find? level.element).bind (·.font)
+      let acc := weightKeysInlineList corners acc (headingBase own) (templated own title).toList
+      -- A deck's top-level section may stand on a section page, in that
+      -- page's template (`collectSection`'s divider); both are read.
+      if slides && level == 1 then
+        let page := (styles.find? "sectionpage").bind (·.font)
+        weightKeysInlineList corners acc (headingBase page) (templated page title).toList
+      else acc
+    else weightKeysInlineList corners acc {} title.toList
+  | .list _ items => weightKeysBlockItems corners styles slides acc items.toList
+  | .center body => weightKeysBlockList corners styles slides acc body.toList
+  | .ragged _ body => weightKeysBlockList corners styles slides acc body.toList
+  | .quote body => weightKeysBlockList corners styles slides acc body.toList
+  | .abstract body =>
+    -- Its heading is the locale's word, in the heading's template
+    -- (`Ir.abstractHeadingStyle`); any word stands for it.
+    let acc := if corners then
+        match (Ir.abstractHeadingStyle styles).font with
+        | some tpl => weightKeysInlineList corners acc {} (Ir.fillTemplate tpl #[.text "Abstract"]).toList
+        | none => acc
+      else acc
+    weightKeysBlockList corners styles slides acc body.toList
+  | .titled kind title body =>
+    let shown := if corners then templated (Ir.blockTitleFont styles kind) title else title
+    weightKeysBlockList corners styles slides (weightKeysInlineList corners acc {} shown.toList)
       body.toList
-  | .role _ body => weightKeysBlockList corners acc body.toList
-  | .link _ body => weightKeysBlockList corners acc body.toList
-  | .spaced _ body => weightKeysBlockList corners acc body.toList
-  | .columns cols => weightKeysBlockCols corners acc cols.toList
-  | .onSteps _ body => weightKeysBlockList corners acc body.toList
+  | .disclosure summary _ body =>
+    weightKeysBlockList corners styles slides
+      (weightKeysInlineList corners acc {} (Ir.disclosureSummary summary).toList) body.toList
+  | .role _ body => weightKeysBlockList corners styles slides acc body.toList
+  | .link _ body => weightKeysBlockList corners styles slides acc body.toList
+  | .spaced _ body => weightKeysBlockList corners styles slides acc body.toList
+  | .columns cols => weightKeysBlockCols corners styles slides acc cols.toList
+  | .onSteps _ body => weightKeysBlockList corners styles slides acc body.toList
   | .altSteps _ active otherwise =>
-    weightKeysBlockList corners (weightKeysBlockList corners acc active.toList) otherwise.toList
-  | .only _ body => weightKeysBlockList corners acc body.toList
-  | .nav _ body => weightKeysBlockList corners acc body.toList
-  | .note body => weightKeysBlockList corners acc body.toList
-  | .frame title _ _ _ body =>
-    weightKeysBlockList corners (weightKeysInlineList corners acc {} title.toList) body.toList
+    weightKeysBlockList corners styles slides
+      (weightKeysBlockList corners styles slides acc active.toList) otherwise.toList
+  | .only _ body => weightKeysBlockList corners styles slides acc body.toList
+  | .nav _ body => weightKeysBlockList corners styles slides acc body.toList
+  | .note body => weightKeysBlockList corners styles slides acc body.toList
+  | .frame title standout _ _ body =>
+    if corners then
+      -- A frame title sets in its template under a themed bar and bold
+      -- without one (`collectFrameTitle`), the palette being the page's:
+      -- both are read. A standout frame sets its paragraphs in its template
+      -- (`collectStandout`).
+      let tpl := (styles.find? "frametitle").bind (·.font)
+      let acc := weightKeysInlineList corners acc { weight := .b } title.toList
+      let acc := match tpl with
+        | some t => weightKeysInlineList corners acc {} (Ir.fillTemplate t title).toList
+        | none => acc
+      if standout then
+        weightKeysStandout corners styles slides ((styles.find? "standout").bind (·.font)) acc
+          body.toList
+      else weightKeysBlockList corners styles slides acc body.toList
+    else
+      weightKeysBlockList corners styles slides (weightKeysInlineList corners acc {} title.toList)
+        body.toList
   | .framefoot content => weightKeysInlineList corners acc {} content.toList
   | .float _ _ _ body caption =>
-    weightKeysBlockList corners (weightKeysInlineList corners acc {} caption.toList) body.toList
+    weightKeysBlockList corners styles slides (weightKeysInlineList corners acc {} caption.toList)
+      body.toList
   | .table _ _ _ rows _ _ => weightKeysTableRows corners acc rows.toList
   -- A line's content and comment set at the base style; the generated
   -- keyword bold is a corner face, not an off-corner key.
@@ -3688,20 +3756,39 @@ private def weightKeysBlock (corners : Bool) (acc : Array (Nat × Nat × Bool)) 
   | .setPalette _ | .setTokens _ | .pagebreak
   | .rule _ _ _ => acc
 
-private def weightKeysBlockList (corners : Bool) (acc : Array (Nat × Nat × Bool)) :
+private def weightKeysBlockList (corners : Bool) (styles : Ir.Styles) (slides : Bool)
+    (acc : Array (Nat × Nat × Bool)) : List Ir.Block → Array (Nat × Nat × Bool)
+  | [] => acc
+  | b :: rest =>
+    weightKeysBlockList corners styles slides (weightKeysBlock corners styles slides acc b) rest
+
+/-- A standout frame's body: each paragraph in the frame's template, as
+layout sets it, any other block as anywhere. -/
+private def weightKeysStandout (corners : Bool) (styles : Ir.Styles) (slides : Bool)
+    (tpl : Option (Array Ir.Inline)) (acc : Array (Nat × Nat × Bool)) :
     List Ir.Block → Array (Nat × Nat × Bool)
   | [] => acc
-  | b :: rest => weightKeysBlockList corners (weightKeysBlock corners acc b) rest
+  | b :: rest =>
+    let acc := match b with
+      | .para content =>
+        weightKeysInlineList corners acc (headingBase tpl) (templated tpl content).toList
+      | _ => weightKeysBlock corners styles slides acc b
+    weightKeysStandout corners styles slides tpl acc rest
 
-private def weightKeysBlockItems (corners : Bool) (acc : Array (Nat × Nat × Bool)) :
-    List (Array Ir.Block) → Array (Nat × Nat × Bool)
+private def weightKeysBlockItems (corners : Bool) (styles : Ir.Styles) (slides : Bool)
+    (acc : Array (Nat × Nat × Bool)) : List (Array Ir.Block) → Array (Nat × Nat × Bool)
   | [] => acc
-  | item :: rest => weightKeysBlockItems corners (weightKeysBlockList corners acc item.toList) rest
+  | item :: rest =>
+    weightKeysBlockItems corners styles slides
+      (weightKeysBlockList corners styles slides acc item.toList) rest
 
-private def weightKeysBlockCols (corners : Bool) (acc : Array (Nat × Nat × Bool)) :
+private def weightKeysBlockCols (corners : Bool) (styles : Ir.Styles) (slides : Bool)
+    (acc : Array (Nat × Nat × Bool)) :
     List (Ir.BoxWidth × Array Ir.Block) → Array (Nat × Nat × Bool)
   | [] => acc
-  | (_, body) :: rest => weightKeysBlockCols corners (weightKeysBlockList corners acc body.toList) rest
+  | (_, body) :: rest =>
+    weightKeysBlockCols corners styles slides
+      (weightKeysBlockList corners styles slides acc body.toList) rest
 
 private def weightKeysTableRows (corners : Bool) (acc : Array (Nat × Nat × Bool)) :
     List (Array (Array Ir.Inline)) → Array (Nat × Nat × Bool)
@@ -3714,16 +3801,26 @@ end
 /-- The face keys the document's runs ask, every key or only the off-corner
 ones (`pushWeightKey`). -/
 private def docKeys (corners : Bool) (doc : Doc) : Array (Nat × Nat × Bool) := Id.run do
-  let mut acc := weightKeysBlockList corners #[] doc.body.toList
+  let slides := doc.docClass.record.model == .frame
+  let mut acc := weightKeysBlockList corners doc.styles slides #[] doc.body.toList
   if let some h := doc.head then
     acc := weightKeysInlineList corners acc {} h.toList
   if let some f := doc.foot then
     acc := weightKeysInlineList corners acc {} f.toList
-  for (_, st) in doc.styles.entries do
-    if let some tpl := st.font then
-      acc := weightKeysInlineList corners acc {} tpl.toList
-    if let some tpl := st.authorFont then
-      acc := weightKeysInlineList corners acc {} tpl.toList
+  if corners then
+    -- The headline band: its title in the title page's template, as
+    -- layout sets it, its author and institute at the base style.
+    if let some hl := doc.headline then
+      let tpl := (doc.styles.find? "titlepage").bind (·.font)
+      acc := weightKeysInlineList corners acc (headingBase tpl) (templated tpl hl.title).toList
+      acc := weightKeysInlineList corners acc {} hl.author.toList
+      acc := weightKeysInlineList corners acc {} hl.institute.toList
+  else
+    for (_, st) in doc.styles.entries do
+      if let some tpl := st.font then
+        acc := weightKeysInlineList corners acc {} tpl.toList
+      if let some tpl := st.authorFont then
+        acc := weightKeysInlineList corners acc {} tpl.toList
   return acc
 
 /-- Every off-corner face key the document's styles can ask
@@ -3738,11 +3835,18 @@ really uses. Style templates (`\style{...}{ font = ... }`) join at the
 base style, as their elaboration does. -/
 public def docWeightKeys (doc : Doc) : Array (Nat × Nat × Bool) := docKeys false doc
 
-/-- Every face key the document's runs ask `FontSet.lookup` for, the
+/-- Every face key the document's text asks `FontSet.lookup` for, the
 corners among them, by the same walk as `docWeightKeys`: a listing's tokens
-in their roles' weights too. The italic of a key is exact — no layout base
-style sets italic — while a heading's weight is read at the base style its
-walk passes. -/
+in their roles' weights too, each key counted where text sets in it, and
+each element in the template layout fills it with where the element stands
+(a heading's, a block title's, a frame title's, a standout frame's, the
+headline's), never a template no element uses. Where layout's choice turns
+on the palette in force — a frame title in its template under a themed bar,
+bold without one; a deck's section page — both readings are counted. The
+slot and italic of a key are layout's — no layout base style sets italic or
+a family — while a heading's weight is read at the base style its walk
+passes. The face keys shipped runs ask hold it to that
+(`Tests.MonoDefault.faceKeyAgreementChecks`). -/
 public def docFaceKeys (doc : Doc) : Array (Nat × Nat × Bool) := docKeys true doc
 
 -- Math -------------------------------------------------------------------------
