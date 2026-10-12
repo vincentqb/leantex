@@ -3708,6 +3708,10 @@ private structure MathEnv where
   every box the assembly builds. No default: the one construction site
   says. -/
   attr : Attribution
+  /-- How many grids' cells hold what is laid: a grid at none is the
+  formula's own, whose rows a display alignment sets as lines
+  (`alignRowMark`). -/
+  gridDepth : Nat := 0
 
 /-- The common font environment for measuring and placing a math run.
 Its em matches the surrounding face's measured x-height. Placement adds
@@ -4030,8 +4034,10 @@ private def gridAssemble (e : MathEnv) (size raise : Sp) (kind : Math.GridKind)
   | .align | .gather =>
     -- A display alignment's last row is the list's last line, as TeX sets
     -- each row as a line of its own: its baseline rides the line
-    -- (`alignRowMark`, `LineOut.lastBase`).
-    return items.push (alignRowMark (Δ + ys[cells.size - 1]!) e.color)
+    -- (`alignRowMark`, `LineOut.lastBase`). A grid inside another's cell
+    -- is a box of that row's.
+    if e.gridDepth == 0 then return items.push (alignRowMark (Δ + ys[cells.size - 1]!) e.color)
+    return items
   | .array _ _ | .aligned _ => return items
 
 /-- Assemble a laid fraction (TeXbook Appendix G rule 15 over the MATH
@@ -4544,7 +4550,7 @@ private def layMathNucleus (e : MathEnv) (st : Math.MathStyle) (raise : Sp)
       | .array _ _ => if st.rank > 2 then .text st.cramped else st
       | .small => .script false
       | .align | .aligned _ | .gather => .display false
-    let (cells, missing) := layGridRows e cellSt (#[], acc.2) rows
+    let (cells, missing) := layGridRows { e with gridDepth := e.gridDepth + 1 } cellSt (#[], acc.2) rows
     (acc.1 ++ gridAssemble e (e.sizeAt st) raise kind cells, missing)
   | .cancel mark spec value body =>
     -- The package boxes its argument in the current style (`\mathpalette`),
@@ -14651,11 +14657,11 @@ public def blockTitleRule (geom : Geom) (fs : FontSet) (styles : Ir.Styles) (kin
 
 /-- **Where a web page's block ends its last line, where it ends on no
 paragraph** (`HtmlDoc.Config.blockLastBelow`): the part below its baseline
-of the line box the last line of the block's last block (`Ir.lastLeafBlock`)
-stands in, CSS 2.1 §10.8.1's — a listing's, its mono face at its step's
-size leaded at the line height the stylesheet declares for it, its pitch
-over that size to the thousandth. A block ending on anything else ends as a
-body paragraph does (`Ir.BlockTitlePlace.bodyBelow`): nothing here. -/
+of the line box a block's last line stands in, CSS 2.1 §10.8.1's — a
+listing's, its mono face at its step's size leaded at the line height the
+stylesheet declares for it, its pitch over that size to the thousandth. A
+block ending on anything else ends as a body paragraph does
+(`Ir.BlockTitlePlace.bodyBelow`): nothing here. -/
 public def blockLastBelow (geom : Geom) (fs : FontSet) (b : Option Ir.Block) : Option Sp :=
   match b with
   | some (.verbatim _ _ spec) =>

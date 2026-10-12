@@ -6995,6 +6995,55 @@ private def listingLineHeight (page : PageSpec) (spec : Ir.ListingSpec) (step : 
     page.leading - spec.lineOverlap
   decMilli (pitch * 1000 / max size 1)
 
+/-- A length of the page's own as the stylesheet writes it: on a deck the
+stage's share (`vh`), elsewhere the screen's rem. -/
+private def stageLength (cfg : Config) (v : Int) : String :=
+  if cfg.deck then s!"{decMilli (deckStageMilli v cfg.page.height)}vh"
+  else milliRem (screenMilli cfg.page.fontSize v)
+
+mutual
+
+-- conserves: none — how far a body's last line box reaches below its baseline and past the boxes around it; the walk follows the last block alone, which no fold over every block can say.
+/-- How far the end of a body stands below its last baseline in the web
+page: its last line box's part below that baseline (`Config.blockLastBelow`,
+a body paragraph's where that answers nothing, `Ir.BlockTitlePlace.bodyBelow`),
+and the skips below every shaped block it ends inside, which pad their
+sections' ends. -/
+private def endBelowList (cfg : Config) (para : String) : List Block → String
+  | [] => para
+  | [b] => endBelowOne cfg para b
+  | _ :: rest => endBelowList cfg para rest
+
+private def endBelowItems (cfg : Config) (para : String) : List (Array Block) → String
+  | [] => para
+  | [item] => endBelowList cfg para item.toList
+  | _ :: rest => endBelowItems cfg para rest
+
+private def endBelowOne (cfg : Config) (para : String) : Block → String
+  | .titled kind _ body =>
+    let inner := endBelowList cfg para body.toList
+    match Ir.blockShapeOf cfg.styles kind with
+    | some sh =>
+      let after := Ir.blockSkipSum cfg.tokens sh.after
+      s!"calc({stageLength cfg after.width.sp} + {inner})"
+    | none => inner
+  | .list _ items => endBelowItems cfg para items.toList
+  | .center body | .ragged _ body | .spaced _ body | .role _ body | .link _ body
+  | .quote body | .abstract body | .onSteps _ body | .only _ body =>
+    endBelowList cfg para body.toList
+  | .verbatim covered content spec =>
+    match cfg.blockLastBelow (some (.verbatim covered content spec)) with
+    | some v =>
+      -- A reading page pads its listings; a deck's stage pads none.
+      if cfg.deck then stageLength cfg v else s!"calc({stageLength cfg v} + {quantaRem 1})"
+    | none => para
+  | .para .. | .section .. | .equation .. | .algorithm .. | .rule .. | .picture ..
+  | .table .. | .bibliography .. | .columns .. | .altSteps .. | .note .. | .nav ..
+  | .logo .. | .pagebreak | .frame .. | .framefoot .. | .setPalette .. | .setTokens ..
+  | .float .. => para
+
+end
+
 /-- Absolute font size and leading keep their physical lengths in the IR;
 on a deck they use the body's stage-height share (`deck_type_is_stage_ratio`),
 so they scale with its named size ladder. Context-dependent expressions keep
@@ -9403,20 +9452,15 @@ public def blockNode (cfg : Config) (b : Block) : Node :=
       let shapedCfg := { cfg.into with
         listingFg := some ink, bodyInk := some (role, look.fg.getD inherited.2) }
       -- A rule beside the whole block ends below the body's last baseline:
-      -- where the body ends on no paragraph, the section says how far its
-      -- last line box reaches below that baseline (`blockShapeCss`), a
-      -- listing's past its own padding.
+      -- each such section says how far its body's end stands below it
+      -- (`blockShapeCss`), so none reads an enclosing section's.
       let lastBelow : String :=
-        if !(shape.edges.any fun e => e.span == .whole && e.besideTitle) then "" else
-        let last := Ir.lastLeafBlock body
-        match cfg.blockLastBelow last with
-        | some v =>
-          let below := if cfg.deck then s!"{decMilli (deckStageMilli v cfg.page.height)}vh"
-            else milliRem (screenMilli cfg.page.fontSize v)
-          let below := if cfg.deck || !(last matches some (.verbatim ..)) then below
-            else s!"calc({below} + {quantaRem 1})"
-          s!" --block-last-below: {below};"
+        match shape.edges.find? fun e => e.span == .whole && e.besideTitle with
         | none => ""
+        | some e =>
+          let para := ((cfg.blockTitleRule kind e.reach).map fun p => stageLength cfg p.bodyBelow).getD
+            "0rem"
+          s!" --block-last-below: {endBelowList cfg para body.toList};"
       fillCarrier cfg (Ir.frameFillsOne cfg.lists cfg.styles .deck 0 b)
         (Html.elem "section" (head ++ blockNodesInto shapedCfg #[] body.toList)
           #[("class", s!"block block-{kind.name} block-shaped"),

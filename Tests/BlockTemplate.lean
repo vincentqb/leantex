@@ -2402,6 +2402,20 @@ private def wholeBarChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) :
         ((d - half).natAbs ≤ tolerance.toNat)
     | none => check ref "whole bar: the display's rule ships" false
   | _, _ => check ref "whole bar: the display's last row ships" false
+  -- A grid inside the last row's cell is a box of that row's: the rule
+  -- still ends below the row.
+  let nested := wholeBarSource.replace "  d &= e\n" "  d &= \\begin{gathered} x \\\\ y \\end{gathered}\n"
+  check ref "whole bar: the nested-grid probe differs from the probe" (nested != wholeBarSource)
+  let (_, nout, _) := layout fs "wholebar-nested" nested
+  match nout.pages[1]?, nout.pages[1]?.bind fun p => runBase p "𝑑" with
+  | some p, some row =>
+    match ruleOf p edgeColor 1 with
+    | some bar =>
+      let d := milliOf (bar.y + bar.h - row)
+      check ref s!"whole bar: a display whose last row holds a grid ends its rule below that row ({d})"
+        ((d - half).natAbs ≤ tolerance.toNat)
+    | none => check ref "whole bar: the nested-grid display's rule ships" false
+  | _, _ => check ref "whole bar: the nested-grid display's last row ships" false
   -- The picture stands on the baseline, its lower edge there.
   match out.pages[2]? with
   | some p =>
@@ -2464,18 +2478,38 @@ private def wholeBarHtmlChecks (ref : IO.Ref (List String)) (fonts : Font.FontSe
   -- The listing's section says how far its last line box reaches.
   let below := Layout.blockLastBelow geom fs
   let listings := Ir.foldBlocks (fun acc b => match b with
-    | .titled _ _ kb => match Ir.lastLeafBlock kb with
-      | some (.verbatim ..) => acc.push (Ir.lastLeafBlock kb)
+    | .titled _ _ kb => match kb.back? with
+      | some (.verbatim ..) => acc.push kb.back?
       | _ => acc
     | _ => acc) (fun acc _ => acc) #[] doc.body
   check ref s!"whole bar HTML: one block ends on a listing ({listings.size})" (listings.size == 1)
   match listings[0]?.bind below with
   | some v =>
-    let sections := elemAttrsList (· == "section") #[] body.toList
     let said := s!"--block-last-below: {HtmlDoc.blockShapeLength doc { width := .ofSp v }};"
-    check ref s!"whole bar HTML: the listing's section says how far its last line box reaches ({said})"
-      ((sections.filter fun (_, attrs) => attrs.any fun (k, s) => k == "style" && hasStr s said).size == 1)
+    -- The section holding the listing.
+    let holding := (elemNodesList (· == "section") #[] body.toList).filterMap fun n => match n with
+      | .elem _ attrs kids =>
+        if kids.any (fun k => k matches .elem "pre" _ _) then (attrs.find? (·.1 == "style")).map (·.2)
+        else none
+      | .text _ | .style _ | .script .. => none
+    check ref s!"whole bar HTML: the listing's section says how far its last line box reaches ({said}, {holding})"
+      (holding.size == 1 && holding.all (hasStr · said))
   | none => check ref "whole bar HTML: the driver measures the listing's last line" false
+  -- Every such section says its own end, so a block inside another reads
+  -- none of the enclosing one's; a body ending in a block ends past that
+  -- block's skip below.
+  let inner := wholeBarSource.replace "Body words here.\n"
+    "Body words here.\n\\begin{block}{Inner title words}\nInner body words.\n\\end{block}\n"
+  check ref "whole bar HTML: the nested-block probe differs from the probe" (inner != wholeBarSource)
+  let (idoc, _) := Elab.run "block-template-wholebar-inner.tex" inner
+  let (_, ibody, _) := HtmlDoc.emitTree cfg idoc
+  let styles := (elemAttrsList (· == "section") #[] ibody.toList).filterMap fun (_, attrs) =>
+    if attrs.any (fun (k, v) => k == "class" && hasStr v "block-shaped") then
+      (attrs.find? (·.1 == "style")).map (·.2) else none
+  check ref s!"whole bar HTML: every titled shaped section says its own end ({styles})"
+    (styles.size ≥ 2 && styles.all (hasStr · "--block-last-below: "))
+  check ref s!"whole bar HTML: a block ending in a block ends past that block's skip below ({styles})"
+    (styles.any (hasStr · "--block-last-below: calc("))
 
 /-- **The reading holds a template that sets the body back to what TeX sets**:
 each probe below breaks one of the template's settings — the items the body
@@ -2501,7 +2535,22 @@ private def wholeBarReadingChecks (ref : IO.Ref (List String)) : IO Unit := do
      ("moved", src.replace "\\moveleft\\dimexpr\\probe@wd+\\probe@sep\\relax" "\\moveleft\\dimexpr\\probe@wd\\relax",
        "a rule beside the body at another place, width or paint than its title's"),
      ("short", src.replace "    \\advance\\probe@above\\ht\\probe@body\n" "",
-       "a rule beside the body reaching elsewhere than the title's rule")]
+       "a rule beside the body reaching elsewhere than the title's rule"),
+     -- Two rounds of one peel take two items off, not every one.
+     ("unrolled", src.replace "\\probe@peel\n  \\else\\ifnum" "\n  \\else\\ifnum"
+         |>.replace "\\probe@trail}\\probe@peel\n" "\\probe@trail}\n"
+         |>.replace "  \\probe@peel\n  \\egroup\n" "  \\probe@peel\\probe@peel\n  \\egroup\n",
+       "a rule beside the body standing below the items the body ends on"),
+     -- A trail set in the body's group is lost where the group ends.
+     ("local", src.replace "\\global\\setbox\\probe@trail\\vbox{" "\\setbox\\probe@trail\\vbox{",
+       "the items the body ends on set back otherwise than in their order, every one"),
+     -- A space before the rule moves it off the title's.
+     ("spaced", src.replace "\\vbox to\\z@{\\vss\\hbox{{" "\\vbox to\\z@{\\vss\\hbox{ {",
+       "a box beside the body other than a rule standing on its last line"),
+     -- A close that takes the body's last item off moves what follows.
+     ("unskipped", (titleBarOf src).replace "\\newcommand{\\probe@close}{\\par\\vskip\\smallskipamount}"
+         "\\newcommand{\\probe@close}{\\par\\unskip\\vskip\\smallskipamount}",
+       "the items the body ends on set back otherwise than in their order, every one")]
   for (name, variant, why) in cases do
     check ref s!"whole bar {name}: the refused probe differs from the probe" (variant != src)
     let (doc, diags) := Elab.run s!"block-template-wholebar-{name}.tex" variant
@@ -2510,6 +2559,23 @@ private def wholeBarReadingChecks (ref : IO.Ref (List String)) : IO Unit := do
       (named.size == 1 && named.all (hasStr ·.message why))
     check ref s!"whole bar {name}: its blocks keep the default pair"
       (((doc.styles.find? "block").bind (·.shape)).isNone)
+  -- What the conditional pass decides in a template's body stands: a flag
+  -- the document set, a macro's optional argument's default.
+  let (plain, _) := Elab.run "block-template-wholebar.tex" src
+  let shape := (plain.styles.find? "block").bind (·.shape)
+  let decided : List (String × String) :=
+    [("flagged", src.replace "\\makeatletter\n" "\\makeatletter\n\\newif\\ifprobe@gap\\probe@gaptrue\n"
+        |>.replace "  \\par\\vskip\\medskipamount\n  \\ifx\\insertblocktitle"
+          "  \\par\\vskip\\medskipamount\\ifprobe@gap\\else\\fi\n  \\ifx\\insertblocktitle"),
+     ("optional", src.replace "\\makeatletter\n"
+          "\\makeatletter\n\\newcommand{\\probe@gap}[1][\\medskipamount]{\\vskip#1}\n"
+        |>.replace "  \\par\\vskip\\medskipamount\n  \\ifx\\insertblocktitle"
+          "  \\par\\probe@gap\n  \\ifx\\insertblocktitle")]
+  for (name, variant) in decided do
+    check ref s!"whole bar {name}: the decided probe differs from the probe" (variant != src)
+    let (doc, diags) := Elab.run s!"block-template-wholebar-{name}.tex" variant
+    check ref s!"whole bar {name}: the template reads as the probe's ({diags.filter (·.code == "W0110") |>.map (·.message)})"
+      (shape.isSome && (doc.styles.find? "block").bind (·.shape) == shape)
   let native (edge : String) (whole : String) : String :=
     "\\documentclass{slides}\n\\palette{ accent = #123456 }\n\\style{block}{ shape = " ++
       "{ title = box strut parskip, untitled = {}" ++ whole ++ ", edge = { span = whole, side = left, " ++

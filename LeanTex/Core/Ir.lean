@@ -11288,20 +11288,6 @@ end
 public def holdsList (body : Array Block) : Bool :=
   foldBlocks (fun acc b => acc || b matches .list ..) (fun acc _ => acc) false body
 
-/-- The block whose lines end a body, in document order: the last block
-the fold reaches that sets lines of its own — a paragraph, a heading, a
-display, a listing, a picture, a rule, a table, an algorithm, a reference
-list — through the lists and wrappers around it. -/
--- conserves: none — a lookup of the block a body ends on; nothing is rebuilt.
-public def lastLeafBlock (body : Array Block) : Option Block :=
-  foldBlocks (fun acc b => match b with
-    | .para .. | .section .. | .equation .. | .verbatim .. | .algorithm .. | .rule ..
-    | .picture .. | .table .. | .bibliography .. => some b
-    | .list .. | .center .. | .ragged .. | .spaced .. | .role .. | .link .. | .quote ..
-    | .abstract .. | .titled .. | .columns .. | .onSteps .. | .altSteps .. | .note ..
-    | .only .. | .nav .. | .logo .. | .pagebreak | .frame .. | .framefoot .. | .setPalette ..
-    | .setTokens .. | .float .. => acc) (fun acc _ => acc) none body
-
 /-- The events a context-threading walk declares. `foldBlock`'s pair of
 leaf functions is the case where no context descends and the way out is
 silent — `foldCtxBlock_covers` is that equality, and it is what makes a
