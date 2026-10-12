@@ -3,6 +3,7 @@ module
 public import LeanTex.Core.Ir
 public import LeanTex.Core.CodeColor
 import LeanTex.Core.ContrastRatio
+import LeanTex.Core.Nfc
 import LeanTex.Core.Oklab
 
 /-!
@@ -559,18 +560,67 @@ public def contract (pal : Palette) (ground : Option Color) (style : Option List
     | some p => p.declared || decide (Contrast.aaText ≤ Contrast.contrastMilli (shipped bg p) bg)
     | none => true
 
+/-- Whether text in a character's script wraps between its characters, not
+at spaces: the ideographs, kana, Hangul syllables, Bopomofo, CJK symbols and
+punctuation and the fullwidth forms, which UAX #14 breaks between any two
+(classes ID, H2, H3, and the CJK punctuation's own), and Thai and Lao,
+which wrap between the words a dictionary finds (class SA) and are read
+here between their syllables (`holdsToPrevious`, `holdsToNext`). Khmer and
+Myanmar stack their consonants, a cluster no table here reads, and keep a
+run whole. -/
+public def wrapsBetweenChars (c : Char) : Bool :=
+  let n := c.toNat
+  (0x0E00 ≤ n && n ≤ 0x0EFF) ||
+  (0x2E80 ≤ n && n ≤ 0x2FDF) ||
+  (0x3000 ≤ n && n ≤ 0x312F) ||
+  (0x3190 ≤ n && n ≤ 0x4DBF) ||
+  (0x4E00 ≤ n && n ≤ 0x9FFF) ||
+  (0xAC00 ≤ n && n ≤ 0xD7A3) ||
+  (0xF900 ≤ n && n ≤ 0xFAFF) ||
+  (0xFE30 ≤ n && n ≤ 0xFE4F) ||
+  (0xFF00 ≤ n && n ≤ 0xFFEF) ||
+  (0x20000 ≤ n && n ≤ 0x3FFFF)
+
+/-- A character no wrap falls before: a combining mark, which belongs to the
+character it marks (a canonical combining class, or one of Thai's and Lao's
+marks above and below, whose class is zero), a joiner or a variation
+selector; a vowel Thai and Lao write after its consonant; and the CJK
+punctuation UAX #14 starts no line with — a stop, a comma, a closing
+bracket, a small kana, the prolonged sound mark, an iteration mark
+(classes CL, NS, and CJ read strictly). -/
+public def holdsToPrevious (c : Char) : Bool :=
+  let n := c.toNat
+  Nfc.combiningClass c != 0 ||
+  n == 0x0E30 || (0x0E31 ≤ n && n ≤ 0x0E3A) || n == 0x0E45 || (0x0E46 ≤ n && n ≤ 0x0E4E) ||
+  n == 0x0E2F ||
+  n == 0x0EB0 || (0x0EB1 ≤ n && n ≤ 0x0EBC) || (0x0EC6 ≤ n && n ≤ 0x0ECE) ||
+  n == 0x200D || (0xFE00 ≤ n && n ≤ 0xFE0F) || (0xE0100 ≤ n && n ≤ 0xE01EF) ||
+  "、。，．・：；？！ー〜～゛゜ヽヾゝゞ々〻」』）］｝〉》】〕〗〙〛｠｡｣､･ｰﾞﾟ".contains c ||
+  "ぁぃぅぇぉっゃゅょゎゕゖァィゥェォッャュョヮヵヶㇰㇱㇲㇳㇴㇵㇶㇷㇸㇹㇺㇻㇼㇽㇾㇿｧｨｩｪｫｬｭｮｯ".contains c
+
+/-- A character no wrap falls after: a vowel Thai and Lao write before the
+consonant it follows, and the CJK opening brackets UAX #14 ends no line
+with (class OP). -/
+public def holdsToNext (c : Char) : Bool :=
+  let n := c.toNat
+  (0x0E40 ≤ n && n ≤ 0x0E44) || (0x0EC0 ≤ n && n ≤ 0x0EC4) ||
+  "「『（［｛〈《【〔〖〘〚｟｢".contains c
+
 /-- How the fallback lexer reads a character: a run of word characters
 (letters, digits, `_`, `'`, every scalar past ASCII) is one token, a run of
 operator characters — the ASCII symbols of the Haskell 2010 report's lexical
 syntax (§2.2, `ascSymbol`) — is one, so `:=`, `->`, `==` and `<=` hold
 together, and any other character, a bracket, a quote, a comma, is a token
-of its own. -/
+of its own, as is each character of a script that wraps between its
+characters (`wrapsBetweenChars`), save where it holds to its neighbour
+(`codeMarks`). -/
 public inductive CodeClass where
   | space | word | op | single
   deriving BEq
 
 public def codeClass (c : Char) : CodeClass :=
   if c == ' ' || c == '\t' then .space
+  else if wrapsBetweenChars c then .single
   else if c.isAlphanum || c == '_' || c == '\'' || c.toNat > 127 then .word
   else if "!#$%&*+-./:<=>?@\\^|~".contains c then .op
   else .single
@@ -581,13 +631,16 @@ output units (`\lst@SelectStdCharTable`): a letter (`a`–`z`, `A`–`Z`, `@`,
 read as a letter, a departure: the table names none, and under LuaLaTeX
 listings sets such a scalar outside its units, out of order where a line
 wraps; read as a letter it stays in place, whole with the letters beside
-it. -/
+it. A character of a script that wraps between its characters
+(`wrapsBetweenChars`) is a unit of its own (`apart`), save where it holds to
+its neighbour (`codeMarks`), which is how such text wraps. -/
 public inductive LstClass where
-  | letter | digit | space | other
+  | letter | digit | space | other | apart
   deriving BEq
 
 public def lstClass (c : Char) : LstClass :=
   if c == ' ' || c == '\t' then .space
+  else if wrapsBetweenChars c then .apart
   else if c.isAlpha || c == '@' || c == '$' || c == '_' || c.toNat > 127 then .letter
   else if c.isDigit then .digit
   else .other
@@ -613,7 +666,10 @@ wrap: listings' output units — letters run on and digits continue them
 digits among them (`\lst@AppendOther`), a space is a unit of its own
 (`\lst@AppendSpecialSpace`), and a `)` closes the run it ends
 (`\lst@breakProcessOther`) — or, under whitespace first, each of the
-highlighter's tokens and each fallback token of untyped text. -/
+highlighter's tokens and each fallback token of untyped text. A character
+that holds to the one before it (`holdsToPrevious`), or follows one that
+holds to the next (`holdsToNext`), opens neither a token nor a unit: a mark
+stays with what it marks, and a stop with the text it ends. -/
 public def codeMarks (wrap : Ir.ListingWrap) (line : Array ListingHighlight.Token) :
     Array CodeMark := Id.run do
   let units := match wrap with
@@ -628,35 +684,31 @@ public def codeMarks (wrap : Ir.ListingWrap) (line : Array ListingHighlight.Toke
   -- or neither (the line's start, a space, a closing `)`)
   let mut letters := false
   let mut others := false
+  let mut held := false
   for token in line do
     let typed := token.kind != .text
     if !units then lex := lex + 1
     for c in token.text.toList do
+      let space := c == ' ' || c == '\t'
+      let glued := !space && (held || holdsToPrevious c)
+      held := holdsToNext c
       let cl := codeClass c
-      let fresh := prev != some cl || cl == .single
+      let fresh := !glued && (prev != some cl || cl == .single)
       if fresh then fb := fb + 1
       prev := some cl
       if !units then
         if !typed && fresh then lex := lex + 1
       else
-        match lstClass c with
-        | .space =>
-          lex := lex + 1
-          letters := false
-          others := false
-        | .letter =>
-          unless letters do lex := lex + 1
-          letters := true
-          others := false
-        | .digit =>
-          unless letters || others do
-            lex := lex + 1
-            others := true
-        | .other =>
-          unless others do lex := lex + 1
-          letters := false
-          others := c != ')'
-      out := out.push { c := c, token := k, lex := lex, fb := fb, space := c == ' ' || c == '\t' }
+        let (opens, l, o) := match lstClass c with
+          | .space => (true, false, false)
+          | .letter => (!letters, true, false)
+          | .digit => if letters || others then (false, letters, others) else (true, false, true)
+          | .other => (!others, false, c != ')')
+          | .apart => (true, false, false)
+        if opens && !glued then lex := lex + 1
+        letters := l
+        others := o
+      out := out.push { c := c, token := k, lex := lex, fb := fb, space := space }
     k := k + 1
   return out
 

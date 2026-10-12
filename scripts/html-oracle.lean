@@ -49,7 +49,7 @@ def features : List String :=
   ["load", "images", "fonts", "mathml", "mathAlpha", "lang", "landmarks", "snaps", "box-side",
    "affine-screen", "affine-print", "color-scheme", "reduced-motion", "print", "print-spill",
    "print-sheets", "no-script", "code-height", "stage-fit", "deck-links", "disclosure",
-   "print-disclosure", "code-wrap"]
+   "print-disclosure", "code-wrap", "print-code"]
 
 def die (code : UInt32) (msg : String) : IO UInt32 := do
   IO.eprintln msg
@@ -601,57 +601,112 @@ const printDeck = async (page, name, fx) => {
 };
 
 // A code block's lines wrap only where the page's own wrap may: every line
-// box break inside a code line falls at a space or between two fallback
-// tokens, read off the line's text — a word (letters, digits, `_`, `'`,
+// box break inside a code line falls at a space, between two fallback
+// tokens read off the line's text — a word (letters, digits, `_`, `'`,
 // every scalar past ASCII), a run of operator characters, any other
-// character alone — never inside `:=`, `->` or an identifier; or, in a
-// declared listing that wraps at listings' units, at the `<wbr>` the page
-// stands between two of them (a unit may part a fallback token: `0x1F` is
-// the units `0` and `x1F`).
-const codeWrapJudge = () => {
+// character alone, each character of a script that wraps between its
+// characters, a character that holds to its neighbour reading with it, as
+// the engine reads them (the tables `codeTables` writes from
+// `Listing.wrapsBetweenChars`, `holdsToPrevious` and `holdsToNext`) — or
+// inside a token wider than its line, which breaks where it must; never
+// inside `:=`, `->` or an identifier that fits. In a block that carries a
+// `<wbr>` — a declared listing that wraps at listings' units — a break
+// falls only at a space or the `<wbr>` the page stands between two units (a
+// unit may part a fallback token: `0x1F` is the units `0` and `x1F`), or
+// inside a unit the page holds nowhere because it is wider than a line. And
+// a wrapping block holds its lines inside its box: none runs past it.
+const codeWrapJudge = (tables) => {
+  const inR = (rs, cp) => {
+    let lo = 0, hi = rs.length - 1;
+    while (lo <= hi) {
+      const m = (lo + hi) >> 1;
+      if (cp < rs[m][0]) hi = m - 1; else if (cp > rs[m][1]) lo = m + 1; else return true;
+    }
+    return false;
+  };
   const cls = (c) => {
+    const cp = c.codePointAt(0);
     if (c === ' ' || c === '\t') return 'space';
-    if (/[A-Za-z0-9_']/.test(c) || c.codePointAt(0) > 127) return 'word';
+    if (inR(tables.apart, cp)) return 'single';
+    if (/[A-Za-z0-9_']/.test(c) || cp > 127) return 'word';
     if ('!#$%&*+-./:<=>?@\\^|~'.includes(c)) return 'op';
     return 'single';
   };
   const blocks = [...document.querySelectorAll('pre > code')]
     .filter(c => c.getBoundingClientRect().width > 0);
   let wraps = 0;
-  const bad = [];
+  const bad = [], over = [];
   for (const code of blocks) {
+    const pre = code.parentElement;
+    const cs = getComputedStyle(pre);
+    const room = pre.clientWidth - parseFloat(cs.paddingLeft) - parseFloat(cs.paddingRight);
+    if (/^(pre-wrap|break-spaces)$/.test(cs.whiteSpace) && pre.scrollWidth > pre.clientWidth + 1)
+      over.push(pre.scrollWidth - pre.clientWidth);
     const chars = [];
-    let wbr = false;
+    let wbr = false, units = false;
     const walker = document.createTreeWalker(code, NodeFilter.SHOW_TEXT | NodeFilter.SHOW_ELEMENT);
     for (let t = walker.nextNode(); t; t = walker.nextNode()) {
-      if (t.nodeType === Node.ELEMENT_NODE) { if (t.tagName === 'WBR') wbr = true; continue; }
+      if (t.nodeType === Node.ELEMENT_NODE) { if (t.tagName === 'WBR') { wbr = true; units = true; } continue; }
+      const tok = t.parentElement.closest('.tok');
+      const holder = tok && code.contains(tok) ? tok : null;
       let i = 0;
       for (const ch of t.data) {
         const r = document.createRange();
         r.setStart(t, i); r.setEnd(t, i + ch.length);
         const rect = [...r.getClientRects()].find(x => x.width > 0 || x.height > 0);
-        chars.push({ ch, top: rect ? rect.top : null, wbr });
+        chars.push({ ch, top: rect ? rect.top : null, w: rect ? rect.width : 0, wbr, holder });
         wbr = false;
         i += ch.length;
       }
     }
-    let prev = null;
+    // under listings' rule, the stretches between two break points the page
+    // marks — a space or a `<wbr>` — that no element holds: a unit wider
+    // than a line, which breaks where it must
+    let seg = 0;
+    const segWidth = new Map();
     for (const c of chars) {
-      if (c.ch === '\n') { prev = null; continue; }
+      if (c.ch === '\n' || c.ch === ' ' || c.ch === '\t' || c.wbr || c.holder) seg++;
+      c.seg = seg;
+      if (!c.holder) segWidth.set(seg, (segWidth.get(seg) || 0) + c.w);
+    }
+    // the fallback tokens, glued as the engine glues them
+    let tok = 0, prev = null, held = false;
+    const width = new Map();
+    for (const c of chars) {
+      c.sp = c.ch === ' ' || c.ch === '\t';
+      if (c.ch === '\n') { tok++; prev = null; held = false; c.tok = tok; continue; }
+      const cp = c.ch.codePointAt(0);
+      const glued = !c.sp && (held || inR(tables.before, cp));
+      held = inR(tables.after, cp);
+      const k = cls(c.ch);
+      if (!glued && (prev !== k || k === 'single')) tok++;
+      prev = k;
+      c.tok = tok;
+      width.set(tok, (width.get(tok) || 0) + c.w);
+    }
+    let last = null;
+    for (const c of chars) {
+      if (c.ch === '\n') { last = null; continue; }
       if (c.top === null) continue;
-      if (prev && c.top > prev.top + 2) {
+      if (last && c.top > last.top + 2) {
         wraps++;
-        const a = cls(prev.ch), b = cls(c.ch);
-        if (!(a === 'space' || b === 'space' || a !== b || a === 'single' || c.wbr))
-          bad.push(JSON.stringify(prev.ch + '|' + c.ch));
+        const inside = last.tok === c.tok;
+        const wide = inside && width.get(c.tok) > room + 0.5;
+        const longUnit = !last.holder && !c.holder && last.seg === c.seg &&
+          segWidth.get(c.seg) > room + 0.5;
+        const ok = units ? (last.sp || c.sp || c.wbr || longUnit)
+          : (last.sp || c.sp || !inside || wide);
+        if (!ok) bad.push(JSON.stringify(last.ch + '|' + c.ch));
       }
-      prev = c;
+      last = c;
     }
   }
-  return { ok: bad.length === 0, n: blocks.length, wraps,
+  return { ok: bad.length === 0 && over.length === 0, n: blocks.length, wraps,
     why: `${blocks.length} code blocks, ${wraps} wraps` +
-      (bad.length ? ', inside a token at ' + [...new Set(bad)].slice(0, 6).join(' ') : '') };
+      (bad.length ? ', inside a token at ' + [...new Set(bad)].slice(0, 6).join(' ') : '') +
+      (over.length ? ', a wrapping block overflowing its box by ' + over.map(Math.round).join(' ') + ' px' : '') };
 };
+const codeTables = JSON.parse(process.env.LT_CODE_TABLES || '{"apart":[],"before":[],"after":[]}');
 
 // The judge at narrow screens, where long lines wrap, and on paper.
 const codeWrap = async (page) => {
@@ -661,12 +716,12 @@ const codeWrap = async (page) => {
     for (const w of widths) {
       await page.setViewportSize({ width: w, height: 720 });
       await page.evaluate(() => new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r))));
-      runs.push(['screen ' + w, await page.evaluate(codeWrapJudge)]);
+      runs.push(['screen ' + w, await page.evaluate(codeWrapJudge, codeTables)]);
     }
     await page.emulateMedia({ media: 'print' });
     await page.setViewportSize({ width: 600, height: 720 });
     await page.evaluate(() => new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r))));
-    runs.push(['print 600', await page.evaluate(codeWrapJudge)]);
+    runs.push(['print 600', await page.evaluate(codeWrapJudge, codeTables)]);
   } finally {
     await page.emulateMedia({ media: 'screen' });
     await page.setViewportSize({ width: 1280, height: 720 });
@@ -675,6 +730,42 @@ const codeWrap = async (page) => {
   const off = runs.filter(([, r]) => !r.ok);
   return { ok: off.length === 0, n,
     why: (off.length ? off : runs).map(([k, r]) => k + ': ' + r.why).join('; ') };
+};
+
+// A page's code reaches paper whole and at the page's own scale. The page
+// is printed as a reader's print dialog prints a page that declares no
+// sheet: Letter, 0.4 in margins, backgrounds off; paper is read back with
+// pdftotext. Two facts, one judgement: laid out for that sheet's printable
+// width, nothing runs past it — Chromium prints a page that does at a
+// reduced scale, every line of it smaller — and every letter and digit the
+// page lays out is on paper, the multiset, NFKC and case folded
+// (`census`). A deck pages on its own sheet (`print-spill`).
+const printCode = async (page, name, fx) => {
+  const none = { ok: true, n: 0, why: '' };
+  if (name !== 'chromium') return none;
+  const has = await page.evaluate(() =>
+    !/mandatory/.test(getComputedStyle(document.documentElement).scrollSnapType) &&
+      document.querySelectorAll('pre > code').length > 0);
+  if (!has) return none;
+  const width = Math.round((8.5 - 2 * 0.4) * 96);
+  await page.emulateMedia({ media: 'print' });
+  await page.setViewportSize({ width, height: 1000 });
+  await page.evaluate(() => new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r))));
+  const laid = await page.evaluate(() => ({
+    past: document.documentElement.scrollWidth - document.documentElement.clientWidth,
+    text: (document.querySelector('main') || document.body).innerText }));
+  const pdf = path.join(dir, fx + '.code.pdf');
+  await page.pdf({ path: pdf, format: 'Letter',
+    margin: { top: '0.4in', bottom: '0.4in', left: '0.4in', right: '0.4in' } });
+  await page.setViewportSize({ width: 1280, height: 720 });
+  let paper;
+  try { paper = execFileSync('pdftotext', ['-enc', 'UTF-8', pdf, '-'], { encoding: 'utf8' }); }
+  catch (e) { return { ok: false, n: 1, why: 'pdftotext: ' + clean(String(e.message).split('\n')[0]) }; }
+  const want = census(laid.text), got = census(paper);
+  const short = [...want].reduce((a, [c, k]) => a + Math.max(0, k - (got.get(c) || 0)), 0);
+  return { ok: laid.past <= 1 && short === 0, n: 1,
+    why: `${Math.max(0, laid.past)} px past the sheet's printable width, ` +
+      `${short} laid-out characters missing on paper` };
 };
 
 // A frame its PDF page holds is held by its stage: at the deck's own aspect
@@ -953,19 +1044,45 @@ async function runReader(name) {
       atoms + '</code></pre>';
     await control.setViewportSize({ width: 400, height: 300 });
     await control.setContent(block('pre .tok { white-space: nowrap; }'));
-    const held = await control.evaluate(codeWrapJudge);
+    const held = await control.evaluate(codeWrapJudge, codeTables);
     if (!held.ok || held.wraps === 0) throw new Error('code-wrap control: held atoms ' + held.why);
     await control.setContent(block(''));
-    if ((await control.evaluate(codeWrapJudge)).ok) throw new Error('code-wrap control: nothing held');
-    // Two units of one fallback token part only at the `<wbr>` between them.
-    const units = (sep) => '<pre style="width: 120px; white-space: pre-wrap; overflow-wrap: break-word; ' +
-      'font: 14px monospace"><code>' + ('<span class="tok">0000000</span>' + sep +
-      '<span class="tok">xxxxxxx</span>' + sep).repeat(6) + '</code></pre>';
-    await control.setContent('<style>pre .tok { white-space: nowrap; }</style>' + units('<wbr>'));
-    const marked = await control.evaluate(codeWrapJudge);
+    if ((await control.evaluate(codeWrapJudge, codeTables)).ok) throw new Error('code-wrap control: nothing held');
+    // Two units of one fallback token part only at the `<wbr>` between them,
+    // and a pair of units wider than the line with no `<wbr>` between them
+    // parts where the page marked no break.
+    const units = (unit, sep) => '<pre style="width: 120px; white-space: pre-wrap; overflow-wrap: break-word; ' +
+      'font: 14px monospace"><code>' + ('<span class="tok">' + unit[0] + '</span>' + sep +
+      '<span class="tok">' + unit[1] + '</span><wbr>').repeat(6) + '</code></pre>';
+    await control.setContent('<style>pre .tok { white-space: nowrap; }</style>' +
+      units(['0000000', 'xxxxxxx'], '<wbr>'));
+    const marked = await control.evaluate(codeWrapJudge, codeTables);
     if (!marked.ok || marked.wraps === 0) throw new Error('code-wrap control: units at their wbr ' + marked.why);
-    await control.setContent('<style>pre .tok { white-space: nowrap; }</style>' + units(''));
-    if ((await control.evaluate(codeWrapJudge)).ok) throw new Error('code-wrap control: units unmarked');
+    await control.setContent('<style>pre .tok { white-space: nowrap; }</style>' +
+      units(['00000000', 'xxxxxxxx'], ''));
+    if ((await control.evaluate(codeWrapJudge, codeTables)).ok) throw new Error('code-wrap control: units unmarked');
+    // A wrapping block whose held atom runs past its box fails it.
+    await control.setContent('<style>pre .tok { white-space: nowrap; }</style><pre style="width: 120px; ' +
+      'white-space: pre-wrap; font: 14px monospace"><code><span class="tok">' + 'x'.repeat(40) +
+      '</span></code></pre>');
+    if ((await control.evaluate(codeWrapJudge, codeTables)).ok) throw new Error('code-wrap control: overflow');
+    // The paper judge breaks once: a held atom wider than the sheet prints
+    // the page small and loses its tail; the engine's own page holding one,
+    // and a comment in a script that wraps between its characters, prints
+    // whole at its own scale.
+    if (name === 'chromium') {
+      await control.setContent('<main><p>Prose.</p><pre style="white-space: pre-wrap"><code>' +
+        '<span style="white-space: nowrap">' + 'x'.repeat(160) + '</span></code></pre></main>');
+      if ((await printCode(control, name, 'print-code-held')).ok) throw new Error('print-code control: a held atom');
+      await control.emulateMedia({ media: 'screen' });
+    }
+    if (name === 'chromium' && process.env.LT_CODE_PRINT) {
+      await control.goto('file://' + process.env.LT_CODE_PRINT, { waitUntil: 'load', timeout: 30000 });
+      await control.evaluate(() => document.fonts.ready);
+      const engine = await printCode(control, name, 'print-code-engine');
+      if (!engine.ok || engine.n !== 1) throw new Error("print-code control: the engine's page " + engine.why);
+      await control.emulateMedia({ media: 'screen' });
+    }
   } finally { await control.close(); }
   for (const fx of fixtures) {
     const url = 'file://' + path.join(dir, fx + '.html');
@@ -1004,6 +1121,7 @@ async function runReader(name) {
         : { spill: { n: 0 }, sheets: { n: 0 } };
       out(fx, name, 'print-spill', cell(printed.spill));
       out(fx, name, 'print-sheets', cell(printed.sheets));
+      out(fx, name, 'print-code', cell(light.deck ? { n: 0 } : await printCode(page, name, fx)));
     } catch (e) {
       out(fx, name, 'error', 'fail:' + clean(String(e.message).split('\n')[0]));
     }
@@ -1269,6 +1387,37 @@ def renderMatrix (p : Probe) (fixtures unbuilt : Array String)
     out := out ++ tableLine fx cells (if ex.isEmpty then "-" else String.intercalate "," ex.toList) ++ "\n"
   return out
 
+/-- The engine's reading of a code character, as the code-wrap judge reads
+it (`codeWrapJudge`): each of `Listing.wrapsBetweenChars`,
+`holdsToPrevious` and `holdsToNext` as the code point ranges it holds of,
+through the supplementary ideographic planes, so the judge and the page
+read one table. -/
+def codeTables : String :=
+  let ranges (p : Char → Bool) : String := Id.run do
+    let mut out : Array String := #[]
+    let mut start : Option Nat := none
+    for n in [0:0x40001] do
+      let inside := n < 0x40000 && (n < 0xD800 || 0xDFFF < n) && p (Char.ofNat n)
+      match start, inside with
+      | none, true => start := some n
+      | some a, false =>
+        out := out.push s!"[{a},{n - 1}]"
+        start := none
+      | _, _ => pure ()
+    return "[" ++ ",".intercalate out.toList ++ "]"
+  "{\"apart\":" ++ ranges Listing.wrapsBetweenChars ++ ",\"before\":" ++
+    ranges Listing.holdsToPrevious ++ ",\"after\":" ++ ranges Listing.holdsToNext ++ "}"
+
+/-- The page the paper judge's engine control prints (`printCode`): prose,
+then a code line holding a token wider than any sheet and a comment in a
+script that wraps between its characters, each of which a held atom would
+run past the sheet. Invented throughout. -/
+def codePrintSource : String :=
+  "# Printed code\n\nA paragraph of prose before the code.\n\n```python\n" ++
+  "value = compute(" ++ "".pushn 'x' 140 ++ ")\n" ++
+  "# この行は折り返しを確かめるための架空のコメントで、句読点の前では改行しません。" ++
+  "二行目に続く文も「括弧」の中で切れません。\n```\n"
+
 -- ## Main
 
 def regenerate : IO UInt32 := do
@@ -1312,6 +1461,17 @@ so the matrix would describe pages nothing ties to this tree; nothing written")
           IO.FS.writeFile (work / "corpus" / (name ++ ".unfit"))
             (String.intercalate " " (spilledFrames pdf.stdout ++ breakable).toList)
     let browserFaces ← capturedBrowserFaces (work / "corpus") fixtures faceFailures
+    -- The paper judge's engine control: a page the engine builds that no
+    -- fixture is, so no fixture's other artifacts carry its long line.
+    let control := work / "control"
+    IO.FS.createDirAll control
+    IO.FS.writeFile (control / "code-print.md") codePrintSource
+    let built ← IO.Process.output
+      { cmd := leantexBin
+        args := #["-q", "--porcelain", "build", (control / "code-print.md").toString,
+          "-o", (control / "code-print.html").toString] }
+    if built.exitCode != 0 then
+      return (← die 2 s!"html-oracle: the paper judge's control page did not build:\n{built.stdout}{built.stderr}")
     let mut probe : Probe := { cells := #[], versions := #[], unavailable := #[] }
     let mut tools := s!"node {nodeVersion}"
     match chromium with
@@ -1328,7 +1488,9 @@ so the matrix would describe pages nothing ties to this tree; nothing written")
         { cmd := "node"
           args := #[(work / "probe.cjs").toString, (work / "corpus").toString] ++ fixtures
           env := #[("PW_MODULE", some m), ("LT_TOKENS", some tokens),
-                   ("LT_READERS", some (String.intercalate " " readers))] }
+                   ("LT_READERS", some (String.intercalate " " readers)),
+                   ("LT_CODE_TABLES", some codeTables),
+                   ("LT_CODE_PRINT", some (control / "code-print.html").toString)] }
       if out.exitCode != 0 then
         IO.eprintln s!"html-oracle: the probe exited {out.exitCode}:\n{out.stderr}"
       probe := parseProbe out.stdout

@@ -172,6 +172,7 @@ classes the layout's fallback lexer reads. A shipped code line spells its
 spaces as no-break spaces, read here as spaces. -/
 def fallbackClass (c : Char) : Nat :=
   if c == ' ' || c == '\t' || c == '\u00a0' then 0
+  else if Listing.wrapsBetweenChars c then 3
   else if c.isAlphanum || c == '_' || c == '\'' || c.toNat > 127 then 1
   else if "!#$%&*+-./:<=>?@\\^|~".contains c then 2
   else 3
@@ -406,11 +407,11 @@ mutual
 /-- The atoms a code tree holds on one line (`HtmlDoc.codeTokClass`), in
 order, by their text, and how many `<wbr>` it carries. -/
 def heldAtomsOne (acc : Array String × Nat) : Html.Node → Array String × Nat
-  | .elem "span" #[("class", c)] kids =>
-    if c == HtmlDoc.codeTokClass then (acc.1.push (nodeTextList "" kids.toList), acc.2)
-    else heldAtomsList acc kids.toList
   | .elem "wbr" _ _ => (acc.1, acc.2 + 1)
-  | .elem _ _ kids => heldAtomsList acc kids.toList
+  | .elem _ attrs kids =>
+    if attrs.any fun (k, v) => k == "class" && (v.splitOn " ").contains HtmlDoc.codeTokClass then
+      (acc.1.push (nodeTextList "" kids.toList), acc.2)
+    else heldAtomsList acc kids.toList
   | .text _ | .style _ | .script _ _ => acc
 
 def heldAtomsList (acc : Array String × Nat) : List Html.Node → Array String × Nat
@@ -427,18 +428,32 @@ def codeAtomsOf (doc : Ir.Doc) : Array (String × Array String × Nat) :=
     | .elem _ _ kids => some (nodeTextList "" kids.toList, heldAtomsList (#[], 0) kids.toList)
     | _ => none
 
+/-- What a code line holds whole under whitespace first, as the web page
+reads it (`HtmlDoc.codeLineNodes`): each stretch between two spaces that
+fits `HtmlDoc.codeHoldColumns`, else each fallback token of it that does,
+of two characters or more. -/
+def heldUnitsOf (line : String) : Array String :=
+  let fits (u : String) : Bool :=
+    2 ≤ u.length && u.length ≤ HtmlDoc.codeHoldColumns
+  (line.splitOn " ").toArray.flatMap fun st =>
+    if fits st then #[st] else (fallbackTokens st).filter fits
+
 /-- **The web page wraps a code line where the page may.** A code block's
-line holds on one line every atom the page's wrap may not break inside
-(`Listing.codeMarks`): under whitespace first each fallback token of two
-characters or more — `:=`, `->`, `==`, a path's `://`, an identifier — in a
-`tok` element the stylesheet sets `nowrap`, and the block's own wrap
-declaration lets a browser part a run wider than its line only between them
-(`overflow-wrap`); under listings' rule each unit of two characters or more,
-and a `<wbr>` between two units, where listings may break. The code's text
-is the source's, character for character, and inline code is untouched.
-Read off the typed HTML tree, against the fallback lexer the layout's
-checks read (`fallbackTokens`); the browser's own wraps are the oracle's
-`code-wrap` row. Every word here is invented. -/
+line holds on one line what the page's wrap may not break inside
+(`Listing.codeMarks`), in a `tok` element the stylesheet sets `nowrap`:
+under whitespace first each stretch between two spaces, so the line wraps
+at a space where one stands, and in a stretch wider than the
+narrowest line each fallback token of two characters or more — `:=`, `->`,
+`==`, a path's `://`, an identifier — the block's own wrap declaration
+letting a browser part the stretch only between them (`overflow-wrap`);
+under listings' rule each unit of two characters or more, and a `<wbr>`
+between two units, where listings may break. Nothing wider than
+`HtmlDoc.codeHoldColumns` is held, so a token wider than any line breaks
+where it must, and a run that is one held unit carries the class itself.
+The code's text is the source's, character for character, and inline code
+is untouched. Read off the typed HTML tree, against the fallback lexer the
+layout's checks read (`fallbackTokens`); the browser's own wraps are the
+oracle's `code-wrap` row. Every word here is invented. -/
 def htmlCodeAtomChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
   let lines := [
@@ -453,8 +468,8 @@ def htmlCodeAtomChecks (ref : IO.Ref (List String)) : IO Unit := do
       let (doc, _) := elabMd s!"```{lang}\n{line}\n```\n"
       match codeAtomsOf doc with
       | #[(text, held, wbrs)] =>
-        t s!"{label} code holds each fallback token of its line on one line ({repr line}: {held})"
-          (text == line && wbrs == 0 && held == (fallbackTokens line).filter (·.length ≥ 2)
+        t s!"{label} code holds each stretch of its line, or each fallback token of a wide one, on one line ({repr line}: {held})"
+          (text == line && wbrs == 0 && held == heldUnitsOf line
             && held.all fun a => !a.any (· == ' '))
       | other => t s!"{label} code is one code element ({other.size})" false
   -- Listings' rule: its units held, a `<wbr>` between two.
@@ -479,7 +494,88 @@ def htmlCodeAtomChecks (ref : IO.Ref (List String)) : IO Unit := do
           hasStr v "white-space: pre-wrap;" && hasStr v "overflow-wrap: break-word;"
       | _ => false)
   t "inline code holds no atom"
-    ((codeAtomsOf doc).map (·.2.1) == #[#["->"], #[]])
+    ((codeAtomsOf doc).map (·.2.1) == #[#["a->b"], #[]])
+  -- A token wider than any line is held nowhere, and breaks where it must.
+  let long := "value = compute(" ++ "".pushn 'x' 140 ++ ")"
+  let (longDoc, _) := elabMd s!"```python\n{long}\n```\n"
+  t "a token wider than the narrowest line is not held"
+    (match codeAtomsOf longDoc with
+      | #[(text, held, _)] => text == long && held == #["value", "compute"]
+      | _ => false)
+  -- A run that is one held unit carries the class on its own element: no
+  -- element of the page's own around the run's ink.
+  let (kwDoc, _) := elabMd "```python\ndef handler(event):\n```\n"
+  let ownClass := (elemNodesList (fun _ => true) #[] (docNodesOf kwDoc).toList).any fun n =>
+    match n with
+    | .elem _ attrs _ =>
+      attrs.any (fun (k, v) => k == "class" && (v.splitOn " ").contains HtmlDoc.codeTokClass) &&
+        attrs.any (·.1 == "style")
+    | _ => false
+  t "a run held whole takes the class on its own element"
+    (ownClass &&
+      (codeAtomsOf kwDoc).all fun (text, held, _) => text != "def handler(event):" || held.contains "def")
+
+/-- The typewriter face with invented advances for the scripts a code line
+here writes, so the page sets them: a glyph past the face's own for each
+character of the Thai, CJK punctuation and kana, ideograph and Hangul
+blocks, two cells wide but for Thai's one. It draws nothing: the wrap reads
+advances alone. -/
+def scriptMono (mono : Font.Font) : Font.Font := Id.run do
+  let cell := mono.spaceAdvance
+  let blocks : Array (Nat × Nat × Nat) :=
+    #[(0x0E00, 0x0E7F, 1), (0x3000, 0x30FF, 2), (0x4E00, 0x9FFF, 2), (0xAC00, 0xD7A3, 2)]
+  let mut widths := mono.widths
+  let mut ranges : Array (UInt32 × UInt32 × UInt32) := #[]
+  for (lo, hi, cells) in blocks do
+    ranges := ranges.push (lo.toUInt32, hi.toUInt32, widths.size.toUInt32)
+    widths := widths ++ Array.replicate (hi + 1 - lo) (cells * cell)
+  let cmap := (mono.cmap ++ ranges).qsort (·.1 < ·.1)
+  return { mono with cmap := cmap, widths := widths, numGlyphs := widths.size }
+
+/-- **A script that wraps between its characters wraps in code.** A code
+line of Japanese, Thai or Korean text with no space in it wraps inside the
+measure on the page, where read as one token it ran past the measure, and
+on the web page each of its characters stands as a token of its own, held
+only with what holds to it: a mark with what it marks, a stop or a closing
+bracket with what it ends, an opening bracket or a Thai vowel written
+first with what follows (`Listing.holdsToPrevious`, `holdsToNext`). Under
+listings' rule each such character is a unit of its own. Every sentence
+here is invented. -/
+def codeScriptWrapChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit := do
+  let t := check ref
+  let some mono := fonts.fonts[1]? | t "code script wrap: the typewriter face loads" false
+  let scripted := { fonts with fonts := fonts.fonts.set! 1 (scriptMono mono) }
+  let lines := [
+    ("Japanese comment", "# この行は折り返しを確かめるための架空のコメントで、句読点の前では改行しません。" ++
+      "二行目に続く文も「括弧」の中で切れず、小さな「ッ」や長音の「ー」から行を始めません。"),
+    ("Thai string", "th = \"ภาษาไทยไม่มีช่องว่างระหว่างคำจึงต้องตัดบรรทัดระหว่างพยางค์แทนการเว้นวรรค" ++
+      "และเครื่องหมายสระที่อยู่บนหรือล่างตัวอักษรต้องอยู่กับพยัญชนะของมันเสมอ\""),
+    ("Korean string", "ko = \"한국어문장을공백없이길게써서줄바꿈을확인합니다한국어문장을공백없이길게" ++
+      "써서줄바꿈을확인합니다\"")]
+  let joins (u : String) : Bool :=
+    (u.toList.zip u.toList.tail).all fun (a, b) =>
+      !(Listing.wrapsBetweenChars a && Listing.wrapsBetweenChars b) ||
+        Listing.holdsToPrevious b || Listing.holdsToNext a
+  for (label, line) in lines do
+    for (surface, src) in [("markdown", s!"```python\n{line}\n```\n"),
+        ("listings", dvDoc "" s!"\\begin\{lstlisting}[breaklines=true]\n{line}\n\\end\{lstlisting}")] do
+      let doc := if surface == "markdown" then (elabMd src).1 else (elabStr src).1
+      let out := layoutOf scripted doc
+      let ls := bodyLines out
+      let right := doc.page.width - doc.page.hmargin
+      let texts := ls.map (bare ∘ lineText)
+      t s!"code script wrap: a {surface} {label} wraps inside the measure ({ls.size} lines)"
+        (ls.size ≥ 2 && ls.all (fun l => l.x + l.setWidth ≤ right) &&
+          !out.diags.any (·.kind == .W0005) && String.join texts.toList == bare line)
+      t s!"code script wrap: no {surface} {label} line opens on what holds to the one before, \
+nor ends on what holds to the next ({texts})"
+        ((texts.extract 1 texts.size).all (fun s => !Listing.holdsToPrevious s.front) &&
+          texts.pop.all (fun s => !Listing.holdsToNext s.back))
+      match codeAtomsOf doc with
+      | #[(text, held, _)] =>
+        t s!"code script wrap: a {surface} {label}'s characters stand apart on the web page ({held})"
+          (text == line && held.all joins)
+      | other => t s!"code script wrap: a {surface} {label} is one code element ({other.size})" false
 
 def markdownCodeChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
@@ -579,5 +675,6 @@ numbers=left,basicstyle=\\ttfamily\\footnotesize]\n" ++ words ++ "\n\\end{lstlis
       | _, _ => false)
   inlineCodeChecks ref text fonts
   Tests.MarkdownCode.codeTokenWrapChecks ref fonts
+  Tests.MarkdownCode.codeScriptWrapChecks ref fonts
 
 end Tests.MarkdownCode

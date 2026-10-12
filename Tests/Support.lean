@@ -1553,20 +1553,21 @@ def dedupConsecutive (xs : Array (String × String)) : Array (String × String) 
 mutual
 
 /-- Every character a tree's text nodes hold, in order, with the styles of
-the elements around it, innermost last. -/
-def shownCharsOne (styles : List String) (acc : Array (Char × List String)) :
-    Html.Node → Array (Char × List String)
-  | .text s => s.toList.foldl (fun a c => a.push (c, styles)) acc
+the elements around it, innermost last, each with its element's preorder
+index, and the next index. -/
+def shownCharsOne (styles : List (String × Nat)) (acc : Array (Char × List (String × Nat)) × Nat) :
+    Html.Node → Array (Char × List (String × Nat)) × Nat
+  | .text s => (s.toList.foldl (fun a c => a.push (c, styles)) acc.1, acc.2)
   | .style _ => acc
   | .script _ _ => acc
   | .elem _ attrs kids =>
     let styles := match attrs.find? (·.1 == "style") with
-      | some (_, v) => styles ++ [v]
+      | some (_, v) => styles ++ [(v, acc.2)]
       | none => styles
-    shownCharsList styles acc kids.toList
+    shownCharsList styles (acc.1, acc.2 + 1) kids.toList
 
-def shownCharsList (styles : List String) (acc : Array (Char × List String)) :
-    List Html.Node → Array (Char × List String)
+def shownCharsList (styles : List (String × Nat)) (acc : Array (Char × List (String × Nat)) × Nat) :
+    List Html.Node → Array (Char × List (String × Nat)) × Nat
   | [] => acc
   | k :: rest => shownCharsList styles (shownCharsOne styles acc k) rest
 
@@ -1588,9 +1589,10 @@ def elemStylesList (acc : Array (String × String)) : List Html.Node → Array (
 
 end
 
-/-- Every character a list of nodes holds, with its elements' styles. -/
-def shownChars (nodes : List Html.Node) : Array (Char × List String) :=
-  shownCharsList [] #[] nodes
+/-- Every character a list of nodes holds, with its elements' styles and
+which element declares each. -/
+def shownChars (nodes : List Html.Node) : Array (Char × List (String × Nat)) :=
+  (shownCharsList [] (#[], 0) nodes).1
 
 /-- The source with string literals, char literals, and comments blanked, so
 the emission scan below reads code proper: a code named in a docstring or a

@@ -1218,9 +1218,9 @@ private def trivlistGap : String := s!"calc({trivlistOwn} + {peerGap})"
 (`Ir.ListingFrame.list`): the list levels space it (`listElems`). -/
 public def verbatimListClass : String := "verbatim-list"
 
-/-- The class of a code atom a line may not break inside (`codeLineNodes`):
-its rule holds the atom on one line (`pre .tok`), and the line wraps
-only where the page's own wrap may. -/
+/-- The class of what a code line may not break inside (`codeLineNodes`):
+its rule holds it on one line (`pre .tok`), and the line wraps only where
+the page's own wrap may. -/
 public def codeTokClass : String := "tok"
 
 /-- The class of a document skip's box (`skipNode`). -/
@@ -6614,7 +6614,8 @@ color: {cssColor ((Ir.Design.at {} .print .ink).getD Ir.Color.black)}; padding: 
   -- clips what runs past it: on paper a code block wraps a line wider than
   -- itself inside the box instead. A departure from LaTeX's verbatim, which
   -- overruns the measure: only such a line moves, and every character
-  -- reaches the sheet.
+  -- reaches the sheet, since no unit a code line holds whole is wider than
+  -- the narrowest line (`codeHoldColumns`).
   "  pre { overflow-x: visible; white-space: pre-wrap; overflow-wrap: anywhere; }\n" ++
   (if docHasDisclosure doc then
     disclosurePrintCss ++
@@ -9249,12 +9250,21 @@ public def abstractClass (styles : Ir.Styles) : String :=
   let step := Ir.abstractBodySize styles
   "abstract size-" ++ step
 
-/-- Does a code atom need holding together: two characters or more. A line
-may break only where the page's own wrap may (`Listing.codeMarks`), and a
-browser breaks inside a word that overruns its line (`overflow-wrap`)
-wherever no element holds it, so every atom longer than a character is
-held, and the line breaks inside a run wider than itself between atoms. -/
-private def codeAtomHolds (text : String) : Bool := text.length ≥ 2
+/-- The most columns a code line holds whole (`codeLineNodes`): a code
+block's continuation line at the width WCAG 2.2's reflow criterion sets
+(SC 1.4.10, 320 CSS px), as Chromium sets a markdown fence there, 248 px of
+line at an 8 px advance less the 20 pt hang, 27 columns. A held unit wider
+than its line runs past it, so no wider one is held, and on paper, whose
+line is wider still, every held unit fits. -/
+public def codeHoldColumns : Nat := 27
+
+/-- How many columns a code character takes: two for a wide character of a
+script that wraps between its characters, one for any other. -/
+private def codeColumns (c : Char) : Nat :=
+  let n := c.toNat
+  if Listing.wrapsBetweenChars c && !(0x0E00 ≤ n && n ≤ 0x0EFF) &&
+      !(0xFF61 ≤ n && n ≤ 0xFFDC) && !(0xFFE8 ≤ n && n ≤ 0xFFEE) then 2
+  else 1
 
 mutual
 
@@ -9279,12 +9289,22 @@ private def pushCodeText (nodes : Array Node) (t : String) : Array Node :=
   | some (.text u) => nodes.pop.push (.text (u ++ t))
   | _ => nodes.push (.text t)
 
+/-- Pieces of code, each a run's characters, after `ps`, a piece of the run
+`ps` ends on joined to it. -/
+private def joinPieces (ps qs : Array (Nat × String)) : Array (Nat × String) :=
+  qs.foldl (fun acc q => match acc.back? with
+    | some (ri, t) => if ri == q.1 then acc.pop.push (ri, t ++ q.2) else acc.push q
+    | none => acc.push q) ps
+
 /-- A code line's nodes: its highlighter runs painted as `Listing.paintRun`
-paints them, every atom of the line's wrap (`Listing.codeMarks`: a fallback
-token under whitespace first, a unit under listings' rule) longer than a
-character held in a `tok` span, and under listings' rule a `<wbr>` between
-two atoms that are no space, where listings may break and a browser
-might not. -/
+paints them, and what the line may not break inside held in a `tok` span —
+under whitespace first each stretch between two spaces, so the line wraps
+at a space where one stands, or, in a stretch wider than its line, each
+fallback token of it (`Listing.codeMarks`); under listings' rule each unit,
+with a `<wbr>` between two that are no space, where listings may break and a
+browser might not. A unit of one character is never held, nor one wider
+than `codeHoldColumns`, which breaks where it must. A held unit that is a
+whole run takes the class on the run's own element (`withClass`). -/
 private def codeLineNodes (cfg : Config) (wrap : Ir.ListingWrap) (runs : Array Listing.Run)
     (line : Array ListingHighlight.Token) : Array Node := Id.run do
   let marks := Listing.codeMarks wrap line
@@ -9302,29 +9322,51 @@ private def codeLineNodes (cfg : Config) (wrap : Ir.ListingWrap) (runs : Array L
       let a := atomOf m
       match atoms.back? with
       | some (a', sp, ps) =>
-        if a' == a then
-          let ps := match ps.back? with
-            | some (ri', t) =>
-              if ri' == ri then ps.pop.push (ri', t.push c) else ps.push (ri, String.singleton c)
-            | none => ps.push (ri, String.singleton c)
-          atoms := atoms.pop.push (a', sp, ps)
+        if a' == a then atoms := atoms.pop.push (a', sp, joinPieces ps #[(ri, String.singleton c)])
         else atoms := atoms.push (a, m.space, #[(ri, String.singleton c)])
       | none => atoms := atoms.push (a, m.space, #[(ri, String.singleton c)])
-  -- A run's paint, once, around what it holds: its text, the atoms inside
-  -- it held, and under listings' rule a `<wbr>` between two atoms.
+  let fits (ps : Array (Nat × String)) : Bool :=
+    2 ≤ ps.foldl (fun n p => n + p.2.length) 0 &&
+      ps.foldl (fun n p => p.2.foldl (fun k c => k + codeColumns c) n) 0 ≤ codeHoldColumns
+  -- The units the line emits, in order: white space, and what it holds.
+  let mut units : Array (Bool × Bool × Array (Nat × String)) := #[]
+  match wrap with
+  | .units =>
+    for (_, sp, ps) in atoms do units := units.push (sp, !sp && fits ps, ps)
+  | .whitespaceFirst =>
+    let mut stretch : Array (Array (Nat × String)) := #[]
+    for (_, sp, ps) in atoms.push (0, true, #[]) do
+      if sp then
+        let whole := stretch.foldl joinPieces #[]
+        if fits whole then units := units.push (false, true, whole)
+        else for qs in stretch do units := units.push (false, fits qs, qs)
+        stretch := #[]
+        unless ps.isEmpty do units := units.push (true, false, ps)
+      else stretch := stretch.push ps
+  -- A run's paint, once, around what it holds: its text, the units inside
+  -- it held, and under listings' rule a `<wbr>` between two units.
   let hole := "\uE000\uE001\uE002"
   let paint (ri : Nat) (content : Array Node) : Array Node :=
     match runs[ri]? with
     | some r => fillHoleList hole content #[] (inlines cfg (Listing.paintRun r #[.text hole])).toList
     | none => content
   let held (kids : Array Node) : Node := Html.elem "span" kids #[("class", codeTokClass)]
+  -- A run whose whole text is one held unit takes the class on its own
+  -- element, where it paints as one.
+  let flush (ri : Nat) (content : Array Node) : Array Node :=
+    match content with
+    | #[.elem "span" #[("class", k)] #[.text t]] =>
+      if k == codeTokClass && (runs[ri]?.map (·.text)) == some t then
+        match paint ri #[.text t] with
+        | #[.elem tag attrs kids] => #[withClass codeTokClass (.elem tag attrs kids)]
+        | _ => paint ri content
+      else paint ri content
+    | _ => paint ri content
   let mut out : Array Node := #[]
   -- the run being filled, and what it holds so far
   let mut cur : Option (Nat × Array Node) := none
   let mut prevSpace : Option Bool := none
-  for (_, sp, ps) in atoms do
-    let text := ps.foldl (fun acc p => acc ++ p.2) ""
-    let hold := !sp && codeAtomHolds text
+  for (sp, hold, ps) in units do
     let gap := wrap matches .units && prevSpace == some false && !sp
     match ps with
     | #[(ri, t)] =>
@@ -9333,19 +9375,19 @@ private def codeLineNodes (cfg : Config) (wrap : Ir.ListingWrap) (runs : Array L
         | some (ri', c) => if ri' == ri then c else #[]
         | none => #[]
       if let some (ri', c) := cur then
-        if ri' != ri then out := out ++ paint ri' c
+        if ri' != ri then out := out ++ flush ri' c
       let content := if gap then content.push (Html.elem "wbr" #[] #[]) else content
       let content := if hold then content.push (held #[.text t]) else pushCodeText content t
       cur := some (ri, content)
     | _ =>
-      -- across runs: each piece in its own run's paint, the atom around them
-      if let some (ri', c) := cur then out := out ++ paint ri' c
+      -- across runs: each piece in its own run's paint, the unit around them
+      if let some (ri', c) := cur then out := out ++ flush ri' c
       cur := none
       if gap then out := out.push (Html.elem "wbr" #[] #[])
       let pieces := ps.foldl (fun acc (ri, t) => acc ++ paint ri #[.text t]) #[]
       out := if hold then out.push (held pieces) else out ++ pieces
     prevSpace := some sp
-  if let some (ri, c) := cur then out := out ++ paint ri c
+  if let some (ri, c) := cur then out := out ++ flush ri c
   return out
 
 -- Shared by ordinary paragraphs and description items after their label

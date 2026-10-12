@@ -49,15 +49,22 @@ private def ground (a : Artifact) (page : Nat) (color : Ir.Color) : Bool :=
     f.color == color && f.x ≤ 0 && f.y ≤ 0 &&
       f.x + f.w ≥ a.geom.pageW && f.y + f.h ≥ a.geom.pageH
 
-/-- Does `text` stand in `nodes` with every character of it inside an element
-whose style declares `css`: a token's ink, however the page parts the token's
-characters into elements (a code atom's, `HtmlDoc.codeLineNodes`). -/
+/-- Does `text` stand in `nodes` as whole runs of ink that elements whose
+style declares `css` paint: every character of it inside such an element,
+and no such element reaching past either end of it, however the page parts
+a run's characters into elements (a code atom's, `HtmlDoc.codeLineNodes`) —
+so `def` is not found inside a painted `default`. -/
 private def styled (nodes : List Html.Node) (text css : String) : Bool :=
   let chars := shownChars nodes
   let want := text.toList.toArray
+  let owners (i : Nat) : List Nat :=
+    ((chars[i]?.map (·.2)).getD []).filterMap fun (v, id) => if hasStr v css then some id else none
+  let parted (i j : Nat) : Bool := !(owners i).any ((owners j).contains ·)
   (List.range (chars.size + 1 - want.size)).any fun start =>
-    (List.range want.size).all fun k =>
-      chars[start + k]?.any fun (c, styles) => c == want[k]! && styles.any (hasStr · css)
+    (List.range want.size).all (fun k =>
+      chars[start + k]?.any fun (c, _) => c == want[k]! && !(owners (start + k)).isEmpty) &&
+      (start == 0 || parted (start - 1) start) &&
+      parted (start + want.size) (start + want.size - 1)
 
 private def stages (ref : IO.Ref (List String)) (name : String) (a : Artifact)
     (frames : Array (Option Nat)) (labels : Array String)

@@ -188,14 +188,15 @@ spelling alone, and a left cell inside a scope that centres or right-aligns its 
 text, which no spec example has — two different alignments, or a centre or a \
 right alignment against none, still differ."),
    ("a code atom held on one line",
-    "inside a code block the engine holds each atom a line may not wrap \
-inside — a fallback token or a listings unit of two characters or more — in \
-a `<span>` whose one attribute is the class `tok` (`HtmlDoc.codeTokClass`), \
-which its stylesheet sets `nowrap`, and parts two listings units with a \
-`<wbr>`; inside <pre> such a span is read through, its children compared in \
-place, and a `<wbr>` dropped. Hides: nothing that reads — the characters \
-stand once, in order — and a span carrying anything else, or outside <pre>, \
-stays compared."),
+    "inside a code block the engine holds what a line may not wrap inside \
+— a stretch between two spaces, a fallback token or a listings unit of two \
+characters or more — in a `<span>` whose one attribute is the class `tok` \
+(`HtmlDoc.codeTokClass`), which its stylesheet sets `nowrap`, or, where it \
+is one run's whole text, as that class on the run's own element, and parts \
+two listings units with a `<wbr>`; inside <pre> such a span is read \
+through, its children compared in place, and a `<wbr>` dropped. Hides: \
+nothing that reads — the characters stand once, in order — and a span \
+carrying anything else, or outside <pre>, stays compared."),
    ("a column group of bare columns",
     "the engine opens every table with a `<colgroup>` of one `<col>` per \
 column; a column that carries no attribute adds nothing to the columns HTML's \

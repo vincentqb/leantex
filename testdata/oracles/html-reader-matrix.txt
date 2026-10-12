@@ -2,8 +2,8 @@
 target: chromium
 tools: node v26.10.0  chromium 151.0.7922.34 (playwright 1.62.0)  firefox untested (browserType.launch: Failed to launch the browser process.)  xmllint: using libxml version 21504  Using libxml 21504, libxslt 10145 and libexslt 825  rsvg-convert version 2.63.2  pdftocairo version 26.09.0  pdftotext version 26.09.0
 date: 2026-10-12
-src-key: 4fd9da3b75588be4
-browser-face-src-key: a070b2f8fe893964
+src-key: b6cc918fafa70f4d
+browser-face-src-key: 50e95dc9c988562e
 browser-face-key: 0207f35691a118b2
 browser-face: diagram-boundary diagram-boundary/i0-bb1520d73065ce7ecf58276e0e5761ca2e75276fca849593477370f9d49c6dfb.svg ok:372:a473a562a6bbd5eb62b4dbb92025ce67d2ce5c71b3d63ea4e4f19764a5bc5644
 browser-face: figures figures/i0-796bbca861ab48356fbadcbcae87a11c849aa9b0b28402b5b16076908b033651.svg ok:9883:0eda4a8ef6ab82c77fe69c8cc22542991eb1bd0888325d46d07ab953b45fa648
@@ -35,6 +35,7 @@ deck-links        pass          untested
 disclosure        pass          untested
 print-disclosure  pass          untested
 code-wrap         pass          untested
+print-code        pass          untested
 
 [fixture]
 # fixture         chromium      firefox       exercised
@@ -87,7 +88,7 @@ layout            pass          untested      load,fonts,lang,landmarks,color-sc
 lineno            pass          untested      load,fonts,mathml,lang,landmarks,color-scheme,reduced-motion,print,no-script
 lineno-modulo     pass          untested      load,fonts,lang,landmarks,color-scheme,reduced-motion,print,no-script
 links             pass          untested      load,fonts,lang,landmarks,color-scheme,reduced-motion,print,no-script
-listings          pass          untested      load,fonts,lang,landmarks,color-scheme,reduced-motion,print,no-script
+listings          pass          untested      load,fonts,lang,landmarks,color-scheme,reduced-motion,print,no-script,print-code
 lists             pass          untested      load,fonts,lang,landmarks,color-scheme,reduced-motion,print,no-script
 lists-deck        pass          untested      load,fonts,lang,landmarks,snaps,color-scheme,reduced-motion,print,print-sheets,no-script,stage-fit,deck-links
 lists-styled      pass          untested      load,fonts,lang,landmarks,color-scheme,reduced-motion,print,no-script
@@ -99,16 +100,16 @@ math-cancel       pass          untested      load,fonts,mathml,lang,landmarks,c
 math-companion    pass          untested      load,fonts,mathml,lang,landmarks,color-scheme,reduced-motion,print,no-script
 math-first        pass          untested      load,fonts,mathml,lang,landmarks,color-scheme,reduced-motion,print,no-script
 math-text         pass          untested      load,fonts,mathml,mathAlpha,lang,landmarks,color-scheme,reduced-motion,print,no-script
-md-code           pass          untested      load,fonts,lang,landmarks,color-scheme,reduced-motion,print,no-script,code-wrap
+md-code           pass          untested      load,fonts,lang,landmarks,color-scheme,reduced-motion,print,no-script,code-wrap,print-code
 md-emphasis       pass          untested      load,fonts,lang,landmarks,color-scheme,reduced-motion,print,no-script
 md-headings       pass          untested      load,fonts,lang,landmarks,color-scheme,reduced-motion,print,no-script
 md-images         pass          untested      load,images,fonts,lang,landmarks,color-scheme,reduced-motion,print,no-script
-md-include        pass          untested      load,fonts,lang,landmarks,color-scheme,reduced-motion,print,no-script
+md-include        pass          untested      load,fonts,lang,landmarks,color-scheme,reduced-motion,print,no-script,print-code
 md-include-deck   pass          untested      load,fonts,lang,landmarks,snaps,color-scheme,reduced-motion,print,print-sheets,no-script,stage-fit,deck-links
 md-links          pass          untested      load,fonts,lang,landmarks,color-scheme,reduced-motion,print,no-script
-md-lists          pass          untested      load,fonts,lang,landmarks,color-scheme,reduced-motion,print,no-script
-md-quotes         pass          untested      load,fonts,lang,landmarks,color-scheme,reduced-motion,print,no-script
-md-readme         pass          untested      load,fonts,lang,landmarks,color-scheme,reduced-motion,print,no-script,disclosure,print-disclosure
+md-lists          pass          untested      load,fonts,lang,landmarks,color-scheme,reduced-motion,print,no-script,print-code
+md-quotes         pass          untested      load,fonts,lang,landmarks,color-scheme,reduced-motion,print,no-script,print-code
+md-readme         pass          untested      load,fonts,lang,landmarks,color-scheme,reduced-motion,print,no-script,disclosure,print-disclosure,print-code
 md-rules          pass          untested      load,fonts,lang,landmarks,color-scheme,reduced-motion,print,no-script
 md-table          pass          untested      load,fonts,lang,landmarks,color-scheme,reduced-motion,print,no-script
 nav-directory     pass          untested      load,fonts,lang,landmarks,color-scheme,reduced-motion,print,no-script
