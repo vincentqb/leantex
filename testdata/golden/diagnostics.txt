@@ -483,8 +483,7 @@
 ── W0315 (standard) low-contrast colour pairing (WCAG 2.2)
 ⚠ [W0315] - \textcolor
   text coloured 'yellow!50' reads on the page below the contrast WCAG 2.2 asks of text (SC 1.4.3)
-  #FFFF80 on #FAFAF9: 1.01:1, below 4.50:1
-  text coloured 'yellow!50' (#FFFF80) reads at 1.05:1 on the page (#FFFFFF), below the 4.50:1 WCAG 2.2 asks of text (SC 1.4.3)
+  #FFFF80 on #FFFFFF: 1.05:1, below 4.50:1
 ── W0316 (config) unknown option in \palette; block skipped
 ⚠ [W0316] - \palette
   unknown option in '\palette': "dark"; block skipped
