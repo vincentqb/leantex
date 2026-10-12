@@ -13,11 +13,13 @@ body size in a measure-wide face ran past the page edge: hundreds of lines
 of a long generated report lost their ends. A markdown fence now sets as
 its surface sets code (`Ir.Surface.listing`) — `\footnotesize`, wrapping —
 and wraps whitespace first: at the last space that fits, else at the last
-boundary of the highlighter's type runs, a run wider than a line parted
-between its fallback tokens, so `:=`, `->` and an identifier stay whole. A
-tex listing that declares `breaklines` wraps at listings' own units, each
-line filled to the last that fits, as a LuaLaTeX probe of listings fills
-it. Each continuation stands 20 pt past its own line's indentation
+fallback-token boundary that is a boundary of the highlighter's type runs,
+a run wider than a line parted between its fallback tokens, so `:=`, `->`,
+a hex byte and an identifier stay whole. A tex listing that declares
+`breaklines` wraps at listings' own units, each line filled to the last that
+fits, as a LuaLaTeX probe of listings fills it but for the white space a
+wrap falls before, which listings carries onto the continuation and the
+engine drops. Each continuation stands 20 pt past its own line's indentation
 (`breakindent`, `breakautoindent`), so every declared line holds. The
 invariants are over `Layout.Out` (where each line's first glyph stands,
 what each line holds, that each fits) and over the IR's listing values the
@@ -164,15 +166,42 @@ def inlineCodeChecks (ref : IO.Ref (List String)) (text : Font.Font)
     (hasStr (HtmlDoc.baseCss {} doc) codeRule
       && !hasStr (HtmlDoc.baseCss {} (elabStr (dvDoc "" tex)).1) codeRule)
 
+/-- The fallback lexer's class of a character: 0 a space, 1 a word
+character, 2 an operator character, 3 any other, a token of its own — the
+classes the layout's fallback lexer reads. A shipped code line spells its
+spaces as no-break spaces, read here as spaces. -/
+def fallbackClass (c : Char) : Nat :=
+  if c == ' ' || c == '\t' || c == '\u00a0' then 0
+  else if c.isAlphanum || c == '_' || c == '\'' || c.toNat > 127 then 1
+  else if "!#$%&*+-./:<=>?@\\^|~".contains c then 2
+  else 3
+
+/-- The wraps of `lines`, read off `code` they ship, that fall inside one
+fallback token of the source: between two of its characters with no space
+between them in the source, of one class that runs on (word or operator). -/
+def dividedTokens (code : String) (lines : Array String) : Array String := Id.run do
+  let src := code.toList.toArray
+  -- the source index of each character a shipped line holds
+  let mut at_ : Array Nat := #[]
+  for i in [0:src.size] do
+    if fallbackClass (src[i]?.getD ' ') != 0 then at_ := at_.push i
+  let mut out : Array String := #[]
+  let mut k := 0
+  for l in lines.pop do
+    k := k + (bare l).length
+    match at_[k - 1]?, at_[k]? with
+    | some i, some j =>
+      let a := src[i]?.getD ' '
+      let b := src[j]?.getD ' '
+      if j == i + 1 && fallbackClass a == fallbackClass b && fallbackClass a ≤ 2 then
+        out := out.push (String.ofList [a, b])
+    | _, _ => pure ()
+  return out
+
 /-- The fallback lexer's tokens of a line (spaces dropped): a run of word
-characters, a run of operator characters, and any other character alone —
-the classes the layout's fallback lexer reads. -/
+characters, a run of operator characters, and any other character alone. -/
 def fallbackTokens (s : String) : Array String := Id.run do
-  let cls (c : Char) : Nat :=
-    if c == ' ' || c == '\t' || c == '\u00a0' then 0
-    else if c.isAlphanum || c == '_' || c == '\'' || c.toNat > 127 then 1
-    else if "!#$%&*+-./:<=>?@\\^|~".contains c then 2
-    else 3
+  let cls := fallbackClass
   let mut out : Array String := #[]
   let mut cur := ""
   let mut prev := 0
@@ -234,6 +263,9 @@ def codeTokenWrapChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO
         found := found.push s!"{label}: {op'} divided"
     unless String.join (ls.toList.map (bare ∘ lineText)) == bare code do
       found := found.push s!"{label}: lost text"
+    let parted := dividedTokens code (ls.map lineText)
+    unless parted.isEmpty do
+      found := found.push s!"{label}: a fallback token parted at {parted}"
     unless ls.all (overrunExplained left measure cell) do
       found := found.push s!"{label}: overfull past its tokens"
     return found
@@ -288,6 +320,23 @@ def codeTokenWrapChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO
     unless ls.size ≥ 2 do longOffences := longOffences.push s!"{lang}: {code.take 12} did not wrap"
   t s!"code wraps: a long comment, string or console line parts inside its tokens, never past the page ({longOffences})"
     longOffences.isEmpty
+  -- Literals a highlighter splits into several runs stay whole: a hex byte,
+  -- a numeral with underscores, a character literal, each one fallback
+  -- token however its runs fall, at every phase across the measure's end.
+  let hex := String.intercalate "," ((List.range 40).map fun i =>
+    "0x" ++ String.ofList ["0123456789abcdef".toList[i / 16 % 16]!, "0123456789abcdef".toList[i % 16]!])
+  let nums := String.intercalate " + " ((List.range 12).map fun i => s!"{i + 1}_000_000_{i}00")
+  let chars := String.intercalate "," ((List.range 30).map fun i =>
+    "'" ++ String.singleton (Char.ofNat (97 + i % 26)) ++ "'")
+  let mut literalOffences : Array String := #[]
+  for phase in [0:10] do
+    let pad := "".pushn 'v' phase
+    for (lang, code) in [("lean", s!"def {pad}table : Array UInt8 := #[{hex}]"),
+        ("lean", s!"def {pad}big : Nat := {nums}"), ("lean", s!"def {pad}cs : List Char := [{chars}]"),
+        ("python", s!"{pad}table = [{hex}]"), ("", s!"{pad}{nums}")] do
+      literalOffences := literalOffences ++ judge s!"{lang} literal @{phase}" code (linesOf lang code)
+  t s!"code wraps: a literal the highlighter splits into runs never parts ({literalOffences})"
+    literalOffences.isEmpty
   -- Whitespace first: the run after the last fitting space is wider than a
   -- line, so the wrap takes the space and the run breaks only at its dots.
   let chain := String.intercalate "." ((List.range 24).map fun i => "".pushn 'z' (2 + i % 3))
@@ -322,7 +371,9 @@ def codeTokenWrapChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO
     ("a.b.c.d.e.f.g.h.i.j.k.l.m.n.o.p.q.r.s.t.u.v.w.x.y.z.a.b.c.d.e.f.g.h.i.j.k.l.m.n.o.p.q.r.s.t.u.v",
       ["a.b.c.d.e.f.g.h.i.j.k.l.m.n.o.p.q.r.s.t.u.v.w.x.y.z.a.b.c.d.e.", "f.g.h.i.j.k.l.m.n.o.p.q.r.s.t.u.v"]),
     ("x = [" ++ String.intercalate ", " ((List.range 25).map fun k => toString (k + 1)) ++ "]",
-      ["x=[1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,", "17,18,19,20,21,22,23,24,25]"])]
+      ["x=[1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,", "17,18,19,20,21,22,23,24,25]"]),
+    ("f(x)(y)" ++ "".pushn 'z' 50 ++ "a)b1)2+)-))" ++ "".pushn 'q' 10,
+      ["f(x)(y)" ++ "".pushn 'z' 50 ++ "a)b1)", "2+)-))" ++ "".pushn 'q' 10])]
   let lst := String.intercalate "\n" (probe.map (·.1))
   let texDoc := (elabStr (dvDoc "" ("\\noindent\\begin{minipage}{300pt}\n\\begin{lstlisting}" ++
     "[breaklines=true,basicstyle=\\ttfamily\\footnotesize]\n" ++ lst ++
@@ -332,6 +383,23 @@ def codeTokenWrapChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO
   t s!"tex listing: breaklines fills each line to listings' last unit that fits, as LuaLaTeX sets it \
 ({(texLines.zip want).filter (fun (a, b) => a != b)})"
     (texLines == want)
+  -- The declared departure: listings carries the white space a wrap falls
+  -- before onto the continuation — a space one column past the break
+  -- indent, a tab its six, which the probe sets moving the next unit a line
+  -- further — and the engine drops it, so every continuation stands at its
+  -- declared indent.
+  let carried := ("".pushn 'a' 62 ++ " " ++ "".pushn 'b' 58 ++ " c") ++ "\n" ++
+    ("".pushn 'a' 58 ++ "\t" ++ "".pushn 'b' 50 ++ " cccc")
+  let carryDoc := (elabStr (dvDoc "" ("\\noindent\\begin{minipage}{300pt}\n\\begin{lstlisting}" ++
+    "[breaklines=true,basicstyle=\\ttfamily\\footnotesize]\n" ++ carried ++
+    "\n\\end{lstlisting}\n\\end{minipage}"))).1
+  let carryLines := bodyLines (layoutOf fonts carryDoc)
+  let x0 := carryLines[0]?.bind firstGlyphX
+  t s!"tex listing: the white space a wrap falls before is dropped, every continuation at its indent \
+({carryLines.map (bare ∘ lineText)})"
+    (carryLines.map (bare ∘ lineText) ==
+        #["".pushn 'a' 62, "".pushn 'b' 58, "c", "".pushn 'a' 58, "".pushn 'b' 50 ++ "cccc"] &&
+      [1, 2, 4].all fun k => (carryLines[k]?.bind firstGlyphX) == x0.map (· + Ir.listingBreakIndent))
 
 def markdownCodeChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref

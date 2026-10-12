@@ -59,8 +59,9 @@ expanded; any other tag is an error at its position whose help names the
 Markdown to write instead. A Markdown document sets on a wider text block
 than an article, with its code in the text face's matching monospaced face:
 code blocks at `\footnotesize`, two sizes below the text, with long lines
-wrapped to stay on the page — at a space where one fits, never inside a
-name or an operator such as `:=` — and inline code free to break after
+wrapped to stay on the page — in the PDF at a space where one fits, never
+inside a name or an operator such as `:=`; a browser wraps the HTML's at
+its own break points — and inline code free to break after
 punctuation such as `_`, `.`, `/` or `-` where a line needs it. A Markdown
 fragment included in TeX keeps its tables' fit and takes its page, code and
 line breaks from the TeX document around it. Include one with:

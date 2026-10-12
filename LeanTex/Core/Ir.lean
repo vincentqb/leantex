@@ -6174,17 +6174,21 @@ public inductive ListingWrap where
   characters with the digits among them, a space, and the run a `)` closes
   (listings.sty `\lst@AppendLetter`, `\lst@ProcessDigit`, `\lst@AppendOther`,
   `\lst@AppendSpecialSpace`; lstmisc.sty `\lst@breakProcessOther`) — each
-  line filled to its last unit that fits, as a LuaLaTeX probe sets it. The
-  spaces at a wrap are dropped, where listings sets a space it breaks before
-  at the continuation's start, one column past its break indent: the
-  continuation then stands at its declared indent. -/
+  line filled to its last unit that fits, as a LuaLaTeX probe sets it. One
+  declared departure, for alignment: listings carries the white space a wrap
+  falls before onto the continuation, a space one column past the break
+  indent and a tab its columns, and where that no longer leaves the next
+  unit room, sets the unit a line further; the engine drops it, as TeX drops
+  the glue at a break, so every continuation stands at its declared indent.
+  The bound is that white space's columns; `codeTokenWrapChecks` holds the
+  page to listings' lines without it and to each continuation's indent. -/
   | units
-  /-- Whitespace first: the last space that fits, else the last boundary of
-  the highlighter's type runs or of the fallback tokens of untyped text that
-  fits, a type run wider than a continuation line broken between its
-  fallback tokens. A markdown fence's (`Surface.listing`): a source line
-  then breaks at its words before its tokens, where listings breaks at
-  whichever unit fills the line. -/
+  /-- Whitespace first: the last space that fits, else the last boundary
+  between two fallback tokens that is a boundary of the highlighter's type
+  runs, or lies inside a type run wider than a continuation line. A markdown
+  fence's (`Surface.listing`): a source line breaks between its words before
+  anything else, and a fallback token — a name, an operator, a number — is
+  never parted. -/
   | whitespaceFirst
   deriving Repr, BEq, Inhabited
 
@@ -6287,10 +6291,11 @@ which the markdown page's measure holds 79 to 80 monospaced columns (the
 longer line with listings' continuation indent: paper has no scroll, so
 every character a wrap can reach does. It wraps whitespace first
 (`ListingWrap.whitespaceFirst`), where listings breaks at whichever of its
-units fills the line: a line of code then breaks between its words before
-inside one, and inside a token only where it is wider than a line, so an
-operator such as `:=` or `->` never divides; a fallback token wider than
-the line runs on, as listings sets a unit wider than its line. The HTML's
+units fills the line: at a space where one fits — inside a string or a
+comment too — else between two fallback tokens, which in a typed run only a
+run wider than a line admits; a fallback token, a name, an operator such as
+`:=` or a number, is never parted (`codeWraps_breaks_mem`), and one wider
+than the line runs on, as listings sets a unit wider than its line. The HTML's
 `<pre>` keeps its padding inside the same measure, so a browser at 16 px
 holds about 72 of those columns and wraps the rest. -/
 public def Surface.listing : Surface → ListingSpec

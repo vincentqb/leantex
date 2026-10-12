@@ -9432,6 +9432,9 @@ public def blockNode (cfg : Config) (b : Block) : Node :=
         | .size n => s!" line-height: {listingLineHeight cfg.page spec n};"
         | _ => s!" line-height: {decMilli (printLeadingMilli cfg.page)};") ++
       s!" tab-size: {spec.tabSize};" ++
+      -- Pending: a browser wraps at its own break points, after the hyphen
+      -- of `->` among them; the page's rule (`Ir.ListingWrap`) reaches no
+      -- HTML yet.
       (if spec.breakLines then " white-space: pre-wrap;" else "") ++
       -- A wrapped line's continuation hangs `breakIndent` in, as listings
       -- sets it on the page: CSS indents every line but the first after
