@@ -666,10 +666,12 @@ fragment's fallback coordinates can coincide with an unrelated written token. -/
   if pos.sourceMapped then sources[(file, pos.line, pos.col)]? else none
 
 /-- Restore a downstream diagnostic's written trigger from lexical evidence,
-retaining an explicit trigger when no construct token owns its span. -/
+retaining an explicit trigger when no construct token owns its span; a loss
+about a place takes none (`DiagCode.namesPlace`). -/
 @[expose] public def SourceTriggers.attribute (sources : SourceTriggers) (d : Diag) : Diag :=
-  { d with trigger := ((d.span.bind fun s =>
-      sources.writtenAt s.file s.pos).bind Diag.Spelling.ofWritten?).orElse (fun _ => d.trigger) }
+  { d with trigger := if d.kind.namesPlace then d.trigger else
+      ((d.span.bind fun s =>
+        sources.writtenAt s.file s.pos).bind Diag.Spelling.ofWritten?).orElse (fun _ => d.trigger) }
 
 /-- Attribution changes presentation only, including for accepted or scoped
 records; every other diagnostic field is exactly the input field. -/
@@ -680,8 +682,10 @@ public theorem SourceTriggers.attribute_record_exact (sources : SourceTriggers) 
 public theorem SourceTriggers.attribute_fixed_point (sources : SourceTriggers) (d : Diag) :
     sources.attribute (sources.attribute d) = sources.attribute d := by
   unfold SourceTriggers.attribute
-  cases (d.span.bind (fun s => sources.writtenAt s.file s.pos)).bind
-    Diag.Spelling.ofWritten? <;> simp
+  by_cases hp : d.kind.namesPlace = true
+  · simp [hp]
+  · cases (d.span.bind (fun s => sources.writtenAt s.file s.pos)).bind
+      Diag.Spelling.ofWritten? <;> simp [hp]
 
 /-- Failed source mapping cannot borrow any token from the index, regardless
 of its contents; all diagnostic fields, including explicit evidence, survive. -/
@@ -694,7 +698,7 @@ public theorem SourceTriggers.attribute_unmapped_id (sources : SourceTriggers) (
     | some s => simp [SourceTriggers.writtenAt, h s hs]
   unfold SourceTriggers.attribute
   rw [absent]
-  rfl
+  simp
 
 mutual
 
@@ -1260,10 +1264,11 @@ cannot, and N0020 already names that file once. -/
 public def styInternal (file name : String) : Bool :=
   packageFile file && texInternal name
 
-/-- Attribute a diagnostic by its source site, preserving an explicit trigger. -/
+/-- Attribute a diagnostic by its source site, preserving an explicit trigger;
+a loss about a place takes none (`DiagCode.namesPlace`). -/
 public def SourceTriggers.atSource (sources : SourceTriggers) (file : String)
     (pos : Pos) (d : Diag) : Diag :=
-  { d with trigger := d.trigger.orElse fun _ =>
+  { d with trigger := if d.kind.namesPlace then d.trigger else d.trigger.orElse fun _ =>
       (sources.writtenAt file pos).bind Diag.Spelling.ofWritten? }
 
 /-- Immediate attribution has the same failed-mapping boundary as delayed

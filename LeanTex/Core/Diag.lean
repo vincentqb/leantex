@@ -708,7 +708,7 @@ public def Diag.Spelling.ofWritten? (s : String) : Option Diag.Spelling :=
   if h : Diag.constructSpelling s = true then some ⟨s, h⟩ else none
 
 /-- The door keeps the token it accepts exactly as written. -/
-public theorem Diag.Spelling.ofWritten?_text (s : String) (t : Diag.Spelling)
+public theorem Diag.Spelling.ofWritten?_kept_exact (s : String) (t : Diag.Spelling)
     (h : Diag.Spelling.ofWritten? s = some t) : t.text = s := by
   unfold Diag.Spelling.ofWritten? at h
   split at h
@@ -819,6 +819,15 @@ public theorem DiagCode.censused_iff_ships (c : DiagCode) :
   cases h : c.loss <;>
     simp only [DiagCode.censused, DiagCode.floor, h, Loss.censused, Loss.floor, Floor.ships]
 
+/-- **A loss about a place names no written token.** An overfull line, a
+declared line that re-flowed and a page set short are where text stands, not
+a construct the author wrote: whatever token opens the place is incidental,
+and a header that quoted it read differently at every site. The location
+points at the place. -/
+public def DiagCode.namesPlace : DiagCode → Bool
+  | .W0005 | .W0386 | .N0200 => true
+  | _ => false
+
 /-- The rendered code string: the kind's own spelling, derived. -/
 public def Diag.code (d : Diag) : String := d.kind.code
 
@@ -830,7 +839,8 @@ public def Diag.severity (d : Diag) : Severity :=
   | false => d.kind.loss.severity
 
 /-- The one door a diagnostic is made through. A written token handed in as
-its trigger is kept only when it spells a construct. -/
+its trigger is kept only when it spells a construct, and never for a loss
+about a place (`DiagCode.namesPlace`). -/
 public def Diag.of (c : DiagCode) (message : String) (span : Option Span := none)
     (help : Option String := none) (subject : Option String := none)
     (refused : Option String := none) (trigger : Option String := none)
@@ -842,7 +852,7 @@ public def Diag.of (c : DiagCode) (message : String) (span : Option Span := none
     help := help
     subject := subject
     refused := refused
-    trigger := trigger.bind Diag.Spelling.ofWritten?
+    trigger := if c.namesPlace then none else trigger.bind Diag.Spelling.ofWritten?
     recovery := recovery
     output := output
     detail := detail }
@@ -858,7 +868,7 @@ public theorem Diag.of_record_exact (c : DiagCode) (message : String)
     Diag.of c message span help subject refused trigger recovery output detail =
       { kind := c, message := message, span := span, help := help,
         subject := subject, refused := refused,
-        trigger := trigger.bind Diag.Spelling.ofWritten?,
+        trigger := if c.namesPlace then none else trigger.bind Diag.Spelling.ofWritten?,
         recovery := recovery, output := output, detail := detail } := by
   rfl
 
@@ -1678,15 +1688,15 @@ public theorem Diag.foldRepeats_line_exact (ds : Array Diag) (s : Nat) (hs : s <
 
 /-- **A wording's line counts its repeats.** A warning's words keep a line at
 or before it, delivered as a warning, whose count is at least the warnings in
-those words and at most those and the log's notes and errors — which the line
-carries where their census loss opens on it. -/
+those words and at most those and the log's notes and errors that a census
+key names — which the line carries where their census loss opens on it. -/
 public theorem Diag.foldRepeats_wording_between (ds : Array Diag) (j : Nat) (hj : j < ds.size)
     (hw : ds[j].severity.isWarning = true) :
     ∃ i d, i ≤ j ∧ (Diag.foldRepeats ds)[i]? = some d ∧ d.severity.isWarning = true ∧
       (∃ hi : i < ds.size, Diag.sameLine ds[j] ds[i] = true) ∧
       (ds.filter fun e => e.severity.isWarning && Diag.sameLine ds[j] e).size ≤ d.sites ∧
       d.sites ≤ (ds.filter fun e => e.severity.isWarning && Diag.sameLine ds[j] e).size +
-        (ds.filter fun e => !e.severity.isWarning).size := by
+        (ds.filter fun e => !e.severity.isWarning && e.subject.isSome).size := by
   have hjl : j < ds.toList.length := by simpa using hj
   have hwl : ds.toList[j].severity.isWarning = true := by simpa using hw
   obtain ⟨hs, hle, hsl, hsW, hss⟩ := Diag.lineOf_spec ds.toList j hjl hwl
@@ -1716,7 +1726,9 @@ public theorem Diag.foldRepeats_wording_between (ds : Array Diag) (j : Nat) (hj 
       simp only [Diag.countsOn] at he
       simp only [Bool.or_eq_true, Bool.and_eq_true, Bool.not_eq_true']
       cases hew : e.severity.isWarning
-      · exact Or.inr rfl
+      · rw [hew] at he
+        simp only [Bool.false_eq_true, ite_false, Bool.and_eq_true] at he
+        exact Or.inr ⟨rfl, he.1⟩
       · rw [hew] at he
         simp only [ite_true, hcongr] at he
         exact Or.inl ⟨rfl, he⟩

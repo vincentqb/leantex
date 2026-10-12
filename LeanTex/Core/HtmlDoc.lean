@@ -9791,7 +9791,7 @@ private def snapWalk (id text label : String) (kids : Array Node)
           s!"frames share the step anchor '{id}-{k}'; each after the first takes a \
 numbered anchor"
           (help := some s!"an in-page link '#{id}-{k}' reaches only the first; \
-retitle the frames apart")
+retitle the frames apart, or link to the numbered anchor")
           (detail := some s!"{text.quote} takes '{sid}', after {holder.quote}"))
       | none => diags
     snapWalk id text label
@@ -9879,7 +9879,7 @@ private def sectionize (cfg : Config) (blocks : Array Block) :
         diags := diags.push (Diag.of .W0327
           s!"sections share the anchor '{base}'; each after the first takes a numbered anchor"
           (help := some s!"an in-page link '#{base}' reaches only the first; \
-retitle the sections apart")
+retitle the sections apart, or link to the numbered anchor")
           (detail := some s!"{text.quote} takes '{id}', after {holder.quote}"))
       taken := taken.insert id text
       openId := some id
@@ -10308,7 +10308,7 @@ on the web slide"
             walkDiags := walkDiags.push (Diag.of .W0327
               s!"frames share the anchor '{base}'; each after the first takes a numbered anchor"
               (help := some s!"an in-page link '#{base}' reaches only the first; \
-retitle the frames apart")
+retitle the frames apart, or link to the numbered anchor")
               (detail := some s!"{text.quote} takes '{id}', after {holder.quote}"))
           taken := taken.insert id text
           -- The spacer anchors `<frame>-k`, claimed and built by the one

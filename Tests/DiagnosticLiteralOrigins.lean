@@ -36,7 +36,7 @@ def diagnosticLiteralOriginChecks (ref : IO.Ref (List String))
       let construct := Diag.constructSpelling spelling
       t s!"literal origins: authored token {spelling} at {line}:{col} is indexed exactly when it spells a construct"
         (sources[(file, line, col)]? == if construct then some spelling else none)
-      let d := Diag.of .N0200 "The page uses its declared shrink."
+      let d := Diag.of .N0018 "A stand-in delayed note."
         (some ⟨file, { line, col }⟩)
       let attributed := sources.attribute d
       t s!"literal origins: delayed token {spelling} preserves the entire record"
@@ -56,7 +56,7 @@ def diagnosticLiteralOriginChecks (ref : IO.Ref (List String))
   for raw in [Parse.Raw.word "invented" { line := 2, col := 3 },
       .sym '*' { line := 2, col := 3 }] do
     let sources := (Compat.execute file #[raw]).sourceTriggers
-    let d := Diag.of .N0200 "The page uses its declared shrink."
+    let d := Diag.of .N0018 "A stand-in delayed note."
       (some ⟨file, { line := 2, col := 3 }⟩)
     t "literal origins: synthetic values cannot invent written evidence"
       (sources.isEmpty && (sources.attribute d).trigger.isNone)
@@ -78,7 +78,7 @@ def diagnosticLiteralOriginChecks (ref : IO.Ref (List String))
     t "literal origins: expanded control leaves one unmapped fragment"
       (fragments.size == 1)
     for token in fragments do
-      let d := Diag.of .N0200 "The page uses its declared shrink."
+      let d := Diag.of .N0018 "A stand-in delayed note."
         (some ⟨file, token.pos⟩)
       t "literal origins: an unmapped fragment cannot borrow a neighboring token"
         ((sources.attribute d).trigger.isNone &&

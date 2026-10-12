@@ -58,25 +58,27 @@ def diagnosticLayoutOriginChecks (ref : IO.Ref (List String))
   let doc : Ir.Doc := { body := #[.para content] }
   let out := Layout.run geom fs none doc
   let overfull := out.diags.filter (·.kind == .W0005)
-  t "layout origins: body overflow keeps each line's command and expansion"
+  -- An overfull line is a place (`DiagCode.namesPlace`): its span keeps the
+  -- written command and the expansion, and its header quotes neither.
+  t "layout origins: body overflow keeps each line's command and expansion in its span"
     (overfull.size == 2 &&
       overfull.any (fun d => DiagnosticLayoutOrigins.sameSource d.span first &&
-        d.triggerText == first.pos.command) &&
+        d.trigger.isNone) &&
       overfull.any (fun d => DiagnosticLayoutOrigins.sameSource d.span second &&
-        d.triggerText == second.pos.command))
+        d.trigger.isNone))
   let notes : Ir.Doc := { body := #[.para #[.text "Note", .footnote (some 1) content]] }
   let noteOut := Layout.run geom fs none notes
   let noteDiags := noteOut.diags.filter (·.kind == .W0005)
   t "layout origins: footnote overflow keeps commands after generated mark insertion"
     (noteDiags.size == 2 &&
       noteDiags.any (fun d => DiagnosticLayoutOrigins.sameSource d.span first &&
-        d.triggerText == first.pos.command) &&
+        d.trigger.isNone) &&
       noteDiags.any (fun d => DiagnosticLayoutOrigins.sameSource d.span second &&
-        d.triggerText == second.pos.command))
-  t "layout origins: overflow CLI human and JSON retain the written command"
+        d.trigger.isNone))
+  t "layout origins: overflow CLI human and JSON stand at the line and quote no token"
     (overfull.any fun d =>
-      (Render.human false d).startsWith "⚠ [W0005] - line-origin.tex:2:1 - \\wideword\n" &&
-      hasStr (Render.porcelainDiag d) "\"trigger\":\"\\\\wideword\"")
+      (Render.human false d).startsWith "⚠ [W0005] - line-origin.tex:2:1\n" &&
+      !hasStr (Render.porcelainDiag d) "\"trigger\":")
   let bare := Ir.eraseLocations doc
   let bareOut := Layout.run geom fs none bare
   t "layout origins: line metadata preserves shipped paint and PDF bytes"
@@ -155,7 +157,7 @@ def diagnosticLayoutOriginChecks (ref : IO.Ref (List String))
       picShrinkDiags.size == 1 && picShrinkDiags.all fun d =>
         DiagnosticLayoutOrigins.sameSource d.span
           (DiagnosticLayoutOrigins.sourceAt "picture-shrink-origin.tex" 5 1 "\\begin") &&
-        d.triggerText == some "\\begin")
+        d.trigger.isNone)
   let shrinkSource :=
     "\\documentclass{article}\\page{height=127pt,margin=20pt}" ++
     "\\newcommand{\\firstline}{First.}\\newcommand{\\secondline}{Second.}" ++
@@ -171,13 +173,13 @@ def diagnosticLayoutOriginChecks (ref : IO.Ref (List String))
     (shrinkDs.all (·.severity != .error) && shrunk.pages.size == 1 && shrinkDiags.size == 1 &&
       shrinkDiags.all fun d =>
         d.span.any (fun s => s.file == "shrink-origin.tex" && s.pos.line == 8 && s.pos.col == 1) &&
-        d.triggerText == some "\\thirdline")
-  t "layout origins: shrink CLI emits the exact authored macro call"
+        d.trigger.isNone)
+  t "layout origins: shrink CLI stands at the box and quotes no token"
     (shrinkDiags.any fun d =>
       hasStr (Render.porcelainDiag d) "\"file\":\"shrink-origin.tex\"" &&
       hasStr (Render.porcelainDiag d) "\"line\":8" &&
-      hasStr (Render.porcelainDiag d) "\"trigger\":\"\\\\thirdline\"" &&
-      hasStr (Render.human false d) "shrink-origin.tex:8:1 - \\thirdline")
+      !hasStr (Render.porcelainDiag d) "\"trigger\":" &&
+      hasStr (Render.human false d) "shrink-origin.tex:8:1\n")
   let unlocatedShrink := Ir.eraseLocations shrinkDoc
   let unlocatedOut := Layout.run shrinkGeom fs none unlocatedShrink
   t "layout origins: shrink metadata preserves shipped paint and PDF bytes"
@@ -198,7 +200,7 @@ def diagnosticLayoutOriginChecks (ref : IO.Ref (List String))
   t "layout origins: a later short column cannot steal the shrink source"
     (columnOut.pages.size == 1 && columnDiags.size == 1 && columnDiags.all fun d =>
       d.span.any (fun s => s.file == "shrink-origin.tex" && s.pos.line == 8 && s.pos.col == 1) &&
-      d.triggerText == some "\\thirdline")
+      d.trigger.isNone)
   t "layout origins: column provenance preserves shipped paint and PDF bytes"
     (reprStr columnOut.pages == reprStr bareColumnOut.pages &&
       driverPdf fs shrinkGeom columns columnOut ==

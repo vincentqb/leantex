@@ -1413,10 +1413,16 @@ public structure ParagraphBreaks where
   forced : Array Nat
   chosen : Array Nat
   endFills : Array Nat
+  /-- Where a declared line that re-flowed stands in the source, when its
+  items say: the paragraph's census key, so the one paragraph an overlay's
+  steps set again is one loss, and two paragraphs are two. -/
+  key : Option Span := none
   deriving Repr, Inhabited
 
 public def ParagraphBreaks.subject (p : ParagraphBreaks) : String :=
-  s!"paragraph:{p.site}"
+  match p.key with
+  | some s => s!"reflow:{s.file}:{s.pos.line}:{s.pos.col}"
+  | none => s!"paragraph:{p.site}"
 
 /-- A chosen break splits an authored segment if it occurs before an
 interior forced end and is neither a forced end nor its preceding fill.
@@ -8225,9 +8231,9 @@ private def Spacing.Page.warnNoteOverrun (b : B) (y inkBelow : Sp) : B :=
   let over := y + inkBelow - noteFloor b.bottom b.noteGap b.notesH b.noteHang
   if b.notesH > 0 && over > 0 then
     { b with diags := b.diags.push (Diag.of .W0372
-        (s!"a footnote is {over.toPtString}pt taller than the text block; " ++
-          "it overruns its page")
-        (help := "shorten the note, or raise the text height (\\page{ vmargin = ... })")) }
+        "a footnote is taller than the text block; it overruns its page"
+        (help := "shorten the note, or raise the text height (\\page{ vmargin = ... })")
+        (detail := some s!"{over.toPtString}pt taller")) }
   else b
 
 @[simp] private theorem attachNotes_pages (b : B) (ns : Array NoteBlock) :
@@ -8595,9 +8601,10 @@ private def Spacing.Page.finishPage (b : B) (owed : Sp := 0) (flush : Bool := fa
         k.shiftY (-(b.inkShrinkAbove.getD i 0 * b.needed / b.pageShrink))
     else b.cur.inks
   let diags := if b.needed > 0 then b.diags.push (Diag.of .N0200
-      (s!"page {b.pages.size + 1} set {b.needed / 65536}pt short: its skips gave " ++
-        s!"{b.needed * 100 / b.pageShrink}% of their {b.pageShrink / 65536}pt of shrink")
-      (span := b.neededSource) (trigger := b.neededSource.bind (·.pos.command)))
+      "a page set short of its height: its skips gave part of their shrink"
+      (span := b.neededSource)
+      (detail := some (s!"page {b.pages.size + 1}: {b.needed / 65536}pt short, its skips gave " ++
+        s!"{b.needed * 100 / b.pageShrink}% of their {b.pageShrink / 65536}pt of shrink")))
     else b.diags
   -- The leftover between the content's bottom and the bottom margin. Fil
   -- glue owns it when any stands on the page: each line moves by its
@@ -10269,11 +10276,12 @@ private theorem finishPage_fill_centre_exact (b : B) (owed : Sp)
     Nat.not_lt.mpr hi]
 
 /-- The census key of an overfull line: the source position its first
-located item stands at, so each overfull line is its own loss — TeX logs
-every overfull box, and each wants its own fix — and only the same site
-set again (an overlay's repeated page) counts as a repeat. A line no
-source item reaches shares one key, the one `uniqueDiags` collapses into
-a count. -/
+located item stands at, so the census counts each overfull line as TeX logs
+each overfull box, and only the same site set again (an overlay's repeated
+page) is a repeat; the log prints the wording once, its sites under `-v`
+(`Diag.sameLine`). A line no source item reaches shares one key, the one
+`uniqueDiags` collapses into a count. An overfull line is a place, not a
+construct, so it names no written token. -/
 def overfullSubject : Option Span → String
   | some s => s!"overfull:{s.file}:{s.pos.line}:{s.pos.col}"
   | none => "overfull:unlocated"
@@ -10282,7 +10290,7 @@ private def Spacing.Page.warnOverfull (b : B) (source : Option Span) : B :=
   { b with
     diags := b.diags.push
       (Diag.of .W0005 "overfull line; no feasible break" (span := source)
-        (trigger := source.bind (·.pos.command)) (subject := some (overfullSubject source))) }
+        (subject := some (overfullSubject source))) }
 
 /-- First located item of the line actually set, never a neighbouring line's
 site. Callers shift this map alongside inserted marks and hanging kerns.
@@ -11351,7 +11359,6 @@ private def collectPara (r : Rd) (a : Acc)
         if overfull then
           ds := ds.push (Diag.of .W0005 "overfull line; no feasible break"
             (span := lineSource nsources s brk)
-            (trigger := (lineSource nsources s brk).bind (·.pos.command))
             (subject := some (overfullSubject (lineSource nsources s brk))))
         let box := lineExtent r.fs r.geom.fontSize (scaleB bodyFont.ascent)
           (scaleB bodyFont.capHeight) (scaleB (-bodyFont.descent))
@@ -12098,10 +12105,10 @@ private def collectTable (r : Rd) (a0 : Acc)
   if tableW > total then
     a := { a with diags := a.diags.push (Diag.of .W0338
       (if web && fit.overhang > 0 then
-          s!"the table's words alone are {(tableW - total).toPtString}pt wider than the \
-measure at its smallest size; it " ++
+          "the table's words alone are wider than the measure at its smallest size; it " ++
             (if offPaper then "runs past the edges of the paper" else "overhangs the margins")
-        else s!"the table is {(tableW - total).toPtString}pt wider than the measure")
+        else "the table is wider than the measure")
+      (detail := some s!"{(tableW - total).toPtString}pt wider")
       (span := rows.findSome? fun row => row.findSome? Ir.inlineSource)
       (help := if web then
           "shorten the longest word in each column, or split the table into narrower ones"
@@ -12924,10 +12931,10 @@ private def collectPicture (r : Rd) (a : Acc) (pic : Ir.Pic.Picture)
   let source := (r.pictureSpans.find? (·.1 == a.leafNext)).map (·.2)
   let a := if w > avail || h > r.geom.textHeight then
       { a with diags := a.diags.push (Diag.of .W0335
-        (s!"the picture is {w.toPtString}pt × {h.toPtString}pt against a text area " ++
-          s!"of {avail.toPtString}pt × {r.geom.textHeight.toPtString}pt; it may overrun \
-the page")
+        "the picture is larger than the text area; it may overrun the page"
         (span := source) (trigger := source.bind (·.pos.command))
+        (detail := some (s!"{w.toPtString}pt × {h.toPtString}pt against " ++
+          s!"{avail.toPtString}pt × {r.geom.textHeight.toPtString}pt"))
         (help := "shrink the picture ([scale=...]) or widen the text area \
 (\\page{ margin = ... })")) }
     else a
@@ -15878,34 +15885,6 @@ private def texBoxBaseline (fs : FontSet) (b : B) (j : ParaJob) (tb : TexBox) (s
   let top := if tb.more then b.boxDepth + inkClearance else texBoxTop bsOut b.boxDepth height
   top + tb.inset + h1
 
-/-- The breaker may choose the end-fill immediately before a forced
-newline. Both choices end the same source segment (`lineStart` skips the
-penalty after the fill).
-premise: mintedSettingsChecks — kept boundaries and indentation
-ship unchanged; a genuinely split declared line still raises W0386. -/
-public def isEndFill (items : Array Item) (k : Nat) : Bool :=
-  match items[k]? with
-  | some (.glue g) => g.parfill && isForced items (k + 1)
-  | _ => false
-
-/-- The last forced end before a paragraph's own, as `ParagraphBreaks.reflows`
-reads it: a chosen break below it stands inside a declared line that is not
-the paragraph's last. -/
-private def interiorTop (items : Array Item) : Nat :=
-  ((Array.range items.size).filter (isForced items)).pop.foldl max 0
-
-/-- A break the breaker chose inside a declared line (`ParagraphBreaks.Splits`,
-read off the items): below the last interior end, neither a forced end nor
-the fill before one. -/
-private def splitsBelow (items : Array Item) (top k : Nat) : Bool :=
-  k < top && !isForced items k && !isEndFill items k
-
-/-- A line of a declared line that re-flowed: it ends at a break inside the
-declared line, or starts after one. W0386 accounts for such a line, so an
-overrun on it is a clause of that account, never a W0005 of its own. -/
-private def reflowedLine (items : Array Item) (top : Nat) (first : Bool) (prev brk : Nat) : Bool :=
-  splitsBelow items top brk || (!first && splitsBelow items top prev)
-
 /-- One break of a paragraph placed: the fold step `placePara` runs over
 `breaks`. The threaded state is (builder, previous break, first line).
 A named step so `runFloat_whole` can state page preservation by fold
@@ -15914,9 +15893,7 @@ private def placeParaLine (fs : FontSet) (j : ParaJob)
     (st : B × Nat × Bool) (brk : Nat) : B × Nat × Bool :=
   let b0 := st.1
   let g := paraLineGeom fs j b0 st.2.2 st.2.1 brk
-  -- An overrun on a re-flowed declared line is W0386's clause (`reflowAccount`).
-  let b1 := if g.2.2.2.1 &&
-      !(j.declaresLines && reflowedLine j.items (interiorTop j.items) st.2.2 st.2.1 brk) then
+  let b1 := if g.2.2.2.1 then
       b0.warnOverfull (lineSource j.itemSources (j.lineStart st.2.2 st.2.1) brk)
     else b0
   -- The notes whose marks this line carries: mark boxes strictly between
@@ -15942,6 +15919,16 @@ private def placeParaLine (fs : FontSet) (j : ParaJob)
       (paintPadding := if st.2.2 then j.paintPadding else none)
       (stepLead := j.lead) (rowStrut := j.rowStrut) (strut := j.strut)),
     brk, false)
+
+/-- The breaker may choose the end-fill immediately before a forced
+newline. Both choices end the same source segment (`lineStart` skips the
+penalty after the fill).
+premise: mintedSettingsChecks — kept boundaries and indentation
+ship unchanged; a genuinely split declared line still raises W0386. -/
+public def isEndFill (items : Array Item) (k : Nat) : Bool :=
+  match items[k]? with
+  | some (.glue g) => g.parfill && isForced items (k + 1)
+  | _ => false
 
 /-- Read the actual item boundaries and the actual breaking task's result
 once, at paragraph placement. No page text or displayed frame counter is
@@ -15994,39 +15981,40 @@ was declared — a paragraph of continuous prose declares one line and may
 set as many as it needs — where every declared break held, and where only
 the paragraph's last line, which its own end closes, sets more lines than
 one: that is the shape LaTeX sets, and it declared nothing to lose. -/
-private def Spacing.Page.warnReflow (b : B) (acct : Option Span × Bool) (reflowed : Bool) : B :=
+private def Spacing.Page.warnReflow (b : B) (p : ParagraphBreaks) (reflowed : Bool) : B :=
   if reflowed then
-    { b with diags := b.diags.push (Diag.of .W0386
-        (subject := some s!"paragraph:{b.paragraphBreaks.size}")
-        (if acct.2 then
-          "a declared line did not fit the measure: it re-flowed, and part of it still runs past"
-        else "a declared line did not fit the measure and re-flowed") acct.1
+    let loc := match b.curFrame with
+      | some n => s!"in frame {n}: "
+      | none => ""
+    { b with diags := b.diags.push (Diag.of .W0386 (subject := some p.subject)
+        "a declared line did not fit the measure and re-flowed" p.key
         (help := "shorten the declared line, reduce \\page{ hmargin = ... } \
-to widen the measure, or declare a narrower face")) }
+to widen the measure, or declare a narrower face")
+        (detail := some s!"{loc}{p.forced.size} lines declared, {p.chosen.size} ship")) }
   else b
 
-@[simp] private theorem warnReflow_pages (b : B) (a : Option Span × Bool) (r : Bool) :
-    (b.warnReflow a r).pages = b.pages := by
+@[simp] private theorem warnReflow_pages (b : B) (q : ParagraphBreaks) (r : Bool) :
+    (b.warnReflow q r).pages = b.pages := by
   simp only [Spacing.Page.warnReflow]
   split <;> rfl
 
-@[simp] private theorem warnReflow_geom (b : B) (a : Option Span × Bool) (r : Bool) :
-    (b.warnReflow a r).geom = b.geom := by
+@[simp] private theorem warnReflow_geom (b : B) (q : ParagraphBreaks) (r : Bool) :
+    (b.warnReflow q r).geom = b.geom := by
   simp only [Spacing.Page.warnReflow]
   split <;> rfl
 
-@[simp] private theorem warnReflow_docBg (b : B) (a : Option Span × Bool) (r : Bool) :
-    (b.warnReflow a r).docBg = b.docBg := by
+@[simp] private theorem warnReflow_docBg (b : B) (q : ParagraphBreaks) (r : Bool) :
+    (b.warnReflow q r).docBg = b.docBg := by
   simp only [Spacing.Page.warnReflow]
   split <;> rfl
 
-@[simp] private theorem warnReflow_cur (b : B) (a : Option Span × Bool) (r : Bool) :
-    (b.warnReflow a r).cur = b.cur := by
+@[simp] private theorem warnReflow_cur (b : B) (q : ParagraphBreaks) (r : Bool) :
+    (b.warnReflow q r).cur = b.cur := by
   simp only [Spacing.Page.warnReflow]
   split <;> rfl
 
-@[simp] private theorem warnReflow_noBreak (b : B) (a : Option Span × Bool) (r : Bool) :
-    (b.warnReflow a r).noBreak = b.noBreak := by
+@[simp] private theorem warnReflow_noBreak (b : B) (q : ParagraphBreaks) (r : Bool) :
+    (b.warnReflow q r).noBreak = b.noBreak := by
   simp only [Spacing.Page.warnReflow]
   split <;> rfl
 
@@ -16038,38 +16026,37 @@ line alone set more than one line, adds none. The `_accounts` shape
 the warning, decided on what the builder already holds — the forced breaks
 in the items it is about to place and the breaks the breaker returned
 (`ParagraphBreaks.reflows`) — never by reading the shipped pages back afterwards. -/
-private theorem warnReflow_accounts (b : B) (acct : Option Span × Bool) (reflowed : Bool) :
-    (b.warnReflow acct reflowed).diags.size =
+private theorem warnReflow_accounts (b : B) (q : ParagraphBreaks) (reflowed : Bool) :
+    (b.warnReflow q reflowed).diags.size =
       b.diags.size + (if reflowed then 1 else 0) := by
   unfold Spacing.Page.warnReflow
   split <;> simp_all
 
-/-- Where a re-flowed paragraph's W0386 stands and whether it states an
-overrun: the first line of its first declared line that re-flowed, and
-whether a line of a re-flowed declared line runs past the measure — which
-that line's W0005 would name again (`reflowedLine`). -/
-private def reflowAccount (fs : FontSet) (j : ParaJob) (b : B) (breaks : Array Nat) :
-    Option Span × Bool := Id.run do
-  let top := interiorTop j.items
+/-- Where a re-flowed paragraph's W0386 stands: the first located line of a
+declared line that re-flowed — a line its split ends, or the one after a split
+— whose first located item is where the author finds the declared line. -/
+private def reflowSource (j : ParaJob) (p : ParagraphBreaks) : Option Span := Id.run do
+  let top := p.forced.pop.foldl max 0
+  let splits (k : Nat) : Bool := k < top && !isForced j.items k && !isEndFill j.items k
   let mut prev := 0
   let mut first := true
-  let mut source : Option Span := none
-  let mut seen := false
-  let mut overruns := false
-  for brk in breaks do
-    if reflowedLine j.items top first prev brk then
-      unless seen do
-        source := lineSource j.itemSources (j.lineStart first prev) brk
-        seen := true
-      if (paraLineGeom fs j b first prev brk).2.2.2.1 then overruns := true
+  for brk in p.chosen do
+    if splits brk || (!first && splits prev) then
+      if let some src := lineSource j.itemSources (j.lineStart first prev) brk then
+        return some src
     prev := brk
     first := false
-  return (source, overruns)
+  return none
+
+/-- The paragraph's record of its breaks, keyed by where a declared line of
+it re-flowed. -/
+private def paragraphRecord (b : B) (j : ParaJob) (breaks : Array Nat) : ParagraphBreaks :=
+  let p := paragraphBreaksOf b.paragraphBreaks.size j.leaf b.curFrameOrigin j.declaresLines j.items breaks
+  if p.reflows.isEmpty then p else { p with key := reflowSource j p }
 
 private def placePara (fs : FontSet) (b : B) (j : ParaJob) (breaks : Array Nat) : B :=
-  let p := paragraphBreaksOf b.paragraphBreaks.size j.leaf b.curFrameOrigin j.declaresLines j.items breaks
-  let start := ({ b with diags := b.diags ++ j.diags }).warnReflow
-    (if p.reflows.isEmpty then (none, false) else reflowAccount fs j b breaks) (!p.reflows.isEmpty)
+  let p := paragraphRecord b j breaks
+  let start := ({ b with diags := b.diags ++ j.diags }).warnReflow p (!p.reflows.isEmpty)
   (breaks.foldl (placeParaLine fs j)
     ({ start with paragraphBreaks := b.paragraphBreaks.push p }, 0, true)).1
 
@@ -19621,29 +19608,26 @@ the line fold, including its spills and notes, preserves the record. -/
 private theorem placePara_breaks_exact (fs : FontSet) (b : B) (j : ParaJob)
     (breaks : Array Nat) :
     (placePara fs b j breaks).paragraphBreaks =
-      b.paragraphBreaks.push
-        (paragraphBreaksOf b.paragraphBreaks.size j.leaf b.curFrameOrigin j.declaresLines j.items breaks) :=
+      b.paragraphBreaks.push (paragraphRecord b j breaks) :=
   (reflowStep_paraLines ..).1
 
-private theorem reflowStep_warnReflow (b : B) (acct : Option Span × Bool) (split : Bool) :
-    ReflowStep b (b.warnReflow acct split) := by
+private theorem reflowStep_warnReflow (b : B) (q : ParagraphBreaks) (split : Bool) :
+    ReflowStep b (b.warnReflow q split) := by
   unfold Spacing.Page.warnReflow
   split
   · exact ⟨rfl, fun _ h => Array.mem_push.mpr (Or.inl h)⟩
   · exact ReflowStep.refl b
 
-private theorem warnReflow_diag (b : B) (acct : Option Span × Bool) :
-    ∃ d ∈ (b.warnReflow acct true).diags,
-      d.code = "W0386" ∧ d.subject = some s!"paragraph:{b.paragraphBreaks.size}" := by
+private theorem warnReflow_diag (b : B) (q : ParagraphBreaks) :
+    ∃ d ∈ (b.warnReflow q true).diags, d.code = "W0386" ∧ d.subject = some q.subject := by
   unfold Spacing.Page.warnReflow
   exact ⟨_, Array.mem_push_self, rfl, rfl⟩
 
 private theorem placePara_reflows (fs : FontSet) (b : B) (j : ParaJob)
     (breaks : Array Nat) (hb : b.ReflowsNamed) :
     (placePara fs b j breaks).ReflowsNamed := by
-  let p := paragraphBreaksOf b.paragraphBreaks.size j.leaf b.curFrameOrigin j.declaresLines j.items breaks
-  let start := ({ b with diags := b.diags ++ j.diags }).warnReflow
-    (if p.reflows.isEmpty then (none, false) else reflowAccount fs j b breaks) (!p.reflows.isEmpty)
+  let p := paragraphRecord b j breaks
+  let start := ({ b with diags := b.diags ++ j.diags }).warnReflow p (!p.reflows.isEmpty)
   have appended : ReflowStep b { b with diags := b.diags ++ j.diags } :=
     ⟨rfl, fun _ h => Array.mem_append.mpr (Or.inl h)⟩
   have old : start.ReflowsNamed :=
@@ -19658,12 +19642,11 @@ private theorem placePara_reflows (fs : FontSet) (b : B) (j : ParaJob)
       have he : (!p.reflows.isEmpty) = true := by
         rw [Bool.not_eq_true', Array.isEmpty_eq_false_iff_exists_mem]
         exact ⟨k, hm⟩
-      change ∃ d ∈ (({ b with diags := b.diags ++ j.diags }).warnReflow
-        (if p.reflows.isEmpty then (none, false) else reflowAccount fs j b breaks)
+      change ∃ d ∈ (({ b with diags := b.diags ++ j.diags }).warnReflow p
           (!p.reflows.isEmpty)).diags,
           d.code = "W0386" ∧ d.subject = some p.subject
       rw [he]
-      exact warnReflow_diag { b with diags := b.diags ++ j.diags } _
+      exact warnReflow_diag { b with diags := b.diags ++ j.diags } p
   exact named.step (reflowStep_paraLines fs j breaks (_, 0, true))
 
 private theorem reflowStep_placePicture (fs : FontSet) (imgs : Image.Store)
@@ -20410,7 +20393,7 @@ shown, whatever reads the file"
               (help := "a band holds one line at a fixed position: shorten \
 the content, or widen the page (\\page{ width = ... })")
               (detail := some s!"on page {i + 1}, \
-{(geom.offMedium l.x l.setWidth).toPtString} pt past its edge"))
+{(geom.offMedium l.x l.setWidth).toPtString}pt past its edge"))
           placed := placed.push (slot, { l with furniture := true })
       let slots := placed
       for hj : j in [0:slots.size] do
@@ -21722,9 +21705,10 @@ private theorem placePara_diags (fs : FontSet) (b : B) (j : ParaJob)
     (breaks : Array Nat) :
     ∀ d ∈ Spacing.Page.diags b ++ Spacing.Paragraph.diags j, d ∈ Spacing.Page.diags (placePara fs b j breaks) := by
   intro d hd
-  simp only [placePara]
-  apply (reflowStep_paraLines fs j breaks _).2 d
-  exact (reflowStep_warnReflow _ _ _).2 d hd
+  unfold placePara
+  exact (reflowStep_paraLines fs j breaks _).2 d
+    ((reflowStep_warnReflow { b with diags := b.diags ++ j.diags } (paragraphRecord b j breaks)
+      (!(paragraphRecord b j breaks).reflows.isEmpty)).2 d hd)
 
 private theorem clean_placePara (fs : FontSet) (b : B) (j : ParaJob)
     (breaks : Array Nat) (hd : GlyphClean (Spacing.Page.diags (placePara fs b j breaks))) :
@@ -23375,19 +23359,17 @@ private theorem paragraph_fold (fs : FontSet) (j : ParaJob)
       cases hm
       exact ih _ (paragraph_step fs j a b prev brk first hj hn h ha hb) rfl hrest'
 
-private def paragraphStart (fs : FontSet) (b : B) (j : ParaJob) (breaks : Array Nat) :
-    B × Nat × Bool :=
-  let p := paragraphBreaksOf b.paragraphBreaks.size j.leaf b.curFrameOrigin j.declaresLines j.items breaks
-  let start := ({ b with diags := b.diags ++ j.diags }).warnReflow
-    (if p.reflows.isEmpty then (none, false) else reflowAccount fs j b breaks) (!p.reflows.isEmpty)
+private def paragraphStart (b : B) (j : ParaJob) (breaks : Array Nat) : B × Nat × Bool :=
+  let p := paragraphRecord b j breaks
+  let start := ({ b with diags := b.diags ++ j.diags }).warnReflow p (!p.reflows.isEmpty)
   ({ start with paragraphBreaks := b.paragraphBreaks.push p }, 0, true)
 
 private theorem paragraph_rise (fs : FontSet) (j : ParaJob) (breaks : Array Nat)
     (a b : B) (hj : j.display = none) (hn : j.notes.isEmpty = true) (h : PageRise a b)
-    (ha : ParagraphInputs fs j breaks.toList (paragraphStart fs a j breaks))
-    (hb : ParagraphInputs fs j breaks.toList (paragraphStart fs b j breaks)) :
+    (ha : ParagraphInputs fs j breaks.toList (paragraphStart a j breaks))
+    (hb : ParagraphInputs fs j breaks.toList (paragraphStart b j breaks)) :
     PageRise (placePara fs a j breaks) (placePara fs b j breaks) := by
-  have hs : PageRise (paragraphStart fs a j breaks).1 (paragraphStart fs b j breaks).1 := by
+  have hs : PageRise (paragraphStart a j breaks).1 (paragraphStart b j breaks).1 := by
     dsimp only [paragraphStart]
     unfold Spacing.Page.warnReflow
     repeat' split
@@ -23692,7 +23674,7 @@ natural-size fixed-top closing. No output ordering is assumed. -/
 public def ParagraphSafe (fs : FontSet) (b : Page) (j : Paragraph)
     (breaks : Array Nat) (gs : Array Glue) : Prop :=
   Spacing.Page.fresh b = false ∧ j.keepNext ≤ 0 ∧ j.display = none ∧ j.notes.isEmpty = true ∧
-    ParagraphInputs fs j breaks.toList (paragraphStart fs (boundaryStart b gs) j breaks) ∧
+    ParagraphInputs fs j breaks.toList (paragraphStart (boundaryStart b gs) j breaks) ∧
     NaturalClose (boundaryEnd fs b j breaks gs)
 
 private def paintedInk (fs : FontSet) (ls : Array LineOut) : List LineOut :=
@@ -23901,7 +23883,7 @@ public def paragraphSafeDecision (fs : FontSet) (b : Page) (j : Paragraph)
     | none => isTrue rfl
     | some _ => isFalse fun h => by contradiction
   letI := paragraphInputsDecidable fs j breaks.toList
-    (paragraphStart fs (boundaryStart b gs) j breaks)
+    (paragraphStart (boundaryStart b gs) j breaks)
   let last := boundaryEnd fs b j breaks gs
   letI : Decidable (last.vdist = .top) :=
     decidable_of_iff (last.vdist.above = 0 ∧ last.vdist.below = 1000 ∧

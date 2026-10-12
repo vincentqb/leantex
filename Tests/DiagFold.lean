@@ -220,13 +220,14 @@ def foldChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "an error keyed per site still prints at every site"
     ((headLines err "E0304").length == 3 && r.errors == 3)
 
-/-- **One declared line, one account.** A declared line that re-flowed (W0386)
-and a line of it that still runs past the measure (W0005) are one site: the
-re-flow's account states the overrun, at the declared line, and no W0005
-names that line again. A declared line that cannot re-flow — one word wider
-than the measure — is W0005's alone. The clause is judged by the page: it is
-stated exactly where a shipped line of a re-flowed declared line runs past the
-margin. Every word here is invented. -/
+/-- **A re-flowed declared line and an overrun are two losses, each named
+once at its own site.** W0386 says a declared line did not hold, at that
+declared line, its counts the site's detail; W0005 says ink runs past the
+measure, at the item that overruns. Accepting one never accepts the other,
+and each census holds: one W0386 per paragraph that re-flowed — the one
+paragraph an overlay's steps set again is one — and one W0005 per line the
+page shows past its margin. The log prints each wording once, located,
+carrying its sites. Every word here is invented. -/
 def reflowAccountChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
   let some font ← loadTestFont "OpenSans-Regular.ttf"
@@ -235,36 +236,53 @@ def reflowAccountChecks (ref : IO.Ref (List String)) : IO Unit := do
   let file := "reflow.tex"
   let wide := String.ofList (List.replicate 70 'w')
   let prose (n : Nat) := String.intercalate " " (List.replicate n "alpha beta gamma delta")
+  let located (src : String) : Ir.Doc :=
+    let prepared := Elab.prepare file (Parse.parse file (Lex.lex file src).1).1
+    (Elab.runPrepared file prepared).1
   let source := String.intercalate "\n" [
     "\\documentclass{article}", "\\page{ width = 220pt, margin = 20pt }",
     "\\begin{document}",
     "Short opening line.\\\\", prose 4 ++ ".\\\\", "Short closing line.", "",
     "Another short line.\\\\", prose 2 ++ " " ++ wide ++ " tail.\\\\", "End.", "",
     wide ++ "\\\\", "After.", "\\end{document}"]
-  let prepared := Elab.prepare file (Parse.parse file (Lex.lex file source).1).1
-  let (doc, _, _) := Elab.runPrepared file prepared
+  let doc := located source
   let out := layoutOf fs doc
   let reflows := out.diags.filter (·.kind == .W0386)
   let overfull := out.diags.filter (·.kind == .W0005)
-  let lineOf (d : Diag) := d.span.map (·.pos.line)
-  t s!"reflow account: each re-flowed declared line has one W0386 at its own line ({reflows.map lineOf})"
-    (reflows.size == 2 && reflows.map lineOf == #[some 5, some 9] &&
-      reflows.all fun d => d.span.any (·.file == file))
-  let overrun := "a declared line did not fit the measure: it re-flowed, and part of it still runs past"
-  t "reflow account: the declared line whose word runs past says so, the other does not"
-    (reflows.map (·.message) ==
-      #["a declared line did not fit the measure and re-flowed", overrun])
-  t s!"reflow account: W0005 names only the declared line that could not re-flow ({overfull.map lineOf})"
-    (overfull.size == 1 && overfull.map lineOf == #[some 12])
-  -- The page: the overrun the clause states is ink past the margin.
+  let siteOf (d : Diag) := d.span.map fun s => (s.pos.line, s.pos.col)
+  t s!"reflow account: each re-flowed paragraph has one W0386 at its declared line ({reflows.map siteOf})"
+    (reflows.size == 2 && reflows.map siteOf == #[some (5, 1), some (9, 1)] &&
+      reflows.all fun d => d.span.any (·.file == file) &&
+        d.message == "a declared line did not fit the measure and re-flowed" &&
+        d.trigger.isNone && d.detail.isSome)
+  t s!"reflow account: W0005 names each overrunning item at its own site ({overfull.map siteOf})"
+    (overfull.map siteOf == #[some (9, 47), some (12, 1)] && overfull.all (·.trigger.isNone))
+  -- The page: each W0005 is a line the page shows past its margin.
   let right := doc.page.width - doc.page.hmargin
   let past := (bodyLines out).filter fun l => l.x + l.setWidth > right + Dim.pt 3
-  t s!"reflow account: the page holds the two overruns the log states ({past.size})"
-    (past.size == 2 && past.any (fun l => hasStr (lineText l) wide))
-  let (err, _, _) ← sink { cmd := .build file, color := .never } #[] out.diags
-  t "reflow account: the log prints each account once, located"
-    ((headLines err "W0386").length == 2 && (headLines err "W0005").length == 1 &&
-      (headLines err "W0386").all (hasStr · s!"{file}:"))
+  t s!"reflow account: the page holds exactly the overruns W0005 names ({past.size})"
+    (past.size == overfull.size && past.all (fun l => hasStr (lineText l) wide))
+  let plain : Config := { cmd := .build file, color := .never }
+  let (err, _, _) ← sink plain #[] out.diags
+  t "reflow account: the log prints each wording once, located, carrying its sites"
+    ((headLines err "W0386").length == 1 && (headLines err "W0005").length == 1 &&
+      (headLines err "W0386").all (fun l => hasStr l s!"{file}:5:1" && hasStr l "(2 sites)") &&
+      (headLines err "W0005").all (fun l => hasStr l s!"{file}:9:47" && hasStr l "(2 sites)"))
+  let (err, _, r) ← sink plain #["W0386"] out.diags
+  t "reflow account: accepting the re-flow leaves the overrun a warning"
+    ((headLines err "W0386").isEmpty && (warningLines err "W0005").length == 1 &&
+      r.accepted == #["W0386"])
+  -- An overlay's steps set the one paragraph again: one loss, one record.
+  let deck := String.intercalate "\n" [
+    "\\documentclass{slides}", "\\begin{document}", "\\begin{frame}",
+    "Opening.\\\\", prose 6 ++ ".\\\\", "Closing.", "\\pause", "", "One.", "\\pause", "",
+    "Two.", "\\end{frame}", "\\end{document}"]
+  let deckDoc := located deck
+  let deckOut := layoutOf fs deckDoc
+  let deckReflows := deckOut.diags.filter (·.kind == .W0386)
+  t s!"reflow account: a paragraph three steps set is one W0386 ({deckOut.pages.size} pages, \
+{deckReflows.map siteOf})"
+    (deckOut.pages.size == 3 && deckReflows.size == 1 && deckReflows.all (siteOf · == some (5, 1)))
 
 /-- The doors a diagnostic is made through, by their call heads, and whether
 each takes a subject: a door named before its receiver (`diag ctx .`,

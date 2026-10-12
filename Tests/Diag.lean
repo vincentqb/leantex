@@ -751,6 +751,22 @@ def dvForeignCodes (own : String) (s : String) : List String := Id.run do
       tok := ""
   return out
 
+/-- Does a text state a length the engine measured — a number with a decimal
+fraction before a unit? A value the author declared is written as the
+author wrote it, a whole number in the cases this registry holds; a measure
+taken at a site belongs in the record's detail, where it no longer splits
+one loss into a line per site. -/
+def dvMeasured (s : String) : Bool := Id.run do
+  let cs := s.toList.toArray
+  for h : i in [0:cs.size] do
+    if cs[i] == '.' && i > 0 && (cs[i - 1]?.getD ' ').isDigit && (cs[i + 1]?.getD ' ').isDigit then
+      let mut k := i + 1
+      for _ in [i + 1:cs.size] do
+        if (cs[k]?.getD ' ').isDigit then k := k + 1 else break
+      let unit := String.ofList ((cs.extract k (k + 2)).toList)
+      if ["pt", "bp", "mm", "cm", "in", "px", "em", "ex"].contains unit then return true
+  return false
+
 /-- The lint over one fired diagnostic. `\allow`-teeth codes (W0013, E0329,
 N0105) quote codes the user wrote in their own document, so the foreign-code
 check does not apply to them — N0105's whole job is to say which live code
@@ -769,6 +785,9 @@ def dvLint (fail : String → IO Unit) (d : Diag) : IO Unit := do
       for tok in dvForeignCodes d.code s do
         fail s!"{d.code} {part}: names {tok}, which the reader cannot look up: {s}"
   judge "message" d.message
+  if let some text := d.detail then judge "detail" text
+  if d.kind.loss.severity.isWarning && dvMeasured d.message then
+    fail s!"{d.code} message: a measure taken at the site belongs in its detail: {d.message}"
   if d.message.startsWith "\\" then
     fail s!"{d.code} message: the construct it names is unquoted: {d.message}"
   unless d.message.length ≤ dvMsgMax do
@@ -1350,6 +1369,7 @@ def twice (src : String) : String :=
   match src.splitOn "\\begin{document}" with
   | [pre, rest] =>
     match rest.splitOn "\\end{document}" with
+    | [body] => pre ++ "\\begin{document}" ++ body ++ "\n\n" ++ body
     | body :: post =>
       pre ++ "\\begin{document}" ++ body ++ "\n\n" ++ body ++ "\\end{document}" ++
         "\\end{document}".intercalate post
@@ -1437,15 +1457,23 @@ def subjectCensusChecks (ref : IO.Ref (List String))
 witness that stops repeating its construct is seen. -/
 def repeatFoldFloor : Nat := 44
 
+/-- The codes whose wording or census key once told the sites of one loss
+apart, each of which the repetition must still exercise. -/
+def repeatFoldWitnessed : List String :=
+  ["W0005", "W0327", "W0333", "W0358", "W0384", "W0388", "W0399", "W0400"]
+
 /-- **A loss written twice is one line.** Every code's witness written twice —
 its construct at a second site (`twice`) — prints no more warning lines on the
 driver's log (`Diag.foldRepeats`) than it does once, elaborated span-free and
-with its sources kept as the driver keeps them: the line is the wording, so
-neither a census key nor a word that names the site may tell two sites of one
-loss apart. An overfull line keyed by its own position once printed a warning
-per line of a listing. A witness whose code fires once per document whatever
-its body holds is not exercised, and the count that is stands above a floor,
-so the check cannot pass by repeating nothing. -/
+with its sources kept as the driver keeps them: the line is the wording, so a
+census key or a word that tells two sites of one loss apart — a position, a
+page, a frame, a renamed anchor — is seen. A measure taken from identical
+content is identical at both sites, so the measures in a message are the
+voice lint's to judge (`dvLint`). An overfull line keyed by its own position
+once printed a warning per line of a listing. A witness whose code fires once
+per document whatever its body holds is not exercised; the count that is
+stands above a floor, and the codes this check was written for are each
+exercised, so it cannot pass by repeating nothing. -/
 def repeatFoldChecks (ref : IO.Ref (List String))
     (one mapped withMath : Font.FontSet) (probed : DiagCode → Array Diag) : IO Unit := do
   let t := check ref
@@ -1463,6 +1491,8 @@ def repeatFoldChecks (ref : IO.Ref (List String))
 prints no more warning lines ({shown once} once, {shown doubled} twice)"
         ((shown doubled).size ≤ (shown once).size)
   t s!"repeat fold: the witnesses repeat {exercised.size} codes" (exercised.size ≥ repeatFoldFloor)
+  for code in repeatFoldWitnessed do
+    t s!"repeat fold: {code}'s witness is written twice" (exercised.contains code)
 
 /-- **A refusal about a name says so, and the set of them is closed against
 the code list.** `\usetheme{X}` was refusable — W0319, "unknown theme", the
