@@ -1465,7 +1465,16 @@ def reports : List Report := [
       "the report's own HTML and PDF builds in a namespace whose fonts are a text family with no designed companion and one platform monospace: with the fix reverted the HTML named the typewriter slot and four overfull lines and set its code in the text face, and with the fix it names neither and sets its code in the monospace; on this Linux host's own fonts both builds are unchanged; macOS itself was not run, so Menlo's reach through its collection is inferred",
       "this supersedes R131's acceptance that a tex document declaring no typewriter face keeps the body family: it now takes the same default a markdown document does, and a document setting no typewriter run loads no typewriter face",
       "the review's guards: with a collection's member paths restored among a build's inputs, two assertions fail as the markdown twin is written over a collection the run's font directory holds; a document shipping its fonts sets the face it ships whatever the host holds, a picture's label and a formula's typewriter alphabet each load the default, and a directory naming one region again and again is refused"]
-    state := .guarded "effc6b16" .revert .author }
+    state := .guarded "effc6b16" .revert .author },
+  { id := "R162", date := "2026-10-12"
+    what := "a markdown report's HTML build printed a warning carrying every one of its several hundred disclosures, that their collapse was not carried, where the page could ship each as the platform's own element: a disclosure shipped as a bold line and its body in every artifact"
+    pins := [check% disclosurePrintChecks, check% htmlTwinChecks, check% markdownHtmlChecks,
+      check% refusedDisclosureChecks, check% Tests.MarkdownTwin.markdownTwinChecks,
+      check% htmlA11yChecks, thm% Ir.disclosureSummary_text,
+      thm% LeanTex.Core.Md.desugar_vocabulary_mem]
+    accept := ["thirty-five of the guards' assertions fail with the fix reverted, the engine at the base of the recorded commit and its tests kept: eight print and inclusion assertions, where the page shipped no element, the twin wrote none and the HTML and twin builds named a lost collapse; twelve of the HTML vocabulary's, where a disclosure shipped as a bold paragraph and a summary with no text was read; six twin rows, where the open and the closed spelling shipped one page and named their collapse; three refused-summary assertions; and six twin round trips",
+      "a long markdown report of several hundred disclosures builds its HTML with no warning where one warning carried every disclosure, each the browser's own element, closed as written, opening and closing on its summary and printing expanded; its PDF keeps its pages and its diagnostics"]
+    state := .guarded "04a2ea83" .revert .author }
 ]
 
 /-- The reports guarded but never seen failing: a count that may fall and
