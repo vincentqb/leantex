@@ -1446,9 +1446,9 @@ def reports : List Report := [
   { id := "R159", date := "2026-10-12"
     what := "a wrapped line of code split an assignment operator across two lines, its colon ending one line and its equals sign opening the next: a wrap fell between two characters of one token"
     pins := [check% Tests.MarkdownCode.codeTokenWrapChecks, check% Tests.MarkdownCode.markdownCodeChecks]
-    accept := ["four of the guards' assertions fail on the tree with the fix reverted: an operator divided in each of eleven Lean, Python and plain fences, after a space and inside a run wider than the line, where the sweeps stand it at the measure's end; the last fitting space losing to a later token break in a Python and in a plain fence; and a declared listing's wrapped lines set apart from the units a LuaLaTeX probe of the same invented lines keeps whole, a number's digits and a list's commas",
+    accept := ["five of the guards' assertions fail with the fix reverted onto the recorded commit: an operator or a fallback token parted in each of eleven Lean, Python and plain fences, after a space and inside a run wider than the line, where the sweeps stand it at the measure's end; a character literal the Lean highlighter splits into runs parted at its quote; the last fitting space losing to a later token break in a Python and in a plain fence; and a declared listing's wrapped lines set apart from the units a LuaLaTeX probe of the same invented lines keeps whole, a number's digits and a list's commas",
       "an invented markdown document's long Lean line wraps before its assignment operator, where the tree before set the operator's colon and equals sign on two lines"]
-    state := .guarded "1f801005" .before .author }
+    state := .guarded "ce4db8b2" .revert .author }
 ]
 
 /-- The reports guarded but never seen failing: a count that may fall and
