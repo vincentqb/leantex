@@ -1397,16 +1397,17 @@ def reports : List Report := [
     accept := ["run against the binary built from the tree before the fix, three of the guard's assertions fail: no porcelain record carries the refusal, the rendered refusal bears no code, and no refusal lists the markdown extension"]
     state := .guarded "1f801005" .before .author },
   { id := "R152", date := "2026-10-12"
-    what := "a long markdown report's build printed an overfull-line warning for every line of its code blocks, each header quoting a fragment of that line's code, beside unlocated re-flow warnings whose words changed at every site: a census key that told sites apart split one wording into a line per site, a header quoted whatever text stood at the site, and a site's page, frame and measure stood in the words"
+    what := "a long markdown report's build printed an overfull-line warning for every line of its code blocks, each header quoting a fragment of that line's code, beside unlocated re-flow warnings whose words changed at every site: a census key that told sites apart split one wording into a line per site, a header quoted whatever text stood at the site, a site's page, frame and measure stood in the words, and a build that shipped no PDF printed the PDF page's overruns"
     pins := [check% Tests.DiagFold.foldChecks, check% Tests.DiagFold.reflowAccountChecks,
-      check% repeatFoldChecks, check% Tests.diagnosticListingOriginChecks,
+      check% repeatFoldChecks, check% diagVoiceChecks, check% Tests.diagnosticListingOriginChecks,
       check% Tests.diagnosticLiteralOriginChecks, check% diagnosticLayoutOriginChecks,
+      check% diagnosticFormatChecks, check% diagnosticFontScopeChecks,
       thm% Diag.foldRepeats_line_exact, thm% Diag.foldRepeats_visible_inj,
       thm% Diag.Spelling.ofWritten?_exact]
-    accept := ["thirty of the guards' assertions fail on the tree before the fix: a wording whose census keys tell its sites apart printed once per site, two constructs in one wording printed apart, the re-flow account unlocated and set again at every overlay step, an overfull line's header quoting its first token, eight codes whose witness written twice printed a line per site — an overfull line keyed by its position among them — and seven messages stating a measure taken at the site",
+    accept := ["ninety-four of the guards' assertions fail with the fix reverted onto the recorded commit — the fold keyed by census subject again, a site's particulars back in its words, every written word a header and the place codes' headers back, the re-flow unlocated and keyed by its index, acceptance read off the delivered severity, and the page's losses unscoped: a wording whose census keys tell its sites apart printed once per site, the re-flow's sites, its output scope and its accepted count, fifteen witnesses written twice printing a line per site, twenty-eight voice and diagnostics-golden assertions, the listing, literal and layout origins' headers, the record format's headers and the font scope's",
       "an invented markdown document whose code lines overrun prints one overfull warning carrying their sites, its header ending at its location, where the tree before printed one per line quoting each line's code",
-      "a long private markdown report builds to HTML with one line per loss"]
-    state := .guarded "1f801005" .before .author }
+      "a long private markdown report built to HTML in a font environment with no monospace face prints no overfull line where the tree before printed twenty-five, and built to PDF prints them as one line carrying their sites"]
+    state := .guarded "0ec6b963" .revert .author }
 ]
 
 /-- The reports guarded but never seen failing: a count that may fall and
