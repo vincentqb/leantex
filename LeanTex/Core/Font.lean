@@ -1170,12 +1170,12 @@ the consumer falls back to nominal metrics. Memoized in the font. -/
 public def Font.bounds (f : Font) (g : Nat) : Option Ink.Bounds :=
   (f.inkExtent.get[g]?).bind (·.get)
 
-/-- How tall the face's `H` stands, in font units: TeX's `\fontcharht\font`H`,
-which luaotfload reads off the glyph's bounding box, so the top of its ink
-hull; nothing where the face has no `H`, and the declared cap height where
-its outline does not decode. -/
-public def Font.charHtH (f : Font) : Int :=
-  match f.gid 'H' with
+/-- How tall the face's glyph for `c` stands, in font units: TeX's
+`\fontcharht\font`c`, which luaotfload reads off the glyph's bounding box, so
+the top of its ink hull; nothing where the face has no glyph for `c`, and the
+declared cap height where its outline does not decode. -/
+public def Font.charHeight (f : Font) (c : Char) : Int :=
+  match f.gid c with
   | none => 0
   | some g =>
     match f.bounds g with

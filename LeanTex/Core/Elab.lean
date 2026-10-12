@@ -15498,7 +15498,7 @@ private def blockShapeKeys : List String :=
   ["before", "title", "untitled", "between", "after", "whole", "edge"]
 
 private def blockEdgeKeys : List String :=
-  ["span", "side", "width", "sep", "hang", "color", "above", "below"]
+  ["span", "side", "width", "sep", "hang", "color", "height", "depth"]
 
 /-- A title metric's native spelling (`BlockTemplate.native` writes it):
 terms in `lh`, the title's `\baselineskip`, in `cap`, its cap height, and
@@ -15592,8 +15592,8 @@ private def blockShapeOf (ctx : Ctx) (src : String) (pos : Pos) : EM (Option Blo
         let mut sep : Length := {}
         let mut hang := true
         let mut color : Option (Ir.Color × Option ColorRef) := none
-        let mut above : Option BlockMetric := none
-        let mut below : Option BlockMetric := none
+        let mut height : Option BlockMetric := none
+        let mut depth : Option BlockMetric := none
         for sub in Decl.splitEntries (unbrace v) do
           match Decl.splitEntry sub with
           | none => ok := false; bad s!"an edge entry that is not key = value: {sub.quote}"
@@ -15627,9 +15627,9 @@ private def blockShapeOf (ctx : Ctx) (src : String) (pos : Pos) : EM (Option Blo
               | .missing =>
                 ok := false
                 diag ctx .E0326 s!"'{et}' is not in the palette" pos
-            | "above" | "below" =>
+            | "height" | "depth" =>
               match blockMetricOf et with
-              | some m => if ek == "above" then above := some m else below := some m
+              | some m => if ek == "height" then height := some m else depth := some m
               | none =>
                 ok := false
                 bad s!"an edge '{ek}' that is not a sum of lh, cap and fixed lengths: {et.quote}"
@@ -15638,7 +15638,7 @@ private def blockShapeOf (ctx : Ctx) (src : String) (pos : Pos) : EM (Option Blo
               modify fun st' => { st' with
                 diags := st'.diags.push (Decl.unknownKey ctx.file "block edge" ek blockEdgeKeys pos) }
         -- A reach read about the title's lines stands beside the title's box.
-        let reach : Option BlockReach := match above, below, span with
+        let reach : Option BlockReach := match height, depth, span with
           | none, none, _ => some .box
           | some a, some b, some .title => some (.lines a b)
           | _, _, _ => none
@@ -15652,12 +15652,16 @@ private def blockShapeOf (ctx : Ctx) (src : String) (pos : Pos) : EM (Option Blo
           sh := { sh with edges := sh.edges.push edge }
         | _, _, _, none =>
           ok := false
-          bad "an edge reaching by lines with no 'above' or 'below', or beside the box holding title and body"
+          bad "an edge reaching by lines with no 'height' or 'depth', or beside the box holding title and body"
         | _, _, _, _ => ok := false; bad "an edge without its span, width or color"
       | _ =>
         ok := false
         modify fun st' => { st' with
           diags := st'.diags.push (Decl.unknownKey ctx.file "block shape" k blockShapeKeys pos) }
+  -- Lines reach by their struts: unstrutted, they stand as tall as their ink.
+  if sh.edges.any (·.reach matches .lines ..) && !(sh.title.boxed && sh.title.strut) then
+    ok := false
+    bad "an edge reaching by lines beside a title that is not a box its struts bound"
   return if ok then some sh else none
 
 /-- The keys of one `slot = {...}` group in `\style{titlepage}`. A

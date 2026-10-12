@@ -1410,7 +1410,7 @@ def reports : List Report := [
     state := .guarded "0ec6b963" .revert .author },
   { id := "R153", date := "2026-10-12"
     what := "A block template's rule beside its title stood off the title's capitals in both engines, spanning the paragraph skip its box opens on; the template that centres it, reading the box's lines, the title font's cap height and its leading in a dimension expression and length registers, was not read, and its blocks set as beamer's default boxes"
-    pins := [check% Tests.BlockTemplate.checks, thm% Ir.BlockMetric.centred_exact]
+    pins := [check% Tests.BlockTemplate.checks, thm% Ir.BlockMetric.halfLeading_centred_exact]
     accept := ["fourteen assertions fail on the tree before the fix and hold after, over an invented probe: the template named and its blocks set as beamer's default boxes, no rule beside its five titles, a large title's line not lowered below its rule's reach nor a body below a rule deeper than its box, no rule centred on its title's capitals, a reach's native spelling unread, and a rule reading its box's height alone not named for it; on this tree every rule's place and size is within 0.002 points of the reference engine's, each centred rule on its capitals exactly in the PDF and to the stylesheet's precision in the browser",
       "a presentation deck whose theme centres its block rules on the titles' capitals ships them centred in both artifacts, as its lualatex build does, every other pixel of the deck unchanged"]
     state := .guarded "30b9fdf4" .before .author }

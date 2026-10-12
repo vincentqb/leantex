@@ -182,11 +182,11 @@ skips the same places (`Ir.FillView.deck`). -/
   (`footCapDecl`). -/
   footBox : Nat → Array Ir.BandSlot → Option (Sp × Sp) := fun _ _ => none
   /-- Where a rule reaching by a block title's lines stands in the title's
-  header (`Ir.BlockReach.lines`), from the driver: below the header's first
-  line box's top and above its last line box's bottom, over the faces the
-  page reads (`Layout.blockTitleRule`). The default answers nothing — a
-  caller with no font environment stands the rule on the header's lines. -/
-  blockTitleRule : Ir.TitledKind → Ir.BlockReach → Option (Sp × Sp) := fun _ _ => none
+  header (`Ir.BlockReach.lines`, `Ir.BlockTitlePlace`), from the driver, over
+  the faces the page reads (`Layout.blockTitleRule`). The default answers
+  nothing — a caller with no font environment stands the rule on the
+  header's lines. -/
+  blockTitleRule : Ir.TitledKind → Ir.BlockReach → Option Ir.BlockTitlePlace := fun _ _ => none
   /-- Measured cancellation in the resolved surrounding text style, supplied
   by the same font environment and assembly as the native backend. -/
   cancelMetric : MeasureValues → Array Ir.Style → Math.MathStyle → Math.CancelSpec →
@@ -2336,7 +2336,8 @@ Lengths keep their font-relative units: neither box sets a size of its own,
 so an `em` is the body's, the font the template's rule is read in. A shaped
 block's body keeps the page's `\parskip` (`blockRules`). -/
 public def blockShapeCss (doc : Doc)
-    (titleRule : Ir.TitledKind → Ir.BlockReach → Option (Sp × Sp) := fun _ _ => none) : String :=
+    (titleRule : Ir.TitledKind → Ir.BlockReach → Option Ir.BlockTitlePlace := fun _ _ => none) :
+    String :=
   let shapes := [Ir.TitledKind.block, .alert, .example].filterMap fun k =>
     (Ir.blockShapeOf doc.styles k).map (k, ·)
   if shapes.isEmpty then "" else
@@ -2373,13 +2374,20 @@ public def blockShapeCss (doc : Doc)
         s!"{box} \{ position: relative; padding-inline: {padL} {padR}; }\n") ++
       left.getD "" ++ right.getD ""
     -- A rule reaching by the title's lines stands its offsets from the
-    -- header's first and last line boxes; one beside the box, the box.
+    -- header's first and last line boxes, and keeps the room it takes above
+    -- and below the header; one beside the box, the box.
+    let places := (edges .title).toList.filterMap fun e => titleRule k e.reach
+    let room := (places.map (·.room)).foldl max 0
+    let below := if room == 0 then between else s!"calc({between} + {len { width := .ofSp room }})"
+    let boxTop := match places.map (·.rise) with
+      | [] => inner
+      | r :: rs => s!"max({inner}, {len { width := .ofSp (rs.foldl max r) }})"
     let titlePlace (e : Ir.BlockEdge) : String × String := match e.reach with
-      | .box => (peerGap, between)
+      | .box => (peerGap, below)
       | .lines .. =>
-        let (top, bottom) := (titleRule k e.reach).getD (0, 0)
-        (s!"calc({peerGap} + {inner} + {len { width := .ofSp top }})",
-         s!"calc({between} + {len { width := .ofSp bottom }})")
+        let p := (titleRule k e.reach).getD default
+        (s!"calc({peerGap} + {boxTop} + {len { width := .ofSp p.top }})",
+         s!"calc({below} + {len { width := .ofSp p.bottom }})")
     let titleRules := boxRules .title s!"{sel} > header" titlePlace
     let wholeRules := boxRules .whole sel fun _ => (s!"calc({before} + {peerGap})", after)
     -- The arm an untitled block takes where its template leaves the title
@@ -2406,13 +2414,13 @@ public def blockShapeCss (doc : Doc)
         let strut := len { width := leading }
         let (height, top) :=
           if sh.title.strut then
-            (strut, if sh.title.boxed then s!"calc({peerGap} + {inner})" else peerGap)
+            (strut, if sh.title.boxed then s!"calc({peerGap} + {boxTop})" else peerGap)
           else if sh.title.boxed then ("1lh", peerGap) else ("0rem", "0rem")
         s!"{hd} \{ box-sizing: content-box; min-height: {height}; padding-top: {top}; }\n" ++
           (if sh.title.strut || (edges .title).isEmpty then "" else
             s!"{hd}::before \{ content: none; }\n{hd}::after \{ content: none; }\n")
     s!"{sel} \{ padding-top: {before}; padding-bottom: {after}; }\n" ++
-      s!"{sel} > header \{ padding-top: calc({peerGap} + {inner}); padding-bottom: {between}; }\n" ++
+      s!"{sel} > header \{ padding-top: calc({peerGap} + {boxTop}); padding-bottom: {below}; }\n" ++
       titleRules ++ wholeRules ++ bare
   String.join rules
 
@@ -2923,7 +2931,8 @@ when the design carries the feature. The colour *values* stay CSS custom
 properties rather than resolved literals, deliberately: a reader's
 stylesheet can override a token, which is the HTML backend's contract. -/
 public def themeCss (doc : Doc)
-    (titleRule : Ir.TitledKind → Ir.BlockReach → Option (Sp × Sp) := fun _ _ => none) : String :=
+    (titleRule : Ir.TitledKind → Ir.BlockReach → Option Ir.BlockTitlePlace := fun _ _ => none) :
+    String :=
   let d := Design.ofDoc doc
   let sectionMeasure :=
     s!"min({stageVh doc.page (Ir.sectionPageMeasure (doc.page.width - 2 * doc.page.hmargin))}, 100%)"

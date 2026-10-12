@@ -224,9 +224,10 @@ private def roundDiv (x : Int) (n : Nat) : Int :=
   let q : Int := ((2 * x.natAbs + n) / (2 * n) : Nat)
   if x < 0 then -q else q
 
-/-- The dimension times `num / den`, each term rounded as e-TeX rounds; a box
-extent keeps a whole coefficient, or the dimension is not one this reading
-holds. -/
+/-- The dimension times `num / den`, each term rounded as e-TeX rounds its
+quotient, so a dimension of several terms can stand a scaled point from the
+one e-TeX rounds once; a box extent keeps a whole coefficient, or the
+dimension is not one this reading holds. -/
 private def Dimen.scale? (d : Dimen) (num : Int) (den : Nat) : Option Dimen :=
   if den == 0 || d.ext.any (fun (_, _, k) => (k * num) % (den : Int) != 0) then none
   else
@@ -584,13 +585,16 @@ private def St.unsignedAt (s : St) (c : Chars) (k : Nat) : Option (Dimen × Nat)
   let some ((m, scale), j) := c.decimal k | return none
   let j := c.skipSp j
   if let some (d, j') := s.internalAt c j then return (d.scale? m scale).map (·, j')
-  let j := (c.keyword j "true").getD j
+  -- `true` scales a physical unit by the magnification, never a font's.
+  let (true?, j) := match c.keyword j "true" with
+    | some j' => (true, j')
+    | none => (false, j)
   for u in unitWords do
     if let some j' := c.keyword j u then
+      let fonted := u == "em" || u == "ex"
+      if true? && fonted then return none
       match Decl.parseLength (decimalSrc m scale ++ u) with
-      | some l =>
-        let fonted := l.em != 0 || l.ex != 0
-        return some ({ len := l, font := if fonted then some font else none }, c.optSp j')
+      | some l => return some ({ len := l, font := if fonted then some font else none }, c.optSp j')
       | none => return none
   return none
 
@@ -625,7 +629,11 @@ private def St.exprAt (s : St) (c : Chars) (k : Nat) : Option (Dimen × Nat) := 
     if expect then
       let (sign, j1) := c.signs j
       match c.get j1 with
-      | .ch '(' => stack := { paren := true, outer := sign } :: stack; j := j1 + 1
+      -- A sign belongs to a dimension, never to a parenthesis (e-TeX's
+      -- factor), which e-TeX stops on as a missing number.
+      | .ch '(' =>
+        if j1 != j then return none
+        stack := { paren := true, outer := sign } :: stack; j := j1 + 1
       | .cs "dimexpr" => stack := { paren := false, outer := sign } :: stack; j := j1 + 1
       | _ =>
         let some (f, j2) := s.unsignedAt c j1 | return none
@@ -1241,11 +1249,13 @@ private def boxContent (kids : Array Node) : Except String Content := Id.run do
 /-- A rule's reach beside its box (`Ir.BlockReach`): its box's own extents;
 nothing at all — a rule reading an emptied register has no height and draws
 nothing, as in TeX; or, beside the title's box, whose title is set in
-`title`'s font and whose list opens on a `\parskip` where `title`'s flag
-says so, the box's lines in that font: its height and depth less that
-`\parskip`, one `\baselineskip` per strutted line, and a metric more above
-the box's baseline, and a metric below it. -/
-private def reachOf (id : Nat) (title : Option (Option String × Bool)) (h d : Option Dimen) :
+`title`'s font, whose list opens on a `\parskip` where `title`'s first flag
+says so and whose lines struts bound where its second does, the box's lines
+— its height and depth less that `\parskip` — and a metric in that font
+more above the box's baseline, and a metric below it. Lines no strut bounds
+stand as tall and as deep as their ink, which the page reads off its own
+lines and a web page's line boxes do not hold, so such a rule is refused. -/
+private def reachOf (id : Nat) (title : Option (Option String × Bool × Bool)) (h d : Option Dimen) :
     Except String (Option Ir.BlockReach) :=
   match h, d with
   | some h, some d =>
@@ -1253,7 +1263,7 @@ private def reachOf (id : Nat) (title : Option (Option String × Bool)) (h d : O
     else if h == {} && d == {} then .ok none
     else match title with
       | none => .error "a rule whose height and depth are not its box's"
-      | some (font, parskip) =>
+      | some (font, parskip, strut) =>
         let metric (x : Dimen) : Option Ir.BlockMetric :=
           if x.line == 0 && x.len.em == 0 && x.len.ex == 0 && (!x.fonted || x.font == some font)
           then some { lead := x.lead, cap := x.cap, sp := x.len.sp } else none
@@ -1264,14 +1274,16 @@ private def reachOf (id : Nat) (title : Option (Option String × Bool)) (h d : O
             .error "a rule beside the title's box reading other than its height and depth"
           else if h.parskip != (if parskip then -1000 else 0) || d.parskip != 0 then
             .error "a rule beside the title's box reading another skip than the one its list opens on"
-          else .ok (some (.lines { mh with lead := mh.lead + 1000 } md))
+          else if !strut then
+            .error "a rule beside the title's box reaching by lines no strut bounds"
+          else .ok (some (.lines mh md))
         | _, _ => .error "a rule beside the title's box measured in another font than its title's"
   | _, _ => .error "a rule running to its line"
 
 /-- The rules beside one box in its line: `\llap{…\vrule…\hskip S}` before
 it hangs left, `\vrule\hskip S` before it stands inside the line, and their
 mirrors after it. A rule reaches as `reachOf` reads it. -/
-private def edgesOf (span : Ir.BlockSpan) (id : Nat) (title : Option (Option String × Bool))
+private def edgesOf (span : Ir.BlockSpan) (id : Nat) (title : Option (Option String × Bool × Bool))
     (hsize : Dimen) (lineHsize : Dimen) (before after : List Node) :
     Except String (Array EdgeRead) := Id.run do
   let lenOf (d : Dimen) : Except String Length :=
@@ -1365,7 +1377,7 @@ private def lowerArm (nodes : Array Node) : Except String Arm := Id.run do
         match boxContent inner with
         | .error e => return .error e
         | .ok (.titleBox st pk f p) =>
-          match edgesOf .title id (some (f, pk)) hsize lineHsize before after with
+          match edgesOf .title id (some (f, pk, st)) hsize lineHsize before after with
           | .error e => return .error e
           | .ok es =>
             seenTitle := true
@@ -1499,7 +1511,7 @@ public def native (r : Read) (colors : Array String) : String :=
     let span := match e.span with | .title => "title" | .whole => "whole"
     let side := match e.side with | .left => "left" | .right => "right"
     let reach := match e.reach with
-      | .lines above below => s!", above = {metricSrc above}, below = {metricSrc below}"
+      | .lines height depth => s!", height = {metricSrc height}, depth = {metricSrc depth}"
       | .box => ""
     s!", edge = \{ span = {span}, side = {side}, width = {lengthSrc e.width}, \
 sep = {lengthSrc e.sep}, hang = {e.hang}, color = {colors.getD i "fg"}{reach} }"

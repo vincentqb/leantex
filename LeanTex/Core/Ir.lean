@@ -8129,34 +8129,52 @@ public structure BlockMetric where
 public def BlockMetric.resolve (m : BlockMetric) (lead cap : Int) : Int :=
   m.lead * lead / 1000 + m.cap * cap / 1000 + m.sp
 
-/-- **A rule a cap height longer above than below stands centred on the
-capitals** (`_exact`): where `above` and `below` read the same leading and
-fixed length and `above` one cap height more, the rule reaches exactly one
-cap height further past the first baseline than past the last, whatever the
-leading, so its midpoint is the midpoint of the span from the first line's
-cap height to the last line's baseline, in integer arithmetic. -/
-public theorem BlockMetric.centred_exact (above below : BlockMetric) (lead cap : Int)
-    (hl : above.lead = below.lead) (hs : above.sp = below.sp)
-    (hc : above.cap = below.cap + 1000) :
-    above.resolve lead cap - below.resolve lead cap = cap := by
-  unfold BlockMetric.resolve
-  rw [hl, hs, hc, Int.add_mul]
-  have h : (below.cap * cap + 1000 * cap) / 1000 = below.cap * cap / 1000 + cap :=
-    Int.add_mul_ediv_left _ _ (by decide)
-  rw [h]
+/-- The metric negated. -/
+public def BlockMetric.neg (m : BlockMetric) : BlockMetric :=
+  { lead := -m.lead, cap := -m.cap, sp := -m.sp }
+
+/-- Half the leading the capitals leave, `(\baselineskip-\fontcharht\font`H)/2`. -/
+public def BlockMetric.halfLeading : BlockMetric := { lead := 500, cap := -500 }
+
+/-- **A rule half the capitals' leading short of its lines above and as far
+past them below is centred on the capitals** (`_exact`): its depth,
+`halfLeading`, less its height, `halfLeading` negated, is exactly the
+leading less the cap height, in integer arithmetic, whatever the two are.
+Over lines strutted at both ends, their box `\baselineskip` per line from
+the first strut's top to the last strut's bottom (`Ir.BlockReach.lines`),
+the rule's midpoint is then the midpoint of the span from the first line's
+cap height to the last line's baseline. -/
+public theorem BlockMetric.halfLeading_centred_exact (lead cap : Int) :
+    BlockMetric.halfLeading.resolve lead cap - BlockMetric.halfLeading.neg.resolve lead cap =
+      lead - cap := by
+  simp only [BlockMetric.resolve, BlockMetric.halfLeading, BlockMetric.neg]
   omega
 
 /-- How far a template's rule reaches beside its box. `box`: the box's own
 height and depth (`height \ht\B depth \dp\B`), its top to its bottom.
-`lines`: beside the title's box, its lines and metrics read in the title's
-font (`height \dimexpr\ht\B+\dp\B-\parskip-… depth …`, the box's height
-and depth less the `\parskip` its list opens on): `above` past the first
-title line's baseline and `below` past the last one's, as TeX sets the rule
-on the box's baseline — strutted at both ends, the title's lines are one
-`\baselineskip` each. -/
+`lines`: beside the title's box, read in the title's font
+(`height \dimexpr\ht\B+\dp\B-\parskip+… depth …`): the box's lines — its
+height and depth less the `\parskip` its list opens on, from its first
+line's top to its last line's bottom — and `height` more above the box's
+baseline, its last line's, and `depth` below it, as TeX sets the rule on
+that baseline. -/
 public inductive BlockReach where
   | box
-  | lines (above below : BlockMetric)
+  | lines (height depth : BlockMetric)
+  deriving Repr, BEq, Inhabited
+
+/-- Where a web page stands a rule reaching by a block title's lines
+(`BlockReach.lines`) beside the header that sets the title: `top` below the
+header's first line box's top, `bottom` above its last line box's bottom,
+`rise` how far its line reaches past the title box's first strut's top —
+TeX's line holding box and rule stands taller wherever that passes the
+`\parskip` the box opens on — and `room`, how much further TeX spaces what
+follows where the rule stands deeper than the box. -/
+public structure BlockTitlePlace where
+  top : Int
+  bottom : Int
+  rise : Int
+  room : Int
   deriving Repr, BEq, Inhabited
 
 /-- A rule beside one of a block's boxes, as themes spell it
