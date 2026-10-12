@@ -482,7 +482,6 @@ def htmlCodeAtomChecks (ref : IO.Ref (List String)) : IO Unit := do
     ((codeAtomsOf doc).map (·.2.1) == #[#["->"], #[]])
 
 def markdownCodeChecks (ref : IO.Ref (List String)) : IO Unit := do
-  htmlCodeAtomChecks ref
   let t := check ref
   -- The surface: one decision, read by the reader choice and the document.
   t "the surface is the path's: a .md source is markdown, any other tex"
