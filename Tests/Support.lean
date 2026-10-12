@@ -1675,6 +1675,54 @@ def corpusStore (doc : Ir.Doc) : IO Image.Store := do
     fetched := fetched.push (req, f)
   return (Image.fulfilRequests fetched).1
 
+/-- Bytes written big-endian, as a font file's fields are. -/
+def pushBe16 (b : ByteArray) (v : Nat) : ByteArray :=
+  (b.push (v / 256 % 256).toUInt8).push (v % 256).toUInt8
+
+def pushBe32 (b : ByteArray) (v : Nat) : ByteArray :=
+  pushBe16 (pushBe16 b (v / 65536 % 65536)) (v % 65536)
+
+/-- A standalone font's tables as its directory names them: tag, checksum
+and bytes, in directory order. -/
+def fontTables (f : ByteArray) : Array (Nat × Nat × ByteArray) :=
+  (Array.range (Ink.u16 f 4)).map fun k =>
+    let e := 12 + 16 * k
+    let off := Ink.u32 f (e + 8)
+    (Ink.u32 f e, Ink.u32 f (e + 4), f.extract off (off + Ink.u32 f (e + 12)))
+
+/-- A font collection of standalone font files, packed as the OpenType
+spec lays one out: the `ttcf` header and one offset per face, every face's
+directory with its offsets made absolute, then every table at its
+four-byte boundary — an encoder of this check's own, so the engine's
+reader is not judged by its own writer. -/
+def packCollection (fonts : Array ByteArray) : ByteArray := Id.run do
+  let faces := fonts.map fontTables
+  let mut pos := 12 + 4 * fonts.size
+  let mut dirAt : Array Nat := #[]
+  for ts in faces do
+    dirAt := dirAt.push pos
+    pos := pos + 12 + 16 * ts.size
+  let mut tableAt : Array (Array Nat) := #[]
+  for ts in faces do
+    let mut row : Array Nat := #[]
+    for (_, _, b) in ts do
+      row := row.push pos
+      pos := (pos + b.size + 3) / 4 * 4
+    tableAt := tableAt.push row
+  let mut out := pushBe32 (pushBe32 (pushBe32 ByteArray.empty 0x74746366) 0x00010000) fonts.size
+  for d in dirAt do
+    out := pushBe32 out d
+  for (f, ts, row) in fonts.zip (faces.zip tableAt) do
+    out := out ++ f.extract 0 12
+    for ((tag, sum, b), place) in ts.zip row do
+      out := pushBe32 (pushBe32 (pushBe32 (pushBe32 out tag) sum) place) b.size
+  for ts in faces do
+    for (_, _, b) in ts do
+      out := out ++ b
+      for _ in [0:(b.size + 3) / 4 * 4 - b.size] do
+        out := out.push 0
+  return out
+
 /-- A document laid out as the driver hands it to the backends: math
 alphabet scopes resolve against the selected face before the fallback census
 or layout sees their scalars. Resolution diagnostics lead layout diagnostics,

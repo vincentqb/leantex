@@ -756,12 +756,15 @@ font directory the host shares with every program, is not on the list. -/
 def buildInputs (file : String) (front : Front) (doc : Ir.Doc) (scan : FaceScan)
     (parsed imgReads staged faces : Array String) : Array String :=
   let owned := scan.docDirs ++ scan.privateDirs
+  -- A collection's face is read from its collection, so the file a build
+  -- reads is the collection (`FontDb.faceFile`), never its member path.
   let scanned := (scan.faces.filter fun face =>
-    owned.any fun dir => face.path.startsWith (if dir.endsWith "/" then dir else dir ++ "/")).map (·.path)
+    owned.any fun dir => face.path.startsWith (if dir.endsWith "/" then dir else dir ++ "/")).map
+      (FontDb.faceFile ·.path)
   let declared := (doc.output.stylesheet.toArray ++ doc.info.favicon.toArray).filterMap fun name =>
     (Publication.localPath? file name).map (·.toString)
   #[file] ++ front.reads ++ (Input.bibPaths file doc).map (·.toString) ++ imgReads ++ staged ++
-    faces ++ parsed ++ scanned ++ declared
+    faces.map FontDb.faceFile ++ parsed ++ scanned ++ declared
 
 def build (ui : Ui) (file : String) : IO UInt32 := do
   let t0 ← IO.monoMsNow

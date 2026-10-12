@@ -125,10 +125,12 @@ private def readAt (h : IO.FS.Handle) (pos off len : Nat) : IO (ByteArray × Nat
 /-- `tableImage` for face `index` of a font collection: the tables `want`
 names, copied out of the collection into a standalone image with a
 directory of its own (`Font.assembleSfnt`, the shape `Font.collectionMember`
-gives a whole face), reading only the collection's header, the face's
-directory and those tables. `none` for bytes that are no collection, an
-index past its count, a short read, no wanted table, or wanted tables past
-eight mebibytes in all. -/
+gives a whole face). The handle has no seek, so it reads forward to the
+collection's header, the face's directory and each wanted table in file
+order, the bytes between them read and dropped. `none` for bytes that are
+no collection, an index past its count, a short read, no wanted table, or
+wanted tables past eight mebibytes in all. An Apple `true` face is written
+with the OpenType TrueType version, as `Font.collectionMember` writes it. -/
 public def memberImage (file : String) (index : Nat) (want : String → Bool) :
     IO (Option ByteArray) := do
   try
@@ -162,24 +164,29 @@ public def memberImage (file : String) (index : Nat) (want : String → Bool) :
       if bytes.size < len then return none
       pos := after
       tables := tables.push (tag, sum, bytes)
-    return some (Font.assembleSfnt (Ink.u32 dirHead 0) tables)
+    let version := if Ink.u32 dirHead 0 == 0x74727565 then 0x00010000 else Ink.u32 dirHead 0
+    return some (Font.assembleSfnt version tables)
   catch _ =>
     return none
 
 /-- The faces of every font file under `files`, in order: a standalone
 file is its own face's path, and a collection is each of its faces'
-(`FontDb.memberPath`), as many as its header counts. A collection whose
-header cannot be read holds none. -/
+(`FontDb.memberPath`), as many as its header counts where the file holds
+that many offsets — the count `Font.collectionCount` reads. A collection
+whose header cannot be read, or counts no face, more than 4096, or more
+offsets than the file holds, holds none. -/
 private def facePaths (files : Array String) : IO (Array String) := do
   let mut out : Array String := #[]
   for f in files do
     if isCollectionFile f then
-      let header ← try
+      let (header, size) ← try
           let h ← IO.FS.Handle.mk f .read
-          h.read 12
-        catch _ => pure ByteArray.empty
-      if header.size == 12 && Ink.u32 header 0 == 0x74746366 then
-        for i in [0:min (Ink.u32 header 8) 4096] do
+          pure (← h.read 12, (← System.FilePath.metadata f).byteSize.toNat)
+        catch _ => pure (ByteArray.empty, 0)
+      let count := Ink.u32 header 8
+      if header.size == 12 && Ink.u32 header 0 == 0x74746366 && 0 < count && count ≤ 4096 &&
+          12 + 4 * count ≤ size then
+        for i in [0:count] do
           out := out.push (memberPath f i)
     else
       out := out.push f

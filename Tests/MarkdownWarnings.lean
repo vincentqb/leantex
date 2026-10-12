@@ -28,12 +28,12 @@ namespace Tests.MarkdownWarnings
 files as the default text family, Source Code Pro as its designed
 typewriter companion. -/
 def relabeled : Array FontDb.Face :=
-  #[face "DejaVu Sans" false (path := testFonts ++ "/OpenSans-Regular.ttf"),
-    face "DejaVu Sans" false (bold := true) (path := testFonts ++ "/OpenSans-Bold.ttf"),
-    face "DejaVu Sans" false (italic := true) (path := testFonts ++ "/OpenSans-Italic.ttf"),
-    face "DejaVu Sans" false (bold := true) (italic := true)
+  #[face "Nimbus Sans" false (path := testFonts ++ "/OpenSans-Regular.ttf"),
+    face "Nimbus Sans" false (bold := true) (path := testFonts ++ "/OpenSans-Bold.ttf"),
+    face "Nimbus Sans" false (italic := true) (path := testFonts ++ "/OpenSans-Italic.ttf"),
+    face "Nimbus Sans" false (bold := true) (italic := true)
       (path := testFonts ++ "/OpenSans-BoldItalic.ttf")] ++
-  family4 "DejaVu Sans Mono" (testFonts ++ "/SourceCodePro-Regular.otf") true
+  family4 "Nimbus Mono PS" (testFonts ++ "/SourceCodePro-Regular.otf") true
 
 /-- **The typewriter companion default, and its premise two builds apart.**
 The default is a decision over sourced rows, never a guess; it fills the
@@ -64,7 +64,7 @@ def markdownMonoChecks (ref : IO.Ref (List String)) : IO Unit := do
   let cache ← FontEnv.Cache.mk'
   let withMono : FaceScan := { faces := relabeled, docDirs := [], dirs := #[], diags := #[] }
   let without : FaceScan :=
-    { withMono with faces := relabeled.filter (·.family != "DejaVu Sans Mono") }
+    { withMono with faces := relabeled.filter (·.family != "Nimbus Mono PS") }
   let src := "Words with `inline code` beside them.\n\n```\nfenced code\n```\n"
   let (doc, _) := elabMd src
   let assemble (d : Ir.Doc) (scan : FaceScan) :=

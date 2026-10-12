@@ -118,12 +118,17 @@ public def buildFontSet (doc : Ir.Doc) (scan : FaceScan)
   -- `SlotLoss` reports from) takes, on either surface, the text family's
   -- designed companion, else the first platform monospace, that the scan
   -- serves whole and fixed-pitch (`FontDb.monoFor`, held to the resolver
-  -- call below by `monoFor_contract`). A scan holding neither leaves the
-  -- slot to the body family, the loss W0390 names; a slot no run reaches
-  -- loads no face, so no page ships one it never sets.
-  -- premise: monoDefaultChecks — two builds of one document, a platform monospace in the scan and not, set its code in different faces and only the second names W0390; a document setting no typewriter run loads no typewriter face and names nothing
+  -- call below by `monoFor_contract`). A document that ships its fonts
+  -- (`\fonts{ dir = ... }`) is answered from its own faces alone, so it
+  -- renders the same on every host; one that ships none, from the whole
+  -- scan. Neither answering leaves the slot to the body family, the loss
+  -- W0390 names; a slot no run reaches loads no face, so no page ships one
+  -- it never sets.
+  -- premise: monoDefaultChecks — two builds of one document, a platform monospace in the scan and not, set its code in different faces and only the second names W0390; a document setting no typewriter run loads no typewriter face and names nothing; a document shipping its fonts sets the same face with and without a platform monospace on the host
+  let own := if docDirs.isEmpty then faces else faces.filter fun f =>
+    docDirs.any fun dir => f.path.startsWith (if dir.endsWith "/" then dir else dir ++ "/")
   let spec := if spec.mono.isNone && (SlotLoss.slotsUsed doc).contains 2 then
-      { spec with mono := FontDb.monoFor faces textFamily }
+      { spec with mono := FontDb.monoFor own textFamily }
     else spec
   let mut fonts : Array Font.Font := #[]
   let mut paths : Array String := #[]

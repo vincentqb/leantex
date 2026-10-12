@@ -2934,6 +2934,43 @@ end
 
 mutual
 
+/-- Does this math tree set a scalar in the text typewriter slot: a resolved
+monospace text style, or a `\mathtt` the document sources from text (`tt`,
+its policy for the alphabet)? Counted whatever an inner alphabet opens: the
+census of the slots a document sets reads such a tree as setting it. -/
+@[expose] public def MList.setsMono (tt : MathAlphabetSource) : MList → Bool
+  | .nil => false
+  | .cons x rest => x.setsMono tt || rest.setsMono tt
+
+@[expose] public def MItem.setsMono (tt : MathAlphabetSource) : MItem → Bool
+  | .atom _ nuc sup sub _ => nuc.setsMono tt || (sup.setsMono tt || sub.setsMono tt)
+  | .space _ | .ink _ _ => false
+
+@[expose] public def MNucleus.setsMono (tt : MathAlphabetSource) : MNucleus → Bool
+  | .sym _ | .word _ => false
+  | .styled style _ => style.slot == .mono
+  | .list body => body.setsMono tt
+  | .alpha a src body => (a == .tt && src == .doc && tt == .text) || body.setsMono tt
+  | .frac _ num den => num.setsMono tt || den.setsMono tt
+  | .rad deg body => deg.setsMono tt || body.setsMono tt
+  | .delim _ _ body => body.setsMono tt
+  | .big _ _ => false
+  | .accent _ _ body => body.setsMono tt
+  | .grid _ rows => rows.setsMono tt
+  | .cancel _ _ value body => value.setsMono tt || body.setsMono tt
+
+@[expose] public def MRow.setsMono (tt : MathAlphabetSource) : MRow → Bool
+  | .nil => false
+  | .cons cell rest => cell.setsMono tt || rest.setsMono tt
+
+@[expose] public def MRows.setsMono (tt : MathAlphabetSource) : MRows → Bool
+  | .nil => false
+  | .cons row rest => row.setsMono tt || rest.setsMono tt
+
+end
+
+mutual
+
 private theorem resolveAlphaList_covers (coverage : MathAlphabetCoverage)
     (active : List (MathAlphabet × MathAlphabetSource)) :
     ∀ body, (resolveAlphaList coverage active body).alphaFree = true

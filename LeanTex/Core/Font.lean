@@ -912,8 +912,14 @@ of one face expects (`assembleSfnt`): the face's own table directory, each
 table it names copied out of the collection — a table two faces share is
 copied into each — and the tables' bytes and checksums the collection's own.
 An error names what is malformed: bytes that are no collection, an index
-past its count, a directory or a table past the end of the bytes. Total
-over arbitrary bytes: every read is bounded. -/
+past its count, a directory or a table past the end of the bytes, or tables
+that together hold more bytes than the collection does — one face's tables
+are distinct regions of its file, so a directory naming one region again and
+again is refused rather than copied out again and again. Every read is
+bounded, and so is the answer: its tables hold no more bytes than `data`,
+which `fontCollectionChecks` holds over packed and mutated collections. An
+Apple `true` face is written with the
+OpenType TrueType version, which names the same outlines. -/
 public def collectionMember (data : ByteArray) (index : Nat) : Except String ByteArray := do
   let some count := collectionCount data | throw "not a font collection"
   unless index < count do
@@ -923,14 +929,19 @@ public def collectionMember (data : ByteArray) (index : Nat) : Except String Byt
   unless 0 < numTables && numTables ≤ 512 && base + 12 + 16 * numTables ≤ data.size do
     throw s!"face {index} of the collection has no readable table directory"
   let mut tables : Array (Nat × Nat × ByteArray) := #[]
+  let mut total := 0
   for k in [0:numTables] do
     let entry := base + 12 + 16 * k
     let offset := u32 data (entry + 8)
     let length := u32 data (entry + 12)
     unless offset + length ≤ data.size do
       throw s!"a table of face {index} of the collection runs past the end of the file"
+    total := total + length
+    unless total ≤ data.size do
+      throw s!"the tables of face {index} of the collection hold more bytes than the file"
     tables := tables.push (u32 data entry, u32 data (entry + 4), data.extract offset (offset + length))
-  return assembleSfnt (u32 data base) tables
+  let version := if u32 data base == 0x74727565 then 0x00010000 else u32 data base
+  return assembleSfnt version tables
 
 /-- The underline band a face declares, normalized to something drawable:
 `(position, thickness)` in font units, the band spanning

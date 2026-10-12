@@ -195,10 +195,13 @@ footnote, a running head, a style's font template — is the fold's and is
 not re-decided here. A document that never sets mono is never told about
 its mono slot.
 
-Slot 2 is reached two ways and both are leaves: `Ir.Style.mono` on a
-`.styled` inline (`\texttt`, `\ttfamily`, `\url`, inline verbatim), and an
-`Ir.Block.verbatim`, which the layout sets by wrapping its content in
-`.styled .mono`. -/
+Slot 2 is reached three ways: `Ir.Style.mono` on a `.styled` inline
+(`\texttt`, `\ttfamily`, `\url`, inline verbatim), an `Ir.Block.verbatim`,
+which the layout sets by wrapping its content in `.styled .mono`, and a
+formula's `\mathtt` the document sources from text
+(`Math.MList.setsMono`). The block-owned regions the fold does not descend
+into — a picture's labels, a listing's caption — are read here, as the
+formula census reads them (`Ir.mathRequests`). -/
 public def slotsUsed (doc : Ir.Doc) : Array Nat :=
   let push (acc : Array Nat) (n : Nat) : Array Nat :=
     if acc.contains n then acc else acc.push n
@@ -207,10 +210,18 @@ public def slotsUsed (doc : Ir.Doc) : Array Nat :=
     | .styled .sans _ => push acc 1
     | _ => acc
   let fb (acc : Array Nat) : Ir.Block → Array Nat
-    | .verbatim _ _ _ => push acc 2
+    | .verbatim _ _ spec =>
+      let acc := push acc 2
+      match spec.caption with
+      | some (_, caption) => Ir.foldInlines fi acc caption
+      | none => acc
+    | .picture pic => pic.labelContents.foldl (fun acc xs => Ir.foldInlines fi acc xs) acc
     | _ => acc
-  (Ir.furnitureInlines doc).foldl (fun acc r => Ir.foldInlines fi acc r)
+  let found := (Ir.furnitureInlines doc).foldl (fun acc r => Ir.foldInlines fi acc r)
     (Ir.foldBlocks fb fi #[] doc.body)
+  if (Ir.mathRequests .alphabets doc).any (·.body.setsMono doc.fonts.mathSources.tt) then
+    push found 2
+  else found
 
 /-- **The slots this document lost.** Four conditions, all necessary: some
 artifact carries a face, the document asks for the slot, it declared no
@@ -270,5 +281,6 @@ public def diags (spec : Ir.FontSpec) (fs : Font.FontSet) (doc : Ir.Doc)
     (c : Carry) : Array Diag :=
   (losses spec fs (slotsUsed doc) c).map fun w =>
     DriverDiag.slotCollapsed w.key w.runs (served fs w.slot).words w.note c.only
+      (doc.surface != .markdown)
 
 end LeanTex.Cli.SlotLoss

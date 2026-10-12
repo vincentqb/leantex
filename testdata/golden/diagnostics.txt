@@ -781,7 +781,7 @@
 ── W0390 (degraded) no family is declared for a font slot the document sets in; the body face serves it
 ⚠ [W0390]
   nothing declares a 'mono' family; typewriter runs set in the body face, which is not fixed-pitch
-  suggestion: \fonts{ mono = "<family>" } gives the slot its own face; `leantex fonts` lists the installed families
+  suggestion: install one of SF Mono, Menlo, DejaVu Sans Mono or Liberation Mono to set code in it, or give the slot its own face: \fonts{ mono = "<family>" }; `leantex fonts` lists the installed families
 ── W0391 (config) an unknown LaTeX internal ('@' in its name) in package code is skipped with its [...] and {...} arguments instead of setting them as text
 ℹ [W0391] - \@venueprobe
   unknown command '\@venueprobe' in package code; any [...] options and its {...} arguments were dropped, not set as text

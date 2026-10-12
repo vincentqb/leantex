@@ -38,53 +38,6 @@ def unpaired : Array FontDb.Face :=
     face "Open Sans" false (bold := true) (italic := true)
       (path := testFonts ++ "/OpenSans-BoldItalic.ttf")]
 
-private def be16 (b : ByteArray) (v : Nat) : ByteArray :=
-  (b.push (v / 256 % 256).toUInt8).push (v % 256).toUInt8
-
-private def be32 (b : ByteArray) (v : Nat) : ByteArray :=
-  be16 (be16 b (v / 65536 % 65536)) (v % 65536)
-
-/-- A standalone font's tables as its directory names them: tag, checksum
-and bytes, in directory order. -/
-def tablesOf (f : ByteArray) : Array (Nat × Nat × ByteArray) :=
-  (Array.range (Ink.u16 f 4)).map fun k =>
-    let e := 12 + 16 * k
-    let off := Ink.u32 f (e + 8)
-    (Ink.u32 f e, Ink.u32 f (e + 4), f.extract off (off + Ink.u32 f (e + 12)))
-
-/-- A font collection of standalone font files, packed as the OpenType
-spec lays one out: the `ttcf` header and one offset per face, every face's
-directory with its offsets made absolute, then every table at its
-four-byte boundary — an encoder of this check's own, so the engine's
-reader is not judged by its own writer. -/
-def packCollection (fonts : Array ByteArray) : ByteArray := Id.run do
-  let faces := fonts.map tablesOf
-  let mut pos := 12 + 4 * fonts.size
-  let mut dirAt : Array Nat := #[]
-  for ts in faces do
-    dirAt := dirAt.push pos
-    pos := pos + 12 + 16 * ts.size
-  let mut tableAt : Array (Array Nat) := #[]
-  for ts in faces do
-    let mut row : Array Nat := #[]
-    for (_, _, b) in ts do
-      row := row.push pos
-      pos := (pos + b.size + 3) / 4 * 4
-    tableAt := tableAt.push row
-  let mut out := be32 (be32 (be32 ByteArray.empty 0x74746366) 0x00010000) fonts.size
-  for d in dirAt do
-    out := be32 out d
-  for (f, ts, row) in fonts.zip (faces.zip tableAt) do
-    out := out ++ f.extract 0 12
-    for ((tag, sum, b), place) in ts.zip row do
-      out := be32 (be32 (be32 (be32 out tag) sum) place) b.size
-  for ts in faces do
-    for (_, _, b) in ts do
-      out := out ++ b
-      for _ in [0:(b.size + 3) / 4 * 4 - b.size] do
-        out := out.push 0
-  return out
-
 /-- Does every table a standalone font's directory names lie inside it? -/
 def directoryFits (b : ByteArray) : Bool :=
   let n := Ink.u16 b 4
@@ -181,6 +134,46 @@ def monoDefaultChecks (ref : IO.Ref (List String)) : IO Unit := do
           && monoSrc htmlB == some (HtmlDoc.fontResource (fsB.get textB)).uri
           && !(fsB.get textB).isFixedPitch)
     | _, _, _ => t s!"{surface}: the three assemblies succeed" false
+  -- A document that ships its fonts is answered from its own faces alone:
+  -- a platform monospace the host holds never displaces one it ships, and
+  -- one it does not ship leaves its slot to the text face on every host.
+  IO.FS.withTempDir fun host => do
+    let hostCode := (host / "Code.otf").toString
+    IO.FS.writeBinFile hostCode (← IO.FS.readBinFile code)
+    let shipped (own : Array FontDb.Face) (hostFaces : Array FontDb.Face) : FaceScan :=
+      { faces := own ++ hostFaces, docDirs := [testFonts], dirs := #[], diags := #[] }
+    let ownText := unpaired
+    let ownMono := family4 "DejaVu Sans Mono" code true
+    let hostMenlo := family4 "Menlo" hostCode true
+    let doc := (codeDocs.lookup "tex").getD {}
+    match ← buildFontSet doc (shipped (ownText ++ ownMono) hostMenlo) cache .settled,
+        ← buildFontSet doc (shipped (ownText ++ ownMono) #[]) cache .settled,
+        ← buildFontSet doc (shipped ownText hostMenlo) cache .settled,
+        ← buildFontSet doc (shipped ownText #[]) cache .settled with
+    | .ok (fsA, _, _, pathsA), .ok (fsB, _, _, pathsB), .ok (fsC, docC, _, pathsC),
+        .ok (fsD, docD, _, _) =>
+      let loss (fs : Font.FontSet) (d : Ir.Doc) :=
+        SlotLoss.diags d.fonts fs d (SlotLoss.carries #[.pdf, .html] d.fontPolicy)
+      t "a document shipping its fonts sets the typewriter face it ships, whatever the host holds"
+        (pathsA.contains code && !pathsA.contains hostCode && pathsB.contains code
+          && fsA.slotIsFixedPitch 2 && fsB.slotIsFixedPitch 2)
+      t "a document shipping no typewriter face sets its code in its text face on every host"
+        (!pathsC.contains hostCode && fsC.slotCollapsed 2 && fsD.slotCollapsed 2
+          && (loss fsC docC).any (·.kind == .W0390) && (loss fsD docD).any (·.kind == .W0390))
+    | _, _, _, _ => t "the shipped-fonts assemblies succeed" false
+  -- The census reaches every typewriter run a document sets, among them a
+  -- picture's label and a formula's typewriter alphabet: each alone moves
+  -- the slot to the platform monospace, and without the run nothing loads.
+  for (what, body) in
+      [("a picture's label", "\\begin{tikzpicture}\\node at (0,0) {\\texttt{label code}};\\end{tikzpicture}"),
+       ("a formula's typewriter alphabet", "A formula $\\mathtt{abc}$ in words.")] do
+    let (doc, _) := elabStr (dvDoc "\\usepackage{tikz}\n" body)
+    let (bare, _) := elabStr (dvDoc "\\usepackage{tikz}\n" "Plain words only.")
+    match ← buildFontSet doc withList cache .settled, ← buildFontSet bare withList cache .settled with
+    | .ok (_, _, _, paths), .ok (_, _, _, barePaths) =>
+      t s!"{what} alone loads the platform monospace"
+        (paths.contains code && !barePaths.contains code)
+    | _, _ => t s!"{what}: the assemblies succeed" false
   -- A document that sets no typewriter run loads no typewriter face: no
   -- page ships faces it never sets, and there is no loss to name.
   for (surface, doc) in
@@ -220,8 +213,8 @@ def fontCollectionChecks (ref : IO.Ref (List String)) : IO Unit := do
     match Font.collectionMember ttc i, Font.parse orig with
     | .ok m, .ok of =>
       t s!"collection face {i}: every table is its file's, byte for byte"
-        ((tablesOf m).map (fun (tag, _, b) => (tag, b.toList)) ==
-          (tablesOf orig).map (fun (tag, _, b) => (tag, b.toList)))
+        ((fontTables m).map (fun (tag, _, b) => (tag, b.toList)) ==
+          (fontTables orig).map (fun (tag, _, b) => (tag, b.toList)))
       t s!"collection face {i}: a standalone font, parsed as its file is"
         (Font.collectionCount m == none && directoryFits m &&
           match Font.parse m with
@@ -232,23 +225,55 @@ def fontCollectionChecks (ref : IO.Ref (List String)) : IO Unit := do
     (Font.collectionMember ttc 2 matches .error _)
   t "a standalone font is refused as a collection"
     (Font.collectionMember regular 0 matches .error _)
+  -- A face the reader answers holds no more table bytes than its file: its
+  -- directory and padding beside them, nothing copied out twice.
+  let bounded (input m : ByteArray) : Bool :=
+    directoryFits m && m.size ≤ input.size + 12 + 19 * Ink.u16 m 4
   let mut cases := 0
   let mut outside := 0
   for k in [0:97] do
     for i in [0:2] do
       cases := cases + 1
-      if let .ok m := Font.collectionMember (ttc.extract 0 (ttc.size * k / 97)) i then
-        unless directoryFits m do outside := outside + 1
+      let cut := ttc.extract 0 (ttc.size * k / 97)
+      if let .ok m := Font.collectionMember cut i then
+        unless bounded cut m do outside := outside + 1
   let dirEnd := 12 + 8 + (12 + 16 * Ink.u16 regular 4) + (12 + 16 * Ink.u16 bold 4)
   for pos in [0:dirEnd] do
     for v in ([0x00, 0x01, 0x7F, 0xFF] : List UInt8) do
       for i in [0:2] do
         cases := cases + 1
-        if let .ok m := Font.collectionMember (ttc.set! pos v) i then
-          unless directoryFits m do outside := outside + 1
+        let mutant := ttc.set! pos v
+        if let .ok m := Font.collectionMember mutant i then
+          unless bounded mutant m do outside := outside + 1
   t s!"truncated and mutated collections are refused or read within their bytes \
 ({outside} of {cases} outside)"
     (outside == 0 && cases > 2000)
+  -- One region of the file named by every record of a face's directory:
+  -- refused, where copying each record out made the face hundreds of times
+  -- its file.
+  let repeated := Id.run do
+    let records := 400
+    let region := 4096
+    let dir := 16
+    let tables := dir + 12 + 16 * records
+    let mut b := pushBe32 (pushBe32 (pushBe32 (pushBe32 ByteArray.empty 0x74746366) 0x00010000) 1) dir
+    b := pushBe16 (pushBe16 (pushBe16 (pushBe16 (pushBe32 b 0x00010000) records) 256) 8) (records * 16 - 256 * 16)
+    for k in [0:records] do
+      b := pushBe32 (pushBe32 (pushBe32 (pushBe32 b (0x61610000 + k)) 0) tables) region
+    for _ in [0:region] do
+      b := b.push 0x41
+    return b
+  t "a directory naming one region again and again is refused"
+    (Font.collectionCount repeated == some 1 &&
+      Font.collectionMember repeated 0 matches .error _)
+  -- An Apple `true` face reads as the TrueType outlines it names.
+  let appleTagged := packCollection #[regular]
+  let trueMember := pushBe32 (appleTagged.extract 0 (Ink.u32 appleTagged 12)) 0x74727565 ++
+    appleTagged.extract (Ink.u32 appleTagged 12 + 4) appleTagged.size
+  t "a face tagged true reads as its TrueType outlines"
+    (match Font.collectionMember trueMember 0 with
+      | .ok m => Ink.u32 m 0 == 0x00010000 && (Font.parse m).toOption.isSome
+      | .error _ => false)
   let cache ← FontEnv.Cache.mk'
   IO.FS.withTempDir fun dir => do
     let file := (dir / "Example.ttc").toString

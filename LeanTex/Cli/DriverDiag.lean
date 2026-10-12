@@ -148,15 +148,26 @@ stylesheet. The substitute face is not named: which family fills an
 undeclared slot is the host's answer, and a message that varies by host
 cannot be witnessed. The subject is the slot, so the loss is counted once
 however many runs set it. -/
-public def slotCollapsed (key runs served note : String) (only : Option String) : Diag :=
+public def slotCollapsed (key runs served note : String) (only : Option String)
+    (declarable : Bool := true) : Diag :=
   let whereLost := match only with
     | some a => s!"in {a}, "
     | none => ""
+  let declare := s!"\\fonts\{ {key} = \"<family>\" }"
+  -- The typewriter slot has a default the scan answers (`FontDb.monoDefaults`):
+  -- installing one of those families is a remedy any source can take, and the
+  -- declaration only one that can declare faces.
+  let families := match FontDb.monoDefaults.reverse with
+    | last :: rest@(_ :: _) => String.intercalate ", " rest.reverse ++ " or " ++ last
+    | _ => String.intercalate ", " FontDb.monoDefaults
+  let help := if key == "mono" then
+      s!"install one of {families} to set code in it" ++
+        (if declarable then s!", or give the slot its own face: {declare}" else "") ++
+        "; `leantex fonts` lists the installed families"
+    else s!"{declare} gives the slot its own face; `leantex fonts` lists the installed families"
   Diag.of .W0390
     s!"nothing declares a '{key}' family; {whereLost}{runs} set in {served}, {note}"
-    (subject := some s!"slot:{key}")
-    (help := s!"\\fonts\{ {key} = \"<family>\" } gives the slot its own face; \
-`leantex fonts` lists the installed families")
+    (subject := some s!"slot:{key}") (help := help)
 
 /-- The two substitution codes off one resolution result: a missing
 variant is W0006, a missing weight W0366 — the one door

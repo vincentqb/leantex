@@ -193,6 +193,7 @@ def publicationInputChecks (ref : IO.Ref (List String)) : IO Unit := do
       IO.FS.writeBinFile (dir / "figure.png") (← IO.FS.readBinFile png)
       IO.FS.writeBinFile (dir / "face.ttf") (← IO.FS.readBinFile font)
       IO.FS.writeBinFile (dir / "fonts" / "Spare.otf") (← IO.FS.readBinFile spare)
+      IO.FS.writeBinFile (dir / "fonts" / "Kept.ttc") (packCollection #[← IO.FS.readBinFile spare])
       for (target, link, hard) in links do
         if hard then IO.FS.hardLink (dir / target) (dir / link)
         else symlink (if target == "." then dir else dir / target) (dir / link)
@@ -233,6 +234,9 @@ def publicationInputChecks (ref : IO.Ref (List String)) : IO Unit := do
       ("a face the run's font directory holds",
         [("doc.tex", tex "\\output{ formats = md, md = \"fonts/Spare.otf\" }\n" "An invented probe.")],
         #["doc.tex", "--font-dir", "fonts"], ["fonts/Spare.otf"], []),
+      ("a collection the run's font directory holds",
+        [("doc.tex", tex "\\output{ formats = md, md = \"fonts/Kept.ttc\" }\n" "An invented probe.")],
+        #["doc.tex", "--font-dir", "fonts"], ["fonts/Kept.ttc"], []),
       ("the declared stylesheet",
         [("doc.tex", tex "\\output{ formats = html, md, stylesheet = \"site.css\", md = \"site.css\" }\n"
             "An invented probe."),

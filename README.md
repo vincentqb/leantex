@@ -91,7 +91,8 @@ See the [example documents](testdata/corpus) and
 ## Fonts and themes
 
 Use installed `.ttf` or `.otf` fonts, or the faces of a `.ttc` or `.otc`
-collection, through `\setmainfont{Family Name}` or
+collection (named by family; a path such as `LEANTEX_FONT` or a fontspec file
+name must still be a `.ttf` or `.otf`), through `\setmainfont{Family Name}` or
 `\fonts{body="Family Name"}`. List available families with `leantex fonts`;
 add search directories with `--font-dir` or `LEANTEX_FONT_PATH`.
 The fonts of the TeX distribution whose `lualatex` (else `luatex`, else `tex`)
@@ -104,7 +105,9 @@ To bundle fonts with a document, use `\fonts{dir="fonts",body="Family Name"}`.
 A document that declares no typewriter face sets its code in the text face's
 matching monospaced face where one is installed, else in the first of SF
 Mono, Menlo, DejaVu Sans Mono and Liberation Mono that is installed with
-its bold and italic, and warns only when none is.
+its bold and italic, and warns only when none is. A document that bundles its
+fonts takes these from its own font directory alone, so it sets the same code
+face on every computer.
 
 List themes with `leantex themes` and select one with `\theme{moloch}`.
 
