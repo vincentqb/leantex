@@ -261,9 +261,9 @@ def publicationInputChecks (ref : IO.Ref (List String)) : IO Unit := do
       let before ← snapshot dir
       let run ← engineRun dir (args ++ #["--porcelain"]) (dir / "face.ttf") (root / "cache")
       let after ← snapshot dir
-      let refused := run.stdout.splitOn "\n" |>.filter (hasStr · "\"E0005\"")
+      let refused := (porcelainCodes run.stdout).filter (·.1 == "E0005")
       check ref s!"publication inputs: {name} is refused as E0005 ({run.exitCode}): {run.stdout}{run.stderr}"
-        (run.exitCode != 0 && refused.length == 1)
+        (run.exitCode != 0 && refused.size == 1)
       check ref s!"publication inputs: {name} leaves every file as it was"
         (guarded.all (fun g => before.any (·.1 == g)) && after == before)
     -- Destinations that are no input publish, whatever the inputs a run
@@ -311,7 +311,8 @@ def outputNameChecks (ref : IO.Ref (List String)) : IO Unit := do
       engineRun dir (#["source.tex", "-o", "notes.tex"] ++ args) font (dir / "cache")
     let porcelain ← run #["--porcelain"]
     let records := (porcelain.stdout.splitOn "\n").filter (!·.isEmpty)
-    let refusal := records.filter (hasStr · "\"code\":\"E0006\"")
+    let refusal := records.filter fun r =>
+      (Lean.Json.parse r).toOption.any (·.getObjValAs? String "code" == .ok "E0006")
     check ref s!"output names: an unknown extension is one E0006 record and exit 3 ({porcelain.exitCode}): {porcelain.stdout}{porcelain.stderr}"
       (porcelain.exitCode == 3 && refusal.length == 1 && porcelain.stderr.isEmpty &&
         records.all fun r => r.startsWith "{")
