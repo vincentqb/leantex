@@ -1182,6 +1182,17 @@ public def Font.charHeight (f : Font) (c : Char) : Int :=
     | some b => max 0 b.top
     | none => f.capHeight
 
+/-- How deep the face's glyph for `c` reaches below the baseline, in font
+units: TeX's `\fontchardp\font`c`, the bottom of its ink hull; nothing
+where the face has no glyph for `c` or its outline does not decode. -/
+public def Font.charDepth (f : Font) (c : Char) : Int :=
+  match f.gid c with
+  | none => 0
+  | some g =>
+    match f.bounds g with
+    | some b => max 0 (-b.bottom)
+    | none => 0
+
 /-- A vertical consumer reads the same memoized hull as a horizontal one. -/
 public def Font.yExtent (f : Font) (g : Nat) : Option (Int × Int) :=
   (f.bounds g).map fun b => (b.bottom, b.top)

@@ -9436,6 +9436,13 @@ arithmetic truncates toward zero as TeX's '\\divide' does" pos
       match paramName args[0] with
       | some n =>
         let target := (rawSrc args[0]).trimAscii.toString
+        -- A register the block templates assign holds no token: what the
+        -- document would read from it is the value their last run leaves.
+        -- premise: capitalRegisterChecks — the document's read of a template register set this way is refused by name, so the value dropped here reaches no page
+        if (← get).allocated.contains n then
+          discard s!"\\setlength\{{target}}" "a register only the block templates assign and read"
+            s!"setlength:{n}" pos
+          return some (#[], k)
         return some (← assignLength n args[1] s!"\\setlength\{{target}}" pos, k)
       | none => return none
     else return none

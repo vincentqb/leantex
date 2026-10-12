@@ -811,7 +811,9 @@ right, half a leading deep and a point over the lines above, deeper than the
 box. The two-line titles break with `\\`, which beamer sets as a paragraph
 per line. The fourth frame's titles stand their lines apart from their
 struts: an accented capital's ink above the strut, at the body's size and at
-`\large`, and two lines a `\\[3pt]` further apart. -/
+`\large`, and two lines a `\\[3pt]` further apart; the fifth's last lines
+stand deeper than their struts, which the rule's reach past the box's top
+reads. -/
 def capitalsSource : String :=
   "\\documentclass[10pt,aspectratio=169]{beamer}\n" ++
   "\\usetheme{moloch}\n" ++
@@ -915,6 +917,16 @@ def capitalsSource : String :=
   "\\end{block}\n" ++
   "\\begin{exampleblock}{Écart title words}\n" ++
   "Eighth body words.\n" ++
+  "\\end{exampleblock}\n" ++
+  "Trailing paragraph below.\n" ++
+  "\\end{frame}\n" ++
+  "\\begin{frame}[t]{Depths}\n" ++
+  "Lead paragraph above.\n" ++
+  "\\begin{block}{Kappa title words\\rule[-6pt]{0pt}{7pt}}\n" ++
+  "Ninth body words.\n" ++
+  "\\end{block}\n" ++
+  "\\begin{exampleblock}{Lambda title words\\rule[-6pt]{0pt}{7pt}}\n" ++
+  "Tenth body words.\n" ++
   "\\end{exampleblock}\n" ++
   "Trailing paragraph below.\n" ++
   "\\end{frame}\n" ++
@@ -1200,7 +1212,16 @@ private def measured : Array (String × Nat × Mark × Mark × Int) := #[
   ("capitals", 3, .top edgeColor 2, .base "Écart title words", 12657),
   ("capitals", 3, .top edgeColor 2, .bottom edgeColor 2, 15374),
   ("capitals", 3, .base "Écart title words", .base "Eighth body words.", 16000),
-  ("capitals", 3, .base "Eighth body words.", .base "Trailing paragraph below.", 19000)]
+  ("capitals", 3, .base "Eighth body words.", .base "Trailing paragraph below.", 19000),
+  ("capitals", 4, .base "Lead paragraph above.", .base "Kappa title words", 25802),
+  ("capitals", 4, .top edgeColor 0, .base "Kappa title words", 11969),
+  ("capitals", 4, .top edgeColor 0, .bottom edgeColor 0, 14400),
+  ("capitals", 4, .base "Kappa title words", .base "Ninth body words.", 18598),
+  ("capitals", 4, .base "Ninth body words.", .base "Lambda title words", 29486),
+  ("capitals", 4, .top edgeColor 1, .base "Lambda title words", 13083),
+  ("capitals", 4, .top edgeColor 1, .bottom edgeColor 1, 15800),
+  ("capitals", 4, .base "Lambda title words", .base "Tenth body words.", 18598),
+  ("capitals", 4, .base "Tenth body words.", .base "Trailing paragraph below.", 19000)]
 
 /-- lualatex's horizontal distances, the same way. -/
 private def measuredX : Array (String × Nat × Mark × Mark × Int) := #[
@@ -1299,7 +1320,7 @@ private def pageChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO 
       | "starsized" => #[3, 2]
       | "plainstar" => #[0, 0]
       | "plainempty" => #[0, 0]
-      | "capitals" => #[2, 2, 1, 3]
+      | "capitals" => #[2, 2, 1, 3, 2]
       | _ => #[1, 1]
     check ref s!"block template {name}: one rule per box that has one ({rules})" (rules == want)
     check ref s!"block template {name}: no colour box is painted"
@@ -1432,10 +1453,12 @@ private def readingChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : 
 /-- The reading names a rule it does not hold beside the title's lines: one
 reading its box's height alone, one taking off a paragraph skip its box's
 list does not open on, one reading the height of a character other than
-`H`, and one beside a title box no strut bounds, whose lines stand as tall
-and as deep as their ink. Each pair is named once, for its reading, and its
-blocks keep beamer's default pair; the native spelling refuses a rule
-reaching by lines beside a title box without struts the same way. -/
+`H`, one beside a title box no strut bounds, whose lines stand as tall and
+as deep as their ink, and one beside a box whose first strut is set before
+the title's font. Each pair is named once, for its reading, and its blocks
+keep beamer's default pair; the native spelling refuses a rule reaching by
+lines beside a title box without struts the same way. The plain kind reads
+half the capitals' leading past its lines. -/
 private def capitalReadingChecks (ref : IO.Ref (List String)) : IO Unit := do
   let height := capitalsSource.replace
     "height \\dimexpr\\ht\\probe@box+\\dp\\probe@box-\\parskip-\\probe@down\\relax"
@@ -1447,12 +1470,16 @@ private def capitalReadingChecks (ref : IO.Ref (List String)) : IO Unit := do
   let unstrutted := capitalsSource.replace
     "\\usebeamerfont*{block title#1}\\usebeamercolor[fg]{block title#1}%\n      \\strut\\insertblocktitle\\strut\\par"
     "\\usebeamerfont*{block title#1}\\usebeamercolor[fg]{block title#1}%\n      \\insertblocktitle\\par"
+  let early := capitalsSource.replace
+    "\\usebeamerfont*{block title example}\\strut\\usebeamercolor[fg]{block title example}%"
+    "\\strut\\usebeamerfont*{block title example}\\usebeamercolor[fg]{block title example}%"
   let cases : List (String × String × String × String × String) :=
     [("height", height, "block begin", "block", "reading other than its height and depth"),
      ("skip", skip, "block example begin", "exampleblock",
        "another skip than the one its list opens on"),
      ("other", other, "block begin", "block", "\\probe@down set to a length it cannot read"),
-     ("unstrutted", unstrutted, "block begin", "block", "reaching by lines no strut bounds")]
+     ("unstrutted", unstrutted, "block begin", "block", "reaching by lines no strut bounds"),
+     ("early", early, "block example begin", "exampleblock", "struts of another font bound")]
   for (name, src, element, style, why) in cases do
     check ref s!"capitals {name}: the refused probe differs from the probe" (src != capitalsSource)
     let (doc, diags) := Elab.run s!"block-template-capitals-{name}.tex" src
@@ -1462,6 +1489,12 @@ private def capitalReadingChecks (ref : IO.Ref (List String)) : IO Unit := do
       (named.size == 1 && named.all (hasStr ·.message why))
     check ref s!"capitals {name}: its blocks keep the default pair"
       (((doc.styles.find? style).bind (·.shape)).isNone)
+  -- The plain kind reads half the capitals' leading past its lines, the
+  -- pair `Ir.BlockMetric.halfLeading_centred_exact` speaks of.
+  let (doc, _) := Elab.run "block-template-capitals.tex" capitalsSource
+  let reaches := ((Ir.blockShapeOf doc.styles .block).map (·.edges.map (·.reach))).getD #[]
+  check ref "capitals: the plain kind's rule reads half the capitals' leading past its lines"
+    (reaches == #[.lines Ir.BlockMetric.halfLeading.neg Ir.BlockMetric.halfLeading])
   let (_, nd) := Elab.run "block-shape-unstrutted.tex"
     ("\\documentclass{slides}\n\\palette{ accent = #123456 }\n\\style{block}{ shape = " ++
       "{ title = box parskip, untitled = {}, edge = { span = title, side = left, width = 0.3em, " ++
@@ -1475,7 +1508,7 @@ private def capitalReadingChecks (ref : IO.Ref (List String)) : IO Unit := do
 `\probe@down`, which the templates assign and read as TeX runs them, read by
 the document's own text — a gap in a paragraph — is refused by name, where
 TeX would set the value its last run left there and a length token would
-set none. -/
+set none; set with `\setlength` first, it is refused the same way. -/
 private def capitalRegisterChecks (ref : IO.Ref (List String)) : IO Unit := do
   let used := capitalsSource
     |>.replace "\\makeatother\n" "\\newcommand{\\probegap}{\\hspace*{\\probe@down}}\n\\makeatother\n"
@@ -1484,6 +1517,12 @@ private def capitalRegisterChecks (ref : IO.Ref (List String)) : IO Unit := do
   let (_, diags) := Elab.run "block-template-capitals-register.tex" used
   check ref s!"capitals register: the document's read of the template's register is refused by name ({diags.filter (·.severity == .error) |>.map (·.message)})"
     (diags.any fun d => d.severity == .error && hasStr d.message "probe@down")
+  -- Set as a length first, it still holds no value the document reads.
+  let set := used.replace "\\makeatother\n" "\\setlength{\\probe@down}{3pt}\n\\makeatother\n"
+  check ref "capitals register: the probe setting its register differs from the probe" (set != used)
+  let (_, sd) := Elab.run "block-template-capitals-register-set.tex" set
+  check ref s!"capitals register: a register set as a length is still refused where the document reads it ({sd.filter (·.severity == .error) |>.map (·.message)})"
+    (sd.any fun d => d.severity == .error && hasStr d.message "probe@down")
   let (_, clean) := Elab.run "block-template-capitals.tex" capitalsSource
   check ref "capitals register: the probe alone raises nothing"
     (clean.all (·.severity == .note))
@@ -1610,7 +1649,9 @@ private def linesBeside (p : Layout.PageOut) (bar : Layout.Fill) : Array Layout.
   (p.lines.filter fun l => !l.furniture && bar.y ≤ l.y && l.y ≤ bar.y + bar.h).qsort (·.y < ·.y)
 
 /-- **A rule reaching by its title's lines stands centred on the capitals**
-(`Ir.BlockMetric.halfLeading_centred_exact`), over the shipped pages: every
+over the shipped pages, as `Layout.edgeLinesSpan_centred_exact` states it of
+the fill beside lines struts bound, given the half-leading pair the template
+reads (`Ir.BlockMetric.halfLeading_centred_exact`): every
 rule beside the probe's plain and example titles — one line and two, at the
 body's size and at `\large`, two lines a skip further apart — has its
 midpoint at the midpoint of the span from its title's first line's cap
@@ -1645,25 +1686,11 @@ private def lastStageTerm (rule key : String) (height : Dim.Sp) : Option Dim.Sp 
   let decl ← (rule.splitOn ";").find? fun d => (d.splitOn ":")[0]?.map (·.trimAscii.toString) == some key
   let value := ((decl.splitOn ":").drop 1 |> String.intercalate ":").trimAscii.toString
   let term := ((value.splitOn " + ").getLast?.getD value).trimAscii.toString
-  let term := if term.endsWith ")" then (term.dropEnd 1).toString else term
+  let term := String.ofList (term.toList.reverse.dropWhile (· == ')')).reverse
   if term == "0rem" then return 0
   if !term.endsWith "vh" then none
   let (m, sc) ← Decl.parseDecimal (term.dropEnd 2).toString
   return m * 1000 / (sc : Int) * height / 100000
-
-/-- The larger operand of a stylesheet length's `max(<a>, <b>)`, read as
-`lastStageTerm` reads a term: `<a>` as written and `<b>` as a length. -/
-private def maxStageTerm (rule key : String) (height : Dim.Sp) : Option (String × Dim.Sp) := do
-  let decl ← (rule.splitOn ";").find? fun d => (d.splitOn ":")[0]?.map (·.trimAscii.toString) == some key
-  let inner ← ((decl.splitOn "max(").drop 1).head?
-  let args := ((inner.splitOn ")").head?.getD "").splitOn ", "
-  match args with
-  | [a, b] =>
-    let b := b.trimAscii.toString
-    if !b.endsWith "vh" then none
-    let (m, sc) ← Decl.parseDecimal (b.dropEnd 2).toString
-    return (a.trimAscii.toString, m * 1000 / (sc : Int) * height / 100000)
-  | _ => none
 
 /-- The rules beside a page's titles in one colour, each with its title's
 first and last lines and the face and size its first run sets in. -/
@@ -1674,6 +1701,79 @@ private def titleBars (fonts : Font.FontSet) (p : Layout.PageOut) (c : Ir.Color)
     match title[0]?, title.back?, title[0]?.bind (firstRun fonts) with
     | some first, some last, some (face, size) => some (bar, first, last, face, size)
     | _, _, _ => none
+
+/-- The capitals probe with every rule reaching by its box alone. -/
+private def boxedRules (src : String) : String :=
+  src
+    |>.replace ("height \\dimexpr\\ht\\probe@box+\\dp\\probe@box-\\parskip-\\probe@down\\relax\n" ++
+        "          depth \\probe@down}") "height \\ht\\probe@box depth \\dp\\probe@box}"
+    |>.replace ("height \\dimexpr\\ht\\probe@box+\\dp\\probe@box-\\probe@down\\relax\n" ++
+        "          depth \\probe@down}") "height \\ht\\probe@box depth \\dp\\probe@box}"
+    |>.replace ("height \\dimexpr\\dp\\probe@box+\\ht\\probe@box-\\parskip-\\probe@down+1pt\\relax\n" ++
+        "          depth \\probe@down}") "height \\ht\\probe@box depth \\dp\\probe@box}"
+
+/-- One build's HTML against its PDF, kind by kind: each rule's place about
+its title's baselines, and the rise and room the header keeps against the
+same template with every rule reaching by its box alone, for a title of one
+line and one broken by `\\`. -/
+private def titleRuleHtmlChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet)
+    (name src : String) (kinds : List (Ir.TitledKind × String × Nat × Ir.Color × String × String × String))
+    (broken : List (Ir.TitledKind × Nat × String × String)) : IO Unit := do
+  let (doc, _) := Elab.run s!"block-template-{name}.tex" src
+  let geom := Layout.Geom.ofPage doc.page
+  let cfg : HtmlDoc.Config := { blockTitleRule := Layout.blockTitleRule geom fonts doc.styles }
+  let (head, body, _) := HtmlDoc.emitTree cfg doc
+  let sheet := treeCssList "" (head.toList ++ body.toList)
+  let (_, out, _) := layout fonts name src
+  let (_, plain, _) := layout fonts s!"{name}-boxed" (boxedRules src)
+  let tol : Nat := (2 * doc.page.height / 100000 + 2).toNat
+  let strut := fonts.get (fonts.lookup 0 700 false)
+  let leaded (f : Font.Font) (size : Dim.Sp) : Dim.Sp × Dim.Sp :=
+    let sc (u : Int) : Dim.Sp := ((u.toNat * size.toNat / f.unitsPerEm : Nat) : Int)
+    Layout.leadedBox (sc f.ascent) (sc (-f.descent)) (Ir.leadingFor size doc.page.leading)
+  let distance (out : Layout.Out) (page : Nat) (a b : String) : Option Dim.Sp :=
+    out.pages[page]?.bind fun p => (lineOf p a).bind fun x => (lineOf p b).map (·.y - x.y)
+  -- The rise a header's padding adds past its skips: the term it ends on.
+  let riseOf (rule : String) : Dim.Sp := (lastStageTerm rule "padding-top" doc.page.height).getD 0
+  for (kind, pseudo, page, color, lead, title, next) in kinds do
+    let sel := s!"section.block-shaped.block-{kind.name} > header"
+    let rule := (cssRuleOf sheet s!"{sel}::{pseudo}").getD ""
+    let p : Layout.PageOut := out.pages[page]?.getD {}
+    let bars := titleBars fonts p color
+    check ref s!"{name} HTML {kind.name}: the page's rules ship ({bars.size})" (!bars.isEmpty)
+    for (bar, first, last, face, size) in bars do
+      let s := leaded strut doc.page.fontSize
+      let r := leaded face size
+      let b := max s.1 r.1
+      let box := b + max s.2 r.2
+      match lastStageTerm rule "top" doc.page.height, lastStageTerm rule "bottom" doc.page.height with
+      | some top, some bottom =>
+        check ref (s!"{name} HTML {kind.name}: the rule's top stands above the first baseline as the page's " ++
+          s!"({b - top} against {first.y - bar.y})") (((b - top) - (first.y - bar.y)).natAbs ≤ tol)
+        check ref (s!"{name} HTML {kind.name}: the rule's bottom stands below the last baseline as the page's " ++
+          s!"({box - b - bottom} against {bar.y + bar.h - last.y})")
+          (((box - b - bottom) - (bar.y + bar.h - last.y)).natAbs ≤ tol)
+      | _, _ => check ref s!"{name} HTML {kind.name}: the rule's offsets read ({rule})" false
+    let pad := ((cssRulesOf sheet sel).find? (hasStr · "padding-top")).getD ""
+    let room := (lastStageTerm pad "padding-bottom" doc.page.height).getD 0
+    match distance out page lead title, distance plain page lead title,
+        distance out page title next, distance plain page title next with
+    | some a, some a', some d, some d' =>
+      check ref s!"{name} HTML {kind.name}: the header rises as the page's title ({riseOf pad} against {a - a'})"
+        ((riseOf pad - (a - a')).natAbs ≤ tol)
+      check ref s!"{name} HTML {kind.name}: the header keeps the page's room below ({room} against {d - d'})"
+        ((room - (d - d')).natAbs ≤ tol)
+    | _, _, _, _ => check ref s!"{name} HTML {kind.name}: the boxed probe's lines ship" false
+  -- A title the author breaks stands as low as the page's broken title.
+  for (kind, page, prev, title) in broken do
+    let sel := s!"section.block-shaped.block-{kind.name} > header"
+    let pad := ((cssRulesOf sheet s!"{sel}:has(br)").find? (hasStr · "padding-top")).getD
+      (((cssRulesOf sheet sel).find? (hasStr · "padding-top")).getD "")
+    match distance out page prev title, distance plain page prev title with
+    | some a, some a' =>
+      check ref s!"{name} HTML {kind.name}: a broken title's header rises as the page's ({riseOf pad} against {a - a'})"
+        ((riseOf pad - (a - a')).natAbs ≤ tol)
+    | _, _ => check ref s!"{name} HTML {kind.name}: the broken titles ship" false
 
 /-- **The web page stands each rule reaching by its title's lines where the
 page stands it** (`HtmlDoc.blockShapeCss`, `Layout.blockTitleRule`): each
@@ -1688,71 +1788,47 @@ its last as the PDF's rule beside the same title, for one line and two, to
 the stylesheet's precision: the plain and `\large` rules centred on their
 capitals, and the alerted rule on the right a point above its centre. The
 header keeps what TeX's line holding box and rule adds beside the lines: the
-rise above the `\large` rule, past its box's top, and the room below the
-alerted rule, deeper than its box, each the distance the PDF's title and
-body move against the same template with every rule reaching by its box
-alone, which is nothing for the plain kind. -/
+room below the alerted rule, deeper than its box, and the rise past the box's
+top — all of it for a title the author breaks, and for one line what the
+interline rule leaves of it, nothing where the `\baselineskip` absorbs it —
+each the distance the PDF's title and body move against the same template
+with every rule reaching by its box alone; at the body's size, with no
+`\parskip`, and at `\large`. A rule reaching by its box beside one that
+rises stands from the box's top, the rise above it. -/
 private def capitalHtmlChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit := do
-  let (doc, _) := Elab.run "block-template-capitals.tex" capitalsSource
-  let geom := Layout.Geom.ofPage doc.page
-  let cfg : HtmlDoc.Config := { blockTitleRule := Layout.blockTitleRule geom fonts doc.styles }
-  let (head, body, _) := HtmlDoc.emitTree cfg doc
-  let sheet := treeCssList "" (head.toList ++ body.toList)
-  let (_, out, _) := layout fonts "capitals" capitalsSource
-  let boxed := capitalsSource
-    |>.replace ("height \\dimexpr\\ht\\probe@box+\\dp\\probe@box-\\parskip-\\probe@down\\relax\n" ++
-        "          depth \\probe@down}") "height \\ht\\probe@box depth \\dp\\probe@box}"
-    |>.replace ("height \\dimexpr\\ht\\probe@box+\\dp\\probe@box-\\probe@down\\relax\n" ++
-        "          depth \\probe@down}") "height \\ht\\probe@box depth \\dp\\probe@box}"
-    |>.replace ("height \\dimexpr\\dp\\probe@box+\\ht\\probe@box-\\parskip-\\probe@down+1pt\\relax\n" ++
-        "          depth \\probe@down}") "height \\ht\\probe@box depth \\dp\\probe@box}"
-  let (_, plain, _) := layout fonts "capitals-boxed" boxed
-  let tol : Nat := (2 * doc.page.height / 100000 + 2).toNat
-  let strut := fonts.get (fonts.lookup 0 700 false)
-  let leaded (f : Font.Font) (size : Dim.Sp) : Dim.Sp × Dim.Sp :=
-    let sc (u : Int) : Dim.Sp := ((u.toNat * size.toNat / f.unitsPerEm : Nat) : Int)
-    Layout.leadedBox (sc f.ascent) (sc (-f.descent)) (Ir.leadingFor size doc.page.leading)
-  let distance (out : Layout.Out) (page : Nat) (a b : String) : Option Dim.Sp :=
-    out.pages[page]?.bind fun p => (lineOf p a).bind fun x => (lineOf p b).map (·.y - x.y)
   let kinds : List (Ir.TitledKind × String × Nat × Ir.Color × String × String × String) :=
     [(.block, "before", 0, edgeColor, "Lead paragraph above.", "Alpha title words", "Body words here."),
      (.example, "before", 1, edgeColor, "Lead paragraph above.", "Gamma title words", "Third body words."),
      (.alert, "after", 2, alertColor, "Lead paragraph above.", "Beta title words", "Fifth body words.")]
-  for (kind, pseudo, page, color, lead, title, next) in kinds do
-    let sel := s!"section.block-shaped.block-{kind.name} > header"
-    let rule := (cssRuleOf sheet s!"{sel}::{pseudo}").getD ""
-    let p : Layout.PageOut := out.pages[page]?.getD {}
-    let bars := titleBars fonts p color
-    check ref s!"capitals HTML {kind.name}: the page's rules ship ({bars.size})" (!bars.isEmpty)
-    for (bar, first, last, face, size) in bars do
-      let s := leaded strut doc.page.fontSize
-      let r := leaded face size
-      let b := max s.1 r.1
-      let box := b + max s.2 r.2
-      match lastStageTerm rule "top" doc.page.height, lastStageTerm rule "bottom" doc.page.height with
-      | some top, some bottom =>
-        check ref (s!"capitals HTML {kind.name}: the rule's top stands above the first baseline as the page's " ++
-          s!"({b - top} against {first.y - bar.y})") (((b - top) - (first.y - bar.y)).natAbs ≤ tol)
-        check ref (s!"capitals HTML {kind.name}: the rule's bottom stands below the last baseline as the page's " ++
-          s!"({box - b - bottom} against {bar.y + bar.h - last.y})")
-          (((box - b - bottom) - (bar.y + bar.h - last.y)).natAbs ≤ tol)
-      | _, _ => check ref s!"capitals HTML {kind.name}: the rule's offsets read ({rule})" false
-    -- The rise and the room, against the rules reaching by their boxes.
-    let pads := (cssRulesOf sheet sel).find? (hasStr · "padding-top")
-    let pad := pads.getD ""
-    let rise := match maxStageTerm pad "padding-top" doc.page.height with
-      | some ("0rem", r) => max 0 r
-      | some (_, r) => max 0 (r - (doc.page.parskip.map (·.width.sp)).getD 0)
-      | none => 0
-    let room := (lastStageTerm pad "padding-bottom" doc.page.height).getD 0
-    match distance out page lead title, distance plain page lead title,
-        distance out page title next, distance plain page title next with
-    | some a, some a', some d, some d' =>
-      check ref s!"capitals HTML {kind.name}: the header rises as the page's title ({rise} against {a - a'})"
-        ((rise - (a - a')).natAbs ≤ tol)
-      check ref s!"capitals HTML {kind.name}: the header keeps the page's room below ({room} against {d - d'})"
-        ((room - (d - d')).natAbs ≤ tol)
-    | _, _, _, _ => check ref s!"capitals HTML {kind.name}: the boxed probe's lines ship" false
+  let broken : List (Ir.TitledKind × Nat × String × String) :=
+    [(.block, 0, "Body words here.", "Delta first title line"),
+     (.example, 1, "Third body words.", "Epsilon first title line")]
+  titleRuleHtmlChecks ref fonts "capitals" capitalsSource kinds broken
+  let unsized := capitalsSource.replace "\\setbeamerfont{block title example}{size=\\large}\n" ""
+  check ref "capitals HTML: the unsized probe differs from the probe" (unsized != capitalsSource)
+  titleRuleHtmlChecks ref fonts "capitals-unsized" unsized kinds broken
+  let flush := capitalsSource.replace "\\setlength{\\parskip}{4pt}\n" "\\setlength{\\parskip}{0pt}\n"
+  check ref "capitals HTML: the probe with no paragraph skip differs from the probe" (flush != capitalsSource)
+  titleRuleHtmlChecks ref fonts "capitals-flush" flush kinds broken
+  -- A rule reaching by its box beside the large title's rising rule.
+  let beside := capitalsSource.replace
+    "    \\box\\probe@box\\par\\nobreak\n  \\fi\n  \\usebeamerfont{block body example}"
+    ("    \\copy\\probe@box\\rlap{\\hskip 4pt\\vrule width 3pt height \\ht\\probe@box depth \\dp\\probe@box}" ++
+      "\\par\\nobreak\n  \\fi\n  \\usebeamerfont{block body example}")
+  check ref "capitals HTML: the probe with a box rule beside the large title differs" (beside != capitalsSource)
+  let (doc, _) := Elab.run "block-template-capitals-beside.tex" beside
+  let geom := Layout.Geom.ofPage doc.page
+  let cfg : HtmlDoc.Config := { blockTitleRule := Layout.blockTitleRule geom fonts doc.styles }
+  let (head, body, _) := HtmlDoc.emitTree cfg doc
+  let sheet := treeCssList "" (head.toList ++ body.toList)
+  let sel := "section.block-shaped.block-example > header"
+  let pad := ((cssRulesOf sheet sel).find? (hasStr · "padding-top")).getD ""
+  let boxRule := (cssRuleOf sheet s!"{sel}::after").getD ""
+  match lastStageTerm pad "padding-top" doc.page.height, lastStageTerm boxRule "top" doc.page.height with
+  | some rise, some top =>
+    check ref s!"capitals HTML: the box's rule stands from the box's top, the rise above it ({top} against {rise})"
+      (rise > 0 && (top - rise).natAbs ≤ (2 * doc.page.height / 100000 + 2).toNat)
+  | _, _ => check ref s!"capitals HTML: the box rule's place reads ({pad} / {boxRule})" false
 
 /-- A page's ink, as a comparison reads it: every line's place and letters,
 every fill's rectangle and colour. -/

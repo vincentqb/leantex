@@ -2375,20 +2375,30 @@ public def blockShapeCss (doc : Doc)
       left.getD "" ++ right.getD ""
     -- A rule reaching by the title's lines stands its offsets from the
     -- header's first and last line boxes, and keeps the room it takes above
-    -- and below the header; one beside the box, the box.
+    -- and below the header; one beside the box, the box. The rise TeX's line
+    -- absorbs differs for a title of one line and one the author breaks.
     let places := (edges .title).toList.filterMap fun e => titleRule k e.reach
     let room := (places.map (·.room)).foldl max 0
     let below := if room == 0 then between else s!"calc({between} + {len { width := .ofSp room }})"
-    let boxTop := match places.map (·.rise) with
-      | [] => inner
-      | r :: rs => s!"max({inner}, {len { width := .ofSp (rs.foldl max r) }})"
-    let titlePlace (e : Ir.BlockEdge) : String × String := match e.reach with
-      | .box => (peerGap, below)
+    let rise := (places.map (·.rise)).foldl max 0
+    let riseMany := (places.map (·.riseMany)).foldl max 0
+    let raised (base : String) (r : Int) : String :=
+      if r == 0 then base else s!"calc({base} + {len { width := .ofSp r }})"
+    let boxTop := raised inner rise
+    let titlePlace (r : Int) (e : Ir.BlockEdge) : String × String := match e.reach with
+      | .box => (raised peerGap r, below)
       | .lines .. =>
         let p := (titleRule k e.reach).getD default
-        (s!"calc({peerGap} + {boxTop} + {len { width := .ofSp p.top }})",
+        (s!"calc({peerGap} + {raised inner r} + {len { width := .ofSp p.top }})",
          s!"calc({below} + {len { width := .ofSp p.bottom }})")
-    let titleRules := boxRules .title s!"{sel} > header" titlePlace
+    let broken := s!"{sel} > header:has(br)"
+    let titleRules := boxRules .title s!"{sel} > header" (titlePlace rise) ++
+      (if riseMany == rise then "" else
+        s!"{broken} \{ padding-top: calc({peerGap} + {raised inner riseMany}); }\n" ++
+        String.join ([Ir.FlushSide.left, .right].filterMap fun side =>
+          ((edges .title).find? (·.side == side)).map fun e =>
+            let pseudo := if side == .left then "before" else "after"
+            s!"{broken}::{pseudo} \{ top: {(titlePlace riseMany e).1}; }\n"))
     let wholeRules := boxRules .whole sel fun _ => (s!"calc({before} + {peerGap})", after)
     -- The arm an untitled block takes where its template leaves the title
     -- out: its own skips, and — the body opening the box around it — the
@@ -2784,8 +2794,7 @@ private def readerAliases (pal : Ir.Palette) (roles : List Ir.Role) (taken : Lis
   let free (n : String) := !taken.contains ("--" ++ n) && !n.startsWith "ltx-"
   (roleNames.filter fun (n, r) => roles.contains r && !authored n && free n).map
       (fun (n, r) => s!"    --{n}: {roleRef r};") ++
-    (pal.colors.toList.filter fun (n, _) =>
-        !n.isEmpty && free n && n.all fun c => c.isAlphanum || c == '-' || c == '_').map
+    (pal.colors.toList.filter fun (n, _) => free n && (tokenVar? n).isSome).map
       fun (n, _) => s!"    --{n}: var({(Ir.ColorRef.color n).property});"
 
 /-- A stage length in the deck's unit, its share of the stage's height

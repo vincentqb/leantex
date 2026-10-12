@@ -7767,6 +7767,37 @@ private def RegionSpan.linkRect (s : RegionSpan) (lines : Array LineOut)
         target := target }
   | .surface _ _ _ _ _ | .edge .. => none
 
+/-- Where a rule reaching by its box's lines stands (`Ir.BlockReach.lines`),
+its top and bottom: TeX's rule on the box's baseline, its last line's, from
+the box's lines — its first line's TeX box top, `firstAbove` over its
+baseline `firstY`, to its last line's bottom, `lastBelow` under `lastY`
+(`LineOut.regionExtent`) — and `height` more above that baseline, to `depth`
+below it; nothing where that leaves no room. -/
+public def edgeLinesSpan (firstY firstAbove lastY lastBelow height depth : Int) :
+    Option (Int × Int) :=
+  let top := firstY - firstAbove - lastBelow - height
+  let bottom := lastY + depth
+  if bottom ≤ top then none else some (top, bottom)
+
+/-- **A rule its lines' half leading past them stands centred on the
+capitals** (`_exact`): beside lines whose TeX boxes reach a leading and `e`
+more from the first line's top to the last line's bottom — lines struts
+bound — a rule whose depth less its height is the leading less the cap
+height (`Ir.BlockMetric.halfLeading_centred_exact`) has its top and bottom
+summing to the first line's cap height and the last line's baseline, less
+`e`: its midpoint is the capitals' span's, in scaled points. -/
+public theorem edgeLinesSpan_centred_exact (firstY firstAbove lastY lastBelow height depth
+    lead cap e : Int) (hs : firstAbove + lastBelow = lead + e) (hr : depth - height = lead - cap)
+    (top bottom : Int)
+    (hf : edgeLinesSpan firstY firstAbove lastY lastBelow height depth = some (top, bottom)) :
+    top + bottom = (firstY - cap) + lastY - e := by
+  unfold edgeLinesSpan at hf
+  dsimp only at hf
+  split at hf
+  · cases hf
+  · simp only [Option.some.injEq, Prod.mk.injEq] at hf
+    omega
+
 /-- Surface extents are read after placement, including page/column breaks
 and vertical distribution: the box's lines (`LineOut.regionExtent`, TeX's
 box of each), its children's paint and the glue it ends on, `pad` beyond
@@ -7787,16 +7818,12 @@ private def RegionSpan.fill (s : RegionSpan) (lines : Array LineOut)
       let y := if anchored && s.first then b.y0 else b.y0 - pad
       { x := x, y := y, w := w, h := max 0 (b.y1 + s.tail + pad - y), color := color }
   | .edge color x w _ (some r) =>
-    -- TeX's rule on the box's baseline, its last line's: the box's lines,
-    -- its first line's TeX box top to its last line's bottom, and `height`
-    -- more above that baseline; `depth` below it.
     let lines := lines.extract s.lineStart s.lineEnd
     match lines[0]?, lines.back? with
     | some first, some last =>
-      let top := first.y - (first.regionExtent.getD (0, 0)).1 - (last.regionExtent.getD (0, 0)).2 -
-        r.height
-      let bottom := last.y + r.depth
-      if bottom ≤ top then none else some { x := x, y := top, w := w, h := bottom - top, color := color }
+      (edgeLinesSpan first.y (first.regionExtent.getD (0, 0)).1 last.y
+          (last.regionExtent.getD (0, 0)).2 r.height r.depth).map fun (top, bottom) =>
+        { x := x, y := top, w := w, h := bottom - top, color := color }
     | _, _ => none
   | .edge color x w inset none =>
     -- The box's own reach: its lines and what paints inside it. Another
@@ -13853,11 +13880,14 @@ its ascent and descent (`leadedBox`), one baseline `b` below the box's top.
 The rule reads the title's lines as TeX's box of them, which struts bound at
 both ends (`7/10` and `3/10` of the title's `\baselineskip` past its first
 and last baselines), so it stands `b` less its strut and its height below
-the first box's top, and its depth above the last box's bottom. Above the
-box's first strut it reaches its height and the last strut's depth, as
-TeX's line holding both does. Below a rule deeper than the box TeX spaces
-the next line by the interline rule from the rule's depth
-(`texBaselineGap`), which the header's room keeps, reading the next line as
+the first box's top, and its depth above the last box's bottom. Past the
+box's top — its first strut's, and the `\parskip` it opens on — the rule
+reaches its height and the last strut's depth, and TeX's line holding both
+stands that much taller: a title of several lines that much lower, and one
+of one line as much lower as the interline rule then places it
+(`texBaselineGap`), under a line of the body's face holding a descender.
+Below a rule deeper than the box TeX spaces the next line the same way from
+the rule's depth, which the header's room keeps, reading the next line as
 the body's face holding an ascender. -/
 public def blockTitleRule (geom : Geom) (fs : FontSet) (styles : Ir.Styles) (kind : TitledKind)
     (reach : Ir.BlockReach) : Option Ir.BlockTitlePlace :=
@@ -13880,10 +13910,20 @@ public def blockTitleRule (geom : Geom) (fs : FontSet) (styles : Ir.Styles) (kin
     let body := fs.get (fs.lookup 0 400 false)
     let next := scaledAt geom.fontSize body
       ((['b', 'd', 'f', 'h', 'k', 'l', 'H'].map body.charHeight).foldl max 0).toNat
+    let prev := scaledAt geom.fontSize body
+      ((['g', 'j', 'p', 'q', 'y'].map body.charDepth).foldl max 0).toNat
     let bs := Ir.leadingFor geom.fontSize geom.leading
     let dn := lead * 3 / 10
+    let inset := match Ir.blockShapeOf styles kind with
+      | some sh => if sh.title.parskip then (geom.parskip.resolve geom.fontSize xHeight).width else 0
+      | none => 0
+    let rise := max 0 (h + dn - inset)
+    let line := inset + lead * 7 / 10
     let room := texBaselineGap bs (max dn d) next - texBaselineGap bs dn next
-    some { top := b - lead - h, bottom := box - b - d, rise := h + dn, room := room }
+    some { top := b - lead - h, bottom := box - b - d
+           rise := texBaselineGap bs prev (line + rise) - texBaselineGap bs prev line
+           riseMany := texBaselineGap bs prev (line + lead + rise) - texBaselineGap bs prev (line + lead)
+           room := room }
 
 /-- A titled block's title colour box (beamerinnerthemedefault.sty, `block
 begin`), read at the block's epoch: a painted title is a colour box around

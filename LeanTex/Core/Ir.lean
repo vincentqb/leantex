@@ -8136,14 +8136,12 @@ public def BlockMetric.neg (m : BlockMetric) : BlockMetric :=
 /-- Half the leading the capitals leave, `(\baselineskip-\fontcharht\font`H)/2`. -/
 public def BlockMetric.halfLeading : BlockMetric := { lead := 500, cap := -500 }
 
-/-- **A rule half the capitals' leading short of its lines above and as far
-past them below is centred on the capitals** (`_exact`): its depth,
-`halfLeading`, less its height, `halfLeading` negated, is exactly the
-leading less the cap height, in integer arithmetic, whatever the two are.
-Over lines strutted at both ends, their box `\baselineskip` per line from
-the first strut's top to the last strut's bottom (`Ir.BlockReach.lines`),
-the rule's midpoint is then the midpoint of the span from the first line's
-cap height to the last line's baseline. -/
+/-- **Half the capitals' leading, as a rule's depth below its lines and its
+height short of them above, spans the leading less the cap height**
+(`_exact`): `halfLeading`'s resolution less its negation's is exactly the
+leading less the cap height, in integer arithmetic, whatever the two are —
+the premise `Layout.edgeLinesSpan_centred_exact` reads to stand such a rule
+centred on its lines' capitals. -/
 public theorem BlockMetric.halfLeading_centred_exact (lead cap : Int) :
     BlockMetric.halfLeading.resolve lead cap - BlockMetric.halfLeading.neg.resolve lead cap =
       lead - cap := by
@@ -8165,15 +8163,17 @@ public inductive BlockReach where
 
 /-- Where a web page stands a rule reaching by a block title's lines
 (`BlockReach.lines`) beside the header that sets the title: `top` below the
-header's first line box's top, `bottom` above its last line box's bottom,
-`rise` how far its line reaches past the title box's first strut's top —
-TeX's line holding box and rule stands taller wherever that passes the
-`\parskip` the box opens on — and `room`, how much further TeX spaces what
-follows where the rule stands deeper than the box. -/
+header's first line box's top and `bottom` above its last line box's bottom;
+`rise` and `riseMany`, how much lower TeX stands a title of one line and one
+of several, its line holding box and rule as tall as the rule wherever the
+rule passes the box's top, which the line's interline glue may absorb; and
+`room`, how much further TeX spaces what follows where the rule stands
+deeper than the box. -/
 public structure BlockTitlePlace where
   top : Int
   bottom : Int
   rise : Int
+  riseMany : Int
   room : Int
   deriving Repr, BEq, Inhabited
 

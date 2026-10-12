@@ -1201,13 +1201,21 @@ private def titleLine (kids : Array Node) : Except String (Bool × Option String
   match core.toList with
   | [.title f p] => .ok (false, f, p)
   | [.strut _, .title f p, .strut _] => .ok (true, f, p)
+  | [.strut _, .title _ _] | [.title _ _, .strut _] => .error "a title line strutted at one end only"
   | _ => .error "a title line holding more than the title and its struts"
+
+/-- Whether a title line's struts are set in its title's own font, as a rule
+reaching by its lines reads them. -/
+private def strutsInFont (kids : Array Node) : Bool :=
+  match (kids.filter (· != .whatsit)).toList with
+  | [.strut a, .title f _, .strut b] => a == f && b == f
+  | _ => true
 
 /-- What a box's vertical list holds: an optional title paragraph, then
 skips and the body (the box holding title and body), or the title alone
 (the title's box). -/
 private inductive Content where
-  | titleBox (strut parskip : Bool) (font : Option String) (paint : Option Paint)
+  | titleBox (strut parskip : Bool) (font : Option String) (paint : Option Paint) (strutFont : Bool)
   | whole (title : Option (Bool × Bool × Option String × Option Paint))
       (between : Array Ir.BlockSkip) (bodyParskip : Bool) (font : Option String)
       (paint : Option Paint) (after : Array Ir.BlockSkip)
@@ -1220,7 +1228,7 @@ private def boxContent (kids : Array Node) : Except String Content := Id.run do
   match items.toList with
   | [.line pk _ line] =>
     match titleLine line with
-    | .ok (st, f, p) => return .ok (.titleBox st pk f p)
+    | .ok (st, f, p) => return .ok (.titleBox st pk f p (strutsInFont line))
     | .error e => return .error e
   | _ =>
     let mut title : Option (Bool × Bool × Option String × Option Paint) := none
@@ -1250,12 +1258,14 @@ private def boxContent (kids : Array Node) : Except String Content := Id.run do
 nothing at all — a rule reading an emptied register has no height and draws
 nothing, as in TeX; or, beside the title's box, whose title is set in
 `title`'s font, whose list opens on a `\parskip` where `title`'s first flag
-says so and whose lines struts bound where its second does, the box's lines
-— its height and depth less that `\parskip` — and a metric in that font
-more above the box's baseline, and a metric below it. Lines no strut bounds
-stand as tall and as deep as their ink, which the page reads off its own
-lines and a web page's line boxes do not hold, so such a rule is refused. -/
-private def reachOf (id : Nat) (title : Option (Option String × Bool × Bool)) (h d : Option Dimen) :
+says so and whose lines struts in that font bound where its other two do,
+the box's lines — its height and depth less that `\parskip` — and a metric
+in that font more above the box's baseline, and a metric below it. Lines no
+strut of the title's font bounds stand as tall and as deep as their ink or
+that other font's strut, which the page reads off its own lines and a web
+page's line boxes do not hold, so such a rule is refused. -/
+private def reachOf (id : Nat) (title : Option (Option String × Bool × Bool × Bool))
+    (h d : Option Dimen) :
     Except String (Option Ir.BlockReach) :=
   match h, d with
   | some h, some d =>
@@ -1263,7 +1273,7 @@ private def reachOf (id : Nat) (title : Option (Option String × Bool × Bool)) 
     else if h == {} && d == {} then .ok none
     else match title with
       | none => .error "a rule whose height and depth are not its box's"
-      | some (font, parskip, strut) =>
+      | some (font, parskip, strut, strutFont) =>
         let metric (x : Dimen) : Option Ir.BlockMetric :=
           if x.line == 0 && x.len.em == 0 && x.len.ex == 0 && (!x.fonted || x.font == some font)
           then some { lead := x.lead, cap := x.cap, sp := x.len.sp } else none
@@ -1276,6 +1286,8 @@ private def reachOf (id : Nat) (title : Option (Option String × Bool × Bool)) 
             .error "a rule beside the title's box reading another skip than the one its list opens on"
           else if !strut then
             .error "a rule beside the title's box reaching by lines no strut bounds"
+          else if !strutFont then
+            .error "a rule beside the title's box reaching by lines struts of another font bound"
           else .ok (some (.lines mh md))
         | _, _ => .error "a rule beside the title's box measured in another font than its title's"
   | _, _ => .error "a rule running to its line"
@@ -1283,7 +1295,8 @@ private def reachOf (id : Nat) (title : Option (Option String × Bool × Bool)) 
 /-- The rules beside one box in its line: `\llap{…\vrule…\hskip S}` before
 it hangs left, `\vrule\hskip S` before it stands inside the line, and their
 mirrors after it. A rule reaches as `reachOf` reads it. -/
-private def edgesOf (span : Ir.BlockSpan) (id : Nat) (title : Option (Option String × Bool × Bool))
+private def edgesOf (span : Ir.BlockSpan) (id : Nat)
+    (title : Option (Option String × Bool × Bool × Bool))
     (hsize : Dimen) (lineHsize : Dimen) (before after : List Node) :
     Except String (Array EdgeRead) := Id.run do
   let lenOf (d : Dimen) : Except String Length :=
@@ -1376,8 +1389,8 @@ private def lowerArm (nodes : Array Node) : Except String Arm := Id.run do
         let after := (kids.extract (bi + 1) kids.size).toList
         match boxContent inner with
         | .error e => return .error e
-        | .ok (.titleBox st pk f p) =>
-          match edgesOf .title id (some (f, pk, st)) hsize lineHsize before after with
+        | .ok (.titleBox st pk f p sf) =>
+          match edgesOf .title id (some (f, pk, st, sf)) hsize lineHsize before after with
           | .error e => return .error e
           | .ok es =>
             seenTitle := true
