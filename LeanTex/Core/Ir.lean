@@ -8163,7 +8163,9 @@ public def blockSkipSum (tokens : Tokens) (skips : Array BlockSkip) : SymGlue :=
 
 /-- The box a template's rule stands beside: the title's own box
 (`\setbox\B\vbox{… \insertblocktitle …}`), or the box holding title and body
-(`\setbox\B\vbox\bgroup` in `block begin`, `\egroup` in `block end`). -/
+(`\setbox\B\vbox\bgroup` in `block begin`, `\egroup` in `block end`) — for a
+rule reaching by lines (`BlockReach.lines`), the block's lines, title and
+body, which the template measures in that box and sets back unboxed. -/
 public inductive BlockSpan where
   | title
   | whole
@@ -8208,7 +8210,10 @@ height and depth (`height \ht\B depth \dp\B`), its top to its bottom.
 height and depth less the `\parskip` its list opens on, from its first
 line's top to its last line's bottom — and `height` more above the box's
 baseline, its last line's, and `depth` below it, as TeX sets the rule on
-that baseline. -/
+that baseline. Beside the whole block (`BlockSpan.whole`), the rule stands
+its title's part so, and runs on from `depth` below the title's last
+baseline to `depth` below the block's last: the body's part, which the
+template stands on that baseline beside the body it measured. -/
 public inductive BlockReach where
   | box
   | lines (height depth : BlockMetric)
@@ -8219,15 +8224,21 @@ public inductive BlockReach where
 header's first line box's top and `bottom` above its last line box's bottom;
 `rise` and `riseMany`, how much lower TeX stands a title of one line and one
 of several, its line holding box and rule as tall as the rule wherever the
-rule passes the box's top, which the line's interline glue may absorb; and
+rule passes the box's top, which the line's interline glue may absorb;
 `room`, how much further TeX spaces what follows where the rule stands
-deeper than the box. -/
+deeper than the box; and `depth`, the rule's reach below a baseline, which a
+rule beside the whole block reaches below the block's last
+(`BlockSpan.whole`), and `bodyBelow`, the part of a body paragraph's line box
+below its baseline, from which such a rule stands where the block ends on a
+paragraph. -/
 public structure BlockTitlePlace where
   top : Int
   bottom : Int
   rise : Int
   riseMany : Int
   room : Int
+  depth : Int
+  bodyBelow : Int
   deriving Repr, BEq, Inhabited
 
 /-- A rule beside one of a block's boxes, as themes spell it
@@ -8254,6 +8265,12 @@ declared with. The page reads it so, and the stylesheet writes the same lookup
 as `var(--name, colour)`. -/
 public def BlockEdge.ink (e : BlockEdge) (pal : Palette) : Color :=
   (e.name.bind pal.lookup).getD e.color
+
+/-- A rule standing beside the title's box: one beside the title, or the
+title's part of one beside the whole block reaching by its lines, whose
+body's part runs on beside the body (`BlockReach.lines`). -/
+public def BlockEdge.besideTitle (e : BlockEdge) : Bool :=
+  e.span == .title || (e.span == .whole && e.reach matches .lines ..)
 
 /-- The title as a block template sets it. `boxed`: in a box of its own,
 `\hsize` wide, which TeX places in its list by the interline rule from the
@@ -11270,6 +11287,20 @@ end
 (`squeezeRole`), and so whether the overflow ladder squeezes a frame. -/
 public def holdsList (body : Array Block) : Bool :=
   foldBlocks (fun acc b => acc || b matches .list ..) (fun acc _ => acc) false body
+
+/-- The block whose lines end a body, in document order: the last block
+the fold reaches that sets lines of its own — a paragraph, a heading, a
+display, a listing, a picture, a rule, a table, an algorithm, a reference
+list — through the lists and wrappers around it. -/
+-- conserves: none — a lookup of the block a body ends on; nothing is rebuilt.
+public def lastLeafBlock (body : Array Block) : Option Block :=
+  foldBlocks (fun acc b => match b with
+    | .para .. | .section .. | .equation .. | .verbatim .. | .algorithm .. | .rule ..
+    | .picture .. | .table .. | .bibliography .. => some b
+    | .list .. | .center .. | .ragged .. | .spaced .. | .role .. | .link .. | .quote ..
+    | .abstract .. | .titled .. | .columns .. | .onSteps .. | .altSteps .. | .note ..
+    | .only .. | .nav .. | .logo .. | .pagebreak | .frame .. | .framefoot .. | .setPalette ..
+    | .setTokens .. | .float .. => acc) (fun acc _ => acc) none body
 
 /-- The events a context-threading walk declares. `foldBlock`'s pair of
 leaf functions is the case where no context descends and the way out is

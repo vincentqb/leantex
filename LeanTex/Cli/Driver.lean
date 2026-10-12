@@ -996,6 +996,9 @@ in the HTML" (← since t)
           -- A rule reaching by a block title's lines stands where the page
           -- stands it, over the same faces.
           blockTitleRule := Layout.blockTitleRule (Layout.Geom.ofPage doc.page) fs doc.styles
+          -- And a rule beside the whole block ends below the body's last
+          -- line where its line box reaches, over the same faces.
+          blockLastBelow := Layout.blockLastBelow (Layout.Geom.ofPage doc.page) fs
           cancelMetric := fun measures ss st spec body value =>
             Layout.cancelMetric (Layout.Geom.ofPage doc.page) fs ss st spec body value (some measures)
           mathEm := fun measures ss st =>

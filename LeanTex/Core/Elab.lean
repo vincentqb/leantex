@@ -15995,10 +15995,11 @@ private def blockShapeOf (ctx : Ctx) (src : String) (pos : Pos) : EM (Option Blo
               ok := false
               modify fun st' => { st' with
                 diags := st'.diags.push (Decl.unknownKey ctx.file "block edge" ek blockEdgeKeys pos) }
-        -- A reach read about the title's lines stands beside the title's box.
+        -- A reach read about the title's lines stands beside the title's box,
+        -- or beside the whole block from those lines to its last.
         let reach : Option BlockReach := match height, depth, span with
           | none, none, _ => some .box
-          | some a, some b, some .title => some (.lines a b)
+          | some a, some b, some _ => some (.lines a b)
           | _, _, _ => none
         match span, width, color, reach with
         | some sp, some w, some (c, n), some r =>
@@ -16010,7 +16011,7 @@ private def blockShapeOf (ctx : Ctx) (src : String) (pos : Pos) : EM (Option Blo
           sh := { sh with edges := sh.edges.push edge }
         | _, _, _, none =>
           ok := false
-          bad "an edge reaching by lines with no 'height' or 'depth', or beside the box holding title and body"
+          bad "an edge reaching by lines with no 'height' or 'depth'"
         | _, _, _, _ => ok := false; bad "an edge without its span, width or color"
       | _ =>
         ok := false
@@ -16020,6 +16021,12 @@ private def blockShapeOf (ctx : Ctx) (src : String) (pos : Pos) : EM (Option Blo
   if sh.edges.any (·.reach matches .lines ..) && !(sh.title.boxed && sh.title.strut) then
     ok := false
     bad "an edge reaching by lines beside a title that is not a box its struts bound"
+  -- A rule reaching by the block's lines hangs beside them, which stand
+  -- unboxed: no box holds title and body for it to stand beside or in.
+  if sh.edges.any (fun e => e.span == .whole && e.reach matches .lines ..) &&
+      (sh.whole.isSome || sh.edges.any fun e => e.span == .whole && e.reach matches .lines .. && !e.hang) then
+    ok := false
+    bad "an edge reaching by the block's lines inside its line or beside a box holding title and body"
   return if ok then some sh else none
 
 /-- The keys of one `slot = {...}` group in `\style{titlepage}`. A

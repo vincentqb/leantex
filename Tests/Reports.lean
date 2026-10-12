@@ -1484,7 +1484,13 @@ def reports : List Report := [
       thm% Listing.inlineCode_source_exact]
     accept := ["forty-five of the guard's assertions fail on the tree at ef5d2b87 before the fix: inline code named unknown in a paragraph, under a weight, a slant, a size and a colour, in a frame's footer, its title and a block's title; its sizes under minted's settings; a definition's parameters in its code; the one-line display command; a listing written where LaTeX cannot set it; a misspelt lexer; and the stylesheet's shrink of inline code",
       "a presentation deck whose footer writes inline code with minted's inline command, its inline size left to the text around it: the footer's code ships at the footer's size, its keywords painted and its other tokens in the footer's ink, in both artifacts, every word of the footer within four tenths of a point of where the deck's own lualatex build sets it"]
-    state := .guarded "ef5d2b87" .before .author }
+    state := .guarded "ef5d2b87" .before .author },
+  { id := "R164", date := "2026-10-12"
+    what := "A block template that sets the body in a box its begin half opens and its end half closes, puts the body back unboxed where it stood and stands the body's part of the title's rule on the last baseline — one rule beside the whole block — was not read, and its blocks set as beamer's default boxes; such a rule had no native spelling, no place on the page past the title's lines and none in the web page, and the template's own macros named losses of their own"
+    pins := [check% Tests.BlockTemplate.checks, thm% Layout.edgeLinesFrom_abuts_exact]
+    accept := ["forty-two assertions fail on the tree before the fix and hold after, over an invented probe of four frames — paragraphs, a list, a display alignment, a large title, a picture, an untitled block, a title alone and a listing: the template named and its blocks set as beamer's default boxes, no rule beside its nine titled blocks and their lines away from the reference engine's, the native spelling of a rule beside the whole block unread or refused for another reading, six templates that would move a line or the rule refused for other readings than their own, and the template's own macros naming losses at their definitions; on this tree each rule is one, within 0.002 points of the reference engine's from 9.569 points above its title's first baseline to its depth below the block's last, every line where the title's rule alone leaves it, and in Chromium the web page's rule ends within a device pixel of the PDF's",
+      "a presentation deck whose theme runs its block rules over the whole block ships them so in both artifacts, as its lualatex build does, every one of its lines where the title-only rule left it"]
+    state := .guarded "bcfef652" .before .author }
 ]
 
 /-- The reports guarded but never seen failing: a count that may fall and

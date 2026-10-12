@@ -994,6 +994,11 @@ public structure LineOut where
   /-- A collected picture label's occurrence and glyph reserve, carried
   with its baseline through fitting, page movement and furniture. -/
   pictureLabel : Option LabelAudit.Stamp := none
+  /-- How far below its own baseline the line's last baseline stands: a
+  display alignment's rows are one line here, where TeX sets each row as a
+  line of its own and the list after the display stands on the last
+  (`alignRowMark`). Zero for every other line. -/
+  lastBase : Sp := 0
   deriving Repr, Inhabited
 
 /-- A filled rectangle behind a page's text: the page background, a frame
@@ -3861,6 +3866,12 @@ private def raiseItems (delta : Sp) (items : Array Item) : Array Item :=
     | .pen w c f i col g => .pen w c f i col g
     | .img s w h => .img s w h
 
+/-- The mark a display alignment leaves at its last row's baseline, `raise`
+from the line's: a rule of no width and no thickness, which paints nothing
+and reaches no further than the row's own ink. The line reads it
+(`LineOut.lastBase`) and drops it, as it drops every rule of no width. -/
+private def alignRowMark (raise : Sp) (color : Ir.Color) : Item := .rule 0 0 raise color
+
 /-- An invisible construction box reserves the declared reach directly.
 No one-sp font run or inherited leading is added to those bounds. -/
 private def struts (e : MathEnv) (top bot : Sp) : Array Item :=
@@ -4016,7 +4027,12 @@ private def gridAssemble (e : MathEnv) (size raise : Sp) (kind : Math.GridKind)
   | .small =>
     let thin := mathKern e size (muAt size 3)
     return (#[thin] ++ items).push thin
-  | .array _ _ | .align | .aligned _ | .gather => return items
+  | .align | .gather =>
+    -- A display alignment's last row is the list's last line, as TeX sets
+    -- each row as a line of its own: its baseline rides the line
+    -- (`alignRowMark`, `LineOut.lastBase`).
+    return items.push (alignRowMark (Δ + ys[cells.size - 1]!) e.color)
+  | .array _ _ | .aligned _ => return items
 
 /-- Assemble a laid fraction (TeXbook Appendix G rule 15 over the MATH
 constants): numerator shifted up, denominator shifted down, and plain TeX's
@@ -7653,10 +7669,14 @@ private structure NoteBlock where
 
 /-- A rule's reach about its box's lines (`Ir.BlockReach.lines`), its
 metrics resolved in the title's font: `height` past the box's lines above
-the box's baseline, its last line's, and `depth` below it. -/
+the box's baseline, its last line's, and `depth` below it. A `continued`
+rule is the body's part of a rule beside the whole block: from `height`
+below the line above it, the title's last, to `depth` below its own last
+baseline (`edgeLinesFrom`). -/
 private structure EdgeReach where
   height : Sp
   depth : Sp
+  continued : Bool := false
 
 /-- A block link, or a painted colour box: beamer's `beamercolorbox`, whose
 paint reaches `pad` beyond its lines (`Ir.titledPadding`) above, below and
@@ -7687,6 +7707,40 @@ private structure RegionStart where
   fills : Nat
   inks : Nat
 
+/-- The baseline a list ends on, as TeX's `\prevdepth` reads it — the
+cursor where the list closes — tied to the element beside which it was
+read, the page's last line or its last picture where that stands lower, so
+the page's shrink and distribution, which move each element rigidly, carry
+it: the element's index and the baseline's offset from its line, or from
+its picture's origin. -/
+private inductive BaseAnchor where
+  | line (i : Nat) (offset : Sp)
+  | ink (i : Nat) (offset : Sp)
+
+private def BaseAnchor.read (p : PageOut) (y : Sp) : Option BaseAnchor :=
+  let inkBottom (k : InkOut) : Sp := k.claims.foldl (fun m b => max m b.2.2) k.place.dy
+  -- The cursor on a line's baseline stands on the line's last: a display
+  -- alignment's last row (`LineOut.lastBase`).
+  let onLine (l : LineOut) : Sp := y - l.y + (if l.y == y then l.lastBase else 0)
+  match p.lines.back?, p.inks.back? with
+  | some l, some k =>
+    if l.y != y && l.y < inkBottom k then some (.ink (p.inks.size - 1) (y - k.place.dy))
+    else some (.line (p.lines.size - 1) (onLine l))
+  | some l, none => some (.line (p.lines.size - 1) (onLine l))
+  | none, some k => some (.ink (p.inks.size - 1) (y - k.place.dy))
+  | none, none => none
+
+private def BaseAnchor.afterPage (a : BaseAnchor) (p : PageOut) : BaseAnchor :=
+  match a with
+  | .line i o => .line (p.lines.size + i) o
+  | .ink i o => .ink (p.inks.size + i) o
+
+private def BaseAnchor.y (a : BaseAnchor) (lines : Array LineOut) (inks : Array InkOut) :
+    Option Sp :=
+  match a with
+  | .line i o => (lines[i]?).map (·.y + o)
+  | .ink i o => (inks[i]?).map (·.place.dy + o)
+
 private structure RegionSpan where
   kind : RegionKind
   depth : Nat
@@ -7700,12 +7754,16 @@ private structure RegionSpan where
   fillEnd : Nat
   inkStart : Nat
   inkEnd : Nat
+  /-- The baseline its list closed on, where it closed in the flow. -/
+  base : Option BaseAnchor := none
 
-private def RegionStart.close (s : RegionStart) (p : PageOut) (tail : Sp := 0) : RegionSpan :=
+private def RegionStart.close (s : RegionStart) (p : PageOut) (tail : Sp := 0)
+    (base : Option Sp := none) : RegionSpan :=
   { kind := s.kind, depth := s.depth, first := s.first, tail := tail
     lineStart := s.lines, lineEnd := p.lines.size
     fillStart := s.fills, fillEnd := p.fills.size
-    inkStart := s.inks, inkEnd := p.inks.size }
+    inkStart := s.inks, inkEnd := p.inks.size
+    base := base.bind (BaseAnchor.read p) }
 
 private def RegionStart.nextPage (s : RegionStart) : RegionStart :=
   { s with lines := 0, fills := 0, inks := 0, first := false, begun := false }
@@ -7803,6 +7861,52 @@ public theorem edgeLinesSpan_centred_exact (firstY firstAbove lastY lastBelow he
   · simp only [Option.some.injEq, Prod.mk.injEq] at hf
     omega
 
+/-- Where the body's part of a rule beside the whole block stands
+(`Ir.BlockSpan.whole`, `EdgeReach.continued`), its top and bottom: from
+`height` below the baseline above it, the title's last, `aboveY`, to `depth`
+below the block's last baseline, `lastY`, as the template stands it on that
+baseline; nothing where that leaves no room. -/
+public def edgeLinesFrom (aboveY lastY height depth : Int) : Option (Int × Int) :=
+  let top := aboveY + height
+  let bottom := lastY + depth
+  if bottom ≤ top then none else some (top, bottom)
+
+/-- **A rule beside the whole block is one rule** (`_exact`): its title's
+part, standing `depth` below the title's last baseline (`edgeLinesSpan`),
+ends where its body's part, from `depth` below that baseline, begins
+(`edgeLinesFrom`), so the two run from the title's part's top to `depth`
+below the block's last baseline with nothing between them. -/
+public theorem edgeLinesFrom_abuts_exact (firstY firstAbove titleY titleBelow lastY height depth
+    t1 b1 t2 b2 : Int)
+    (h1 : edgeLinesSpan firstY firstAbove titleY titleBelow height depth = some (t1, b1))
+    (h2 : edgeLinesFrom titleY lastY depth depth = some (t2, b2)) :
+    b1 = t2 ∧ b2 = lastY + depth := by
+  unfold edgeLinesSpan at h1
+  unfold edgeLinesFrom at h2
+  dsimp only at h1 h2
+  split at h1
+  · cases h1
+  · split at h2
+    · cases h2
+    · simp only [Option.some.injEq, Prod.mk.injEq] at h1 h2
+      omega
+
+/-- The body's part of a rule beside the whole block
+(`EdgeReach.continued`). -/
+private def RegionSpan.continuesRule (s : RegionSpan) : Bool :=
+  match s.kind with
+  | .edge _ _ _ _ (some r) => r.continued
+  | _ => false
+
+/-- The baseline a region's list ends on: where it closed in the flow
+(`BaseAnchor`), or, on a page it continues past, its lowest line's. -/
+private def RegionSpan.lastBaseline (s : RegionSpan) (lines : Array LineOut)
+    (inks : Array InkOut) : Option Sp :=
+  match s.base with
+  | some a => a.y lines inks
+  | none => (lines.extract s.lineStart s.lineEnd).foldl
+      (fun m (l : LineOut) => some (max (m.getD l.y) l.y)) none
+
 /-- Surface extents are read after placement, including page/column breaks
 and vertical distribution: the box's lines (`LineOut.regionExtent`, TeX's
 box of each), its children's paint and the glue it ends on, `pad` beyond
@@ -7813,8 +7917,11 @@ private def RegionSpan.fill (s : RegionSpan) (lines : Array LineOut)
   match s.kind with
   | .link _ => none
   | .surface color pad x w anchored =>
+    -- The body's part of a rule beside a whole block inside the box stands
+    -- in a box of no size, as TeX's does, and grows it nowhere.
     let box := children.foldl (fun box (child, f) =>
-      if s.depth < child.depth && s.lineStart ≤ child.lineStart && child.lineEnd ≤ s.lineEnd &&
+      if s.depth < child.depth && !child.continuesRule &&
+          s.lineStart ≤ child.lineStart && child.lineEnd ≤ s.lineEnd &&
           s.fillStart ≤ child.fillStart && child.fillEnd ≤ s.fillEnd &&
           s.inkStart ≤ child.inkStart && child.inkEnd ≤ s.inkEnd then
         addRegionBox box f.x f.y (f.x + f.w) (f.y + f.h)
@@ -7823,6 +7930,20 @@ private def RegionSpan.fill (s : RegionSpan) (lines : Array LineOut)
       let y := if anchored && s.first then b.y0 else b.y0 - pad
       { x := x, y := y, w := w, h := max 0 (b.y1 + s.tail + pad - y), color := color }
   | .edge color x w _ (some r) =>
+    if r.continued then
+      -- The body's part: from below the line above it, the title's last,
+      -- where the fragment holds the region's opening; else from its own
+      -- first line's top.
+      let start : Option (Sp × Sp) :=
+        if s.first && 0 < s.lineStart then (lines[s.lineStart - 1]?).map fun l => (l.y, r.height)
+        else (lines.extract s.lineStart s.lineEnd)[0]?.map fun l =>
+          (l.y - (l.regionExtent.getD (0, 0)).1, 0)
+      match start, s.lastBaseline lines inks with
+      | some (y, height), some last =>
+        (edgeLinesFrom y last height r.depth).map fun (top, bottom) =>
+          { x := x, y := top, w := w, h := bottom - top, color := color }
+      | _, _ => none
+    else
     let lines := lines.extract s.lineStart s.lineEnd
     match lines[0]?, lines.back? with
     | some first, some last =>
@@ -7862,6 +7983,25 @@ private def regionFills (spans : Array RegionSpan) (lines : Array LineOut)
     match span.fill lines fills inks out with
     | some fill => out.push (span, fill)
     | none => out) #[]
+
+/-- `s` is the body's part of the rule whose title's part is `t`: a rule of
+one colour and column, opened where `t` closed, beside the same list. -/
+private def RegionSpan.continues (s t : RegionSpan) : Bool :=
+  s.depth == t.depth && t.lineEnd == s.lineStart && match s.kind, t.kind with
+  | .edge c x w _ (some r), .edge c' x' w' _ (some r') =>
+    r.continued && !r'.continued && c == c' && x == x' && w == w'
+  | _, _ => false
+
+/-- **A rule beside the whole block ships as one rule**: its body's part
+joins the title's part it continues, whose bottom is its top
+(`edgeLinesFrom_abuts_exact`), so the page paints one rectangle from the
+title's capitals to the block's last baseline, never two that meet. -/
+private def joinRuleParts (fills : Array (RegionSpan × Fill)) : Array (RegionSpan × Fill) :=
+  fills.filterMap fun (s, f) =>
+    if s.continuesRule && fills.any (fun (t, g) => s.continues t && g.y + g.h == f.y) then none
+    else match fills.find? (fun (b, g) => b.continues s && f.y + f.h == g.y) with
+      | some (_, g) => some (s, { f with h := g.y + g.h - f.y })
+      | none => some (s, f)
 
 /-- The lowest y body ink may reach on a page carrying `h` of note ink:
 the note block and the `\skip\footins` gap above it come out of the text
@@ -8550,8 +8690,10 @@ paint, after shrink and before distributing the remaining space. -/
 private def Spacing.Page.surfaceEnd (b : B) (lines : Array LineOut)
     (fills : Array Fill) (inks : Array InkOut) : Option Sp :=
   let spans := b.closedRegions ++ b.openRegions.map (fun start => start.close b.cur)
-  (regionFills spans lines fills inks).foldl (fun edge (_, f) =>
-    some (max (edge.getD (f.y + f.h)) (f.y + f.h))) none
+  -- The body's part of a rule beside the whole block stands where TeX's
+  -- box of no size holds it, and holds no room of the page's.
+  (regionFills spans lines fills inks).foldl (fun edge (s, f) =>
+    if s.continuesRule then edge else some (max (edge.getD (f.y + f.h)) (f.y + f.h))) none
 
 /-- How a frame names itself in a diagnostic: by its label
 (`Ir.Doc.frameLabels`), else as a frame. -/
@@ -8731,7 +8873,7 @@ private def Spacing.Page.finishPage (b : B) (owed : Sp := 0) (flush : Bool := fa
   let spans := b.closedRegions ++ openSpans
   let links := spans.filterMap fun span => span.linkRect lines bodyFills inks
   -- Outer grounds precede inner ones; all precede the content they enclose.
-  let surfaces := (regionFills spans lines bodyFills inks).reverse.map (·.2)
+  let surfaces := (joinRuleParts (regionFills spans lines bodyFills inks)).reverse.map (·.2)
   let fills := surfaces ++ bodyFills ++ footerFills
   let fills := match effectivePageGround b.pageBg b.docBg with
     | some c => #[b.geom.ground c] ++ fills
@@ -9952,6 +10094,15 @@ private def Spacing.Page.placeLine (fs : FontSet) (b : B) (x : Sp) (size : Sp) (
     | none => strut
   let tex := lineStrutInk strut ink
   let rl := ruleOnly segs
+  -- A display alignment's last row's baseline, from the mark its grid
+  -- leaves there (`alignRowMark`).
+  let lastBase : Sp := match display with
+    | some dj =>
+      if !dj.ctx.align then 0 else
+      segs.foldl (fun m s => match s with
+        | .rule 0 0 raise _ => max m (-raise)
+        | _ => m) 0
+    | none => 0
   -- A zero-width rule is a strut: it shaped the extent above and ships no
   -- ink — kept, a degenerate rect rasterizes as a hairline in some viewers.
   let segs := segs.filter fun s => match s with
@@ -9966,7 +10117,8 @@ private def Spacing.Page.placeLine (fs : FontSet) (b : B) (x : Sp) (size : Sp) (
   let mk (y : Sp) : LineOut :=
     { x := x, y := y, size := size, segs := segs, setWidth := w
       regionExtent := some tex
-      hang := hang, expand := expand, counted := counted, leaf := leaf, anchors := anchors }
+      hang := hang, expand := expand, counted := counted, leaf := leaf, anchors := anchors
+      lastBase := lastBase }
   let lead := Ir.stepSkip stepLead (if size == 0 then b.geom.fontSize else size)
     b.geom.leading
   -- The distance from the band above: TeX's interline glue on either side
@@ -14494,7 +14646,29 @@ public def blockTitleRule (geom : Geom) (fs : FontSet) (styles : Ir.Styles) (kin
     some { top := b - lead - h, bottom := box - b - d
            rise := texBaselineGap bs prev (line + rise) - texBaselineGap bs prev line
            riseMany := texBaselineGap bs prev (line + lead + rise) - texBaselineGap bs prev (line + lead)
-           room := room }
+           room := room, depth := d
+           bodyBelow := (leaded body geom.fontSize).2 }
+
+/-- **Where a web page's block ends its last line, where it ends on no
+paragraph** (`HtmlDoc.Config.blockLastBelow`): the part below its baseline
+of the line box the last line of the block's last block (`Ir.lastLeafBlock`)
+stands in, CSS 2.1 §10.8.1's — a listing's, its mono face at its step's
+size leaded at the line height the stylesheet declares for it, its pitch
+over that size to the thousandth. A block ending on anything else ends as a
+body paragraph does (`Ir.BlockTitlePlace.bodyBelow`): nothing here. -/
+public def blockLastBelow (geom : Geom) (fs : FontSet) (b : Option Ir.Block) : Option Sp :=
+  match b with
+  | some (.verbatim _ _ spec) =>
+    match spec.fontSize with
+    | .size n =>
+      let size := geom.fontSize * ((geom.scale.lookup n).getD 1000 : Int) / 1000
+      let pitch := Ir.stepSkip (Ir.stepLead geom.skips n geom.fontSize) geom.fontSize
+        geom.leading - spec.lineOverlap
+      let mono := fs.get (fs.lookup 2 400 false)
+      some (leadedBox (scaledAt size mono mono.ascent.toNat) (scaledAt size mono (-mono.descent).toNat)
+        (pitch * 1000 / max size 1 * size / 1000)).2
+    | _ => none
+  | _ => none
 
 /-- A titled block's title colour box (beamerinnerthemedefault.sty, `block
 begin`), read at the block's epoch: a painted title is a colour box around
@@ -14587,6 +14761,11 @@ private def collectBoxOpen (r : Rd) (a : Acc) (title : Array Inline) (indent : S
         (Ir.tcbBoxsep + Ir.tcbTop)
   ({ a with measure := some (measure - Ir.tcbInset) }, indent + Ir.tcbInset)
 
+/-- Whether a block in its template sets its title's paragraph: a title it
+shows, or an empty one its box or struts hold. -/
+private def shapedSetsTitle (shape : Ir.BlockShape) (titled : Bool) : Bool :=
+  shape.showsTitle titled && (titled || shape.title.boxed || shape.title.strut)
+
 /-- A block in its kind's template (`Ir.BlockShape`, beamer's `block begin`
 and `block end` as `BlockTemplate.read` read them), opened: the skips above
 in the arm the block takes (`Ir.BlockShape.skipsAbove`); the rules beside
@@ -14605,8 +14784,10 @@ spends no `\parskip` — with no box, no line at all. Then the arm's skips
 between, and the body's opening:
 an untitled body opening the box around it stands those skips inside that
 box. A rule stands `sep` beside its box and `width` wide; one inside the
-line moves its box in by both. Returns the opened state, the body's indent
-and its measure. -/
+line moves its box in by both. A rule beside the whole block reaching by its
+lines stands its title's part beside the title's box, as a rule beside the
+title does, and opens its body's part where that closes (`EdgeReach.continued`).
+Returns the opened state, the body's indent and its measure. -/
 private def collectShapedOpen (r : Rd) (a : Acc) (kind : TitledKind) (shape : Ir.BlockShape)
     (title : Array Inline) (body : Array Block) (indent : Sp) : Acc × Sp × Sp :=
   let measure := a.measure.getD r.geom.textWidth
@@ -14617,10 +14798,9 @@ private def collectShapedOpen (r : Rd) (a : Acc) (kind : TitledKind) (shape : Ir
   let titleL := len (shape.inset .title .left)
   let titleR := len (shape.inset .title .right)
   let titled := !title.isEmpty
-  let showTitle := shape.showsTitle titled
   -- An empty title with no box of its own sets a paragraph only where
   -- struts stand in it.
-  let setsTitle := showTitle && (titled || shape.title.boxed || shape.title.strut)
+  let setsTitle := shapedSetsTitle shape titled
   let font := Ir.blockTitleFont r.styles kind
   let titleLeading := titleLeading r font
   let titleCap := (titleMetricsIn r.geom r.fs r.xHeight font).2
@@ -14632,7 +14812,7 @@ private def collectShapedOpen (r : Rd) (a : Acc) (kind : TitledKind) (shape : Ir
     | .box => none
   -- The room the rules beside the title's box reach past it.
   let titleReach : Option (Sp × Sp) :=
-    (shape.edges.filter (·.span == .title)).foldl (fun acc e =>
+    (shape.edges.filter (·.besideTitle)).foldl (fun acc e =>
       match reachOf e, acc with
       | some q, some (u, d) => some (max u q.height, max d q.depth)
       | some q, none => some (q.height, q.depth)
@@ -14650,22 +14830,24 @@ private def collectShapedOpen (r : Rd) (a : Acc) (kind : TitledKind) (shape : Ir
   let tx1 := wx1 - titleR
   let ruleX (e : Ir.BlockEdge) (x0 x1 : Sp) : Sp :=
     if e.side == .left then x0 - len e.sep - len e.width else x1 + len e.sep
-  let opens (a : Acc) (span : Ir.BlockSpan) (x0 x1 inset : Sp) : Acc :=
+  let opens (a : Acc) (beside : Ir.BlockEdge → Bool) (x0 x1 inset : Sp) : Acc :=
     shape.edges.foldl (fun a e =>
-      if e.span == span then
+      if beside e then
         a.pushOp (.regionOpen (.edge (r.shown (e.ink a.pal)) (ruleX e x0 x1) (len e.width) inset
           (reachOf e)))
       else a) a
-  let closes (a : Acc) (span : Ir.BlockSpan) : Acc :=
-    shape.edges.foldl (fun a e => if e.span == span then a.pushOp .regionClose else a) a
+  let closes (a : Acc) (beside : Ir.BlockEdge → Bool) : Acc :=
+    shape.edges.foldl (fun a e => if beside e then a.pushOp .regionClose else a) a
+  let besideWhole (e : Ir.BlockEdge) : Bool := e.span == .whole && !e.besideTitle
   let above := r.resolve (Ir.blockSkipSum a.tokens (shape.skipsAbove titled))
   let a := { a.vskip above with wantDefault := !a.frameTop }
-  let a := if shape.whole.isSome then opens (a.flushGap r) .whole wx0 wx1 wholeInset else a
+  let a := if shape.whole.isSome then opens (a.flushGap r) besideWhole wx0 wx1 wholeInset else a
   let a := if !setsTitle then a else
     let look := Ir.titledLook a.pal kind
     let titleInk := look.fg
     let saved := a.fg
-    let a := if shape.title.boxed then opens (a.flushGap r) .title tx0 tx1 titleInset else a
+    let a := if shape.title.boxed then opens (a.flushGap r) (·.besideTitle) tx0 tx1 titleInset
+      else a
     let (ti, tm) := if shape.title.boxed then (tx0, tx1) else (wx0, wx1)
     let a := { a with fg := r.shown titleInk, measure := some (tm - r.geom.hmargin) }
     let (a, leaf) := a.leafRange (leafCount title)
@@ -14683,7 +14865,14 @@ private def collectShapedOpen (r : Rd) (a : Acc) (kind : TitledKind) (shape : Ir
     let a := collectDisplay r a shown (ti - r.geom.hmargin) false r.geom.fontSize
       (baseStyle := { weight := .b }) (leaf := leaf) (span := leafCount title)
       (strut := strut) (texBox := texBox)
-    let a := if shape.title.boxed then closes a .title else a
+    let a := if shape.title.boxed then closes a (·.besideTitle) else a
+    -- A rule beside the whole block runs on beside the body, from `depth`
+    -- below the title's last baseline (`edgeLinesFrom`).
+    let a := shape.edges.foldl (fun a e => match e.span, reachOf e with
+      | .whole, some q =>
+        a.pushOp (.regionOpen (.edge (r.shown (e.ink a.pal)) (ruleX e tx0 tx1) (len e.width) 0
+          (some { height := q.depth, depth := q.depth, continued := true })))
+      | _, _ => a) a
     ({ a with fg := saved, measure := some measure } : Acc).wantGap
   -- An untitled body opens the box the template sets around it: the line
   -- holding the box spent the page's `\parskip` where the box opened, and
@@ -14699,13 +14888,19 @@ private def collectShapedOpen (r : Rd) (a : Acc) (kind : TitledKind) (shape : Ir
     else (a.vskip between).wantGap
   (a, wx0 - r.geom.hmargin, wx1 - r.geom.hmargin)
 
-/-- The template's close: the rules beside the box holding title and body
-close after the glue the body ends on, which the box keeps, and the skips
-below follow; a paragraph after them spends its own `\parskip`. -/
-private def collectShapedClose (r : Rd) (done : Acc) (shape : Ir.BlockShape) : Acc :=
+/-- The template's close: the body's part of a rule beside the whole block
+closes on the body's last baseline, before the glue the body ends on, which
+the template sets back after it; the rules beside the box holding title and
+body close after that glue, which the box keeps, and the skips below follow;
+a paragraph after them spends its own `\parskip`. -/
+private def collectShapedClose (r : Rd) (done : Acc) (shape : Ir.BlockShape) (titled : Bool) :
+    Acc :=
   let done := { done with boxOpener := none }
+  let done := if !shapedSetsTitle shape titled then done else
+    shape.edges.foldl (fun d e =>
+      if e.span == .whole && e.reach matches .lines .. then d.pushOp .regionClose else d) done
   let done := if shape.whole.isNone then done else
-    shape.edges.foldl (fun d e => if e.span == .whole then d.pushOp .regionClose else d)
+    shape.edges.foldl (fun d e => if e.span == .whole && !e.besideTitle then d.pushOp .regionClose else d)
       ({ done with wantDefault := false }.flushGap r)
   done.vskip (r.resolve (Ir.blockSkipSum done.tokens shape.after))
 
@@ -15466,7 +15661,7 @@ private def collectBlock (r : Rd) (a : Acc)
         fg := r.shown ink, measure := some bodyMeasure
         bodyInk := some (role, look.fg.getD inherited.2) }
       let done := collectBlocks r inner body bodyIndent
-      (restore (collectShapedClose r done shape))
+      (restore (collectShapedClose r done shape !title.isEmpty))
     | none =>
     -- beamerinnerthemedefault.sty's `block begin`/`block end`: two colour
     -- boxes, the text on the measure and the paint `pad` beyond it.
@@ -18150,7 +18345,7 @@ and cursor depend on measuring the surface; page, census and frame
 projections can read the remaining fields directly. -/
 private def Spacing.Page.closeRegion (fs : FontSet) (b : B) : B :=
   let closing := b.openRegions.back?.map fun start =>
-    let span := start.close b.cur b.skip.width
+    let span := start.close b.cur b.skip.width b.y
     let empty := span.lineStart == span.lineEnd && span.fillStart == span.fillEnd &&
       span.inkStart == span.inkEnd
     let regions := if empty then b.closedRegions else b.closedRegions.push span
@@ -19442,7 +19637,8 @@ private def mergeColumnPages (g : Geom) (first : Nat)
 private def RegionSpan.afterPage (s : RegionSpan) (p : PageOut) : RegionSpan :=
   { s with lineStart := p.lines.size + s.lineStart, lineEnd := p.lines.size + s.lineEnd
            fillStart := p.fills.size + s.fillStart, fillEnd := p.fills.size + s.fillEnd
-           inkStart := p.inks.size + s.inkStart, inkEnd := p.inks.size + s.inkEnd }
+           inkStart := p.inks.size + s.inkStart, inkEnd := p.inks.size + s.inkEnd
+           base := s.base.map (·.afterPage p) }
 
 /-- Two unfinished columns on the same page retain their line ledgers
 and link ranges. Clearance, leading and measured lower bounds survive

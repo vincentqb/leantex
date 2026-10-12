@@ -201,6 +201,13 @@ skips the same places (`Ir.FillView.deck`). -/
   nothing — a caller with no font environment stands the rule on the
   header's lines. -/
   blockTitleRule : Ir.TitledKind → Ir.BlockReach → Option Ir.BlockTitlePlace := fun _ _ => none
+  /-- The part below its baseline of the line box a block's last line stands
+  in, where the block ends on no paragraph (`Layout.blockLastBelow`), from
+  the driver, over the faces the page reads: a rule beside the whole block
+  ends that much less its depth above the block's content's end
+  (`Ir.BlockSpan.whole`). The default answers nothing — the block ends as
+  a body paragraph does (`Ir.BlockTitlePlace.bodyBelow`). -/
+  blockLastBelow : Option Ir.Block → Option Int := fun _ => none
   /-- Measured cancellation in the resolved surrounding text style, supplied
   by the same font environment and assembly as the native backend. -/
   cancelMetric : MeasureValues → Array Ir.Style → Math.MathStyle → Math.CancelSpec →
@@ -2388,7 +2395,12 @@ no height beside no rule, its line one line of the page; a title with no box
 spends its line's `\parskip` once, and empty without struts sets nothing.
 Lengths keep their font-relative units: neither box sets a size of its own,
 so an `em` is the body's, the font the template's rule is read in. A shaped
-block's body keeps the page's `\parskip` (`blockRules`). -/
+block's body keeps the page's `\parskip` (`blockRules`). A rule beside the
+whole block reaching by its lines (`Ir.BlockSpan.whole`) is the section's,
+from its title's part's top below the header's first line box to its depth
+below the body's last baseline, read off the section's end: its last line
+box's part below that baseline, a body paragraph's unless the section says
+otherwise (`--block-last-below`); an untitled block draws none. -/
 public def blockShapeCss (doc : Doc)
     (titleRule : Ir.TitledKind → Ir.BlockReach → Option Ir.BlockTitlePlace := fun _ _ => none) :
     String :=
@@ -2414,7 +2426,11 @@ public def blockShapeCss (doc : Doc)
     let before := skips sh.before
     let after := skips sh.after
     let between := skips sh.between
-    let edges (span : Ir.BlockSpan) := sh.edges.filter (·.span == span)
+    -- A rule beside the whole block reaching by its lines stands beside no
+    -- box of its own: its title's part beside the header, its body's beside
+    -- the body, one rule the section draws.
+    let edges (span : Ir.BlockSpan) := sh.edges.filter fun e =>
+      e.span == span && (span == .title || !e.besideTitle)
     let boxRules (span : Ir.BlockSpan) (box : String) (place : Ir.BlockEdge → String × String) :
         String :=
       let es := edges span
@@ -2431,7 +2447,7 @@ public def blockShapeCss (doc : Doc)
     -- header's first and last line boxes, and keeps the room it takes above
     -- and below the header; one beside the box, the box. The rise TeX's line
     -- absorbs differs for a title of one line and one the author breaks.
-    let places := (edges .title).toList.filterMap fun e => titleRule k e.reach
+    let places := (sh.edges.filter (·.besideTitle)).toList.filterMap fun e => titleRule k e.reach
     let room := (places.map (·.room)).foldl max 0
     let below := if room == 0 then between else s!"calc({between} + {len { width := .ofSp room }})"
     let rise := (places.map (·.rise)).foldl max 0
@@ -2454,6 +2470,28 @@ public def blockShapeCss (doc : Doc)
             let pseudo := if side == .left then "before" else "after"
             s!"{broken}::{pseudo} \{ top: {(titlePlace riseMany e).1}; }\n"))
     let wholeRules := boxRules .whole sel fun _ => (s!"calc({before} + {peerGap})", after)
+    -- A rule beside the whole block reaching by its lines is the section's:
+    -- from its title's part's top, where a rule beside the title stands it
+    -- below the header's first line box, to `depth` below the block's last
+    -- baseline — its last line box's part below that baseline above the
+    -- section's skips below, a body paragraph's unless the block says
+    -- otherwise (`--block-last-below`, `Config.blockLastBelow`); an
+    -- untitled block draws none, as the template draws none without the
+    -- title's part.
+    let wholeLines := sh.edges.filter fun e => e.span == .whole && e.besideTitle
+    let lineRules := String.join (wholeLines.toList.map fun e =>
+      let pseudo := if e.side == .left then "before" else "after"
+      let p := (titleRule k e.reach).getD default
+      let pad := len (sh.inset .title (if e.side == .left then .left else .right))
+      let top (r : Int) : String :=
+        s!"calc({before} + {peerGap} + {raised inner r} + {len { width := .ofSp p.top }})"
+      let bottom := s!"calc({after} + var(--block-last-below, {len { width := .ofSp p.bodyBelow }}) - \
+{len { width := .ofSp p.depth }})"
+      rule pseudo sel e pad (top rise) bottom ++
+        (if riseMany == rise then "" else
+          s!"{sel}:has(> header br)::{pseudo} \{ top: {top riseMany}; }\n") ++
+        s!"{sel}:not(:has(> header))::{pseudo} \{ content: none; }\n")
+    let lineBox := if wholeLines.isEmpty then "" else s!"{sel} \{ position: relative; }\n"
     -- The arm an untitled block takes where its template leaves the title
     -- out: its own skips, and — the body opening the box around it — the
     -- line's `\parskip` above that box and the box's own inside it.
@@ -2485,7 +2523,7 @@ public def blockShapeCss (doc : Doc)
             s!"{hd}::before \{ content: none; }\n{hd}::after \{ content: none; }\n")
     s!"{sel} \{ padding-top: {before}; padding-bottom: {after}; }\n" ++
       s!"{sel} > header \{ padding-top: calc({peerGap} + {boxTop}); padding-bottom: {below}; }\n" ++
-      titleRules ++ wholeRules ++ bare
+      titleRules ++ wholeRules ++ lineBox ++ lineRules ++ bare
   String.join rules
 
 /-- A tcolorbox length (`Ir.tcb…`, TeX millimetres) as CSS: its print
@@ -9364,10 +9402,25 @@ public def blockNode (cfg : Config) (b : Block) : Node :=
       let ink := look.fg.getD inherited.2
       let shapedCfg := { cfg.into with
         listingFg := some ink, bodyInk := some (role, look.fg.getD inherited.2) }
+      -- A rule beside the whole block ends below the body's last baseline:
+      -- where the body ends on no paragraph, the section says how far its
+      -- last line box reaches below that baseline (`blockShapeCss`), a
+      -- listing's past its own padding.
+      let lastBelow : String :=
+        if !(shape.edges.any fun e => e.span == .whole && e.besideTitle) then "" else
+        let last := Ir.lastLeafBlock body
+        match cfg.blockLastBelow last with
+        | some v =>
+          let below := if cfg.deck then s!"{decMilli (deckStageMilli v cfg.page.height)}vh"
+            else milliRem (screenMilli cfg.page.fontSize v)
+          let below := if cfg.deck || !(last matches some (.verbatim ..)) then below
+            else s!"calc({below} + {quantaRem 1})"
+          s!" --block-last-below: {below};"
+        | none => ""
       fillCarrier cfg (Ir.frameFillsOne cfg.lists cfg.styles .deck 0 b)
         (Html.elem "section" (head ++ blockNodesInto shapedCfg #[] body.toList)
           #[("class", s!"block block-{kind.name} block-shaped"),
-            ("style", s!"color: {cssColor ink};")])
+            ("style", s!"color: {cssColor ink};" ++ lastBelow)])
     | none =>
     -- A painted region owns a box, distinct from its independently painted
     -- title. Unfilled bodies keep their original child structure.

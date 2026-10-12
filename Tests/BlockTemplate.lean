@@ -62,6 +62,13 @@ less the `\parskip` its list opens on, `\baselineskip` and
 the box; lualatex centres such a rule on the capitals, grows a line whose
 rule reaches past its box, and spaces what follows from a rule deeper than
 the box, and both artifacts do (`capitalChecks`, `capitalHtmlChecks`).
+
+A rule beside the whole block is held so too (`wholebar`): a template that
+sets the body in a box to measure its lines, puts them back where they stood
+and stands the body's part of the rule on the last baseline is read as one
+rule from the title's capitals to its depth below that baseline
+(`wholeBarChecks`, `wholeBarHtmlChecks`), and one that would move a line or
+the rule is named (`wholeBarReadingChecks`).
 -/
 
 /-- A rule beside the title's box, hanging `.6em` into the margin, `.3em`
@@ -1439,7 +1446,17 @@ private def readingChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : 
                      sep := { width := { em := 600 } }, hang := true
                      color := { r := 0x12, g := 0x34, b := 0x56 }, name := some (.role .accent)
                      reach := .lines { lead := -500, cap := 500 }
-                       { lead := 500, cap := -500, sp := -Dim.pt 1 } }] })]
+                       { lead := 500, cap := -500, sp := -Dim.pt 1 } }] }),
+     ("{ title = box strut parskip, untitled = { before = medskipamount }, before = medskipamount, " ++
+       "after = smallskipamount, edge = { span = whole, side = left, width = 0.3em, sep = 0.6em, " ++
+       "hang = true, color = accent, height = -0.5lh + 0.5cap, depth = 0.5lh - 0.5cap } }",
+      { title := { boxed := true, strut := true, parskip := true }
+        bare := some { before := #[.register "medskipamount"] }
+        before := #[.register "medskipamount"], after := #[.register "smallskipamount"]
+        edges := #[{ span := .whole, side := .left, width := { width := { em := 300 } }
+                     sep := { width := { em := 600 } }, hang := true
+                     color := { r := 0x12, g := 0x34, b := 0x56 }, name := some (.role .accent)
+                     reach := .lines { lead := -500, cap := 500 } { lead := 500, cap := -500 } }] })]
   for (src, want) in reads do
     let doc := (Elab.run "block-shape.tex"
       ("\\documentclass{slides}\n\\palette{ accent = #123456 }\n\\style{block}{ shape = " ++ src ++
@@ -2128,6 +2145,421 @@ private def bodyFamilyChecks (ref : IO.Ref (List String)) : IO Unit := do
   check ref s!"body family: the PDF sets the words in the page's own face ({faces})"
     (!faces.isEmpty && faces.all fun (face, _) => !face.startsWith "SourceSerifPro")
 
+/-! ### A rule beside the whole block
+
+lualatex, as above, ships `wholebar`: the capitals probe's rule beside the
+title, from a template whose `block begin` also opens a box the body is set
+in (`\setbox\B\vbox\bgroup`, on the depth of the line above,
+`\prevdepth`, after a penalty), and whose `block end` closes the box, takes
+the glue, kerns and penalties after its last line into a box of their own
+(a macro calling itself, `\lastnodetype`, `\unskip`), sets the body back
+unboxed, then a box of no size holding the body's part of the rule
+(`\nointerlineskip`, `\moveleft`, `\vbox to\z@`, `\raisebox`) — a title's
+rule's depth below the last baseline, as tall as the title's line's depth
+and the box's height — and sets back the items and the last line's depth.
+Over paragraphs, a list, a display alignment, a large title, a picture, an
+untitled block, a title alone and a listing, every line stands where the
+title's rule alone leaves it, and the rule runs from the title's capitals to
+its depth below the block's last baseline (`Layout.edgeLinesFrom_abuts_exact`).
+-/
+
+def wholeBarSource : String :=
+  "\\documentclass[10pt,aspectratio=169]{beamer}\n" ++
+  "\\usetheme{moloch}\n" ++
+  "\\definecolor{probeInk}{HTML}{1F2A44}\n" ++
+  "\\definecolor{probeEdge}{HTML}{2E8B57}\n" ++
+  "\\setbeamercolor{normal text}{fg=probeInk,bg=white}\n" ++
+  "\\setbeamercolor{probe edge}{bg=probeEdge}\n" ++
+  "\\setbeamerfont{block title example}{size=\\large}\n" ++
+  "\\setlength{\\parskip}{4pt}\n" ++
+  "\\makeatletter\n" ++
+  "\\newbox\\probe@title\n" ++
+  "\\newbox\\probe@body\n" ++
+  "\\newbox\\probe@trail\n" ++
+  "\\newdimen\\probe@inset\n" ++
+  "\\newdimen\\probe@wd\n" ++
+  "\\newdimen\\probe@sep\n" ++
+  "\\newdimen\\probe@titleinset\n" ++
+  "\\newdimen\\probe@above\n" ++
+  "\\newdimen\\probe@raise\n" ++
+  "\\newdimen\\probe@last\n" ++
+  "\\newcommand{\\probe@open}[1]{%\n" ++
+  "  \\par\\vskip\\medskipamount\n" ++
+  "  \\ifx\\insertblocktitle\\@empty\\else\n" ++
+  "    \\setbox\\probe@title\\vbox{\\hsize\\linewidth\n" ++
+  "      \\usebeamerfont*{block title#1}\\usebeamercolor[fg]{block title#1}%\n" ++
+  "      \\strut\\insertblocktitle\\strut\\par\n" ++
+  "      \\global\\probe@inset\\dimexpr(\\baselineskip-\\fontcharht\\font`H)/2\\relax}%\n" ++
+  "    \\probe@titleinset\\probe@inset\n" ++
+  "    \\probe@wd .3em\n" ++
+  "    \\probe@sep .6em\n" ++
+  "    \\noindent\\llap{{\\usebeamercolor[bg]{probe edge}%\n" ++
+  "        \\vrule width \\probe@wd\n" ++
+  "          height \\dimexpr\\ht\\probe@title+\\dp\\probe@title-\\parskip-\\probe@inset\\relax\n" ++
+  "          depth \\probe@inset}%\n" ++
+  "      \\hskip \\probe@sep}%\n" ++
+  "    \\box\\probe@title\\par\\nobreak\n" ++
+  "  \\fi\n" ++
+  "  \\usebeamerfont{block body#1}\\usebeamercolor[fg]{block body#1}%\n" ++
+  "  \\probe@above\\prevdepth\n" ++
+  "  \\setbox\\probe@body\\vbox\\bgroup\\prevdepth\\probe@above\\nobreak}\n" ++
+  "\\newcommand{\\probe@peel}{%\n" ++
+  "  \\ifnum\\lastnodetype=11\n" ++
+  "    \\skip@\\lastskip\\unskip\n" ++
+  "    \\global\\setbox\\probe@trail\\vbox{\\vskip\\skip@\\unvbox\\probe@trail}\\probe@peel\n" ++
+  "  \\else\\ifnum\\lastnodetype=12\n" ++
+  "    \\dimen@\\lastkern\\unkern\n" ++
+  "    \\global\\setbox\\probe@trail\\vbox{\\kern\\dimen@\\unvbox\\probe@trail}\\probe@peel\n" ++
+  "  \\else\\ifnum\\lastnodetype=13\n" ++
+  "    \\count@\\lastpenalty\\unpenalty\n" ++
+  "    \\global\\setbox\\probe@trail\\vbox{\\penalty\\count@\\unvbox\\probe@trail}\\probe@peel\n" ++
+  "  \\fi\\fi\\fi}\n" ++
+  "\\newcommand{\\probe@close}{%\n" ++
+  "  \\par\n" ++
+  "  \\global\\probe@last\\prevdepth\n" ++
+  "  \\global\\setbox\\probe@trail\\box\\voidb@x\n" ++
+  "  \\probe@peel\n" ++
+  "  \\egroup\n" ++
+  "  \\ifx\\insertblocktitle\\@empty\n" ++
+  "    \\unvbox\\probe@body\n" ++
+  "  \\else\n" ++
+  "    \\advance\\probe@above\\ht\\probe@body\n" ++
+  "    \\probe@raise\\probe@last\n" ++
+  "    \\ifdim\\probe@raise<\\z@ \\probe@raise\\z@ \\fi\n" ++
+  "    \\advance\\probe@raise-\\probe@titleinset\n" ++
+  "    \\unvbox\\probe@body\n" ++
+  "    \\nointerlineskip\n" ++
+  "    \\moveleft\\dimexpr\\probe@wd+\\probe@sep\\relax\\vbox to\\z@{\\vss\\hbox{{\\usebeamercolor[bg]{probe edge}%\n" ++
+  "      \\raisebox{\\probe@raise}[\\z@][\\z@]{\\vrule width \\probe@wd height \\probe@above depth \\z@}}}}%\n" ++
+  "  \\fi\n" ++
+  "  \\unvbox\\probe@trail\n" ++
+  "  \\prevdepth\\probe@last\n" ++
+  "  \\vskip\\smallskipamount}\n" ++
+  "\\defbeamertemplate*{block begin}{probe}{\\probe@open{}}\n" ++
+  "\\defbeamertemplate*{block end}{probe}{\\probe@close}\n" ++
+  "\\defbeamertemplate*{block example begin}{probe}{\\probe@open{ example}}\n" ++
+  "\\defbeamertemplate*{block example end}{probe}{\\probe@close}\n" ++
+  "\\makeatother\n" ++
+  "\\begin{document}\n" ++
+  "\\begin{frame}[t]{Paragraphs}\n" ++
+  "Lead paragraph above.\n" ++
+  "\\begin{block}{Alpha title words}\n" ++
+  "Body words here.\n" ++
+  "\\end{block}\n" ++
+  "\\begin{block}{Delta first title line\\\\Delta second title line}\n" ++
+  "First body paragraph.\n" ++
+  "\n" ++
+  "Second body paragraph.\n" ++
+  "\\end{block}\n" ++
+  "Trailing paragraph below.\n" ++
+  "\\end{frame}\n" ++
+  "\\begin{frame}[t]{Lists and displays}\n" ++
+  "Lead paragraph above.\n" ++
+  "\\begin{block}{Gamma list title}\n" ++
+  "\\begin{itemize}\n" ++
+  "\\item First listed item.\n" ++
+  "\\item Second listed item.\n" ++
+  "\\end{itemize}\n" ++
+  "\\end{block}\n" ++
+  "\\begin{block}{Omega display title}\n" ++
+  "\\begin{align*}\n" ++
+  "  a &= b + c\\\\\n" ++
+  "  d &= e\n" ++
+  "\\end{align*}\n" ++
+  "\\end{block}\n" ++
+  "Trailing paragraph below.\n" ++
+  "\\end{frame}\n" ++
+  "\\begin{frame}[t]{Sizes and pictures}\n" ++
+  "Lead paragraph above.\n" ++
+  "\\begin{exampleblock}{Epsilon large title}\n" ++
+  "Third body words.\n" ++
+  "\\end{exampleblock}\n" ++
+  "\\begin{block}{Eta picture title}\n" ++
+  "\\begin{tikzpicture}\\draw[fill=gray] (0,0) rectangle (2,0.8);\\end{tikzpicture}\n" ++
+  "\\end{block}\n" ++
+  "\\begin{block}{}\n" ++
+  "Untitled body words.\n" ++
+  "\\end{block}\n" ++
+  "\\begin{block}{Kappa title alone}\n" ++
+  "\\end{block}\n" ++
+  "Trailing paragraph below.\n" ++
+  "\\end{frame}\n" ++
+  "\\begin{frame}[t,fragile]{Listings}\n" ++
+  "Lead paragraph above.\n" ++
+  "\\begin{block}{Zeta listing title}\n" ++
+  "\\begin{verbatim}\n" ++
+  "plain listing line\n" ++
+  "second listing line\n" ++
+  "\\end{verbatim}\n" ++
+  "\\end{block}\n" ++
+  "Trailing paragraph below.\n" ++
+  "\\end{frame}\n" ++
+  "\\end{document}\n"
+
+/-- lualatex's distances on the whole-bar probe, in thousandths of a point,
+per page: the rule beside each block from its title's first baseline and to
+the block's last — one rule, where TeX's two parts meet — and the lines
+around it. -/
+private def measuredWhole : Array (Nat × Mark × Mark × Int) := #[
+  (0, .base "Lead paragraph above.", .base "Alpha title words", 25802),
+  (0, .top edgeColor 0, .base "Alpha title words", 9569),
+  (0, .base "Alpha title words", .base "Body words here.", 16000),
+  (0, .base "Body words here.", .bottom edgeColor 0, 2431),
+  (0, .top edgeColor 1, .base "Delta first title line", 9569),
+  (0, .base "Delta first title line", .base "Delta second title line", 12000),
+  (0, .base "Delta second title line", .base "First body paragraph.", 16000),
+  (0, .base "First body paragraph.", .base "Second body paragraph.", 16000),
+  (0, .base "Second body paragraph.", .bottom edgeColor 1, 2431),
+  (0, .base "Second body paragraph.", .base "Trailing paragraph below.", 19000),
+  (1, .top edgeColor 0, .base "Gamma list title", 9569),
+  (1, .base "Gamma list title", .base "• First listed item.", 19000),
+  (1, .base "• First listed item.", .base "• Second listed item.", 15000),
+  (1, .base "• Second listed item.", .bottom edgeColor 0, 2431),
+  (1, .top edgeColor 1, .base "Omega display title", 9569),
+  (2, .top edgeColor 0, .base "Epsilon large title", 11283),
+  (2, .base "Epsilon large title", .base "Third body words.", 16000),
+  (2, .base "Third body words.", .bottom edgeColor 0, 2717),
+  (2, .top edgeColor 1, .base "Eta picture title", 9569),
+  (2, .top edgeColor 2, .base "Kappa title alone", 9569),
+  (2, .base "Kappa title alone", .bottom edgeColor 2, 2431),
+  (3, .top edgeColor 0, .base "Zeta listing title", 9569),
+  (3, .base "Zeta listing title", .base "plain listing line", 24000),
+  (3, .base "plain listing line", .base "second listing line", 12000),
+  (3, .base "second listing line", .bottom edgeColor 0, 2431)]
+
+/-- The whole-bar probe with its rule beside the title alone: no box around
+the body, and a close of the skip below only. -/
+private def titleBarOf (src : String) : String :=
+  src
+    |>.replace ("  \\probe@above\\prevdepth\n" ++
+        "  \\setbox\\probe@body\\vbox\\bgroup\\prevdepth\\probe@above\\nobreak}\n") "}\n"
+    |>.replace ("\\newcommand{\\probe@close}{%\n" ++
+        "  \\par\n" ++
+        "  \\global\\probe@last\\prevdepth\n" ++
+        "  \\global\\setbox\\probe@trail\\box\\voidb@x\n" ++
+        "  \\probe@peel\n" ++
+        "  \\egroup\n" ++
+        "  \\ifx\\insertblocktitle\\@empty\n" ++
+        "    \\unvbox\\probe@body\n" ++
+        "  \\else\n" ++
+        "    \\advance\\probe@above\\ht\\probe@body\n" ++
+        "    \\probe@raise\\probe@last\n" ++
+        "    \\ifdim\\probe@raise<\\z@ \\probe@raise\\z@ \\fi\n" ++
+        "    \\advance\\probe@raise-\\probe@titleinset\n" ++
+        "    \\unvbox\\probe@body\n" ++
+        "    \\nointerlineskip\n" ++
+        "    \\moveleft\\dimexpr\\probe@wd+\\probe@sep\\relax\\vbox to\\z@{\\vss\\hbox{{\\usebeamercolor[bg]{probe edge}%\n" ++
+        "      \\raisebox{\\probe@raise}[\\z@][\\z@]{\\vrule width \\probe@wd height \\probe@above depth \\z@}}}}%\n" ++
+        "  \\fi\n" ++
+        "  \\unvbox\\probe@trail\n" ++
+        "  \\prevdepth\\probe@last\n" ++
+        "  \\vskip\\smallskipamount}\n")
+      "\\newcommand{\\probe@close}{\\par\\vskip\\smallskipamount}\n"
+
+/-- A line's run whose letters are `text`: its baseline on the page, the
+line's lifted by the run's own. -/
+private def runBase (p : Layout.PageOut) (text : String) : Option Dim.Sp :=
+  p.lines.findSome? fun l => l.segs.findSome? fun s => match s with
+    | .run _ _ _ _ glyphs _ _ _ raise _ _ =>
+      if String.ofList (glyphs.toList.map (·.2.1)) == text then some (l.y - raise) else none
+    | _ => none
+
+/-- **A rule beside the whole block stands where lualatex stands it**: read
+off the whole-bar probe as one rule beside each titled block
+(`Ir.BlockSpan.whole`), from its title's capitals — the title's rule's place
+— to its depth below the block's last baseline: a paragraph's, a list
+item's, a display alignment's last row's, a picture's, a listing's last
+line's, the title's own where the body is empty; none beside the untitled
+block; and every line where the title's rule alone leaves it. -/
+private def wholeBarChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit := do
+  let fs ← mathSetOf fonts
+  let (geom, out, diags) := layout fs "wholebar" wholeBarSource
+  check ref s!"whole bar: the probe reads without loss ({(diags ++ out.diags).filter (·.severity != .note) |>.map (·.message)})"
+    ((diags ++ out.diags).all (·.severity == .note))
+  let (doc, _) := Elab.run "block-template-wholebar.tex" wholeBarSource
+  let edges := ((Ir.blockShapeOf doc.styles .block).map (·.edges)).getD #[]
+  check ref s!"whole bar: the plain kind's rule stands beside the whole block, by its lines ({edges.map (·.span == .whole)})"
+    (edges.size == 1 && edges.all fun e => e.span == .whole && e.hang &&
+      e.reach == .lines Ir.BlockMetric.halfLeading.neg Ir.BlockMetric.halfLeading)
+  for (page, a, b, want) in measuredWhole do
+    match out.pages[page]?.bind fun p => (markAt geom p a).bind fun ya => (markAt geom p b).map (· - ya) with
+    | some d =>
+      check ref s!"whole bar page {page}: {want} (lualatex) got {milliOf d}"
+        ((milliOf d - want).natAbs ≤ tolerance.toNat)
+    | none => check ref s!"whole bar page {page}: the marks for {want} ship" false
+  let rules := out.pages.map fun p => (p.fills.filter (·.color == edgeColor)).size
+  check ref s!"whole bar: one rule per titled block, none beside the untitled one ({rules})"
+    (rules == #[2, 2, 3, 1])
+  -- The display alignment's rule ends its depth below the last row, which
+  -- TeX sets as a line of its own: here a row of the display's one line.
+  let half : Dim.Sp := 2431
+  match out.pages[1]?, out.pages[1]?.bind fun p => runBase p "𝑑" with
+  | some p, some row =>
+    match ruleOf p edgeColor 1 with
+    | some bar =>
+      let d := milliOf (bar.y + bar.h - row)
+      check ref s!"whole bar: the display's rule ends below its last row ({d})"
+        ((d - half).natAbs ≤ tolerance.toNat)
+    | none => check ref "whole bar: the display's rule ships" false
+  | _, _ => check ref "whole bar: the display's last row ships" false
+  -- The picture stands on the baseline, its lower edge there.
+  match out.pages[2]? with
+  | some p =>
+    match ruleOf p edgeColor 1, p.inks[0]? with
+    | some bar, some k =>
+      let bottom := k.claims.foldl (fun m b => max m b.2.2) k.place.dy
+      let d := milliOf (bar.y + bar.h - bottom)
+      check ref s!"whole bar: the picture's rule ends below the picture's baseline ({d})"
+        ((d - half).natAbs ≤ 250)
+    | _, _ => check ref "whole bar: the picture and its rule ship" false
+  | none => check ref "whole bar: the picture's page ships" false
+  -- Every line stands where the title's rule alone leaves it.
+  let titled := titleBarOf wholeBarSource
+  check ref "whole bar: the title-only probe differs from the probe" (titled != wholeBarSource)
+  let (_, alone, _) := layout fs "wholebar-title" titled
+  let ys (o : Layout.Out) := o.pages.map fun p => p.lines.map fun l => (l.y, lineText l false)
+  check ref "whole bar: every line stands where the title's rule alone leaves it" (ys out == ys alone)
+  check ref "whole bar: the title-only probe draws the title's rule alone"
+    ((alone.pages.map fun p => (p.fills.filter (·.color == edgeColor)).size) == #[2, 2, 3, 1])
+
+/-- **The web page draws the rule beside the whole block on the block's
+section** (`HtmlDoc.blockShapeCss`): from its title's part's top, where the
+title's rule stands below the header's first line box, to its depth below
+the body's last line box's baseline — a body paragraph's unless the section
+says how far its last line box reaches (a listing's, its mono face at its
+size leaded at its line height); none for an untitled block. The depth is
+the page's: the PDF's rule ends that far below the block's last baseline. -/
+private def wholeBarHtmlChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit := do
+  let fs ← mathSetOf fonts
+  let (doc, _) := Elab.run "block-template-wholebar.tex" wholeBarSource
+  let geom := Layout.Geom.ofPage doc.page
+  let cfg : HtmlDoc.Config := { blockTitleRule := Layout.blockTitleRule geom fs doc.styles
+                                blockLastBelow := Layout.blockLastBelow geom fs }
+  let (head, body, _) := HtmlDoc.emitTree cfg doc
+  let sheet := treeCssList "" (head.toList ++ body.toList)
+  let sel := "section.block-shaped.block-block"
+  let rule := (cssRuleOf sheet s!"{sel}::before").getD ""
+  check ref s!"whole bar HTML: the section draws the rule ({rule})"
+    (hasStr rule "position: absolute" && hasStr rule "var(--block-last-below, " &&
+      hasStr rule "width: 0.3em" && hasStr rule "left: calc(0rem - 0.6em - 0.3em)")
+  check ref "whole bar HTML: the header draws no rule of its own"
+    ((cssRuleOf sheet s!"{sel} > header::before").isNone)
+  check ref "whole bar HTML: an untitled block draws none"
+    ((cssRuleOf sheet s!"{sel}:not(:has(> header))::before").any (hasStr · "content: none"))
+  let place := Layout.blockTitleRule geom fs doc.styles .block
+    (.lines Ir.BlockMetric.halfLeading.neg Ir.BlockMetric.halfLeading)
+  let (_, out, _) := layout fs "wholebar" wholeBarSource
+  match place, out.pages[0]? with
+  | some p, some page =>
+    match ruleOf page edgeColor 0, lineOf page "Body words here." with
+    | some bar, some last =>
+      let pdf := bar.y + bar.h - last.y
+      check ref s!"whole bar HTML: the section's rule ends the page's depth below the last baseline ({p.depth} against {pdf})"
+        ((p.depth - pdf).natAbs ≤ 2 * Dim.spPerPt / 1000)
+      let stage (v : Int) := HtmlDoc.blockShapeLength doc { width := .ofSp v }
+      check ref s!"whole bar HTML: a paragraph's line box ends the rule by default ({rule})"
+        (hasStr rule s!"var(--block-last-below, {stage p.bodyBelow}) - {stage p.depth})")
+    | _, _ => check ref "whole bar HTML: the page's rule and its last line ship" false
+  | _, _ => check ref "whole bar HTML: the driver places the rule" false
+  -- The listing's section says how far its last line box reaches.
+  let below := Layout.blockLastBelow geom fs
+  let listings := Ir.foldBlocks (fun acc b => match b with
+    | .titled _ _ kb => match Ir.lastLeafBlock kb with
+      | some (.verbatim ..) => acc.push (Ir.lastLeafBlock kb)
+      | _ => acc
+    | _ => acc) (fun acc _ => acc) #[] doc.body
+  check ref s!"whole bar HTML: one block ends on a listing ({listings.size})" (listings.size == 1)
+  match listings[0]?.bind below with
+  | some v =>
+    let sections := elemAttrsList (· == "section") #[] body.toList
+    let said := s!"--block-last-below: {HtmlDoc.blockShapeLength doc { width := .ofSp v }};"
+    check ref s!"whole bar HTML: the listing's section says how far its last line box reaches ({said})"
+      ((sections.filter fun (_, attrs) => attrs.any fun (k, s) => k == "style" && hasStr s said).size == 1)
+  | none => check ref "whole bar HTML: the driver measures the listing's last line" false
+
+/-- **The reading holds a template that sets the body back to what TeX sets**:
+each probe below breaks one of the template's settings — the items the body
+ends on left in its box, below the rule (no peel); the depth below its last
+line not set back; the box opened on a fresh box's depth rather than the
+line above's; its list opened on no penalty, so its first paragraph spends
+no `\parskip`; the rule beside the body moved off the title's rule, or
+reaching less than to it — and is named once, for its reading, its blocks
+keeping beamer's default pair. The native spelling refuses a rule beside the
+whole block by its lines beside a box holding title and body, or inside the
+line. -/
+private def wholeBarReadingChecks (ref : IO.Ref (List String)) : IO Unit := do
+  let src := wholeBarSource
+  let cases : List (String × String × String) :=
+    [("unpeeled", src.replace "  \\probe@peel\n  \\egroup\n" "  \\egroup\n",
+       "a rule beside the body standing below the items the body ends on"),
+     ("unrestored", src.replace "  \\prevdepth\\probe@last\n  \\vskip\\smallskipamount}" "  \\vskip\\smallskipamount}",
+       "a body set back without the depth below its last line after it"),
+     ("fresh", src.replace "\\vbox\\bgroup\\prevdepth\\probe@above\\nobreak}" "\\vbox\\bgroup\\nobreak}",
+       "a body set back on another depth than the list it joins stood on"),
+     ("unopened", src.replace "\\vbox\\bgroup\\prevdepth\\probe@above\\nobreak}" "\\vbox\\bgroup\\prevdepth\\probe@above}",
+       "a body set back without the \\parskip its list spends"),
+     ("moved", src.replace "\\moveleft\\dimexpr\\probe@wd+\\probe@sep\\relax" "\\moveleft\\dimexpr\\probe@wd\\relax",
+       "a rule beside the body at another place, width or paint than its title's"),
+     ("short", src.replace "    \\advance\\probe@above\\ht\\probe@body\n" "",
+       "a rule beside the body reaching elsewhere than the title's rule")]
+  for (name, variant, why) in cases do
+    check ref s!"whole bar {name}: the refused probe differs from the probe" (variant != src)
+    let (doc, diags) := Elab.run s!"block-template-wholebar-{name}.tex" variant
+    let named := diags.filter fun d => d.code == "W0110" && d.subject == some "beamer:template:block begin"
+    check ref s!"whole bar {name}: the template is named once, for its reading ({named.map (·.message)})"
+      (named.size == 1 && named.all (hasStr ·.message why))
+    check ref s!"whole bar {name}: its blocks keep the default pair"
+      (((doc.styles.find? "block").bind (·.shape)).isNone)
+  let native (edge : String) (whole : String) : String :=
+    "\\documentclass{slides}\n\\palette{ accent = #123456 }\n\\style{block}{ shape = " ++
+      "{ title = box strut parskip, untitled = {}" ++ whole ++ ", edge = { span = whole, side = left, " ++
+      "width = 0.3em, sep = 0.6em, " ++ edge ++ ", color = accent, height = -0.5lh + 0.5cap, " ++
+      "depth = 0.5lh - 0.5cap } } }\n\\begin{document}\n\\end{document}\n"
+  for (name, src, why) in [("boxed", native "hang = true" ", whole = parskip",
+        "beside a box holding title and body"),
+      ("inside", native "hang = false" "", "inside its line")] do
+    let (_, nd) := Elab.run s!"block-shape-whole-{name}.tex" src
+    check ref s!"whole bar: the native spelling refuses lines beside the whole block {name} ({nd.map (·.message)})"
+      (nd.any fun d => d.code == "E0323" && hasStr d.message why)
+
+/-- **A block template's own macro names no loss of its own**
+(`Compat.templateReach`, the premise beside the settled and translated
+definitions): the whole-bar probe's macros, which only its templates call,
+raise nothing; the probe whose text also uses one of them, where the
+conditional pass expands the use, names its loss at that use. -/
+private def templateCodeChecks (ref : IO.Ref (List String)) : IO Unit := do
+  let (_, clean) := Elab.run "block-template-wholebar.tex" wholeBarSource
+  check ref s!"template code: the probe's own macros raise nothing ({clean.filter (·.severity != .note) |>.map (·.message)})"
+    (clean.all (·.severity == .note))
+  let used := wholeBarSource.replace "Body words here.\n" "Body words here.\\makeatletter\\probe@peel\\makeatother\n"
+  check ref "template code: the probe using a template macro differs from the probe" (used != wholeBarSource)
+  let (_, ud) := Elab.run "block-template-wholebar-used.tex" used
+  check ref s!"template code: a template macro the text uses names its loss there ({ud.filter (·.severity != .note) |>.map (·.message)})"
+    (ud.any fun d => d.code == "W0104" && hasStr d.message "probe@peel")
+  -- Named elsewhere in the preamble, outside the templates and its own
+  -- definition, it is no template's alone: its definition names its loss.
+  let elsewhere := wholeBarSource.replace "\\makeatother\n"
+    "\\newcommand{\\probe@other}{\\probe@peel}\n\\makeatother\n"
+  check ref "template code: the probe naming a template macro elsewhere differs from the probe"
+    (elsewhere != wholeBarSource)
+  let (_, ed) := Elab.run "block-template-wholebar-elsewhere.tex" elsewhere
+  -- The loss named at the macro's own definition, where its settled text
+  -- reads its call of itself.
+  let lines := (elsewhere.splitOn "\n").zipIdx
+  let first := ((lines.find? fun (l, _) => l.startsWith "\\newcommand{\\probe@peel}").map (·.2 + 1)).getD 0
+  let past := ((lines.find? fun (l, i) => i + 1 > first && l.startsWith "\\newcommand{\\probe@close}").map
+    (·.2 + 1)).getD 0
+  let atDefinition (d : Diag) : Bool := d.span.any fun sp => first ≤ sp.pos.line && sp.pos.line < past
+  check ref s!"template code: a template macro the preamble names elsewhere names its definition's loss ({ed.filter (·.severity != .note) |>.map fun d => (d.message, d.span.map (·.pos.line))})"
+    (ed.any fun d => d.code == "W0104" && hasStr d.message "probe@peel" && atDefinition d)
+  -- And the probe's own definitions, every one of them, name nothing.
+  let srcLines := (wholeBarSource.splitOn "\n").zipIdx
+  let opens := ((srcLines.find? fun (l, _) => l.startsWith "\\newcommand{\\probe@open}").map (·.2 + 1)).getD 0
+  let ends := ((srcLines.find? fun (l, _) => l.startsWith "\\defbeamertemplate").map (·.2 + 1)).getD 0
+  check ref s!"template code: the probe's own definitions name nothing at their lines ({opens}..{ends})"
+    (opens > 0 && ends > opens && clean.all fun d => d.severity == .note ||
+      !(d.span.any fun sp => opens ≤ sp.pos.line && sp.pos.line < ends))
+
 def checks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit := do
   pageChecks ref fonts
   voidedChecks ref fonts
@@ -2149,5 +2581,9 @@ def checks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit := do
   capitalHtmlChecks ref fonts
   capitalReadingChecks ref
   capitalRegisterChecks ref
+  wholeBarChecks ref fonts
+  wholeBarHtmlChecks ref fonts
+  wholeBarReadingChecks ref
+  templateCodeChecks ref
 
 end Tests.BlockTemplate
