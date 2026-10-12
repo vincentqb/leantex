@@ -30,6 +30,7 @@ import Tests.MarkdownHeadings
 import Tests.MarkdownTables
 import Tests.MarkdownPage
 import Tests.MarkdownWarnings
+import Tests.MonoDefault
 import Tests.MarkdownCode
 import Tests.Artifact
 import Tests.UnderlineSpacing
@@ -1455,7 +1456,15 @@ def reports : List Report := [
       .tier "commonmark" "Fenced code blocks.match", .tier "mdtwin" "cm.Fenced code blocks.reread-exact"]
     accept := ["on the tree before the fix one of the guard's assertions fails: a fence with no info word names its overrun on the fence's line, while the same fence with a language names the code's own line",
       "the CommonMark tier's fenced-code item rises by the case whose code opens on a blank line, and the markdown twin's reread of the same section by one"]
-    state := .guarded "bc2adb38" .before .author }
+    state := .guarded "bc2adb38" .before .author },
+  { id := "R161", date := "2026-10-12"
+    what := "a markdown report built on macOS set its code in the proportional text face and named the loss, the document declaring no typewriter family: its text family had no designed companion the scan served, and the system's own monospace faces ship as font collections, which the scan skipped"
+    pins := [check% Tests.MonoDefault.monoDefaultChecks, check% Tests.MonoDefault.fontCollectionChecks,
+      thm% FontDb.monoFor_contract, thm% FontDb.monoDefault_mem]
+    accept := ["fifteen of the guards' assertions fail on the tree at effc6b16 with the fix reverted, the assembly's markdown-only companion and a scan that lists no collection restored: the platform monospace filling the slot on either surface, the code's runs on the page and the HTML's typewriter stack and face, a tex document taking the companion, and a collection's faces found, cached, assembled and shipped",
+      "the report's own HTML and PDF builds in a namespace whose fonts are a text family with no designed companion and one platform monospace: with the fix reverted the HTML named the typewriter slot and four overfull lines and set its code in the text face, and with the fix it names neither and sets its code in the monospace; on this Linux host's own fonts both builds are unchanged; macOS itself was not run, so Menlo's reach through its collection is inferred",
+      "this supersedes R131's acceptance that a tex document declaring no typewriter face keeps the body family: it now takes the same default a markdown document does, and a document setting no typewriter run loads no typewriter face"]
+    state := .guarded "effc6b16" .revert .author }
 ]
 
 /-- The reports guarded but never seen failing: a count that may fall and
