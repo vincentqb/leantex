@@ -163,15 +163,32 @@ public def slotCollapsed (key runs served note : String) (only : Option String)
   let families := match FontDb.monoDefaults.reverse with
     | last :: rest@(_ :: _) => String.intercalate ", " rest.reverse ++ " or " ++ last
     | _ => String.intercalate ", " FontDb.monoDefaults
-  let whole := s!"one of {families}, with its bold and italic"
-  let declared := if declarable then s!", or give the slot its own face: {declare}" else ""
+  -- A tex document's default reads lualatex's own typewriter shapes first
+  -- (`FontDb.latinModernMonoFaces`), which every TeX distribution installs.
+  let listed := if declarable then s!"Latin Modern Mono, {families}" else families
+  let declared := if declarable then s!", or declare one: {declare}" else ""
   let help := if key == "mono" then
-      if shipsFonts then s!"put {whole}, in the document's font directory{declared}"
-      else s!"install {whole}{declared}; `leantex fonts` lists the installed families"
+      if shipsFonts then
+        s!"install one of {listed} with its bold, or put it in the document's font directory{declared}"
+      else s!"install one of {listed} with its bold{declared}; `leantex fonts` lists the installed families"
     else s!"{declare} gives the slot its own face; `leantex fonts` lists the installed families"
   Diag.of .W0390
     s!"nothing declares a '{key}' family; {whereLost}{runs} set in {served}, {note}"
     (subject := some s!"slot:{key}") (help := help)
+
+/-- **N0031: the engine's typewriter default has no italic face.** A listed
+monospace served at its upright corners fills an undeclared slot
+(`FontDb.servesMono`); its italic corners set upright in it, unslanted —
+both backends never fake a slant — named once per build rather than as a
+substitution warning per corner (W0006), which is about a family the
+document named. `declarable` is whether the source can declare a face. -/
+public def monoUpright (family : String) (declarable : Bool := true) : Diag :=
+  Diag.of .N0031
+    s!"'{family}' has no italic face; italic code sets upright in it"
+    (subject := some "slot:mono:italic")
+    (help := if declarable then
+        "install the family's italic faces, or declare a typewriter family that has them: \\fonts{ mono = \"<family>\" }"
+      else "install the family's italic faces")
 
 /-- The two substitution codes off one resolution result: a missing
 variant is W0006, a missing weight W0366 — the one door

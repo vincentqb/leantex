@@ -19,6 +19,7 @@ import Tests.BibModel
 import Tests.PdfNative
 import Tests.SeedPalette
 import scripts.Rung
+import Tests.MonoDefault
 
 /-!
 # The diagnostics audit: every code's decided direction, and what holds it
@@ -244,6 +245,9 @@ def registry : List AuditRow :=
    -- A character TeX reserves in a .bib field, set as the character where
    -- LaTeX stops at it: a decided divergence, named.
    ⟨.N0030, .divergence, .rewritten, check% bibReservedChecks⟩,
+   -- The typewriter default a scan serves upright only: its italics set
+   -- upright, the one note naming it; lualatex substitutes and warns.
+   ⟨.N0031, .divergence, .rewritten, check% Tests.MonoDefault.monoDefaultChecks⟩,
    -- A numeric style's superscript citation: set as \cite, its keys listed
    -- and numbered, the superscript named.
    ⟨.W0428, .keep, .degraded, check% biblatexSuperciteChecks⟩,

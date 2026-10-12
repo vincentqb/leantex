@@ -258,6 +258,10 @@
 ℹ [N0030]
   '&' in a .bib field sets as the character; LaTeX reads it as an alignment tab outside a table and stops there
   suggestion: write it '\&' if the .bib must also build with LaTeX
+── N0031 (info) the typewriter family the engine took for an undeclared slot has no italic face; italic code sets upright in it, unslanted
+ℹ [N0031]
+  'DejaVu Sans Mono' has no italic face; italic code sets upright in it
+  suggestion: install the family's italic faces, or declare a typewriter family that has them: \fonts{ mono = "<family>" }
 ── N0100 (info) LaTeX idiom translated to its native declaration
 ℹ [N0100] - \usepackage
   '\usepackage{geometry}' → \page{ margin = 1in }
@@ -824,7 +828,7 @@
 ── W0390 (degraded) no family is declared for a font slot the document sets in; the body face serves it
 ⚠ [W0390]
   nothing declares a 'mono' family; typewriter runs set in the body face, which is not fixed-pitch
-  suggestion: install one of SF Mono, Menlo, DejaVu Sans Mono or Liberation Mono, with its bold and italic, or give the slot its own face: \fonts{ mono = "<family>" }; `leantex fonts` lists the installed families
+  suggestion: install one of Latin Modern Mono, SF Mono, Menlo, DejaVu Sans Mono or Liberation Mono with its bold, or declare one: \fonts{ mono = "<family>" }; `leantex fonts` lists the installed families
 ── W0391 (config) an unknown LaTeX internal ('@' in its name) in package code is skipped with its [...] and {...} arguments instead of setting them as text
 ℹ [W0391] - \@venueprobe
   unknown command '\@venueprobe' in package code; any [...] options and its {...} arguments were dropped, not set as text

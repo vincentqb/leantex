@@ -115,23 +115,31 @@ public def buildFontSet (doc : Ir.Doc) (scan : FaceScan)
   let textFamily := if slides then spec.sans.orElse fun _ => spec.body
     else spec.body.orElse fun _ => spec.sans
   -- An undeclared typewriter slot the document sets runs in (the census
-  -- `SlotLoss` reports from) takes, on either surface, the text family's
-  -- designed companion, else the first platform monospace, that the scan
-  -- serves whole and fixed-pitch (`FontDb.monoFor`, held to the resolver
-  -- call below by `monoFor_contract`: over `own`, which the resolver reads
+  -- `SlotLoss` reports from) takes a typewriter default (`FontDb.monoPick`):
+  -- for a tex document lualatex's own Latin Modern Mono shapes wherever the
+  -- scan holds them, else the text family's designed companion, else the
+  -- first platform monospace, each served at its upright corners in its own
+  -- fixed-pitch faces (`monoPick_contract`, over the pool the resolver reads
   -- first, as it reads a document's directories before the host's). A
-  -- document that ships its fonts
-  -- (`\fonts{ dir = ... }`) is answered from its own faces alone, so it
-  -- renders the same on every host; one that ships none, from the whole
-  -- scan. Neither answering leaves the slot to the body family, the loss
-  -- W0390 names; a slot no run reaches loads no face, so no page ships one
-  -- it never sets.
-  -- premise: monoDefaultChecks — two builds of one document, a platform monospace in the scan and not, set its code in different faces and only the second names W0390; a document setting no typewriter run loads no typewriter face and names nothing; a document shipping its fonts sets the same face with and without a platform monospace on the host
+  -- document that ships its fonts (`\fonts{ dir = ... }`) is answered from
+  -- its own faces first and from the whole scan after them, so a monospace
+  -- it ships is never displaced by the host's, and its code is never set
+  -- proportional where the host holds a monospace. Neither answering leaves
+  -- the slot to the body family, the loss W0390 names; a slot no run reaches
+  -- loads no face, so no page ships one it never sets.
+  -- premise: monoDefaultChecks — two builds of one document, a platform monospace in the scan and not, set its code in different faces and only the second names W0390; a document setting no typewriter run loads no typewriter face and names nothing; a document shipping its fonts sets the monospace it ships whatever the host holds, and the host's where it ships none
+  let tex := doc.surface != .markdown
   let own := if docDirs.isEmpty then faces else faces.filter fun f =>
     docDirs.any fun dir => f.path.startsWith (if dir.endsWith "/" then dir else dir ++ "/")
-  let spec := if spec.mono.isNone && (SlotLoss.slotsUsed doc).contains 2 then
-      { spec with mono := FontDb.monoFor own textFamily }
-    else spec
+  let pick := if spec.mono.isNone && (SlotLoss.slotsUsed doc).contains 2 then
+      (FontDb.monoPick tex own textFamily).orElse fun _ => FontDb.monoPick tex faces textFamily
+    else none
+  let spec := match pick with
+    | some p =>
+      { spec with mono := some p.family
+                  faces := spec.faces ++ (p.faces.map fun (c : (Nat × Bool) × String) =>
+                    ((2, c.1.1, c.1.2), c.2)).toArray }
+    | none => spec
   let mut fonts : Array Font.Font := #[]
   let mut paths : Array String := #[]
   let mut index : Array ((Nat × Nat × Bool) × Nat) := #[]
@@ -207,6 +215,14 @@ public def buildFontSet (doc : Ir.Doc) (scan : FaceScan)
             (FontDb.nearest all family).toList all.size)
       | some (face, sub) =>
         if let some s := sub then
+          -- The engine's own typewriter default may lack italics
+          -- (`FontDb.uprightCorners`): its italic corners set upright in
+          -- it, unslanted, named once as a note (N0031) — a variant the
+          -- document never asked of a family it never named is no W0006.
+          if slot == 2 && pick.isSome && italic && !face.italic && s matches .variant _ then
+            unless diags.any (·.kind == .N0031) do
+              diags := diags.push (DriverDiag.monoUpright family tex)
+          else
           let d := DriverDiag.substituted s
           -- Slots share families, so the same substitution surfaces
           -- repeatedly; two weights sharing a nearest face are two records.

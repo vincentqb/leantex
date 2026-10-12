@@ -22,6 +22,7 @@ example : String → Nat → FontDb.Face → Diag := DriverDiag.weightSubstitute
 example : String → String → String → String → Option String → Bool → Bool → Diag :=
   fun key runs served note only declarable ships =>
     DriverDiag.slotCollapsed key runs served note only declarable ships
+example : String → Bool → Diag := fun family declarable => DriverDiag.monoUpright family declarable
 example : FontDb.Substituted → Diag := DriverDiag.substituted
 example : String → String → Diag := DriverDiag.mathFaceNoTable
 example : String → String → Diag := DriverDiag.mathFaceCompanion

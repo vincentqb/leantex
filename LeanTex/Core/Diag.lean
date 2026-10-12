@@ -318,6 +318,7 @@ public inductive DiagCode where
   | W0426
   | W0427
   | N0030
+  | N0031
   | W0428
   | W0429
   | W0306
@@ -537,6 +538,7 @@ private def DiagCode.spec : DiagCode → String × Loss × String
   | .W0428 => ("0428", .degraded, "a biblatex \\supercite sets as \\cite, in brackets on the line; the style's superscript is not carried")
   | .W0429 => ("0429", .degraded, "a .bib field the document's elaborator refuses where an entry stands; the field sets as its text")
   | .N0030 => ("0030", .info, "a character TeX reserves, in a .bib field, set as the character it is where LaTeX reads it as markup or a comment")
+  | .N0031 => ("0031", .info, "the typewriter family the engine took for an undeclared slot has no italic face; italic code sets upright in it, unslanted")
   | .W0306 => ("0306", .degraded, "a palette's seeds generate no palette — a role they derive cannot meet what its sites owe, or a seed has no sRGB tones to derive from; the seeds stand as the page's text, ground and accent")
   | .W0411 => ("0411", .standard, "a listing environment written where LaTeX cannot set it — within a line of text, in an argument, or all on one line; it is set by its evident intent")
   | .W0413 => ("0413", .degraded, "minted's one-line display command written within a line of text or an argument, where LaTeX sets a display or cannot set it, is set as inline code")

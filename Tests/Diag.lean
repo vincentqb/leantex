@@ -1,6 +1,7 @@
 module
 
 public import LeanTex.Cli.FontDiscovery
+public import LeanTex.Cli.FontAssembly
 public import Tests.Support
 public import Tests.LayoutInkContracts
 public import Tests.ListingStyleTable
@@ -202,6 +203,29 @@ def driverProbes : Array (DiagCode × DriverProbe) :=
     -- carries it. Every input is a value built here — the faces come from
     -- the suite's own font directory — so the message is the same on every
     -- host and no font need be installed.
+    -- The typewriter default lacking italics: a listed family served at its
+    -- upright corners fills a document's undeclared slot, its italic code
+    -- set upright in it — the assembly's own note. The faces are scan
+    -- records over the suite's own files, so the note is the same on every
+    -- host.
+    (.N0031, fun _ => do
+      let code := testFonts ++ "/SourceCodePro-Regular.otf"
+      let text (file : String) (bold italic : Bool) : FontDb.Face :=
+        { path := testFonts ++ "/" ++ file, family := "Open Sans", subfamily := "Regular"
+          bold, italic, fixedPitch := false, weight := if bold then 700 else 400 }
+      let faces : Array FontDb.Face := #[text "OpenSans-Regular.ttf" false false,
+        text "OpenSans-Bold.ttf" true false, text "OpenSans-Italic.ttf" false true,
+        text "OpenSans-BoldItalic.ttf" true true,
+        { path := code, family := "DejaVu Sans Mono", subfamily := "Book", bold := false
+          italic := false, fixedPitch := true, weight := 400 },
+        { path := code, family := "DejaVu Sans Mono", subfamily := "Bold", bold := true
+          italic := false, fixedPitch := true, weight := 700 }]
+      let doc := (elabStr ("\\documentclass{article}\n\\fonts{ body = \"Open Sans\" }\n" ++
+        "\\begin{document}\nA \\textit{\\texttt{slanted}} run.\n\\end{document}\n")).1
+      match ← FontAssembly.buildFontSet doc { faces, docDirs := [], dirs := #[], diags := #[] }
+          (← FontEnv.Cache.mk') .settled with
+      | .ok (_, _, ds, _) => return ds.filter (·.kind == .N0031)
+      | .error _ => return #[]),
     (.W0390, fun _ => do
       match Font.parse (← IO.FS.readBinFile (testFonts ++ "/SourceSerifPro-Regular.otf")) with
       | .error _ => return #[]
@@ -533,6 +557,7 @@ def diagWitnessWith (w : WitnessRun) (one mapped withMath : Font.FontSet)
   -- whose mono slot is the proportional body face, and an artifact that
   -- carries it — so what the golden records is what a build emits.
   | .W0390 => probed .W0390
+  | .N0031 => probed .N0031
   -- A style file's hook calls a LaTeX internal nothing defines: its
   -- argument is its code, so it is dropped and the site named, never set
   -- as text.
