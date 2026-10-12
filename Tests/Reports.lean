@@ -1509,10 +1509,12 @@ def reports : List Report := [
   { id := "R167", date := "2026-10-12"
     what := "an undeclared typewriter slot set code in the text face where the host held a monospace without italics, in the host's monospace where a tex document's own TeX distribution held lualatex's Latin Modern Mono shapes, and proportional in a document shipping its text fonts on a host with a monospace"
     pins := [check% Tests.MonoDefault.monoDefaultChecks, check% diagVoiceChecks,
-      thm% FontDb.monoPick_contract, thm% FontDb.latinModernMono_contract]
-    accept := ["fourteen of the guards' assertions fail with the fix reverted onto the recorded commit, a typewriter default again requiring every corner, read from a document's own faces alone and never from lualatex's shapes, with its old help: a family served upright only filling the slot with one note in either surface, its italic code upright on the page and unslanted on the web, a tex document's slot in lualatex's four shapes, a font-shipping document's slot from the host after its own faces, the help naming both remedies and Latin Modern Mono for a tex source, and the note's witness",
-      "on this host a tex document's typewriter runs embed the four Latin Modern Mono faces lualatex embeds for the same runs, and a markdown document's keep the platform monospace"]
-    state := .guarded "de3f485d" .revert .author }
+      thm% FontDb.monoPick_contract, thm% FontDb.latinModernMono_contract,
+      thm% FontDb.servesMono_contract]
+    accept := ["twenty-five of the guards' assertions fail with the fix reverted onto the recorded commit, a typewriter default again requiring every corner, read from a document's own faces alone and never from lualatex's shapes, with its old help: the note's driver probe, witness and golden block, and the help's; the help naming Latin Modern Mono and both remedies; a font-shipping document's slot from the host after its own faces, and its shipped upright italics; a family served upright only in either surface, on the page and on the web; the note named exactly where italic code is set, a listing's comment among it, and its declared twin; and lualatex's shapes first beside a declared text face, last beside the engine's own, and upright alone",
+      "the review's guards: with its fixes reverted onto the recorded commit, thirteen assertions fail: a document setting no italic code named in three, a family holding one italic of two served in six, a document on the engine's own text face taking lualatex's shapes before the platform list, lualatex's upright shapes alone refused in two, and a shipped monospace's italics read from the host",
+      "on this host, against lualatex over one invented probe: a tex document declaring its text face embeds for its 10-point typewriter runs the four Latin Modern Mono faces lualatex embeds, and for a footnote-size run LMMono10-Regular where lualatex embeds LMMono8-Regular, the optical size recorded as pending work; a tex document on the engine's own text face, and a markdown document, embed DejaVu Sans Mono's four beside DejaVu Sans, where lualatex sets Latin Modern Mono beside its own Latin Modern Roman"]
+    state := .guarded "e8e84d86" .revert .author }
 ]
 
 /-- The reports guarded but never seen failing: a count that may fall and
