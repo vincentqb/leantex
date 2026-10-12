@@ -512,7 +512,7 @@ def listingPaletteAuditChecks (ref : IO.Ref (List String)) : IO Unit := do
       t s!"listing audit {name}/{epochName}: real audit names the current page"
         ((Contrast.docDiags doc).any fun d =>
           d.code == "W0315" && hasStr d.message "'codekeyword'" &&
-          hasStr d.message "the page (#FFFFFF)")
+          d.detail.any (hasStr · "on #FFFFFF"))
     let source := "return value"
     let large := { entry with body := #[.frame #[] standout valign false
       #[.setPalette light, .verbatim none source
@@ -527,7 +527,7 @@ def listingPaletteAuditChecks (ref : IO.Ref (List String)) : IO Unit := do
     t s!"listing audit {name}: an unrepairable authored role still warns"
       ((Contrast.docDiags refused).any fun d =>
         d.code == "W0315" && hasStr d.message "'codekeyword'" &&
-        hasStr d.message "the page (#FFFFFF)")
+        d.detail.any (hasStr · "on #FFFFFF"))
   let code := "\\begin{minted}{python}\nreturn value\n\\end{minted}"
   let preamble := "\\theme{default}\\palette{fg=#000000,bg=#FFFFFF,\
 standoutfg=#FFFFFF,standoutbg=#000000}"
@@ -547,7 +547,7 @@ standoutfg=#FFFFFF,standoutbg=#000000}"
   let codes := ListingHighlight.codeNodesList #[] html.toList
   t "listing audit source: the actual audit reports the role's pairing on the page"
     (ds.any fun d => d.code == "W0315" && hasStr d.message "'codekeyword'" &&
-      hasStr d.message "the page (#FFFFFF)")
+      d.detail.any (hasStr · "on #FFFFFF"))
   t "listing audit source: typed HTML ships the declared ink on the declared page"
     ((elemAttrsList (· == "pre") #[] html.toList).any (fun (_, attrs) =>
        attrs.any fun (key, value) => key == "style" && hasStr value "background: #ffffff") &&
@@ -596,7 +596,7 @@ standoutfg=#FFFFFF,standoutbg=#000000}"
     t s!"role epoch {name}: actual audit reports the pairing on the declared page"
       (ds.all (·.severity != .error) &&
        ds.any fun d =>
-         d.code == "W0315" && hasStr d.message "the page (#FFFFFF)" &&
+         d.code == "W0315" && d.detail.any (hasStr · "on #FFFFFF") &&
          (name != "source" || hasStr d.message "'accent'"))
     shipped name doc #[ink] #[Ir.Color.white]
   let light := ({} : Ir.Palette).declare (.role .ink) Ir.Color.black
@@ -626,7 +626,7 @@ standoutfg=#FFFFFF,standoutbg=#000000}"
       t s!"role epoch {name}: actual audit names the declared page only after a boundary"
         (if resets then ds.any (fun d =>
           d.code == "W0315" && hasStr d.message "'accent'" &&
-          hasStr d.message "the page (#FFFFFF)")
+          d.detail.any (hasStr · "on #FFFFFF"))
          else ds.all (fun d => !hasStr d.message "'accent'"))
       shipped name doc (List.replicate count gray).toArray
         #[if resets then Ir.Color.white else Ir.Color.black]

@@ -10782,10 +10782,10 @@ slide navigation uses '#{target}'"
     -- Navigation role). The engine has no label mechanism yet, so a second
     -- unlabeled <nav> is indistinguishable to assistive technology.
     diags := diags.push (Diag.of .W0325
-      s!"{facts.navs} unlabeled <nav> landmarks on one page are \
-indistinguishable to assistive technology"
+      "unlabeled <nav> landmarks repeat on one page, indistinguishable to assistive technology"
       (help := some "repeated landmarks need unique labels (ARIA Landmark \
-Regions): give each one a name, \\begin{nav}[label = Site]"))
+Regions): give each one a name, \\begin{nav}[label = Site]")
+      (detail := some s!"{facts.navs} on one page"))
   if facts.reveals > 0 then
     -- Declared reveals resolve at the page level: the CSS (declarative
     -- where the platform has scroll-driven animations) and the constant

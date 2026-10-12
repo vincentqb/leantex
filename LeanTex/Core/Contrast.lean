@@ -619,23 +619,24 @@ private def siteVerdict (site : ColorSite) (r : Role) (pal : Palette) (st : Site
   if r.row.noun.isNone && (Design.declared? pal r).isNone then
     let onKey := (ColorRef.role st.on).key
     Diag.of .W0330
-      (s!"declared page {hexOf st.ground} keeps the defaulted {hexOf st.ink} ink: " ++
-        s!"{ratioString milli}, below the {ratioString req} WCAG 2.2 asks of " ++ clause)
+      (s!"the declared page keeps the defaulted ink, below the contrast WCAG 2.2 asks of " ++
+        clause)
       (span := (site pal (some onKey) st.ground).map (·.2))
+      (detail := some s!"{hexOf st.ink} on {hexOf st.ground}: {ratioString milli}, below {ratioString req}")
       (help := some ("a declared surface chooses its ink: declare " ++
         "\\palette{ " ++ key ++ " = ... }" ++ " beside " ++ onKey))
   else match r.row.noun with
     | some noun =>
       Diag.of .W0345
-        (s!"{noun} pairs {hexOf st.ink} on {hexOf st.ground} at " ++
-          s!"{ratioString milli}, below the {ratioString req} WCAG 2.2 asks of " ++ clause)
+        (s!"{noun} pairs its ink and ground below the contrast WCAG 2.2 asks of " ++ clause)
         (span := span) (subject := some (inkKey key st.ink st.ground))
+        (detail := some s!"{hexOf st.ink} on {hexOf st.ground}: {ratioString milli}, below {ratioString req}")
     | none =>
       Diag.of .W0315
-        (s!"text coloured '{key}' ({hexOf st.ink}) reads at {ratioString milli} " ++
-          s!"on the page ({hexOf st.ground}), below the {ratioString req} " ++
-          "WCAG 2.2 asks of " ++ clause)
+        (s!"text coloured '{key}' reads on the page below the contrast WCAG 2.2 asks of " ++
+          clause)
         (span := span) (subject := some (inkKey key st.ink st.ground))
+        (detail := some s!"{hexOf st.ink} on {hexOf st.ground}: {ratioString milli}, below {ratioString req}")
 
 /-- **The one site judge.** A shipped design site, judged under the palette
 in force where it ships: a site that does not ship there, is declared
@@ -809,10 +810,10 @@ private structure UseJudgeState where
 first span, at the first run; a note at each later run, under one subject,
 so the tally puts the run count on the one line that shows. -/
 private def UseJudgeState.pairing (s : UseJudgeState) (dup : Bool) (key : UseKey)
-    (run : Nat) (subject message : String) (span : Option Span) : UseJudgeState :=
+    (run : Nat) (subject message detail : String) (span : Option Span) : UseJudgeState :=
   if dup && s.sites[key]? == some run then s
   else
-    let d := Diag.of .W0315 message span (subject := some subject)
+    let d := Diag.of .W0315 message span (subject := some subject) (detail := some detail)
     { s with diags := s.diags.push (if dup then d.demote else d)
              sites := s.sites.insert key run }
 
@@ -839,15 +840,15 @@ private def useStep (site : ColorSite) (large : Std.HashMap UseKey Bool)
         | some role => some role.key
         | none => origin.map Prod.fst
       let label := match u.styleName, spelled with
-        | some st, _ => s!"by the '{st}' highlighting style ({hexOf u.color})"
-        | none, some e => s!"'{e}' ({hexOf u.color})"
-        | none, none => hexOf u.color
+        | some st, _ => s!"by the '{st}' highlighting style"
+        | none, some e => s!"'{e}'"
+        | none, none => s!"'{hexOf u.color}'"
       let s := s.pairing dup key u.site
         (inkKey (spelled.getD (hexOf u.color)) u.color u.surface)
-        (s!"text coloured {label} reads at {ratioString assessment.ratio} " ++
-          s!"on {u.groundName.getD "the page"} ({hexOf u.surface}), " ++
-          s!"below the {ratioString threshold} " ++
+        (s!"text coloured {label} reads on {u.groundName.getD "the page"} below the contrast " ++
           s!"WCAG 2.2 asks of {if allLarge then "large-scale text" else "text"} (SC 1.4.3)")
+        (s!"{hexOf u.color} on {hexOf u.surface}: {ratioString assessment.ratio}, " ++
+          s!"below {ratioString threshold}")
         (origin.map (·.2))
       { s with done := done }
 

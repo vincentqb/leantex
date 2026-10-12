@@ -49,4 +49,4 @@ list unordered
         text "a tint"
       text "."
 -- diagnostics
-warning[W0315] 34:46 text coloured 'warn!40' (#E1BA9D) reads at 1.71:1 on the page (#FAFAF9), below the 4.50:1 WCAG 2.2 asks of text (SC 1.4.3)
+warning[W0315] 34:46 text coloured 'warn!40' reads on the page below the contrast WCAG 2.2 asks of text (SC 1.4.3)

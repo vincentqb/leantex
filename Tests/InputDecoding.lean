@@ -102,7 +102,8 @@ def inputDecodingChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "input decoding: one bad byte reads as one U+FFFD" (count bad.text '\uFFFD' == 1)
   t "input decoding: one bad byte is one warning naming its offset and place"
     (bad.diags.size == 1 && codes bad.diags .W0002 == 1 && bad.diags.all fun d =>
-      d.message == "byte 0xFF at offset 49 is not text in UTF-8" &&
+      d.message == "the file holds bytes that are not text in UTF-8" &&
+      d.detail == some "byte 0xFF at offset 49" &&
       d.span == some ⟨"u96-badbyte.tex", { line := 3, col := 9 }⟩ &&
       d.recovery == some (.replacedBy "U+FFFD") && d.offsets == #[49])
   t "input decoding: the replacement reaches the page"
@@ -111,12 +112,11 @@ def inputDecodingChecks (ref : IO.Ref (List String)) : IO Unit := do
     ("x".toUTF8 ++ bytes [0xFF, 0x61, 0xFE, 0x62, 0xFF, 0x63, 0xFE, 0x64, 0xFF])
   t "input decoding: a warning lists three offsets and gives a tool all of them"
     (five.diags.any fun d => d.kind == .W0002 && d.offsets == #[1, 3, 5, 7, 9] &&
-      d.message == "5 byte sequences are not text in UTF-8, at offsets 1 (0xFF), 3 (0xFE), \
-5 (0xFF) and 2 more")
+      d.detail == some "5 byte sequences, at offsets 1 (0xFF), 3 (0xFE), 5 (0xFF) and 2 more")
   let cut := Encoding.readTex none "cut.tex" ("a".toUTF8 ++ bytes [0xE2, 0x82] ++ "b".toUTF8)
   t "input decoding: a truncated sequence is one U+FFFD naming its bytes"
     (cut.text == "a\uFFFDb" && cut.diags.any fun d =>
-      d.message == "the bytes 0xE2 0x82 at offset 1 are not text in UTF-8")
+      d.detail == some "the bytes 0xE2 0x82 at offset 1")
   -- The help follows what the bytes show.
   let stray := Encoding.readTex none "stray.tex"
     ("Café crème".toUTF8 ++ bytes [0x92] ++ "s".toUTF8)
@@ -182,8 +182,8 @@ encoding in that load, as \\usepackage[latin1]{inputenc} reads Latin-1")
       codes mixed.diags .W0002 == 0)
   t "input decoding: the stray byte a UTF-8 file read as declared is named, a guess"
     (mixed.diags.size == 1 && mixed.diags.all fun d => d.kind == .W0004 &&
-      d.message == "byte 0x92 at offset 83 is read as Windows-1252 (Latin-1), as declared, \
-in a file otherwise UTF-8" && d.offsets == #[83])
+      d.message == "bytes are read as Windows-1252 (Latin-1), as declared, in a file otherwise \
+UTF-8" && d.detail == some "byte 0x92 at offset 83" && d.offsets == #[83])
   -- A tie is no evidence: it goes to the declaration.
   let tie := readTexFile "tie.tex"
     (doc "\\usepackage[latin1]{inputenc}\n" ("x".toUTF8 ++ bytes [0xC3, 0xA9, 0x20, 0xE9]))
@@ -207,7 +207,8 @@ in a file otherwise UTF-8" && d.offsets == #[83])
   let hole := readTexFile "hole.tex" ("\\usepackage[cp1252]{inputenc}\n".toUTF8 ++ bytes [0x81])
   t "input decoding: a byte Windows-1252 leaves undefined is U+FFFD, named"
     (hole.text.endsWith "\uFFFD" && hole.diags.any fun d => d.kind == .W0002 &&
-      d.message == "byte 0x81 at offset 30 is not text in Windows-1252 (Latin-1)")
+      d.message == "the file holds bytes that are not text in Windows-1252 (Latin-1)" &&
+      d.detail == some "byte 0x81 at offset 30")
   let unread := readTexFile "latin2.tex"
     ("\\usepackage[latin2]{inputenc}\n".toUTF8 ++ bytes [0xB1])
   t "input decoding: an encoding the engine does not read is UTF-8 with its loss named"
@@ -231,12 +232,12 @@ in a file otherwise UTF-8" && d.offsets == #[83])
     (beRead.text == String.ofList ['A', Char.ofNat 0x1F600, '\uFFFD', '\uFFFD', 'B'] &&
       beRead.reading == .utf16 true && beRead.diags.size == 1 &&
       beRead.diags.all (fun d => d.kind == .W0002 && d.offsets == #[8, 10] &&
-        d.message == "2 byte sequences are not text in UTF-16BE, at offsets 8 (0xDC 0x00) and \
-10 (0x00 0x00)"))
+        d.detail == some "2 byte sequences, at offsets 8 (0xDC 0x00) and 10 (0x00 0x00)"))
   let odd := Encoding.readMarkdown "u96-odd16.md" (← probe "u96-odd16.md")
   t "input decoding: a trailing odd byte of UTF-16 is the one byte it is"
     (odd.text == "Hi\uFFFD" && odd.diags.all fun d =>
-      d.message == "byte 0x41 at offset 6 is not text in UTF-16LE" && d.offsets == #[6])
+      d.message == "the file holds bytes that are not text in UTF-16LE" &&
+      d.detail == some "byte 0x41 at offset 6" && d.offsets == #[6])
   let bare := Encoding.readTex none "bare.tex"
     ("Hi there".toList.foldl (fun b c => b ++ bytes [c.toNat.toUInt8, 0]) ByteArray.empty)
   t "input decoding: UTF-16 with no mark is named as such"
@@ -247,7 +248,8 @@ in a file otherwise UTF-8" && d.offsets == #[83])
   let nul := Encoding.readMarkdown "u96-nul.md" (← probe "u96-nul.md")
   t "input decoding: U+0000 in markdown is U+FFFD, named once as what it is"
     (!nul.text.contains '\x00' && count nul.text '\uFFFD' == 1 && codes nul.diags .W0002 == 1 &&
-      nul.diags.all (·.message == "U+0000 at offset 8 is not text") &&
+      nul.diags.all (fun d => d.message == "the file holds U+0000, which is not text" &&
+        d.detail == some "U+0000 at offset 8") &&
       treeShownOccurs (HtmlDoc.emitTree {} (elabMd nul.text).1).2.1 "A\uFFFDB" == 1)
   let texNul := Encoding.readTex none "nul.tex" ("A".toUTF8 ++ bytes [0] ++ "B".toUTF8)
   t "input decoding: U+0000 in tex is U+FFFD, named once"
@@ -256,7 +258,7 @@ in a file otherwise UTF-8" && d.offsets == #[83])
   t "input decoding: U+0000 and a bad byte in one file are one warning"
     (nulBad.diags.size == 1 && nulBad.diags.all fun d => d.kind == .W0002 &&
       d.offsets == #[10, 17] && d.subject == some "input-bytes:u96-nulbad.md" &&
-      d.message == "2 byte sequences are not text in UTF-8, at offsets 10 (0x00) and 17 (0xFF)")
+      d.detail == some "2 byte sequences, at offsets 10 (0x00) and 17 (0xFF)")
   -- A line ends at LF, CR LF and a CR alone, on both surfaces: the page of
   -- a file with classic Mac or Windows line ends is the page of the same
   -- file with LF, and a comment ends at its line.

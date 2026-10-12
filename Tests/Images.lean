@@ -755,7 +755,7 @@ def planChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "the ledger names exactly one W0604 with the tag"
     (match planOf jpgExif6 with
      | .ok pl => (Image.lossDiags "p.jpg" pl).map (·.code) == #["W0604"] &&
-         (Image.lossDiags "p.jpg" pl).all fun d => d.subject == some "p.jpg" && hasStr d.message "tag 6"
+         (Image.lossDiags "p.jpg" pl).all fun d => d.subject == some "p.jpg" && hasStr (diagWords d) "tag 6"
      | .error _ => false)
   t "orientation 1 and an absent tag are no loss"
     ((planOf (jpegOf (exifApp1 1 true) 2 1 3)).toOption.map (·.losses) == some #[] &&

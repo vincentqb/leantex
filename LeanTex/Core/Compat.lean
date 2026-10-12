@@ -7999,7 +7999,7 @@ clock, so nothing is inserted" pos
     for j in [start:raws.size] do
       k := j + 1
       if let some (.ctrl "ExplSyntaxOff" _) := raws[j]? then break
-    say .W0106 "expl3 code (\\ExplSyntaxOn … \\ExplSyntaxOff) is not supported; skipped" pos
+    say .W0106 "code between '\\ExplSyntaxOn' and '\\ExplSyntaxOff' is not supported; skipped" pos
     return some (#[], k)
   | "setkomafont" =>
     let (args, k) := takeGroups raws start 2

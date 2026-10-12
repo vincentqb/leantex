@@ -2164,8 +2164,8 @@ driver's loop. -/
 
 /-- W0601: the image file exists but reading it failed. -/
 public def imageUnreadable (src err : String) : Diag :=
-  Diag.of .W0601 s!"cannot read image '{src}': {err}; a placeholder box holds its place"
-    (subject := some src)
+  Diag.of .W0601 s!"cannot read image '{src}'; a placeholder box holds its place"
+    (subject := some src) (detail := some err)
 
 /-- W0601: no file answers the image source. -/
 public def imageMissing (src looked : String) : Diag :=
@@ -2189,7 +2189,8 @@ public def imageIccDropped (src : String) : Diag :=
 /-- W0604: the source carries an orientation tag the plan did not apply. -/
 public def imageOrientationDropped (src : String) (orientation : Nat) : Diag :=
   Diag.of .W0604
-    s!"image '{src}' carries orientation tag {orientation}; the page shows the stored orientation"
+    s!"image '{src}' carries an orientation tag; the page shows the stored orientation"
+    (detail := some s!"orientation tag {orientation}")
     (help := "rotate the pixels and re-export with orientation tag 1, or accept it with \
 \\allow{W0604}")
     (subject := some src)

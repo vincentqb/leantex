@@ -43,7 +43,7 @@ open LeanTex.Core LeanTex.Core.Gfx
   | .value n => s!"'{n}' value"
   | .operator n => s!"'{n}' operator"
   | .resource n => s!"{n} resource"
-  | .font k => s!"{k} font"
+  | .font k => s!"'{k}' font"
   | .budget w => s!"{w} beyond the reader's budget"
 
 /-- Why a PDF figure's web face is the engine's drawing though the engine

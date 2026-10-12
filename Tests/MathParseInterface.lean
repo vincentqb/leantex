@@ -32,7 +32,7 @@ example (env : Env) :
 
 example (note : Note) : String :=
   match note with
-  | .ragged message | .styleDropped message | .constructFloored message
+  | .ragged message _ | .styleDropped message | .constructFloored message
   | .inkMissed message => message
   | .inkUsed expression _ _ => expression
 

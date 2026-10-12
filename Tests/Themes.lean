@@ -1756,7 +1756,7 @@ def contrastChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "a failing role pairing warns once, naming role and requirement"
     ((elabStr quiet).2.any fun d => d.code == "W0315" && d.severity == .warning &&
       (d.message.splitOn "'washed'").length == 2 &&
-      (d.message.splitOn "4.50:1").length == 2)
+      ((diagWords d).splitOn "4.50:1").length == 2)
   t "a failing role ships its declared value"
     ((elabStr quiet).1.palette.find? "washed" == some { r := 0x88, g := 0x88, b := 0x88 })
   t "a pale role warns on one line, naming no repair"
@@ -1821,7 +1821,7 @@ def contrastChecks (ref : IO.Ref (List String)) : IO Unit := do
       titled)).contains "W0345")
   t "an overridden frame-title pair below 3:1 warns once, on one line"
     (((elabStr (dvDeck "\\theme{moloch}\\palette{ frametitlebg = #F2F2F0 }" titled)).2.filter
-      fun d => d.code == "W0345" && d.help.isNone && hasStr d.message "3.00:1").size == 1)
+      fun d => d.code == "W0345" && d.help.isNone && hasStr (diagWords d) "3.00:1").size == 1)
   t "the untouched bundle's frame-title pair is silent"
     (!(warnCodes (dvDeck "\\theme{moloch}" titled)).contains "W0345")
   t "an illegible frame-title pair without a titled frame is silent"
@@ -1834,7 +1834,7 @@ def contrastChecks (ref : IO.Ref (List String)) : IO Unit := do
     ((elabStr (dvDeck "\\palette{ standoutfg = #A0A0A0, standoutbg = #FAFAFA }"
       "\\begin{frame}[standout]S\\end{frame}")).2.any
       fun d => d.code == "W0345" && hasStr d.message "the standout frame" &&
-        (d.message.splitOn "3.00:1").length == 2)
+        ((diagWords d).splitOn "3.00:1").length == 2)
   t "an illegible standout pair without a standout frame is silent"
     (!(warnCodes (dvDeck "\\palette{ standoutfg = #DDDDDD, standoutbg = #FAFAFA }"
       titled)).contains "W0345")
@@ -1882,7 +1882,7 @@ def contrastChecks (ref : IO.Ref (List String)) : IO Unit := do
       "\\palette{ fg = #808080, bg = #F0F0F0 }" ++
       "\\begin{document}x\\end{document}")).2.any fun d =>
         d.code == "W0315" && (d.message.splitOn "'fg'").length == 2 &&
-          (d.message.splitOn "#F0F0F0").length == 2)
+          ((diagWords d).splitOn "#F0F0F0").length == 2)
   -- The effective pair (F3): the contract judges the pair the page ships,
   -- not only the pair the document spelled. A declared dark page with the
   -- ink left defaulted is black-on-dark in both backends — its own code
@@ -1922,7 +1922,7 @@ def contrastChecks (ref : IO.Ref (List String)) : IO Unit := do
       spec ++ "\\end{document}"
   let pairing (spec : String) : Array String :=
     ((elabStr (paleUse spec)).2.filter fun d =>
-      d.code == "W0315" && d.severity == .warning).map (·.message)
+      d.code == "W0315" && d.severity == .warning).map diagWords
   let heldAt (spec needle : String) : Bool :=
     let ms := pairing spec
     ms.size == 1 && ((((ms[0]?).getD "").splitOn needle).length == 2)
@@ -2307,11 +2307,11 @@ def titleGroundChecks (ref : IO.Ref (List String)) : IO Unit := do
   let dim := "\\palette{ titlepagebg = #101822, titlepagefg = #3A4048 }"
   t "an illegible title-page pair warns at the stage's threshold"
     ((elabStr (deckOf dim "\\maketitle")).2.any fun d =>
-      d.code == "W0345" && (d.message.splitOn "3.00:1").length == 2 &&
+      d.code == "W0345" && ((diagWords d).splitOn "3.00:1").length == 2 &&
         (d.message.splitOn "the title page").length == 2 && d.help.isNone)
   t "the warning names the declared ground, not an invented one"
     ((elabStr (deckOf dim "\\maketitle")).2.any fun d =>
-      d.code == "W0345" && (d.message.splitOn "#101822").length == 2)
+      d.code == "W0345" && ((diagWords d).splitOn "#101822").length == 2)
   t "a title-page ink keeps its declared value"
     ((designOf dim).titlepage.any (·.fg == { r := 0x3A, g := 0x40, b := 0x48 }))
   -- Only where the page ships: a deck with no \maketitle has no title page,
@@ -3149,7 +3149,7 @@ def titledGroundChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) :
   let ds := Contrast.docDiags doc
   t "the judge speaks for the shipped titled pair" (!ds.isEmpty)
   t "the judge names the ground the page ships"
-    (ds.any fun d => d.code == "W0345" && hasStr d.message "#FAFAF9")
+    (ds.any fun d => d.code == "W0345" && hasStr (diagWords d) "#FAFAF9")
   -- A declared bar is still the ground: the fix resolves the undeclared
   -- page, it does not override a bar.
   let barPal := (pal.declareKey "blocktitlebg" { r := 0xEE, g := 0xEE, b := 0xEE })
@@ -3163,7 +3163,7 @@ def titledGroundChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) :
           ground == some { r := 0xEE, g := 0xEE, b := 0xEE }
       | _ => false)
   t "the judge grounds the barred title on the bar"
-    ((Contrast.docDiags barDoc).all fun d => !hasStr d.message "#FAFAF9")
+    ((Contrast.docDiags barDoc).all fun d => !hasStr (diagWords d) "#FAFAF9")
   -- A declared page is the ground where one is declared, white nowhere.
   let pagePal := (pal.declareKey "bg" { r := 0xFF, g := 0xFF, b := 0xFF })
   t "a declared white page is judged as declared"

@@ -184,11 +184,13 @@ is skipped.
   stands on, how far it overruns, a renamed anchor, a count measured there —
   are the record's `detail`, printed beside the words and kept out of them, or
   one loss prints a line per site; a value the author declared may stand in
-  the words, as the construct's own. Every code's witness written twice prints
-  no more warning lines (`repeatFoldChecks`), and a warning's words state no
-  measured length (`dvLint`); neither sees what differs only between two real
-  sites, and an offset or a row in W0002, W0004, W0014 and W0364 still prints
-  a line per site: pending work. A header names a construct the author wrote —
+  the words, as the construct's own. Every code's witness written twice, its
+  second copy at another site — another line, column and byte offset, another
+  file for a byte-level loss — prints no more warning lines
+  (`repeatFoldChecks`), and a warning's words state no number outside what they
+  quote, save an encoding's name, a scalar, a standard's citation and a code
+  (`dvLint`, `dvNumber?`): a row, an index or a count, which no shifted copy
+  varies, is detail too. A header names a construct the author wrote —
   a control sequence, an environment opener, a math shift — or nothing, never
   a word of text or a fragment of code (`Diag.Spelling`); a loss about a place
   — an overfull line, a declared line that re-flowed, a table wider than the

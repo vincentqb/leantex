@@ -132,31 +132,31 @@ structure Binding where
   entry : Bib.Entry
 
 /-- Resolve a path's variable against the innermost-first bindings: the
-binding and the field name, or the W0364 message and help. -/
+binding and the field name, or the W0364 message, help and detail. -/
 def resolveVar (env : List Binding) (path : String) :
-    Except (String × Option String) (Binding × String) :=
+    Except (String × Option String × Option String) (Binding × String) :=
   match path.splitOn "." with
   | [v, f] =>
     let v := v.trimAscii.toString
     let f := f.trimAscii.toString.toLower
     if v.isEmpty || f.isEmpty then
       .error (s!"'{path}' is not a data path",
-        some "a path is variable.field, as in '\\val{job.role}'")
+        some "a path is variable.field, as in '\\val{job.role}'", none)
     else
       match env.find? (·.var == v) with
       | none =>
         .error (s!"'{v}' is not bound here",
-          some s!"'\\begin\{foreach}\{{v}}\{kind}' binds it over the '@kind' records")
+          some s!"'\\begin\{foreach}\{{v}}\{kind}' binds it over the '@kind' records", none)
       | some b => .ok (b, f)
   | _ =>
     .error (s!"'{path}' is not a data path",
-      some "a path is variable.field, as in '\\val{job.role}'")
+      some "a path is variable.field, as in '\\val{job.role}'", none)
 
 /-- Resolve `var.field`: the field's raw text and the source name it came
 from, or the W0364 message and help — the absent-field message names the
 entry's own fields, the E0403 nearest-names shape. -/
 def resolvePath (env : List Binding) (path : String) :
-    Except (String × Option String) (String × String) :=
+    Except (String × Option String × Option String) (String × String) :=
   match resolveVar env path with
   | .error e => .error e
   | .ok (b, f) =>
@@ -164,8 +164,9 @@ def resolvePath (env : List Binding) (path : String) :
     | some txt => .ok (b.src, txt)
     | none =>
       let carried := String.intercalate ", " (b.entry.fields.toList.map (·.1))
-      .error (s!"'{f}' is absent in {b.entry.kind}[{b.index}]; its entries carry: {carried}",
-        some s!"'\\ifdata\{{path}}\{…}' renders content only when the field is present")
+      .error (s!"'{f}' is absent in a '@{b.entry.kind}' record",
+        some s!"'\\ifdata\{{path}}\{…}' renders content only when the field is present",
+        some s!"{b.entry.kind}[{b.index}] carries: {carried}")
 
 /-- A field value's raws and diagnostics: the same lexer and the same
 parser the document body went through — no data-specific lexing exists to
@@ -239,9 +240,9 @@ private structure St where
 private abbrev M := StateM St
 
 private def say (code : DiagCode) (msg : String) (pos : Pos)
-    (help : Option String := none) : M Unit :=
+    (help : Option String := none) (detail : Option String := none) : M Unit :=
   modify fun st => { st with
-    diags := st.diags.push (Diag.of code msg (some ⟨st.file, pos⟩) (help := help)) }
+    diags := st.diags.push (Diag.of code msg (some ⟨st.file, pos⟩) (help := help) (detail := detail)) }
 
 /-- Install one source's records: parse errors are W0352 — the same
 contract the bibliography holds, one bad entry costs itself, never the
@@ -272,8 +273,8 @@ private def sayNoRecords (kind : String) (pos : Pos) : M Unit := do
     say .W0364 s!"no data records are declared before this point" pos
       (help := "'\\data{ file = \"records.bib\" }' declares them")
   else
-    say .W0364 s!"no '@{kind}' records in the data; it carries: \
-      {String.intercalate ", " (ks.toList.map ("@" ++ ·))}" pos
+    say .W0364 s!"no '@{kind}' records in the data" pos
+      (detail := some s!"it carries: {String.intercalate ", " (ks.toList.map ("@" ++ ·))}")
 
 mutual
 
@@ -302,8 +303,8 @@ private def expandList (env : List Binding) (out : Array Raw) :
       let (vraws, vdiags) := valParsed src txt
       modify fun st => { st with diags := st.diags ++ vdiags }
       expandList env (out ++ vraws) rest
-    | .error (msg, help) =>
-      say .W0364 msg pos help
+    | .error (msg, help, detail) =>
+      say .W0364 msg pos help detail
       expandList env out rest
   | .ctrl "val" pos :: rest => do
     say .E0304 "'\\val' needs {variable.field}" pos
@@ -313,8 +314,8 @@ private def expandList (env : List Binding) (out : Array Raw) :
     let present ← do
       match resolveVar env (Parse.rawSrc cond) with
       | .ok (b, f) => pure (b.entry.field? f).isSome
-      | .error (msg, help) =>
-        say .W0364 msg pos help
+      | .error (msg, help, detail) =>
+        say .W0364 msg pos help detail
         pure false
     let s := optArg rest
     let out ← if present then expandList env out thenB.toList

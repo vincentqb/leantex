@@ -908,8 +908,9 @@ this projection without opening the constructor's implementation. -/
 public theorem Diag.of_subject (c : DiagCode) (message : String) (span : Option Span)
     (help subject : Option String) (refused : Option String := none)
     (trigger : Option String := none) (recovery : Option Diag.Recovery := none)
-    (output : Option Diag.Output := none) :
-    (Diag.of c message span help subject refused trigger recovery output).subject = subject := by
+    (output : Option Diag.Output := none) (detail : Option String := none) :
+    (Diag.of c message span help subject refused trigger recovery output detail).subject =
+      subject := by
   rfl
 
 /-- A refusal carries the name it refuses structurally, never as a reading of
@@ -1896,8 +1897,9 @@ public theorem Loss.degraded_floor_ships_exact :
 public theorem Diag.of_code_exact (c : DiagCode) (message : String) (span : Option Span)
     (help subject : Option String) (refused : Option String := none)
     (trigger : Option String := none) (recovery : Option Diag.Recovery := none)
-    (output : Option Diag.Output := none) :
-    (Diag.of c message span help subject refused trigger recovery output).code = c.code := by
+    (output : Option Diag.Output := none) (detail : Option String := none) :
+    (Diag.of c message span help subject refused trigger recovery output detail).code =
+      c.code := by
   rfl
 
 /-- The outline diagnostic keeps its registered spelling. -/

@@ -125,7 +125,7 @@ public def checks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit 
         "\\begin{document}x\\end{document}")).1 with body := #[.verbatim none source spec] }
   t "declared colours: a declared code role is reported under its key"
     ((reports (Contrast.docDiags keyed)).any fun d =>
-      hasStr d.message "'codecomment' (#C0C0C0)")
+      hasStr d.message "'codecomment'" && hasStr (diagWords d) "#C0C0C0 on")
   -- The medium's size: a grey between 3:1 and 4.5:1 on white.
   let greySrc (cls body : String) : String :=
     "\\documentclass{" ++ cls ++ "}\\palette{ bg = #FFFFFF }\\definecolor{quiet}{HTML}{808080}" ++

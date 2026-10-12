@@ -246,7 +246,7 @@
   suggestion: the box is measured and placed by the engine; alt={...} or artifact on the picture, or a figure caption, names it for assistive technology
 ── N0024 (info) a figure is drawn by an external converter, because the engine does not draw one of its features
 ℹ [N0024]
-  figure 'figures/plot.pdf' is drawn on the web page by pdftocairo, because the engine does not draw its type1 font
+  figure 'figures/plot.pdf' is drawn on the web page by pdftocairo, because the engine does not draw its 'type1' font
 ── N0025 (info) an inputenc declaration names an encoding other than UTF-8; each file it governs is listed with how it reads
 ℹ [N0025]
   '\usepackage[latin1]{inputenc}': 'doc.tex' reads as Windows-1252 (Latin-1)
@@ -304,7 +304,8 @@
   content after '\end{document}' is ignored
 ── W0002 (degraded) bytes that are not text in the file's encoding, U+0000 among them, are replaced by U+FFFD
 ⚠ [W0002]
-  byte 0xE9 at offset 44 is not text in UTF-8
+  the file holds bytes that are not text in UTF-8
+  byte 0xE9 at offset 44
   replaced by: U+FFFD
   suggestion: save the file as UTF-8, or name its encoding: \usepackage[latin1]{inputenc} reads Latin-1
 ── W0003 (degraded) no math face available; math set as plain text
@@ -313,7 +314,8 @@
   suggestion: declare \fonts{ math = "..." } naming an installed OpenType math face; `leantex fonts` lists families
 ── W0004 (degraded) bytes a UTF-8 file holds that UTF-8 cannot read are read in the encoding its document declares, a guess the warning names
 ⚠ [W0004]
-  byte 0x92 at offset 83 is read as Windows-1252 (Latin-1), as declared, in a file otherwise UTF-8
+  bytes are read as Windows-1252 (Latin-1), as declared, in a file otherwise UTF-8
+  byte 0x92 at offset 83
   suggestion: retype the characters at those offsets in UTF-8: the rest of the file is UTF-8
 ── W0005 (degraded) overfull line, no feasible break, where no re-flowed declared line accounts for it
 ⚠ [W0005]
@@ -336,7 +338,8 @@
   replaced by: a glyph from 'Source Code Pro'
 ── W0010 (degraded) lists nest four levels; deeper levels reuse the fourth marker
 ⚠ [W0010]
-  lists nest four levels; level 5 reuses the fourth's marker
+  lists nest more than four levels; a deeper level reuses the fourth's marker
+  level 5
   suggestion: LaTeX errors here ('Too deeply nested'); flatten the nesting
 ── W0011 (degraded) declared math face has no OpenType MATH table
 ⚠ [W0011]
@@ -353,7 +356,8 @@
   suggestion: the document no longer needs it; drop the entry from \allow
 ── W0014 (degraded) alignment row disagrees with its grid's columns; padded
 ⚠ [W0014] - \begin
-  '{align*}': row 2 has 1 cell(s) where 2 align; padded with empty cells
+  '{align*}': a row has fewer cells than its widest; padded with empty cells
+  row 2 has 1 cell(s) where 2 align
 ── W0015 (degraded) equation numbers not rendered yet; rows set unnumbered
 ⚠ [W0015] - \begin
   equation numbers are not rendered yet; '{align}' sets unnumbered
@@ -394,7 +398,7 @@
   suggestion: write a numbered spec: <2>, <2->, or <2-3>; incremental specs are not modelled
 ── W0106 (config) expl3 code skipped
 ⚠ [W0106] - \ExplSyntaxOn
-  expl3 code (\ExplSyntaxOn … \ExplSyntaxOff) is not supported; skipped
+  code between '\ExplSyntaxOn' and '\ExplSyntaxOff' is not supported; skipped
 ── W0108 (degraded) \centering is inert inside an argument
 ⚠ [W0108] - \centering
   '\centering' centres nothing inside an argument; content stays left-aligned
@@ -409,11 +413,13 @@
   suggestion: \style{element}{ font = {...} } styles the elements the engine draws
 ── W0201 (standard) measure outside the readable band
 ⚠ [W0201]
-  the measure holds about 98 characters per line, outside the readable 45–90 band
+  the measure holds more characters per line than the readable band
+  about 98 characters per line, outside 45–90
   suggestion: narrow the text block (\page{ hmargin = ... }; 66 characters is the ideal) or declare \page{ measure = free }
 ── W0202 (standard) heading sets more space below than above
 ⚠ [W0202]
-  'section' sets more space below the heading (10pt) than above it (2pt)
+  'section' sets more space below the heading than above it
+  10pt below, 2pt above
   suggestion: a heading binds to the text it introduces: in \style{section}{...} keep 'after' at most 'before'
 ── W0301 (degraded) unknown command; {...} arguments kept as text
 ⚠ [W0301] - \mystery
@@ -468,7 +474,8 @@
   suggestion: write a factor like {0.5\textwidth}
 ── W0315 (standard) low-contrast colour pairing (WCAG 2.2)
 ⚠ [W0315] - \textcolor
-  text coloured 'yellow!50' (#FFFF80) reads at 1.01:1 on the page (#FAFAF9), below the 4.50:1 WCAG 2.2 asks of text (SC 1.4.3)
+  text coloured 'yellow!50' reads on the page below the contrast WCAG 2.2 asks of text (SC 1.4.3)
+  #FFFF80 on #FAFAF9: 1.01:1, below 4.50:1
 ── W0316 (config) unknown option in \palette; block skipped
 ⚠ [W0316] - \palette
   unknown option in '\palette': "dark"; block skipped
@@ -502,7 +509,8 @@
   suggestion: backends: pdf, html, md
 ── W0325 (degraded) more than one <nav> landmark on one page
 ⚠ [W0325]
-  2 unlabeled <nav> landmarks on one page are indistinguishable to assistive technology
+  unlabeled <nav> landmarks repeat on one page, indistinguishable to assistive technology
+  2 on one page
   suggestion: repeated landmarks need unique labels (ARIA Landmark Regions): give each one a name, \begin{nav}[label = Site]
 ── W0326 (degraded) in-page link with no target anchor on the page
 ⚠ [W0326]
@@ -522,7 +530,8 @@
   '\fontfallback' is not implemented yet; skipped
 ── W0330 (degraded) declared page with a defaulted ink is illegible (WCAG 2.2)
 ⚠ [W0330] - \palette
-  declared page #18181B keeps the defaulted #000000 ink: 1.18:1, below the 4.50:1 WCAG 2.2 asks of text (SC 1.4.3)
+  the declared page keeps the defaulted ink, below the contrast WCAG 2.2 asks of text (SC 1.4.3)
+  #000000 on #18181B: 1.18:1, below 4.50:1
   suggestion: a declared surface chooses its ink: declare \palette{ fg = ... } beside bg
 ── W0331 (degraded) declared marker not expressible in this backend; default substituted
 ⚠ [W0331]
@@ -553,7 +562,8 @@
   suggestion: declare the extent ([minimum width = ...]) or widen the separation ([node distance = ...])
 ── W0337 (degraded) table row disagrees with its column spec; padded to the grid
 ⚠ [W0337] - \begin
-  a row carries 3 cells but the column spec declares 2; the grid widens
+  a row carries more cells than the column spec declares; the grid widens
+  3 cells where the spec declares 2
   suggestion: declare one column type per cell: l, c, r, or p{width}
 ⚠ [W0337] - \begin
   a row carries fewer cells than the column spec; it is padded with empty cells
@@ -649,7 +659,8 @@
   suggestion: shrink the float's content, or raise the text height (\page{ vmargin = ... })
 ── W0361 (config) a built-in is not replaced by a redefinition the engine cannot run
 ⚠ [W0361] - \newcommand
-  the redefinition of '\maketitle' uses '\venuetitlebox' (t:2), which the engine cannot run; the built-in stands
+  the redefinition of '\maketitle' uses '\venuetitlebox', which the engine cannot run; the built-in stands
+  '\venuetitlebox' at t:2
 ── W0362 (degraded) picture entirely outside the rendered subset; a placeholder box marks its place
 ⚠ [W0362] - \begin
   no part of this picture is inside the rendered subset; a placeholder box marks its place
@@ -660,19 +671,23 @@
   suggestion: pin the node to a point of the page: \node[anchor=west] at (current page.west) {\inserttitle}
 ── W0364 (degraded) an unresolved data path; nothing renders in its place
 ⚠ [W0364]
-  'end' is absent in job[1]; its entries carry: role, start
+  'end' is absent in a '@job' record
+  job[1] carries: role, start
   suggestion: '\ifdata{j.end}{…}' renders content only when the field is present
 ⚠ [W0364]
   'k' is not bound here
   suggestion: '\begin{foreach}{k}{kind}' binds it over the '@kind' records
 ⚠ [W0364]
-  no '@trip' records in the data; it carries: @job
+  no '@trip' records in the data
+  it carries: @job
 ── W0366 (degraded) a named font weight is not installed; the nearest installed weight substitutes
 ⚠ [W0366]
-  'Demo Sans Light' asks for weight 300, which is not installed; 'Demo Sans Regular' (weight 400) is the nearest
+  'Demo Sans Light' asks for a weight that is not installed; 'Demo Sans Regular' is the nearest
+  weight 300 asked, weight 400 the nearest
   suggestion: install the named weight, or name the face to use (\fonts{ sans.upright = "..." } and siblings)
 ⚠ [W0366]
-  'Demo Sans Medium' asks for weight 500, which is not installed; 'Demo Sans Regular' (weight 400) is the nearest
+  'Demo Sans Medium' asks for a weight that is not installed; 'Demo Sans Regular' is the nearest
+  weight 500 asked, weight 400 the nearest
   suggestion: install the named weight, or name the face to use (\fonts{ sans.upright = "..." } and siblings)
 ── W0367 (config) a beamerposter option outside the poster model; named and ignored
 ⚠ [W0367] - \usepackage
@@ -719,7 +734,8 @@
   suggestion: give the link visible text — \href{...}{words} — or an image with alt inside it
 ── W0378 (degraded) a boundary picture has no checked browser face; the web page shows the rendered subset's drawing of it, or its text alternative
 ⚠ [W0378]
-  this boundary picture has no browser face for the HTML artifact: not found (error code: 2)
+  this boundary picture has no browser face for the HTML artifact
+  not found (error code: 2)
   suggestion: install the tool the reason names (poppler's pdftocairo, libxml2's xmllint, librsvg's rsvg-convert), rebuild if it was interrupted, or \allow{W0378} accepts the loss
 ── W0379 (degraded) no boundary tool available for a picture outside the rendered subset; a placeholder box marks the picture
 ⚠ [W0379]
@@ -843,7 +859,8 @@
   suggestion: load biblatex with 'language=english' and 'autolang=hyphen' to word the list in English, as biblatex then does
 ── W0422 (degraded) a biblatex @set entry; its members are listed each as an entry of its own
 ⚠ [W0422]
-  biblatex sets the @set entry 's' as one entry of its members; the engine lists its 2 members each as an entry of its own
+  biblatex sets the @set entry 's' as one entry of its members; the engine lists each member as an entry of its own
+  2 members
 ── W0423 (degraded) a biblatex entry's related entries, which its style sets after it; the engine does not set them
 ⚠ [W0423]
   biblatex sets the entries 'r' that 'k' names as related after it; the engine does not set related entries
@@ -868,7 +885,8 @@
   the editor of 'k' takes the publisher of 'd', a field of another kind, which biber refuses; 'k' is set without it
   suggestion: take a field of the kind 'editor' is, or write the editor of 'k' out
 ⚠ [W0425]
-  the origlocation of 'k' takes item 3 of the location of 'd', which has no item 3; 'k' is set without it
+  the origlocation of 'k' takes an item the location of 'd' does not hold; 'k' is set without it
+  item 3
   suggestion: name an item 'd' holds, or write the origlocation of 'k' out
 ⚠ [W0425]
   the addendum of 'k' is 'xdata=d', an xdata reference naming no field to take; 'k' is set without it
@@ -896,7 +914,8 @@
   image file not found: 'figures/plot.png'; a placeholder box holds its place
   suggestion: looked at: /documents/figures/plot.png, also with .pdf/.png/.jpg/.jpeg/.svg added
 ⚠ [W0601]
-  cannot read image 'figures/plot.png': permission denied (error code: 13); a placeholder box holds its place
+  cannot read image 'figures/plot.png'; a placeholder box holds its place
+  permission denied (error code: 13)
 ── W0602 (degraded) image format unusable; placeholder box placed
 ⚠ [W0602]
   cannot use image 'figures/plot.gif': not a PNG, JPEG, or PDF file; a placeholder box holds its place
@@ -906,7 +925,8 @@
   suggestion: re-export the image without the profile, or accept the device reading with \allow{W0603}
 ── W0604 (degraded) an image's orientation tag is dropped; the page shows the stored orientation
 ⚠ [W0604]
-  image 'figures/photo.jpg' carries orientation tag 6; the page shows the stored orientation
+  image 'figures/photo.jpg' carries an orientation tag; the page shows the stored orientation
+  orientation tag 6
   suggestion: rotate the pixels and re-export with orientation tag 1, or accept it with \allow{W0604}
 ── W0605 (degraded) an image or the page icon has no usable browser face; the web page shows a placeholder for an image and ships without the icon
 ⚠ [W0605]
@@ -917,7 +937,7 @@
   suggestion: install the tool the reason names, rebuild if it was interrupted, or \pdfmeta{ favicon = "icon.png" } declares a PNG icon, which needs no tool
 ── W0609 (degraded) a figure is drawn by the engine without a feature it does not draw; the rest of the figure is drawn
 ⚠ [W0609]
-  figure 'plot.pdf' is drawn on the web page without its type1 font, which the engine does not draw (pdftocairo is missing)
+  figure 'plot.pdf' is drawn on the web page without its 'type1' font, which the engine does not draw (pdftocairo is missing)
   suggestion: install poppler's pdftocairo to draw the figure whole, or accept the engine's drawing with \allow{W0609}
 ── W0701 (pending) an output contract fact this artifact does not yet realize
 ⚠ [W0701]

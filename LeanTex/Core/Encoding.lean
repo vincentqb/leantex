@@ -588,21 +588,24 @@ private def nulAdvice : String := "remove the U+0000 characters: no encoding rea
 each standing as one U+FFFD; positioned at the first. -/
 private def replacedDiag (file encoding help : String) (bytes : ByteArray) (runs : Array Run)
     (pos : Pos) : Diag :=
-  let message := match runs.toList with
+  -- The words are the loss's, the same at every file it stands in; which
+  -- bytes, and where, is the site's detail.
+  let message := if runs.all (·.nul) then "the file holds U+0000, which is not text"
+    else s!"the file holds bytes that are not text in {encoding}"
+  let detail := match runs.toList with
     | [r] =>
-      if r.nul then s!"U+0000 at offset {r.offset} is not text"
-      else if r.len == 1 then
-        s!"byte {hexByte (bytes[r.offset]?.getD 0)} at offset {r.offset} is not text in {encoding}"
-      else s!"the bytes {hexRun bytes r.offset r.len} at offset {r.offset} are not text in \
-{encoding}"
+      if r.nul then s!"U+0000 at offset {r.offset}"
+      else if r.len == 1 then s!"byte {hexByte (bytes[r.offset]?.getD 0)} at offset {r.offset}"
+      else s!"the bytes {hexRun bytes r.offset r.len} at offset {r.offset}"
     | _ =>
       if runs.all (·.nul) then
-        s!"{runs.size} U+0000 characters are not text, at offsets \
+        s!"{runs.size} U+0000 characters, at offsets \
 {runList bytes (runs.map fun r => (r.offset, r.len)) false}"
-      else s!"{runs.size} byte sequences are not text in {encoding}, at offsets \
+      else s!"{runs.size} byte sequences, at offsets \
 {runList bytes (runs.map fun r => (r.offset, r.len)) true}"
   { Diag.of .W0002 message (some ⟨file, pos⟩) (help := some help)
-      (subject := some ("input-bytes:" ++ file)) (recovery := some (.replacedBy "U+FFFD")) with
+      (subject := some ("input-bytes:" ++ file)) (recovery := some (.replacedBy "U+FFFD"))
+      (detail := some detail) with
     offsets := runs.map (·.offset) }
 
 /-- The warning a reading owes for what it replaced, if anything: `prefixText`
@@ -680,15 +683,14 @@ private def strayDiag (file : String) (e : Legacy) (bytes : ByteArray) (c : Chos
   | some (first, _) =>
     let rest := if c.byMark then "in a file its byte-order mark calls UTF-8"
       else "in a file otherwise UTF-8"
-    let message := match c.minority.toList with
-      | [(o, _)] => s!"byte {hexByte (bytes[o]?.getD 0)} at offset {o} is read as {e.name}, \
-as declared, {rest}"
-      | _ => s!"{c.minority.size} bytes are read as {e.name}, as declared, {rest}, at offsets \
-{runList bytes c.minority true}"
+    let message := s!"bytes are read as {e.name}, as declared, {rest}"
+    let detail := match c.minority.toList with
+      | [(o, _)] => s!"byte {hexByte (bytes[o]?.getD 0)} at offset {o}"
+      | _ => s!"{c.minority.size} bytes, at offsets {runList bytes c.minority true}"
     #[{ Diag.of .W0004 message (some ⟨file, posAfter (prefixText first)⟩)
           (help := some "retype the characters at those offsets in UTF-8: the rest of the \
 file is UTF-8")
-          (subject := some ("input-mixed:" ++ file)) with
+          (subject := some ("input-mixed:" ++ file)) (detail := some detail) with
         offsets := c.minority.map (·.1) }]
 
 /-- The reading under a legacy declaration, UTF-8 or the declared one, by

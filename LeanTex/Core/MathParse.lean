@@ -234,7 +234,9 @@ rather than a bare string so the elaborator dispatches each kind to its own
 diagnostic — a ragged alignment row and a dropped colour are different
 losses and may not share a code. -/
 public inductive Note where
-  | ragged (msg : String)
+  /-- A ragged alignment: the words a message gives every such row, and
+  the row's own particulars, its detail. -/
+  | ragged (msg detail : String)
   /-- A colour or font change inside math whose content renders in the
   surrounding style: `what` names the change for the message. -/
   | styleDropped (what : String)
@@ -1133,13 +1135,13 @@ private def buildGrid (kind : GridKind) (rows : Array (Array MList)) (endsRow : 
   for k in [0:rows.size] do
     if widths[k]! != maxCols then
       notes := notes.push (.ragged
-        s!"row {k + 1} has {widths[k]!} cell(s) where {maxCols} align; \
-padded with empty cells")
+        "row has fewer cells than its widest; padded with empty cells"
+        s!"row {k + 1} has {widths[k]!} cell(s) where {maxCols} align")
   if let GridKind.array cols _ := kind then
     if maxCols > cols.size then
       notes := notes.push (.ragged
-        s!"a row has {maxCols} cells where the column spec declares \
-{cols.size}; extra columns centre")
+        "row has more cells than the column spec declares; extra columns centre"
+        s!"{maxCols} cells where the column spec declares {cols.size}")
   let rs := MRows.ofList (rows.toList.map fun r => MRow.ofList r.toList)
   return (.grid (gridKindOf kind widths endsRow) (rs.pad rs.maxCols), notes)
 

@@ -3327,7 +3327,7 @@ After text keeps it: flow scope, no brace revert.")
   let dsDark := codesOf (doc
     "\\palette{ bg = #202020, dim = #787878 }\n\n\\textcolor{dim}{dim words} here.")
   t "a use inside a dark-page epoch is judged on that page, and warns there"
-    (dsDark.any fun d => d.code == "W0315" && hasStr d.message "#202020")
+    (dsDark.any fun d => d.code == "W0315" && hasStr (diagWords d) "#202020")
   -- A body epoch that declares a page and leaves the ink defaulted is the
   -- W0330 defect wherever it is declared.
   t "a body epoch's defaulted ink on its declared page is W0330"

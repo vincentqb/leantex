@@ -1040,10 +1040,11 @@ so a message exists in exactly one spelling. -/
 private def diagOf (ctx : Ctx) (code : DiagCode) (msg : String) (pos : Option Pos)
     (help : Option String := none) (subject : Option String := none)
     (refused : Option String := none) (trigger : Option String := none)
-    (recovery : Option Diag.Recovery := none) (output : Option Diag.Output := none) : Diag :=
+    (recovery : Option Diag.Recovery := none) (output : Option Diag.Output := none)
+    (detail : Option String := none) : Diag :=
   let trigger := if pos.isSome then (ctx.callSite.map (·.2)).orElse (fun _ => trigger)
     else trigger
-  Diag.of code msg (pos.map ctx.sourceSpan) help subject refused trigger recovery output
+  Diag.of code msg (pos.map ctx.sourceSpan) help subject refused trigger recovery output detail
 
 private def diag (ctx : Ctx) (code : DiagCode) (msg : String) (pos : Option Pos)
     (help : Option String := none) (refused : Option String := none) : EM Unit :=
@@ -1108,9 +1109,9 @@ inside a `do` block, which is what `warnUnknownCmd_push_exact` reads. -/
 private def warnOnceDiag (ctx : Ctx) (key : String) (code : DiagCode) (msg : String)
     (pos : Pos) (help : Option String) (demote first : Bool)
     (trigger : Option String := none) (recovery : Option Diag.Recovery := none)
-    (output : Option Diag.Output := none) : Diag :=
+    (output : Option Diag.Output := none) (detail : Option String := none) : Diag :=
   let d := diagOf ctx code msg (some pos) (if first then help else none) (subject := some key)
-    (trigger := trigger) (recovery := recovery) (output := output)
+    (trigger := trigger) (recovery := recovery) (output := output) (detail := detail)
   if demote || !first then d.demote else d
 
 private theorem demote_kind (d : Diag) : d.demote.kind = d.kind := by
@@ -1130,8 +1131,8 @@ subject.** Typed presentation and output scope never replace census identity. -/
 private theorem warnOnceDiag_kind_exact (ctx : Ctx) (key : String) (code : DiagCode) (msg : String)
     (pos : Pos) (help : Option String) (demote first : Bool)
     (trigger : Option String := none) (recovery : Option Diag.Recovery := none)
-    (output : Option Diag.Output := none) :
-    (warnOnceDiag ctx key code msg pos help demote first trigger recovery output).kind = code := by
+    (output : Option Diag.Output := none) (detail : Option String := none) :
+    (warnOnceDiag ctx key code msg pos help demote first trigger recovery output detail).kind = code := by
   unfold warnOnceDiag diagOf
   dsimp only
   split <;> simp only [demote_kind, Diag.of_record_exact]
@@ -1139,8 +1140,8 @@ private theorem warnOnceDiag_kind_exact (ctx : Ctx) (key : String) (code : DiagC
 private theorem warnOnceDiag_subject_exact (ctx : Ctx) (key : String) (code : DiagCode) (msg : String)
     (pos : Pos) (help : Option String) (demote first : Bool)
     (trigger : Option String := none) (recovery : Option Diag.Recovery := none)
-    (output : Option Diag.Output := none) :
-    (warnOnceDiag ctx key code msg pos help demote first trigger recovery output).subject = some key := by
+    (output : Option Diag.Output := none) (detail : Option String := none) :
+    (warnOnceDiag ctx key code msg pos help demote first trigger recovery output detail).subject = some key := by
   unfold warnOnceDiag diagOf
   dsimp only
   split <;> simp only [demote_subject, Diag.of_record_exact]
@@ -1148,8 +1149,8 @@ private theorem warnOnceDiag_subject_exact (ctx : Ctx) (key : String) (code : Di
 private theorem warnOnceDiag_output_exact (ctx : Ctx) (key : String) (code : DiagCode) (msg : String)
     (pos : Pos) (help : Option String) (demote first : Bool)
     (trigger : Option String := none) (recovery : Option Diag.Recovery := none)
-    (output : Option Diag.Output := none) :
-    (warnOnceDiag ctx key code msg pos help demote first trigger recovery output).output = output := by
+    (output : Option Diag.Output := none) (detail : Option String := none) :
+    (warnOnceDiag ctx key code msg pos help demote first trigger recovery output detail).output = output := by
   unfold warnOnceDiag diagOf
   dsimp only
   split <;> simp only [demote_output, Diag.of_record_exact]
@@ -1166,21 +1167,21 @@ private def warnOnceKey (key : String) : Option Diag.Output → String
 public def warnOnceState (ctx : Ctx) (key : String) (code : DiagCode) (msg : String)
     (pos : Pos) (help : Option String) (demote : Bool) (st : ESt)
     (trigger : Option String := none) (recovery : Option Diag.Recovery := none)
-    (output : Option Diag.Output := none) : ESt :=
+    (output : Option Diag.Output := none) (detail : Option String := none) : ESt :=
   let siteKey := warnOnceKey key output
   let first := !st.warnedUnknown.contains siteKey
   { st with
     warnedUnknown := if first then st.warnedUnknown.push siteKey else st.warnedUnknown
     diags := st.diags.push (warnOnceDiag ctx key code msg pos help demote first
-      trigger recovery output) }
+      trigger recovery output detail) }
 
 private theorem warnOnceState_diags_exact (ctx : Ctx) (key : String) (code : DiagCode) (msg : String)
     (pos : Pos) (help : Option String) (demote : Bool) (st : ESt)
     (trigger : Option String := none) (recovery : Option Diag.Recovery := none)
-    (output : Option Diag.Output := none) :
-    (warnOnceState ctx key code msg pos help demote st trigger recovery output).diags =
+    (output : Option Diag.Output := none) (detail : Option String := none) :
+    (warnOnceState ctx key code msg pos help demote st trigger recovery output detail).diags =
       st.diags.push (warnOnceDiag ctx key code msg pos help demote
-        (!st.warnedUnknown.contains (warnOnceKey key output)) trigger recovery output) := by rfl
+        (!st.warnedUnknown.contains (warnOnceKey key output)) trigger recovery output detail) := by rfl
 
 /-- Each call adds exactly one site to its own loss group and none to any
 other group. The law ranges over the actual reporting operation, not over
@@ -1190,34 +1191,34 @@ message wording, location, help and demotion cannot change the count. -/
 public theorem warnOnce_sites_exact (ctx : Ctx) (key : String) (code : DiagCode) (msg : String)
     (pos : Pos) (help : Option String) (demote : Bool) (st : ESt) (d : Diag)
     (trigger : Option String := none) (recovery : Option Diag.Recovery := none)
-    (output : Option Diag.Output := none) :
-    ((warnOnceState ctx key code msg pos help demote st trigger recovery output).diags.filter
+    (output : Option Diag.Output := none) (detail : Option String := none) :
+    ((warnOnceState ctx key code msg pos help demote st trigger recovery output detail).diags.filter
       (Diag.sameLoss d)).size =
       (st.diags.filter (Diag.sameLoss d)).size +
         if d.kind = code ∧ d.output = output ∧ d.subject = some key then 1 else 0 := by
   have hid (first : Bool) :
       Diag.sameLoss d (warnOnceDiag ctx key code msg pos help demote first
-        trigger recovery output) =
+        trigger recovery output detail) =
         decide (d.kind = code ∧ d.output = output ∧ d.subject = some key) := by
     apply Bool.eq_iff_iff.mpr
     rw [Diag.sameLoss_iff, decide_eq_true_eq,
-      warnOnceDiag_kind_exact ctx key code msg pos help demote first trigger recovery output,
-      warnOnceDiag_output_exact ctx key code msg pos help demote first trigger recovery output,
-      warnOnceDiag_subject_exact ctx key code msg pos help demote first trigger recovery output]
+      warnOnceDiag_kind_exact ctx key code msg pos help demote first trigger recovery output detail,
+      warnOnceDiag_output_exact ctx key code msg pos help demote first trigger recovery output detail,
+      warnOnceDiag_subject_exact ctx key code msg pos help demote first trigger recovery output detail]
     constructor
     · rintro ⟨⟨hc, ho⟩, hs, _⟩
       exact ⟨hc, ho, hs⟩
     · rintro ⟨hc, ho, hs⟩
       exact ⟨⟨hc, ho⟩, hs, by rw [hs]; rfl⟩
-  rw [warnOnceState_diags_exact ctx key code msg pos help demote st trigger recovery output,
+  rw [warnOnceState_diags_exact ctx key code msg pos help demote st trigger recovery output detail,
     Array.filter_push, hid]
   split <;> simp_all
 
 private def warnOnce (ctx : Ctx) (key : String) (code : DiagCode) (msg : String) (pos : Pos)
     (help : Option String := none) (demote : Bool := false)
     (trigger : Option String := none) (recovery : Option Diag.Recovery := none)
-    (output : Option Diag.Output := none) : EM Unit :=
-  modify fun st => warnOnceState ctx key code msg pos help demote st trigger recovery output
+    (output : Option Diag.Output := none) (detail : Option String := none) : EM Unit :=
+  modify fun st => warnOnceState ctx key code msg pos help demote st trigger recovery output detail
 
 /-- Record a citation group's keys with their `\cite`'s span, first
 occurrence per key: the no-bibliography judge's sites (elabDoc). A
@@ -2029,9 +2030,10 @@ alignment body. -/
 private def mathNote (ctx : Ctx) (note : MathParse.Note) (where_ : String)
     (pos : Pos) : EM Unit := do
   match note with
-  | .ragged msg =>
+  | .ragged msg detail =>
     warnOnce ctx ("math:ragged:" ++ msg) .W0014
-      (if where_.isEmpty then s!"alignment {msg}" else where_ ++ msg) pos
+      (if where_.isEmpty then s!"an alignment {msg}" else s!"{where_}a {msg}") pos
+      (detail := some detail)
   | .styleDropped what =>
     warnOnce ctx ("math:style:" ++ what) .W0385
       s!"{where_}{what} inside math sets in the surrounding style" pos
@@ -8836,18 +8838,17 @@ private inductive RedefVerdict where
 message names why the body cannot run — its first losing construct and
 that construct's site, or the empty expansion. -/
 private def refuseRedef (cmd : UserCmd) (verdict : RedefVerdict) : EM Unit := do
-  let msg := match verdict with
+  let (msg, detail) : String × Option String := match verdict with
     | .refused d =>
       let construct := match d.message.splitOn "'" with
         | _ :: q :: _ => s!"'{q}'"
         | _ => "a construct"
-      let site := match d.span with
-        | some sp => s!" ({sp.file}:{sp.pos.line})"
-        | none => ""
-      s!"the redefinition of '\\{cmd.name}' uses {construct}{site}, which the \
-engine cannot run; the built-in stands"
-    | _ => s!"the redefinition of '\\{cmd.name}' renders nothing; the built-in stands"
-  modify fun st => { st with diags := st.diags.push (Diag.of .W0361 msg (some cmd.span)) }
+      (s!"the redefinition of '\\{cmd.name}' uses {construct}, which the \
+engine cannot run; the built-in stands",
+        d.span.map fun (sp : Span) => s!"{construct} at {sp.file}:{sp.pos.line}")
+    | _ => (s!"the redefinition of '\\{cmd.name}' renders nothing; the built-in stands", none)
+  modify fun st => { st with
+    diags := st.diags.push (Diag.of .W0361 msg (some cmd.span) (detail := detail)) }
 
 /-- Past the end, a slice weighs nothing. -/
 private theorem sliceWeight_end (raws : Array Raw) {j : Nat}
@@ -10312,9 +10313,9 @@ private def tabularArm (ctx : Ctx) (n : String) (body : Array Raw)
   let widest := rows.foldl (fun m r => max m r.size) cols.size
   if cols.size < widest then
     warnOnce ctx "tabular:wide" .W0337
-      s!"a row carries {widest} cells but the column spec declares \
-  {cols.size}; the grid widens" pos
+      "a row carries more cells than the column spec declares; the grid widens" pos
       (help := "declare one column type per cell: l, c, r, or p{width}")
+      (detail := some s!"{widest} cells where the spec declares {cols.size}")
     for _ in [cols.size:widest] do
       cols := cols.push { width := .natural, align := .left }
   if rows.any (·.size < cols.size) then

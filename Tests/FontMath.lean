@@ -103,8 +103,10 @@ def weightResolveChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "a width half stays an unknown key"
     (errCodes (pre ++ "\\fonts{ body.bx = \"Y\" }" ++ post) == ["E0322"])
   -- Resolution on the axis, over synthetic faces.
+  -- A substitution's words, then its site's particulars (the weights).
   let subMsg : Option FontDb.Substituted → Option String
-    | some s => some (DriverDiag.substituted s).message
+    | some s => some ((DriverDiag.substituted s).message ++
+        ((DriverDiag.substituted s).detail.map ("; " ++ ·)).getD "")
     | none => none
   let light : FontDb.Face := { synthFace "Alpha Sans" "/x/as-l.otf" with
     subfamily := "Light", weight := 300 }
@@ -120,7 +122,7 @@ def weightResolveChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "a missing weight takes the nearest and says both numbers"
     ((FontDb.resolveWeight faces "Alpha Sans" none 200 false).map
       (fun r => (r.1.subfamily,
-        (subMsg r.2).getD "" |>.startsWith "'Alpha Sans' asks for weight 200")) ==
+        (subMsg r.2).getD "" |>.endsWith "weight 200 asked, weight 300 the nearest")) ==
       some ("Light", true))
   t "a declared face for a weight key is met exactly"
     ((FontDb.resolveWeight faces "Alpha Sans" (some "Alpha Sans Light") 300 false).map
@@ -216,8 +218,10 @@ def declaredFaceChecks (ref : IO.Ref (List String)) : IO Unit := do
   let d4 := (elabStr (pre ++ "\\setsansfont[UprightFont=*-Semibold]{Ordwick}" ++ post)).1.fonts
   t "fontspec * expands to the family name" (d4.faceFor 1 400 false == some "Ordwick-Semibold")
   -- Resolution: the declared face wins over the family's own variant.
+  -- A substitution's words, then its site's particulars (the weights).
   let subMsg : Option FontDb.Substituted → Option String
-    | some s => some (DriverDiag.substituted s).message
+    | some s => some ((DriverDiag.substituted s).message ++
+        ((DriverDiag.substituted s).detail.map ("; " ++ ·)).getD "")
     | none => none
   let light : FontDb.Face := { synthFace "Alpha Sans" "/x/as-l.otf" with
     subfamily := "Light", weight := 300 }
@@ -254,13 +258,13 @@ def declaredFaceChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "a missing weight resolves to the nearest installed weight"
     ((FontDb.resolveVariant betas "Beta Sans Light" none {}).map
       (fun r => (r.1.subfamily, subMsg r.2)) == some ("Regular",
-        some ("'Beta Sans Light' asks for weight 300, which is not installed; " ++
-          "'Beta Sans Regular' (weight 400) is the nearest")))
+        some ("'Beta Sans Light' asks for a weight that is not installed; " ++
+          "'Beta Sans Regular' is the nearest; weight 300 asked, weight 400 the nearest")))
   t "a declared weighted face the host lacks takes the nearest weight"
     ((FontDb.resolveVariant betas "Beta Sans" (some "Beta Sans Medium") {}).map
       (fun r => (r.1.subfamily, subMsg r.2)) == some ("Regular",
-        some ("'Beta Sans Medium' asks for weight 500, which is not installed; " ++
-          "'Beta Sans Regular' (weight 400) is the nearest")))
+        some ("'Beta Sans Medium' asks for a weight that is not installed; " ++
+          "'Beta Sans Regular' is the nearest; weight 500 asked, weight 400 the nearest")))
   let betaLight : FontDb.Face := { synthFace "Beta Sans" "/x/bs-l.otf" with
     subfamily := "Light", weight := 300 }
   t "an installed weight is served exactly and stays silent"

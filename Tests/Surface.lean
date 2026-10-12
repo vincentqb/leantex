@@ -6270,8 +6270,8 @@ def dataChecks (ref : IO.Ref (List String)) : IO Unit := do
     (elabData srcs (pre ++ s)).2.filter (·.severity == .warning)
   t "data: an absent field is W0364 naming the entry's own fields"
     ((dataWarns "\\begin{foreach}{j}{job}\\val{j.end}\\end{foreach}").any fun d =>
-      d.code == "W0364" && hasStr d.message "job[1]" &&
-        hasStr d.message "role, start")
+      d.code == "W0364" && hasStr d.message "'end' is absent in a '@job' record" &&
+        d.detail.any (hasStr · "job[1] carries: role, start"))
   t "data: \\ifdata on the same absent field stays silent"
     ((dataWarns "\\begin{foreach}{j}{job}\\ifdata{j.end}{x}\\end{foreach}").isEmpty)
   t "data: an unbound variable is W0364"
@@ -6279,7 +6279,7 @@ def dataChecks (ref : IO.Ref (List String)) : IO Unit := do
       d.code == "W0364" && hasStr d.message "'k' is not bound")
   t "data: a kind with no records is W0364 naming what the data carries"
     ((dataWarns "\\begin{foreach}{j}{trip}\\val{j.role}\\end{foreach}").any fun d =>
-      d.code == "W0364" && hasStr d.message "@job")
+      d.code == "W0364" && d.detail.any (hasStr · "@job"))
   t "data: a forward reference is W0364 — data precedes use"
     (((elabData #[] ("\\begin{foreach}{j}{job}\\val{j.role}\\end{foreach}" ++
         "\\data{ @job{a, role = {X}} }")).2.filter (·.severity == .warning)).any fun d =>

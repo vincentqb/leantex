@@ -15508,8 +15508,9 @@ private def collectBlock (r : Rd) (a : Acc)
     let level := min depth 4
     let a := if depth > 4 then { a with diags := a.diags.push (
         Diag.of .W0010
-          s!"lists nest four levels; level {depth} reuses the fourth's marker"
-          (help := "LaTeX errors here ('Too deeply nested'); flatten the nesting")) }
+          "lists nest more than four levels; a deeper level reuses the fourth's marker"
+          (help := "LaTeX errors here ('Too deeply nested'); flatten the nesting")
+          (detail := some s!"level {depth}")) }
       else a
     -- The level's own style, falling back to the kind's base style — so a
     -- bare `\style{itemize}{...}` keeps styling every level, as it did.
@@ -22764,10 +22765,10 @@ private def withLayoutOps {α : Type} (geom : Geom) (fs : FontSet)
         let down := (after.resolve geom.fontSize xHeight).width
         if down > up then
           ds.push (Diag.of .W0202
-            (s!"'{element}' sets more space below the heading " ++
-              s!"({down.toPtString}pt) than above it ({up.toPtString}pt)")
+            s!"'{element}' sets more space below the heading than above it"
             (help := s!"a heading binds to the text it introduces: in " ++
-              s!"\\style\{{element}}\{...} keep 'after' at most 'before'"))
+              s!"\\style\{{element}}\{...} keep 'after' at most 'before'")
+            (detail := some s!"{down.toPtString}pt below, {up.toPtString}pt above"))
         else ds
       | _, _ => ds
     | none => ds) preDiags
@@ -22816,10 +22817,11 @@ private def withLayoutOps {α : Type} (geom : Geom) (fs : FontSet)
           if cpl10 < 450 || cpl10 > 900 then
             let dir := if cpl10 > 900 then "narrow" else "widen"
             b.diags.push (Diag.of .W0201
-              (s!"the measure holds about {(cpl10 + 5) / 10} characters " ++
-                "per line, outside the readable 45\u201390 band")
+              (s!"the measure holds {if cpl10 > 900 then "more" else "fewer"} characters " ++
+                "per line than the readable band")
               (help := s!"{dir} the text block (\\page\{ hmargin = ... }; 66 characters " ++
-                "is the ideal) or declare \\page{ measure = free }"))
+                "is the ideal) or declare \\page{ measure = free }")
+              (detail := some s!"about {(cpl10 + 5) / 10} characters per line, outside 45\u201390"))
           else b.diags
         else b.diags
       else b.diags

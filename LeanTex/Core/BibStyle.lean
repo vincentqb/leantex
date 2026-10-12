@@ -2867,8 +2867,8 @@ private def analyse (sources : Array (String × String)) (doc : Ir.Doc) (rd : Fi
       | .noField _ =>
         (s!"{takes}, which '{m}' does not hold; '{k}' is set without it",
          s!"add '{xf}' to '{m}', or write the {fld} of '{k}' out")
-      | .noPosition _ n =>
-        (s!"the {fld} of '{k}' takes item {n} of the {xf} of '{m}', which has no item {n}; \
+      | .noPosition _ _ =>
+        (s!"the {fld} of '{k}' takes an item the {xf} of '{m}' does not hold; \
           '{k}' is set without it",
          s!"name an item '{m}' holds, or write the {fld} of '{k}' out")
       | .shapes _ =>
@@ -2878,8 +2878,12 @@ private def analyse (sources : Array (String × String)) (doc : Ir.Doc) (rd : Fi
         (s!"the {fld} of '{k}' is '{m}', an xdata reference naming no field to take; \
           '{k}' is set without it",
          s!"write it 'xdata=<key>-<field>', or write the {fld} of '{k}' out")
+    let detail : Option String := match r.fault with
+      | .noPosition _ n => some s!"item {n}"
+      | _ => none
     diags := diags.push (Diag.of .W0425 what atEntry (help := help)
-      (subject := some (if xf.isEmpty then s!"bibref:{m}" else s!"bibref:{m}-{xf}")))
+      (subject := some (if xf.isEmpty then s!"bibref:{m}" else s!"bibref:{m}-{xf}"))
+      (detail := detail))
   -- A listed entry's value naming a macro no `@string` defined before it:
   -- the name prints where BibTeX and biber print nothing (W0426).
   for k in db.list do
@@ -2940,9 +2944,9 @@ private def analyse (sources : Array (String × String)) (doc : Ir.Doc) (rd : Fi
   for k in cited do
     if let some ms := sets.get? k then
       diags := diags.push (Diag.of .W0422 s!"biblatex sets the @set entry '{k}' as one entry \
-        of its members; the engine lists its {ms.size} members each as an entry of its own"
+        of its members; the engine lists each member as an entry of its own"
         (((origin.get? k).map fun src => ⟨sourceName src, ((db.own.get? k).map (·.pos)).getD {}⟩))
-        (subject := some ("bibset:" ++ k)))
+        (subject := some ("bibset:" ++ k)) (detail := some s!"{ms.size} members"))
   -- A date biber cannot read prints as written, named (W0420): a value
   -- outside its grammar or its calendar, and a legacy month it reads as no
   -- month.

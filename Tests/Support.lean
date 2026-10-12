@@ -1226,6 +1226,10 @@ def censusOf (coveredColors : Array Ir.Color) (out : Layout.Out) :
 
 def hasStr (hay needle : String) : Bool := (hay.splitOn needle).length > 1
 
+/-- A diagnostic's words and its site's particulars, as its log line shows
+them: what a check that reads a site's measure or colour reads. -/
+def diagWords (d : Diag) : String := d.message ++ (d.detail.map ("\n" ++ ·)).getD ""
+
 /-- The opening tags of a page's failed-face placeholders: the spans that
 carry `data-image-src`. -/
 def placeholderTags (html : String) : List String :=

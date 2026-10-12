@@ -62,8 +62,8 @@ def dvBbl (bib cite : String) (pre : String := "") (opts : String := "style=nume
 /-- Diagnostics of the data-expansion pass over a source: the pass runs
 before elaboration and is pure over inline records, so the witness lexes
 and parses itself and needs no driver. -/
-def dvData (src : String) : Array Diag :=
-  (Data.expandData "t" #[] (Parse.parse "t" (Lex.lex "t" src).1).1).2
+def dvData (src : String) (w : WitnessRun := {}) : Array Diag :=
+  (Data.expandData "t" #[] (Parse.parse "t" (Lex.lex "t" (w.rep src)).1).1).2
 
 /-- A driver probe: one real driver path, run against a sandbox directory
 the harness creates and deletes. A probe returns what the driver returned
@@ -211,6 +211,27 @@ def driverProbes : Array (DiagCode × DriverProbe) :=
         let doc := (elabStr ("\\documentclass{article}\n\\begin{document}\n" ++
           "A \\texttt{fixed pitch} run.\n\\end{document}\n")).1
         return SlotLoss.diags doc.fonts fs doc (SlotLoss.carries #[.pdf] doc.fontPolicy))]
+
+/-- The probed warnings again with their loss at a second site: the same
+bytes read in a second file, a line further down and two columns further
+in, so the site's offset, line and column differ while the loss stands
+(`repeatFoldChecks`). -/
+def driverProbesElsewhere : Array (DiagCode × DriverProbe) :=
+  let read (name : String) (bytes : ByteArray) : IO (Array Diag) := do
+    return (← Input.readDocument name bytes).diags
+  #[(.W0002, fun _ => do
+      let tail := "\\documentclass{article}\n\\begin{document}\n".toUTF8
+      return (← read "doc.tex" (tail ++ "Caf".toUTF8 ++ ⟨#[0xE9]⟩ ++
+          ".\n\\end{document}\n".toUTF8)) ++
+        (← read "chapter.tex" (tail ++ "Prose first.\n  Caf".toUTF8 ++ ⟨#[0xE9]⟩ ++
+          ".\n\\end{document}\n".toUTF8))),
+    (.W0004, fun _ => do
+      let head := ("\\documentclass{article}\n" ++
+        "\\usepackage[latin1]{inputenc}\n\\begin{document}\n").toUTF8
+      return (← read "doc.tex" (head ++ "Café crème".toUTF8 ++ ⟨#[0x92]⟩ ++
+          "s.\n\\end{document}\n".toUTF8)) ++
+        (← read "chapter.tex" (head ++ "Prose first.\n  Café crème".toUTF8 ++ ⟨#[0x92]⟩ ++
+          "s.\n\\end{document}\n".toUTF8)))]
 
 /-- Every probe run once, each in its own sandbox, removed afterwards. -/
 def runDriverProbes : IO (Array (DiagCode × Array Diag)) :=
@@ -667,11 +688,11 @@ def diagWitnessWith (w : WitnessRun) (one mapped withMath : Font.FontSet)
   | .W0361 =>
     dvE (w := w) (dvDoc "\\title{T}\\newcommand{\\maketitle}{\\venuetitlebox}\n" "\\maketitle")
   | .W0364 =>
-    dvData ("\\data{ @job{a, role = {X}, start = 2020} " ++
+    dvData (w := w) ("\\data{ @job{a, role = {X}, start = 2020} " ++
         "@job{b, role = {Y}, start = 2021, end = 2024} }\n" ++
       "\\begin{foreach}{j}{job}\\val{j.end}\\end{foreach}") ++
-    dvData "\\data{ @job{a, role = {X}} }\\val{k.role}" ++
-    dvData "\\data{ @job{a, role = {X}} }\\begin{foreach}{j}{trip}\\val{j.role}\\end{foreach}"
+    dvData (w := w) "\\data{ @job{a, role = {X}} }\\val{k.role}" ++
+    dvData (w := w) "\\data{ @job{a, role = {X}} }\\begin{foreach}{j}{trip}\\val{j.role}\\end{foreach}"
   | .E0365 => probed .E0365
   | .W0366 =>
     let mk (sub : String) (w : Nat) : FontDb.Face :=
@@ -772,6 +793,49 @@ def dvMeasured (s : String) : Bool := Id.run do
       if ["pt", "bp", "mm", "cm", "in", "px", "em", "ex"].contains unit then return true
   return false
 
+/-- Spellings with a digit in them that name no site's particular: the
+encodings a message names a reading by — UTF-8, UTF-16 and the words of every
+legacy encoding's name — which every site of the loss shares. -/
+def dvNumberSpellings : List String :=
+  ["UTF-8", "UTF-16"] ++ ([Encoding.Legacy.windows1252, .iso885915, .macRoman].flatMap fun e =>
+    (e.name.split (fun c => c == ' ' || c == '(' || c == ')')).toList.map (·.toString))
+
+/-- The first number a text states outside what it quotes: a row, an index,
+a count, an offset, a measure taken at a site — the particulars that tell two
+sites of one loss apart, which belong in the record's detail. What a message
+quotes (`'...'`) is the author's own declaration and may hold digits; so may
+a scalar it names (`U+2705`, the character itself, not a site of it) and the
+spellings above (`dvNumberSpellings`). -/
+def dvNumber? (s : String) : Option String := Id.run do
+  let cs := (s.toList ++ [' ']).toArray
+  let mut quoted := false
+  let mut word := ""
+  let mut out : Option String := none
+  let mut prev := ""
+  for h : i in [0:cs.size] do
+    let c := cs[i]
+    -- An apostrophe inside a word (`frame's`) quotes nothing.
+    let before := i > 0 && (cs[i - 1]?.getD ' ').isAlphanum
+    let after := (cs[i + 1]?.getD ' ').isAlphanum
+    if c == '\'' && !(before && after) && (quoted || !before) then
+      quoted := !quoted
+      word := ""
+    else if quoted then pure ()
+    else if c.isAlphanum || c == '+' || c == '-' || c == '.' then
+      word := word.push c
+    else
+      let w := (word.dropWhile (fun x => x == '.' || x == '-')).toString
+      let w := String.ofList (w.toList.reverse.dropWhile (fun x => x == '.' || x == '-')).reverse
+      let scalar := w.startsWith "U+" && w.length > 2 && (w.drop 2).all fun x => x.isDigit || ('A' ≤ x && x ≤ 'F')
+      -- A standard's citation (`WCAG 2.2`, `SC 1.4.3`) and a code name are
+      -- the same at every site.
+      let cited := prev == "WCAG" || prev == "SC" || isDiagCode w
+      if out.isNone && w.any Char.isDigit && !scalar && !cited && !dvNumberSpellings.contains w then
+        out := some w
+      if !w.isEmpty then prev := w
+      word := ""
+  return out
+
 /-- The lint over one fired diagnostic. `\allow`-teeth codes (W0013, E0329,
 N0105) quote codes the user wrote in their own document, so the foreign-code
 check does not apply to them — N0105's whole job is to say which live code
@@ -793,6 +857,9 @@ def dvLint (fail : String → IO Unit) (d : Diag) : IO Unit := do
   if let some text := d.detail then judge "detail" text
   if d.kind.loss.severity.isWarning && dvMeasured d.message then
     fail s!"{d.code} message: a measure taken at the site belongs in its detail: {d.message}"
+  if d.kind.loss.severity.isWarning then
+    if let some n := dvNumber? d.message then
+      fail s!"{d.code} message: states '{n}', a particular of its site, which belongs in its detail: {d.message}"
   if d.message.startsWith "\\" then
     fail s!"{d.code} message: the construct it names is unquoted: {d.message}"
   unless d.message.length ≤ dvMsgMax do
@@ -1425,15 +1492,24 @@ def diagWitness (one mapped withMath : Font.FontSet) (probed : DiagCode → Arra
 second site a paragraph on, or, where it names no one document, its whole
 text. -/
 def twice (src : String) : String :=
+  -- The second copy stands at another site: two lines further down, behind a
+  -- line of its own, and in a tex body two columns further in (a space at a
+  -- line's start is no token), so its byte offset, line and column differ.
+  let elsewhere (body : String) : String :=
+    let lead := (body.toList.takeWhile (· == '\n')).length
+    String.ofList (List.replicate lead '\n') ++ "  " ++ (body.drop lead).toString
   match src.splitOn "\\begin{document}" with
   | [pre, rest] =>
     match rest.splitOn "\\end{document}" with
-    | [body] => pre ++ "\\begin{document}" ++ body ++ "\n\n" ++ body
+    | [body] =>
+      let second := elsewhere body
+      pre ++ "\\begin{document}" ++ body ++ "\n\n%\n" ++ second
     | body :: post =>
-      pre ++ "\\begin{document}" ++ body ++ "\n\n" ++ body ++ "\\end{document}" ++
+      let second := elsewhere body
+      pre ++ "\\begin{document}" ++ body ++ "\n\n%\n" ++ second ++ "\\end{document}" ++
         "\\end{document}".intercalate post
     | [] => src
-  | _ => src ++ "\n\n" ++ src
+  | _ => src ++ "\n\nZzpad.\n\n" ++ src
 
 /-- **The subject baseline.** Codes whose loss is censused but whose emission
 carries no subject today, frozen as measured on 2026-09-25 — 47 of them.
@@ -1519,7 +1595,8 @@ def repeatFoldFloor : Nat := 44
 /-- The codes whose wording or census key once told the sites of one loss
 apart, each of which the repetition must still exercise. -/
 def repeatFoldWitnessed : List String :=
-  ["W0005", "W0327", "W0333", "W0358", "W0384", "W0388", "W0399", "W0400"]
+  ["W0002", "W0004", "W0005", "W0014", "W0327", "W0333", "W0358", "W0364", "W0384", "W0388",
+   "W0399", "W0400"]
 
 /-- **A loss written twice is one line.** Every code's witness written twice —
 its construct at a second site (`twice`) — prints no more warning lines on the
@@ -1534,14 +1611,15 @@ per document whatever its body holds is not exercised; the count that is
 stands above a floor, and the codes this check was written for are each
 exercised, so it cannot pass by repeating nothing. -/
 def repeatFoldChecks (ref : IO.Ref (List String))
-    (one mapped withMath : Font.FontSet) (probed : DiagCode → Array Diag) : IO Unit := do
+    (one mapped withMath : Font.FontSet) (probed : DiagCode → Array Diag)
+    (probedElsewhere : DiagCode → Array Diag := probed) : IO Unit := do
   let t := check ref
   let mut exercised : Array String := #[]
   for located in [false, true] do
     for c in DiagCode.all do
       unless c.loss.severity.isWarning do continue
       let once := diagWitnessWith { located } one mapped withMath probed c
-      let doubled := diagWitnessWith { rep := twice, located } one mapped withMath probed c
+      let doubled := diagWitnessWith { rep := twice, located } one mapped withMath probedElsewhere c
       unless (once.filter (·.kind == c)).size < (doubled.filter (·.kind == c)).size do continue
       unless exercised.contains c.code do exercised := exercised.push c.code
       let shown (ds : Array Diag) : Array String :=
@@ -1648,7 +1726,11 @@ def diagVoiceChecks (ref : IO.Ref (List String)) (update : Bool) : IO Unit := do
   -- voice lint, and the name-refusal registry's closure against the code list.
   nameRefusalRegistryChecks ref one mapped withMath probeOf
   subjectCensusChecks ref one mapped withMath probeOf
-  repeatFoldChecks ref one mapped withMath probeOf
+  let elsewhere ← driverProbesElsewhere.mapM fun (c, probe) => do
+    return (c, ← IO.FS.withTempDir probe)
+  let elsewhereOf (c : DiagCode) : Array Diag :=
+    ((elsewhere.find? (·.1 == c)).map (·.2)).getD (probeOf c)
+  repeatFoldChecks ref one mapped withMath probeOf elsewhereOf
   let mut blocks : Array (String × String) := #[]
   for c in DiagCode.all do
     let fired := (diagWitness one mapped withMath probeOf c).filter (·.code == c.code)

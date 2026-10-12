@@ -1496,7 +1496,12 @@ def reports : List Report := [
     what := "a declared line that re-flowed and still ran past the measure drew a re-flow warning and an overfull warning per overrunning line, one construct accounted twice, where the re-flow can say the overrun"
     pins := [check% Tests.DiagFold.reflowAccountChecks, check% siteAccountingChecks]
     accept := ["twelve of the guards' assertions fail with the fix's behaviour reverted onto the recorded commit, its records kept: no re-flow saying its overrun, carrying it or naming where it opens; an overfull warning for each line a re-flow accounts for, so the page's overruns count twice, the log and the HTML and PDF builds print it on a line of its own, accepting the re-flow leaves it a warning and an acceptance of the overfull warning reads stale; a paragraph's re-flowed lines and their overruns as more than one diagnostic; overlay steps that measure one declared line apart, that differ in whether it runs past, or that re-flow different declared lines, each drawing a record of their own; and a macro's re-flowed line that runs past drawing an overfull warning beside its re-flow"]
-    state := .guarded "373b2f34" .revert .author }
+    state := .guarded "373b2f34" .revert .author },
+  { id := "R166", date := "2026-10-12"
+    what := "a build printed a warning line per site for losses whose words stated a site's particulars, a byte offset, an alignment row, a data record's index, a count or a measure taken there, so one loss printed as several; the witness check repeated identical content at one site and could not see them"
+    pins := [check% repeatFoldChecks, check% diagVoiceChecks, check% inputDecodingChecks]
+    accept := ["on the tree before the fix, with the guards as first written, twenty-nine of their assertions fail: the byte-level and data warnings' witnesses written again at another site print a line per site, six with and without their sources, and twenty-two codes' witnesses state a number outside what they quote, twenty-three in all, two of them a standard's citation and a code name, which the lint then allowed"]
+    state := .guarded "fb46f760" .before .author }
 ]
 
 /-- The reports guarded but never seen failing: a count that may fall and
