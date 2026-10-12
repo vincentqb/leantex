@@ -6165,6 +6165,29 @@ public def ListingFrame.onPage (surface : Surface) (lists : ListLineage)
   | .list => if surface == .tex && lists != .web then .list else .none
   | .none => .none
 
+/-- Where a listing the layout wraps itself (`ListingSpec.breakIndent`) may
+end a line. -/
+public inductive ListingWrap where
+  /-- listings.sty's own rule (`breaklines`, under its default
+  `breakatwhitespace=false`, lstmisc.sty): a discretionary after every output
+  unit — a run of letters and the digits that continue it, a run of other
+  characters with the digits among them, a space, and the run a `)` closes
+  (listings.sty `\lst@AppendLetter`, `\lst@ProcessDigit`, `\lst@AppendOther`,
+  `\lst@AppendSpecialSpace`; lstmisc.sty `\lst@breakProcessOther`) — each
+  line filled to its last unit that fits, as a LuaLaTeX probe sets it. The
+  spaces at a wrap are dropped, where listings sets a space it breaks before
+  at the continuation's start, one column past its break indent: the
+  continuation then stands at its declared indent. -/
+  | units
+  /-- Whitespace first: the last space that fits, else the last boundary of
+  the highlighter's type runs or of the fallback tokens of untyped text that
+  fits, a type run wider than a continuation line broken between its
+  fallback tokens. A markdown fence's (`Surface.listing`): a source line
+  then breaks at its words before its tokens, where listings breaks at
+  whichever unit fills the line. -/
+  | whitespaceFirst
+  deriving Repr, BEq, Inhabited
+
 /-- What a code listing declares beside its content — the delta between
 `{verbatim}` and listings' `{lstlisting}` / minted's `{minted}` (listings
 manual: the `caption` key, lstmisc's `numbers` key; minted's `linenos`).
@@ -6224,12 +6247,16 @@ public structure ListingSpec where
   on the last line's box. -/
   lineStrut : Bool := false
   /-- How a wrapping listing's continuation stands in past its own line's
-  indentation, when it wraps as listings.sty wraps (`breakindent`, with
-  `breakautoindent` on): the layout then breaks each source line itself, so
-  every declared line holds and none re-flows. `none` leaves a wrap to the
-  paragraph breaker, which names the re-flow (W0386) — minted's, whose
-  fvextra continuation carries a break symbol this engine does not draw. -/
+  indentation, as listings.sty's does (`breakindent`, with `breakautoindent`
+  on): the layout then breaks each source line itself, where `wrapAt`
+  allows, so every declared line holds and none re-flows. `none` leaves a
+  wrap to the paragraph breaker, which names the re-flow (W0386) — minted's,
+  whose fvextra continuation carries a break symbol this engine does not
+  draw. -/
   breakIndent : Option Sp := none
+  /-- Where the layout's own wrap may end a line (`ListingWrap`): listings'
+  units, a tex listing's, by default. -/
+  wrapAt : ListingWrap := .units
   /-- How the environment spaces the code from its neighbours. -/
   frame : ListingFrame := .none
   deriving Repr, BEq, Inhabited
@@ -6257,15 +6284,20 @@ listing keys, and its code takes `\footnotesize`, LaTeX's own step, at
 which the markdown page's measure holds 79 to 80 monospaced columns (the
 0.6 em advance of every default typewriter face, to within 0.003 em) — the
 80-column line most code is written to (PEP 8's limit is 79) — and wraps a
-longer line as listings does: paper has no scroll, so every character a
-wrap can reach does — a run with no break point at all runs on, as
-listings sets it. The HTML's
+longer line with listings' continuation indent: paper has no scroll, so
+every character a wrap can reach does. It wraps whitespace first
+(`ListingWrap.whitespaceFirst`), where listings breaks at whichever of its
+units fills the line: a line of code then breaks between its words before
+inside one, and inside a token only where it is wider than a line, so an
+operator such as `:=` or `->` never divides; a fallback token wider than
+the line runs on, as listings sets a unit wider than its line. The HTML's
 `<pre>` keeps its padding inside the same measure, so a browser at 16 px
 holds about 72 of those columns and wraps the rest. -/
 public def Surface.listing : Surface → ListingSpec
   | .tex => {}
   | .markdown =>
-    { fontSize := .size "footnotesize", breakLines := true, breakIndent := some listingBreakIndent }
+    { fontSize := .size "footnotesize", breakLines := true, breakIndent := some listingBreakIndent
+      wrapAt := .whitespaceFirst }
 
 /-- The declared language as the bare token, `none` when none is declared:
 the one IR fact both text projections below read. -/

@@ -1444,9 +1444,9 @@ def reports : List Report := [
     accept := ["run against the binary built from the tree before the fix, one of the guard's assertions fails: the refusal of a Bulma page with no declared sheet does not name 'stylesheet = ...'"]
     state := .guarded "1f801005" .before .author },
   { id := "R159", date := "2026-10-12"
-    what := "a wrapped line of code split an assignment operator across two lines, its colon ending one line and its equals sign opening the next: a wrap fell between two characters of one token, and a run that fit after a space took a later break inside its own code"
+    what := "a wrapped line of code split an assignment operator across two lines, its colon ending one line and its equals sign opening the next: a wrap fell between two characters of one token"
     pins := [check% Tests.MarkdownCode.codeTokenWrapChecks, check% Tests.MarkdownCode.markdownCodeChecks]
-    accept := ["three of the guard's assertions fail on the tree before the fix: an operator divided in each of eleven Lean, Python and plain fences where the sweep stands it at the measure's end, and the last fitting space losing to a later token break in a Python and a plain fence",
+    accept := ["four of the guards' assertions fail on the tree with the fix reverted: an operator divided in each of eleven Lean, Python and plain fences, after a space and inside a run wider than the line, where the sweeps stand it at the measure's end; the last fitting space losing to a later token break in a Python and in a plain fence; and a declared listing's wrapped lines set apart from the units a LuaLaTeX probe of the same invented lines keeps whole, a number's digits and a list's commas",
       "an invented markdown document's long Lean line wraps before its assignment operator, where the tree before set the operator's colon and equals sign on two lines"]
     state := .guarded "1f801005" .before .author }
 ]

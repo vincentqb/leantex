@@ -1788,6 +1788,10 @@ flag this filters out. -/
 def bodyLines (out : Layout.Out) : Array Layout.LineOut :=
   out.pages.flatMap (·.lines.filter (!·.furniture))
 
+/-- A markdown code fence's shipped lines, `lang` its info string. -/
+def codeFenceLines (fonts : Font.FontSet) (lang code : String) : Array Layout.LineOut :=
+  bodyLines (layoutOf fonts (elabMd ("```" ++ lang ++ "\n" ++ code ++ "\n```\n")).1)
+
 /-- The distances between consecutive body baselines, in page order: the
 line pitches a page shipped. -/
 def baselinePitches (out : Layout.Out) : Array Dim.Sp :=

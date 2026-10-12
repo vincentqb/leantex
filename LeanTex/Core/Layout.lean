@@ -13445,22 +13445,27 @@ private def collectLogo (a : Acc) (content : Array Inline) : Acc :=
 
 /-- One display column of a listing line as the layout sets it: the
 character (`ListingSpec.layoutText`'s spelling, tab stops expanded), the
-highlighting token it came from, the lexer token it stands in (`lex`: a wrap
-may fall between two), its authored source column, and whether the source
-is white space there. -/
+highlighting token it came from, the run a wrap does not enter (`lex`: one
+of listings' output units, or under whitespace first one of the
+highlighter's type runs — adjacent tokens of one type are one run — or a
+fallback token of text it left untyped), the fallback token it stands in
+(`fb`), its authored source column, and whether the source is white space
+there. -/
 private structure CodeUnit where
   c : Char
   token : Nat
   lex : Nat
+  fb : Nat
   sourceCol : Nat
   space : Bool
   deriving Inhabited
 
-/-- How a character of text no language lexer typed reads to the fallback
-lexer: a run of word characters (letters, digits, `_`, `'`, every scalar past
-ASCII) is one token, a run of operator characters is one — so `:=`, `->`,
-`==` and `<=` hold together — and any other character, a bracket, a quote, a
-comma, is a token of its own. -/
+/-- How the fallback lexer reads a character: a run of word characters
+(letters, digits, `_`, `'`, every scalar past ASCII) is one token, a run of
+operator characters — the ASCII symbols of the Haskell 2010 report's lexical
+syntax (§2.2, `ascSymbol`) — is one, so `:=`, `->`, `==` and `<=` hold
+together, and any other character, a bracket, a quote, a comma, is a token
+of its own. -/
 private inductive CodeClass where
   | space | word | op | single
   deriving BEq
@@ -13471,164 +13476,422 @@ private def codeClass (c : Char) : CodeClass :=
   else if "!#$%&*+-./:<=>?@\\^|~".contains c then .op
   else .single
 
+/-- How listings.sty's standard character table reads a character into its
+output units (`\lst@SelectStdCharTable`): a letter (`a`–`z`, `A`–`Z`, `@`,
+`$`, `_`; every scalar past ASCII read as one), a digit, a space, or another
+character. -/
+private inductive LstClass where
+  | letter | digit | space | other
+  deriving BEq
+
+private def lstClass (c : Char) : LstClass :=
+  if c == ' ' || c == '\t' then .space
+  else if c.isAlpha || c == '@' || c == '$' || c == '_' || c.toNat > 127 then .letter
+  else if c.isDigit then .digit
+  else .other
+
 /-- A source line as display units, each character spelled as `layoutText`
-spells the whole line, the column threaded through the tokens. A token the
-language's lexer typed is one lexer token; text it left untyped — a line with
-no lexer, its fallback's reading of it — is read by `codeClass`. -/
+spells the whole line, the column threaded through the tokens. Its runs
+follow the listing's wrap (`Ir.ListingWrap`): listings' output units —
+letters run on and digits continue them (`\lst@AppendLetter`,
+`\lst@ProcessDigit`), other characters run on with the digits among them
+(`\lst@AppendOther`), a space is a unit of its own
+(`\lst@AppendSpecialSpace`), and a `)` closes the run it ends
+(`\lst@breakProcessOther`) — or, under whitespace first, a typed token's
+type run and each fallback token of untyped text. -/
 private def codeUnits (spec : Ir.ListingSpec) (line : Array ListingHighlight.Token) :
     Array CodeUnit := Id.run do
+  let units := match spec.wrapAt with
+    | .units => true
+    | .whitespaceFirst => false
   let mut out : Array CodeUnit := #[]
   let mut col := 0
   let mut src := 0
   let mut k := 0
   let mut lex := 0
-  let mut prev : Option CodeClass := none
+  let mut fb := 0
+  -- listings' unit in progress: a run of letters, an open run of others,
+  -- or neither (the line's start, a space, a closing `)`)
+  let mut letters := false
+  let mut others := false
   for token in line do
     let typed := token.kind != .text
-    if typed then
-      lex := lex + 1
-      prev := none
+    let mut prev : Option CodeClass := none
+    if !units && typed then lex := lex + 1
     for c in token.text.toList do
-      unless typed do
-        let cl := codeClass c
-        if prev != some cl || cl == .single then lex := lex + 1
-        prev := some cl
+      let cl := codeClass c
+      let fresh := prev != some cl || cl == .single
+      if fresh then fb := fb + 1
+      prev := some cl
+      if !units then
+        if !typed && fresh then lex := lex + 1
+      else
+        match lstClass c with
+        | .space =>
+          lex := lex + 1
+          letters := false
+          others := false
+        | .letter =>
+          unless letters do lex := lex + 1
+          letters := true
+          others := false
+        | .digit =>
+          unless letters || others do
+            lex := lex + 1
+            others := true
+        | .other =>
+          unless others do lex := lex + 1
+          letters := false
+          others := c != ')'
       let (kept, next) := spec.layoutText col (String.singleton c)
       for d in kept.toList do
-        out := out.push { c := d, token := k, lex := lex, sourceCol := src
+        out := out.push { c := d, token := k, lex := lex, fb := fb, sourceCol := src
                           space := c == ' ' || c == '\t' }
       col := next
       src := src + 1
     k := k + 1
   return out
 
-/-- A wrap before a space: the spaces at a wrap are dropped. -/
-private def CodeUnit.atSpace (us : Array CodeUnit) (b : Nat) : Bool :=
+/-- How a wrap before unit `b` ranks, read off the units on either side:
+none after a space, nor inside a run (`lex`) — save, under whitespace first,
+between two fallback tokens of a run `wide` reads as wider than a line; a
+wrap before a space ranks first under whitespace first, and every other
+wrap after it. -/
+private def CodeUnit.rank (wrap : Ir.ListingWrap) (wide : Nat → Bool) (us : Array CodeUnit)
+    (b : Nat) : Nat :=
   match us[b - 1]?, us[b]? with
-  | some p, some q => !p.space && q.space
-  | _, _ => false
+  | some p, some q =>
+    if p.space then 0
+    else if q.space then (match wrap with | .whitespaceFirst => 2 | .units => 1)
+    else if p.lex != q.lex then 1
+    else match wrap with
+      | .whitespaceFirst => if p.fb != q.fb && wide (b - 1) then 1 else 0
+      | .units => 0
+  | _, _ => 0
 
-/-- A wrap between two units of different lexer tokens, neither a space. -/
-private def CodeUnit.atToken (us : Array CodeUnit) (b : Nat) : Bool :=
-  match us[b - 1]?, us[b]? with
-  | some p, some q => !p.space && !q.space && p.lex != q.lex
-  | _, _ => false
+/-- **Where a wrap may fall.** A wrap ranks only after a unit that is no
+space, before a space or between two runs — or, under whitespace first,
+between two fallback tokens of a run wider than a line. -/
+private theorem CodeUnit.rank_mem (wrap : Ir.ListingWrap) (wide : Nat → Bool)
+    (us : Array CodeUnit) (b : Nat) (h : CodeUnit.rank wrap wide us b ≠ 0) :
+    ∃ p q, us[b - 1]? = some p ∧ us[b]? = some q ∧ p.space = false ∧
+      (q.space = true ∨ p.lex ≠ q.lex ∨
+        (wrap = .whitespaceFirst ∧ p.fb ≠ q.fb ∧ wide (b - 1) = true)) := by
+  unfold CodeUnit.rank at h
+  split at h
+  · rename_i p q hp hq
+    refine ⟨p, q, hp, hq, ?_⟩
+    cases hs : p.space
+    · refine ⟨rfl, ?_⟩
+      cases hqs : q.space
+      · simp only [hs, hqs, Bool.false_eq_true, ↓reduceIte] at h
+        by_cases hl : p.lex = q.lex
+        · refine Or.inr (Or.inr ?_)
+          cases wrap with
+          | units => simp [hl] at h
+          | whitespaceFirst =>
+            simp only [hl, bne_self_eq_false, Bool.false_eq_true, ↓reduceIte] at h
+            by_cases hw : (p.fb != q.fb && wide (b - 1)) = true
+            · simp only [Bool.and_eq_true, bne_iff_ne, ne_eq] at hw
+              exact ⟨rfl, hw.1, hw.2⟩
+            · simp [hw] at h
+        · exact Or.inr (Or.inl hl)
+      · exact Or.inl rfl
+    · simp [hs] at h
+  · simp at h
 
-/-- The breaks inside a segment from `s`, the line ending at `n`. -/
-private def codeInner (s n : Nat) : List Nat := List.range' (s + 1) (n - (s + 1))
+/-- A segment's scan from `b`, `fit` reading whether the segment reaches a
+unit inside its width: while it does, the last wrap of the first rank and
+the last wrap of any rank, and the unit the scan stopped at. -/
+private def codeScan (rank : Nat → Nat) (fit : Nat → Bool) (n b : Nat) (top any : Option Nat) :
+    Option Nat × Option Nat × Nat :=
+  if b < n then
+    if fit b then
+      codeScan rank fit n (b + 1) (if rank b == 2 then some b else top)
+        (if rank b != 0 then some b else any)
+    else (top, any, b)
+  else (top, any, b)
+termination_by n - b
 
-/-- Where a segment from `s` ends, `width s b` the advance of its units up to
-`b`: the whole rest where it fits; else, whitespace first, the last space
-break that fits; else — the run from `s` is wider than the line — the last
-token break inside it that fits; else the first break past the width, the
-run set overfull as TeX sets it; else the rest. -/
-private def codeCut (us : Array CodeUnit) (width : Nat → Nat → Sp) (limit : Sp) (s n : Nat) :
-    Nat :=
+private theorem codeScan_top (rank : Nat → Nat) (fit : Nat → Bool) (n b : Nat) (top any : Option Nat)
+    (t : Nat) (h : (codeScan rank fit n b top any).1 = some t) :
+    top = some t ∨ (b ≤ t ∧ t < n ∧ rank t = 2) := by
+  revert h
+  induction b, top, any using codeScan.induct rank fit n with
+  | case1 b top any hb hf ih =>
+    intro h
+    rw [codeScan] at h
+    simp only [hb, hf, ↓reduceIte] at h
+    rcases ih h with h' | ⟨h1, h2, h3⟩
+    · by_cases hr : (rank b == 2) = true
+      · simp only [hr, ↓reduceDIte, Option.some.injEq] at h'
+        subst h'
+        exact Or.inr ⟨Nat.le_refl _, hb, by simpa using hr⟩
+      · simp only [hr] at h'
+        exact Or.inl h'
+    · exact Or.inr ⟨by omega, h2, h3⟩
+  | case2 b top any hb hf =>
+    intro h
+    rw [codeScan] at h
+    simp only [hb, hf, ↓reduceIte] at h
+    exact Or.inl h
+  | case3 b top any hb =>
+    intro h
+    rw [codeScan] at h
+    simp only [hb, ↓reduceIte] at h
+    exact Or.inl h
+
+private theorem codeScan_any (rank : Nat → Nat) (fit : Nat → Bool) (n b : Nat) (top any : Option Nat)
+    (t : Nat) (h : (codeScan rank fit n b top any).2.1 = some t) :
+    any = some t ∨ (b ≤ t ∧ t < n ∧ rank t ≠ 0) := by
+  revert h
+  induction b, top, any using codeScan.induct rank fit n with
+  | case1 b top any hb hf ih =>
+    intro h
+    rw [codeScan] at h
+    simp only [hb, hf, ↓reduceIte] at h
+    rcases ih h with h' | ⟨h1, h2, h3⟩
+    · by_cases hr : (rank b != 0) = true
+      · simp only [hr, ↓reduceDIte, Option.some.injEq] at h'
+        subst h'
+        exact Or.inr ⟨Nat.le_refl _, hb, by simpa using hr⟩
+      · simp only [hr] at h'
+        exact Or.inl h'
+    · exact Or.inr ⟨by omega, h2, h3⟩
+  | case2 b top any hb hf =>
+    intro h
+    rw [codeScan] at h
+    simp only [hb, hf, ↓reduceIte] at h
+    exact Or.inl h
+  | case3 b top any hb =>
+    intro h
+    rw [codeScan] at h
+    simp only [hb, ↓reduceIte] at h
+    exact Or.inl h
+
+private theorem codeScan_stop_between (rank : Nat → Nat) (fit : Nat → Bool) (n b : Nat) (top any : Option Nat)
+    (h : b ≤ n) : b ≤ (codeScan rank fit n b top any).2.2 ∧
+      (codeScan rank fit n b top any).2.2 ≤ n := by
+  revert h
+  induction b, top, any using codeScan.induct rank fit n with
+  | case1 b top any hb hf ih =>
+    intro _
+    rw [codeScan]
+    simp only [hb, hf, ↓reduceIte]
+    simp only [dite_eq_ite] at ih
+    have := ih (by omega)
+    omega
+  | case2 b top any hb hf =>
+    intro _
+    rw [codeScan]
+    simp only [hb, hf, Bool.false_eq_true, ↓reduceIte]
+    omega
+  | case3 b top any hb =>
+    intro _
+    rw [codeScan]
+    simp only [hb, ↓reduceIte]
+    omega
+
+private theorem codeScan_top_kept (rank : Nat → Nat) (fit : Nat → Bool) (n b : Nat) (top any : Option Nat)
+    (h : top.isSome) : (codeScan rank fit n b top any).1.isSome := by
+  revert h
+  induction b, top, any using codeScan.induct rank fit n with
+  | case1 b top any hb hf ih =>
+    intro h
+    rw [codeScan]
+    simp only [hb, hf, ↓reduceIte]
+    apply ih
+    split <;> simp_all
+  | case2 b top any hb hf =>
+    intro h
+    rw [codeScan]
+    simp only [hb, hf, ↓reduceIte]
+    exact h
+  | case3 b top any hb =>
+    intro h
+    rw [codeScan]
+    simp only [hb, ↓reduceIte]
+    exact h
+
+/-- **The scan sees every wrap the segment reaches.** A first-rank wrap whose
+every unit up to it fits leaves the scan holding a first-rank wrap. -/
+private theorem codeScan_top_reached (rank : Nat → Nat) (fit : Nat → Bool) (n b : Nat) (top any : Option Nat)
+    (c : Nat) (hbc : b ≤ c) (hc : c < n) (hr : rank c = 2)
+    (hfit : ∀ k, b ≤ k → k ≤ c → fit k = true) :
+    (codeScan rank fit n b top any).1.isSome := by
+  revert hbc hfit
+  induction b, top, any using codeScan.induct rank fit n with
+  | case1 b top any hb hf ih =>
+    intro hbc hfit
+    rw [codeScan]
+    simp only [hb, hf, ↓reduceIte]
+    by_cases hbc' : b = c
+    · subst hbc'
+      apply codeScan_top_kept
+      simp [hr]
+    · exact ih (by omega) (fun k hk hkc => hfit k (by omega) hkc)
+  | case2 b top any hb hf =>
+    intro hbc hfit
+    exact absurd (hfit b (Nat.le_refl _) hbc) hf
+  | case3 b top any hb =>
+    intro hbc _
+    omega
+
+/-- The first wrap at or past `b`, or the line's end. -/
+private def codeNext (rank : Nat → Nat) (n b : Nat) : Nat :=
+  if b < n then if rank b != 0 then b else codeNext rank n (b + 1) else n
+termination_by n - b
+
+private theorem codeNext_mem (rank : Nat → Nat) (n b : Nat) (h : b ≤ n) :
+    (b ≤ codeNext rank n b ∧ codeNext rank n b ≤ n) ∧
+      (codeNext rank n b = n ∨ rank (codeNext rank n b) ≠ 0) := by
+  revert h
+  induction b using codeNext.induct rank n with
+  | case1 b hb hr =>
+    intro _
+    rw [codeNext]
+    simp only [hb, hr, ↓reduceIte]
+    exact ⟨⟨Nat.le_refl _, by omega⟩, Or.inr (by simpa using hr)⟩
+  | case2 b hb hr ih =>
+    intro _
+    rw [codeNext]
+    simp only [hb, hr, Bool.false_eq_true, ↓reduceIte]
+    have := ih (by omega)
+    exact ⟨⟨by omega, this.1.2⟩, this.2⟩
+  | case3 b hb =>
+    intro _
+    rw [codeNext]
+    simp only [hb, ↓reduceIte]
+    exact ⟨⟨by omega, Nat.le_refl _⟩, by simp⟩
+
+private def codeChoose (rank : Nat → Nat) (n : Nat) : Option Nat × Option Nat × Nat → Nat
+  | (some b, _, _) => b
+  | (none, some b, _) => b
+  | (none, none, stop) => codeNext rank n stop
+
+/-- Where a segment from `s` ends: the whole rest where it fits; else,
+scanning only while the segment fits, its last first-rank wrap, else its
+last wrap of any rank; else — no wrap inside the width — the first wrap
+past it, the run set overfull as TeX sets it, or the rest. -/
+private def codeCut (rank : Nat → Nat) (width : Nat → Nat → Sp) (limit : Sp) (s n : Nat) : Nat :=
   if width s n ≤ limit then n
-  else
-    match ((codeInner s n).filter fun b => CodeUnit.atSpace us b && width s b ≤ limit).getLast? with
-    | some b => b
-    | none =>
-      match ((codeInner s n).filter fun b => CodeUnit.atToken us b && width s b ≤ limit).getLast? with
-      | some b => b
-      | none =>
-        match (codeInner s n).find? fun b => CodeUnit.atSpace us b || CodeUnit.atToken us b with
-        | some b => b
-        | none => n
+  else codeChoose rank n (codeScan rank (fun b => decide (width s b ≤ limit)) n (s + 1) none none)
 
-private theorem codeInner_mem {s n b : Nat} (h : b ∈ codeInner s n) : s < b ∧ b < n := by
-  simp only [codeInner, List.mem_range'_1] at h
-  omega
-
-/-- A cut stands past the segment's start, at a break the lexer allows or at
-the line's end. -/
-private theorem codeCut_mem (us : Array CodeUnit) (width : Nat → Nat → Sp) (limit : Sp)
+/-- A cut stands past the segment's start, at a wrap or at the line's end. -/
+private theorem codeCut_mem (rank : Nat → Nat) (width : Nat → Nat → Sp) (limit : Sp)
     (s n : Nat) (h : s < n) :
-    (s < codeCut us width limit s n ∧ codeCut us width limit s n ≤ n) ∧
-      (codeCut us width limit s n = n ∨ CodeUnit.atSpace us (codeCut us width limit s n) = true ∨
-        CodeUnit.atToken us (codeCut us width limit s n) = true) := by
+    (s < codeCut rank width limit s n ∧ codeCut rank width limit s n ≤ n) ∧
+      (codeCut rank width limit s n = n ∨ rank (codeCut rank width limit s n) ≠ 0) := by
   unfold codeCut
-  split
-  · exact ⟨⟨h, Nat.le_refl n⟩, Or.inl rfl⟩
-  · split
-    · rename_i b hb
-      have hm := List.mem_of_getLast? hb
-      simp only [List.mem_filter, Bool.and_eq_true] at hm
-      have := codeInner_mem hm.1
-      exact ⟨⟨this.1, Nat.le_of_lt this.2⟩, Or.inr (Or.inl hm.2.1)⟩
-    · split
-      · rename_i b hb
-        have hm := List.mem_of_getLast? hb
-        simp only [List.mem_filter, Bool.and_eq_true] at hm
-        have := codeInner_mem hm.1
-        exact ⟨⟨this.1, Nat.le_of_lt this.2⟩, Or.inr (Or.inr hm.2.1)⟩
-      · split
-        · rename_i b hb
-          have hm := List.mem_of_find?_eq_some hb
-          have hp := List.find?_some hb
-          have := codeInner_mem hm
-          simp only [Bool.or_eq_true] at hp
-          exact ⟨⟨this.1, Nat.le_of_lt this.2⟩, Or.inr hp⟩
-        · exact ⟨⟨h, Nat.le_refl n⟩, Or.inl rfl⟩
+  by_cases hw : width s n ≤ limit
+  · simp only [hw, ↓reduceIte]
+    exact ⟨⟨h, Nat.le_refl n⟩, by simp⟩
+  · simp only [hw, ↓reduceIte]
+    have htop := codeScan_top rank (fun b => decide (width s b ≤ limit)) n (s + 1) none none
+    have hany := codeScan_any rank (fun b => decide (width s b ≤ limit)) n (s + 1) none none
+    have hstop := codeScan_stop_between rank (fun b => decide (width s b ≤ limit)) n (s + 1) none none
+      (by omega)
+    generalize codeScan rank (fun b => decide (width s b ≤ limit)) n (s + 1) none none = r
+      at htop hany hstop
+    obtain ⟨t, a, st⟩ := r
+    dsimp only at hstop
+    cases t with
+    | some b =>
+      rcases htop b rfl with h' | ⟨h1, h2, h3⟩
+      · simp at h'
+      · exact ⟨⟨by simp only [codeChoose]; omega, by simp only [codeChoose]; omega⟩,
+          Or.inr (by simp only [codeChoose]; omega)⟩
+    | none =>
+      cases a with
+      | some b =>
+        rcases hany b rfl with h' | ⟨h1, h2, h3⟩
+        · simp at h'
+        · exact ⟨⟨by simp only [codeChoose]; omega, by simp only [codeChoose]; omega⟩,
+            Or.inr (by simpa only [codeChoose] using h3)⟩
+      | none =>
+        have := codeNext_mem rank n st hstop.2
+        simp only [codeChoose]
+        exact ⟨⟨by omega, this.1.2⟩, this.2⟩
 
-/-- **Whitespace first.** Where a space break inside the segment fits, the cut
-is a space break: a token break serves only a run wider than the line. -/
-private theorem codeCut_space_mem (us : Array CodeUnit) (width : Nat → Nat → Sp) (limit : Sp)
-    (s n b : Nat) (hb : b ∈ codeInner s n) (hs : CodeUnit.atSpace us b = true)
-    (hw : width s b ≤ limit) (hwide : ¬ width s n ≤ limit) :
-    CodeUnit.atSpace us (codeCut us width limit s n) = true := by
+/-- **Whitespace first.** Where a first-rank wrap — a space, under whitespace
+first — stands with every unit up to it inside the width, the cut is a
+first-rank wrap: a lower rank serves only a run with none. -/
+private theorem codeCut_space_mem (rank : Nat → Nat) (width : Nat → Nat → Sp) (limit : Sp)
+    (s n c : Nat) (hc : s < c) (hcn : c < n) (hr : rank c = 2)
+    (hfit : ∀ k, s < k → k ≤ c → width s k ≤ limit) (hwide : ¬ width s n ≤ limit) :
+    rank (codeCut rank width limit s n) = 2 := by
   unfold codeCut
   simp only [hwide, ↓reduceIte]
-  split
-  · rename_i c hc
-    have hm := List.mem_of_getLast? hc
-    simp only [List.mem_filter, Bool.and_eq_true] at hm
-    exact hm.2.1
-  · rename_i hnone
-    have : b ∈ (codeInner s n).filter fun b => CodeUnit.atSpace us b && width s b ≤ limit := by
-      simp only [List.mem_filter, Bool.and_eq_true, decide_eq_true_eq]
-      exact ⟨hb, hs, hw⟩
-    rw [List.getLast?_eq_none_iff] at hnone
-    rw [hnone] at this
-    exact absurd this (List.not_mem_nil)
+  have hsee := codeScan_top_reached rank (fun b => decide (width s b ≤ limit)) n (s + 1) none none c
+    (by omega) hcn hr (fun k hk hkc => by simpa using hfit k (by omega) hkc)
+  have htop := codeScan_top rank (fun b => decide (width s b ≤ limit)) n (s + 1) none none
+  generalize codeScan rank (fun b => decide (width s b ≤ limit)) n (s + 1) none none = r
+    at hsee htop
+  obtain ⟨t, a, st⟩ := r
+  cases t with
+  | some b =>
+    rcases htop b rfl with h' | ⟨_, _, h3⟩
+    · simp at h'
+    · simpa only [codeChoose] using h3
+  | none => simp at hsee
 
 /-- The segment's cut with the bounds a recursion's measure reads. -/
-private def codeCutIn (us : Array CodeUnit) (width : Nat → Nat → Sp) (limit : Sp) (s n : Nat)
+private def codeCutIn (rank : Nat → Nat) (width : Nat → Nat → Sp) (limit : Sp) (s n : Nat)
     (h : s < n) : {b : Nat // s < b ∧ b ≤ n} :=
-  ⟨codeCut us width limit s n, (codeCut_mem us width limit s n h).1⟩
+  ⟨codeCut rank width limit s n, (codeCut_mem rank width limit s n h).1⟩
 
-/-- The units after a wrap: its spaces dropped. -/
-private def skipSpaces (us : Array CodeUnit) (b n : Nat) : Nat :=
-  b + ((us.extract b n).toList.takeWhile (·.space)).length
+/-- The unit after a wrap: its spaces dropped, scanned in place. -/
+private def skipSpaces (us : Array CodeUnit) (n b : Nat) : Nat :=
+  if b < n then
+    if (us[b]?.map (·.space)).getD false then skipSpaces us n (b + 1) else b
+  else b
+termination_by n - b
 
-/-- The segments a source line wraps into, from `s`: each the longest its
-width admits under `codeCut`, `first` wide for the line's first and `cont`
-for every continuation, the spaces at each wrap dropped. -/
-private def codeSegments (us : Array CodeUnit) (width : Nat → Nat → Sp) (first cont : Sp)
-    (n s : Nat) (out : Array (Nat × Nat)) : Array (Nat × Nat) :=
+private theorem skipSpaces_between (us : Array CodeUnit) (n b : Nat) (h : b ≤ n) :
+    b ≤ skipSpaces us n b ∧ skipSpaces us n b ≤ n := by
+  revert h
+  induction b using skipSpaces.induct us n with
+  | case1 b hb hs ih =>
+    intro _
+    rw [skipSpaces]
+    simp only [hb, hs, ↓reduceIte]
+    have := ih (by omega)
+    omega
+  | case2 b hb hs =>
+    intro _
+    rw [skipSpaces]
+    simp only [hb, hs, Bool.false_eq_true, ↓reduceIte]
+    omega
+  | case3 b hb =>
+    intro h
+    rw [skipSpaces]
+    simp only [hb, ↓reduceIte]
+    omega
+
+/-- The segments a source line wraps into, from `s`: each cut by
+`codeCut`, `first` wide for the line's first and `cont` for every
+continuation, the spaces at each wrap dropped. -/
+private def codeSegments (rank : Nat → Nat) (width : Nat → Nat → Sp) (us : Array CodeUnit)
+    (first cont : Sp) (n s : Nat) (out : Array (Nat × Nat)) : Array (Nat × Nat) :=
   if h : s < n then
-    match codeCutIn us width (if out.isEmpty then first else cont) s n h with
+    match codeCutIn rank width (if out.isEmpty then first else cont) s n h with
     | ⟨b, hb⟩ =>
-      have : n - skipSpaces us b n < n - s := by
-        unfold skipSpaces
+      have : n - skipSpaces us n b < n - s := by
+        have := skipSpaces_between us n b hb.2
         omega
-      codeSegments us width first cont n (skipSpaces us b n) (out.push (s, b))
+      codeSegments rank width us first cont n (skipSpaces us n b) (out.push (s, b))
   else out
 termination_by n - s
 
-/-- **A code line wraps only where its lexer separates tokens.** Every
-segment a line wraps into ends at the line's end, before a space, or between
-two units of different lexer tokens — never inside one, so `:=`, `->` and an
-identifier stay whole on their line. -/
-private theorem codeSegments_breaks_mem (us : Array CodeUnit) (width : Nat → Nat → Sp)
-    (first cont : Sp) (n s : Nat) (out : Array (Nat × Nat)) :
-    ∀ seg ∈ codeSegments us width first cont n s out,
-      seg ∈ out ∨ seg.2 = n ∨ CodeUnit.atSpace us seg.2 = true ∨
-        CodeUnit.atToken us seg.2 = true := by
-  induction s, out using codeSegments.induct us width first cont n with
+/-- Every segment a line wraps into ends at the line's end or at a wrap. -/
+private theorem codeSegments_breaks_mem (rank : Nat → Nat) (width : Nat → Nat → Sp)
+    (us : Array CodeUnit) (first cont : Sp) (n s : Nat) (out : Array (Nat × Nat)) :
+    ∀ seg ∈ codeSegments rank width us first cont n s out,
+      seg ∈ out ∨ seg.2 = n ∨ rank seg.2 ≠ 0 := by
+  induction s, out using codeSegments.induct rank width us first cont n with
   | case1 s out h b hb hcut _ ih =>
     intro seg hseg
-    have hval : codeCut us width (if out.isEmpty then first else cont) s n = b := by
+    have hval : codeCut rank width (if out.isEmpty then first else cont) s n = b := by
       have := congrArg Subtype.val hcut
       simpa [codeCutIn] using this
     unfold codeSegments at hseg
@@ -13636,7 +13899,7 @@ private theorem codeSegments_breaks_mem (us : Array CodeUnit) (width : Nat → N
     rcases ih seg hseg with hin | hrest
     · rcases Array.mem_push.mp hin with hold | rfl
       · exact Or.inl hold
-      · have hm := (codeCut_mem us width (if out.isEmpty then first else cont) s n h).2
+      · have hm := (codeCut_mem rank width (if out.isEmpty then first else cont) s n h).2
         rw [hval] at hm
         exact Or.inr hm
     · exact Or.inr hrest
@@ -13646,24 +13909,56 @@ private theorem codeSegments_breaks_mem (us : Array CodeUnit) (width : Nat → N
     simp only [h, ↓reduceDIte] at hseg
     exact Or.inl hseg
 
-/-- Where a source line wraps: whitespace first, between the lexer's tokens
-where a run is wider than the line, never inside a token
-(`codeWraps_breaks_mem`). A segment no break brings inside its width runs on
-to its first break, as TeX sets the overfull line. Each segment is its unit
-range; `widths` is each unit's advance. -/
-private def codeWraps (us : Array CodeUnit) (widths : Array Sp) (first cont : Sp) :
-    Array (Nat × Nat) :=
-  let pre : Array Sp := widths.foldl (fun acc w => acc.push ((acc.back?.getD 0) + w)) #[0]
-  codeSegments us (fun a b => (pre[b]?.getD 0) - (pre[a]?.getD 0)) first cont us.size 0 #[]
+/-- Which units stand in a run wider than a continuation line, `cont` wide:
+the runs whose own fallback tokens a wrap may part under whitespace first. -/
+private def codeWide (us : Array CodeUnit) (widths : Array Sp) (cont : Sp) : Array Bool := Id.run do
+  let mut flags : Array Bool := Array.replicate us.size false
+  let mut start := 0
+  let mut w : Sp := 0
+  for i in [0:us.size + 1] do
+    let ends := i == us.size || (i > 0 && (us[i]?.map (·.lex)) != (us[i - 1]?.map (·.lex)))
+    if ends && start < i then
+      if w > cont then
+        for j in [start:i] do
+          flags := flags.set! j true
+      start := i
+      w := 0
+    w := w + widths.getD i 0
+  return flags
 
-/-- Every wrap of a code line stands where its lexer separates tokens. -/
-private theorem codeWraps_breaks_mem (us : Array CodeUnit) (widths : Array Sp) (first cont : Sp) :
-    ∀ seg ∈ codeWraps us widths first cont,
-      seg.2 = us.size ∨ CodeUnit.atSpace us seg.2 = true ∨ CodeUnit.atToken us seg.2 = true := by
+/-- Where a source line wraps (`Ir.ListingWrap`): listings' units, each
+segment filled to its last unit that fits, or whitespace first — the last
+space that fits, else the last run boundary, a run wider than a line parted
+between its fallback tokens. A segment no wrap brings inside its width runs
+on to its first wrap, as TeX sets the overfull line. Each segment is its unit
+range; `widths` is each unit's advance. The scan stops where a segment
+leaves its width, so a line costs its length: a wrap past the width is
+reached only by a segment no wrap inside it ends. -/
+private def codeWraps (wrap : Ir.ListingWrap) (us : Array CodeUnit) (widths : Array Sp)
+    (first cont : Sp) : Array (Nat × Nat) :=
+  let pre : Array Sp := widths.foldl (fun acc w => acc.push ((acc.back?.getD 0) + w)) #[0]
+  let wide := codeWide us widths cont
+  codeSegments (CodeUnit.rank wrap (fun i => wide.getD i false) us)
+    (fun a b => (pre[b]?.getD 0) - (pre[a]?.getD 0)) us first cont us.size 0 #[]
+
+/-- **Where a code line wraps.** Every segment ends at the line's end or
+after a unit that is no space: before a space, between two units of
+different runs (`lex`), or, under whitespace first, between two fallback
+tokens (`fb`) of a run wider than a continuation line (`codeWide`). Which
+runs `codeUnits` assigns is its definition; `codeTokenWrapChecks` holds the
+shipped page to the operators and identifiers they keep whole. -/
+private theorem codeWraps_breaks_mem (wrap : Ir.ListingWrap) (us : Array CodeUnit)
+    (widths : Array Sp) (first cont : Sp) :
+    ∀ seg ∈ codeWraps wrap us widths first cont, seg.2 = us.size ∨
+      ∃ p q, us[seg.2 - 1]? = some p ∧ us[seg.2]? = some q ∧ p.space = false ∧
+        (q.space = true ∨ p.lex ≠ q.lex ∨
+          (wrap = .whitespaceFirst ∧ p.fb ≠ q.fb ∧
+            (codeWide us widths cont).getD (seg.2 - 1) false = true)) := by
   intro seg hseg
-  rcases codeSegments_breaks_mem us _ first cont us.size 0 #[] seg hseg with h | h
+  rcases codeSegments_breaks_mem _ _ us first cont us.size 0 #[] seg hseg with h | h | h
   · simp at h
-  · exact h
+  · exact Or.inl h
+  · exact Or.inr (CodeUnit.rank_mem wrap _ us seg.2 h)
 
 private def collectVerbatim (r : Rd) (a : Acc) (covered : Option Ir.Color) (s : String) (spec : Ir.ListingSpec) (indent : Sp) : Acc :=
   let a0 := a
@@ -13713,11 +14008,12 @@ private def collectVerbatim (r : Rd) (a : Acc) (covered : Option Ir.Color) (s : 
   let (size, leading) := sty.metrics r.geom.fontSize r.xHeight avail r.geom.textHeight
   let leading := leading.getD
     (Ir.stepSkip (sty.stepLead r.geom.skips r.geom.fontSize) size r.geom.leading)
-  -- A listing that wraps as listings wraps (`breakIndent`) is broken here,
-  -- line by line, each continuation standing in its line's own indentation
-  -- and the break indent: every segment then fits, so the paragraph sets
-  -- the lines as declared and none re-flows. Advances are the mono slot's
-  -- at the listing's size, a missing glyph's its fallback face's.
+  -- A listing with listings' continuation indent (`breakIndent`) is broken
+  -- here, line by line, where its wrap allows (`codeWraps`), each
+  -- continuation standing in its line's own indentation and the break
+  -- indent: the paragraph then sets the lines as declared and none
+  -- re-flows. Advances are the mono slot's at the listing's size, a missing
+  -- glyph's its fallback face's.
   let wrap := if spec.breakLines then spec.breakIndent else none
   let mono := r.fs.get (r.fs.lookup 2 400 false)
   let advance (c : Char) : Sp :=
@@ -13779,10 +14075,14 @@ private def collectVerbatim (r : Rd) (a : Acc) (covered : Option Ir.Color) (s : 
               let us := codeUnits { spec with breakLines := false } line
               let ws := us.map (advance ·.c)
               let prefixW := (numbered.toList.map advance).sum
-              let lead := ((us.toList.takeWhile (·.space)).map (advance ·.c)).sum
+              let lead : Sp := Id.run do
+                let mut w : Sp := 0
+                for u in us do
+                  if u.space then w := w + advance u.c else break
+                return w
               let hang := prefixW + lead + breakIndent
               let mut physical := #[]
-              for (a0, b0) in codeWraps us ws (avail - prefixW) (avail - hang) do
+              for (a0, b0) in codeWraps spec.wrapAt us ws (avail - prefixW) (avail - hang) do
                 let mut pieces := #[]
                 let mut k := a0
                 for _ in [a0:b0] do

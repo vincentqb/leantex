@@ -10225,8 +10225,9 @@ size commands; the current style stands" none
     lineStrut := env == "minted" && (breakLines || ground.isSome)
     -- listings wraps with its own continuation indent; minted's fvextra
     -- wrap keeps the surface's (none on a tex document).
-    -- premise: markdownCodeChecks — a breaklines lstlisting sets every line inside the measure, continuations 20 pt in, with no re-flow named, while minted's wrap keeps no break indent and so the paragraph breaker's W0386
+    -- premise: markdownCodeChecks — a breaklines lstlisting wraps at listings' own units, each line filled to its last unit that fits as lualatex fills it, continuations 20 pt in, with no re-flow named, while minted's wrap keeps no break indent and so the paragraph breaker's W0386
     breakIndent := if env == "lstlisting" then some Ir.listingBreakIndent else base.breakIndent
+    wrapAt := base.wrapAt
     frame := if env == "minted" then Ir.ListingFrame.onPage ctx.surface ctx.lists ctx.page.parskip .list
       else .none
     source := some (ctx.sourceSpan contentPos) }

@@ -12,16 +12,16 @@ A markdown document can declare no listing keys, and its code set at the
 body size in a measure-wide face ran past the page edge: hundreds of lines
 of a long generated report lost their ends. A markdown fence now sets as
 its surface sets code (`Ir.Surface.listing`) — `\footnotesize`, wrapping —
-and a wrapping listing wraps whitespace first, at the last space that fits,
-and inside a run wider than the line only where its lexer separates tokens:
-never inside one, so `:=`, `->` and an identifier stay whole where
-listings.sty's between-units rule split them. Each continuation stands
-20 pt past its own line's indentation (`breakindent`, `breakautoindent`), so
-every declared line holds; a LuaLaTeX probe of listings set the indent that
-way, and an identifier wider than the measure whole. The invariants are over
-`Layout.Out` (where each line's first glyph stands, what each line holds,
-that each fits) and over the IR's listing values the two artifacts read.
-Every word here is invented. -/
+and wraps whitespace first: at the last space that fits, else at the last
+boundary of the highlighter's type runs, a run wider than a line parted
+between its fallback tokens, so `:=`, `->` and an identifier stay whole. A
+tex listing that declares `breaklines` wraps at listings' own units, each
+line filled to the last that fits, as a LuaLaTeX probe of listings fills
+it. Each continuation stands 20 pt past its own line's indentation
+(`breakindent`, `breakautoindent`), so every declared line holds. The
+invariants are over `Layout.Out` (where each line's first glyph stands,
+what each line holds, that each fits) and over the IR's listing values the
+two artifacts read. Every word here is invented. -/
 
 namespace Tests.MarkdownCode
 
@@ -164,55 +164,130 @@ def inlineCodeChecks (ref : IO.Ref (List String)) (text : Font.Font)
     (hasStr (HtmlDoc.baseCss {} doc) codeRule
       && !hasStr (HtmlDoc.baseCss {} (elabStr (dvDoc "" tex)).1) codeRule)
 
+/-- The fallback lexer's tokens of a line (spaces dropped): a run of word
+characters, a run of operator characters, and any other character alone —
+the classes the layout's fallback lexer reads. -/
+def fallbackTokens (s : String) : Array String := Id.run do
+  let cls (c : Char) : Nat :=
+    if c == ' ' || c == '\t' || c == '\u00a0' then 0
+    else if c.isAlphanum || c == '_' || c == '\'' || c.toNat > 127 then 1
+    else if "!#$%&*+-./:<=>?@\\^|~".contains c then 2
+    else 3
+  let mut out : Array String := #[]
+  let mut cur := ""
+  let mut prev := 0
+  for c in s.toList do
+    let k := cls c
+    if k == 0 then
+      unless cur.isEmpty do out := out.push cur
+      cur := ""
+    else if cur.isEmpty || (k == prev && k != 3) then cur := cur.push c
+    else
+      out := out.push cur
+      cur := String.singleton c
+    prev := k
+  unless cur.isEmpty do out := out.push cur
+  return out
+
+/-- **Overfull only where one fallback token is wider than its room.** A
+shipped code line runs past the measure only when a fallback token on it is
+wider than the room from its first glyph to the measure's edge, `cell` the
+typewriter advance. -/
+def overrunExplained (left measure cell : Dim.Sp) (l : Layout.LineOut) : Bool :=
+  l.x + l.setWidth ≤ left + measure ||
+    match firstGlyphX l with
+    | some x => (fallbackTokens (lineText l)).any fun t => t.length * cell > left + measure - x
+    | none => false
+
 /-- **A code line wraps where its lexer separates tokens, whitespace first.**
 A wrapped Lean line split `:=` across two lines (`… :` above `= by`): the
 wrap fell between two output units of one operator. Swept so that each
 operator stands at every column across the measure's end, in a Lean, a
-Python and a plain fence: no two consecutive shipped lines of one source
-line divide `:=`, `->`, `==`, `<=`, `**`, `!=`, `::` or `=>`, every
-character ships in order, and every line fits. A line whose last fitting
-space stands before a run wider than the line breaks at the space, and the
-run only then at its tokens. Every word here is invented. -/
+Python and a plain fence, after a space and inside a run wider than the
+line: no two consecutive shipped lines of one source line divide `:=`,
+`->`, `==`, `<=`, `**`, `!=`, `::` or `=>`, every character ships in order,
+and every line fits. A URL in a comment, a path in a string, a formatted
+string and a console line wrap inside their tokens rather than run past the
+measure, overfull only where one fallback token is wider than the line. A
+line whose last fitting space stands before a run wider than the line breaks
+at the space, and the run only then at its tokens. A tex listing that
+declares `breaklines` breaks as listings does: a LuaLaTeX probe of the same
+invented lines at the same measure and advance sets each line at the units
+these assertions name. Every word here is invented. -/
 def codeTokenWrapChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit := do
   let t := check ref
-  let linesOf (lang code : String) : Array Layout.LineOut :=
-    bodyLines (layoutOf fonts (elabMd ("```" ++ lang ++ "\n" ++ code ++ "\n```\n")).1)
+  let linesOf := codeFenceLines fonts
   let doc := (elabMd "```\nx\n```\n").1
+  let left := doc.page.hmargin
   let measure := doc.page.width - 2 * doc.page.hmargin
+  let some mono := fonts.fonts[1]? | t "code wraps: the typewriter face loads" false
+  let cell := Dim.pt 8 * mono.spaceAdvance / mono.unitsPerEm
   let ops := [":=", "->", "==", "<=", "**", "!=", "::", "=>"]
   let divides (a b : String) : Option String :=
     ops.find? fun op => (List.range (op.length - 1)).any fun k =>
       a.endsWith (String.ofList (op.toList.take (k + 1))) &&
         b.startsWith (String.ofList (op.toList.drop (k + 1)))
-  let mut offences : Array String := #[]
-  let mut swept := 0
-  for (lang, op, tail) in [("lean", ":=", " by exact rfl"), ("lean", "->", " Gadget"),
+  let judge (label : String) (code : String) (ls : Array Layout.LineOut) : Array String := Id.run do
+    let mut found : Array String := #[]
+    for (a, b) in ls.zip (ls.extract 1 ls.size) do
+      if let some op' := divides (bare (lineText a)) (bare (lineText b)) then
+        found := found.push s!"{label}: {op'} divided"
+    unless String.join (ls.toList.map (bare ∘ lineText)) == bare code do
+      found := found.push s!"{label}: lost text"
+    unless ls.all (overrunExplained left measure cell) do
+      found := found.push s!"{label}: overfull past its tokens"
+    return found
+  let pairs := [("lean", ":=", " by exact rfl"), ("lean", "->", " Gadget"),
       ("lean", "::", " rest"), ("lean", "=>", " widget"), ("python", "==", " beta:"),
       ("python", "**", " 2"), ("python", "!=", " gamma"), ("python", "->", " int:"),
-      ("python", "<=", " delta"), ("", ":=", " value"), ("", "==", " other")] do
+      ("python", "<=", " delta"), ("", ":=", " value"), ("", "==", " other")]
+  let mut offences : Array String := #[]
+  let mut swept := 0
+  let mut unspaced := 0
+  for (lang, op, tail) in pairs do
     for k in [0:24] do
       let words := String.intercalate " " (List.replicate 20 "wwwwwww")
       let head := (String.ofList (words.toList.take (60 + k))).trimAsciiEnd.toString
       let code := head ++ " " ++ op ++ tail
       let ls := linesOf lang code
       if ls.size ≥ 2 then swept := swept + 1
-      for (a, b) in ls.zip (ls.extract 1 ls.size) do
-        if let some op' := divides (bare (lineText a)) (bare (lineText b)) then
-          offences := offences.push s!"{lang}:{op'}@{k}"
-      unless String.join (ls.toList.map (bare ∘ lineText)) == bare code do
-        offences := offences.push s!"{lang}:{op}@{k} lost text"
+      offences := offences ++ judge s!"{lang}:{op}@{k}" code ls
       unless ls.all (·.setWidth ≤ measure) do
         offences := offences.push s!"{lang}:{op}@{k} overfull"
+      -- The same operator inside one run wider than the line, no space
+      -- near it: only a token break can take the wrap.
+      let chain := String.intercalate "." ((List.range 40).map fun i => "".pushn 'z' (2 + i % 3))
+      let glued := String.ofList (chain.toList.take (70 + k)) ++ op ++ "y.yy.yyy"
+      let gs := linesOf lang ("value = " ++ glued)
+      if gs.size ≥ 2 then unspaced := unspaced + 1
+      offences := offences ++ judge s!"{lang}:{op}@{k} unspaced" ("value = " ++ glued) gs
   t s!"code wraps: no wrap divides an operator, every character ships, every line fits ({offences})"
     offences.isEmpty
-  t s!"code wraps: the sweep wraps its lines ({swept})" (swept ≥ 130)
+  t s!"code wraps: the sweeps wrap their lines ({swept}, {unspaced})"
+    (swept ≥ 130 && unspaced == 24 * pairs.length)
   -- A Lean line with an order relation: each glyph ships, whole, in order.
   let rel := "theorem gadget_le_widget (n m : Nat) (h : n ≤ m) (k : Nat) (hk : m ≤ k) : n ≤ k + 0 := Nat.le_trans h hk"
   let relLines := linesOf "lean" rel
   t s!"code wraps: a Lean line holding ≤ wraps and ships whole ({relLines.size} lines)"
-    (relLines.size ≥ 2 && String.join (relLines.toList.map (bare ∘ lineText)) == bare rel &&
-      (relLines.zip (relLines.extract 1 relLines.size)).all fun (a, b) =>
-        (divides (bare (lineText a)) (bare (lineText b))).isNone)
+    (relLines.size ≥ 2 && (judge "lean ≤" rel relLines).isEmpty)
+  -- Long tokens: a typed comment, string or console line wider than the
+  -- line parts between its fallback tokens rather than run past the page.
+  let url := "https://example.org/some/rather/long/path/segments/that/never/end/and/keep/going/on/forever.html"
+  let path := "/var/lib/example/aaaaaaaa/bbbbbbbbbb/cccccccccc/dddddddddd/eeeeeeeeee/ffffffffff/gggg.txt"
+  let long := [("python", "# see " ++ url), ("python", "x = \"" ++ url ++ "\""),
+    ("python", "open(\"" ++ path ++ "\")"),
+    ("python", "label = f\"" ++ "".pushn 'a' 50 ++ "{name}" ++ "".pushn 'b' 40 ++ "\""),
+    ("python", "message = (\"the-quick-brown-fox-jumps-over-the-lazy-dog-and-keeps-running-far-away\")"),
+    ("lean", "-- see " ++ url), ("lean", "def url : String := \"" ++ url ++ "\""),
+    ("rust", "let url = \"" ++ url ++ "\";"), ("console", "$ cat " ++ path),
+    ("", "see " ++ url)]
+  let mut longOffences : Array String := #[]
+  for (lang, code) in long do
+    let ls := linesOf lang code
+    longOffences := longOffences ++ judge s!"{lang}: {code.take 12}" code ls
+    unless ls.size ≥ 2 do longOffences := longOffences.push s!"{lang}: {code.take 12} did not wrap"
+  t s!"code wraps: a long comment, string or console line parts inside its tokens, never past the page ({longOffences})"
+    longOffences.isEmpty
   -- Whitespace first: the run after the last fitting space is wider than a
   -- line, so the wrap takes the space and the run breaks only at its dots.
   let chain := String.intercalate "." ((List.range 24).map fun i => "".pushn 'z' (2 + i % 3))
@@ -223,6 +298,40 @@ def codeTokenWrapChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO
       (ls.size ≥ 3 && (ls[0]?.map (bare ∘ lineText)) == some "value=" &&
         String.join (ls.toList.map (bare ∘ lineText)) == bare ("value = " ++ chain) &&
         ls.all (·.setWidth ≤ measure))
+  -- A tex listing keeps listings' units, each line filled: the lines a
+  -- LuaLaTeX probe of listings set from the same source at 300 pt in this
+  -- 0.6 em face at `\footnotesize`, its spaces dropped.
+  let probe : List (String × List String) := [
+    ("value = " ++ chain,
+      ["value=zz.zzz.zzzz.zz.zzz.zzzz.zz.zzz.zzzz.zz.zzz.zzzz.zz.zzz",
+       ".zzzz.zz.zzz.zzzz.zz.zzz.zzzz.zz.zzz.zzzz"]),
+    ("x = \"https://example.org/some/rather/long/path/segments/that/never/end/and/keep/going/on.html\"",
+      ["x=\"https://example.org/some/rather/long/path/segments/that/",
+       "never/end/and/keep/going/on.html\""]),
+    ("f(" ++ String.intercalate "," ((List.range 30).map fun k => s!"arg{k}") ++ ")",
+      ["f(arg0,arg1,arg2,arg3,arg4,arg5,arg6,arg7,arg8,arg9,arg10,",
+       "arg11,arg12,arg13,arg14,arg15,arg16,arg17,arg18,arg19,",
+       "arg20,arg21,arg22,arg23,arg24,arg25,arg26,arg27,arg28,", "arg29)"]),
+    ("total = 1234567890.1234567890 + 9876543210.98765 * 31415926535.8979 - 2718281828.459045 / 7",
+      ["total=1234567890.1234567890+9876543210.98765*", "31415926535.8979-2718281828.459045/7"]),
+    ("abc123def456ghi789 = jkl012mno345pqr678(stu901vwx234yz) + aaa111bbb222ccc333ddd444eee555fff",
+      ["abc123def456ghi789=jkl012mno345pqr678(stu901vwx234yz)+", "aaa111bbb222ccc333ddd444eee555fff"]),
+    ("gadget(widget(sprocket(flange(bracket(lever(spindle(axle(wheel(rim(spoke(hub(nut))))))))))))):=x",
+      ["gadget(widget(sprocket(flange(bracket(lever(spindle(axle(wheel", "(rim(spoke(hub(nut))))))))))))):=x"]),
+    ("".pushn 'w' 71 ++ "->" ++ "".pushn 'v' 20, ["".pushn 'w' 71, "->" ++ "".pushn 'v' 20]),
+    ("a.b.c.d.e.f.g.h.i.j.k.l.m.n.o.p.q.r.s.t.u.v.w.x.y.z.a.b.c.d.e.f.g.h.i.j.k.l.m.n.o.p.q.r.s.t.u.v",
+      ["a.b.c.d.e.f.g.h.i.j.k.l.m.n.o.p.q.r.s.t.u.v.w.x.y.z.a.b.c.d.e.", "f.g.h.i.j.k.l.m.n.o.p.q.r.s.t.u.v"]),
+    ("x = [" ++ String.intercalate ", " ((List.range 25).map fun k => toString (k + 1)) ++ "]",
+      ["x=[1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,", "17,18,19,20,21,22,23,24,25]"])]
+  let lst := String.intercalate "\n" (probe.map (·.1))
+  let texDoc := (elabStr (dvDoc "" ("\\noindent\\begin{minipage}{300pt}\n\\begin{lstlisting}" ++
+    "[breaklines=true,basicstyle=\\ttfamily\\footnotesize]\n" ++ lst ++
+    "\n\\end{lstlisting}\n\\end{minipage}"))).1
+  let texLines := (bodyLines (layoutOf fonts texDoc)).map (bare ∘ lineText)
+  let want := (probe.flatMap (·.2)).toArray
+  t s!"tex listing: breaklines fills each line to listings' last unit that fits, as LuaLaTeX sets it \
+({(texLines.zip want).filter (fun (a, b) => a != b)})"
+    (texLines == want)
 
 def markdownCodeChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
@@ -235,10 +344,10 @@ def markdownCodeChecks (ref : IO.Ref (List String)) : IO Unit := do
   -- The listing values both artifacts read.
   let mdSpec := firstListing (elabMd "```\nplain code\n```\n").1
   let mdLang := firstListing (elabMd "```python\nx = 1\n```\n").1
-  t "a markdown fence sets as its surface's code: footnotesize, wrapping as listings wraps"
+  t "a markdown fence sets as its surface's code: footnotesize, wrapping whitespace first with listings' continuation indent"
     ([mdSpec, mdLang].all fun s => s.any fun s =>
       s.fontSize == .size "footnotesize" && s.breakLines
-        && s.breakIndent == some Ir.listingBreakIndent)
+        && s.breakIndent == some Ir.listingBreakIndent && s.wrapAt == .whitespaceFirst)
   let texPlain := firstListing (elabStr (dvDoc "" "\\begin{verbatim}\nx\n\\end{verbatim}")).1
   let texLst := firstListing (elabStr (dvDoc "" "\\begin{lstlisting}\nx\n\\end{lstlisting}")).1
   t "a tex listing keeps LaTeX's defaults: the ambient size, no wrapping"
@@ -248,8 +357,9 @@ def markdownCodeChecks (ref : IO.Ref (List String)) : IO Unit := do
     "\\begin{lstlisting}[breaklines=true]\nx\n\\end{lstlisting}")).1
   let mintedWrap := firstListing (elabStr (dvDoc ""
     "\\begin{minted}[breaklines]{text}\nx\n\\end{minted}")).1
-  t "listings wraps with its own continuation indent; minted's fvextra wrap is not that"
-    (lstWrap.any (fun s => s.breakLines && s.breakIndent == some Ir.listingBreakIndent)
+  t "listings wraps at its own units with its own continuation indent; minted's fvextra wrap is not that"
+    (lstWrap.any (fun s => s.breakLines && s.breakIndent == some Ir.listingBreakIndent
+        && s.wrapAt == .units)
       && mintedWrap.any (fun s => s.breakLines && s.breakIndent.isNone))
   -- The page.
   let some text ← loadTestFont "OpenSans-Regular.ttf"
@@ -287,7 +397,7 @@ omicron pi rho sigma tau upsilon phi chi psi omega"
   -- footnotesize: an 80-column line stays one line, an 81-column one wraps.
   let cols (n : Nat) : String :=
     String.ofList ((List.range n).map fun k => if k % 5 == 4 && k + 1 < n then ' ' else 'a')
-  let linesOf (s : String) := bodyLines (layoutOf fonts (elabMd ("```\n" ++ s ++ "\n```\n")).1)
+  let linesOf := codeFenceLines fonts ""
   t "markdown code: an 80-column line fits the markdown measure whole"
     ((linesOf (cols 79)).size == 1 && (linesOf (cols 80)).size == 1
       && (linesOf (cols 81)).size == 2)
@@ -304,7 +414,7 @@ omicron pi rho sigma tau upsilon phi chi psi omega"
   t "markdown code: a run of output units wraps between units, never inside one"
     (unitLines.size ≥ 2 && String.join (unitLines.toList.map (bare ∘ lineText)) == units
       && joins.all fun (a, b) => !(a.isAlphanum && b.isAlphanum))
-  -- A tex listing that declares listings' wrapping wraps as listings does,
+  -- A tex listing that declares listings' wrapping wraps at its units,
   -- line numbers included: no re-flow named, continuations past the
   -- number column.
   let texSrc := dvDoc "" ("\\begin{minipage}{120pt}\n\\begin{lstlisting}[breaklines=true,\
