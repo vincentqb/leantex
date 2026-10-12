@@ -12,15 +12,16 @@ A markdown document can declare no listing keys, and its code set at the
 body size in a measure-wide face ran past the page edge: hundreds of lines
 of a long generated report lost their ends. A markdown fence now sets as
 its surface sets code (`Ir.Surface.listing`) — `\footnotesize`, wrapping —
-and a wrapping listing wraps as listings.sty wraps it: greedily, at a space
-or between two output units, never inside an identifier, each continuation
-standing 20 pt past its own line's indentation (`breakindent`,
-`breakautoindent`), so every declared line holds. A LuaLaTeX probe of
-listings set exactly that: continuations 20 pt in, past the line's own
-indentation; a break before a comma; an identifier wider than the measure
-left whole. The invariants are over `Layout.Out` (where each line's first
-glyph stands, what each line holds, that each fits) and over the IR's
-listing values the two artifacts read. Every word here is invented. -/
+and a wrapping listing wraps whitespace first, at the last space that fits,
+and inside a run wider than the line only where its lexer separates tokens:
+never inside one, so `:=`, `->` and an identifier stay whole where
+listings.sty's between-units rule split them. Each continuation stands
+20 pt past its own line's indentation (`breakindent`, `breakautoindent`), so
+every declared line holds; a LuaLaTeX probe of listings set the indent that
+way, and an identifier wider than the measure whole. The invariants are over
+`Layout.Out` (where each line's first glyph stands, what each line holds,
+that each fits) and over the IR's listing values the two artifacts read.
+Every word here is invented. -/
 
 namespace Tests.MarkdownCode
 
@@ -163,6 +164,66 @@ def inlineCodeChecks (ref : IO.Ref (List String)) (text : Font.Font)
     (hasStr (HtmlDoc.baseCss {} doc) codeRule
       && !hasStr (HtmlDoc.baseCss {} (elabStr (dvDoc "" tex)).1) codeRule)
 
+/-- **A code line wraps where its lexer separates tokens, whitespace first.**
+A wrapped Lean line split `:=` across two lines (`… :` above `= by`): the
+wrap fell between two output units of one operator. Swept so that each
+operator stands at every column across the measure's end, in a Lean, a
+Python and a plain fence: no two consecutive shipped lines of one source
+line divide `:=`, `->`, `==`, `<=`, `**`, `!=`, `::` or `=>`, every
+character ships in order, and every line fits. A line whose last fitting
+space stands before a run wider than the line breaks at the space, and the
+run only then at its tokens. Every word here is invented. -/
+def codeTokenWrapChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit := do
+  let t := check ref
+  let linesOf (lang code : String) : Array Layout.LineOut :=
+    bodyLines (layoutOf fonts (elabMd ("```" ++ lang ++ "\n" ++ code ++ "\n```\n")).1)
+  let doc := (elabMd "```\nx\n```\n").1
+  let measure := doc.page.width - 2 * doc.page.hmargin
+  let ops := [":=", "->", "==", "<=", "**", "!=", "::", "=>"]
+  let divides (a b : String) : Option String :=
+    ops.find? fun op => (List.range (op.length - 1)).any fun k =>
+      a.endsWith (String.ofList (op.toList.take (k + 1))) &&
+        b.startsWith (String.ofList (op.toList.drop (k + 1)))
+  let mut offences : Array String := #[]
+  let mut swept := 0
+  for (lang, op, tail) in [("lean", ":=", " by exact rfl"), ("lean", "->", " Gadget"),
+      ("lean", "::", " rest"), ("lean", "=>", " widget"), ("python", "==", " beta:"),
+      ("python", "**", " 2"), ("python", "!=", " gamma"), ("python", "->", " int:"),
+      ("python", "<=", " delta"), ("", ":=", " value"), ("", "==", " other")] do
+    for k in [0:24] do
+      let words := String.intercalate " " (List.replicate 20 "wwwwwww")
+      let head := (String.ofList (words.toList.take (60 + k))).trimAsciiEnd.toString
+      let code := head ++ " " ++ op ++ tail
+      let ls := linesOf lang code
+      if ls.size ≥ 2 then swept := swept + 1
+      for (a, b) in ls.zip (ls.extract 1 ls.size) do
+        if let some op' := divides (bare (lineText a)) (bare (lineText b)) then
+          offences := offences.push s!"{lang}:{op'}@{k}"
+      unless String.join (ls.toList.map (bare ∘ lineText)) == bare code do
+        offences := offences.push s!"{lang}:{op}@{k} lost text"
+      unless ls.all (·.setWidth ≤ measure) do
+        offences := offences.push s!"{lang}:{op}@{k} overfull"
+  t s!"code wraps: no wrap divides an operator, every character ships, every line fits ({offences})"
+    offences.isEmpty
+  t s!"code wraps: the sweep wraps its lines ({swept})" (swept ≥ 130)
+  -- A Lean line with an order relation: each glyph ships, whole, in order.
+  let rel := "theorem gadget_le_widget (n m : Nat) (h : n ≤ m) (k : Nat) (hk : m ≤ k) : n ≤ k + 0 := Nat.le_trans h hk"
+  let relLines := linesOf "lean" rel
+  t s!"code wraps: a Lean line holding ≤ wraps and ships whole ({relLines.size} lines)"
+    (relLines.size ≥ 2 && String.join (relLines.toList.map (bare ∘ lineText)) == bare rel &&
+      (relLines.zip (relLines.extract 1 relLines.size)).all fun (a, b) =>
+        (divides (bare (lineText a)) (bare (lineText b))).isNone)
+  -- Whitespace first: the run after the last fitting space is wider than a
+  -- line, so the wrap takes the space and the run breaks only at its dots.
+  let chain := String.intercalate "." ((List.range 24).map fun i => "".pushn 'z' (2 + i % 3))
+  for lang in ["python", ""] do
+    let ls := linesOf lang ("value = " ++ chain)
+    t s!"code wraps ({lang}): the last fitting space wins over a later token break \
+({ls.map lineText})"
+      (ls.size ≥ 3 && (ls[0]?.map (bare ∘ lineText)) == some "value=" &&
+        String.join (ls.toList.map (bare ∘ lineText)) == bare ("value = " ++ chain) &&
+        ls.all (·.setWidth ≤ measure))
+
 def markdownCodeChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
   -- The surface: one decision, read by the reader choice and the document.
@@ -259,5 +320,6 @@ numbers=left,basicstyle=\\ttfamily\\footnotesize]\n" ++ words ++ "\n\\end{lstlis
           firstGlyphX b == (glyphX a 'a').map (· + Ir.listingBreakIndent)
       | _, _ => false)
   inlineCodeChecks ref text fonts
+  Tests.MarkdownCode.codeTokenWrapChecks ref fonts
 
 end Tests.MarkdownCode

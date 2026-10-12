@@ -1442,6 +1442,12 @@ def reports : List Report := [
     what := "the Bulma stylesheet mode was documented as styled by a host page's framework sheet, while publication refused a page declaring no framework sheet of its own, and the refusal named no declaration to write"
     pins := [check% htmlContainedCliChecks, check% Tests.bulmaSheetChecks]
     accept := ["run against the binary built from the tree before the fix, one of the guard's assertions fails: the refusal of a Bulma page with no declared sheet does not name 'stylesheet = ...'"]
+    state := .guarded "1f801005" .before .author },
+  { id := "R159", date := "2026-10-12"
+    what := "a wrapped line of code split an assignment operator across two lines, its colon ending one line and its equals sign opening the next: a wrap fell between two characters of one token, and a run that fit after a space took a later break inside its own code"
+    pins := [check% Tests.MarkdownCode.codeTokenWrapChecks, check% Tests.MarkdownCode.markdownCodeChecks]
+    accept := ["three of the guard's assertions fail on the tree before the fix: an operator divided in each of eleven Lean, Python and plain fences where the sweep stands it at the measure's end, and the last fitting space losing to a later token break in a Python and a plain fence",
+      "an invented markdown document's long Lean line wraps before its assignment operator, where the tree before set the operator's colon and equals sign on two lines"]
     state := .guarded "1f801005" .before .author }
 ]
 
