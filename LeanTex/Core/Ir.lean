@@ -1990,8 +1990,11 @@ public def Palette.restore (p opening : Palette) (ref : ColorRef) : Palette :=
 /-- Two palettes that resolve every name alike, whatever order their entries
 were declared in: the same values, decorative names and cover. -/
 @[expose] public def Palette.sameAs (a b : Palette) : Bool :=
-  (a.entries ++ b.entries).all (fun (k, _) => a.lookup k == b.lookup k) &&
-    (a.decorative ++ b.decorative).all (fun k => a.decorative.contains k == b.decorative.contains k) &&
+  -- Entries alike in order resolve alike; only a reordered palette pays the
+  -- quadratic name-by-name reading, which every group's end would otherwise.
+  (a.entries == b.entries && a.decorative == b.decorative ||
+    (a.entries ++ b.entries).all (fun (k, _) => a.lookup k == b.lookup k) &&
+      (a.decorative ++ b.decorative).all (fun k => a.decorative.contains k == b.decorative.contains k)) &&
     a.coveredFraction == b.coveredFraction
 
 /-- Erasing a name makes it absent, not a guessed replacement colour. -/
@@ -13680,6 +13683,32 @@ public def Palette.applySeedsUnder (pal : Palette) (st : SeedPalette.SeedState)
 seeds derive: the export's and a bundle's install. -/
 public def Palette.applySeeds (pal : Palette) (st : SeedPalette.SeedState) : Palette :=
   pal.applySeedsUnder st fun _ => false
+
+/-- Whether `el` is an element ink a generated palette chooses for the ground
+`g`: one the block styles and the furniture bind (`SeedPalette.elementRoles`)
+whose row judges it on `g` (`Row.ground`). -/
+@[expose] public def Role.boundTo (el g : Role) : Bool :=
+  SeedPalette.elementRoles.contains el && el.row.ground == some g
+
+/-- **A ground other than its own takes back the ink generated for it**: each
+element ink a generated palette bound (`Role.boundTo`), still at the colour
+it was bound at and not one the document declares (`keep`), is erased where
+its ground stands at another colour than the one generated for it, so the
+registry's default for the ground in force reads it — the `readable` choice
+on a bar, solved where it stands. The beamer colour scope's resolution runs
+it after every door that declares a colour (`Elab.resolveBeamerColors`), a
+bundle's install included: a scope that restates a bundle's ink cannot bring
+it back, and an epoch that restores the generated ground restores its ink. -/
+public def Palette.yieldGrounds (pal : Palette) (keep : Role → Bool) : Palette :=
+  match pal.seeded with
+  | none => pal
+  | some st =>
+    let gen (r : Role) : Option Color :=
+      (SeedPalette.Colors.role st.seeds st.colors (((SeedPalette.bound st).lookup r).getD r)).map
+        fun c => Color.ofHtml c.r c.g c.b
+    (SeedPalette.bound st).foldl (fun p (el, _) =>
+      if !keep el && (el.row.ground.any fun g => el.boundTo g && Design.declared? p g != gen g) &&
+          Design.declared? p el == gen el then p.erase (.role el) else p) pal
 
 private theorem Palette.installDerived_keeps (keep : Role → Bool) (es : List (Role × Color))
     (p : Palette) (r : Role) (h : ∀ e ∈ es, e.1 ≠ r) :

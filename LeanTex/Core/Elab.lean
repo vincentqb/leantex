@@ -8494,7 +8494,10 @@ private def resolveBeamerColors (ctx : Ctx) (pal : Palette)
       warnOnce origin ("beamercolor:" ++ issue.message) .W0104
         ("'\\setbeamercolor': " ++ issue.message ++ "; the unresolved value is ignored") issue.span.pos
         (trigger := "\\setbeamercolor")
-  return pal
+  -- A ground declared through any door takes back the inks generated for
+  -- another, whatever the scope restated.
+  let docRoles := (← get).spans.docRoles
+  return pal.yieldGrounds docRoles.contains
 
 private def applyBeamerColor (ctx : Ctx) (pal : Palette) (name : String)
     (star : Bool) (src : String) (pos : Pos) : EM Palette := do
@@ -18849,8 +18852,18 @@ private def prepareStyledBody (file : String) (decls : Array PDecl)
   -- A palette generated from seeds is the whole palette: the default
   -- bundle's rhythm and furniture still install, its colours do not, so no
   -- colour reaches the page but through the seeds.
+  -- A deck that declares its own ink, paper or accent takes the default
+  -- bundle over those seeds: its cards and secondary colours are generated
+  -- from what it declares, the one entry point every colour comes through.
+  let declaredSeed (r : Role) : Option Color := Design.declared? s.palette r
+  let seeds := Theme.daylightSeeds
+  let ownSeeds := [Role.ink, .page, .accent].any fun r => (declaredSeed r).isSome
   let bundle := if s.palette.seeded.isSome then
       { Theme.daylight with palette := {}, seeds := none, derived := [] }
+    else if ownSeeds then
+      Theme.daylightWith { seeds with ink := (declaredSeed .ink).getD seeds.ink
+                                      paper := (declaredSeed .page).getD seeds.paper
+                                      accent := (declaredSeed .accent).getD seeds.accent }
     else Theme.daylight
   -- The class's defaults ride on the palette every artifact reads: what a
   -- role nothing declares resolves to (`Ir.DocClass.classColors`).

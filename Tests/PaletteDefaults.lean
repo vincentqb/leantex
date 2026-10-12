@@ -1,6 +1,7 @@
 module
 
 public import Tests.Support
+public import LeanTex.Core.ContrastSolve
 
 public section
 
@@ -44,8 +45,10 @@ def checks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit := do
   | some alert, some page =>
     t s!"moloch: the alert {alert.css} keeps the lineage's hue within a degree"
       (hueGap (hueOf alert) (hueOf lineage) ≤ 1000)
-    t s!"moloch: the alert {alert.css} reads at 4.6:1 on its page"
-      (4600 ≤ Contrast.contrastMilli alert page)
+    t s!"moloch: the alert {alert.css} reads at 4.6:1 on its page, and no further"
+      (4600 ≤ Contrast.contrastMilli alert page && Contrast.contrastMilli alert page ≤ 4700)
+    t "moloch: the alert is the lineage realized as text on its page, the solver's own answer"
+      (some alert == ContrastSolve.realizeNearest (Contrast.aaText + SeedPalette.margin) page lineage)
   | _, _ => t "moloch: the alert and the page resolve" false
   -- An undeclared list: one marker colour on the page and in the HTML.
   let (ldoc, _) := elabStr (dvDoc "" ("Probe words.\n\\begin{itemize}\n\\item First\n" ++
@@ -74,6 +77,44 @@ def checks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit := do
   t "a markdown note: the HTML paints the same ground"
     ((ground.map HtmlDoc.cssColor) == cssRole (HtmlDoc.emit {} mddoc).1 .codeSurface &&
       ground.isSome)
+  -- A code ground an epoch declares: painted under the listing in both artifacts.
+  let tint := Ir.Color.ofHtml 0xEE 0xF2 0xE8
+  let (edoc, _) := elabStr (dvDoc "" ("Fern words.\n\\palette{ tint = #EEF2E8 }\n" ++
+    "\\begin{verbatim}\nfrond = 1\n\\end{verbatim}"))
+  t "an epoch's code ground: the PDF paints it under the listing"
+    ((layoutOf fonts edoc).pages.any fun p => p.fills.any (·.color == tint))
+  let ecss := (HtmlDoc.emit {} edoc).1
+  let decls (style : String) : List (String × String) :=
+    ((style.splitOn ";").filterMap fun d => match d.splitOn ":" with
+      | [k, v] => some (k.trimAscii.toString, v.trimAscii.toString)
+      | _ => none).reverse
+  t "an epoch's code ground: the HTML paints it under the listing"
+    ((elemNodesList (· == "pre") #[] (docNodesOf edoc).toList).any fun n => match n with
+      | .elem _ attrs _ =>
+        let own := decls ((HtmlDoc.attrOf? attrs "style").getD "")
+        (own.lookup "background").any fun v =>
+          chaseCssValue (own ++ screenRootVars ecss) v == some (HtmlDoc.cssColor tint)
+      | _ => false)
+  -- The muted row: one relation both artifacts read — the ink on LaTeX's
+  -- rows, one generated tone on the web's and under a generated bundle.
+  let docOf (src : Option String) : Ir.Doc := match src with
+    | some s => (elabStr s).1
+    | none => (elabMd "Probe words.\n").1
+  for (what, src) in [("a markdown note", none),
+      ("a webpage", some "\\documentclass{webpage}\n\\begin{document}\nProbe words.\n\\end{document}"),
+      ("an undeclared deck", some "\\documentclass{beamer}\n\\begin{document}\n\\begin{frame}x\\end{frame}\n\\end{document}")] do
+    let doc := docOf src
+    let muted := Ir.Design.at doc.palette .print .muted
+    t s!"{what}: its PDF and its HTML read one muted ({muted.map (·.css)})"
+      (muted.isSome && muted == Ir.Design.at doc.palette .light .muted &&
+        muted != Ir.Design.at doc.palette .print .ink)
+  for (what, src) in [("an undeclared article", some (dvDoc "" "Probe words.")),
+      ("a deck under beamer's default theme", some ("\\documentclass{beamer}\n\\usetheme{default}\n" ++
+        "\\begin{document}\n\\begin{frame}x\\end{frame}\n\\end{document}"))] do
+    let doc := docOf src
+    t s!"{what}: its muted is its ink, in print and on screen"
+      ([Ir.Scheme.print, .light].all fun s =>
+        Ir.Design.at doc.palette s .muted == Ir.Design.at doc.palette s .ink)
   -- An undeclared deck: tinted cards on every block.
   let (ddoc, _) := elabStr ("\\documentclass[aspectratio=169]{beamer}\n\\begin{document}\n" ++
     "\\begin{frame}{Cards}\n\\begin{block}{Plain}Kilo body.\\end{block}\n" ++
@@ -92,5 +133,56 @@ def checks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit := do
         t s!"an undeclared deck: the {kind} fill {fill.css} shows chroma 0.005 or more"
           (5 * 10 ^ 15 ≤ (lchOf fill).1)
     | _, _ => t s!"an undeclared deck: the {kind} block has a band and a body" false
+
+/-- **A generated palette's inks give way where the document declares**: a
+ground the document declares takes back the inks generated for another —
+installed by the class's default bundle, a bundle named outright, the
+document's own seeds, or a beamer channel — so a title reads on its declared
+bar with nothing to report; and a deck that declares its own ink or paper
+takes the default bundle over them, its cards and their text the document's
+own colours. -/
+def yieldChecks (ref : IO.Ref (List String)) : IO Unit := do
+  let t := check ref
+  let deck (pre : String) := "\\documentclass[aspectratio=169]{beamer}\n" ++ pre ++
+    "\\begin{document}\n\\begin{frame}{Cards}\n" ++
+    "\\begin{block}{Plain}Kilo body.\\end{block}\n" ++
+    "\\begin{alertblock}{Alerted}Lima body.\\end{alertblock}\n\\end{frame}\n\\end{document}"
+  let bars := "\\palette{ blocktitlebg = #333333, alerttitlebg = #333333 }\n"
+  for (what, pre) in [("the class's default bundle", bars),
+      ("a bundle named outright", "\\usetheme{daylight}\n" ++ bars),
+      ("the document's own seeds",
+        "\\palette[seeds]{ ink = #2B2440, paper = #FFFFFF, accent = #E85D2A }\n" ++ bars),
+      ("a beamer channel", "\\usetheme{daylight}\n\\setbeamercolor{block title}{bg=black!80}\n" ++
+        "\\setbeamercolor{block title alerted}{bg=black!80}\n")] do
+    let (doc, ds) := elabStr (deck pre)
+    let reads (s : Ir.Scheme) (text bar : Ir.Role) : Bool :=
+      match Ir.Design.at doc.palette s text, Ir.Design.at doc.palette s bar with
+      | some i, some b => Contrast.aaText ≤ Contrast.contrastMilli i b
+      | _, _ => false
+    t s!"generated inks give way under {what}: the titles read on the declared bars"
+      ([Ir.Scheme.print, .light].all fun s =>
+        reads s .blockTitleInk .blockTitleBar && reads s .alertTitleInk .alertTitleBar)
+    t s!"generated inks give way under {what}: nothing to report"
+      (ds.all fun d => d.code != "W0315" && d.code != "W0345")
+  let darkPage := Ir.Color.ofHtml 0x10 0x14 0x18
+  let lightInk := Ir.Color.ofHtml 0xE8 0xE8 0xE8
+  let (dark, _) := elabStr (deck "\\palette{ bg = #101418, fg = #E8E8E8 }\n")
+  t "a deck's own paper and ink: the cards' text is its ink"
+    (Ir.Design.at dark.palette .print .blockBodyInk == some lightInk &&
+      Ir.Design.at dark.palette .print .blockTitleInk == some lightInk)
+  t "a deck's own paper and ink: the cards are tints of its dark paper, legible"
+    (match Ir.Design.at dark.palette .print .blockBodyGround,
+        Ir.Design.at dark.palette .print .blockTitleBar with
+      | some body, some bar =>
+        Contrast.luminance body < Contrast.luminance lightInk &&
+          Contrast.contrastMilli body darkPage < 1500 &&
+          Contrast.aaText ≤ Contrast.contrastMilli lightInk body &&
+          Contrast.aaText ≤ Contrast.contrastMilli lightInk bar
+      | _, _ => false)
+  let purple := Ir.Color.ofHtml 0x5B 0x2A 0x86
+  let (inked, _) := elabStr (deck "\\palette{ fg = #5B2A86 }\n")
+  t "a deck's own ink: its cards' titles and bodies are set in it"
+    (Ir.Design.at inked.palette .print .blockBodyInk == some purple &&
+      Ir.Design.at inked.palette .print .blockTitleInk == some purple)
 
 end Tests.PaletteDefaults

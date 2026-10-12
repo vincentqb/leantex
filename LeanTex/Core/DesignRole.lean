@@ -314,14 +314,17 @@ default, named `--ltx-<css>` in CSS and `<export>` in a TeX export. -/
     ClassRow → Scheme → Fallback :=
   Row.every (.readable bar [.page, .ink] unbarred)
 
-/-- A secondary ink where nothing declares one: the ink in LaTeX's classes,
-in every scheme, as they print every line; elsewhere the ink in print and,
-on screen, the quietest tone the seeds generate that reads (`SeedPalette`). -/
+/-- A secondary ink where nothing declares one, one relation in print and on
+the light screen: the ink in LaTeX's classes, as they print every line, and
+on a stage, as beamer's default theme does; on the web's row, which no LaTeX
+class prints, the quietest tone the seeds generate that reads
+(`SeedPalette`). -/
 @[expose] public def Row.mutedFallback : ClassRow → Scheme → Fallback
   | .latex, _ => .first [.ink]
-  | _, .print => .first [.ink]
-  | _, .light => .seeded .muted
-  | _, .dark => .const (Row.hex 0xA1 0xA1 0xAA)
+  | .stage, .dark => .const (Row.hex 0xA1 0xA1 0xAA)
+  | .stage, _ => .first [.ink]
+  | .web, .dark => .const (Row.hex 0xA1 0xA1 0xAA)
+  | .web, _ => .seeded .muted
 
 /-- A list marker's ink: the printed ink on paper and on the light screen —
 one mark in both artifacts, as LaTeX sets a label in the running ink — and

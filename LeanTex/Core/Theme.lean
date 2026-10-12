@@ -76,11 +76,13 @@ public def Theme.derivedFresh (th : Theme) (seed : Color) : Color :=
     (Design.printPage th.palette) seed).getD seed
 
 /-- The palette a bundle's seeds generate at a depth: the generator's answer
-kept in `PaletteData`, else derived as asked. -/
+kept in `PaletteData` for those seeds, else derived as asked (a bundle over
+a document's own seeds, `daylightWith`). -/
 public def Theme.generated (th : Theme) (d : GroundDepth) : Option SeedPalette.Colors :=
-  match PaletteData.bundleGenerated.find? (fun e => e.1 == th.name && e.2.1 == d) with
-  | some e => some e.2.2
-  | none => th.generatedFresh d
+  th.seeds.bind fun (s, _) =>
+    match PaletteData.bundleGenerated.find? (fun e => e.1 == s && e.2.1 == d) with
+    | some e => some e.2.2
+    | none => th.generatedFresh d
 
 /-- The colour a bundle derives for a role: the realization kept in
 `PaletteData`, else derived as asked. -/
@@ -100,6 +102,11 @@ public def Theme.realize (th : Theme) (d : GroundDepth) : Palette :=
   let lit := th.palette.entries.foldl (fun p e => p.declare e.1 e.2) gen
   let full := th.derived.foldl (fun p e => p.declare (.role e.1) (th.derivedColor e.1 e.2)) lit
   { full with coveredFraction := th.palette.coveredFraction, decorative := th.palette.decorative }
+
+/-- **A bundle that generates nothing realizes alike at every depth.** -/
+public theorem realize_depth_exact (th : Theme) (h : th.seeds = none) (d d' : GroundDepth) :
+    th.realize d = th.realize d' := by
+  simp only [Theme.realize, Theme.generated, h, Option.bind_none]
 
 /-- `{\large\bfseries}` (`{\Large\bfseries}` for `large := "Large"`) as the
 elaborator reads a `\style` font value: nested wrappers with an empty body
@@ -165,7 +172,7 @@ public def moloch : Theme :=
         -- The muted step: the theme's own ink mixed 70:30 into its page, a
         -- declared quieting that keeps 4.79:1 on this page, a pinned margin
         -- over the 4.6:1 a generated text ink stands at
-        -- (`ThemeContract.builtin_muted_margin`).
+        -- (`Theme.builtin_muted_contract`).
         (.role .muted, fg.mix 70 bg),                              -- fg!70!bg
         (.role .frameTitleInk, bg), (.role .frameTitleBar, fg),
         (.role .progressFill, lineage), (.role .progressTrack, progressbg),
@@ -225,24 +232,26 @@ public def plain : Theme :=
       ("standout", boldFont "Large")] }
     chrome := builtinChrome }
 
-/-- A bright, warm default for decks: warm paper, warm near-black ink, one
-azure accent — quiet chrome, no title bar (the bar key is deliberately
-absent: hierarchy rides size and weight). Its palette is generated from its
-four seeds (`SeedPalette`): the page and ink are the warm-neutral family
-practice (Tailwind's `stone`; Material's own on-surface is never pure black),
-the accent a link-blue azure, the example GOV.UK's `success` green verbatim;
-its blocks are tonal cards, its secondary ink the quietest tone that reads,
-and its standout frame the inversion on the accent. The slides class installs
-this bundle when a deck declares no theme; `moloch` stays by name. -/
-public def daylight : Theme :=
-  let fg : Color := { r := 0x29, g := 0x25, b := 0x24 }     -- stone-800
-  let bg : Color := { r := 0xFD, g := 0xFC, b := 0xF9 }     -- warm near-white
-  let accent : Color := { r := 0x0B, g := 0x66, b := 0xC2 } -- azure
-  let success : Color := { r := 0x0F, g := 0x7A, b := 0x52 } -- GOV.UK success
+/-- daylight's four seeds: the warm-neutral family practice for the page and
+ink (Tailwind's `stone`; Material's own on-surface is never pure black), a
+link-blue azure accent, GOV.UK's `success` green as the example. -/
+public def daylightSeeds : SeedPalette.Seeds :=
+  { ink := { r := 0x29, g := 0x25, b := 0x24 }       -- stone-800
+    paper := { r := 0xFD, g := 0xFC, b := 0xF9 }     -- warm near-white
+    accent := { r := 0x0B, g := 0x66, b := 0xC2 }    -- azure
+    exampleColor := some { r := 0x0F, g := 0x7A, b := 0x52 } }  -- GOV.UK success
+
+/-- The daylight bundle over a set of seeds: its palette generated from them
+with tonal blocks, its standout frame the paper on the accent, its title-page
+separator the accent, and its rhythm and furniture daylight's own. A deck
+that declares its own ink, paper or accent and no theme takes this bundle
+over those seeds (`Elab`'s class-default install), one entry point for every
+colour it ships. -/
+public def daylightWith (seeds : SeedPalette.Seeds) : Theme :=
   { name := "daylight"
-    seeds := some ({ ink := fg, paper := bg, accent, exampleColor := some success }, .tonal)
+    seeds := some (seeds, .tonal)
     palette := {
-      entries := #[(.role .standoutInk, bg), (.role .standoutGround, accent)]
+      entries := #[(.role .standoutInk, seeds.paper), (.role .standoutGround, seeds.accent)]
       coveredFraction := some 38 }
     -- The lineage's rhythm, not this bundle's own knob: the shared table
     -- makes the docstring's claim true in code.
@@ -254,8 +263,19 @@ public def daylight : Theme :=
       ("sectionpage", boldFont "Large"),
       ("standout", boldFont "Large"),
       ("titlepage", { align := some .left
-                      separator := some (accent, some (.role .separator)) })] }
+                      separator := some (seeds.accent, some (.role .separator)) })] }
     chrome := builtinChrome }
+
+/-- A bright, warm default for decks: warm paper, warm near-black ink, one
+azure accent — quiet chrome, no title bar (the bar key is deliberately
+absent: hierarchy rides size and weight). Its palette is generated from its
+four seeds (`SeedPalette`): the page and ink are the warm-neutral family
+practice (Tailwind's `stone`; Material's own on-surface is never pure black),
+the accent a link-blue azure, the example GOV.UK's `success` green verbatim;
+its blocks are tonal cards, its secondary ink the quietest tone that reads,
+and its standout frame the inversion on the accent. The slides class installs
+this bundle when a deck declares no theme; `moloch` stays by name. -/
+public def daylight : Theme := daylightWith daylightSeeds
 
 /-- The Gemini poster lineage as a token bundle: a blue headline band with
 near-white text, blue block titles on the page, alert and example blocks
@@ -280,8 +300,9 @@ public def gemini : Theme :=
         -- (beamercolorthemedefault.sty: `alerted text` fg=red, `example
         -- text` fg=green!50!black). red reads 4.00:1 on this page, under
         -- the 4.5:1 WCAG 2.2 SC 1.4.3 asks of text; this is the same hue
-        -- at the nearest lightness that clears it on this ground
-        -- (ContrastSolve.realizeNearest; 4.53:1), moloch's alert precedent.
+        -- at the nearest lightness that clears it on this ground at the bare
+        -- gate (ContrastSolve.realizeNearest at 4.5:1; 4.53:1), kept as the
+        -- bundle's literal value, which this bundle ships unchanged.
         (.role .alert, { r := 0xEE, g := 0x00, b := 0x00 }),
         (.role .example, { r := 0x00, g := 0x80, b := 0x00 }),      -- green!50!black
         -- The same 70:30 ink-into-page muted rule the other bundles use
@@ -399,23 +420,6 @@ public def apply (th : Theme) (s : Decls) : Decls :=
     styles := installStyles s.styles th.styles.entries.toList
     chrome := chromeApply th.chrome s.chrome }
 
-/-- A bundle's generated palette under a document: an element's generated
-ink whose ground the document declares gives way, for it was chosen for the
-bundle's ground (`SeedPalette.bindings`), and an ink the engine derives is
-solved on the ground it stands on — the registry's default for the declared
-ground (`Row.ground`). A bundle that generates nothing installs as it is. -/
-private def underDocument (th : Theme) (real doc : Palette) : Palette :=
-  if th.seeds.isNone then real else
-    { real with entries := real.entries.filter fun (k, _) => match k with
-        | .role r => !(SeedPalette.elementRoles.contains r && r.row.ground.any fun g =>
-            SeedPalette.elementRoles.contains g && (Design.declared? doc g).isSome)
-        | .color _ => true }
-
-private theorem underDocument_decorative (th : Theme) (real doc : Palette) :
-    (underDocument th real doc).decorative = real.decorative := by
-  unfold underDocument
-  split <;> rfl
-
 /-- A class-default bundle installs *under* the document: the document's
 own declarations win per key — `apply` with the priorities mirrored,
 because the author never wrote this bundle and a default must not replace
@@ -423,7 +427,7 @@ a declaration. `\theme{...}` keeps `apply`'s positional rule; only the
 class-default site calls this. -/
 public def applyUnder (th : Theme) (s : Decls) : Decls :=
   { palette :=
-      let real := underDocument th (th.realize s.palette.classColors.depth) s.palette
+      let real := th.realize s.palette.classColors.depth
       let pal := installPalette real s.palette.entries.toList
       { pal with
         coveredFraction := s.palette.coveredFraction <|> real.coveredFraction
@@ -935,9 +939,9 @@ public theorem applyUnder_decorative_exact (th : Theme) (s : Decls) (k : ColorRe
     k ∈ (applyUnder th s).palette.decorative ↔
       (k ∈ s.palette.decorative ∨ (k ∈ (th.realize s.palette.classColors.depth).decorative ∧
         s.palette.lookup k = none)) := by
-  show k ∈ s.palette.decorative ++ (installPalette (underDocument th
-    (th.realize s.palette.classColors.depth) s.palette) s.palette.entries.toList).decorative ↔ _
-  rw [Array.mem_append, installPalette_decorative, underDocument_decorative, Array.mem_filter]
+  show k ∈ s.palette.decorative ++ (installPalette (th.realize s.palette.classColors.depth)
+    s.palette.entries.toList).decorative ↔ _
+  rw [Array.mem_append, installPalette_decorative, Array.mem_filter]
   have hnone : (!(s.palette.entries.toList.any fun e => k == e.1)) = true ↔
       s.palette.lookup k = none := by
     simp only [Palette.lookup, Option.map_eq_none_iff, Array.find?_eq_none, Bool.not_eq_true',

@@ -125,11 +125,16 @@ directory first, then from the computer's.
 List themes with `leantex themes` and select one with `\theme{moloch}`.
 
 A document that declares no colours ships what its class prints. Its HTML
-page is white, as its PDF's paper is; list markers are the ink in every
-class, and so are the article, report and book classes' secondary ink (line
-numbers, footers). A deck that declares no theme takes the `daylight`
-bundle: warm paper, warm ink and one azure accent, its blocks tinted cards
-generated from those seeds as `\palette[seeds]` generates them. `moloch`
+page is white, as its PDF's paper is; list markers are the printed ink in
+every class, on the page and on the light screen alike; the article, report,
+book and résumé classes, posters, cards and a deck under beamer's default
+theme set their secondary ink (line numbers, footers) in the ink, as LaTeX
+prints them, and a markdown note and a web page in a quieter tone generated
+from their default seeds, in both artifacts. A deck that declares no theme takes the
+`daylight` bundle: warm paper, warm ink and one azure accent, its blocks
+tinted cards generated from those seeds as `\palette[seeds]` generates them;
+a deck that declares its own ink, paper or accent takes the bundle over
+those, its cards generated from its own colours. `moloch`
 draws its progress bar and title separator in its lineage's orange, exactly
 as lualatex draws them, the bar's track in moloch's own mix of it, and sets
 its alert in that orange realized as text on its page, where the orange
@@ -145,7 +150,8 @@ page alone, which the PDF does not paint: `focus` the focus ring
 declares it, and `rule` a slide's border on the paged deck (`--ltx-rule`).
 `tint` (`--ltx-tint`) is the ground a listing stands on: a markdown note
 and a web page paint it in both artifacts, and the LaTeX classes, slides,
-posters and cards leave verbatim unpainted, as LaTeX does. A colour from `\definecolor{name}` is
+posters and cards leave verbatim unpainted, as LaTeX does, unless the
+document declares it. A colour from `\definecolor{name}` is
 `--ltx-c-name`, letters and digits as written and any other character as `_`
 and its six hex digits, and text set in it reads that property. A role the
 document leaves undeclared is declared as the role it defaults to, so

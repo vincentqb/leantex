@@ -9822,11 +9822,16 @@ public def blockNode (cfg : Config) (b : Block) : Node :=
         s!"color: {cssColor (covered.getD
           (Listing.groundInk cfg.pal g (cfg.listingFg.getD design.fg)))};"
       | none, some (g, _) =>
-        -- The class's code ground: the base `pre` rule paints it under plain
-        -- verbatim; a highlighted listing states the ground its tokens were
-        -- fitted to, as it states the page's.
+        -- The code ground in force, the class's or an epoch's: plain
+        -- verbatim reads it through its role, which a host stylesheet may
+        -- override — the base `pre` rule does where the class paints one,
+        -- and the listing itself where an epoch declares one over a class
+        -- that paints none; a highlighted listing states the ground its
+        -- tokens were fitted to, as it states the page's.
         if spec.highlight.isEmpty then
-          (covered.map fun c => s!"color: {cssColor c};").getD ""
+          let ground := if (Design.at cfg.docPal .light .codeSurface).isSome then none
+            else some s!"background: {roleRef .codeSurface};"
+          " ".intercalate (ground.toList ++ (covered.map fun c => s!"color: {cssColor c};").toList)
         else
           s!"background: {cssColor g}; " ++
           s!"color: {cssColor (covered.getD

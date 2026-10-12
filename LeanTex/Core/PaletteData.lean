@@ -54,9 +54,9 @@ open Ir
     exampleText := none
     exampleBand := { r := 0x5D, g := 0x63, b := 0x6F } })]
 
-/-- Each bundle's generated palette at each depth, by the bundle's name. -/
-@[expose] public def bundleGenerated : List (String × GroundDepth × SeedPalette.Colors) := [
-  ("daylight", .documents, {
+/-- Each bundle's generated palette at each depth, by the seeds it is generated from. -/
+@[expose] public def bundleGenerated : List (SeedPalette.Seeds × GroundDepth × SeedPalette.Colors) := [
+  ({ ink := { r := 0x29, g := 0x25, b := 0x24 }, paper := { r := 0xFD, g := 0xFC, b := 0xF9 }, accent := { r := 0x0B, g := 0x66, b := 0xC2 }, alert := none, exampleColor := some { r := 0x0F, g := 0x7A, b := 0x52 }, neutral := none }, .documents, {
     surface := { r := 0xF7, g := 0xF5, b := 0xEF }
     surfaceStrong := { r := 0xEF, g := 0xEC, b := 0xE3 }
     rule := { r := 0xD3, g := 0xD1, b := 0xC8 }
@@ -72,7 +72,7 @@ open Ir
     alertBand := { r := 0x0B, g := 0x66, b := 0xC2 }
     exampleText := some { r := 0x0F, g := 0x7A, b := 0x52 }
     exampleBand := { r := 0x0B, g := 0x78, b := 0x50 } }),
-  ("daylight", .decks, {
+  ({ ink := { r := 0x29, g := 0x25, b := 0x24 }, paper := { r := 0xFD, g := 0xFC, b := 0xF9 }, accent := { r := 0x0B, g := 0x66, b := 0xC2 }, alert := none, exampleColor := some { r := 0x0F, g := 0x7A, b := 0x52 }, neutral := none }, .decks, {
     surface := { r := 0xF2, g := 0xEF, b := 0xE6 }
     surfaceStrong := { r := 0xE1, g := 0xDF, b := 0xD6 }
     rule := { r := 0xD3, g := 0xD1, b := 0xC8 }

@@ -42,6 +42,11 @@ def colors (c : SeedPalette.Colors) (ind : String) : String :=
     f "alertBand" (color c.alertBand), f "exampleText" (optColor c.exampleText),
     f "exampleBand" (color c.exampleBand)] ++ s!" }"
 
+def seeds (s : SeedPalette.Seeds) : String :=
+  s!"\{ ink := {color s.ink}, paper := {color s.paper}, accent := {color s.accent}, " ++
+    s!"alert := {optColor s.alert}, exampleColor := {optColor s.exampleColor}, " ++
+    s!"neutral := {optColor s.neutral} }"
+
 def depthName (d : Ir.GroundDepth) : String :=
   if d == .documents then ".documents" else if d == .decks then ".decks" else "{}"
 
@@ -58,10 +63,10 @@ def render : Except String String := do
   let mut gen : Array String := #[]
   let mut der : Array String := #[]
   for th in Theme.builtin do
-    if th.seeds.isSome then
+    if let some (sd, _) := th.seeds then
       for d in depths do
         match th.generatedFresh d with
-        | some c => gen := gen.push s!"  (\"{th.name}\", {depthName d}, {colors c "  "})"
+        | some c => gen := gen.push s!"  ({seeds sd}, {depthName d}, {colors c "  "})"
         | none => throw s!"'{th.name}''s seeds generate no palette at {depthName d}"
     for (r, seed) in th.derived do
       der := der.push s!"  (\"{th.name}\", {roleName r}, {color (th.derivedFresh seed)})"
@@ -86,8 +91,8 @@ def render : Except String String := do
     "/-- The class's default palette at each depth a class takes. -/\n" ++
     "@[expose] public def classGenerated : List (GroundDepth × SeedPalette.Colors) := " ++
       clsList ++ "\n\n" ++
-    "/-- Each bundle's generated palette at each depth, by the bundle's name. -/\n" ++
-    "@[expose] public def bundleGenerated : List (String × GroundDepth × SeedPalette.Colors) := " ++
+    "/-- Each bundle's generated palette at each depth, by the seeds it is generated from. -/\n" ++
+    "@[expose] public def bundleGenerated : List (SeedPalette.Seeds × GroundDepth × SeedPalette.Colors) := " ++
       genList ++ "\n\n" ++
     "/-- Each colour a bundle derives from a lineage colour, by the bundle's name. -/\n" ++
     "@[expose] public def bundleDerived : List (String × Role × Color) := " ++ derList ++ "\n\n" ++

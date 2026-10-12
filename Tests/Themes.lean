@@ -2047,8 +2047,7 @@ def contrastChecks (ref : IO.Ref (List String)) : IO Unit := do
     let (thDoc, _) := elabStr ("\\documentclass{slides}\\theme{" ++ th.name ++
       "}\\begin{document}\\begin{frame}x\\end{frame}\\end{document}")
     t s!"\\theme installs the {th.name} bundle's own values"
-      (thDoc.palette.entries == (deckBundle th).entries &&
-        thDoc.palette.coveredFraction == (deckBundle th).coveredFraction)
+      ({ thDoc.palette with classColors := {} } == deckBundle th)
   -- The check fires on the illegible bundle it exists for: moloch's own
   -- alert (#EB811B, 2.61:1 as body text) fails the contract.
   t "the contract rejects moloch's original alert"

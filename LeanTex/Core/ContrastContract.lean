@@ -39,14 +39,33 @@ public theorem pdf_default_aa : contrastMilli Color.black Color.white ≥ aaText
 -- default surface (`{}` is not in `builtin`) keeps its own statements, and
 -- each site a realized bundle ships is `Theme.builtin_sites_contract`'s.
 
+/-- A contract that holds of every shipped bundle at a deck's depth, and of
+every bundle that generates its palette at a document's, holds of every
+bundle at both: a bundle that generates nothing realizes alike at every depth
+(`Theme.realize_depth_exact`), so the kernel reads each palette once. -/
+private theorem both_depths (P : Palette → Bool)
+    (hdecks : Theme.builtin.all (fun th => P (th.realize .decks)) = true)
+    (hdocs : Theme.builtin.all (fun th => th.seeds.isNone || P (th.realize .documents)) = true) :
+    ∀ th ∈ Theme.builtin, ∀ d ∈ [GroundDepth.documents, .decks], P (th.realize d) = true := by
+  intro th hth d hd
+  have h1 := List.all_eq_true.mp hdecks th hth
+  have h2 := List.all_eq_true.mp hdocs th hth
+  simp only [List.mem_cons, List.not_mem_nil, or_false] at hd
+  rcases hd with rfl | rfl
+  · cases hs : th.seeds with
+    | none => rw [Theme.realize_depth_exact th hs .documents .decks]; exact h1
+    | some _ => simpa [hs] using h2
+  · exact h1
+
 /-- No shipped bundle's pairing is illegible: every built-in palette as it
 installs — the content colours (`alert`, `example`) and the resolved
 design's semantic pairings, defaults applied — clears its WCAG 2.2
 threshold. Moloch's alert is its lineage's #EB811B realized as text on its
 page: the colour itself reads at 2.61:1 there, under SC 1.4.3. -/
 public theorem builtin_palettes_contract :
-    Theme.builtin.all (fun th => paletteContract (th.realize .documents) &&
-      paletteContract (th.realize .decks)) = true := by decide +kernel
+    ∀ th ∈ Theme.builtin, ∀ d ∈ [GroundDepth.documents, .decks],
+      paletteContract (th.realize d) = true :=
+  both_depths paletteContract (by decide +kernel) (by decide +kernel)
 
 /-- The default surface: black ink, white page, covered at
 `coveredFractionDefault` — 38% of the ink over the page, mixed in Oklab
@@ -59,14 +78,16 @@ public theorem default_cover_monotone : coverMonotone {} = true := by decide +ke
 /-- Cover monotonicity, quantified over the shipped list: covering twice
 quiets further for every built-in bundle's text roles. -/
 public theorem builtin_covers_monotone :
-    Theme.builtin.all (fun th => coverMonotone (th.realize .documents) &&
-      coverMonotone (th.realize .decks)) = true := by decide +kernel
+    ∀ th ∈ Theme.builtin, ∀ d ∈ [GroundDepth.documents, .decks],
+      coverMonotone (th.realize d) = true :=
+  both_depths coverMonotone (by decide +kernel) (by decide +kernel)
 
 /-- The covered contract, quantified the same way: every built-in
 bundle's palette is visibly covered when dimmed, per colour. -/
 public theorem builtin_designs_covered :
-    Theme.builtin.all (fun th => coveredContract (th.realize .documents) &&
-      coveredContract (th.realize .decks)) = true := by decide +kernel
+    ∀ th ∈ Theme.builtin, ∀ d ∈ [GroundDepth.documents, .decks],
+      coveredContract (th.realize d) = true :=
+  both_depths coveredContract (by decide +kernel) (by decide +kernel)
 
 /-- Both contracts over what `\theme` installs, for every shipped bundle
 (arch-provable I2): stated over `Theme.apply t {}` — the exact function

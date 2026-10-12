@@ -1,0 +1,26 @@
+% rhythm: beamer frames under the class's default colours with each block's title and body grounds declared, so both engines paint them, top-aligned: a frame title into a painted block, its title to its body, out of it into a paragraph, a paragraph into a block, and one block to the next
+% boundary: frametitle-block Larch span
+% boundary: blocktitle-body Maple span
+% boundary: block-par Oak span
+% boundary: par-block Pine span
+% boundary: block-block Rowan span
+\documentclass{beamer}
+\usepackage{fontspec}
+\setsansfont{OpenSans-Regular.ttf}[Path=../corpus/fonts/, BoldFont=OpenSans-Bold.ttf, ItalicFont=OpenSans-Italic.ttf, BoldItalicFont=OpenSans-BoldItalic.ttf]
+\setmainfont{OpenSans-Regular.ttf}[Path=../corpus/fonts/, BoldFont=OpenSans-Bold.ttf, ItalicFont=OpenSans-Italic.ttf, BoldItalicFont=OpenSans-BoldItalic.ttf]
+\setbeamercolor{block title}{bg=black!10}
+\setbeamercolor{block body}{bg=black!5}
+\begin{document}
+\begin{frame}[t]{Juniper title}
+\begin{block}{Larch block}
+Maple is the block's body.
+\end{block}
+Oak is the paragraph after the block.
+\begin{block}{Pine block}
+Quince is the second block's body.
+\end{block}
+\begin{block}{Rowan block}
+Spruce is the third block's body.
+\end{block}
+\end{frame}
+\end{document}
