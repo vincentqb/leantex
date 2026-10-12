@@ -46,9 +46,11 @@ public theorem builtin_names_plain :
     (builtin.all fun th => th.palette.entries.toList.all fun e => plainName e.1.key) = true := by
   decide
 
-/-- Where a shipped bundle installs: on a deck's stage at a deck's depth, and
-on a document's LaTeX page at a document's depth, each row's defaults filling
-in what the bundle leaves (`Ir.ClassColors`). -/
+/-- Where the contracts judge a shipped bundle installed: on a deck's stage
+at a deck's depth, and on a document's LaTeX page at a document's depth, each
+row's defaults filling in what the bundle leaves (`Ir.ClassColors`). A web
+page's and a card's rows are installs `\theme` reaches too, not judged here:
+pending the resolver table that would make each install cheap to judge. -/
 @[expose] public def installs : List ClassColors :=
   [{ row := .stage, depth := .decks }, { row := .latex, depth := .documents }]
 

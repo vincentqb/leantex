@@ -97,7 +97,7 @@ seeds and relations, realized where a document installs the bundle. -/
 public def Theme.realize (th : Theme) (d : GroundDepth) : Palette :=
   let gen : Palette := match th.seeds, th.generated d with
     | some (seeds, blocks), some colors =>
-      ({} : Palette).applySeeds { seeds, targets := seeds.targets d, blocks, colors }
+      ({} : Palette).applySeeds { seeds, targets := seeds.targets d, blocks, colors, bundle := true }
     | _, _ => {}
   let lit := th.palette.entries.foldl (fun p e => p.declare e.1 e.2) gen
   let full := th.derived.foldl (fun p e => p.declare (.role e.1) (th.derivedColor e.1 e.2)) lit

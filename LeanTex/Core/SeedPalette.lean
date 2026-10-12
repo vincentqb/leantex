@@ -593,12 +593,16 @@ document declares none (`Ir.ClassColors.ink`, `.paper`, `.accent`). -/
 
 /-- A generated palette as a document keeps it: the seeds, the targets they
 were generated to, the block style, and the colours, so a generated role
-standing on another ground can take its family's tone there (`toneOn`). -/
+standing on another ground can take its family's tone there (`toneOn`);
+and whether a bundle generated it, whose seeds then follow the page, ink and
+accent the document declares (`Ir.Palette.reseed`), where the document's
+own `\palette[seeds]` stand as written. -/
 public structure SeedState where
   seeds : Seeds
   targets : Targets
   blocks : Blocks
   colors : Colors
+  bundle : Bool := false
   deriving Repr, BEq, Inhabited
 
 /-- What a generated palette derives from its seeds: each role generation

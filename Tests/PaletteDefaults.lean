@@ -185,4 +185,86 @@ def yieldChecks (ref : IO.Ref (List String)) : IO Unit := do
     (Ir.Design.at inked.palette .print .blockBodyInk == some purple &&
       Ir.Design.at inked.palette .print .blockTitleInk == some purple)
 
+/-- **A bundle's generated palette follows the seeds a deck declares, through
+every door**: a deck's own ink alone, its page alone (its ink then the
+bundle's paper, so it reads), its page through `\pagecolor`, its page and
+ink after the bundle is named, and a body epoch's page and ink each take
+cards generated from what the deck declares; seeds the generator refuses
+leave the bundle's own palette under the document, its alert and example
+kept; and an epoch that gives a bar back its generated ground gives its
+title back the generated ink. Invented content. -/
+def reseedChecks (ref : IO.Ref (List String)) : IO Unit := do
+  let t := check ref
+  let deck (pre body : String) := "\\documentclass[aspectratio=169]{beamer}\n" ++ pre ++
+    "\\begin{document}\n" ++ body ++ "\n\\end{document}"
+  let cards := "\\begin{frame}{Cards}\n\\begin{block}{Plain}Kilo body.\\end{block}\n" ++
+    "\\begin{alertblock}{Alerted}Lima body.\\end{alertblock}\n\\end{frame}"
+  let dark := Ir.Color.ofHtml 0x10 0x14 0x18
+  let darkCards (pal : Ir.Palette) : Bool :=
+    match Ir.Design.at pal .print .page, Ir.Design.at pal .print .blockBodyGround,
+        Ir.Design.at pal .print .blockTitleBar, Ir.Design.at pal .print .blockBodyInk with
+    | some page, some body, some bar, some ink =>
+      Contrast.contrastMilli body page < 1500 && Contrast.contrastMilli bar page < 1700 &&
+        Contrast.luminance body < 1800000 &&
+        Contrast.aaText ≤ Contrast.contrastMilli ink body &&
+        Contrast.aaText ≤ Contrast.contrastMilli ink bar
+    | _, _, _, _ => false
+  let quiet (ds : Array Diag) : Bool :=
+    ds.all fun d => !(["W0304", "W0315", "W0330", "W0345"].contains d.code)
+  -- A page alone: the ink is the bundle's paper, so it reads.
+  let (bgOnly, ds) := elabStr (deck "\\palette{ bg = #101418 }\n" cards)
+  t "a deck's own dark page: its ink reads there and its cards are its page's tints"
+    (darkCards bgOnly.palette && (Ir.Design.at bgOnly.palette .print .ink).any fun i =>
+      Contrast.aaText ≤ Contrast.contrastMilli i dark)
+  t "a deck's own dark page: nothing to report" (quiet ds)
+  let (paged, ds) := elabStr (deck "\\pagecolor[HTML]{101418}\n" cards)
+  t "a deck's page through \\pagecolor: its cards are its page's tints" (darkCards paged.palette)
+  t "a deck's page through \\pagecolor: nothing to report" (quiet ds)
+  let (named, ds) := elabStr (deck "\\usetheme{daylight}\n\\palette{ bg = #101418, fg = #E8E8E8 }\n" cards)
+  t "a named bundle under a deck's page and ink: its cards are generated from them"
+    (darkCards named.palette &&
+      Ir.Design.at named.palette .print .blockTitleInk == some (Ir.Color.ofHtml 0xE8 0xE8 0xE8))
+  t "a named bundle under a deck's page and ink: nothing to report" (quiet ds)
+  let purple := Ir.Color.ofHtml 0x5B 0x2A 0x86
+  let (inked, _) := elabStr (deck "\\usetheme{daylight}\n\\palette{ fg = #5B2A86 }\n" cards)
+  t "a named bundle under a deck's ink: its cards' titles and bodies are set in it"
+    (Ir.Design.at inked.palette .print .blockTitleInk == some purple &&
+      Ir.Design.at inked.palette .print .blockBodyInk == some purple)
+  -- A body epoch's page and ink.
+  let (epoch, ds) := elabStr (deck "" ("\\begin{frame}{Light}\\begin{block}{Plain}Kilo.\\end{block}\\end{frame}\n" ++
+    "\\palette{ bg = #101418, fg = #E8E8E8 }\n" ++ cards))
+  let epochs := epoch.body.filterMap fun b => match b with
+    | .setPalette p => some p
+    | _ => none
+  t "a body epoch's page and ink: its cards are generated from them"
+    (epochs.any fun p => darkCards p &&
+      Ir.Design.at p .print .blockBodyInk == some (Ir.Color.ofHtml 0xE8 0xE8 0xE8))
+  t "a body epoch's page and ink: nothing to report" (quiet ds)
+  -- Seeds the generator refuses: the bundle's own palette under the document.
+  let (refused, ds) := elabStr (deck "\\palette{ fg = #666666 }\n"
+    ("\\begin{frame}{Cards}Dust \\alert{flare}.\n\\begin{exampleblock}{Example}Mike.\\end{exampleblock}\n" ++
+      "\\end{frame}"))
+  t "seeds a deck declares that generate nothing: the bundle's alert and example stand"
+    ((Ir.Design.at refused.palette .print .alert).isSome &&
+      (Ir.Design.at refused.palette .print .example).isSome &&
+      Ir.Design.at refused.palette .print .page == some Theme.daylightSeeds.paper &&
+      Ir.Design.at refused.palette .print .ink == some (Ir.Color.ofHtml 0x66 0x66 0x66))
+  t "seeds a deck declares that generate nothing: no colour goes missing"
+    (ds.all fun d => d.code != "W0304")
+  -- A bar given back its generated ground takes back its generated ink.
+  let (trip, _) := elabStr (deck "" ("\\begin{frame}{One}\\begin{alertblock}{A}One.\\end{alertblock}\\end{frame}\n" ++
+    "\\palette{ alerttitlebg = #333333 }\n" ++
+    "\\begin{frame}{Two}\\begin{alertblock}{A}Two.\\end{alertblock}\\end{frame}\n" ++
+    "\\palette{ alerttitlebg = #CAE1FF }\n" ++
+    "\\begin{frame}{Three}\\begin{alertblock}{A}Three.\\end{alertblock}\\end{frame}"))
+  let trips := trip.body.filterMap fun b => match b with
+    | .setPalette p => some p
+    | _ => none
+  let generated := Ir.Design.at trip.palette .print .alertTitleInk
+  t s!"an epoch that gives a bar back its generated ground gives back its generated ink ({generated.map (·.css)})"
+    (generated.isSome && Ir.Design.declared? trip.palette .alertTitleBar ==
+        some (Ir.Color.ofHtml 0xCA 0xE1 0xFF) &&
+      (trips.back?.any fun p => Ir.Design.at p .print .alertTitleInk == generated) &&
+      (trips[0]?.any fun p => Ir.Design.at p .print .alertTitleInk != generated))
+
 end Tests.PaletteDefaults

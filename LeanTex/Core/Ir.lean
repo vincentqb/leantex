@@ -13690,25 +13690,79 @@ whose row judges it on `g` (`Row.ground`). -/
 @[expose] public def Role.boundTo (el g : Role) : Bool :=
   SeedPalette.elementRoles.contains el && el.row.ground == some g
 
-/-- **A ground other than its own takes back the ink generated for it**: each
-element ink a generated palette bound (`Role.boundTo`), still at the colour
-it was bound at and not one the document declares (`keep`), is erased where
-its ground stands at another colour than the one generated for it, so the
-registry's default for the ground in force reads it — the `readable` choice
-on a bar, solved where it stands. The beamer colour scope's resolution runs
-it after every door that declares a colour (`Elab.resolveBeamerColors`), a
-bundle's install included: a scope that restates a bundle's ink cannot bring
-it back, and an epoch that restores the generated ground restores its ink. -/
+/-- The colour a generated palette installs for a role, as the palette holds
+it (8-bit, as a TeX build reads it from the export): a seed, a derived role,
+or an element role at its bound source's colour (`SeedPalette.bound`). -/
+@[expose] public def Design.installed (st : SeedPalette.SeedState) (r : Role) :
+    Option Color :=
+  (SeedPalette.Colors.role st.seeds st.colors (((SeedPalette.bound st).lookup r).getD r)).map
+    fun c => Color.ofHtml c.r c.g c.b
+
+/-- **An ink generated for a ground follows that ground**: each element ink
+a generated palette bound (`Role.boundTo`) and the document does not declare
+(`keep`) is erased where its ground stands at another colour than the one
+generated for it, so the registry's default for the ground in force reads
+it — the `readable` choice on a bar, solved where it stands — and stands at
+its generated colour again where its ground does. The beamer colour scope's
+resolution runs it after every door that declares a colour
+(`Elab.resolveBeamerColors`), a bundle's install included: a scope that
+restates a bundle's ink cannot bring it back on a ground it was not made
+for, and an epoch that restores the generated ground restores its ink. -/
 public def Palette.yieldGrounds (pal : Palette) (keep : Role → Bool) : Palette :=
   match pal.seeded with
   | none => pal
   | some st =>
-    let gen (r : Role) : Option Color :=
-      (SeedPalette.Colors.role st.seeds st.colors (((SeedPalette.bound st).lookup r).getD r)).map
-        fun c => Color.ofHtml c.r c.g c.b
     (SeedPalette.bound st).foldl (fun p (el, _) =>
-      if !keep el && (el.row.ground.any fun g => el.boundTo g && Design.declared? p g != gen g) &&
-          Design.declared? p el == gen el then p.erase (.role el) else p) pal
+      if keep el then p else
+      let off := el.row.ground.any fun g =>
+        el.boundTo g && Design.declared? p g != Design.installed st g
+      if off && Design.declared? p el == Design.installed st el then p.erase (.role el)
+      else if !off && (Design.declared? p el).isNone then
+        match Design.installed st el with
+        | some c => p.declare (.role el) c
+        | none => p
+      else p) pal
+
+/-- Whether a colour reads more against white text than against black: a
+dark page. -/
+private def Color.darkGround (c : Color) : Bool :=
+  decide (Contrast.contrastMilli c Color.black < Contrast.contrastMilli c Color.white)
+
+/-- **A bundle's generated palette follows the seeds the document declares**:
+where a palette a bundle generated (`SeedState.bundle`) no longer stands on
+the page, ink and accent it was made from — a declaration after the bundle,
+a body epoch, `\pagecolor` — it is generated again from the seeds as they
+now stand, an ink the document left taking the bundle's paper where the
+page's polarity turned (its ink would vanish on the page it was not made
+for), and every role still at its old generated colour takes its new one; a
+role the document declared (`keep`) keeps its colour. Where the new seeds
+generate nothing, the palette stands as it is: the bundle's own colours
+under the document's. -/
+public def Palette.reseed (pal : Palette) (keep : Role → Bool) : Palette :=
+  match pal.seeded with
+  | none => pal
+  | some st =>
+    if !st.bundle then pal else
+    let paper := if keep .page then (Design.declared? pal .page).getD st.seeds.paper
+      else st.seeds.paper
+    let turned := paper.darkGround != st.seeds.paper.darkGround
+    let ink := if keep .ink then (Design.declared? pal .ink).getD st.seeds.ink
+      else if turned then st.seeds.paper else st.seeds.ink
+    let accent := if keep .accent then (Design.declared? pal .accent).getD st.seeds.accent
+      else st.seeds.accent
+    let seeds := { st.seeds with paper, ink, accent }
+    if seeds == st.seeds then pal else
+    let d := pal.classColors.depth
+    match SeedPalette.generate seeds (seeds.targets d) with
+    | .error _ => pal
+    | .ok g =>
+      let st' := { st with seeds, targets := seeds.targets d, colors := g.colors }
+      let roles := (SeedPalette.entries st).map (·.1) ++ (SeedPalette.bound st).map (·.1)
+      roles.foldl (fun p r =>
+        if keep r || Design.declared? p r != Design.installed st r then p else
+        match Design.installed st' r with
+        | some c => p.declare (.role r) c
+        | none => p) { pal with seeded := some st' }
 
 private theorem Palette.installDerived_keeps (keep : Role → Bool) (es : List (Role × Color))
     (p : Palette) (r : Role) (h : ∀ e ∈ es, e.1 ≠ r) :
