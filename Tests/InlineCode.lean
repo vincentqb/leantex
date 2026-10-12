@@ -364,7 +364,8 @@ def inlineCodeChecks (ref : IO.Ref (List String)) : IO Unit := do
   | some (some (_, _, inl)), some (some (_, _, disp)) =>
     t "inline code standout: its literal ships the listing's ink on the frame's ground" (inl == disp)
   | _, _ => failures ref "inline code standout: the frame's words did not ship"
-  let (sbody, _) := html standout
+  -- Read as print paints the page (`emitIn`), a token's class colour its own.
+  let (_, sbody, _) := emitIn {} (elabStr standout).1 .print
   let spanColors (n : Html.Node) := (elemNodesList (· == "span") #[] [n]).filterMap fun sp =>
     if nodeTextOne "" sp == "42" then attr? sp "style" else none
   -- The literal colour a style states, its custom property's fallback included.
