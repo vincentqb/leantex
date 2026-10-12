@@ -495,6 +495,33 @@ public def mintedLangHead (s : String) (start : Nat) : Option (String × Nat) :=
     return none
   else return none
 
+/-- The code of a captured `\mintinline` or `\mint` call, from `start` just
+past its `{language}`: the text inside its brace group, braces nesting, or
+between its delimiter's two copies, each line end inside it one space, as
+minted reads it under lualatex. An unclosed call's code runs to the
+capture's end (the lexer names it). -/
+public def mintedCode (s : String) (start : Nat) : String := Id.run do
+  let cs := s.toList.toArray
+  let some opener := cs[start]? | return ""
+  let mut out := ""
+  let mut depth : Nat := 0
+  let mut i := start + 1
+  for _ in [start + 1:cs.size] do
+    let some c := cs[i]? | break
+    if opener == '{' then
+      if c == '}' then
+        if depth == 0 then break
+        depth := depth - 1
+      else if c == '{' then depth := depth + 1
+    else if c == opener then break
+    if c == '\r' && cs[i + 1]? == some '\n' then
+      out := out.push ' '
+      i := i + 2
+    else
+      out := out.push (if c == '\n' || c == '\r' then ' ' else c)
+      i := i + 1
+  return out
+
 /-! `Raw` back to source text. Declaration blocks and lengths are parsed from
 this string, so it must round-trip what the lexer accepted. -/
 
@@ -594,6 +621,7 @@ mutual
     if env == "verb" then
       let d := (['|', '!', '+', '=', '/', '"', '@'].find? (fun c => !s.contains c)).getD '|'
       s!"\\verb{d}{s}{d}"
+    else if env == "mintinline" || env == "mint" then "\\" ++ env ++ s
     else s!"\\begin\{{env}}{s}\\end\{{env}}"
 
 end

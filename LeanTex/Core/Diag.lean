@@ -308,6 +308,8 @@ public inductive DiagCode where
   | W0428
   | W0429
   | W0306
+  | W0411
+  | W0412
   deriving Repr, BEq, DecidableEq
 
 /-- The registry: each code's digits, its declared `Loss`, and its one
@@ -522,6 +524,8 @@ private def DiagCode.spec : DiagCode → String × Loss × String
   | .W0429 => ("0429", .degraded, "a .bib field the document's elaborator refuses where an entry stands; the field sets as its text")
   | .N0030 => ("0030", .info, "a character TeX reserves, in a .bib field, set as the character it is where LaTeX reads it as markup or a comment")
   | .W0306 => ("0306", .degraded, "a palette's seeds generate no palette — a role they derive cannot meet what its sites owe, or a seed has no sRGB tones to derive from; the seeds stand as the page's text, ground and accent")
+  | .W0411 => ("0411", .standard, "a listing written where LaTeX cannot set it as written — within a line of text, in an argument, or all on one line; it is set by its evident intent")
+  | .W0412 => ("0412", .degraded, "a listing's language names no lexer the engine or Pygments' registry has; its code is set as plain text")
 
 public def DiagCode.digits (c : DiagCode) : String := c.spec.1
 

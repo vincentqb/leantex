@@ -496,6 +496,55 @@ public theorem paintRun_text (r : Run) : Conserves plainText (paintRun r) := fun
   simp only [paintRun]
   split <;> split <;> split <;> split <;> simp [plainText, plainTextOne, plainTextList]
 
+/-- Inline code as typed inlines, its tokens painted in runs as a listing
+line's are (`paintLine`, `paintRun`) on the ground it stands on. The
+elaborator sets them in the mono family and nothing else, so the size,
+weight, slant and colour around the code stand: a run with no ink of its
+own takes the colour around it, and a role's bold adds to the weight
+around it. -/
+public def inlineCode (pal : Palette) (ground : Option Color) (style : Option ListingStyle)
+    (tokens : Array Token) : Array Inline :=
+  (paintLine pal ground none style (brushes pal ground none style #[tokens]) tokens).foldl
+    (fun acc r => acc ++ paintRun r #[.text r.text]) #[]
+
+private theorem plainTextList_append (a b : List Inline) :
+    plainTextList (a ++ b) = plainTextList a ++ plainTextList b := by
+  induction a with
+  | nil => simp [plainTextList]
+  | cons x rest ih => simp [plainTextList, ih, String.append_assoc]
+
+private theorem textFold_append (s : String) (ts : List Token) :
+    ts.foldl (fun acc t => acc ++ t.text) s = s ++ ts.foldl (fun acc t => acc ++ t.text) "" := by
+  induction ts generalizing s with
+  | nil => simp
+  | cons t ts ih =>
+    simp only [List.foldl_cons]
+    rw [ih (s ++ t.text), ih ("" ++ t.text)]
+    simp [String.append_assoc]
+
+private theorem inlineFold_text (rs : List Run) (acc : Array Inline) :
+    plainText (rs.foldl (fun acc r => acc ++ paintRun r #[.text r.text]) acc) =
+      (rs.flatMap (·.tokens.toList)).foldl (fun s t => s ++ t.text) (plainText acc) := by
+  induction rs generalizing acc with
+  | nil => simp
+  | cons r rs ih =>
+    simp only [List.foldl_cons, List.flatMap_cons, List.foldl_append]
+    rw [ih]
+    congr 1
+    have hrun := paintRun_text r #[.text r.text]
+    simp only [plainText, Array.toList_append, plainTextList_append] at hrun ⊢
+    rw [hrun, textFold_append]
+    simp [plainTextList, plainTextOne, Run.text, lineText, Array.foldl_toList]
+
+/-- **Inline code ships its source, scalar for scalar**, under every palette,
+ground and style: painting adds no scalar and drops none. -/
+public theorem inlineCode_source_exact (pal : Palette) (ground : Option Color)
+    (style : Option ListingStyle) (tokens : Array Token) :
+    plainText (inlineCode pal ground style tokens) = lineText tokens := by
+  unfold inlineCode
+  rw [← Array.foldl_toList, inlineFold_text, paintLine_tokens_exact]
+  simp [plainText, plainTextList, lineText, Array.foldl_toList]
+
 /-- Every colour a listing ships on a ground and the palette does not declare
 is text AA there, even where the surrounding frame uses the lower large-text
 threshold: every role's, as it ships — what the rule fits, and what the

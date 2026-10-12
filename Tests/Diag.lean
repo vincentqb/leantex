@@ -414,6 +414,11 @@ def diagWitnessWith (w : WitnessRun) (one mapped withMath : Font.FontSet)
   -- Seeds whose ink is a mid grey: no neutral tone reads on it, so the
   -- seeds generate nothing and stand as the page's text, ground and accent.
   | .W0306 => dvE (w := w) (dvDoc "\\palette[seeds]{ ink = #808080, paper = #FFFFFF, accent = #E85D2A }\n" "x")
+  | .W0411 => dvE (w := w) (dvDoc "\\usepackage{minted}\n"
+      "Alpha \\begin{minted}{python}x = 1\\end{minted} omega.") ++
+    dvE (w := w) (dvDoc "\\usepackage{minted}\n" "\\textbf{Alpha \\mint{python}{x = 1} omega}") ++
+    dvE (w := w) (dvDoc "\\usepackage{minted}\n" "\\begin{minted}{python}x = 1\\end{minted}")
+  | .W0412 => dvE (w := w) (dvDoc "\\usepackage{minted}\n" "Alpha \\mintinline{pyhton}{x} omega.")
   | .W0317 => dvE (w := w) ("\\documentclass{card}\n\\runninghead{name}\n" ++
       "\\begin{document}\nx\n\\end{document}")
   | .W0318 => dvE (w := w) (dvDoc "\\chrome{ footer = { left = \\sectiontitle } }\n" "x")

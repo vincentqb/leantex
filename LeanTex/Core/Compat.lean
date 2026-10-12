@@ -1815,6 +1815,34 @@ where
       if n < 9 && w == toString (n + 1) then read rest (n + 1) else none
     | _, _ => none
 
+/-- The parameters a captured minted command writes (`\mintinline{#1}{#2}`
+in a definition's text), each the source of its argument, as TeX binds
+them before minted reads the call; `##` is one `#`. -/
+private def bindMintedParams (args : Array (Array Raw)) (s : String) : String := Id.run do
+  if !s.contains '#' then return s
+  let cs := s.toList.toArray
+  let mut out := ""
+  let mut i := 0
+  for _ in [0:cs.size] do
+    let some c := cs[i]? | break
+    let next := cs[i + 1]?
+    if c == '#' && next == some '#' then
+      out := out.push '#'
+      i := i + 2
+    else if c == '#' && next.any (fun d => '1' ≤ d && d ≤ '9') then
+      let k := ((next.map fun d => d.toNat - '1'.toNat)).getD 0
+      match args[k]? with
+      | some arg =>
+        out := out ++ rawSrc arg
+        i := i + 2
+      | none =>
+        out := out.push c
+        i := i + 1
+    else
+      out := out.push c
+      i := i + 1
+  return out
+
 mutual
 
 -- conserves: none — substitutes arguments for parameter tokens, preserving
@@ -1822,7 +1850,8 @@ mutual
 /-- Bind parameters before executing replacement text. `#10` is argument
 one followed by `0`; `##` quotes one parameter token for a nested
 definition (TeXbook chapter 20). Substituted arguments are not scanned
-again by this binding, and verbatim text is opaque. -/
+again by this binding, and verbatim text is opaque — but for minted's
+commands, which read their code where TeX has bound it (`bindMintedParams`). -/
 private def bindRawArgsList (args : Array (Array Raw)) (out : Array Raw) :
     List Raw → Array Raw
   | [] => out
@@ -1852,7 +1881,8 @@ private def bindRawArgsRaw (args : Array (Array Raw)) : Raw → Raw
   | .par p => .par p
   | .ctrl n p => .ctrl n p
   | .sym c p => .sym c p
-  | .verb e s p => .verb e s p
+  | .verb e s p =>
+    if e == "mintinline" || e == "mint" then .verb e (bindMintedParams args s) p else .verb e s p
 
 end
 
@@ -13395,6 +13425,11 @@ private structure TextSt where
   language defaults override even a later global declaration. -/
   mintedOpts : Array String := #[]
   mintedLangOpts : Array (String × Array String) := #[]
+  /-- `\setmintedinline`'s layers, read by inline code alone, after both
+  of `\setminted`'s (minted.sty: `\minted@optscopes`, global, lexer,
+  globalinline, lexerinline, then the command's own). -/
+  inlineOpts : Array String := #[]
+  inlineLangOpts : Array (String × Array String) := #[]
   /-- Names the document defines; a defined `\num` is the document's. -/
   defined : Array String := #[]
 
@@ -13472,23 +13507,25 @@ private def textList (loc : Locale) (st : TextSt) (raws : Array Raw)
         | some b => { st with defined := st.defined.push b }
         | none => st
       textList loc st raws (out.push (.ctrl n pos)) rest (i + 1) 0
-    else if (n == "lstset" || n == "setminted") && !st.defined.contains n then
-      let (lang, j) := if n == "setminted" then takeOpt raws (i + 1)
-        else (none, i + 1)
+    else if (n == "lstset" || n == "setminted" || n == "setmintedinline") &&
+        !st.defined.contains n then
+      let (lang, j) := if n == "lstset" then (none, i + 1) else takeOpt raws (i + 1)
       let (args, k) := takeGroups raws j 1
       let entries := (Decl.splitEntries (rawSrc (args.getD 0 #[]))).filterMap
         fun e => let e := e.trimAscii.toString
           if e.isEmpty then none else some e
       let entries := entries.toArray
+      let layered (layer : Array (String × Array String)) (lang : String) :=
+        let old := ((layer.find? (·.1 == lang)).map (·.2)).getD #[]
+        (layer.filter (·.1 != lang)).push (lang, old ++ entries)
       let st := if n == "lstset" then
           { st with lstOpts := st.lstOpts ++ entries }
-        else match lang with
+        else if n == "setminted" then match lang with
           | none => { st with mintedOpts := st.mintedOpts ++ entries }
-          | some lang =>
-            let lang := lang.trimAscii.toString
-            let old := ((st.mintedLangOpts.find? (·.1 == lang)).map (·.2)).getD #[]
-            { st with mintedLangOpts :=
-              (st.mintedLangOpts.filter (·.1 != lang)).push (lang, old ++ entries) }
+          | some lang => { st with mintedLangOpts := layered st.mintedLangOpts lang.trimAscii.toString }
+        else match lang with
+          | none => { st with inlineOpts := st.inlineOpts ++ entries }
+          | some lang => { st with inlineLangOpts := layered st.inlineLangOpts lang.trimAscii.toString }
       textList loc st raws out rest (i + 1) (k - (i + 1))
     else if siCtrls.contains n && !st.defined.contains n then
       let (repl, k) ← siCtrl loc n pos raws (i + 1)
@@ -13497,11 +13534,13 @@ private def textList (loc : Locale) (st : TextSt) (raws : Array Raw)
       textList loc st raws (out.push (.ctrl n pos)) rest (i + 1) 0
   | .verb env s vpos :: rest, i, 0 =>
     let s := if env == "lstlisting" then injectListingOpts st.lstOpts s
-      else if env == "minted" then
+      else if env == "minted" || env == "mint" || env == "mintinline" then
         let afterOpt := ((Parse.listingOptHead s).map (·.2)).getD 0
         let lang := ((Parse.mintedLangHead s afterOpt).map (·.1.trimAscii.toString)).getD ""
-        let opts := ((st.mintedLangOpts.find? (·.1 == lang)).map (·.2)).getD #[]
-        injectListingOpts (st.mintedOpts ++ opts) s
+        let layer (l : Array (String × Array String)) := ((l.find? (·.1 == lang)).map (·.2)).getD #[]
+        let block := st.mintedOpts ++ layer st.mintedLangOpts
+        injectListingOpts (if env == "mintinline" then
+          block ++ st.inlineOpts ++ layer st.inlineLangOpts else block) s
       else s
     textList loc st raws (out.push (.verb env s vpos)) rest (i + 1) 0
   | r :: rest, i, 0 => do
@@ -13565,7 +13604,8 @@ never pays for the rebuilding walk (`scripts/bench.lean` is the check). -/
 private def textNeededList : List Raw → Bool
   | [] => false
   | .ctrl n _ :: rest =>
-    n == "lstset" || n == "setminted" || siCtrls.contains n || textNeededList rest
+    n == "lstset" || n == "setminted" || n == "setmintedinline" || siCtrls.contains n ||
+      textNeededList rest
   | r :: rest => textNeededOne r || textNeededList rest
 
 private def textNeededOne : Raw → Bool
@@ -13575,8 +13615,9 @@ private def textNeededOne : Raw → Bool
 
 end
 
-/-- The listings/siunitx pass, run right after `rewrite`: `\lstset` and
-`\setminted` fold into the listings that follow, and siunitx commands become their
+/-- The listings/siunitx pass, run right after `rewrite`: `\lstset`,
+`\setminted` and `\setmintedinline` fold into the listings and inline code
+that follow, and siunitx commands become their
 spelled text under the document's own locale. Third in the document's
 warn-once chain (`rewrite`'s docstring carries why the set travels): the
 keys it receives are the ones `rewrite` fired, the keys it returns go on to

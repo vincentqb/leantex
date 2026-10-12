@@ -19,6 +19,7 @@ import LeanTex.Core.BibAccent
 import LeanTex.Core.PdfContract
 public import LeanTex.Core.ListingReply
 import LeanTex.Core.Listing
+import LeanTex.Core.LexerName
 public import LeanTex.Core.BeamerColor
 
 namespace LeanTex.Core.Elab
@@ -498,6 +499,10 @@ public structure SpanRecords where
   /-- The pictures the rendered subset draws in part under the document's
   `\pictures{ tool = none }`, by picture id (`ReqSpans.declined`). -/
   declined : Array String := #[]
+  /-- Inline code in a language only the highlighter reads, as language
+  and source, each once: what the driver asks it to classify beside the
+  listings (`ReqSpans.code`). -/
+  code : Array (String × String) := #[]
   /-- Top-level frame openings, maintained with the block accumulator. -/
   frames : FrameSources := {}
   /-- The actual log at the last content-recovery emission. Its persistent
@@ -5094,7 +5099,260 @@ its place" pos
     return blocks.push (.picture (Picture.placeholder DiagCode.W0362.code))
   return blocks.push (.picture pic)
 
+/-- A definition's parameter in the code minted's command reads (`#1` in
+`\newcommand{\py}[1]{\mintinline{python}{#1}}`): the argument's text where
+the call bound it — TeX binds the parameter before minted reads the code —
+and `##` one `#`. Nothing is bound outside a body, where `#1` is the code
+it spells. -/
+private def bindCodeParams (ctx : Ctx) (code : String) : String := Id.run do
+  if ctx.args.isEmpty || !code.contains '#' then return code
+  let cs := code.toList.toArray
+  let mut out := ""
+  let mut i := 0
+  for _ in [0:cs.size] do
+    let some c := cs[i]? | break
+    let next := cs[i + 1]?
+    if c == '#' && next == some '#' then
+      out := out.push '#'
+      i := i + 2
+    else if c == '#' && next.any (fun d => '1' ≤ d && d ≤ '9') then
+      let k := (next.map Char.toString).getD ""
+      match ctx.args.find? (·.1 == "a" ++ k) with
+      | some (_, bound) =>
+        out := out ++ Ir.plainText (bound.getD #[])
+        i := i + 2
+      | none =>
+        out := out.push c
+        i := i + 1
+    else
+      out := out.push c
+      i := i + 1
+  return out
+
+/-- A size command's name, `\small` read as `small`, where the size ladder
+holds it. -/
+private def sizeCommand? (v : String) : Option String :=
+  if v.startsWith "\\" then
+    let name := (v.drop 1).toString
+    if Ir.sizeScale.any (·.1 == name) then some name else none
+  else none
+
+/-- A `fontsize` entry that asks for no size: `auto`, `\relax`, or an empty
+value — what `\relax` leaves once the rewrite has run it, inside a
+`\setminted` group (fancyvrb's `\FV@FontSize` is then empty, and the size
+in force stands). -/
+private def keepsSize (bare : String) : Bool :=
+  match bare.splitOn "=" with
+  | [key, v] =>
+    key.trimAscii.toString == "fontsize" &&
+      (let v := listingVal v; v.isEmpty || v == "auto" || v == "\\relax")
+  | _ => false
+
+/-- minted's `formatcom` runs TeX on the Pygments formatter's macros: said
+once, wherever a listing or inline code carries it. -/
+private def noteFormatcom (ctx : Ctx) (pos : Pos) : EM Unit :=
+  warnOnce ctx "lstopt:formatcom" .N0102
+    "minted's formatcom runs TeX on the Pygments formatter's macros, which only a TeX \
+engine runs; the listing's tokens paint by their code roles" pos
+    (help := "set a role's colour in the palette by its name: codeink, codekeyword, \
+codename, codeliteral, codecomment or codeerror")
+
+/-- A listing's language selects a lexer only where the engine or Pygments'
+registry has one (`LexerName.known`): any other name is the document's to
+correct, named once with the known name nearest its spelling, and its code
+sets as plain text. -/
+private def nameUnknownLexer (ctx : Ctx) (lang : String) (pos : Pos) : EM Unit := do
+  if LexerName.known lang then return
+  let help := match LexerName.nearest? lang with
+    | some near => s!"spell it '{near}', the lexer name nearest it"
+    | none => "name a lexer Pygments registers, such as 'python' or 'lean4'"
+  warnOnce ctx ("listing-language:" ++ lang) .W0412
+    s!"'{lang}' names no lexer the engine or Pygments has; its code is set as plain text" pos
+    (help := help)
+
+/-- An author's language spelling as the token a listing or inline code
+carries, the spelling outside the token grammar named and carried by
+neither, and a name no lexer reads named too (`nameUnknownLexer`). -/
+private def codeLanguage (ctx : Ctx) (raw : String) (pos : Pos) :
+    EM (Option Ir.ListingLang) := do
+  match Ir.listingLang? raw with
+  | some l =>
+    nameUnknownLexer ctx l.val pos
+    return some l
+  | none =>
+    let msg := s!"listing language '{raw.trimAscii.toString}' is not a plain name; the \
+listing carries no language"
+    warnOnce ctx ("lstopt:" ++ msg) .W0110 msg pos
+      (help := "spell it as letters, digits, +, #, - or . (python, c++, c#)")
+    return none
+
+/-- What inline code reads of minted's options — `\setminted`'s layers, then
+`\setmintedinline`'s, then its own, the later winning: a declared size, or
+the size around it under `\relax` or `auto` (`none`); a style; tab stops;
+whether its spaces may break. -/
+private structure InlineCodeOpts where
+  size : Option Ir.Style := none
+  style : Option Ir.ListingStyle := none
+  tabSize : Nat := 8
+  breakLines : Bool := false
+
+/-- minted's keys that configure a display alone — its numbering, frame,
+margins, line range, page breaking — which minted reads for no inline
+code; and the caption a listing carries. -/
+private def displayOnlyKeys : List String :=
+  ["linenos", "numbers", "firstnumber", "stepnumber", "numbersep", "numberblanklines",
+   "numberfirstline", "frame", "framerule", "framesep", "rulecolor", "label",
+   "labelposition", "xleftmargin", "xrightmargin", "resetmargins", "samepage", "vspace",
+   "listparameters", "firstline", "lastline", "highlightlines", "highlightcolor", "caption"]
+
+/-- Inline code's options, each read as minted reads it there; a key no
+inline code honours is named W0110, never a silent drop. -/
+private def inlineCodeOpts (ctx : Ctx) (opts : String) (pos : Pos) : EM InlineCodeOpts := do
+  let unhonoured (msg : String) (help : Option String) : EM Unit :=
+    warnOnce ctx ("lstopt:" ++ msg) .W0110 msg pos (help := help)
+  let mut o : InlineCodeOpts := {}
+  for entry in Decl.splitEntries opts do
+    let bare := entry.trimAscii.toString
+    if bare.isEmpty then
+      continue
+    let key := ((Decl.splitEntry entry).map (·.1.trimAscii.toString)).getD bare
+    if key == "formatcom" || bare.startsWith "formatcom=" then
+      noteFormatcom ctx pos
+      continue
+    -- premise: inlineCodeChecks — inline code under a `\setminted` of display keys ships the page it ships without them, as minted's own inline code does
+    if displayOnlyKeys.contains key then
+      continue
+    if keepsSize bare then
+      o := { o with size := none }
+      continue
+    match Decl.splitEntry entry with
+    | some ("fontsize", v) =>
+      let v := listingVal v
+      match sizeCommand? v with
+        | some name => o := { o with size := some (.size name) }
+        | none =>
+          unhonoured s!"inline code fontsize '{v}' is not a supported size command; the size \
+around it stands" "use a named size command such as fontsize=\\small, or fontsize=\\relax"
+    | some ("style", v) =>
+      let v := listingVal v
+      match Ir.ListingStyle.ofName? v with
+      | some selected => o := { o with style := some selected }
+      | none =>
+        unhonoured s!"listing style '{v}' is not supported; the current style stands"
+          "use style=default or style=friendly"
+    | some ("tabsize", v) =>
+      let v := listingVal v
+      -- FancyVerb's upper bound (fancyvrb.sty, the FV/tabsize key).
+      match v.toNat? with
+      | some n =>
+        if 0 < n && n ≤ 100 then o := { o with tabSize := n }
+        else unhonoured s!"listing tabsize '{v}' is outside 1..100; \
+the current tab stops stand" none
+      | none =>
+        unhonoured s!"listing tabsize '{v}' is not an integer; \
+the current tab stops stand" none
+    | some ("breaklines", v) =>
+      let v := listingVal v
+      if v == "true" then o := { o with breakLines := true }
+      else if v == "false" then o := { o with breakLines := false }
+      else unhonoured s!"listing breaklines '{v}' is not true or false; \
+the current wrapping stands" none
+    | some (k, _) => unhonoured s!"inline code key '{k}' is not honoured; ignored" none
+    | none =>
+      if bare == "breaklines" then o := { o with breakLines := true }
+      else unhonoured s!"inline code key '{bare}' is not honoured; ignored" none
+  -- premise: codeRoleChecks — two builds that differ only by the declared style ship byte-identical pages under a palette that gives every code role its colour, and different pages under one that leaves a role to the style
+  if let some declared := o.style then
+    let pal := (← get).scope.palette.current.getD ctx.palette
+    if !(ListingHighlight.Role.all.any (CodeColor.styleReads pal)) then
+      warnOnce ctx ("lstopt:style:" ++ declared.name) .W0387
+        s!"minted's style '{declared.name}' was read and had no effect: the palette names \
+or derives a colour for every code role" pos
+        (help := "\\allow{W0387} accepts the skip")
+  return o
+
+/-- Code set inline (`\mintinline`, and a listing written where inline
+content stands): its lines classified by the lexer its language names — a
+native one, else the highlighter's reply, which a language only the
+highlighter reads asks for through the driver — each token painted in its
+code role on the ground the code stands on (`Listing.inlineCode`), lines
+joined by forced breaks, all in the mono family alone, so the size, weight,
+slant and colour around the code stand — but for a size its options
+declare. -/
+private def inlineCodeOf (ctx : Ctx) (lang : Option Ir.ListingLang) (lines : Array String)
+    (o : InlineCodeOpts) : EM (Array Inline) := do
+  if lines.all (·.isEmpty) then return #[]
+  let source := String.intercalate "\n" lines.toList
+  let classified := lang.bind fun l =>
+    match ListingHighlight.language? l.val with
+    | some lexer => some (ListingHighlight.tokenize lexer lines)
+    | none => ListingReply.lookup ctx.listingReplies l.val source
+  if let some l := lang then
+    if classified.isNone && LexerName.known l.val then
+      modify fun st => if st.spans.code.contains (l.val, source) then st
+        else { st with spans := { st.spans with code := st.spans.code.push (l.val, source) } }
+  let tokenLines := classified.getD (lines.map fun line => #[{ text := line }])
+  let pal := (← get).scope.palette.current.getD ctx.palette
+  let spec : Ir.ListingSpec := { tabSize := o.tabSize, breakLines := o.breakLines }
+  let mut body : Array Inline := #[]
+  for line in tokenLines do
+    unless body.isEmpty do
+      body := body.push (.linebreak {})
+    if ListingHighlight.lineText line == "" then
+      body := body.push (.text "\u00a0")
+    else
+      let laid := (line.foldl (fun (acc, column) t =>
+        let (text, column) := spec.layoutText column t.text
+        (acc.push { t with text }, column)) ((#[] : Array ListingHighlight.Token), 0)).1
+      body := body ++ Listing.inlineCode pal ctx.ground o.style laid
+  let code := #[Inline.styled .mono body]
+  return match o.size with
+    | some size => #[.styled size code]
+    | none => code
+
+/-- Verbatim met inside inline content. `\verb`: its text in the mono face,
+spaces held. `\mintinline`: inline code (`inlineCodeOf`) under its options.
+A display listing written there — `\mint`, or a listing environment, which
+LaTeX cannot set within a line or an argument — is named once and set by its
+evident intent, as inline code. -/
+private def inlineVerbatim (ctx : Ctx) (env s : String) (pos : Pos) : EM (Array Inline) := do
+  if env == "verb" then
+    let kept := s.map fun c => if c == ' ' then '\u00a0' else c
+    return if kept.isEmpty then #[] else #[.styled .mono #[.text kept]]
+  let (opts, afterOpt) := (Parse.listingOptHead s).getD ("", 0)
+  if env == "mintinline" || env == "mint" then
+    let some (rawLang, afterLang) := Parse.mintedLangHead s afterOpt | return #[]
+    if env == "mint" then
+      warnOnce ctx "listing-inline:mint" .W0411
+        "'\\mint' sets a display, which a line of text or an argument cannot hold; it is \
+set as inline code" pos
+        (help := s!"write \\mintinline\{{rawLang.trimAscii.toString}}\{…} for inline code")
+    let o ← inlineCodeOpts ctx opts pos
+    let lang ← codeLanguage ctx rawLang pos
+    return ← inlineCodeOf ctx lang #[bindCodeParams ctx (Parse.mintedCode s afterLang)] o
+  let lines := Ir.verbatimLines (s.drop (listingContentStart env s)).toString
+  let (rawLang, opts) : Option String × String :=
+    if env == "minted" then (((Parse.mintedLangHead s afterOpt).map (·.1)), opts)
+    else if env == "lstlisting" then
+      let entries := Decl.splitEntries opts
+      let isLang (e : String) := ((Decl.splitEntry e).map (·.1.trimAscii.toString)) == some "language"
+      ((entries.find? isLang).bind fun e => (Decl.splitEntry e).map (listingVal ·.2),
+        ",".intercalate (entries.filter (!isLang ·)))
+    else (none, opts)
+  warnOnce ctx ("listing-inline:" ++ env) .W0411
+    s!"'\\begin\{{env}}' within a line of text or an argument does not compile under LaTeX; \
+it is set as inline code" pos
+    (help := match rawLang with
+      | some l => s!"write \\mintinline\{{l.trimAscii.toString}}\{…} for inline code"
+      | none => "write \\verb|…| for inline code")
+  let o ← inlineCodeOpts ctx opts pos
+  let lang ← match rawLang with
+    | some l => codeLanguage ctx l pos
+    | none => pure none
+  inlineCodeOf ctx lang lines o
+
 seal pictureOptEntries splitPictureAlt subsetPicture routePicture inlinePicture
+seal inlineVerbatim
 seal secFmtOfBody applySecFmt applyCounter counterCtrl counterArm runInHead
 seal theCounterLevel? sectionLevel
 seal inlineGroup
@@ -5412,22 +5670,10 @@ private def elabInlinesFrom (ctx : Ctx) (raws : Array Raw) (i : Nat)
           elabInlinesFrom ctx (raws.extract 0 i ++ body.extract keptFrom body.size
             ++ raws.extract (i + 1) raws.size) i acc sb
     | .verb env s vpos =>
-      -- Verbatim inside inline content: kept as mono text, spaces held as
-      -- no-break spaces, lines separated by forced breaks. A listing's
-      -- option head is a declaration a paragraph cannot carry — stripped
-      -- and named, never set as code text. `\verb`'s one line has no head.
+      -- Verbatim inside inline content, read whole outside the knot.
       let acc := flushText acc sb
-      if env == "verb" then
-        let kept := s.map fun c => if c == ' ' then '\u00a0' else c
-        elabInlinesFrom ctx raws (i + 1)
-          (if kept.isEmpty then acc else acc.push (.styled .mono #[.text kept])) ""
-      else
-      let start := listingContentStart env s
-      if start > 0 then
-        warnOnce ctx ("verb-inline:" ++ env) .W0346
-          s!"a '\{{env}}' option head inside inline content is ignored" vpos
-      elabInlinesFrom ctx raws (i + 1)
-        (acc.push (.styled .mono (Ir.verbatimInlines ((s.drop start).toString)))) ""
+      let code ← inlineVerbatim ctx env s vpos
+      elabInlinesFrom ctx raws (i + 1) (acc ++ code) ""
     | .ctrl name pos =>
       -- The document's own names come first: a parameter, then a defined
       -- command. Built-ins the document cannot redefine are exactly
@@ -6486,6 +6732,7 @@ unseal warnUnclosed warnDroppedArgs
 unseal refCtrlForm? refFormNeedsKind
 unseal secFmtOfBody applySecFmt applyCounter counterCtrl counterArm runInHead
 unseal pictureOptEntries splitPictureAlt subsetPicture routePicture inlinePicture
+unseal inlineVerbatim
 unseal theCounterLevel? sectionLevel
 unseal inlineGroup
 
@@ -7092,7 +7339,7 @@ private def bodyIsBlockOne : Raw → Bool
       || (Compat.lengthRestoreKeys? n).isSome
       || (blockHeading? n).isSome
   | .par _ => true
-  | .verb env _ _ => env != "verb"
+  | .verb env _ _ => env != "verb" && env != "mintinline"
   | .math display _ _ => display
   | .env n body _ =>
     if (Parse.inputEnvFile? n).isSome then bodyIsBlockList body.toList
@@ -9072,6 +9319,11 @@ public def refusedTitleReadout (user : Array UserCmd) (bound : Nat) (body : Arra
 private def referencesParam (name : String) : List Raw → Bool
   | [] => false
   | .ctrl n _ :: rest => n == name || referencesParam name rest
+  -- minted's commands take their code where TeX has bound the parameters
+  -- (`bindCodeParams`): `#k` there is the native `\ak`.
+  | .verb e s _ :: rest =>
+    ((e == "mintinline" || e == "mint") && name.startsWith "a" &&
+      (s.splitOn ("#" ++ (name.drop 1).toString)).length > 1) || referencesParam name rest
   | .group body _ :: rest => referencesParam name body.toList || referencesParam name rest
   | .env _ body _ :: rest => referencesParam name body.toList || referencesParam name rest
   | .math _ body _ :: rest => referencesParam name body.toList || referencesParam name rest
@@ -10031,6 +10283,16 @@ private def tabularArm (ctx : Ctx) (n : String) (body : Array Raw)
   blocks := blocks.push (.table cols padL padR rows rules spans)
   return blocks
 
+/-- Whether a verbatim the block walk meets runs inline in the paragraph
+it stands in: `\verb` and `\mintinline` always; a listing environment
+written all on one line, which LaTeX cannot set, where text shares its
+paragraph — its evident intent then inline code (`inlineVerbatim`). -/
+private def verbRunsInline (env s : String) (cur raws : Array Raw) (i : Nat) : Bool :=
+  let inks (r : Raw) : Bool := !(r matches .space) && !(r matches .par _)
+  env == "verb" || env == "mintinline" ||
+    ((env == "minted" || env == "lstlisting") && !s.contains '\n' &&
+      (cur.any inks || (raws[skipSpaces raws (i + 1)]?).any inks))
+
 /-- One listing block from a lexically blind capture. `{verbatim}` is the
 default spec, as always. `{lstlisting}` reads listings' per-environment
 keys from its option head, `{minted}` its option head and its mandatory
@@ -10057,6 +10319,24 @@ silent drop. The caption is kept as its literal
 text: a listing caption is plain prose; markup inside one is out of the
 blind capture's reach. -/
 private def listingBlock (ctx : Ctx) (env s : String) (pos : Pos) : EM Block := do
+  -- `\mint` is the minted environment of one line (minted.sty v3.7: its
+  -- code goes through the environment's own buffer and display).
+  let (env, s, opener) := if env == "mint" then
+      let afterOpt := ((Parse.listingOptHead s).map (·.2)).getD 0
+      let afterLang := ((Parse.mintedLangHead s afterOpt).map (·.2)).getD afterOpt
+      ("minted", (s.take afterLang).toString ++ bindCodeParams ctx (Parse.mintedCode s afterLang) ++
+        "\n", "\\mint")
+    else (env, s, "\\begin{" ++ env ++ "}")
+  if (env == "minted" || env == "lstlisting") && !s.contains '\n' then
+    let lang := if env == "minted" then
+        (((Parse.mintedLangHead s ((Parse.listingOptHead s).map (·.2) |>.getD 0)).map
+          (·.1.trimAscii.toString)).getD "")
+      else ""
+    warnOnce ctx ("listing-oneline:" ++ env) .W0411
+      s!"'\\begin\{{env}}' with its code on the same line does not compile under LaTeX; it \
+is set as a display listing" pos
+      (help := s!"put the code on lines of its own between '\\begin\{{env}}" ++
+        (if lang.isEmpty then "" else "{" ++ lang ++ "}") ++ s!"' and '\\end\{{env}}'")
   -- The size in force where the environment stands, resolved once through
   -- the ordinary declaration scope (`blockDecls`), defaulting to the body
   -- size. Bare `verbatim`, `minted`, and `lstlisting` all inherit it: LaTeX's
@@ -10070,8 +10350,7 @@ private def listingBlock (ctx : Ctx) (env s : String) (pos : Pos) : EM Block := 
   let inherited := (← get).scope.blockDecls.foldl (fun size decl => match decl with
     | .style s@(.size _) | .style s@(.fontSize _ _) => s
     | _ => size) base.fontSize
-  let sourceStart := ("\\begin{" ++ env ++ "}").foldl
-    (fun p c => p.next (c == '\n')) pos
+  let sourceStart := opener.foldl (fun p c => p.next (c == '\n')) pos
   if env == "verbatim" then
     return .verbatim none s
       { base with
@@ -10088,23 +10367,10 @@ private def listingBlock (ctx : Ctx) (env s : String) (pos : Pos) : EM Block := 
   let mut tabSize := base.tabSize
   let mut breakLines := base.breakLines
   let mut ground := base.ground
-  let sizeName? (v : String) : Option String :=
-    if v.startsWith "\\" then
-      let name := (v.drop 1).toString
-      if Ir.sizeScale.any (·.1 == name) then some name else none
-    else none
   -- Keyed by its words: two listings share a loss exactly when they print the same.
   let unhonoured (msg : String) (help : Option String) : EM Unit :=
     warnOnce ctx ("lstopt:" ++ msg) .W0110 msg pos (help := help)
-  let langOf (raw : String) : EM (Option Ir.ListingLang) := do
-    match Ir.listingLang? raw with
-    | some l => pure (some l)
-    | none =>
-      unhonoured
-        s!"listing language '{raw.trimAscii.toString}' is not a plain name; the \
-listing carries no language"
-        "spell it as letters, digits, +, #, - or . (python, c++, c#)"
-      pure none
+  let langOf (raw : String) : EM (Option Ir.ListingLang) := codeLanguage ctx raw pos
   for entry in Decl.splitEntries opts do
     let bare := entry.trimAscii.toString
     if bare.isEmpty then
@@ -10112,11 +10378,10 @@ listing carries no language"
     -- minted's `formatcom` whatever its value spells, an empty one included.
     if env == "minted" && ((Decl.splitEntry entry).map (·.1) == some "formatcom" ||
         bare == "formatcom" || bare.startsWith "formatcom=") then
-      warnOnce ctx "lstopt:formatcom" .N0102
-        "minted's formatcom runs TeX on the Pygments formatter's macros, which only a TeX \
-engine runs; the listing's tokens paint by their code roles" pos
-        (help := "set a role's colour in the palette by its name: codeink, codekeyword, \
-codename, codeliteral, codecomment or codeerror")
+      noteFormatcom ctx pos
+      continue
+    if env == "minted" && keepsSize bare then
+      fontSize := inherited
       continue
     match Decl.splitEntry entry with
     | some ("caption", v) =>
@@ -10147,9 +10412,8 @@ does not draw; lines keep no numbers" "numbers=left draws them"
           s!"listing named style '{v}' is not supported; the current style stands" none
     | some ("fontsize", v) =>
       let v := listingVal v
-      if env == "minted" && v == "auto" then fontSize := inherited
-      else if env == "minted" && (sizeName? v).isSome then
-        fontSize := .size ((sizeName? v).getD "normalsize")
+      if env == "minted" && (sizeCommand? v).isSome then
+        fontSize := .size ((sizeCommand? v).getD "normalsize")
       else
         unhonoured s!"listing fontsize '{v}' is not a supported size command; \
 the current size stands" "use a named size command such as fontsize=\\small, or fontsize=auto"
@@ -13875,7 +14139,7 @@ private def elabBlocksGo (ctx : Ctx) (raws : Array Raw) (i : Nat)
       let (⟨ctx', hm⟩, blocks) ← flushPara ctx' blocks cur
       elabBlocksGo ctx' raws (i + 1) blocks #[] gen'
     | .verb env s vpos =>
-      if env == "verb" then
+      if verbRunsInline env s cur raws i then
         elabBlocksGo ctx' raws (i + 1) blocks (cur.push raws[i]) gen'
       else
       let (⟨ctx', hm⟩, blocks) ← flushPara ctx' blocks cur
@@ -18964,6 +19228,9 @@ public structure ReqSpans where
   refs : Array (String × Span) := #[]
   /-- The label table resolution spent, for W0349's cause (`Ir.refDiags`). -/
   labels : Ir.RefTable := #[]
+  /-- Inline code in a language only the highlighter reads, as language and
+  source: the requests beside the listings' (`ListingReply.requests`). -/
+  code : Array (String × String) := #[]
   deriving Repr, BEq, Inhabited
 
 /-- The source both of a document's elaborations read: the compat rewrite
@@ -19376,6 +19643,7 @@ public def completePrepared (file : String) (p : Prepared) (earlier : Array Diag
       frames := st.spans.frames.sites
       fallbacks := st.spans.fallbacks
       declined := st.spans.declined
+      code := st.spans.code
       refs := (st.refSites.foldl (init := (#[], (∅ : Std.HashSet String)))
         fun (out, seen) (key, _, pos) =>
           if seen.contains key then (out, seen)

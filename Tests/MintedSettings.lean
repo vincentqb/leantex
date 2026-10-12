@@ -43,8 +43,8 @@ def preStyle (n : Html.Node) : String :=
     (((attrs.find? (·.1 == "style")).map (·.2)).getD "").replace " " ""
   | _ => ""
 
-/-- Font and tab declarations are on the actual pre element; the listing
-stylesheet separately makes its code child inherit the selected size. -/
+/-- Font and tab declarations are on the actual pre element; no stylesheet
+rule sizes code, so its code child inherits the selected size. -/
 def htmlSettings (n : Html.Node) (factor : String) (tab : Nat) (wrap : Bool) : Bool :=
   let s := preStyle n
   hasStr s ("font-size:" ++ factor ++ "em") &&
@@ -124,7 +124,7 @@ def mintedSettingsChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "minted fontsize/tab/wrap: typed HTML declares settings without nested shrink"
     (pres.size == 1 && pres.any (MintedSettings.htmlSettings · "0.9" 3 true) &&
       hasStr css "font-family: var(--font-mono)" &&
-      hasStr css "pre > code { font-size: inherit; }")
+      (cssRulesOf css "code, pre").all (!hasStr · "font-size"))
   t "minted default: inherits the body size" (hasSize (dvDoc "" (code "" "text" simple)) 10)
   t "minted auto: inherits a scoped named size"
     (hasSize (dvDoc "" ("{\\small\n" ++ code "fontsize=auto" "text" simple ++ "}")) 9)

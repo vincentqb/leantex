@@ -124,6 +124,7 @@ import Tests.LayoutSources
 import Tests.LineRhythm
 import Tests.Privacy
 import Tests.DiagFold
+import Tests.InlineCode
 import scripts.LandCore
 
 /-!
@@ -1476,7 +1477,14 @@ def reports : List Report := [
       "a long markdown report of several hundred disclosures builds its HTML with no warning where one warning carried every disclosure, each the browser's own element, closed as written, opening and closing on its summary and printing expanded; its PDF keeps its pages and its diagnostics",
       "the first review's guards: with the disclosure not read through at its foot, four gap assertions fail, the block after a disclosure ending on a list or a quotation standing a peer gap where it stands the list's space outside one; a disclosure in a list item names its loose list as CommonMark reads it, and a summary of characters drawn as nothing is refused and named unnamed",
       "the second review's guards, written to its probes and not on record failing: a closed disclosure's hidden body moves no gap on screen while paper reads every disclosure through, a list item opening on a disclosure keeps its marker on paper, and a disclosure whose body opens on a list or a quotation names its loose list"]
-    state := .guarded "04a2ea83" .revert .author }
+    state := .guarded "04a2ea83" .revert .author },
+  { id := "R163", date := "2026-10-12"
+    what := "inline code a slide's footer wrote with minted's inline command shipped as its arguments' text in the footer's face, the command unknown, its language a word and its braces gone; minted's inline settings were unknown too, a display listing written in an argument or on a line of text was set unhighlighted, and HTML set all inline code smaller than the text around it"
+    pins := [check% Tests.inlineCodeChecks, check% Tests.inlineCodeRequestChecks,
+      thm% Listing.inlineCode_source_exact]
+    accept := ["forty-five of the guard's assertions fail on the tree at ef5d2b87 before the fix: inline code named unknown in a paragraph, under a weight, a slant, a size and a colour, in a frame's footer, its title and a block's title; its sizes under minted's settings; a definition's parameters in its code; the one-line display command; a listing written where LaTeX cannot set it; a misspelt lexer; and the stylesheet's shrink of inline code",
+      "a presentation deck whose footer writes inline code with minted's inline command, its inline size left to the text around it: the footer's code ships at the footer's size, its keywords painted and its other tokens in the footer's ink, in both artifacts, every word of the footer within four tenths of a point of where the deck's own lualatex build sets it"]
+    state := .guarded "ef5d2b87" .before .author }
 ]
 
 /-- The reports guarded but never seen failing: a count that may fall and

@@ -156,6 +156,95 @@ private def strFrom (cs : Array Char) (a b : Nat) : String := Id.run do
       s := s.push cs[j]
   return s
 
+/-- A line end at `k`: where the line after it starts, a CRLF one unit. -/
+private def lineEndAt (cs : Array Char) (k : Nat) : Option Nat :=
+  match cs[k]? with
+  | some '\n' => some (k + 1)
+  | some '\r' => some (if cs[k + 1]? == some '\n' then k + 2 else k + 1)
+  | _ => none
+
+/-- Past the spaces at `k` and at most one line end among them, as TeX's
+argument reader skips them; `none` at a blank line, which ends a
+paragraph there. -/
+private def argGap (cs : Array Char) (k : Nat) : Option Nat :=
+  let blank (c : Char) := c == ' ' || c == '\t'
+  let a := scanWhile cs k blank
+  match lineEndAt cs a with
+  | none => some a
+  | some b =>
+    let c := scanWhile cs b blank
+    if (lineEndAt cs c).isSome then none else some c
+
+/-- minted's one-line commands, `\mintinline` and `\mint`, read from just
+past the command name as minted.sty (v3.7) reads them: `[options]`, braces
+nesting inside, then `{language}`, then the code — a brace group whose
+braces nest, or the text up to the next copy of the character that opens
+it. Spaces stand between them as TeX's reader skips them (`argGap`); inside
+the code a line end is one more character, which a blank line ends unclosed.
+Returns where the call ends, whether its code closed, and the call as the
+elaborator reads it: its options, language and delimited code, the spaces
+between them dropped. `none` when no `{language}` follows, so the name stays
+an ordinary control word (the subject of a definition, say). -/
+private def mintedCall (cs : Array Char) (j : Nat) : Option (Nat × Bool × String) := Id.run do
+  let some start := argGap cs j | return none
+  let mut k := start
+  let mut head := ""
+  if cs[k]? == some '[' then
+    let mut depth : Nat := 0
+    let mut m := k + 1
+    let mut shut := false
+    for _ in [k + 1:cs.size] do
+      match cs[m]? with
+      | some ']' =>
+        if depth == 0 then
+          shut := true
+          break
+        m := m + 1
+      | some '{' => depth := depth + 1; m := m + 1
+      | some '}' => depth := depth - 1; m := m + 1
+      | some _ => m := m + 1
+      | none => break
+    unless shut do return none
+    head := strFrom cs k (m + 1)
+    let some next := argGap cs (m + 1) | return none
+    k := next
+  unless cs[k]? == some '{' do return none
+  let close := scanWhile cs (k + 1) (fun c => c != '}' && c != '\n' && c != '\r')
+  unless cs[close]? == some '}' do return none
+  head := head ++ strFrom cs k (close + 1)
+  let some code := argGap cs (close + 1) | return some (close + 1, false, head)
+  -- A blank line ends the code: a line end, then only spaces, then another.
+  let blankAt (m : Nat) : Bool :=
+    match lineEndAt cs m with
+    | some b => (lineEndAt cs (scanWhile cs b (fun c => c == ' ' || c == '\t'))).isSome
+    | none => false
+  let (stop, closed) : Nat × Bool := Id.run do
+    match cs[code]? with
+    | none => return (code, false)
+    | some '{' =>
+      let mut depth : Nat := 0
+      let mut m := code + 1
+      for _ in [code + 1:cs.size] do
+        if blankAt m then return (m, false)
+        match cs[m]? with
+        | some '}' =>
+          if depth == 0 then return (m + 1, true)
+          depth := depth - 1
+          m := m + 1
+        | some '{' => depth := depth + 1; m := m + 1
+        | some _ => m := m + 1
+        | none => break
+      return (cs.size, false)
+    | some d =>
+      let mut m := code + 1
+      for _ in [code + 1:cs.size] do
+        if blankAt m then return (m, false)
+        match cs[m]? with
+        | some c => if c == d then return (m + 1, true) else m := m + 1
+        | none => break
+      return (cs.size, false)
+  return some (stop, closed, head ++ strFrom cs code stop)
+
 /-- The written control token, before NFC changes any spelling. A control
 word ends with its name; a control symbol includes its character, including
 both characters of a CRLF line end. -/
@@ -364,6 +453,16 @@ public def lex (file : String) (input : String) : Array Token × Array Diag := I
                   (some ⟨file, here⟩))
               toks := toks.push ⟨.verb "verb" shown, here⟩
               let stop := if closed then e + 1 else e
+              pos := posOver cs i stop pos
+              i := stop
+            else if let some (stop, closed, call) :=
+                (if name == "mintinline" || name == "mint" then mintedCall cs j else none) then
+              -- minted's commands read their code raw, as `\verb` does.
+              unless closed do
+                diags := diags.push (Diag.of .E0102
+                  s!"unclosed \\{name}: its code's closing delimiter must come before a blank line"
+                  (some ⟨file, here⟩))
+              toks := toks.push ⟨.verb name call, here⟩
               pos := posOver cs i stop pos
               i := stop
             else

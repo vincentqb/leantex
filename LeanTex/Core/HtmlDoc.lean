@@ -6360,8 +6360,10 @@ public def baseRules (doc : Doc) (pairs : List (Nat × Nat) := []) (figureWords 
   s!"s \{ text-decoration-line: line-through; text-decoration-thickness: {lineThroughThicknessCss};\n" ++
   "    text-decoration-skip-ink: none; }\n" ++
   s!"a:focus-visible \{ outline: 2px solid {roleRef .focus}; outline-offset: 2px; }\n" ++
-  "code, pre { font-family: var(--font-mono); font-size: 0.925em; }\n" ++
-  "pre > code { font-size: inherit; }\n" ++
+  -- Code sets in the mono family and nothing else: inline code takes the
+  -- size around it, as the page sets it (`Ir.Style.mono` changes the slot
+  -- alone), and a listing states its own (`fontStyleDecls`).
+  "code, pre { font-family: var(--font-mono); }\n" ++
   -- Flexbox 1 §4.5 gives scroll containers no automatic minimum size.
   -- Keep code at its content height; a crowded stage owns vertical scrolling.
   s!"pre \{ background: {roleRef .codeSurface}; padding: {quantaRem 1} 1rem; overflow-x: auto;\n" ++

@@ -246,6 +246,7 @@ import Tests.PictureHtmlBaseline
 import Tests.PictureMathLabels
 import Tests.TextSym
 import Tests.InlineVerb
+import Tests.InlineCode
 import Tests.VerbatimAmbient
 import Tests.OwnBib
 import Tests.BigDelim
@@ -860,6 +861,8 @@ def surfaceSuiteChecks (ref : IO.Ref (List String)) : IO Unit := do
   mathSymChecks ref
   textSymChecks ref
   inlineVerbChecks ref
+  Tests.inlineCodeChecks ref
+  Tests.inlineCodeRequestChecks ref
   verbatimAmbientChecks ref
   ownBibChecks ref
   amsmathChecks ref

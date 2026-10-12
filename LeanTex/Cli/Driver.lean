@@ -677,7 +677,7 @@ def frontend (ui : Ui) (file : String) : IO (Option Front) := do
   -- macros and includes have already settled the language and source. The
   -- provider returns data only; every later elaboration reuses this exact
   -- snapshot, including font remeasurement and picture withdrawal.
-  let requests := LeanTex.Core.ListingReply.requests doc
+  let requests := LeanTex.Core.ListingReply.requests doc reqSpans.code
   let (doc, diags, reqSpans, prepared, earlier) ← if requests.isEmpty then
       pure (doc, diags, reqSpans, prepared, earlier)
     else do

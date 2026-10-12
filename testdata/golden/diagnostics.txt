@@ -813,6 +813,20 @@
   a frame stands past its text area, in the gap below it
   frame 1: 2.237pt past
   suggestion: shorten the frame, or declare `[allowframebreaks]` on it to accept a break
+── W0411 (standard) a listing written where LaTeX cannot set it as written — within a line of text, in an argument, or all on one line; it is set by its evident intent
+⚠ [W0411] - \begin
+  '\begin{minted}' within a line of text or an argument does not compile under LaTeX; it is set as inline code
+  suggestion: write \mintinline{python}{…} for inline code
+⚠ [W0411] - \mint
+  '\mint' sets a display, which a line of text or an argument cannot hold; it is set as inline code
+  suggestion: write \mintinline{python}{…} for inline code
+⚠ [W0411] - \begin
+  '\begin{minted}' with its code on the same line does not compile under LaTeX; it is set as a display listing
+  suggestion: put the code on lines of its own between '\begin{minted}{python}' and '\end{minted}'
+── W0412 (degraded) a listing's language names no lexer the engine or Pygments' registry has; its code is set as plain text
+⚠ [W0412] - \mintinline
+  'pyhton' names no lexer the engine or Pygments has; its code is set as plain text
+  suggestion: spell it 'python', the lexer name nearest it
 ── W0419 (degraded) a picture the boundary did not draw is drawn in part by the rendered subset; what it leaves out is named in the line
 ⚠ [W0419] - \begin
   the rendered subset draws this picture in part: '\pattern' is outside the rendered picture subset; not drawn

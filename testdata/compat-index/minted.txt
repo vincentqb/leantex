@@ -1,21 +1,33 @@
 # source: minted manual (v3.7), Commands and environments: the minted
 # environment with its mandatory {language} argument and linenos option;
-# \mint, \mintinline, \inputminted; \setminted and \usemintedstyle
-# configuration. Environment capture preserves source literally. Lean 4,
-# Python, Bash, shell sessions and plain text are classified after capture
-# by mirrors of Pygments' own lexers; another lexer name asks the installed
-# Pygments and ships plain source where none answers. \inputminted reads a
-# file — a driver request later; the short forms and external Pygments
-# machinery refuse by name.
+# \mint, \mintinline, \inputminted; \setminted, \setmintedinline and
+# \usemintedstyle configuration. Environment and command capture preserve
+# source literally: \mint and \mintinline read their code braced or between
+# two copies of a delimiter, as minted does. \mint is the environment of one
+# line; \mintinline is inline code, set in the mono family alone, so it takes
+# the size, weight, slant and colour around it. Lean 4, Python, Bash, shell
+# sessions and plain text are classified after capture by mirrors of
+# Pygments' own lexers; another name Pygments' registry holds asks the
+# installed Pygments and ships plain source where none answers; a name the
+# registry does not hold is named (W0412) with the nearest one it does.
+# \inputminted reads a file — a driver request later; the short forms and
+# external Pygments machinery refuse by name.
 body impl \begin{minted}{python} print(1) \end{minted}
 body impl \begin{minted}[linenos]{python} print(1) \end{minted}
 body impl \begin{minted}{C++} int x; \end{minted}
 body refuse:W0110 \begin{minted}{Python 3} print(1) \end{minted}
-body refuse:W0301 \mint{python}|print(1)|
-body refuse:W0301 \mintinline{python}|print(1)|
+body impl \mint{python}|print(1)|
+body impl \mint{python}{print(1)}
+body impl \mintinline{python}|print(1)|
+body impl \mintinline{python}{print(1)}
+body impl \mintinline[fontsize=\small]{python}{print(1)}
+body refuse:W0412 \mintinline{pythn}{print(1)}
 body refuse:W0301 \inputminted{python}{example.py}
 pre inert:binds \setminted{linenos}
 pre inert:binds \setminted[python]{fontsize=\small,tabsize=3,breaklines}
+pre inert:binds \setmintedinline{fontsize=\relax}
+pre inert:binds \setmintedinline[python]{fontsize=\small}
+body impl \setmintedinline{fontsize=\large}\mintinline{python}{print(1)}
 body impl \setminted{fontsize=\small,tabsize=3,breaklines}\begin{minted}{text} Alpha Bravo \end{minted}
 body impl \setminted[python]{fontsize=\scriptsize}\begin{minted}{python} print(1) \end{minted}
 body impl \begin{minted}[fontsize=auto,breaklines=false]{text} Alpha Bravo \end{minted}
@@ -30,6 +42,8 @@ pre refuse:W0301 \usemintedstyle{tango}
 pre refuse:W0301 \newminted{python}{linenos}
 # \setminted binds global or exact-lexer defaults. Environment options win;
 # language defaults beat global defaults even when the latter are newer.
+# \setmintedinline binds inline code's own layers after both of them, and
+# fontsize=\relax there keeps the size around the code.
 # Fontsize accepts named size commands (\small) and auto; bare names are
 # literal text in FancyVerb and are diagnosed with the corrected spelling.
 # tabsize uses positive stops through 100; breaklines wraps at whitespace.

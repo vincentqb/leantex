@@ -9,6 +9,7 @@ import Tests.Surface
 import Tests.Kernel
 import Tests.ListingProvider
 import Tests.ListingStyleTable
+import Tests.InlineCode
 import Tests.PublicationPaths
 import Tests.HtmlContained
 import Tests.TableSide
@@ -154,6 +155,12 @@ def registry : List AuditRow :=
    ⟨.W0435, .native, .native, check% kernelQedHereChecks⟩,
    -- A refused external classification keeps the source and names its loss.
    ⟨.W0393, .keep, .degraded, check% listingProviderChecks⟩,
+   -- A listing LaTeX cannot set where it is written, set by its evident
+   -- intent: the remedy is the author's, the inline command the help names.
+   ⟨.W0411, .keep, .native, check% Tests.inlineCodeChecks⟩,
+   -- A language no lexer reads: the code ships plain and the nearest known
+   -- name is the help; the document's to correct, never the boundary's.
+   ⟨.W0412, .keep, .degraded, check% Tests.inlineCodeChecks⟩,
    -- A face declared before booktabs loads: measuring that face's ex at
    -- the class size (the driver holds the font environment) retires it.
    ⟨.W0398, .native, .native, check% Tests.tableFaceOrderChecks⟩,
