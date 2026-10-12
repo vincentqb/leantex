@@ -1495,8 +1495,8 @@ def reports : List Report := [
   { id := "R165", date := "2026-10-12"
     what := "a declared line that re-flowed and still ran past the measure drew a re-flow warning and an overfull warning per overrunning line, one construct accounted twice, where the re-flow can say the overrun"
     pins := [check% Tests.DiagFold.reflowAccountChecks]
-    accept := ["six of the guard's assertions fail with the fix reverted onto the recorded commit: the re-flow's detail carries no overrun, an overfull warning names a line a re-flow accounts for, the log prints the overrun on a line of its own, accepting the re-flow leaves that overrun a warning, and the declared lines that open on a wide word draw both codes"]
-    state := .guarded "f7c221bc" .revert .author }
+    accept := ["ten of the guard's assertions fail with the fix's behaviour reverted onto the recorded commit, its records kept: one re-flow per paragraph at its first declared line, an overfull warning for each line a re-flow accounts for, no re-flow saying its overrun or carrying the overfull loss, the log and the HTML build counting the overrun on a line of its own, accepting the re-flow leaving that overrun a warning, an acceptance of the overfull warning reading stale, and an overlay's steps measuring one declared line apart"]
+    state := .guarded "e13488b1" .revert .author }
 ]
 
 /-- The reports guarded but never seen failing: a count that may fall and
