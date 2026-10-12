@@ -57,7 +57,7 @@ breaks the line as a Markdown hard break does, an empty `<a name="…">` is a
 link target, and a `<details>` block with a plain `<summary>` is set
 expanded; any other tag is an error at its position whose help names the
 Markdown to write instead. A Markdown document sets on a wider text block
-than an article, with its code in the text face's matching monospaced face:
+than an article, with its code in a monospaced face (see Fonts and themes):
 code blocks at `\footnotesize`, two sizes below the text, with long lines
 wrapped to stay on the page — in the PDF at a space where one fits, never
 inside a name or an operator such as `:=`; a browser wraps the HTML's at
@@ -90,7 +90,8 @@ See the [example documents](testdata/corpus) and
 
 ## Fonts and themes
 
-Use installed `.ttf` or `.otf` fonts through `\setmainfont{Family Name}` or
+Use installed `.ttf` or `.otf` fonts, or the faces of a `.ttc` or `.otc`
+collection, through `\setmainfont{Family Name}` or
 `\fonts{body="Family Name"}`. List available families with `leantex fonts`;
 add search directories with `--font-dir` or `LEANTEX_FONT_PATH`.
 The fonts of the TeX distribution whose `lualatex` (else `luatex`, else `tex`)
@@ -100,7 +101,10 @@ the site's `texmf-local` (or a package's `/usr/local/share/texmf`), and of the
 distribution's trees in TeX Live's own layout (`texmf-dist`) and in the
 Debian, Fedora, Arch, Homebrew, MacPorts, FreeBSD and Nix packages' layouts.
 To bundle fonts with a document, use `\fonts{dir="fonts",body="Family Name"}`.
-macOS `.ttc` collections are not supported.
+A document that declares no typewriter face sets its code in the text face's
+matching monospaced face where one is installed, else in the first of SF
+Mono, Menlo, DejaVu Sans Mono and Liberation Mono that is installed with
+its bold and italic, and warns only when none is.
 
 List themes with `leantex themes` and select one with `\theme{moloch}`.
 

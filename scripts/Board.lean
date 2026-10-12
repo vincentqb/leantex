@@ -1514,7 +1514,7 @@ def oneFaceIndex : Array ((Nat × Nat × Bool) × Nat) :=
 def loadFont (cache : IO.Ref (Array (String × Font.Font))) (path : String) :
     IO (Option Font.Font) := do
   if let some (_, f) := (← cache.get).find? (·.1 == path) then return some f
-  match Font.parse (← IO.FS.readBinFile path) with
+  match (← FontDiscovery.faceBytes path) >>= Font.parse with
   | .ok f =>
     cache.modify (·.push (path, f))
     return some f

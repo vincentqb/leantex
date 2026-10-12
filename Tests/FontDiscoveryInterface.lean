@@ -16,6 +16,9 @@ example : Repr Face := inferInstance
 example : List String := searchDirs
 example : IO (List String) := extraDirs
 example : String → (String → Bool) → IO (Option ByteArray) := tableImage
+example : String → Nat → (String → Bool) → IO (Option ByteArray) := memberImage
+example : String → (String → Bool) → IO (Option ByteArray) := faceImage
+example : String → IO (Except String ByteArray) := faceBytes
 example : String → IO (Option Face) := probe
 example : IO (Option System.FilePath) := cacheDir
 example : String := probeCacheName
@@ -38,6 +41,9 @@ example : True := by
   fail_if_success have := LeanTex.Cli.FontDiscovery.dirLine
   fail_if_success have := LeanTex.Cli.FontDiscovery.parseDirLine
   fail_if_success have := LeanTex.Cli.FontDiscovery.walkCached
+  fail_if_success have := LeanTex.Cli.FontDiscovery.skipBytes
+  fail_if_success have := LeanTex.Cli.FontDiscovery.readAt
+  fail_if_success have := LeanTex.Cli.FontDiscovery.facePaths
   fail_if_success have := LeanTex.Core.Font.parse
   trivial
 

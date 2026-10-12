@@ -8,6 +8,7 @@ public import LeanTex.Cli.FontEnv
 import LeanTex.Core.Math
 import LeanTex.Cli.FontDiscovery
 import LeanTex.Cli.DriverDiag
+import LeanTex.Cli.SlotLoss
 import LeanTex.Core.Layout
 
 /-! Font assembly shared by the driver and its artifact checks. Host discovery
@@ -113,15 +114,16 @@ public def buildFontSet (doc : Ir.Doc) (scan : FaceScan)
   let slides := doc.docClass == Ir.DocClass.slides
   let textFamily := if slides then spec.sans.orElse fun _ => spec.body
     else spec.body.orElse fun _ => spec.sans
-  -- A markdown document cannot declare a typewriter face, so its undeclared
-  -- slot takes the default text family's designed companion wherever the
-  -- scan serves it whole and fixed-pitch (`FontDb.monoCompanion`, held to
-  -- the resolver call below by `monoCompanion_contract`). Anywhere else — a
-  -- tex document, or a scan without the companion — an undeclared slot
-  -- falls to the body family, the loss W0390 names.
-  -- premise: markdownMonoChecks — two builds of one markdown document, its companion in the scan and not, set code in different faces, and only the second names W0390
-  let spec := if doc.surface == .markdown && spec.mono.isNone then
-      { spec with mono := textFamily.bind (FontDb.monoCompanion faces ·) }
+  -- An undeclared typewriter slot the document sets runs in (the census
+  -- `SlotLoss` reports from) takes, on either surface, the text family's
+  -- designed companion, else the first platform monospace, that the scan
+  -- serves whole and fixed-pitch (`FontDb.monoFor`, held to the resolver
+  -- call below by `monoFor_contract`). A scan holding neither leaves the
+  -- slot to the body family, the loss W0390 names; a slot no run reaches
+  -- loads no face, so no page ships one it never sets.
+  -- premise: monoDefaultChecks — two builds of one document, a platform monospace in the scan and not, set its code in different faces and only the second names W0390; a document setting no typewriter run loads no typewriter face and names nothing
+  let spec := if spec.mono.isNone && (SlotLoss.slotsUsed doc).contains 2 then
+      { spec with mono := FontDb.monoFor faces textFamily }
     else spec
   let mut fonts : Array Font.Font := #[]
   let mut paths : Array String := #[]

@@ -314,9 +314,9 @@ public def markdownTextBlock : Sp := pt 384
 reader's or the markdown reader's, each read through its one door
 (`Surface.read`). A markdown source can declare nothing — no page, no faces, no
 listing keys — so what its surface defaults is the whole of those settings
-for its documents: the text block (`textBlock`), how code sets
-(`Surface.listing`), and a typewriter face beside the default text face
-(the driver's `FontDb.monoCompanion`). One decision, the path's extension
+for its documents: the text block (`textBlock`) and how code sets
+(`Surface.listing`); its typewriter face is the one any undeclared slot
+takes (the driver's `FontDb.monoFor`). One decision, the path's extension
 (`ofPath`), read by the driver to pick the reader and by the elaborator to
 record the surface in the document; a markdown fragment a tex document
 includes is set as that document's surface sets it — but for its tables,

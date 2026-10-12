@@ -28,16 +28,50 @@ public structure Variant where
   deriving Repr, BEq, Inhabited
 
 /-- The standalone-font extensions selection and discovery recognize,
-lowercase. Font collections (`.ttc`, `.dfont`) are not among them. -/
+lowercase; a font collection's are `collectionExtensions`. -/
 public def fontExtensions : List String := ["ttf", "otf"]
+
+/-- The font collection extensions discovery recognizes, lowercase: one file
+holding several faces (`.ttc`, `.otc`), the form macOS ships most of its
+system faces in. A `.dfont` is neither a font file nor a collection here. -/
+public def collectionExtensions : List String := ["ttc", "otc"]
 
 /-- A supported standalone-font extension (`fontExtensions`), ignoring
 case. This recognizes names used by selection and discovery; it does not
-inspect any bytes. -/
+inspect any bytes. A collection is `isCollectionFile`'s. -/
 public def hasFontExtension (p : String) : Bool :=
   match (p.splitOn ".").getLast? with
   | some ext => fontExtensions.contains ext.toLower
   | none => false
+
+/-- An OpenType font collection's extension, ignoring case: one file
+holding several faces (`.ttc`, `.otc`), the form macOS ships most of its
+system faces in. -/
+public def isCollectionFile (p : String) : Bool :=
+  match (p.splitOn ".").getLast? with
+  | some ext => collectionExtensions.contains ext.toLower
+  | none => false
+
+/-- The path a face of a collection is known by: the file, `#`, and the
+face's index in it. No standalone font file is named so: its name would end
+in no font extension, so the scan never lists one as a face. -/
+public def memberPath (file : String) (index : Nat) : String :=
+  s!"{file}#{index}"
+
+/-- The collection file and face index a `memberPath` names, or `none` for
+any other path: the text after the last `#` is the index, and the text
+before it must name a collection. -/
+public def splitMember (p : String) : Option (String × Nat) :=
+  let parts := p.splitOn "#"
+  if parts.length < 2 then none else
+  let file := String.intercalate "#" parts.dropLast
+  (parts.getLast?.bind String.toNat?).bind fun i =>
+    if isCollectionFile file then some (file, i) else none
+
+/-- The file a face's bytes are read from: a collection face's collection,
+any other face's own path. -/
+public def faceFile (p : String) : String :=
+  ((splitMember p).map (·.1)).getD p
 
 def norm (s : String) : String :=
   String.ofList ((s.toLower.toList).filter fun c => c.isAlphanum)
@@ -691,8 +725,9 @@ public def monoCompanions : Array Pairing := #[
     source := "github.com/ArtifexSoftware/urw-base35-fonts", license := "AGPL with font exception" }]
 
 /-- The default text families no project ships a designed typewriter face
-beside: their documents' undeclared slot keeps the text family, and W0390
-names it. -/
+beside: their documents' undeclared slot takes the first platform monospace
+the scan serves (`monoDefault`), and keeps the text family, which W0390
+names, where it serves none. -/
 public def monoUnpaired : List String := ["Helvetica Neue", "Inter"]
 
 /-- The four corners NFSS names for every family — regular, bold, italic,
@@ -716,13 +751,10 @@ private theorem cornerFixed_fixedPitch (faces : Array Face) (family : String) (c
     exact ⟨f, heq, h⟩
   · exact absurd h Bool.false_ne_true
 
-/-- The typewriter family a markdown document's undeclared slot takes: its
+/-- The typewriter family an undeclared slot takes first (`monoFor`): its
 text family's designed companion (`monoCompanions`), when the scan serves
 the companion at every corner with its own fixed-pitch face (`cornerFixed`)
-— else none, and the slot falls to the text family as every undeclared
-slot does, the loss W0390 names. A markdown source cannot declare a face, so
-this is how its code reaches a typewriter face; a tex document declares its
-own. -/
+— else none, and the platform monospace answers (`monoDefault`). -/
 public def monoCompanion (faces : Array Face) (text : String) : Option String :=
   (companionRow monoCompanions text).bind fun row =>
     if corners.all (cornerFixed faces row.companion) then some row.companion else none
@@ -756,5 +788,80 @@ public theorem monoCompanion_mem (faces : Array Face) (text family : String)
   · cases hrow
     exact ⟨row, hr, rfl⟩
   · cases hrow
+
+/-- The monospaced families an undeclared typewriter slot takes, in order,
+where the text family has no designed companion the scan serves: the
+platforms' own system monospace faces, macOS's first. One list for every
+host: a face is taken because the font environment holds it, never because
+of the operating system's name, so the artifact stays a function of the
+document and its font environment. The engine ships none of these faces.
+Sources:
+- developer.apple.com/fonts — SF Mono, Apple's monospaced system family,
+  where a user has installed it into a font directory.
+- Menlo, the monospaced face macOS has shipped as a system font collection
+  since 10.6.
+- github.com/dejavu-fonts/dejavu-fonts — DejaVu Sans Mono, the monospace
+  Linux distributions install and fontconfig's `monospace` alias resolves
+  to on them (fontconfig, `conf.d/60-latin.conf`).
+- github.com/liberationfonts/liberation-fonts — Liberation Mono, the
+  distributions' metric-compatible Courier New. -/
+public def monoDefaults : List String :=
+  ["SF Mono", "Menlo", "DejaVu Sans Mono", "Liberation Mono"]
+
+/-- Does the scan serve `family` whole as a typewriter family: every corner
+its own face, unsubstituted and fixed-pitch (`cornerFixed`)? -/
+public def servesMono (faces : Array Face) (family : String) : Bool :=
+  corners.all (cornerFixed faces family)
+
+/-- The first platform monospace (`monoDefaults`) the scan serves whole. -/
+public def monoDefault (faces : Array Face) : Option String :=
+  monoDefaults.find? (servesMono faces)
+
+/-- The typewriter family an undeclared slot the document sets runs in
+takes, on either surface: the text family's designed companion where the
+scan serves it, else the first platform monospace it serves, else none —
+and the slot falls to the text family, the loss W0390 names. -/
+public def monoFor (faces : Array Face) (text : Option String) : Option String :=
+  (text.bind (monoCompanion faces ·)).orElse fun _ => monoDefault faces
+
+/-- **The platform default sets no corner it cannot serve**, as the
+companion does not (`monoCompanion_contract`): never a substitution
+warning (W0006), never a proportional face. -/
+public theorem monoDefault_contract (faces : Array Face) (family : String)
+    (h : monoDefault faces = some family) :
+    ∀ c ∈ corners, ∃ f, resolveWeight faces family none c.1 c.2 = some (f, none) ∧
+      f.fixedPitch = true := by
+  have hs := List.find?_some h
+  intro c hc
+  exact cornerFixed_fixedPitch faces family c (List.all_eq_true.mp hs c hc)
+
+/-- The platform default is drawn from the sourced list, and every family
+listed before it is one the scan does not serve whole: the list is read in
+order. -/
+public theorem monoDefault_mem (faces : Array Face) (family : String)
+    (h : monoDefault faces = some family) :
+    family ∈ monoDefaults ∧ ∃ before after, monoDefaults = before ++ family :: after ∧
+      ∀ g ∈ before, servesMono faces g = false := by
+  refine ⟨List.mem_of_find?_eq_some h, ?_⟩
+  obtain ⟨before, after, hsplit, hbefore⟩ := List.find?_eq_some_iff_append.mp h |>.2
+  exact ⟨before, after, hsplit, fun g hg => by simpa using hbefore g hg⟩
+
+/-- **Whatever fills an undeclared typewriter slot serves every corner** in
+its own fixed-pitch face: the companion's contract and the platform
+default's, one statement for the assembly's one call. -/
+public theorem monoFor_contract (faces : Array Face) (text : Option String) (family : String)
+    (h : monoFor faces text = some family) :
+    ∀ c ∈ corners, ∃ f, resolveWeight faces family none c.1 c.2 = some (f, none) ∧
+      f.fixedPitch = true := by
+  unfold monoFor at h
+  generalize hc : text.bind (monoCompanion faces ·) = pick at h
+  match pick, hc, h with
+  | some fam, hc, h =>
+    have hf : fam = family := by simpa [Option.orElse] using h
+    subst hf
+    obtain ⟨t, _, ht⟩ := Option.bind_eq_some_iff.mp hc
+    exact monoCompanion_contract faces t fam ht
+  | none, _, h =>
+    exact monoDefault_contract faces family (by simpa [Option.orElse] using h)
 
 end LeanTex.Core.FontDb

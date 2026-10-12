@@ -865,6 +865,73 @@ pins the shipped faces' answers to this number, so a change to the answer
 that leaves the number alone fails there. -/
 public def classifierVersion : Nat := 2
 
+/-- The number of faces a font collection holds, when `data` opens as one:
+the `ttcf` tag, a version, `numFonts`, then that many offsets, every one of
+which these bytes hold (OpenType spec, "Font Collections"). -/
+public def collectionCount (data : ByteArray) : Option Nat :=
+  let n := u32 data 8
+  if 12 ≤ data.size && u32 data 0 == 0x74746366 && 0 < n && n ≤ 4096 &&
+      12 + 4 * n ≤ data.size then some n else none
+
+private def pushU16 (b : ByteArray) (v : Nat) : ByteArray :=
+  (b.push (v / 256 % 256).toUInt8).push (v % 256).toUInt8
+
+private def pushU32 (b : ByteArray) (v : Nat) : ByteArray :=
+  pushU16 (pushU16 b (v / 65536 % 65536)) (v % 65536)
+
+/-- Round up to the four-byte boundary a table starts on. -/
+private def pad4 (n : Nat) : Nat := (n + 3) / 4 * 4
+
+/-- A standalone font file of the given tables: the `sfntVersion`, a
+directory naming each table's tag, checksum, offset and length in the order
+given, then each table's bytes at its four-byte boundary (OpenType spec,
+"Table directory"). The binary-search fields are computed from the largest
+power of two no greater than the table count. -/
+public def assembleSfnt (version : Nat) (tables : Array (Nat × Nat × ByteArray)) : ByteArray := Id.run do
+  let n := tables.size
+  let mut pow := 1
+  let mut log := 0
+  for _ in [0:16] do
+    if pow * 2 ≤ n then
+      pow := pow * 2
+      log := log + 1
+  let mut out := pushU32 ByteArray.empty version
+  out := pushU16 (pushU16 (pushU16 (pushU16 out n) (pow * 16)) log) (n * 16 - pow * 16)
+  let mut next := 12 + 16 * n
+  for (tag, sum, bytes) in tables do
+    out := pushU32 (pushU32 (pushU32 (pushU32 out tag) sum) next) bytes.size
+    next := pad4 (next + bytes.size)
+  for (_, _, bytes) in tables do
+    out := out ++ bytes
+    for _ in [0:pad4 bytes.size - bytes.size] do
+      out := out.push 0
+  return out
+
+/-- Face `index` of a font collection as the standalone font file a reader
+of one face expects (`assembleSfnt`): the face's own table directory, each
+table it names copied out of the collection — a table two faces share is
+copied into each — and the tables' bytes and checksums the collection's own.
+An error names what is malformed: bytes that are no collection, an index
+past its count, a directory or a table past the end of the bytes. Total
+over arbitrary bytes: every read is bounded. -/
+public def collectionMember (data : ByteArray) (index : Nat) : Except String ByteArray := do
+  let some count := collectionCount data | throw "not a font collection"
+  unless index < count do
+    throw s!"the collection holds {count} faces, so it has no face {index}"
+  let base := u32 data (12 + 4 * index)
+  let numTables := u16 data (base + 4)
+  unless 0 < numTables && numTables ≤ 512 && base + 12 + 16 * numTables ≤ data.size do
+    throw s!"face {index} of the collection has no readable table directory"
+  let mut tables : Array (Nat × Nat × ByteArray) := #[]
+  for k in [0:numTables] do
+    let entry := base + 12 + 16 * k
+    let offset := u32 data (entry + 8)
+    let length := u32 data (entry + 12)
+    unless offset + length ≤ data.size do
+      throw s!"a table of face {index} of the collection runs past the end of the file"
+    tables := tables.push (u32 data entry, u32 data (entry + 4), data.extract offset (offset + length))
+  return assembleSfnt (u32 data base) tables
+
 /-- The underline band a face declares, normalized to something drawable:
 `(position, thickness)` in font units, the band spanning
 `[position - thickness, position]` relative to the baseline. `post` values

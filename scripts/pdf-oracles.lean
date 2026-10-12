@@ -110,7 +110,7 @@ def fontSetFor (faces : Array FontDb.Face) (doc : Ir.Doc) : IO (Option Font.Font
   let mut index : Array ((Nat × Nat × Bool) × Nat) := #[]
   let famOf (slot : Nat) : String := match slot with
     | 1 => spec.sans.getD family
-    | 2 => spec.mono.getD family
+    | 2 => spec.mono.getD ((FontDb.monoFor faces (some family)).getD family)
     | _ => family
   for slot in [0:3] do
     for (w, i) in [(400, false), (700, false), (400, true), (700, true)] do
@@ -118,7 +118,7 @@ def fontSetFor (faces : Array FontDb.Face) (doc : Ir.Doc) : IO (Option Font.Font
         match paths.findIdx? (· == face.path) with
         | some k => index := index.push ((slot, w, i), k)
         | none =>
-          if let .ok f := Font.parse (← IO.FS.readBinFile face.path) then
+          if let .ok f := (← FontDiscovery.faceBytes face.path) >>= Font.parse then
             index := index.push ((slot, w, i), fonts.size)
             fonts := fonts.push f
             paths := paths.push face.path
@@ -133,7 +133,7 @@ def fontSetFor (faces : Array FontDb.Face) (doc : Ir.Doc) : IO (Option Font.Font
     match paths.findIdx? (· == face.path) with
     | some k => if (fonts[k]!).math.isSome then mathIdx := some k
     | none =>
-      if let .ok f := Font.parse (← IO.FS.readBinFile face.path) then
+      if let .ok f := (← FontDiscovery.faceBytes face.path) >>= Font.parse then
         if f.math.isSome then
           mathIdx := some fonts.size
           fonts := fonts.push f
@@ -153,7 +153,7 @@ def fontSetFor (faces : Array FontDb.Face) (doc : Ir.Doc) : IO (Option Font.Font
     match paths.findIdx? (· == path) with
     | some k => fallback := fallback.push (c, k)
     | none =>
-      if let .ok f := Font.parse (← IO.FS.readBinFile path) then
+      if let .ok f := (← FontDiscovery.faceBytes path) >>= Font.parse then
         fallback := fallback.push (c, fonts.size)
         fonts := fonts.push f
         paths := paths.push path

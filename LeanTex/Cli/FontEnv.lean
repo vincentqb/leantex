@@ -60,16 +60,18 @@ public def Cache.resolveWeight (c : Cache) (faces : Array FontDb.Face) (family :
   return answer
 
 /-- The face files this cache read, parsed or refused, by the paths they
-were read at. -/
+were read at: a collection face's, its collection's. -/
 public def Cache.readPaths (c : Cache) : IO (Array String) := c.read.get
 
-/-- Parse a face, or hand back the parse already made for that path. -/
+/-- Parse a face, or hand back the parse already made for that path. A
+collection face is parsed from its own bytes, copied out of the collection
+(`FontDiscovery.faceBytes`). -/
 public def Cache.parse (c : Cache) (path : String) : IO (Except String Font.Font) := do
   if let some f := (← c.ref.get).find? (·.1 == path) then
     return .ok f.2
-  unless (← c.read.get).contains path do c.read.modify (·.push path)
-  let data ← IO.FS.readBinFile path
-  match Font.parse data with
+  let file := FontDb.faceFile path
+  unless (← c.read.get).contains file do c.read.modify (·.push file)
+  match (← FontDiscovery.faceBytes path) >>= Font.parse with
   | .error e => return .error e
   | .ok f =>
     c.ref.modify (·.push (path, f))
@@ -82,7 +84,7 @@ private def parseFace (cache : Option Cache) (path : String) :
     IO (Except String Font.Font) := do
   match cache with
   | some c => c.parse path
-  | none => return Font.parse (← IO.FS.readBinFile path)
+  | none => return (← FontDiscovery.faceBytes path) >>= Font.parse
 
 /-- `LEANTEX_FONT` (a path) overrides the default face for a document that
 declares no `\fonts`: one face serves every slot and variant, no scan.

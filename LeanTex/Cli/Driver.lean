@@ -1249,11 +1249,7 @@ public def main (argv : List String) : IO UInt32 := do
       -- threshold, so it is reported here and never gates anything.
       let faces ← FontDiscovery.scan (cfg.fontDirs.toList ++ (← texFontDirs))
       let load (path : String) : IO (Option Font.Font) := do
-        try
-          match Font.parse (← IO.FS.readBinFile path) with
-          | .ok f => pure (some f)
-          | .error _ => pure none
-        catch _ => pure none
+        return ((← FontDiscovery.faceBytes path) >>= Font.parse).toOption
       for fam in FontDb.families faces do
         IO.println fam
         if let some (row, cFace) := FontDb.pickCompanion faces fam then

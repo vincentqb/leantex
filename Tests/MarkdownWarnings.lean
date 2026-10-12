@@ -6,7 +6,7 @@ public import LeanTex.Cli.SlotLoss
 
 public section
 
-open LeanTex.Core LeanTex.Cli LeanTex.Cli.FontAssembly
+open LeanTex.Core LeanTex.Cli LeanTex.Cli.FontAssembly FontScan
 
 /-! **A markdown document sets its code in a typewriter face and names each
 loss once.**
@@ -24,19 +24,6 @@ invented. -/
 
 namespace Tests.MarkdownWarnings
 
-/-- A scan record for the pick: a family, a corner and its pitch, nothing
-read from a file. -/
-def face (family : String) (fixed : Bool) (bold italic : Bool := false)
-    (path : String := family ++ ".otf") : FontDb.Face :=
-  { path, family, subfamily := "Regular", bold, italic, fixedPitch := fixed
-    weight := if bold then 700 else 400 }
-
-/-- A family's four corners, all from one file. -/
-def family4 (family path : String) (fixed : Bool) : Array FontDb.Face :=
-  #[face family fixed (path := path), face family fixed (bold := true) (path := path),
-    face family fixed (italic := true) (path := path),
-    face family fixed (bold := true) (italic := true) (path := path)]
-
 /-- The suite's faces under the default families' names: Open Sans's four
 files as the default text family, Source Code Pro as its designed
 typewriter companion. -/
@@ -48,17 +35,13 @@ def relabeled : Array FontDb.Face :=
       (path := testFonts ++ "/OpenSans-BoldItalic.ttf")] ++
   family4 "DejaVu Sans Mono" (testFonts ++ "/SourceCodePro-Regular.otf") true
 
-/-- The face index a shipped run holding `needle` sets in, if one does. -/
-def runFace (out : Layout.Out) (needle : String) : Option Nat :=
-  (bodyLines out).findSome? fun l =>
-    (lineRuns l).findSome? fun (f, s, _, _) => if hasStr s needle then some f else none
-
-/-- **The markdown typewriter default, and its premise two builds apart.**
+/-- **The typewriter companion default, and its premise two builds apart.**
 The default is a decision over sourced rows, never a guess; it fills the
-slot only where the scan serves the companion whole and fixed-pitch; a tex
-document is untouched; and with the companion and without it, one
-markdown document ships its code in different faces while only the second
-names W0390 — the default moves ink, it does not silence a loss. -/
+slot only where the scan serves the companion whole and fixed-pitch, on
+either surface; and with the companion and without it, one markdown
+document ships its code in different faces while only the second names
+W0390 — the default moves ink, it does not silence a loss. The platform
+list's checks are `Tests.MonoDefault`'s. -/
 def markdownMonoChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
   let pick := FontDb.monoCompanion
@@ -103,14 +86,15 @@ def markdownMonoChecks (ref : IO.Ref (List String)) : IO Unit := do
         && (fsA.get (fsA.lookup 2 400 false)).isFixedPitch
         && !(fsB.get (fsB.lookup 0 400 false)).isFixedPitch)
   | _, _ => t "markdown fonts: both assemblies succeed" false
-  -- A tex document declares its own faces: the same scan leaves its
-  -- undeclared typewriter slot to the body family, and the loss is named.
+  -- A tex document that declares no typewriter face takes the same
+  -- default: the same scan serves its undeclared slot with the companion,
+  -- and there is no loss to name.
   let (texDoc, _) := elabStr (dvDoc "" "Words with \\texttt{inline code} beside them.")
   match ← assemble texDoc withMono with
   | .ok (fs, resolved, _, _) =>
-    t "a tex document's undeclared typewriter slot keeps the body family"
-      (fs.slotCollapsed 2 && (SlotLoss.diags resolved.fonts fs resolved
-        (SlotLoss.carries #[.pdf] resolved.fontPolicy)).any (·.kind == .W0390))
+    t "a tex document's undeclared typewriter slot takes the companion as a markdown one does"
+      (fs.slotIsFixedPitch 2 && !fs.slotCollapsed 2 && (SlotLoss.diags resolved.fonts fs resolved
+        (SlotLoss.carries #[.pdf] resolved.fontPolicy)).isEmpty)
   | .error d => t s!"tex fonts: the assembly succeeds ({d.message})" false
 
 /-- The default log and the line ends of code. -/

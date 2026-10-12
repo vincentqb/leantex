@@ -11,10 +11,10 @@ The engine resolves three family slots — body, sans, mono. A slot the
 document declares no family for is filled by the body family
 (`resolveName` in the driver's assembly), so a `\texttt`, `\url` or
 verbatim run in a document with no `\fonts{ mono = ... }` sets in body
-prose. The one exception cannot reach this report: a markdown document,
-which can declare nothing, takes its text family's designed typewriter
-companion where the scan serves it at every corner in fixed pitch
-(`FontDb.monoCompanion_contract`), and a fixed-pitch slot is no loss — so
+prose — unless the scan serves a typewriter family first: an undeclared
+typewriter slot, on either surface, takes the text family's designed
+companion or the first platform monospace served at every corner in fixed
+pitch (`FontDb.monoFor_contract`), and a fixed-pitch slot is no loss — so
 every slot this module reports was served by the body family. This module
 is the decision; the diagnostic is `DriverDiag.slotCollapsed` (W0390).
 

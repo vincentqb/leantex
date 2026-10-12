@@ -29,8 +29,8 @@ open LeanTex.Core LeanTex.Core.FontDb
 public def searchDirs : List String :=
   ["/usr/share/fonts", "/usr/local/share/fonts", "/usr/share/texmf-dist/fonts/opentype",
    "/usr/share/texmf-dist/fonts/truetype",
-   -- macOS. System faces are mostly .ttc collections, which the scan skips
-   -- (see hasFontExtension); Supplemental and /Library hold plain .ttf/.otf.
+   -- macOS: its system faces are mostly collections, read face by face
+   -- (`memberImage`).
    "/System/Library/Fonts", "/System/Library/Fonts/Supplemental", "/Library/Fonts",
    "/opt/homebrew/share/fonts"]
 
@@ -101,13 +101,118 @@ public def tableImage (path : String) (want : String → Bool) : IO (Option Byte
   catch _ =>
     return none
 
+/-- Read `n` bytes forward from the handle's position and drop them, a
+mebibyte at a time: a handle has no seek, and one read of the whole gap
+would hold all of it. -/
+private def skipBytes (h : IO.FS.Handle) (n : Nat) : IO Unit := do
+  let chunk := 1024 * 1024
+  let mut left := n
+  for _ in [0:n / chunk + 1] do
+    if left == 0 then break
+    let got ← h.read (min left chunk).toUSize
+    if got.isEmpty then break
+    left := left - got.size
+
+/-- The bytes `[off, off + len)` of the file `h` reads, its position `pos`:
+forward from there when the range starts at or past it, else from the start
+again. With the position after what was read. -/
+private def readAt (h : IO.FS.Handle) (pos off len : Nat) : IO (ByteArray × Nat) := do
+  let pos ← if off < pos then do h.rewind; pure 0 else pure pos
+  skipBytes h (off - pos)
+  let got ← h.read len.toUSize
+  return (got, off + got.size)
+
+/-- `tableImage` for face `index` of a font collection: the tables `want`
+names, copied out of the collection into a standalone image with a
+directory of its own (`Font.assembleSfnt`, the shape `Font.collectionMember`
+gives a whole face), reading only the collection's header, the face's
+directory and those tables. `none` for bytes that are no collection, an
+index past its count, a short read, no wanted table, or wanted tables past
+eight mebibytes in all. -/
+public def memberImage (file : String) (index : Nat) (want : String → Bool) :
+    IO (Option ByteArray) := do
+  try
+    let h ← IO.FS.Handle.mk file .read
+    let header ← h.read 12
+    if header.size < 12 || Ink.u32 header 0 != 0x74746366 then return none
+    let count := Ink.u32 header 8
+    if index ≥ count || count > 4096 then return none
+    let (offs, pos) ← readAt h 12 (12 + 4 * index) 4
+    if offs.size < 4 then return none
+    let base := Ink.u32 offs 0
+    let (dirHead, pos) ← readAt h pos base 12
+    if dirHead.size < 12 then return none
+    let numTables := Ink.u16 dirHead 4
+    if numTables == 0 || numTables > 512 then return none
+    let (dir, pos) ← readAt h pos (base + 12) (16 * numTables)
+    if dir.size < 16 * numTables then return none
+    let mut wanted : Array (Nat × Nat × Nat × Nat) := #[]
+    for k in [0:numTables] do
+      let e := 16 * k
+      let tag := String.ofList ((dir.extract e (e + 4)).toList.map fun c => Char.ofNat c.toNat)
+      if want tag then
+        wanted := wanted.push (Ink.u32 dir e, Ink.u32 dir (e + 4), Ink.u32 dir (e + 8),
+          Ink.u32 dir (e + 12))
+    if wanted.isEmpty || wanted.foldl (fun acc t => acc + t.2.2.2) 0 > 8 * 1024 * 1024 then
+      return none
+    let mut pos := pos
+    let mut tables : Array (Nat × Nat × ByteArray) := #[]
+    for (tag, sum, off, len) in wanted.qsort (fun a b => a.2.2.1 < b.2.2.1) do
+      let (bytes, after) ← readAt h pos off len
+      if bytes.size < len then return none
+      pos := after
+      tables := tables.push (tag, sum, bytes)
+    return some (Font.assembleSfnt (Ink.u32 dirHead 0) tables)
+  catch _ =>
+    return none
+
+/-- The faces of every font file under `files`, in order: a standalone
+file is its own face's path, and a collection is each of its faces'
+(`FontDb.memberPath`), as many as its header counts. A collection whose
+header cannot be read holds none. -/
+private def facePaths (files : Array String) : IO (Array String) := do
+  let mut out : Array String := #[]
+  for f in files do
+    if isCollectionFile f then
+      let header ← try
+          let h ← IO.FS.Handle.mk f .read
+          h.read 12
+        catch _ => pure ByteArray.empty
+      if header.size == 12 && Ink.u32 header 0 == 0x74746366 then
+        for i in [0:min (Ink.u32 header 8) 4096] do
+          out := out.push (memberPath f i)
+    else
+      out := out.push f
+  return out
+
+/-- A face's `tableImage`, whichever file holds it: a collection face's
+from its collection (`memberImage`), any other face's from its own file. -/
+public def faceImage (path : String) (want : String → Bool) : IO (Option ByteArray) := do
+  match splitMember path with
+  | some (file, index) => memberImage file index want
+  | none => tableImage path want
+
+/-- The bytes of a face's own font file: a collection face copied out of its
+collection as the standalone file `Font.parse` reads
+(`Font.collectionMember`), any other face's file as it stands. -/
+public def faceBytes (path : String) : IO (Except String ByteArray) := do
+  match splitMember path with
+  | some (file, index) =>
+    match ← (IO.FS.readBinFile file).toBaseIO with
+    | .ok data => return Font.collectionMember data index
+    | .error e => return .error (toString e)
+  | none =>
+    match ← (IO.FS.readBinFile path).toBaseIO with
+    | .ok data => return .ok data
+    | .error e => return .error (toString e)
+
 /-- Read just enough of a font file to classify it: the table directory, then
 the `name`, `OS/2`, `head`, and `post` tables. Full files are large (a
 megabyte each is common) and a scan touches every installed face — `hmtx`
 and `cmap` are what make that expensive, and classification needs neither,
 so `probe` calls `classify` rather than `parse`. -/
 public def probe (path : String) : IO (Option Face) := do
-  let some image ← tableImage path
+  let some image ← faceImage path
     (fun tag => tag == "name" || tag == "OS/2" || tag == "head" || tag == "post")
     | return none
   match Font.classify image with
@@ -175,7 +280,7 @@ private def parseLine (line : String) : Option (String × Option Face) :=
 
 private def fileKey (path : String) : IO (Option (String × String)) := do
   try
-    let md ← (System.FilePath.mk path).metadata
+    let md ← (System.FilePath.mk (faceFile path)).metadata
     return some (toString md.byteSize, s!"{md.modified.sec}.{md.modified.nsec}")
   catch _ => return none
 
@@ -200,9 +305,11 @@ filter, so the filter's extensions are in the file's name
 files, and the unnamed `fontdb-dirs.tsv` every earlier walk wrote is never
 read. -/
 
-/-- The listing cache's file name, which carries `FontDb.fontExtensions`. -/
+/-- The listing cache's file name, which carries the extensions the walk
+keeps, `FontDb.fontExtensions` and `FontDb.collectionExtensions`: a listing
+an earlier walk wrote, which skipped collections, is never read. -/
 public def listingCacheName : String :=
-  s!"fontdb-dirs-{"-".intercalate FontDb.fontExtensions}.tsv"
+  s!"fontdb-dirs-{"-".intercalate (FontDb.fontExtensions ++ FontDb.collectionExtensions)}.tsv"
 
 /-- One line per directory: path, mtime, then each entry in sorted order
 prefixed `F` (a font file) or `D` (a subdirectory). Entries the walk skips
@@ -257,7 +364,7 @@ private def walkCached (known : Std.HashMap String (String × Array (Bool × Str
             fun a b => a.fileName < b.fileName
           let mut es : Array (Bool × String) := #[]
           for e in raw do
-            if hasFontExtension e.fileName then
+            if hasFontExtension e.fileName || isCollectionFile e.fileName then
               es := es.push (true, e.fileName)
             else if ← e.path.isDir then
               es := es.push (false, e.fileName)
@@ -319,6 +426,8 @@ public def scanRootsIn (cache : Option System.FilePath) (roots : List String) :
         IO.FS.writeFile df (String.intercalate "\n"
           (merged.toList.map fun (k, m, es) => dirLine k m es) ++ "\n")
       catch _ => pure ()
+  -- A collection is the faces it holds, each probed and cached on its own.
+  files ← facePaths files
   -- What the cache remembers, keyed by path + size + mtime, in the file
   -- this classifier's version names.
   let cacheFile := cache.map (· / probeCacheName)
@@ -401,7 +510,7 @@ This probes metadata only; the caller must parse the selected file and check
 its math data before using it. `none` also covers unreadable candidates. -/
 public def firstMathFace (faces : Array Face) : IO (Option Face) := do
   for f in faces.qsort faceLt do
-    if (← tableImage f.path (· == "MATH")).isSome then
+    if (← faceImage f.path (· == "MATH")).isSome then
       return some f
   return none
 
@@ -431,7 +540,7 @@ public def fallbackPicks (faces : Array Face) (needed : Array Char) :
   for f in sorted do
     if remaining.isEmpty then
       break
-    let some image ← tableImage f.path (· == "cmap") | continue
+    let some image ← faceImage f.path (· == "cmap") | continue
     let ranges := Font.cmapRanges image
     if ranges.isEmpty then
       continue

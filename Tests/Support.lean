@@ -2603,3 +2603,25 @@ def under {α : Type} (path : String) (cwd : Except Failure String) (p : Prog α
   p.runM (hybrid (some path) cwd)
 
 end Tests.World
+
+namespace FontScan
+
+/-- A scan record: a family, a corner and its pitch, at a path, nothing
+read from a file — the face the scan would have recorded there. -/
+def face (family : String) (fixed : Bool) (bold italic : Bool := false)
+    (path : String := family ++ ".otf") : FontDb.Face :=
+  { path, family, subfamily := "Regular", bold, italic, fixedPitch := fixed
+    weight := if bold then 700 else 400 }
+
+/-- A family's four corners, all at one path. -/
+def family4 (family path : String) (fixed : Bool) : Array FontDb.Face :=
+  #[face family fixed (path := path), face family fixed (bold := true) (path := path),
+    face family fixed (italic := true) (path := path),
+    face family fixed (bold := true) (italic := true) (path := path)]
+
+/-- The face index a shipped run holding `needle` sets in, if one does. -/
+def runFace (out : Layout.Out) (needle : String) : Option Nat :=
+  (bodyLines out).findSome? fun l =>
+    (lineRuns l).findSome? fun (f, s, _, _) => if hasStr s needle then some f else none
+
+end FontScan

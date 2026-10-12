@@ -112,6 +112,7 @@ import Tests.MarkdownHeadings
 import Tests.MarkdownTables
 import Tests.MarkdownPage
 import Tests.MarkdownWarnings
+import Tests.MonoDefault
 import Tests.MarkdownCode
 import Tests.MarkdownInput
 import Tests.MarkdownDoors
@@ -317,6 +318,8 @@ def backendSuiteChecks (ref : IO.Ref (List String)) : IO Unit := do
   Tests.MarkdownPage.markdownPageChecks ref
   Tests.MarkdownWarnings.markdownWarningChecks ref
   Tests.MarkdownWarnings.markdownMonoChecks ref
+  Tests.MonoDefault.monoDefaultChecks ref
+  Tests.MonoDefault.fontCollectionChecks ref
   Tests.MarkdownCode.markdownCodeChecks ref
   algorithmBackendChecks ref
   listingLanguageChecks ref

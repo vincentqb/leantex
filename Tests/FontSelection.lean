@@ -26,6 +26,15 @@ def demi : FontDb.Face :=
 #guard (FontDb.resolveWeight #[] "Absent" none 500 false).isNone
 #guard FontDb.hasFontExtension "EXAMPLE.OTF"
 #guard !FontDb.hasFontExtension "collection.ttc"
+#guard FontDb.isCollectionFile "Collection.TTC" && FontDb.isCollectionFile "c.otc"
+#guard !FontDb.isCollectionFile "face.ttf"
+#guard FontDb.splitMember (FontDb.memberPath "/f/Example.ttc" 3) == some ("/f/Example.ttc", 3)
+#guard FontDb.splitMember (FontDb.memberPath "/f/a#b.ttc" 12) == some ("/f/a#b.ttc", 12)
+#guard FontDb.splitMember "/f/Example.ttf" == none
+#guard FontDb.splitMember "/f/Example.ttf#2" == none
+#guard FontDb.splitMember "/f/Example.ttc#" == none
+#guard FontDb.faceFile (FontDb.memberPath "/f/Example.ttc" 0) == "/f/Example.ttc"
+#guard FontDb.faceFile "/f/Example.otf" == "/f/Example.otf"
 
 example (faces : Array FontDb.Face) (weight : Nat) (h : 0 < faces.size) :
     (FontDb.pickWeighted faces weight).isSome :=
