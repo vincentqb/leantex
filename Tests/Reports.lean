@@ -1470,10 +1470,11 @@ def reports : List Report := [
     what := "a markdown report's HTML build printed a warning carrying every one of its several hundred disclosures, that their collapse was not carried, where the page could ship each as the platform's own element: a disclosure shipped as a bold line and its body in every artifact"
     pins := [check% disclosurePrintChecks, check% htmlTwinChecks, check% markdownHtmlChecks,
       check% refusedDisclosureChecks, check% Tests.MarkdownTwin.markdownTwinChecks,
-      check% htmlA11yChecks, thm% Ir.disclosureSummary_text,
-      thm% LeanTex.Core.Md.desugar_vocabulary_mem]
+      check% htmlA11yChecks, check% Tests.LineRhythm.disclosureGapChecks,
+      thm% Ir.disclosureSummary_text, thm% LeanTex.Core.Md.desugar_vocabulary_mem]
     accept := ["thirty-five of the guards' assertions fail with the fix reverted, the engine at the base of the recorded commit and its tests kept: eight print and inclusion assertions, where the page shipped no element, the twin wrote none and the HTML and twin builds named a lost collapse; twelve of the HTML vocabulary's, where a disclosure shipped as a bold paragraph and a summary with no text was read; six twin rows, where the open and the closed spelling shipped one page and named their collapse; three refused-summary assertions; and six twin round trips",
-      "a long markdown report of several hundred disclosures builds its HTML with no warning where one warning carried every disclosure, each the browser's own element, closed as written, opening and closing on its summary and printing expanded; its PDF keeps its pages and its diagnostics"]
+      "a long markdown report of several hundred disclosures builds its HTML with no warning where one warning carried every disclosure, each the browser's own element, closed as written, opening and closing on its summary and printing expanded; its PDF keeps its pages and its diagnostics",
+      "the review's guards: with the disclosure not read through at its foot, four gap assertions fail, the block after a disclosure ending on a list or a quotation standing a peer gap where it stands the list's space outside one; a disclosure in a list item names its loose list as CommonMark reads it, and a summary of characters drawn as nothing is refused and named unnamed"]
     state := .guarded "04a2ea83" .revert .author }
 ]
 

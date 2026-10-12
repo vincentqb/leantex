@@ -423,8 +423,9 @@ def twinEdgeChecks (ref : IO.Ref (List String)) : IO Unit := do
 /-- A disclosure's twin is the element its reader reads back: `open` where it
 is expanded, its summary's ampersand and angle bracket written as the
 references the reader decodes, its body and nesting kept, in a document, a
-quotation and a list item — where no blank line stands before its closing
-tag, which would make the list loose. -/
+quotation and a list item. In a list item the blank line after its summary,
+which ends the summary's HTML block, makes the list loose as CommonMark
+reads it: the source and its twin each name that once. -/
 def twinDisclosureChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
   let inner := "\n<summary>Q&amp;A &lt;now></summary>\n\nAlder.\n\n- Birch\n\n\
@@ -436,12 +437,20 @@ def twinDisclosureChecks (ref : IO.Ref (List String)) : IO Unit := do
       (ds0.isEmpty && back.body == doc.body && ds.isEmpty && MarkdownDoc.emit back == tw)
     t s!"twin: a {label} disclosure keeps its tag and its summary's references ({repr tw})"
       (tw.startsWith (opener ++ "\n<summary>Q&amp;A &lt;now></summary>\n"))
-  for src in ["> <details>\n> <summary>Elm</summary>\n>\n> Fir.\n> </details>\n",
-      "- <details>\n  <summary>Elm</summary>\n\n  Fir.\n  </details>\n- Gorse\n"] do
+  -- A line break a summary's references spell is written back as one.
+  let (brDoc, _) := elabMd "<details>\n<summary>Alder&#10;Birch</summary>\n\nCedar.\n\n</details>\n"
+  let (brTw, brBack, _) := roundTrip brDoc
+  t s!"twin: a summary's line break reads back as written ({repr brTw})"
+    (brBack.body == brDoc.body && hasStr brTw "<summary>Alder&#10;Birch</summary>")
+  for (src, loose) in [("> <details>\n> <summary>Elm</summary>\n>\n> Fir.\n> </details>\n", false),
+      ("- <details>\n  <summary>Elm</summary>\n\n  Fir.\n  </details>\n- Gorse\n", true)] do
     let (doc, ds0) := elabMd src
     let (tw, back, ds) := roundTrip doc
-    t s!"twin: a disclosure in a container reads back to itself, nothing named ({repr tw})"
-      (ds0.isEmpty && back.body == doc.body && ds.isEmpty)
+    let named (xs : Array Diag) : Bool :=
+      if loose then xs.size == 1 && xs.all (·.subject == some "md:loose-list") else xs.isEmpty
+    t s!"twin: a disclosure in a container reads back to itself, a list it makes loose named \
+({repr tw}: {ds0.map (·.subject)} then {ds.map (·.subject)})"
+      (named ds0 && back.body == doc.body && named ds)
 
 def markdownTwinChecks (ref : IO.Ref (List String)) : IO Unit := do
   twinDisclosureChecks ref

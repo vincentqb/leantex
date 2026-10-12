@@ -1,6 +1,7 @@
 module
 
 public import LeanTex.Core.Html
+public import LeanTex.Core.Blank
 public import LeanTex.Core.HtmlResource
 public import LeanTex.Core.MathMl
 public import LeanTex.Core.Ir
@@ -1697,6 +1698,17 @@ private def isAltPair : Node → Bool
 
 private def isCarrierNode (n : Node) : Bool := isLinkCarrier n || isAltPair n
 
+/-- A disclosure's element, read through upward only: the block its body
+ends on owns the space below it, as on paper, where the disclosure sets
+flat; its top is its own, the summary's boundary the disclosure's
+(`blockGapKinds`). -/
+private def isDisclosureNode : Node → Bool
+  | .elem "details" _ _ => true
+  | .elem .. | .text _ | .style _ | .script _ _ => false
+
+/-- A carrier a boundary reads up through: a carrier, or a disclosure. -/
+private def isUpCarrierNode (n : Node) : Bool := isCarrierNode n || isDisclosureNode n
+
 /-- An element the page hides with no snap state: an alternation's other
 group, a speaker note. -/
 private def hiddenNode : Node → Bool
@@ -1796,7 +1808,7 @@ private def lastDepths (acc : List Nat) : List Node → List Nat
   | [] => acc
   | x :: rest =>
     match x with
-    | .elem .. => lastDepths (if isCarrierNode x then (upDepths x).map (· + 1) else [1]) rest
+    | .elem .. => lastDepths (if isUpCarrierNode x then (upDepths x).map (· + 1) else [1]) rest
     | .text _ => lastDepths acc rest
     | .style _ | .script _ _ => lastDepths [1] rest
 
@@ -1824,7 +1836,7 @@ chain onto a slide's furniture: the spacer meets the flow's last block
 through the frame's marks, one member per boundary whatever depth the
 carriers nest to, and the rest states its own gap. -/
 private def pairDepths (p y : Node) : List (Nat × Nat) :=
-  let js := 0 :: (if isCarrierNode p && !frameFurniture y then upDepths p else [])
+  let js := 0 :: (if isUpCarrierNode p && !frameFurniture y then upDepths p else [])
   let ks := 0 :: (if isCarrierNode y then downDepths y else [])
   js.flatMap fun j => ks.filterMap fun k => if j == 0 && k == 0 then none else some (j, k)
 
@@ -1876,10 +1888,14 @@ private def carrierFirstLink : String :=
 
 /-- `carrierFirstLink` down a chain of last children: either group of an
 alternation whose groups end alike, and of one ending apart the group the
-page shows with no snap state. -/
+page shows with no snap state, and a disclosure (`isDisclosureNode`). -/
 private def carrierLastLink : String :=
   ":is(div:is(.step, .step-set, .step-end, .alt-pair, [data-backend]):last-child, " ++
-    ".alt-alike > div.alt, div.alt:not([hidden]))"
+    "details:last-child, .alt-alike > div.alt, div.alt:not([hidden]))"
+
+/-- The carriers a boundary reads up from: `carrierTop` and a disclosure. -/
+private def carrierTopUp : String :=
+  ":is(div:is(.step, .step-set, .alt-pair, [data-backend]), details)"
 
 /-- `sel`'s parts at the separators `sep` no parenthesis encloses. -/
 private def splitTop (sep : Char) (sel : String) : List String := Id.run do
@@ -1930,7 +1946,7 @@ private def throughMembers (pairs : List (Nat × Nat)) (m : String) : List Strin
         String.join (List.replicate (k - 1) (" > " ++ carrierFirstLink)) ++
         " > " ++ y ++ ":first-child"
     let up (j : Nat) : String :=
-      carrierTop ++ ":has(> " ++
+      carrierTopUp ++ ":has(> " ++
         String.join (List.replicate (j - 1) (carrierLastLink ++ " > ")) ++ x ++ ":last-child)"
     let upOk := !(x == "*" || (x.splitOn ":has(").length > 1)
     -- a carrier opening on a skip's box already stands where the box would
@@ -5803,7 +5819,8 @@ public def deckScript : String :=
     if (e.ctrlKey || e.altKey || e.metaKey || e.defaultPrevented) return;
     const t = e.target;
     if (t instanceof Element &&
-        (t.isContentEditable || /^(input|textarea|select|button)$/i.test(t.tagName))) return;
+        (t.isContentEditable || t.tagName === \"SUMMARY\" ||
+          /^(input|textarea|select|button)$/i.test(t.tagName))) return;
     let i = null;
     if (e.key === \"Home\") i = 0;
     else if (e.key === \"End\") {
@@ -5920,7 +5937,8 @@ public theorem deck_script_constant : deckScript =
     if (e.ctrlKey || e.altKey || e.metaKey || e.defaultPrevented) return;
     const t = e.target;
     if (t instanceof Element &&
-        (t.isContentEditable || /^(input|textarea|select|button)$/i.test(t.tagName))) return;
+        (t.isContentEditable || t.tagName === \"SUMMARY\" ||
+          /^(input|textarea|select|button)$/i.test(t.tagName))) return;
     let i = null;
     if (e.key === \"Home\") i = 0;
     else if (e.key === \"End\") {
@@ -6840,11 +6858,13 @@ public theorem overlay_alternation_agree (spec : Ir.OverlaySpec) (steps k : Nat)
   · apply Bool.eq_iff_iff.mpr
     simp [overlayFirstAt, h, Ir.OverlaySpec.pageSteps_mem, hk, hsteps]
 
-/-- Does a string carry anything to read: a character that is not white
-space. The one blankness test for an accessible name, here and in the
-judge (`carriesName`): accname 1.2 does not take a name that is empty once
-trimmed of white space. -/
-public def nonBlank (s : String) : Bool := s.toList.any (!·.isWhitespace)
+/-- Does a string carry anything to read: a character that shows something
+(`holdsText`, the markdown reader's test of a summary too). The one
+blankness test for an accessible name, here and in the judge
+(`carriesName`): accname 1.2 does not take a name that is empty once
+trimmed of white space, and a name of invisible characters is empty to a
+reader. -/
+@[expose] public def nonBlank (s : String) : Bool := holdsText s
 
 /-- The first of two strings that carries anything to read. -/
 public def firstNonBlank (a b : String) : String := if nonBlank a then a else b

@@ -942,12 +942,14 @@ private def paraText (first ind text : String) : String :=
     ls.foldl (fun acc x => acc ++ "\n" ++ ind ++ escapeLineStart x) (first ++ escapeLineStart l)
 
 /-- A disclosure's summary as its line in the twin: its text on one line,
-`&` and `<` written as the references its reader reads back. -/
+`&`, `<` and a line break written as the references its reader reads
+back. -/
 private def summaryHtml (head : Array Inline) : String :=
   (plainText head).foldl (fun acc c => match c with
     | '&' => acc ++ "&amp;"
     | '<' => acc ++ "&lt;"
-    | '\n' | '\r' => acc.push ' '
+    | '\n' => acc ++ "&#10;"
+    | '\r' => acc ++ "&#13;"
     | c => acc.push c) ""
 
 /-- Two blank lines in a row: what the tightening folds into one. -/

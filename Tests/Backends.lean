@@ -1456,6 +1456,10 @@ def deckCssChecks (ref : IO.Ref (List String)) : IO Unit := do
      has deckPage "document.documentElement.dataset.deckScript" &&
      has deckPage "document.querySelectorAll(\"[data-snap]\")" &&
      has deckPage "scrollIntoView" && !has deckPage "/* removed */")
+  -- A key the page's own controls take is theirs: a focused field, button
+  -- or disclosure's summary, which Space and Enter toggle, never pages.
+  t "the deck's keys leave a focused summary to toggle its disclosure"
+    ((HtmlDoc.deckScript.splitOn "t.tagName === \"SUMMARY\"").length == 2)
   t "the deck keeps the safe area"
     (has deckPage "padding: var(--safearea, 6vmin); position: relative; }")
   -- A title's background must contain all of its lines. An arbitrary

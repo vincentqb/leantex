@@ -320,7 +320,9 @@ const checks = {
   },
   // A disclosure is the platform's own: on screen a closed one shows its
   // summary alone and an open one its body too, and its summary opens and
-  // closes it. Each is put back as it stood.
+  // closes it. Each is put back as it stood. One the page does not show —
+  // inside a closed disclosure, or a hidden alternative — is judged where
+  // it is shown, never here.
   disclosure: async () => {
     const frame = () => new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));
     const ds = [...document.querySelectorAll('details')];
@@ -328,6 +330,7 @@ const checks = {
     const shown = (d) => body(d).every(c => c.checkVisibility());
     const bad = [];
     for (const d of ds) {
+      if (!d.checkVisibility()) continue;
       const s = d.querySelector(':scope > summary');
       if (!s || !s.checkVisibility()) { bad.push('summary not shown'); continue; }
       const was = d.open;

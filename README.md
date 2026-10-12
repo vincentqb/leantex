@@ -56,7 +56,9 @@ through to any output: a comment on lines of its own shows nothing, `<br>`
 breaks the line as a Markdown hard break does, an empty `<a name="…">` is a
 link target, and a `<details>` block with a plain `<summary>` is a
 disclosure: the HTML page ships the browser's own collapsible element, open
-where the tag says `open`, and the PDF and the printed page set it expanded;
+where the tag says `open`, and the PDF and the printed page set it expanded
+(in a browser that styles a disclosure's content, `::details-content`, as
+current Chromium does; an older one prints a closed disclosure closed);
 any other tag is an error at its position whose help names the Markdown to
 write instead. A Markdown document sets on a wider text block
 than an article, with its code in a monospaced face (see Fonts and themes):

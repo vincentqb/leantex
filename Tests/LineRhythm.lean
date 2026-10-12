@@ -1022,6 +1022,38 @@ private def gapDeck (body : String) : String :=
   "\\documentclass{beamer}\n\\setlength{\\parskip}{6pt}\n\\begin{document}\n" ++
     "\\begin{frame}{Overlay gaps}\n" ++ body ++ "\n\\end{frame}\n\\end{document}"
 
+/-- The margin-top the sheet gives the first element whose text is `text`,
+in the tree `nodes` under `css`. -/
+private def marginTopOfText (nodes : Array Html.Node) (css : String) (text : String) :
+    Option String := Id.run do
+  let t := CTree.of nodes
+  let rules := cssRules css
+  for i in [0:t.els.size] do
+    if (t.el i).text.trimAscii.toString == text then return cascadeMarginTop t rules i
+  return none
+
+/-- **A disclosure is read through at its foot.** On paper a disclosure sets
+flat, so the block after it stands where it would after its body's last
+block: a list, a quotation or a paragraph ending the body gives the next
+block the space it gives outside a disclosure, open or closed, and nested.
+The judge is the sheet's own cascade over the emitted tree. Invented words
+throughout. -/
+def disclosureGapChecks (ref : IO.Ref (List String)) : IO Unit := do
+  let t := check ref
+  let gapAfter (src : String) : Option String :=
+    let (doc, _) := elabMd src
+    let (h, n, _) := HtmlDoc.emitTree {} doc
+    marginTopOfText n (treeCssList "" h.toList) "After."
+  for (label, body) in [("a list", "- Alder\n- Birch\n"), ("a quotation", "> Cedar\n"),
+      ("a paragraph", "Delta.\n")] do
+    let flat := gapAfter s!"Before.\n\n{body}\nAfter.\n"
+    for (opener, how) in [("<details>", "closed"), ("<details open>", "open")] do
+      let one := gapAfter s!"Before.\n\n{opener}\n<summary>Elm</summary>\n\n{body}\n</details>\n\nAfter.\n"
+      let nested := gapAfter (s!"Before.\n\n{opener}\n<summary>Elm</summary>\n\n{opener}\n" ++
+        s!"<summary>Fir</summary>\n\n{body}\n</details>\n\n</details>\n\nAfter.\n")
+      t s!"a disclosure, {how}, ending on {label}, gives the next block its space ({one}, {nested} beside {flat})"
+        (flat.isSome && one == flat && nested == flat)
+
 /-- **An overlay changes no gap between the blocks it carries**: built with
 and without its `\pause`, `\uncover` and closed-range carriers, every flow
 block of the frame takes the same `margin-top` in the cascade — the

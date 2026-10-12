@@ -188,6 +188,14 @@ def htmlA11yChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "html a11y: a summary with no text is unnamed"
     (judged #[] #[] == 1 && judged #[Html.text "  "] #[] == 1
       && judged #[Html.elem "span" #[Html.text "Amber"] #[("hidden", "")]] #[] == 1)
+  -- Characters a renderer draws as nothing name nothing either: the no-break
+  -- and ideographic spaces, the zero-width space and joiners, the line
+  -- separator, the byte order mark, the soft hyphen, a direction mark and a
+  -- control.
+  let invisible := [" ", "　", "​", "‍", " ", "﻿", "­",
+    "‎", ""]
+  t "html a11y: a summary of characters drawn as nothing is unnamed"
+    (invisible.all fun s => judged #[Html.text (s ++ s)] #[] == 1)
   t "html a11y: a summary's text or its own name names it"
     (judged #[Html.elem "strong" #[Html.text "Amber"]] #[] == 0
       && judged #[] #[("aria-label", "Amber")] == 0)

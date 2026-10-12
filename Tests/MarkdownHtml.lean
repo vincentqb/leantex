@@ -464,6 +464,11 @@ def refusedDisclosureChecks (ref : IO.Ref (List String)) : IO Unit := do
       ("an empty summary", "<details>\n<summary></summary>\n\nCedar\n\n</details>\nFir\n",
         ["Cedar", "Fir"], [], (2, 1)),
       ("a summary of spaces", "<details>\n<summary> &#32; </summary>\n\nCedar\n\n</details>\n",
+        ["Cedar"], [], (2, 1)),
+      ("a summary of no-break spaces", "<details>\n<summary>&nbsp;&#160;</summary>\n\nCedar\n\n</details>\n",
+        ["Cedar"], [], (2, 1)),
+      ("a summary of characters drawn as nothing",
+        "<details>\n<summary>&#xFEFF;&#8203;&#x2028;&#x3000;&#xAD;&#x200E;</summary>\n\nCedar\n\n</details>\n",
         ["Cedar"], [], (2, 1))] do
     let (doc, ds) := elabMd src
     let shown := docTreeOf doc

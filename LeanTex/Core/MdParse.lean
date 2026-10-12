@@ -3,6 +3,7 @@ module
 public import LeanTex.Core.Diag
 public import LeanTex.Core.Heading
 import LeanTex.Core.Loop
+import LeanTex.Core.Blank
 import Std.Data.HashMap
 
 /-! # The markdown surface: source → md AST
@@ -1881,7 +1882,7 @@ private def summaryAt (cs : Array Char) (i : Nat) (p : Pos) : Option (Array Inl)
   let next ← bareTagAt cs stop "summary" true
   guard (isBlankFrom cs next)
   let text ← htmlText (sliceStr cs start stop)
-  guard (text.any (!·.isWhitespace))
+  guard (holdsText text)
   return #[.text text { p with col := start + 1 }]
 
 end LeanTex.Core.Md
@@ -2426,8 +2427,12 @@ public def blocks (file : String) (input : String) : Array Blk × Array Diag := 
     let (fs, a) := closeLists frames acc
     frames := fs
     acc := a
-    -- A blank line between two blocks of one item makes its list loose.
-    if sawBlank && !acc.isEmpty then
+    -- A blank line between two blocks of one item makes its list loose. A
+    -- disclosure's opening tags and summary are such a block, an HTML
+    -- block (CommonMark §4.6), though the frame keeps the summary off its
+    -- body: the blank line after it, which ends that block, counts too.
+    let summaryBefore := frames.back?.any fun f => f.kind == .disclosure && f.summary.isSome
+    if sawBlank && (!acc.isEmpty || summaryBefore) then
       for fi in [0:frames.size] do
         let idx := frames.size - 1 - fi
         if let some f := frames[idx]? then
@@ -2480,7 +2485,7 @@ public def blocks (file : String) (input : String) : Array Blk × Array Diag := 
     let htmlStart : Option HtmlEnd :=
       (htmlBlockKind cs j).bind fun (e, interrupts) =>
         if leaf.isPara && !interrupts then Option.none else some e
-    -- premise: disclosurePrintChecks — every spelling of `open` ships the element open and the bare tag ships it closed, the page setting both expanded and the twin writing each back
+    -- premise: htmlTwinChecks — every spelling of `open` ships the element open, the bare tag ships it closed one page apart by `open` alone, and paper sets both alike
     let detailsTag := (tagAt cs j).filter fun t => detailsOpen t && isBlankFrom cs t.stop
     let opensDetails := detailsTag.isSome
     let closesDetails := (bareTagAt cs j "details" true).any (isBlankFrom cs ·)
