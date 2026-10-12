@@ -14078,26 +14078,136 @@ public theorem Design.adapt_between {flip : Bool} {req : Nat} {homePage page gro
       exact ⟨‹_›, Or.inl rfl⟩
     · exact ⟨ContrastSolve.realizeNearest_meets h, ContrastSolve.realize_hue_between h⟩
 
+/-- **A colour no palette names, as a scheme carries it**: itself where the
+scheme ships palettes as declared (`SchemeFrame.home`); elsewhere carried
+at the scheme's text gate on the scheme's page as a declared ink is
+(`Design.carryInk`), else reflected to it where the polarity flips. Both
+artifacts' one reading of a literal in a scheme: the page states it and the
+scheme judge reads it. -/
+public def Design.literalIn (f : SchemeFrame) (c : Color) : Color :=
+  if f.home then c else
+  (Design.carryInk f.flip (Contrast.requiredIn f.scheme (Need.text.atStage f.stage)) f.homePage
+    f.page f.page c).getD (if f.flip then ContrastSolve.reflect f.homePage f.page c else c)
+
+/-- The roles a colour stands on: the page and every role a row names as
+its ground. -/
+public def Role.grounds : List Role :=
+  Role.all.filter fun g => g == .page || Role.all.any (·.row.ground == some g)
+
+/-- **The ground a use stands on, as a scheme ships it**: the palette role it
+is — the one the use census names (`role`), else a ground role of the
+palette in force resolving to it (`Role.grounds`, on the light screen or in
+print) — as the scheme's view of that palette (`view`) resolves it; else
+the colour carried as a declared ground is (`SchemeFrame.ground`), standing
+on the page. -/
+public def Palette.useGround (pal view : Palette) (f : SchemeFrame) (g : Color)
+    (role : Option Role := none) : Color × Role :=
+  match role.orElse fun _ => Role.grounds.find? (fun r => Design.at pal .light r == some g ||
+      Design.at pal .print r == some g) with
+  | some r => ((Design.at view f.scheme r).getD (f.ground g), r)
+  | none => (f.ground g, .page)
+
+/-- **The grounds an ink must read on in a scheme's view**, each with the
+role it is and what reading on it owes there: its row's ground, the
+palette's own page where its row names none, at the row's need; and each
+ground a use of it stands on (`used`, the use census's surfaces), as the
+view `p` carries it (`Palette.useGround`), as text — large-scale where the
+use stands so. An author colour's row names no ground. -/
+public def Palette.inkGrounds (pal : Palette) (f : SchemeFrame)
+    (used : List (ColorRef × List (Color × Bool × Option Role))) (p : Palette) (k : ColorRef) :
+    List (Color × Role × Nat) :=
+  let s := f.scheme
+  let row : List (Color × Role × Nat) := match k with
+    | .role r =>
+      let on := r.row.ground.getD .page
+      [((Design.at p s on).getD ((Design.at p s .page).getD f.page), on,
+        Contrast.requiredIn s (r.row.need.atStage f.stage))]
+    | .color _ => []
+  row ++ (((used.lookup k).getD []).eraseDups.map fun (g, large, role) =>
+    let (g', on) := pal.useGround p f g role
+    (g', on, Contrast.requiredIn s ((if large then Need.largeText else .text).atStage f.stage)))
+
+/-- **One ink carried to a scheme's view on its grounds** (`Palette.inkGrounds`):
+itself where it reads on every one of them without turning the page over,
+else the first carrying to one of them that reads on every one
+(`Design.carryInk`); else the ground it fails on. A colour the scheme
+generated (`fresh`) stands in the scheme's polarity already. -/
+public def Palette.carryOn (pal : Palette) (f : SchemeFrame)
+    (used : List (ColorRef × List (Color × Bool × Option Role))) (p : Palette) (k : ColorRef)
+    (c : Color) (fresh : Bool := false) : Except Role (Option Color) :=
+  let gs := pal.inkGrounds f used p k
+  if gs.isEmpty then .ok none else
+  let passes (x : Color) : Bool := gs.all fun (g, _, req) => req ≤ Contrast.contrastMilli x g
+  let flip := f.flip && !fresh
+  let tries := (if flip then [] else [c]) ++
+    gs.filterMap fun (g, _, req) => Design.carryInk flip req f.homePage f.page g c
+  match tries.find? passes with
+  | some c' => .ok (some c')
+  | none =>
+    let best := tries.headD c
+    .error (((gs.find? fun (g, _, req) => Contrast.contrastMilli best g < req).map (·.2.1)).getD .page)
+
+/-- **An ink a scheme's view carries meets that scheme's gate on every ground
+it is judged on, its hue held, its chroma no more than declared**
+(`_between`): what `Palette.carryOn` returns reads at the gate each of the
+ink's grounds owes (`Palette.inkGrounds` — its row's and each its uses stand
+on), and is the declared colour itself or the 8-bit colour of an Oklab tone
+at its own direction with no more than its chroma (`Design.adapt_between`,
+ground by ground). -/
+public theorem Palette.carryOn_between {pal : Palette} {f : SchemeFrame}
+    {used : List (ColorRef × List (Color × Bool × Option Role))} {p : Palette} {k : ColorRef}
+    {c c' : Color} {fresh : Bool} (h : pal.carryOn f used p k c fresh = .ok (some c')) :
+    (∀ x ∈ pal.inkGrounds f used p k, x.2.2 ≤ Contrast.contrastMilli c' x.1) ∧
+      (c' = c ∨ ∃ o : Oklab.Okl, o.a = (Oklab.labOf c).a ∧ o.b = (Oklab.labOf c).b ∧
+        o.f ≤ Oklab.fracOne ∧ c' = o.toColor) := by
+  unfold Palette.carryOn at h
+  simp only at h
+  split at h
+  · cases h
+  · split at h
+    · rename_i c'' hfind
+      cases h
+      have hp := List.find?_some hfind
+      have hm := List.mem_of_find?_eq_some hfind
+      refine ⟨fun x hx => ?_, ?_⟩
+      · simp only [List.all_eq_true, decide_eq_true_eq] at hp
+        exact hp x hx
+      · simp only [List.mem_append, List.mem_filterMap] at hm
+        rcases hm with hc | ⟨_, _, hcarry⟩
+        · split at hc
+          · simp at hc
+          · left; simpa using hc
+        · exact (Design.adapt_between hcarry).2
+    · cases h
+
 /-- **A palette as a scheme ships it**, with the colours it could not carry.
 A frame that ships palettes as declared (`SchemeFrame.home`) ships it as it
 is. Otherwise a generated role takes its colour in the palette regenerated
 there (`Design.carrySeeds`); a declared ground or decoration — the
 document's page standing for the scheme's — is reflected to the scheme's
-page where the polarity flips; and a declared ink, an author colour read as
-text on the page, is carried at the scheme's gate on its ground as the view
-resolves it (`Design.carryInk`), at the medium's need — an author colour,
-which no role's ground places, only where the polarity flips. Where the reader asks
-more contrast and no tone of an ink's hue reaches the gate on its declared
-ground, that ground moves instead, as far as the gate asks at its own hue
-(`ContrastSolve.realizeNearest`), and every ink on it is judged there again:
-a bar's pale title on a mid-tone band takes a deeper band. -/
-public def Palette.view (pal : Palette) (f : SchemeFrame) : Palette × Array Unrealized :=
+page where the polarity flips; and a declared ink, a role or an author
+colour, is carried at the scheme's gate on its grounds as the view resolves
+them (`Palette.carryOn`, which meets every one, `Palette.carryOn_between`),
+at the medium's need: its row's ground, the palette's own page where its
+row names none, and every ground a use of it stands on (`used`, the use
+census's surfaces, as `Palette.useGround` carries each) — an author colour,
+whose row names no ground, on its uses' alone, and one no use paints stays
+as declared. Where the reader asks more contrast and
+no tone of an ink's hue reaches the gate on a declared ground, that ground
+moves instead, as far as the gate asks at its own hue
+(`ContrastSolve.realizeNearest`), and every ink is judged there again: a
+bar's pale title on a mid-tone band takes a deeper band. -/
+public def Palette.view (pal : Palette) (f : SchemeFrame)
+    (used : List (ColorRef × List (Color × Bool × Option Role)) := []) : Palette × Array Unrealized :=
   if f.home then (pal, #[]) else
   let s := f.scheme
+  let uses (k : ColorRef) : List (Color × Bool × Option Role) := (used.lookup k).getD []
   let carried : Option (Option SeedPalette.SeedState) :=
     pal.seeded.map (Design.carrySeeds · pal.classColors.depth s f.flip)
   let generated (r : Role) (c : Color) : Bool := pal.seeded.any fun st => Design.installed st r == some c
-  let inkLike (k : ColorRef) : Bool := match k with
+  -- An ink: a role whose need pairs it with a ground, an author colour, and
+  -- any colour a use sets text in.
+  let inkLike (k : ColorRef) : Bool := !(uses k).isEmpty || match k with
     | .role r => r.row.need.paired
     | .color _ => true
   -- Grounds and decorations first, so each ink is judged on its ground as
@@ -14114,40 +14224,49 @@ public def Palette.view (pal : Palette) (f : SchemeFrame) : Palette × Array Unr
         else (acc.1.push (k, f.ground c), acc.2)
       | .color _ => (acc.1.push (k, c), acc.2)) (#[], #[])
   let staged : Palette := { pal with entries := grounds.1, seeded := carried.bind id }
-  let inks : Array (ColorRef × Color) × Array Unrealized :=
-    (pal.entries.zip grounds.1).foldl (fun (acc : Array (ColorRef × Color) × Array Unrealized)
-        ((k, c), (_, c0)) =>
-      let need := match k with
-        | .role r => r.row.need
-        | .color _ => .text
-      let on : Role := match k with
-        | .role r => r.row.ground.getD .page
-        | .color _ => .page
-      let isGenerated := match k with
-        | .role r => generated r c
-        | .color _ => false
-      -- An author colour is no role: nothing says which ground it stands
-      -- on, so only a scheme that turns the page over carries it.
-      let author := match k with
-        | .color _ => true
-        | .role _ => false
-      if !inkLike k || isGenerated || (author && !f.flip) then (acc.1.push (k, c0), acc.2) else
-      let ground := (Design.at staged s on).getD f.page
-      let req := Contrast.requiredIn s (need.atStage f.stage)
-      match Design.carryInk f.flip req f.homePage f.page ground c with
-      | some c' => (acc.1.push (k, c'), acc.2)
-      | none => (acc.1.push (k, c0), acc.2.push { name := k, on })) (#[], grounds.2)
-  let out : Palette := { staged with entries := inks.1 }
-  if !s.more || inks.2.isEmpty then (out, inks.2) else
-  -- Where the reader asks more contrast and no tone of an ink's hue reaches
-  -- the gate on its ground, the declared ground moves instead, as far as the
-  -- gate asks at its own hue; each ink on a moved ground is judged there.
   let reqOf (k : ColorRef) : Nat := Contrast.requiredIn s ((match k with
     | .role r => r.row.need
     | .color _ => .text).atStage f.stage)
-  let onOf (k : ColorRef) : Role := match k with
-    | .role r => r.row.ground.getD .page
-    | .color _ => .page
+  -- Each ink on its grounds (`Palette.inkGrounds`), as `Palette.carryOn`
+  -- carries it.
+  let groundsOf (p : Palette) (k : ColorRef) : List (Color × Role × Nat) := pal.inkGrounds f used p k
+  let carryOn (p : Palette) (k : ColorRef) (c : Color) (fresh : Bool := false) :
+      Except Role (Option Color) := pal.carryOn f used p k c fresh
+  let inks : Array (ColorRef × Color) × Array Unrealized :=
+    (pal.entries.zip grounds.1).foldl (fun (acc : Array (ColorRef × Color) × Array Unrealized)
+        ((k, c), (_, c0)) =>
+      let isGenerated := match k with
+        | .role r => generated r c
+        | .color _ => false
+      if !inkLike k || (isGenerated && (uses k).isEmpty) then (acc.1.push (k, c0), acc.2) else
+      -- A generated colour another ground's use reads is held there too, from
+      -- the colour the scheme generated.
+      match carryOn staged k (if isGenerated then c0 else c) isGenerated with
+      | .ok (some c') => (acc.1.push (k, c'), acc.2)
+      | .ok none => (acc.1.push (k, c0), acc.2)
+      | .error on => (acc.1.push (k, c0), acc.2.push { name := k, on })) (#[], grounds.2)
+  -- A role the palette leaves undeclared that a use reads on another ground
+  -- than its row's: held there too, from the colour the scheme gives it, and
+  -- declared in the view where it moves.
+  let undeclared : Array (ColorRef × Color) × Array Unrealized :=
+    used.foldl (fun (acc : Array (ColorRef × Color) × Array Unrealized) (k, _) =>
+      match k with
+      | .color _ => acc
+      | .role r =>
+        if pal.entries.any (·.1 == k) || !r.row.need.paired then acc else
+        match Design.at staged s r with
+        | none => acc
+        | some c =>
+          match carryOn staged k c true with
+          | .ok (some c') => if c' == c then acc else (acc.1.push (k, c'), acc.2)
+          | .ok none => acc
+          | .error on => (acc.1, acc.2.push { name := k, on })) inks
+  let inks := undeclared
+  let out : Palette := { staged with entries := inks.1 }
+  if !s.more || inks.2.isEmpty then (out, inks.2) else
+  -- Where the reader asks more contrast and no tone of an ink's hue reaches
+  -- the gate on a declared ground, the ground moves instead, as far as the
+  -- gate asks at its own hue; each ink of the palette is judged again.
   let moves : Array (Role × Color) := inks.2.foldl (fun acc u =>
     if acc.any (·.1 == u.on) then acc else
     match Design.declared? out u.on, out.lookup u.name with
@@ -14156,18 +14275,27 @@ public def Palette.view (pal : Palette) (f : SchemeFrame) : Palette × Array Unr
       | some g' => acc.push (u.on, g')
       | none => acc
     | _, _ => acc) #[]
+  if moves.isEmpty then (out, inks.2) else
   let moved : Palette := { out with entries := out.entries.map fun (k, c) =>
     match k with
     | .role r => ((moves.find? (·.1 == r)).map fun (_, g) => (k, g)).getD (k, c)
     | .color _ => (k, c) }
-  let rejudged := moved.entries.filterMap fun (k, c) =>
-    let on := onOf k
-    if !(moves.any (·.1 == on)) || !(match k with
-        | .role r => r.row.need.paired
-        | .color _ => true) then none else
-    (Design.at moved s on).bind fun g =>
-      if reqOf k ≤ Contrast.contrastMilli c g then none else some { name := k, on }
-  (moved, (inks.2.filter fun u => !(moves.any (·.1 == u.on))) ++ rejudged)
+  let rejudged : Array (ColorRef × Color) × Array Unrealized :=
+    (pal.entries.zip moved.entries).foldl (fun (acc : Array (ColorRef × Color) × Array Unrealized)
+        ((k, c), (_, c1)) =>
+      let isGenerated := match k with
+        | .role r => generated r c
+        | .color _ => false
+      if !inkLike k || (isGenerated && (uses k).isEmpty) ||
+          (groundsOf moved k).all (fun (g, _, req) => req ≤ Contrast.contrastMilli c1 g) then
+        (acc.1.push (k, c1), acc.2)
+      else match carryOn moved k (if isGenerated then c1 else c) isGenerated with
+        | .ok (some c') => (acc.1.push (k, c'), acc.2)
+        | .ok none => (acc.1.push (k, c1), acc.2)
+        | .error on => (acc.1.push (k, c1), acc.2.push { name := k, on })) (#[], grounds.2)
+  -- The roles the use pass declared ride after the palette's own entries.
+  let extra := moved.entries.extract pal.entries.size moved.entries.size
+  ({ moved with entries := extra.foldl Array.push rejudged.1 }, rejudged.2)
 
 /-- **A frame that ships palettes as declared ships each as it is**: in
 print and on the document's own screen the view is the palette, and nothing

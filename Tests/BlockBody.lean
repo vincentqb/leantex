@@ -4,6 +4,7 @@ public import LeanTex.Core.Font
 import LeanTex.Core.Layout
 import LeanTex.Core.HtmlDoc
 import Tests.LightCss
+import Tests.Support
 import LeanTex.Core.BeamerColor
 import LeanTex.Core.Elab
 import LeanTex.Core.SeedPalette
@@ -142,8 +143,10 @@ private def probe (kind : Ir.TitledKind) (title : Array Ir.Inline) : Ir.Doc :=
 private def layout (fonts : Font.FontSet) (doc : Ir.Doc) : Layout.Out :=
   Layout.run (Layout.Geom.ofPage doc.page) fonts none doc
 
+/-- The page's leaves as print paints them, the scheme the PDF is
+(`emitIn`). -/
 private def html (doc : Ir.Doc) : Array HtmlInk :=
-  let (_, nodes, _) := HtmlDoc.emitTree {} doc
+  let (_, nodes, _) := emitIn {} doc .print
   htmlInks [] #[] nodes.toList
 
 /-- Exercise the exported source through the real front end and both
@@ -290,8 +293,7 @@ public def checks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit 
             fill.color == ground && fill.x ≤ line.x &&
             line.x + line.setWidth ≤ fill.x + fill.w &&
             fill.y < line.y && line.y < fill.y + fill.h)
-      let (_, nodes, _) := HtmlDoc.emitTree {} doc
-      let leaves := htmlInks [] #[] nodes.toList
+      let leaves := html doc
       check ref (label ++ ": HTML body ink and surface")
         (leaves.any fun leaf => leaf.text == "BODY" &&
           leaf.inlineColor == some ink.css &&

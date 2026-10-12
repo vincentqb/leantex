@@ -467,6 +467,11 @@ def layoutSuiteChecks (ref : IO.Ref (List String)) : IO Unit := do
   Tests.Schemes.darkListingChecks ref
   Tests.Schemes.printChecks ref oneFace
   Tests.Schemes.forcedColorChecks ref
+  Tests.Schemes.darkTextChecks ref
+  Tests.Schemes.subsetChecks ref
+  Tests.Schemes.plateChecks ref
+  Tests.Schemes.literalChecks ref
+  Tests.Schemes.contractChecks ref
   Tests.ColorNames.xcolorCodeRoleChecks ref oneFace
   Tests.ColorNames.htmlDecimalChecks ref oneFace
   Tests.ColorNames.unreadKeyChecks ref

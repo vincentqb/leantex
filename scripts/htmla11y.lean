@@ -132,8 +132,10 @@ def a11ySelftest : IO UInt32 := tierSelftest "htmla11y" fun no => do
   no s!"contrast: an undeclared page passes every scheme: {HtmlDoc.schemeFailures true plain}"
     (HtmlDoc.schemeFailures true plain).isEmpty
   let inked := (elabStr (dvDoc "\\palette{ fg = #18181B }\n" "x")).1
-  no s!"contrast: a declared ink keeps its one scheme and passes it: {HtmlDoc.schemeFailures true inked}"
-    (HtmlDoc.schemeFailures true inked).isEmpty
+  no s!"contrast: a declared ink ships as declared on its own screen, is carried to the \
+others, and passes each: {HtmlDoc.schemeFailures true inked}"
+    ((HtmlDoc.schemeFailures true inked).isEmpty &&
+     (Contrast.schemeJudge inked).shipped == Ir.Scheme.all)
   let pale := (elabStr (dvDoc "\\palette{ fg = #D4D4D8 }\n" "x")).1
   no s!"contrast: a declared ink that fails its ground fails once: {HtmlDoc.schemeFailures true pale}"
     ((HtmlDoc.schemeFailures true pale).contains ("light", "text") &&
@@ -148,7 +150,7 @@ def a11ySelftest : IO UInt32 := tierSelftest "htmla11y" fun no => do
     (HtmlDoc.schemeFailures true named).isEmpty
   let deck := (elabStr (dvDeck "" "\\begin{frame}{T}\nx\n\\end{frame}")).1
   -- The deck's stage paints the bundle's declared page, as the PDF does, so
-  -- its declared ink reads on it, in the one scheme the page ships.
+  -- its declared ink reads on it, in each scheme the page ships.
   no s!"contrast: a deck bundle's colours ship no dark stage: \
 {HtmlDoc.schemeFailures true deck}"
     (!(HtmlDoc.schemeFailures true deck).any (·.1 == "dark"))

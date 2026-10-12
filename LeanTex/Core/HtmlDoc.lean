@@ -107,6 +107,16 @@ public structure Config where
   `:root` states for the code roles (`Config.listingPaints` of a listing
   that declares nothing). -/
   codeRoot : CodeRoot := []
+  /-- A listing on the page's own code ground in every shipped scheme — its
+  ground, its plain text's colour and its code roles' — computed once for
+  every listing that declares nothing and stands on the page as its
+  document leaves it (`Config.listingPaints`). -/
+  codePaints : List (Ir.Scheme × Ir.Color × Ir.Color ×
+    List (Ir.Role × Option (Ir.Color × Option Ir.Role))) := []
+  /-- The page, its ink and its code ground in each shipped scheme as the
+  palette in force there resolves them (`boxRoleTexts`): what a listing's box
+  names a role for where it stands on that role's colour. -/
+  boxTexts : List (Ir.Role × List (Ir.Scheme × Option String)) := []
   /-- A listing's local frame colours. Its code panel states the same ground
   that PDF paints, so default syntax inks have one contrast contract on
   screen and paper, including standout and title-page frames. -/
@@ -487,6 +497,62 @@ public def classLengthCss (size : Sp) (l : Length) : String :=
   if size ≤ 0 then cssLength l
   else cssLengthIn (fun sp => s!"{decMilli (classShareMilli sp size)}rem") l
 
+/-- The `:root` property a colour reads where its text is not one across the
+schemes a page ships: its name spells its text in each scheme the page
+ships, in the page's order (`schemeVarTexts` reads it back), so the page's
+scheme blocks state it from the name alone and two colours alike in every
+scheme share one. Every text is a colour (`#rrggbb`) or none, and a text an
+earlier scheme already spells is that scheme's place, one digit. The name
+stands behind `--ltx--`, which no role's key (a word) and no author
+colour's property (`--ltx-c-…`) begins with. -/
+public def schemeVar (texts : List (Ir.Scheme × Option String)) : String :=
+  let parts := texts.map fun (_, x) => match x with
+    | some t => (t.drop 1).toString
+    | none => "none"
+  "--ltx--" ++ "-".intercalate (parts.zipIdx.map fun (p, i) =>
+    match (parts.take i).idxOf? p with
+    | some j => if j < 10 then toString j else p
+    | none => p)
+
+/-- What a `schemeVar` name spells, read back in the page's scheme order:
+each part a six-digit colour, `none`, or the place of an earlier part it
+repeats; nothing for any other name. -/
+public def schemeVarTexts (schemes : List Ir.Scheme) (name : String) :
+    Option (List (Ir.Scheme × Option String)) := do
+  guard (name.startsWith "--ltx--")
+  let parts := ((name.drop 7).toString).splitOn "-"
+  guard (parts.length == schemes.length)
+  let texts ← parts.foldlM (fun (acc : Array (Option String)) p =>
+    if p == "none" then some (acc.push none)
+    else if p.length == 1 && p.all Char.isDigit then acc[p.toNat!]?.map acc.push
+    else if p.length == 6 && p.all (fun c => c.isDigit || ('a' ≤ c && c ≤ 'f')) then
+      some (acc.push (some ("#" ++ p)))
+    else none) #[]
+  return schemes.zip texts.toList
+
+/-- **A colour's texts across the shipped schemes as one declaration states
+them**: its floor text where every scheme reads it alike (`texts`), and
+otherwise the `:root` property its colours in each scheme name
+(`schemeVar` over `colours`), which the page's scheme blocks state — the
+floor's plain value first, so a browser without `light-dark()` keeps the
+page's own colour — in every scheme. -/
+public def schemeValue (texts colours : List (Ir.Scheme × Option String)) (floor : Ir.Scheme) :
+    String :=
+  let f := (texts.lookup floor).join
+  if texts.all (·.2 == f) then f.getD "initial"
+  else if colours.all (·.2.all (·.startsWith "#")) then s!"var({schemeVar colours})"
+  else f.getD "initial"
+
+/-- **A literal colour as the page ships it**: in each shipped scheme as that
+scheme carries a colour no palette names (`Ir.Design.literalIn`: itself in
+print and on the document's own screen), spelled once across them
+(`schemeValue`) — a colour no palette names has no property to restate, so
+its every scheme rides in its one declaration. -/
+public def Config.literal (cfg : Config) (c : Ir.Color) : String :=
+  if cfg.frames.isEmpty then cssColor c else
+  let texts := cfg.frames.map fun f => (f.scheme, some (cssColor (Ir.Design.literalIn f c)))
+  schemeValue texts texts cfg.floor
+
 /-- What a formula's cancel marks read from the math face, in thousandths
 of an em — its overbar rule and clearance, the two quantities the PDF lays
 the marks with — when the page ships its faces; TeX's own stand-ins
@@ -499,7 +565,8 @@ public def mathMarks (cfg : Config) : MathMl.Marks :=
       else classLengthCss cfg.page.fontSize (Dim.Length.ofSp Math.minAlignSep)
     metric := cfg.cancelMetric cfg.measureValues cfg.mathStyles
     em := cfg.mathEm cfg.measureValues cfg.mathStyles
-    textEm := cfg.mathTextEm cfg.measureValues cfg.mathStyles }
+    textEm := cfg.mathTextEm cfg.measureValues cfg.mathStyles
+    literal := cfg.literal }
   match cfg.fonts.bind fun fs => fs.math.bind (fs.fonts[·]?) with
   | some f =>
     match f.math with
@@ -722,6 +789,18 @@ private def markerColorDecl (c : Ir.Color) (name : Option Ir.ColorRef) : String 
   match name with
   | some n => s!"color: var({n.property}, {cssColor c});"
   | none => s!"color: {cssColor c};"
+
+/-- The colour a marker's literal colour declaration (`markerColorDecl`)
+spells, read back: `color: #rrggbb;`. -/
+private def literalColorDecl? (d : String) : Option Ir.Color := do
+  guard (d.startsWith "color: #" && d.endsWith ";" && d.length == 15)
+  let hex := ((d.drop 8).take 6).toString.toList
+  let digit (c : Char) : Option Nat :=
+    if c.isDigit then some (c.toNat - '0'.toNat)
+    else if 'a' ≤ c && c ≤ 'f' then some (c.toNat - 'a'.toNat + 10) else none
+  let ds ← hex.mapM digit
+  let byte (i : Nat) : UInt8 := (16 * ds.getD i 0 + ds.getD (i + 1) 0).toUInt8
+  return Ir.Color.ofHtml (byte 0) (byte 2) (byte 4)
 
 mutual
 
@@ -1017,7 +1096,11 @@ public def styleRules (doc : Doc) (lit : Ir.Color → String := cssColor) : Stri
     if let some m := st.marker then
       match markerCss? m doc.page.scale with
       | some r =>
-        let body := String.join (r.decls.toList.map (" " ++ ·))
+        -- A literal colour reads as the page ships one in every scheme.
+        let decls := r.decls.map fun d => match literalColorDecl? d with
+          | some c => s!"color: {lit c};"
+          | none => d
+        let body := String.join (decls.toList.map (" " ++ ·))
         liDecls := liDecls ++
           [s!"{markerSel tag} \{ content: \"{cssString r.text}  \";{body} }\n"]
       | none =>
@@ -2453,8 +2536,8 @@ below the body's last baseline, read off the section's end: its last line
 box's part below that baseline, a body paragraph's unless the section says
 otherwise (`--block-last-below`); an untitled block draws none. -/
 public def blockShapeCss (doc : Doc)
-    (titleRule : Ir.TitledKind → Ir.BlockReach → Option Ir.BlockTitlePlace := fun _ _ => none) :
-    String :=
+    (titleRule : Ir.TitledKind → Ir.BlockReach → Option Ir.BlockTitlePlace := fun _ _ => none)
+    (lit : Ir.Color → String := cssColor) : String :=
   let shapes := [Ir.TitledKind.block, .alert, .example].filterMap fun k =>
     (Ir.blockShapeOf doc.styles k).map (k, ·)
   if shapes.isEmpty then "" else
@@ -2464,7 +2547,7 @@ public def blockShapeCss (doc : Doc)
     (doc.page.height - 2 * doc.page.vmargin)
   let paint (e : Ir.BlockEdge) : String := match e.name with
     | some n => s!"var({n.property}, {cssColor e.color})"
-    | none => cssColor e.color
+    | none => lit e.color
   let rule (pseudo : String) (sel : String) (e : Ir.BlockEdge) (pad top bottom : String) : String :=
     let place := if e.side == .left then "left" else "right"
     s!"{sel}::{pseudo} \{ content: \"\"; position: absolute; top: {top}; bottom: {bottom}; \
@@ -2619,9 +2702,9 @@ reads for a property nothing declares. -/
 @[expose] public def colorRead (cfg : Config) (name : Option Ir.ColorRef) (c : Ir.Color) :
     String :=
   match name with
-  | some (.role r) => if cfg.declares r then s!"var({roleVar r}, {cssColor c})" else cssColor c
+  | some (.role r) => if cfg.declares r then s!"var({roleVar r}, {cssColor c})" else cfg.literal c
   | some n => s!"var({n.property}, {cssColor c})"
-  | none => cssColor c
+  | none => cfg.literal c
 
 /-- **A named colour reads its property wherever the page can declare it**:
 an author colour always, a role where some palette of the page gives it a
@@ -2632,19 +2715,6 @@ public theorem colorRead_names (cfg : Config) (n : Ir.ColorRef) (c : Ir.Color)
   cases n with
   | role r => simp only [colorRead, h r rfl, ite_true]; rfl
   | color m => rfl
-
-/-- **A literal colour as the page ships it**: itself where the page ships one
-polarity, and beside its carrying to a dark page where it ships both screens
-(`light-dark()`; the dark side adapted at the text gate on the dark page,
-`Ir.Design.carryInk`, else reflected) — a colour no palette names has no
-property to restate, so its every scheme rides in its one declaration. -/
-public def Config.literal (cfg : Config) (c : Ir.Color) : String :=
-  match cfg.frames.find? (·.scheme == .dark), cfg.frames.any (·.scheme == .light) with
-  | some f, true =>
-    let d := (Ir.Design.carryInk f.flip (Contrast.requiredIn .dark .text) f.homePage f.page
-      f.page c).getD (if f.flip then ContrastSolve.reflect f.homePage f.page c else c)
-    if cssColor d == cssColor c then cssColor c else s!"light-dark({cssColor c}, {cssColor d})"
-  | _, _ => cssColor c
 
 /-- A colour as an element's own style reads it: a named colour through its
 property (`colorRead`), a literal as the page ships it (`Config.literal`). -/
@@ -2707,52 +2777,87 @@ public def schemeProps (v : Ir.Palette) (s : Ir.Scheme) (roles : List Ir.Role)
 /-- **What each shipped scheme restates over the page's floor**: the light
 and dark screens as `light-dark()` pairs inside `@supports`, so a browser
 without the function keeps the floor; the more-contrast schemes under
-`prefers-contrast: more`, the floor's polarity plainly and both polarities'
-pairs inside `@supports` again; and print's own values under `@media print`,
-last, with the printed page's own `color-scheme` (`printDark`: light but for
-a document whose page is dark, whose `light-dark()` pairs then read their
-dark side, as the page prints) — each property only where its text there
-differs from what the page would otherwise read. `props` is each shipped
-scheme's text of every property, `none` for a scheme the page does not
-ship. -/
+`prefers-contrast: more`, the floor's polarity plainly and, where both
+screens ship, each polarity's — its more scheme where that ships, else its
+own screen — as pairs inside `@supports` again; and print's own values
+under `@media print`, last, with the printed page's own `color-scheme`
+(`printDark`: light but for a document whose page is dark, whose
+`light-dark()` pairs then read their dark side, as the page prints). Each
+property is restated where its text there differs from what the page would
+otherwise read, and wherever an earlier block under the same conditions
+moved it — print restates every property another block moves, since a
+reader asking more contrast prints with that block in force. `props` is
+each shipped scheme's text of every property, `none` for a scheme the page
+does not ship. -/
 public def schemeBlocksOf (props : Ir.Scheme → Option (List (String × Option String)))
     (floor : Ir.Scheme) (scheme : Bool := true) (printDark : Bool := false) : String :=
   let floorT := (props floor).getD []
   let names := floorT.map (·.1)
   let textIn (t : List (String × Option String)) (p : String) : Option String := (t.lookup p).join
   let decl (ind p : String) (t : Option String) := s!"{ind}{p}: {t.getD "initial"};\n"
-  let pairs (ind : String) (l d lb db : List (String × Option String)) : String :=
-    String.join (names.filterMap fun p =>
+  -- The pairs a block restates: each property whose texts in the two
+  -- screens differ from what the cascade gives it before the block, or that
+  -- an earlier declaration in the same condition restated (`forced`).
+  let pairs (ind : String) (l d lb db : List (String × Option String)) (forced : List String) :
+      List String × String :=
+    let rows := names.filterMap fun p =>
       let (a, b) := (textIn l p, textIn d p)
-      if (a, b) == (textIn lb p, textIn db p) then none else match a, b with
-        | some a, some b => if a == b then some s!"{ind}{p}: {a};\n"
-          else some s!"{ind}{p}: light-dark({a}, {b});\n"
-        | _, _ => none)
-  let plain (ind : String) (t : List (String × Option String)) : String :=
-    String.join (names.filterMap fun p =>
+      if (a, b) == (textIn lb p, textIn db p) && !forced.contains p then none else
+      match a, b with
+      | some a, some b => some (p, if a == b then s!"{ind}{p}: {a};\n"
+          else s!"{ind}{p}: light-dark({a}, {b});\n")
+      | _, _ => some (p, decl ind p (if floor.onDark then b else a))
+    (rows.map (·.1), String.join (rows.map (·.2)))
+  let plain (ind : String) (t : List (String × Option String)) (forced : List String) :
+      List String × String :=
+    let rows := names.filterMap fun p =>
       let x := textIn t p
-      if x == textIn floorT p then none else some (decl ind p x))
-  let lightDark := match props .light, props .dark with
+      if x == textIn floorT p && !forced.contains p then none else some (p, decl ind p x)
+    (rows.map (·.1), String.join (rows.map (·.2)))
+  let (ldNames, lightDark) := match props .light, props .dark with
     | some l, some d =>
-      let body := pairs "    " l d floorT floorT
-      if !scheme && body.isEmpty then "" else
-      "@supports (color: light-dark(#000, #fff)) {\n  :root {\n" ++
-        (if scheme then "    color-scheme: light dark;\n" else "") ++ body ++ "  }\n}\n"
-    | _, _ => ""
+      let (ns, body) := pairs "    " l d floorT floorT []
+      (ns, if !scheme && body.isEmpty then "" else
+        "@supports (color: light-dark(#000, #fff)) {\n  :root {\n" ++
+          (if scheme then "    color-scheme: light dark;\n" else "") ++ body ++ "  }\n}\n")
+    | _, _ => ([], "")
+  -- Where the reader asks more contrast: the floor polarity's more scheme
+  -- plainly, as a browser without light-dark() shows the page; then, where
+  -- both screens ship, each polarity's — its more scheme where that ships,
+  -- else its own screen — as pairs, every property the plain block moved
+  -- among them, so neither polarity reads the other's values.
   let floorMore := if floor.onDark then Ir.Scheme.darkMore else .lightMore
-  let morePlain := ((props floorMore).map (plain "    ")).getD ""
-  let moreLd := match props .lightMore, props .darkMore, props .light, props .dark with
-    | some lm, some dm, some l, some d => pairs "      " lm dm l d
-    | _, _, _, _ => ""
+  let otherMore := if floor.onDark then Ir.Scheme.lightMore else .darkMore
+  let (plainNames, morePlain) := ((props floorMore).map (plain "    " · [])).getD ([], "")
+  -- What each polarity reads before the block: its screen where both
+  -- screens ship, else the floor, which every reader then sees.
+  let screens := (props .light).isSome && (props .dark).isSome
+  let baseL := if screens then (props .light).getD floorT else floorT
+  let baseD := if screens then (props .dark).getD floorT else floorT
+  -- The other polarity reaches the page under more contrast where its more
+  -- scheme ships, even without its plain screen, which the block then
+  -- opens (`color-scheme: light dark`).
+  let opens := !screens && (props otherMore).isSome
+  let (moreNames, moreLd) :=
+    if !(screens || opens) || ((props .lightMore).isNone && (props .darkMore).isNone) then ([], "")
+    else
+      let moreL := (props .lightMore).getD baseL
+      let moreD := (props .darkMore).getD baseD
+      let (ns, body) := pairs "      " moreL moreD baseL baseD plainNames
+      (ns, if body.isEmpty && !opens then "" else
+        (if opens && scheme then "      color-scheme: light dark;\n" else "") ++ body)
   let more := if morePlain.isEmpty && moreLd.isEmpty then "" else
     "@media (prefers-contrast: more) {\n" ++
       (if morePlain.isEmpty then "" else "  :root {\n" ++ morePlain ++ "  }\n") ++
       (if moreLd.isEmpty then "" else
         "  @supports (color: light-dark(#000, #fff)) {\n    :root {\n" ++ moreLd ++ "    }\n  }\n") ++
       "}\n"
+  -- Print restates every property another block moves: a reader asking more
+  -- contrast prints with that block in force too.
+  let touched := ldNames ++ plainNames ++ moreNames
   let print := match props .print with
     | some pr =>
-      let body := plain "    " pr
+      let (_, body) := plain "    " pr touched
       if !scheme && body.isEmpty then "" else
       "@media print {\n  :root {\n" ++
         (if scheme then s!"    color-scheme: {if printDark then "dark" else "light"};\n" else "") ++
@@ -2775,61 +2880,6 @@ public def propText (v : Ir.Palette) (s : Ir.Scheme) (prop : Ir.ColorRef) : Opti
   match prop with
   | .role r => (Ir.Design.cssDecl v s r).map cssDeclValue
   | .color _ => (v.lookup prop).map cssColor
-
-/-- How a property reads across the schemes a page ships, as one inline
-declaration can state it: its floor text where every scheme reads it alike,
-`light-dark()` where only the two screens differ, and otherwise `none` — a
-more-contrast or print value an inline style cannot carry. -/
-public def inlineText (texts : List (Ir.Scheme × Option String)) (floor : Ir.Scheme) :
-    Option (Option String) :=
-  let t (s : Ir.Scheme) : Option String := (texts.lookup s).join
-  let f := t floor
-  if texts.all (·.2 == f) then some f else
-  let onlyScreens := texts.all fun (s, x) => match s with
-    | .print => x == f
-    | .lightMore => x == t .light
-    | .darkMore => x == t .dark
-    | .light | .dark => true
-  if !onlyScreens then none else
-  match t .light, t .dark with
-  | some l, some d => some (some s!"light-dark({l}, {d})")
-  | _, _ => some f
-
-/-- The `:root` property a colour reads where an inline style cannot state its
-every scheme (`inlineText`): its name spells its text in each scheme the page
-ships, in the page's order (`schemeVarTexts` reads it back), so the page's
-scheme blocks state it from the name alone and two colours alike in every
-scheme share one. Every text is a colour (`#rrggbb`) or none. -/
-public def schemeVar (texts : List (Ir.Scheme × Option String)) : String :=
-  "--ltx-c-" ++ "-".intercalate (texts.map fun (_, x) => match x with
-    | some t => (t.drop 1).toString
-    | none => "none")
-
-/-- What a `schemeVar` name spells, read back in the page's scheme order:
-each part a six-digit colour or `none`; nothing for any other name. -/
-public def schemeVarTexts (schemes : List Ir.Scheme) (name : String) :
-    Option (List (Ir.Scheme × Option String)) := do
-  guard (name.startsWith "--ltx-c-")
-  let parts := ((name.drop 8).toString).splitOn "-"
-  guard (parts.length == schemes.length)
-  let texts ← parts.mapM fun p =>
-    if p == "none" then some none
-    else if p.length == 6 && p.all (fun c => c.isDigit || ('a' ≤ c && c ≤ 'f')) then
-      some (some ("#" ++ p))
-    else none
-  return schemes.zip texts
-
-/-- **A colour's texts across the shipped schemes as one declaration states
-them**: as `inlineText` can — its floor text where every scheme reads it
-alike, else a `light-dark()` pair — and otherwise through the `:root`
-property its texts name (`schemeVar`), which the page's scheme blocks state
-in every scheme; the floor's text where a text is no colour. -/
-public def schemeValue (texts : List (Ir.Scheme × Option String)) (floor : Ir.Scheme) : String :=
-  match inlineText texts floor with
-  | some t => t.getD "initial"
-  | none =>
-    if texts.all (·.2.all (·.startsWith "#")) then s!"var({schemeVar texts})"
-    else ((texts.lookup floor).join).getD "initial"
 
 /-- Whether `pat` stands in `b` at byte `i`. -/
 private def bytesAt (b pat : ByteArray) (i : Nat) : Bool := Id.run do
@@ -3290,8 +3340,8 @@ when the design carries the feature. The colour *values* stay CSS custom
 properties rather than resolved literals, deliberately: a reader's
 stylesheet can override a token, which is the HTML backend's contract. -/
 public def themeCss (doc : Doc)
-    (titleRule : Ir.TitledKind → Ir.BlockReach → Option Ir.BlockTitlePlace := fun _ _ => none) :
-    String :=
+    (titleRule : Ir.TitledKind → Ir.BlockReach → Option Ir.BlockTitlePlace := fun _ _ => none)
+    (lit : Ir.Color → String := cssColor) : String :=
   let d := Design.ofDoc doc
   let sectionMeasure :=
     s!"min({stageVh doc.page (Ir.sectionPageMeasure (doc.page.width - 2 * doc.page.hmargin))}, 100%)"
@@ -3435,7 +3485,7 @@ calc({stepFactor Ir.plainFrameTitleStep} * \
      "section.slide.title-page h1 { color: inherit; }\n"
    | none => "") ++
   titleSlotCss doc ++
-  blockShapeCss doc titleRule ++
+  blockShapeCss doc titleRule lit ++
   -- Rules are available to later palette epochs too; the section node
   -- itself is gated on that epoch's resolved section-progress pair.
   (if doc.docClass.record.model == .frame then
@@ -6372,12 +6422,14 @@ public def tokenClass (k : ListingHighlight.Kind) : String := "tok-" ++ k.cssCla
 order of first use: every role but the ink, which a listing's box states
 for every token it holds (`Config.listingStyle`). -/
 public def docTokenClasses (doc : Doc) : Array (String × ListingHighlight.Role) :=
-  Ir.foldBlocks (fun acc bl => match bl with
+  let kinds : Array ListingHighlight.Kind := Ir.foldBlocks (fun acc bl => match bl with
       | .verbatim _ _ spec => spec.highlight.foldl (fun acc line => line.foldl (fun acc t =>
-          let c := tokenClass t.kind
-          if t.kind.role == .ink || acc.any (·.1 == c) then acc else acc.push (c, t.kind.role)) acc) acc
+          if acc.contains t.kind then acc else acc.push t.kind) acc) acc
       | _ => acc)
     (fun acc _ => acc) #[] doc.body
+  kinds.foldl (fun acc k =>
+    let c := tokenClass k
+    if k.role == .ink || acc.any (·.1 == c) then acc else acc.push (c, k.role)) #[]
 
 /-- **The rules that colour a document's tokens**: one per code role its
 listings' tokens paint in, every class of that role's types (`tokenClass`)
@@ -6849,11 +6901,10 @@ public def baseRules (doc : Doc) (pairs : List (Nat × Nat) := []) (figureWords 
   ".equation { display: flex; align-items: center; }\n" ++
   ".equation > .math { flex: 1 1 auto; text-align: center; }\n" ++
   "@media print {\n" ++
-  -- The sheet's paper and ink are the print column's, LaTeX's white paper
-  -- and black ink, on the page's own box; every other role keeps its light
-  -- value on paper.
-  s!"  body \{ background: {cssColor ((Ir.Design.at {} .print .page).getD Ir.Color.white)}; \
-color: {cssColor ((Ir.Design.at {} .print .ink).getD Ir.Color.black)}; padding: 0; }\n" ++
+  -- The sheet's paper and ink are the page's roles, whose print values the
+  -- print block states (`schemeBlocksOf`): the PDF's page and ink, a
+  -- declared one included, on the page's own box.
+  s!"  body \{ background: {roleRef .page}; color: {roleRef .ink}; padding: 0; }\n" ++
   -- Paper has no scroll, and a scroll box is monolithic there, so it
   -- clips what runs past it: on paper a code block wraps a line wider than
   -- itself inside the box instead. A departure from LaTeX's verbatim, which
@@ -7929,13 +7980,14 @@ private theorem role_use_names_its_token (cfg : Config) (acc : Array Node)
   simp [inlineNodeInto, Config.paint]
 
 /-- A use of a role the page cannot declare states its value: the read CSS
-would make of a property nothing declares, written as itself. -/
+would make of a property nothing declares, written as the page ships a
+colour no palette names in every scheme (`Config.literal`). -/
 private theorem role_use_undeclarable_value (cfg : Config) (acc : Array Node)
     (c : Ir.Color) (r : Ir.Role) (body : Array Inline) (h : cfg.declares r = false) :
     inlineNodeInto cfg acc (.colored c (some (.role r)) body) =
       acc.push (Html.elem "span" (inlineNodesInto cfg #[] body.toList)
-        #[("style", "color: " ++ cssColor c)]) := by
-  have hv : colorRead cfg (some (.role r)) c = cssColor c := by simp [colorRead, h]
+        #[("style", "color: " ++ cfg.literal c)]) := by
+  have hv : colorRead cfg (some (.role r)) c = cfg.literal c := by simp [colorRead, h]
   rw [← hv]
   simp [inlineNodeInto, Config.paint]
 
@@ -8160,6 +8212,13 @@ public def epochTokenStyle (basis : LengthBasis) (before after : Ir.Tokens) : St
     before.find? n != some g).toList.filterMap fun (n, g) =>
       (tokenVar? n).map fun v => s!"{v}: {tokenCss basis n g.width}")
 
+/-- The colours a listing's box may name by role — the page, its ink and its
+code ground — in each shipped scheme, as each view resolves them. -/
+public def boxRoleTexts (frames : List Ir.SchemeFrame) (views : List Ir.Palette) :
+    List (Ir.Role × List (Ir.Scheme × Option String)) :=
+  [Ir.Role.page, .ink, .codeSurface].map fun r =>
+    (r, (frames.zip views).map fun (f, v) => (f.scheme, (Ir.Design.at v f.scheme r).map cssColor))
+
 /-- A palette's views in the schemes the page ships: the judge's, else
 carried here (`Ir.Palette.view`). -/
 public def Config.viewsOf (cfg : Config) (p : Ir.Palette) : List Ir.Palette :=
@@ -8169,24 +8228,32 @@ public def Config.viewsOf (cfg : Config) (p : Ir.Palette) : List Ir.Palette :=
 
 /-- **What an epoch restates in every scheme the page ships**: each property
 the epoch moves in some shipped scheme (`epochPaletteDiff` over that scheme's
-views), stated once — as `inlineText` can, its floor text or a `light-dark()`
-pair, and a declared colour whose more-contrast or print value differs too
-through its own `:root` property (`schemeVar`), which the page's scheme blocks
-state in every scheme: an inline style, which no media query reaches, still
-ships each scheme's colour. A page shipping its floor alone restates as the
-floor's diff spells it. -/
+views), stated once — its floor text where every scheme reads it alike, else
+through its own `:root` property (`schemeVar`), which the page's scheme
+blocks state in every scheme (`schemeValue`): an inline style, which no
+media query reaches, still ships each scheme's colour. A page shipping its
+floor alone restates as the floor's diff spells it. -/
 public def Config.epochStyleFor (cfg : Config) (floorDiff : PaletteDiff)
     (before after : List Ir.Palette) : String :=
   if cfg.frames.all (·.scheme == cfg.floor) then floorDiff.style else
   let tabs := (cfg.frames.map (·.scheme)).zip (before.zip after)
-  let props : Array Ir.ColorRef := tabs.foldl (fun out (_, vb, va) =>
-    let d := epochPaletteDiff cfg.cssRoles vb va
+  let add (out : Array Ir.ColorRef) (d : PaletteDiff) : Array Ir.ColorRef :=
     let out := d.entries.foldl (fun o (n, _) => if o.contains n then o else o.push n) out
-    d.defaults.foldl (fun o (r, _) => if o.contains (.role r) then o else o.push (.role r)) out) #[]
+    d.defaults.foldl (fun o (r, _) => if o.contains (.role r) then o else o.push (.role r)) out
+  -- A scheme that ships the palette as declared moves what the floor's diff
+  -- moves, where the floor is such a scheme itself.
+  let floorHome := cfg.frames.any fun f => f.scheme == cfg.floor && f.home
+  let props : Array Ir.ColorRef := (cfg.frames.zip (before.zip after)).foldl
+    (fun out (f, vb, va) => if floorHome && f.home then out
+      else add out (epochPaletteDiff cfg.cssRoles vb va)) (add #[] floorDiff)
   -- A role the epoch removes restates its default in each scheme: the
   -- flow's ink reads the role (`epochPaint`), so it must stand there.
   String.intercalate "; " (props.toList.map fun n =>
-    s!"{n.property}: {schemeValue (tabs.map fun (sc, _, va) => (sc, propText va sc n)) cfg.floor}")
+    let texts := tabs.map fun (sc, _, va) => (sc, propText va sc n)
+    let colours := tabs.map fun (sc, _, va) => (sc, (match n with
+      | .role r => Ir.Design.at va sc r
+      | .color _ => va.lookup n).map cssColor)
+    s!"{n.property}: {schemeValue texts colours cfg.floor}")
 
 /-- The `:root` properties the page's elements read their colours through
 (`schemeVar`), of those the page reads (`used`), each with the texts its
@@ -8215,12 +8282,13 @@ ancestor's inherited CSS colour; a deck stage instead reads the tokens
 through its own paint rules. -/
 public def Config.advancePalette (cfg : Config) (p : Ir.Palette) : Config :=
   let views := cfg.viewsOf p
+  let boxTexts := boxRoleTexts cfg.frames views
   let diff := epochPaletteDiff cfg.cssRoles cfg.floorPal
     (((cfg.frames.map (·.scheme)).zip views).lookup cfg.floor |>.getD p)
   let fg := Design.printInk p
   let home := cfg.bodyGround.isNone && p.sameAs cfg.docPal
   { cfg with pal := p
-             views
+             views, boxTexts
              listingGround := cfg.bodyGround.or (Ir.Design.declared? p .page)
              listingFg := if home then none else some fg, bodyInk := none
              epochStyle := compactStyle (joinStyles cfg.epochStyle (cfg.epochStyleFor diff cfg.views views))
@@ -9793,7 +9861,9 @@ carried at the scheme's gate on that ground as a declared ink is
 no tone of its hue reaches it — while what the rule derives is derived there
 again and fitted at that gate. -/
 private def listingPaintIn (cfg : Config) (spec : Ir.ListingSpec) (f : Ir.SchemeFrame)
-    (v : Ir.Palette) : Ir.Color × Ir.Color × List (Ir.Role × Option (Ir.Color × Option Ir.Role)) :=
+    (v : Ir.Palette)
+    (known : Option (Ir.Color × List (Ir.Role × Option (Ir.Color × Option Ir.Role))) := none) :
+    Ir.Color × Ir.Color × List (Ir.Role × Option (Ir.Color × Option Ir.Role)) :=
   let s := f.scheme
   let (around, inherited) := listingAround cfg f v
   let own : Option Ir.Color := if f.home then (spec.groundIn v s).map (·.1)
@@ -9803,37 +9873,61 @@ private def listingPaintIn (cfg : Config) (spec : Ir.ListingSpec) (f : Ir.Scheme
   let req := Contrast.requiredIn s (Ir.Need.text.atStage f.stage)
   let carry (c : Ir.Color) : Ir.Color :=
     (Ir.Design.carryInk f.flip req f.homePage f.page ground c).getD (Listing.fitInk req ground c)
-  let paints := CodeColor.resolve v ground spec.style
   let fit := if f.home then Listing.defaultInk ground else Listing.fitInk req ground
-  let roles := ListingHighlight.Role.all.map fun r =>
-    (Ir.Role.ofCode r, (paints.get r).map fun p =>
-      let c := if !(p.declared || p.styled) then fit p.color
-        else if f.home then p.color
-        else if p.styled then carry p.color
-        else carry ((p.role.bind (Ir.Design.declared? cfg.pal ·)).getD p.color)
-      (c, if p.declared && p.role != some (Ir.Role.ofCode r) then p.role else none))
+  -- Two schemes that ship the palette as declared paint the code roles alike
+  -- on one ground: the resolution is read once (`known`).
+  let reuse := known.bind fun (g, rs) => if f.home && g == ground then some rs else none
+  let roles := match reuse with
+    | some rs => rs
+    | none =>
+    let paints := CodeColor.resolve v ground spec.style
+    ListingHighlight.Role.all.map fun r =>
+      (Ir.Role.ofCode r, (paints.get r).map fun p =>
+        let c := if !(p.declared || p.styled) then fit p.color
+          else if f.home then p.color
+          else if p.styled then carry p.color
+          else carry ((p.role.bind (Ir.Design.declared? cfg.pal ·)).getD p.color)
+        (c, if p.declared && p.role != some (Ir.Role.ofCode r) then p.role else none))
   let ink := match Ir.Design.declared? cfg.pal .codeInk with
     | some c => if f.home then c else carry c
     | none => if own.isSome then fit inherited else inherited
   (ground, ink, roles)
 
-/-- A listing in every scheme the page ships, beside each scheme. -/
+/-- A listing in every scheme the page ships, beside each scheme: the page's
+own (`codePaints`) for a listing that declares nothing, on the page in
+force as its document leaves it, which is what it computes there; a scheme
+that ships the palette as declared reads the code roles another such scheme
+read on the same ground. -/
 private def Config.listingPaints (cfg : Config) (spec : Ir.ListingSpec) :
     List (Ir.Scheme × Ir.Color × Ir.Color × List (Ir.Role × Option (Ir.Color × Option Ir.Role))) :=
-  (cfg.frames.zip cfg.views).map fun (f, v) => (f.scheme, listingPaintIn cfg spec f v)
+  -- What surrounds the listing is the page as its document leaves it where
+  -- the ground is the page in force and the ink the palette's own
+  -- (`listingAround` reads both as the scheme's view does).
+  if !cfg.codePaints.isEmpty && spec.ground.isNone && spec.style.isNone &&
+      cfg.pal.sameAs cfg.docPal && cfg.listingGround == Ir.Design.declared? cfg.pal .page &&
+      cfg.listingFg.all (· == Ir.Design.printInk cfg.pal) then
+    cfg.codePaints
+  else
+    let (out, _) := (cfg.frames.zip cfg.views).foldl (fun (acc :
+        Array (Ir.Scheme × Ir.Color × Ir.Color × List (Ir.Role × Option (Ir.Color × Option Ir.Role))) ×
+          Option (Ir.Color × List (Ir.Role × Option (Ir.Color × Option Ir.Role)))) (f, v) =>
+      let (g, ink, rs) := listingPaintIn cfg spec f v acc.2
+      (acc.1.push (f.scheme, g, ink, rs), if f.home && acc.2.isNone then some (g, rs) else acc.2))
+      (#[], none)
+    out.toList
 
 /-- A listing line's runs as the page ships them (`Listing.paintLine`), each
 cut where its tokens' classes change and its ink left to classes: the tokens
-of one type that a shipped scheme colours (`colored`), in a role other than
-the ink, in one part wearing their type's class (`tokenClass`), white space
-joining the part before it, and every other token in the colour its box
-states (`Config.listingStyle`); each part beside its class. -/
-private def tokenRuns (colored : ListingHighlight.Role → Bool) (runs : Array Listing.Run) :
-    Array Listing.Run × Array (Option String) :=
+of one type that a shipped scheme colours in a role other than the ink, in
+one part wearing their type's class (`classes`, by type: `tokenClass`), white
+space joining the part before it, and every other token in the colour its
+box states (`Config.listingStyle`); each part beside its class. -/
+private def tokenRuns (classes : Array (ListingHighlight.Kind × Option String))
+    (runs : Array Listing.Run) : Array Listing.Run × Array (Option String) :=
   runs.foldl (fun (out : Array Listing.Run × Array (Option String)) r =>
     let classOf (t : ListingHighlight.Token) : Option String :=
-      if r.brush.inkFree t.text || t.kind.role == .ink || !colored t.kind.role then none
-      else some (tokenClass t.kind)
+      if r.brush.inkFree t.text then none
+      else ((classes.find? (·.1 == t.kind)).bind (·.2))
     let segs := r.tokens.foldl (fun (segs : Array (Option String × Array ListingHighlight.Token)) t =>
       let c := classOf t
       match segs.back? with
@@ -9858,13 +9952,12 @@ surrounds it, as the page's code ground rule paints it. -/
 private def Config.listingStyle (cfg : Config) (spec : Ir.ListingSpec)
     (paints : List (Ir.Scheme × Ir.Color × Ir.Color ×
       List (Ir.Role × Option (Ir.Color × Option Ir.Role)))) : String :=
-  let tables := (cfg.frames.map (·.scheme)).zip cfg.views
   let roleTexts (r : Ir.Role) : List (Ir.Scheme × Option String) :=
-    tables.map fun (sc, v) => (sc, (Ir.Design.at v sc r).map cssColor)
+    (cfg.boxTexts.lookup r).getD []
   let value (t : List (Ir.Scheme × Option String)) (rs : List Ir.Role) : String :=
     match rs.find? (fun r => roleTexts r == t) with
     | some r => roleRef r
-    | none => schemeValue t cfg.floor
+    | none => schemeValue t t cfg.floor
   let ground := paints.map fun (sc, g, _, _) => (sc, some (cssColor g))
   let ink := paints.map fun (sc, _, i, _) => (sc, some (cssColor i))
   let classGround := (Ir.Design.at cfg.docPal .light .codeSurface).isSome
@@ -9880,15 +9973,15 @@ private def Config.listingStyle (cfg : Config) (spec : Ir.ListingSpec)
     else
       let bg := if spec.ground.isNone && classGround && ground == roleTexts .codeSurface then []
         else [s!"background: {value ground [.page, .codeSurface]};"]
-      let used := spec.highlight.foldl (fun acc line => line.foldl (fun acc t =>
-        if acc.contains t.kind.role then acc else acc.push t.kind.role) acc) #[]
+      let used := (spec.highlight.foldl (fun acc line => line.foldl (fun acc t =>
+        if acc.contains t.kind then acc else acc.push t.kind) acc) #[]).map (·.role)
       let roles := ListingHighlight.Role.all.filterMap fun r =>
         let key := Ir.Role.ofCode r
         if r == .ink || !used.contains r then none else
         let t := paints.map fun (sc, _, _, rs) => (sc, ((rs.lookup key).join).map (cssColor ·.1))
         let root := paints.map fun (sc, _) =>
           (sc, ((((cfg.codeRoot.lookup sc).getD []).lookup key).join).map (cssColor ·.1))
-        if t == root then none else some s!"{roleVar key}: {schemeValue t cfg.floor};"
+        if t == root then none else some s!"{roleVar key}: {schemeValue t t cfg.floor};"
       bg ++ [s!"color: {value ink [.ink]};"] ++ roles
   " ".intercalate decls
 
@@ -10091,7 +10184,7 @@ public def blockNode (cfg : Config) (b : Block) : Node :=
       fillCarrier cfg (Ir.frameFillsOne cfg.lists cfg.styles .deck 0 b)
         (Html.elem "section" (head ++ blockNodesInto shapedCfg #[] body.toList)
           #[("class", s!"block block-{kind.name} block-shaped"),
-            ("style", s!"color: {cssColor ink};" ++ lastBelow)])
+            ("style", s!"color: {cfg.literal ink};" ++ lastBelow)])
     | none =>
     -- A painted region owns a box, distinct from its independently painted
     -- title. Unfilled bodies keep their original child structure.
@@ -10215,6 +10308,10 @@ public def blockNode (cfg : Config) (b : Block) : Node :=
     let paints := if cfg.frames.isEmpty || covered.isSome then [] else cfg.listingPaints spec
     let colored (r : ListingHighlight.Role) : Bool :=
       paints.any fun (_, _, _, rs) => ((rs.lookup (Ir.Role.ofCode r)).join).isSome
+    -- Each type the lines hold, its class where a shipped scheme colours its
+    -- role (one reading per type, not per token).
+    let classes := brushes.map fun (k, _) =>
+      (k, if k.role != .ink && colored k.role then some (tokenClass k) else none)
     let codeAttrs : Array (String × String) := match spec.htmlClass with
       | some c => #[("class", c)]
       | none => #[]
@@ -10225,8 +10322,8 @@ public def blockNode (cfg : Config) (b : Block) : Node :=
         let runs := Listing.paintLine cfg.pal ground covered spec.style brushes lines[i]!
         let line := if paints.isEmpty then codeLineNodes cfg spec.wrapAt runs lines[i]!
           else
-            let (parts, classes) := tokenRuns colored runs
-            codeLineNodes cfg spec.wrapAt parts lines[i]! classes
+            let (parts, partClasses) := tokenRuns classes runs
+            codeLineNodes cfg spec.wrapAt parts lines[i]! partClasses
         kids := if spec.numbers then
           kids.push (Html.elem "span" line #[("class", "line")])
           else kids ++ line
@@ -10961,17 +11058,26 @@ public def imgSrcsList (acc : Array String) (nodes : List Node) : Array String :
 colours, which flatten every ground to the system's, a 1px `CanvasText`
 border on each band a solid ground marks out — a frame title's bar, the
 poster's headline, a standout frame, a block's title — so the band still
-reads as one; and where a dark screen ships, a see-through image and a
-picture, whose marks paint the colours they declare, stand on a light plate,
-the page as printed. -/
+reads as one, a tcolorbox's title among them; and where the screen of the
+other polarity than the document's page ships, a see-through image and a
+picture, whose marks paint the colours they declare, stand on the
+document's own page as it prints, a literal there. -/
 public def schemeRules (cfg : Config) : String :=
   "@media (forced-colors: active) {\n" ++
   "  section.slide > header, body > header.headline, section.slide.standout,\n" ++
-  "  section.block > header { border: 1px solid CanvasText; }\n}\n" ++
-  (if cfg.ships .dark || cfg.ships .darkMore then
-    "@supports (color: light-dark(#000, #fff)) {\n" ++
-    s!"  img.see-through, svg.picture \{ background: light-dark(transparent, {roleRef .paper}); }\n" ++
-    "}\n"
+  "  section.block > header, section.tcolorbox > header { border: 1px solid CanvasText; }\n}\n" ++
+  -- The plate is the document's own page as it prints, a literal: on the
+  -- other polarity's screen every role reads that screen's colours.
+  (let page := Ir.Design.printPage cfg.docPal
+   let dark := cfg.docPal.darkPage
+   if dark && (cfg.ships .light || cfg.ships .lightMore) then
+     "@supports (color: light-dark(#000, #fff)) {\n" ++
+     s!"  img.see-through, svg.picture \{ background: light-dark({cssColor page}, transparent); }\n" ++
+     "}\n"
+   else if !dark && (cfg.ships .dark || cfg.ships .darkMore) then
+     "@supports (color: light-dark(#000, #fff)) {\n" ++
+     s!"  img.see-through, svg.picture \{ background: light-dark(transparent, {cssColor page}); }\n" ++
+     "}\n"
    else "")
 
 /-- Emit a document as its typed tree — head and body nodes — plus any
@@ -10995,12 +11101,14 @@ private def emitTreeCore (cfg : Config) (doc : Doc)
   let judge := if cfg.css == .own then Contrast.schemeJudge doc else {}
   let cfg := { cfg with pal := doc.palette, docPal := doc.palette, frames := judge.frames
                         views := (judge.views.head?.map (·.2)).getD []
+                        boxTexts := boxRoleTexts judge.frames ((judge.views.head?.map (·.2)).getD [])
                         paletteViews := judge.views
                         floor := floorScheme judge.frames doc.palette.homeScreen }
   -- Each code role's colour in each scheme for a listing on the page's own
   -- code ground: what `:root` states, and what a listing restates against.
   let cfg := if cfg.frames.isEmpty || (docTokenClasses doc).isEmpty then cfg else
-    { cfg with codeRoot := (cfg.listingPaints {}).map fun (sc, _, _, rs) => (sc, rs) }
+    let paints := cfg.listingPaints {}
+    { cfg with codeRoot := paints.map fun (sc, _, _, rs) => (sc, rs), codePaints := paints }
   let allTables : List (Ir.Scheme × Ir.Palette) :=
     if cfg.frames.isEmpty then (Contrast.docPalettes doc).map (.light, ·)
     else judge.views.flatMap fun (_, vs) => (cfg.frames.zip vs).map fun (f, v) => (f.scheme, v)
@@ -11494,7 +11602,7 @@ one in the article class"
   let mut shipped := body
   if cssCfg.css == .own then
     let pairs := carrierPairs body
-    let theme := themeCss doc cssCfg.blockTitleRule
+    let theme := themeCss doc cssCfg.blockTitleRule cssCfg.literal
     let tokens := tokenRules doc
     let base := baseRules doc pairs (cssCfg.imgs.entries.any (!·.webWords.isEmpty)) ++
       schemeRules cssCfg ++ tokens
@@ -11516,18 +11624,20 @@ one in the article class"
     -- The tree changes only where it reads or declares a role outside the
     -- set; with none, keeping it to the set is the identity.
     let outside (name : String) : Bool := (roleOfVar? name).any (!roles.contains ·)
-    let mut used := bodyReads.toList ++ bodyDecls.toList.flatMap (fun (d : String × Array String) =>
-      d.2.toList)
+    -- The scheme properties the sheet's own rules read are stated too.
+    let mut used := sheetReads.toList ++ bodyReads.toList ++
+      bodyDecls.toList.flatMap (fun (d : String × Array String) => d.2.toList)
     if bodyReads.any outside || bodyDecls.any (outside ·.1) then
       shipped := keepRolesList roles.contains #[] body.toList
       -- What a dropped declaration read is no longer read.
       let (r, d) := nodeRefsList (#[], #[]) shipped.toList
-      used := r.toList ++ d.toList.flatMap (fun (d : String × Array String) => d.2.toList)
+      used := sheetReads.toList ++ r.toList ++
+        d.toList.flatMap (fun (d : String × Array String) => d.2.toList)
     head := head.modify styleAt fun _ => Node.style (faceRules ++ resolveRoleVars roles.contains
       (baseCss cssCfg doc pairs (roles := some roles) (taken := sheetReads.toList)
         (rules := some base)
         (epochVars := { cssCfg with cssRoles := roles }.epochVarBlocks
-          (used.filter (·.startsWith "--ltx-c-"))) ++ "\n" ++ theme ++ styled))
+          (used.filter (·.startsWith "--ltx--"))) ++ "\n" ++ theme ++ styled))
   return (head, shipped, diags)
 
 /-- Normalize the shared IR at the public entry, before any backend walk. -/

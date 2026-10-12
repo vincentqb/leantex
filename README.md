@@ -182,11 +182,15 @@ ground under it does. Generated colours are generated again
 for each scheme. A scheme that cannot carry a colour legibly is dropped from
 that page alone, and the build names the colour once. Under
 `forced-colors: active`, frame-title bars, standout frames and block title
-bands keep a border, and on a dark screen images that see through and
-pictures stand on a light plate. Highlighted code ships in every scheme:
+bands keep a border, and on the screen of the other polarity than the
+page's, images that see through and pictures stand on a plate of the page
+as it prints. Highlighted code ships in every scheme:
 each token wears its Pygments type's class behind `tok-` (`tok-k`,
 `tok-s2`), whose rule reads its code role's property, and a listing whose
-colours differ from the page's states them on its own box.
+colours differ from the page's states them on its own box. A listing panel
+on a `\definecolor` colour (minted's `bgcolor`) is carried as a ground, so
+it states its colour in each scheme and follows no override of that
+colour's `--ltx-c-` property, which text set in the colour still reads.
 
 A palette can be generated from three seeds, an ink, a paper and one accent:
 

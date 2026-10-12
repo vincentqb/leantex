@@ -7448,7 +7448,7 @@ def oneInkChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit
     t "the role's picture label ships its text run's ink in the PDF" (label == text)
     t "a label on a node's fill ships the declared ink" (filled == softDeclared)
   | _, _, _ => failures ref "one ink: no soft text run or label in the PDF"
-  let (_, body, _) := HtmlDoc.emitTree {} doc
+  let (_, body, _) := emitIn {} doc .print
   let spans := elemStylesList #[] body.toList
   let runs := svgTextRuns body
   let spanHas (needle ink : String) : Bool :=

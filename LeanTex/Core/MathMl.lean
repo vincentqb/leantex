@@ -222,6 +222,10 @@ public structure Marks where
   /-- Font MATH percentages; the unmeasured default is plain TeX's 7/5 pt
   script sizes at its 10 pt base. -/
   scales : ScriptScales := { script := 70, scriptscript := 50 }
+  /-- A colour no palette names, as the page ships it: itself on a page of
+  one polarity, beside its carrying where the page ships both screens
+  (`HtmlDoc.Config.literal`). -/
+  literal : Ir.Color → String := Ir.Color.css
   deriving Inhabited
 
 /-- A length in thousandths of an em, as CSS reads it. -/
@@ -257,10 +261,11 @@ def fracNode (mk : Marks) (disp : Bool) (spec : FracSpec)
 /-- A colour as CSS reads it on a MathML element: the palette's custom
 property with the literal as its fallback when the colour came from a
 named entry — the text runs' emission, so a host page restyles a formula's
-colours as it restyles its text's. -/
-def inkCss (c : Ir.Color) : Option Ir.ColorRef → String
+colours as it restyles its text's — and otherwise as the page ships a
+colour no palette names (`Marks.literal`). -/
+def inkCss (lit : Ir.Color → String) (c : Ir.Color) : Option Ir.ColorRef → String
   | some n => s!"var({n.property}, {c.css})"
-  | none => c.css
+  | none => lit c
 
 /-- A colour switch's reach: the colour every element after the switch in
 its list carries, merged into a style the element already declares. Each
@@ -296,7 +301,7 @@ placement when the provider supplies an actual math em and input. -/
 def cancelNode (mk : Marks) (disp : Bool) (mark : CancelMark) (spec : CancelSpec)
     (struck vals : Array Html.Node) (shown : Bool) : Html.Node :=
   let ink := match spec.color with
-    | some (c, n) => inkCss c n
+    | some (c, n) => inkCss mk.literal c n
     | none => "currentColor"
   let r := mk.rule * (if spec.thick then 2 else 1)
   let half := milliEm ((r + 1) / 2)
@@ -395,7 +400,7 @@ def measuredCancelNode (mk : Marks) (metric : CancelMetric) (mark : CancelMark)
   let (pad, width) := if spec.room then inkRoom reach.left reach.right g.advance
     else (0, g.advance)
   let ink := match spec.color with
-    | some (c, n) => inkCss c n
+    | some (c, n) => inkCss mk.literal c n
     | none => "currentColor"
   let sw := max em (reach.right - reach.left)
   let sh := max em (reach.top - reach.bot)
@@ -410,7 +415,7 @@ vertical-align: baseline; overflow: visible; pointer-events: none")]
     (g.polys.map (cancelPolygon ink pad))
   let body := cancelAt em (g.shift + pad) 0 (.elem "mrow" #[] struck)
   let value := cancelAt em (g.valueX + pad) g.valueY
-    (paint (spec.color.map fun (c, n) => inkCss c n)
+    (paint (spec.color.map fun (c, n) => inkCss mk.literal c n)
       (.elem "mstyle" (relativeStyle mk (spec.size.style mk.style)) vals))
   let kids := if visible then #[body, value] else #[body]
   .elem "mpadded" (advanceAttrs em width ++
@@ -435,7 +440,7 @@ mutual
 public def listNodes (mk : Marks) (disp : Bool) (ink : Option String) (acc : Array Html.Node) :
     MList → Array Html.Node
   | .nil => acc
-  | .cons (.ink c n) rest => listNodes mk disp (some (inkCss c n)) acc rest
+  | .cons (.ink c n) rest => listNodes mk disp (some (inkCss mk.literal c n)) acc rest
   | .cons (.space mu) rest =>
     listNodes mk disp ink (acc.push (paint ink (itemNode mk disp (.space mu)))) rest
   | .cons (.atom cls nuc sup sub lim) rest =>
@@ -951,7 +956,7 @@ theorem listNodes_chars (mk : Marks) (disp : Bool) :
         = listChars (nodeListChars c acc.toList) ml
   | _, .nil, acc, c => rfl
   | _, .cons (.ink co n) rest, acc, c => by
-    show nodeListChars c (listNodes mk disp (some (inkCss co n)) acc rest).toList
+    show nodeListChars c (listNodes mk disp (some (inkCss mk.literal co n)) acc rest).toList
         = listChars (nodeListChars c acc.toList) rest
     exact listNodes_chars mk disp _ rest acc c
   | ink, .cons (.space mu) rest, acc, c => by

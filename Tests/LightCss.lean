@@ -141,10 +141,12 @@ def sheetRules (css : String) : Array (List String × String × String) := Id.ru
       else cur := cur.push c
   return out
 
-/-- Whether a block's condition holds in a scheme. -/
-def holdsIn (s : Ir.Scheme) (prelude : String) : Bool :=
+/-- Whether a block's condition holds in a scheme, the reader asking more
+contrast where `more` says (in print too: a reader who asks it prints with
+it). -/
+def holdsIn (s : Ir.Scheme) (prelude : String) (more : Bool := s.more) : Bool :=
   if prelude.startsWith "@supports" then prelude.contains "light-dark"
-  else if prelude == "@media (prefers-contrast: more)" then s.more
+  else if prelude == "@media (prefers-contrast: more)" then more
   else if prelude == "@media print" then s == .print
   else if prelude == "@media screen" then s != .print
   else prelude == "@media screen, print"
@@ -157,15 +159,16 @@ def cssDecls (decls : String) : List (String × String) :=
     | _ => none
 
 /-- The `:root` declarations a scheme's cascade applies, in order. -/
-def rootDeclsIn (s : Ir.Scheme) (rules : Array (List String × String × String)) :
-    List (String × String) :=
-  (rules.toList.filter fun (conds, sel, _) => sel == ":root" && conds.all (holdsIn s)).flatMap
-    fun (_, _, decls) => cssDecls decls
+def rootDeclsIn (s : Ir.Scheme) (rules : Array (List String × String × String))
+    (more : Bool := s.more) : List (String × String) :=
+  (rules.toList.filter fun (conds, sel, _) =>
+    sel == ":root" && conds.all (holdsIn s · more)).flatMap fun (_, _, decls) => cssDecls decls
 
 /-- **The `:root` table a scheme's cascade gives**, newest first, and whether
 its `light-dark()` pairs read their dark side there. -/
-def schemeRoot (css : String) (s : Ir.Scheme) : List (String × String) × Bool :=
-  let decls := rootDeclsIn s (sheetRules css)
+def schemeRoot (css : String) (s : Ir.Scheme) (more : Bool := s.more) :
+    List (String × String) × Bool :=
+  let decls := rootDeclsIn s (sheetRules css) more
   let cs := ((decls.reverse.lookup "color-scheme").getD "light").splitOn " "
   let dark := if cs.contains "dark" && cs.contains "light" then s.onDark
     else cs.contains "dark"

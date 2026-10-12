@@ -950,7 +950,7 @@ def colorModelChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO 
   let artifactHas (d : Ir.Doc) (text : String) (want : Ir.Color) (pdfOp : String) : Bool :=
     let geom := Layout.Geom.ofPage d.page
     let pdf := pdfText (Pdf.write geom oneFace (layoutOf oneFace d geom).pages d.info)
-    let (_, body, _) := HtmlDoc.emitTree {} d
+    let (_, body, _) := emitIn {} d .print
     bytesContain pdf pdfOp &&
       (elemLightStyles body.toList).any fun (shown, style) =>
         hasStr shown text && hasStr style ("color: " ++ HtmlDoc.cssColor want)

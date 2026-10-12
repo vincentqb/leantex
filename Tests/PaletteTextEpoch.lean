@@ -110,7 +110,7 @@ private def containerEpochChecks (ref : IO.Ref (List String))
     let (doc, ds) := Elab.run "list-palette-epoch.tex" (listSource env)
     check ref s!"palette list/{env}: source has no errors" (ds.all (·.severity != .error))
     let out := Layout.run (Layout.Geom.ofPage doc.page) fonts none doc
-    let (_, nodes, _) := HtmlDoc.emitTree { fonts := some fonts } doc
+    let (_, nodes, _) := emitIn { fonts := some fonts } doc .print
     let leaves := htmlInks (some (Ir.Design.ofPalette doc.palette).fg.css) none #[] nodes.toList
     for marker in ["ITEM", "NEXT", "LATER", "OUTSIDE"] do
       let pdf := markerForeground out marker
@@ -132,7 +132,7 @@ private def containerEpochChecks (ref : IO.Ref (List String))
       .titled .block #[] #[wrap #[.setPalette changed, para "ITEM"], para "LATER"],
       para "OUTSIDE"] }
     let out := Layout.run (Layout.Geom.ofPage doc.page) fonts none doc
-    let (_, nodes, _) := HtmlDoc.emitTree { fonts := some fonts } doc
+    let (_, nodes, _) := emitIn { fonts := some fonts } doc .print
     let leaves := htmlInks (some (Ir.Design.ofPalette doc.palette).fg.css) none #[] nodes.toList
     for marker in ["ITEM", "LATER", "OUTSIDE"] do
       let ink := leaves.filter (·.text == marker)
@@ -147,7 +147,7 @@ private def containerEpochChecks (ref : IO.Ref (List String))
       .titled .block #[] #[wrap #[.setPalette changed, para "LOCAL"], para "LATER"],
       para "OUTSIDE"] }
     let out := Layout.run (Layout.Geom.ofPage doc.page) fonts none doc
-    let (_, nodes, _) := HtmlDoc.emitTree { fonts := some fonts } doc
+    let (_, nodes, _) := emitIn { fonts := some fonts } doc .print
     let leaves := htmlInks (some (Ir.Design.ofPalette doc.palette).fg.css) none #[] nodes.toList
     for (marker, expected) in [("LATER", "#004080"), ("OUTSIDE", "#101010")] do
       let ink := leaves.filter (·.text == marker)

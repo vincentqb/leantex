@@ -87,6 +87,9 @@ private structure Use where
   surface : Color
   /-- What the diagnostic calls the surface; `none` reads "the page". -/
   groundName : Option String := none
+  /-- The palette role the surface is (`UseCx.groundRole`, the page where the
+  use stands on it). -/
+  surfaceRole : Option Role := none
   /-- Exempt where it stood: `covered`, a name the epoch's decorative set
   carries, or an anonymous value a decorative entry names. -/
   exempt : Bool
@@ -160,6 +163,9 @@ private structure UseCx where
   /-- What the diagnostic calls the ground ("the frame-title bar"); `none`
   reads "the page". -/
   groundName : Option String := none
+  /-- The palette role the ground is, where one is: what a scheme carries
+  the ground as (`Ir.Palette.useGround`). -/
+  groundRole : Option Role := none
   /-- A frame-entry ground lasts only until the next palette declaration,
   even when that declaration repeats the same palette. -/
   groundEpoch : Option Nat := none
@@ -171,6 +177,13 @@ private structure UseCx where
   inheritedInk : Option (ColorRef × Color) := none
   /-- The highlighting style of the listing this content is a token of. -/
   codeStyle : Option String := none
+  /-- Whether the walk reads the design sites alone: a listing's tokens are
+  uses and no event, so such a walk passes over them. -/
+  sitesOnly : Bool := false
+  /-- The document's element styles: a heading's or a block title's font
+  template is filled around its title as both backends fill it
+  (`Ir.fillTemplate`), so a colour the template sets is a use. -/
+  styles : Styles := {}
 
 private def UseCx.atEpoch (cx : UseCx) (pal : Palette) (epoch : Nat) : UseCx :=
   let cx := if cx.inkEpoch.any (· != epoch) then
@@ -180,7 +193,8 @@ private def UseCx.atEpoch (cx : UseCx) (pal : Palette) (epoch : Nat) : UseCx :=
   -- premise: listingPaletteAuditChecks — a body declaration replaces the
   -- entry ground; its colour equality cannot stand in for the boundary.
   if cx.groundEpoch.any (· != epoch) then
-    { cx with ground := none, groundName := none, groundEpoch := none, inheritedInk := none }
+    { cx with ground := none, groundName := none, groundRole := none, groundEpoch := none
+              inheritedInk := none }
   else cx
 
 /-- Whether a use stands as large-scale text at the size its medium shows it.
@@ -226,6 +240,7 @@ private def UseAcc.use (acc : UseAcc) (cx : UseCx) (nm : Option ColorRef)
                    large := cx.large
                    surface := cx.ground.getD (surfaceOf acc.pal)
                    groundName := cx.groundName
+                   surfaceRole := if cx.ground.isSome then cx.groundRole else some .page
                    exempt := exempt
                    pal := acc.pal
                    site := match cx.cur with
@@ -356,7 +371,12 @@ private def usesBlock (cx : UseCx) (acc : UseAcc) : Block → UseAcc
   | .equation number content =>
     usesInlines cx (usesInlines cx acc content.toList) number.toList
   | .section level _ _ title =>
-    let hc := { headingCx cx.base level with cur := cx.cur }
+    let st := (cx.styles.find? level.element).getD {}
+    let st := if level == 0 then Ir.titleHeadingStyle st else st
+    let title := match st.font with
+      | some tpl => Ir.fillTemplate tpl title
+      | none => title
+    let hc := { headingCx cx.base level with cur := cx.cur, styles := cx.styles }
     let (hc, acc) := if cx.slides && level == 1 then
       match Design.declared? acc.pal .sectionTitleInk with
       | some c => ({ hc with cur := some (some (.role .sectionTitleInk), c, acc.runs) },
@@ -377,7 +397,8 @@ private def usesBlock (cx : UseCx) (acc : UseAcc) : Block → UseAcc
       bold := true
       cur := some (some (.role (Role.titleInk kind)), look.fg, acc.runs)
       ground := look.bar.or cx.ground
-      groundName := (look.bar.map (fun _ => "the block-title bar")).or cx.groundName }
+      groundName := (look.bar.map (fun _ => "the block-title bar")).or cx.groundName
+      groundRole := if look.bar.isSome then some (Role.titleBar kind) else cx.groundRole }
     let d := Design.ofPalette acc.pal
     let bodyLook := d.titledBody kind
     let defaultInk := cx.inheritedInk.getD (.role .ink, d.fg)
@@ -389,7 +410,11 @@ private def usesBlock (cx : UseCx) (acc : UseAcc) : Block → UseAcc
       inkEpoch := some acc.epochs.size
       ground := bodyLook.bg.or cx.ground
       groundName := (bodyLook.bg.map (fun _ => "the block body")).or cx.groundName
+      groundRole := if bodyLook.bg.isSome then some (Role.bodyGround kind) else cx.groundRole
       groundEpoch := if bodyLook.bg.isSome then none else cx.groundEpoch }
+    let title := match Ir.blockTitleFont cx.styles kind with
+      | some tpl => Ir.fillTemplate tpl title
+      | none => title
     usesBlocks bodyCx
       (usesInlines titleCx { acc with runs := acc.runs + 2 } title.toList) body.toList
   | .disclosure summary _ body =>
@@ -431,7 +456,8 @@ private def usesBlock (cx : UseCx) (acc : UseAcc) : Block → UseAcc
       bold := true
       ground := Design.declared? acc.pal .frameTitleBar
       groundName := (Design.declared? acc.pal .frameTitleBar).map
-        (fun _ => "the frame-title bar") }
+        (fun _ => "the frame-title bar")
+      groundRole := (Design.declared? acc.pal .frameTitleBar).map fun _ => .frameTitleBar }
     -- A foreground-only title has no bar for the site judge to read.
     let (titleCx, acc) := if titleCx.ground.isNone then
       match Design.declared? acc.pal .frameTitleInk with
@@ -446,6 +472,7 @@ private def usesBlock (cx : UseCx) (acc : UseAcc) : Block → UseAcc
         { cx with ground := some d.standout.bg
                   inheritedInk := some (.role .standoutInk, d.standout.fg)
                   groundName := some "the standout frame"
+                  groundRole := some .standoutGround
                   groundEpoch := some acc.epochs.size }
       -- And a title page with a declared ground sits on that: the ground
       -- `Layout.titleGround` paints (`Ir.titleGroundOf`, the one reading),
@@ -454,6 +481,7 @@ private def usesBlock (cx : UseCx) (acc : UseAcc) : Block → UseAcc
       else match titleGroundOf acc.pal valign with
         | some ground =>
           { cx with ground := some ground, groundName := some "the title page"
+                    groundRole := some .titlePageGround
                     inheritedInk := some (.role .titlePageInk, (d.titlepage.map (·.fg)).getD d.fg)
                     groundEpoch := some acc.epochs.size }
         | none => cx
@@ -464,7 +492,8 @@ private def usesBlock (cx : UseCx) (acc : UseAcc) : Block → UseAcc
   | .framefoot content =>
     usesInlines { cx with
       ground := (Design.ofPalette acc.pal).footline.bar
-      groundName := (Design.ofPalette acc.pal).footline.bar.map (fun _ => "the footline") }
+      groundName := (Design.ofPalette acc.pal).footline.bar.map (fun _ => "the footline")
+      groundRole := (Design.ofPalette acc.pal).footline.bar.map fun _ => .footBand }
       acc content.toList
   -- The epoch boundary: the palette in force changes here, in flow order,
   -- and every use after it is judged against the new state.
@@ -499,6 +528,7 @@ private def usesBlock (cx : UseCx) (acc : UseAcc) : Block → UseAcc
     let acc := match spec.caption with
       | some (_, cap) => usesInlines cx acc cap.toList
       | none => acc
+    if cx.sitesOnly then acc else
     let own := spec.groundIn acc.pal .print
     let ground := (own.map (·.1)).orElse fun _ =>
       cx.ground.orElse fun _ => some (Design.printPage acc.pal)
@@ -514,6 +544,10 @@ private def usesBlock (cx : UseCx) (acc : UseAcc) : Block → UseAcc
       | none => cx.cur
     let codeCx := { cx.style spec.fontSize with
       ground, cur, groundName := (own.map fun _ => "the listing's ground").or cx.groundName
+      groundRole := match own with
+        | some (_, some (.role r)) => some r
+        | some _ => none
+        | none => cx.groundRole
       codeStyle := spec.style.map (·.name) }
     -- One brush per type for the whole listing, as both backends draw it;
     -- the palette changes only at a `.setPalette`, never inside a listing.
@@ -547,12 +581,12 @@ public def stageOf (doc : Doc) : Bool := doc.docClass.record.model == .frame
 epoch boundaries, and the design sites each epoch ships, read off
 `doc.body` once. One site, so the judge and the judged-pair census read
 the same walk and not two copies of it. -/
-private def docWalk (doc : Doc) : UseAcc :=
+private def docWalk (doc : Doc) (sitesOnly : Bool := false) : UseAcc :=
   let hasFrameFoot := doc.body.any fun b => match b with
     | .framefoot xs => !xs.isEmpty
     | _ => false
   let cx : UseCx :=
-    { base := doc.page.fontSize, size := doc.page.fontSize
+    { base := doc.page.fontSize, size := doc.page.fontSize, sitesOnly, styles := doc.styles
       slides := stageOf doc
       chromeFoot := doc.docClass.record.chrome && doc.foot.isNone &&
         (doc.chrome.hasFooter || hasFrameFoot) }
@@ -576,7 +610,8 @@ private def docUses (doc : Doc) (walk : UseAcc) : UseAcc := Id.run do
     let key : ColorRef := if (Design.declared? pal .muted).isSome then .role .muted else .role .ink
     let cx := { base with
       size := Ir.scaleStep doc.page.fontSize Ir.footline.step
-      ground := look.bar, groundName := look.bar.map (fun _ => "the footline") }
+      ground := look.bar, groundName := look.bar.map (fun _ => "the footline")
+      groundRole := look.bar.map fun _ => .footBand }
     acc := { acc with pal := pal }
     acc := { acc.use cx (some key) look.fg with runs := acc.runs + 1 }
   acc := { acc with pal := doc.palette }
@@ -713,6 +748,15 @@ palette in force where it ships: every event's sites (`eventSites`). -/
 public def shippedSites (doc : Doc) : Array (Role × Palette) :=
   (shippedEvents doc).flatMap fun (ev, pal) => eventSites ev pal
 
+/-- The design sites a document ships, as `shippedSites` reads them, and its
+coloured uses, the furniture's included (`docUses`), off a walk that passes
+over every listing's tokens: a listing ships its colours per scheme on its
+own grounds. -/
+private def schemeWalk (doc : Doc) : Array (Role × Palette) × Array Use :=
+  let walk := docWalk doc (sitesOnly := true)
+  ((pageEvents doc walk ++ elementEvents walk).flatMap fun (ev, pal) => eventSites ev pal,
+    (docUses doc walk).uses)
+
 /-- The palettes a document's page carries: its own, then every epoch's, in
 the order the body declares them. -/
 public def docPalettes (doc : Doc) : List Palette :=
@@ -744,13 +788,20 @@ public structure SchemeJudgement where
 /-- The losses one scheme's views and the page's shipped sites show: each
 colour a view could not carry, at what it reads there, and each site the page
 ships that falls short of the scheme's gate, once per name and ground. -/
-private def schemeLosses (s : Scheme) (stage : Bool) (views : List (Palette × (Palette × Array Unrealized)))
-    (sites : Array (Role × Palette)) : List SchemeLoss := Id.run do
+private def schemeLosses (s : Scheme) (f : SchemeFrame) (stage : Bool)
+    (views : List (Palette × (Palette × Array Unrealized))) (sites : Array (Role × Palette))
+    (uses : List (Palette × Array Use)) : List SchemeLoss := Id.run do
   let mut out : Array SchemeLoss := #[]
   let push (out : Array SchemeLoss) (l : SchemeLoss) : Array SchemeLoss :=
     if out.any fun o => o.name == l.name && o.on == l.on then out else out.push l
-  for (_, (v, un)) in views do
+  for (p, (v, un)) in views do
+    let used := (uses.lookup p).getD #[]
     for u in un do
+      -- A colour the page paints: a use of it, or a site it ships.
+      let paints := used.any (·.name == some u.name) || match u.name with
+        | .role r => sites.any (· == (r, p))
+        | .color _ => false
+      if !paints then continue
       let need := match u.name with
         | .role r => r.row.need
         | .color _ => .text
@@ -761,6 +812,15 @@ private def schemeLosses (s : Scheme) (stage : Bool) (views : List (Palette × (
         | some a, some b => contrastMilli a b
         | _, _ => 0
       out := push out { name := u.name, on := u.on, ratio, gate := requiredIn s (need.atStage stage) }
+    -- A colour no palette names stands where it is used, carried as the
+    -- page carries it there (`Design.literalIn`).
+    for u in used do
+      if u.name.isSome then continue
+      let c := Design.literalIn f u.color
+      let (g, on) := p.useGround v f u.surface u.surfaceRole
+      let gate := requiredIn s (if u.large then .largeText else .text)
+      if contrastMilli c g < gate then
+        out := push out { name := .color (hexOf u.color), on, ratio := contrastMilli c g, gate }
   for (r, p) in sites do
     let v := ((views.find? (·.1 == p)).map (·.2.1)).getD p
     if let some st := Design.site? v s r then
@@ -785,18 +845,37 @@ scheme, or name the schemes the page offers: \\output\{ schemes = print, light }
 /-- **The colour schemes a web page ships**, of those its document asks
 (`Doc.requestedSchemes`): a scheme the document's colours were declared for
 ships them as they are, judged where they ship by the document's contrast
-report; any other ships only where every palette of the page can be carried
-there legibly (`Palette.view`) and every site the page ships reads at that
-scheme's gate — else that scheme alone is dropped for the page, each colour
-it could not carry named once (`schemeLossDiag`). -/
+report; any other ships only where every colour the page paints can be
+carried there legibly — each palette carried on every ground its colours'
+uses stand on (`Palette.view` over the use census's surfaces), a colour no
+palette names carried as the page carries it and judged where it is used
+(`Design.literalIn`) — and every site the page ships reads at that scheme's
+gate; else that scheme alone is dropped for the page, each colour it could
+not carry named once (`schemeLossDiag`). A colour the page never paints
+drops nothing. -/
 public def schemeJudge (doc : Doc) : SchemeJudgement :=
   let stage := stageOf doc
   let pals := docPalettes doc
-  let sites := shippedSites doc
+  -- The sites and uses are read only where a scheme carries the colours
+  -- somewhere.
+  let carries := doc.requestedSchemes.any fun s => !(doc.palette.frame s stage).home
+  let (sites, uses) := if carries then schemeWalk doc else (#[], #[])
+  let usesOf : List (Palette × Array Use) := pals.map fun p =>
+    (p, uses.filter fun u => !u.exempt && u.pal == p)
+  -- Each named colour a palette's uses read, with the grounds they stand on.
+  let groundsOf (p : Palette) : List (ColorRef × List (Color × Bool × Option Role)) :=
+    ((usesOf.lookup p).getD #[]).foldl (fun acc u => match u.name with
+      | some k => match acc.findIdx? (·.1 == k) with
+        | some i => acc.modify i fun (k, gs) => (k, gs ++ [(u.surface, u.large, u.surfaceRole)])
+        | none => acc.push (k, [(u.surface, u.large, u.surfaceRole)])
+      | none => acc) #[] |>.toList
   let judged := doc.requestedSchemes.map fun s =>
     let f := doc.palette.frame s stage
-    let vs := pals.map fun p => (p, p.view f)
-    (s, f, vs, if f.home then [] else schemeLosses s stage vs sites)
+    let vs := pals.map fun p => (p, p.view f (groundsOf p))
+    -- premise: dropChecks — a scheme the colours were declared for ships
+    -- them as declared, where the document's report (W0315) names a pair
+    -- below its gate; judging it here too would name the loss twice.
+    (s, f, vs, if f.home then [] else schemeLosses s f stage vs sites usesOf)
   let kept := judged.filter (·.2.2.2.isEmpty)
   { shipped := kept.map (·.1)
     frames := kept.map (·.2.1)

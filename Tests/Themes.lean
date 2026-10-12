@@ -1704,21 +1704,43 @@ def contrastChecks (ref : IO.Ref (List String)) : IO Unit := do
     ("\\documentclass{article}\\pictures{ tool = none }\\begin{document}" ++
      "\\begin{tikzpicture}\\draw (0,0) -- (1,0);\\end{tikzpicture}\\end{document}")).1
   let picCss := headCss picHead
-  t "a picture stands on a light plate on the dark screen"
-    (hasStr picCss s!"svg.picture \{ background: light-dark(transparent, {HtmlDoc.roleRef .paper}); }")
-  -- A style's own literal colour rides in its one declaration, beside its
-  -- carrying to the dark screen.
+  -- What a sheet rule paints in one scheme: the declaration of the last
+  -- rule whose selector holds `sel` and that states `prop`, under the
+  -- conditions that hold there, read through that scheme's cascade.
+  let ruleIn (css sel prop : String) (sc : Ir.Scheme) : Option String :=
+    let (root, dark) := schemeRoot css sc
+    ((sheetRules css).toList.reverse.findSome? fun (conds, sl, decls) =>
+      if hasStr sl sel && conds.all (holdsIn sc ·) then (cssDecls decls).lookup prop else none).map
+      (schemeRead dark root)
+  let darkPage := (Ir.Design.at {} .dark .page).getD Ir.Color.black
+  let legibleOnDark (v : Option String) : Bool :=
+    v.any fun t => match (({} : Ir.Palette).resolveSource none t).toOption.join with
+      | some c => Contrast.aaText ≤ Contrast.contrastMilli c darkPage
+      | none => false
+  t "a picture stands on the printed page on the dark screen"
+    (ruleIn picCss "svg.picture" "background" .dark == some "#ffffff")
+  -- A style's own literal colour rides in its one declaration, carried to
+  -- the dark screen at the text gate there.
   let schemeCss (imgs : Image.Store) (src : String) : String :=
     let (h, _, _) := HtmlDoc.emitTree { imgs } (elabStr src).1
     headCss h
   let styled (decl body : String) : String :=
     s!"\\documentclass\{article}{decl}\\begin\{document}{body}\\end\{document}"
+  let ruleCss := schemeCss {} (styled "\\style{section}{ rule = red!50!black }" "\\section{A}b")
   t "a heading rule's literal colour is carried to the dark screen"
-    (hasStr (schemeCss {} (styled "\\style{section}{ rule = red!50!black }" "\\section{A}b"))
-      "--rule-color: light-dark(#800000, ")
+    (ruleIn ruleCss "h2" "--rule-color" .light == some "#800000" &&
+      legibleOnDark (ruleIn ruleCss "h2" "--rule-color" .dark))
+  let hoverCss := schemeCss {} (styled "\\style{nav}{ hover = red!50!black }" "x")
   t "a link hover's literal colour is carried to the dark screen"
-    (hasStr (schemeCss {} (styled "\\style{nav}{ hover = red!50!black }" "x"))
-      "color: light-dark(#800000, ")
+    (ruleIn hoverCss "a:hover" "color" .light == some "#800000" &&
+      legibleOnDark (ruleIn hoverCss "a:hover" "color" .dark))
+  -- A list marker's literal colour too (review S-1 once found it on the
+  -- dark surface at 1:1).
+  let markerCss := schemeCss {} (styled "\\style{itemize}{ marker = {\\textcolor[HTML]{1A2433}{>}} }"
+    "\\begin{itemize}\\item a\\end{itemize}")
+  t "a list marker's literal colour is carried to the dark screen"
+    (ruleIn markerCss "li::marker" "color" .light == some "#1a2433" &&
+      legibleOnDark (ruleIn markerCss "li::marker" "color" .dark))
   let raster (a : Image.Alpha) : Image.Store :=
     { entries := #[{ src := "mark.png", info := some { pxW := 4, pxH := 4, alpha := a } }] }
   let imgSrc := "\\documentclass{article}\\usepackage{graphicx}\\begin{document}x\n\n" ++
@@ -2410,8 +2432,12 @@ def roleInvocationChecks (ref : IO.Ref (List String)) : IO Unit := do
   let qPage := (HtmlDoc.emit {} qDoc).1
   t "a role use references its token on the page"
     ((qPage.splitOn "color: var(--ltx-c-quiet, #123456)").length == 2)
+  let qCss := treeCssList "" (HtmlDoc.emitTree {} qDoc).1.toList
   t "the page declares the token the use references"
-    ((qPage.splitOn "--ltx-c-quiet: #123456;").length == 2)
+    ((sheetRules qCss).toList.any (fun (conds, sel, decls) => conds.isEmpty && sel == ":root" &&
+        (cssDecls decls).lookup "--ltx-c-quiet" == some "#123456") &&
+     schemeRead (schemeRoot qCss .light).2 (schemeRoot qCss .light).1 "var(--ltx-c-quiet)" ==
+       "#123456")
 
 /-- W0342: a definition that shadows a palette role is named, with the cost
 in the reason — the palette (a variant, a host page's override) and the

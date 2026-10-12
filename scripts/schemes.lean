@@ -53,22 +53,21 @@ web page ships (Contrast.schemeJudge); pages shipping each scheme of those askin
     rows.qsort (·.item < ·.item))
 
 /-- A minimal document under a declaration, its body one paragraph. -/
-def schemeProbe (pre : String) (cls : String := "article") : Ir.Doc :=
-  (elabStr s!"\\documentclass\{{cls}}{pre}\\begin\{document}x\\end\{document}").1
+def schemeProbe (pre : String) (body : String := "x") (cls : String := "article") : Ir.Doc :=
+  (elabStr s!"\\documentclass\{{cls}}{pre}\\begin\{document}{body}\\end\{document}").1
 
 def schemesSelftest : IO UInt32 := tierSelftest "schemes" fun no => do
   let plain := schemeProbe ""
   no "an undeclared document asks every scheme and ships each"
     (schemesOf plain == (Ir.Scheme.all, Ir.Scheme.all))
-  let deck := schemeProbe "" "slides"
+  let deck := schemeProbe "" (cls := "slides")
   no "a deck asks print, its light screen and that screen's more contrast"
     ((schemesOf deck).1 == [.print, .light, .lightMore])
-  -- A mid-grey page under a black ink and a white alert: no tone of either
-  -- reaches the more-contrast gate on it, and the page moved for the ink
-  -- leaves the alert further off, so that scheme alone drops; the colours
-  -- were declared for the light screen and print, which ship them as
-  -- declared.
-  let grey := schemeProbe "\\palette{ bg = #767676, fg = #000000, alert = #FFFFFF }"
+  -- A mid-grey ink on a mid-grey page: no tone of the ink reaches the
+  -- more-contrast gate on the page, nor one of the page against the ink, so
+  -- that scheme alone drops; the colours were declared for the light screen
+  -- and print, which ship them as declared.
+  let grey := schemeProbe "\\palette{ bg = #767676, fg = #777777 }"
   no s!"a colour no tone carries drops that scheme alone: {(schemesOf grey).2.map (·.name)}"
     (!(schemesOf grey).2.contains .lightMore && (schemesOf grey).2.contains .light &&
      (schemesOf grey).2.contains .print)
