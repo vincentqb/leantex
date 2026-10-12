@@ -196,5 +196,31 @@ three sites ({routes.size})"
     (mdHard.page.hmargin == texHard.page.hmargin && texts mdOut == texts texOut
       && (texts mdOut).size ≥ 3 && (texts mdOut).back? == some "last words"
       && !mdOut.diags.any (·.kind == .W0386) && texOut.diags.any (·.kind == .W0386))
+  -- A fenced block's code stands at its own source lines, with an info word
+  -- or without one: the overrun of its first line is named at the line
+  -- after the fence, column one, and the code ships as written, its first
+  -- line first. Without an info word it was named on the fence's own line,
+  -- past the column a verbatim opener would end at.
+  let code := String.intercalate "_" (List.replicate 24 "gadget")
+  let fence (src : String) : Layout.Out :=
+    let (fRaws, fReads) := Md.read "f.md" src
+    let (fDoc, _, _) := Elab.runRawsSpanned "f.md" fRaws fReads
+    layoutOf split fDoc
+  let sitesOf (o : Layout.Out) := (o.diags.filter (·.kind == .W0005)).map
+    (·.span.map fun s => (s.pos.line, s.pos.col))
+  for (info, label) in [("", "bare"), ("python", "python"), ("a]b", "routed")] do
+    let fOut := fence s!"Prose.\n\n```{info}\n{code}\nshort\n```\n"
+    let shipped := (bodyLines fOut).map lineText
+    t s!"a {label} fence names its code at its own line ({sitesOf fOut})"
+      (sitesOf fOut == #[some (4, 1)] && shipped.contains "short" &&
+        shipped.findIdx? (hasStr · "gadget") == some 1)
+  -- A fence whose code opens on a blank line keeps it, as CommonMark reads
+  -- it: the page sets the blank line before the code, and the code's
+  -- overrun is named at its own line, after the blank one.
+  let blankOut := fence s!"Prose.\n\n```\n\n{code}\n```\n"
+  let blankLines := (bodyLines blankOut).map lineText
+  t s!"a fence whose code opens on a blank line ships the blank line ({sitesOf blankOut})"
+    (sitesOf blankOut == #[some (5, 1)] && blankLines[0]? == some "Prose." &&
+      blankLines[1]? == some "" && (blankLines[2]?.any (hasStr · "gadget")))
 
 end Tests.MarkdownWarnings

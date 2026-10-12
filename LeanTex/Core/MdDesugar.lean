@@ -468,15 +468,19 @@ private def blkRaws (file : String) : Blk → Array Raw × Array Diag
     -- `]`, `,`, `=` or brace, so the head reads it back unchanged. A word
     -- outside the grammar is routed, and the code sets as it is. The word is
     -- split on spaces and tabs, as §4.5's "first word" is.
+    -- The code is the fence's next line, as a tex verbatim's is its
+    -- opener's: the newline the body opens on is the one `Ir.verbatimLines`
+    -- reads past, so every code line stands at its own source line. Its
+    -- column inside a list item or a block quote is not carried: pending.
     let word := ((info.split (fun c => c == ' ' || c == '\t')).find? (!·.isEmpty)).map
       (·.toString)
     match word with
-    | none => (#[.verb "verbatim" text p], #[])
+    | none => (#[.verb "verbatim" ("\n" ++ text) p], #[])
     | some w =>
       match Ir.listingLang? w with
       | some l => (#[.verb "lstlisting" ("[language=" ++ l.val ++ "]\n" ++ text) p], #[])
       | none =>
-        (#[.verb "verbatim" text p],
+        (#[.verb "verbatim" ("\n" ++ text) p],
          #[routeDegraded file "code-info"
             s!"the info word '{w}' is not a language a listing can carry: the code sets \
 without a language" p

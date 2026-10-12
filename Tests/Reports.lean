@@ -1448,7 +1448,14 @@ def reports : List Report := [
     pins := [check% Tests.MarkdownCode.codeTokenWrapChecks, check% Tests.MarkdownCode.markdownCodeChecks]
     accept := ["five of the guards' assertions fail with the fix reverted onto the recorded commit: an operator or a fallback token parted in each of eleven Lean, Python and plain fences, after a space and inside a run wider than the line, where the sweeps stand it at the measure's end; a character literal the Lean highlighter splits into runs parted at its quote; the last fitting space losing to a later token break in a Python and in a plain fence; and a declared listing's wrapped lines set apart from the units a LuaLaTeX probe of the same invented lines keeps whole, a number's digits and a list's commas",
       "an invented markdown document's long Lean line wraps before its assignment operator, where the tree before set the operator's colon and equals sign on two lines"]
-    state := .guarded "ce4db8b2" .revert .author }
+    state := .guarded "ce4db8b2" .revert .author },
+  { id := "R160", date := "2026-10-12"
+    what := "a markdown report's folded overfull warning named its first site on a code block's opening fence line, at the column a verbatim opener would end at, where the block had no info word: the code's characters stood one line early, and a block whose code opened on a blank line lost that line"
+    pins := [check% Tests.MarkdownWarnings.markdownWarningChecks,
+      .tier "commonmark" "Fenced code blocks.match", .tier "mdtwin" "cm.Fenced code blocks.reread-exact"]
+    accept := ["on the tree before the fix one of the guard's assertions fails: a fence with no info word names its overrun on the fence's line, while the same fence with a language names the code's own line",
+      "the CommonMark tier's fenced-code item rises by the case whose code opens on a blank line, and the markdown twin's reread of the same section by one"]
+    state := .guarded "bc2adb38" .before .author }
 ]
 
 /-- The reports guarded but never seen failing: a count that may fall and
