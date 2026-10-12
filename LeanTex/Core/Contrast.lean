@@ -808,10 +808,10 @@ private def schemeLosses (s : Scheme) (f : SchemeFrame) (stage : Bool)
       let ink := match u.name with
         | .role r => Design.at v s r
         | .color n => v.lookup (.color n)
-      let ratio := match ink, Design.at v s u.on with
+      let (ratio, gate) := u.measured.getD ((match ink, Design.at v s u.on with
         | some a, some b => contrastMilli a b
-        | _, _ => 0
-      out := push out { name := u.name, on := u.on, ratio, gate := requiredIn s (need.atStage stage) }
+        | _, _ => 0), requiredIn s (need.atStage stage))
+      out := push out { name := u.name, on := u.on, ratio, gate }
     -- A colour no palette names stands where it is used, carried as the
     -- page carries it there (`Design.literalIn`).
     for u in used do

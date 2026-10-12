@@ -3285,11 +3285,11 @@ below the bar's top, its last `frametitlepadding` above the bar's bottom —
 two struts no font's metrics enter, on the lines' own leading. Each length
 is the PDF's own at an em of the title's size: the token's resolved value
 (`Ir.frameTitlePadding`) and the strut at a 1000 sp title, its milli-em. -/
-private def frameTitleStrutCss : String :=
+private def frameTitleStrutCss (hdr : String := "section.slide > header") : String :=
   let pad := s!"var(--frametitlepadding, {cssLength Ir.frameTitlePadding.width})"
-  "section.slide > header h2::before { content: \"\"; display: inline-block;\n" ++
+  s!"{hdr} h2::before \{ content: \"\"; display: inline-block;\n" ++
   s!"  height: calc({pad} + {decMilli (Ir.frameTitleStrut 1000)}em); }\n" ++
-  "section.slide > header h2::after { content: \"\"; display: inline-block;\n" ++
+  s!"{hdr} h2::after \{ content: \"\"; display: inline-block;\n" ++
   s!"  vertical-align: calc(-1 * {pad}); }\n"
 
 /-- moloch's footline on the stage (beamerouterthememoloch.sty, `footline`
@@ -3352,6 +3352,47 @@ public def themeCss (doc : Doc)
       Ir.foldBlocks (fun a b => a || match b with
         | .setPalette p => (Ir.Design.declared? p r).isSome
         | _ => false) (fun a _ => a) false doc.body
+  -- The bar a frame title stands on, under `hdr`: every frame's where the
+  -- opening palette declares one, else the frames of an epoch that does
+  -- (`.titlebar`), as the PDF paints them.
+  let barRules (hdr : String) : String :=
+    s!"{hdr} \{ background: {roleRef .frameTitleBar};\n" ++
+    s!"  color: {roleRef .frameTitleInk};\n" ++
+    -- The bar sets at the title's own step, so `frametitlepadding` — an em
+    -- of the title size, `\ht\strutbox` measured after
+    -- `\usebeamerfont{frametitle}` — resolves here against the size it is
+    -- defined in, exactly as `collectFrameTitle` resolves it at
+    -- `titleSize`. Without the declared size the em would resolve against
+    -- the body base and the bar would come out at the body's 0.84em where
+    -- the PDF pays the title's; the inner h2 drops to `1em` in the deck's
+    -- own override so the step is paid once, not squared.
+    s!"  font-size: {stepFactor "Large"}rem;\n" ++
+    -- The first body element pays the shared frame opening skip through
+    -- `blockGapCss`, one emitter per boundary.
+    s!"  margin: -{slidePadV} -{slidePadH} 0;\n" ++
+    s!"  padding: var(--frametitlepadding, {quantaRem 1}) {slidePadH};\n" ++
+    s!"  border-radius: {slideRadiusPx - slideBorderPx}px {slideRadiusPx - slideBorderPx}px 0 0; }\n" ++
+    s!"{hdr} h2 \{ color: inherit; font-size: 1em; }\n" ++
+    -- On the paged deck the slide is the viewport — on paper the page —
+    -- cornerless: the bar squares off with it and bleeds through the
+    -- safe-area padding, negating exactly the token the slide pads by.
+    (if doc.docClass == .slides then
+      s!"@media screen, print \{ {hdr} \{ border-radius: 0;\n" ++
+      -- The deck sets type on `main` in `vh`, so the bar retakes the title
+      -- step in `em` to ride the stage rather than pinning to the root.
+      s!"  font-size: {frameTitleStep doc}em;\n" ++
+      (if doc.chromeAllowed then s!"  margin: 0 calc(-1 * {safeareaVar}) 0;\n"
+       else s!"  margin: calc(-1 * {safeareaVar}) calc(-1 * {safeareaVar}) 0;\n") ++
+      (if (doc.tokens.find? "frametitlepadding").isSome then
+        -- moloch's bar is the paper's width, its title inset from either
+        -- edge by 0.85 of the title's strut (`Ir.frameTitleInset`, an em of
+        -- the title's size here, where the bar sets at the title's step),
+        -- wherever the chrome stands, as the page sets it.
+        s!"  padding: 0 {decMilli (Ir.frameTitleInset 1000)}em; line-height: \
+{decMilli (Ir.leadingFor 1000)}; } }\n" ++
+        frameTitleStrutCss hdr
+       else s!"  padding: var(--frametitlepadding, {quantaRem 1}) {safeareaVar}; } }\n")
+     else "")
   -- Paint is carried by each block's palette epoch. A document-level
   -- condition would miss body declarations that add or remove a bar.
   "section.block > header { font-weight: bold; }\n" ++
@@ -3372,44 +3413,7 @@ public def themeCss (doc : Doc)
   s!"section.tcolorbox > .tcolorbox-body \{ padding: {tcbLength (Ir.tcbBoxsep + Ir.tcbTop)} {tcbLength Ir.tcbInset} {tcbLength (Ir.tcbBottom + Ir.tcbBoxsep + Ir.tcbRule)}; }\n" ++
   s!"section.tcolorbox > .tcolorbox-body:first-child \{ padding-top: {tcbLength (Ir.tcbRule + Ir.tcbBoxsep + Ir.tcbTop)}; }\n" ++
   s!"{blockAt "first-child"} \{ --frame-body-before: calc({milliFactor (blockAboveMilli doc.page.fontSize doc.tokens)}rem - var(--parskip, 0rem)); }\n" ++
-  (if d.frametitle.isSome then
-    s!"section.slide > header \{ background: {roleRef .frameTitleBar};\n" ++
-    s!"  color: {roleRef .frameTitleInk};\n" ++
-    -- The bar sets at the title's own step, so `frametitlepadding` — an em
-    -- of the title size, `\ht\strutbox` measured after
-    -- `\usebeamerfont{frametitle}` — resolves here against the size it is
-    -- defined in, exactly as `collectFrameTitle` resolves it at
-    -- `titleSize`. Without the declared size the em would resolve against
-    -- the body base and the bar would come out at the body's 0.84em where
-    -- the PDF pays the title's; the inner h2 drops to `1em` in the deck's
-    -- own override so the step is paid once, not squared.
-    s!"  font-size: {stepFactor "Large"}rem;\n" ++
-    -- The first body element pays the shared frame opening skip through
-    -- `blockGapCss`, one emitter per boundary.
-    s!"  margin: -{slidePadV} -{slidePadH} 0;\n" ++
-    s!"  padding: var(--frametitlepadding, {quantaRem 1}) {slidePadH};\n" ++
-    s!"  border-radius: {slideRadiusPx - slideBorderPx}px {slideRadiusPx - slideBorderPx}px 0 0; }\n" ++
-    "section.slide > header h2 { color: inherit; font-size: 1em; }\n" ++
-    -- On the paged deck the slide is the viewport — on paper the page —
-    -- cornerless: the bar squares off with it and bleeds through the
-    -- safe-area padding, negating exactly the token the slide pads by.
-    (if doc.docClass == .slides then
-      "@media screen, print { section.slide > header { border-radius: 0;\n" ++
-      -- The deck sets type on `main` in `vh`, so the bar retakes the title
-      -- step in `em` to ride the stage rather than pinning to the root.
-      s!"  font-size: {frameTitleStep doc}em;\n" ++
-      (if doc.chromeAllowed then s!"  margin: 0 calc(-1 * {safeareaVar}) 0;\n"
-       else s!"  margin: calc(-1 * {safeareaVar}) calc(-1 * {safeareaVar}) 0;\n") ++
-      (if (doc.tokens.find? "frametitlepadding").isSome then
-        -- moloch's bar is the paper's width, its title inset from either
-        -- edge by 0.85 of the title's strut (`Ir.frameTitleInset`, an em of
-        -- the title's size here, where the bar sets at the title's step),
-        -- wherever the chrome stands, as the page sets it.
-        s!"  padding: 0 {decMilli (Ir.frameTitleInset 1000)}em; line-height: \
-{decMilli (Ir.leadingFor 1000)}; } }\n" ++
-        frameTitleStrutCss
-       else s!"  padding: var(--frametitlepadding, {quantaRem 1}) {safeareaVar}; } }\n")
-     else "") else
+  (if d.frametitle.isSome then barRules "section.slide > header" else
     -- Undeclared, an unbarred title takes the ink of what it stands in, as
     -- every heading does, so the rule stands only where a palette names one.
     (if declares .frameTitleInk then
@@ -3434,7 +3438,8 @@ public def themeCss (doc : Doc)
       s!"section.slide:not(.title-page):not(.titlebar):has(> header) \{ --frame-title-below: \
 calc({stepFactor Ir.plainFrameTitleStep} * \
 ({decMilli (Ir.defaultFrameTitleBelow 1000 doc.page.leading 0)}em - 1ex)); }\n"
-     else "")) ++
+     else "") ++
+    (if declares .frameTitleBar then barRules "section.slide.titlebar > header" else "")) ++
   -- The headline band: the poster page's <header> around the title matter
   -- and the two corner-logo slots. Colours are the same frametitle tokens
   -- the PDF band resolves (one resolving site per backend, one declared

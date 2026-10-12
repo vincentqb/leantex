@@ -14042,10 +14042,12 @@ public def SchemeFrame.ground (f : SchemeFrame) (c : Color) : Color :=
   if !f.flip then c else if c == f.homePage then f.page else ContrastSolve.reflect f.homePage f.page c
 
 /-- A colour a scheme could not carry legibly: the name it is declared
-under and the role it was judged on. -/
+under, the role it was judged on, and — where one was measured — what the
+nearest carrying read there and what reading there owes. -/
 public structure Unrealized where
   name : ColorRef
   on : Role
+  measured : Option (Nat × Nat) := none
   deriving Repr, BEq, Inhabited
 
 /-- **One declared ink carried to a scheme**: to a page of the other
@@ -14130,11 +14132,12 @@ public def Palette.inkGrounds (pal : Palette) (f : SchemeFrame)
 /-- **One ink carried to a scheme's view on its grounds** (`Palette.inkGrounds`):
 itself where it reads on every one of them without turning the page over,
 else the first carrying to one of them that reads on every one
-(`Design.carryInk`); else the ground it fails on. A colour the scheme
-generated (`fresh`) stands in the scheme's polarity already. -/
+(`Design.carryInk`); else the ground the first carrying fails on, with what
+it reads there and what that ground owes. A colour the scheme generated
+(`fresh`) stands in the scheme's polarity already. -/
 public def Palette.carryOn (pal : Palette) (f : SchemeFrame)
     (used : List (ColorRef × List (Color × Bool × Option Role))) (p : Palette) (k : ColorRef)
-    (c : Color) (fresh : Bool := false) : Except Role (Option Color) :=
+    (c : Color) (fresh : Bool := false) : Except (Role × Option (Nat × Nat)) (Option Color) :=
   let gs := pal.inkGrounds f used p k
   if gs.isEmpty then .ok none else
   let passes (x : Color) : Bool := gs.all fun (g, _, req) => req ≤ Contrast.contrastMilli x g
@@ -14145,7 +14148,9 @@ public def Palette.carryOn (pal : Palette) (f : SchemeFrame)
   | some c' => .ok (some c')
   | none =>
     let best := tries.headD c
-    .error (((gs.find? fun (g, _, req) => Contrast.contrastMilli best g < req).map (·.2.1)).getD .page)
+    match gs.find? fun (g, _, req) => Contrast.contrastMilli best g < req with
+    | some (g, on, req) => .error (on, some (Contrast.contrastMilli best g, req))
+    | none => .error (.page, none)
 
 /-- **An ink a scheme's view carries meets that scheme's gate on every ground
 it is judged on, its hue held, its chroma no more than declared**
@@ -14178,12 +14183,13 @@ public theorem Palette.carryOn_between {pal : Palette} {f : SchemeFrame}
           · simp at hc
           · left; simpa using hc
         · exact (Design.adapt_between hcarry).2
-    · cases h
+    · split at h <;> cases h
 
 /-- **A palette as a scheme ships it**, with the colours it could not carry.
 A frame that ships palettes as declared (`SchemeFrame.home`) ships it as it
 is. Otherwise a generated role takes its colour in the palette regenerated
-there (`Design.carrySeeds`); a declared ground or decoration — the
+there (`Design.carrySeeds`), or where the seeds generate nothing there is
+carried as a declared colour is; a declared ground or decoration — the
 document's page standing for the scheme's — is reflected to the scheme's
 page where the polarity flips; and a declared ink, a role or an author
 colour, is carried at the scheme's gate on its grounds as the view resolves
@@ -14204,7 +14210,10 @@ public def Palette.view (pal : Palette) (f : SchemeFrame)
   let uses (k : ColorRef) : List (Color × Bool × Option Role) := (used.lookup k).getD []
   let carried : Option (Option SeedPalette.SeedState) :=
     pal.seeded.map (Design.carrySeeds · pal.classColors.depth s f.flip)
-  let generated (r : Role) (c : Color) : Bool := pal.seeded.any fun st => Design.installed st r == some c
+  -- A role the seeds generated, where they generate again in this scheme;
+  -- where they cannot, it is carried as a declared colour is.
+  let generated (r : Role) (c : Color) : Bool := (carried.bind id).isSome &&
+    pal.seeded.any fun st => Design.installed st r == some c
   -- An ink: a role whose need pairs it with a ground, an author colour, and
   -- any colour a use sets text in.
   let inkLike (k : ColorRef) : Bool := !(uses k).isEmpty || match k with
@@ -14231,7 +14240,7 @@ public def Palette.view (pal : Palette) (f : SchemeFrame)
   -- carries it.
   let groundsOf (p : Palette) (k : ColorRef) : List (Color × Role × Nat) := pal.inkGrounds f used p k
   let carryOn (p : Palette) (k : ColorRef) (c : Color) (fresh : Bool := false) :
-      Except Role (Option Color) := pal.carryOn f used p k c fresh
+      Except (Role × Option (Nat × Nat)) (Option Color) := pal.carryOn f used p k c fresh
   let inks : Array (ColorRef × Color) × Array Unrealized :=
     (pal.entries.zip grounds.1).foldl (fun (acc : Array (ColorRef × Color) × Array Unrealized)
         ((k, c), (_, c0)) =>
@@ -14244,7 +14253,8 @@ public def Palette.view (pal : Palette) (f : SchemeFrame)
       match carryOn staged k (if isGenerated then c0 else c) isGenerated with
       | .ok (some c') => (acc.1.push (k, c'), acc.2)
       | .ok none => (acc.1.push (k, c0), acc.2)
-      | .error on => (acc.1.push (k, c0), acc.2.push { name := k, on })) (#[], grounds.2)
+      | .error (on, measured) => (acc.1.push (k, c0), acc.2.push { name := k, on, measured }))
+      (#[], grounds.2)
   -- A role the palette leaves undeclared that a use reads on another ground
   -- than its row's: held there too, from the colour the scheme gives it, and
   -- declared in the view where it moves.
@@ -14260,7 +14270,7 @@ public def Palette.view (pal : Palette) (f : SchemeFrame)
           match carryOn staged k c true with
           | .ok (some c') => if c' == c then acc else (acc.1.push (k, c'), acc.2)
           | .ok none => acc
-          | .error on => (acc.1, acc.2.push { name := k, on })) inks
+          | .error (on, measured) => (acc.1, acc.2.push { name := k, on, measured })) inks
   let inks := undeclared
   let out : Palette := { staged with entries := inks.1 }
   if !s.more || inks.2.isEmpty then (out, inks.2) else
@@ -14292,7 +14302,8 @@ public def Palette.view (pal : Palette) (f : SchemeFrame)
       else match carryOn moved k (if isGenerated then c1 else c) isGenerated with
         | .ok (some c') => (acc.1.push (k, c'), acc.2)
         | .ok none => (acc.1.push (k, c1), acc.2)
-        | .error on => (acc.1.push (k, c1), acc.2.push { name := k, on })) (#[], grounds.2)
+        | .error (on, measured) => (acc.1.push (k, c1), acc.2.push { name := k, on, measured }))
+        (#[], grounds.2)
   -- The roles the use pass declared ride after the palette's own entries.
   let extra := moved.entries.extract pal.entries.size moved.entries.size
   ({ moved with entries := extra.foldl Array.push rejudged.1 }, rejudged.2)

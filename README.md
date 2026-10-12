@@ -179,7 +179,8 @@ from the page and its hue, and where the reader asks more contrast a colour
 that falls short of the gate there (7:1 for text, 4.5:1 for large text and
 edges) moves only as far as it must — or, where no tone of its hue can, the
 ground under it does. Generated colours are generated again
-for each scheme. A scheme that cannot carry a colour legibly is dropped from
+for each scheme, or carried as declared ones are where their seeds generate
+nothing there. A scheme that cannot carry a colour legibly is dropped from
 that page alone, and the build names the colour once. Under
 `forced-colors: active`, frame-title bars, standout frames and block title
 bands keep a border, and on the screen of the other polarity than the

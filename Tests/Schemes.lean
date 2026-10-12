@@ -595,8 +595,10 @@ cascade gives both (`schemeRoot`, `schemeRead`), at that scheme's gate for
 its size (`Contrast.requiredIn`: large-scale in a heading or on a deck's
 stage). A colour the document declares decorative is exempt, as the report
 exempts it. The offences, by scheme; `edit` doctors the sheet, so a check
-can break the page and see the contract fall. -/
-def schemeContractOffences (doc : Ir.Doc) (edit : String → String := id) : Array String := Id.run do
+can break the page and see the contract fall, and `also` names schemes the
+colours were declared for to judge as well, where they are known to read. -/
+def schemeContractOffences (doc : Ir.Doc) (edit : String → String := id)
+    (also : List Ir.Scheme := []) : Array String := Id.run do
   let j := Contrast.schemeJudge doc
   let (head, body, _) := HtmlDoc.emitTree {} doc
   let css := edit (treeCssList "" head.toList)
@@ -606,7 +608,7 @@ def schemeContractOffences (doc : Ir.Doc) (edit : String → String := id) : Arr
   let sheet := sheetRules css
   let mut out : Array String := #[]
   for f in j.frames do
-    if f.home then continue
+    if f.home && !also.contains f.scheme then continue
     let rules := sheet.toList.filterMap fun (conds, sel, decls) =>
       if conds.all (holdsIn f.scheme ·) then some (sel, cssDecls decls) else none
     let (root, dark) := schemeRoot css f.scheme
@@ -663,6 +665,30 @@ def contractChecks (ref : IO.Ref (List String)) : IO Unit := do
 {schemeContractOffences epochs |>.toList}"
     ((schemeContractOffences epochs).isEmpty &&
      (Contrast.schemeJudge epochs).shipped.contains .lightMore)
+  -- A bar declared between frames paints the frames after it in the web
+  -- page as on paper, in every scheme: the title it stands under reads on
+  -- it. With no bar in the opening palette, the page once painted none.
+  let barEpoch := deck ""
+    ("\\begin{frame}{One}Words.\\end{frame}" ++
+     "\\setbeamercolor{frametitle}{bg=teal!70!black, fg=white}" ++
+     "\\begin{frame}{Two}Words.\\end{frame}")
+  let barOffences := schemeContractOffences barEpoch (also := [.print, .light])
+  t s!"scheme contract: a bar declared between frames stands under the title it carries: \
+{barOffences.toList}"
+    (barOffences.isEmpty && (Contrast.schemeJudge barEpoch).shipped.contains .lightMore)
+  -- An epoch whose seeds generate nothing at the more-contrast gates — a
+  -- grey ink no derived tone keeps 7:1 from — is carried as declared
+  -- colours are, so the scheme ships, its frames legible.
+  let greyEpoch := deck ""
+    ("\\begin{frame}{One}Words.\\end{frame}" ++
+     "\\setbeamercolor{normal text}{fg=black!65}" ++
+     "\\begin{frame}{Two}Grey words. \\alert{An alert.}\\end{frame}")
+  let greySeeds := (Contrast.docPalettes greyEpoch).filter fun p => p.seeded.isSome &&
+    (p.seeded.bind (Ir.Design.carrySeeds · p.classColors.depth .lightMore false)).isNone
+  t s!"scheme contract: an epoch whose seeds generate nothing there is carried as declared \
+({greySeeds.length} such): {schemeContractOffences greyEpoch |>.toList}"
+    (!greySeeds.isEmpty && (schemeContractOffences greyEpoch).isEmpty &&
+     (Contrast.schemeJudge greyEpoch).shipped.contains .lightMore)
   -- The judge breaks once: without its more-contrast blocks, a page's more
   -- schemes read the AA colours, which the 7:1 gate refuses.
   let (aa, _) := elabStr
