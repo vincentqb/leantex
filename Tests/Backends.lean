@@ -631,7 +631,8 @@ def htmlListGapChecks (ref : IO.Ref (List String)) : IO Unit := do
   let items (n : Nat) := s!"{lv n}li + {item}, {lv n}dd + dt"
   let parsep (n : Nat) := s!"{lv n}{item}, {lv n}blockquote > *, {lv n}dl > *"
   let lastList (n : Nat) (sel : String) :=
-    let has := s!":has(> :is({", ".intercalate elems}){sel}:last-child)"
+    let ends := s!":is({", ".intercalate elems}){sel}:last-child"
+    let has := s!":has(> {ends}, > details[open]:last-child > {ends})"
     s!"{lv n}li{has} + {item}, {lv n}dd{has} + dt"
   t "html a 10pt list's items stand itemsep over the item's parsep apart"
     (hasStr art s!":where({items 0}) \{ margin-top: {space "0.483"}; }" &&
@@ -1456,10 +1457,12 @@ def deckCssChecks (ref : IO.Ref (List String)) : IO Unit := do
      has deckPage "document.documentElement.dataset.deckScript" &&
      has deckPage "document.querySelectorAll(\"[data-snap]\")" &&
      has deckPage "scrollIntoView" && !has deckPage "/* removed */")
-  -- A key the page's own controls take is theirs: a focused field, button
-  -- or disclosure's summary, which Space and Enter toggle, never pages.
+  -- A key the page's own controls take is theirs: a focused field or
+  -- button, and the Space and Enter a focused summary toggles its
+  -- disclosure with; every other key still pages the deck.
   t "the deck's keys leave a focused summary to toggle its disclosure"
-    ((HtmlDoc.deckScript.splitOn "t.tagName === \"SUMMARY\"").length == 2)
+    ((HtmlDoc.deckScript.splitOn
+      "(t.tagName === \"SUMMARY\" && (e.key === \" \" || e.key === \"Enter\"))").length == 2)
   t "the deck keeps the safe area"
     (has deckPage "padding: var(--safearea, 6vmin); position: relative; }")
   -- A title's background must contain all of its lines. An arbitrary

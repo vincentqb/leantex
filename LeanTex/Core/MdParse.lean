@@ -1883,6 +1883,9 @@ private def summaryAt (cs : Array Char) (i : Nat) (p : Pos) : Option (Array Inl)
   guard (isBlankFrom cs next)
   let text ← htmlText (sliceStr cs start stop)
   guard (holdsText text)
+  -- White space a reference spells sets as a space, as the page shows it:
+  -- a summary is one line.
+  let text := text.map fun c => if c == '\n' || c == '\r' || c == '\x0C' || c == '\t' then ' ' else c
   return #[.text text { p with col := start + 1 }]
 
 end LeanTex.Core.Md
@@ -2182,6 +2185,11 @@ public def blocks (file : String) (input : String) : Array Blk × Array Diag := 
   let mut leaf : Leaf := .none
   let mut diags : Array Diag := #[]
   let mut sawBlank := false
+  -- The disclosure frame a blank line ended the summary of: that blank line
+  -- separates the summary's HTML block from the body (CommonMark §4.6), two
+  -- blocks of whatever list item holds the disclosure, decided where it
+  -- stands, before the next line opens containers inside the body.
+  let mut blankAfterSummary : Option Nat := none
   -- The first line of the paragraph whose header a delimiter row failed to
   -- match: GFM tries a paragraph once.
   let mut tableVisited : Option Pos := none
@@ -2326,6 +2334,8 @@ public def blocks (file : String) (input : String) : Array Blk × Array Diag := 
       acc := a
       diags := diags ++ ds
       leaf := .none
+      if acc.isEmpty && frames.back?.any (fun f => f.kind == .disclosure && f.summary.isSome) then
+        blankAfterSummary := some (frames.size - 1)
       sawBlank := true
       continue
     -- New containers, as many as the line opens.
@@ -2430,16 +2440,22 @@ public def blocks (file : String) (input : String) : Array Blk × Array Diag := 
     -- A blank line between two blocks of one item makes its list loose. A
     -- disclosure's opening tags and summary are such a block, an HTML
     -- block (CommonMark §4.6), though the frame keeps the summary off its
-    -- body: the blank line after it, which ends that block, counts too.
-    let summaryBefore := frames.back?.any fun f => f.kind == .disclosure && f.summary.isSome
-    if sawBlank && (!acc.isEmpty || summaryBefore) then
-      for fi in [0:frames.size] do
-        let idx := frames.size - 1 - fi
+    -- body: the blank line after it, which ends that block, counts too, for
+    -- the list around the disclosure. A quotation is one block of its item,
+    -- so a blank line inside it makes no list outside it loose.
+    let summaryAt? := blankAfterSummary.filter fun d =>
+      frames[d]?.any (·.kind == .disclosure)
+    let start? : Option Nat := if !sawBlank then none
+      else if !acc.isEmpty then some (frames.size - 1) else summaryAt?
+    if let some start := start? then
+      for fi in [0:start + 1] do
+        let idx := start - fi
         if let some f := frames[idx]? then
           match f.kind with
           | .list _ _ _ =>
             frames := frames.modify idx (fun lf => { lf with tight := false })
             break
+          | .quote => break
           | _ => pure ()
     -- A line that was only container markers opens nothing: `blank` was
     -- measured before they opened, so `- ` or `>` with an empty remainder
@@ -2447,6 +2463,7 @@ public def blocks (file : String) (input : String) : Array Blk × Array Diag := 
     -- as a lazy continuation of it.
     if isBlankFrom cs i then
       sawBlank := false
+      blankAfterSummary := none
       continue
     -- The leaf.
     let (j, ind) := indentAt cs i col
@@ -2466,6 +2483,7 @@ public def blocks (file : String) (input : String) : Array Blk × Array Diag := 
         diags := diags ++ ds
         leaf := .table aligns header (rows.push row) tpos
         sawBlank := false
+        blankAfterSummary := none
         continue
     -- A delimiter row under a paragraph whose last line carries as many
     -- cells opens a table, that line its header. A paragraph whose header
@@ -2608,6 +2626,7 @@ public def blocks (file : String) (input : String) : Array Blk × Array Diag := 
         leaf := .para (pls.push (text, { line := ln.no, col := j + 1 }))
       | _ => leaf := .para #[(text, { line := ln.no, col := j + 1 })]
     sawBlank := false
+    blankAfterSummary := none
   -- End of input: the leaf, then every frame.
   match leaf with
   | .para pls =>

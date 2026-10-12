@@ -9,8 +9,8 @@ namespace LeanTex.Core
 soft hyphen, the joiners and marks of 200B–200F and 202A–202E, 2060–206F,
 the variation selectors, the byte order mark, the tag characters), which a
 renderer draws as nothing. An accessible name of nothing else is empty to a
-reader however many characters it holds: axe's `summary-name` rule trims
-the same characters. -/
+reader however many characters it holds: a stricter test than axe's
+`summary-name` rule, which trims the spaces among them alone. -/
 @[expose] public def blankChar (c : Char) : Bool :=
   let n := c.toNat
   n ≤ 0x20 || (0x7F ≤ n && n ≤ 0xA0) || n == 0xAD || n == 0x34F || n == 0x61C ||

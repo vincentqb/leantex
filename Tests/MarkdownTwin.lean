@@ -437,13 +437,18 @@ def twinDisclosureChecks (ref : IO.Ref (List String)) : IO Unit := do
       (ds0.isEmpty && back.body == doc.body && ds.isEmpty && MarkdownDoc.emit back == tw)
     t s!"twin: a {label} disclosure keeps its tag and its summary's references ({repr tw})"
       (tw.startsWith (opener ++ "\n<summary>Q&amp;A &lt;now></summary>\n"))
-  -- A line break a summary's references spell is written back as one.
-  let (brDoc, _) := elabMd "<details>\n<summary>Alder&#10;Birch</summary>\n\nCedar.\n\n</details>\n"
+  -- White space a summary's references spell is a space, as the page shows
+  -- it, and the twin writes the space back.
+  let (brDoc, _) := elabMd "<details>\n<summary>Alder&#10;Birch&#13;Cedar&#12;Delta</summary>\n\nEcho.\n\n</details>\n"
   let (brTw, brBack, _) := roundTrip brDoc
-  t s!"twin: a summary's line break reads back as written ({repr brTw})"
-    (brBack.body == brDoc.body && hasStr brTw "<summary>Alder&#10;Birch</summary>")
+  t s!"twin: a summary's referenced white space reads as a space and back ({repr brTw})"
+    (brBack.body == brDoc.body && hasStr brTw "<summary>Alder Birch Cedar Delta</summary>")
   for (src, loose) in [("> <details>\n> <summary>Elm</summary>\n>\n> Fir.\n> </details>\n", false),
-      ("- <details>\n  <summary>Elm</summary>\n\n  Fir.\n  </details>\n- Gorse\n", true)] do
+      ("- <details>\n  <summary>Elm</summary>\n\n  Fir.\n  </details>\n- Gorse\n", true),
+      ("- <details>\n  <summary>Elm</summary>\n\n  - Alder\n  </details>\n- Gorse\n", true),
+      ("- <details>\n  <summary>Elm</summary>\n\n  1. Alder\n  </details>\n- Gorse\n", true),
+      ("- <details>\n  <summary>Elm</summary>\n\n  > Alder\n  </details>\n- Gorse\n", true),
+      ("- > <details>\n  > <summary>Elm</summary>\n  >\n  > Fir.\n  > </details>\n- Gorse\n", false)] do
     let (doc, ds0) := elabMd src
     let (tw, back, ds) := roundTrip doc
     let named (xs : Array Diag) : Bool :=

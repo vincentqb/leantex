@@ -10852,6 +10852,9 @@ public structure Spacing.Pending where
   enumerate inside an itemize is itemize level 2. -/
   private itemDepth : Nat := 0
   private enumDepth : Nat := 0
+  /-- The marker of the list item a disclosure opens, until its summary line
+  takes it (`collectItem`), as the item's first paragraph does. -/
+  private itemMarker : Option (Array Ir.Inline) := none
   /-- Quotations open around the walk (`quote`, `quotation`, `verse`, the
   abstract's quotation): each is a `\list`, so LaTeX's `\@listdepth`, which
   picks a list level's spaces and margin, counts it beside the lists,
@@ -15136,6 +15139,10 @@ private def collectItem (r : Rd) (a : Acc)
         let (a, leaf) := a.leafRange (leafCount content)
         collectPara r a content indent false r.geom.fontSize
           (marker := some marker) (leaf := leaf) (span := leafCount content)
+      -- A disclosure opening its item sets its summary as the item's first
+      -- paragraph, the marker beside it (`itemMarker`), and its body after
+      -- it: the page of the bold-summary spelling, as at the top level.
+      | .disclosure .., true => collectBlock r { a with itemMarker := some marker } blk indent
       | _, _ => collectBlock r a blk indent
     collectItem r a rest indent false marker hang
 
@@ -15417,8 +15424,14 @@ private def collectBlock (r : Rd) (a : Acc)
   -- (`Ir.disclosureSummary`) and its body after it, every word it holds on
   -- the page, open or not.
   | .disclosure summary _ body =>
-    collectBlockList r (collectParaBlock r a (Ir.disclosureSummary summary) indent)
-      body.toList indent false false
+    let content := Ir.disclosureSummary summary
+    let a := match a.itemMarker with
+      | some marker =>
+        let (a, leaf) := ({ a with itemMarker := none } : Acc).leafRange (leafCount content)
+        collectPara r a content indent false r.geom.fontSize
+          (marker := some marker) (leaf := leaf) (span := leafCount content)
+      | none => collectParaBlock r a content indent
+    collectBlockList r a body.toList indent false false
   | .titled kind title body =>
     let d := Ir.Design.ofPalette a.pal
     let look := d.titledBody kind

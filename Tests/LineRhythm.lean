@@ -1032,27 +1032,48 @@ private def marginTopOfText (nodes : Array Html.Node) (css : String) (text : Str
     if (t.el i).text.trimAscii.toString == text then return cascadeMarginTop t rules i
   return none
 
-/-- **A disclosure is read through at its foot.** On paper a disclosure sets
-flat, so the block after it stands where it would after its body's last
-block: a list, a quotation or a paragraph ending the body gives the next
-block the space it gives outside a disclosure, open or closed, and nested.
-The judge is the sheet's own cascade over the emitted tree. Invented words
-throughout. -/
+/-- **A disclosure is read through at its foot where its body shows.** On
+paper a disclosure sets flat, so the block after it stands where it would
+after its body's last block: a list, a quotation or a paragraph ending the
+body gives the next block the space it gives outside a disclosure, open or
+closed, and nested. On screen an open one does the same, and a closed one,
+which shows its summary alone, gives the next block the space a paragraph
+gives: its hidden body moves nothing. The judge is the sheet's own cascade
+over the emitted tree, its print rules read after the screen's for paper.
+Invented words throughout. -/
 def disclosureGapChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
-  let gapAfter (src : String) : Option String :=
+  let gapAfter (print : Bool) (src : String) : Option String :=
     let (doc, _) := elabMd src
     let (h, n, _) := HtmlDoc.emitTree {} doc
-    marginTopOfText n (treeCssList "" h.toList) "After."
+    let css := treeCssList "" h.toList
+    marginTopOfText n (if print then css.replace "@media print" "printmedia" else css) "After."
   for (label, body) in [("a list", "- Alder\n- Birch\n"), ("a quotation", "> Cedar\n"),
       ("a paragraph", "Delta.\n")] do
-    let flat := gapAfter s!"Before.\n\n{body}\nAfter.\n"
-    for (opener, how) in [("<details>", "closed"), ("<details open>", "open")] do
-      let one := gapAfter s!"Before.\n\n{opener}\n<summary>Elm</summary>\n\n{body}\n</details>\n\nAfter.\n"
-      let nested := gapAfter (s!"Before.\n\n{opener}\n<summary>Elm</summary>\n\n{opener}\n" ++
-        s!"<summary>Fir</summary>\n\n{body}\n</details>\n\n</details>\n\nAfter.\n")
-      t s!"a disclosure, {how}, ending on {label}, gives the next block its space ({one}, {nested} beside {flat})"
-        (flat.isSome && one == flat && nested == flat)
+    let flatSrc := s!"Before.\n\n{body}\nAfter.\n"
+    let summarySrc := "Before.\n\n**Elm**\n\nAfter.\n"
+    for (opener, isOpen) in [("<details>", false), ("<details open>", true)] do
+      let one := s!"Before.\n\n{opener}\n<summary>Elm</summary>\n\n{body}\n</details>\n\nAfter.\n"
+      let nested := s!"Before.\n\n{opener}\n<summary>Elm</summary>\n\n{opener}\n" ++
+        s!"<summary>Fir</summary>\n\n{body}\n</details>\n\n</details>\n\nAfter.\n"
+      let how := if isOpen then "open" else "closed"
+      let screenWant := gapAfter false (if isOpen then flatSrc else summarySrc)
+      t s!"screen: a disclosure, {how}, ending on {label}, gives the next block the space its \
+shown end gives ({gapAfter false one}, {gapAfter false nested} beside {screenWant})"
+        (screenWant.isSome && gapAfter false one == screenWant && gapAfter false nested == screenWant)
+      let paperWant := gapAfter true flatSrc
+      t s!"paper: a disclosure, {how}, ending on {label}, gives the next block its body's space \
+({gapAfter true one}, {gapAfter true nested} beside {paperWant})"
+        (paperWant.isSome && gapAfter true one == paperWant && gapAfter true nested == paperWant)
+  -- An item whose disclosure ends on a nested list gives the next item the
+  -- space a nested list ending the item gives, on paper and open on screen.
+  let flatItem := "- **Elm**\n\n  Alder\n\n  - Birch\n  - Cedar\n- After.\n"
+  for (opener, print) in [("<details open>", false), ("<details open>", true), ("<details>", true)] do
+    let item := s!"- {opener}\n  <summary>Elm</summary>\n\n  Alder\n\n  - Birch\n  - Cedar\n" ++
+      "  </details>\n- After.\n"
+    t s!"{if print then "paper" else "screen"}: an item whose {opener} ends on a nested list gives the \
+next item its space ({gapAfter print item} beside {gapAfter print flatItem})"
+      ((gapAfter print flatItem).isSome && gapAfter print item == gapAfter print flatItem)
 
 /-- **An overlay changes no gap between the blocks it carries**: built with
 and without its `\pause`, `\uncover` and closed-range carriers, every flow

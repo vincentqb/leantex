@@ -298,6 +298,16 @@ def disclosurePrintChecks (ref : IO.Ref (List String)) : IO Unit := do
       (hasStr twin (opener ++ "\n<summary>Amber</summary>\n") && (elabMd twin).1.body == doc.body
         && (elabMd twin).2.isEmpty)
     t s!"{opener}: no artifact loses anything, and nothing is named" ds.isEmpty
+    -- A disclosure opening a list item takes the item's marker, as the
+    -- bold-summary spelling's first paragraph does, in a bullet and an
+    -- ordered list.
+    for (marker, label) in [("-", "bullet"), ("1.", "ordered")] do
+      let pad := String.ofList (List.replicate (marker.length + 1) ' ')
+      let item := s!"{marker} {opener}\n{pad}<summary>Amber</summary>\n\n{pad}Cedar\n{pad}</details>\n" ++
+        s!"{marker} Birch\n"
+      let flat := s!"{marker} **Amber**\n\n{pad}Cedar\n{marker} Birch\n"
+      t s!"{opener}: a disclosure opening a {label} item sets the item's marker beside its summary"
+        (shippedLinesOf fonts (elabMd item).1 == shippedLinesOf fonts (elabMd flat).1)
   let css := HtmlDoc.baseCss {} (elabMd ("<details>" ++ body)).1
   let print := ((css.splitOn "@media print {").drop 1).headD ""
   t "the print sheet shows a closed disclosure's body and no toggle marker"

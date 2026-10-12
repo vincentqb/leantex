@@ -1339,10 +1339,13 @@ after it is its parent's sibling: `nested` is the next level's `\topsep`
 and its `\@topsepadd` where it opens a paragraph, each rule written only
 where it is the larger. -/
 private def listLevelRules (pre : String) (g : Nat × Nat × Nat) (opened : Nat)
-    (nested : Nat × Nat) : List GapRule :=
+    (nested : Nat × Nat) (disc : String := "details[open]") : List GapRule :=
   let inPar := roleClass Ir.inParagraphRole
+  -- An item may end on a disclosure whose body ends on the list: read
+  -- through it as the boundary read through carriers reads (`disc`).
   let after (sel : String) (m : Nat) : GapRule :=
-    let last := s!":has(> :is({", ".intercalate listElems}){sel}:last-child)"
+    let ends := s!":is({", ".intercalate listElems}){sel}:last-child"
+    let last := s!":has(> {ends}, > {disc}:last-child > {ends})"
     .boundary s!"{pre}li{last} + {itemSubject}, {pre}dd{last} + dt" (listSpace m)
   [.parskip s!"{pre}{itemSubject}, {pre}blockquote > *, {pre}dl > *" (milliRem g.2.2),
    .boundary (", ".intercalate (listElems.map fun e => s!"{pre}* + {e}")) (listSpace opened)] ++
@@ -1361,13 +1364,14 @@ read from the one resolving site the PDF walk spends and converted once
 `\partopsep` rides in). The web's lineage owes none: its lists open the
 peer gap and its items stand a leading apart, as its print twin sets
 them. -/
-public def listRules (l : Ir.ListLineage) (size : Int) (tokens : Ir.Tokens) : List GapRule :=
+public def listRules (l : Ir.ListLineage) (size : Int) (tokens : Ir.Tokens)
+    (disc : String := "details[open]") : List GapRule :=
   let spaces (n : Nat) : Nat × Nat := match Ir.listSkips l size n with
     | some sk => ((listLevelGaps size sk).1, listOpenGap size sk (Ir.partopsepFor l size n tokens))
     | none => (0, 0)
   [1, 2, 3].flatMap fun n => match Ir.listSkips l size n with
     | some sk => listLevelRules (String.join (List.replicate (n - 1) itemAncestor))
-        (listLevelGaps size sk) (spaces n).2 (spaces (n + 1))
+        (listLevelGaps size sk) (spaces n).2 (spaces (n + 1)) disc
     | none => []
 
 /-- A squeezed frame's list rules (`Ir.frameSqueeze`): the class's levels
@@ -1375,8 +1379,8 @@ again under the frame's `squeeze` class, its items with beamer's
 `\itemsep0pt` (`\beamer@cramped`) and every other space the level's own,
 as `\@listii` resets a nested list's `\topsep` before it opens; standing
 after the class's rules at the same specificity, they win where they apply. -/
-public def squeezeListRules (l : Ir.ListLineage) (size : Int) (tokens : Ir.Tokens) :
-    List GapRule :=
+public def squeezeListRules (l : Ir.ListLineage) (size : Int) (tokens : Ir.Tokens)
+    (disc : String := "details[open]") : List GapRule :=
   let squeezed (n : Nat) : Option Ir.ListSkips :=
     (Ir.listSkips l size n).map fun sk => { sk with itemsep := {} }
   let spaces (n : Nat) : Nat × Nat := match squeezed n with
@@ -1385,7 +1389,7 @@ public def squeezeListRules (l : Ir.ListLineage) (size : Int) (tokens : Ir.Token
   [1, 2, 3].flatMap fun n => match squeezed n with
     | some sk =>
       listLevelRules ("section.slide.squeeze " ++ String.join (List.replicate (n - 1) itemAncestor))
-        (listLevelGaps size sk) (spaces n).2 (spaces (n + 1))
+        (listLevelGaps size sk) (spaces n).2 (spaces (n + 1)) disc
     | none => []
 
 /-- A lineage's list indents as CSS, per level: a list's items, a
@@ -1635,9 +1639,10 @@ consumer rule — a declared `\style` on the bare element or a reader
 stylesheet owning a container's spacing with `gap` — wins without a
 specificity fight, which is the HTML backend's override contract. -/
 public def blockGapRules (l : Ir.ListLineage) (size : Int) (tokens : Ir.Tokens)
-    (shaped : Bool := false) (squeezed : Bool := false) : List GapRule :=
+    (shaped : Bool := false) (squeezed : Bool := false) (disc : String := "details[open]") :
+    List GapRule :=
   gapResets ++ gapBeforeLists ++ blockRules size tokens shaped ++ thmRules l size ++
-    listRules l size tokens ++ (if squeezed then squeezeListRules l size tokens else []) ++
+    listRules l size tokens disc ++ (if squeezed then squeezeListRules l size tokens disc else []) ++
     gapAfterLists ++ beamerPairRules l size tokens ++
     [skipFollowerRule, headingFollowerRule]
 
@@ -1888,14 +1893,16 @@ private def carrierFirstLink : String :=
 
 /-- `carrierFirstLink` down a chain of last children: either group of an
 alternation whose groups end alike, and of one ending apart the group the
-page shows with no snap state, and a disclosure (`isDisclosureNode`). -/
-private def carrierLastLink : String :=
+page shows with no snap state, and a disclosure the medium shows the body of
+(`disc`: an open one on screen, every one on paper). -/
+private def carrierLastLink (disc : String) : String :=
   ":is(div:is(.step, .step-set, .step-end, .alt-pair, [data-backend]):last-child, " ++
-    "details:last-child, .alt-alike > div.alt, div.alt:not([hidden]))"
+    s!"{disc}:last-child, .alt-alike > div.alt, div.alt:not([hidden]))"
 
-/-- The carriers a boundary reads up from: `carrierTop` and a disclosure. -/
-private def carrierTopUp : String :=
-  ":is(div:is(.step, .step-set, .alt-pair, [data-backend]), details)"
+/-- The carriers a boundary reads up from: `carrierTop`, and a disclosure the
+medium shows the body of (`disc`). -/
+private def carrierTopUp (disc : String) : String :=
+  s!":is(div:is(.step, .step-set, .alt-pair, [data-backend]), {disc})"
 
 /-- `sel`'s parts at the separators `sep` no parenthesis encloses. -/
 private def splitTop (sep : Char) (sel : String) : List String := Id.run do
@@ -1935,7 +1942,8 @@ side that is any element is no carrier: the carrier's first block takes
 the boundary, and a gap on both would stack in a flex column. An upper side that is any element already meets the carrier
 itself, and `:has()` does not nest. A tree with no carriers keeps its
 member as written. -/
-private def throughMembers (pairs : List (Nat × Nat)) (m : String) : List String :=
+private def throughMembers (pairs : List (Nat × Nat)) (disc : String) (m : String) :
+    List String :=
   match siblingMember? m with
   | none => [m]
   | some (pre, x, y) =>
@@ -1946,8 +1954,8 @@ private def throughMembers (pairs : List (Nat × Nat)) (m : String) : List Strin
         String.join (List.replicate (k - 1) (" > " ++ carrierFirstLink)) ++
         " > " ++ y ++ ":first-child"
     let up (j : Nat) : String :=
-      carrierTopUp ++ ":has(> " ++
-        String.join (List.replicate (j - 1) (carrierLastLink ++ " > ")) ++ x ++ ":last-child)"
+      carrierTopUp disc ++ ":has(> " ++
+        String.join (List.replicate (j - 1) (carrierLastLink disc ++ " > ")) ++ x ++ ":last-child)"
     let upOk := !(x == "*" || (x.splitOn ":has(").length > 1)
     -- a carrier opening on a skip's box already stands where the box would
     -- and owns its boundary (`skipCarrier`): the box takes none of its own
@@ -1965,10 +1973,11 @@ private def throughMembers (pairs : List (Nat × Nat)) (m : String) : List Strin
 /-- A boundary read through the boundary shapes `pairs` (`throughMembers`):
 the same value over its members read through; a reset and a parskip rule
 stand as they are, and so does every rule of a tree with no carriers. -/
-public def GapRule.throughCarriers (pairs : List (Nat × Nat)) : GapRule → GapRule
+public def GapRule.throughCarriers (pairs : List (Nat × Nat)) (disc : String := "details[open]") :
+    GapRule → GapRule
   | .boundary sel v =>
     if pairs.isEmpty then .boundary sel v
-    else .boundary (", ".intercalate ((splitTop ',' sel).flatMap (throughMembers pairs))) v
+    else .boundary (", ".intercalate ((splitTop ',' sel).flatMap (throughMembers pairs disc))) v
   | .reset sel m => .reset sel m
   | .parskip sel v => .parskip sel v
 
@@ -1989,6 +1998,22 @@ public def blockGapCss (l : Ir.ListLineage) (size : Int) (tokens : Ir.Tokens)
     String :=
   String.join ((blockGapRules l size tokens shaped squeezed).map fun r =>
     (r.throughCarriers pairs).render)
+
+/-- The boundaries paper reads through a closed disclosure, whose body it
+sets (`disclosurePrintCss`): the sheet's own rules read through every
+disclosure (`disc` any `details`), keeping only the members that read
+through one, so on paper a closed disclosure's end stands where an open
+one's stands on screen. A page without a disclosure ships none. -/
+public def disclosurePrintGapCss (l : Ir.ListLineage) (size : Int) (tokens : Ir.Tokens)
+    (pairs : List (Nat × Nat) := []) (shaped : Bool := false) (squeezed : Bool := false) :
+    String :=
+  let reads (m : String) : Bool := (m.splitOn "details").length > 1
+  String.join ((blockGapRules l size tokens shaped squeezed "details").filterMap fun r =>
+    match r.throughCarriers pairs "details" with
+    | .boundary sel v =>
+      let kept := (splitTop ',' sel).filter reads
+      if kept.isEmpty then none else some ("  " ++ (GapRule.boundary (", ".intercalate kept) v).render)
+    | _ => none)
 
 private theorem dropWhile_append_all {α : Type} (p : α → Bool) (xs ys : List α)
     (h : xs.all p = true) : (xs ++ ys).dropWhile p = ys.dropWhile p := by
@@ -5819,8 +5844,8 @@ public def deckScript : String :=
     if (e.ctrlKey || e.altKey || e.metaKey || e.defaultPrevented) return;
     const t = e.target;
     if (t instanceof Element &&
-        (t.isContentEditable || t.tagName === \"SUMMARY\" ||
-          /^(input|textarea|select|button)$/i.test(t.tagName))) return;
+        (t.isContentEditable || /^(input|textarea|select|button)$/i.test(t.tagName) ||
+          (t.tagName === \"SUMMARY\" && (e.key === \" \" || e.key === \"Enter\")))) return;
     let i = null;
     if (e.key === \"Home\") i = 0;
     else if (e.key === \"End\") {
@@ -5937,8 +5962,8 @@ public theorem deck_script_constant : deckScript =
     if (e.ctrlKey || e.altKey || e.metaKey || e.defaultPrevented) return;
     const t = e.target;
     if (t instanceof Element &&
-        (t.isContentEditable || t.tagName === \"SUMMARY\" ||
-          /^(input|textarea|select|button)$/i.test(t.tagName))) return;
+        (t.isContentEditable || /^(input|textarea|select|button)$/i.test(t.tagName) ||
+          (t.tagName === \"SUMMARY\" && (e.key === \" \" || e.key === \"Enter\")))) return;
     let i = null;
     if (e.key === \"Home\") i = 0;
     else if (e.key === \"End\") {
@@ -6049,8 +6074,10 @@ private def docHasNarrowingTable (doc : Doc) : Bool :=
       | _ => false)
     (fun b _ => b) false doc.body
 
-/-- Whether the document carries a disclosure: the gate on its rules, so a
-document without one ships exactly the stylesheet it shipped before. -/
+/-- Whether the document carries a disclosure: the gate on its summary and
+print rules, so a document without one ships none of them. The boundary
+table's `details` row (`blockGapKinds`) stands in every sheet, as every
+row does, and matches nothing on a page without one. -/
 private def docHasDisclosure (doc : Doc) : Bool :=
   Ir.foldBlocks (fun b bl => b || bl matches .disclosure ..) (fun b _ => b) false doc.body
 
@@ -6537,7 +6564,13 @@ color: {cssColor ((Ir.Design.at {} .print .ink).getD Ir.Color.black)}; padding: 
   -- overruns the measure: only such a line moves, and every character
   -- reaches the sheet.
   "  pre { overflow-x: visible; white-space: pre-wrap; overflow-wrap: anywhere; }\n" ++
-  (if docHasDisclosure doc then disclosurePrintCss else "") ++
+  (if docHasDisclosure doc then
+    disclosurePrintCss ++
+      disclosurePrintGapCss doc.docClass.record.lists doc.page.fontSize doc.tokens pairs
+        (shaped := [Ir.TitledKind.block, .alert, .example].any fun k =>
+          (Ir.blockShapeOf doc.styles k).isSome)
+        (squeezed := anySqueezed doc)
+  else "") ++
   -- A markdown table whose words alone pass the column at its smallest
   -- step stands centred on it, overhanging both margins equally, as its
   -- page sets it (`Layout.tableFit`): on paper both margins are room, and
