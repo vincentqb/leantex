@@ -9,10 +9,10 @@
 ✖ [E0004]
   cannot write 'site/out.pdf': permission denied
   suggestion: choose a destination this user can write with -o, or the markdown twin's with \output{ md = ... }
-── E0005 (dropped) an artifact would be written over a file the build reads; publication is refused
+── E0005 (dropped) an artifact would be written over one of the build's inputs; publication is refused
 ✖ [E0005]
-  cannot publish output: the Markdown destination 'doc.md' is 'doc.md', which this build reads
-  suggestion: name another destination with -o, or the markdown twin with \output{ md = ... }; the build never writes over a file it reads
+  cannot publish output: the Markdown destination 'doc.md' is 'doc.md', one of the build's inputs
+  suggestion: name another destination with -o, or the markdown twin with \output{ md = ... }
 ── E0006 (dropped) an output file name ends in no extension of a format the engine writes; nothing is built
 ✖ [E0006]
   cannot tell the output format of 'notes.tex'

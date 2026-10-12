@@ -97,17 +97,73 @@ def publicationWriteChecks (ref : IO.Ref (List String)) : IO Unit := do
       (blocked.exitCode != 0 && hasStr said "E0004" && hasStr said "blocker/out.pdf" &&
         !hasStr said "uncaught exception")
 
-/-- **No artifact is written over a file the build reads.** A destination
-that is the document, another name of it — a link to it, a link to the
-directory above it, a hard link — or a file the document reads — an
-include, its bibliography, an image, its face, a face its font directory
-holds, its stylesheet — is E0005 before anything is written, whatever the
+/-- A host whose files are a table: each name's metadata and real path,
+and nothing else — any other question is refused. -/
+def tableWorld (files : List (String × LeanTex.Cli.World.Metadata × String)) :
+    (q : LeanTex.Cli.World.Ask) → LeanTex.Cli.World.Reply q
+  | .metadata p => match files.lookup p with
+    | some (m, _) => .ok m
+    | none => .error .absent
+  | .stat p => match files.lookup p with
+    | some (m, real) =>
+      .ok { kind := m.kind, size := m.size, mtimeSec := m.mtimeSec, mtimeNsec := m.mtimeNsec,
+            real := real }
+    | none => .error .absent
+  | .env _ => none
+  | .cwd => .error .denied
+  | .readFile _ => .error .denied
+  | .listDir _ => .error .denied
+  | .run _ => { ran := .unstarted "refused", out := "", err := "", complete := false, outputs := #[] }
+  | .writeAtomic .. => .error .denied
+  | .createDirAll _ => .error .denied
+
+open LeanTex.Cli in
+/-- **The preflight's decision, over a host given as a table.** A
+destination that is an input's file by its real path is `same`; one that
+resolves apart from a multiply-linked input agreeing with it on every
+metadata fact is `linked`; one that resolves apart from a singly-linked
+file of the same size and time is no clash. It resolves only an input
+whose metadata agrees with a standing destination's, asks of an input
+named twice once, and with no destination standing asks nothing of any
+input: the preflight's cost is a stat per input on a rebuild, and nothing
+on a first build. -/
+def overwritePlanChecks (ref : IO.Ref (List String)) : IO Unit := do
+  let one : World.Metadata := { kind := .file, size := 10, mtimeSec := 5, mtimeNsec := 7, links := 1 }
+  let two := { one with links := 2 }
+  let dest := #[("Markdown", "out.md")]
+  let decide (files : List (String × World.Metadata × String)) (inputs : Array String) :=
+    (PublicationPaths.overwrite dest inputs).run (tableWorld files)
+  let asked (files : List (String × World.Metadata × String)) (inputs : Array String) :=
+    (PublicationPaths.overwrite dest inputs).asks (tableWorld files)
+  check ref "publication plan: a destination resolving to an input's path is that input"
+    (decide [("out.md", one, "/w/doc.md"), ("doc.md", one, "/w/doc.md")] #["doc.md"] ==
+      some (.same "Markdown" "out.md" "doc.md"))
+  check ref "publication plan: a multiply-linked input agreeing with the destination may be it"
+    (decide [("out.md", two, "/w/out.md"), ("doc.md", two, "/w/doc.md")] #["doc.md"] ==
+      some (.linked "Markdown" "out.md" "doc.md"))
+  check ref "publication plan: a singly-linked file of the same size and time is another file"
+    (decide [("out.md", one, "/w/out.md"), ("doc.md", one, "/w/doc.md")] #["doc.md"] == none)
+  check ref "publication plan: with no destination standing, no input is asked about"
+    (asked [("doc.md", one, "/w/doc.md")] #["doc.md", "face.otf"] == [.metadata "out.md"])
+  check ref "publication plan: an input whose metadata differs is never resolved"
+    (asked [("out.md", one, "/w/out.md"), ("doc.md", { one with size := 11 }, "/w/doc.md")]
+        #["doc.md"] == [.metadata "out.md", .stat "out.md", .metadata "doc.md"])
+  check ref "publication plan: an input named twice is asked about once"
+    ((asked [("out.md", one, "/w/out.md"), ("doc.md", one, "/w/doc.md")]
+        #["doc.md", "doc.md"]).count (.metadata "doc.md") == 1)
+
+/-- **No artifact is written over one of the build's inputs.** A
+destination that is the document, another name of it — a link to it, a
+link to the directory above it, a hard link — or a file the document reads
+— an include, its bibliography, an image, its face, a face its font
+directory holds — or a resource it declares — its stylesheet or icon, in a
+build of any formats — is E0005 before anything is written, whatever the
 run accepts: every input keeps its bytes and no artifact appears. A
-destination that is none of them still publishes, beside a stylesheet a run
-with no page never reads, a bibliography no file stands for, and an
-unrelated hard link. The defect: `leantex doc.md -o doc.md` replaced the
-source with its markdown twin, and `\output{ md = "doc.tex" }` replaced the
-source it was built from. -/
+destination that is none of them still publishes, beside a stylesheet no
+file stands at, a bibliography no file stands for, and an unrelated hard
+link. The defect: `leantex doc.md -o doc.md` replaced the source with its
+markdown twin, and `\output{ md = "doc.tex" }` replaced the source it was
+built from. -/
 def publicationInputChecks (ref : IO.Ref (List String)) : IO Unit := do
   let font ← IO.FS.realPath "testdata/corpus/fonts/OpenSans-Regular.ttf"
   let spare ← IO.FS.realPath "testdata/corpus/fonts/SourceSerifPro-Regular.otf"
@@ -181,7 +237,25 @@ def publicationInputChecks (ref : IO.Ref (List String)) : IO Unit := do
         [("doc.tex", tex "\\output{ formats = html, md, stylesheet = \"site.css\", md = \"site.css\" }\n"
             "An invented probe."),
          ("site.css", "p { color: rgb(1, 2, 3) }\n")],
-        #["doc.tex"], ["site.css"], [])]
+        #["doc.tex"], ["site.css"], []),
+      ("the stylesheet a build with no page declares",
+        [("doc.tex", tex "\\output{ formats = pdf, md, stylesheet = \"site.css\", md = \"site.css\" }\n"
+            "An invented probe."),
+         ("site.css", "p { color: rgb(1, 2, 3) }\n")],
+        #["doc.tex"], ["site.css"], []),
+      ("the stylesheet a twin-only build declares",
+        [("doc.tex", tex "\\output{ formats = md, stylesheet = \"site.css\", md = \"site.css\" }\n"
+            "An invented probe."),
+         ("site.css", "p { color: rgb(1, 2, 3) }\n")],
+        #["doc.tex"], ["site.css"], []),
+      ("the declared icon",
+        [("doc.tex", tex "\\pdfmeta{ favicon = \"figure.png\" }\n\\output{ formats = html, md, md = \"figure.png\" }\n"
+            "An invented probe.")],
+        #["doc.tex"], ["figure.png"], []),
+      ("the icon a build with no page declares",
+        [("doc.tex", tex "\\pdfmeta{ favicon = \"figure.png\" }\n\\output{ formats = pdf, md, md = \"figure.png\" }\n"
+            "An invented probe.")],
+        #["doc.tex"], ["figure.png"], [])]
     for (name, files, args, guarded, links) in cases do
       let dir ← prepare name files links
       let before ← snapshot dir
@@ -198,7 +272,7 @@ def publicationInputChecks (ref : IO.Ref (List String)) : IO Unit := do
         List (String × String × Bool)) := [
       ("a distinct destination beside its source", [("doc.md", note)],
         #["doc.md", "-o", "twin.md"], "twin.md", []),
-      ("a stylesheet a run with no page never reads",
+      ("a stylesheet no file stands at",
         [("doc.tex", tex "\\output{ formats = pdf, stylesheet = \"doc.tex/site.css\" }\n"
             "An invented probe.")],
         #["doc.tex"], "doc.pdf", []),

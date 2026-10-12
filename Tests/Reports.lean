@@ -1387,9 +1387,9 @@ def reports : List Report := [
       "a presentation deck whose theme declares its code roles by xcolor definitions ships its declared code colours in both artifacts"]
     state := .guarded "dbbfba91" .before .author },
   { id := "R150", date := "2026-10-12"
-    what := "a build wrote its artifact over the file it was built from: a markdown source built onto its own name was replaced by its markdown twin, and a markdown twin declared under the source's name, an include's, the bibliography's, an image's, a face's or the stylesheet's replaced that file"
-    pins := [check% Tests.publicationInputChecks]
-    accept := ["run against the binary built from the tree before the fix, twenty-two of the guard's assertions fail: each of eleven destinations, among them a link to the source, a link to its directory, a hard link of it and a face the run's font directory holds, is published over the file the build read, which then differs; the destinations that are no input publish as before"]
+    what := "a build wrote its artifact over the file it was built from: a markdown source built onto its own name was replaced by its markdown twin, and a markdown twin declared under the source's name, an include's, the bibliography's, an image's, a face's, the stylesheet's or the icon's replaced that file"
+    pins := [check% Tests.publicationInputChecks, check% Tests.overwritePlanChecks]
+    accept := ["run against the binary built from the tree before the fix, thirty of the guard's assertions fail: each of fifteen destinations, among them a link to the source, a link to its directory, a hard link of it, a face the run's font directory holds, and the stylesheet and icon a build of any formats declares, is published over the file the build read, which then differs; the destinations that are no input publish as before"]
     state := .guarded "1f801005" .before .author },
   { id := "R151", date := "2026-10-12"
     what := "an output name with no format's extension was refused on plain standard error, outside the porcelain stream a tool reads and with no code, and the refusal named the PDF and HTML extensions but not the markdown one"

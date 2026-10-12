@@ -36,6 +36,17 @@ public structure Stat where
   real : String
   deriving DecidableEq, Repr
 
+/-- A path's metadata, symlinks followed, with its hard-link count and
+without its real path: what a comparison of many files reads, resolving
+only the few whose metadata could be one file's. -/
+public structure Metadata where
+  kind : Kind
+  size : Nat
+  mtimeSec : Int
+  mtimeNsec : Nat
+  links : Nat
+  deriving DecidableEq, Repr
+
 /-- One bounded tool run in a scratch directory of its own. `inputs` are
 written there before the call and `outputs` read back after it, both named
 relative to it; `env` changes the inherited environment. -/
@@ -69,6 +80,7 @@ public inductive Ask where
   | env (name : String)
   | cwd
   | stat (path : String)
+  | metadata (path : String)
   | readFile (path : String)
   | listDir (path : String)
   | run (call : ToolCall)
@@ -82,6 +94,7 @@ read refuses anything but a regular file. -/
   | .env _ => Option String
   | .cwd => Except Failure String
   | .stat _ => Except Failure Stat
+  | .metadata _ => Except Failure Metadata
   | .readFile _ => Except Failure ByteArray
   | .listDir _ => Except Failure (Array (String × Kind))
   | .run _ => Ended

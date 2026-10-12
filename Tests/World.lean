@@ -16,6 +16,7 @@ def loud : (q : Ask) → Reply q
   | .env _ => some "loud"
   | .cwd => .ok "/loud"
   | .stat p => .ok { kind := .file, size := 7, mtimeSec := 1, mtimeNsec := 0, real := p }
+  | .metadata _ => .ok { kind := .file, size := 7, mtimeSec := 1, mtimeNsec := 0, links := 1 }
   | .readFile _ => .ok "loud".toUTF8
   | .listDir _ => .ok #[("loud", .file)]
   | .run _ => { ran := .exited 0, out := "loud\n", err := "", complete := true, outputs := #[] }
@@ -112,6 +113,17 @@ def faultChecks (ref : IO.Ref (List String)) (dir : System.FilePath) : IO Unit :
     (match ← Host.answer (.readFile dir.toString) with | .error .notRegular => true | _ => false)
   t "world/host: a directory's stat says so"
     (match ← Host.answer (.stat dir.toString) with | .ok st => st.kind == .dir | _ => false)
+  let single := dir / "single"
+  IO.FS.writeFile single "seven b"
+  IO.FS.hardLink single (dir / "second")
+  symlink single (dir / "named")
+  t "world/host: metadata agrees with stat and counts a file's hard links through a link to it"
+    (match ← Host.answer (.metadata (dir / "named").toString), ← Host.answer (.stat single.toString) with
+      | .ok md, .ok st => md.kind == .file && md.size == 7 && md.links == 2 &&
+          md.size == st.size && md.mtimeSec == st.mtimeSec && md.mtimeNsec == st.mtimeNsec
+      | _, _ => false)
+  t "world/host: a missing path is absent to metadata"
+    (isAbsent (← Host.answer (.metadata missing)))
   let locked := dir / "locked"
   IO.FS.writeFile locked "secret"
   IO.setAccessRights locked {}

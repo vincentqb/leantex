@@ -546,14 +546,18 @@ def writeScript (path : System.FilePath) (body : String) (exec : Bool := true) :
   IO.FS.writeFile path body
   IO.setAccessRights path { user := ⟨true, true, exec⟩ }
 
-/-- The engine this build made, run in `dir` over `args` with `font` as its one
-face and its caches under `cache`: how a CLI check runs it. -/
+/-- The engine this build made, run in `dir` over `args` with `font` the face
+it sets in and its caches under `cache`, sealed as `sealedRunEnv` seals a
+run: a home of its own, a `PATH` that reaches no tool, and no font root
+named from outside. How a CLI check runs it. -/
 def engineRun (dir : System.FilePath) (args : Array String) (font cache : System.FilePath) :
     IO IO.Process.Output := do
   let binary ← IO.FS.realPath ".lake/build/bin/leantex"
   IO.Process.output {
     cmd := binary.toString, cwd := some dir, args,
-    env := #[("LEANTEX_FONT", some font.toString), ("XDG_CACHE_HOME", some cache.toString)] }
+    env := #[("LEANTEX_FONT", some font.toString), ("XDG_CACHE_HOME", some cache.toString),
+      ("HOME", some (cache / "home").toString), ("PATH", some (cache / "no-tools").toString),
+      ("LEANTEX_FONT_PATH", none)] }
 
 /-- A symbolic link at `link` naming `target`: Lean has no call that makes one. -/
 def symlink (target link : System.FilePath) : IO Unit := do
@@ -2516,6 +2520,7 @@ def quiet : (q : Ask) → Reply q
   | .env _ => none
   | .cwd => .error .absent
   | .stat _ => .error .absent
+  | .metadata _ => .error .absent
   | .readFile _ => .error .absent
   | .listDir _ => .error .absent
   | .run _ => { ran := .unstarted "unasked", out := "", err := "", complete := false, outputs := #[] }

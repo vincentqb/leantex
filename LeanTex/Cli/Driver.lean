@@ -635,7 +635,8 @@ structure Front where
   /-- The input encoding the document declares and the files read under
   it, which the bibliography joins. -/
   ledger : Encoding.Ledger
-  /-- Every file the document's execution read beside it (`Input.Source.reads`). -/
+  /-- Every file the document's execution read, by the path it read it at
+  (`Input.Source.reads`). -/
   reads : Array String
   /-- Parsed faces, shared by the provisional assembly and the final one. -/
   cache : FontEnv.Cache
@@ -779,20 +780,22 @@ def boundaryFaces (ui : Ui) (file : String) (front : Front) : IO (Ir.FontSpec ×
 its execution read (`Front.reads`: an include, a local style, a `\data` file);
 its bibliography (`Input.bibPaths`); the images it read and an animation's
 companion beside one (`imgReads`); the files its boundary pictures staged
-(`staged`); every face it parsed, in any assembly (`FontEnv.Cache.parsedPaths`),
-with the settled set's (`faces`); every face the scan found under the
-document's own font directories and the run's (`FaceScan.docDirs`,
-`privateDirs`); and, where it emits a page, the stylesheet and icon the page
-captures (`Publication.localPath?`). Publication writes over none of them
-(`PublicationPaths.overwrite`), which skips a listed name no file stands at. -/
-def buildInputs (file : String) (front : Front) (doc : Ir.Doc) (emit : Array Emit)
-    (scan : FaceScan) (parsed imgReads staged faces : Array String) : Array String :=
+(`staged`); every face it read to parse, in any assembly, the ones it
+refused included (`FontEnv.Cache.readPaths`), with the settled set's
+(`faces`); every face the scan found under the document's own font
+directories and the run's (`FaceScan.docDirs`, `privateDirs`); and the
+stylesheet and icon it declares (`Publication.localPath?`), the document's
+own resources whether or not this run's formats read them. Publication
+writes over none of them (`PublicationPaths.overwrite`), which skips a
+listed name no file stands at. A face the scan only classified, under a
+font directory the host shares with every program, is not on the list. -/
+def buildInputs (file : String) (front : Front) (doc : Ir.Doc) (scan : FaceScan)
+    (parsed imgReads staged faces : Array String) : Array String :=
   let owned := scan.docDirs ++ scan.privateDirs
   let scanned := (scan.faces.filter fun face =>
     owned.any fun dir => face.path.startsWith (if dir.endsWith "/" then dir else dir ++ "/")).map (·.path)
-  let declared := if !emit.contains .html then #[] else
-    (doc.output.stylesheet.toArray ++ doc.info.favicon.toArray).filterMap fun name =>
-      (Publication.localPath? file name).map (·.toString)
+  let declared := (doc.output.stylesheet.toArray ++ doc.info.favicon.toArray).filterMap fun name =>
+    (Publication.localPath? file name).map (·.toString)
   #[file] ++ front.reads ++ (Input.bibPaths file doc).map (·.toString) ++ imgReads ++ staged ++
     faces ++ parsed ++ scanned ++ declared
 
@@ -938,8 +941,8 @@ def build (ui : Ui) (file : String) : IO UInt32 := do
         (if emit.contains .pdf then #[ ("PDF", pdfPath) ] else #[])
       -- premise: publicationInputChecks — a destination naming the document, a file it
       -- reads or another name of one is refused with every input byte for byte as it was
-      if let some clash ← PublicationPaths.overwrite destinations
-          (buildInputs file front doc emit scan (← front.cache.parsedPaths) imgReads staged paths) then
+      if let some clash ← Host.runIO (PublicationPaths.overwrite destinations
+          (buildInputs file front doc scan (← front.cache.readPaths) imgReads staged paths)) then
         ui.diag (DriverDiag.outputOverwritesInput clash)
         ui.summary file 1 (← since t0)
         return 1

@@ -51,6 +51,11 @@ private def statOf (path : String) : BaseIO (Except Failure Stat) := caught do
   return { kind := kindOf md.type, size := md.byteSize.toNat, mtimeSec := md.modified.sec,
            mtimeNsec := md.modified.nsec.toNat, real := real.toString }
 
+private def metadataOf (path : String) : BaseIO (Except Failure Metadata) := caught do
+  let md ← System.FilePath.metadata path
+  return { kind := kindOf md.type, size := md.byteSize.toNat, mtimeSec := md.modified.sec,
+           mtimeNsec := md.modified.nsec.toNat, links := md.numLinks.toNat }
+
 private def readRegular (path : String) : BaseIO (Except Failure ByteArray) := do
   match ← caught (System.FilePath.metadata path) with
   | .error f => return .error f
@@ -201,6 +206,7 @@ public def answer : (q : Ask) → BaseIO (Reply q)
   | .env name => IO.getEnv name
   | .cwd => caught do return (← IO.currentDir).toString
   | .stat path => statOf path
+  | .metadata path => metadataOf path
   | .readFile path => readRegular path
   | .listDir path => listing path
   | .run call => runCall call

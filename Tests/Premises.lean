@@ -234,7 +234,7 @@ def registry : List Premise := [
     sites := [("LeanTex/Cli/Publication.lean", "publish")]
     unchecked := some "Whether a reader opens an artifact mid-write is the reader's schedule, which no build observes, and publishing by rename would retire the premise." },
   { name := "path-identity", residue := .host "filesystem", reach := .render
-    statement := "Two paths whose existing prefixes IO.FS.realPath resolves to different paths name different files unless one has several hard links, which the publication preflight refuses between destinations and, between a destination and a file the build read, wherever the two agree on their link count, size and modification time, as two hard links of one file do, though on a filesystem that folds case or normalizes names two such paths can name one file, and so can the paths of one directory mounted twice, whose files resolve apart and keep one link."
+    statement := "Two paths whose existing prefixes IO.FS.realPath resolves to different paths name different files unless one has several hard links, which the publication preflight refuses between destinations and, between a destination and one of the build's inputs, wherever the two agree on their kind, link count, size and modification time, as two hard links of one file do, though on a filesystem that folds case or normalizes names two such paths can name one file, and so can the paths of one directory mounted twice, whose files resolve apart with no link added."
     consumers := [.gate "LeanTex/Cli/Driver.lean" "build" (check% publicationPathChecks),
       .gate "LeanTex/Cli/Driver.lean" "build" (check% Tests.publicationInputChecks)]
     sites := [("LeanTex/Cli/PublicationPaths.lean", "conflict"),

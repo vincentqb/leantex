@@ -1,13 +1,18 @@
 module
 
 import Init.System.IO
+public import LeanTex.Cli.World
+import Std.Data.HashSet
 
-/-! Publication destinations are checked before any artifact is written.
-Resolve existing directory links before `..`; lexical normalization alone
-would mistake two names of the same file for independent destinations.
-This is a filesystem preflight, not a claim against concurrent filesystem
-changes. Multiply-linked files and unresolved links cannot establish the
-required independence with the portable metadata API, so they are refused. -/
+/-! Publication destinations are checked before any artifact is written,
+twice. `conflict` holds the destinations apart from each other: it
+resolves existing directory links before `..`, since lexical normalization
+alone would mistake two names of the same file for independent
+destinations, and refuses multiply-linked files and unresolved links,
+whose independence the portable metadata API cannot establish.
+`overwrite` holds them apart from the files the build read, as a program
+of questions (`World.Prog`) that only looks (`overwrite_only`). Both are a
+filesystem preflight, not a claim against concurrent filesystem changes. -/
 
 namespace LeanTex.Cli.PublicationPaths
 
@@ -66,47 +71,137 @@ public def conflict (paths : Array (String × String)) : IO (Option String) := d
 public inductive Overwrite where
   /-- The destination resolves to the path the input resolves to. -/
   | same (format destination input : String)
-  /-- The destination stands with several hard links and agrees with the
-  input on every fact the portable metadata gives of a file (`mayAlias`). -/
+  /-- The destination and the input resolve apart, and their metadata
+  agrees on every fact two hard links of one file share, among them a link
+  count of at least two. -/
   | linked (format destination input : String)
   deriving Repr, BEq
 
-/-- Could two standing files be one under two names? Two hard links of one
-file share its kind, link count, size and modification time, and its link
-count is at least two. With no inode number to compare, this reading misses
-no hard-link alias, and it takes an unrelated file for one only where all
-four agree. A second mount of one directory is another matter: its paths
-resolve apart and its files keep one link (`path-identity`). -/
-private def mayAlias (a b : IO.FS.Metadata) : Bool :=
-  a.type == .file && b.type == .file && a.numLinks > 1 && a.numLinks == b.numLinks &&
-    a.byteSize == b.byteSize && a.modified == b.modified
+/-- A destination that stands, as the preflight read it. -/
+private structure Standing where
+  format : String
+  name : String
+  metadata : World.Metadata
+  real : String
+
+/-- Could two files be one, by their metadata? A file read twice agrees
+with itself on all of it, and so do two hard links of one file. -/
+private def sameShape (a b : World.Metadata) : Bool :=
+  a.kind == b.kind && a.size == b.size && a.mtimeSec == b.mtimeSec &&
+    a.mtimeNsec == b.mtimeNsec && a.links == b.links
+
+/-- The destinations that stand, each read by its metadata and real path,
+links followed; one that does not stand or that this user cannot reach is
+left out. -/
+private def standingGo : List (String × String) → Array Standing → World.Prog (Array Standing)
+  | [], acc => .pure acc
+  | (format, name) :: rest, acc =>
+    .ask (.metadata name) fun
+      | .error _ => standingGo rest acc
+      | .ok metadata => .ask (.stat name) fun
+        | .error _ => standingGo rest acc
+        | .ok st => standingGo rest (acc.push { format, name, metadata, real := st.real })
+
+/-- The first input that is a standing destination's file: one whose real
+path is the destination's, or, resolving apart, a regular file of several
+links whose metadata agrees with it. An input is asked about once, and
+resolved only where its metadata agrees with a destination's. -/
+private def clashGo (standing : Array Standing) :
+    List String → Std.HashSet String → World.Prog (Option Overwrite)
+  | [], _ => .pure none
+  | input :: rest, asked =>
+    if asked.contains input then clashGo standing rest asked else
+    .ask (.metadata input) fun
+      | .error _ => clashGo standing rest (asked.insert input)
+      | .ok metadata =>
+        let near := standing.filter (sameShape ·.metadata metadata)
+        if near.isEmpty then clashGo standing rest (asked.insert input) else
+        .ask (.stat input) fun
+          | .error _ => clashGo standing rest (asked.insert input)
+          | .ok st =>
+            match near.find? (·.real == st.real) with
+            | some d => .pure (some (.same d.format d.name input))
+            | none =>
+              if metadata.kind == .file && metadata.links > 1 then
+                .pure (near[0]?.map fun d => .linked d.format d.name input)
+              else clashGo standing rest (asked.insert input)
 
 /-- Nothing means no destination names a file the build reads (`inputs`):
-none resolves to an input's own path, and none could be another hard link of
-an input's file (`mayAlias`). An input that does not stand, or that this
-user cannot stat or resolve, was not read by that spelling and holds nothing
-a write could destroy. A destination that does not resolve — a component
-that is no directory, or one this user cannot search — names no standing
-file a write could open, so its write is the one that fails, under its own
-path; one behind a link to nothing creates the link's target and replaces
-nothing. One output owes this as much as several: writing it would replace
-the document or a file it reads. -/
+none resolves to an input's own path, and none could be another hard link
+of an input's file. With no inode number to compare, a hard link is read
+off the metadata two links of one file share — kind, size, modification
+time and a link count of at least two — which misses no hard-link alias
+and takes an unrelated file for one only where all of them agree. A second
+mount of one directory adds no link and resolves apart (`path-identity`).
+A destination that does not stand, or that this user cannot reach, names
+no file a write could replace, so its write is the one that fails, under
+its own path; one behind a link to nothing replaces nothing. An input that
+does not stand, or that this user cannot reach, was not read by that
+spelling. One output owes this as much as several: writing it would
+replace the document or a file it reads. -/
 public def overwrite (destinations : Array (String × String)) (inputs : Array String) :
-    IO (Option Overwrite) := do
-  let mut read : Array (String × System.FilePath × IO.FS.Metadata) := #[]
-  for input in inputs do
-    if read.any (·.1 == input) then continue
-    let .ok metadata ← (System.FilePath.mk input).metadata.toBaseIO | continue
-    let .ok real ← (IO.FS.realPath input).toBaseIO | continue
-    read := read.push (input, real, metadata)
-  for (format, name) in destinations do
-    let .ok (.ok path) ← (resolve name).toBaseIO | continue
-    if let some (input, _, _) := read.find? (·.2.1 == path) then
-      return some (.same format name input)
-    if let .ok metadata ← path.metadata.toBaseIO then
-      if let some (input, _, _) := read.find? (mayAlias metadata ·.2.2) then
-        return some (.linked format name input)
-  return none
+    World.Prog (Option Overwrite) := do
+  let standing ← standingGo destinations.toList #[]
+  if standing.isEmpty then return none
+  clashGo standing inputs.toList {}
+
+/-- A question that only looks: a path's metadata or its real path. -/
+@[expose] public def Inspects : World.Ask → Prop
+  | .metadata _ => True
+  | .stat _ => True
+  | _ => False
+
+private theorem standingGo_only (destinations : List (String × String)) (acc : Array Standing) :
+    (standingGo destinations acc).Only Inspects := by
+  induction destinations generalizing acc with
+  | nil => exact .pure acc
+  | cons d rest ih =>
+    obtain ⟨format, name⟩ := d
+    refine .ask (.metadata name) _ trivial fun r => ?_
+    cases r with
+    | error _ => exact ih acc
+    | ok metadata =>
+      refine .ask (.stat name) _ trivial fun r => ?_
+      cases r with
+      | error _ => exact ih acc
+      | ok st => exact ih _
+
+private theorem clashGo_only (standing : Array Standing) (inputs : List String)
+    (asked : Std.HashSet String) : (clashGo standing inputs asked).Only Inspects := by
+  induction inputs generalizing asked with
+  | nil => exact .pure none
+  | cons input rest ih =>
+    unfold clashGo
+    split
+    · exact ih asked
+    · refine .ask (.metadata input) _ trivial fun r => ?_
+      cases r with
+      | error _ => exact ih _
+      | ok metadata =>
+        dsimp only
+        split
+        · exact ih _
+        · refine .ask (.stat input) _ trivial fun r => ?_
+          cases r with
+          | error _ => exact ih _
+          | ok st =>
+            dsimp only
+            split
+            · exact .pure _
+            · split
+              · exact .pure _
+              · exact ih _
+
+/-- **The preflight only looks** (`_only`): whatever the host replies,
+every question `overwrite` asks is a path's metadata or its real path, so
+a refused build has written, created and run nothing. -/
+public theorem overwrite_only (destinations : Array (String × String)) (inputs : Array String) :
+    (overwrite destinations inputs).Only Inspects := by
+  unfold overwrite
+  refine (standingGo_only _ _).bind fun standing => ?_
+  split
+  · exact .pure none
+  · exact clashGo_only _ _ _
 
 /-- One path segment as a URL reads it back: each character a relative
 URL's path would read as something else (`%`, `#`, `?`, `\`, `:`, white

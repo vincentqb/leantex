@@ -321,7 +321,7 @@ private def DiagCode.spec : DiagCode → String × Loss × String
   | .W0004 => ("0004", .degraded, "bytes a UTF-8 file holds that UTF-8 cannot read are read in the encoding its document declares, a guess the warning names")
   | .E0003 => ("0003", .dropped, "output formats do not have independent destinations; publication is refused")
   | .E0004 => ("0004", .dropped, "an artifact could not be written to its destination")
-  | .E0005 => ("0005", .dropped, "an artifact would be written over a file the build reads; publication is refused")
+  | .E0005 => ("0005", .dropped, "an artifact would be written over one of the build's inputs; publication is refused")
   | .E0006 => ("0006", .dropped, "an output file name ends in no extension of a format the engine writes; nothing is built")
   | .E0101 => ("0101", .dropped, "lone backslash at end of input")
   | .E0102 => ("0102", .dropped, "unclosed verbatim environment")

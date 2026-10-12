@@ -42,9 +42,11 @@ public structure Cache where
   fixed for a run, so the answer may be remembered. -/
   private weights : IO.Ref (Array ((String × Option String × Nat × Bool) ×
     Option (FontDb.Face × Option FontDb.Substituted)))
+  /-- Every path `parse` read, whatever the parse made of it. -/
+  private read : IO.Ref (Array String)
 
 public def Cache.mk' : IO Cache := do
-  return ⟨← IO.mkRef #[], ← IO.mkRef #[]⟩
+  return ⟨← IO.mkRef #[], ← IO.mkRef #[], ← IO.mkRef #[]⟩
 
 /-- Resolve a family's face for one weight and slant, through the memo. -/
 public def Cache.resolveWeight (c : Cache) (faces : Array FontDb.Face) (family : String)
@@ -57,14 +59,15 @@ public def Cache.resolveWeight (c : Cache) (faces : Array FontDb.Face) (family :
   c.weights.modify (·.push (key, answer))
   return answer
 
-/-- The face files this cache parsed, by the paths they were read at. -/
-public def Cache.parsedPaths (c : Cache) : IO (Array String) :=
-  return (← c.ref.get).map (·.1)
+/-- The face files this cache read, parsed or refused, by the paths they
+were read at. -/
+public def Cache.readPaths (c : Cache) : IO (Array String) := c.read.get
 
 /-- Parse a face, or hand back the parse already made for that path. -/
 public def Cache.parse (c : Cache) (path : String) : IO (Except String Font.Font) := do
   if let some f := (← c.ref.get).find? (·.1 == path) then
     return .ok f.2
+  unless (← c.read.get).contains path do c.read.modify (·.push path)
   let data ← IO.FS.readBinFile path
   match Font.parse data with
   | .error e => return .error e

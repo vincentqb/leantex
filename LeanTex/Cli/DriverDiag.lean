@@ -53,19 +53,19 @@ public def outputPathsConflict (detail : String) : Diag :=
   Diag.of .E0003 s!"cannot publish output: {detail}"
     (help := "choose separate files with -o and \\output{ md = ... }; use destinations without hard links")
 
-/-- E0005: an artifact would be written over a file the build reads — the
-document, an include, its bibliography, an image, a font, a declared
-stylesheet or icon — so nothing is written. The subject is the destination. -/
+/-- E0005: an artifact would be written over one of the build's inputs —
+the document, an include, its bibliography, an image, a face, the
+stylesheet or icon it declares — so nothing is written. The subject is the
+destination. -/
 public def outputOverwritesInput : PublicationPaths.Overwrite → Diag
   | .same format dest input => overwrite dest
-    s!"the {format} destination '{dest}' is '{input}', which this build reads"
+    s!"the {format} destination '{dest}' is '{input}', one of the build's inputs"
   | .linked format dest input => overwrite dest
-    s!"the {format} destination '{dest}' may be a hard link to '{input}', which this build reads"
+    s!"the {format} destination '{dest}' may be a hard link to '{input}', one of the build's inputs"
 where
   overwrite (dest detail : String) : Diag :=
     Diag.of .E0005 s!"cannot publish output: {detail}"
-      (help := "name another destination with -o, or the markdown twin with \\output{ md = ... }; \
-the build never writes over a file it reads")
+      (help := "name another destination with -o, or the markdown twin with \\output{ md = ... }")
       (subject := some dest)
 
 /-- A whole-artifact representation refusal. Aggregate storage limits and
