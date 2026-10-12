@@ -20,12 +20,25 @@ public structure Pos where
   /-- Whether these coordinates identify a boundary in the original source.
   A normalized fragment without such a boundary cannot index authored tokens. -/
   sourceMapped : Bool := true
+  /-- An opening brace whose line end the lexer leaves out (`Lex.midlineWs`),
+  which TeX reads as a space after the brace. -/
+  openEol : Bool := false
+  /-- A closing brace, and once parsed the group it closes, after a line end
+  the lexer leaves out, which TeX reads as a space unless a control word
+  ends the line. -/
+  closeEol : Bool := false
   deriving Repr, DecidableEq
 
 /-- Source-location identity ignores expansion and token provenance. Consumers that
 need macro ancestry read `Pos.origins` explicitly. -/
 public instance : BEq Pos where
   beq p q := p.line == q.line && p.col == q.col
+
+/-- A line end the lexer leaves out beside a brace is lexing evidence, not
+location identity. -/
+public theorem Pos.beq_eol_exact (p q : Pos) (a b c d : Bool) :
+    ({ p with openEol := a, closeEol := b } == { q with openEol := c, closeEol := d }) =
+      (p == q) := rfl
 
 public theorem Pos.beq_origins_exact (p q : Pos) (xs ys : List MacroOrigin) :
     ({ p with origins := xs } == { q with origins := ys }) = (p == q) := rfl

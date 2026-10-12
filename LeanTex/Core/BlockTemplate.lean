@@ -62,6 +62,20 @@ public inductive Tok where
   | body
   deriving Repr, BEq, Inhabited
 
+/-- Does TeX read a line end after this raw as a space: after anything but
+a control word, past which its scanner skips blanks (TeXbook chapter 8). -/
+private def endsMidLine : Raw → Bool
+  | .ctrl n _ => !(n.all fun c => c.isAlpha || c == '@')
+  | .space | .par _ => false
+  | .word .. | .sym .. | .group .. | .math .. | .env .. | .verb .. => true
+
+/-- A text's raws with the spaces TeX reads at its braces' line ends, which
+the lexer leaves out (`Pos.openEol`, `Pos.closeEol`): after the opening
+brace, and before the closing one past anything but a control word. -/
+public def edged (edges : Bool × Bool) (raws : Array Raw) : Array Raw :=
+  let raws := if edges.1 then raws.foldl (·.push ·) #[Raw.space] else raws
+  if edges.2 && raws.back?.all endsMidLine then raws.push .space else raws
+
 mutual
 
 -- conserves: none — a token reading of template code, not a walk over document content.
@@ -78,7 +92,10 @@ private def flatOne (acc : Array Tok) : Raw → Array Tok
     else if n == "egroup" then acc.push .eg
     else acc.push (.ctrl n)
   | .sym c _ => acc.push (.sym c)
-  | .group body _ => (flatList (acc.push .bg) body.toList).push .eg
+  | .group body p =>
+    let acc := flatList (if p.openEol then (acc.push .bg).push .space else acc.push .bg) body.toList
+    let acc := if p.closeEol && body.back?.all endsMidLine then acc.push .space else acc
+    acc.push .eg
   | .math _ _ _ => acc.push (.ctrl "$…$")
   | .env n _ _ => acc.push (.ctrl ("begin{" ++ n ++ "}"))
   | .verb _ _ _ => acc.push (.ctrl "verb")
@@ -95,15 +112,51 @@ public structure Macro where
   serial : Nat
   arity : Nat
   body : Array Raw
+  /-- The default of an optional first argument, `\newcommand`'s `[…]`. -/
+  optional : Option (Array Raw) := none
   deriving Inhabited
 
-/-- The braced arguments of a call from the head of `l`, and the tokens
-they take, spaces between them included. -/
-private def callArgs (l : List Tok) (arity : Nat) : Option (Array (Array Tok) × Nat) := Id.run do
+/-- The arguments of a call from the head of `l`, and the tokens they take,
+spaces between them included: with a default (`optional`), the first is
+what a `[…]` after the spaces holds — LaTeX's `\@ifnextchar[` reads past
+them — or the default, and the rest are braced. -/
+private def callArgs (l : List Tok) (arity : Nat) (optional : Option (Array Tok) := none) :
+    Option (Array (Array Tok) × Nat) := Id.run do
   let toks := l.toArray
   let mut args : Array (Array Tok) := #[]
   let mut k := 0
-  for _ in [0:arity] do
+  let mut braced := arity
+  if let some dflt := optional then
+    if arity == 0 then return none
+    braced := arity - 1
+    let mut j := k
+    for _ in [k:toks.size] do
+      if toks[j]? == some .space then j := j + 1 else break
+    if toks[j]? == some (.sym '[') then
+      let mut depth := 0
+      let mut arg : Array Tok := #[]
+      let mut m := j + 1
+      let mut closed := false
+      for _ in [j + 1:toks.size] do
+        match toks[m]? with
+        | some .bg => depth := depth + 1; arg := arg.push .bg
+        | some .eg =>
+          if depth == 0 then return none
+          depth := depth - 1
+          arg := arg.push .eg
+        | some (.sym ']') =>
+          if depth == 0 then closed := true; break
+          arg := arg.push (.sym ']')
+        | some t => arg := arg.push t
+        | none => break
+        m := m + 1
+      unless closed do return none
+      args := args.push arg
+      k := m + 1
+    else
+      args := args.push dflt
+      k := j
+  for _ in [0:braced] do
     let mut j := k
     for _ in [k:toks.size] do
       if toks[j]? == some .space then j := j + 1 else break
@@ -155,7 +208,7 @@ public def expandList (defs : String → Option Macro) (bound : Nat) :
     match defs n with
     | some m =>
       if _h : m.serial < bound then
-        match callArgs rest m.arity with
+        match callArgs rest m.arity (m.optional.map flatten) with
         | some (args, k) =>
           let body := substParams args (flatten m.body).toList #[]
           let expanded := expandList defs m.serial body.toList #[]
@@ -341,6 +394,8 @@ private structure Scope where
   /-- Scratch registers holding the node a `\last…` read: its kind and the
   body's trailing item it is, or the penalty the template set. -/
   vals : List (String × Val) := []
+  /-- The `\newif` flags the template set (`\Xtrue`, `\Xfalse`). -/
+  flags : List (String × Bool) := []
   deriving Inhabited
 
 /-- A list under construction: vertical or horizontal, its nodes, and the
@@ -435,6 +490,8 @@ private structure St where
   `some none` for one whose value where the block stands this reading does
   not hold. -/
   lengths : String → Option (Option Dimen) := fun _ => none
+  /-- The document's `\newif` flags, as they stand where the body begins. -/
+  flags : String → Option Bool := fun _ => none
   /-- The template's characters, as dimensions are read. -/
   chars : Chars := {}
   /-- A `\moveleft`/`\moveright` shift the next box takes. -/
@@ -449,6 +506,23 @@ private structure St where
 
 private def St.miss (s : St) (what : String) : St :=
   if s.unread.contains what then s else { s with unread := s.unread.push what }
+
+/-- A `\newif` flag's value: as the template set it, else as the document
+did. -/
+private def St.flag? (s : St) (x : String) : Option Bool :=
+  (s.scope.flags.lookup x).orElse fun _ => s.flags x
+
+/-- The flag `\ifX` tests and its value, for a flag the document declares. -/
+private def St.flagTest (s : St) (n : String) : Option Bool :=
+  if n.startsWith "if" && n.length > 2 then s.flag? (n.drop 2).toString else none
+
+/-- The flag `\Xtrue` or `\Xfalse` sets, and to what. -/
+private def St.flagSet (s : St) (n : String) : Option (String × Bool) :=
+  let t := (n.dropEnd 4).toString
+  let f := (n.dropEnd 5).toString
+  if n.endsWith "true" && (s.flag? t).isSome then some (t, true)
+  else if n.endsWith "false" && (s.flag? f).isSome then some (f, false)
+  else none
 
 private def skipSp (toks : Array Tok) (i : Nat) : Nat := Id.run do
   let mut j := i
@@ -1120,14 +1194,17 @@ private def condHeads : List String :=
    "ifdefined", "ifcsname", "iffontchar"]
 
 /-- From `i`, past the matching `\else` (`true`) or `\fi`: the index after
-it, and which was met. Nested conditionals are skipped whole. -/
-private def skipArm (toks : Array Tok) (i : Nat) : Option (Nat × Bool) := Id.run do
+it, and which was met. Nested conditionals — TeX's, and a declared flag's
+(`flags`) — are skipped whole. -/
+private def skipArm (flags : String → Option Bool) (toks : Array Tok) (i : Nat) :
+    Option (Nat × Bool) := Id.run do
   let mut depth := 0
   let mut k := i
   for _ in [i:toks.size] do
     match toks[k]? with
     | some (.ctrl n) =>
-      if condHeads.contains n then depth := depth + 1
+      if condHeads.contains n || (n.startsWith "if" && n.length > 2 && (flags (n.drop 2).toString).isSome)
+      then depth := depth + 1
       else if n == "fi" then
         if depth == 0 then return some (k + 1, false)
         depth := depth - 1
@@ -1367,8 +1444,10 @@ private def runToks (defs : String → Option Macro) (titled : Bool) (tail : Arr
             if c == "fg" || c == "bg" then s := s.paint (.beamer chain c)
             else s := s.miss s!"\\usebeamercolor[{c}]"
           | none => pure ()
-          -- A colour it sets is xcolor's `\color`, which ends ignoring spaces.
-          i := if ch.isSome || starred then skipSp toks k else k
+          -- A colour it sets last is xcolor's `\color`, which ends ignoring
+          -- spaces; the starred form's second call sets none without a
+          -- channel (beamerbasecolor.sty).
+          i := if ch.isSome then skipSp toks k else k
         | none => s := s.miss "\\usebeamercolor"; i := i + 1
       | "color" =>
         let (model, j) := readOpt toks (i + 1)
@@ -1566,7 +1645,7 @@ private def runToks (defs : String → Option Macro) (titled : Bool) (tail : Arr
         match decided with
         | some (true, t) => s := { s with conds := .thenArm :: s.conds }; i := t
         | some (false, t) =>
-          match skipArm toks t with
+          match skipArm s.flag? toks t with
           | some (k', true) => s := { s with conds := .elseArm :: s.conds }; i := k'
           | some (k', false) => i := k'
           | none => s := s.miss s!"\\{n} without \\fi"; i := toks.size
@@ -1591,14 +1670,14 @@ private def runToks (defs : String → Option Macro) (titled : Bool) (tail : Arr
           if !titled then
             s := { s with conds := .thenArm :: s.conds }; i := k + 1
           else
-            match skipArm toks (k + 1) with
+            match skipArm s.flag? toks (k + 1) with
             | some (k', true) => s := { s with conds := .elseArm :: s.conds }; i := k'
             | some (k', false) => i := k'
             | none => s := s.miss "\\ifx without \\fi"; i := toks.size
       | "else" =>
         match s.conds with
         | .thenArm :: rest =>
-          match skipArm toks (i + 1) with
+          match skipArm s.flag? toks (i + 1) with
           | some (k', false) => s := { s with conds := rest }; i := k'
           | _ => s := s.miss "\\else without its \\fi"; i := toks.size
         | _ => s := s.miss "\\else"; i := i + 1
@@ -1607,7 +1686,18 @@ private def runToks (defs : String → Option Macro) (titled : Bool) (tail : Arr
         | _ :: rest => s := { s with conds := rest }; i := i + 1
         | [] => s := s.miss "\\fi"; i := i + 1
       | _ =>
-        if (s.dimen? n).isSome then
+        if let some holds := s.flagTest n then
+          -- A declared flag's conditional, decided by the flag as it stands.
+          if holds then s := { s with conds := .thenArm :: s.conds }; i := i + 1
+          else
+            match skipArm s.flag? toks (i + 1) with
+            | some (k', true) => s := { s with conds := .elseArm :: s.conds }; i := k'
+            | some (k', false) => i := k'
+            | none => s := s.miss s!"\\{n} without \\fi"; i := toks.size
+        else if let some (x, b) := s.flagSet n then
+          s := { s with scope := { s.scope with flags := (x, b) :: s.scope.flags.filter (·.1 != x) } }
+          i := i + 1
+        else if (s.dimen? n).isSome then
           let (s', k) := s.assignAt n (i + 1) false false
           s := s'
           i := k
@@ -1644,8 +1734,9 @@ termination_by bound
 /-- The interpreter's main loop over the flat list: the block's own list
 opens on the depth of the box before the block. -/
 private def run (defs : String → Option Macro) (toks : Array Tok) (titled : Bool)
-    (tail : Array TailKind) (lengths : String → Option (Option Dimen)) : St := Id.run do
-  let s0 : St := { lengths := lengths, lst := { prev := { ext := [(priorId, .dp, 1)] } } }
+    (tail : Array TailKind) (lengths : String → Option (Option Dimen))
+    (flags : String → Option Bool) : St := Id.run do
+  let s0 : St := { lengths, flags, lst := { prev := { ext := [(priorId, .dp, 1)] } } }
   let mut s := runToks defs titled tail (toks.size + tail.size + 2) toks s0
   s := s.closePara
   unless s.frames.isEmpty do s := s.miss "a group the template never closes"
@@ -1906,11 +1997,14 @@ private def overlayRule (n : Node) :
     let hkids := match real kids with
       | [.vss, .box _ false _ hk _] | [.box _ false _ hk _, .vss] => some hk
       | _ => none
+    -- Glue after the rule widens its boxes, which move nothing in a list
+    -- of no height.
+    let after (ns : List Node) : Bool := ns.all fun x => x matches .space _ | .hskip ..
     match hkids.map real with
-    | some [.raised lift (some h0) (some d0) rk] =>
-      if !h0.zero? || !d0.zero? then none else
+    | some (.raised lift (some h0) (some d0) rk :: tail) =>
+      if !h0.zero? || !d0.zero? || !after tail then none else
       match real rk with
-      | [.rule w h d p _] => some (shift, lift, w, h, d, p)
+      | .rule w h d p _ :: tail => if after tail then some (shift, lift, w, h, d, p) else none
       | _ => none
     | _ => none
   | _ => none
@@ -2089,14 +2183,53 @@ private def lowerArm (nodes : Array Node) (tailSize : Nat) : Except String Arm :
   if tailFirst then return .error "a rule beside the body standing below the items the body ends on"
   return .ok arm
 
+/-- How many items a template's run may take off the end of the list it
+stands in: its `\\unskip`, `\\unkern` and `\\unpenalty`, and those of each
+macro a call it holds runs (`defs`), once per call — the run reaches the
+macros the expansion left, defined after their caller or calling
+themselves. A macro the run reaches again inside its own run adds none:
+calling itself, it takes what it takes (`tailVariants`). Each macro is
+counted once (`memo`), and a path of calls holds distinct macros, each
+defined before `bound`. -/
+private def removalsIn (defs : String → Option Macro) (bound : Nat) (path : List String)
+    (memo : Std.HashMap String Nat) : List Tok → Nat × Std.HashMap String Nat
+  | [] => (0, memo)
+  | .ctrl n :: rest =>
+    let (here, memo) :=
+      if n == "unskip" || n == "unkern" || n == "unpenalty" then (1, memo)
+      else match memo[n]? with
+        | some c => (c, memo)
+        | none =>
+          match defs n with
+          | some m =>
+            if _h : path.length < bound ∧ !path.contains n then
+              let (c, memo) := removalsIn defs bound (n :: path) memo (flatten m.body).toList
+              (c, memo.insert n c)
+            else (0, memo)
+          | none => (0, memo)
+    let (r, memo) := removalsIn defs bound path memo rest
+    (here + r, memo)
+  | _ :: rest => removalsIn defs bound path memo rest
+termination_by l => (bound - path.length, l.length)
+decreasing_by
+  all_goals simp_wf
+  all_goals first
+    | (apply Prod.Lex.left; have := _h.1; omega)
+    | (apply Prod.Lex.right; omega)
+
+/-- The most items a template may take off the list's end without calling
+itself that the reader runs it over; one that may take more is named. -/
+private def removalsHeld : Nat := 64
+
 /-- The items a body's list may end on past its last line, which the reader
 runs the pair over: every sequence of up to two of TeX's glue, kern and
 penalty nodes — what a list's end (`\\@endparpenalty`, `\\addvspace`) and a
 display's leave there — and, of each kind and of penalties and glue in
-turn, one item more than the template's `removals`, its `\\unskip`,
-`\\unkern` and `\\unpenalty`: a template that sets those back without
-calling itself sets back no more than it removes, and leaves the rest
-before what it sets after the body. -/
+turn, one item more than the template's run may take off (`removalsIn`):
+a template that sets those back without calling itself sets back no more
+than it takes, and leaves the rest before what it sets after the body. A
+template calling itself is held to these ends alone: one that stops after
+more items than they hold is read as if it did not stop. -/
 private def tailVariants (removals : Nat) : List (Array TailKind) :=
   let one := [TailKind.glue, .kern, .penalty]
   let long := removals + 1
@@ -2110,21 +2243,25 @@ one only in leaving the title out, with the skips of its own that arm stands
 (`Ir.BlockBare`), or in keeping its box empty. Each arm runs over every body
 end the reader varies (`tailVariants`) and lowers to one arm whatever the
 body ends on, so a template that measures the body's lines sets them back
-as TeX would leave them, wherever the body's list ends. `lengths` are the
-document's length registers (`St.lengths`). -/
+as TeX would leave them on each of those ends. `lengths` are the
+document's length registers (`St.lengths`), `flags` its `\\newif` flags,
+where the body begins (`St.flags`). -/
 public def read (beginRaws endRaws : Array Raw) (defs : String → Option Macro := fun _ => none)
-    (bound : Nat := 0) (lengths : String → Option (Option Dimen) := fun _ => none) :
+    (bound : Nat := 0) (lengths : String → Option (Option Dimen) := fun _ => none)
+    (flags : String → Option Bool := fun _ => none) :
     Except (Array String) Read :=
   let opening := flatten beginRaws
   let closing := flatten endRaws
   let flat := #[Tok.par] ++ opening ++ #[Tok.body, Tok.par] ++ closing
   let toks := expandList defs bound flat.toList #[]
-  -- A template removes no more items without calling itself than it holds
-  -- removals; a body ending on one more of each kind shows what it keeps.
-  let removals := toks.foldl (fun n t =>
-    if t matches .ctrl "unskip" | .ctrl "unkern" | .ctrl "unpenalty" then n + 1 else n) 0
+  -- A template removes no more items without calling itself than its run
+  -- holds removals; a body ending on one more of each kind shows what it
+  -- keeps.
+  let removals := (removalsIn defs bound [] {} toks.toList).1
+  if removals > removalsHeld then
+    .error #[s!"a template that may take more than {removalsHeld} items off the body's end"] else
   let runs := (tailVariants removals).map fun tail =>
-    (tail, run defs toks true tail lengths, run defs toks false tail lengths)
+    (tail, run defs toks true tail lengths flags, run defs toks false tail lengths flags)
   let unread := runs.foldl (fun acc (_, t, u) =>
     (t.unread ++ u.unread).foldl (fun acc w => if acc.contains w then acc else acc.push w) acc) #[]
   if !unread.isEmpty then .error unread else

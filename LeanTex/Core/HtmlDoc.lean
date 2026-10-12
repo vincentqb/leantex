@@ -2362,11 +2362,10 @@ the page's own unit — on a deck's stage its share of the stage (`vh`, the
 unit the deck's type is set in, so the length keeps its proportion to the
 type at every viewport), elsewhere the screen's rem (`screenMilli`) — and its
 `em` and `ex` parts kept for the face to resolve. -/
-public def blockShapeLength (doc : Doc) (g : SymGlue) : String :=
+public def shapeLengthCss (deck : Bool) (page : Ir.PageSpec) (g : SymGlue) : String :=
   let l := g.width
-  let sp : String := if doc.docClass.record.model == .frame then
-      s!"{decMilli (deckStageMilli l.sp doc.page.height)}vh"
-    else milliRem (screenMilli doc.page.fontSize l.sp)
+  let sp : String := if deck then s!"{decMilli (deckStageMilli l.sp page.height)}vh"
+    else milliRem (screenMilli page.fontSize l.sp)
   let parts := (if l.sp != 0 then [sp] else []) ++
     (if l.em != 0 then [s!"{decMilli l.em}em"] else []) ++
     (if l.ex != 0 then [s!"{decMilli l.ex}ex"] else [])
@@ -2374,6 +2373,10 @@ public def blockShapeLength (doc : Doc) (g : SymGlue) : String :=
   | [] => "0rem"
   | [one] => one
   | many => "calc(" ++ String.intercalate " + " many ++ ")"
+
+/-- `shapeLengthCss` on the document's own page. -/
+public def blockShapeLength (doc : Doc) (g : SymGlue) : String :=
+  shapeLengthCss (doc.docClass.record.model == .frame) doc.page g
 
 /-- **A block template's boxes, rules and skips, as the stylesheet sets
 them**: the projection of each kind's `Ir.BlockShape`, the value the page's
@@ -7001,6 +7004,15 @@ private def stageLength (cfg : Config) (v : Int) : String :=
   if cfg.deck then s!"{decMilli (deckStageMilli v cfg.page.height)}vh"
   else milliRem (screenMilli cfg.page.fontSize v)
 
+/-- A block that sets no line box in the flow of the section it stands in:
+what a body's end is read past. -/
+private def shipsNoLine : Block → Bool
+  | .note .. | .nav .. | .logo .. | .pagebreak | .framefoot .. | .setPalette .. | .setTokens .. => true
+  | .para .. | .section .. | .list .. | .center .. | .ragged .. | .spaced .. | .role .. | .link ..
+  | .quote .. | .abstract .. | .titled .. | .disclosure .. | .equation .. | .verbatim ..
+  | .algorithm .. | .columns .. | .onSteps .. | .altSteps .. | .only .. | .frame .. | .rule ..
+  | .picture .. | .table .. | .float .. | .bibliography .. => false
+
 mutual
 
 -- conserves: none — how far a body's last line box reaches below its baseline and past the boxes around it; the walk follows the last block alone, which no fold over every block can say.
@@ -7012,7 +7024,7 @@ sections' ends. -/
 private def endBelowList (cfg : Config) (para : String) : List Block → String
   | [] => para
   | [b] => endBelowOne cfg para b
-  | _ :: rest => endBelowList cfg para rest
+  | b :: rest => if rest.all shipsNoLine then endBelowOne cfg para b else endBelowList cfg para rest
 
 private def endBelowItems (cfg : Config) (para : String) : List (Array Block) → String
   | [] => para
@@ -7024,9 +7036,9 @@ private def endBelowOne (cfg : Config) (para : String) : Block → String
     let inner := endBelowList cfg para body.toList
     match Ir.blockShapeOf cfg.styles kind with
     | some sh =>
-      let after := Ir.blockSkipSum cfg.tokens sh.after
-      s!"calc({stageLength cfg after.width.sp} + {inner})"
+      s!"calc({shapeLengthCss cfg.deck cfg.page (Ir.blockSkipSum cfg.tokens sh.after)} + {inner})"
     | none => inner
+  | .disclosure _ expanded body => if expanded then endBelowList cfg para body.toList else para
   | .list _ items => endBelowItems cfg para items.toList
   | .center body | .ragged _ body | .spaced _ body | .role _ body | .link _ body
   | .quote body | .abstract body | .onSteps _ body | .only _ body =>

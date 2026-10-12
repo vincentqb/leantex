@@ -344,7 +344,7 @@ public def parse (file : String) (toks : Array Token) : Array Raw × Array Diag 
           match frames.back? with
           | some f =>
             frames := frames.pop
-            acc := f.close acc
+            acc := ({ f with openPos := { f.openPos with closeEol := pos.closeEol } } : Frame).close acc
           | none => pure ()
         else
           diags := diags.push (err file .E0202 "unexpected '}'" pos)

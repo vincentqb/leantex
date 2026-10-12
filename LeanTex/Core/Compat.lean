@@ -566,6 +566,10 @@ private structure CondVal where
   live : Bool := false
   serial : Nat := 0
   textSerial : Nat := 0
+  /-- The line ends at the replacement text's braces the lexer left out
+  (`Pos.openEol`, `Pos.closeEol`), which TeX reads as spaces of the text:
+  what a block template's reader sets back (`BlockTemplate.edged`). -/
+  edges : Bool × Bool := (false, false)
 
 /-- One change the conditional pass made to its definition state, with what
 it replaced (`none`: the name was not bound, or the flag not declared). -/
@@ -963,13 +967,16 @@ private structure St where
   text reaches them only through uses the conditional pass expands, which
   name their own losses there, so their definitions name none. -/
   templateCode : Array String := #[]
-  /-- The control words the preamble's block templates' bodies name as
-  written, before the conditional pass expands them: where `templateReach`
-  starts. -/
-  templateSeeds : Array String := #[]
-  /-- Where those control words stand: a use there that the pass cannot
-  expand is the template reader's to name. -/
-  templateSites : Array Pos := #[]
+  /-- The definitions and `\newif` flags in force where the document body
+  begins, its begin hooks run: what a block's templates run against
+  (`BlockTemplate.read`), TeX running them at each block. -/
+  templateBinds : Std.HashMap String (Option CondVal) := {}
+  templateFlags : Std.HashMap String Bool := {}
+  /-- The control words the block templates reach (`templateClosure`). -/
+  templateNames : Array String := #[]
+  /-- Those whose meaning, or whose flag, a block in the body meets changed
+  from where the body began (`noteTemplateDrift`). -/
+  templateDrift : Array String := #[]
   /-- The next definition body the walk meets is a block template's own
   macro's (`templateCode`): translated, and naming nothing. -/
   quietNext : Bool := false
@@ -3972,14 +3979,15 @@ private def definedValue (st : St) (raws : Array Raw) (i : Nat) (d : String) :
     let b := sh.stop - 1
     let some arity := undelimitedArity (raws.extract (j + 1) b) | return none
     match raws[b]? with
-    | some (.group body _) => return some { raws := body, arity, long, prot }
+    | some (.group body gp) =>
+      return some { raws := body, arity, long, prot, edges := (gp.openEol, gp.closeEol) }
     | _ => return none
   if d == "edef" || d == "xdef" then
     let j := skipSpaces raws (i + 1)
     match raws[j]?, raws[j + 1]? with
-    | some (.ctrl _ _), some (.group body _) =>
+    | some (.ctrl _ _), some (.group body gp) =>
       if body.all fun r => !(r matches .ctrl _ _) then
-        return some { raws := body, long, prot }
+        return some { raws := body, long, prot, edges := (gp.openEol, gp.closeEol) }
       match (body.filter fun r => !(r matches .space)).toList with
       | [.ctrl m _] =>
         match condValueOf st.binds m with
@@ -4018,10 +4026,10 @@ private def definedValue (st : St) (raws : Array Raw) (i : Nat) (d : String) :
     let some name := raws[j]?.bind boundName | return none
     let optional := defaultArg.map fun arg => (name ++ " optional", ungroupArg arg)
     match raws[skipSpaces raws k]? with
-    | some (.group body _) =>
+    | some (.group body gp) =>
       return some {
         raws := body, arity, optional
-        long := arity > 0 && !star, prot := false }
+        long := arity > 0 && !star, prot := false, edges := (gp.openEol, gp.closeEol) }
     | _ => return none
   return none
 
@@ -4206,20 +4214,6 @@ private def namesOf (acc : Array String) : Raw → Array String
 
 end
 
-mutual
-
--- conserves: none — where a raw list's control words stand; no document content is rebuilt.
-private def sitesIn (acc : Array Pos) : List Raw → Array Pos
-  | [] => acc
-  | r :: rest => sitesIn (sitesOf acc r) rest
-
-private def sitesOf (acc : Array Pos) : Raw → Array Pos
-  | .ctrl _ p => acc.push p
-  | .group body _ | .env _ body _ | .math _ body _ => sitesIn acc body.toList
-  | .word .. | .space | .par _ | .sym .. | .verb .. => acc
-
-end
-
 /-- A block template's body after its definer's name: `{element}{name}[n][default]{body}`
 for `\defbeamertemplate`, `{element}{body}` for `\setbeamertemplate`, of a block
 template the reader reads — and the index past it. -/
@@ -4235,6 +4229,25 @@ private def templateBodyAt (definer : String) (rest : Array Raw) : Option (Array
   let j := if definer == "defbeamertemplate" then (takeRawOpt rest (takeOpt rest j).2).2 else j
   let (body, k) := takeGroups rest j 1
   body[0]?.map (·, k)
+
+mutual
+
+-- conserves: none — the bodies of the block templates a raw list installs; no document content is rebuilt.
+private def templateBodiesIn (acc : Array (Array Raw)) : List Raw → Array (Array Raw)
+  | [] => acc
+  | .ctrl n p :: rest =>
+    if n == "defbeamertemplate" || n == "setbeamertemplate" then
+      match templateBodyAt n rest.toArray with
+      | some (body, _) => templateBodiesIn (acc.push body) rest
+      | none => templateBodiesIn acc rest
+    else templateBodiesIn (templateBodiesOf acc (.ctrl n p)) rest
+  | r :: rest => templateBodiesIn (templateBodiesOf acc r) rest
+
+private def templateBodiesOf (acc : Array (Array Raw)) : Raw → Array (Array Raw)
+  | .group body _ | .env _ body _ => templateBodiesIn acc body.toList
+  | .ctrl .. | .math .. | .word .. | .space | .par _ | .sym .. | .verb .. => acc
+
+end
 
 /-- A definition after its definer `d`: the macro it defines and how many
 raws past the definer it spans — `\newcommand`'s family's `{\X}` or `\X`,
@@ -4294,25 +4307,62 @@ private def namesOutsideOf (code acc : Array String) : Raw → Array String
 
 end
 
-/-- **The macros a preamble's block templates reach**: those a block
-template's body names as written (`seeds`), and those their definitions
-name in turn — closed over the definitions the conditional pass bound, one
-round per macro it bound at most, since a round that reaches no new macro
-ends it — less any the preamble names elsewhere: outside the block
-templates' bodies and the definitions of those macros themselves, where a
-use the conditional pass does not expand could read the definition. -/
-private def templateReach (binds : Std.HashMap String (Option CondVal)) (seeds : Array String)
-    (pre : Array Raw) : Array String := Id.run do
+/-- The control words `seeds` name and those the definitions `binds` holds
+for them name in turn, their optional arguments' defaults included — one
+round per bound macro at most, since a round that reaches no new name ends
+it. -/
+private def closeNames (binds : Std.HashMap String (Option CondVal)) (seeds : Array String) :
+    Array String := Id.run do
   let mut reach := seeds
   for _ in [0:binds.size + 1] do
     let next := reach.foldl (fun acc n => match binds[n]? with
-      | some (some v) => namesIn acc v.raws.toList
+      | some (some v) =>
+        namesIn (match v.optional with
+          | some (_, d) => namesIn acc d.toList
+          | none => acc) v.raws.toList
       | _ => acc) reach
     if next.size == reach.size then break
     reach := next
+  return reach
+
+/-- The control words a preamble's block templates reach as TeX runs them:
+those their bodies name, closed over the definitions `binds` holds. -/
+private def templateClosure (binds : Std.HashMap String (Option CondVal)) (pre : Array Raw) :
+    Array String :=
+  closeNames binds ((templateBodiesIn #[] pre.toList).foldl (fun acc b => namesIn acc b.toList) #[])
+
+/-- **The macros a preamble's block templates reach**: those a block
+template's body names, and those their definitions name in turn
+(`templateClosure`) — less any the preamble names elsewhere: outside the
+block templates' bodies and the definitions of those macros themselves,
+where a use the conditional pass does not expand could read the
+definition. -/
+private def templateReach (binds : Std.HashMap String (Option CondVal)) (pre : Array Raw) :
+    Array String := Id.run do
+  let reach := templateClosure binds pre
   let code := reach.filter fun n => binds[n]? matches some (some _)
   let elsewhere := namesOutsideIn code #[] 0 pre.toList
   return code.filter (!elsewhere.contains ·)
+
+/-- The `\newif` flag a control word tests (`\ifX`), when one of the two
+states records it. -/
+private def testedFlag (a b : Std.HashMap String Bool) (n : String) : Option String :=
+  let x := (n.drop 2).toString
+  if n.startsWith "if" && n.length > 2 && (a.contains x || b.contains x) then some x else none
+
+/-- A block stands here, its templates run as TeX runs them where it
+stands: note each control word they reach whose meaning, or the flag it
+tests, is not the one the body began with, which the reading holds
+(`templateBinds`, `templateFlags`). -/
+private def noteTemplateDrift : M Unit := do
+  let st ← get
+  let serialOf (b : Std.HashMap String (Option CondVal)) (x : String) : Option (Option Nat) :=
+    b[x]?.map (·.map (·.serial))
+  let drift := st.templateNames.filter fun x =>
+    !st.templateDrift.contains x &&
+    (serialOf st.binds x != serialOf st.templateBinds x ||
+      (testedFlag st.flags st.templateFlags x).any fun f => st.flags[f]? != st.templateFlags[f]?)
+  unless drift.isEmpty do write fun st => { st with templateDrift := st.templateDrift ++ drift }
 
 mutual
 
@@ -4431,13 +4481,6 @@ private def condList [Monad m]
       condStopSpaces
       condList ex [] raws following (out.push (.ctrl "endinput" pos)) stack rest (i + 1) 0
   | .ctrl n pos :: rest, i, 0 => do
-    -- A block template's body, as written, names the template's own macros
-    -- (`templateReach`) and the sites where what the pass cannot expand is
-    -- the reader's to name (`BlockTemplate.read`).
-    if n == "defbeamertemplate" || n == "setbeamertemplate" then
-      if let some (body, _) := templateBodyAt n (raws.extract (i + 1) raws.size) then
-        write fun st => { st with templateSeeds := namesIn st.templateSeeds body.toList
-                                  templateSites := sitesIn st.templateSites body.toList }
     let st ← get
     -- `\unless` before a head reverses the head's test (e-TeX).
     let unlessHead : Option (String × Pos) := if n == "unless" then
@@ -4481,6 +4524,15 @@ private def condList [Monad m]
             (r.used + (if unlessHead.isSome then 1 else 0))
     else if !(stack.all CondOpen.keeps) then
       condList ex [] raws following out stack rest (i + 1) 0
+    else if let some (_, k) := (if n == "defbeamertemplate" || n == "setbeamertemplate" then
+        templateBodyAt n (raws.extract (i + 1) raws.size) else none) then
+      -- A block template's body is the template reader's, which runs it as
+      -- TeX does at each block (`BlockTemplate.read`), against the macros
+      -- and flags in force where the body begins (`templateBinds`): it
+      -- passes through unexpanded and undecided, and names the template's
+      -- own macros (`templateReach`).
+      let out := (raws.extract i (i + 1 + k)).foldl (fun o r => o.push r) out
+      condList ex [] raws following out stack rest (i + 1) k
     else if let some close := groupPrimitives.lookup n then
       condStopSpaces
       let mark ← condMark
@@ -4776,6 +4828,7 @@ private def condOne [Monad m]
         -- a retained group or a subsequently discarded command stops the scan.
         write fun st => { st with ignoreSpaces := true }
       else condStopSpaces
+      if (← get).condInDoc && overlayTitled (overlayName n) then noteTemplateDrift
       let m ← condMark
       let inPic := (← get).inPicture
       if pictureEnvs.contains n then
@@ -5039,8 +5092,7 @@ the argument boundary is unread here, so its optional selection and state change
       let remaining := if used == 0 then tail else run.tail
       unless remaining.isEmpty do condStopSpaces
       return some { raws := out, stop := stop + (used - tail.size), tail := remaining }
-    -- premise: templateCodeChecks — a block template's body names its losses through the reader, which refuses what it cannot read
-    else if v.live && !st.templateSites.contains (site.getD pos) then
+    else if v.live then
       sayOnce ("cond:unexpanded:" ++ n) .W0104
         (s!"'\\{n}' selects an optional argument or holds state changes that TeX executes where it is \
 used; here it is reached through a macro defined before it, which this engine expands \
@@ -5219,14 +5271,14 @@ private theorem condList_package_read_step
     rcases hc with rfl | rfl <;> decide
   rw [condList.eq_16]
   all_goals try solve | simp_all
-  simp only [htpl, Bool.false_eq_true, ↓reduceIte, bind, StateT.bind, get, getThe,
-    MonadStateOf.get, StateT.get, pure]
+  simp only [bind, StateT.bind, get, getThe, MonadStateOf.get, StateT.get,
+    pure]
   simp only [hn.2.2.2.2.2.1, beq_iff_eq, ↓reduceIte, Option.map_none,
     Option.getD_none, hcond, List.all_nil,
     Bool.not_true, Bool.false_eq_true, hg, hp, Array.back?_empty,
     Option.any_none, hh, hn.2.2.2.2.2.2.1, hl, Option.bind_none,
     hn.2.2.2.2.2.2.2.1, ht, hf,
-    hbox, htcb, hdef, hno, hd, Bool.not_false, ho]
+    hbox, htcb, hdef, hno, hd, Bool.not_false, ho, htpl]
   cases hload : recordLoad raws name i st with
   | mk tick loaded =>
     cases tick
@@ -5395,7 +5447,7 @@ private def condSettle [Monad m] (reader : Option (InputReader m)) (pre : Array 
     EvalM m (Array (String × Pos × Array Raw)) := do
   let pend := (← get).pending
   write fun st => { st with pending := #[], condInDoc := true
-                            templateCode := templateReach st.binds st.templateSeeds pre }
+                            templateCode := templateReach st.binds pre }
   let mut out : Array (String × Pos × Array Raw) := #[]
   for p in pend do
     match condValueOf (← get).binds p.name with
@@ -5494,6 +5546,9 @@ private def condDocument [Monad m] (reader : Option (InputReader m))
   let endHooks := endHooks.map fun (pt, f, pos, body) => (pt, f, pos, patch f body)
   let beginHooks ← condReplay reader hooks .beginDocument
   write fun st => { st with deferred := endHooks ++ beginHooks }
+  if seam.isSome then
+    write fun st => { st with templateBinds := st.binds, templateFlags := st.flags
+                              templateNames := templateClosure st.binds pre'.raws }
   let post' ← condList (condTopExpand reader) [] post #[] (OverlayPrefix.ofArray #[]) [] post.toList 0 0
   return patch file pre'.raws ++ post'.raws
 
@@ -7318,6 +7373,13 @@ private def substArg (default : Array Raw) : List Raw → Array Raw → Array Ra
     else substArg default rest ((acc.push (.sym '#' p)).push (.word w p))
   | r :: rest, acc => substArg default rest (acc.push r)
 
+/-- The line ends at the braces of the group at or after `j` that the lexer
+left out (`Pos.openEol`, `Pos.closeEol`): TeX's spaces of a template's text. -/
+private def bodyEdges (raws : Array Raw) (j : Nat) : Bool × Bool :=
+  match raws[skipSpaces raws j]? with
+  | some (.group _ gp) => (gp.openEol, gp.closeEol)
+  | _ => (false, false)
+
 /-- Install a block template: an installed `block begin` replaces what
 `\addtobeamertemplate` appended to the one before it, as beamer's install
 replaces the template the addition modified. -/
@@ -7349,14 +7411,15 @@ private def flushBeamerBlocks : M (Array Raw) := do
     let wrap (rs : Array Raw) : Array Raw :=
       if file == savedFile then rs else #[Raw.env (Parse.inputEnv file) rs pos]
     let st ← get
-    -- The document's own macros a template calls, as the conditional
-    -- pass recorded them: what TeX expands where the template runs.
+    -- The document's own macros and flags a template reads, as they stand
+    -- where the body begins: what TeX runs the template against at a block.
     let defs : String → Option BlockTemplate.Macro := fun n =>
-      match st.binds[n]? with
+      match st.templateBinds[n]? with
       | some (some v) =>
-        if v.optional.isNone then some { serial := v.serial, arity := v.arity, body := v.raws }
-        else none
+        some { serial := v.serial, arity := v.arity, body := BlockTemplate.edged v.edges v.raws
+               optional := v.optional.map (·.2) }
       | _ => none
+    let flags : String → Option Bool := fun x => st.templateFlags[x]?
     let unread : Array String ← match b, e with
       | some (_, _, _, bb), some (_, _, _, eb) =>
         -- The dimen registers the document allocates, assigned where the
@@ -7364,7 +7427,14 @@ private def flushBeamerBlocks : M (Array Raw) := do
         -- premise: capitalRegisterChecks — a register a template assigns is read by no document text outside the templates, which would see the value TeX's runs leave there
         let lengths : String → Option (Option BlockTemplate.Dimen) := fun n =>
           if st.allocated.contains n then some none else none
-        match BlockTemplate.read bb eb defs (st.serial + 1) lengths with
+        -- premise: wholeBarReadingChecks — a template run against the state the body began in sets each block as TeX sets it there, a flag or macro the body changes before a block named
+        let drift := (closeNames st.templateBinds (namesIn (namesIn #[] bb.toList) eb.toList)).filter
+          st.templateDrift.contains
+        if !drift.isEmpty then
+          pure #[s!"the document's body changes {String.intercalate ", " (drift.toList.map ("\\" ++ ·))}, \
+which they run, before a block"]
+        else
+        match BlockTemplate.read bb eb defs (st.serial + 1) lengths flags with
         | .error us => pure us
         | .ok r =>
           -- The kind's own element binds the foreground last: beamer's title
@@ -8254,7 +8324,7 @@ is skipped" pos
     let (default, j) := takeRawOpt raws j
     let (bodyArgs, k) := takeGroups raws j 1
     if bodyArgs.size != 1 then return none
-    let body := bodyArgs.getD 0 #[]
+    let body := BlockTemplate.edged (bodyEdges raws j) (bodyArgs.getD 0 #[])
     let body := match arity.map (·.trimAscii.toString) with
       | some "1" => substArg (default.getD #[]) body.toList #[]
       | _ => body
@@ -8314,7 +8384,7 @@ only preamble block templates are read" pos
               s!"'\\setbeamertemplate\{{element}}[{name}]' names a template the document never \
 defines; those blocks keep beamer's default template" pos
       | none, some body =>
-        installBlockTemplate element body pos
+        installBlockTemplate element (BlockTemplate.edged (bodyEdges raws j') body) pos
         became s!"\\setbeamertemplate\{{element}}" "a block template, read where the preamble ends" pos
       | none, none => return none
       return some (#[], k)

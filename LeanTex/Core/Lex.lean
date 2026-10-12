@@ -414,6 +414,7 @@ public def lex (file : String) (input : String) : Array Token × Array Diag := I
   let mut diags : Array Diag := #[]
   let mut i := 0
   let mut pos : Pos := {}
+  let mut closeEol := false
   for _ in [0:cs.size + 1] do
     if h : i < cs.size then
       let c := cs[i]
@@ -432,6 +433,12 @@ public def lex (file : String) (input : String) : Array Token × Array Diag := I
         -- indistinguishable at the lexer boundary.
         for tok in midlineWs prevLbrace nextRbrace n do
           toks := toks.push ⟨tok, here⟩
+        -- The space TeX reads there stays on the brace, for a reader that
+        -- runs TeX's lists as TeX does (`Pos.openEol`, `Pos.closeEol`).
+        if n == 1 && (prevLbrace || nextRbrace) then
+          if prevLbrace then
+            toks := toks.modify (toks.size - 1) fun t => { t with pos := { t.pos with openEol := true } }
+          else closeEol := true
         pos := posOver cs i j pos
         i := j
       else if c == '%' then
@@ -540,7 +547,8 @@ public def lex (file : String) (input : String) : Array Token × Array Diag := I
         pos := pos.next false
         i := i + 1
       else if c == '}' then
-        toks := toks.push ⟨.rbrace, here⟩
+        toks := toks.push ⟨.rbrace, { here with closeEol }⟩
+        closeEol := false
         pos := pos.next false
         i := i + 1
       else if c == '$' then

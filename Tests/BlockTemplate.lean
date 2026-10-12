@@ -2,6 +2,7 @@ module
 
 public import Tests.Support
 public import LeanTex.Cli.FontAssembly
+import LeanTex.Core.BlockTemplate
 
 public section
 
@@ -2510,6 +2511,15 @@ private def wholeBarHtmlChecks (ref : IO.Ref (List String)) (fonts : Font.FontSe
     (styles.size ≥ 2 && styles.all (hasStr · "--block-last-below: "))
   check ref s!"whole bar HTML: a block ending in a block ends past that block's skip below ({styles})"
     (styles.any (hasStr · "--block-last-below: calc("))
+  -- That skip as the section pads it, its font's part and all.
+  let emInner := inner.replace "  \\vskip\\smallskipamount}\n" "  \\vskip 1em}\n"
+  let (edoc, _) := Elab.run "block-template-wholebar-inner-em.tex" emInner
+  let (_, ebody, _) := HtmlDoc.emitTree cfg edoc
+  let estyles := (elemAttrsList (· == "section") #[] ebody.toList).filterMap fun (_, attrs) =>
+    if attrs.any (fun (k, v) => k == "class" && hasStr v "block-shaped") then
+      (attrs.find? (·.1 == "style")).map (·.2) else none
+  check ref s!"whole bar HTML: a skip below in ems ends the enclosing block's rule an em past the inner block ({estyles})"
+    (emInner != inner && estyles.any (hasStr · "--block-last-below: calc(1em + "))
 
 /-- **The reading holds a template that sets the body back to what TeX sets**:
 each probe below breaks one of the template's settings — the items the body
@@ -2550,7 +2560,26 @@ private def wholeBarReadingChecks (ref : IO.Ref (List String)) : IO Unit := do
      -- A close that takes the body's last item off moves what follows.
      ("unskipped", (titleBarOf src).replace "\\newcommand{\\probe@close}{\\par\\vskip\\smallskipamount}"
          "\\newcommand{\\probe@close}{\\par\\unskip\\vskip\\smallskipamount}",
-       "the items the body ends on set back otherwise than in their order, every one")]
+       "the items the body ends on set back otherwise than in their order, every one"),
+     -- A line end after a brace is TeX's space, before the rule.
+     ("line end", src.replace "\\vbox to\\z@{\\vss\\hbox{{" "\\vbox to\\z@{\\vss\\hbox{\n{",
+       "a box beside the body other than a rule standing on its last line"),
+     -- So is a macro's text that is one.
+     ("macro line end", src.replace "\\makeatother\n\\begin{document}"
+         "\\newcommand{\\probe@lead}{\n}\n\\makeatother\n\\begin{document}"
+         |>.replace "\\vbox to\\z@{\\vss\\hbox{{" "\\vbox to\\z@{\\vss\\hbox{\\probe@lead{",
+       "a box beside the body other than a rule standing on its last line"),
+     -- The starred colour use without a channel sets no colour last, and
+     -- keeps the space after it.
+     ("starred", src.replace "{\\usebeamercolor[bg]{probe edge}%\n      \\raisebox"
+         "{\\usebeamercolor*{probe edge} \\usebeamercolor[bg]{probe edge}%\n      \\raisebox",
+       "a box beside the body other than a rule standing on its last line"),
+     -- A peel run twice through a macro the expansion leaves for the run
+     -- takes two items off, not every one.
+     ("forward", src.replace "\\newcommand{\\probe@peel}{%\n"
+         "\\newcommand{\\probe@peel}{\\probe@peelone\\probe@peelone}\n\\newcommand{\\probe@peelone}{%\n"
+         |>.replace "\\probe@trail}\\probe@peel\n" "\\probe@trail}\n",
+       "a rule beside the body standing below the items the body ends on")]
   for (name, variant, why) in cases do
     check ref s!"whole bar {name}: the refused probe differs from the probe" (variant != src)
     let (doc, diags) := Elab.run s!"block-template-wholebar-{name}.tex" variant
@@ -2559,23 +2588,60 @@ private def wholeBarReadingChecks (ref : IO.Ref (List String)) : IO Unit := do
       (named.size == 1 && named.all (hasStr ·.message why))
     check ref s!"whole bar {name}: its blocks keep the default pair"
       (((doc.styles.find? "block").bind (·.shape)).isNone)
-  -- What the conditional pass decides in a template's body stands: a flag
-  -- the document set, a macro's optional argument's default.
+  -- A template runs as TeX runs it at each block, against the macros and
+  -- flags in force where the body begins: a flag the preamble sets after
+  -- the templates, a macro's optional argument's default, a comment's line
+  -- end, glue after the rule.
   let (plain, _) := Elab.run "block-template-wholebar.tex" src
   let shape := (plain.styles.find? "block").bind (·.shape)
+  let shapeOf (name variant : String) := ((Elab.run s!"block-template-wholebar-{name}.tex" variant).1.styles.find?
+    "block").bind (·.shape)
+  let gapped := src.replace "\\makeatletter\n" "\\makeatletter\n\\newif\\ifprobe@gap\\probe@gaptrue\n"
+    |>.replace "  \\par\\vskip\\medskipamount\n  \\ifx\\insertblocktitle"
+      "  \\par\\vskip\\medskipamount\\ifprobe@gap\\vskip\\bigskipamount\\fi\n  \\ifx\\insertblocktitle"
   let decided : List (String × String) :=
     [("flagged", src.replace "\\makeatletter\n" "\\makeatletter\n\\newif\\ifprobe@gap\\probe@gaptrue\n"
         |>.replace "  \\par\\vskip\\medskipamount\n  \\ifx\\insertblocktitle"
-          "  \\par\\vskip\\medskipamount\\ifprobe@gap\\else\\fi\n  \\ifx\\insertblocktitle"),
+          "  \\par\\vskip\\medskipamount\\ifprobe@gap\\else\\vskip\\bigskipamount\\fi\n  \\ifx\\insertblocktitle"),
+     ("late flag", gapped.replace "\\makeatother\n\\begin{document}"
+        "\\probe@gapfalse\n\\makeatother\n\\begin{document}"),
      ("optional", src.replace "\\makeatletter\n"
           "\\makeatletter\n\\newcommand{\\probe@gap}[1][\\medskipamount]{\\vskip#1}\n"
         |>.replace "  \\par\\vskip\\medskipamount\n  \\ifx\\insertblocktitle"
-          "  \\par\\probe@gap\n  \\ifx\\insertblocktitle")]
+          "  \\par\\probe@gap\n  \\ifx\\insertblocktitle"),
+     ("commented", src.replace "\\vbox to\\z@{\\vss\\hbox{{" "\\vbox to\\z@{\\vss\\hbox{%\n{"),
+     ("glue after", src.replace "depth \\z@}}}}%" "depth \\z@}} }}%")]
   for (name, variant) in decided do
     check ref s!"whole bar {name}: the decided probe differs from the probe" (variant != src)
     let (doc, diags) := Elab.run s!"block-template-wholebar-{name}.tex" variant
     check ref s!"whole bar {name}: the template reads as the probe's ({diags.filter (·.code == "W0110") |>.map (·.message)})"
       (shape.isSome && (doc.styles.find? "block").bind (·.shape) == shape)
+  -- The flag decides: set where the body begins, its arm is taken.
+  check ref "whole bar: a flag set where the body begins takes its arm"
+    (shape.isSome && (shapeOf "gapped" gapped).isSome && shapeOf "gapped" gapped != shape)
+  -- A template macro the preamble redefines after the templates runs as
+  -- redefined, as TeX runs it at each block.
+  let closeHead := "\\newcommand{\\probe@close}{%\n"
+  let closeFoot := "  \\vskip\\smallskipamount}\n"
+  let closeBody := (((src.splitOn closeHead)[1]?.getD "").splitOn closeFoot)[0]?.getD ""
+  let renewed := src.replace "\\makeatother\n\\begin{document}"
+    ("\\renewcommand{\\probe@close}{%\n" ++ closeBody ++ "  \\vskip\\bigskipamount}\n" ++
+      "\\makeatother\n\\begin{document}")
+  let written := src.replace closeFoot "  \\vskip\\bigskipamount}\n"
+  check ref "whole bar: the redefined and the rewritten probes differ from the probe"
+    (!closeBody.isEmpty && renewed != src && written != src)
+  check ref "whole bar: a template macro redefined after the templates runs as redefined"
+    ((shapeOf "renewed" renewed).isSome && shapeOf "renewed" renewed == shapeOf "written" written &&
+      shapeOf "written" written != shape)
+  -- A flag the body changes before a block runs the templates otherwise
+  -- there than where the body began: named, the default pair standing.
+  let drifted := gapped.replace "Lead paragraph above.\n" "\\probe@gapfalse\nLead paragraph above.\n"
+  let (ddoc, dd) := Elab.run "block-template-wholebar-drift.tex" drifted
+  let named := dd.filter fun d => d.code == "W0110" && d.subject == some "beamer:template:block begin"
+  check ref s!"whole bar: a flag the body changes before a block is named ({named.map (·.message)})"
+    (drifted != gapped && named.size == 1 && named.all (hasStr ·.message "changes \\ifprobe@gap"))
+  check ref "whole bar: the blocks the body's flag changes keep the default pair"
+    (((ddoc.styles.find? "block").bind (·.shape)).isNone)
   let native (edge : String) (whole : String) : String :=
     "\\documentclass{slides}\n\\palette{ accent = #123456 }\n\\style{block}{ shape = " ++
       "{ title = box strut parskip, untitled = {}" ++ whole ++ ", edge = { span = whole, side = left, " ++
@@ -2626,6 +2692,26 @@ private def templateCodeChecks (ref : IO.Ref (List String)) : IO Unit := do
     (opens > 0 && ends > opens && clean.all fun d => d.severity == .note ||
       !(d.span.any fun sp => opens ≤ sp.pos.line && sp.pos.line < ends))
 
+/-- **A line end the lexer leaves out beside a brace stays on the brace**
+(`Pos.openEol`, `Pos.closeEol`), and the template reader sets back the
+space TeX reads there (`BlockTemplate.flatten`): after an opening brace,
+and before a closing one past anything but a control word; a comment's
+line end is none, and the document's own raws keep none. -/
+private def braceEolChecks (ref : IO.Ref (List String)) : IO Unit := do
+  let raws (src : String) : Array Parse.Raw := (Parse.parse "eol.tex" (Lex.lex "eol.tex" src).1).1
+  let flat (src : String) : Array LeanTex.Core.BlockTemplate.Tok :=
+    LeanTex.Core.BlockTemplate.flatten (raws src)
+  for (src, want) in [("{\n x}", #[LeanTex.Core.BlockTemplate.Tok.bg, .space, .word "x", .eg]),
+      ("{x\n}", #[.bg, .word "x", .space, .eg]),
+      ("{{x}\n}", #[.bg, .bg, .word "x", .eg, .space, .eg]),
+      ("{\\relax\n}", #[.bg, .ctrl "relax", .eg]),
+      ("{%\n x}", #[.bg, .word "x", .eg]),
+      ("{x%\n}", #[.bg, .word "x", .eg])] do
+    check ref s!"brace line ends: {repr src} reads as TeX's tokens ({repr (flat src)})" (flat src == want)
+  check ref "brace line ends: the document's own raws keep no space there"
+    ((raws "{\n x}").toList matches [.group #[.word "x" _] _] &&
+      (raws "{x\n}").toList matches [.group #[.word "x" _] _])
+
 def checks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit := do
   pageChecks ref fonts
   voidedChecks ref fonts
@@ -2651,5 +2737,6 @@ def checks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit := do
   wholeBarHtmlChecks ref fonts
   wholeBarReadingChecks ref
   templateCodeChecks ref
+  braceEolChecks ref
 
 end Tests.BlockTemplate
