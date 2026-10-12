@@ -315,7 +315,7 @@
 ⚠ [W0004]
   byte 0x92 at offset 83 is read as Windows-1252 (Latin-1), as declared, in a file otherwise UTF-8
   suggestion: retype the characters at those offsets in UTF-8: the rest of the file is UTF-8
-── W0005 (degraded) overfull line, no feasible break
+── W0005 (degraded) overfull line, no feasible break, where no re-flowed declared line accounts for it
 ⚠ [W0005]
   overfull line; no feasible break
 ── W0006 (degraded) declared face variant missing; another face substitutes
@@ -758,10 +758,10 @@
 ── W0385 (degraded) a colour or font change inside math is not carried; its content sets in the surrounding style
 ⚠ [W0385] - $
   '\textbf' inside math sets in the surrounding style
-── W0386 (degraded) a declared line break did not hold: its line did not fit the measure and re-flowed
+── W0386 (degraded) a declared line break did not hold: its line did not fit the measure and re-flowed, and any line of it still past the measure is its overrun too
 ⚠ [W0386]
   a declared line did not fit the measure and re-flowed
-  2 lines declared, 5 ship
+  it ships as 3 lines
   suggestion: shorten the declared line, reduce \page{ hmargin = ... } to widen the measure, or declare a narrower face
 ── W0387 (config) a known construct was read and had no effect
 ⚠ [W0387] - \thispagestyle

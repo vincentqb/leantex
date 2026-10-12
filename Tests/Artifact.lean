@@ -751,8 +751,8 @@ break), `W0335` (picture larger than the text area; it may overrun the
 page), and `W0388` (ink painted off the medium, which a viewer clips). A
 document that ships ink outside its own area and says one of these has
 reported the loss; one that says nothing has not. A re-flowed declared
-line's overrun is its re-flow's (`W0386`), which accounts for ink only
-where its detail carries a line run past the measure (`artAccounted`).
+line's overrun is its re-flow's (`W0386`), which accounts for ink where it
+carries W0005's loss (`Diag.carries`, read by `artAccounted`).
 
 None of them accounts for ink off the page box (`pageBox`): a reader never
 sees it, whatever the log says, so the claim holds on every fixture but the
@@ -1010,7 +1010,7 @@ area? Read from the whole build's diagnostics — elaboration and layout
 alike, since a picture that will overrun is a layout finding. -/
 def artAccounted (diags : Array Diag) : Bool :=
   diags.any fun d => artOverflowCodes.contains d.code ||
-    (d.kind == .W0386 && d.detail.any (hasStr · "past the measure"))
+    d.carries.any (artOverflowCodes.contains ·.code)
 
 /-- Where the layout put each glyph of a page, in PDF user space and in
 stream order — the lines as the stream paints them (`Pdf.paintLines`: a

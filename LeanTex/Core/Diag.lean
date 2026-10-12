@@ -387,7 +387,7 @@ private def DiagCode.spec : DiagCode → String × Loss × String
   | .W0001 => ("0001", .config, "content after \\end{document} is ignored")
   | .W0003 => ("0003", .degraded, "no math face available; math set as plain text")
   | .E0405 => ("0405", .dropped, "font has no glyph for a character; dropped")
-  | .W0005 => ("0005", .degraded, "overfull line, no feasible break")
+  | .W0005 => ("0005", .degraded, "overfull line, no feasible break, where no re-flowed declared line accounts for it")
   | .W0006 => ("0006", .degraded, "declared face variant missing; another face substitutes")
   | .W0007 => ("0007", .degraded, "paged-media furniture omitted from HTML")
   | .W0008 => ("0008", .config, "\\fonts dir is not a directory")
@@ -508,7 +508,7 @@ private def DiagCode.spec : DiagCode → String × Loss × String
   | .W0384 => ("0384", .degraded, "a frame taller than its page continues on the next page without a declared break")
   | .W0400 => ("0400", .degraded, "a frame a little taller than its page stands past its text area, in the gap below it")
   | .W0385 => ("0385", .degraded, "a colour or font change inside math is not carried; its content sets in the surrounding style")
-  | .W0386 => ("0386", .degraded, "a declared line break did not hold: its line did not fit the measure and re-flowed")
+  | .W0386 => ("0386", .degraded, "a declared line break did not hold: its line did not fit the measure and re-flowed, and any line of it still past the measure is its overrun too")
   | .W0388 => ("0388", .degraded, "ink is painted off the medium; a viewer clips to the page and cannot show it")
   | .W0389 => ("0389", .degraded, "a math construct whose operands the floor has ruled on; its content operand sets in its place and the formula still sets as mathematics")
   | .W0390 => ("0390", .degraded, "no family is declared for a font slot the document sets in; the body face serves it")
@@ -797,6 +797,12 @@ public structure Diag where
   sites of one loss print one line however their particulars differ, each
   site's own under `-v`. -/
   detail : Option String := none
+  /-- Other codes' losses this record accounts for, as one construct's one
+  diagnostic: a re-flowed declared line's overrun (W0005) in its re-flow
+  (W0386). Each is fired with it, so a document's acceptance of that code
+  is never stale for it (`Diag.unfired`), and a judge of that code's loss
+  reads it here; acceptance reads the record's own code. -/
+  carries : List DiagCode := []
   deriving Repr, BEq
 
 /-- **Is this code's loss part of the site census?** A `degraded` or
@@ -865,7 +871,7 @@ public def Diag.of (c : DiagCode) (message : String) (span : Option Span := none
     (help : Option String := none) (subject : Option String := none)
     (refused : Option String := none) (trigger : Option String := none)
     (recovery : Option Diag.Recovery := none) (output : Option Diag.Output := none)
-    (detail : Option String := none) : Diag :=
+    (detail : Option String := none) (carries : List DiagCode := []) : Diag :=
   { kind := c
     message := message
     span := span
@@ -875,7 +881,8 @@ public def Diag.of (c : DiagCode) (message : String) (span : Option Span := none
     trigger := if c.namesPlace then none else trigger.bind Diag.Spelling.ofWritten?
     recovery := recovery
     output := output
-    detail := detail }
+    detail := detail
+    carries := carries }
 
 /-- The construct a header names, as text. -/
 public def Diag.triggerText (d : Diag) : Option String := d.trigger.map (·.text)
@@ -884,12 +891,13 @@ public def Diag.triggerText (d : Diag) : Option String := d.trigger.map (·.text
 a written token the construct spelling alone (`Diag.Spelling.ofWritten?`). -/
 public theorem Diag.of_record_exact (c : DiagCode) (message : String)
     (span : Option Span) (help subject refused trigger : Option String)
-    (recovery : Option Diag.Recovery) (output : Option Diag.Output) (detail : Option String) :
-    Diag.of c message span help subject refused trigger recovery output detail =
+    (recovery : Option Diag.Recovery) (output : Option Diag.Output) (detail : Option String)
+    (carries : List DiagCode) :
+    Diag.of c message span help subject refused trigger recovery output detail carries =
       { kind := c, message := message, span := span, help := help,
         subject := subject, refused := refused,
         trigger := if c.namesPlace then none else trigger.bind Diag.Spelling.ofWritten?,
-        recovery := recovery, output := output, detail := detail } := by
+        recovery := recovery, output := output, detail := detail, carries := carries } := by
   rfl
 
 /-- The diagnostic names exactly the supplied subject, independently of its
@@ -1822,7 +1830,7 @@ public theorem Resolution.append_assoc_exact (a b c : Resolution) :
 
 private def Resolution.record (r : Resolution) (d : Diag) (accepted : Bool) : Resolution :=
   { diags := r.diags.push d
-    fired := r.fired.push d.code
+    fired := r.fired.push d.code ++ (d.carries.map (·.code)).toArray
     accepted := if accepted then r.accepted.push (Diag.Accepted.of d) else r.accepted
     errors := r.errors + (if d.severity == .error then 1 else 0)
     warnings := r.warnings + (if d.severity == .warning then 1 else 0)
@@ -1830,7 +1838,8 @@ private def Resolution.record (r : Resolution) (d : Diag) (accepted : Bool) : Re
 
 private theorem Resolution.record_append (a b : Resolution) (d : Diag) (accepted : Bool) :
     (a.append b).record d accepted = a.append (b.record d accepted) := by
-  cases accepted <;> simp [record, append, -Array.push_append, Array.append_push, Nat.add_assoc]
+  cases accepted <;> simp [record, append, -Array.push_append, Array.append_push, Nat.add_assoc,
+    Array.append_assoc]
 
 public def Diag.resolveAll (allowed : Array String) (allowAll : Bool)
     (ds : Array Diag) : Resolution := Id.run do
