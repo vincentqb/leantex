@@ -325,6 +325,7 @@ public inductive DiagCode where
   | W0411
   | W0412
   | W0413
+  | W0308
   deriving Repr, BEq, DecidableEq
 
 /-- The registry: each code's digits, its declared `Loss`, and its one
@@ -543,6 +544,7 @@ private def DiagCode.spec : DiagCode → String × Loss × String
   | .W0411 => ("0411", .standard, "a listing environment written where LaTeX cannot set it — within a line of text, in an argument, or all on one line; it is set by its evident intent")
   | .W0413 => ("0413", .degraded, "minted's one-line display command written within a line of text or an argument, where LaTeX sets a display or cannot set it, is set as inline code")
   | .W0412 => ("0412", .degraded, "a listing's language names no lexer the engine or Pygments' registry has; its code is set as plain text")
+  | .W0308 => ("0308", .degraded, "a colour scheme the web page offers cannot carry a colour legibly; the page ships without that scheme")
 
 public def DiagCode.digits (c : DiagCode) : String := c.spec.1
 

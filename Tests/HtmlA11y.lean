@@ -38,8 +38,8 @@ def a11yFactsOf (doc : Ir.Doc) (body : Array Html.Node) : HtmlDoc.A11yFacts :=
 /-- A page's accessibility deficits, one count per check — what the
 `htmla11y` scoreboard tier ratchets, per fixture, as headroom:
 
-* `contrast` — the stylesheet's pairings the page fails, over both colour
-  schemes (`HtmlDoc.schemeFailures`);
+* `contrast` — the stylesheet's pairings the page fails, over every colour
+  scheme it ships (`HtmlDoc.schemeFailures`);
 * `h1` — 1 unless the page carries exactly one `<h1>`;
 * `hidden-focus` — tab stops under `aria-hidden`, a keyboard stop assistive
   technology cannot see;
@@ -48,10 +48,10 @@ def a11yFactsOf (doc : Ir.Doc) (body : Array Html.Node) : HtmlDoc.A11yFacts :=
 * `svg` — `<svg>` with no accessible name.
 
 Sorted by check name, so a tier's rows come out in the order it writes them. -/
-def a11yDeficits (doc : Ir.Doc) (imgs : Image.Store) (body : Array Html.Node) :
+def a11yDeficits (doc : Ir.Doc) (body : Array Html.Node) :
     List (String × Nat) :=
   let f := a11yFactsOf doc body
-  [("contrast", (HtmlDoc.schemeFailures (a11yCssOf doc == .own) imgs doc).length),
+  [("contrast", (HtmlDoc.schemeFailures (a11yCssOf doc == .own) doc).length),
    ("h1", if f.h1s == 1 then 0 else 1),
    ("hidden-focus", f.hiddenTabStops),
    ("img", f.imgsUnnamed),
@@ -63,8 +63,8 @@ only: no browser, no network, no tool. -/
 def a11yCorpus : IO (Array (String × List (String × Nat))) := do
   let mut out := #[]
   for n in goldenNames do
-    let (doc, store, _, body, _) ← a11yCorpusPage n
-    out := out.push (n, a11yDeficits doc store body)
+    let (doc, _, _, body, _) ← a11yCorpusPage n
+    out := out.push (n, a11yDeficits doc body)
   return out
 
 /-- The `aria-label` of every `<svg>` a body carries. -/

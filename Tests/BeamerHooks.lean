@@ -187,7 +187,7 @@ def beamerHookChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Un
   let look := (Ir.Design.ofDoc restored).standout
   t "standout footer hook: the restored band uses the standout foreground and canvas"
     ((out.pages[0]?.bind (·.footLook)) == some { fg := look.fg, bar := some look.bg } &&
-      (elemStylesList #[] html.toList).any (fun (text, style) =>
+      (elemLightStyles html.toList).any (fun (text, style) =>
         text == "StandoutNote" && hasStr style s!"color: {look.fg.css}" &&
           hasStr style s!"background: {look.bg.css}"))
   t "standout footer hook: no restoration or number is invented for an empty note"
@@ -320,6 +320,6 @@ def beamerHookChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Un
   t "standout footer hook: paint resolves from the frame's palette epoch"
     (((layoutOf fonts epoch).pages[0]?.bind (·.footLook)) ==
         some { fg := { r := 249, g := 247, b := 241 }, bar := some { r := 24, g := 54, b := 74 } } &&
-      (elemStylesList #[] (hookHtml epoch).toList).any (fun (text, style) =>
+      (elemLightStyles (hookHtml epoch).toList).any (fun (text, style) =>
         text == "EpochNote" && hasStr style "color: #f9f7f1" &&
           hasStr style "background: #18364a"))

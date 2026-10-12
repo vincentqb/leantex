@@ -3,6 +3,7 @@ module
 public import LeanTex.Core.Font
 import LeanTex.Core.Layout
 import LeanTex.Core.HtmlDoc
+import Tests.LightCss
 import LeanTex.Core.BeamerColor
 import LeanTex.Core.Elab
 import LeanTex.Core.SeedPalette
@@ -47,7 +48,11 @@ mutual
       Html.Node → Array HtmlInk
     | .text text => out.push { text, ancestors }
     | .elem tag attrs kids =>
-      let own := (attrs.find? (·.1 == "style")).map (·.2) |>.getD ""
+      let raw := (attrs.find? (·.1 == "style")).map (·.2) |>.getD ""
+      -- Values a style states through its roles read as the light screen
+      -- reads them, against the custom properties in scope.
+      let vars := styleVars raw ++ ancestors.flatMap (styleVars ·.styles)
+      let own := lightStyle vars raw
       let bodyBox := attrs.contains ("class", "block-body")
       let ancestors := { tag, styles := own, bodyBox : HtmlElement } :: ancestors
       let out := if bodyBox then

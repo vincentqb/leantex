@@ -1653,24 +1653,24 @@ def contrastChecks (ref : IO.Ref (List String)) : IO Unit := do
     return true
   t "covering quiets monotonically over random colours" quietingHolds
 
-  -- The stylesheet ships the proven token sets: the dark block overrides
-  -- the accent (the light one reads 2.64:1 on the dark surface, under SC
-  -- 1.4.11's 3:1), and both spellings come from the constants the
-  -- contract theorems cover.
+  -- The stylesheet ships the proven token sets in every scheme: the dark
+  -- screen re-accents (the light accent reads 2.70:1 on the dark page, under
+  -- SC 1.4.11's 3:1) through `light-dark()`, and both spellings come from the
+  -- class's seeds as each scheme carries them, which the contract theorems
+  -- cover.
   let (page, _) := HtmlDoc.emit {} (elabStr "x").1
-  let darkBlock := ((page.splitOn "prefers-color-scheme: dark")[1]?.getD "").splitOn "}"
-    |>.headD ""
-  t "dark block re-accents"
-    ((darkBlock.splitOn s!"{HtmlDoc.roleVar .accent}: {HtmlDoc.cssColor (screenColor .dark .accent)}").length == 2)
+  t "the dark screen re-accents through light-dark()"
+    (hasStr page s!"{HtmlDoc.roleVar .accent}: light-dark({HtmlDoc.cssColor (screenColor .light .accent)}, \
+{HtmlDoc.cssColor (screenColor .dark .accent)})" && hasStr page "color-scheme: light dark;")
   t "light accent comes from the registry's light column"
     ((page.splitOn s!"{HtmlDoc.roleVar .accent}: {HtmlDoc.cssColor (screenColor .light .accent)}").length == 2)
   t "the focus ring follows the accent"
     ((page.splitOn s!"{HtmlDoc.roleVar .focus}: var({HtmlDoc.roleVar .accent})").length == 2)
-  -- A page that declares a colour ships one scheme (`HtmlDoc.dualScheme`):
-  -- only the engine's own token set has a proven dark variant, and the
-  -- dark block once stood a declared ink equal to the light default on
-  -- the dark surface at 1.00:1. A themed deck declares its colours through
-  -- its bundle, so it too keeps the scheme its colours were judged in.
+  t "the printed page restates the print column under @media print"
+    (hasStr page "@media print {" &&
+      hasStr page s!"{HtmlDoc.roleVar .ink}: {HtmlDoc.cssColor Ir.Color.black};")
+  -- A deck offers its own screen and that screen's more contrast, never the
+  -- other polarity: no light-dark() unless its document declares schemes.
   -- Judged over the typed head tree the backend emits, never an IR dump.
   let (deckHead, _, _) := HtmlDoc.emitTree {} (elabStr
     ("\\documentclass{slides}\\theme{moloch}\\begin{document}" ++
@@ -1679,67 +1679,68 @@ def contrastChecks (ref : IO.Ref (List String)) : IO Unit := do
     | Html.Node.style s => acc ++ s
     | _ => acc
   let deckCss := headCss deckHead
-  let themeMuted := match (deckBundle Theme.moloch).find? "muted" with
-    | some c => s!"{HtmlDoc.roleVar .muted}: {HtmlDoc.cssColor c};"
-    | none => "no muted key"
-  let darkMuted := s!"{HtmlDoc.roleVar .muted}: {HtmlDoc.cssColor (screenColor .dark .muted)};"
-  t "a themed deck declares its muted once and ships no dark variant"
-    ((deckCss.splitOn themeMuted).length == 2 && (deckCss.splitOn darkMuted).length == 1 &&
-     hasStr deckCss "color-scheme: light;" && !hasStr deckCss "prefers-color-scheme: dark")
-  let (inkHead, _, _) := HtmlDoc.emitTree {} (elabStr
-    "\\documentclass{article}\\palette{ ink = #18181B }\\begin{document}x\\end{document}").1
+  t "a deck ships no light-dark() unless its document declares schemes"
+    (hasStr deckCss "color-scheme: light;" && !hasStr deckCss "light-dark(")
+  let (askedHead, _, _) := HtmlDoc.emitTree {} (elabStr
+    ("\\documentclass{slides}\\theme{moloch}\\output{ schemes = print, light, dark }" ++
+     "\\begin{document}\\begin{frame}{T}x\\end{frame}\\end{document}")).1
+  t "a deck that declares its schemes ships them"
+    (hasStr (headCss askedHead) "light-dark(")
+  -- A declared ink ships exactly on its own screen and is carried to the
+  -- dark one, judged there.
+  let inkSrc := "\\documentclass{article}\\palette{ ink = #18181B }\\begin{document}x\\end{document}"
+  let (inkHead, _, _) := HtmlDoc.emitTree {} (elabStr inkSrc).1
   let inkCss := headCss inkHead
-  t "a declared ink keeps its page in the one scheme it was judged in"
-    (hasStr inkCss "color-scheme: light;" && !hasStr inkCss "prefers-color-scheme: dark" &&
-     (HtmlDoc.schemeFailures true {} (elabStr
-       "\\documentclass{article}\\palette{ ink = #18181B }\\begin{document}x\\end{document}").1).isEmpty)
-  -- A picture's marks paint the colour they declare (black, undeclared),
-  -- which the dark surface would swallow: its page keeps one scheme too.
+  let inkDoc := (elabStr inkSrc).1
+  let darkInk := (Ir.Design.inScheme inkDoc.palette (inkDoc.palette.frame .dark) .ink).getD .black
+  t "a declared ink ships as declared on the light screen and carried on the dark one"
+    (hasStr inkCss s!"{HtmlDoc.roleVar .ink}: light-dark(#18181b, {HtmlDoc.cssColor darkInk})" &&
+      Contrast.aaText ≤ Contrast.contrastMilli darkInk
+        ((Ir.Design.inScheme inkDoc.palette (inkDoc.palette.frame .dark) .page).getD .black) &&
+      (HtmlDoc.schemeFailures true inkDoc).isEmpty)
+  -- A picture's marks paint the colours they declare: on the dark screen it
+  -- stands on a light plate.
   let (picHead, _, _) := HtmlDoc.emitTree {} (elabStr
     ("\\documentclass{article}\\pictures{ tool = none }\\begin{document}" ++
      "\\begin{tikzpicture}\\draw (0,0) -- (1,0);\\end{tikzpicture}\\end{document}")).1
   let picCss := headCss picHead
-  t "a page with a picture ships one scheme"
-    (hasStr picCss "color-scheme: light;" && !hasStr picCss "prefers-color-scheme: dark")
-  -- A style's own colours and a clear image's ink paint on the ground too
-  -- (review S-1): a red heading rule, a red list marker and a link's hover
-  -- ink once shipped both schemes with the literal red in the sheet, and a
-  -- black mark on a transparent raster stood on the dark surface at about
-  -- 1:1. An opaque raster brings its own ground and keeps both.
+  t "a picture stands on a light plate on the dark screen"
+    (hasStr picCss s!"svg.picture \{ background: light-dark(transparent, {HtmlDoc.roleRef .paper}); }")
+  -- A style's own literal colour rides in its one declaration, beside its
+  -- carrying to the dark screen.
   let schemeCss (imgs : Image.Store) (src : String) : String :=
     let (h, _, _) := HtmlDoc.emitTree { imgs } (elabStr src).1
     headCss h
-  let oneScheme (css : String) : Bool :=
-    hasStr css "color-scheme: light;" && !hasStr css "prefers-color-scheme: dark"
   let styled (decl body : String) : String :=
     s!"\\documentclass\{article}{decl}\\begin\{document}{body}\\end\{document}"
-  t "a page whose heading rule is a declared colour ships one scheme"
-    (oneScheme (schemeCss {} (styled "\\style{section}{ rule = red }" "\\section{A}b")))
-  t "a page whose list marker is a declared colour ships one scheme"
-    (oneScheme (schemeCss {} (styled "\\style{itemize}{ marker = {\\textcolor{red}{*}} }"
-      "\\begin{itemize}\\item a\\end{itemize}")))
-  t "a page whose link hover is a declared colour ships one scheme"
-    (oneScheme (schemeCss {} (styled "\\style{nav}{ hover = red }" "x")))
+  t "a heading rule's literal colour is carried to the dark screen"
+    (hasStr (schemeCss {} (styled "\\style{section}{ rule = red!50!black }" "\\section{A}b"))
+      "--rule-color: light-dark(#800000, ")
+  t "a link hover's literal colour is carried to the dark screen"
+    (hasStr (schemeCss {} (styled "\\style{nav}{ hover = red!50!black }" "x"))
+      "color: light-dark(#800000, ")
   let raster (a : Image.Alpha) : Image.Store :=
     { entries := #[{ src := "mark.png", info := some { pxW := 4, pxH := 4, alpha := a } }] }
   let imgSrc := "\\documentclass{article}\\usepackage{graphicx}\\begin{document}x\n\n" ++
     "\\includegraphics{mark.png}\\end{document}"
-  t "a page with a raster that lets the ground through ships one scheme"
-    (oneScheme (schemeCss (raster (.soft ByteArray.empty 8)) imgSrc) &&
-     oneScheme (schemeCss (raster (.colorKey #[0, 0])) imgSrc) &&
-     !HtmlDoc.dualScheme (raster (.soft ByteArray.empty 8)) (elabStr imgSrc).1)
-  t "a page with an opaque raster keeps both schemes"
-    (hasStr (schemeCss (raster .opaque) imgSrc) "color-scheme: light dark;")
-  -- The layering order still holds where a page ships both schemes: a
-  -- declared token stands after the dark variant, so no variant beats a
-  -- higher layer (the layering audit's clobber 3).
+  let seeThrough (imgs : Image.Store) : Bool :=
+    let (_, body, _) := HtmlDoc.emitTree { imgs } (elabStr imgSrc).1
+    (elemNodesList (· == "img") #[] body.toList).any fun n => match n with
+      | .elem _ attrs _ => HtmlDoc.attrOf? attrs "class" == some "see-through"
+      | _ => false
+  t "a raster that lets the ground through stands on a light plate on the dark screen"
+    (seeThrough (raster (.soft ByteArray.empty 8)) && seeThrough (raster (.colorKey #[0, 0])) &&
+      hasStr (schemeCss (raster (.soft ByteArray.empty 8)) imgSrc) "img.see-through")
+  t "an opaque raster stands as it is"
+    (!seeThrough (raster .opaque) && hasStr (schemeCss (raster .opaque) imgSrc) "color-scheme: light dark;")
+  -- A declared token is the document's in every scheme: no scheme block
+  -- restates it.
   let (tokHead, _, _) := HtmlDoc.emitTree {} (elabStr
     "\\documentclass{article}\\tokens{ topsep = 3pt }\\begin{document}x\\end{document}").1
   let tokCss := headCss tokHead
-  t "a declared token comes after the dark variant in the cascade"
-    (hasStr tokCss "color-scheme: light dark;" &&
-     match (tokCss.splitOn "prefers-color-scheme: dark")[1]? with
-     | some after => hasStr after "--topsep:"
+  t "a declared token reaches every scheme and no scheme block restates it"
+    (hasStr tokCss "--topsep:" && match (tokCss.splitOn "@supports (color: light-dark")[1]? with
+     | some after => !hasStr after "--topsep:"
      | none => false)
   t "an undeclared document emits no empty custom-property block"
     (let (plainHead, _, _) := HtmlDoc.emitTree {} (elabStr "x").1
@@ -2666,7 +2667,7 @@ def deckStepChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Un
      count "section.slide, section.section-page { break-after: page;" == 1 &&
      count ".step { opacity: 100%; }" == 1 &&
      (((html.splitOn "@media print").drop 1).all fun s =>
-      (s.splitOn "ltx-uncover").length == 1))
+      ((((s.splitOn "\n}\n").headD "").splitOn "ltx-uncover").length == 1)))
 
 /-- The range's other end, in both artifacts. `\uncover<2-3>` in a
 four-step frame is pending on steps 1 and 4 and crisp on 2 and 3

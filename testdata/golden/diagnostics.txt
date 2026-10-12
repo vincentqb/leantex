@@ -460,6 +460,10 @@
 ── W0307 (pending) construct not implemented yet; its content is not rendered
 ⚠ [W0307] - \begin
   '{external}' is not implemented yet; its content is not rendered
+── W0308 (degraded) a colour scheme the web page offers cannot carry a colour legibly; the page ships without that scheme
+⚠ [W0308]
+  the lightMore scheme cannot carry 'alert' legibly on 'bg' (2.99:1, 7.00:1 owed); the page ships without it
+  suggestion: declare a colour that reaches 7.00:1 on its ground in that scheme, or name the schemes the page offers: \output{ schemes = print, light }
 ── W0309 (config) \maketitle with nothing declared
 ⚠ [W0309] - \maketitle
   '\maketitle' with nothing declared; no title is set

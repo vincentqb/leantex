@@ -149,7 +149,7 @@ def listingProviderChecks (ref : IO.Ref (List String)) : IO Unit := do
       (ds.all (·.severity != .error) && entries.size == 1 && entries.all fun (_, text, spec) =>
         Ir.verbatimLines text == request.lines && spec.style == style &&
         (spec.tokenLines text).map LeanTex.Core.ListingHighlight.lineText == request.lines)
-    let (_, body, _) := HtmlDoc.emitTree {} doc
+    let (_, body, _) := emitIn {} doc .print
     let codes := ListingHighlight.codeNodesList #[] body.toList
     t "listing provider: typed HTML preserves tabs and blank lines"
       (codes.size == 1 && codes.all fun code => nodeTextOne "" code == source)
@@ -182,8 +182,8 @@ def listingProviderChecks (ref : IO.Ref (List String)) : IO Unit := do
       { a with request := { a.request with language := "foreign-language" } }
     for rejected in [#[], forged, stale, foreign] do
       let (plain, _, _) := Elab.runPrepared "listing" { base with listingReplies := rejected } earlier
-      let (_, plainBody, _) := HtmlDoc.emitTree {} plain
-      let (_, coldBody, _) := HtmlDoc.emitTree {} cold
+      let (_, plainBody, _) := emitIn {} plain .print
+      let (_, coldBody, _) := emitIn {} cold .print
       t "listing provider: missing, stale, foreign and forged answers ship the original plain page"
         (plainBody.map (Html.render · 0) == coldBody.map (Html.render · 0) &&
           reprStr (layoutOf fonts plain).pages == reprStr (layoutOf fonts cold).pages)

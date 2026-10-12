@@ -952,7 +952,7 @@ def colorModelChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO 
     let pdf := pdfText (Pdf.write geom oneFace (layoutOf oneFace d geom).pages d.info)
     let (_, body, _) := HtmlDoc.emitTree {} d
     bytesContain pdf pdfOp &&
-      (elemStylesList #[] body.toList).any fun (shown, style) =>
+      (elemLightStyles body.toList).any fun (shown, style) =>
         hasStr shown text && hasStr style ("color: " ++ HtmlDoc.cssColor want)
   for (model, spec, want, pdfOp) in cases do
     let direct := "\\textcolor[" ++ model ++ "]{" ++ spec ++ "}{Model Ink}"
@@ -1043,7 +1043,7 @@ def colorModelChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO 
       declaredMuted == some { r := 0x8A, g := 0x8A, b := 0x99 } &&
       contrastEpoch.bind (·.find? "muted") == declaredMuted)
   t "the accessibility colour judge reads the declared root pair"
-    (!(HtmlDoc.schemeFailures true {} contrastDoc).isEmpty)
+    (!(HtmlDoc.schemeFailures true contrastDoc).isEmpty)
   let malformed : List (String × String × String) :=
     [("short HTML", "\\textcolor[HTML]{369}{Kept Ink}", "E0321"),
      ("bad HTML digit", "\\textcolor[HTML]{GG6699}{Kept Ink}", "E0321"),
@@ -3259,7 +3259,10 @@ After text keeps it: flow scope, no brace revert.")
   let tops := body2.foldl (fun acc n => match n with
     | .elem "main" _ kids => acc ++ kids
     | _ => acc) #[]
-  let entries := styleAttrs tops
+  -- Each redefinition as the light screen reads it: an epoch's colour
+  -- restates every scheme the page ships (`HtmlDoc.Config.epochStyleFor`).
+  let roots2 := screenRootVars headCss
+  let entries := (styleAttrs tops).map fun (x, st) => (x, lightStyleAll roots2 st)
   t "the html sibling before the declaration carries no epoch redefinition"
     ((entries.find? fun (txt, _) => hasStr txt "Early ink").map
       (fun (_, st) => !hasStr st "--ltx-accent") == some true)
@@ -3273,8 +3276,9 @@ After text keeps it: flow scope, no brace revert.")
     "\\block{First inside.\n\n\\palette{ accent = #CC1100 }\n\nSecond inside.}\n\n\
 \\textcolor{accent}{Outside after.}"
   let (d5, _) := elabStr nestedSrc
-  let (_, body5, _) := HtmlDoc.emitTree {} d5
-  let els5 := elemStylesList #[] body5.toList
+  let (head5, body5, _) := HtmlDoc.emitTree {} d5
+  let roots5 := screenRootVars (treeCssList "" head5.toList)
+  let els5 := (elemStylesList #[] body5.toList).map fun (x, st) => (x, lightStyleAll roots5 st)
   t "a nested epoch redefines the property on its later siblings"
     (els5.any fun (txt, st) => hasStr txt "Second inside" &&
       !hasStr txt "First inside" && hasStr st "--ltx-accent: #cc1100")

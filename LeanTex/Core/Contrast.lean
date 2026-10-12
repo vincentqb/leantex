@@ -713,6 +713,138 @@ palette in force where it ships: every event's sites (`eventSites`). -/
 public def shippedSites (doc : Doc) : Array (Role × Palette) :=
   (shippedEvents doc).flatMap fun (ev, pal) => eventSites ev pal
 
+/-- The palettes a document's page carries: its own, then every epoch's, in
+the order the body declares them. -/
+public def docPalettes (doc : Doc) : List Palette :=
+  doc.palette :: (Ir.foldBlocks (fun (acc : Array Palette) b => match b with
+    | .setPalette p => acc.push p
+    | _ => acc) (fun acc _ => acc) #[] doc.body).toList
+
+/-- One colour a scheme cannot carry: its name, the role it is judged on,
+what it reads there and what that scheme owes. -/
+public structure SchemeLoss where
+  name : ColorRef
+  on : Role
+  ratio : Nat
+  gate : Nat
+  deriving Repr, BEq, Inhabited
+
+/-- What the scheme judge decides for a web page: the schemes it ships, with
+each one's frame and every palette of the page as that scheme ships it
+(`Palette.view`), and the colours each dropped scheme could not carry. -/
+public structure SchemeJudgement where
+  shipped : List Scheme := []
+  frames : List SchemeFrame := []
+  /-- Each palette of the page (`docPalettes`) beside its view in every
+  shipped scheme, in `shipped`'s order. -/
+  views : List (Palette × List Palette) := []
+  dropped : List (Scheme × List SchemeLoss) := []
+  deriving Inhabited
+
+/-- The losses one scheme's views and the page's shipped sites show: each
+colour a view could not carry, at what it reads there, and each site the page
+ships that falls short of the scheme's gate, once per name and ground. -/
+private def schemeLosses (s : Scheme) (stage : Bool) (views : List (Palette × (Palette × Array Unrealized)))
+    (sites : Array (Role × Palette)) : List SchemeLoss := Id.run do
+  let mut out : Array SchemeLoss := #[]
+  let push (out : Array SchemeLoss) (l : SchemeLoss) : Array SchemeLoss :=
+    if out.any fun o => o.name == l.name && o.on == l.on then out else out.push l
+  for (_, (v, un)) in views do
+    for u in un do
+      let need := match u.name with
+        | .role r => r.row.need
+        | .color _ => .text
+      let ink := match u.name with
+        | .role r => Design.at v s r
+        | .color n => v.lookup (.color n)
+      let ratio := match ink, Design.at v s u.on with
+        | some a, some b => contrastMilli a b
+        | _, _ => 0
+      out := push out { name := u.name, on := u.on, ratio, gate := requiredIn s (need.atStage stage) }
+  for (r, p) in sites do
+    let v := ((views.find? (·.1 == p)).map (·.2.1)).getD p
+    if let some st := Design.site? v s r then
+      let st := { st with need := st.need.atStage stage }
+      if !st.passes then
+        out := push out { name := .role r, on := st.on, ratio := contrastMilli st.ink st.ground
+                          gate := requiredIn s st.need }
+  return out.toList
+
+/-- One dropped scheme's diagnostic for one colour it could not carry,
+named by `scheme:name@ground`. -/
+public def schemeLossDiag (s : Scheme) (l : SchemeLoss) : Diag :=
+  let key := l.name.key
+  let ground := (ColorRef.role l.on).key
+  Diag.of .W0308
+    s!"the {s.name} scheme cannot carry '{key}' legibly on '{ground}' \
+({ratioString l.ratio}, {ratioString l.gate} owed); the page ships without it"
+    (help := some s!"declare a colour that reaches {ratioString l.gate} on its ground in that \
+scheme, or name the schemes the page offers: \\output\{ schemes = print, light }")
+    (subject := some s!"{s.name}:{key}@{ground}")
+
+/-- **The colour schemes a web page ships**, of those its document asks
+(`Doc.requestedSchemes`): a scheme the document's colours were declared for
+ships them as they are, judged where they ship by the document's contrast
+report; any other ships only where every palette of the page can be carried
+there legibly (`Palette.view`) and every site the page ships reads at that
+scheme's gate — else that scheme alone is dropped for the page, each colour
+it could not carry named once (`schemeLossDiag`). -/
+public def schemeJudge (doc : Doc) : SchemeJudgement :=
+  let stage := stageOf doc
+  let pals := docPalettes doc
+  let sites := shippedSites doc
+  let judged := doc.requestedSchemes.map fun s =>
+    let f := doc.palette.frame s stage
+    let vs := pals.map fun p => (p, p.view f)
+    (s, f, vs, if f.home then [] else schemeLosses s stage vs sites)
+  let kept := judged.filter (·.2.2.2.isEmpty)
+  { shipped := kept.map (·.1)
+    frames := kept.map (·.2.1)
+    views := pals.zipIdx.map fun (p, i) =>
+      (p, kept.map fun k => ((k.2.2.1[i]?).map (·.2.1)).getD p)
+    dropped := judged.filterMap fun (s, _, _, ls) => if ls.isEmpty then none else some (s, ls) }
+
+/-- The diagnostics a scheme judgement owes: one per colour each dropped
+scheme could not carry. -/
+public def SchemeJudgement.diags (j : SchemeJudgement) : Array Diag :=
+  (j.dropped.flatMap fun (s, ls) => ls.map (schemeLossDiag s)).toArray
+
+/-- **A dropped scheme is paid for** (`_accounts`): every scheme the judge
+drops carries at least one loss, and each loss its own diagnostic — a page
+never loses a scheme it was asked for without a line saying why. -/
+public theorem scheme_drop_accounts (doc : Doc) :
+    ∀ d ∈ (schemeJudge doc).dropped, d.2 ≠ [] ∧
+      ∀ l ∈ d.2, schemeLossDiag d.1 l ∈ (schemeJudge doc).diags := by
+  intro d hd
+  refine ⟨?_, fun l hl => ?_⟩
+  · simp only [schemeJudge, List.mem_filterMap] at hd
+    obtain ⟨⟨s, f, vs, ls⟩, _, he⟩ := hd
+    split at he
+    · cases he
+    · rename_i hne
+      cases he
+      intro h
+      simp only at h hne
+      exact hne (by simp [h])
+  · simp only [SchemeJudgement.diags, List.mem_toArray, List.mem_flatMap, List.mem_map]
+    exact ⟨d, hd, l, hl, rfl⟩
+
+/-- A scheme loss's census key: `scheme:name@ground`, the subject its
+diagnostic carries (`schemeLossDiag`). -/
+public def SchemeLoss.key (s : Scheme) (l : SchemeLoss) : String :=
+  s!"{s.name}:{l.name.key}@{(ColorRef.role l.on).key}"
+
+/-- **Every colour a scheme could not carry is named, scheme by scheme, on its
+subject** (`_named`): for each scheme the judge drops and each loss it
+records there — a colour a view could not carry, or a site the page ships
+that falls short of that scheme's gate — a diagnostic of the judgement
+carries the loss's key (`SchemeLoss.key`) as its structured subject. -/
+public theorem sites_named (doc : Doc) :
+    ∀ d ∈ (schemeJudge doc).dropped, ∀ l ∈ d.2,
+      ∃ g ∈ (schemeJudge doc).diags, g.subject = some (SchemeLoss.key d.1 l) :=
+  fun d hd l hl => ⟨schemeLossDiag d.1 l, (scheme_drop_accounts doc d hd).2 l hl,
+    by simp only [schemeLossDiag, SchemeLoss.key, Diag.of_subject]⟩
+
 /-- The covering judged, per epoch that ships pending content: SC 1.4.11's
 3:1 between an active and an inactive state, and quieter-than-active —
 `coveredContract`'s own two bounds, read from `Design.cover`: the cover

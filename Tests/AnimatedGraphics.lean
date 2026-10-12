@@ -47,7 +47,7 @@ private def graphicsPng (w h : Nat) : Option Image.Plan :=
 
 private def graphicsSizingAttrs (p : GraphicsPage) : Array (Array (String × String)) :=
   (elemAttrsList (· == "img") #[] p.tree.toList).map fun (_, attrs) =>
-    attrs.filter (·.1 != "src")
+    attrs.filter fun a => a.1 != "src" && a.1 != "class"
 
 /-- An animation command owns four mandatory groups. Its frame rate,
 source and range must never become paragraph ink; the tail must survive.

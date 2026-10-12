@@ -121,7 +121,7 @@ def checks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit := do
       | .elem _ attrs _ =>
         let own := decls ((HtmlDoc.attrOf? attrs "style").getD "")
         (own.lookup "background").any fun v =>
-          chaseCssValue (own ++ screenRootVars ecss) v == some (HtmlDoc.cssColor tint)
+          lightValue (own ++ screenRootVars ecss) v == HtmlDoc.cssColor tint
       | _ => false)
   -- The muted row: one relation both artifacts read — the ink on LaTeX's
   -- rows, one generated tone on the web's and under a generated bundle.

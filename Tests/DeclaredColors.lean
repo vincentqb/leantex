@@ -17,9 +17,10 @@ private def inksOn (out : Layout.Out) (text : String) : Array Ir.Color :=
       | .run _ ink _ _ glyphs .. => if glyphs.isEmpty then none else some ink
       | _ => none
 
-/-- The styles of the HTML elements whose text holds `text`. -/
+/-- The styles of the HTML elements whose text holds `text`, as the printed
+page reads them (`schemeTree`). -/
 private def htmlStyles (doc : Ir.Doc) (text : String) : Array String :=
-  let (_, body, _) := HtmlDoc.emitTree {} doc
+  let (_, body, _) := emitIn {} doc .print
   (elemStylesList #[] body.toList).filterMap fun (t, st) =>
     if hasStr t text && !st.isEmpty then some st else none
 
@@ -104,7 +105,7 @@ public def checks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit 
      glyphs.all fun (c, ink) => c != 's' || ink == red)
   t "declared colours: the style's comment colour ships unmoved in the PDF"
     (glyphs.any fun (c, ink) => c == 'n' && ink == comment)
-  let (_, listingHtml, _) := HtmlDoc.emitTree {} listing
+  let (_, listingHtml, _) := emitIn {} listing .print
   -- A coloured run's text, without the blanks that join a run and show no ink.
   let spans := (ListingHighlight.coloredSpansList #[] listingHtml.toList).map fun (txt, st) =>
     (txt.trimAscii.toString, st)

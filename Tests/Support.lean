@@ -5,6 +5,7 @@ public import LeanTex
 public import LeanTex.Core.HtmlDoc
 public import Lean.Data.Json.Parser
 public import Lean.Data.Json.FromToJson.Basic
+public import Tests.LightCss
 
 public section
 
@@ -1576,7 +1577,33 @@ def shownCharsList (styles : List (String × Nat)) (acc : Array (Char × List (S
 
 /-- Every element of an emitted tree with its subtree text and its own
 style attribute, for the epoch checks: which node carries a redefinition
-is a fact of the typed tree, never of a rendered string. -/
+is a fact of the typed tree, never of a rendered string. Each ordinary
+declaration a style states through its roles is read as the light screen
+reads it against the custom properties in scope (`lightStyle`); the
+custom properties themselves stand as written. -/
+def elemStylesIn (vars : List (String × String)) (acc : Array (String × String)) :
+    Html.Node → Array (String × String)
+  | .text _ => acc
+  | .style _ => acc
+  | .script _ _ => acc
+  | .elem t attrs kids =>
+    let raw := ((attrs.find? (·.1 == "style")).map (·.2)).getD ""
+    let vars := styleVars raw ++ vars
+    let acc := acc.push (nodeTextOne "" (.elem t attrs kids), lightStyle vars raw)
+    elemStylesListIn vars acc kids.toList
+
+def elemStylesListIn (vars : List (String × String)) (acc : Array (String × String)) :
+    List Html.Node → Array (String × String)
+  | [] => acc
+  | k :: rest => elemStylesListIn vars (elemStylesIn vars acc k) rest
+
+end
+
+mutual
+
+/-- Every element of an emitted tree with its subtree text and its own
+style attribute as written, for the epoch checks: which node carries a
+redefinition is a fact of the typed tree, never of a rendered string. -/
 def elemStylesOne (acc : Array (String × String)) : Html.Node → Array (String × String)
   | .text _ => acc
   | .style _ => acc
@@ -1607,6 +1634,11 @@ def reportedContrast (d : Diag) : Bool :=
 which element declares each. -/
 def shownChars (nodes : List Html.Node) : Array (Char × List (String × Nat)) :=
   (shownCharsList [] (#[], 0) nodes).1
+
+/-- Every element with its style as the light screen reads it
+(`elemStylesIn`), from no custom property in scope. -/
+def elemLightStyles (nodes : List Html.Node) : Array (String × String) :=
+  elemStylesListIn [] #[] nodes
 
 /-- The source with string literals, char literals, and comments blanked, so
 the emission scan below reads code proper: a code named in a docstring or a
@@ -2439,6 +2471,75 @@ def screenRootVars (css : String) : List (String × String) :=
         let k := k.trimAscii.toString
         if k.startsWith "--" then (k, v.trimAscii.toString) :: vars else vars
       | _ => vars) vars) []
+
+/-- The colour each token class's rule reads (`HtmlDoc.tokenRules`): every
+top-level `:is(.tok-…)` rule's classes, each beside its `color` value. -/
+def tokenClassColors (css : String) : List (String × String) :=
+  (sheetRules css).toList.flatMap fun (conds, sel, decls) =>
+    if !conds.isEmpty || !sel.startsWith ":is(.tok-" then [] else
+    match (cssDecls decls).lookup "color" with
+    | some v => (((sel.drop 4).dropEnd 1).toString.splitOn ",").map fun c =>
+        ((c.trimAscii.toString.drop 1).toString, v)
+    | none => []
+
+/-- A style attribute with each ordinary declaration's value read on one
+side of the `light-dark()` pairs (`schemeRead`) against `vars`, the custom
+properties themselves kept as written. -/
+def sideStyle (dark : Bool) (vars : List (String × String)) (style : String) : String :=
+  "; ".intercalate ((style.splitOn ";").filterMap fun decl =>
+    match decl.splitOn ":" with
+    | k :: rest@(_ :: _) =>
+      let key := k.trimAscii.toString
+      let v := (":".intercalate rest).trimAscii.toString
+      some s!"{key}: {if key.startsWith "--" then v else schemeRead dark vars v}"
+    | _ => if decl.trimAscii.isEmpty then none else some decl.trimAscii.toString)
+
+mutual
+
+/-- An element with its style as one scheme reads it: every ordinary
+declaration through the custom properties in scope (`sideStyle`), and a
+token's colour, which its class's rule states (`tokenClassColors`), written
+first as its own `color`. -/
+def schemeTreeOne (dark : Bool) (classes : List (String × String)) (vars : List (String × String)) :
+    Html.Node → Html.Node
+  | .elem t attrs kids =>
+    let raw := ((attrs.find? (·.1 == "style")).map (·.2)).getD ""
+    let vars := styleVars raw ++ vars
+    let cls := ((attrs.find? (·.1 == "class")).map (·.2)).getD ""
+    let token := ((cls.splitOn " ").findSome? (classes.lookup ·)).map (schemeRead dark vars)
+    let own := sideStyle dark vars raw
+    let style := match token with
+      | some c => if c.startsWith "#" then
+          "color: " ++ c ++ (if own.isEmpty then "" else "; " ++ own) else own
+      | none => own
+    let attrs := (attrs.filter (·.1 != "style")) ++
+      (if style.isEmpty && raw.isEmpty then #[] else #[("style", style)])
+    .elem t attrs (schemeTreeList dark classes vars #[] kids.toList)
+  | .text x => .text x
+  | .style css => .style css
+  | .script a js => .script a js
+
+def schemeTreeList (dark : Bool) (classes : List (String × String)) (vars : List (String × String))
+    (acc : Array Html.Node) : List Html.Node → Array Html.Node
+  | [] => acc
+  | n :: rest => schemeTreeList dark classes vars (acc.push (schemeTreeOne dark classes vars n)) rest
+
+end
+
+/-- **A typed tree as one scheme paints it**: each style's declarations read
+through the custom properties in scope from the `:root` that scheme's
+cascade gives (`schemeRoot`), and each token's class colour written as its
+own (`schemeTreeOne`). -/
+def schemeTree (head body : Array Html.Node) (s : Ir.Scheme) : Array Html.Node :=
+  let css := treeCssList "" head.toList
+  let (root, dark) := schemeRoot css s
+  schemeTreeList dark (tokenClassColors css) root #[] body.toList
+
+/-- `HtmlDoc.emitTree`, its body as one scheme paints it (`schemeTree`). -/
+def emitIn (cfg : HtmlDoc.Config) (doc : Ir.Doc) (s : Ir.Scheme) :
+    Array Html.Node × Array Html.Node × Array Diag :=
+  let (head, body, ds) := HtmlDoc.emitTree cfg doc
+  (head, schemeTree head body s, ds)
 
 /-- A CSS value with its `var()` references chased through a property
 table, eight references deep: `var(--x)` reads the table's `--x`, and

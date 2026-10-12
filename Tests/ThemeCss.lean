@@ -124,8 +124,12 @@ public def checks (ref : IO.Ref (List String)) : IO Unit := do
   let reset : Ir.Doc := { palette := opening, body := #[
     .setPalette empty, .para #[.text "RESET"]] }
   for mode in [HtmlDoc.CssMode.own, .none, .bulma] do
-    let (_, body, _) := HtmlDoc.emitTree { css := mode } reset
-    let styles := elemStylesList #[] body.toList
+    let (head, body, _) := HtmlDoc.emitTree { css := mode } reset
+    -- The light screen's reading of each style: a restated default reads
+    -- the screen's page in every scheme the page ships.
+    let roots := screenRootVars (treeCssList "" head.toList)
+    let styles := (elemStylesList #[] body.toList).map fun (x, style) =>
+      (x, lightStyleAll roots style)
     let paints := styles.filterMap fun (_, style) =>
       (property style "background").map fun bg => (style, bg)
     let lightPage := Ir.Design.at empty .light .page

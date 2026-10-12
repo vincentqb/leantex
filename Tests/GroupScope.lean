@@ -80,10 +80,10 @@ private def varStep (vars : List (String × String)) (value : String) : String :
     | [] => value
   else value
 
-/-- The stylesheet nests one fallback (`var(--fg, var(--ink))`) and its
-root properties are colours, so two reads reach the paint. -/
+/-- The light screen's paint of a value: its `var()` chain and any
+`light-dark()` pair read as the light screen reads them (`lightValue`). -/
 private def resolveVar (vars : List (String × String)) (value : String) : String :=
-  varStep vars (varStep vars value)
+  lightValue vars (varStep vars value)
 
 private structure Leaf where
   text : String

@@ -250,6 +250,10 @@ private def deckListings (ref : IO.Ref (List String)) (a : Artifact) : IO Unit :
   title ref name a "Small Tools for Paper Shapes" "Practice Group"
   check ref s!"{name}: section page" (textAt a 1 == #["Small counting tools"])
   let codes := elemNodesList (· == "code") #[] a.body.toList
+  -- Each token's colour as the printed page paints it (`schemeTree`): its
+  -- class's rule, through the code role the page states.
+  let lightCodes := elemNodesList (· == "code") #[] (schemeTree a.head a.body .print).toList
+  let css := treeCssList "" a.head.toList
   check ref s!"{name}: both native listing languages"
     (codes.map (deckAttr · "class") == #[some "language-lean4", some "language-python"])
   for (lang, page, source, heading, intro) in #[
@@ -258,6 +262,7 @@ private def deckListings (ref : IO.Ref (List String)) (a : Artifact) : IO Unit :
       ("python", 3, pythonLines, "A Python helper",
         "The same limit works for a list of shape names.")] do
     let code := codes.filter (fun n => deckAttr n "class" == some s!"language-{lang}")
+    let lightCode := lightCodes.filter (fun n => deckAttr n "class" == some s!"language-{lang}")
     let comment := source.back!
     check ref s!"{name}: {lang} exact shipped code including final comment"
       (textAt a page == #[heading, intro] ++ source)
@@ -272,9 +277,15 @@ private def deckListings (ref : IO.Ref (List String)) (a : Artifact) : IO Unit :
       (tokenPaint a page source[0]! "def" { r := 0x34, g := 0x5d, b := 0x94 } &&
         tokenPaint a page source[2]! "\"square\"" { r := 0, g := 0x80, b := 0x80 })
     check ref s!"{name}: {lang} HTML token colours"
-      (styled code.toList "def" "color: #345d94" &&
-        styled code.toList "\"square\"" "color: var(--ltx-example, #008080)" &&
-        styled code.toList comment "color: var(--ltx-muted, #60767a)")
+      (styled lightCode.toList "def" "color: #345d94" &&
+        styled lightCode.toList "\"square\"" "color: #008080" &&
+        styled lightCode.toList comment "color: #60767a")
+    -- A literal and a comment ship as the palette roles the rule reads
+    -- them from: the page states each code role as that role's property,
+    -- so a reader's restyle of the role reaches the code.
+    check ref s!"{name}: {lang} HTML literals and comments read the palette's roles"
+      (hasStr css "--ltx-codeliteral: var(--ltx-example);" &&
+        hasStr css "--ltx-codecomment: var(--ltx-muted);")
 
 end Tests.RegressionDecks
 

@@ -444,6 +444,9 @@ def diagWitnessWith (w : WitnessRun) (one mapped withMath : Font.FontSet)
     dvE (w := w) (dvDoc "\\usepackage{minted}\n" "\\begin{minted}{python}x = 1\\end{minted}")
   | .W0413 => dvE (w := w) (dvDoc "\\usepackage{minted}\n" "\\textbf{Alpha \\mint{python}{x = 1} omega}")
   | .W0412 => dvE (w := w) (dvDoc "\\usepackage{minted}\n" "Alpha \\mintinline{pyhton}{x} omega.")
+  -- Black on a mid-grey page reads at 4.69:1, past AA, but no tone of any
+  -- hue reaches 7:1 on it: the page ships without its more-contrast screen.
+  | .W0308 => dvH (w := w) (dvDoc "\\palette{ bg = #767676, fg = #000000, alert = #FFFFFF }\n" "x")
   | .W0317 => dvE (w := w) ("\\documentclass{card}\n\\runninghead{name}\n" ++
       "\\begin{document}\nx\n\\end{document}")
   | .W0318 => dvE (w := w) (dvDoc "\\chrome{ footer = { left = \\sectiontitle } }\n" "x")

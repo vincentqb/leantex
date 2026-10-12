@@ -16461,6 +16461,7 @@ continues whichever was last opened. -/
 private inductive OutputList where
   | formats
   | profiles
+  | schemes
 
 /-- `\output{...}`: what to build, so a document needs no CLI options.
 `formats` and `profiles` take bare comma lists (`formats = pdf, html`,
@@ -16491,11 +16492,22 @@ private def applyOutput (ctx : Ctx) (o0 : OutputSpec) (src : String) (pos : Pos)
     else
       (o, say evs .E0321 s!"'{p}' is not a conformance profile"
         (help := s!"profiles: {String.intercalate ", " PdfContract.Profile.names}"))
+  -- A scheme name is one of the five; a later `schemes =` replaces the list.
+  let addScheme (o : OutputSpec) (evs : Array PEvent) (v : String) :
+      OutputSpec × Array PEvent :=
+    match Scheme.all.find? (·.name == v) with
+    | some sc =>
+      let l := o.schemes.getD #[]
+      ({ o with schemes := some (if l.contains sc then l else l.push sc) }, evs)
+    | none =>
+      (o, say evs .E0321 s!"'{v}' is not a colour scheme"
+        (help := s!"schemes: {String.intercalate ", " (Scheme.all.map (·.name))}"))
   let addListed (o : OutputSpec) (evs : Array PEvent) (l : OutputList) (v : String) :
       OutputSpec × Array PEvent :=
     match l with
     | .formats => addFormat o evs v
     | .profiles => addProfile o evs v
+    | .schemes => addScheme o evs v
   for entry in Decl.splitEntries src do
     match Decl.splitEntry entry with
     | some ("formats", v) =>
@@ -16506,6 +16518,11 @@ private def applyOutput (ctx : Ctx) (o0 : OutputSpec) (src : String) (pos : Pos)
     | some ("profiles", v) =>
       inList := some .profiles
       let (o', evs') := addProfile o evs v
+      o := o'
+      evs := evs'
+    | some ("schemes", v) =>
+      inList := some .schemes
+      let (o', evs') := addScheme { o with schemes := some #[] } evs v
       o := o'
       evs := evs'
     | some ("css", v) =>
@@ -16576,7 +16593,7 @@ private def applyOutput (ctx : Ctx) (o0 : OutputSpec) (src : String) (pos : Pos)
     | some (key, _) =>
       inList := none
       evs := evs.push (.say (Decl.unknownKey ctx.file "output" key
-        (["formats", "profiles", "css", "stylesheet", "md"] ++ OutputContract.facts) pos))
+        (["formats", "profiles", "schemes", "css", "stylesheet", "md"] ++ OutputContract.facts) pos))
     | none =>
       match inList with
       | some l =>

@@ -18,6 +18,7 @@ import Tests.InputDecoding
 import Tests.BibModel
 import Tests.PdfNative
 import Tests.SeedPalette
+import Tests.Schemes
 import scripts.Rung
 import Tests.MonoDefault
 
@@ -184,6 +185,9 @@ def registry : List AuditRow :=
    -- Seeds no palette can be generated from: the role that fails is named,
    -- and the seeds themselves stand as the page's colours.
    ⟨.W0306, .keep, .degraded, check% Tests.SeedPalette.failureChecks⟩,
+   -- A scheme the page offers that cannot carry a colour legibly is dropped
+   -- for that page alone, the colour named once: the right loss as it stands.
+   ⟨.W0308, .keep, .degraded, check% Tests.Schemes.dropChecks⟩,
    -- Unknown outline data, an absent result and a reservation mismatch
    -- are separate losses. The check mutates each guard's own input and
    -- holds the actual emitted diagnostics to the label and full source.

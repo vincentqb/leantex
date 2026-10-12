@@ -96,9 +96,16 @@ public def checks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit 
       (baseline "Before.").all (· < f.y) && (baseline "After.").all (· > f.y + f.h) &&
       (baseline "def f(x):").all fun y => f.y < y && y < f.y + f.h)
   let mCss := (HtmlDoc.emit {} mDoc).1
+  -- In print, as on the light screen, the panel paints the declared colour;
+  -- every other scheme carries it as a ground (`HtmlDoc.Config.listingStyle`).
+  let (mHead, mBody, _) := emitIn {} mDoc .print
+  let panels := (elemNodesList (· == "pre") #[] mBody.toList).filterMap fun n => match n with
+    | .elem _ attrs _ => (attrs.find? (·.1 == "style")).map (·.2)
+    | _ => none
   t "minted bgcolor: the HTML panel takes the colour, the body the page role"
-    (hasStr mCss "background: var(--ltx-c-bg, " && hasStr mCss "background: var(--ltx-bg);" &&
-      hasStr mCss s!"--ltx-c-bg: {HtmlDoc.cssColor grey};")
+    (panels.any (hasStr · s!"background: {HtmlDoc.cssColor grey}") &&
+      hasStr mCss "background: var(--ltx-bg);" &&
+      hasStr (treeCssList "" mHead.toList) s!"--ltx-c-bg: {HtmlDoc.cssColor grey};")
   let (pageDoc, _) := elabStr (article "\\definecolor{paper}{HTML}{F4F0E6}\n\\pagecolor{paper}\n"
     "Probe page.")
   t "author colours: \\pagecolor names the page role explicitly"

@@ -463,6 +463,10 @@ def layoutSuiteChecks (ref : IO.Ref (List String)) : IO Unit := do
   Tests.PaletteDefaults.yieldChecks ref
   Tests.PaletteDefaults.reseedChecks ref
   Tests.Schemes.checks ref
+  Tests.Schemes.dropChecks ref
+  Tests.Schemes.darkListingChecks ref
+  Tests.Schemes.printChecks ref oneFace
+  Tests.Schemes.forcedColorChecks ref
   Tests.ColorNames.xcolorCodeRoleChecks ref oneFace
   Tests.ColorNames.htmlDecimalChecks ref oneFace
   Tests.ColorNames.unreadKeyChecks ref

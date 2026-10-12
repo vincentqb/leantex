@@ -108,7 +108,7 @@ end
 
 /-- The paint of the listing's code, line by line. -/
 def htmlLines (doc : Ir.Doc) : Array (Array (Char × HtmlPaint)) :=
-  let (_, body, _) := HtmlDoc.emitTree {} doc
+  let (_, body, _) := emitIn {} doc .print
   let codes := ListingHighlight.codeNodesList #[] body.toList
   let chars := htmlPaintList {} #[] codes.toList
   chars.foldl (fun lines (c, p) =>

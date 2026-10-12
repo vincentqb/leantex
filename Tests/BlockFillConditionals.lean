@@ -4,6 +4,7 @@ public import LeanTex.Core.Font
 import LeanTex.Core.Elab
 import LeanTex.Core.Layout
 import LeanTex.Core.HtmlDoc
+import Tests.LightCss
 
 open LeanTex.Core
 
@@ -75,7 +76,9 @@ mutual
       Html.Node → Array HtmlInk
     | .text text => out.push { text, styles, inBody }
     | .elem _ attrs kids =>
-      let own := (attrs.find? (·.1 == "style")).map (·.2) |>.getD ""
+      let raw := (attrs.find? (·.1 == "style")).map (·.2) |>.getD ""
+      -- A style stated through its roles reads as the light screen reads it.
+      let own := lightStyle (styleVars raw ++ styleVars styles) raw
       let styles := styles ++ ";" ++ own
       let box := attrs.contains ("class", "block-body")
       let inBody := inBody || box

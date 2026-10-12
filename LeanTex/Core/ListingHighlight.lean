@@ -59,6 +59,58 @@ public def ofPygments (name : String) : Kind :=
       parts.tail.all part then ⟨".".intercalate parts.tail⟩
   else text
 
+/-- Pygments' short names for its standard types (pygments/token.py,
+`STANDARD_TYPES`), each beside the type's path below `Token`. -/
+private def standardClasses : List (String × String) :=
+  [("", ""), ("Text", ""), ("Text.Whitespace", "w"), ("Escape", "esc"), ("Error", "err"),
+   ("Other", "x"),
+   ("Keyword", "k"), ("Keyword.Constant", "kc"), ("Keyword.Declaration", "kd"),
+   ("Keyword.Namespace", "kn"), ("Keyword.Pseudo", "kp"), ("Keyword.Reserved", "kr"),
+   ("Keyword.Type", "kt"),
+   ("Name", "n"), ("Name.Attribute", "na"), ("Name.Builtin", "nb"),
+   ("Name.Builtin.Pseudo", "bp"), ("Name.Class", "nc"), ("Name.Constant", "no"),
+   ("Name.Decorator", "nd"), ("Name.Entity", "ni"), ("Name.Exception", "ne"),
+   ("Name.Function", "nf"), ("Name.Function.Magic", "fm"), ("Name.Property", "py"),
+   ("Name.Label", "nl"), ("Name.Namespace", "nn"), ("Name.Other", "nx"), ("Name.Tag", "nt"),
+   ("Name.Variable", "nv"), ("Name.Variable.Class", "vc"), ("Name.Variable.Global", "vg"),
+   ("Name.Variable.Instance", "vi"), ("Name.Variable.Magic", "vm"),
+   ("Literal", "l"), ("Literal.Date", "ld"),
+   ("Literal.String", "s"), ("Literal.String.Affix", "sa"), ("Literal.String.Backtick", "sb"),
+   ("Literal.String.Char", "sc"), ("Literal.String.Delimiter", "dl"),
+   ("Literal.String.Doc", "sd"), ("Literal.String.Double", "s2"),
+   ("Literal.String.Escape", "se"), ("Literal.String.Heredoc", "sh"),
+   ("Literal.String.Interpol", "si"), ("Literal.String.Other", "sx"),
+   ("Literal.String.Regex", "sr"), ("Literal.String.Single", "s1"),
+   ("Literal.String.Symbol", "ss"),
+   ("Literal.Number", "m"), ("Literal.Number.Bin", "mb"), ("Literal.Number.Float", "mf"),
+   ("Literal.Number.Hex", "mh"), ("Literal.Number.Integer", "mi"),
+   ("Literal.Number.Integer.Long", "il"), ("Literal.Number.Oct", "mo"),
+   ("Operator", "o"), ("Operator.Word", "ow"), ("Punctuation", "p"),
+   ("Punctuation.Marker", "pm"),
+   ("Comment", "c"), ("Comment.Hashbang", "ch"), ("Comment.Multiline", "cm"),
+   ("Comment.Preproc", "cp"), ("Comment.PreprocFile", "cpf"), ("Comment.Single", "c1"),
+   ("Comment.Special", "cs"),
+   ("Generic", "g"), ("Generic.Deleted", "gd"), ("Generic.Emph", "ge"), ("Generic.Error", "gr"),
+   ("Generic.Heading", "gh"), ("Generic.Inserted", "gi"), ("Generic.Output", "go"),
+   ("Generic.Prompt", "gp"), ("Generic.Strong", "gs"), ("Generic.Subheading", "gu"),
+   ("Generic.EmphStrong", "ges"), ("Generic.Traceback", "gt")]
+
+/-- **A type's Pygments class**, as Pygments' HTML formatter names it
+(pygments/formatters/html.py, `_get_ttype_class`): its standard short name,
+else its nearest standard ancestor's with each part below that ancestor
+appended after a `-` (`Keyword.Type.Extra` is `kt-Extra`); `""` for plain
+text. -/
+public def cssClass (k : Kind) : String :=
+  let parts := if k.path.isEmpty then [] else k.path.splitOn "."
+  let rec up : Nat → List String → String × List String
+    | 0, rest => ("", rest)
+    | m + 1, rest =>
+      match standardClasses.lookup (".".intercalate (parts.take (m + 1))) with
+      | some c => (c, rest)
+      | none => up m ((parts.getD m "") :: rest)
+  let (c, rest) := up parts.length []
+  c ++ String.join (rest.map ("-" ++ ·))
+
 end Kind
 
 public structure Token where

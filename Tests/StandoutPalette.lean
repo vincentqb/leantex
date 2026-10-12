@@ -48,18 +48,16 @@ private def variables (old : List (String × String)) (style : String) :
   (declarations style).foldl (fun vars (key, value) =>
     if key.startsWith "--" then (key, value) :: vars else vars) old
 
+/-- The light screen's `:root` table: the top-level rules alone, since the
+scheme blocks nested in `@supports` and `@media` restate other screens. -/
 private def rootVariables (head : Array Html.Node) : List (String × String) :=
-  head.foldl (fun vars node => match node with
-    | .style css => ((css.splitOn ":root {").drop 1).foldl
-        (fun vars block => variables vars ((block.splitOn "}").head!)) vars
-    | _ => vars) []
+  screenRootVars (head.foldl (fun css node => match node with
+    | .style s => css ++ s
+    | _ => css) "")
 
+/-- A colour as the light screen paints it (`lightValue`). -/
 private def cssColor (vars : List (String × String)) (value : String) : String :=
-  if value.startsWith "var(" && value.endsWith ")" then
-    match (((value.drop 4).dropEnd 1).toString.splitOn ",") with
-    | [key, fallback] => (vars.lookup key.trimAscii.toString).getD fallback.trimAscii.toString
-    | _ => value
-  else value
+  lightValue vars value
 
 mutual
   private def htmlPaint (vars : List (String × String)) (color : String)

@@ -399,7 +399,7 @@ def shellHighlightChecks (ref : IO.Ref (List String))
             Ir.verbatimLines text == expectedLines &&
             spec.langToken == some language && spec.style == style &&
             (spec.tokenLines text).map LeanTex.Core.ListingHighlight.lineText == expectedLines)
-        let (_, body, _) := HtmlDoc.emitTree {} doc
+        let (_, body, _) := emitIn {} doc .print
         let codes := ListingHighlight.codeNodesList #[] body.toList
         t s!"{label}: typed HTML preserves every source character"
           (codes.size == 1 && codes.all fun code => nodeTextOne "" code == source)

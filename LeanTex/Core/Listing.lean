@@ -45,19 +45,22 @@ public theorem paint_derived_exact (pal : Palette) (ground : Color) (style : Opt
     (hd : p.declared = false) : p.role = some (Ir.Role.ofCode k.role) :=
   resolve_derived_exact pal ground style k.role p h hd
 
-/-- A colour the rule derives keeps its value where it is legible. On
-another ground, the first whole-percent sRGB tint or shade that clears WCAG
-AA: the least change on that path, never applied to a colour the document
-declares or the listing's style states. The endpoints and percentage scale
-are xcolor's `Color.mix`, not new palette constants. -/
-public def defaultInk (ground seed : Color) : Color := Id.run do
-  if Contrast.contrastMilli seed ground ≥ Contrast.aaText then return seed
+/-- A colour the rule derives keeps its value where it reads at `req` on
+its ground. Elsewhere, the first whole-percent sRGB tint or shade that
+does: the least change on that path, never applied to a colour the
+document declares or the listing's style states. The endpoints and
+percentage scale are xcolor's `Color.mix`, not new palette constants. -/
+public def fitInk (req : Nat) (ground seed : Color) : Color := Id.run do
+  if Contrast.contrastMilli seed ground ≥ req then return seed
   let pole := if Contrast.contrastMilli Color.black ground >
       Contrast.contrastMilli Color.white ground then Color.black else Color.white
   for step in [1:101] do
     let c := seed.mix (100 - step) pole
-    if Contrast.contrastMilli c ground ≥ Contrast.aaText then return c
+    if Contrast.contrastMilli c ground ≥ req then return c
   return pole
+
+/-- A derived colour fitted to WCAG AA text on its ground (`fitInk`). -/
+public def defaultInk (ground seed : Color) : Color := fitInk Contrast.aaText ground seed
 
 /-- The colour a listing's plain text sets in on a ground the listing
 declares for itself (minted's `bgcolor`): the code ink the document declares

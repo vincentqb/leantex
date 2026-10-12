@@ -58,8 +58,9 @@ pending the resolver table that would make each install cheap to judge. -/
 @[expose] public def installedAt (th : Theme) (c : ClassColors) : Palette :=
   { th.realize c.depth with classColors := c }
 
-/-- The schemes a bundle ships in: the printed page and the light screen (a
-page declaring its colours ships one scheme, `HtmlDoc.dualScheme`). -/
+/-- The schemes a bundle's colours are declared for: the printed page and the
+light screen (`Ir.SchemeFrame.home`); every other scheme carries them, judged
+where a page ships it (`Contrast.schemeJudge`). -/
 @[expose] public def shipped : List Scheme := [.print, .light]
 
 /-- Every site a shipped bundle paints where one class installs it, in each

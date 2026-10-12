@@ -228,15 +228,20 @@ private def htmlChecks (ref : IO.Ref (List String)) : IO Unit := do
   let (doc, _) := Elab.run "block-geometry.tex" source
   let (head, body, _) := HtmlDoc.emitTree {} doc
   let (inline, sheet) := listStyles (#[], "") (head.toList ++ body.toList)
+  -- A block's paint reads its role: each style as the light screen reads it,
+  -- the roles' properties in scope (`lightStyle`).
+  let painted := (elemStylesListIn (screenRootVars sheet) #[] body.toList).map (·.2)
+  let box := lightStyle [] HtmlDoc.titledBoxPaint
   check ref "block geometry HTML: the boxes' insets are .75ex, reaching beyond the measure"
     (HtmlDoc.titledBoxPaint == "padding: 0.75ex; margin-inline: -0.75ex;" &&
       HtmlDoc.titledBodyBoxPaint == "padding: 0 0.75ex 0.75ex; margin-inline: -0.75ex;")
   check ref "block geometry HTML: a painted title is padded all round"
-    (inline.any fun s => hasStr s "background: #c9d6e8" && hasStr s HtmlDoc.titledBoxPaint)
+    (painted.any fun s => hasStr s "background: #c9d6e8" && hasStr s box)
   check ref "block geometry HTML: a painted body opens flush on its top"
-    (inline.any fun s => hasStr s "background: #e8eef6" && hasStr s HtmlDoc.titledBodyBoxPaint)
+    (painted.any fun s => hasStr s "background: #e8eef6" &&
+      hasStr s (lightStyle [] HtmlDoc.titledBodyBoxPaint))
   check ref "block geometry HTML: an untitled painted block keeps its band"
-    (inline.any (· == s!"background: #c9d6e8; {HtmlDoc.titledBoxPaint}"))
+    (painted.any (· == s!"background: #c9d6e8; {box}"))
   check ref "block geometry HTML: an untitled transparent block keeps its empty line"
     (inline.any (· == "min-height: 1lh;"))
   check ref "block geometry HTML: consecutive blocks stand apart"

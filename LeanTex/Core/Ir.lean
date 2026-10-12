@@ -15,6 +15,7 @@ public import LeanTex.Core.Oklab
 public import LeanTex.Core.SeedPalette
 public import LeanTex.Core.PaletteData
 import LeanTex.Core.Loop
+import LeanTex.Core.ContrastSolve
 import Init.Data.Nat.ToString
 public import Std.Data.HashMap
 
@@ -2674,11 +2675,22 @@ and the warnings reporting them are the same count. -/
 public theorem contract_accounts (us : Array Unmet) : (contractDiags us).size = us.size :=
   Array.size_map ..
 
+/-- The colour schemes a class's page offers where its document names none:
+every scheme, or its print, its own screen and that screen's more contrast. -/
+public inductive ClassSchemes where
+  | every
+  | own
+  deriving Repr, BEq, DecidableEq, Inhabited
+
 /-- What to build, as declared by `\output`: the document carries its own
 build intent, the way `\documentclass` already does. Names stay strings here
 so the core does not know the CLI's option types. -/
 public structure OutputSpec where
   formats : Array String := #[]
+  /-- The colour schemes the HTML page offers (`schemes = print, light,
+  dark`): an artifact declaration, as `formats` is; `none` takes the class's
+  (`ClassRecord.schemes`). -/
+  schemes : Option (Array Scheme) := none
   /-- The semantic contract the artifacts are held to (`OutputContract`);
   every key defaults to today's behaviour. -/
   contract : OutputContract := {}
@@ -9555,6 +9567,11 @@ public structure ClassRecord where
   standard classes' and the résumé's ink-only secondary text and unpainted
   verbatim unless the class says otherwise. -/
   colorRow : ClassRow := .latex
+  /-- The colour schemes the class's page offers where its document names
+  none (`\output{ schemes = … }`): a document every scheme; a deck, a poster
+  and a card, made to be shown as their author set them, their print, their
+  own screen and that screen's more contrast (`ClassSchemes`). -/
+  schemes : ClassSchemes := .every
   /-- Implied contract, checked against the shipped pages exactly as a
   declared `\assert` is; a document declaring an assertion of the same
   form is intent and takes control. The help beside each value is the
@@ -9660,10 +9677,12 @@ what to build the way `\documentclass` already carries the page model. -/
       preambleSans := true
       chrome := true
       groundDepth := .decks
-      colorRow := .stage }
+      colorRow := .stage
+      schemes := .own }
   | .card =>
     { model := .face
       colorRow := .stage
+      schemes := .own
       runningFurniture := false
       pagesBound := some .faces
       inkInArea := some "the margins are the print safe zone: ink past them risks \
@@ -9697,6 +9716,7 @@ distance (Legge & Bigelow 2011); declare \\assert{ text.xheight >= ... } to take
       fontSize := some posterFontSize
       lists := .beamer
       colorRow := .stage
+      schemes := .own
       preambleSans := true
       headline := true
       groundDepth := .decks
@@ -13925,7 +13945,275 @@ public theorem Palette.groundRun_text (pal : Palette) (g : Color) (x : Inline) :
     · rfl
   · rfl
 
+/-! ## A palette in every scheme
+
+A document declares its colours for its page's polarity, and they ship
+exactly in print and on that polarity's plain screen (`SchemeFrame.home`).
+Every other screen scheme carries them (`Palette.view`): to a page of the
+other polarity each declared colour is carried as its distance from the
+document's page (`ContrastSolve.reflect`, `adapt`) — an epoch's own page
+included, so a section set dark on a light page stands light on a dark
+one — and where the reader asks more contrast a colour that falls short of
+the scheme's gate moves as far as it must and no further, at its own hue
+and no more than its chroma. A generated palette is regenerated from its
+seeds as the scheme carries them, and a role nothing declares reads the
+class's seeds in that scheme. -/
+
+/-- Whether a palette's page is dark: its declared page reads more against
+white text than against black. An undeclared page is the class's white. -/
+@[expose] public def Palette.darkPage (pal : Palette) : Bool :=
+  match Design.declared? pal .page with
+  | some p => decide (Contrast.contrastMilli p Color.black < Contrast.contrastMilli p Color.white)
+  | none => false
+
+/-- The plain screen scheme of a palette's page's polarity. -/
+@[expose] public def Palette.homeScreen (pal : Palette) : Scheme :=
+  if pal.darkPage then .dark else .light
+
+/-- The palette a generated palette's seeds generate in a scheme: the
+generator's answer `PaletteData` keeps for a shipped bundle's seeds there,
+else generated as asked. -/
+public def Design.generatedIn (seeds : SeedPalette.Seeds) (d : GroundDepth) (s : Scheme) :
+    Option SeedPalette.Colors :=
+  match PaletteData.bundleGenerated.find? (fun e => e.1 == seeds && e.2.1 == d && e.2.2.1 == s) with
+  | some e => some e.2.2.2
+  | none => ((SeedPalette.generate seeds (seeds.targetsIn d s)).toOption).map (·.colors)
+
+/-- **A generated palette in a scheme**: its seeds carried to the other
+polarity where the scheme's flips the document's (`flip`,
+`SeedPalette.Seeds.carry`) — a dark section of a light page stands light on
+a dark screen and dark on a light one, however much contrast that asks —
+the ink moved to the gate where the scheme asks more contrast and it falls
+short there, and the palette regenerated at that scheme's targets; `none`
+where the seeds reach no legible tone there or generate nothing. -/
+public def Design.carrySeeds (st : SeedPalette.SeedState) (d : GroundDepth)
+    (s : Scheme) (flip : Bool) : Option SeedPalette.SeedState := do
+  let carried ← st.seeds.carry (st.seeds.dark != flip)
+  let ink ← if !s.more then some carried.ink
+    else ContrastSolve.realizeNearest (Contrast.requiredIn s .text) carried.paper carried.ink
+  let seeds := { carried with ink }
+  let colors ← Design.generatedIn seeds d s
+  pure { st with seeds, targets := seeds.targetsIn d s, colors }
+
+/-- What a document's colours are carried by in one scheme: the scheme,
+whether its polarity is the other one than the document's page's (`flip`),
+the document's page on its own screen and in the scheme, and whether its
+text is judged at a stage's size (`Need.atStage`). -/
+public structure SchemeFrame where
+  scheme : Scheme
+  flip : Bool
+  homePage : Color
+  page : Color
+  stage : Bool
+  deriving Repr, BEq, Inhabited
+
+/-- **A document's frame in a scheme**: its page on its own screen, and in a
+scheme of the other polarity the page its generated palette's seeds carry
+there, else the class's paper for that polarity over the document's own
+page, ink and accent (`SeedPalette.schemePaper`). -/
+public def Palette.frame (doc : Palette) (s : Scheme) (stage : Bool := false) : SchemeFrame :=
+  let homeS := doc.homeScreen
+  let homePage := (Design.at doc homeS .page).getD Color.white
+  let flip := s != .print && s.onDark != doc.darkPage
+  let own : SeedPalette.Seeds :=
+    { ink := (Design.at doc homeS .ink).getD Color.black, paper := homePage
+      accent := (Design.at doc homeS .accent).getD ClassColors.accent }
+  let page : Color := if !flip then homePage else
+    match doc.seeded.bind (Design.carrySeeds · doc.classColors.depth s true) with
+    | some st => st.seeds.paper
+    | none => SeedPalette.schemePaper own s.onDark
+  { scheme := s, flip, homePage, page, stage }
+
+/-- Whether a frame ships a palette as declared: in print, and on the
+document's own plain screen. -/
+@[expose] public def SchemeFrame.home (f : SchemeFrame) : Bool :=
+  f.scheme == .print || (!f.flip && !f.scheme.more)
+
+/-- **Print ships a document's palettes as declared**, whatever its page. -/
+public theorem Palette.frame_print_home (doc : Palette) (stage : Bool) :
+    (doc.frame .print stage).home = true := by
+  simp [Palette.frame, SchemeFrame.home]
+
+/-- **A declared ground as a scheme carries it**: itself where the scheme
+keeps the document's polarity, else its distance from the document's page
+carried to the scheme's (`ContrastSolve.reflect`), the document's page
+standing for the scheme's. -/
+public def SchemeFrame.ground (f : SchemeFrame) (c : Color) : Color :=
+  if !f.flip then c else if c == f.homePage then f.page else ContrastSolve.reflect f.homePage f.page c
+
+/-- A colour a scheme could not carry legibly: the name it is declared
+under and the role it was judged on. -/
+public structure Unrealized where
+  name : ColorRef
+  on : Role
+  deriving Repr, BEq, Inhabited
+
+/-- **One declared ink carried to a scheme**: to a page of the other
+polarity (`flip`), adapted at the gate on its ground (`ContrastSolve.adapt`);
+on the same polarity, where the reader asks more contrast, itself where it
+meets the gate there, else the nearest tone that does
+(`ContrastSolve.realizeNearest`); `none` where no tone of its hue reaches
+the gate. -/
+public def Design.carryInk (flip : Bool) (req : Nat) (homePage page ground c : Color) :
+    Option Color :=
+  if flip then ContrastSolve.adapt req homePage page c ground
+  else if req ≤ Contrast.contrastMilli c ground then some c
+  else ContrastSolve.realizeNearest req ground c
+
+/-- **A carried ink meets its gate, its hue held, its chroma no more than
+declared** (`_between`): what `carryInk` returns reads at the scheme's gate
+on its ground, and is the declared colour itself or the 8-bit colour of an
+Oklab tone at its own direction with no more than its chroma. -/
+public theorem Design.adapt_between {flip : Bool} {req : Nat} {homePage page ground c c' : Color}
+    (h : Design.carryInk flip req homePage page ground c = some c') :
+    req ≤ Contrast.contrastMilli c' ground ∧
+      (c' = c ∨ ∃ o : Oklab.Okl, o.a = (Oklab.labOf c).a ∧ o.b = (Oklab.labOf c).b ∧
+        o.f ≤ Oklab.fracOne ∧ c' = o.toColor) := by
+  unfold Design.carryInk at h
+  split at h
+  · obtain ⟨hm, hh⟩ := ContrastSolve.adapt_between h
+    exact ⟨hm, Or.inr hh⟩
+  · split at h
+    · cases h
+      exact ⟨‹_›, Or.inl rfl⟩
+    · exact ⟨ContrastSolve.realizeNearest_meets h, ContrastSolve.realize_hue_between h⟩
+
+/-- **A palette as a scheme ships it**, with the colours it could not carry.
+A frame that ships palettes as declared (`SchemeFrame.home`) ships it as it
+is. Otherwise a generated role takes its colour in the palette regenerated
+there (`Design.carrySeeds`); a declared ground or decoration — the
+document's page standing for the scheme's — is reflected to the scheme's
+page where the polarity flips; and a declared ink, an author colour read as
+text on the page, is carried at the scheme's gate on its ground as the view
+resolves it (`Design.carryInk`), at the medium's need — an author colour,
+which no role's ground places, only where the polarity flips. Where the reader asks
+more contrast and no tone of an ink's hue reaches the gate on its declared
+ground, that ground moves instead, as far as the gate asks at its own hue
+(`ContrastSolve.realizeNearest`), and every ink on it is judged there again:
+a bar's pale title on a mid-tone band takes a deeper band. -/
+public def Palette.view (pal : Palette) (f : SchemeFrame) : Palette × Array Unrealized :=
+  if f.home then (pal, #[]) else
+  let s := f.scheme
+  let carried : Option (Option SeedPalette.SeedState) :=
+    pal.seeded.map (Design.carrySeeds · pal.classColors.depth s f.flip)
+  let generated (r : Role) (c : Color) : Bool := pal.seeded.any fun st => Design.installed st r == some c
+  let inkLike (k : ColorRef) : Bool := match k with
+    | .role r => r.row.need.paired
+    | .color _ => true
+  -- Grounds and decorations first, so each ink is judged on its ground as
+  -- the view carries it.
+  let grounds : Array (ColorRef × Color) × Array Unrealized :=
+    pal.entries.foldl (fun (acc : Array (ColorRef × Color) × Array Unrealized) (k, c) =>
+      match k with
+      | .role r =>
+        if generated r c then
+          match carried.bind id |>.bind (Design.installed · r) with
+          | some c' => (acc.1.push (k, c'), acc.2)
+          | none => (acc.1.push (k, c), acc.2.push { name := k, on := r.row.ground.getD .page })
+        else if inkLike k then (acc.1.push (k, c), acc.2)
+        else (acc.1.push (k, f.ground c), acc.2)
+      | .color _ => (acc.1.push (k, c), acc.2)) (#[], #[])
+  let staged : Palette := { pal with entries := grounds.1, seeded := carried.bind id }
+  let inks : Array (ColorRef × Color) × Array Unrealized :=
+    (pal.entries.zip grounds.1).foldl (fun (acc : Array (ColorRef × Color) × Array Unrealized)
+        ((k, c), (_, c0)) =>
+      let need := match k with
+        | .role r => r.row.need
+        | .color _ => .text
+      let on : Role := match k with
+        | .role r => r.row.ground.getD .page
+        | .color _ => .page
+      let isGenerated := match k with
+        | .role r => generated r c
+        | .color _ => false
+      -- An author colour is no role: nothing says which ground it stands
+      -- on, so only a scheme that turns the page over carries it.
+      let author := match k with
+        | .color _ => true
+        | .role _ => false
+      if !inkLike k || isGenerated || (author && !f.flip) then (acc.1.push (k, c0), acc.2) else
+      let ground := (Design.at staged s on).getD f.page
+      let req := Contrast.requiredIn s (need.atStage f.stage)
+      match Design.carryInk f.flip req f.homePage f.page ground c with
+      | some c' => (acc.1.push (k, c'), acc.2)
+      | none => (acc.1.push (k, c0), acc.2.push { name := k, on })) (#[], grounds.2)
+  let out : Palette := { staged with entries := inks.1 }
+  if !s.more || inks.2.isEmpty then (out, inks.2) else
+  -- Where the reader asks more contrast and no tone of an ink's hue reaches
+  -- the gate on its ground, the declared ground moves instead, as far as the
+  -- gate asks at its own hue; each ink on a moved ground is judged there.
+  let reqOf (k : ColorRef) : Nat := Contrast.requiredIn s ((match k with
+    | .role r => r.row.need
+    | .color _ => .text).atStage f.stage)
+  let onOf (k : ColorRef) : Role := match k with
+    | .role r => r.row.ground.getD .page
+    | .color _ => .page
+  let moves : Array (Role × Color) := inks.2.foldl (fun acc u =>
+    if acc.any (·.1 == u.on) then acc else
+    match Design.declared? out u.on, out.lookup u.name with
+    | some g, some c =>
+      match ContrastSolve.realizeNearest (reqOf u.name) c g with
+      | some g' => acc.push (u.on, g')
+      | none => acc
+    | _, _ => acc) #[]
+  let moved : Palette := { out with entries := out.entries.map fun (k, c) =>
+    match k with
+    | .role r => ((moves.find? (·.1 == r)).map fun (_, g) => (k, g)).getD (k, c)
+    | .color _ => (k, c) }
+  let rejudged := moved.entries.filterMap fun (k, c) =>
+    let on := onOf k
+    if !(moves.any (·.1 == on)) || !(match k with
+        | .role r => r.row.need.paired
+        | .color _ => true) then none else
+    (Design.at moved s on).bind fun g =>
+      if reqOf k ≤ Contrast.contrastMilli c g then none else some { name := k, on }
+  (moved, (inks.2.filter fun u => !(moves.any (·.1 == u.on))) ++ rejudged)
+
+/-- **A frame that ships palettes as declared ships each as it is**: in
+print and on the document's own screen the view is the palette, and nothing
+is left uncarried. -/
+public theorem Palette.view_home (pal : Palette) (f : SchemeFrame) (h : f.home = true) :
+    pal.view f = (pal, #[]) := by
+  unfold Palette.view
+  simp [h]
+
+/-- A role's colour in a scheme as the scheme ships it: the resolver over
+the palette's view in the document's frame there (`Palette.view`). -/
+public def Design.inScheme (pal : Palette) (f : SchemeFrame) (r : Role) : Option Color :=
+  Design.at (pal.view f).1 f.scheme r
+
+/-- **Declared colours ship exactly in print and on their own screen**: in a
+document whose page is light, every palette it holds — its own and every
+epoch's — resolves each role it declares to that colour in print and in the
+light scheme, as declared: no scheme the colours were written for repaints
+them. -/
+public theorem Design.light_print_exact (doc pal : Palette) (r : Role) (c : Color) (stage : Bool)
+    (hd : doc.darkPage = false) (h : Design.declared? pal r = some c) :
+    Design.inScheme pal (doc.frame .print stage) r = some c ∧
+      Design.inScheme pal (doc.frame .light stage) r = some c := by
+  have hp : (doc.frame .print stage).home = true := Palette.frame_print_home doc stage
+  have hl : (doc.frame .light stage).home = true := by
+    simp [Palette.frame, SchemeFrame.home, hd, Scheme.onDark, Scheme.more]
+  have sp : (doc.frame .print stage).scheme = .print := by simp [Palette.frame]
+  have sl : (doc.frame .light stage).scheme = .light := by simp [Palette.frame]
+  unfold Design.inScheme
+  rw [Palette.view_home pal _ hp, Palette.view_home pal _ hl, sp, sl]
+  exact ⟨Design.at_declared pal .print r c h, Design.at_declared pal .light r c h⟩
+
 end DesignResolve
+
+/-- **The colour schemes a document asks its page to offer**: its
+`\output{ schemes = … }`, else its class's (`ClassRecord.schemes`) — every
+scheme, or print, the screen of its page's own polarity and that screen's
+more contrast. -/
+public def Doc.requestedSchemes (doc : Doc) : List Scheme :=
+  match doc.output.schemes with
+  | some l => l.toList
+  | none => match doc.docClass.record.schemes with
+    | .every => Scheme.all
+    | .own =>
+      let home := doc.palette.homeScreen
+      [.print, home, if home == .dark then .darkMore else .lightMore]
 
 /-- The body's declaration projected from the resolved design. -/
 @[expose] public def Design.titledBody (d : Design) : TitledKind → SurfaceLook

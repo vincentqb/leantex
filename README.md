@@ -160,11 +160,33 @@ document leaves undeclared is declared as the role it defaults to, so
 overriding `--ltx-fg` also moves the code and section-title ink that follow
 it. A paint the palette in force decides for one element — a block's title
 band and body, a listing's panel, a standout frame's footline, an overlay's
-covered ink, a code colour the engine derives where nothing declares its
-role — is stated on the element as its value. The previous names (`--bg`, `--fg`, `--muted`,
+covered ink — is stated on the element, through its role's property where
+the page declares one; a code colour is its code role's property, which the
+page states for a listing on its own code ground. The previous names (`--bg`, `--fg`, `--muted`,
 `--ink`, `--surface`, `--accent`, `--tint`, `--rule` and each colour's own
 name, where the stylesheet reads no property of that name) remain readable for
 one release; override the `--ltx-*` property instead.
+
+A web page offers its reader's colour schemes. A document's page ships
+print, the light and dark screens, and each screen's increased contrast
+(`prefers-contrast: more`); a deck, a poster and a card ship print, the
+screen of their page's polarity and its increased contrast.
+`\output{ schemes = print, light }` names them instead, from `print`,
+`light`, `dark`, `lightMore` and `darkMore`. The colours a document declares
+ship exactly in print and on the screen of their page's polarity. Every
+other scheme carries them: on the other polarity each keeps its distance
+from the page and its hue, and where the reader asks more contrast a colour
+that falls short of the gate there (7:1 for text, 4.5:1 for large text and
+edges) moves only as far as it must — or, where no tone of its hue can, the
+ground under it does. Generated colours are generated again
+for each scheme. A scheme that cannot carry a colour legibly is dropped from
+that page alone, and the build names the colour once. Under
+`forced-colors: active`, frame-title bars, standout frames and block title
+bands keep a border, and on a dark screen images that see through and
+pictures stand on a light plate. Highlighted code ships in every scheme:
+each token wears its Pygments type's class behind `tok-` (`tok-k`,
+`tok-s2`), whose rule reads its code role's property, and a listing whose
+colours differ from the page's states them on its own box.
 
 A palette can be generated from three seeds, an ink, a paper and one accent:
 

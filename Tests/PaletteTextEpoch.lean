@@ -44,21 +44,30 @@ private structure Ink where
 -- Inspect inherited concrete paint in the typed artifact. A custom property
 -- alone does not repaint an inherited CSS color; the browser witness checks
 -- that distinction against the same layout runs.
+-- A colour an element states through its roles is read as the light screen
+-- reads it: its `var()` chain through the custom properties in scope and any
+-- `light-dark()` pair on its light side (`lightValue`).
 mutual
-  private def htmlInks (color ownerColor : Option String) (out : Array Ink) :
-      List Html.Node → Array Ink
+  private def htmlInksIn (vars : List (String × String)) (color ownerColor : Option String)
+      (out : Array Ink) : List Html.Node → Array Ink
     | [] => out
-    | node :: rest => htmlInks color ownerColor (htmlInk color ownerColor out node) rest
-  private def htmlInk (color ownerColor : Option String) (out : Array Ink) :
-      Html.Node → Array Ink
+    | node :: rest =>
+      htmlInksIn vars color ownerColor (htmlInkIn vars color ownerColor out node) rest
+  private def htmlInkIn (vars : List (String × String)) (color ownerColor : Option String)
+      (out : Array Ink) : Html.Node → Array Ink
     | .text text => out.push { text := text.trimAscii.toString, color, ownerColor }
     | .elem tag attrs kids =>
       let style := (attrs.find? (·.1 == "style")).map (·.2) |>.getD ""
-      let own := property style "color"
+      let vars := styleVars style ++ vars
+      let own := (property style "color").map (lightValue vars)
       let ownerColor := if ["p", "li", "dt", "dd"].contains tag then own else ownerColor
-      htmlInks (own.or color) ownerColor out kids.toList
+      htmlInksIn vars (own.or color) ownerColor out kids.toList
     | .style _ | .script .. => out
 end
+
+private def htmlInks (color ownerColor : Option String) (out : Array Ink)
+    (nodes : List Html.Node) : Array Ink :=
+  htmlInksIn [] color ownerColor out nodes
 
 private def epochLineForeground (out : Layout.Out) (marker : String) : Option Ir.Color :=
   let lines := out.pages.flatMap (·.lines) |>.filter fun line =>
@@ -157,8 +166,11 @@ def paletteTextEpochChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) :
     let name := if body then "body exit" else "flow"
     let doc := document body
     let out := Layout.run (Layout.Geom.ofPage doc.page) fonts none doc
-    let (_, nodes, _) := HtmlDoc.emitTree { fonts := some fonts } doc
-    let leaves := htmlInks none none #[] nodes.toList
+    let (head, nodes, _) := HtmlDoc.emitTree { fonts := some fonts } doc
+    let css := head.foldl (init := "") fun acc n => match n with
+      | Html.Node.style s => acc ++ s
+      | _ => acc
+    let leaves := htmlInksIn (screenRootVars css) none none #[] nodes.toList
     for (marker, expected, texts) in [
         ("AFTER", brown, ["AFTER", "𝑥"]),
         ("CODEIN", brown, ["CODEIN"]),
@@ -169,11 +181,17 @@ def paletteTextEpochChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) :
       let pdf := epochLineForeground out marker
       check ref s!"palette text epoch/{name}: layout {marker}"
         (pdf == some expected)
+      -- An erased foreground repaints the shared default: the PDF's printed
+      -- ink, and on the light screen the screen's own, as every undeclared
+      -- word there reads.
+      let screen := if expected == Ir.Color.black then
+          Ir.Design.at { classColors := doc.palette.classColors } .light .ink
+        else pdf
       for text in texts do
         let ink := leaves.filter (·.text == text)
         check ref s!"palette text epoch/{name}: HTML {text} agrees with layout"
           (ink.size == 1 && pdf.isSome && ink.all fun leaf =>
-            leaf.color == pdf.map (·.css))
+            leaf.color == screen.map (·.css))
     let before := if body then "#004080" else "#101010"
     check ref s!"palette text epoch/{name}: earlier layout ink survives"
       ((epochLineForeground out "BEFORE").map (·.css) == some before)

@@ -182,7 +182,7 @@ def listingRunChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Un
       | failures ref s!"listing runs {styleName}: no listing"
     let tokens := (spec.tokenLines src).flatten
     let brushOf (k : ListingHighlight.Kind) := Listing.brush doc.palette none covered style k
-    let (_, body, _) := HtmlDoc.emitTree {} doc
+    let (_, body, _) := emitIn {} doc .print
     let codes := ListingHighlight.codeNodesList #[] body.toList
     let paints := (ListingHighlight.scalarPaintList none false false #[] codes.toList).filter
       (·.1 != '\n')
@@ -251,8 +251,8 @@ def listingFriendlyChecks (ref : IO.Ref (List String)) : IO Unit := do
     defaultOut.pages defaultDoc.info)
   let friendlyPdf := pdfText (Pdf.write (Layout.Geom.ofPage friendlyDoc.page) fonts
     friendlyOut.pages friendlyDoc.info)
-  let (_, defaultHtml, _) := HtmlDoc.emitTree {} defaultDoc
-  let (_, friendlyHtml, _) := HtmlDoc.emitTree {} friendlyDoc
+  let (_, defaultHtml, _) := emitIn {} defaultDoc .print
+  let (_, friendlyHtml, _) := emitIn {} friendlyDoc .print
   let defaultSpans := ListingHighlight.coloredSpansList #[] defaultHtml.toList
   let friendlySpans := ListingHighlight.coloredSpansList #[] friendlyHtml.toList
   let keyword : Ir.Color := { r := 0, g := 112, b := 32 }
@@ -291,7 +291,7 @@ def listingFriendlyChecks (ref : IO.Ref (List String)) : IO Unit := do
         #[keyword, defaultKeyword])] do
     let (doc, ds) := elabStr (dvDoc pre body)
     let out := layoutOf fonts doc
-    let (_, html, _) := HtmlDoc.emitTree {} doc
+    let (_, html, _) := emitIn {} doc .print
     let spans := ListingHighlight.coloredSpansList #[] html.toList
     let keywordSpans := spans.filter (·.1 == "def")
     let actual := (ListingHighlight.glyphColors out).filterMap fun (c, ink) =>
@@ -393,7 +393,10 @@ def listingPaletteEpochChecks (ref : IO.Ref (List String))
       let pdf := pdfText (Pdf.write geom fonts out.pages doc.info)
       t s!"listing epoch {frame}/{name}: emitted PDF paints the classified ink"
         (bytesContain pdf fg.pdfFill && bytesContain pdf keyword.pdfFill)
-      let (_, html, _) := HtmlDoc.emitTree {} doc
+      -- The PDF is the printed page: the typed tree as print reads it. A
+      -- deck whose page is dark ships its dark screen, whose own class
+      -- defaults stand where an epoch removes its colours.
+      let (_, html, _) := emitIn {} doc .print
       let pre := elemAttrsList (· == "pre") #[] html.toList
       let code := ListingHighlight.codeNodesList #[] html.toList
       let spans := ListingHighlight.coloredSpansList #[] code.toList
@@ -449,7 +452,7 @@ def listingPaletteContinuationChecks (ref : IO.Ref (List String))
          glyphs.any (fun (c, color) => c == 'v' && color == design.fg) &&
          glyphs.all (fun (_, color) =>
            Contrast.contrastMilli color (ground.getD design.bg) ≥ Contrast.aaText))
-    let (_, html, _) := HtmlDoc.emitTree {} doc
+    let (_, html, _) := emitIn {} doc .print
     let pre := elemAttrsList (· == "pre") #[] html.toList
     let codes := ListingHighlight.codeNodesList #[] html.toList
     t s!"listing epoch {name}: typed HTML keeps the outgoing palette across frames"
@@ -466,7 +469,7 @@ def listingPaletteContinuationChecks (ref : IO.Ref (List String))
       .frame #[] standout valign false
         #[.center #[.setPalette dark, code "return value"], .note #[.setPalette light]],
       frame none] }
-    let (_, html, _) := HtmlDoc.emitTree {} nested
+    let (_, html, _) := emitIn {} nested .print
     let pre := elemAttrsList (· == "pre") #[] html.toList
     t s!"listing epoch {name}: nested palette reaches the next frame, notes do not"
       (pre.size == 2 && pre.all fun (_, attrs) =>
@@ -534,7 +537,7 @@ standoutfg=#FFFFFF,standoutbg=#000000}"
   let (continued, _) := elabStr (dvDeck preamble
     ("\\begin{frame}\\palette{fg=#FFFFFF,bg=#000000}" ++ code ++
       "\\end{frame}\\begin{frame}" ++ code ++ "\\end{frame}"))
-  let (_, html, _) := HtmlDoc.emitTree {} continued
+  let (_, html, _) := emitIn {} continued .print
   let pre := elemAttrsList (· == "pre") #[] html.toList
   t "listing epoch source: both frames ship the declared dark listing pair"
     (pre.size == 2 && pre.all fun (_, attrs) =>
@@ -543,7 +546,7 @@ standoutfg=#FFFFFF,standoutbg=#000000}"
   let (declared, ds) := elabStr (dvDeck preamble
     ("\\begin{frame}[standout]\\palette{bg=#FFFFFF,codekeyword=#AAAAAA}" ++
       code ++ "\\end{frame}"))
-  let (_, html, _) := HtmlDoc.emitTree {} declared
+  let (_, html, _) := emitIn {} declared .print
   let codes := ListingHighlight.codeNodesList #[] html.toList
   t "listing audit source: the actual audit reports the role's pairing on the page"
     (ds.any fun d => d.code == "W0315" && hasStr d.message "'codekeyword'" &&
@@ -580,7 +583,7 @@ def listingRoleEpochChecks (ref : IO.Ref (List String))
     let pdf := pdfText (Pdf.write geom fonts out.pages doc.info)
     t s!"role epoch {name}: emitted PDF paints the audited ink"
       (!inks.isEmpty && inks.all fun ink => bytesContain pdf ink.pdfFill)
-    let (_, html, _) := HtmlDoc.emitTree {} doc
+    let (_, html, _) := emitIn {} doc .print
     let spans := (ListingHighlight.coloredSpansList #[] html.toList).filter (·.1 == "sample")
     t s!"role epoch {name}: typed HTML carries the audited ink"
       (spans.size == inks.size && (spans.zip inks).all fun ((_, style), ink) =>
@@ -655,7 +658,7 @@ def listingHighlightChecks (ref : IO.Ref (List String)) : IO Unit := do
   for (language, source) in [("python", ListingHighlight.pythonSource),
       ("lean4", ListingHighlight.leanSource)] do
     let doc := ListingHighlight.sourceDoc language source
-    let (_, body, _) := HtmlDoc.emitTree {} doc
+    let (_, body, _) := emitIn {} doc .print
     let codes := ListingHighlight.codeNodesList #[] body.toList
     t s!"highlight {language}: typed HTML preserves code text and whitespace"
       (codes.size == 1 && codes.any fun n => nodeTextOne "" n == source)
@@ -690,13 +693,13 @@ def listingHighlightChecks (ref : IO.Ref (List String)) : IO Unit := do
         "\n\\end{lstlisting}"),
       "```python\n" ++ code ++ "\n```"] do
     let doc := if src.startsWith "```" then (elabMd src).1 else (elabStr src).1
-    let (_, body, _) := HtmlDoc.emitTree {} doc
+    let (_, body, _) := emitIn {} doc .print
     let codes := ListingHighlight.codeNodesList #[] body.toList
     t "highlight listing surfaces: literal code survives numbered listings and markdown"
       (codes.size == 1 && nodeTextOne "" codes[0]! == code &&
        !(ListingHighlight.coloredSpansList #[] codes.toList).isEmpty)
   let plain := ListingHighlight.sourceDoc "unknown-language" code
-  let (_, body, _) := HtmlDoc.emitTree {} plain
+  let (_, body, _) := emitIn {} plain .print
   let codes := ListingHighlight.codeNodesList #[] body.toList
   t "highlight unknown language: exact plain text, no invented grammar"
     (codes.size == 1 && nodeTextOne "" codes[0]! == code &&
@@ -708,7 +711,7 @@ def listingHighlightChecks (ref : IO.Ref (List String)) : IO Unit := do
         ("\\begin{frame}[standout]\n\\begin{minted}{python}\n" ++ code ++
          "\n\\end{minted}\n\\end{frame}"))).1 with palette := deckBundle theme }
     let ground := (Ir.Design.ofDoc standout).standout.bg
-    let (_, html, _) := HtmlDoc.emitTree {} standout
+    let (_, html, _) := emitIn {} standout .print
     let spans := ListingHighlight.coloredSpansList #[]
       (ListingHighlight.codeNodesList #[] html.toList).toList
     let glyphs := ListingHighlight.glyphColors (layoutOf fonts standout)
@@ -736,14 +739,15 @@ def listingHighlightChecks (ref : IO.Ref (List String)) : IO Unit := do
     let coveredDoc := { doc with
       body := coveredBody
       palette := doc.palette.declare (.role .covered) Ir.Color.black }
-    let (_, coveredHtml, _) := HtmlDoc.emitTree {} coveredDoc
+    let (_, coveredHtml, _) := emitIn {} coveredDoc .print
     let coveredSpans := ListingHighlight.coloredSpansList #[]
       (ListingHighlight.codeNodesList #[] coveredHtml.toList).toList
     let literal := (Listing.ink coveredDoc.palette none .string).getD Ir.Color.black
     let quiet := (Ir.Design.ofDoc coveredDoc).cover.of literal
     t s!"highlight overlay: {theme.name} typed HTML keeps literal per-token cover"
       (coveredSpans.any (fun (text, style) =>
-         text.trimAscii.toString == "\"x\"" && style == s!"color: {HtmlDoc.cssColor quiet}") &&
+         text.trimAscii.toString == "\"x\"" &&
+           lightStyle [] style == s!"color: {HtmlDoc.cssColor quiet}") &&
        coveredSpans.all (fun (_, style) => !hasStr style "var(--covered"))
   let badColor := "\\palette{codekeyword=#FFFFFF}"
   let (_, diagnostics) := elabStr (dvDoc badColor

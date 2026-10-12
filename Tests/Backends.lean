@@ -1417,8 +1417,10 @@ def deckCssChecks (ref : IO.Ref (List String)) : IO Unit := do
   -- long, a frame's bottom safe area is room its content may take before
   -- it continues, the sheet a continuation leaves unfilled keeps the
   -- stage's ground, and the card the handout drew is gone.
+  -- Every print block the page carries: the stage's, and the colour
+  -- schemes' print values.
   let printOf (page : String) : String :=
-    (((page.splitOn "@media print {").getD 1 "").splitOn "\n}\n").headD ""
+    String.join (((page.splitOn "@media print {").drop 1).map fun b => (b.splitOn "\n}\n").headD "")
   let stageOf (page : String) : String :=
     (((page.splitOn "@media screen, print {").getD 1 "").splitOn "@media screen {").headD ""
   t "the deck prints its stages, one per sheet, on the PDF's page"
