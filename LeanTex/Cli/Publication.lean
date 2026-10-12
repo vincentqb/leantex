@@ -17,12 +17,18 @@ namespace LeanTex.Cli.Publication
 
 open LeanTex.Core
 
+/-- Where a declared HTML resource named `name` is read, for a document at
+`file`: beside the document unless absolute; none for a name that is no
+local file. -/
+public def localPath? (file name : String) : Option System.FilePath :=
+  if name.isEmpty || name.startsWith "//" || name.contains ':' then none
+  else
+    let path := System.FilePath.mk name
+    some (if path.isAbsolute then path else (System.FilePath.mk file).parent.getD "." / path)
+
 private def htmlLocalBytes (file name : String) : IO (Except String ByteArray) := do
-  if name.isEmpty || name.startsWith "//" || name.contains ':' then
-    return .error "a declared HTML resource must name a local file"
-  let path := System.FilePath.mk name
-  let path := if path.isAbsolute then path else
-    (System.FilePath.mk file).parent.getD "." / path
+  let some path := localPath? file name
+    | return .error "a declared HTML resource must name a local file"
   try return .ok (← IO.FS.readBinFile path)
   catch _ => return .error "a declared HTML resource could not be read"
 

@@ -40,6 +40,11 @@ public def coldPicture (picDir : System.FilePath) (tool key : String)
   | some bytes => return .ok bytes
   | none => return .error (DriverDiag.boundaryToolUnavailable tool span why)
 
+/-- Where a request's input spelled `cand` is read: against the document's
+directory `dir`, unless absolute. -/
+public def inputPath (dir cand : String) : String :=
+  if cand.startsWith "/" then cand else World.ToolPath.join dir cand
+
 /-- The first of a path's graphicx candidates that stands, read once, by the
 path it spells, against the document's directory `dir` unless absolute;
 none standing leaves `out` as it was, for the tool to name. -/
@@ -47,7 +52,7 @@ public def firstInput (dir : String) (out : Array (String × ByteArray)) :
     List String → World.Prog (Array (String × ByteArray))
   | [] => .pure out
   | cand :: rest =>
-    let path := if cand.startsWith "/" then cand else World.ToolPath.join dir cand
+    let path := inputPath dir cand
     .ask (.stat path) fun
       | .ok _ => .ask (.readFile path) fun
         | .ok bytes => .pure (out.push (cand, bytes))

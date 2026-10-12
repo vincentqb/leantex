@@ -97,6 +97,99 @@ def publicationWriteChecks (ref : IO.Ref (List String)) : IO Unit := do
       (blocked.exitCode != 0 && hasStr said "E0004" && hasStr said "blocker/out.pdf" &&
         !hasStr said "uncaught exception")
 
+/-- **No artifact is written over a file the build reads.** A destination
+that is the document, another name of it — a link to it, a link to the
+directory above it, a hard link — or a file the document reads — an
+include, its bibliography, an image, its face, its stylesheet — is E0005
+before anything is written, whatever the run accepts: every input keeps its
+bytes and no artifact appears. A distinct destination still publishes. The
+defect: `leantex doc.md -o doc.md` replaced the source with its markdown
+twin, and `\output{ md = "doc.tex" }` replaced the source it was built from. -/
+def publicationInputChecks (ref : IO.Ref (List String)) : IO Unit := do
+  let binary ← IO.FS.realPath ".lake/build/bin/leantex"
+  let font ← IO.FS.realPath "testdata/corpus/fonts/OpenSans-Regular.ttf"
+  let png ← IO.FS.realPath "testdata/corpus/rects.png"
+  IO.FS.withTempDir fun root => do
+    let root ← IO.FS.realPath root
+    let tex (preamble body : String) : String :=
+      "\\documentclass{article}\n" ++ preamble ++ "\\begin{document}\n" ++ body ++
+        "\n\\end{document}\n"
+    -- The cases: the source and the files beside it, the arguments, the
+    -- files the build reads that must keep their bytes, and the links to make.
+    -- A source whose markdown twin differs from it, so a write over it shows.
+    let note := "# An invented note\n\nA *probe* line.\n\n* one\n* two\n"
+    -- The cases: the source and the files beside it, the arguments, the
+    -- files the build reads that must keep their bytes, and the links to make.
+    let cases : List (String × List (String × String) × Array String × List String ×
+        List (String × String × Bool)) := [
+      ("a markdown source written onto itself", [("doc.md", note)],
+        #["doc.md", "-o", "doc.md"], ["doc.md"], []),
+      ("a twin named after its own source",
+        [("doc.tex", tex "\\output{ formats = pdf, md, md = \"doc.tex\" }\n" "An invented probe.")],
+        #["doc.tex"], ["doc.tex"], []),
+      ("a link to the source", [("doc.md", note)],
+        #["doc.md", "-o", "alias.md"], ["doc.md"], [("doc.md", "alias.md", false)]),
+      ("a link to the source's directory", [("doc.md", note)],
+        #["doc.md", "-o", "up/doc.md"], ["doc.md"], [(".", "up", false)]),
+      ("a hard link of the source", [("doc.md", note)],
+        #["doc.md", "-o", "hard.md"], ["doc.md"], [("doc.md", "hard.md", true)]),
+      ("an include",
+        [("doc.tex", tex "\\output{ formats = md, md = \"chapter.tex\" }\n" "\\input{chapter}"),
+         ("chapter.tex", "An invented \\emph{chapter}.\n")],
+        #["doc.tex"], ["doc.tex", "chapter.tex"], []),
+      ("a bibliography",
+        [("doc.tex", tex "\\output{ formats = md, md = \"refs.bib\" }\n"
+            "An invented claim~\\cite{probe}.\n\\bibliographystyle{plain}\n\\bibliography{refs}"),
+         ("refs.bib", "@misc{probe, title = {An Invented Title}, year = {2001}}\n")],
+        #["doc.tex", "--best-effort"], ["refs.bib"], []),
+      ("an image",
+        [("doc.tex", tex "\\output{ formats = md, md = \"figure.png\" }\n"
+            "\\includegraphics[alt={Invented rectangles}]{figure}")],
+        #["doc.tex"], ["figure.png"], []),
+      ("the face the build sets in",
+        [("doc.tex", tex "\\output{ formats = md, md = \"face.ttf\" }\n" "An invented probe.")],
+        #["doc.tex"], ["face.ttf"], []),
+      ("the declared stylesheet",
+        [("doc.tex", tex "\\output{ formats = html, md, stylesheet = \"site.css\", md = \"site.css\" }\n"
+            "An invented probe."),
+         ("site.css", "p { color: rgb(1, 2, 3) }\n")],
+        #["doc.tex"], ["site.css"], [])]
+    for (name, files, args, guarded, links) in cases do
+      let dir := root / (name.replace " " "-").replace "'" ""
+      IO.FS.createDirAll dir
+      for (file, text) in files do IO.FS.writeFile (dir / file) text
+      IO.FS.writeBinFile (dir / "figure.png") (← IO.FS.readBinFile png)
+      IO.FS.writeBinFile (dir / "face.ttf") (← IO.FS.readBinFile font)
+      for (target, link, hard) in links do
+        if hard then IO.FS.hardLink (dir / target) (dir / link)
+        else symlink (if target == "." then dir else dir / target) (dir / link)
+      let before ← (← dir.readDir).mapM fun e => do
+        return (e.fileName, ← if ← e.path.isDir then pure ByteArray.empty else IO.FS.readBinFile e.path)
+      let run ← IO.Process.output {
+        cmd := binary.toString, cwd := some dir, args := args ++ #["--porcelain"],
+        env := #[("LEANTEX_FONT", some (dir / "face.ttf").toString),
+          ("XDG_CACHE_HOME", some (root / "cache").toString)] }
+      let after ← (← dir.readDir).mapM fun e => do
+        return (e.fileName, ← if ← e.path.isDir then pure ByteArray.empty else IO.FS.readBinFile e.path)
+      let refused := run.stdout.splitOn "\n" |>.filter (hasStr · "\"E0005\"")
+      check ref s!"publication inputs: {name} is refused as E0005 ({run.exitCode}): {run.stdout}{run.stderr}"
+        (run.exitCode != 0 && refused.length == 1)
+      check ref s!"publication inputs: {name} leaves every file as it was"
+        (guarded.all (fun g => before.any (·.1 == g)) &&
+          after.map (·.1) == before.map (·.1) && after.toList.all (before.contains ·))
+    -- A destination that is no input still publishes, beside a source
+    -- whose twin would differ from it.
+    let dir := root / "distinct"
+    IO.FS.createDirAll dir
+    IO.FS.writeFile (dir / "doc.md") note
+    let run ← IO.Process.output {
+      cmd := binary.toString, cwd := some dir, args := #["doc.md", "-o", "twin.md"],
+      env := #[("LEANTEX_FONT", some font.toString),
+        ("XDG_CACHE_HOME", some (root / "cache").toString)] }
+    check ref s!"publication inputs: a distinct destination publishes ({run.exitCode}): {run.stderr}"
+      (run.exitCode == 0 && (← (dir / "twin.md").pathExists) &&
+        (← IO.FS.readFile (dir / "doc.md")) == note)
+
 /-- Different formats must reach independent files. The CLI must reject a
 collision before any write, including existing-file and directory aliases;
 accepting diagnostics cannot authorize overwriting a different artifact. -/

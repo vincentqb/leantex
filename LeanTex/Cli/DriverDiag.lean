@@ -3,6 +3,7 @@ module
 public import LeanTex.Core.Diag
 public import LeanTex.Core.FontDb
 public import LeanTex.Core.PdfWriteContract
+public import LeanTex.Cli.PublicationPaths
 import LeanTex.Core.PdfRead
 
 /-! The driver's diagnostics, as pure builders: every message the CLI can
@@ -42,6 +43,23 @@ public def outputUnwritable (path err : String) : Diag :=
 public def outputPathsConflict (detail : String) : Diag :=
   Diag.of .E0003 s!"cannot publish output: {detail}"
     (help := "choose separate files with -o and \\output{ md = ... }; use destinations without hard links")
+
+/-- E0005: an artifact would be written over a file the build reads — the
+document, an include, its bibliography, an image, a font, a declared
+stylesheet or icon — so nothing is written. The subject is the destination. -/
+public def outputOverwritesInput : PublicationPaths.Overwrite → Diag
+  | .same format dest input => overwrite dest
+    s!"the {format} destination '{dest}' is '{input}', which this build reads"
+  | .linked format dest input => overwrite dest
+    s!"the {format} destination '{dest}' may be a hard link to '{input}', which this build reads"
+  | .unresolved why => overwrite ""
+    s!"a file this build read cannot be resolved again, so no destination is known to spare it: {why}"
+where
+  overwrite (dest detail : String) : Diag :=
+    Diag.of .E0005 s!"cannot publish output: {detail}"
+      (help := "name another destination with -o, or the markdown twin with \\output{ md = ... }; \
+the build never writes over a file it reads")
+      (subject := if dest.isEmpty then none else some dest)
 
 /-- A whole-artifact representation refusal. Aggregate storage limits and
 font metadata do not identify a source command, so no span is invented. -/

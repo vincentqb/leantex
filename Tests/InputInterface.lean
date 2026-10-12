@@ -20,6 +20,8 @@ example (file : String) (bytes : ByteArray) (phase : String → String → Nat �
 example : String → Ir.Doc → Bib.FieldReading → Ir.RefTable → Array (String × Span) →
     Encoding.Ledger → IO (Ir.Doc × Array Diag × Encoding.Ledger) := @resolveBibliography
 example : String → Array Parse.Raw → IO (Array Parse.Raw × Array Diag) := resolveData
+example : String → String → System.FilePath := besideDocument
+example : String → Ir.Doc → Array System.FilePath := bibPaths
 
 example (file : String) : readSource file = readSource file := by
   fail_if_success unfold readSource

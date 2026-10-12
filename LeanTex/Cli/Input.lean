@@ -80,6 +80,9 @@ private structure InputLog where
   /-- Each file decoded in this run, so a file read twice is decoded once and
   its losses named once. -/
   decoded : Array (String × Encoding.FileText) := #[]
+  /-- Each file read, by the path it was read at: what publication must
+  never write over (`PublicationPaths.overwritten`). -/
+  reads : Array String := #[]
 
 private abbrev ReadM := StateT InputLog IO
 
@@ -140,6 +143,7 @@ private def readFragment (dir : System.FilePath) (file name : String) (pos : Pos
     match ← readSource path.toString with
     | .error d => return (#[], #[{ d with span := some ⟨file, pos⟩ }])
     | .ok bytes =>
+      modify fun log => { log with reads := log.reads.push path.toString }
       let read ← decode path.toString bytes
       return Surface.fragment surface path.toString read.text pos
   else
@@ -227,7 +231,9 @@ the file uses the Markdown document dialect" (some ⟨request.file, request.pos�
           out := out ++ call
         | depth + 1 =>
           let text ← match ← readSource path.toString with
-            | .ok bytes => pure (← readTexOnce (name ++ ".sty") bytes).text
+            | .ok bytes =>
+              modify fun log => { log with reads := log.reads.push path.toString }
+              pure (← readTexOnce (name ++ ".sty") bytes).text
             | .error d =>
               modify fun log => { log with
                 diags := log.diags.push { d with span := some ⟨request.file, request.pos⟩ } }
@@ -265,6 +271,17 @@ public def expandInputs (file : String) (raws : Array Parse.Raw)
   let (executed, log) ← executeWith file raws {} dir
   return (executed, log.diags, log.spliced)
 
+/-- Where a file a document names by `name` is read: beside the document,
+like `\input`, unless the name is absolute. -/
+public def besideDocument (file name : String) : System.FilePath :=
+  if (System.FilePath.mk name).isAbsolute then System.FilePath.mk name
+  else (System.FilePath.mk file).parent.getD "." / name
+
+/-- The files the document's bibliography request names (`Ir.bibRefs`), at
+the paths `resolveBibliography` reads them from. -/
+public def bibPaths (file : String) (doc : Ir.Doc) : Array System.FilePath :=
+  (Ir.bibRefs doc).map fun src => besideDocument file (Bib.sourceName src)
+
 /-- The bibliography request an elaborated document states (`Ir.bibRefs`),
 fulfilled: each named `.bib` resolves beside the document, like `\input`,
 and its text goes to the pure core (`Bib.apply`) — parsing, ordering,
@@ -283,7 +300,6 @@ public def resolveBibliography (file : String) (doc : Ir.Doc) (cv : Bib.FieldRea
     (ledger : Encoding.Ledger := {}) :
     IO (Ir.Doc × Array Diag × Encoding.Ledger) := do
   let requested := Ir.bibRefs doc
-  let dir := (System.FilePath.mk file).parent.getD "."
   let spanOf (src : String) : Option Span :=
     (bibSpans.find? fun (r, _) => (Ir.bibSourceNames r).contains src).map (·.2)
   let mut sources : Array (String × String) := #[]
@@ -291,9 +307,7 @@ public def resolveBibliography (file : String) (doc : Ir.Doc) (cv : Bib.FieldRea
   let mut missing : Array (String × String) := #[]
   let mut ledger := ledger
   for src in requested do
-    let name := Bib.sourceName src
-    let path := if (System.FilePath.mk name).isAbsolute then System.FilePath.mk name
-      else dir / name
+    let path := besideDocument file (Bib.sourceName src)
     if ← path.pathExists then
       match ← readSource path.toString with
       | .ok bytes =>
@@ -320,20 +334,19 @@ like `\input`, and is read under the declaration the ledger holds; a
 missing file is E0365 naming the path, and the reads that wanted its
 records say what stayed unresolved. -/
 private def resolveDataIn (file : String) (raws : Array Parse.Raw) (ledger : Encoding.Ledger) :
-    IO (Array Parse.Raw × Array Diag × Encoding.Ledger) := do
-  unless Data.hasData raws do return (raws, #[], ledger)
+    IO (Array Parse.Raw × Array Diag × Encoding.Ledger × Array String) := do
+  unless Data.hasData raws do return (raws, #[], ledger, #[])
   let requested := Data.fileRefsAt file raws
-  let dir := (System.FilePath.mk file).parent.getD "."
   let mut sources : Array (String × String) := #[]
   let mut diags : Array Diag := #[]
   let mut ledger := ledger
+  let mut reads : Array String := #[]
   for (src, span) in requested do
-    let name := Data.sourceName src
-    let path := if (System.FilePath.mk name).isAbsolute then System.FilePath.mk name
-      else dir / name
+    let path := besideDocument file (Data.sourceName src)
     if ← path.pathExists then
       match ← readSource path.toString with
       | .ok bytes =>
+        reads := reads.push path.toString
         let read := Encoding.readTex ledger.declared path.toString bytes
         sources := sources.push (src, read.text)
         diags := diags ++ read.diags
@@ -342,23 +355,26 @@ private def resolveDataIn (file : String) (raws : Array Parse.Raw) (ledger : Enc
     else
       diags := diags.push (DriverDiag.dataMissing src path.toString (some span))
   let (raws, expandDiags) := Data.expandData file sources raws
-  return (raws, diags ++ expandDiags, ledger)
+  return (raws, diags ++ expandDiags, ledger, reads)
 
 /-- `resolveDataIn` for a document that declares no input encoding. -/
 public def resolveData (file : String) (raws : Array Parse.Raw) :
     IO (Array Parse.Raw × Array Diag) := do
-  let (raws, diags, _) ← resolveDataIn file raws {}
+  let (raws, diags, _, _) ← resolveDataIn file raws {}
   return (raws, diags)
 
 /-- A document's sources as the driver reads them: its own text as the door
 read it, executed, with its data resolved, the diagnostics of every read,
-the local styles spliced, and the ledger of the input encoding. -/
+the local styles spliced, the ledger of the input encoding, and the path of
+every other file the execution read — an include, a local style, a `\data`
+file. -/
 public structure Source where
   text : String
   executed : Compat.Executed
   diags : Array Diag
   spliced : Array (String × Option String × Pos)
   ledger : Encoding.Ledger
+  reads : Array String
 
 /-- **The front door**: a document's bytes to its executed source, as the
 driver reads every document and as every harness that claims to read one
@@ -414,11 +430,11 @@ public def readDocument (file : String) (bytes : ByteArray)
         { fixed := some settled, ledger := seeded again settled }
       let ledger := { log.ledger with declared := settled }
       pure (again, frontDiags, executed, { log with ledger })
-  let (raws, dataDiags, ledger) ← resolveDataIn file executed.raws log.ledger
+  let (raws, dataDiags, ledger, dataReads) ← resolveDataIn file executed.raws log.ledger
   phase "input" s!"{raws.size} top-level nodes" (← since t)
   return { text := read.text
            executed := executed.withRaws raws
            diags := read.diags ++ frontDiags ++ log.diags ++ dataDiags
-           spliced := log.spliced, ledger }
+           spliced := log.spliced, ledger, reads := log.reads ++ dataReads }
 
 end LeanTex.Cli.Input

@@ -239,12 +239,13 @@ results and diagnostics in source order (`Batch.plan_exact`). The scheduler
 excludes repeated keys within a batch (`Batch.plan_keys_nodup`); owned
 scratch and atomic cache publication also protect independent compiler runs.
 Unfinished attempts remain distinct from refusals, so machine failures
-cannot silently select the native subset's drawing. -/
+cannot silently select the native subset's drawing. Also returns the path of
+every file a request staged, as the build read it. -/
 def resolvePictures (ui : Ui) (file : String) (doc : Ir.Doc)
     (imageSpans : Array (String × Span) := #[]) (faces : Ir.FontSpec := doc.fonts) :
-    IO (Array PicResult × Array (String × Boundary.Undrawn)) := do
+    IO (Array PicResult × Array (String × Boundary.Undrawn) × Array String) := do
   let refs := Ir.pictureRefs doc faces
-  if refs.isEmpty then return (#[], #[])
+  if refs.isEmpty then return (#[], #[], #[])
   -- **The page's faces never cost a picture its drawing.** Where they
   -- changed a request, the document's own stands behind it, asked only
   -- where the tool refused the faced one (`Boundary.ownRequest?`).
@@ -337,7 +338,9 @@ def resolvePictures (ui : Ui) (file : String) (doc : Ir.Doc)
     if let some result := attempt.result then results := results.push result
     if let some loss := attempt.undrawn then undrawn := undrawn.push loss
     ui.phase "boundary" attempt.detail attempt.elapsed
-  return (results, undrawn)
+  let staged := keyedRefs.flatMap fun (_, _, _, inputs) =>
+    inputs.map fun (cand, _) => Boundary.inputPath dir cand
+  return (results, undrawn, staged)
 
 /-- Where the image cache files a plan: beside the font and boundary
 caches, keyed by the *content* (so a re-exported file under the same name
@@ -384,24 +387,25 @@ boundary results, a path resolves against the document's own directory,
 like `\input`, then through graphicx's extension resolution (a deck says
 `figures/plot` and means the `figures/plot.png` beside it), and decodes in
 the pure core through the content-hash cache when the decode is the
-expensive kind. Returns whether the cache answered, for the phase line, and
+expensive kind. Returns whether the cache answered, for the phase line,
 whether a fact about the machine stopped an included SVG's plan, for the
-page's placeholder (`Boundary.markUnplanned`). -/
+page's placeholder (`Boundary.markUnplanned`), and the files it read or
+found standing where it read: what publication must not write over. -/
 def fetchImage (dir : System.FilePath) (pics : Array PicResult)
     (refused : Array (String × Diag)) (params : Image.PlanParams) (req : Image.Request)
     (paths : Array String := #[]) :
-    IO (Image.Fetch × Bool × Bool) := do
+    IO (Image.Fetch × Bool × Bool × Array String) := do
   let src := req.src
   if src.startsWith Ir.picSrcPrefix then
     match pics.find? (·.src == src) with
     | some r =>
       return (.decoded "" (Image.probe r.bytes >>= Image.plan params) none none none none,
-        false, false)
+        false, false, #[])
     | none =>
       match refused.find? (·.1 == src) with
-      | some (_, why) => return (.refused why, false, false)
+      | some (_, why) => return (.refused why, false, false, #[])
       | none =>
-        return (.missing "the boundary cache (no picture declares this source)", false, false)
+        return (.missing "the boundary cache (no picture declares this source)", false, false, #[])
   let mut hit : Option (String × System.FilePath) := none
   for cand in Image.searchCandidates paths src do
     let p := if (System.FilePath.mk cand).isAbsolute then System.FilePath.mk cand
@@ -413,32 +417,34 @@ def fetchImage (dir : System.FilePath) (pics : Array PicResult)
   | none =>
     let p := if (System.FilePath.mk src).isAbsolute then System.FilePath.mk src
       else dir / src
-    return (.missing p.toString, false, false)
+    return (.missing p.toString, false, false, #[])
   | some (cand, p) =>
     let bytes : Except String ByteArray ← try pure (.ok (← IO.FS.readBinFile p))
       catch e => pure (.error (toString e))
     match bytes with
-    | .error e => return (.unreadable e, false, false)
+    | .error e => return (.unreadable e, false, false, #[p.toString])
     | .ok bytes =>
       let href := if cand == src then "" else cand
       if Image.isSvg cand then
         let (res, stopped) ← ImageAssets.svgPlanResult params bytes req.page
-        return (.decoded href res (some bytes) none (some bytes) none, false, stopped)
+        return (.decoded href res (some bytes) none (some bytes) none, false, stopped, #[p.toString])
       else if req.page != .first || req.animated then
         let res := Image.decodeRequest params bytes req
         -- An animation's companion SVG is read once, here, beside the PDF,
         -- so preserving movement never rereads the file (`fulfilOne_bytes`).
         let companion ← if req.animated then do
             match ← (IO.FS.readBinFile (p.withExtension "svg")).toBaseIO with
-            | .ok svg => pure (some svg)
+            | .ok svg => pure (some (svg, p.withExtension "svg"))
             | .error _ =>
-              Except.toOption <$> (IO.FS.readBinFile (p.withExtension "SVG")).toBaseIO
+              let upper := p.withExtension "SVG"
+              pure ((← (IO.FS.readBinFile upper).toBaseIO).toOption.map (·, upper))
           else pure none
         return (.decoded href (res.map (·.1)) none (res.toOption.bind (·.2))
-          (some bytes) companion, false, false)
+          (some bytes) (companion.map (·.1)), false, false,
+          #[p.toString] ++ (companion.map (·.2.toString)).toArray)
       else
         let (res, fromCache) ← decodeImageCached params bytes
-        return (.decoded href res none none (some bytes) none, fromCache, false)
+        return (.decoded href res none none (some bytes) none, fromCache, false, #[p.toString])
 
 /-- The image request an elaborated document states (`Ir.imageRequests`),
 fulfilled: the driver reads each source (`fetchImage`) and the pure core
@@ -451,28 +457,31 @@ are the defaults until a declaration projects them (the profile slices'
 one line). The `Nat` returned is the cache-hit count, for the phase line.
 Image diagnostics inherit the executed request span; located boundary
 refusals keep their own span. An include whose plan a fact about the
-machine stopped carries the page's placeholder (`Boundary.markUnplanned`). -/
+machine stopped carries the page's placeholder (`Boundary.markUnplanned`).
+The files read come last. -/
 def loadImages (file : String) (doc : Ir.Doc) (pics : Array PicResult := #[])
     (refused : Array (String × Diag) := #[])
     (imageSpans : Array (String × Span) := #[]) :
-    IO (Image.Store × Array Diag × Nat) := do
+    IO (Image.Store × Array Diag × Nat × Array String) := do
   let dir := (System.FilePath.mk file).parent.getD "."
   let params := Image.PlanParams.default
   let mut fetched : Array (Image.Request × Image.Fetch) := #[]
   let mut stopped : Array Image.Request := #[]
   let mut hits := 0
+  let mut reads : Array String := #[]
   for req in Ir.imageRequests doc do
-    let (f, fromCache, machine) ← fetchImage dir pics refused params req doc.graphicsPath
+    let (f, fromCache, machine, read) ← fetchImage dir pics refused params req doc.graphicsPath
     if fromCache then hits := hits + 1
     if machine then stopped := stopped.push req
     fetched := fetched.push (req, f)
+    reads := reads ++ read
   let (store, diags) := Image.fulfilRequests fetched
   let store := Boundary.markUnplanned stopped store
   let diags := (diags ++ PlanLoss.ledger store).map fun d =>
     match d.subject with
     | some src => DriverDiag.atImageRequest imageSpans src d
     | none => d
-  return (store, diags, hits)
+  return (store, diags, hits, reads)
 
 /-- PDF sources receive a browser image of their selected page, converted
 from the bytes `fetchImage` already read — never a reread. A declared
@@ -626,6 +635,8 @@ structure Front where
   /-- The input encoding the document declares and the files read under
   it, which the bibliography joins. -/
   ledger : Encoding.Ledger
+  /-- Every file the document's execution read beside it (`Input.Source.reads`). -/
+  reads : Array String
   /-- Parsed faces, shared by the provisional assembly and the final one. -/
   cache : FontEnv.Cache
   /-- The host's answer, taken once — absent where no face was needed yet. -/
@@ -715,7 +726,7 @@ def frontend (ui : Ui) (file : String) : IO (Option Front) := do
       pure (doc, diags, reqSpans, prepared, earlier)
   return some { doc := doc, diags := diags, spans := reqSpans
                 prepared := prepared, earlier := earlier, spliced := spliced
-                ledger := src.ledger
+                ledger := src.ledger, reads := src.reads
                 cache := cache, scan := scan, provisional := provisional }
 
 /-- The reporting scope is the output plan's projection: each artifact the
@@ -764,6 +775,20 @@ def boundaryFaces (ui : Ui) (file : String) (front : Front) : IO (Ir.FontSpec ×
   | .ok (fs, _, _, _) => return (FontAssembly.boundaryFonts doc.fonts fs scan, front)
   | .error _ => return (doc.fonts, front)
 
+/-- Every file a build reads, by the path it reads it at: the document; what
+its execution read (`Front.reads`: an include, a local style, a `\data` file);
+its bibliography (`Input.bibPaths`); the images it read and an animation's
+companion beside one (`imgReads`); the files its boundary pictures staged
+(`staged`); the faces its font set loaded (`faces`); and the stylesheet and
+icon its page captures (`Publication.localPath?`). Publication writes over
+none of them (`PublicationPaths.overwrite`). -/
+def buildInputs (file : String) (front : Front) (doc : Ir.Doc)
+    (imgReads staged faces : Array String) : Array String :=
+  let declared := (doc.output.stylesheet.toArray ++ doc.info.favicon.toArray).filterMap fun name =>
+    (Publication.localPath? file name).map (·.toString)
+  #[file] ++ front.reads ++ (Input.bibPaths file doc).map (·.toString) ++ imgReads ++ staged ++
+    faces ++ declared
+
 def build (ui : Ui) (file : String) : IO UInt32 := do
   let t0 ← IO.monoMsNow
   match ← frontend ui file with
@@ -789,7 +814,7 @@ def build (ui : Ui) (file : String) : IO UInt32 := do
     let front := { front with diags := Boundary.foldLines front.doc.allow allowAll declined front.diags }
     let failing := (Diag.resolveAll front.doc.allow allowAll (Diag.forOutputs outputs front.diags)).errors > 0
     let (faces, front) ← boundaryFaces ui file front
-    let (pics, undrawn) ← if failing then pure (#[], #[])
+    let (pics, undrawn, staged) ← if failing then pure (#[], #[], #[])
       else resolvePictures ui file front.doc front.spans.images faces
     let w := Boundary.withdraw front.spans.fallbacks undrawn
     let front ← if w.ids.isEmpty then pure front else do
@@ -854,7 +879,7 @@ def build (ui : Ui) (file : String) : IO UInt32 := do
         let family := fs.math.bind (fs.fonts[·]?) |>.map (·.family) |>.getD "math face"
         pure ((Ir.resolveMathAlphas fs.mathAlphabets family doc2).1, spans2)
       let t ← IO.monoMsNow
-      let (imgs, imgDiags, imgHits) ← loadImages file doc pics refused reqSpans.images
+      let (imgs, imgDiags, imgHits, imgReads) ← loadImages file doc pics refused reqSpans.images
       let imgDiags := (imgDiags ++ PlanLoss.pictureAlts doc reqSpans.images imgs).map sourceDiag
       resolved := resolved.append (← ui.resolve doc.allow allowAll (outputs := outputs) imgDiags)
       unless imgs.entries.isEmpty do
@@ -904,6 +929,13 @@ def build (ui : Ui) (file : String) : IO UInt32 := do
       let destinations := (if emit.contains .html then #[ ("HTML", htmlPath) ] else #[]) ++
         (if emit.contains .md then #[ ("Markdown", mdPath) ] else #[]) ++
         (if emit.contains .pdf then #[ ("PDF", pdfPath) ] else #[])
+      -- premise: publicationInputChecks — a destination naming the document, a file it
+      -- reads or another name of one is refused with every input byte for byte as it was
+      if let some clash ← PublicationPaths.overwrite destinations
+          (buildInputs file front doc imgReads staged paths) then
+        ui.diag (DriverDiag.outputOverwritesInput clash)
+        ui.summary file 1 (← since t0)
+        return 1
       -- premise: publicationPathChecks — distinct formats publish, while
       -- colliding names and filesystem aliases leave all outputs untouched.
       if let some detail ← PublicationPaths.conflict destinations then

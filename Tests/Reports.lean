@@ -1385,7 +1385,12 @@ def reports : List Report := [
       thm% Ir.Palette.defineXcolor_design_id]
     accept := ["six of the guard's assertions fail on the tree before the fix: the two roles undeclared, the keyword and the literals in derived colours on the page, the page and the HTML body apart from the palette spelling's, and the stylesheet's two roles not the declared colours",
       "a presentation deck whose theme declares its code roles by xcolor definitions ships its declared code colours in both artifacts"]
-    state := .guarded "dbbfba91" .before .author }
+    state := .guarded "dbbfba91" .before .author },
+  { id := "R150", date := "2026-10-12"
+    what := "a build wrote its artifact over the file it was built from: a markdown source built onto its own name was replaced by its markdown twin, and a markdown twin declared under the source's name, an include's, the bibliography's, an image's, the face's or the stylesheet's replaced that file"
+    pins := [check% Tests.publicationInputChecks]
+    accept := ["all twenty of the guard's assertions fail on the tree before the fix: each of ten destinations, among them a link to the source, a link to its directory and a hard link of it, is published over the file the build read, which then differs"]
+    state := .guarded "1f801005" .before .author }
 ]
 
 /-- The reports guarded but never seen failing: a count that may fall and

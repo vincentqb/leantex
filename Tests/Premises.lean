@@ -234,10 +234,12 @@ def registry : List Premise := [
     sites := [("LeanTex/Cli/Publication.lean", "publish")]
     unchecked := some "Whether a reader opens an artifact mid-write is the reader's schedule, which no build observes, and publishing by rename would retire the premise." },
   { name := "path-identity", residue := .host "filesystem", reach := .render
-    statement := "Two destinations whose existing prefixes IO.FS.realPath resolves to different paths name different files unless one has several hard links, which the publication preflight refuses, though on a filesystem that folds case or normalizes names two such paths can name one file."
-    consumers := [.gate "LeanTex/Cli/Driver.lean" "build" (check% publicationPathChecks)]
-    sites := [("LeanTex/Cli/PublicationPaths.lean", "conflict")]
-    checks := [check% publicationPathChecks]
+    statement := "Two paths whose existing prefixes IO.FS.realPath resolves to different paths name different files unless one has several hard links, which the publication preflight refuses between destinations and, between a destination and a file the build read, wherever the two agree on their link count, size and modification time, as two names of one file do, though on a filesystem that folds case or normalizes names two such paths can name one file."
+    consumers := [.gate "LeanTex/Cli/Driver.lean" "build" (check% publicationPathChecks),
+      .gate "LeanTex/Cli/Driver.lean" "build" (check% Tests.publicationInputChecks)]
+    sites := [("LeanTex/Cli/PublicationPaths.lean", "conflict"),
+      ("LeanTex/Cli/PublicationPaths.lean", "overwrite")]
+    checks := [check% publicationPathChecks, check% Tests.publicationInputChecks]
     owed := some "Publish two formats whose names differ only in case on a case-folding filesystem and require the preflight to refuse them." },
   { name := "tex-font-roots", residue := .host "TeX tree", reach := .render
     statement := "The TeX distribution whose lualatex, luatex or tex comes first on PATH keeps its OpenType and TrueType fonts in the trees TexFontTrees.trees lists beside that program's real path, so the directories TexFontTrees.roots finds hold the faces that distribution's own font search finds."

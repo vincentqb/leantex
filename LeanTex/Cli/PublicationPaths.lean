@@ -11,8 +11,9 @@ required independence with the portable metadata API, so they are refused. -/
 
 namespace LeanTex.Cli.PublicationPaths
 
-/-- Resolve an existing prefix and normalize the not-yet-created tail. -/
-private def canonical (path : System.FilePath) : IO System.FilePath := do
+/-- Resolve an existing prefix and normalize the not-yet-created tail, or
+name the first component that is a link resolving to nothing. -/
+private def resolve (path : System.FilePath) : IO (Except System.FilePath System.FilePath) := do
   let absolute := (← IO.currentDir) / path
   let mut cursor : System.FilePath := "/"
   for part in absolute.components do
@@ -29,9 +30,15 @@ private def canonical (path : System.FilePath) : IO System.FilePath := do
           match ← next.symlinkMetadata.toBaseIO with
           | .error (.noFileOrDirectory ..) => cursor := next
           | .error err => throw err
-          | .ok _ => throw <| IO.userError s!"cannot resolve output link '{next}'"
+          | .ok _ => return .error next
         | _ => throw err
-  return cursor
+  return .ok cursor
+
+/-- `resolve`, where a link resolving to nothing is an error. -/
+private def canonical (path : System.FilePath) : IO System.FilePath := do
+  match ← resolve path with
+  | .ok resolved => return resolved
+  | .error link => throw <| IO.userError s!"cannot resolve output link '{link}'"
 
 /-- Nothing means every requested format has a distinct resolved path and
 no destination has uninspectable hard-link aliases. Only multiple formats
@@ -54,6 +61,58 @@ public def conflict (paths : Array (String × String)) : IO (Option String) := d
     return none
   catch err =>
     return some s!"cannot establish output independence: {err}"
+
+/-- Why a destination cannot be written: it is a file the build reads. -/
+public inductive Overwrite where
+  /-- The destination resolves to the path the input resolves to. -/
+  | same (format destination input : String)
+  /-- The destination stands with several hard links and agrees with the
+  input on every fact the portable metadata gives of a file (`mayAlias`). -/
+  | linked (format destination input : String)
+  /-- A file the build read cannot be resolved again, so no destination can
+  be shown to be none of the inputs. -/
+  | unresolved (why : String)
+  deriving Repr, BEq
+
+/-- Could two standing files be one under two names? Two names of one file
+share its kind, link count, size and modification time, and its link count
+is at least two. With no inode number to compare, this reading misses no
+alias, and it takes an unrelated file for one only where all four agree. -/
+private def mayAlias (a b : IO.FS.Metadata) : Bool :=
+  a.type == .file && b.type == .file && a.numLinks > 1 && a.numLinks == b.numLinks &&
+    a.byteSize == b.byteSize && a.modified == b.modified
+
+/-- Nothing means no destination names a file the build reads (`inputs`):
+none resolves to an input's own path, and none could be another name of an
+input's file (`mayAlias`). An input no longer standing holds nothing a write
+could destroy. A destination that does not resolve — a link to nothing, a
+component that is no directory or that this user cannot search — names no
+standing file a write could open either, so its write is the one that
+fails, under its own path. One output owes this as much as several:
+writing it would replace the document or a file it reads. -/
+public def overwrite (destinations : Array (String × String)) (inputs : Array String) :
+    IO (Option Overwrite) := do
+  let read ← try
+      let mut read : Array (String × System.FilePath × IO.FS.Metadata) := #[]
+      for input in inputs do
+        if read.any (·.1 == input) then continue
+        match ← (System.FilePath.mk input).metadata.toBaseIO with
+        | .error (.noFileOrDirectory ..) => pure ()
+        | .error err => throw err
+        | .ok metadata => read := read.push (input, ← IO.FS.realPath input, metadata)
+      pure (Except.ok read)
+    catch err => pure (.error (toString err))
+  match read with
+  | .error why => return some (.unresolved why)
+  | .ok read =>
+    for (format, name) in destinations do
+      let .ok (.ok path) ← (resolve name).toBaseIO | continue
+      if let some (input, _, _) := read.find? (·.2.1 == path) then
+        return some (.same format name input)
+      if let .ok metadata ← path.metadata.toBaseIO then
+        if let some (input, _, _) := read.find? (mayAlias metadata ·.2.2) then
+          return some (.linked format name input)
+    return none
 
 /-- One path segment as a URL reads it back: each character a relative
 URL's path would read as something else (`%`, `#`, `?`, `\`, `:`, white

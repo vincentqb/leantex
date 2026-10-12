@@ -230,6 +230,7 @@ def diagWitness (one mapped withMath : Font.FontSet)
   | .W0004 => probed .W0004
   | .E0003 => #[DriverDiag.outputPathsConflict "HTML and Markdown both name 'out.html'"]
   | .E0004 => #[DriverDiag.outputUnwritable "site/out.pdf" "permission denied"]
+  | .E0005 => #[DriverDiag.outputOverwritesInput (.same "Markdown" "doc.md" "doc.md")]
   | .E0101 => dvE "a\\"
   | .E0102 => dvE "\\begin{verbatim}\nx"
   | .E0111 => dvE (dvDeck "" ("\\setbeamertemplate{footline}{\\insertframenumber}\n" ++
