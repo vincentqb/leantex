@@ -180,20 +180,25 @@ is skipped.
   count on the line its first record prints on, a line's count is what it
   stands for, and porcelain keeps every record (`foldRepeats_sum_exact`,
   `foldRepeats_line_exact`, `foldRepeats_shown_exact`,
-  `foldRepeats_visible_inj`). So a message never names its site or a measure
-  taken there — the page or frame it stands on, how far it overruns, a renamed
-  anchor: those are the record's `detail`, printed beside the words and kept
-  out of them, or one loss prints a line per site; a value the author declared
-  may stand in the words, as the construct's own. Every code's witness written
-  twice prints no more warning lines (`repeatFoldChecks`), and a warning's
-  words state no measured length (`dvLint`). A header names a construct the
-  author wrote — a control sequence, an environment opener, a math shift — or
-  nothing, never a word of text or a fragment of code (`Diag.Spelling`); a loss
-  about a place — an overfull line, a declared line that re-flowed, a page set
-  short — names none (`DiagCode.namesPlace`). An emitter that keys once per
-  construct (`warnOnce`, `sayOnce`) delivers its later sites as notes itself,
-  whatever their words. Errors print at every site; acceptance and `--werror`
-  count a folded repeat once, as they count a census repeat.
+  `foldRepeats_visible_inj`). So a site's particulars — the page or frame it
+  stands on, how far it overruns, a renamed anchor, a count measured there —
+  are the record's `detail`, printed beside the words and kept out of them, or
+  one loss prints a line per site; a value the author declared may stand in
+  the words, as the construct's own. Every code's witness written twice prints
+  no more warning lines (`repeatFoldChecks`), and a warning's words state no
+  measured length (`dvLint`); neither sees what differs only between two real
+  sites, and an offset or a row in W0002, W0004, W0014 and W0364 still prints
+  a line per site: pending work. A header names a construct the author wrote —
+  a control sequence, an environment opener, a math shift — or nothing, never
+  a word of text or a fragment of code (`Diag.Spelling`); a loss about a place
+  — an overfull line, a declared line that re-flowed, a table wider than the
+  measure, a page set short — names none (`DiagCode.namesPlace`), and a loss
+  of the PDF's page names that output, so a build that ships no PDF prints
+  none. An emitter that keys once per construct (`warnOnce`, `sayOnce`)
+  delivers its later sites as notes itself, whatever their words. Errors print
+  at every site; `--werror` counts a folded line once; acceptance accepts every
+  site of a code it names and counts each loss once — one census key, or a
+  subjectless repeat in the same words (`Diag.acceptedLosses`).
 
 - A run never carries a leading of its own: its line box leads at its
   paragraph's leading in its own size's proportion (`Ir.runLead`), as LaTeX

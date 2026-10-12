@@ -10290,7 +10290,7 @@ private def Spacing.Page.warnOverfull (b : B) (source : Option Span) : B :=
   { b with
     diags := b.diags.push
       (Diag.of .W0005 "overfull line; no feasible break" (span := source)
-        (subject := some (overfullSubject source))) }
+        (subject := some (overfullSubject source)) (output := some .pdf)) }
 
 /-- First located item of the line actually set, never a neighbouring line's
 site. Callers shift this map alongside inserted marks and hanging kerns.
@@ -11359,7 +11359,8 @@ private def collectPara (r : Rd) (a : Acc)
         if overfull then
           ds := ds.push (Diag.of .W0005 "overfull line; no feasible break"
             (span := lineSource nsources s brk)
-            (subject := some (overfullSubject (lineSource nsources s brk))))
+            (subject := some (overfullSubject (lineSource nsources s brk)))
+            (output := some .pdf))
         let box := lineExtent r.fs r.geom.fontSize (scaleB bodyFont.ascent)
           (scaleB bodyFont.capHeight) (scaleB (-bodyFont.descent))
           r.geom.leading noteSize lsegs noteLead
@@ -12945,10 +12946,10 @@ private def collectPicture (r : Rd) (a : Acc) (pic : Ir.Pic.Picture)
     | 0 => a
     | n =>
       { a with diags := a.diags.push (Diag.of .W0336
-        (s!"{n} pair(s) of node labels overlap: a relative placement parts \
-node centres, not the text they set")
+        "node labels overlap: a relative placement parts node centres, not the text they set"
         (help := "declare the extent ([minimum width = ...]) or widen the \
-separation ([node distance = ...])")) }
+separation ([node distance = ...])")
+        (detail := some s!"{n} {if n == 1 then "pair" else "pairs"} of labels")) }
   let side : Ir.HAlign := if center then .center else if r.geom.flushRight then .right else .left
   let x := indent + side.boxOffset (max 0 (avail - w))
   let a := a.flushGap r
@@ -15990,7 +15991,8 @@ private def Spacing.Page.warnReflow (b : B) (p : ParagraphBreaks) (reflowed : Bo
         "a declared line did not fit the measure and re-flowed" p.key
         (help := "shorten the declared line, reduce \\page{ hmargin = ... } \
 to widen the measure, or declare a narrower face")
-        (detail := some s!"{loc}{p.forced.size} lines declared, {p.chosen.size} ship")) }
+        (detail := some s!"{loc}{p.forced.size} lines declared, {p.chosen.size} ship")
+        (output := some .pdf)) }
   else b
 
 @[simp] private theorem warnReflow_pages (b : B) (q : ParagraphBreaks) (r : Bool) :
@@ -16032,18 +16034,72 @@ private theorem warnReflow_accounts (b : B) (q : ParagraphBreaks) (reflowed : Bo
   unfold Spacing.Page.warnReflow
   split <;> simp_all
 
-/-- Where a re-flowed paragraph's W0386 stands: the first located line of a
-declared line that re-flowed — a line its split ends, or the one after a split
-— whose first located item is where the author finds the declared line. -/
+/-- Whether a paragraph's line sets wider than its measure: the overrun
+flag `paraLineGeom` reads, which no builder field enters
+(`paraLineGeom_overruns`). -/
+private def lineOverruns (j : ParaJob) (first : Bool) (prev brk : Nat) : Bool :=
+  let lead := if first then j.hangIndent else 0
+  let width := j.target + lead
+  let a := j.lineStart first prev
+  let shrinks := j.rightFil && width < (measure j.items a brk).natural
+  (setLine j.items a brk width
+      (setsToMeasure (!j.center && !j.flushRight && j.justify) j.items a brk || shrinks)
+      (j.protrude && !shrinks) (j.expand && !shrinks) j.wordOffsets).2.2.1
+
+private theorem paraLineGeom_overruns (fs : FontSet) (j : ParaJob) (b : B) (first : Bool)
+    (prev brk : Nat) :
+    (paraLineGeom fs j b first prev brk).2.2.2.1 = lineOverruns j first prev brk := by
+  unfold paraLineGeom lineOverruns
+  dsimp only
+  repeat' split
+  all_goals rfl
+
+/-- The sites of a line's located items, in item order: `lineSource`'s
+answer first. -/
+private def lineSites (sources : Array (Nat × Span)) (first last : Nat) : Array Span := Id.run do
+  let mut lo := 0
+  let mut hi := sources.size
+  for _ in [0:sources.size + 1] do
+    if lo < hi then
+      let mid := (lo + hi) / 2
+      if ((sources[mid]?.map (·.1)).getD 0) < first then lo := mid + 1 else hi := mid
+    else break
+  let mut out : Array Span := #[]
+  for k in [lo:sources.size] do
+    match sources[k]? with
+    | some (i, span) => if i ≤ last then out := out.push span else break
+    | none => break
+  return out
+
+/-- A site as a reader finds it: file, line and column. -/
+private def siteKey (s : Span) : String × Nat × Nat := (s.file, s.pos.line, s.pos.col)
+
+/-- Where a re-flowed paragraph's W0386 stands: the first located item of a
+line of a declared line that re-flowed — a line its split ends, or the one
+after a split — at a site no overrunning line of the paragraph opens on.
+An overrun (W0005) names the first located item of its own line, so the
+re-flow and an overrun are never named at one site: a declared line that
+opens on a word wider than the measure is named where its next line opens.
+A paragraph whose re-flowed lines offer no other located site leaves its
+re-flow unlocated, keyed by its index. -/
 private def reflowSource (j : ParaJob) (p : ParagraphBreaks) : Option Span := Id.run do
   let top := p.forced.pop.foldl max 0
   let splits (k : Nat) : Bool := k < top && !isForced j.items k && !isEndFill j.items k
+  let mut taken : Std.HashSet (String × Nat × Nat) := {}
   let mut prev := 0
   let mut first := true
   for brk in p.chosen do
-    if splits brk || (!first && splits prev) then
+    if lineOverruns j first prev brk then
       if let some src := lineSource j.itemSources (j.lineStart first prev) brk then
-        return some src
+        taken := taken.insert (siteKey src)
+    prev := brk
+    first := false
+  prev := 0
+  first := true
+  for brk in p.chosen do
+    if splits brk || (!first && splits prev) then
+      for src in lineSites j.itemSources (j.lineStart first prev) brk do
+        unless taken.contains (siteKey src) do return some src
     prev := brk
     first := false
   return none

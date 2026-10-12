@@ -35,7 +35,9 @@ and styles. Ordinary hyperlinks remain links.
 Diagnostics identify the source location and unsupported construct. A warning
 repeated in the same words within one phase of a build prints once, at its
 first site, with its count; `-v` lists every site, `--porcelain` gives JSON
-output, and `leantex --help` shows all options.
+output, and `leantex --help` shows all options. A loss of the PDF's page, such
+as a line that runs past the margin, is reported only when the build writes a
+PDF.
 
 ## TeX and Markdown
 

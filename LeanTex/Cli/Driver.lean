@@ -109,10 +109,11 @@ def tally (xs : Array String) : List (String × Nat) := Id.run do
 
 /-- Acceptance is visible, never ambient: whenever any loss was accepted,
 the line prints — under `-q` too, because an accepted error is exactly the
-thing quiet mode must not hide. -/
-def Ui.accepted (ui : Ui) (accepted : Array String) : IO Unit := do
+thing quiet mode must not hide. It counts losses, each census loss once
+(`Diag.acceptedLosses`), however many sites accepted it. -/
+def Ui.accepted (ui : Ui) (accepted : Array Diag.Accepted) : IO Unit := do
   if accepted.isEmpty then return
-  let counts := tally accepted
+  let counts := tally (Diag.acceptedLosses accepted)
   if ui.cfg.porcelain then
     ui.outStream.putStrLn (Render.porcelainAccepted counts)
   else

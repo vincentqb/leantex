@@ -173,6 +173,16 @@ def diagnosticRecordChecks (ref : IO.Ref (List String)) : IO Unit := do
         ["⚠ [W0301] - example.tex:4:7",
           "  command is unknown", "  replaced by: \\oddity",
           "    Error - forged\\t\\x1b[31m\\x9b0m\\u2028\\u2029"])
+  -- A control symbol is one construct token whatever character follows its
+  -- backslash, so the filter keeps it: the header escapes it instead.
+  for (c, shown) in [('\x1b', "\\x1b"), ('\r', "\\r"), ('\n', "\\n"),
+      ('\x9b', "\\x9b"), ('\u2028', "\\u2028"), ('\u2029', "\\u2029")] do
+    let symbol := "\\".push c
+    let carried := { d with trigger := Diag.Spelling.ofWritten? symbol, recovery := none, help := none }
+    t s!"diagnostic record: a control symbol's header escapes its character {shown}"
+      ((Diag.Spelling.ofWritten? symbol).isSome &&
+        (Render.human false carried).splitOn "\n" ==
+          ["⚠ [W0301] - example.tex:4:7 - \\" ++ shown, "  command is unknown"])
   for sample in [d, hostile, empty] do
     let stripped := ["\x1b[1;31m", "\x1b[1;33m", "\x1b[1;36m", "\x1b[1;34m",
       "\x1b[1m", "\x1b[0m"].foldl (fun s code => s.replace code "") (Render.human true sample)

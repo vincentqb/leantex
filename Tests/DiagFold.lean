@@ -21,14 +21,15 @@ namespace Tests.DiagFold
 
 /-- What the driver's sink writes for one phase: stderr, stdout and the
 phase's accounting. -/
-def sink (cfg : Config) (allowed : Array String) (ds : Array Diag) :
+def sink (cfg : Config) (allowed : Array String) (ds : Array Diag)
+    (outputs : Array Diag.Output := #[.pdf, .html]) :
     IO (String × String × Resolution) := do
   let err ← IO.mkRef ({} : IO.FS.Stream.Buffer)
   let out ← IO.mkRef ({} : IO.FS.Stream.Buffer)
   let ui : Driver.Ui := {
     cfg := cfg, color := false
     errStream := IO.FS.Stream.ofBuffer err, outStream := IO.FS.Stream.ofBuffer out }
-  let r ← ui.resolve allowed false ds
+  let r ← ui.resolve allowed false ds outputs
   let text (b : IO.FS.Stream.Buffer) := String.fromUTF8? b.data |>.getD ""
   return (text (← err.get), text (← out.get), r)
 
@@ -157,10 +158,14 @@ def foldChecks (ref : IO.Ref (List String)) : IO Unit := do
   let (err, _, r) ← sink plain #[] (errs ++ named)
   t "a repeated error prints at every site and counts every site, named or not"
     ((headLines err "E0304").length == 6 && r.errors == 6)
-  -- Acceptance reads the folded phase, as it reads a census repeat.
+  -- Acceptance accepts every site of the losses it names, and counts each
+  -- loss once: a subjectless repeat in the same words is one loss, as its
+  -- one line is, and none of its sites is left an unread note.
   let (err, _, r) ← sink plain #["W0110"] (same.push other)
   t "an accepted repeat prints nothing and is accepted once per loss"
-    ((headLines err "W0110").isEmpty && r.accepted.size == 2 && r.warnings == 0)
+    ((headLines err "W0110").isEmpty && Diag.acceptedLosses r.accepted == #["W0110", "W0110"] &&
+      r.accepted.size == 5 && r.warnings == 0 && r.notes == 0)
+
   -- The law the theorems state, read off the folded records.
   let log := same.push other ++ errs ++ named ++ boxes ++ advised ++ ds
   let folded := Diag.foldRepeats log
@@ -201,6 +206,12 @@ def foldChecks (ref : IO.Ref (List String)) : IO Unit := do
   let (_, porcelain, _) ← sink { plain with porcelain := true } #[] keyed
   t "porcelain keeps every keyed site, the first carrying the count"
     ((porcelainRows porcelain "W0005").map (·.1) == [5, 0, 0, 0, 0])
+  -- Losses the census keys apart stay apart however their words fold: the
+  -- five overfull lines accepted are five losses, and no site an unread note.
+  let (err, _, r) ← sink plain #["W0005"] keyed
+  t s!"accepted keyed sites are each a loss accepted ({Diag.acceptedLosses r.accepted})"
+    ((headLines err "W0005").isEmpty && Diag.acceptedLosses r.accepted == #["W0005", "W0005",
+      "W0005", "W0005", "W0005"] && r.notes == 0 && r.warnings == 0)
   -- A once-per-construct loss beside another construct in the same words:
   -- one line, the two constructs' sites on it, the notes of each counted.
   let once (key : String) (k : Nat) (first : Bool) : Diag :=
@@ -223,7 +234,9 @@ def foldChecks (ref : IO.Ref (List String)) : IO Unit := do
 /-- **A re-flowed declared line and an overrun are two losses, each named
 once at its own site.** W0386 says a declared line did not hold, at that
 declared line, its counts the site's detail; W0005 says ink runs past the
-measure, at the item that overruns. Accepting one never accepts the other,
+measure, at the item that overruns. The two never share a site: a declared
+line that opens on an overrun is named where it goes on, and one that offers
+no other site leaves its re-flow unlocated. Accepting one never accepts the other,
 and each census holds: one W0386 per paragraph that re-flowed — the one
 paragraph an overlay's steps set again is one — and one W0005 per line the
 page shows past its margin. The log prints each wording once, located,
@@ -268,10 +281,20 @@ def reflowAccountChecks (ref : IO.Ref (List String)) : IO Unit := do
     ((headLines err "W0386").length == 1 && (headLines err "W0005").length == 1 &&
       (headLines err "W0386").all (fun l => hasStr l s!"{file}:5:1" && hasStr l "(2 sites)") &&
       (headLines err "W0005").all (fun l => hasStr l s!"{file}:9:47" && hasStr l "(2 sites)"))
+  -- Both are losses of the PDF's page: a build that writes no PDF prints
+  -- neither, and one that writes it prints both.
+  let (htmlErr, _, _) ← sink plain #[] out.diags #[.html]
+  let (pdfErr, _, _) ← sink plain #[] out.diags #[.pdf]
+  t "reflow account: an HTML build prints neither page loss, a PDF build both"
+    ((headLines htmlErr "W0386").isEmpty && (headLines htmlErr "W0005").isEmpty &&
+      (headLines pdfErr "W0386").length == 1 &&
+      (headLines pdfErr "W0005").length == 1 &&
+      (reflows ++ overfull).all (·.output == some .pdf))
   let (err, _, r) ← sink plain #["W0386"] out.diags
-  t "reflow account: accepting the re-flow leaves the overrun a warning"
+  t s!"reflow account: accepting the re-flow leaves the overrun a warning, each paragraph a loss \
+({Diag.acceptedLosses r.accepted})"
     ((headLines err "W0386").isEmpty && (warningLines err "W0005").length == 1 &&
-      r.accepted == #["W0386"])
+      Diag.acceptedLosses r.accepted == #["W0386", "W0386"])
   -- An overlay's steps set the one paragraph again: one loss, one record.
   let deck := String.intercalate "\n" [
     "\\documentclass{slides}", "\\begin{document}", "\\begin{frame}",
@@ -283,6 +306,26 @@ def reflowAccountChecks (ref : IO.Ref (List String)) : IO Unit := do
   t s!"reflow account: a paragraph three steps set is one W0386 ({deckOut.pages.size} pages, \
 {deckReflows.map siteOf})"
     (deckOut.pages.size == 3 && deckReflows.size == 1 && deckReflows.all (siteOf · == some (5, 1)))
+  -- A declared line that opens on a word wider than the measure: the
+  -- overrun is named at the word, the re-flow where the declared line goes
+  -- on, never both at one site; two wide words leave the re-flow no site
+  -- but theirs, and it stands unlocated.
+  let collide := String.intercalate "\n" [
+    "\\documentclass{article}", "\\page{ width = 220pt, margin = 20pt }",
+    "\\begin{document}",
+    "Short opening line.\\\\", wide ++ " " ++ prose 2 ++ ".\\\\", "Short closing line.", "",
+    "Two wide words.\\\\", wide ++ " " ++ wide ++ "\\\\", "End.",
+    "\\end{document}"]
+  let cOut := layoutOf fs (located collide)
+  let sitesOf (k : DiagCode) := (cOut.diags.filter (·.kind == k)).map siteOf
+  t s!"reflow account: a re-flow and an overrun never share a site \
+({sitesOf .W0386} beside {sitesOf .W0005})"
+    (sitesOf .W0386 == #[some (5, 72), none] &&
+      sitesOf .W0005 == #[some (5, 1), some (9, 1), some (9, 72)])
+  let cRight := doc.page.width - doc.page.hmargin
+  let cPast := (bodyLines cOut).filter fun l => l.x + l.setWidth > cRight + Dim.pt 3
+  t s!"reflow account: the overruns named are the page's ({cPast.size})"
+    (cPast.size == (sitesOf .W0005).size)
 
 /-- The doors a diagnostic is made through, by their call heads, and whether
 each takes a subject: a door named before its receiver (`diag ctx .`,

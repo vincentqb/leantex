@@ -820,12 +820,13 @@ public theorem DiagCode.censused_iff_ships (c : DiagCode) :
     simp only [DiagCode.censused, DiagCode.floor, h, Loss.censused, Loss.floor, Floor.ships]
 
 /-- **A loss about a place names no written token.** An overfull line, a
-declared line that re-flowed and a page set short are where text stands, not
+declared line that re-flowed, a table wider than the measure (named at its
+first located cell) and a page set short are where text stands, not
 a construct the author wrote: whatever token opens the place is incidental,
 and a header that quoted it read differently at every site. The location
 points at the place. -/
 public def DiagCode.namesPlace : DiagCode → Bool
-  | .W0005 | .W0386 | .N0200 => true
+  | .W0005 | .W0386 | .W0338 | .N0200 => true
   | _ => false
 
 /-- The rendered code string: the kind's own spelling, derived. -/
@@ -954,9 +955,12 @@ so a document that declares its intent emits nothing at default verbosity
 — and the build summary always prints what was accepted, which is how
 acceptance stays visible rather than silent. An accepted loss is not a
 warning, so it never trips `--werror`: that is the point of accepting it.
+Acceptance reads the code's own loss, never the delivered severity: a repeat
+the fold delivered as a note is a site of the loss its line accepts, and is
+accepted with it (`Diag.acceptedLosses` counts the loss once).
 Returns the resolved diagnostic and whether it was accepted. -/
 public def Diag.accept (allowed : Array String) (allowAll : Bool) (d : Diag) : Diag × Bool :=
-  if d.severity != .note && (allowAll || allowed.contains d.code) then
+  if d.kind.loss.severity != .note && (allowAll || allowed.contains d.code) then
     ({ d with demoted := true }, true)
   else (d, false)
 
@@ -1688,15 +1692,16 @@ public theorem Diag.foldRepeats_line_exact (ds : Array Diag) (s : Nat) (hs : s <
 
 /-- **A wording's line counts its repeats.** A warning's words keep a line at
 or before it, delivered as a warning, whose count is at least the warnings in
-those words and at most those and the log's notes and errors that a census
-key names — which the line carries where their census loss opens on it. -/
+those words and at most those and the notes and errors it carries — those
+whose census loss opens on a warning in its words (`countsOn`). -/
 public theorem Diag.foldRepeats_wording_between (ds : Array Diag) (j : Nat) (hj : j < ds.size)
     (hw : ds[j].severity.isWarning = true) :
     ∃ i d, i ≤ j ∧ (Diag.foldRepeats ds)[i]? = some d ∧ d.severity.isWarning = true ∧
       (∃ hi : i < ds.size, Diag.sameLine ds[j] ds[i] = true) ∧
       (ds.filter fun e => e.severity.isWarning && Diag.sameLine ds[j] e).size ≤ d.sites ∧
       d.sites ≤ (ds.filter fun e => e.severity.isWarning && Diag.sameLine ds[j] e).size +
-        (ds.filter fun e => !e.severity.isWarning && e.subject.isSome).size := by
+        (ds.filter fun e => !e.severity.isWarning &&
+          Diag.countsOn ds.toList ds[j] e).size := by
   have hjl : j < ds.toList.length := by simpa using hj
   have hwl : ds.toList[j].severity.isWarning = true := by simpa using hw
   obtain ⟨hs, hle, hsl, hsW, hss⟩ := Diag.lineOf_spec ds.toList j hjl hwl
@@ -1723,15 +1728,38 @@ public theorem Diag.foldRepeats_wording_between (ds : Array Diag) (j : Nat) (hj 
     · rw [hcount, Diag.filter_size_countP, Diag.filter_size_countP, Diag.filter_size_countP]
       refine Nat.le_trans (List.countP_mono_left ?_) (Diag.countP_or_le _ _ _)
       intro e _ he
-      simp only [Diag.countsOn] at he
+      have hc : Diag.countsOn ds.toList ds[j] e = true := by
+        simpa only [Diag.countsOn, hcongr] using he
       simp only [Bool.or_eq_true, Bool.and_eq_true, Bool.not_eq_true']
       cases hew : e.severity.isWarning
-      · rw [hew] at he
-        simp only [Bool.false_eq_true, ite_false, Bool.and_eq_true] at he
-        exact Or.inr ⟨rfl, he.1⟩
-      · rw [hew] at he
-        simp only [ite_true, hcongr] at he
-        exact Or.inl ⟨rfl, he⟩
+      · exact Or.inr ⟨rfl, hc⟩
+      · simp only [Diag.countsOn, hew, ite_true] at hc
+        exact Or.inl ⟨rfl, hc⟩
+
+/-- One accepted record and the loss it is a site of: its code, its output
+scope, and its census subject (`sameLoss`) — or, naming none, its words
+(`sameWords`), the one loss the fold prints a subjectless repeat as. -/
+public structure Diag.Accepted where
+  code : String
+  output : Option Diag.Output
+  loss : String
+  deriving Repr, BEq
+
+public def Diag.Accepted.of (d : Diag) : Diag.Accepted :=
+  { code := d.code, output := d.output
+    loss := match d.subject with
+      | some s => "subject\x00" ++ s
+      | none => s!"words\x00{d.message}\x00{repr d.help}\x00{repr d.recovery}\x00{repr d.refused}" }
+
+/-- **What acceptance accepted, one code per loss.** The records of one loss
+are one entry however many sites the document accepts it at and however the
+log folds their lines. First acceptance first. -/
+public def Diag.acceptedLosses (accepted : Array Diag.Accepted) : Array String :=
+  let keyed := accepted.mapIdx fun i a => (s!"{a.code}\x00{repr a.output}\x00{a.loss}", i, a.code)
+  let sorted := keyed.qsort fun x y => x.1 < y.1 || (x.1 == y.1 && x.2.1 < y.2.1)
+  let firsts := sorted.zipIdx.filterMap fun (x, k) =>
+    if k > 0 && (sorted[k - 1]?.map (·.1)) == some x.1 then none else some x.2
+  (firsts.qsort fun x y => x.1 < y.1).map (·.2)
 
 /-- Diagnostics resolved against the document's acceptance, with the counts
 of every resolved phase. Counts follow acceptance, so an accepted loss is
@@ -1741,7 +1769,7 @@ delivered as one. -/
 public structure Resolution where
   diags : Array Diag := #[]
   fired : Array String := #[]
-  accepted : Array String := #[]
+  accepted : Array Diag.Accepted := #[]
   errors : Nat := 0
   warnings : Nat := 0
   notes : Nat := 0
@@ -1776,7 +1804,7 @@ public theorem Resolution.append_assoc_exact (a b c : Resolution) :
 private def Resolution.record (r : Resolution) (d : Diag) (accepted : Bool) : Resolution :=
   { diags := r.diags.push d
     fired := r.fired.push d.code
-    accepted := if accepted then r.accepted.push d.code else r.accepted
+    accepted := if accepted then r.accepted.push (Diag.Accepted.of d) else r.accepted
     errors := r.errors + (if d.severity == .error then 1 else 0)
     warnings := r.warnings + (if d.severity == .warning then 1 else 0)
     notes := r.notes + (if d.severity == .note && !accepted then 1 else 0) }

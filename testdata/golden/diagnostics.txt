@@ -548,7 +548,8 @@
   suggestion: shrink the picture ([scale=...]) or widen the text area (\page{ margin = ... })
 ── W0336 (degraded) node labels overlap; a relative placement parts centres, not text
 ⚠ [W0336]
-  1 pair(s) of node labels overlap: a relative placement parts node centres, not the text they set
+  node labels overlap: a relative placement parts node centres, not the text they set
+  1 pair of labels
   suggestion: declare the extent ([minimum width = ...]) or widen the separation ([node distance = ...])
 ── W0337 (degraded) table row disagrees with its column spec; padded to the grid
 ⚠ [W0337] - \begin

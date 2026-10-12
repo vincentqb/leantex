@@ -834,6 +834,16 @@ def siteAccountingProbes : List (String × String) :=
    (dvDoc "\\definecolor{codestring}{HTML}{AA0000}\n" "Sierra.",
     "a translated colour declaration of a retired listing key")]
 
+/-- Sources the site audit lays out, so it reads the losses a page names
+beside elaboration's: declared lines that open on a word wider than the
+measure, where a re-flow and an overrun meet. Invented words throughout. -/
+def layoutSiteAccountingProbes : List (String × String) :=
+  let wide := String.ofList (List.replicate 70 'w')
+  [(dvDoc "\\page{ width = 220pt, margin = 20pt }\n"
+      ("Short opening line.\\\\\n" ++ wide ++ " alpha beta gamma delta alpha beta.\\\\\n" ++
+        "Short closing line.\n\nTwo wide words.\\\\\n" ++ wide ++ " " ++ wide ++ "\\\\\nEnd."),
+    "layout: declared lines opening on an overrun")]
+
 /-- Markdown sources the site audit reads through the markdown reader, so the
 one-site rule sees what the reader names: the refused disclosures, which
 named one site twice, beside an accepted one, raw tags inline and as a block,
@@ -947,10 +957,19 @@ def siteAccountingChecks (ref : IO.Ref (List String)) : IO Unit := do
     sources := sources.push (what, (elabStr src).2)
   for (src, what) in mdSiteAccountingProbes do
     sources := sources.push (what, dvMd src)
-  -- The whole corpus as well as the probes: a collision a probe never
-  -- reproduced is still one site named twice.
+  -- The whole corpus as well as the probes, each as elaboration and layout
+  -- name it: a collision a probe never reproduced is still one site named
+  -- twice, and a page's losses stand at sites too.
+  let some face ← loadTestFont "OpenSans-Regular.ttf"
+    | t "site accounting: the face loads" false
+  let fs := oneFaceOf face
   for n in goldenNames do
-    sources := sources.push (s!"fixture {n}", (← goldenDoc n).2)
+    let (doc, ds) ← goldenDoc n
+    let out := layoutOf fs doc (imgs := ← corpusStore doc)
+    sources := sources.push (s!"fixture {n}", ds ++ out.diags)
+  for (src, what) in layoutSiteAccountingProbes do
+    let (doc, ds) := elabStr src
+    sources := sources.push (what, ds ++ (layoutOf fs doc).diags)
   for (what, ds) in sources do
     for pair in siteCollisions ds do
       unless seen.contains pair do seen := pair :: seen
@@ -1233,7 +1252,7 @@ def optionRunAccountingChecks (ref : IO.Ref (List String)) : IO Unit := do
   let renRes := Diag.resolveAll renDoc.allow false
     #[DriverDiag.boundaryFailed "lualatex" "! an invented failure" (Ir.picSrcPrefix ++ "aa")]
   t "renumbered allow: the successor is accepted, so --werror passes"
-    (renRes.accepted == #["W0382"] && renRes.warnings == 0 &&
+    (Diag.acceptedLosses renRes.accepted == #["W0382"] && renRes.warnings == 0 &&
       exitFor renRes.errors 0 renRes.warnings true == 0)
   t "renumbered allow: rows name no live code, a live successor, and no retired row"
     (DiagCode.renumbered.all fun (old, succ) => (DiagCode.ofString? old).isNone &&
@@ -1713,7 +1732,7 @@ def werrorChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "matrix: an allowed loss is 0 without the flag"
     (exitFor allowed.errors 0 allowed.warnings false == 0)
   t "matrix: an allowed loss is 0 with the flag — acceptance composes"
-    (allowed.warnings == 0 && allowed.accepted == #["W0104"] &&
+    (allowed.warnings == 0 && Diag.acceptedLosses allowed.accepted == #["W0104"] &&
       exitFor allowed.errors 0 allowed.warnings true == 0)
   t "matrix: an error is 1 whatever the flag"
     (exitFor 1 0 0 false == 1 && exitFor 1 0 0 true == 1)

@@ -1639,6 +1639,25 @@ def codeSources : IO (Array (String × List String)) := do
     out := out.push (f.toString, appliedCodes (stripNonCode (← IO.FS.readFile f)))
   return out
 
+/-- The corpus fixture's images, read from `testdata/corpus/` the way the
+driver reads them beside the document (boundary pictures stay unfulfilled:
+their placeholder boxes are what an unconverted build ships). -/
+def corpusStore (doc : Ir.Doc) : IO Image.Store := do
+  let mut fetched : Array (Image.Request × Image.Fetch) := #[]
+  for req in Ir.imageRequests doc do
+    let src := req.src
+    let mut f : Image.Fetch := .missing src
+    for cand in Image.sourceCandidates src do
+      let p := System.FilePath.mk "testdata/corpus" / cand
+      if ← p.pathExists then
+        let bytes ← IO.FS.readBinFile p
+        let decoded := Image.decodeRequest .default bytes req
+        f := .decoded (if cand == src then "" else cand)
+          (decoded.map (·.1)) none (decoded.toOption.bind (·.2)) (some bytes) none
+        break
+    fetched := fetched.push (req, f)
+  return (Image.fulfilRequests fetched).1
+
 /-- A document laid out as the driver hands it to the backends: math
 alphabet scopes resolve against the selected face before the fallback census
 or layout sees their scalars. Resolution diagnostics lead layout diagnostics,

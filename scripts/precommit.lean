@@ -1632,9 +1632,10 @@ def diagnosticOutputBypasses (file : String) (lines : Array String) : Array (Nat
     "Ui.done", "Ui.werror", "main", "dump", "hyphenate"]
   let names (s : String) := (s.split (fun c => !(isWordChar c || c == '.'))).toList.map
     (·.toString) |>.filter (!·.isEmpty)
-  -- Output is also a configuration/path field. Only associate it with
-  -- receivers explicitly bound as Diag or built by Diag.of in this def;
-  -- a mention of Diag must not taint unrelated status/output values.
+  -- Output and detail are also fields of configurations and run reports.
+  -- Only associate them with receivers explicitly bound as Diag or built
+  -- by Diag.of in this def; a mention of Diag must not taint unrelated
+  -- status values.
   let diagBindings (s : String) :=
     (s.split (fun c => c == '(' || c == ')' || c == '{' || c == '}')).toList.flatMap fun part =>
       match part.toString.splitOn ":" with
@@ -1650,7 +1651,8 @@ def diagnosticOutputBypasses (file : String) (lines : Array String) : Array (Nat
     ([".message", ".code", ".help", ".severity", ".span", ".subject", ".sites",
       ".trigger", ".recovery"].any fun f =>
         (n.endsWith f || containsSub n (f ++ ".")) && n.length > f.length) ||
-      diags.any (fun d => n == d ++ ".output" || n.startsWith (d ++ ".output."))
+      diags.any (fun d => [".output", ".detail"].any fun f =>
+        n == d ++ f || n.startsWith (d ++ f ++ "."))
   let mut owner := ""
   let mut diags : List String := []
   let mut depth := 0
@@ -2798,7 +2800,7 @@ def selftest : IO UInt32 := do
       [": lost text", "[W0301] lost text", " [W0301] lost text", " - lost text"].map fun tail =>
         (s!"literal {label}{tail}", "LeanTex/Cli/Driver.lean",
           ["def Ui.phase := IO.eprintln \"" ++ label ++ tail ++ "\""], true)) ++
-    ["trigger", "recovery", "output"].flatMap fun field =>
+    ["trigger", "recovery", "detail", "output"].flatMap fun field =>
       -- All use permitted writers: the field rule itself must reject them,
       -- not the independent rule against an unaudited terminal writer.
       [(s!"structured {field} direct", "LeanTex/Cli/Driver.lean",
