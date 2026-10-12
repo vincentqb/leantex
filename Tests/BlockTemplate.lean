@@ -54,6 +54,14 @@ blocks (`starsized`, `plainstar`); `\usebeamercolor` binding only the channels
 its element sets (`chain`); a title font declared before the theme, and one
 declared with the star (`parentChecks`); and a block's unread style keys kept
 out of both artifacts, each the one refusal at its site.
+
+A rule reaching by its title's lines, read in the title's font, is held the
+same way (`capitals`): a `\dimexpr` over the title box's height and depth
+less the `\parskip` its list opens on, `\baselineskip` and
+`\fontcharht\font`H`, and length registers assigned with `\global` inside
+the box; lualatex centres such a rule on the capitals, grows a line whose
+rule reaches past its box, and spaces what follows from a rule deeper than
+the box, and both artifacts do (`capitalChecks`, `capitalHtmlChecks`).
 -/
 
 /-- A rule beside the title's box, hanging `.6em` into the margin, `.3em`
@@ -793,6 +801,110 @@ def plainEmptySource : String :=
   "\\end{frame}\n" ++
   "\\end{document}\n"
 
+/-- Rules reaching by their titles' lines, read in the title's font from the
+title's box: the plain kind's its box's height and depth less the
+`\parskip` its list opens on, less half the leading the capitals leave
+(`\baselineskip` less `\fontcharht\font`H`), standing that far below the
+last baseline; the example kind's the same at `\large`, its box opening on
+its strut, so its rule reaches past the box's top; the alerted kind's on the
+right, half a leading deep and a point over the lines above, deeper than the
+box. The two-line titles break with `\\`, which beamer sets as a paragraph
+per line. -/
+def capitalsSource : String :=
+  "\\documentclass[10pt,aspectratio=169]{beamer}\n" ++
+  "\\usetheme{moloch}\n" ++
+  "\\definecolor{probeInk}{HTML}{1F2A44}\n" ++
+  "\\definecolor{probeEdge}{HTML}{2E8B57}\n" ++
+  "\\setbeamercolor{normal text}{fg=probeInk,bg=white}\n" ++
+  "\\setbeamercolor{probe edge}{bg=probeEdge}\n" ++
+  "\\setbeamerfont{block title example}{size=\\large}\n" ++
+  "\\setlength{\\parskip}{4pt}\n" ++
+  "\\makeatletter\n" ++
+  "\\newbox\\probe@box\n" ++
+  "\\newdimen\\probe@down\n" ++
+  "\\newcommand{\\probe@open}[1]{%\n" ++
+  "  \\par\\vskip\\medskipamount\n" ++
+  "  \\ifx\\insertblocktitle\\@empty\\else\n" ++
+  "    \\setbox\\probe@box\\vbox{\\hsize\\linewidth\n" ++
+  "      \\usebeamerfont*{block title#1}\\usebeamercolor[fg]{block title#1}%\n" ++
+  "      \\strut\\insertblocktitle\\strut\\par\n" ++
+  "      \\global\\probe@down\\dimexpr(\\baselineskip-\\fontcharht\\font`H)/2\\relax}%\n" ++
+  "    \\noindent\\llap{{\\usebeamercolor[bg]{probe edge}%\n" ++
+  "        \\vrule width .3em\n" ++
+  "          height \\dimexpr\\ht\\probe@box+\\dp\\probe@box-\\parskip-\\probe@down\\relax\n" ++
+  "          depth \\probe@down}%\n" ++
+  "      \\hskip .6em}%\n" ++
+  "    \\box\\probe@box\\par\\nobreak\n" ++
+  "  \\fi\n" ++
+  "  \\usebeamerfont{block body#1}\\usebeamercolor[fg]{block body#1}}\n" ++
+  "\\newcommand{\\probe@close}{\\par\\vskip\\smallskipamount}\n" ++
+  "\\defbeamertemplate*{block begin}{probe}{\\probe@open{}}\n" ++
+  "\\defbeamertemplate*{block end}{probe}{\\probe@close}\n" ++
+  "\\defbeamertemplate*{block example begin}{probe}{%\n" ++
+  "  \\par\\vskip\\medskipamount\n" ++
+  "  \\ifx\\insertblocktitle\\@empty\\else\n" ++
+  "    \\setbox\\probe@box\\vbox{\\hsize\\linewidth\n" ++
+  "      \\usebeamerfont*{block title example}\\strut\\usebeamercolor[fg]{block title example}%\n" ++
+  "      \\insertblocktitle\\strut\\par\n" ++
+  "      \\global\\probe@down\\dimexpr(\\baselineskip-\\fontcharht\\font`H)/2\\relax}%\n" ++
+  "    \\noindent\\llap{{\\usebeamercolor[bg]{probe edge}%\n" ++
+  "        \\vrule width .3em height \\dimexpr\\ht\\probe@box+\\dp\\probe@box-\\probe@down\\relax\n" ++
+  "          depth \\probe@down}%\n" ++
+  "      \\hskip .6em}%\n" ++
+  "    \\box\\probe@box\\par\\nobreak\n" ++
+  "  \\fi\n" ++
+  "  \\usebeamerfont{block body example}\\usebeamercolor[fg]{block body example}}\n" ++
+  "\\defbeamertemplate*{block example end}{probe}{\\probe@close}\n" ++
+  "\\defbeamertemplate*{block alerted begin}{probe}{%\n" ++
+  "  \\par\\vskip\\medskipamount\n" ++
+  "  \\ifx\\insertblocktitle\\@empty\\else\n" ++
+  "    \\setbox\\probe@box\\vbox{\\hsize\\linewidth\n" ++
+  "      \\usebeamerfont*{block title alerted}\\usebeamercolor[fg]{block title alerted}%\n" ++
+  "      \\strut\\insertblocktitle\\strut\\par\n" ++
+  "      \\global\\probe@down\\dimexpr\\baselineskip/2\\relax}%\n" ++
+  "    \\noindent\\copy\\probe@box\n" ++
+  "    \\rlap{\\hskip 4pt{\\usebeamercolor[fg]{alerted text}%\n" ++
+  "        \\vrule width 3pt\n" ++
+  "          height \\dimexpr\\dp\\probe@box+\\ht\\probe@box-\\parskip-\\probe@down+1pt\\relax\n" ++
+  "          depth \\probe@down}}%\n" ++
+  "    \\par\\nobreak\n" ++
+  "  \\fi\n" ++
+  "  \\usebeamerfont{block body alerted}\\usebeamercolor[fg]{block body alerted}}\n" ++
+  "\\defbeamertemplate*{block alerted end}{probe}{\\probe@close}\n" ++
+  "\\makeatother\n" ++
+  "\\begin{document}\n" ++
+  "\\begin{frame}[t]{Capitals}\n" ++
+  "Lead paragraph above.\n" ++
+  "\\begin{block}{Alpha title words}\n" ++
+  "Body words here.\n" ++
+  "\\end{block}\n" ++
+  "\\begin{block}{Delta first title line\\\\Delta second title line}\n" ++
+  "Second body words.\n" ++
+  "\\end{block}\n" ++
+  "Trailing paragraph below.\n" ++
+  "\\end{frame}\n" ++
+  "\\begin{frame}[t]{Sizes}\n" ++
+  "Lead paragraph above.\n" ++
+  "\\begin{exampleblock}{Gamma title words}\n" ++
+  "Third body words.\n" ++
+  "\\end{exampleblock}\n" ++
+  "\\begin{exampleblock}{Epsilon first title line\\\\Epsilon second title line}\n" ++
+  "Fourth body words.\n" ++
+  "\\end{exampleblock}\n" ++
+  "Trailing paragraph below.\n" ++
+  "\\end{frame}\n" ++
+  "\\begin{frame}[t]{Right}\n" ++
+  "Lead paragraph above.\n" ++
+  "\\begin{alertblock}{Beta title words}\n" ++
+  "Fifth body words.\n" ++
+  "\\end{alertblock}\n" ++
+  "\\begin{block}{}\n" ++
+  "Untitled body words.\n" ++
+  "\\end{block}\n" ++
+  "Trailing paragraph below.\n" ++
+  "\\end{frame}\n" ++
+  "\\end{document}\n"
+
 private def edgeColor : Ir.Color := { r := 0x2E, g := 0x8B, b := 0x57 }
 
 private def edgeTwoColor : Ir.Color := { r := 0x8B, g := 0x2E, b := 0x57 }
@@ -1019,7 +1131,43 @@ private def measured : Array (String × Nat × Mark × Mark × Int) := #[
   ("plainstar", 1, .base "Lead paragraph above.", .base "First heading line", 19279),
   ("plainstar", 1, .base "First heading line", .base "Second heading line", 17000),
   ("plainstar", 1, .base "Second heading line", .base "Fifth body words.", 14785),
-  ("plainstar", 1, .base "Fifth body words.", .base "Trailing paragraph below.", 15000)]
+  ("plainstar", 1, .base "Fifth body words.", .base "Trailing paragraph below.", 15000),
+  -- A rule reaching by the title's lines: half a leading and half a cap
+  -- height past the capitals' span, one leading per line; the large title's
+  -- rule reaches past its box, which its line then stands below; the
+  -- alerted rule half a leading deep, which the body is then spaced from.
+  ("capitals", 0, .base "Lead paragraph above.", .base "Alpha title words", 25802),
+  ("capitals", 0, .top edgeColor 0, .base "Alpha title words", 9569),
+  ("capitals", 0, .top edgeColor 0, .bottom edgeColor 0, 12000),
+  ("capitals", 0, .base "Alpha title words", .base "Body words here.", 16000),
+  ("capitals", 0, .base "Body words here.",
+    .base "Delta first title line", 28802),
+  ("capitals", 0, .top edgeColor 1,
+    .base "Delta first title line", 9569),
+  ("capitals", 0, .top edgeColor 1, .bottom edgeColor 1, 24000),
+  ("capitals", 0, .base "Delta first title line",
+    .base "Delta second title line", 12000),
+  ("capitals", 0, .base "Delta second title line", .base "Second body words.", 16000),
+  ("capitals", 0, .base "Second body words.", .base "Trailing paragraph below.", 19000),
+  ("capitals", 1, .base "Lead paragraph above.", .base "Gamma title words", 24686),
+  ("capitals", 1, .top edgeColor 0, .base "Gamma title words", 11283),
+  ("capitals", 1, .top edgeColor 0, .bottom edgeColor 0, 14000),
+  ("capitals", 1, .base "Gamma title words", .base "Third body words.", 16000),
+  ("capitals", 1, .base "Third body words.",
+    .base "Epsilon first title line", 27686),
+  ("capitals", 1, .top edgeColor 1,
+    .base "Epsilon first title line", 11283),
+  ("capitals", 1, .top edgeColor 1, .bottom edgeColor 1, 28000),
+  ("capitals", 1, .base "Epsilon first title line",
+    .base "Epsilon second title line", 14000),
+  ("capitals", 1, .base "Epsilon second title line", .base "Fourth body words.", 16000),
+  ("capitals", 1, .base "Fourth body words.", .base "Trailing paragraph below.", 19000),
+  ("capitals", 2, .base "Lead paragraph above.", .base "Beta title words", 25802),
+  ("capitals", 2, .top alertColor 0, .base "Beta title words", 7000),
+  ("capitals", 2, .top alertColor 0, .bottom alertColor 0, 13000),
+  ("capitals", 2, .base "Beta title words", .base "Fifth body words.", 18651),
+  ("capitals", 2, .base "Fifth body words.", .base "Untitled body words.", 25000),
+  ("capitals", 2, .base "Untitled body words.", .base "Trailing paragraph below.", 19000)]
 
 /-- lualatex's horizontal distances, the same way. -/
 private def measuredX : Array (String × Nat × Mark × Mark × Int) := #[
@@ -1045,7 +1193,11 @@ private def measuredX : Array (String × Nat × Mark × Mark × Int) := #[
   ("boxed", 0, .rightEdge, .right edgeColor 0, 0),
   ("boxed", 0, .left edgeColor 0, .right edgeColor 0, 2000),
   ("boxed", 1, .rightEdge, .right edgeColor 0, 0),
-  ("boxed", 1, .edge, .lineX "Delta title words", 0)]
+  ("boxed", 1, .edge, .lineX "Delta title words", 0),
+  ("capitals", 0, .left edgeColor 0, .edge, 9000),
+  ("capitals", 0, .left edgeColor 0, .right edgeColor 0, 3000),
+  ("capitals", 2, .rightEdge, .left alertColor 0, 4000),
+  ("capitals", 2, .left alertColor 0, .right alertColor 0, 3000)]
 
 /-- Word spaces ship as gaps, not glyphs: a line is found by its letters. -/
 private def letters (text : String) : String := text.replace " " ""
@@ -1076,7 +1228,7 @@ private def sources : List (String × String) :=
   [("hanging", hanging), ("whole", whole), ("inside", inside), ("armed", armedSource),
    ("boxed", boxedSource), ("sized", sizedSource), ("plainsized", plainSizedSource),
    ("emptybox", emptyBoxSource), ("starsized", starSizedSource), ("plainstar", plainStarSource),
-   ("plainempty", plainEmptySource)]
+   ("plainempty", plainEmptySource), ("capitals", capitalsSource)]
 
 private def layout (fonts : Font.FontSet) (name src : String) : Layout.Geom × Layout.Out × Array Diag :=
   let (doc, diags) := Elab.run s!"block-template-{name}.tex" src
@@ -1114,6 +1266,7 @@ private def pageChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO 
       | "starsized" => #[3, 2]
       | "plainstar" => #[0, 0]
       | "plainempty" => #[0, 0]
+      | "capitals" => #[2, 2, 1]
       | _ => #[1, 1]
     check ref s!"block template {name}: one rule per box that has one ({rules})" (rules == want)
     check ref s!"block template {name}: no colour box is painted"
@@ -1223,7 +1376,16 @@ private def readingChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : 
         whole := some true
         edges := #[{ span := .whole, side := .right, width := { width := { em := 250 } }
                      sep := { width := .ofSp (Dim.pt 3) }, hang := false
-                     color := { r := 0x12, g := 0x34, b := 0x56 }, name := some (.role .accent) }] })]
+                     color := { r := 0x12, g := 0x34, b := 0x56 }, name := some (.role .accent) }] }),
+     ("{ title = box strut parskip, untitled = {}, edge = { span = title, side = left, " ++
+       "width = 0.3em, sep = 0.6em, hang = true, color = accent, above = 0.5lh + 0.5cap, " ++
+       "below = 0.5lh - 0.5cap - 1pt } }",
+      { title := { boxed := true, strut := true, parskip := true }, bare := some {}
+        edges := #[{ span := .title, side := .left, width := { width := { em := 300 } }
+                     sep := { width := { em := 600 } }, hang := true
+                     color := { r := 0x12, g := 0x34, b := 0x56 }, name := some (.role .accent)
+                     reach := .lines { lead := 500, cap := 500 }
+                       { lead := 500, cap := -500, sp := -Dim.pt 1 } }] })]
   for (src, want) in reads do
     let doc := (Elab.run "block-shape.tex"
       ("\\documentclass{slides}\n\\palette{ accent = #123456 }\n\\style{block}{ shape = " ++ src ++
@@ -1233,6 +1395,34 @@ private def readingChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : 
     let want := { want with edges := want.edges.map fun e => { e with color := accent } }
     check ref s!"block template: the native shape {src} reads back"
       (((doc.styles.find? "block").bind (·.shape)) == some want)
+
+/-- The reading names a rule it does not hold beside the title's lines: one
+reading its box's height alone, one taking off a paragraph skip its box's
+list does not open on, and one reading the height of a character other than
+`H`. Each pair is named once, for its reading, and its blocks keep beamer's
+default pair. -/
+private def capitalReadingChecks (ref : IO.Ref (List String)) : IO Unit := do
+  let height := capitalsSource.replace
+    "height \\dimexpr\\ht\\probe@box+\\dp\\probe@box-\\parskip-\\probe@down\\relax"
+    "height \\dimexpr\\ht\\probe@box-\\parskip-\\probe@down\\relax"
+  let skip := capitalsSource.replace
+    "height \\dimexpr\\ht\\probe@box+\\dp\\probe@box-\\probe@down\\relax"
+    "height \\dimexpr\\ht\\probe@box+\\dp\\probe@box-\\parskip-\\probe@down\\relax"
+  let other := capitalsSource.replace "\\fontcharht\\font`H" "\\fontcharht\\font`x"
+  let cases : List (String × String × String × String × String) :=
+    [("height", height, "block begin", "block", "reading other than its height and depth"),
+     ("skip", skip, "block example begin", "exampleblock",
+       "another skip than the one its list opens on"),
+     ("other", other, "block begin", "block", "\\probe@down set to a length it cannot read")]
+  for (name, src, element, style, why) in cases do
+    check ref s!"capitals {name}: the refused probe differs from the probe" (src != capitalsSource)
+    let (doc, diags) := Elab.run s!"block-template-capitals-{name}.tex" src
+    let named := diags.filter fun d =>
+      d.code == "W0110" && d.subject == some s!"beamer:template:{element}"
+    check ref s!"capitals {name}: the template is named once, for its reading ({named.map (·.message)})"
+      (named.size == 1 && named.all (hasStr ·.message why))
+    check ref s!"capitals {name}: its blocks keep the default pair"
+      (((doc.styles.find? style).bind (·.shape)).isNone)
 
 /-- fontspec's `\newfontfamily\cmd{Family}` declares a family beside the
 three slots and the command that selects it, and beamer's
@@ -1331,6 +1521,88 @@ private def chainChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO
       (·.y < ·.y)).map (·.color)
     check ref s!"block template chain page {page}: each rule paints the channel its chain binds"
       (rules == want)
+
+/-- A shipped line's first glyph run: the face and size it sets in. -/
+private def firstRun (fs : Font.FontSet) (l : Layout.LineOut) : Option (Font.Font × Dim.Sp) :=
+  l.segs.findSome? fun s => match s with
+    | .run idx _ _ _ gs size _ _ _ _ _ =>
+      if gs.isEmpty then none else some (fs.get idx, if size == 0 then l.size else size)
+    | _ => none
+
+/-- **A rule reaching by its title's lines stands centred on the capitals**
+(`Ir.BlockMetric.centred_exact`), over the shipped pages: every rule beside
+the probe's plain and example titles — one line and two, at the body's size
+and at `\large` — has its midpoint exactly at the midpoint of the span from
+its title's first line's cap height, the height of `H` in the face and at
+the size the line's first run sets in, to its last line's baseline, in
+scaled points, and reaches one `\baselineskip` per line, to a scaled point. -/
+private def capitalChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit := do
+  let (_, out, _) := layout fonts "capitals" capitalsSource
+  for (page, lead) in [(0, Dim.pt 12), (1, Dim.pt 14)] do
+    let p : Layout.PageOut := out.pages[page]?.getD {}
+    let bars := (p.fills.filter (·.color == edgeColor)).qsort (·.y < ·.y)
+    check ref s!"capitals page {page}: a rule beside each title ({bars.size})" (bars.size == 2)
+    for (bar, lines) in bars.toList.zip [1, 2] do
+      let title := (p.lines.filter fun l =>
+        !l.furniture && bar.y ≤ l.y && l.y ≤ bar.y + bar.h).qsort (·.y < ·.y)
+      match title[0]?, title.back?, title[0]?.bind (firstRun fonts) with
+      | some first, some last, some (face, size) =>
+        let cap : Dim.Sp := ((face.charHtH.toNat * size.toNat / face.unitsPerEm : Nat) : Int)
+        check ref (s!"capitals page {page}: the {lines}-line title's rule is centred on its capitals " ++
+          s!"({2 * bar.y + bar.h} against {first.y - cap + last.y})")
+          (title.size == lines && 2 * bar.y + bar.h == first.y - cap + last.y)
+        check ref s!"capitals page {page}: the {lines}-line title's rule is a leading per line ({bar.h})"
+          ((bar.h - (lines : Int) * lead).natAbs ≤ 1)
+      | _, _, _ => check ref s!"capitals page {page}: the {lines}-line title ships" false
+
+/-- The term a stylesheet length adds last, `calc(… + <term>)`, as a length
+on a stage `height` tall: thousandths of `vh`, or a zero. -/
+private def lastStageTerm (rule key : String) (height : Dim.Sp) : Option Dim.Sp := do
+  let decl ← (rule.splitOn ";").find? fun d => (d.splitOn ":")[0]?.map (·.trimAscii.toString) == some key
+  let value := ((decl.splitOn ":").drop 1 |> String.intercalate ":").trimAscii.toString
+  let term := ((value.splitOn " + ").getLast?.getD value).trimAscii.toString
+  let term := if term.endsWith ")" then (term.dropEnd 1).toString else term
+  if term == "0rem" then return 0
+  if !term.endsWith "vh" then none
+  let (m, sc) ← Decl.parseDecimal (term.dropEnd 2).toString
+  return m * 1000 / (sc : Int) * height / 100000
+
+/-- **The web page stands the rule where it centres on the capitals**
+(`HtmlDoc.blockShapeCss`, `Layout.blockTitleRule`): the plain title's rule is
+its header's `::before`, its top the header's first line box's top past the
+`\parskip`s and its bottom its last line box's bottom, each moved by the
+offset the driver measures over the page's faces. Under CSS 2.1 §10.8.1's
+model of a line over the title face's ascent and descent at the title's
+`\baselineskip` — each line box its leading tall, its baseline `b` below
+its top — the rule's midpoint is the midpoint of the span from the first
+line's cap height to the last line's baseline, for one line and two, to the
+stylesheet's precision. -/
+private def capitalHtmlChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit := do
+  let (doc, _) := Elab.run "block-template-capitals.tex" capitalsSource
+  let geom := Layout.Geom.ofPage doc.page
+  let cfg : HtmlDoc.Config := { blockTitleRule := Layout.blockTitleRule geom fonts doc.styles }
+  let (head, body, _) := HtmlDoc.emitTree cfg doc
+  let sheet := treeCssList "" (head.toList ++ body.toList)
+  let rule := (cssRuleOf sheet "section.block-shaped.block-block > header::before").getD ""
+  let peer := "var(--parskip, 0.725rem)"
+  check ref s!"capitals HTML: the rule's top stands past the header's paragraph skips ({rule})"
+    (hasStr rule s!"top: calc({peer} + {peer} + ")
+  let face := fonts.get 0
+  let size := Dim.pt 10
+  let lead := Dim.pt 12
+  let scale (u : Int) : Dim.Sp := ((u.toNat * size.toNat / face.unitsPerEm : Nat) : Int)
+  let cap := scale face.charHtH
+  let b := (Layout.leadedBox (scale face.ascent) (scale (-face.descent)) lead).1
+  match lastStageTerm rule "top" doc.page.height, lastStageTerm rule "bottom" doc.page.height with
+  | some top, some bottom =>
+    for lines in [1, 2] do
+      -- From the header's content top: the rule from `top` to `n·lead - bottom`, the
+      -- capitals from `b - cap` to `(n - 1)·lead + b`.
+      let bar2 := top + ((lines : Int) * lead - bottom)
+      let caps2 := (b - cap) + (((lines : Int) - 1) * lead + b)
+      check ref s!"capitals HTML: the {lines}-line title's rule is centred on its capitals ({bar2} against {caps2})"
+        ((bar2 - caps2).natAbs ≤ (2 * doc.page.height / 100000 + 2).toNat)
+  | _, _ => check ref s!"capitals HTML: the rule's offsets read ({rule})" false
 
 /-- A page's ink, as a comparison reads it: every line's place and letters,
 every fill's rectangle and colour. -/
@@ -1647,5 +1919,8 @@ def checks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit := do
   bodyFamilyChecks ref
   chainChecks ref fonts
   emptyBoxHtmlChecks ref
+  capitalChecks ref fonts
+  capitalHtmlChecks ref fonts
+  capitalReadingChecks ref
 
 end Tests.BlockTemplate

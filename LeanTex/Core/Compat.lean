@@ -965,6 +965,10 @@ private structure St where
   (`\newlength`, `\setlength`, register arithmetic): what an `\advance` of
   it is evaluated from. -/
   lens : Array (String × String) := #[]
+  /-- The length registers the document allocates (`\newlength`,
+  `\newdimen`): what a block template may assign and read as registers
+  (`BlockTemplate.read`), where a parameter such as `\parskip` is not one. -/
+  allocated : Array String := #[]
   /-- Token sites assigned directly in this scope. Their opening values
   are captured by the elaborator, where native declarations have resolved. -/
   localLengths : Array String := #[]
@@ -3689,7 +3693,8 @@ private def condLiveRaw (flags : Std.HashMap String Bool)
       -- Length declarations and mutations execute at each use. Their
       -- operands reach the later scoped rewrite in execution order, so
       -- repeated assignments read the value the preceding one left.
-      ["newlength", "setlength", "addtolength", "advance", "multiply", "divide"].contains n ||
+      ["newlength", "newdimen", "setlength", "addtolength", "advance", "multiply",
+        "divide"].contains n ||
       groupPrimitives.any (fun p => p.1 == n || p.2 == n) ||
       (match condValueOf binds n with
        | some (some v) => v.live
@@ -7160,7 +7165,11 @@ private def flushBeamerBlocks : M (Array Raw) := do
       | _ => none
     let unread : Array String ← match b, e with
       | some (_, _, _, bb), some (_, _, _, eb) =>
-        match BlockTemplate.read bb eb defs (st.serial + 1) with
+        -- The document's own length registers, assigned where the template
+        -- runs; their values where the block stands are not held.
+        let lengths : String → Option (Option BlockTemplate.Dimen) := fun n =>
+          if st.allocated.contains n then some none else none
+        match BlockTemplate.read bb eb defs (st.serial + 1) lengths with
         | .error us => pure us
         | .ok r =>
           -- The kind's own element binds the foreground last: beamer's title
@@ -9390,13 +9399,17 @@ face serves every language, so the binding is dropped" pos
       else #[Raw.env (Parse.inputEnv st.file) cmd pos]
     write fun st => { st with preCounters := st.preCounters ++ cmd }
     return some (#[], k)
-  | "newlength" =>
+  | "newlength" | "newdimen" =>
     -- `\newlength{\x}` allocates a length register at 0pt (usrguide,
-    -- "Defining lengths"); the native store is a token, so a later
+    -- "Defining lengths"), as TeX's `\newdimen\x` allocates a dimen
+    -- register (plain.tex); the native store is a token, so a later
     -- `\setlength{\x}` and references to `\x` in other lengths resolve.
     let (args, k) := takeGroups raws start 1
     let some n := ctrlName (args.getD 0 #[]) | return none
-    return some (← setLength n "0pt" s!"\\newlength\{\\{n}}" pos, k)
+    write fun st => { st with
+      allocated := if st.allocated.contains n then st.allocated else st.allocated.push n }
+    let what := if name == "newdimen" then s!"\\newdimen\\{n}" else s!"\\newlength\{\\{n}}"
+    return some (← setLength n "0pt" what pos, k)
   | "setlength" =>
     let (args, k) := takeGroups raws start 2
     if h : args.size = 2 then

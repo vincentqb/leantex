@@ -171,6 +171,32 @@ def htmlRoleClosureChecks (ref : IO.Ref (List String)) : IO Unit := do
     t s!"role closure {n}: every role read is declared ({undeclared})" undeclared.isEmpty
     t s!"role closure {n}: every declared role is read ({unread})" unread.isEmpty
 
+/-- **A token named as TeX names internals still publishes** (`HtmlDoc.tokenVar?`):
+a length register a document allocates under an internal name — `\newlength`
+and `\newdimen` of a name holding `@` — has no custom property, since the
+self-contained stylesheet admits no identifier escape, so the page's
+stylesheet requests nothing it refuses; a token named in plain letters keeps
+its property, and a length sourced from the internal name states its value
+alone. -/
+def htmlInternalTokenChecks (ref : IO.Ref (List String)) : IO Unit := do
+  let t := check ref
+  let (doc, ds) := elabStr
+    ("\\documentclass{article}\n\\makeatletter\n\\newlength{\\probe@len}\n" ++
+     "\\newdimen\\probe@dim\n\\newlength{\\probeplain}\n\\setlength{\\probe@len}{7pt}\n" ++
+     "\\setlength{\\parskip}{\\probe@len}\n\\makeatother\n" ++
+     "\\begin{document}\nPlaceholder words.\n\nMore placeholder words.\n\\end{document}\n")
+  t s!"internal tokens: the probe elaborates with no loss above a note ({ds.map (·.code)})"
+    (ds.all fun d => d.severity == Severity.note)
+  let (head, body, _) := HtmlDoc.emitTree {} doc
+  let refusals := (HtmlResource.requests head body).filterMap fun
+    | .refused why => some why
+    | _ => none
+  t s!"internal tokens: the stylesheet requests nothing it refuses ({refusals})" refusals.isEmpty
+  let sheet := treeCssList "" (head.toList ++ body.toList)
+  t "internal tokens: a token named in plain letters keeps its property"
+    (hasStr sheet "--probeplain:")
+  t "internal tokens: no property carries an internal name" (!hasStr sheet "@len" && !hasStr sheet "@dim")
+
 /-- The title page's own gaps, measured on one synthetic document rather
 than as a union over the corpus: every part a lineage bundle's inter-part
 tokens govern is declared, so each of the five must reach the emitted

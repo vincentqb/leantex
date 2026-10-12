@@ -8116,9 +8116,52 @@ public inductive BlockSpan where
   | whole
   deriving Repr, BEq, DecidableEq, Inhabited
 
+/-- A length a template's rule reads in its title's font, where TeX reads it
+inside the title's box: thousandths of the title's `\baselineskip` (`lead`)
+and of its cap height, `\fontcharht\font`H` (`cap`), and a fixed length. -/
+public structure BlockMetric where
+  lead : Int := 0
+  cap : Int := 0
+  sp : Int := 0
+  deriving Repr, BEq, DecidableEq, Inhabited
+
+/-- A metric at the title's `\baselineskip` and cap height. -/
+public def BlockMetric.resolve (m : BlockMetric) (lead cap : Int) : Int :=
+  m.lead * lead / 1000 + m.cap * cap / 1000 + m.sp
+
+/-- **A rule a cap height longer above than below stands centred on the
+capitals** (`_exact`): where `above` and `below` read the same leading and
+fixed length and `above` one cap height more, the rule reaches exactly one
+cap height further past the first baseline than past the last, whatever the
+leading, so its midpoint is the midpoint of the span from the first line's
+cap height to the last line's baseline, in integer arithmetic. -/
+public theorem BlockMetric.centred_exact (above below : BlockMetric) (lead cap : Int)
+    (hl : above.lead = below.lead) (hs : above.sp = below.sp)
+    (hc : above.cap = below.cap + 1000) :
+    above.resolve lead cap - below.resolve lead cap = cap := by
+  unfold BlockMetric.resolve
+  rw [hl, hs, hc, Int.add_mul]
+  have h : (below.cap * cap + 1000 * cap) / 1000 = below.cap * cap / 1000 + cap :=
+    Int.add_mul_ediv_left _ _ (by decide)
+  rw [h]
+  omega
+
+/-- How far a template's rule reaches beside its box. `box`: the box's own
+height and depth (`height \ht\B depth \dp\B`), its top to its bottom.
+`lines`: beside the title's box, its lines and metrics read in the title's
+font (`height \dimexpr\ht\B+\dp\B-\parskip-… depth …`, the box's height
+and depth less the `\parskip` its list opens on): `above` past the first
+title line's baseline and `below` past the last one's, as TeX sets the rule
+on the box's baseline — strutted at both ends, the title's lines are one
+`\baselineskip` each. -/
+public inductive BlockReach where
+  | box
+  | lines (above below : BlockMetric)
+  deriving Repr, BEq, Inhabited
+
 /-- A rule beside one of a block's boxes, as themes spell it
 (`\llap{\vrule width W height \ht\B depth \dp\B \hskip S}\box\B`): `width`
-wide, `sep` from the box's `side`, from the box's top to its bottom. A hanging
+wide, `sep` from the box's `side`, reaching as `reach` says. A hanging
 rule stands outside the box's line (`\llap`, `\rlap`), so the box keeps the
 measure; a rule inside the line moves the box in by `width + sep` on its side,
 the box set that much narrower. `color` is the colour in force at the rule, and
@@ -8131,6 +8174,7 @@ public structure BlockEdge where
   hang : Bool
   color : Color
   name : Option ColorRef := none
+  reach : BlockReach := .box
   deriving Repr, BEq, Inhabited
 
 /-- **The one reading of a template rule's colour**, against the palette in

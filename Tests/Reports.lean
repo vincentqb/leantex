@@ -1407,7 +1407,13 @@ def reports : List Report := [
     accept := ["ninety-four of the guards' assertions fail with the fix reverted onto the recorded commit — the fold keyed by census subject again, a site's particulars back in its words, every written word a header and the place codes' headers back, the re-flow unlocated and keyed by its index, acceptance read off the delivered severity, and the page's losses unscoped: a wording whose census keys tell its sites apart printed once per site, the re-flow's sites, its output scope and its accepted count, fifteen witnesses written twice printing a line per site, twenty-eight voice and diagnostics-golden assertions, the listing, literal and layout origins' headers, the record format's headers and the font scope's",
       "an invented markdown document whose code lines overrun prints one overfull warning carrying their sites, its header ending at its location, where the tree before printed one per line quoting each line's code",
       "a long private markdown report built to HTML in a font environment with no monospace face prints no overfull line where the tree before printed twenty-five, and built to PDF prints them as one line carrying their sites"]
-    state := .guarded "0ec6b963" .revert .author }
+    state := .guarded "0ec6b963" .revert .author },
+  { id := "R153", date := "2026-10-12"
+    what := "A block template's rule beside its title stood off the title's capitals in both engines, spanning the paragraph skip its box opens on; the template that centres it, reading the box's lines, the title font's cap height and its leading in a dimension expression and length registers, was not read, and its blocks set as beamer's default boxes"
+    pins := [check% Tests.BlockTemplate.checks, thm% Ir.BlockMetric.centred_exact]
+    accept := ["fourteen assertions fail on the tree before the fix and hold after, over an invented probe: the template named and its blocks set as beamer's default boxes, no rule beside its five titles, a large title's line not lowered below its rule's reach nor a body below a rule deeper than its box, no rule centred on its title's capitals, a reach's native spelling unread, and a rule reading its box's height alone not named for it; on this tree every rule's place and size is within 0.002 points of the reference engine's, each centred rule on its capitals exactly in the PDF and to the stylesheet's precision in the browser",
+      "a presentation deck whose theme centres its block rules on the titles' capitals ships them centred in both artifacts, as its lualatex build does, every other pixel of the deck unchanged"]
+    state := .guarded "30b9fdf4" .before .author }
 ]
 
 /-- The reports guarded but never seen failing: a count that may fall and

@@ -181,6 +181,12 @@ skips the same places (`Ir.FillView.deck`). -/
   caller with no font environment keeps the cap-height strut
   (`footCapDecl`). -/
   footBox : Nat → Array Ir.BandSlot → Option (Sp × Sp) := fun _ _ => none
+  /-- Where a rule reaching by a block title's lines stands in the title's
+  header (`Ir.BlockReach.lines`), from the driver: below the header's first
+  line box's top and above its last line box's bottom, over the faces the
+  page reads (`Layout.blockTitleRule`). The default answers nothing — a
+  caller with no font environment stands the rule on the header's lines. -/
+  blockTitleRule : Ir.TitledKind → Ir.BlockReach → Option (Sp × Sp) := fun _ _ => none
   /-- Measured cancellation in the resolved surrounding text style, supplied
   by the same font environment and assembly as the native backend. -/
   cancelMetric : MeasureValues → Array Ir.Style → Math.MathStyle → Math.CancelSpec →
@@ -498,6 +504,16 @@ public def cellSideRule (h : Ir.HAlign) : String :=
   "table.booktabs td." ++ cellSideClass h ++ ", table.booktabs th." ++ cellSideClass h ++
     " { text-align: " ++ h.align ++ "; }\n"
 
+/-- **A token's custom property**: `--` and its name, where the name is
+spelled in what a CSS identifier holds with no escape — ASCII letters,
+digits, `-` and `_` — since the self-contained stylesheet admits no escape
+(`HtmlResource.cssRequests`). A name holding anything else, a TeX internal
+name's `@` among them (`\newdimen\x@y`), has no property: no rule declares
+it, and a rule reading it states its value alone. -/
+public def tokenVar? (n : String) : Option String :=
+  if !n.isEmpty && n.all (fun c => c.isAlphanum || c == '-' || c == '_') then some ("--" ++ n)
+  else none
+
 /-- A sourced length in CSS: the custom property the value was declared
 under, with the resolved length as its fallback. This is the whole reason
 `Ir.Sourced` exists — `tokenVars` emits every declared token into `:root`
@@ -512,8 +528,8 @@ theme's bundle but absent from the document's own table is not in `:root`,
 and an unresolved `var()` with no fallback makes the whole declaration
 invalid — the gap would collapse to zero. -/
 public def cssSourced (g : Ir.Sourced SymGlue) : String :=
-  match g.token with
-  | some n => s!"var(--{n}, {cssLength g.value.width})"
+  match g.token.bind tokenVar? with
+  | some v => s!"var({v}, {cssLength g.value.width})"
   | none => cssLength g.value.width
 
 /-- A declared token reaches the stylesheet as a reference to its own
@@ -522,9 +538,11 @@ resolved length rides along as the fallback. The artifact-level half of
 `Ir.findSourced?_names`: the name the lookup kept is the name the rule
 defers to, so a reader's override lands. -/
 public theorem cssSourced_projects (g : Ir.Sourced SymGlue) (n : String)
-    (h : g.token = some n) :
+    (h : g.token = some n) (hn : tokenVar? n = some ("--" ++ n)) :
     cssSourced g = s!"var(--{n}, {cssLength g.value.width})" := by
-  simp [cssSourced, h]
+  simp only [cssSourced, h, Option.bind_some, hn]
+  simp only [toString, String.append_assoc]
+  rfl
 
 /-- The complement: a value no declaration named prints as the bare length,
 so nothing references a property the engine never emitted. -/
@@ -1233,8 +1251,8 @@ private def skipNode (size : Int) (g : Ir.Sourced SymGlue) (grow : Option Nat :=
   let v := g.value.width.resolve size (size / 2)
   let rem := milliRem (screenMilli size v.natAbs)
   let len := if v < 0 then s!"-{rem}" else rem
-  let len := match g.token with
-    | some n => s!"var(--{n}, {len})"
+  let len := match g.token.bind tokenVar? with
+    | some v => s!"var({v}, {len})"
     | none => len
   let extent := if v < 0 then s!"margin-bottom: {len}" else s!"height: {len}"
   let decls := (if v == 0 then [] else [s!"--skip: {len}", extent]) ++
@@ -2317,7 +2335,8 @@ spends its line's `\parskip` once, and empty without struts sets nothing.
 Lengths keep their font-relative units: neither box sets a size of its own,
 so an `em` is the body's, the font the template's rule is read in. A shaped
 block's body keeps the page's `\parskip` (`blockRules`). -/
-public def blockShapeCss (doc : Doc) : String :=
+public def blockShapeCss (doc : Doc)
+    (titleRule : Ir.TitledKind → Ir.BlockReach → Option (Sp × Sp) := fun _ _ => none) : String :=
   let shapes := [Ir.TitledKind.block, .alert, .example].filterMap fun k =>
     (Ir.blockShapeOf doc.styles k).map (k, ·)
   if shapes.isEmpty then "" else
@@ -2341,17 +2360,28 @@ public def blockShapeCss (doc : Doc) : String :=
     let after := skips sh.after
     let between := skips sh.between
     let edges (span : Ir.BlockSpan) := sh.edges.filter (·.span == span)
-    let boxRules (span : Ir.BlockSpan) (box : String) (top bottom : String) : String :=
+    let boxRules (span : Ir.BlockSpan) (box : String) (place : Ir.BlockEdge → String × String) :
+        String :=
       let es := edges span
       let padL := len (sh.inset span .left)
       let padR := len (sh.inset span .right)
-      let left := (es.find? (·.side == .left)).map fun e => rule "before" box e padL top bottom
-      let right := (es.find? (·.side == .right)).map fun e => rule "after" box e padR top bottom
+      let left := (es.find? (·.side == .left)).map fun e =>
+        rule "before" box e padL (place e).1 (place e).2
+      let right := (es.find? (·.side == .right)).map fun e =>
+        rule "after" box e padR (place e).1 (place e).2
       (if es.isEmpty then "" else
         s!"{box} \{ position: relative; padding-inline: {padL} {padR}; }\n") ++
       left.getD "" ++ right.getD ""
-    let titleRules := boxRules .title s!"{sel} > header" peerGap between
-    let wholeRules := boxRules .whole sel s!"calc({before} + {peerGap})" after
+    -- A rule reaching by the title's lines stands its offsets from the
+    -- header's first and last line boxes; one beside the box, the box.
+    let titlePlace (e : Ir.BlockEdge) : String × String := match e.reach with
+      | .box => (peerGap, between)
+      | .lines .. =>
+        let (top, bottom) := (titleRule k e.reach).getD (0, 0)
+        (s!"calc({peerGap} + {inner} + {len { width := .ofSp top }})",
+         s!"calc({between} + {len { width := .ofSp bottom }})")
+    let titleRules := boxRules .title s!"{sel} > header" titlePlace
+    let wholeRules := boxRules .whole sel fun _ => (s!"calc({before} + {peerGap})", after)
     -- The arm an untitled block takes where its template leaves the title
     -- out: its own skips, and — the body opening the box around it — the
     -- line's `\parskip` above that box and the box's own inside it.
@@ -2892,7 +2922,8 @@ resolved `Design`, the same record the PDF path consumes; a rule fires only
 when the design carries the feature. The colour *values* stay CSS custom
 properties rather than resolved literals, deliberately: a reader's
 stylesheet can override a token, which is the HTML backend's contract. -/
-public def themeCss (doc : Doc) : String :=
+public def themeCss (doc : Doc)
+    (titleRule : Ir.TitledKind → Ir.BlockReach → Option (Sp × Sp) := fun _ _ => none) : String :=
   let d := Design.ofDoc doc
   let sectionMeasure :=
     s!"min({stageVh doc.page (Ir.sectionPageMeasure (doc.page.width - 2 * doc.page.hmargin))}, 100%)"
@@ -3036,7 +3067,7 @@ calc({stepFactor Ir.plainFrameTitleStep} * \
      "section.slide.title-page h1 { color: inherit; }\n"
    | none => "") ++
   titleSlotCss doc ++
-  blockShapeCss doc ++
+  blockShapeCss doc titleRule ++
   -- Rules are available to later palette epochs too; the section node
   -- itself is gated on that epoch's resolved section-progress pair.
   (if doc.docClass.record.model == .frame then
@@ -3666,8 +3697,8 @@ private def tokenVars (cfg : Config) (doc : Doc) (roles : List Ir.Role)
   -- unit (`lineageSkipVars`).
   let stated (n : String) : Bool :=
     doc.docClass.record.lists == .beamer && (n == Ir.trivlistSkipName || n == "floatsep")
-  let tokens := (doc.tokens.entries.toList.filter (!stated ·.1)).map fun (n, g) =>
-    s!"    --{n}: {tokenCss (lengthBasisOf doc) n g.width};"
+  let tokens := (doc.tokens.entries.toList.filter (!stated ·.1)).filterMap fun (n, g) =>
+    (tokenVar? n).map fun v => s!"    {v}: {tokenCss (lengthBasisOf doc) n g.width};"
   let fonts := match cfg.fonts with
     | some fs =>
       -- The declared kind per slot: in the slides class the text slot is
@@ -5581,8 +5612,8 @@ public def deckLengthCss (stage : Sp) (l : Length) : String :=
 /-- `cssSourced` on the deck's stage: the token a gap was declared under,
 the stage share of its value behind it (`deckLengthCss`). -/
 public def deckSourced (stage : Sp) (g : Ir.Sourced SymGlue) : String :=
-  match g.token with
-  | some n => s!"var(--{n}, {deckLengthCss stage g.value.width})"
+  match g.token.bind tokenVar? with
+  | some v => s!"var({v}, {deckLengthCss stage g.value.width})"
   | none => deckLengthCss stage g.value.width
 
 /-- The page's stage typography for its deck (`DeckType`). -/
@@ -7638,7 +7669,8 @@ public def epochPaletteDiff (roles : List Ir.Role) (before after : Ir.Palette) :
 /-- The redefinitions a body `\tokens` makes, same diff. -/
 public def epochTokenStyle (basis : LengthBasis) (before after : Ir.Tokens) : String :=
   String.intercalate "; " ((after.entries.filter fun (n, g) =>
-    before.find? n != some g).toList.map fun (n, g) => s!"--{n}: {tokenCss basis n g.width}")
+    before.find? n != some g).toList.filterMap fun (n, g) =>
+      (tokenVar? n).map fun v => s!"{v}: {tokenCss basis n g.width}")
 
 /-- Advance the palette tokens and the ordinary flow's default ink
 separately. A surrounding painted body keeps its surface; outside one,
@@ -10536,7 +10568,7 @@ one in the article class"
   let mut shipped := body
   if cssCfg.css == .own then
     let pairs := carrierPairs body
-    let theme := themeCss doc
+    let theme := themeCss doc cssCfg.blockTitleRule
     let base := baseRules doc pairs (cssCfg.imgs.entries.any (!·.webWords.isEmpty))
     let rules := base ++ "\n" ++ theme ++ styled
     let (bodyReads, bodyDecls) := nodeRefsList (#[], #[]) body.toList

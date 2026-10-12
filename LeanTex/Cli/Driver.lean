@@ -1025,6 +1025,9 @@ in the HTML" (← since t)
           labelMetric := Layout.labelMetric (Layout.Geom.ofPage doc.page) fs
           -- The footline's box is the page's band box, over the same faces.
           footBox := fun n band => some (Layout.footBandBox (Layout.Geom.ofPage doc.page) fs imgs n band)
+          -- A rule reaching by a block title's lines stands where the page
+          -- stands it, over the same faces.
+          blockTitleRule := Layout.blockTitleRule (Layout.Geom.ofPage doc.page) fs doc.styles
           cancelMetric := fun measures ss st spec body value =>
             Layout.cancelMetric (Layout.Geom.ofPage doc.page) fs ss st spec body value (some measures)
           mathEm := fun measures ss st =>

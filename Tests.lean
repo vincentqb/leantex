@@ -388,6 +388,7 @@ def backendSuiteChecks (ref : IO.Ref (List String)) : IO Unit := do
   htmlTokenClosureChecks ref
   htmlRoleClosureChecks ref
   htmlSourcedGapChecks ref
+  htmlInternalTokenChecks ref
   htmlA11yChecks ref
   htmlMathChecks ref
 

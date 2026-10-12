@@ -7646,6 +7646,16 @@ private structure NoteBlock where
   depth : Sp := 0
   deriving Repr, Inhabited
 
+/-- A rule's reach about its box's lines (`Ir.BlockReach.lines`), read in
+the title's font: `above` past the first line's baseline and `below` past
+the last's, the lines `lead` apart. TeX's rule stands on the box's baseline,
+its last line's, and reaches its strutted lines above it, a `\baselineskip`
+each. -/
+private structure EdgeReach where
+  above : Sp
+  below : Sp
+  lead : Sp
+
 /-- A block link, or a painted colour box: beamer's `beamercolorbox`, whose
 paint reaches `pad` beyond its lines (`Ir.titledPadding`) above, below and
 beside the measure `x`..`x + w` names. An `anchored` box opens on its own
@@ -7657,9 +7667,12 @@ private inductive RegionKind where
   /-- A rule a block template sets beside a box (`Ir.BlockEdge`): painted
   `x`..`x + w` from the box's top — its first line's TeX box top, and
   `inset` above it the `\parskip` the box's list opens on — to its last
-  line's TeX box bottom and the glue the box ends on. It spaces nothing:
-  TeX sets the rule in the line beside the box, as tall as the box. -/
-  | edge (color : Ir.Color) (x w inset : Sp)
+  line's TeX box bottom and the glue the box ends on; reaching by the
+  title's lines (`reach`), from `above` past the first line's baseline to
+  `below` past the last's. It spaces nothing: TeX sets the rule in the line
+  beside the box, and the box's own paragraph keeps the room a rule reaches
+  past it (`TexBox.reach`). -/
+  | edge (color : Ir.Color) (x w inset : Sp) (reach : Option EdgeReach)
 
 private structure RegionStart where
   kind : RegionKind
@@ -7776,7 +7789,15 @@ private def RegionSpan.fill (s : RegionSpan) (lines : Array LineOut)
     box.map fun b =>
       let y := if anchored && s.first then b.y0 else b.y0 - pad
       { x := x, y := y, w := w, h := max 0 (b.y1 + s.tail + pad - y), color := color }
-  | .edge color x w inset =>
+  | .edge color x w _ (some r) =>
+    -- The title's lines: the last one's baseline, and a `lead` per line
+    -- before it up to the first.
+    let lines := lines.extract s.lineStart s.lineEnd
+    lines.back?.bind fun last =>
+      let top := last.y - ((lines.size : Int) - 1) * r.lead - r.above
+      let bottom := last.y + r.below
+      if bottom ≤ top then none else some { x := x, y := top, w := w, h := bottom - top, color := color }
+  | .edge color x w inset none =>
     -- The box's own reach: its lines and what paints inside it. Another
     -- rule beside the same box stands beside it, not in it, and its fill
     -- already reaches its own inset above the box.
@@ -10332,6 +10353,10 @@ public structure TexBox where
   more : Bool
   leading : Sp
   boxed : Bool := true
+  /-- How far a rule beside the box reaches past its first line's baseline
+  and past its last's (`Ir.BlockReach.lines`): TeX's line holding the box and
+  the rule is as tall and as deep as the taller and the deeper of the two. -/
+  reach : Option (Sp × Sp) := none
   deriving Repr, Inhabited, DecidableEq
 
 /-- One paragraph, measured and ready to break: everything `kp` and line
@@ -13792,6 +13817,49 @@ private def titleLeading (r : Rd) (font : Option (Array Inline)) : Sp :=
     (MeasureValues.horizontal r.geom.textWidth r.geom.textHeight) font).resolve
     r.geom.fontSize r.xHeight
 
+/-- The face and size a block title's template sets its content in, as its
+runs resolve them: the template's axes (`Ir.fontAxesOf`) over the bold style
+the title is set in (`collectShapedOpen`); a template beyond the four axes
+sets the base. -/
+private def titleFaceIn (geom : Geom) (fs : FontSet) (xHeight : Sp)
+    (font : Option (Array Inline)) : Font × Sp :=
+  let axes := (font.bind Ir.fontAxesOf).getD {}
+  let sty := ([axes.size, axes.shape, axes.series, axes.family].filterMap id).foldl
+    (applyStyle geom.scale) ({ weight := .b } : TextStyle)
+  let size := (sty.metrics geom.fontSize xHeight geom.textWidth geom.textHeight).1
+  (fs.get (fs.lookup sty.slot sty.weight.css sty.italic), size)
+
+/-- A block title's `\baselineskip` and its cap height, `\fontcharht\font`H`
+in its face at its size: what a rule reaching by the title's lines reads
+(`Ir.BlockMetric.resolve`). -/
+private def titleMetricsIn (geom : Geom) (fs : FontSet) (xHeight : Sp)
+    (font : Option (Array Inline)) : Sp × Sp :=
+  let lead := (Ir.blockTitleLeading geom.scale geom.fontSize geom.leading
+    (MeasureValues.horizontal geom.textWidth geom.textHeight) font).resolve geom.fontSize xHeight
+  let (face, size) := titleFaceIn geom fs xHeight font
+  (lead, scaledAt size face face.charHtH.toNat)
+
+/-- **Where the web page stands a rule reaching by a block title's lines**
+(`Ir.BlockReach.lines`): below the header's first line box's top and above
+its last line box's bottom, the title's lines one `\baselineskip` apart and
+each line box leaded as CSS 2.1 §10.8.1 leads it over the title face's
+ascent and descent (`leadedBox`), its baseline `b` below its top — so the
+rule's top stands `b - above` below the first box's top and its bottom
+`lead - b - below` above the last box's bottom. The page reads the same
+metrics where it sets the rule (`collectShapedOpen`). -/
+public def blockTitleRule (geom : Geom) (fs : FontSet) (styles : Ir.Styles) (kind : TitledKind)
+    (reach : Ir.BlockReach) : Option (Sp × Sp) :=
+  match reach with
+  | .box => none
+  | .lines above below =>
+    let font := Ir.blockTitleFont styles kind
+    let xHeight := fs.body.xHeight * geom.fontSize / fs.body.unitsPerEm
+    let (lead, cap) := titleMetricsIn geom fs xHeight font
+    let (face, size) := titleFaceIn geom fs xHeight font
+    let b := (leadedBox (scaledAt size face face.ascent.toNat)
+      (scaledAt size face (-face.descent).toNat) lead).1
+    some (b - above.resolve lead cap, lead - b - below.resolve lead cap)
+
 /-- A titled block's title colour box (beamerinnerthemedefault.sty, `block
 begin`), read at the block's epoch: a painted title is a colour box around
 its lines (`RegionKind.surface`), which stand on the measure; an unpainted
@@ -13919,6 +13987,20 @@ private def collectShapedOpen (r : Rd) (a : Acc) (kind : TitledKind) (shape : Ir
   let setsTitle := showTitle && (titled || shape.title.boxed || shape.title.strut)
   let font := Ir.blockTitleFont r.styles kind
   let titleLeading := titleLeading r font
+  let titleCap := (titleMetricsIn r.geom r.fs r.xHeight font).2
+  -- A rule reaching by the title's lines, in the title's font.
+  let reachOf (e : Ir.BlockEdge) : Option EdgeReach := match e.reach with
+    | .lines above below =>
+      some { above := above.resolve titleLeading titleCap
+             below := below.resolve titleLeading titleCap, lead := titleLeading }
+    | .box => none
+  -- The room the rules beside the title's box reach past it.
+  let titleReach : Option (Sp × Sp) :=
+    (shape.edges.filter (·.span == .title)).foldl (fun acc e =>
+      match reachOf e, acc with
+      | some q, some (u, d) => some (max u q.above, max d q.below)
+      | some q, none => some (q.above, q.below)
+      | none, acc => acc) none
   -- An empty title starts a paragraph in its box only where a strut does.
   let titleInset := if shape.title.parskip && (titled || shape.title.strut) then parskip else 0
   let between := r.resolve (Ir.blockSkipSum a.tokens (shape.skipsBetween titled))
@@ -13935,7 +14017,8 @@ private def collectShapedOpen (r : Rd) (a : Acc) (kind : TitledKind) (shape : Ir
   let opens (a : Acc) (span : Ir.BlockSpan) (x0 x1 inset : Sp) : Acc :=
     shape.edges.foldl (fun a e =>
       if e.span == span then
-        a.pushOp (.regionOpen (.edge (r.shown (e.ink a.pal)) (ruleX e x0 x1) (len e.width) inset))
+        a.pushOp (.regionOpen (.edge (r.shown (e.ink a.pal)) (ruleX e x0 x1) (len e.width) inset
+          (reachOf e)))
       else a) a
   let closes (a : Acc) (span : Ir.BlockSpan) : Acc :=
     shape.edges.foldl (fun a e => if e.span == span then a.pushOp .regionClose else a) a
@@ -13955,7 +14038,8 @@ private def collectShapedOpen (r : Rd) (a : Acc) (kind : TitledKind) (shape : Ir
       | some tpl => Ir.fillTemplate tpl title
       | none => title
     let texBox : Option TexBox :=
-      if shape.title.boxed then some { inset := titleInset, more := false, leading := titleLeading }
+      if shape.title.boxed then
+        some { inset := titleInset, more := false, leading := titleLeading, reach := titleReach }
       else if shape.whole.isSome then
         some { inset := titleInset, more := true, leading := titleLeading }
       else some { inset := 0, more := false, leading := titleLeading, boxed := false }
@@ -15821,17 +15905,27 @@ private def Spacing.Page.openDisplayAt (b : B) (j : ParaJob) (first : Bool) (x :
     (segs : Array Seg) : (b.openDisplayAt j f x segs).docBg = b.docBg := by
   unfold Spacing.Page.openDisplayAt; split <;> rfl
 
+/-- A rule reaching past a TeX box's last line (`TexBox.reach`) makes the
+line holding the box and the rule as deep as the rule: what follows the
+box's last line is spaced from that depth. -/
+private def reachDepth (j : ParaJob) (brk : Nat) (b : B) : B :=
+  match j.texBox.bind (·.reach) with
+  | some (_, below) => if brk + 1 == j.items.size then b.keepInk (max b.boxDepth below) else b
+  | none => b
+
 /-- What follows a placed paragraph line: the extra skip a forced break
-owes. Drawn decoration is no longer emitted here — every page line, body
-and furniture alike, takes its `.decoration` riders in one place at the
-furniture pass (`decorationRiders`, applied in `furnishPage`), so this
-trailer only carries the forced-break skip forward and a decoration paints
-exactly once. -/
+owes, and the depth a rule beside a TeX box's last line leaves
+(`reachDepth`). Drawn decoration is no longer emitted here — every page
+line, body and furniture alike, takes its `.decoration` riders in one place
+at the furniture pass (`decorationRiders`, applied in `furnishPage`), so
+this trailer only carries the forced-break skip forward and a decoration
+paints exactly once. -/
 private def placeParaTrailer (_fs : FontSet) (j : ParaJob) (brk : Nat)
     (_segs : Array Seg) (b : B) : B :=
   -- A line in a TeX box (`TexBox`): what follows is spaced from the box's
   -- depth by TeX's interline rule.
   let tex := j.texBox.isSome || b.texAfter
+  let b := reachDepth j brk b
   match j.extras[brk]? with
   | some extra => { b with skip := { b.skip with width := b.skip.width + extra }, texAfter := tex }
   | none => { b with texAfter := tex }
@@ -15839,14 +15933,14 @@ private def placeParaTrailer (_fs : FontSet) (j : ParaJob) (brk : Nat)
 @[simp] private theorem placeParaTrailer_pages (fs : FontSet) (j : ParaJob)
     (brk : Nat) (segs : Array Seg) (b : B) :
     (placeParaTrailer fs j brk segs b).pages = b.pages := by
-  simp only [placeParaTrailer]
+  simp only [placeParaTrailer, reachDepth]
   repeat' split
   all_goals first | rfl | simp
 
 @[simp] private theorem placeParaTrailer_noBreak (fs : FontSet) (j : ParaJob)
     (brk : Nat) (segs : Array Seg) (b : B) :
     (placeParaTrailer fs j brk segs b).noBreak = b.noBreak := by
-  simp only [placeParaTrailer]
+  simp only [placeParaTrailer, reachDepth]
   repeat' split
   all_goals first | rfl | simp
 
@@ -15862,7 +15956,7 @@ private theorem decoration_no_growth (fs : FontSet) (j : ParaJob)
       (placeParaTrailer fs j brk segs b).prevDepth = b.prevDepth ∧
       (placeParaTrailer fs j brk segs b).prevBelow = b.prevBelow ∧
       (placeParaTrailer fs j brk segs b).needed = b.needed := by
-  simp only [placeParaTrailer]
+  simp only [placeParaTrailer, reachDepth]
   repeat' split
   all_goals exact ⟨rfl, rfl, rfl, rfl⟩
 
@@ -15882,9 +15976,14 @@ private def texBoxBaseline (fs : FontSet) (b : B) (j : ParaJob) (tb : TexBox) (s
   let h1 := (lineStrutInk j.strut (segsInk fs segs)).1
   let bsIn := tb.leading
   let bsOut := Ir.leadingFor b.geom.fontSize b.geom.leading
-  let height := tb.inset + h1 + (if last then 0 else bsIn)
+  -- A rule reaching past the box's top makes the line holding both that
+  -- much taller, above the box.
+  let rise := match tb.reach with
+    | some (above, _) => max 0 (above - (tb.inset + h1))
+    | none => 0
+  let height := rise + tb.inset + h1 + (if last then 0 else bsIn)
   let top := if tb.more then b.boxDepth + inkClearance else texBoxTop bsOut b.boxDepth height
-  top + tb.inset + h1
+  top + rise + tb.inset + h1
 
 /-- One break of a paragraph placed: the fold step `placePara` runs over
 `breaks`. The threaded state is (builder, previous break, first line).
@@ -16138,8 +16237,9 @@ private theorem sourceBound_openDisplayAt {n : Nat} (b : B) (j : ParaJob)
 private theorem sourceBound_placeParaTrailer {n : Nat} (fs : FontSet) (j : ParaJob)
     (brk : Nat) (segs : Array Seg) (b : B) (hb : b.SourceBound n) :
     (placeParaTrailer fs j brk segs b).SourceBound n := by
-  unfold placeParaTrailer
-  split <;> exact hb.of_eq rfl rfl rfl rfl rfl
+  unfold placeParaTrailer reachDepth
+  repeat' split
+  all_goals exact hb.of_eq rfl rfl rfl rfl rfl
 
 private theorem sourceBound_withPendingSource {n : Nat} (b : B) (source : Option Span)
     (hb : b.SourceBound n) : (b.withPendingSource source).SourceBound n :=
@@ -16748,8 +16848,9 @@ private theorem census_openDisplayAt (pick : Option Nat → Bool → Bool) (b : 
 private theorem census_placeParaTrailer (pick : Option Nat → Bool → Bool) (fs : FontSet)
     (j : ParaJob) (brk : Nat) (segs : Array Seg) (b : B) :
     Spacing.Page.census pick (placeParaTrailer fs j brk segs b) = Spacing.Page.census pick b := by
-  unfold placeParaTrailer
-  split <;> rfl
+  unfold placeParaTrailer reachDepth
+  repeat' split
+  all_goals rfl
 
 private theorem census_withPendingSource (pick : Option Nat → Bool → Bool) (b : B)
     (source : Option Span) :
@@ -17918,13 +18019,13 @@ private theorem pagesExtend_congr {b b' c : B} (h : c.pages = b'.pages)
 @[simp] private theorem placeParaTrailer_geom (fs : FontSet) (j : ParaJob)
     (brk : Nat) (segs : Array Seg) (b : B) :
     (placeParaTrailer fs j brk segs b).geom = b.geom := by
-  simp only [placeParaTrailer]
+  simp only [placeParaTrailer, reachDepth]
   repeat' split
   all_goals first | rfl | simp
 @[simp] private theorem placeParaTrailer_docBg (fs : FontSet) (j : ParaJob)
     (brk : Nat) (segs : Array Seg) (b : B) :
     (placeParaTrailer fs j brk segs b).docBg = b.docBg := by
-  simp only [placeParaTrailer]
+  simp only [placeParaTrailer, reachDepth]
   repeat' split
   all_goals first | rfl | simp
 
@@ -19153,8 +19254,9 @@ private theorem frameStep_openDisplayAt (b : B) (j : ParaJob) (first : Bool)
 
 private theorem frameStep_placeParaTrailer (fs : FontSet) (j : ParaJob) (k : Nat)
     (segs : Array Seg) (b : B) : FrameStep b (placeParaTrailer fs j k segs b) := by
-  unfold placeParaTrailer
-  split <;> exact FrameStep.of_eq rfl rfl
+  unfold placeParaTrailer reachDepth
+  repeat' split
+  all_goals exact FrameStep.of_eq rfl rfl
 
 private theorem frameStep_withPendingSource (b : B) (source : Option Span) :
     FrameStep b (b.withPendingSource source) := FrameStep.of_eq rfl rfl
@@ -19635,8 +19737,9 @@ private theorem reflowStep_openDisplayAt (b : B) (j : ParaJob) (first : Bool)
 
 private theorem reflowStep_placeParaTrailer (fs : FontSet) (j : ParaJob) (k : Nat)
     (segs : Array Seg) (b : B) : ReflowStep b (placeParaTrailer fs j k segs b) := by
-  unfold placeParaTrailer
-  split <;> exact ReflowStep.of_eq rfl rfl
+  unfold placeParaTrailer reachDepth
+  repeat' split
+  all_goals exact ReflowStep.of_eq rfl rfl
 
 private theorem reflowStep_withPendingSource (b : B) (source : Option Span) :
     ReflowStep b (b.withPendingSource source) := ReflowStep.of_eq rfl rfl
@@ -23352,16 +23455,26 @@ private def ParaFits (fs : FontSet) (j : ParaJob) (s : B × Nat × Bool) (brk : 
   (j.paintPadding = none ∧ j.texBox = none) ∧ j.rowStrut = none ∧
     Ready s.1 g.1 ∧ LineFits fs s.1 j.size g.1 (if s.2.2 then j.firstBaseline else none) j.lead
 
+private theorem reachDepth_rise (j : ParaJob) (brk : Nat) (a b : B) (h : PageRise a b) :
+    PageRise (reachDepth j brk a) (reachDepth j brk b) := by
+  unfold reachDepth
+  split
+  · split
+    · exact { h with depth := by rw [keepInk_boxDepth_exact, keepInk_boxDepth_exact, h.depth] }
+    · exact h
+  · exact h
+
 private theorem trailer_rise (fs : FontSet) (j : ParaJob) (brk : Nat)
     (segs : Array Seg) (a b : B) (h : PageRise a b) :
     PageRise (placeParaTrailer fs j brk segs a) (placeParaTrailer fs j brk segs b) := by
+  have h' := reachDepth_rise j brk a b h
   unfold placeParaTrailer
   dsimp only
   split
-  · refine { h with cursor := ?_ }
+  · refine { h' with cursor := ?_ }
     dsimp only
-    simpa only [Int.add_assoc] using Int.add_le_add_right h.cursor _
-  · exact { h with }
+    simpa only [Int.add_assoc] using Int.add_le_add_right h'.cursor _
+  · exact { h' with }
 
 private theorem paragraph_step (fs : FontSet) (j : ParaJob)
     (a b : B) (prev brk : Nat) (first : Bool)

@@ -1170,6 +1170,18 @@ the consumer falls back to nominal metrics. Memoized in the font. -/
 public def Font.bounds (f : Font) (g : Nat) : Option Ink.Bounds :=
   (f.inkExtent.get[g]?).bind (·.get)
 
+/-- How tall the face's `H` stands, in font units: TeX's `\fontcharht\font`H`,
+which luaotfload reads off the glyph's bounding box, so the top of its ink
+hull; nothing where the face has no `H`, and the declared cap height where
+its outline does not decode. -/
+public def Font.charHtH (f : Font) : Int :=
+  match f.gid 'H' with
+  | none => 0
+  | some g =>
+    match f.bounds g with
+    | some b => max 0 b.top
+    | none => f.capHeight
+
 /-- A vertical consumer reads the same memoized hull as a horizontal one. -/
 public def Font.yExtent (f : Font) (g : Nat) : Option (Int × Int) :=
   (f.bounds g).map fun b => (b.bottom, b.top)

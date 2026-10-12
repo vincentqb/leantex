@@ -15497,7 +15497,24 @@ its `edge = {...}` groups (`Ir.BlockEdge`). -/
 private def blockShapeKeys : List String :=
   ["before", "title", "untitled", "between", "after", "whole", "edge"]
 
-private def blockEdgeKeys : List String := ["span", "side", "width", "sep", "hang", "color"]
+private def blockEdgeKeys : List String :=
+  ["span", "side", "width", "sep", "hang", "color", "above", "below"]
+
+/-- A title metric's native spelling (`BlockTemplate.native` writes it):
+terms in `lh`, the title's `\baselineskip`, in `cap`, its cap height, and
+fixed lengths, joined by `+` and `-`. -/
+private def blockMetricOf (src : String) : Option BlockMetric :=
+  let terms := ((src.replace " - " " + -").splitOn "+").map (·.trimAscii.toString)
+  terms.foldlM (init := ({} : BlockMetric)) fun m t =>
+    let milli (v : String) : Option Int :=
+      (Decl.parseDecimal v).map fun (x, sc) => x * 1000 / (sc : Int)
+    if t.isEmpty then none
+    else if t.endsWith "lh" then
+      (milli (t.dropEnd 2).toString).map fun v => { m with lead := m.lead + v }
+    else if t.endsWith "cap" then
+      (milli (t.dropEnd 3).toString).map fun v => { m with cap := m.cap + v }
+    else (Decl.parseLength t).bind fun l =>
+      if l.em == 0 && l.ex == 0 then some { m with sp := m.sp + l.sp } else none
 
 /-- A block's `shape = {...}`, the native spelling of a beamer block
 template's reading (`BlockTemplate.native` writes it): skips as `+`-joined
@@ -15575,6 +15592,8 @@ private def blockShapeOf (ctx : Ctx) (src : String) (pos : Pos) : EM (Option Blo
         let mut sep : Length := {}
         let mut hang := true
         let mut color : Option (Ir.Color × Option ColorRef) := none
+        let mut above : Option BlockMetric := none
+        let mut below : Option BlockMetric := none
         for sub in Decl.splitEntries (unbrace v) do
           match Decl.splitEntry sub with
           | none => ok := false; bad s!"an edge entry that is not key = value: {sub.quote}"
@@ -15608,18 +15627,33 @@ private def blockShapeOf (ctx : Ctx) (src : String) (pos : Pos) : EM (Option Blo
               | .missing =>
                 ok := false
                 diag ctx .E0326 s!"'{et}' is not in the palette" pos
+            | "above" | "below" =>
+              match blockMetricOf et with
+              | some m => if ek == "above" then above := some m else below := some m
+              | none =>
+                ok := false
+                bad s!"an edge '{ek}' that is not a sum of lh, cap and fixed lengths: {et.quote}"
             | _ =>
               ok := false
               modify fun st' => { st' with
                 diags := st'.diags.push (Decl.unknownKey ctx.file "block edge" ek blockEdgeKeys pos) }
-        match span, width, color with
-        | some sp, some w, some (c, n) =>
+        -- A reach read about the title's lines stands beside the title's box.
+        let reach : Option BlockReach := match above, below, span with
+          | none, none, _ => some .box
+          | some a, some b, some .title => some (.lines a b)
+          | _, _, _ => none
+        match span, width, color, reach with
+        | some sp, some w, some (c, n), some r =>
           let wg : SymGlue := { width := w }
           let sg : SymGlue := { width := sep }
           let edge : BlockEdge :=
-            { span := sp, side := side, width := wg, sep := sg, hang := hang, color := c, name := n }
+            { span := sp, side := side, width := wg, sep := sg, hang := hang, color := c, name := n
+              reach := r }
           sh := { sh with edges := sh.edges.push edge }
-        | _, _, _ => ok := false; bad "an edge without its span, width or color"
+        | _, _, _, none =>
+          ok := false
+          bad "an edge reaching by lines with no 'above' or 'below', or beside the box holding title and body"
+        | _, _, _, _ => ok := false; bad "an edge without its span, width or color"
       | _ =>
         ok := false
         modify fun st' => { st' with
