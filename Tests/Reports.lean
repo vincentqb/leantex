@@ -1505,7 +1505,14 @@ def reports : List Report := [
     accept := ["on the tree before the fix, the guards as they stand after the first review, forty-one of their assertions fail: two where the data warning's witness written again at another site prints a line per site, with and without its sources; twenty-five where twenty-one codes' witnesses state a number outside what they quote; twelve of the input decoding's, where a file's warning stated an offset in its words and two files' losses folded to one line naming neither; and two where two weights a family lacks, served by one face, printed two lines whose words named each weight",
       "the first review's guards: two weights served by one face keep a record each through the font assembly and fold to one line; a covered form's ratio is its detail; a boundary picture's missing face has one wording per reason, each with its remedy; each file's byte-level loss names the file; the codes whose witness cannot repeat are a baseline read in both directions, each with its reason; and the number lint reads a quote before a possessive and an apostrophe inside double quotes",
       "the second review's guards, written to its probes and not on record failing: located and unlocated overfull lines laid out together both reach the log's lines, the unlocated lines' one record in words of its own, and two environments' ragged rows each warn in their own words"]
-    state := .guarded "fb46f760" .before .author }
+    state := .guarded "fb46f760" .before .author },
+  { id := "R167", date := "2026-10-12"
+    what := "an undeclared typewriter slot set code in the text face where the host held a monospace without italics, in the host's monospace where a tex document's own TeX distribution held lualatex's Latin Modern Mono shapes, and proportional in a document shipping its text fonts on a host with a monospace"
+    pins := [check% Tests.MonoDefault.monoDefaultChecks, check% diagVoiceChecks,
+      thm% FontDb.monoPick_contract, thm% FontDb.latinModernMono_contract]
+    accept := ["fourteen of the guards' assertions fail with the fix reverted onto the recorded commit, a typewriter default again requiring every corner, read from a document's own faces alone and never from lualatex's shapes, with its old help: a family served upright only filling the slot with one note in either surface, its italic code upright on the page and unslanted on the web, a tex document's slot in lualatex's four shapes, a font-shipping document's slot from the host after its own faces, the help naming both remedies and Latin Modern Mono for a tex source, and the note's witness",
+      "on this host a tex document's typewriter runs embed the four Latin Modern Mono faces lualatex embeds for the same runs, and a markdown document's keep the platform monospace"]
+    state := .guarded "de3f485d" .revert .author }
 ]
 
 /-- The reports guarded but never seen failing: a count that may fall and
