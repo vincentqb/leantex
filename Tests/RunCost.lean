@@ -100,15 +100,6 @@ the {scanned} it scanned"
       (verbose.length == 1 && loaded == [staged.toString] && scanned.any (1 ≤ ·))
     t "faces: a run that is not verbose writes no font phase" (← fontPhases #[]).isEmpty
 
-/-- The next summary record the watcher writes, or `none` at the end of its
-output. -/
-private def nextSummary (h : IO.FS.Handle) : IO (Option String) := do
-  repeat
-    let line ← h.getLine
-    if line.isEmpty then return none
-    if (line.splitOn "\"event\":\"summary\"").length > 1 then return some line
-  return none
-
 /-- The memory a running process holds resident now, in KiB: the `VmRSS`
 line of its `/proc/<pid>/status`, where the platform has one. -/
 private def residentKiB (pid : UInt32) : IO (Option Nat) := do
@@ -159,15 +150,7 @@ def watchDeliveryChecks (ref : IO.Ref (List String))
       env := sealedRunEnv dir
       stdin := .null, stdout := .piped, stderr := .null }
     try
-      let next : IO (Option String) := do
-        let task ← IO.asTask (prio := .dedicated) (nextSummary child.stdout)
-        let start ← IO.monoMsNow
-        while !(← IO.hasFinished task) && (← IO.monoMsNow) - start < 60000 do
-          IO.sleep 10
-        if !(← IO.hasFinished task) then return none
-        return match ← IO.wait task with
-          | .ok line => line
-          | .error _ => none
+      let next := watcherSummary child.stdout
       let first ← next
       t "watch: the first build's summary reaches a pipe while the watcher runs" first.isSome
       if let some first := first then

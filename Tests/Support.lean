@@ -550,6 +550,23 @@ def sealedRunEnv (dir : System.FilePath) : Array (String × Option String) :=
     ("HOME", some (dir / "home").toString), ("PATH", some (dir / "no-tools").toString),
     ("LEANTEX_FONT", none), ("LEANTEX_FONT_PATH", none)]
 
+/-- The next summary record a watcher writes on `h`, or `none` at the end of
+its output or once `budgetMs` pass without one. -/
+def watcherSummary (h : IO.FS.Handle) (budgetMs : Nat := 60000) : IO (Option String) := do
+  let task ← IO.asTask (prio := .dedicated) do
+    repeat
+      let line ← h.getLine
+      if line.isEmpty then return none
+      if (line.splitOn "\"event\":\"summary\"").length > 1 then return some line
+    return none
+  let start ← IO.monoMsNow
+  while !(← IO.hasFinished task) && (← IO.monoMsNow) - start < budgetMs do
+    IO.sleep 10
+  if !(← IO.hasFinished task) then return none
+  return match ← IO.wait task with
+    | .ok line => line
+    | .error _ => none
+
 /-- The peak (`rssKiB`) the first porcelain summary in `stdout` states. -/
 def summaryPeak (stdout : String) : Option Nat :=
   (stdout.splitOn "\n").findSome? fun line =>

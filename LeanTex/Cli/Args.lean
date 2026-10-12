@@ -54,7 +54,9 @@ public structure Config where
   werror : Bool := false
   /-- The one remaining flag that shapes the artifact — a recorded debt, not
   a design: it dies when `\output` grows a key for the math renderer, and
-  the matching hypothesis in `artifact_flag_free` dies with it. -/
+  the matching hypothesis in `artifact_flag_free` dies with it. It names a
+  local script file, which the HTML page carries inline
+  (`Publication.captureMathBoundary`). -/
   mathBoundary : Option String := none
   /-- Extra font directories, added to the built-in locations. -/
   fontDirs : Array String := #[]
@@ -125,7 +127,7 @@ public def parse (argv : List String) : Except String Config := do
         | m :: rest' =>
           cfg := { cfg with mathBoundary := some m }
           args := rest'
-        | [] => throw "'--math-boundary' needs a tool URL or path"
+        | [] => throw "'--math-boundary' needs a math renderer's script file"
       | "--font-dir" =>
         match rest with
         | m :: rest' =>
@@ -237,8 +239,10 @@ flags are not arguments to it.** Two parsed configurations that agree on
 backends run (`-o out.html`), never what any backend emits; `--font-dir`
 needs no hypothesis because it extends the font environment the invariant
 conditions on, and the planning functions cannot see it. `--math-boundary`
-is exempted as the one recorded remainder: it dies when the document grows
-an `\output` key for the math renderer, and its hypothesis dies with it.
+is exempted as the one recorded remainder: the page carries the bytes of
+the file it names, read from the run's directory, so one flag in two
+directories can carry two renderers; it dies when the document grows an
+`\output` key for the math renderer, and its hypothesis dies with it.
 Stated over the driver's planning functions rather than `main`, which is
 IO: these are the only places a `Config` value meets a backend decision —
 `cssFor`, `Pdf.write`, `MarkdownDoc.emit`, and `HtmlDoc.emit` take no
@@ -312,7 +316,7 @@ flags:
   --werror                exit 1 when any warning was emitted; output is
                           still written, and accepted losses (\\allow,
                           --best-effort) and notes never count
-  --math-boundary <tool>  attach a client-side math renderer to HTML output
+  --math-boundary <file>  carry a math renderer's script inline in HTML output
   --font-dir <d>          also look for fonts here (repeatable)
   -q, --quiet             errors only
   -v -vv -vvv             phases · decisions · trace (on stderr)

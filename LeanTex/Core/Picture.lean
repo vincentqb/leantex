@@ -8450,9 +8450,14 @@ private def macroTable (ladder : List (String × Nat)) (declStyles : List (Strin
 
 /-- `baseline=` (pgf manual §12.2.1) as a height in picture coordinates:
 the bare key is 0pt, a length is itself, and a coordinate is its y —
-`(x,y)` through the picture's scale, or a node's anchor such as `(n.base)`,
-where the picture's own reading put it. Braces around the value are TeX's
-grouping. -/
+`(x,y)` read as a path reads a coordinate's component (`evalComp`, the
+manual's §13.2.1: a number of the y vector, or a length where the
+component declares units), or a node's anchor such as `(n.base)`, where
+the picture's own reading put it. pgf reads the coordinate when the
+picture ends, after its scope has closed, so no transformation of the
+picture's own applies: `[scale=2,baseline={(0,5pt)}]` stands on 5pt and
+`(0,0.5)` on half a centimetre, as lualatex sets them. Braces around the
+value are TeX's grouping. -/
 private def readBaseline (cx : Cx) (nodes : List (String × NodeGeom)) (toks : List Tok) :
     Except String Sp :=
   let toks := if let [.group body] := toks then body.filter (· != Tok.space) else toks
@@ -8463,7 +8468,7 @@ private def readBaseline (cx : Cx) (nodes : List (String × NodeGeom)) (toks : L
     | .sym ')' :: inner =>
       let inner := inner.reverse.toArray
       match (splitTop inner ',').toList with
-      | [_, ys] => (evalNum [] ys).map cx.toSp
+      | [_, ys] => (evalComp [] ys).map ({ cx with scale := 1000 }).compSp
       | _ =>
         let nm := String.join (inner.toList.map fun (t : Tok) => match t with
           | .ident s => s

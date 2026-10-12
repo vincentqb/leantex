@@ -23,11 +23,21 @@ public inductive CssMode where
   /-- Our own token-driven stylesheet, inlined. Self-contained by default: no
   CDN, no webfont round-trip, works offline. -/
   | own
-  /-- Bulma class names plus a `--bulma-*` binding of our tokens, for pages
-  that drop into an existing Bulma site. The framework itself is not shipped;
-  the host page provides it. -/
+  /-- Bulma's class vocabulary plus a `--bulma-*` binding of our tokens. The
+  framework's sheet is the document's declared `\output{ stylesheet = ... }`,
+  captured and inlined under the closure gate's CSS vocabulary
+  (`HtmlResource.cssRequests`) as every declared sheet is, so a published
+  build of Bulma that steps outside it (an `@charset`, a vendor
+  `@keyframes`, an escaped class name) is refused rather than shipped; a
+  page that names the classes and declares no sheet cannot publish, for
+  nothing would style them (`emitClosed`); no host page supplies the
+  framework. The declared sheet stands after the binding, so a sheet that
+  declares the same properties on `:root`, or more specifically, sets them. -/
   | bulma
-  /-- Semantic markup only. Bring your own stylesheet. -/
+  /-- Semantic markup only: no engine stylesheet, so the page's sheets are
+  the document's declared stylesheet, if it declares one, and the rules the
+  document's own declarations write (a `\style` hover, say), beside the
+  few inline styles the markup carries in every mode. -/
   | none
   deriving Repr, BEq
 
@@ -46,9 +56,12 @@ public structure Config where
   `emitTree`'s entry: what the backend's generated furniture (the
   abstract heading, caption prefixes) is worded in. -/
   locale : Locale := Locale.en
-  /-- Optional client-side math renderer alongside native MathML.
-  Checked publication still requires every resource it requests to be embedded. -/
-  mathBoundary : Option String := none
+  /-- The client-side math renderer the run declares beside native MathML,
+  as its text: the script of the file `--math-boundary` names, which the
+  driver captures (`Publication.captureHtmlResources`). The page carries it
+  inline as one script (`mathBoundaryNodes`), and the closure gate admits
+  exactly it (`admittedScripts`). -/
+  mathRenderer : Option String := none
   styles : Styles := {}
   /-- The document's loaded images, from the driver: `<img>` carries the
   intrinsic pixel size so the page never reflows while loading. -/
@@ -5936,6 +5949,33 @@ page moves). `_contract`'s grade, riding the definition. -/
 public theorem deck_script_gated (b : Bool) :
     deckScriptNodes b = if b then #[Node.script #[] deckScript] else #[] := by rfl
 
+/-! ### The declared math renderer
+
+The other script a page may carry: the client-side math renderer a run
+names beside native MathML. No document text reaches it, for it is the
+captured text of the file the run names, carried as it stands; a text the
+HTML parser would end early or keep open, or that holds a NUL, is refused
+where it is captured (`Publication.captureMathBoundary`) and by the closure
+gate's raw-text refusal (`HtmlResource.nodeRequests`), never escaped. It
+ships only where the run declares it (`math_boundary_contract`), and with
+scripting off the page is the page without it (`math_boundary_floor_exact`).
+The gate admits its text and fetches nothing; what the script loads when it
+runs is the renderer's own, which no check of the page sees. -/
+
+/-- The renderer's one emission site: its captured text as a raw-text
+script node through the typed tree, exactly when the run declares one. -/
+public def mathBoundaryNodes (renderer : Option String) : Array Node :=
+  match renderer with
+  | some text => #[Node.script #[("data-math-boundary", "")] text]
+  | none => #[]
+
+/-- Artifact-specific, the gate definitionally (`_contract`): the node
+ships iff the run declared a renderer, and it carries exactly that text. -/
+public theorem math_boundary_contract (renderer : Option String) :
+    mathBoundaryNodes renderer =
+      (renderer.map fun text => Node.script #[("data-math-boundary", "")] text).toArray := by
+  cases renderer <;> rfl
+
 /-- The slide sections' stylesheet, split by class. A deck (the `slides`
 class) is one tree with two media renderings: on screen a paged
 full-viewport deck laid out as a horizontal row — → is next, one snap
@@ -10204,11 +10244,12 @@ private def emitTreeCore (cfg : Config) (doc : Doc) (styles : String × Array Di
   match cfg.css with
   | .own => head := head.push (Node.style "")
   | .bulma =>
-    -- Bind our tokens onto Bulma's own custom properties so a host page's
-    -- theme and ours agree instead of fighting.
-    -- Bulma's primary is a host's or the document's own `--primary` (the
-    -- reader alias of an author colour `primary`), else the accent role:
-    -- an override of either reaches it.
+    -- Bind our tokens onto Bulma's own custom properties, for a declared
+    -- framework sheet that reads them; one that declares them itself on
+    -- `:root`, or more specifically, sets them, standing after this binding. Bulma's primary is the declared
+    -- sheet's or the document's own `--primary` (the reader alias of an
+    -- author colour `primary`), else the accent role: an override of
+    -- either reaches it.
     let primary := "var(--primary, " ++ roleRef .accent ++ ")"
     let accentDecl := String.join ((roleDefaultVars doc.palette .light [.accent]).map (· ++ "\n"))
     head := head.push (Node.style (faceRules ++ ":root {\n" ++ tokenVars cfg doc [.accent] ++ "\n" ++
@@ -10515,9 +10556,6 @@ retitle the frames apart, or link to the numbered anchor")
   -- (`deck_script_gated`), its text the pinned constant
   -- (`deck_script_constant`).
   body := body ++ deckScriptNodes (doc.docClass == .slides)
-  if let some tool := cfg.mathBoundary then
-    body := body.push (Html.elem "script" #[]
-      #[("data-math-boundary", tool), ("src", tool)])
   -- Figures named apart before the anchors are judged.
   body := numberFigures body
   -- The landmark and anchor contracts, judged over the emitted tree.
@@ -10618,11 +10656,14 @@ public def emitTree (cfg : Config) (doc : Doc) :
   -- hide a display formula, a description label, or a flex-row separator
   -- from the backend's structural classifiers. The caller's spanned IR
   -- remains available for diagnostics.
-  let tree := emitTreeCore cfg (Ir.eraseLocations resolved.1) (styleRules resolved.1)
+  -- The declared math renderer stands after the page the core emits
+  -- without it (`math_boundary_floor_exact`).
+  let tree := emitTreeCore { cfg with mathRenderer := none } (Ir.eraseLocations resolved.1)
+    (styleRules resolved.1)
   -- Projections, not a destructuring `let`: matching the emitter's result
   -- made the kernel evaluate the whole emitter to check
   -- `emitTree_resolve_agree` (73 s of every HtmlDoc build).
-  (tree.1, tree.2.1, resolved.2 ++ tree.2.2)
+  (tree.1, tree.2.1 ++ mathBoundaryNodes cfg.mathRenderer, resolved.2 ++ tree.2.2)
 
 -- A bound, not a budget: the check needs under 300 heartbeats over the
 -- projections, and the destructuring form exceeds 2000 in the kernel.
@@ -10636,6 +10677,20 @@ public theorem emitTree_resolve_agree (cfg : Config) (doc : Doc) :
     (emitTree cfg resolved).1 = (emitTree cfg doc).1 ∧
       (emitTree cfg resolved).2.1 = (emitTree cfg doc).2.1 := by
   simp only [emitTree, Ir.resolveMathAlphas_fixed_point, and_self]
+
+-- A bound, not a budget, as above: the two sides share the emitter's call.
+set_option maxHeartbeats 2000 in
+/-- Artifact-specific. **With scripting off, the page is the page without
+the renderer** (`_exact`): the declared math renderer is the body's last
+node, and the head, every other body node and the diagnostics are those of
+the page that declares none. -/
+public theorem math_boundary_floor_exact (cfg : Config) (doc : Doc) :
+    (emitTree cfg doc).1 = (emitTree { cfg with mathRenderer := none } doc).1 ∧
+      (emitTree cfg doc).2.1 =
+        (emitTree { cfg with mathRenderer := none } doc).2.1 ++ mathBoundaryNodes cfg.mathRenderer ∧
+      (emitTree cfg doc).2.2 = (emitTree { cfg with mathRenderer := none } doc).2.2 := by
+  refine ⟨rfl, ?_, rfl⟩
+  simp only [emitTree, mathBoundaryNodes, Array.append_empty]
 
 /-- Emit a document. Returns the file and any diagnostics the backend itself
 raises — running content is the notable one: page furniture cannot be honoured
@@ -10655,17 +10710,31 @@ public def resources (cfg : Config) : Array HtmlResource.Embedded :=
   (cfg.fonts.map fontResources).getD #[] ++ imageResources cfg.imgs ++
     (cfg.favicon.map fun (_, r) => #[r]).getD #[]
 
-public abbrev ClosedPage := HtmlResource.ClosedPage deckScript
+/-- The scripts a page may carry, each as its text: the deck's constant
+(`deckScript`, emitted only for the slides class, `deck_script_gated`) and
+the math renderer the run declared, if it declared one
+(`mathBoundaryNodes`). -/
+public def admittedScripts (renderer : Option String) : Array String :=
+  #[deckScript] ++ renderer.toArray
+
+/-- A checked page, by the renderer it may carry: its type admits the deck's
+constant and that one text as its script elements, and no other script
+element. A link's URL scheme is outside the gate (`HtmlResource.resolves`),
+so a `javascript:` link the document writes is not bounded here: pending
+work. -/
+public abbrev ClosedPage (renderer : Option String) :=
+  HtmlResource.ClosedPage (admittedScripts renderer)
 
 /-- The publication entry checks the actual emitted tree. SVG evidence
 must come from the driver's parsed-XML validator on these exact bytes. -/
 public def emitClosed (cfg : Config) (doc : Doc) (svgChecked : Array ByteArray) :
-    Except String ClosedPage × Array Diag :=
+    Except String (ClosedPage cfg.mathRenderer) × Array Diag :=
   let (head, body, diags) := emitTree cfg doc
   -- premise: Tests.htmlContainedChecks — Bulma requires a captured framework stylesheet.
   let page := if cfg.css == .bulma && doc.output.stylesheet.isNone then
-      .error "Bulma HTML requires a captured local framework stylesheet"
-    else HtmlResource.close (resources cfg) svgChecked deckScript
+      .error "'css = bulma' declares the framework's class names, and no 'stylesheet = ...' \
+declares the framework's sheet"
+    else HtmlResource.close (resources cfg) svgChecked (admittedScripts cfg.mathRenderer)
       (doc.info.language.getD "en") head body
   (page, diags)
 
@@ -10673,14 +10742,14 @@ public def emitClosed (cfg : Config) (doc : Doc) (svgChecked : Array ByteArray) 
 the checked page is the emitter's actual serialization and every projected
 rendering reference resolves against its captured resources. -/
 public theorem emitClosed_covers (cfg : Config) (doc : Doc) (svgChecked : Array ByteArray)
-    {page : ClosedPage} (h : (emitClosed cfg doc svgChecked).1 = .ok page) :
+    {page : ClosedPage cfg.mathRenderer} (h : (emitClosed cfg doc svgChecked).1 = .ok page) :
     page.render = (emit cfg doc).1 ∧
       ∀ r ∈ HtmlResource.requests (emitTree cfg doc).1 (emitTree cfg doc).2.1,
-        HtmlResource.resolves (resources cfg) svgChecked deckScript r = true := by
+        HtmlResource.resolves (resources cfg) svgChecked (admittedScripts cfg.mathRenderer) r = true := by
   dsimp only [emitClosed] at h
   split at h
   · contradiction
-  · exact HtmlResource.close_covers (resources cfg) svgChecked deckScript
+  · exact HtmlResource.close_covers (resources cfg) svgChecked (admittedScripts cfg.mathRenderer)
       (doc.info.language.getD "en") _ _ h
 
 /-- Every emitted page declares a language: the artifact is
@@ -10757,8 +10826,8 @@ public def classTokens (attrs : Array (String × String)) : List String :=
 /-- The elements the engine's own stylesheet declares scroll containers
 (`overflow-x`/`overflow-y: auto`): every `pre` (`baseCss`), and on the paged
 deck every stage (`deckStageRule`: `section.slide, section.section-page`).
-Only the `own` stylesheet declares either — under `bulma` or `none` the host
-sheet decides, and the engine claims nothing. -/
+Only the `own` stylesheet declares either — under `bulma` or `none` the
+document's declared sheet decides, and the engine claims nothing. -/
 public def declaresScroll (own deck : Bool) (tag : String) (attrs : Array (String × String)) :
     Bool :=
   own && (tag == "pre" ||

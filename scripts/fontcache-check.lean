@@ -100,7 +100,7 @@ private def boundaryChecks (root : System.FilePath) (font : ByteArray) : IO Bool
 
   let md ← dir.metadata
   let emptyListing := s!"{dir}\t{md.modified.sec}.{md.modified.nsec}\n"
-  let listingFile := cache / "fontdb-dirs.tsv"
+  let listingFile := cache / FontDiscovery.listingCacheName
   IO.FS.writeFile listingFile emptyListing
   check "a current-mtime empty listing is replayed"
     ((← FontDiscovery.scanRootsIn (some cache) [dir.toString]).isEmpty)

@@ -8,6 +8,7 @@ import LeanTex.Core.HtmlResource
 public import LeanTex.Core.FigureLoss
 public import LeanTex.Core.FigureFace
 import LeanTex.Cli.AtomicFile
+import LeanTex.Cli.Engine
 import LeanTex.Cli.FontDiscovery
 
 /-! A PDF figure's web face, native first. The PDF backend embeds a figure's
@@ -150,16 +151,6 @@ private def storable (key : Array String) (a : FigureFace.Answer) : Bool :=
       fits d.losses.size && fits d.face.size && fits d.words.toUTF8.size &&
         d.losses.all fun l => fits (FigureFace.lossName l).toUTF8.size
 
-/-- The engine's identity, as the face cache keys its answers: the running
-binary's path, size and modification time — a rebuilt engine reads every
-figure afresh. `none` where the binary cannot be stated. -/
-public def engineId : IO (Option String) := do
-  try
-    let path ← IO.appPath
-    let md ← path.metadata
-    return some s!"{path}\u0000{md.byteSize}\u0000{md.modified.sec}.{md.modified.nsec}"
-  catch _ => return none
-
 /-- A face's slot, one per figure: the page's bytes, and the page and
 stretch read from them. A later engine's answer replaces an earlier one's
 in it, so the cache holds one face per figure page, however often the
@@ -187,7 +178,7 @@ public def nativeCached (dir : Option System.FilePath) (pdf : ByteArray) (page :
     (stretch : Bool) : IO FigureFace.Answer := do
   let fresh := fun (_ : Unit) => nativeOf pdf page stretch
   let some dir := dir | return fresh ()
-  let some engine ← engineId | return fresh ()
+  let some engine ← Engine.engineId | return fresh ()
   let key := slotKey pdf page stretch engine
   let path := dir / slotName pdf page stretch
   if let some a := (← (IO.FS.readBinFile path).toBaseIO).toOption.bind (FigureFace.lookup key) then return a

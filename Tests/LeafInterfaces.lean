@@ -98,9 +98,9 @@ example (look : String → Option Dim.SymGlue) (name : String)
   Decl.LenExpr.eval_absent_named look name missing
 example : HtmlResource.Media.png.mime = "image/png" := by rfl
 example (resources : Array HtmlResource.Embedded) (svgChecked : Array ByteArray)
-    (script lang : String) (head body : Array Html.Node) :
-    Except String (HtmlResource.ClosedPage script) :=
-  HtmlResource.close resources svgChecked script lang head body
+    (scripts : Array String) (lang : String) (head body : Array Html.Node) :
+    Except String (HtmlResource.ClosedPage scripts) :=
+  HtmlResource.close resources svgChecked scripts lang head body
 
 example : True := by
   fail_if_success have := Utf8.go

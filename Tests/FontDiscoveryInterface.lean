@@ -19,6 +19,7 @@ example : String → (String → Bool) → IO (Option ByteArray) := tableImage
 example : String → IO (Option Face) := probe
 example : IO (Option System.FilePath) := cacheDir
 example : String := probeCacheName
+example : String := listingCacheName
 example : String → IO (Option String) := probeKey
 example : List String → IO (List String) := fun dirs => systemRoots dirs
 example : Option System.FilePath → List String → IO (Array Face) := scanRootsIn

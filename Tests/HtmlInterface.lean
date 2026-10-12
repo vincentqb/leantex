@@ -10,8 +10,9 @@ namespace Tests.HtmlInterface
 open LeanTex.Core
 
 example : HtmlDoc.Config → Ir.Doc → String × Array Diag := HtmlDoc.emit
-example : HtmlDoc.Config → Ir.Doc → Array ByteArray →
-    Except String HtmlDoc.ClosedPage × Array Diag := HtmlDoc.emitClosed
+example (cfg : HtmlDoc.Config) (doc : Ir.Doc) (svgChecked : Array ByteArray) :
+    Except String (HtmlDoc.ClosedPage cfg.mathRenderer) × Array Diag :=
+  HtmlDoc.emitClosed cfg doc svgChecked
 example : HtmlDoc.Config → Array HtmlResource.Embedded := HtmlDoc.resources
 example : Bool → Bool → Array Html.Node → HtmlDoc.A11yFacts := HtmlDoc.a11yFacts
 

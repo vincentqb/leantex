@@ -1,58 +1,70 @@
 module
 
 public import LeanTex.Cli.Batch
+public import LeanTex.Cli.Engine
 import LeanTex.Cli.ConvCache
 public import LeanTex.Core.Flate
-import LeanTex.Version
+import LeanTex.Core.SlotRecord
 
 namespace LeanTex.Cli.Compression
 
 open LeanTex.Core
 
-public def cachePath (root : System.FilePath) (input : ByteArray) : System.FilePath :=
-  -- The old .z files have no integrity envelope and may be partial.
-  root / "flate" / s!"{Flate.contentKey input}-{LeanTex.version}.answer"
+/-- The flate cache: a stream's deflation is a function of its bytes and of
+the compressor that ran, so a slot answers only the engine that wrote it. -/
+public abbrev Cache := Engine.Cache
 
-private def readCached? (path : System.FilePath) : IO (Option ByteArray) := do
+public def cachePath (root : System.FilePath) (input : ByteArray) : System.FilePath :=
+  root / "flate" / s!"{Flate.contentKey input}.answer"
+
+/-- **The key a deflation is stored under**: the format, the input's
+content key and the engine that compressed it (`SlotRecord.lookup_exact`). -/
+public def slotKey (engine : String) (input : ByteArray) : Array String :=
+  #["flate-v2", Flate.contentKey input, engine]
+
+private def readCached? (cache : Cache) (input : ByteArray) (path : System.FilePath) :
+    IO (Option ByteArray) := do
   let .ok stored ← (IO.FS.readBinFile path).toBaseIO | return none
-  let some (.ok z) := ConvCache.decode stored | return none
+  let some z := SlotRecord.lookup (slotKey cache.engine input) stored | return none
   return if z.size ≥ 8 && z[0]? == some 0x78 && z[1]? == some 0x9C then some z else none
 
-private def deflateAtPath (path : Option System.FilePath) (input : ByteArray)
+private def deflateAtPath (slot : Option (Cache × System.FilePath)) (input : ByteArray)
     (compute : ByteArray → IO ByteArray) :
     IO ByteArray := do
-  let some path := path | compute input
-  if let some z ← readCached? path then return z
+  let some (cache, path) := slot | compute input
+  if let some z ← readCached? cache input path then return z
   let z ← compute input
-  try
-    if let some parent := path.parent then IO.FS.createDirAll parent
-    ConvCache.atomicWrite path (ConvCache.encode (.ok z))
-  catch _ => pure ()
+  let key := slotKey cache.engine input
+  if SlotRecord.storable key z then
+    try
+      if let some parent := path.parent then IO.FS.createDirAll parent
+      ConvCache.atomicWrite path (SlotRecord.encode key z)
+    catch _ => pure ()
   return z
 
 /-- Cache failures fall back to computation. The optional computation is an
 effect seam; production uses the engine's compressor without changing its bytes. -/
-public def deflateCachedAt (root : Option System.FilePath) (input : ByteArray)
+public def deflateCachedAt (root : Option Cache) (input : ByteArray)
     (compute : ByteArray → IO ByteArray := fun b => pure (Flate.deflate b)) :
     IO ByteArray :=
-  deflateAtPath (root.map (cachePath · input)) input compute
+  deflateAtPath (root.map fun c => (c, cachePath c.dir input)) input compute
 
 public theorem deflateCachedAt_none_exact (input : ByteArray) (compute : ByteArray → IO ByteArray) :
     deflateCachedAt none input compute = compute input := by rfl
 
-public def requests (root : Option System.FilePath) (input : α → ByteArray)
+public def requests (root : Option Cache) (input : α → ByteArray)
     (jobs : Array α) : Array (System.FilePath × α) :=
-  jobs.map fun job => (cachePath (root.getD ".") (input job), job)
+  jobs.map fun job => (cachePath ((root.map (·.dir)).getD ".") (input job), job)
 
-public theorem requests_exact (root : Option System.FilePath) (input : α → ByteArray)
+public theorem requests_exact (root : Option Cache) (input : α → ByteArray)
     (jobs : Array α) :
     (requests root input jobs).map Prod.snd = jobs := by
   simp [requests, Array.map_map, Function.comp_def]
 
-public theorem requests_mem (root : Option System.FilePath) (input : α → ByteArray)
+public theorem requests_mem (root : Option Cache) (input : α → ByteArray)
     (jobs : Array α) (path : System.FilePath) (job : α) :
     (path, job) ∈ requests root input jobs ↔
-      job ∈ jobs ∧ path = cachePath (root.getD ".") (input job) := by
+      job ∈ jobs ∧ path = cachePath ((root.map (·.dir)).getD ".") (input job) := by
   simp only [requests, Array.mem_map, Prod.mk.injEq]
   constructor
   · rintro ⟨a, ha, hp, rfl⟩
@@ -100,16 +112,16 @@ public theorem storeFonts_push_exact (fontCount : Nat) (done : Array (Nat × Byt
       (storeFonts fontCount done).setIfInBounds k (some z) := by
   simp only [storeFonts, Array.foldl_push]
 
-private def mapCached (root : Option System.FilePath) (input : α → ByteArray)
+private def mapCached (root : Option Cache) (input : α → ByteArray)
     (result : α → ByteArray → β) (jobs : Array α) (limit : Nat)
     (compute : ByteArray → IO ByteArray) : IO (Array β) := do
   let prepared := requests root input jobs
-  if root.isSome then
+  if let some cache := root then
     let warm ← prepared.mapM fun (path, job) => do
-      return (← readCached? path).map (result job)
+      return (← readCached? cache (input job) path).map (result job)
     if let some out := (warm.mapM id : Option (Array β)) then return out
   let run := fun (path, job) => do
-    let z ← deflateAtPath (root.map fun _ => path) (input job) compute
+    let z ← deflateAtPath (root.map fun c => (c, path)) (input job) compute
     return result job z
   let mut out := #[]
   for batch in Batch.plan (limit - 1) Prod.fst prepared.toList do
@@ -124,7 +136,7 @@ private def mapCached (root : Option System.FilePath) (input : α → ByteArray)
   return out
 
 /-- The driver supplies rendered page bytes in source order. -/
-public def pageStreams (root : Option System.FilePath) (pages : Array ByteArray)
+public def pageStreams (root : Option Cache) (pages : Array ByteArray)
     (limit : Nat := 4)
     (compute : ByteArray → IO ByteArray := fun b => pure (Flate.deflate b)) :
     IO (Array (ByteArray × Option ByteArray)) :=
@@ -132,7 +144,7 @@ public def pageStreams (root : Option System.FilePath) (pages : Array ByteArray)
 
 /-- Keep the writer's font indices, truncated zip, and last assignment
 semantics even when the supplied keep list repeats an index. -/
-public def fontZdata (root : Option System.FilePath) (fontCount : Nat)
+public def fontZdata (root : Option Cache) (fontCount : Nat)
     (keep : Array Nat) (programs : Array (ByteArray × Bool))
     (limit : Nat := 4)
     (compute : ByteArray → IO ByteArray := fun b => pure (Flate.deflate b)) :
@@ -145,7 +157,7 @@ public def fontZdata (root : Option System.FilePath) (fontCount : Nat)
 cache by store entry — `Image.Store.formZ`: a figure unchanged since the
 last build reads its stream back instead of compressing it, as a page and a
 font program do. -/
-public def formZdata (root : Option System.FilePath) (contents : Array (Option ByteArray))
+public def formZdata (root : Option Cache) (contents : Array (Option ByteArray))
     (limit : Nat := 4)
     (compute : ByteArray → IO ByteArray := fun b => pure (Flate.deflate b)) :
     IO (Array (Option ByteArray)) := do
@@ -156,14 +168,14 @@ public def formZdata (root : Option System.FilePath) (contents : Array (Option B
 
 -- These are the partitions consumed by mapCached's cold/mixed branch.
 -- The captured key is also the path read and published by deflateAtPath.
-public theorem pageBatches_exact (root : Option System.FilePath) (pages : Array ByteArray)
+public theorem pageBatches_exact (root : Option Cache) (pages : Array ByteArray)
     (limit : Nat) :
     (Batch.plan (limit - 1) Prod.fst (requests root id pages).toList).flatten.map Prod.snd =
       pages.toList := by
   rw [Batch.plan_exact]
   simpa only [Array.toList_map] using congrArg Array.toList (requests_exact root id pages)
 
-public theorem pageBatches_contract (root : Option System.FilePath) (pages : Array ByteArray)
+public theorem pageBatches_contract (root : Option Cache) (pages : Array ByteArray)
     (limit : Nat) :
     ∀ batch ∈ Batch.plan (limit - 1) Prod.fst (requests root id pages).toList,
       batch.length ≤ max 1 limit ∧ (batch.map Prod.fst).Nodup := by
@@ -172,7 +184,7 @@ public theorem pageBatches_contract (root : Option System.FilePath) (pages : Arr
   have := Batch.plan_bounded _ _ _ batch h
   omega
 
-public theorem fontBatches_exact (root : Option System.FilePath) (fontCount : Nat)
+public theorem fontBatches_exact (root : Option Cache) (fontCount : Nat)
     (keep : Array Nat) (programs : Array (ByteArray × Bool)) (limit : Nat) :
     (Batch.plan (limit - 1) Prod.fst
       (requests root Prod.snd (fontJobs fontCount keep programs)).toList).flatten.map Prod.snd =
@@ -182,7 +194,7 @@ public theorem fontBatches_exact (root : Option System.FilePath) (fontCount : Na
   rw [← Array.toList_map, requests_exact]
   simp only [fontJobs, Array.toList_filterMap, Array.toList_zip]
 
-public theorem fontBatches_contract (root : Option System.FilePath) (fontCount : Nat)
+public theorem fontBatches_contract (root : Option Cache) (fontCount : Nat)
     (keep : Array Nat) (programs : Array (ByteArray × Bool)) (limit : Nat) :
     ∀ batch ∈ Batch.plan (limit - 1) Prod.fst
         (requests root Prod.snd (fontJobs fontCount keep programs)).toList,

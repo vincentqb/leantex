@@ -82,7 +82,7 @@ def runCase (ref : IO.Ref (List String)) (fonts : Font.FontSet) (c : Case) : IO 
   | .error e => check ref s!"{c.path}: PDF reader: {e}" false
   | .ok pages =>
     check ref s!"{c.path}: emitted PDF page census" (pages.size == a.out.pages.size)
-  match HtmlResource.close (HtmlDoc.resources (htmlConfig fonts a.geom)) #[] HtmlDoc.deckScript
+  match HtmlResource.close (HtmlDoc.resources (htmlConfig fonts a.geom)) #[] #[HtmlDoc.deckScript]
       (a.doc.info.language.getD "en") a.head a.body with
   | .error e => check ref s!"{c.path}: HTML is self-contained: {e}" false
   | .ok _ => pure ()

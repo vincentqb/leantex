@@ -11024,6 +11024,21 @@ private def restoreLengths (keys : Array String) (p : Pos) : Array Raw :=
 
 mutual
 
+/-- Push one raw's rewrite. An environment rewritten to a group stands where
+`\begin` stood, and `\begin` is a command, so no argument scan of the command
+before it reaches the body: where the output so far would read the group as
+one more argument of the command it ends with (`Parse.endsInArgument`), the
+empty generated scope keeps `\begin`'s place between them. It elaborates to
+nothing, a scan of the paragraph's text reads through it
+(`Parse.isPlaceKeeper`), and the group keeps the reading it has after plain
+words. -/
+private def pushRewritten (out : Array Raw) (r r' : Raw) : Array Raw :=
+  match r, r' with
+  | .env _ _ p, .group _ _ =>
+    if Parse.endsInArgument out then (out.push (.env Parse.scopeEnv #[] p)).push r'
+    else out.push r'
+  | _, _ => out.push r'
+
 /-- Walk `raws`. The list is `raws` from index `i` on and only drives the
 recursion; the array gives a rewrite O(1) access to its arguments, and `out`
 accumulates so the result is built in one pass -- prepending to the recursive
@@ -11076,7 +11091,7 @@ private def rewriteList (inBody : Bool) (raws : Array Raw) (out : Array Raw) :
       let out := if tail.isEmpty then out.push param else (out.push param).push (.word tail wp)
       rewriteList inBody raws out rest (i + 2) 0
   | r :: rest, i, 0 => do
-    rewriteList inBody raws (out.push (← rewriteRaw inBody r)) rest (i + 1) 0
+    rewriteList inBody raws (pushRewritten out r (← rewriteRaw inBody r)) rest (i + 1) 0
 
 /-- Descend into a group or environment. Split from the list walk so the
 recursion is structural on `Raw`: the body is a field of the head, not a tail
@@ -11831,7 +11846,8 @@ private theorem rewriteCursor_document_exact (cursor : RewriteCursor)
   case x_4 => simp
   case x_5 => simp
   simp only [bind, StateT.bind, rewriteRaw_document_exact _ _ _ _ hp,
-    RewriteCursor.enterDocument, List.drop_zero, ht, rewriteDocumentBody]
+    RewriteCursor.enterDocument, List.drop_zero, ht, rewriteDocumentBody, closeBeamerScope,
+    closeDocumentBody, pushRewritten]
 
 private def closeLastDocument (cursor : RewriteCursor) (pos : Pos)
     (result : Array Raw × St) : Array Raw × St :=

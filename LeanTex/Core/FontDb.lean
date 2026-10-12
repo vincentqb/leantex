@@ -27,12 +27,17 @@ public structure Variant where
   italic : Bool := false
   deriving Repr, BEq, Inhabited
 
-/-- A supported standalone-font extension, ignoring case. This recognizes
-names used by selection and discovery; it does not inspect any bytes. Font
-collections (`.ttc`, `.dfont`) are not supported. -/
+/-- The standalone-font extensions selection and discovery recognize,
+lowercase. Font collections (`.ttc`, `.dfont`) are not among them. -/
+public def fontExtensions : List String := ["ttf", "otf"]
+
+/-- A supported standalone-font extension (`fontExtensions`), ignoring
+case. This recognizes names used by selection and discovery; it does not
+inspect any bytes. -/
 public def hasFontExtension (p : String) : Bool :=
-  let ext := (p.splitOn ".").getLast? |>.map String.toLower
-  ext == some "ttf" || ext == some "otf"
+  match (p.splitOn ".").getLast? with
+  | some ext => fontExtensions.contains ext.toLower
+  | none => false
 
 def norm (s : String) : String :=
   String.ofList ((s.toLower.toList).filter fun c => c.isAlphanum)

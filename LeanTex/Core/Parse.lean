@@ -513,6 +513,30 @@ The space keeps this wrapper outside the environment names a document can
 spell, as with `inputEnv`. Serializing it restores ordinary TeX braces. -/
 public def scopeEnv : String := "scope "
 
+/-- The empty generated scope an environment's rewrite leaves where `\begin`
+stood (`Compat.pushRewritten`): it holds nothing of the paragraph, so a scan
+of the paragraph's text reads through it as through nothing. -/
+@[expose] public def isPlaceKeeper : Raw → Bool
+  | .env n body _ => n == scopeEnv && body.isEmpty
+  | _ => false
+
+/-- Would a group standing next read as an argument? It would when, looking
+back over spaces and earlier argument groups, a control word or an
+`[option]` precedes it; a group standing on its own is a scope. The block
+walk reads every brace group by this rule (`Elab.isArgument`), and an
+environment's rewrite reads by it whether `\begin`'s place needs keeping
+(`Compat.pushRewritten`). -/
+@[expose] public def endsInArgument (cur : Array Raw) : Bool := Id.run do
+  let mut k := cur.size
+  for _ in [0:cur.size] do
+    match cur[k - 1]? with
+    | some .space => k := k - 1
+    | some (.group _ _) => k := k - 1
+    | some (.ctrl _ _) => return true
+    | some (.sym ']' _) => return true
+    | _ => return false
+  return false
+
 /-- The environment a markdown pipe table desugars to (`Md.tableRaws`): the
 booktabs `{tabular}` it means, its natural columns narrowing as a web
 table's do (`Ir.ColSpec.narrows`). The space keeps it outside the

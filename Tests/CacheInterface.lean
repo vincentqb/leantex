@@ -16,6 +16,8 @@ example : ByteArray → Option (Except String ByteArray) := ConvCache.decode
 example : Except String ByteArray → ConvCache.Result := ConvCache.Result.replay
 example : ByteArray → String → Array String → Bool → IO (ConvCache.Result × Bool) →
     IO ConvCache.Result := ConvCache.cachedResult
+example : Option System.FilePath → Option String → ByteArray → String → Array String → Bool →
+    IO (ConvCache.Result × Bool) → IO ConvCache.Result := ConvCache.cachedResultIn
 
 example (bytes : ByteArray) (a : Except String ByteArray) (h : ConvCache.decode bytes = some a) :
     (ConvCache.Result.replay a).answer = a :=
@@ -33,11 +35,11 @@ example (input : ByteArray) (compute : ByteArray → IO ByteArray) :
     Compression.deflateCachedAt none input compute = compute input :=
   Compression.deflateCachedAt_none_exact input compute
 
-example (root : Option System.FilePath) (input : α → ByteArray) (jobs : Array α) :
+example (root : Option Compression.Cache) (input : α → ByteArray) (jobs : Array α) :
     (Compression.requests root input jobs).map Prod.snd = jobs :=
   Compression.requests_exact root input jobs
 
-example (root : Option System.FilePath) (pages : Array ByteArray) (limit : Nat) :
+example (root : Option Compression.Cache) (pages : Array ByteArray) (limit : Nat) :
     ∀ batch ∈ Batch.plan (limit - 1) Prod.fst
       (Compression.requests root id pages).toList,
       batch.length ≤ max 1 limit ∧ (batch.map Prod.fst).Nodup :=

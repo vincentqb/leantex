@@ -191,7 +191,7 @@ def main (args : List String) : IO UInt32 := do
     check "concurrent writers: one verdict and no staging residue"
       (slots.size == 1 && entries.all (fun e => !e.fileName.endsWith ".part"))
     if let some slot := slots[0]? then
-      let answer := ConvCache.decode (← IO.FS.readBinFile slot)
+      let answer := ConvCache.decodeSlot (← IO.FS.readBinFile slot)
       check "concurrent writers: slot is the served bytes"
         (answer.any fun a => match a with
           | .error _ => false

@@ -155,3 +155,39 @@ def boxPosRowChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO U
   t "the HTML picture stands on its declared baseline, beside its box"
     (svgStyles.any (hasStr · "vertical-align: -") &&
       (pStyles.filter (hasStr · "align-self: baseline")).size == 2)
+  -- A baseline coordinate's y is read as a path reads a coordinate's
+  -- component (TikZ manual §13.2.1): a length where it declares units, a
+  -- number of the y vector otherwise, and with no transformation of the
+  -- picture's, which pgf reads the coordinate after closing. So `(0,5pt)`
+  -- stands the picture on its line as `baseline=5pt` does and `(0,0.2)` as
+  -- `baseline=0.2cm`, at `scale=2` too, as lualatex sets them; the defect
+  -- read every y as a number of the vector, scaled, and `(0,5pt)` as five of
+  -- them. Every height here lies inside the picture's box, which bounds the
+  -- rise (`Ir.Pic.Picture.rise`).
+  let based (opts : String) : Ir.Doc :=
+    (elabM (dvDoc "" ("\\raggedright\n\n\\parbox[t]{.2\\textwidth}{\\emph{Lab}}\n" ++
+      "\\begin{tikzpicture}[" ++ opts ++ "]\n\\node (x) {Nodea};\n\\end{tikzpicture}\n"))).1
+  let rise (opts : String) : Option Int :=
+    let ls := (allLines (layoutOf oneFace (based opts))).filter fun l => !l.furniture && !l.segs.isEmpty
+    match ls.find? (fun l => hasStr (lineText l) "Lab"), ls.find? (fun l => hasStr (lineText l) "Nodea") with
+    | some lab, some node => some (node.y - lab.y)
+    | _, _ => none
+  let near (a b : Option Int) : Bool :=
+    match a, b with
+    | some x, some y => decide (x - y ≤ 2 ∧ y - x ≤ 2)
+    | _, _ => false
+  t "a baseline coordinate's y in points stands the picture as that length does"
+    (near (rise "baseline={(0,5pt)}") (rise "baseline=5pt") &&
+      near (rise "baseline={(1,5pt)}") (rise "baseline=5pt"))
+  t "a baseline coordinate's unitless y is a number of the y vector"
+    (near (rise "baseline={(0,0.2)}") (rise "baseline=0.2cm"))
+  t "the picture's scale reaches no baseline coordinate"
+    (near (rise "scale=2,baseline={(0,5pt)}") (rise "scale=2,baseline=5pt") &&
+      near (rise "scale=2,baseline={(0,0.2)}") (rise "scale=2,baseline=0.2cm"))
+  t "the baseline readings stand the picture at different heights"
+    (!near (rise "baseline=5pt") (rise "baseline=0.2cm"))
+  let lift (opts : String) : Array String :=
+    (based opts).body.foldl (fun acc b => acc ++ attrValuesOf (· == "svg") "style" (HtmlDoc.blockNode {} b)) #[]
+  t "the HTML picture's lift reads a baseline coordinate as the page does"
+    (!(lift "baseline=5pt").isEmpty && lift "baseline={(0,5pt)}" == lift "baseline=5pt" &&
+      lift "scale=2,baseline={(0,5pt)}" == lift "scale=2,baseline=5pt")

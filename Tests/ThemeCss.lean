@@ -147,9 +147,10 @@ public def checks (ref : IO.Ref (List String)) : IO Unit := do
   t "theme CSS: the author's rule remains last"
     (treeCssList "" head.toList |>.endsWith author)
   let bulma := sheet { css := .bulma } (probe empty)
-  -- Bulma's primary reads a host's `--primary` first, as it did before the
-  -- registry, then the focus role's own property, so a host's override of
-  -- either reaches it; the property is the registry's.
+  -- Bulma's primary reads a declared sheet's or the document's `--primary`
+  -- first, as it did before the registry, then the focus role's own
+  -- property, so an override of either reaches it; the property is the
+  -- registry's.
   t "theme CSS: Bulma's default accent is the native contrast palette"
     (property (String.intercalate ";" (cssRulesOf bulma ":root")) "--bulma-primary" ==
         some "var(--primary, var(--ltx-accent))" &&

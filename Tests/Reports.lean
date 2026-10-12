@@ -1,4 +1,5 @@
 import Tests.DiagAudit
+import Tests.EngineCache
 import Tests.BuildGraph
 import Tests.DeclaredColors
 import Tests.ColorNames
@@ -1414,7 +1415,34 @@ def reports : List Report := [
       thm% Ir.BlockMetric.halfLeading_centred_exact]
     accept := ["thirty-three assertions fail on the tree before the fix and hold after, over an invented probe of five frames: the template named and its blocks set as beamer's default boxes, no rule beside its ten titles and every title and body line away from the reference engine's, a reach's native spelling unread, and the readings of a box's height alone and of lines no strut bounds not named for them; on this tree every rule's place and size is within 0.002 points of the reference engine's, titles whose ink passes their struts, two title lines a skip apart and last lines deeper than their struts among them, each rule beside lines struts bound centred on its capitals exactly in the PDF and within a device pixel in Chromium, whose header stands as low as the PDF's title for the rule's rise and keeps the body as far below a rule deeper than its box",
       "a presentation deck whose theme centres its block rules on the titles' capitals ships them centred in both artifacts, as its lualatex build does, every other pixel of the deck unchanged"]
-    state := .guarded "bc2adb38" .before .author }
+    state := .guarded "bc2adb38" .before .author },
+  { id := "R154", date := "2026-10-12"
+    what := "a picture's baseline given as a coordinate whose y carries units, such as (0,5pt), read that y as so many units of the picture's y vector, scaled by the picture's scale, which pgf reads the coordinate without, so the picture stood away from where the length 5pt stands it"
+    pins := [check% boxPosRowChecks]
+    accept := ["three of the guard's assertions fail on the tree before the fix: a coordinate whose y is in points, the same coordinate in a scaled picture, and the HTML picture's lift each stand the picture apart from the one whose baseline is that length"]
+    state := .guarded "1f801005" .before .author },
+  { id := "R155", date := "2026-10-12"
+    what := "an environment the rewrite turns into a group, a title page, a language switch or a refused column form, opened right after a command and its braced arguments in the same paragraph was read as one more argument of that command: it stayed in the paragraph, a title page's page marks were named as an unknown command and a page break out of place, and a list inside failed the build"
+    pins := [check% titlePageLifecycleChecks, check% environmentArgumentChecks]
+    accept := ["thirty-two of the guards' assertions fail on the tree before the fix: after a link, a bold word and a forced line break, a title page recovers by an error and an unknown command and its pages are not those of plain words in the command's place; after a bold word and a link, with or without a picture opening the paragraph, a language switch or a refused column form around a list recovers by an error, and a language switch around two paragraphs loses its paragraph break", "with the place the rewrite keeps read as an environment by the in-sentence picture scan, six of them fail on the fixed tree: behind a picture, the sentence running on past the environment is not named as it is after plain words"]
+    state := .guarded "1f801005" .before .author },
+  { id := "R156", date := "2026-10-12"
+    what := "the flate, image-plan and conversion caches keyed their answers by the release version, which every build of a release shares, so a rebuilt or replaced engine was served the answers an earlier engine stored, and a planted equivalent answer changed another binary's PDF"
+    pins := [check% Tests.engineCacheChecks, check% Tests.engineIdentityChecks,
+      thm% SlotRecord.lookup_exact]
+    accept := ["on the tree before the fix, the guard's second copy of the binary reads the image plan the first copy stored, its images phase reporting the plan cached; the guard's plant, which writes the keyed slots of the fix, finds none there"]
+    state := .guarded "1f801005" .before .author },
+  { id := "R157", date := "2026-10-12"
+    what := "an HTML build given the math renderer flag published nothing: the page named the renderer as a script source, which the self-contained publication gate refuses, so every such build failed"
+    pins := [check% Tests.mathBoundaryChecks, thm% HtmlDoc.math_boundary_contract,
+      thm% HtmlDoc.math_boundary_floor_exact]
+    accept := ["run against the binary built from the tree before the fix, the guard's two end-to-end assertions fail: the HTML build with the flag is refused, and no page carries the renderer"]
+    state := .guarded "1f801005" .before .author },
+  { id := "R158", date := "2026-10-12"
+    what := "the Bulma stylesheet mode was documented as styled by a host page's framework sheet, while publication refused a page declaring no framework sheet of its own, and the refusal named no declaration to write"
+    pins := [check% htmlContainedCliChecks, check% Tests.bulmaSheetChecks]
+    accept := ["run against the binary built from the tree before the fix, one of the guard's assertions fails: the refusal of a Bulma page with no declared sheet does not name 'stylesheet = ...'"]
+    state := .guarded "1f801005" .before .author }
 ]
 
 /-- The reports guarded but never seen failing: a count that may fall and

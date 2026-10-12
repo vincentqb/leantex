@@ -2,6 +2,7 @@ module
 
 public import LeanTex.Cli.Compression
 public import LeanTex.Cli.ConvCache
+public import LeanTex.Core.SlotRecord
 public import Tests.Support
 public import Std.Sync.Mutex
 
@@ -133,6 +134,8 @@ private def compressionCacheChecks (ref : IO.Ref (List String)) : IO Unit := do
   IO.FS.withTempDir fun dir => do
     let input := "invented compression cache payload".toUTF8
     let expected := Flate.deflate input
+    let engine : Compression.Cache := { dir, engine := "invented engine a" }
+    let key := Compression.slotKey engine.engine input
     let path := Compression.cachePath dir input
     IO.FS.createDirAll (path.parent.getD dir)
     -- This is all the old header-only reader needed to embed a partial file.
@@ -141,30 +144,30 @@ private def compressionCacheChecks (ref : IO.Ref (List String)) : IO Unit := do
     let compute := fun b => do
       calls.modify (· + 1)
       return Flate.deflate b
-    let recovered ← Compression.deflateCachedAt (some dir) input compute
+    let recovered ← Compression.deflateCachedAt (some engine) input compute
     check ref "compression cache: a zlib header alone is a miss"
       (recovered == expected && (← calls.get) == 1)
-    check ref "compression cache: publishes a checked envelope"
-      (ConvCache.decode (← IO.FS.readBinFile path) == some (.ok expected))
-    let warm ← Compression.deflateCachedAt (some dir) input
+    check ref "compression cache: publishes a checked slot under its key"
+      (SlotRecord.lookup key (← IO.FS.readBinFile path) == some expected)
+    let warm ← Compression.deflateCachedAt (some engine) input
       (fun _ => throw (IO.userError "warm compression cache recomputed"))
     check ref "compression cache: warm bytes exactly match recompression" (warm == expected)
 
-    let encoded := ConvCache.encode (.ok expected)
+    let encoded := SlotRecord.encode key expected
     for broken in #[encoded.extract 0 (encoded.size - 1),
-        ConvCache.encode (.error "not a compressor answer"),
-        ConvCache.encode (.ok (bytes [0x78, 0x9C])),
+        ConvCache.encode (.ok expected),
+        SlotRecord.encode key (bytes [0x78, 0x9C]),
         bytes [0, 1, 2, 3]] do
       IO.FS.writeBinFile path broken
-      let got ← Compression.deflateCachedAt (some dir) input compute
-      check ref "compression cache: truncated, refused, or malformed entries recompute"
-        (got == expected && ConvCache.decode (← IO.FS.readBinFile path) == some (.ok expected))
+      let got ← Compression.deflateCachedAt (some engine) input compute
+      check ref "compression cache: truncated, unkeyed, or malformed entries recompute"
+        (got == expected && SlotRecord.lookup key (← IO.FS.readBinFile path) == some expected)
     check ref "compression cache: each broken entry causes one computation" ((← calls.get) == 5)
 
     IO.FS.removeFile path
     calls.set 0
-    let pages ← Compression.pageStreams (some dir) #[input, input, input] 4 compute
-    let fonts ← Compression.fontZdata (some dir) 2 #[1, 0]
+    let pages ← Compression.pageStreams (some engine) #[input, input, input] 4 compute
+    let fonts ← Compression.fontZdata (some engine) 2 #[1, 0]
       #[(input, false), (input, true)] 4 compute
     check ref "compression cache: repeated pages and font programs reuse one complete slot"
       ((← calls.get) == 1 &&
@@ -173,7 +176,7 @@ private def compressionCacheChecks (ref : IO.Ref (List String)) : IO Unit := do
 
     let blocked := dir / "unavailable"
     IO.FS.writeFile blocked "a file cannot be a cache directory"
-    let uncached ← Compression.deflateCachedAt (some blocked) input
+    let uncached ← Compression.deflateCachedAt (some { engine with dir := blocked }) input
     check ref "compression cache: cache IO failure preserves the computed bytes" (uncached == expected)
 
     -- Simultaneous callers can publish to the same slot outside one batch.
@@ -185,19 +188,19 @@ private def compressionCacheChecks (ref : IO.Ref (List String)) : IO Unit := do
         if (← started.atomically get) == 2 then break
         IO.sleep 1
       return Flate.deflate b
-    let first ← IO.asTask (Compression.deflateCachedAt (some dir) input compute) .dedicated
-    let second ← IO.asTask (Compression.deflateCachedAt (some dir) input compute) .dedicated
+    let first ← IO.asTask (Compression.deflateCachedAt (some engine) input compute) .dedicated
+    let second ← IO.asTask (Compression.deflateCachedAt (some engine) input compute) .dedicated
     let one ← IO.wait first
     let two ← IO.wait second
     check ref "compression cache: simultaneous publications return complete answers"
       (one.toOption == some expected && two.toOption == some expected &&
-        ConvCache.decode (← IO.FS.readBinFile path) == some (.ok expected))
+        SlotRecord.lookup key (← IO.FS.readBinFile path) == some expected)
     let entries ← (path.parent.getD dir).readDir
     check ref "compression cache: publication cleans its staging directories"
       (entries.all fun entry => !entry.fileName.endsWith ".part")
     IO.FS.removeFile path
     IO.FS.createDir path
-    let unpublished ← Compression.deflateCachedAt (some dir) input
+    let unpublished ← Compression.deflateCachedAt (some engine) input
     let entries ← (path.parent.getD dir).readDir
     check ref "compression cache: failed rename falls back and cleans staging"
       (unpublished == expected && entries.all fun entry => !entry.fileName.endsWith ".part")

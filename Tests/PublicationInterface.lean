@@ -11,17 +11,18 @@ namespace Tests.PublicationInterface
 
 example : String → HtmlDoc.Config → Ir.Doc → IO (Except String HtmlDoc.Config) :=
   captureHtmlResources
-example : HtmlDoc.ClosedPage → HtmlArtifact := HtmlArtifact.ofPage
+example (renderer : Option String) : HtmlDoc.ClosedPage renderer → HtmlArtifact :=
+  HtmlArtifact.ofPage
 example : String → HtmlDoc.Config → Ir.Doc →
     IO (Except String HtmlArtifact × Array Diag) := prepareHtml
 example : Option String → Option (String × HtmlArtifact) →
     Option (String × String) → Option (String × ByteArray) → IO (Array String × Array Diag) :=
   publish
-example (page : HtmlDoc.ClosedPage) : HtmlArtifact :=
-  { render := page.render, render_exact := ⟨page, rfl⟩ }
+example (renderer : Option String) (page : HtmlDoc.ClosedPage renderer) : HtmlArtifact :=
+  { render := page.render, renderer, render_exact := ⟨page, rfl⟩ }
 example (artifact : HtmlArtifact) : String := artifact.render
 example (artifact : HtmlArtifact) :
-    ∃ page : HtmlDoc.ClosedPage, artifact.render = page.render :=
+    ∃ page : HtmlDoc.ClosedPage artifact.renderer, artifact.render = page.render :=
   artifact.render_exact
 
 example : PicCache.Outcome → Verdict := svgVerdict

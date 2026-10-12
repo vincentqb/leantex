@@ -73,7 +73,7 @@ private theorem elabBlocksGo_group_alone (ctx : Ctx) (st : ESt) (body : Array Ra
         elabBlocksGo ctx #[.group body pos] 1 (#[] ++ inner) #[] st.flowGen) :
         EM (Array Block)).run st := by
   have ha : isArgument #[] = false := by
-    rw [isArgument]
+    rw [isArgument, Parse.endsInArgument]
     simp [Std.Legacy.Range.forIn_eq_forIn_range']
   rw [elabBlocksGo, run_get]
   rw [blockMacroStep_idle ctx st _ 0 #[] #[] hm (by simp) (by simpa [Raw.origins?] using hp)]

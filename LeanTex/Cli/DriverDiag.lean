@@ -321,7 +321,7 @@ public def listingHighlightUnavailable (language reason : String) : Diag :=
 publication, never an instruction to write the unchecked page anyway. -/
 public def htmlResourceUnavailable (detail : String) : Diag :=
   Diag.of .E0606 s!"cannot publish self-contained HTML: {detail}"
-    (help := "use readable local image, font and stylesheet files; remove CSS `@import` and external `url(...)` dependencies")
+    (help := "use readable local image, font, stylesheet and math renderer files; remove CSS `@import` and external `url(...)` dependencies")
     (output := some .html)
 
 /-- E0502: an included source file is not there; its content is absent. -/

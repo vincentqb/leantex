@@ -7546,17 +7546,9 @@ private def isCenteringRaw : Raw → Bool
 
 /-- Is a group here an argument? It is when, looking back over spaces and
 earlier argument groups, a control word or an `[option]` precedes it; a group
-standing on its own is a scope. -/
-private def isArgument (cur : Array Raw) : Bool := Id.run do
-  let mut k := cur.size
-  for _ in [0:cur.size] do
-    match cur[k - 1]? with
-    | some .space => k := k - 1
-    | some (.group _ _) => k := k - 1
-    | some (.ctrl _ _) => return true
-    | some (.sym ']' _) => return true
-    | _ => return false
-  return false
+standing on its own is a scope (`Parse.endsInArgument`, the rule an
+environment's rewrite reads too). -/
+private def isArgument (cur : Array Raw) : Bool := Parse.endsInArgument cur
 
 /-- The declarations a group split at a paragraph end re-applies to the parts
 after it: a declaration standing in it (`isDeclaration`, its argument
@@ -10447,14 +10439,15 @@ private def sentenceText (r : Raw) : Bool :=
 engine sets a picture as a block, which breaks the sentence into two
 paragraphs with the picture between. The sentence is the paragraph's text
 (`sentenceText`) before the picture (`cur`, what the block walk holds) and
-after it, up to the next paragraph break or environment. A box followed by
-a picture on its own line is a row (`Compat.boxRows`), and never reaches
-here. Outside the knot. -/
+after it, up to the next paragraph break or environment — read through the
+place an environment's rewrite keeps (`Parse.isPlaceKeeper`), which is no
+environment of the paragraph. A box followed by a picture on its own line
+is a row (`Compat.boxRows`), and never reaches here. Outside the knot. -/
 private def pictureInSentence (ctx : Ctx) (n : String) (cur raws : Array Raw) (i : Nat)
     (pos : Pos) : EM Unit := do
   if n != "tikzpicture" && n != "tikzcd" then return
   let after := (raws.extract (i + 1) raws.size).toList.takeWhile fun r =>
-    !(r matches .par _) && !(r matches .env _ _ _)
+    !(r matches .par _) && (!(r matches .env _ _ _) || Parse.isPlaceKeeper r)
   if cur.any sentenceText || after.any sentenceText then
     warnOnce ctx "picture:inline" .W0334
       "a picture inside a paragraph is set as its own block: the paragraph's text breaks \
@@ -14689,7 +14682,7 @@ private theorem elabBlocksGo_recovery_group (ctx : Ctx) (st : ESt) (name : Strin
   rw [blockMacroStep_idle ctx st _ 1 blocks #[.ctrl name p] hm (by simp)
     (by simpa [Raw.origins?] using hp)]
   have ha : isArgument #[.ctrl name p] = true := by
-    rw [isArgument]
+    rw [isArgument, Parse.endsInArgument]
     simp only [Std.Legacy.Range.forIn_eq_forIn_range']
     simp [Std.Legacy.Range.size, List.forIn_cons]
   simp [ha]
@@ -14903,7 +14896,7 @@ private theorem elabBlocksGo_recovered_group (ctx : Ctx) (st : ESt) (name w : St
   rw [blockMacroStep_idle ctx st _ 1 blocks #[.ctrl name p] hm (by simp)
     (by simpa [Raw.origins?] using hp)]
   have ha : isArgument #[.ctrl name p] = true := by
-    rw [isArgument]
+    rw [isArgument, Parse.endsInArgument]
     simp only [Std.Legacy.Range.forIn_eq_forIn_range']
     simp [Std.Legacy.Range.size, List.forIn_cons]
   simp [ha]
@@ -16144,7 +16137,7 @@ private def applyOutput (ctx : Ctx) (o0 : OutputSpec) (src : String) (pos : Pos)
         evs := evs.push (.scalar "output" "css" v pos)
       else
         evs := say evs .E0321 s!"'{v}' is not a stylesheet mode"
-          (help := "css: own, bulma, none")
+          (help := "css: own (the engine's sheet), bulma (Bulma's class names, styled by the sheet stylesheet = ... declares, within the page's CSS subset), none (markup only)")
     | some ("stylesheet", v) =>
       inList := none
       -- A path is a string; the quotes other declarations require are

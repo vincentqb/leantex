@@ -64,7 +64,7 @@ def pictureMathLabelChecks (ref : IO.Ref (List String))
         t (name ++ " ships one native label") ((bodyLines out).size == 1)
         for svg in svgs do
           t (name ++ " publishes as self-contained typed HTML")
-            ((HtmlResource.close #[] #[] HtmlDoc.deckScript "en" #[] #[svg]).isOk)
+            ((HtmlResource.close #[] #[] #[HtmlDoc.deckScript] "en" #[] #[svg]).isOk)
           t (name ++ " paints exactly the mathematical leaves")
             (String.ofList (MathMl.nodeChars #[] svg).toList == leaves)
           t (name ++ " preserves its native mathematical schema")
@@ -138,7 +138,7 @@ def pictureMathLabelChecks (ref : IO.Ref (List String))
     Html.elem "svg" #[Html.elem "foreignObject"
       #[Html.elem "div" kids #[("xmlns", "http://www.w3.org/1999/xhtml")]] attrs]
   let admits := fun (node : Html.Node) =>
-    (HtmlResource.close #[] #[] HtmlDoc.deckScript "en" #[] #[node]).isOk
+    (HtmlResource.close #[] #[] #[HtmlDoc.deckScript] "en" #[] #[node]).isOk
   t "picture mathematics: the checked carrier accepts escaped passive text"
     (admits (carrier #[] #[.text "<Maple & Birch>"]))
   for (name, child) in #[

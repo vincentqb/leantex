@@ -5,7 +5,9 @@ import LeanTex.Cli.FontDiscovery
 import LeanTex.Cli.AtomicFile
 import LeanTex.Cli.RunBounded
 import LeanTex.Cli.ToolProbe
+import LeanTex.Cli.Engine
 import LeanTex.Core.Flate
+import LeanTex.Core.SlotRecord
 import LeanTex.Version
 
 namespace LeanTex.Cli.ConvCache
@@ -121,7 +123,11 @@ public def slotName (source : ByteArray) (recipe identity : String) : String :=
   -- v1 could remember an interrupted process as a refusal, and v2 a run
   -- that never started (exit 126 or 127). Boundary pictures' slots are named
   -- here too, so v3 renders each picture once more; with no tool,
-  -- PictureAssets.previous still serves the drawing of any variant.
+  -- PictureAssets.previous still serves the drawing of any variant. The
+  -- version is a format tag: a conversion's slot keeps the engine it
+  -- answers in its key (`slotKey`); a boundary picture's is the tool's
+  -- answer, keyed by the tool, its refusal worded as the engine that read
+  -- it worded it (`engine-identity`).
   let variant := Flate.contentKey (String.intercalate "\u0000"
     ["vector-cache-v3", LeanTex.version, recipe, identity]).toUTF8
   Flate.contentKey source ++ "-" ++ variant ++ ".answer"
@@ -173,26 +179,51 @@ private def cacheDir : IO (Option System.FilePath) := do
     return some dir
   catch _ => return none
 
-/-- The conversion's whole result, warm or fresh, so a caller can tell the
-tool's refusal from an attempt that never finished. -/
-public def cachedResult (source : ByteArray) (recipe : String) (tools : Array String)
+/-- **The key a conversion's answer is stored under**: the format, the
+source's content key, the recipe, the tools' identity, and the engine whose
+checks and post-processing read the tools' output (`SlotRecord.lookup_exact`):
+a slot another engine wrote is read afresh and replaced. -/
+public def slotKey (source : ByteArray) (recipe identity engine : String) : Array String :=
+  #["conversion-v1", Flate.contentKey source, recipe, identity, engine]
+
+/-- A slot's answer, whichever engine wrote it: what a reader that checks
+only a slot's integrity reads. -/
+public def decodeSlot (bytes : ByteArray) : Option (Except String ByteArray) :=
+  (SlotRecord.decode bytes).bind fun (_, record) => decode record
+
+/-- `cachedResult` through the cache in `dir`, for the engine `engine`:
+with no directory or no engine, nothing is read or written. -/
+public def cachedResultIn (dir : Option System.FilePath) (engine : Option String)
+    (source : ByteArray) (recipe : String) (tools : Array String)
     (eligible : Bool) (produce : IO (Result × Bool)) : IO Result := do
   let slot ← if eligible then do
-      let some dir ← cacheDir | pure none
+      let some dir := dir | pure none
+      let some engine := engine | pure none
       let some id ← identity dir tools | pure none
-      pure (some (dir / slotName source recipe id, dir, id))
+      pure (some (dir / slotName source recipe id, dir, id, slotKey source recipe id engine))
     else pure none
-  if let some (path, _, _) := slot then
-    let warm := (← (IO.FS.readBinFile path).toBaseIO).toOption.bind decode
-    if let some answer := warm then return Result.replay answer
+  if let some (path, _, _, key) := slot then
+    let stored := (← (IO.FS.readBinFile path).toBaseIO).toOption
+    if let some answer := (stored.bind (SlotRecord.lookup key)).bind decode then
+      return Result.replay answer
   let (got, independent) ← produce
   if independent then
-    if let some (path, dir, before) := slot then
+    if let some (path, dir, before, key) := slot then
       -- A binary replaced during the attempt cannot fill the earlier slot.
       if (← identity dir tools) == some before then
         if let some answer := got.record? then
-          discard <| (atomicWrite path (encode answer)).toBaseIO
+          let record := encode answer
+          if SlotRecord.storable key record then
+            discard <| (atomicWrite path (SlotRecord.encode key record)).toBaseIO
   return got
+
+/-- The conversion's whole result, warm or fresh, so a caller can tell the
+tool's refusal from an attempt that never finished, through the engine's
+cache (`Engine.engineId`). -/
+public def cachedResult (source : ByteArray) (recipe : String) (tools : Array String)
+    (eligible : Bool) (produce : IO (Result × Bool)) : IO Result := do
+  let dir ← if eligible then cacheDir else pure none
+  cachedResultIn dir (← Engine.engineId) source recipe tools eligible produce
 
 public def cached (source : ByteArray) (recipe : String) (tools : Array String)
     (eligible : Bool) (produce : IO (Result × Bool)) : IO (Except String ByteArray) :=

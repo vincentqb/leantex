@@ -8,6 +8,7 @@ import Tests.ProcessRuntime
 import Tests.PictureAssets
 import Tests.World
 import Tests.MachineLoss
+import Tests.EngineCache
 import scripts.LandCore
 
 /-!
@@ -161,19 +162,20 @@ def registry : List Premise := [
     scripts := ["scripts/runboundprobe.lean"]
     owed := some "Put a FIFO where the driver reads a document, an image and a font and where it writes an artifact and a cache file, and require every call to refuse it and return, which checks the driver's guard rather than the host and retires the file clauses once it passes." },
   { name := "atomic-publication", residue := .host "filesystem", reach := .render
-    statement := "Renaming a staged file onto its destination within one directory replaces the destination atomically for every reader, so a cache file AtomicFile publishes is read whole or not at all, and an answer whose envelope fails its content key reads as a miss."
-    transfers := [thm% ConvCache.refusal_replays_exact]
-    sites := [("LeanTex/Cli/AtomicFile.lean", "write"), ("LeanTex/Cli/ConvCache.lean", "decode")]
+    statement := "Renaming a staged file onto its destination within one directory replaces the destination atomically for every reader, so a cache file AtomicFile publishes is read whole or not at all, and an answer whose envelope fails its content key, or a slot whose body fails its checksum, reads as a miss."
+    transfers := [thm% ConvCache.refusal_replays_exact, thm% SlotRecord.decode_encode_id]
+    sites := [("LeanTex/Cli/AtomicFile.lean", "write"), ("LeanTex/Cli/ConvCache.lean", "decode"),
+      ("LeanTex/Cli/PlanCache.lean", "decodeCached"), ("LeanTex/Core/SlotRecord.lean", "decode")]
     checks := [check% Tests.toolMemoChecks] },
   { name := "content-keys", residue := .host "cache inputs", reach := .render
     statement := "No two inputs one cache meets share a content key, though Flate.contentKey is two FNV-1a passes from two seeds, a 128-bit key that resists no chosen collision."
     sites := [("LeanTex/Cli/ConvCache.lean", "slotName"), ("LeanTex/Cli/Compression.lean", "cachePath"),
-      ("LeanTex/Cli/PictureAssets.lean", "key"), ("LeanTex/Cli/Driver.lean", "imageCachePath")]
+      ("LeanTex/Cli/PictureAssets.lean", "key"), ("LeanTex/Cli/PlanCache.lean", "cachePath")]
     unchecked := some "No check can enumerate the inputs a cache will meet, and a cryptographic key would retire the premise instead." },
   { name := "cache-trust", residue := .host "cache directory", reach := .render
-    statement := "Every file under the cache directory was written by a leantex build of the same user, since an answer whose envelope checks is served, and the envelope is a checksum anyone can compute."
+    statement := "Every file under the cache directory was written by a leantex build of the same user, since an answer whose envelope checks is served, and the envelope is a checksum anyone can compute, a slot's key among what it covers."
     sites := [("LeanTex/Cli/FontDiscovery.lean", "cacheDir"), ("LeanTex/Cli/ConvCache.lean", "decode"),
-      ("LeanTex/Cli/PictureAssets.lean", "previous")]
+      ("LeanTex/Cli/PictureAssets.lean", "previous"), ("LeanTex/Core/SlotRecord.lean", "lookup")]
     unchecked := some "A checksum anyone can compute cannot tell a planted answer from a written one, and the driver reads no owner or mode of the directory that holds it." },
   { name := "exec-failure", residue := .host "process", reach := .render
     statement := "A command the runtime cannot execute exits 255 with the single stderr line `could not execute external process` and the quoted command, a working directory it cannot enter exits 255 with `could not change directory to` and the directory, a child a signal ended exits 128 plus the signal, and a program a shell cannot find, or whose dynamic loader cannot start it, exits 127."
@@ -190,6 +192,13 @@ def registry : List Premise := [
       ("LeanTex/Cli/ConvCache.lean", "identify"),
       ("LeanTex/Cli/ImageAssets.lean", "convert")]
     owed := some "Change a file a cached tool reads beside itself, such as a TeX package, under an unchanged executable, and require the next build to ask the tool again." },
+  { name := "engine-identity", residue := .host "filesystem", reach := .render
+    statement := "An engine binary whose resolved path, size and modification time are unchanged computes what it computed, so the flate, image-plan, conversion and figure-face caches, which key each answer by that identity as its process read it on starting (Engine.engineId), serve an answer only to the engine that wrote it, though a replacement whose size and modification time equal the binary's it replaced, as a build with normalised times or one stamped by touch -r from it leaves them, and one rewritten at the same size within one tick of the clock, read the answers of the binary they replaced, a build started through the dynamic loader or lean --run is the loader's or lean's, and a boundary picture's slot, keyed by the tool, replays the refusal an earlier engine read off the tool's run."
+    transfers := [thm% SlotRecord.lookup_exact, thm% FigureFace.lookup_exact]
+    sites := [("LeanTex/Cli/Engine.lean", "engineId"), ("LeanTex/Cli/Compression.lean", "slotKey"),
+      ("LeanTex/Cli/PlanCache.lean", "slotKey"), ("LeanTex/Cli/ConvCache.lean", "slotKey"),
+      ("LeanTex/Cli/PdfFaces.lean", "slotKey")]
+    checks := [check% Tests.engineIdentityChecks, check% Tests.engineWatchChecks] },
   { name := "tool-determinism", residue := .host "tools", reach := .render
     statement := "For one tool identity and one request, what the engine reads of the reply is the same on every run: a page's content and resources, an SVG's bytes, a token stream."
     transfers := [thm% PicCache.step_cold_exact, thm% PicCache.remembers_verdict_exact,
@@ -405,6 +414,7 @@ def routes : List Route := [
   ⟨"LeanTex/Cli/ConvCache.lean", "LeanTex.Cli.ConvCache.probeVersion", "tool", .forwards⟩,
   ⟨"LeanTex/Cli/ConvCache.lean", "LeanTex.Cli.ConvCache.identify", "tool", .forwards⟩,
   ⟨"LeanTex/Cli/ConvCache.lean", "LeanTex.Cli.ConvCache.identity", "tools", .forwards⟩,
+  ⟨"LeanTex/Cli/ConvCache.lean", "LeanTex.Cli.ConvCache.cachedResultIn", "tools", .forwards⟩,
   ⟨"LeanTex/Cli/ConvCache.lean", "LeanTex.Cli.ConvCache.cachedResult", "tools", .forwards⟩,
   ⟨"LeanTex/Cli/ImageAssets.lean", "LeanTex.Cli.ConvCache.cachedResult", "spec.tools", .conversionTools⟩,
   ⟨"LeanTex/Cli/ImageAssets.lean", "LeanTex.Cli.RunBounded.output", "_", .alias "runTool"⟩,

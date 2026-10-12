@@ -161,7 +161,7 @@ def runChild (args : List String) : IO UInt32 := do
   for entry in cache do
     if entry.fileName.endsWith ".answer" then
       t "browser batch: persisted answer checksum is valid"
-        ((ConvCache.decode (← IO.FS.readBinFile entry.path)).isSome)
+        ((ConvCache.decodeSlot (← IO.FS.readBinFile entry.path)).isSome)
     if entry.fileName.endsWith ".ver" then
       t "browser batch: concurrent cold identity memos remain complete"
         ((PicCache.readVersionMemo (← IO.FS.readFile entry.path)).any fun (stamp, version) =>

@@ -40,6 +40,8 @@ import LeanTex.Cli.Boundary
 import LeanTex.Cli.Host
 import LeanTex.Cli.Batch
 import LeanTex.Cli.Compression
+import LeanTex.Cli.Engine
+import LeanTex.Cli.PlanCache
 import LeanTex.Cli.PictureAssets
 import LeanTex.Cli.PicCache
 import LeanTex.Cli.ToolProbe
@@ -343,45 +345,6 @@ def resolvePictures (ui : Ui) (file : String) (doc : Ir.Doc)
     inputs.map fun (cand, _) => Boundary.inputPath dir cand
   return (results, undrawn, staged)
 
-/-- Where the image cache files a plan: beside the font and boundary
-caches, keyed by the *content* (so a re-exported file under the same name
-re-plans and an unchanged one never does), by the plan parameters (every
-non-source input to `Image.plan`, so two plans that could differ never
-share an entry — `planParams_serialize_inj`), and by the engine version
-(an upgraded planner re-plans; `Image.decodeBin`'s magic already orphans a
-format change). No document or output path enters the key. -/
-def imageCachePath (params : Image.PlanParams) (bytes : ByteArray) :
-    IO (Option System.FilePath) := do
-  let some root ← FontDiscovery.cacheDir | return none
-  return some (root / "imgs" / s!"{Flate.contentKey bytes}-{params.key}-{LeanTex.version}.img")
-
-/-- Plan through the image cache. The header is probed first; only a plan
-the planner itself says does real work — an alpha PNG's inflate, split,
-deflate (`Image.Plan.recodes`, `recodes_iff`) — is worth a disk read, and
-everything else plans directly from the probe. The cached value is the
-pure plan's own output (`Image.encodeBin`), so a hit equals a
-recomputation — `decodeBin_encodeBin_id`, the transparency statement.
-Returns whether this was a hit, for the phase line. -/
-def decodeImageCached (params : Image.PlanParams) (bytes : ByteArray) :
-    IO (Except String Image.Plan × Bool) := do
-  let src ← match Image.probe bytes with
-    | .error e => return (.error e, false)
-    | .ok src => pure src
-  unless Image.Plan.recodes params src do return (Image.plan params src, false)
-  let path? ← imageCachePath params bytes
-  if let some path := path? then
-    if let .ok blob ← IO.FS.readBinFile path |>.toBaseIO then
-      if let some pl := Image.decodeBin blob then
-        return (.ok pl, true)
-  let res := Image.plan params src
-  if let some path := path? then
-    if let .ok pl := res then
-      try
-        if let some parent := path.parent then IO.FS.createDirAll parent
-        IO.FS.writeBinFile path (Image.encodeBin pl)
-      catch _ => pure ()
-  return (res, false)
-
 /-- One image source's read — the effect half of `Image.fulfil`: a boundary
 picture's source (`Ir.picSrcPrefix`) is answered from the resolved
 boundary results, a path resolves against the document's own directory,
@@ -394,7 +357,7 @@ page's placeholder (`Boundary.markUnplanned`), and the files it read or
 found standing where it read: what publication must not write over. -/
 def fetchImage (dir : System.FilePath) (pics : Array PicResult)
     (refused : Array (String × Diag)) (params : Image.PlanParams) (req : Image.Request)
-    (paths : Array String := #[]) :
+    (paths : Array String := #[]) (cache : Option Engine.Cache := none) :
     IO (Image.Fetch × Bool × Bool × Array String) := do
   let src := req.src
   if src.startsWith Ir.picSrcPrefix then
@@ -444,7 +407,7 @@ def fetchImage (dir : System.FilePath) (pics : Array PicResult)
           (some bytes) (companion.map (·.1)), false, false,
           #[p.toString] ++ (companion.map (·.2.toString)).toArray)
       else
-        let (res, fromCache) ← decodeImageCached params bytes
+        let (res, fromCache) ← PlanCache.decodeCached cache params bytes
         return (.decoded href res none none (some bytes) none, fromCache, false, #[p.toString])
 
 /-- The image request an elaborated document states (`Ir.imageRequests`),
@@ -462,7 +425,7 @@ machine stopped carries the page's placeholder (`Boundary.markUnplanned`).
 The files read come last. -/
 def loadImages (file : String) (doc : Ir.Doc) (pics : Array PicResult := #[])
     (refused : Array (String × Diag) := #[])
-    (imageSpans : Array (String × Span) := #[]) :
+    (imageSpans : Array (String × Span) := #[]) (cache : Option Engine.Cache := none) :
     IO (Image.Store × Array Diag × Nat × Array String) := do
   let dir := (System.FilePath.mk file).parent.getD "."
   let params := Image.PlanParams.default
@@ -471,7 +434,7 @@ def loadImages (file : String) (doc : Ir.Doc) (pics : Array PicResult := #[])
   let mut hits := 0
   let mut reads : Array String := #[]
   for req in Ir.imageRequests doc do
-    let (f, fromCache, machine, read) ← fetchImage dir pics refused params req doc.graphicsPath
+    let (f, fromCache, machine, read) ← fetchImage dir pics refused params req doc.graphicsPath cache
     if fromCache then hits := hits + 1
     if machine then stopped := stopped.push req
     fetched := fetched.push (req, f)
@@ -890,7 +853,10 @@ def build (ui : Ui) (file : String) : IO UInt32 := do
         let family := fs.math.bind (fs.fonts[·]?) |>.map (·.family) |>.getD "math face"
         pure ((Ir.resolveMathAlphas fs.mathAlphabets family doc2).1, spans2)
       let t ← IO.monoMsNow
-      let (imgs, imgDiags, imgHits, imgReads) ← loadImages file doc pics refused reqSpans.images
+      -- The engine's own answers — image plans, flate streams — are read
+      -- from slots this engine wrote, and no other's (`Engine.engineId`).
+      let cache ← Engine.cache (← FontDiscovery.cacheDir)
+      let (imgs, imgDiags, imgHits, imgReads) ← loadImages file doc pics refused reqSpans.images cache
       let imgDiags := (imgDiags ++ PlanLoss.pictureAlts doc reqSpans.images imgs).map sourceDiag
       resolved := resolved.append (← ui.resolve doc.allow allowAll (outputs := outputs) imgDiags)
       unless imgs.entries.isEmpty do
@@ -1014,7 +980,6 @@ in the HTML" (← since t)
           pure (Ir.resolveMathAlphas fs.mathAlphabets family d).1
         let hcfg : HtmlDoc.Config := {
           css := cssMode
-          mathBoundary := ui.cfg.mathBoundary
           imgs := imgs
           fonts := if shipFonts then some fs else none
           -- The markdown twin, when one is being written beside the page,
@@ -1044,6 +1009,7 @@ in the HTML" (← since t)
         }
         let htmlDoc := { htmlDoc with body := Ir.squeezeFrames htmlDoc.body squeezed }
         let (result, hdiags) ← prepareHtml file hcfg htmlDoc (picNatives ++ faceNatives)
+          (mathBoundary := ui.cfg.mathBoundary)
         resolved := resolved.append (← ui.resolve doc.allow allowAll (outputs := outputs)
           (hdiags.map front.prepared.sourceTriggers.attribute))
         match result with
@@ -1072,7 +1038,6 @@ in the HTML" (← since t)
         let used := Pdf.usedAll fs out.pages
         let keep := Pdf.keepOf used
         let programs := Pdf.facePrograms fs used
-        let cache ← FontDiscovery.cacheDir
         let fs := { fs with zdata := ← Compression.fontZdata cache fs.fonts.size keep programs }
         -- The structure tree the pages' `leaf` indices name: the one the
         -- layout attributed against (`Layout.pdfView`), projected once.
@@ -1240,6 +1205,9 @@ def watch (cfg : Config) (file : String) : IO UInt32 := do
   return 0
 
 public def main (argv : List String) : IO UInt32 := do
+  -- The engine's identity is the image this process started as, whatever is
+  -- built at its path while it runs (`Engine.engineId`).
+  discard Engine.engineId
   match parse argv with
   | .error msg =>
     let stderr ← IO.getStderr

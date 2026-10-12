@@ -1004,6 +1004,33 @@ Font.classifierVersion, so no stored answer of the old one is read"
   t "classifier pins: every shipped face is pinned"
     (shipped.qsort (· < ·) == (classifierPins.map (·.1)).toArray.qsort (· < ·))
 
+/-- **A stored listing is read only by a walk with the same filter.** The
+listing cache's file name carries the extensions the walk keeps
+(`FontDb.fontExtensions`), checked by two scans of the shipped directory
+through a private cache that differ only in which file holds one listing
+claiming the directory, at its current time, holds no font: under the
+unnamed file every earlier walk wrote, the scan finds the shipped faces;
+under this filter's own name the listing is served and the scan finds
+none, so the cache is live and only the name stands between the scan and
+another filter's answer. -/
+def listingCacheChecks (ref : IO.Ref (List String)) : IO Unit := do
+  let t := check ref
+  let md ← (System.FilePath.mk testFonts).metadata
+  let empty := s!"{testFonts}\t{md.modified.sec}.{md.modified.nsec}\n"
+  let scanWith (file : String) : IO Nat := do
+    let dir ← IO.FS.createTempDir
+    IO.FS.writeFile (dir / file) empty
+    let faces ← FontDiscovery.scanRootsIn (some dir) [testFonts]
+    IO.FS.removeDirAll dir
+    return faces.size
+  let legacy ← scanWith "fontdb-dirs.tsv"
+  t s!"listing cache: a listing an earlier walk wrote is not read ({legacy} faces)" (legacy ≥ 2)
+  let live ← scanWith FontDiscovery.listingCacheName
+  t s!"listing cache: the same listing under this filter's own name is read, so the name is what \
+refuses it ({live} faces)" (live == 0)
+  t "listing cache: the name carries every extension the walk keeps"
+    (FontDb.fontExtensions.all fun ext => hasStr FontDiscovery.listingCacheName ext)
+
 def fontsDeclChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
   -- \fonts declarations and family resolution
@@ -1027,6 +1054,7 @@ def fontsDeclChecks (ref : IO.Ref (List String)) : IO Unit := do
   defaultFontChecks ref
   shippedFontChecks ref faces
   probeCacheChecks ref
+  listingCacheChecks ref
   match FontDb.resolve faces "Source Serif Pro" { bold := true } with
   | some (face, exact) =>
     t "fontdb bold is exact" exact

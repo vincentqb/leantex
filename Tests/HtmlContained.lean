@@ -17,7 +17,7 @@ the dependency reading of bytes the browser does not read as CSS or script. -/
 def htmlContainedRawContextChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
   let close (head body : Array Html.Node) :=
-    HtmlResource.close #[] #[] HtmlDoc.deckScript "en" head body
+    HtmlResource.close #[] #[] #[HtmlDoc.deckScript] "en" head body
   let escape := "</svg><img src=\"https://remote.invalid/closure.png\">"
   let witness := #[Html.elem "svg" #[Html.Node.style escape]]
   let expected := "<!DOCTYPE html>\n<html lang=\"en\">\n  <head></head>\n  <body>\n" ++
@@ -69,7 +69,7 @@ policy: the browser ignores the opener and still fetches the stylesheet. -/
 def htmlContainedCssAtRuleChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
   let close (head body : Array Html.Node) :=
-    HtmlResource.close #[] #[] HtmlDoc.deckScript "en" head body
+    HtmlResource.close #[] #[] #[HtmlDoc.deckScript] "en" head body
   let imported := "@import \"https://example.invalid/style.css\";"
   let css := "<!--" ++ imported ++ "-->"
   let tree := #[Html.Node.style css]
@@ -96,7 +96,7 @@ def htmlContainedAdmissionChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
   let bytes := svgDocument "<rect width=\"1\" height=\"1\"/>"
   let image : HtmlResource.Embedded := { media := .svg, bytes }
-  let close := HtmlResource.close #[image] #[bytes] HtmlDoc.deckScript "en"
+  let close := HtmlResource.close #[image] #[bytes] #[HtmlDoc.deckScript] "en"
   for name in ["attributionsrc", "AtTrIbUtIoNsRc"] do
     for (kind, value) in [("empty", ""), ("single URL", "https://example.invalid/attribution"),
         ("URL list", "https://example.invalid/first https://example.invalid/second"),
@@ -116,7 +116,7 @@ def htmlContainedAdmissionChecks (ref : IO.Ref (List String)) : IO Unit := do
     let raw := "{\"name\":\"" ++ text ++ "\"}"
     for attrs in [#[], #[("type", "application/ld+json")]] do
       t ("contained script: MIME or constant approval cannot bypass parser control: " ++ text)
-        (!(HtmlResource.close #[] #[] raw "en" #[.script attrs raw] following).isOk)
+        (!(HtmlResource.close #[] #[] #[raw] "en" #[.script attrs raw] following).isOk)
     let escaped := "{\"name\":\"" ++ Html.escapeJson text ++ "\"}"
     match close #[.script #[("type", "application/ld+json")] escaped] following with
     | .error _ => t "contained script: escaped JSON data remains supported" false
@@ -133,7 +133,7 @@ among duplicates, and preserves the typed carriers and first refusal. -/
 def htmlContainedIndexChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
   let close (resources : Array HtmlResource.Embedded) (checked : Array ByteArray) :=
-    HtmlResource.close resources checked HtmlDoc.deckScript "en"
+    HtmlResource.close resources checked #[HtmlDoc.deckScript] "en"
   let image (uri : String) := Html.elem "img" #[] #[("src", uri), ("alt", "Captured square")]
   let captures : Array HtmlResource.Embedded := (Array.range 32).map fun i =>
     { media := .svg, bytes := svgDocument s!"<rect id=\"square-{i}\" width=\"1\" height=\"1\"/>" }
@@ -194,7 +194,7 @@ def htmlContainedIndexChecks (ref : IO.Ref (List String)) : IO Unit := do
       (head, body ++ #[Html.elem "svg" #[Html.elem "use" #[] #[("href", "#bad fragment")]],
         image missing], "unsupported SVG fragment reference " ++ reprStr "#bad fragment"),
       (head, body ++ #[Html.Node.script #[] "unapproved()", image missing],
-        "an HTML script is not the constant deck script"),
+        "an HTML script is none of the scripts the page declares"),
       (head, body ++ #[Html.elem "svg" #[Html.Node.style "p { color: red }"], image missing],
         "raw HTML style is inside an unsupported parsing context")] do
     match close resources checked extraHead extraBody with
@@ -266,7 +266,7 @@ def htmlContainedChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO
     (!(HtmlDoc.emitClosed cfg iconDoc #[moving, poster]).1.isOk)
   let resource : HtmlResource.Embedded := { media := .svg, bytes := moving }
   let close (head body : Array Html.Node) :=
-    HtmlResource.close #[resource] #[moving] HtmlDoc.deckScript "en" head body
+    HtmlResource.close #[resource] #[moving] #[HtmlDoc.deckScript] "en" head body
   let image := Html.elem "img" #[] #[("src", resource.uri), ("alt", "Captured square")]
   for (name, head, body) in [
       ("remote image", #[], #[Html.elem "img" #[] #[("src", "https://example.invalid/x.png")]]),
@@ -343,11 +343,8 @@ def htmlContainedChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO
     (!(HtmlDoc.emitClosed { cfg with css := .bulma } doc #[moving, poster]).1.isOk)
   let collection : HtmlResource.Embedded := { media := .ttf, bytes := "ttcf".toUTF8 }
   t "contained gate refuses a collection mislabeled as a standalone font"
-    (!(HtmlResource.close #[collection] #[] HtmlDoc.deckScript "en"
+    (!(HtmlResource.close #[collection] #[] #[HtmlDoc.deckScript] "en"
       #[.style ("@font-face { font-family: Probe; src: url(\"" ++ collection.uri ++ "\"); }")] #[]).isOk)
-  for renderer in ["katex", "mathjax"] do
-    t ("contained HTML: remote math boundary is refused: " ++ renderer)
-      (!(HtmlDoc.emitClosed { cfg with mathBoundary := some renderer } doc #[moving, poster]).1.isOk)
 
 /-- Capture and publication are separated by deliberate source mutations.
 SVG dependency mutations cross the actual CLI validator before the gate. -/
@@ -501,7 +498,14 @@ def htmlContainedCliChecks (ref : IO.Ref (List String)) : IO Unit := do
         ("missing CSS", "\\output{ formats = html, stylesheet = \"missing.css\" }", #[]),
         ("nested CSS", "\\output{ formats = html, stylesheet = \"nested.css\" }", #[]),
         ("missing icon", "\\output{ formats = html }\n\\pdfmeta{ favicon = \"missing.svg\" }", #[]),
-        ("remote math", "\\output{ formats = html }", #["--math-boundary", "katex"]),
+        ("missing math renderer", "\\output{ formats = html }", #["--math-boundary", "katex"]),
+        ("remote math renderer", "\\output{ formats = html }",
+          #["--math-boundary", "https://example.invalid/renderer.js"]),
+        ("early-ending math renderer", "\\output{ formats = html }", #["--math-boundary", "early.js"]),
+        ("unending math renderer", "\\output{ formats = html }", #["--math-boundary", "open.js"]),
+        ("shouting math renderer", "\\output{ formats = html }", #["--math-boundary", "shout.js"]),
+        ("NUL-holding math renderer", "\\output{ formats = html }", #["--math-boundary", "nul.js"]),
+        ("Bulma's published sheet", "\\output{ formats = html, css = bulma, stylesheet = \"framework.css\" }", #[]),
         ("best effort", "\\output{ formats = html, stylesheet = \"missing.css\" }", #["--best-effort"]),
         ("missing framework", "\\output{ formats = html, css = bulma }", #[]),
         ("remote framework", "\\output{ formats = html, css = bulma, stylesheet = \"https://example.invalid/framework.css\" }", #[])] do
@@ -509,6 +513,13 @@ def htmlContainedCliChecks (ref : IO.Ref (List String)) : IO Unit := do
       let output := input / "output"
       IO.FS.createDirAll input
       IO.FS.writeFile (input / "nested.css") "@import 'https://example.invalid/nested.css';"
+      IO.FS.writeFile (input / "early.js") "const invented = 1; </script> const more = 2;\n"
+      IO.FS.writeFile (input / "open.js") "const invented = '<!--';\n"
+      IO.FS.writeFile (input / "shout.js") "const invented = 1; </SCRIPT> const more = 2;\n"
+      IO.FS.writeFile (input / "nul.js") "const invented = \"\u0000\";\n"
+      -- A framework sheet in a published build's shape, outside the page's CSS
+      -- vocabulary from its first line.
+      IO.FS.writeFile (input / "framework.css") "@charset \"utf-8\";\n.content { margin: 0 }\n"
       IO.FS.writeFile (input / "source.tex")
         ("\\documentclass{article}\n" ++ preamble ++
           "\n\\begin{document}\nAn invented resource probe.\\end{document}\n")
@@ -521,7 +532,11 @@ def htmlContainedCliChecks (ref : IO.Ref (List String)) : IO Unit := do
       check ref ("contained CLI: refuses " ++ name ++ " before creating output")
         (run.exitCode != 0 && hasStr (run.stdout ++ run.stderr) "E0606" && !(← output.pathExists))
       for (probe, resource) in [("missing CSS", "missing.css"), ("missing icon", "missing.svg"),
-          ("best effort", "missing.css"), ("remote framework", "https://example.invalid/framework.css")] do
+          ("best effort", "missing.css"), ("remote framework", "https://example.invalid/framework.css"),
+          ("missing math renderer", "katex"), ("remote math renderer", "https://example.invalid/renderer.js"),
+          ("early-ending math renderer", "early.js"), ("unending math renderer", "open.js"),
+          ("shouting math renderer", "shout.js"), ("NUL-holding math renderer", "nul.js"),
+          ("Bulma's published sheet", "@charset"), ("missing framework", "stylesheet = ")] do
         if name == probe then
           check ref ("contained CLI: refusal names the authored resource for " ++ name)
             (hasStr (run.stdout ++ run.stderr) resource)
@@ -532,6 +547,80 @@ def htmlContainedCliChecks (ref : IO.Ref (List String)) : IO Unit := do
         (retry.exitCode != 0 && hasStr (retry.stdout ++ retry.stderr) "E0606" &&
           (← IO.FS.readFile (output / "source.html")) == "existing artifact" &&
           (← output.readDir).map (·.fileName) == #["source.html"])
+
+/-- **The declared math renderer passes the closure gate it was declared
+for.** `--math-boundary <file>` names a local script, and the page carries
+its text inline as the body's last node (`HtmlDoc.mathBoundaryNodes`); the
+gate admits exactly that text (`HtmlDoc.admittedScripts`), the page is
+otherwise the page without it (`HtmlDoc.math_boundary_floor_exact`), its
+formula native MathML, and the build publishes. A script the run did not
+declare, and a renderer text that would end its script early, are refused.
+The defect emitted `<script src>` for the flag's value, a source the gate
+refuses, so no HTML build with the flag could publish. -/
+def mathBoundaryChecks (ref : IO.Ref (List String)) : IO Unit := do
+  let t := check ref
+  let renderer := "document.documentElement.dataset.mathRenderer = \"invented\";\n"
+  let (doc, _) := elabStr (dvDoc "" "An invented formula $x^2 + y$ in a line.")
+  let declared : HtmlDoc.Config := { mathRenderer := some renderer }
+  let (_, body, _) := HtmlDoc.emitTree declared doc
+  t "math boundary: the renderer is the body's last node, its text verbatim"
+    (match body.back? with
+     | some (.script attrs text) => attrs == #[("data-math-boundary", "")] && text == renderer
+     | _ => false)
+  t "math boundary: the declared renderer passes the closure gate"
+    (HtmlDoc.emitClosed declared doc #[]).1.isOk
+  t "math boundary: a script the run did not declare is refused"
+    (!(HtmlResource.close #[] #[] (HtmlDoc.admittedScripts declared.mathRenderer) "en" #[]
+      #[Html.Node.script #[] "const undeclared = 1;"]).isOk)
+  t "math boundary: a renderer text the HTML parser would end early is refused"
+    (!(HtmlDoc.emitClosed { mathRenderer := some "const a = 1; </SCRIPT> const b = 2;" } doc #[]).1.isOk)
+  t "math boundary: a renderer text holding a NUL is refused by the gate"
+    (!(HtmlDoc.emitClosed { mathRenderer := some "const a = \"\u0000\";" } doc #[]).1.isOk)
+  t "math boundary: a renderer a caller set is dropped at capture, so only the run's checked file ships"
+    (match ← captureHtmlResources "doc.tex" { mathRenderer := some "const forged = 1;" } doc with
+     | .ok cfg => cfg.mathRenderer.isNone
+     | .error _ => false)
+  let binary ← IO.FS.realPath ".lake/build/bin/leantex"
+  let font ← IO.FS.realPath "testdata/corpus/fonts/OpenSans-Regular.ttf"
+  IO.FS.withTempDir fun dir => do
+    IO.FS.writeFile (dir / "renderer.js") renderer
+    IO.FS.writeFile (dir / "doc.tex")
+      "\\documentclass{article}\n\\begin{document}\nAn invented formula $x^2 + y$ in a line.\n\\end{document}\n"
+    let run ← IO.Process.output {
+      cmd := binary.toString, cwd := some dir,
+      args := #["doc.tex", "-o", "out.html", "--math-boundary", "renderer.js"],
+      env := #[("LEANTEX_FONT", some font.toString),
+        ("XDG_CACHE_HOME", some (dir / "cache").toString)] }
+    let html ← if ← (dir / "out.html").pathExists then IO.FS.readFile (dir / "out.html") else pure ""
+    t s!"math boundary: an HTML build with the flag publishes ({run.exitCode}): {run.stderr}"
+      (run.exitCode == 0 && !html.isEmpty)
+    let element := (((html.splitOn "<script data-math-boundary>")[1]?.getD "").splitOn "</script>").headD ""
+    t "math boundary: the page carries the renderer once, inline, beside native MathML"
+      ((html.splitOn "<script data-math-boundary>").length == 2 &&
+        element.trimAscii == renderer.trimAscii && (html.splitOn renderer).length == 2 &&
+        hasStr html "<math" && !hasStr html "renderer.js")
+
+/-- **Bulma's classes over the declared sheet.** `css = bulma` names the
+framework's class vocabulary, and its sheet is the document's declared
+stylesheet: captured and inlined after the engine's token binding, so a
+sheet that declares the same properties sets them, and the page publishes
+with it. A sheet outside the page's CSS vocabulary is refused, as
+`htmlContainedCliChecks` holds for a published build's shape. -/
+def bulmaSheetChecks (ref : IO.Ref (List String)) : IO Unit := do
+  let (doc, _) := elabStr (dvDoc "\\output{ css = bulma, stylesheet = \"framework.css\" }\n"
+    "An invented paragraph.")
+  let sheet := ":root { --bulma-primary: rgb(1, 2, 3) }"
+  let cfg : HtmlDoc.Config := { css := .bulma, stylesheet := some ("framework.css", sheet) }
+  let (head, _, _) := HtmlDoc.emitTree cfg doc
+  let styles := head.filterMap fun n => match n with
+    | .style css => some css
+    | _ => none
+  check ref "bulma: the declared sheet stands after the token binding"
+    (match styles.findIdx? (hasStr · "--bulma-primary: var("), styles.findIdx? (· == sheet) with
+     | some binding, some declared => binding < declared
+     | _, _ => false)
+  check ref "bulma: a page naming the classes publishes with its declared sheet"
+    (HtmlDoc.emitClosed cfg doc #[]).1.isOk
 
 /-- The shipped generated syntax must remain in the checked vocabulary.
 This is a syntax coverage guard; missing captures still owe publication checks. -/

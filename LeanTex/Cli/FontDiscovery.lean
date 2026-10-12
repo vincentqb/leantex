@@ -192,9 +192,17 @@ advance it for membership changes, adding, removing or renaming an entry
 invalidates the listing. Editing a font in place is handled separately by
 its file key. Timestamp preservation or coarse resolution can hide a change;
 the scan is not an atomic snapshot. A directory read failure is treated as
-an empty listing and is retried when its key changes or caches are bypassed. -/
+an empty listing and is retried when its key changes or caches are bypassed.
 
-private def dirsName : String := "fontdb-dirs.tsv"
+A listing records which entries are font files, an answer of the walk's
+filter, so the filter's extensions are in the file's name
+(`listingCacheName`): a listing is read only by a walk that keeps the same
+files, and the unnamed `fontdb-dirs.tsv` every earlier walk wrote is never
+read. -/
+
+/-- The listing cache's file name, which carries `FontDb.fontExtensions`. -/
+public def listingCacheName : String :=
+  s!"fontdb-dirs-{"-".intercalate FontDb.fontExtensions}.tsv"
 
 /-- One line per directory: path, mtime, then each entry in sorted order
 prefixed `F` (a font file) or `D` (a subdirectory). Entries the walk skips
@@ -281,7 +289,7 @@ because resolution prefers earlier faces on ties. -/
 public def scanRootsIn (cache : Option System.FilePath) (roots : List String) :
     IO (Array Face) := do
   -- The walk, through the listing cache: a stat per unchanged directory.
-  let dirsFile := cache.map (· / dirsName)
+  let dirsFile := cache.map (· / listingCacheName)
   let mut knownDirs : Std.HashMap String (String × Array (Bool × String)) := {}
   if let some df := dirsFile then
     if ← df.pathExists then

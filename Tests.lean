@@ -49,6 +49,7 @@ import Tests.CacheInterface
 import Tests.PictureAssetsInterface
 import Tests.ImageAssetsInterface
 import Tests.Compression
+import Tests.EngineCache
 import Tests.BrowserFaceBatch
 import Tests.CacheIO
 import Tests.PictureAssets
@@ -377,6 +378,8 @@ def backendSuiteChecks (ref : IO.Ref (List String)) : IO Unit := do
   htmlContainedPublicationChecks ref
   htmlContainedSvgColorChecks ref
   htmlContainedCliChecks ref
+  Tests.mathBoundaryChecks ref
+  Tests.bulmaSheetChecks ref
   Tests.machineLossChecks ref
   htmlContainedCorpusChecks ref
   publicationPathChecks ref
@@ -507,6 +510,7 @@ def layoutSuiteChecks (ref : IO.Ref (List String)) : IO Unit := do
   columnGeometryChecks ref oneFace
   recipeTitlePageChecks ref oneFace
   titlePageLifecycleChecks ref oneFace
+  environmentArgumentChecks ref oneFace
   recipeUlemChecks ref oneFace
   recipeLinkAffordChecks ref oneFace
   boxPosRowChecks ref oneFace
@@ -870,6 +874,9 @@ def surfaceSuiteChecks (ref : IO.Ref (List String)) : IO Unit := do
   picCacheChecks ref
   batchChecks ref
   Tests.compressionChecks ref
+  Tests.engineCacheChecks ref
+  Tests.engineIdentityChecks ref
+  Tests.engineWatchChecks ref
   Tests.browserFaceBatchChecks ref
   Tests.cacheIdentityChecks ref
   Tests.pictureAssetsChecks ref
