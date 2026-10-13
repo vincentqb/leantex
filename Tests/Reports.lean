@@ -1540,7 +1540,7 @@ def reports : List Report := [
     accept := ["with the checks' process held stopped six seconds of every 6.1, the checks as b6e1a170 wrote them fail: the killed run, the hung version question and the runtime overrun each answer in about 6,100 ms against bounds of 4,000 and 5,200; the fixed checks pass under the same stalls, and eight suites run at once at a load average of 46 to 79 all pass"]
     state := .guarded "b6e1a170" .before .author },
   { id := "R173", date := "2026-10-13"
-    what := "the landing tool read its help option as an agent name: it took the landing lock and wrote a refused ledger row, as it did for any option it does not read"
+    what := "the landing tool read its help option as an agent name, taking the landing lock and writing a refused ledger row, as it did any lone option it does not read; beside a subcommand such an option became the name it acted on, and elsewhere it made a run directory before the usage"
     pins := [thm% Land.parseArgs_run_exact, thm% Land.parseArgs_unknown_exact,
       thm% Land.parseArgs_help_exact]
     accept := ["the landing tool's usage scenario fails against the tool built at b6e1a170 before the fix: the help option and its short form exit 2 having taken the lock and written a refused ledger row, and every unknown option makes a run directory; with the fix every scenario passes"]

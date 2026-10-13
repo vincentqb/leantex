@@ -382,24 +382,23 @@ def probeChildChecks (ref : IO.Ref (List String)) (dir : System.FilePath) : IO U
   let driver := dir / "probe.lean"
   IO.FS.writeFile driver <|
     "import LeanTex.Cli.ToolProbe\n" ++
-    "import LeanTex.Cli.World\n" ++
-    "open LeanTex.Cli.World in\n" ++
-    "def main : IO UInt32 := do\n" ++
-    "  let call := ToolPath.versionCall ToolPath.versionBudgetMs \"leantex-hang-probe\"\n" ++
+    "def main : IO Unit := do\n" ++
     "  let start ← IO.monoMsNow\n" ++
     "  let got ← LeanTex.Cli.ToolProbe.probeVersion \"leantex-hang-probe\"\n" ++
-    "  let spent := (← IO.monoMsNow) - start\n" ++
-    "  IO.println s!\"probe ended after {spent} ms\"\n" ++
-    s!"  let timely := call.budgetMs ≤ spent && spent < call.budgetMs + call.graceMs + {hostMarginMs}\n" ++
-    "  return match got with\n" ++
-    "    | .absent why =>\n" ++
-    "      if why == s!\"no version within {call.budgetMs / 1000} s; killed\" && timely then 0 else 2\n" ++
-    "    | .present _ => 1\n"
+    "  IO.println s!\"{(← IO.monoMsNow) - start}\"\n" ++
+    "  IO.println (match got with | .absent why => why | .present v => s!\"present {v}\")\n"
   let path := s!"{dir / "hang"}:{(← IO.getEnv "PATH").getD ""}"
   let result ← RunBounded.runBounded lean.toString #["--run", driver.toString] dir childBudgetMs 100
     (env := #[("PATH", some path), ("LEAN_PATH", some leanPath)])
-  check ref s!"world/path: the driver's version probe answers a tool that hangs as its budget's overrun, after that budget and before its grace and the host's margin end: {result.out}{result.err}"
-    (result.complete && result.ran == .exited 0)
+  let call := ToolPath.versionCall ToolPath.versionBudgetMs "leantex-hang-probe"
+  let (spent, said) := match ((result.out.splitOn "\n").filter (!·.isEmpty)).reverse with
+    | w :: s :: _ => (s, w)
+    | _ => ("", "")
+  check ref s!"world/path: the driver's version probe answers a tool that hangs as its budget's overrun: {result.out}{result.err}"
+    (result.complete && result.ran == .exited 0 &&
+      said == s!"no version within {call.budgetMs / 1000} s; killed")
+  check ref s!"world/path: the driver's version probe answers after its budget, before its grace and the host's margin end ({spent} ms)"
+    (spent.toNat?.any (answeredAtBudget call))
   check ref "world/path: the driver's version probe kills a tool that hangs"
     (← endsWithin (dir / "hang.pid") hostMarginMs)
 

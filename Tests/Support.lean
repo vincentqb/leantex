@@ -532,13 +532,13 @@ spawning it and making and removing its scratch directory, before a check
 reads the run as one its budget did not end. -/
 def hostMarginMs : Nat := 60000
 
-/-- How long a fixture that only its kill should end sleeps: ten margins. -/
-def hangSeconds : Nat := hostMarginMs / 100
+/-- How long a fixture that only its kill should end sleeps: two margins. -/
+def hangSeconds : Nat := 2 * hostMarginMs / 1000
 
 /-- A shell command that records its process id in `pidFile`, then sleeps
 `hangSeconds`. -/
 def hangCommand (pidFile : System.FilePath) : String :=
-  s!"echo $$ > '{pidFile}'; exec sleep {hangSeconds}"
+  s!"echo $$ > '{pidFile}' && exec sleep {hangSeconds}"
 
 /-- The process id a `hangCommand` recorded in `pidFile`; empty before it has. -/
 def recordedPid (pidFile : System.FilePath) : IO String := do

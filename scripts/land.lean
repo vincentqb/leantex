@@ -2028,8 +2028,8 @@ def scenarioReserved (self root : String) : IO Outcome := do
          , ok := code == 3 && before == after
          , detail := s!"exit={code} main-before={before} main-after={after}" }
 
-/-- `--help` and `-h` print the usage and exit 0, and an unknown option prints it and exits 3,
-with no run directory, lock or ledger row. -/
+/-- `--help` and `-h` print the usage and exit 0, and an unknown option prints its error and the
+usage and exits 3, all with no run directory, lock or ledger row. -/
 def scenarioUsage (self root : String) : IO Outcome := do
   let s ← mkScratch s!"{root}/usage" "usage"
   let tries : List (Array String × Nat) :=
@@ -2039,7 +2039,7 @@ def scenarioUsage (self root : String) : IO Outcome := do
   let before ← revOf s.repo "refs/heads/main"
   let mut wrong : Array String := #[]
   for (args, want) in tries do
-    let (code, out) ← runTool self s.repo args #[]
+    let (code, out) ← landIn self s.repo args "t=true"
     unless code == want && says out "usage: land" do
       wrong := wrong.push s!"{String.intercalate " " args.toList}: exit {code}"
   let after ← revOf s.repo "refs/heads/main"

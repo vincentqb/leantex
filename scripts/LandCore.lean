@@ -1199,7 +1199,6 @@ theorem hpush_owned (g : HGuard) (cwd d t : String)
 
 -- ## The command line
 
-/-- The options `land` reads. -/
 def options : List String := ["--push", "--selftest", "--scratch-selftest", "--help", "-h"]
 
 /-- The subcommand words, which are not agent names. -/
@@ -1214,7 +1213,6 @@ inductive Run where
   | land (name : String) (mode : Mode) (push : Bool)
   deriving DecidableEq, Repr
 
-/-- The agent a run names. -/
 def Run.name? : Run → Option String
   | .status | .push => none
   | .new n | .retire n | .land n .. => some n

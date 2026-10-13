@@ -294,6 +294,9 @@ public def missingBothWaysChecks (ref : IO.Ref (List String)) : IO Unit := do
       t s!"each loss of a colour missing both ways counts its own site ({order}, {log})"
         ((inkLoss ++ groundLoss).all (·.sites == 1) &&
           inkLoss.map (·.subject) != groundLoss.map (·.subject))
+      t s!"each loss of a colour missing both ways carries its own help ({order}, {log})"
+        (groundLoss.map (·.help) == #[some "declare the colour before using it as a page ground"] &&
+          inkLoss.map (·.help) != groundLoss.map (·.help))
   let again := misses "" (ground ++ ink ++ ground ++ ink)
   t "a further use of a colour missing both ways is a further site of its own loss"
     ((says again "content kept uncoloured").map (·.sites) == #[2] &&
