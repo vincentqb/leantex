@@ -49,9 +49,10 @@ example (lang : ListingHighlight.Language) (lines : Array String) :
 example : Highlight.Lexer → Highlight.Src → Array Highlight.Raw := Highlight.lex
 example (tokens : Array ListingHighlight.Token) :
     ListingHighlight.lineText tokens = tokens.foldl (fun s t => s ++ t.text) "" := by rfl
-example (drawn : Bool) (refusal : Option String) :
-    PicCache.step drawn refusal = .run ↔ drawn = false ∧ refusal = none :=
-  PicCache.step_cold_exact drawn refusal
+example (ran : PicCache.Ran) (firstLine version said : String) :
+    PicCache.probed ran firstLine said = .present version ↔
+      (ran = .exited 0 ∧ firstLine = version ∧ firstLine ≠ "") :=
+  PicCache.probed_present_exact ran firstLine version said
 example : IO.Process.SpawnArgs → IO IO.Process.Output := RunBounded.output
 example : String → IO PicCache.Tool := ToolProbe.probeVersion
 example : Html.Node → Nat → String := Html.render

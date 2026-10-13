@@ -290,8 +290,6 @@ LaTeX Font Info:    Checking defaults for T1/cmr/m/n on input line 3.\n\
 LaTeX Font Info:    ... okay on input line 3.\nLaTeX Font Info:    Checking defa"
   unless refOutcome 137 false killed == .inconclusive "exit code 137" do
     bad := bad.push s!"a killed run was read as a verdict: {repr (refOutcome 137 false killed)}"
-  unless PicCache.remembers (refOutcome 137 false killed) == none do
-    bad := bad.push "a machine fault would be committed"
   unless refOutcome 0 true "fine" == .drawn do bad := bad.push "refOutcome drawn"
   unless refOutcome 0 false "warning  (pdf backend): no pages of output." ==
       .refused "no PDF was produced" do

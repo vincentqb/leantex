@@ -7191,31 +7191,12 @@ def posterChromeCompatChecks (ref : IO.Ref (List String)) : IO Unit := do
     ((elabStr (pre "")).1.headline.isNone)
 
 
-/-- The boundary cache's policy as values (`LeanTex.Cli.PicCache`): one attempt per request and tool
-version, a held verdict replayed in the tool's own words, an unfinished attempt never a verdict. -/
+/-- The boundary cache's decisions over the functions the driver runs: how an attempt
+ended, what the cache keeps of it and replays, and who the tool is. -/
 def picCacheChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
-  -- The decision table, exhaustively: `run` is the cold case and only that (`PicCache.step_cold_exact`).
-  t "nothing held: the tool runs"
-    (PicCache.step false none == .run)
-  t "a drawn PDF serves"
-    (PicCache.step true none == .serve)
-  t "a remembered refusal replays instead of running"
-    (PicCache.step false (some "! Package pgf Error") == .replay "! Package pgf Error")
-  t "a drawn PDF outranks a stale refusal in the same slot"
-    (PicCache.step true (some "! Package pgf Error") == .serve)
   let says := "! Package pgf Error: No shape named `x' is known."
-  let fresh := DriverDiag.boundaryFailed "lualatex" says (Ir.picSrcPrefix ++ "aa")
-  let replayed := match PicCache.step false (some says) with
-    | .replay s => some (DriverDiag.boundaryFailed "lualatex" s (Ir.picSrcPrefix ++ "aa"))
-    | _ => none
-  t "a replayed refusal is the fresh diagnostic, word for word"
-    (replayed.map (·.code) == some fresh.code &&
-     replayed.map (·.message) == some fresh.message &&
-     replayed.bind (·.help) == fresh.help)
-  t "the replayed help still carries the tool's own words"
-    (fresh.code == "W0382" && (fresh.help.any fun h => hasStr h says))
-  -- An exit the tool chose and left a log for is a verdict; nothing else is.
+  -- How an attempt ended, read as the tool's answer or as none.
   t "a clean exit that drew is the drawing"
     (PicCache.outcome (.exited 0) true .absent == .drawn)
   t "a clean exit that drew nothing is the tool's own no"
@@ -7232,32 +7213,37 @@ def picCacheChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "a spawn that raised is no answer about the request"
     (PicCache.outcome (.unstarted "no such file") false .absent ==
       .inconclusive "no such file")
-  t "a refusal is remembered, in the tool's words"
-    (PicCache.remembers (PicCache.outcome (.exited 1) false (.says says)) == some says)
-  t "a drawing is not remembered as a refusal"
-    (PicCache.remembers (PicCache.outcome (.exited 0) true .absent) == none)
-  t "an overrun is not remembered, so the next build retries it"
-    (PicCache.remembers (PicCache.outcome (.overran 120) false .absent) == none)
-  t "a failed spawn is not remembered, so the next build retries it"
-    (PicCache.remembers (PicCache.outcome (.unstarted "boom") false .absent) == none)
-  t "a missing tool is not remembered, so installing it is enough"
-    (PicCache.remembers (PicCache.outcome (.exited 127) false .absent) == none)
-  -- A slot keys the request's content hash and the tool's version, so an edit or an upgrade retries.
-  let k := Ir.picHash "\\draw (0,0) -- (1,1);"
-  let k' := Ir.picHash "\\draw (0,0) -- (1,2);"
-  let v := Ir.picHash "lualatex 1.0"
-  let v' := Ir.picHash "lualatex 1.1"
-  t "the drawn PDF and the remembered refusal share one slot"
-    (PicCache.pdfName k v == PicCache.stem k v ++ ".pdf" &&
-     PicCache.failName k v == PicCache.stem k v ++ ".fail" &&
-     PicCache.pdfName k v != PicCache.failName k v)
-  t "an edited picture names a different slot"
-    (k != k' && PicCache.failName k v != PicCache.failName k' v)
-  t "an upgraded tool names a different slot"
-    (v != v' && PicCache.failName k v != PicCache.failName k v')
-  t "the remembered refusal is not mistaken for a drawing"
-    (!(PicCache.failName k v).endsWith ".pdf")
-  -- Only a clean probe exit names a version: a missing tool still reaches exec and hands back the parent's stdout.
+  -- What the cache keeps: a verdict the tool reached, and nothing the machine did
+  -- (`ConvCache.record?_some_exact`).
+  let kept (ran : PicCache.Ran) (log : PicCache.Log) (bytes : ByteArray := .empty) :=
+    (ConvCache.Result.ofRun ran log "" bytes).record?
+  let drawing := "%PDF-1.7 invented".toUTF8
+  t "a drawing is kept as its bytes"
+    (kept (.exited 0) .absent drawing == some (.ok drawing))
+  t "a clean exit that drew nothing is kept as the tool's own no"
+    (kept (.exited 0) .absent == some (.error "no PDF was produced"))
+  t "a refusal is kept, in the tool's words"
+    (kept (.exited 1) (.says says) == some (.error says))
+  t "an overrun is not kept, so the next build retries it"
+    (kept (.overran 120) .absent == none && kept (.overran 120) (.says says) == none)
+  t "a failed spawn is not kept, so the next build retries it"
+    (kept (.unstarted "boom") .absent == none)
+  t "a missing tool is not kept, so installing it is enough"
+    (kept (.exited 127) .absent == none)
+  -- The slot gives back what it was given (`ConvCache.decode_encode_record_id`).
+  let fresh := ConvCache.Result.ofRun (.exited 1) (.says says) "" .empty
+  let replayed := fresh.record?.bind fun a =>
+    (ConvCache.decode (ConvCache.encode a)).map ConvCache.Result.replay
+  let lossOf (r : ConvCache.Result) : Option Diag :=
+    match Boundary.undrawnOf "lualatex" r.outcome none (Ir.picSrcPrefix ++ "aa") with
+    | some (.answered d _) => some d
+    | _ => none
+  t "a replayed refusal is the fresh diagnostic, word for word"
+    (replayed.map (·.outcome) == some fresh.outcome && (lossOf fresh).isSome &&
+     replayed.bind lossOf == lossOf fresh)
+  t "the replayed help still carries the tool's own words"
+    ((lossOf fresh).any fun d => d.code == "W0382" && d.help.any fun h => hasStr h says)
+  -- Only a clean exit names a version (`PicCache.probed_present_exact`).
   let banner := "This is InventedTeX, Version 1.0"
   t "a clean exit that named itself is the tool"
     (PicCache.probed (.exited 0) banner == .present banner)
@@ -7286,6 +7272,7 @@ def picCacheChecks (ref : IO.Ref (List String)) : IO Unit := do
         .inconclusive "exit code 127" &&
      PicCache.annotate (.refused "no") .absent "words" == .refused "no" &&
      PicCache.annotate (.inconclusive "x") .absent "" == .inconclusive "x")
+  -- A missing tool and a refusal are two degraded losses under two codes.
   let unavailable := DriverDiag.boundaryToolUnavailable "lualatex"
   t "a tool that is not there is a degraded loss, not a dropped one"
     (unavailable.code == "W0379" && DiagCode.W0379.loss == .degraded &&
@@ -7293,9 +7280,10 @@ def picCacheChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "a picture the tool refused ships its placeholder under a code of its own"
     ((DriverDiag.boundaryFailed "lualatex" says (Ir.picSrcPrefix ++ "aa")).code == "W0382" &&
      DiagCode.W0382.loss == .degraded && unavailable.code != "W0382")
-  -- The version memo is asked once per tool binary, not once per build.
+  -- The version is asked once per binary witness (`PicCache.versionStep_remembered_exact`).
   let stampA := "/opt/invented/bin/tool\t7634408\t1777998731\t0"
   let stampB := "/opt/invented/bin/tool\t7634512\t1778998731\t0"
+  let v := Ir.picHash "lualatex 1.0"
   t "a witness that still matches answers without asking"
     (PicCache.versionStep (some (stampA, banner)) stampA == .remembered banner)
   t "a witness that moved asks again"
@@ -7315,7 +7303,7 @@ def picCacheChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "the memo lives beside the slots it names"
     (PicCache.versionName v == "tool-" ++ v ++ ".ver" &&
      !(PicCache.versionName v).endsWith ".pdf" &&
-     !(PicCache.versionName v).endsWith ".fail")
+     !(PicCache.versionName v).endsWith ".answer")
 
 /-- A build whose pictures all replay starts no tool process: the version is remembered against a
 stat-only witness, re-asked when it moves. -/

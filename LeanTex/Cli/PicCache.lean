@@ -1,8 +1,7 @@
 module
 
-/-! Pure boundary outcomes and the tool-version memo policy: a tool's refusal is an answer
-kept like a drawing, and an attempt the tool never finished is no answer and is
-retried. -/
+/-! How a boundary tool's attempt ended and what it answered, and the memo of the tool's
+version. -/
 
 namespace LeanTex.Cli.PicCache
 
@@ -22,7 +21,7 @@ public inductive Log where
   deriving BEq, Repr
 
 /-- The log's last words, empty when there is no log. -/
-public def Log.tail : Log → String
+@[expose] public def Log.tail : Log → String
   | .absent => ""
   | .says t => t
 
@@ -36,7 +35,7 @@ public inductive Outcome where
 
 /-- One attempt read as a verdict: an exit the tool chose and left a log for is one; a
 kill, a failed spawn or a nonzero exit without a log is inconclusive. -/
-public def outcome (ran : Ran) (drew : Bool) (log : Log) : Outcome :=
+@[expose] public def outcome (ran : Ran) (drew : Bool) (log : Log) : Outcome :=
   let said (fallback : String) : String :=
     if log.tail.isEmpty then fallback else log.tail
   match ran with
@@ -63,13 +62,6 @@ tool wrote last; every other outcome is unchanged. -/
   match o, log with
   | .inconclusive why, .absent => if said.isEmpty then o else .inconclusive s!"{why}: {said}"
   | o, _ => o
-
-/-- The refusal the cache remembers of an outcome: the tool's own, none for a drawing
-(kept as its PDF) or an unfinished attempt (retried). -/
-public def remembers : Outcome → Option String
-  | .drawn => none
-  | .refused says => some says
-  | .inconclusive _ => none
 
 /-- What asking the tool its version came back with: its own answer, or an absence with
 its reason. -/
@@ -165,52 +157,5 @@ public def readVersionMemo (text : String) : Option (String × String) :=
 
 /-- Where the remembered version lives, beside the slots it names. -/
 public def versionName (toolKey : String) : String := "tool-" ++ toolKey ++ ".ver"
-
-/-- The cache slot one request takes: its content hash and the tool's version. -/
-public def stem (key version : String) : String := key ++ "-" ++ version
-
-/-- The drawn PDF's name in the slot. -/
-public def pdfName (key version : String) : String := stem key version ++ ".pdf"
-
-/-- The remembered refusal's name in the slot, beside the PDF. -/
-public def failName (key version : String) : String := stem key version ++ ".fail"
-
-/-- What a run does about one request. -/
-public inductive Step where
-  | serve
-  | replay (says : String)
-  | run
-  deriving BEq, Repr
-
-/-- A drawn PDF serves, else a remembered refusal replays, else the tool runs. -/
-public def step (drawn : Bool) (refusal : Option String) : Step :=
-  if drawn then .serve
-  else match refusal with
-    | some says => .replay says
-    | none => .run
-
-public theorem step_cold_exact (drawn : Bool) (refusal : Option String) :
-    step drawn refusal = .run ↔ (drawn = false ∧ refusal = none) := by
-  unfold step
-  cases drawn with
-  | true => simp
-  | false => cases refusal <;> simp
-
-public theorem replay_says_exact (says : String) :
-    step false (some says) = .replay says := by rfl
-
-public theorem remembers_verdict_exact (o : Outcome) (says : String) :
-    remembers o = some says ↔ o = .refused says := by
-  cases o <;> simp [remembers]
-
-public theorem overrun_retried_exact (s : Nat) (drew : Bool) (log : Log) :
-    remembers (outcome (.overran s) drew log) = none := by rfl
-
-public theorem unlogged_retried_exact (c : Nat) (hc : c ≠ 0) (drew : Bool) :
-    remembers (outcome (.exited c) drew .absent) = none := by
-  unfold outcome remembers
-  cases c with
-  | zero => exact absurd rfl hc
-  | succ _ => rfl
 
 end LeanTex.Cli.PicCache

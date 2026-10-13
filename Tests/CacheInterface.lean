@@ -30,6 +30,18 @@ example (r : ConvCache.Result) (a : Except String ByteArray) (h : r.record? = so
 example (why : String) (bytes : ByteArray) :
     ConvCache.Result.record? ⟨.inconclusive why, bytes⟩ = none :=
   ConvCache.inconclusive_retried_exact why bytes
+example : PicCache.Ran → PicCache.Log → String → ByteArray → ConvCache.Result :=
+  ConvCache.Result.ofRun
+example (ran : PicCache.Ran) (log : PicCache.Log) (said : String) (bytes : ByteArray)
+    (a : Except String ByteArray) :
+    (ConvCache.Result.ofRun ran log said bytes).record? = some a ↔
+      (ran = .exited 0 ∧ a = if bytes.isEmpty then .error "no PDF was produced" else .ok bytes) ∨
+      ∃ c tail, ran = .exited (c + 1) ∧ log = .says tail ∧
+        a = .error (if tail.isEmpty then s!"exit code {c + 1}" else tail) :=
+  ConvCache.record?_some_exact ran log said bytes a
+example (r : ConvCache.Result) (a : Except String ByteArray) (h : r.record? = some a) :
+    ConvCache.decode (ConvCache.encode a) = some a :=
+  ConvCache.decode_encode_record_id r a h
 
 example (input : ByteArray) (compute : ByteArray → IO ByteArray) :
     Compression.deflateCachedAt none input compute = compute input :=

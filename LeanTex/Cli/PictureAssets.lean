@@ -101,7 +101,7 @@ private def produce (tool wrapped : String) (inputs : Array (String × ByteArray
         else pure PicCache.Log.absent
       -- The scratch directory's random name never reaches a reason.
       let said := PicCache.saidOf (ended.err.replace work.toString "<scratch>")
-      return { outcome := PicCache.annotate (PicCache.outcome ended.ran (!bytes.isEmpty) log) log said, bytes }
+      return ConvCache.Result.ofRun ended.ran log said bytes
   catch e => return { outcome := .inconclusive (toString e) }
 
 /-- Fulfil a request in its own scratch and publish one integrity-checked answer by atomic

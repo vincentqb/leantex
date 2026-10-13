@@ -93,8 +93,8 @@ export LIBRARY_PATH="$(lean --print-prefix)/lib:$(lean --print-prefix)/lib/lean"
   (`premiseSite`), and two builds differing by its condition (`pictureKeyGateChecks`).
 - A path where a machine fact (a tool absent, killed or unable to start, a check unfinished) stops a
   conversion, a face or a check: a degraded artifact, never a refused one, its loss named once,
-  nothing cached, though a tool's refusal is cached and replayed as the same loss
-  (`machineLossChecks`, `boundaryUnfinishedChecks`, `inconclusive_retried_exact`).
+  nothing cached, but a refusal is, and replays as the same loss (`machineLossChecks`,
+  `boundaryUnfinishedChecks`, `record?_some_exact`, `decode_encode_record_id`).
 - A design constant: a token, or its source where it stands (`dimLiteral`); a token: one resolving
   site, held over every bundle (`builtin_palettes_contract`); a colour role: a `Role.row` arm read
   only through its resolver (`roleReads`, `roleRowWildcards`), the stylesheet its projection

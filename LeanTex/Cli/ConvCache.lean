@@ -7,6 +7,7 @@ import LeanTex.Cli.RunBounded
 import LeanTex.Cli.ToolProbe
 import LeanTex.Cli.Engine
 import LeanTex.Core.Flate
+import LeanTex.Core.Flate.ContentKeyProof
 import LeanTex.Core.SlotRecord
 import LeanTex.Version
 
@@ -43,6 +44,49 @@ public theorem empty_retried_exact :
 public theorem refusal_replays_exact (why : String) (h : why.isEmpty = false) (bytes : ByteArray) :
     Result.record? ⟨.refused why, bytes⟩ = some (.error why) := by
   simp [Result.record?, h]
+
+/-- A boundary run's result, read off how the run ended, the bytes it drew and its log. -/
+public def Result.ofRun (ran : PicCache.Ran) (log : PicCache.Log) (said : String)
+    (bytes : ByteArray) : Result :=
+  { outcome := PicCache.annotate (PicCache.outcome ran (!bytes.isEmpty) log) log said, bytes }
+
+public theorem record?_some_exact (ran : PicCache.Ran) (log : PicCache.Log) (said : String)
+    (bytes : ByteArray) (a : Except String ByteArray) :
+    (Result.ofRun ran log said bytes).record? = some a ↔
+      (ran = .exited 0 ∧ a = if bytes.isEmpty then .error "no PDF was produced" else .ok bytes) ∨
+      ∃ c tail, ran = .exited (c + 1) ∧ log = .says tail ∧
+        a = .error (if tail.isEmpty then s!"exit code {c + 1}" else tail) := by
+  have hi (why : String) :
+      Result.record? ⟨PicCache.annotate (.inconclusive why) log said, bytes⟩ = none := by
+    cases log <;> simp only [PicCache.annotate] <;> (try split) <;> rfl
+  have hn : "no PDF was produced".isEmpty = false := by decide
+  cases ran with
+  | exited c =>
+    cases c with
+    | zero =>
+      by_cases hb : bytes.isEmpty
+      · simpa [Result.ofRun, PicCache.outcome, PicCache.annotate, Result.record?, hb, hn]
+          using eq_comm
+      · simpa [Result.ofRun, PicCache.outcome, PicCache.annotate, Result.record?, hb]
+          using eq_comm
+    | succ n =>
+      cases log with
+      | absent => simp [Result.ofRun, PicCache.outcome, hi]
+      | says tail =>
+        by_cases ht : tail.isEmpty
+        · have he : tail = "" := by
+            simpa [String.isEmpty, String.utf8ByteSize_eq_zero_iff] using ht
+          subst he
+          have hc : (s!"exit code {n + 1}").isEmpty = false := by
+            simp [String.isEmpty, String.utf8ByteSize_append]
+          simpa [Result.ofRun, PicCache.outcome, PicCache.annotate, Result.record?,
+            PicCache.Log.tail, hc] using eq_comm
+        · have he : tail ≠ "" := by
+            simpa [String.isEmpty, String.utf8ByteSize_eq_zero_iff] using ht
+          simpa [Result.ofRun, PicCache.outcome, PicCache.annotate, Result.record?,
+            PicCache.Log.tail, ht, he] using eq_comm
+  | overran s => simp [Result.ofRun, PicCache.outcome, hi]
+  | unstarted e => simp [Result.ofRun, PicCache.outcome, hi]
 
 /-- A remembered answer read back as the result it records. -/
 public def Result.replay : Except String ByteArray → Result
@@ -83,6 +127,51 @@ public def decode (bytes : ByteArray) : Option (Except String ByteArray) := do
     if header == "O" ++ key then some (.ok payload)
     else if header == "E" ++ key then some (.error (← String.fromUTF8? payload))
     else none
+
+private theorem decode_envelope_exact (tag : String) (payload : ByteArray)
+    (ht : tag.utf8ByteSize = 1) (hp : payload.size ≠ 0) :
+    decode ((tag ++ Flate.contentKey payload ++ "\n").toUTF8 ++ payload) =
+      if tag ++ Flate.contentKey payload ++ "\n" == "O" ++ (Flate.contentKey payload ++ "\n") then
+        some (.ok payload)
+      else if tag ++ Flate.contentKey payload ++ "\n" == "E" ++ (Flate.contentKey payload ++ "\n")
+      then (String.fromUTF8? payload).bind fun why => some (.error why)
+      else none := by
+  have hh : (tag ++ Flate.contentKey payload ++ "\n").toUTF8.size = 34 := by
+    have := Flate.contentKey_size_exact payload
+    simp only [String.toUTF8_eq_toByteArray, String.size_toByteArray] at this
+    simp [this, ht, show "\n".utf8ByteSize = 1 from rfl]
+  unfold decode
+  have hs : ¬((tag ++ Flate.contentKey payload ++ "\n").toUTF8 ++ payload).size ≤ 34 := by
+    rw [ByteArray.size_append, hh]; omega
+  simp only [hs, ↓reduceIte]
+  rw [ByteArray.extract_append_eq_left hh.symm, Binary.fromUTF8?_toUTF8,
+    ByteArray.extract_append_eq_right hh.symm (by rw [ByteArray.size_append, hh])]
+  rfl
+
+public theorem decode_encode_record_id (r : Result) (a : Except String ByteArray)
+    (h : r.record? = some a) : decode (encode a) = some a := by
+  rcases r with ⟨outcome, bytes⟩
+  cases outcome with
+  | drawn =>
+    by_cases hb : bytes.isEmpty
+    · simp [Result.record?, hb] at h
+    · simp only [Result.record?, hb] at h
+      cases h
+      have hp : bytes.size ≠ 0 := by simpa [ByteArray.isEmpty] using hb
+      unfold encode
+      rw [decode_envelope_exact "O" bytes rfl hp]
+      simp [String.append_assoc]
+  | refused why =>
+    by_cases hw : why.isEmpty
+    · simp [Result.record?, hw] at h
+    · simp only [Result.record?, hw] at h
+      cases h
+      have hp : why.toUTF8.size ≠ 0 := by
+        simpa [String.isEmpty, String.utf8ByteSize_eq_zero_iff] using hw
+      unfold encode
+      rw [decode_envelope_exact "E" why.toUTF8 rfl hp, Binary.fromUTF8?_toUTF8]
+      simp [String.append_assoc]
+  | inconclusive why => simp [Result.record?] at h
 
 public theorem replay_decode_exact (bytes : ByteArray) (a : Except String ByteArray)
     (h : decode bytes = some a) : (Result.replay a).answer = a := by

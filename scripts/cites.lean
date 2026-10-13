@@ -477,7 +477,7 @@ def docBareOwed (text : String) : Array String :=
 /-- How many owed groups that name no pin each rule document may carry, held in both
 directions. -/
 def bareOwedBaseline : List (String × Nat) :=
-  [("AGENTS.md", 3), ("PRINCIPLES.md", 10), ("THEOREMS.md", 4)]
+  [("AGENTS.md", 3), ("PRINCIPLES.md", 11), ("THEOREMS.md", 4)]
 
 /-- A document whose bare owed groups differ from its baseline, either way. -/
 def bareOwedFault (file text : String) (baseline : List (String × Nat) := bareOwedBaseline) :

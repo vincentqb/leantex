@@ -248,6 +248,11 @@ def pictureAssetsChecks (ref : IO.Ref (List String)) : IO Unit :=
       (PictureAssets.keyed pictureAssetWrapped #[] == pictureAssetWrapped &&
         PictureAssets.slotName (PictureAssets.keyed pictureAssetWrapped inputs) tool stamp version !=
           PictureAssets.slotName (PictureAssets.keyed pictureAssetWrapped changed) tool stamp version)
+    t "picture assets: an edited picture or an upgraded tool names another slot"
+      (PictureAssets.slotName pictureAssetWrapped tool stamp version !=
+          PictureAssets.slotName (pictureAssetWrapped ++ "% edited\n") tool stamp version &&
+        PictureAssets.slotName pictureAssetWrapped tool stamp version !=
+          PictureAssets.slotName pictureAssetWrapped tool stamp (version ++ ".1"))
     t "picture assets: a path the scratch cannot hold is never staged"
       (PictureAssets.stagePath "/elsewhere/x.png" == none &&
         PictureAssets.stagePath "a/../../x.png" == none &&

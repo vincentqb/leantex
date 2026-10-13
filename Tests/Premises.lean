@@ -111,7 +111,7 @@ def registry : List Premise := [
     checks := [check% toolchainSpawnChecks] },
   { name := "host-bounded", residue := .host "process", reach := .render
     statement := s!"Every host call the driver makes returns, because RunBounded.runBounded holds each tool run to a wall-clock budget and then kills its process group{exceptedClause unbudgeted}, because each file the driver reads is a regular file, which Host.answer's read enforces and the reads outside it do not, and because each path it writes in place, an artifact or a cache file, is absent or a regular file, which no write checks."
-    transfers := [thm% PicCache.overrun_retried_exact, thm% Boundary.withdrawStep_unfinished_exact]
+    transfers := [thm% ConvCache.record?_some_exact, thm% Boundary.withdrawStep_unfinished_exact]
     sites := [("LeanTex/Cli/RunBounded.lean", "runBounded"), ("LeanTex/Cli/Host.lean", "answer"),
       ("LeanTex/Cli/Publication.lean", "publish"), ("LeanTex/Cli/FontDiscovery.lean", "scanRootsIn")]
     checks := [check% Tests.processRuntimeChecks, check% Tests.World.checks]
@@ -135,7 +135,7 @@ def registry : List Premise := [
     unchecked := some "A checksum anyone can compute cannot tell a planted answer from a written one, and the driver reads no owner or mode of the directory that holds it." },
   { name := "exec-failure", residue := .host "process", reach := .render
     statement := "A command the runtime cannot execute exits 255 with the single stderr line `could not execute external process` and the quoted command, a working directory it cannot enter exits 255 with `could not change directory to` and the directory, a child a signal ended exits 128 plus the signal, and a program a shell cannot find, or whose dynamic loader cannot start it, exits 127."
-    transfers := [thm% PicCache.probed_absent_exact, thm% PicCache.unlogged_retried_exact]
+    transfers := [thm% PicCache.probed_absent_exact, thm% ConvCache.record?_some_exact]
     sites := [("LeanTex/Cli/ImageAssets.lean", "runChecked"), ("LeanTex/Cli/World.lean", "execFailed")]
     checks := [check% Tests.processRuntimeChecks]
     owed := some "Start a program whose shared library is missing and require exit 127 with the loader's line on its stderr." },
@@ -156,7 +156,7 @@ def registry : List Premise := [
     checks := [check% Tests.engineIdentityChecks, check% Tests.engineWatchChecks] },
   { name := "tool-determinism", residue := .host "tools", reach := .render
     statement := "For one tool identity and one request, what the engine reads of the reply is the same on every run: a page's content and resources, an SVG's bytes, a token stream."
-    transfers := [thm% PicCache.step_cold_exact, thm% PicCache.remembers_verdict_exact,
+    transfers := [thm% ConvCache.record?_some_exact, thm% ConvCache.decode_encode_record_id,
       thm% ConvCache.refusal_replays_exact]
     sites := [("LeanTex/Cli/ConvCache.lean", "cached"), ("LeanTex/Cli/PictureAssets.lean", "fulfil")]
     owed := some "Build every corpus document twice from cold caches and require identical artifacts." },
@@ -181,7 +181,7 @@ def registry : List Premise := [
     owed := some "Run each converter on malformed and missing input, and require every exit below 126." },
   { name := "process-group", residue := .host "process", reach := .render
     statement := "A tool's descendants stay in the process group its setsid spawn starts, so the runtime's Child.kill, which sends SIGKILL to that whole group, ends them, and a tool finishes its writers before it exits."
-    transfers := [thm% ConvCache.inconclusive_retried_exact, thm% PicCache.overrun_retried_exact]
+    transfers := [thm% ConvCache.inconclusive_retried_exact, thm% ConvCache.record?_some_exact]
     sites := [("LeanTex/Cli/RunBounded.lean", "runBounded")]
     checks := [check% Tests.processRuntimeChecks]
     scripts := ["scripts/runboundprobe.lean"] },
