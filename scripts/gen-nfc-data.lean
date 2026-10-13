@@ -74,15 +74,23 @@ def hexToNat (s : String) : Nat := Id.run do
     v := v * 16 + d
   return v
 
-/-- Full canonical decomposition, expanded recursively; the UCD's chains are shorter than
-the fuel of 8. -/
-def expand (canon : Std.HashMap Nat (List Nat)) (fuel : Nat) (cp : Nat) : List Nat :=
-  match fuel with
-  | 0 => [cp]
-  | fuel + 1 =>
-    match canon.get? cp with
-    | some parts => parts.flatMap (expand canon fuel)
-    | none => [cp]
+private theorem erase_size_lt {m : Std.HashMap Nat (List Nat)} {k : Nat} {v : List Nat}
+    (h : m.get? k = some v) : (m.erase k).size < m.size := by
+  have hm : k ∈ m := by
+    rw [Std.HashMap.mem_iff_isSome_getElem?, ← Std.HashMap.get?_eq_getElem?, h]; rfl
+  have hne := Std.HashMap.isEmpty_eq_false_iff_exists_mem.mpr ⟨k, hm⟩
+  simp only [Std.HashMap.isEmpty_eq_size_eq_zero, beq_eq_false_iff_ne] at hne
+  simp only [Std.HashMap.size_erase, hm, ↓reduceIte]
+  omega
+
+/-- The full canonical decomposition of `cp`, each part expanded in the map without `cp`. -/
+def expand (canon : Std.HashMap Nat (List Nat)) (cp : Nat) : List Nat :=
+  match h : canon.get? cp with
+  | some parts =>
+    have := erase_size_lt h
+    parts.flatMap fun p => expand (canon.erase cp) p
+  | none => [cp]
+termination_by canon.size
 
 /-- Fixed-width lowercase hex, left-padded, since the loader reads fields by byte offset;
 a value that does not fit dies. -/
@@ -144,7 +152,7 @@ def main (args : List String) : IO UInt32 := do
     (ccc.find? (·.1 == cp)).map (·.2) |>.getD 0
   let mut decompEntries : Array (Nat × List Nat) := #[]
   for (cp, _) in canon.toList.toArray do
-    decompEntries := decompEntries.push (cp, expand canon 8 cp)
+    decompEntries := decompEntries.push (cp, expand canon cp)
   -- Primary composites: canonical pairs minus UAX #15 §5's exclusions.
   let mut compEntries : Array (Nat × Nat × Nat) := #[]
   for (cp, parts) in canon.toList.toArray do
