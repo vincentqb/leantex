@@ -186,10 +186,9 @@ def Matcher.opening (m : Matcher) (c : Char) : Array Nat :=
 def Matcher.maxWords (m : Matcher) : Nat :=
   m.terms.foldl (fun n t => max n t.words.size) 0
 
-/-- Whether `t` stands at index `i` of `s`: its words in order, compared case-folded
-unless it keeps case, each after the first at most `gapMax` scalars that are no letter or
-digit past the one before, and a word's close after the last; the open before it is the
-caller's to judge. -/
+/-- Whether `t` stands at index `i` of `s`: its words in order, case-folded unless it
+keeps case, each at most `gapMax` scalars that are no letter or digit after the one
+before, and a word's close after the last; the caller judges the open. -/
 def standsAt (s : Array Char) (i : Nat) (t : Term) : Bool := Id.run do
   let mut j := i
   for (w, k) in t.words.zipIdx do
@@ -333,10 +332,9 @@ def percentRun (cs : Array Char) (i : Nat) : ByteArray × Nat := Id.run do
     | none => break
   return (bytes, j)
 
-/-- Lean's string escapes, character references and percent-encoding decoded: `\\`, `\"`,
-`\'`, `\n`/`\t`/`\r` (as spaces), `\u{…}`, `\uXXXX`, `\xHH`, `&#…;`/`&#x…;`, the named
-references of `entityScalar`, and runs of `%XX` read as UTF-8 where they spell it and as
-Latin-1 bytes where they do not; anything else is kept as written. -/
+/-- Lean's string escapes (`\\`, `\"`, `\'`, `\n`/`\t`/`\r` as spaces, `\u{…}`, `\uXXXX`,
+`\xHH`), character references (`&#…;`, `&#x…;`, `entityScalar`'s names) and `%XX` runs
+(UTF-8 where they spell it, else Latin-1) decoded; anything else is kept. -/
 def escapeReading (cs : Array Char) : Array Char := Id.run do
   let mut out : Array Char := Array.mkEmpty cs.size
   let mut i := 0
@@ -415,9 +413,8 @@ def skipBlanks (cs : Array Char) (i : Nat) : Nat := Id.run do
   return j
 
 /-- TeX's spellings of letters undone: accent commands dropped with the blanks before
-their argument, letter commands as their letters, the discretionary hyphen, italic
-correction and `\@` removed, ties and spacing commands as spaces, braces and invisible
-format characters dropped; any other command is kept. -/
+their argument, letter commands as letters, `\-`, italic correction and `\@` removed, ties
+and spacing as spaces, braces and format characters dropped; other commands kept. -/
 def texReading (cs : Array Char) : Array Char := Id.run do
   let mut out : Array Char := Array.mkEmpty cs.size
   let mut i := 0
@@ -468,10 +465,9 @@ def ascendingUnique (xs : Array Nat) : Array Nat := Id.run do
     if out.back? != some x then out := out.push x
   return out
 
-/-- The readings of a text worth folding: the text as written, its TeX reading where it
-holds a backslash, a brace, a tie or an invisible format character, and its
-escape-then-TeX reading where it holds a backslash, an ampersand or a percent sign; any
-other text reads the same every way. -/
+/-- The readings of a text worth folding: as written, its TeX reading where it holds a
+backslash, brace, tie or invisible format character, and its escape-then-TeX reading where
+it holds a backslash, ampersand or percent sign; other text reads one way. -/
 def readingsOf (cs : Array Char) : Array (Array Char) :=
   let tex := cs.any fun c => c == '\\' || c == '{' || c == '}' || c == '~' || invisible c
   let esc := cs.any fun c => c == '\\' || c == '&' || c == '%'
@@ -664,11 +660,9 @@ def pdfParts (bs : ByteArray) (cap : Nat) : ByteArray × Array ByteArray := Id.r
 def octalDigit (b : UInt8) : Option Nat :=
   if 48 ≤ b && b ≤ 55 then some (b.toNat - 48) else none
 
-/-- A PDF literal string's bytes from just past its `(`, and the index
-past its `)` (ISO 32000-2 §7.3.4.2): the escapes `\n` `\r` `\t` `\b` `\f`
-`\(` `\)` `\\` read, as are up to three octal digits; a backslash before an
-end of line continues the string; balanced parentheses stand for
-themselves; any other escaped byte is that byte. -/
+/-- A PDF literal string's bytes from just past its `(`, and the index past its `)`, read
+as ISO 32000-2 §7.3.4.2 spells them: escapes, octal codes, line continuations and balanced
+parentheses. -/
 def pdfLiteral (bs : ByteArray) (i : Nat) : ByteArray × Nat := Id.run do
   let mut out : ByteArray := .empty
   let mut j := i
@@ -873,9 +867,8 @@ def unwrap (bs : ByteArray) (cap : Nat) : Array ByteArray :=
   else #[]
 
 /-- What a blob's compressed content and a PDF's strings read as: each chunk a container
-wraps, and each chunk one of those wraps, by segment and with zero bytes removed, and a
-PDF's decoded strings; glyph-coded PDF text, other compressions and bytes past `decodeCap`
-are not read. -/
+wraps, two levels deep, by segment and without zero bytes, and a PDF's decoded strings;
+glyph-coded text, other compressions and bytes past `decodeCap` stay unread. -/
 def decodedReadings (bs : ByteArray) : Array (Array Char) := Id.run do
   let pdf := isPdf bs
   let parts := if pdf then pdfParts bs decodeCap else (.empty, unwrap bs decodeCap)
@@ -890,11 +883,9 @@ def decodedReadings (bs : ByteArray) : Array (Array Char) := Id.run do
       out := out.append (both d)
   return out
 
-/-- Where one blob holds a term: the lines of text, read by segment
-(`segmentReadings`) where no zero byte stands, or `binary` for a hit in
-content that is not text — the bytes as lenient UTF-8 and with their zero
-bytes removed (`cp1252NonZero`), or what they decompress to
-(`decodedReadings`). -/
+/-- Where one blob holds a term: lines of text by segment (`segmentReadings`) where no
+zero byte stands, else `binary` for a hit in the bytes as lenient UTF-8, without zero
+bytes (`cp1252NonZero`), or decompressed (`decodedReadings`). -/
 structure Hits where
   lines : Array Nat
   binary : Bool
@@ -1011,10 +1002,9 @@ def logPatches (out : String) : Array (String × String) := Id.run do
     | [] => pure ()
   return res
 
-/-- The records of a `git log --format=%x00%H -z` answer with one record a path
-(`--name-only`) or a numstat row (`--numstat`), each beside its commit; under `-z` a
-commit reads as an empty field, its sha, then its records, the first opening with the
-newline that ends the format line. -/
+/-- The records of a `git log --format=%x00%H -z` answer, each a path (`--name-only`) or
+numstat row (`--numstat`) beside its commit, which `-z` spells as an empty field, its sha,
+then its records, the first after the format line's newline. -/
 def logRecords (out : String) : Array (String × String) := Id.run do
   let mut res : Array (String × String) := #[]
   let mut sha : Option String := none
@@ -1110,10 +1100,9 @@ def Matcher.pathFindings (m : Matcher) (paths : Array String) (lead what : Strin
 /-- The commit a finding names: its sha, short. -/
 def commitLead (sha : String) : String := s!"commit {(sha.take 12).toString}: "
 
-/-- Findings in unpushed commits, from what git answered for them: each commit's patch
-(`logPatches`), the paths each adds (`logRecords` of `--name-only`), and each binary blob
-it adds or changes with its content; a term one commit adds and a later one removes is
-still found in the first, as a landing would publish it. -/
+/-- Findings in unpushed commits from git's answers: each commit's patch (`logPatches`),
+added paths (`logRecords` of `--name-only`) and added or changed binary blobs; a term
+added and later removed is still found, as a landing would publish it. -/
 def Matcher.commitFindings (m : Matcher) (patches : Array (String × String))
     (paths : Array (String × String)) (blobs : Array ((String × String) × ByteArray)) :
     Array String := Id.run do

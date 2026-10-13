@@ -98,10 +98,9 @@ def headerValue (l key : String) : Option String :=
   let pre := s!"% {key}:"
   if l.startsWith pre then some (l.drop pre.length).toString.trimAscii.toString else none
 
-/-- A fixture's declarations, read off its header: `% rhythm: <what it probes>`, one `%
-boundary: <class> <marker> <kind>` per boundary (a marker names a line's word, or
-`=<text>` its whole text), and `% reference: <file>` naming a LaTeX half; a malformed line
-is an error. -/
+/-- A fixture's header declarations: `% rhythm: <what it probes>`, one `% boundary:
+<class> <marker> <kind>` per boundary (a marker is a line's word or `=<text>`, its whole
+text), and `% reference: <file>` naming a LaTeX half; a malformed line is an error. -/
 def parseFixture (name src : String) : Except String Fixture := do
   let mut about : Option String := none
   let mut specs : Array Spec := #[]

@@ -140,11 +140,9 @@ def rungOfLoss : Loss → Rung
   | .config => .skipped
   | .info => .rewritten
 
-/-- One probe's rung from its diagnostics, read in order: a code naming the construct
-decides by its `Loss` (a text-mode unknown is `unknown`, the math decline no information);
-a rewrite to nothing is `skipped`; a subjectless or place-own complaint means the probe
-learned nothing; a rewrite note counts; a clean document is `native`; an operand complaint
-decides by its `Loss`; anything else learned nothing. -/
+/-- One probe's rung from its diagnostics, the first rule that applies deciding: those
+naming the construct, a rewrite to nothing, the probe's own complaints, a rewrite note, a
+clean document, then operand complaints. -/
 def rungOfProbe (name : String) (own : Array String) (ds : Array Diag) : Rung :=
   let worstOf (xs : Array Diag) : Rung :=
     xs.foldl (fun acc d => Rung.worse acc (rungOfLoss d.kind.loss)) .verified

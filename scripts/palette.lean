@@ -54,12 +54,9 @@ private meta def flags : Flags → List String → Except String (Flags × List 
   | f, "--check" :: path :: rest => flags { f with check := some path } rest
   | f, rest => .ok (f, rest)
 
-/-- Export TeX colour declarations from three RGB seeds (`Prefix INK PAPER ACCENT`, or
-`Prefix --seeds colors.json`) to stdout; flags before the prefix: `--beamer-blocks` binds
-beamer's elements (block style `--blocks tonal|strong`), `--depth documents|decks` picks
-the ground depth, `--pygments STYLE` adds a listing's code colours, `--series N` adds
-chart series colours, and `--check FILE` exits 1 when FILE is not what the seeds
-generate. -/
+/-- Export TeX colour declarations from three RGB seeds (`Prefix INK PAPER ACCENT` or
+`Prefix --seeds colors.json`) to stdout, with the flags the usage line lists; `--check
+FILE` exits 1 where FILE is not what the seeds generate. -/
 public meta def main (args : List String) : IO UInt32 := do
   let (f, args) ← match flags {} args with
     | .ok r => pure r

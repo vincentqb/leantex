@@ -231,10 +231,9 @@ def scan (tree : CompiledTree) (rows : List PhantomRow := citePhantomKnown)
   let (_, dead) := judgePhantoms rows c.phantoms
   return (bad, dead, c, names)
 
-/-- The rule documents, whose backticked names are pins held to the compiled tree: a pin
-written `owed (<unit or branch>):` must resolve to nothing until it lands, a held pin
-names exactly one declaration and never a type; the flag says whether the document's prose
-states rules. -/
+/-- The rule documents, whose backticked names are pins held to the compiled tree: an
+`owed (<unit or branch>):` pin resolves to nothing until it lands, a held one to exactly
+one declaration, never a type; the flag marks prose that states rules. -/
 def ruleDocs : List (String × Bool) :=
   [("AGENTS.md", true), ("PRINCIPLES.md", true), ("THEOREMS.md", false)]
 

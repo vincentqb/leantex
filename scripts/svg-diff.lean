@@ -59,9 +59,8 @@ def hostRoles : Array (String × Array (Option String)) := #[
   ("monospace", #[some "DejaVuSansMono.ttf", some "DejaVuSansMono-Bold.ttf",
     some "DejaVuSansMono-Oblique.ttf", some "DejaVuSansMono-BoldOblique.ttf"])]
 
-/-- The host's faces in `dir`, after checking the premise the comparison
-rests on: fontconfig answers each role's generic family, in each style,
-with the file loaded for it — the face Chromium and librsvg set the
+/-- The host's faces in `dir`, once fontconfig is checked to answer each role's generic
+family in each style with the file loaded for it, the face Chromium and librsvg set the
 reference's text in. -/
 def hostFacesIn (dir : System.FilePath) : IO (Except String Font.FontSet) := do
   let styles := #[("", 0), (":bold", 1), (":italic", 2), (":bold:italic", 3)]

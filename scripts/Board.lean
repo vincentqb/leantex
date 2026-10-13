@@ -1070,9 +1070,8 @@ def parsePins (file text : String) : Except String (Array Entry) := Id.run do
   return .ok out
 
 /-- The three modes every tier producer shares: no argument regenerates the baseline,
-writing a fall only where a committed request authorises it; `--check` measures and
-compares, writing nothing, an absent or empty baseline being a fault; `--selftest` runs
-the tier's own predicates. -/
+writing a fall only where a committed request authorises it; `--check` compares and writes
+nothing, an absent or empty baseline a fault; `--selftest` runs the tier's predicates. -/
 def tierMainAt (path tier : String) (enc : Encoding)
     (measure : IO (Array String × Array Row)) (selftest : IO UInt32)
     (args : List String) : IO UInt32 := do

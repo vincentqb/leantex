@@ -403,11 +403,9 @@ real sha. -/
 def State.landedIsGated (s : State) : Bool :=
   s.mainAt == s.gatedTip && isSha s.gatedTip
 
-/-- The run's invariant, preserved by every transition: from the fast-forward's
-verification on, and under any verdict claiming a landing, the landing is the gated
-commit's, and such a verdict appears only at `done`; no gate is recorded before the rebase
-is judged; every recorded gate read the tree back clean at the gated tip; and from the
-rebase on, the gated tip is a sha. -/
+/-- The run's invariant, kept by every transition: once the fast-forward is verified or a
+landing claimed (only at `done`), `main` is the gated tip; no gate precedes the rebase's
+verdict; each read the tree clean at that tip, a sha once rebased. -/
 def State.pinned (s : State) : Bool :=
   (!(s.atOrPastFF || s.landedVerdict) || s.landedIsGated)
     && (!s.landedVerdict || s.stage == .done)
