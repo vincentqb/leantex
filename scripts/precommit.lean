@@ -1108,11 +1108,37 @@ def premisePin (l : String) : Option (Option String × String) :=
       if (why.trimAscii.toString).isEmpty then none
       else some (if pin == "none" then (none, why) else (some pin, why))
 
-/-- Does `pin` name a theorem the build checks, or a check block the suite defines and invokes? -/
+/-- Does `pin` name a theorem the build checks, or a check block the suite defines, under any
+qualification `testDefs` lists, and invokes? -/
 def pinResolves (treeText testText : String) (testDefs : List String)
     (pin : String) : Bool :=
-  containsSub treeText s!"theorem {pin}" ||
-    (testDefs.contains pin && ((testText.splitOn pin).length ≥ 3))
+  hasCall treeText s!"theorem {pin}" ||
+    (testDefs.contains pin && ((testText.splitOn ((pin.splitOn ".").getLastD pin)).length ≥ 3))
+
+/-- Does the line carry a marker: a comment, or a docstring line, opening with `mark`? -/
+def markerLine (mark l : String) : Bool :=
+  let s := stripStrings l
+  s.trimAscii.toString.startsWith mark ||
+    ((s.splitOn "--").drop 1).any (·.trimAscii.toString.startsWith mark)
+
+/-- The premise markers of a source naming no reason, `none`, or a pin `resolves` refuses, by line. -/
+def premiseFaults (resolves : String → Bool) (lines : Array String) :
+    Array (Nat × Option String) := Id.run do
+  let mut out := #[]
+  for (l, i) in lines.zipIdx do
+    if markerLine premiseMark l then
+      match premisePin l with
+      | none => out := out.push (i + 1, none)
+      | some (some pin, _) => unless resolves pin do out := out.push (i + 1, some pin)
+      | some (none, _) => pure ()
+  return out
+
+/-- The conserves markers of a source that are no `conserves: none — <why>`, by line. -/
+def conservesFaults (lines : Array String) : Array Nat :=
+  (lines.zipIdx.filter fun (l, _) => markerLine "conserves:" l &&
+    match tokens ((l.splitOn "conserves:").getLastD "") with
+    | "none" :: why => (why.filter (fun w => w != "—" && w != "-")).isEmpty
+    | _ => true).map (·.2 + 1)
 
 /-- A premise site that cannot carry its marker in place, with the pin that holds it, or `none` and
 what is missing. -/
@@ -1394,12 +1420,12 @@ def scopedDefNames (lines : Array String) : Array String := Id.run do
     let head := (declarationHead line).2
     let space := scopes.headD ""
     if head.startsWith "namespace " then
-      let name := ((head.drop 10).toString.splitOn " ").headD ""
-      scopes := qualify space name :: scopes
-    else if head == "section" || head.startsWith "section " then
+      for part in (((head.drop 10).toString.splitOn " ").headD "").splitOn "." do
+        scopes := qualify (scopes.headD "") part :: scopes
+    else if head == "section" || head.startsWith "section " || head == "mutual" then
       scopes := space :: scopes
     else if head == "end" || head.startsWith "end " then
-      scopes := scopes.tail
+      scopes := scopes.drop ((head.drop 3).toString.trimAscii.toString.splitOn ".").length
     else if let some name := topLevelDefName line then
       out := out.push (qualify space name)
   return out
@@ -2078,12 +2104,31 @@ def selftest : IO UInt32 := do
   let testSrc := "def liveChecks (ref : IO.Ref (List String)) : IO Unit := do\n  liveChecks ref\ndef deadChecks : IO Unit := pure ()"
   let pinCases : List (String × Bool) := [
     ("footBand_projects", true),
+    ("footBand", false),
     ("liveChecks", true),
+    ("Tests.liveChecks", true),
     ("deadChecks", false),
     ("neverWrittenChecks", false)]
   for (pin, want) in pinCases do
-    if pinResolves treeSrc testSrc ["liveChecks", "deadChecks"] pin != want then
+    if pinResolves treeSrc testSrc ["liveChecks", "Tests.liveChecks", "deadChecks"] pin != want then
       fails.modify (s!"pinResolves {pin}: want {want}" :: ·)
+  let markerSrc := #["  if ctx.slides then -- premise: noSuchChecks — a reason",
+    "  -- premise: liveChecks — the suite runs it",
+    "  -- premise: noSuchChecks — a pin that names nothing",
+    "  -- premise: none — nothing falsifies it yet",
+    "  -- premise: liveChecks",
+    "premise: noSuchChecks — a docstring line carries a marker too",
+    "the process-group premise: a descendant that outlives the run",
+    "  say \"-- premise: noSuchChecks — a string is no marker\" pos",
+    "  -- conserves: none — fills a hole",
+    "  -- conserves: none",
+    "-- conserves: everything"]
+  let premiseGot := premiseFaults (pinResolves treeSrc testSrc ["liveChecks"]) markerSrc
+  unless premiseGot == #[(1, some "noSuchChecks"), (3, some "noSuchChecks"), (5, none),
+      (6, some "noSuchChecks")] do
+    fails.modify (s!"premiseFaults: {premiseGot}" :: ·)
+  unless conservesFaults markerSrc == #[10, 11] do
+    fails.modify (s!"conservesFaults: {conservesFaults markerSrc}" :: ·)
 
   let twoLine : Array String :=
     #["    if Compat.nativeSetCtrls.contains name ||",
@@ -2218,6 +2263,12 @@ def selftest : IO UInt32 := do
       "namespace First", "public def checks := 2", "end First"] ==
       #["First.checks", "First.checks"] do
     fails.modify ("scopedDefNames: reopening a namespace hid a duplicate" :: ·)
+  unless scopedDefNames #["namespace Tests", "mutual", "def walk := 1", "end", "def after := 2",
+      "end Tests"] == #["Tests.walk", "Tests.after"] do
+    fails.modify ("scopedDefNames: a mutual block's end closed the namespace" :: ·)
+  unless scopedDefNames #["namespace Tests.Inner", "def inner := 1", "end Inner", "def outer := 2",
+      "end Tests", "def top := 3"] == #["Tests.Inner.inner", "Tests.outer", "top"] do
+    fails.modify ("scopedDefNames: a dotted namespace did not close one component at a time" :: ·)
 
   expect "quadraticPrepend" quadraticPrepend [
     ("  | x :: rest => inlineNode cfg x ++ inlineNodes cfg rest", true),
@@ -3377,26 +3428,28 @@ the privacy check is skipped."
       testText := testText ++ txt
       for l in txt.splitOn "\n" do
         if let some n := topLevelDefName l then testDefs := n :: testDefs
+      testDefs := testDefs ++ (scopedDefNames (txt.splitOn "\n").toArray).toList
   let treeText := allCore
   -- Every marker resolves wherever it stands, sites the detector misses included.
   for (f, lines) in premiseTexts do
-    for i in [0:lines.size] do
-      let l := lines[i]?.getD ""
-      if containsSub (stripLineComment l) premiseMark then
-        match premisePin l with
-        | none =>
-          say s!"pre-commit: a premise marker with no reason, in {f}:{i + 1}:
-  {l.trimAscii}
+    for (n, pin?) in premiseFaults (pinResolves treeText testText testDefs) lines do
+      match pin? with
+      | none =>
+        say s!"pre-commit: a premise marker with no reason, in {f}:{n}:
+  {(lines[n - 1]?.getD "").trimAscii}
   A premise marker names the check that falsifies it (AGENTS.md § When you add).
   Fix: write `-- {premiseMark} <pin> — <why>`, or `-- {premiseMark} none — <why>`
   when nothing falsifies it."
-        | some (some pin, _) =>
-          unless pinResolves treeText testText testDefs pin do
-            say s!"pre-commit: the premise marker in {f}:{i + 1} names `{pin}`, which resolves to nothing.
+      | some pin =>
+        say s!"pre-commit: the premise marker in {f}:{n} names `{pin}`, which resolves to nothing.
   A pin is a theorem the build checks or a check block the suite runs
   (AGENTS.md § When you add).
   Fix: name the real check, or write `{premiseMark} none — <why>` and say what is missing."
-        | some (none, _) => pure ()
+    for n in conservesFaults lines do
+      say s!"pre-commit: a conserves marker with no reason, in {f}:{n}:
+  {(lines[n - 1]?.getD "").trimAscii}
+  A walk that conserves nothing says why beside its def (AGENTS.md § When you add).
+  Fix: write `-- conserves: none — <why>`."
   -- Each row in both directions: its site text still occurs, and a named pin resolves.
   for row in premiseRegistry do
     let txt := ((premiseTexts.find? (·.1 == row.file)).map
