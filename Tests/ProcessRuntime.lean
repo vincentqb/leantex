@@ -70,10 +70,11 @@ def processRuntimeChecks (ref : IO.Ref (List String)) : IO Unit := do
     (heard.trimAscii.toString == "ready" && leader == some 0 && (← doneWithin drained 5000))
   let start ← IO.monoMsNow
   let over ← RunBounded.runBounded "/bin/sh"
-    #["-c", "trap '' TERM\n/bin/sh -c 'trap \"\" TERM; exec /bin/sleep 30' &\nexec /bin/sleep 30"]
-    (← IO.currentDir) 200 10000
+    #["-c", s!"trap '' TERM\n/bin/sh -c 'trap \"\" TERM; exec /bin/sleep {hangSeconds}' &\n\
+exec /bin/sleep {hangSeconds}"]
+    (← IO.currentDir) 200 hostMarginMs
   let elapsed := (← IO.monoMsNow) - start
   t s!"process runtime: an overrun returns as its group's pipes close, before the grace ({elapsed} ms)"
-    (over.ran == .overran 0 && !over.complete && elapsed < 5200)
+    (over.ran == .overran 0 && !over.complete && elapsed < 200 + hostMarginMs)
 
 end Tests

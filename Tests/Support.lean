@@ -527,6 +527,49 @@ def writeScript (path : System.FilePath) (body : String) (exec : Bool := true) :
   IO.FS.writeFile path body
   IO.setAccessRights path { user := ⟨true, true, exec⟩ }
 
+/-- What a loaded host may add to a bounded run's declared budget and grace,
+spawning it and making and removing its scratch directory, before a check
+reads the run as one its budget did not end. -/
+def hostMarginMs : Nat := 60000
+
+/-- How long a fixture that only its kill should end sleeps: ten margins. -/
+def hangSeconds : Nat := hostMarginMs / 100
+
+/-- A shell command that records its process id in `pidFile`, then sleeps
+`hangSeconds`. -/
+def hangCommand (pidFile : System.FilePath) : String :=
+  s!"echo $$ > '{pidFile}'; exec sleep {hangSeconds}"
+
+/-- The process id a `hangCommand` recorded in `pidFile`; empty before it has. -/
+def recordedPid (pidFile : System.FilePath) : IO String := do
+  return ((← (IO.FS.readFile pidFile).toBaseIO).toOption.getD "").trimAscii.toString
+
+/-- Whether process `pid` has ended, as `ps` reads it beside this process:
+gone, or a zombie its parent has not reaped; never when `ps` cannot say. -/
+def processEnded (pid : String) : IO Bool := do
+  let me := toString (← IO.Process.getPID)
+  let r ← (IO.Process.output
+    { cmd := "ps", args := #["-o", "pid=", "-o", "stat=", "-p", s!"{pid},{me}"] }).toBaseIO
+  let rows : List (String × String) := match r with
+    | .ok o => (o.stdout.splitOn "\n").filterMap fun (l : String) =>
+        match (l.splitOn " ").filter (!·.isEmpty) with
+        | [p, st] => some (p, st)
+        | _ => none
+    | .error _ => []
+  return rows.any (·.1 == me) && (rows.find? (·.1 == pid)).all (·.2.startsWith "Z")
+
+/-- Whether the `hangCommand` that records its process id in `pidFile` ends
+within `ms`: the process it names ends, or it was ended before it named one. -/
+def endsWithin (pidFile : System.FilePath) (ms : Nat) : IO Bool := do
+  let start ← IO.monoMsNow
+  let mut pid := ""
+  for _ in [0:ms / 50 + 1] do
+    pid ← recordedPid pidFile
+    if !pid.isEmpty && (← processEnded pid) then return true
+    if (← IO.monoMsNow) - start ≥ ms then break
+    IO.sleep 50
+  return pid.isEmpty
+
 /-- This build's engine run in `dir` over `args`, sealed as `sealedRunEnv` seals a run, with `font`
 its face and `cache` its caches. -/
 def engineRun (dir : System.FilePath) (args : Array String) (font cache : System.FilePath) :
@@ -2475,6 +2518,11 @@ def hybrid (path : Option String) (cwd : Except Failure String) : (q : Ask) → 
 
 def under {α : Type} (path : String) (cwd : Except Failure String) (p : Prog α) : BaseIO α :=
   p.runM (hybrid (some path) cwd)
+
+/-- Whether a run its budget ended was answered after that budget and before
+its grace and `hostMarginMs` end, `spent` ms after it was asked. -/
+def answeredAtBudget (call : ToolCall) (spent : Nat) : Bool :=
+  call.budgetMs ≤ spent && spent < call.budgetMs + call.graceMs + hostMarginMs
 
 end Tests.World
 

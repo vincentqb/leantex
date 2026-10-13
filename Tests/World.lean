@@ -168,17 +168,36 @@ def faultChecks (ref : IO.Ref (List String)) (dir : System.FilePath) : IO Unit :
   let absentRun ← Host.answer (.run (call ghost #["--version"] 10000))
   t "world/host: a tool that is not there ends as the exec-failure signature"
     (absentRun.complete && ToolPath.execFailed ghost absentRun)
+  let left ← IO.Process.spawn {
+    cmd := "/bin/sh", setsid := true, stdin := .null, stdout := .null, stderr := .null
+    args := #["-c", hangCommand (dir / "left.pid")] }
+  let mut leftPid := ""
+  for _ in [0:hostMarginMs / 50] do
+    leftPid ← recordedPid (dir / "left.pid")
+    unless leftPid.isEmpty do break
+    IO.sleep 50
+  let seenRunning := !leftPid.isEmpty && !(← endsWithin (dir / "left.pid") 200)
+  left.kill
+  discard <| left.wait
+  t "world/host: the kill check reads a process left running as running, and the same process killed as ended"
+    (seenRunning && (← endsWithin (dir / "left.pid") hostMarginMs))
+  let hangCall := call "/bin/sh" #["-c", hangCommand (dir / "hung.pid")] 300
   let start ← IO.monoMsNow
-  let hung ← Host.answer (.run (call "/bin/sh" #["-c", "sleep 5"] 300))
+  let hung ← Host.answer (.run hangCall)
   let spent := (← IO.monoMsNow) - start
-  t s!"world/host: a run past its budget is killed and ends incomplete ({spent} ms)"
-    (!hung.complete && hung.ran == .overran 0 && spent < 4000)
+  t "world/host: a run past its budget ends incomplete, overrunning that budget"
+    (!hung.complete && hung.ran == .overran (hangCall.budgetMs / 1000))
+  t "world/host: a run past its budget is killed"
+    (← endsWithin (dir / "hung.pid") hostMarginMs)
+  t s!"world/host: a run past its budget is answered after it, before its grace and the host's margin end ({spent} ms)"
+    (answeredAtBudget hangCall spent)
+  let noisyCall := call "/bin/sh" #["-c", "printf 'out\\376'; printf '\\377 tail' >&2; exit 3"] 10000
   let noisyStart ← IO.monoMsNow
-  let noisy ← Host.answer (.run (call "/bin/sh" #["-c", "printf 'out\\376'; printf '\\377 tail' >&2; exit 3"] 10000))
+  let noisy ← Host.answer (.run noisyCall)
   let noisySpent := (← IO.monoMsNow) - noisyStart
-  t s!"world/host: a non-UTF-8 run ends as it exited, stray bytes read as U+FFFD ({noisySpent} ms)"
+  t s!"world/host: a non-UTF-8 run ends as it exited, within its budget, stray bytes read as U+FFFD ({noisySpent} ms)"
     (noisy.complete && noisy.ran == .exited 3 && noisy.out == "out\uFFFD" && noisy.err == "\uFFFD tail" &&
-      noisySpent < 4000)
+      noisySpent < noisyCall.budgetMs + noisyCall.graceMs + hostMarginMs)
   let copied ← Host.answer (.run { call "/bin/sh" #["-c", "cat in/data > out.txt; pwd > where.txt; pwd; pwd -L >&2"] 10000 with
     inputs := #[("in/data", "payload".toUTF8)], outputs := #["out.txt", "never.txt", "where.txt"] })
   let scratch := ((copied.outputs.find? (·.1 == "where.txt")).bind (·.2)).map (String.fromUTF8? · |>.getD "")
@@ -339,12 +358,17 @@ def pathChecks (ref : IO.Ref (List String)) (dir : System.FilePath) : IO Unit :=
       | none => false)
   t "world/path: with PATH unset a name the default path lacks starts nothing"
     ((← unset (ToolPath.probe "leantex-no-such-tool" bareCall)).isNone)
-  writeScript (root / "hang" / "tool") "#!/bin/sh\nexec sleep 30\n"
+  writeScript (root / "hang" / "tool") s!"#!/bin/sh\n{hangCommand (root / "hang.pid")}\n"
+  let hangCall := ToolPath.versionCall 300 s!"{r}/hang/tool"
   let start ← IO.monoMsNow
-  let hung ← under s!"{r}/hang" (.ok r) (ToolPath.version "tool" (budgetMs := 300))
+  let hung ← under s!"{r}/hang" (.ok r) (ToolPath.version "tool" (budgetMs := hangCall.budgetMs))
   let spent := (← IO.monoMsNow) - start
-  t s!"world/path: a version question that hangs is killed within its budget ({spent} ms)"
-    ((match hung with | .absent _ => true | .present _ => false) && spent < 4000)
+  t "world/path: a version question that hangs is answered as its budget's overrun"
+    (hung == .absent s!"no version within {hangCall.budgetMs / 1000} s; killed")
+  t "world/path: a version question that hangs is killed"
+    (← endsWithin (root / "hang.pid") hostMarginMs)
+  t s!"world/path: a version question that hangs is answered after its budget, before its grace and the host's margin end ({spent} ms)"
+    (answeredAtBudget hangCall spent)
 
 /-- The budget of a child Lean interpreter that elaborates its driver first, generous since no child
 check reads the outer time. -/
@@ -354,23 +378,30 @@ def childBudgetMs : Nat := 120000
 ends. -/
 def probeChildChecks (ref : IO.Ref (List String)) (dir : System.FilePath) : IO Unit := do
   let (lean, leanPath) ← leanChild "world checks"
-  writeScript (dir / "hang" / "leantex-hang-probe") "#!/bin/sh\nexec sleep 30\n"
+  writeScript (dir / "hang" / "leantex-hang-probe") s!"#!/bin/sh\n{hangCommand (dir / "hang.pid")}\n"
   let driver := dir / "probe.lean"
   IO.FS.writeFile driver <|
     "import LeanTex.Cli.ToolProbe\n" ++
+    "import LeanTex.Cli.World\n" ++
+    "open LeanTex.Cli.World in\n" ++
     "def main : IO UInt32 := do\n" ++
+    "  let call := ToolPath.versionCall ToolPath.versionBudgetMs \"leantex-hang-probe\"\n" ++
     "  let start ← IO.monoMsNow\n" ++
     "  let got ← LeanTex.Cli.ToolProbe.probeVersion \"leantex-hang-probe\"\n" ++
     "  let spent := (← IO.monoMsNow) - start\n" ++
     "  IO.println s!\"probe ended after {spent} ms\"\n" ++
+    s!"  let timely := call.budgetMs ≤ spent && spent < call.budgetMs + call.graceMs + {hostMarginMs}\n" ++
     "  return match got with\n" ++
-    "    | .absent _ => if spent < 5000 then 0 else 2\n" ++
+    "    | .absent why =>\n" ++
+    "      if why == s!\"no version within {call.budgetMs / 1000} s; killed\" && timely then 0 else 2\n" ++
     "    | .present _ => 1\n"
   let path := s!"{dir / "hang"}:{(← IO.getEnv "PATH").getD ""}"
   let result ← RunBounded.runBounded lean.toString #["--run", driver.toString] dir childBudgetMs 100
     (env := #[("PATH", some path), ("LEAN_PATH", some leanPath)])
-  check ref s!"world/path: the driver's version probe ends a tool that hangs: {result.out}{result.err}"
+  check ref s!"world/path: the driver's version probe answers a tool that hangs as its budget's overrun, after that budget and before its grace and the host's margin end: {result.out}{result.err}"
     (result.complete && result.ran == .exited 0)
+  check ref "world/path: the driver's version probe kills a tool that hangs"
+    (← endsWithin (dir / "hang.pid") hostMarginMs)
 
 /-- A run under a temporary root that cannot hold its scratch directory never starts, rather than
 crashing the process. -/

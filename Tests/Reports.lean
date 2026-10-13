@@ -127,6 +127,8 @@ import Tests.Privacy
 import Tests.DiagFold
 import Tests.InlineCode
 import scripts.LandCore
+import Tests.World
+import Tests.ProcessRuntime
 
 /-! Every breakage the user reported, as a row whose pins hold it closed; a report closes only as
 `guarded`, and the unwitnessed and owed counts are held both ways. -/
@@ -1531,7 +1533,12 @@ def reports : List Report := [
   { id := "R171", date := "2026-10-13"
     what := "beamer's `visible` overlay command, and `onslide` with its plus modifier, which beamer defines as it, covered their argument on the steps their selector does not select, dimmed as `uncover` covers, where beamer sets the argument invisible there, its space kept"
     pins := []
-    state := .owed "the overlay owner: an argument invisible off its steps, its space kept, in both artifacts" ["overlayVisibleChecks"] }
+    state := .owed "the overlay owner: an argument invisible off its steps, its space kept, in both artifacts" ["overlayVisibleChecks"] },
+  { id := "R172", date := "2026-10-13"
+    what := "the suite's checks of a tool its budget ends failed under parallel load, and with them every agent's commit: they held the wall clock to a few seconds past a short budget, and a loaded host took longer"
+    pins := [check% Tests.World.checks, check% Tests.processRuntimeChecks]
+    accept := ["with the checks' process held stopped six seconds of every 6.1, the checks as b6e1a170 wrote them fail: the killed run, the hung version question and the runtime overrun each answer in about 6,100 ms against bounds of 4,000 and 5,200; the fixed checks pass under the same stalls, and eight suites run at once at a load average of 46 to 79 all pass"]
+    state := .guarded "b6e1a170" .before .author }
 ]
 
 /-- The reports guarded but never seen failing, a count held in both directions. -/
