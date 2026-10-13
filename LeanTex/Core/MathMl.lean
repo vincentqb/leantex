@@ -3,20 +3,8 @@ module
 public import LeanTex.Core.Html
 public import LeanTex.Core.Math
 
-/-! Math on the HTML backend: MathML Core, emitted from the parsed math AST
-the PDF lays out — one parser, two projections (PLAN, M6). MathML Core
-(W3C CR, 2025-06-24, w3.org/TR/mathml-core) is the declarative floor: no
-script is emitted, and the `--math-boundary` client renderer stays the
-opt-in that may replace the element it finds by `data-tex`.
-
-Every leaf goes through the typed tree, so author text reaches the page
-only through the certified escaper. `mathml_glyphs_agree` is the census:
-the text content of the emission — which lives only in the `mi`/`mn`/`mo`
-token leaves — equals `listChars`, the pure glyph-text fold over the same
-AST, exposed here because the PDF's own glyph walk (`Layout.layMathTail`)
-is private and entangled with font metrics; the fold's agreement with the
-PDF's coverage census (`Math.MList.scalarsList`) is held by test
-(`mathmlChecks`), overline excepted and stated there. -/
+/-! Math on the HTML backend: MathML Core emitted from the math list the PDF lays out, every leaf
+through the typed tree's escaper, and no script. -/
 
 namespace LeanTex.Core.MathMl
 
@@ -25,26 +13,17 @@ open LeanTex.Core LeanTex.Core.Math
 /-- One scalar as the string a token leaf carries. -/
 def charText (c : Char) : String := String.ofList [c]
 
-/-- The overline operator the U+0305 accent renders as: U+203E OVERLINE,
-a postfix stretchy operator with inline intrinsic stretch axis in MathML
-Core's operator dictionary (§B.1 category I; §B.3 maps U+0305 combining
-overline to it) — where the PDF draws the same accent as a rule from the
-overbar constants. -/
+/-- The overline operator U+0305 renders as: U+203E, stretchy in MathML Core's dictionary. -/
 public def overlineChar : Char := '\u203E'
 
-/-- The token element a lone scalar sets in, by its TeX class: operator
-classes are `mo` (MathML Core §3.2.4 — fences, separators and accents
-included); an Ord or Inner scalar is `mn` for a digit and `mi` otherwise
-(§3.2.2, §3.2.3). -/
+/-- The token element a lone scalar sets in by its TeX class: `mo`, else `mn` for a digit, else
+`mi` (MathML Core §3.2). -/
 public def leafTag (cls : MathClass) (c : Char) : String :=
   match cls with
   | .op | .bin | .rel | .opening | .closing | .punct => "mo"
   | .ord | .inner => if c.isDigit then "mn" else "mi"
 
-/-- A measured coordinate divided by its provider's em. Six decimal places
-bound serialization error by half a millionth of that em; the integer SVG
-points themselves lose no precision. This is decimal serialization, not a
-font-size or attachment constant. -/
+/-- A measured coordinate over its provider's em, to six decimal places. -/
 public def measuredEm (n em : Int) : String :=
   let d := (max 1 em).toNat
   let m := (n.natAbs * 1000000 + d / 2) / d
@@ -52,12 +31,10 @@ public def measuredEm (n em : Int) : String :=
   (if n < 0 && m != 0 then "-" else "") ++
     s!"{m / 1000000}." ++ "".pushn '0' (6 - fs.length) ++ fs ++ "em"
 
-/-- MathML width hints are nonnegative; a CSS end margin carries the
-negative part of an advance. Both are in the same current-style units. -/
+/-- An advance as a nonnegative MathML width and a negative CSS end margin. -/
 public def widthParts (width : Int) : Int × Int := (max 0 width, min 0 width)
 
-/-- Artifact arithmetic: the browser's width and end margin preserve every
-signed advance, including zero, without an invalid negative width hint. -/
+/-- A fact of the artifact: width and end margin preserve every signed advance. -/
 public theorem widthParts_contract (width : Int) :
     let p := widthParts width
     0 ≤ p.1 ∧ p.2 ≤ 0 ∧ p.1 + p.2 = width := by
@@ -71,10 +48,8 @@ def advanceAttrs (em width : Int) : Array (String × String) :=
     #[("width", "0"), ("style", s!"margin-inline-end: {measuredEm margin em}")]
   else #[("width", measuredEm w em)]
 
-/-- The padding a stretched array's cells add above and below, so its rows
-stand `\arraystretch` times the one-baseline pitch apart: half the stretch
-past one, of the 1.2 em baseline the PDF assembly reads (`leadingFor`), on
-top of MathML Core's default 0.5ex. `none` at the default stretch. -/
+/-- The cell padding that sets a stretched array's rows `\arraystretch` baselines apart; `none`
+at the default. -/
 def stretchPad (stretch : Nat) : Option String :=
   if stretch ≤ 1000 then none else
     let m := (stretch - 1000) * 6 / 10
@@ -82,35 +57,24 @@ def stretchPad (stretch : Nat) : Option String :=
     let em := s!"{m / 1000}." ++ "".pushn '0' (3 - fs.length) ++ fs ++ "em"
     some s!"padding-top: calc(0.5ex + {em}); padding-bottom: calc(0.5ex + {em})"
 
-/-- A `\left`/`\right` delimiter: stretchy, and symmetric about the math
-axis (`mo` attributes, MathML Core §3.2.4.2) — rule 19's centring, which
-`Layout.delimAssemble` realizes on the PDF side. -/
+/-- A `\left`/`\right` delimiter: stretchy and symmetric about the math axis (MathML Core
+§3.2.4.2). -/
 def delimMo (c : Char) : Html.Node :=
   .elem "mo" #[("stretchy", "true"), ("symmetric", "true")]
     #[.text (charText c)]
 
-/-- A `\genfrac` delimiter: stretched to exactly `size`, amsmath's fixed
-delimiter size rather than the content's reach (`minsize` and `maxsize`
-clamp an operator's stretch, MathML Core §3.2.4.2), as
-`Layout.delimAssembleTo` grows the PDF's. -/
+/-- A `\genfrac` delimiter stretched to exactly `size`. -/
 def sizedMo (c : Char) (size : String) : Html.Node :=
   .elem "mo" #[("stretchy", "true"), ("symmetric", "true"), ("minsize", size),
     ("maxsize", size)] #[.text (charText c)]
 
-/-- The size an amsmath sized delimiter stretches to, in em: the PDF's own
-target (`Math.bigTarget`) for a face whose `(` is one em tall and deep, to
-the thousandth. The `\vcenter` itself (1.2 em at `\big`) is not the target:
-Chromium stretches to the variant nearest it, one step past TeX's at
-`\big` (1.195 em against 1.094 em in Latin Modern Math). -/
+/-- The size an amsmath sized delimiter stretches to in em: `Math.bigTarget` for a one-em `(`. -/
 def bigMoSize (step : Nat) : String :=
   let t := (Math.bigTarget 1000 1000 step).toNat
   let frac := ((toString (1000 + t % 1000)).drop 1).toString
   s!"{t / 1000}.{frac}em"
 
-/-- A fraction's declared rule as `mfrac`'s `linethickness` (MathML Core
-§3.3.2). The measured em carries physical lengths into the same responsive
-coordinate system as glyphs and attachments. A caller without font metrics
-keeps the physical length; an undeclared rule belongs to the face. -/
+/-- A fraction's declared rule as `mfrac`'s `linethickness`, in measured em when known. -/
 def ruleAttrs (rule : Option Int) (em : Option Int) : Array (String × String) :=
   match rule with
   | none => #[]
@@ -127,9 +91,7 @@ where
     if m == 0 then "0"
     else s!"{m / 1000}." ++ "".pushn '0' (3 - fs.length) ++ fs ++ "pt"
 
-/-- A style switch as MathML Core's `displaystyle` and absolute
-`scriptlevel` (§2.1.6): `\displaystyle`, `\textstyle`, `\scriptstyle` and
-`\scriptscriptstyle` set a style, never a step from the current one. -/
+/-- A style switch as MathML Core's `displaystyle` and absolute `scriptlevel` (§2.1.6). -/
 public def styleAttrs : Option MathStyle → Array (String × String)
   | none => #[]
   | some (.display _) => #[("displaystyle", "true"), ("scriptlevel", "0")]
@@ -137,8 +99,8 @@ public def styleAttrs : Option MathStyle → Array (String × String)
   | some (.script _) => #[("displaystyle", "false"), ("scriptlevel", "1")]
   | some (.scriptscript _) => #[("displaystyle", "false"), ("scriptlevel", "2")]
 
-/-- A generalized fraction's row: its delimiters, sized as the PDF sizes
-them — 2.4 em in display style, 1.01 em otherwise — around the `mfrac`. -/
+/-- A generalized fraction's row: its delimiters, sized as the PDF sizes them, around the
+`mfrac`. -/
 def fracKids (disp : Bool) (spec : FracSpec) (bar : Html.Node) : Array Html.Node :=
   let size := if (spec.style.map (·.rank == 3)).getD disp then "2.4em" else "1.01em"
   let opened : Array Html.Node := match spec.left with
@@ -148,13 +110,8 @@ def fracKids (disp : Bool) (spec : FracSpec) (bar : Html.Node) : Array Html.Node
   | some c => (opened.push bar).push (sizedMo c size)
   | none => opened.push bar
 
-/-- The script schema around a base: `msub`/`msup`/`msubsup` take children
-base, subscript, superscript (MathML Core §3.4.1.1), and a limit-taking
-atom in display style takes `munder`/`mover`/`munderover` instead
-(§3.4.2.1) — the `lim && display` rule the PDF's `layMathItem` applies.
-`.nil` means no script, and a math list emits one element per item, so an
-empty child array is exactly an absent script. Scripts wrap in `mrow`,
-laid out identically to a lone child (§3.3.1). -/
+/-- The script schema around a base: `msub`/`msup`/`msubsup`, or `munder`/`mover`/`munderover`
+for display limits. -/
 def scriptNode (limits : Bool) (base : Html.Node)
     (sub sup : Array Html.Node) (subAttrs supAttrs : Array (String × String) := #[]) :
     Html.Node :=
@@ -170,10 +127,7 @@ def scriptNode (limits : Bool) (base : Html.Node)
     .elem (if limits then "munderover" else "msubsup") #[]
       #[base, .elem "mrow" subAttrs sub, .elem "mrow" supAttrs sup]
 
-/-- A radical: `msqrt` takes any number of children as an implied row,
-`mroot` exactly the base then the index (MathML Core §3.3.3) — the
-renderer draws the surd, so no U+221A glyph enters the tree, as none
-enters `Math.MList.scalarsList`. -/
+/-- A radical: `msqrt`, or `mroot` with its index; the renderer draws the surd. -/
 def radNode (body deg : Array Html.Node) (degAttrs : Array (String × String) := #[]) :
     Html.Node :=
   match deg.isEmpty with
@@ -182,8 +136,7 @@ def radNode (body deg : Array Html.Node) (degAttrs : Array (String × String) :=
     .elem "mroot" #[]
       #[.elem "mrow" #[] body, .elem "mrow" degAttrs deg]
 
-/-- The accent schema over an already emitted base. U+0305 uses the
-overline operator; every other accent keeps its own scalar. -/
+/-- The accent schema over an emitted base; U+0305 uses the overline operator. -/
 def accentNode (mark : Char) (stretch : Bool) (body : Array Html.Node) : Html.Node :=
   let base := Html.Node.elem "mrow" #[] body
   match mark == '\u0305' with
@@ -195,36 +148,24 @@ def accentNode (mark : Char) (stretch : Bool) (body : Array Html.Node) : Html.No
       #[base, .elem "mo" #[("stretchy", if stretch then "true" else "false")]
         #[.text (charText mark)]]
 
-/-- What a formula's cancel marks read beyond the AST, in thousandths of an
-em: the math face's overbar rule and clearance when the page ships its
-faces — the two quantities the PDF lays the marks with — else TeX's own
-stand-ins, plain TeX's default rule (0.4 pt at the 10 pt base, 40 per
-mille) and rule 9's clearance of three rules. -/
+/-- What a formula's cancel marks and lengths read beyond the AST, with TeX's stand-ins where no
+face is measured. -/
 public structure Marks where
   rule : Nat := 40
   gap : Nat := 120
-  /-- Resolved font units for physical math lengths, through the same native
-  run resolver as the attachment measurement. -/
+  /-- Resolved font units for physical math lengths. -/
   em : MathStyle → Option Int := fun _ => none
-  /-- Text-sourced alphabets use the ambient text size, before the math
-  face's optical size adjustment. -/
+  /-- The ambient text size's em, for text-sourced alphabets. -/
   textEm : MathStyle → Option Int := fun _ => none
-  /-- The current style's em and the exact measured input, in the same
-  coordinate units. A missing measurement keeps the semantic fallback. -/
+  /-- The current style's em and measured input; `none` keeps the semantic fallback. -/
   metric : MathStyle → CancelSpec → MList → MList → Option CancelMetric :=
     fun _ _ _ _ => none
   style : MathStyle := .text false
-  /-- `\minalignsep` (`Math.minAlignSep`), the space after an `aligned`'s
-  column pairs, as a CSS length in the page's unit for print lengths — an
-  absolute length, as TeX's is, which a cell's em under a size change is
-  not (`HtmlDoc.mathMarks`); `1em` at the 10 pt base. -/
+  /-- `\minalignsep` as a CSS length in the page's print unit. -/
   alignSep : String := "1em"
-  /-- Font MATH percentages; the unmeasured default is plain TeX's 7/5 pt
-  script sizes at its 10 pt base. -/
+  /-- Font MATH percentages; unmeasured, plain TeX's 7/5 pt script sizes at 10 pt. -/
   scales : ScriptScales := { script := 70, scriptscript := 50 }
-  /-- A colour no palette names, as the page ships it: itself on a page of
-  one polarity, beside its carrying where the page ships both screens
-  (`HtmlDoc.Config.literal`). -/
+  /-- A colour no palette names, as the page ships it. -/
   literal : Ir.Color → String := Ir.Color.css
   deriving Inhabited
 
@@ -233,20 +174,14 @@ public def milliEm (m : Nat) : String :=
   let fs := toString (m % 1000)
   s!"{m / 1000}." ++ "".pushn '0' (3 - fs.length) ++ fs ++ "em"
 
-/-- An explicit transition between the same styles the native walk reads.
-The relative font size performs the size change exactly once; `+0` removes
-MathML's implicit script step. Descendant transitions go through this same
-resolver, including TeX's scriptscript floor. Do not also set CSS math-depth:
-Firefox applies its automatic scaling and minimum size on top of these
-resolved sizes (the rendered script-size matrix holds this boundary). -/
+/-- An explicit transition between the styles the native walk reads; CSS `math-depth` stays unset,
+since Firefox would scale a second time. -/
 def relativeStyle (mk : Marks) (st : MathStyle) : Array (String × String) :=
   #[("scriptlevel", "+0"), ("displaystyle", if st.rank == 3 then "true" else "false"),
     ("style", s!"font-size: {measuredEm (sizeFor mk.scales 100 st)
       (sizeFor mk.scales 100 mk.style)}")]
 
-/-- The fraction schema owns its parent and child style transitions.
-The IR's absolute style is expressed relative to its enclosing browser style,
-so the browser cannot shrink a declared script style a second time. -/
+/-- The fraction schema, owning its parent and child style transitions. -/
 def fracNode (mk : Marks) (disp : Bool) (spec : FracSpec)
     (num den : Array Html.Node) : Html.Node :=
   let st := spec.style.getD mk.style
@@ -258,20 +193,14 @@ def fracNode (mk : Marks) (disp : Bool) (spec : FracSpec)
   else .elem "mrow" (if spec.style.isSome then relativeStyle mk st else #[])
     (fracKids disp spec bar)
 
-/-- A colour as CSS reads it on a MathML element: the palette's custom
-property with the literal as its fallback when the colour came from a
-named entry — the text runs' emission, so a host page restyles a formula's
-colours as it restyles its text's — and otherwise as the page ships a
-colour no palette names (`Marks.literal`). -/
+/-- A colour as CSS reads it on a MathML element: the palette's property with a literal fallback,
+else the literal. -/
 def inkCss (lit : Ir.Color → String) (c : Ir.Color) : Option Ir.ColorRef → String
   | some n => s!"var({n.property}, {c.css})"
   | none => lit c
 
-/-- A colour switch's reach: the colour every element after the switch in
-its list carries, merged into a style the element already declares. Each
-element carries it rather than a wrapper around them, because a wrapper
-`mrow` would change how MathML infers an operator's form — the `+` after a
-switch would become a prefix operator. -/
+/-- A colour switch's colour merged into an element's style; a wrapping `mrow` would change
+operator forms. -/
 def paint (ink : Option String) : Html.Node → Html.Node
   | .elem t attrs kids =>
     match ink with
@@ -284,20 +213,12 @@ def paint (ink : Option String) : Html.Node → Html.Node
   | .style s => .style s
   | .script src nonce => .script src nonce
 
-/-- A cancel mark's diagonal band as a CSS gradient over the padded box: a
-corner keyword angles the gradient across the box, so its midline is the
-box's other diagonal whatever the box's proportions — `top left` draws the
-rising diagonal, `top right` the falling one — and the band is `half` each
-side of it, cut by the box's own edges exactly as the PDF's band is. -/
+/-- A cancel mark's diagonal band as a CSS gradient over the padded box. -/
 def cancelBand (corner ink half : String) : String :=
   s!"linear-gradient(to {corner}, transparent calc(50% - {half}), {ink} calc(50% - {half}), \
 {ink} calc(50% + {half}), transparent calc(50% + {half}))"
 
-/-- Readable, explicitly unmeasured cancellation when no font measurement
-is available. CSS strikes and a superscript preserve the semantic content;
-they make no claim about measured ink, ray alignment or reserved reach.
-The measured path below replaces both the corner head and superscript
-placement when the provider supplies an actual math em and input. -/
+/-- Unmeasured cancellation: CSS strikes and a superscript, for a formula without font metrics. -/
 def cancelNode (mk : Marks) (disp : Bool) (mark : CancelMark) (spec : CancelSpec)
     (struck vals : Array Html.Node) (shown : Bool) : Html.Node :=
   let ink := match spec.color with
@@ -328,8 +249,7 @@ clip-path: polygon(0 50%, 100% 0, 50% 100%); {print}")] #[]
     | none => ""
   let valueRow := Html.Node.elem "mrow"
     (level.push ("style", s!"padding-left: {milliEm mk.gap}" ++ tint)) vals
-  -- The direct script child owns the size step; an inner +0 only
-  -- preserves the size its mpadded parent already received.
+  -- The direct script child owns the size step.
   let valueNode := if spec.room then valueRow else
     .elem "mpadded" (level.push ("width", "0")) #[valueRow]
   if mark == .to || shown then
@@ -341,9 +261,8 @@ clip-path: polygon(0 50%, 100% 0, 50% 100%); {print}")] #[]
     | .style css => .style css
     | .script attrs js => .script attrs js
 
-/-- Baseline-inclusive reach of the measured body, target ink and advance,
-and every painted polygon vertex. Only the final common x translation
-reserves left overhang; overlap mode keeps the body's advance. -/
+/-- Baseline-inclusive reach of the measured body, target ink and advance, and every polygon
+vertex. -/
 private structure CancelReach where
   left : Int
   right : Int
@@ -370,26 +289,19 @@ private def cancelReach (metric : CancelMetric) (g : CancelGeom) : CancelReach :
     else body
   g.polys.foldl (fun r ps => ps.foldl CancelReach.point r) body
 
-/-- One source polygon, with the common room translation and SVG's y-axis
-reversal. All coordinates remain integers in the provider's original unit. -/
+/-- One source polygon with the common room translation and SVG's y-axis reversal. -/
 def cancelPolygon (ink : String) (pad : Int) (ps : Array (Int × Int)) : Html.Node :=
   let points := String.intercalate " " (ps.toList.map fun (x, y) => s!"{x + pad},{-y}")
   .elem "polygon" #[("points", points), ("fill", ink)] #[]
 
-/-- A zero-size placement box uses offsets in the parent's current-style
-em, outside the visible child's font-size change. Balanced margins preserve
-signed offsets and zero advance: Chromium clamps negative MathML lspace. -/
+/-- A zero-size placement box offset in the parent's em; its margins keep signed offsets. -/
 def cancelAt (em x y : Int) (child : Html.Node) : Html.Node :=
   .elem "mpadded" #[("width", "0"), ("height", "0"), ("depth", "0"),
     ("lspace", "0"), ("voffset", measuredEm y em),
     ("style", s!"margin-left: {measuredEm x em}; margin-right: {measuredEm (-x) em}")]
     #[child]
 
-/-- Artifact placement: one SVG user unit is one measured input unit. The
-viewport contains the whole measured reach, with its bottom on an explicit
-MathML baseline. Body, target and SVG use the same signed placement boxes.
-At least one em in each dimension keeps zero-advance content nondegenerate.
-Body and value remain selectable MathML. -/
+/-- Measured cancellation as an SVG over selectable MathML, one SVG unit per measured unit. -/
 def measuredCancelNode (mk : Marks) (metric : CancelMetric) (mark : CancelMark)
     (spec : CancelSpec) (struck vals : Array Html.Node) (shown : Bool) : Html.Node :=
   let em := metric.em
@@ -423,8 +335,7 @@ vertical-align: baseline; overflow: visible; pointer-events: none")]
       ("data-cancel-metric", "measured")])
     (kids.push (cancelAt em sx reach.bot (.elem "mtext" #[] #[svg])))
 
-/-- The font provider is the sole source of measured bounds. A nonpositive
-em cannot define a CSS projection and takes the named semantic fallback. -/
+/-- Measured cancellation when the provider gives a positive em, else the unmeasured fallback. -/
 def cancelWithMetric (mk : Marks) (disp : Bool) (mark : CancelMark) (spec : CancelSpec)
     (body value : MList) (struck vals : Array Html.Node) (shown : Bool) : Html.Node :=
   match mk.metric mk.style spec body value with
@@ -447,10 +358,7 @@ public def listNodes (mk : Marks) (disp : Bool) (ink : Option String) (acc : Arr
     listNodes mk disp ink (acc.push (paint ink (itemNode mk disp (.atom cls nuc sup sub lim))))
       rest
 
-/-- One item as one element: an explicit space is `mspace`; an atom is its
-nucleus under its script schema (`scriptNode`). `disp` goes false inside
-scripts, as the script styles are never display. A colour switch is read
-by its list (`listNodes`) and emits nothing of its own. -/
+/-- One item as one element; a colour switch emits nothing of its own. -/
 public def itemNode (mk : Marks) (disp : Bool) : MItem → Html.Node
   | .space mu => -- Signed mu: 18ths of the current em (TeXbook p. 168).
     .elem "mspace" (advanceAttrs 18 mu) #[]
@@ -461,48 +369,23 @@ public def itemNode (mk : Marks) (disp : Bool) : MItem → Html.Node
       (listNodes { mk with style := mk.style.sup } false none #[] sup)
       (relativeStyle mk mk.style.sub) (relativeStyle mk mk.style.sup)
 
-/-- One nucleus as one element. A lone scalar is final — elaboration
-already remapped variables into the Mathematical Alphanumeric block — so a
-single-char `mi` carries `mathvariant="normal"`, the one value MathML Core
-keeps (§3.2.2), cancelling the renderer's `math-auto` italic: the page
-shows exactly the engine's code point, as the PDF does. A word (`\sin`,
-`\text`) is a multi-char `mi`, upright because `math-auto` maps single
-characters only (§4.2). `mfrac` takes exactly two children (§3.3.2); an
-accent is `mover accent="true"` — the mark keeps its size (§3.4.4) and
-stretches through the face's variants exactly when the PDF's does — with
-the U+0305 overline as `mover accent="false"` over the stretchy U+203E
-operator (`overlineChar`). A grid is `mtable`/`mtr`/`mtd`; the table sets
-`math-style: compact` on its content (§3.5.1), so a display alignment
-restores `displaystyle="true"` (§2.1.6) — amsmath sets align cells in
-display style — while an `array` keeps text style, as the PDF's cell
-style rule does. -/
+/-- One nucleus as one element; a lone scalar is final, so a single-char `mi` cancels `math-auto`
+italic with `mathvariant="normal"`. -/
 public def nucNode (mk : Marks) (disp : Bool) (cls : MathClass) : MNucleus → Html.Node
   | .sym c =>
-    -- A lone scalar never grows: TeX stretches a delimiter only under
-    -- `\left`/`\right` (`delimMo`), and MathML Core's dictionary makes every
-    -- fence stretchy, so an `mo` from here declares it cannot.
+    -- A lone scalar never stretches: only `\left`/`\right` grow a delimiter.
     let tag := leafTag cls c
     .elem tag (if tag == "mi" then #[("mathvariant", "normal")]
         else if tag == "mo" then #[("stretchy", "false")] else #[])
       #[.text (charText c)]
   | .styled style c =>
-    -- A resolved text-sourced alphabet scalar: the plain base letter whose
-    -- family/weight/shape ride on real CSS (`style.css`), the same axes the
-    -- PDF reads from the one typed style — Chromium honours no non-`normal`
-    -- `mathvariant` (MathML Core §3.2.2), so attributes alone would leave
-    -- `\mathsf`/`\mathbf` in the default serif. `mathvariant="normal"` goes
-    -- on a single-char `mi` only, to cancel the renderer's `math-auto`
-    -- italic so the literal base letter stands and CSS decides its shape; a
-    -- digit `mn` and an operator `mo` are upright already and need no cancel.
+    -- Chromium honours no non-`normal` `mathvariant`, so a text style's axes ride on CSS.
     let tag := leafTag cls c
     let base : Array (String × String) := match tag with
       | "mi" => #[("mathvariant", "normal")]
       | "mo" => #[("stretchy", "false")]
       | _ => #[]
-    -- Firefox drops a plain relative font size when a MathML token also
-    -- changes font family. `calc` keeps the same resolved ratio in both
-    -- browsers, without changing the semantic tree (CancelContext.checks
-    -- and the rendered text-target probe).
+    -- Firefox drops a plain relative font size beside a family change; `calc` keeps the ratio.
     let sizing := match mk.textEm mk.style, mk.em mk.style with
       | some text, some math =>
         if text > 0 && math > 0 then s!"; font-size: calc({measuredEm text math})" else ""
@@ -511,10 +394,7 @@ public def nucNode (mk : Marks) (disp : Bool) (cls : MathClass) : MNucleus → H
   | .word s => .elem "mi" #[] #[.text s]
   | .list body => .elem "mrow" #[] (listNodes mk disp none #[] body)
   | .alpha _ _ body =>
-    -- The driver resolves alphabets before emission; direct callers owe
-    -- that same pass (`resolveMathAlphas_covers`). An unresolved `.alpha`
-    -- is a MathML `merror` naming its content, never an ordinary `mrow`.
-    -- The body still renders inside, so no content is lost.
+    -- An unresolved alphabet is an `merror` around its content.
     .elem "merror" #[] (listNodes mk disp none #[] body)
   | .frac spec num den =>
     let st := spec.style.getD mk.style
@@ -545,8 +425,7 @@ public def nucNode (mk : Marks) (disp : Bool) (cls : MathClass) : MNucleus → H
       | .array _ _ => if mk.style.rank == 3 then .text mk.style.cramped else mk.style
       | .small => .script false
       | .align | .aligned _ | .gather => .display false
-    -- `smallmatrix` sets its cells in script style, a thin space each side:
-    -- 3 mu of the text size, in the script size's em at a 70% script scale.
+    -- `smallmatrix`: script-style cells, a thin space each side.
     let attrs := relativeStyle mk st
     let attrs := if kind == .small then attrs.map fun (k, v) =>
       (k, if k == "style" then v ++ "; padding-inline: 0.238em" else v)
@@ -558,24 +437,8 @@ public def nucNode (mk : Marks) (disp : Bool) (cls : MathClass) : MNucleus → H
       (listNodes { mk with style := st } (st.rank == 3) none #[] value)
       (value matches .cons _ _)
 
-/-- The `mtd` cells of one row. A cell's alignment is the grid kind's for
-its column (`GridKind.colAlign`), declared as CSS `text-align` — MathML
-Core's `mtd` computes to `table-cell` with a `text-align: center` default
-and no `columnalign` attribute (§3.5.3 and its user-agent stylesheet;
-styling beyond it is CSS, §2.1.5) — so only a non-centred column carries
-the property. An `align` pair's halves abut at the alignment point
-(amsmath's `\align@preamble`, the source `GridKind.gapAfter` cites; the
-PDF assembly realizes the same zero), so the pair-inner padding of Core's
-default `mtd` rule (0.5ex 0.4em) is zeroed on that side; the default
-stays as the stand-in for the other gaps, as `gapAfter`'s 2 em between
-pairs is already a stated stand-in. A right column declares the standard
-value and its `-webkit-` twin: today's Chromium renders every standard
-`text-align` on a math cell flush-left and reads only the prefixed forms
-(its own default centring is `-webkit-center`; probed 2026-09-20,
-Playwright Chromium), and an unsupported value invalidates only its own
-declaration (CSS Syntax 3 §declaration error handling), so each engine
-keeps the one it understands — delete the twin when Chromium honours the
-standard value. -/
+/-- The `mtd` cells of one row, each aligned by CSS `text-align`, with its `-webkit-` twin for
+Chromium. -/
 def rowNodes (mk : Marks) (disp : Bool) (kind : GridKind) (k : Nat)
     (acc : Array Html.Node) : MRow → Array Html.Node
   | .nil => acc
@@ -586,9 +449,7 @@ def rowNodes (mk : Marks) (disp : Bool) (kind : GridKind) (k : Nat)
           "text-align: right; text-align: -webkit-right; padding-right: 0")]
       | .align, .left => #[("style", "text-align: left; padding-left: 0")]
       | .align, .center => #[]
-      -- `aligned`'s pairs stand `\minalignsep` apart, half on each side of
-      -- the pair boundary, and the whole after its last pair where it
-      -- trails; its outer edges keep the default.
+      -- `aligned`'s pairs stand `\minalignsep` apart, half on each side.
       | .aligned _, .right =>
         #[("style", "text-align: right; text-align: -webkit-right; padding-right: 0" ++
           (if k == 0 then "" else s!"; padding-left: calc({mk.alignSep} / 2)"))]
@@ -609,9 +470,7 @@ def rowNodes (mk : Marks) (disp : Bool) (kind : GridKind) (k : Nat)
         match [align, stretchPad s].filterMap id with
         | [] => #[]
         | parts => #[("style", "; ".intercalate parts)]
-      -- `\thickspace` before every column but the first (`GridKind.gapAfter`)
-      -- and half of `1.5\ex@` above and below each row, in the script size's
-      -- em at a 70% script scale.
+      -- `\thickspace` before every column but the first, half of `1.5\ex@` around each row.
       | .small, _ =>
         #[("style", if k == 0 then "padding: 0.107em 0" else "padding: 0.107em 0 0.107em 0.397em")]
     rowNodes mk disp kind (k + 1)
@@ -627,39 +486,26 @@ def rowsNodes (mk : Marks) (disp : Bool) (kind : GridKind) (acc : Array Html.Nod
 
 end
 
-/-- One formula's children: its list in the formula's own style, display
-or text — what the root (`formula`) and the in-context row (`formulaRow`)
-both carry. -/
+/-- One formula's children: its list in the formula's own style. -/
 public def formulaKids (display : Bool) (body : MList) (mk : Marks := {}) :
     Array Html.Node :=
   listNodes { mk with style := if display then .display false else .text false }
     display none #[] body
 
-/-- One formula as its `math` element: `display="block"` for display math
-(the user-agent stylesheet then gives it `math-style: normal` and centres
-the content box — MathML Core §2.1.1), absent for inline, which the same
-stylesheet treats as `inline`. The backend's own attributes (class,
-`data-tex`) ride in `extra`. -/
+/-- One formula as its `math` element, `display="block"` for display math; `extra` carries the
+backend's attributes. -/
 public def formula (display : Bool) (extra : Array (String × String))
     (body : MList) (mk : Marks := {}) : Html.Node :=
   .elem "math"
     ((if display then #[("display", "block")] else #[]) ++ extra)
     (formulaKids display body mk)
 
-/-- One formula inside an element that already opened `math` — a picture
-label's carrier: the same children as `formula`, as a row. `math` is the
-root of a MathML tree (MathML Core §2.1.1), so a second one there would be
-a root nested in a root (`unnested`); `displaystyle`, an attribute every
-MathML element takes (§2.1.6), sets what a root's `display="block"` sets. -/
+/-- One formula as a row inside an open `math` element, `displaystyle` standing for `display`. -/
 public def formulaRow (display : Bool) (extra : Array (String × String))
     (body : MList) (mk : Marks := {}) : Html.Node :=
   .elem "mrow"
     ((if display then #[("displaystyle", "true")] else #[]) ++ extra)
     (formulaKids display body mk)
-
--- The glyph-text fold: what the emission's token leaves spell, in
--- document order, as a pure fold over the AST — the exposed statement of
--- "the leaf text of the MathML emission" the theorem below holds it to.
 
 /-- A list of scalars onto an accumulator. -/
 def pushChars (acc : Array Char) : List Char → Array Char
@@ -668,12 +514,7 @@ def pushChars (acc : Array Char) : List Char → Array Char
 
 mutual
 
-/-- The glyph text of a math list, MathML document order: per atom the
-nucleus, then the subscript, then the superscript (the script elements'
-child order — where the PDF census `MList.scalarsList` walks superscript
-first); a radical's body before its degree (`mroot` child order); a
-delimiter pair around its body; an accent mark after its base, the U+0305
-overline as `overlineChar`. Spaces carry no text. -/
+/-- The glyph text of a math list in MathML document order; spaces carry none. -/
 public def listChars (acc : Array Char) : MList → Array Char
   | .nil => acc
   | .cons x rest => listChars (itemChars acc x) rest
@@ -717,7 +558,6 @@ def nucChars (acc : Array Char) : MNucleus → Array Char
         | true => overlineChar
         | false => mark)
   | .grid _ rows => rowsChars acc rows
-  -- The struck row, then the value: `msup`'s child order.
   | .cancel _ _ value body => listChars (listChars acc body) value
 
 def rowChars (acc : Array Char) : MRow → Array Char
@@ -732,9 +572,7 @@ end
 
 mutual
 
-/-- The text content of an emitted node: every `.text` leaf in order. The
-emission above puts text only inside `mi`/`mn`/`mo` token leaves, so this
-is exactly their leaf text. -/
+/-- The text content of an emitted node: every `.text` leaf in order. -/
 public def nodeChars (acc : Array Char) : Html.Node → Array Char
   | .text s => pushChars acc s.toList
   | .elem _ _ kids => nodeListChars acc kids.toList
@@ -747,7 +585,6 @@ public def nodeListChars (acc : Array Char) : List Html.Node → Array Char
 
 end
 
-/-- The list fold's two equations, for readers outside this module. -/
 public theorem nodeListChars_nil (acc : Array Char) : nodeListChars acc [] = acc := by
   simp only [nodeListChars]
 
@@ -764,21 +601,17 @@ theorem nodeListChars_append (c : Array Char) (l1 l2 : List Html.Node) :
 theorem charText_toList (c : Char) : (charText c).toList = [c] :=
   String.toList_ofList
 
-/-- A token leaf's text content is its one scalar. -/
 theorem pushChars_charText (acc : Array Char) (c : Char) :
     pushChars acc (charText c).toList = acc.push c := by
   rw [charText_toList]
   rfl
 
-/-- An operator (or any token) element around one scalar contributes
-exactly that scalar. -/
 theorem moLeaf_chars (t : String) (attrs : Array (String × String))
     (m : Char) (c : Array Char) :
     nodeChars c (.elem t attrs #[.text (charText m)]) = c.push m := by
   show pushChars c (charText m).toList = c.push m
   exact pushChars_charText c m
 
-/-- A delimiter element contributes exactly its scalar. -/
 theorem delimMo_chars (m : Char) (c : Array Char) :
     nodeChars c (delimMo m) = c.push m :=
   moLeaf_chars "mo" _ m c
@@ -790,8 +623,6 @@ theorem toList_of_isEmpty {α : Type} {a : Array α} (h : a.isEmpty = true) :
   rw [hs] at this
   exact List.eq_nil_of_length_eq_zero this
 
-/-- A cancel mark's text is its struck row's, then its value's when the
-value shows: the head and the marks are an empty element and CSS. -/
 theorem cancelNode_chars (mk : Marks) (disp : Bool) (mark : CancelMark) (spec : CancelSpec)
     (struck vals : Array Html.Node) (shown : Bool) (c : Array Char) :
     nodeChars c (cancelNode mk disp mark spec struck vals shown)
@@ -801,8 +632,6 @@ theorem cancelNode_chars (mk : Marks) (disp : Bool) (mark : CancelMark) (spec : 
   cases hm : mark == .to <;> cases shown <;> cases spec.room <;>
     simp [nodeChars, nodeListChars, Array.toList_push, nodeListChars_append]
 
-/-- Painting a colour onto an element changes its attributes, never its
-text. -/
 theorem paint_chars (ink : Option String) (n : Html.Node) (c : Array Char) :
     nodeChars c (paint ink n) = nodeChars c n := by
   cases n with
@@ -816,8 +645,6 @@ theorem paint_chars (ink : Option String) (n : Html.Node) (c : Array Char) :
   | style s => rfl
   | script a j => rfl
 
-/-- SVG polygons carry only attributes, regardless of their measured
-points. Their census is empty; hiding them never hides native MathML. -/
 theorem cancelPolygons_chars (ink : String) (pad : Int)
     (ps : List (Array (Int × Int))) (c : Array Char) :
     nodeListChars c (ps.map (cancelPolygon ink pad)) = c := by
@@ -825,8 +652,6 @@ theorem cancelPolygons_chars (ink : String) (pad : Int)
   | nil => rfl
   | cons p ps ih => simpa [cancelPolygon, nodeChars, nodeListChars] using ih
 
-/-- The measured artifact's text is the native body followed by its target.
-Placement offsets, dimensions and SVG never enter the text census. -/
 theorem measuredCancelNode_chars (mk : Marks) (metric : CancelMetric)
     (mark : CancelMark) (spec : CancelSpec) (struck vals : Array Html.Node)
     (shown : Bool) (c : Array Char) :
@@ -837,8 +662,6 @@ theorem measuredCancelNode_chars (mk : Marks) (metric : CancelMetric)
     simp [measuredCancelNode, hm, cancelAt, nodeChars, nodeListChars,
       Array.toList_map, paint_chars, cancelPolygons_chars]
 
-/-- Either provider result preserves exactly the same native glyph census;
-this quantifies over arbitrary metric callbacks, including missing inputs. -/
 theorem cancelWithMetric_chars (mk : Marks) (disp : Bool) (mark : CancelMark)
     (spec : CancelSpec) (body value : MList) (struck vals : Array Html.Node)
     (shown : Bool) (c : Array Char) :
@@ -850,9 +673,6 @@ theorem cancelWithMetric_chars (mk : Marks) (disp : Bool) (mark : CancelMark)
   · split <;> first | exact measuredCancelNode_chars .. | exact cancelNode_chars ..
   · exact cancelNode_chars ..
 
-/-- An emitted list grows the accumulator: one element per atom or space,
-none removed — the fact that lets `scriptNode` and `radNode` read `.nil`
-(no script, no degree) off an empty child array. -/
 theorem listNodes_size (mk : Marks) (disp : Bool) :
     ∀ (ink : Option String) (ml : MList) (acc : Array Html.Node),
       acc.size ≤ (listNodes mk disp ink acc ml).size
@@ -866,8 +686,6 @@ theorem listNodes_size (mk : Marks) (disp : Bool) :
       (listNodes_size mk disp ink rest
         (acc.push (paint ink (itemNode mk disp (.atom cls nuc sup sub lim)))))
 
-/-- An empty emission is an empty list, on the fold: the glyph text of a
-list whose emission is empty is the accumulator unchanged. -/
 theorem listChars_of_empty (mk : Marks) (disp : Bool) :
     ∀ (ink : Option String) (ml : MList),
       (listNodes mk disp ink #[] ml).isEmpty = true → ∀ (c : Array Char), listChars c ml = c
@@ -892,9 +710,6 @@ theorem listChars_of_empty (mk : Marks) (disp : Bool) :
         Array Html.Node).size = 1 := rfl
     omega
 
-/-- The script schema's text is base, subscript, superscript, whether the
-scripts ride beside (`msub` family) or above and below (`munder` family):
-the two schemas share their child order. -/
 theorem scriptNode_chars (limits : Bool) (base : Html.Node)
     (sub sup : Array Html.Node) (subAttrs supAttrs : Array (String × String)) (c : Array Char) :
     nodeChars c (scriptNode limits base sub sup subAttrs supAttrs)
@@ -914,8 +729,6 @@ theorem scriptNode_chars (limits : Bool) (base : Html.Node)
   · rw [toList_of_isEmpty hsub, toList_of_isEmpty hsup]
     rfl
 
-/-- A radical's text is its body then its degree, `msqrt` and `mroot`
-alike. -/
 theorem radNode_chars (body deg : Array Html.Node) (degAttrs : Array (String × String))
     (c : Array Char) :
     nodeChars c (radNode body deg degAttrs)
@@ -927,8 +740,6 @@ theorem radNode_chars (body deg : Array Html.Node) (degAttrs : Array (String × 
   · rw [toList_of_isEmpty hdeg]
     rfl
 
-/-- Fraction delimiters enclose numerator then denominator in the native
-text order; the child styles and rule never contribute text. -/
 theorem fracNode_chars (mk : Marks) (disp : Bool) (spec : FracSpec)
     (num den : Array Html.Node) (c : Array Char) :
     nodeChars c (fracNode mk disp spec num den) =
@@ -939,7 +750,6 @@ theorem fracNode_chars (mk : Marks) (disp : Bool) (spec : FracSpec)
   cases l <;> cases r <;> cases style <;>
     simp [fracNode, fracKids, nodeChars, nodeListChars, sizedMo, pushChars_charText]
 
-/-- An accent emits its base followed by the declared accent scalar. -/
 theorem accentNode_chars (mark : Char) (stretch : Bool) (body : Array Html.Node)
     (c : Array Char) :
     nodeChars c (accentNode mark stretch body) =
@@ -1119,16 +929,7 @@ theorem rowsNodes_chars (mk : Marks) (disp : Bool) (kind : GridKind) :
 
 end
 
-/-- The MathML census: the emission's leaf text — the `mi`/`mn`/`mo`
-contents in order, which is all the text the element carries — equals the
-pure glyph-text fold over the same math list, for either display mode,
-whatever backend attributes ride on the element and whatever the marks'
-measures are. What this holds fixed: the projection to MathML drops no
-glyph the AST carries and invents none beyond it — a colour switch paints,
-a cancel mark's strike and arrowhead are decorative SVG polygons (CSS in
-the unmeasured fallback), text of neither; the fold's agreement with the PDF's coverage census
-(`Math.MList.scalarsList` — same scalars, its order, overline excepted)
-is pinned by test in `mathmlChecks`. -/
+/-- A fact of the artifact: the emission's leaf text is the glyph-text fold of its math list. -/
 public theorem mathml_glyphs_agree (display : Bool) (extra : Array (String × String))
     (body : MList) (mk : Marks) :
     nodeChars #[] (formula display extra body mk) = listChars #[] body := by
@@ -1136,7 +937,7 @@ public theorem mathml_glyphs_agree (display : Bool) (extra : Array (String × St
   rw [listNodes_chars _ display none body #[] #[]]
   rfl
 
-/-- The in-context row paints the same glyph text as the root. -/
+/-- A fact of the artifact: the in-context row carries the root's glyph text. -/
 public theorem formulaRow_glyphs_agree (display : Bool) (extra : Array (String × String))
     (body : MList) (mk : Marks) :
     nodeChars #[] (formulaRow display extra body mk) = listChars #[] body := by
@@ -1144,9 +945,8 @@ public theorem formulaRow_glyphs_agree (display : Bool) (extra : Array (String �
   rw [listNodes_chars _ display none body #[] #[]]
   rfl
 
-/-- The HTML projection consumes the same resolved math list the PDF layout
-consumes: its typed MathML leaf text is exactly that list's glyph-text
-projection, after the one shared alphabet pass. -/
+/-- The projection of the shared alphabet pass: MathML leaf text is the resolved list's glyph
+text. -/
 public theorem resolveMathAlphas_html_agree (coverage : Math.MathAlphabetCoverage)
     (display : Bool) (extra : Array (String × String)) (body : MList)
     (mk : Marks) :
@@ -1154,17 +954,6 @@ public theorem resolveMathAlphas_html_agree (coverage : Math.MathAlphabetCoverag
       (formula display extra (Math.resolveMathAlphas coverage body) mk) =
       listChars #[] (Math.resolveMathAlphas coverage body) :=
   mathml_glyphs_agree display extra (Math.resolveMathAlphas coverage body) mk
-
-/-! ## The elements a formula is built of
-
-The content emitter's elements are one fixed vocabulary (`contentTags`), and
-`merror` only where an alphabet reached it unresolved. Two facts follow for
-every formula: its content holds no `math` element, so the root around it —
-its own, or a picture label's carrier — is the tree's only root
-(`formula_unnested_contract`, `formulaRow_mathFree_contract`); and a resolved
-formula, which is alphabet-free (`Math.resolveMathAlphas_covers`), holds no
-`merror`, the element browsers frame in red on yellow
-(`formula_merrorFree_contract`). -/
 
 mutual
 
@@ -1184,9 +973,7 @@ end
 
 mutual
 
-/-- No `math` element stands inside another. A `math` element is the root
-of a MathML tree (MathML Core §2.1.1); one inside another is a second root,
-whose layout no engine defines. -/
+/-- No `math` element stands inside another (MathML Core §2.1.1). -/
 @[expose] public def unnested : Html.Node → Bool
   | .elem t _ kids =>
     if t == "math" then tagFreeList (· == "math") kids.toList else unnestedList kids.toList
@@ -1201,9 +988,7 @@ whose layout no engine defines. -/
 
 end
 
-/-- Every element the content emitter builds but `merror`: token, layout,
-script, fraction, radical, table and padding elements, and the SVG a
-measured cancellation draws. `math` is not among them. -/
+/-- Every element the content emitter builds but `merror`; `math` is not among them. -/
 public def contentTags : List String :=
   ["mi", "mn", "mo", "mtext", "mspace", "mrow", "mstyle", "mpadded", "mfrac", "msqrt",
     "mroot", "msub", "msup", "msubsup", "munder", "mover", "munderover", "mtable", "mtr",
@@ -1221,7 +1006,6 @@ public theorem tagFreeList_push (p : String → Bool) (acc : Array Html.Node) (n
 
 mutual
 
-/-- A tree with no `math` element nests none. -/
 public theorem unnested_of_mathFree :
     ∀ n : Html.Node, tagFree (· == "math") n = true → unnested n = true
   | .text _, _ => rfl
@@ -1232,7 +1016,6 @@ public theorem unnested_of_mathFree :
   | .style _, _ => rfl
   | .script _ _, _ => rfl
 
-/-- `unnested_of_mathFree` over a list of trees. -/
 public theorem unnestedList_of_mathFree :
     ∀ ns : List Html.Node, tagFreeList (· == "math") ns = true → unnestedList ns = true
   | [], _ => rfl
@@ -1259,7 +1042,6 @@ theorem tagFree_paint (p : String → Bool) (ink : Option String) (n : Html.Node
 theorem leafTag_mem (cls : MathClass) (c : Char) : leafTag cls c ∈ contentTags := by
   cases cls <;> simp only [leafTag] <;> (try split) <;> simp [contentTags]
 
-/-- A tag outside the vocabulary selects none of its elements. -/
 theorem contentTags_beq_false {s : String} (hs : s ∉ contentTags) :
     ∀ t ∈ contentTags, (t == s) = false := by
   intro t ht
@@ -1267,7 +1049,6 @@ theorem contentTags_beq_false {s : String} (hs : s ∉ contentTags) :
   rintro rfl
   exact hs ht
 
-/-- The vocabulary, one fact per element, in the form `simp` rewrites with. -/
 theorem contentTags_false {p : String → Bool} (hp : ∀ t ∈ contentTags, p t = false) :
     p "mi" = false ∧ p "mn" = false ∧ p "mo" = false ∧ p "mtext" = false ∧
     p "mspace" = false ∧ p "mrow" = false ∧ p "mstyle" = false ∧ p "mpadded" = false ∧
@@ -1365,10 +1146,6 @@ private theorem alphaFree_atom {cls : MathClass} {nuc : MNucleus} {sup sub : MLi
 
 mutual
 
-/-- The content of a list builds only `contentTags` elements, and `merror`
-only for an unresolved alphabet: for any tag selection `p` that misses the
-vocabulary, and misses `merror` unless the list is alphabet-free, the
-emission carries no selected element. -/
 theorem listNodes_tagFree (p : String → Bool) (hp : ∀ t ∈ contentTags, p t = false)
     (mk : Marks) (disp : Bool) :
     ∀ (ink : Option String) (ml : MList) (acc : Array Html.Node),
@@ -1518,38 +1295,27 @@ theorem rowsNodes_tagFree (p : String → Bool) (hp : ∀ t ∈ contentTags, p t
 
 end
 
-/-- A formula's content holds no `math` element, for every list: the
-emitter's vocabulary has none, and `merror` is not one. A fact of the
-artifact, as `formula_unnested_contract` is. -/
+/-- A fact of the artifact: a formula's content holds no `math` element. -/
 public theorem formulaKids_mathFree_contract (display : Bool) (body : MList) (mk : Marks) :
     tagFreeList (· == "math") (formulaKids display body mk).toList = true :=
   listNodes_tagFree (· == "math") (contentTags_beq_false (by simp [contentTags]))
     _ _ none body #[] (fun h => by simp at h) rfl
 
-/-- **A formula's root is its tree's only root** (`_contract`): the `math`
-element `formula` builds has no `math` descendant, for every list, display
-mode and measure. A fact of the artifact: one root per tree is MathML's rule,
-not the IR's. -/
+/-- A fact of the artifact: a formula's root is its tree's only root. -/
 public theorem formula_unnested_contract (display : Bool) (extra : Array (String × String))
     (body : MList) (mk : Marks) : unnested (formula display extra body mk) = true := by
   simp only [formula, unnested, beq_self_eq_true, ↓reduceIte]
   exact formulaKids_mathFree_contract display body mk
 
-/-- **A formula set inside an open `math` element adds no root**
-(`_contract`): the row `formulaRow` builds holds no `math` element at all,
-so the carrier around it stays the only root. A fact of the artifact, as
-`formula_unnested_contract` is. -/
+/-- A fact of the artifact: a formula row holds no `math` element. -/
 public theorem formulaRow_mathFree_contract (display : Bool) (extra : Array (String × String))
     (body : MList) (mk : Marks) :
     tagFree (· == "math") (formulaRow display extra body mk) = true := by
   simp only [formulaRow, tagFree, formulaKids_mathFree_contract, Bool.and_true]
   rfl
 
-/-- **A resolved formula carries no error element** (`_contract`): an
-alphabet-free list — every list the driver's alphabet pass returns
-(`Math.resolveMathAlphas_covers`) — emits no `merror`, root or row. The
-MathML projection of the IR's resolution fact, which reaches every formula a
-page paints (`Ir.mathRequests_resolve_covers`). -/
+/-- The MathML projection of `Math.resolveMathAlphas_covers`: a resolved formula emits no
+`merror`. -/
 public theorem formula_merrorFree_contract (display : Bool) (body : MList) (mk : Marks)
     (h : body.alphaFree = true) :
     tagFreeList (· == "merror") (formulaKids display body mk).toList = true :=

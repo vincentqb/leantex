@@ -4,22 +4,10 @@ import LeanTex.Core.GlyphList
 
 namespace LeanTex.Core.Ink
 
-/-! Glyph ink in the underline band, from the font's own outlines.
+/-! Glyph outlines decoded from TrueType and CFF data, total over arbitrary bytes: ink hulls and
+the ink crossing the underline band; an undecodable glyph is `none`. -/
 
-For each glyph: the horizontal extent of ink crossing the band the underline
-rule occupies, as merged x-intervals in font units, so `q` keeps its rule
-under the bowl and clears it at the stem. The extent is the projection of
-the flattened outline — eight chords per curve — clipped to the band, so it
-is approximate by the flattening error, a few font units at a curve's
-extreme, well under the clearance the consumer dilates every interval by.
-Everything here is total over arbitrary bytes, and errs only toward more
-obstruction: a glyph the decoder cannot answer for — malformed or truncated
-tables, unsupported constructs, exceeded budgets — is reported as `none`,
-and the caller clears its whole advance. -/
-
-/-- A bounded byte read. Out of range is 0 rather than a panic: these parsers
-are fed arbitrary files, and a reader that aborts the process on a short
-table is not a parser. -/
+/-- A bounded byte read: 0 out of range, never a panic. -/
 public def u8 (b : ByteArray) (i : Nat) : Nat :=
   if h : i < b.size then (b[i]).toNat else 0
 
@@ -57,8 +45,7 @@ public def findTable (b : ByteArray) (tag : String) : Option Table := Id.run do
       return some ⟨u32 b (entry + 8), u32 b (entry + 12)⟩
   return none
 
-/-- Does a table's declared extent fit inside the file? A table that does not
-is a broken font, and saying so beats reading zeros off the end of it. -/
+/-- Does a table's declared extent fit inside the file? -/
 public def fits (b : ByteArray) (t : Table) : Bool :=
   t.offset + t.length ≤ b.size
 
@@ -70,18 +57,13 @@ public inductive Cmd where
   | cube (c1x c1y c2x c2y x y : Int)
   deriving Inhabited, BEq
 
-/-- A decoded outline: its commands, and the lowest y any point reaches —
-control points included, so by the convex-hull property the curve itself
-never goes lower. A glyph whose `minY` clears the band has no ink in it and
-is never flattened. -/
+/-- A decoded outline: its commands and the lowest y any point, control points included, reaches. -/
 public structure Outline where
   cmds : Array Cmd
   minY : Int
 
-/-- Straight edges in doubled coordinates, each curve cut into eight chords.
-Every vertex has an even y — `move`/`line` vertices are doubled inputs, and
-each chord vertex is computed in font units and then doubled — so a scanline
-at an odd y never meets one and the crossing count is unambiguous. -/
+/-- Straight edges in doubled coordinates, each curve cut into eight chords, every vertex at an
+even y. -/
 private def edgesOf (cmds : Array Cmd) : Array (Int × Int × Int × Int) := Id.run do
   let mut out : Array (Int × Int × Int × Int) := #[]
   let mut cx : Int := 0
@@ -166,21 +148,8 @@ private def fillAt (edges : Array (Int × Int × Int × Int)) (y : Int) :
     wind := w
   return out
 
-/-- Merged x-intervals (font units) of ink inside `[bandLo, bandHi]`: the
-x-projection of every flattened edge clipped to the band, unioned with the
-winding-fill runs on the band's midline. This covers all flattened ink in
-the band: a point of ink either has a contour edge somewhere on its vertical
-line inside the band — the clipped projection of that edge covers it — or it
-sits strictly inside ink across the whole band height, and then the midline
-fill run covers it. The fill leg needs no vertex on its scanline, which
-`edgesOf` guarantees by construction (every vertex even, the scanline odd).
-What remains approximate is the flattening itself: eight chords per curve,
-whose deviation from the true curve grows with the curve's size — a few
-font units at a glyph's extremes, more for outsized geometry — plus one
-font unit of rounding at each chord vertex and at the clip. The consumer
-dilates every interval by twice the rule thickness, two orders of magnitude
-above the rounding, so only the chord deviation is ever visible and only as
-a slightly loose boundary. -/
+/-- Merged x-intervals in font units of ink inside `[bandLo, bandHi]`, exact up to the
+eight-chord flattening. -/
 public def bandIntervals (o : Outline) (bandLo bandHi : Int) : Array (Int × Int) := Id.run do
   if o.minY ≥ bandHi then
     return #[]
@@ -217,8 +186,6 @@ public def bandIntervals (o : Outline) (bandLo bandHi : Int) : Array (Int × Int
       else out := out.push (a, b)
     | none => out := out.push (a, b)
   return out
-
--- TrueType outlines --------------------------------------------------------
 
 /-- A composite component's 2×2 transform in F2Dot14 (÷16384) plus a
 font-unit offset. -/
@@ -288,11 +255,8 @@ private def contourCmds (pts : Array (Int × Int × Bool)) (s e : Nat)
   | none => acc := acc.push (.line start.1 start.2)
   return acc
 
-/-- Decode a simple glyph (numberOfContours ≥ 0 at `off`) under `t`,
-appending to `acc`. Reads are bounded by `lim` (the end of this glyph's
-slice): a glyph that declares more than its slice holds, or exceeds the
-contour or point budget, is undecodable (`none`) rather than silently
-truncated — the caller must fall back conservatively. -/
+/-- Decode a simple glyph at `off` under `t` onto `acc`; a read past `lim` or a budget makes it
+`none`. -/
 private def simpleOutline (b : ByteArray) (off lim : Nat) (t : Xf)
     (acc : Array Cmd) (minY0 : Int) : Option (Array Cmd × Int) := Id.run do
   let nc := (i16 b off).toNat
@@ -363,11 +327,7 @@ private def simpleOutline (b : ByteArray) (off lim : Nat) (t : Xf)
       s := e + 1
   return some (acc, minY)
 
-/-- Decode glyph `g` of a TrueType font. `none` for anything the decoder
-does not cover or the data does not support: an out-of-range component gid,
-a component list past the budget, point-matching arguments, a malformed
-loca entry, or a glyph slice that overruns its table — the caller falls
-back conservatively. Only a genuinely empty glyph decodes to nothing. -/
+/-- Decode glyph `g` of a TrueType font; `none` for anything the decoder does not cover. -/
 private def glyfOutline (b : ByteArray) (glyf loca : Table) (long : Bool)
     (numGlyphs g : Nat) : Option Outline := Id.run do
   let offAt (i : Nat) : Nat :=
@@ -387,7 +347,6 @@ private def glyfOutline (b : ByteArray) (glyf loca : Table) (long : Bool)
     let o1 := offAt gid
     let o2 := offAt (gid + 1)
     if o2 == o1 then
-      -- A genuinely empty glyph (a space): no outline, no ink.
       continue
     if o2 < o1 || o2 > glyf.length || o1 + 10 > glyf.length then
       bad := true
@@ -411,7 +370,6 @@ private def glyfOutline (b : ByteArray) (glyf loca : Table) (long : Bool)
         p := p + 4
         let words := flags &&& 1 != 0
         if flags &&& 2 == 0 then
-          -- point-matching component: not decoded
           bad := true
         else
           let (dx, dy) :=
@@ -436,15 +394,12 @@ private def glyfOutline (b : ByteArray) (glyf loca : Table) (long : Bool)
           work := work.push (gi, t.compose child)
           more := flags &&& 32 != 0
       if more then
-        -- component list past the budget: undecoded remainder
         bad := true
       if p > lim then
         bad := true
   if bad || !work.isEmpty then
     return none
   return some ⟨cmds, minY⟩
-
--- CFF (Type 2 charstring) outlines ------------------------------------------
 
 /-- Entries of a CFF INDEX as absolute (start, end) byte ranges, plus the
 offset just past the INDEX. -/
@@ -489,9 +444,8 @@ private structure CffDict where
   fdSelect : Nat := 0
   matrix : Option (Array Rat) := none
 
-/-- A DICT real (Adobe Technical Note #5176 Table 5): nibbles of digits, a
-point, an exponent (`E`, `E-`), a sign, up to the `f` terminator. The value
-and the position after it. -/
+/-- A DICT real (Technical Note #5176 Table 5), nibbles up to the `f` terminator: its value and
+the position after it. -/
 private def dictReal (b : ByteArray) (p e : Nat) : Rat × Nat := Id.run do
   let mut q := p
   let mut neg := false
@@ -528,10 +482,7 @@ private def dictReal (b : ByteArray) (p e : Nat) : Rat × Nat := Id.run do
   let v := if expoNeg then m / p10 else m * p10
   return (if neg then -v else v, q)
 
-/-- The DICT operators this consumer needs (Technical Note #5176 Table 9,
-Table 10): the charstrings, the private dictionary and its subroutines,
-the charstring type, the font matrix, the charset and encoding, and the
-CID-keyed font's `ROS`, `FDArray` and `FDSelect`. -/
+/-- The CFF DICT operators this consumer needs (Technical Note #5176 Tables 9 and 10). -/
 private def parseDict (b : ByteArray) (s e : Nat) : CffDict := Id.run do
   let mut ops : Array Rat := #[]
   let mut d : CffDict := {}
@@ -603,10 +554,8 @@ private def localSubrs (b : ByteArray) (d : CffDict) : Array (Nat × Nat) :=
     else #[]
   else #[]
 
-/-- A charset (Technical Note #5176 §13): each glyph's string identifier —
-or, in a CID-keyed font, its CID — glyph 0 being `.notdef`. The three
-predefined charsets (offsets 0–2) are read as the identity, which is the
-ISOAdobe charset's own reading. -/
+/-- A charset (Technical Note #5176 §13): each glyph's string identifier or CID; the predefined
+charsets read as the identity. -/
 private def parseCharset (b : ByteArray) (off n : Nat) : Array Nat := Id.run do
   if off ≤ 2 then
     return Array.range n
@@ -629,11 +578,7 @@ private def parseCharset (b : ByteArray) (off n : Nat) : Array Nat := Id.run do
           out := out.push (first + k)
   return out
 
-/-- A name-keyed CFF's own encoding (Technical Note #5176 §12): each of
-the 256 codes' glyph — the predefined Standard and Expert encodings
-through their names' string identifiers and the charset; a custom one's
-codes (format 0) or ranges (format 1), in glyph order from glyph 1, and
-its supplements, each a code and the string identifier of its glyph. -/
+/-- A name-keyed CFF's own encoding (Technical Note #5176 §12): each of the 256 codes' glyph. -/
 private def parseEncoding (b : ByteArray) (off : Nat) (charset : Array Nat) : Array (Option Nat) := Id.run do
   let bySid (sid : Nat) : Option Nat := charset.findIdx? (· == sid)
   if off == 0 then
@@ -688,11 +633,7 @@ private def parseFdSelect (b : ByteArray) (off n : Nat) : Array Nat := Id.run do
         out := out.push fd
   return out
 
-/-- Prepared CFF data carried by `Src.cffSrc`: the charstrings and their
-subroutines, each glyph's charset entry, and — in a CID-keyed font — each
-glyph's font dictionary and its own local subroutines and matrix.
-Consumers may inspect the source kind; only the outline decoder reads its
-parsed table state. -/
+/-- Prepared CFF data: charstrings, subroutines, charset, and a CID-keyed font's dictionaries. -/
 public structure Cff where
   private charStrings : Array (Nat × Nat)
   private gsubrs : Array (Nat × Nat)
@@ -709,10 +650,8 @@ public structure Cff where
   /-- The Top DICT's font matrix: glyph space to text space. -/
   matrix : Array Rat
 
-/-- The CFF data at the start of `b` — a bare CFF, as a PDF's `FontFile3`
-carries it (`Type1C`, `CIDFontType0C`), or an OpenType font's `CFF `
-table — name-keyed or CID-keyed. `none` for a charstring type other than 2
-or anything malformed: every glyph then falls back. -/
+/-- The CFF data at the start of `b`, name-keyed or CID-keyed; `none` for a charstring type
+other than 2 or anything malformed. -/
 private def parseCff (b : ByteArray) : Option Cff := do
   let hdrSize := u8 b 2
   let (_, p1) ← parseIndex b hdrSize
@@ -736,11 +675,8 @@ private def parseCff (b : ByteArray) : Option Cff := do
            fdMatrix := #[], charset, strings, builtin := parseEncoding b d.encoding charset
            cid := false, matrix }
 
-/-- Run one Type 2 charstring into an outline. Explicit subroutine frames
-and a step budget keep it total on arbitrary bytes; `none` marks a
-charstring the interpreter does not cover (seac composition, arithmetic
-operators) or that never terminates within the budget, which the caller
-treats conservatively. -/
+/-- Run one Type 2 charstring into an outline under subroutine frames and a step budget; `none`
+where uncovered. -/
 private def runCharstring (b : ByteArray) (gsubrs lsubrs : Array (Nat × Nat)) (cs : Nat × Nat) :
     Option (Outline × Option (Int × Int × Nat × Nat)) := Id.run do
   let biasOf (n : Nat) : Int :=
@@ -797,8 +733,7 @@ private def runCharstring (b : ByteArray) (gsubrs lsubrs : Array (Nat × Nat)) (
         stk := #[]
         pc := pc + 1 + (nStems + 7) / 8
       else if b0 == 21 || b0 == 22 || b0 == 4 then
-        -- moveto family; a leading width may pad the front, so args read
-        -- from the end
+        -- A leading width may pad the front, so moveto arguments read from the end.
         if b0 == 21 then
           x := x + arg (n - 2)
           y := y + arg (n - 1)
@@ -931,10 +866,7 @@ private def runCharstring (b : ByteArray) (gsubrs lsubrs : Array (Nat × Nat)) (
           lim := rl
         | none => done := true
       else if b0 == 14 then
-        -- With four arguments (after an optional width), endchar is
-        -- Type 1's `seac`: a base and an accent glyph by StandardEncoding
-        -- code, the accent's origin at (adx, ady) (Technical Note #5177
-        -- Appendix C). The caller composes them.
+        -- With four arguments, endchar is Type 1's `seac` (Technical Note #5177 Appendix C).
         if n ≥ 4 then
           let bc := arg (n - 2)
           let ac := arg (n - 1)
@@ -1032,10 +964,7 @@ private def shiftCmds (dx dy : Int) : Cmd → Cmd
   | .quad cx cy x y => .quad (cx + dx) (cy + dy) (x + dx) (y + dy)
   | .cube a b c d x y => .cube (a + dx) (b + dy) (c + dx) (d + dy) (x + dx) (y + dy)
 
-/-- Glyph `g`'s outline: its charstring run with the local subroutines of
-its font dictionary (the private dictionary's in a name-keyed font), and a
-`seac` composed of its base and accent glyphs — each of which must decode
-on its own, with no `seac` of its own. -/
+/-- Glyph `g`'s outline: its charstring run, a `seac` composed of base and accent glyphs. -/
 private def Cff.outline (b : ByteArray) (c : Cff) (g : Nat) : Option Outline := do
   let cs ← c.charStrings[g]?
   let ls := if c.cid then ((c.fdOf[g]?).bind (c.fdSubrs[·]?)).getD #[] else c.lsubrs
@@ -1053,12 +982,7 @@ private def Cff.outline (b : ByteArray) (c : Cff) (g : Nat) : Option Outline := 
     some { cmds := o.cmds ++ bo.cmds ++ ao.cmds.map (shiftCmds adx ady)
            minY := min o.minY (min bo.minY (ao.minY + ady)) }
 
-/-- The prepared outline source of one font, tables resolved once so
-per-glyph decoding is pay-as-you-go. `.opaque`: outlines that cannot be
-read at all — a CFF table that would not parse or is CID-keyed, TrueType
-tables missing, truncated, or too short for the glyph count — so every
-glyph is `none` and the consumer falls back to clearing its whole
-advance. -/
+/-- The prepared outline source of one font; `.opaque` when outlines cannot be read at all. -/
 public inductive Src where
   | cffSrc (data : ByteArray) (c : Cff)
   | glyfSrc (data : ByteArray) (glyf loca : Table) (long : Bool) (numGlyphs : Nat)
@@ -1096,9 +1020,7 @@ public def Src.make (b : ByteArray) (isCff : Bool) (numGlyphs : Nat) : Src :=
         .opaque
     | _, _, _ => .opaque
 
-/-- An outline's rectangular hull, in font units. Control points contribute
-too: the curve stays inside the answer, which need not be its raster's
-tightest box. Empty outlines have the zero hull. -/
+/-- An outline's rectangular hull in font units, control points included; empty is zero. -/
 public structure Bounds where
   left : Int := 0
   bottom : Int := 0
@@ -1109,8 +1031,6 @@ public structure Bounds where
 public def Bounds.union (a b : Bounds) : Bounds :=
   ⟨min a.left b.left, min a.bottom b.bottom, max a.right b.right, max a.top b.top⟩
 
-/-- Both axes come from the same outline decode and the same points.
-An absent accumulator is distinct from an outline passing through zero. -/
 public def Outline.bounds (o : Outline) : Bounds := Id.run do
   let mut hull : Option Bounds := none
   let add (hull : Option Bounds) (x y : Int) :=
@@ -1123,13 +1043,11 @@ public def Outline.bounds (o : Outline) : Bounds := Id.run do
     | .cube c1x c1y c2x c2y x y => hull := add (add (add hull c1x c1y) c2x c2y) x y
   return hull.getD {}
 
-/-- Vertical bounds are a projection of the outline's one measured hull. -/
 public def Outline.yExtent (o : Outline) : Int × Int :=
   let b := o.bounds
   (b.bottom, b.top)
 
-/-- The ink hull of glyph `g`, or `none` where its outline could not be
-decoded. Total over arbitrary bytes, like `inkAt`. -/
+/-- The ink hull of glyph `g`, or `none` where its outline does not decode. -/
 public def Src.boundsAt (s : Src) (g : Nat) : Option Bounds :=
   match s with
   | .opaque => none
@@ -1150,15 +1068,11 @@ public def Src.boundsAt (s : Src) (g : Nat) : Option Bounds :=
     else
       (glyfOutline b glyf loca long numGlyphs g).map (·.bounds)
 
-/-- The vertical ink extent `(minY, maxY)` of glyph `g` in font units.
-Both axes share `boundsAt`; a consumer asking for height does not choose a
-different outline measurement from one attaching a mark horizontally. -/
+/-- The vertical ink extent `(minY, maxY)` of glyph `g` in font units. -/
 public def Src.yExtentAt (s : Src) (g : Nat) : Option (Int × Int) :=
   (s.boundsAt g).map fun b => (b.bottom, b.top)
 
-/-- Glyph `g`'s outline commands, or `none` where the decoder cannot read
-it: the glyph a font subset must carry unchanged for every glyph a page
-paints. An empty glyph (a space) is the empty outline. -/
+/-- Glyph `g`'s outline commands, or `none` where the decoder cannot read it. -/
 public def Src.cmdsAt (s : Src) (g : Nat) : Option (Array Cmd) :=
   match s with
   | .opaque => none
@@ -1169,9 +1083,7 @@ public def Src.cmdsAt (s : Src) (g : Nat) : Option (Array Cmd) :=
     if g ≥ numGlyphs then none
     else (glyfOutline b glyf loca long numGlyphs g).map (·.cmds)
 
-/-- Merged ink intervals of glyph `g` inside the underline band, or `none`
-where the outline could not be decoded and the caller must fall back. Total
-over arbitrary bytes. -/
+/-- Merged ink intervals of glyph `g` inside the underline band, or `none` where undecodable. -/
 public def Src.inkAt (s : Src) (g : Nat) (bandLo bandHi : Int) :
     Option (Array (Int × Int)) :=
   match s with
@@ -1188,22 +1100,16 @@ public def Src.inkAt (s : Src) (g : Nat) (bandLo bandHi : Int) :
     if g ≥ numGlyphs then
       none
     else if o2 == o1 then
-      -- A genuinely empty glyph has no ink.
       some #[]
     else if o2 < o1 || o2 > glyf.length || o1 + 10 > glyf.length then
       none
-    -- A simple glyph whose own yMin clears the band never needs its outline
-    -- decoded: its declared bbox is its own point data's. A composite's
-    -- declared box need not bound its transformed components, so trusting it
-    -- would answer from data the invariant says must be decoded.
+    -- A simple glyph's own bbox may skip the decode; a composite's need not bound its components.
     else if i16 b (glyf.offset + o1) ≥ 0 && i16 b (glyf.offset + o1 + 4) ≥ bandHi then
       some #[]
     else
       match glyfOutline b glyf loca long numGlyphs g with
       | none => none
       | some o => some (bandIntervals o bandLo bandHi)
-
-/-! ## What a PDF's font reading asks of a CFF -/
 
 /-- Whether a source is a CID-keyed CFF. -/
 public def Src.isCidCff : Src → Bool
@@ -1269,10 +1175,6 @@ public def Src.charsetAt (s : Src) (g : Nat) : Option Nat :=
   | .glyfSrc .. => none
   | .opaque => none
 
-/-- **A CID selects the glyph that carries it** (`_agree`): the two
-readings of a CID-keyed CFF's charset — a CID to its glyph, which a PDF's
-`CIDFontType0` text selects by (§9.7.4.2), and a glyph to its CID — agree,
-so the glyph drawn for a CID is the one the font says it is. -/
 public theorem Src.cidCff_agree (s : Src) (cid g : Nat) (h : s.cidGlyph cid = some g) :
     s.charsetAt g = some cid := by
   cases s with
@@ -1286,11 +1188,6 @@ public theorem Src.cidCff_agree (s : Src) (cid g : Nat) (h : s.cidGlyph cid = so
   | glyfSrc => simp [Src.cidGlyph] at h
   | «opaque» => simp [Src.cidGlyph] at h
 
-/-- **A bare CFF and the OpenType font it came from are one reading**
-(`_agree`): the source a PDF's `FontFile3` builds from an OpenType font's
-`CFF ` table, read bare, is the source the font set builds from the font
-itself — one reader over the same bytes, so a glyph is decoded the same
-way whichever of the two programs carries it. -/
 public theorem Src.bareCff_agree (b t : ByteArray) (n : Nat) (h : cffTable b = some t) :
     Src.make b true n = Src.ofCff t := by
   simp [Src.make, h]

@@ -1,11 +1,7 @@
 module
 
-/-!
-The integer trigonometry every figure producer and the colour pipeline share:
-rotation- and vectoring-mode CORDIC at 2⁻³⁰ of a radian, with no `Float`.
-`scripts/trig-oracle.lean` recomputes its constants and bounds its error.
-A leaf, so a colour module can read it without the vector model above it.
--/
+/-! Integer trigonometry shared by the figure producers and the colour pipeline: CORDIC at 2⁻³⁰ of
+a radian, no `Float`; `scripts/trig-oracle.lean` bounds its error. -/
 
 namespace LeanTex.Core.Gfx.Trig
 
@@ -47,11 +43,7 @@ private def rotate (x y z : Int) : Int × Int := Id.run do
       z := z + t
   return (x, y)
 
-/-- `(cos θ, sin θ)` at 2⁻³⁰, for any angle in 2⁻³⁰ radians. The angle is
-reduced to (−π, π], then a half-turn folds it into the rotation's range;
-the four axis directions are exact, so an axis-aligned arc's chord is read
-without the rotation's rounding (`scripts/trig-oracle.lean` bounds the
-rest). -/
+/-- `(cos θ, sin θ)` at 2⁻³⁰ for any angle in 2⁻³⁰ radians, exact on the four axes. -/
 public def cosSin (θ : Int) : Int × Int :=
   let twoPi := 2 * pi
   let r := θ % twoPi
@@ -88,10 +80,7 @@ private def vector (x y : Int) : Int := Id.run do
       z := z + t
   return z
 
-/-- A vector scaled by a power of two until its larger coordinate stands in
-`[2³⁰, 2³¹)`: its angle is unchanged, and a short vector's floored shifts
-would otherwise steer the rotation by the vector's own coarseness
-(`scripts/trig-oracle.lean` measured 0.2° at magnitude 2¹⁰). -/
+/-- A vector scaled by a power of two until its larger coordinate stands in `[2³⁰, 2³¹)`. -/
 private def lift (x y : Int) : Int × Int :=
   let m := max x.natAbs y.natAbs
   if m == 0 || m ≥ 2 ^ 30 then (x, y) else

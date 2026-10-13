@@ -3,25 +3,14 @@ module
 public import LeanTex.Core.ContrastRatio
 public import LeanTex.Core.Layout
 
-/-!
-Contrast observations over placed glyphs. The document realization plan
-cannot enumerate all such paint: overlays compute colours, and pictures
-and furniture can introduce ink after that walk.
-
-The arithmetic contract is over `Ir.Color`. Its placed-page projection
-reads actual `Layout.Out` data and preserves every occurrence and address.
-The raw audit retains observations under caller-selected thresholds.
-The PDF assertion instead reads actual font metrics and a conservative
-background decision; unsupported evidence remains explicitly unverified.
-A recorded run ground or a colour resembling covered text is no exemption.
--/
+/-! Contrast over placed glyphs: every nonempty glyph run of `Layout.Out` judged on its page's
+ground with actual metrics; unsupported evidence stays unverified. -/
 namespace LeanTex.Core.Contrast
 
 open Ir Layout
 
-/-- A nonempty glyph run's paint at its zero-based address in the output.
-`ground` retains `none`: resolving a fallback must not erase the evidence
-that a painter did not record a local ground. -/
+/-- A nonempty glyph run's paint at its zero-based address; `ground` keeps `none` where the
+painter recorded none. -/
 public structure RunPaint where
   page : Nat
   line : Nat
@@ -30,8 +19,7 @@ public structure RunPaint where
   ground : Option Color
   deriving Repr, BEq
 
-/-- Read exactly the paint a glyph run carries. Spacing, rules, decoration,
-images and polygons are outside this text census. -/
+/-- The paint a glyph run carries; other segments are outside this census. -/
 public def runPaint? (page line segment : Nat) : Seg → Option RunPaint
   | .run _ ink _ _ glyphs _ _ _ _ ground _ =>
     if glyphs.isEmpty then none else some { page, line, segment, ink, ground }
@@ -46,14 +34,13 @@ private theorem runPaint?_address
   · cases hp
     exact ⟨rfl, rfl, rfl⟩
 
-/-- The actual ordered census, with duplicates retained. It is read from
-placed output, not reconstructed from source or from a palette plan. -/
+/-- The ordered census of glyph-run paints, read from placed output, duplicates retained. -/
 public def shippedPaints (out : Out) : Array RunPaint :=
   out.pages.zipIdx.flatMap fun (page, p) =>
     page.lines.zipIdx.flatMap fun (line, l) =>
       line.segs.zipIdx.filterMap fun (seg, s) => runPaint? p l s seg
 
-/-- Independent address-based specification of one census entry. -/
+/-- An address-based specification of one census entry. -/
 public def PaintOccurs (out : Out) (paint : RunPaint) : Prop :=
   ∃ page line seg,
     out.pages[paint.page]? = some page ∧
@@ -61,8 +48,6 @@ public def PaintOccurs (out : Out) (paint : RunPaint) : Prop :=
     line.segs[paint.segment]? = some seg ∧
     runPaint? paint.page paint.line paint.segment seg = some paint
 
-/-- Both directions: every census entry has an actual nonempty glyph run
-at its reported address, and every such run is present. -/
 public theorem shippedPaints_exact (out : Out) (paint : RunPaint) :
     paint ∈ shippedPaints out ↔ PaintOccurs out paint := by
   constructor
@@ -87,8 +72,6 @@ public theorem shippedPaints_exact (out : Out) (paint : RunPaint) :
     exact Array.mem_filterMap.mpr
       ⟨(seg, paint.segment), Array.mk_mem_zipIdx_iff_getElem?.mpr hs, hr⟩
 
-/-- No assumption about the layout algorithm: a nonempty run in the output
-is always in the actual census, including computed overlay/furniture ink. -/
 public theorem shippedPaints_covers (out : Out)
     (hp : out.pages[p]? = some page) (hl : page.lines[l]? = some line)
     (hs : line.segs[s]? =
@@ -99,8 +82,7 @@ public theorem shippedPaints_covers (out : Out)
   refine ⟨page, line, _, hp, hl, hs, ?_⟩
   simp [runPaint?, hne]
 
-/-- The observation and its assessment travel together; equal colours at
-different addresses must not consume one another's exemption decisions. -/
+/-- An observation with its assessment, so equal colours at different addresses stay apart. -/
 public structure RunAssessment where
   paint : RunPaint
   assessment : PairAssessment
@@ -110,9 +92,7 @@ public def assessRun (defaultGround : Color) (required : Nat) (paint : RunPaint)
     RunAssessment :=
   { paint, assessment := assessPair required paint.ink (paint.ground.getD defaultGround) }
 
-/-- Arithmetic for every nonempty placed glyph run. Call with the effective
-page ground for the document that produced `out`. This does not resolve a
-picture's unrecorded local fill or recover exemption provenance. -/
+/-- The contrast arithmetic for every nonempty placed glyph run, on the given page ground. -/
 public def shippedAudit (defaultGround : Color) (required : Nat) (out : Out) :
     Array RunAssessment :=
   (shippedPaints out).map (assessRun defaultGround required)
@@ -123,8 +103,6 @@ public theorem shippedAudit_exact (defaultGround : Color) (required : Nat)
       ∃ paint, PaintOccurs out paint ∧ assessRun defaultGround required paint = a := by
   simp only [shippedAudit, Array.mem_map, shippedPaints_exact]
 
-/-- The audit never silently drops a run. The retained entry includes the
-actual colours and the implemented contrast decision. -/
 public theorem shippedAudit_covers (defaultGround : Color) (required : Nat) (out : Out)
     (hp : out.pages[p]? = some page) (hl : page.lines[l]? = some line)
     (hs : line.segs[s]? =
@@ -135,13 +113,11 @@ public theorem shippedAudit_covers (defaultGround : Color) (required : Nat) (out
         shippedAudit defaultGround required out := by
   exact Array.mem_map.mpr ⟨_, shippedPaints_covers out hp hl hs hne, rfl⟩
 
-/-- Arithmetic below the supplied threshold; this deliberately does not
-classify a run as covered, decorative, or eligible for a diagnostic. -/
+/-- The runs below the supplied threshold, with no exemption judged. -/
 public def shippedFailures (defaultGround : Color) (required : Nat) (out : Out) :
     Array RunAssessment :=
   (shippedAudit defaultGround required out).filter fun a => !a.assessment.passes
 
-/-- A failure is exactly an actual run below the supplied threshold. -/
 public theorem shippedFailures_exact (defaultGround : Color) (required : Nat)
     (out : Out) (a : RunAssessment) :
     a ∈ shippedFailures defaultGround required out ↔
@@ -166,8 +142,6 @@ public theorem shippedFailures_exact (defaultGround : Color) (required : Nat)
     exact Nat.not_lt_of_ge ((assessPair_contract required paint.ink
       (paint.ground.getD defaultGround)).2.mp hpass) h
 
-/-- Empty failure output certifies all recorded pairs at the supplied
-threshold, in both directions. No premise assumes the judge's correctness. -/
 public theorem shippedFailures_clear_contract (defaultGround : Color) (required : Nat)
     (out : Out) :
     shippedFailures defaultGround required out = #[] ↔
@@ -184,21 +158,15 @@ public theorem shippedFailures_clear_contract (defaultGround : Color) (required 
     rcases (shippedFailures_exact ..).mp ha with ⟨paint, hp, _, hlt⟩
     exact Nat.not_lt_of_ge (h paint hp) hlt
 
-/-- Paint outside the text census may overlap a glyph. Until a local
-occlusion proof is available, such a page cannot borrow a recorded run
-ground as evidence of its visible background. -/
+/-- A text segment; any other paint may overlap a glyph's ground. -/
 private def textOnly : Seg → Bool
   | .run _ _ _ _ _ _ _ decorations _ _ _ =>
     !decorations.underline && decorations.lineThrough.isNone
   | .gap .. => true
   | .decoratedGap .. | .decoration .. | .rule .. | .image .. | .poly .. => false
 
-/-- A sufficient, deliberately conservative background decision over the
-actual PDF paint list. Every rectangle covers the medium, no path paints,
-and no later non-text segment can obscure the text. The last rectangle
-wins; an unpainted PDF page uses white paper. This certifies the uniform
-substrate only, not absence of overlapping text or full WCAG conformance.
-PDF painting order is `fills`, picture ink, text, then inline graphics. -/
+/-- A conservative uniform background for a PDF page's text, or `none`: every rectangle covers
+the medium and nothing else paints. -/
 public def uniformTextGround? (geom : Geom) (page : PageOut) : Option Color :=
   if page.inks.any (fun ink => !ink.fig.marks.isEmpty) ||
       !(page.lines.all fun line => line.segs.all textOnly) ||
@@ -208,8 +176,7 @@ public def uniformTextGround? (geom : Geom) (page : PageOut) : Option Color :=
         geom.pageH + geom.bleed ≤ fill.y + fill.h) then none
   else some ((page.fills.back?).map (·.color) |>.getD Color.white)
 
-/-- Cache each page's background decision once; assessing many runs must
-not rescan every page's paint for each glyph run. -/
+/-- Each page's background decision, computed once. -/
 public def shippedGrounds (geom : Geom) (out : Out) : Array (Option Color) :=
   out.pages.map (uniformTextGround? geom)
 
@@ -218,9 +185,8 @@ public theorem shippedGrounds_projects (geom : Geom) (out : Out) {p : Nat} {page
     (shippedGrounds geom out)[p]? = some (uniformTextGround? geom page) := by
   simp [shippedGrounds, Array.getElem?_map, h]
 
-/-- Actual point size and OpenType weight, including the PDF writer's
-fallback to the body face. An absent font is unresolved, never bold by
-assumption. No source colour spelling is used as an exemption. -/
+/-- A run's actual point size and OpenType weight, with the PDF writer's body-face fallback;
+`none` when the font is absent. -/
 public def runMetrics? (fs : Font.FontSet) (out : Out) (paint : RunPaint) :
     Option (Dim.Sp × Nat) := do
   let page ← out.pages[paint.page]?
@@ -235,9 +201,7 @@ public inductive ContrastUnknown where
   | ground
   deriving Repr, BEq
 
-/-- An arithmetic verdict or the precise evidence the judge lacks.
-Below-threshold paint is retained even when it might be deliberately
-covered: declaring an exemption requires provenance, not colour equality. -/
+/-- A contrast verdict, or the evidence the judge lacks. -/
 public inductive TextVerdict where
   | measured (ground : Color) (size : Dim.Sp) (weight : Nat) (pair : PairAssessment)
   | unverified (reason : ContrastUnknown)
@@ -264,9 +228,8 @@ public def judgePaint (grounds : Array (Option Color)) (fs : Font.FontSet)
         | some ground => .measured ground size weight
           (assessPair (textRequired size (weight ≥ 700)) paint.ink ground) }
 
-/-- Independent acceptance condition: actual font metrics, a positive
-size, a supported background and the implemented integer contrast bound.
-There is no premise assuming that an earlier diagnostic judge was complete. -/
+/-- A run's acceptance: actual metrics, a positive size, a supported background and enough
+contrast. -/
 public def TextVerified (grounds : Array (Option Color)) (fs : Font.FontSet)
     (out : Out) (paint : RunPaint) : Prop :=
   ∃ size weight ground,
@@ -291,17 +254,12 @@ public theorem judgePaint_exact (grounds : Array (Option Color)) (fs : Font.Font
           and_assoc, Int.lt_of_not_ge hs,
           (assessPair_contract (textRequired size (weight ≥ 700)) paint.ink ground).2]
 
-/-- One result for every actual nonempty run, with background scans shared.
-Unknown grounds and missing metrics remain in the same census as measured
-ink. This runs only when a PDF accessibility assertion requests it. -/
+/-- One verdict for every nonempty placed run, background scans shared. -/
 public def shippedJudgments (geom : Geom) (fs : Font.FontSet) (out : Out) :
     Array JudgedPaint :=
   let grounds := shippedGrounds geom out
   (shippedPaints out).map (judgePaint grounds fs out)
 
-/-- Completeness over the placed artifact, replacing the false claim that
-the source colour plan enumerates all paint. Every occurrence has its own
-verdict, including unresolved cases; repeated colours do not merge sites. -/
 public theorem contrast_judged_complete (geom : Geom) (fs : Font.FontSet)
     (out : Out) (paint : RunPaint) (h : PaintOccurs out paint) :
     judgePaint (shippedGrounds geom out) fs out paint ∈ shippedJudgments geom fs out := by
@@ -328,10 +286,6 @@ public theorem shippedContrastIssues_exact (geom : Geom) (fs : Font.FontSet)
     rw [Bool.not_eq_true']
     exact Bool.of_not_eq_true (fun h => hv ((judgePaint_exact ..).mp h))
 
-/-- An empty issue list means every placed glyph run has verified metrics,
-a supported background and sufficient integer contrast. An unresolved
-case cannot silently pass. This is the implemented PDF text-contrast
-contract, not a certification of all WCAG criteria or browser paint. -/
 public theorem shippedContrast_clear_contract (geom : Geom) (fs : Font.FontSet)
     (out : Out) :
     shippedContrastIssues geom fs out = #[] ↔

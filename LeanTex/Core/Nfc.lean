@@ -4,21 +4,8 @@ import Std.Data.HashMap
 import Std.Data.HashSet
 import LeanTex.Core.NfcData
 
-/-!
-Canonical normalization to NFC (UAX #15). The engine normalizes text at
-input: composed forms are what font cmaps carry (HarfBuzz normalizes
-before shaping for the same reason, `_hb_ot_shape_normalize`), so an
-NFD-spelled accent (`e` + U+0301) reaches every corpus face as the one
-glyph `é` instead of an unanchored mark, and two spellings of one word
-make one slug, one hyphenation-cache key, one search hit.
-
-The algorithm is UAX #15 §9's: canonical decomposition (the generated
-table is fully expanded; Hangul is arithmetic, Unicode §3.12), canonical
-reordering of nonzero-combining-class runs, then canonical composition
-over the primary composites. Tables come from `NfcData` (generated from
-UnicodeData.txt; see `scripts/gen-nfc-data.lean`), fixed-width hex that
-this module reads by byte offset.
--/
+/-! Canonical normalization to NFC (UAX #15 §9), applied at input so composed forms reach the
+fonts' cmaps; tables from the generated `NfcData`. -/
 
 namespace LeanTex.Core.Nfc
 
@@ -31,19 +18,15 @@ private structure Tables where
   /-- Merged codepoint ranges of general category L*, sorted. -/
   letters : Array (UInt32 × UInt32)
   lower : HashMap UInt32 Char
-  /-- The letters some letter lowercases to: the lowercase half of every
-  case pair. -/
+  /-- The lowercase half of every case pair. -/
   lowered : HashSet UInt32
 
-/-- A hex digit's value. The generator emits `[0-9a-f]` only, so the two
-ranges are the whole domain. -/
+/-- A hex digit's value. -/
 private def nib (b : UInt8) : Nat :=
   let n := b.toNat
   if n ≤ 0x39 then n - 0x30 else n - 0x57
 
-/-- A fixed-width hex field, read by byte offset. A short read would be a
-malformed generated table, and reads as zero rather than aborting the run;
-the decomposition census in `Tests` is what refuses one. -/
+/-- A fixed-width hex field read by byte offset; a short read reads as zero. -/
 private def field (bs : ByteArray) (start width : Nat) : Nat := Id.run do
   let mut v := 0
   for k in [0:width] do
@@ -87,11 +70,7 @@ private def load (_ : Unit) : Tables := Id.run do
     lowered := lowered.insert lc.val
   return { ccc, decomp, comp, letters, lower, lowered }
 
-/-- The tables, built once per process, on first use. `load` takes a `Unit`
-because a zero-argument definition is a closed term the code generator
-initializes at module load: as one, it cost every process 5 ms — including
-the ASCII documents that never read a table — and the `Thunk` around it
-deferred nothing. -/
+/-- The tables, built once per process on first use; `load` takes `Unit` to defer the cost. -/
 private def tables : Thunk Tables := Thunk.mk load
 
 -- Hangul syllable composition is arithmetic (Unicode §3.12).
@@ -122,9 +101,8 @@ private def decomposeInto (t : Tables) (out : Array Char) (c : Char) : Array Cha
   | some parts => return out ++ parts
   | none => return out.push c
 
-/-- Canonical reordering (UAX #15): each maximal run of nonzero-class
-characters is stably sorted by combining class. Runs are short (a base
-letter carries a handful of marks), so the bubble is bounded by the run. -/
+/-- Canonical reordering (UAX #15): each maximal run of nonzero-class characters stably sorted
+by class. -/
 private def reorder (t : Tables) (cs : Array Char) : Array Char := Id.run do
   let mut cs := cs
   let mut i := 0
@@ -186,8 +164,7 @@ private def compose (t : Tables) (cs : Array Char) : Array Char := Id.run do
       lastCcc := cc
   return out
 
-/-- NFC over a character array. Text whose scalars all sit below U+00C0
-has nothing to decompose, reorder, or compose, and passes through whole. -/
+/-- NFC over a character array; text below U+00C0 passes through whole. -/
 public def normalizeChars (cs : Array Char) : Array Char := Id.run do
   if cs.all (·.toNat < 0xC0) then
     return cs
@@ -197,10 +174,6 @@ public def normalizeChars (cs : Array Char) : Array Char := Id.run do
     work := decomposeInto t work c
   compose t (reorder t work)
 
-/-- The fast path is the identity: text whose scalars all sit below U+00C0
-passes through NFC unchanged. Idempotence over the full domain is UAX #15's
-own guarantee and is held by the property test seeded from the
-decomposition keys, not by a theorem. -/
 public theorem normalizeChars_ascii_id (cs : Array Char)
     (h : cs.all (·.toNat < 0xC0)) : normalizeChars cs = cs := by
   simp only [normalizeChars, Id.run, h, ite_true]; rfl
@@ -214,10 +187,7 @@ public def normalize (s : String) : String := Id.run do
     r := r.push c
   return r
 
-/-- A letter by Unicode's general category (L*), by binary search over the
-generated ranges. `Char.isAlpha` is ASCII-only: under it a word boundary
-excludes é, so an accented word neither hyphenates nor stays one box.
-ASCII answers without the search. -/
+/-- A letter by Unicode's general category (L*); `Char.isAlpha` is ASCII-only. -/
 public def isLetter (c : Char) : Bool := Id.run do
   if c.toNat < 0x80 then
     return c.isAlpha
@@ -235,23 +205,16 @@ public def isLetter (c : Char) : Bool := Id.run do
       break
   return false
 
-/-- Unicode simple lowercase (UnicodeData field 13): what pattern matching
-against lowercase hyphenation patterns needs — `Char.toLower` is
-ASCII-only and leaves É beside é. -/
+/-- Unicode simple lowercase (UnicodeData field 13); `Char.toLower` is ASCII-only. -/
 public def toLower (c : Char) : Char :=
   if c.toNat < 0x80 then c.toLower
   else tables.get.lower.getD c.val c
 
-/-- One scalar's full canonical decomposition (UAX #15, D68), unreordered:
-a precomposed letter comes apart into its base and its marks, a Hangul
-syllable into its jamo by arithmetic, and any other scalar is itself. Below
-U+00C0 nothing decomposes, the bound `normalizeChars` passes through on. -/
+/-- One scalar's full canonical decomposition (UAX #15 D68), unreordered. -/
 public def decompose (c : Char) : Array Char :=
   if c.toNat < 0xC0 then #[c] else decomposeInto tables.get #[] c
 
-/-- The canonical combining class (UnicodeData field 3): zero for a starter,
-which is every scalar the generated table does not list. No scalar below
-U+0300 carries a nonzero class. -/
+/-- The canonical combining class (UnicodeData field 3), zero for a starter. -/
 public def combiningClass (c : Char) : Nat :=
   if c.toNat < 0x300 then 0 else cccOf tables.get c
 
@@ -261,8 +224,7 @@ public def isUpper (c : Char) : Bool :=
   if c.toNat < 0x80 then 'A' ≤ c && c ≤ 'Z'
   else (tables.get.lower.get? c.val).any (· != c)
 
-/-- A lowercase letter: the lowercase of some letter (é, ø, ł, ß). A letter
-of a script without case is neither upper nor lower. -/
+/-- A lowercase letter: the lowercase of some letter; a caseless script's letter is neither case. -/
 public def isLower (c : Char) : Bool :=
   if c.toNat < 0x80 then 'a' ≤ c && c ≤ 'z'
   else tables.get.lowered.contains c.val

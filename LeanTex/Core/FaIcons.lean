@@ -5,12 +5,8 @@ public import Std.Data.HashMap
 
 namespace LeanTex.Core.FaIcons
 
-/-- One Font Awesome icon: the fontawesome5 LaTeX command (without its
-backslash; empty when the package defines no single-command spelling), the
-icon's own name (`\faIcon{name}`), its scalar in the Private Use Area, and
-Font Awesome's accessible name for it — the icon's default text
-alternative (WCAG 2.2 SC 1.1.1 wants one, and PUA scalars carry no meaning
-of their own for assistive technology). -/
+/-- One Font Awesome icon: its fontawesome5 command (empty when none), name, Private Use Area
+scalar, and accessible name as its default text alternative. -/
 public structure Entry where
   macroName : String
   name : String
@@ -37,12 +33,7 @@ private def parseLine (line : String) : Option Entry :=
       none
   | _ => none
 
-/-- The table, parsed on first use (`Thunk` is call-by-need: a top-level
-constant is computed at process start, and parsing the 58 KB generated
-table there taxed every run whether or not it set an icon — the same trap
-the Hyphen/Nfc tables already close). Generated data (`FaData.table`), so
-a line that does not parse is a generator bug; it is skipped rather than
-trusted. -/
+/-- The generated table, parsed on first use; a line that does not parse is skipped. -/
 private def entries : Thunk (Array Entry) := Thunk.mk fun _ =>
   FaData.table.splitOn "\n" |>.toArray |>.filterMap parseLine
 

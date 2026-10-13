@@ -3,36 +3,14 @@ module
 public import LeanTex.Core.BibStyle
 import all LeanTex.Core.Ir
 
-/-! # The resolution gate
-
-Nothing unresolved reaches a backend unnamed. The resolution points are
-few — `\ref` (the label table), `\cite` (`Bib.apply`), images and
-boundary pictures (`Image.fulfil`) — and each names what it leaves: W0349,
-W0351, W0601/W0602/W0378/W0379. `pending_named` is the one statement over
-the pipeline's pure tail holding the census (`Ir.pending`) to those
-diagnostics, assembled from each resolver's own lemma:
-
-- `Ir.refDiags_named` — every `.ref` still showing `??` has a W0349 whose
-  subject is its key; the judge reads the same census.
-- `Bib.apply_no_cite` — no `.cite` survives resolution, in any region.
-- `Image.fulfilRequests_named` and `Image.fulfilRequests_covers` — every store entry with
-  no payload has a diagnostic whose subject is its source, and the store
-  has an entry per fetched source.
-
-The driver (`Main.frontend`, `Main.build`) is the statement's shape:
-`Bib.apply` on the elaborated document, whatever field reading it is given
-(the build gives the document's own elaborator, `Bib.FieldDoor.read`), `Ir.refDiags` over its output,
-then `Image.fulfilRequests` over one read per `Ir.imageRequests` entry — which is the
-hypothesis `hcov`, the one fact the driver contributes. -/
+/-! The resolution gate: nothing unresolved reaches a backend unnamed. `pending_named` holds the
+pending census to the diagnostics `\ref`, `\cite` and image resolution emit; `hcov` is the one
+fact the driver contributes. -/
 
 namespace LeanTex.Core
 
 open Ir
 
-/-- **Every pending thing is named.** Over the document the backends read
-(`Bib.apply`'s output) and the store they read (`Image.fulfilRequests`'s), every
-element of the pending census has a diagnostic in the run's output whose
-structured subject is its key. -/
 public theorem pending_named (table : RefTable) (spanOf : String → Option Span)
     (sources : Array (String × String)) (doc : Doc) (cv : Bib.FieldReading)
     (fetched : Array (Image.Request × Image.Fetch))

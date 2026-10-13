@@ -3,19 +3,10 @@ module
 public import LeanTex.Core.Ir
 import all LeanTex.Core.Ir
 
-/-! The PDF colour printer's injectivity and its spelling, off the import
-chain.
-
-These contracts read the printer through its private implementation view.
-The separator proof follows decimal digit membership and applies to every
-input, including values the printer clamps. None is needed by the renderer,
-so the default build checks them outside its import chain; the figure
-importer's read-back statement reads the spelling ones. -/
+/-! The PDF colour printer's injectivity and spelling, in a leaf off the import chain. -/
 
 namespace LeanTex.Core.Ir
 
-/-- No printed thousandth contains the separator the components are
-joined with — what lets `pdfComponents_inj` split the string. -/
 public theorem Color.pdfMilli_no_space (v : Nat) :
     (pdfMilli v).toList.all (· != ' ') = true := by
   unfold pdfMilli
@@ -62,11 +53,6 @@ private theorem sep_inj (a a' r r' : List Char)
       have := ih cs' ha.2 ha'.2 h.2
       exact ⟨by rw [h.1, this.1], this.2⟩
 
-/-- Two colours never share a printed component triple unless they agree
-as sRGB: the PDF twin of `cssColor_inj`, so the two backends keep apart
-exactly the same inks. The CMYK rider is not determined and not claimed:
-it is the `k` operator's channel (`cmyk_components_kept`), never printed
-through `pdfComponents`. -/
 public theorem Color.pdfComponents_inj (a b : Color) (h : a.pdfComponents = b.pdfComponents) :
     a.r = b.r ∧ a.g = b.g ∧ a.b = b.b := by
   have hl := congrArg String.toList h
@@ -83,17 +69,9 @@ public theorem Color.pdfComponents_inj (a b : Color) (h : a.pdfComponents = b.pd
     exact milli_inj _ _ e'
   exact ⟨dec _ _ h1, dec _ _ h2, dec _ _ h3⟩
 
-/-! The printer's spelling, as a reader of the PDF meets it: a thousandth
-between the two ends is a point and its digits (`Dim.fracDigits`, which
-drops the trailing zeros), and a colour with no declared device model
-prints its three thousandths before `rg` or `RG` — what the figure
-importer reads a written colour back from. -/
-
-/-- A channel's thousandth, as the printer computes it. -/
 public theorem Color.milli_eq (v : UInt8) : milli v = (v.toNat * 1000 + 127) / 255 := by
   unfold milli; rfl
 
-/-- The ends print as integers. -/
 public theorem Color.pdfMilli_zero : pdfMilli 0 = "0" := by
   unfold pdfMilli; rfl
 
@@ -120,7 +98,6 @@ private theorem pad3 (v : Nat) (h1 : v < 1000) :
       have h1 : v / 10 / 10 % 10 = v / 10 / 10 := by omega
       simp [h1]
 
-/-- A thousandth between the ends prints as a point and its digits. -/
 public theorem Color.pdfMilli_frac (v : Nat) (h0 : 0 < v) (h1 : v < 1000) :
     pdfMilli v = "0." ++ String.ofList (Dim.fracDigits 3 v) := by
   have hmin : min v 1000 = v := Nat.min_eq_left (by omega)
@@ -128,8 +105,6 @@ public theorem Color.pdfMilli_frac (v : Nat) (h0 : 0 < v) (h1 : v < 1000) :
   have hu : (v == 1000) = false := by simp; omega
   simp only [pdfMilli, hmin, hz, hu, Bool.false_eq_true, ↓reduceIte, Dim.fracDigits, pad3 v h1]
 
-/-- A colour with no declared device model fills with its three printed
-thousandths (`pdfComponents`). -/
 public theorem Color.pdfFill_plain (c : Color) (hm : c.pdfModel = none) (hc : c.cmyk = none) :
     c.pdfFill = c.pdfComponents ++ " rg" := by
   simp only [pdfFill, hm, hc]

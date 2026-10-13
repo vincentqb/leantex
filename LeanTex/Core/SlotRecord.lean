@@ -3,16 +3,8 @@ module
 public import LeanTex.Core.Binary
 public import LeanTex.Core.Flate
 
-/-!
-# A cache slot that holds the key it answers
-
-A slot of one of the engine's caches keeps its payload beside the key it
-answers — the format, the input's content key, and the engine that computed
-it — and is read back as that payload under that key and as nothing under
-any other (`lookup_exact`): the key, never the slot's file name, is what a
-hit rests on, so a slot another engine wrote is read afresh and never
-served. Bytes that do not check against their own checksum are a miss too.
--/
+/-! A cache slot that holds the key it answers: read back as its payload under that key, and as a
+miss under any other or when its checksum fails. -/
 
 namespace LeanTex.Core.SlotRecord
 
@@ -36,8 +28,7 @@ public def readBody : Binary.Reader (Array String × ByteArray) := do
 /-- A body's checksum (FNV-64, `Flate.fnv64`). -/
 @[expose] public def checksum (b : ByteArray) : Nat := (Flate.fnv64 14695981039346656037 b).toNat
 
-/-- **A payload as a cache stores it**, under the key it answers: the magic,
-the body's checksum and size, the body. -/
+/-- A payload as a cache stores it under its key: magic, checksum, size, body. -/
 @[expose] public def encode (key : Array String) (payload : ByteArray) : ByteArray :=
   let b := body key payload
   magic ++ Binary.natBE 8 (checksum b) ++ Binary.natBE 4 b.size ++ b
@@ -57,8 +48,7 @@ public def readAll : Binary.Reader (Array String × ByteArray) := do
 truncated, corrupted or foreign file is a miss. -/
 public def decode (bytes : ByteArray) : Option (Array String × ByteArray) := readAll.run bytes
 
-/-- **A slot read for a key**: the payload it holds where it was stored under
-that very key, else a miss. -/
+/-- A slot read for a key: its payload where stored under that very key, else a miss. -/
 public def lookup (key : Array String) (bytes : ByteArray) : Option ByteArray :=
   (decode bytes).bind fun (k, p) => if k == key then some p else none
 
@@ -109,8 +99,6 @@ private theorem reads_body (key : Array String) (payload : ByteArray) (h : Bound
     key.size (key, payload) (Binary.natBE 4 key.size) _ (Binary.Reads.nat 4 _ hk) hkey
   simpa only [ByteArray.append_assoc] using this
 
-/-- **A stored payload reads back as itself, with its key** (`_id`): every
-payload the format holds, the empty one included, under every key it holds. -/
 public theorem decode_encode_id (key : Array String) (payload : ByteArray)
     (h : Bounded key payload) : decode (encode key payload) = some (key, payload) := by
   unfold decode
@@ -143,11 +131,6 @@ public theorem decode_encode_id (key : Array String) (payload : ByteArray)
     () (key, payload) magic _ (Binary.Reads.expect magic) hck
   simpa only [ByteArray.append_assoc] using this
 
-/-- **A slot answers its own key and no other** (`_exact`): a payload stored
-under a key reads back as itself for that key, and as a miss for every
-other — so a slot another engine wrote is read afresh and never served. A
-key names its input by content key, so two inputs whose content keys
-collide share a key (`content-keys`). -/
 public theorem lookup_exact (key : Array String) (payload : ByteArray) (h : Bounded key payload) :
     lookup key (encode key payload) = some payload ∧
       ∀ key', key' ≠ key → lookup key' (encode key payload) = none := by

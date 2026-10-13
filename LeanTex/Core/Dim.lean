@@ -14,13 +14,10 @@ public abbrev Sp := Int
 
 @[expose] public def inch (n : Int) : Sp := n * 72 * spPerPt
 
-/-- Millimetres: 1 mm = 7200⁄2540 pt, rounded to sp. This engine's `pt` is
-the big point, 1⁄72 inch (`inch` and `Decl.unitScale` agree), not TeX's
-1⁄72.27: 25.4 mm is exactly 72 pt here. -/
+/-- Millimetres, 1 mm = 7200⁄2540 pt rounded to sp; this engine's `pt` is the big point, 1⁄72 in. -/
 @[expose] public def mm (n : Int) : Sp := n * 7200 * spPerPt / 2540
 
-/-- Hundredths of a millimetre, for standards that specify to 0.01 mm —
-ISO/IEC 7810's ID-1 card is 85.60 × 53.98 mm. -/
+/-- Hundredths of a millimetre, for standards that specify to 0.01 mm (ISO/IEC 7810's ID-1). -/
 @[expose] public def mm100 (n : Int) : Sp := n * 7200 * spPerPt / 254000
 
 public theorem pt_exact (n : Int) : pt n / spPerPt = n := by
@@ -30,8 +27,6 @@ public theorem inch_eq_72pt (n : Int) : inch n = pt (72 * n) := by
   simp only [inch, pt, spPerPt]
   rw [Int.mul_comm n 72]
 
-/-- The two spellings of one length agree: `mm` is defined against the same
-1⁄72-inch point as `inch`, so 254 mm and 10 in are the same number of sp. -/
 public theorem mm_eq_inch (n : Int) : mm (254 * n) = inch (10 * n) := by
   have h : 254 * n * 7200 * spPerPt = 2540 * (10 * n * 72 * spPerPt) := by
     simp only [spPerPt]
@@ -39,7 +34,6 @@ public theorem mm_eq_inch (n : Int) : mm (254 * n) = inch (10 * n) := by
   simp only [mm, inch, h]
   exact Int.mul_ediv_cancel_left _ (by decide)
 
-/-- The finer spelling names the same lengths: 100 hundredths are one mm. -/
 public theorem mm100_eq_mm (n : Int) : mm100 (100 * n) = mm n := by
   have h : 100 * n * 7200 * spPerPt = 100 * (n * 7200 * spPerPt) := by
     simp only [spPerPt]
@@ -48,10 +42,7 @@ public theorem mm100_eq_mm (n : Int) : mm100 (100 * n) = mm n := by
   simp only [mm100, mm, h, h2]
   exact Int.mul_ediv_mul_of_pos _ _ (by decide)
 
-/-- The value `toPtString` spells, in thousandths of a point: the exact sp
-value rounded to the nearest thousandth, half away from zero. What a
-reader of the spelling gets back — the PDF writer's pen model starts from
-it, so the pen it tracks is the one the file states. -/
+/-- The value `toPtString` spells, in thousandths of a point, rounded half away from zero. -/
 @[expose] public def Sp.toPtMilli (x : Sp) : Int :=
   let milli : Int := ((x.natAbs * 1000 + 32768) / 65536 : Nat)
   if x < 0 then -milli else milli
@@ -61,9 +52,7 @@ it, so the pen it tracks is the one the file states. -/
   | 0, _ => []
   | k + 1, n => kDigits k (n / 10) ++ [Nat.digitChar (n % 10)]
 
-/-- The `k` digits of a fraction `fr < 10^k`, most significant first, its
-trailing zeros dropped: what follows a decimal point. Built over the digit
-list, so a statement over the printed form reads it digit by digit. -/
+/-- The `k` digits of a fraction `fr < 10^k`, most significant first, trailing zeros dropped. -/
 @[expose] public def fracDigits (k fr : Nat) : List Char :=
   ((kDigits k fr).reverse.dropWhile (· == '0')).reverse
 
@@ -80,16 +69,11 @@ value rounded to the nearest thousandth, `toPtMilli`). -/
   else
     s!"{sign}{ip}." ++ String.ofList (fracDigits 3 fr)
 
--- The Tests.lean checks these began as, upgraded to the compiler's tier:
--- a decidable ground fact needs no runtime test.
 example : mm 254 = inch 10 := by decide
 example : (pt 10).toPtString = "10" := by rfl
 
-/-- A rational `p / q` (`q > 0`) as a decimal, rounded once at the ninth
-digit, half away from zero: the one printer for a matrix entry in both
-artifacts — a PDF form's `/Matrix` and `cm`, an SVG `matrix()` — its scale
-entries the reciprocal of a box in points, where one rounding at 1e-9 lands
-a placed corner within a nanometre of the exact rational. -/
+/-- A rational `p / q` (`q > 0`) as a decimal rounded once at the ninth digit, half away from
+zero: the one matrix-entry printer. -/
 @[expose] public def ratString (p q : Int) : String :=
   let neg := p < 0
   let v := (p.natAbs * 1000000000 + q.natAbs / 2) / max 1 q.natAbs
@@ -109,15 +93,9 @@ public structure Glue where
   stretch : Sp := 0
   shrink : Sp := 0
   fil : Bool := false
-  /-- Fill that only exists to run out the rest of a line, as at the end of a
-  paragraph. It yields to an author's `\hfill`: a row that says "name, then
-  dates at the margin" means the margin, not halfway to it. -/
+  /-- Fill that only runs out the rest of a line, yielding to an author's `\hfill`. -/
   parfill : Bool := false
-  /-- Interword glue: the space between two words of set text, set only by
-  the token→item path for a space (`Layout.interword`) and copied by the
-  glue transforms (`raggedItems`, `displayItems`). Every other glue —
-  indent, alignment, kern, fill — is `false`. Read by the line setter onto
-  `Seg.gap`'s `word`, the tagger's interword channel. -/
+  /-- Interword glue: the space between two words of set text. -/
   word : Bool := false
   deriving Repr, BEq, DecidableEq, Inhabited
 
@@ -150,9 +128,7 @@ public theorem badness_le (d t : Int) : badness d t ≤ 10000 := by
   · exact Nat.le_refl _
   · exact Nat.min_le_right _ _
 
-/-- A length that may depend on the font: an absolute part plus em and ex
-parts in thousandths. `\tokens` needs this because a token is declared before
-any font is chosen, but `1.5ex` can only be resolved once one is. -/
+/-- A length that may depend on the font: an absolute part plus em and ex parts in thousandths. -/
 public structure Length where
   sp : Sp := 0
   em : Int := 0
@@ -166,26 +142,17 @@ namespace Length
 @[expose] public def add (a b : Length) : Length :=
   { sp := a.sp + b.sp, em := a.em + b.em, ex := a.ex + b.ex }
 
-/-- Componentwise difference, exact: subtraction in a fixed point is
-integer subtraction, no rounding anywhere. -/
+/-- Componentwise difference, exact. -/
 @[expose] public def sub (a b : Length) : Length :=
   { sp := a.sp - b.sp, em := a.em - b.em, ex := a.ex - b.ex }
 
-/-- Scale by a rational `num/den`, truncating toward zero — TeX's one
-rounding: `\divide` truncates (TeXbook ch. 24), and so does the
-coefficient scaling `⟨factor⟩⟨dimen⟩` (`xn_over_d`, TeX §107). Only
-e-TeX's `\dimexpr` division rounds to nearest instead (e-TeX manual
-§3.5), which is why that spelling is refused, not mapped here. -/
+/-- Scale by a rational `num/den`, truncating toward zero as TeX's `\divide` and coefficient
+scaling do (TeX §107). -/
 @[expose] public def scale (l : Length) (num : Int) (den : Nat) : Length :=
   { sp := (l.sp * num).tdiv den
     em := (l.em * num).tdiv den
     ex := (l.ex * num).tdiv den }
 
-/-- The settled rounding agrees with the floor `scale` used before
-wherever the scaled product is nonnegative — truncation toward zero and
-Euclidean division (Lean's `Int./`, floor for a positive divisor) differ
-only on negative dividends, so every nonnegative value scales exactly as
-it always did. -/
 public theorem scale_tdiv_eq_of_nonneg (v num : Int) (den : Nat) (h : 0 ≤ v * num) :
     (v * num).tdiv den = v * num / den :=
   Int.tdiv_eq_ediv_of_nonneg h
@@ -208,9 +175,7 @@ public structure SymGlue where
   width : Length := {}
   stretch : Length := {}
   shrink : Length := {}
-  /-- First-order infinite stretch, TeX's `fil`: `\vspace{\fill}` and
-  `\vfill` declare glue whose share of a page's leftover is what places
-  the content. Finite components ride beside it as in TeX. -/
+  /-- First-order infinite stretch, TeX's `fil`; finite components ride beside it. -/
   fil : Bool := false
   deriving Repr, BEq, DecidableEq, Inhabited
 
@@ -222,10 +187,7 @@ namespace SymGlue
     shrink := a.shrink.add b.shrink
     fil := a.fil || b.fil }
 
-/-- Componentwise, as `\glueexpr` subtracts glue (e-TeX manual, the
-`⟨expr⟩` grammar): the rubber components subtract with the widths. An
-infinite stretch survives subtraction — TeX's `1fil - 1fil` is `0fil`,
-still first-order infinite, and a boolean cannot say finer. -/
+/-- Componentwise, as `\glueexpr` subtracts glue; an infinite stretch survives subtraction. -/
 @[expose] public def sub (a b : SymGlue) : SymGlue :=
   { width := a.width.sub b.width
     stretch := a.stretch.sub b.stretch
@@ -246,9 +208,7 @@ still first-order infinite, and a boolean cannot say finer. -/
 
 end SymGlue
 
-/-- A local measure a length may read. The names stay distinct until the
-consumer supplies its context: a minipage makes all three horizontal
-measures its own, while other page models may not. -/
+/-- A local measure a length may read, kept distinct until the consumer supplies its context. -/
 public inductive Measure where
   | textWidth
   | lineWidth
@@ -264,17 +224,15 @@ public def Measure.ofName? : String → Option Measure
   | "textheight" => some .textHeight
   | _ => none
 
-/-- A diagnostic label for a typed measure. Source spelling never rides the IR. -/
+/-- A diagnostic label for a typed measure. -/
 public def Measure.label : Measure → String
   | .textWidth => "\\textwidth"
   | .lineWidth => "\\linewidth"
   | .columnWidth => "\\columnwidth"
   | .textHeight => "\\textheight"
 
-/-- A typed affine expression: literals and variables combined only by
-addition, subtraction, and scalar multiplication. Keeping the operations
-rather than flattening coefficients preserves TeX's fixed-point rounding at
-each scalar product. -/
+/-- A typed affine expression whose kept operations preserve TeX's rounding at each scalar
+product. -/
 public inductive Affine (α : Type) where
   | lit (g : SymGlue)
   | ref (name : α)
@@ -287,8 +245,7 @@ public instance [Inhabited α] : Inhabited (Affine α) := ⟨.lit {}⟩
 
 namespace Affine
 
-/-- Canonical rational scaling. Equivalent coefficient spellings construct
-the same tree, which makes parser normalization a structural fact. -/
+/-- Canonical rational scaling: equivalent coefficient spellings build the same tree. -/
 @[expose] public def scaleQ (num : Int) (den : Nat) (e : Affine α) : Affine α :=
   if den == 0 then .scale num den e
   else
@@ -302,13 +259,8 @@ the same tree, which makes parser normalization a structural fact. -/
   | .scale _ _ e => anyRef p e
   | .add a b | .sub a b => anyRef p a || anyRef p b
 
-/-- The reference, and its coefficient in permille, when the expression is
-exactly a non-negative rational multiple of a single `.ref` with no literal,
-sum, or difference part: a bare `.ref m` is `(m, 1000)`; `scale num den
-(.ref m)` is `(m, num·1000/den)`. Anything else — a literal, a sum, a nested
-scale, a different shape, a zero denominator, or a negative coefficient — is
-`none`, the signal to a share computation that this length does not reduce to
-a clean fraction of a shared measure and must fall back to its affine form. -/
+/-- The reference and its permille coefficient when the expression is a non-negative rational
+multiple of one `.ref`, else `none`. -/
 @[expose] public def refPermille : Affine α → Option (α × Nat)
   | .ref m => some (m, 1000)
   | .scale num den (.ref m) =>
@@ -322,16 +274,14 @@ a clean fraction of a shared measure and must fall back to its affine form. -/
   | .scale _ _ e => rigid e
   | .add a b | .sub a b => rigid a && rigid b
 
-/-- Whether an expression carries an infinite-stretch literal. References
-are local rigid lengths, so only a literal can contribute one. -/
+/-- Whether an expression carries an infinite-stretch literal. -/
 @[expose] public def hasFil : Affine α → Bool
   | .lit g => g.fil
   | .ref _ => false
   | .scale _ _ e => hasFil e
   | .add a b | .sub a b => hasFil a || hasFil b
 
-/-- Remove infinite stretch while preserving the expression's finite width,
-stretch, shrink, references, and fixed-point operation order. -/
+/-- Remove infinite stretch, keeping everything else and the operation order. -/
 @[expose] public def withoutFil : Affine α → Affine α
   | .lit g => .lit { g with fil := false }
   | .ref n => .ref n
@@ -339,9 +289,7 @@ stretch, shrink, references, and fixed-point operation order. -/
   | .add a b => .add (withoutFil a) (withoutFil b)
   | .sub a b => .sub (withoutFil a) (withoutFil b)
 
-/-- Whether every literal is a rigid absolute length. Local measures are
-rigid by definition; dimension consumers reject rubber and font-relative
-literals before the expression reaches their IR. -/
+/-- Whether every literal is a rigid absolute length. -/
 @[expose] public def rigidAbsolute : Affine α → Bool
   | .lit g => !g.fil && g.stretch == {} && g.shrink == {} &&
       g.width.em == 0 && g.width.ex == 0
@@ -349,8 +297,7 @@ literals before the expression reaches their IR. -/
   | .scale _ _ e => rigidAbsolute e
   | .add a b | .sub a b => rigidAbsolute a && rigidAbsolute b
 
-/-- Replace every reference with a typed expression. This is the boundary
-between source names and the IR: unresolved spellings cannot cross it. -/
+/-- Replace every reference with a typed expression. -/
 @[expose] public def bind (f : α → Except ε (Affine β)) : Affine α → Except ε (Affine β)
   | .lit g => .ok (.lit g)
   | .ref n => f n
@@ -369,8 +316,7 @@ between source names and the IR: unresolved spellings cannot cross it. -/
     | .error x, _ => .error x
     | _, .error x => .error x
 
-/-- Evaluate with a total context. Use this only after the source boundary
-has proved every variable is representable there. -/
+/-- Evaluate with a total context. -/
 @[expose] public def eval (look : α → SymGlue) : Affine α → SymGlue
   | .lit g => g
   | .ref n => look n
@@ -378,7 +324,6 @@ has proved every variable is representable there. -/
   | .add a b => (eval look a).add (eval look b)
   | .sub a b => (eval look a).sub (eval look b)
 
-/-- Total evaluation is also independent of ambient state. -/
 public theorem eval_names_agree (l₁ l₂ : α → SymGlue) (e : Affine α)
     (h : ∀ n, l₁ n = l₂ n) : eval l₁ e = eval l₂ e := by
   induction e with
@@ -388,8 +333,7 @@ public theorem eval_names_agree (l₁ l₂ : α → SymGlue) (e : Affine α)
   | add a b iha ihb => simp only [eval, iha, ihb]
   | sub a b iha ihb => simp only [eval, iha, ihb]
 
-/-- Resolve an affine expression against one context. An absent variable is
-returned as that typed variable, never as zero and never as source text. -/
+/-- Resolve against one context; an absent variable is returned as that typed variable. -/
 @[expose] public def resolve (look : α → Option SymGlue) : Affine α → Except α SymGlue
   | .lit g => .ok g
   | .ref n =>
@@ -411,8 +355,6 @@ returned as that typed variable, never as zero and never as source text. -/
     | .error n, _ => .error n
     | _, .error n => .error n
 
-/-- Resolution depends only on the supplied values, not on any ambient
-state. -/
 public theorem resolve_names_agree (l₁ l₂ : α → Option SymGlue) (e : Affine α)
     (h : ∀ n, l₁ n = l₂ n) : resolve l₁ e = resolve l₂ e := by
   induction e with
@@ -422,14 +364,12 @@ public theorem resolve_names_agree (l₁ l₂ : α → Option SymGlue) (e : Affi
   | add a b iha ihb => simp only [resolve, iha, ihb]
   | sub a b iha ihb => simp only [resolve, iha, ihb]
 
-/-- A literal resolves exactly; no context can change it. -/
 public theorem resolve_lit_exact (look : α → Option SymGlue) (g : SymGlue) :
     resolve look (.lit g) = .ok g := by rfl
 
 end Affine
 
-/-- A fully resolved local-measure context, used only after the source
-boundary admitted exactly the variables the consumer supplies. -/
+/-- A fully resolved local-measure context. -/
 public structure MeasureValues where
   textWidth : Sp
   lineWidth : Sp
@@ -449,22 +389,18 @@ public structure MeasureValues where
   { textWidth := measure, lineWidth := measure,
     columnWidth := measure, textHeight := textHeight }
 
-/-- Resolve one typed affine length against the geometry and font metrics at
-its consuming site. This is the only door from `Affine Measure` to sp: boxes,
-table columns, images, glue, rules, and font-size declarations supply their
-actual local context rather than estimating it during elaboration. -/
+/-- Resolve a typed affine length against the geometry and font metrics at its consuming site:
+the only door from `Affine Measure` to sp. -/
 @[expose] public def Affine.resolveWidth (e : Affine Measure) (env : MeasureValues)
     (fontSize xHeight : Sp := 0) : Sp :=
   (e.eval env.find).width.resolve fontSize xHeight
 
-/-- A local reference resolves to exactly the value its context supplies. -/
 public theorem Affine.resolveWidth_ref_exact (env : MeasureValues) (m : Measure)
     (fontSize xHeight : Sp) :
     (Affine.ref m).resolveWidth env fontSize xHeight = (env.find m).width.sp := by
   cases m <;> simp [Affine.resolveWidth, Affine.eval, MeasureValues.find,
     Length.resolve, Length.ofSp]
 
-/-- A rigid literal is independent of every local measure. -/
 public theorem Affine.resolveWidth_lit_exact (env : MeasureValues) (v : Sp)
     (fontSize xHeight : Sp) :
     (Affine.lit { width := .ofSp v }).resolveWidth env fontSize xHeight = v := by

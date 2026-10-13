@@ -3,18 +3,9 @@ module
 public import LeanTex.Core.Highlight.Scan
 import LeanTex.Core.PygmentsLexData
 
-/-!
-Pygments' `PythonLexer` (pygments/lexers/python.py), rule for rule; the rule
-structure it mirrors is testdata/highlight/pygments-rules.txt. A port of
-BSD-licensed code: Pygments' licence is testdata/highlight/LICENSE-Pygments.
-
-A string state is one of Pygments' combined states: the escape rules its
-prefix selects (`Esc`), then its quote's own rules, then the formatting
-rules of an f-string or of an ordinary string. A soft keyword's pattern
-case lexes the text before its `_` as a text of its own (`using(this)`),
-from the root and blind to what surrounds it; that text holds no `_`, so
-the lexer it runs never reaches the rule again.
--/
+/-! Pygments' `PythonLexer` (pygments/lexers/python.py) rule for rule, mirroring
+testdata/highlight/pygments-rules.txt. A port of BSD-licensed code: Pygments' licence is
+testdata/highlight/LICENSE-Pygments. -/
 namespace LeanTex.Core.Highlight.Python
 
 private inductive Quote where
@@ -188,11 +179,8 @@ private def quoteAt (s : Src) (e : Nat) : Option (Quote × Nat) :=
     if s.is (e + 1) '\'' && s.is (e + 2) '\'' then some (.tsq, e + 3) else some (.sq, e + 1)
   else none
 
-/-- `expr`'s twenty string openings, in their order: the prefix's end, the
-escapes it selects, the quote and the quote's end. Within one prefix
-pattern only one alternative can stand before a quote, so the order of
-its quote rules is `quoteAt`'s. A template string (`t`) opens as an
-f-string does. -/
+/-- `expr`'s twenty string openings in their order: the prefix's end, its escapes, the quote and
+the quote's end. -/
 private def stringStart (s : Src) (p : Nat) : Option (Nat × Esc × Quote × Nat) := Id.run do
   let r (i : Nat) := s.is i 'r' || s.is i 'R'
   let f (i : Nat) := s.is i 'f' || s.is i 'F' || s.is i 't' || s.is i 'T'
@@ -421,9 +409,7 @@ private def bytesEscape (s : Src) (p : Nat) : Option Nat :=
     some (if s.sat (p + 2) octal then (if s.sat (p + 3) octal then p + 4 else p + 3) else p + 2)
   else none
 
-/-- `%(\(\w+\))?[-#0 +]*([0-9]+|[*])?(\.([0-9]+|[*]))?[hlL]?[E-GXc-giorsaux%]`.
-Every part's scalars stay out of the parts after it, so only the greedy
-reading can end on a conversion. -/
+/-- `%(\(\w+\))?[-#0 +]*([0-9]+|[*])?(\.([0-9]+|[*]))?[hlL]?[E-GXc-giorsaux%]`, greedy. -/
 private def percentEnd (ix : Ix) (p : Nat) : Option Nat := Id.run do
   let s := ix.s
   if !s.is p '%' then return none
@@ -441,9 +427,8 @@ private def percentEnd (ix : Ix) (p : Nat) : Option Nat := Id.run do
   if s.sat a (fun c => "EFGXcdefgiorsaux%".contains c) then return some (a + 1)
   return none
 
-/-- A format spec after its fill and alignment:
-`[-+ ]?#?0?(\d+)?,?(\.\d+)?[E-GXb-gnosx%]?`, greedy, since no part's
-scalars include the `}` that must follow. -/
+/-- A format spec after its fill and alignment, `[-+ ]?#?0?(\d+)?,?(\.\d+)?[E-GXb-gnosx%]?`,
+greedy. -/
 private def specRestEnd (ix : Ix) (b : Nat) : Nat := Id.run do
   let s := ix.s
   let mut a := b
@@ -456,9 +441,8 @@ private def specRestEnd (ix : Ix) (b : Nat) : Nat := Id.run do
   if s.sat a (fun c => "EFGXbcdefgnosx%".contains c) then a := a + 1
   return a
 
-/-- `\{((\w+)((\.\w+)|(\[[^\]]+\]))*)?(\![sra])?(\:(.?[<>=\^])?…)?\}`. The
-field and conversion read greedily; the spec's fill and alignment are tried
-in the pattern's order, two scalars, the alignment alone, then neither. -/
+/-- `\{((\w+)((\.\w+)|(\[[^\]]+\]))*)?(\![sra])?(\:(.?[<>=\^])?…)?\}`, the spec's fill and
+alignment tried in the pattern's order. -/
 private def braceEnd (ix : Ix) (p : Nat) : Option Nat := Id.run do
   let s := ix.s
   if !s.is p '{' then return none

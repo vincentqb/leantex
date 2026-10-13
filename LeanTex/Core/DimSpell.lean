@@ -2,16 +2,7 @@ module
 
 public import LeanTex.Core.Dim
 
-/-!
-# The decimal printers, digit by digit
-
-What `Sp.toPtString` and `ratString` print, as the characters a reader of
-the decimal meets: a sign, the integer part's digits, and — where there is
-a fraction — a point and the fraction's digits with its trailing zeros
-dropped (`fracDigits`), whose value is the fraction
-(`fracDigits_value_exact`): what a reader of the spelling
-(`PdfContentLex.numParts?`) needs to recover the printed value.
--/
+/-! What `Sp.toPtString` and `ratString` print, digit by digit, for a reader recovering it. -/
 
 namespace LeanTex.Core.Dim
 
@@ -30,7 +21,6 @@ private theorem digitsVal_acc (acc : Nat) (b : List Char) :
     simp only [Nat.zero_mul, Nat.zero_add, Nat.pow_succ]
     grind
 
-/-- A digit list's value over an append. -/
 public theorem digitsVal_append (a b : List Char) :
     digitsVal (a ++ b) = digitsVal a * 10 ^ b.length + digitsVal b := by
   simp only [digitsVal, List.foldl_append]
@@ -49,7 +39,6 @@ private theorem digitsVal_zeros (ds : List Char) (h : ∀ c ∈ ds, c = '0') : d
     rw [e, hr]
     simp
 
-/-- `kDigits` spells digits. -/
 public theorem kDigits_digits (k n : Nat) : ∀ c ∈ kDigits k n, c.isDigit = true := by
   induction k generalizing n with
   | zero => simp [kDigits]
@@ -65,7 +54,6 @@ public theorem kDigits_length (k n : Nat) : (kDigits k n).length = k := by
   | zero => rfl
   | succ k ih => simp [kDigits, ih]
 
-/-- **The last `k` digits are the number modulo `10^k`** (`_exact`). -/
 public theorem kDigits_value_exact (k n : Nat) : digitsVal (kDigits k n) = n % 10 ^ k := by
   induction k generalizing n with
   | zero => simp [kDigits, digitsVal, Nat.mod_one]
@@ -85,7 +73,6 @@ private theorem rev_split (l : List Char) :
     _ = (l.reverse.takeWhile (· == '0') ++ l.reverse.dropWhile (· == '0')).reverse := by rw [h]
     _ = _ := List.reverse_append
 
-/-- `fracDigits` spells digits. -/
 public theorem fracDigits_digits (k fr : Nat) : ∀ c ∈ fracDigits k fr, c.isDigit = true := by
   intro c hc
   have hsplit := rev_split (kDigits k fr)
@@ -93,9 +80,6 @@ public theorem fracDigits_digits (k fr : Nat) : ∀ c ∈ fracDigits k fr, c.isD
   rw [hsplit]
   exact List.mem_append_left _ hc
 
-/-- **A fraction's digits are the fraction** (`_exact`): a nonzero fraction
-below `10^k` prints at least one digit and at most `k`, and its digits,
-scaled back by the trailing zeros dropped, are the fraction. -/
 public theorem fracDigits_value_exact (k fr : Nat) (h : fr < 10 ^ k) (h0 : fr ≠ 0) :
     fracDigits k fr ≠ [] ∧ (fracDigits k fr).length ≤ k ∧
       digitsVal (fracDigits k fr) * 10 ^ (k - (fracDigits k fr).length) = fr := by
@@ -124,9 +108,6 @@ public theorem fracDigits_value_exact (k fr : Nat) (h : fr < 10 ^ k) (h0 : fr �
     exact hval
 
 
-/-- **What `toPtString` prints, character by character** (`_exact`): a sign
-where the thousandths are negative, the integer part's digits, and where
-there is a fraction, a point and its digits (`fracDigits`). -/
 public theorem toPtString_chars_exact (x : Sp) :
     (Sp.toPtString x).toList = (if x.toPtMilli < 0 then ['-'] else []) ++
       Nat.toDigits 10 (x.toPtMilli.natAbs / 1000) ++
@@ -142,10 +123,6 @@ public theorem toPtString_chars_exact (x : Sp) :
     by_cases hm : x.toPtMilli < 0 <;> simp [hm, ts, String.toList_ofList]
 
 
-/-- **What `ratString` prints, character by character** (`_exact`): the
-magnitude rounded once at the ninth decimal (`v`), a sign where the ratio is
-negative and rounds to no zero, `v`'s integer part's digits, and where
-there is a fraction, a point and its digits (`fracDigits`). -/
 public theorem ratString_chars_exact (p q : Int) :
     (ratString p q).toList =
       (if p < 0 ∧ (p.natAbs * 1000000000 + q.natAbs / 2) / max 1 q.natAbs ≠ 0 then ['-'] else []) ++

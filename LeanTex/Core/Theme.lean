@@ -8,88 +8,38 @@ namespace LeanTex.Core.Theme
 
 open LeanTex.Core.Ir LeanTex.Core.Dim
 
-/-- The four declaration surfaces a `\theme` installs onto: what the
-document has declared at the theme site, and what its later declarations
-keep overriding. Values in, values out — the install is `apply` below, a
-function of these alone. A `Theme` extends this record: a bundle is the
-same four surfaces plus a name.
-
-A theme fixes no page, by construction — a declared design decision this
-record's own shape carries, not a theorem: a class fixes the page model and
-nothing a theme may override. This structure is `apply`'s whole domain and
-codomain, and it carries no page, no class, and no assertion, so a bundle
-*cannot* reach the geometry or the class's implied contract
-(`Ir.DocClass.record`) — the compiler enforces the rule at the type, the
-same way `DocClass` closes the class set, and a key a bundle installs names
-its surface by the closed `DeclSurface`. Keep it that way: a bundle wanting
-geometry is a genre or class question, never a theme field (the
-value-vs-consumer layering rule; audit-layer's `Theme.apply`/W0348 fixed
-the value-vs-value face, and W0355 names the consumer face at install). -/
+/-- The four declaration surfaces a `\theme` installs onto, holding no page, class or assertion. -/
 public structure Decls where
   palette : Palette := {}
   tokens : Tokens := {}
   styles : Styles := {}
-  /-- The slide footer's slots, declared data (`\chrome`), not colour: no
-  theorem ranges over it. -/
+  /-- The slide footer's slots (`\chrome`). -/
   chrome : Chrome := {}
   deriving Repr, BEq
 
-/-- A theme is data: palette, tokens, element styles, and chrome as the
-*values* the engine runs on, installed at the `\theme` site through the same
-replace-on-redeclare path a document's own declarations use. A document's
-later declarations override, so a theme is a default, never a lock — and a
-new theme is a new table here, values only, no code. Values rather than
-surface strings so a theorem about a bundle ranges over what `\theme`
-installs (`Contrast.builtin_palettes_contract` closes by `decide` over
-these entries, for every bundle in `builtin` at once);
-colour arithmetic a bundle wants (xcolor's `!` mixes) is evaluated right
-here, at definition time, with the same `Color.mix` step
-`Ir.Palette.resolve` folds at document use sites. The semantic palette keys
-are the whole contract with the backends: `fg`/`bg` colour text and page,
-declaring `frametitlebg` turns the frame title into a colour bar,
-`progressfg`/`bg` draw the section-page progress bar (`progressheight`
-sizes it), `standoutfg`/`bg` invert a `[standout]` frame, and `muted`
-quiets secondary furniture — the chrome footer draws in it. -/
+/-- A theme: the values of the four surfaces a `\theme` installs as defaults, and a name. -/
 public structure Theme extends Decls where
   name : String
-  /-- The frame-alignment keys the bundle's inner theme sets: beamer's own
-  unless the lineage redefines them, as moloch's `[c]` does. -/
+  /-- The frame-alignment keys the bundle's inner theme sets. -/
   frameKeys : Ir.FrameKeys := .beamer
-  /-- The seeds the bundle's palette is generated from, with its block style
-  (`SeedPalette`): the bundle's own palette entries stand over what they
-  generate. -/
+  /-- The seeds the bundle's palette is generated from, with its block style. -/
   seeds : Option (SeedPalette.Seeds × SeedPalette.Blocks) := none
-  /-- The roles the bundle derives rather than states, each by its rule
-from the colour beside it (`Theme.derivedFresh`): the secondary ink from
-the bundle's ink as a generated palette's muted step is derived
-(`SeedPalette.mutedFor`), any other role a lineage colour realized as text
-on the bundle's page at the generated text target, its hue held
-(`ContrastSolve.realizeNearest`). -/
+  /-- The roles the bundle derives from the colour beside each rather than states. -/
   derived : List (Ir.Role × Color) := []
-  /-- The roles the lineage's own source declares at a colour that reads
-short of its need where the bundle installs it: they ship exactly, as
-lualatex sets them, and the document's contrast report names each pair
-where a document uses it — declared colours are reported, never
-repainted. -/
+  /-- The roles the lineage declares short of their need, shipped as declared and reported. -/
   reported : List Ir.Role := []
 
 /-- The palette a bundle's seeds generate at a depth, derived afresh. -/
 public def Theme.generatedFresh (th : Theme) (d : GroundDepth) : Option SeedPalette.Colors :=
   th.seeds.bind fun (s, _) => ((SeedPalette.generate s (s.targets d)).toOption).map (·.colors)
 
-/-- The colour a bundle derives for a role, derived afresh: the secondary
-ink by the generated muted rule from the bundle's ink and page
-(`SeedPalette.mutedFor`); any other role its lineage colour realized as
-text on the bundle's page at the generated text target, its hue held; the
-colour itself where nothing derives one. -/
+/-- The colour a bundle derives for a role, derived afresh; `seed` itself where nothing derives. -/
 public def Theme.derivedFresh (th : Theme) (r : Ir.Role) (seed : Color) : Color :=
   let page := Design.printPage th.palette
   if r == .muted then (SeedPalette.mutedFor seed page).getD seed
   else (ContrastSolve.realizeNearest (Contrast.aaText + SeedPalette.margin) page seed).getD seed
 
-/-- The palette a bundle's seeds generate at a depth: the generator's answer
-kept in `PaletteData` for those seeds, else derived as asked (a bundle over
-a document's own seeds, `daylightWith`). -/
+/-- The palette a bundle's seeds generate at a depth: kept in `PaletteData`, else derived. -/
 public def Theme.generated (th : Theme) (d : GroundDepth) : Option SeedPalette.Colors :=
   th.seeds.bind fun (s, _) =>
     match PaletteData.bundleGenerated.find? (fun e => e.1 == s && e.2.1 == d && e.2.2.1 == .light) with
@@ -103,9 +53,7 @@ public def Theme.derivedColor (th : Theme) (r : Ir.Role) (seed : Color) : Color 
   | some e => e.2.2
   | none => th.derivedFresh r seed
 
-/-- **What a bundle declares at a depth**: the palette its seeds generate,
-its own entries over it, and each colour it derives from a lineage colour —
-seeds and relations, realized where a document installs the bundle. -/
+/-- What a bundle declares at a depth: its generated palette, own entries and derived colours. -/
 public def Theme.realize (th : Theme) (d : GroundDepth) : Palette :=
   let gen : Palette := match th.seeds, th.generated d with
     | some (seeds, blocks), some colors =>
@@ -115,31 +63,18 @@ public def Theme.realize (th : Theme) (d : GroundDepth) : Palette :=
   let full := th.derived.foldl (fun p e => p.declare (.role e.1) (th.derivedColor e.1 e.2)) lit
   { full with coveredFraction := th.palette.coveredFraction, decorative := th.palette.decorative }
 
-/-- **A bundle that generates nothing realizes alike at every depth.** -/
 public theorem realize_depth_exact (th : Theme) (h : th.seeds = none) (d d' : GroundDepth) :
     th.realize d = th.realize d' := by
   simp only [Theme.realize, Theme.generated, h, Option.bind_none]
 
-/-- `{\large\bfseries}` (`{\Large\bfseries}` for `large := "Large"`) as the
-elaborator reads a `\style` font value: nested wrappers with an empty body
-where the element's own content goes. -/
+/-- `{\<size>\bfseries}` as the elaborator reads a `\style` font value. -/
 private def boldFont (size : String) : ElementStyle :=
   { font := some #[.styled (.size size) #[.styled .bold #[]]] }
 
 private def pt1 : Dim.SymGlue := { width := Length.ofSp (Dim.pt 1) }
 
-/-- The moloch lineage's furniture weights and title-page gaps, one named
-dtx-sourced table: a 1pt progress bar (`progressbar linewidth`,
-beamerouterthememoloch.dtx, `\moloch@outer@setdefaults`), a 0.5pt hairline
-separator (its default linewidth), the frame-title bar's padding
-(`\moloch@frametitle@margin@top`/`@bottom` = `\ht\strutbox` in the
-frametitle font, beamerouterthememoloch.dtx `frametitle` template —
-`Ir.frameTitlePadding`, em of the title size), and the title page's
-inter-part gaps from beamerinnerthememoloch.dtx — 0.3em above the
-subtitle, 0.8em below the separator, 0.5em below the author, 1em below the
-institute. `moloch` installs it because these are its own source's values;
-`daylight` installs the same table because its rhythm is deliberately the
-lineage's, not a knob of its own — one edit site for a dtx correction. -/
+/-- The moloch lineage's furniture weights and title-page gaps (beamerouterthememoloch.dtx,
+beamerinnerthememoloch.dtx). -/
 private def lineageTokens : Tokens := { entries := #[
   ("progressheight", pt1),
   ("frametitlepadding", Ir.frameTitlePadding),
@@ -149,57 +84,34 @@ private def lineageTokens : Tokens := { entries := #[
   ("authorgap", { width := { em := 500 } }),
   ("institutegap", { width := { em := 1000 } })] }
 
-/-- The footline every shipped bundle declares, read as data from the
-metropolis lineage (beamerouterthememoloch.dtx, `footline` template:
-`\usebeamertemplate*{frame footer}` `\hfill` `\usebeamertemplate*{page
-number in head/foot}`): the left slot is the author's `\framefoot` and
-nothing else — the template names no section slot, so an undeclared frame's
-footer-left is empty, as the lineage renders it — and the right slot is
-the frame number. One value, three installs; `footline_left_contract`
-holds every shipped bundle to the template. A section title in the footer
-would be an engine embellishment a document opts into (`\chrome{ footer =
-{ left = \sectiontitle } }`), never a bundle's claim about its source. -/
+/-- The footline every shipped bundle declares (beamerouterthememoloch.dtx): `\framefoot` left,
+the frame number right. -/
 private def builtinChrome : Chrome :=
   { footerLeft := none
     footerRight := some .frameNumber }
 
-/-- The Metropolis lineage as a token bundle: an inverted frame-title bar,
-one warm accent, a near-white page. Values map the moloch beamer theme's
-light preset onto the semantic keys, mixes evaluated (the original xcolor
-spelling rides in the comment beside each); the lineage's warm colour is its
-alerted text and its decorative marks, each exactly as lualatex sets it. -/
+/-- The Metropolis lineage: an inverted frame-title bar, one warm accent, a near-white page
+(beamercolorthememoloch.sty's light preset). -/
 public def moloch : Theme :=
   let fg : Color := { r := 0x23, g := 0x37, b := 0x3B }
   let bg := Color.black.mix 2 Color.white                     -- black!2
-  -- mAlertFg (beamercolorthememoloch.sty), the lineage's one warm colour:
-  -- its alerted text, the progress bar and the title separator in it
-  -- exactly, as lualatex sets them.
+  -- mAlertFg (beamercolorthememoloch.sty), as lualatex sets it.
   let lineage := Color.ofHtml 0xEB 0x81 0x1B
   let progressbg := (lineage.mix 50 .black).mix 30 .white      -- progressfg!50!black!30
   { name := "moloch"
     palette := {
       entries := #[
         (.role .ink, fg), (.role .page, bg),
-        -- alerted text fg=mAlertFg: 2.61:1 on this page, under the 4.5:1
-        -- WCAG 2.2 SC 1.4.3 asks of text, so a document's contrast report
-        -- names it where the alert is used (`reported`).
+        -- alerted text fg=mAlertFg reads 2.61:1 here, so it is `reported`.
         (.role .alert, lineage),
         (.role .example, { r := 0x00, g := 0x80, b := 0x80 }),
         (.role .frameTitleInk, bg), (.role .frameTitleBar, fg),
         (.role .progressFill, lineage), (.role .progressTrack, progressbg),
         (.role .separator, lineage),
         (.role .standoutInk, bg), (.role .standoutGround, fg)]
-      -- Covered overlay content keeps each colour at 31% of itself over
-      -- the page, mixed in Oklab (Core/Oklab.lean). Material's
-      -- disabled-state opacity is 38% (m2.material.io/design/interaction/
-      -- states.html#disabled), but at 38% this bundle's alert and example
-      -- read under the 3:1 WCAG 2.2 SC 1.4.11 asks of state-identifying
-      -- information against their active forms; 31% is the largest
-      -- fraction where every text role clears it
-      -- (`Contrast.builtin_designs_covered` is the check).
+      -- 31%: the largest fraction where every text role clears SC 1.4.11's 3:1.
       coveredFraction := some 31 }
-    -- The lineage declares no secondary ink: the muted step is derived from
-    -- the ink as a generated palette's is (`SeedPalette.mutedFor`).
+    -- The lineage declares no secondary ink.
     derived := [(.muted, fg)]
     reported := [.alert, .alertTitleInk]
     tokens := lineageTokens
@@ -208,16 +120,12 @@ public def moloch : Theme :=
       ("frametitle", boldFont "large"),
       ("sectionpage", boldFont "Large"),
       ("standout", boldFont "Large"),
-      -- moloch's `title page` template sets the title matter ragged left
-      -- and draws a separator rule between the title block and the author
-      -- block, in the palette's separator colour.
+      -- moloch's `title page` template: ragged left, a separator between title and author.
       ("titlepage", { align := some .left
                       separator := some (lineage, some (.role .separator)) })] }
     chrome := builtinChrome }
 
-/-- A quieter default: near-black ink on white, one restrained accent, no
-title bar — frame titles set as plain bold headings because the bar key is
-simply absent. A third theme costs exactly one more table like this. -/
+/-- A quieter default: near-black ink on white, one restrained accent, no title bar. -/
 public def plain : Theme :=
   let fg : Color := { r := 0x1B, g := 0x1B, b := 0x1F }
   let bg : Color := { r := 0xFF, g := 0xFF, b := 0xFF }
@@ -230,12 +138,8 @@ public def plain : Theme :=
         (.role .progressTrack, fg.mix 15 .white),                     -- fg!15
         (.role .separator, fg.mix 40 .white),                      -- fg!40
         (.role .standoutInk, bg), (.role .standoutGround, fg)]
-      -- Covered keeps each colour at 38% of itself over the page — the
-      -- Material disabled-state opacity, per colour in Oklab; this
-      -- bundle's roles all clear the 3:1 state change at 38%
-      -- (Contrast.builtin_designs_covered is the kernel check).
+      -- 38%: Material's disabled-state opacity; every text role clears SC 1.4.11's 3:1.
       coveredFraction := some 38 }
-    -- The muted step derived from the ink as a generated palette's is.
     derived := [(.muted, fg)]
     tokens := { entries := #[("progressheight", pt1)] }
     styles := { entries := #[
@@ -243,33 +147,23 @@ public def plain : Theme :=
       ("standout", boldFont "Large")] }
     chrome := builtinChrome }
 
-/-- daylight's four seeds: the warm-neutral family practice for the page and
-ink (Tailwind's `stone`; Material's own on-surface is never pure black), a
-link-blue azure accent, GOV.UK's `success` green as the example. -/
+/-- daylight's four seeds: Tailwind `stone` page and ink, an azure accent, GOV.UK `success`. -/
 public def daylightSeeds : SeedPalette.Seeds :=
   { ink := { r := 0x29, g := 0x25, b := 0x24 }       -- stone-800
     paper := { r := 0xFD, g := 0xFC, b := 0xF9 }     -- warm near-white
     accent := { r := 0x0B, g := 0x66, b := 0xC2 }    -- azure
     exampleColor := some { r := 0x0F, g := 0x7A, b := 0x52 } }  -- GOV.UK success
 
-/-- The daylight bundle over a set of seeds: its palette generated from them
-with tonal blocks, its standout frame the paper on the accent, its title-page
-separator the accent, and its rhythm and furniture daylight's own. A deck
-that declares its own ink, paper or accent and no theme takes this bundle
-over those seeds (`Elab`'s class-default install), one entry point for every
-colour it ships. -/
+/-- The daylight bundle over a set of seeds: its palette generated from them with tonal blocks. -/
 public def daylightWith (seeds : SeedPalette.Seeds) : Theme :=
   { name := "daylight"
     seeds := some (seeds, .tonal)
     palette := {
       entries := #[(.role .standoutInk, seeds.paper), (.role .standoutGround, seeds.accent)]
       coveredFraction := some 38 }
-    -- The lineage's rhythm, not this bundle's own knob: the shared table
-    -- makes the docstring's claim true in code.
     tokens := lineageTokens
     styles := { entries := #[
-      -- No frametitle bar: the title sets as a plain bold heading in the
-      -- ink (the absent `frametitlebg` key is the declaration).
+      -- No frame-title bar: the title sets as a plain bold heading.
       ("frametitle", boldFont "large"),
       ("sectionpage", boldFont "Large"),
       ("standout", boldFont "Large"),
@@ -277,26 +171,11 @@ public def daylightWith (seeds : SeedPalette.Seeds) : Theme :=
                       separator := some (seeds.accent, some (.role .separator)) })] }
     chrome := builtinChrome }
 
-/-- A bright, warm default for decks: warm paper, warm near-black ink, one
-azure accent — quiet chrome, no title bar (the bar key is deliberately
-absent: hierarchy rides size and weight). Its palette is generated from its
-four seeds (`SeedPalette`): the page and ink are the warm-neutral family
-practice (Tailwind's `stone`; Material's own on-surface is never pure black),
-the accent a link-blue azure, the example GOV.UK's `success` green verbatim;
-its blocks are tonal cards, its secondary ink the quietest tone that reads,
-and its standout frame the inversion on the accent. The slides class installs
-this bundle when a deck declares no theme; `moloch` stays by name. -/
+/-- A bright, warm default for decks, generated from `daylightSeeds`. -/
 public def daylight : Theme := daylightWith daylightSeeds
 
-/-- The Gemini poster lineage as a token bundle: a blue headline band with
-near-white text, blue block titles on the page, alert and example blocks
-carrying the band's pair. Values map beamercolorthemegemini.sty
-(github.com/anishathalye/gemini) onto the semantic keys, each entry's
-original spelling beside it; the poster class is the intended consumer
-(its headline band and titled blocks read exactly these roles), and the
-bundle deliberately declares no chrome and no slides furniture styles —
-the poster class never draws them (W0355 names an install that would be
-inert). -/
+/-- The Gemini poster lineage (beamercolorthemegemini.sty): a blue headline band, blue block
+titles, no chrome. -/
 public def gemini : Theme :=
   let blue : Color := { r := 0x40, g := 0x73, b := 0x9E }      -- blue, RGB 64,115,158
   let lightgray : Color := { r := 0xF5, g := 0xF6, b := 0xFA } -- lightgray, RGB 245,246,250
@@ -307,13 +186,7 @@ public def gemini : Theme :=
     palette := {
       entries := #[
         (.role .ink, fg), (.role .page, bg),
-        -- The lineage leaves alerted/example text to beamer's defaults
-        -- (beamercolorthemedefault.sty: `alerted text` fg=red, `example
-        -- text` fg=green!50!black). red reads 4.00:1 on this page, under
-        -- the 4.5:1 WCAG 2.2 SC 1.4.3 asks of text; this is the same hue
-        -- at the nearest lightness that clears it on this ground at the bare
-        -- gate (ContrastSolve.realizeNearest at 4.5:1; 4.53:1), kept as the
-        -- bundle's literal value, which this bundle ships unchanged.
+        -- beamer's `alerted text` red at the nearest lightness clearing 4.5:1 here (4.53:1).
         (.role .alert, { r := 0xEE, g := 0x00, b := 0x00 }),
         (.role .example, { r := 0x00, g := 0x80, b := 0x00 }),      -- green!50!black
         (.role .frameTitleInk, lightgray), (.role .frameTitleBar, blue),   -- headline fg/bg
@@ -322,35 +195,17 @@ public def gemini : Theme :=
         (.role .exampleTitleInk, blue), (.role .exampleTitleBar, lightgray), -- block example title
         (.role .standoutInk, bg), (.role .standoutGround, fg),                -- palette tertiary bg=black,fg=white
         (.role .separator, darkblue)]                               -- headline rule bg=darkblue
-      -- Covered overlay content keeps each colour at 30% of itself over
-      -- the page, mixed in Oklab. At Material's 38% disabled-state
-      -- default this bundle's alert and example read at 2.70:1 and
-      -- 2.99:1 against their active forms — under the 3:1 WCAG 2.2
-      -- SC 1.4.11 asks of state-identifying information; 30% is the
-      -- largest fraction where every text role clears it
-      -- (Contrast.builtin_designs_covered is the kernel check).
+      -- 30%: the largest fraction where every text role clears SC 1.4.11's 3:1.
       coveredFraction := some 30 }
-    -- gemini declares no secondary ink: the muted step is derived from the
-    -- ink as a generated palette's is.
+    -- gemini declares no secondary ink.
     derived := [(.muted, fg)]
     styles := { entries := #[
-      -- The headline band centres its title matter (beamerthemegemini.sty,
-      -- headline template: the logo columns keep space on both sides "to
-      -- keep title centered") — declared here, the alignment token the
-      -- band reads, never a hard-coded centring. The separator is the
-      -- lineage's headline rule, in its own colour.
+      -- The headline band centres its title matter (beamerthemegemini.sty).
       ("titlepage", { align := some .center
                       separator := some (darkblue, some (.role .separator)) })] } }
 
 public def builtin : List Theme := [moloch, plain, daylight, gemini]
 
-/-- `footline_left_contract`: no shipped bundle declares a footer-left
-datum. The lineage's footline template (beamerouterthememoloch.dtx,
-`\defbeamertemplate{footline}{plain}`) has exactly two slots — the
-author's `frame footer` and the frame number — so a bundle that cites it
-owes an empty left slot; a bundle wanting a section title there would be
-adding to its source and must say so as an opt-in, not as data read from
-the dtx. Quantified over `builtin`: adding a bundle enters the contract. -/
 public theorem footline_left_contract : ∀ th ∈ builtin, th.chrome.footerLeft = none := by
   intro th h
   simp only [builtin, List.mem_cons, List.not_mem_nil, or_false] at h
@@ -361,14 +216,7 @@ public def find? (name : String) : Option Theme :=
 
 public def names : List String := builtin.map (·.name)
 
-/-- Key-wise onto the element's existing entry: the theme's key wins where
-both declare it (the positional last-writer rule every palette entry
-follows), and the document's survives where the theme is silent — over
-every field of `ElementStyle`, the same merge a later `\style` block
-performs against the running entry. Built positionally, so a field added
-to the record is a compile error here rather than a silently dropped key:
-the structure-instance spelling this replaces omitted `color` and erased a
-link colour at every install. -/
+/-- Key-wise onto the element's entry: the theme's key wins where both declare it. -/
 public def styleMerge (top base : ElementStyle) : ElementStyle :=
   ElementStyle.mk (top.font <|> base.font) (top.before <|> base.before)
     (top.after <|> base.after) (top.rule <|> base.rule)
@@ -397,45 +245,27 @@ private def installStyles (s : Styles) : List (String × ElementStyle) → Style
   | (k, st) :: es =>
     installStyles (s.declare k (styleMerge st ((s.find? k).getD {}))) es
 
-/-- The bundle-palette install: entries fold through `Palette.declare`, and
-the bundle's covered fraction rides with them (`<|>`: a document's earlier
-`covered = <n>\%` yields, its later one overrides). Its own function so the
-layering statements below take it whole. -/
+/-- The bundle-palette install: entries fold through `Palette.declare`, the covered fraction too. -/
 private def paletteApply (bp p : Palette) : Palette :=
   let pal := installPalette p bp.entries.toList
   { pal with coveredFraction := bp.coveredFraction <|> pal.coveredFraction
              seeded := bp.seeded <|> pal.seeded }
 
-/-- The bundle-chrome install: per slot, the same shape as every palette
-entry — the bundle's slot wins where it declares one, the document's
-survives where it is silent. -/
+/-- The bundle-chrome install, per slot: the bundle's slot wins where it declares one. -/
 private def chromeApply (bc c : Chrome) : Chrome :=
   { footerLeft := bc.footerLeft <|> c.footerLeft
     footerRight := bc.footerRight <|> c.footerRight
     standoutNote := bc.standoutNote <|> c.standoutNote }
 
-/-- The `\theme` install as a value: the bundle's entries fold onto the
-document's declarations through the same replace-on-redeclare doors the
-document's own blocks use (`Palette.declare`, `Tokens.declare`,
-`Styles.declare`), the bundle's covered fraction rides with its palette,
-styles merge key-wise onto any entry already declared, and the bundle's
-chrome merges per slot — a slot the bundle declares wins, as any later
-declaration does, and a slot it leaves silent keeps the document's,
-instead of the band replacing wholesale. Values in, values out, no
-elaborator state — effects as data: `Elab` calls exactly this function at
-the `\theme` site, so a statement about layering ranges over the install
-the engine runs. -/
+/-- The `\theme` install as a value: the bundle's entries fold onto the document's declarations
+through the doors the document's own declarations use. -/
 public def apply (th : Theme) (s : Decls) : Decls :=
   { palette := paletteApply (th.realize s.palette.classColors.depth) s.palette
     tokens := installTokens s.tokens th.tokens.entries.toList
     styles := installStyles s.styles th.styles.entries.toList
     chrome := chromeApply th.chrome s.chrome }
 
-/-- A class-default bundle installs *under* the document: the document's
-own declarations win per key — `apply` with the priorities mirrored,
-because the author never wrote this bundle and a default must not replace
-a declaration. `\theme{...}` keeps `apply`'s positional rule; only the
-class-default site calls this. -/
+/-- A class-default bundle installed under the document: the document's declarations win per key. -/
 public def applyUnder (th : Theme) (s : Decls) : Decls :=
   { palette :=
       let real := th.realize s.palette.classColors.depth
@@ -449,9 +279,7 @@ public def applyUnder (th : Theme) (s : Decls) : Decls :=
     styles := installStyles th.styles s.styles.entries.toList
     chrome := chromeApply s.chrome th.chrome }
 
-/-- The four declaration surfaces a `\theme` installs onto (`Decls`), closed:
-a key a bundle declares lives on one of them by type, so a bundle cannot
-reach the page model or the class's contract. -/
+/-- The four declaration surfaces a `\theme` installs onto. -/
 public inductive DeclSurface where
   | palette
   | tokens
@@ -466,9 +294,7 @@ public def DeclSurface.name : DeclSurface → String
   | .style => "style"
   | .chrome => "chrome"
 
-/-- Every `(surface, key)` the bundle installs at a depth — `(.palette,
-"alert")`, `(.chrome, "footer.left")` — whatever stood there before: the
-keys whose standing value is the theme's after `apply`. -/
+/-- Every `(surface, key)` the bundle installs at a depth. -/
 public def declares (th : Theme) (d : GroundDepth) : Array (DeclSurface × String) := Id.run do
   let mut out : Array (DeclSurface × String) := #[]
   let real := th.realize d
@@ -486,13 +312,8 @@ public def declares (th : Theme) (d : GroundDepth) : Array (DeclSurface × Strin
     out := out.push (.chrome, "footer.right")
   return out
 
-/-- The `(declaration, key)` pairs `apply` would overwrite with a
-*different* value, computed against the same state `apply` consumes: the
-positional last-writer rule says the theme wins them, and W0348's site
-says so out loud when the loser was the document's own declaration. A key
-the theme re-declares at the standing value replaces nothing and is not
-listed. Install order: palette entries, `covered`, tokens, styles,
-chrome. -/
+/-- The `(declaration, key)` pairs `apply` would overwrite with a different value, in install
+order. -/
 public def replaces (th : Theme) (s : Decls) : Array (DeclSurface × String) := Id.run do
   let mut out : Array (DeclSurface × String) := #[]
   let real := th.realize s.palette.classColors.depth
@@ -522,27 +343,7 @@ public def replaces (th : Theme) (s : Decls) : Array (DeclSurface × String) := 
         out := out.push (.chrome, "footer.right")
   return out
 
-/-! ## The layering contract over the install
-
-T1 (`Palette.declare_last_wins`, `Palette.declare_keeps_others` and the
-`Tokens` twins beside them in `Ir`) states the per-key contract of one
-declaration. The statements below are its bundle-side companions, in the
-same terms, over the install the engine runs (`apply`):
-
-* T2, the keeps side — a bundle changes only the keys it declares:
-  `apply_palette_keeps_others` and its per-surface siblings. The positional
-  reading (a bundle *wins* the keys it does declare, wherever it stands) is
-  the beamer lineage's `\usetheme` semantics — a `\setbeamercolor` before
-  `\usetheme` loses the same way — and per entry it is exactly
-  `Palette.declare_last_wins`.
-* Idempotence — applying a theme twice is applying it once:
-  `apply_fixed_point`. A bundle declares a state, it does not perform an
-  action, so `apply th s` is a fixed point of `apply th`.
--/
-
-/-- No key declared twice. Every shipped bundle satisfies it
-(`builtin_styles_nodup`), and it is what pins the style fold's read-back
-to the pre-install state in `apply_fixed_point`. -/
+/-- No key declared twice. -/
 public def nodupKeys {α : Type} : List (String × α) → Bool
   | [] => true
   | e :: es => !(es.any (·.1 == e.1)) && nodupKeys es
@@ -560,10 +361,7 @@ private theorem styleMerge_absorb (a b : ElementStyle) :
   intro h h'
   exact absurd h' h
 
-/-- The keyed store, as every declare door writes it: filter the key out,
-push the entry. `Palette.declare`, `Tokens.declare`, and `Styles.declare`
-all reduce to iterating this step, so the fold lemmas below serve all
-three surfaces. -/
+/-- The keyed store every declare door writes: filter the key out, push the entry. -/
 private def installEntries {κ α : Type} [BEq κ] [LawfulBEq κ] (xs : Array (κ × α)) :
     List (κ × α) → Array (κ × α)
   | [] => xs
@@ -729,9 +527,7 @@ private theorem installTokens_entries (t : Tokens) (es : List (String × Dim.Sym
     rw [ih]
     rfl
 
-/-- The style fold's writes, read against one base: nodup keys are what
-make the running fold's reads equal these (each key is written once, so no
-read sees an earlier write). -/
+/-- The style fold's writes, read against one base. -/
 private def styleWrites (s : Styles) :
     List (String × ElementStyle) → List (String × ElementStyle)
   | [] => []
@@ -919,11 +715,6 @@ private theorem dropWhile_head_keep (p : Char → Bool) (l : List Char)
     simp only [List.head?_cons, Option.all_some, Bool.not_eq_true'] at h
     simp [h]
 
-/-- **A plain name resolves to its entry.** `Palette.resolve` — the
-evaluator `\textcolor` and every declaration value go through — reads a
-name with no `!` and no blank at either end as exactly what `find?` reads:
-the two spellings of one colour use cannot diverge, for any palette. The
-side condition is what `resolve` itself splits and trims on. -/
 public theorem resolve_find_exact (pal : Palette) (n : String) (c : Color)
     (hn : plainName n = true) (h : pal.find? n = some c) : pal.resolve n = some c := by
   simp only [plainName, Bool.and_eq_true, Bool.not_eq_true', List.contains_eq_mem,
@@ -941,11 +732,6 @@ public theorem resolve_find_exact (pal : Palette) (n : String) (c : Color)
   rw [hparts]
   simp [Palette.atom, h, Palette.resolve.go]
 
-/-- **A class default never re-exempts a redeclared key.** The exemption a
-class-default bundle installs under the document survives exactly for the
-keys the document did not declare: a document that redeclares a theme's
-decorative entry is judged on its own declaration, as `Palette.declare`
-judges every redeclaration. -/
 public theorem applyUnder_decorative_exact (th : Theme) (s : Decls) (k : ColorRef) :
     k ∈ (applyUnder th s).palette.decorative ↔
       (k ∈ s.palette.decorative ∨ (k ∈ (th.realize s.palette.classColors.depth).decorative ∧
@@ -964,9 +750,6 @@ public theorem applyUnder_decorative_exact (th : Theme) (s : Decls) (k : ColorRe
       exact hall x hx (by simpa using hkx.symm)
   rw [hnone]
 
-/-- T2, the palette half, in `Palette.declare_keeps_others`'s terms: a
-bundle changes only the keys it declares — a key the theme does not name
-resolves after `\theme` exactly as before it. -/
 public theorem apply_palette_keeps_others (th : Theme) (s : Decls) (k : ColorRef)
     (h : (th.realize s.palette.classColors.depth).lookup k = none) :
     (apply th s).palette.lookup k = s.palette.lookup k := by
@@ -979,8 +762,6 @@ public theorem apply_palette_keeps_others (th : Theme) (s : Decls) (k : ColorRef
   rw [installPalette_entries, installEntries_keeps _ _ _ hall]
   rfl
 
-/-- The covered fraction is part of the same contract: a bundle that
-declares no `covered` leaves the document's standing. -/
 public theorem apply_keeps_covered (th : Theme) (s : Decls)
     (h : th.palette.coveredFraction = none) :
     (apply th s).palette.coveredFraction = s.palette.coveredFraction := by
@@ -990,9 +771,6 @@ public theorem apply_keeps_covered (th : Theme) (s : Decls)
   rw [h, installPalette_covered]
   rfl
 
-/-- The decorative exemption is per key and rides with declarations
-(`declare_decorative_rides`); a bundle that does not declare a key never
-touches its exemption. -/
 public theorem apply_palette_keeps_decorative (th : Theme) (s : Decls) (k : ColorRef)
     (h : (th.realize s.palette.classColors.depth).lookup k = none) :
     (k ∈ (apply th s).palette.decorative) ↔ k ∈ s.palette.decorative := by
@@ -1013,8 +791,6 @@ public theorem apply_palette_keeps_decorative (th : Theme) (s : Decls) (k : Colo
     intro e he
     simpa using fun hk => (hall e he) hk.symm
 
-/-- T2, the tokens half: `Tokens.declare_keeps_others` lifted over the
-bundle fold. -/
 public theorem apply_tokens_keeps_others (th : Theme) (s : Decls) (k : String)
     (h : th.tokens.find? k = none) :
     (apply th s).tokens.find? k = s.tokens.find? k := by
@@ -1027,8 +803,6 @@ public theorem apply_tokens_keeps_others (th : Theme) (s : Decls) (k : String)
   rw [installTokens_entries, installEntries_keeps _ _ _ hall]
   rfl
 
-/-- T2, the styles half: an element the bundle does not style keeps the
-document's whole entry. -/
 public theorem apply_styles_keeps_others (th : Theme) (s : Decls) (element : String)
     (h : th.styles.find? element = none) :
     (apply th s).styles.find? element = s.styles.find? element := by
@@ -1038,9 +812,6 @@ public theorem apply_styles_keeps_others (th : Theme) (s : Decls) (element : Str
     exact h
   exact installStyles_keeps _ _ _ hall
 
-/-- T2, the chrome half: a slot the bundle leaves silent keeps the
-document's datum — the statement whose absence let the install replace the
-band wholesale. -/
 public theorem apply_chrome_keeps_left (th : Theme) (s : Decls)
     (h : th.chrome.footerLeft = none) :
     (apply th s).chrome.footerLeft = s.chrome.footerLeft := by
@@ -1055,12 +826,6 @@ public theorem apply_chrome_keeps_right (th : Theme) (s : Decls)
   rw [h]
   rfl
 
-/-- Idempotence: applying a theme twice is applying it once — `apply th s`
-is a fixed point of `apply th`. A bundle declares a state rather than
-performing an action, so a repeated `\theme{name}` cannot drift the
-document. The one hypothesis — the bundle declares each style element
-once — holds for every shipped bundle (`builtin_styles_nodup`) and is what
-pins the style fold's read-back to the pre-install state. -/
 public theorem apply_fixed_point (th : Theme) (s : Decls)
     (h : nodupKeys th.styles.entries.toList = true) :
     apply th (apply th s) = apply th s := by

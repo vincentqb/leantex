@@ -4,13 +4,9 @@ public import LeanTex.Core.Highlight.Scan
 import LeanTex.Core.PygmentsLexData
 import Std.Data.HashMap
 
-/-!
-Pygments' `BashLexer` (pygments/lexers/shell.py), rule for rule; the rule
-structure it mirrors is testdata/highlight/pygments-rules.txt. A port of
-BSD-licensed code: Pygments' licence is testdata/highlight/LICENSE-Pygments. Every state
-but `string` ends in the root's rules, so the shared fallback is reached
-only by a quote the data rules leave unclosed.
--/
+/-! Pygments' `BashLexer` (pygments/lexers/shell.py) rule for rule, mirroring
+testdata/highlight/pygments-rules.txt. A port of BSD-licensed code: Pygments' licence is
+testdata/highlight/LICENSE-Pygments. -/
 namespace LeanTex.Core.Highlight.Bash
 
 private inductive St where
@@ -29,11 +25,7 @@ private abbrev M := Machine St
 
 @[inline] private def moveKey (v : Nat) (c : Char) : Nat := v * 0x110000 + c.val.toNat
 
-/-- The suffix automaton of a text (Blumer et al., 1985): a state for each
-class of substrings ending at the same positions, its moves on a scalar,
-and one past the last position any of its substrings ends at (`0` for
-none). Built in time linear in the text, its moves hashed: each state
-lists the scalars it moves on, which a clone copies. -/
+/-- The suffix automaton of a text (Blumer et al., 1985), built in linear time, its moves hashed. -/
 private structure Sam where
   moves : Std.HashMap Nat Nat
   lastEnd : Array Nat
@@ -112,10 +104,8 @@ private def Sam.of (cs : Array Char) : Sam := Id.run do
       lastEnd := lastEnd.set! u (max (lastEnd.getD u 0) (lastEnd.getD v 0))
   return { moves, lastEnd }
 
-/-- The length of the longest prefix of `[g, g + len)` standing again at
-least one scalar past its own end: an occurrence's last start falls as the
-prefix grows, and its bound rises, so the walk stops at the first prefix
-that fails. -/
+/-- The length of the longest prefix of `[g, g + len)` standing again at least one scalar past its
+own end. -/
 private def Sam.recurring (t : Sam) (s : Src) (g len : Nat) : Nat := Id.run do
   let mut v := 0
   let mut best := 0
@@ -164,15 +154,8 @@ private def Ix.of (s : Src) : Ix :=
     ansi := Table.of (ansiStep s) none s.size
     sam := Thunk.mk fun _ => Sam.of s.chars }
 
-/-- `<<-?\s*(\'?)\\?(\w+)[\w\W]+?\2`. Only the delimiter's length can
-backtrack: giving back an optional mark leaves `\w+` facing that mark. So
-the longest prefix of the delimiter that recurs past its own length wins,
-at its first recurrence. The suffix automaton names that prefix, reading
-it alone; the Z-function of the prefix, then one pass over the text after
-the delimiter's first scalar, gives each position's longest common prefix
-with it, and the pass stops at its first recurrence. So a heredoc costs
-the text its token covers, where Pygments reads the rest of the text once
-for every prefix of a delimiter that never recurs whole. -/
+/-- `<<-?\s*(\'?)\\?(\w+)[\w\W]+?\2`, in time linear in the token: the delimiter's longest
+prefix recurring past its own length wins, at its first recurrence. -/
 private def heredocAt (ix : Ix) (p : Nat) : Option Nat := Id.run do
   let s := ix.s
   if !(s.is p '<' && s.is (p + 1) '<') then return none
@@ -220,8 +203,7 @@ private def heredocAt (ix : Ix) (p : Nat) : Option Nat := Id.run do
   if best == 0 then return none
   return some (bestAt + best)
 
-/-- `heredocAt` over a text of its own: what the suite holds to the
-regex's own reading. -/
+/-- `heredocAt` over a text of its own. -/
 public def heredocEnd (s : Src) (p : Nat) : Option Nat := heredocAt (Ix.of s) p
 
 /-- `(?s)\$?"(\\.|[^"\\$])*"`: a double-quoted string with nothing to

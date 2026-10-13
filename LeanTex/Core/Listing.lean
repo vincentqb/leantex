@@ -6,15 +6,8 @@ import LeanTex.Core.ContrastRatio
 import LeanTex.Core.Nfc
 import LeanTex.Core.Oklab
 
-/-!
-Shared listing paint, downstream of the IR and upstream of both backends.
-Classification is already in `ListingSpec`; this module never lexes source.
-A token paints in its code role (`Kind.role`): the role's weights, and the
-colour `CodeColor.resolve` gives the role on the listing's ground. A colour
-the document declares or the listing's style states ships as stated, the
-contrast report naming a pairing that falls short (`Contrast.docDiags`);
-every colour the rule derives adapts to the actual ground.
--/
+/-! Shared listing paint between the IR and both backends: a token paints in its code role's
+weights and the colour `CodeColor.resolve` gives the role on the listing's ground. -/
 namespace LeanTex.Core.Listing
 
 open Ir ListingHighlight PygmentsStyle CodeColor
@@ -24,32 +17,23 @@ public def paint (pal : Palette) (ground : Color) (style : Option ListingStyle) 
     Option CodeColor.Paint :=
   (resolve pal ground style).get k.role
 
-/-- **Two types of one role paint alike**, under every palette, ground and
-style: a proof hole and a raised not-implemented error, both `error`, ship
-one colour by construction. -/
 public theorem paint_role_exact (pal : Palette) (ground : Color) (style : Option ListingStyle)
     (k k' : Kind) (h : k.role = k'.role) : paint pal ground style k = paint pal ground style k' := by
   simp only [paint, h]
 
-/-- **A colour a token ships as declared is one the palette declares**, under
-the key it ships under. -/
 public theorem paint_declared_mem (pal : Palette) (ground : Color) (style : Option ListingStyle)
     (k : Kind) (p : CodeColor.Paint) (h : paint pal ground style k = some p)
     (hd : p.declared = true) :
     ∃ key, p.role = some key ∧ Design.declared? pal key = some p.color :=
   resolve_declared_mem pal ground style k.role p h hd
 
-/-- **Every other colour a token ships is under its role's own key.** -/
 public theorem paint_derived_exact (pal : Palette) (ground : Color) (style : Option ListingStyle)
     (k : Kind) (p : CodeColor.Paint) (h : paint pal ground style k = some p)
     (hd : p.declared = false) : p.role = some (Ir.Role.ofCode k.role) :=
   resolve_derived_exact pal ground style k.role p h hd
 
-/-- A colour the rule derives keeps its value where it reads at `req` on
-its ground. Elsewhere, the first whole-percent sRGB tint or shade that
-does: the least change on that path, never applied to a colour the
-document declares or the listing's style states. The endpoints and
-percentage scale are xcolor's `Color.mix`, not new palette constants. -/
+/-- A derived colour kept where it reads at `req` on its ground, else the first whole-percent
+xcolor tint or shade that does. -/
 public def fitInk (req : Nat) (ground seed : Color) : Color := Id.run do
   if Contrast.contrastMilli seed ground ≥ req then return seed
   let pole := if Contrast.contrastMilli Color.black ground >
@@ -62,26 +46,18 @@ public def fitInk (req : Nat) (ground seed : Color) : Color := Id.run do
 /-- A derived colour fitted to WCAG AA text on its ground (`fitInk`). -/
 public def defaultInk (ground seed : Color) : Color := fitInk Contrast.aaText ground seed
 
-/-- The colour a listing's plain text sets in on a ground the listing
-declares for itself (minted's `bgcolor`): the code ink the document declares
-(`codeink`), as declared; else the text colour around the listing, fitted to
-that ground — a pairing the document never stated, the engine's to make
-legible, as every colour it derives for the code is. -/
+/-- A listing's plain text colour on its own ground: the declared `codeink`, else the text
+colour around it fitted to that ground. -/
 public def groundInk (pal : Palette) (ground inherited : Color) : Color :=
   match Design.declared? pal .codeInk with
   | some c => c
   | none => defaultInk ground inherited
 
-/-- **A declared code ink ships as declared** on the listing's own ground:
-the engine fits only the colour it chose. -/
 public theorem groundInk_declared_exact (pal : Palette) (ground inherited c : Color)
     (h : Design.declared? pal .codeInk = some c) : groundInk pal ground inherited = c := by
   simp [groundInk, h]
 
-/-- A paint's colour on the actual ground: a colour the document or the
-listing's style states as stated, the contrast report naming a pairing that
-falls short; a colour the rule derives fitted here once, identically for
-PDF, screen and print. -/
+/-- A paint's colour on the actual ground: stated colours as stated, derived ones fitted here. -/
 private def shipped (bg : Color) (p : CodeColor.Paint) : Color :=
   if p.declared || p.styled then p.color else defaultInk bg p.color
 
@@ -91,9 +67,7 @@ public def ink (pal : Palette) (ground : Option Color) (kind : Kind)
   let bg := ground.getD (Design.printPage pal)
   (paint pal bg style kind).map (shipped bg)
 
-/-- A role's weights around a token's text, nested as `\PYG@do` nests
-them: underline outside italic outside bold. Text and source punctuation
-still convey the language when colours are unavailable (WCAG SC 1.4.1). -/
+/-- A role's weights around a token's text, nested as `\PYG@do` nests them. -/
 private def weighted (look : Look) (text : String) : Inline :=
   let body : Inline := .text text
   let body := if look.bold then .styled .bold #[body] else body
@@ -105,10 +79,8 @@ private theorem weighted_text (look : Look) (text : String) :
   unfold weighted
   split <;> split <;> split <;> simp [plainTextOne, plainTextList]
 
-/-- What every token of one role ships as: its weights, and its ink and key
-on the listing's ground under its overlay. Covering acts on the role's own
-colour; an outer colour alone would be overridden by the token's inner
-colour during flattening. -/
+/-- What every token of one role ships as: its weights, and its ink and key on the listing's
+ground under its overlay. -/
 public structure Brush where
   look : Look
   ink : Option Color
@@ -123,8 +95,7 @@ private def roleBrush (d : Design) (bg : Color) (covered : Option Color)
   | some p =>
     let c := shipped bg p
     let c := if covered.isSome then ({ d with bg := bg }).cover.of c else c
-    -- Like `Ir.dimInline`, covered ink is literal: a CSS role would replace
-    -- the per-token mixture with the one declared `covered` colour.
+    -- Covered ink is literal: a CSS role would replace the per-token mixture.
     { look, ink := some c, role := if covered.isSome then none else p.role.map .role }
   | none => { look, ink := covered, role := none }
 
@@ -140,8 +111,6 @@ public def brush (pal : Palette) (ground covered : Option Color) (style : Option
     (k : Kind) : Brush :=
   (roleBrushes pal ground covered style).get k.role
 
-/-- **Two types of one role ship one brush**, the value both backends paint
-from (`brushes`, `paintLine`): one set of weights, one ink, one key. -/
 public theorem brush_role_exact (pal : Palette) (ground covered : Option Color)
     (style : Option ListingStyle) (k k' : Kind) (h : k.role = k'.role) :
     brush pal ground covered style k = brush pal ground covered style k' := by
@@ -155,24 +124,17 @@ public def blank (c : Char) : Bool := c.isWhitespace || c == '\u00a0'
 public def Brush.inkFree (b : Brush) (text : String) : Bool :=
   !b.look.underline && text.all blank
 
-/-- A token's text in its brush. Text that lays down no ink takes no
-colour: it paints nothing, and its colour would only cost the artifact a
-span or a colour change. -/
+/-- A token's text in its brush; text that lays down no ink takes no colour. -/
 public def Brush.inline (b : Brush) (text : String) : Inline :=
   match b.ink with
   | some c => if b.inkFree text then weighted b.look text else .colored c b.role #[weighted b.look text]
   | none => weighted b.look text
 
-/-- A classified source token as ordinary typed inlines. Both backends consume
-this projection. -/
+/-- A classified source token as the typed inlines both backends consume. -/
 public def tokenInline (pal : Palette) (ground covered : Option Color) (t : Token)
     (style : Option ListingStyle := none) : Inline :=
   (brush pal ground covered style t.kind).inline t.text
 
-/-- Painting a classified token conserves its exact scalar sequence, under
-every palette, ground, overlay and style. Together with
-`Ir.listing_source_exact`, this is the source-preservation premise both
-artifact projections consume. -/
 public theorem token_inline_source_exact (pal : Palette) (ground covered : Option Color)
     (t : Token) (style : Option ListingStyle := none) :
     plainTextOne (tokenInline pal ground covered t (style := style)) = t.text := by
@@ -207,8 +169,6 @@ public def brushIn (pal : Palette) (ground covered : Option Color) (style : Opti
   | some (_, b) => b
   | none => brush pal ground covered style k
 
-/-- A brush drawn from the table is the type's own brush, for any lines the
-table was drawn from. -/
 public theorem brushIn_exact (pal : Palette) (ground covered : Option Color)
     (style : Option ListingStyle) (lines : Array (Array Token)) (k : Kind) :
     brushIn pal ground covered style (brushes pal ground covered style lines) k =
@@ -223,13 +183,10 @@ public theorem brushIn_exact (pal : Palette) (ground covered : Option Color)
     rfl
   · rfl
 
-/-- Adjacent tokens of one listing line that ship alike: one set of weights
-and one ink. White space that lays down no ink shows no ink, so it joins
-the run beside it whose weights are its own. -/
+/-- Adjacent tokens of one listing line that ship alike: one set of weights and one ink. -/
 public structure Run where
   brush : Brush
-  /-- Whether a token that lays down ink stands in the run. Until one does,
-  the run ships no colour, as its tokens alone would. -/
+  /-- Whether a token that lays down ink stands in the run. -/
   inked : Bool
   tokens : Array Token
 
@@ -252,10 +209,7 @@ private def Run.join? (r : Run) (b : Brush) (t : Token) : Option Run :=
   else if r.brush.ink.isNone && b.ink.isNone then some { r with tokens := r.tokens.push t }
   else none
 
-/-- `Run.join?`'s decision alone: the joined run's brush and inked flag.
-Deciding before the run is built leaves `r` unread when its tokens grow,
-so they grow in place; building the joined run beside the run that might
-not join copied its tokens at every join. -/
+/-- `Run.join?`'s decision alone, made before the run is built so its tokens grow in place. -/
 private def Run.joins? (r : Run) (b : Brush) (t : Token) : Option (Brush × Bool) :=
   if r.brush.weights ≠ b.weights then none
   else if b.inkFree t.text then some (r.brush, r.inked)
@@ -325,7 +279,6 @@ private theorem runsGo_tokens (B : Kind → Brush) (ts : List Token) :
       · rw [ih]
         simp [Run.start]
 
-/-- The runs of a line hold its tokens, in order, each once. -/
 public theorem paintLine_tokens_exact (pal : Palette) (ground covered : Option Color)
     (style : Option ListingStyle) (table : Array (Kind × Brush)) (line : Array Token) :
     (paintLine pal ground covered style table line).toList.flatMap (·.tokens.toList) =
@@ -463,11 +416,6 @@ private theorem runsGo_good (B : Kind → Brush) (ts : List Token) :
         · exact hacc r'' hr''
         · subst hr''; exact hcur r'' rfl
 
-/-- **A listing line painted as runs shows, scalar by scalar, exactly what
-its tokens painted one by one show**: the same scalars in the same order,
-each in its type's weights and, wherever it lays down ink, its type's ink.
-Only white space that is not underlined may change ink, which it does not
-show. -/
 public theorem paintLine_shows_exact (pal : Palette) (ground covered : Option Color)
     (style : Option ListingStyle) (lines : Array (Array Token)) (line : Array Token) :
     (paintLine pal ground covered style (brushes pal ground covered style lines) line).toList.flatMap
@@ -495,17 +443,11 @@ public def paintRun (r : Run) (body : Array Inline) : Array Inline :=
   | some (c, role) => #[.colored c role body]
   | none => body
 
-/-- Painting a run adds no scalar and drops none. -/
 public theorem paintRun_text (r : Run) : Conserves plainText (paintRun r) := fun body => by
   simp only [paintRun]
   split <;> split <;> split <;> split <;> simp [plainText, plainTextOne, plainTextList]
 
-/-- Inline code as typed inlines, its tokens painted in runs as a listing
-line's are (`paintLine`, `paintRun`) on the ground it stands on. The
-elaborator sets them in the mono family and nothing else, so the size,
-weight, slant and colour around the code stand: a run with no ink of its
-own takes the colour around it, and a role's bold adds to the weight
-around it. -/
+/-- Inline code as typed inlines, painted in runs as a listing line is, on its own ground. -/
 public def inlineCode (pal : Palette) (ground : Option Color) (style : Option ListingStyle)
     (tokens : Array Token) : Array Inline :=
   (paintLine pal ground none style (brushes pal ground none style #[tokens]) tokens).foldl
@@ -540,8 +482,6 @@ private theorem inlineFold_text (rs : List Run) (acc : Array Inline) :
     rw [hrun, textFold_append]
     simp [plainTextList, plainTextOne, Run.text, lineText, Array.foldl_toList]
 
-/-- **Inline code ships its source, scalar for scalar**, under every palette,
-ground and style: painting adds no scalar and drops none. -/
 public theorem inlineCode_source_exact (pal : Palette) (ground : Option Color)
     (style : Option ListingStyle) (tokens : Array Token) :
     plainText (inlineCode pal ground style tokens) = lineText tokens := by
@@ -549,12 +489,7 @@ public theorem inlineCode_source_exact (pal : Palette) (ground : Option Color)
   rw [← Array.foldl_toList, inlineFold_text, paintLine_tokens_exact]
   simp [plainText, plainTextList, lineText, Array.foldl_toList]
 
-/-- Every colour a listing ships on a ground and the palette does not declare
-is text AA there, even where the surrounding frame uses the lower large-text
-threshold: every role's, as it ships — what the rule fits, and what the
-listing's style states. A colour the palette declares — the document's own, or
-a bundle's installed under it — ships as declared and is judged by the contrast
-report at its medium's need, a deck's stage asking 3:1. -/
+/-- Every colour a listing ships on a ground that the palette does not declare is text AA there. -/
 public def contract (pal : Palette) (ground : Option Color) (style : Option ListingStyle := none) :
     Bool :=
   let bg := ground.getD (Design.printPage pal)
@@ -563,25 +498,13 @@ public def contract (pal : Palette) (ground : Option Color) (style : Option List
     | some p => p.declared || decide (Contrast.aaText ≤ Contrast.contrastMilli (shipped bg p) bg)
     | none => true
 
-/-- Whether a character is Thai's or Lao's: text a browser wraps between
-the words its dictionary finds (UAX #14 class SA), which no table here
-holds. -/
+/-- Whether a character is Thai's or Lao's, which a browser wraps between words (UAX #14 SA). -/
 public def wrapsAtWords (c : Char) : Bool :=
   let n := c.toNat
   0x0E00 ≤ n && n ≤ 0x0EFF
 
-/-- Whether text in a character's script wraps between its characters, not
-at spaces: the ideographs, kana and its supplements, Hangul syllables and
-its compatibility letters, Bopomofo, Yi, CJK symbols and punctuation and
-the fullwidth forms, which UAX #14 breaks between any two (classes ID, H2,
-H3, and the CJK punctuation's own), and Thai and Lao (`wrapsAtWords`),
-read here between their clusters (`holdsToPrevious`, `holdsToNext`): not
-their syllables, an emergency reading the page takes only in a code line
-wider than its measure, where the web page leaves their breaks to the
-browser's dictionary (`HtmlDoc.codeLineNodes`). Their digits are digits,
-one number one token. Khmer and Myanmar stack their consonants, a cluster
-no table here reads, and keep a run whole, as do Hangul's conjoining
-letters and the small form variants, whose holds no table here reads. -/
+/-- Whether text in a character's script wraps between its characters, not at spaces (UAX #14
+ID, H2, H3 and CJK punctuation; Thai and Lao by cluster). -/
 public def wrapsBetweenChars (c : Char) : Bool :=
   let n := c.toNat
   (wrapsAtWords c && !(0x0E50 ≤ n && n ≤ 0x0E59) && !(0x0ED0 ≤ n && n ≤ 0x0ED9)) ||
@@ -596,13 +519,8 @@ public def wrapsBetweenChars (c : Char) : Bool :=
   (0x1AFF0 ≤ n && n ≤ 0x1B12F) ||
   (0x20000 ≤ n && n ≤ 0x3FFFF)
 
-/-- A character no wrap falls before: a combining mark, which belongs to the
-character it marks (a canonical combining class, or one of Thai's and Lao's
-marks above and below, whose class is zero), a joiner or a variation
-selector; a vowel Thai and Lao write after its consonant; and the CJK
-punctuation UAX #14 starts no line with — a stop, a comma, a closing
-bracket, a small kana, the prolonged sound mark, an iteration mark
-(classes CL, NS, and CJ read strictly). -/
+/-- A character no wrap falls before: a combining mark, a joiner or variation selector, a Thai
+or Lao following vowel, and UAX #14's CL, NS and CJ. -/
 public def holdsToPrevious (c : Char) : Bool :=
   let n := c.toNat
   Nfc.combiningClass c != 0 ||
@@ -613,22 +531,14 @@ public def holdsToPrevious (c : Char) : Bool :=
   "、。，．・：；？！ー〜～゛゜ヽヾゝゞ々〻」』）］｝〉》】〕〗〙〛｠｡｣､･ｰﾞﾟ".contains c ||
   "ぁぃぅぇぉっゃゅょゎゕゖァィゥェォッャュョヮヵヶㇰㇱㇲㇳㇴㇵㇶㇷㇸㇹㇺㇻㇼㇽㇾㇿｧｨｩｪｫｬｭｮｯ".contains c
 
-/-- A character no wrap falls after: a vowel Thai and Lao write before the
-consonant it follows, and the CJK opening brackets UAX #14 ends no line
-with (class OP). -/
+/-- A character no wrap falls after: a Thai or Lao preceding vowel, and UAX #14's OP. -/
 public def holdsToNext (c : Char) : Bool :=
   let n := c.toNat
   (0x0E40 ≤ n && n ≤ 0x0E44) || (0x0EC0 ≤ n && n ≤ 0x0EC4) ||
   "「『（［｛〈《【〔〖〘〚｟｢".contains c
 
-/-- How the fallback lexer reads a character: a run of word characters
-(letters, digits, `_`, `'`, every scalar past ASCII) is one token, a run of
-operator characters — the ASCII symbols of the Haskell 2010 report's lexical
-syntax (§2.2, `ascSymbol`) — is one, so `:=`, `->`, `==` and `<=` hold
-together, and any other character, a bracket, a quote, a comma, is a token
-of its own, as is each character of a script that wraps between its
-characters (`wrapsBetweenChars`), save where it holds to its neighbour
-(`codeMarks`). -/
+/-- How the fallback lexer reads a character: word runs, operator runs (Haskell 2010 §2.2
+`ascSymbol`), or a token of its own. -/
 public inductive CodeClass where
   | space | word | op | single
   deriving BEq
@@ -640,15 +550,8 @@ public def codeClass (c : Char) : CodeClass :=
   else if "!#$%&*+-./:<=>?@\\^|~".contains c then .op
   else .single
 
-/-- How listings.sty's standard character table reads a character into its
-output units (`\lst@SelectStdCharTable`): a letter (`a`–`z`, `A`–`Z`, `@`,
-`$`, `_`), a digit, a space, or another character. A scalar past ASCII is
-read as a letter, a departure: the table names none, and under LuaLaTeX
-listings sets such a scalar outside its units, out of order where a line
-wraps; read as a letter it stays in place, whole with the letters beside
-it. A character of a script that wraps between its characters
-(`wrapsBetweenChars`) is a unit of its own (`apart`), save where it holds to
-its neighbour (`codeMarks`), which is how such text wraps. -/
+/-- How listings.sty's standard character table reads a character; a scalar past ASCII reads
+as a letter. -/
 public inductive LstClass where
   | letter | digit | space | other | apart
   deriving BEq
@@ -660,13 +563,7 @@ public def lstClass (c : Char) : LstClass :=
   else if c.isDigit then .digit
   else .other
 
-/-- One source character of a code line as both backends' wraps read it: the
-highlighter token it stands in, its run under the listing's wrap
-(`Ir.ListingWrap`), its fallback token (`codeClass`), and whether it is
-white space. A wrap may fall only after a space or between two runs, or, in
-a run wider than a line, between two fallback tokens: the page's wrap reads
-these (`Layout.codeWraps`) and the web page's line boxes do too, each
-fallback token or run a line may not break inside held together. -/
+/-- One source character of a code line as both backends' wraps read it. -/
 public structure CodeMark where
   c : Char
   token : Nat
@@ -675,16 +572,8 @@ public structure CodeMark where
   space : Bool
   deriving Repr, Inhabited
 
-/-- A source line's characters as `CodeMark`s. Its runs follow the listing's
-wrap: listings' output units — letters run on and digits continue them
-(`\lst@AppendLetter`, `\lst@ProcessDigit`), other characters run on with the
-digits among them (`\lst@AppendOther`), a space is a unit of its own
-(`\lst@AppendSpecialSpace`), and a `)` closes the run it ends
-(`\lst@breakProcessOther`) — or, under whitespace first, each of the
-highlighter's tokens and each fallback token of untyped text. A character
-that holds to the one before it (`holdsToPrevious`), or follows one that
-holds to the next (`holdsToNext`), opens neither a token nor a unit: a mark
-stays with what it marks, and a stop with the text it ends. -/
+/-- A source line's characters as `CodeMark`s, runs following the listing's wrap as listings'
+output units do. -/
 public def codeMarks (wrap : Ir.ListingWrap) (line : Array ListingHighlight.Token) :
     Array CodeMark := Id.run do
   let units := match wrap with
@@ -695,8 +584,7 @@ public def codeMarks (wrap : Ir.ListingWrap) (line : Array ListingHighlight.Toke
   let mut lex := 0
   let mut fb := 0
   let mut prev : Option CodeClass := none
-  -- listings' unit in progress: a run of letters, an open run of others,
-  -- or neither (the line's start, a space, a closing `)`)
+  -- listings' unit in progress: letters, an open run of others, or neither.
   let mut letters := false
   let mut others := false
   let mut held := false

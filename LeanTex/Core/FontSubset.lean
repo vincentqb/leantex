@@ -6,15 +6,8 @@ namespace LeanTex.Core.FontSubset
 
 open LeanTex.Core.Ink
 
-/-! The font program a PDF embeds: the face's own file with the glyphs its
-pages never paint dropped, as LuaTeX and every other PDF engine embeds a
-subset. Glyph ids stay where they are — `Identity-H` and `/W` name glyphs
-by the face's own ids — so a dropped glyph is an empty one: a bare
-`endchar` in CFF, a zero-length entry in `glyf`. The text-layout tables go
-too: the file positions every glyph itself, and no viewer shapes an
-embedded program. Anything this does not read with certainty keeps the
-face's own bytes for that part — a CID-keyed or seac-composed CFF, a
-variable face — so a dropped glyph can only ever be one no page paints. -/
+/-! The font program a PDF embeds: the face's own file with unpainted glyphs emptied in place and
+the layout tables dropped, the face's bytes kept wherever a part is not read with certainty. -/
 
 /-- Tables no PDF viewer reads from an embedded program: the OpenType
 layout tables, the legacy kern table, and a signature the subset would
@@ -39,9 +32,8 @@ private def checksum (b : ByteArray) : Nat := Id.run do
     s := s + (u32 b (4 * i)).toUInt32
   return s.toNat
 
-/-- An sfnt of these tables: the directory sorted by tag, each table on a
-4-byte boundary with its checksum, and `head.checkSumAdjustment` set over
-the whole file (OpenType, "Font file" and `head`). -/
+/-- An sfnt of these tables: sorted directory, 4-byte aligned tables with checksums, and
+`head.checkSumAdjustment` set. -/
 def assemble (flavor : Nat) (tables : Array (String × ByteArray)) : ByteArray := Id.run do
   let ts := (tables.qsort fun a b => a.1 < b.1).map fun (tag, d) =>
     (tag, if tag == "head" && d.size ≥ 12 then setU32 d 8 0 else d)
@@ -67,9 +59,7 @@ def assemble (flavor : Nat) (tables : Array (String × ByteArray)) : ByteArray :
   | some h => return setU32 out (h + 8) ((0xB1B0AFBA + 0x100000000 - checksum out) % 0x100000000)
   | none => return out
 
-/-- A CFF DICT's integer operands, each with where it is spelled:
-`(operator, start, length, value)`, a two-byte operator as `1200 + b1`.
-Reals are skipped: no offset is ever spelled as one. -/
+/-- A CFF DICT's integer operands with where each is spelled, `(operator, start, length, value)`. -/
 private def dictOperands (b : ByteArray) (s e : Nat) : Array (Nat × Nat × Nat × Int) := Id.run do
   let mut pend : Array (Nat × Nat × Int) := #[]
   let mut out : Array (Nat × Nat × Nat × Int) := #[]
@@ -133,17 +123,8 @@ private def indexOf (entries : Array ByteArray) : ByteArray := Id.run do
     out := out ++ e
   return out
 
-/-- The `CFF ` table at `t` with every glyph outside `keep` reduced to a
-bare `endchar`: the CharStrings INDEX rewritten in place, and every Top
-DICT offset past it moved back by what it shrank, each in its own
-spelling's width. `none` — keep the table as it is — for anything outside
-what this reads with certainty: a CID-keyed face, a kept glyph the outline
-decoder cannot read whole (a seac glyph composes from two others), an
-offset into the old INDEX, or one that no longer fits its spelling — and
-when there is nothing to drop. `src` is the face's prepared outline source
-and `decodes g` whether glyph `g`'s outline reads whole under it: the
-face's own (`Font.inkSrc`, `Font.yExtent`), which its layout has mostly
-asked already, so embedding parses and decodes nothing twice. -/
+/-- The `CFF ` table with every glyph outside `keep` a bare `endchar`, offsets moved in their own
+spellings; `none` for anything not read with certainty. -/
 public def cffDrop (b : ByteArray) (t : Table) (keep : Array Bool) (src : Src) (decodes : Nat → Bool) :
     Option ByteArray := do
   guard (fits b t)
@@ -193,10 +174,8 @@ private def components (b : ByteArray) (s e : Nat) : Array Nat := Id.run do
     if flags &&& 32 == 0 then break
   return out
 
-/-- `glyf`, `loca` and `head` with every glyph outside `keep` — closed
-under composite components — emptied: a zero-length `loca` entry, the
-spec's own empty glyph. `loca` is written long, and `head` says so. `none`
-for tables this cannot read, and when there is nothing to drop. -/
+/-- `glyf`, `loca` and `head` with every glyph outside `keep`, closed under components, emptied;
+`none` for tables it cannot read. -/
 def glyfDrop (b : ByteArray) (keep : Array Bool) :
     Option (ByteArray × ByteArray × ByteArray) := do
   let head ← findTable b "head"
@@ -234,12 +213,8 @@ def glyfDrop (b : ByteArray) (keep : Array Bool) :
   let h' := ((b.extract head.offset (head.offset + head.length)).set! 50 0).set! 51 1
   return (g', l', h')
 
-/-- The program a PDF embeds for a face whose pages paint the glyphs
-`used`, and whether it is a subset (so the file names it with a tag): the
-face's tables minus `droppedTables`, its outlines minus every glyph `used`
-does not reach (`.notdef` always kept). A variable face, a table directory
-this cannot read, or a result the face parser would not read back embeds
-the face's own bytes. -/
+/-- The program a PDF embeds for a face whose pages paint `used`, and whether it is a subset;
+the face's own bytes where subsetting is not certain. -/
 public def program (font : Font.Font) (used : Array Nat) : ByteArray × Bool := Id.run do
   let data := font.data
   if data.size < 12 || (findTable data "fvar").isSome || (findTable data "CFF2").isSome then

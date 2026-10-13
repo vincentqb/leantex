@@ -7,35 +7,22 @@ import LeanTex.Core.Decl
 import LeanTex.Core.MathSymData
 import LeanTex.Core.Loop
 
-/-! The math surface: `$...$` bodies and alignment environments elaborated
-into `Math.MList` atoms. Pure and total; the caller (the elaborator) owns
-diagnostics. A construct outside this slice — `\cfrac`, `\text` with
-markup inside — returns `.error name`, and the formula stays
-`.math` source text with a warning naming the construct: out of scope is a
-named warning, never a silent drop (PLAN M6). A ragged alignment row is
-returned as a note beside the parse, rendered padded and diagnosed. -/
+/-! The math surface: `$...$` bodies and alignment environments elaborated into `Math.MList`
+atoms; a construct outside the model returns `.error name`, and the caller owns diagnostics. -/
 
 namespace LeanTex.Core.MathParse
 
 open LeanTex.Core LeanTex.Core.Math
 
-/-- A variable sets in mathematical italic (ISO 80000-2 §7 / TeXbook ch. 18:
-letters denote variables and set italic; digits, operators, and named
-functions are upright). The Mathematical Alphanumeric Symbols block carries
-the italic letters, with Unicode's one hole: italic h is U+210E PLANCK
-CONSTANT. -/
+/-- A variable sets in mathematical italic (ISO 80000-2; TeXbook ch. 18); italic h is U+210E. -/
 public def italicVar (c : Char) : Char :=
   if c == 'h' then '\u210E'
   else if 'a' ≤ c && c ≤ 'z' then Char.ofNat (0x1D44E + (c.toNat - 'a'.toNat))
   else if 'A' ≤ c && c ≤ 'Z' then Char.ofNat (0x1D434 + (c.toNat - 'A'.toNat))
   else c
 
-/-- Literal Greek in math is unicode-math's second spelling of the control
-words in `ctrlAtom` (`math-style=TeX`, unicode-math's default): the lowercase
-block α..ω maps onto the Mathematical Italic block in order (ο and ς
-included), the six symbol-slot forms ϵ ϑ ϰ ϕ ϱ ϖ onto their own italic
-slots, and the capitals stay upright. The literal and the control word
-denote one scalar — `greek_literal_agree` is the statement. -/
+/-- Literal Greek as unicode-math's `math-style=TeX` reads it: lowercase italic, capitals
+upright. -/
 private def greekLiteral (c : Char) : Option Char :=
   let n := c.toNat
   if 0x3B1 ≤ n && n ≤ 0x3C9 then some (Char.ofNat (0x1D6FC + (n - 0x3B1)))
@@ -50,10 +37,7 @@ private def greekLiteral (c : Char) : Option Char :=
     | 'ϴ' => some 'ϴ'
     | _ => none
 
-/-- Characters that classify directly (TeX's mathcodes, plain format): the
-class and the scalar actually set — `-` is MINUS SIGN, `*` is ASTERISK
-OPERATOR. Digits and Latin letters classify after the table; a literal
-Greek letter is the second spelling of its `ctrlAtom` row (`greekLiteral`). -/
+/-- Characters that classify directly, TeX's plain mathcodes: the class and the scalar set. -/
 private def charAtom (c : Char) : Option (MathClass × Char) :=
   match c with
   | '+' => some (.bin, '+')
@@ -85,8 +69,7 @@ private def charAtom (c : Char) : Option (MathClass × Char) :=
   | '→' => some (.rel, '→')
   | '∈' => some (.rel, '∈')
   | '∞' => some (.ord, '∞')
-  -- The replacement for bytes that were not text: an ordinary atom, so the
-  -- repair stays at the byte and the formula around it still sets.
+  -- U+FFFD sets as an ordinary atom, so the formula around it still sets.
   | '\uFFFD' => some (.ord, '\uFFFD')
   | _ =>
     if c.isDigit then some (.ord, c)
@@ -107,17 +90,10 @@ private def greekSpellings : List (Char × String) :=
    ('Ξ', "Xi"), ('Π', "Pi"), ('Σ', "Sigma"), ('Υ', "Upsilon"),
    ('Φ', "Phi"), ('Ψ', "Psi"), ('Ω', "Omega")]
 
-/-- Control words that are one symbol atom: `(class, scalar)`. The rows
-here are the engine's own decisions; every other symbol is a row of
-`MathSymData.rows`, generated from the file that declares it (the kernel's
-fontmath.ltx, amsfonts, amssymb) and unicode-math's table, and appended
-below, so a row here is the one `lookup` finds for its name. Greek
-lowercase is italic (the Mathematical Italic block, with TeX's `\epsilon` ↦
-lunate and `\phi` ↦ straight forms); Greek capitals upright, TeX's
-convention — kept whole here because `greek_literal_agree` reads it. -/
+/-- Control words that are one symbol atom, `(class, scalar)`: the engine's own rows, then the
+generated `MathSymData.rows`. -/
 public def ctrlAtom : List (String × MathClass × Char) :=
-  [-- Greek, lowercase italic
-   ("alpha", .ord, '𝛼'), ("beta", .ord, '𝛽'),
+  [("alpha", .ord, '𝛼'), ("beta", .ord, '𝛽'),
    ("gamma", .ord, '𝛾'), ("delta", .ord, '𝛿'),
    ("epsilon", .ord, '𝜖'), ("varepsilon", .ord, '𝜀'),
    ("zeta", .ord, '𝜁'), ("eta", .ord, '𝜂'),
@@ -132,7 +108,6 @@ public def ctrlAtom : List (String × MathClass × Char) :=
    ("phi", .ord, '𝜙'), ("varphi", .ord, '𝜑'),
    ("chi", .ord, '𝜒'), ("psi", .ord, '𝜓'),
    ("omega", .ord, '𝜔'),
-   -- Greek, capitals upright
    ("Gamma", .ord, 'Γ'), ("Delta", .ord, 'Δ'), ("Theta", .ord, 'Θ'),
    ("Lambda", .ord, 'Λ'), ("Xi", .ord, 'Ξ'), ("Pi", .ord, 'Π'),
    ("Sigma", .ord, 'Σ'), ("Upsilon", .ord, 'Υ'), ("Phi", .ord, 'Φ'),
@@ -140,37 +115,27 @@ public def ctrlAtom : List (String × MathClass × Char) :=
    -- the operator scalar, where unicode-math sets U+2022
    ("bullet", .bin, '\u2219'),
    ("iff", .rel, '\u27FA'),
-   -- inner: the dotses, TeX's \mathinner forms
    ("ldots", .inner, '…'), ("dots", .inner, '…'), ("cdots", .inner, '\u22EF'),
-   -- amsmath's semantic dots are these two (amsmath.sty: `\let\dotsb\cdots`,
-   -- `\let\dotsm\cdots`; `\dotsc` and `\dotso` set `\@ldots`)
+   -- amsmath.sty: `\dotsb` and `\dotsm` are `\cdots`; `\dotsc` and `\dotso` are `\ldots`.
    ("dotsc", .inner, '…'), ("dotso", .inner, '…'),
    ("dotsb", .inner, '\u22EF'), ("dotsm", .inner, '\u22EF'),
    ("iint", .op, '\u222C'),
    ("|", .ord, '\u2016'), ("colon", .punct, ':'),
-   -- escapes: the reserved characters as content
    ("{", .opening, '{'), ("}", .closing, '}'), ("$", .ord, '$'),
    ("%", .ord, '%'), ("&", .ord, '&'), ("#", .ord, '#'), ("_", .ord, '_')]
     ++ MathSymData.rows
 
-/-- Two spellings, one atom: every literal Greek letter classifies to exactly
-the atom its control word does. The invariant whose absence let `$λ$`
-degrade to source text while `$\lambda$` set the italic scalar. -/
 private theorem greek_literal_agree :
     ∀ p ∈ greekSpellings, charAtom p.1 = ctrlAtom.lookup p.2 := by
   decide
 
-/-- Every letter of the lowercase and capital Greek blocks classifies —
-including ο, ς, and the capitals TeX has no control word for (Α, Β, …),
-which unicode-math sets from their literal spelling alone. -/
 private theorem greek_literal_covers :
     (∀ k < 25, (charAtom (Char.ofNat (0x3B1 + k))).isSome) ∧
     (∀ k < 25, k ≠ 17 → (charAtom (Char.ofNat (0x391 + k))).isSome) := by
   decide
 
-/-- The big operators whose scripts become above/below limits in display
-style — TeX's `\displaylimits` default for every `\mathop` except the
-integrals, which plain TeX declares `\nolimits` (TeXbook p. 144). -/
+/-- The big operators whose scripts set as display limits; integrals are `\nolimits` (TeXbook
+p. 144). -/
 private def limitOps : List String :=
   ["sum", "prod", "coprod", "bigcup", "bigcap", "bigvee", "bigwedge",
    "bigoplus", "bigotimes", "bigodot", "bigsqcup", "biguplus"]
@@ -199,10 +164,7 @@ public def ctrlSpace : List (String × Int) :=
   [(",", 3), (":", 4), (";", 5), ("!", -3), ("quad", 18), ("qquad", 36),
    (" ", 6), ("~", 6)]
 
-/-- The math alphabet commands, each one argument whose letters remap
-(`Math.MathAlphabet.apply`): LaTeX's `\math…` family, `\bm`/`\boldsymbol`
-(bold with variables kept italic), and the plain-TeX `\cal`/`\frak`, whose
-dominant use `{\cal L}` reads here as `\cal` taking the single letter. -/
+/-- The math alphabet commands, each one argument whose letters remap. -/
 public def alphaCtrl : List (String × Math.MathAlphabet × Math.AlphaSource) :=
   [("mathbb", .bb, .doc), ("mathcal", .cal, .doc), ("cal", .cal, .doc),
    ("mathfrak", .frak, .doc), ("frak", .frak, .doc),
@@ -210,21 +172,12 @@ public def alphaCtrl : List (String × Math.MathAlphabet × Math.AlphaSource) :=
    ("Bbb", .bb, .doc), ("bold", .bf, .doc),
    ("mathbf", .bf, .doc), ("bm", .bm, .doc), ("boldsymbol", .bm, .doc),
    ("mathit", .it, .doc), ("mathsf", .sf, .doc), ("mathtt", .tt, .doc), ("mathrm", .rm, .doc),
-   -- unicode-math's `\sym…` family selects the math (`sym`) version of each
-   -- alphabet explicitly, forcing the symbol source regardless of the
-   -- document's `MathAlphabetSources`. `\symup`/`\symrm` are the upright
-   -- roman; `\symbf` the default TeX bold (italic lowercase Greek),
-   -- `\symbfup` upright bold, and `\symbfit` bold italic; the rest name
-   -- their shape.
+   -- unicode-math's `\sym…` alphabets force the symbol source.
    ("symup", .rm, .sym), ("symrm", .rm, .sym), ("symit", .it, .sym),
    ("symbf", .bfDefault, .sym), ("symbfup", .bf, .sym), ("symbfit", .bfit, .sym),
    ("symsf", .sf, .sym), ("symtt", .tt, .sym), ("symbb", .bb, .sym),
    ("symcal", .cal, .sym), ("symfrak", .frak, .sym),
-   -- LaTeX's text-style commands used inside math: `\textbf{x}` sets an
-   -- upright bold roman x, which is exactly what `\mathbf` does, so they
-   -- resolve to the same alphabets (document-sourced) rather than leaving
-   -- the formula unrenderable. `\textrm` keeps the word arm above, which
-   -- sets its letters as one upright word instead of letter by letter.
+   -- Text-style commands inside math resolve to the matching document-sourced alphabets.
    ("textbf", .bf, .doc), ("textit", .it, .doc), ("textsf", .sf, .doc), ("texttt", .tt, .doc),
    ("textnormal", .rm, .doc), ("emph", .it, .doc)]
 
@@ -245,11 +198,7 @@ public def Ragged.words : Ragged → String
   | .short => "row has fewer cells than its widest; padded with empty cells"
   | .overrun => "row has more cells than the column spec declares; extra columns centre"
 
-/-- A loss the parser can name without failing the formula: the
-mathematics renders, something about its presentation does not. Typed
-rather than a bare string so the elaborator dispatches each kind to its own
-diagnostic — a ragged alignment row and a dropped colour are different
-losses and may not share a code. -/
+/-- A loss the parser can name without failing the formula. -/
 public inductive Note where
   /-- A ragged alignment: how it is ragged, and the row's own particulars,
   its detail. -/
@@ -257,47 +206,29 @@ public inductive Note where
   /-- A colour or font change inside math whose content renders in the
   surrounding style: `what` names the change for the message. -/
   | styleDropped (what : String)
-  /-- A construct outside this slice that cost only itself: its name and its
-  naming arguments are gone and its one content operand stands in its place,
-  parsed as mathematics along with the rest of the formula. `what` names the
-  construct. -/
+  /-- A construct outside the model reduced to its content operand; `what` names it. -/
   | constructFloored (what : String)
-  /-- A colour expression the formula inks in, as the palette resolved it:
-  the elaborator records its span, as the text path does, so the contrast
-  judge can name where a colour came from. -/
+  /-- A colour expression the formula inks in, as the palette resolved it. -/
   | inkUsed (expr : String) (color : Ir.Color) (entry : Bool)
   /-- A colour expression the palette cannot resolve: its content sets in
   the colour in force, named as the text path names it (W0304). -/
   | inkMissed (expr : String)
   deriving Repr, BEq
 
-/-- What a formula reads from the document beyond its own tokens: a colour
-expression resolved as the text path resolves one (`Palette.resolve`), with
-whether it names a declared entry (`Palette.find?`, the HTML custom
-property's name), and the cancel package's options and `\CancelColor`. The
-defaults resolve nothing and load no option, which is how a formula parses
-where no document stands behind it. -/
+/-- What a formula reads from the document beyond its own tokens: colours and the cancel options. -/
 public structure Env where
   ink : String → Option (Ir.Color × Option Ir.ColorRef) := fun _ => none
   cancel : CancelSpec := {}
-  /-- The expression `\CancelColor` names when the palette cannot resolve
-  it: a formula that draws a mark names it (W0304), the marks set in the
-  colour in force. -/
+  /-- The expression `\CancelColor` names when the palette cannot resolve it. -/
   cancelMiss : Option String := none
 
-/-- Text-style commands whose styling cannot be carried inside `\text`:
-there the body is one upright word, so the command contributes its letters
-and the styling is named as lost. At the formula's own level these resolve
-through `alphaCtrl` instead, with no loss. -/
+/-- Text-style commands whose styling `\text` cannot carry: their letters stay, the styling is
+named as lost. -/
 private def textStyleCtrl : List String :=
   ["textbf", "textit", "textsf", "texttt", "textsc", "emph",
    "bf", "it", "sf", "tt"]
 
-/-- Wrappers that ask for upright roman, which is already what `\text`'s
-body sets: inside it they lose nothing, so they contribute their letters
-and say nothing. Keeping them out of `textStyleCtrl` is what stops a
-`degraded` code from firing over a no-op and failing a `--werror` run for
-it — one code, one meaning, and the meaning is a loss. -/
+/-- Wrappers asking for upright roman, which `\text` already sets: they lose nothing. -/
 private def textNeutralCtrl : List String :=
   ["text", "mbox", "textrm", "textup", "textnormal", "rm"]
 
@@ -305,9 +236,7 @@ private def textNeutralCtrl : List String :=
 mapping between the control name, combining mark and stretch flag. -/
 public def accentCtrl : List (String × Char × Bool) := Ir.mathAccentCommands
 
-/-- Delimiters `\left`/`\right` accept: the char actually set, or `none`
-for the empty `.`. Names looked up in `ctrlAtom` too, so `\left\langle`
-works. -/
+/-- A delimiter `\left`/`\right` accepts: the char set, or `none` for the empty `.`. -/
 private def delimChar : Char → Option (Option Char)
   | '.' => some none
   | '(' => some (some '(')
@@ -320,31 +249,18 @@ private def delimChar : Char → Option (Option Char)
   | '>' => some (some '\u27E9')
   | _ => none
 
-/-- The control words `parseToks` reads structurally, rather than through one
-of the symbol tables: every name that reaches a `.ctrl` arm of the parse loop
-by itself. Together with the tables, this is the whole of what this slice
-models, and `knownCtrl` is the question the containment pass asks.
-
-Listed rather than derived because the parse loop's arms are a `match` and
-not a table; `containKnownChecks` probes each name here through
-`parseMath`, so a name that stops being structural fails the suite rather
-than quietly starting to be contained. -/
+/-- The control words `parseToks` reads structurally rather than through a symbol table. -/
 public def structuralCtrl : List String :=
   ["over", "genfrac", "sqrt", "ensuremath", "left", "right",
    "limits", "nolimits", "text", "mbox", "textrm", "operatorname", "textcolor",
    "color", "cancelto",
    "bmod", "mod", "pod", "pmod", "dotsi"]
 
-/-- cancel.sty's one-argument marks (v2.2): the command and the mark it
-draws. `\cancelto` takes two arguments and is structural. -/
+/-- cancel.sty's one-argument marks (v2.2) and the mark each draws. -/
 private def cancelCtrl : List (String × CancelMark) :=
   [("cancel", .up), ("bcancel", .down), ("xcancel", .cross)]
 
-/-- The fraction commands, each the `\genfrac` row its definition is
-(amsmath.sty, TeX Live 2026: `\dfrac` is `\genfrac{}{}{}0`, `\tfrac`
-`\genfrac{}{}{}1`, `\binom` `\genfrac()\z@{}`, `\dbinom` `\genfrac(){0pt}0`,
-`\tbinom` `\genfrac(){0pt}1`; `\frac` sets the face's rule in the current
-style, as `\genfrac{}{}{}{}` does). -/
+/-- The fraction commands, each the `\genfrac` row its amsmath.sty definition is. -/
 public def fracCmds : List (String × FracSpec) :=
   let binom : FracSpec := { left := some '(', right := some ')', rule := some 0 }
   [("frac", {}), ("dfrac", { style := some (.display false) }),
@@ -352,17 +268,8 @@ public def fracCmds : List (String × FracSpec) :=
    ("binom", binom), ("dbinom", { binom with style := some (.display false) }),
    ("tbinom", { binom with style := some (.text false) })]
 
-/-- amsmath's environments that build a grid inside a formula, each as the
-grid it expands to and the delimiters `\left`/`\right` grow around it
-(amsmath.sty, TeX Live 2026: `\env@matrix` is `\array{*\c@MaxMatrixCols c}`
-with `MaxMatrixCols` 10, the five delimited matrices wrap it in
-`\left…\right`; `\env@cases` is `\left\lbrace\array{@{}l@{\quad}l@{}}`
-closed by `\right.`, under `\def\arraystretch{1.2}`; `gathered` and
-`split` are the display alignments' own column models — `split`'s one pair,
-its template no `\tabskip` — and `aligned` stands `\minalignsep` after its
-pairs, `GridKind.aligned`, its trailing read once its rows are).
-`\substack` is `subarray{c}`, one centred column. `smallmatrix` is its own
-grid (`GridKind.small`), undelimited. -/
+/-- amsmath's grid environments inside a formula, each with its grid and its `\left`/`\right`
+delimiters (amsmath.sty). -/
 public def gridEnvs : List (String × GridKind × Option Char × Option Char) :=
   let matrix : GridKind := .array (Array.replicate 10 .center) 1000
   [("matrix", matrix, none, none), ("pmatrix", matrix, some '(', some ')'),
@@ -374,16 +281,12 @@ public def gridEnvs : List (String × GridKind × Option Char × Option Char) :=
    ("split", .align, none, none), ("substack", .array #[.center] 1000, none, none),
    ("smallmatrix", .small, none, none)]
 
-/-- amsmath's sized delimiters (amsmath.sty: `\big` is `\bBigg@\@ne`, `\Big`
-`\bBigg@{1.5}`, `\bigg` `\bBigg@\tw@`, `\Bigg` `\bBigg@{2.5}`), each in four
-classes: `\bigl` is `\mathopen\big`, `\bigr` `\mathclose\big`, `\bigm`
-`\mathrel\big`, and `\big` itself sets an ordinary atom. The step is the
-size in halves of `\big@size`. -/
+/-- amsmath's sized delimiters in their four classes, the step in halves of `\big@size`. -/
 private def bigCtrl : List (String × MathClass × Nat) :=
   [("big", 2), ("Big", 3), ("bigg", 4), ("Bigg", 5)].flatMap fun (n, s) =>
     [(n, .ord, s), (n ++ "l", .opening, s), (n ++ "r", .closing, s), (n ++ "m", .rel, s)]
 
-/-- Does this slice model the control word at all? -/
+/-- Does the math model read the control word at all? -/
 public def knownCtrl (n : String) : Bool :=
   structuralCtrl.contains n
     || (cancelCtrl.lookup n).isSome
@@ -395,10 +298,7 @@ public def knownCtrl (n : String) : Bool :=
     || (ctrlAtom.lookup n).isSome
     || (ctrlWord.lookup n).isSome
 
-/-- The flat token stream a formula parses from: group edges, alignment
-edges, and array boundaries become explicit markers, so the parser is one
-pass over one array with a frame stack — totality immediate (the shape
-`Parse.parse` set). -/
+/-- The flat token stream a formula parses from, group and alignment edges as markers. -/
 private inductive MTok where
   | ch (c : Char)
   | ws
@@ -452,8 +352,6 @@ private def flattenOne (out : Array MTok) : Parse.Raw →
     let o ← flattenList (out.push .openGrp) body.toList
     .ok (o.push .closeGrp)
   | .env "array" body _ => do
-    -- `\begin{array}[pos]{spec} rows`: everything flattens; the parser
-    -- reads the position and spec back out of the tokens after `arrOpen`.
     let o ← flattenList (out.push .arrOpen) body.toList
     .ok (o.push .arrClose)
   | .env n body p =>
@@ -478,10 +376,7 @@ private def skipTokWs (toks : Array MTok) (i : Nat) : Nat := Id.run do
     j := j + 1
   return j
 
-/-- Past a `[...]` option run beginning at `i`, else `i` itself. A command's
-option run is markup with its name, whether or not this slice knows the
-command — the rule `Ir.floorMask` already applies to a math source, here at
-token scope. -/
+/-- Past a `[...]` option run beginning at `i`, else `i` itself. -/
 private def skipTokOption (toks : Array MTok) (i : Nat) : Nat := Id.run do
   if toks[i]? != some (.ch '[') then return i
   let mut j := i + 1
@@ -492,9 +387,7 @@ private def skipTokOption (toks : Array MTok) (i : Nat) : Nat := Id.run do
     if t == some (.ch ']') then break
   return j
 
-/-- Past a balanced `{...}` beginning at `i`, or `i` itself when no group
-opens there. An index loop, so the bound is the array and no measure is
-owed — the shape `Ir.skipBalanced` has over characters. -/
+/-- Past a balanced `{...}` beginning at `i`, or `i` itself when no group opens there. -/
 private def skipTokGroup (toks : Array MTok) (i : Nat) : Nat := Id.run do
   if toks[i]? != some .openGrp then return i
   let mut j := i
@@ -511,9 +404,7 @@ private def skipTokGroup (toks : Array MTok) (i : Nat) : Nat := Id.run do
     | _ => j := j + 1
   return j
 
-/-- How many braced groups stand contiguously at `i`, spaces between them
-ignored as LaTeX ignores them when it collects a command's arguments. The
-containment decision reads this and nothing else about the operands. -/
+/-- How many braced groups stand contiguously at `i`, spaces between them ignored. -/
 private def countTokGroups (toks : Array MTok) (i : Nat) : Nat := Id.run do
   let mut j := skipTokWs toks i
   let mut n := 0
@@ -524,35 +415,8 @@ private def countTokGroups (toks : Array MTok) (i : Nat) : Nat := Id.run do
     j := skipTokWs toks stop
   return n
 
-/-- Which tokens of a formula survive containment, and the constructs
-contained: one flag per token, the shape `Ir.floorMask` has over a source's
-characters and for the same reason — the salvage is then a filter, so no
-token can be invented (`keptToks_mem`).
-
-Containment is confined to the commands `Ir.floorNamedArgs` names, and that
-confinement is the whole of the judgement here. For those the floor has
-*already* ruled on every operand — which ones name and which one carries —
-so reducing the construct to its content operand applies a decision already
-made rather than making a new one. The name, the option run and the naming
-arguments are markup exactly as they are to `Ir.floorMask`; what remains
-parses as mathematics with the rest of the formula.
-
-Two refusals, both of them the same rule:
-
-* more than one group left after the naming arguments — the operands would
-  have to be juxtaposed, and `formulaFloor_separates` is the statement that
-  juxtaposing two content operands states a claim the source does not
-  (`\overset{a}{b}` as `ab` reads as a product);
-* a command with no entry at all, whose operands nothing has ruled on. A
-  glyph can be load-bearing between its neighbours rather than around its
-  argument: `$a \xleftarrow{f} b$` reduced to its one operand is `𝑎𝑓𝑏`,
-  which is the same falsity one construct further out. Whether a command is
-  a wrapper or an operator is a per-command judgement and belongs beside the
-  tables that already make it, not to a token walk that cannot see it.
-
-A refused construct degrades the formula whole and is named as it was
-before, so a lossy floor stays the contract and a false one stays
-unreachable. -/
+/-- Which tokens of a formula survive containment, one flag per token, and the constructs
+contained: only commands `Ir.floorNamedArgs` names, down to one content operand. -/
 private def containPlan (toks : Array MTok) :
     Except String (Array Bool × Array String) := do
   let mut keep : Array Bool := Array.replicate toks.size true
@@ -590,9 +454,6 @@ private def ContainedName (w : String) : Prop :=
   ∃ n, w = "\\" ++ n ∧ knownCtrl n = false ∧
     (Ir.floorNamedArgs.lookup n).isSome
 
-/-- The existing fallible scan names only unknown, declared wrappers.
-Both inner loops leave this invariant alone; the sole push has the
-unknown-control and successful-lookup premises in scope. -/
 private theorem containPlan_accounts (toks : Array MTok) :
     Loop.OnSuccess (fun plan => ∀ w ∈ plan.2, ContainedName w) (containPlan toks) := by
   unfold containPlan
@@ -632,22 +493,11 @@ private theorem containPlan_accounts (toks : Array MTok) :
   · intro st hst
     exact hst
 
-/-- The tokens a plan keeps, in order. Factored out of `containUnknown` so
-that the salvage is a filter over the input with nothing else in the way,
-which is what makes `keptToks_mem` readable off it. -/
+/-- The tokens a plan keeps, in order. -/
 private def keptToks (toks : Array MTok) (keep : Array Bool) : Array MTok :=
   (toks.toList.zipIdx.filterMap fun (t, i) =>
     if (keep[i]?.getD true) then some t else none).toArray
 
-/-- **Nothing invented: every token kept is a token of the input.** The
-upper bound on containment, and the reason it is stated as a filter — the
-same argument `Ir.floorChars_mem` makes for the filtered salvage, at the
-scope where what survives is parsed as mathematics rather than set as text.
-
-What it deliberately does not say, exactly as at the other floor: this
-permits a plan that dropped everything. The clause that bounds *when* the
-plan may drop anything at all is `mathContain_accounts`, and the page-level
-witness is `mathContainChecks`. -/
 private theorem keptToks_mem (toks : Array MTok) (keep : Array Bool) :
     ∀ t ∈ keptToks toks keep, t ∈ toks := by
   intro t ht
@@ -661,9 +511,8 @@ private theorem keptToks_mem (toks : Array MTok) (keep : Array Bool) :
     simpa using hfst
   · simp at hq
 
-/-- The token stream a formula parses from once every construct outside this
-slice has been reduced to its content operand, and the names of the
-constructs so reduced. -/
+/-- The token stream a formula parses from once every construct outside the model is reduced to
+its content operand, and the names of the constructs so reduced. -/
 private def containUnknown (toks : Array MTok) :
     Except String (Array MTok × Array String) :=
   match containPlan toks with
@@ -680,9 +529,6 @@ private theorem containUnknown_accounts (toks : Array MTok) :
     rw [h] at hc
     exact hc
 
-/-- `keptToks_mem` where the parser reads it: whatever plan `containPlan`
-made, the stream `parseToks` consumes is drawn from the author's own
-tokens. -/
 private theorem containUnknown_mem (toks out : Array MTok) (names : Array String)
     (h : containUnknown toks = .ok (out, names)) : ∀ t ∈ out, t ∈ toks := by
   simp only [containUnknown] at h
@@ -694,9 +540,8 @@ private theorem containUnknown_mem (toks out : Array MTok) (names : Array String
     rw [← h.1]
     exact keptToks_mem toks pn.1
 
-/-- Attach a script to the last atom of `acc`, or to a fresh empty atom when
-none is there to take it (`$^2$`, TeX's empty-nucleus behaviour). A second
-script on the same side is TeX's "double superscript" error. -/
+/-- Attach a script to the last atom, or to a fresh empty atom; a second script on one side is
+TeX's double-script error. -/
 private def attach (acc : Array MItem) (isSup : Bool) (script : MList) :
     Except String (Array MItem) := do
   let put (x : MItem) : Except String MItem :=
@@ -713,9 +558,7 @@ private def attach (acc : Array MItem) (isSup : Bool) (script : MList) :
   | some x =>
     .ok (acc.pop.push (← put x))
 
-/-- A prime after an atom: `x'` is `x^\prime`, and primes accumulate
-(`x''`). A prime after a written superscript is TeX's double-superscript
-error, spelled by name. -/
+/-- A prime after an atom is `^\prime`, accumulating; after a written superscript it is an error. -/
 private def attachPrime (acc : Array MItem) : Except String (Array MItem) := do
   let primeAtom : MItem := .atom .ord (.sym '\u2032') .nil .nil false
   let rec allPrimes : MList → Bool
@@ -760,9 +603,7 @@ private def tokName : MTok → String
   | .arrClose => "'\\end{array}'"
   | .gridOpen n => s!"'\\begin\{{n}}'"
 
-/-- The delimiter after `\left`/`\right` (the twins read one shape): the
-char actually set (`none` for the empty `.`) and the index past it,
-skipping one leading space. `cmd` names the caller in the error. -/
+/-- The delimiter after `\left`/`\right` (`none` for `.`) and the index past it. -/
 private def readDelim (toks : Array MTok) (i : Nat) (cmd : String) :
     Except String (Option Char × Nat) := do
   let j := if toks[i]? == some .ws then i + 1 else i
@@ -777,9 +618,8 @@ private def readDelim (toks : Array MTok) (i : Nat) (cmd : String) :
     | none => throw s!"'\\{cmd} \\{n}'"
   | _ => throw s!"'\\{cmd}' without a delimiter"
 
-/-- What an argument of `\genfrac`'s spec spells, skipping one leading space:
-a braced group's tokens, or the one token that stands unbraced (amsmath's
-own `\binom` is `\genfrac()\z@{}`), and the index past it. -/
+/-- A `\genfrac` spec argument: a braced group's tokens or one unbraced token, and the index
+past it. -/
 private def readSpecArg (toks : Array MTok) (i : Nat) :
     Except String (Array MTok × Nat) := do
   let j := if toks[i]? == some .ws then i + 1 else i
@@ -792,12 +632,7 @@ private def readSpecArg (toks : Array MTok) (i : Nat) :
   | some .closeGrp | none => throw "'\\genfrac' without its arguments"
   | some t => return (#[t], j + 1)
 
-/-- `\genfrac{left}{right}{thickness}{style}`, read into the spec its two
-operands set under: a delimiter as `\left` reads one (empty or `.` for
-none), a thickness in an absolute unit (empty for the face's rule, zero for
-a stack), and amsmath's `\@mathstyle` digit (empty for the current style;
-0 display, 1 text, 2 script, any other scriptscript, as its `\ifcase`
-reads). The index is past the fourth argument. -/
+/-- `\genfrac{left}{right}{thickness}{style}` read into a spec, and the index past it. -/
 private def readGenfracSpec (toks : Array MTok) (i : Nat) :
     Except String (FracSpec × Nat) := do
   let delim (arg : Array MTok) : Except String (Option Char) :=
@@ -848,9 +683,7 @@ private inductive Dest where
   | fracNum (spec : FracSpec)
   | fracDen (spec : FracSpec) (num : MList)
   | sqrtBody (deg : MList)
-  /-- A math alphabet's argument: its letters remap
-  (`Math.MathAlphabet.apply`) when the argument closes. `source` records
-  whether it came from `\sym…` (forced symbol) or a legacy command. -/
+  /-- A math alphabet's argument, whose letters remap when it closes. -/
   | alpha (a : Math.MathAlphabet) (source : Math.AlphaSource)
   /-- A math accent's base: the mark sets over it when it closes. -/
   | accentBody (mark : Char) (stretch : Bool)
@@ -858,9 +691,7 @@ private inductive Dest where
   /-- amsmath's `\pod`/`\pmod` argument: it closes into `(…)`, after the
   word "mod" and a 6 mu kern when `withMod` (`\pmod` is `\pod{mod\mkern6mu #1}`). -/
   | pod (withMod : Bool)
-  /-- `\textcolor`'s content: it closes into `{\color{c} …}`, the braced
-  Ord atom whose list opens with the colour switch (xcolor's
-  `\textcolor` is `{\color{c}#2}`). -/
+  /-- `\textcolor`'s content, closing into `{\color{c} …}`. -/
   | inked (color : Ir.Color) (name : Option Ir.ColorRef)
   /-- `\cancelto`'s first argument, the value: it becomes the request for
   the second. -/
@@ -868,10 +699,7 @@ private inductive Dest where
   /-- A cancel mark's struck subformula: it closes into the mark's Ord
   atom (cancel.sty sets the mark as a box). -/
   | cancelBody (mark : CancelMark) (spec : CancelSpec) (value : MList)
-  /-- A grid awaiting its rows. `wrap` is `none` for the formula's own
-  alignment (`top`), which only the end of the formula closes; a nested
-  grid carries the delimiters it closes between, `(none, none)` for an
-  `array` or an undelimited `gridEnvs` row. -/
+  /-- A grid awaiting its rows; `wrap` is `none` for the formula's own alignment. -/
   | grid (kind : GridKind) (wrap : Option (Option Char × Option Char))
       (rows : Array (Array MList)) (cells : Array MList)
 
@@ -880,9 +708,7 @@ private structure PFrame where
   /-- The items before a `\over` on this level, once one is seen: TeX's
   whole-level fraction (TeXbook ch. 17). -/
   overNum : Option (Array MItem)
-  /-- What this level answers when it closes, innermost awaiting
-  construction first: `x^\mathbb{…}` opens with
-  `[.alpha .bb .doc, .script true]`. -/
+  /-- What this level answers when it closes, innermost first. -/
   dests : List Dest
 
 /-- Close a level's items into the list it denotes: everything before a
@@ -898,13 +724,8 @@ private def closeLevel (overNum : Option (Array MItem)) (acc : Array MItem) : ML
 an Ord: `\bmod`'s Bin spacing is realized by its own kerns (below). -/
 private def modWord : MItem := .atom .ord (.word "mod") .nil .nil false
 
-/-- The one place every parsed argument lands: an argument answers the
-innermost awaiting destination, whose result may in turn answer the next —
-`x^\frac{a}{b}` feeds the braced numerator to the fraction and the built
-fraction to the script. Each iteration pops one destination (or turns a
-numerator into its awaiting denominator and returns), so the loop is
-bounded by the chain's length. Returns the new accumulator and what is
-still awaited. -/
+/-- Land a parsed argument on the innermost awaiting destination, and each result in turn;
+returns the accumulator and what is still awaited. -/
 private def resolveChain (acc0 : Array MItem) (chain : List Dest) (arg0 : MList) :
     Except String (Array MItem × List Dest) := do
   let mut acc := acc0
@@ -913,7 +734,6 @@ private def resolveChain (acc0 : Array MItem) (chain : List Dest) (arg0 : MList)
   for _ in [0:chain.length + 1] do
     match rest with
     | [] =>
-      -- Every wrap step below leaves one constructed atom; land it.
       match arg with
       | .cons x .nil => return (acc.push x, [])
       | _ => throw "an unbalanced group"
@@ -925,9 +745,7 @@ private def resolveChain (acc0 : Array MItem) (chain : List Dest) (arg0 : MList)
     | .fracNum spec :: more =>
       return (acc, .fracDen spec arg :: more)
     | .fracDen spec num :: more =>
-      -- Every LaTeX fraction command braces its fraction (latex.ltx's and
-      -- amsmath.sty's `\frac` is `{…\over…}`, `\genfrac` `{{…}}`), so it
-      -- spaces as the Ord atom a braced subformula is (TeXbook ch. 17).
+      -- Every LaTeX fraction command braces its fraction, so it spaces as an Ord (TeXbook ch. 17).
       arg := .cons (.atom .ord (.frac spec num arg) .nil .nil false) .nil
       rest := more
     | .sqrtBody deg :: more =>
@@ -958,10 +776,7 @@ private def resolveChain (acc0 : Array MItem) (chain : List Dest) (arg0 : MList)
     | .grid _ _ _ _ :: _ => throw "an unbalanced group"
   throw "an unbalanced group"
 
-/-- A command's naming argument: the `{...}` whose content is a name rather
-than content, read as a string and stepped over. `\textcolor{alert}{x}`'s
-first group is the one case today. Returns the name and the index past the
-group's closer. -/
+/-- A command's naming `{...}` argument read as a string, and the index past its closer. -/
 private def skipNamedArg (toks : Array MTok) (i : Nat) (cmd : String) :
     Except String (String × Nat) := do
   let mut j := if toks[i]? == some .ws then i + 1 else i
@@ -982,8 +797,7 @@ private def skipNamedArg (toks : Array MTok) (i : Nat) (cmd : String) :
   let some .closeGrp := toks[j]? | throw "an unbalanced group"
   return (name, j + 1)
 
-/-- Parsing may name a presentation loss, but containment alone names a
-reduced construct. This safety invariant needs no consumed-prefix claim. -/
+/-- Parsing names no reduced construct; only containment does. -/
 private def ParserNotes (notes : Array Note) : Prop :=
   ∀ w, Note.constructFloored w ∉ notes
 
@@ -1002,9 +816,7 @@ private theorem parserNotes_append (a b : Array Note)
   · exact ha w hw
   · exact hb w hw
 
-/-- The four upright-text aliases share one scan. Nested braces group the
-word; symbols contribute their scalar, and styling contributes a loss note.
-The caller's note accumulator passes through without a second array. -/
+/-- Read an upright-text alias's group: symbols contribute their scalar, styling a loss note. -/
 private def readTextGroup (toks : Array MTok) (i : Nat) (tok : MTok)
     (notes0 : Array Note) : Except String (String × Nat × Array Note) := do
   let mut j := i + 1
@@ -1084,10 +896,7 @@ private theorem readTextGroup_notes (toks : Array MTok) (i : Nat) (tok : MTok)
          intro r _)
       | split
 
-/-- One atom joins the list: on its own when nothing is pending, otherwise
-through the pending chain's resolution. Every site that emits an atom goes
-through here, so a new one cannot land an atom past a pending script,
-accent or alphabet. -/
+/-- One atom joins the list, through the pending chain when one waits. -/
 private def joinAtom (acc : Array MItem) (pending : List Dest) (atom : MItem) :
     Except String (Array MItem × List Dest) :=
   if pending.isEmpty then return (acc.push atom, pending)
@@ -1108,15 +917,8 @@ private def closeCell (kind : GridKind) (cells : Array MList)
     | _ => body
   cells.push body
 
-/-- Whether an `aligned`'s `\tabskip` after its last pair stands, from its
-rows' cell counts and whether a `\\` ends the last row: amsmath's row end
-(`\math@cr@@@aligned`) adds a column of `\kern-\alignsep@`, cancelling that
-skip, where the columns the alignment has opened so far are even —
-`\column@`, which `aligned` counts across its rows and never resets, the
-correction column among them — so the skip stands where the widest rows'
-count is even and none of them takes the correction. Measured under
-lualatex over twenty-one row shapes: a lone pair trails, the same pair ended
-by `\\` does not, and a widest row after a shorter one trails, ended or not. -/
+/-- Whether an `aligned`'s `\tabskip` after its last pair stands, as amsmath's row end decides
+(measured under lualatex). -/
 private def alignedTrails (widths : Array Nat) (endsRow : Bool) : Bool := Id.run do
   let n := widths.foldl Nat.max 0
   if n % 2 == 1 then return false
@@ -1139,11 +941,7 @@ private def gridKindOf (kind : GridKind) (widths : Array Nat) (endsRow : Bool) :
   | .array cols s => .array cols s
   | .small => .small
 
-/-- Rows into a rectangular grid nucleus: a ragged row is named in a note
-and padded with empty cells (`MRows.pad`, whose rectangularity and
-conservation are theorems); a row overrunning an `array`'s column spec is
-named too, its extra columns centring; an `aligned` reads its trailing
-separation off its rows (`gridKindOf`). -/
+/-- Rows into a rectangular grid nucleus, a ragged or overrunning row named and padded. -/
 private def buildGrid (kind : GridKind) (rows : Array (Array MList)) (endsRow : Bool) :
     MNucleus × Array Note := Id.run do
   let mut notes : Array Note := #[]
@@ -1177,10 +975,7 @@ private theorem buildGrid_notes (kind : GridKind) (rows : Array (Array MList)) (
       | exact parserNotes_push _ _ hn (by intro w h; cases h)
       | split
 
-/-- One amsmath sized-delimiter atom: read its delimiter (as `\left` reads
-one), join the `.big` atom onto the running cell, and report the index past
-it. Lifted out of `parseToks` so the parse knot stays within its heartbeat
-budget: the loop's arm is one call here. -/
+/-- One amsmath sized-delimiter atom, kept outside `parseToks` for its knot's heartbeat budget. -/
 private def bigAtomStep (toks : Array MTok) (i : Nat) (n : String) (cls : MathClass) (step : Nat)
     (acc : Array MItem) (pending : List Dest) :
     Except String (Array MItem × List Dest × Nat) := do
@@ -1188,15 +983,8 @@ private def bigAtomStep (toks : Array MTok) (i : Nat) (n : String) (cls : MathCl
   let (acc', pending') ← joinAtom acc pending (.atom cls (.big d step) .nil .nil false)
   return (acc', pending', j)
 
-/-- Parse flattened tokens into a math list, or name the construct that
-puts the formula outside this slice. One forward pass with an explicit
-frame stack; every iteration consumes at least one token, so the loop
-bound is never the reason it stops. `top` opens an alignment grid at the
-bottom of the stack (`align`/`gather` bodies); notes name ragged rows.
-`pending` is the chain of constructions awaiting their next argument,
-innermost first — `x^\frac{a}{b}` stacks the fraction's request on the
-script's — and `resolveChain` is where every argument lands. `display` is
-amsmath's `\if@display`, which picks the modulo commands' leading kerns. -/
+/-- Parse flattened tokens into a math list in one forward pass over a frame stack, or name the
+construct outside the model. -/
 private def parseToks (toks : Array MTok) (top : Option GridKind) (display : Bool)
     (env : Env) :
     Except String (MList × Array Note) := do
@@ -1265,10 +1053,7 @@ private def parseToks (toks : Array MTok) (top : Option GridKind) (display : Boo
       stack := stack.pop.push { frame with dests := [.grid kind wrap (rows.push cells) #[]] }
       i := i + 1
     | .arrOpen =>
-      -- `[pos]{spec}`: the position is burned (the grid centres on the
-      -- axis either way in this slice); the spec gives the column
-      -- alignments. Anything else a spec can say (`|` rules, `@{}`,
-      -- `p{}`) is outside this slice, named.
+      -- The position is ignored: the grid centres on the axis.
       unless pending.isEmpty do throw (tokName tok)
       let mut j := i + 1
       if let some .ws := toks[j]? then j := j + 1
@@ -1303,10 +1088,7 @@ private def parseToks (toks : Array MTok) (top : Option GridKind) (display : Boo
     | .gridOpen n =>
       unless pending.isEmpty do throw (tokName tok)
       let some (kind, l, r) := gridEnvs.lookup n | throw (tokName tok)
-      -- `aligned` and `gathered` read amsmath's `[t]`/`[b]`/`[c]` position
-      -- (`\aligned@a[1][c]`; `t` is a `\vtop`, `b` a `\vbox`); this grid
-      -- centres on the axis, which is `[c]`, so the other two are named.
-      -- Every other row's `[` is its first cell's content.
+      -- Only `[c]` is modelled; `[t]` and `[b]` are named.
       let mut j := i + 1
       if n == "aligned" || n == "gathered" then
         let k := if toks[j]? == some .ws then j + 1 else j
@@ -1363,15 +1145,10 @@ private def parseToks (toks : Array MTok) (top : Option GridKind) (display : Boo
       pending := .sqrtBody (MList.ofList deg.toList) :: pending
       i := j
     | .ctrl "ensuremath" =>
-      -- Transparent inside math (amsldoc: `\ensuremath`'s argument sets in
-      -- math mode, which this already is): the group after it is an
-      -- ordinary braced group.
+      -- `\ensuremath` is transparent inside math.
       i := i + 1
-    -- amsmath's modulo commands (amsmath.sty). `\bmod` is a Bin "mod" whose
-    -- medium spaces are cancelled and replaced by 5 mu a side in every
-    -- style; `\mod` kerns 18 mu in a display, else 12, then sets "mod" and
-    -- `\,\,` before its argument; `\pod` kerns 18 mu, else 8, and
-    -- parenthesises its argument; `\pmod` is `\pod{mod\mkern6mu #1}`.
+    -- amsmath.sty's modulo commands: `\bmod` 5 mu a side, `\mod` 18 mu (12 inline), `\pod` 18
+    -- (8 inline), `\pmod` `\pod{mod\mkern6mu #1}`.
     | .ctrl "bmod" =>
       unless pending.isEmpty do throw (tokName tok)
       acc := acc ++ #[.space 5, modWord, .space 5]
@@ -1386,8 +1163,7 @@ private def parseToks (toks : Array MTok) (top : Option GridKind) (display : Boo
       pending := [.pod (tok == .ctrl "pmod")]
       i := i + 1
     | .ctrl "dotsi" =>
-      -- amsmath.sty: `\newcommand{\dotsi}{\!\@cdots}`, the dots between
-      -- integrals pulled a thin space back.
+      -- amsmath.sty: `\dotsi` is `\!\@cdots`.
       unless pending.isEmpty do throw (tokName tok)
       acc := acc ++ #[.space (-3), .atom .inner (.sym '\u22EF') .nil .nil false]
       i := i + 1
@@ -1423,9 +1199,7 @@ private def parseToks (toks : Array MTok) (top : Option GridKind) (display : Boo
       | _ => throw "\\nolimits without an operator"
       i := i + 1
     | .ctrl "text" | .ctrl "mbox" | .ctrl "textrm" | .ctrl "operatorname" =>
-      -- \text sets its letters upright as an Ord atom; \operatorname is
-      -- the same word as an Op atom, binding with a thin space like the
-      -- built-in function names (TeXbook p. 162's class).
+      -- `\operatorname` is `\text`'s word as an Op atom (TeXbook p. 162).
       let (s, j, notes') ← readTextGroup toks i tok notes
       notes := notes'
       let cls : MathClass := if tok == .ctrl "operatorname" then .op else .ord
@@ -1436,11 +1210,7 @@ private def parseToks (toks : Array MTok) (top : Option GridKind) (display : Boo
       i := j
     | .ctrl n =>
       if n == "textcolor" then
-        -- `\textcolor{c}{body}`: the colour is a name, not content, so its
-        -- group is consumed here; the body is the next argument, which
-        -- closes into `{\color{c} body}`. An expression the palette cannot
-        -- resolve leaves the body in the colour in force, named (W0304),
-        -- as the text path leaves it.
+        -- `\textcolor`'s colour group is a name; the body is the next argument.
         let (name, j) ← skipNamedArg toks (i + 1) n
         match env.ink name with
         | some (c, entry) =>
@@ -1449,11 +1219,7 @@ private def parseToks (toks : Array MTok) (top : Option GridKind) (display : Boo
         | none => notes := notes.push (.inkMissed name)
         i := j
       else if n == "color" then
-        -- `\color{c}`: a declaration, TeX's colour whatsit — the rest of
-        -- this list inks in `c`, and no atom or class enters the list.
-        -- xcolor's model form (`\color[rgb]{…}`) names its colour by
-        -- components the palette cannot resolve by name: its group is
-        -- consumed and the change named (W0385), the content kept.
+        -- `\color` is a colour whatsit; its model form names its change (W0385).
         unless pending.isEmpty do throw (tokName tok)
         let k := if toks[i + 1]? == some .ws then i + 2 else i + 1
         if toks[k]? == some (.ch '[') then
@@ -1583,16 +1349,8 @@ private theorem parseToks_notes (toks : Array MTok) (top : Option GridKind)
       | exact parserNotes_append _ _ hn (buildGrid_notes _ _ _)
       | split
 
-/-- Parse a formula's raw body into a math list, or name the construct that
-puts it outside this slice. Notes name ragged alignment rows (an `array`
-inside the formula) and each construct contained rather than modelled.
-
-Containment runs first, so an unmodelled construct costs itself and not the
-mathematics around it: its name and naming arguments go, its content operand
-stays, and the formula parses. Where containment leaves the formula inking
-nothing at all the whole-formula floor is the better recovery — it has a
-declared placeholder (`Ir.floorInk_accounts`) where this path would ship a
-blank — so the construct is named through the same channel it always was. -/
+/-- Parse a formula's raw body into a math list after containment, or name the construct
+outside the model. -/
 public def parseMath (display : Bool) (raws : Array Parse.Raw) (env : Env := {}) :
     Except String (MList × Array Note) := do
   let (toks, names) ← containUnknown (← flattenList #[] raws.toList)
@@ -1601,10 +1359,6 @@ public def parseMath (display : Bool) (raws : Array Parse.Raw) (env : Env := {})
     if (MList.scalarsList #[] l).isEmpty then throw n
   return (l, names.map Note.constructFloored ++ notes)
 
-/-- Every contained construct named by a successful formula came through
-the containment policy: its control word is not modelled and its naming
-arguments have a declared count. Text scans, grids, and the parser loop
-preserve this provenance, for every document environment. -/
 public theorem mathContain_accounts (display : Bool) (raws : Array Parse.Raw)
     (l : MList) (notes : Array Note) {env : Env}
     (h : parseMath display raws env = .ok (l, notes)) :
@@ -1640,9 +1394,7 @@ public theorem mathContain_accounts (display : Bool) (raws : Array Parse.Raw)
   rw [h] at hp
   exact hp
 
-/-- Parse an alignment environment's body (`align`/`gather` rows split at
-`&` and `\\`) into one grid formula. Containment applies as it does to a
-formula (`parseMath`): one unmodelled addend of one row costs that addend. -/
+/-- Parse an alignment environment's body into one grid formula, with containment. -/
 public def parseMathRows (kind : GridKind) (raws : Array Parse.Raw) (env : Env := {}) :
     Except String (MList × Array Note) := do
   let (toks, names) ← containUnknown (← flattenList #[] raws.toList)

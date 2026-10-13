@@ -3,17 +3,8 @@ module
 public import LeanTex.Core.PathData
 import LeanTex.Core.PdfNumber
 
-/-!
-# Path data read back as written
-
-What `PathData.render` writes, `PathData.parse` reads back as written
-(`parse_render_exact`), for every command list that opens with a moveto and
-whose decimals the reader keeps whole (`Dec.ok`: at most `maxSig`
-significant digits, at most `maxExp + maxSig` places). The steps: a
-decimal's characters are the number `number` reads (`number_chars`), a
-command's are its letter and operands (`cmds_cmd`), a list's are its
-commands one space apart (`cmds_render`).
--/
+/-! `PathData.parse` reads back what `PathData.render` writes (`parse_render_exact`), for command
+lists opening with a moveto whose decimals hold `Dec.ok`. -/
 
 namespace LeanTex.Core.PathData
 
@@ -66,7 +57,6 @@ private theorem Run.push_inv (r : Run) (d : Nat) (hr : r.inv) (hd : d < 10) (hv 
       by_cases hk0 : r.kept = 0
       · rw [hk0]; decide
       · have hp := h2 (by omega)
-        -- 10^kept ≤ acc * 10 + d < 10^maxSig
         have : 10 ^ r.kept ≤ r.acc * 10 + d := by
           have e : 10 ^ r.kept = 10 ^ (r.kept - 1) * 10 := by
             rw [← Nat.pow_succ]; congr 1; omega
@@ -168,7 +158,6 @@ private theorem number_parts (neg : Bool) (ip fp rest : List Char) (hip : ip ≠
     have := dfold_ge (dfold 0 ip) fp
     omega
   obtain ⟨hiv1, _, hcnt1⟩ := pushes_value Run.empty ip Run.inv_empty hipd (by simpa [Run.empty] using hipv)
-  -- the sign
   have hsign : sign ((if neg then ['-'] else []) ++ ip ++ (if fp.isEmpty then [] else '.' :: fp) ++ rest) =
       (neg, ip ++ ((if fp.isEmpty then [] else '.' :: fp) ++ rest)) := by
     cases neg with
@@ -177,7 +166,6 @@ private theorem number_parts (neg : Bool) (ip fp rest : List Char) (hip : ip ≠
       obtain ⟨c, cs, rfl⟩ := List.exists_cons_of_ne_nil hip
       simp only [Bool.false_eq_true, ↓reduceIte, List.nil_append, List.cons_append, List.append_assoc]
       exact sign_digit c _ (hipd c (by simp))
-  -- the integer digits
   have hfrHead : ∀ c ∈ ((if fp.isEmpty then [] else '.' :: fp) ++ rest).head?, c.isDigit = false := by
     intro c hc
     by_cases he : fp.isEmpty = true
@@ -188,7 +176,6 @@ private theorem number_parts (neg : Bool) (ip fp rest : List Char) (hip : ip ≠
         Option.mem_def, Option.some.injEq] at hc
       subst hc; decide
   have hip' := digitRun_append Run.empty ip ((if fp.isEmpty then [] else '.' :: fp) ++ rest) hipd hfrHead
-  -- the fraction
   have hfr : fraction (ip.foldl pushC Run.empty) ((if fp.isEmpty then [] else '.' :: fp) ++ rest) =
       ((ip ++ fp).foldl pushC Run.empty, fp.length, rest) := by
     by_cases he : fp.isEmpty = true
@@ -248,9 +235,6 @@ private theorem decOf_exact (d : Dec) (r : Run) (hr : r.acc = d.m.natAbs) (he : 
     have h3 : ¬ (maxExp + maxSig < e) := by omega
     simp only [h2, ↓reduceIte, Int.neg_neg, Int.toNat_natCast, h3]
 
-/-- **A decimal reads back as written** (`_exact`): its characters, before a
-space or the end, are the number `number` reads, when it holds at most
-`maxSig` significant digits and at most `maxExp + maxSig` after its point. -/
 public theorem number_chars (d : Dec) (rest : List Char) (hm : d.m.natAbs < 10 ^ maxSig)
     (he : d.e ≤ maxExp + maxSig) (hr : ∀ c ∈ rest.head?, c = ' ') :
     number (d.chars ++ rest) = some (d, rest) := by
@@ -320,7 +304,6 @@ private theorem cmds_letter (acc : Array Cmd) (cur : Option Char) (c : Char) (re
 /-- A decimal the reader reads back as written. -/
 @[expose] public def Dec.ok (d : Dec) : Prop := d.m.natAbs < 10 ^ maxSig ∧ d.e ≤ maxExp + maxSig
 
-/-- A decimal's characters open with a sign or a digit. -/
 private theorem Dec.chars_head (d : Dec) : ∃ c rest, d.chars = c :: rest ∧ (c = '-' ∨ c.isDigit = true) := by
   unfold Dec.chars
   dsimp only
@@ -474,8 +457,6 @@ private theorem arcArgs_chars (rx ry rot x y : Dec) (l sw : Bool) (hd : ∀ d �
   rw [skipSep_space, skipSep_chars, number_chars y _ m5 e5 ht]
   rfl
 
-/-- **One command's characters read back as the command** (`_exact`): the
-reader takes its letter, reads its operands, and continues where they end. -/
 public theorem cmds_cmd (c : Cmd) (hd : ∀ d ∈ c.decs, d.ok) (acc : Array Cmd) (cur : Option Char)
     (tail : List Char) (ht : ∀ x ∈ tail.head?, x = ' ') :
     ∃ cur' r, cmds acc cur (c.chars ++ tail) = cmds (acc.push c) cur' r ∧
@@ -615,9 +596,6 @@ public theorem cmds_render : ∀ (cs : List Cmd) (acc : Array Cmd) (cur : Option
     rw [h, hr', ih]
     simp
 
-/-- **What `render` writes, `parse` reads back as written** (`_exact`):
-every command list that opens with a moveto (or is empty), each decimal
-within `maxSig` significant digits and `maxExp + maxSig` places. -/
 public theorem parse_render_exact (cs : Array Cmd)
     (hfirst : ∀ c ∈ cs[0]?, ∃ rel x y, c = .move rel x y)
     (hd : ∀ c ∈ cs, ∀ d ∈ c.decs, d.ok) :

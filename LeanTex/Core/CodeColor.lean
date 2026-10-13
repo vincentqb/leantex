@@ -6,48 +6,8 @@ public import LeanTex.Core.PygmentsStyle
 public import LeanTex.Core.ContrastRatio
 import LeanTex.Core.Oklab
 
-/-!
-The colour each code role paints in (`ListingHighlight.Role`), resolved at
-one site, `resolve`, for both backends. A role's own palette key (its
-registry row, `Ir.Role.ofCode`) is the document's colour for it. Otherwise the
-role takes its
-colour from the palette's roles by one rule, so every palette has code
-colours of its own:
-
-* the error role is the palette's `alert`, where it is not the ink;
-* the comment role is the palette's `muted`, where it is neither the ink
-  nor the alert; else the quietest tone of the ink's own hue that reads as
-  text, a muted step derived by a rule rather than a fixed mix;
-* the literal role is the palette's `example`, where it is neither the ink
-  nor the alert; else one more hue, the middle of the widest arc of the hue
-  circle the ink's and the alert's hues leave open — the hue farthest from
-  both;
-* keywords and names are the ink's hue family: a tone of the ink's own hue
-  where it has one and the literal's hue stands clear of it; else the ink,
-  keywords set apart by weight;
-* the ink role is the listing's own text colour.
-
-Under a palette generated from seeds, whose code is the generator's to
-complete, the literal, keywords and names each take a hue of their own
-instead (`seededPlan`), planned around the code's fixed hues — the listing's
-ink, the error, and every code role its own key declares, which ships as
-declared: the literal the middle of the widest arc those leave open
-(`openArc`) unless an example is named, keywords the ink's hue where it
-stands clear of the others, else the widest arc's middle, and names the
-middle of the widest arc left once the keywords' hue is set. Where nothing
-shows a hue there is nothing to space from, and keywords and names stay in
-the ink. Exactly equal arcs are a tie the list's order settles; arcs a few
-degrees apart choose by width, so seeds a step apart can move a role's hue
-across the circle.
-
-A derived hue ships as a tone (`tone`): its hue at `codeChroma`, never
-louder than the alert, and the lightness nearest the ground that clears
-`codeTone` there — Material 3's tonal rule (a key colour fixes hue and
-chroma, the ground chooses the tone), the rule `ContrastSolve.realizeNearest`
-follows too. A role the palette gives the rule nothing to read for takes the
-listing style's colour for the type a reader knows the role by
-(`roleStyleKind`).
--/
+/-! The colour each listing code role paints in, resolved at one site (`resolve`) for both
+backends: a role's own key, else one rule over the palette's roles, else the listing style. -/
 namespace LeanTex.Core.CodeColor
 
 open Ir ListingHighlight PygmentsStyle
@@ -57,14 +17,8 @@ public def table : ListingStyle → Table
   | .default => defaultTable
   | .friendly => friendlyTable
 
-/-- A token colour and where it comes from: `role` names the registry role it
-ships under (the HTML custom property a host page may override, and the
-contrast judge's key), `declared` whether the document declared the colour
-— under a code role's own key, or as the palette role the rule reads —
-rather than the rule deriving it or the style choosing it, and `styled`
-whether the listing's highlighting style states it. A declared or a styled
-colour ships as stated; only what the rule derives is the engine's to fit
-to its ground. -/
+/-- A token colour, the registry role it ships under, and whether the document declared it or
+the style states it; only a derived colour is fitted to its ground. -/
 public structure Paint where
   color : Color
   role : Option Ir.Role
@@ -72,15 +26,12 @@ public structure Paint where
   styled : Bool := false
   deriving Repr, BEq
 
-/-- The palette keys that once coloured one token type each, and the role
-that type paints in now. They colour no listing: a role is named by its own
-key (`Ir.codeKey`, the registry's), one naming scheme. -/
+/-- Retired palette keys, each with the role its token type paints in now. -/
 public def retiredKeys : List (String × ListingHighlight.Role) :=
   [("codestring", .literal), ("codenumber", .literal), ("codebuiltin", .name),
    ("codeoperator", .ink)]
 
-/-- The type a style's colour for a role is read from: the one a reader
-knows the role by. The ink has none: it sets in the listing's own colour. -/
+/-- The token type a style's colour for a role is read from; the ink has none. -/
 public def roleStyleKind : ListingHighlight.Role → Option Kind
   | .ink => none
   | .keyword => some .keyword
@@ -93,20 +44,14 @@ public def roleStyleKind : ListingHighlight.Role → Option Kind
 public def styleColor (style : ListingStyle) (r : ListingHighlight.Role) : Option Color :=
   (roleStyleKind r).bind fun k => ((table style).resolvedOf k).color.map (·.1)
 
-/-- One just-noticeable difference (`Oklab.okJnd`): a colour nearer the
-neutral axis than one JND shows no hue. -/
+/-- One just-noticeable difference: a colour nearer the neutral axis shows no hue. -/
 private def jnd : Int := Oklab.okJnd
 
-/-- A derived hue's chroma: five JNDs off the neutral axis. A declared
-reading of "plainly a hue beside the ink and the comment's grey, and
-quieter than an accent", not a measurement. -/
+/-- A derived hue's chroma: five JNDs off the neutral axis, a declared reading, no measurement. -/
 public def codeChroma : Int := 5 * Oklab.okJnd
 
-/-- The contrast a derived hue's tone clears on its ground, in
-`contrastMilli`'s thousandths: Material 3's accent tone, 40, on its
-tone-100 surface (m3.material.io/styles/color/system/how-the-system-works).
-Tone is CIE L*, so the pair's WCAG 2.2 ratio is 1.05 / (Y(40) + 0.05) with
-Y(40) = (56/116)³: 6.461:1. -/
+/-- The contrast a derived hue's tone clears, in thousandths: Material 3's tone 40 on tone 100,
+6.461:1. -/
 public def codeTone : Nat := 21000 * 116 ^ 3 / (20 * 56 ^ 3 + 116 ^ 3)
 
 example : codeTone = 6461 := by decide
@@ -123,16 +68,11 @@ private def scaled (c : Int) (v : Int × Int) : Int × Int :=
   let n := norm v
   if n == 0 then (0, 0) else (c * v.1 / n, c * v.2 / n)
 
-/-- Two hues stand clear of each other when they lie 60° apart or more:
-Material 3's tonal-spot scheme sets its tertiary accent 60° of hue from its
-primary, the nearest it treats as a hue of its own. -/
+/-- Two hues stand clear of each other 60° apart or more (Material 3's tonal-spot tertiary). -/
 private def clear (u w : Int × Int) : Bool :=
   decide (2 * (u.1 * w.1 + u.2 * w.2) ≤ norm u * norm w)
 
-/-- The middle of the widest arc a set of hues leaves open: opposite the
-one hue, or, for two, opposite the middle of the narrower arc between
-them — the bisector of the wider. Two opposite hues leave two equal arcs;
-the one a quarter turn on from the first is taken. -/
+/-- The middle of the widest arc one or two hues leave open. -/
 private def openHue : List (Int × Int) → Option (Int × Int)
   | [] => none
   | [u] => some (-u.1, -u.2)
@@ -140,18 +80,11 @@ private def openHue : List (Int × Int) → Option (Int × Int)
     let s := (u.1 * norm w + w.1 * norm u, u.2 * norm w + w.2 * norm u)
     if s == (0, 0) then some (-u.2, u.1) else some (-s.1, -s.2)
 
-/-- Arcs within a degree of the widest count as wide as it: a hue set at an
-arc's middle leaves two halves the hue arithmetic measures equal to far
-closer than that, and at `codeChroma` a just-noticeable difference spans
-about 11° of hue, so the tie rule, never rounding, chooses between them. -/
+/-- Arcs within a degree of the widest count as wide as it. -/
 private def arcSlack : Int := 1000
 
-/-- The middle of the widest arc a list of hues (millidegrees) leaves open on
-the hue circle: each listed hue opens the arc running counter-clockwise to
-the nearest other hue listed, and of the arcs within `arcSlack` of the
-widest the earliest-listed hue's is taken: `openHue`'s rule for two hues
-away from a tie, at any count. One hue leaves the whole circle, whose middle stands opposite
-it. -/
+/-- The middle of the widest arc a list of hues (millidegrees) leaves open, the earliest-listed
+hue's arc winning within `arcSlack`. -/
 private def openArc (hs : List Int) : Option Int :=
   let width (h : Int) : Int :=
     hs.foldl (fun w h' => let d := (h' - h) % 360000; if d == 0 then w else min w d) 360000
@@ -168,8 +101,7 @@ example : openArc [] = none := by decide
 /-- The colour at Oklab lightness `L` and chromatic coordinates `(a, b)`. -/
 private def lab (a b L : Int) : Color := Oklab.toColorOfLab { L, a, b }
 
-/-- Binary search on structural fuel between a failing lightness and a
-passing one, returning the passing side of the boundary. -/
+/-- Binary search between a failing lightness and a passing one, returning the passing side. -/
 private def bisect (pass : Int → Bool) : Nat → Int → Int → Int
   | 0, _, p => p
   | n + 1, f, p =>
@@ -188,10 +120,8 @@ private def nearestPass (pass : Int → Bool) (from_ : Int) : Option Int :=
   | none, some u => some u
   | none, none => none
 
-/-- A hue's tone on a set of grounds: at chromatic coordinates `(a, b)`, the
-lightness nearest the first ground's at which it clears `req` on every one,
-its chroma reduced toward the neutral axis by quarters where no lightness
-does. -/
+/-- A hue's tone on a set of grounds: the lightness nearest the first ground's clearing `req` on
+every one, its chroma reduced where none does. -/
 public def toneOn (req : Nat) (grounds : List Color) (v : Int × Int) : Option Color :=
   let from_ := (Oklab.labOf (grounds.headD Color.white)).L
   let clears (c : Color) := grounds.all fun g => decide (req ≤ Contrast.contrastMilli c g)
@@ -201,9 +131,6 @@ public def toneOn (req : Nat) (grounds : List Color) (v : Int × Int) : Option C
     (nearestPass (fun L => clears (lab a b L)) from_).bind
       fun L => if clears (lab a b L) then some (lab a b L) else none
 
-/-- **A tone clears what it was asked to on every ground it was asked for**:
-every answer is guarded by the judged ratios themselves, so no search
-argument is load-bearing. -/
 public theorem toneOn_contract {req : Nat} {grounds : List Color} {c : Color} {v : Int × Int}
     (h : toneOn req grounds v = some c) : ∀ g ∈ grounds, req ≤ Contrast.contrastMilli c g := by
   unfold toneOn at h
@@ -221,7 +148,6 @@ public theorem toneOn_contract {req : Nat} {grounds : List Color} {c : Color} {v
 public def tone (req : Nat) (ground : Color) (v : Int × Int) : Option Color :=
   toneOn req [ground] v
 
-/-- **A tone clears what it was asked to**, on its ground. -/
 public theorem tone_meets {req : Nat} {ground c : Color} {v : Int × Int}
     (h : tone req ground v = some c) : req ≤ Contrast.contrastMilli c ground :=
   toneOn_contract h ground (List.mem_singleton.mpr rfl)
@@ -231,10 +157,8 @@ text AA where they leave no lightness for it. -/
 private def hueTone (grounds : List Color) (v : Int × Int) : Option Color :=
   (toneOn codeTone grounds v).orElse fun _ => toneOn Contrast.aaText grounds v
 
-/-- The grounds a derived hue's tone must read on: the listing's own, and,
-under a palette generated from seeds, the paper and the fills a block's body
-stands on, so a token sets in one colour wherever its listing stands — and
-the TeX export's one set of token macros sets it alike. -/
+/-- The grounds a derived hue's tone must read on: the listing's own, and under seeds the paper
+and the block fills. -/
 public def toneGrounds (pal : Palette) (ground : Color) : List Color :=
   match pal.seeded with
   | some st => (ground :: [st.seeds.paper, st.colors.surface, st.colors.accentWash]).eraseDups
@@ -252,9 +176,7 @@ public inductive Derived where
   | none
   deriving Repr, BEq
 
-/-- The palette roles the rule reads, each passed over where it is another
-role's colour already: an alert that is the ink, an example that is the
-ink or the alert, a muted step that is the alert. -/
+/-- The palette roles the rule reads, each skipped where it repeats an earlier role's colour. -/
 private structure Reads where
   fg : Option Color
   alert : Option Color
@@ -273,8 +195,7 @@ the alert's. -/
 private def Reads.hues (p : Reads) : List (Int × Int) :=
   (p.fg.bind hue?).toList ++ (p.alert.bind hue?).toList
 
-/-- Whether the rule leaves role `r` open: the palette gives it nothing to
-read, whatever the ground. Only then does a listing style colour it. -/
+/-- Whether the rule leaves role `r` open, so a listing style colours it. -/
 public def opens (pal : Palette) (r : ListingHighlight.Role) : Bool :=
   let p := reads pal
   match r with
@@ -343,17 +264,8 @@ private def seededLiteral (p : Reads) (grounds : List Color) (literal : Derived 
   | none, some v => (tonedDir p grounds v, some v)
   | _, _ => literal
 
-/-- The literal, keywords and names under a palette generated from seeds,
-each a hue of its own, planned around the code's fixed hues: the listing's
-ink (its own key, else the palette's ink), the error (its own key, else the
-alert), a comment its own key declares in a hue, and every keyword, name and
-literal its own key declares — a declared role ships as declared
-(`declared`), and in its own hue where it shows one. In turn: the literal
-(`seededLiteral`); keywords the ink's own hue where it stands clear of every
-other hue set, else the middle of the widest arc those and the literal's
-leave; names the middle of the widest arc left once the keywords' hue is set
-too. Where nothing shows a hue the literal is the rule's own (`literalOf`)
-and keywords and names stay in the ink. -/
+/-- The literal, keywords and names under seeds, each a hue of its own planned around the code's
+fixed hues. -/
 private def seededPlan (p : Reads) (grounds : List Color) (literal : Derived × Option (Int × Int))
     (declared : ListingHighlight.Role → Option Color) : Derived × Derived × Derived :=
   let ships (r : ListingHighlight.Role) (planned : Option (Int × Int)) : Option (Int × Int) :=
@@ -373,10 +285,7 @@ private def seededPlan (p : Reads) (grounds : List Color) (literal : Derived × 
   | none => (lit.1, .none, .none)
   | some _ => (lit.1, keyword.elim .ink (tonedDir p grounds), name.elim .ink (tonedDir p grounds))
 
-/-- The quietest tone of the ink's own hue and chroma that still reads as
-text on every ground, 0.10 above WCAG 2.2's 4.5:1: a muted step derived from
-the palette by a rule, never a fixed mix. The ink itself where no lighter
-tone reads. -/
+/-- The quietest tone of the ink's hue that reads as text on every ground, else the ink. -/
 private def quietInk (f : Color) (grounds : List Color) : Derived :=
   let l := Oklab.labOf f
   match toneOn (Contrast.aaText + 100) grounds (l.a, l.b) with
@@ -476,10 +385,7 @@ private theorem errorOf_none {p : Reads} (h : errorOf p = .none) : p.alert = non
   · simp at h
   · assumption
 
-/-- The literal, keywords and names: the rule's own literal and the ink's hue
-family, or under a palette generated from seeds a hue of their own each
-(`seededPlan`), around the code roles the palette declares under their own
-keys. -/
+/-- The literal, keywords and names: the rule's own, or under seeds `seededPlan`'s. -/
 private def planOf (pal : Palette) (p : Reads) (grounds : List Color)
     (literal : Derived × Option (Int × Int)) : Derived × Derived × Derived :=
   match pal.seeded with
@@ -511,9 +417,6 @@ public def derive (pal : Palette) (ground : Color) : RoleTable Derived :=
   { ink := .ink, keyword := plan.2.1, name := plan.2.2, literal := plan.1
     comment := commentOf p grounds, error := errorOf p }
 
-/-- **The rule leaves a role to the style only where it `opens`**: on every
-ground, a role the palette gives the rule something to read for derives a
-colour, or the ink. -/
 public theorem derive_none_opens (pal : Palette) (ground : Color) (r : ListingHighlight.Role)
     (h : (derive pal ground).get r = .none) : opens pal r = true := by
   cases r <;> simp only [derive, RoleTable.get] at h
@@ -526,13 +429,8 @@ public theorem derive_none_opens (pal : Palette) (ground : Color) (r : ListingHi
     simp [opens, hm, hf]
   · simp [opens, errorOf_none h]
 
-/-- **The one resolving site for the code roles.** A role's own key first,
-shipped as the document declared it; then the rule (`derive`); then the
-listing style's colour for the role. A palette role the rule reads ships
-as that role on the page it is declared for — the colour the document
-chose, under its key, judged by the contrast report as its prose uses are
-— and, on any other ground, adapted to that ground under the code role's
-own key, as a colour the document did not choose there. -/
+/-- The one resolving site for the code roles: a role's own key, then the rule, then the listing
+style's colour. -/
 public def resolve (pal : Palette) (ground : Color) (style : Option ListingStyle) :
     RoleTable (Option Paint) :=
   let page := Design.printPage pal
@@ -551,9 +449,6 @@ public def resolve (pal : Palette) (ground : Color) (style : Option ListingStyle
           { color := c, role := some (Ir.Role.ofCode r), declared := false
             styled := style.isSome }
 
-/-- **A colour shipped as declared is one the palette declares, under the
-key it ships under**: a code role's own, or the palette role the rule
-reads. -/
 public theorem resolve_declared_mem (pal : Palette) (ground : Color) (style : Option ListingStyle)
     (r : ListingHighlight.Role) (p : Paint) (h : (resolve pal ground style).get r = some p)
     (hd : p.declared = true) :
@@ -576,9 +471,6 @@ public theorem resolve_declared_mem (pal : Palette) (ground : Color) (style : Op
       obtain ⟨_, _, rfl⟩ := h
       simp at hd
 
-/-- **Every other colour ships under the role's own key**: what the rule
-derives, adapts or takes from the style is the code role's, never a
-palette role's. -/
 public theorem resolve_derived_exact (pal : Palette) (ground : Color) (style : Option ListingStyle)
     (r : ListingHighlight.Role) (p : Paint) (h : (resolve pal ground style).get r = some p)
     (hd : p.declared = false) : p.role = some (Ir.Role.ofCode r) := by
@@ -597,16 +489,10 @@ public theorem resolve_derived_exact (pal : Palette) (ground : Color) (style : O
       obtain ⟨_, _, rfl⟩ := h
       rfl
 
-/-- Whether the listing style gives role `r` its colour under the palette:
-no key of the role's own, a type the style colours the role by, and
-nothing for the rule to read. A style no role reads changes no page the
-palette sets. -/
+/-- Whether the listing style gives role `r` its colour under the palette. -/
 public def styleReads (pal : Palette) (r : ListingHighlight.Role) : Bool :=
   (Design.declared? pal (Ir.Role.ofCode r)).isNone && (roleStyleKind r).isSome && opens pal r
 
-/-- **A role no style reads resolves alike under every style**, on every
-ground: the style decides a colour only where `styleReads` says it does,
-so the inert-style diagnostic judges exactly what both artifacts ship. -/
 public theorem resolve_style_exact (pal : Palette) (ground : Color)
     (style style' : Option ListingStyle)
     (r : ListingHighlight.Role) (h : styleReads pal r = false) :

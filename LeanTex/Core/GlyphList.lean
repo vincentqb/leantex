@@ -3,22 +3,12 @@ module
 public import LeanTex.Core.GlyphListData
 public import Std.Data.HashMap
 
-/-!
-# Glyph names and the PDF's standard encodings
-
-The reading a simple font's codes need (ISO 32000-2 §9.6.5–9.6.6): a code
-to a glyph name through StandardEncoding, or to the scalar it means
-through WinAnsiEncoding or MacRomanEncoding, and a glyph name to its
-scalars through the Adobe Glyph List and its naming conventions (`uniXXXX`,
-`uXXXX`, a suffix after a period, ligature components joined by `_`).
-The tables are `GlyphListData`, generated; this module owns how they are
-read.
--/
+/-! Glyph names and the PDF's standard encodings (ISO 32000-2 §9.6.5–9.6.6): codes to names or
+scalars, and names to scalars through the Adobe Glyph List, read from `GlyphListData`. -/
 
 namespace LeanTex.Core.GlyphList
 
-/-- The glyph list as a map from name to its scalars, built once, on the
-first lookup. -/
+/-- The glyph list as a map from name to its scalars, built on first lookup. -/
 public def aglMap : Thunk (Std.HashMap String (Array Char)) := Thunk.mk fun _ => Id.run do
   let mut m : Std.HashMap String (Array Char) := {}
   for row in GlyphListData.agl.splitOn "\n" do
@@ -34,8 +24,7 @@ public def aglMap : Thunk (Std.HashMap String (Array Char)) := Thunk.mk fun _ =>
     | _ => pure ()
   return m
 
-/-- `n` hexadecimal digits as a number, or `none`. Uppercase only, as the
-glyph-naming convention spells them. -/
+/-- `n` uppercase hexadecimal digits as a number, or `none`. -/
 private def upperHex (s : List Char) : Option Nat :=
   s.foldl (fun acc c => acc.bind fun a =>
     (if '0' ≤ c && c ≤ '9' then some (c.toNat - 48)
@@ -44,9 +33,8 @@ private def upperHex (s : List Char) : Option Nat :=
 /-- A scalar a `uni`/`u` name may spell: not a surrogate, inside Unicode. -/
 private def scalarOk (v : Nat) : Bool := v < 0xD800 || (0xDFFF < v && v ≤ 0x10FFFF)
 
-/-- One component of a glyph name (no period, no underscore) as scalars:
-the glyph list's entry, then `uni` followed by groups of four uppercase
-hex digits, then `u` followed by four to six. -/
+/-- One component of a glyph name as scalars: the glyph list's entry, else `uniXXXX…`, else
+`uXXXX` to `uXXXXXX`. -/
 private def componentScalars (c : String) : Option (Array Char) :=
   match aglMap.get.get? c with
   | some cs => some cs
@@ -70,9 +58,7 @@ private def componentScalars (c : String) : Option (Array Char) :=
       else none
     | _ => none
 
-/-- **A glyph name's text** (the Adobe Glyph List specification's mapping):
-the part before the first period, its `_`-separated components each read
-by `componentScalars`; `none` when no component reads. -/
+/-- A glyph name's text by the Adobe Glyph List specification; `none` when no component reads. -/
 public def nameText (name : String) : Option String :=
   let base := (name.splitOn ".").headD ""
   if base.isEmpty then none else
@@ -102,8 +88,7 @@ public def Base.ofName? : String → Option Base
 /-- StandardEncoding's name for a code; empty for `.notdef`. -/
 public def standardName (code : Nat) : String := GlyphListData.standardEncoding[code]?.getD ""
 
-/-- The scalar a code means in a base encoding, `none` where it means
-nothing. StandardEncoding reads through its glyph names. -/
+/-- The scalar a code means in a base encoding, `none` where it means nothing. -/
 public def Base.scalar? (e : Base) (code : Nat) : Option Char :=
   match e with
   | .standard => nameScalar (standardName code)
@@ -124,7 +109,7 @@ public def Base.name (e : Base) (code : Nat) : String :=
 Appendix C); empty for none. -/
 public def expertName (code : Nat) : String := GlyphListData.expertNames[code]?.getD ""
 
-/-- The CFF standard strings by name, built once, on the first lookup. -/
+/-- The CFF standard strings by name, built on first lookup. -/
 public def cffSids : Thunk (Std.HashMap String Nat) := Thunk.mk fun _ =>
   GlyphListData.cffStandardStrings.zipIdx.foldl
     (fun m (n, i) => if m.contains n then m else m.insert n i) {}
@@ -139,10 +124,8 @@ public def macGlyphName (i : Nat) : Option String := GlyphListData.macGlyphNames
 /-- A CFF standard string by its identifier. -/
 public def cffString? (sid : Nat) : Option String := GlyphListData.cffStandardStrings[sid]?
 
-/-- The CFF string identifier of a StandardEncoding code (Adobe Technical
-Note #5176, Appendix B): the standard strings 1–149 are StandardEncoding's
-names in code order, so a code's identifier is its rank among the codes
-that name a glyph. `none` for an unencoded code. -/
+/-- The CFF string identifier of a StandardEncoding code (Technical Note #5176 Appendix B), `none`
+for an unencoded code. -/
 public def standardSid (code : Nat) : Option Nat :=
   if code ≥ 256 || (standardName code).isEmpty then none else
   some (((List.range code).filter fun c => !(standardName c).isEmpty).length + 1)

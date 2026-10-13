@@ -4,27 +4,15 @@ public import LeanTex.Core.Parse
 public import LeanTex.Core.Ir
 import LeanTex.Core.Picture
 
-/-!
-The reader of beamer's `title page` template, for the one shape a theme
-writes a full-bleed title page in: an overlay `tikzpicture` on the page
-(`remember picture,overlay`, TikZ manual §17.13.2), a fill over the whole
-page, and nodes pinned to points of the page, each setting one declared
-datum through beamer's inserts (beamerbasetitle.sty) or literal content.
-What it reads is a spelling of the engine's own title page — the ground
-(`titlepagebg`) and one slot per node (`\style{titlepage}{ slot = ... }`) —
-and it reads source, never meaning: every value it returns is the template's
-own text, evaluated where the native declaration is (palette names, lengths,
-font commands). A template of any other shape is not this reader's, and a
-node it cannot map is named, never guessed.
--/
+/-! The reader of beamer's `title page` template in its full-bleed shape, an overlay `tikzpicture`
+of a page fill and pinned nodes, read as source into the engine's own title-page declarations. -/
 
 namespace LeanTex.Core.TitleTemplate
 
 open LeanTex.Core
 open LeanTex.Core.Picture (Tok)
 
-/-- One ordered datum or literal part inside a source node. Styling
-belongs to the part; placement and measure belong to its node. -/
+/-- One ordered datum or literal part inside a source node; placement belongs to its node. -/
 public structure Part where
   datum : Option String
   content : String := ""
@@ -40,9 +28,8 @@ public structure Part where
 /-- One node of the template, as native source. -/
 public structure Node where
   parts : Array Part := #[]
-  /-- Whether the node stands pinned to a point of the page. A node the
-  engine cannot pin — no `at (current page.<point>)` — still sets its
-  parts unpinned at the title page's default place. -/
+  /-- Whether the node stands pinned to a point of the page; an unpinned node sets its parts at
+  the default place. -/
   pinned : Bool := true
   anchor : String := "center"
   pagePoint : String := "center"
@@ -56,26 +43,19 @@ public structure Node where
 public structure Read where
   ground : Option String := none
   nodes : Array Node := #[]
-  /-- The constructs met and not modelled, by name: what the one loss the
-  translation names lists. -/
+  /-- The constructs met and not modelled, by name. -/
   unread : Array String := #[]
-  /-- The theme's own font elements the template selects: each is honoured
-  here, so its skip at the declaration is withdrawn. -/
+  /-- The theme's own font elements the template selects, each honoured here. -/
   fonts : Array String := #[]
-  /-- Nodes the engine cannot pin as the template does: the data each sets
-  (empty for literal content). What each sets still ships, unpinned. -/
+  /-- Nodes the engine cannot pin as the template does: the data each sets, which still ships. -/
   unplaced : Array (Array String) := #[]
-  /-- Control words met beside a datum and not read, with the datum: the
-  datum ships without them. -/
+  /-- Control words met beside a datum and not read, with the datum. -/
   skipped : Array (String × String) := #[]
-  /-- A node sets a datum beside literal text, which no slot holds: the
-  datum named here. The template is then not read, and the built-in title
-  page sets every datum. -/
+  /-- A datum set beside literal text, which no slot holds; the template is then not read. -/
   mixed : Option String := none
   deriving Repr, BEq, Inhabited
 
-/-- A custom beamer font element, as `\setbeamerfont` declared it: its font
-commands and, apart, the size it declares (beamerbasefont.sty's `size*`). -/
+/-- A custom beamer font element as `\setbeamerfont` declared it, its declared size apart. -/
 public structure Font where
   cmds : String := ""
   size : Option String := none
@@ -93,9 +73,7 @@ private def insertDatum : String → Option String
   | "insertdate" | "insertshortdate" => some "date"
   | _ => none
 
-/-- TeX's integer parameters a template sets inside a node to keep a title
-from breaking (`\pretolerance=10000`): configuration of the line breaker,
-not ink. -/
+/-- TeX's integer parameters a template sets to keep a title from breaking, which set no ink. -/
 private def breakParams : List String :=
   ["pretolerance", "tolerance", "hyphenpenalty", "exhyphenpenalty", "linepenalty",
    "emergencystretch"]
@@ -110,8 +88,7 @@ private def trim (ts : List Tok) : List Tok :=
 
 mutual
 
-/-- Source text of micro-tokens, re-lexable, into an accumulator: a control
-word is kept apart from a following letter. -/
+/-- Source text of micro-tokens, re-lexable, into an accumulator. -/
 private def srcListInto (acc : String) : List Tok → String
   | [] => acc
   | .ctrl n :: rest@(.ident _ :: _) => srcListInto (acc ++ "\\" ++ n ++ " ") rest
@@ -185,8 +162,7 @@ private def entryOf (ts : List Tok) : String × Option (List Tok) :=
   | _ :: rest => (key, some (trim rest))
   | [] => (key, none)
 
-/-- `current page.<point>`, optionally shifted: `([xshift=…,yshift=…]current
-page.south west)` — the page point and the two shifts as source. -/
+/-- `current page.<point>`, optionally shifted: the page point and the two shifts as source. -/
 private def pagePointOf (ts : List Tok) : Option (String × Option String × Option String) := do
   let (shifts, rest) := match takeBracket '[' ']' ts with
     | some (inner, after) => (some inner, after)
@@ -206,9 +182,7 @@ private def pagePointOf (ts : List Tok) : Option (String × Option String × Opt
     return (point, xs, ys)
   | _ => none
 
-/-- The style in force at a point of a node's content: the font commands
-declared so far, the size a selected theme font declares, a `\color`, and
-a ragged declaration. A group scopes each of them, as TeX's does. -/
+/-- The style in force at a point of a node's content, scoped by groups as TeX's is. -/
 private structure Style where
   font : String := ""
   size : Option String := none
@@ -217,8 +191,7 @@ private structure Style where
   align : Option String := none
   deriving Repr, BEq, Inhabited
 
-/-- One datum found in node content, with the style and boundary in
-force where it stands. -/
+/-- One datum found in node content, with the style and boundary in force where it stands. -/
 private structure ScannedPart where
   datum : String
   style : Style
@@ -226,10 +199,8 @@ private structure ScannedPart where
   before : Option String := none
   deriving Repr, BEq, Inhabited
 
-/-- What a node's content group sets: each datum it inserts with the style
-in force where the insert stands, its line and gap boundary, whether any
-other ink stands beside the data, the control words met and not read, and
-the theme fonts selected. -/
+/-- What a node's content group sets: each datum with its style and boundary, other ink, the
+control words not read, the theme fonts selected. -/
 private structure Scan where
   data : Array ScannedPart := #[]
   words : Bool := false
@@ -238,25 +209,19 @@ private structure Scan where
   /-- A line end and gap met since the last datum. -/
   broke : Bool := false
   before : Option String := none
-  /-- The current `\ifx` arm was proved to be the final optional-datum
-  shape. Only glue in that arm may disappear with empty metadata. -/
+  /-- The current `\ifx` arm is the final optional-datum shape, whose glue may vanish. -/
   optionalArm : Bool := false
   deriving Repr, Inhabited
 
-/-- NFSS's font-change commands, declaration beside its one-argument form —
-fntguide §2.2's table, the one the elaborator reads (`Elab.fontAxes`; a
-check holds the two equal). In a node's content, either spelling is the
-node's font, as `font=` is. -/
+/-- NFSS's font-change commands, declaration beside one-argument form (fntguide §2.2). -/
 public def fontAxes : List (String × String) :=
   [("rmfamily", "textrm"), ("sffamily", "textsf"), ("ttfamily", "texttt"),
    ("mdseries", "textmd"), ("bfseries", "textbf"), ("upshape", "textup"),
    ("itshape", "textit"), ("slshape", "textsl"), ("scshape", "textsc"),
    ("normalfont", "textnormal"), ("em", "emph")]
 
-/-- Beamer's default 11-point named sizes and baseline skips, measured
-from its loaded size file (TeX Live 2026). A title-template font command is
-resolved here because the template reader emits exact native part metrics;
-the document-wide modular scale remains the engine's own. -/
+/-- Beamer's default 11-point named sizes and baseline skips, measured from its size file (TeX
+Live 2026). -/
 public def beamerSizes : List (String × (String × String)) :=
   [("tiny", ("6pt", "7pt")), ("scriptsize", ("8pt", "9.5pt")),
    ("footnotesize", ("9pt", "11pt")), ("small", ("10pt", "12pt")),
@@ -271,9 +236,7 @@ public def fontDecl (n : String) : Bool :=
 /-- Control words that end or break a line and set no ink of their own. -/
 private def lineCtrls : List String := ["par", "\\", "newline", "null"]
 
-/-- Facts needed to admit exactly the final scoped optional-datum arm.
-Literal ink, another datum, or an unknown control makes the arm structural
-rather than a conditional omission. -/
+/-- Facts needed to admit exactly the final scoped optional-datum arm. -/
 private structure OptionalFacts where
   data : Array String := #[]
   clean : Bool := true
@@ -320,9 +283,7 @@ private def optionalGapPrefix (ts : List Tok) : Bool :=
   | [.ctrl "vskip", .sym '-', .num _, .ident unit] => absoluteSkipUnit unit
   | _ => false
 
-/-- Only a final scoped arm inserting the datum it tests is an optional
-part. This prevents a nearby conditional from being normalized into a
-slot it did not describe. -/
+/-- Only a final scoped arm inserting the datum it tests is an optional part. -/
 private def supportedOptional (tested : String) (rest : List Tok) : Bool :=
   match insertDatum tested, splitOptionalFi #[] rest with
   | some expected, some (arm, after) =>
@@ -334,15 +295,8 @@ private def supportedOptional (tested : String) (rest : List Tok) : Bool :=
     | _ => false
   | _, _ => false
 
-/-- **What a node's content sets**, one scan in source order. A datum is
-recorded with the style in force where its insert stands; a group scopes
-declarations; a font declaration, `\usebeamerfont`, `\color` and a ragged
-declaration are read; the breaker's integer parameters and line ends are
-transparent. Beamer's empty-datum `\ifx` idiom contributes only its else
-body, so the comparison operand is not mistaken for ink or a second datum.
-A literal `\vskip` belongs to the next optional part. `\usebeamercolor`
-and any other control word are named and not read, and an argument group
-of theirs is still scanned for data. Anything else is ink beside the data. -/
+/-- What a node's content sets, in one source-order scan: data with their styles; unread control
+words named; any other ink beside the data. -/
 private def scanList (fonts : List (String × Font)) (st : Style) (acc : Scan) : List Tok → Scan
   | [] => acc
   | .space :: rest => scanList fonts st acc rest
@@ -417,8 +371,8 @@ where
         { datum := d, style := st, newLine := acc.broke, before := acc.before }
       broke := false
       before := none }
-  /-- One bare control word: a datum, a line end, a ragged or font
-  declaration, or a construct named and not read. -/
+  /-- One bare control word: a datum, a line end, a ragged or font declaration, or a construct
+  named. -/
   ctrlStep (st : Style) (acc : Scan) (n : String) : Style × Scan :=
     match insertDatum n with
     | some d => (st, push acc d st)
@@ -434,14 +388,12 @@ where
           if fontDecl n then ({ st with font := st.font ++ s!"\\{n} " }, acc)
           else (st, { acc with skipped := acc.skipped.push s!"\\{n}" })
 
-/-- Two opposite corners of the page: the rectangle between them is the
-whole page. -/
+/-- Two opposite corners of the page. -/
 private def opposite (a b : String) : Bool :=
   (a == "south west" && b == "north east") || (a == "north east" && b == "south west") ||
   (a == "north west" && b == "south east") || (a == "south east" && b == "north west")
 
-/-- `\fill[<colour>] (current page.<corner>) rectangle (current page.<corner>)`
-over two opposite corners: the page's ground. -/
+/-- `\fill[<colour>]` over two opposite page corners: the page's ground. -/
 private def fillStmt (rd : Read) (ts : List Tok) : Read :=
   let (color, rest) := match takeBracket '[' ']' ts with
     | some (inner, after) =>
@@ -540,9 +492,7 @@ private def nodeStmt (fonts : List (String × Font)) (rd : Read) (ts : List Tok)
     | _ =>
       bad := true
       break
-  -- The page point the node is pinned to, when it is pinned: `at (current
-  -- page.<point>)`, optionally shifted. A node with no readable pin still
-  -- sets what it inserts, unpinned — never dropped with its data.
+  -- A node with no readable pin still sets what it inserts, unpinned.
   let pin : Option (String × Option String × Option String) :=
     if bad then none else
     (coord.bind pagePointOf).filter fun (point, _, _) => (Ir.BoxPoint.ofName? point).isSome
@@ -610,9 +560,7 @@ private def dataPhrase (ds : List String) : String :=
   | last :: init =>
     String.intercalate ", " (init.reverse.map (s!"the {·}")) ++ s!" and the {last}"
 
-/-- The one loss a node the engine cannot pin is named by (`W0363`):
-the key's suffix (the data it sets), what it sets and where that stands
-instead, and the help. -/
+/-- The loss naming a node the engine cannot pin (`W0363`): key suffix, message and help. -/
 public def unplacedLoss (data : Array String) : String × String × Option String :=
   let key := if data.isEmpty then "text" else String.intercalate "+" data.toList
   let help := data[0]?.map fun d =>
@@ -626,17 +574,14 @@ public def unplacedLoss (data : Array String) : String × String × Option Strin
 it sets in the title page's flow"
   (key, msg, help)
 
-/-- A control word beside a datum that the reader does not read (`W0104`):
-the key's suffix and the message; the datum ships without it. -/
+/-- A control word beside a datum that the reader does not read (`W0104`): key suffix and
+message. -/
 public def skippedLoss (construct datum : String) : String × String :=
   (construct,
    s!"'{construct}' in the title-page template's {datum} node is not read; the {datum} \
 sets without it")
 
-/-- A datum beside literal text (`W0363`): no slot holds the two, so the
-custom node arrangement falls back. When its full-page ground was read,
-the same diagnostic accounts for keeping it. The key's suffix, the
-message, the help. -/
+/-- A datum beside literal text (`W0363`): key suffix, message and help. -/
 public def mixedLoss (datum : String) (groundKept : Bool) : String × String × Option String :=
   let msg :=
     if groundKept then
@@ -648,9 +593,7 @@ the built-in title page stands"
   (datum, msg,
    some s!"set the text in a node of its own, and \\insert{datum} alone in another")
 
-/-- **Read a `title page` template of the overlay shape.** `none` when the
-template is not one overlay picture on the page — any other shape is not
-this reader's, and the caller keeps its refusal. -/
+/-- Read a `title page` template of the overlay shape; `none` for any other shape. -/
 public def read (fonts : List (String × Font)) (body : Array Parse.Raw) : Option Read := do
   let mut pic : Option (Array Parse.Raw) := none
   for r in body do
@@ -675,11 +618,8 @@ public def read (fonts : List (String × Font)) (body : Array Parse.Raw) : Optio
     | _ => rd := { rd with unread := rd.unread.push "a statement that is not a fill or a node" }
   return rd
 
-/-- The read template as the engine's own declarations: the ground (and the
-title's ink, which stands on it) as palette roles, and one slot per node.
-The title page the template replaces draws no lineage separator. A node's
-ink rides its font template as the palette colour command; the title's is
-the title page's own ink role when a ground stands. -/
+/-- The read template as the engine's own declarations: the ground and title ink as palette
+roles, and one slot per node. -/
 public def native (rd : Read) : String :=
   let titleInk := rd.nodes.toList.findSome? fun n =>
     (n.parts.find? (·.datum == some "title")).bind (·.ink)

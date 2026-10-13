@@ -6,47 +6,16 @@ public import LeanTex.Core.ContrastRatio
 public import LeanTex.Core.Oklab
 import LeanTex.Core.ContrastSolve
 
-/-!
-A palette generated from its seeds: an ink, a paper and an accent (and, if
-the author names them, an alert, an example and a neutral), shipped exactly,
-and every other role derived from them by stated rules in Oklab, each
-checked against the contrast its sites owe.
-
-* Grounds are tints solved by their WCAG 2.2 ratio to the page, at a family
-  hue whose chroma grows with distance from the page (`Family.tint`): a
-  neutral family for surfaces and bands, the accent's for washes. The
-  neutral hue is the paper's where it has one, else the ink's, else the
-  accent's — Radix Colors' pairing of a gray scale with its accent
-  (https://www.radix-ui.com/colors/docs/palette-composition/composing-a-palette).
-  Chroma grows at κ per unit of lightness, measured on Tailwind v4's
-  slate 50–300 (0.16–0.22) and orange 50–200 (0.76–0.83)
-  (https://tailwindcss.com/docs/colors), capped at a peak.
-* Inks are the quietest tone of their family that meets the text or the
-  non-text target on every ground they stand on — Material 3's tonal rule
-  (https://m3.material.io/styles/color/system/how-the-system-works): a key
-  colour fixes hue and chroma, the ground chooses the tone. An accent seed
-  that already passes ships as itself.
-* A warm accent's darker tones turn toward red (`Oklab.Okl.turn`), as
-  Tailwind's amber and yellow 500 → 700 and Radix amber 9 → 11 do; any
-  other hue is held.
-* Targets sit 0.10 above WCAG 2.2's gates (SC 1.4.3 text 4.5:1, SC 1.4.11
-  non-text 3:1), because `contrastMilli` truncates by up to 0.007.
-
-A generated palette carries its contract (`Generated.valid`): every site it
-creates meets its target, every ground stands within its band, its tints keep
-their family's chroma and hue, and both block styles' pairs read. Nothing
-here runs when a module initializes; a document's `\palette[seeds]` calls
-`generate` once per seeds.
--/
+/-! A palette generated from its seeds: ink, paper and accent shipped exactly, every other role
+derived in Oklab by stated rules (Radix's gray pairing, Tailwind's chroma growth, Material 3's
+tonal rule) and checked against the contrast its sites owe. -/
 
 namespace LeanTex.Core.SeedPalette
 
 open Ir Oklab Contrast
 
-/-- The colours an author names. `ink`, `paper` and `accent` ship exactly as
-the page's text, ground and accent; `alert` and `example`, where named, are
-the families those roles take their tones from; `neutral` overrides the
-hue surfaces and muted inks take. -/
+/-- The colours an author names: ink, paper and accent shipped exactly, and optional alert,
+example and neutral families. -/
 public structure Seeds where
   ink : Color
   paper : Color
@@ -98,21 +67,14 @@ public def margin : Nat := 100
   { body := d.body, band := d.band, rule := d.rule, wash := d.body, soft := d.band,
     pair := d.pair, text := aaText + margin, edge := aaNonText + margin }
 
-/-- A dark page: grounds stand further from a dark page to read as apart,
-and text at 6.5:1, where WCAG 2's ratio understates how faint light text on
-a dark ground reads — calibrated against the screen's former dark constants
-(a zinc page, ink, muted ink, rule, code ground and blue accent), which the
-class's seeds carried to a dark page now reproduce within ΔEOK 0.026
-(`Tests.Schemes`): 6.9:1, the first calibration's, put the muted ink 0.042
-away, the generator solving it on every ground it stands on. -/
+/-- A dark page: grounds further apart, and text at 6.5:1, where WCAG 2 understates how faint
+light text on a dark ground reads. -/
 @[expose] public def Targets.dark : Targets :=
   { body := 1190, band := 1400, rule := 1700, wash := 1120, soft := 1300, pair := 1100,
     text := 6500, edge := aaNonText + margin }
 
-/-- The same polarity where the reader asks more contrast: text at SC
-1.4.6's 7:1 and edges at the engine's 4.5:1 (`Contrast.moreNonText`), each
-with the margin, and rules at 3:1 so a rule reads as an edge; grounds stand
-as the polarity's. -/
+/-- The same polarity where the reader asks more contrast: text at SC 1.4.6's 7:1, edges at
+4.5:1, rules at 3:1. -/
 @[expose] public def Targets.more (t : Targets) : Targets :=
   { t with rule := 3000, text := aaaText + margin, edge := moreNonText + margin }
 
@@ -126,12 +88,8 @@ as the polarity's. -/
 @[expose] public def Seeds.targetsIn (s : Seeds) (d : GroundDepth) (sc : Ir.Scheme) : Targets :=
   if sc.more then (s.targets d).more else s.targets d
 
-/-! ## Families -/
-
-/-- A hue family: a direction `(a, b)` of length `norm` (0 on the neutral
-axis), the chroma its inks take (`peak`), and how its tints' chroma grows
-from `base` at the page, `kappa` thousandths per unit of lightness, up to
-`peak`. Scales are `labOf`'s. -/
+/-- A hue family at `labOf`'s scales: a direction `(a, b)` of length `norm`, its inks' chroma
+`peak`, and its tints' chroma growing from `base` by `kappa` per unit of lightness. -/
 public structure Family where
   a : Int
   b : Int
@@ -150,10 +108,8 @@ private def familyOf (c : Color) (peak base kappa : Int) : Family :=
   let l := labOf c
   { a := l.a, b := l.b, norm := Nat.sqrt (chromaSq l).toNat, peak, base, kappa }
 
-/-- The neutral family: the named neutral's hue, else the paper's where it
-shows one (chroma ≥ 0.003), else the ink's (≥ 0.015), else the accent's;
-its inks at the source's chroma held to 0.012–0.030, or 0.020 from the
-accent. A tinted paper's own chroma is where its tints start. -/
+/-- The neutral family: the named neutral's hue, else the paper's where it shows one (chroma
+≥ 0.003), else the ink's (≥ 0.015), else the accent's. -/
 public def neutralFamily (s : Seeds) : Family :=
   let clamp (c : Int) := max (milliChroma 12) (min (milliChroma 30) c)
   match s.neutral with
@@ -200,8 +156,6 @@ private def warmOf (c : Color) : Option (Int × Int) :=
   let l := labOf c
   some (hueMilli l.a l.b, l.L)
 
-/-! ## Solving -/
-
 /-- How far from the grey's lightness a tint's or an ink's boundary is
 looked for first, at `labOf`'s scale: 0.06 of the axis. -/
 private def guessSpan : Int := 6 * 10 ^ 16
@@ -211,10 +165,8 @@ quantizing took it across the boundary: a 2⁻¹⁰ of the axis, about a quarter
 of an 8-bit step. -/
 private def nudge : Int := 10 ^ 18 / 1024
 
-/-- The lightness at which the candidate's luminance meets `want` (10⁻⁷
-units), by the secant method from the guess: luminance along a lightness
-axis is monotone, so a few steps close the gap that a bisection would
-spend a dozen on. -/
+/-- The lightness where the candidate's luminance meets `want` (10⁻⁷ units), by the secant
+method. -/
 private def secant (lum : Int → Int) (want : Int) (guess : Int) : Int := Id.run do
   let mut a := guess
   let mut ya := lum a
@@ -229,12 +181,8 @@ private def secant (lum : Int → Int) (want : Int) (guess : Int) : Int := Id.ru
     yb := lum b
   return b
 
-/-- The search over a lightness axis: the candidate at `L` (`at_`, in
-gamut), the lightness where its luminance meets `want` found by `secant`,
-then the quantized colour moved toward the passing side (`darker`: toward
-black) until it passes `ok` itself. Where twelve nudges do not reach a
-passing colour, the boundary is bisected over the whole axis instead, from
-the failing end `f` to the passing end `p`. -/
+/-- The search along a lightness axis: the secant's answer nudged toward the passing side, else
+bisected over the whole axis. -/
 private def search (at_ : Int → Okl) (want : Nat) (darker : Bool) (ok : Color → Bool)
     (f p guess : Int) : Option Color :=
   let dir : Int := if darker then -1 else 1
@@ -257,10 +205,7 @@ private def solveGround (fam : Family) (page : Color) (dark : Bool) (target : Na
   search (fam.tint lp) want (!dark) (fun c => decide (target ≤ contrastMilli c page)) lp far
     (ContrastSolve.greyLightness want)
 
-/-- The quietest tone meeting `target` on every ground: the lightness nearest
-the grounds that passes on all of them, searched from white (`light`) or
-from black, looked for first beside the grey the most demanding ground asks
-for, at the chroma the gamut holds there. -/
+/-- The quietest tone meeting `target` on every ground, searched from white (`light`) or black. -/
 private def solveInk (raw : Int → Okl) (grounds : List Color) (target : Nat) (light : Bool) :
     Option Color :=
   let (f, p) : Int × Int := if light then (10 ^ 18, 0) else (0, 10 ^ 18)
@@ -275,8 +220,6 @@ private def solveInk (raw : Int → Okl) (grounds : List Color) (target : Nat) (
 private def seedOr (seed : Color) (grounds : List Color) (target : Nat)
     (tone : Option Color) : Option Color :=
   if grounds.all fun g => decide (target ≤ contrastMilli seed g) then some seed else tone
-
-/-! ## The palette -/
 
 /-- Every derived colour of a generated palette. -/
 public structure Colors where
@@ -357,18 +300,12 @@ and accent, and nothing for a role generation derives. -/
 /-- The palette roles generation sets: the seeds' three, then what it derives. -/
 @[expose] public def tierRoles : List Ir.Role := [.page, .ink, .accent] ++ derivedRoles
 
-/-- The colours a generated palette paints its furniture in, each element
-role bound to the palette role it reads, in both block styles: the progress
-bar in the accent over the accent's band, the title separator in the
-accent. Decorative marks, so no contrast is owed; their hue is the seeds'
-rather than any bundle's, the one entry point every colour comes through. -/
+/-- The furniture's element roles bound to the palette roles they read: the progress bar and the
+title separator in the accent. -/
 @[expose] public def furniture : List (Ir.Role × Ir.Role) :=
   [(.progressFill, .accent), (.progressTrack, .accentSoft), (.separator, .accent)]
 
-/-- The element roles a block style binds, each to the palette role it reads:
-the title's bar and ink and the body's ground and ink, for each kind. Under
-`strong`, the alert title stands on the accent where the ink reads on it,
-else on the ink in the accent's inverse tone. -/
+/-- The element roles a block style binds, each to the palette role it reads. -/
 @[expose] public def bindings (s : Seeds) (t : Targets) : Blocks → List (Ir.Role × Ir.Role)
   | .tonal =>
     [(.blockTitleBar, .surfaceStrong), (.blockTitleInk, .ink),
@@ -436,10 +373,7 @@ public def sites (s : Seeds) (t : Targets) (c : Colors) : List (Ir.Role × Color
   | some e => [(.example, e, s.paper, t.text), (.example, e, c.surface, t.text)]
   | none => []
 
-/-- How far above its target a ground may stand: a fiftieth of the target —
-0.022 at a deck body's 1.12:1, about two and a half 8-bit steps of a light
-tint, the room the search's quantized answer needs — and proportionally more
-near a dark page, where a step moves the ratio further. -/
+/-- How far above its target a ground may stand: a fiftieth of the target. -/
 public def groundSlack (target : Nat) : Nat := target / 50
 
 /-- One 8-bit step's worth of chroma near the page, `labOf`'s scale. -/
@@ -487,9 +421,8 @@ public def groundOk (page : Color) (fam : Family) (g : Color) (target : Nat) : B
   decide (target ≤ contrastMilli g page) && decide (contrastMilli g page ≤ target + groundSlack target) &&
     decide (floorAt fam page g - chromaStep ≤ chromaOf g) && hueOk fam page g
 
-/-- **The contract a generated palette carries**: every site meets its
-target, every block pair of both styles reads, every ground stands in its
-band, and each band stands `pair` apart from the body below it. -/
+/-- The contract a generated palette carries: every site meets its target, every block pair
+reads, every ground stands in its band. -/
 public def contract (s : Seeds) (t : Targets) (c : Colors) : Bool :=
   (sites s t c).all (fun (_, i, g, r) => decide (r ≤ contrastMilli i g)) &&
   (Blocks.all.all fun b => (blockPairs s t c b).all fun (i, g) => decide (t.text ≤ contrastMilli i g)) &&
@@ -497,8 +430,7 @@ public def contract (s : Seeds) (t : Targets) (c : Colors) : Bool :=
   decide (t.pair ≤ contrastMilli c.surfaceStrong c.surface) &&
   decide (t.pair ≤ contrastMilli c.accentSoft c.accentWash)
 
-/-- A generated palette: its colours, and the proof they meet the contract.
-The seeds are parameters, never outputs the generator may change. -/
+/-- A generated palette: its colours and the proof they meet the contract. -/
 public structure Generated (s : Seeds) (t : Targets) where
   colors : Colors
   valid : contract s t colors = true
@@ -603,9 +535,7 @@ private def candidate (s : Seeds) (t : Targets) : Except Failure Colors := do
            mutedOnInverse, accentText, accentEdge, accentOnInverse, alert, alertBand, exampleText,
            exampleBand }
 
-/-- **Generate a palette** from its seeds at the targets of a class's depth
-and the paper's polarity. A CMYK seed is refused: this sRGB operation cannot
-keep its print components. -/
+/-- Generate a palette from its seeds at the given targets; a CMYK seed is refused. -/
 public def generate (s : Seeds) (t : Targets) : Except Failure (Generated s t) := do
   if s.ink.cmyk.isSome then failCmyk .ink
   if s.paper.cmyk.isSome then failCmyk .page
@@ -617,23 +547,14 @@ public def generate (s : Seeds) (t : Targets) : Except Failure (Generated s t) :
     | some f => .error f
     | none => fail .surface "the palette does not meet its contract"
 
-/-- **The secondary ink a palette's own ink and page derive**, by the rule a
-generated palette's muted step follows (`candidate`): the quietest tone of
-the neutral family they set that reads at the text target on the page —
-4.6:1 on a light page, 6.9:1 on a dark one (`Seeds.targets`). For a bundle
-that states its ink and page and no seeds (`Theme.derived`). -/
+/-- The secondary ink an ink and page derive, by a generated palette's muted rule. -/
 public def mutedFor (ink paper : Color) : Option Color :=
   let s : Seeds := { ink, paper, accent := ink }
   solveInk ((neutralFamily s).inkRaw none) [paper] (s.targets .decks).text (!s.dark)
 
-/-! ## The class's default palette -/
-
-/-- The seeds the engine's own screen colours are generated from where a
-document declares none (`Ir.ClassColors.ink`, `.paper`, `.accent`). -/
+/-- The seeds the engine's own colours are generated from where a document declares none. -/
 @[expose] public def classSeeds : Seeds :=
   { ink := ClassColors.ink, paper := ClassColors.paper, accent := ClassColors.accent }
-
-/-! ## Seeds in a scheme of the other polarity -/
 
 /-- The lightness of a dark screen's page, 0.20 at `labOf`'s scale, and the
 most chroma it keeps, 0.012: a near-neutral of the document's own hue. -/
@@ -641,10 +562,8 @@ public def darkPageL : Int := 2 * 10 ^ 17
 
 public def darkPageChroma : Int := 12 * 10 ^ 15
 
-/-- The page a scheme of the given polarity stands on where the seeds' own
-is the other one: on a dark screen the neutral family at `darkPageL` with no
-more than `darkPageChroma`, brought into the gamut; on a light one white,
-the class's page. -/
+/-- The page a scheme of the other polarity stands on: a dark near-neutral of the seeds' hue,
+or white. -/
 public def schemePaper (s : Seeds) (dark : Bool) : Color :=
   if dark then
     let fam := neutralFamily s
@@ -652,12 +571,8 @@ public def schemePaper (s : Seeds) (dark : Bool) : Color :=
     (Okl.toGamut { L := darkPageL, a := fam.a, b := fam.b, f }).toColor
   else ClassColors.paper
 
-/-- **Seeds carried to a scheme of the given polarity**: the scheme's page
-(`schemePaper`), and every other seed carried to it — the ink, and an alert
-or an example where named, adapted at the text target on that page
-(`ContrastSolve.adapt`), the accent and a named neutral reflected
-(`ContrastSolve.reflect`); `none` where a text seed reaches no legible tone
-there. Seeds already of that polarity stand as they are. -/
+/-- Seeds carried to a scheme of the given polarity; `none` where a text seed has no legible
+tone there. -/
 public def Seeds.carry (s : Seeds) (dark : Bool) : Option Seeds :=
   if s.dark == dark then some s else
   let paper := schemePaper s dark
@@ -676,12 +591,8 @@ printed page and a light screen, carried to a dark page on a dark one. -/
 public def classSeedsIn (s : Ir.Scheme) : Seeds :=
   if s.onDark then (classSeeds.carry true).getD classSeeds else classSeeds
 
-/-- A generated palette as a document keeps it: the seeds, the targets they
-were generated to, the block style, and the colours, so a generated role
-standing on another ground can take its family's tone there (`toneOn`);
-and whether a bundle generated it, whose seeds then follow the page, ink and
-accent the document declares (`Ir.Palette.reseed`), where the document's
-own `\palette[seeds]` stand as written. -/
+/-- A generated palette as a document keeps it: seeds, targets, block style and colours, and
+whether a bundle generated it. -/
 public structure SeedState where
   seeds : Seeds
   targets : Targets
@@ -713,13 +624,10 @@ palette holds it once the palette roles are installed (`Ir.Palette.applySeedsUnd
    .alertTitleInk, .alertBodyGround, .alertBodyInk, .exampleTitleBar, .exampleTitleInk,
    .exampleBodyGround, .exampleBodyInk, .progressFill, .progressTrack, .separator]
 
-/-- The element roles a block style and the furniture bind, in either style. -/
 public theorem bound_elements (s : Seeds) (t : Targets) (b : Blocks) :
     (bindings s t b ++ furniture).map Prod.fst = elementRoles := by
   cases b <;> rfl
 
-/-- **No binding rewrites a seed**: the element roles a block style and the
-furniture bind are never the page's text, ground or accent. -/
 public theorem bindings_seeds_exact (s : Seeds) (t : Targets) (b : Blocks) :
     ∀ x ∈ bindings s t b ++ furniture, x.1 ≠ .ink ∧ x.1 ≠ .page ∧ x.1 ≠ .accent := by
   intro x hx
@@ -728,10 +636,6 @@ public theorem bindings_seeds_exact (s : Seeds) (t : Targets) (b : Blocks) :
   have hall : ∀ r ∈ elementRoles, r ≠ .ink ∧ r ≠ .page ∧ r ≠ .accent := by decide
   exact hall _ hm
 
-/-- **The seeds ship exactly**: after the seeds, a generated palette derives
-and binds nothing that names the page's text, ground or accent, so what it
-installs for those three roles is the author's colours
-(`Ir.Palette.applySeedsUnder_seeds_exact` reads it off the install). -/
 public theorem generate_seeds_exact (st : SeedState) :
     (∀ x ∈ derivedEntries st, x.1 ≠ .ink ∧ x.1 ≠ .page ∧ x.1 ≠ .accent) ∧
       ∀ x ∈ bound st, x.1 ≠ .ink ∧ x.1 ≠ .page ∧ x.1 ≠ .accent := by
@@ -745,10 +649,8 @@ public theorem generate_seeds_exact (st : SeedState) :
 private def lightGround (g : Color) : Bool :=
   decide (contrastMilli Color.white g < contrastMilli Color.black g)
 
-/-- A generated text role on a ground it does not read on: on the ink, the
-inverse ink generation already holds, under its own role; on any other
-ground, its family's quietest tone that reads there. Only the roles text is
-set in re-tone: the alert, the muted step, the example. -/
+/-- A generated text role's tone on a ground it does not read on: the inverse ink, or its
+family's quietest legible tone. -/
 public def SeedState.toneOn (st : SeedState) (r : Ir.Role) (g : Color) :
     Option (Color × Option Ir.Role) :=
   let s := st.seeds
@@ -767,8 +669,6 @@ public def SeedState.toneOn (st : SeedState) (r : Ir.Role) (g : Color) :
     (s.exampleColor.bind fun ex => solve (accentFamily ex) (warmOf ex)).map fun c => (c, none)
   | _ => none
 
-/-! ## What a generated palette guarantees -/
-
 private theorem contract_parts {s : Seeds} {t : Targets} {c : Colors} (h : contract s t c = true) :
     (sites s t c).all (fun (_, i, g, r) => decide (r ≤ contrastMilli i g)) = true ∧
     (Blocks.all.all fun b => (blockPairs s t c b).all fun (i, g) =>
@@ -779,9 +679,6 @@ private theorem contract_parts {s : Seeds} {t : Targets} {c : Colors} (h : contr
   simp only [contract, Bool.and_eq_true, decide_eq_true_eq] at h
   exact ⟨h.1.1.1.1, h.1.1.1.2, h.1.1.2, h.1.2, h.2⟩
 
-/-- **Every site a generated palette creates meets its target**, in both
-block styles: each derived ink on each ground it stands on, and each block
-title and body over its ground — 0.10 above WCAG 2.2's gate. -/
 public theorem generated_sites_contract {s : Seeds} {t : Targets} (p : Generated s t) :
     (∀ x ∈ sites s t p.colors, x.2.2.2 ≤ contrastMilli x.2.1 x.2.2.1) ∧
       ∀ b : Blocks, ∀ x ∈ blockPairs s t p.colors b, t.text ≤ contrastMilli x.1 x.2 := by
@@ -792,9 +689,6 @@ public theorem generated_sites_contract {s : Seeds} {t : Targets} (p : Generated
   · have hb := List.all_eq_true.mp h2 b (by cases b <;> simp [Blocks.all])
     exact of_decide_eq_true (List.all_eq_true.mp hb x hx)
 
-/-- **Each ground stands in its band**: at least its target ratio to the
-page and at most `groundSlack` above it, with the chroma its family's tint
-keeps at its lightness, less one 8-bit step. -/
 public theorem tint_between {s : Seeds} {t : Targets} (p : Generated s t) :
     ∀ x ∈ grounds s t p.colors,
       x.2.2.2 ≤ contrastMilli x.2.2.1 s.paper ∧
@@ -806,10 +700,6 @@ public theorem tint_between {s : Seeds} {t : Targets} (p : Generated s t) :
   simp only [groundOk, Bool.and_eq_true, decide_eq_true_eq] at this
   exact ⟨this.1.1.1, this.1.1.2, this.1.2⟩
 
-/-- **A block's title band stands apart from its body**, at least `pair` to
-one between the neutral band and body and between the accent's band and
-wash, and each holds its family's hue within 10° wherever it has the chroma
-to show one. -/
 public theorem blockPair_between {s : Seeds} {t : Targets} (p : Generated s t) :
     t.pair ≤ contrastMilli p.colors.surfaceStrong p.colors.surface ∧
       t.pair ≤ contrastMilli p.colors.accentSoft p.colors.accentWash ∧
@@ -821,18 +711,14 @@ public theorem blockPair_between {s : Seeds} {t : Targets} (p : Generated s t) :
   simp only [groundOk, Bool.and_eq_true] at this
   exact hueOk_within this.2 hf
 
-/-! ## The TeX export -/
-
 private theorem beamerBlocks_pair {s : Seeds} {t : Targets} {c : Colors} {b : Blocks}
     {element : String} {fg bg : Ir.Role} (h : (element, fg, bg) ∈ beamerBlocks s t b)
     {cf cg : Color} (hf : Colors.role s c fg = some cf) (hg : Colors.role s c bg = some cg) :
     (cf, cg) ∈ blockPairs s t c b :=
   List.mem_filterMap.mpr ⟨(element, fg, bg), h, by simp [hf, hg]⟩
 
-/-- Every beamer element the generated palette writes, in first-written
-order, with the roles its two channels read: each generated role's own
-elements (`Row.beamer`), then each element role its block style and its
-furniture bind, at the role it reads. -/
+/-- Every beamer element the generated palette writes, first written first, with its two
+channels' roles. -/
 public def beamerChannels (st : SeedState) : List (String × Option Ir.Role × Option Ir.Role) :=
   let writes : List (String × Ir.Channel × Ir.Role) :=
     (tierRoles.filter fun r => (Colors.role st.seeds st.colors r).isSome).flatMap
@@ -849,9 +735,7 @@ public def beamerChannels (st : SeedState) : List (String × Option Ir.Role × O
         | .fg => (e, some r, none)
         | .bg => (e, none, some r)]) []
 
-/-- **The export**: an xcolor colour for each role the registry names for
-export (`Row.exportName`), in registry order, at its generated colour — the
-print projection a TeX build reads. -/
+/-- The export: an xcolor colour for each role the registry names for export, in registry order. -/
 public def declarations (stem : String) (st : SeedState) : String :=
   String.join (Ir.Role.all.filterMap fun r => do
     let n ← r.row.exportName
@@ -859,18 +743,13 @@ public def declarations (stem : String) (st : SeedState) : String :=
     pure ("\\definecolor{" ++ stem ++ n ++ "}{HTML}{" ++ Color.hexByte c.r ++ Color.hexByte c.g ++
       Color.hexByte c.b ++ "}\n"))
 
-/-- The export with every beamer element the palette writes bound to the
-colours its channels read (`beamerChannels`): the page's text and ground,
-the canvas, the muted footline and its page number, the alert, the six block
-elements in the style, the progress bar and the title separator. -/
+/-- The export with every beamer element the palette writes bound to its channels' colours. -/
 public def beamerDeclarations (stem : String) (st : SeedState) : String :=
   let name (r : Ir.Role) := stem ++ r.row.exportName.getD ""
   declarations stem st ++ String.join ((beamerChannels st).map fun (e, fg, bg) =>
     let parts := (fg.map fun r => "fg=" ++ name r).toList ++ (bg.map fun r => "bg=" ++ name r).toList
     "\\setbeamercolor{" ++ e ++ "}{" ++ ",".intercalate parts ++ "}\n")
 
-/-- **Every exported block binding reads**, in both styles: its foreground
-over its ground meets the generated text target, at least WCAG 2.2's 4.5:1. -/
 public theorem generated_beamer_contract {s : Seeds} {t : Targets} (p : Generated s t)
     (ht : aaText ≤ t.text) (b : Blocks) {element : String} {fg bg : Ir.Role}
     (h : (element, fg, bg) ∈ beamerBlocks s t b) {cf cg : Color}

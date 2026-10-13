@@ -1,26 +1,7 @@
 module
 
-/-!
-# SVG path data
-
-The `d` attribute's grammar (SVG 2 §9.3.9): commands `M L H V C S Q T A Z`
-in both cases, numbers in the compact syntax exporters write — `1.5.5` is
-two numbers, `1-2` is two, an arc's flags need no separator — and implicit
-repetition (after `M` further pairs are line segments). A number is kept
-as the decimal it spells (`Dec`) to `maxSig` significant digits, past which
-a digit only moves the point: far finer than any coordinate needs (a
-double holds 17), and what keeps the reader linear in the digits a number
-spells. What is rounded further, and where, is the importer's decision.
-
-The reader follows SVG 2 §9.5.4's error rule: it reads the path up to the
-last command that parsed whole, and says where and why it stopped — at a
-spelling no reader accepts, or at a number past the reader's range, where a
-browser's double would still have read on (`Stop`). Every step consumes
-input (`number_lt`, `operands_lt`), which is the walk's termination measure,
-so the reader is linear in the path. `render` writes commands back, and the
-reader reads every rendered spelling back as it stands
-(`PathDataContract`'s `parse_render_exact`).
--/
+/-! SVG path data (SVG 2 §9.3.9): the `d` grammar in the compact syntax exporters write, read up to
+the last whole command (§9.5.4) in linear time, and written back as `render`. -/
 
 namespace LeanTex.Core.PathData
 
@@ -30,7 +11,6 @@ public structure Dec where
   e : Nat
   deriving Repr, BEq, DecidableEq, Inhabited
 
-/-- Its value. -/
 @[expose] public def Dec.toRat (d : Dec) : Rat := (d.m : Rat) / ((10 ^ d.e : Nat) : Rat)
 
 @[expose] public def Dec.zero : Dec := ⟨0, 0⟩
@@ -48,8 +28,6 @@ public inductive Cmd where
   | arc (rel : Bool) (rx ry rot : Dec) (large sweep : Bool) (x y : Dec)
   | close
   deriving Repr, BEq, DecidableEq, Inhabited
-
-/-! ## Numbers -/
 
 @[expose] public def isWsp (c : Char) : Bool := c == ' ' || c == '\t' || c == '\n' || c == '\r' || c == '\x0c'
 
@@ -73,7 +51,6 @@ public theorem skipWs_length_le : ∀ l : List Char, (skipSep.skipWs l).length �
       simp only [List.length_cons]; omega
     · simp
 
-/-- Skipping a separator never lengthens the text. -/
 public theorem skipSep_length_le : ∀ l : List Char, (skipSep l).length ≤ l.length
   | [] => by simp [skipSep]
   | c :: rest => by
@@ -89,18 +66,15 @@ public theorem skipSep_length_le : ∀ l : List Char, (skipSep l).length ≤ l.l
 /-- The significant digits a number keeps. -/
 @[expose] public def maxSig : Nat := 40
 
-/-- The decimal exponent past which a number is no coordinate any figure
-means: larger is out of the reader's range, smaller than `-(maxExp + maxSig)`
-reads as zero. -/
+/-- The decimal exponent past which a number is out of range; below `-(maxExp + maxSig)` it reads
+as zero. -/
 @[expose] public def maxExp : Nat := 40
 
-/-- An exponent's value saturates here: past any digit count a file can
-hold, so saturation never changes which side of the range a number falls. -/
+/-- An exponent's value saturates here, past any digit count a file can hold. -/
 @[expose] public def expCap : Nat := 1000000000000000000
 
-/-- A run of mantissa digits read so far: the significant digits kept, as a
-natural — leading zeros skipped, at most `maxSig` of them — how many digits
-were dropped past those, and how many digits the run held in all. -/
+/-- A run of mantissa digits read so far: the kept significant digits, how many were dropped,
+and the total count. -/
 public structure Run where
   acc : Nat
   kept : Nat
@@ -110,8 +84,8 @@ public structure Run where
 
 @[expose] public def Run.empty : Run := ⟨0, 0, 0, 0⟩
 
-/-- One mantissa digit onto a run: a leading zero only counts, a digit
-past `maxSig` only counts as dropped. -/
+/-- One mantissa digit onto a run: a leading zero only counts, a digit past `maxSig` counts as
+dropped. -/
 @[expose] public def Run.push (r : Run) (d : Nat) : Run :=
   if r.acc == 0 && d == 0 then { r with count := r.count + 1 }
   else if r.kept < maxSig then
@@ -123,8 +97,7 @@ past `maxSig` only counts as dropped. -/
   | c :: rest => if c.isDigit then digitRun (r.push (c.toNat - 48)) rest else (r, c :: rest)
   | [] => (r, [])
 
-/-- An exponent's digits: their value, saturating at `expCap`, and how many
-there were. -/
+/-- An exponent's digits: their value, saturating at `expCap`, and how many there were. -/
 @[expose] public def expDigits (v n : Nat) : List Char → Nat × Nat × List Char
   | c :: rest =>
     if c.isDigit then expDigits (min (v * 10 + (c.toNat - 48)) expCap) (n + 1) rest
@@ -137,16 +110,14 @@ there were. -/
   | '+' :: rest => (false, rest)
   | cs => (false, cs)
 
-/-- A fraction after the integer digits: the run continued over the digits
-after a point, and how many those were. -/
+/-- A fraction after the integer digits: the run continued over them, and how many those were. -/
 @[expose] public def fraction (r : Run) : List Char → Run × Nat × List Char
   | '.' :: rest =>
     let f := digitRun r rest
     (f.1, f.1.count - r.count, f.2)
   | cs => (r, 0, cs)
 
-/-- An optional exponent: its signed value and the text after it; an `e`
-with no digit after it is no exponent. -/
+/-- An optional exponent and the text after it; an `e` with no digit after it is none. -/
 @[expose] public def exponent : List Char → Int × List Char
   | e :: rest =>
     if e == 'e' || e == 'E' then
@@ -156,8 +127,8 @@ with no digit after it is no exponent. -/
     else (0, e :: rest)
   | [] => (0, [])
 
-/-- The decimal a sign, a run and its point's exponent spell: `none` past
-`maxExp`, zero below `-(maxExp + maxSig)`. -/
+/-- The decimal a sign, a run and its point's exponent spell: `none` past `maxExp`, zero below
+`-(maxExp + maxSig)`. -/
 @[expose] public def decOf (neg : Bool) (r : Run) (E : Int) : Option Dec :=
   let m : Int := if neg then -(r.acc : Int) else r.acc
   if (maxExp : Int) < E then none
@@ -165,8 +136,8 @@ with no digit after it is no exponent. -/
   else if maxExp + maxSig < (-E).toNat then some ⟨0, 0⟩
   else some ⟨m, (-E).toNat⟩
 
-/-- A number at the front: an optional sign, digits with an optional
-fraction (one side may be empty, not both), an optional exponent. -/
+/-- A number at the front: an optional sign, digits with an optional fraction, an optional
+exponent. -/
 @[expose] public def number (cs : List Char) : Option (Dec × List Char) :=
   let s := sign cs
   let ip := digitRun Run.empty s.2
@@ -175,14 +146,12 @@ fraction (one side may be empty, not both), an optional exponent. -/
   let ex := exponent fr.2.2
   (decOf s.1 fr.1 ((fr.1.dropped : Int) + ex.1 - fr.2.1)).map (·, ex.2)
 
-/-- Why a number is none: its spelling, or its range. -/
+/-- Whether a number fails by its range rather than its spelling. -/
 @[expose] public def outOfRange (cs : List Char) : Bool :=
   let s := sign cs
   let ip := digitRun Run.empty s.2
   let fr := fraction ip.1 ip.2
   ip.1.count + fr.2.1 != 0 && (number cs).isNone
-
-/-! ### Every number consumes what it reads -/
 
 public theorem Run.push_count (r : Run) (d : Nat) : (r.push d).count = r.count + 1 := by
   unfold Run.push
@@ -241,8 +210,6 @@ public theorem exponent_length_le (cs : List Char) : (exponent cs).2.length ≤ 
     · simp
   · simp
 
-/-- **A number consumes what it reads** (`_lt`): whatever follows it is
-shorter than what it was read from. -/
 public theorem number_lt {cs : List Char} {d : Dec} {r : List Char} (h : number cs = some (d, r)) :
     r.length < cs.length := by
   unfold number at h
@@ -271,8 +238,6 @@ public theorem flag_lt {cs : List Char} {b : Bool} {r : List Char} (h : flag cs 
     r.length < cs.length := by
   unfold flag at h
   split at h <;> simp_all
-
-/-! ## Commands -/
 
 /-- `n` numbers, separated, from the front. -/
 @[expose] public def numbers : Nat → List Char → Option (List Dec × List Char)
@@ -367,8 +332,6 @@ private theorem bindList_lt {k : Nat} {cs : List Char} {cmd : Cmd} {r : List Cha
     rw [hg _ _ _ h]
     exact numbers_lt k hn
 
-/-- **A command with operands consumes what it reads** (`_lt`): every
-command letter but `Z` reads at least one number. -/
 public theorem operands_lt {c : Char} {cs : List Char} {cmd : Cmd} {r : List Char}
     (h : operands c cs = some (cmd, r)) (hz : c.toUpper ≠ 'Z') : r.length < cs.length := by
   unfold operands at h
@@ -398,7 +361,6 @@ public theorem operands_lt {c : Char} {cs : List Char} {cmd : Cmd} {r : List Cha
   · next hc => exact absurd hc hz
   · cases h
 
-/-- A command letter's operands never lengthen the text. -/
 public theorem operands_le {c : Char} {cs : List Char} {cmd : Cmd} {r : List Char}
     (h : operands c cs = some (cmd, r)) : r.length ≤ cs.length := by
   by_cases hz : c.toUpper = 'Z'
@@ -409,24 +371,19 @@ public theorem operands_le {c : Char} {cs : List Char} {cmd : Cmd} {r : List Cha
     rw [← h.2]; omega
   · exact Nat.le_of_lt (operands_lt h hz)
 
-/-- After a command, the letter an implicit repetition repeats: a moveto
-repeats as a lineto (§9.3.3). -/
+/-- The letter an implicit repetition repeats; a moveto repeats as a lineto (§9.3.3). -/
 @[expose] public def repeatOf (c : Char) : Char :=
   if c == 'M' then 'L' else if c == 'm' then 'l' else c
 
-/-- Where the reader stopped: at the end, at a spelling no reader accepts,
-or at a number past the reader's range (`maxExp`), which a browser's
-double would still have read. -/
+/-- Where the reader stopped: at the end, at a spelling no reader accepts, or past `maxExp`. -/
 public inductive Stop where
   | done
   | syntax
   | range
   deriving Repr, BEq, DecidableEq, Inhabited
 
-/-- The path's commands onto `acc`, from the front of `cs` under the
-command letter in force; stops at the first command that does not parse,
-returning what parsed and where it stopped. Each step consumes at least
-one character (`operands_lt`), the walk's measure. -/
+/-- The path's commands onto `acc` under the command letter in force, up to the first that does
+not parse. -/
 @[expose] public def cmds (acc : Array Cmd) (cur : Option Char) (cs : List Char) : Array Cmd × Stop :=
   match cs with
   | [] => (acc, .done)
@@ -453,17 +410,13 @@ decreasing_by
     simp only [List.length_cons]; omega
   · exact operands_lt _h _hz
 
-/-- **A path's `d` as commands**, up to the first that does not parse, and
-where the reader stopped. A path must start with a moveto (§9.5.4); one
-that does not draws nothing. -/
+/-- A path's `d` as commands, up to the first that does not parse, and where the reader stopped. -/
 @[expose] public def parse (s : String) : Array Cmd × Stop :=
   let (out, stop) := cmds #[] none s.toList
   match out[0]? with
   | some (Cmd.move _ _ _) => (out, stop)
   | none => (out, stop)
   | some _ => (#[], .syntax)
-
-/-! ## Writing -/
 
 /-- A decimal's digits, `e` of them after the point. -/
 @[expose] public def Dec.chars (d : Dec) : List Char :=
@@ -475,8 +428,7 @@ that does not draws nothing. -/
 
 @[expose] public def flagChar (b : Bool) : Char := if b then '1' else '0'
 
-/-- One command as it is written: its letter, then each operand after a
-space. -/
+/-- One command as it is written: its letter, then each operand after a space. -/
 @[expose] public def Cmd.chars : Cmd → List Char
   | .move rel x y => letter 'M' rel ++ ops [x, y]
   | .line rel x y => letter 'L' rel ++ ops [x, y]
@@ -499,8 +451,7 @@ where
   | [c] => c.chars
   | c :: rest => c.chars ++ ' ' :: renderChars rest
 
-/-- **Commands as a `d` attribute**: each command and its operands, one
-space between commands. -/
+/-- Commands as a `d` attribute, one space between commands. -/
 @[expose] public def render (cs : Array Cmd) : String := String.ofList (renderChars cs.toList)
 
 end LeanTex.Core.PathData

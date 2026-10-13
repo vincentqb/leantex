@@ -5,70 +5,8 @@ public import LeanTex.Core.Utf8
 public import LeanTex.Core.EncodingOption
 import LeanTex.Core.EncodingData
 
-/-! # The encoding a file is read in
-
-A file is UTF-8 unless it says otherwise, and it says so two ways. A
-byte-order mark names its encoding outright and wins over any label, as the
-WHATWG Encoding Standard's decode has it: EF BB BF is UTF-8, FE FF
-UTF-16BE, FF FE UTF-16LE. And a LaTeX document declares one with
-`\usepackage[<encoding>]{inputenc}`: pdfLaTeX reads its files in the
-encoding named, lualatex ignores it and prints U+FFFD for every byte that is
-not UTF-8. The engine honours the declaration, a departure from lualatex on
-the axis of content fidelity — the page carries the characters the author
-typed, as pdfLaTeX prints them (`inputDecodingChecks` holds the probes'
-text to pdfLaTeX's) — for the encodings it carries a table for: `latin1`,
-`ansinew` and `cp1252` (Windows-1252), `latin9` (ISO 8859-15) and
-`applemac` (Mac OS Roman). `latin1` reads as Windows-1252, as the WHATWG
-Encoding Standard reads the label: its graphic characters are ISO 8859-1's,
-and its 0x80–0x9F block holds the curly quotes, dashes and euro sign a file
-labelled latin1 carries in practice, where ISO 8859-1 and pdfLaTeX's
-latin1.def have only control codes and an error. `applemac` reads as Apple's
-own Mac OS Roman table, which the WHATWG index-macintosh follows, where
-pdfLaTeX's applemac.def keeps the table as it stood before 1998 and spells
-some bytes by the nearest LaTeX command. By the command it spells: 0xDB is
-€ where it is ¤, 0xC6 the increment sign ∆ where it is the Greek Δ, 0xB5
-the micro sign µ where it is the Greek μ, 0xB7 and 0xB8 the operators ∑ and
-∏ where they are Σ and Π, 0xD7 ◊ where it is ⋄, 0xDA the fraction slash ⁄
-where it is /, 0xDE and 0xDF the ligatures ﬁ and ﬂ where they are the
-letters fi and fl, and 0xF0 Apple's logo where it is a command LaTeX leaves
-undefined. The bytes it declares as math symbols stop pdfLaTeX in text
-("Missing $ inserted"), where the engine sets each as the character. glibc's iconv, which a note's help names for saving a file as
-UTF-8, reads 0xC6 as the Greek Δ and 0xF0 as a private scalar of its own,
-so those two bytes of a file saved that way show differently than here.
-
-The declaration governs every file the document reads, the file that makes
-it and those read before it runs included: inputenc makes each byte past
-0x7F an active character whose meaning is looked up where it is typeset,
-after the preamble, so pdfLaTeX prints every file's bytes in the declared
-encoding. It governs a file only where the file's bytes do not say
-otherwise. A file that is valid UTF-8 reads as UTF-8
-(`Legacy.choose_valid_exact`): a legacy file almost never is, and an editor
-re-saving a file as UTF-8 keeps the declaration it no longer means. A file
-that is not reads in the declared encoding, byte by byte, as pdfLaTeX reads
-it (`Legacy.decodeAll_exact`) — unless its well-formed UTF-8 sequences
-outnumber the bytes UTF-8 cannot claim, which makes it a UTF-8 file with a
-few stray bytes: those read in the declared encoding, a guess one warning
-per file names, and the rest stays UTF-8. A tie goes to the declaration.
-
-What is not text becomes U+FFFD, and one warning per file lists the byte
-offsets: a byte sequence that is not UTF-8, a byte the declared encoding
-leaves undefined, a UTF-16 code unit that is not a scalar, and U+0000,
-which CommonMark replaces (§2.3) and LaTeX refuses as an invalid character.
-A line ends at LF, at CR LF and at a CR alone, as TeX Live's reader and
-CommonMark (§2.1) end it, so every reader past the door sees LF (`settle`).
-U+FFFD needs a face that draws it. Where no face does, it is the ordinary
-glyph-coverage loss (E0405), which refuses the PDF until glyph losses ship a
-placeholder: pending work, not a guarantee this module makes.
-
-The laws hold the door's own functions. Text that is UTF-8, starts with no
-byte-order mark and holds no CR or U+0000 reads unchanged, under any
-declaration (`readTex_valid_id`, `readMarkdown_valid_id`); a leading
-byte-order mark changes no text, except that it settles a legacy
-declaration's choice (`readTex_bom_exact`, `readMarkdown_bom_exact`).
-
-One note per declaration says what it did to each file it governed. It
-stands at the declaration, in place of the package's translation note.
--/
+/-! The decoding door: a file's bytes as text, by its byte-order mark, UTF-8, or the encoding a
+`\usepackage[...]{inputenc}` declares, lines ended at LF and losses named. -/
 
 namespace LeanTex.Core.Encoding
 
@@ -91,14 +29,11 @@ private def Legacy.table : Legacy → Array (Option Char)
   | .iso885915 => EncodingData.iso885915
   | .macRoman => EncodingData.macRoman
 
-/-- The character a byte UTF-8 does not claim stands for in the encoding:
-the table from 0x80, none where the encoding has no character. A byte below
-0x80 is always a UTF-8 sequence of its own, so the decoder never asks. -/
+/-- The character a byte past 0x7F stands for in the encoding, if any. -/
 public def Legacy.high (e : Legacy) (b : UInt8) : Option Char :=
   if b < 0x80 then none else (e.table[b.toNat - 0x80]?).join
 
-/-- The character a byte stands for in the encoding: ASCII below 0x80, as
-in every encoding here, and the table above. -/
+/-- The character a byte stands for in the encoding: ASCII below 0x80, the table above. -/
 public def Legacy.char (e : Legacy) (b : UInt8) : Option Char :=
   if b < 0x80 then some (Char.ofNat b.toNat) else e.high b
 
@@ -114,9 +49,7 @@ private def Legacy.allGo (e : Legacy) (bs : ByteArray) (i : Nat) (out : String)
   else (out, bad)
 termination_by bs.size - i
 
-/-- Every byte read in the encoding, as pdfLaTeX reads a file under the
-declaration: U+FFFD where the encoding has no character, its offset
-reported. -/
+/-- Every byte read in the encoding, as pdfLaTeX reads it, U+FFFD where it has no character. -/
 public def Legacy.decodeAll (e : Legacy) (bs : ByteArray) : Decoded :=
   let r := e.allGo bs 0 "" #[]
   ⟨r.1, r.2⟩
@@ -145,10 +78,6 @@ private theorem Legacy.allGo_text (e : Legacy) (bs : ByteArray) (i : Nat) (out :
     simp
 termination_by bs.size - i
 
-/-- **The declared reading is the encoding's table, byte by byte.** Each
-byte is the character the encoding gives it, or U+FFFD where it gives none:
-no state carries from one byte to the next, which is pdfLaTeX's reading of
-a file under `inputenc`. -/
 public theorem Legacy.decodeAll_exact (e : Legacy) (bs : ByteArray) :
     (e.decodeAll bs).text.toList = bs.data.toList.map e.charOr := by
   simp [Legacy.decodeAll, Legacy.allGo_text]
@@ -178,8 +107,7 @@ decreasing_by
 /-- The evidence in the bytes from `start`. -/
 public def evidence (bs : ByteArray) (start : Nat) : Evidence := evidenceGo bs start {}
 
-/-- Does the evidence say UTF-8? Its well-formed sequences outnumber the
-bytes it cannot claim; a tie is no evidence, and goes to the declaration. -/
+/-- Does the evidence say UTF-8: more well-formed sequences than stray bytes? -/
 public def Evidence.utf8Wins (ev : Evidence) : Bool := ev.sequences.size > ev.strays.size
 
 /-- How a file's bytes were read. -/
@@ -208,13 +136,10 @@ public def Reading.alike : Reading → Bool
   | .ascii | .utf16 _ => true
   | .utf8 | .legacy _ | .replaced => false
 
-/-- Is a decoded text more than ASCII? A character past U+007F takes more
-than one byte, so the count of characters falls short of the bytes exactly
-then; the runtime keeps both counts, so this asks no pass over the text. -/
+/-- Is a decoded text more than ASCII, read off its character and byte counts? -/
 private def beyondAscii (t : String) : Bool := t.length != t.utf8ByteSize
 
-/-- The offset of each 0x00 from `start`: U+0000 in UTF-8 and in every 8-bit
-encoding here, and never part of a longer sequence. -/
+/-- The offset of each 0x00 from `start`. -/
 private def nulOffsets (bytes : ByteArray) (start : Nat) : Array Nat := Id.run do
   let mut out : Array Nat := #[]
   for h : i in [start:bytes.size] do
@@ -231,10 +156,7 @@ public structure Chosen where
   byMark : Bool
   deriving Repr
 
-/-- **The reading a declaration gets.** Bytes that are UTF-8 read as UTF-8;
-otherwise the evidence decides — UTF-8 with the declared encoding for its
-stray bytes when it says UTF-8 or a byte-order mark does, the declared
-encoding for every byte otherwise. -/
+/-- The reading a declaration gets: UTF-8 bytes as UTF-8, else as the evidence decides. -/
 public def Legacy.choose (e : Legacy) (bs : ByteArray) : Chosen :=
   if bs.validateUTF8 then
     let d := Utf8.read bs
@@ -247,8 +169,6 @@ public def Legacy.choose (e : Legacy) (bs : ByteArray) : Chosen :=
       ⟨Utf8.readWith e.high bs, .utf8, read.map ((·, 1)), !ev.utf8Wins⟩
     else ⟨e.decodeAll bs, .legacy e, ev.sequences, false⟩
 
-/-- **A declaration never changes a file that is UTF-8.** Its reading under
-any legacy declaration is its UTF-8 reading, with no run overridden. -/
 public theorem Legacy.choose_valid_exact (e : Legacy) (bs : ByteArray)
     (h : bs.validateUTF8 = true) :
     (e.choose bs).decoded = Utf8.read bs ∧ (e.choose bs).minority = #[] := by
@@ -341,14 +261,8 @@ private def callAt (bs : ByteArray) (i : Nat) : Option (String × String) := do
   guard ((((uncommented pkgs).splitOn ",").map (·.trimAscii.toString)).contains "inputenc")
   return (loader, uncommented opts)
 
-/-- **The declaration a file makes for itself**, read from its bytes before
-any lexing, so the file can be read in it the first time: the first
-`inputenc` load before `\begin{document}`, outside comments. The
-declaration is ASCII, whatever the encoding of the rest. It is a guess the
-driver checks against execution — a load in a skipped branch or through a
-macro is execution's to find — so the scan is only as careful as the
-common spelling needs, and a file that never mentions `inputenc` is not
-scanned at all. -/
+/-- The first `inputenc` load before `\begin{document}` outside comments, read from the bytes
+before lexing. -/
 public def declaredIn (file : String) (bytes : ByteArray) : Option Declared := Id.run do
   unless mentions bytes "inputenc".toUTF8 do return none
   let doc := "\\begin{document}".toUTF8
@@ -390,9 +304,7 @@ private def unitAt (big : Bool) (bs : ByteArray) (i : Nat) : Option Nat :=
   | some a, some b => some (if big then a.toNat * 256 + b.toNat else b.toNat * 256 + a.toNat)
   | _, _ => none
 
-/-- UTF-16 from `i`, as the WHATWG decoder reads it: a surrogate pair is one
-scalar, and a lone surrogate or a trailing odd byte is U+FFFD, its offset and
-length reported. U+0000 stays for `settle`, its offset reported apart. -/
+/-- UTF-16 from `i` as the WHATWG decoder reads it; a lone surrogate or odd byte is U+FFFD. -/
 private def utf16Go (big : Bool) (bs : ByteArray) (i : Nat) (out : String)
     (bad : Array (Nat × Nat)) (nuls : Array Nat) : String × Array (Nat × Nat) × Array Nat :=
   if i < bs.size then
@@ -414,17 +326,14 @@ private def utf16Go (big : Bool) (bs : ByteArray) (i : Nat) (out : String)
   else (out, bad, nuls)
 termination_by bs.size - i
 
-/-- The offset past a UTF-16 file's marks: its byte-order mark and every
-U+FEFF after it, which a tool doubled and is never content. -/
+/-- The offset past a UTF-16 file's byte-order mark and every U+FEFF after it. -/
 private def utf16Start (big : Bool) (bs : ByteArray) : Nat := Id.run do
   let mut i := 2
   for _ in [0:bs.size] do
     if unitAt big bs i == some 0xFEFF then i := i + 2 else break
   return i
 
-/-- Is there a CR or a U+0000 at or past byte `i` of the text? An ASCII byte
-of a text's UTF-8 is that character (`Utf8.ascii_byte_mem`), so the
-bytes answer for the characters. -/
+/-- Is there a CR or a U+0000 at or past byte `i` of the text? -/
 private def unsettledFrom (t : String) (i : Nat) : Bool :=
   if h : i < t.utf8ByteSize then
     let b := t.getUTF8Byte ⟨i⟩ (by simpa [String.Pos.Raw.lt_iff] using h)
@@ -438,12 +347,7 @@ private def settleStep (acc : String × Bool) (c : Char) : String × Bool :=
   else if c == '\x00' then (acc.1.push '\uFFFD', false)
   else (acc.1.push c, false)
 
-/-- `settleStep` over the text's bytes from `i`, `run` the first byte not
-yet copied and `cr` saying whether the byte before was a CR: CR, LF and
-0x00 are one-byte characters in UTF-8 and never part of a longer one, so
-rewriting them byte by byte keeps the text UTF-8, which the validation that
-ends `settleBytes` confirms. The bytes between them are copied a run at a
-time. -/
+/-- `settleStep` over the text's bytes from `i`, copying the runs between rewrites. -/
 private def settleGo (bs : ByteArray) (i run : Nat) (out : ByteArray) (cr : Bool) : ByteArray :=
   if h : i < bs.size then
     let b := bs[i]
@@ -461,8 +365,7 @@ private def settleBytes (t : String) : Option String :=
   let bs := t.toUTF8
   String.fromUTF8? (settleGo bs 0 0 (ByteArray.emptyWithCapacity bs.size) false)
 
-/-- `settle`'s work, where the scan for a CR or a U+0000 has answered: the
-door reads that answer once, for the text and for the offsets it names. -/
+/-- `settle`'s work, once the scan for a CR or a U+0000 has answered. -/
 private def settleIf (dirty : Bool) (t : String) : String :=
   if dirty then
     match settleBytes t with
@@ -470,12 +373,8 @@ private def settleIf (dirty : Bool) (t : String) : String :=
     | none => (t.foldl settleStep ("", false)).1
   else t
 
-/-- **Lines end at LF, and U+0000 is U+FFFD.** A CR LF and a CR alone end a
-line as LF does: TeX Live's reader ends an input line at each, and
-CommonMark 0.31.2 §2.1 defines a line ending as exactly these three. U+0000
-is U+FFFD, as CommonMark §2.3 has it and as no encoding here reads it as
-text. Every reader past the door sees LF and no U+0000; text with neither
-CR nor U+0000 is taken as it stands (`settle_id`). -/
+/-- Lines end at LF, CR LF and a lone CR included, and U+0000 is U+FFFD, as TeX Live and
+CommonMark (§2.1, §2.3) read them. -/
 public def settle (t : String) : String := settleIf (unsettledFrom t 0) t
 
 private theorem unsettledFrom_mem (t : String) (i : Nat) (h : unsettledFrom t i = true) :
@@ -499,7 +398,6 @@ private theorem unsettledFrom_mem (t : String) (i : Nat) (h : unsettledFrom t i 
   · exact absurd h (by simp)
 termination_by t.utf8ByteSize - i
 
-/-- **Text with no CR and no U+0000 is taken as it stands.** -/
 public theorem settle_id (t : String) (hcr : '\r' ∉ t.toList) (hnul : '\x00' ∉ t.toList) :
     settle t = t := by
   have h : unsettledFrom t 0 = false := by
@@ -588,8 +486,6 @@ private def nulAdvice : String := "remove the U+0000 characters: no encoding rea
 each standing as one U+FFFD; positioned at the first. -/
 private def replacedDiag (file encoding help : String) (bytes : ByteArray) (runs : Array Run)
     (pos : Pos) : Diag :=
-  -- The words name the file, whose loss this is and whose bytes the help
-  -- corrects; which bytes, and where, is the detail.
   let message := if runs.all (·.nul) then s!"'{file}' holds U+0000, which is not text"
     else s!"'{file}' holds bytes that are not text in {encoding}"
   let detail := match runs.toList with
@@ -608,9 +504,7 @@ private def replacedDiag (file encoding help : String) (bytes : ByteArray) (runs
       (detail := some detail) with
     offsets := runs.map (·.offset) }
 
-/-- The warning a reading owes for what it replaced, if anything: `prefixText`
-reads the bytes before an offset the way the file was read, which places
-the warning, and `help` is read only where a warning needs it. -/
+/-- The warning a reading owes for what it replaced, if anything. -/
 private def lossesDiag (file encoding : String) (bytes : ByteArray) (runs : Array Run)
     (prefixText : Nat → String) (help : Unit → String) : Array Diag :=
   match runs[0]? with
@@ -625,11 +519,8 @@ private def helpFor (runs : Array Run) (size : Nat) (bad : Unit → String) : St
   else if runs.any (!·.nul) then bad ()
   else nulAdvice
 
-/-- A file's bytes as text: the text, the losses the reading names, how the
-file read, and the runs its reading took against the other reading's
-evidence — in a UTF-8 reading under a legacy declaration, the stray bytes it
-read as declared; in a legacy reading, the sequences that are well-formed
-UTF-8 too. -/
+/-- A file's bytes as text: the text, the losses named, how it read, and the runs its reading
+took against the other reading's evidence. -/
 public structure FileText where
   text : String
   diags : Array Diag
@@ -651,12 +542,8 @@ private def utf16Text (file : String) (big : Bool) (bytes : ByteArray) : FileTex
       (fun o => (utf16Go big (bytes.extract 0 o) start "" #[] #[]).1) help
     reading := .utf16 big }
 
-/-- The UTF-8 reading, without a declaration that names a table: `other`
-is the advice for a file that is evidently in another encoding. A file
-whose well-formed UTF-8 sequences are at least as many as its stray bytes
-is not evidently in another one: an 8-bit declaration would read those
-sequences as two or three characters each, so the advice there corrects
-the stray bytes instead. -/
+/-- The UTF-8 reading without a declaration naming a table; `other` advises a file evidently in
+another encoding. -/
 private def utf8Text (file other : String) (bytes : ByteArray) : FileText :=
   let d := Utf8.read bytes
   let start := Utf8.bomLen bytes
@@ -719,9 +606,8 @@ private def legacyText (file : String) (e : Legacy) (bytes : ByteArray) : FileTe
 private def texHelp : String :=
   "save the file as UTF-8, or name its encoding: \\usepackage[latin1]{inputenc} reads Latin-1"
 
-/-- **A tex file's text**: in the encoding its byte-order mark names if it
-has one, else UTF-8, or the legacy encoding its document declares where
-the bytes do not say UTF-8 (`Legacy.choose`). -/
+/-- A tex file's text: by its byte-order mark, else UTF-8, or the declared legacy encoding where
+the bytes do not say UTF-8. -/
 public def readTex (declared : Option Declared) (file : String) (bytes : ByteArray) : FileText :=
   match utf16Mark? bytes with
   | some big => utf16Text file big bytes
@@ -737,11 +623,7 @@ public def readTex (declared : Option Declared) (file : String) (bytes : ByteArr
 its encoding in that load, as \\usepackage[latin1]\{inputenc} reads Latin-1") bytes
     | none => utf8Text file texHelp bytes
 
-/-- **A tex document's own text**, and the declaration it was read under:
-the one its preamble makes (`declaredIn`), honoured before the body is
-lexed. A declaration execution finds elsewhere — through an `\input`, a
-macro, or not at all where the preamble's sits in a branch never taken —
-is the driver's to settle, after the inputs are read. -/
+/-- A tex document's own text, read under the declaration its preamble makes. -/
 public def readDocument (file : String) (bytes : ByteArray) : FileText × Option Declared :=
   let early := declaredIn file bytes
   (readTex early file bytes, early)
@@ -770,8 +652,6 @@ private theorem utf16Mark_text (s : String) : utf16Mark? s.toUTF8 = none := by
     exact absurd (Utf8.toUTF8_head_between s _ h) (by decide)
   · rfl
 
-/-- Without a declaration that names a table, a file with no UTF-16 mark
-reads as UTF-8, its lines and U+0000 settled. -/
 private theorem readTex_utf8 (d : Option Declared) (file : String) (bs : ByteArray)
     (hm : utf16Mark? bs = none) (hd : ∀ x e, d = some x → x.choice ≠ .legacy e) :
     (readTex d file bs).text = settle (Utf8.read bs).text := by
@@ -786,10 +666,6 @@ private theorem readTex_utf8 (d : Option Declared) (file : String) (bs : ByteArr
     · rfl
     · rfl
 
-/-- **A tex file that is UTF-8, starts with no byte-order mark and holds no
-CR or U+0000 reads as written, under any declaration.** The door changes
-nothing a reader wrote: a declaration's table is never consulted for a file
-that is UTF-8. -/
 public theorem readTex_valid_id (d : Option Declared) (file : String) (s : String)
     (hhead : s.toList.head? ≠ some '\uFEFF') (hcr : '\r' ∉ s.toList)
     (hnul : '\x00' ∉ s.toList) : (readTex d file s.toUTF8).text = s := by
@@ -806,17 +682,12 @@ public theorem readTex_valid_id (d : Option Declared) (file : String) (s : Strin
   · rw [readTex_utf8 d file _ (utf16Mark_text s) (fun x e hx he => hl ⟨x, e, hx, he⟩), hr,
       settle_id s hcr hnul]
 
-/-- **A leading byte-order mark changes no tex text** where no declaration
-names a table, whose choice a mark settles: the text is the text of the file
-without it. -/
 public theorem readTex_bom_exact (d : Option Declared) (file : String) (bs : ByteArray)
     (hm : utf16Mark? bs = none) (hd : ∀ x e, d = some x → x.choice ≠ .legacy e) :
     (readTex d file (Utf8.bom ++ bs)).text = (readTex d file bs).text := by
   rw [readTex_utf8 d file _ (utf16Mark_bom bs) hd, readTex_utf8 d file bs hm hd,
     Utf8.read_bom_exact]
 
-/-- **A markdown file that is UTF-8, starts with no byte-order mark and
-holds no CR or U+0000 reads as written.** -/
 public theorem readMarkdown_valid_id (file : String) (s : String)
     (hhead : s.toList.head? ≠ some '\uFEFF') (hcr : '\r' ∉ s.toList)
     (hnul : '\x00' ∉ s.toList) : (readMarkdown file s.toUTF8).text = s := by
@@ -825,7 +696,6 @@ public theorem readMarkdown_valid_id (file : String) (s : String)
   show settle (Utf8.read s.toUTF8).text = s
   rw [Utf8.read_valid_id s hhead, settle_id s hcr hnul]
 
-/-- **A leading byte-order mark changes no markdown text.** -/
 public theorem readMarkdown_bom_exact (file : String) (bs : ByteArray)
     (hm : utf16Mark? bs = none) :
     (readMarkdown file (Utf8.bom ++ bs)).text = (readMarkdown file bs).text := by
@@ -848,9 +718,8 @@ public structure Read where
 public def FileText.read (t : FileText) (file : String) (under : Option Declared) : Read :=
   ⟨file, under, t.reading, t.minority⟩
 
-/-- What the decoding door did across a document's files: the declaration
-in force — the first `inputenc` load executed, since a later load's options
-are not applied — and each file read, once, in reading order. -/
+/-- What the decoding door did across a document's files: the declaration in force and each
+file read, once. -/
 public structure Ledger where
   declared : Option Declared := none
   reads : Array Read := #[]
@@ -865,9 +734,7 @@ public def Ledger.record (l : Ledger) (r : Read) : Ledger :=
 UTF-8 one does. -/
 private def keyOf (d : Option Declared) : Choice := (d.map (·.choice)).getD .utf8
 
-/-- **Was a file read under a declaration other than the one in force,**
-where that changes what it reads as? Then it is read again under the one in
-force: the declaration governs every file of the document, whenever it ran. -/
+/-- Was a file read under a declaration other than the one in force, where that changes it? -/
 public def Ledger.stale (l : Ledger) : Bool :=
   l.reads.any fun r => !r.reading.alike && keyOf r.under != keyOf l.declared
 
@@ -958,10 +825,7 @@ UTF-8"])
       s!"save {names replacedFiles} as UTF-8 (`iconv -f {d.option} -t UTF-8`), then delete the \
 declaration")
 
-/-- **N0025: what a declaration did**, once, at the declaration: each file
-it governed and how that file read. The help follows the files: it saves
-the ones that need the declaration before deleting it, and deletes it only
-where no file does. -/
+/-- N0025 once per declaration: each file it governed and how it read. -/
 public def Ledger.notes (l : Ledger) : Array Diag :=
   match l.declared with
   | none => #[]

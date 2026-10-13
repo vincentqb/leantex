@@ -3,39 +3,8 @@ module
 public import LeanTex.Core.Parse
 public import LeanTex.Core.Ir
 
-/-!
-The reader of beamer's block templates (`block begin` and `block end`, and
-their alerted and example pairs): an interpretation of what the pair writes
-in TeX's box-and-rule vocabulary, run as TeX runs it, into the record both
-backends set a block by (`Ir.BlockShape`).
-
-beamer's block environment is `\par\usebeamertemplate{block begin}` before
-the body and `\par\usebeamertemplate{block end}` after it
-(beamerbaselocalstructure.sty), so the reader runs the two templates around a
-marker for the body, once with a title and once without — the two arms of
-beamer's own `\ifx\insertblocktitle\@empty` test — and keeps the lists TeX
-would build: vertical skips, paragraphs and their lines, boxes built with
-`\setbox` and placed with `\box` or `\copy`, `\llap`/`\rlap` and their
-rules, `\strut`, the colour and font selections. The semantics are TeX's
-own, where they decide what the page shows: a `\usebeamercolor[fg]` puts a
-colour change on the list it stands in, so a paragraph after it in a fresh
-box spends `\parskip` (tex.web §1091, where a paragraph starts); `\box` empties its
-register, so a rule after it reading `\ht` of the box has no height; a box
-opened by `\vbox\bgroup` in `block begin` closes at the `\egroup` in `block
-end`, holding the body; `\unvbox` sets a box's list back into the list it
-stands in, and `\prevdepth`, `\lastnodetype`, `\unskip` and their kin read
-and change that list's end as TeX's do, a macro calling itself running as
-TeX runs it. The reader then lowers the lists onto the record: skips before
-the title, the title's box, the box holding title and body, skips after the
-body, and the rules beside those boxes — a body set back unboxed is no box
-of the page's, and a box of no size beside it that stands the body's part of
-the title's rule on its last line makes that rule one beside the whole block.
-The body's list may end on glue, kerns and penalties past its last line, so
-the pair runs over each such end (`tailVariants`), and must set the body
-back alike. A construct outside the vocabulary, or lists of a shape the
-record cannot hold, is named — the whole template is then not read, and the
-default inner theme's pair stands.
--/
+/-! The reader of beamer's block templates: runs the `block begin`/`block end` pair as TeX runs it,
+in TeX's box-and-rule vocabulary, and lowers the lists it builds onto `Ir.BlockShape`. -/
 
 namespace LeanTex.Core.BlockTemplate
 
@@ -43,14 +12,7 @@ open LeanTex.Core
 open LeanTex.Core.Dim
 open LeanTex.Core.Parse (Raw)
 
-/-! ## Tokens
-
-A template runs as a flat token list, as TeX reads one: a brace group is its
-two braces around its content, `\bgroup` and `\egroup` are the braces they
-stand for, so a box opened in `block begin` can close in `block end`. -/
-
-/-- One token of a template's flat list. `body` is the block's body, where
-the environment runs it. -/
+/-- One token of a template's flat list, `body` standing for the block's body. -/
 public inductive Tok where
   | ctrl (n : String)
   | word (s : String)
@@ -62,23 +24,20 @@ public inductive Tok where
   | body
   deriving Repr, BEq, Inhabited
 
-/-- Does TeX read a line end after this raw as a space: after anything but
-a control word, past which its scanner skips blanks (TeXbook chapter 8). -/
+/-- Does TeX read a line end after this raw as a space (TeXbook ch. 8)? -/
 private def endsMidLine : Raw → Bool
   | .ctrl n _ => !(n.all fun c => c.isAlpha || c == '@')
   | .space | .par _ => false
   | .word .. | .sym .. | .group .. | .math .. | .env .. | .verb .. => true
 
-/-- A text's raws with the spaces TeX reads at its braces' line ends, which
-the lexer leaves out (`Pos.openEol`, `Pos.closeEol`): after the opening
-brace, and before the closing one past anything but a control word. -/
+/-- A text's raws with the spaces TeX reads at its braces' line ends, which the lexer omits. -/
 public def edged (edges : Bool × Bool) (raws : Array Raw) : Array Raw :=
   let raws := if edges.1 then raws.foldl (·.push ·) #[Raw.space] else raws
   if edges.2 && raws.back?.all endsMidLine then raws.push .space else raws
 
 mutual
 
--- conserves: none — a token reading of template code, not a walk over document content.
+-- conserves: none — a token reading of template code
 private def flatList (acc : Array Tok) : List Raw → Array Tok
   | [] => acc
   | r :: rest => flatList (flatOne acc r) rest
@@ -105,9 +64,7 @@ end
 /-- The template code as one flat list. -/
 public def flatten (raws : Array Raw) : Array Tok := flatList #[] raws.toList
 
-/-- A document macro a template may call: the order its definition was
-made in (`serial`), its arity and its replacement text, `#k` standing for
-its arguments. -/
+/-- A document macro a template may call: its definition order, arity and replacement text. -/
 public structure Macro where
   serial : Nat
   arity : Nat
@@ -116,10 +73,8 @@ public structure Macro where
   optional : Option (Array Raw) := none
   deriving Inhabited
 
-/-- The arguments of a call from the head of `l`, and the tokens they take,
-spaces between them included: with a default (`optional`), the first is
-what a `[…]` after the spaces holds — LaTeX's `\@ifnextchar[` reads past
-them — or the default, and the rest are braced. -/
+/-- The arguments of a call from the head of `l` and the tokens they take; with `optional`, a
+leading `[…]` or the default. -/
 private def callArgs (l : List Tok) (arity : Nat) (optional : Option (Array Tok) := none) :
     Option (Array (Array Tok) × Nat) := Id.run do
   let toks := l.toArray
@@ -196,11 +151,8 @@ private def substParams (args : Array (Array Tok)) : List Tok → Array Tok → 
     | [] => substParams args rest ((acc.push (.sym '#')).push (.word w))
   | t :: rest, acc => substParams args rest (acc.push t)
 
-/-- **The document's macros, expanded where the template calls them**, as TeX
-expands them when the template runs: each call's arguments bound into its
-replacement text, which is expanded in turn. A text expands only the
-macros defined before it (`Macro.serial` below the text's own), the order
-definitions were made in, so expansion ends. -/
+/-- The document's macros expanded where the template calls them; a text expands only macros
+defined before it, so expansion ends. -/
 public def expandList (defs : String → Option Macro) (bound : Nat) :
     List Tok → Array Tok → Array Tok
   | [], acc => acc
@@ -224,8 +176,6 @@ decreasing_by
     | (apply Prod.Lex.left; omega)
     | (apply Prod.Lex.right; omega)
 
-/-! ## What the lists hold -/
-
 /-- Which extent of a box a dimension reads. -/
 public inductive Ext where
   | ht
@@ -233,13 +183,8 @@ public inductive Ext where
   | wd
   deriving Repr, BEq, DecidableEq, Inhabited
 
-/-- A dimension as a template writes it: a linear form over a length (its
-`em` and `ex`), the measure `\linewidth` in thousandths, box extents by the
-box's identity, and, in thousandths, `\parskip` (`parskip`), the
-`\baselineskip` in force (`lead`) and the cap height `\fontcharht\font`H`
-(`cap`). `font` is the font element in force where the terms that read a
-font were read, `none` while there are none: TeX fixes a register's value
-where it is assigned. -/
+/-- A dimension as a template writes it: a linear form over a length, the measure, box extents,
+`\parskip`, the leading and the cap height; `font` is the font its terms were read in. -/
 public structure Dimen where
   len : Length := {}
   line : Int := 0
@@ -285,10 +230,7 @@ private def roundDiv (x : Int) (n : Nat) : Int :=
   let q : Int := ((2 * x.natAbs + n) / (2 * n) : Nat)
   if x < 0 then -q else q
 
-/-- The dimension times `num / den`, each term rounded as e-TeX rounds its
-quotient, so a dimension of several terms can stand a scaled point from the
-one e-TeX rounds once; a box extent keeps a whole coefficient, or the
-dimension is not one this reading holds. -/
+/-- The dimension times `num / den`, each term rounded as e-TeX rounds its quotient. -/
 private def Dimen.scale? (d : Dimen) (num : Int) (den : Nat) : Option Dimen :=
   if den == 0 || d.ext.any (fun (_, _, k) => (k * num) % (den : Int) != 0) then none
   else
@@ -303,10 +245,8 @@ public def Dimen.length? (d : Dimen) : Option Length :=
   if d.line == 0 && d.ext.isEmpty && d.parskip == 0 && d.lead == 0 && d.cap == 0
   then some d.len else none
 
-/-- What a colour command selects: a channel as the beamer colour elements in
-force bind it, the latest first — `\usebeamercolor[fg]{block title}`, or
-`\color{bg}` after `\usebeamercolor`s, read the channel of the latest element
-that sets it (beamerbasecolor.sty) — or a colour by name (`\color{name}`). -/
+/-- What a colour command selects: a channel of the latest beamer colour element setting it, or
+a colour by name. -/
 public inductive Paint where
   | beamer (chain : List String) (channel : String)
   | named (name : String)
@@ -320,21 +260,8 @@ public inductive TailKind where
   | penalty
   deriving Repr, BEq, DecidableEq, Inhabited
 
-/-- One node of a list a template builds. `line` is a paragraph's one line
-in a vertical list, with whether `\parskip` stands before it; `box` a box
-built by `\vbox`/`\hbox` (`vertical`), its measure, its list and the depth
-its list ended on (TeX's `\prevdepth` there); `sized` one built `to` a
-height; `lap` an `\llap` (`right` false) or `\rlap`; `raised` a
-`\raisebox` lift with its declared height and depth; `hskip` a horizontal
-skip or, `kern`, a kern; `space` an interword space, TeX's glue of the font in
-force. A rule's dimensions are `none` where it runs to its box. `tail` is the body's `k`th item past its
-last line, which the reader varies (`read`); `unboxed` a box's list set into
-another (`\unvbox`), with the depth that list stood on where it was set and
-the depth the box's list ended on; `moved` a box shifted right by `d`
-(`\moveright`, `\moveleft`); `prevdepth` an assignment to `\prevdepth`,
-which is no node of TeX's but decides the next line's place. Lines, boxes
-and the body carry identities their extents are read by. The font element
-in force rides with every node whose lengths or ink read it. -/
+/-- One node of a list a template builds; lines, boxes and the body carry identities their
+extents are read by. -/
 public inductive Node where
   | vskip (s : Ir.BlockSkip)
   | whatsit
@@ -358,21 +285,15 @@ public inductive Node where
   | moved (d : Dimen) (n : Node)
   deriving Repr, BEq, Inhabited
 
-/-- The depth of the box before the block, which the block's own list opens
-on (`\prevdepth` where `block begin` runs): the extent of a box of this
-identity, which no box the template builds takes. -/
+/-- The identity of the box before the block, whose depth the block's list opens on. -/
 private def priorId : Nat := 0
 
 /-- TeX's `\prevdepth` that suppresses the next interline glue, `-1000pt`
 (`\nointerlineskip`, a fresh box's list, a rule). -/
 private def ignoreDepth : Dimen := { len := { sp := -1000 * Dim.spPerPt } }
 
-/-! ## The interpreter -/
-
-/-- What a register reading a list's last node holds (`\lastskip`,
-`\lastkern`, `\lastpenalty`): the body's trailing item `k`, a skip or a
-penalty the template set, or nothing — TeX's zero, where the last node is
-of another kind. -/
+/-- What a `\last…` register holds: the body's trailing item, a skip or penalty the template
+set, or TeX's zero. -/
 private inductive Val where
   | tail (k : Nat) (kind : TailKind)
   | skip (s : Ir.BlockSkip)
@@ -380,19 +301,15 @@ private inductive Val where
   | none
   deriving BEq, Inhabited
 
-/-- What a group restores: the font element, the colour, `\hsize`, the beamer
-colour elements in force, the latest first, through which the colour names
-`fg` and `bg` read their channels — `\usebeamercolor` rebinds with
-`\colorlet` each channel its element sets and keeps the other
-(beamerbasecolor.sty) — and the length registers the group assigned. -/
+/-- What a group restores: font, colour, `\hsize`, the beamer colour elements in force, and the
+length registers it assigned. -/
 private structure Scope where
   font : Option String := none
   paint : Option Paint := none
   hsize : Dimen := { line := 1000 }
   channels : List String := []
   dimens : List (String × Dimen) := []
-  /-- Scratch registers holding the node a `\last…` read: its kind and the
-  body's trailing item it is, or the penalty the template set. -/
+  /-- Scratch registers holding the node a `\last…` read. -/
   vals : List (String × Val) := []
   /-- The `\newif` flags the template set (`\Xtrue`, `\Xfalse`). -/
   flags : List (String × Bool) := []
@@ -405,13 +322,9 @@ private structure Lst where
   nodes : Array Node := #[]
   para : Option (Array Node) := none
   paraParskip : Bool := false
-  /-- An enclosing box holds this list: its paragraphs spend `\parskip`
-  only after a node. The block's own list, the frame's, never opens
-  empty. -/
+  /-- An enclosing box holds this list: its paragraphs spend `\parskip` only after a node. -/
   inner : Bool := false
-  /-- TeX's `\prevdepth` in a vertical list: the depth of its last box, as
-  the box's identity reads it, or what an assignment set. A box's list opens
-  on `ignoreDepth`; the block's own on the depth of the box before it. -/
+  /-- TeX's `\prevdepth` in a vertical list. -/
   prev : Dimen := ignoreDepth
   deriving Inhabited
 
@@ -428,9 +341,7 @@ private structure Frame where
   outer : Lst
   /-- The `\moveleft`/`\moveright` shift the box this frame builds takes. -/
   move : Option Dimen := none
-  /-- The box registers the group assigned locally, with what each held
-  where the group opened (`none`: no box was ever set there): TeX's save
-  stack, which the group's end restores. -/
+  /-- The box registers the group assigned locally, with what each held where it opened. -/
   boxes : List (String × Option (Option Node)) := []
   deriving Inhabited
 
@@ -440,11 +351,7 @@ private inductive Pending where
   | elseArm
   deriving BEq, Inhabited
 
-/-- A template token list as TeX's scanner reads it, a character at a time:
-each character of a word, a control word, a space, and `stop` for what no
-dimension reads (a brace, a paragraph end, the body). `owner` is the token
-each character stands in and whether it opens it; `start` where each token's
-characters begin. -/
+/-- A template token list as TeX's scanner reads it, a character at a time. -/
 private inductive STok where
   | ch (c : Char)
   | cs (n : String)
@@ -486,9 +393,7 @@ private structure St where
   dimens : List (String × Dimen) := []
   /-- Registers `\newdimen` declares in the template itself. -/
   declared : List String := []
-  /-- The document's length registers: `none` for a name that is none,
-  `some none` for one whose value where the block stands this reading does
-  not hold. -/
+  /-- The document's length registers: `none` for no register, `some none` for an unknown value. -/
   lengths : String → Option (Option Dimen) := fun _ => none
   /-- The document's `\newif` flags, as they stand where the body begins. -/
   flags : String → Option Bool := fun _ => none
@@ -496,9 +401,7 @@ private structure St where
   chars : Chars := {}
   /-- A `\moveleft`/`\moveright` shift the next box takes. -/
   move : Option Dimen := none
-  /-- The identities of the lines, horizontal boxes and the body: boxes TeX
-  packs from zero, whose height and depth never fall below it (tex.web
-  §649). -/
+  /-- The identities of boxes TeX packs from zero, whose extents never fall below it. -/
   packed : List Nat := []
   /-- A `\global` prefix the next `\setbox` takes. -/
   globalNext : Bool := false
@@ -581,9 +484,7 @@ no box (never set, or emptied by `\box`). -/
 private def St.boxOf (s : St) (reg : String) : Option Node :=
   (s.regs.lookup reg).join
 
-/-- A box register assigned, as TeX's `\setbox` assigns it: in the group,
-whose end restores what the register held where it opened, or, `global`,
-at every level — no group's end restores it then. -/
+/-- A box register assigned as `\setbox` assigns it: in the group, or at every level. -/
 private def St.setBox (s : St) (reg : String) (v : Option Node) (global : Bool) : St :=
   let regs := (reg, v) :: s.regs.filter (·.1 != reg)
   if global then
@@ -613,10 +514,8 @@ private def Node.id? : Node → Option Nat
   | .box id .. => some id
   | _ => none
 
-/-- A length register's value where the template stands: its group's own
-value, its global one, the value it was declared with. `none` for a name no
-register has; `some none` for a register whose value this reading does not
-hold. -/
+/-- A length register's value where the template stands: `none` for no register, `some none`
+for an unknown value. -/
 private def St.dimen? (s : St) (n : String) : Option (Option Dimen) :=
   match s.scope.dimens.lookup n with
   | some d => some (some d)
@@ -625,20 +524,13 @@ private def St.dimen? (s : St) (n : String) : Option (Option Dimen) :=
     | some d => some (some d)
     | none => if s.declared.contains n then some (some {}) else s.lengths n
 
-/-- Assign a length register, as TeX does: in the group, or, `\global`, at
-every level — a global assignment outlives every group's own value. -/
+/-- Assign a length register, as TeX does: in the group, or at every level. -/
 private def St.assign (s : St) (n : String) (v : Dimen) (global : Bool) : St :=
   if global then
     let drop (sc : Scope) : Scope := { sc with dimens := sc.dimens.filter (·.1 != n) }
     { s with dimens := (n, v) :: s.dimens.filter (·.1 != n), scope := drop s.scope
              frames := s.frames.map fun fr => { fr with saved := drop fr.saved } }
   else { s with scope := { s.scope with dimens := (n, v) :: s.scope.dimens.filter (·.1 != n) } }
-
-/-! ## Reading dimensions
-
-TeX reads a dimension a character at a time (TeXbook ch. 24), where the
-template's token list keeps a word whole: a dimension is read over the
-characters (`Chars`), and must end where a token does. -/
 
 private def Chars.get (c : Chars) (k : Nat) : STok := c.chars[k]?.getD .stop
 
@@ -720,10 +612,7 @@ private def decimalSrc (m : Int) (scale : Nat) : String :=
 private def unitWords : List String :=
   ["em", "ex", "pt", "pc", "in", "bp", "cm", "mm", "dd", "cc", "sp"]
 
-/-- An internal dimension at `k`: a measure register, `\z@`, `\p@`, a box's
-extent read now as TeX reads it, a length register, `\parskip`, and
-`\baselineskip` and `\fontcharht\font`H` in the font in force — and the
-index after it. -/
+/-- An internal dimension at `k`, read as TeX reads it, and the index after it. -/
 private def St.internalAt (s : St) (c : Chars) (k : Nat) : Option (Dimen × Nat) :=
   let font := s.scope.font
   match c.get k with
@@ -779,9 +668,7 @@ private def St.unsignedAt (s : St) (c : Chars) (k : Nat) : Option (Dimen × Nat)
       | none => return none
   return none
 
-/-- One level of `\dimexpr`'s evaluation: the sum so far, the sign of the
-term being read and the term, whether `)` or `\relax` closes the level, and
-the sign its value takes as a factor of the level below. -/
+/-- One level of `\dimexpr`'s evaluation. -/
 private structure ExprLevel where
   sum : Dimen := {}
   sign : Int := 1
@@ -794,12 +681,8 @@ private def ExprLevel.value? (l : ExprLevel) : Option Dimen :=
   l.term.bind fun t => (l.sum.add? (if l.sign < 0 then t.neg else t)).map fun v =>
     if l.outer < 0 then v.neg else v
 
-/-- `\dimexpr`'s expression from `k`, after the `\dimexpr` (e-TeX manual
-§3.5): terms joined by `+` and `-`, a term a factor times or over integers,
-and a factor a dimension, a parenthesized expression or a nested
-`\dimexpr`. It ends at `\relax`, which it takes, or before anything that
-continues no expression. The levels are a stack, so the read is one pass
-over the characters. -/
+/-- `\dimexpr`'s expression from `k` (e-TeX manual §3.5), ending at `\relax` or before
+anything that continues no expression. -/
 private def St.exprAt (s : St) (c : Chars) (k : Nat) : Option (Dimen × Nat) := Id.run do
   let mut stack : List ExprLevel := [{ paren := false }]
   let mut j := k
@@ -810,8 +693,7 @@ private def St.exprAt (s : St) (c : Chars) (k : Nat) : Option (Dimen × Nat) := 
     if expect then
       let (sign, j1) := c.signs j
       match c.get j1 with
-      -- A sign belongs to a dimension, never to a parenthesis (e-TeX's
-      -- factor), which e-TeX stops on as a missing number.
+      -- A sign never belongs to a parenthesis: e-TeX stops on it as a missing number.
       | .ch '(' =>
         if j1 != j then return none
         stack := { paren := true, outer := sign } :: stack; j := j1 + 1
@@ -855,7 +737,6 @@ private def St.exprAt (s : St) (c : Chars) (k : Nat) : Option (Dimen × Nat) := 
         | [] => return some (v, j + 1)
         | below :: rest => stack := { below with term := some v } :: rest; j := j + 1
       | _ =>
-        -- Anything else ends the outermost expression, and stays unread.
         if stack.length != 1 then return none
         return top.value?.map (·, j)
   return none
@@ -927,16 +808,9 @@ private def St.readRuleSpec (s : St) (c : Chars) (i : Nat) :
     else break
   return (c.tokAt k).map ((w, h, d), ·)
 
-/-! ## A list's last node
-
-TeX's `\lastnodetype`, `\lastskip`, `\lastkern` and `\lastpenalty` read the
-current list's last node, and `\unskip`, `\unkern` and `\unpenalty` take it
-off: here past the assignments to `\prevdepth`, which make no node, and into
-the lists `\unvbox` set in it, whose nodes are the list's own. -/
-
 mutual
 
--- conserves: none — a template list's last node, as TeX's `\last…` reads it; no document content.
+-- conserves: none — a template list's last node; no document content
 private def lastIn (acc : Option Node) : List Node → Option Node
   | [] => acc
   | n :: rest => lastIn ((lastOf n).orElse fun _ => acc) rest
@@ -950,7 +824,7 @@ end
 
 mutual
 
--- conserves: none — a template list less its last node, as TeX's `\un…` takes it; no document content.
+-- conserves: none — a template list less its last node; no document content
 private def dropLastIn : List Node → Option (List Node)
   | [] => none
   | n :: rest =>
@@ -1017,9 +891,7 @@ private def scratchRegs : List String :=
   ["skip@", "dimen@", "count@", "@tempskipa", "@tempskipb", "@tempdima", "@tempdimb",
    "@tempcnta", "@tempcntb"]
 
-/-- An integer at `k`, TeX's ⟨number⟩: optional signs, then digits, which
-take one optional space after them, or `\lastnodetype`, or a register a
-template loaded with a penalty it set — and the index after it. -/
+/-- An integer at `k`, TeX's ⟨number⟩, and the index after it. -/
 private def St.intAt (s : St) (c : Chars) (k : Nat) : Option (Int × Nat) :=
   let (sign, j) := c.signs k
   match c.get j with
@@ -1039,14 +911,8 @@ private def Chars.relAt (c : Chars) (k : Nat) : Option (Char × Nat) :=
   | .ch '>' => some ('>', j + 1)
   | _ => none
 
-/-- What a length's sign is known to be, where every term it reads has one:
-its fixed part; its font units and measures, all positive; and the heights
-and depths of lines, horizontal boxes and the body — boxes TeX packs from
-zero (tex.web §649), which no template can stand below it (`packed`). The
-pair says whether the length is at least zero and at most zero, the fixed
-part's sign whether strictly. A box TeX packs vertically, or the depth the
-block's list opens on, which a rule above it leaves at `-1000pt`, can take
-either sign, and so the length. -/
+/-- Whether a length is known to be at least or at most zero, and strictly, from the signs of
+its terms. -/
 private def Dimen.signs (d : Dimen) (packed : List Nat) : (Bool × Bool) × (Bool × Bool) :=
   let fixed := d.len.sp
   let pos := [d.len.em, d.len.ex, d.line, d.parskip, d.lead, d.cap]
@@ -1082,8 +948,7 @@ private def St.closePara (s : St) : St :=
         prev := { ext := [(id, .dp, 1)] } } }
   | none => s
 
-/-- Horizontal material: in a vertical list it opens a paragraph (beamer's
-`\parindent` is zero, so no indent box), which spends `\parskip` unless it
+/-- Horizontal material: in a vertical list it opens a paragraph, spending `\parskip` unless it
 opens an empty box's list. -/
 private def St.pushH (s : St) (n : Node) : St :=
   if s.move.isSome then s.miss "\\moveleft or \\moveright before something other than a box" else
@@ -1146,7 +1011,6 @@ private def St.open (s : St) (kind : FrameKind) : St :=
   match kind with
   | .group _ => { s with frames := fr :: s.frames }
   | .box _ _ vertical _ =>
-    -- A pending shift is the box's, placed where it closes.
     { s with frames := { fr with move := s.move } :: s.frames, move := none
              lst := { vertical := vertical, inner := true } }
   | .lap _ | .raise .. =>
@@ -1193,9 +1057,8 @@ private def condHeads : List String :=
    "ifvoid", "ifhbox", "ifvbox", "ifx", "ifeof", "iftrue", "iffalse", "ifcase",
    "ifdefined", "ifcsname", "iffontchar"]
 
-/-- From `i`, past the matching `\else` (`true`) or `\fi`: the index after
-it, and which was met. Nested conditionals — TeX's, and a declared flag's
-(`flags`) — are skipped whole. -/
+/-- From `i`, the index past the matching `\else` (`true`) or `\fi`, nested conditionals
+skipped whole. -/
 private def skipArm (flags : String → Option Bool) (toks : Array Tok) (i : Nat) :
     Option (Nat × Bool) := Id.run do
   let mut depth := 0
@@ -1266,13 +1129,8 @@ private def readOptToks (toks : Array Tok) (i : Nat) : Option (Array Tok) × Nat
     k := k + 1
   return (none, i)
 
-/-- The interpreter's loop over a flat list, from the state `s0`. `titled`
-is the arm of `\ifx\insertblocktitle\@empty` this run takes, and `tail`
-the items the body's list ends on past its last line. A document macro the
-expansion left unexpanded, the call of one to itself, runs here as TeX runs
-it, where the list it stands in is shorter than `bound`, the length of the
-list the call that ran it stood in: each such call takes a node off its
-list first, so the calls end. -/
+/-- The interpreter's loop over a flat list from `s0`; a macro calling itself takes a node off
+its list first, so the calls end. -/
 private def runToks (defs : String → Option Macro) (titled : Bool) (tail : Array TailKind)
     (bound : Nat) (toks : Array Tok) (s0 : St) : St := Id.run do
   let mut s : St := { s0 with chars := Chars.of toks }
@@ -1283,14 +1141,10 @@ private def runToks (defs : String → Option Macro) (titled : Bool) (tail : Arr
     match t with
     | .sym '%' => i := i + 1
     | .space =>
-      -- A space in a horizontal list is TeX's interword glue; a vertical
-      -- list ignores it.
       if s.lst.para.isSome || !s.lst.vertical then s := s.pushH (.space s.scope.font)
       i := i + 1
     | .par => s := s.closePara; i := i + 1
     | .body =>
-      -- The body's list ends on its last line, then on the items `tail`
-      -- names: the line's depth is the list's `\prevdepth`.
       let id := s.nextId
       s := { s with nextId := id + 1, packed := id :: s.packed }
       s := s.pushV (.body id s.scope.font s.scope.paint) "the body"
@@ -1357,7 +1211,6 @@ private def runToks (defs : String → Option Macro) (titled : Bool) (tail : Arr
               | none => (none, i + 1)
             else match s.readGlue s.chars (i + 1) with
               | some (.glue g, k) =>
-                -- Its ems are the font's in force here, where it was read.
                 if g.stretch == {} && g.shrink == {} then
                   (some (Dimen.norm { len := g.width, font := some s.scope.font }), k)
                 else (none, k)
@@ -1444,9 +1297,7 @@ private def runToks (defs : String → Option Macro) (titled : Bool) (tail : Arr
             if c == "fg" || c == "bg" then s := s.paint (.beamer chain c)
             else s := s.miss s!"\\usebeamercolor[{c}]"
           | none => pure ()
-          -- A colour it sets last is xcolor's `\color`, which ends ignoring
-          -- spaces; the starred form's second call sets none without a
-          -- channel (beamerbasecolor.sty).
+          -- xcolor's `\color` ends ignoring spaces (beamerbasecolor.sty).
           i := if ch.isSome then skipSp toks k else k
         | none => s := s.miss "\\usebeamercolor"; i := i + 1
       | "color" =>
@@ -1536,8 +1387,7 @@ private def runToks (defs : String → Option Macro) (titled : Bool) (tail : Arr
           i := k
         | none => s := s.miss s!"\\{n}"; i := k
       | "unvbox" | "unvcopy" =>
-        -- The box's list joins this one, its nodes this list's own; TeX
-        -- leaves `\\prevdepth` as it was.
+        -- `\unvbox` leaves `\prevdepth` as it was.
         match toks[skipSp toks (i + 1)]? with
         | some (.ctrl r) =>
           match s.boxOf r with
@@ -1562,8 +1412,6 @@ private def runToks (defs : String → Option Macro) (titled : Bool) (tail : Arr
           | none => s := s.miss "\\prevdepth set to a length it cannot read"; i := i + 1
       | "ignorespaces" => i := skipSp toks (i + 1)
       | "nobreak" | "allowbreak" =>
-        -- A penalty in a vertical list is a node of it; in a paragraph it
-        -- breaks no line a block's title holds.
         if s.lst.vertical && s.lst.para.isNone then
           s := s.pushV (.penalty (if n == "nobreak" then 10000 else 0)) s!"\\{n}"
         i := i + 1
@@ -1621,8 +1469,6 @@ private def runToks (defs : String → Option Macro) (titled : Bool) (tail : Arr
           | none => s := s.miss "\\raisebox by a length it cannot read"; i := k
         | none => s := s.miss "\\raisebox"; i := i + 1
       | "ifnum" | "ifdim" =>
-        -- The comparison decides the arm, as TeX's: an integer the list's last
-        -- node gives, or a length whose sign its terms decide (`ifDimHolds`).
         let k0 := s.chars.skipSp (s.chars.first (i + 1))
         let decided : Option (Bool × Nat) :=
           if n == "ifnum" then do
@@ -1687,7 +1533,6 @@ private def runToks (defs : String → Option Macro) (titled : Bool) (tail : Arr
         | [] => s := s.miss "\\fi"; i := i + 1
       | _ =>
         if let some holds := s.flagTest n then
-          -- A declared flag's conditional, decided by the flag as it stands.
           if holds then s := { s with conds := .thenArm :: s.conds }; i := i + 1
           else
             match skipArm s.flag? toks (i + 1) with
@@ -1714,8 +1559,6 @@ private def runToks (defs : String → Option Macro) (titled : Bool) (tail : Arr
           | _ => s := s.miss s!"\\{n} set to a value it cannot read"; i := i + 1
         else match defs n with
           | some m =>
-            -- A macro calling itself, as TeX runs the call: each call takes
-            -- a node off the list it stands in first.
             if m.arity != 0 then s := s.miss s!"\\{n} run where the template stands, with arguments"; i := i + 1
             else if h : s.lst.nodes.size < bound then
               let depth := (s.frames.length, s.conds.length)
@@ -1743,8 +1586,6 @@ private def run (defs : String → Option Macro) (toks : Array Tok) (titled : Bo
   unless s.conds.isEmpty do s := s.miss "a conditional the template never closes"
   return s
 
-/-! ## Lowering the lists onto the record -/
-
 /-- A template rule as read, before its colour is a palette entry. -/
 public structure EdgeRead where
   span : Ir.BlockSpan
@@ -1756,9 +1597,8 @@ public structure EdgeRead where
   reach : Ir.BlockReach := .box
   deriving Repr, BEq, Inhabited
 
-/-- What a template pair sets, read: `Ir.BlockShape` but for its rules'
-colours, which a palette resolves, and the font elements and colours the
-title and body are set in, which the caller holds to the kind's own. -/
+/-- What a template pair sets, read: `Ir.BlockShape` but for its rules' colours, with the font
+elements and colours of title and body. -/
 public structure Read where
   before : Array Ir.BlockSkip := #[]
   title : Ir.BlockTitleBox := {}
@@ -1787,8 +1627,8 @@ private structure Arm where
   bodyPaint : Option Paint := none
   deriving Repr, BEq, Inhabited
 
-/-- A title paragraph's line: the title between optional struts, colour
-changes beside them. Returns whether it is strutted at both ends. -/
+/-- A title paragraph's line, the title between optional struts: whether both ends are strutted,
+and the title's font element and paint. -/
 private def titleLine (kids : Array Node) : Except String (Bool × Option String × Option Paint) :=
   let core := kids.filter (· != .whatsit)
   match core.toList with
@@ -1814,11 +1654,7 @@ private inductive Content where
       (paint : Option Paint) (after : Array Ir.BlockSkip)
 
 private def boxContent (kids : Array Node) : Except String Content := Id.run do
-  -- A penalty breaks nothing a block holds; the items the body ends on are
-  -- the body's own, which the box keeps.
   let items := kids.filter fun n => n != .whatsit && !(n matches .penalty ..) && !(n matches .tail ..)
-  -- The body's paragraph spends `\parskip` inside the box when any node
-  -- stands before it there.
   let bodyIdx := kids.findIdx? (· matches .body ..)
   match items.toList with
   | [.line _ pk _ line] =>
@@ -1849,16 +1685,8 @@ private def boxContent (kids : Array Node) : Except String Content := Id.run do
         | none => false
       return .ok (.whole title between bodyParskip f p after)
 
-/-- A rule's reach beside its box (`Ir.BlockReach`): its box's own extents;
-nothing at all — a rule reading an emptied register has no height and draws
-nothing, as in TeX; or, beside the title's box, whose title is set in
-`title`'s font, whose list opens on a `\parskip` where `title`'s first flag
-says so and whose lines struts in that font bound where its other two do,
-the box's lines — its height and depth less that `\parskip` — and a metric
-in that font more above the box's baseline, and a metric below it. Lines no
-strut of the title's font bounds stand as tall and as deep as their ink or
-that other font's strut, which the page reads off its own lines and a web
-page's line boxes do not hold, so such a rule is refused. -/
+/-- A rule's reach beside its box: the box's extents, nothing for an emptied register, or the
+title box's lines bounded by struts of the title's font; any other reach is refused. -/
 private def reachOf (id : Nat) (title : Option (Option String × Bool × Bool × Bool))
     (h d : Option Dimen) :
     Except String (Option Ir.BlockReach) :=
@@ -1887,9 +1715,8 @@ private def reachOf (id : Nat) (title : Option (Option String × Bool × Bool ×
         | _, _ => .error "a rule beside the title's box measured in another font than its title's"
   | _, _ => .error "a rule running to its line"
 
-/-- The rules beside one box in its line: `\llap{…\vrule…\hskip S}` before
-it hangs left, `\vrule\hskip S` before it stands inside the line, and their
-mirrors after it. A rule reaches as `reachOf` reads it. -/
+/-- The rules beside one box in its line: `\llap{…\vrule…\hskip S}` before it hangs left,
+`\vrule\hskip S` before it stands inside the line, and their mirrors after it. -/
 private def edgesOf (span : Ir.BlockSpan) (id : Nat)
     (title : Option (Option String × Bool × Bool × Bool))
     (hsize : Dimen) (lineHsize : Dimen) (before after : List Node) :
@@ -1900,8 +1727,6 @@ private def edgesOf (span : Ir.BlockSpan) (id : Nat)
       if (l.em == 0 && l.ex == 0) || d.font == some none then .ok l
       else .error "a rule measured in a font of its own"
     | none => .error "a rule or space measured against a box"
-  -- One side's nodes, read outward from the box: a hanging lap, or a rule
-  -- and the space between it and the box.
   let side (onRight : Bool) (nodes : List Node) : Except String (Option EdgeRead × Length) := do
     let sideName : Ir.FlushSide := if onRight then .right else .left
     let ns := nodes.filter (· != .whatsit)
@@ -1910,7 +1735,6 @@ private def edgesOf (span : Ir.BlockSpan) (id : Nat)
     | [.lap r kids] =>
       if r != onRight then throw "a lap reaching over its box"
       let inner := (kids.filter (· != .whatsit)).toList
-      -- From the box outward: the space, then the rule.
       let outward := if onRight then inner else inner.reverse
       match outward with
       | [.rule (some w) h d p _] =>
@@ -1951,7 +1775,7 @@ private def edgesOf (span : Ir.BlockSpan) (id : Nat)
 
 mutual
 
--- conserves: none — the body's items a set-back box holds, in their order; no document content.
+-- conserves: none — the body's items a set-back box holds; no document content
 private def tailsIn (acc : Array Nat) : List Node → Option (Array Nat)
   | [] => some acc
   | n :: rest => (tailsOf acc n).bind (tailsIn · rest)
@@ -1963,10 +1787,7 @@ private def tailsOf (acc : Array Nat) : Node → Option (Array Nat)
 
 end
 
-/-- Two rules' paints as one colour: a colour by name, or the channel of the
-beamer element each rule binds last — the rule's own colour element, which
-sets the channel it reads, so the elements bound before it, around each
-rule, are never reached. -/
+/-- Two rules' paints as one colour: a colour by name, or the channel of each rule's own element. -/
 private def Paint.sameAs : Option Paint → Option Paint → Bool
   | some (.beamer (a :: _) ca), some (.beamer (b :: _) cb) => a == b && ca == cb
   | a, b => a == b
@@ -1983,11 +1804,7 @@ private def Dimen.same (a b : Dimen) : Bool := match a.add? b.neg with
 private def metricDimen (m : Ir.BlockMetric) (font : Option String) : Dimen :=
   Dimen.norm { len := { sp := m.sp }, lead := m.lead, cap := m.cap, font := some font }
 
-/-- The rule a box of no size sets, standing it on the box's baseline: a box
-built `to` no height, its list a `\vss` and an `\hbox` in either order —
-the `\hbox` then standing on the box's baseline — holding one
-`\raisebox` declared of no height and depth around one `\vrule`: the box's
-shift, the rule's lift, and its width, height, depth and paint. -/
+/-- The rule a box of no size sets on its baseline: its shift, the rule's lift, size and paint. -/
 private def overlayRule (n : Node) :
     Option (Dimen × Dimen × Option Dimen × Option Dimen × Option Dimen × Option Paint) :=
   let real (ks : Array Node) : List Node := (ks.filter (· != .whatsit)).toList
@@ -1997,8 +1814,6 @@ private def overlayRule (n : Node) :
     let hkids := match real kids with
       | [.vss, .box _ false _ hk _] | [.box _ false _ hk _, .vss] => some hk
       | _ => none
-    -- Glue after the rule widens its boxes, which move nothing in a list
-    -- of no height.
     let after (ns : List Node) : Bool := ns.all fun x => x matches .space _ | .hskip ..
     match hkids.map real with
     | some (.raised lift (some h0) (some d0) rk :: tail) =>
@@ -2009,35 +1824,17 @@ private def overlayRule (n : Node) :
     | _ => none
   | _ => none
 
-/-- One arm's top-level list, lowered: skips, the title's line or a box line,
-skips, the body or the box holding it, skips. A box holding the body that
-the template sets back (`\unvbox`) is no box of the page's: its list joins
-the block's as it would without it — on the depth the block's list stood on
-where the box opened (the template's `\prevdepth`), its first paragraph
-spending `\parskip` after a node, and the depth below its last line set
-back after it — and a box of no size after it, joined by no interline glue
-(`\nointerlineskip`), may set a rule beside the body: one standing a title's
-rule's depth below the body's last baseline — lifted by the depth its list
-ended on less that depth — and as tall as the title's line's depth and the
-box's height, so it reaches the title's rule's bottom, at that rule's place
-and width in its paint. That rule and the title's are one rule beside the
-whole block (`Ir.BlockSpan.whole`). The items the body ends on past its
-last line (`tail`) are the body's own: in their order, and after that rule,
-which stands on the last line. -/
+/-- One arm's top-level list lowered: skips, the title's line or a box line, skips, the body or
+its box, skips, with a set-back body's rule beside the whole block. -/
 private def lowerArm (nodes : Array Node) (tailSize : Nat) : Except String Arm := Id.run do
   let mut arm : Arm := {}
   let mut seenTitle := false
   let mut seenBody := false
-  -- The title's line: a rule beside the body reaches its depth.
   let mut titleLine? : Option Nat := none
-  -- The box holding the body, set back: its identity and the depth its
-  -- list ended on, which the template owes the list after it.
   let mut unboxed : Option (Nat × Dimen) := none
   let mut owed := false
   let mut joinedFlush := false
   let mut ruled := false
-  -- The body's own items, in the order they stand, and whether one stood
-  -- before the rule beside the body.
   let mut tails : Array Nat := #[]
   let mut tailFirst := false
   for n in nodes do
@@ -2066,8 +1863,6 @@ private def lowerArm (nodes : Array Node) (tailSize : Nat) : Except String Arm :
       | some bi =>
         if seenBody then return .error "the body twice"
         let before := kids.extract 0 bi
-        -- The depth the body opens on: the last one set before it, else a
-        -- fresh box's.
         let opens := (before.filterMap fun x => match x with
           | .prevdepth d => some d
           | _ => none).back?.getD ignoreDepth
@@ -2088,7 +1883,6 @@ private def lowerArm (nodes : Array Node) (tailSize : Nat) : Except String Arm :
         unboxed := some (id, e)
         owed := true
       | none =>
-        -- The items the body ended on, set back after it.
         if !seenBody then return .error "a box set back before the body"
         match tailsIn tails kids.toList with
         | some ts => tails := ts
@@ -2108,8 +1902,6 @@ private def lowerArm (nodes : Array Node) (tailSize : Nat) : Except String Arm :
               let depth := metricDimen md arm.titleFont
               let stands := (lift.add? depth).map (Dimen.same · e) == some true
               let reaches := Dimen.same h { ext := [(tl, .dp, 1), (bid, .ht, 1)] }
-              -- The title's rule's width and sep are lengths of the body's
-              -- font (`edgesOf`), the font the shift and width must read.
               let bodyLen (l : Length) : Dimen := Dimen.norm { len := l, font := some none }
               let placed := Dimen.same shift.neg (bodyLen (te.width.add te.sep)) &&
                 Dimen.same w (bodyLen te.width)
@@ -2133,7 +1925,6 @@ private def lowerArm (nodes : Array Node) (tailSize : Nat) : Except String Arm :
       if seenBody then return .error "a line after the body"
       if seenTitle then return .error "a second title line"
       titleLine? := some id
-      -- A bare title paragraph, or a line holding one box and its rules.
       match titleLine kids with
       | .ok (st, f, p) =>
         seenTitle := true
@@ -2161,7 +1952,6 @@ private def lowerArm (nodes : Array Node) (tailSize : Nat) : Except String Arm :
           | .ok es =>
             seenTitle := true
             seenBody := true
-            -- The items the body ends on, which the box keeps.
             for x in inner do
               if let .tail k _ := x then tails := tails.push k
             arm := { arm with between := arm.between ++ between, whole := some bodyParskip
@@ -2183,14 +1973,7 @@ private def lowerArm (nodes : Array Node) (tailSize : Nat) : Except String Arm :
   if tailFirst then return .error "a rule beside the body standing below the items the body ends on"
   return .ok arm
 
-/-- How many items a template's run may take off the end of the list it
-stands in: its `\\unskip`, `\\unkern` and `\\unpenalty`, and those of each
-macro a call it holds runs (`defs`), once per call — the run reaches the
-macros the expansion left, defined after their caller or calling
-themselves. A macro the run reaches again inside its own run adds none:
-calling itself, it takes what it takes (`tailVariants`). Each macro is
-counted once (`memo`), and a path of calls holds distinct macros, each
-defined before `bound`. -/
+/-- How many items a template's run may take off the end of its list, each macro counted once. -/
 private def removalsIn (defs : String → Option Macro) (bound : Nat) (path : List String)
     (memo : Std.HashMap String Nat) : List Tok → Nat × Std.HashMap String Nat
   | [] => (0, memo)
@@ -2221,15 +2004,8 @@ decreasing_by
 itself that the reader runs it over; one that may take more is named. -/
 private def removalsHeld : Nat := 64
 
-/-- The items a body's list may end on past its last line, which the reader
-runs the pair over: every sequence of up to two of TeX's glue, kern and
-penalty nodes — what a list's end (`\\@endparpenalty`, `\\addvspace`) and a
-display's leave there — and, of each kind and of penalties and glue in
-turn, one item more than the template's run may take off (`removalsIn`):
-a template that sets those back without calling itself sets back no more
-than it takes, and leaves the rest before what it sets after the body. A
-template calling itself is held to these ends alone: one that stops after
-more items than they hold is read as if it did not stop. -/
+/-- The body list ends the reader runs the pair over: up to two glue, kern and penalty items,
+and one of each kind past what the run may take off. -/
 private def tailVariants (removals : Nat) : List (Array TailKind) :=
   let one := [TailKind.glue, .kern, .penalty]
   let long := removals + 1
@@ -2237,15 +2013,8 @@ private def tailVariants (removals : Nat) : List (Array TailKind) :=
     one.map (fun k => Array.replicate long k) ++
     [(Array.range long).map fun i => if i % 2 == 0 then TailKind.penalty else .glue]
 
-/-- **A block template pair, read**: both arms of the title test run and
-lowered, and held to one shape — the untitled arm differs from the titled
-one only in leaving the title out, with the skips of its own that arm stands
-(`Ir.BlockBare`), or in keeping its box empty. Each arm runs over every body
-end the reader varies (`tailVariants`) and lowers to one arm whatever the
-body ends on, so a template that measures the body's lines sets them back
-as TeX would leave them on each of those ends. `lengths` are the
-document's length registers (`St.lengths`), `flags` its `\\newif` flags,
-where the body begins (`St.flags`). -/
+/-- A block template pair read: both arms of the title test, over every body end, held to one
+shape. -/
 public def read (beginRaws endRaws : Array Raw) (defs : String → Option Macro := fun _ => none)
     (bound : Nat := 0) (lengths : String → Option (Option Dimen) := fun _ => none)
     (flags : String → Option Bool := fun _ => none) :
@@ -2254,9 +2023,6 @@ public def read (beginRaws endRaws : Array Raw) (defs : String → Option Macro 
   let closing := flatten endRaws
   let flat := #[Tok.par] ++ opening ++ #[Tok.body, Tok.par] ++ closing
   let toks := expandList defs bound flat.toList #[]
-  -- A template removes no more items without calling itself than its run
-  -- holds removals; a body ending on one more of each kind shows what it
-  -- keeps.
   let removals := (removalsIn defs bound [] {} toks.toList).1
   if removals > removalsHeld then
     .error #[s!"a template that may take more than {removalsHeld} items off the body's end"] else
@@ -2287,8 +2053,7 @@ public def read (beginRaws endRaws : Array Raw) (defs : String → Option Macro 
     match t.title with
     | none => .error #["a template that never sets the title"]
     | some title =>
-      -- A rule beside the whole block reaching by its lines is drawn from
-      -- its title's part: the untitled arm draws none.
+      -- The untitled arm draws no rule reaching by the title's lines.
       let lineRule (e : EdgeRead) : Bool := e.span == .whole && e.reach matches .lines ..
       let titleEdges := t.edges.filter fun e => e.span == .title || lineRule e
       let wholeEdges (a : Arm) := a.edges.filter fun e => e.span == .whole && !lineRule e
@@ -2312,8 +2077,6 @@ public def read (beginRaws endRaws : Array Raw) (defs : String → Option Macro 
             whole := if t.title.isSome && !untitledBox then u.whole else t.whole
             edges := t.edges, titleFont := t.titleFont, titlePaint := t.titlePaint
             bodyFont := t.bodyFont, bodyPaint := t.bodyPaint }
-
-/-! ## The native spelling -/
 
 /-- A thousandths value as its shortest decimal: 2500 is `2.5`. -/
 private def milliText (m : Int) : String :=

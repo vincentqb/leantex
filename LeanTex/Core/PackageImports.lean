@@ -4,12 +4,8 @@ public import Init.Data.List.Find
 
 namespace LeanTex.Core.PackageImports
 
-/-- Literal package options, in their written order. Only an unbraced
-comma separates options; spaces outside groups are zapped, as by the
-kernel's `\zap@space`. Braces remain part of the comparison key: an option
-first passed as `{a}` does not make a later `a` compatible. Keeping nested
-values whole also prevents two different key/value pairs from becoming
-the same bag of comma fragments. This scanner does not expand TeX macros. -/
+/-- Literal package options in written order: split at unbraced commas, spaces outside groups
+zapped (`\zap@space`), braces kept, nothing expanded. -/
 public def literalOptions (s : String) : List String := Id.run do
   let mut out : Array String := #[]
   let mut item := ""
@@ -28,52 +24,35 @@ public def literalOptions (s : String) : List String := Id.run do
   unless item.isEmpty do out := out.push item
   return out.toList
 
-/-- Packages whose bodies have been admitted, with their first effective
-option lists. A reservation precedes execution, so a back edge in a style
-dependency graph sees the same entry as a completed import.
-
-This is execution state, separate from the conditional reader's account
-of package declarations. A missing file makes no reservation. -/
+/-- Packages whose bodies have been admitted, with their first effective option lists. -/
 public abbrev Loads := List (String × List String)
 
-/-- A package body runs only on `load`. `skip []` is a compatible repeat;
-a nonempty list names the new options of an option clash. The caller must
-diagnose that list while preserving the first body's effects. -/
+/-- A package body runs only on `load`; `skip` with a nonempty list names an option clash. -/
 public inductive Decision where
   | load
   | skip (newOptions : List String)
   deriving Repr, BEq, Inhabited
 
-/-- LaTeX's repeated-load comparison is membership, not option-list
-equality: reordered or repeated members of the first list are compatible.
-The first list itself keeps its order and multiplicity for `ProcessOptions*`.
-Forwarded options precede direct options on a first load. A late
-`PassOptionsToPackage` extends the compatibility list without rerunning
-handlers (latex.ltx, `\@pass@ptions`). -/
+/-- LaTeX's repeated-load check, by membership in the first list (latex.ltx `\@pass@ptions`);
+forwarded options precede direct ones. -/
 public def admit (loads : Loads) (name : String) (options passed : List String) :
     Decision × Loads :=
   match loads.lookup name with
   | none => (.load, (name, passed ++ options) :: loads)
   | some first => (.skip (options.filter fun o => !(first ++ passed).contains o), loads)
 
-/-- The first admission reserves exactly the original ordered list before
-any caller can execute a body or follow its dependencies. -/
 public theorem admit_first_exact (loads : Loads) (name : String)
     (options passed : List String)
     (h : loads.lookup name = none) :
     admit loads name options passed = (.load, (name, passed ++ options) :: loads) := by
   simp [admit, h]
 
-/-- Both compatible repeats and clashes leave the original reservation
-unchanged and cannot select the body-running decision. -/
 public theorem admit_loaded_exact (loads : Loads) (name : String)
     (options passed first : List String) (h : loads.lookup name = some first) :
     admit loads name options passed =
       (.skip (options.filter fun o => !(first ++ passed).contains o), loads) := by
   simp [admit, h]
 
-/-- A compatible repeat skips the body and preserves all prior imports,
-for arbitrary option lists, including duplicates and permutations. -/
 public theorem admit_compatible_exact (loads : Loads) (name : String)
     (options passed first : List String) (h : loads.lookup name = some first)
     (compatible : ∀ o ∈ options, o ∈ first ++ passed) :
@@ -85,9 +64,6 @@ public theorem admit_compatible_exact (loads : Loads) (name : String)
     simp [compatible o ho]
   rw [empty]
 
-/-- Every reported clash item came from this request and was absent from
-the first load and all passes in force here. No compatible option is
-diagnosed as new. -/
 public theorem admit_clash_exact (loads : Loads) (name : String)
     (options passed first : List String) (h : loads.lookup name = some first) (o : String) :
     (match (admit loads name options passed).1 with
@@ -95,9 +71,6 @@ public theorem admit_clash_exact (loads : Loads) (name : String)
       | .skip missing => o ∈ missing) ↔ o ∈ options ∧ o ∉ first ++ passed := by
   simp [admit, h]
 
-/-- Looking up the admission result reads the old first list if present,
-or the new list for this name alone. This is the state the two production
-gates carry, not a reordered model of their effect stream. -/
 public theorem admit_lookup_exact (loads : Loads) (name observed : String)
     (options passed : List String) :
     (admit loads name options passed).2.lookup observed =
@@ -113,9 +86,6 @@ public theorem admit_lookup_exact (loads : Loads) (name observed : String)
     · simp [admit, h, same]
     · simp [admit, h, same]
 
-/-- A back edge, or any later compatible import, cannot run the first
-body twice. The reservation itself is enough; completing the body is not
-a prerequisite for stopping a cycle. -/
 public theorem admit_repeat_fixed_point (loads : Loads) (name : String)
     (options passed again : List String) (h : loads.lookup name = none)
     (compatible : ∀ o ∈ again, o ∈ passed ++ options) :
@@ -125,10 +95,6 @@ public theorem admit_repeat_fixed_point (loads : Loads) (name : String)
   exact admit_compatible_exact _ name again [] (passed ++ options) (by simp)
     (by simpa using compatible)
 
-/-- Admissions of distinct package names commute under every lookup.
-Their bodies still execute in source/dependency order. Artifact-level
-commutation additionally needs independent declarations, as expressed by
-`Elab.applyDecl_comm`; conflicts deliberately do not satisfy that premise. -/
 public theorem admit_distinct_agree (loads : Loads) (left right observed : String)
     (leftOptions rightOptions leftPassed rightPassed : List String) (distinct : left ≠ right) :
     (admit (admit loads left leftOptions leftPassed).2 right rightOptions rightPassed).2.lookup

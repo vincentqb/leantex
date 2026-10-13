@@ -1,38 +1,13 @@
 module
 
-/-! # Bytes as text
-
-A file the engine reads as UTF-8 reaches it through `readWith` — `read`
-where no other encoding stands by — and every byte array reads: `go`
-recurses on a measure, so decoding is total by construction, with no fuel.
-A well-formed UTF-8 sequence is its scalar; each maximal subpart of an
-ill-formed one is one U+FFFD, the substitution the Unicode Standard
-recommends (§3.9, "U+FFFD Substitution of Maximal Subparts") and the WHATWG
-Encoding Standard's UTF-8 decoder performs. The byte offset of every
-replaced subpart travels with the text, so a reader is told where a file is
-not UTF-8 instead of the file being refused.
-
-Another encoding can read the bytes UTF-8 does not claim (`decodeWith`);
-whatever it is, a file that is UTF-8 reads as UTF-8 (`decodeWith_valid_id`).
-
-The laws: well-formed input reads unchanged (`decode_valid_id`), and a
-reading that reports nothing replaced nothing (`decode_accounts`), so the
-offsets account for every byte the text does not carry; a well-formed
-prefix reads as written and moves the offsets after it
-(`decode_valid_prefix_exact`); one byte that starts no character between two
-texts is exactly one U+FFFD at its own offset (`decode_one_bad_exact`); a
-leading byte-order mark changes nothing but where offsets count from
-(`readWith_bom_exact`); and the text a file reads as reads back as itself
-(`read_fixed_point`). An ASCII byte of a text's UTF-8 is that character of
-the text (`ascii_byte_mem`), so a scan of the bytes answers for the
-characters. -/
+/-! UTF-8 decoding with replacement, total by a measure: each maximal ill-formed subpart is one
+U+FFFD (Unicode §3.9; WHATWG Encoding), its byte offset reported. -/
 
 namespace LeanTex.Core.Utf8
 
 /-- Bytes read as text, and where they were not text. -/
 public structure Decoded where
-  /-- Each well-formed sequence's scalar, and U+FFFD for each maximal
-  ill-formed subpart. -/
+  /-- Each well-formed sequence's scalar, and U+FFFD for each maximal ill-formed subpart. -/
   text : String
   /-- The byte offset of each replaced subpart, in reading order. -/
   bad : Array Nat
@@ -43,10 +18,8 @@ private def byteIn (bs : ByteArray) (j : Nat) (lo hi : UInt8) : Bool :=
   | some b => lo ≤ b && b ≤ hi
   | none => false
 
-/-- What a lead byte asks of the bytes after it, as the WHATWG decoder reads
-it: how many continuation bytes, and the range the first of them must fall
-in (narrower after E0, ED, F0 and F4, which is how overlong forms,
-surrogates and scalars past U+10FFFF are refused at their second byte). -/
+/-- What a lead byte asks of the bytes after it, as the WHATWG decoder reads it: continuation
+count and the first one's range. -/
 private def lead (b : UInt8) : Nat × UInt8 × UInt8 :=
   if b < 0xC2 then (0, 0x80, 0xBF)
   else if b ≤ 0xDF then (1, 0x80, 0xBF)
@@ -58,9 +31,7 @@ private def lead (b : UInt8) : Nat × UInt8 × UInt8 :=
   else if b ≤ 0xF3 then (3, 0x80, 0xBF)
   else (0, 0x80, 0xBF)
 
-/-- The length of the maximal subpart at `i`: the lead byte and the
-continuation bytes the decoder accepts before the first it refuses, which is
-left for the next step. -/
+/-- The length of the maximal subpart at `i`. -/
 private def subpart (bs : ByteArray) (i : Nat) : Nat :=
   let r := lead (bs[i]?.getD 0)
   if r.1 = 0 || !byteIn bs (i + 1) r.2.1 r.2.2 then 1
@@ -68,8 +39,7 @@ private def subpart (bs : ByteArray) (i : Nat) : Nat :=
   else if r.1 = 2 || !byteIn bs (i + 3) 0x80 0xBF then 3
   else 4
 
-/-- The bytes one U+FFFD stands for where the bytes at `i` start no
-character: the maximal subpart there, as the decoder consumes it. -/
+/-- The bytes one U+FFFD stands for where the bytes at `i` start no character. -/
 public def replacedRun (bs : ByteArray) (i : Nat) : Nat := subpart bs i
 
 private theorem subpart_pos (bs : ByteArray) (i : Nat) : 0 < subpart bs i := by
@@ -80,9 +50,8 @@ private theorem subpart_pos (bs : ByteArray) (i : Nat) : 0 < subpart bs i := by
     · decide
     · split <;> decide
 
-/-- The loop. Where no well-formed sequence starts, the fallback may read
-the one byte there as a character of another encoding; otherwise the
-maximal subpart is one U+FFFD. -/
+/-- The loop: where no well-formed sequence starts, `fb` may read the byte, else the maximal
+subpart is one U+FFFD. -/
 private def go (fb : UInt8 → Option Char) (bs : ByteArray) (i : Nat) (out : String)
     (bad : Array Nat) : String × Array Nat :=
   if i < bs.size then
@@ -99,11 +68,7 @@ decreasing_by
   · omega
   · have := subpart_pos bs i; omega
 
-/-- Decode UTF-8, reading each byte no well-formed sequence claims through
-`fb`: the bytes of a file that are not UTF-8 read in the encoding its
-document declares, and the rest stay UTF-8. Well-formed input is checked in
-one pass and taken whole (`decodeWith_eq_go` holds the fast path to the
-loop). -/
+/-- Decode UTF-8, reading each byte no well-formed sequence claims through `fb`. -/
 public def decodeWith (fb : UInt8 → Option Char) (bs : ByteArray) : Decoded :=
   if h : bs.validateUTF8 = true then
     ⟨String.fromUTF8 bs (ByteArray.validateUTF8_eq_true_iff.mp h), #[]⟩
@@ -117,8 +82,6 @@ private def noFallback : UInt8 → Option Char := fun _ => none
 public def decode (bs : ByteArray) : Decoded := decodeWith noFallback bs
 
 
-/-- The accumulators are a prefix of the answer: what `go` adds from `i`
-does not depend on what it was handed. -/
 private theorem go_acc (fb : UInt8 → Option Char) (bs : ByteArray) (i : Nat) (out : String)
     (bad : Array Nat) :
     go fb bs i out bad = (out ++ (go fb bs i "" #[]).1, bad ++ (go fb bs i "" #[]).2) := by
@@ -170,9 +133,6 @@ private theorem subpart_shift (pre suf : ByteArray) (j : Nat) :
   simp only [subpart, byteIn, Nat.add_assoc, get?_shift]
   rfl
 
-/-- Decoding past a prefix is decoding the suffix: what `go` reads at
-`pre.size + j` is the suffix's byte `j`, so its answer is the suffix's with
-every offset moved by the prefix. -/
 private theorem go_shift (fb : UInt8 → Option Char) (pre suf : ByteArray) (j : Nat) :
     go fb (pre ++ suf) (pre.size + j) "" #[] =
       ((go fb suf j "" #[]).1, (go fb suf j "" #[]).2.map (pre.size + ·)) := by
@@ -211,8 +171,6 @@ decreasing_by
 private theorem size_singleton (c : Char) : [c].utf8Encode.size = c.utf8Size := by
   simp [List.utf8Encode_singleton]
 
-/-- A well-formed prefix decodes to its own characters, and the rest is
-decoded as if it stood alone. -/
 private theorem go_valid_prefix (fb : UInt8 → Option Char) (l : List Char) (bs : ByteArray) :
     go fb (l.utf8Encode ++ bs) 0 "" #[] =
       (String.ofList l ++ (go fb bs 0 "" #[]).1,
@@ -244,8 +202,6 @@ private theorem toUTF8_eq_utf8Encode (s : String) : s.toUTF8 = s.toList.utf8Enco
   conv => lhs; rw [← String.ofList_toList (s := s)]
   simp
 
-/-- Well-formed bytes decode to the string they encode, with nothing to
-report. -/
 private theorem go_valid (fb : UInt8 → Option Char) (s : String) :
     go fb s.toUTF8 0 "" #[] = (s, #[]) := by
   have h := go_valid_prefix fb s.toList ByteArray.empty
@@ -253,9 +209,6 @@ private theorem go_valid (fb : UInt8 → Option Char) (s : String) :
   rw [h, go.eq_def]
   simp [ByteArray.size_empty]
 
-/-- **The fast path changes nothing.** Well-formed input skips the
-replacing loop and is taken whole; the answer is the loop's all the same, so
-every statement about the loop is a statement about `decode`. -/
 private theorem decodeWith_eq_go (fb : UInt8 → Option Char) (bs : ByteArray) :
     decodeWith fb bs = ⟨(go fb bs 0 "" #[]).1, (go fb bs 0 "" #[]).2⟩ := by
   unfold decodeWith
@@ -272,21 +225,13 @@ private theorem decode_eq_go (bs : ByteArray) :
     decode bs = ⟨(go noFallback bs 0 "" #[]).1, (go noFallback bs 0 "" #[]).2⟩ :=
   decodeWith_eq_go noFallback bs
 
-/-- **Well-formed input reads unchanged, whatever it might have been read
-as.** The UTF-8 of a string decodes to that string with nothing replaced,
-and no fallback encoding is ever consulted: a declared encoding cannot
-change a file that is UTF-8. -/
 public theorem decodeWith_valid_id (fb : UInt8 → Option Char) (s : String) :
     decodeWith fb s.toUTF8 = ⟨s, #[]⟩ := by
   rw [decodeWith_eq_go, go_valid]
 
-/-- **Well-formed input reads unchanged.** Every byte array that is the
-UTF-8 of a string decodes to that string with no replacement — the
-guarantee that reading a valid file as text loses nothing. -/
 public theorem decode_valid_id (s : String) : decode s.toUTF8 = ⟨s, #[]⟩ :=
   decodeWith_valid_id noFallback s
 
-/-- The bytes a character was decoded from are its encoding. -/
 private theorem extract_char (bs : ByteArray) (i : Nat) (c : Char)
     (h : bs.utf8DecodeChar? i = some c) :
     bs.extract i (i + c.utf8Size) = (String.utf8EncodeChar c).toByteArray := by
@@ -295,7 +240,6 @@ private theorem extract_char (bs : ByteArray) (i : Nat) (c : Char)
   rw [String.toByteArray_utf8EncodeChar_of_utf8DecodeChar?_eq_some h, ByteArray.extract_extract,
     Nat.add_zero, Nat.min_eq_left hle]
 
-/-- Where `go` replaces nothing from `i` on, its text is the bytes from `i`. -/
 private theorem go_accounts (bs : ByteArray) (i : Nat)
     (h : (go noFallback bs i "" #[]).2 = #[]) :
     (go noFallback bs i "" #[]).1.toByteArray = bs.extract i bs.size := by
@@ -321,15 +265,11 @@ private theorem go_accounts (bs : ByteArray) (i : Nat)
 termination_by bs.size - i
 decreasing_by have := Char.utf8Size_pos ‹Char›; omega
 
-/-- **Nothing reported is nothing replaced.** A reading with no offsets is
-the bytes themselves: the offsets account for every byte the text does not
-carry, so an empty report is a byte-for-byte reading. -/
 public theorem decode_accounts (bs : ByteArray) (h : (decode bs).bad = #[]) :
     (decode bs).text.toUTF8 = bs := by
   rw [decode_eq_go] at h ⊢
   rw [String.toUTF8_eq_toByteArray, go_accounts bs 0 h, ByteArray.extract_zero_size]
 
-/-- What `go` reports from `i` on is a byte at or past `i`. -/
 private theorem go_bad_mem (fb : UInt8 → Option Char) (bs : ByteArray) (i : Nat)
     (out : String) (bad : Array Nat) (x : Nat) (h : x ∈ (go fb bs i out bad).2) :
     x ∈ bad ∨ (i ≤ x ∧ x < bs.size) := by
@@ -360,8 +300,6 @@ decreasing_by
     | omega
     | (have := subpart_pos bs i; omega)
 
-/-- **Every offset names a byte of the input.** A replacement's offset is
-where its subpart starts in the bytes decoded, never past their end. -/
 public theorem decodeWith_bad_between (fb : UInt8 → Option Char) (bs : ByteArray) (x : Nat)
     (h : x ∈ (decodeWith fb bs).bad) : x < bs.size := by
   rw [decodeWith_eq_go] at h
@@ -373,10 +311,6 @@ public theorem decode_bad_between (bs : ByteArray) (x : Nat) (h : x ∈ (decode 
     x < bs.size :=
   decodeWith_bad_between noFallback bs x h
 
-/-- **A well-formed prefix is read as written.** Decoding the UTF-8 of `s`
-followed by any bytes is `s` followed by the decoding of those bytes, every
-replacement's offset moved past `s` — so a replacement never reaches back
-into text before it. -/
 public theorem decode_valid_prefix_exact (s : String) (bs : ByteArray) :
     decode (s.toUTF8 ++ bs) =
       ⟨s ++ (decode bs).text, (decode bs).bad.map (s.utf8ByteSize + ·)⟩ := by
@@ -389,11 +323,9 @@ private theorem byteAll {P : UInt8 → Prop} (h : ∀ n : Fin 256, P (UInt8.ofNa
   intro x
   simpa using h ⟨x.toNat, x.toNat_lt⟩
 
-/-- A first byte is never a continuation byte. -/
 private theorem first_not_cont : ∀ x : UInt8, x.IsUTF8FirstByte → x < 0x80 ∨ 0xC0 ≤ x :=
   byteAll (by decide +kernel)
 
-/-- Every lead's first continuation range lies inside the continuation bytes. -/
 private theorem lead_range : ∀ b : UInt8, 0x80 ≤ (lead b).2.1 ∧ (lead b).2.2 ≤ 0xBF :=
   byteAll (by decide +kernel)
 
@@ -401,7 +333,6 @@ private theorem getElem_of_eq {a b : ByteArray} (h : a = b) (i : Nat) (ha : i < 
     a[i] = b[i]'(h ▸ ha) := by
   subst h; rfl
 
-/-- Text's first byte is a first byte. -/
 private theorem first_isFirst (t : String) (h : 0 < t.toUTF8.size) :
     (t.toUTF8[0]'h).IsUTF8FirstByte := by
   obtain ⟨l, rfl⟩ := t.exists_eq_ofList
@@ -421,9 +352,6 @@ private theorem size_lone (b : UInt8) (t : String) :
     (ByteArray.mk #[b] ++ t.toUTF8).size = t.toUTF8.size + 1 := by
   rw [ByteArray.size_append, size_one]; omega
 
-/-- A byte at or past 0x80 followed by text starts no character: either it
-leads none, or the character it leads would need the text's first byte as a
-continuation, and a first byte never is one. -/
 private theorem lone_none (b : UInt8) (hb : 0x80 ≤ b) (t : String) :
     (ByteArray.mk #[b] ++ t.toUTF8).utf8DecodeChar? 0 = none := by
   cases h : (ByteArray.mk #[b] ++ t.toUTF8).utf8DecodeChar? 0 with
@@ -458,8 +386,6 @@ private theorem lone_none (b : UInt8) (hb : 0x80 ≤ b) (t : String) :
       exact hnot (first_isFirst t (by omega))
 
 
-/-- A byte that starts no character, before text, is a subpart by itself:
-the text's first byte is never a continuation the lead could accept. -/
 private theorem subpart_lone (b : UInt8) (t : String) :
     subpart (ByteArray.mk #[b] ++ t.toUTF8) 0 = 1 := by
   have h0 : (ByteArray.mk #[b] ++ t.toUTF8)[0]?.getD 0 = b := by
@@ -489,8 +415,6 @@ private theorem subpart_lone (b : UInt8) (t : String) :
         omega
   simp only [subpart, h0, hin, Bool.not_false, Bool.or_true, ↓reduceIte]
 
-/-- One byte that starts no character, before text, reads as one U+FFFD
-and then the text. -/
 private theorem go_lone (b : UInt8) (hb : 0x80 ≤ b) (t : String) :
     go noFallback (ByteArray.mk #[b] ++ t.toUTF8) 0 "" #[] = ("�" ++ t, #[0]) := by
   rw [go.eq_def]
@@ -500,11 +424,6 @@ private theorem go_lone (b : UInt8) (hb : 0x80 ≤ b) (t : String) :
   simp only [String.push_eq_append, String.empty_append, Array.map_empty]
   rfl
 
-/-- **The replacement law.** A byte at or past 0x80 that no well-formed
-sequence around it can claim — between any two texts — reads as exactly one
-U+FFFD, reported at its own offset, and both texts read as written. This is
-the acceptance shape of a file with one bad byte: one replacement character
-and one offset to name. -/
 public theorem decode_one_bad_exact (s t : String) (b : UInt8) (hb : 0x80 ≤ b) :
     decode (s.toUTF8 ++ ByteArray.mk #[b] ++ t.toUTF8) =
       ⟨s ++ "�" ++ t, #[s.utf8ByteSize]⟩ := by
@@ -533,22 +452,17 @@ private def marks (bs : ByteArray) (i : Nat) : Nat :=
 termination_by bs.size - i
 decreasing_by have := lt_of_bomAt h; omega
 
-/-- How many leading bytes are byte-order marks. Every leading mark is
-skipped, not only the first: a second U+FEFF at the very start of a text
-joins nothing to nothing, so it is a mark doubled by a tool, never content. -/
+/-- How many leading bytes are byte-order marks; a doubled mark is a mark, never content. -/
 public def bomLen (bs : ByteArray) : Nat := marks bs 0
 
-/-- **A file's bytes as text.** Leading byte-order marks are not text and
-are skipped, as the WHATWG decoder and LuaTeX's reader skip one; what
-follows is decoded with replacement, `fb` reading the bytes UTF-8 does not
-claim. Offsets name the file's own bytes, the marks included. -/
+/-- A file's bytes as text: leading byte-order marks skipped, the rest decoded with
+replacement; offsets name the file's own bytes. -/
 public def readWith (fb : UInt8 → Option Char) (bs : ByteArray) : Decoded :=
   let k := bomLen bs
   let d := decodeWith fb (bs.extract k bs.size)
   ⟨d.text, d.bad.map (k + ·)⟩
 
-/-- `readWith` where no other encoding stands by: every byte UTF-8 does not
-claim is part of a U+FFFD. -/
+/-- `readWith` where no other encoding stands by. -/
 public def read (bs : ByteArray) : Decoded := readWith noFallback bs
 
 private theorem bomAt_shift (pre suf : ByteArray) (j : Nat) :
@@ -574,7 +488,6 @@ private theorem extract_min_size (a : ByteArray) (i j : Nat) :
   rw [this]
   omega
 
-/-- The bytes past `marks` start no mark. -/
 private theorem marks_stop (bs : ByteArray) (i : Nat) :
     bomAt (bs.extract (marks bs i) bs.size) 0 = false := by
   rw [marks.eq_def]
@@ -588,10 +501,6 @@ termination_by bs.size - i
 decreasing_by have := lt_of_bomAt ‹_›; omega
 
 
-/-- **A leading mark changes nothing but where offsets count from.** The
-text a file reads as is the text it reads as without one more byte-order
-mark in front; only the replacement offsets move, by the mark's three
-bytes. -/
 public theorem readWith_bom_exact (fb : UInt8 → Option Char) (bs : ByteArray) :
     readWith fb (bom ++ bs) = ⟨(readWith fb bs).text, (readWith fb bs).bad.map (3 + ·)⟩ := by
   have h0 : bomAt (bom ++ bs) 0 = true := by
@@ -612,7 +521,6 @@ public theorem readWith_bom_exact (fb : UInt8 → Option Char) (bs : ByteArray) 
   simp only [Function.comp_apply]
   omega
 
-/-- **Every offset names a byte of the file**, marks included. -/
 public theorem readWith_bad_between (fb : UInt8 → Option Char) (bs : ByteArray) (x : Nat)
     (h : x ∈ (readWith fb bs).bad) : x < bs.size := by
   simp only [readWith, Array.mem_map] at h
@@ -621,7 +529,6 @@ public theorem readWith_bad_between (fb : UInt8 → Option Char) (bs : ByteArray
   rw [ByteArray.size_extract] at this
   omega
 
-/-- Text whose bytes start with a mark starts with U+FEFF. -/
 private theorem head_of_bomAt (t : String) (h : bomAt t.toUTF8 0 = true) :
     t.toList.head? = some '\uFEFF' := by
   have he : t.toUTF8.extract 0 3 = bom := of_decide_eq_true h
@@ -644,8 +551,6 @@ private theorem head_of_bomAt (t : String) (h : bomAt t.toUTF8 0 = true) :
       List.utf8DecodeChar?_utf8Encode_cons] at hdec
     simp [hdec]
 
-/-- **Text that does not start with U+FEFF reads unchanged**, whatever
-encoding stands by for the bytes UTF-8 does not claim. -/
 public theorem readWith_valid_id (fb : UInt8 → Option Char) (s : String)
     (h : s.toList.head? ≠ some '\uFEFF') : readWith fb s.toUTF8 = ⟨s, #[]⟩ := by
   have h0 : bomAt s.toUTF8 0 = false := by
@@ -659,8 +564,6 @@ public theorem readWith_valid_id (fb : UInt8 → Option Char) (s : String)
   simp only [readWith, hk, ByteArray.extract_zero_size, decodeWith_valid_id]
   simp
 
-/-- What decoding bytes that start no mark yields starts with no U+FEFF:
-the first character is the one the first bytes encode, or U+FFFD. -/
 private theorem head_of_decode (e : ByteArray) (h : bomAt e 0 = false) :
     (decode e).text.toList.head? ≠ some '\uFEFF' := by
   rw [decode_eq_go, go.eq_def]
@@ -689,19 +592,14 @@ private theorem head_of_decode (e : ByteArray) (h : bomAt e 0 = false) :
       simp
   · simp [hpos]
 
-/-- **Reading is idempotent.** The text a file reads as reads back as
-itself, with nothing replaced: marks are gone once read, and what remains
-is text. -/
 public theorem read_fixed_point (bs : ByteArray) :
     read (read bs).text.toUTF8 = ⟨(read bs).text, #[]⟩ :=
   readWith_valid_id noFallback _ (head_of_decode _ (marks_stop bs 0))
 
-/-- `readWith_bom_exact` where no other encoding stands by. -/
 public theorem read_bom_exact (bs : ByteArray) :
     read (bom ++ bs) = ⟨(read bs).text, (read bs).bad.map (3 + ·)⟩ :=
   readWith_bom_exact noFallback bs
 
-/-- `readWith_valid_id` where no other encoding stands by. -/
 public theorem read_valid_id (s : String) (h : s.toList.head? ≠ some '\uFEFF') :
     read s.toUTF8 = ⟨s, #[]⟩ :=
   readWith_valid_id noFallback s h
@@ -709,8 +607,6 @@ public theorem read_valid_id (s : String) (h : s.toList.head? ≠ some '\uFEFF')
 private theorem first_lt : ∀ x : UInt8, x.IsUTF8FirstByte → x < 0xF8 :=
   byteAll (by decide +kernel)
 
-/-- **A text's UTF-8 starts below 0xF8**, where every well-formed sequence
-starts: no text saved as UTF-8 begins with a UTF-16 byte-order mark. -/
 public theorem toUTF8_head_between (s : String) (x : UInt8) (h : s.toUTF8[0]? = some x) :
     x < 0xF8 := by
   obtain ⟨hlt, hx⟩ := getElem?_eq_some_iff.mp h
@@ -723,8 +619,6 @@ private theorem orC0 : ∀ x : UInt8, 0x80 ≤ x ||| 0xc0 := byteAll (by decide 
 private theorem orE0 : ∀ x : UInt8, 0x80 ≤ x ||| 0xe0 := byteAll (by decide +kernel)
 private theorem orF0 : ∀ x : UInt8, 0x80 ≤ x ||| 0xf0 := byteAll (by decide +kernel)
 
-/-- An ASCII byte in a character's UTF-8 is that character, encoded alone:
-every byte of a longer encoding has its high bit set. -/
 private theorem ascii_of_mem_encode (c : Char) (b : UInt8) (hb : b < 0x80)
     (h : b ∈ String.utf8EncodeChar c) : c.val.toUInt8 = b ∧ c.utf8Size = 1 := by
   have high (x : UInt8) (hx : 0x80 ≤ x) (he : b = x) : False := by
@@ -751,9 +645,6 @@ private theorem ascii_of_mem_encode (c : Char) (b : UInt8) (hb : b < 0x80)
     · exact (high _ (or80 _) h).elim
     · exact (high _ (or80 _) h).elim
 
-/-- **An ASCII byte of a text's UTF-8 is that character of the text.** No
-byte below 0x80 occurs inside a longer sequence, so a scan of a text's
-bytes for an ASCII character answers for its characters. -/
 public theorem ascii_byte_mem (s : String) (c : Char) (hc : c.val < 0x80) (i : Nat)
     (hi : i < s.toUTF8.size) (h : s.toUTF8[i] = c.val.toUInt8) : c ∈ s.toList := by
   have hmem : s.toUTF8[i] ∈ s.toList.flatMap String.utf8EncodeChar := by

@@ -4,33 +4,8 @@ import LeanTex.Core.Nfc
 import LeanTex.Core.CollateData
 public import Std.Data.HashMap
 
-/-! Collation: the order a reference list is sorted in, as biber sorts it —
-the Unicode Collation Algorithm (UTS #10) at its fourth level, punctuation
-and spaces non-ignorable, an uppercase letter before its lowercase
-(Biber::UCollate under biber's `collate_options` and biblatex's
-`sortupper`). A string's key is three rows of weights compared one after
-the other: the letters (primary), their accents (secondary), their case
-(tertiary); a fourth level separates nothing under non-ignorable weights,
-so two strings equal at the third compare equal and keep their order.
-
-A Latin letter weighs as the default table weighs it (`CollateData`, read
-from Unicode::Collate, whose table biber sorts by): read through its
-canonical decomposition, its base letter's elements — `æ` is `a` and `e`,
-`ŋ` a letter between `n` and `o`, `ł` an `l` and a mark — and each mark's
-second-level weight after them, so `Ä` sorts with `A`, after it. The case
-row keeps two values, uppercase and the rest. White space sorts before
-punctuation, punctuation in the table's order before digits, digits before
-letters; a letter of another script sorts after every Latin one, by code
-point within its script, as the table's blocks fall.
-
-biber sorts by a locale's tailoring of the table — Unicode::Collate::Locale's,
-which `Biber::UCollate` subclasses — its locale the document's
-`sortlocale`, else the main language biblatex reads from babel. A tailoring
-weighs some letters and runs of letters otherwise: Swedish sets `å`, `ä`
-and `ö` after `z`, Czech `ch` after `h`, Spanish `ñ` after `n`.
-`CollateData` carries each tailoring among the Latin letters in the table's
-own weights; a tailoring of another script carries none and is named where
-it applies. -/
+/-! Collation as biber sorts a reference list: the Unicode Collation Algorithm (UTS #10) at its
+fourth level, uppercase first, with Unicode::Collate::Locale's tailorings. -/
 
 namespace LeanTex.Core.Collate
 
@@ -150,8 +125,6 @@ public def Key.compare (a b : Key) : Ordering :=
   (rowCompare a.primary b.primary).then
     ((rowCompare a.secondary b.secondary).then (rowCompare a.tertiary b.tertiary))
 
-/-! ## Locale tailorings -/
-
 /-- A locale's tailoring: the entries it weighs otherwise — a run of
 characters and its elements — the longest run, and whether accents compare
 from the string's end (French Canadian's backwards second level). -/
@@ -174,10 +147,7 @@ polyglossia language name through its `%LOCALE_MAP` (Biber::Utils
 public def biberLocale (name : String) : String :=
   (CollateData.biberLocales.lookup name).getD name
 
-/-- The locale Unicode::Collate::Locale accepts for the one asked (Locale.pm
-`_locale`): lowercased, its separators `_`, a trailing variant read through
-`%TypeAlias`, then the first of its own spellings with a file — language,
-script, region and variant dropping out in Locale.pm's order — else
+/-- The locale Unicode::Collate::Locale accepts for the one asked (Locale.pm `_locale`), else
 `default`. -/
 public def acceptedLocale (asked : String) : String := Id.run do
   let has (l : String) : Bool := ((CollateData.localeFiles.lookup l).getD "") != ""
@@ -210,12 +180,8 @@ public def acceptedLocale (asked : String) : String := Id.run do
 public def localeFile (locale : String) : String :=
   (CollateData.localeFiles.lookup (acceptedLocale locale)).getD ""
 
-/-- A tailoring file's weights, when this module's rows carry them: `none`
-for the default table and for a tailoring of another script
-(`CollateData.outsideRows`). -/
+/-- A tailoring file's weights, `none` for the default table and a tailoring of another script. -/
 public def tailoringFor (file : String) : Option Tailoring :=
-  -- the one file asked for decoded, the last row of its name as a table
-  -- keyed by name keeps; the default table (`""`) decodes none
   if file.isEmpty then none
   else (CollateData.tailorings.foldl (init := none) fun acc (f, bw, es) =>
     if f == file then some (bw, es) else acc).map fun (bw, es) => decodeTailoring bw es

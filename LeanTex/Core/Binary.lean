@@ -5,10 +5,7 @@ import Init.Data.UInt.Lemmas
 
 namespace LeanTex.Core.Binary
 
-/-! Fixed-width binary fields. The laws include arbitrary bytes before and
-after a field, so a record codec composes them without depending on its
-absolute offsets. Reads are bounds-checked; integer representability is a
-mathematical width bound, independent of the decoder. -/
+/-! Fixed-width binary fields and readers whose laws hold inside any enclosing record. -/
 
 /-- Big-endian bytes, least significant `width` bytes of `n`. -/
 @[expose] public def natBE : Nat → Nat → ByteArray
@@ -28,7 +25,6 @@ mathematical width bound, independent of the decoder. -/
   | zero => rfl
   | succ width ih => simp [natBE, ih]
 
-/-- The byte at the join is the first appended byte. -/
 public theorem byte_append_exact (pre post : ByteArray) (v : UInt8) :
     (pre ++ [v].toByteArray ++ post)[pre.size]? = some v := by
   rw [getElem?_pos]
@@ -39,7 +35,6 @@ public theorem byte_append_exact (pre post : ByteArray) (v : UInt8) :
   · simp only [ByteArray.size_append, List.size_toByteArray, List.length_singleton]
     omega
 
-/-- A fixed-width field is read back in any record context. -/
 public theorem readNatBE_natBE_id (width n : Nat) (h : n < 256 ^ width)
     (pre post : ByteArray) :
     readNatBE width (pre ++ natBE width n ++ post) pre.size = some n := by
@@ -83,7 +78,7 @@ public def Reader.bytes (size : Nat) : Reader ByteArray :=
     if pos + size ≤ bytes.size then some (bytes.extract pos (pos + size), pos + size)
     else none
 
-/-- Interpret a field, refusing unknown tags without consuming another field. -/
+/-- Interpret a field, refusing an unknown tag without consuming another field. -/
 public def Reader.map? (read : Reader α) (f : α → Option β) : Reader β :=
   fun bytes pos => do
     let (a, pos) ← read bytes pos
@@ -94,7 +89,7 @@ public def Reader.expect (expected : ByteArray) : Reader Unit :=
   (Reader.bytes expected.size).map? fun actual =>
     if actual == expected then some () else none
 
-/-- A parser consumes precisely this field in every enclosing record. -/
+/-- `read` consumes exactly `encoded`, yielding `value`, in every enclosing record. -/
 @[expose] public def Reads (read : Reader α) (value : α) (encoded : ByteArray) : Prop :=
   ∀ pre post, read (pre ++ encoded ++ post) pre.size =
     some (value, pre.size + encoded.size)
@@ -195,8 +190,7 @@ private def Reader.arrayLoop (read : Reader α) : Nat → Array α → Reader (A
       let value ← read
       arrayLoop read count (acc.push value)
 
-/-- Read fixed-width elements. Check the declared extent before allocating
-or entering the loop. For a positive element width, the file bounds the count. -/
+/-- Read fixed-width elements, the declared extent checked against the input before the loop. -/
 public def Reader.array (width count : Nat) (read : Reader α) : Reader (Array α) :=
   fun bytes pos =>
     if pos + width * count ≤ bytes.size then Reader.arrayLoop read count #[] bytes pos
@@ -230,15 +224,13 @@ public theorem Reads.array (read : Reader α) (encode : α → ByteArray) (value
   simp only [Reader.array, hsize, ↓reduceIte]
   simpa using Reads.arrayLoop read encode values.toList #[] (by simpa using h) pre post
 
-/-- `count` records read one after another onto `acc`, each as wide as it
-says — `array`'s reading where the records' widths differ. -/
+/-- `count` records of differing widths read one after another onto `acc`. -/
 public def Reader.many (read : Reader α) : Nat → Array α → Reader (Array α)
   | 0, acc => pure acc
   | count + 1, acc => do
       let value ← read
       Reader.many read count (acc.push value)
 
-/-- **Records of any width read back** (`Reader.many` over `array`). -/
 public theorem Reads.many (read : Reader α) (encode : α → ByteArray)
     (values : List α) (acc : Array α) (h : ∀ v ∈ values, Reads read v (encode v)) :
     Reads (Reader.many read values.length acc) (acc ++ values.toArray)
@@ -265,12 +257,10 @@ public def Reader.str : Reader String := do
   let b ← Reader.bytes n
   Reader.lift (String.fromUTF8? b)
 
-/-- A string's UTF-8 bytes decode as the string. -/
 public theorem fromUTF8?_toUTF8 (s : String) : String.fromUTF8? s.toUTF8 = some s := by
   have h : s.toByteArray.IsValidUTF8 := s.isValidUTF8
   simp only [String.toUTF8_eq_toByteArray, String.fromUTF8?, h, ↓reduceDIte, String.fromUTF8]
 
-/-- **A string record reads back** for a string under 4 GiB. -/
 public theorem Reads.str (s : String) (h : s.toUTF8.size < 256 ^ 4) :
     Reads Reader.str s (str s) := by
   have hb := Reads.bind (Reader.bytes s.toUTF8.size) (fun b => Reader.lift (String.fromUTF8? b))

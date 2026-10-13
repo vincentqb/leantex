@@ -2,35 +2,9 @@ module
 
 import LeanTex.Core.PygmentsLexData
 
-/-!
-What the native lexers share: the text they read, the Unicode classes
-their patterns name, word lists, and the raw token stream they write.
-
-Each lexer mirrors one Pygments `RegexLexer` (pygments/lexer.py, BSD-licensed:
-testdata/highlight/LICENSE-Pygments): at every
-position the current state's rules are tried in order and the first match
-wins; `#pop` keeps the root state; when nothing matches, a newline resets
-the stack to the root and is whitespace, and any other scalar is one
-`Error` token. A Python `re` pattern's semantics is what a rule's code
-reproduces, so a class it names is Python's: `\w`, `\s` and `\d` are the
-Unicode answers of the Python the data was generated under, written into
-`PygmentsLexData` with the rest of the lexers' data. A `words` list matches its longest listed
-word that the suffix admits, which the generator checks against Pygments'
-own compiled pattern before writing the list.
-
-A lexer is linear in its text by construction. A rule reads the scalars of
-the tokens it writes, a bounded window past them (a literal, a word of a
-list), and anything further only from a `Table`: a scan answered at every
-position in one pass from the end of the text, built the first time a rule
-asks it, read by one array access. A table answers exactly what its scan
-answers (`Memo.read_exact`, `Src.runs_exact`); its cost is the one pass. So
-a step costs a constant beside what it writes; every step reads a scalar or
-pops a state, and a push needs a read, so the drive takes at most two steps
-a scalar. Pygments' backtracking rereads the same text from every position
-a rule is tried at; a table is that rereading answered once. The cost
-argument is the code's shape, not a theorem: `scripts/bench.lean
---listings-only` is its evidence, over the shapes that once broke it.
--/
+/-! What the native lexers share: the text, the Unicode classes their patterns name, word lists
+and the raw token stream. Each lexer mirrors one Pygments `RegexLexer` (pygments/lexer.py,
+BSD-licensed: testdata/highlight/LICENSE-Pygments). -/
 namespace LeanTex.Core.Highlight
 
 /-- A token of a raw stream: the scalars `[start, stop)` of the lexed text
@@ -100,7 +74,7 @@ private structure Classes where
   pyStart : Array UInt32
   pyRest : Array UInt32
 
-/-- A hex digit's value. The generator emits `[0-9a-f]` only. -/
+/-- A hex digit's value, for the generator's `[0-9a-f]`. -/
 private def nib (b : UInt8) : UInt32 :=
   if b ≤ 0x39 then b.toUInt32 - 0x30 else b.toUInt32 - 0x57
 
@@ -123,8 +97,7 @@ private def loadClasses (_ : Unit) : Classes :=
     pyStart := hexRanges PygmentsLexData.pyNameStart
     pyRest := hexRanges PygmentsLexData.pyNameRest }
 
-/-- Built once per process, on first use: `loadClasses` takes a `Unit` so
-a process that lexes nothing parses no table. -/
+/-- Built once per process, on first use. -/
 private def classes : Thunk Classes := Thunk.mk loadClasses
 
 /-- Membership in sorted inclusive ranges, by binary search. -/
@@ -140,7 +113,7 @@ private def inRanges (rs : Array UInt32) (v : UInt32) : Bool := Id.run do
     else break
   return false
 
-/-- `\w`. The generator checks that the table's ASCII members are these. -/
+/-- `\w`. -/
 public def wordChar (c : Char) : Bool :=
   if c.val < 0x80 then c.isAlphanum || c == '_' else inRanges classes.get.word c.val
 
@@ -170,8 +143,7 @@ public def pyNameStart (c : Char) : Bool :=
 public def pyNameRest (c : Char) : Bool :=
   if c.val < 0x80 then c.isAlphanum || c == '_' else inRanges classes.get.pyRest c.val
 
-/-- What the ASCII fast paths answer, beside what the tables answer, for one
-scalar: the suite holds every ASCII scalar's pair equal. -/
+/-- What the ASCII fast paths and the tables answer for one scalar, side by side. -/
 public def asciiAgrees (c : Char) : Bool :=
   let t := classes.get
   wordChar c == inRanges t.word c.val && spaceChar c == inRanges t.space c.val &&
@@ -179,7 +151,7 @@ public def asciiAgrees (c : Char) : Bool :=
     leanNameRest c == inRanges t.leanRest c.val && pyNameStart c == inRanges t.pyStart c.val &&
     pyNameRest c == inRanges t.pyRest c.val
 
-/-- The text a lexer reads. Positions count scalars, as Pygments' offsets do. -/
+/-- The text a lexer reads, its positions counting scalars as Pygments' offsets do. -/
 public structure Src where
   chars : Array Char
   deriving Inhabited
@@ -242,9 +214,8 @@ namespace Step
 
 variable {α : Type}
 
-/-- The answer a scan from `i` reaches in a text of `n` scalars: its moves
-followed to a stop. A move that is not forward, or that leaves the text,
-stops with `dflt`. -/
+/-- The answer a scan from `i` reaches in a text of `n` scalars; a move not forward or out of the
+text stops with `dflt`. -/
 public def follow (f : Nat → Step α) (dflt : α) (n i : Nat) : α :=
   match f i with
   | .stop a => a
@@ -306,9 +277,7 @@ private theorem fill_follow (f : Nat → Step α) (dflt : α) (n : Nat) :
 
 end Step
 
-/-- A scan answered at every position of a text of `n` scalars at once:
-the answers filled from the end, each in constant time from the answers
-past it. -/
+/-- A scan answered at every position of a text of `n` scalars, filled from the end. -/
 public structure Memo (α : Type) where
   step : Nat → Step α
   dflt : α
@@ -322,15 +291,13 @@ variable {α : Type}
 public def of (f : Nat → Step α) (dflt : α) (n : Nat) : Memo α :=
   ⟨f, dflt, n, Step.fill f dflt n (n + 1) (Array.replicate (n + 1) dflt)⟩
 
-/-- The scan's answer from `i`: the table's within the text; past it, one
-move decides. -/
+/-- The scan's answer from `i`: the table's within the text, one move past it. -/
 @[inline] public def read (m : Memo α) (i : Nat) : α :=
   if i ≤ m.n then m.answers.getD i m.dflt
   else match m.step i with
     | .stop a => a
     | .next _ => m.dflt
 
-/-- A table answers what its scan answers, at every position. -/
 public theorem read_exact (f : Nat → Step α) (dflt : α) (n i : Nat) :
     (Memo.of f dflt n).read i = Step.follow f dflt n i := by
   unfold read of
@@ -394,8 +361,7 @@ public theorem runs_exact (s : Src) (p : Char → Bool) (i : Nat) : (s.runs p).r
 
 end Src
 
-/-- A list of literal words, by first scalar: an ASCII scalar's bucket is
-its own, every other scalar shares the last. Longest first in a bucket. -/
+/-- A list of literal words by first scalar, ASCII buckets their own, longest first. -/
 public structure WordSet where
   buckets : Array (Array (Array Char))
   deriving Inhabited
@@ -433,10 +399,8 @@ public def firstAlt {α : Type} (alts : Array (Array Char)) (s : Src) (i : Nat)
       if let some a := cont (i + w.size) then return some a
   return none
 
-/-- A lexer's state between rules: the tokens written, the position, and
-the state stack, top first, whose last state is always the root. A step
-that keeps the machine it started from shares that stack, so the stack is a
-list, which a push or a pop never copies; `depth` counts its states. -/
+/-- A lexer's state between rules: the tokens written, the position, and the state stack, top
+first, the root always last. -/
 public structure Machine (σ : Type) where
   out : Array Raw
   pos : Nat
@@ -469,8 +433,7 @@ variable {σ : Type}
 /-- The state the next rule is drawn from. -/
 @[inline] public def top? (m : Machine σ) : Option σ := m.stack.head?
 
-/-- No rule matched: a newline resets to the root, anything else is one
-`Error` scalar. -/
+/-- No rule matched: a newline resets to the root, anything else is one `Error` scalar. -/
 public def fallback (m : Machine σ) (s : Src) (root : σ) : Machine σ :=
   let p := m.pos
   if s.is p '\n' then { m.tok p (p + 1) Ty.whitespace with stack := [root], depth := 1 }
@@ -503,15 +466,8 @@ private def advance (root : σ) (step : Src → Machine σ → Machine σ) (s : 
 
 end Machine
 
-/-- Run a lexer from its root state to the end of the text. Each step's
-tokens join the stream after it. A port's step reads a scalar or pops a
-state when a rule matches, and takes the fallback when none does. A step
-that does neither is read as no match, the fallback taking the scalar: it
-is the one shape a port must not write, since Pygments applies a push
-without a read (`default` with a push target) once, where this would be
-an `Error` token. The generator refuses a mirrored lexer that has one, and
-the oracle would see the difference. So the run ends by well-founded
-recursion on the unread scalars, then the stack's depth. -/
+/-- Run a lexer from its root state to the end of the text; a step that neither reads nor pops
+takes the fallback. -/
 public def drive {σ : Type} (root : σ) (step : Src → Machine σ → Machine σ) (s : Src) :
     Array Raw :=
   go { out := #[], pos := 0, stack := [root], depth := 1 } #[]

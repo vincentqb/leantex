@@ -1,11 +1,7 @@
 module
 
-/-!
-The six roles a listing's tokens paint in — the ink, keywords, names,
-literals, comments and errors — and a table of one value per role, alone in
-a leaf: the colour registry names them (`Ir.Role.ofCode`) without waiting on
-the lexers that file tokens into them (`CodeRole`).
--/
+/-! The six roles a listing's tokens paint in, and a table of one value per role, in a leaf the
+colour registry reads without the lexers. -/
 namespace LeanTex.Core.ListingHighlight
 
 public inductive Role where
@@ -23,9 +19,7 @@ public def Role.word : Role → String
   | .comment => "comment"
   | .error => "error"
 
-/-- A role's weights, bold and italic: a keyword is bold and a comment
-italic, as every style the engine ships sets them; the rest are upright and
-regular, their colour alone telling them apart. -/
+/-- A role's weights, bold and italic: keywords bold, comments italic, the rest regular. -/
 public def Role.weights : Role → Bool × Bool
   | .keyword => (true, false)
   | .comment => (false, true)

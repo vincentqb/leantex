@@ -2,56 +2,20 @@ module
 
 public import LeanTex.Core.Ir
 
-/-! # The structure tree
-
-The document's semantic structure as one backend-neutral value: what a
-tagged PDF's structure tree and an HTML page's element tree both say
-about the document, projected once from the IR so the two artifacts cannot
-disagree on it. Both backends may read it; neither owns it. The tree
-carries structure and text only — no geometry, no style, no ink — and its
-leaves are the atoms a page attributes ink to: text runs, images, diagram
-boxes. Each leaf bears its preorder index, the id a page line will name
-(`LineOut.leaf`, the attribution channel M7-18 adds) and a tagger keys
-its marked content by.
-
-Three census facts hold the tree to the IR: its leaf text is exactly
-`blocksText` (`structTree_text`), its outline headings are exactly
-`headingLevels` (`structTree_headings_covers`), and every image and native
-picture alternative is exactly the generic fold's alternative census
-(`structTree_alts_covers`) — so the walk here descends everywhere the one
-shared fold does, footnote bodies and role wrappers included. `structTree_leaves_id` pins the ids: the k-th leaf
-in preorder carries `k`.
-
-Every IR arm is classified here, explicitly. A *transparent* wrapper
-(`.center`, `.ragged`, `.spaced`, `.role`, `.columns`, `.step`, `.only`;
-inline `.styled` bar `.lang`, `.colored`, `.role`, `.underline`, `.step`)
-splices its body and invents no node — layout scope is not document
-structure. A *decorative* arm (`.rule`) and a *state-only* arm
-(`.setPalette`, `.setTokens`, `.pagebreak`; inline `.label`, `.fill`,
-`.strut`, `.italicCorr`, `.pageNumber`, `.pageCount`) produces nothing: no text, no
-structure. Generated furniture the census still counts (`.logo`,
-`.framefoot`) sits under `.artifact`, so a tagger marks it as such. -/
+/-! The document's structure tree: one backend-neutral projection of the IR that a tagged PDF's
+structure tree and an HTML page's element tree both read; its leaves carry preorder ids. -/
 
 namespace LeanTex.Core.Struct
 
 open Ir
 
--- Ir is part of the public signatures: the tree is a projection of its
--- blocks and retains its alternatives. Backend consumers use the tree,
--- censuses and contracts; Layout also unfolds the raw projection and leaf
--- counts when proving that its source attribution follows the same tree.
-
-/-- A structure node's kind: the standard structure types the IR can
-honestly fill (ISO 32000-2 §14.8.4; the HTML element each maps to is the
-one `HtmlDoc` already emits for the arm). -/
+/-- A structure node's kind: the standard structure types the IR can fill (ISO 32000-2 §14.8.4). -/
 public inductive Kind where
   /-- The root, one per document. -/
   | document
-  /-- A titled region that is not an outline heading: an abstract, a
-  beamer block, a slide. Its title, when it has one, is a `.title` child. -/
+  /-- A titled region that is not an outline heading; its title is a `.title` child. -/
   | section
-  /-- The title of a `.section` region — a frame's or a block's title,
-  which `headingLevels` does not count. -/
+  /-- The title of a `.section` region. -/
   | title
   /-- An outline heading at its `\section` level. -/
   | heading (level : Ir.HeadingLevel)
@@ -66,8 +30,7 @@ public inductive Kind where
   | row
   | cell
   | caption
-  /-- A captioned object (`{figure}`, `{table}`, a captioned listing) and
-  a diagram: HTML's `<figure>`, PDF's `Figure`. -/
+  /-- A captioned object or a diagram. -/
   | figure
   | formula
   /-- A code listing or pseudocode. -/
@@ -95,9 +58,7 @@ public inductive Leaf where
   | text (s : String)
   /-- An image, its source and its text alternative. -/
   | image (src : String) (alt : Alt)
-  /-- A diagram, its one leaf, and the alternative a reader of either
-  artifact gets (`Pic.Picture.alternative`): its own element in the PDF, as
-  an image's is. -/
+  /-- A diagram, one leaf, with the alternative a reader of either artifact gets. -/
   | picture (alt : Alt)
   /-- A declared line break, worth the space `plainText` reads it as. -/
   | linebreak
@@ -111,50 +72,33 @@ public def Leaf.census : Leaf → String
   | .picture _ => ""
   | .linebreak => " "
 
-/-- A leaf's alternative census: every non-text leaf's source (an
-image's source, `none` for a native picture) and the alternative the
-artifacts project. -/
+/-- A leaf's alternative census: its source (`none` for a native picture) and alternative. -/
 def Leaf.altCensus (out : Array (Option String × Alt)) :
     Leaf → Array (Option String × Alt)
   | .image src alt => out.push (some src, alt)
   | .picture alt => out.push (none, alt)
   | .text _ | .linebreak => out
 
-/-- Does a structure element hold the leaf? Every leaf but decoration: an
-image or picture declared decorative is held by nothing, so its ink is an
-artifact (ISO 32000-2 §14.8.2.2) — the one resolving site the PDF's
-skeleton and its leaf census both read. -/
+/-- Whether a structure element holds the leaf: every leaf but a decorative image or picture. -/
 @[expose] public def Leaf.held : Leaf → Bool
   | .image _ .decorative | .picture .decorative => false
   | .image _ .undeclared | .image _ (.described _) | .picture .undeclared
   | .picture (.described _) | .text _ | .linebreak => true
 
--- **The kind classification**: what a census does with a kind, as two
--- functions on `Kind` rather than a match inside a walk. A prover reduces
--- these on a concrete kind, so the walk's descent equation is citable with
--- no hypothesis about which kind it is — and the same two answers are the
--- fields a shared node walk would carry.
-
-/-- What a kind contributes to the outline census on the way in: an outline
-heading its level, every other kind nothing. The one resolving site for
-"which kinds are the outline". -/
+/-- What a kind contributes to the outline census: an outline heading its level. -/
 def Kind.outlineEmit (out : Array Ir.HeadingLevel) : Kind → Array Ir.HeadingLevel
   | .heading level => out.push level
   | .document | .section | .title | .paragraph | .list _ | .item | .label | .body
   | .table | .row | .cell | .caption | .figure | .formula | .code | .quote | .note
   | .aside | .nav | .bibEntry | .link _ | .span _ | .reference _ | .artifact => out
 
-/-- Does the outline census read a kind's content? A speaker note is a side
-channel, so no heading inside one reaches the outline (`.aside`); every other
-kind reads through. The one place a census declines a subtree. -/
+/-- Whether the outline census reads a kind's content: every kind's but a speaker note's. -/
 @[expose] public def Kind.outlineDescends : Kind → Bool
   | .aside => false
   | .document | .section | .title | .heading _ | .paragraph | .list _ | .item | .label
   | .body | .table | .row | .cell | .caption | .figure | .formula | .code | .quote
   | .note | .nav | .bibEntry | .link _ | .span _ | .reference _ | .artifact => true
 
-/-- The outline's contribution builds onto its accumulator: the classifier's
-half of the outline census's `Appends` witness. -/
 theorem Kind.outlineEmit_acc (out : Array Ir.HeadingLevel) (kind : Kind) :
     kind.outlineEmit out = out ++ kind.outlineEmit #[] := by
   cases kind <;> simp [Kind.outlineEmit]
@@ -169,17 +113,7 @@ public structure Tree where
   children : Array Node
   deriving Repr, BEq, Inhabited
 
--- The projection. A hand-rolled mutual walk rather than a `foldBlocks`
--- leaf: the fold reads a node before its content and has no close event,
--- so an accumulator cannot know where a container ends, and a tree is
--- exactly that nesting. Structural recursion through `List`, an `Array`
--- accumulator threaded through, one explicit arm per constructor. Leaf ids
--- are placeholders here; `number` assigns the preorder index once.
---
--- The raw walk's bodies are exposed for Layout's count equations. The
--- title, table, bibliography and algorithm builders named by those bodies
--- are public constants with hidden implementations. Their own auxiliary
--- walks and the numbering step remain private.
+-- A hand-rolled mutual walk: a tree needs the close event `foldBlocks` lacks.
 
 mutual
 
@@ -221,8 +155,7 @@ mutual
 
 end
 
-/-- A title region's node, when the title is not empty: an empty title is
-beamer's untitled block or a bare frame, and no node is invented for it. -/
+/-- A title region's node, when the title is not empty. -/
 public def titleRaw (title : Array Inline) : Array Node :=
   if title.isEmpty then #[] else #[.node .title (inlinesRaw #[] title.toList)]
 
@@ -239,17 +172,13 @@ public def rowsRaw (out : Array Node) : List (Array (Array Inline)) → Array No
   | [] => out
   | row :: rest => rowsRaw (out.push (.node .row (cellsRaw #[] row.toList))) rest
 
-/-- Reference-list entries, each its own `.bibEntry` over its inline
-content, as a cell is: a field is read by the document's own elaborator, so
-an entry's link, image, picture and note are the tree's as the body's are
-— the walks that census the body descend the entries (`Ir.foldBibItems`). -/
+/-- Reference-list entries, each its own `.bibEntry` over its inline content. -/
 public def bibRaw (out : Array Node) : List BibItem → Array Node
   | [] => out
   | item :: rest =>
     bibRaw (out.push (.node .bibEntry (inlinesRaw #[] item.content.toList))) rest
 
-/-- Pseudocode lines: each line's content then its comment, in reading
-order — the order `algLineText` and `foldAlgLines` both read. -/
+/-- Pseudocode lines: each line's content then its comment, in reading order. -/
 public def algRaw (out : Array Node) : List AlgLine → Array Node
   | [] => out
   | l :: rest =>
@@ -278,13 +207,9 @@ mutual
     out.push (.node .section (blocksRaw (titleRaw title) body.toList))
   | .disclosure title _ body =>
     out.push (.node .section (blocksRaw (titleRaw title) body.toList))
-  -- the number is census text, set beside the formula in every backend: a
-  -- counter's digits, or an author's tag elaborated as inline content
   | .equation number content =>
     out.push (.node .formula
       ((inlinesRaw #[] content.toList).push (.node .label (inlinesRaw #[] number.toList))))
-  -- a listing's caption is one leaf, as `textLeaves` and the shared fold
-  -- read it (the fold does not descend a `.verbatim`)
   | .verbatim _ content spec =>
     match spec.caption with
     | some (_, cap) =>
@@ -310,8 +235,7 @@ mutual
   | .rule _ _ _ => out
   | .picture pic => out.push (.leaf 0 (.picture pic.alternative))
   | .table _ _ _ rows _ _ => out.push (.node .table (rowsRaw #[] rows.toList))
-  -- the caption stands first whatever `capAbove` says: census order is
-  -- `blocksText`'s, and a caption's placement is the page's, not the tree's
+  -- The caption stands first whatever `capAbove` says: census order is `blocksText`'s.
   | .float _ _ _ body caption =>
     out.push (.node .figure (blocksRaw (captionRaw caption) body.toList))
   | .bibliography _ _ items => bibRaw out items.toList
@@ -327,10 +251,6 @@ public def colsRaw (out : Array Node) : List (BoxWidth × Array Block) → Array
   | (_, body) :: rest => colsRaw (blocksRaw out body.toList) rest
 
 end
-
--- The numbering pass: leaf ids are the preorder index, assigned once over
--- the built shape. Structural recursion through `List`, the counter and
--- the accumulator threaded together.
 
 mutual
 
@@ -354,38 +274,12 @@ end
 /-- The structure of a block sequence, leaves numbered from 0. -/
 @[expose] public def ofBlocks (bs : Array Block) : Array Node := number 0 (blocksRaw #[] bs.toList)
 
-/-- The document's structure tree: its body under one `.document` root.
-The furniture regions (`Doc.head`, `foot`, `logo`, the headline band) are
-page artifacts the furniture pass writes and flags as such; they are not
-document structure and have no node here. -/
+/-- The document's structure tree: its body under one `.document` root; furniture has no node. -/
 @[expose] public def ofDoc (doc : Doc) : Tree := { children := ofBlocks doc.body }
 
-/-- **A picture's leaf projects the one IR value** (`_projects`): its own
-leaf, carrying `Ir.Pic.Picture.alternative` — the value the HTML's svg
-reads too (`HtmlDoc.html_picture_name_projects`) — which the PDF turns into
-its `Figure` (`Pdf.altElem`). -/
 public theorem picture_leaf_projects (out : Array Node) (pic : Pic.Picture) :
     blockRaw out (.picture pic) = out.push (.leaf 0 (.picture pic.alternative)) := by
   simp [blockRaw]
-
--- **One walk over the tree.** The four censuses below differ in three
--- answers and nothing else, so those three are the walk's fields. Read off
--- the four callers rather than invented:
---
---   * `leaf` takes the id because one caller of four reads it (`leaves`
---     pairs it with the leaf; the text and image censuses ignore it).
---   * `enter` is what a node ships before its content: only the outline
---     ships anything (`Kind.outlineEmit`), the other three thread the
---     accumulator through.
---   * `descends` is whether the content is read at all — the one thing a
---     leaf fold cannot say. `.aside` is a side channel, so the outline
---     declines its subtree. It is a function of the kind alone, which is
---     what lets a proof reduce it without unfolding the walk.
---
--- No close event and no context, unlike `Ir.CtxFold`: none of the four
--- needs to know where a container ends, and all four thread one
--- accumulator left to right. Structural mutual recursion through `List`,
--- the knot the projection walks already tie.
 
 public structure NodeFold (α : Type) where
   leaf : α → Nat → Leaf → α
@@ -406,11 +300,6 @@ public def foldNode (f : NodeFold α) (acc : α) : Node → α
     | false => f.enter acc kind
 
 end
-
--- The walk's own equations, and the two arguments every census over it
--- shares: an appended list folds the halves in turn, and a census that only
--- appends builds onto the accumulator it was given. Stated once over any
--- `NodeFold`; each census's named form below is an instance.
 
 public theorem foldNodeList_nil_exact (f : NodeFold α) (acc : α) : foldNodeList f acc [] = acc := by rfl
 
@@ -442,10 +331,7 @@ theorem foldNodeList_push (f : NodeFold α) (acc : α) (out : Array Node) (n : N
     foldNodeList f acc (out.push n).toList = foldNode f (foldNodeList f acc out.toList) n := by
   rw [Array.toList_push, foldNodeList_snoc]
 
-/-- A census that only appends: each of its answers builds onto the
-accumulator it was given, so the whole walk does. The hypothesis the
-accumulator-extraction argument needs, named rather than repeated per
-census. -/
+/-- A census that only appends, so the whole walk builds onto its accumulator. -/
 public structure Appends {β : Type} (f : NodeFold (Array β)) : Prop where
   leaf : ∀ (out : Array β) (id : Nat) (l : Leaf), f.leaf out id l = out ++ f.leaf #[] id l
   enter : ∀ (out : Array β) (kind : Kind), f.enter out kind = out ++ f.enter #[] kind
@@ -504,19 +390,13 @@ public def Tree.text (t : Tree) : String := leafText t.children
 
 @[expose] public def Tree.leaves (t : Tree) : Array (Nat × Leaf) := Struct.leaves t.children
 
-/-- How many leaves the tree gives an inline sequence: the projection's own
-count, so a consumer that has to step over a group it does not ship steps
-by exactly what the tree numbered. -/
+/-- How many leaves the tree gives an inline sequence. -/
 @[expose] public def leafCountInlines (xs : Array Inline) : Nat := (leaves (inlinesRaw #[] xs.toList)).size
 
 /-- How many leaves the tree gives a block sequence. -/
 @[expose] public def leafCountBlocks (bs : Array Block) : Nat := (leaves (blocksRaw #[] bs.toList)).size
 
-/-- The outline headings, in preorder: every `.heading`'s level. An
-`.aside` is a side channel and never ships a heading, as `headingLevels`
-reads the speaker note it comes from — the one census that declines a
-subtree, and it declines it by the classification, not by a walk of its
-own. -/
+/-- The outline headings, in preorder; an `.aside` ships none. -/
 def headingsFold : NodeFold (Array Ir.HeadingLevel) where
   leaf := fun out _ _ => out
   enter := Kind.outlineEmit
@@ -554,9 +434,7 @@ theorem headingsAppends : Appends headingsFold where
   leaf := by intros; simp [headingsFold]
   enter := fun out kind => Kind.outlineEmit_acc out kind
 
-/-- The IR's alternative census through the shared fold: every image's
-source and alternative and every native picture's resolved alternative, in
-document order. -/
+/-- The IR's alternative census through the shared fold, in document order. -/
 def altPush (out : Array (Option String × Alt)) (x : Inline) : Array (Option String × Alt) :=
   match x with
   | .image src _ alt => out.push (some src, alt)
@@ -570,16 +448,6 @@ def altPicPush (out : Array (Option String × Alt)) (b : Block) :
 
 public def irAlts (bs : Array Block) : Array (Option String × Alt) :=
   foldBlocks altPicPush altPush #[] bs
-
--- **The censuses' interface**: the equations a prover may cite, stated. A
--- definition is not an interface — it becomes one the moment a downstream
--- proof unfolds it, and then the census cannot be refactored without
--- breaking a file that cannot see the change. So each census states the four
--- equations it is built from (nil, cons, leaf, node) and its entry point,
--- and every proof below — here and in `PdfStruct` — cites those rather than
--- the definitions. The outline's node equation reads the kind classification
--- rather than a kind pattern, so it fires on any kind with no hypothesis:
--- the two classifiers reduce, the match follows.
 
 theorem leafTextList_nil_exact (acc : String) : leafTextList acc [] = acc := rfl
 
@@ -615,9 +483,6 @@ public theorem headingsList_cons_exact (out : Array Ir.HeadingLevel) (n : Node) 
 public theorem headingsOne_leaf_exact (out : Array Ir.HeadingLevel) (id : Nat) (l : Leaf) :
     headingsOne out (.leaf id l) = out := by rfl
 
-/-- The outline's descent equation, over any kind: the classification says
-whether the content is read and what the node ships, so a citation names no
-kind and carries no hypothesis. -/
 theorem headingsOne_node_exact (out : Array Ir.HeadingLevel) (kind : Kind) (kids : Array Node) :
     headingsOne out (.node kind kids)
       = match kind.outlineDescends with
@@ -654,11 +519,6 @@ theorem altsOne_node_exact (out : Array (Option String × Alt)) (kind : Kind) (k
 
 theorem alts_eq_exact (ns : Array Node) : alts ns = altsList #[] ns.toList := rfl
 
--- The census lemmas the projection theorems stand on: each census over an
--- appended list folds the halves in turn, so a pushed node is the census
--- of the array then of the node. Each is its census's instance of the one
--- argument stated over `foldNodeList` above.
-
 theorem leafTextList_append (acc : String) (a b : List Node) :
     leafTextList acc (a ++ b) = leafTextList (leafTextList acc a) b :=
   foldNodeList_append leafTextFold acc a b
@@ -683,12 +543,6 @@ theorem headingsList_push (out : Array Ir.HeadingLevel) (ns : Array Node) (n : N
     headingsList out (ns.push n).toList = headingsOne (headingsList out ns.toList) n :=
   foldNodeList_push headingsFold out ns n
 
--- The accumulator extraction each projection proof needs of the outline
--- walk, in place of its equations: the generic argument at the census.
-
-/-- The outline census builds onto its accumulator: the census of a list is
-the accumulator, then the list's own — the fact a projection proof needs of
-the walk, in place of its equations. -/
 public theorem headingsList_acc (out : Array Ir.HeadingLevel) (ns : List Node) :
     headingsList out ns = out ++ headingsList #[] ns := by
   exact foldNodeList_acc headingsAppends out ns
@@ -721,17 +575,9 @@ theorem leavesList_push (out : Array (Nat × Leaf)) (ns : Array Node) (n : Node)
     leavesList out (ns.push n).toList = leavesOne (leavesList out ns.toList) n :=
   foldNodeList_push leavesFold out ns n
 
-/-- An empty inline array has no list: the shape the empty-title and
-empty-caption splits reduce to. -/
 theorem toList_of_isEmpty (xs : Array Inline) (h : xs.isEmpty = true) : xs.toList = [] := by
   rw [Array.isEmpty_iff] at h
   rw [h]
-
--- **The tree's text is the IR's** (`structTree_text`). The projection drops
--- and invents no character: every leaf's census text in preorder is
--- `blocksText`, the same string the overlay and conditional walks
--- conserve. Stated with the accumulators generalized, one arm per
--- constructor, the inline walk first.
 
 mutual
 
@@ -816,8 +662,6 @@ theorem inlineRaw_text (acc : String) (out : Array Node) (x : Inline) :
 
 end
 
-/-- Inline content built onto an empty accumulator: its census is exactly
-the content's plain text — the shape every node-opening arm reduces to. -/
 theorem inlinesRaw_text_nil (acc : String) (xs : Array Inline) :
     leafTextList acc (inlinesRaw #[] xs.toList).toList = acc ++ plainText xs := by
   rw [inlinesRaw_text]
@@ -1022,10 +866,6 @@ theorem colsRaw_text (acc : String) (out : Array Node) (cols : List (BoxWidth ×
 
 end
 
--- Numbering is markup: the pass rewrites ids and nothing else, so every
--- census over the shape is fixed under it. Structural recursion through
--- `List`, the numbering's own shape.
-
 mutual
 
 theorem numberList_text (acc : String) (k : Nat) (out : Array Node) (ns : List Node) :
@@ -1048,32 +888,18 @@ theorem numberOne_text (acc : String) (k : Nat) (n : Node) :
 
 end
 
-/-- **Numbering conserves the text**: the ids pass is a `Conserves`
-instance over the tree's own census. -/
 public theorem number_text (k : Nat) : Conserves leafText (number k) := by
   intro ns
   rw [leafText_eq_exact, leafText_eq_exact, number, numberList_text]
   rfl
 
-/-- **The tree's text is the IR's.** The projection of a block sequence has
-exactly `blocksText`'s characters in its leaves, in preorder: nothing
-dropped, nothing invented, the ids added on top. The census equality of
-the `_text` shape; not a `Conserves` instance itself because the walk is
-IR → tree, not IR → IR — `number_text` is the instance the tree-side pass
-owes, and `structTree_text` composes it with the raw walk's equality. -/
 public theorem structTree_text (bs : Array Block) : leafText (ofBlocks bs) = blocksText bs := by
   unfold ofBlocks
   rw [number_text, leafText, blocksRaw_text]
   rfl
 
-/-- The document face: the tree's text is the body's. -/
 public theorem ofDoc_text (doc : Doc) : (ofDoc doc).text = blocksText doc.body := by
   exact structTree_text doc.body
-
--- **The outline is the IR's** (`structTree_headings_covers`): the tree's
--- `.heading` levels in preorder are `headingLevels`. Inline content opens
--- no heading, so the inline walk is fixed; the block walk mirrors
--- `headingLevelOne` arm for arm.
 
 mutual
 
@@ -1388,21 +1214,11 @@ theorem numberOne_headings (hs : Array Ir.HeadingLevel) (k : Nat) (n : Node) :
 
 end
 
-/-- **The outline is the IR's.** The tree's heading levels in preorder are
-exactly `headingLevels`: every `\section` at its level, in order, and no
-heading the outline does not know — the fact the outline diagnostics, the
-markdown preamble, and a tagger's `H<n>` sequence all read. -/
 public theorem structTree_headings_covers (bs : Array Block) :
     headings (ofBlocks bs) = headingLevels bs := by
   unfold ofBlocks headingLevels
   rw [headings_eq_exact, number, numberList_headings, blocksRaw_headings]
   rfl
-
--- **The alternatives are the IR's** (`structTree_alts_covers`): the
--- structure leaves and shared fold carry the same image sources and native
--- picture alternatives, in document order. The projection walk therefore
--- descends everywhere the fold does (footnotes, roles, columns, cells), and
--- no alternative-bearing leaf is attributed nowhere.
 
 mutual
 
@@ -1717,20 +1533,11 @@ theorem numberOne_alts (is : Array (Option String × Alt)) (k : Nat) (n : Node) 
 
 end
 
-/-- **The alternatives are the IR's.** Every image and native-picture
-leaf of the structure tree, source where one exists and resolved
-alternative, is exactly the shared fold's whole-document census. -/
 public theorem structTree_alts_covers (bs : Array Block) : alts (ofBlocks bs) = irAlts bs := by
   unfold ofBlocks irAlts foldBlocks
   rw [alts_eq_exact, number, numberList_alts, blocksRaw_alts]
   rfl
 
--- **Ids are the preorder index** (`structTree_leaves_id`): the k-th leaf
--- in preorder carries `k`, so the attribution channel's `Option Nat` and a
--- tagger's `/K` both index one array.
-
-/-- `leaves` builds onto its accumulator: the census of a list is the
-accumulator, then the list's own. -/
 public theorem leavesList_acc (out : Array (Nat × Leaf)) (ns : List Node) :
     leavesList out ns = out ++ leavesList #[] ns :=
   foldNodeList_acc leavesAppends out ns
@@ -1739,7 +1546,6 @@ theorem leavesOne_acc (out : Array (Nat × Leaf)) (n : Node) :
     leavesOne out n = out ++ leavesOne #[] n :=
   foldNode_acc leavesAppends out n
 
-/-- `numberList` builds onto its accumulator and counts independently of it. -/
 theorem numberList_acc (k : Nat) (out : Array Node) (ns : List Node) :
     (numberList k out ns).1 = out ++ (numberList k #[] ns).1
       ∧ (numberList k out ns).2 = (numberList k #[] ns).2 := by
@@ -1753,7 +1559,6 @@ theorem numberList_acc (k : Nat) (out : Array Node) (ns : List Node) :
     rw [h1, h1']
     simp
 
-/-- Two adjacent ranges join: the numbering's induction step. -/
 theorem range'_join {a b c : Nat} (hab : a ≤ b) (hbc : b ≤ c) :
     List.range' a (b - a) ++ List.range' b (c - b) = List.range' a (c - a) := by
   obtain ⟨m, rfl⟩ : ∃ m, b = a + m := ⟨b - a, by omega⟩
@@ -1797,10 +1602,6 @@ theorem numberOne_id (k : Nat) (n : Node) :
 
 end
 
-/-- **Ids are the preorder index.** The leaves of a projected block
-sequence, in preorder, carry `0, 1, …, n − 1`: the k-th leaf is the one
-whose id is `k`, so `leaves t` is the one array the attribution channel's
-`Option Nat` and a tagger's marked-content keys both index. -/
 public theorem structTree_leaves_id (bs : Array Block) :
     (leaves (ofBlocks bs)).toList.map Prod.fst = List.range (leaves (ofBlocks bs)).size := by
   unfold ofBlocks number
@@ -1812,18 +1613,8 @@ public theorem structTree_leaves_id (bs : Array Block) :
   simp only [List.length_map, Array.length_toList, List.length_range'] at this
   omega
 
--- **A group's ids are the tree's** (`alt_leaf_projects`): where one node
--- holds two alternatives and a page ships only one of them, the id the page
--- references must be the one the tree assigned that alternative. The
--- projection walks build onto their accumulator, so an alternation's node
--- array is its two groups' arrays appended; numbering an append numbers the
--- halves in turn; so the second group's ids begin exactly its sibling's leaf
--- count later. That offset is what a page steps over, and stepping over it is
--- what makes the reference a projection rather than a fresh mint.
-
 mutual
 
-/-- `inlinesRaw` builds onto its accumulator. -/
 theorem inlinesRaw_acc (out : Array Node) (xs : List Inline) :
     inlinesRaw out xs = out ++ inlinesRaw #[] xs := by
   match xs with
@@ -1883,7 +1674,6 @@ theorem inlineRaw_acc (out : Array Node) (x : Inline) :
 
 end
 
-/-- `bibRaw` builds onto its accumulator: the `.bibliography` arm's half. -/
 theorem bibRaw_acc (out : Array Node) (items : List BibItem) :
     bibRaw out items = out ++ bibRaw #[] items := by
   induction items generalizing out with
@@ -1894,7 +1684,6 @@ theorem bibRaw_acc (out : Array Node) (items : List BibItem) :
 
 mutual
 
-/-- `blocksRaw` builds onto its accumulator. -/
 theorem blocksRaw_acc (out : Array Node) (bs : List Block) :
     blocksRaw out bs = out ++ blocksRaw #[] bs := by
   match bs with
@@ -1989,13 +1778,10 @@ theorem numberOne_leafCount (k : Nat) (n : Node) :
 
 end
 
-/-- Numbering moves no leaf: the numbered shape has exactly the leaves the
-shape had. The recursive proof keeps the single-node numbering step private. -/
 public theorem numberList_leafCount (k : Nat) (ns : List Node) :
     (leavesList #[] (numberList k #[] ns).1.toList).size = (leavesList #[] ns).size := by
   exact numberList_leafCount_aux k ns
 
-/-- The counter a numbering leaves: the start plus the shape's leaf count. -/
 theorem numberList_count (k : Nat) (ns : List Node) :
     (numberList k #[] ns).2 = k + (leavesList #[] ns).size := by
   obtain ⟨hid, hle⟩ := numberList_id k ns
@@ -2006,8 +1792,6 @@ theorem numberList_count (k : Nat) (ns : List Node) :
       = (leavesList #[] (numberList k #[] ns).1.toList).toList.length := by simp
   omega
 
-/-- Numbering an append numbers the halves in turn: the second half starts
-where the first left the counter. -/
 theorem numberList_append (k : Nat) (a b : List Node) :
     (numberList k #[] (a ++ b)).1
         = (numberList k #[] a).1 ++ (numberList (numberList k #[] a).2 #[] b).1
@@ -2024,8 +1808,6 @@ theorem numberList_append (k : Nat) (a b : List Node) :
     rw [hab1, hab2, ha1, ha2, hr1, hr2, Array.append_assoc]
     exact ⟨rfl, rfl⟩
 
-/-- Two shapes numbered as one from `k`: the first takes `k …`, the second
-resumes at `k` plus the first's leaf count. -/
 public theorem pair_leaf_ids (a b : Array Node) (k : Nat) :
     (leaves (number k (a ++ b))).toList.map Prod.fst
       = List.range' k (leaves a).size
@@ -2046,27 +1828,12 @@ public theorem pair_leaf_ids (a b : Array Node) (k : Nat) :
   simp
   omega
 
-/-- Covering with any selector preserves the whole numbered structure,
-including leaf contents and ids, at both IR levels. -/
 public theorem onSteps_id (spec : OverlaySpec) (bodyI : Array Inline) (bodyB : Array Block)
     (out : Array Node) (k : Nat) :
     number k (inlineRaw out (.onSteps spec bodyI)) = number k (inlinesRaw out bodyI.toList)
       ∧ number k (blockRaw out (.onSteps spec bodyB)) = number k (blocksRaw out bodyB.toList) := by
   exact ⟨rfl, rfl⟩
 
-/-- **`alt_leaf_projects`** (`_projects`): the ids the tree gives an overlay
-alternation's two groups, for every selector and at both IR levels. The group
-stored first — the one step 1 inks (`Ir.OverlaySpec.showsFirst_id`) — is numbered
-from the node's own start; the other from that start plus the first group's leaf count.
-
-Layout's alternation arms are this projection: a page that inks the group
-stored first steps the counter over the other group *after* setting it, and a
-page that inks the other steps over the first group's `leafCountInlines` (or
-`leafCountBlocks`) *before* setting it, so in both orders the group lands on
-the id the tree already assigned it. That is what keeps one leaf per group
-across a frame's step pages — the id is the node's position in the document
-tree, not a count the walk accumulates, and nothing has to reconcile two
-counters after the fact. -/
 public theorem alt_leaf_projects (spec : OverlaySpec)
     (firstI otherI : Array Inline) (firstB otherB : Array Block) (k : Nat) :
     (leaves (number k (inlineRaw #[] (Inline.altSteps spec firstI otherI)))).toList.map Prod.fst

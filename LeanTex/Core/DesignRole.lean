@@ -3,42 +3,23 @@ module
 public import LeanTex.Core.Color
 public import LeanTex.Core.CodeRoles
 
-/-!
-The colour roles every artifact paints, as one typed registry. A role is a
-name with a row of data: the `\palette` key that declares it, its CSS
-identifier, the contrast need it is judged by and the role it stands on, its
-default in each scheme, the beamer elements that write it, and its export
-name. Every consumer reads a role through this table and the one resolver
-over it (`Design.at`), so a default chain is data, never a site's code.
-
-Two tiers, as beamer's own colour elements and the reference → system →
-component layering of Material 3 and the W3C Design Tokens format
-(https://www.designtokens.org/tr/drafts/format/, aliases): palette roles
-(the page, the ink, the content colours) and element roles (the frame-title
-bar and its ink, a block's title and body, the standout pair), whose
-defaults refer to palette roles.
--/
+/-! The colour roles every artifact paints, as one typed registry read through one resolver
+(`Design.at`): palette roles, and element roles whose defaults refer to them. -/
 
 namespace LeanTex.Core.Ir
 
-/-- What a role's ink owes the ground it stands on, by the WCAG 2.2 success
-criterion that judges it: text (SC 1.4.3), large-scale text (SC 1.4.3),
-non-text information (SC 1.4.11), a state change (SC 1.4.11), or nothing — a
-ground, or pure decoration, which both criteria exempt. -/
+/-- What a role's ink owes its ground by WCAG 2.2: text, large text (SC 1.4.3), non-text, a
+state change (SC 1.4.11), or nothing. -/
 public inductive Need where
   | text | largeText | nonText | state | decorative
   deriving Repr, DecidableEq, Inhabited
 
-/-- A need the contrast judge holds a pair to on a ground: text, large-scale
-text, non-text information. A state change is judged against its active
-form (the cover contract), and a ground or decoration owes nothing. -/
+/-- A need the contrast judge holds a pair to on a ground. -/
 @[expose] public def Need.paired : Need → Bool
   | .text | .largeText | .nonText => true
   | .state | .decorative => false
 
-/-- A need as its medium shows it. A deck's stage is shown at the size of the
-screen it is projected on, where its text stands past WCAG 2.2's large-scale
-sizes, so a slide's text is judged as large-scale text; nothing else moves. -/
+/-- A need as its medium shows it: a slide's text is judged as large-scale text. -/
 @[expose] public def Need.atStage (stage : Bool) : Need → Need
   | .text => if stage then .largeText else .text
   | .largeText => .largeText
@@ -46,13 +27,7 @@ sizes, so a slide's text is judged as large-scale text; nothing else moves. -/
   | .state => .state
   | .decorative => .decorative
 
-/-- The titled block's kind, closed: beamer's three block environments
-(`{block}`, `{alertblock}`, `{exampleblock}` — beamer user guide §12.3,
-"Highlighting"), and tcolorbox's box, which its lowering sets through the
-same surface (`Tcolorbox.lower`). The kind selects the roles the title and
-body resolve through (the box the plain block's) and the box the block
-stands in: beamer's two colour boxes for the three, tcolorbox's frame for
-the box — a poster and a deck set the same node at different base sizes. -/
+/-- The titled block's kind: beamer's three block environments and tcolorbox's box. -/
 public inductive TitledKind where
   | block
   | alert
@@ -60,26 +35,21 @@ public inductive TitledKind where
   | box
   deriving Repr, BEq, DecidableEq, Inhabited
 
-/-- The kind's one spelling: the HTML class suffix, one naming site for both
-backends and the dump. -/
+/-- The kind's one spelling, the HTML class suffix. -/
 @[expose] public def TitledKind.name : TitledKind → String
   | .block => "block"
   | .alert => "alert"
   | .example => "example"
   | .box => "box"
 
-/-- The role-key stem the kind's colours resolve through (`alerttitlefg`):
-tcolorbox's box takes the plain block's roles, where its lowering declares
-its colours. -/
+/-- The role-key stem the kind's colours resolve through; the box takes the plain block's. -/
 @[expose] public def TitledKind.roleStem : TitledKind → String
   | .block | .box => "block"
   | .alert => "alert"
   | .example => "example"
 
-/-- The medium a resolution is for: print is the PDF's (LaTeX's black ink on
-unpainted paper); light and dark are the screen's two colour schemes, and
-lightMore and darkMore the same two where the reader asks for more contrast
-(`prefers-contrast: more`, Media Queries Level 5). -/
+/-- The medium a resolution is for: print, light and dark screens, and their
+`prefers-contrast: more` variants. -/
 public inductive Scheme where
   | print | light | dark | lightMore | darkMore
   deriving Repr, DecidableEq, Inhabited
@@ -122,28 +92,18 @@ public structure GroundDepth where
   pair : Nat
   deriving Repr, BEq, DecidableEq, Inhabited
 
-/-- A document's: a body as deep as GitHub's code ground on white (1.06:1),
-a band at 1.15:1, rules at Tailwind v4 slate-300's 1.49:1
-(https://tailwindcss.com/docs/colors). The band keeps 1.07:1 to the body
-below it: what the two targets leave (1.15 / 1.06 = 1.085), less the slack
-of the band's quantized answer. -/
+/-- A document's: a body at GitHub's code ground on white (1.06:1), a band at 1.15:1, rules at
+Tailwind slate-300's 1.49:1, the band 1.07:1 from the body. -/
 @[expose] public def GroundDepth.documents : GroundDepth :=
   { body := 1060, band := 1150, rule := 1490, pair := 1070 }
 
-/-- A deck's and a poster's, read across a room on a projector: Radix slate
-steps 3 and 5 on white (1.14:1, 1.31:1; https://www.radix-ui.com/colors),
-the same rules. The band keeps 1.10:1 to the body below it, inside what the
-two targets leave (1.30 / 1.12 = 1.16). -/
+/-- A deck's and a poster's: Radix slate steps 3 and 5 on white (1.14:1, 1.31:1), the band
+1.10:1 from the body. -/
 @[expose] public def GroundDepth.decks : GroundDepth :=
   { body := 1120, band := 1300, rule := 1490, pair := 1100 }
 
-/-- What a class asks of the colours nothing declares, beside its ground
-depth: LaTeX's standard classes and the résumé, a deck, a poster and a card
-set their secondary ink in the ink and leave verbatim unpainted, as LaTeX
-prints them; the web's page and a markdown note keep a quieter generated
-secondary ink and set verbatim on a tinted ground, in print as on screen —
-GitHub's practice. One row per class, read by both artifacts (`Role.row`'s
-fallbacks take it). -/
+/-- What a class asks of colours nothing declares: LaTeX's classes print secondary ink in the
+ink, the web's keep a quieter one and tinted verbatim. -/
 public inductive ClassRow where
   | latex
   | stage
@@ -161,17 +121,14 @@ public structure ClassColors where
 
 public instance : BEq ClassColors := ⟨fun a b => decide (a = b)⟩
 
-/-- The seeds the engine's own screen colours are generated from where a
-document declares none, invented here: an ink, a paper and an accent —
-Tailwind v4's zinc-900, white, and blue-700 (https://tailwindcss.com/docs/colors). -/
+/-- The default seeds' ink, Tailwind v4's zinc-900; the paper is white, the accent blue-700. -/
 @[expose] public def ClassColors.ink : Color := { r := 0x18, g := 0x18, b := 0x1B }
 
 @[expose] public def ClassColors.paper : Color := { r := 0xFF, g := 0xFF, b := 0xFF }
 
 @[expose] public def ClassColors.accent : Color := { r := 0x1D, g := 0x4E, b := 0xD8 }
 
-/-- Every colour role. Palette roles first (the page, the ink, the content
-and furniture colours), then the element roles that paint one site each. -/
+/-- Every colour role: palette roles first, then the element roles that paint one site each. -/
 public inductive Role where
   | page | ink | muted | alert | example | covered
   | marker | codeSurface | rule | focus
@@ -209,15 +166,8 @@ public inductive Role where
   | .alert => .alertBodyGround
   | .example => .exampleBodyGround
 
-/-- A role's default where nothing declares it. `first` takes the first of
-its roles that resolves (one role is the one-level alias); `readable` stands
-on a bar: the first candidate whose colour meets the role's need there, else
-the first candidate, and the `unbarred` list where no bar resolves; `inPrint`
-is a role's value in the print column whatever the scheme asked for — the
-paper and ink as printed; `code` is a listing code role's colour, which the
-code rule derives from the palette's roles on the ground the listing stands
-on (`CodeColor.resolve`), the listing's style holding what it leaves open;
-`seeded` is the colour the palette's seeds generate for a role. -/
+/-- A role's default where nothing declares it: the first role that resolves, a readable ink on a
+bar, the printed value, a code role's derived colour, or a seeded one. -/
 public inductive Fallback where
   | first (roles : List Role)
   | readable (bar : Role) (candidates : List Role) (unbarred : List Role)
@@ -225,9 +175,7 @@ public inductive Fallback where
   | const (c : Color)
   | absent
   | code
-  /-- The colour the palette's seeds generate for a role: the document's own
-  seeds where it declares them, else the class's default seeds at the class's
-  depth (`SeedPalette`). -/
+  /-- The colour the palette's seeds generate for a role, else the class's default seeds'. -/
   | seeded (role : Role)
   deriving Repr, BEq
 
@@ -251,28 +199,21 @@ through `look`. -/
   | .always => true
   | .on r => (look r).isSome
 
-/-- An element whose shipping the document's contrast report reads off the
-body, per epoch: a titled block's title (by the title's colour kind), a
-frame title on its bar, a standout frame, a title page with a ground of its
-own, a link's focus ring. -/
+/-- An element whose shipping the contrast report reads off the body, per epoch. -/
 public inductive Element where
   | blockTitle | alertTitle | exampleTitle | frameTitle | standout | titlePage
   /-- The ring the HTML page draws around a link that takes focus. -/
   | focusRing
   deriving Repr, DecidableEq, Inhabited
 
-/-- The element a titled block's title ships as: tcolorbox's box takes the
-plain block's colours, as its roles do (`Role.titleInk`). -/
+/-- The element a titled block's title ships as; the box takes the plain block's. -/
 @[expose] public def Element.ofTitled : TitledKind → Element
   | .block | .box => .blockTitle
   | .alert => .alertTitle
   | .example => .exampleTitle
 
-/-- Where the document's contrast report reads a role's site: on every page,
-in every epoch (the page's text); wherever the element it inks ships, in the
-epoch it ships in; or through the runs coloured with it, which the report's
-walk meets as uses. A role's row decides this, so a role added to the
-registry is read by the report the way its row says (`Contrast.judged_covers`). -/
+/-- Where the contrast report reads a role's site: every page, where its element ships, or its
+coloured runs. -/
 public inductive Judged where
   | page
   | element (e : Element)
@@ -284,12 +225,8 @@ public inductive Channel where
   | fg | bg
   deriving Repr, BEq, DecidableEq
 
-/-- One role's data. `ground` is the role its ink is judged on (the page
-when that role resolves to nothing); `beamer` the `\setbeamercolor`
-elements and channels that write it; `exportName` its name in a TeX export;
-`noun` what a diagnostic calls the role's element; `region` whether body
-content (running text, a listing, a figure) flows on it as a ground; `judged`
-where the document's contrast report reads its site. -/
+/-- One role's data: `ground` the role its ink is judged on, `noun` its element's name in a
+diagnostic, `region` whether body content flows on it, `judged` where its site is read. -/
 public structure Row where
   key : Option String
   css : String
@@ -342,39 +279,28 @@ default, named `--ltx-<css>` in CSS and `<export>` in a TeX export. -/
     ClassRow → Scheme → Fallback :=
   Row.every (.readable bar [.page, .ink] unbarred)
 
-/-- A secondary ink where nothing declares one, one relation in every
-scheme: the ink in LaTeX's classes, as they print every line, and on a stage,
-as beamer's default theme does; on the web's row, which no LaTeX class
-prints, the quietest tone the scheme's seeds generate that reads
-(`SeedPalette`). -/
+/-- A secondary ink where nothing declares one: the ink in LaTeX's classes and on a stage, the
+seeds' quietest legible tone on the web. -/
 @[expose] public def Row.mutedFallback : ClassRow → Scheme → Fallback
   | .latex, _ | .stage, _ => .first [.ink]
   | .web, _ => .seeded .muted
 
-/-- A list marker's ink: the printed ink on paper and on a light screen —
-one mark in both artifacts, as LaTeX sets a label in the running ink — and
-a dark screen's own ink there. -/
+/-- A list marker's ink: the printed ink on paper and a light screen, a dark screen's own ink. -/
 @[expose] public def Row.markerFallback : ClassRow → Scheme → Fallback
   | _, .print => .first [.ink]
   | _, .light | _, .lightMore => .inPrint .ink
   | _, .dark | _, .darkMore => .first [.ink]
 
-/-- The ground verbatim stands on where nothing declares one: none in LaTeX's
-classes and on a stage, as they print it; on the web the documents' surface
-the scheme's seeds generate, in print and on every screen. -/
+/-- Verbatim's ground where nothing declares one: none in LaTeX's classes, the generated
+surface on the web. -/
 @[expose] public def Row.codeGround : ClassRow → Scheme → Fallback
   | .web, _ => .seeded .surface
   | .latex, _ | .stage, _ => .absent
 
 open Row in
 
-/-- **The registry.** One row per role, written out per constructor — an
-added role is a missing arm, never a silent default. The print column is
-the PDF's: black ink on unpainted (white) paper. The screen columns are the
-class's default seeds (`ClassColors.ink`, `.paper`, `.accent`) as each
-scheme carries them, and what they generate there (`Design.classDefaults`).
-The standout frame keeps the printed inversion in every scheme: its ground is
-the ink as printed and its ink the paper (`paper`, `printInk`). -/
+/-- The registry: one row per role, every constructor spelled; the print column is black ink on
+white paper. -/
 @[expose] public def Role.row : Role → Row
   | .page => keyed "bg" .decorative none (screen (.const Color.white) (.seeded .page))
       [("normal text", .bg), ("background canvas", .bg)] (exportName := some "Paper")
@@ -474,9 +400,7 @@ the ink as printed and its ink the paper (`paper`, `printInk`). -/
   | .codeComment => keyed "codecomment" .text (some .codeSurface) (every .code) (judged := .uses)
   | .codeError => keyed "codeerror" .text (some .codeSurface) (every .code) (judged := .uses)
 
-/-- A role's stratum: one more than the deepest role its defaults read, in
-any scheme. `Role.fallback_depth_monotone` checks the table against every
-row, so the resolver's recursion on it is well founded by the data. -/
+/-- A role's stratum: one more than the deepest role its defaults read, in any scheme. -/
 @[expose] public def Role.depth : Role → Nat
   | .page | .ink | .alert | .example | .covered | .codeSurface | .rule => 0
   | .accent | .surface | .surfaceStrong | .accentWash | .accentSoft | .accentText => 0
@@ -495,37 +419,28 @@ row, so the resolver's recursion on it is well founded by the data. -/
   | .frameSubtitleInk | .footInk | .standoutGround | .sectionProgressTrack => 2
   | .standoutInk => 3
 
-/-- A number at or past the last constructor's index: `ofNat` saturates, so
-it names the last constructor without naming it by hand, which makes
-`Role.count` derivable (the `DiagCode` registry's shape). -/
+/-- A number at or past the last constructor's index, where `ofNat` saturates. -/
 @[expose] public def Role.ctorCeiling : Nat := 4096
 
 /-- How many roles the registry holds, read off the type. -/
 @[expose] public def Role.count : Nat := (Role.ofNat Role.ctorCeiling).ctorIdx + 1
 
-/-- Every role, derived from the type through the `ofNat` that
-`deriving DecidableEq` synthesises: constructor declaration order, complete
-by `Role.all_complete` and duplicate-free by `Role.all_nodup`
-(`DesignRoleContract`). -/
+/-- Every role, in declaration order, derived from the type. -/
 @[expose] public def Role.all : List Role :=
   (List.range Role.count).map Role.ofNat
 
 public theorem Role.all_complete (r : Role) : Role.all.contains r := by
   cases r <;> rfl
 
-/-- **Every default reads only shallower roles**, in every class and scheme:
-the measure `Design.at` recurses on. -/
 public theorem Role.fallback_depth_monotone :
     (Role.all.all fun r => ClassRow.all.all fun c => Scheme.all.all fun s =>
       ((r.row.fallback c s).refs.all fun r' => decide (r'.depth < r.depth))) = true := by
   decide +kernel
 
-/-- **The page's text is the one role read at every page**: the ink. -/
 public theorem Role.judged_page : Role.all.filter (fun r => r.row.judged == .page) = [.ink] := by
   decide
 
-/-- Every keyed role beside its key, in registry order: the table a key is
-read through, so a lookup compares keys and builds no row. -/
+/-- Every keyed role beside its key, in registry order. -/
 @[expose] public def Role.keyed : Array (String × Role) :=
   (Role.all.filterMap fun r => r.row.key.map (·, r)).toArray
 
@@ -533,8 +448,7 @@ read through, so a lookup compares keys and builds no row. -/
 @[expose] public def Role.ofKey? (k : String) : Option Role :=
   (Role.keyed.find? (·.1 == k)).map (·.2)
 
-/-- The registry's role for a listing code role (`ListingHighlight.Role`):
-the role whose `\palette` key declares that code role's colour. -/
+/-- The registry role whose `\palette` key declares a listing code role's colour. -/
 @[expose] public def Role.ofCode : ListingHighlight.Role → Role
   | .ink => .codeInk
   | .keyword => .codeKeyword
@@ -563,14 +477,8 @@ the role whose `\palette` key declares that code role's colour. -/
   | .titlePageGround | .titlePageInk | .separator | .progressFill | .progressTrack
   | .sectionProgressFill | .sectionProgressTrack => none
 
-/-- **The role an xcolor colour of a key declares**: a listing's code role,
-whose colour a document declares by an xcolor colour of its key
-(`\definecolor{codekeyword}`, `\colorlet{codecomment}{…}`) — the spelling
-both engines compile, no beamer element carrying the role: leantex reads the
-role, and a TeX build the colour wherever the document's own highlighting
-names it. Every other name an xcolor definition gives stays an author colour,
-as xcolor keeps it: the minted manual's `\definecolor{bg}` paints no page,
-and beamer's `\alert` reads its `alerted text`, never a colour named alert. -/
+/-- The role an xcolor colour of a key declares: only a listing code role; any other name stays
+an author colour. -/
 @[expose] public def Role.ofXcolor? (k : String) : Option Role :=
   (Role.ofKey? k).filter fun r => (Role.code? r).isSome
 
@@ -583,14 +491,6 @@ public theorem Role.code?_ofCode (r : ListingHighlight.Role) : (Role.ofCode r).c
 /-- The `\palette` key a code role's colour is declared under. -/
 @[expose] public def codeKey (r : ListingHighlight.Role) : String := (Role.ofCode r).row.key.getD ""
 
-/-! ## CSS names
-
-Every colour custom property the HTML backend declares, by kind: a role is
-`--ltx-<css>`, an author colour `--ltx-c-<escape>`, a length token keeps its
-own `--<name>`. The kinds cannot collide (`CssName.ident_inj`), and none
-can collide with the engine's internal `--ltx-box-*` and `--ltx-cap*`
-names (`CssName.ident_internal`). -/
-
 private def hexDigit (d : Nat) : Char :=
   "0123456789abcdef".toList.getD d '0'
 
@@ -599,9 +499,7 @@ private def hex6 (n : Nat) : List Char :=
   [hexDigit (n / 1048576 % 16), hexDigit (n / 65536 % 16), hexDigit (n / 4096 % 16),
    hexDigit (n / 256 % 16), hexDigit (n / 16 % 16), hexDigit (n % 16)]
 
-/-- An ASCII letter or digit stands as itself; every other character as `_`
-and its scalar's six hex digits, so the escape is a valid CSS identifier
-whatever the name, and the `_` it introduces is never a kept character. -/
+/-- An ASCII letter or digit as itself, any other character as `_` and six hex digits. -/
 private def escChar (c : Char) : List Char :=
   if c.isAlphanum then [c] else '_' :: hex6 c.toNat
 
@@ -628,17 +526,14 @@ public def CssName.wellFormed : CssName → Prop
   | .token n => '-' ∉ n.toList
   | .role _ | .color _ => True
 
-/-- A colour a document names: a role of the registry, or an author colour
-(`\definecolor`, `\colorlet`, a `\palette` key no role owns). Separate kinds,
-so no author name ever binds a role: `\definecolor{bg}` is the colour `bg`,
-never the page. -/
+/-- A colour a document names: a registry role, or an author colour, which never binds a role. -/
 public inductive ColorRef where
   | role (r : Role)
   | color (name : String)
   deriving Repr, DecidableEq, Inhabited, Hashable
 
-/-- The name's source spelling: a role's `\palette` key (its CSS identifier
-when it has none), an author colour's own name. What the dump prints. -/
+/-- The name's source spelling: a role's `\palette` key, else its CSS identifier; an author
+colour's name. -/
 @[expose] public def ColorRef.key : ColorRef → String
   | .role r => r.row.key.getD r.row.css
   | .color n => n
@@ -654,9 +549,7 @@ when it has none), an author colour's own name. What the dump prints. -/
   | .role r => .role r
   | .color n => .color n
 
-/-- The custom property a run named by this colour reads in HTML: a role's
-`--ltx-<css>`, an author colour's `--ltx-c-<escape>` (`CssName.ident`), so no
-author name can spell a role's or the engine's own property. -/
+/-- The custom property a run named by this colour reads in HTML. -/
 @[expose] public def ColorRef.property (ref : ColorRef) : String :=
   "--" ++ ref.css.ident
 

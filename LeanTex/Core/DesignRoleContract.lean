@@ -3,18 +3,11 @@ module
 public import LeanTex.Core.DesignRole
 import all LeanTex.Core.DesignRole
 
-/-!
-The registry's kernel-checked facts over its shipped table, kept in a leaf so
-their evaluations run beside the build rather than in series with every
-module the registry's importers compile: every role once (`Role.all_nodup`),
-one role per key (`Role.key_inj`, `Role.ofKey?_key_exact`), and CSS names
-that never collide (`CssName.ident_inj`, `CssName.ident_internal`).
--/
+/-! The registry's kernel-checked facts over its shipped table, in a leaf so their evaluations run
+beside the build. -/
 
 namespace LeanTex.Core.Ir
 
-/-- **Every role once**: with `Role.all_complete`, a miscount of the registry
-is a build failure in both directions. -/
 public theorem Role.all_nodup : Role.all.Nodup := by decide +kernel
 
 private theorem inj_of_nodup_map {α β : Type} (f : α → β) :
@@ -41,12 +34,9 @@ public theorem Role.key_inj {a b : Role} {k : String} (ha : a.row.key = some k)
   exact inj_of_nodup_map (·.row.key) _ Role.keyed_nodup a (mem a ha) b (mem b hb)
     (ha.trans hb.symm)
 
-/-- **The registry lists each role at its constructor index**: what a table
-indexed by `Role.ctorIdx` reads a role's entry at (`HtmlDoc.Config.declares`). -/
 public theorem Role.all_ctorIdx (r : Role) : Role.all[r.ctorIdx]? = some r := by
   cases r <;> rfl
 
-/-- A key reads back the role that declared it. -/
 public theorem Role.ofKey?_key_exact (r : Role) (k : String) (h : r.row.key = some k) :
     Role.ofKey? k = some r := by
   unfold Role.ofKey?
@@ -138,8 +128,6 @@ public theorem cssEscape_inj {a b : String} (h : cssEscape a = cssEscape b) : a 
 private theorem Role.css_distinct :
     (Role.all.map (·.row.css)).Nodup := by decide +kernel
 
-/-- Every role identifier stays clear of the other kinds' prefixes: an
-author colour's `c-`, the engine's `box-` and `cap`. -/
 private theorem Role.css_clear :
     (Role.all.all fun r =>
       !("c-".toList.isPrefixOf r.row.css.toList) &&
@@ -174,9 +162,6 @@ private theorem ident_toList_color (n : String) :
 private theorem string_ext {x y : String} (h : x.toList = y.toList) : x = y :=
   String.toList_inj.mp h
 
-/-- **Role, author colour and token names never collide**, the escape
-included: a document's `\definecolor{bg}` is `--ltx-c-bg`, never the page's
-`--ltx-bg`, and no colour can spell a length token's name. -/
 public theorem CssName.ident_inj {a b : CssName} (ha : a.wellFormed) (hb : b.wellFormed)
     (h : a.ident = b.ident) : a = b := by
   have hl := congrArg String.toList h
@@ -217,8 +202,6 @@ public theorem CssName.ident_inj {a b : CssName} (ha : a.wellFormed) (hb : b.wel
     | color m => exact absurd hl (htok n _ ha (colorPre m))
     | token m => exact congrArg CssName.token h
 
-/-- **No colour name is one of the engine's own layout properties**: those
-are `--ltx-box-*` and `--ltx-cap*`. -/
 public theorem CssName.ident_internal (a : CssName) (ha : a.wellFormed) :
     ¬ ("ltx-box-".toList <+: a.ident.toList) ∧ ¬ ("ltx-cap".toList <+: a.ident.toList) := by
   have box : "ltx-box-".toList = "ltx-".toList ++ "box-".toList := by decide
@@ -251,7 +234,6 @@ public theorem CssName.ident_internal (a : CssName) (ha : a.wellFormed) :
       rw [← ht]
       simp
 
-/-- A role's key reads back as that role. -/
 public theorem ColorRef.ofKey_role (r : Role) (k : String) (h : r.row.key = some k) :
     ColorRef.ofKey k = .role r := by
   simp [ColorRef.ofKey, Role.ofKey?_key_exact r k h]

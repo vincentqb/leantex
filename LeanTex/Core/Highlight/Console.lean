@@ -3,25 +3,8 @@ module
 public import LeanTex.Core.Highlight.Scan
 import LeanTex.Core.Highlight.Bash
 
-/-!
-Pygments' `BashSessionLexer` (`ShellSessionBaseLexer`,
-pygments/lexers/shell.py; BSD-licensed, its licence is
-testdata/highlight/LICENSE-Pygments): each line is a prompt and the code after it, a
-continuation of a backslash-ended command, or output. A block of prompted
-lines lexes as one Bash text, the prompts inserted back where they stood
-(do_insertions in pygments/lexer.py).
-
-The prompt pattern is answered as Python's `re` answers it, the first
-match in the pattern's own priority order, but not the way `re` finds it:
-its nested repeats make backtracking cost up to the cube of a line's
-length, so every way through the pattern advances together instead, one
-scalar at a time, and a line costs time linear in its length.
-
-Pygments emits a virtual-environment prefix's tokens before the code they
-precede, but reports offsets for them from an earlier block's start: the
-text is in order and the offsets are not. These tokens carry the text's
-own positions.
--/
+/-! Pygments' `BashSessionLexer` (pygments/lexers/shell.py; BSD-licensed, its licence is
+testdata/highlight/LICENSE-Pygments), its prompt pattern matched in linear time. -/
 namespace LeanTex.Core.Highlight.Console
 
 /-- A regular expression with no captures whose every repeat is of one
@@ -44,8 +27,8 @@ private inductive Inst where
   | accept
   deriving Inhabited
 
-/-- `r` compiled in front of the instruction `k`: its entry, and the
-program grown by its instructions. A fork only ever points below itself. -/
+/-- `r` compiled in front of the instruction `k`: its entry, and the program grown by its
+instructions. -/
 private def Re.compile : Re → Nat → Array Inst → Nat × Array Inst
   | .empty, k, prog => (k, prog)
   | .cls p, k, prog => (prog.size, prog.push (.read p k))
@@ -86,12 +69,8 @@ private def Prog.of (r : Re) : Prog :=
   let (entry, insts) := r.compile 0 #[.accept]
   { insts, entry, reach := reaches insts }
 
-/-- The end of the match Python's `re.match` finds at `start`, the text
-ending at `lim`. The ways through the pattern advance one scalar at a
-time, kept in priority order. A way that reaches an instruction an earlier
-way already holds at that position is dropped, since what can follow is
-the same for both; and a way that accepts ends every way after it, so the
-last acceptance recorded is the first in priority order. -/
+/-- The end of the match Python's `re.match` finds at `start`, the text ending at `lim`, every
+way through the pattern advancing together. -/
 private def Prog.firstEnd (g : Prog) (s : Src) (start lim : Nat) : Option Nat := Id.run do
   let mut ways := g.reach.getD g.entry #[]
   let mut found : Option Nat := none
@@ -190,9 +169,7 @@ private def flush (code : Array Char) (insertions : Array (Nat × Array Piece))
 private def endsContinued (code : Array Char) : Bool :=
   code.size ≥ 2 && code[code.size - 2]? == some '\\' && code.back? == some '\n'
 
-/-- The raw token stream Pygments' `BashSessionLexer` writes, at the
-positions of the text it writes. The block's code grows in place: nothing
-else holds it. -/
+/-- The raw token stream Pygments' `BashSessionLexer` writes, at the positions of its text. -/
 public def lex (s : Src) : Array Raw := Id.run do
   let mut pieces : Array Piece := #[]
   let mut code : Array Char := #[]

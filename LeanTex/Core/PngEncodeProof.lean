@@ -5,15 +5,8 @@ public import LeanTex.Core.Image
 import all LeanTex.Core.PngEncode
 import all LeanTex.Core.Image
 
-/-!
-# A PNG the engine writes, read back
-
-`probe_encode_exact`: the image probe reads a file `encodeIdat` wrote as
-exactly the header and stream it was written from. The probe walks chunks
-by the lengths it reads, so the proof is the file's layout byte by byte —
-signature, `IHDR`, `IDAT`, `IEND` — and the walk's three iterations over
-it, the third ending at `IEND`.
--/
+/-! `probe_encode_exact`: the image probe reads a file `encodeIdat` wrote as exactly the header and
+stream it was written from; the CRCs are not read. -/
 
 namespace LeanTex.Core.PngEncode
 
@@ -71,13 +64,6 @@ private theorem size_encodeIdat (h : Header) (z : ByteArray) :
     size_tag_idat, size_tag_iend, size_ihdr, ByteArray.size_empty]
   omega
 
-/-- **A PNG the engine writes reads back exactly** (`_exact`): the probe of
-`encodeIdat h z`, for a header `Header.Plain` admits and a nonempty stream
-whose length fits the chunk's 32 bits, is the source of that header and
-stream — its size, depth and colour type, no interlace, the stream as the
-one `IDAT`'s payload, every other field the probe's default. `encode` is
-`encodeIdat` over its deflated rows. The CRCs are not read by the probe, so
-this says nothing of them; `pngEncodeChecks` holds one to PNG's. -/
 public theorem probe_encode_exact (h : Header) (z : ByteArray) (hh : h.Plain)
     (hz : 0 < z.size ∧ z.size < 2 ^ 32) :
     Image.probe (encodeIdat h z) =
@@ -114,7 +100,6 @@ public theorem probe_encode_exact (h : Header) (z : ByteArray) (hh : h.Plain)
       · exact ⟨_, _, rfl, rfl, rfl, by rw [h8]; rfl⟩
       · exact ⟨_, _, rfl, rfl, by rw [h8]; rfl, by rw [h8]; rfl⟩
   obtain ⟨space, alpha, hsp, hni, hrgb, halpha⟩ := hsp
-  -- The chunk walk: IHDR is passed over, IDAT read, IEND ends it.
   have q12 : Image.u8? (encodeIdat h z) 12 = some 73 := by png_read
   have s12d : Image.sliceEq (encodeIdat h z) 12 [73, 68, 65, 84] = false := by png_read
   have s12e : Image.sliceEq (encodeIdat h z) 12 [73, 69, 78, 68] = false := by png_read

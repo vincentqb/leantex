@@ -6,38 +6,26 @@ namespace LeanTex.Core.BeamerColor
 
 open Ir
 
-/-- A space cannot occur in an author's control word. The two original
-groups follow this internal marker; no author text is encoded into it. -/
+/-- The internal marker the two original groups follow; a space cannot occur in a control word. -/
 public def marker : String := " beamer color"
 public def starMarker : String := " beamer color*"
 public def standoutMarker : String := " beamer standout color"
-/-- A paint site a block template reads (`\usebeamercolor[bg]{element}` at a
-rule): its element, channel and the palette entry it paints. -/
+/-- A paint site a block template reads: its element, channel and the palette entry it paints. -/
 public def siteMarker : String := " beamer color site"
 
-/-- The role an element's channel writes: the registry row that binds it
-(`Row.beamer`). -/
+/-- The role an element's channel writes, from the registry row that binds it. -/
 public def channelRole (name : String) (ch : Channel) : Option Role :=
   Role.all.find? fun r => r.row.beamer.contains (name, ch)
 
-/-- Beamer's named elements with genuine native paint sites, and the roles
-their two channels write, read off the registry's rows in registry order
-(elements that share a role keep beamer's relative order: the frame title
-before the headline, the footline before the page number). In particular,
-the head/foot progress placement is absent: a section rule is not that site.
-Sources: beamercolorthemedefault.sty and beamercolorthememoloch.sty. -/
+/-- Beamer's named elements with native paint sites and the roles their two channels write, in
+registry order (beamercolorthemedefault.sty, beamercolorthememoloch.sty). -/
 public def roles : List (String × Option Role × Option Role) :=
   let names := Role.all.flatMap fun r => r.row.beamer.map (·.1)
   (names.foldl (fun acc n => if acc.contains n then acc else acc ++ [n]) []).map fun n =>
     (n, channelRole n .fg, channelRole n .bg)
 
-/-- beamer's default colour theme's relationships among the modelled
-elements (beamercolorthemedefault.sty): relationships, not copied colours.
-The title-like elements hang on `structure` through `titlelike`, the block
-titles on `structure` and the text roles, and the block bodies on nothing.
-The progress-bar variants are elements the default theme does not have; the
-furniture the engine draws for them everywhere inherits as moloch, which
-defines them, declares. -/
+/-- beamer's default colour theme's parent relationships among the modelled elements
+(beamercolorthemedefault.sty). -/
 private def defaultParents : String → List String
   | "framesubtitle" => ["frametitle"]
   | "frametitle" | "section title" => ["titlelike"]
@@ -65,20 +53,8 @@ public structure Element where
   sites : List (String × Span) := []
   deriving Inhabited
 
-/-- A colour theme's own declarations over the default theme's, as it runs
-them at load: unstarred `\setbeamercolor`s, each keeping what it does not
-name. moloch 2.1.0's (beamercolorthememoloch.sty: `\moloch@setup@text@colors`,
-`\moloch@setup@block@colors` and the progress-bar parents, which its
-`background=light` default runs; it loads with no `block` option):
-`titlelike` hangs on normal text and `structure` takes its ink; the block
-title takes normal text's ink and clears its fill, keeping its `structure`
-parent, which therefore reaches neither channel; the alerted and example
-titles only `use` the block title and their text role, keeping the default
-theme's parents, so a fill declared on `alerted text` or `example text`
-paints their bars; the alerted and example bodies inherit the block body,
-which the theme leaves the default theme's empty one. Every other theme
-declares none of these. The `block` option's declarations are the
-document's own (`Compat.molochOptions`). -/
+/-- A colour theme's own declarations over the default theme's, as it runs them at load
+(beamercolorthememoloch.sty for moloch; none for any other theme). -/
 private def themeElement (theme name : String) : Option Element :=
   if theme != "moloch" then none else
   match name with
@@ -103,22 +79,17 @@ public structure Issue where
   message : String
   span : Span
 
-/-- A standout option's appended alias is read when the option runs,
-inside the group opened by the Moloch/Metropolis inner theme. -/
+/-- A standout option's appended alias, read inside the inner theme's group. -/
 public structure StandoutAlias where
   name : String
   source : String
   span : Span
 
-/-- End the alias scope without discarding unrelated flow declarations.
-An alias is an xcolor name (`\colorlet`), so it restores as one. -/
+/-- End the alias scope without discarding unrelated flow declarations. -/
 public def restoreAliases (opening : Palette) (current : Palette)
     (names : List String) : Palette :=
   names.foldl (fun pal name => pal.restore opening (.color name)) current
 
-/-- Every scoped name regains its opening value, including absence; every
-other name keeps the closing epoch's value. This is independent of colours,
-declaration order, duplicate aliases and intervening flow declarations. -/
 public theorem restoreAliases_contract (opening current : Palette)
     (names : List String) (key : ColorRef) :
     (restoreAliases opening current names).lookup key =
@@ -136,9 +107,8 @@ public theorem restoreAliases_contract (opening current : Palette)
         simp [hm, Palette.restore_exact]
       · simp [hm, he, Palette.restore_keeps_others _ _ _ _ he]
 
-/-- Flow palette and named declarations share one elaborator state field.
-`opening` remembers the native values displaced by resolution, so a later
-parent update never inherits its own previously resolved result. -/
+/-- The flow palette and named declarations; `opening` keeps the native values resolution
+displaced. -/
 public structure State where
   current : Option Palette := none
   elements : List Element := []
@@ -148,24 +118,19 @@ public structure State where
   /-- Winning authored channels, rebuilt by `resolve` in native role order. -/
   origins : Array (String × Color × Span) := #[]
   standoutAliases : List StandoutAlias := []
-  /-- The colour theme in force, whose own declarations (`themeElement`)
-  stand under the document's. -/
+  /-- The colour theme in force, whose own declarations stand under the document's. -/
   theme : String := ""
-  /-- Paint sites a block template reads beside the native ones (`roles`'
-  shape): the elements a rule's colour reads its channel through — each
-  `\usebeamercolor` in force there, the latest first — and the palette entry
-  that channel paints. -/
+  /-- Paint sites a block template reads beside the native ones: the element chain, channel and
+  palette entry. -/
   sites : List (List String × String × String) := []
   deriving Inhabited
 
-/-- Register a template's paint site: the channel the chain of elements binds
-paints `key`. A site already registered for the key is replaced. -/
+/-- Register a template's paint site, replacing one already registered for the key. -/
 public def State.addSite (s : State) (chain : List String) (channel key : String) : State :=
   let site := if channel == "fg" then (chain, key, "") else (chain, "", key)
   { s with sites := s.sites.filter (fun (_, f, b) => f != key && b != key) ++ [site] }
 
-/-- The colour names the declarations' expressions spell (`Ir.colorNames`):
-what `\setbeamercolor{…}{fg=…}` reads from the palette when it resolves. -/
+/-- The colour names the declarations' expressions spell. -/
 public def State.sourceNames (s : State) : Array String :=
   s.elements.foldl (fun acc e =>
     [e.fg, e.bg].foldl (fun acc v => match v with
@@ -182,8 +147,7 @@ private def unbrace (s : String) : String :=
 private def names (s : String) : List String :=
   ((unbrace s).splitOn ",").map (·.trimAscii.toString) |>.filter (!·.isEmpty)
 
-/-- `key=value`, where an empty value is kept: beamer's `bg=` clears the
-channel as `bg={}` does (moloch's own block colours spell it so). -/
+/-- `key=value`, an empty value kept: beamer's `bg=` clears the channel as `bg={}` does. -/
 private def entryOf (entry : String) : Option (String × String) :=
   match entry.splitOn "=" with
   | key :: value :: more =>
@@ -192,8 +156,8 @@ private def entryOf (entry : String) : Option (String × String) :=
     else some (k, (String.intercalate "=" (value :: more)).trimAscii.toString)
   | _ => none
 
-/-- Update only the keys that occur, except that the starred form first
-clears both channels and both relationships (beamerbasecolor.sty). -/
+/-- Update only the keys that occur; the starred form first clears both channels and both
+relationships (beamerbasecolor.sty). -/
 public def State.declare (s : State) (name : String) (star : Bool) (src : String)
     (span : Span) : State × List String := Id.run do
   let mut e := if star then { name := name, reset := true, span := span }
@@ -213,8 +177,7 @@ public def State.declare (s : State) (name : String) (star : Bool) (src : String
     | none => unsupported := unsupported ++ [entry]
   return ({ s with elements := s.elements.filter (·.name != name) ++ [e] }, unsupported)
 
-/-- A native role declared later wins too. Fixed colours retain their native
-model, including CMYK; the compatibility resolver never converts them. -/
+/-- A native role declared later wins too; fixed colours keep their native model, CMYK included. -/
 public def State.native (s : State) (key : Role) (color : Color) : State := Id.run do
   if s.elements.isEmpty then return s
   let mut s := { s with opening := s.opening.declare (.role key) color }
@@ -232,8 +195,7 @@ private structure Channel where
   origin : Option Span := none
 
 private structure Reading where
-  /-- `none` leaves an earlier parent alone; a channel with no colour
-  explicitly clears it. Empty `fg={}` / `bg={}` still run. -/
+  /-- `none` leaves an earlier parent alone; a channel with no colour explicitly clears it. -/
   fg : Option Channel := none
   bg : Option Channel := none
   issues : List Issue := []
@@ -241,7 +203,6 @@ private structure Reading where
 private def Reading.over (a b : Reading) : Reading :=
   { fg := b.fg.or a.fg, bg := b.bg.or a.bg, issues := a.issues ++ b.issues }
 
-/-- Dropping origins commutes with the per-channel override decision. -/
 private theorem Reading.over_projects (a b : Reading) :
     ((a.over b).fg.map Channel.color, (a.over b).bg.map Channel.color) =
       ((b.fg.map Channel.color).or (a.fg.map Channel.color),
@@ -256,12 +217,7 @@ private def own (pal : Palette) (name : String) : Reading :=
   | none => if name == "structure" then
       { fg := (Design.declared? pal .ink).map (fun c => ⟨some c, none⟩) } else {}
 
-/-- An element as it stands over its colour theme's declaration
-(`themeElement`): the document's keys, then the theme's where the document
-named none — `use` and `parent` whole, as `\setbeamercolor` replaces them,
-and a channel only where the palette holds no native value for it, since a
-native declaration stands later than any theme's load. A starred
-declaration cleared the theme's too. -/
+/-- An element over its colour theme's declaration: the document's keys first, then the theme's. -/
 private def withTheme (pal : Palette) (theme : String) (e : Element) : Element :=
   match e.reset, themeElement theme e.name with
   | false, some t =>
@@ -273,14 +229,10 @@ private def withTheme (pal : Palette) (theme : String) (e : Element) : Element :
       parents := e.parents.orElse fun _ => t.parents }
   | true, _ | false, none => e
 
-/-- DFS removes the current element before descending. A path detects a
-cycle, and the shrinking declaration list proves termination without fuel.
-Only colour declarations are visited, never document content. -/
+/-- Depth-first resolution over the colour declarations, a path detecting cycles. -/
 private def read (theme : String) (pal : Palette) (path : List (String × Option Span))
     (es : List Element) (name : String) : Reading := Id.run do
   if let some (_, span) := path.find? (·.1 == name) then
-    -- Default edges have no authored site. Choose an explicit edge inside
-    -- this cycle, never an unrelated channel or the path that entered it.
     let span := span.orElse fun _ =>
       (path.takeWhile (·.1 != name)).findSome? (·.2)
     return { issues := [⟨s!"colour inheritance cycle at '{name}'", span.getD ⟨"", {}⟩⟩] }
@@ -290,8 +242,7 @@ private def read (theme : String) (pal : Palette) (path : List (String × Option
     let rest := es.eraseIdx i
     let mut r : Reading := {}
     let mut aliases := pal
-    -- beamer@thc@docolor runs `use` before `parent`. Empty used channels
-    -- bind the current foreground/background, rather than no alias.
+    -- beamer@thc@docolor runs `use` before `parent`.
     for used in e.uses do
       let u := read theme aliases ((name, e.sites.lookup "use") :: path) rest used
       let fgNow := Design.printInk aliases
@@ -334,15 +285,8 @@ private def mentions : Option Value → List String
   | some (.source src) => (src.splitOn "!").map (·.trimAscii.toString)
   | _ => []
 
-/-- The elements a paint site reading channels `o` of `name` reaches, and
-the aliases the expressions it consumes name: what `read` resolves, as a
-census of whose declarations can change the paint. A channel the element's
-own value or the palette's native one fills is closed to its parents, a
-later parent's to an earlier one (beamerbasecolor.sty's `docolor`, own
-values last), and a `use` reaches only through a consumed expression naming
-its alias. So a parent the child overrides on every channel — moloch's
-block title over `structure` — is not reached, and its declaration is named
-unused (`finishBeamerColors`). -/
+/-- The elements a paint site reading channels `o` of `name` reaches, and the aliases its
+expressions name (beamerbasecolor.sty's `docolor`). -/
 private def reach (theme : String) (pal : Palette) (es : List Element) (name : String)
     (o : Open) : List String × List String := Id.run do
   if !(o.fg || o.bg) then return ([], [])
@@ -375,16 +319,13 @@ decreasing_by all_goals
   rw [List.length_eraseIdx_of_lt h']
   omega
 
-/-- beamer names these at the document's start (beamerbasecolor.sty:
-`\usebeamercolor{normal text}` and the starred `structure`, `alerted text`,
-`example text`), so any declaration may read them without `use`. -/
+/-- The colours beamer names at the document's start (beamerbasecolor.sty), readable without
+`use`. -/
 private def startColors : List String :=
   ["normal text", "structure", "alerted text", "example text"]
 
-/-- Resolve the finite set of engine sites against the declarations in force.
-Later explicit aliases of one native site win. `use` makes temporary xcolor
-aliases available to expressions, but contributes no inherited channel.
-Missing parents contribute nothing, as in Beamer. -/
+/-- Resolve the engine's sites against the declarations in force; later explicit aliases of one
+site win. -/
 public def State.resolve (s : State) (pal : Palette) : State × Palette × List Issue := Id.run do
   let base := s.painted.foldl (fun p key => p.restore s.opening (.role key)) pal
   let mut s := { s with origins := #[] }
@@ -395,8 +336,7 @@ public def State.resolve (s : State) (pal : Palette) : State × Palette × List 
   let es := allNames.foldl (fun es name =>
     if es.any (·.name == name) then es
     else es ++ [{ name := name, declared := false }]) s.elements
-  -- Frame furniture starts from normal text. Resolve that context before
-  -- the sites, even when normal text was declared after a child.
+  -- Frame furniture starts from normal text, resolved before the sites.
   let normal := read s.theme base [] es "normal text"
   let context := [(Role.ink, normal.fg), (Role.page, normal.bg)].foldl (fun p (key, value) =>
     match value.map (·.color) with
@@ -414,11 +354,8 @@ public def State.resolve (s : State) (pal : Palette) : State × Palette × List 
     if i < s.elements.length then i + 1 else 0
   let ordered := roles.mergeSort fun a b => rank a.1 ≤ rank b.1
   let normalBg := Design.printPage context
-  -- A template's site always paints, as beamerbasecolor.sty's
-  -- `\usebeamercolor` binds `fg` and `bg`: each element binds the channels
-  -- it sets and keeps the one in force where it sets none, so a channel is
-  -- the latest element's that sets it, every later element read on the way,
-  -- and else the colour in force there, normal text's.
+  -- A template's site always paints: each channel is the latest element's that sets it, else
+  -- normal text's (beamerbasecolor.sty).
   for (chain, fgKey, bgKey) in s.sites do
     let mut fg : Option Color := none
     let mut bg : Option Color := none
@@ -439,16 +376,14 @@ public def State.resolve (s : State) (pal : Palette) : State × Palette × List 
     let names := startColors.foldl (fun acc start => acc ++ (reach s.theme context es start
       { fg := said.contains (start ++ ".fg"), bg := said.contains (start ++ ".bg") }).1) names
     s := { s with reached := s.reached ++ names }
-    -- A site is repainted only when a declaration reaches it: a declared
-    -- parent its element overrides on every channel leaves it as it was.
+    -- A site is repainted only when a declaration reaches it.
     if names.any fun n => es.any fun e => e.name == n && e.declared then
       issues := issues ++ r.issues
       for (role, value) in [(fgKey, r.fg), (bgKey, r.bg)] do
         if let some key := role then
           let origin := value.bind (·.origin)
           let value := value.bind (·.color)
-          -- An empty Beamer heading inherits normal text. Erasing its
-          -- native key would instead choose the title bar's inverse ink.
+          -- An empty beamer heading inherits normal text.
           let value := if key == .frameTitleInk then value.or (some normalFg) else value
           unless s.painted.contains key do
             s := { s with opening := s.opening.restore base (.role key),

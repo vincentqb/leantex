@@ -2,24 +2,12 @@ module
 
 public import LeanTex.Core.WhatwgEncodingData
 
-/-!
-# Bytes in the encodings the web reads
-
-The WHATWG Encoding Standard's labels and the decoders an XML document's
-bytes need: UTF-16 in either byte order, the legacy single-byte encodings —
-`windows-1252` among them, which the standard reads for the labels
-`iso-8859-1`, `latin1` and `us-ascii` too, as every browser does — and
-`x-user-defined`. UTF-8 needs no decoder: the reader validates it as it
-stands. The tables are the standard's own (`WhatwgEncodingData`, generated
-from its vendored indexes); this module reads them, and states what they
-must hold (`dataFaults`, which the suite holds empty).
--/
+/-! The WHATWG Encoding Standard's labels and the decoders an XML document needs: UTF-16, the
+legacy single-byte encodings and `x-user-defined`, over `WhatwgEncodingData`. -/
 
 namespace LeanTex.Core.WhatwgEncoding
 
-/-- **The encoding a label names** (§4.2, "get an encoding"): the label with
-ASCII white space trimmed and ASCII lower-cased, looked up; none for a
-label the standard does not list. -/
+/-- The encoding a label names (§4.2), the label trimmed and lower-cased; `none` if unlisted. -/
 public def lookup (label : String) : Option String :=
   let l := label.trimAscii.toString.map Char.toLower
   (WhatwgEncodingData.labels.find? (·.1 == l)).map (·.2)
@@ -33,8 +21,7 @@ public def singleByteIndex? (name : String) : Option String :=
   if c.isDigit then c.toNat - 48 else if 'A' ≤ c && c ≤ 'F' then c.toNat - 55
   else if 'a' ≤ c && c ≤ 'f' then c.toNat - 87 else 0
 
-/-- An index's 128 scalars, byte 0x80 first; 0 where the index has no
-pointer. -/
+/-- An index's 128 scalars, byte 0x80 first; 0 where the index has no pointer. -/
 public def scalarsOf (index : String) : Array UInt32 := Id.run do
   let cs := index.toList.toArray
   let mut out : Array UInt32 := Array.mkEmpty 128
@@ -54,9 +41,8 @@ public def scalarsOf (index : String) : Array UInt32 := Id.run do
     (((out.push ((0xF0 : UInt32) ||| (c >>> 18)).toUInt8).push (cont (c >>> 12))).push
       (cont (c >>> 6))).push (cont c)
 
-/-- **A single-byte encoding's bytes as UTF-8** (§9.1's decoder), from
-`start`: an ASCII byte is itself, any other its index's scalar. The offset
-of the first byte the index does not map is the error. -/
+/-- A single-byte encoding's bytes as UTF-8 from `start` (§9.1); the error is the first unmapped
+byte's offset. -/
 public def decodeSingle (scalars : Array UInt32) (b : ByteArray) (start : Nat) :
     Except Nat ByteArray := Id.run do
   let mut out := ByteArray.emptyWithCapacity (b.size + b.size / 2)
@@ -69,8 +55,7 @@ public def decodeSingle (scalars : Array UInt32) (b : ByteArray) (start : Nat) :
       out := pushUtf8 out s
   return .ok out
 
-/-- **`x-user-defined` as UTF-8** (§14.4), from `start`: an ASCII byte is
-itself, any other U+F780 plus its distance past 0x80. -/
+/-- `x-user-defined` as UTF-8 from `start` (§14.4). -/
 public def decodeUserDefined (b : ByteArray) (start : Nat) : ByteArray := Id.run do
   let mut out := ByteArray.emptyWithCapacity (b.size * 2)
   for h : i in [start:b.size] do
@@ -78,9 +63,8 @@ public def decodeUserDefined (b : ByteArray) (start : Nat) : ByteArray := Id.run
     out := if c < 0x80 then out.push c else pushUtf8 out (0xF780 + (c - 0x80).toUInt32)
   return out
 
-/-- **UTF-16 as UTF-8** (§14.2's shared decoder), from `start`, its code
-units in the order `be` says: a surrogate pair is one scalar. A lone
-surrogate, and a final odd byte, are the error, at their offset. -/
+/-- UTF-16 as UTF-8 from `start` (§14.2), in `be`'s byte order; a lone surrogate or final odd
+byte is the error. -/
 public def decodeUtf16 (be : Bool) (b : ByteArray) (start : Nat) : Except Nat ByteArray := Id.run do
   let unit (i : Nat) : Nat :=
     let hi := (b[i]?.getD 0).toNat
@@ -104,18 +88,11 @@ public def decodeUtf16 (be : Bool) (b : ByteArray) (start : Nat) : Except Nat By
       i := i + 2
   return .ok out
 
-/-- The encodings the standard names, from its labels. It takes `Unit`, so
-the table is read when it is asked for, never when the module initializes
-in every process. -/
+/-- The encodings the standard names, from its labels, read when asked for. -/
 public def names (_ : Unit) : Array String :=
   WhatwgEncodingData.labels.foldl (fun acc (_, n) => if acc.contains n then acc else acc.push n) #[]
 
-/-- **What the tables must hold**, as the faults they would show: every
-index is 128 four-digit scalars, none a surrogate; every label lower case
-and trimmed, in strictly increasing order, so named once; every single-byte encoding one the labels name;
-and the names the decoders here read — `windows-1252` for the labels a
-browser reads as it — among them. The suite holds this empty; it takes
-`Unit`, so no process pays for it at initialization. -/
+/-- What the tables must hold, as the faults they would show; the suite holds it empty. -/
 public def dataFaults (_ : Unit) : Array String := Id.run do
   let mut out : Array String := #[]
   for (n, idx) in WhatwgEncodingData.singleByte do

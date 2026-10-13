@@ -2,16 +2,8 @@ module
 
 import LeanTex.Core.Flate
 
-/-!
-# Writing a PNG
-
-What a figure's raster becomes for the browser (ISO/IEC 15948): the
-signature, an `IHDR`, a palette where the colour type needs one, one
-`IDAT`, an `IEND`, each chunk with its CRC-32. The data is either rows of
-samples this module filters and deflates, or a zlib stream whose rows
-already carry PNG filter bytes — a PDF image deflated under a PNG
-predictor is exactly that, so it passes through untouched.
--/
+/-! PNG writing (ISO/IEC 15948): signature, `IHDR`, optional palette, one `IDAT` and `IEND`, from
+sample rows or from a zlib stream of already-filtered rows. -/
 
 namespace LeanTex.Core.PngEncode
 
@@ -61,10 +53,8 @@ public structure Header where
   colorType : Nat
   deriving Repr, BEq, Inhabited
 
-/-- A header PNG's colour-type table gives an image with no palette
-(ISO/IEC 15948 §11.2.2, Table 11.1), its size in 32 bits: greyscale at 1,
-2, 4, 8 or 16 bits; truecolour, greyscale with alpha and truecolour with
-alpha at 8 or 16. -/
+/-- A header the colour-type table admits without a palette (§11.2.2 Table 11.1), its size in
+32 bits. -/
 @[expose] public def Header.Plain (h : Header) : Prop :=
   0 < h.width ∧ h.width < 2 ^ 32 ∧ 0 < h.height ∧ h.height < 2 ^ 32 ∧
     ((h.colorType = 0 ∧ h.bitDepth ∈ [1, 2, 4, 8, 16]) ∨
@@ -75,9 +65,8 @@ method PNG defines. -/
 public def ihdr (h : Header) : ByteArray :=
   be32 h.width ++ be32 h.height ++ ⟨#[UInt8.ofNat h.bitDepth, UInt8.ofNat h.colorType, 0, 0, 0]⟩
 
-/-- **A PNG from a zlib stream of filtered rows**: the stream becomes the
-one `IDAT`, as it stands; `palette` is the `PLTE` an indexed image needs.
-What the probe reads back from one is `probe_encode_exact`. -/
+/-- A PNG from a zlib stream of filtered rows, the stream as the one `IDAT`; `palette` is an
+indexed image's `PLTE`. -/
 public def encodeIdat (h : Header) (zlib : ByteArray) (palette : Option ByteArray := none) : ByteArray :=
   signature ++ chunk tagIHDR (ihdr h) ++
     (match palette with
@@ -97,8 +86,7 @@ public def channels : Nat → Nat
 /-- One row's bytes at a bit depth. -/
 public def rowBytes (h : Header) : Nat := (h.width * channels h.colorType * h.bitDepth + 7) / 8
 
-/-- **A PNG from rows of samples**, `rowBytes h` bytes each, top row first:
-each row behind filter byte 0, the whole deflated. -/
+/-- A PNG from rows of samples, `rowBytes h` bytes each, top first, each behind filter byte 0. -/
 public def encode (h : Header) (rows : ByteArray) (palette : Option ByteArray := none) : ByteArray :=
   let rb := rowBytes h
   let filtered := Id.run do

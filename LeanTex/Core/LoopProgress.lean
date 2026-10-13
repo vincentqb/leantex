@@ -4,9 +4,7 @@ import LeanTex.Core.Loop
 
 namespace LeanTex.Core.Loop
 
-/-- A finite execution ending in `break`. Its length records consumed
-iterations, unlike a safety invariant, which cannot distinguish an early
-exit from an exhausted loop. This relation is used only in proofs. -/
+/-- A finite execution ending in `break`, its length the iterations consumed. -/
 public inductive Stops {α : Type} (step : α → Id (ForInStep α)) : α → Nat → α → Prop
   | done {a b} : (step a).run = .done b → Stops step a 1 b
   | yield {a b c n} : (step a).run = .yield b →
@@ -32,8 +30,7 @@ public theorem Yields.stops {α : Type} {step : α → Id (ForInStep α)}
   | nil => simpa using g
   | cons hs _ ih => simpa [Nat.add_assoc, Nat.add_comm, Nat.add_left_comm] using Stops.yield hs (ih g)
 
-/-- An exhausted loop executes exactly its yielding trace. Unlike a
-safety invariant, the trace records that every iteration was consumed. -/
+/-- Progress-indexed: an exhausted loop executes exactly its yielding trace. -/
 public theorem forIn_yields_exact {α β : Type} {step : α → Id (ForInStep α)}
     {a b : α} {n : Nat} (h : Yields step a n b) :
     ∀ xs : List β, xs.length = n →
@@ -53,8 +50,7 @@ public theorem forIn_yields_exact {α β : Type} {step : α → Id (ForInStep α
       simp only [List.forIn_cons, bind, Id.run, hs]
       exact ih xs (by simpa using hn)
 
-/-- A sufficient iteration budget executes the entire trace, independently
-of unused iterations after its `break`. -/
+/-- Progress-indexed: a sufficient budget executes the whole trace to its `break`. -/
 public theorem forIn_stops_exact {α β : Type} {step : α → Id (ForInStep α)}
     {a b : α} {n : Nat} (h : Stops step a n b) :
     ∀ (xs : List β), n ≤ xs.length →

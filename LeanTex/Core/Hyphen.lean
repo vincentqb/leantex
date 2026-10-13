@@ -11,10 +11,8 @@ namespace LeanTex.Core.Hyphen
 
 open Std
 
-/-- Liang patterns: letters → inter-letter weights (odd allows a break),
-plus the exception dictionary. The hyphenation minima are locale data
-(babel ini `lefthyphenmin`/`righthyphenmin`): the shortest fragment a
-break may leave on each side. -/
+/-- Liang patterns: letters to inter-letter weights (odd allows a break), the exception
+dictionary, and the locale's hyphenation minima. -/
 public structure Patterns where
   map : HashMap String (Array Nat)
   exceptions : HashMap String (Array Nat)
@@ -43,8 +41,7 @@ private def parseException (w : String) : String × Array Nat := Id.run do
       word := word.push c
   return (word, breaks)
 
-/-- Build one language's table from its generated pattern strings and its
-locale's hyphenation minima. -/
+/-- Build one language's table from its generated pattern strings and its locale's minima. -/
 public def load' (patternData exceptionData : String) (leftMin rightMin : Nat) :
     Patterns := Id.run do
   let mut map : HashMap String (Array Nat) := {}
@@ -61,8 +58,6 @@ public def load' (patternData exceptionData : String) (leftMin rightMin : Nat) :
       exceptions := exceptions.insert word breaks
   return { map, exceptions, maxLen, leftMin, rightMin }
 
--- Parse each language's table only when first selected.
-
 public def english : Thunk Patterns := Thunk.mk fun _ =>
   load' HyphenData.patterns HyphenData.exceptions
     Locale.en.leftMin Locale.en.rightMin
@@ -75,8 +70,7 @@ public def german : Thunk Patterns := Thunk.mk fun _ =>
   load' HyphenDataDe.patterns HyphenDataDe.exceptions
     Locale.de.leftMin Locale.de.rightMin
 
-/-- Select the pattern table for a BCP 47 tag. A language without a
-supported table has no hyphenation patterns. -/
+/-- The pattern table for a BCP 47 tag, if the language has one. -/
 public def forTag (tag : String) : Option Patterns :=
   match (Locale.forTag tag).map (·.tag) with
   | some "en" => some english.get
@@ -84,8 +78,7 @@ public def forTag (tag : String) : Option Patterns :=
   | some "de" => some german.get
   | _ => none
 
-/-- The candidate break weights of the pattern walk, before the minima
-filter: every odd inter-letter weight, over the dot-wrapped word. -/
+/-- The candidate breaks of the pattern walk before the minima filter: every odd weight. -/
 private def rawBreaks (pats : Patterns) (lower : String) : Array Nat := Id.run do
   let wrapped := ("." ++ lower ++ ".").toList.toArray
   let l := wrapped.size
@@ -106,10 +99,8 @@ private def rawBreaks (pats : Patterns) (lower : String) : Array Nat := Id.run d
       breaks := breaks.push (i - 1)
   return breaks
 
-/-- Break positions (letters before the break) for a word, folded to
-lowercase (Unicode fold: the fr patterns spell é directly). Only positions
-respecting leftMin/rightMin are returned — the shape is one final filter,
-which is what `hyphenate_respects_min` reads. -/
+/-- Break positions (letters before the break) for a word folded to lowercase, respecting
+leftMin and rightMin. -/
 public def hyphenate (pats : Patterns) (word : String) : Array Nat :=
   let lower := String.ofList (word.toList.map Nfc.toLower)
   let candidates :=
@@ -119,10 +110,6 @@ public def hyphenate (pats : Patterns) (word : String) : Array Nat :=
       | none => rawBreaks pats lower
   candidates.filter fun p => p ≥ pats.leftMin && p + pats.rightMin ≤ lower.length
 
-/-- Every break respects the locale's hyphenation minima: at least
-`leftMin` letters stay before the hyphen and `rightMin` after (babel ini
-`lefthyphenmin`/`righthyphenmin`; TeX's `\lefthyphenmin` semantics). What
-makes German's 2/2 safe to vary per locale. -/
 public theorem hyphenate_respects_min (pats : Patterns) (word : String) :
     ∀ p ∈ hyphenate pats word,
       pats.leftMin ≤ p ∧

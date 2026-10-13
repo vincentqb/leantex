@@ -4,27 +4,13 @@ public import LeanTex.Core.Elab
 
 import all LeanTex.Core.Elab
 
-/-!
-# A group the block walk meets restores its declaration state
-
-`texGroup_scope_id` is the restore as an equation over any action. The
-statements here read it through the block walk's own dispatch for two
-shapes: a document whose body is one environment holding block content, and
-one whose body is one braced group of block content with no paragraph end.
-Both go through `texGroup`, so the state after them is the state before
-them (TeXbook ch. 24), the global assignments logged inside aside. The rest
-of the walk's dispatch — a group split at a paragraph end, a column, an
-inline group, a group among other raws — goes through the same `texGroup` or
-`inlineGroup` with no theorem of its own here; `Tests.GroupScope` holds
-probes of those against lualatex.
--/
+/-! A group the block walk meets restores its declaration state: `texGroup_scope_id` read through
+the walk's dispatch for an environment body and a braced block group. -/
 
 namespace LeanTex.Core.Elab
 
 open Parse Ir
 
-/-- The spine past its last raw with nothing open: whatever the flow
-generation, it returns its blocks and leaves the state alone. -/
 private theorem elabBlocksGo_past (ctx : Ctx) (st : ESt) (raws : Array Raw) (i : Nat)
     (blocks : Array Block) (gen : Nat)
     (hm : ctx.macroRoles = ({file := ""} : Ctx).macroRoles) (hi : raws.size ≤ i) :
@@ -47,8 +33,6 @@ private theorem groupPictureInSentence_alone (ctx : Ctx) (body : Array Raw) (pos
   unfold groupPictureInSentence
   split <;> simp [pictureInSentence]
 
-/-- The spine at an environment standing alone, nothing open before it:
-the environment's arm through `envGroup`, then the walk past it. -/
 private theorem elabBlocksGo_env_alone (ctx : Ctx) (st : ESt) (n : String) (body : Array Raw)
     (pos : Pos) (hm : ctx.macroRoles = ({file := ""} : Ctx).macroRoles) (hp : pos.origins = [])
     (hb : bodyIsBlock body = true) (hl : n ≠ Compat.linkedBoxRowMark) :
@@ -61,8 +45,6 @@ private theorem elabBlocksGo_env_alone (ctx : Ctx) (st : ESt) (n : String) (body
   simp [hl, hb, pictureInSentence_alone, flushPara_empty ctx _ hm, Ir.flushedText_empty_exact,
     Ir.lastLeavesEndPe_empty_exact, endPeAt, parFollows]
 
-/-- The spine at a braced group of block content standing alone, nothing
-open before it: the group through `groupBlocks`, then the walk past it. -/
 private theorem elabBlocksGo_group_alone (ctx : Ctx) (st : ESt) (body : Array Raw)
     (pos : Pos) (hm : ctx.macroRoles = ({file := ""} : Ctx).macroRoles) (hp : pos.origins = [])
     (hpar : body.any isParRaw = false) (hb : bodyIsBlock body = true) :
@@ -79,14 +61,11 @@ private theorem elabBlocksGo_group_alone (ctx : Ctx) (st : ESt) (body : Array Ra
   rw [blockMacroStep_idle ctx st _ 0 #[] #[] hm (by simp) (by simpa [Raw.origins?] using hp)]
   simp [hpar, hb, ha, groupPictureInSentence_alone, flushPara_empty ctx _ hm]
 
-/-- What the walk's tail does to the state: nothing the declaration state
-reads. -/
 private theorem closeBlockScope_scope (ctx : Ctx) (base : Option Nat) (bs : Array Block)
     (st : ESt) : ((closeBlockScope ctx #[] base bs).run st).2.scope = st.scope := by
   simp [closeBlockScope, closeLengthScope, setFrameSourceBase]
   rfl
 
-/-- `texGroup`'s blocks with its epoch appended keep its state. -/
 private theorem groupBlocks_state (base : Palette) (act : EM (Array Block)) (st : ESt) :
     ((groupBlocks base act).run st).2 = ((texGroup base act).run st).2 := by
   rfl
@@ -98,12 +77,6 @@ private theorem envGroup_state (n : String) (base : Palette) (inPar parEnd after
   simp [envGroup, hfile]
   rfl
 
-/-- **An environment is a group**: a body that is one environment holding
-block content (`bodyIsBlock`) leaves the declaration state as its `\begin`
-found it when nothing inside made a global assignment, whatever the
-environment's arm does — `texGroup_scope_id` read through the walk's own
-dispatch. An `\input` file's wrapper names a file and opens no group, so it
-is not one. -/
 public theorem elabBlocks_env_scope_id (ctx : Ctx) (st : ESt) (n : String) (body : Array Raw)
     (pos : Pos) (hm : ctx.macroRoles = ({file := ""} : Ctx).macroRoles) (hp : pos.origins = [])
     (hb : bodyIsBlock body = true) (hl : n ≠ Compat.linkedBoxRowMark)
@@ -138,9 +111,6 @@ public theorem elabBlocks_env_scope_id (ctx : Ctx) (st : ESt) (n : String) (body
   rw [hfinal, hclose, hstate, texGroup_globals_exact] at hglobal
   exact texGroup_scope_id ctx.palette act (enterBodyScope st) hglobal
 
-/-- **A braced group of block content is a group**: a body that is one such
-group with no paragraph end inside leaves the declaration state as its `{`
-found it when nothing inside made a global assignment. -/
 public theorem elabBlocks_group_scope_id (ctx : Ctx) (st : ESt) (body : Array Raw)
     (pos : Pos) (hm : ctx.macroRoles = ({file := ""} : Ctx).macroRoles) (hp : pos.origins = [])
     (hpar : body.any isParRaw = false) (hb : bodyIsBlock body = true)

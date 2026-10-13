@@ -3,17 +3,8 @@ module
 import Lean.Data.Json
 public import LeanTex.Core.Ir
 
-/-!
-The pure boundary for external listing classification. Source is normalized
-once by the IR's verbatim reader; a tool supplies class names and exact text,
-never HTML, colours, font names, code to evaluate, or a document replacement.
-
-Pygments' token hierarchy and unprocessed-token interface are documented at
-https://pygments.org/docs/tokens/ and https://pygments.org/docs/api/#lexers.
-A class name is carried as its token type (`Kind.ofPygments`); the shipped
-style tables paint it through its ancestors (`PygmentsStyle`), never through
-anything the provider sends besides the name.
--/
+/-! The pure boundary for external listing classification (Pygments' token interface): a tool
+supplies class names and exact text, never markup, colours, fonts or code. -/
 namespace LeanTex.Core.ListingReply
 
 open Lean (Json toJson)
@@ -24,8 +15,8 @@ public structure Request where
   source : String
   deriving BEq, ReflBEq, LawfulBEq, Repr
 
-/-- Normalize only at the frontend boundary. Calling `verbatimLines` on
-`request.source` again would discard a retained initial blank line. -/
+/-- A request, its source normalized once here; normalizing again would drop a leading blank
+line. -/
 public def Request.ofSource (language : String) (rawSource : String) : Request :=
   { language := language.trimAscii.toString.toLower
     source := String.intercalate "\n" (Ir.verbatimLines rawSource).toList }
@@ -33,18 +24,15 @@ public def Request.ofSource (language : String) (rawSource : String) : Request :
 public def Request.lines (request : Request) : Array String :=
   if request.source.isEmpty then #[] else (request.source.splitOn "\n").toArray
 
-/-- Classification data, always checked by `lookup` before installation.
-The shared IR reader checks it again before either artifact consumes it. -/
+/-- Classification data, checked by `lookup` before installation. -/
 public structure Answer where
   request : Request
   tokens : Array (Array Token)
   deriving BEq, Repr
 
-/-- Requests are leaves of the one generic document fold, including listings
-inside captions, notes and nested containers, for the languages no native
-lexer reads, then the inline code the elaborator met in such a language
-(`inline`, language and source). Styles share a classification. -/
--- conserves: none — this collector returns requests, not a rewritten document.
+/-- The classification requests a document's listings and inline code make, for languages no
+native lexer reads. -/
+-- conserves: none — a collector of requests, not a rewritten document.
 public def requests (doc : Ir.Doc) (inline : Array (String × String) := #[]) :
     Array Request :=
   let asked (acc : Array Request) (language source : String) : Array Request :=
@@ -61,8 +49,8 @@ public def requests (doc : Ir.Doc) (inline : Array (String × String) := #[]) :
     | _ => acc)
   inline.foldl (fun acc (language, source) => asked acc language source) listings
 
-/-- Exact content-key lookup, with the raw source checked at the install
-site as well. A foreign, stale, or malformed answer cannot change code. -/
+/-- Exact content-key lookup, the raw source checked again; a foreign or stale answer changes
+nothing. -/
 public def lookup (answers : Array Answer) (language : String)
     (rawSource : String) : Option (Array (Array Token)) :=
   let request := Request.ofSource language rawSource
@@ -73,9 +61,6 @@ public def lookup (answers : Array Answer) (language : String)
       some answer.tokens
     else none
 
-/-- Every installed classification comes from the snapshot's exact language
-and source key, and reproduces the original lines. Text equality alone would
-admit another language's classification of the same source. -/
 public theorem lookup_contract (answers : Array Answer) (language : String)
     (source : String) (highlight : Array (Array Token))
     (h : lookup answers language source = some highlight) :
@@ -93,7 +78,6 @@ public theorem lookup_contract (answers : Array Answer) (language : String)
       exact ⟨⟨answer, Array.mem_of_find?_eq_some found, key, rfl⟩, by assumption⟩
     · contradiction
 
-/-- A lookup is installable only for the original listing's exact lines. -/
 public theorem lookup_source_exact (answers : Array Answer) (language : String)
     (source : String) (highlight : Array (Array Token))
     (h : lookup answers language source = some highlight) :
@@ -112,9 +96,7 @@ public def Failure.reason : Failure → String
   | .sourceMismatch => "the highlighter did not preserve the source"
   | .budget => "the highlighter exceeded its resource limit"
 
-/-- Source-valid plain data for a completed refusal. Its typed failure is
-returned alongside it by `decode`; callers retaining answers must retain
-failures too. Interrupted or unstarted attempts have no answer to remember. -/
+/-- Source-valid plain data for a completed refusal; its typed failure travels beside it. -/
 public def plainAnswer (request : Request) : Answer :=
   { request
     tokens := request.lines.map fun text => #[{ text }] }
@@ -129,11 +111,8 @@ public structure Classified where
   text : String
   deriving BEq, Repr
 
-/-- Split token text at LF without losing blank lines or indentation.
-Empty chunks need no run, and adjacent chunks of one type share a token, as
-a native lexer's lines do (`ListingHighlight.tokenize`). Validation below
-also checks the resulting lines, so this representation step is not a second
-trusted lexer. -/
+/-- Split token text at LF, keeping blank lines and indentation; adjacent chunks of one type
+share a token. -/
 private def splitTokens (tokens : Array Classified) : Array (Array Token) := Id.run do
   let mut lines : Array (Array Token) := #[#[]]
   for token in tokens do
@@ -141,8 +120,7 @@ private def splitTokens (tokens : Array Classified) : Array (Array Token) := Id.
     let parts := token.text.splitOn "\n"
     for (part, i) in parts.zipIdx do
       if i > 0 then lines := lines.push #[]
-      -- The line is modified where it stands: read out and set back, it was
-      -- shared at every write and copied at every token.
+      -- The line is modified in place, never shared and copied per token.
       if !part.isEmpty then
         lines := lines.modify (lines.size - 1) fun last =>
           match last.back? with
@@ -152,11 +130,8 @@ private def splitTokens (tokens : Array Classified) : Array (Array Token) := Id.
           | none => last.push { kind, text := part }
   return lines
 
-/-- Offsets count Unicode characters, as Pygments does. Every token starts
-where its predecessor ended; the whole text and every normalized line must
-also match. `terminalLf` allows exactly one lexer-only LF after the requested
-source: validate it before removing its empty last line. No authored whitespace
-is trimmed, and the answer keeps the original content key. -/
+/-- Validate a tool's tokens against the request, offsets in characters as Pygments counts them;
+`terminalLf` admits one trailing LF. -/
 public def ofTokens (request : Request) (tokens : Array Classified)
     (terminalLf : Bool := false) : Except Failure Answer :=
   let contiguous := (tokens.foldl (fun (offset, valid) token =>
@@ -172,8 +147,6 @@ public def ofTokens (request : Request) (tokens : Array Classified)
       .ok { request, tokens := highlight }
     else .error .sourceMismatch
 
-/-- Successful validation preserves the source lines and content key in both
-raw and terminal-LF modes. The lexical boundary never becomes displayed text. -/
 public theorem ofTokens_source_exact (request : Request) (tokens : Array Classified)
     (terminalLf : Bool) (answer : Answer)
     (h : ofTokens request tokens terminalLf = .ok answer) :
@@ -189,9 +162,8 @@ public theorem ofTokens_source_exact (request : Request) (tokens : Array Classif
       exact ⟨rfl, by assumption⟩
     · contradiction
 
--- Operational protocol ceilings: one MiB of source per batch, at most 256
--- requests and 262144 token records, and sixteen MiB of UTF-8 JSON. These
--- limit allocation and process capture, not the syntax of any language.
+-- Protocol ceilings on allocation and capture: 1 MiB of source, 256 requests, 262144 token
+-- records, 16 MiB of JSON.
 public def maxSourceBytes : Nat := 1024 * 1024
 public def maxRequests : Nat := 256
 public def maxTokens : Nat := 262144
@@ -202,7 +174,7 @@ public def withinBudget (rs : Array Request) : Bool :=
     rs.foldl (fun bytes r => bytes + r.source.utf8ByteSize + r.language.utf8ByteSize) 0
       ≤ maxSourceBytes
 
-/-- Only language and normalized source cross the process boundary as data. -/
+/-- The batch's wire form: only language and normalized source cross the process boundary. -/
 public def encode (rs : Array Request) : String :=
   (Json.mkObj [
     ("version", toJson (1 : Nat)),
@@ -215,10 +187,8 @@ private def classified (value : Json) : Except String Classified := do
            tokenClass := ← value.getObjValAs? String "kind"
            text := ← value.getObjValAs? String "text" }
 
-/-- Decode a complete v1 batch or reject it as a whole. Reordered, missing
-and repeated content keys never partially poison the cache. Per-request
-errors are completed plain replies with a typed failure keyed by the request.
-The CLI owns diagnostic translation; external error text is never its prose. -/
+/-- Decode a complete v1 batch or reject it whole; a per-request error is a plain reply with a
+typed failure. -/
 public def decode (rs : Array Request) (body : String) (terminalLf : Bool := false) :
     Except String (Array Answer × Array (Request × Failure)) := do
   if !withinBudget rs || body.utf8ByteSize > maxReplyBytes then

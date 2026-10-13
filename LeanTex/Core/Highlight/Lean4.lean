@@ -3,13 +3,9 @@ module
 public import LeanTex.Core.Highlight.Scan
 import LeanTex.Core.PygmentsLexData
 
-/-!
-Pygments' `Lean4Lexer` (pygments/lexers/lean.py), rule for rule; the rule
-structure it mirrors is testdata/highlight/pygments-rules.txt. A port of
-BSD-licensed code: Pygments' licence is testdata/highlight/LICENSE-Pygments. Every state
-falls through to a rule that consumes, except `string`, whose unlisted
-escapes take the shared fallback.
--/
+/-! Pygments' `Lean4Lexer` (pygments/lexers/lean.py) rule for rule, mirroring
+testdata/highlight/pygments-rules.txt. A port of BSD-licensed code: Pygments' licence is
+testdata/highlight/LICENSE-Pygments. -/
 namespace LeanTex.Core.Highlight.Lean4
 
 private inductive St where
@@ -34,9 +30,7 @@ private def sets : Thunk Sets := Thunk.mk fun _ =>
 
 private abbrev M := Machine St
 
-/-- The text, and the one table a rule reads past the scalars it writes:
-the end of a run of `\w` and `'`, which `[~?][a-z][\w']*:` reads before it
-knows whether its colon follows. -/
+/-- The text, and the end of each `[\w']` run, which `[~?][a-z][\w']*:` reads before its colon. -/
 private structure Ix where
   s : Src
   label : Table Nat

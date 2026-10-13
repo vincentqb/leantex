@@ -7,49 +7,8 @@ import LeanTex.Core.Oklab
 import Std.Data.HashMap
 import Std.Data.HashSet
 
-/-!
-Colour as a checkable contract: WCAG 2.2 relative luminance and contrast
-ratio as pure integer arithmetic over the engine's 8-bit `Color`.
-
-Sources, and the rule taken from each:
-
-* https://www.w3.org/TR/WCAG22/#dfn-relative-luminance — for sRGB,
-  L = 0.2126·R + 0.7152·G + 0.0722·B where each channel c/255 is linearised
-  as c'/12.92 when c' ≤ 0.04045, else ((c' + 0.055)/1.055)^2.4. (The 0.04045
-  threshold is the errata'd value; the older 0.03928 makes no difference for
-  8-bit channels — no 8-bit value falls between them.)
-* https://www.w3.org/TR/WCAG22/#dfn-contrast-ratio — ratio =
-  (L1 + 0.05)/(L2 + 0.05), lighter over darker, range 1:1 to 21:1. Note 3
-  there: when no background is specified, white is assumed.
-* https://www.w3.org/TR/WCAG22/#contrast-minimum — SC 1.4.3 (AA): text 4.5:1;
-  large-scale text 3:1; text in inactive components or pure decoration exempt.
-  Large-scale is ≥ 18pt, or ≥ 14pt bold (glossary, "large scale").
-* https://www.w3.org/TR/WCAG22/#contrast-enhanced — SC 1.4.6 (AAA): 7:1,
-  large text 4.5:1.
-* https://www.w3.org/TR/WCAG22/#non-text-contrast — SC 1.4.11 (AA): visual
-  information required to identify UI components (the focus indicator here)
-  needs 3:1 against adjacent colours.
-* https://www.w3.org/TR/WCAG22/#use-of-color — SC 1.4.1 (A): colour must not
-  be the only visual means of conveying information. In this engine a link
-  carries an underline in both backends and `\alert` maps to bold, so neither
-  relies on colour; the checks live in the test suite.
-* https://ctan.org/pkg/xcolor (Kern, *Extending LaTeX's color facilities*),
-  §2 "colour expressions": `a!P!b` is the convex combination P/100·a +
-  (1−P/100)·b computed in the first colour's model, a trailing `!P` fills
-  up with white. `Ir.Color.mix`/`Ir.Palette.resolve` implement exactly
-  that, on raw sRGB components — the model xcolor computes rgb mixes in.
-  Consequence, stated rather than claimed away: sRGB components are not
-  perceptually linear, so `a!50!b` is xcolor's midpoint, not the colour a
-  viewer would judge halfway between `a` and `b`.
-
-WCAG 2.x is the standard in force; APCA (the WCAG 3 draft contrast method,
-https://www.w3.org/TR/wcag-3.0/) is not implemented here because it is a
-working draft.
-
-These are the thresholds the engine's own shipped pairings are proved
-against (kernel-checked `decide` over the integer arithmetic below), and
-the ones document-level diagnostics report.
--/
+/-! WCAG 2.2 contrast judgement over the engine's colours: the document's contrast report,
+the colour-scheme judge for web pages, and the palette contracts of the shipped bundles. -/
 
 namespace LeanTex.Core.Contrast
 
@@ -64,73 +23,47 @@ public def ratioString (milli : Nat) : String :=
   let frac := (milli % 1000) / 10
   s!"{milli / 1000}.{if frac < 10 then "0" else ""}{frac}:1"
 
--- The document-level check: the pairings a document's own colours create.
-
 private def hexOf (c : Color) : String :=
   s!"#{Color.hexByte c.r}{Color.hexByte c.g}{Color.hexByte c.b}"
 
-/-- One coloured text occurrence: the name it was used under when it had
-one, the colour, whether it stood as large-scale text (≥ 18pt, or bold
-≥ 14pt — the WCAG 2.2 glossary sizes, against the document's own resolved
-base size) — and the epoch it stood in: the effective page under it and
-whether it was decorative-exempt there. A pairing is judged against the
-palette in force where it is used, never the document's final one. -/
+/-- One coloured text occurrence, judged against the palette in force where it stands. -/
 private structure Use where
   name : Option ColorRef
   color : Color
   large : Bool
-  /-- The effective page under this use: the local ground where one stands
-  (the frame-title bar, the standout inversion), else the epoch palette's
-  `bg`, else the shipped light surface when undeclared (WCAG
-  contrast-ratio Note 3). Per pair, not per token: the same colour is
-  judged once per surface it sits on. -/
+  /-- The page under this use: its local ground, else the epoch's `bg`, else the light surface. -/
   surface : Color
   /-- What the diagnostic calls the surface; `none` reads "the page". -/
   groundName : Option String := none
-  /-- The palette role the surface is (`UseCx.groundRole`, the page where the
-  use stands on it). -/
   surfaceRole : Option Role := none
-  /-- Exempt where it stood: `covered`, a name the epoch's decorative set
-  carries, or an anonymous value a decorative entry names. -/
+  /-- Exempt where it stood: covered, or declared decorative in its epoch. -/
   exempt : Bool
-  /-- The palette in force at the use: what its decorative exemption and its
-  authored site are read under. -/
+  /-- The palette in force at the use. -/
   pal : Palette
-  /-- The coloured run the use stands in (one per `.colored` inline and per
-  furniture use): what a pairing's site count counts. -/
+  /-- The coloured run the use stands in. -/
   site : Nat := 0
-  /-- The highlighting style a listing token's colour is the style's own
-  under — a code role the palette leaves undeclared, which the style
-  states: what the report names it by, since the document wrote no key. -/
+  /-- The highlighting style whose own colour a listing token carries. -/
   styleName : Option String := none
   deriving BEq
 
-/-- The walk's fold state: the palette in force (epoch), the uses with
-their epochs resolved, and the design sites the per-epoch site judge needs
-— which epochs shipped a titled frame, a standout frame, or pending overlay
-content. Palettes dedup on push: a document has few epochs, and each is
-judged once. -/
+/-- The walk's fold state: the palette in force, the uses, and each design site's epochs. -/
 private structure UseAcc where
   pal : Palette
   uses : Array Use := #[]
-  /-- Every `.setPalette` snapshot met, in flow order: the epochs whose
-  effective ink/page pair is judged beside epoch 0's. -/
+  /-- Every `.setPalette` snapshot met, in flow order. -/
   epochs : Array Palette := #[]
   titledPals : Array Palette := #[]
   /-- Epochs of numbered frames whose chrome footer actually ships. -/
   footPals : Array Palette := #[]
-  /-- Epochs that shipped a titled block, per kind: the kind's resolved
-  title pair is judged against the palette in force at the block. -/
+  /-- Epochs that shipped a titled block, per kind. -/
   blockPals : Array (TitledKind × Palette) := #[]
   standoutPals : Array Palette := #[]
-  /-- Epochs that shipped a title page with a declared ground of its own:
-  the site the judge reads there, against the palette in force. -/
+  /-- Epochs that shipped a title page with a declared ground of its own. -/
   titlePagePals : Array Palette := #[]
   /-- Epochs that shipped a link: where the HTML page draws a focus ring. -/
   linkPals : Array Palette := #[]
   pendingPals : Array Palette := #[]
-  /-- The colours some handout page covers, each beside the epoch it stands
-  in: the covered judgement reads a colour's cover where one is shown. -/
+  /-- The colours some handout page covers, each beside its epoch. -/
   coveredNames : Array (Palette × ColorRef) := #[]
   /-- The coloured runs met so far: the next run's site number. -/
   runs : Nat := 0
@@ -138,51 +71,38 @@ private structure UseAcc where
 private def pushUnique [BEq α] (xs : Array α) (p : α) : Array α :=
   if xs.contains p then xs else xs.push p
 
-/-- The effective page of a palette: its `bg`, else the screen's own light
-page (the same rule `effectivePair` applies to epoch 0). -/
+/-- The effective page of a palette: its `bg`, else the shipped light surface. -/
 private def surfaceOf (pal : Palette) : Color :=
   (Design.at pal .light .page).getD Color.white
 
-/-- The text-size context of the walk below. `size` follows the layout
-semantics: a size declaration sets a factor over the document base (`base`
-here, so `\normalfont` can restore it), it does not compound. -/
+/-- The walk's text context; a size declaration sets a factor over `base`, never compounding. -/
 private structure UseCx where
   base : Sp
   size : Sp
-  /-- Inside overlay content some handout page covers (`UseAcc.step`). -/
+  /-- Inside overlay content some handout page covers. -/
   covering : Bool := false
   slides : Bool := false
   chromeFoot : Bool := false
   bold : Bool := false
   cur : Option (Option ColorRef × Color × Nat) := none
-  /-- The local ground under this content, when it is not the page: the
-  frame-title bar, the standout inversion. A pairing is judged against
-  the surface it actually sits on — the same colour can pass on the page
-  and fail on the bar (per-pair resolution, not per-token). -/
+  /-- The local ground under this content when it is not the page. -/
   ground : Option Color := none
   /-- What the diagnostic calls the ground ("the frame-title bar"); `none`
   reads "the page". -/
   groundName : Option String := none
-  /-- The palette role the ground is, where one is: what a scheme carries
-  the ground as (`Ir.Palette.useGround`). -/
   groundRole : Option Role := none
-  /-- A frame-entry ground lasts only until the next palette declaration,
-  even when that declaration repeats the same palette. -/
+  /-- A frame-entry ground lasts until the next palette declaration, even a repeated one. -/
   groundEpoch : Option Nat := none
   /-- A body's default ink follows a palette declaration, while its
   physical fill remains the enclosing surface. -/
   inkEpoch : Option Nat := none
-  /-- Frame default for a nested surface; the frame's own default pair is
-  already judged by its design-site contract. -/
+  /-- The frame's default ink for a nested surface. -/
   inheritedInk : Option (ColorRef × Color) := none
   /-- The highlighting style of the listing this content is a token of. -/
   codeStyle : Option String := none
-  /-- Whether the walk reads the design sites alone: a listing's tokens are
-  uses and no event, so such a walk passes over them. -/
+  /-- Whether the walk reads the design sites alone, passing over listing tokens. -/
   sitesOnly : Bool := false
-  /-- The document's element styles: a heading's or a block title's font
-  template is filled around its title as both backends fill it
-  (`Ir.fillTemplate`), so a colour the template sets is a use. -/
+  /-- The document's element styles, whose font templates' colours are uses. -/
   styles : Styles := {}
 
 private def UseCx.atEpoch (cx : UseCx) (pal : Palette) (epoch : Nat) : UseCx :=
@@ -190,36 +110,26 @@ private def UseCx.atEpoch (cx : UseCx) (pal : Palette) (epoch : Nat) : UseCx :=
     { cx with cur := some (some (.role .ink), Design.printInk pal,
         (cx.cur.map (·.2.2)).getD 0), inkEpoch := some epoch }
     else cx
-  -- premise: listingPaletteAuditChecks — a body declaration replaces the
-  -- entry ground; its colour equality cannot stand in for the boundary.
+  -- premise: listingPaletteAuditChecks — a body declaration replaces the entry ground
   if cx.groundEpoch.any (· != epoch) then
     { cx with ground := none, groundName := none, groundRole := none, groundEpoch := none
               inheritedInk := none }
   else cx
 
-/-- Whether a use stands as large-scale text at the size its medium shows it.
-A deck's stage is shown at the size of the screen it is projected on — a
-4:3 stage 96 mm tall on a 1080-pixel display sets its 11pt body near 33pt,
-past WCAG 2.2's 18pt large-scale threshold — so every slide text is
-large-scale; elsewhere the glossary sizes at the document's own base. -/
+/-- Whether a use is large-scale text at the size its medium shows it; slide text always is. -/
 private def UseCx.large (cx : UseCx) : Bool :=
   cx.slides || largeText cx.size cx.bold
 
 private def UseCx.style (cx : UseCx) : Style → UseCx
   | .bold => { cx with bold := true }
   | .medium => { cx with bold := false }
-  -- WCAG 2.2's large-text criterion says "bold"; the registry boundary
-  -- `Weight.isBold` (700) is where a series starts counting as that.
   | .series w => { cx with bold := w.isBold }
   | .normal => { cx with size := cx.base, bold := false }
   | .size n => match sizeScale.lookup n with
     | some k => { cx with size := cx.base * k / 1000 }
     | none => cx
   | .fontSize size _ =>
-    -- The contrast walk has no measured box or font face. An unresolved
-    -- relative size cannot inherit a preceding large-text exemption.
-    -- premise: contrastChecks — absolute sizes replace the named scale;
-    -- a font-relative size keeps the ordinary text threshold.
+    -- premise: contrastChecks — a font-relative size keeps the ordinary threshold
     match size.resolve (fun _ => none) with
     | .ok g =>
       { cx with size := if g.width.em == 0 && g.width.ex == 0 then g.width.sp else 0 }
@@ -252,36 +162,18 @@ private def UseAcc.use (acc : UseAcc) (cx : UseCx) (nm : Option ColorRef)
     | none => acc.coveredNames
   { acc with uses := acc.uses.push u, coveredNames }
 
-/-- Pending overlay content: a step whose range starts (or ends) past the
-first step covers on some handout page — the fact that gates the covered
-judgement, recorded against the epoch it happens in. -/
+/-- Record pending overlay content: a step range past the first step covers on a handout page. -/
 private def UseAcc.step (acc : UseAcc) (spec : Ir.OverlaySpec) : UseAcc :=
   if spec.maxStep ≥ 2 then
     { acc with pendingPals := pushUnique acc.pendingPals acc.pal }
   else acc
 
-/-- The context a heading's title sets: the type scale's per-level sizes —
-`Ir.headingSize`, the one function the page sets titles with
-(`Layout.sectionSize`) — in bold. The level-0 title takes the scale's LARGE
-step, the elaborator's `\maketitle` size, which `headingSize` does not
-serve here. Judging at the size the page
-ships is what makes the large-scale call (WCAG 2.2 glossary: ≥ 18pt, or
-bold ≥ 14pt) the page's own: a re-spelled absolute here once judged a
-phantom 14 pt bold while a 9 pt base set its sections at 12.96 pt. -/
+/-- The context a heading's title sets: bold, at the type scale's size for its level. -/
 private def headingCx (base : Sp) : Ir.HeadingLevel → UseCx
   | 0 => { base, size := scaleStep base "LARGE"
            bold := true }
   | l => { base, size := Ir.headingSize base l, bold := true }
 
-/-- The judge and the page agree on heading sizes by construction: for the
-sectioning levels, `headingCx` reads `Ir.headingSize` — the function the
-layout sets titles with (`Layout.sectionSize`) — so the WCAG large-scale
-judgement is made at the size the page ships, never at a re-spelled
-absolute. Stated so the
-derivation cannot drift back: the old 14 pt / 12 pt absolutes passed a
-9 pt-base section (12.96 pt on the page, not large-scale) as a phantom
-14 pt bold, which is — the judge passing text the page fails, the exact
-defect class it exists to catch. -/
 private theorem contrast_judges_what_layout_sets (base : Sp) :
     ∀ l : Ir.HeadingLevel, l ≠ .title →
       (headingCx base l).size = Ir.headingSize base l
@@ -308,26 +200,21 @@ private def usesInline (cx : UseCx) (acc : UseAcc) : Inline → UseAcc
     match cx.cur with
     | some (nm, c, _) => acc.use cx nm c
     | none => acc
-  -- A resolved reference is ink in the current colour, like a number, and a
-  -- link on the HTML page, which draws the focus ring around it.
   | .ref _ _ _ _ =>
     let acc := { acc with linkPals := pushUnique acc.linkPals acc.pal }
     match cx.cur with
     | some (nm, c, _) => acc.use cx nm c
     | none => acc
-  -- Judge only ink used by the formula; an inner switch may replace all
-  -- uses of its inherited colour.
+  -- Judge only ink the formula uses: an inner switch may replace its inherited colour.
   | .formula _ _ body =>
     let ink := cx.cur.map fun (nm, c, _) => (c, nm)
     (Math.MList.inks ink #[] body).foldl (fun a (c, nm) =>
       { a.use { cx with cur := some (nm, c, a.runs) } nm c with runs := a.runs + 1 }) acc
-  -- an anchor ships no ink
   | .label _ => acc
   | .styled st body => usesInlines (cx.style st) acc body.toList
   | .colored c nm body =>
     usesInlines { cx with cur := some (nm, c, acc.runs) } { acc with runs := acc.runs + 1 }
       body.toList
-  -- a role names its content; the ink inside keeps the current colour
   | .located _ body => usesInlines cx acc body.toList
   | .role _ body => usesInlines cx acc body.toList
   | .link _ body =>
@@ -335,24 +222,17 @@ private def usesInline (cx : UseCx) (acc : UseAcc) : Inline → UseAcc
   | .decorated _ body => usesInlines cx acc body.toList
   | .onSteps spec body =>
     usesInlines { cx with covering := cx.covering || spec.maxStep ≥ 2 } (acc.step spec) body.toList
-  -- An alternative is never covered: it is inked at full colour or not
-  -- inked at all, so no alt range makes a palette pending.
+  -- An alternative is inked at full colour or not at all, so it makes no palette pending.
   | .altSteps _ active otherwise =>
     usesInlines cx (usesInlines cx acc active.toList) otherwise.toList
-  -- a note's body is ink like any other; it holds the contrast contract
   | .footnote _ body =>
     usesInlines cx { acc with linkPals := pushUnique acc.linkPals acc.pal } body.toList
   | .fill | .hspace _ _ | .rule _ _ _ | .strut _ | .italicCorr _ | .linebreak _ => acc
-  -- An image carries no text; its alt is read by a screen reader, not set
-  -- in a colour.
   | .image _ _ _ => acc
-  -- An icon is ink in the current colour: it holds the contrast contract
-  -- like a glyph of text, because it is one.
   | .icon _ _ =>
     match cx.cur with
     | some (nm, c, _) => acc.use cx nm c
     | none => acc
-  -- An unresolved citation's marks are ink in the current colour, as text.
   | .cite _ _ =>
     match cx.cur with
     | some (nm, c, _) => acc.use cx nm c
@@ -428,17 +308,10 @@ private def usesBlock (cx : UseCx) (acc : UseAcc) : Block → UseAcc
     usesBlocks { cx with covering := cx.covering || spec.maxStep ≥ 2 } (acc.step spec) body.toList
   | .altSteps _ active otherwise =>
     usesBlocks cx (usesBlocks cx acc active.toList) otherwise.toList
-  -- Conditional content is judged whichever backend carries it: a colour
-  -- pairing is wrong on the surface that shows it, so no target set
-  -- exempts it. A nav's links are page text like any other.
+  -- Conditional content is judged whichever backend carries it.
   | .only _ body => usesBlocks cx acc body.toList
   | .nav _ body => usesBlocks cx acc body.toList
   | .frame title standout valign _ body =>
-    -- A frame title sets at `\large\bfseries` (the shipped bundles'
-    -- template): the scale's own step, never a re-spelled factor. The
-    -- frame is a design site of its epoch: the resolved-pair judge tests
-    -- the frame-title bar and the standout inversion against the palette
-    -- in force here, not the document's final one.
     let acc := if title.isEmpty || (Design.declared? acc.pal .frameTitleBar).isNone then acc
       else { acc with titledPals := pushUnique acc.titledPals acc.pal }
     let acc := if cx.chromeFoot && !standout && !(valign matches .golden) then
@@ -458,15 +331,13 @@ private def usesBlock (cx : UseCx) (acc : UseAcc) : Block → UseAcc
       groundName := (Design.declared? acc.pal .frameTitleBar).map
         (fun _ => "the frame-title bar")
       groundRole := (Design.declared? acc.pal .frameTitleBar).map fun _ => .frameTitleBar }
-    -- A foreground-only title has no bar for the site judge to read.
     let (titleCx, acc) := if titleCx.ground.isNone then
       match Design.declared? acc.pal .frameTitleInk with
       | some c => ({ titleCx with cur := some (some (.role .frameTitleInk), c, acc.runs) },
           { acc with runs := acc.runs + 1 })
       | none => (titleCx, acc)
       else (titleCx, acc)
-    -- A standout frame's content sits on the inversion, never the page:
-    -- the ground Layout paints (`standoutbg`, else the palette's `fg`).
+    -- A standout frame's content sits on the inversion, never the page.
     let d := Design.ofPalette acc.pal
     let bodyCx := if standout then
         { cx with ground := some d.standout.bg
@@ -474,10 +345,6 @@ private def usesBlock (cx : UseCx) (acc : UseAcc) : Block → UseAcc
                   groundName := some "the standout frame"
                   groundRole := some .standoutGround
                   groundEpoch := some acc.epochs.size }
-      -- And a title page with a declared ground sits on that: the ground
-      -- `Layout.titleGround` paints (`Ir.titleGroundOf`, the one reading),
-      -- so every use on the page is judged against the surface it really
-      -- stands on.
       else match titleGroundOf acc.pal valign with
         | some ground =>
           { cx with ground := some ground, groundName := some "the title page"
@@ -486,26 +353,16 @@ private def usesBlock (cx : UseCx) (acc : UseAcc) : Block → UseAcc
                     groundEpoch := some acc.epochs.size }
         | none => cx
     usesBlocks bodyCx (usesInlines titleCx acc title.toList) body.toList
-  -- A framefoot note lands as footer text on the page: its own declared
-  -- colours are judged; its default colour is the muted key, judged once
-  -- at the palette level.
   | .framefoot content =>
     usesInlines { cx with
       ground := (Design.ofPalette acc.pal).footline.bar
       groundName := (Design.ofPalette acc.pal).footline.bar.map (fun _ => "the footline")
       groundRole := (Design.ofPalette acc.pal).footline.bar.map fun _ => .footBand }
       acc content.toList
-  -- The epoch boundary: the palette in force changes here, in flow order,
-  -- and every use after it is judged against the new state.
   | .setPalette p => { acc with pal := p, epochs := acc.epochs.push p }
   | .setTokens _ => acc
-  -- Every cell is page text at the body size, judged in whatever colour
-  -- wraps it; a caption is page text beside its float's body.
   | .table _ _ _ rows _ _ =>
     rows.foldl (fun o row => row.foldl (fun o cell => usesInlines cx o cell.toList) o) acc
-  -- A line's content and comment are page text, judged in whatever colour
-  -- wraps them; the generated keyword and comment furniture takes the
-  -- muted role, judged once per bundle at the palette level.
   | .algorithm _ _ lines =>
     lines.foldl (fun o l =>
       let o := usesInlines cx o l.content.toList
@@ -514,16 +371,8 @@ private def usesBlock (cx : UseCx) (acc : UseAcc) : Block → UseAcc
       | none => o) acc
   | .float _ _ _ body caption =>
     usesBlocks cx (usesInlines cx acc caption.toList) body.toList
-  -- Each entry's content is page text at the body size, like a cell's.
   | .bibliography _ _ items =>
     items.foldl (fun o item => usesInlines cx o item.content.toList) acc
-  -- A note is a side channel, never page text; a rule is decorative ink,
-  -- not text, so the text-contrast
-  -- contract does not judge it; a logo declaration is furniture, not
-  -- page text. A picture's labels sit on the picture's own fills, not on
-  -- the page, so judging them against the page surface would be judging
-  -- the wrong pairing; the label-on-fill contract is still owed (recorded
-  -- in the slice report).
   | .verbatim covered source spec =>
     let acc := match spec.caption with
       | some (_, cap) => usesInlines cx acc cap.toList
@@ -532,8 +381,6 @@ private def usesBlock (cx : UseCx) (acc : UseAcc) : Block → UseAcc
     let own := spec.groundIn acc.pal .print
     let ground := (own.map (·.1)).orElse fun _ =>
       cx.ground.orElse fun _ => some (Design.printPage acc.pal)
-    -- On a ground of its own the plain text sets in the colour both
-    -- backends fit to it (`Listing.groundInk`), and is judged as such.
     let cur := match own with
       | some (g, _) =>
         let inherited := (cx.cur.map (·.2.1)).getD
@@ -549,8 +396,6 @@ private def usesBlock (cx : UseCx) (acc : UseAcc) : Block → UseAcc
         | some _ => none
         | none => cx.groundRole
       codeStyle := spec.style.map (·.name) }
-    -- One brush per type for the whole listing, as both backends draw it;
-    -- the palette changes only at a `.setPalette`, never inside a listing.
     let lines := spec.tokenLines source
     let brushes := Listing.brushes acc.pal ground covered spec.style lines
     lines.foldl (fun acc line =>
@@ -572,15 +417,10 @@ private def usesColumns (cx : UseCx) (acc : UseAcc) :
 
 end
 
-/-- Whether the document is shown as a deck's stage: the frame page model,
-whose text the judge reads at the size its screen shows it (`UseCx.large`,
-`Need.atStage`). -/
+/-- Whether the document is shown as a deck's stage (the frame page model). -/
 public def stageOf (doc : Doc) : Bool := doc.docClass.record.model == .frame
 
-/-- The body walk: every coloured use with the epoch it stood in, the
-epoch boundaries, and the design sites each epoch ships, read off
-`doc.body` once. One site, so the judge and the judged-pair census read
-the same walk and not two copies of it. -/
+/-- The body walk: every coloured use with its epoch, and the design sites each epoch ships. -/
 private def docWalk (doc : Doc) (sitesOnly : Bool := false) : UseAcc :=
   let hasFrameFoot := doc.body.any fun b => match b with
     | .framefoot xs => !xs.isEmpty
@@ -591,17 +431,12 @@ private def docWalk (doc : Doc) (sitesOnly : Bool := false) : UseAcc :=
       chromeFoot := doc.docClass.record.chrome && doc.foot.isNone &&
         (doc.chrome.hasFooter || hasFrameFoot) }
   let walk := usesBlocks cx { pal := doc.palette } doc.body.toList
-  -- A page that ships no stylesheet of the engine's draws no focus ring, and
-  -- a document whose declared formats name no HTML ships no page to draw it.
-  -- premise: Tests.DeclaredColors.focusGateChecks — the css=none page holds no focus rule where the default page holds one, and a pdf-only declaration builds no HTML
+  -- premise: Tests.DeclaredColors.focusGateChecks — css=none and pdf-only pages draw no focus ring
   if doc.output.css == some "none" ||
       (!doc.output.formats.isEmpty && !doc.output.formats.contains "html") then
     { walk with linkPals := #[] } else walk
 
-/-- The uses the document plan enumerates: the body walk's, plus running
-heads and feet and the chrome footer. The chrome footer reads its frame's
-epoch and band ground; running heads and feet are document state and read
-epoch 0. One site, read by the per-use judge and by the judged-pair census. -/
+/-- The body walk's uses plus the running heads, feet and chrome footer. -/
 private def docUses (doc : Doc) (walk : UseAcc) : UseAcc := Id.run do
   let base : UseCx := { base := doc.page.fontSize, size := doc.page.fontSize, slides := stageOf doc }
   let mut acc := { walk with pal := doc.palette }
@@ -620,25 +455,11 @@ private def docUses (doc : Doc) (walk : UseAcc) : UseAcc := Id.run do
       acc := usesInlines base acc content.toList
   return acc
 
-/-- The ink/page pair the shipped pages actually carry, declared or
-defaulted: the resolved design's ink — `Design.ofDoc` is the one resolving
-site, and `Layout.run` reads the same field for every uncoloured run — over
-the declared page when there is one, the shipped light surface otherwise
-(WCAG's contrast-ratio Note 3 assumes white when nothing is specified; the
-shipped surface is the marginally darker of the two, so passing here passes
-on the PDF's white page too). -/
+/-- The shipped ink/page pair: the resolved ink over the declared page, else the light surface. -/
 public def effectivePair (doc : Doc) : ColorPair :=
   { fg := (Design.ofDoc doc).fg, bg := (Design.at doc.palette .light .page).getD Color.white }
 
-/-- A design site as the document judge reads it: the print site
-(`Design.site?`) at its medium's need (`Need.atStage`), with an undeclared
-page read as the shipped light surface (`surfaceOf`). That is what the
-artifacts ship under a `none` ground — the PDF leaves white paper, HTML's
-body takes the page role's light default (`HtmlDoc.baseCss`) — and the
-surface is the darker of the two, so a pair that passes here passes on the
-white page too. Grounding on white judged the lighter one and passed titles
-the HTML page fails: #757575 reads 4.61:1 on white and 4.41:1 on the
-surface it ships on. -/
+/-- A design site as the document judge reads it, an undeclared page as the light surface. -/
 public def judgedSite? (stage : Bool) (pal : Palette) (r : Role) : Option Site :=
   (Design.site? pal .print r).map fun st =>
     let st := { st with need := st.need.atStage stage }
@@ -652,10 +473,8 @@ private def needClause : Need → String
   | .state => "a state change (SC 1.4.11)"
   | .decorative => "nothing"
 
-/-- What a failing site says, on one line. W0345 for a themed element's
-pair (its row's `noun`), W0315 for the page's text, or W0330 when that ink
-was never declared: the remedy is then the declaration, which its help
-names. The colours ship as stated — the judge reports and never repaints. -/
+/-- A failing site's diagnostic: W0345 for a themed element, W0315 for page text, W0330 for
+undeclared ink. -/
 private def siteVerdict (site : ColorSite) (r : Role) (pal : Palette) (st : Site) : Diag :=
   let key := (ColorRef.role r).key
   let req := requiredIn st.scheme st.need
@@ -684,10 +503,7 @@ private def siteVerdict (site : ColorSite) (r : Role) (pal : Palette) (st : Site
         (span := span) (subject := some (inkKey key st.ink st.ground))
         (detail := some s!"{hexOf st.ink} on {hexOf st.ground}: {ratioString milli}, below {ratioString req}")
 
-/-- **The one site judge.** A shipped design site, judged under the palette
-in force where it ships: a site that does not ship there, is declared
-decorative, meets its need, or was reported by an earlier epoch says
-nothing (`judgeSite_id`); a failing one says its verdict once. -/
+/-- Judge one shipped design site; only a failing site no earlier epoch reported speaks. -/
 private def judgeSite (site : ColorSite) (stage : Bool) (s : Array Diag × Array Site) :
     Role × Palette → Array Diag × Array Site
   | (r, pal) =>
@@ -702,26 +518,16 @@ private def judgeSites (site : ColorSite) (stage : Bool) (xs : Array (Role × Pa
     Array Diag :=
   (xs.foldl (judgeSite site stage) (#[], #[])).1
 
-/-- The sites one shipped event stands for: every registry site of the
-palette in force (`Design.sites`, in print), whose row the report reads at
-that event (`Row.judged`), in registry order. -/
+/-- The registry sites the report reads at one shipped event, in registry order. -/
 public def eventSites (ev : Judged) (pal : Palette) : Array (Role × Palette) :=
   ((Design.sites pal .print).filter (·.role.row.judged == ev)).toArray.map (·.role, pal)
 
-/-- The page in every epoch, the document's palette first: the page's text
-is judged whether or not the document spelled it — a document that declares
-a dark page and leaves the ink defaulted ships black on dark, and the
-contract judges what ships. -/
+/-- The page in every epoch, the document's palette first. -/
 private def pageEvents (doc : Doc) (walk : UseAcc) : Array (Judged × Palette) :=
   (#[doc.palette] ++ walk.epochs).map (.page, ·)
 
-/-- The themed elements, per epoch that ships one, which the per-use walk
-cannot see because no body text is coloured with them: each titled block's
-title (bold at the body size, under WCAG 2.2's large-scale sizes, so 4.5:1),
-each frame title on its bar (`\large\bfseries` is 12pt bold, so 4.5:1), each
-standout frame (`\Large\bfseries`, 14.4pt bold, large-scale, so 3:1), each
-declared title page (mixed matter, so the body threshold) and the focus ring
-of each epoch that ships a link (non-text, 3:1, SC 1.4.11). -/
+/-- The themed elements each epoch ships: block titles, frame titles, standout frames, title
+pages and focus rings. -/
 private def elementEvents (walk : UseAcc) : Array (Judged × Palette) :=
   walk.blockPals.map (fun (k, pal) => (.element (Element.ofTitled k), pal)) ++
     walk.titledPals.map (.element .frameTitle, ·) ++
@@ -735,23 +541,17 @@ private def pageSites (doc : Doc) (walk : UseAcc) : Array (Role × Palette) :=
 private def elementSites (walk : UseAcc) : Array (Role × Palette) :=
   (elementEvents walk).flatMap fun (ev, pal) => eventSites ev pal
 
-/-- What a document ships that its report reads sites at, in judging order:
-the page in every epoch, then each themed element in the epoch it ships
-in, each with the palette in force there. -/
+/-- The events a document's report reads sites at, in judging order, each with its palette. -/
 public def shippedEvents (doc : Doc) : Array (Judged × Palette) :=
   let walk := docWalk doc
   let elements := elementEvents walk
   pageEvents doc walk ++ elements
 
-/-- The design sites a document ships, in judging order, each with the
-palette in force where it ships: every event's sites (`eventSites`). -/
+/-- The design sites a document ships, in judging order, each with its palette. -/
 public def shippedSites (doc : Doc) : Array (Role × Palette) :=
   (shippedEvents doc).flatMap fun (ev, pal) => eventSites ev pal
 
-/-- The design sites a document ships, as `shippedSites` reads them, and its
-coloured uses, the furniture's included (`docUses`), off a walk that passes
-over every listing's tokens: a listing ships its colours per scheme on its
-own grounds. -/
+/-- The shipped sites and coloured uses, from a walk that passes over listing tokens. -/
 private def schemeWalk (doc : Doc) : Array (Role × Palette) × Array Use :=
   let walk := docWalk doc (sitesOnly := true)
   ((pageEvents doc walk ++ elementEvents walk).flatMap fun (ev, pal) => eventSites ev pal,
@@ -773,9 +573,7 @@ public structure SchemeLoss where
   gate : Nat
   deriving Repr, BEq, Inhabited
 
-/-- What the scheme judge decides for a web page: the schemes it ships, with
-each one's frame and every palette of the page as that scheme ships it
-(`Palette.view`), and the colours each dropped scheme could not carry. -/
+/-- The schemes a web page ships, their palette views, and each dropped scheme's losses. -/
 public structure SchemeJudgement where
   shipped : List Scheme := []
   frames : List SchemeFrame := []
@@ -785,9 +583,7 @@ public structure SchemeJudgement where
   dropped : List (Scheme × List SchemeLoss) := []
   deriving Inhabited
 
-/-- The losses one scheme's views and the page's shipped sites show: each
-colour a view could not carry, at what it reads there, and each site the page
-ships that falls short of the scheme's gate, once per name and ground. -/
+/-- One scheme's losses: colours a view could not carry and shipped sites short of its gate. -/
 private def schemeLosses (s : Scheme) (f : SchemeFrame) (stage : Bool)
     (views : List (Palette × (Palette × Array Unrealized))) (sites : Array (Role × Palette))
     (uses : List (Palette × Array Use)) : List SchemeLoss := Id.run do
@@ -797,7 +593,6 @@ private def schemeLosses (s : Scheme) (f : SchemeFrame) (stage : Bool)
   for (p, (v, un)) in views do
     let used := (uses.lookup p).getD #[]
     for u in un do
-      -- A colour the page paints: a use of it, or a site it ships.
       let paints := used.any (·.name == some u.name) || match u.name with
         | .role r => sites.any (· == (r, p))
         | .color _ => false
@@ -812,8 +607,6 @@ private def schemeLosses (s : Scheme) (f : SchemeFrame) (stage : Bool)
         | some a, some b => contrastMilli a b
         | _, _ => 0), requiredIn s (need.atStage stage))
       out := push out { name := u.name, on := u.on, ratio, gate }
-    -- A colour no palette names stands where it is used, carried as the
-    -- page carries it there (`Design.literalIn`).
     for u in used do
       if u.name.isSome then continue
       let c := Design.literalIn f u.color
@@ -830,9 +623,7 @@ private def schemeLosses (s : Scheme) (f : SchemeFrame) (stage : Bool)
                           gate := requiredIn s st.need }
   return out.toList
 
-/-- One dropped scheme's diagnostic for one colour it could not carry,
-named by `scheme:name@ground`, what it reads there and what that ground
-owes in the record's detail. -/
+/-- A dropped scheme's diagnostic for one colour it could not carry (`scheme:name@ground`). -/
 public def schemeLossDiag (s : Scheme) (l : SchemeLoss) : Diag :=
   let key := l.name.key
   let ground := (ColorRef.role l.on).key
@@ -843,27 +634,15 @@ the schemes the page offers: \\output{ schemes = print, light }")
     (subject := some s!"{s.name}:{key}@{ground}")
     (detail := some s!"{ratioString l.ratio}, below {ratioString l.gate}")
 
-/-- **The colour schemes a web page ships**, of those its document asks
-(`Doc.requestedSchemes`): a scheme the document's colours were declared for
-ships them as they are, judged where they ship by the document's contrast
-report; any other ships only where every colour the page paints can be
-carried there legibly — each palette carried on every ground its colours'
-uses stand on (`Palette.view` over the use census's surfaces), a colour no
-palette names carried as the page carries it and judged where it is used
-(`Design.literalIn`) — and every site the page ships reads at that scheme's
-gate; else that scheme alone is dropped for the page, each colour it could
-not carry named once (`schemeLossDiag`). A colour the page never paints
-drops nothing. -/
+/-- The colour schemes a web page ships, of those it asks: a scheme its colours were not
+declared for ships only where every colour the page paints stays legible. -/
 public def schemeJudge (doc : Doc) : SchemeJudgement :=
   let stage := stageOf doc
   let pals := docPalettes doc
-  -- The sites and uses are read only where a scheme carries the colours
-  -- somewhere.
   let carries := doc.requestedSchemes.any fun s => !(doc.palette.frame s stage).home
   let (sites, uses) := if carries then schemeWalk doc else (#[], #[])
   let usesOf : List (Palette × Array Use) := pals.map fun p =>
     (p, uses.filter fun u => !u.exempt && u.pal == p)
-  -- Each named colour a palette's uses read, with the grounds they stand on.
   let groundsOf (p : Palette) : List (ColorRef × List (Color × Bool × Option Role)) :=
     ((usesOf.lookup p).getD #[]).foldl (fun acc u => match u.name with
       | some k => match acc.findIdx? (·.1 == k) with
@@ -873,9 +652,7 @@ public def schemeJudge (doc : Doc) : SchemeJudgement :=
   let judged := doc.requestedSchemes.map fun s =>
     let f := doc.palette.frame s stage
     let vs := pals.map fun p => (p, p.view f (groundsOf p))
-    -- premise: dropChecks — a scheme the colours were declared for ships
-    -- them as declared, where the document's report (W0315) names a pair
-    -- below its gate; judging it here too would name the loss twice.
+    -- premise: dropChecks — a declared scheme's pairs are the document report's to name
     (s, f, vs, if f.home then [] else schemeLosses s f stage vs sites usesOf)
   let kept := judged.filter (·.2.2.2.isEmpty)
   { shipped := kept.map (·.1)
@@ -889,9 +666,6 @@ scheme could not carry. -/
 public def SchemeJudgement.diags (j : SchemeJudgement) : Array Diag :=
   (j.dropped.flatMap fun (s, ls) => ls.map (schemeLossDiag s)).toArray
 
-/-- **A dropped scheme is paid for** (`_accounts`): every scheme the judge
-drops carries at least one loss, and each loss its own diagnostic — a page
-never loses a scheme it was asked for without a line saying why. -/
 public theorem scheme_drop_accounts (doc : Doc) :
     ∀ d ∈ (schemeJudge doc).dropped, d.2 ≠ [] ∧
       ∀ l ∈ d.2, schemeLossDiag d.1 l ∈ (schemeJudge doc).diags := by
@@ -909,29 +683,18 @@ public theorem scheme_drop_accounts (doc : Doc) :
   · simp only [SchemeJudgement.diags, List.mem_toArray, List.mem_flatMap, List.mem_map]
     exact ⟨d, hd, l, hl, rfl⟩
 
-/-- A scheme loss's census key: `scheme:name@ground`, the subject its
-diagnostic carries (`schemeLossDiag`). -/
+/-- A scheme loss's census key `scheme:name@ground`, its diagnostic's subject. -/
 public def SchemeLoss.key (s : Scheme) (l : SchemeLoss) : String :=
   s!"{s.name}:{l.name.key}@{(ColorRef.role l.on).key}"
 
-/-- **Every colour a scheme could not carry is named, scheme by scheme, on its
-subject** (`_named`): for each scheme the judge drops and each loss it
-records there — a colour a view could not carry, or a site the page ships
-that falls short of that scheme's gate — a diagnostic of the judgement
-carries the loss's key (`SchemeLoss.key`) as its structured subject. -/
 public theorem sites_named (doc : Doc) :
     ∀ d ∈ (schemeJudge doc).dropped, ∀ l ∈ d.2,
       ∃ g ∈ (schemeJudge doc).diags, g.subject = some (SchemeLoss.key d.1 l) :=
   fun d hd l hl => ⟨schemeLossDiag d.1 l, (scheme_drop_accounts doc d hd).2 l hl,
     by simp only [schemeLossDiag, SchemeLoss.key, Diag.of_record_exact]⟩
 
-/-- The covering judged, per epoch that ships pending content: SC 1.4.11's
-3:1 between an active and an inactive state, and quieter-than-active —
-`coveredContract`'s own two bounds, read from `Design.cover`: the cover
-fraction is the author's declaration, so the remedy is theirs to choose
-(lower it, or name a quieter colour). The ink's cover is judged wherever an
-epoch covers anything; the alert's and the example's where a covered use of
-that colour ships (`covered`). -/
+/-- Judge the covering per epoch that ships pending content: quieter than the active form,
+and 3:1 from it (SC 1.4.11). -/
 private def pendingCoverDiags (site : ColorSite) (doc : Doc) (pending : Array Palette)
     (covered : Array (Palette × ColorRef)) : Array Diag := Id.run do
   let mut out : Array Diag := #[]
@@ -965,9 +728,7 @@ private def pendingCoverDiags (site : ColorSite) (doc : Doc) (pending : Array Pa
             (help := coverHelp)]
         else #[]
     out := out ++ judge "fg" d.fg (cov.of d.fg)
-    -- A declared constant cover stands for the plain runs itself: judged
-    -- under the key that declared it (undeclared, the plain cover IS the
-    -- fg cover just judged).
+    -- A declared constant cover is judged under its own key; undeclared, it is the fg cover.
     if d.covered.isSome then
       out := out ++ judge "covered" d.fg cov.plain
     for (role, r) in [("alert", Role.alert), ("example", Role.example)] do
@@ -986,12 +747,7 @@ private instance : Hashable PairKey where
   hash k := hash (k.color.r, k.color.g, k.color.b, k.color.cmyk,
     k.ground.r, k.ground.g, k.ground.b, k.ground.cmyk)
 
-/-- What a use is judged under: its pairing and the name it carried there.
-The judge's verdict for a use is a function of this key and the document —
-never of how many uses precede it — so the judge below answers every
-membership question by key. Judging by scanning what came before instead
-cost two full passes over the uses per use: 3,200 coloured runs put ~200 ms
-of quadratic scanning into a 307 ms build (PLAN 2026-09-23). -/
+/-- What a use is judged under: its pairing and the name it carried there. -/
 private structure UseKey where
   name : Option ColorRef
   pair : PairKey
@@ -1003,41 +759,18 @@ private instance : Hashable UseKey where
 private def Use.key (u : Use) : UseKey :=
   { name := u.name, pair := { color := u.color, ground := u.surface } }
 
-/-- The pairings a document's own colours create, judged: every colour the
-document puts on text is paired with the page by the engine, so each is
-checked against the page in force where it is used — the epoch's effective
-page, and the effective ink first of all, whether or not the document
-spelled it: a document that declares a dark page and leaves the ink
-defaulted ships black-on-dark, and the contract judges what ships, never
-only what was spelled. A pairing used only as large-scale text is held to
-3:1, any other use to 4.5:1 (SC 1.4.3). `covered` is exempt by role —
-dimmed overlay content is deliberately quiet — and so is anything the
-palette in force at the use declared under `\palette[decorative]{...}`:
-the warning names that spelling, so poor contrast is a choice a document
-states, never a silent default.
-
-The loop is a fold over `useStep`, whose state carries the dedup: the keys
-already reported, and the run each pairing last spoke for. A colour ships as
-stated whatever its verdict, so the fold's only output is what it says. -/
+/-- Whether each pairing stood as large-scale text everywhere it was used. -/
 private def allLargeOf (uses : Array Use) : Std.HashMap UseKey Bool :=
-  -- Whether a pairing stood as large-scale text *everywhere* it was used:
-  -- one keyed fold over the uses, so the answer is the whole document's and
-  -- the order the uses arrived in cannot change it.
   uses.foldl (fun m v => m.insert v.key (v.large && (m[v.key]?).getD true)) {}
 
 private structure UseJudgeState where
   diags : Array Diag := #[]
-  /-- The pairings already reported: the effective pair seeds it, since the
-  site judge already spoke for it and a body use of the same pairing must
-  not report it twice. -/
+  /-- The pairings already reported, seeded with the effective pair. -/
   done : Std.HashSet UseKey
-  /-- The coloured run each pairing warning last spoke for: a later run of
-  the same pairing adds a note, a later use in the same run adds nothing. -/
+  /-- The coloured run each pairing's warning last spoke for. -/
   sites : Std.HashMap UseKey Nat := {}
 
-/-- A pairing warning at one coloured run: the warning, with the pairing's
-first span, at the first run; a note at each later run, under one subject,
-so the tally puts the run count on the one line that shows. -/
+/-- A pairing warning at one coloured run: a warning at its first run, a note at later runs. -/
 private def UseJudgeState.pairing (s : UseJudgeState) (dup : Bool) (key : UseKey)
     (run : Nat) (subject message detail : String) (span : Option Span) : UseJudgeState :=
   if dup && s.sites[key]? == some run then s
@@ -1048,9 +781,7 @@ private def UseJudgeState.pairing (s : UseJudgeState) (dup : Bool) (key : UseKey
 
 private def useStep (site : ColorSite) (large : Std.HashMap UseKey Bool)
     (s : UseJudgeState) (u : Use) : UseJudgeState :=
-  -- The exemption is judged before the dedup: an exempt use must not
-  -- consume the key a later, non-exempt epoch's use of the same pairing
-  -- would be judged under.
+  -- Exemption before dedup: an exempt use must not consume a later use's key.
   if u.exempt then s
   else
     let key := u.key
@@ -1061,9 +792,6 @@ private def useStep (site : ColorSite) (large : Std.HashMap UseKey Bool)
     let assessment := assessPair threshold u.color u.surface
     if assessment.passes then { s with done := done }
     else
-      -- The name a pairing reports is its role's or the author's own
-      -- spelling where the elaboration recorded one, never one the engine
-      -- invents; an anonymous value reports its hex.
       let origin := site u.pal (u.name.map (·.key)) u.color
       let spelled : Option String := match u.name with
         | some role => some role.key
@@ -1089,31 +817,17 @@ private def declaredUseJudged (site : ColorSite) (doc : Doc) (walk : UseAcc) : A
         { name := some (.role .ink),
           pair := { color := d.fg, ground := (effectivePair doc).bg } } }).diags
 
-/-- **The document-level contrast report**, one walk: the uses with their
-epochs, the design sites per epoch, and the epoch boundaries are read off
-`doc.body` once; then each half judges against the palette in force where
-the pairing ships, at the size its medium shows it, and a pairing a themed
-element's site names is reported by that site alone. Every colour ships as
-the document states it: this is a report, and the document is not an input
-it returns. `site` names each pairing's authored expression and span. -/
+/-- The document-level contrast report; `site` names each pairing's authored source and span. -/
 public def docDiags (doc : Doc) (site : ColorSite := fun _ _ _ => none) : Array Diag :=
   let walk := docWalk doc
   let stage := stageOf doc
   let elements := judgeSites site stage (elementSites walk)
-  -- A pairing a themed element's site names is reported there, once: the
-  -- use judge's report of that same pairing yields to it.
+  -- A pairing a themed element's site names is reported by that site alone.
   let uses := (declaredUseJudged site doc walk).filter fun d =>
     !(elements.any fun e => e.subject.isSome && e.subject == d.subject)
   judgeSites site stage (pageSites doc walk) ++ uses ++ elements ++
     pendingCoverDiags site doc walk.pendingPals walk.coveredNames
 
-/-- The judged pair is the shipped pair: what `effectivePairDiags` judges is
-the resolved design's own ink — the field `Layout.run` colours every
-uncoloured run with — and, on a declared page, the resolved design's own
-surface — the fill `Layout.run` paints the page with. Definitional by
-construction (`effectivePair` reads `Design.ofDoc`, the one resolving
-site), and stated so the construction cannot drift: a defaulted colour
-cannot escape the contract by never being spelled. -/
 public theorem judged_pair_is_shipped (doc : Doc) :
     (effectivePair doc).fg = (Design.ofDoc doc).fg ∧
     ((Design.ofDoc doc).bgDeclared = true →
@@ -1125,16 +839,6 @@ public theorem judged_pair_is_shipped (doc : Doc) :
   simp only [effectivePair, hbg, Design.at_declared doc.palette .light .page c hc,
     Design.at_declared doc.palette .print .page c hc]
 
-/-- The site judge grounds a titled title where the per-use walk records it:
-both read the kind's bar where the palette declares one, and `surfaceOf`,
-the engine's one reading of an unpainted page, where it does not — so the
-pair the judge weighs is the pair the reader sees.
-
-Stated because the two drifted: the judge read an unbarred title's page as
-`Color.white` while the walk read it as `surfaceOf` (`#FAFAF9`, the surface
-`HtmlDoc.baseCss` ships under a `none` ground), and white is the lighter
-ground — so a title between the two ratios was judged passing and shipped
-failing, with no test, theorem or diagnostic to say so. -/
 private theorem titled_ground_agree (acc : UseAcc) (cx : UseCx) (kind : TitledKind)
     (nm : Option ColorRef) (c : Color) (stage : Bool) (st : Site)
     (h : judgedSite? stage acc.pal (Role.titleInk kind) = some st) :
@@ -1150,13 +854,9 @@ private theorem titled_ground_agree (acc : UseAcc) (cx : UseCx) (kind : TitledKi
   simp only [UseAcc.use, titledLook, Array.back?_push, Option.map_some, Function.comp]
   cases Design.at acc.pal .print (Role.titleBar kind) <;> simp [hb]
 
-/-- The judged page under a palette is its declared page, else the shipped
-light surface — the ground the effective pair reads. -/
 private theorem effectivePair_bg (doc : Doc) : (effectivePair doc).bg = surfaceOf doc.palette :=
   rfl
 
-/-- The page's text, as the site judge reads it: the effective pair, at
-its medium's need. -/
 private theorem judgedSite_ink (stage : Bool) (doc : Doc) :
     judgedSite? stage doc.palette .ink =
       some { role := .ink, ink := (effectivePair doc).fg, on := .page
@@ -1171,7 +871,6 @@ private theorem judgedSite_ink (stage : Bool) (doc : Doc) :
   simp [judgedSite?, Design.site?, Role.row, Row.keyed, Need.paired, Presence.holds, hink, hc,
     effectivePair_bg]
 
-/-- A site is its role's. -/
 private theorem site?_role {pal : Palette} {s : Scheme} {r : Role} {st : Site}
     (h : Design.site? pal s r = some st) : st.role = r := by
   simp only [Design.site?, Option.bind_eq_some_iff] at h
@@ -1194,7 +893,6 @@ private theorem filter_filterMap_role (f : Role → Option Site)
       subst hr
       by_cases hq : q st.role = true <;> simp [h, hq, ih]
 
-/-- The page's sites in an epoch: the ink's, alone. -/
 private theorem eventSites_page (pal : Palette) :
     eventSites .page pal = ((Design.site? pal .print .ink).toList.map (·.role, pal)).toArray := by
   have h := filter_filterMap_role (Design.site? pal .print) (fun _ _ h => site?_role h)
@@ -1204,9 +902,6 @@ private theorem eventSites_page (pal : Palette) :
   simp only [List.filterMap_cons, List.filterMap_nil]
   cases Design.site? pal .print .ink <;> simp
 
-/-- A fold's invariant, as an induction the judge's lemmas below
-instantiate: a property held by the seed and by every step over the list's
-own elements is held by the result. -/
 private theorem foldlList_invariant {α β : Type} (P : β → Prop) (f : β → α → β) :
     ∀ (xs : List α) (init : β), P init →
       (∀ b a, a ∈ xs → P b → P (f b a)) → P (xs.foldl f init)
@@ -1215,7 +910,6 @@ private theorem foldlList_invariant {α β : Type} (P : β → Prop) (f : β →
     foldlList_invariant P f as (f init a) (hs init a (List.mem_cons_self ..) hi)
       (fun b x hx hb => hs b x (List.mem_cons_of_mem a hx) hb)
 
-/-- A step never retracts a message. -/
 private theorem judgeSite_diags_mono (site : ColorSite) (stage : Bool)
     (s : Array Diag × Array Site) (x : Role × Palette) :
     s.1.size ≤ (judgeSite site stage s x).1.size := by
@@ -1227,11 +921,6 @@ private theorem judgeSite_diags_mono (site : ColorSite) (stage : Bool)
     · simp
   · exact Nat.le_refl _
 
-/-- The load-bearing form of F3, over every document: when the effective
-pair fails the ratio its medium asks of text and the ink is not declared
-decorative, `docDiags` reports — declared ink or defaulted, because the
-page's text is the first site the judge reads, before the declared-use walk
-runs. The missing special case is an impossibility, not a covered branch. -/
 public theorem defaulted_ink_cannot_escape (doc : Doc)
     (hdec : doc.palette.decorative.contains (.role .ink) = false)
     (hfail : contrastMilli (effectivePair doc).fg (effectivePair doc).bg <
@@ -1270,30 +959,11 @@ public theorem defaulted_ink_cannot_escape (doc : Doc)
   simp only [docDiags, Array.size_append]
   omega
 
--- The built-in theme bundles, held to the same contract.
-
-/-- **A palette's whole contract**: every pair its design ships in print
-(`Design.sites`, generated from the registry's rows) meets its need, every
-default applied rather than passed vacuously when a key is absent — body,
-muted and marker text and the content colours on the page, the frame-title
-bar and its subtitle, the section title, the footline, each titled block's
-title and body, the standout inversion (large-scale text, 3:1) and a
-declared title page. The progress bar and the separator are decorative:
-supplementary position indicators the section title already carries,
-outside SC 1.4.11's "required to understand the content", and so is a
-block template's rule (`Ir.BlockEdge.ink`), a mark beside a title whose
-own text names the block; `covered` is a state, held to visibly-covered
-by `coveredContract` below. A role a bundle's lineage declares short of its
-need (`reported`, `Theme.reported`) ships as declared and is the document's
-report's to name. -/
+/-- Every pair the palette's design ships in print meets its need, `reported` roles aside. -/
 public def paletteContract (pal : Palette) (reported : List Role := []) : Bool :=
   (Design.sites pal .print).all fun st => st.passes || reported.contains st.role
 
-/-- Every listing ink of every shipped style, declared or the engine's
-default, is text-AA on every listing ground of a bundle: the page, its
-standout inversion, and its title page when declared. A colour the bundle
-declares ships as declared, which this holds to AA on every such ground;
-every other colour the shared painter adapts there. -/
+/-- Every listing ink of every shipped style is text-AA on each listing ground of the bundle. -/
 public def listingContract (pal : Palette) : Bool :=
   let d := Design.ofPalette pal
   (none :: ListingStyle.all.map some).all fun style =>
@@ -1306,23 +976,8 @@ public def Theme.contractHolds (th : LeanTex.Core.Theme.Theme) : Bool :=
   paletteContract (th.realize .documents) th.reported &&
     paletteContract (th.realize .decks) th.reported
 
-/-- Covered reads as covered on the design's own page, per colour — the
-contract ranges over the cover of every colour the bundle puts on text
-(`fg`, `alert`, `example`), never over `fg` alone: one global fraction
-that works for the ink can fail a chromatic role (at 38% moloch's alert
-reaches only 2.89:1 against its active form), and a cover the reader
-cannot see is a covering defect wherever it happens. Each colour must be
-quieter than its active form against the page (SC 1.4.3 exempts inactive
-text, so no minimum binds the covered text itself), and each active/
-covered pair must differ by at least 3:1 — the ratio WCAG 2.2 SC 1.4.11
-asks of visual information that identifies a state. The plain cover
-(runs with no colour of their own) is held to the same two bounds
-against `fg`. Judged from `Design.cover`, the one resolving site. If a
-bundle needs a smaller fraction to close, that is a finding about the
-bundle — moloch's 31% — never a reason to weaken this contract. A colour a
-bundle's lineage declares short of its need on the page (`reported`) has no
-cover 3:1 from it there: it is held to quieting alone, and the document's
-report names a covered use of it. -/
+/-- Each text colour's cover is quieter than its active form and at least 3:1 from it
+(SC 1.4.11); a role in `reported` is held to quieting alone. -/
 public def coveredContract (pal : Palette) (reported : List Role := []) : Bool :=
   let d := Design.ofDoc { palette := pal }
   let cov := d.cover
@@ -1335,13 +990,7 @@ public def coveredContract (pal : Palette) (reported : List Role := []) : Bool :
     && contrastMilli cov.plain d.bg < contrastMilli d.fg d.bg
     && contrastMilli d.fg cov.plain ≥ aaNonText
 
-/-- Covering twice quiets further: the cover of a covered colour reads
-quieter against the page than the cover itself, for every text role the
-bundle ships — the monotonicity that makes "more covered" mean what it
-says. The general integer statement needs luminance monotonicity through
-the whole pipeline (a refactor, tracked in PLAN, not claimed here); this
-is its per-bundle kernel check, with a property test over random colours
-in `Tests.lean` beside it. -/
+/-- Covering twice quiets further, for every text role the bundle ships. -/
 public def coverMonotone (pal : Palette) : Bool :=
   let d := Design.ofDoc { palette := pal }
   let cov := d.cover
@@ -1351,34 +1000,17 @@ public def coverMonotone (pal : Palette) : Bool :=
     && (match Design.declared? pal .alert with | some c => quieter c | none => true)
     && (match Design.declared? pal .example with | some c => quieter c | none => true)
 
-/-- The coloured uses the walk met, each as the pair it stood in: its colour
-on the ground it stood on, the running head and foot and the chrome footer
-included (`docUses`). -/
+/-- Each coloured use as the pair it stood in, furniture included. -/
 public def usePairs (doc : Doc) : Array (Color × Color) :=
   (docUses doc (docWalk doc)).uses.map fun u => (u.color, u.surface)
 
-/-- The (ink, ground) pairs the document-level contrast judge enumerates, as
-data: every design site the document ships (`shippedSites`, as the judge
-reads it) and every coloured use (`usePairs`). This is the domain of the
-document's contrast report, not a census of placed glyphs or of emitted
-diagnostics. Overlay dimming computes additional colours, picture labels
-have their own paint, and exempt uses need not emit a diagnostic.
-`contrastContractChecks` pins actual placed counterexamples to the former
-claim that this domain contains every shipped pair. -/
+/-- The (ink, ground) pairs the document judge enumerates: shipped sites and coloured uses. -/
 public def judgedPairs (doc : Doc) : Array (Color × Color) :=
   let uses := usePairs doc
   (shippedSites doc).filterMap (fun x =>
       (judgedSite? (stageOf doc) x.2 x.1).map fun st => (st.ink, st.ground))
     ++ uses
 
-/-- **The judged pairs cover the registry's sites where they ship**
-(`_covers`): for every event the document ships — the page in each epoch,
-each themed element in the epoch it ships in — every site the registry
-generates for the palette in force there (`Design.sites`) whose row the
-report reads at that event (`Row.judged`) is a judged pair, at its medium's
-need, and so is every coloured use the walk met. A role added to the
-registry enters the report the way its row says, with no list here to
-extend; `Design.sites_covers` says which roles have a site. -/
 public theorem judged_covers (doc : Doc) :
     (∀ ev ∈ shippedEvents doc, ∀ st ∈ Design.sites ev.2 .print, st.role.row.judged = ev.1 →
       ∀ st', judgedSite? (stageOf doc) ev.2 st.role = some st' →
@@ -1393,10 +1025,6 @@ public theorem judged_covers (doc : Doc) :
     exact ⟨st, ⟨hst, by simpa using hj⟩, rfl⟩
   exact Array.mem_append_left _ (Array.mem_filterMap.mpr ⟨_, hsite, by rw [h']; rfl⟩)
 
-/-- **A passing site is the identity** (`_id`): a site that does not ship,
-is declared decorative, or meets its need leaves the judging state exactly
-as it was — no message and no dedup entry — so the report cannot name a
-pair that meets what its medium asks. -/
 private theorem judgeSite_id (site : ColorSite) (stage : Bool) (s : Array Diag × Array Site)
     (r : Role) (pal : Palette) (h : ∀ st, judgedSite? stage pal r = some st → st.passes = true) :
     judgeSite site stage s (r, pal) = s := by
@@ -1404,10 +1032,7 @@ private theorem judgeSite_id (site : ColorSite) (stage : Bool) (s : Array Diag �
   | none => simp [judgeSite, hst]
   | some st => simp [judgeSite, hst, h st hst]
 
-/-- What a document's palette amounts to in the schemes an artifact ships,
-for the driver's `palette:` phase line: how many roles resolve, how many
-sites their pairs create, and the least margin any site keeps above what its
-need owes, in thousandths of a ratio (none when no site is paired). -/
+/-- The `palette:` phase line's facts: roles, sites, and the least margin above need (milli). -/
 public structure PaletteSummary where
   roles : Nat
   schemes : Nat
@@ -1430,8 +1055,7 @@ public def paletteSummaryIn (views : List (Scheme × Palette)) (seeded : Bool) :
 public def paletteSummary (pal : Palette) (schemes : List Scheme) : PaletteSummary :=
   paletteSummaryIn (schemes.map (·, pal)) pal.seeded.isSome
 
-/-- The palette phase's summary for a web page: the document's palette as
-each scheme the page ships carries it (`schemeJudge`). -/
+/-- The palette summary for a web page, over the schemes it ships. -/
 public def pageSummary (doc : Doc) : PaletteSummary :=
   let j := schemeJudge doc
   paletteSummaryIn (j.shipped.zip ((j.views.head?.map (·.2)).getD [])) doc.palette.seeded.isSome

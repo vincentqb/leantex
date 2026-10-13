@@ -2,8 +2,7 @@ module
 
 namespace LeanTex.Core
 
-/-- One macro invocation in the provenance of an expanded token. The id
-distinguishes separate invocations of the same name. -/
+/-- One macro invocation in the provenance of an expanded token. -/
 public structure MacroOrigin where
   id : Nat
   name : String
@@ -14,28 +13,21 @@ public structure Pos where
   col : Nat := 1
   /-- Enclosing macro invocations, outermost first. -/
   origins : List MacroOrigin := []
-  /-- The exact authored token, before normalization or display expansion.
-  Desugared or otherwise synthetic positions have no written token. -/
+  /-- The exact authored token, before normalization; `none` at a synthetic position. -/
   command : Option String := none
-  /-- Whether these coordinates identify a boundary in the original source.
-  A normalized fragment without such a boundary cannot index authored tokens. -/
+  /-- Whether these coordinates identify a boundary in the original source. -/
   sourceMapped : Bool := true
-  /-- An opening brace whose line end the lexer leaves out (`Lex.midlineWs`),
-  which TeX reads as a space after the brace. -/
+  /-- An opening brace whose line end the lexer leaves out, which TeX reads as a space. -/
   openEol : Bool := false
-  /-- A closing brace, and once parsed the group it closes, after a line end
-  the lexer leaves out, which TeX reads as a space unless a control word
-  ends the line. -/
+  /-- A closing brace after a line end the lexer leaves out, which TeX reads as a space unless a
+  control word ends the line. -/
   closeEol : Bool := false
   deriving Repr, DecidableEq
 
-/-- Source-location identity ignores expansion and token provenance. Consumers that
-need macro ancestry read `Pos.origins` explicitly. -/
+/-- Source-location identity, ignoring expansion and token provenance. -/
 public instance : BEq Pos where
   beq p q := p.line == q.line && p.col == q.col
 
-/-- A line end the lexer leaves out beside a brace is lexing evidence, not
-location identity. -/
 public theorem Pos.beq_eol_exact (p q : Pos) (a b c d : Bool) :
     ({ p with openEol := a, closeEol := b } == { q with openEol := c, closeEol := d }) =
       (p == q) := rfl
@@ -43,12 +35,9 @@ public theorem Pos.beq_eol_exact (p q : Pos) (a b c d : Bool) :
 public theorem Pos.beq_origins_exact (p q : Pos) (xs ys : List MacroOrigin) :
     ({ p with origins := xs } == { q with origins := ys }) = (p == q) := rfl
 
-/-- Source-token evidence, like macro ancestry, is presentation metadata:
-changing it cannot change source-location identity. -/
 public theorem Pos.beq_command_exact (p q : Pos) (xs ys : Option String) :
     ({ p with command := xs } == { q with command := ys }) = (p == q) := rfl
 
-/-- Source-map availability is provenance metadata, not location identity. -/
 public theorem Pos.beq_sourceMapped_exact (p q : Pos) (a b : Bool) :
     ({ p with sourceMapped := a } == { q with sourceMapped := b }) = (p == q) := rfl
 
@@ -83,53 +72,27 @@ public def Severity.letter : Severity → Char
   | .warning => 'W'
   | .note => 'N'
 
-/-- Is this a warning: what `--werror` fails on, and the one severity the log's
-fold delivers as a note when it repeats. -/
+/-- Is this a warning, the severity `--werror` fails on. -/
 public def Severity.isWarning : Severity → Bool
   | .warning => true
   | .error | .note => false
 
-/-- What a reader of the shipped output loses at the site that emits a
-diagnostic. Severity is a function of one question — can the reader recover
-what the document declared? — so it is derived from this classification,
-never chosen at a call site. -/
+/-- What a reader of the shipped output loses at a diagnostic's site; severity derives from it. -/
 public inductive Loss where
-  /-- Declared content is absent with nothing in its place, and the engine has
-  no plan to render it: a value it cannot interpret, a construct it will not
-  support. Test: deleting the construct from the source leaves the output
-  identical AND the construct carried content AND no milestone owns it. -/
+  /-- Declared content is absent, with nothing in its place and no plan to render it. -/
   | dropped
-  /-- Declared content is absent, but the engine has published a plan to
-  render it: a construct owned by a milestone. The reader loses it today and
-  gets it later, so refusing to emit the document is the wrong trade — the
-  loss is reported and the rest of the document is still produced. -/
+  /-- Declared content is absent, and the engine has a plan to render it. -/
   | pending
-  /-- The content is in the output but not as declared (unstyled, set as
-  source text, a placeholder box, a substituted face): the reader sees
-  *something stands here*. -/
+  /-- The content is in the output, but not as declared. -/
   | degraded
-  /-- The output is exactly what the document declared, and the declaration
-  falls below a standard the engine holds documents to: a readable measure,
-  a heading nearer its text than what precedes it, a WCAG contrast ratio.
-  Nothing was lost in translation; the remedy is the author's, so the engine
-  has nothing to recover in its place. -/
+  /-- The output is as declared, but falls below a standard the engine holds documents to. -/
   | standard
-  /-- A skipped construct with no content operand (packages, templating,
-  TeX conditionals): the meaning of the content survives. -/
+  /-- A skipped construct with no content operand; the content's meaning survives. -/
   | config
-  /-- Translation notes and authoring advice, including missing image alternatives;
-  the output matches the intent. -/
+  /-- Translation notes and authoring advice; the output matches the intent. -/
   | info
   deriving Repr, BEq
 
-/-- The policy: a dropped loss is an error, everything else is a warning or a
-note. `pending` is a warning by design — the engine renders as much as it can
-and says what it could not, because a document is more useful than a refusal
-when the gap is one the project has committed to closing. `--werror` makes
-any remaining warning fail the exit code for a caller who wants the strict
-reading, and `\allow` in a document accepts named codes, downgrading them to
-notes (see `Diag.accept`) — an accepted loss is neither an error nor a
-warning. -/
 public def Loss.severity : Loss → Severity
   | .dropped => .error
   | .pending => .warning
@@ -138,14 +101,9 @@ public def Loss.severity : Loss → Severity
   | .config => .warning
   | .info => .note
 
-/-- The class letter of a loss is its declared severity's letter. An error
-code cannot acquire a warning letter at construction; accepting a loss
-changes its effective severity later, without changing this letter. -/
 public def Loss.letter (l : Loss) : Char := l.severity.letter
 
-/-- The declared class as a machine reader sees it. A census bands on this,
-never on the rendered severity: demotion (`Diag.accept`, `Diag.demote`, a
-repeat site's note) changes what a line says it is, and never what was lost. -/
+/-- The declared class as a machine reader sees it, independent of demotion. -/
 public def Loss.label : Loss → String
   | .dropped => "dropped"
   | .pending => "pending"
@@ -154,51 +112,21 @@ public def Loss.label : Loss → String
   | .config => "config"
   | .info => "info"
 
-/-- Two classes never share a label, so banding on the label is banding on
-the loss. -/
 public theorem Loss.label_inj (a b : Loss) (h : a.label = b.label) : a = b := by
   cases a <;> cases b <;> first | rfl | exact absurd h (by decide)
 
-/-- **What the construct's place on the page owes a reader.** The recovery
-floor, declared once per loss class and derived at a salvage site exactly as
-severity and the code letter already are.
-
-It is declared here because it was being *rediscovered*. In one session
-three salvage paths — math the parser could not model, an unknown command's
-braced arguments, a diagram node whose body held one unreadable token — each
-independently arrived at the same law, and two of them arrived at it by
-first shipping the wrong thing: LaTeX source as body ink on five slides, a
-length beside a label, and a whole label dropped so three pages shipped an
-empty diagram frame. The law is not a property of math, or of pictures, or
-of unknown commands. It is a property of the loss class, so it belongs to
-the loss class. -/
+/-- What a construct's place on the page owes a reader, declared once per loss class. -/
 public inductive Floor where
-  /-- No floor exists, because no artifact does: a `dropped` loss fails the
-  run, so there is no page for a recovery to stand on. -/
+  /-- No floor: a `dropped` loss fails the run, so no page exists. -/
   | refuse
-  /-- The construct's place may legitimately be empty. That is what
-  `pending` *means* — the content is gone today and arrives with the
-  milestone that owns it — so a blank there is the declared state and not a
-  silent loss. Whatever does stand there is still the construct's own
-  content. -/
+  /-- The construct's place may be empty; whatever stands there is its own content. -/
   | absent
-  /-- The construct's text content stands in its place: never its markup,
-  and never nothing where the construct carried content — an empty salvage
-  is paid for by a declared placeholder. This is the floor the three sites
-  derived, and `degraded`'s own definition is why it is this one: the reader
-  is promised that *something stands here*. -/
+  /-- The construct's text content stands in its place, never its markup and never nothing. -/
   | content
-  /-- Nothing is owed and nothing appears: a `config` or `info` loss has no
-  content operand, so ink in its place would be invention rather than
-  recovery, and a `standard` loss's construct already stands as declared,
-  so there is nothing to recover. -/
+  /-- Nothing is owed and nothing appears. -/
   | inert
   deriving Repr, BEq, DecidableEq
 
-/-- The floor is a function of the declared loss and of nothing else — one
-decision, one place, the same shape `Loss.severity` has. A new diagnostic
-code inherits its floor from the class it declares; there is no site at
-which a floor is chosen. -/
 public def Loss.floor : Loss → Floor
   | .dropped => .refuse
   | .pending => .absent
@@ -207,31 +135,20 @@ public def Loss.floor : Loss → Floor
   | .config => .inert
   | .info => .inert
 
-/-- Does anything at all stand in the construct's place? A floor that ships
-nothing is not a recovery, and routing a salvage to a code whose floor does
-not ship puts ink where no content was lost. -/
+/-- Does anything stand in the construct's place? -/
 public def Floor.ships : Floor → Bool
   | .content | .absent => true
   | .refuse | .inert => false
 
-/-- Must the construct's place carry ink whenever the construct carried
-content? Only `.content` owes that, and `inks_iff_degraded` says the
-converse: no other loss class quietly acquires the obligation. -/
+/-- Must the construct's place carry ink whenever the construct carried content? -/
 public def Floor.inks : Floor → Bool
   | .content => true
   | .refuse | .absent | .inert => false
 
-/-- A floor that owes ink ships: the two questions are ordered, so no code
-can be asked for ink in a place nothing stands in. -/
 public theorem Floor.inks_ships (f : Floor) (h : f.inks) : f.ships := by
   cases f <;> simp_all [Floor.inks, Floor.ships]
 
-/-- Every diagnostic code the engine can emit: one constructor per code, so
-an unregistered code is unrepresentable and every walk over the codes is
-compiler-exhaustive. The constructor names spell the rendered codes; the
-letter itself is derived from the declared `Loss` at the one construction
-site (`DiagCode.code`), and `DiagCode.code_letter` holds the two spellings
-equal. -/
+/-- Every diagnostic code the engine can emit, one constructor per code. -/
 public inductive DiagCode where
   | E0001 | W0002 | E0003 | E0004 | W0004 | E0005 | E0006
   | E0101 | E0102 | E0111 | E0112 | E0113
@@ -330,11 +247,7 @@ public inductive DiagCode where
   | W0308
   deriving Repr, BEq, DecidableEq
 
-/-- The registry: each code's digits, its declared `Loss`, and its one
-meaning. One code, one meaning — a new code is forced through this match,
-where a collision with an existing number is visible before it ships, and
-the compiler holds every projection exhaustive. The class letter is not
-written here: `DiagCode.code` derives it from the loss. -/
+/-- The registry: each code's digits, its declared `Loss`, and its one meaning. -/
 private def DiagCode.spec : DiagCode → String × Loss × String
   | .E0001 => ("0001", .dropped, "cannot read an input file")
   | .W0002 => ("0002", .degraded, "bytes that are not text in the file's encoding, U+0000 among them, are replaced by U+FFFD")
@@ -556,63 +469,28 @@ public def DiagCode.loss (c : DiagCode) : Loss := c.spec.2.1
 
 public def DiagCode.meaning (c : DiagCode) : String := c.spec.2.2
 
-/-- The floor a code's declared loss demands, the projection every salvage
-site reads. Beside `DiagCode.code` and `Diag.severity`: a code has no floor
-field to disagree with its class, so a new code inherits a correct recovery
-rather than choosing one. -/
 public def DiagCode.floor (c : DiagCode) : Floor := c.loss.floor
 
-/-- **Exactly the degraded codes owe ink.** The ink rule — a
-`degraded` loss ships the construct's text content — is not one reading of
-the registry among several: it is the whole of the ink obligation, for every
-registered code. A future loss class cannot inherit the obligation by
-looking similar to `degraded`, and a `degraded` code cannot escape it by
-being routed somewhere quiet. -/
 public theorem DiagCode.inks_iff_degraded (c : DiagCode) :
     c.floor.inks = (c.loss == .degraded) := by
   cases h : c.loss <;> simp only [DiagCode.floor, h, Loss.floor, Floor.inks] <;> decide
 
 
-/-- The one place a code's printed name is spelled: the class letter comes
-from the declared loss, the digits from the registry. A code whose letter
-disagrees with its declared severity cannot be written. -/
+/-- A code's printed name: its declared loss's class letter, then the registry's digits. -/
 public def DiagCode.code (c : DiagCode) : String :=
   String.singleton c.loss.letter ++ c.digits
 
-/-- Every code's letter agrees with its declared severity. This is a fact
-of the record, independent of the terminal format or later acceptance. -/
 public theorem DiagCode.code_letter (c : DiagCode) :
     c.code.front = c.loss.severity.letter := by
   cases c <;> rfl
 
-/-- A number at or past the last constructor's index. `ofNat` saturates —
-every index beyond the last constructor answers with the last constructor —
-so applying it here names that constructor without naming it by hand, which
-is what makes `count` derivable. It is a *ceiling*, not a count: it never
-needs touching as codes are added, and a value too small is a build failure
-rather than a wrong answer (`all_complete` stops holding). -/
+/-- A number at or past the last constructor's index, where `ofNat` saturates. -/
 private def DiagCode.ctorCeiling : Nat := 65536
 
-/-- How many codes the registry holds: read off the type, not maintained by
-hand. Four agents adding a code in one session collided on the literal this
-replaces and merged it to a number one short of the truth; the count is
-derived now, so registering a code is one constructor and one `spec` arm and
-nothing else.
-
-Derived through the two helpers `deriving DecidableEq` synthesises for an
-enum: `ofNat` saturates at the last constructor, so `ofNat ctorCeiling` *is*
-that constructor, and `ctorIdx` reads its index. If either helper ever
-changed shape the value would move, and the two theorems below would stop
-holding — `all_complete` makes an undercount a build failure, `all_nodup` an
-overcount (`ofNat` clamps out of range, so an overcount duplicates the last
-constructor), so the derivation is checked in both directions rather than
-trusted. -/
+/-- How many codes the registry holds, read off the type. -/
 public def DiagCode.count : Nat := (DiagCode.ofNat DiagCode.ctorCeiling).ctorIdx + 1
 
-/-- Every code, for the registry checks in Tests.lean — derived from the
-type through the `ofNat` that `deriving DecidableEq` synthesises, never
-hand-maintained: constructor declaration order, complete and duplicate-free
-by the two theorems below, so the list cannot drift from the inductive. -/
+/-- Every code, in declaration order, derived from the type. -/
 public def DiagCode.all : List DiagCode :=
   (List.range DiagCode.count).map DiagCode.ofNat
 
@@ -625,66 +503,22 @@ public theorem DiagCode.all_nodup : DiagCode.all.Nodup := by decide +kernel
 public def DiagCode.ofString? (s : String) : Option DiagCode :=
   DiagCode.all.find? (·.code == s)
 
-/-- **A code a document can name is a surface, so retiring one is a
-migration.** `\allow{<code>}` is written in documents this repository cannot
-see, exactly as a CLI flag is invoked from build recipes it cannot see, and
-the same rule applies: the old spelling keeps answering, with a note saying
-what answers it now. Without this row a retirement turned a building document
-into a hard error (`E0329`, a `dropped` loss: exit 1, no PDF) for a change
-that took nothing away.
-
-`some succ` means the fact is still named by another diagnostic. The
-successor may report a broader loss, or be informational and need no
-acceptance. `\allow` of the old spelling accepts *nothing*: accepting `succ`
-in its place would accept every loss `succ` names, and a document that accepted dropped option runs
-would silently accept every unknown command with them (measured: `--werror`
-went from 1 to 0 on such a document). The note says which code names the
-loss now, and the document widens its acceptance only by writing that code
-itself if acceptance is needed. `none` means the loss cannot occur any more —
-the engine's rule changed — so there is nothing to accept and nothing to fail
-over. A pure renumbering, whose successor names exactly the retired loss,
-accepts its successor: that is `DiagCode.renumbered`'s, not this table's.
-
-A row leaves this list only when a document naming the old code is
-implausible, which is a judgement about the world and not about this tree, so
-in practice rows stay. -/
+/-- Retired codes a document may still name, each with the code naming its loss now, or `none`
+when the loss cannot occur; `\allow` of a retired code accepts nothing. -/
 public def DiagCode.retired : List (String × Option String) :=
-  [-- A refused command's leading `[...]` run was named by its own code at
-   -- the same span as the command's refusal. Its fate is a clause of that
-   -- refusal's message now, and W0301 names every unknown command, so the
-   -- old spelling accepts nothing.
-   ("W0341", some "W0301"),
-   -- `\scshape` means uniform small caps, so a casing lie in the source is
-   -- no longer how the canonical form is reached: the loss this named cannot
-   -- occur.
+  [("W0341", some "W0301"),
    ("W0344", none),
-   -- A missing alternative is authoring advice; no acceptance is needed.
    ("W0376", some "N0376"),
-   -- The withdrawal note named no loss beside the subset's refusals; the
-   -- picture's one line carries them now, a wider loss than the note's.
    ("N0419", some "W0419"),
-   -- Retired by decision: a listing token paints in its code role, a
-   -- colour and weights, never a style's frame or background.
    ("W0397", none)]
 
-/-- **A code renumbered for its class, whose successor names exactly its
-loss.** The old spelling keeps answering, as a retired one does, and here
-it also accepts the successor: the document accepted that loss, the loss is
-the same, and only what the page carries for it moved — so `\allow` of the
-old spelling accepting nothing would turn an accepted loss back into a
-warning that `--werror` fails on. Disjoint from `retired`, and the successor
-is a live code (both checked where the retired table is). -/
+/-- Codes renumbered for their class, whose successor names exactly their loss; `\allow` of the
+old spelling accepts the successor. -/
 public def DiagCode.renumbered : List (String × String) :=
-  [-- A picture the boundary tool drew nothing of, or did not finish: the
-   -- run failed with no artifact; it ships its placeholder now, the same
-   -- two events named under the same number.
-   ("E0382", "W0382"),
-   -- Bytes that are not UTF-8: the run refused the file; each sequence ships
-   -- as U+FFFD now, and the warning that lists them names the same bytes.
+  [("E0382", "W0382"),
    ("E0002", "W0002")]
 
-/-- An artifact whose diagnostics apply only when that output is requested:
-the two pages and the markdown twin. -/
+/-- An artifact whose diagnostics apply only when that output is requested. -/
 public inductive Diag.Output where
   | pdf
   | html
@@ -696,20 +530,15 @@ public def Diag.Output.label : Diag.Output → String
   | .html => "html"
   | .md => "md"
 
-/-- What the engine actually did after a loss. A proposed action belongs in
-`Diag.help`; neither field is reconstructed from message prose. -/
+/-- What the engine did after a loss; a proposed action belongs in `Diag.help`. -/
 public inductive Diag.Recovery where
   | ignored
   | skipped
   | replacedBy (replacement : String)
   deriving Repr, BEq, DecidableEq
 
-/-- Is `s` one written construct token: a control word (`\` and name
-characters, `@` among them, as `Lex.nameChar` reads them), a control symbol
-(`\` and one character, a control space or a line end among them, as the
-author wrote it), a math shift (`$`, `$$`), or a special character TeX gives
-a role (`&`, `#`, `^`, `_`, `~`)? A word of the document's text, a fragment
-of a code line, a bracket and blanks are not. -/
+/-- Is `s` one written construct token: a control word or symbol, a math shift, or a TeX
+special character? -/
 @[expose] public def Diag.constructSpelling (s : String) : Bool :=
   match s.toList with
   | ['$'] | ['$', '$'] | ['&'] | ['#'] | ['^'] | ['_'] | ['~'] => true
@@ -717,13 +546,7 @@ of a code line, a bracket and blanks are not. -/
   | '\\' :: rest => !rest.isEmpty && rest.all fun x => x.isAlpha || x == '@'
   | _ => false
 
-/-- **The one token a diagnostic's header names after its location**: a
-written construct (`constructSpelling`), as the author spelled it — the
-command, environment opener or math shift whose use the diagnostic is about.
-The constructor is private and the field states the invariant, so a word of
-the document, a line of code or a run of blanks is unrepresentable here
-rather than merely unconstructed: those are what the location already points
-at, and a header that quoted them read differently at every site. -/
+/-- The one written construct a diagnostic's header names after its location. -/
 public structure Diag.Spelling where
   private mk ::
   text : String
@@ -734,7 +557,6 @@ public structure Diag.Spelling where
 public def Diag.Spelling.ofWritten? (s : String) : Option Diag.Spelling :=
   if h : Diag.constructSpelling s = true then some ⟨s, h⟩ else none
 
-/-- The door keeps the token it accepts exactly as written. -/
 public theorem Diag.Spelling.ofWritten?_kept_exact (s : String) (t : Diag.Spelling)
     (h : Diag.Spelling.ofWritten? s = some t) : t.text = s := by
   unfold Diag.Spelling.ofWritten? at h
@@ -742,29 +564,13 @@ public theorem Diag.Spelling.ofWritten?_kept_exact (s : String) (t : Diag.Spelli
   · cases h; rfl
   · cases h
 
-/-- A construct token passes the door, and nothing else does. -/
 public theorem Diag.Spelling.ofWritten?_exact (s : String) :
     ((Diag.Spelling.ofWritten? s).map (·.text) = some s) = (Diag.constructSpelling s = true) := by
   unfold Diag.Spelling.ofWritten?
   split <;> simp_all
 
-/-- A diagnostic as delivered: `kind` is the registered code, and both the
-rendered code string and the severity are its projections — no free
-severity or code field exists, so a diagnostic disagreeing with its
-code's declared `Loss` is unrepresentable rather than merely
-unconstructed. `demoted` is the one policy bit (`accept`/`demote`): an
-accepted or demoted diagnostic delivers as a note, whatever its loss.
-`subject` is the key or source of the unresolved node a diagnostic names —
-a `\ref` key, a `\cite` key, an image source — structured so that "this
-loss is named" is a lookup, never a search of the message text
-(`Ir.Diag.mentions`, the resolution gate `pending_named`). `sites` is how
-many times this loss occurs in the document: a once-per-document warning
-carries the total so the default log states it, and each further site rides
-beside it as a note. Two writers: `tallySites`, the census, over a producer's
-log, and `foldRepeats`, the log a phase prints, which counts each wording
-once on its first line, whatever census key its sites carry
-(`foldRepeats_line_exact`); the default is the honest one for a diagnostic
-nothing else counted. -/
+/-- A diagnostic as delivered: severity and code string project from `kind`, `demoted` is its
+one policy bit, `subject` its census key and `sites` its loss's site count. -/
 public structure Diag where
   kind : DiagCode
   message : String
@@ -772,111 +578,50 @@ public structure Diag where
   help : Option String := none
   demoted : Bool := false
   subject : Option String := none
-  /-- The name this diagnostic refuses, when refusing a name is what it does:
-  an unsupported package, an unknown theme, an unknown font theme slot.
-
-  Separate from `subject`, which is the dedup key and is namespaced — an
-  unknown command's key is `"ctrl:\<name>"`, not the bare name, so a consumer
-  reading the name off `subject` reads it correctly for some codes and not
-  others. The distinction was not academic: `\usetheme` was refusable without
-  being enumerable, and the invariant that a name-refusal must first ask the
-  input path for a file that would define it could only be *stated* against
-  `subject`, where two of its codes set nothing at all and the statement was
-  vacuously true.
-
-  A structured field rather than a reading of the message, for the reason
-  every `_named` claim in this tree gives: prose rots, and a claim that
-  parses a sentence holds only until the sentence is reworded. -/
+  /-- The name this diagnostic refuses, when refusing a name is what it does. -/
   refused : Option String := none
   sites : Nat := 1
-  /-- The written construct the diagnostic is about, as the author spelled it
-  (`Diag.Spelling`), independent of the census key. -/
+  /-- The written construct the diagnostic is about, as the author spelled it. -/
   trigger : Option Diag.Spelling := none
   /-- Actual handling of this loss, distinct from a suggested action in `help`. -/
   recovery : Option Diag.Recovery := none
   /-- `none` applies to every output; a scoped loss applies only to that artifact. -/
   output : Option Diag.Output := none
-  /-- Every byte offset in the span's file the diagnostic names, where it
-  names more places than its message lists: the porcelain record carries
-  them all for a tool, the message the first few for a reader. -/
+  /-- Every byte offset in its span's file the diagnostic names, beyond what its message lists. -/
   offsets : Array Nat := #[]
-  /-- What this site alone adds to the words — the page it stands on, a
-  measure, the frame it names. Not part of the wording (`sameWords`), so the
-  sites of one loss print one line however their particulars differ, each
-  site's own under `-v`. -/
+  /-- What this site alone adds to the words; not part of the wording (`sameWords`). -/
   detail : Option String := none
-  /-- Other codes' losses this record accounts for, as one construct's one
-  diagnostic: a re-flowed declared line's overrun (W0005) in its
-  paragraph's re-flow (W0386). Each is fired with it, so a document's
-  acceptance of that code is never stale for it (`Diag.unfired`), and a
-  judge of that code's loss reads it here. Acceptance reads the record's
-  own code: accepting the carrier accepts what it carries, and accepting
-  the carried code alone leaves the carrier standing. -/
+  /-- Other codes' losses this record accounts for; accepting the carrier accepts them. -/
   carries : List DiagCode := []
   deriving Repr, BEq
 
-/-- **Is this code's loss part of the site census?** A `degraded` or
-`pending` diagnostic says content did not reach the page as declared, so a
-reader sizing the damage counts its sites — which `Diag.tallySites` can only
-do through `subject`. A `config` or `info` loss has no content operand and
-nothing to count, and a `standard` loss's content reached the page as
-declared.
-
-Declared here, beside `Loss.severity` and `Loss.floor`, and for the same
-reason: it is a function of the loss class and of nothing else, so no call
-site chooses it. A code since retired is why it is written down: it named a
-fragment of an unknown command's arguments with no subject at all, which put
-it outside the census entirely — `tallySites` returned a subjectless
-diagnostic untouched, so it fired once per site, repeated its help at each,
-and billed every site to `--werror`, while `W0301`, the same loss at the same
-site, reported `(2 sites)` on one line. Neither arm chose that; one reached
-for `warnOnce` and the other for `diag`, and nothing gated the choice. The
-run's fate is a clause of `W0301`'s own message now
-(`Elab.warnUnknownCmd_push_exact` is the emitter fact: one push per call,
-carrying the construct's code and the subject `ctrl:<name>`), and
-`subjectCensusChecks` is the gate. -/
+/-- Is this loss part of the site census? -/
 public def Loss.censused : Loss → Bool
   | .degraded | .pending => true
   | .dropped | .standard | .config | .info => false
 
-/-- The census question, per code — the projection a witness check reads. -/
 public def DiagCode.censused (c : DiagCode) : Bool := c.loss.censused
 
-/-- **Exactly the codes that owe ink are the codes that are counted.** The
-census obligation and the recovery obligation do not drift apart: a code
-whose place on the page must carry something is a code whose sites a reader
-can count, and `pending` joins it because a declared absence is still a
-number the reader is owed. Stated against `Floor.ships` rather than against
-the loss list twice, so a future loss class cannot acquire one half of the
-pair by looking similar. -/
 public theorem DiagCode.censused_iff_ships (c : DiagCode) :
     c.censused = c.floor.ships := by
   cases h : c.loss <;>
     simp only [DiagCode.censused, DiagCode.floor, h, Loss.censused, Loss.floor, Floor.ships]
 
-/-- **A loss about a place names no written token.** An overfull line, a
-declared line that re-flowed, a table wider than the measure (named at its
-first located cell) and a page set short are where text stands, not
-a construct the author wrote: whatever token opens the place is incidental,
-and a header that quoted it read differently at every site. The location
-points at the place. -/
+/-- Is this a loss about a place, whose header names no written token? -/
 public def DiagCode.namesPlace : DiagCode → Bool
   | .W0005 | .W0386 | .W0338 | .N0200 => true
   | _ => false
 
-/-- The rendered code string: the kind's own spelling, derived. -/
 public def Diag.code (d : Diag) : String := d.kind.code
 
-/-- Severity is a projection, never a stored field: the declared loss's
-severity, demoted to a note by policy alone. -/
+/-- The declared loss's severity, or a note when demoted. -/
 public def Diag.severity (d : Diag) : Severity :=
   match d.demoted with
   | true => .note
   | false => d.kind.loss.severity
 
-/-- The one door a diagnostic is made through. A written token handed in as
-its trigger is kept only when it spells a construct, and never for a loss
-about a place (`DiagCode.namesPlace`). -/
+/-- The one door a diagnostic is made through; a trigger is kept only when it spells a construct
+and the loss is not about a place. -/
 public def Diag.of (c : DiagCode) (message : String) (span : Option Span := none)
     (help : Option String := none) (subject : Option String := none)
     (refused : Option String := none) (trigger : Option String := none)
@@ -894,11 +639,8 @@ public def Diag.of (c : DiagCode) (message : String) (span : Option Span := none
     detail := detail
     carries := carries }
 
-/-- The construct a header names, as text. -/
 public def Diag.triggerText (d : Diag) : Option String := d.trigger.map (·.text)
 
-/-- The diagnostic constructor retains every supplied evidence field, and of
-a written token the construct spelling alone (`Diag.Spelling.ofWritten?`). -/
 public theorem Diag.of_record_exact (c : DiagCode) (message : String)
     (span : Option Span) (help subject refused trigger : Option String)
     (recovery : Option Diag.Recovery) (output : Option Diag.Output) (detail : Option String)
@@ -910,9 +652,6 @@ public theorem Diag.of_record_exact (c : DiagCode) (message : String)
         recovery := recovery, output := output, detail := detail, carries := carries } := by
   rfl
 
-/-- The diagnostic names exactly the supplied subject, independently of its
-message and optional recovery metadata. Effect-boundary accounting reads
-this projection without opening the constructor's implementation. -/
 public theorem Diag.of_subject (c : DiagCode) (message : String) (span : Option Span)
     (help subject : Option String) (refused : Option String := none)
     (trigger : Option String := none) (recovery : Option Diag.Recovery := none)
@@ -921,113 +660,71 @@ public theorem Diag.of_subject (c : DiagCode) (message : String) (span : Option 
       subject := by
   rfl
 
-/-- A refusal carries the name it refuses structurally, never as a reading of
-its own words: what the door was handed is what comes back out. The fact the
-name-refusal registry rests on — a consumer enumerating refusals reads a
-field, so rewording a message cannot silently empty the registry. -/
 public theorem Diag.of_refused (c : DiagCode) (message : String) (span : Option Span)
     (help subject refused : Option String) :
     (Diag.of c message span help subject refused).refused = refused := by rfl
 
-/-- Severity derives from the declared loss — structurally now: `severity`
-is a projection of the stored `kind`, so this is `rfl` and a call site
-cannot make it false anywhere, not only at construction. -/
 public theorem Diag.of_severity (c : DiagCode) (message : String) (span : Option Span)
     (help : Option String) (subject : Option String) :
     (Diag.of c message span help subject).severity = c.loss.severity := by rfl
 
-/-- `of_severity` over every argument the door takes. -/
 public theorem Diag.of_severity_full (c : DiagCode) (message : String) (span : Option Span)
     (help subject refused trigger : Option String) (recovery : Option Diag.Recovery)
     (output : Option Diag.Output) :
     (Diag.of c message span help subject refused trigger recovery output).severity =
       c.loss.severity := by rfl
 
-/-- The codes a `.bib` field's reading names its own losses by — a field it
-refuses (W0429), a formula's floor (W0012), a character TeX reserves
-(N0030) — none an error, so a field's reading fails no build by them
-(`Bib.FieldDoor.readWith_ships_contract`). -/
 public theorem DiagCode.fieldReading_ships :
     (DiagCode.W0429.loss.severity == .error) = false ∧
       (DiagCode.W0012.loss.severity == .error) = false ∧
       (DiagCode.N0030.loss.severity == .error) = false := ⟨rfl, rfl, rfl⟩
 
-/-- At construction, severity and code letter both come from the code's
-`Loss`. A caller cannot choose them independently. -/
 public theorem Diag.of_code_letter (c : DiagCode) (message : String) (span : Option Span)
     (help : Option String) (subject : Option String) :
     (Diag.of c message span help subject).code.front =
       (Diag.of c message span help subject).severity.letter :=
   c.code_letter
 
-/-- Unscoped diagnostics always apply. A scoped diagnostic requires its artifact. -/
+/-- An unscoped diagnostic always applies; a scoped one only when its artifact is built. -/
 public def Diag.appliesTo (outputs : Array Diag.Output) (d : Diag) : Bool :=
   match d.output with
   | none => true
   | some output => outputs.contains output
 
-/-- Stable projection for the driver, before acceptance and exit accounting.
-An empty output set still retains common diagnostics. -/
--- premise: Diag.forOutputs_mem — only diagnostics of disabled artifacts are removed.
+/-- The diagnostics that apply to the built outputs, before acceptance. -/
+-- premise: Diag.forOutputs_mem — only disabled artifacts' diagnostics are removed
 public def Diag.forOutputs (outputs : Array Diag.Output) (ds : Array Diag) : Array Diag :=
   ds.filter (Diag.appliesTo outputs)
 
-/-- Projection retains exactly the original records whose scope applies. -/
 public theorem Diag.forOutputs_mem (outputs : Array Diag.Output) (ds : Array Diag) (d : Diag) :
     d ∈ Diag.forOutputs outputs ds ↔
       d ∈ ds ∧ (∀ output, d.output = some output → output ∈ outputs) := by
   simp only [Diag.forOutputs, Array.mem_filter]
   cases h : d.output <;> simp [Diag.appliesTo, h]
 
-/-- Repeated projection cannot duplicate or further change a diagnostic. -/
 public theorem Diag.forOutputs_id (outputs : Array Diag.Output) (ds : Array Diag) :
     Diag.forOutputs outputs (Diag.forOutputs outputs ds) = Diag.forOutputs outputs ds := by
   simp [Diag.forOutputs, Array.filter_filter]
 
-/-- The escape hatch: `\allow{W0307, ...}` in a document's preamble accepts
-the named losses for that document alone; `--best-effort` (`allowAll`)
-accepts every loss — port mode. Rust's lint levels (allow/warn/deny per
-scope, deny wins in CI) are the tested prior art: acceptance is declared
-and scoped, never ambient. An accepted diagnostic is downgraded to a note,
-so a document that declares its intent emits nothing at default verbosity
-— and the build summary always prints what was accepted, which is how
-acceptance stays visible rather than silent. An accepted loss is not a
-warning, so it never trips `--werror`: that is the point of accepting it.
-Acceptance reads the code's own loss, never the delivered severity: a repeat
-the fold delivered as a note is a site of the loss its line accepts, and is
-accepted with it (`Diag.acceptedLosses` counts the loss once).
-Returns the resolved diagnostic and whether it was accepted. -/
+/-- Resolve `\allow` acceptance, delivering an accepted diagnostic as a note; returns it and
+whether it was accepted. -/
 public def Diag.accept (allowed : Array String) (allowAll : Bool) (d : Diag) : Diag × Bool :=
   if d.kind.loss.severity != .note && (allowAll || allowed.contains d.code) then
     ({ d with demoted := true }, true)
   else (d, false)
 
-/-- Acceptance changes only the policy bit, preserving the entire record,
-including present and future structured fields. -/
 public theorem Diag.accept_record_exact (allowed : Array String) (allowAll : Bool) (d : Diag) :
     { (Diag.accept allowed allowAll d).1 with demoted := d.demoted } = d := by
   unfold Diag.accept
   split <;> rfl
 
-/-- The spliced-`.sty` demotion: a TeX internal the engine correctly
-refuses inside a style file the author did not write is per-line correct
-and per-line unactionable — "'\\z@' is unknown" helps nobody holding only
-their own document. The diagnostic keeps its code and message but is
-delivered as a note (listed under `-v`), and N0020's "TeX internals
-refused" count carries it at default verbosity. The demotion bit is
-written here beside `Diag.accept`, the other policy door: severity is a
-function of the declared loss and of policy declared in this module,
-never of a call site. -/
+/-- Deliver a diagnostic as a note, keeping its code and message. -/
 public def Diag.demote (d : Diag) : Diag := { d with demoted := true }
 
-/-- Explicit policy demotion preserves the entire record apart from its policy bit. -/
 public theorem Diag.demote_record_exact (d : Diag) :
     { Diag.demote d with demoted := d.demoted } = d := by rfl
 
-/-- Two diagnostics are sites of the *same* loss when they carry the same
-code, structured subject and output scope. A PDF loss and an HTML loss
-must remain distinct even when they name the same construct, so filtering
-one artifact cannot inherit the other's count. -/
+/-- Two diagnostics are sites of the same loss: same code, subject and output scope. -/
 public def Diag.sameLoss (a b : Diag) : Bool :=
   (decide (a.kind = b.kind) && decide (a.output = b.output)) &&
     decide (a.subject = b.subject) && a.subject.isSome
@@ -1050,7 +747,6 @@ private theorem Diag.sameLoss_trans {a b c : Diag} (h₁ : Diag.sameLoss a b = t
   exact (Diag.sameLoss_iff a c).mpr
     ⟨⟨hk.1.trans hk'.1, hk.2.trans hk'.2⟩, hs.trans hs', hi⟩
 
-/-- A census group cannot cross output scopes. -/
 public theorem Diag.sameLoss_output_exact (a b : Diag) (h : Diag.sameLoss a b = true) :
     a.output = b.output := ((Diag.sameLoss_iff a b).mp h).1.2
 
@@ -1085,20 +781,7 @@ private theorem Diag.countsOf_count (n : Nat) (cs : List Nat) (i : Nat) (h : i <
   rw [Diag.countsOf_foldl cs _ i (by simpa using h)]
   simp [h]
 
-/-- **The losses add up.** A once-per-document diagnostic names its
-construct at the first site and delivers every later site as a note, so
-the default log shows one line where the document has many. That line
-therefore has to carry the total, or a reader sizing the damage from it
-undercounts — ten lines standing for fifty losses is how a document full of
-silent drops reads as nearly clean.
-
-This is the census's writer of `sites`: the first diagnostic of each loss carries
-the number of diagnostics sharing its code, subject and output, every later one
-carries 0, and a diagnostic with no subject is its own one site — so the
-counts on a log add up to its length (`tallySites_sum_exact`). Stamping the
-total on every site squared it for any reader who summed them. Nothing else
-moves — no diagnostic is added, removed, reordered, demoted or reworded — so
-counting cannot change what was lost, only what the reader is told about it. -/
+/-- Count each loss's sites onto its first diagnostic; later sites carry 0, a subjectless one 1. -/
 public def Diag.tallySites (ds : Array Diag) : Array Diag :=
   let counts := Diag.countsOf ds.size (ds.toList.mapIdx (Diag.carrier ds.toList))
   ds.mapIdx fun i d => { d with sites := counts[i]?.getD 0 }
@@ -1116,8 +799,6 @@ private theorem Diag.carrier_lt (ds : List Diag) (i : Nat) (h : i < ds.length) :
     omega
   · exact h
 
-/-- Counting a list of indices over the first `n` counts the entries below
-`n`: the fibres of a map into `[0, n)` partition its domain. -/
 private theorem Diag.sum_count_range (os : List Nat) (n : Nat) :
     ((List.range n).map (os.count ·)).sum = (os.filter (· < n)).length := by
   induction n with
@@ -1245,14 +926,9 @@ private theorem Diag.tallySites_getElem? (ds : Array Diag) (i : Nat) (h : i < ds
     Option.map_some]
   rw [Diag.countsOf_count ds.size _ i h]
 
-/-- Counting is not filtering: the tally holds every diagnostic it was
-given, in order. -/
 public theorem Diag.tallySites_length (ds : Array Diag) :
     (Diag.tallySites ds).size = ds.size := Array.size_mapIdx
 
-/-- Counting changes only the count: each diagnostic keeps its code,
-message, span, help, demotion and subject, so no loss is created,
-silenced or reworded by being counted. -/
 public theorem Diag.tallySites_id (ds : Array Diag) (i : Nat) (h : i < ds.size) :
     ∃ d, (Diag.tallySites ds)[i]? = some d ∧ d.kind = (ds[i]).kind ∧
       d.message = (ds[i]).message ∧ d.span = (ds[i]).span ∧
@@ -1260,17 +936,11 @@ public theorem Diag.tallySites_id (ds : Array Diag) (i : Nat) (h : i < ds.size) 
       d.subject = (ds[i]).subject :=
   ⟨_, Diag.tallySites_getElem? ds i h, rfl, rfl, rfl, rfl, rfl, rfl⟩
 
-/-- Counting preserves the entire record except `sites`, including all
-structured fields; this remains true when the record gains another field. -/
 public theorem Diag.tallySites_record_exact (ds : Array Diag) (i : Nat) (h : i < ds.size) :
     ((Diag.tallySites ds)[i]?).map (fun d => { d with sites := ds[i].sites }) = some ds[i] := by
   rw [Diag.tallySites_getElem? ds i h]
   rfl
 
-/-- **The counts on a log add up to its length.** Summing `sites` over every
-record of a run gives the number of records, whatever the run — the claim a
-reader sizing the damage makes when they add the numbers up. Each record
-counts once, on its carrier's line. -/
 public theorem Diag.tallySites_sum_exact (ds : Array Diag) :
     ((Diag.tallySites ds).toList.map (·.sites)).sum = ds.size := by
   have hmap : (Diag.tallySites ds).toList.map (·.sites) =
@@ -1292,10 +962,6 @@ public theorem Diag.tallySites_sum_exact (ds : Array Diag) :
   rw [List.filter_eq_self.mpr (by simpa using hall)]
   simp
 
-/-- **The number on the line is the number of sites in the log.** The first
-diagnostic of a loss — the line the default log shows — carries the count
-of diagnostics sharing that loss, so a reader who trusts the default line's
-total and a reader who counts the `-v` sites by hand reach the same number. -/
 public theorem Diag.tallySites_exact (ds : Array Diag) (i : Nat) (h : i < ds.size)
     (hs : (ds[i]).subject.isSome)
     (hfirst : ∀ k (hk : k < i), Diag.sameLoss ds[i] ds[k] = false) :
@@ -1311,9 +977,6 @@ public theorem Diag.tallySites_exact (ds : Array Diag) (i : Nat) (h : i < ds.siz
       simpa using this]
   rw [List.countP_eq_length_filter, ← Array.length_toList, Array.toList_filter]
 
-/-- **A later site rides on the first.** Every diagnostic after the first of
-its loss carries 0, so its note adds nothing to a sum the first line already
-holds. -/
 public theorem Diag.tallySites_later_exact (ds : Array Diag) (i k : Nat) (h : i < ds.size)
     (hk : k < i) (hsame : Diag.sameLoss ds[i] ds[k] = true) :
     ((Diag.tallySites ds)[i]?).map (·.sites) = some 0 := by
@@ -1326,13 +989,6 @@ public theorem Diag.tallySites_later_exact (ds : Array Diag) (i k : Nat) (h : i 
       simpa using this]
   simp
 
-/-- **A diagnostic with no subject is its own one site.** `tallySites`
-returns it with the count 1 and nothing else changed, whatever it carried.
-This is the mechanism behind the census gate in Tests.lean: a `censused`
-code emitted without a subject is invisible to the grouping, and the reader
-sees one line per site instead of one line carrying the total. Nothing here
-fixes that; it says precisely what is lost, so the gate over `DiagCode.all`
-has a statement to rest on rather than a comment. -/
 public theorem Diag.tallySites_subjectless_id (ds : Array Diag) (i : Nat) (h : i < ds.size)
     (hn : (ds[i]).subject.isNone) :
     (Diag.tallySites ds)[i]? = some { ds[i] with sites := 1 } := by
@@ -1367,14 +1023,7 @@ private theorem Diag.sameWords_trans {a b c : Diag} (h₁ : Diag.sameWords a b =
   obtain ⟨⟨h1', h2'⟩, h3', h4'⟩ := (Diag.sameWords_iff b c).mp h₂
   exact (Diag.sameWords_iff a c).mpr ⟨⟨h1.trans h1', h2.trans h2'⟩, h3.trans h3', h4.trans h4'⟩
 
-/-- **Two records print as one line.** One code, at one output scope, in the
-same words (`sameWords`): what a log line says is its identity, never how its
-emitter keyed the census. A census key that tells sites apart — an overfull
-line's position, a paragraph's index — names each site for the census and for
-the `_named` claims; it does not split one wording into a line per site, which
-is how an overfull line per listing line printed hundreds of identical
-warnings. The code decides the line, never a demotion, so neither a fold nor
-an acceptance moves a record between lines. -/
+/-- Two records print as one line: one code, one output scope, the same words. -/
 public def Diag.sameLine (a b : Diag) : Bool :=
   (decide (a.kind = b.kind) && decide (a.output = b.output)) && Diag.sameWords a b
 
@@ -1431,7 +1080,6 @@ private theorem Diag.lineOf_spec (l : List Diag) (j : Nat) (hj : j < l.length)
     (p := fun e => Diag.sameLine l[j] e && e.severity.isWarning) hj hq
   exact ⟨hlt, hle, hgs, hgw, (Diag.lineOf_congr l hgs).symm⟩
 
-/-- At a shown line, a warning is counted exactly when it is in its words. -/
 private theorem Diag.lineOf_eq_iff (l : List Diag) (s k : Nat) (hs : s < l.length)
     (hk : k < l.length) (hss : Diag.lineOf l l[s] = s)
     (hkw : l[k].severity.isWarning = true) :
@@ -1497,8 +1145,6 @@ public def Diag.countsOn (l : List Diag) (w e : Diag) : Bool :=
     ((l.getD (l.findIdx (Diag.sameLoss e)) e).severity.isWarning &&
       Diag.sameLine w (l.getD (l.findIdx (Diag.sameLoss e)) e))
 
-/-- **Which records a shown line counts.** At the line of a warning's words,
-a record is counted exactly when `countsOn` holds of it. -/
 private theorem Diag.repeatCarrier_eq_iff (l : List Diag) (s m : Nat) (hs : s < l.length)
     (hm : m < l.length) (hsw : l[s].severity.isWarning = true) (hss : Diag.lineOf l l[s] = s) :
     Diag.repeatCarrier l m l[m] = s ↔ Diag.countsOn l l[s] l[m] = true := by
@@ -1563,21 +1209,8 @@ private theorem Diag.foldOne_shown (n : Nat) (s : Bool) (d : Diag)
   · simp only [hb, ite_true] at h
     exact absurd h (by simp [Severity.isWarning])
 
-/-- **One wording, one line.** A wording repeated across a phase's log
-prints once: the first warning in those words stays a warning and carries
-their count, and every later warning in them is delivered as a note, listed
-under `-v`. The line is the wording (`sameLine`), whatever census key each
-site carries, so a key that tells sites apart folds as one that does not; a
-note or an error a census loss holds counts on the line of the loss's first
-record, so a loss `warnOnce` already folded keeps its line and its count.
-Folding changes how often a wording is printed and nothing it says: nothing
-is added, removed, reordered or reworded (`foldRepeats_record_exact`), the
-counts add up to the records (`foldRepeats_sum_exact`) and a line's to what
-it stands for (`foldRepeats_line_exact`), an error and a note keep their
-severity (`foldRepeats_kept_exact`, `foldRepeats_error_exact`), every wording
-stays on the log once (`foldRepeats_shown_exact`, `foldRepeats_visible_inj`),
-and its line counts its repeats (`foldRepeats_wording_between`). The demotion
-is written here beside `Diag.accept`, the other policy door. -/
+/-- Fold repeated wordings: the first warning in a wording carries the count, later ones
+deliver as notes. -/
 public def Diag.foldRepeats (ds : Array Diag) : Array Diag :=
   let l := ds.toList
   let carriers := l.mapIdx (Diag.repeatCarrier l)
@@ -1595,11 +1228,9 @@ private theorem Diag.foldRepeats_getElem? (ds : Array Diag) (i : Nat) (h : i < d
   rw [Diag.countsOf_count ds.size _ i h]
   simp [List.getElem?_mapIdx, Array.getElem?_eq_getElem h]
 
-/-- Folding holds every record it was given, in order. -/
 public theorem Diag.foldRepeats_size_exact (ds : Array Diag) : (Diag.foldRepeats ds).size = ds.size :=
   Array.size_mapIdx
 
-/-- Folding rewrites a record's count and its demotion, and nothing else. -/
 public theorem Diag.foldRepeats_record_exact (ds : Array Diag) (i : Nat) (h : i < ds.size) :
     ((Diag.foldRepeats ds)[i]?).map
       (fun d => { d with sites := ds[i].sites, demoted := ds[i].demoted }) = some ds[i] := by
@@ -1608,8 +1239,6 @@ public theorem Diag.foldRepeats_record_exact (ds : Array Diag) (i : Nat) (h : i 
   unfold Diag.foldOne
   split <;> rfl
 
-/-- **The sites in are the sites out.** Summing the folded log's counts gives
-the number of records it was given, whatever the phase. -/
 public theorem Diag.foldRepeats_sum_exact (ds : Array Diag) :
     ((Diag.foldRepeats ds).toList.map (·.sites)).sum = ds.size := by
   have hmap : (Diag.foldRepeats ds).toList.map (·.sites) =
@@ -1631,21 +1260,17 @@ public theorem Diag.foldRepeats_sum_exact (ds : Array Diag) :
   rw [List.filter_eq_self.mpr (by simpa using hall)]
   simp
 
-/-- An error stays an error and a note a note: only a warning is folded. -/
 public theorem Diag.foldRepeats_kept_exact (ds : Array Diag) (i : Nat) (h : i < ds.size)
     (hw : ds[i].severity.isWarning = false) :
     ((Diag.foldRepeats ds)[i]?).map (·.severity) = some ds[i].severity := by
   rw [Diag.foldRepeats_getElem? ds i h]
   simp [Diag.foldOne_severity, hw]
 
-/-- **An error stays an error.** A build fails at each of its sites, and the
-summary counts every one. -/
 public theorem Diag.foldRepeats_error_exact (ds : Array Diag) (i : Nat) (h : i < ds.size)
     (he : ds[i].severity = .error) :
     ((Diag.foldRepeats ds)[i]?).map (·.severity) = some .error := by
   rw [Diag.foldRepeats_kept_exact ds i h (by rw [he]; rfl), he]
 
-/-- A warning that is the first of its words stays a warning. -/
 private theorem Diag.foldRepeats_shown_at (ds : Array Diag) (s : Nat) (hs : s < ds.size)
     (hw : ds[s].severity.isWarning = true) (hsh : Diag.lineOf ds.toList ds[s] = s) :
     ((Diag.foldRepeats ds)[s]?).map (·.severity.isWarning) = some true := by
@@ -1655,8 +1280,6 @@ private theorem Diag.foldRepeats_shown_at (ds : Array Diag) (s : Nat) (hs : s < 
   rw [Diag.foldOne_severity]
   simp [hc, hw]
 
-/-- **Every wording stays on the log.** A warning's words keep a warning in
-them at or before it. -/
 public theorem Diag.foldRepeats_shown_exact (ds : Array Diag) (j : Nat) (hj : j < ds.size)
     (hw : ds[j].severity.isWarning = true) :
     ∃ i, ∃ hi : i < ds.size, i ≤ j ∧ Diag.sameLine ds[j] ds[i] = true ∧
@@ -1667,8 +1290,6 @@ public theorem Diag.foldRepeats_shown_exact (ds : Array Diag) (j : Nat) (hj : j 
   refine ⟨_, hs', hle, by simpa using hsl, ?_⟩
   exact Diag.foldRepeats_shown_at ds _ hs' (by simpa using hsW) (by simpa using hss)
 
-/-- **A wording shows once.** Two records in the same words, both delivered
-as warnings, are the same record. -/
 public theorem Diag.foldRepeats_visible_inj (ds : Array Diag) (i j : Nat) (hi : i < ds.size)
     (hj : j < ds.size)
     (hvi : ((Diag.foldRepeats ds)[i]?).map (·.severity.isWarning) = some true)
@@ -1696,7 +1317,6 @@ private theorem Diag.filter_size_countP (ds : Array Diag) (p : Diag → Bool) :
     (ds.filter p).size = ds.toList.countP p := by
   rw [List.countP_eq_length_filter, ← Array.length_toList, Array.toList_filter]
 
-/-- A shown line's count is the number of records `countsOn` holds of. -/
 private theorem Diag.foldRepeats_line_count (ds : Array Diag) (s : Nat) (hs : s < ds.size)
     (hw : ds[s].severity.isWarning = true) (hss : Diag.lineOf ds.toList ds[s] = s) :
     ((Diag.foldRepeats ds)[s]?).map (·.sites) =
@@ -1711,9 +1331,6 @@ private theorem Diag.foldRepeats_line_count (ds : Array Diag) (s : Nat) (hs : s 
   rw [hcount, Diag.filter_size_countP]
   simp
 
-/-- **A line counts exactly what it stands for.** The first warning in its
-words carries the number of the warnings in them and of the notes and errors
-whose census loss opens on one of those warnings (`countsOn`). -/
 public theorem Diag.foldRepeats_line_exact (ds : Array Diag) (s : Nat) (hs : s < ds.size)
     (hw : ds[s].severity.isWarning = true)
     (hfirst : ∀ k (hk : k < s),
@@ -1728,10 +1345,6 @@ public theorem Diag.foldRepeats_line_exact (ds : Array Diag) (s : Nat) (hs : s <
     simpa using hfirst k hk
   exact Diag.foldRepeats_line_count ds s hs hw hss
 
-/-- **A wording's line counts its repeats.** A warning's words keep a line at
-or before it, delivered as a warning, whose count is at least the warnings in
-those words and at most those and the notes and errors it carries — those
-whose census loss opens on a warning in its words (`countsOn`). -/
 public theorem Diag.foldRepeats_wording_between (ds : Array Diag) (j : Nat) (hj : j < ds.size)
     (hw : ds[j].severity.isWarning = true) :
     ∃ i d, i ≤ j ∧ (Diag.foldRepeats ds)[i]? = some d ∧ d.severity.isWarning = true ∧
@@ -1774,9 +1387,7 @@ public theorem Diag.foldRepeats_wording_between (ds : Array Diag) (j : Nat) (hj 
       · simp only [Diag.countsOn, hew, ite_true] at hc
         exact Or.inl ⟨rfl, hc⟩
 
-/-- One accepted record and the loss it is a site of: its code, its output
-scope, and its census subject (`sameLoss`) — or, naming none, its words
-(`sameWords`), the one loss the fold prints a subjectless repeat as. -/
+/-- One accepted record and the loss it is a site of. -/
 public structure Diag.Accepted where
   code : String
   output : Option Diag.Output
@@ -1789,9 +1400,7 @@ public def Diag.Accepted.of (d : Diag) : Diag.Accepted :=
       | some s => "subject\x00" ++ s
       | none => s!"words\x00{d.message}\x00{repr d.help}\x00{repr d.recovery}\x00{repr d.refused}" }
 
-/-- **What acceptance accepted, one code per loss.** The records of one loss
-are one entry however many sites the document accepts it at and however the
-log folds their lines. First acceptance first. -/
+/-- The accepted codes, one per loss, first acceptance first. -/
 public def Diag.acceptedLosses (accepted : Array Diag.Accepted) : Array String :=
   let keyed := accepted.mapIdx fun i a => (s!"{a.code}\x00{repr a.output}\x00{a.loss}", i, a.code)
   let sorted := keyed.qsort fun x y => x.1 < y.1 || (x.1 == y.1 && x.2.1 < y.2.1)
@@ -1799,11 +1408,7 @@ public def Diag.acceptedLosses (accepted : Array Diag.Accepted) : Array String :
     if k > 0 && (sorted[k - 1]?.map (·.1)) == some x.1 then none else some x.2
   (firsts.qsort fun x y => x.1 < y.1).map (·.2)
 
-/-- Diagnostics resolved against the document's acceptance, with the counts
-of every resolved phase. Counts follow acceptance, so an accepted loss is
-neither an error nor a warning. `notes` counts the lines only `-v` prints
-that no acceptance demoted: a note as emitted, and a repeat site the fold
-delivered as one. -/
+/-- Diagnostics resolved against the document's acceptance, with each phase's counts. -/
 public structure Resolution where
   diags : Array Diag := #[]
   fired : Array String := #[]
@@ -1813,9 +1418,6 @@ public structure Resolution where
   notes : Nat := 0
   deriving Repr, BEq
 
-/-- Phase accounting keeps the rendered records, acceptance and exit counts
-in one value. `resolveAll_append_exact` holds this operation to resolving the
-same stream at once, including its order and repeated diagnostic codes. -/
 public def Resolution.append (a b : Resolution) : Resolution :=
   { diags := a.diags ++ b.diags
     fired := a.fired ++ b.fired
@@ -1834,7 +1436,6 @@ public def Resolution.append (a b : Resolution) : Resolution :=
   cases r
   simp [append]
 
-/-- Grouping phases never changes their diagnostic records or verdict. -/
 public theorem Resolution.append_assoc_exact (a b c : Resolution) :
     (a.append b).append c = a.append (b.append c) := by
   simp [append, Array.append_assoc, Nat.add_assoc]
@@ -1860,7 +1461,6 @@ public def Diag.resolveAll (allowed : Array String) (allowAll : Bool)
     r := r.record d acc
   return r
 
-/-- The actual imperative resolver's fold reading; no second runtime walk. -/
 private theorem Diag.resolveAll_fold (allowed : Array String) (allowAll : Bool)
     (ds : Array Diag) :
     Diag.resolveAll allowed allowAll ds = ds.foldl (fun r d0 =>
@@ -1868,9 +1468,6 @@ private theorem Diag.resolveAll_fold (allowed : Array String) (allowAll : Bool)
       r.record d acc) {} := by
   simp [resolveAll]
 
-/-- Resolving consecutive phases equals resolving their combined stream.
-The record equality covers diagnostic order, fired and accepted codes, both
-exit counts and the notes under the same acceptance policy. -/
 public theorem Diag.resolveAll_append_exact (allowed : Array String) (allowAll : Bool)
     (xs ys : Array Diag) :
     Diag.resolveAll allowed allowAll (xs ++ ys) =
@@ -1885,23 +1482,14 @@ public theorem Diag.resolveAll_append_exact (allowed : Array String) (allowAll :
       (Diag.accept allowed allowAll d0).1 (Diag.accept allowed allowAll d0).2)
   simpa [step] using h
 
-/-- The `\allow` entries no emitted diagnostic ever matched: each is stale
-acceptance the document no longer needs, and warning about it is one of the
-hatch's teeth — an allow that silences nothing today may silence something
-real tomorrow. A code another record carries (`Diag.carries`) is matched by
-that record's firing, though that allow accepts nothing there: the carrier's
-own code decides it, so such an allow is never called stale while the loss
-stands under its carrier. -/
+/-- The `\allow` entries no emitted or carried diagnostic matched. -/
 public def Diag.unfired (allowed : Array String) (fired : Array String) : Array String :=
   allowed.filter (!fired.contains ·)
 
-/-- Degraded output carries content; recovery can use this fact without unfolding
-the diagnostic policy. -/
 public theorem Loss.degraded_floor_ships_exact :
     Loss.degraded.floor.ships = true := by
   rfl
 
-/-- Diagnostic construction preserves the kind's registered code. -/
 public theorem Diag.of_code_exact (c : DiagCode) (message : String) (span : Option Span)
     (help subject : Option String) (refused : Option String := none)
     (trigger : Option String := none) (recovery : Option Diag.Recovery := none)
@@ -1910,7 +1498,6 @@ public theorem Diag.of_code_exact (c : DiagCode) (message : String) (span : Opti
       c.code := by
   rfl
 
-/-- The outline diagnostic keeps its registered spelling. -/
 public theorem DiagCode.w0320_code_exact : DiagCode.W0320.code = "W0320" := by
   rfl
 

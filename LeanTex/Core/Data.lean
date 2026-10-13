@@ -3,22 +3,8 @@ module
 public import LeanTex.Core.Bib
 public import LeanTex.Core.Parse
 
-/-! Data-driven documents: `@job{…}` records read from a `.bib` file (or an
-inline `\data{ @job{…} }` group), expanded into the document before
-elaboration. The vocabulary is three spellings — `\val{var.field}`,
-`\begin{foreach}{var}{kind}[sep]`, `\ifdata{var.field}{then}[else]` — and
-one declaration, `\data{ file = "records.bib" }`. A braced field value is
-body-language TeX: it is lexed by the document's own lexer and parsed by
-the document's own parser at the use site (`valParsed`), so `\%`, `~`,
-`\emph{}` and `\item` work inside a value and `expandData_covers` — a data
-document elaborates as the document with the data inlined by hand — is
-near-definitional. The line is drawn tight: no expressions, no filters, no
-functions, no recursion, no indices; expansion is a bounded fold over the
-finite record list, so the designed-terminating property of the language
-survives by construction.
-
-Reading the file is the driver's effect (`fileRefsAt` is the request value,
-the `Ir.bibRefs` shape); this module only ever sees the text. -/
+/-! Data-driven documents: `@kind{…}` records from a `.bib` file or an inline `\data` group,
+expanded before elaboration through `\val`, `foreach` and `\ifdata` by a bounded fold. -/
 
 namespace LeanTex.Core.Data
 
@@ -44,8 +30,8 @@ def dataDecl? (body : Array Raw) : Option (String ⊕ String) :=
       else none
     | _ => none
 
-/-- This surface scan pairs a command with its operand and carries the
-input filename across wrappers; an IR leaf fold cannot read those siblings. -/
+/-- A surface scan pairing a command with its operand across input wrappers, which no leaf fold
+reads. -/
 private def refsList (file : String) (out : Array (String × Span)) :
     List Raw → Array (String × Span)
   | [] => out
@@ -68,24 +54,17 @@ decreasing_by
   all_goals try omega
   all_goals (have hb : sizeOf body = 1 + sizeOf body.toList := rfl; omega)
 
-/-- Every `.bib` source the document's `\data` declarations name, in
-first-appearance order, deduplicated, with the complete first declaration
-span. Input wrappers change the filename only within their own contents.
-The driver fulfils these requests before elaboration, where the expansion
-needs the records where `\begin{foreach}` stands. Files are effects, so
-the core never opens one. -/
+/-- Every `.bib` source the document's `\data` declarations name, first appearance first, with
+its declaration span. -/
 public def fileRefsAt (file : String) (raws : Array Raw) : Array (String × Span) :=
   refsList file #[] raws.toList
 
-/-- A file wrapper's requests are exactly its body's requests under the
-included filename, independent of the caller's filename and wrapper position. -/
 public theorem fileRefsAt_input_exact (caller file name : String) (body : Array Raw) (pos : Pos)
     (h : Parse.inputEnvFile? name = some file) :
     fileRefsAt caller #[.env name body pos] = fileRefsAt file body := by
   simp [fileRefsAt, refsList, h]
 
-/-- The filename-free view for callers that only load the named sources.
-Diagnostics use `fileRefsAt` with the actual root filename. -/
+/-- The filename-free view of `fileRefsAt`, for callers that only load the named sources. -/
 public def fileRefs (raws : Array Raw) : Array (String × Pos) :=
   (fileRefsAt "" raws).map fun (name, span) => (name, span.pos)
 
@@ -101,17 +80,11 @@ decreasing_by
   all_goals try omega
   all_goals (have hb : sizeOf body = 1 + sizeOf body.toList := rfl; omega)
 
-/-- Does the document declare any `\data` at all? The driver's gate: no
-declaration, no file scan, no expansion — a data-free document costs one
-short-circuiting walk and nothing else, and its own `\val` or `foreach`
-spellings stay its own (the vocabulary exists only where data does). -/
+/-- Does the document declare any `\data` at all? -/
 public def hasData (raws : Array Raw) : Bool :=
   hasDataList raws.toList
 
-/-- The record store: every parsed record in declaration order, each with
-the source name its text came from (the file a value's own diagnostics
-must name). Records of one kind keep file order — `foreach` iterates them
-as written. -/
+/-- The record store: every parsed record in declaration order, with its source name. -/
 structure Store where
   entries : Array (String × Bib.Entry) := #[]
   deriving Repr
@@ -152,9 +125,7 @@ def resolveVar (env : List Binding) (path : String) :
     .error (s!"'{path}' is not a data path",
       some "a path is variable.field, as in '\\val{job.role}'", none)
 
-/-- Resolve `var.field`: the field's raw text and the source name it came
-from, or the W0364 message and help — the absent-field message names the
-entry's own fields, the E0403 nearest-names shape. -/
+/-- Resolve `var.field`: the field's raw text and source name, or the W0364 message and help. -/
 def resolvePath (env : List Binding) (path : String) :
     Except (String × Option String × Option String) (String × String) :=
   match resolveVar env path with
@@ -168,19 +139,13 @@ def resolvePath (env : List Binding) (path : String) :
         some s!"'\\ifdata\{{path}}\{…}' renders content only when the field is present",
         some s!"{b.entry.kind}[{b.index}] carries: {carried}")
 
-/-- A field value's raws and diagnostics: the same lexer and the same
-parser the document body went through — no data-specific lexing exists to
-differ. This is decision 4 of the data design made structural, and the
-function `expandData_covers` quantifies over. -/
+/-- A field value's raws and diagnostics through the document's own lexer and parser. -/
 def valParsed (src text : String) : Array Raw × Array Diag :=
   let (toks, lexDiags) := Lex.lex src text
   let (raws, parseDiags) := Parse.parse src toks
   (raws, lexDiags ++ parseDiags)
 
-/-- The raws inside a leading `[…]` and the list past the closer: the
-optional argument. Flat, as the elaborator's own optional scan is: the
-first top-level `]` closes (a `]` inside a brace group is already a
-`.group` node and cannot). -/
+/-- The raws inside a leading `[…]` and the list past its first top-level `]`. -/
 def bracketSplit : List Raw → List Raw × List Raw
   | [] => ([], [])
   | .sym ']' _ :: rest => ([], rest)
@@ -192,9 +157,7 @@ private theorem bracketSplit_le (l : List Raw) :
     sizeOf (bracketSplit l).1 ≤ sizeOf l ∧ sizeOf (bracketSplit l).2 ≤ sizeOf l := by
   fun_induction bracketSplit l <;> simp_all <;> omega
 
-/-- A leading optional `[…]`, possibly after one space: its raws (empty
-when absent) and the list past it. An empty optional and an absent one
-mean the same thing to both consumers — no separator, no else branch. -/
+/-- A leading optional `[…]`, maybe after one space: its raws, empty when absent, and the rest. -/
 def optArg : List Raw → List Raw × List Raw
   | .sym '[' _ :: r1 | .space :: .sym '[' _ :: r1 => bracketSplit r1
   | l => ([], l)
@@ -244,9 +207,7 @@ private def say (code : DiagCode) (msg : String) (pos : Pos)
   modify fun st => { st with
     diags := st.diags.push (Diag.of code msg (some ⟨st.file, pos⟩) (help := help) (detail := detail)) }
 
-/-- Install one source's records: parse errors are W0352 — the same
-contract the bibliography holds, one bad entry costs itself, never the
-file — and the entries append in file order. -/
+/-- Install one source's records in file order; a parse error is W0352 and costs its entry. -/
 private def install (src text : String) : M Unit := do
   let parsed := Bib.parse text
   modify fun st => { st with
@@ -278,13 +239,8 @@ private def sayNoRecords (kind : String) (pos : Pos) : M Unit := do
 
 mutual
 
-/-- The expansion walk. Substitution only: a spliced field value is content
-and is never re-expanded, `foreach` iterates a finite record list, and
-paths do not recurse — the fold is bounded by construction, no fuel. -/
--- conserves: none — the walk's whole job is substitution: `\val` splices a
--- field's raws in, `foreach` repeats its body, so a census equality over
--- the tree is false by design; the census statement is `expandData_covers`
--- below, on the public `expandData`.
+/-- The expansion walk: substitution only, bounded by the finite record list. -/
+-- conserves: none — substitution by design; `expandData_covers` states it
 private def expandList (env : List Binding) (out : Array Raw) :
     List Raw → M (Array Raw)
   | [] => pure out
@@ -371,9 +327,7 @@ decreasing_by
      have hf := foreachArgs_le body.toList _ _ _ _hargs
      omega)
 
-/-- One record after another: the body expands once per binding, the
-expanded separator splices between iterations — Pandoc's `$sep$`, without
-a filter. -/
+/-- One record after another, the expanded separator between iterations. -/
 private def expandEach (env : List Binding) (body : List Raw) (sep : Array Raw)
     (out : Array Raw) (first : Bool) : List Binding → M (Array Raw)
   | [] => pure out
@@ -388,13 +342,7 @@ decreasing_by
 
 end
 
-/-- Expand a document's data vocabulary: records install in document order
-(data precedes use — a forward reference diagnoses as unresolved, so a
-cycle is unrepresentable), `foreach` repeats its body over the records of
-a kind in file order, `\val` splices a field's text through the document's
-own lexer and parser, `\ifdata` branches on presence. A document that
-declares no `\data` is returned untouched: the vocabulary exists only
-where data does, so a document's own `\val` command stays its own. -/
+/-- Expand a document's data vocabulary; a document declaring no `\data` is returned untouched. -/
 public def expandData (file : String) (sources : Array (String × String))
     (raws : Array Raw) : Array Raw × Array Diag :=
   if !hasDataList raws.toList then (raws, #[])
@@ -403,14 +351,6 @@ public def expandData (file : String) (sources : Array (String × String))
       { sources := sources, file := file }
     (out, st.diags)
 
-/-- `expandData_covers` — substitution, the data design's headline theorem:
-a `\val` whose path resolves expands to exactly the raws of the field's
-text through the document's own lexer and parser (`valParsed`), so the
-elaboration of a data document is the elaboration of the document with the
-data inlined by hand — there is no data-specific lexing or elaboration
-left to differ, and every content theorem (census, escaping, layout)
-applies to data documents unchanged. Near-definitional by design: the
-`val` arm of the walk is literally this splice. -/
 theorem expandData_covers (env : List Binding) (out : Array Raw)
     (st : St) (pos gp : Pos) (body : Array Raw) (src txt : String)
     (h : resolvePath env (Parse.rawSrc body) = .ok (src, txt)) :

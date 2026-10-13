@@ -5,32 +5,21 @@ public import LeanTex.Core.Dim
 public import LeanTex.Core.DesignRole
 import LeanTex.Core.Oklab
 
-/-!
-The WCAG arithmetic shared by painting defaults and the document contrast
-judge. Keeping it below layout lets a pure painter read the very same
-thresholds the judge checks, without importing the judge's document walk.
-
-Sources: WCAG 2.2, relative luminance, contrast ratio, SC 1.4.3 and SC 1.4.11:
-https://www.w3.org/TR/WCAG22/#dfn-relative-luminance
-https://www.w3.org/TR/WCAG22/#dfn-contrast-ratio
--/
+/-! The WCAG 2.2 contrast arithmetic (relative luminance, contrast ratio, SC 1.4.3, SC 1.4.11)
+shared by painting defaults and the document contrast judge. -/
 namespace LeanTex.Core.Contrast
 
 open LeanTex.Core.Ir
 open LeanTex.Core.Oklab (channelLinear)
 
-/-- WCAG relative luminance in units of 10⁻⁷ (0 = black, 10⁷ = white):
-0.2126·R + 0.7152·G + 0.0722·B over the linearised channels.
-`Oklab.channelLinear` is the one tabulation of the sRGB transfer function.
-The division truncates below 10⁻⁷. -/
+/-- WCAG relative luminance in units of 10⁻⁷: 0.2126·R + 0.7152·G + 0.0722·B over the linearised
+channels. -/
 public def luminance (c : Color) : Nat :=
   (2126 * (channelLinear.getD c.r.toNat 0)
     + 7152 * (channelLinear.getD c.g.toNat 0)
     + 722 * (channelLinear.getD c.b.toNat 0)) / 10000
 
-/-- WCAG contrast ratio ×1000, truncated: (L₁ + 0.05)/(L₂ + 0.05) with the
-lighter luminance on top. Channel rounding and truncation differ from the
-real-valued ratio by less than 0.007. -/
+/-- WCAG contrast ratio ×1000, (L₁ + 0.05)/(L₂ + 0.05) with the lighter on top, truncated. -/
 public def contrastMilli (a b : Color) : Nat :=
   let la := luminance a
   let lb := luminance b
@@ -46,8 +35,7 @@ public theorem contrastMilli_ratioOf_exact (a b : Color) :
   unfold contrastMilli ratioOf
   rfl
 
-/-- An arithmetic assessment, before a caller's exemption policy. Ratios
-and thresholds use the units of `contrastMilli`. -/
+/-- An arithmetic assessment before a caller's exemption policy, in `contrastMilli`'s units. -/
 public structure PairAssessment where
   ratio : Nat
   required : Nat
@@ -56,9 +44,7 @@ public structure PairAssessment where
 public def PairAssessment.passes (a : PairAssessment) : Bool :=
   decide (a.required ≤ a.ratio)
 
-/-- The integer comparison shared by the document use judge and the
-placed-run audit. This asserts the implemented arithmetic, not equality
-to an unrounded real-valued WCAG computation. -/
+/-- The integer contrast comparison the use judge and the placed-run audit share. -/
 public def assessPair (required : Nat) (ink ground : Color) : PairAssessment :=
   { ratio := contrastMilli ink ground, required }
 
@@ -75,9 +61,7 @@ public def aaLargeText : Nat := 3000
 /-- SC 1.4.11 (AA), non-text UI information: 3:1. -/
 public def aaNonText : Nat := 3000
 
-/-- The ratio a role's need owes, in `contrastMilli`'s units: text 4.5:1
-and large-scale text 3:1 (SC 1.4.3), non-text information and a state
-change 3:1 (SC 1.4.11); a ground or decoration owes nothing. -/
+/-- The ratio a role's need owes, in `contrastMilli`'s units. -/
 @[expose] public def required : Ir.Need → Nat
   | .text => aaText
   | .largeText => aaLargeText
@@ -85,8 +69,6 @@ change 3:1 (SC 1.4.11); a ground or decoration owes nothing. -/
   | .state => aaNonText
   | .decorative => 0
 
-/-- Every need's ratio is at most the text one: a pair that clears 4.5:1
-clears whatever its need asks. -/
 public theorem required_le_aaText (n : Ir.Need) : required n ≤ aaText := by
   cases n <;> decide
 
@@ -94,15 +76,10 @@ public theorem required_le_aaText (n : Ir.Need) : required n ≤ aaText := by
 public def aaaText : Nat := 7000
 /-- SC 1.4.6 (AAA), large-scale text: 4.5:1. -/
 public def aaaLargeText : Nat := 4500
-/-- Non-text information where the reader asks more contrast: 4.5:1, an
-engine choice — WCAG 2.2 sets no enhanced level for SC 1.4.11, and this
-holds an edge to the enhanced large-text ratio beside it. -/
+/-- Non-text information where the reader asks more contrast: 4.5:1, an engine choice. -/
 public def moreNonText : Nat := 4500
 
-/-- The ratio a need owes in a scheme: `required`'s in print and the plain
-screens, and where the reader asks more contrast (`Scheme.more`) SC 1.4.6's
-7:1 for text and 4.5:1 for large-scale text, with non-text information and
-a state change at `moreNonText`. -/
+/-- The ratio a need owes in a scheme: `required`'s, or SC 1.4.6's where the reader asks more. -/
 @[expose] public def requiredIn (s : Ir.Scheme) (n : Ir.Need) : Nat :=
   if s.more then
     match n with
@@ -113,25 +90,18 @@ a state change at `moreNonText`. -/
     | .decorative => 0
   else required n
 
-/-- A scheme that asks no more contrast owes what `required` owes. -/
 public theorem requiredIn_plain (s : Ir.Scheme) (h : s.more = false) (n : Ir.Need) :
     requiredIn s n = required n := by
   simp [requiredIn, h]
 
-/-- **A more scheme never owes less** (`_monotone`): each need's ratio there
-is at least its plain one. -/
 public theorem requiredIn_monotone (s : Ir.Scheme) (n : Ir.Need) : required n ≤ requiredIn s n := by
   unfold requiredIn
   cases s.more <;> cases n <;> decide
 
-/-- A pair that clears the normal-text requirement also clears the
-large-scale text requirement. Consumers need this ordering, not the
-implementation of either threshold. -/
 public theorem aaLargeText_le_aaText : aaLargeText ≤ aaText := by
   decide
 
-/-- WCAG 2.2's large-scale text boundary, in the same point units as layout.
-The document planner and placed-glyph judge share this decision. -/
+/-- WCAG 2.2's large-scale text boundary (≥ 18pt, or ≥ 14pt bold), in layout's units. -/
 public def largeText (size : Dim.Sp) (bold : Bool) : Bool :=
   size ≥ Dim.pt 18 || (bold && size ≥ Dim.pt 14)
 

@@ -5,29 +5,13 @@ public import LeanTex.Core.ListingHighlight
 import LeanTex.Core.PygmentsStyleData
 public import Std.Data.HashMap
 
-/-!
-Pygments' style model for listing tokens, over the declarations
-`PygmentsStyleData` carries. Two readings of one table:
-
-* `Resolved` is Pygments' inheritance (pygments/style.py, `StyleMeta`): a
-  type starts from its parent's resolved style and applies its own
-  declaration's words in order. It is `style_for_token`'s answer, which the
-  suite compares row by row with Pygments' own.
-* `Look` is what a lualatex build with minted ships: the LaTeX formatter
-  (pygments/formatters/latex.py) writes a token as `\PYG{k+kt}{…}`, and
-  `\PYG@toks` applies each type's command from the top level down. A later
-  colour or box replaces an earlier one; bold, italic and underline, once
-  set, stay set, so a `nobold` below a bold type is lost exactly as it is in
-  the lualatex build. The colour remembers the type whose declaration set
-  it, which is where a document's own listing colour enters (`Listing`).
--/
+/-! Pygments' style model over `PygmentsStyleData`: `Resolved`, Pygments' inheritance
+(`style_for_token`), and `Look`, what minted's LaTeX formatter ships under lualatex. -/
 namespace LeanTex.Core.PygmentsStyle
 
 open Ir ListingHighlight
 
-/-- One style declaration's words: what each field sets, `none` where the
-type keeps its parent's value. `bgcolor` and `border` may be set to nothing
-(`bg:`), as Pygments allows. -/
+/-- One style declaration's words; `none` where the type keeps its parent's value. -/
 public structure Decl where
   color : Option Color := none
   bold : Option Bool := none
@@ -37,8 +21,7 @@ public structure Decl where
   border : Option (Option Color) := none
   deriving Repr, BEq, Inhabited
 
-/-- `style_for_token`'s fields the carried declarations reach. `color`
-carries the type whose declaration set it. -/
+/-- The `style_for_token` fields the declarations reach; `color` carries the type that set it. -/
 public structure Resolved where
   color : Option (Color × Kind) := none
   bold : Bool := false
@@ -111,8 +94,7 @@ public def Resolved.step (parent : Resolved) (k : Kind) (d : Decl) : Resolved :=
     bgcolor := d.bgcolor.getD parent.bgcolor
     border := d.border.getD parent.border }
 
-/-- The fill `\fcolorbox` takes when a style names a border and no
-background: the formatter's `rgbcolor('')`, `1,1,1`. -/
+/-- The fill `\fcolorbox` takes for a border with no background: the formatter's `1,1,1`. -/
 private def unfilled : Color := { r := 255, g := 255, b := 255 }
 
 /-- One `\PYG@tok`: the next type's command over what the types above it set. -/
@@ -126,18 +108,14 @@ public def Look.step (acc : Look) (r : Resolved) : Look :=
       | none, some fill => some (.fill fill)
       | none, none => acc.box }
 
-/-- A style resolved: every declared type and its ancestors, the root
-included. A type the table does not hold declares nothing, so it reads as
-its nearest ancestor does (`resolvedOf`, `lookOf`). -/
+/-- A style resolved: every declared type and its ancestors, the root included. -/
 public structure Table where
   resolved : Std.HashMap Kind Resolved
   looks : Std.HashMap Kind Look
 
 private def root : Kind := ⟨""⟩
 
-/-- Resolve declarations, each type after its parent: a chain lists its
-ancestors first, so walking the declared types' chains in order meets every
-parent before its children. -/
+/-- Resolve declarations, each type after its parent. -/
 public def Table.build (decls : List (String × String)) : Table := Id.run do
   let parsed := decls.filterMap fun (t, d) => (parseDecl? d).map (Kind.ofPygments t, ·)
   let declOf (k : Kind) : Decl := ((parsed.find? (·.1 == k)).map (·.2)).getD {}
@@ -162,22 +140,19 @@ private def Table.nearest (t : Table) (k : Kind) : Kind :=
 public def Table.resolvedOf (t : Table) (k : Kind) : Resolved :=
   t.resolved.getD (t.nearest k) {}
 
-/-- What minted ships for any type. The root itself carries no style. -/
+/-- What minted ships for any type; the root carries no style. -/
 public def Table.lookOf (t : Table) (k : Kind) : Look :=
   if k.path.isEmpty then {} else t.looks.getD (t.nearest k) {}
 
-/-- Every type the table holds: the domain a contract over its colours
-ranges over, since every other type reads as one of these. -/
+/-- Every type the table holds, the domain a contract over its colours ranges over. -/
 public def Table.kinds (t : Table) : List Kind := t.resolved.keys
 
-/-- The formatter's name for a standard type, as its `\PYG@tok@<name>` macro
-spells it (`STANDARD_TYPES`). -/
+/-- The formatter's name for a standard type, as its `\PYG@tok@<name>` macro spells it. -/
 public def standardName? (k : Kind) : Option String :=
   let path := if k.path.isEmpty then "Token" else "Token." ++ k.path
   (PygmentsStyleData.standardTypes.find? (·.1 == path)).map (·.2)
 
-/-- Every standard type with the name the formatter spells its macro with,
-in token order (`STANDARD_TYPES`). -/
+/-- Every standard type with its formatter macro name, in token order (`STANDARD_TYPES`). -/
 public def standardTypes : List (Kind × String) :=
   PygmentsStyleData.standardTypes.map fun (path, n) => (Kind.ofPygments path, n)
 
@@ -185,8 +160,7 @@ public def defaultTable : Table := Table.build PygmentsStyleData.defaultStyle
 
 public def friendlyTable : Table := Table.build PygmentsStyleData.friendlyStyle
 
-/-- Every shipped declaration parses: what the generator admitted, this
-module carries. -/
+/-- Every shipped declaration parses. -/
 public def declarationsParse : Bool :=
   (PygmentsStyleData.defaultStyle ++ PygmentsStyleData.friendlyStyle).all fun (_, d) =>
     (parseDecl? d).isSome
