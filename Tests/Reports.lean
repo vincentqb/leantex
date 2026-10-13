@@ -41,6 +41,7 @@ import Tests.Redefine
 import Tests.Images
 import Tests.SvgImages
 import Tests.SvgTools
+import Tests.SvgNative
 import Tests.AnimatedGraphics
 import Tests.AnimatedFaces
 import Tests.PdfPageSelection
@@ -158,7 +159,7 @@ open Tests (mintedSettingsChecks listingHighlightChecks listingPaletteContinuati
   shellReplyChecks shellHighlightChecks listingProviderChecks listingStyleTableChecks publicationPathChecks
   htmlContainedChecks htmlContainedRawContextChecks htmlContainedPublicationChecks htmlContainedSvgColorChecks
   htmlContainedCliChecks htmlContainedCorpusChecks
-  listingPaletteAuditChecks listingRoleEpochChecks svgAssetChecks animatedGraphicsChecks
+  listingPaletteAuditChecks listingRoleEpochChecks svgAssetChecks svgNativeBoundaryChecks animatedGraphicsChecks
   animatedFacesChecks imageContentUrlChecks svgToolChecks markdownInputChecks
   markdownInputHtmlChecks disclosurePrintChecks overlaySetChecks overlayStyleChecks
   overlayContractChecks overlayInputChecks overlaySingletonHtmlChecks diagnosticFormatChecks diagnosticTriggerChecks diagnosticImageOriginChecks diagnosticFontScopeChecks
@@ -499,7 +500,7 @@ def reports : List Report := [
     state := .guarded "09e4aa72" .before .author },
   { id := "R57", date := "2026-09-30"
     what := "an exporter doctype identifier caused a self-contained vector drawing to become a placeholder in both artifacts"
-    pins := [check% svgAssetChecks]
+    pins := [check% svgAssetChecks, check% svgNativeBoundaryChecks]
     accept := ["synthetic exporter-doctype inputs through the installed converters, with original browser bytes and painted native PDF pixels",
       "the private reference figure rendered from its original vector source"]
     state := .guarded "1c668735" .before .author },

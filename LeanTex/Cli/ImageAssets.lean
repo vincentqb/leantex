@@ -84,13 +84,20 @@ private def toolRecovery (tool : String) : String :=
     else s!"install '{tool}' (macOS: brew install {formula})"
   install ++ s!" and ensure '{tool}' is executable on the PATH used to run leantex"
 
+/-- The words of a machine a tool is not on: the tool, and how to put it
+there. -/
+public def missingWords (tool : String) : String :=
+  s!"{tool} is not on PATH; {toolRecovery tool}"
+
 private def runChecked (runTool : IO.Process.SpawnArgs → IO IO.Process.Output)
     (tool : String) (args : Array String) : ExceptT PicCache.Outcome IO String := do
   let recovery := toolRecovery tool
   let ran ← match ← liftM ((runTool { cmd := tool, args }).toBaseIO) with
     | .ok out => pure out
     | .error e =>
-      let detail := s!"{tool}: {e}"
+      -- A bounded run's own error already names the tool it ran.
+      let said := toString e
+      let detail := if said.startsWith s!"{tool}:" then said else s!"{tool}: {said}"
       throw <| .inconclusive (match e with
         | .noFileOrDirectory .. | .permissionDenied .. => detail ++ "; " ++ recovery
         | _ => detail)
@@ -158,6 +165,7 @@ private def convertResult (op : Op) (bytes : ByteArray)
           let output := dir / ("face." ++ spec.outputExt)
           IO.FS.writeBinFile input bytes
           discard <| runChecked runTool spec.tool (spec.args input output)
+          unless ← output.pathExists do throw <| .inconclusive s!"{spec.tool} wrote no output"
           let result ← IO.FS.readBinFile output
           if result.isEmpty then throw <| .inconclusive s!"{spec.tool} produced an empty image"
           if spec.outputExt == "pdf" then

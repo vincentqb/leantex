@@ -342,8 +342,9 @@ For image support on macOS:
 brew install librsvg poppler
 ```
 
-HTML preserves SVG animation, and a still SVG with text ships as the page's
-own SVG, its text live in the page's fonts. PDF displays a static pose:
+HTML preserves SVG animation, and a still SVG with text that leantex draws
+whole, with no embedded image, ships as the page's own SVG, its text live in
+the page's fonts; any other still SVG ships as its own bytes. PDF displays a static pose:
 `\animategraphics[poster=last]{10}{figure}{}{}` selects the final frame of
 supported SVG animations or a PDF frame sequence, and the page prints that
 pose. Unsupported animation features are diagnosed.

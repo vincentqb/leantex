@@ -88,6 +88,9 @@ def svgToolChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit 
       (!degraded.diags.isEmpty && degraded.diags.all fun d =>
         d.code == "W0609" && hasStr (diagWords d) "rsvg-convert" &&
           hasStr (diagWords d) "brew install librsvg" && hasStr (diagWords d) "PATH")
+    check ref (label ++ " does not ask the author to re-export")
+      (!degraded.diags.isEmpty && degraded.diags.all fun d =>
+        !hasStr (diagWords d) "re-export" && !(d.help.any (hasStr · "re-export")))
     failure.set none
     calls.set #[]
     let restored ← Driver.svgFetch req.src lossy .first "en" (some converter)

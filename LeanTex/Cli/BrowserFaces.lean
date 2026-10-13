@@ -135,11 +135,10 @@ private inductive Prepared where
 
 /-- A selected PDF page's face is native first (`PdfFaces.face`): the
 converter runs only for a page whose import names a loss, where the host has
-it (`present`, `PdfFaces.converterProbe`), and its face serves only where
-the page's own check keeps it. Either face stretches onto the box the
-include gives it, as the PDF form does. -/
-private def preparePrimary (decl : Boundary.Refusal)
-    (present : IO (Except PicCache.Outcome ByteArray) → IO (Option (Except PicCache.Outcome ByteArray)))
+it (`door`, `PdfFaces.doorWith`), and its face serves only where the page's
+own check keeps it. Either face stretches onto the box the include gives
+it, as the PDF form does. -/
+private def preparePrimary (decl : Boundary.Refusal) (door : PdfFaces.Door)
     (en : Image.Loaded) : IO Prepared := do
   let p := plan en
   let some conversion := p.conversion? | return .keep en
@@ -148,7 +147,7 @@ private def preparePrimary (decl : Boundary.Refusal)
   | .svgPoster _, none =>
     return .converted en p (.error "the SVG source has no captured bytes") #[] false none ""
   | .pdfPage page, some pdf =>
-    let f ← PdfFaces.face (HtmlDoc.resolvedSrc en) pdf page (present (ImageAssets.pdfSvgAnswer pdf page))
+    let f ← PdfFaces.face (HtmlDoc.resolvedSrc en) pdf page (door (ImageAssets.pdfSvgAnswer pdf page))
       ImageAssets.validateSvgResult decl (stretch := true) (cache := ← PdfFaces.cacheDir) (checkRefused := false)
     return .converted en p f.bytes f.diags f.checked (some f.route) f.words
   | .pdfPage _, none =>
@@ -183,7 +182,7 @@ private def Prepared.finish (prepared : Prepared) : IO Finished := do
     return { entry, diags, checked := checkedFace, route }
 
 public def prepare (en : Image.Loaded) : IO Image.Loaded := do
-  return (← (← preparePrimary .none (← PdfFaces.converterProbe) en).finish).entry
+  return (← (← preparePrimary .none (← PdfFaces.door) en).finish).entry
 
 /-- Prepare browser faces with at most `max 1 limit` concurrent requests,
 returning them in source order, with the diagnostics each route owes and
@@ -194,10 +193,12 @@ prefix and the ordered, exclusive partition checked by `Batch.plan_exact`,
 `Batch.plan_bounded` and `Batch.plan_keys_nodup`. Tool identity memos may
 share a path across keys; ConvCache publishes those atomically too. -/
 public def prepareAllFaces (entries : Array Image.Loaded) (limit : Nat := 4)
-    (decl : Boundary.Refusal := .none) :
+    (decl : Boundary.Refusal := .none) (door : Option PdfFaces.Door := none) :
     IO (Array Image.Loaded × Array (String × Diag) × Array ByteArray × PdfFaces.Tally) := do
-  let present ← PdfFaces.converterProbe
-  let prepared ← mapBySource limit primarySource? (preparePrimary decl present) entries
+  let door ← match door with
+    | some d => pure d
+    | none => PdfFaces.door
+  let prepared ← mapBySource limit primarySource? (preparePrimary decl door) entries
   let done ← mapBySource limit Prepared.companion? Prepared.finish prepared
   return (done.map (·.entry), done.flatMap (fun f => f.diags.map (f.entry.src, ·)),
     done.filterMap (·.checked), done.foldl (fun t f => (f.route.map t.add).getD t) {})

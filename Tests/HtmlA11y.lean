@@ -89,8 +89,9 @@ def imgAlts (body : Array Html.Node) : Array (Option String) :=
 decodes in an `<img>` (WHATWG MIME Sniffing §6.1, the image signatures):
 PNG, JPEG, GIF, WebP — and SVG, an XML document a browser draws, read by
 the native judge. `none` for anything else — a PDF page included. Read off
-the bytes, so the judge below does not share the backend's own
-classification. -/
+the bytes, never the backend's classification of a source (its extension,
+its route): an SVG is one the resource boundary admits, the boundary
+publication attests every embedded SVG through. -/
 def sniffBrowserImage (b : ByteArray) : Option String :=
   let at' (i : Nat) (xs : List UInt8) : Bool :=
     xs.length + i ≤ b.size && (List.range xs.length).all fun k => b[i + k]! == xs[k]!

@@ -11,6 +11,8 @@ import LeanTex.Cli.AtomicFile
 import LeanTex.Cli.Engine
 import LeanTex.Cli.FontDiscovery
 import LeanTex.Cli.ToolProbe
+import LeanTex.Cli.ImageAssets
+import Std.Sync.Mutex
 
 /-! A PDF figure's web face, native first. The PDF backend embeds a figure's
 page verbatim; the browser receives the engine's own drawing of it
@@ -69,7 +71,7 @@ public inductive Answer where
 
 /-- The words an answer that gave no face says why in. -/
 public def Answer.said? : Answer → Option String
-  | .absent => some s!"{FigureLoss.pdfFigures.tool} is not on PATH"
+  | .absent => some (ImageAssets.missingWords FigureLoss.pdfFigures.tool)
   | .failed why | .unfinished why => some why
   | .notAsked | .drew _ _ | .rejected _ _ => none
 
@@ -77,7 +79,7 @@ public def Answer.said? : Answer → Option String
 no drawing the page can carry. -/
 public def Answer.tool : Answer → Boundary.ToolState
   | .notAsked => .notAsked
-  | .absent => .failed s!"{FigureLoss.pdfFigures.tool} is not on PATH"
+  | .absent => .failed (ImageAssets.missingWords FigureLoss.pdfFigures.tool)
   | .drew _ _ => .drew
   | .rejected _ why | .failed why | .unfinished why => .failed why
 
@@ -113,23 +115,32 @@ public def answerOf (convert : IO (Option (Except PicCache.Outcome ByteArray)))
       | .refused why => return .rejected bytes why
       | .inconclusive why => return .unfinished why
 
-/-- **poppler's pdftocairo as a figure face's converter, where the host has
-it**: `convert` asked only while the host says pdftocairo is on PATH, and
-the host asked the first time a face needs the converter, once per probe —
-as `Driver.svgConverterWith` asks for librsvg's — so a build whose figures
-all import exactly never probes, and a machine without the tool reads as
-having none (`Answer.absent`), never as a run that failed. -/
-public def converterProbe : IO (IO (Except PicCache.Outcome ByteArray) →
-    IO (Option (Except PicCache.Outcome ByteArray))) := do
-  let found ← IO.mkRef (none : Option Bool)
+/-- A figure face's converter door: `convert` is run where the host has the
+converter, and none is the answer of a host without it (`Answer.absent`). -/
+public abbrev Door := IO (Except PicCache.Outcome ByteArray) → IO (Option (Except PicCache.Outcome ByteArray))
+
+/-- **A converter door that asks the host once** (`converterChecks`):
+`probe` is asked the first time a face needs the converter, and once only,
+however many faces ask at once — the answer is kept under a lock — as
+`Driver.svgConverterWith` asks for librsvg's. A build whose figures all
+import exactly never probes, and a machine without the tool reads as
+having none, never as a run that failed. -/
+public def doorWith (probe : IO Bool) : BaseIO Door := do
+  let found ← Std.Mutex.new (none : Option Bool)
   return fun convert => do
-    let present ← match ← found.get with
+    let present ← found.atomically do
+      match ← get with
       | some p => pure p
       | none =>
-        let p := (← ToolProbe.onPath FigureLoss.pdfFigures.tool).isSome
-        found.set (some p)
+        let p ← probe
+        set (some p)
         pure p
     if present then some <$> convert else pure none
+
+/-- poppler's pdftocairo behind that door, one per build: the driver opens it
+once and hands it to every face it decides. -/
+public def door : BaseIO Door :=
+  doorWith (do return (← ToolProbe.onPath FigureLoss.pdfFigures.tool).isSome)
 
 /-- A web face as decided: its bytes or why it has none, the route that
 chose it, the diagnostics the choice owes, whether the bytes are the

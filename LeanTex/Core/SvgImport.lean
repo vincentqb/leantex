@@ -1854,9 +1854,11 @@ public def walkOne (env : Env) (bud : Budget) (cx : Ctx) (acc : St × Array (Nod
       | some c => (st, out.append (wrap xf c r.opacity runs))
     | "image" =>
       let href := (Xml.Attr.get? attrs "" "href").orElse fun _ => Xml.Attr.get? attrs xlinkNs "href"
-      match href.bind fun h => rasterOf h s.smooth with
-      | none => (st.lose (.resource "image"), out)
-      | some ras =>
+      -- An image that names nothing draws nothing, in a browser as here.
+      match href.filter (!·.trimAscii.isEmpty), href.bind fun h => rasterOf h s.smooth with
+      | none, _ => (st, out)
+      | some _, none => (st.lose (.resource "image"), out)
+      | some _, some ras =>
         let em := s.fontSize
         let x := lenAttr attrs "x" em cx.vp.w 0
         let y := lenAttr attrs "y" em cx.vp.h 0

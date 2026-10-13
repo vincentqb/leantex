@@ -277,12 +277,15 @@ def svgMovingFilterFixture : ByteArray :=
     "<animate attributeName=\"r\" values=\"5;8;5\" dur=\"2s\" repeatCount=\"indefinite\"/></circle>")
 
 /-- **A figure's loss is named in every output its drawing ships in**, and
-only there — the premise `FigureLoss.shipsIn` states. Two builds of a still
-lossy figure differing only by the converter ship the same HTML, its
-authored bytes in an image, and name nothing for the HTML; a moving one's
-still face (print, reduced motion) is the drawing its route chose, so with
-no converter the engine's drawing — without the feature — and its loss is
-named for the HTML too, and with one the converter's, the reason named. -/
+only there — the premises `FigureLoss.shipsIn` and
+`FigureSvg.drawingShipsIn` state. Two builds of a still lossy figure
+differing only by the converter ship the same HTML, its authored bytes in an
+image, and name nothing for the HTML; a moving one's still face (print,
+reduced motion) is the drawing its route chose, so with no converter the
+engine's drawing — without the feature — and its loss is named for the HTML
+too, and with one the converter's, the reason named. A note on the engine's
+drawing (a link it does not carry, a family it sets in the document's face)
+is named for the HTML exactly where the page ships that drawing inline. -/
 def svgOutputScopeChecks (ref : IO.Ref (List String)) : IO Unit := do
   let some fs ← threeRoleFonts | check ref "output scope: the role faces parse" false
   -- A converter that draws, answering the figure's own natural size, so the
@@ -315,6 +318,29 @@ def svgOutputScopeChecks (ref : IO.Ref (List String)) : IO Unit := do
   check ref "output scope: the moving figure's still face is the engine's drawing, unfiltered"
     ((imgs.entries[0]?.bind (·.posterSvg)).any fun p =>
       !hasStr (String.fromUTF8! p) "filter" && hasStr (String.fromUTF8! p) "<circle")
+  -- A note says what the engine's drawing does, so it is named where that
+  -- drawing ships: an inline figure's page is the drawing, and a figure kept
+  -- as its authored bytes leaves the browser to draw it in its own faces.
+  let linked (extra : String) : ByteArray := svgDocument
+    ("<rect id=\"x\" width=\"1\" height=\"1\"/>" ++ extra ++
+      "<a href=\"#x\"><text x=\"2\" y=\"15\" font-family=\"Example Grotesk\">Label</text></a>")
+  let blur := "<filter id=\"soft\"><feGaussianBlur stdDeviation=\"2\"/></filter>" ++
+    "<rect width=\"4\" height=\"4\" filter=\"url(#soft)\"/>"
+  for (name, bytes, inline) in [("inline", linked "", true), ("authored", linked blur, false)] do
+    let f ← Driver.svgFetch s!"{name}.svg" bytes .first "en" none
+    let req : Image.Request := { src := s!"{name}.svg" }
+    let (en, _) := Image.fulfilOne req (.decoded "" f.res none none (some bytes) none)
+    let (imgs, shaped) := FigureStore.settle fs (FigureStore.attach { entries := #[en] } #[some f.drawn])
+    let notes := f.diags ++ shaped.map (·.2)
+    let html := page imgs s!"{name}.svg"
+    let named (code : String) := (Diag.forOutputs #[.html] notes).any (·.code == code)
+    check ref s!"output scope: the {name} figure ships {if inline then "inline" else "as its authored bytes"} ({hasStr html "<svg"})"
+      (hasStr html "<svg" == inline)
+    check ref s!"output scope: the {name} figure's link and family notes are {if inline then "" else "not "}named for the HTML"
+      (named "N0027" == inline && named "N0026" == inline)
+    check ref s!"output scope: the {name} figure's link and family notes are named for the PDF"
+      ((Diag.forOutputs #[.pdf] notes).any (·.code == "N0027") &&
+        (Diag.forOutputs #[.pdf] notes).any (·.code == "N0026"))
 
 
 /-- **The corpus's figures ship as the page's own SVG where they can**: in

@@ -47,10 +47,11 @@ open LeanTex.Core LeanTex.Core.Gfx
   | .font k => s!"'{k}' font"
   | .budget w => s!"{w} beyond the reader's budget"
 
-/-- Where the drawing an SVG figure's route chose ships: the PDF always, and
-the HTML too when the figure moves — its print and reduced-motion still
-face is that drawing — while a still figure's HTML face is its authored
-bytes, which the browser draws whole. -/
+/-- Where the drawing a lossy SVG figure's route chose ships: the PDF always,
+and the HTML too when the figure moves — its print and reduced-motion still
+face is that drawing — while a still lossy figure's HTML face is its
+authored bytes, which the browser draws whole (a figure ships inline only
+drawn whole, `FigureSvg.inlines`). -/
 @[expose] public def shipsIn (moving : Bool) : Option Diag.Output :=
   -- premise: svgOutputScopeChecks — two builds of a still lossy figure, with
   -- and without the converter, ship byte-identical HTML; a moving one's
@@ -171,27 +172,29 @@ engine does not draw the feature. -/
 covers: the engine's drawing ships without it. A figure's route is taken
 before the faces settle, so no converter stands in for a gap they leave —
 a fact of the font environment, named, and never an error. -/
-@[expose] public def svgGlyphDiag (moving : Bool) (src code : String) : Diag :=
+@[expose] public def svgGlyphDiag (output : Option Diag.Output) (src code : String) : Diag :=
   Diag.of .W0609
     s!"figure '{src}' is drawn without its character U+{code}, which no face of the document covers"
     (help := some "declare a face that covers it in \\fonts, or accept the loss with \\allow{W0609}")
-    (subject := some (subject "svg" (.font s!"U+{code}"))) (output := shipsIn moving)
+    (subject := some (subject "svg" (.font s!"U+{code}"))) (output := output)
 
 /-- **N0026**: an SVG names a font family the document does not declare,
 and no family after it in its list is one the document's roles answer; its
-text sets in the document's face `face`. One per family. -/
-@[expose] public def svgFontDiag (src family face : String) : Diag :=
+text sets in the document's face `face` wherever the engine's drawing ships
+(`output`, `FigureSvg.drawingShipsIn`). One per family. -/
+@[expose] public def svgFontDiag (output : Option Diag.Output) (src family face : String) : Diag :=
   Diag.of .N0026
     s!"'{family}' in figure '{src}' is no family of the document; its text is set in '{face}'"
     (help := some "name a generic family (serif, sans-serif or monospace) last in the SVG's font list, or declare the family in \\fonts")
-    (subject := some ("svg:font:" ++ family))
+    (subject := some ("svg:font:" ++ family)) (output := output)
 
 /-- **N0027**: an SVG figure holds what its drawing does not carry and no
-ink of the figure needs — a link — named once per figure; the figure draws
-the link's content. -/
-@[expose] public def svgNoteDiag (moving : Bool) (src note : String) : Diag :=
+ink of the figure needs — a link — named once per figure, wherever the
+engine's drawing ships (`output`, `FigureSvg.drawingShipsIn`); the figure
+draws the link's content. -/
+@[expose] public def svgNoteDiag (output : Option Diag.Output) (src note : String) : Diag :=
   Diag.of .N0027 s!"figure '{src}' holds {note}, which its drawing does not carry; its content is drawn"
-    (subject := some ("figure:svg:note:" ++ note)) (output := shipsIn moving)
+    (subject := some ("figure:svg:note:" ++ note)) (output := output)
 
 /-- A figure's losses, each named once, as `diag` says it. -/
 @[expose] public def diags (diag : Gfx.Loss → Diag) (losses : Array Gfx.Loss) : Array Diag :=
@@ -247,7 +250,7 @@ end
 
 /-- The loss a figure's rasters are, where the drawing that ships cannot
 carry them: a raster the image planner refuses (`FigureStore.rasterPlans`). -/
-@[expose] public def rasterLoss : Gfx.Loss := .resource "raster in a PDF figure"
+@[expose] public def rasterLoss : Gfx.Loss := .resource "unplaceable raster"
 
 /-- **A figure with its rasters dropped and the drop named**: what the
 engine's drawing is where a figure's raster cannot be placed — every other

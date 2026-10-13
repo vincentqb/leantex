@@ -2136,8 +2136,8 @@ public theorem Loaded.size?_vector_exact (en : Loaded) (fig : Gfx.Figure Gfx.Run
     en.size? = some (fig.box.2.1 - fig.box.1.1, fig.box.2.2 - fig.box.1.2) := by
   simp [Loaded.size?, h]
 
-/-- Extension recognition for the browser image format. The CLI still
-validates its print face through the converter and native PDF reader. -/
+/-- Extension recognition for SVG, which the driver reads natively
+(`Driver.svgFetch`). -/
 public def isSvg (src : String) : Bool := src.toLower.endsWith ".svg"
 
 /-- graphicx resolves an extensionless name against its extension list; the

@@ -37,7 +37,6 @@ example : String → Withdrawal → Array String → Array (String × LineHelp) 
 example : Array String → Bool → Array (String × LineHelp) → Array Diag → Array Diag := foldLines
 example : Array String → Bool → String → Withdrawal → Array Diag → Array Diag := fold
 example : Array String → Array String → Array String := htmlWithdraw
-example : ByteArray → IO (Except String ByteArray) := htmlFace
 example : String := facelessReason
 example : Image.Loaded → Bool := faceless
 example : Image.Store → Image.Store := markFaceless

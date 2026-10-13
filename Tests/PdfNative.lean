@@ -240,6 +240,41 @@ def figureRouteChecks (ref : IO.Ref (List String)) : IO Unit := do
     (plain.native && ((root plain).splitOn "preserveAspectRatio").length == 1)
 
 open Tests.PdfNative in
+/-- **A face asks the host for its converter once, and only when it needs
+it** (`PdfFaces.doorWith`): faces whose import is exact never probe; lossy
+faces probe once between them, however many ask at once; and a host
+without the converter answers none — the install line, and no run. -/
+def converterDoorChecks (ref : IO.Ref (List String)) : IO Unit := do
+  let t := check ref
+  let probes ← IO.mkRef 0
+  let runs ← IO.mkRef 0
+  let probe (present : Bool) : IO Bool := do
+    probes.modify (· + 1)
+    return present
+  let convert : IO (Except PicCache.Outcome ByteArray) := do
+    runs.modify (· + 1)
+    return .ok (svgDocument "<path d=\"M0 0L20 20\"/>")
+  let keeps : ByteArray → IO PicCache.Outcome := fun _ => pure .drawn
+  let chart ← fixture "cairo-chart.pdf"
+  let door ← PdfFaces.doorWith (probe true)
+  for _ in [0:3] do
+    let _ ← PdfFaces.face "chart.pdf" chart .first (door convert) keeps
+  t "converter door: faces imported exactly never probe the host"
+    ((← probes.get) == 0 && (← runs.get) == 0)
+  let asked ← (List.range 8).mapM fun _ =>
+    IO.asTask (PdfFaces.face "lossy.pdf" type1FigurePdf .first (door convert) keeps)
+  let faces ← asked.mapM fun task => IO.ofExcept task.get
+  t s!"converter door: eight lossy faces asking at once probe the host once ({← probes.get})"
+    ((← probes.get) == 1 && faces.all (·.route == .tool))
+  probes.set 0
+  runs.set 0
+  let bare ← PdfFaces.doorWith (probe false)
+  let f ← PdfFaces.face "lossy.pdf" type1FigurePdf .first (bare convert) keeps
+  t "converter door: a host without the converter answers none, with no run"
+    ((← probes.get) == 1 && (← runs.get) == 0 && f.route == .nativeWithLoss && !f.diags.isEmpty &&
+      f.diags.all fun d => d.detail.isNone && d.help.any (hasStr · "install poppler's pdftocairo"))
+
+open Tests.PdfNative in
 /-- **A native face is closed by construction**, what lets publication take
 it without the converter's validation (`Publication.prepareHtml`'s
 premise): every reference a fixture's face spells is a fragment of its own

@@ -340,7 +340,7 @@ public inductive SvgFaceLoss where
   | unconverted (why : String)
 
 /-- W0378: a boundary picture has no SVG face for the HTML artifact
-(`Boundary.htmlFace`), so the page shows the rendered subset's drawing where
+(`PdfFaces.face`), so the page shows the rendered subset's drawing where
 the subset draws the picture in part (`Boundary.htmlWithdraw`), and
 otherwise a placeholder labelled with the picture's text alternative. One
 per picture, under its image source; the tool's words are its detail. -/

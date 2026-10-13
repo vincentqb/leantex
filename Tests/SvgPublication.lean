@@ -3,6 +3,7 @@ module
 public import Tests.DriverAssets
 public import LeanTex.Cli.Publication
 public import LeanTex.Cli.ImageAssets
+public import LeanTex.Cli.PdfFaces
 public import Tests.Support
 
 public section
@@ -11,12 +12,16 @@ namespace Tests
 
 open LeanTex.Core LeanTex.Cli.Publication Tests.DriverAssets
 
-/-- A boundary face is the conversion of captured PDF bytes. A stale
-unkeyed sibling cannot answer for it, and a cache replacement between
-preparation and acceptance cannot change the published artifact. -/
+/-- A boundary face is decided from the captured PDF bytes — the engine's
+own drawing of them where their import is exact, their conversion where it
+names a loss (`PdfFaces.face`). A stale unkeyed sibling cannot answer for
+it, and a cache replacement between preparation and acceptance cannot
+change the published artifact. -/
 def svgPublicationChecks (ref : IO.Ref (List String)) : IO Unit := do
-  let .ok expected ← LeanTex.Cli.ImageAssets.picFace svgCanvasPdf |
-    throw <| IO.userError "the boundary publication probe requires pdftocairo"
+  let decided ← LeanTex.Cli.PdfFaces.face "probe" svgCanvasPdf .first
+    (some <$> LeanTex.Cli.ImageAssets.picFaceAnswer svgCanvasPdf) LeanTex.Cli.ImageAssets.validateSvgResult
+  let .ok expected := decided.bytes |
+    throw <| IO.userError "the boundary publication probe's PDF has no face"
   IO.FS.withTempDir fun dir => do
     for name in ["stale", "deleted"] do
       let cache := dir / name

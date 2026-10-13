@@ -467,5 +467,14 @@ def svgRasterFigureChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : 
         !v.marks.isEmpty).getD false && refused.plans.isEmpty &&
       refused.diags.any fun d => d.code == "W0609" &&
         d.subject == some (FigureLoss.subject "svg" FigureLoss.rasterLoss))
+  -- An image that names nothing draws nothing, in a browser as here, so the
+  -- engine's drawing lacks nothing and no converter is asked for it.
+  for (name, img) in [("no reference", "<image width=\"4\" height=\"4\"/>"),
+      ("a data source and no reference", "<image src=\"data:image/png;base64," ++
+        HtmlResource.base64 tinyPng ++ "\" width=\"4\" height=\"4\"/>")] do
+    let f ← Driver.svgFetch "nothing.svg" (svgDocument ("<rect width=\"2\" height=\"2\"/>" ++ img))
+      .first "en" none
+    check ref s!"raster figure: an image with {name} draws nothing and names no loss ({f.diags.map (·.code)})"
+      ((f.vector.map fun v => v.losses.isEmpty && v.rasters.isEmpty).getD false && f.diags.isEmpty)
 
 end Tests

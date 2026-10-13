@@ -36,6 +36,7 @@ import LeanTex.Core.SvgPoster
 import LeanTex.Core.LayoutFigure
 import LeanTex.Core.FigureLoss
 import LeanTex.Core.FigureAlt
+import LeanTex.Core.FigureSvg
 public import LeanTex.Core.FigureStore
 import LeanTex.Cli.Args
 import LeanTex.Cli.Render
@@ -420,7 +421,7 @@ public def svgFetch (src : String) (bytes : ByteArray) (page : PdfRead.PageSelec
   let losses := fig.losses
   -- What the import dropped with no ink of its own — a link — is named
   -- once, whichever route draws the figure.
-  let notes := i.notes.map (FigureLoss.svgNoteDiag moving src)
+  let notes := i.notes.map (FigureLoss.svgNoteDiag (FigureSvg.drawingShipsIn fig moving) src)
   let native : SvgFetch :=
     { res := .ok (vectorPlan fig), vector := some fig, plans, moving, title := fig.title, diags := notes }
   let verdict : Boundary.Verdict := if losses.isEmpty then .exact else .lossy losses
@@ -598,9 +599,11 @@ def imageBrowserFaces (imgs : Image.Store) : IO Image.Store := do
 /-- `imageBrowserFaces`, with the diagnostics each face's route owes and the
 faces the engine drew itself (`PdfFaces.face`), under the document's
 refusal of the converter (`decl`). -/
-def imageBrowserFacesNative (imgs : Image.Store) (decl : Boundary.Refusal := .none) :
+def imageBrowserFacesNative (imgs : Image.Store) (decl : Boundary.Refusal := .none)
+    (door : Option PdfFaces.Door := none) :
     IO (Image.Store × Array (String × Diag) × Array ByteArray × PdfFaces.Tally) := do
-  let (entries, diags, natives, tally) ← BrowserFaces.prepareAllFaces imgs.entries (decl := decl)
+  let (entries, diags, natives, tally) ←
+    BrowserFaces.prepareAllFaces imgs.entries (decl := decl) (door := door)
   return ({ imgs with entries }, diags, natives, tally)
 
 def countErrors (diags : Array Diag) : Nat :=
@@ -621,7 +624,7 @@ Also returns the faces publication need not check again, and how each face
 was decided. -/
 def picsToSvgNative (pics : Array PicResult) (imgs : Image.Store)
     (imageSpans : Array (String × Span) := #[]) (fallbacks : Array String := #[])
-    (decl : Boundary.Refusal := .none) :
+    (decl : Boundary.Refusal := .none) (door : Option PdfFaces.Door := none) :
     IO (Image.Store × Array Diag × Array String × Array ByteArray × PdfFaces.Tally) := do
   let mut entries := imgs.entries
   let mut diags : Array Diag := #[]
@@ -629,11 +632,13 @@ def picsToSvgNative (pics : Array PicResult) (imgs : Image.Store)
   let mut natives : Array ByteArray := #[]
   let mut tally : PdfFaces.Tally := {}
   let cache ← PdfFaces.cacheDir
-  let present ← PdfFaces.converterProbe
+  let door ← match door with
+    | some d => pure d
+    | none => PdfFaces.door
   -- Pictures are read four at a time, never two of one content at once,
   -- so the cache slot a picture writes is the one picture's.
   let faces ← Batch.map 4 (fun (r : PicResult) => Flate.contentKey r.bytes) (fun r =>
-    PdfFaces.face r.src r.bytes .first (present (ImageAssets.picFaceAnswer r.bytes))
+    PdfFaces.face r.src r.bytes .first (door (ImageAssets.picFaceAnswer r.bytes))
       ImageAssets.validateSvgResult (decl := decl) (cache := cache)) pics
   for (r, f) in pics.zip faces do
     -- premise: nativeFigureBuildChecks — a textless answer for a picture the subset draws in
@@ -1122,9 +1127,9 @@ def build (ui : Ui) (file : String) : IO UInt32 := do
           | .own => HtmlDoc.CssMode.own
           | .bulma => HtmlDoc.CssMode.bulma
           | .none => HtmlDoc.CssMode.none
-        -- The boundary pictures' HTML face: captured PDFs convert to
-        -- checked SVG bytes (`picsToSvg`; W0378 names a face this host
-        -- could not convert or check). A picture left without one, and that
+        -- The boundary pictures' HTML face: decided from the captured PDFs,
+        -- native first (`picsToSvgNative`; W0378 names a face this host
+        -- could not convert). A picture left without one, and that
         -- the rendered subset draws in part, is drawn by the subset on
         -- this face alone (`Boundary.htmlWithdraw`): the document is
         -- elaborated again for the page with it withdrawn, and the PDF
@@ -1134,9 +1139,12 @@ def build (ui : Ui) (file : String) : IO UInt32 := do
         -- with it no converter runs and each loss of a lossy figure is named on the engine's
         -- drawing, its help offering no install; without it the converter draws it
         let decl : Boundary.Refusal := if doc.figureConvert then .none else .declared
+        -- One door for the build: the host is asked for pdftocairo once, the
+        -- first time a face needs it.
+        let door ← PdfFaces.door
         let (imgs, svgDiags, unconverted, picNatives, picTally) ←
-          picsToSvgNative pics imgs reqSpans.images reqSpans.fallbacks (decl := decl)
-        let (imgs, faceDiags, faceNatives, faceTally) ← imageBrowserFacesNative imgs decl
+          picsToSvgNative pics imgs reqSpans.images reqSpans.fallbacks (decl := decl) (door := door)
+        let (imgs, faceDiags, faceNatives, faceTally) ← imageBrowserFacesNative imgs decl door
         let tally := picTally.merge faceTally
         if tally.native + tally.lossy + tally.tool + tally.refused > 0 then
           ui.phase "faces" tally.words (← since tf)

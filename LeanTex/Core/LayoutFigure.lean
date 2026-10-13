@@ -6,6 +6,7 @@ public import LeanTex.Core.Diag
 public import LeanTex.Core.Image
 public import LeanTex.Core.Layout
 import LeanTex.Core.FigureLoss
+import LeanTex.Core.FigureSvg
 
 /-!
 # Text in an imported figure, set by the engine
@@ -425,13 +426,15 @@ public def shapeStoreNotesBy (fs : FontSet) (imgs : Image.Store) :
       let (sh, notes) := shapeFigure fs fig
       let src := if en.href.isEmpty then en.src else en.href
       let sans := (fs.get (fs.lookup 1 400 false)).family
-      let fams := notes.families.map fun f => FigureLoss.svgFontDiag src f sans
+      -- What the shaping says of the engine's drawing is said where it ships.
+      let scope := FigureSvg.drawingShipsIn fig en.moving
+      let fams := notes.families.map fun f => FigureLoss.svgFontDiag scope src f sans
       let substs := notes.substs.map fun (idx, c, fb) =>
         Diag.of .W0009 s!"'{(fs.get idx).family}' has no glyph for U+{hex4 c.toNat}"
-          (output := FigureLoss.shipsIn en.moving)
+          (output := scope)
           (recovery := some (.replacedBy s!"a glyph from '{(fs.get fb).family}'"))
           (subject := some s!"svg:glyph:{src}:{hex4 c.toNat}")
-      let missing := notes.missing.map fun c => FigureLoss.svgGlyphDiag en.moving src (hex4 c.toNat)
+      let missing := notes.missing.map fun c => FigureLoss.svgGlyphDiag scope src (hex4 c.toNat)
       (out.push (some sh), diags ++ (fams ++ substs ++ missing).map (en.src, ·))
     | none => (out.push none, diags)) (#[], #[])
 

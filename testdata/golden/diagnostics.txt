@@ -978,6 +978,9 @@
   figure 'figures/glow.svg' is drawn without its 'filter' property, which the engine does not draw
   rsvg-convert exited 1: an invented refusal
   suggestion: accept the engine's drawing with \allow{W0609}
+⚠ [W0609]
+  figure 'figures/map.svg' is drawn without its character U+6F22, which no face of the document covers
+  suggestion: declare a face that covers it in \fonts, or accept the loss with \allow{W0609}
 ── W0701 (pending) an output contract fact this artifact does not yet realize
 ⚠ [W0701]
   output contract: 'alternatives = required' is declared and this artifact carries no alternative channel

@@ -644,23 +644,26 @@ def diagWitnessWith (w : WitnessRun) (one mapped withMath : Font.FontSet)
   -- emission path is `htmlA11yChecks`' (the figures fixture fires it).
   | .W0605 => #[HtmlDoc.undecodableDiag "figures/box.pdf"]
   -- A figure's feature the engine does not draw — a PDF figure's text in a
-  -- Type 1 program the importer does not read, an SVG figure's filter: with
-  -- no converter drawing the figure the engine's drawing ships without it,
-  -- and with one the converter's drawing, the reason named. The emission
-  -- paths are the routes' (`figureRouteChecks`, `Tests.svgRouteChecks`).
+  -- Type 1 program the importer does not read, an SVG figure's filter, a
+  -- character of its text no face of the document covers: with no converter
+  -- drawing the figure the engine's drawing ships without it, and with one
+  -- the converter's drawing, the reason named. The emission paths are the
+  -- routes' (`figureRouteChecks`, `Tests.svgRouteChecks`) and the shaping's
+  -- (`Tests.svgGlyphGapChecks`).
   | .W0609 => FigureLoss.diags
       (FigureLoss.pdfLostDiag "plot.pdf" (.unfinished "pdftocairo produced an empty image"))
       ((PdfGfx.importPage type1FigurePdf).toOption.map (·.figure.losses) |>.getD #[]) ++
     #[FigureLoss.svgLostDiag false "figures/chart.svg" .absent (.property "filter"),
       FigureLoss.svgLostDiag false "figures/glow.svg"
-        (.failed "rsvg-convert exited 1: an invented refusal") (.property "filter")]
+        (.failed "rsvg-convert exited 1: an invented refusal") (.property "filter"),
+      FigureLoss.svgGlyphDiag (some .pdf) "figures/map.svg" "6F22"]
   | .N0024 => FigureLoss.diags (FigureLoss.pdfConvertedDiag "figures/plot.pdf")
       ((PdfGfx.importPage type1FigurePdf).toOption.map (·.figure.losses) |>.getD #[]) ++
     #[FigureLoss.svgConvertedDiag false "figures/chart.svg" (.property "filter")]
   -- A font family the document does not declare, set in its sans face.
-  | .N0026 => #[FigureLoss.svgFontDiag "figures/chart.svg" "Example Grotesk" "Open Sans"]
+  | .N0026 => #[FigureLoss.svgFontDiag none "figures/chart.svg" "Example Grotesk" "Open Sans"]
   -- A link inside a figure, whose content the figure draws.
-  | .N0027 => #[FigureLoss.svgNoteDiag false "figures/chart.svg" "a link"]
+  | .N0027 => #[FigureLoss.svgNoteDiag (some .pdf) "figures/chart.svg" "a link"]
   | .W0393 => #[DriverDiag.listingHighlightUnavailable "bash" "Pygments is unavailable"]
   | .W0394 => Tests.LayoutInkContracts.boundaryWitness one .W0394
   | .E0395 => Tests.LayoutInkContracts.boundaryWitness one .E0395

@@ -73,6 +73,14 @@ private def lossyFiguresSource (fonts : System.FilePath) : String :=
   "\\includegraphics[width=20pt,alt={An invented chart}]{lossy.pdf}\n\n" ++
   "\\includegraphics[width=20pt,alt={An invented blur}]{lossy.svg}\n\\end{document}\n"
 
+/-- A PDF figure the engine's importer refuses (an encrypted file), whose
+only web face is the converter's. Invented content. -/
+private def lockedIncludeSource (fonts : System.FilePath) : String :=
+  "\\documentclass{article}\n" ++
+  "\\fonts{ dir = \"" ++ fonts.toString ++ "\", body = \"Source Serif Pro\" }\n" ++
+  "\\begin{document}\nAn invented figure follows.\n\n" ++
+  "\\includegraphics[width=20pt,alt={An invented canvas}]{locked.pdf}\n\\end{document}\n"
+
 /-- A picture outside the rendered subset whose failed render the document
 accepts. Invented content. -/
 private def acceptedSource (fonts : System.FilePath) : String :=
@@ -388,7 +396,19 @@ def machineLossChecks (ref : IO.Ref (List String))
         hasStr (helpOf pdfAbsent) "install poppler's pdftocairo")
     t s!"figure remedy CLI: with no converter on the machine, neither figure carries the words of a run ({lineOf pdfAbsent} | {lineOf svgAbsent})"
       (pdfAbsent.isSome && svgAbsent.isSome && [pdfAbsent, svgAbsent].all fun j =>
-        (j.bind fun j => (j.getObjValAs? String "detail").toOption).isNone)
+        (j.bind fun j => (j.getObjValAs? String "detail").toOption).isNone &&
+          !hasStr (lineOf j) "exited" && !hasStr (lineOf j) "could not execute")
+    -- A PDF include the importer refuses has no face but the converter's: on
+    -- a machine without it, the placeholder's line says how to put it there.
+    IO.FS.writeBinFile (dir / "locked.pdf") encryptedCanvasPdf
+    let lockedDoc := dir / "locked.tex"
+    IO.FS.writeFile lockedDoc (lockedIncludeSource (corpus / "fonts"))
+    let locked ← build lockedDoc bare "locked" (dir / "locked" / "page.html")
+    let faceless := (recordsOf locked).filter fun j =>
+      (j.getObjValAs? String "code").toOption == some "W0605"
+    t s!"figure remedy CLI: a PDF include the importer refuses, on a machine with no converter, names the install on its placeholder's line ({faceless.map wordsOf})"
+      (locked.exitCode == 0 && !faceless.isEmpty && faceless.all fun j =>
+        (wordsOf j).any fun w => hasStr w "install 'pdftocairo'" && hasStr w "PATH")
     for subject in ["figure:pdf:font:type1", "figure:svg:property:filter"] do
       let refused ← lossOf verdict ("figures-verdict-" ++ (subject.splitOn ":")[1]!) subject
       t s!"figure remedy CLI: a converter's refusal of {subject} is its verdict, in its words, with no install advice ({lineOf refused} | {helpOf refused})"

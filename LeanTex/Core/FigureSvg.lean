@@ -109,12 +109,29 @@ end
 @[expose] public def setsText {L : Type} (fig : Figure L) : Bool :=
   labelsList false fig.nodes.toList || fig.symbols.any (labelsList false ·.toList)
 
-/-- **Which drawn figures ship inline**: still, drawn whole, with no raster,
-and setting text. -/
+/-- **Which drawn figures ship inline**, read off the figure and whether it
+moves: still, drawn whole, with no raster, and setting text. -/
+@[expose] public def inlines {L : Type} (fig : Figure L) (moving : Bool) : Bool :=
+  !moving && fig.losses.isEmpty && fig.rasters.isEmpty && setsText fig
+
+/-- **Which store entries ship inline**: a drawn figure that `inlines`. -/
 @[expose] public def inlineable (en : Image.Loaded) : Bool :=
   match en.vector with
-  | some v => !en.moving && v.losses.isEmpty && v.rasters.isEmpty && setsText v
+  | some v => inlines v en.moving
   | none => false
+
+/-- **Where the engine's drawing of an SVG figure ships**: the PDF always,
+and the HTML too where the figure ships inline (`inlines`) or moves — its
+print and reduced-motion still face is the drawing — while any other still
+figure's HTML face is its authored bytes, which the browser draws in its
+own faces. What a note says of the engine's drawing — a family set in the
+document's face, a substituted or uncovered glyph, a link the drawing does
+not carry — is the scope of the artifacts it ships in. -/
+@[expose] public def drawingShipsIn {L : Type} (fig : Figure L) (moving : Bool) :
+    Option Diag.Output :=
+  -- premise: svgOutputScopeChecks — the page of an inlined figure carries the engine's
+  -- <svg> and names its notes; the page of a figure kept as authored bytes names none
+  if moving || inlines fig moving then none else some .pdf
 
 /-- The shaped figure an entry's page ships inline, if it ships one. -/
 public def inlineFigure? (imgs : Image.Store) (k : Nat) : Option (Figure Shaped) := do

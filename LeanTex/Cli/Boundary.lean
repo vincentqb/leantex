@@ -18,10 +18,9 @@ and where none exists the placeholder ships and the loss is named
 (`coldPicture`). When a request was refused either way, a picture the
 rendered subset draws in part is withdrawn from the boundary and drawn by
 the subset (`withdraw`); an attempt that never reached an answer is no
-refusal, and stands. One step here runs a tool: a picture's HTML face is
-its PDF converted to SVG (`htmlFace`), which the face decision's check or
-publication attests, as every embedded SVG is attested; a picture left without one ships the page's
-labelled placeholder (`markFaceless`). Each decision returns its
+refusal, and stands. No step here runs a tool: a picture's HTML face is
+decided in the driver, native first (`PdfFaces.face`), and a picture left
+without one ships the page's labelled placeholder (`markFaceless`). Each decision returns its
 diagnostics, so a test can run it rather than restate it, and a driver that
 stopped naming the loss fails the suite instead of passing it. -/
 
@@ -367,9 +366,9 @@ public theorem fold_covers (allow : Array String) (allowAll : Bool) (tool : Stri
   · simp at hid
 
 /-- **The HTML face withdraws a drawing it cannot show.** A boundary
-picture's page face is its PDF, and its HTML face the SVG converted from
-that PDF (`htmlFace`). Where it is missing (W0378) — the conversion
-failed, or did not finish — the image has nothing to
+picture's page face is its PDF, and its HTML face the one decided from
+that PDF (`PdfFaces.face`). Where it is missing (W0378) — no drawing the
+page can carry — the image has nothing to
 show but a request key, so a picture the rendered subset draws in part —
 `fallbacks`, the elaborator's record — is withdrawn from the HTML face
 alone, which the driver elaborates again with it drawn by the subset; the
@@ -377,13 +376,6 @@ PDF keeps the boundary's drawing. The ids, by picture: those among the
 fallbacks whose image source has no converted SVG (`unconverted`). -/
 public def htmlWithdraw (fallbacks unconverted : Array String) : Array String :=
   fallbacks.filter fun id => unconverted.contains (Ir.picSrcPrefix ++ id)
-
-/-- One boundary picture's HTML face: its PDF converted to SVG
-(`ImageAssets.picFace`). Publication attests it as it attests every
-embedded SVG (`Publication.attestSvg`): a native check, which always
-finishes, so a face that converted is a face the page can judge. -/
-public def htmlFace (pdf : ByteArray) : IO (Except String ByteArray) :=
-  ImageAssets.picFace pdf
 
 /-- A boundary picture's HTML face is missing whatever the cause — no tool
 drew it (W0379), the tool drew nothing or did not finish (W0382), or its face was not
