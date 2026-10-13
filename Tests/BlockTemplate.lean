@@ -1303,7 +1303,7 @@ private def pageChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO 
   for (name, src) in sources do
     let (geom, out, diags) := layout fonts name src
     check ref s!"block template {name}: the probe reads without loss"
-      ((diags ++ out.diags).all (·.severity == .note))
+      ((diags ++ out.diags).all fun d => d.severity == .note || reportedContrast d)
     let rows := measured ++ measuredX
     for (probe, page, a, b, want) in rows do
       unless probe == name do continue
@@ -1543,7 +1543,7 @@ private def capitalRegisterChecks (ref : IO.Ref (List String)) : IO Unit := do
     (sd.any fun d => d.severity == .error && hasStr d.message "probe@down")
   let (_, clean) := Elab.run "block-template-capitals.tex" capitalsSource
   check ref "capitals register: the probe alone raises nothing"
-    (clean.all (·.severity == .note))
+    (clean.all fun d => d.severity == .note || reportedContrast d)
 
 /-- fontspec's `\newfontfamily\cmd{Family}` declares a family beside the
 three slots and the command that selects it, and beamer's
@@ -1614,7 +1614,7 @@ green, red and blue. -/
 private def channelChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit := do
   let (_, out, diags) := layout fonts "channels" channelsSource
   check ref "block template channels: the probe reads without loss"
-    ((diags ++ out.diags).all (·.severity == .note))
+    ((diags ++ out.diags).all fun d => d.severity == .note || reportedContrast d)
   let red : Ir.Color := { r := 0xB2, g := 0x22, b := 0x22 }
   let blue : Ir.Color := { r := 0x1E, g := 0x40, b := 0xAF }
   for (page, c) in [(0, edgeColor), (1, red), (2, blue)] do
@@ -1635,7 +1635,7 @@ calls its colours unused. -/
 private def chainChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit := do
   let (_, out, diags) := layout fonts "chain" chainSource
   check ref "block template chain: the probe reads without loss"
-    ((diags ++ out.diags).all (·.severity == .note))
+    ((diags ++ out.diags).all fun d => d.severity == .note || reportedContrast d)
   let blue : Ir.Color := { r := 0x1E, g := 0x40, b := 0xAF }
   for (page, want) in [(0, #[edgeColor, edgeTwoColor, edgeColor]), (1, #[blue, blue])] do
     let rules := ((((out.pages[page]?.map (·.fills)).getD #[]).filter fun f => f.w < Dim.pt 2).qsort
@@ -1893,8 +1893,9 @@ private def blockStyleKeyChecks (ref : IO.Ref (List String)) (fonts : Font.FontS
           ((diagsB.filter fun d => d.code == "W0104" &&
             d.subject == some s!"style:{el}:{key}").size == 1)
       check ref s!"block style {probe} {el}: nothing else is raised"
-        ((diagsB.filter (·.severity != .note)).size == blockUnreadEntries.length &&
-          (diagsA.filter (·.severity != .note)).isEmpty)
+        ((diagsB.filter fun d => d.severity != .note && !reportedContrast d).size ==
+            blockUnreadEntries.length &&
+          (diagsA.filter fun d => d.severity != .note && !reportedContrast d).isEmpty)
       check ref s!"block style {probe} {el}: the page ships as without the keys"
         (pageInk outA == pageInk outB)
       let html (s : String) : String := (HtmlDoc.emit {} (Elab.run s!"block-style-{probe}.tex" s).1).1
@@ -2376,7 +2377,7 @@ private def wholeBarChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) :
   let fs ← mathSetOf fonts
   let (geom, out, diags) := layout fs "wholebar" wholeBarSource
   check ref s!"whole bar: the probe reads without loss ({(diags ++ out.diags).filter (·.severity != .note) |>.map (·.message)})"
-    ((diags ++ out.diags).all (·.severity == .note))
+    ((diags ++ out.diags).all fun d => d.severity == .note || reportedContrast d)
   let (doc, _) := Elab.run "block-template-wholebar.tex" wholeBarSource
   let edges := ((Ir.blockShapeOf doc.styles .block).map (·.edges)).getD #[]
   check ref s!"whole bar: the plain kind's rule stands beside the whole block, by its lines ({edges.map (·.span == .whole)})"

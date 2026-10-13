@@ -595,7 +595,7 @@
 ── W0342 (degraded) a definition shadows a palette role; the role is frozen where it is used
 ⚠ [W0342] - \muted
   '\muted' is also a palette role; this definition freezes it, so the palette and the contrast check no longer reach it
-  suggestion: drop the definition and '\muted' colours as declared; declared: fg, bg, alert, example, muted, progressfg, progressbg, separator, standoutfg, standoutbg
+  suggestion: drop the definition and '\muted' colours as declared; declared: fg, bg, alert, example, progressfg, progressbg, separator, standoutfg, standoutbg, muted
 ── W0343 (config) one setting is given two different values; the later declaration wins
 ⚠ [W0343] - \page
   'margin' in '\page' was already set to '20pt'; this later value wins
@@ -610,14 +610,6 @@
 ⚠ [W0345]
   covered 'fg' reads against its active form below the contrast WCAG 2.2 asks of a state change (SC 1.4.11)
   #4E4A49 against #292524: 1.73:1, below 3.00:1
-  suggestion: a cover is a declaration too: lower 'covered = <n>%', or declare \palette{ covered = ... } quieter than the ink it stands for
-⚠ [W0345]
-  covered 'alert' reads against its active form below the contrast WCAG 2.2 asks of a state change (SC 1.4.11)
-  #4985CF against #0B66C2: 1.49:1, below 3.00:1
-  suggestion: a cover is a declaration too: lower 'covered = <n>%', or declare \palette{ covered = ... } quieter than the ink it stands for
-⚠ [W0345]
-  covered 'example' reads against its active form below the contrast WCAG 2.2 asks of a state change (SC 1.4.11)
-  #4E9371 against #0F7A52: 1.46:1, below 3.00:1
   suggestion: a cover is a declaration too: lower 'covered = <n>%', or declare \palette{ covered = ... } quieter than the ink it stands for
 ── W0346 (config) a declaration inside inline content is ignored
 ⚠ [W0346] - \palette

@@ -404,8 +404,9 @@ def alertOverlayChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : I
   for (mode, deck) in [("themed", themedDeck), ("unthemed", deck169Frame)] do
     let (pDoc, pDs) := elabStr (deck "One \\alert{apple} here.")
     let (aDoc, aDs) := elabStr (deck "One \\alert<2>{apple} here.")
-    t s!"{mode} alert<2> raises no error and no warning"
-      (aDs.all (·.severity == .note) && pDs.all (·.severity == .note))
+    t s!"{mode} alert<2> raises no error and no warning but its pairing's report"
+      (aDs.all (fun d => d.severity == .note || reportedContrast d) &&
+        pDs.all fun d => d.severity == .note || reportedContrast d)
     match altOf aDoc, plainOf pDoc with
     | some (n, last, onFirst, onOther), some ps =>
       t s!"{mode} alert<2> alternates on step 2 alone" (n == 2 && last == some 2)
@@ -435,7 +436,7 @@ def alertOverlayChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : I
   -- a census over shipped pages can tell from one copy.
   let (uDoc, uDs) := elabStr (themedDeck "One \\alert<+->{apple} here.")
   t "an unnumberable alert spec warns W0105 once"
-    ((uDs.filter (·.severity != .note)).map (·.code) == #["W0105"])
+    ((uDs.filter fun d => d.severity != .note && !reportedContrast d).map (·.code) == #["W0105"])
   let uc := censusOf (coveredColorsOf uDoc) (layoutOf oneFace uDoc)
   t "an unnumberable alert spec ships one page, its body inked exactly once"
     (uc.size == 1 && pageOccurs uc 0 "apple" == 1 && pageAllRevealed uc 0)
@@ -686,8 +687,8 @@ def chromeDeclChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "moloch declares the footer's right slot and leaves the left to \\framefoot"
     (mDoc.chrome.footerLeft == none &&
      mDoc.chrome.footerRight == some .frameNumber)
-  t "moloch declares the muted step"
-    (mDoc.palette.find? "muted" == some { r := 0x64, g := 0x72, b := 0x74 })
+  t "moloch derives its muted step from its ink, by the generated rule"
+    (mDoc.palette.find? "muted" == some { r := 0x60, g := 0x76, b := 0x7A })
   t "plain declares the same footer"
     ((elabStr (deck169 "\\theme{plain}" frame)).1.chrome.hasFooter)
   t "a deck opted out by name has no chrome"
@@ -929,7 +930,7 @@ def chromeFooterChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : I
     (match out.pages[0]? with
      | some p => p.lines.any fun l => l.y == footY && l.size == footSize &&
          l.segs.any fun s => match s with
-           | .run _ c _ _ _ _ _ _ _ _ _ => c == ({ r := 0x64, g := 0x72, b := 0x74 } : Ir.Color)
+           | .run _ c _ _ _ _ _ _ _ _ _ => c == ({ r := 0x60, g := 0x76, b := 0x7A } : Ir.Color)
            | _ => false
      | none => false)
   -- Invariant (a) of the footer: body ink never reaches the footer's ink,
@@ -2251,8 +2252,8 @@ def designChecks (ref : IO.Ref (List String)) : IO Unit := do
     (themed.progress == some { fg := lineage, bg := (lineage.mix 50 .black).mix 30 .white })
   t "themed design reads the declared separator"
     (themed.separator == lineage)
-  t "themed design reads the declared muted step"
-    (themed.muted == { r := 0x64, g := 0x72, b := 0x74 })
+  t "themed design reads the muted step the bundle derives"
+    (themed.muted == { r := 0x60, g := 0x76, b := 0x7A })
   -- A half-declared standout keeps the declared half and defaults the rest
   -- from the page's own colours — the fallback Layout applied per site.
   let half := designOf "\\theme{default}\\palette{ standoutbg = #102030 }"
@@ -2572,7 +2573,7 @@ def deckStepChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Un
      "\\begin{frame}{Steps}\n\\label{fr:steps}first\n\n\\pause\n" ++
      "\\alert{second}\n\n\\pause\nthird\n\\end{frame}\n" ++
      "\\begin{frame}{Plain}\nd\n\\end{frame}"))
-  t "step deck elaborates clean" (ds.all fun d => d.severity == .note)
+  t "step deck elaborates clean" (ds.all fun d => d.severity == .note || reportedContrast d)
   let out := layoutOf oneFace doc
   let (html, _) := HtmlDoc.emit {} doc
   let (_, body, _) := HtmlDoc.emitTree {} doc

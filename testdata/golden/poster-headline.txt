@@ -4,7 +4,6 @@ palette fg #000000
 palette bg #FFFFFF
 palette alert #EE0000
 palette example #008000
-palette muted #4D4D4D
 palette frametitlefg #F5F6FA
 palette frametitlebg #40739E
 palette blocktitlefg #40739E
@@ -15,6 +14,7 @@ palette exampletitlebg #F5F6FA
 palette standoutfg #FFFFFF
 palette standoutbg #000000
 palette separator #273C75
+palette muted #757575
 palette covered 30%
 runningfoot
   text "An Invented Workshop 2099"

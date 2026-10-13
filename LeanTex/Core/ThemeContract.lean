@@ -66,31 +66,37 @@ page declaring its colours ships one scheme, `HtmlDoc.dualScheme`). -/
 scheme it ships in: one evaluation per install, so the kernel resolves each
 installed palette once for both schemes. -/
 private theorem sites_at (c : ClassColors) (h : builtin.all (fun th => shipped.all fun s =>
-      (Design.sites (installedAt th c) s).all Site.passes) = true) :
-    ∀ th ∈ builtin, ∀ s ∈ shipped, ∀ site ∈ Design.sites (installedAt th c) s, site.passes = true :=
+      (Design.sites (installedAt th c) s).all fun site =>
+        site.passes || th.reported.contains site.role) = true) :
+    ∀ th ∈ builtin, ∀ s ∈ shipped, ∀ site ∈ Design.sites (installedAt th c) s,
+      (site.passes || th.reported.contains site.role) = true :=
   fun th hth s hs site hsite =>
     List.all_eq_true.mp (List.all_eq_true.mp (List.all_eq_true.mp h th hth) s hs) site hsite
 
 private theorem sites_stage : builtin.all (fun th => shipped.all fun s =>
-    (Design.sites (installedAt th { row := .stage, depth := .decks }) s).all Site.passes) = true := by
+    (Design.sites (installedAt th { row := .stage, depth := .decks }) s).all fun site =>
+      site.passes || th.reported.contains site.role) = true := by
   decide +kernel
 
 private theorem sites_latex : builtin.all (fun th => shipped.all fun s =>
-    (Design.sites (installedAt th { row := .latex, depth := .documents }) s).all Site.passes) = true := by
+    (Design.sites (installedAt th { row := .latex, depth := .documents }) s).all fun site =>
+      site.passes || th.reported.contains site.role) = true := by
   decide +kernel
 
 /-- **Every site a shipped bundle paints reads**: on a deck's stage and a
 document's page, on the printed page and the light screen, each pair the
 bundle's realized palette ships there — its generated grounds and inks, its
-literal colours, the colour it derives from a lineage, and the defaults the
-class's row fills in — meets its need (`Site.passes`). The kernel reads the
+literal colours, the colours it derives, and the defaults the class's row
+fills in — meets its need (`Site.passes`), but the roles its lineage's own
+source declares short of their need, which ship exactly and are reported
+where a document uses them (`Theme.reported`). The kernel reads the
 realized palettes, whose generated and derived values are the literals
 `PaletteData` keeps (held to a fresh derivation by `Tests.PaletteData`); the
 two installs cost about 30 s of kernel time, pending a resolver that hands
 the kernel its strata as a table. -/
 public theorem builtin_sites_contract :
     ∀ th ∈ builtin, ∀ c ∈ installs, ∀ s ∈ shipped, ∀ site ∈ Design.sites (installedAt th c) s,
-      site.passes = true := by
+      (site.passes || th.reported.contains site.role) = true := by
   intro th hth c hc
   simp only [installs, List.mem_cons, List.not_mem_nil, or_false] at hc
   rcases hc with rfl | rfl
@@ -100,21 +106,23 @@ public theorem builtin_sites_contract :
 /-- moloch's lineage colour, `mLightBrown` (beamercolorthememoloch.sty). -/
 @[expose] public def molochLineage : Color := Color.ofHtml 0xEB 0x81 0x1B
 
-/-- **moloch's progress bar and title separator are its lineage colour**,
-exactly, as lualatex draws them, wherever the bundle is installed. -/
+/-- **moloch's alerted text, progress bar and title separator are its
+lineage colour**, exactly, as lualatex sets them, wherever the bundle is
+installed. -/
 public theorem moloch_lineage_exact (d : GroundDepth) :
-    Design.declared? (moloch.realize d) .progressFill = some molochLineage ∧
+    Design.declared? (moloch.realize d) .alert = some molochLineage ∧
+      Design.declared? (moloch.realize d) .progressFill = some molochLineage ∧
       Design.declared? (moloch.realize d) .separator = some molochLineage := by
   rw [realize_depth_exact moloch rfl d .decks]
-  exact ⟨rfl, rfl⟩
+  exact ⟨rfl, rfl, rfl⟩
 
 /-- **Every shipped muted reads with a margin**: the secondary ink each
 shipped bundle installs where a class installs it, on the printed page and
 the light screen, and the one each class's row gives an undeclared document
 at its depth, on the dark screen too, stands at least 4.6:1 on its page —
 0.10 over the 4.5:1 WCAG 2.2 SC 1.4.3 asks of text, the margin a generated
-ink is held to. moloch's declared 70:30 mix of its ink into its page holds
-it at 4.79:1. -/
+ink is held to: the bundles that state no seeds derive theirs from their ink
+by the generated muted rule (`SeedPalette.mutedFor`). -/
 public theorem builtin_muted_contract :
     (builtin.all fun th => installs.all fun c => shipped.all fun s =>
         match Design.at (installedAt th c) s .muted, Design.at (installedAt th c) s .page with

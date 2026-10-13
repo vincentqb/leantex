@@ -1592,6 +1592,17 @@ def elemStylesList (acc : Array (String × String)) : List Html.Node → Array (
 
 end
 
+/-- **A contrast report a bundle's lineage owes**: a colour its source
+declares short of its need (`Theme.reported`, moloch's alert) ships exactly,
+as lualatex sets it, and the document's report names its pairing, or its
+covered form, where a document uses it. A probe that reads clean otherwise
+raises these and nothing else. -/
+def reportedContrast (d : Diag) : Bool :=
+  (d.kind == .W0315 || d.kind == .W0345) && d.subject.any fun k =>
+    Theme.builtin.any fun th => th.reported.any fun r =>
+      let key := (Ir.ColorRef.role r).key
+      k.startsWith (key ++ ":") || k == "covered:" ++ key
+
 /-- Every character a list of nodes holds, with its elements' styles and
 which element declares each. -/
 def shownChars (nodes : List Html.Node) : Array (Char × List (String × Nat)) :=

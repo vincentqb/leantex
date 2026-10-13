@@ -584,6 +584,15 @@ public def generate (s : Seeds) (t : Targets) : Except Failure (Generated s t) :
     | some f => .error f
     | none => fail .surface "the palette does not meet its contract"
 
+/-- **The secondary ink a palette's own ink and page derive**, by the rule a
+generated palette's muted step follows (`candidate`): the quietest tone of
+the neutral family they set that reads at the text target on the page —
+4.6:1 on a light page, 6.9:1 on a dark one (`Seeds.targets`). For a bundle
+that states its ink and page and no seeds (`Theme.derived`). -/
+public def mutedFor (ink paper : Color) : Option Color :=
+  let s : Seeds := { ink, paper, accent := ink }
+  solveInk ((neutralFamily s).inkRaw none) [paper] (s.targets .decks).text (!s.dark)
+
 /-! ## The class's default palette -/
 
 /-- The seeds the engine's own screen colours are generated from where a

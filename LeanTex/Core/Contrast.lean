@@ -126,6 +126,9 @@ private structure UseAcc where
   /-- Epochs that shipped a link: where the HTML page draws a focus ring. -/
   linkPals : Array Palette := #[]
   pendingPals : Array Palette := #[]
+  /-- The colours some handout page covers, each beside the epoch it stands
+  in: the covered judgement reads a colour's cover where one is shown. -/
+  coveredNames : Array (Palette × ColorRef) := #[]
   /-- The coloured runs met so far: the next run's site number. -/
   runs : Nat := 0
 
@@ -143,6 +146,8 @@ here, so `\normalfont` can restore it), it does not compound. -/
 private structure UseCx where
   base : Sp
   size : Sp
+  /-- Inside overlay content some handout page covers (`UseAcc.step`). -/
+  covering : Bool := false
   slides : Bool := false
   chromeFoot : Bool := false
   bold : Bool := false
@@ -227,7 +232,10 @@ private def UseAcc.use (acc : UseAcc) (cx : UseCx) (nm : Option ColorRef)
                      | some (_, _, k) => k
                      | none => acc.runs
                    styleName }
-  { acc with uses := acc.uses.push u }
+  let coveredNames := match nm with
+    | some n => if cx.covering then pushUnique acc.coveredNames (acc.pal, n) else acc.coveredNames
+    | none => acc.coveredNames
+  { acc with uses := acc.uses.push u, coveredNames }
 
 /-- Pending overlay content: a step whose range starts (or ends) past the
 first step covers on some handout page — the fact that gates the covered
@@ -310,7 +318,8 @@ private def usesInline (cx : UseCx) (acc : UseAcc) : Inline → UseAcc
   | .link _ body =>
     usesInlines cx { acc with linkPals := pushUnique acc.linkPals acc.pal } body.toList
   | .decorated _ body => usesInlines cx acc body.toList
-  | .onSteps spec body => usesInlines cx (acc.step spec) body.toList
+  | .onSteps spec body =>
+    usesInlines { cx with covering := cx.covering || spec.maxStep ≥ 2 } (acc.step spec) body.toList
   -- An alternative is never covered: it is inked at full colour or not
   -- inked at all, so no alt range makes a palette pending.
   | .altSteps _ active otherwise =>
@@ -390,7 +399,8 @@ private def usesBlock (cx : UseCx) (acc : UseAcc) : Block → UseAcc
     usesBlocks cx { acc with linkPals := pushUnique acc.linkPals acc.pal } body.toList
   | .spaced _ body => usesBlocks cx acc body.toList
   | .columns cols => usesColumns cx acc cols.toList
-  | .onSteps spec body => usesBlocks cx (acc.step spec) body.toList
+  | .onSteps spec body =>
+    usesBlocks { cx with covering := cx.covering || spec.maxStep ≥ 2 } (acc.step spec) body.toList
   | .altSteps _ active otherwise =>
     usesBlocks cx (usesBlocks cx acc active.toList) otherwise.toList
   -- Conditional content is judged whichever backend carries it: a colour
@@ -707,9 +717,11 @@ public def shippedSites (doc : Doc) : Array (Role × Palette) :=
 3:1 between an active and an inactive state, and quieter-than-active —
 `coveredContract`'s own two bounds, read from `Design.cover`: the cover
 fraction is the author's declaration, so the remedy is theirs to choose
-(lower it, or name a quieter colour). -/
-private def pendingCoverDiags (site : ColorSite) (doc : Doc) (pending : Array Palette) :
-    Array Diag := Id.run do
+(lower it, or name a quieter colour). The ink's cover is judged wherever an
+epoch covers anything; the alert's and the example's where a covered use of
+that colour ships (`covered`). -/
+private def pendingCoverDiags (site : ColorSite) (doc : Doc) (pending : Array Palette)
+    (covered : Array (Palette × ColorRef)) : Array Diag := Id.run do
   let mut out : Array Diag := #[]
   for pal in pending do
     if pal.decorative.contains (.role .covered) then continue
@@ -726,6 +738,7 @@ private def pendingCoverDiags (site : ColorSite) (doc : Doc) (pending : Array Pa
           (s!"covering '{nm}' does not quiet it: the covered form " ++
             "reads as loud on the page as the active one")
           (span := origin.map (·.2))
+          (subject := some s!"covered:{nm}")
           (help := coverHelp)]
       else
         let milli := contrastMilli active covered
@@ -734,6 +747,7 @@ private def pendingCoverDiags (site : ColorSite) (doc : Doc) (pending : Array Pa
             (s!"covered '{nm}' reads against its active form below the contrast " ++
               "WCAG 2.2 asks of a state change (SC 1.4.11)")
             (span := origin.map (·.2))
+            (subject := some s!"covered:{nm}")
             (detail := some (s!"{hexOf covered} against {hexOf active}: " ++
               s!"{ratioString milli}, below {ratioString aaNonText}"))
             (help := coverHelp)]
@@ -746,7 +760,8 @@ private def pendingCoverDiags (site : ColorSite) (doc : Doc) (pending : Array Pa
       out := out ++ judge "covered" d.fg cov.plain
     for (role, r) in [("alert", Role.alert), ("example", Role.example)] do
       if let some c := Design.declared? pal r then
-        out := out ++ judge role c (cov.of c)
+        if covered.contains (pal, .role r) then
+          out := out ++ judge role c (cov.of c)
   return out
 
 /-- One pairing: an ink and the ground it stood on. -/
@@ -865,14 +880,20 @@ private def declaredUseJudged (site : ColorSite) (doc : Doc) (walk : UseAcc) : A
 /-- **The document-level contrast report**, one walk: the uses with their
 epochs, the design sites per epoch, and the epoch boundaries are read off
 `doc.body` once; then each half judges against the palette in force where
-the pairing ships, at the size its medium shows it. Every colour ships as
+the pairing ships, at the size its medium shows it, and a pairing a themed
+element's site names is reported by that site alone. Every colour ships as
 the document states it: this is a report, and the document is not an input
 it returns. `site` names each pairing's authored expression and span. -/
 public def docDiags (doc : Doc) (site : ColorSite := fun _ _ _ => none) : Array Diag :=
   let walk := docWalk doc
   let stage := stageOf doc
-  judgeSites site stage (pageSites doc walk) ++ declaredUseJudged site doc walk ++
-    judgeSites site stage (elementSites walk) ++ pendingCoverDiags site doc walk.pendingPals
+  let elements := judgeSites site stage (elementSites walk)
+  -- A pairing a themed element's site names is reported there, once: the
+  -- use judge's report of that same pairing yields to it.
+  let uses := (declaredUseJudged site doc walk).filter fun d =>
+    !(elements.any fun e => e.subject.isSome && e.subject == d.subject)
+  judgeSites site stage (pageSites doc walk) ++ uses ++ elements ++
+    pendingCoverDiags site doc walk.pendingPals walk.coveredNames
 
 /-- The judged pair is the shipped pair: what `effectivePairDiags` judges is
 the resolved design's own ink — the field `Layout.run` colours every
@@ -1049,9 +1070,11 @@ supplementary position indicators the section title already carries,
 outside SC 1.4.11's "required to understand the content", and so is a
 block template's rule (`Ir.BlockEdge.ink`), a mark beside a title whose
 own text names the block; `covered` is a state, held to visibly-covered
-by `coveredContract` below. -/
-public def paletteContract (pal : Palette) : Bool :=
-  (Design.sites pal .print).all Site.passes
+by `coveredContract` below. A role a bundle's lineage declares short of its
+need (`reported`, `Theme.reported`) ships as declared and is the document's
+report's to name. -/
+public def paletteContract (pal : Palette) (reported : List Role := []) : Bool :=
+  (Design.sites pal .print).all fun st => st.passes || reported.contains st.role
 
 /-- Every listing ink of every shipped style, declared or the engine's
 default, is text-AA on every listing ground of a bundle: the page, its
@@ -1067,7 +1090,8 @@ public def listingContract (pal : Palette) : Bool :=
           | none => true)
 
 public def Theme.contractHolds (th : LeanTex.Core.Theme.Theme) : Bool :=
-  paletteContract (th.realize .documents) && paletteContract (th.realize .decks)
+  paletteContract (th.realize .documents) th.reported &&
+    paletteContract (th.realize .decks) th.reported
 
 /-- Covered reads as covered on the design's own page, per colour — the
 contract ranges over the cover of every colour the bundle puts on text
@@ -1082,16 +1106,19 @@ asks of visual information that identifies a state. The plain cover
 (runs with no colour of their own) is held to the same two bounds
 against `fg`. Judged from `Design.cover`, the one resolving site. If a
 bundle needs a smaller fraction to close, that is a finding about the
-bundle — moloch's 31% — never a reason to weaken this contract. -/
-public def coveredContract (pal : Palette) : Bool :=
+bundle — moloch's 31% — never a reason to weaken this contract. A colour a
+bundle's lineage declares short of its need on the page (`reported`) has no
+cover 3:1 from it there: it is held to quieting alone, and the document's
+report names a covered use of it. -/
+public def coveredContract (pal : Palette) (reported : List Role := []) : Bool :=
   let d := Design.ofDoc { palette := pal }
   let cov := d.cover
-  let visiblyCovered (c : Color) : Bool :=
+  let visiblyCovered (r : Role) (c : Color) : Bool :=
     contrastMilli (cov.of c) d.bg < contrastMilli c d.bg
-      && contrastMilli c (cov.of c) ≥ aaNonText
-  visiblyCovered d.fg
-    && (match Design.declared? pal .alert with | some c => visiblyCovered c | none => true)
-    && (match Design.declared? pal .example with | some c => visiblyCovered c | none => true)
+      && (reported.contains r || contrastMilli c (cov.of c) ≥ aaNonText)
+  visiblyCovered .ink d.fg
+    && (match Design.declared? pal .alert with | some c => visiblyCovered .alert c | none => true)
+    && (match Design.declared? pal .example with | some c => visiblyCovered .example c | none => true)
     && contrastMilli cov.plain d.bg < contrastMilli d.fg d.bg
     && contrastMilli d.fg cov.plain ≥ aaNonText
 

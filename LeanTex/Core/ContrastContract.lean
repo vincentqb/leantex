@@ -43,10 +43,10 @@ public theorem pdf_default_aa : contrastMilli Color.black Color.white ≥ aaText
 every bundle that generates its palette at a document's, holds of every
 bundle at both: a bundle that generates nothing realizes alike at every depth
 (`Theme.realize_depth_exact`), so the kernel reads each palette once. -/
-private theorem both_depths (P : Palette → Bool)
-    (hdecks : Theme.builtin.all (fun th => P (th.realize .decks)) = true)
-    (hdocs : Theme.builtin.all (fun th => th.seeds.isNone || P (th.realize .documents)) = true) :
-    ∀ th ∈ Theme.builtin, ∀ d ∈ [GroundDepth.documents, .decks], P (th.realize d) = true := by
+private theorem both_depths (P : Theme.Theme → Palette → Bool)
+    (hdecks : Theme.builtin.all (fun th => P th (th.realize .decks)) = true)
+    (hdocs : Theme.builtin.all (fun th => th.seeds.isNone || P th (th.realize .documents)) = true) :
+    ∀ th ∈ Theme.builtin, ∀ d ∈ [GroundDepth.documents, .decks], P th (th.realize d) = true := by
   intro th hth d hd
   have h1 := List.all_eq_true.mp hdecks th hth
   have h2 := List.all_eq_true.mp hdocs th hth
@@ -57,15 +57,18 @@ private theorem both_depths (P : Palette → Bool)
     | some _ => simpa [hs] using h2
   · exact h1
 
-/-- No shipped bundle's pairing is illegible: every built-in palette as it
-installs — the content colours (`alert`, `example`) and the resolved
-design's semantic pairings, defaults applied — clears its WCAG 2.2
-threshold. Moloch's alert is its lineage's #EB811B realized as text on its
-page: the colour itself reads at 2.61:1 there, under SC 1.4.3. -/
+/-- No shipped bundle's pairing is illegible but the ones its lineage's
+source declares so: every built-in palette as it installs — the content
+colours (`alert`, `example`) and the resolved design's semantic pairings,
+defaults applied — clears its WCAG 2.2 threshold, but a role the bundle
+reports (`Theme.reported`): moloch's alert is its lineage's #EB811B exactly,
+as lualatex sets it, at 2.61:1 on its page, under SC 1.4.3, which the
+document's contrast report names where it is used. -/
 public theorem builtin_palettes_contract :
     ∀ th ∈ Theme.builtin, ∀ d ∈ [GroundDepth.documents, .decks],
-      paletteContract (th.realize d) = true :=
-  both_depths paletteContract (by decide +kernel) (by decide +kernel)
+      paletteContract (th.realize d) th.reported = true :=
+  both_depths (fun th pal => paletteContract pal th.reported) (by decide +kernel)
+    (by decide +kernel)
 
 /-- The default surface: black ink, white page, covered at
 `coveredFractionDefault` — 38% of the ink over the page, mixed in Oklab
@@ -80,14 +83,16 @@ quiets further for every built-in bundle's text roles. -/
 public theorem builtin_covers_monotone :
     ∀ th ∈ Theme.builtin, ∀ d ∈ [GroundDepth.documents, .decks],
       coverMonotone (th.realize d) = true :=
-  both_depths coverMonotone (by decide +kernel) (by decide +kernel)
+  both_depths (fun _ => coverMonotone) (by decide +kernel) (by decide +kernel)
 
 /-- The covered contract, quantified the same way: every built-in
-bundle's palette is visibly covered when dimmed, per colour. -/
+bundle's palette is visibly covered when dimmed, per colour, a colour it
+reports short of its need quieted. -/
 public theorem builtin_designs_covered :
     ∀ th ∈ Theme.builtin, ∀ d ∈ [GroundDepth.documents, .decks],
-      coveredContract (th.realize d) = true :=
-  both_depths coveredContract (by decide +kernel) (by decide +kernel)
+      coveredContract (th.realize d) th.reported = true :=
+  both_depths (fun th pal => coveredContract pal th.reported) (by decide +kernel)
+    (by decide +kernel)
 
 /-- Both contracts over what `\theme` installs, for every shipped bundle
 (arch-provable I2): stated over `Theme.apply t {}` — the exact function
@@ -99,8 +104,8 @@ is the per-bundle "`\theme` installs the bundle's own values" pin in
 elaborator itself outside the kernel's reach. -/
 public theorem builtin_palette_contract_engine :
     (Theme.builtin.all fun t =>
-      paletteContract (Theme.apply t {}).palette &&
-      coveredContract (Theme.apply t {}).palette) = true := by
+      paletteContract (Theme.apply t {}).palette t.reported &&
+      coveredContract (Theme.apply t {}).palette t.reported) = true := by
   decide +kernel
 
 /-- The registry's own defaults are legible in every scheme: each site an

@@ -337,4 +337,4 @@ def beamerColorsChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO 
       !colorLoss separatorDs "title separator")
   for theme in Theme.builtin do
     t s!"beamer colors: {theme.name} satisfies the extended design contrast contract"
-      (Contrast.paletteContract (deckBundle theme))
+      (Contrast.paletteContract (deckBundle theme) theme.reported)

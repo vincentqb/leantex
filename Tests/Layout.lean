@@ -3354,12 +3354,12 @@ After text keeps it: flow scope, no brace revert.")
   t "a bad frame-title pair declared after the last frame styles nothing"
     ((codesOf (deckDoc "" "\\palette{ frametitlebg = #555555, frametitlefg = #888888 }\n\n")).all
       fun d => d.code != "W0345")
-  -- Per (fg, bg) pair, not per token: moloch's darkened alert passes on
-  -- the light page and fails on the dark frame-title bar — the same
+  -- Per (fg, bg) pair, not per token: a darkened orange alert passes on
+  -- moloch's light page and fails on its dark frame-title bar — the same
   -- colour, two grounds, judged where each sits, and it warns where it
   -- sits.
   let deckAlert (title body : String) : String :=
-    "\\documentclass{slides}\\theme{moloch}\\begin{document}\n\
+    "\\documentclass{slides}\\theme{moloch}\\palette{ alert = #AF5C00 }\\begin{document}\n\
 \\begin{frame}{" ++ title ++ "}\n" ++ body ++ "\n\\end{frame}\n\\end{document}"
   t "an accent inside the frame title is judged on the bar, and warns there"
     ((codesOf (deckAlert "An \\alert{urgent} word" "plain body")).any
@@ -3368,7 +3368,8 @@ After text keeps it: flow scope, no brace revert.")
     ((codesOf (deckAlert "A title" "an \\alert{urgent} word")).all
       fun d => d.code != "W0315")
   t "an accent inside a standout frame is judged on the inversion, and warns there"
-    ((codesOf ("\\documentclass{slides}\\theme{moloch}\\begin{document}\n\
+    ((codesOf ("\\documentclass{slides}\\theme{moloch}\\palette{ alert = #AF5C00 }\
+\\begin{document}\n\
 \\begin{frame}[standout]\nan \\alert{urgent} word\n\\end{frame}\n\\end{document}")).any
       fun d => d.code == "W0315" && hasStr d.message "the standout frame")
 

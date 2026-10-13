@@ -30,8 +30,8 @@ def checks (ref : IO.Ref (List String)) : IO Unit := do
           ((th.generatedFresh d).isSome && kept.map (·.2.2) == th.generatedFresh d)
     for (r, seed) in th.derived do
       let kept := PaletteData.bundleDerived.find? fun e => e.1 == th.name && e.2.1 == r
-      t s!"palette data: {th.name}'s {(Ir.ColorRef.role r).key} is kept as its lineage realized"
-        (kept.map (·.2.2) == some (th.derivedFresh seed))
+      t s!"palette data: {th.name}'s {(Ir.ColorRef.role r).key} is kept as its rule derives it"
+        (kept.map (·.2.2) == some (th.derivedFresh r seed))
   t "palette data: nothing kept for a bundle that does not ship it"
     (PaletteData.bundleGenerated.all (fun e => Theme.builtin.any (·.seeds.any (·.1 == e.1))) &&
       PaletteData.bundleDerived.all fun e =>

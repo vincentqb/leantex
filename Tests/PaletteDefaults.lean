@@ -21,9 +21,10 @@ private def cssRole (css : String) (r : Ir.Role) : Option String :=
   chaseCssValue (screenRootVars css) (HtmlDoc.roleRef r)
 
 /-- **What an undeclared document and a shipped bundle show.** moloch draws
-its progress bar and title separator in its lineage colour, exactly as
-lualatex writes it, and its alert is that colour realized as text on its
-page, its hue held within a degree at 4.6:1; an undeclared list marks its
+its progress bar, title separator and alerted text in its lineage colour,
+exactly as lualatex writes it, the alert's pairing named by the report
+where it is used; a bundle stating no seeds derives its muted step by the
+generated rule; an undeclared list marks its
 items in one colour on the page and in the HTML; an undeclared article's
 HTML stands on the white its PDF prints, which paints no page and sets
 every word in black; a markdown note's fenced code stands on its code
@@ -41,15 +42,42 @@ def checks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit := do
   t "moloch: the title separator draws lualatex's lineage operator"
     (bytesContain mpdf "0.92157 0.50587 0.10588 rg")
   let lineage := Ir.Color.ofHtml 0xEB 0x81 0x1B
-  match Ir.Design.declared? mdoc.palette .alert, Ir.Design.at mdoc.palette .print .page with
-  | some alert, some page =>
-    t s!"moloch: the alert {alert.css} keeps the lineage's hue within a degree"
-      (hueGap (hueOf alert) (hueOf lineage) ≤ 1000)
-    t s!"moloch: the alert {alert.css} reads at 4.6:1 on its page, and no further"
-      (4600 ≤ Contrast.contrastMilli alert page && Contrast.contrastMilli alert page ≤ 4700)
-    t "moloch: the alert is the lineage realized as text on its page, the solver's own answer"
-      (some alert == ContrastSolve.realizeNearest (Contrast.aaText + SeedPalette.margin) page lineage)
-  | _, _ => t "moloch: the alert and the page resolve" false
+  -- Its alerted text is that colour itself, as lualatex sets it, and the
+  -- document's contrast report names the pairing where it is used: a
+  -- declared colour is reported, never repainted.
+  let (adoc, _) := elabStr ("\\documentclass[aspectratio=169]{beamer}\n\\usetheme{moloch}\n" ++
+    "\\begin{document}\n\\begin{frame}{One}Probe \\alert{alerted} words.\\end{frame}\n" ++
+    "\\end{document}")
+  t "moloch: the alert is the lineage colour exactly"
+    (Ir.Design.declared? adoc.palette .alert == some lineage)
+  t "moloch: the alerted words set in it on the page"
+    ((runsOf (layoutOf fonts adoc)).any fun (text, ink) => hasStr text "alerted" && ink == lineage)
+  let alertSays := (Contrast.docDiags adoc).filter fun d =>
+    d.severity == .warning && d.subject.any (hasStr · "alert")
+  t s!"moloch: the report names the alert's pairing once ({alertSays.map (·.code)})"
+    (alertSays.size == 1)
+  -- A bundle that states no seeds derives its secondary ink as a generated
+  -- palette's: the quietest tone of its ink's family that reads at 4.6:1 on
+  -- its page, never a fixed mix.
+  for th in [Theme.moloch, Theme.plain, Theme.gemini] do
+    let pal := th.realize .decks
+    match Ir.Design.declared? pal .muted, Ir.Design.declared? pal .ink,
+        Ir.Design.at pal .print .page with
+    | some m, some ink, some page =>
+      t s!"{th.name}: its muted {m.css} is its ink's derived by the generated rule"
+        (some m == SeedPalette.mutedFor ink page && m != ink.mix 70 page)
+      t s!"{th.name}: its muted {m.css} reads at 4.6:1 on its page, and no further"
+        (4600 ≤ Contrast.contrastMilli m page && Contrast.contrastMilli m page ≤ 4700)
+    | _, _, _ => t s!"{th.name}: its muted, ink and page resolve" false
+  -- The roles a bundle ships short of their need are exactly the ones its
+  -- lineage's source declares so: every listed role falls short where a
+  -- class installs the bundle, and every short site's role is listed.
+  for th in Theme.builtin do
+    let short := Theme.installs.flatMap fun c => Theme.shipped.flatMap fun sc =>
+      (Ir.Design.sites (Theme.installedAt th c) sc).filterMap fun st =>
+        if st.passes then none else some st.role
+    t s!"{th.name}: the roles it ships short of their need are the ones it reports"
+      (short.all th.reported.contains && th.reported.all short.contains)
   -- An undeclared list: one marker colour on the page and in the HTML.
   let (ldoc, _) := elabStr (dvDoc "" ("Probe words.\n\\begin{itemize}\n\\item First\n" ++
     "\\item Second\n\\end{itemize}"))

@@ -6,7 +6,6 @@ font mono "Source Code Pro"
 palette fg #23373B
 palette bg #FAFAFA
 palette example #008080
-palette muted #647274
 palette frametitlefg #FAFAFA
 palette frametitlebg #23373B
 palette progressfg #EB811B
@@ -14,6 +13,7 @@ palette progressbg #D6C6B7
 palette separator #EB811B
 palette standoutfg #FAFAFA
 palette standoutbg #23373B
+palette muted #60767A
 palette alert #C2185B
 palette covered 31%
 token progressheight 1pt

@@ -135,10 +135,12 @@ from their default seeds, in both artifacts. A deck that declares no theme takes
 tinted cards generated from those seeds as `\palette[seeds]` generates them;
 a deck that declares its own ink, paper or accent takes the bundle over
 those, its cards generated from its own colours. `moloch`
-draws its progress bar and title separator in its lineage's orange, exactly
-as lualatex draws them, the bar's track in moloch's own mix of it, and sets
-its alert in that orange realized as text on its page, where the orange
-itself reads at 2.6:1.
+draws its progress bar, title separator and alerted text in its lineage's
+orange, exactly as lualatex sets them, the bar's track in moloch's own mix
+of it; the orange reads at 2.6:1 on its page, which the contrast report
+names where a document uses the alert. A bundle that states no seeds and no
+secondary ink (`moloch`, `plain`, `gemini`) derives one from its ink as a
+generated palette does: the quietest tone that reads on its page.
 
 In HTML, the colours the stylesheet's rules paint and every named colour are
 CSS custom properties a host stylesheet can override on `:root`. A colour role

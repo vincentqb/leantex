@@ -1,8 +1,8 @@
 /-
 Regenerate LeanTex/Core/PaletteData.lean: the palettes the class's default
 seeds generate at the classes' two ground depths, each shipped bundle's
-generated palette at both depths, and each colour a bundle derives from a
-lineage colour — the generator's own answers (`SeedPalette.generate`,
+generated palette at both depths, and each colour a bundle derives — the
+generator's own answers (`SeedPalette.generate`, `SeedPalette.mutedFor`,
 `ContrastSolve.realizeNearest`), kept so no build derives a constant again.
 Run from the repository root with:
 
@@ -69,7 +69,7 @@ def render : Except String String := do
         | some c => gen := gen.push s!"  ({seeds sd}, {depthName d}, {colors c "  "})"
         | none => throw s!"'{th.name}''s seeds generate no palette at {depthName d}"
     for (r, seed) in th.derived do
-      der := der.push s!"  (\"{th.name}\", {roleName r}, {color (th.derivedFresh seed)})"
+      der := der.push s!"  (\"{th.name}\", {roleName r}, {color (th.derivedFresh r seed)})"
   let list (xs : Array String) : String :=
     if xs.isEmpty then "[]" else "[\n" ++ ",\n".intercalate xs.toList ++ "]"
   let clsList := list cls
@@ -81,8 +81,8 @@ def render : Except String String := do
     "lake env lean --run scripts/gen-palette-data.lean\n\n" ++
     "The palettes the class's default seeds generate at the classes' two ground\n" ++
     "depths, the palettes a bundle's seeds generate, and the colours a bundle\n" ++
-    "derives from a lineage colour: each the generator's own answer\n" ++
-    "(`SeedPalette.generate`, `ContrastSolve.realizeNearest`), kept here so no\n" ++
+    "derives: each the generator's own answer (`SeedPalette.generate`,\n" ++
+    "`SeedPalette.mutedFor`, `ContrastSolve.realizeNearest`), kept here so no\n" ++
     "build pays to derive a constant again. This module carries only data; the\n" ++
     "lookups over it live in the hand-owned Ir.lean and Theme.lean, and\n" ++
     "`Tests.PaletteData.checks` holds every entry to a fresh derivation.\n-/\n" ++
@@ -94,7 +94,7 @@ def render : Except String String := do
     "/-- Each bundle's generated palette at each depth, by the seeds it is generated from. -/\n" ++
     "@[expose] public def bundleGenerated : List (SeedPalette.Seeds × GroundDepth × SeedPalette.Colors) := " ++
       genList ++ "\n\n" ++
-    "/-- Each colour a bundle derives from a lineage colour, by the bundle's name. -/\n" ++
+    "/-- Each colour a bundle derives, by the bundle's name. -/\n" ++
     "@[expose] public def bundleDerived : List (String × Role × Color) := " ++ derList ++ "\n\n" ++
     "end LeanTex.Core.PaletteData\n"
 

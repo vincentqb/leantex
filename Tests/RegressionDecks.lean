@@ -264,16 +264,17 @@ private def deckListings (ref : IO.Ref (List String)) (a : Artifact) : IO Unit :
     check ref s!"{name}: {lang} exact HTML source, indentation and terminal comment"
       (code.map (nodeTextOne "") == #[String.intercalate "\n" source.toList] &&
         treeShownOccurs code comment == 1)
-    -- The code roles from the deck's palette: comments its muted text,
-    -- literals its example colour, keywords a tone of its ink's hue.
-    painted ref name a page comment { r := 0x64, g := 0x72, b := 0x74 }
+    -- The code roles from the deck's palette: comments its muted text (the
+    -- theme's, derived from its ink), literals its example colour, keywords
+    -- a tone of its ink's hue.
+    painted ref name a page comment { r := 0x60, g := 0x76, b := 0x7A }
     check ref s!"{name}: {lang} native keyword and string ink"
       (tokenPaint a page source[0]! "def" { r := 0x34, g := 0x5d, b := 0x94 } &&
         tokenPaint a page source[2]! "\"square\"" { r := 0, g := 0x80, b := 0x80 })
     check ref s!"{name}: {lang} HTML token colours"
       (styled code.toList "def" "color: #345d94" &&
         styled code.toList "\"square\"" "color: var(--ltx-example, #008080)" &&
-        styled code.toList comment "color: var(--ltx-muted, #647274)")
+        styled code.toList comment "color: var(--ltx-muted, #60767a)")
 
 end Tests.RegressionDecks
 

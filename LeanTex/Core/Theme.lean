@@ -59,21 +59,33 @@ public structure Theme extends Decls where
   (`SeedPalette`): the bundle's own palette entries stand over what they
   generate. -/
   seeds : Option (SeedPalette.Seeds × SeedPalette.Blocks) := none
-  /-- The roles the bundle derives from a lineage colour rather than states:
-  each the colour realized as text on the bundle's page at the generated
-  text target, its hue held (`ContrastSolve.realizeNearest`). -/
+  /-- The roles the bundle derives rather than states, each by its rule
+from the colour beside it (`Theme.derivedFresh`): the secondary ink from
+the bundle's ink as a generated palette's muted step is derived
+(`SeedPalette.mutedFor`), any other role a lineage colour realized as text
+on the bundle's page at the generated text target, its hue held
+(`ContrastSolve.realizeNearest`). -/
   derived : List (Ir.Role × Color) := []
+  /-- The roles the lineage's own source declares at a colour that reads
+short of its need where the bundle installs it: they ship exactly, as
+lualatex sets them, and the document's contrast report names each pair
+where a document uses it — declared colours are reported, never
+repainted. -/
+  reported : List Ir.Role := []
 
 /-- The palette a bundle's seeds generate at a depth, derived afresh. -/
 public def Theme.generatedFresh (th : Theme) (d : GroundDepth) : Option SeedPalette.Colors :=
   th.seeds.bind fun (s, _) => ((SeedPalette.generate s (s.targets d)).toOption).map (·.colors)
 
-/-- The colour a bundle derives from a lineage colour, derived afresh: the
-colour realized as text on the bundle's page at the generated text target,
-its hue held; the colour itself where nothing realizes it. -/
-public def Theme.derivedFresh (th : Theme) (seed : Color) : Color :=
-  (ContrastSolve.realizeNearest (Contrast.aaText + SeedPalette.margin)
-    (Design.printPage th.palette) seed).getD seed
+/-- The colour a bundle derives for a role, derived afresh: the secondary
+ink by the generated muted rule from the bundle's ink and page
+(`SeedPalette.mutedFor`); any other role its lineage colour realized as
+text on the bundle's page at the generated text target, its hue held; the
+colour itself where nothing derives one. -/
+public def Theme.derivedFresh (th : Theme) (r : Ir.Role) (seed : Color) : Color :=
+  let page := Design.printPage th.palette
+  if r == .muted then (SeedPalette.mutedFor seed page).getD seed
+  else (ContrastSolve.realizeNearest (Contrast.aaText + SeedPalette.margin) page seed).getD seed
 
 /-- The palette a bundle's seeds generate at a depth: the generator's answer
 kept in `PaletteData` for those seeds, else derived as asked (a bundle over
@@ -89,7 +101,7 @@ public def Theme.generated (th : Theme) (d : GroundDepth) : Option SeedPalette.C
 public def Theme.derivedColor (th : Theme) (r : Ir.Role) (seed : Color) : Color :=
   match PaletteData.bundleDerived.find? (fun e => e.1 == th.name && e.2.1 == r) with
   | some e => e.2.2
-  | none => th.derivedFresh seed
+  | none => th.derivedFresh r seed
 
 /-- **What a bundle declares at a depth**: the palette its seeds generate,
 its own entries over it, and each colour it derives from a lineage colour —
@@ -154,26 +166,25 @@ private def builtinChrome : Chrome :=
 /-- The Metropolis lineage as a token bundle: an inverted frame-title bar,
 one warm accent, a near-white page. Values map the moloch beamer theme's
 light preset onto the semantic keys, mixes evaluated (the original xcolor
-spelling rides in the comment beside each); the lineage's warm colour is a
-seed its decorative marks take exactly and its alert derives from. -/
+spelling rides in the comment beside each); the lineage's warm colour is its
+alerted text and its decorative marks, each exactly as lualatex sets it. -/
 public def moloch : Theme :=
   let fg : Color := { r := 0x23, g := 0x37, b := 0x3B }
   let bg := Color.black.mix 2 Color.white                     -- black!2
-  -- mLightBrown (beamercolorthememoloch.sty), the lineage's one warm colour:
-  -- the progress bar and the title separator in it exactly, as lualatex
-  -- draws them — decorative marks, owing no contrast.
+  -- mAlertFg (beamercolorthememoloch.sty), the lineage's one warm colour:
+  -- its alerted text, the progress bar and the title separator in it
+  -- exactly, as lualatex sets them.
   let lineage := Color.ofHtml 0xEB 0x81 0x1B
   let progressbg := (lineage.mix 50 .black).mix 30 .white      -- progressfg!50!black!30
   { name := "moloch"
     palette := {
       entries := #[
         (.role .ink, fg), (.role .page, bg),
+        -- alerted text fg=mAlertFg: 2.61:1 on this page, under the 4.5:1
+        -- WCAG 2.2 SC 1.4.3 asks of text, so a document's contrast report
+        -- names it where the alert is used (`reported`).
+        (.role .alert, lineage),
         (.role .example, { r := 0x00, g := 0x80, b := 0x80 }),
-        -- The muted step: the theme's own ink mixed 70:30 into its page, a
-        -- declared quieting that keeps 4.79:1 on this page, a pinned margin
-        -- over the 4.6:1 a generated text ink stands at
-        -- (`Theme.builtin_muted_contract`).
-        (.role .muted, fg.mix 70 bg),                              -- fg!70!bg
         (.role .frameTitleInk, bg), (.role .frameTitleBar, fg),
         (.role .progressFill, lineage), (.role .progressTrack, progressbg),
         (.role .separator, lineage),
@@ -187,10 +198,10 @@ public def moloch : Theme :=
       -- fraction where every text role clears it
       -- (`Contrast.builtin_designs_covered` is the check).
       coveredFraction := some 31 }
-    -- The lineage's alert is the warm colour itself, which reads at 2.61:1 on
-    -- this page, under the 4.5:1 WCAG 2.2 SC 1.4.3 asks of text: the alert
-    -- is that colour realized as text here, its hue held.
-    derived := [(.alert, lineage)]
+    -- The lineage declares no secondary ink: the muted step is derived from
+    -- the ink as a generated palette's is (`SeedPalette.mutedFor`).
+    derived := [(.muted, fg)]
+    reported := [.alert, .alertTitleInk]
     tokens := lineageTokens
     frameKeys := .moloch
     styles := { entries := #[
@@ -215,8 +226,6 @@ public def plain : Theme :=
       entries := #[
         (.role .ink, fg), (.role .page, bg), (.role .alert, { r := 0xB3, g := 0x26, b := 0x1E }),
         (.role .example, { r := 0x20, g := 0x5E, b := 0x3B }),
-        -- Same muted rule as moloch: ink 70:30 into the page (6.36:1 here).
-        (.role .muted, fg.mix 70 bg),                              -- fg!70!bg
         (.role .progressFill, fg.mix 60 .white),                     -- fg!60
         (.role .progressTrack, fg.mix 15 .white),                     -- fg!15
         (.role .separator, fg.mix 40 .white),                      -- fg!40
@@ -226,6 +235,8 @@ public def plain : Theme :=
       -- bundle's roles all clear the 3:1 state change at 38%
       -- (Contrast.builtin_designs_covered is the kernel check).
       coveredFraction := some 38 }
+    -- The muted step derived from the ink as a generated palette's is.
+    derived := [(.muted, fg)]
     tokens := { entries := #[("progressheight", pt1)] }
     styles := { entries := #[
       ("sectionpage", boldFont "Large"),
@@ -305,9 +316,6 @@ public def gemini : Theme :=
         -- bundle's literal value, which this bundle ships unchanged.
         (.role .alert, { r := 0xEE, g := 0x00, b := 0x00 }),
         (.role .example, { r := 0x00, g := 0x80, b := 0x00 }),      -- green!50!black
-        -- The same 70:30 ink-into-page muted rule the other bundles use
-        -- (8.45:1 here); gemini declares no muted step of its own.
-        (.role .muted, fg.mix 70 bg),                               -- fg!70!bg
         (.role .frameTitleInk, lightgray), (.role .frameTitleBar, blue),   -- headline fg/bg
         (.role .blockTitleInk, blue),                                -- block title fg=blue (bg=white: the page, no bar)
         (.role .alertTitleInk, lightgray), (.role .alertTitleBar, blue),   -- block alerted title
@@ -322,6 +330,9 @@ public def gemini : Theme :=
       -- largest fraction where every text role clears it
       -- (Contrast.builtin_designs_covered is the kernel check).
       coveredFraction := some 30 }
+    -- gemini declares no secondary ink: the muted step is derived from the
+    -- ink as a generated palette's is.
+    derived := [(.muted, fg)]
     styles := { entries := #[
       -- The headline band centres its title matter (beamerthemegemini.sty,
       -- headline template: the logo columns keep space on both sides "to

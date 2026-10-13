@@ -6490,7 +6490,7 @@ def boundaryChecks (ref : IO.Ref (List String)) : IO Unit := do
   let bundleAlert := (Ir.Design.declared? (Theme.moloch.realize .documents) .alert).getD .black
   t "a theme role reached through alert's rewrite is declared with the bundle's value"
     (hasStr (reqOf tdoc) "\\textcolor {alert}" &&
-     hasStr (reqOf tdoc) s!"\\definecolor\{alert}\{RGB}\{{bundleAlert.r},{bundleAlert.g},{bundleAlert.b}}")
+     hasStr (reqOf tdoc) (Ir.colorDeclLine ("alert", bundleAlert)))
   t "the declared math face rides through unicode-math"
     (hasStr (reqOf tdoc) "\\usepackage{unicode-math}" &&
      hasStr (reqOf tdoc) "\\setmathfont{Fira Math}")
