@@ -142,7 +142,7 @@ public structure PageSpec where
   /-- The rules the document draws on every page, in the order drawn. -/
   drawn : Array DrawnRule := #[]
   /-- Whether the document declares page boxes the engine cannot evaluate, so
-  the trim its drawn cut marks cut stands for them. -/
+  its drawn cut marks declare the trim in their place. -/
   trimMarked : Bool := false
   deriving Repr, BEq, Inhabited
 
@@ -3317,8 +3317,6 @@ every shape but a label. -/
   | .label x y content _ scale align => labelGlyphBox x y align (m content scale)
   | s@(.ink _) => s.box
 
--- Proofs below spell `Int`, not `Sp`: `omega` does not see through the abbreviation.
-
 /-- The half-extents a label of this width and height asks of the node it
 hangs on, read off `labelInkSpan`. -/
 public def labelHalfExtent (align : LabelAlign) (w tall : Sp) : Sp × Sp :=
@@ -4455,7 +4453,8 @@ public def Block.partopsepEnv : Block → Bool
 mutual
 
 /-- A block whose end leaves TeX's `\@endpe` set: a list, a quote, the
-kernel's theorem, a trivlist, and a framed listing. -/
+kernel's theorem, a trivlist or a framed listing, also in an in-paragraph
+wrapper or last in a carrier. -/
 public def Block.leavesEndPe : Block → Bool
   | .list .. | .quote _ => true
   | .verbatim _ _ spec => spec.frame == .trivlist || spec.frame == .list
@@ -4755,8 +4754,8 @@ public theorem frameNumbers_size (body : Array Block) :
     (frameNumbers body).size = body.size := by
   simp [frameNumbers, frameMask, numbersFrom_length]
 
-/-- The counters `numberFloats` threads: captioned figures, captioned tables,
-and captioned subfloats reset at every float body. -/
+/-- The counters `numberFloats` threads: captioned figures, tables and
+algorithms, and captioned subfloats reset for every float body. -/
 private structure FloatCtr where
   fig : Nat := 0
   tab : Nat := 0
@@ -4778,8 +4777,9 @@ private def FloatCtr.bump : FloatCtr → FloatKind → FloatCtr
 
 mutual
 
-/-- The numbering walk: every captioned float takes the next number of its
-kind, in document order. -/
+/-- The numbering walk: every captioned float outside a speaker note takes the
+next number of its kind in document order, a float's subfloats lettered from
+one. -/
 private def numberFloatList (c : FloatCtr) (out : Array Block) :
     List Block → FloatCtr × Array Block
   | [] => (c, out)
@@ -7035,7 +7035,7 @@ public def Doc.frameCount (doc : Doc) : Nat :=
   doc.frameCountAt 0
 
 /-- The name each frame is known by at its body index: its number
-(`appendix-n` past `frameRestart`), else `standout`, `standout-2`, … or
+(`appendix-n` from `frameRestart` on), else `standout`, `standout-2`, … or
 `titlepage`, `titlepage-2`, …; `none` at every other block. -/
 public def Doc.frameLabels (doc : Doc) : Array (Option String) := Id.run do
   let nums := doc.frameNumbers
@@ -10156,7 +10156,8 @@ public def Palette.applySeeds (pal : Palette) (st : SeedPalette.SeedState) : Pal
     fun c => Color.ofHtml c.r c.g c.b
 
 /-- The palette with each bound element ink the document does not declare
-erased where its ground stands at another colour than generated. -/
+erased where its ground stands off its generated colour, and reinstated where
+the ground is back on it. -/
 public def Palette.yieldGrounds (pal : Palette) (keep : Role → Bool) : Palette :=
   match pal.seeded with
   | none => pal
@@ -11579,9 +11580,9 @@ public theorem exclusiveOccurrences_exact {α : Type u} [BEq α] [LawfulBEq α]
 
 mutual
 
-/-- Every footnote in document order with its resolved mark number; equal
-occurrences in exclusive alternatives share one endnote. -/
--- conserves: none — projects the notes alone.
+/-- Every footnote outside a speaker note, in document order with its resolved
+mark number; equal occurrences in exclusive alternatives share one endnote. -/
+-- conserves: none — projects the footnotes alone.
 public def footnotesOf (xs : Array Block) : Array (Option Nat × Array Inline) :=
   footnoteBlockList #[] xs.toList
 
@@ -14275,7 +14276,6 @@ public def mapBlockCols (gp : Pic.Picture → Pic.Picture) (f : Inline → Inlin
 
 end
 
-/-- Resolve one formula leaf. -/
 @[expose] public def resolveMathAlphaInline (coverage : Math.MathAlphabetCoverage) : Inline → Inline
   | .formula display src body =>
     .formula display src (Math.resolveMathAlphas coverage body)
@@ -15922,7 +15922,6 @@ public def liftParaStepIn (xs : List Inline) : Array Inline :=
   | [] => #[]
   | y :: z :: rest => (y :: z :: rest).toArray
 
-/-- The one-node face of `liftParaStepIn`. -/
 public def liftParaStepOne (x : Inline) : Array Inline :=
   match x with
   | .styled (.size _) body => body
@@ -16422,7 +16421,6 @@ public def refText (loc : Locale) (form : RefForm) (b : RefBinding) : String :=
     | some k => if cap then (crefNameOf loc k).capOne else (crefNameOf loc k).one
     | none => b.num
 
-/-- One reference against a lookup. -/
 public def resolveOneRefWith (loc : Locale)
     (look : String → Option (String × Option RefBinding)) (key : String)
     (form : RefForm) : Inline :=
