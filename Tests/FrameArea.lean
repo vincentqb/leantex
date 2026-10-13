@@ -132,7 +132,7 @@ def classAlignChecks (ref : IO.Ref (List String)) : IO Unit := do
   let at? (page : Nat) (word : String) (milli : Int) : Bool :=
     ((out.pages[page]?.bind fun p => p.lines.find? fun l =>
       !l.furniture && hasStr (lineText l) word).map fun l => near l.y (ptMilli milli)).getD false
-  t "class t: an untitled frame opens at the text area's top, a standout frame centres"
+  t "class t: an untitled frame opens at the text area's top and a standout frame centres, as lualatex does"
     (at? 1 "Kilo" 17620 && at? 3 "Kilo" 142950)
   let centred (doc : Ir.Doc) : Option Ir.VAlign := doc.body.findSome? fun b => match b with
     | .frame _ false v _ _ => if v matches .center then some v else none
@@ -167,7 +167,7 @@ def openingChecks (ref : IO.Ref (List String)) : IO Unit := do
   let size := doc.page.fontSize
   let lead := Ir.leadingFor size doc.page.leading
   let skip := (Ir.frameBodySkip false .top).resolve size 0
-  t "frame opening: a paragraph's first baseline stands one baselineskip below the opening"
+  t "frame opening: a paragraph's first baseline stands one baselineskip below the opening, as lualatex's"
     ((first 0).any fun y => y == skip + lead && near y (ptMilli 17620))
   let listOpen : Option Dim.Sp := (Ir.listSkips doc.docClass.record.lists size 1).map fun sk =>
     sk.topsep.width.sp + (Ir.partopsepFor doc.docClass.record.lists size 1 doc.tokens).width.sp
@@ -251,10 +251,10 @@ def trivlistOpeningChecks (ref : IO.Ref (List String)) : IO Unit := do
       l.segs.any (· matches .image ..)).map (·.y)
   t "trivlist opening: a frame's trivlist spends LaTeX's top-level topsep, size10's 8pt"
     (topsep == Dim.pt 8 && (Ir.floatSpaceFor lists doc.tokens size 0).1.width.sp == topsep)
-  t "trivlist opening: a center, flushleft or flushright line stands its topsep and a baselineskip down"
+  t "trivlist opening: a center, flushleft or flushright line stands its topsep and a baselineskip below the opening, as lualatex's"
     ([0, 1, 2].all fun pg => (lineY pg "Kilo").any fun y =>
       y == skip + topsep + lead && near y (ptMilli 25594))
-  t "trivlist opening: a figure's and a center's image stand topsep and lineskip below the opening"
+  t "trivlist opening: a figure's and a center's image stand their topsep and lineskip below the opening, as lualatex's"
     ([3, 4].all fun pg => (imageY pg).any fun y =>
       y == skip + topsep + Layout.inkClearance + Dim.pt 40 && near (y - Dim.pt 40) (ptMilli 14635))
   t "trivlist opening: a description's item stands its topsep below the opening, as lualatex's"

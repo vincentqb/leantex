@@ -1167,9 +1167,8 @@ def mathSymbolResetChecks (ref : IO.Ref (List String)) : IO Unit := do
     check ref (source ++ " resets only the inner HTML text family")
       (mathTextLeavesList #[] body.toList == expectedLeaves)
 
-/-- A discarded enclosing text family cannot suppress the unavailable
-symbol alphabet's note. Compare the shipped glyph and typed MathML pair,
-with an actually retained text family as the silent positive control. -/
+/-- A discarded enclosing text family cannot suppress the unavailable symbol alphabet's note, on the
+shipped glyph and typed MathML alike. -/
 def mathSymbolResetAccountingChecks (ref : IO.Ref (List String)) : IO Unit := do
   let fs ← mathTextFaces
   let evidence (source : String) :
@@ -2305,7 +2304,7 @@ def slotMatrixChecks (ref : IO.Ref (List String)) : IO Unit := do
   let warm ← slotRunRow bin dir cache rows.size (rows[0]?.getD default)
   t s!"slot matrix: the warm-up run builds: {warm.log}" (warm.exit == 0)
   let mut outcomes : Array (Option (Except IO.Error SlotOutcome)) := Array.replicate rows.size none
-  -- Sixteen workers measured fastest (3.4 s, against 4.2 s at 32 and 5.0 s at 4).
+  -- Sixteen workers measured fastest on a 192-core host, ahead of 4, 32 and 64.
   let width := 16
   -- Workers over a static partition share no state, so a slow row delays only its own worker.
   let mut tasks := #[]

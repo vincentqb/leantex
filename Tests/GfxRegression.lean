@@ -126,9 +126,9 @@ def gfxContentPageChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) :
       !tall.diags.any (·.code == "W0358"))
 
 open Tests.GfxRegression in
-/-- The cross-backend picture defects the vector model closed, held over the page's typed stream,
-`Layout.Out` and the typed HTML tree: fill order, subpaths, zero widths, miter limits, zero-size and
-dashed shapes, and square-capped dots. -/
+/-- Pictures agree across backends over the page's typed stream, `Layout.Out` and the typed HTML
+tree: fill order, subpaths, zero widths, miter limits, zero-size and dashed shapes, and
+square-capped dots. -/
 def gfxDefectChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit := do
   let t := check ref
   let red : Ir.Color := { r := 255, g := 0, b := 0 }

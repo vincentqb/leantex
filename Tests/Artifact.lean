@@ -520,8 +520,7 @@ def ArtRect.render (r : ArtRect) : String :=
 def ArtRect.holds (r : ArtRect) (hslack vslack bx0 by0 bx1 by1 : Dim.Sp) : Bool :=
   r.x0 - hslack ≤ bx0 && r.y0 - vslack ≤ by0 && bx1 ≤ r.x1 + hslack && by1 ≤ r.y1 + vslack
 
-/-- Do two rectangles share area? Touching edges do not count: a band's
-bottom edge and a body line's top edge may coincide. -/
+/-- Whether two rectangles share area, touching edges not counting. -/
 def ArtRect.overlaps (a b : ArtRect) : Bool :=
   a.x0 < b.x1 && b.x0 < a.x1 && a.y0 < b.y1 && b.y0 < a.y1
 
@@ -732,8 +731,7 @@ end
 
 mutual
 
-/-- One page's operators with its text displaced. Fills and paths stay
-where they were, so a band keeps its place while the ink moves. -/
+/-- One page's operators with its text displaced, its fills and paths in place. -/
 def artMoveOp (onlyContent : Bool) (dx dy : Dim.Sp) : Pdf.ContentOp → Pdf.ContentOp
   | .text ops => .text (artMoveTextList onlyContent dx dy #[] ops.toList)
   | .marked t body => .marked t (artMoveList onlyContent dx dy #[] body.toList)
@@ -1217,7 +1215,7 @@ def artifactMutantChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet)
   judge "a glyph the /ToUnicode does not name" .glyphNames geom
     (artWriteWith fs geom doc out store (artOnPage 0 (artRegidList 60000 #[] ·.toList))) true
   judge "paragraphs untouched" .glyphNames geom plain false
-  -- The lift is read off the layout, never fitted to today's geometry.
+  -- The lift is read off the layout, never a fitted constant.
   let (cf, cg, cd, co, cs) ← build "chrome"
   let lift : Dim.Sp := ((co.pages[2]?).bind fun p => p.band.bind fun band =>
     (p.lines.find? fun l => !l.furniture && l.y > band).map fun l => l.y - band / 2).getD 0
@@ -1270,8 +1268,8 @@ def artPaintsBand (decls : String) : Bool := artPaintsFrom artBandProp decls
 /-- An element as the tree carries it: its tag and its classes. -/
 abbrev ArtElem := String × Array String
 
-/-- One compound selector, and whether it must be a direct child of the
-compound before it. A selector is an array of these, root first. -/
+/-- One compound selector and whether it must be a direct child of the one before; a selector is an
+array of these, root first. -/
 abbrev ArtStep := ArtElem × Bool
 
 /-- One compound selector as the element it names: its tag (empty for classes only) and every class

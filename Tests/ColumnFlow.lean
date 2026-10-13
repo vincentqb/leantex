@@ -23,9 +23,8 @@ private def flowPlaces (census : Array CensusPage) (mark : String) : Array (Nat 
 private def pageBefore (a b : Nat × Sp × Sp) : Bool :=
   a.1 < b.1 || (a.1 == b.1 && a.2.2 < b.2.2)
 
-/-- Each independent flow starts at the row's opening page and baseline,
-retains its own pagination, and joins after the later ending flow. Swapping
-the columns may change x, never a paragraph's page or baseline. -/
+/-- Each independent flow starts at the row's opening page and baseline, keeps its own pagination
+and joins after the later-ending flow; swapping the columns may move x, never a page or baseline. -/
 def columnFlowChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit := do
   let t := check ref
   for (leftCount, rightCount) in #[(24, 1), (1, 24), (24, 17), (17, 24)] do

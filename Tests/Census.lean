@@ -277,7 +277,8 @@ def silentLossChecks (ref : IO.Ref (List String))
     for (n, doc, out, c, ds) in seen do
       let fires := row.shows doc out c ds
       if row.fixtures.contains n then
-        check ref s!"silent loss '{row.what}': {n} still ships it (else take {n}, or the row, out)" fires
+        check ref s!"silent loss '{row.what}': {n} still ships it — if it no longer does, \
+take {n} out of the row, or the row out, and leave the guard that keeps it read" fires
       else
         check ref s!"silent loss '{row.what}': {n} ships it unrecorded — list {n} under the row" (!fires)
 

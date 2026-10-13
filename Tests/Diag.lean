@@ -764,7 +764,7 @@ def diagBlocksOf (s : String) : Array (String × String) := Id.run do
   if !key.isEmpty then out := out.push (key, cur)
   return out
 
-/-- The sources the site audit runs over: the reported shapes and the recovery paths around them. -/
+/-- The invented sources the site audit runs over, each with what it exercises. -/
 def siteAccountingProbes : List (String × String) :=
   [(dvDoc "" "Alpha \\zztrack[-11]{Bravo} charlie.", "an option run on an unknown command"),
    (dvDoc "" "Delta \\zztrack[16]{Echo} foxtrot.", "a second option run, another site"),
