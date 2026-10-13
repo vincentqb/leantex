@@ -1,7 +1,7 @@
 /-
 `land`: the landing procedure as a porcelain command over `scripts/LandCore.lean`; exit 0 ok, 1
-gate failed, 2 precondition or conflict, 3 internal, 4 landed but not known pushed.
-Usage: land new <name> | check <name> | <name> [--push] | push | retire <name> | status | --selftest | --scratch-selftest
+gate failed, 2 precondition or conflict, 3 internal or a usage mistake, 4 landed but not known pushed.
+Usage: land new <name> | check <name> | <name> [--push] | push | retire <name> | status | --selftest | --scratch-selftest | --help
 -/
 import scripts.LandCore
 
@@ -2028,6 +2028,30 @@ def scenarioReserved (self root : String) : IO Outcome := do
          , ok := code == 3 && before == after
          , detail := s!"exit={code} main-before={before} main-after={after}" }
 
+/-- `--help` and `-h` print the usage and exit 0 wherever they stand, and an
+argument beginning with `-` that is no option `land` reads prints it and exits
+3, beside a branch the bare-name form would land; none of them makes a run
+directory, takes the lock or writes the ledger. -/
+def scenarioUsage (self root : String) : IO Outcome := do
+  let s ← mkScratch s!"{root}/usage" "usage"
+  let tries : List (Array String × Nat) :=
+    [ (#["--help"], 0), (#["-h"], 0), (#["check", "usage", "--help"], 0), (#["usage", "-h"], 0)
+    , (#["--scenarios"], 3), (#["usage", "--pushh"], 3), (#["new", "-x"], 3)
+    , (#["-"], 3), (#["--push"], 3) ]
+  let before ← revOf s.repo "refs/heads/main"
+  let mut wrong : Array String := #[]
+  for (args, want) in tries do
+    let (code, out) ← runTool self s.repo args #[]
+    unless code == want && says out "usage: land" do
+      wrong := wrong.push s!"{String.intercalate " " args.toList}: exit {code}"
+  let after ← revOf s.repo "refs/heads/main"
+  let made ← System.FilePath.pathExists s!"{s.repo}/.git/land"
+  return { label := "--help and -h print the usage, an unknown option prints it too, and none \
+of them makes a run, takes the lock or writes the ledger"
+         , ok := wrong.isEmpty && !made && before == after
+         , detail := s!"wrong=[{String.intercalate "; " wrong.toList}] land-dir={made} \
+main={before}->{after}" }
+
 /-- A landing started with `GIT_DIR` naming another repository lands the one its working
 directory names and writes nothing into the other. -/
 def scenarioForeignGitDir (self root : String) : IO Outcome := do
@@ -2498,6 +2522,7 @@ def scratchSelftest : IO UInt32 := do
     , ("merge-kept", fun self root => scenarioMergedTip self root false)
     , ("merge-reconciled", fun self root => scenarioMergedTip self root true)
     , ("conflict", scenarioConflict), ("optin", scenarioNoOptIn), ("reserved", scenarioReserved)
+    , ("usage", scenarioUsage)
     , ("stopped", scenarioStoppedRebase), ("switched", scenarioWorktreeSwitched)
     , ("treemoved", scenarioTreeMoved), ("pushtip", scenarioPushNamesTip)
     , ("pushff", scenarioPushNotFastForward), ("union", scenarioUnionDrift)
@@ -2533,10 +2558,7 @@ def scratchSelftest : IO UInt32 := do
 
 def usage : String :=
   "usage: land new <name> | land check <name> | land <name> [--push] | land push | \
-land retire <name> | land status | land --selftest | land --scratch-selftest"
-
-/-- The subcommand words, which are not agent names. -/
-def reserved : List String := ["new", "check", "retire", "status", "push"]
+land retire <name> | land status | land --selftest | land --scratch-selftest | land --help"
 
 def resolveGates (e : Env) : IO (Except String (Array Gate × String)) := do
   let ctr ← IO.mkRef 0
@@ -2551,44 +2573,34 @@ gate overrides (git config --local land.allowGateOverride true)"
     | .ok gs => return .ok (gs, "override")
 
 def main (argv : List String) : IO UInt32 := do
-  match argv with
-  | [] => IO.eprintln usage; return 3
-  | ["--selftest"] => selftest
-  | ["--scratch-selftest"] => scratchSelftest
-  | args => do
+  match parseArgs argv with
+  | .help => IO.println usage; return 0
+  | .misuse why => IO.eprintln s!"land: {why}\n{usage}"; return 3
+  | .selftest => selftest
+  | .scratchSelftest => scratchSelftest
+  | .run r => do
     match ← mkEnv with
     | .error e => IO.eprintln s!"land: {e}"; return 3
     | .ok env =>
       let landing (n : String) (m : Mode) (p : Bool) : IO UInt32 := do
-        if reserved.contains n then
-          IO.eprintln s!"land: {n} is a subcommand, not an agent name"
-          return 3
         match ← resolveGates env with
         | .error why =>
           say "gateset" "fail" [("why", why)]
           sayFinal .refused [("name", n), ("why", why)]
           return 2
         | .ok (gs, gateset) => withLock env n (landRun env n m p gs gateset)
-      let named (n : String) (act : IO UInt32) : IO UInt32 := do
-        if reserved.contains n then
-          IO.eprintln s!"land: {n} is a subcommand, not an agent name"
-          return 3
+      let retained (act : IO UInt32) : IO UInt32 := do
+        retainRuns env 50
         act
-      let code ← match args with
-        | ["status"] => do
+      let code ← match r with
+        | .status => do
           -- A listing is no run: it prunes nothing and leaves no directory.
           let c ← landStatus env
           rmQuiet env.runDir
           pure c
-        | _ => do
-          retainRuns env 50
-          match args with
-          | ["new", n] => named n (landNew env n)
-          | ["retire", n] => named n (landRetire env n)
-          | ["push"] => withLock env "push" (landPush env)
-          | ["check", n] => landing n .check false
-          | [n] => landing n .land false
-          | [n, "--push"] => landing n .land true
-          | _ => IO.eprintln usage; return 3
+        | .new n => retained (landNew env n)
+        | .retire n => retained (landRetire env n)
+        | .push => retained (withLock env "push" (landPush env))
+        | .land n m p => retained (landing n m p)
       env.alive.unlock
       return code

@@ -1197,4 +1197,152 @@ theorem hpush_owned (g : HGuard) (cwd d t : String)
   simp only [HWrite.owned, Bool.and_eq_true] at hd ht
   exact ⟨hd, ht.1, ht.2⟩
 
+-- ## The command line
+
+/-- The options `land` reads. -/
+def options : List String := ["--push", "--selftest", "--scratch-selftest", "--help", "-h"]
+
+/-- The subcommand words, which are not agent names. -/
+def reserved : List String := ["new", "check", "retire", "status", "push"]
+
+/-- A command that makes a run directory. -/
+inductive Run where
+  | status
+  | push
+  | new (name : String)
+  | retire (name : String)
+  | land (name : String) (mode : Mode) (push : Bool)
+  deriving DecidableEq, Repr
+
+/-- The agent a run names. -/
+def Run.name? : Run → Option String
+  | .status | .push => none
+  | .new n | .retire n | .land n .. => some n
+
+/-- What an argument vector asks for; `help` and `misuse` print the usage and
+start nothing. -/
+inductive Cmd where
+  | help
+  | misuse (why : String)
+  | selftest
+  | scratchSelftest
+  | run (r : Run)
+  deriving DecidableEq, Repr
+
+/-- The run `k n`, when `n` can name an agent. -/
+def named (n : String) (k : String → Run) : Cmd :=
+  if n.isEmpty then .misuse "an agent name cannot be empty"
+  else if reserved.contains n then .misuse s!"{n} is a subcommand, not an agent name"
+  else .run (k n)
+
+/-- The command an argv's words and its options, all known, spell. -/
+def parseForm : List String → List String → Cmd
+  | [], [] => .misuse "no command given"
+  | [], ["--selftest"] => .selftest
+  | [], ["--scratch-selftest"] => .scratchSelftest
+  | ["status"], [] => .run .status
+  | ["push"], [] => .run .push
+  | ["new", n], [] => named n .new
+  | ["retire", n], [] => named n .retire
+  | ["check", n], [] => named n (.land · .check false)
+  | [n], [] => named n (.land · .land false)
+  | [n], ["--push"] => named n (.land · .land true)
+  | _, _ => .misuse "no command takes these arguments"
+
+/-- `--help` or `-h` anywhere asks for the usage, and any other argument
+beginning with `-` that is not an option `land` reads is a mistake. -/
+def parseArgs (argv : List String) : Cmd :=
+  let opts := argv.filter (·.startsWith "-")
+  if opts.contains "--help" || opts.contains "-h" then .help
+  else match opts.find? (!options.contains ·) with
+    | some o => .misuse s!"{o} is not an option land reads"
+    | none => parseForm (operands argv) opts
+
+theorem named_run_exact (n : String) (k : String → Run) (r : Run) (h : named n k = .run r) :
+    r = k n ∧ n.isEmpty = false ∧ reserved.contains n = false := by
+  unfold named at h
+  split at h
+  · simp at h
+  · split at h
+    · simp at h
+    · rename_i he hr
+      simp only [Cmd.run.injEq] at h
+      exact ⟨h.symm, Bool.eq_false_iff.mpr he, Bool.eq_false_iff.mpr hr⟩
+
+private theorem named_ne_help (n : String) (k : String → Run) : named n k ≠ .help := by
+  unfold named
+  split
+  · simp
+  · split <;> simp
+
+private theorem parseForm_ne_help (ws os : List String) : parseForm ws os ≠ .help := by
+  unfold parseForm
+  split <;> first | exact named_ne_help _ _ | simp
+
+theorem parseForm_name_mem (ws os : List String) (r : Run) (n : String)
+    (h : parseForm ws os = .run r) (hn : r.name? = some n) :
+    n ∈ ws ∧ n.isEmpty = false ∧ reserved.contains n = false := by
+  unfold parseForm at h
+  split at h <;> first
+    | (simp at h; done)
+    | (simp only [Cmd.run.injEq] at h; subst h; simp [Run.name?] at hn)
+    | (obtain ⟨rfl, he, hr⟩ := named_run_exact _ _ _ h
+       simp only [Run.name?, Option.some.injEq] at hn
+       subst hn
+       exact ⟨by simp, he, hr⟩)
+
+/-- **A run reads only the options `land` knows, and names its agent by a word
+of the argument vector that is no subcommand.** -/
+theorem parseArgs_run_exact (argv : List String) (r : Run) (h : parseArgs argv = .run r) :
+    (∀ a ∈ argv, a.startsWith "-" = true → a ∈ options) ∧
+      ∀ n, r.name? = some n →
+        n ∈ argv ∧ n.startsWith "-" = false ∧ n.isEmpty = false ∧ reserved.contains n = false := by
+  unfold parseArgs at h
+  dsimp only at h
+  split at h
+  · simp at h
+  · split at h
+    · simp at h
+    · rename_i hnone
+      refine ⟨fun a ha hd => ?_, fun n hn => ?_⟩
+      · have hk := List.find?_eq_none.mp hnone a (List.mem_filter.mpr ⟨ha, hd⟩)
+        simpa using hk
+      · obtain ⟨hw, he, hr⟩ := parseForm_name_mem _ _ r n h hn
+        have hw' := List.mem_filter.mp hw
+        exact ⟨hw'.1, by simpa using hw'.2, he, hr⟩
+
+/-- **An argument beginning with `-` that is no option `land` reads makes no
+run**: the usage is printed instead. -/
+theorem parseArgs_unknown_exact (argv : List String) (a : String) (ha : a ∈ argv)
+    (hd : a.startsWith "-" = true) (hu : a ∉ options) :
+    parseArgs argv = .help ∨ ∃ why, parseArgs argv = .misuse why := by
+  unfold parseArgs
+  dsimp only
+  split
+  · exact .inl rfl
+  · split
+    · exact .inr ⟨_, rfl⟩
+    · rename_i hnone
+      have hk := List.find?_eq_none.mp hnone a (List.mem_filter.mpr ⟨ha, hd⟩)
+      exact absurd (by simpa using hk) hu
+
+theorem parseArgs_help_exact (argv : List String) :
+    parseArgs argv = .help ↔ ("--help" ∈ argv ∨ "-h" ∈ argv) := by
+  have hh : "--help".startsWith "-" = true := by decide +kernel
+  have hs : "-h".startsWith "-" = true := by decide +kernel
+  unfold parseArgs
+  dsimp only
+  split
+  · rename_i hc
+    simp only [Bool.or_eq_true, List.contains_iff_mem, List.mem_filter, hh, hs,
+      and_true] at hc
+    simpa using hc
+  · rename_i hc
+    simp only [Bool.or_eq_true, List.contains_iff_mem, List.mem_filter, hh, hs,
+      and_true, not_or] at hc
+    refine ⟨fun h => ?_, fun h => (h.elim hc.1 hc.2).elim⟩
+    split at h
+    · simp at h
+    · exact absurd h (parseForm_ne_help _ _)
+
 end Land
