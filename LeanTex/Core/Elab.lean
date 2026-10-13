@@ -107,7 +107,8 @@ public structure PicCtx where
   /-- The external TeX that draws pictures outside the rendered subset;
   `none` is the declared refusal. -/
   tool : Option String := some "lualatex"
-  /-- An external converter may draw a figure the engine cannot draw whole. -/
+  /-- Whether an external converter may draw a figure the engine cannot draw
+  whole. -/
   convert : Bool := true
   /-- Boundary requests the driver withdrew, drawn natively instead. -/
   withdrawn : Array String := #[]
@@ -333,8 +334,8 @@ public structure SpanRecords where
   colors : Array (Palette × String × Color × Bool × Span) := #[]
   /-- The declaration sites furniture and implicit foregrounds report. -/
   colorDeclarations : Array (String × Color × Bool × Span) := #[]
-  /-- Each `\palette` entry that declares an author colour under a retired
-  text or ground key (`ink`, `surface`), at its first declaration. -/
+  /-- Each `\palette` entry that declares an author colour under the key
+  `ink` or `surface`, at its first declaration. -/
   tokenKeys : Array (String × Span) := #[]
   /-- The declared `tokenKeys` some resolved colour expression spells, once
   each. -/
@@ -521,8 +522,8 @@ public structure ESt where
   /-- The last refused `\maketitle` redefinition's body, read again at the
   preamble's end for its title styling. -/
   refusedTitleBody : Option (Array Raw) := none
-  /-- Refused size-command redefinitions' bodies, read again at the preamble's
-  end for their `\@setfontsize` ladder. -/
+  /-- Refused size-command redefinitions' bodies, read again at the
+  preamble's end for their `\@setfontsize` ladder. -/
   refusedSizeBodies : Array (String × Array Raw × Span) := #[]
   /-- Speaker-note bodies met inside inline content, which the enclosing
   frame drains to its end. -/
@@ -544,7 +545,7 @@ public structure ESt where
   state only when it moved. -/
   flowGen : Nat := 0
   /-- The scalar settings the document has declared, by `(decl, key)`, each
-  with its value as written. -/
+  beside its value as written. -/
   seenScalars : Array (String × String × String) := #[]
   /-- The keyed entries the document itself declared, `(decl, key)`, that no
   theme install has replaced. -/
@@ -775,7 +776,7 @@ private theorem warnOnceDiag_output_exact (ctx : Ctx) (key : String) (code : Dia
   dsimp only
   split <;> simp only [demote_output, Diag.of_record_exact]
 
-/-- The warn-once key of a loss scoped to one output. -/
+/-- A warn-once key, suffixed by the output a loss is scoped to, if any. -/
 private def warnOnceKey (key : String) : Option Diag.Output → String
   | none => key
   | some .pdf => key ++ "\npdf"
@@ -851,7 +852,8 @@ private def recordNativePictureSpan (ctx : Ctx) (pos : Pos) : EM Unit := do
   let k := ((← get).spans.images.filter fun e => e.1.startsWith Ir.picKeyPrefix).size
   recordImageSpan ctx (Ir.picKeyPrefix ++ toString k) pos
 
-/-- Retired `\palette` text and ground keys, now ordinary author colours. -/
+/-- The `\palette` keys `ink` and `surface`: author colours, named when
+nothing reads them. -/
 private def legacyScreenKeys : List String := ["ink", "surface"]
 
 /-- The declared legacy keys the engine has not read yet. -/
@@ -1080,7 +1082,7 @@ private def blockOnly : List String :=
   ["section", "subsection", "subsubsection", "item", "documentclass", "define",
    "defineenv", "block", "framefoot", "pagebreak"]
 
-/-- The overlay commands, which dim content before its step. -/
+/-- The overlay commands, whose content dims, never hides, off its steps. -/
 private def overlayCtrls : List String :=
   ["uncover", "visible", "only", "onslide"]
 
@@ -1090,14 +1092,14 @@ private def decorationCtrls : List (String × Ir.Decoration) :=
 public def builtinNames : List String :=
   ["begin", "end", "par", "define", "ifgiven", "documentclass", "textcolor",
    "ul", "varul"] ++ (decorationCtrls.map (·.1)) ++ [
-   -- Spelled out, not derived from `Picture.phantomCtrl`: a gap must show.
+   -- Spelled out, not derived from `Picture.phantomCtrl`, so the phantom coverage theorem can fail.
    "vphantom", "hphantom", "phantom"] ++
   blockOnly ++ (escapes.map (·.1)) ++ (argStyles.map (·.1)) ++
   (declStyles.map (·.1)) ++ (reservedCtrl.map (·.1)) ++ declCtrl ++
   (Lex.textSymbols.map (·.1))
 
 /-- Built-ins a definition may never touch, whatever its body: the names the
-walks' own shape depends on. -/
+walks' shape depends on, the underline family and `\tabularxcolumn`. -/
 public def structuralNames : List String :=
   ["begin", "end", "par", "define", "ifgiven", "documentclass",
    "ul", "varul", "tabularxcolumn",
@@ -1158,8 +1160,8 @@ public def accentBase (d : String) : Option Char :=
     | some [c] => some c
     | _ => none
 
-/-- The composed text of an accent command applied to what follows, or `none`
-where no precomposed scalar exists. -/
+/-- The composed text of an accent command applied to what follows, or
+`none` when no precomposed scalar exists. -/
 public def accentCompose (name : String) (r : Parse.Raw) : Option String := do
   let mark ← accentMarkOf name
   let one (b : Char) : Option String := (Bib.composeAccent mark b).map (String.ofList [·])
@@ -1218,7 +1220,7 @@ private def flowLangUpdate (ctx : Ctx) (marker : String) (st : ESt) : ESt :=
   let tag := (marker.drop "@lang:".length).toString
   { st with scope := { st.scope with lang := if tag == ctx.locale.tag then none else some tag } }
 
-/-- A paragraph carrying the flow language's attribute. -/
+/-- A paragraph, wrapped in the flow language's attribute when one is set. -/
 private def paraUnder (lang : Option String) (inlines : Array Ir.Inline) : Ir.Block :=
   match lang with
   | some tag => .para (Ir.langWrap tag inlines)
@@ -1565,8 +1567,8 @@ private def allText (xs : Array Inline) : Bool :=
     | .text _ | .role _ _ | .located _ _ => true
     | _ => false) true xs
 
-/-- A text leaf with smart punctuation, or both spellings under a monospace
-selector. -/
+/-- A text leaf with smart punctuation unless literal, or both spellings
+under a monospace selector. -/
 private def punctuationInline (literal : Bool) (when? : Option OverlaySpec)
     (s : String) : Inline :=
   if literal then .text s else
@@ -1699,8 +1701,8 @@ with the mark's place (`qedHereKey`) for the symbol. -/
 private def qedHereRun : Array Inline :=
   #[.strut {}, .fill, .text "\u2003", .label qedHereKey]
 
-/-- Joins adjacent text runs with every space kept, as TeX sets both glues
-where both runs bring one to the seam. -/
+/-- Joins adjacent text runs with every space kept, as TeX sets both
+glues when both runs bring one to the seam. -/
 private def mergeText (xs : Array Inline) : Array Inline := Id.run do
   let mut out : Array Inline := #[]
   for x in xs do
@@ -3324,8 +3326,8 @@ private def counterValue (st : ESt) (nRaw : Array Raw) : CounterArg :=
   | [.word "-" _, .ctrl r _] => named r (-1)
   | _ => (shown.toInt?.map .int).getD (.unread shown)
 
-/-- One counter command from `i`: applied to a kept counter, otherwise named
-with its arguments consumed; returns the index past them. -/
+/-- One counter command from `i`: applied to a kept counter, otherwise
+named and its arguments consumed; returns the index past them. -/
 private def counterArm (ctx : Ctx) (raws : Array Raw) (i : Nat)
     (n : String) (pos : Pos) : EM { j : Nat // i ≤ j } := do
   let j := skipSpaces raws i
@@ -3417,8 +3419,8 @@ private def thanksWarn (ctx : Ctx) (pos : Pos) : EM Unit :=
     "'\\thanks' content is kept inline in the title block" pos
     (help := "a plain \\footnote in the body text renders as a page footnote")
 
-/-- Steps the footnote counter and returns the mark's number; an override
-steps nothing, and a deferred mark returns `none`. -/
+/-- Steps the footnote counter and returns the mark's number; an override or
+a deferred mark steps nothing, and a deferred one returns `none`. -/
 private def footnoteStepNum (override : Option Nat) : EM (Option Nat) := do
   let c := (← get).ctr
   if override.isNone && c.fnDefer then return none
@@ -4127,8 +4129,8 @@ private def nameUnknownLexer (ctx : Ctx) (lang : String) (minted : Bool) (pos : 
     s!"'{lang}' names no lexer the engine or Pygments has; its code is set as plain text" pos
     (help := help)
 
-/-- An author's language spelling as a listing's language token, or `none`
-with a spelling outside the token grammar named. -/
+/-- An author's language spelling as a listing's language token, named when
+no lexer reads it; `none`, named, when it is outside the token grammar. -/
 private def codeLanguage (ctx : Ctx) (raw : String) (minted : Bool) (pos : Pos) :
     EM (Option Ir.ListingLang) := do
   match Ir.listingLang? raw with
@@ -4481,7 +4483,7 @@ private def elabInlinesFrom (ctx : Ctx) (raws : Array Raw) (i : Nat)
         ((flushText acc sb).push (sourceInline ctx pos (.text "\u00a0"))) ""
     | .sym c pos =>
       if ctx.noteBody || ctx.argBody then
-        -- An argument's reserved character may still be a key on arrival.
+        -- In a note or an argument a reserved character is the caller's literal text.
         elabInlinesFrom ctx raws (i + 1)
           ((flushText acc sb).push (sourceInline ctx pos (.text (String.singleton c)))) ""
       else
@@ -6177,8 +6179,8 @@ private def wrapDeclAlign (align : Option Ir.HAlign) (inner : Array Block) :
 private def declScopeWrap (n : String) (inner : Array Block) : Array Block :=
   wrapDeclAlign (declAlignOf n) inner
 
-/-- The declarations between a list's opening and its first item, in force
-for every item. -/
+/-- The declarations between a list's opening and its first item, in
+force for every item. -/
 private structure ListScope where
   decls : List Ir.Decl := []
   align : Option Ir.HAlign := none
@@ -6344,8 +6346,8 @@ private def isCenteringRaw : Raw → Bool
 precedes it, past spaces and earlier argument groups. -/
 private def isArgument (cur : Array Raw) : Bool := Parse.endsInArgument cur
 
-/-- Collects the declarations a split group re-applies after a paragraph
-end, `\urlstyle` with its face included. -/
+/-- Collects the declarations a split group re-applies after each paragraph
+break, `\urlstyle` and its face included. -/
 private def carryDecl (ctx : Ctx) (r : Raw) (rest : List Raw) (decls : Array Raw) :
     Array Raw :=
   if isDeclaration ctx r && argFree ctx r rest then decls.push r
@@ -6549,8 +6551,8 @@ private theorem visPars_expand {ctx : Ctx} {name : String} {k : Nat}
 
 mutual
 /-- Trims a paragraph edge through roles and source locations, which open no
-TeX group, but not into styled bodies; the boolean says the edge is still
-open. -/
+TeX group, but not into styled bodies; the boolean says the edge stays
+unclosed. -/
 -- conserves: none — trims discarded paragraph-edge space and final breaks.
 private def trimParaOne (leading : Bool) : Inline → Array Inline × Bool
   | .text s =>
@@ -8238,8 +8240,8 @@ private def spanOf (ctx : Ctx) (count : Option Nat) (spec : Ir.ColSpec)
 cell in its column's alignment" pos
     return none
 
-/-- The expansion of the user command at `raws[j]` when its definition opens
-with `\multicolumn`, and how many raws the call took. -/
+/-- The expansion of the user command at `raws[j]` when its definition
+opens on `\multicolumn`, and how many raws the call took. -/
 private def expandSpanHead (ctx : Ctx) (raws : Array Raw) (j : Nat) (name : String) :
     Option (Array Raw × Nat) :=
   (lookupUser ctx name).bind fun (k, cmd) =>
@@ -9002,8 +9004,8 @@ private def pendingParaInput : List Raw → Bool
 termination_by raws => rawWeightList raws
 decreasing_by all_goals simp only [rawWeightList, rawWeight] <;> omega
 
-/-- Whether a declaration at a paragraph's top level stays in force past its
-end, since a paragraph end closes no group (TeXbook ch. 24). -/
+/-- Whether a declaration at a paragraph's top level stays in force after
+the paragraph, since a paragraph end closes no group (TeXbook ch. 24). -/
 private def carriesPar (ctx : Ctx) (n : String) : Bool :=
   n != "ttfamily" &&
     (n.startsWith "@ink:" || n.startsWith Compat.fontSizeMark || (declStyleOf n).isSome
@@ -10383,8 +10385,6 @@ private def isBlockStart (ctx' : Ctx) (n : String) (raws : Array Raw) (i : Nat)
               titleCtrls.contains n || n == "maketitle"
                 || n == "titlepage" || n == "logo")))
 
--- The block knot's measure: (envLimit, noteFlag, pars, weight, layer, scan).
-
 /-- The `\begin{frame}` options the frame model reads; a standout frame is
 centred whatever its options say. -/
 private structure FrameOpts where
@@ -10654,7 +10654,8 @@ seal lengthScopeKeys? openLengthScope closeLengthScope openBlockScope closeBlock
 mutual
 
 /-- Whether a redefinition of a rendered built-in wins: its body, expanded
-with probe arguments, must elaborate non-empty and without loss. -/
+under probe arguments, elaborates non-empty with no dropped, pending or
+degraded loss. -/
 private def gateRedefB (ctx : Ctx) (cmd : UserCmd) : EM Bool := do
   if !renderedBuiltins.contains cmd.name then return true
   let saved ← get
@@ -10997,7 +10998,6 @@ termination_by (ctx.envLimit, noteFlag ctx,
   body.size + 1 - j)
 decreasing_by all_goals blocks_dec
 
-/-- Elaborates one environment at block level. -/
 private def elabEnvArm (ctx : Ctx) (n : String) (scope : Array Raw)
     (pos : Pos) (blocks : Array Block) : EM (Array Block) := do
   let (savedLengths, ⟨body, hsw, hsp, hsn⟩) := openLengthScope ctx scope
@@ -14042,8 +14042,8 @@ private def takeOptRun (preamble : Array Raw) (j : Nat) :
     | none => (some (preamble.extract (j + 1) preamble.size), preamble.size)
   else (none, j)
 
-/-- Segments the preamble into declaration values, `\input` wrappers spliced
-open between file markers. -/
+/-- Segments the preamble into declaration values, `\input` wrappers
+spliced open between file markers. -/
 public def scanDecls (file : String) (pre : Array Raw) : Array PDecl := Id.run do
   let mut preamble := pre
   let mut curFile := file
