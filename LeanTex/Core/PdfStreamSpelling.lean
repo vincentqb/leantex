@@ -12,7 +12,8 @@ namespace LeanTex.Core.PdfRead
 
 open PdfLex ObjReader
 
-/-- A dictionary spelled as the native stream writer spells it, a second space after `<<` when empty. -/
+/-- A dictionary as the native stream writer spells it: `<<` and two spaces, each entry followed by a
+space, then `>>`. -/
 public def Obj.paddedDict (es : Array (String × Obj)) : ByteArray :=
   Obj.renderEntries "<<  ".toUTF8 es.toList ++ ">>".toUTF8
 

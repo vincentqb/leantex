@@ -861,7 +861,7 @@ public structure Doc where
   memo_ok : ∀ k t, memo.get? k = some t → t.get = objStmOf bytes locs k
   /-- The document catalog's object number. -/
   root : Nat
-  /-- The trailer dictionary the cross-reference read last. -/
+  /-- The newest trailer dictionary, the first the cross-reference reads. -/
   trailer : Obj
 
 private def Doc.reader (d : Doc) : Reader := { b := d.bytes, locs := d.locs }
@@ -949,7 +949,8 @@ public def Doc.field (d : Doc) (o : Obj) (k : String) : Except String (Option Ob
     | none => return none
   | _ => return none
 
-/-- A stream object's dictionary and decoded data, or `none` when the value carries no stream. -/
+/-- A stream object's dictionary and raw (still encoded) data, or `none` when the value carries no
+stream. -/
 public def Doc.stream (d : Doc) (o : Obj) : Except String (Option (Obj × ByteArray)) := do
   match o with
   | .ref n _ =>

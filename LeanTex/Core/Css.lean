@@ -103,7 +103,8 @@ public def admitsCall (name arg : String) : Bool :=
     !arg.isEmpty && arg.all channelChar
   else false
 
-/-- The first refused spelling outside strings: an escape, an at-sign, or a function not admitted. -/
+/-- The first spelling this reader refuses: an escape or an at-sign anywhere, an unterminated
+string, or a function outside strings that is nested, unterminated or not admitted. -/
 public def refusedIn (s : String) : Option String := Id.run do
   let cs := s.toList.toArray
   let mut i := 0

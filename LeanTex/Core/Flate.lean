@@ -8,8 +8,8 @@ import LeanTex.Core.Flate.TokenSymbols
 
 namespace LeanTex.Core.Flate
 
-/-! Bounded zlib compression and decompression (RFC 1950 wrapping RFC 1951), with the
-checksums, content keys and PNG scanline unfiltering built on them. -/
+/-! Bounded zlib compression and decompression (RFC 1950 wrapping RFC 1951), and the checksums,
+content keys and PNG scanline unfiltering beside them. -/
 
 /-- Inflates a zlib stream into at most `maxOut` bytes; the Adler-32 trailer is not verified. -/
 public def inflate (data : ByteArray) (maxOut : Nat) : Except String ByteArray := do

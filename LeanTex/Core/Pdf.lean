@@ -388,12 +388,12 @@ public def inkRasterPage? (pages : Array PageOut) : Option Nat :=
   pages.findIdx? fun p => p.inks.any fun k => !k.fig.imageFree
 
 /-- The drawn figures the store holds as forms in the kept faces, each raster named by its store
-entry and every other resource 0 until `namedPageOps` names it onto the table. -/
+entry and every other resource 0 until the writer names it onto the figure table. -/
 public def docFigsWith (fs : FontSet) (keep : Array Nat) (imgs : Image.Store) : Array (Option FigForm) :=
   let remap := remapOf fs keep
   let wt := widthTable fs.fonts keep
   imgs.shaped.mapIdx fun k s => s.map fun fig =>
-    -- A raster with no entry of its own is dropped rather than named with no resource.
+    -- One raster without an entry of its own drops every raster of the figure, none named without a resource.
     -- premise: Tests.svgRasterFigureChecks — the store slots each raster of a drawn figure
     let fig := if rastersSlotted imgs k fig then fig else FigureLoss.unrastered fig
     { body := figureBody remap wt (rasterNames imgs k) fig, box := fig.box }
@@ -454,7 +454,8 @@ private def interpObj (c0 c1 : Ir.Color) : PdfRead.Obj :=
   .dict #[("FunctionType", .int 2), ("Domain", .arr #[.int 0, .int 1]), ("C0", rgbObj c0),
     ("C1", rgbObj c1), ("N", .int 1)]
 
-/-- A stop list as a stitched PDF function over [0, 1] (§7.10.4), padded at both ends. -/
+/-- A stop list as a PDF function over [0, 1], padded at both ends: one interpolation per segment
+between distinct offsets, stitched (§7.10.4) when there are several. -/
 public def stopsFunctionObj (stops : Array Gfx.Stop) : PdfRead.Obj :=
   let black : Ir.Color := { r := 0, g := 0, b := 0 }
   match stops.toList with
@@ -1632,8 +1633,8 @@ public def formRow (gi : GfxPdf.GlyphInk) (id resId : Nat) : FigRes → Row
   | .pattern _ => flateRow id StreamPrefix.content.text ByteArray.empty
   | .shading _ => flateRow id StreamPrefix.content.text ByteArray.empty
 
-/-- A copied page's content as stored: deflated with the filter declared when smaller, else as
-the source carried it. -/
+/-- A copied page's decoded content as stored: deflated with the filter declared when smaller,
+else unfiltered. -/
 @[expose] public def copiedFormStream (content : ByteArray) (z? : Option ByteArray) :
     ByteArray × Bool :=
   let z := z?.getD (Flate.deflate content)
@@ -1861,8 +1862,9 @@ public theorem WritePlan.bytes_serialized_exact (p : WritePlan) :
       let (out, _) := serialize body #[flateRow p.table.xrefId dict xrefRows]
       out ++ (s!"startxref\n{body.size}\n%%EOF\n").toUTF8 := by rfl
 
-/-- Prepares positioned pages for a PDF 2.0 file; `streams`, `ops` and `programs` are the driver's
-cached page operators, streams and face programs. -/
+/-- Prepares positioned pages for a PDF 2.0 file, or 1.7 where the document declares it; `ops`,
+`streams` and `programs` are the driver's cached page operators, their rendered and deflated bytes,
+and its face programs. -/
 public def prepare (geom : Geom) (fs : FontSet) (pages : Array PageOut)
     (info : Ir.Meta := {}) (imgs : Image.Store := {})
     (outline : Array OutlineEntry := #[])
@@ -2059,7 +2061,7 @@ public def prepare (geom : Geom) (fs : FontSet) (pages : Array PageOut)
       | some z => zRow (t.contentId i) "" data z
       | none => flateRow (t.contentId i) "" data)
 
-  -- A PNG's IDAT passes through as /FlateDecode with its predictor declared (§7.4.4.4).
+  -- PNG rows embed as /FlateDecode with the predictor declared (§7.4.4.4), re-deflated when alpha splits off.
   for ((k, imgId), n) in (usedImgs.zip t.imgIds).zipIdx do
     if let some inf := (imgs.get? k).bind (·.info) then
       match inf.form, (t.formBases[n]?).join with

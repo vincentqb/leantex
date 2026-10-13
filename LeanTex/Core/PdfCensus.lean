@@ -96,8 +96,9 @@ public def deref (es : Array Entry) (o : Obj) : Obj :=
 public def fontEntries (es : Array Entry) : Array Entry :=
   es.filter fun e => kindOf e.val == .font
 
-/-- Whether a font dictionary's program is in the file: a composite font's by its descendant, a
-Type 3's by definition, any other's by its descriptor's font file (§9.9). -/
+/-- Whether a font dictionary's program is in the file: always for a composite font, whose
+descendant is judged as an entry of its own, and for a Type 3, else by its descriptor's font file
+(§9.9). -/
 public def fontEmbedded (es : Array Entry) (e : Entry) : Bool :=
   match nameOf e.val "Subtype" with
   | some "Type0" => true

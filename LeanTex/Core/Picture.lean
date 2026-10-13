@@ -113,14 +113,15 @@ public def ofRaws (raws : Array Parse.Raw) : Array Tok :=
 public def ofSetting (setting : Span × Array Parse.Raw) : Array Tok :=
   ofRawsAt (fun p => some ⟨setting.1.file, p⟩) setting.2
 
-/-- A bound macro's value: a number in milli, a length in sp, or a list item's raw text. -/
+/-- A bound macro's value: a number in milli, a length in sp, or text (a pgfmath string or a list
+item's raw text). -/
 public inductive Val where
   | num (m : Int)
   | len (sp : Sp)
   | str (s : String)
   deriving Repr, BEq, Inhabited
 
-/-- A milli value as pgf prints a macro: an integer without a point, else up to three decimals. -/
+/-- A milli value as macro text: an integer without a point, else up to three decimals. -/
 public def milliString (m : Int) : String :=
   let neg := m < 0
   let n := m.natAbs
@@ -453,7 +454,8 @@ public inductive Stmt where
   | draw (toks : Array Tok)
   /-- `\path (a) edge (b);`: a path whose `edge` operations draw (pgf's `every edge`). -/
   | path (toks : Array Tok)
-  /-- `\useasboundingbox`: the rectangle is the picture's box from here on (pgf manual §15.8). -/
+  /-- `\useasboundingbox`: the rectangle, joined with the box already established, is the picture's
+  box from here on (pgf manual §15.8). -/
   | bbox (toks : Array Tok)
   /-- `\pgfmathsetmacro`, `\pgfmathtruncatemacro` and
   `\pgfmathsetlengthmacro`, by `mode`. -/
@@ -872,7 +874,8 @@ public structure Cx where
   scale : Int := 1000
   styles : List (String × Array Tok) := []
   transformShape : Bool := false
-  /-- The document's `\tikzset` entries, the outermost bracket every statement inherits. -/
+  /-- What the document's `\tikzset` lines set for every picture (`documentOpts`), the outermost
+  bracket every statement inherits. -/
   global : Array (Array Tok) := #[]
   /-- The picture-level option entries its contents inherit. -/
   opts : Array (Array Tok) := #[]
@@ -1779,8 +1782,8 @@ public structure Ev where
   diags : Array PDiag := #[]
   /-- The box a `\useasboundingbox` declared (`Ir.Pic.Picture.declared`). -/
   declared : Option Ir.Pic.Box := none
-  /-- The boxes the picture's bounds read: each placed node's border (text extent plus `inner sep`),
-  and a clip's hull in place of what it clips. -/
+  /-- The boxes the picture's bounds read: each placed node's border, and a clip's hull in place of
+  what it clips. -/
   borders : Array Ir.Pic.Box := #[]
   /-- Named nodes so far, latest first, which a path endpoint resolves against. -/
   nodes : List (String × NodeGeom) := []
@@ -2145,7 +2148,7 @@ private def salOne (cx : Cx) (env : List (String × Val)) (t : Tok) (s : Sal) : 
     | .num m => s.str (milliString m)
     | .space => s.str " "
     | .sym c => s.str (String.singleton c)
-    -- A group's size switch is its own, as TeX scopes one.
+    -- A group's content joins the line and its styles end with it; a size switch inside one is refused.
     | .group g =>
       let nested : Sal := { s with depth := s.depth + 1 }
       let nested : Sal := { nested with consumeNocorr := false }
@@ -3572,7 +3575,7 @@ is dropped")
       | .ok d => ysep := some d
       | .error e => ev := ev.diag (.W0334, s!"in 'inner ysep', {e}; the option \
 is dropped")
-    -- `outer sep` moves a drawn node's anchors past its border, never the path; `auto` is half the line width.
+    -- `outer sep` moves a painted node's anchors past its border, never the path; `auto` is half the line width.
     | .ident "outer" :: .ident "sep" :: .sym '=' :: rest =>
       match rest, readDim rest with
       | [.ident "auto"], _ => oxsep := none; oysep := none
@@ -5646,7 +5649,8 @@ public theorem relTrichotomy_exact (a b : Int) :
   simp only [relHolds]
   refine ⟨?_, ?_, ?_⟩ <;> (by_cases h1 : a < b <;> by_cases h2 : b < a <;> simp_all <;> omega)
 
-/-- Whether an unreadable conditional ships its first branch: the branch that draws, the first where both do. -/
+/-- Whether an unreadable conditional ships its first branch, which it does whenever that branch
+holds a statement. -/
 public def condFloorTakesThen (thenS : List Stmt) : Bool := !thenS.isEmpty
 
 /-- The branch the floor ships. -/
@@ -7150,7 +7154,7 @@ public def elabCd (pal : Ir.Palette) (raws : Array Parse.Raw)
     | _, _ =>
       diags := note (.E0333, s!"an arrow from row {r + 1}, column {c + 1} reaches no cell; \
 it is not drawn") diags
-  -- tikz-cd's `every diagram` sets `baseline=+0pt` around a matrix centred on the origin.
+  -- tikz-cd's `every diagram` runs the baseline through the matrix's centre, `1-row diagram` on its row's base.
   let baseline : Option Sp :=
     if ys.isEmpty then none
     else if cells.size == 1 then

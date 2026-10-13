@@ -1456,8 +1456,8 @@ end
 mutual
 
 -- conserves: none — a condition on a tree, not a walk over it.
-/-- A tree the reader reads back as it stands: names it reads, each attribute named once, admitted
-characters within the text budget, and no empty or adjacent texts. -/
+/-- What the reader asks of a tree it reads back as it stands: names it reads, each attribute named
+once, admitted characters within the text budget, and no empty or adjacent texts. -/
 @[expose] public def CanonNode (bud : Budget) : Node → Prop
   | .elem name attrs kids => CanonName name ∧ name.toList.length ≤ bud.name ∧
       (∀ kv ∈ attrs.toList, CanonAttr bud kv) ∧ (attrs.toList.map (·.1)).Nodup ∧ CanonKids bud kids.toList

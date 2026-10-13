@@ -21,7 +21,8 @@ open LeanTex.Core LeanTex.Core.Ir
   | .rule _ _ _ | .pageNumber | .pageCount | .linebreak _ | .strut _ | .italicCorr _
   | .onSteps _ _ | .altSteps _ _ _ | .icon _ _ | .cite _ _ | .footnote _ _ => x
 
-/-- Every image whose alternative is undeclared and whose source names a title takes it; logos stay decorative. -/
+/-- Every image of the body and the running head and foot whose alternative is undeclared and whose
+source names a title takes it, a picture's labels aside; logos stay decorative. -/
 public def titled (titles : Array (String × String)) (doc : Doc) : Doc :=
   let logos := logoImageSrcs doc
   let titles := titles.filter fun (src, t) => !logos.contains src && !t.trimAscii.isEmpty

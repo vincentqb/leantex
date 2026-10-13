@@ -81,7 +81,8 @@ public def TextItem.render : TextItem → String
 
 mutual
 
-/-- One text operator's line, without its line end. -/
+/-- One text operator without its final line end; a marked sequence puts each operator on a line of
+its own. -/
 public def TextOp.render : TextOp → String
   | .scale p => s!"{p / 10}.{p % 10} Tz"
   | .move x y => s!"1 0 0 1 {x.toPtString} {y.toPtString} Tm"
@@ -489,7 +490,8 @@ private def polyOp (p : Ir.Color × Array (Sp × Sp)) : ContentOp :=
 
 private def furnitureTag : MarkTag := .artifact (some .pagination)
 
-/-- One line onto the text object, under the wrapper its origin names; a line with no operators adds nothing. -/
+/-- One line onto the text object, under the wrapper its origin names; a line with no operators adds
+nothing unless it is furniture, which is wrapped whatever it holds. -/
 public def stepLine (geom : Geom) (remap : Array Nat) (imgMap : Array (Option Nat))
     (tags : Array (Option String)) (st : TextSt) (l : LineOut) : TextSt :=
   let og := Origin.of tags l

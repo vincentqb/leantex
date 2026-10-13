@@ -4,8 +4,8 @@ import LeanTex.Core.Flate.Progress
 
 namespace LeanTex.Core.Flate.DecodeLoop
 
-/-- Runs `step` from `initial` at most `count` times to an answer, else fails with `exhausted`;
-a finished state drops its continuation so the output buffer stays unshared. -/
+/-- Runs `step` from `initial` at most `count` times to an answer or a step's error, else fails with
+`exhausted`; a finished state drops its continuation so the output buffer stays unshared. -/
 @[specialize] public def run {ε σ α : Type} (count : Nat)
     (step : σ → Except ε (Sum α σ)) (initial : σ) (exhausted : ε) : Except ε α :=
   let result := (forIn [0:count] (.inr initial) fun _ state => do

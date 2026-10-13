@@ -224,8 +224,8 @@ public def plain : Contract := {
   boxes := .any
   ids := #[] }
 
-/-- PDF/A-4 (ISO 19005-4:2020): no `/Info`, Table 6 filters, device colour under an RGB output
-intent, and the `pdfaid` identification. -/
+/-- PDF/A-4 (ISO 19005-4:2020): no `/Info`, Table 6's filters but `LZWDecode` and `Crypt`, device
+colour under an RGB output intent, and the `pdfaid` identification. -/
 public def archive : Contract := {
   infoDict := .absent
   filters := tableSix
@@ -254,8 +254,8 @@ public def accessible : Contract := {
   boxes := .any
   ids := #[.pdfua] }
 
-/-- PDF/X-6 (ISO 15930-9:2020): a `GTS_PDFX` intent (CMYK by default), Trim-xor-Art boxes (assumed
-from PDF/X-4), and the `pdfxid` identification. -/
+/-- PDF/X-6 (ISO 15930-9:2020): a CMYK `GTS_PDFX` intent, Trim-xor-Art boxes (assumed from
+PDF/X-4), and the `pdfxid` identification. -/
 public def print : Contract := {
   infoDict := .full
   filters := tableSix

@@ -329,7 +329,8 @@ public structure Store where
   type3 : Std.HashMap (Nat × String) (Option (Bool × Nat))
   forms : Std.HashMap String Nat
   images : Std.HashMap String (Option Nat)
-  /-- The next key for a font dictionary read in place, past every object number. -/
+  /-- How many font dictionaries read in place have been keyed; the next key is `directKeyBase` plus
+  this count. -/
   direct : Nat
   deriving Inhabited
 
@@ -1290,7 +1291,8 @@ public def frameScale? (m : Affine) : Option Rat :=
     some (if m.a < 0 then -m.a else m.a)
   else none
 
-/-- A user-space length carried into a glyph frame, `none` where the frame scales lengths unevenly. -/
+/-- A user-space length carried into a glyph frame, `none` unless the frame is an axis-aligned
+similarity (`frameScale?`). -/
 public def strokeIn (m : Affine) (w : Sp) : Option Sp :=
   (frameScale? m).map fun s => spOfRat ((w : Rat) / 65536 / s)
 

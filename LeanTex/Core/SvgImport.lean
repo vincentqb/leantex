@@ -10,7 +10,7 @@ import LeanTex.Core.Image
 public import Std.Data.HashMap
 
 /-! SVG read into the vector figure model: an accepted tree's viewports, shapes, paints, text and
-symbol uses, with every meaning it cannot give a keyed loss. -/
+symbol uses, every meaning it cannot give a keyed loss, and a dropped link a note. -/
 
 namespace LeanTex.Core.Svg
 
@@ -329,7 +329,8 @@ public inductive Treatment where
   | lossUnless (harmless : List String)
   deriving Repr, BEq, Inhabited
 
-/-- Every property the importer reads or reports, with its treatment (SVG 2 §6.6). -/
+/-- Every property the importer reads or reports wherever it is set, with its treatment (SVG 2
+§6.6); those it reports only from a sheet are `cssLost`'s. -/
 @[expose] public def propertyTable : List (String × Treatment) :=
   [("fill", .honoured), ("fill-opacity", .honoured), ("fill-rule", .honoured),
    ("stroke", .honoured), ("stroke-width", .honoured), ("stroke-linecap", .honoured),
@@ -1780,7 +1781,7 @@ public def usesList (acc : Array Nat) : List (Node Run) → Array Nat
 end
 
 /-- The requests ordered so each body uses only symbols before it (Kahn's order), old index to new,
-and whether a cycle's uses were dropped. -/
+and whether every request was placed, which a reference cycle prevents. -/
 public def orderRequests (bodies : Array (Array (Node Run))) : Array (Option Nat) × Bool := Id.run do
   let n := bodies.size
   let deps := bodies.map fun b => (usesList #[] b.toList).filter (· < n)

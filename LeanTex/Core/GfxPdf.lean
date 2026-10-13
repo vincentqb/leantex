@@ -85,8 +85,8 @@ in where the coordinates were still carried by it. -/
   | none => fr
   | some m => { iso := none, stream := fr.stream.compose m }
 
-/-- A geometry's operators in the frame: a rectangle stays one `re` where the placement keeps its
-corner order, else its drawn outline is placed point by point. -/
+/-- A geometry's operators in the frame: a rectangle stays one `re` unless a flipping placement
+meets it dashed or degenerate, where its drawn outline is placed point by point. -/
 @[expose] public def Frame.geomOps (fr : Frame) (g : Geom) (dashed : Bool) : List PathOp :=
   match fr.iso with
   | some t =>
@@ -418,7 +418,9 @@ public structure GlyphInk where
   width : Nat → Nat → Int
   hull : Nat → Nat → Option Box
 
-/-- The text state a stream's text is read in (§9.3, §9.4.2), in the file's own units. -/
+/-- The text state a stream's text is read in (§9.3, §9.4.2): font resource, size and origin in
+thousandths of a point, horizontal scale per mille, and the advance since the origin in millionths
+of the size. -/
 public structure TextPen where
   font : Option Nat
   sm : Int

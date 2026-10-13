@@ -93,7 +93,8 @@ public structure SFrame where
   | .solid c => .color c
   | .gradient g => .url (g.withXf (fr.lift g.xf))
 
-/-- A draw's attributes, each stated where it differs from SVG's initial value, the width always. -/
+/-- A draw's attributes: its fill always (`none` where it does not fill), its stroke and width where
+it strokes, and every other field only where it differs from SVG's initial value. -/
 @[expose] public def attrsOf (fr : SFrame) (fl : Option Fill) (st : Option Stroke) : ShapeAttrs :=
   { fill := some (match fl with
       | some f => sPaint fr f.paint
@@ -137,8 +138,8 @@ public structure SFrame where
   | c :: rest => #[.g none none (some { geom := fr.place (clipGeom c.geom), rule := c.rule })
       (nestClips fr kids rest)]
 
-/-- A draw's geometry as the element SVG draws as the model does: its own element only where it
-encloses area under a solid stroke. -/
+/-- A draw's geometry as the element SVG draws as the model does: a rectangle or ellipse as its own
+element only where it encloses area and is not dashed, else the path the model draws. -/
 @[expose] public def shapeOf (fr : SFrame) (g : Geom) (dashed : Bool) : Geom :=
   match g with
   | .rect _ _ w h => if 0 < w ∧ 0 < h ∧ dashed = false then fr.place g else fr.place (g.drawn dashed)
@@ -219,7 +220,8 @@ public inductive IdKind where
   | .symbol => 's'
   | .outline => 'o'
 
-/-- The separator a figure's ids hold, a character no anchor this backend writes can hold. -/
+/-- The separator a figure's ids hold: no label anchor or title slug holds it, and a reference
+anchor, which may, starts `ref-`. -/
 @[expose] public def idSep : Char := '~'
 
 /-- An element id, `f{figure}~{kind}{index}`. -/
@@ -1637,7 +1639,7 @@ element the marks it paints, read with SVG's meaning at the root. -/
   | e@(.shape ..) | e@(.g ..) | e@(.use ..) | e@(.stamp ..) | e@(.image ..) =>
     (readOne (SState.root place) #[] e).map .mark
 
-/-- What a typed SVG tree paints, its labels among its ink, in document order. -/
+/-- What a typed SVG tree paints, its top-level labels among its ink, in document order. -/
 @[expose] public def readSteps (place : Iso) (els : Array El) : Array (Step Html.Node) :=
   els.foldl (fun acc e => acc ++ readStep place e) #[]
 

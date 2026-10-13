@@ -143,8 +143,8 @@ start, rebuild if it was interrupted, or accept the loss with \\allow\{W0609}"
     (help := some "declare a face that covers it in \\fonts, or accept the loss with \\allow{W0609}")
     (subject := some (subject "svg" (.font s!"U+{code}"))) (output := output)
 
-/-- N0026: an SVG names a family the document's roles do not answer; its text sets in the
-document's face `face`. -/
+/-- N0026: an SVG names a family the document's roles do not answer and none after it in its list
+do; its text sets in the document's face `face`. -/
 @[expose] public def svgFontDiag (output : Option Diag.Output) (src family face : String) : Diag :=
   Diag.of .N0026
     s!"'{family}' in figure '{src}' is no family of the document; its text is set in '{face}'"

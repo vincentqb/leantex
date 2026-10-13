@@ -55,7 +55,8 @@ public def Space.components : Space → Nat
   | .rgb => 3
   | .indexed => 1
 
-/-- The `/ColorSpace` a plan declares (ISO 32000-2 §8.6); `iccBased` carries its profile as zlib bytes. -/
+/-- The `/ColorSpace` a plan declares (ISO 32000-2 §8.6); `iccBased` carries its profile as zlib
+bytes, and the writer emits it as the device space of `n` components. -/
 public inductive ColorSpaceDecl where
   | gray
   | rgb
@@ -1112,7 +1113,8 @@ public def probePage (b : ByteArray) (page : PdfRead.PageSelection) : Except Str
   if sliceEq b 0 [0x25, 0x50, 0x44, 0x46] then probePdf b page
   else probe b
 
-/-- What to do with an embedded colour profile: carry it as `/ICCBased`, or drop it and say so. -/
+/-- What to do with an embedded colour profile: carry it in the plan as `iccBased`, which the writer
+emits as its device space, or drop it and say so. -/
 public inductive IccPolicy where
   | dropWithDiag
   | carry
@@ -1654,7 +1656,8 @@ public theorem encodeBin_inj (a b : Plan) (ha : binBounded a) (hb : binBounded b
 public structure Request where
   src : String
   page : PdfRead.PageSelection := .first
-  /-- Whether the include animates: its source SVG for the browser, the PDF page for print. -/
+  /-- Whether the include animates: the browser may show its source SVG, and print shows the
+  selected PDF page. -/
   animated : Bool := false
   deriving Repr, BEq, ReflBEq, LawfulBEq, DecidableEq, Inhabited
 

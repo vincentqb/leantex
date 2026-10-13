@@ -9,8 +9,8 @@ namespace LeanTex.Core.Pdf
 
 /-! Checked storage and source-spelling domains for the writer. -/
 
-/-- The storage the structural reader needs: offsets within 64 bits and decoded streams within the
-reader's decompression limit. -/
+/-- The storage the structural reader needs: offsets within 64 bits, and the object and xref streams
+within the reader's decompression limit. -/
 @[expose] public def WritePlan.WithinBounds (p : WritePlan) : Prop :=
   p.serialized.1.size < 2 ^ 64 ∧
   (∀ c ∈ p.chunks, (objectStream c).bytes.size ≤ PdfRead.maxDecoded) ∧
@@ -45,7 +45,7 @@ private theorem WritePlan.find_unencodable_none (p : WritePlan) :
     p.compressed.find? (fun e => !e.2.encodable) = none ↔ p.Encodable := by
   simp [Encodable, List.find?_eq_none]
 
-/-- Typed write refusals, each carrying the observed byte size or object id. -/
+/-- Typed write refusals, each carrying the observed byte size, object id or page index. -/
 public inductive WriteError where
   | byteOffset (bytes : Nat)
   | objectStreamSize (bytes : Nat)

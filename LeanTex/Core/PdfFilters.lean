@@ -4,8 +4,8 @@ public import LeanTex.Core.PdfObj
 import LeanTex.Core.PdfRead
 import LeanTex.Core.Flate
 
-/-! The stream filters of ISO 32000-2 §7.4 a figure's streams may name, chained in order, every
-output capped at `PdfRead.maxDecoded`. -/
+/-! The stream filters of ISO 32000-2 §7.4 a figure's streams may name, chained in order, the
+run-length, LZW and Flate outputs capped at `PdfRead.maxDecoded`. -/
 
 namespace LeanTex.Core.PdfFilters
 

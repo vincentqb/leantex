@@ -966,7 +966,8 @@ theorem groupHeader_chars (m : Option Affine) (clips : Array (Array Pdf.PathOp �
 mutual
 
 -- conserves: none — a predicate.
-/-- The operations the read-back covers: plain opaque paths, and saved states around them with no ExtGState. -/
+/-- The operations the read-back covers: plain opaque paths, and saved states around them with no
+ExtGState, no matrix reading back as the identity and no empty clip path. -/
 @[expose] public def opPlain : Pdf.ContentOp → Bool
   | .paint fl st gs segs =>
     gs.isNone && fl.all (plainPaint ·.paint) && st.all (plainPaint ·.paint) &&
@@ -2745,7 +2746,8 @@ theorem readStream_render (cx : Ctx) (ops : Array Pdf.ContentOp) (h : opsPlain o
 mutual
 
 -- conserves: none — a read-back of the numbers an operation prints.
-/-- An operation with every number it prints read back. -/
+/-- A path or saved state with every number it prints read back; any other operation is kept as it
+is. -/
 @[expose] public def opBack : Pdf.ContentOp → Pdf.ContentOp
   | .paint fl sk gs segs => .paint fl (sk.map strokeBack) gs (segs.map pathRead)
   | .group m gs clips body =>
@@ -3102,7 +3104,7 @@ mutual
 
 -- conserves: none — a predicate.
 /-- A figure node the read-back covers: a plain opaque fill or stroke on a path, an opaque group of
-such nodes, or words. -/
+such nodes whose clips each have a path, or words. -/
 @[expose] public def nodePlain : Node Empty → Bool
   | .draw g fl sk => geomInked g && fl.all fillPlain && sk.all strokePlain && (fl.isSome || sk.isSome)
   | .group _ clips alpha kids =>

@@ -618,8 +618,9 @@ rectangle as the path `re` traces. -/
     .ellipse cx' cy' rx ry
   | .path subs => .path (subs.map (Subpath.map t.apply))
 
-/-- One ink mark as a reader of either artifact meets it, in the figure's frame: its frame, drawn
-geometry, paints, clips and group alphas, or a shading. -/
+/-- One ink mark as a reader of either artifact meets it, in the figure's frame: a paint (its frame,
+drawn geometry and paints), a raster under its frame, or a shading, each with its clips and group
+alphas. -/
 public inductive Mark where
   | paint (ctm : Affine) (geom : Geom) (fill : Option Fill) (stroke : Option Stroke)
       (clips : Array (Affine × Clip)) (alphas : Array Alpha)
@@ -810,7 +811,8 @@ stroke's reach in the mark's frame, then imaged. -/
 @[expose] public def hullOf {α : Type} (f : α → Option Box) (xs : Array α) : Option Box :=
   xs.foldl (fun acc x => Box.joinOpt acc (f x)) none
 
-/-- The geometry box: the hull of every mark's control points through its frame, the box layout reserves. -/
+/-- The geometry box: the hull of every mark's control points through its frame, the box layout
+reserves for a picture. -/
 @[expose] public def Figure.geomBox {L : Type} (fig : Figure L) : Option Box :=
   hullOf (Mark.geomBox rasterUnit) fig.marks
 
@@ -1216,7 +1218,7 @@ several labels of another type; a mark stays. -/
     (Node.marksList fig.outlines Ctx.root #[]
       (Node.expandOne fig.bodies fig.bodies.size #[] n).toList).map .mark
 
-/-- What a figure paints, its labels among its ink, in painter's order. -/
+/-- What a figure paints, its top-level labels among its ink, in painter's order. -/
 @[expose] public def Figure.steps {L : Type} (fig : Figure L) : Array (Step L) :=
   fig.nodes.foldl (fun acc n => acc ++ fig.nodeSteps n) #[]
 

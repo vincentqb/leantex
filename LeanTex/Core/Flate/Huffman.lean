@@ -76,8 +76,9 @@ theorem bitField_bits_exact (r : Br) (n v : Nat) (hn : n < 64)
     (Nat.pow_le_pow_right (by decide) (Nat.le_of_lt hn)))]
 
 
-/-- A canonical Huffman table: code counts per length and symbols in canonical order;
-over-subscribed lengths fail at decode. -/
+/-- A canonical Huffman table: code counts per length and symbols in canonical order; a code the
+lengths leave unassigned fails at decode, and an over-subscribed set decodes with its excess symbols
+unreachable. -/
 public structure Huff where
   counts : Array Nat
   symbols : Array Nat
