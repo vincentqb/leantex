@@ -4631,10 +4631,8 @@ private def closeDisplayAt (parEnd : Bool) (b : Block) : Block :=
 
 mutual
 
-/-- The opening half of `carrierDisplays` on a carrier's first block: a
-display takes the state the carrier opened in (`openDisplayAt`), and a
-carrier opening it — an alternation's two alternatives, an overlay's body —
-opens in that state too, as it stands where the outer one does. -/
+/-- The opening half of `carrierDisplays` on a carrier's first block, whose display and nested
+carriers open in the state the carrier opened in (`openDisplayAt`). -/
 private def carrierOpenBlock (inPar endPe broken : Bool) : Block → Block
   | .altSteps s fa oa =>
     .altSteps s (carrierOpenList inPar endPe broken fa.toList).toArray
@@ -8719,9 +8717,7 @@ public theorem slug_altSteps_exact (spec : OverlaySpec) (firstPage otherPage : A
   simp only [slug, firstPageText, firstPageTextList, firstPageTextOne, hs', hw, Bool.false_or,
     Bool.not_true, Bool.false_and, Bool.false_eq_true, ↓reduceIte]
 
-/-- **A title whose first page shows nothing of an alternation anchors by
-the other group** (`_exact`): an `\only` the title's first step leaves out
-names the frame by the words the floor shows. -/
+/-- A title that is one alternation with a blank first-page group anchors by the other. -/
 public theorem slug_altSteps_floor_exact (spec : OverlaySpec) (firstPage otherPage : Array Inline)
     (hb : (plainText firstPage).toList.any (!·.isWhitespace) = false)
     (hw : (plainText otherPage).toList.any (!·.isWhitespace) = true) :

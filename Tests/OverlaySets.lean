@@ -123,12 +123,8 @@ private def segMark : Layout.Seg → String
   | s@(.gap ..) | s@(.decoratedGap ..) | s@(.decoration ..) | s@(.rule ..) | s@(.image ..)
   | s@(.poly ..) => reprStr s
 
-/-- What a shipped page paints, read off `Layout.PageOut`, whatever source
-leaf each mark stands for: every line's place, size, set width, hang and
-expansion, with its segments — a run's face, colour, link, width, glyphs
-and their advances, size, metrics, decorations, raise and ground — every
-fill, and every picture mark. Two pages with the same marks paint the same
-page. -/
+/-- What a shipped page paints, whatever source leaf each mark stands for: its lines with their
+segments, its fills and its picture marks. -/
 private def pageMarks (p : Layout.PageOut) : Array String :=
   p.lines.map (fun l => reprStr (l.x, l.y, l.size, l.setWidth, l.hang, l.expand, l.furniture) ++
       String.join (l.segs.toList.map segMark)) ++
@@ -258,27 +254,8 @@ def overlaySetChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Un
           (overlayCount shown "AmberMarker" == (if selected then 1 else 0) &&
             overlayCount shown "BlueMarker" == (if selected then 0 else 1))
 
-/-- **`\only` is absent off its steps, and takes no space.** Beamer's
-`\only<s>{x}` is `\alt<s>{x}{}` (beamerbaseoverlay.sty): on a step its
-selector does not select, the frame is typeset as if `x` were not written,
-and TeX keeps the spaces around it. So every step's shipped page is the page
-of the frame written with that step's reading — the argument's tokens where
-the selector selects, nothing elsewhere — and every snap of the typed tree
-shows that reading's text, nothing covered. Read over `Layout.PageOut`
-(`pageMarks`) and the emitted tree, for an argument inline, as paragraphs,
-around a display, a list or a paragraph break inside a paragraph, in
-display and inline formulas, as its next token, as a control word with its
-groups, in a frame's title, a block's title and a caption, an item, a cell,
-a list's item and a table's row, under unions and nesting, as `\onslide*`,
-and beside a document's own `\alt`; and for overlays nested at a carrier's
-opening, whose display stands in the paragraph the outer carrier opened in
-unless a break inside the inner one ends it. With no snap state the deck
-shows step 1's reading, an `\only`'s argument with it where step 1 reads it
-as nothing. A document's own `\only` keeps its meaning. The defect it names:
-`\only` covered its argument and kept its space, as `\uncover` does, so a
-frame whose steps swap blocks by `\only` stood every step at the height of
-all of them and continued on a further page where lualatex sets one per
-step. -/
+/-- Every step of an `\only` frame ships the page, and every snap shows the text, of the frame
+written with that step's reading, the argument's tokens where the selector selects. -/
 def overlayOnlyChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit := do
   let t := check ref
   let fonts ← mathSetOf fonts

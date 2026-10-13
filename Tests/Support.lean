@@ -1497,9 +1497,8 @@ mutual
 typed tree's characters with every `hidden` subtree dropped — what the UA
 stylesheet's `[hidden] { display: none }` removes, and so the HTML twin of
 a shipped PDF page's ink. `nodeTextOne` reads the whole tree, which is the
-declaration; this reads what a reader with no snap state sees: step 1's
-reading, save an alternation one of whose groups shows nothing, whose other
-group that reader sees (`HtmlDoc.altPairNodes`). The distinction is what the
+declaration; this reads what a reader with no snap state sees
+(`HtmlDoc.altPairNodes`). The distinction is what the
 census could not make when overlay alternation put both groups inside one
 visible wrapper. `snapTextList` reads one snap. -/
 def shownTextOne (acc : String) : Html.Node → String
@@ -1520,10 +1519,7 @@ end
 def snapAttr (attrs : Array (String × String)) (key : String) : String :=
   ((attrs.find? (·.1 == key)).map (·.2)).getD ""
 
-/-- Does snap `k` select an element's steps, read off the emitted attribute
-vocabulary independently of the IR selector: the stylesheet matches
-space-separated step numbers, or the contiguous start/end attributes. The
-browser probe exercises these selectors too. -/
+/-- Does snap `k` select an element's steps, read off its emitted attributes alone? -/
 def snapActive (attrs : Array (String × String)) (k : Nat) : Bool :=
   if attrs.any (·.1 == "data-steps") then
     (snapAttr attrs "data-steps").splitOn " " |>.contains (toString k)

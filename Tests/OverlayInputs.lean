@@ -33,9 +33,8 @@ selector attributes. The positive text assertion prevents two empty artifacts
 from passing; glyph equality also observes covered colour and placement. -/
 private def inputEquivalent (ref : IO.Ref (List String)) (fonts : Font.FontSet)
     (label source canonical : String) (probeCopies : Nat := 3) : IO Unit := do
-  -- Fix the frame extent before a source can redefine the clock's name. A
-  -- paragraph after the call keeps it inside the frame, where no spelling
-  -- reads it per step for what it holds beside the call.
+  -- Fix the frame extent before a source can redefine the clock's name; the
+  -- tail paragraph keeps the call off the frame's edge.
   let clock := "\\uncover<3>{ClockMarker}\n\n"
   let (out, html, ds) := inputBuild fonts (clock ++ source ++ "\n\nTail words.")
   let (want, wantHtml, wantDs) := inputBuild fonts (clock ++ canonical ++ "\n\nTail words.")

@@ -9510,10 +9510,9 @@ end
 
 mutual
 
-/-- `l`'s tokens as step `k` reads them, each alternation replaced by the
-alternative shown, in text an empty group where it shows nothing; with `k`
-none, the handout, where an alternation with one blank alternative shows the
-other and any other step 1's. -/
+/-- `l`'s tokens at step `k`, each alternation as the alternative shown, in text an
+empty group for nothing; with `k` none, the handout, an alternation showing the
+other of a blank alternative and otherwise step 1's. -/
 -- conserves: none — a surface boundary walk; no IR content has been elaborated.
 private def readTokens (cx : ReadCx) (math : Bool) (k : Option Nat) :
     List Raw → Array Raw → Array Raw
@@ -9588,8 +9587,7 @@ private def readingSegments : List (Nat × Array Raw) → List ((Nat × Option N
   | [(a, r)] => [((a, none), r)]
   | (a, r) :: (b, rb) :: rest => ((a, some (b - 1)), r) :: readingSegments ((b, rb) :: rest)
 
-/-- The readings, each once, with the steps it shows on, in order of first
-showing. -/
+/-- The distinct readings with the steps each shows on, in order of first showing. -/
 private def distinctReadings (segs : List ((Nat × Option Nat) × Array Raw)) :
     Array (Array Raw × List (Nat × Option Nat)) := Id.run do
   let mut out : Array (Array Raw × List (Nat × Option Nat)) := #[]

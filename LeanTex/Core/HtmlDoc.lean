@@ -4926,17 +4926,10 @@ public def overlayAltSetNode (tag : String) (steps : Nat) (spec : Ir.OverlaySpec
     ("data-steps", String.intercalate " " ((spec.pageSteps steps first).map toString))] ++
     if hidden then #[("hidden", "hidden")] else #[])
 
-/-- An alternation's two groups, in page order. Where one shows nothing —
-`\only`'s, absent off its steps — both stand in their membership sets and
-the blank one carries `hidden`, so a rendering with no snap state shows the
-other: the floor with scripting off, the print sheet and the reduced page
-hide nothing the document says, while every snap still shows the group its
-step selects (`overlay_set_alternation_agree`). Otherwise the group stored
-first is the floor's (`overlayAltNode`). -/
+/-- An alternation's two groups in page order, the one a rendering with no snap state shows
+being the handout's where no snap selects, the non-blank one where one is blank, else the first. -/
 public def altPairNodes (tag : String) (steps : Nat) (spec : Ir.OverlaySpec)
     (first other : Array Node) : Array Node :=
-  -- An alternation no snap selects (`<0>`) is a reading for no snap at all:
-  -- the handout, which only a rendering with no snap state shows.
   if (spec.selectedSteps steps).isEmpty && !nodesBlank other then
     #[overlayAltSetNode tag steps spec true true first,
       overlayAltSetNode tag steps spec false false other]
@@ -4956,10 +4949,8 @@ public def nodeKids : Node → Array Node
   | .elem _ _ kids => kids
   | .text _ | .style _ | .script .. => #[]
 
-/-- **No floor shows nothing where an alternation says something**
-(`_contract`): a rendering with no snap state — scripting off, the print,
-the reduced page — shows exactly one of the pair's groups, and a group with
-content wherever either has some. -/
+/-- A rendering with no snap state shows exactly one of the pair's groups, one with content
+where either has some. -/
 public theorem altPairNodes_floor_contract (tag : String) (steps : Nat) (spec : Ir.OverlaySpec)
     (first other : Array Node) (h : nodesBlank first = false ∨ nodesBlank other = false) :
     (floorShown (altPairNodes tag steps spec first other)).size = 1 ∧
@@ -5052,14 +5043,8 @@ private def groupSnaps (steps : Nat) (attrs : Array (String × String)) : List N
       let active := lo ≤ k && hi.all (k ≤ ·)
       if pending then !active else active
 
-/-- An alternation one of whose sides is itself an alternation — a chain, as
-a paragraph's readings stand — as its groups side by side: each inner group
-shown where it shows inside its side, every group in its membership set,
-and one group alone without `hidden`, the floor's: the outer's active group
-where no snap selects it (the handout), else the group step 1 shows, or the
-first with content where that one shows nothing. Nested group in group, a
-chain would stand its carriers as deep as it has readings, and the sheet's
-boundaries read every depth. None where neither side is an alternation. -/
+/-- A chain of alternations as its groups side by side, each in its membership set and one, the
+floor's, without `hidden`; none where neither side is an alternation. -/
 private def flatChain (block : Bool) (tag : String) (steps : Nat) (spec : Ir.OverlaySpec)
     (first other : Array Node) : Option (Array Node) :=
   let sideOf (xs : Array Node) (side : Bool) : Array Node × Array (Array Node × List Nat) :=
@@ -6090,10 +6075,8 @@ private def openingStyle : Node → Node
 
 mutual
 
-/-- The element a carrier's flow opens on, marked `frame-flow-start` down its
-first children — in every group of an alternation, each the opening of the
-snaps that show it — carrying the frame's opening there, where the page
-opens it: on the block, never on the carrier around it. -/
+/-- Marks `frame-flow-start` the element a carrier's flow opens on, in every group of an
+alternation. -/
 private def markFlowStart : Node → Node
   | .elem tag attrs kids =>
     if isAltPair (.elem tag attrs kids) then .elem tag attrs (markGroupsStart kids.toList).toArray
@@ -6119,11 +6102,8 @@ private def markGroupsStart : List Node → List Node
 
 end
 
-/-- Put the frame boundary on its first participating body element. State,
-text and hidden speaker notes do not take it. A generated leading margin
-joins the fixed opening at its one owner; the element tree is unchanged.
-Where that element is an overlay's carrier, the block its flow opens on
-takes the opening (`markFlowStart`). -/
+/-- Put the frame boundary on the first body element that is no state, text or hidden note, or
+where that is an overlay's carrier on the blocks its flow opens on (`markFlowStart`). -/
 private def frameBodyStart (kids : Array Node) : Array Node :=
   match kids.findIdx? (fun node => match node with
     | .elem _ attrs _ => !(attrs.any (·.1 == "hidden"))

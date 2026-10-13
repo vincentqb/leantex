@@ -1160,16 +1160,8 @@ private def onlyGapCases : List (String × String × Nat × (Nat → String)) :=
      fun k => if k == 1 then "\\begin{itemize}\\item One a\\item One b\\end{itemize}" else
        "\\begin{itemize}\\item Two a\\item Two b\\item Two c\\end{itemize}")]
 
-/-- **Every snap of an `\only` frame takes its reading's gaps and edges on
-the screen.** Each snap's tree (`snapTreeList`) sets its blocks with the
-`margin-top` the cascade gives the frame written with that step's reading,
-block for block, and opens and closes the frame on the same blocks: where an
-alternation opens the frame, the block each group opens on takes the
-frame's opening (`frame-flow-start`), never the carrier around it — before,
-the carrier took it and the first paragraph lost its opening strut, so the
-frame's content stood off its reading's — and every paragraph takes the
-opening strut its reading's takes, an alternation in a centred scope
-opening the frame included. -/
+/-- Every snap of an `\only` frame takes its reading's block gaps, frame edges and opening
+struts on the screen. -/
 def onlyGapChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
   for (label, body, steps, reading) in onlyGapCases do
