@@ -547,10 +547,6 @@ def walkEntry (l : String) : Option String := Id.run do
   unless containsSub params s!": {ret}" do return none
   return some name
 
-/-- A comment line carrying `conserves: none`, a walk's reasoned refusal of a census theorem. -/
-def conservesNone (l : String) : Bool :=
-  containsSub l "conserves: none"
-
 /-- Is `pat` spelled as a whole name, with no identifier character on either side? -/
 def spellsName (line pat : String) : Bool :=
   let parts := line.splitOn pat
@@ -1096,12 +1092,17 @@ def premiseSite (lines : Array String) (i : Nat) : Option PremiseKind := Id.run 
 /-- The marker beside a premise site: `-- premise: <pin> — <why>`, or `-- premise: none — <why>`. -/
 def premiseMark : String := "premise:"
 
+/-- A marker's text after its first `mark`, strings aside, cut at a block comment's close. -/
+def markerText (mark l : String) : String :=
+  let after := mark.intercalate (((stripStrings l).splitOn mark).drop 1)
+  (after.splitOn "-/").headD after
+
 /-- The pin and reason a marker line carries, `some (none, why)` for the refusal, `none` for a
 marker with no reason. -/
 def premisePin (l : String) : Option (Option String × String) :=
   if !containsSub l premiseMark then none
   else
-    match tokens (premiseMark.intercalate ((l.splitOn premiseMark).drop 1)) with
+    match tokens (markerText premiseMark l) with
     | [] => none
     | pin :: rest =>
       let why := String.intercalate " " (rest.filter (fun w => w != "—" && w != "-"))
@@ -1111,8 +1112,8 @@ def premisePin (l : String) : Option (Option String × String) :=
 /-- The names that follow `theorem ` in a text. -/
 def theoremNames (text : String) : Std.HashSet String :=
   ((text.splitOn "theorem ").drop 1).foldl (init := {}) fun acc rest =>
-    let n := (rest.takeWhile fun c => isWordChar c || c == '.' || c == '\'' || c == '?' ||
-      c == '!').toString
+    let n := (rest.takeWhile fun (c : Char) => !c.isWhitespace && !"({[:,;".contains c).toString
+    let n := String.ofList (n.toList.reverse.dropWhile (· == '.')).reverse
     if n.isEmpty then acc else acc.insert n
 
 /-- How often each identifier occurs in a text, a dotted name counted by its parts. -/
@@ -1145,11 +1146,18 @@ def premiseMarkedAt (lines : Array String) (i : Nat) : Bool :=
     let m := lines[i - d]?.getD ""
     markerLine premiseMark m && (premisePin m).isSome
 
-/-- Does a `conserves: none` marker stand on line `i` or one of the twelve above it? -/
+/-- The reason a `conserves: none — <why>` marker gives, if the line is one. -/
+def conservesReason (l : String) : Option String :=
+  if !markerLine "conserves:" l then none
+  else match tokens (markerText "conserves:" l) with
+    | "none" :: rest =>
+      let why := " ".intercalate (rest.filter (fun w => w != "—" && w != "-"))
+      if why.isEmpty then none else some why
+    | _ => none
+
+/-- Does a `conserves: none — <why>` marker stand on line `i` or one of the twelve above it? -/
 def conservedAt (lines : Array String) (i : Nat) : Bool :=
-  (List.range 13).any fun d => i ≥ d &&
-    let m := lines[i - d]?.getD ""
-    markerLine "conserves:" m && conservesNone m
+  (List.range 13).any fun d => i ≥ d && (conservesReason (lines[i - d]?.getD "")).isSome
 
 /-- The premise markers of a source with no reason (`none`) or a pin `resolves` refuses, by line. -/
 def premiseFaults (resolves : String → Bool) (lines : Array String) :
@@ -1165,10 +1173,8 @@ def premiseFaults (resolves : String → Bool) (lines : Array String) :
 
 /-- The conserves markers of a source that are not `conserves: none — <why>`, by line. -/
 def conservesFaults (lines : Array String) : Array Nat :=
-  (lines.zipIdx.filter fun (l, _) => markerLine "conserves:" l &&
-    match tokens ((l.splitOn "conserves:").getLastD "") with
-    | "none" :: why => (why.filter (fun w => w != "—" && w != "-")).isEmpty
-    | _ => true).map (·.2 + 1)
+  (lines.zipIdx.filter fun (l, _) => markerLine "conserves:" l && (conservesReason l).isNone).map
+    (·.2 + 1)
 
 /-- A premise site that cannot carry its marker in place, with the pin that holds it, or `none` and
 what is missing. -/
@@ -1444,6 +1450,7 @@ def codeOnly (lines : Array String) : Array String := Id.run do
   let mut depth := 0
   let mut inStr := false
   let mut esc := false
+  let mut raw : Option Nat := none
   let mut out := #[]
   for line in lines do
     let cs := line.toList.toArray
@@ -1452,7 +1459,13 @@ def codeOnly (lines : Array String) : Array String := Id.run do
     while i < cs.size do
       let c := cs[i]?.getD ' '
       let next := cs[i + 1]?.getD ' '
-      if depth > 0 then
+      let hashes (k : Nat) : Nat := ((cs.extract k cs.size).toList.takeWhile (· == '#')).length
+      if let some h := raw then
+        if c == '"' && hashes (i + 1) ≥ h then
+          raw := none
+          i := i + 1 + h
+        else i := i + 1
+      else if depth > 0 then
         if c == '/' && next == '-' then
           depth := depth + 1
           i := i + 2
@@ -1474,6 +1487,11 @@ def codeOnly (lines : Array String) : Array String := Id.run do
         inStr := true
         code := code.push ' '
         i := i + 1
+      else if c == 'r' && !(i > 0 && isWordChar (cs[i - 1]?.getD ' ')) &&
+          cs[i + 1 + hashes (i + 1)]? == some '"' then
+        raw := some (hashes (i + 1))
+        code := code.push ' '
+        i := i + 2 + hashes (i + 1)
       else if c == '\'' && cs[i + 2]? == some '\'' then
         code := code.push ' '
         i := i + 3
@@ -2162,18 +2180,23 @@ def selftest : IO UInt32 := do
     "-- conserves: everything",
     "  /- premise: noSuchChecks — a block comment carries a marker too -/",
     "  -- premise: noSuchChecks — as the premise: liveChecks reads",
-    "  -- (premise: noSuchChecks — a parenthesis is prose)"]
+    "  -- (premise: noSuchChecks — a parenthesis is prose)",
+    "  /- premise: none -/",
+    "  /- premise: liveChecks -/",
+    "  say \"premise: liveChecks — x\" -- premise: noSuchChecks — a string is no pin"]
   let premiseGot := premiseFaults resolves markerSrc
   unless premiseGot == #[(1, some "noSuchChecks"), (3, some "noSuchChecks"), (5, none),
-      (6, some "noSuchChecks"), (12, some "noSuchChecks"), (13, some "noSuchChecks")] do
+      (6, some "noSuchChecks"), (12, some "noSuchChecks"), (13, some "noSuchChecks"), (15, none),
+      (16, none), (17, some "noSuchChecks")] do
     fails.modify (s!"premiseFaults: {premiseGot}" :: ·)
-  unless conservesFaults markerSrc == #[10, 11] do
+  unless conservesFaults (markerSrc.push "/- conserves: none -/") == #[10, 11, 18] do
     fails.modify (s!"conservesFaults: {conservesFaults markerSrc}" :: ·)
   let site := "  if ctx.picTool.isSome && pic.shapes.isEmpty then"
   unless premiseMarkedAt #["  -- premise: liveChecks — the suite runs it", site] 1 &&
       premiseMarkedAt #["  /- premise: liveChecks — the suite runs it -/", site] 1 &&
       !premiseMarkedAt #["  -- (premise: liveChecks — a parenthesis is prose)", site] 1 &&
-      !premiseMarkedAt #["  -- premise: liveChecks", site] 1 do
+      !premiseMarkedAt #["  -- premise: liveChecks", site] 1 &&
+      !premiseMarkedAt #["  /- premise: liveChecks -/", site] 1 do
     fails.modify ("premiseMarkedAt read a marker it should not, or missed one" :: ·)
   let walk := "def keepFor (t : String) (xs : Array Block) : Array Block :="
   unless conservedAt #["-- conserves: none — fills a hole", walk] 1 &&
@@ -2323,6 +2346,12 @@ def selftest : IO UInt32 := do
       "/-- end of a sentence", "section page after page -/", "def after := 2", "end Tests"] ==
       #["Tests.inside", "Tests.after"] do
     fails.modify ("scopedDefNames: a dotted section, or prose, moved a scope" :: ·)
+  unless scopedDefNames #["namespace Tests", "def a := r\"\\\"", "def b := r#\"x\"y\"#",
+      "def c := 3", "end Tests", "def top := 4"] == #["Tests.a", "Tests.b", "Tests.c", "top"] do
+    fails.modify ("scopedDefNames: a raw string hid the code after it" :: ·)
+  unless (theoremNames "theorem foo.{u} : True\ntheorem append_chain₂ : True").toList.all
+      (["foo", "append_chain₂"].contains ·) do
+    fails.modify ("theoremNames misread a universe suffix or a subscript" :: ·)
 
   expect "quadraticPrepend" quadraticPrepend [
     ("  | x :: rest => inlineNode cfg x ++ inlineNodes cfg rest", true),
@@ -2844,10 +2873,13 @@ def selftest : IO UInt32 := do
     ("private def raggedItems (items : Array Item) : Array Item :=", false),
     ("  -- def fake (xs : Array Block) : Array Block, quoted in a comment", false)]
 
-  expect "conservesNone" conservesNone [
+  expect "conservesReason" (fun l => (conservesReason l).isSome) [
     ("-- conserves: none — fills a hole; the output census is a mix", true),
     ("  -- conserves: none — the walk edits only image alt text", true),
+    ("-- conserves:none — the space is optional", true),
     ("-- conserves everything", false),
+    ("-- conserves: nonesuch — not the refusal", false),
+    ("/- conserves: none -/", false),
     ("def keepFor (t : String) (xs : Array Block) : Array Block :=", false)]
 
   expect "repoRefInString" repoRefInString [
@@ -3472,17 +3504,17 @@ the privacy check is skipped."
   Fix: read through Surface.read or Surface.fragment — or, for tex text the
   core itself holds, name the reader in coreTexReaders with its reason."
   let mut testDefs : Std.HashSet String := {}
-  let mut testText := ""
+  let mut testCode := ""
   for f in (#["Tests.lean"] : Array String) ++ (← System.FilePath.walkDir "Tests").filterMap
       (fun p => if p.toString.endsWith ".lean" then some p.toString else none) do
     if (← System.FilePath.pathExists f) then
       let txt ← IO.FS.readFile f
-      testText := testText ++ txt
       let lines := (txt.splitOn "\n").toArray
+      testCode := testCode ++ "\n".intercalate (codeOnly lines).toList ++ "\n"
       for l in lines do
         if let some n := topLevelDefName l then testDefs := testDefs.insert n
       testDefs := (scopedDefNames lines).foldl (·.insert ·) testDefs
-  let resolves := pinResolves (theoremNames allCore) (identCounts testText) testDefs
+  let resolves := pinResolves (theoremNames allCore) (identCounts testCode) testDefs
   -- Every marker resolves wherever it stands, sites the detector misses included.
   for (f, lines) in premiseTexts do
     for (n, pin?) in premiseFaults resolves lines do
