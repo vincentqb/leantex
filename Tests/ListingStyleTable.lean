@@ -605,7 +605,9 @@ def definitionNameChecks (ref : IO.Ref (List String)) : IO Unit := do
 
 /-- The TeX export of a palette's code colours: one redefinition per standard
 token type, every setting stated, each role's colour the one the engine
-paints on the page (`CodeExport.pageBrushes`), the alert the palette's own. -/
+paints on the page (`CodeExport.pageBrushes`), the alert the palette's own,
+each coloured type `\let` to its role's colour command, and a document that
+reads the export, as one both engines build does, built without a warning. -/
 def codeExportChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
   let ink := Ir.Color.ofHtml 0x20 0x24 0x40
@@ -634,5 +636,14 @@ def codeExportChecks (ref : IO.Ref (List String)) : IO Unit := do
       ((brushes.get .error).ink == some alert)
     t s!"code export {style.name}: an ink type sets in the listing's own colour"
       (hasStr tex "\\@namedef{PYG@tok@n}{\\let\\PYG@bf=\\relax\\let\\PYG@it=\\relax\\let\\PYG@ul=\\relax\\let\\PYG@bc=\\relax\\let\\PYG@tc=\\relax}")
+    t s!"code export {style.name}: a coloured type lets its role's colour command"
+      (ListingHighlight.Role.all.all fun r => match (brushes.get r).ink with
+        | some _ => hasStr tex ("\\newcommand\\" ++ CodeExport.colorName "Probe" r ++ "Tok[1]{\\textcolor{" ++
+            CodeExport.colorName "Probe" r ++ "}{#1}}") &&
+          hasStr tex ("\\let\\PYG@tc=\\" ++ CodeExport.colorName "Probe" r ++ "Tok}")
+        | none => !hasStr tex (CodeExport.colorName "Probe" r ++ "Tok"))
+    let (_, ds) := elabStr (dvDoc tex "Text.")
+    t s!"code export {style.name}: a document that reads the export builds clean ({(ds.filter (·.severity != .note)).map (·.code)})"
+      (ds.all (·.severity == .note))
 
 end Tests

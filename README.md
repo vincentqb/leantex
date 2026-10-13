@@ -259,12 +259,15 @@ hex strings. `--check colors.tex` prints nothing and exits 1 when the file
 is not what the seeds generate, so a build can refuse a stale export.
 
 Add `--pygments friendly` (or `default`) to export the code colours the
-engine derives from the generated palette: one colour per code role and a
+engine derives from the generated palette: one colour per code role, a
+command setting its argument in that colour (`\SlideCodeKeywordTok`), and a
 `\SlidePygments` command (named by the prefix) redefining the highlighter's
 token macros, with the style's colours only where the palette leaves a role
 open. Load it after `minted` and apply it with
 `\setminted{formatcom=\SlidePygments}`, so a lualatex build sets the colours
-leantex sets; leantex reads the palette itself and runs no `formatcom`.
+leantex sets; leantex reads the palette itself and runs no `formatcom`, and
+reads the export without a warning where a document both engines build
+loads it.
 
 ## Images and code
 
