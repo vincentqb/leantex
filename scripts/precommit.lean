@@ -1637,11 +1637,14 @@ def narrativeMarks (prose : String) : Array (Nat × String) := Id.run do
   let joined (k : Nat) : Bool := k > 0 && (ws[k]?.any (·.sep.all Char.isWhitespace))
   let after (k : Nat) : String := if joined k then (raw k).toLower else ""
   let bare (p : String) : String := if p.endsWith "'s" then (p.dropEnd 2).toString else p
-  let number (n : String) : Bool := (!n.isEmpty && n.all Char.isDigit) ||
+  let digits (n : String) : Bool := !n.isEmpty && n.all Char.isDigit
+  let numberWord (n : String) : Bool :=
     ["two", "three", "four", "five", "six", "seven", "eight", "nine", "ten"].contains n
   let ordinal (n : String) : Bool :=
     ["first", "second", "third", "fourth", "fifth", "final", "last", "next"].contains n ||
       (n.length ≥ 3 && n.front.isDigit && ["st", "nd", "rd", "th"].any (n.endsWith ·))
+  let listedNoun := ["list", "lists", "tip", "result", "results", "verdict", "verdicts", "row",
+    "rows", "merge"]
   let mut out : Array (Nat × String) := #[]
   for (w, k) in ws.zipIdx do
     let t := w.text
@@ -1651,15 +1654,13 @@ def narrativeMarks (prose : String) : Array (Nat × String) := Id.run do
     let prev := if joined k then (raw (k - 1)).toLower else ""
     let next := after (k + 1)
     let rounds := parts.any (fun p => p == "round" || p == "rounds")
-    let listedNoun := ["list", "lists", "tip", "result", "results", "verdict", "verdicts", "row",
-      "rows", "merge"]
     if (isoDateWord t && !w.ticked) || rawParts.any reportIdWord ||
         (rawParts.any hashWord && !w.sep.endsWith "#") then
       out := out.push (w.pos, t)
     else if w.ticked then continue
     else if parts.length > 1 && ((parts.any reviewForms.contains &&
           !(parts.head? == some "reviewed" && parts.getLast?.any listedNoun.contains)) ||
-        l.startsWith "must-fix" || (rounds && parts.any (fun p => ordinal p || number p))) then
+        l.startsWith "must-fix" || (rounds && parts.any (fun p => ordinal p || digits p))) then
       out := out.push (w.pos, t)
     else if reviewForms.contains (bare l) then
       let id := bare (if joined (k + 1) then raw (k + 1) else "")
@@ -1672,8 +1673,10 @@ def narrativeMarks (prose : String) : Array (Nat × String) := Id.run do
         out := out.push (w.pos, t)
     else if l == "must" && (next == "fix" || next == "fixes") then
       out := out.push (w.pos, s!"{t} {next}")
-    else if rounds && ((ordinal prev && !["trip", "trips", "of", "off", "robin"].contains next) ||
-        number next) then
+    else if (l == "round" || l == "rounds") &&
+        ((ordinal prev && !["trip", "trips", "of", "off", "robin"].contains next) ||
+        digits next || (numberWord next && ["in", "the", "a", "of", "after", "before", "during",
+          "since", "until", "from", "this", "that", "each", "every"].contains prev)) then
       out := out.push (if ordinal prev then ((ws[k - 1]?.map (·.pos)).getD w.pos) else w.pos,
         if ordinal prev then s!"{prev} {t}" else s!"{t} {next}")
     else if l == "once" && !prev.isEmpty &&
@@ -2431,6 +2434,7 @@ def selftest : IO UInt32 := do
     ("the 110 dpi review raster", false),
     (" premise: none — review holds it", false),
     ("the first round of glue and a second round trip", false),
+    ("a dashed frame fitted round two nodes, and the round-bottomed 3", false),
     ("a record such as `2026-01-31`", false),
     ("how many names it shows once truncated (`uniquelist`)", false),
     ("judged once shipped), never named", false)]
