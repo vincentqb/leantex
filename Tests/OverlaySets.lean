@@ -8,29 +8,6 @@ open LeanTex.Core
 
 namespace Tests
 
-private def overlayAttr (attrs : Array (String × String)) (key : String) : String :=
-  ((attrs.find? (·.1 == key)).map (·.2)).getD ""
-
-/-- Read the emitted attribute vocabulary, independently of the IR selector:
-the stylesheet matches space-separated step numbers, or the older contiguous
-start/end attributes. The browser probe also exercises these selectors. -/
-private def overlayActive (attrs : Array (String × String)) (k : Nat) : Bool :=
-  if attrs.any (·.1 == "data-steps") then
-    (overlayAttr attrs "data-steps").splitOn " " |>.contains (toString k)
-  else
-    let lo := (overlayAttr attrs "data-step").toNat?.getD 1
-    let hi := (overlayAttr attrs "data-step-last").toNat?
-    lo ≤ k && (hi.map fun u => decide (k ≤ u)).getD true
-
-/-- Does an element show at snap `k`: an alternative where its steps select
-it, anything else unless it is `hidden`. -/
-private def overlayShown (attrs : Array (String × String)) (k : Nat) : Bool :=
-  let classes := (overlayAttr attrs "class").splitOn " "
-  if classes.contains "alt-set" then overlayActive attrs k
-  else if classes.contains "alt-crisp" then overlayActive attrs k
-  else if classes.contains "alt-pending" then !overlayActive attrs k
-  else !(attrs.any (·.1 == "hidden"))
-
 mutual
 
 /-- Actual typed HTML text at a snap: the first component is present text,
@@ -40,11 +17,11 @@ private def overlayTextOne (k : Nat) (covered : Bool)
   | .text s => (acc.1 ++ s, if covered then acc.2 else acc.2 ++ s)
   | .style _ | .script _ _ => acc
   | .elem _ attrs kids =>
-    let classes := (overlayAttr attrs "class").splitOn " "
-    let shown := overlayShown attrs k
+    let classes := (snapAttr attrs "class").splitOn " "
+    let shown := snapShows attrs k
     let covered := covered ||
       ((classes.contains "step" || classes.contains "step-set" ||
-        classes.contains "step-end") && !overlayActive attrs k)
+        classes.contains "step-end") && !snapActive attrs k)
     if shown then overlayTextList k covered acc kids.toList else acc
 
 private def overlayTextList (k : Nat) (covered : Bool)
@@ -88,7 +65,7 @@ private def overlayRenderedOne (k : Nat) (acc : String) : Html.Node → String
   | .text s => acc ++ s
   | .style _ | .script _ _ => acc
   | .elem tag attrs kids =>
-    if overlayShown attrs k then
+    if snapShows attrs k then
       let edge := if renderedBlockTags.contains tag then "\n" else ""
       overlayRenderedList k (acc ++ edge) kids.toList ++ edge
     else acc
@@ -255,14 +232,19 @@ of the frame written with that step's reading — the argument's tokens where
 the selector selects, nothing elsewhere — and every snap of the typed tree
 shows that reading's text, nothing covered. Read over `Layout.PageOut`
 (`pageMarks`) and the emitted tree, for an argument inline, as paragraphs,
-in display and inline formulas, as its next token, as a control word with
-its groups, in a title, an item and a cell, under unions and nesting, and as
-`\onslide*` — and for `\alt` nested at an alternative's opening, whose
-display stands in the paragraph the outer alternation opened in, as a
-formula's readings chain. The defect it names: `\only` covered its argument
-and kept its space, as `\uncover` does, so a frame whose steps swap blocks
-by `\only` stood every step at the height of all of them and continued on a
-further page where lualatex sets one per step. -/
+around a display, a list or a paragraph break inside a paragraph, in
+display and inline formulas, as its next token, as a control word with its
+groups, in a frame's title, a block's title and a caption, an item, a cell,
+a list's item and a table's row, under unions and nesting, as `\onslide*`,
+and beside a document's own `\alt`; and for overlays nested at a carrier's
+opening, whose display stands in the paragraph the outer carrier opened in
+unless a break inside the inner one ends it. With no snap state the deck
+shows step 1's reading, an `\only`'s argument with it where step 1 reads it
+as nothing. A document's own `\only` keeps its meaning. The defect it names:
+`\only` covered its argument and kept its space, as `\uncover` does, so a
+frame whose steps swap blocks by `\only` stood every step at the height of
+all of them and continued on a further page where lualatex sets one per
+step. -/
 def overlayOnlyChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit := do
   let t := check ref
   let fonts ← mathSetOf fonts
@@ -276,6 +258,20 @@ def overlayOnlyChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO U
        "Top paragraph.\n\n\\only<2>{Middle paragraph.\n\nSecond middle.}\n\nBottom paragraph.", 2,
        fun k => "Top paragraph.\n\n" ++ pick (k == 2) "Middle paragraph.\n\nSecond middle.\n\n" ++
          "Bottom paragraph."),
+     ("a display inside a paragraph", "Before.\n\\only<2>{\\[ a \\]}\nAfter.", 2,
+       fun k => if k == 2 then "Before.\n\\[ a \\]\nAfter." else "Before.\n{}\nAfter."),
+     ("two displays swapped", "Before.\n\\only<1>{\\[ a \\]}\\only<2>{\\[ b \\]}\nAfter.", 2,
+       fun k => "Before.\n\\[ " ++ (if k == 1 then "a" else "b") ++ " \\]\nAfter."),
+     ("a paragraph break inside a paragraph", "Before \\only<2>{text.\n\nNew para} after.", 2,
+       fun k => if k == 2 then "Before text.\n\nNew para after." else "Before {} after."),
+     ("a list inside a paragraph",
+       "Before \\only<2>{\\begin{itemize}\\item x\\end{itemize}} after.", 2,
+       fun k => if k == 2 then "Before \\begin{itemize}\\item x\\end{itemize} after."
+         else "Before {} after."),
+     ("a paragraph opening the frame", "\\only<2>{Head line.}\n\nBody line.", 2,
+       fun k => if k == 2 then "Head line.\n\nBody line." else "Body line."),
+     ("a paragraph closing the frame", "Body line.\n\n\\only<2>{Tail line.}", 2,
+       fun k => if k == 2 then "Body line.\n\nTail line." else "Body line."),
      ("display formula", "Before.\n\\[ a + \\only<2>{b +} c \\]\nAfter.", 2,
        fun k => "Before.\n\\[ a + " ++ pick (k == 2) "b + " ++ "c \\]\nAfter."),
      ("display formula after a break", "Before.\n\n\\[ a + \\only<2>{b +} c \\]\n\nAfter.", 2,
@@ -294,15 +290,32 @@ def overlayOnlyChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO U
        fun k => "Lead " ++ (if k == 2 then "\\textbf{bold}" else "{bold}") ++ " rest."),
      ("onslide star", "Lead words \\onslide*<2>{Middle} trail words.", 2,
        fun k => "Lead words " ++ (if k == 2 then "Middle" else "{}") ++ " trail words."),
-     ("title", "\\frametitle{\\only<2>{Hidden }Shown}\nBody text.", 2,
+     ("frame title", "\\frametitle{\\only<2>{Hidden }Shown}\nBody text.", 2,
        fun k => "\\frametitle{" ++ pick (k == 2) "Hidden " ++ "Shown}\nBody text."),
-     ("item", "\\begin{itemize}\n\\item One \\only<2>{and more}\n\\item Two\n\\end{itemize}", 2,
+     ("block title", "\\begin{block}{\\only<2>{New }Heading}Body.\\end{block}", 2,
+       fun k => "\\begin{block}{" ++ pick (k == 2) "New " ++ "Heading}Body.\\end{block}"),
+     ("caption",
+       "\\begin{figure}\\centering Figure body\\caption{Caption \\only<2>{extra} end}\\end{figure}", 2,
+       fun k => "\\begin{figure}\\centering Figure body\\caption{Caption " ++
+         (if k == 2 then "extra" else "{}") ++ " end}\\end{figure}"),
+     ("inline in an item",
+       "\\begin{itemize}\n\\item One \\only<2>{and more}\n\\item Two\n\\end{itemize}", 2,
        fun k => "\\begin{itemize}\n\\item One " ++ (if k == 2 then "and more" else "{}") ++
          "\n\\item Two\n\\end{itemize}"),
      ("cell", "\\begin{tabular}{ll}\nleft & \\only<2>{wide cell words}\\\\\nnext & row\n" ++
        "\\end{tabular}", 2,
        fun k => "\\begin{tabular}{ll}\nleft & " ++ (if k == 2 then "wide cell words" else "{}") ++
          "\\\\\nnext & row\n\\end{tabular}"),
+     ("an item",
+       "\\begin{enumerate}\n\\item Alpha one\n\\only<2>{\\item Beta two}\n\\item Gamma three\n" ++
+         "\\end{enumerate}", 2,
+       fun k => "\\begin{enumerate}\n\\item Alpha one\n" ++ pick (k == 2) "\\item Beta two\n" ++
+         "\\item Gamma three\n\\end{enumerate}"),
+     ("a row",
+       "\\begin{tabular}{ll}\nDelta & four \\\\\n\\only<2>{Epsilon & five \\\\}\nZeta & six \\\\\n" ++
+         "\\end{tabular}", 2,
+       fun k => "\\begin{tabular}{ll}\nDelta & four \\\\\n" ++ pick (k == 2) "Epsilon & five \\\\\n" ++
+         "Zeta & six \\\\\n\\end{tabular}"),
      ("union", "A \\only<1,3>{First}\\only<2>{Second} tail.", 3,
        fun k => "A " ++ (if k == 2 then "Second" else "First") ++ " tail."),
      ("nested", "Lead \\only<2-3>{outer \\only<3>{inner} done} end.", 3,
@@ -310,16 +323,10 @@ def overlayOnlyChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO U
          "outer " ++ (if k == 3 then "inner" else "{}") ++ " done") ++ " end."),
      ("swapped blocks", "\\only<1>{" ++ lines "First" 10 ++ "}\\only<2>{" ++ lines "Second" 10 ++ "}",
        2, fun k => lines (if k == 1 then "First" else "Second") 10),
-     -- An alternation nested at another's opening stands its display where
-     -- the outer one stands it: in the paragraph the text before it opened.
-     ("alt nested at an alternative's opening",
-       "Before.\n\\alt<1>{\\[ a \\]}{\\alt<2>{\\[ b \\]}{\\[ c \\]}}\nAfter.", 2,
-       fun k => "Before.\n\\[ " ++ (if k == 1 then "a" else "b") ++ " \\]\nAfter."),
-     ("alt nested before a break",
-       "Before.\n\\alt<1>{\\[ a \\]}{\\alt<2>{\\[ b \\]}{\\[ c \\]}}\n\nAfter.", 2,
-       fun k => "Before.\n\\[ " ++ (if k == 1 then "a" else "b") ++ " \\]\n\nAfter.")]
+     ("beside a document's own alt", "\\def\\alt#1#2#3{Lost}\nLead \\only<2>{Probe} trail.", 2,
+       fun k => "\\def\\alt#1#2#3{Lost}\nLead " ++ (if k == 2 then "Probe" else "{}") ++ " trail.")]
   for (label, body, steps, reading) in cases do
-    let label := "overlay reading, " ++ label
+    let label := "only, " ++ label
     let (doc, ds) := elabStr (deck169Frame body)
     let fitted := fittedOf fonts doc
     let out := layoutOf fonts doc
@@ -338,5 +345,38 @@ def overlayOnlyChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO U
         (renderedLines (overlayRenderedList k "" tree.toList) ==
             renderedLines (overlayRenderedList 1 "" rtree.toList) &&
           crisp == shown)
+  -- With no snap state — scripting off, the print sheet, the reduced page —
+  -- the deck shows step 1's reading, and an argument that reading leaves out
+  -- stands too: an alternation never shows nothing over what it says.
+  let floor (body : String) : String :=
+    let (_, tree, _) := HtmlDoc.emitTree {} (elabStr (deck169Frame body)).1
+    shownTextList "" tree.toList
+  t "only, with no snap state: an argument step 1 leaves out stands"
+    (hasStr (floor "Lead words \\only<2>{Middle} trail words.") "Middle" &&
+      hasStr (floor "Lead \\only<2-3>{Later} words.\n\n\\uncover<3>{Third.}") "Later")
+  let swap := "\\only<1>{First reading.\n\nFirst more.}\\only<2>{Second reading.\n\nSecond more.}"
+  t "only, with no snap state: blocks read per step show step 1's reading"
+    (hasStr (floor swap) "First reading." && !hasStr (floor swap) "Second reading.")
+  -- A document that defines `\only` keeps its meaning.
+  let (udoc, _) := elabStr (deck169Frame "\\def\\only#1{[#1]}Lead \\only<2>{later} end.")
+  t "only, defined by the document: its own macro, no step"
+    ((layoutOf fonts udoc).pages.size == 1 && hasStr (pageTextOf fonts
+      (deck169Frame "\\def\\only#1{[#1]}Lead \\only<2>{later} end.")) "[")
+  -- Overlays nested at a carrier's opening: the inner carrier's display
+  -- stands where the outer carrier stands it, unless a break opens it.
+  for (label, body, reading) in
+      [("an uncover opening an uncover", "Before.\n\\uncover<1->{\\uncover<2->{\\[ x \\]}}\nAfter.",
+         "Before.\n\\[ x \\]\nAfter."),
+       ("an uncover opening an uncover on a break",
+         "Before.\n\\uncover<1->{\\uncover<2->{\n\n\\[ x \\]}}\nAfter.",
+         "Before.\n\n\\[ x \\]\nAfter.")] do
+    let out := layoutOf fonts (elabStr (deck169Frame body)).1
+    let rout := layoutOf fonts (elabStr (deck169Frame reading)).1
+    let place (p : Layout.PageOut) : Array (Dim.Sp × Dim.Sp × String) :=
+      p.lines.map fun l => (l.x, l.y, lineText l)
+    t s!"nested overlays, {label}: the uncovered step's page is the flat frame's"
+      (out.pages.size == 2 && (out.pages[1]?.map pageMarks) == (rout.pages[0]?.map pageMarks))
+    t s!"nested overlays, {label}: the covered step stands its lines there too"
+      ((out.pages[0]?.map place) == (rout.pages[0]?.map place))
 
 end Tests

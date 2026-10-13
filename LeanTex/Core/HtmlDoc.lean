@@ -218,7 +218,8 @@ public def engineClasses : List String :=
    "reveal-scroll", "ruled", "section-page", "separator", "slide",
    "slide-foot", "slide-logo", "slide-track", "slides", "snap", "spaced",
    "standout", "step", "table-float", "tcolorbox", "tcolorbox-body", "titlebar", "verbatim-list", "vskip",
-   "alt-pair", "alt-alike", "frame-body-tail", "frame-flow-end", "fill-before", "squeeze",
+   "alt-pair", "alt-alike", "frame-body-tail", "frame-flow-end", "frame-flow-start",
+   "fill-before", "squeeze",
    "tok", "tok-long"] ++
   Ir.sizeScale.map (fun p => "size-" ++ p.1) ++ Ir.sizeScale.map (fun p => "lead-" ++ p.1)
 
@@ -1058,6 +1059,13 @@ private def gapAfterLists : List GapRule :=
       "calc(0rem - var(--parskip, 0rem))",
     -- the first body element owns the frame opening, which a fil spacer cannot pay
     .boundary "section.slide > .frame-body-start"
+      ("calc(var(--frame-body-skip) + var(--frame-title-below, 0pt) + " ++
+        "var(--frame-body-before, 0pt) + var(--frame-body-open, 0pt))"),
+    -- An overlay carrier opening the frame gives the opening to the block
+    -- its flow opens on in each group (`markFlowStart`): the one a snap
+    -- shows opens the frame, as its page opens it.
+    .boundary "section.slide > .frame-body-start:has(.frame-flow-start)" "0",
+    .boundary "section.slide .frame-flow-start"
       ("calc(var(--frame-body-skip) + var(--frame-title-below, 0pt) + " ++
         "var(--frame-body-before, 0pt) + var(--frame-body-open, 0pt))")]
 
@@ -3470,26 +3478,31 @@ baseline one `\baselineskip` down, the last line trimmed to its baseline. -/
 private def frameOpeningCss (doc : Doc) : String :=
   let l := doc.docClass.record.lists
   let size := doc.page.fontSize
-  let item := "section.slide > :is(ul, ol:not(.algorithm)).frame-body-start > li:first-child"
-  let triv := s!"section.slide > .{roleClass Ir.trivlistRole}.frame-body-start"
-  let float := "section.slide > figure.float.frame-body-start"
-  (match Ir.listSkips l size 1 with
-   | some sk =>
-     let opened := sk.topsep.width.sp + (Ir.partopsepFor l size 1 doc.tokens).width.sp
-     s!"section.slide > :is({", ".intercalate listElems}).frame-body-start \{ \
+  -- One set of rules per edge: the frame's opening element, the stage's
+  -- child (`frame-body-start`), and the block an opening carrier's flow
+  -- opens on in each group (`frame-flow-start`, `markFlowStart`).
+  let rules (pre cls : String) : String :=
+    let item := s!"{pre}:is(ul, ol:not(.algorithm)){cls} > li:first-child"
+    let triv := s!"{pre}.{roleClass Ir.trivlistRole}{cls}"
+    let float := s!"{pre}figure.float{cls}"
+    (match Ir.listSkips l size 1 with
+     | some sk =>
+       let opened := sk.topsep.width.sp + (Ir.partopsepFor l size 1 doc.tokens).width.sp
+       s!"{pre}:is({", ".intercalate listElems}){cls} \{ \
 --frame-body-open: {stageVh doc.page opened}; }\n"
-   | none => "") ++
-  s!"{triv} \{ --frame-body-open: {stageVh doc.page ((Ir.trivlistSkipFor l doc.tokens size 0).width.resolve size 0)}; }\n" ++
-  s!"{float} \{ --frame-body-open: {stageVh doc.page ((Ir.floatSpaceFor l doc.tokens size 0).1.width.resolve size 0)}; }\n" ++
+     | none => "") ++
+    s!"{triv} \{ --frame-body-open: {stageVh doc.page ((Ir.trivlistSkipFor l doc.tokens size 0).width.resolve size 0)}; }\n" ++
+    s!"{float} \{ --frame-body-open: {stageVh doc.page ((Ir.floatSpaceFor l doc.tokens size 0).1.width.resolve size 0)}; }\n" ++
+    s!"{pre}p{cls}::before,\n" ++
+    s!"{triv} > p:first-child::before, {float} > :is(p, figcaption):first-child::before,\n" ++
+    s!"{pre}dl{cls} > dt:first-child::before,\n" ++
+    s!"{item}:not(:has(> :is(p, div, ul, ol, dl, pre, table, figure, blockquote)))::before,\n" ++
+    s!"{item} > p:first-child::before \{ content: \"\"; display: inline-block;\n" ++
+    s!"  height: {decMilli (Ir.leadingFor 1000 doc.page.leading)}em; }\n"
+  rules "section.slide > " ".frame-body-start" ++ rules "section.slide " ".frame-flow-start" ++
   "section.slide > :is(p, ul, ol, dl, blockquote, .centered, .ragged, .ragged-right)\
 .frame-body-end,\nsection.slide :is(p, ul, ol, dl, blockquote, .centered, .ragged, \
-.ragged-right).frame-flow-end { text-box: trim-end text alphabetic; }\n" ++
-  "section.slide > p.frame-body-start::before,\n" ++
-  s!"{triv} > p:first-child::before, {float} > :is(p, figcaption):first-child::before,\n" ++
-  "section.slide > dl.frame-body-start > dt:first-child::before,\n" ++
-  s!"{item}:not(:has(> :is(p, div, ul, ol, dl, pre, table, figure, blockquote)))::before,\n" ++
-  s!"{item} > p:first-child::before \{ content: \"\"; display: inline-block;\n" ++
-  s!"  height: {decMilli (Ir.leadingFor 1000 doc.page.leading)}em; }\n"
+.ragged-right).frame-flow-end { text-box: trim-end text alphabetic; }\n"
 
 /-- The print rules every deck carries, steps aside. -/
 private def printPaged : List DeckRule := [printStageRule, printSheetGround] ++ printFrameEnd
@@ -4886,6 +4899,45 @@ public def overlayAltNode (tag : String) (steps : Nat) (spec : Ir.OverlaySpec)
       ("data-steps", String.intercalate " " ((spec.pageSteps steps first).map toString))] ++
       if first then #[] else #[("hidden", "hidden")])
 
+/-- Does a group show nothing: no element, and no text but white space? -/
+public def nodesBlank (xs : Array Node) : Bool :=
+  xs.all fun n => match n with
+    | .text t => !holdsText t
+    | .elem .. | .style _ | .script .. => false
+
+/-- One group of an alternation in its finite membership set, `hidden` where
+asked: the representation every snap selects by its own number. -/
+public def overlayAltSetNode (tag : String) (steps : Nat) (spec : Ir.OverlaySpec)
+    (first hidden : Bool) (kids : Array Node) : Node :=
+  Html.elem tag kids (#[("class", "alt alt-set"),
+    ("data-steps", String.intercalate " " ((spec.pageSteps steps first).map toString))] ++
+    if hidden then #[("hidden", "hidden")] else #[])
+
+/-- An alternation's two groups, in page order. Where one shows nothing —
+`\only`'s, absent off its steps — both stand in their membership sets and
+the blank one carries `hidden`, so a rendering with no snap state shows the
+other: the floor with scripting off, the print sheet and the reduced page
+hide nothing the document says, while every snap still shows the group its
+step selects (`overlay_set_alternation_agree`). Otherwise the group stored
+first is the floor's (`overlayAltNode`). -/
+public def altPairNodes (tag : String) (steps : Nat) (spec : Ir.OverlaySpec)
+    (first other : Array Node) : Array Node :=
+  if nodesBlank first != nodesBlank other then
+    #[overlayAltSetNode tag steps spec true (nodesBlank first) first,
+      overlayAltSetNode tag steps spec false (nodesBlank other) other]
+  else #[overlayAltNode tag steps spec true first, overlayAltNode tag steps spec false other]
+
+/-- **No floor shows a blank alternative over one with content**
+(`_contract`): where exactly one group is blank, the pair is its two
+membership-set nodes, the blank one alone `hidden`. -/
+public theorem altPairNodes_floor_contract (tag : String) (steps : Nat) (spec : Ir.OverlaySpec)
+    (first other : Array Node) (h : nodesBlank first != nodesBlank other) :
+    altPairNodes tag steps spec first other =
+      #[overlayAltSetNode tag steps spec true (nodesBlank first) first,
+        overlayAltSetNode tag steps spec false (!nodesBlank first) other] := by
+  unfold altPairNodes
+  cases hf : nodesBlank first <;> cases ho : nodesBlank other <;> simp_all
+
 mutual
 
 private def anchorIdsOne (acc : Array String) : Node → Array String
@@ -4926,8 +4978,8 @@ public def overlayAlternatives (tag : String) (steps : Nat) (spec : Ir.OverlaySp
   let shared := ((anchorIdsList #[] first.toList).filter otherIds.contains).toList.eraseDups.toArray
   let anchors := shared.map fun id =>
     Html.elem "span" #[] #[("id", id), ("data-alt-anchor", "")]
-  anchors ++ #[overlayAltNode tag steps spec true (unanchorList shared #[] first.toList),
-    overlayAltNode tag steps spec false (unanchorList shared #[] other.toList)]
+  anchors ++ altPairNodes tag steps spec (unanchorList shared #[] first.toList)
+    (unanchorList shared #[] other.toList)
 
 /-- Artifact-specific. -/
 public theorem overlay_membership_agree (spec : Ir.OverlaySpec) (steps k : Nat)
@@ -4961,6 +5013,15 @@ public theorem overlay_pending_agree (spec : Ir.OverlaySpec) (steps k : Nat)
 public def overlayFirstAt (steps : Nat) (spec : Ir.OverlaySpec) (k : Nat) : Bool :=
   if overlayUsesRange steps spec then altShownFirstAt steps spec.first spec.last k
   else (spec.pageSteps steps true).contains k
+
+/-- The membership-set representation selects at every snap of the frame
+the group the PDF page inks: the snap shows the first group exactly where
+the IR's step does. -/
+public theorem overlay_set_alternation_agree (spec : Ir.OverlaySpec) (steps k : Nat)
+    (hk : 1 ≤ k) (hsteps : k ≤ steps) :
+    (spec.pageSteps steps true).contains k = spec.showsFirst k := by
+  apply Bool.eq_iff_iff.mpr
+  simp [Ir.OverlaySpec.pageSteps_mem, hk, hsteps]
 
 public theorem overlay_alternation_agree (spec : Ir.OverlaySpec) (steps k : Nat)
     (hk : 1 ≤ k) (hsteps : k ≤ steps) :
@@ -5895,17 +5956,59 @@ private def frameBodyBefore (style : String) : String :=
       else decl
     | _ => decl)
 
-/-- Put the frame boundary on its first participating body element. -/
+/-- An element's generated leading margin as the frame boundary's addend
+(`frameBodyBefore`). -/
+private def openingStyle : Node → Node
+  | .elem tag attrs body =>
+    .elem tag (attrs.map fun (key, value) =>
+      (key, if key == "style" then frameBodyBefore value else value)) body
+  | .text s => .text s
+  | .style css => .style css
+  | .script attrs code => .script attrs code
+
+mutual
+
+/-- The element a carrier's flow opens on, marked `frame-flow-start` down its
+first children — in every group of an alternation, each the opening of the
+snaps that show it — carrying the frame's opening there, where the page
+opens it: on the block, never on the carrier around it. -/
+private def markFlowStart : Node → Node
+  | .elem tag attrs kids =>
+    if isAltPair (.elem tag attrs kids) then .elem tag attrs (markGroupsStart kids.toList).toArray
+    else if isLinkCarrier (.elem tag attrs kids) then
+      .elem tag attrs (markFirstList kids.toList).toArray
+    else withClass "frame-flow-start" (openingStyle (.elem tag attrs kids))
+  | .text s => .text s
+  | .style css => .style css
+  | .script attrs code => .script attrs code
+
+-- conserves: none — the first element of a carrier for `markFlowStart`; it marks one class.
+private def markFirstList : List Node → List Node
+  | [] => []
+  | x :: rest =>
+    match x with
+    | .elem .. => markFlowStart x :: rest
+    | .text _ | .style _ | .script _ _ => x :: markFirstList rest
+
+-- conserves: none — an alternation's groups for `markFlowStart`; it marks one class.
+private def markGroupsStart : List Node → List Node
+  | [] => []
+  | x :: rest => markFlowStart x :: markGroupsStart rest
+
+end
+
+/-- Put the frame boundary on its first participating body element. State,
+text and hidden speaker notes do not take it. A generated leading margin
+joins the fixed opening at its one owner; the element tree is unchanged.
+Where that element is an overlay's carrier, the block its flow opens on
+takes the opening (`markFlowStart`). -/
 private def frameBodyStart (kids : Array Node) : Array Node :=
   match kids.findIdx? (fun node => match node with
     | .elem _ attrs _ => !(attrs.any (·.1 == "hidden"))
     | .text _ | .style _ | .script .. => false) with
   | some i => kids.modify i fun node =>
-    withClass "frame-body-start" (match node with
-      | .elem tag attrs body =>
-        .elem tag (attrs.map fun (key, value) =>
-          (key, if key == "style" then frameBodyBefore value else value)) body
-      | .text _ | .style _ | .script .. => node)
+    let node := withClass "frame-body-start" (openingStyle node)
+    if isCarrierNode node then markFlowStart node else node
   | none => kids
 
 mutual

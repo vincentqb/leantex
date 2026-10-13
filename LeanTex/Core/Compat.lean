@@ -686,6 +686,10 @@ private structure St where
   localLengths : Array String := #[]
   /-- Command names the rewrite walk has bound so far, in document order. -/
   bound : Array String := #[]
+  /-- Does the document define `\only`, and `\alt`, itself: read off the
+  whole document before the rewrite (`readCxOf`), so a deferred body's
+  overlays read the document's meanings. -/
+  userOverlays : Bool × Bool := (false, false)
   /-- biblatex's declared resources (`\addbibresource`). -/
   bibResources : Array String := #[]
   /-- The record name biblatex's style option mapped to, emitted beside the
@@ -9218,121 +9222,198 @@ end
 (beamerbaseoverlay.sty, `\beamer@only`), so on the steps its selector does
 not select, its argument is absent and takes no space. It becomes the
 alternation the elaborator already sets that way, with nothing as its other
-alternative. An undelimited argument is the next token, as TeX reads one: a
+alternative, written under a name no document can define (`altHead`); a
+document that defines `\only` itself keeps that meaning for every `\only`
+it writes. An undelimited argument is the next token, as TeX reads one: a
 word gives its first character, and a control word leaves the groups after
 it to stand without it. A selector the step model cannot number is left as
 written, for the elaborator's W0105, and so is an argument no token reads
-(a blank line, an environment), which the elaborator covers. -/
+(a blank line, an environment), which the elaborator covers. A formula's
+`\only` is read with the formula below, and a picture's is its reader's. -/
+
+/-- The alternation this pass writes: beamer's `\alt` under its saved-native
+spelling, which a document cannot define, so a document's own `\alt` never
+reads it. -/
+private def altHead : String := overlayNativeName "alt"
+
+/-- An `\only` this pass reads: beamer's, unless the document defines the
+name itself. -/
+private def onlyHead (userOnly : Bool) (c : String) : Bool :=
+  c == overlayNativeName "only" || (!userOnly && c == "only")
+
+/-- An alternation the readings below read: this pass's own, and beamer's
+`\alt` unless the document defines the name itself. -/
+private def isAltHead (userAlt : Bool) (c : String) : Bool :=
+  c == altHead || (!userAlt && c == "alt")
+
+/-- The definers whose next token names what they define. -/
+private def nameDefiners : List String :=
+  ["def", "gdef", "edef", "xdef", "let", "newcommand", "renewcommand", "providecommand",
+   "DeclareRobustCommand", "NewDocumentCommand", "RenewDocumentCommand",
+   "ProvideDocumentCommand", "DeclareDocumentCommand", "newrobustcmd", "renewrobustcmd",
+   "providerobustcmd"]
+
+/-- The command a definer's next tokens name, past a star and spaces. -/
+private def definedName : List Raw → Option String
+  | .space :: rest => definedName rest
+  | .word "*" _ :: rest => definedName rest
+  | .ctrl n _ :: _ => some n
+  | .group g _ :: _ =>
+    match g.toList.filter (· != .space) with
+    | [.ctrl n _] => some n
+    | _ => none
+  | _ => none
+
+mutual
+
+/-- Does the document define the command `n`, anywhere it writes it? -/
+private def definesList (n : String) : List Raw → Bool
+  | [] => false
+  | .ctrl d _ :: rest =>
+    (nameDefiners.contains d && definedName rest == some n) || definesList n rest
+  | r :: rest => definesRaw n r || definesList n rest
+termination_by structural l => l
+
+private def definesRaw (n : String) : Raw → Bool
+  | .group g _ => definesList n g.toList
+  | .env _ g _ => definesList n g.toList
+  | .math _ g _ => definesList n g.toList
+  | .word .. | .space | .par _ | .ctrl .. | .sym .. | .verb .. => false
+termination_by structural r => r
+
+end
+
+/-- What the document leaves to beamer: `\only` and `\alt` (`true` where the
+document defines the name itself). -/
+private structure ReadCx where
+  userOnly : Bool
+  userAlt : Bool
+
+/-- The environments whose bodies this pass leaves to their reader: a
+picture's overlays are the picture's. -/
+private def pictureBodies : List String := pictureEnvs ++ ["tikzcd", "picture", "pgfpicture"]
 
 /-- The alternation `\only<s>` reads as, its argument where the selector
 selects and nothing elsewhere. -/
 private def onlyAlt (p : Pos) (sel : Raw) (arg : Array Raw) (q : Pos) : Array Raw :=
-  #[.ctrl "alt" p, sel, .group arg q, .group #[] q]
+  #[.ctrl altHead p, sel, .group arg q, .group #[] q]
 
 /-- The alternation of a control word taken as `\only`'s argument, `groups`
 the ones written after it. -/
 private def onlyCtrl (p : Pos) (sel : Raw) (n : String) (q : Pos) (groups : Array Raw) :
     Array Raw :=
-  #[.ctrl "alt" p, sel, .group (#[.ctrl n q] ++ groups) q, .group groups q]
+  #[.ctrl altHead p, sel, .group (#[.ctrl n q] ++ groups) q, .group groups q]
 
 /-- An `\only` head with a numbered selector (`overlayInputs` moved every
 spelling's selector to the head). -/
-private def onlyNumbered (c : String) : Raw → Bool
-  | .word w _ => overlayName c == "only" && (Ir.overlayRange w).isSome
+private def onlyNumbered (userOnly : Bool) (c : String) : Raw → Bool
+  | .word w _ => onlyHead userOnly c && (Ir.overlayRange w).isSome
   | _ => false
 
 mutual
 
 /-- Every `\only` with a numbered selector, rewritten into its alternation
-wherever a group, an environment or a formula holds it. -/
+wherever a group or an environment holds it — inside a formula only where
+`math` asks, as a formula's readings do. -/
 -- conserves: none — a surface boundary walk; no IR content has been elaborated.
-private def onlyAltList : List Raw → Array Raw → Nat → Array Raw
+private def onlyAltList (userOnly math : Bool) : List Raw → Array Raw → Nat → Array Raw
   | [], out, _ => out
-  | _ :: rest, out, skip + 1 => onlyAltList rest out skip
+  | _ :: rest, out, skip + 1 => onlyAltList userOnly math rest out skip
   | .ctrl "apptocmd" pos :: rest, out, 0 =>
     -- Overlay bodies inside a patch or callback are not live material.
     let args := rest.toArray
     let (_, k, _) := takeHookArgs args 0
-    onlyAltList rest ((out.push (.ctrl "apptocmd" pos)) ++ args.extract 0 k) k
+    onlyAltList userOnly math rest ((out.push (.ctrl "apptocmd" pos)) ++ args.extract 0 k) k
   -- A control word as the argument takes the groups after it in both
   -- readings: the command where the selector selects, its groups alone
   -- elsewhere, as TeX reads them once the command is gone.
   | .ctrl c p :: sel :: .ctrl n q :: .group a qa :: .group b qb :: rest, out, 0 =>
-    if onlyNumbered c sel then
+    if onlyNumbered userOnly c sel then
       let alt := onlyCtrl p sel n q
-        #[.group (onlyAltList a.toList #[] 0) qa, .group (onlyAltList b.toList #[] 0) qb]
-      onlyAltList rest (out ++ alt) 0
-    else onlyAltList (sel :: .ctrl n q :: .group a qa :: .group b qb :: rest)
+        #[.group (onlyAltList userOnly math a.toList #[] 0) qa,
+          .group (onlyAltList userOnly math b.toList #[] 0) qb]
+      onlyAltList userOnly math rest (out ++ alt) 0
+    else onlyAltList userOnly math (sel :: .ctrl n q :: .group a qa :: .group b qb :: rest)
       (out.push (.ctrl c p)) 0
   | .ctrl c p :: sel :: .ctrl n q :: .group a qa :: rest, out, 0 =>
-    if onlyNumbered c sel then
-      let alt := onlyCtrl p sel n q #[.group (onlyAltList a.toList #[] 0) qa]
-      onlyAltList rest (out ++ alt) 0
-    else onlyAltList (sel :: .ctrl n q :: .group a qa :: rest) (out.push (.ctrl c p)) 0
-  | .ctrl c p :: sel :: .space :: .ctrl n q :: .group a qa :: .group b qb :: rest, out, 0 =>
-    if onlyNumbered c sel then
-      let alt := onlyCtrl p sel n q
-        #[.group (onlyAltList a.toList #[] 0) qa, .group (onlyAltList b.toList #[] 0) qb]
-      onlyAltList rest (out ++ alt) 0
-    else onlyAltList (sel :: .space :: .ctrl n q :: .group a qa :: .group b qb :: rest)
+    if onlyNumbered userOnly c sel then
+      let alt := onlyCtrl p sel n q #[.group (onlyAltList userOnly math a.toList #[] 0) qa]
+      onlyAltList userOnly math rest (out ++ alt) 0
+    else onlyAltList userOnly math (sel :: .ctrl n q :: .group a qa :: rest)
       (out.push (.ctrl c p)) 0
+  | .ctrl c p :: sel :: .space :: .ctrl n q :: .group a qa :: .group b qb :: rest, out, 0 =>
+    if onlyNumbered userOnly c sel then
+      let alt := onlyCtrl p sel n q
+        #[.group (onlyAltList userOnly math a.toList #[] 0) qa,
+          .group (onlyAltList userOnly math b.toList #[] 0) qb]
+      onlyAltList userOnly math rest (out ++ alt) 0
+    else onlyAltList userOnly math
+      (sel :: .space :: .ctrl n q :: .group a qa :: .group b qb :: rest) (out.push (.ctrl c p)) 0
   | .ctrl c p :: sel :: .space :: .ctrl n q :: .group a qa :: rest, out, 0 =>
-    if onlyNumbered c sel then
-      let alt := onlyCtrl p sel n q #[.group (onlyAltList a.toList #[] 0) qa]
-      onlyAltList rest (out ++ alt) 0
-    else onlyAltList (sel :: .space :: .ctrl n q :: .group a qa :: rest) (out.push (.ctrl c p)) 0
+    if onlyNumbered userOnly c sel then
+      let alt := onlyCtrl p sel n q #[.group (onlyAltList userOnly math a.toList #[] 0) qa]
+      onlyAltList userOnly math rest (out ++ alt) 0
+    else onlyAltList userOnly math (sel :: .space :: .ctrl n q :: .group a qa :: rest)
+      (out.push (.ctrl c p)) 0
   -- A selector moved to the head leaves its spelling's remainder behind,
   -- an empty word (`\onslide*{x}<s>`), which no reading of the argument sees.
   | .ctrl c p :: sel :: .word "" q :: .space :: arg :: rest, out, 0 =>
-    if onlyNumbered c sel then
-      match onlyArg p sel arg with
-      | some rs => onlyAltList rest (out ++ rs) 0
-      | none => onlyAltList (sel :: .word "" q :: .space :: arg :: rest) (out.push (.ctrl c p)) 0
-    else onlyAltList (sel :: .word "" q :: .space :: arg :: rest) (out.push (.ctrl c p)) 0
+    if onlyNumbered userOnly c sel then
+      match onlyArg userOnly math p sel arg with
+      | some rs => onlyAltList userOnly math rest (out ++ rs) 0
+      | none => onlyAltList userOnly math (sel :: .word "" q :: .space :: arg :: rest)
+          (out.push (.ctrl c p)) 0
+    else onlyAltList userOnly math (sel :: .word "" q :: .space :: arg :: rest)
+      (out.push (.ctrl c p)) 0
   | .ctrl c p :: sel :: .word "" q :: arg :: rest, out, 0 =>
-    if onlyNumbered c sel then
-      match onlyArg p sel arg with
-      | some rs => onlyAltList rest (out ++ rs) 0
-      | none => onlyAltList (sel :: .word "" q :: arg :: rest) (out.push (.ctrl c p)) 0
-    else onlyAltList (sel :: .word "" q :: arg :: rest) (out.push (.ctrl c p)) 0
+    if onlyNumbered userOnly c sel then
+      match onlyArg userOnly math p sel arg with
+      | some rs => onlyAltList userOnly math rest (out ++ rs) 0
+      | none => onlyAltList userOnly math (sel :: .word "" q :: arg :: rest)
+          (out.push (.ctrl c p)) 0
+    else onlyAltList userOnly math (sel :: .word "" q :: arg :: rest) (out.push (.ctrl c p)) 0
   | .ctrl c p :: sel :: .space :: arg :: rest, out, 0 =>
-    if onlyNumbered c sel then
-      match onlyArg p sel arg with
-      | some rs => onlyAltList rest (out ++ rs) 0
-      | none => onlyAltList (sel :: .space :: arg :: rest) (out.push (.ctrl c p)) 0
-    else onlyAltList (sel :: .space :: arg :: rest) (out.push (.ctrl c p)) 0
+    if onlyNumbered userOnly c sel then
+      match onlyArg userOnly math p sel arg with
+      | some rs => onlyAltList userOnly math rest (out ++ rs) 0
+      | none => onlyAltList userOnly math (sel :: .space :: arg :: rest) (out.push (.ctrl c p)) 0
+    else onlyAltList userOnly math (sel :: .space :: arg :: rest) (out.push (.ctrl c p)) 0
   | .ctrl c p :: sel :: arg :: rest, out, 0 =>
-    if onlyNumbered c sel then
-      match onlyArg p sel arg with
-      | some rs => onlyAltList rest (out ++ rs) 0
-      | none => onlyAltList (sel :: arg :: rest) (out.push (.ctrl c p)) 0
-    else onlyAltList (sel :: arg :: rest) (out.push (.ctrl c p)) 0
-  | r :: rest, out, 0 => onlyAltList rest (out.push (onlyAltRaw r)) 0
+    if onlyNumbered userOnly c sel then
+      match onlyArg userOnly math p sel arg with
+      | some rs => onlyAltList userOnly math rest (out ++ rs) 0
+      | none => onlyAltList userOnly math (sel :: arg :: rest) (out.push (.ctrl c p)) 0
+    else onlyAltList userOnly math (sel :: arg :: rest) (out.push (.ctrl c p)) 0
+  | r :: rest, out, 0 => onlyAltList userOnly math rest (out.push (onlyAltRaw userOnly math r)) 0
 termination_by structural l _ _ => l
 
 /-- The undelimited argument `\only<s>` takes, as its alternation: a group's
-content, a word's first character, a control word, a character or a
-formula; nothing it can read as one token, `none`. A word reads as itself
-where the selector selects and as its rest elsewhere, so its letters keep
-their kerns. -/
-private def onlyArg (p : Pos) (sel : Raw) : Raw → Option (Array Raw)
-  | .group g q => some (onlyAlt p sel (onlyAltList g.toList #[] 0) q)
+content, a word's first character, a control word, a character, or a
+formula — whole, where TeX would take its opening `$` alone and leave the
+page in the wrong mode; nothing it can read as one token, `none`. A word
+reads as itself where the selector selects and as its rest elsewhere, so its
+letters keep their kerns. -/
+private def onlyArg (userOnly math : Bool) (p : Pos) (sel : Raw) : Raw → Option (Array Raw)
+  | .group g q => some (onlyAlt p sel (onlyAltList userOnly math g.toList #[] 0) q)
   | .word w q =>
     match w.toList with
     | _ :: tail@(_ :: _) =>
-      some #[.ctrl "alt" p, sel, .group #[.word w q] q,
+      some #[.ctrl altHead p, sel, .group #[.word w q] q,
         .group #[.word (String.ofList tail) { q with col := q.col + 1 }] q]
     | [c] => some (onlyAlt p sel #[.word (String.singleton c) q] q)
     | [] => none
   | .ctrl n q => some (onlyAlt p sel #[.ctrl n q] q)
   | .sym c q => some (onlyAlt p sel #[.sym c q] q)
-  | .math d body q => some (onlyAlt p sel #[.math d (onlyAltList body.toList #[] 0) q] q)
+  | .math d body q => some (onlyAlt p sel #[.math d body q] q)
   | .space | .par _ | .env .. | .verb .. => none
 
-private def onlyAltRaw : Raw → Raw
-  | .group body p => .group (onlyAltList body.toList #[] 0) p
-  | .env n body p => .env n (onlyAltList body.toList #[] 0) p
-  | .math d body p => .math d (onlyAltList body.toList #[] 0) p
+private def onlyAltRaw (userOnly math : Bool) : Raw → Raw
+  | .group body p => .group (onlyAltList userOnly math body.toList #[] 0) p
+  | .env n body p =>
+    if pictureBodies.contains n || (!math && mathEnvs.contains n) then .env n body p
+    else .env n (onlyAltList userOnly math body.toList #[] 0) p
+  | .math d body p =>
+    if math then .math d (onlyAltList userOnly math body.toList #[] 0) p else .math d body p
   | .word w p => .word w p
   | .space => .space
   | .par p => .par p
@@ -9342,13 +9423,55 @@ private def onlyAltRaw : Raw → Raw
 
 end
 
-/-! An alternation inside a formula is the alternation of whole formulas: the
-math parser reads one formula, so each step's reading of the formula — every
-`\alt<s>{a}{b}` in it read as `a` where `s` selects that step and `b`
-elsewhere, as beamer's `\alt` executes one argument's tokens — is set as its
-own formula, and the step chooses among them. A formula whose every selector
-is numbered, holding no label or tag, takes the readings; any other stays as
-written, named by the elaborator where it cannot be read. -/
+/-! The readings. An alternation stands in the IR as one node whose
+alternative each step page chooses, which is exact where it stands among a
+paragraph's words. Where it holds what only a block holds — a paragraph
+break, a display, an environment, a list's item, a table's cell or row —
+its node splits the paragraph on every step, and a formula's math parser
+cannot read one at all. There the content around it is read per step
+instead: each step's reading — every `\alt<s>{a}{b}` in it read as `a`'s
+tokens where `s` selects that step and `b`'s elsewhere, as beamer's `\alt`
+executes one argument's tokens — is set whole, and the step chooses among
+the readings. The unit is the formula; in a flow of paragraphs, the
+paragraph holding such an alternation, or a list or table its alternation
+splits, and a paragraph that is nothing but alternations, joined to the
+next until no step reads it as nothing. Content whose every selector is
+numbered takes the readings, unless it labels, tags, footnotes, pauses,
+titles or heads, or holds an environment a copy would count again; any
+other stays as written, named by the elaborator where it cannot be read. -/
+
+/-- What a copy per reading would count again, or what no reading may hold
+twice: a label, a tag, a footnote, a pause, a frame's title, a heading, a
+note. -/
+private def readingCounts : List String :=
+  ["label", "tag", "footnote", "footnotemark", "footnotetext", "pause", "frametitle",
+   "framesubtitle", "titlepage", "maketitle", "part", "chapter", "section", "subsection",
+   "subsubsection", "paragraph", "note"]
+
+/-- The overlay commands no formula reading can set: the math parser reads
+none of them, so a formula holding one stays as written, its one loss
+naming it, where every reading would name it again. -/
+private def formulaOverlays : List String :=
+  ["uncover", "visible", "invisible", "onslide", "only", "alt"]
+
+/-- The math environments a formula's readings may stand in: the unnumbered
+ones, whose copies number nothing twice. -/
+private def readableMathEnvs : List String :=
+  ["equation*", "displaymath", "align*", "gather*"]
+
+/-- The environments a paragraph's readings may copy: none numbers what it
+holds or keeps state past its end. -/
+private def readingEnvs : List String :=
+  listEnvs ++ tableEnvs ++ readableMathEnvs ++
+    ["center", "flushleft", "flushright", "quote", "quotation", "verse", "minipage", "block",
+     "alertblock", "exampleblock", "columns", "column"]
+
+/-- The environments whose bodies are a flow of paragraphs, with the number
+of argument groups each opens on. -/
+private def flowEnvArgs : List (String × Nat) :=
+  [("document", 0), ("frame", 2), ("block", 1), ("alertblock", 1), ("exampleblock", 1),
+   ("center", 0), ("flushleft", 0), ("flushright", 0), ("quote", 0), ("quotation", 0),
+   ("verse", 0), ("minipage", 1), ("column", 1)]
 
 /-- A selector's numbered steps: none where the step model cannot number it. -/
 private def altSpecOf : Raw → Option Ir.OverlaySpec
@@ -9361,50 +9484,57 @@ private def altSelects (sel : Raw) (k : Nat) : Bool :=
 
 mutual
 
-/-- The selectors of every alternation in a formula's tokens, nested ones
-included; `none` where one is not numbered, an alternation is not two
-groups, or the formula labels or tags itself. -/
-private def mathAltSpecs : List Raw → Option (List Ir.OverlaySpec)
+/-- The selectors of every alternation in `l`, nested ones included; `none`
+where one is not numbered or not two groups, or where `l` holds what a
+reading cannot copy (`readingCounts`, an environment off `readingEnvs`, a
+picture, and in a formula `formulaOverlays`). -/
+private def altSpecs (cx : ReadCx) (formula : Bool) : List Raw → Option (List Ir.OverlaySpec)
   | [] => some []
   | .ctrl n _ :: rest =>
-    if n == "alt" then specsAfterAlt rest
-    else if n == "label" || n == "tag" then none
-    else mathAltSpecs rest
+    if isAltHead cx.userAlt n then specsAfterAlt cx formula rest
+    else if readingCounts.contains n || (formula && formulaOverlays.contains n) then none
+    else altSpecs cx formula rest
   | r :: rest => do
-    let sr ← mathAltSpecsRaw r
-    let rs ← mathAltSpecs rest
+    let sr ← altSpecsRaw cx formula r
+    let rs ← altSpecs cx formula rest
     pure (sr ++ rs)
 termination_by structural l => l
 
 /-- After an alternation's head: its selector, then its first group. -/
-private def specsAfterAlt : List Raw → Option (List Ir.OverlaySpec)
-  | sel :: rest => (altSpecOf sel).bind fun s => specsAltA s rest
+private def specsAfterAlt (cx : ReadCx) (formula : Bool) :
+    List Raw → Option (List Ir.OverlaySpec)
+  | sel :: rest => (altSpecOf sel).bind fun s => specsAltA cx formula s rest
   | [] => none
 termination_by structural l => l
 
 /-- The first alternative, after at most one space. -/
-private def specsAltA (s : Ir.OverlaySpec) : List Raw → Option (List Ir.OverlaySpec)
-  | .space :: .group g _ :: rest => specsAltB s (mathAltSpecs g.toList) rest
-  | .group g _ :: rest => specsAltB s (mathAltSpecs g.toList) rest
+private def specsAltA (cx : ReadCx) (formula : Bool) (s : Ir.OverlaySpec) :
+    List Raw → Option (List Ir.OverlaySpec)
+  | .space :: .group g _ :: rest => specsAltB cx formula s (altSpecs cx formula g.toList) rest
+  | .group g _ :: rest => specsAltB cx formula s (altSpecs cx formula g.toList) rest
   | _ => none
 termination_by structural l => l
 
 /-- The second alternative, after at most one space, and the rest. -/
-private def specsAltB (s : Ir.OverlaySpec) (sa : Option (List Ir.OverlaySpec)) :
-    List Raw → Option (List Ir.OverlaySpec)
+private def specsAltB (cx : ReadCx) (formula : Bool) (s : Ir.OverlaySpec)
+    (sa : Option (List Ir.OverlaySpec)) : List Raw → Option (List Ir.OverlaySpec)
   | .space :: .group g _ :: rest | .group g _ :: rest => do
     let a ← sa
-    let b ← mathAltSpecs g.toList
-    let r ← mathAltSpecs rest
+    let b ← altSpecs cx formula g.toList
+    let r ← altSpecs cx formula rest
     pure (s :: a ++ b ++ r)
   | _ => none
 termination_by structural l => l
 
-private def mathAltSpecsRaw : Raw → Option (List Ir.OverlaySpec)
-  | .group g _ => mathAltSpecs g.toList
-  | .env _ g _ => mathAltSpecs g.toList
-  | .math _ g _ => mathAltSpecs g.toList
-  | .ctrl n _ => if n == "alt" || n == "label" || n == "tag" then none else some []
+private def altSpecsRaw (cx : ReadCx) (formula : Bool) : Raw → Option (List Ir.OverlaySpec)
+  | .group g _ => altSpecs cx formula g.toList
+  | .env n g _ =>
+    if pictureBodies.contains n || (!formula && !readingEnvs.contains n) then none
+    else altSpecs cx (formula || mathEnvs.contains n) g.toList
+  | .math _ g _ => altSpecs cx true g.toList
+  | .ctrl n _ =>
+    if isAltHead cx.userAlt n || readingCounts.contains n ||
+      (formula && formulaOverlays.contains n) then none else some []
   | .word .. | .space | .par _ | .sym .. | .verb .. => some []
 termination_by structural r => r
 
@@ -9412,40 +9542,49 @@ end
 
 mutual
 
-/-- A formula's tokens as step `k` reads them: every alternation replaced by
-the content of the alternative that step shows. -/
+/-- `l`'s tokens as step `k` reads them: every alternation replaced by the
+tokens of the alternative that step shows — in text, an empty group where
+it shows nothing, so the spaces around it stay two, as TeX keeps them. -/
 -- conserves: none — a surface boundary walk; no IR content has been elaborated.
-private def mathRead (k : Nat) : List Raw → Array Raw → Array Raw
+private def readTokens (cx : ReadCx) (math : Bool) (k : Nat) : List Raw → Array Raw → Array Raw
   | [], out => out
   | .ctrl n p :: rest, out =>
-    if n == "alt" then readAfterAlt k p rest out else mathRead k rest (out.push (.ctrl n p))
-  | r :: rest, out => mathRead k rest (out.push (mathReadRaw k r))
+    if isAltHead cx.userAlt n then readAfterAlt cx math k p n rest out
+    else readTokens cx math k rest (out.push (.ctrl n p))
+  | r :: rest, out => readTokens cx math k rest (out.push (readRaw cx math k r))
 termination_by structural l _ => l
 
 /-- After an alternation's head: its selector, then its alternatives. A
 shape that is no alternation keeps its tokens unread. -/
-private def readAfterAlt (k : Nat) (p : Pos) : List Raw → Array Raw → Array Raw
-  | sel :: rest, out => readAltA k p sel rest out
-  | [], out => out.push (.ctrl "alt" p)
-termination_by structural l _ => l
-
-private def readAltA (k : Nat) (p : Pos) (sel : Raw) : List Raw → Array Raw → Array Raw
-  | .space :: .group g _ :: rest, out => readAltB k p sel (mathRead k g.toList #[]) rest out
-  | .group g _ :: rest, out => readAltB k p sel (mathRead k g.toList #[]) rest out
-  | rest, out => (out.push (.ctrl "alt" p)).push sel ++ rest.toArray
-termination_by structural l _ => l
-
-private def readAltB (k : Nat) (p : Pos) (sel : Raw) (ra : Array Raw) :
+private def readAfterAlt (cx : ReadCx) (math : Bool) (k : Nat) (p : Pos) (n : String) :
     List Raw → Array Raw → Array Raw
-  | .space :: .group g _ :: rest, out | .group g _ :: rest, out =>
-    mathRead k rest (out ++ (if altSelects sel k then ra else mathRead k g.toList #[]))
-  | rest, out => (out.push (.ctrl "alt" p)).push sel ++ ra ++ rest.toArray
+  | sel :: rest, out => readAltA cx math k p n sel rest out
+  | [], out => out.push (.ctrl n p)
 termination_by structural l _ => l
 
-private def mathReadRaw (k : Nat) : Raw → Raw
-  | .group g p => .group (mathRead k g.toList #[]) p
-  | .env n g p => .env n (mathRead k g.toList #[]) p
-  | .math d g p => .math d (mathRead k g.toList #[]) p
+private def readAltA (cx : ReadCx) (math : Bool) (k : Nat) (p : Pos) (n : String) (sel : Raw) :
+    List Raw → Array Raw → Array Raw
+  | .space :: .group g _ :: rest, out =>
+    readAltB cx math k p n sel (readTokens cx math k g.toList #[]) rest out
+  | .group g _ :: rest, out => readAltB cx math k p n sel (readTokens cx math k g.toList #[]) rest out
+  | rest, out => (out.push (.ctrl n p)).push sel ++ rest.toArray
+termination_by structural l _ => l
+
+private def readAltB (cx : ReadCx) (math : Bool) (k : Nat) (p : Pos) (n : String) (sel : Raw)
+    (ra : Array Raw) : List Raw → Array Raw → Array Raw
+  | .space :: .group g _ :: rest, out | .group g _ :: rest, out =>
+    let shown := if altSelects sel k then ra else readTokens cx math k g.toList #[]
+    let shown := if !math && shown.isEmpty then #[.group #[] p] else shown
+    readTokens cx math k rest (out ++ shown)
+  | rest, out => (out.push (.ctrl n p)).push sel ++ ra ++ rest.toArray
+termination_by structural l _ => l
+
+private def readRaw (cx : ReadCx) (math : Bool) (k : Nat) : Raw → Raw
+  | .group g p => .group (readTokens cx math k g.toList #[]) p
+  | .env n g p =>
+    if pictureBodies.contains n then .env n g p
+    else .env n (readTokens cx (math || mathEnvs.contains n) k g.toList #[]) p
+  | .math d g p => .math d (readTokens cx true k g.toList #[]) p
   | .word w p => .word w p
   | .space => .space
   | .par p => .par p
@@ -9456,64 +9595,349 @@ termination_by structural r => r
 
 end
 
-/-- The steps at which a formula's reading may change: step 1, every range's
-first step and the step after every range's last. -/
-private def mathAltBreaks (specs : List Ir.OverlaySpec) : List Nat :=
+/-- The steps at which a reading may change: step 1, every range's first
+step and the step after every range's last. -/
+private def readingBreaks (specs : List Ir.OverlaySpec) : List Nat :=
   let points := specs.flatMap fun s => s.ranges.flatMap fun (a, b) =>
     max a 1 :: (b.map (· + 1)).toList
   ((1 :: points).eraseDups.toArray.qsort (· < ·)).toList
 
-/-- The selector word for a closed segment of steps. -/
-private def segmentWord (a b : Nat) (p : Pos) : Raw :=
-  .word (if a == b then s!"<{a}>" else s!"<{a}-{b}>") p
+/-- The first step of every range the selectors name. -/
+private def readingStarts (specs : List Ir.OverlaySpec) : List Nat :=
+  specs.flatMap fun s => s.ranges.map fun (a, _) => max a 1
 
-/-- The readings chained as alternations, each segment between two breaks a
-closed selector and the last an open one where it opens at a range's first
-step, so the selectors name exactly the steps the formula's own selectors
-reach and no further. -/
-private def mathAltChain (p : Pos) (starts : List Nat) (wrap : Array Raw → Raw) :
-    List (Nat × Array Raw) → Array Raw
+/-- The selector word for the steps of `segs`, each closed or open. -/
+private def segmentsWord (segs : List (Nat × Option Nat)) (p : Pos) : Raw :=
+  .word ("<" ++ ",".intercalate (segs.map fun (a, b) => match b with
+    | none => s!"{a}-"
+    | some b => if a == b then s!"{a}" else s!"{a}-{b}") ++ ">") p
+
+/-- Each reading's steps: from its break up to the next, the last open. -/
+private def readingSegments : List (Nat × Array Raw) → List ((Nat × Option Nat) × Array Raw)
+  | [] => []
+  | [(a, r)] => [((a, none), r)]
+  | (a, r) :: (b, rb) :: rest => ((a, some (b - 1)), r) :: readingSegments ((b, rb) :: rest)
+
+/-- The readings, each once, with the steps it shows on, in order of first
+showing. -/
+private def distinctReadings (segs : List ((Nat × Option Nat) × Array Raw)) :
+    Array (Array Raw × List (Nat × Option Nat)) := Id.run do
+  let mut out : Array (Array Raw × List (Nat × Option Nat)) := #[]
+  for (sg, r) in segs do
+    match out.findIdx? (·.1 == r) with
+    | some i => out := out.modify i fun (r', ss) => (r', ss ++ [sg])
+    | none => out := out.push (r, [sg])
+  return out
+
+/-- Readings chained as alternations, each under the selector of its own
+steps, the last standing where no selector reached. -/
+private def nestReadings (p : Pos) : List (Array Raw × List (Nat × Option Nat)) → Array Raw
   | [] => #[]
-  | [(_, r)] => #[wrap r]
-  | [(a, ra), (b, rb)] =>
-    if starts.contains b then
-      #[.ctrl "alt" p, .word s!"<{b}->" p, .group #[wrap rb] p, .group #[wrap ra] p]
-    else #[.ctrl "alt" p, segmentWord a (b - 1) p, .group #[wrap ra] p, .group #[wrap rb] p]
-  | (a, ra) :: (b, rb) :: rest =>
-    #[.ctrl "alt" p, segmentWord a (b - 1) p, .group #[wrap ra] p,
-      .group (mathAltChain p starts wrap ((b, rb) :: rest)) p]
+  | [(r, _)] => r
+  | (r, ss) :: rest =>
+    #[.ctrl altHead p, segmentsWord ss p, .group r p, .group (nestReadings p rest) p]
 
-/-- One formula, as its readings' alternation where its alternations can be
-read per step; as written otherwise. -/
-private def mathAltExpand (wrap : Array Raw → Raw) (body : Array Raw) (p : Pos) : Array Raw :=
-  match mathAltSpecs body.toList with
+/-- The readings — each the content its group holds — as alternations, each
+distinct reading once, under the selector of the steps it shows on. The one
+showing past the last break leads where that break opens a range, carrying
+its steps, and stands last otherwise, its steps named by none: so the
+selectors name exactly the steps the content's own selectors reach and no
+further. -/
+private def readingChain (p : Pos) (starts : List Nat) (readings : List (Nat × Array Raw)) :
+    Array Raw :=
+  let segs := readingSegments readings
+  let ds := (distinctReadings segs).toList
+  let lastStart := (readings.getLast?.map (·.1)).getD 1
+  let lastR := (segs.getLast?.map (·.2)).getD #[]
+  if starts.contains lastStart then
+    nestReadings p (ds.filter (·.1 == lastR) ++ ds.filter (·.1 != lastR))
+  else nestReadings p (ds.filter (·.1 != lastR) ++ ds.filter (·.1 == lastR))
+
+/-- One formula, as its readings' alternation where its alternations — its
+`\only` among them — can be read per step; as written otherwise. -/
+private def formulaReadings (cx : ReadCx) (wrap : Array Raw → Raw) (body : Array Raw)
+    (orig : Raw) (p : Pos) : Array Raw :=
+  let b := onlyAltList cx.userOnly true body.toList #[] 0
+  match altSpecs cx true b.toList with
   | some specs@(_ :: _) =>
-    let breaks := mathAltBreaks specs
-    let starts := specs.flatMap fun s => s.ranges.map fun (a, _) => max a 1
-    mathAltChain p starts wrap (breaks.map fun k => (k, mathRead k body.toList #[]))
-  | some [] | none => #[wrap body]
-
-/-- The math environments a formula's readings may stand in: the unnumbered
-ones, whose copies number nothing twice. -/
-private def readableMathEnvs : List String :=
-  ["equation*", "displaymath", "align*", "gather*"]
+    readingChain p (readingStarts specs)
+      ((readingBreaks specs).map fun k => (k, #[wrap (readTokens cx true k b.toList #[])]))
+  | some [] | none => #[orig]
 
 mutual
 
-/-- Every formula holding alternations, nested anywhere, as its readings'
-alternation (`mathAltExpand`). -/
+/-- Every formula of `l` with its `\only` read as alternations, as a
+paragraph's readings read them. -/
 -- conserves: none — a surface boundary walk; no IR content has been elaborated.
-private def mathAltList : List Raw → Array Raw → Array Raw
+private def formulaOnlyList (cx : ReadCx) : List Raw → Array Raw → Array Raw
   | [], out => out
-  | r :: rest, out => mathAltList rest (out ++ mathAltRaw r)
-termination_by structural l _ => l
+  | r :: rest, out => formulaOnlyList cx rest (out.push (formulaOnlyRaw cx r))
 
-private def mathAltRaw : Raw → Array Raw
-  | .math d body p => mathAltExpand (fun b => .math d b p) body p
+private def formulaOnlyRaw (cx : ReadCx) : Raw → Raw
+  | .math d g p => .math d (onlyAltList cx.userOnly true g.toList #[] 0) p
+  | .env n g p =>
+    if pictureBodies.contains n then .env n g p
+    else if mathEnvs.contains n then .env n (onlyAltList cx.userOnly true g.toList #[] 0) p
+    else .env n (formulaOnlyList cx g.toList #[]) p
+  | .group g p => .group (formulaOnlyList cx g.toList #[]) p
+  | .word w p => .word w p
+  | .space => .space
+  | .par p => .par p
+  | .ctrl n p => .ctrl n p
+  | .sym c p => .sym c p
+  | .verb env s p => .verb env s p
+
+end
+
+/-- A reading's content with the blank space at its ends dropped. -/
+private def trimReading (r : Array Raw) : Array Raw :=
+  let blank (x : Raw) : Bool := x matches .space || x matches .par _
+  let r := r.extract (r.findIdx? (!blank ·) |>.getD r.size) r.size
+  match (List.range r.size).reverse.find? fun i => (r[i]?.map (!blank ·)).getD false with
+  | some i => r.extract 0 (i + 1)
+  | none => #[]
+
+/-- Does a reading show nothing: blank space and empty groups alone? -/
+private def readingEmpty (r : Array Raw) : Bool :=
+  r.all fun x => x matches .space || x matches .par _ || x matches .group #[] _
+
+/-- A unit's readings, with the first step of every range its selectors
+name and the last step they reach; none where the unit holds what a reading
+cannot copy, or no numbered alternation. -/
+private def unitReadings (cx : ReadCx) (raws : Array Raw) :
+    Option (List Nat × List (Nat × Array Raw) × Nat) :=
+  let u := formulaOnlyList cx raws.toList #[]
+  match altSpecs cx false u.toList with
+  | some specs@(_ :: _) =>
+    some (readingStarts specs,
+      (readingBreaks specs).map (fun k => (k, trimReading (readTokens cx false k u.toList #[]))),
+      specs.foldl (fun m s => max m s.maxStep) 1)
+  | some [] | none => none
+
+/-- Does a group hold what only a block holds: a paragraph break, a display
+or an environment? -/
+private def holdsBlock (g : Array Raw) : Bool :=
+  g.any fun r => match r with
+    | .par _ => true
+    | .math d _ _ => d
+    | .env .. => true
+    | .word .. | .space | .ctrl .. | .sym .. | .group .. | .verb .. => false
+
+/-- A token that splits environment `n`'s structure: a list's item, or a
+table's cell, row or rule. -/
+private def splitsAt (n : String) : Raw → Bool
+  | .ctrl c _ => (listEnvs.contains n && c == "item") ||
+      (tableEnvs.contains n && ["\\", "tabularnewline", "hline", "cline", "toprule",
+        "midrule", "bottomrule", "cmidrule", "addlinespace"].contains c)
+  | .sym c _ => tableEnvs.contains n && c == '&'
+  | .group .. | .env .. | .math .. | .word .. | .space | .par _ | .verb .. => false
+
+/-- The two groups of every alternation standing in `l` itself, each after
+its selector and at most a space. -/
+private def topAlts (cx : ReadCx) : List Raw → List (Array Raw × Array Raw)
+  | [] => []
+  | .ctrl n _ :: _ :: .group a _ :: .group b _ :: rest =>
+    if isAltHead cx.userAlt n then (a, b) :: topAlts cx rest else topAlts cx rest
+  | .ctrl n _ :: _ :: .space :: .group a _ :: .space :: .group b _ :: rest =>
+    if isAltHead cx.userAlt n then (a, b) :: topAlts cx rest else topAlts cx rest
+  | _ :: rest => topAlts cx rest
+
+/-- Is `l` alternations and blank space alone, one alternation at least? -/
+private def onlyAlts (cx : ReadCx) : List Raw → Bool
+  | [] => true
+  | .space :: rest => onlyAlts cx rest
+  | .ctrl n _ :: _ :: .group _ _ :: .group _ _ :: rest => isAltHead cx.userAlt n && onlyAlts cx rest
+  | _ :: _ => false
+
+mutual
+
+/-- Does `l` hold a list or a table an alternation in it splits — one
+holding an item, a cell, a row or a rule of it, or a block — at any depth
+a paragraph's reading reaches? -/
+private def splitsList (cx : ReadCx) : List Raw → Bool
+  | [] => false
+  | r :: rest => splitsRaw cx r || splitsList cx rest
+
+private def splitsRaw (cx : ReadCx) : Raw → Bool
+  | .env n g _ =>
+    if !readingEnvs.contains n || mathEnvs.contains n then false
+    else
+      ((listEnvs.contains n || tableEnvs.contains n) &&
+        (topAlts cx g.toList).any fun (a, b) =>
+          a.any (splitsAt n) || b.any (splitsAt n) || holdsBlock a || holdsBlock b) ||
+      splitsList cx g.toList
+  | .group g _ => splitsList cx g.toList
+  | .math .. | .word .. | .space | .par _ | .ctrl .. | .sym .. | .verb .. => false
+
+end
+
+/-- A display formula holding an alternation it can read. -/
+private def displayAlts (cx : ReadCx) : Raw → Bool
+  | .math true g _ | .env _ g _ =>
+    (altSpecs cx true (onlyAltList cx.userOnly true g.toList #[] 0).toList).any (!·.isEmpty)
+  | .math false .. | .group .. | .word .. | .space | .par _ | .ctrl .. | .sym .. | .verb .. =>
+    false
+
+/-- Is a paragraph read per step: an alternation in it holds a block, a
+list or table in it is split by one, or a display in it holds one? -/
+private def unitTrigger (cx : ReadCx) (run : Array Raw) : Bool :=
+  (topAlts cx run.toList).any (fun (a, b) => holdsBlock a || holdsBlock b) ||
+    splitsList cx run.toList ||
+    run.any (fun r => match r with
+      | .env n _ _ => readableMathEnvs.contains n && displayAlts cx r
+      | .math true .. => displayAlts cx r
+      | .math false .. | .group .. | .word .. | .space | .par _ | .ctrl .. | .sym .. | .verb .. =>
+        false)
+
+/-- Is a paragraph nothing but alternations, one of them showing nothing on
+some step: one a page may read as no paragraph at all. -/
+private def emptyRun (cx : ReadCx) (run : Array Raw) : Bool :=
+  onlyAlts cx run.toList &&
+    (topAlts cx run.toList).any fun (a, b) => readingEmpty a || readingEmpty b
+
+/-- A paragraph of a flow: its raws as the pass before left them, each read
+alone, and the blank line after it. -/
+private structure ReadRun where
+  orig : Array Raw := #[]
+  done : Array Raw := #[]
+  sep : Option Raw := none
+
+/-- Runs `i` through `j`, joined by the blank lines between them. -/
+private def runsRaws (runs : Array ReadRun) (i j : Nat) : Array Raw := Id.run do
+  let mut out : Array Raw := #[]
+  for (r, k) in runs.zipIdx do
+    if i ≤ k && k ≤ j then
+      out := out ++ r.orig
+      if k < j then
+        if let some s := r.sep then out := out.push s
+  return out
+
+/-- Does a unit read as nothing on some step its own selectors reach? -/
+private def someEmpty (rd : Option (List Nat × List (Nat × Array Raw) × Nat)) : Bool :=
+  rd.any fun (_, rs, mx) => rs.any fun (k, r) => k ≤ mx && readingEmpty r
+
+/-- The flow's units: runs read per step (`unitTrigger`), and a first or last
+run a page may read as nothing (`emptyRun`). A unit at the flow's first or
+last run that some step reads as nothing extends over the runs inside it
+until none does, never over a run a reading cannot copy: what opens or
+closes a frame is then a reading with content on every step, as its page
+opens and closes on that content. A run that may read as nothing and joins
+no other is left as it stands. -/
+private def planUnits (cx : ReadCx) (runs : Array ReadRun) : Array (Nat × Nat) := Id.run do
+  let n := runs.size
+  let mut segs : Array (Nat × Nat) := #[]
+  let mut next := 0
+  for (r, i) in runs.zipIdx do
+    let strong := unitTrigger cx r.orig
+    let edge := i == 0 || i + 1 == n
+    if i < next || !(strong || (edge && emptyRun cx r.orig)) then continue
+    let mut j := i
+    let mut rd := unitReadings cx (runsRaws runs i i)
+    if rd.isNone then continue
+    if i == 0 then
+      for _ in [0:n] do
+        if !someEmpty rd || j + 1 ≥ n then break
+        let wider := unitReadings cx (runsRaws runs i (j + 1))
+        if wider.isNone then break
+        j := j + 1
+        rd := wider
+    let mut k := i
+    if j + 1 == n then
+      for _ in [0:n] do
+        if !someEmpty rd || k ≤ next then break
+        let wider := unitReadings cx (runsRaws runs (k - 1) j)
+        if wider.isNone then break
+        k := k - 1
+        rd := wider
+    if !strong && (someEmpty rd || (k == i && j == i)) then continue
+    segs := segs.push (k, j)
+    next := j + 1
+  return segs
+
+/-- A raw's position, where it carries one. -/
+private def rawPos? : Raw → Option Pos
+  | .word _ p | .par p | .ctrl _ p | .sym _ p | .group _ p | .math _ _ p | .env _ _ p
+  | .verb _ _ p => some p
+  | .space => none
+
+/-- A flow of paragraphs, its units read per step and every other run as
+each of its raws reads alone. -/
+private def assembleFlow (cx : ReadCx) (runs : Array ReadRun) : Array Raw := Id.run do
+  let segs := planUnits cx runs
+  let mut out : Array Raw := #[]
+  for (r, i) in runs.zipIdx do
+    match segs.find? fun (k, j) => k ≤ i && i ≤ j with
+    | some (k, j) =>
+      if i == k then
+        let raws := runsRaws runs k j
+        let p := (raws.findSome? rawPos?).getD {}
+        match unitReadings cx raws with
+        | some (starts, rs, _) =>
+          out := out ++ readingChain p starts
+            (rs.map fun (s, rd) => (s, if readingEmpty rd then #[] else rd.push (.par p)))
+        | none => out := out ++ raws
+      if i == j then
+        if let some s := r.sep then out := out.push s
+    | none =>
+      out := out ++ r.done
+      if let some s := r.sep then out := out.push s
+  return out
+
+/-- Is a flow's opening raw one of its environment's arguments: a blank,
+an option in brackets, an overlay selector, or a group while `groups`
+remain? Answers with the state after it. -/
+private def leadStep (groups : Nat) (bracket : Bool) : Raw → Bool × Nat × Bool
+  | .space => (true, groups, bracket)
+  | .sym '[' _ => (true, groups, true)
+  | .sym ']' _ => (bracket, groups, false)
+  | .word w _ => (bracket || (w.startsWith "<" && w.endsWith ">"), groups, bracket)
+  | .group .. =>
+    if bracket then (true, groups, bracket)
+    else if groups > 0 then (true, groups - 1, false) else (false, groups, bracket)
+  | .sym .. | .par _ | .ctrl .. | .math .. | .env .. | .verb .. => (bracket, groups, bracket)
+
+mutual
+
+/-- A list that is no flow of paragraphs, each raw read alone. -/
+-- conserves: none — a surface boundary walk; no IR content has been elaborated.
+private def readList (cx : ReadCx) : List Raw → Array Raw → Array Raw
+  | [], out => out
+  | r :: rest, out =>
+    let rs := readRawAlone cx r
+    readList cx rest (out ++ rs)
+
+/-- A flow's arguments, then its runs: each raw read alone beside its own,
+the runs split at blank lines. -/
+private def flowRuns (cx : ReadCx) (lead : Bool) (groups : Nat) (bracket : Bool) :
+    List Raw → Array Raw → Array ReadRun → ReadRun → Array Raw × Array ReadRun
+  | [], pre, runs, cur => (pre, runs.push cur)
+  | r :: rest, pre, runs, cur =>
+    let (arg, groups', bracket') := leadStep groups bracket r
+    if lead && arg then
+      let rs := readRawAlone cx r
+      flowRuns cx true groups' bracket' rest (pre ++ rs) runs cur
+    else
+      match r with
+      | .par p => flowRuns cx false 0 false rest pre (runs.push { cur with sep := some (.par p) }) {}
+      | .word .. | .space | .ctrl .. | .sym .. | .group .. | .math .. | .env .. | .verb .. =>
+        let rs := readRawAlone cx r
+        flowRuns cx false 0 false rest pre runs { cur with orig := cur.orig.push r, done := cur.done ++ rs }
+
+/-- One raw read alone: a formula by its readings, a flow's body by its
+runs, a picture's body as its reader takes it. -/
+private def readRawAlone (cx : ReadCx) : Raw → Array Raw
+  | .math d body p => formulaReadings cx (fun b => .math d b p) body (.math d body p) p
   | .env n body p =>
-    if readableMathEnvs.contains n then mathAltExpand (fun b => .env n b p) body p
-    else #[.env n (mathAltList body.toList #[]) p]
-  | .group body p => #[.group (mathAltList body.toList #[]) p]
+    if pictureBodies.contains n then #[.env n body p]
+    else if readableMathEnvs.contains n then
+      formulaReadings cx (fun b => .env n b p) body (.env n body p) p
+    else if mathEnvs.contains n then #[.env n body p]
+    else match flowEnvArgs.lookup n with
+      | some groups =>
+        let (pre, runs) := flowRuns cx true groups false body.toList #[] #[] {}
+        #[.env n (pre ++ assembleFlow cx runs) p]
+      | none => #[.env n (readList cx body.toList #[]) p]
+  | .group body p => #[.group (readList cx body.toList #[]) p]
   | .word w p => #[.word w p]
   | .space => #[.space]
   | .par p => #[.par p]
@@ -9523,11 +9947,21 @@ private def mathAltRaw : Raw → Array Raw
 
 end
 
-/-- `\only` read as beamer reads it, everywhere, and every formula's
-alternations as alternations of whole formulas: the pass after the
-overlay inputs are canonical. -/
+/-- `\only` read as beamer reads it, with `cx` the document's own
+definitions, and every alternation read per step where its node alone
+cannot be exact. -/
+private def onlyAlternationsIn (cx : ReadCx) (raws : Array Raw) : Array Raw :=
+  readList cx (onlyAltList cx.userOnly false raws.toList #[] 0).toList #[]
+
+/-- What a document leaves to beamer, read off what it writes. -/
+private def readCxOf (raws : Array Raw) : ReadCx :=
+  { userOnly := definesList "only" raws.toList, userAlt := definesList "alt" raws.toList }
+
+/-- `\only` read as beamer reads it, everywhere, and every alternation read
+per step where its node alone cannot be exact: the pass after the overlay
+inputs are canonical. -/
 public def onlyAlternations (raws : Array Raw) : Array Raw :=
-  mathAltList (onlyAltList raws.toList #[] 0).toList #[]
+  onlyAlternationsIn (readCxOf raws) raws
 
 /-- A scope's trailing length metadata, unforgeable because it holds a space. -/
 public def lengthRestoreKeys? (name : String) : Option (Array String) :=
@@ -10583,35 +11017,45 @@ private theorem overprint_package_exact (command names : String) (pos gp np : Po
   simp [packageCall, overprintList, overprintRaw, hn, bind, StateT.bind,
     pure, StateT.pure]
 
-private theorem onlyAlternations_package_exact (command names : String) (pos gp np : Pos)
+/-- A package call defines neither overlay command. -/
+private theorem readCxOf_package_exact (command names : String) (pos gp np : Pos)
     (hc : command = "usepackage" ∨ command = "RequirePackage") :
-    onlyAlternations (packageCall command names pos gp np) =
+    readCxOf (packageCall command names pos gp np) = { userOnly := false, userAlt := false } := by
+  rcases hc with rfl | rfl <;>
+    simp [readCxOf, packageCall, definesList, definesRaw, nameDefiners]
+
+private theorem onlyAlternationsIn_package_exact (cx : ReadCx) (command names : String)
+    (pos gp np : Pos) (hc : command = "usepackage" ∨ command = "RequirePackage") :
+    onlyAlternationsIn cx (packageCall command names pos gp np) =
       packageCall command names pos gp np := by
   have hn : command ≠ "apptocmd" := by rcases hc with rfl | rfl <;> decide
-  simp [onlyAlternations, packageCall, onlyAltList, onlyAltRaw, mathAltList, mathAltRaw, hn]
+  simp [onlyAlternationsIn, packageCall, onlyAltList, onlyAltRaw, readList, readRawAlone, hn]
 
 /-- The passes before the compatibility walk: overlay inputs, live groups,
 delimiters, columns, overprints and `\only`'s alternations. -/
 public def beginRewrite (executed : Executed) : RewriteCursor :=
   let raws := overlayInputs executed.raws
+  let cx := readCxOf raws
   let go : M (Array Raw) := do
     -- After the conditionals only a live pair is a group.
     let raws := pairGroupsList true #[] raws.toList
     let raws ← delimDocument raws
     let raws := (splitColumnsList raws.toList).toArray
     let raws ← overprintList raws.toList #[] 0
-    pure (onlyAlternations raws)
+    pure (onlyAlternationsIn cx raws)
   let st0 : St :=
     { executed.state with
       boundaryOpen := !boundaryRefused raws,
-      wholeDoc := raws.any (· matches .env "document" _ _) }
+      wholeDoc := raws.any (· matches .env "document" _ _),
+      userOverlays := (cx.userOnly, cx.userAlt) }
   let (raws, st) := go.run st0
   { inBody := false, raws := raws, state := st }
 
 private def packageRewriteState (st : St) (command names : String) (pos gp np : Pos) : St :=
   { st with
     boundaryOpen := !boundaryRefused (packageCall command names pos gp np)
-    wholeDoc := false, deferred := #[], writes := st.writes + 1 }
+    wholeDoc := false, deferred := #[], writes := st.writes + 1,
+    userOverlays := (false, false) }
 
 private theorem beginRewrite_package_exact (command names : String) (pos gp np : Pos)
     (st : St) (hc : command = "usepackage" ∨ command = "RequirePackage")
@@ -10620,18 +11064,20 @@ private theorem beginRewrite_package_exact (command names : String) (pos gp np :
       { inBody := false
         raws := packageCall command names pos gp np
         state := packageRewriteState st command names pos gp np } := by
-  simp only [beginRewrite, overlayInputs_package_exact _ _ _ _ _ hc]
+  simp only [beginRewrite, overlayInputs_package_exact _ _ _ _ _ hc,
+    readCxOf_package_exact _ _ _ _ _ hc]
   have hw : (packageCall command names pos gp np).any
       (· matches .env "document" _ _) = false := by simp [packageCall]
   have hdelim := delimDocument_package_exact command names pos gp np hc
     { st with
       boundaryOpen := !boundaryRefused (packageCall command names pos gp np)
-      wholeDoc := false } hd
+      wholeDoc := false
+      userOverlays := (false, false) } hd
   have hcols : splitColumnsList (packageCall command names pos gp np).toList =
       (packageCall command names pos gp np).toList := by rfl
   simp only [hw, StateT.run, bind, StateT.bind,
     pairGroups_package_exact, hdelim,
-    hcols, overprint_package_exact _ _ _ _ _ hc, onlyAlternations_package_exact _ _ _ _ _ hc,
+    hcols, overprint_package_exact _ _ _ _ _ hc, onlyAlternationsIn_package_exact _ _ _ _ _ _ hc,
     pure, StateT.pure, packageRewriteState]
 
 /-- The gathered declarations and deferred bodies
@@ -10648,7 +11094,11 @@ private def finishDeclarations (out : Array Raw) : M (Array Raw) := do
   let mut bodySide : Array Raw := #[]
   for (pt, file, pos, body) in (← get).deferred do
     write fun st => { st with file := file, seam := pt == .beginDocument }
-    let body := onlyAlternations (overlayInputs body)
+    let body := overlayInputs body
+    let (userOnly, userAlt) := (← get).userOverlays
+    let body := onlyAlternationsIn
+      { userOnly := userOnly || definesList "only" body.toList,
+        userAlt := userAlt || definesList "alt" body.toList } body
     let body ← rewriteList false body #[] body.toList 0 0
     -- A hook from an `\input` file replays inside that file's wrapper.
     let wrap (rs : Array Raw) : Array Raw :=

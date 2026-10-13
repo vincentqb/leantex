@@ -1540,9 +1540,10 @@ def reports : List Report := [
       "the second review's guards: with its answer reverted onto 04961d69, four assertions fail: a literal planned over a keyword its own key declares, a degree from it; names and keywords both shipping a name's declared colour; and a literal shipping an error's declared colour"]
     state := .guarded "1805d55c" .before .author },
   { id := "R170", date := "2026-10-13"
-    what := "beamer's `only` overlay command covered its argument on the steps its selector does not select and kept its space, as `uncover` does, where beamer typesets the frame there as if the argument were not written: a frame whose steps swap blocks by it stood every step at the height of all of them and continued on further pages, and a formula holding it was set as its source text, selectors included"
-    pins := [check% overlayOnlyChecks, check% overlaySetChecks, check% overlayContractChecks,
-      check% overlayInputChecks]
+    what := "beamer's `only` overlay command covered its argument on the steps its selector does not select and kept its space, as `uncover` does, where beamer typesets the frame there as if the argument were not written: a frame whose steps swap blocks by it stood every step at the height of all of them and continued on further pages, and an unnumbered formula holding it was set as its source text, selectors included"
+    pins := [check% overlayOnlyChecks, check% Tests.LineRhythm.onlyGapChecks,
+      check% overlaySetChecks, check% overlayContractChecks, check% overlayInputChecks,
+      thm% HtmlDoc.altPairNodes_floor_contract, thm% Ir.carrierDisplays_text]
     accept := ["one hundred and sixteen of the guards' assertions fail with the fix reverted onto its commit: sixty-six of the reading guard's — every step whose selector leaves the argument out kept it on the page and in the web page's snap, inline, as paragraphs, as a next token, a control word and the starred onslide, in a title, an item and a cell, under a union and nested; a display, an unnumbered equation and an inline formula holding it named a loss and set as their text; the frame swapping two ten-line blocks continued on further pages; and an alternation nested at an alternative's opening set its display a line low — and fifty of the set, contract and input guards, which held the covering reading",
       "a presentation deck whose frames swap content by it ships as many pages as its lualatex build, where it shipped more, each page the step lualatex sets there; one whose table cells it reveals ships each step's cells absent where lualatex leaves them out, its page count unchanged and lualatex's; two decks that never write it ship byte-identical PDF and HTML"]
     state := .guarded "fcebbaa5" .revert .author }

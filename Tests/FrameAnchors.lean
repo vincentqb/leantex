@@ -26,7 +26,7 @@ private def stageOf (anchor : Option String) (attrs : Array (String × String))
   | #[] => none
   | hs => match hs[0]! with
     | .elem _ _ hk => some { anchor, name := HtmlDoc.attrOf? attrs "aria-label"
-                             shown := shownTextList "" hk.toList, snaps }
+                             shown := snapTextList 1 "" hk.toList, snaps }
     | _ => none
 
 mutual

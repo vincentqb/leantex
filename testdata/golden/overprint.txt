@@ -48,15 +48,20 @@ chrome footer right framenumber
 frame
   title
     text "Three readings"
-  alt 3-3
+  alt 1-1
     first page
+      para
+        text "The lone opening reading."
+    other page
       alt 2-2
         first page
-          para
-            alt 1-1
-              first page
-                text " The lone opening reading. "
-              other page
+          alt 3-3
+            first page
+            other page
+              para
+                text "The closing reading opens a paragraph."
+              para
+                text "And ends on a second paragraph."
         other page
           list unordered
             item
@@ -65,11 +70,6 @@ frame
             item
               para
                 text "A second listed point beside it."
-    other page
-      para
-        text "The closing reading opens a paragraph."
-      para
-        text "And ends on a second paragraph."
 frame
   title
     text "A line that stands"

@@ -9284,10 +9284,10 @@ private def parPrecedes (raws : Array Raw) (i : Nat) : Bool := Id.run do
   return false
 
 /-- The paragraph state an overlay carrier at `raws[i]` opens in: inside the
-paragraph its text ran on from, or right after an environment end that left
-`\@endpe`. -/
+paragraph its text ran on from, right after an environment end that left
+`\@endpe`, and whether its content opens on a paragraph break. -/
 private def carrierOpening (raws : Array Raw) (i : Nat) (blocks : Array Block)
-    (body : Array Raw) : Bool × Bool :=
+    (body : Array Raw) : Bool × Bool × Bool :=
   let opensOnText := match body.toList.dropWhile (· matches .space) with
     | .par _ :: _ => false
     | _ => true
@@ -9295,38 +9295,38 @@ private def carrierOpening (raws : Array Raw) (i : Nat) (blocks : Array Block)
     | [] | .par _ :: _ => false
     | _ :: _ => true
   let inPar := opensOnText && ranOn && Ir.flushedText (blocks.size - 1) blocks
-  (inPar, !inPar && Ir.lastLeavesEndPe blocks && !parPrecedes raws i)
+  (inPar, !inPar && Ir.lastLeavesEndPe blocks && !parPrecedes raws i, !opensOnText)
 
 /-- A braced overlay's carrier, stood in its paragraph and before the break
 after its group at `raws[jg]`. -/
 private def carrierInGroup (raws : Array Raw) (i jg : Nat) (blocks : Array Block)
     (body : Array Raw) (inner : Array Block) : Array Block :=
-  let (inPar, endPe) := carrierOpening raws i blocks body
-  Ir.carrierDisplays inPar endPe (parFollows raws (jg + 1)) inner
+  let (inPar, endPe, broken) := carrierOpening raws i blocks body
+  Ir.carrierDisplays inPar endPe (parFollows raws (jg + 1)) broken inner
 
 /-- An open overlay's carrier, the rest of the scope from `raws[jg]` on,
 stood in its paragraph. -/
 private def carrierToEnd (raws : Array Raw) (i jg : Nat) (blocks : Array Block)
     (inner : Array Block) : Array Block :=
-  let (inPar, endPe) := carrierOpening raws i blocks (raws.extract jg raws.size)
-  Ir.carrierDisplays inPar endPe false inner
+  let (inPar, endPe, broken) := carrierOpening raws i blocks (raws.extract jg raws.size)
+  Ir.carrierDisplays inPar endPe false broken inner
 
 /-- An alternation's two groups, each stood in the paragraph the
 alternation opens in and before the break after its second group. -/
 private def altCarriers (raws : Array Raw) (i j3 : Nat) (blocks : Array Block)
     (spec : Ir.OverlaySpec) (ga gb : Array Raw) (ia ib : Array Block) : Block :=
   let after := parFollows raws (j3 + 1)
-  let (pa, ea) := carrierOpening raws i blocks ga
-  let (pb, eb) := carrierOpening raws i blocks gb
-  .alternate spec (Ir.carrierDisplays pa ea after ia) (Ir.carrierDisplays pb eb after ib)
+  let (pa, ea, ba) := carrierOpening raws i blocks ga
+  let (pb, eb, bb) := carrierOpening raws i blocks gb
+  .alternate spec (Ir.carrierDisplays pa ea after ba ia) (Ir.carrierDisplays pb eb after bb ib)
 
 /-- `\pause`'s carrier: the rest of the scope from `raws[i]` on, revealed at
 step `n` and stood in its paragraph. -/
 private def pauseCarrier (raws : Array Raw) (i : Nat) (blocks : Array Block) (n : Nat)
     (inner : Array Block) : Array Block :=
   if inner.isEmpty then blocks else
-  let (inPar, endPe) := carrierOpening raws i blocks (raws.extract (i + 1) raws.size)
-  blocks.push (.step n none (Ir.carrierDisplays inPar endPe false inner))
+  let (inPar, endPe, broken) := carrierOpening raws i blocks (raws.extract (i + 1) raws.size)
+  blocks.push (.step n none (Ir.carrierDisplays inPar endPe false broken inner))
 
 /-- Whether an environment's `\@endpe` reaches a display at `i`, so TeX sets
 no empty line before it (ltlists.dtx `\@doendpe`). -/

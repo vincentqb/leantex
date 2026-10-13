@@ -1497,9 +1497,11 @@ mutual
 typed tree's characters with every `hidden` subtree dropped — what the UA
 stylesheet's `[hidden] { display: none }` removes, and so the HTML twin of
 a shipped PDF page's ink. `nodeTextOne` reads the whole tree, which is the
-declaration; this reads what a reader with no snap state sees, which is
-step 1. The distinction is what the census could not make when overlay
-alternation put both groups inside one visible wrapper. -/
+declaration; this reads what a reader with no snap state sees: step 1's
+reading, save an alternation one of whose groups shows nothing, whose other
+group that reader sees (`HtmlDoc.altPairNodes`). The distinction is what the
+census could not make when overlay alternation put both groups inside one
+visible wrapper. `snapTextList` reads one snap. -/
 def shownTextOne (acc : String) : Html.Node → String
   | .text s => acc ++ s
   | .style _ => acc
@@ -1511,6 +1513,46 @@ def shownTextOne (acc : String) : Html.Node → String
 def shownTextList (acc : String) : List Html.Node → String
   | [] => acc
   | k :: rest => shownTextList (shownTextOne acc k) rest
+
+end
+
+/-- An emitted attribute's value, or nothing. -/
+def snapAttr (attrs : Array (String × String)) (key : String) : String :=
+  ((attrs.find? (·.1 == key)).map (·.2)).getD ""
+
+/-- Does snap `k` select an element's steps, read off the emitted attribute
+vocabulary independently of the IR selector: the stylesheet matches
+space-separated step numbers, or the contiguous start/end attributes. The
+browser probe exercises these selectors too. -/
+def snapActive (attrs : Array (String × String)) (k : Nat) : Bool :=
+  if attrs.any (·.1 == "data-steps") then
+    (snapAttr attrs "data-steps").splitOn " " |>.contains (toString k)
+  else
+    let lo := (snapAttr attrs "data-step").toNat?.getD 1
+    let hi := (snapAttr attrs "data-step-last").toNat?
+    lo ≤ k && (hi.map fun u => decide (k ≤ u)).getD true
+
+/-- Does an element show at snap `k`: an alternative where its steps select
+it, anything else unless it is `hidden`. -/
+def snapShows (attrs : Array (String × String)) (k : Nat) : Bool :=
+  let classes := (snapAttr attrs "class").splitOn " "
+  if classes.contains "alt-set" then snapActive attrs k
+  else if classes.contains "alt-crisp" then snapActive attrs k
+  else if classes.contains "alt-pending" then !snapActive attrs k
+  else !(attrs.any (·.1 == "hidden"))
+
+mutual
+
+/-- The text an emitted tree shows at snap `k`, every alternative its snap
+does not select left out. -/
+def snapTextOne (k : Nat) (acc : String) : Html.Node → String
+  | .text s => acc ++ s
+  | .style _ | .script _ _ => acc
+  | .elem _ attrs kids => if snapShows attrs k then snapTextList k acc kids.toList else acc
+
+def snapTextList (k : Nat) (acc : String) : List Html.Node → String
+  | [] => acc
+  | n :: rest => snapTextList k (snapTextOne k acc n) rest
 
 end
 

@@ -1065,6 +1065,94 @@ def carrierDisplayChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) :
     t s!"{label} takes the flat frame's gaps on the screen"
       (agree3 (frameFlow fn (treeCssList "" fh.toList)) (frameFlow on (treeCssList "" oh.toList)))
 
+mutual
+
+/-- The tree snap `k` shows: every alternative the snap does not select left
+out (`snapShows`), the alternatives it selects standing with no `hidden`
+left on them, as the snap's rules display them. -/
+private def snapTreeOne (k : Nat) (acc : Array Html.Node) : Html.Node → Array Html.Node
+  | .elem tag attrs kids =>
+    if snapShows attrs k then
+      let alt := ((snapAttr attrs "class").splitOn " ").contains "alt"
+      let attrs := if alt then attrs.filter (·.1 != "hidden") else attrs
+      acc.push (.elem tag attrs (snapTreeList k #[] kids.toList))
+    else acc
+  | .text s => acc.push (.text s)
+  | .style css => acc.push (.style css)
+  | .script attrs code => acc.push (.script attrs code)
+
+private def snapTreeList (k : Nat) (acc : Array Html.Node) : List Html.Node → Array Html.Node
+  | [] => acc
+  | n :: rest => snapTreeList k (snapTreeOne k acc n) rest
+
+end
+
+/-- `frameFlow` with each block's edge: whether it opens the frame
+(`frame-body-start`, or `frame-flow-start` inside a carrier that opens it)
+and whether it closes it (`frame-body-end`, `frame-flow-end`). -/
+private def frameEdges (nodes : Array Html.Node) : Array (String × Bool × Bool) :=
+  let t := CTree.of nodes
+  let cls (i : Nat) : List String := ((t.attr? i "class").getD "").splitOn " "
+  ((List.range t.els.size).filter fun i =>
+    let c := cls i
+    c.contains "frame-body-start" || c.contains "frame-flow-start" ||
+      c.contains "frame-body-end" || c.contains "frame-flow-end").toArray.filterMap fun i =>
+    let c := cls i
+    let carrier := (t.el i).tag == "div" &&
+      ["step", "step-set", "step-end", "alt-pair", "alt"].any c.contains
+    if carrier then none
+    else some ((t.el i).text.trimAscii.toString,
+      c.contains "frame-body-start" || c.contains "frame-flow-start",
+      c.contains "frame-body-end" || c.contains "frame-flow-end")
+
+/-- Frames whose steps swap content by `\only`, with the frame each step's
+reading writes. -/
+private def onlyGapCases : List (String × String × Nat × (Nat → String)) :=
+  [("a paragraph opening the frame on its second step", "\\only<2>{Head line.}\n\nBody line.", 2,
+     fun k => if k == 2 then "Head line.\n\nBody line." else "Body line."),
+   ("a paragraph closing the frame on its second step", "Body line.\n\n\\only<2>{Tail line.}", 2,
+     fun k => if k == 2 then "Body line.\n\nTail line." else "Body line."),
+   ("two blocks swapped", "\\only<1>{First words.\n\nFirst again.}\\only<2>{Second words.\n\nSecond again.\n\nSecond last.}", 2,
+     fun k => if k == 1 then "First words.\n\nFirst again." else
+       "Second words.\n\nSecond again.\n\nSecond last."),
+   ("two displays swapped", "Before.\n\\only<1>{\\[ a \\]}\\only<2>{\\[ b \\]}\nAfter.", 2,
+     fun k => "Before.\n\\[ " ++ (if k == 1 then "a" else "b") ++ " \\]\nAfter."),
+   ("a display absent on the first step", "Before.\n\\only<2>{\\[ a \\]}\nAfter.", 2,
+     fun k => if k == 2 then "Before.\n\\[ a \\]\nAfter." else "Before.\n{}\nAfter."),
+   ("paragraphs between paragraphs",
+     "Top words.\n\n\\only<2>{Middle words.\n\nSecond middle.}\n\nBottom words.", 2,
+     fun k => "Top words.\n\n" ++ (if k == 2 then "Middle words.\n\nSecond middle.\n\n" else "") ++
+       "Bottom words."),
+   ("an item absent on the first step",
+     "\\begin{enumerate}\n\\item Alpha one\n\\only<2>{\\item Beta two}\n\\item Gamma three\n\\end{enumerate}", 2,
+     fun k => "\\begin{enumerate}\n\\item Alpha one\n" ++ (if k == 2 then "\\item Beta two\n" else "") ++
+       "\\item Gamma three\n\\end{enumerate}"),
+   ("two lists swapped",
+     "\\only<1>{\\begin{itemize}\\item One a\\item One b\\end{itemize}}\\only<2>{\\begin{itemize}\\item Two a\\item Two b\\item Two c\\end{itemize}}", 2,
+     fun k => if k == 1 then "\\begin{itemize}\\item One a\\item One b\\end{itemize}" else
+       "\\begin{itemize}\\item Two a\\item Two b\\item Two c\\end{itemize}")]
+
+/-- **Every snap of an `\only` frame takes its reading's gaps and edges on
+the screen.** Each snap's tree (`snapTreeList`) sets its blocks with the
+`margin-top` the cascade gives the frame written with that step's reading,
+block for block, and opens and closes the frame on the same blocks: where an
+alternation opens the frame, the block each group opens on takes the
+frame's opening (`frame-flow-start`), never the carrier around it — before,
+the carrier took it and the first paragraph lost its opening strut, so the
+frame's content stood off its reading's. -/
+def onlyGapChecks (ref : IO.Ref (List String)) : IO Unit := do
+  let t := check ref
+  for (label, body, steps, reading) in onlyGapCases do
+    let (h, n, _) := HtmlDoc.emitTree {} (elabStr (deck169Frame body)).1
+    let css := treeCssList "" h.toList
+    for k in [1:steps + 1] do
+      let (rh, rn, _) := HtmlDoc.emitTree {} (elabStr (deck169Frame (reading k))).1
+      let snap := snapTreeList k #[] n.toList
+      t s!"{label}: snap {k} takes its reading's gaps on the screen"
+        (agree3 (frameFlow rn (treeCssList "" rh.toList)) (frameFlow snap css))
+      t s!"{label}: snap {k} opens and closes on its reading's blocks"
+        (frameEdges rn == frameEdges snap && !(frameEdges rn).isEmpty)
+
 /-- Invented words a centred block of the article's measure sets in three
 lines when each line takes every word that fits, the last word alone. -/
 private def runtPara : String :=
