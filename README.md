@@ -273,6 +273,16 @@ engines build loads it. Such a document keeps `\palette[seeds]` for leantex,
 or names the exported colours under the code roles' own keys
 (`\colorlet{codekeyword}{SlideCodeKeyword}`), which both engines read.
 
+Add `--series N`, from 1 to 16, to export colours for a chart's N series,
+`SlideSeries1` to `SlideSeriesN`. The first is `SlideAccentText`, so a
+chart's subject stands in the accent as the page's text takes it, the
+alert's colour where no alert seed is named. Each next one is
+the hue and tone farthest from every series before it and from the ink, so a
+chart of fewer series reads the first ones whatever N is, and a series keeps
+its colour from chart to chart. Every series stands out from the paper as a
+mark, at 3.1:1, the first reads on it as text, and no two stand within
+ΔEOK 0.04 of each other.
+
 ## Images and code
 
 PNG, JPEG and PDF images embed directly in PDF output. SVG conversion runs

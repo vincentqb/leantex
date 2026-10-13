@@ -51,6 +51,7 @@ public import LeanTex.Core.Contrast
 public import LeanTex.Core.ContrastContract
 public import LeanTex.Core.SeedPalette
 public import LeanTex.Core.PaletteData
+public import LeanTex.Core.SeedSeries
 public import LeanTex.Core.CodeExport
 public import LeanTex.Core.Locale
 public import LeanTex.Core.LocaleData

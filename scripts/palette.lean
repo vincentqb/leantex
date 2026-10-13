@@ -1,6 +1,7 @@
 module
 
 public meta import LeanTex.Core.SeedPalette
+public meta import LeanTex.Core.SeedSeries
 public meta import LeanTex.Core.CodeExport
 public meta import Lean.Data.Json
 
@@ -30,6 +31,7 @@ private structure Flags where
   style : SeedPalette.Blocks := .tonal
   depth : Ir.GroundDepth := .decks
   pygments : Option String := none
+  series : Option Nat := none
   check : Option String := none
 
 private meta def flags : Flags → List String → Except String (Flags × List String)
@@ -42,6 +44,13 @@ private meta def flags : Flags → List String → Except String (Flags × List 
   | f, "--depth" :: "decks" :: rest => flags { f with depth := .decks } rest
   | _, "--depth" :: name :: _ => .error s!"unknown depth '{name}'; use documents or decks"
   | f, "--pygments" :: style :: rest => flags { f with pygments := some style } rest
+  | f, "--series" :: n :: rest =>
+    match n.toNat? with
+    | some k =>
+      if k == 0 || SeedSeries.maxCount < k then
+        .error s!"a series count is a number from 1 to {SeedSeries.maxCount}, not '{n}'"
+      else flags { f with series := some k } rest
+    | none => .error s!"a series count is a number from 1 to {SeedSeries.maxCount}, not '{n}'"
   | f, "--check" :: path :: rest => flags { f with check := some path } rest
   | f, rest => .ok (f, rest)
 
@@ -57,7 +66,9 @@ initialization);
 `--pygments STYLE` adds a listing's code colours as the engine derives them
 from the generated palette (`CodeExport`), with STYLE's colours where the
 palette leaves a role open, and a `\<Prefix>Pygments` command to name in
-minted's `formatcom`; `--check FILE` prints nothing and exits 1 when FILE
+minted's `formatcom`; `--series N` adds N categorical series colours for a
+chart, `\<Prefix>Series1` to `\<Prefix>SeriesN` (`SeedSeries`), the first
+the accent's text tone; `--check FILE` prints nothing and exits 1 when FILE
 is not what these seeds generate. Only declarations go to stdout, so the
 caller can save or compare them. The script never rewrites a document or
 changes its permissions. -/
@@ -81,7 +92,7 @@ public meta def main (args : List String) : IO UInt32 := do
     | _ => pure args
   let [stem, ink, paper, accent] := args
     | IO.eprintln ("usage: palette.lean [--beamer-blocks] [--blocks tonal|strong] " ++
-        "[--depth documents|decks] [--pygments STYLE] [--check FILE] Prefix " ++
+        "[--depth documents|decks] [--pygments STYLE] [--series N] [--check FILE] Prefix " ++
         "(INK PAPER ACCENT | --seeds colors.json)")
       return 2
   if stem.isEmpty || !(stem.toList.all fun c => c.isAlpha && c.toNat < 128) then
@@ -106,8 +117,16 @@ use contrasting ink and paper with a distinct accent"
         | IO.eprintln s!"unknown highlighting style '{name}'; use default or friendly"
           return 2
       pure (CodeExport.texDeclarations stem (({} : Ir.Palette).applySeeds st) style)
+  let series ← match f.series with
+    | none => pure ""
+    | some n =>
+      match SeedSeries.generate seeds targets palette n with
+      | .ok g => pure (SeedSeries.declarations stem g.series)
+      | .error message =>
+        IO.eprintln s!"could not derive the series: {message}"
+        return 1
   let out := (if f.blocks then SeedPalette.beamerDeclarations stem st
-    else SeedPalette.declarations stem st) ++ code
+    else SeedPalette.declarations stem st) ++ code ++ series
   match f.check with
   | some path =>
     let current ← try IO.FS.readFile path catch error =>

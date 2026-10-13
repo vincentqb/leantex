@@ -170,6 +170,7 @@ import Tests.InputDecoding
 import Tests.ImageOrigins
 import Tests.Themes
 import Tests.SeedPalette
+import Tests.SeedSeries
 import Tests.ColourSolve
 import Tests.ThemePalette
 import Tests.ThemeCss
@@ -500,6 +501,8 @@ def layoutSuiteChecks (ref : IO.Ref (List String)) : IO Unit := do
   Tests.SeedPalette.seedRoleChecks ref oneFace
   Tests.SeedPalette.failureChecks ref
   Tests.SeedPalette.scriptChecks ref
+  Tests.SeedSeries.seriesChecks ref
+  Tests.SeedSeries.seriesScriptChecks ref
   Tests.ColourSolve.checks ref
   titleTemplateOptionalChecks ref oneFace
   titleTemplateColorChecks ref oneFace
