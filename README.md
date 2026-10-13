@@ -213,7 +213,10 @@ title separator are the seeds' too, and a deck that generates its palette
 takes none of its default theme's colours. A generated colour standing on a
 ground it does not read on — a frame-title or block bar, the standout frame —
 takes its family's tone there, and highlighted code takes colours derived
-from the same palette, one tone wherever the listing stands. The seeds'
+from the same palette, one tone wherever the listing stands: errors in the
+alert, comments in the muted ink, and keywords, names and literals each in a
+hue of its own, spaced around the hue circle from the alert's and the ink's
+(keywords keep the ink's hue where it has one). The seeds'
 ink, paper and accent declare the page's text, ground and accent, so the later
 of a seed and the document's own declaration of that role wins. Any other
 colour the document declares, before `\palette[seeds]` or after it, keeps its

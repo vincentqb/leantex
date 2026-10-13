@@ -459,6 +459,56 @@ def codeRoleChecks (ref : IO.Ref (List String)) : IO Unit := do
     (Theme.builtin.all fun th => (deckBundle th).entries.all fun (k, _) =>
       (CodeColor.retiredKeys.lookup k.key).isNone)
 
+/-- A generated palette's code is complete: under `\palette[seeds]`, a
+listing's keywords, names and literals each set in a colour of their own,
+their hues 60° or more apart and from the alert the error sets in, each
+reading at the code tone on the page; comments set in the generated muted
+step and errors in the alert, and the web page sets every role in the PDF's
+colour. An ink that shows a hue keeps its keywords in it. Held over the
+shipped page and the typed HTML, and over the export a TeX build reads. -/
+def seededCodeChecks (ref : IO.Ref (List String)) : IO Unit := do
+  let t := check ref
+  let some fonts ← serifFacesSet | failures ref "seeded code: the serif faces load"
+  let source := "@cache\ndef probe(n):\n    # an invented remark\n" ++
+    "    raise NotImplementedError(len(\"synthetic\") + 1)"
+  for (label, seeds, inkHue) in [
+      ("a black ink and a yellow accent", "ink = #000000, paper = #FFFFFF, accent = #FACC15", false),
+      ("a neutral ink and a magenta accent", "ink = #1A1A1A, paper = #FFFFFF, accent = #C026D3", false),
+      ("a violet ink and an orange accent", "ink = #2B2440, paper = #FFFFFF, accent = #E85D2A", true)] do
+    let (doc, ds) := elabStr (dvDeck ("\\usepackage{minted}\n\\palette[seeds]{ " ++ seeds ++ " }\n")
+      ("\\begin{frame}[fragile]\n\\begin{minted}{python}\n" ++ source ++ "\n\\end{minted}\n\\end{frame}"))
+    t s!"seeded code, {label}: the listing elaborates clean" (ds.all (·.severity != .error))
+    let laid := ((glyphPaint (layoutOf fonts doc)).filter fun (c, _) =>
+      ShellHighlight.visible c).map fun (c, idx, color) => (c, (idx, color))
+    let typed := (htmlLines doc).flatten.filter fun (c, _) => ShellHighlight.visible c
+    let pdf (w : String) := (onePaint (ShellHighlight.witnessPaint? source w laid)).map (·.2)
+    let html (w : String) := onePaint (ShellHighlight.witnessPaint? source w typed)
+    let d := Ir.Design.ofPalette doc.palette
+    let alert := Ir.Design.declared? doc.palette .alert
+    let muted := Ir.Design.declared? doc.palette .muted
+    match pdf "def", pdf "len", pdf "synthetic", pdf "remark", pdf "NotImplementedError", alert with
+    | some kw, some nm, some lit, some cm, some err, some al =>
+      let hued := [kw, nm, lit]
+      t s!"seeded code, {label}: keywords, names and literals each set in a colour of their own"
+        (hued.all (· != d.fg) && kw != nm && nm != lit && kw != lit)
+      let apart := (hued ++ [al]).zipIdx
+      t s!"seeded code, {label}: their hues stand 60° or more apart, and from the alert's"
+        (apart.all fun (c, i) => apart.all fun (c', j) => i == j || hueCosMilli c c' ≤ 500)
+      t s!"seeded code, {label}: each reads at the code tone on the page"
+        (hued.all fun c => CodeColor.codeTone ≤ Contrast.contrastMilli c d.bg)
+      t s!"seeded code, {label}: comments set in the generated muted step, errors in the alert"
+        (some cm == muted && err == al)
+      t s!"seeded code, {label}: the web page sets each role in the PDF's colour"
+        ([("def", kw), ("len", nm), ("synthetic", lit), ("remark", cm), ("NotImplementedError", err)].all
+          fun (w, c) => (html w).any fun p => p.color.any (hasStr · (HtmlDoc.cssColor c)))
+      if inkHue then
+        t s!"seeded code, {label}: keywords keep the ink's own hue" (hueCosMilli kw d.fg ≥ 990)
+      let exported := CodeExport.pageBrushes doc.palette .default
+      t s!"seeded code, {label}: the export colours every role but the ink, as the page does"
+        ([(ListingHighlight.Role.keyword, kw), (.name, nm), (.literal, lit), (.comment, cm),
+          (.error, err)].all fun (r, c) => (exported.get r).ink == some c)
+    | _, _, _, _, _, _ => t s!"seeded code, {label}: every role's token ships in one colour" false
+
 /-- A name reads alike where its listing defines it and where it uses it,
 and from one language to the next: a definition's name sets in the ink, as
 the identifiers that use it do, while a builtin keeps the name role. Held

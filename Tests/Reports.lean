@@ -164,7 +164,7 @@ open Tests (mintedSettingsChecks listingHighlightChecks listingPaletteContinuati
   tableContextChecks linkMacroLayoutChecks inputUseChecks mathAlphaEntryChecks mathAlphaRegionChecks
   mathDiagnosticOriginChecks mathDelimiterTriggerChecks mathDollarSurfaceChecks
   diagnosticProducerOriginChecks diagnosticAggregationOriginChecks diagnosticPipelineOriginChecks
-  listDeclarationChecks stringConditionalChecks codeRoleChecks definitionNameChecks)
+  listDeclarationChecks stringConditionalChecks codeRoleChecks seededCodeChecks definitionNameChecks)
 open TcolorboxChecks (tcolorboxChecks tcolorboxSourceChecks)
 open TcolorboxColors (tcolorboxColorChecks)
 open PictureBoundary (pictureBoundaryChecks pictureWrapperChecks pictureShipChecks)
@@ -1528,7 +1528,12 @@ def reports : List Report := [
       "the browser oracle's paper judge, Chromium printing on Letter and pdftotext reading it back, run on its control page built by the binary of the tree before the answer: the page runs 486 px past the printable width and 37 of its letters miss paper; built on this tree it prints whole at its own scale, and a held atom wider than the sheet fails the judge",
       "the second review's guards: six assertions fail with its answer's behaviour reverted onto the recorded commit, its guards kept — a breaking listing's Japanese, Thai and Korean lines marking a break between two of their characters, Thai and Lao numbers parted digit by digit, every held unit held in every box, and the stylesheet without the rule a narrow box releases its longer units by",
       "the browser oracle's controls, run in Chromium on the engine's page of a breaking listing in a box a fifth of the line wide, beside prose and before a wider box, and of a breaking Thai listing: built by the binary of the tree before the second answer, its boxes run 202 px past themselves at 600 and 900 px and 186 px on paper, where the page prints at 92 percent, and its Thai parts inside words at 320, 360, 600 and 900 px; built on this tree every line stays in its box and the Thai parts only where the browser's segmenter finds a word, at 480 px too, and a held atom in a narrow box beside prose and a Thai line parted between its letters fail the judges"]
-    state := .guarded "35a51d50" .revert .author }
+    state := .guarded "35a51d50" .revert .author },
+  { id := "R169", date := "2026-10-13"
+    what := "a palette generated from a brand's few colours left its code mostly in the ink: under an ink with no hue of its own, a listing's keywords and names set in the ink, and under an ink with one, keywords and names shared one colour, so only literals, comments and errors stood apart"
+    pins := [check% seededCodeChecks]
+    accept := ["eight of the guard's assertions fail on the tree at 1805d55c before the fix: for a black ink beside a yellow accent and a neutral ink beside a magenta one, keywords and names in the ink, the web page painting no colour for them and the export a TeX build reads defining none; and for a violet ink beside an orange accent, keywords and names in one colour, their hues not apart"]
+    state := .guarded "1805d55c" .before .author }
 ]
 
 /-- The reports guarded but never seen failing: a count that may fall and
