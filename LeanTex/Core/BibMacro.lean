@@ -1,21 +1,12 @@
 module
 
-/-! The commands a `.bib`'s `@preamble` defines. BibTeX and biber copy the
-preamble into the `.bbl` ahead of the list (bibtex.web's `preamble$`,
-biber's `\preamble`), so its definitions are in force where the list's
-fields are typeset and nowhere in what sorts them: `{\noopsort{1999}}2001`
-prints `2001` and sorts by `19992001`. The engine reads the defining forms
-`@preamble`s use — `\newcommand`, `\renewcommand`, `\providecommand`
-(starred or not, the name braced or bare, `[n]` parameters) and `\def`
-with `#1`… parameters — and expands their uses in a field's text before
-the text is read; a use of a command no form defines stays for the reading,
-which names it. -/
+/-! The commands a `.bib`'s `@preamble` defines, in force
+where the list's fields are set. -/
 
 namespace LeanTex.Core.Bib
 
-/-- One command a `@preamble` defines: its name, its parameter count, and
-its body, `#1`… marking the arguments, written in terms of the commands
-defined before it. -/
+/-- One command a `@preamble` defines: its name, parameter count, and body with
+`#1`… marking the arguments. -/
 public structure Macro where
   name : String
   arity : Nat
@@ -58,8 +49,7 @@ private def skipWs (cs : Array Char) (i : Nat) : Nat := Id.run do
     | none => break
   return j
 
-/-- The control word at `cs[i]` (a backslash): its name and the index after
-it, a control symbol its one character. -/
+/-- The control word at `cs[i]`: its name and the index after it. -/
 private def ctrlAt (cs : Array Char) (i : Nat) : Option (String × Nat) := Id.run do
   if cs[i]? != some '\\' then return none
   let mut j := i + 1
@@ -72,11 +62,7 @@ private def ctrlAt (cs : Array Char) (i : Nat) : Option (String × Nat) := Id.ru
     return cs[i + 1]?.map fun c => (String.singleton c, i + 2)
   return some (name, j)
 
-/-- A text with the commands expanded once, outermost uses first: each use
-of a defined name takes its arguments — a braced group's content, else the
-next character or control sequence — and stands as its body with them in
-place. The arguments go in as written; a use inside one is the next pass's.
-`true` where a use was expanded. -/
+/-- A text with the commands expanded once, outermost uses first. -/
 private def expandOnce (ms : Array Macro) (s : String) : String × Bool := Id.run do
   let cs := s.toList.toArray
   let mut out := ""
@@ -143,11 +129,7 @@ private def expandOnce (ms : Array Macro) (s : String) : String × Bool := Id.ru
     else break
   return (out, changed)
 
-/-- A text with the commands expanded, pass by pass until no use is left —
-each pass removes one level of uses written inside arguments, so a text
-needs at most as many passes as it is long — stopping where the text has
-grown past what its uses could honestly make of it, the rest left for the
-reading to name. -/
+/-- A text with the commands expanded pass by pass until no use is left. -/
 public def expandMacros (ms : Array Macro) (s : String) : String := Id.run do
   if ms.isEmpty || !s.contains '\\' then return s
   let cap := 64 * s.length + 4096
@@ -158,12 +140,7 @@ public def expandMacros (ms : Array Macro) (s : String) : String := Id.run do
     cur := next
   return cur
 
-/-- The definitions in a `@preamble`'s text, in order: `\newcommand`,
-`\renewcommand`, `\providecommand` — starred or not, the name braced or
-bare, `[n]` parameters — and `\def\name#1…#n{body}`, each body expanded
-over the definitions before it, so a use never reaches a definition made
-after the text it stands in. A `\providecommand` of a name already defined
-defines nothing. -/
+/-- The definitions in a `@preamble`'s text, in order. -/
 public def preambleMacros (texts : Array String) : Array Macro := Id.run do
   let mut ms : Array Macro := #[]
   for t in texts do
@@ -206,7 +183,6 @@ public def preambleMacros (texts : Array String) : Array Macro := Id.run do
           else if cmd == "def" then
             match ctrlAt cs (skipWs cs j) with
             | some (name, k) =>
-              -- the parameter text: `#1#2…` up to the body's brace
               let mut arity := 0
               let mut p := k
               for _ in [0:cs.size] do

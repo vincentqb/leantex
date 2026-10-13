@@ -24,29 +24,18 @@ public structure Token where
   pos : Pos
   deriving Repr, BEq
 
-/-- Text symbols. The table lives in the lexer because it also decides the
-space-swallowing rule above: these names take no argument, so the space after
-them is content. The elaborator reads the same table for replacement text. -/
+/-- Text symbols, which take no argument, so the space after them is content. -/
 @[expose] public def textSymbols : List (String × String) :=
   [("middot", "·"), ("bullet", "•"), ("endash", "–"),
    ("emdash", "—"), ("ldots", "…"), ("dots", "…"),
    ("times", "×"), ("copyright", "©"), ("degree", "°"),
    ("nbsp", " "), ("thinspace", " ")]
 
-/-- `@` is a control-name character, always. TeX makes this a mode
-(`\makeatletter` sets `@` to catcode 11, `\makeatother` back to 12 —
-source2e `ltdefns.dtx`; catcodes, TeXbook ch. 7), because internal names
-like `\p@` must be writable in package code and unwritable in documents.
-This engine has no catcode reprogramming, so the mode collapses to its
-permissive half: `\demo@wd` is one name wherever it stands. The alternative
-— honouring the mode — would re-lex `\demo@wd` outside `\makeatletter` as
-`\demo` then `@wd`, which is exactly the mis-lex the mode exists to cause,
-and no known document wants: a document using `@`-names writes
-`\makeatletter` first, and one that never uses them never notices. -/
+/-- Whether a character continues a control name; `@` always does. -/
 @[expose] public def nameChar (c : Char) : Bool :=
   c.isAlpha || c == '@'
 
-/-- The special characters are fixed forever: no catcode reprogramming. -/
+/-- The special characters, fixed: no catcode reprogramming. -/
 @[expose] public def special (c : Char) : Bool :=
   c == '\\' || c == '{' || c == '}' || c == '$' || c == '%' ||
   c == '[' || c == ']' || c == '&' || c == '#' || c == '^' || c == '_' || c == '~'
@@ -76,48 +65,30 @@ private def newlines (cs : Array Char) (a b : Nat) : Nat := Id.run do
       if cs[j] == '\n' then n := n + 1
   return n
 
-/-- TeXbook ch. 8: mid-line whitespace supplies one space, followed by a
-paragraph token for each blank line. At line start, indentation is skipped
-and every end-of-line is a paragraph. Keeping the whole token run matters
-inside definitions, where `\ifx` distinguishes spaces and repeated `\par`. -/
+/-- The tokens of a whitespace run with `n` line ends: one space mid-line, then
+a paragraph per blank line. -/
 public def wsTokens (lineStart : Bool) (n : Nat) : List Tok :=
   if lineStart then List.replicate n .par
   else .space :: List.replicate (n - 1) .par
 
-/-- A comment removes its own end-of-line, including the space mid-line
-text would have supplied, but preserves every subsequent paragraph token. -/
 public theorem blank_line_par_agree (n : Nat) :
     (wsTokens false (n + 1)).tail = wsTokens true n := by
   simp [wsTokens]
 
-/-- The mid-line whitespace run, given whether a group brace sits immediately
-before the run (`prevLbrace`) or immediately after it (`nextRbrace`), and the
-run's newline count `n`. A single line end against a group brace is dropped —
-exactly as LaTeX's `{%` drops the line end after an opening brace — so the run
-emits nothing; every other run is byte-for-byte `wsTokens false n`, leaving
-same-line spacing and blank-line paragraph behaviour untouched. The brace
-carries no glyph, so any adjacency the drop leaves is intentional under the
-shorthand and earns no diagnostic: `{` at end of line and `{%` are identical
-after lexing. -/
+/-- The mid-line whitespace run: a single line end against a
+group brace is dropped. -/
 public def midlineWs (prevLbrace nextRbrace : Bool) (n : Nat) : List Tok :=
   if n = 1 ∧ (prevLbrace = true ∨ nextRbrace = true) then []
   else wsTokens false n
 
-/-- A same-line run is always a space, whatever sits beside it. -/
 public theorem midlineWs_same_line (p q : Bool) : midlineWs p q 0 = [.space] := by
   simp [midlineWs, wsTokens]
 
-/-- A blank line keeps main's whole mid-line run, brace-adjacency
-notwithstanding. -/
 public theorem midlineWs_par (p q : Bool) (n : Nat) (h : n ≥ 2) :
     midlineWs p q n = wsTokens false n := by
   have : ¬ n = 1 := by omega
   simp [midlineWs, this]
 
-/-- Suppression is exactly a single line end against a group brace: the
-contract is narrow, not a global whitespace trim. (`wsTokens false n` is
-always non-empty — it heads with a space — so an empty run can only be the
-suppressed case.) -/
 public theorem midlineWs_suppress_iff (p q : Bool) (n : Nat) :
     midlineWs p q n = [] ↔ (n = 1 ∧ (p = true ∨ q = true)) := by
   unfold midlineWs
@@ -127,8 +98,6 @@ public theorem midlineWs_suppress_iff (p q : Bool) (n : Nat) :
     refine iff_of_false ?_ hc
     simp [wsTokens]
 
-/-- Away from braces the rule is byte-for-byte the old `wsTokens false`: the
-change is confined to brace-adjacency. -/
 public theorem midlineWs_conservative (p q : Bool) (n : Nat) (hp : p = false) (hq : q = false) :
     midlineWs p q n = wsTokens false n := by
   simp [midlineWs, hp, hq]
@@ -147,8 +116,7 @@ private def findSub (cs : Array Char) (start : Nat) (pat : Array Char) : Option 
       return some k
   return none
 
-/-- The string over `[a, b)`, pushed a character at a time: going through
-`extract` and a `List` allocated a cons cell per character of every token. -/
+/-- The string over `[a, b)`. -/
 private def strFrom (cs : Array Char) (a b : Nat) : String := Id.run do
   let mut s := ""
   for j in [a:b] do
@@ -156,17 +124,15 @@ private def strFrom (cs : Array Char) (a b : Nat) : String := Id.run do
       s := s.push cs[j]
   return s
 
-/-- A line end at `k`: where the line after it starts, a CRLF one unit. -/
+/-- A line end at `k`: where the next line starts, a CRLF one unit. -/
 private def lineEndAt (cs : Array Char) (k : Nat) : Option Nat :=
   match cs[k]? with
   | some '\n' => some (k + 1)
   | some '\r' => some (if cs[k + 1]? == some '\n' then k + 2 else k + 1)
   | _ => none
 
-/-- Past the spaces at `k` and at most one line end among them, as TeX's
-argument reader skips them, and — where `comments` — any comment, which
-spends its own line end (TeX's `%`); `none` at a blank line, which ends a
-paragraph there. -/
+/-- The index past the spaces at `k` and at most one line end, as TeX's argument
+reader skips them; `none` at a blank line. -/
 private def argGap (cs : Array Char) (k : Nat) (comments : Bool := true) : Option Nat := Id.run do
   let blank (c : Char) := c == ' ' || c == '\t'
   let mut a := scanWhile cs k blank
@@ -186,9 +152,8 @@ private def argGap (cs : Array Char) (k : Nat) (comments : Bool := true) : Optio
       | none => break
   return some a
 
-/-- The commands whose next token is the name they define or show, never a
-call: `\renewcommand\mintinline[2]{…}` names minted's command, so its
-arguments are the definition's, not code. -/
+/-- The commands whose next token is the name they define or
+show, never a call. -/
 private def definers : List String :=
   ["newcommand", "renewcommand", "providecommand", "DeclareRobustCommand",
    "NewDocumentCommand", "RenewDocumentCommand", "ProvideDocumentCommand",
@@ -196,8 +161,8 @@ private def definers : List String :=
    "LetLtxMacro", "newrobustcmd", "renewrobustcmd", "providerobustcmd",
    "def", "gdef", "edef", "xdef", "let", "define", "show", "meaning", "string", "noexpand"]
 
-/-- Whether the last token, past white space and a definer's star, is a
-definer. -/
+/-- Whether the last token, past white space and a definer's
+star, is a definer. -/
 private def definesNext (toks : Array Token) : Bool := Id.run do
   let mut k := toks.size
   for _ in [0:toks.size] do
@@ -209,16 +174,8 @@ private def definesNext (toks : Array Token) : Bool := Id.run do
     | _ => return false
   return false
 
-/-- minted's one-line commands, `\mintinline` and `\mint`, read from just
-past the command name as minted.sty (v3.7) reads them: `[options]`, braces
-nesting inside, then `{language}`, then the code — a brace group whose
-braces nest, or the text up to the next copy of the character that opens
-it. Spaces stand between them as TeX's reader skips them (`argGap`); inside
-the code a line end is one more character, which a blank line ends unclosed.
-Returns where the call ends, whether its code closed, and the call as the
-elaborator reads it: its options, language and delimited code, the spaces
-between them dropped. `none` when no `{language}` follows, so the name stays
-an ordinary control word (the subject of a definition, say). -/
+/-- minted's `\mintinline` and `\mint`, read from just past the command name as
+minted.sty reads them. -/
 private def mintedCall (cs : Array Char) (j : Nat) : Option (Nat × Bool × String) := Id.run do
   let some start := argGap cs j | return none
   let mut k := start
@@ -247,10 +204,9 @@ private def mintedCall (cs : Array Char) (j : Nat) : Option (Nat × Bool × Stri
   unless cs[close]? == some '}' do return none
   head := head ++ strFrom cs k (close + 1)
   let some code := argGap cs (close + 1) (comments := false) | return some (close + 1, false, head)
-  -- A closing brace opens no code: the call's code is not here, as in a
-  -- definition that stops at the language (`\newcommand{\py}{\mintinline{python}}`).
+  -- A closing brace opens no code.
   if cs[code]? == some '}' then return none
-  -- A blank line ends the code: a line end, then only spaces, then another.
+  -- A blank line ends the code.
   let blankAt (m : Nat) : Bool :=
     match lineEndAt cs m with
     | some b => (lineEndAt cs (scanWhile cs b (fun c => c == ' ' || c == '\t'))).isSome
@@ -282,9 +238,7 @@ private def mintedCall (cs : Array Char) (j : Nat) : Option (Nat × Bool × Stri
       return (cs.size, false)
   return some (stop, closed, head ++ strFrom cs code stop)
 
-/-- The written control token, before NFC changes any spelling. A control
-word ends with its name; a control symbol includes its character, including
-both characters of a CRLF line end. -/
+/-- The written control token, before NFC changes any spelling. -/
 private def writtenControl (source : Array Char) (i : Nat) : Option String := do
   guard (source[i]? == some '\\')
   let c ← source[i + 1]?
@@ -306,9 +260,8 @@ private structure SourceMap where
   stop : Nat := 0
   pos : Pos := {}
 
-/-- Structural ASCII characters and whitespace separate NFC slices (UAX #15).
-Keep their original scalar offsets and positions, including the end boundary.
-The normalizer still owns token text; only the original array supplies evidence. -/
+/-- The original-source map of the NFC slices between structural ASCII
+characters and whitespace. -/
 private def sourceMap (source : Array Char) : SourceMap := Id.run do
   let mut out : SourceMap := {}
   let mut i := 0
@@ -326,10 +279,8 @@ private def sourceMap (source : Array Char) : SourceMap := Id.run do
       i := j
   return out
 
-/-- Most token boundaries coincide with a chunk boundary. A control may consume
-part of a word chunk; an internal cut is accepted only when normalizing its two
-original slices gives exactly the two normalized slices. A reordered or expanded
-scalar with no such cut provides no literal evidence for a synthetic fragment. -/
+/-- The original span of a normalized token boundary, admitted only where
+normalizing its slices agrees. -/
 private def SourceMap.point (m : SourceMap) (source : Array Char) (i : Nat) :
     Option (Nat × Pos) := Id.run do
   if i == m.size then return some (m.stop, m.pos)
@@ -364,8 +315,6 @@ private def writtenRange (m : SourceMap) (source cs : Array Char) (i j : Nat) :
     Nfc.normalizeChars (source.extract a b) == cs.extract i j)
   return strFrom source a b
 
-/-- Every admitted literal is a nonempty original source slice whose NFC is
-the token's normalized slice; arbitrary or incomplete maps cannot invent it. -/
 private theorem writtenRange_source_exact
     (m : SourceMap) (source cs : Array Char) (i j : Nat) (text : String)
     (h : writtenRange m source cs i j = some text) :
@@ -385,22 +334,14 @@ private theorem writtenRange_source_exact
         exact ⟨a.1, b.1, good.1.1, good.1.2, good.2, h.symm⟩
       next bad => simp [failure] at h
 
-/-- The lexically blind environments: their bodies are code, captured raw
-in one token — `{verbatim}`, and the listing environments that differ from
-it only by their declared apparatus (listings' `{lstlisting}`, minted's
-`{minted}`), whose option head the elaborator reads from the captured
-string. Each entry: the environment name, its `\begin` suffix, its whole
-closer. -/
+/-- The lexically blind environments, whose bodies are
+captured raw in one token. -/
 private def verbEnvs : List (String × Array Char × Array Char) :=
   ["verbatim", "lstlisting", "minted"].map fun n =>
     (n, s!"\{{n}}".toList.toArray, s!"\\end\{{n}}".toList.toArray)
 
 public def lex (file : String) (input : String) : Array Token × Array Diag := Id.run do
-  -- Folded straight into an array: `toList.toArray` builds and drops a cons
-  -- cell per character of the document. Normalized to NFC here, once, so
-  -- every downstream consumer — hyphenation, slugs, font cmap lookups,
-  -- both backends — sees one canonical spelling (UAX #15; Nfc.lean says
-  -- why input is the right place).
+  -- Normalized to NFC here, once, so every consumer sees one canonical spelling.
   let source := input.foldl (fun a c => a.push c) (Array.mkEmpty input.utf8ByteSize)
   let cs := Nfc.normalizeChars source
   let unchanged := source == cs
@@ -426,15 +367,10 @@ public def lex (file : String) (input : String) : Array Token × Array Diag := I
           | some t => t.tok == .lbrace
           | none => false
         let nextRbrace := cs[j]? == some '}'
-        -- A single line end against a group brace is dropped, exactly as
-        -- LaTeX's `{%` drops the line end after an opening brace. Group
-        -- braces carry no glyph, so any adjacency this leaves is intentional
-        -- under the shorthand and earns no diagnostic: the two syntaxes are
-        -- indistinguishable at the lexer boundary.
+        -- A single line end against a group brace is dropped, as LaTeX's `{%` drops it.
         for tok in midlineWs prevLbrace nextRbrace n do
           toks := toks.push ⟨tok, here⟩
-        -- The space TeX reads there stays on the brace, for a reader that
-        -- runs TeX's lists as TeX does (`Pos.openEol`, `Pos.closeEol`).
+        -- The space TeX reads there stays on the brace.
         if n == 1 && (prevLbrace || nextRbrace) then
           if prevLbrace then
             toks := toks.modify (toks.size - 1) fun t => { t with pos := { t.pos with openEol := true } }
@@ -460,8 +396,7 @@ public def lex (file : String) (input : String) : Array Token × Array Diag := I
             let name := strFrom cs (i + 1) j
             if name == "begin" &&
                 verbEnvs.any (fun e => matchAt cs j e.2.1) then
-              -- verbatim (and the listing environments) are lexically
-              -- blind: capture raw content in one token
+              -- verbatim and the listing environments capture raw content in one token.
               let (env, opener, closer) :=
                 (verbEnvs.find? (fun e => matchAt cs j e.2.1)).getD
                   ("verbatim", #[], #[])
@@ -479,10 +414,7 @@ public def lex (file : String) (input : String) : Array Token × Array Diag := I
                 pos := posOver cs i cs.size pos
                 i := cs.size
             else if name == "verb" then
-              -- `\verb<d>…<d>`: the text up to the delimiter's next copy on
-              -- the same line is code, read raw (latex.ltx's `\verb`, whose
-              -- `\@ifstar` skips spaces before the delimiter); `\verb*`
-              -- shows each space as the visible space, U+2423.
+              -- `\verb<d>…<d>`: the text up to the delimiter's next copy on the line is code.
               let star := cs[j]? == some '*'
               let k := scanWhile cs (if star then j + 1 else j) (fun c => c == ' ' || c == '\t')
               let d := (cs[k]?).getD '\n'
@@ -514,9 +446,7 @@ public def lex (file : String) (input : String) : Array Token × Array Diag := I
               toks := toks.push ⟨.ctrl name, here⟩
               pos := posOver cs i j pos
               i := j
-              -- A control word swallows the whitespace after it, so
-              -- `\textbf {x}` introduces no space. Symbols take no argument,
-              -- so eating the space would turn `a \middot b` into "a ·b".
+              -- A control word swallows the whitespace after it; a text symbol does not.
               unless (textSymbols.lookup name).isSome do
                 let k := scanWhile cs i isWs
                 for tok in wsTokens true (newlines cs i k - 1) do
@@ -524,9 +454,7 @@ public def lex (file : String) (input : String) : Array Token × Array Diag := I
                 pos := posOver cs i k pos
                 i := k
           else if c1 == '\n' || c1 == '\r' then
-            -- `\` ending a line is `\^^M`, the control space (plain.tex and
-            -- latex.ltx: `\def\^^M{\ }`); the next line starts at its first
-            -- non-blank, and a blank one ends the paragraph.
+            -- `\` ending a line is the control space.
             toks := toks.push ⟨.ctrl " ", here⟩
             let e := if c1 == '\r' && cs[i + 2]? == some '\n' then i + 3 else i + 2
             let k := scanWhile cs e isWs
@@ -552,8 +480,7 @@ public def lex (file : String) (input : String) : Array Token × Array Diag := I
         pos := pos.next false
         i := i + 1
       else if c == '$' then
-        -- Keep individual shifts: in `$x$$y$` the middle pair closes one
-        -- inline formula and opens the next.
+        -- In `$x$$y$` the middle pair closes one formula and opens the next.
         let stop := if cs[i + 1]? == some '$' then i + 2 else i + 1
         let here := { here with command := written i stop }
         toks := toks.push ⟨.math, here⟩

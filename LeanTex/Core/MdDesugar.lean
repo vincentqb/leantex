@@ -6,91 +6,27 @@ public import LeanTex.Core.Ir
 import LeanTex.Core.Decl
 import LeanTex.Core.Loop
 
-/-! # Markdown's meaning: the desugaring into the surface AST
+/-! # Markdown's meaning
 
-Markdown has no semantics of its own here. Its meaning *is* this function:
-md AST → the tex-shaped surface AST the one elaborator reads. AST to AST,
-never through generated tex text — generating text would put two parsers in
-the pipeline and destroy the `.md` provenance every diagnostic downstream
-carries.
-
-Markdown lowers into a declared vocabulary of the surface AST
-(`Md.vocabulary`): words, spaces, paragraph ends, a fixed list of controls,
-environments and verbatims, and the heading bridge — at every depth, for
-every md block and inline node (`desugar_vocabulary_mem`). Its output is
-also block-shaped (`desugar_blockStart_contract`), which is what makes a
-markdown file included in tex elaborate as it does alone
-(`Elab.markdownInput_blocks_exact`). The vocabulary exceeds what a
-tex source can spell in two named places: heading ranks h1, h5 and h6
-exist only through the bridge (a tex section command reaches h2–h4), and a
-word may hold `%`, `#`, `$` and `&`, which tex spells only as escapes.
-Where the surface AST cannot express a markdown construct, the construct is
-*routed* — named by its own subject — rather than the elaborator being
-extended to meet markdown. The code a route takes is decided by what
-reaches the page, which is the registry's rule and not a habit:
-
-* `W0307` (`pending`, floor `absent`) for a construct that ships nothing.
-  One today: `md:thematic-break`, which has no block in this engine.
-* `W0392` (`degraded`, floor `content`) for a construct that ships,
-  diminished: `md:list-start`, `md:loose-list`,
-  `md:link-title`, `md:image-title`, `md:code-info`, `md:image-alt`.
-  Shipping content cannot take an absent-content loss.
-
-A disclosure is expressible, and crosses as the markdown disclosure
-environment (`Parse.markdownDisclosureEnv`, `disclosureRaws`) to its own IR
-node, which the HTML ships as the platform's element and the twin writes
-back, and paper sets expanded: it has no collapse to lose, and every word
-ships.
-
-A GFM table is expressible, and crosses as the booktabs `{tabular}` it
-means, every cell's content inside a group of its own (`tableRaws_contract`),
-where the `{tabular}` reader looks for no cell or row end. Its environment
-is the markdown table's own (`Parse.markdownTableEnv`): the one difference
-from a tex `{tabular}` is that its columns narrow as a web table's do.
-
-All six heading ranks cross the native heading bridge as fixed names and
-grouped inline raws. Their shared IR rank reaches both artifacts unchanged;
-a body h1 remains distinct from document-title furniture.
-
-**No reader text reaches a re-parse.** Two surface constructs are read back
-from option text by the elaborator — a listing's `[language=…]` head and an
-image's `[alt=…]` run — and splicing reader text into either was an
-injection path: an info string `a]b` shipped `b]` as code, and
-`{r, echo=FALSE}` shipped `[language={r,]` as its first line. So what
-crosses is never the author's text. A language crosses as an
-`Ir.ListingLang`, the IR's own value, whose token grammar holds no character
-the option head reads; a spelling outside it is routed (`md:code-info`). An
-alternative crosses in the one spelling the elaborator's own option splitter
-is checked to read back exactly (`altSource`); text no spelling can carry
-has its straight double quotes set curly, and says so (`md:image-alt`). -/
+The desugaring of the md AST into the surface AST the one elaborator reads. -/
 
 namespace LeanTex.Core.Md
 
 open LeanTex.Core LeanTex.Core.Parse
 
-/-- A `W0307`: a markdown construct the surface AST cannot yet express *and*
-whose content does not reach the page. `pending` means exactly that (its
-floor is `absent`), so only a construct that ships nothing takes this code —
-today the thematic break, which has no block in the engine at all.
-
-A construct that *does* ship, diminished, takes `routeDegraded` instead. The
-two were one code, and the census then read four shipping constructs as
-absent content. -/
+/-- A `W0307`: a markdown construct the surface AST cannot express and whose
+content does not reach the page. -/
 private def route (file : String) (subject : String) (what : String) (pos : Pos) : Diag :=
   Diag.of .W0307 what (some ⟨file, pos⟩) (subject := some ("md:" ++ subject))
 
-/-- A `W0392`: the construct sets, with part of its declaration dropped —
-`degraded`, floor `content`, which is what the census must see for a link
-that sets without its title or a disclosure whose body stays expanded. -/
+/-- A `W0392`: the construct sets, with part of its declaration dropped. -/
 private def routeDegraded (file : String) (subject : String) (what : String) (pos : Pos)
     (help : Option String := none) (output : Option Diag.Output := none) : Diag :=
   Diag.of .W0392 what (some ⟨file, pos⟩) help (subject := some ("md:" ++ subject))
     (output := output)
 
 /-- The value the elaborator reads back from one `\includegraphics` option
-source: `Decl.splitEntries`, then `Decl.splitEntry`, then the one layer of
-braces or quotes `readImageOpts` strips, then its trim. `none` when the
-source does not read as exactly one `alt` entry. -/
+source; `none` when it reads none. -/
 public def altReadBack (src : String) : Option String :=
   match Decl.splitEntries src with
   | [e] =>
@@ -107,10 +43,7 @@ public def altReadBack (src : String) : Option String :=
   | _ => none
 
 /-- An option source for a text alternative that reads back as exactly that
-text, checked with the reader's own splitter rather than argued: quoted,
-where nothing but a `"` ends the value; else braced, where the splitter's
-depth and string tracking must both come back balanced. `none` when neither
-spelling reads back — the text is then not carried as written. -/
+text; `none` where no spelling does. -/
 public def altSource (t : String) : Option String :=
   let want := t.trimAscii.toString
   let quoted := "alt=\"" ++ t ++ "\""
@@ -119,10 +52,8 @@ public def altSource (t : String) : Option String :=
   else if altReadBack braced == some want then some braced
   else none
 
-/-- Literal text as surface words and spaces: one `word` per run of
-non-space characters. Going through `word` rather than through generated
-source is also what lets markdown text carry `$`, `%` and `#` with no
-escape — they never become control tokens. -/
+/-- Literal text as surface words and spaces, one `word` per
+run of non-space characters. -/
 public def textRaws (s : String) (pos : Pos) : Array Raw := Id.run do
   let mut out : Array Raw := #[]
   let mut cur := ""
@@ -160,9 +91,6 @@ private theorem textOnly_space (rs : Array Raw) (h : TextOnly rs) :
   · exact h r hr
   · exact Or.inl hr
 
-/-- Author text cannot introduce a surface control, group or option. This
-is a safety invariant over the actual lowering loop, before IR exists;
-it does not claim a character census or how much input was consumed. -/
 public theorem textRaws_covers (s : String) (pos : Pos) :
     ∀ r ∈ textRaws s pos, r = .space ∨ ∃ t p, r = .word t p := by
   change TextOnly (textRaws s pos)
@@ -185,15 +113,13 @@ public theorem textRaws_covers (s : String) (pos : Pos) :
     · exact hs
     · exact textOnly_word _ _ _ hs
 
-/-- An empty HTML target can use the native target only if its key reaches
-the page unchanged. An HTML fragment link names the original key, whereas
-native labels sanitise it; accepting a changed key would break that link. -/
+/-- The native target for an empty HTML target, only when
+its key reaches the page unchanged. -/
 public def anchorRaws? (key : String) (p : Pos) : Option (Array Raw) :=
   if Ir.labelAnchor key == key then
     some #[.ctrl "hypertarget" p, .group #[.word key p] p, .group #[] p]
   else none
 
-/-- A supported target's fragment remains the original key. -/
 public theorem anchorRaws_fixed_point (key : String) (p : Pos) (rs : Array Raw)
     (h : anchorRaws? key p = some rs) : Ir.labelAnchor key = key := by
   unfold anchorRaws? at h
@@ -201,19 +127,13 @@ public theorem anchorRaws_fixed_point (key : String) (p : Pos) (rs : Array Raw)
   · simpa using ‹(Ir.labelAnchor key == key) = true›
   · contradiction
 
-/-- A disclosure over the surface AST before IR exists: the markdown
-disclosure environment (`Parse.markdownDisclosureEnv`), its `[open]` option
-where the disclosure stands open, all summary raws inside one group, and the
-entire body after it, in order. -/
+/-- A disclosure as the markdown disclosure environment: its `[open]` option,
+the summary in one group, then the body. -/
 public def disclosureRaws (summary body : Array Raw) (expanded : Bool) (p : Pos) : Array Raw :=
   #[.env Parse.markdownDisclosureEnv
     ((if expanded then #[.sym '[' p, .word "open" p, .sym ']' p] else #[]) ++
       #[.group summary p] ++ body) p]
 
-/-- Framing cannot discard or reorder any body raw, or extract author text
-from the summary's group: the environment holds its option, then the
-summary's one group, then the body whole. These are facts of lowering, not
-backend layout. -/
 public theorem disclosureRaws_contract (summary body : Array Raw) (expanded : Bool) (p : Pos) :
     ∃ opts, disclosureRaws summary body expanded p =
         #[.env Parse.markdownDisclosureEnv (opts ++ #[.group summary p] ++ body) p] ∧
@@ -241,8 +161,7 @@ private def inlTextList (acc : String) : List Inl → String
 
 end
 
-/-- The flattened text of inline content: what an `alt` attribute carries,
-which HTML states as text and markdown writes as inline content. -/
+/-- The flattened text of inline content, as an `alt` attribute carries it. -/
 private def inlText (xs : Array Inl) : String := inlTextList "" xs.toList
 
 mutual
@@ -274,10 +193,7 @@ private def inlRaws (file : String) : Inl → Array Raw × Array Diag
         "a link's title is not carried: the link sets without it" p)
     (#[.ctrl "href" p, .group (textRaws dest p) p, .group rs p], ds)
   | .image dest title alt p =>
-    -- The alternative rides `\includegraphics`'s own `alt` key in the one
-    -- spelling the option splitter is checked to read back exactly
-    -- (`altSource`). Text no spelling carries sets with its straight double
-    -- quotes curly — still the alternative, and named.
+    -- The alternative rides `\includegraphics`'s own `alt` key in the spelling `altSource` checks.
     let text := String.ofList ((inlText alt).toList.map fun c => if c == '\t' then ' ' else c)
     let ds := if title.isEmpty then #[] else
       #[routeDegraded file "image-title"
@@ -298,8 +214,7 @@ the image option cannot carry them as written" p
       (#[.ctrl "includegraphics" p, .sym '[' p] ++ altRaws
          ++ #[.sym ']' p, .group (textRaws dest p) p], ds)
 
-/-- A list of inline nodes, accumulating: prepending to the recursive result
-would copy it at every element. -/
+/-- A list of inline nodes, accumulating. -/
 private def inlListRaws (file : String) (out : Array Raw) (ds : Array Diag) :
     List Inl → Array Raw × Array Diag
   | [] => (out, ds)
@@ -309,18 +224,14 @@ private def inlListRaws (file : String) (out : Array Raw) (ds : Array Diag) :
 
 end
 
-/-- A table column's spec letter: GFM's undeclared alignment is the left
-`l`, LaTeX's own default for a text column. -/
+/-- A table column's spec letter; GFM's undeclared alignment is `l`. -/
 public def TableAlign.specLetter : TableAlign → Char
   | .none => 'l'
   | .left => 'l'
   | .right => 'r'
   | .center => 'c'
 
-/-- The cells of a row after its first, each after the `&` that separates
-it from the one before, the accumulator threaded. A cell is one group: its
-content rides inside, where the `{tabular}` reading looks for no `&` and no
-`\\`, so a cell's own text cannot end a cell or a row. -/
+/-- The cells of a row after its first, each after its `&`, each one group. -/
 private def laterCellsRaws (file : String) (p : Pos) (out : Array Raw) (ds : Array Diag) :
     List (Array Inl) → Array Raw × Array Diag
   | [] => (out, ds)
@@ -349,17 +260,7 @@ private def rowsRaws (file : String) (p : Pos) (out : Array Raw) (ds : Array Dia
     let (rs, rds) := rowRaws file row p
     rowsRaws file p (out ++ rs) (ds ++ rds) rest
 
-/-- A table as the booktabs `{tabular}` the surface AST already has, the
-one resolving site both artifacts read a table from: a column per
-alignment between `@{}` at either edge, so the rules span the columns' text
-and no outer pad, as booktabs' own examples set a formal table
-(`@{}llr@{}`, booktabs manual); the header between `\toprule` and
-`\midrule` — what makes it the head (`Ir.tableHeaderRows`) — the data rows,
-then `\bottomrule`. Three rules and no vertical one. The environment is the
-markdown table's own (`Parse.markdownTableEnv`), read as `{tabular}` is,
-its columns narrowing as a web table's do (`Ir.ColSpec.narrows`): a
-markdown table declares no widths, wherever it is read — alone, or
-included in a tex document. -/
+/-- A table as the booktabs `{tabular}` the surface AST already has. -/
 public def tableRaws (file : String) (aligns : Array TableAlign)
     (header : Array (Array Inl)) (rows : Array (Array (Array Inl))) (p : Pos) :
     Array Raw × Array Diag :=
@@ -370,10 +271,8 @@ public def tableRaws (file : String) (aligns : Array TableAlign)
   let (body, ds) := rowsRaws file p ((head ++ hr).push (.ctrl "midrule" p)) hds rows.toList
   (#[.env Parse.markdownTableEnv (body.push (.ctrl "bottomrule" p)) p], ds)
 
-/-- What a markdown table may put at a `{tabular}` body's top level: a
-group — the column spec or one cell —, the `&` between two cells, the `\\`
-that ends a row, and booktabs' three rules. Never a word or a space: a
-cell's text read there would be the table's own structure. -/
+/-- What a markdown table may put at a `{tabular}` body's top level: groups,
+`&`, `\\`, and booktabs' three rules. -/
 public def TableTop (p : Pos) (r : Raw) : Prop :=
   (∃ g, r = .group g p) ∨ r = .sym '&' p ∨ r = .ctrl "\\" p
     ∨ r = .ctrl "toprule" p ∨ r = .ctrl "midrule" p ∨ r = .ctrl "bottomrule" p
@@ -429,15 +328,6 @@ private theorem rowsRaws_tableTop (file : String) (p : Pos) (rows : List (Array 
     · exact h x hx
     · exact hr x hx
 
-/-- **The lowering's shape: a cell's text is inside its cell's group.** A
-markdown table lowers to one markdown `{tabular}` (`Parse.markdownTableEnv`)
-whose body holds, at its top level, nothing but groups — the column spec
-and one per cell —, the `&` and `\\` between them, and booktabs' rules;
-every word a cell holds sits inside that cell's group. What the shape buys
-rests on a premise of the elaborator's, not proved here: that the
-`{tabular}` reader splits a body into rows and cells only at its top level,
-never inside a group. The end-to-end check holds it — `markdownTableChecks`
-ships an `&` and a `\\` in a cell as that cell's text. -/
 public theorem tableRaws_contract (file : String) (aligns : Array TableAlign)
     (header : Array (Array Inl)) (rows : Array (Array (Array Inl))) (p : Pos) :
     ∃ body, (tableRaws file aligns header rows p).1 = #[.env Parse.markdownTableEnv body p] ∧
@@ -470,18 +360,7 @@ private def blkRaws (file : String) : Blk → Array Raw × Array Diag
     let (rs, ds) := inlListRaws file #[] #[] body.toList
     (Parse.headingRaws level rs p, ds)
   | .code info text p =>
-    -- The info string's first word is the language, which the IR carries
-    -- (`Ir.ListingSpec.language`) and both artifacts project — the HTML
-    -- `code` element's class and the markdown fence's info string. What
-    -- crosses into `{lstlisting}`'s option head is an `Ir.ListingLang`, the
-    -- IR's own value, never the author's word: its token grammar holds no
-    -- `]`, `,`, `=` or brace, so the head reads it back unchanged. A word
-    -- outside the grammar is routed, and the code sets as it is. The word is
-    -- split on spaces and tabs, as §4.5's "first word" is.
-    -- The code is the fence's next line, as a tex verbatim's is its
-    -- opener's: the newline the body opens on is the one `Ir.verbatimLines`
-    -- reads past, so every code line stands at its own source line. Its
-    -- column inside a list item or a block quote is not carried: pending.
+    -- The info string's first word is the language, crossing as an `Ir.ListingLang`.
     let word := ((info.split (fun c => c == ' ' || c == '\t')).find? (!·.isEmpty)).map
       (·.toString)
     match word with
@@ -534,15 +413,14 @@ private def itemsRaws (file : String) (out : Array Raw) (ds : Array Diag) :
 
 end
 
-/-- The whole document: markdown source to the surface AST the elaborator
-reads, with the reader's own diagnostics carrying `.md` spans. -/
+/-- The whole document: markdown source to the surface AST, with the reader's
+own diagnostics carrying `.md` spans. -/
 public def desugar (file : String) (input : String) : Array Raw × Array Diag :=
   let (bs, ds) := blocks file input
   let (rs, ds') := blkListRaws file #[] #[] bs.toList
   (rs, ds ++ ds')
 
-/-- The frontend a `.md` path selects: the reader plus the desugaring, in
-the shape `Lex.lex` and `Parse.parse` present for `.tex`. -/
+/-- The frontend a `.md` path selects: the reader plus the desugaring. -/
 public def read (file input : String) : Array Raw × Array Diag := desugar file input
 
 end LeanTex.Core.Md

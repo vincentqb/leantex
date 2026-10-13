@@ -6,77 +6,15 @@ import LeanTex.Core.Loop
 import LeanTex.Core.Blank
 import Std.Data.HashMap
 
-/-! # The markdown surface: source → md AST
-
-Markdown has no semantics of its own in this engine: its meaning *is* its
-desugaring into the tex-shaped surface AST (`MdDesugar`), which the one
-elaborator then reads. This module is only the reader — source text to an
-md AST carrying `.md` spans, so every diagnostic downstream names the
-markdown line the reader saw.
-
-Dialect: CommonMark-shaped but strict, with GitHub Flavored Markdown's
-table extension, which the surface AST expresses as a booktabs table. Three
-constructs are refused by design rather than silently diverging, each an
-`E0390` carrying the class as its subject:
-
-* `raw-html` — raw HTML is parsed. It is never passed through, never
-  rendered by another engine, never decided per backend, and never dropped
-  in silence. A closed vocabulary lowers at read time onto md constructors
-  that already exist, so the elaborator reads it through those nodes' one
-  resolving site: a comment-only span ships nothing; a `<br>`, `<br/>` or
-  `<br />` with no attribute is a hard break; an empty `<a>` with one `name`
-  or `id` is a target; a `<details>` or `<details open>` around a one-line,
-  attribute-free, plain-text `<summary>` is a disclosure, open where its tag
-  says so. Every attribute on an accepted
-  element is carried by an existing field, honoured exactly by what ships
-  (a premise pin), routed, or its element is refused. Everything else is
-  one `E0390` at its own `<`, dropping exactly the raw HTML the reader
-  consumed: an inline tag's markup, its neighbouring text still shipping, or
-  an HTML block's lines. What is proved is the inline scan's step: raw HTML
-  lowers to that vocabulary and nothing else (`htmlInlineAt_covers`), and
-  each step ships a token, raises one `E0390` at the position the scan reads
-  its `<` at, or consumes a comment that hides only itself
-  (`htmlInlineAt_accounts`). The loop around that step and the block
-  reader's raw-HTML arms are held by evidence over a generated family of
-  names, shapes and sites (`mdHtmlAccountsChecks`); their statements are
-  pending work. A spelling joins only when it says what markdown cannot, the
-  IR already resolves it, and each artifact sets it as it sets its markdown
-  spelling (`htmlTwinChecks`) — or, where markdown has none, as rows over
-  both artifacts hold it; a loss is named for each artifact that suffers it,
-  the markdown twin included, and for no other. `\markdownInput` reads
-  through the same `Md.read`, so all of this holds for markdown included in
-  tex.
-* `indented-code` — a four-space indent as a code block. Measured
-  ambiguity: the same indent means continuation inside a list and code
-  outside one.
-* `lazy-continuation` — a paragraph line inside a container that omits the
-  container's own marker.
-
-Each refusal carries a fix-it in its message, and each is a *data*
-decision: the verdict rows in `testdata/commonmark/verdicts.tsv` say which
-spec cases the class touches, so flipping one is a table change plus a
-reader arm, never a redesign.
-
-Why document content can never become markup: whatever the reader makes of
-a document, raw HTML included, the surface AST it desugars to lies in the
-lowering's declared vocabulary, no formula among it
-(`desugar_vocabulary_mem`), author text crossing as words and spaces
-(`textRaws_covers`); and the HTML backend escapes every text and attribute
-it emits (`Html.escapeText_no_lt`, `Html.escapeAttr_no_quote`). The other
-half — that a link's or an image's destination cannot carry an active URL
-scheme onto the page — is pending work, held by no theorem yet.
-
-Block structure is one pass over the lines with an explicit container
-stack — `Parse.parse`'s frame shape, so totality is immediate and the
-checker needs no help. Inline structure is a flat token array plus
-CommonMark's delimiter-run algorithm, matched into a pair table and then
-built into a tree by the same frame shape. -/
+/-! The markdown reader: strict CommonMark with GFM tables into an md AST
+carrying `.md` spans, refusing raw HTML outside a closed vocabulary, indented
+code and lazy continuation (E0390). -/
 
 namespace LeanTex.Core.Md
 
 open LeanTex.Core
 
-/-- An inline node. `pos` is the position in the `.md` source. -/
+/-- An inline node; `pos` is its position in the `.md` source. -/
 public inductive Inl where
   | text (s : String) (pos : Pos)
   | code (s : String) (pos : Pos)
@@ -91,8 +29,7 @@ public inductive Inl where
 
 public instance : Inhabited Inl := ⟨.soft {}⟩
 
-/-- A table column's alignment as its GFM delimiter cell spells it: `---`
-declares none, `:--` left, `--:` right, `:-:` centre. -/
+/-- A table column's alignment as its GFM delimiter cell spells it. -/
 public inductive TableAlign where
   | none
   | left
@@ -100,9 +37,8 @@ public inductive TableAlign where
   | center
   deriving Repr, BEq, Inhabited
 
-/-- A block node. A list holds one `Array Blk` per item. A table holds one
-alignment per column, the header's cells, and its data rows, each exactly
-one cell per column. -/
+/-- A block node; a list holds one `Array Blk` per item, a
+table one cell per column in every row. -/
 public inductive Blk where
   | para (body : Array Inl) (pos : Pos)
   | heading (level : Ir.HeadingLevel) (body : Array Inl) (pos : Pos)
@@ -118,18 +54,14 @@ public inductive Blk where
 
 public instance : Inhabited Blk := ⟨.rule {}⟩
 
--- ## Character classes
-
 def isSpaceOrTab (c : Char) : Bool := c == ' ' || c == '\t'
 
-/-- CommonMark's Unicode whitespace: space, tab, newline, form feed,
-carriage return. -/
+/-- CommonMark's Unicode whitespace: space, tab, newline,
+form feed, carriage return. -/
 def isMdSpace (c : Char) : Bool :=
   c == ' ' || c == '\t' || c == '\n' || c == '\r' || c == '\x0c'
 
-/-- ASCII punctuation, the spec's `punctuation` for flanking purposes. The
-spec widens this to Unicode punctuation and symbols; the widening is a
-declared verdict row, not a silent narrowing. -/
+/-- ASCII punctuation, the spec's `punctuation` for flanking purposes. -/
 def isMdPunct (c : Char) : Bool :=
   "!\"#$%&'()*+,-./:;<=>?@[\\]^_`{|}~".any (· == c)
 
@@ -138,39 +70,28 @@ def isAsciiAlpha (c : Char) : Bool :=
 
 def isAsciiDigit (c : Char) : Bool := '0' ≤ c && c ≤ '9'
 
--- ## Lines
-
-/-- One source line as characters, with its 1-based line number. Scanning
-is over `Array Char` so every index is O(1); a line is short, and the
-whole document allocates one array's worth of characters. -/
+/-- One source line as characters, with its 1-based line number. -/
 structure Line where
   cs : Array Char
   no : Nat
   deriving Inhabited
 
-/-- The reader's line-splitting accumulator: the lines closed so far, the
-line being built, and its number. -/
+/-- The reader's line-splitting accumulator. -/
 private structure LineAcc where
   out : Array Line
   cur : Array Char
   no : Nat
 
 def splitLines (input : String) : Array Line :=
-  -- Folded over the string rather than over `input.toList`: the whole
-  -- document is the input here, and materializing it as a cons list is one
-  -- allocation per character before the reader has looked at anything. The
-  -- accumulator is uniquely owned through the fold, so each `push` appends
-  -- in place.
   let step (a : LineAcc) (c : Char) : LineAcc :=
     if c == '\n' then { out := a.out.push ⟨a.cur, a.no⟩, cur := #[], no := a.no + 1 }
     else if c == '\r' then a
     else { a with cur := a.cur.push c }
   let a := input.foldl step { out := #[], cur := #[], no := 1 }
-  -- A trailing newline ends the last line; text after it is one more line.
   if a.cur.isEmpty then a.out else a.out.push ⟨a.cur, a.no⟩
 
-/-- Where the line's content starts and how many columns of indent precede
-it, counting a tab as advancing to the next multiple of four. -/
+/-- Where the line's content starts and its columns of indent, a tab advancing
+to the next multiple of four. -/
 def indentAt (cs : Array Char) (from_ : Nat) (col0 : Nat) : Nat × Nat := Id.run do
   let mut i := from_
   let mut col := col0
@@ -203,10 +124,8 @@ def sliceStr (cs : Array Char) (from_ to_ : Nat) : String := Id.run do
 
 def rstrip (s : String) : String := s.trimAsciiEnd.toString
 
--- ## Block starts
-
-/-- `#`×1–6 then a space or end of line: the level and the index past the
-marker, or `none`. -/
+/-- `#`×1–6 then a space or end of line: the level and the
+index past the marker, or `none`. -/
 def atxAt (cs : Array Char) (i : Nat) : Option (Ir.HeadingLevel × Nat) := Id.run do
   let mut j := i
   let mut n := 0
@@ -249,8 +168,8 @@ def fenceAt (cs : Array Char) (i : Nat) : Option (Char × Nat × String) := Id.r
   if c0 == '`' && info.any (· == '`') then return none
   return some (c0, n, info)
 
-/-- A closing fence for an open one: at most three spaces of indent, the
-same char at least as long, nothing after it. -/
+/-- A closing fence for an open one: at most three spaces of indent, the same
+char at least as long, nothing after it. -/
 def closesFence (cs : Array Char) (ch : Char) (len : Nat) : Bool := Id.run do
   let (i, ind) := indentAt cs 0 0
   if ind > 3 then return false
@@ -272,8 +191,8 @@ def bulletAt (cs : Array Char) (i : Nat) : Option (Char × Nat) := do
   | none => some (c, i + 1)
   | some d => if isSpaceOrTab d then some (c, i + 2) else none
 
-/-- An ordered marker: the start number, the delimiter, and the index past
-it. At most nine digits, per the spec. -/
+/-- An ordered marker: the start number, the delimiter, and
+the index past it; at most nine digits. -/
 def orderedAt (cs : Array Char) (i : Nat) : Option (Nat × Char × Nat) := Id.run do
   let mut j := i
   let mut n := 0
@@ -292,10 +211,8 @@ def orderedAt (cs : Array Char) (i : Nat) : Option (Nat × Char × Nat) := Id.ru
   | none => return some (n, d, j + 1)
   | some e => if isSpaceOrTab e then return some (n, d, j + 2) else return none
 
-/-- A setext underline: one run of `=` or of `-`, then only trailing spaces
-or tabs (§4.3). Returns the level. Spaces *inside* the run are not an
-underline: `Foo` over `- - -` is a paragraph and a thematic break, and
-accepting them set it as a heading. -/
+/-- A setext underline: one run of `=` or of `-`, then only trailing spaces or
+tabs; returns the level. -/
 def setextAt (cs : Array Char) (i : Nat) : Option Ir.HeadingLevel := Id.run do
   let some c0 := cs[i]? | return none
   unless c0 == '=' || c0 == '-' do return none
@@ -305,17 +222,7 @@ def setextAt (cs : Array Char) (i : Nat) : Option Ir.HeadingLevel := Id.run do
   unless isBlankFrom cs j do return none
   return some (if c0 == '=' then .h1 else .h2)
 
--- ## Raw HTML, recognized rather than guessed
---
--- The dialect refuses raw HTML, so what counts *as* raw HTML decides what
--- the reader refuses — and a test wider than the grammar refuses valid
--- CommonMark. Twenty-nine spec cases were refused by a test that fired on
--- any `<` followed by a letter: `<https://example.org>` at the start of a
--- line, and literal text such as `x <y for comparison`. So the tag grammar
--- (§6.6) is implemented, and anything it does not accept is text.
-
-/-- The characters of `lit` at `i`, case-folded, one step of the source per
-character of the literal: its reach is the literal's length. -/
+/-- Whether the literal's characters stand at `i`, case-folded. -/
 def litAtList (cs : Array Char) (i : Nat) : List Char → Bool
   | [] => true
   | c :: rest => (cs[i]?.any fun d => d.toLower == c.toLower) && litAtList cs (i + 1) rest
@@ -332,25 +239,17 @@ def findLit (cs : Array Char) (i : Nat) (lit : String) : Option Nat := Id.run do
     j := j + 1
   return none
 
-/-- HTML also ends a comment at `--!>`. CommonMark's raw span can extend
-past that boundary, so it cannot be discarded as invisible content.
-Inspect only the consumed span, never the rest of the paragraph. -/
+/-- Whether the consumed span is one comment and nothing else. -/
 def commentOnly (cs : Array Char) (start stop : Nat) : Bool :=
   (findLit (cs.extract start stop) 0 "--!>").isNone
 
-/-- What a raw-HTML scan over one stretch remembers: for each of the four
-constructs that close on a literal (comment, CDATA, processing instruction,
-declaration), the earliest position from which a search for that literal
-has already failed. -/
+/-- The earliest position from which each closing-literal
+search is known to fail. -/
 structure HtmlMemo where
   noClose : Array (Option Nat) := #[none, none, none, none]
   deriving Inhabited
 
-/-- `findLit`, remembering failure. A search for literal `k` that found
-nothing at or after `p` answers every later search from `q ≥ p` without
-scanning, and the inline scan asks at increasing positions — so an unclosed
-construct costs one scan in all, not one per opener. Unclosed `<!--`
-repeated took 133 s at 78 KB, one scan to the paragraph's end per `<`. -/
+/-- `findLit`, remembering failure. -/
 def findLitM (cs : Array Char) (i : Nat) (k : Nat) (lit : String) (m : HtmlMemo) :
     Option Nat × HtmlMemo :=
   let known : Bool := match m.noClose[k]? with
@@ -408,10 +307,8 @@ def attrValueAt (cs : Array Char) (i : Nat) : Option Nat := Id.run do
     | some c => if isAttrValueStop c then break else j := j + 1
   return some j
 
-/-- One attribute at `i`, its leading whitespace already consumed: its name,
-lower-cased; its value as the source spells it, quotes stripped and nothing
-decoded, so a vocabulary row that carries a value decides its decoding and
-owes the check that reads it back; and the index past it. -/
+/-- One attribute at `i`: its name, lower-cased, and its value as the source
+spells it, quotes stripped. -/
 def attrAt (cs : Array Char) (i : Nat) : Option ((String × Option String) × Nat) := Id.run do
   let some c0 := cs[i]? | return none
   unless isAttrStart c0 do return none
@@ -421,7 +318,6 @@ def attrAt (cs : Array Char) (i : Nat) : Option ((String × Option String) × Na
     | some c => if isAttrRest c then j := j + 1 else break
     | none => break
   let name := (sliceStr cs i j).toLower
-  -- An optional value, after optional whitespace either side of `=`.
   let k := wsAt cs j
   if cs[k]? == some '=' then
     let v := wsAt cs (k + 1)
@@ -432,11 +328,8 @@ def attrAt (cs : Array Char) (i : Nat) : Option ((String × Option String) × Na
     | none => return some ((name, none), j)
   return some ((name, none), j)
 
-/-- One tag as the §6.6 grammar reads it: the name, lower-cased; each
-attribute as `attrAt` captured it; whether it closed with `/>`; and the index
-past its `>`. The one reading every recognizer projects — the refusal
-(`htmlTagAtM`), the disclosure and anchor arms, and the vocabulary — so what
-the reader refuses and what it reads cannot drift apart. -/
+/-- One tag as the §6.6 grammar reads it: name, attributes, whether it
+self-closes, and the index past its `>`. -/
 structure HtmlTag where
   name : String
   attrs : Array (String × Option String)
@@ -463,8 +356,8 @@ def tagAt (cs : Array Char) (i : Nat) : Option HtmlTag := Id.run do
   unless cs[e]? == some '>' do return none
   return some { name := (sliceStr cs (i + 1) j).toLower, attrs, selfClosing, stop := e + 1 }
 
-/-- A closing tag at `i` (§6.6): its name, lower-cased, and the index past
-its `>`. -/
+/-- A closing tag at `i` (§6.6): its name, lower-cased, and
+the index past its `>`. -/
 def endTagAt (cs : Array Char) (i : Nat) : Option (String × Nat) := do
   guard (cs[i]? == some '<' && cs[i + 1]? == some '/')
   let j ← tagNameAt cs (i + 2)
@@ -472,12 +365,8 @@ def endTagAt (cs : Array Char) (i : Nat) : Option (String × Nat) := do
   guard (cs[k]? == some '>')
   return ((sliceStr cs (i + 2) j).toLower, k + 1)
 
-/-- A complete raw-HTML construct at `i` (§6.6): an open tag, a closing tag,
-a comment, a processing instruction, a declaration, or CDATA. The index past
-it, or `none` — and `none` means the text is text. A comment is `<!-->`,
-`<!--->`, or `<!--` … `-->` (0.31.2), so its closer is searched from the
-second character. The memo is `findLitM`'s. The two tag arms are `tagAt`
-and `endTagAt` themselves (`htmlTagAtM_tag_exact`). -/
+/-- A complete raw-HTML construct at `i` (§6.6), and the index past it; `none`
+means the text is text. -/
 def htmlTagAtM (cs : Array Char) (i : Nat) (m : HtmlMemo) : Option Nat × HtmlMemo :=
   if cs[i]? != some '<' then (none, m)
   else match cs[i + 1]? with
@@ -490,21 +379,19 @@ def htmlTagAtM (cs : Array Char) (i : Nat) (m : HtmlMemo) : Option Nat × HtmlMe
     | some '/' => ((endTagAt cs i).map (·.2), m)
     | _ => ((tagAt cs i).map (·.stop), m)
 
-/-- `htmlTagAtM` with nothing remembered: a block start reads one line. -/
+/-- `htmlTagAtM` with nothing remembered. -/
 def htmlTagAt (cs : Array Char) (i : Nat) : Option Nat := (htmlTagAtM cs i {}).1
 
-/-- An attribute-free, non-self-closing tag. The entire name must match:
-`details-extra` and an attribute that changes visibility are not this node. -/
+/-- Whether an attribute-free, non-self-closing tag of
+exactly `name` stands at `i`. -/
 private def bareTagAt (cs : Array Char) (i : Nat) (name : String)
     (closing : Bool := false) : Option Nat :=
   if closing then (endTagAt cs i).bind fun (n, stop) => if n == name then some stop else none
   else (tagAt cs i).bind fun t =>
     if t.name == name && t.attrs.isEmpty && !t.selfClosing then some t.stop else none
 
-/-- The spellings of a disclosure's opening tag that the reader accepts: a
-`details`, not self-closing, with no attribute or with exactly one `open`
-whose value is absent, empty, or `open` in any case — every spelling HTML
-reads as the open state (`Blk.disclosure`'s `expanded`). -/
+/-- The spellings of a disclosure's opening tag the reader accepts: `details`
+with no attribute or one valueless or `open` `open`. -/
 private def detailsOpen (t : HtmlTag) : Bool :=
   t.name == "details" && !t.selfClosing &&
     match t.attrs.toList with
@@ -512,8 +399,8 @@ private def detailsOpen (t : HtmlTag) : Bool :=
     | [(a, v)] => a == "open" && v.all fun s => s.isEmpty || s.toLower == "open"
     | _ => false
 
-/-- The key of an empty target's open tag: an `a`, not self-closing, with
-exactly one attribute, a `name` or an `id` carrying a value. -/
+/-- The key of an empty target's open tag: an `a` with exactly one `name` or
+`id` carrying a value. -/
 private def anchorKey? (t : HtmlTag) : Option String :=
   if t.name == "a" && !t.selfClosing then
     match t.attrs.toList with
@@ -521,13 +408,8 @@ private def anchorKey? (t : HtmlTag) : Option String :=
     | _ => none
   else none
 
-/-- A line break, as HTML spells one: `<br>`, `<br/>` or `<br />`, any case,
-with no attribute. -/
+/-- A line break as HTML spells one, with no attribute. -/
 private def isBr (t : HtmlTag) : Bool := t.name == "br" && t.attrs.isEmpty
-
-/-! Every reading above ends past where it started and inside the source, so
-a scan that resumes at a reading's stop always advances. Each scanner's
-bound is an invariant of its own loop (`Loop.forIn_range_inv`). -/
 
 theorem litAtList_between {cs : Array Char} :
     ∀ {i : Nat} {l : List Char}, litAtList cs i l = true → i ≤ cs.size →
@@ -821,8 +703,7 @@ theorem htmlTagAtM_tag_exact {cs : Array Char} {i : Nat} {m : HtmlMemo}
     · rename_i hc; exact absurd hc hs
     · rfl
 
-/-- The tag names §4.6 condition 1 names: their block runs to a closing tag,
-not to a blank line. -/
+/-- The tag names §4.6 condition 1 names, whose block runs to a closing tag. -/
 def htmlRawTags : List String := ["pre", "script", "style", "textarea"]
 
 /-- The block-level tag names §4.6 condition 6 names. -/
@@ -836,8 +717,7 @@ def htmlBlockTags : List String :=
    "section", "summary", "table", "tbody", "td", "tfoot", "th", "thead",
    "title", "tr", "track", "ul"]
 
-/-- A tag name at `i` drawn from `names`, ending at whitespace, `>`, `/>` or
-the end of the line. -/
+/-- Whether a tag name drawn from `names` stands at `i`. -/
 private def namedTagAt (cs : Array Char) (i : Nat) (names : List String) : Bool :=
   match tagNameAt cs i with
   | none => false
@@ -848,26 +728,21 @@ private def namedTagAt (cs : Array Char) (i : Nat) (names : List String) : Bool 
        | none => true
        | some c => isMdSpace c || c == '>' || (c == '/' && cs[j + 1]? == some '>'))
 
-/-- Does an HTML block of §4.6's sixth condition open at `i` with the tag
-`name`: `<name` or `</name`, the name followed by a space, a tab, `>`, `/>`
-or the line's end? The test `htmlBlockKind` refuses such a line by, read
-where a construct accounts for that refusal, so the two cannot drift. -/
+/-- Whether an HTML block of §4.6's sixth condition opens at
+`i` with the tag `name`. -/
 def blockTagStartsAt (cs : Array Char) (i : Nat) (name : String) : Bool :=
   cs[i]? == some '<' &&
     (namedTagAt cs (i + 1) [name] || (cs[i + 1]? == some '/' && namedTagAt cs (i + 2) [name]))
 
-/-- How an HTML block ends (§4.6): at the first line holding one of these
-literals, compared case-folded (conditions 1–5), or at a blank line, which
-is not part of the block (conditions 6 and 7). -/
+/-- How an HTML block ends (§4.6): at a line holding one of
+these literals, or at a blank line. -/
 inductive HtmlEnd where
   | lit (ends : List String)
   | blank
   deriving Repr, Inhabited
 
-/-- The HTML block starting at `i`, by §4.6 condition: how it ends, and
-whether it may interrupt a paragraph — conditions 1–6 may, 7 may not.
-`none` means no block starts here. One definition, read by every question
-about HTML blocks: whether one starts, whether it interrupts, where it ends. -/
+/-- The HTML block starting at `i`, by §4.6 condition: how it ends, and whether
+it may interrupt a paragraph. -/
 def htmlBlockKind (cs : Array Char) (i : Nat) : Option (HtmlEnd × Bool) := Id.run do
   unless cs[i]? == some '<' do return none
   if namedTagAt cs (i + 1) htmlRawTags then
@@ -884,8 +759,7 @@ def htmlBlockKind (cs : Array Char) (i : Nat) : Option (HtmlEnd × Bool) := Id.r
   | some j => if isBlankFrom cs j then return some (.blank, false) else return none
   | none => return none
 
-/-- Does a line, from `i`, hold an end literal of its HTML block? A scan of
-one line, so the cost is the line's. -/
+/-- Whether a line, from `i`, holds an end literal of its HTML block. -/
 def htmlEndsIn (cs : Array Char) (i : Nat) (e : HtmlEnd) : Bool := Id.run do
   match e with
   | .blank => return false
@@ -894,9 +768,8 @@ def htmlEndsIn (cs : Array Char) (i : Nat) (e : HtmlEnd) : Bool := Id.run do
       if ends.any (litAt cs k ·) then return true
     return false
 
-/-- Conditions 1–6 only: what may interrupt a paragraph. Condition 7 may
-not, and reading it as an interrupter refused a paragraph line holding a
-bare `<span>`. -/
+/-- Whether an HTML block that may interrupt a paragraph,
+conditions 1–6, starts at `i`. -/
 def htmlBlockInterruptAt (cs : Array Char) (i : Nat) : Bool :=
   match htmlBlockKind cs i with
   | some (_, interrupts) => interrupts
@@ -909,15 +782,8 @@ namespace LeanTex.Core.Md
 
 open LeanTex.Core
 
-/-! ## Inline structure
-
-CommonMark's inline phase in three passes, each an index loop: a scan into
-a flat token array (brackets resolved against a stack as they close), the
-delimiter-run match into a pair table, and a tree build over the pairs with
-the frame shape `Parse.parse` uses — index loops throughout. -/
-
-/-- One inline token. A `run` is a delimiter run of `*` or `_` with its
-flanking verdicts already computed. -/
+/-- One inline token; a `run` is a delimiter run of `*` or
+`_` with its flanking verdicts. -/
 inductive ITok where
   | txt (s : String) (pos : Pos)
   | code (s : String) (pos : Pos)
@@ -936,8 +802,8 @@ def ITok.pos : ITok → Pos
   | .txt _ p | .code _ p | .soft p | .hard p | .auto _ _ p
   | .anchor _ p | .run _ _ _ _ p | .bopen _ p | .bclose p => p
 
-/-- A resolved link or image: the token indices of its brackets, whether it
-is an image, and its destination and title. -/
+/-- A resolved link or image: its bracket token indices, whether it is an image,
+and its destination and title. -/
 structure BPair where
   openTok : Nat
   closeTok : Nat
@@ -946,9 +812,8 @@ structure BPair where
   title : String
   deriving Inhabited, Repr
 
-/-- One matched emphasis pair: the run tokens it joins, how many delimiter
-characters it consumes from each, and its creation index — the order the
-delimiter algorithm produced it, which is innermost first. -/
+/-- One matched emphasis pair: the runs it joins, the delimiters it takes from
+each, and its creation order. -/
 structure EPair where
   openTok : Nat
   closeTok : Nat
@@ -956,8 +821,8 @@ structure EPair where
   born : Nat
   deriving Inhabited, Repr
 
-/-- The characters of an inline stretch, each with the `.md` position it
-came from, so a diagnostic names the line the reader saw. -/
+/-- The characters of an inline stretch, each with the `.md`
+position it came from. -/
 structure Chars where
   cs : Array Char
   ps : Array Pos
@@ -975,8 +840,7 @@ def Chars.str (c : Chars) (from_ to_ : Nat) : String := Id.run do
     if h : i < c.cs.size then s := s.push c.cs[i]
   return s
 
-/-- A delimiter run's flanking verdicts, from the characters either side
-(CommonMark §6.2). -/
+/-- A delimiter run's flanking verdicts (CommonMark §6.2). -/
 def flanking (before after : Option Char) : Bool × Bool :=
   let wsBefore := (before.map isMdSpace).getD true
   let wsAfter := (after.map isMdSpace).getD true
@@ -986,8 +850,8 @@ def flanking (before after : Option Char) : Bool × Bool :=
   let right := !wsBefore && (!puBefore || wsAfter || puAfter)
   (left, right)
 
-/-- An ASCII-punctuation backslash escape, or `none` where the backslash is
-literal. -/
+/-- An ASCII-punctuation backslash escape, or `none` where
+the backslash is literal. -/
 def escaped? (c : Chars) (i : Nat) : Option Char := do
   guard (c.at? i == some '\\')
   let d ← c.at? (i + 1)
@@ -1005,11 +869,8 @@ def tickRun (c : Chars) (i : Nat) : Nat := Id.run do
     else break
   return n
 
-/-- Every maximal backtick string of a stretch — a code span's only possible
-closers (§6.1) — as start positions in order, grouped by length. Built once
-per stretch, so finding a closer is a lookup and not a scan: scanned for,
-backtick strings of rising lengths with no closers cost one scan to the end
-of the paragraph each. -/
+/-- Every maximal backtick string of a stretch, as start
+positions grouped by length. -/
 def tickIndex (c : Chars) : Std.HashMap Nat (Array Nat) := Id.run do
   let mut m : Std.HashMap Nat (Array Nat) := {}
   let mut i := 0
@@ -1033,15 +894,12 @@ def firstAtLeast (a : Array Nat) (x : Nat) : Option Nat := Id.run do
     if (a[mid]?).getD 0 < x then lo := mid + 1 else hi := mid
   return a[lo]?
 
-/-- A code span opening at `i` with a backtick string of length `n`: the
-content and the index past the closing string, or `none` when no closing
-string of the same length follows. The closer is the first maximal backtick
-string of length `n` after the opener, read off `tickIndex`. -/
+/-- A code span opening at `i` with a backtick string of length `n`: the content
+and the index past its closer, or `none`. -/
 def codeSpanAt (c : Chars) (idx : Std.HashMap Nat (Array Nat)) (i n : Nat) :
     Option (String × Nat) := do
   let j ← firstAtLeast (idx.getD n #[]) (i + n)
-  -- Strip one space from each end when both are present and the content is
-  -- not all spaces (spec §6.1).
+  -- Strip one space from each end when both are present and the content is not all spaces.
   let raw := (c.str (i + n) j).toList
   let stripped :=
     if raw.length ≥ 2 && raw.headD 'x' == ' ' && raw.getLastD 'x' == ' '
@@ -1051,18 +909,15 @@ def codeSpanAt (c : Chars) (idx : Std.HashMap Nat (Array Nat)) (i n : Nat) :
   -- Line endings inside a code span are spaces.
   some (String.ofList (stripped.map (fun ch => if ch == '\n' then ' ' else ch)), j + n)
 
-/-- A run of whitespace in an inline stretch: the index past it. Spelled as a
-loop that stops, because a bounded `for` used as a while-loop without a break
-is the shape that made this phase quadratic: five of these ran to `c.size`
-once per token. -/
+/-- A run of whitespace in an inline stretch: the index past it. -/
 def Chars.ws (c : Chars) (i : Nat) : Nat := Id.run do
   let mut j := i
   for _ in [0:c.size + 1] do
     if (c.at? j).map isMdSpace == some true then j := j + 1 else break
   return j
 
-/-- An autolink `<scheme:...>` or `<local@domain>` at `i`: the destination,
-the link text, and the index past `>`. -/
+/-- An autolink `<scheme:...>` or `<local@domain>` at `i`: the destination, the
+link text, and the index past `>`. -/
 def autolinkAt (c : Chars) (i : Nat) : Option (String × String × Nat) := Id.run do
   unless c.at? i == some '<' do return none
   let mut j := i + 1
@@ -1088,22 +943,13 @@ def autolinkAt (c : Chars) (i : Nat) : Option (String × String × Nat) := Id.ru
         return some ("mailto:" ++ body, body, j + 1)
       return none
     | some ch =>
-      -- No whitespace, control character or `<` inside an autolink (§6.5):
-      -- stopping at `<` is also what keeps `<a<a<a…` linear.
+      -- No whitespace, control character or `<` inside an autolink (§6.5).
       if isMdSpace ch || ch == '<' || ch.toNat < 0x20 then return none
       j := j + 1
   return none
 
-/-- A link destination and optional title starting at `(`: the destination,
-the title, and the index past `)`. Angle-bracket destinations and balanced
-parentheses, which is what the inline form needs.
-
-Three stops the spec states keep each scan bounded by the next construct
-rather than by the paragraph (§6.3): an angle destination holds no unescaped
-`<`, a parenthesized title no unescaped `(`, and a bare destination nests
-parentheses at most 32 deep (the spec asks at least three; cmark's limit).
-Without them, `[a](<b`, `[a](b` and `[ (](` repeated each scanned to the
-end of the paragraph once per `](`. -/
+/-- A link destination and optional title starting at `(`: the destination, the
+title, and the index past `)`. -/
 def linkTailAt (c : Chars) (i : Nat) : Option (String × String × Nat) := Id.run do
   unless c.at? i == some '(' do return none
   let mut j := c.ws (i + 1)
@@ -1162,7 +1008,6 @@ def linkTailAt (c : Chars) (i : Nat) : Option (String × String × Nat) := Id.ru
           dest := dest.push ch
           k := k + 1
     j := k
-  -- Optional whitespace, then an optional title in `"`, `'` or `(`.
   j := c.ws j
   let mut title := ""
   match c.at? j with
@@ -1200,9 +1045,8 @@ def linkTailAt (c : Chars) (i : Nat) : Option (String × String × Nat) := Id.ru
   unless c.at? j == some ')' do return none
   return some (dest, title, j + 1)
 
-/-- Named and numeric character references (§2.5). Only the five the engine
-needs by name plus the numeric forms resolve here; anything else stays
-literal, a declared verdict row rather than a silent drop. -/
+/-- Named and numeric character references (§2.5): the five named ones the
+engine needs and the numeric forms. -/
 def entityAt (c : Chars) (i : Nat) : Option (String × Nat) := Id.run do
   unless c.at? i == some '&' do return none
   let mut j := i + 1
@@ -1243,10 +1087,8 @@ def entityAt (c : Chars) (i : Nat) : Option (String × Nat) := Id.run do
     return some (String.singleton (Char.ofNat cp), j + 1)
   | _ => return none
 
-/-- A fenced block's info string with its backslash escapes and character
-references resolved (§4.5, §2.4, §2.5: both are recognized in info
-strings). `foo\+bar` names the language `foo+bar`; read raw, the listing
-lost it. -/
+/-- A fenced block's info string with its backslash escapes
+and character references resolved. -/
 def decodeInfo (s : String) : String := Id.run do
   let c : Chars := { cs := s.toList.toArray, ps := #[] }
   let mut out := ""
@@ -1274,9 +1116,7 @@ namespace LeanTex.Core.Md
 
 open LeanTex.Core
 
-/-- What the reader refuses by design, as the subject its diagnostic
-carries. A class is data: the verdict table names the spec cases each one
-touches, so a dialect decision flips a row and one reader arm. -/
+/-- What the reader refuses by design, as the subject its diagnostic carries. -/
 inductive Strict where
   | rawHtml
   | indentedCode
@@ -1298,17 +1138,12 @@ def Strict.fixit : Strict → String
   | .indentedCode => "fence the block with ``` instead"
   | .lazyContinuation => "indent the line to its container's content column, or repeat a quote's '>'"
 
-/-- The refusal, as a diagnostic. The subject is what folds repeats into one
-line with a site count (`Diag.tallySites`), so a document with fifty raw
-tags reports one error naming fifty sites. -/
+/-- The refusal, as a diagnostic. -/
 def refuse (file : String) (s : Strict) (pos : Pos) : Diag :=
   Diag.of .E0390 s.message (some ⟨file, pos⟩) (some s.fixit) (some s.subject)
 
-/-- What an open tag the inline scan read lowers to, from that one reading:
-a bare break (`isBr`) is a hard break; an empty target — the open tag
-`anchorKey?` reads a key from, with its `</a>` straight after — is a target,
-whose key the desugaring checks the existing target semantics preserve; any
-other open tag ships nothing and is refused at its own `<`. -/
+/-- What an open tag the inline scan read lowers to: a hard
+break, a target, or a disclosure. -/
 private def openTagInline (file : String) (cs : Array Char) (p : Pos) (t : HtmlTag) :
     Nat × Option ITok × Option Diag :=
   let refused := (t.stop, none, some (refuse file .rawHtml p))
@@ -1320,7 +1155,6 @@ private def openTagInline (file : String) (cs : Array Char) (p : Pos) (t : HtmlT
       | some (n, next) => if n == "a" then (next, some (.anchor key p), none) else refused
       | none => refused
 
-/-- The three things an open tag can become, and where its reading stops. -/
 private theorem openTagInline_exact {file : String} {cs : Array Char} {p : Pos} {t : HtmlTag}
     {next : Nat} {tok : Option ITok} {d : Option Diag}
     (h : openTagInline file cs p t = (next, tok, d)) :
@@ -1348,37 +1182,19 @@ private theorem openTagInline_exact {file : String} {cs : Array Char} {p : Pos} 
       · simp only [Prod.mk.injEq] at h
         exact Or.inr (Or.inr ⟨h.1.symm, h.2.1.symm, h.2.2.symm⟩)
 
-/-- Raw HTML at `i` inside an inline stretch, after the autolink reading
-failed: the index past what the reader consumed, the token it lowers to,
-and the refusal it raises — or `none`, and the `<` is text. The construct
-is read once: an open tag is `tagAt`'s reading, projected by
-`openTagInline`; a closing tag, a comment, a processing instruction, a
-declaration or CDATA is `htmlTagAtM`'s. A comment-only span ships nothing
-and raises nothing; any other construct the vocabulary does not read ships
-nothing and is refused at its own `<` (`htmlInlineAt_accounts`); what
-lowers is exactly the vocabulary `htmlInlineAt_covers` lists. -/
+/-- Raw HTML at `i` inside an inline stretch: the index past what was consumed,
+the token it lowers to, and its refusal; `none` when the `<` is text. -/
 def htmlInlineAt (file : String) (cs : Array Char) (i : Nat) (p : Pos) (m : HtmlMemo) :
     Option (Nat × Option ITok × Option Diag) × HtmlMemo :=
   if cs[i + 1]? == some '!' || cs[i + 1]? == some '?' || cs[i + 1]? == some '/' then
     match htmlTagAtM cs i m with
     | (some next, m') =>
-      -- premise: mdSurfaceChecks — comments hide only their own text.
+      -- premise: mdSurfaceChecks — comments hide only their own text
       if litAt cs i "<!--" && commentOnly cs i next then (some (next, none, none), m')
       else (some (next, none, some (refuse file .rawHtml p)), m')
     | (none, m') => (none, m')
   else ((tagAt cs i).map (openTagInline file cs p), m)
 
-/-- **Every raw construct the inline scan consumes is accounted for.** The
-reading advances and stays inside the stretch, and then exactly one of: a
-token ships and nothing is raised; nothing ships and one `E0390` names the raw
-HTML at `p`, the position the scan reads its `<` at; or nothing ships,
-nothing is raised, and the span was a comment that hides only itself. The
-third outcome is still the `_accounts` shape, not an unpaid empty result:
-`commentOnly` makes the span exactly one HTML comment — no `--!>` closes it
-early — and HTML itself shows a comment as nothing, so the empty result is
-what the source means, with no lost content to pay for. This is one step of
-the scan; the loop that resumes past each step, and the block reader's
-raw-HTML arms, hold no statement yet. -/
 theorem htmlInlineAt_accounts {file : String} {cs : Array Char} {i next : Nat} {p : Pos}
     {m m' : HtmlMemo} {tok : Option ITok} {d : Option Diag}
     (h : htmlInlineAt file cs i p m = (some (next, tok, d), m')) :
@@ -1418,11 +1234,6 @@ theorem htmlInlineAt_accounts {file : String} {cs : Array Char} {i next : Nat} {
         exact ⟨by omega, heb.2, Or.inl ⟨rfl, rfl⟩⟩
       · exact ⟨htb.1, htb.2, Or.inr (Or.inl ⟨rfl, _, rfl, refused_named rfl⟩)⟩
 
-/-- What the inline scan lowers raw HTML to: exactly this vocabulary, each
-token an md node that already exists, so the elaborator reads it through
-that node's one resolving site. That each spelling then ships what its
-markdown twin ships, in both artifacts, is `htmlTwinChecks`' evidence, not
-this theorem's. -/
 theorem htmlInlineAt_covers {file : String} {cs : Array Char} {i next : Nat} {p : Pos}
     {m m' : HtmlMemo} {tok : ITok} {d : Option Diag}
     (h : htmlInlineAt file cs i p m = (some (next, some tok, d), m')) :
@@ -1441,16 +1252,15 @@ theorem htmlInlineAt_covers {file : String} {cs : Array Char} {i next : Nat} {p 
       · exact Or.inr ⟨key, Option.some.inj h2⟩
       · simp at h2
 
-/-- The scan: characters to a flat token array, with brackets resolved
-against a stack as they close and the refusals raised where they are seen. -/
+/-- The scan: characters to a flat token array, brackets resolved against a
+stack and refusals raised where seen. -/
 def scanInlines (file : String) (c : Chars) :
     Array ITok × Array BPair × Array Diag := Id.run do
   let mut toks : Array ITok := #[]
   let mut pairs : Array BPair := #[]
   let mut diags : Array Diag := #[]
   let mut stack : Array (Nat × Bool) := #[]   -- token index, image
-  -- Link openers below this stack depth are inactive: a link closed while
-  -- they were open (§6.3). Lowered as the stack pops below it.
+  -- Link openers below this stack depth are inactive (§6.3).
   let mut inactiveBelow : Nat := 0
   let ticks := tickIndex c
   let mut hmemo : HtmlMemo := {}
@@ -1508,16 +1318,13 @@ def scanInlines (file : String) (c : Chars) :
           toks := toks.push (.auto dest text p)
           i := next
         | none =>
-          -- Only a complete tag (§6.6) is raw HTML; anything else is
-          -- literal text. Pending text is flushed only when a token ships,
-          -- so a refused tag or a comment joins the text either side of it.
+          -- Only a complete tag (§6.6) is raw HTML; anything else is literal text.
           let (r, m) := htmlInlineAt file c.cs i p hmemo
           hmemo := m
           match r with
           | some (next, tok, d) =>
             if let some tk := tok then
-              -- A break ends its line: the text before it sheds its trailing
-              -- spaces, as the text before a two-space break does.
+              -- A break sheds the trailing spaces of the text before it.
               toks := flush toks (if tk matches .hard _ then rstrip pending else pending) pendingPos
               pending := ""
               toks := toks.push tk
@@ -1546,7 +1353,6 @@ def scanInlines (file : String) (c : Chars) :
         toks := toks.push (.bopen false p)
         i := i + 1
       else if ch == ']' then
-        -- The nearest opener, and an inline destination after it.
         match stack.back? with
         | none =>
           pending := pending.push ']'
@@ -1563,11 +1369,7 @@ def scanInlines (file : String) (c : Chars) :
             toks := toks.push (.bclose p)
             pairs := pairs.push
               { openTok, closeTok, image, dest, title }
-            -- A link may not contain a link: every link opener still open
-            -- goes inactive (§6.3), which is one number, not a pass over
-            -- the stack — the pass made `[a [b](c)` repeated quadratic.
-            -- An image opener stays active: an image's text may hold a
-            -- link, and deactivating it lost the image around one.
+            -- A link may not contain a link: every link opener still open goes inactive (§6.3).
             unless image do inactiveBelow := stack.size
             i := next
           | none =>
@@ -1597,14 +1399,8 @@ def scanInlines (file : String) (c : Chars) :
   toks := flush toks pending pendingPos
   return (toks, pairs, diags)
 
-/-- The bracket region of each token — the *innermost* resolved link or image
-around it, `0` outside every one — and the number of regions. Two emphasis
-delimiters pair only inside one region, which is how the spec's per-link
-pass (§6.3: process emphasis on the link text when the link closes) shows
-up in one array. Innermost matters: filled pair by pair, an image's region
-overwrote the link inside it, and a delimiter in the link could pair with
-one in the image around it. One pass with a stack, so nesting depth costs
-nothing. -/
+/-- The innermost resolved link or image region of each token, `0` outside every
+one, and the region count. -/
 def regions (toks : Array ITok) (pairs : Array BPair) : Array Nat × Nat := Id.run do
   let mut openAt : Array Nat := Array.replicate toks.size 0
   let mut closeAt : Array Bool := Array.replicate toks.size false
@@ -1620,28 +1416,8 @@ def regions (toks : Array ITok) (pairs : Array BPair) : Array Nat × Nat := Id.r
     if o > 0 then stack := stack.push o
   return (out, pairs.size + 1)
 
-/-- CommonMark's delimiter-run match (§6.2, "process emphasis"), run once
-per bracket region over that region's runs alone, as cmark does.
-
-Three rules the spec states and a single pass over the whole array got
-wrong, each a reproduced defect:
-
-* **The openers-bottom floor is per region.** It is the position below
-  which a closer of one (character, original length mod 3, can-also-open)
-  shape has been shown to have no partner. Shared across regions, a closer
-  inside a link that found no partner raised the floor above a valid
-  opener outside it, and `*a [b*](c) d*` stopped pairing.
-* **A match removes every delimiter between opener and closer.** The
-  potential openers are a stack; matching one pops everything above it.
-  Left in place, `*foo _bar* baz_` paired the `_` across the `*` pair and
-  built crossing emphasis.
-* **The rule of three reads the original run lengths**, and so does the
-  floor's shape: a run's remaining length changes as it is consumed, the
-  run it came from does not.
-
-Linear: every run is pushed at most once and popped at most once, a search
-that passes a stack entry either pops it or is bounded by a floor that then
-rises past it, and there are twelve floors per region. -/
+/-- CommonMark's delimiter-run match (§6.2), run once per
+bracket region over that region's runs. -/
 def matchEmphasis (toks : Array ITok) (reg : Array Nat) (nRegions : Nat) :
     Array EPair × Array Nat := Id.run do
   let mut len : Array Nat := Array.replicate toks.size 0
@@ -1667,10 +1443,8 @@ def matchEmphasis (toks : Array ITok) (reg : Array Nat) (nRegions : Nat) :
   let mut out : Array EPair := #[]
   let mut born := 0
   for runs in byRegion do
-    -- The potential openers still alive, bottom to top, as token indices.
     let mut stack : Array Nat := #[]
-    -- One floor per (character, closer can also open, original length mod
-    -- 3): a closer of that shape examines only openers at or above it.
+    -- One floor per character, closer-can-open and length mod 3.
     let mut bottom : Array Nat := Array.replicate 12 0
     for ci in runs do
       if rb cl ci then
@@ -1678,7 +1452,6 @@ def matchEmphasis (toks : Array ITok) (reg : Array Nat) (nRegions : Nat) :
           + (if rb op ci then 3 else 0) + rd orig ci % 3
         for _ in [0:rd orig ci] do
           if rd len ci == 0 then break
-          -- The nearest opener of the same character, no lower than the floor.
           let mut found : Option Nat := none
           let mut si := stack.size
           for _ in [0:stack.size] do
@@ -1687,9 +1460,7 @@ def matchEmphasis (toks : Array ITok) (reg : Array Nat) (nRegions : Nat) :
             let oi := rd stack si
             if oi < rd bottom bkt then break
             if rc ch oi == rc ch ci then
-              -- Rule of three, on the original lengths: when either run
-              -- can both open and close, the sum may not be a multiple of
-              -- three unless both are.
+              -- Rule of three, on the original lengths.
               let ok := !(rb op ci || rb cl oi) || rd orig ci % 3 == 0
                 || (rd orig oi + rd orig ci) % 3 != 0
               if ok then
@@ -1697,8 +1468,7 @@ def matchEmphasis (toks : Array ITok) (reg : Array Nat) (nRegions : Nat) :
                 break
           match found with
           | none =>
-            -- No partner for this shape at or above the floor: nothing
-            -- below this closer can ever partner a closer of its shape.
+            -- No partner for this shape at or above the floor, so none below this closer either.
             bottom := bottom.set! bkt ci
             break
           | some s =>
@@ -1747,15 +1517,8 @@ private def OFrame.close (f : OFrame) (body : Array Inl) : Array Inl :=
   | .link d t => f.outer.push (.link d t body f.pos)
   | .image d t => f.outer.push (.image d t body f.pos)
 
-/-- The tree, from the token array and the two pair tables: one left-to-right
-pass with a frame stack. A run token that both closes and opens does its
-closes first, then its unconsumed delimiter characters as text, then its
-opens — outermost first, which is the reverse of the order the matcher
-created them in.
-
-The pair tables are indexed by token once, before the pass. Filtered per
-token, the four lookups made this walk quadratic: 112 KB of links took
-55.3 s, against 0.6 s for the same content as tex. -/
+/-- The tree from the token array and the two pair tables, in one left-to-right
+pass with a frame stack. -/
 def buildInlines (toks : Array ITok) (bpairs : Array BPair) (epairs : Array EPair)
     (leftover : Array Nat) : Array Inl := Id.run do
   let mut closingAt : Array (Array EPair) := Array.replicate toks.size #[]
@@ -1827,8 +1590,8 @@ def inlines (file : String) (c : Chars) : Array Inl × Array Diag :=
   let (epairs, leftover) := matchEmphasis toks reg nRegions
   (buildInlines toks bpairs epairs leftover, diags)
 
-/-- The characters of a run of paragraph lines, newline-separated, each
-character carrying its source position. -/
+/-- The characters of a run of paragraph lines,
+newline-separated, each with its source position. -/
 def charsOf (lines : Array (String × Pos)) : Chars := Id.run do
   let mut cs : Array Char := #[]
   let mut ps : Array Pos := #[]
@@ -1845,10 +1608,8 @@ def charsOf (lines : Array (String × Pos)) : Chars := Id.run do
 
 def charsOfOne (s : String) (p : Pos) : Chars := charsOf #[(s, p)]
 
-/-- HTML text resolves the reader's known character references, but neither
-Markdown delimiters nor TeX controls. Unknown or unterminated references and
-numeric C1 references are refused: HTML's legacy decoding differs from the
-Markdown decoder there. Markup inside the summary is outside this subset. -/
+/-- HTML text with the reader's known character references resolved; `none` for
+an unknown, unterminated or C1 reference. -/
 private def htmlText (s : String) : Option String := Id.run do
   let c : Chars := { cs := s.toList.toArray, ps := #[] }
   let mut out := ""
@@ -1871,10 +1632,7 @@ private def htmlText (s : String) : Option String := Id.run do
       i := i + 1
   return some out
 
-/-- A complete, attribute-free summary on one line, holding text. Requiring
-the closing tag and blank suffix prevents a supported prefix from swallowing
-markup or visible text outside it; a summary with no text would label the
-disclosure's control with nothing. -/
+/-- A complete, attribute-free summary on one line, holding text. -/
 private def summaryAt (cs : Array Char) (i : Nat) (p : Pos) : Option (Array Inl) := do
   let start ← bareTagAt cs i "summary"
   let closeEnd ← findLit cs start "</summary"
@@ -1883,8 +1641,7 @@ private def summaryAt (cs : Array Char) (i : Nat) (p : Pos) : Option (Array Inl)
   guard (isBlankFrom cs next)
   let text ← htmlText (sliceStr cs start stop)
   guard (holdsText text)
-  -- White space a reference spells sets as a space, as the page shows it:
-  -- a summary is one line.
+  -- White space a reference spells sets as a space: a summary is one line.
   let text := text.map fun c => if c == '\n' || c == '\r' || c == '\x0C' || c == '\t' then ' ' else c
   return #[.text text { p with col := start + 1 }]
 
@@ -1895,26 +1652,8 @@ namespace LeanTex.Core.Md
 
 open LeanTex.Core
 
-/-! ## Tables
-
-GitHub Flavored Markdown's table, the one GFM leaf block the surface AST
-already expresses: it desugars to a booktabs `{tabular}`. The extension's
-rules (GFM 0.29, "Tables (extension)"), each a scanner here:
-
-* the delimiter row is cells of hyphens, each with an optional colon either
-  side, with pipes between them and optionally around them; the colons give
-  the column's alignment;
-* a row splits on every pipe a backslash does not escape, *before* any
-  inline is read, so `\|` is a pipe even inside a code span, and each cell
-  is trimmed;
-* the header is the last line of the paragraph the delimiter row stands
-  under and carries exactly as many cells; lines before it stay a paragraph;
-* a data row's missing cells are empty and its excess cells are dropped;
-* the table ends at a blank line, with its container, or where another block
-  starts. -/
-
-/-- The table extension's space: a space, a tab, a vertical tab or a form
-feed. -/
+/-- The table extension's space: a space, a tab, a vertical
+tab or a form feed. -/
 def isTableSpace (c : Char) : Bool :=
   c == ' ' || c == '\t' || c == '\x0b' || c == '\x0c'
 
@@ -1925,8 +1664,8 @@ def tableSpaceEnd (cs : Array Char) (i : Nat) : Nat := Id.run do
     if (cs[k]?).any isTableSpace then k := k + 1 else break
   return k
 
-/-- A delimiter row at `i`: each column's alignment, or `none` when the
-line is not one. -/
+/-- A delimiter row at `i`: each column's alignment, or
+`none` when the line is not one. -/
 def tableDelimAt (cs : Array Char) (i : Nat) : Option (Array TableAlign) := Id.run do
   let mut k := if cs[i]? == some '|' then i + 1 else i
   let mut aligns : Array TableAlign := #[]
@@ -1952,9 +1691,8 @@ def tableDelimAt (cs : Array Char) (i : Nat) : Option (Array TableAlign) := Id.r
     | some _ => return none
   return none
 
-/-- One cell of a row, `[start, stop)` of the line: trimmed, with each
-`\|` read as the pipe it escapes, every kept character carrying its `.md`
-position so a diagnostic inside the cell names its column. -/
+/-- One cell of a row, trimmed, each `\|` read as a pipe, every character
+keeping its `.md` position. -/
 def tableCell (c : Chars) (start stop : Nat) : Chars := Id.run do
   let blank (ch : Char) : Bool := isMdSpace ch || ch == '\x0b'
   let mut a := start
@@ -1971,9 +1709,8 @@ def tableCell (c : Chars) (start stop : Nat) : Chars := Id.run do
       ps := ps.push (c.posAt k)
   return ⟨cs, ps⟩
 
-/-- A row's cells, split on every pipe a backslash does not escape, with an
-optional pipe at either end. Empty when the line holds no cell — a lone
-`|` — which ends a table rather than continuing it. -/
+/-- A row's cells, split on every unescaped pipe; empty for a line holding no
+cell, which ends a table. -/
 def tableCells (c : Chars) : Array Chars := Id.run do
   let mut k := if c.at? 0 == some '|' then tableSpaceEnd c.cs 1 else 0
   let mut cells : Array Chars := #[]
@@ -1992,7 +1729,7 @@ def tableCells (c : Chars) : Array Chars := Id.run do
   return cells
 
 /-- A row's cells as inline content, exactly `n` of them: a missing cell is
-empty and an excess one is dropped, as the extension reads a data row. -/
+empty and an excess one dropped. -/
 def tableRow (file : String) (n : Nat) (cells : Array Chars) :
     Array (Array Inl) × Array Diag := Id.run do
   let mut row : Array (Array Inl) := #[]
@@ -2014,13 +1751,6 @@ namespace LeanTex.Core.Md
 
 open LeanTex.Core
 
-/-! ## Block structure
-
-One pass over the lines with an explicit container stack, the shape
-`Parse.parse` uses: a frame holds the accumulator that was open outside it,
-and closing a frame wraps the inner blocks into the node its container
-denotes. No recursion, so totality is immediate. -/
-
 private inductive FKind where
   | quote
   | list (ordered : Bool) (start : Nat) (marker : Char)
@@ -2035,21 +1765,16 @@ private structure Frame where
   items : Array (Array Blk) := #[]
   tight : Bool := true
   summary : Option (Array Inl) := none
-  /-- A disclosure whose summary line the reader refused: that refusal, at
-  the summary's own `<`, is the construct's one accounting. -/
+  /-- A disclosure whose summary line was refused, that
+  refusal being its one accounting. -/
   refused : Bool := false
-  /-- A disclosure opened by a tag that carries `open`: its body shows until
-  the reader closes it. -/
+  /-- A disclosure opened by a tag that carries `open`. -/
   expanded : Bool := false
 
 private instance : Inhabited Frame := ⟨{ kind := .quote, pos := {} }⟩
 
-/-- Close the innermost frame, wrapping what it accumulated into the node its
-container denotes. The one closing definition every site uses, and it drops
-nothing: a list's own accumulator — blocks that reached the list frame
-outside any item — is carried after the list. Four sites once closed a list
-by hand as `outer.push list`, and each discarded that accumulator; when a
-frame outlived its items, everything after it shipped nowhere. -/
+/-- Closes the innermost frame, wrapping what it accumulated
+into the node its container denotes. -/
 private def closeTop (frames : Array Frame) (acc : Array Blk) : Array Frame × Array Blk :=
   match frames.back? with
   | none => (frames, acc)
@@ -2065,13 +1790,8 @@ private def closeTop (frames : Array Frame) (acc : Array Blk) : Array Frame × A
       | _ => (rest, f.outer ++ acc)
     | .list ord st _ => (rest, f.outer.push (.list ord st f.tight f.items f.pos) ++ acc)
 
-/-- Close a disclosure frame the reader refuses: the summary, when one was
-read, ships as a paragraph, then the body, into the accumulator outside it.
-No `Blk.disclosure` is built, so nothing downstream ships an element the
-reader never accepted: the refusal at its `<` — or at its summary's, when
-the reader refused that line as raw HTML and dropped it — is the construct's
-one accounting, and every other word it held still ships, once, in source
-order. -/
+/-- Closes a refused disclosure frame: its summary ships as
+a paragraph, then its body. -/
 private def closeRefusedDisclosure (frames : Array Frame) (acc : Array Blk) :
     Array Frame × Array Blk :=
   match frames.back? with
@@ -2082,26 +1802,23 @@ private def closeRefusedDisclosure (frames : Array Frame) (acc : Array Blk) :
       | none => f.outer
     (frames.pop, outer ++ acc)
 
-/-- Close the innermost frame where its own closer never came — its
-container ended, or the input did. A disclosure is refused there, once, with
-`closeRefusedDisclosure` — unless its summary's refusal already accounted
-for it; any other frame closes as `closeTop` closes it. -/
+/-- Closes the innermost frame where its own closer never came, refusing a
+disclosure there once. -/
 private def closeUnclosed (file : String) (frames : Array Frame) (acc : Array Blk) :
     Array Frame × Array Blk × Option Diag :=
   match frames.back? with
   | some f =>
     if f.kind == .disclosure then
       let (fs, a) := closeRefusedDisclosure frames acc
-      -- premise: refusedDisclosureChecks — an unclosed disclosure whose summary was refused raises that one E0390 and no second where its container ends
+      -- premise: refusedDisclosureChecks — a refused summary raises one E0390, not two
       (fs, a, if f.refused then none else some (refuse file .rawHtml f.pos))
     else
       let (fs, a) := closeTop frames acc
       (fs, a, none)
   | none => (frames, acc, none)
 
-/-- Close every list frame that is innermost. A list frame lives only as long
-as its items: a line that opens no item inside it — a thematic break, a
-quote, a paragraph — is past the list. -/
+/-- Closes every innermost list frame, since a line that
+opens no item is past the list. -/
 private def closeLists (frames : Array Frame) (acc : Array Blk) : Array Frame × Array Blk :=
   Id.run do
   let mut fs := frames
@@ -2115,20 +1832,17 @@ private def closeLists (frames : Array Frame) (acc : Array Blk) : Array Frame ×
     | _ => break
   return (fs, a)
 
-/-- The leaf open at the innermost container. A fence carries the indent its
-opener stood at: §4.5 strips up to that many columns from each content line,
-so a fence inside a list item does not ship the item's indent as code. -/
+/-- The leaf open at the innermost container; a fence
+carries its opener's indent (§4.5). -/
 private inductive Leaf where
   | none
   | para (lines : Array (String × Pos))
   | fenced (ch : Char) (len : Nat) (info : String) (pos : Pos) (indent : Nat)
       (lines : Array String)
-  /-- A refused HTML block still open: its lines are the refused construct,
-  consumed to its §4.6 end, never re-read as markdown. Re-read, an indented
-  line inside a `<table>` was refused a second time as indented code. -/
+  /-- A refused HTML block still open, its lines consumed to its §4.6 end. -/
   | html (e : HtmlEnd)
   | comment (pos : Pos)
-  /-- An open table: its rows so far, each already read into its cells. -/
+  /-- An open table: its rows so far, each read into its cells. -/
   | table (aligns : Array TableAlign) (header : Array (Array Inl))
       (rows : Array (Array (Array Inl))) (pos : Pos)
   deriving Inhabited
@@ -2137,8 +1851,7 @@ private def Leaf.isPara : Leaf → Bool
   | .para _ => true
   | _ => false
 
-/-- Does the line at `i` start a block that interrupts a paragraph? The
-spec's interrupter list, which is what decides whether a paragraph ends. -/
+/-- Whether the line at `i` starts a block that interrupts a paragraph. -/
 private def interrupts (cs : Array Char) (i : Nat) : Bool :=
   (atxAt cs i).isSome || thematicAt cs i || (fenceAt cs i).isSome
     || cs[i]? == some '>' || htmlBlockInterruptAt cs i
@@ -2149,9 +1862,8 @@ private def interrupts (cs : Array Char) (i : Nat) : Bool :=
         | some (n, _, j) => n == 1 && !isBlankFrom cs j
         | none => false)
 
-/-- Consume `need` columns of indent from `i` at column `col`, a tab
-advancing to the next multiple of four: the index and column past them, or
-`none` when the whitespace runs out first. Walks at most `need` columns. -/
+/-- `need` columns of indent consumed from `i` at column `col`: the index and
+column past them, or `none`. -/
 private def consumeIndent (cs : Array Char) (i col need : Nat) : Option (Nat × Nat) :=
   Id.run do
   let mut k := i
@@ -2168,16 +1880,12 @@ private def consumeIndent (cs : Array Char) (i col need : Nat) : Option (Nat × 
     | _ => return Option.none
   if c2 - col ≥ need then return some (k, c2) else return Option.none
 
-/-- Does the line at `i` start *any* block? Wider than `interrupts`: a
-marker that may not interrupt a paragraph still opens a sibling item when
-its own container did not match, which is not a lazy continuation. The two
-predicates were one, and the false positive it produced fired on the second
-item of every ordered list that did not start at 1. -/
+/-- Whether the line at `i` starts any block, including markers that may not
+interrupt a paragraph. -/
 private def startsAnyBlock (cs : Array Char) (i : Nat) : Bool :=
   interrupts cs i || (bulletAt cs i).isSome || (orderedAt cs i).isSome
 
-/-- Blocks for one markdown document, and the diagnostics the reader raised.
-The only recursion here is the loop's own index. -/
+/-- Blocks for one markdown document, and the diagnostics the reader raised. -/
 public def blocks (file : String) (input : String) : Array Blk × Array Diag := Id.run do
   let lines := splitLines input
   let mut frames : Array Frame := #[]
@@ -2185,31 +1893,22 @@ public def blocks (file : String) (input : String) : Array Blk × Array Diag := 
   let mut leaf : Leaf := .none
   let mut diags : Array Diag := #[]
   let mut sawBlank := false
-  -- The disclosure frame a blank line ended the summary of: that blank line
-  -- separates the summary's HTML block from the body (CommonMark §4.6), two
-  -- blocks of whatever list item holds the disclosure, decided where it
-  -- stands, before the next line opens containers inside the body.
+  -- The disclosure frame whose summary a blank line ended, separating summary from body (§4.6).
   let mut blankAfterSummary : Option Nat := none
-  -- The first line of the paragraph whose header a delimiter row failed to
-  -- match: GFM tries a paragraph once.
+  -- GFM tries a paragraph as a table header once.
   let mut tableVisited : Option Pos := none
   for li in [0:lines.size] do
     let some ln := lines[li]? | continue
     let cs := ln.cs
     let lpos : Pos := { line := ln.no, col := 1 }
-    -- One past the line's last character that is not a space or a tab: the
-    -- line is blank from `i` exactly when `i ≥ inkEnd`.
+    -- One past the line's last non-space character.
     let inkEnd := Id.run do
       let mut e := 0
       for k in [0:cs.size] do
         if h : k < cs.size then
           unless isSpaceOrTab cs[k] do e := k + 1
       return e
-    -- Match the open containers. A fence does not exempt a line from this:
-    -- skipping it left the fence open past its container, so a fence in a
-    -- quote or a nested item swallowed every block that followed and the
-    -- closing fence, the paragraph and the heading after it all shipped as
-    -- code — with no diagnostic.
+    -- Match the open containers; a fence does not exempt a line.
     let mut i := 0
     let mut col := 0
     let mut matched := 0
@@ -2229,12 +1928,6 @@ public def blocks (file : String) (input : String) : Array Blk × Array Diag := 
           else
             ok := false
         | some (FKind.item need) =>
-          -- Both tests read at most what this frame consumes: the line's
-          -- last non-space character is found once per line, and the
-          -- indent is walked only as far as `need`. Measured over the whole
-          -- rest of the line at every frame, a list nested k deep cost k
-          -- scans of k columns per line, and the deep-list shape grew 2.7×
-          -- per doubling.
           if i ≥ inkEnd then
             i := cs.size
             matched := matched + 1
@@ -2246,9 +1939,7 @@ public def blocks (file : String) (input : String) : Array Blk × Array Diag := 
               matched := matched + 1
             | none => ok := false
         | some (FKind.list _ _ _) | some FKind.disclosure => matched := matched + 1
-    -- An open fenced block, inside the containers that matched: its closer
-    -- is tested on the line *after* the container prefixes, and its content
-    -- lines keep neither those prefixes nor the opener's own indent (§4.5).
+    -- An open fence's closer is tested after the container prefixes (§4.5).
     match leaf with
     | .fenced fch flen finfo fpos find flines =>
       if !ok then
@@ -2269,9 +1960,7 @@ public def blocks (file : String) (input : String) : Array Blk × Array Diag := 
             (flines.push (sliceStr rest strip rest.size))
         continue
     | .html e =>
-      -- The refused block ends with its container, at a blank line for
-      -- conditions 6 and 7 (the blank line is read as usual), or on the
-      -- line that holds its end literal. Every other line is consumed.
+      -- The refused block ends with its container, at a blank line, or on its end literal's line.
       if !ok then
         leaf := .none
       else
@@ -2286,8 +1975,7 @@ public def blocks (file : String) (input : String) : Array Blk × Array Diag := 
         leaf := .none
       else
         let end_ := findLit cs i "-->"
-        -- A suffix or an earlier HTML terminator makes this a larger raw
-        -- block. Refuse it once, then consume it under the raw-block rules.
+        -- A suffix or an earlier terminator makes this a larger raw block, refused once.
         if !commentOnly cs i (end_.getD cs.size)
             || end_.any (fun next => !isBlankFrom cs next) then
           diags := diags.push (refuse file .rawHtml p)
@@ -2296,8 +1984,6 @@ public def blocks (file : String) (input : String) : Array Blk × Array Diag := 
         continue
     | _ => pure ()
     let blank := isBlankFrom cs i
-    -- Closing the open paragraph or table, wherever a branch below needs it
-    -- done: every site that ends a paragraph ends a table the same way.
     let closePara : Leaf → Array Blk → Pos → Array Blk × Array Diag :=
       fun l a fallback =>
         match l with
@@ -2306,14 +1992,7 @@ public def blocks (file : String) (input : String) : Array Blk × Array Diag := 
           (a.push (.para inl ((pls[0]?.map (·.2)).getD fallback)), ds)
         | .table aligns header rows p => (a.push (.table aligns header rows p), #[])
         | _ => (a, #[])
-    -- An unmatched container under an open paragraph is a lazy continuation
-    -- when the line starts no block. A line indented four columns or more
-    -- starts none — indented code cannot interrupt a paragraph — so it is
-    -- lazy too: read as a block start, `    - bar` under a quoted paragraph
-    -- was refused as indented code with the wrong fix-it. The refused line
-    -- is the construct, consumed: the containers and the paragraph stay
-    -- open, as the spec's lazy line leaves them, so the line is not read a
-    -- second time as a new block and refused again.
+    -- An unmatched container under an open paragraph is lazy when the line starts no block.
     let (jl, indl) := indentAt cs i col
     if !ok && leaf.isPara && !blank && !(indl < 4 && startsAnyBlock cs jl) then
       diags := diags.push (refuse file .lazyContinuation lpos)
@@ -2338,7 +2017,6 @@ public def blocks (file : String) (input : String) : Array Blk × Array Diag := 
         blankAfterSummary := some (frames.size - 1)
       sawBlank := true
       continue
-    -- New containers, as many as the line opens.
     let mut opened := true
     for _ in [0:cs.size + 1] do
       if opened then
@@ -2361,15 +2039,12 @@ public def blocks (file : String) (input : String) : Array Blk × Array Diag := 
           col := 0
           opened := true
         else if ind ≤ 3 && !thematicAt cs j then
-          -- A thematic break outranks a list marker (§4.1): tested after the
-          -- marker, `* * *` and `- - -` opened three nested empty lists.
+          -- A thematic break outranks a list marker (§4.1).
           let startNew : Option (Bool × Nat × Char × Nat × Nat) :=
             match bulletAt cs j, orderedAt cs j with
             | some (m, k), _ => some (false, 1, m, k, 1)
             | none, some (n, d, k) =>
-              -- The marker's own width, digits and delimiter, without the
-              -- space after it: an empty item's content column is measured
-              -- from the marker, and counting the space put it one too far.
+              -- The marker's own width, without the space after it.
               let dg := Id.run do
                 let mut q := j
                 for _ in [0:11] do
@@ -2394,12 +2069,7 @@ public def blocks (file : String) (input : String) : Array Blk × Array Diag := 
                   | .list o _ m => o == ordered && m == marker
                   | _ => false
                 | none => false
-              -- A marker of a different kind starts a *new* list, so the
-              -- open one closes first. Left open, its frame swallowed every
-              -- block that followed: the bullet list stayed on the stack and
-              -- an ordered list, a quote, a fence and two more blocks all
-              -- landed inside its last item, where the backend shipped none
-              -- of them.
+              -- A marker of a different kind starts a new list, so the open one closes first.
               unless sameList do
                 let (fs, a2) := closeLists frames acc
                 frames := fs
@@ -2407,15 +2077,10 @@ public def blocks (file : String) (input : String) : Array Blk × Array Diag := 
                 frames := frames.push
                   { kind := .list ordered start marker, pos := lpos, outer := acc }
                 acc := #[]
-              -- A blank line *between two items of one list* makes it loose;
-              -- a blank line before the list starts says nothing about it.
+              -- A blank line between two items of one list makes it loose.
               if sawBlank && sameList && frames.size > 0 then
                 frames := frames.modify (frames.size - 1) (fun f => { f with tight := false })
-              -- The item's content indent, in columns from the line start.
-              -- `sp` counts the spaces *beyond* the one the marker consumed,
-              -- so five spaces after the marker is `sp ≥ 4`: written `≥ 5`,
-              -- `-     foo` set its content as item text where the strict
-              -- dialect owes an indented-code refusal.
+              -- The item's content indent; `sp` counts spaces beyond the marker's one.
               let (k2, sp) := indentAt cs k 0
               let wide := sp ≥ 4
               let markerCols :=
@@ -2427,22 +2092,11 @@ public def blocks (file : String) (input : String) : Array Blk × Array Diag := 
               i := contentIdx
               col := 0
               opened := true
-    -- A list frame is never innermost past this point. The line opened no
-    -- item inside it, so the line is past the list. Decided after the
-    -- containers were read, not predicted before: the prediction was a
-    -- second copy of the container loop's marker test, and the copy that
-    -- lacked the thematic-break precedence kept a list open under `* * *`
-    -- with no item in it, so the rest of the document landed in the list's
-    -- own accumulator and shipped nowhere.
+    -- The line opened no item, so it is past the list.
     let (fs, a) := closeLists frames acc
     frames := fs
     acc := a
-    -- A blank line between two blocks of one item makes its list loose. A
-    -- disclosure's opening tags and summary are such a block, an HTML
-    -- block (CommonMark §4.6), though the frame keeps the summary off its
-    -- body: the blank line after it, which ends that block, counts too, for
-    -- the list around the disclosure. A quotation is one block of its item,
-    -- so a blank line inside it makes no list outside it loose.
+    -- A blank line between two blocks of one item makes its list loose.
     let summaryAt? := blankAfterSummary.filter fun d =>
       frames[d]?.any (·.kind == .disclosure)
     let start? : Option Nat := if !sawBlank then none
@@ -2457,19 +2111,13 @@ public def blocks (file : String) (input : String) : Array Blk × Array Diag := 
             break
           | .quote => break
           | _ => pure ()
-    -- A line that was only container markers opens nothing: `blank` was
-    -- measured before they opened, so `- ` or `>` with an empty remainder
-    -- opened an empty paragraph, and the next unmarked line was then refused
-    -- as a lazy continuation of it.
+    -- A line of only container markers opens nothing.
     if isBlankFrom cs i then
       sawBlank := false
       blankAfterSummary := none
       continue
-    -- The leaf.
     let (j, ind) := indentAt cs i col
-    -- An open table takes the line as its next row unless the line starts
-    -- another block; then the table ends and the line reads as usual. A
-    -- blank line, a container's end, a quote and a list item closed it above.
+    -- An open table takes the line as its next row unless the line starts another block.
     if let .table aligns header rows tpos := leaf then
       let startsBlock := ind ≥ 4 || (atxAt cs j).isSome || thematicAt cs j
         || (fenceAt cs j).isSome || (htmlBlockKind cs j).isSome
@@ -2485,9 +2133,7 @@ public def blocks (file : String) (input : String) : Array Blk × Array Diag := 
         sawBlank := false
         blankAfterSummary := none
         continue
-    -- A delimiter row under a paragraph whose last line carries as many
-    -- cells opens a table, that line its header. A paragraph whose header
-    -- once failed to match stays a paragraph (`tableVisited`).
+    -- A delimiter row under a paragraph whose last line has as many cells opens a table.
     let tableStart : Option (Array (String × Pos) × Pos × Array Chars × Array TableAlign) :=
       match leaf with
       | .para pls =>
@@ -2498,12 +2144,11 @@ public def blocks (file : String) (input : String) : Array Blk × Array Diag := 
             if cells.size == aligns.size then some (pls.pop, hp, cells, aligns) else Option.none
           | _, _ => Option.none
       | _ => Option.none
-    -- An HTML block, by condition: one that may not interrupt a paragraph
-    -- (condition 7) is paragraph text under an open one.
+    -- An HTML block of condition 7 is paragraph text under an open paragraph.
     let htmlStart : Option HtmlEnd :=
       (htmlBlockKind cs j).bind fun (e, interrupts) =>
         if leaf.isPara && !interrupts then Option.none else some e
-    -- premise: htmlTwinChecks — every spelling of `open` ships the element open, the bare tag ships it closed one page apart by `open` alone, and paper sets both alike
+    -- premise: htmlTwinChecks — every spelling of `open` ships the element open
     let detailsTag := (tagAt cs j).filter fun t => detailsOpen t && isBlankFrom cs t.stop
     let opensDetails := detailsTag.isSome
     let closesDetails := (bareTagAt cs j "details" true).any (isBlankFrom cs ·)
@@ -2511,18 +2156,13 @@ public def blocks (file : String) (input : String) : Array Blk × Array Diag := 
     let summaryLine := inDetails && !leaf.isPara && acc.isEmpty
       && (frames.back?.bind Frame.summary).isNone && !(frames.back?.any (·.refused))
     let summary := if summaryLine then summaryAt cs j lpos else none
-    -- A summary line the reader cannot read is raw HTML, refused below at its
-    -- own `<` as an HTML block, by the block test itself: that refusal
-    -- accounts for its disclosure, its tag on one line or several.
-    -- premise: refusedDisclosureChecks — each refused summary, its tag on one line or spread over two, raises one E0390, at the summary, and its disclosure's body ships
+    -- premise: refusedDisclosureChecks — each refused summary raises one E0390
     if summaryLine && summary.isNone && ind < 4 && blockTagStartsAt cs j "summary" then
       frames := frames.modify (frames.size - 1) fun f => { f with refused := true }
     if ind ≥ 4 && !leaf.isPara then
       diags := diags.push (refuse file .indentedCode lpos)
     else if ind ≥ 4 && leaf.isPara then
-      -- Four spaces under an open paragraph is continuation text, not a
-      -- block start: `foo` then `    # bar` is one paragraph. Tested for
-      -- block starts first, the indented line became an ATX heading.
+      -- Four spaces under an open paragraph is continuation text, not a block start.
       leaf := .para (match leaf with
         | .para pls => pls.push (sliceStr cs j cs.size, { line := ln.no, col := j + 1 })
         | _ => #[(sliceStr cs j cs.size, { line := ln.no, col := j + 1 })])
@@ -2540,7 +2180,7 @@ public def blocks (file : String) (input : String) : Array Blk × Array Diag := 
       leaf := .none
       let summaryless := frames.back?.any (·.summary.isNone)
       if let some f := frames.back? then
-        -- premise: refusedDisclosureChecks — a disclosure whose summary was refused raises that one E0390 and no second at its close
+        -- premise: refusedDisclosureChecks — a refused summary raises one E0390, not two
         if summaryless && !f.refused then diags := diags.push (refuse file .rawHtml f.pos)
       let (fs, a) := (if summaryless then closeRefusedDisclosure else closeTop) frames a
       frames := fs
@@ -2566,10 +2206,7 @@ public def blocks (file : String) (input : String) : Array Blk × Array Diag := 
       acc := acc.push (.heading level inl lpos)
       diags := diags ++ ds2
     else if leaf.isPara && (setextAt cs j).isSome then
-      -- A `---` line under a paragraph is a setext underline, not a
-      -- thematic break: the spec gives the heading precedence, and testing
-      -- the break first read every level-2 setext heading as a rule and
-      -- dropped its title into the paragraph above.
+      -- A `---` line under a paragraph is a setext underline, not a thematic break.
       let level := (setextAt cs j).getD 1
       match leaf with
       | .para pls =>
@@ -2590,15 +2227,12 @@ public def blocks (file : String) (input : String) : Array Blk × Array Diag := 
       diags := diags ++ ds
       leaf := .fenced fch flen (decodeInfo finfo) lpos (j - i) #[]
     else if let some e := htmlStart then
-      -- The refusal names the construct's own column, not the line's: a
-      -- block inside a quote or an item starts after the container prefix,
-      -- and a checker reading the refused text back from the source must
-      -- land on the tag.
+      -- The refusal names the construct's own column, not the line's.
       let (a, ds) := closePara leaf acc lpos
       acc := a
       diags := diags ++ ds
       let p := { lpos with col := j + 1 }
-      -- premise: mdSurfaceChecks — only a comment-only block is consumed without loss.
+      -- premise: mdSurfaceChecks — only a comment-only block is consumed without loss
       if litAt cs j "<!--" then
         let end_ := findLit cs (j + 2) "-->"
         if !commentOnly cs j (end_.getD cs.size)
@@ -2620,14 +2254,12 @@ public def blocks (file : String) (input : String) : Array Blk × Array Diag := 
       let text := sliceStr cs j cs.size
       match leaf with
       | .para pls =>
-        -- A delimiter row that opened no table is text, and its paragraph
-        -- can no longer become one.
+        -- A delimiter row that opened no table is text.
         if ind < 4 && (tableDelimAt cs j).isSome then tableVisited := pls[0]?.map (·.2)
         leaf := .para (pls.push (text, { line := ln.no, col := j + 1 }))
       | _ => leaf := .para #[(text, { line := ln.no, col := j + 1 })]
     sawBlank := false
     blankAfterSummary := none
-  -- End of input: the leaf, then every frame.
   match leaf with
   | .para pls =>
     let (inl, ds) := inlines file (charsOf pls)

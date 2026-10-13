@@ -11,16 +11,6 @@ import all LeanTex.Core.Parse
 
 namespace LeanTex.Core.CompatContract
 
-/-- Candidate coverage for an actual callback argument, including loads
-introduced by expansion. The request has one executed operand slice: its
-filename, options and the call the driver's input reader answers are
-projections of that slice. No equality to an unexpanded source census is
-assumed.
-
-This is the request boundary contract. It does not infer a file attempt
-from a refusal code: native `\theme` and native-package option refusals
-remain outside the loading door. Nor does it claim that the filesystem
-contained or successfully supplied any candidate. -/
 public theorem inputRequest_names_asked (request : Compat.InputRequest) :
     (request.command = "usepackage" ∨ request.command = "RequirePackage" →
       ∀ part ∈ request.name.splitOn ",",
@@ -47,10 +37,8 @@ end LeanTex.Core.CompatContract
 
 namespace LeanTex.Core.Elab
 
-/-- A final tally may move a site's count to its carrier, but it must retain
-the producer's whole diagnostic record. In particular the refused name and
-source span cannot be reconstructed from the message or from another code
-at the same site. -/
+/-- The producer's whole diagnostic record survives in `ds`, at most its site
+count moved to its carrier. -/
 @[expose] public def Reported (ds : Array Diag) (producer : Diag) : Prop :=
   ∃ actual ∈ ds, { actual with sites := producer.sites } = producer
 
@@ -77,11 +65,6 @@ public theorem reported_append (left right : Array Diag) (d : Diag) (h : Reporte
   obtain ⟨actual, ha, heq⟩ := h
   exact ⟨actual, Array.mem_append.mpr (Or.inl ha), heq⟩
 
-/-- Document completion preserves the diagnostics supplied by execution and
-compatibility, including their original refused names, codes and spans.
-Colour realization, recovered-content accounting and the first tally
-cannot change any of those fields. The trigger is restored from the
-prepared source's lexical evidence. -/
 public theorem completePrepared_reports_contract (file : String) (p : Prepared)
     (earlier : Array Diag) (doc : Ir.Doc) (table : Ir.RefTable)
     (report : PictureReportContext) (st : ESt) (d : Diag)
@@ -102,8 +85,6 @@ public theorem completePrepared_reports_contract (file : String) (p : Prepared)
             (Array.mem_append.mpr (Or.inl
               (Array.mem_append.mpr (Or.inl h)))))))))))))
 
-/-- The production preamble and body interpreter reach the same diagnostic
-completion for every picture-withdrawal environment. -/
 public theorem runPrepared_reports_contract (file : String) (p : Prepared)
     (earlier : Array Diag) (metric : Ir.Pic.LabelMetric) (withdrawn : Array String)
     (d : Diag) (h : d ∈ earlier ++ p.compatDiags) :
@@ -116,8 +97,6 @@ public theorem runPrepared_reports_contract (file : String) (p : Prepared)
 
 attribute [local irreducible] runPrepared
 
-/-- Whichever production pass withdrawal selects, source erasure and the
-reference judge preserve its producer records through the final tally. -/
 public theorem runPreparedFinal_reports_contract (file : String) (p : Prepared)
     (earlier : Array Diag) (metric : Ir.Pic.LabelMetric) (d : Diag)
     (h : d ∈ earlier ++ p.compatDiags) :
@@ -131,9 +110,6 @@ public theorem runPreparedFinal_reports_contract (file : String) (p : Prepared)
       (runPrepared_reports_contract file p earlier metric _ d h))
 
 attribute [local irreducible] Compat.rewriteText in
-/-- Preparation retains every compatibility producer record verbatim. The
-text pass can add reports, but cannot replace the package producer's span,
-refused spelling, code or source trigger. -/
 public theorem prepareRewritten_diags_covers (file : String)
     (scan : Compat.BoundaryScan) (macros : Array (String × String))
     (triggers : Compat.SourceTriggers) (prior : Array Diag)
@@ -155,10 +131,6 @@ public theorem prepareExecuted_diags_covers (file : String)
   prepareRewritten_diags_covers file _ _ _ _ _ _ d h
 
 attribute [local irreducible] prepareExecuted runPreparedFinal in
-/-- A compatibility refusal reaches the final executed-document result,
-through text rewriting, body interpretation, recovery and both tallies.
-The caller still owes the producer-to-request connection; this lemma
-preserves the actual record rather than inventing a matching report. -/
 public theorem runExecuted_reports_contract (file : String)
     (executed : Compat.Executed) (earlier : Array Diag)
     (metric : Ir.Pic.LabelMetric) (d : Diag)
@@ -171,18 +143,6 @@ public theorem runExecuted_reports_contract (file : String)
 
 attribute [local irreducible] executeInputs Compat.executeInputs
   Compat.rewriteExecuted runExecuted in
-/-- A live external-package declaration whose reader returns no input has
-an actual failed-call receipt, the requested style-file candidate for each
-name, and its producer's full source-located refusal in the final result.
-The final trigger uses the same lexical evidence as the producer, so
-the only further change is the tally's site count.
-
-The domain is stated on the source call and the external reader before
-execution: either package-loading spelling, arbitrary nonempty external
-comma-separated names and arbitrary positions. It excludes native-package
-option refusals, native theme selection, dormant definitions and calls
-inside consumed control operands. Those cases cannot justify a global
-equivalence between requests and refusal codes. -/
 public theorem packageInput_refusal_contract (reader : Compat.InputReader Id)
     (file command names : String) (pos groupPos namePos : Pos)
     (earlier : Array Diag) (metric : Ir.Pic.LabelMetric)
@@ -222,36 +182,6 @@ public theorem packageInput_refusal_contract (reader : Compat.InputReader Id)
       (by simpa only [hname] using hpart) (hnames part hpart).1 (hnames part hpart).2.1
   · simpa only [Compat.SourceTriggers.attribute_fixed_point] using
       runExecuted_reports_contract file _ earlier metric _ (hproducer.2 part hpart)
-
-/-! ## Including is transparent
-
-An included file reaches the elaborator wrapped once, as the file it came
-from (`Parse.inputEnv`, through `Surface.fragment`). The statements below
-say what the wrapper means: nothing but the file's name. An include standing
-as the whole of a block accumulator, with only blank source around it
-(`sourceBlank`: the spaces and blank lines a call written on a line of its
-own stands among), produces exactly the blocks and the final state its raws
-produce as that accumulator of their own, under the file's name, with no
-call site. The host contributes only its display marking of a file that is
-exactly one display: no text before it, and whether a paragraph break
-follows. The accumulator is any the elaborator opens through
-`elabBlockScope` with no text pending (`elabBlockScope_input_exact`, from
-every frame-source state): a frame's content — the frame arm elaborates what
-follows its options and title there — and the bodies the block environments
-open the same way. The document body is the public form
-(`elabBlocks_input_exact`, `runDocBody_input_exact`). That a frame's other
-steps — options, title, notes, palette — read only its content scope's
-result is the frame arm's code, not a statement here; the doors' D6 frame
-rows check the composed frame end to end, with the call written on a line
-of its own and written tight.
-
-Beside other content — text or blocks before or after the include in the
-same accumulator — the included blocks are the same, but the inner
-frame-source offsets shift by the blocks before the include, by design, and
-the marking reads the paragraph the include opens in; that form is a stretch
-lemma, not a claim made here. Markdown meets the hypotheses by construction
-(`markdownInput_blocks_exact`): a nonempty desugaring is block-shaped and
-lowers into a vocabulary that holds no length-restore marker. -/
 
 open Parse Ir
 
@@ -305,8 +235,8 @@ private theorem lengthScopeKeys?_back (body : Array Raw)
   · next n p heq => exact h n p heq
   · rfl
 
-/-- Blank source between blocks: a space, or a paragraph break the source
-wrote — one no macro expansion made, which would open a role of its own. -/
+/-- Whether a raw is blank source between blocks: a space,
+or a paragraph break the source wrote. -/
 @[expose] public def sourceBlank : Raw → Bool
   | .space => true
   | .par p => p.origins.isEmpty
@@ -327,8 +257,6 @@ private theorem withRoles_default (c : Ctx)
   cases hc
   rfl
 
-/-- A step at a raw no expansion made, with no macro role open, refreshes
-the flow state and changes nothing else, whatever the flow generation. -/
 private theorem blockMacroStep_quiet (ctx : Ctx) (st : ESt) (gen : Nat) (raws : Array Raw)
     (i : Nat) (blocks : Array Block) (cur : Array Raw)
     (hm : ctx.macroRoles = ({file := ""} : Ctx).macroRoles)
@@ -363,8 +291,6 @@ private theorem sourceBlank_of_mem (xs : Array Raw) (h : xs.all sourceBlank = tr
     (hr : r ∈ xs) : sourceBlank r = true :=
   Array.all_eq_true_iff_forall_mem.mp h r hr
 
-/-- The block spine at blank source with no paragraph open: it moves on,
-and nothing happens but the flow refresh every step makes. -/
 private theorem elabBlocksGo_blank (ctx : Ctx) (st : ESt) (raws : Array Raw) (i gen : Nat)
     (blocks : Array Block) (hm : ctx.macroRoles = ({file := ""} : Ctx).macroRoles)
     (hi : i < raws.size) (hb : sourceBlank raws[i] = true) :
@@ -384,10 +310,6 @@ private theorem elabBlocksGo_blank (ctx : Ctx) (st : ESt) (raws : Array Raw) (i 
   · rename_i heq; rw [heq] at hb; simp [sourceBlank] at hb
   · simp [sourceBlank_spaceOrPar _ hb]
 
-/-- The block spine at an include wrapper with nothing open before it: the
-environment arm on an empty accumulator, its result marked as a display
-would be — whether a paragraph break follows is the host's to record — and
-the walk moves past the wrapper. -/
 private theorem elabBlocksGo_input_at (ctx : Ctx) (st : ESt) (raws : Array Raw) (i : Nat)
     (f : String) (body : Array Raw) (pos : Pos) (gen : Nat) (hg : st.flowGen = gen)
     (hm : ctx.macroRoles = ({file := ""} : Ctx).macroRoles) (hp : pos.origins = [])
@@ -418,8 +340,6 @@ private theorem elabBlocksGo_input_at (ctx : Ctx) (st : ESt) (raws : Array Raw) 
   · rename_i _ _ _ _ henv _
     exact absurd hr (henv _ _ _)
 
-/-- The environment arm of an include wrapper: the file's raws in a fresh
-scope under the file's name, spliced at offset zero, and nothing else. -/
 private theorem elabEnvArm_input_scope (ctx : Ctx) (f : String) (body : Array Raw) (pos : Pos)
     (hlen : lengthScopeKeys? body = none) :
     elabEnvArm ctx (Parse.inputEnv f) body pos #[] =
@@ -428,9 +348,6 @@ private theorem elabEnvArm_input_scope (ctx : Ctx) (f : String) (body : Array Ra
   simp [inputEnv_ne_scopeEnv, inputEnvFile?_inputEnv, closeLengthScope]
   rfl
 
-/-- The block spine past its last raw, with no paragraph open and no
-macro role active: whatever the flow generation, it returns its blocks and
-leaves the state alone. -/
 private theorem elabBlocksGo_end (ctx : Ctx) (st : ESt) (raws : Array Raw) (i : Nat)
     (blocks : Array Block) (gen : Nat)
     (hm : ctx.macroRoles = ({file := ""} : Ctx).macroRoles) (hi : raws.size ≤ i) :
@@ -444,9 +361,6 @@ private theorem elabBlocksGo_end (ctx : Ctx) (st : ESt) (raws : Array Raw) (i : 
     closeBlockFrameSources, commonOrigins, moveMacroRuns, closeMacroRuns, MacroRoles.empty]
   rfl
 
-/-- Blank source to the end of an accumulator, with no paragraph open: the
-spine returns its blocks and leaves the state alone, whatever the flow
-generation. -/
 private theorem elabBlocksGo_blanks_end (raws : Array Raw) (blocks : Array Block) :
     ∀ (n i gen : Nat) (ctx : Ctx) (st : ESt), raws.size - i = n →
       ctx.macroRoles = ({file := ""} : Ctx).macroRoles →
@@ -459,8 +373,6 @@ private theorem elabBlocksGo_blanks_end (raws : Array Raw) (blocks : Array Block
     exact elabBlocksGo_blanks_end raws blocks n (i + 1) st.flowGen _ st (by omega)
       (by rw [flowCtx_macroRoles]; exact hm) (fun j hj hij => hb j hj (by omega))
 
-/-- Blank source before a raw, with no paragraph open and the flow state
-current: the spine stands at that raw as if the blanks were not there. -/
 private theorem elabBlocksGo_blanks_skip (ctx : Ctx) (raws : Array Raw) (blocks : Array Block)
     (k gen : Nat) (hm : ctx.macroRoles = ({file := ""} : Ctx).macroRoles) (hk : k ≤ raws.size) :
     ∀ (n i : Nat) (st : ESt), st.flowGen = gen → k - i = n → i ≤ k →
@@ -476,8 +388,6 @@ private theorem elabBlocksGo_blanks_skip (ctx : Ctx) (raws : Array Raw) (blocks 
     exact elabBlocksGo_blanks_skip ctx raws blocks k st.flowGen hm hk n (i + 1) st rfl (by omega)
       (by omega) (fun j hj h1 h2 => hb j hj (by omega) h2)
 
-/-- What follows an include standing among blanks is a paragraph break
-exactly when one of the blanks after it is. -/
 private theorem parFollows_include (pre post : Array Raw) (w : Raw)
     (hpost : post.all sourceBlank = true) :
     parFollows (pre ++ #[w] ++ post) (pre.size + 1) = post.any (· matches .par _) := by
@@ -499,8 +409,6 @@ private theorem parFollows_include (pre post : Array Raw) (w : Raw)
     | par p => simp
     | _ => simp [sourceBlank] at hb
 
-/-- No length-restore marker closes an include standing among blanks: its
-last raw is a blank or the wrapper. -/
 private theorem lengthScopeKeys?_include (pre post : Array Raw) (f : String) (body : Array Raw)
     (pos : Pos) (hpost : post.all sourceBlank = true) :
     lengthScopeKeys? (pre ++ #[.env (Parse.inputEnv f) body pos] ++ post) = none := by
@@ -523,15 +431,12 @@ private theorem closeBlockScope_base (ctx : Ctx) (base : Option Nat) (blocks : A
   simp [closeBlockScope, closeLengthScope, setFrameSourceBase]
   rfl
 
-/-- A block accumulator's entry state: its scheduled splice offset becomes
-its base, and nothing is scheduled inside (`openBlockScope`). -/
+/-- A block accumulator's entry state: its scheduled splice
+offset becomes its base. -/
 private def openScope (st : ESt) : ESt :=
   { st with spans := { st.spans with frames :=
     { st.spans.frames with base := st.spans.frames.nextBase, nextBase := none } } }
 
-/-- A block accumulator with no macro role active and no length scope to
-open runs its walk from the entry state and closes back to the base it
-found. -/
 private theorem elabBlockScope_run (ctx : Ctx) (st : ESt) (raws : Array Raw)
     (hm : ctx.macroRoles = ({file := ""} : Ctx).macroRoles)
     (hlen : openLengthScope ctx raws =
@@ -549,8 +454,6 @@ private theorem elabBlockScope_run (ctx : Ctx) (st : ESt) (raws : Array Raw)
   simp only [henter, openBlockScope, hlen, bind_assoc, pure_bind]
   rfl
 
-/-- A splice at offset zero schedules the accumulator it opens at the base
-it is met at: the included file's scope opens where its caller's stands. -/
 private theorem splicedFrameScope_zero (scope : EM (Array Block)) (st : ESt) :
     (splicedFrameScope (some 0) scope).run st =
       scope.run { st with spans := { st.spans with frames :=
@@ -558,30 +461,17 @@ private theorem splicedFrameScope_zero (scope : EM (Array Block)) (st : ESt) :
   cases hb : st.spans.frames.base <;>
     simp [splicedFrameScope, FrameSources.offset, hb]
 
-/-- `elabBlocks` is the accumulator scheduled at offset zero. -/
 private theorem elabBlocks_run (ctx : Ctx) (raws : Array Raw) (st : ESt) :
     (elabBlocks ctx raws).run st =
       (elabBlockScope ctx raws).run { st with spans := { st.spans with frames :=
         { st.spans.frames with nextBase := some 0 } } } := rfl
 
-/-- The dispatch domain where a wrapped file splices. No macro expansion is
-open; the wrapper has a source position; the raws are block-shaped (a
-phrase joins the open paragraph, as TeX's `\input` of a phrase does); and
-no trailing length-restore marker closes them. Each conjunct is a fact of
-syntax and context, none a fact of the result. -/
+/-- The dispatch domain where a wrapped file splices: no macro expansion open, a
+positioned wrapper, block-shaped raws. -/
 @[expose] public def InputSplice (ctx : Ctx) (body : Array Raw) (pos : Pos) : Prop :=
   ctx.macroRoles = ({file := ""} : Ctx).macroRoles ∧ pos.origins = [] ∧ bodyIsBlock body = true ∧
     ∀ n p, body.back? = some (.ctrl n p) → Compat.lengthRestoreKeys? n = none
 
-/-- **An include standing as a whole block accumulator is transparent.**
-Its raws produce exactly the blocks and final state they produce as that
-accumulator of their own, under the file's name and no call site, from any
-frame-source state — so at a frame's content scope as at a document body —
-whatever blank source stands around the call. The host contributes only its
-display marking of a file that is exactly one display: no text before it,
-and whether a paragraph break follows. The statement is the whole state,
-not a census: diagnostics, counters, labels, frame sources and the flow
-epoch all agree. -/
 private theorem elabBlockScope_input_exact (ctx : Ctx) (f : String) (body pre post : Array Raw)
     (pos : Pos) (st : ESt) (h : InputSplice ctx body pos)
     (hpre : pre.all sourceBlank = true) (hpost : post.all sourceBlank = true) :
@@ -632,10 +522,6 @@ private theorem elabBlockScope_input_exact (ctx : Ctx) (f : String) (body pre po
   simp only [StateT.run_bind, hx, closeBlockScope_base, hend, parFollows_include pre post _ hpost]
   rfl
 
-/-- **An include standing as its own block sequence is transparent**, at the
-document body, whatever blank source stands around the call: the
-accumulator `elabBlocks` schedules at offset zero is the one
-`elabBlockScope_input_exact` describes. -/
 public theorem elabBlocks_input_exact (ctx : Ctx) (f : String) (body pre post : Array Raw)
     (pos : Pos) (st : ESt) (h : InputSplice ctx body pos)
     (hpre : pre.all sourceBlank = true) (hpost : post.all sourceBlank = true) :
@@ -645,9 +531,6 @@ public theorem elabBlocks_input_exact (ctx : Ctx) (f : String) (body pre post : 
   rw [elabBlocks_run, elabBlocks_run]
   exact elabBlockScope_input_exact ctx f body pre post pos _ h hpre hpost
 
-/-- The same at the document body: a body that is one include among blank
-source runs the document continuation — numbering, metadata, references —
-over exactly the blocks the included raws produce as a body of their own. -/
 public theorem runDocBody_input_exact (plan : DocBodyPlan) (f : String) (body pre post : Array Raw)
     (pos : Pos) (st : ESt) (hraws : plan.raws = pre ++ #[.env (Parse.inputEnv f) body pos] ++ post)
     (h : InputSplice plan.ctx body pos)
@@ -662,10 +545,6 @@ public theorem runDocBody_input_exact (plan : DocBodyPlan) (f : String) (body pr
   rw [elabBlocks_input_exact plan.ctx f body pre post pos st h hpre hpost]
   rfl
 
-/-- Markdown's vocabulary against the elaborator's reserved names: each of
-its environments is the elaborator's own or holds a space no source spells
-(a document can redefine none of them), and none of its controls is a
-length-restore marker. -/
 public theorem markdownVocabulary_contract :
     (∀ n ∈ Md.vocabulary.envs, n ∈ builtinEnvNames ∨ ' ' ∈ n.toList) ∧
     (∀ n ∈ Md.vocabulary.ctrls ++ Md.vocabulary.bridged, Compat.lengthRestoreKeys? n = none) := by
@@ -710,11 +589,6 @@ private theorem bodyIsBlock_of_blockStart (body : Array Raw) (h : ∃ r ∈ body
   exact bodyIsBlockList_of_mem body.toList r (Array.mem_toList_iff.mpr hr)
     (bodyIsBlockOne_of_blockStart r hs)
 
-/-- A markdown file whose desugaring is not empty meets the splice domain
-wherever no macro expansion is open and the include has a source position:
-block-shaped by `Md.desugar_blockStart_contract`, and closed by no
-length-restore marker by `Md.desugar_vocabulary_mem` and
-`markdownVocabulary_contract`. -/
 private theorem markdownInput_splice (ctx : Ctx) (f t : String) (pos : Pos)
     (hm : ctx.macroRoles = ({file := ""} : Ctx).macroRoles) (hp : pos.origins = [])
     (hne : (Surface.read .markdown f t).1 ≠ #[]) :
@@ -731,11 +605,6 @@ private theorem markdownInput_splice (ctx : Ctx) (f t : String) (pos : Pos)
   simp only [Md.Vocab.admits, Bool.or_eq_true, List.contains_iff_mem] at hadm
   exact markdownVocabulary_contract.2 n (List.mem_append.mpr hadm)
 
-/-- Markdown at any block accumulator — a frame's content as a document
-body: a markdown file with a nonempty desugaring, read through its door and
-included where it stands as the accumulator's whole content, blank source
-around the call allowed, gives exactly the blocks and state it gives alone
-there, under its own name, up to the host's display marking. -/
 private theorem markdownInput_scope_exact (ctx : Ctx) (f t : String) (pre post : Array Raw)
     (pos : Pos) (st : ESt)
     (hm : ctx.macroRoles = ({file := ""} : Ctx).macroRoles) (hp : pos.origins = [])
@@ -748,14 +617,6 @@ private theorem markdownInput_scope_exact (ctx : Ctx) (f t : String) (pre post :
   elabBlockScope_input_exact ctx f _ pre post pos st (markdownInput_splice ctx f t pos hm hp hne)
     hpre hpost
 
-/-- **Markdown included in tex is markdown.** A markdown file read through
-its door and included where it stands as the block sequence, blank source
-around the call allowed, gives exactly the blocks and state it gives alone,
-under its own name, up to the host's display marking. What remains assumed
-is the shape of the call, never the file's content beyond its desugaring
-not being empty — a file of text has one; a file holding only what desugars
-to nothing, a thematic break or blank lines, does not: no macro expansion
-open, a source position, and a nonempty desugaring. -/
 public theorem markdownInput_blocks_exact (ctx : Ctx) (f t : String) (pre post : Array Raw)
     (pos : Pos) (st : ESt)
     (hm : ctx.macroRoles = ({file := ""} : Ctx).macroRoles) (hp : pos.origins = [])
@@ -768,7 +629,6 @@ public theorem markdownInput_blocks_exact (ctx : Ctx) (f t : String) (pre post :
   rw [elabBlocks_run, elabBlocks_run]
   exact markdownInput_scope_exact ctx f t pre post pos _ hm hp hne hpre hpost
 
-/-- The census of the same: included markdown sets the text it sets alone. -/
 public theorem markdownInput_blocks_text (ctx : Ctx) (f t : String) (pre post : Array Raw)
     (pos : Pos) (st : ESt)
     (hm : ctx.macroRoles = ({file := ""} : Ctx).macroRoles) (hp : pos.origins = [])

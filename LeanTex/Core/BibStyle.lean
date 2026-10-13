@@ -11,36 +11,15 @@ import LeanTex.Core.BibMacro
 import LeanTex.Core.Nfc
 import Std.Data.HashSet
 
-/-! A bibliography style, decomposed the way biblatex decomposed `.bst`
-files: independent pure choices — how a citation renders inline, how the
-reference list is ordered, which fields each entry type contributes in
-what order, the order a name is written in, whether first names abbreviate
-to initials (the last two carried by `NameFormat`), the month macros, and
-alpha's labels. `unsrtnat` is one record; `plainnat` another over the same
-field orders; `abbrvnat` and `abbrv` set the abbreviation axes; `alpha`
-the labels; a style the engine does not know falls back to a record, never
-to a separate code path. The formats transcribe plainnat.bst (Daly,
-natbib's companion style, which `unsrtnat.bst` shares verbatim minus the
-SORT pass) and plain.bst (`plainSteps`), each over the BibTeX view of the
-one entry model (`Database.read`); a document that loads biblatex has its
-list set by biblatex's standard drivers instead (`renderBbl`). -/
+/-! A bibliography style decomposed into independent pure choices: inline
+citations, list order, each entry type's fields, and name format. -/
 
 namespace LeanTex.Core.Bib
 
 open LeanTex.Core
 
-/-- How the reference list is ordered: `citation` keeps first-citation
-order (the "unsrt" in `unsrtnat`); `plain` sorts by plain.bst's key — the
-names, the year, the title (FUNCTION {presort}); `alpha` by alpha.bst's —
-the label, then plain's key; `authorYear` by
-plainnat.bst's — the label, the names, the year, the cite key, the title;
-`bbl` is a biblatex sorting template (biblatex.def
-`\DeclareSortingTemplate`, `bblTemplate`) under the load's options —
-`nty` the numeric styles' default (name, title, year), `nyt` the
-author-year ones' (name, year, title). Every BibTeX key ends in the cite
-key, the tiebreak that keeps the comparison total; biblatex's keys end
-where biber's do, and entries they leave equal keep their citation order,
-as biber's stable sort keeps them. -/
+/-- How the reference list is ordered: first-citation order, or plain.bst's or
+alpha.bst's sort key. -/
 public inductive SortOrder where
   | citation
   | plain
@@ -49,12 +28,8 @@ public inductive SortOrder where
   | bbl (template : String) (opts : BblOptions)
   deriving Repr, BEq, Inhabited
 
-/-- One formatted piece of a reference-list entry: plainnat.bst's `format.*`
-functions (unsrtnat.bst shares them verbatim), each owing its own dressing —
-the `In` before a booktitle, the `pages` word, the `12(3):45–67` join — so
-an entry type contributes only its sequence of pieces and boundaries
-(`Step`). `field` outputs a stored value as written: a publisher, an
-address, a school, an institution, an organization, a note. -/
+/-- One formatted piece of a reference-list entry, after plainnat.bst's
+`format.*` functions. -/
 public inductive Field where
   | authors
   /-- `Sam Roe, editor`, or `…, editors` for more than one (FUNCTION
@@ -99,26 +74,21 @@ public inductive Field where
   | isbn
   | issn
   | field (name : String)
-  /-- The `key` field where the named field is empty (plainnat.bst FUNCTION
-  {format.key}): what an entry with no author or editor opens with. -/
+  /-- The `key` field where the named field is empty (FUNCTION {format.key}). -/
   | keyIf (name : String)
-  /-- An article's reference to its listed parent: `In *Journal*` and a
-  citation of the parent (FUNCTION {format.article.crossref}); `natbib` is
-  plainnat's spelling — `\citet`, no key word — against plain's `\cite`. -/
+  /-- An article's reference to its listed parent (FUNCTION
+  {format.article.crossref}); `natbib` cites it with `\citet`. -/
   | articleCrossref (natbib : Bool)
-  /-- A book's or chapter's reference to its listed parent: `Volume 2 of`
-  or `In`, the parent's editors or series, and a citation of it (FUNCTION
+  /-- A book's or chapter's reference to its listed parent (FUNCTION
   {format.book.crossref}). -/
   | bookCrossref (natbib : Bool)
-  /-- A contribution's reference to its listed parent: `In` the parent's
-  editors or booktitle, and a citation of it (FUNCTION
+  /-- A contribution's reference to its listed parent (FUNCTION
   {format.incoll.inproc.crossref}). -/
   | incollCrossref (natbib : Bool)
   deriving Repr, BEq
 
 /-- One step of an entry type's function: a piece's `output`, or a block or
-sentence boundary — the conditional ones (`new.block.checka`, `checkb`,
-`new.sentence.checkb`) taken when any of the named fields is present. -/
+sentence boundary, conditional ones taken when a named field is present. -/
 public inductive Step where
   | out (f : Field)
   | newBlock
@@ -127,46 +97,33 @@ public inductive Step where
   | newSentenceIf (fields : List String)
   deriving Repr, BEq
 
-/-- How one name is written, used by the inline citation style and the
-entry format alike. plainnat prints full first-first names in the list
-(`{ff~}{vv~}{ll}{, jj}`, plainnat.bst FUNCTION {format.names}) and last
-names inline; `initials` is the axis the abbrv styles set, `lastFirst`
-the one alpha-shaped styles would. -/
+/-- How one name is written, by the inline citation style
+and the entry format alike. -/
 public structure NameFormat where
   lastFirst : Bool := false
-  /-- Abbreviate first names to initials — plain.bst's `{f.~}` designator,
-  the one axis `abbrv`/`abbrvnat` set. -/
+  /-- Abbreviate first names to initials, plain.bst's `{f.~}` designator. -/
   initials : Bool := false
-  /-- Truncate a list longer than this to its first name and `et al.`;
-  `none` keeps every name, as plainnat does. -/
+  /-- Truncate a list longer than this to its first name and
+  `et al.`; `none` keeps every name. -/
   etAlAfter : Option Nat := none
   deriving Repr, BEq, Inhabited
 
-/-- A bibliography style: four independent choices composed. `unsrtnat` and
-`plainnat` are records of this type; so is the fallback an unknown
-`\bibliographystyle` gets (W0353) — a record, not a code path. -/
+/-- A bibliography style: four independent choices composed. -/
 public structure Style where
-  /-- Whether the style's `\bibitem`s carry natbib's author-year labels
-  (plainnat's family does, plain's does not): a style that writes none puts
-  natbib in numbers mode whatever was declared. The punctuation is natbib's
-  row for the style's name (`natbibRows`), not the record's. -/
+  /-- Whether the style's `\bibitem`s carry natbib's author-year labels. -/
   labels : Bool
   sort : SortOrder
-  /-- The steps an entry's type writes, the entry at hand deciding the
-  branches the style's own function takes (`plainnatSteps`). -/
+  /-- The steps an entry's type writes, the entry deciding
+  the style function's branches. -/
   steps : Entry → Array Step
   names : NameFormat
-  /-- The month macros the style defines: its own abbreviations (abbrv.bst,
-  abbrvnat.bst `MACRO {mar} {"Mar."}`), or the full names. -/
+  /-- Whether the style's month macros are its own
+  abbreviations rather than the full names. -/
   shortMonths : Bool := false
-  /-- alpha.bst's labels: `[Doe24]`, `[DR21]`, `[DRS+19]` in place of the
-  list position, the mark every citation of the entry prints. -/
+  /-- alpha.bst's labels in place of the list position. -/
   alphabetic : Bool := false
 
-/-- One name as the format writes it, in TeX: the name's parts as the
-`.bib` spells them. Initials abbreviate each first-name token to its first
-letter and a period, a hyphen kept between them (plain.bst's `{f.~}`
-designator, `Bib.initials`). -/
+/-- One name as the format writes it, in TeX. -/
 public def NameFormat.render (nf : NameFormat) (n : Name) : String :=
   let first := if nf.initials then Bib.initials n.first else n.first
   let jr := if n.jr.isEmpty then "" else s!", {n.jr}"
@@ -176,9 +133,7 @@ public def NameFormat.render (nf : NameFormat) (n : Name) : String :=
   else
     String.intercalate " " ([first, n.von, n.last].filter (!·.isEmpty)) ++ jr
 
-/-- An author value as the reference list writes it, in TeX: each name
-through the format, the list through plain.bst's join (`andJoin`), a long
-list elided at `etAlAfter`. -/
+/-- An author value as the reference list writes it, in TeX. -/
 public def NameFormat.renderTeX (nf : NameFormat) (v : String) : String :=
   let ns := (splitNames v).toList
   let ns := match nf.etAlAfter with
@@ -186,8 +141,7 @@ public def NameFormat.renderTeX (nf : NameFormat) (v : String) : String :=
     | none => ns
   andJoin (ns.map fun s => if s == "others" then "others" else nf.render (parseName s))
 
-/-- An author value as plain text (`renderTeX` read by `text`, name by
-name). -/
+/-- An author value as plain text. -/
 public def NameFormat.renderList (nf : NameFormat) (v : String) : String :=
   let ns := (splitNames v).toList
   let ns := match nf.etAlAfter with
@@ -196,8 +150,8 @@ public def NameFormat.renderList (nf : NameFormat) (v : String) : String :=
   andJoin (ns.map fun s =>
     if s == "others" then "others" else text (nf.render (parseName s)))
 
-/-- The year a date field's value names in a label: its year, and a range's
-end year after an en dash when it differs (an open end leaves the dash). -/
+/-- The year a date field names in a label, with a range's
+differing end year after an en dash. -/
 private def dateYears (dv : DateValue) : String :=
   let yr (d : Date) : String := (if d.year < 0 then "−" else "") ++ toString d.year.natAbs
   match dv.start, dv.stop with
@@ -207,11 +161,8 @@ private def dateYears (dv : DateValue) : String :=
   | some a, none => yr a
   | none, _ => ""
 
-/-- The year an entry's label and inline citation print: its `year` (what a
-BibTeX style reads), else its date's year (what biber reads, and what a
-BibTeX style reads of a `date` it is not given a `year` beside); an entry
-with neither prints `n.d.` (no date), the natbib and biblatex spelling, and
-an unreadable date prints as written. -/
+/-- The year an entry's label and inline citation print: its
+`year`, else its date's year. -/
 private def citeYear (e : Entry) : String :=
   match e.field? "year" with
   | some y => text y
@@ -222,18 +173,11 @@ private def citeYear (e : Entry) : String :=
       | none => text d
     | none => "n.d."
 
-/-- The `"The "` a label or sort drops from an organization (plain.bst's
-`"The " #4 organization chop.word`). -/
+/-- An organization without the `"The "` a label or sort drops. -/
 private def chopThe (v : String) : String :=
   if v.startsWith "The " then (v.drop 4).toString else v
 
-/-- The names a label is built from, in TeX. natbib's: plainnat.bst's
-`calc.short.authors` — a book's or a chapter's editors when it has no
-author, a proceedings volume's editors first, a manual's organization —
-then the `key`, then the cite key's first three characters (`cite$ #1 #3
-substring$`). biblatex's: its labelname — the author, else the editor,
-else the translator, three names with no von part — and the title where an
-entry names nobody. -/
+/-- The names a label is built from, in TeX. -/
 private def labelSource (e : Entry) (biblatex : Bool) (useprefix : Bool := false) : String :=
   let names (v : String) : String := labelNamesTeX v 2 true
   if biblatex then
@@ -252,108 +196,83 @@ private def labelSource (e : Entry) (biblatex : Bool) (useprefix : Bool := false
     | "manual" => first [au, e.field? "key", org]
     | _ => first [au]
 
-/-- The label names a citation prints (`\citet`'s `Author et al.`): the
-label's source (`labelSource`) as text, never silently empty. -/
+/-- The label names a citation prints, never silently empty. -/
 private def citeAuthors (e : Entry) (biblatex : Bool := false) (useprefix : Bool := false) :
     String :=
   Ir.smartPunct (text (labelSource e biblatex useprefix))
 
-/-- The anchor an entry's reference-list item carries and its citations
-link to: `Ir.bibAnchor`, the one naming site, `#`-prefixed for the href.
-The key is author text from the `.bib`; the typed HTML tree escapes it on
-the way into the attribute (`escapeAttr`), so no spelling of a key can
-break out of the `href`. -/
+/-- The anchor an entry's reference-list item carries and
+its citations link to. -/
 public def anchorOf (key : String) : String :=
   let a := Ir.bibAnchor key
   "#" ++ a
 
-/-- One resolved citation, ready to render: the entry with its 1-based
-position in the reference list, and the letter that tells it from entries
-sharing its label (`extraLabels`), empty when its label is its own. -/
+/-- One resolved citation, ready to render: the entry, its 1-based list
+position, and its disambiguating letter. -/
 public structure Resolved where
   key : String
   position : Nat
   entry : Entry
   extra : String := ""
-  /-- The mark a `thebibliography` entry's optional label sets in numbers
-  mode (latex.ltx `\@lbibitem`), in place of its position. -/
+  /-- The mark a `thebibliography` entry's optional label
+  sets in numbers mode. -/
   label : Option String := none
-  /-- biblatex's: its labelname as its citations print it, uniqueness
-  applied (`citeNamesTeX`), in TeX. -/
+  /-- biblatex's labelname as its citations print it,
+  uniqueness applied, in TeX. -/
   citeNames : Option String := none
-  /-- biblatex's, for an entry no name list labels: what its citations
-  print in place of the names (`bblCiteLabel`), read as its fields are. -/
+  /-- biblatex's citation text for an entry no name list labels. -/
   citeLabel : Option (Array Ir.Inline) := none
-  /-- The TeX the label a style writes is spelt in — alpha.bst's, or a
-  biblatex shorthand in place of a number — where `label` holds its text
-  read as `text` reads it; set as the entry's fields are set where it holds
-  a control word (`labelInk`). -/
+  /-- The TeX the style's label is spelt in, where `label` holds its text. -/
   labelTeX : Option String := none
-  /-- What a citation prints for the names, where their TeX holds a control
-  word: read as the entry's fields are, so `\textsc` and `\emph` in a
-  name set as the body sets them (`inkOf`). -/
+  /-- What a citation prints for the names, where their TeX
+  holds a control word. -/
   namesInk : Option (Array Ir.Inline) := none
-  /-- biblatex's shorthand as an author-year citation prints it, where its
-  TeX holds a control word, read as the entry's fields are (`inkOf`). -/
+  /-- biblatex's shorthand as an author-year citation prints it, where its TeX
+  holds a control word. -/
   shortInk : Option (Array Ir.Inline) := none
-  /-- biblatex's: what its extradate letter is grouped by — the names its
-  citations show (`nameHashKey`). -/
+  /-- biblatex's grouping key for the extradate letter: the
+  names its citations show. -/
   extraKey : Option String := none
-  /-- biblatex's `namehash`: the names its citations show, whole
-  (`nameHashFull`) — what a numeric textual citation groups its keys by. -/
+  /-- biblatex's `namehash`: the names its citations show, whole. -/
   nameHash : Option String := none
-  /-- biblatex's: its labelname's field and the names its `uniquelist`
-  shows, which the reference list shows of that field too. -/
+  /-- biblatex's labelname field and the names its `uniquelist` shows. -/
   labelUl : Option (String × Nat) := none
-  /-- biblatex's: how many names of its sort list the sort key reads. -/
+  /-- biblatex's count of sort-list names the sort key reads. -/
   sortShown : Option Nat := none
-  /-- biblatex's `shorthand`: what its citations print in place of its
-  label. -/
+  /-- biblatex's `shorthand`, printed in place of the label. -/
   shorthand : Option String := none
-  /-- biblatex's label year (`bblLabelYear`) and whether it reads as
-  numerals, which decides how its letter is set. -/
+  /-- biblatex's label year, and whether it reads as numerals. -/
   labelYear : Option (String × Bool) := none
   /-- biblatex's `skipbib`: cited and numbered, never listed. -/
   skipbib : Bool := false
   /-- biblatex's `skiplab`: no number and no letter. -/
   skiplab : Bool := false
-  /-- The entry as its `.bib` writes it, where the list is typeset under
-  definitions its sort keys never see (`@preamble`, `Bib.preambleMacros`);
-  `none` where the two are one. -/
+  /-- The entry as its `.bib` writes it, where the list's definitions differ
+  from its sort keys'; `none` where they are one. -/
   raw : Option Entry := none
-  /-- What its field citations print (`Ir.CiteField`, and whether the star
-  asks the full title), for the fields the document cites it by. -/
+  /-- What the entry's field citations print, per field and form. -/
   fieldInk : Array ((Ir.CiteField × Bool) × Array Ir.Inline) := #[]
-  /-- The boundary pictures its citation ink sets (`citeLabel`, `fieldInk`),
-  which the document's request carries as the body's own. -/
+  /-- The boundary pictures its citation ink sets. -/
   inkPictures : Array (String × Ir.PicSrc) := #[]
   deriving Repr
 
-/-- The entry a sort key and alpha's label read: as its `.bib` writes it,
-which BibTeX's `purify$` and biber's sort strings read where the `.bbl`'s
-definitions do not reach. -/
+/-- The entry a sort key and alpha's label read: as its `.bib` writes it. -/
 public def Resolved.sortEntry (r : Resolved) : Entry := r.raw.getD r.entry
 
-/-- The full author list natbib's starred forms print (`\citet*`), or the
-key when no author is there, as `citeAuthors` does. -/
+/-- The full author list natbib's starred forms print, or the key. -/
 private def citeFullAuthors (e : Entry) : String :=
   match e.field? "author" with
   | some a => Ir.smartPunct (fullNames a)
   | none => e.key
 
-/-- What one key prints: its names and year, its names alone, or its year
-alone — natbib.sty's `\NAT@ctype` 0, 1 and 2. -/
+/-- What one key prints: names and year, names alone, or year alone. -/
 private inductive CitePart where
   | both
   | names
   | year
   deriving BEq
 
-/-- The loop's state between keys: the output so far, the separator the
-last key left for the next (natbib.sty `\@citea`), the last key's names and
-bare year — a key repeating the names prints only its year, and one
-repeating both only its letter — and whether the last key printed a year,
-which is what closes a textual citation's bracket. -/
+/-- The citation loop's state between keys. -/
 private structure CiteAcc where
   out : Array Ir.Inline := #[]
   citea : String := ""
@@ -362,9 +281,8 @@ private structure CiteAcc where
   dated : Bool := false
   /-- The keys read so far. -/
   index : Nat := 0
-  /-- The groups begun so far — a biblatex numeric textual citation's keys
-  by one list of names share one (numeric.cbx's `textcite` against
-  `\cbx@lasthash`); every other citation's keys each begin their own. -/
+  /-- The groups begun so far; a biblatex numeric textual citation's keys share
+  one per list of names. -/
   groups : Nat := 0
   /-- The last key's `namehash`. -/
   lastHash : Option String := none
@@ -403,11 +321,7 @@ private def emitLink (p : CitePunct) (out : Array Ir.Inline) (anchor s : String)
     | some (c, n) => #[.colored c n #[.text s]]
     | none => #[.text s]))
 
-/-- A key's piece linked to its entry, after what precedes it: as the
-inline content they are where neither carries a citation, as their plain
-text otherwise — a citation's output never holds one
-(`linkPiece_citeFree`). An empty piece links nothing: no link without a
-name ships. -/
+/-- A key's piece linked to its entry, after what precedes it. -/
 private def linkPiece (p : CitePunct) (out : Array Ir.Inline) (anchor : String)
     (before piece : Array Ir.Inline) : Array Ir.Inline :=
   if piece.isEmpty then
@@ -418,23 +332,17 @@ private def linkPiece (p : CitePunct) (out : Array Ir.Inline) (anchor : String)
       | none => piece))
   else emitLink p (emit out (Ir.plainText before)) anchor (Ir.plainText piece)
 
-/-- The first letter capitalized — natbib's `\NAT@Up`, what `\Citet` does
-to a name that opens with a lowercase particle. -/
+/-- The first letter capitalized, natbib's `\NAT@Up`. -/
 private def upFirst (s : String) : String :=
   match s.toList with
   | c :: cs => String.ofList (c.toUpper :: cs)
   | [] => s
 
-/-- `upFirst` over inline content: its first text's first letter, where
-the content opens with text. -/
+/-- `upFirst` over inline content. -/
 private def upFirstInk (xs : Array Ir.Inline) : Array Ir.Inline :=
   if let some (Ir.Inline.text t) := xs[0]? then xs.modify 0 fun _ => .text (upFirst t) else xs
 
-/-- What natbib's command table sets for a command: whether it counts in
-numbers (`\citenum` does in either mode), whether its brackets close the
-whole citation (`\NAT@swa`: `\citep`) rather than each year (`\citet`),
-which part of each key it prints (`\NAT@ctype`), and the brackets it draws
-(`\NAT@par`: none for the `alt`/`alp` forms). -/
+/-- What natbib's command table sets for a command. -/
 private structure Switches where
   numeric : Bool
   wrap : Bool
@@ -459,23 +367,20 @@ private def switches (p : CitePunct) (f : Ir.CiteForm) : Switches :=
     op := if brackets then p.open else ""
     cl := if brackets then p.close else "" }
 
-/-- The separator a textual citation's key leaves for the next when the
-citation has `total` keys and this is key `k` (from 0): natbib's `sep`,
-or biblatex's `\textcitedelim` — `, ` between keys, ` and ` before the last
-of two, `, and ` before the last of more. -/
+/-- The separator a textual citation's key `k` of `total`
+leaves for the next. -/
 private def textSep (p : CitePunct) (f : Ir.CiteForm) (total k : Nat) : String :=
   if p.biblatex && f.cmd == .textual then
     if k + 2 == total then (if total ≥ 3 then ", and " else " and ") else ", "
   else p.sep ++ " "
 
-/-- Does this citation group its keys by their names — a biblatex numeric
-textual citation (numeric.cbx's `textcite`)? -/
+/-- Whether a citation groups its keys by their names, as a biblatex numeric
+textual citation does. -/
 private def groupsKeys (p : CitePunct) (f : Ir.CiteForm) (s : Switches) : Bool :=
   p.biblatex && s.numeric && f.cmd == .textual
 
-/-- A citation's groups: one per key, except that a key of a grouping
-citation (`groupsKeys`) whose `namehash` is the last key's joins its group
-— what biblatex's `textcitetotal` counts. -/
+/-- A citation's groups: one per key, a grouping citation's key joining the last
+key's group when their `namehash` agree. -/
 private def citeGroups (p : CitePunct) (f : Ir.CiteForm) (s : Switches)
     (parts : Array (Option Resolved)) : Nat :=
   if groupsKeys p f s then
@@ -485,19 +390,8 @@ private def citeGroups (p : CitePunct) (f : Ir.CiteForm) (s : Switches)
       | none => (n + 1, none)).1
   else parts.size
 
-/-- One key under natbib's loop (natbib.sty `\NAT@citex`, `\NAT@citexnum`
-in numbers mode): the separator the previous key left, this key's piece
-linked to its entry, and the separator it leaves. natbib capitalizes names
-only in author-year mode; a key repeating the previous key's names prints
-only its year after `yysep`, and one repeating the year too only its
-letter, with no space (`\NAT@exlab`: `2019a,b`) — biblatex's standard
-styles print every key whole. In numbers mode natbib defines `\natexlab`
-to print nothing, so no letter prints. An unresolvable key prints `?` in
-its place with the separators a resolved one would have. `total` is the
-citation's group count (`citeGroups`), which a biblatex textual citation's
-last separator reads (`textSep`); a biblatex numeric textual citation's key
-whose names are the last key's joins that key's bracket, as numeric.cbx's
-`textcite` does (`Beta [3, 4]`). -/
+/-- One key under natbib's loop: the separator the previous key left, this key's
+linked piece, and the separator it leaves. -/
 private def citeStep (p : CitePunct) (f : Ir.CiteForm) (s : Switches) (total : Nat)
     (acc : CiteAcc) : Option Resolved → CiteAcc
   | none =>
@@ -510,41 +404,28 @@ private def citeStep (p : CitePunct) (f : Ir.CiteForm) (s : Switches) (total : N
         | none => citeAuthors r.entry p.biblatex p.useprefix
     let up := f.up && !s.numeric
     let names := if up then upFirst names else names
-    -- the names as the entry's fields set them where their TeX holds a
-    -- control word; biblatex prints an entry no name list labels by its
-    -- label title (`bblCiteLabel`), set as its fields are set
     let titled := if f.full then none else match r.namesInk with
       | some inl => some (if up then upFirstInk inl else inl)
       | none => if r.citeNames.isSome then none else r.citeLabel
     let txt (s : String) : Array Ir.Inline := if s.isEmpty then #[] else #[.text s]
-    -- the names, and what follows them, as the linked piece
     let linked (after : String) : Array Ir.Inline := match titled with
       | some inl =>
         let tail := txt after
         inl ++ tail
       | none => #[.text (names ++ after)]
-    -- the names inside what precedes the linked piece
     let lead (before after : String) : Array Ir.Inline := match titled with
       | some inl =>
         let tail := txt after
         txt before ++ inl ++ tail
       | none => txt (before ++ names ++ after)
-    -- biblatex's label year, and its letter after a year that is no
-    -- numeral in parentheses — brackets inside the citation's own
-    -- (biblatex.def `extradate`)
     let (bare, numerals) := r.labelYear.getD (citeYear r.entry, true)
     let inParens := (s.wrap && !s.op.isEmpty) || f.cmd == .textual
     let letter := if p.numbers || r.extra.isEmpty then ""
       else if numerals then r.extra
       else if inParens then "[" ++ r.extra ++ "]" else "(" ++ r.extra ++ ")"
     let year := bare ++ letter
-    -- biblatex's author-year citations print a shorthand in place of the
-    -- names and year, or of the year after the names (authoryear.cbx
-    -- `cite:shorthand`); numeric ones carry it as the label
     let sh := if p.biblatex && !s.numeric then r.shorthand.map (Ir.smartPunct ∘ text) else none
     let mark := if s.numeric then r.label.getD (toString r.position) else sh.getD year
-    -- the shorthand as the entry's fields set it where its TeX holds a
-    -- control word
     let shInk : Option (Array Ir.Inline) :=
       sh.map fun h => r.shortInk.getD #[.text h]
     let markInk : Array Ir.Inline := if s.numeric then #[.text mark] else shInk.getD #[.text mark]
@@ -553,12 +434,10 @@ private def citeStep (p : CitePunct) (f : Ir.CiteForm) (s : Switches) (total : N
     let sameYear := same && acc.lastYear == some bare && !letter.isEmpty
     let joins := groupsKeys p f s && r.nameHash.isSome && acc.lastHash == r.nameHash
     let tsep := textSep p f total (if joins then acc.groups - 1 else acc.groups)
-    -- (what precedes the linked piece, the piece, the separator left behind)
     let t : Array Ir.Inline × Array Ir.Inline × String :=
       if joins then (txt (p.sep ++ " "), markInk, s.cl ++ tsep) else
       match s.part with
-      -- biblatex's \citeauthor prints the labelname alone, so nothing for
-      -- an entry no name list labels
+      -- biblatex's `\citeauthor` prints nothing for an entry no name list labels.
       | .names => (txt acc.citea, if p.biblatex && r.citeNames.isNone then #[] else linked "",
           p.sep ++ " ")
       | .year => (txt acc.citea, #[.text (if p.biblatex then bare else year)], p.sep ++ " ")
@@ -582,12 +461,7 @@ private def citeStep (p : CitePunct) (f : Ir.CiteForm) (s : Switches) (total : N
       groups := if joins then acc.groups else acc.groups + 1
       lastHash := r.nameHash }
 
-/-- The brackets around the loop's output: a wrapping form opens them with
-its pre-note and closes them after its post-note (`notesep`); a textual
-form has opened each year's bracket in the loop and closes the last,
-after the post-note, when that key printed a year. A biblatex citation's
-post-note is set as its `postnote` format sets it (`bblPostnote`: `p. 12`,
-`pp. 12–15`), under the last key's `pagination`. -/
+/-- The brackets around the loop's output, with the pre- and post-notes. -/
 private def finish (p : CitePunct) (f : Ir.CiteForm) (s : Switches) (pagination : Option String)
     (acc : CiteAcc) : Array Ir.Inline :=
   let post := if f.post.isEmpty then ""
@@ -598,10 +472,8 @@ private def finish (p : CitePunct) (f : Ir.CiteForm) (s : Switches) (pagination 
       (if acc.dated then s.cl else ""))
   emit (emit #[] lead ++ acc.out) trail
 
-/-- natbib's `sort` (natbib.sty `\NAT@sort@cites`): a citation's keys in
-reference-list order, in either mode; a key whose mark is not a number —
-unresolved, or a `thebibliography` item's own label — goes after them in
-the order written, natbib's non-sort list. -/
+/-- natbib's `sort`: a citation's keys in reference-list
+order, unnumbered marks after them. -/
 private def sortParts (parts : Array (Option Resolved)) : Array (Option Resolved) :=
   let numbered (o : Option Resolved) : Bool := o.any (·.label.isNone)
   let known := (parts.filterMap fun o => if numbered o then o else none).toList.mergeSort
@@ -609,11 +481,7 @@ private def sortParts (parts : Array (Option Resolved)) : Array (Option Resolved
   let unknown := parts.filter (!numbered ·)
   (known.map some).toArray ++ unknown
 
-/-- `compress`'s state between keys (natbib.sty `\NAT@citexnum`): the output
-so far, the last position printed or held, and the key held back — the last
-number of a run waits until the run ends (`\NAT@last@yr`), with what
-precedes it: the separator after the run's first number, an en dash after
-its second. -/
+/-- `compress`'s state between keys. -/
 private structure RunAcc where
   acc : CiteAcc := {}
   last : Option Nat := none
@@ -625,10 +493,8 @@ private def flushHeld (p : CitePunct) (out : Array Ir.Inline) :
   | some (pre, r) => emitLink p (emit out pre) (anchorOf r.key) (toString r.position)
   | none => out
 
-/-- One key under `compress`: a number one past the last extends the run
-and is held back; any other — a gap, a repeat, a mark that is no number (a
-`thebibliography` label) — prints what was held, then itself. An unresolved
-key ends the run and prints `?` where it stands. -/
+/-- One key under `compress`: a number one past the last extends the run and is
+held back; anything else prints the held number, then itself. -/
 private def runStep (p : CitePunct) (st : RunAcc) : Option Resolved → RunAcc
   | none =>
     { acc := { st.acc with out := emit (flushHeld p st.acc.out st.held) (st.acc.citea ++ "?"),
@@ -644,19 +510,14 @@ private def runStep (p : CitePunct) (st : RunAcc) : Option Resolved → RunAcc
           citea := p.sep ++ " ", dated := true }
         last := if r.label.isNone then some r.position else none }
 
-/-- natbib's `compress` over a numbered citation (natbib.sty `\NAT@cmprs`):
-a run of three or more consecutive list positions sets as its ends joined
-by an en dash (`[1–3, 5]`), a run of two keeps both numbers, and a repeated
-number breaks a run and prints again. -/
+/-- natbib's `compress` over a numbered citation: a run of three or more joins
+its ends by an en dash. -/
 private def compressRuns (p : CitePunct) (parts : Array (Option Resolved)) : CiteAcc :=
   let st := parts.foldl (runStep p) {}
   { st.acc with out := flushHeld p st.acc.out st.held }
 
-/-- What a field citation prints for one key's entry (`Ir.CiteField`): the
-ink its entry was given for the field, where it holds content and no
-citation, `?` otherwise — a title or a date linked to the entry
-(biblatex.def's `bibhyperref`), a URL or a whole entry carrying its own
-links. -/
+/-- What a field citation prints for one key's entry, `?`
+where it holds no content. -/
 private def fieldPiece (w : Ir.CiteField) (full : Bool) (acc : Array Ir.Inline) :
     Option Resolved → Array Ir.Inline
   | some r =>
@@ -671,28 +532,11 @@ private def fieldStep (p : CitePunct) (w : Ir.CiteField) (full : Bool) (acc : Ar
     (o : Option Resolved) : Array Ir.Inline :=
   fieldPiece w full (if acc.isEmpty then acc else emit acc (p.sep ++ " ")) o
 
-/-- A whole citation under natbib's punctuation, per its command (natbib.sty's
-command table): `\citep` wraps its keys in the brackets with `sep` between
-them (`[Doe, 2024; Roe, 2020]`, `[1, 2]`), `\citet` brackets each year
-(`Doe [2024]`), the `alt`/`alp` forms drop the brackets, `\citeauthor` and
-`\citeyear` print one part, `\citenum` the list position in either mode,
-a bracket mark the one bracket it names (the halves of `\citetext`, whose
-body stands between them), and `\nocite` nothing: its keys
-only enter the list (`citedKeys`). Under the load's `sort` the keys stand in
-list order; under `compress` a numbered citation that wraps its keys
-(`\citep`, `\citealp`, `\citenum`) joins its runs (`compressRuns`), where a
-textual one keeps every number, as natbib's textual branch does. A field
-citation prints each key's field — the ink its entry was given, where that
-carries no citation — and every other citation text and links over text
-only: the output carries no `.cite`, which is `renderCite_citeFree`, the
-leaf fact `apply_no_cite` rests on. -/
+/-- A whole citation under natbib's punctuation, per its command. -/
 public def renderCite (p : CitePunct) (f : Ir.CiteForm) (parts : Array (Option Resolved)) :
     Array Ir.Inline :=
   if let .bracket o := f.cmd then emit #[] (if o then p.open else p.close)
   else if let .field w := f.cmd then
-    -- a field citation (`\citetitle`, `\fullcite`, …): each key's field as
-    -- its entry prints it, linked to the entry, the keys apart by the
-    -- citation separator, the notes around them as a bare citation's
     let body := parts.foldl (fieldStep p w f.full) #[]
     let pre := if f.pre.isEmpty then "" else f.pre ++ " "
     let post := if f.post.isEmpty then ""
@@ -708,8 +552,8 @@ public def renderCite (p : CitePunct) (f : Ir.CiteForm) (parts : Array (Option R
         compressRuns p parts
       else parts.foldl (citeStep p f s (citeGroups p f s parts)) {})
 
-/-- BibTeX's `n.dashify` (plain.bst): a lone `-` between page numbers
-becomes `--`, the en dash, and a run of two or more stays as written. -/
+/-- BibTeX's `n.dashify`: a lone `-` between page numbers
+becomes the en dash. -/
 private def dashify (v : String) : String := Id.run do
   let cs := v.toList.toArray
   let mut out := ""
@@ -734,31 +578,30 @@ private def dashify (v : String) : String := Id.run do
     else break
   return out
 
-/-- A stored value is present when it holds anything but white space —
+/-- Whether a stored value holds anything but white space,
 BibTeX's `empty$` false. -/
 private def Entry.has (e : Entry) (name : String) : Bool :=
   (e.field? name).any fun v => !v.trimAscii.toString.isEmpty
 
-/-- The reference list's writer: the diagnostics its field readings report,
-gathered as the entry is set, and the texts read so far. -/
+/-- The reference list's writer: the diagnostics its field readings report, and
+the texts read so far. -/
 private abbrev RenderM := StateM (FieldReport × FieldCache)
 
-/-- A field's TeX text through the reading in force, once per text
-(`FieldCache.read`), its reports kept. -/
+/-- A field's TeX text through the reading in force, once per text. -/
 private def conv (cv : FieldText) (s : String) : RenderM (Array Ir.Inline) := do
   let (ds, cache) ← get
   let ((out, ds'), cache) := cache.read cv s
   set (ds ++ ds', cache)
   pure out
 
-/-- plain.bst's `tie.or.space.connect`: a value shorter than three
-characters ties to its word, so `volume 3` never breaks between them. -/
+/-- plain.bst's `tie.or.space.connect`: a value shorter than
+three characters ties to its word. -/
 private def tieOrSpace (cv : FieldText) (word v : String) : RenderM (Array Ir.Inline) := do
   let gap := if (text v).length < 3 then "\u00a0" else " "
   pure (#[.text (word ++ gap)] ++ (← conv cv v))
 
-/-- plain.bst's `format.pages`: `pages` for a range or a list (a `-`, `,`
-or `+` in the value, `multi.page.check`), `page` for one. -/
+/-- plain.bst's `format.pages`: `pages` for a range or a
+list, `page` for one. -/
 private def formatPages (cv : FieldText) (p : String) : RenderM (Array Ir.Inline) :=
   if p.any fun c => c == '-' || c == ',' || c == '+' then tieOrSpace cv "pages" (dashify p)
   else tieOrSpace cv "page" p
@@ -767,9 +610,7 @@ private def formatPages (cv : FieldText) (p : String) : RenderM (Array Ir.Inline
 private def editorsTeX (nf : NameFormat) (ed : String) : String :=
   nf.renderTeX ed ++ if (splitNames ed).size > 1 then ", editors" else ", editor"
 
-/-- plain.bst's `format.crossref.editor`: the parent's first editor by
-`{vv~}{ll}`, the second after `and` when there are exactly two, `et al.`
-past them. -/
+/-- plain.bst's `format.crossref.editor`. -/
 private def crossrefEditor (ed : String) : String :=
   let ns := splitNames ed
   let short (s : String) : String := (parseName s).short
@@ -781,24 +622,17 @@ private def crossrefEditor (ed : String) : String :=
     if b == "others" then short a ++ " et~al." else short a ++ " and " ++ second
   | a :: _ => short a ++ " et~al."
 
-/-- A cross-reference's citation of its parent: plainnat's `\citet`,
-plain's `\cite`. -/
+/-- A cross-reference's citation of its parent: plainnat's
+`\citet`, plain's `\cite`. -/
 private def crossrefCite (natbib : Bool) (key : String) : Ir.Inline :=
   .cite { cmd := if natbib then .textual else .auto } #[key]
 
-/-- The parent's editor list stands for the parent unless it is missing
-or is the child's own author list (`editor field.or.null author
-field.or.null =`). -/
+/-- Whether the parent's editor list stands for the parent. -/
 private def editorStands (e : Entry) : Bool :=
   e.has "editor" && e.field? "editor" != e.field? "author"
 
-/-- One piece of one entry: THE piece renderer — every entry type renders
-through this one function, and what varies per type is only the steps that
-call it. `mid` is whether the piece continues a sentence, which the edition
-and the series number read, as plainnat's do; `extra` is the entry's letter,
-which the date carries. Author text goes through the field reading `cv`;
-the style's own words are text. An absent field renders empty, and its step
-writes nothing. -/
+/-- One piece of one entry, the one renderer every entry type goes through;
+`mid` says whether it continues a sentence. -/
 private def renderField (cv : FieldText) (nf : NameFormat) (e : Entry) (mid : Bool)
     (extra : String) : Field → RenderM (Array Ir.Inline)
   | .authors => do
@@ -989,14 +823,8 @@ public def readsOf (steps : Array Step) : List String :=
     | .newBlockIf fs | .newSentenceIf fs => fs
     | .newBlock | .newSentence => []
 
-/-- The entry functions of plainnat.bst, whose steps unsrtnat.bst and
-abbrvnat.bst share verbatim — FUNCTION {article}, {book}, {booklet},
-{inbook}, {incollection}, {inproceedings}, {manual}, {mastersthesis},
-{misc}, {phdthesis}, {proceedings}, {techreport}, {unpublished} — one step
-sequence per type, the entry deciding the branches the style's function
-takes: on its author, its address, and its `crossref`, which the database
-keeps only while the parent stands in the list (`Database.read`). An
-unknown type is `misc` (FUNCTION {default.type}). -/
+/-- The entry functions of plainnat.bst, which unsrtnat.bst
+and abbrvnat.bst share. -/
 public def plainnatSteps (e : Entry) : Array Step :=
   let url : Array Step := #[.newBlockIf ["url"], .out .url]
   let note : Array Step := #[.newBlock, .out (.field "note")]
@@ -1072,11 +900,8 @@ public def plainnatSteps (e : Entry) : Array Step :=
       .newBlockIf ["howpublished"], .out (.field "howpublished"), .out .date,
       .newBlockIf ["issn"], .out .issn] ++ url ++ note
 
-/-- The entry functions of plain.bst, which unsrt.bst, abbrv.bst and
-alpha.bst share verbatim: plainnat's minus everything plain.bst predates —
-no `key`, `doi`, `url`, `isbn`, `issn` — with plain's own spellings of the
-cross-reference (`\cite`, the parent's editors named) and of a manual or a
-proceedings volume that has no author or editor. -/
+/-- The entry functions of plain.bst, which unsrt.bst,
+abbrv.bst and alpha.bst share. -/
 public def plainSteps (e : Entry) : Array Step :=
   let note : Array Step := #[.newBlock, .out (.field "note")]
   let xref := e.has "crossref"
@@ -1154,9 +979,7 @@ public def plainSteps (e : Entry) : Array Step :=
     #[.out .authors, .newBlockIf ["title", "howpublished"], .out .title,
       .newBlockIf ["howpublished"], .out (.field "howpublished"), .out .date] ++ note
 
-/-- The output state plainnat.bst threads through an entry (`output.state`):
-nothing written yet, inside a sentence, or a block or a sentence boundary
-pending. -/
+/-- The output state plainnat.bst threads through an entry. -/
 private inductive OutState where
   | beforeAll
   | mid
@@ -1164,41 +987,28 @@ private inductive OutState where
   | afterSentence
   deriving BEq
 
-/-- Inline content with each citation and reference read as the key it
-names: the text a `.bbl` holds where the field wrote `\cite{key}` or
-`\ref{key}`, its closing brace aside. A leaf of `Ir.mapInlines`. -/
+/-- Inline content with each citation and reference read as the key it names. -/
 private def sourceText (xs : Array Ir.Inline) : Array Ir.Inline :=
   Ir.mapInlines (fun x => match x with
     | .cite _ keys => .text (keys.back?.getD "")
     | .ref k _ _ _ => .text k
     | x => x) xs
 
-/-- BibTeX's `add.period$`: the entry so far takes a period unless it
-already ends with `.`, `?` or `!` — read in the `.bbl` text the style
-writes, where a citation or a reference a field holds is its command,
-`\cite{key}` and `\ref{key}`, and the character before its closing brace
-is its key's last (`sourceText`), never the `?` an unresolved one shows
-for now. -/
+/-- BibTeX's `add.period$`: a period unless the entry
+already ends with `.`, `?` or `!`. -/
 private def addPeriod (out : Array Ir.Inline) : Array Ir.Inline :=
   match (Ir.plainText (sourceText out)).toList.getLast? with
   | none => out
   | some c => if c == '.' || c == '?' || c == '!' then out else out.push (.text ".")
 
-/-- Adjacent text nodes as one: the pieces an entry is assembled from join
-the way the `.bbl` line they stand for reads, so a run is shaped whole. -/
+/-- Adjacent text nodes merged. -/
 private def mergeText (xs : Array Ir.Inline) : Array Ir.Inline :=
   xs.foldl (fun acc x => match x, acc.back? with
     | .text b, some (.text a) => acc.pop.push (.text (a ++ b))
     | _, _ => acc.push x) #[]
 
-/-- One reference-list entry as plainnat.bst's `output` writes it, with the
-reports of its field readings: a piece joins its sentence with `, `; after
-a block or sentence boundary the entry so far takes its period
-(`add.period$`) and the piece opens the next; the entry closes with its
-period (`fin.entry`). natbib's `\newblock` adds `\hskip .11em plus .33em
-minus .07em` at a block boundary, which no IR node spells: the boundary is
-one word space. `extra` is the entry's letter among those sharing its
-label, which its date carries (`extraLabels`). -/
+/-- One reference-list entry as plainnat.bst's `output` writes it, with its
+field readings' reports. -/
 public def renderEntryCached (cv : FieldText) (nf : NameFormat) (steps : Array Step) (e : Entry)
     (extra : String) (cache : FieldCache) : (Array Ir.Inline × FieldReport) × FieldCache :=
   let run : RenderM (Array Ir.Inline) := do
@@ -1228,40 +1038,35 @@ public def renderEntryWith (cv : FieldText) (nf : NameFormat) (steps : Array Ste
     (extra : String := "") : Array Ir.Inline × FieldReport :=
   (renderEntryCached cv nf steps e extra {}).1
 
-/-- `renderEntryWith` under the reading that needs no elaborator
-(`plainField`), its reports dropped. -/
+/-- `renderEntryWith` under the reading that needs no
+elaborator, its reports dropped. -/
 public def renderEntry (nf : NameFormat) (steps : Array Step) (e : Entry) (extra : String := "") :
     Array Ir.Inline :=
   (renderEntryWith plainField nf steps e extra).1
 
-/-- `unsrtnat`: the reference list in first-citation order (the "unsrt"),
-the standard field orders, full names, author-year labels in its
-`\bibitem`s — what `unsrtnat.bst` is, as one record. -/
+/-- `unsrtnat`: first-citation order, the standard field
+orders, full names, author-year labels. -/
 public def Style.unsrtnat : Style where
   labels := true
   sort := .citation
   steps := plainnatSteps
   names := {}
 
-/-- `plainnat`: the same fields and names, the list sorted by author then
-year (natbib manual §4: plainnat is the author-year companion of plain). -/
+/-- `plainnat`: `unsrtnat` with the list sorted by author then year. -/
 public def Style.plainnat : Style where
   labels := true
   sort := .authorYear
   steps := plainnatSteps
   names := {}
 
-/-- `plain`: numbers over a list sorted by its names, year and title
-(plain.bst FUNCTION {presort}), formatted by plain.bst's own functions
-(`plainSteps`). -/
+/-- `plain`: numbers over a list sorted by names, year and title. -/
 public def Style.plain : Style where
   labels := false
   sort := .plain
   steps := plainSteps
   names := {}
 
-/-- `alpha`: `plain`'s entries under alpha.bst's labels, the list sorted by
-label (alpha.bst FUNCTION {presort}). -/
+/-- `alpha`: `plain` under alpha.bst's labels, sorted by label. -/
 public def Style.alpha : Style :=
   { Style.plain with sort := .alpha, alphabetic := true }
 
@@ -1269,27 +1074,19 @@ public def Style.alpha : Style :=
 public def Style.unsrt : Style :=
   { Style.plain with sort := .citation }
 
-/-- The name format the abbrv-shaped styles share: first names abbreviate
-to initials, first-first order — `{f.~}{vv~}{ll}{, jj}` in both abbrv.bst
-and abbrvnat.bst FUNCTION {format.names}, so "J. Smith", never
-"Smith, J.". The one axis the abbrv pair sets; everything else is
-`plain`/`plainnat` verbatim. -/
+/-- The abbrv styles' name format: initials, first names first. -/
 public def abbrvNames : NameFormat := { initials := true }
 
-/-- `abbrvnat`: `plainnat` with abbreviated first names — natbib ships
-abbrvnat.bst as plainnat.bst minus only the name designator (natbib
-manual §4 lists the three companion styles as one family). -/
+/-- `abbrvnat`: `plainnat` with abbreviated first names. -/
 public def Style.abbrvnat : Style :=
   { Style.plainnat with names := abbrvNames, shortMonths := true }
 
-/-- `abbrv`: `plain` with abbreviated first names, the same relation
-abbrv.bst has to plain.bst. -/
+/-- `abbrv`: `plain` with abbreviated first names. -/
 public def Style.abbrv : Style :=
   { Style.plain with names := abbrvNames, shortMonths := true }
 
-/-- The style a `\bibliographystyle` name selects. `none` is W0353's cue;
-the caller falls back to `unsrtnat` — a record, so the fallback loses the
-name, never the machinery. -/
+/-- The style a `\bibliographystyle` name selects; `none`
+for an unknown name. -/
 public def Style.named (name : String) : Option Style :=
   match name with
   | "unsrtnat" => some .unsrtnat
@@ -1301,43 +1098,25 @@ public def Style.named (name : String) : Option Style :=
   | "alpha" => some .alpha
   | _ => none
 
-/-- The month names abbrv.bst and abbrvnat.bst define for BibTeX's month
-macros (`MACRO {jan} {"Jan."}` …). -/
+/-- The month names abbrv.bst and abbrvnat.bst define. -/
 private def shortMonthNames : Array String :=
   #["Jan.", "Feb.", "Mar.", "Apr.", "May", "June", "July", "Aug.", "Sept.", "Oct.", "Nov.", "Dec."]
 
-/-! ## Resolution
-
-`apply` is the pure half of the `\bibliography` effect: the driver reads
-the named `.bib` file beside the document (`Ir.bibRefs` is the request) and
-hands its text here; everything after — parsing, ordering, numbering,
-formatting, the rewrite of every citation — is a function of the document
-and that text. -/
-
-/-- A key appended to an ordered set of keys: the array keeps first-appearance
-order and the set answers membership in constant time, so collecting `n`
-keys costs `n` steps, never `n²` — a `\nocite{*}` over a thesis-sized `.bib`
-makes `n` the whole database. -/
+/-- A key appended to an ordered set of keys. -/
 private def addKey (acc : Array String × Std.HashSet String) (k : String) :
     Array String × Std.HashSet String :=
   if acc.2.contains k then acc else (acc.1.push k, acc.2.insert k)
 
-/-- First-citation order: the keys the document cites, in order of first
-appearance, each once — the sequence citation-order lists are sorted by
-and numeric labels index into — among the citations `keep` admits (every
-one by default; `\nocite`'s count, as they do for BibTeX). A leaf
-projection of `Ir.foldDoc`, the one collect traversal, over every region
-`resolveDoc` rewrites. -/
+/-- The keys the document cites, in order of first appearance, each once, among
+the citations `keep` admits. -/
 private def citedKeys (doc : Ir.Doc) (keep : Ir.CiteForm → Bool := fun _ => true) : Array String :=
   (Ir.foldDoc
     (fun acc x => match x with
       | .cite f keys => if keep f then keys.foldl addKey acc else acc
       | _ => acc) (#[], {}) doc).1
 
-/-- `\nocite{*}`'s key, BibTeX's `\citation{*}`: every entry of the `.bib`
-enters the list where it stands, in the database's order, after the keys
-cited before it — a key already in the sequence keeps its place — but an
-`@xdata` entry, which is data for other entries and never itself listed. -/
+/-- `\nocite{*}`: every `.bib` entry enters the list where it stands, after the
+keys cited before it. -/
 private def expandStar (entries : Array Entry) (cited : Array String) : Array String :=
   (cited.foldl (fun acc k =>
     if k == "*" then entries.foldl (fun acc e =>
@@ -1347,9 +1126,7 @@ private def expandStar (entries : Array Entry) (cited : Array String) : Array St
 /-- BibTeX's `sortify`: `purify$`, lowercased. -/
 private def sortify (v : String) : String := (purify v).toLower
 
-/-- plain.bst's `sort.format.names`: each name as `{vv{ } }{ll{ }}{  ff{
-}}{  jj{ }}`, sortified, three spaces between names, and a closing
-`others` as `et al`. -/
+/-- plain.bst's `sort.format.names`. -/
 private def sortNames (v : String) : String :=
   let ns := splitNames v
   String.intercalate "   " (ns.toList.zipIdx.map fun (s, i) =>
@@ -1360,16 +1137,13 @@ private def sortNames (v : String) : String :=
         (if n.first.isEmpty then "" else "  " ++ n.first) ++
         (if n.jr.isEmpty then "" else "  " ++ n.jr)))
 
-/-- plain.bst's `sort.format.title`: a leading `The `, `An ` or `A `
-dropped, sortified. -/
+/-- plain.bst's `sort.format.title`: a leading `The `, `An `
+or `A ` dropped, sortified. -/
 private def sortTitle (v : String) : String :=
   let chop (w t : String) : String := if t.startsWith w then (t.drop w.length).toString else t
   sortify (chop "A " (chop "An " (chop "The " v)))
 
-/-- The names plain.bst's `presort` reads by type: a book's or a chapter's
-editors when it has no author, a proceedings volume's editors or
-organization, a manual's author or organization, else the author, and the
-`key` where none of them is there. -/
+/-- The names plain.bst's `presort` reads by entry type. -/
 private def sortWho (e : Entry) : String :=
   let key := ((e.field? "key").map sortify).getD ""
   let org := (e.field? "organization").map fun o => sortify (chopThe o)
@@ -1382,18 +1156,13 @@ private def sortWho (e : Entry) : String :=
   | "manual" => first [au, org]
   | _ => first [au]
 
-/-- plain.bst's sort key: the names, the year, the title, four spaces
-apart; the cite key breaks a tie. -/
+/-- plain.bst's sort key: the names, the year and the title;
+the cite key breaks a tie. -/
 private def plainKey (r : Resolved) : String × String :=
   (sortWho r.sortEntry ++ "    " ++ sortify ((r.sortEntry.field? "year").getD "") ++ "    " ++
     sortTitle ((r.sortEntry.field? "title").getD ""), r.key)
 
-/-- alpha.bst's `format.lab.names`: one author's `{v{}}{l{}}` letters, or
-the first three letters of the last name where those are fewer than two;
-two to four authors' letters in turn; past four the first three's and a
-`+`, and a closing `others` as one. alpha.bst raises it (`\etalchar{+}`,
-`$^{+}$`); a mark is plain text here, so it stands on the baseline. The
-letters' length is `text.length$`'s, a special character one letter. -/
+/-- alpha.bst's `format.lab.names`. -/
 private def alphaNames (v : String) : String :=
   let ns := splitNames v
   let vl (s : String) : String :=
@@ -1410,13 +1179,7 @@ private def alphaNames (v : String) : String :=
     let a := vl s
     if textLength a < 2 then textPrefix (parseName s).last 3 else a
 
-/-- alpha.bst's label stem by type (`calc.label`): the names `alphaNames`
-reads — a book's or chapter's editors where it has no author, a
-proceedings volume's editors — else the `key`'s first three letters; a
-manual's or proceedings' organization only where it has no `key`
-(`author.key.organization.label`, `editor.key.organization.label`, which
-read the key first, where the sort reads the organization first); else
-the cite key's first three characters. -/
+/-- alpha.bst's label stem by entry type (`calc.label`). -/
 private def alphaWho (e : Entry) (key : String) : String :=
   let k := (e.field? "key").map (textPrefix · 3)
   let org := (e.field? "organization").map fun o => textPrefix (chopThe o) 3
@@ -1436,7 +1199,7 @@ private def yearTail (e : Entry) (n : Nat) : String :=
   (y.drop (y.length - n)).toString
 
 /-- alpha.bst's sort label (`sort.label`): the stem and the year's last four
-characters, sortified — what an entry's letter is decided by. -/
+characters, sortified. -/
 private def alphaSortLabel (r : Resolved) : String :=
   sortify (alphaWho r.sortEntry r.key ++ yearTail r.sortEntry 4)
 
@@ -1444,9 +1207,7 @@ private def alphaSortLabel (r : Resolved) : String :=
 private def alphaKey (r : Resolved) : String × String :=
   (alphaSortLabel r ++ "    " ++ (plainKey r).1, r.key)
 
-/-- plainnat.bst's `sort.format.names`: plain's, except that a closing
-`others` sorts as `zzzzz` and, in a list of three or more, the second name
-after `zz`, the year and three spaces. -/
+/-- plainnat.bst's `sort.format.names`. -/
 private def sortNamesNat (v year : String) : String :=
   let ns := splitNames v
   String.intercalate "   " (ns.toList.zipIdx.map fun (s, i) =>
@@ -1458,9 +1219,7 @@ private def sortNamesNat (v year : String) : String :=
           (if n.first.isEmpty then "" else "  " ++ n.first) ++
           (if n.jr.isEmpty then "" else "  " ++ n.jr)))
 
-/-- plainnat.bst's sort key, as bibtex computes it: the names by type
-(`sortWho`'s choice, `sortNamesNat`), the year and the cite key, four
-spaces apart. -/
+/-- plainnat.bst's sort key: the names by type, the year and the cite key. -/
 private def plainnatKey (r : Resolved) : String × String :=
   let e := r.sortEntry
   let year := (e.field? "year").getD ""
@@ -1476,11 +1235,8 @@ private def plainnatKey (r : Resolved) : String × String :=
     | _ => first [au]
   (who ++ "    " ++ sortify year ++ "    " ++ r.key, r.key)
 
-/-- Lexicographic order on two keys: the sort strings by collation
-(`Collate`), the cite keys as written. For the purified ASCII keys BibTeX
-compares this is its own order — spaces, then digits, then letters — and a
-letter outside ASCII sorts with its base letter, where bibtex 0.99, reading
-UTF-8 as bytes, put every accented capital after `Z`. -/
+/-- Lexicographic order on two keys: the sort strings by
+collation, the cite keys as written. -/
 private def pairCompare (a b : Collate.Key × String) : Ordering :=
   (a.1.compare b.1).then (Ord.compare a.2 b.2)
 
@@ -1490,7 +1246,7 @@ private def collated (key : Resolved → String × String) (r : Resolved) : Coll
   (Collate.key k, c)
 
 /-- One sortset's value under a biblatex template: a string compared by
-collation, or a number (biber's integer and date-part sortsets). -/
+collation, or a number. -/
 private inductive SortVal where
   | str (k : Collate.Key)
   | int (n : Int)
@@ -1501,13 +1257,7 @@ private def SortVal.compare : SortVal → SortVal → Ordering
   | .int _, .str _ => .lt
   | .str _, .int _ => .gt
 
-/-- What a template's sortset reads (biblatex.def's `\sort{…}` elements):
-`presort` (`mm` by default), `sortkey` (`final`: where it is set it stands
-in for every later sortset), the names — `sortname`, `author`, `editor`,
-`translator` under their `use` options, then `sorttitle` and `title` —
-the titles, the year — `sortyear`, the date's or the legacy year, a number
-or, where it is none, after every number — the year with `9999` where
-there is none, and the volume, `0` where there is none. -/
+/-- What a template's sortset reads. -/
 private inductive SortSet where
   | presort
   | sortkey
@@ -1518,9 +1268,7 @@ private inductive SortSet where
   | volume
   deriving BEq
 
-/-- biblatex's sorting templates the engine sorts by, each as its sortsets
-and whether it sorts its year descending (biblatex.def `nty`, `nyt`,
-`nyvt`, `ynt`, `ydnt`). -/
+/-- biblatex's sorting templates the engine sorts by. -/
 public def bblTemplates : List String := ["nty", "nyt", "nyvt", "ynt", "ydnt"]
 
 private def bblTemplate : String → List SortSet × Bool
@@ -1530,22 +1278,16 @@ private def bblTemplate : String → List SortSet × Bool
   | "ydnt" => ([.presort, .sortkey, .yearOr9999, .names, .titles], true)
   | _ => ([.presort, .sortkey, .names, .titles, .year, .volume], false)
 
-/-- A literal field as biber sorts it (Biber::Utils `normalise_string_sort`):
-its TeX read as text — biber decodes it when it reads the file — every
-other command's name and every brace dropped, white space runs one space. -/
+/-- A literal field as biber sorts it (`normalise_string_sort`). -/
 private def sortText (v : String) : String :=
   " ".intercalate ((sortPlainText v).splitOn " " |>.filter (!·.isEmpty))
 
-/-- A name's parts as biber's sorting name key reads them (biblatex.def
-`\DeclareSortingNamekeyTemplate`): the prefix with the family under
-`useprefix`, the given name, the suffix, the prefix after them without. -/
+/-- A name's parts as biber's sorting name key reads them. -/
 private def namePartsForSort (up : Bool) (n : Name) : List (String × String) :=
   (if up then [("prefix", n.von), ("family", n.last)] else [("family", n.last)]) ++
     [("given", n.first), ("suffix", n.jr)] ++ (if up then [] else [("prefix", n.von)])
 
-/-- The name lists a biblatex list sorts by, each value read once: every
-`author`, `editor`, `translator` and `sortname` the list's entries hold,
-its names as biber splits them (`and others` dropped). -/
+/-- The name lists a biblatex list sorts by, each value read once. -/
 private def sortNameLists (es : List Entry) : Std.HashMap String (Array Name) :=
   es.foldl (init := {}) fun m e =>
     ["author", "editor", "translator", "sortname"].foldl (init := m) fun m f =>
@@ -1555,9 +1297,8 @@ private def sortNameLists (es : List Entry) : Std.HashMap String (Array Name) :=
         if m.contains v then m
         else m.insert v (((splitNames v).filter (· != "others")).map parseNameBiber)
 
-/-- The longest each name part is written across the names a list sorts
-(Biber::Section's `np_length`, which pads every part to it so that parts
-compare part by part). -/
+/-- The longest each name part is written across the names a
+list sorts (biber's `np_length`). -/
 private def namePartLengths (lists : Std.HashMap String (Array Name)) : Std.HashMap String Nat :=
   lists.fold (init := {}) fun m _ ns =>
     ns.foldl (init := m) fun m n =>
@@ -1566,9 +1307,7 @@ private def namePartLengths (lists : Std.HashMap String (Array Name)) : Std.Hash
           let len := (Nfc.normalize (sortText t)).length
           if len > m.getD part 0 then m.insert part len else m
 
-/-- A name list's sort string (Biber::Internals `_namestring`): the names
-its sorting shows, each part padded to the list's longest, joined with
-nothing between them, and biber's `et al.` mark where the list is cut. -/
+/-- A name list's sort string, each part padded to the list's longest. -/
 private def nameSortString (lens : Std.HashMap String Nat) (up : Bool) (shown : Option Nat)
     (names : Array Name) : String :=
   let real := names.toList
@@ -1584,19 +1323,11 @@ private def nameSortString (lens : Std.HashMap String Nat) (up : Bool) (shown : 
     String.join ((namePartsForSort (n.useprefix.getD up) n).map fun (part, t) => pad part t)) ++
     (if vis.length < real.length then String.singleton (Char.ofNat 0x10FFFD) else "")
 
-/-- A sortset's integer as biber's sort compares it (Biber.pm's
-`sort_list`): the number, or past every number where the value is none —
-how `final`'s `sortkey` reads where it stands in for an integer sortset. -/
+/-- A sortset's integer as biber's sort compares it, past
+every number where the value is none. -/
 private def sortInt (v : String) : Int := ((text v).trimAscii.toString.toInt?).getD 2000000000
 
-/-- A roman numeral's value as biber reads an integer field for sorting
-(Biber::Internals `_sort_integer`, through Text::Roman's `isroman` and
-`roman2int`): either case, the numeral forms of U+2160 to U+217F as the
-letters they decompose to, no I, X, C or M four times running and no V, L
-or D twice, none of the interleavings Text::Roman refuses (IXI, IVI, VIV
-and their kin), and the value the symbols sum to read greedily from the
-left, a subtractive pair before a single symbol. `none` where the text is
-not one. -/
+/-- A roman numeral's value as biber reads an integer field for sorting. -/
 private def romanValue (s : String) : Option Nat := Id.run do
   let forms := #["I", "II", "III", "IV", "V", "VI", "VII", "VIII", "IX", "X", "XI", "XII",
     "L", "C", "D", "M"]
@@ -1633,31 +1364,25 @@ private def romanValue (s : String) : Option Nat := Id.run do
     else break
   return some total
 
-/-- An integer field's sort value (Biber::Internals `_sort_integer`): a
-roman numeral as its value, else as `sortInt` reads it. -/
+/-- An integer field's sort value: a roman numeral as its
+value, else as `sortInt` reads it. -/
 private def sortIntField (v : String) : Int :=
   let t := (text v).trimAscii.toString
   match romanValue t with
   | some n => n
   | none => sortInt t
 
-/-- The tailoring file a biblatex list sorts by: its `sortlocale`, `auto`
-read as babel's main language (`english` without babel), through biber's
-language map (`Collate.biberLocale`) to the file Unicode::Collate::Locale
-accepts it under (`Collate.localeFile`; `""` is the default table). -/
+/-- The tailoring file a biblatex list sorts by. -/
 public def bblSortFile (o : BblOptions) : String :=
   Collate.localeFile (Collate.biberLocale
     (if o.sortlocale == "auto" then o.babelMain.getD "english" else o.sortlocale))
 
-/-- The tailoring a biblatex list sorts by, where `Collate`'s rows carry
-it; the default table where the file is none or of another script. -/
+/-- The tailoring a biblatex list sorts by; the default table where the file is
+none or of another script. -/
 private def bblTailoring (o : BblOptions) : Collate.Tailoring :=
   (Collate.tailoringFor (bblSortFile o)).getD {}
 
-/-- An entry's biblatex sort key under a template (Biber::Internals
-`_generatesortinfo`, Biber.pm's `sort_list`): each sortset's value,
-`final`'s `sortkey` standing in for every later one where it is set, each
-string collated under the list's locale (`bblTailoring`). -/
+/-- An entry's biblatex sort key under a template. -/
 private def bblSortKey (template : String) (o : BblOptions) (tl : Collate.Tailoring)
     (lists : Std.HashMap String (Array Name)) (lens : Std.HashMap String Nat)
     (r : Resolved) : Array SortVal := Id.run do
@@ -1722,11 +1447,7 @@ private def bblCompare (a b : Array SortVal) : Ordering := Id.run do
   return .eq
 
 /-- The comparison a sort order names, over entries carrying their
-first-citation position. Citation order compares the positions, which are
-distinct by construction; BibTeX's orders compare their keys, each ending
-in the cite key; a biblatex template compares its sortsets, padded against
-the two entries alone (the list sorts against the whole list,
-`sortResolved`). -/
+first-citation position. -/
 public def SortOrder.compare (so : SortOrder) (a b : Resolved) : Ordering :=
   match so with
   | .citation => Ord.compare a.position b.position
@@ -1744,11 +1465,8 @@ private def sortByKey {κ : Type} (key : Resolved → κ) (cmp : κ → κ → O
     List Resolved :=
   ((xs.map fun r => (key r, r)).mergeSort fun a b => cmp a.1 b.1 != .gt).map (·.2)
 
-/-- The list sorted by the order's comparison, in `n log n` steps: a merge
-sort (stable), over keys computed once per entry rather than once per
-comparison — a thesis-sized list is thousands of entries, and the
-insertion sort this replaces was quadratic in them. A biblatex template's
-names pad against every name the list sorts. -/
+/-- The list sorted by the order's comparison: a stable merge sort over keys
+computed once per entry. -/
 public def sortResolved (so : SortOrder) (xs : List Resolved) : List Resolved :=
   match so with
   | .citation => xs.mergeSort fun a b => decide (a.position ≤ b.position)
@@ -1760,17 +1478,10 @@ public def sortResolved (so : SortOrder) (xs : List Resolved) : List Resolved :=
     let lens := namePartLengths lists
     sortByKey (bblSortKey t o (bblTailoring o) lists lens) bblCompare xs
 
-/-- What one key renders as, everywhere it is cited: its entry at its
-1-based position in the reference list. -/
+/-- What one key renders as everywhere it is cited. -/
 @[expose] public def Resolver := String → Option Resolved
 
-/-- The label two entries must share to take letters: plainnat.bst's
-`calc.label`, which its `forward.pass` compares — the label names a
-citation prints and the year; and biber's extradate group — the labelname
-whole, given names and all, as many names as a citation shows, and the
-label year — the names as uniqueness reads them (`nameHashKey`, the
-entry's `extraKey`), so two authors a citation tells apart take no letters,
-and two it cannot take them. -/
+/-- The label two entries must share to take letters. -/
 private def labelOf (r : Resolved) (biblatex : Bool := false) : String :=
   let e := r.entry
   let year := if citeYear e == "n.d." then "" else citeYear e
@@ -1783,10 +1494,8 @@ private def labelOf (r : Resolved) (biblatex : Bool := false) : String :=
     | none => citeAuthors e true ++ "(" ++ year
   else citeAuthors e biblatex ++ "(" ++ year
 
-/-- The letter of the `i`-th entry among those sharing a label: `a`, `b`,
-… `z`, then `aa`, `ab`, … — biblatex's `\mknumalph`, and for BibTeX's
-styles a departure from `int.to.chr$`, which past `z` sets `{`, `|` and
-on into control characters no face has a glyph for. -/
+/-- The letter of the `i`-th entry among those sharing a label: `a` … `z`, then
+`aa`, `ab`, … as biblatex's `\mknumalph`. -/
 private def extraLetter (i : Nat) : String := Id.run do
   -- bijective base 26 over the 1-based index: 1 is `a`, 26 `z`, 27 `aa`
   let mut n := i + 1
@@ -1797,11 +1506,8 @@ private def extraLetter (i : Nat) : String := Id.run do
     n := (n - 1) / 26
   return String.ofList out
 
-/-- The letters plainnat.bst's `forward.pass` and `reverse.pass` give a
-reference list, and unsrtnat.bst's the same: the entries sharing a label
-(`labelOf`) take `a`, `b`, … in list order, and an entry whose label is its
-own takes none. Each label is computed once and grouped through a map, so
-the letters cost one pass over the list, never a comparison per pair. -/
+/-- The letters plainnat.bst's `forward.pass` and `reverse.pass` give entries
+sharing a label, in list order. -/
 private def extraLabels (rs : Array Resolved) (biblatex : Bool := false) : Array Resolved :=
   -- an entry with no labels (`skiplab`) takes no letter and counts for none
   let labels := rs.map fun r =>
@@ -1814,10 +1520,7 @@ private def extraLabels (rs : Array Resolved) (biblatex : Bool := false) : Array
     { r with extra :=
         if counts.getD (labels[i]?.getD "") 0 < 2 then "" else extraLetter (ranks[i]?.getD 0) }
 
-/-- alpha.bst's labels over the sorted list (`calc.label`, `forward.pass`,
-`reverse.pass`): each entry's stem and the year's last two characters, and
-— where neighbours share a sort label — the letters `a`, `b`, … in list
-order, as plain text. -/
+/-- alpha.bst's labels over the sorted list. -/
 private def alphaMarks (rs : Array Resolved) : Array Resolved :=
   let sl := rs.map alphaSortLabel
   let ranks := (sl.foldl (fun (acc : Array Nat × Option String) l =>
@@ -1832,12 +1535,7 @@ private def alphaMarks (rs : Array Resolved) : Array Resolved :=
     { r with label := some (text tex ++ letter), labelTeX := some (tex ++ letter) }
 
 /-- What biber reads of a biblatex list before it sorts and labels it, each
-entry under its own options (`BblOptions.forEntry`): its uniqueness over
-the whole list (`uniqueness`) — the labelname its citations print, the key
-its letter groups by, the names its `uniquelist` shows — the names its
-sort key reads (biber's `process_visible_names` over the list sorting
-reads), its label year, its `shorthand`, and whether it is listed and
-labelled (`skipbib`, `skiplab`). -/
+entry under its own options. -/
 private def bblAnnotate (o : BblOptions) (months : Array String) (rs : Array Resolved) :
     Array Resolved :=
   let uo := o.unique'
@@ -1866,10 +1564,8 @@ private def bblAnnotate (o : BblOptions) (months : Array String) (rs : Array Res
       skipbib := oe.skipbib
       skiplab := oe.skiplab }
 
-/-- biblatex's numeric labels (biblatex.sty's `labelnumber`): an entry's
-number counts the listed entries before it that are numbered — neither a
-shorthand, which stands in for the number, nor an entry with no labels
-(`skiplab`), whose citations print an empty label as biblatex's do. -/
+/-- biblatex's numeric labels: an entry's number counts the
+numbered listed entries before it. -/
 private def numericLabels (rs : Array Resolved) : Array Resolved :=
   if rs.any fun r => r.shorthand.isSome || r.skiplab then
     let numbers := (rs.foldl (init := ((#[] : Array Nat), 0)) fun (acc, n) r =>
@@ -1881,18 +1577,12 @@ private def numericLabels (rs : Array Resolved) : Array Resolved :=
                labelTeX := r.shorthand }
   else rs
 
-/-- The reference list a style builds from the cited entries: sorted by
-the style's order, positions assigned by list index — so the numeric
-marker IS the sort position, the fact `\cite` marks rest on — and each
-entry's letter among those sharing its label (`extraLabels`). A biblatex
-list (`bbl`) reads its uniqueness first (`bblAnnotate`), and a numeric one
-numbers past its shorthands and unlabelled entries (`numericLabels`). -/
+/-- The reference list a style builds from the cited entries: sorted, positions
+assigned by list index. -/
 public def resolveEntries (style : Style) (cited : Array String)
     (find : String → Option Entry) (biblatex : Bool := false)
     (bbl : Option (BblOptions × Bool) := none) (months : Array String := Locale.en.months)
     (findRaw : String → Option Entry := fun _ => none) : Array Resolved :=
-  -- First-citation positions (1-based, in cited order) feed the sort;
-  -- the final position is the index in the sorted list.
   let hits := cited.foldl (fun acc k =>
     match find k with
     | some e => acc.push { key := k, position := acc.size + 1, entry := e, raw := findRaw k }
@@ -1907,18 +1597,13 @@ public def resolveEntries (style : Style) (cited : Array String)
     | _ => rs
   if style.alphabetic then alphaMarks rs else rs
 
-/-- The mark an item carries: in numbers mode its label, else its
-position; none in author-year mode. -/
+/-- The mark an item carries: in numbers mode its label,
+else its position; none in author-year mode. -/
 public def itemMarker (p : CitePunct) (r : Resolved) : Option String :=
   if p.numbers then some (r.label.getD (toString r.position)) else none
 
-/-- The items a `\bibliography` block ships, each with what reading its
-fields reported: each resolved entry formatted per the style through the
-field reading `cv`, marked by its position in numbers mode and by nothing
-in author-year mode — natbib's `\@biblabel` is the number there and an
-empty hanging label here. The date carries the entry's letter in
-author-year mode (FUNCTION {format.date}); numbers mode's `\natexlab`
-prints nothing. -/
+/-- The items a `\bibliography` block ships, each with what
+reading its fields reported. -/
 public def bibItemsWith (cvOf : String → FieldText) (p : CitePunct) (style : Style)
     (resolved : Array Resolved) : Array (Ir.BibItem × FieldReport) :=
   let renders := (resolved.foldl (init := ((#[] : Array (Array Ir.Inline × FieldReport)),
@@ -1931,16 +1616,12 @@ public def bibItemsWith (cvOf : String → FieldText) (p : CitePunct) (style : S
     ({ key := r.key, marker := itemMarker p r, content := rd.1,
        labelFlush := p.numbers && r.label.isSome }, rd.2)
 
-/-- The entries a biblatex list prints: all but those under `skipbib`,
-which are cited and numbered and never listed. -/
+/-- The entries a biblatex list prints: all but those under `skipbib`. -/
 public def bblListed (resolved : Array Resolved) : Array Resolved :=
   resolved.filter (!·.skipbib)
 
-/-- The items biblatex's standard styles set (`renderBbl`), each with what
-reading its fields reported and the fields its driver read: the listed
-entries (`bblListed`), numbered in numbers mode, the entry's extradate
-letter in authoryear's head, and authoryear's dash where an entry's head
-names repeat the previous entry's (`bblHeadNames`). -/
+/-- The items biblatex's standard styles set, with each item's field reports and
+the fields its driver read. -/
 public def bblItems (o : BblOptions) (cvOf : String → FieldText) (p : CitePunct)
     (resolved : Array Resolved) (months : Array String := Locale.en.months) :
     Array ((Ir.BibItem × FieldReport) × List String) :=
@@ -1961,32 +1642,12 @@ public def bibItems (p : CitePunct) (style : Style) (resolved : Array Resolved) 
     Array Ir.BibItem :=
   (bibItemsWith (fun _ => plainField) p style resolved).map (·.1)
 
-/-! ### The theorems the four-axis shape earns
-
-Each axis being a pure function is what makes these statable; a
-transcribed `.bst` has none of them. -/
-
-/-- Numbering is the sort position: in numbers mode, the marker of the
-reference list's `i`-th entry is its label, else its 1-based index in the
-sorted list — under whatever field reading the build gives the list
-(`cvOf`) — the fact every `\cite` mark rests on, `positions_exact` below
-being the half that says the positions the marks look up are those same
-indices. Floats state the same vocabulary in `Ir.numberFloats_exact` — a
-label is the index of first appearance in a sequence, `List.range'` both
-times — but over a different data shape (a counter threaded through a tree
-walk, not a `mapIdx` over a sorted list). Deliberately not unified: a
-shared "consecutive assignment" lemma would leave each proof's hard part —
-here a one-line `simp`, there the tree induction — untouched. -/
 public theorem bibItems_marker_exact (cvOf : String → FieldText) (p : CitePunct) (style : Style)
     (resolved : Array Resolved) (h : p.numbers = true) (i : Nat) (hi : i < resolved.size) :
     (bibItemsWith cvOf p style resolved)[i]?.bind (·.1.marker) =
       some (resolved[i].label.getD (toString resolved[i].position)) := by
   simp [bibItemsWith, itemMarker, Array.getElem?_mapIdx, Array.getElem?_eq_getElem hi, h]
 
-/-- **biblatex's numbered list marks each item as its citations do**: in
-numbers mode the `i`-th item biblatex's styles set carries the `i`-th
-listed entry's label (`numericLabels`: its number among the numbered, its
-shorthand, or the empty label of an entry with none), else its position. -/
 public theorem bblItems_marker_exact (o : BblOptions) (cvOf : String → FieldText)
     (p : CitePunct) (resolved : Array Resolved) (months : Array String) (h : p.numbers = true)
     (i : Nat) (hi : i < (bblListed resolved).size) :
@@ -1994,11 +1655,6 @@ public theorem bblItems_marker_exact (o : BblOptions) (cvOf : String → FieldTe
       some ((bblListed resolved)[i].label.getD (toString (bblListed resolved)[i].position)) := by
   simp [bblItems, itemMarker, Array.getElem?_mapIdx, Array.getElem?_eq_getElem hi, h]
 
-/-- The positions `resolveEntries` hands the marks are the 1-based indices
-of the sorted list: position `i + 1` at index `i`, whatever the sort
-order did, and alpha's and the shorthands' labels leave them. Together with
-`bibItems_marker_exact`, the numeric marker at index `i` is `i + 1` where
-the style gives the entry no label of its own. -/
 public theorem positions_exact (style : Style) (cited : Array String)
     (find : String → Option Entry) (biblatex : Bool) (bbl : Option (BblOptions × Bool))
     (months : Array String) (findRaw : String → Option Entry)
@@ -2009,32 +1665,20 @@ public theorem positions_exact (style : Style) (cited : Array String)
     simp only [numericLabels] at hi ⊢ <;>
     split <;> (try split) <;> simp [alphaMarks, extraLabels] at hi ⊢
 
-/-- The sorted list holds exactly the input's elements — the membership
-half of "the emitted list is a permutation of the cited set". -/
 public theorem sortResolved_mem (so : SortOrder) (xs : List Resolved) (z : Resolved) :
     z ∈ sortResolved so xs ↔ z ∈ xs := by
   cases so <;> simp [sortResolved, sortByKey]
 
-/-- The sorted list is exactly as long as the input: with `sortResolved_mem`
-this is the counting half of the permutation claim. -/
 public theorem sortResolved_length (so : SortOrder) (xs : List Resolved) :
     (sortResolved so xs).length = xs.length := by
   cases so <;> simp [sortResolved, sortByKey]
 
-/-- The comparison is total in the order-theoretic sense: two entries
-always compare, one way or the other — `gt` one way implies not-`gt` the
-other for citation order, whose comparison is over the distinct
-first-citation positions. Author-year's chained string comparison owes the
-same statement; it is the recorded remainder of this slice. -/
 public theorem compare_citation_asymm (a b : Resolved)
     (h : SortOrder.citation.compare a b = .gt) :
     SortOrder.citation.compare b a ≠ .gt := by
   simp [SortOrder.compare, Nat.compare_eq_gt] at h ⊢
   omega
 
-/-- The sorted list is sorted: no element compares `gt` against a later
-one, for citation order. (`Pairwise` over the comparison; author-year is
-the recorded remainder beside `compare_citation_asymm`.) -/
 public theorem sortResolved_sorted_citation (xs : List Resolved) :
     (sortResolved .citation xs).Pairwise
       (fun a b => SortOrder.citation.compare a b ≠ .gt) := by
@@ -2048,11 +1692,8 @@ public theorem sortResolved_sorted_citation (xs : List Resolved) :
 mutual
 
 /-- The citation rewrite: every `.cite` node becomes its rendering under the
-document's punctuation (`renderCite`), everything else passes through with
-its body walked. The one edit is the citation; `resolveInline_id` below is
-the machine-checked form of that sentence. -/
--- conserves: none — resolution rewrites citation marks into the style's
--- rendering; `resolveInline_id` states the walk's identity off citations.
+document's punctuation. -/
+-- conserves: none — resolution rewrites citation marks
 private def resolveInline (p : CitePunct) (find : Resolver)
     (out : Array Ir.Inline) : Ir.Inline → Array Ir.Inline
   | .cite form keys =>
@@ -2069,7 +1710,6 @@ private def resolveInline (p : CitePunct) (find : Resolver)
   | .altSteps spec active otherwise =>
     out.push (.altSteps spec (resolveInlines p find #[] active.toList)
       (resolveInlines p find #[] otherwise.toList))
-  -- a citation inside a note resolves like any other
   | .footnote n body => out.push (.footnote n (resolveInlines p find #[] body.toList))
   | .text s => out.push (.text s)
   | .math d src => out.push (.math d src)
@@ -2123,11 +1763,6 @@ where
 
 mutual
 
-/-- Style independence, the walk half: resolution is the identity on
-content carrying no citation — whatever the style and whatever the
-bibliography, only citations and the reference list change. The
-citation-side analogue of `artifact_flag_free`: two styles can differ
-only where a `.cite` stood or a `\bibliography` marker fills. -/
 private theorem resolveInline_id (p : CitePunct) (find : Resolver)
     (out : Array Ir.Inline) (x : Ir.Inline) (h : citeFreeOne x = true) :
     resolveInline p find out x = out.push x := by
@@ -2178,10 +1813,8 @@ private theorem resolveInlines_id (p : CitePunct) (find : Resolver)
 
 end
 
-/-- A paragraph TeX never begins: nothing in it but `\nocite`s and the spaces
-between them. `\nocite` sets no ink and leaves vertical mode alone, and a
-space in vertical mode is dropped, so the page is the page of the document
-without it (lualatex: the same step between the paragraphs around it). -/
+/-- Whether a paragraph holds only `\nocite`s and spaces,
+which TeX never begins. -/
 private def nociteOnly (content : Array Ir.Inline) : Bool :=
   content.any (fun x => match x with | .cite f _ => f.cmd == .nocite | _ => false) &&
     content.all fun x => match x with
@@ -2191,13 +1824,9 @@ private def nociteOnly (content : Array Ir.Inline) : Bool :=
 
 mutual
 
-/-- The block half of the rewrite: citations resolve wherever inline
-content stands, each `\bibliography` marker takes the items the style
-built — their content resolved as the body's is, which leaves an entry the
-list resolved already as it stands (`resolveInlines_id`) — and a paragraph
-of `\nocite`s alone is dropped (`nociteOnly`). -/
--- conserves: none — resolution rewrites citation marks and fills the
--- reference list; `resolveInline_id` carries the off-citation identity.
+/-- The block half of the rewrite: citations resolve, each `\bibliography`
+marker takes the style's items, and a paragraph of `\nocite`s is dropped. -/
+-- conserves: none — resolution rewrites citations and fills the reference list
 private def resolveBlock (p : CitePunct) (find : Resolver)
     (items : Array Ir.BibItem) (out : Array Ir.Block) (b : Ir.Block) :
     Array Ir.Block :=
@@ -2243,7 +1872,6 @@ private def resolveBlock (p : CitePunct) (find : Resolver)
   | .table cols pl pr rows rules spans =>
     out.push (.table cols pl pr
       (rows.map fun row => row.map (resolveArr p find)) rules spans)
-  -- A citation resolves inside a line and its comment, as in a cell.
   | .algorithm n sm lines =>
     out.push (.algorithm n sm (lines.map fun l =>
       { l with
@@ -2289,18 +1917,14 @@ termination_by structural cs
 
 end
 
-/-- The citation rewrite over the whole document: the body through
-`resolveBlocks`, every furniture region through `resolveArr` — `Ir.mapDoc`
-hands both the regions the pending census (`Ir.foldDoc`) reads, so a
-`\cite` in a running head resolves as one in the body does. -/
+/-- The citation rewrite over the whole document, body and furniture regions. -/
 public def resolveDoc (p : CitePunct) (find : Resolver) (items : Array Ir.BibItem)
     (doc : Ir.Doc) : Ir.Doc :=
   Ir.mapDoc (resolveArr p find)
     (fun bs => resolveBlocks p find items #[] bs.toList) doc
 
-/-- Bibliography resolution emits one block per input block except a
-paragraph consisting only of nonprinting citations. Source metadata follows
-this decision, independently of the citation style or external entries. -/
+/-- Whether a block survives bibliography resolution: all but a paragraph of
+only nonprinting citations. -/
 public def keepsBlock : Ir.Block → Bool
   | .para content => !nociteOnly content
   | .bibliography .. | .equation .. | .section .. | .abstract .. | .list ..
@@ -2327,9 +1951,7 @@ private theorem resolveBlocks_size_exact (p : CitePunct) (find : Resolver)
     rw [resolveBlocks, ih, resolveBlock_size_exact]
     cases hk : keepsBlock b <;> simp [hk] <;> omega
 
-/-- Preserve metadata attached to surviving top-level blocks. Indices refer
-to the input document; values, including expansion origins, pass unchanged.
-Invalid indices and the removed nonprinting paragraphs have no output site. -/
+/-- Metadata of surviving top-level blocks, reindexed to the output document. -/
 public def remapSources {α : Type} (doc : Ir.Doc) (sites : Array (Nat × α)) :
     Array (Nat × α) :=
   sites.filterMap fun (i, source) =>
@@ -2337,8 +1959,6 @@ public def remapSources {α : Type} (doc : Ir.Doc) (sites : Array (Nat × α)) :
       some (((doc.body.toList.take i).filter keepsBlock).length, source)
     else none
 
-/-- Each surviving source's new offset is the size of its prefix after the
-actual bibliography rewrite, for every style, resolver and reference list. -/
 public theorem remapSources_projects {α : Type} (doc : Ir.Doc)
     (sites : Array (Nat × α)) (i : Nat) (source : α) (b : Ir.Block)
     (hs : (i, source) ∈ sites) (hb : doc.body[i]? = some b)
@@ -2353,9 +1973,8 @@ public theorem remapSources_projects {α : Type} (doc : Ir.Doc)
   refine ⟨(i, source), hs, ?_⟩
   simp [hb, hk, resolveDoc, Ir.mapDoc, hsize]
 
-/-- natbib's author-year label in a `\bibitem`'s optional argument
-(natbib.sty `\NAT@parse`: `Jones et al.(1990)Jones, Baker, and Williams`):
-the names before the parentheses and the year inside them. -/
+/-- natbib's author-year label in a `\bibitem`'s optional
+argument: the names and the year. -/
 private def natbibLabel? (label : String) : Option (String × String) :=
   match label.splitOn "(" with
   | names :: rest =>
@@ -2367,9 +1986,7 @@ private def natbibLabel? (label : String) : Option (String × String) :=
     | _ => none
   | [] => none
 
-/-- The entry a `thebibliography` item cites as in author-year mode: its
-label's names as the author (natbib's `et al.` as BibTeX's `and others`)
-and its year. -/
+/-- The entry a `thebibliography` item cites as in author-year mode. -/
 private def ownEntry (key : String) (label : Option (String × String)) : Entry :=
   let fields := match label with
     | some (names, year) =>
@@ -2379,13 +1996,8 @@ private def ownEntry (key : String) (label : Option (String × String)) : Entry 
     | none => #[]
   { (default : Entry) with key, fields }
 
-/-- A document's own reference list, `thebibliography`, resolved: its
-entries in source order (the list is printed as written, never sorted).
-natbib reads it in numbers mode unless every entry carries an author-year
-label (natbib.sty, reading each `\bibitem`); in numbers mode an entry's mark
-is its label as written, or the list counter, which only an entry without a
-label steps (latex.ltx `\@bibitem` against `\@lbibitem`). An author-year
-entry cites as its label's names and year. -/
+/-- A document's own `thebibliography` list resolved, its
+entries in source order. -/
 private def ownList (p : CitePunct) (own : Array Ir.BibItem) :
     CitePunct × Array Resolved × Array Ir.BibItem := Id.run do
   let ay := own.map fun it => it.marker.bind natbibLabel?
@@ -2398,25 +2010,21 @@ private def ownList (p : CitePunct) (own : Array Ir.BibItem) :
     let label := if p.numbers then it.marker else none
     resolved := resolved.push
       { key := it.key, position := n, entry := ownEntry it.key (ay[i]?).join, label }
-    -- a label written by hand sets flush left, as latex.ltx's `\@lbibitem`
-    -- sets it (`\item[\@biblabel{#1}\hfill]`); a number right-aligned
+    -- A hand-written label sets flush left, as latex.ltx's `\@lbibitem` sets it.
     items := items.push
       { it with marker := if p.numbers then some (label.getD (toString n)) else none
                 labelFlush := p.numbers && it.marker.isSome }
   return (p, resolved, items)
 
-/-- A field's `\cite` read as biblatex's author-year styles read it: the
-bare citation (`Doe 2024`), natbib's `\citealp`. The compatibility pass
-renames the body's spelling where it reads the load (`Compat`'s
-`\cite` row); a field's text is read without that state, so its
-citations are renamed here, on the node. A leaf of `Ir.mapInlines`. -/
+/-- A field's `\cite` read as biblatex's author-year styles
+read it, as the bare citation. -/
 private def bareCites (xs : Array Ir.Inline) : Array Ir.Inline :=
   Ir.mapInlines (fun x => match x with
     | .cite f keys => if f.cmd == .auto then .cite { f with cmd := .alp } keys else .cite f keys
     | x => x) xs
 
-/-- The field citations a document makes (`Ir.CiteField`): each key, the
-field, and whether the star asks the full title. A leaf of `Ir.foldDoc`. -/
+/-- The field citations a document makes: each key, the field, and whether the
+star asks the full title. -/
 private def citeFieldUses (doc : Ir.Doc) : Array (String × Ir.CiteField × Bool) :=
   Ir.foldDoc (fun acc x => match x with
     | .cite f keys => match f.cmd with
@@ -2424,9 +2032,7 @@ private def citeFieldUses (doc : Ir.Doc) : Array (String × Ir.CiteField × Bool
       | _ => acc
     | _ => acc) #[] doc
 
-/-- What a field citation prints under a BibTeX style, which defines none:
-the title as written, starred or not, the URL a link, the year, and the
-entry as the style sets it, its closing period dropped. -/
+/-- What a field citation prints under a BibTeX style, which defines none. -/
 private def bibtexCiteField (cv : FieldText) (r : Resolved) (w : Ir.CiteField)
     (rendered : Array (Ir.BibItem × FieldReport)) : Array Ir.Inline × Array (String × Ir.PicSrc) :=
   match w with
@@ -2445,10 +2051,7 @@ private def bibtexCiteField (cv : FieldText) (r : Resolved) (w : Ir.CiteField)
         | _ => it.content, rep.pictures)
     | none => (#[], #[])
 
-/-- One run of the reference list over a sequence of citations: the
-database the processor reads for them, the entries the style resolves, the
-items it sets with what reading their fields reported, and the fields each
-set entry's driver read. -/
+/-- One run of the reference list over a sequence of citations. -/
 private structure ListRun where
   cited : Array String
   db : Database
@@ -2456,9 +2059,8 @@ private structure ListRun where
   rendered : Array (Ir.BibItem × FieldReport)
   readSets : Array (List String)
 
-/-- The keys the set entries' own fields cite (a `\cite` in a `note`), in
-the order the list sets them, each once, with the first entry citing it: a
-leaf of `Ir.foldInlines` over each item's content. -/
+/-- The keys the set entries' own fields cite, in list order, each once, with
+the first entry citing it. -/
 private def fieldCites (rendered : Array (Ir.BibItem × FieldReport)) : Array (String × String) :=
   (rendered.foldl (init := ((#[] : Array (String × String)), (∅ : Std.HashSet String)))
     fun acc (it, _) => Ir.foldInlines (fun (out, seen) x => match x with
@@ -2466,8 +2068,8 @@ private def fieldCites (rendered : Array (Ir.BibItem × FieldReport)) : Array (S
           if seen.contains k then (out, seen) else (out.push (k, it.key), seen.insert k)
       | _ => (out, seen)) acc it.content).1
 
-/-- The keys of `uncited` that `named` does not hold, when it holds one at
-least: what a round of `settleFieldCites` leaves, shorter by what it spent. -/
+/-- The keys of `uncited` that `named` does not hold, when
+it holds one at least. -/
 private def spend (uncited : List String) (named : Std.HashSet String) :
     Option { rest : List String // rest.length < uncited.length } :=
   if h : uncited.filter (named.contains ·) = [] then none
@@ -2476,9 +2078,8 @@ private def spend (uncited : List String) (named : Std.HashSet String) :
     obtain ⟨x, hx⟩ := List.exists_mem_of_ne_nil _ h
     exact ⟨x, (List.mem_filter.mp hx).1, by simp [(List.mem_filter.mp hx).2]⟩⟩
 
-/-- The keys a list run's set entries cite in their fields, each read
-through `canon`, that `seen` does not hold, each once in the order the list
-sets them. -/
+/-- The keys a list run's set entries cite in their fields
+that `seen` does not hold, each once. -/
 private def freshCites (canon : String → String) (r : ListRun) (seen : Std.HashSet String) :
     Array String :=
   ((fieldCites r.rendered).foldl (init := ((#[] : Array String), seen))
@@ -2486,13 +2087,7 @@ private def freshCites (canon : String → String) (r : ListRun) (seen : Std.Has
       let k := canon k
       if seen.contains k then (out, seen) else (out.push k, seen.insert k)).1
 
-/-- Where the field citations of `frontier`'s entries lead, round by round,
-each round setting only the entries the round before added, so a chain of
-field citations costs its length rather than its length times the list's:
-`found` with every key reached appended, in the order reached, and
-`foundSet` its keys. A list's composition can change what an entry prints
-— a parent `minCrossrefs` lists, a letter — so this is a search, not the
-answer: `settleFieldCites` holds what it found to the whole list. -/
+/-- Where the field citations of `frontier`'s entries lead, round by round. -/
 private def discoverFieldCites (run : Array String → ListRun) (canon : String → String)
     (uncited : List String) (frontier found : Array String) (foundSet : Std.HashSet String) :
     Array String × Std.HashSet String :=
@@ -2503,19 +2098,8 @@ private def discoverFieldCites (run : Array String → ListRun) (canon : String 
   | some ⟨rest, _⟩ => discoverFieldCites run canon rest fresh (found ++ fresh) foundSet
 termination_by uncited.length
 
-/-- **A field's citation completes the list.** LaTeX sets a `.bbl`'s
-`\cite` where the list stands, which writes the citation to the `.aux`, so
-the next BibTeX or biber run lists its entry after every citation the body
-made, and the run after that resolves it: the rerun cycle `latexmk` repeats
-until nothing changes. Here the cycle is a function — run the list for the
-citations (`run`), append the keys the set entries' fields cite that the
-citations lack (`freshCites`, each read through `canon`, an entry's `ids`),
-and run again while that cites an entry no citation named before; after a
-round that adds some, the entries it added lead the search for the rest
-(`discoverFieldCites`) before the whole list runs again. `uncited` holds
-the database keys no citation names yet; a round that names none of them
-is the fixed point, and a round that continues spends one of them at least,
-which is the measure — the rounds are at most the entries. -/
+/-- The list completed with the entries its fields cite, as the next BibTeX or
+biber run lists them. -/
 private def settleFieldCites (run : Array String → ListRun) (canon : String → String)
     (uncited : List String) (cited : Array String) : ListRun :=
   let r := run cited
@@ -2532,28 +2116,14 @@ private def settleFieldCites (run : Array String → ListRun) (canon : String �
     settleFieldCites run canon left more
 termination_by uncited.length
 
-/-- Resolve the document's citations and reference lists against its
-`.bib` sources — the pure half of the `\bibliography` effect. `sources`
-maps each requested name (`Ir.bibRefs`) to the file text the driver read;
-a name the driver could not read is simply absent, its diagnostic already
-fired. Emits W0352 for each malformed `.bib` entry (skipped, the rest
-kept), W0353 when the declared style is unknown (the fallback record
-formats the list and says so), and W0351 for each cited key no entry
-answers (its citation shows `?`, LaTeX's own rendering). It runs on every
-document: with no `\bibliography` marker there are no sources and every
-key resolves to `?` — the elaborator has already named each such citation
-at its site (W0351, the no-bibliography cause), so none is named twice
-here — and no `.cite` node survives in any region (`apply_no_cite`), which
-is what lets the backends' `.cite` arms be dead code. `analyse` is the
-reading half — sources, style, the resolver and the reference list, with
-the diagnostics — and `apply` is that half followed by the one rewrite. -/
+/-- The document's citations and reference lists resolved
+against its `.bib` sources. -/
 private def analyse (sources : Array (String × String)) (doc : Ir.Doc) (rd : FieldReading) :
     CitePunct × Resolver × Array Ir.BibItem × Array Diag × Array (String × Ir.PicSrc) × Nat :=
     Id.run do
   let requested := Ir.bibRefs doc
   let declared := (Ir.bibStyleName doc).map fun name => (name, Style.named name)
-  -- The month macros are the style's (abbrv.bst spells `mar` `Mar.`), in
-  -- the document's language where the style is English.
+  -- The month macros are the style's, in the document's language where the style is English.
   let months := if (declared.bind (·.2)).any (·.shortMonths) && doc.info.locale.tag == "en"
     then shortMonthNames else doc.info.locale.months
   let mut diags : Array Diag := #[]
@@ -2561,9 +2131,7 @@ private def analyse (sources : Array (String × String)) (doc : Ir.Doc) (rd : Fi
   let mut origin : Std.HashMap String String := {}
   let mut seen : Std.HashSet String := {}
   let mut preambles : Array String := #[]
-  -- One `@string` store for the list's files, read in turn: a strings file
-  -- named before the files that use it defines their macros, as BibTeX and
-  -- biber read a list's files into one store.
+  -- One `@string` store for the list's files, read in turn.
   let mut store := monthMacros months
   let mut undefined : Std.HashMap String (Array String) := {}
   for src in requested do
@@ -2598,9 +2166,7 @@ private def analyse (sources : Array (String × String)) (doc : Ir.Doc) (rd : Fi
   let p := CitePunct.ofDoc doc.natbib ((Ir.bibStyleName doc).bind (natbibRows.lookup ·))
     (declared.all (·.labels))
   let p := { p with ink := (doc.styles.find? "cite").bind (·.color) }
-  -- biblatex sorts its list by its own schemes: the load's `sorting`, nty
-  -- for the numeric styles and nyt for the author-year ones by default, and
-  -- `none` citation order.
+  -- biblatex sorts by the load's `sorting`: nty for numeric styles and nyt for author-year.
   let bbl := (BblOptions.ofDecls doc.natbib).map ({ · with mainLang := doc.info.locale.tag })
   let style := declared.getD Style.unsrtnat
   let style := match bbl with
@@ -2612,10 +2178,7 @@ private def analyse (sources : Array (String × String)) (doc : Ir.Doc) (rd : Fi
         { style with sort := .bbl (if p.numbers then "nty" else "nyt") {} } else style
   let p := { p with useprefix := bbl.any (·.useprefix) }
   let proc : Processor := if p.biblatex then .biber else .bibtex
-  -- An entry's `ids` are other keys it is cited by (biblatex manual §2.2.3,
-  -- "ids"): a citation of one is a citation of the entry. BibTeX reads no
-  -- `ids`; the alias resolves under its styles too, where it would show as
-  -- '?' unanswered.
+  -- An entry's `ids` are other keys it is cited by.
   let keys : Std.HashSet String := entries.foldl (·.insert ·.key) {}
   let aliases : Std.HashMap String String := entries.foldl (init := {}) fun m e =>
     (e.refsBy "ids").foldl (init := m) fun m a =>
@@ -2623,10 +2186,7 @@ private def analyse (sources : Array (String × String)) (doc : Ir.Doc) (rd : Fi
   let canon (k : String) : String := aliases.getD k k
   let cited := expandStar entries ((citedKeys doc).map canon)
   let shown := (citedKeys doc (·.cmd != .nocite)).foldl (·.insert ·) (∅ : Std.HashSet String)
-  -- biblatex sets an `@set` entry as one entry of its members (standard.bbx's
-  -- `set` driver, `\entryset`); the engine lists each member as an entry
-  -- of its own, cites the set as its first member, and names the
-  -- difference.
+  -- Each `@set` member is listed as its own entry; the set is cited as its first member.
   let sets : Std.HashMap String (Array String) := if proc != .biber then {} else
     entries.foldl (init := {}) fun m e =>
       match (e.field? "entryset").filter (fun _ => e.kind == "set") with
@@ -2637,26 +2197,18 @@ private def analyse (sources : Array (String × String)) (doc : Ir.Doc) (rd : Fi
     (cited.foldl (init := ((#[] : Array String), (∅ : Std.HashSet String))) fun (acc, seen) k =>
       (sets.getD k #[k]).foldl (init := (acc, seen)) fun (acc, seen) m =>
         if seen.contains m then (acc, seen) else (acc.push m, seen.insert m)).1
-  -- The list is typeset under its `@preamble`s' definitions and sorted
-  -- without them, as the `.bbl` carries them to the one and not the other.
+  -- The list is typeset under its `@preamble` definitions and sorted without them.
   let macros := preambleMacros preambles
   let typeset := if macros.isEmpty then entries else
     entries.map fun e => { e with fields := e.fields.map fun (f, v) => (f, expandMacros macros v) }
-  -- Each entry's fields are read where the entry stands in its `.bib`.
   let positions : Std.HashMap String Pos := entries.foldl (fun m e => m.insert e.key e.pos) {}
   let spanOf (k : String) : Span :=
     ⟨sourceName ((origin.get? k).getD ""), (positions.get? k).getD {}⟩
   let cv (k : String) : FieldText := rd (spanOf k)
   let own := Ir.ownBibItemsBlocks doc.body
-  -- The database's own work once, for every list a round reads off it.
   let prepared := Database.prepare proc months typeset
   let rawPrepared := if macros.isEmpty then prepared else Database.prepare proc months entries
-  -- The TeX a label or a citation's names are spelt in, set as the
-  -- entry's fields are, the list's `@preamble` definitions expanded, where
-  -- it holds a control word and the reading reports no loss (a note
-  -- records a faithful translation) and draws no picture and sets no note,
-  -- which a label's text cannot carry; elsewhere `text`'s reading stands,
-  -- which keeps an unknown command's name in sight.
+  -- The TeX a label or a citation's names are spelt in, set as the entry's fields are.
   let inkOf (k tex : String) : Option (Array Ir.Inline) :=
     if !tex.contains '\\' then none else
       let read := cv k (if macros.isEmpty then tex else expandMacros macros tex)
@@ -2696,8 +2248,6 @@ private def analyse (sources : Array (String × String)) (doc : Ir.Doc) (rd : Fi
     else
       let (p, resolved, items) := ownList p own
       (p, resolved, items.map (·, ({} : FieldReport)), #[])
-  -- biblatex cites an entry no name list labels by its label title, read
-  -- as the entry's fields are (`bblCiteLabel`)
   let labelled (r : Resolved) : Resolved :=
     let r := match bbl with
       | some o => if r.citeNames.isSome then r else
@@ -2705,11 +2255,8 @@ private def analyse (sources : Array (String × String)) (doc : Ir.Doc) (rd : Fi
         if l.isEmpty then r
         else { r with citeLabel := some l, inkPictures := r.inkPictures ++ pics }
       | none => r
-    -- the names and the shorthand a citation prints, set as the fields are
     let namesTeX := if p.biblatex then r.citeNames else some (labelSource r.entry false p.useprefix)
     { r with namesInk := namesTeX.bind (inkOf r.key), shortInk := r.shorthand.bind (inkOf r.key) }
-  -- read only for the entries a citation prints: the body's, `\nocite`
-  -- aside, a field's, and a cited @set's first member
   let printed : Std.HashSet String :=
     let ks := (fieldCites rendered).foldl (fun s (k, _) => s.insert (canon k))
       (shown.fold (fun s k => s.insert (canon k)) {})
@@ -2721,8 +2268,6 @@ private def analyse (sources : Array (String × String)) (doc : Ir.Doc) (rd : Fi
     match ms[0]?.bind byCite.get? with
     | some r => m.insert k r
     | none => m
-  -- A field citation prints its entry's field (`Ir.CiteField`): each one the
-  -- document makes, read once per entry and field, as the style prints it.
   let fieldUses := citeFieldUses doc
   let labelFind : Resolver := fun k => byCite.get? (canon k)
   let byCite := fieldUses.foldl (init := byCite) fun m (k, w, full) =>
@@ -2733,22 +2278,15 @@ private def analyse (sources : Array (String × String)) (doc : Ir.Doc) (rd : Fi
       let (ink, pics) := match bbl with
         | some o => bblCiteField o (cv r.key) months r.entry r.extra w full
         | none => bibtexCiteField (cv r.key) r w rendered
-      -- a citation inside the field resolves as a label citation
       let ink := resolveArr p labelFind ink
       m.insert (canon k) { r with fieldInk := r.fieldInk.push ((w, full), ink)
                                   inkPictures := r.inkPictures ++ pics }
   let find : Resolver := fun k => byCite.get? (canon k)
-  -- An entry's own citations — a cross-reference's parent, a `\cite` in a
-  -- field or a `\bibitem` — resolve as the body's do; a field's bare
-  -- `\cite` under biblatex's author-year citations is the bare citation
-  -- the body's is (`bareCites`).
+  -- An entry's own citations resolve as the body's do.
   let bare := bbl.any (·.cite == .authoryear)
   let items := rendered.map fun (it, _) =>
     { it with content := resolveArr p find (if bare then bareCites it.content else it.content) }
-  -- An entry's declared language (`langid`, BibTeX's `hyphenation`) tags its
-  -- text, so its words hyphenate by its patterns and a reader is told the
-  -- language: biblatex's `autolang=hyphen`, a departure from its default
-  -- `none` and from BibTeX, which read no language.
+  -- An entry's declared language tags its text, as biblatex's `autolang=hyphen`.
   let items := items.map fun it =>
     match (db.own.get? it.key).bind fun e =>
         (e.field? "langid").orElse fun _ => e.field? "hyphenation" with
@@ -2757,10 +2295,7 @@ private def analyse (sources : Array (String × String)) (doc : Ir.Doc) (rd : Fi
       if tag.isEmpty || tag == doc.info.locale.tag then it
       else { it with content := #[.styled (.lang tag) it.content] }
     | none => it
-  -- The notes the list's fields set number where the list stands, after the
-  -- notes before it (`Ir.Doc.listNotes`), in the order the list sets them;
-  -- a citation that prints a field (`\fullcite`, a label title) numbers its
-  -- notes after the list's, once per entry and field.
+  -- The list's notes number where the list stands, after the notes before it.
   let base := (doc.listNotes[0]?.map (·.1)).getD 0
   let (afterList, items) := Ir.numberNotesItems base items
   let inkKeys := ((byCite.toArray.filter fun (_, r) =>
@@ -2777,16 +2312,12 @@ private def analyse (sources : Array (String × String)) (doc : Ir.Doc) (rd : Fi
         (x.1, out.push (w, x.2))
       (k, m.insert key { r with citeLabel := label, fieldInk := inks })
   let find : Resolver := fun k => byCite.get? (canon k)
-  -- What reading an entry's fields reported names that entry's place in
-  -- its `.bib`; one report per site, the same loss at many sites counted
-  -- by the run's tally as the body's are (`Diag.tallySites`).
   let mut reported : Std.HashSet String := {}
   for (it, ds) in rendered do
     let span : Option Span := (origin.get? it.key).map fun src =>
       ⟨sourceName src, ((findEntry it.key).map (·.pos)).getD {}⟩
     for d in ds.diags do
       let d := { d with span := span.orElse fun _ => d.span }
-      -- a refused field is named for the field it stands for in this entry
       let d := if d.kind != .W0429 then d else match findEntry it.key with
         | some e => nameUnread (entries.find? (·.key == it.key)) e d
         | none => d
@@ -2794,19 +2325,14 @@ private def analyse (sources : Array (String × String)) (doc : Ir.Doc) (rd : Fi
       unless reported.contains site do
         reported := reported.insert site
         diags := diags.push d
-  -- A content field the style prints nowhere for an entry that declares
-  -- it: named once per field as the `.bib` spells it, with the entries that
-  -- keep one (N0029).
+  -- A field the style prints nowhere for an entry declaring it is named once (N0029).
   let styleName := match bbl with
     | some o => if o.style == BblStyle.authoryear then "biblatex's authoryear style"
       else "biblatex's numeric style"
     | none => s!"the bibliography style '{(Ir.bibStyleName doc).getD "unsrtnat"}'"
   let written : Std.HashMap String Entry := entries.foldl (fun m e => m.insert e.key e) {}
-  -- premise: biblatexFieldCoverageChecks — the drivers read every field standard.bbx's print, against biber line for line
+  -- premise: biblatexFieldCoverageChecks — the drivers read every printed field
   let listedReads := if bbl.isSome then (bblListed resolved).zip readSets else resolved.zip readSets
-  -- each field with the entries that keep one and the types they are: a
-  -- style may print a field for one type and not another (plainnat prints
-  -- a @misc's howpublished and not a @manual's)
   let mut dropped : Array (String × Array String × Array String) := #[]
   let mut droppedAt : Std.HashSet String := {}
   for (r, reads) in listedReads do
@@ -2828,9 +2354,7 @@ private def analyse (sources : Array (String × String)) (doc : Ir.Doc) (rd : Fi
     diags := diags.push (Diag.of .N0029 s!"{styleName} prints no '{f}' field in {types} \
       entries; {ks.size} {if ks.size == 1 then "entry keeps" else "entries keep"} one ({shown})"
       (subject := some ("bibfield:" ++ f)))
-  -- A reference a listed entry's reading left unresolved: the entry is set
-  -- without what it would lend (W0425), where BibTeX and biber warn — or,
-  -- for a cycle, where biber stops.
+  -- A reference a listed entry's reading left unresolved is named (W0425).
   for r in db.broken do
     let k := r.holder
     let m := r.target
@@ -2884,8 +2408,7 @@ private def analyse (sources : Array (String × String)) (doc : Ir.Doc) (rd : Fi
     diags := diags.push (Diag.of .W0425 what atEntry (help := help)
       (subject := some (if xf.isEmpty then s!"bibref:{m}" else s!"bibref:{m}-{xf}"))
       (detail := detail))
-  -- A listed entry's value naming a macro no `@string` defined before it:
-  -- the name prints where BibTeX and biber print nothing (W0426).
+  -- A value naming an undefined macro prints the name where BibTeX prints nothing (W0426).
   for k in db.list do
     for n in undefined.getD k #[] do
       let atEntry : Option Span := (origin.get? k).map fun src => ⟨sourceName src, (positions.get? k).getD {}⟩
@@ -2894,8 +2417,6 @@ private def analyse (sources : Array (String × String)) (doc : Ir.Doc) (rd : Fi
         (help := s!"define it before its first use: '@string\{{n} = \"...\"}', in the .bib \
           file named first")
         (subject := some s!"bibstring:{n}"))
-  -- What biblatex's styles print of an entry that the engine does not set:
-  -- the entries a `related` field names (standard.bbx's `related` macro).
   if bbl.isSome then
     for r in bblListed resolved do
       let mine := (db.own.get? r.key).getD r.entry
@@ -2904,11 +2425,7 @@ private def analyse (sources : Array (String × String)) (doc : Ir.Doc) (rd : Fi
           '{r.key}' names as related after it; the engine does not set related entries"
           ((origin.get? r.key).map fun src => ⟨sourceName src, mine.pos⟩)
           (subject := some ("bibrelated:" ++ r.key)))
-  -- biblatex words its list in babel's main language (`language=autodetect`)
-  -- or the one its load names, and under `autolang=other` an entry with a
-  -- `langid` in that language; the strings and dates set here are
-  -- english.lbx's, so any other language is named, once.
-  -- premise: biblatexOracleChecks — the strings and dates set are english.lbx's, line for line
+  -- premise: biblatexOracleChecks — the strings and dates set are english.lbx's
   if let some o := (if requested.isEmpty then none else bbl) then
     let main := (o.language.filter fun l => !["autodetect", "auto"].contains l).orElse
       fun _ => o.babelMain
@@ -2931,9 +2448,7 @@ private def analyse (sources : Array (String × String)) (doc : Ir.Doc) (rd : Fi
             diags := diags.push (Diag.of .W0421 s!"under 'autolang={o.autolang}' biblatex words \
               entries with langid '{l}' in it; the engine sets the English strings"
               (subject := some ("bibstrings:" ++ l)) (help := help))
-  -- biber sorts by the list's locale (`bblSortFile`); a tailoring among the
-  -- Latin letters sorts here as there, one of another script is named.
-  -- premise: biblatexLocaleSortChecks — every carried tailoring the probe reaches sorts its list as biber does, line for line
+  -- premise: biblatexLocaleSortChecks — carried tailorings sort as biber does
   if let some o := (if requested.isEmpty then none else bbl) then
     let file := bblSortFile o
     if Collate.outsideRows file then
@@ -2947,9 +2462,7 @@ private def analyse (sources : Array (String × String)) (doc : Ir.Doc) (rd : Fi
         of its members; the engine lists each member as an entry of its own"
         (((origin.get? k).map fun src => ⟨sourceName src, ((db.own.get? k).map (·.pos)).getD {}⟩))
         (subject := some ("bibset:" ++ k)) (detail := some s!"{ms.size} members"))
-  -- A date biber cannot read prints as written, named (W0420): a value
-  -- outside its grammar or its calendar, and a legacy month it reads as no
-  -- month.
+  -- A date biber cannot read prints as written, named (W0420).
   for r in resolved do
     let mine := (db.own.get? r.key).getD r.entry
     let atEntry : Option Span := (origin.get? r.key).map fun src => ⟨sourceName src, mine.pos⟩
@@ -2968,7 +2481,6 @@ private def analyse (sources : Array (String × String)) (doc : Ir.Doc) (rd : Fi
             biblatex reads; it prints as written" atEntry
             (help := "write it as a number, 1 to 12, or as a month's name: 'month = {3}'")
             (subject := some s!"bibdate:{r.key}:month"))
-  -- A key a set entry's field cites (`fieldCites`) names that entry's place.
   let citedBy : Std.HashMap String String := (fieldCites rendered).foldl (init := {})
     fun m (k, by_) => if m.contains (canon k) then m else m.insert (canon k) by_
   unless requested.isEmpty && own.isEmpty do
@@ -2985,8 +2497,6 @@ private def analyse (sources : Array (String × String)) (doc : Ir.Doc) (rd : Fi
             or fix the spelling in \\{cmd}"
             else s!"add \\bibitem\{{k}} to the reference list, or fix the spelling in \\{cmd}")
           (subject := some k))
-  -- The boundary pictures the list's fields and its citations' ink set:
-  -- the document's request carries them as the body's own (`apply`).
   let pictures := resolved.foldl (init := rendered.foldl (init := #[]) fun acc (_, rep) =>
       acc ++ rep.pictures) fun acc r =>
     match find r.key with
@@ -2994,10 +2504,8 @@ private def analyse (sources : Array (String × String)) (doc : Ir.Doc) (rd : Fi
     | none => acc
   return (p, find, items, diags, pictures, afterInk - base)
 
-/-- A loss the reference list reports at a site after the run has named it —
-in the body (`prior`) or at an earlier entry — as the body's own later
-sites ride: a note with no help, beside the first site's warning, which
-the run's tally gives the count (`Diag.tallySites`). -/
+/-- A loss the reference list reports at a site after the run has named it,
+demoted to a note with no help. -/
 public def demoteRepeated (prior ds : Array Diag) : Array Diag :=
   let key (d : Diag) : Option String := d.subject.map fun s =>
     s!"{d.code}\u0000{s}\u0000{repr d.output}"
@@ -3012,23 +2520,16 @@ public def demoteRepeated (prior ds : Array Diag) : Array Diag :=
       else (out.push d, seen.insert k)
     | none => (out.push d, seen)).1
 
-/-- Resolve the document's citations and reference lists against its `.bib`
-sources, every field read through `rd` at its entry's place: the build
-passes the document's own inline elaborator (`Bib.FieldDoor.read`, through
-`Bib.resolve`), and a caller with no source context names the reading that
-needs none (`plainReading`) — there is no default, so no caller reads
-fields some other way than it says. -/
+/-- The document's citations and reference lists resolved against its `.bib`
+sources, every field read through `rd`. -/
 public def apply (sources : Array (String × String)) (doc : Ir.Doc)
     (rd : FieldReading) : Ir.Doc × Array Diag :=
   match analyse sources doc rd with
   | (p, find, items, diags, pictures, notes) =>
     (((resolveDoc p find items doc).addPictures pictures).withListNotes notes, diags)
 
-/-- The keys of the references the document's reference lists hold, each
-once in list order — `pending`, only those no label answered, which the
-list sets as `??`. A collector over the list items' inlines alone, the
-body's set aside: where the document's judge locates a key only a list
-holds (`refSpanOf`). -/
+/-- The keys of the references the document's reference lists hold, each once in
+list order; `pending` keeps only those no label answered. -/
 public def listRefKeys (doc : Ir.Doc) (pending : Bool) : Array String :=
   Ir.foldBlocks (fun out b => match b with
     | .bibliography _ _ items => items.foldl (init := out) fun out it =>
@@ -3038,45 +2539,27 @@ public def listRefKeys (doc : Ir.Doc) (pending : Bool) : Array String :=
           | _ => out) out it.content
     | _ => out) (fun out _ => out) #[] doc.body
 
-/-- A reference list's references resolved against the document's labels
-(`table`, the one the body's resolved against): LaTeX sets a `.bbl`'s
-`\ref` where the list stands, the labels read from the `.aux`, so a
-field's `\ref{key}` sets the number the body's sets. The list is built
-after the body's references were resolved, so its own are resolved here;
-the body's resolve again to what they are. A document with no reference is
-returned as it is. -/
+/-- A reference list's references resolved against the document's labels. -/
 public def resolveListRefs (table : Ir.RefTable) (doc : Ir.Doc) : Ir.Doc :=
   if (Ir.bibRefs doc).isEmpty || !Ir.foldDoc (fun b x => b || x matches .ref ..) false doc
   then doc
   else { doc with body := Ir.resolveRefs doc.info.locale table doc.body }
 
-/-- Where W0349 names a key: the body's first site (`bodySpan`), else, for a
-key only a reference list's entries hold (`listed`, `listRefKeys`), the
-list's command (`listSpan`) — an entry's fields carry no source span of
-their own. The judge is the document's (`Ir.refDiags`), whose census reads
-a list's entries with the body, so a key the body and a field both leave
-`??` is named once, at the body's site, as the body's own repeats are. -/
+/-- Where W0349 names a key: the body's first site, else a
+reference list's command. -/
 public def refSpanOf (bodySpan : String → Option Span) (listSpan : Option Span)
     (listed : Array String) (key : String) : Option Span :=
   (bodySpan key).orElse fun _ => if listed.contains key then listSpan else none
 
-/-! ## Resolution leaves no citation
-
-The census fact `apply_no_cite` rests on two things: every node the rewrite
-emits in a citation's place carries no citation (`renderCite_citeFree`: text
-and links over text, or a field citation's cite-free ink), and every other
-node passes through with only its body rewritten. Stated over the census fold (`Ir.pendingStep`) with the
-accumulator generalised, so each walk shape is one induction. -/
-
-/-- A citation link's body: its mark's text, or that text in the declared
-ink (`CitePunct.ink`). -/
+/-- Whether an inline is a citation link's body: its mark's
+text, or that text in the declared ink. -/
 private def plainMark : Ir.Inline → Bool
   | .text _ => true
   | .colored _ _ b => b.all fun x => match x with | .text _ => true | _ => false
   | _ => false
 
-/-- A node the citation renderer emits for a label citation: text, or a
-link whose body is a mark (`plainMark`). Neither carries a pending leaf. -/
+/-- Whether an inline is a node the citation renderer emits
+for a label citation. -/
 private def plainCite : Ir.Inline → Bool
   | .text _ => true
   | .link _ body => body.all plainMark
@@ -3118,7 +2601,6 @@ private theorem compressRuns_plain (p : CitePunct) (parts : Array (Option Resolv
   exact Array.foldl_induction (motive := fun _ (a : RunAcc) => a.acc.out.all plainCite = true)
     (by simp) (fun _ b hb => runStep_plain p b _ hb)
 
-/-- The renderer emits text and links over text only. -/
 private theorem plainCite_citeFree (x : Ir.Inline) (h : plainCite x = true) :
     citeFreeOne x = true := by
   cases x <;> simp only [plainCite] at h <;> try exact absurd h (by decide)
@@ -3153,9 +2635,6 @@ private theorem plainCite_citeFree (x : Ir.Inline) (h : plainCite x = true) :
 
 mutual
 
-/-- **Cite-free content adds no citation to the census**: whatever the
-pending fold collects over inline content carrying no citation
-(`citeFreeOne`) is a reference, never a citation. -/
 private theorem citeFree_census (x : Ir.Inline) (h : citeFreeOne x = true) :
     ∀ (acc : Array Ir.Unresolved) (q : Ir.Unresolved),
       q ∈ Ir.foldInline Ir.pendingStep acc x → q ∈ acc ∨ q.isCite = false := by
@@ -3271,8 +2750,6 @@ private theorem finish_citeFree (p : CitePunct) (f : Ir.CiteForm) (s : Switches)
   rw [Array.toList_append]
   exact citeFreeList_append _ _ (emit_citeFree _ _ rfl) h
 
-/-- A field citation's keys, each its ink — a link over cite-free content —
-or a `?`, apart by text: content with no citation in it. -/
 private theorem fieldStep_citeFree (p : CitePunct) (w : Ir.CiteField) (full : Bool)
     (acc : Array Ir.Inline) (o : Option Resolved) (h : citeFreeList acc.toList = true) :
     citeFreeList (fieldStep p w full acc o).toList = true := by
@@ -3296,8 +2773,6 @@ private theorem fieldStep_citeFree (p : CitePunct) (w : Ir.CiteField) (full : Bo
       · rw [Array.toList_append]
         exact citeFreeList_append _ _ hsep (by simpa using hink.2)
 
-/-- **The renderer emits no citation**: text and links over text, and a
-field citation's inks, each content carrying no citation. -/
 private theorem renderCite_citeFree (p : CitePunct) (f : Ir.CiteForm)
     (parts : Array (Option Resolved)) :
     citeFreeList (renderCite p f parts).toList = true := by
@@ -3320,7 +2795,6 @@ private theorem renderCite_citeFree (p : CitePunct) (f : Ir.CiteForm)
     · exact Array.foldl_induction (motive := fun _ (a : CiteAcc) => citeFreeList a.out.toList = true)
         rfl (fun _ b hb => citeStep_citeFree p f _ _ b _ hb)
 
-/-- A rendered citation adds no citation to the pending census. -/
 private theorem renderCite_pending (p : CitePunct) (f : Ir.CiteForm)
     (parts : Array (Option Resolved)) (acc : Array Ir.Unresolved) (q : Ir.Unresolved)
     (h : q ∈ Ir.foldInlineList Ir.pendingStep acc (renderCite p f parts).toList) :
@@ -3329,9 +2803,6 @@ private theorem renderCite_pending (p : CitePunct) (f : Ir.CiteForm)
 
 mutual
 
-/-- Resolution's census, inline face: whatever a rewritten node adds to the
-pending census is not a citation — the citation arm emits plain content
-(`renderCite_pending`), every other node keeps its own leaf. -/
 private theorem resolveInline_pending (p : CitePunct) (find : Resolver) (x : Ir.Inline) :
     ∀ (acc : Array Ir.Unresolved) (q : Ir.Unresolved),
       q ∈ Ir.foldInlineList Ir.pendingStep acc (resolveInline p find #[] x).toList →
@@ -3446,7 +2917,6 @@ private theorem algLines_pending (p : CitePunct) (find : Resolver) :
         · exact .inr hcc
     · exact .inr hc
 
-/-- A reference list's entries, each through `resolveArr`, folded in turn. -/
 private theorem bibItems_pending (p : CitePunct) (find : Resolver) :
     ∀ (items : List Ir.BibItem) (acc : Array Ir.Unresolved) (q : Ir.Unresolved),
       q ∈ Ir.foldBibItems Ir.pendingStep acc
@@ -3464,9 +2934,6 @@ private theorem bibItems_pending (p : CitePunct) (find : Resolver) :
 
 mutual
 
-/-- Resolution's census, block face, generalised over the output prefix:
-whatever the rewritten block adds to the census beyond what the prefix
-already contributed is not a citation. -/
 private theorem resolveBlock_pending (p : CitePunct) (find : Resolver) (items : Array Ir.BibItem)
     (b : Ir.Block) :
     ∀ (out : Array Ir.Block) (acc : Array Ir.Unresolved) (q : Ir.Unresolved),
@@ -3593,7 +3060,6 @@ private theorem resolveCols_pending (p : CitePunct) (find : Resolver) (items : A
 
 end
 
-/-- The furniture regions, each through `resolveArr`, folded in turn. -/
 private theorem regions_pending (p : CitePunct) (find : Resolver) :
     ∀ (rs : List (Array Ir.Inline)) (acc : Array Ir.Unresolved) (q : Ir.Unresolved),
       q ∈ rs.foldl (fun acc r => Ir.foldInlines Ir.pendingStep acc (resolveArr p find r)) acc →
@@ -3608,8 +3074,6 @@ private theorem regions_pending (p : CitePunct) (find : Resolver) :
     · exact resolveInlines_pending p find r.toList acc q h'
     · exact .inr hc
 
-/-- **Resolution leaves no citation**: the pending census of a resolved
-document names no `.cite`, in any region `foldDoc` reads. -/
 public theorem resolveDoc_no_cite (p : CitePunct) (find : Resolver) (items : Array Ir.BibItem)
     (doc : Ir.Doc) :
     ∀ u ∈ Ir.pendingNodes (resolveDoc p find items doc), u.isCite = false := by
@@ -3627,11 +3091,6 @@ public theorem resolveDoc_no_cite (p : CitePunct) (find : Resolver) (items : Arr
     · exact hc
   · exact hc
 
-/-- **No citation reaches a backend**: `apply` runs on every document and
-leaves no `.cite` node in any region, so the backends' `.cite` arms —
-kept explicit, as every walk's arms are — are dead by this theorem; a
-citation's rendering is the style's inlines and nothing else. The
-citation half of the resolution gate (`pending_named`). -/
 public theorem apply_no_cite (sources : Array (String × String)) (doc : Ir.Doc)
     (rd : FieldReading) :
     ∀ u ∈ Ir.pendingNodes (apply sources doc rd).1, u.isCite = false := by

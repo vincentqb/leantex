@@ -8,50 +8,21 @@ import LeanTex.Core.BibStringsData
 import Std.Data.HashMap
 
 /-! biblatex's standard bibliography styles, `numeric` and `authoryear`,
-transcribed from their sources at biblatex 3.21: the drivers of
-standard.bbx, every bibliography macro, field, list and name format of
-biblatex.def they call, the two style files' overrides (numeric.bbx,
-authoryear.bbx), and English's strings and dates (english.lbx, its strings
-read from the generated `BibStringsData`), under biblatex's default options
-(`maxbibnames=3`, `minbibnames=1`, `maxitems=3`, `giveninits=false`,
-`useprefix=false`, `useauthor`, `useeditor`, no `usetranslator`,
-`abbreviate=true`, `date=comp`, `labeldate=year`, `urldate=short`,
-`dateera=astronomical`, no `datecirca` or `dateuncertain`,
-`mergedate=compact`, `dashed=true`, `block=none`) and the ones a load or an
-entry's `options` sets (`BblOptions.forEntry`).
-
-The reference list is written through biblatex's punctuation tracker
-(biblatex.sty, "Punctuation"): a pending unit punctuation (`\setunit`,
-`\newunit`, `\printunit`) prints only before the next print command that
-prints, and `\addperiod`, `\addcomma`, … add a mark only where biblatex's
-punctuation pairs allow it after the mark before — so an abbreviation dot
-takes no second period, and a title ending in `?` takes none. Each driver
-below is its standard.bbx namesake, macro for macro; what one prints of a
-field is what `BCtx.read` records, which the list's accounting reads.
-
-Two departures are declared. `\printtext[parens]{…}` around content that
-prints nothing prints nothing here, where biblatex prints an empty pair — an
-article with a volume and no date reads `Journal 3`, not `Journal 3 ()`. An
-eprint of a type biblatex has no format for is set as its identifier, never
-a link: biblatex links it to the identifier's own text as an address, which
-leads nowhere. -/
+transcribed from biblatex 3.21's sources. -/
 
 namespace LeanTex.Core.Bib
 
-/-- The two families of biblatex's standard styles whose reference lists
-the engine sets: numeric labels over the standard drivers, and authoryear's
-name-and-date head (authoryear.bbx). -/
+/-- The two families of biblatex's standard styles whose
+reference lists the engine sets. -/
 public inductive BblStyle where
   | numeric
   | authoryear
   deriving Repr, BEq, Inhabited
 
-/-- The biblatex options the drivers read, at biblatex's defaults (biblatex
-manual §3.1.2). -/
+/-- The biblatex options the drivers read, at biblatex's defaults. -/
 public structure BblOptions where
   style : BblStyle := .numeric
-  /-- The citations' family (`citestyle`), whose `.cbx` executes the
-  uniqueness options: authoryear.cbx sets `uniquename` and `uniquelist`. -/
+  /-- The citations' family, whose `.cbx` executes the uniqueness options. -/
   cite : BblStyle := .numeric
   maxbibnames : Nat := 3
   minbibnames : Nat := 1
@@ -76,11 +47,11 @@ public structure BblOptions where
   url : Bool := true
   doi : Bool := true
   eprint : Bool := true
-  /-- The document's language (a BCP 47 tag): `clearlang`, biblatex's
-  default, drops a `language` naming it. -/
+  /-- The document's language as a BCP 47 tag; under `clearlang` a `language`
+  naming it is dropped. -/
   mainLang : String := "en"
-  /-- `language=`: the language the list is worded in, where the load names
-  one (`autodetect`, the default, follows babel's main language). -/
+  /-- `language=`: the language the list is worded in, where
+  the load names one. -/
   language : Option String := none
   /-- babel's main language, as its options spell it. -/
   babelMain : Option String := none
@@ -93,22 +64,19 @@ public structure BblOptions where
   skiplab : Bool := false
   /-- An entry's `dataonly`'s `uniquename=false` and `uniquelist=false`. -/
   unique : Bool := true
-  /-- `sortlocale=`: the locale the list sorts by; `auto`, the default, is
-  babel's main language, as biblatex writes it into the control file. -/
+  /-- `sortlocale=`: the locale the list sorts by; `auto` is
+  babel's main language. -/
   sortlocale : String := "auto"
   /-- `clearlang=`: a `language` naming the document's own is not printed. -/
   clearlang : Bool := true
   deriving Repr, BEq, Inhabited
 
-/-- A boolean option's value as biblatex reads one: `true` or `false`, a
-bare key `true`. -/
+/-- A boolean option's value as biblatex reads one; a bare key is `true`. -/
 private def boolOpt (v : String) : Option Bool :=
   if v == "true" then some true else if v == "false" then some false else none
 
 /-- The options a document's biblatex load declared, read back from the
-declarations the compatibility pass carries to the bibliography (`bbx=`
-names the list's family; `Compat` writes them): `none` when the document
-loads no biblatex. A value that is not a number leaves the default. -/
+declarations the compatibility pass carries; `none` without a load. -/
 public def BblOptions.ofDecls (decls : Option (Array String)) : Option BblOptions := do
   let ds ← decls
   let fam ← ds.findSome? fun d => (d.dropPrefix? "bbx=").map (·.toString)
@@ -128,9 +96,7 @@ public def BblOptions.ofDecls (decls : Option (Array String)) : Option BblOption
     | some "allfull" => .allfull
     | some "false" => .off
     | _ => if cite == .authoryear then .full else .off
-  -- biblatex.sty's end-of-preamble check: a names' initials option turns
-  -- `uniquename=full` into `init` and `allfull` into `allinit`, since a
-  -- list that prints initials tells names apart by them.
+  -- An initials option turns `uniquename=full` into `init` and `allfull` into `allinit`.
   let uniquename := if !giveninits then uniquename else match uniquename with
     | .full => .init
     | .allfull => .allinit
@@ -168,14 +134,13 @@ public def BblOptions.ofDecls (decls : Option (Array String)) : Option BblOption
          sortlocale := (val "sortlocale").getD "auto"
          clearlang := flag "clearlang" true }
 
-/-- The sorting scheme the load declared (`sorting=`), biblatex's default
-for the family where none is. -/
+/-- The sorting scheme the load declared, else biblatex's
+default for the family. -/
 public def bblSorting (decls : Option (Array String)) : String :=
   ((decls.getD #[]).toList.reverse.findSome? fun d => (d.dropPrefix? "sorting=").map (·.toString)).getD
     "nty"
 
-/-- An entry's `options` field (biblatex manual §2.2.3, "options"): its
-comma-separated `key=value` items, a bare key `true`. -/
+/-- An entry's `options` field as `key=value` items; a bare key is `true`. -/
 public def entryOptions (e : Entry) : List (String × String) :=
   match e.field? "options" with
   | none => []
@@ -188,18 +153,15 @@ public def entryOptions (e : Entry) : List (String × String) :=
         | k :: rest => some (k.trimAscii.toString, ("=".intercalate rest).trimAscii.toString)
         | [] => none
 
-/-- The entry-scope options the engine applies (biblatex.sty's
-`\DeclareBiblatexOption{…,entry}` and biber's `dataonly`), each read as the
-document's option of that name is. -/
+/-- The entry-scope options the engine applies. -/
 public def entryOptionKeys : List String :=
   ["useprefix", "giveninits", "firstinits", "maxnames", "minnames", "maxbibnames", "minbibnames",
    "maxcitenames", "mincitenames", "maxsortnames", "minsortnames", "maxitems", "minitems",
    "useauthor", "useeditor", "usetranslator", "abbreviate", "isbn", "url", "doi", "eprint",
    "skipbib", "skipbiblist", "skiplab", "dataonly"]
 
-/-- The options an entry is set under: the document's, with its `options`
-over them — `dataonly` is `skipbib`, `skiplab` and its names out of
-uniqueness, as biber resolves it. -/
+/-- The options an entry is set under: the document's, with
+its `options` over them. -/
 public def BblOptions.forEntry (o : BblOptions) (e : Entry) : BblOptions :=
   (entryOptions e).foldl (init := o) fun o (k, v) =>
     let n (d : Nat) : Nat := v.toNat?.getD d
@@ -241,21 +203,15 @@ public def BblOptions.unique' (o : BblOptions) : UniqueOptions :=
   { uniquename := o.uniquename, uniquelist := o.uniquelist, maxcitenames := o.maxcitenames
     mincitenames := o.mincitenames, useprefix := o.useprefix }
 
-/-- An entry's labelname under its options (biblatex.def `\DeclareLabelname`,
-`useauthor`, `useeditor`, `usetranslator`): the field and its names, each
-under the entry's `useprefix` where it sets no `useprefix` of its own, the
-list read under the entry's citation counts. -/
+/-- An entry's labelname under its options: the field and its names. -/
 public def BblOptions.labelName (o : BblOptions) (e : Entry) : Option (String × NameList) :=
   (labelNameList e o.useauthor o.useeditor o.usetranslator).map fun (f, l) =>
     let names := l.names.map fun n => { n with useprefix := n.useprefix.orElse fun _ => some o.useprefix }
     (f, { l with names, maxCite := some o.maxcitenames, minCite := some o.mincitenames
                  unique := o.unique })
 
-/-! ## The punctuation tracker -/
-
-/-- What the last printed mark leaves for the next one to read — TeX's
-space factor as biblatex classifies it: an ordinary character, the entry's
-start, or one of its punctuation marks (`dot` is an abbreviation's). -/
+/-- What the last printed mark leaves for the next to read: TeX's space factor
+as biblatex classifies it. -/
 private inductive Sf where
   | letter
   | start
@@ -268,16 +224,14 @@ private inductive Sf where
   | question
   deriving BEq
 
-/-- `\DeclareCapitalPunctuation{.!?}`: a string after a sentence's end, or
-at the entry's start, is capitalized. -/
+/-- `\DeclareCapitalPunctuation{.!?}`: a string after a sentence's end, or at
+the entry's start, is capitalized. -/
 private def Sf.capital : Sf → Bool
   | .start | .period | .exclam | .question => true
   | .letter | .dot | .comma | .semicolon | .colon => false
 
-/-- biblatex's punctuation pairs (biblatex.sty `\blx@resetpunct`): may
-`mark` follow what was printed last? After an ordinary character anything
-may; a comma, semicolon or colon may follow an abbreviation dot, `!` or
-`?`; `!` and `?` may follow a dot; a period or a dot follows no mark. -/
+/-- biblatex's punctuation pairs: whether `mark` may follow
+what was printed last. -/
 private def allowedAfter (mark prev : Sf) : Bool :=
   match prev with
   | .letter | .start => true
@@ -287,10 +241,8 @@ private def allowedAfter (mark prev : Sf) : Bool :=
     | .exclam | .question => p == .dot
     | .letter | .start | .dot | .period => false
 
-/-- The class a printed text leaves: its last character, read through the
-quotes and brackets TeX's space factor reads through (biblatex's sfcodes
-make an opening parenthesis transparent too, so `(Visited on …)` after a
-period capitalizes). -/
+/-- The class a printed text leaves, read through closing
+quotes and brackets. -/
 private def sfAfter (prev : Sf) (s : String) : Sf :=
   match (s.toList.reverse.dropWhile fun c =>
       c == '”' || c == '’' || c == '“' || c == '‘' || c == ')' || c == ']' || c == '(' ||
@@ -315,13 +267,11 @@ private inductive Op where
   | nbspace
   | text (s : String)
 
-/-- `\newunitpunct`, the unit and block separator: `\addperiod\space`. -/
+/-- `\newunitpunct`, the unit and block separator. -/
 private def newunitpunct : List Op := [.period, .space]
 
-/-- The tracker's state, biblatex.sty's toggles (`blx@insert`,
-`blx@lastins`, `blx@unit`, `blx@block`, `blx@keepunit`) and buffered unit
-punctuation, over the output so far and the space a following mark may
-take back (`\unspace`). -/
+/-- The punctuation tracker's state: biblatex.sty's toggles and buffered unit
+punctuation over the output so far. -/
 private structure Tk where
   out : Array Ir.Inline := #[]
   gap : Option String := none
@@ -333,8 +283,8 @@ private structure Tk where
   keepunit : Bool := false
   unitPunct : List Op := newunitpunct
   parens : Nat := 0
-  /-- Fields a macro cleared after printing them (`\clearname`,
-  `\clearfield`): later macros read them as undefined. -/
+  /-- Fields a macro cleared after printing them, which
+  later macros read as undefined. -/
   cleared : List String := []
   /-- The fields the driver read: what it decided about. -/
   read : List String := []
@@ -343,11 +293,8 @@ private structure Tk where
   /-- The field texts read so far, across the list's entries. -/
   cache : FieldCache := {}
 
-/-- What a driver reads: the entry, the options it is set under, the field
-reading, the entry's extradate letter, whether its names repeat the last
-entry's (authoryear's dash), its labelname's field with the names its
-`uniquelist` shows, and the document's month names, which a legacy `month`
-may spell. -/
+/-- What a driver reads: the entry, its options, the field reading, its
+extradate letter, and its labelname. -/
 private structure BCtx where
   e : Entry
   opts : BblOptions
@@ -369,10 +316,7 @@ private def flushGap : BM Unit := modify fun t =>
   | some g => { t with out := if t.out.isEmpty then t.out else t.out.push (.text g), gap := none }
   | none => t
 
-/-- The text a printed piece leaves the space factor of: a citation or a
-reference a field holds sets its mark, which ends in a letter, a digit or
-a bracket — never the `?` an unresolved one shows for now. A leaf of
-`Ir.mapInlines`. -/
+/-- The text a printed piece leaves the space factor of. -/
 private def sfText (xs : Array Ir.Inline) : String :=
   Ir.plainText (Ir.mapInlines (fun x => match x with
     | .cite _ _ => .text "0"
@@ -387,8 +331,8 @@ private def put (xs : Array Ir.Inline) : BM Unit := do
 
 private def putText (s : String) : BM Unit := put #[.text s]
 
-/-- `\addperiod`, `\adddot`, `\addcomma`, …: take back a pending space, then
-add the mark where the pair rule allows (`allowedAfter`). -/
+/-- `\addperiod`, `\adddot`, `\addcomma`, …: a pending space taken back, then
+the mark where the pair rule allows. -/
 private def addMark (m : Sf) (ch : String) : BM Unit := modify fun t =>
   let t := { t with gap := none }
   if allowedAfter m t.sf && !t.out.isEmpty then { t with out := t.out.push (.text ch), sf := m }
@@ -417,9 +361,8 @@ private def midsentence : BM Unit := modify fun t => { t with sf := .letter }
 /-- `\isdot`: a period just printed is an abbreviation's dot. -/
 private def isdot : BM Unit := modify fun t => if t.sf == .period then { t with sf := .dot } else t
 
-/-- `\blx@begunit`: before content that prints, the buffered unit
-punctuation once something is printed (`\newblockpunct` is empty under
-`block=none`). -/
+/-- `\blx@begunit`: before printing content, the buffered unit punctuation once
+something is printed. -/
 private def begunit : BM Unit := do
   let t ← get
   if t.insert then
@@ -431,7 +374,6 @@ private def begunit : BM Unit := do
 private def endunit : BM Unit := modify fun t => { t with insert := true, lastins := true }
 private def nounit : BM Unit := modify fun t => { t with lastins := false }
 
-/-- `\setunit{p}`. -/
 private def setunit (p : List Op) : BM Unit := modify fun t =>
   if t.keepunit then t else { t with unitPunct := p, unit := true }
 
@@ -452,8 +394,7 @@ private def printWith (body : BM Unit) : BM Unit := do
   body
   endunit
 
-/-- A field's TeX text through the reading in force, once per text
-(`FieldCache.read`). -/
+/-- A field's TeX text through the reading in force, once per text. -/
 private def conv (s : String) : BM (Array Ir.Inline) := do
   let cv := (← read).cv
   let t ← get
@@ -461,14 +402,13 @@ private def conv (s : String) : BM (Array Ir.Inline) := do
   set { t with report := t.report ++ ds, cache }
   pure xs
 
-/-- An entry's field, present when it holds more than white space and no
-macro cleared it. -/
+/-- An entry's field, present when it holds more than white
+space and no macro cleared it. -/
 private def fld (name : String) : BM (Option String) := do
   modify fun t => if t.read.contains name then t else { t with read := name :: t.read }
   if (← get).cleared.contains name then return none
   pure (((← read).e.field? name).filter fun v => !v.trimAscii.toString.isEmpty)
 
-/-- `\clearname`, `\clearfield`. -/
 private def clear (name : String) : BM Unit := modify fun t => { t with cleared := name :: t.cleared }
 
 private def has (name : String) : BM Bool := do pure (← fld name).isSome
@@ -483,9 +423,8 @@ private def styled (st : Ir.Style) (body : BM Unit) : BM Unit := do
       { t with out := (t.out.extract 0 n).push (.styled st (t.out.extract n t.out.size)) }
     else t
 
-/-- `\printtext[parens]{body}` (and `brackets`): the pair around what the
-body prints, brackets inside parentheses (`\mkbibparens` alternates); the
-pair prints only around content that printed (the declared departure). -/
+/-- `\printtext[parens]{body}` and `brackets`: the pair around what the body
+prints, only where it printed. -/
 private def wrapped (brackets : Bool) (body : BM Unit) : BM Unit := do
   let before ← get
   begunit
@@ -506,10 +445,8 @@ private def wrapped (brackets : Bool) (body : BM Unit) : BM Unit := do
     modify fun t => { t with sf := .letter }
     endunit
 
-/-! ## Strings -/
-
 /-- One piece of a localized string: text, a punctuation command, or the
-original-language list (`\lbx@sfromlang`, `\lbx@lfromlang`). -/
+original-language list. -/
 public inductive BibPiece where
   | txt (s : String)
   | dot
@@ -521,11 +458,8 @@ public inductive BibPiece where
   | fromLang
   deriving Repr, BEq, Inhabited
 
-/-- A string's TeX as its pieces, and whether every command in it was one
-the pieces spell: `\adddot`, `\adddotspace`, `\addabbrvspace`, `\addspace`,
-`\addnbspace`, `\addcomma`, `\finalandcomma` (English's is `\addcomma`),
-`\addsemicolon`, `\finalandsemicolon`, `\addcolon`, a control space, `\S`
-(`§`), `~` (a no-break space), and the original-language list. -/
+/-- A string's TeX as its pieces, and whether every command
+in it was one the pieces spell. -/
 public def bibStringPieces (src : String) : Array BibPiece × Bool := Id.run do
   let cs := src.toList.toArray
   let mut out : Array BibPiece := #[]
@@ -583,9 +517,7 @@ public def bibStringPieces (src : String) : Array BibPiece × Bool := Id.run do
   unless cur.isEmpty do out := out.push (.txt cur)
   return (out, ok)
 
-/-- The strings by key, each form read into its pieces once per process,
-on first use (`Unit`, as `Nfc`'s tables take it, so a document with no
-biblatex list never builds it). -/
+/-- The strings by key, each form read into its pieces on first use. -/
 private def loadStrings (_ : Unit) : Std.HashMap String (Array BibPiece × Array BibPiece) :=
   BibStringsData.english.foldl (init := {}) fun m (k, longForm, shortForm) =>
     m.insert k ((bibStringPieces longForm).1, (bibStringPieces shortForm).1)
@@ -593,8 +525,8 @@ private def loadStrings (_ : Unit) : Std.HashMap String (Array BibPiece × Array
 private def stringTable : Thunk (Std.HashMap String (Array BibPiece × Array BibPiece)) :=
   Thunk.mk loadStrings
 
-/-- A bibliography string's pieces in the form the options ask for — the
-short form under `abbreviate`, else the long. -/
+/-- A bibliography string's pieces: the short form under
+`abbreviate`, else the long. -/
 private def bibStringOf (short : Bool) (key : String) : Option (Array BibPiece) :=
   (stringTable.get.get? key).map fun (longForm, shortForm) => if short then shortForm else longForm
 
@@ -607,9 +539,8 @@ private def capFirst (s : String) : String :=
   | c :: cs => String.ofList (c.toUpper :: cs)
   | [] => s
 
-/-- A string's pieces printed in place, its first letter capitalized after
-a sentence's end (`\bibstring`'s `\ifcapital`); the original-language list
-as `fromLang` prints it, which a string of its own never holds. -/
+/-- A string's pieces printed in place, its first letter
+capitalized after a sentence's end. -/
 private def putPiecesWith (fromLang : BM Unit) (ps : Array BibPiece) : BM Unit := do
   let cap := (← get).sf.capital
   let mut first := true
@@ -626,9 +557,8 @@ private def putPiecesWith (fromLang : BM Unit) (ps : Array BibPiece) : BM Unit :
     | .nbspace => runOp .nbspace
     | .fromLang => fromLang
 
-/-- `\printlist[sfromoriglanguage]{origlanguage}` (`\lbx@sfromlang`): each
-language as its `from` string, else as its name, joined as names are; an
-entry without one takes the space before it back (`\unspace`). -/
+/-- `\printlist[sfromoriglanguage]{origlanguage}`: each language as its `from`
+string, else its name. -/
 private def fromLangList : BM Unit := do
   match ← fld "origlanguage" with
   | none => unspace
@@ -653,12 +583,11 @@ private def fromLangList : BM Unit := do
         | some ps => putPiecesWith (pure ()) ps
         | none => putText k
 
-/-- A string's pieces printed in place (`putPiecesWith`), the
-original-language list read off the entry (`fromLangList`). -/
+/-- A string's pieces printed in place, the
+original-language list read off the entry. -/
 private def putPieces (ps : Array BibPiece) : BM Unit := putPiecesWith fromLangList ps
 
-/-- `\bibstring{key}`: a print command. A key no string answers prints as
-written, as biblatex prints it. -/
+/-- `\bibstring{key}`; a key no string answers prints as written. -/
 private def bibstring (key : String) : BM Unit := do
   match bibStringOf (← read).opts.abbreviate key with
   | some ps => printWith (putPieces ps)
@@ -668,8 +597,8 @@ private def bibstring (key : String) : BM Unit := do
 private def strPieces (key : String) : BM (Array BibPiece) := do
   pure ((bibStringOf (← read).opts.abbreviate key).getD #[.txt key])
 
-/-- english.lbx's `\mkbibordinal`: `1st`, `2nd`, `3rd`, `4th`, … `11th`,
-`12th`, `13th`, `21st`. -/
+/-- english.lbx's `\mkbibordinal`: `1st`, `2nd`, `3rd`,
+`4th`, … `11th`, `12th`, `13th`, `21st`. -/
 private def ordinal (n : Nat) : String :=
   let m := n % 100
   let suffix := if 10 < m && m < 20 then "th"
@@ -680,30 +609,21 @@ private def ordinal (n : Nat) : String :=
       | _ => "th"
   toString n ++ suffix
 
-/-! ## Names -/
-
-/-- How a name list is written (biblatex.def's name formats): given name
-first (`given-family`, the `default`), or the first name family first and
-the rest given first (`family-given/given-family`, authoryear's
-`sortname`). -/
+/-- How a name list is written: given name first, or the first name family first
+and the rest given first. -/
 private inductive NameFmt where
   | givenFamily
   | sortname
   deriving BEq
 
-/-- The format a field's names print in when the macro names none
-(`\printnames{author}`): its `\DeclareNameAlias` — authoryear aliases
-`author`, `editor`, `translator` and `bookauthor` (through `author`) to
-`sortname`; numeric, and every other field, the default. -/
+/-- The format a field's names print in when the macro names
+none: its `\DeclareNameAlias`. -/
 private def fmtOf (field : String) : BM NameFmt := do
   pure (if (← read).opts.style == .authoryear && !(← read).fullcite &&
       ["author", "editor", "translator", "bookauthor"].contains field then .sortname
     else .givenFamily)
 
-/-- A name list's visible names and whether more are elided (biblatex's
-`liststop` and `\ifmorenames`): past `max` names its `uniquelist`, else
-the first `min`, show (`shownCount`); a closing `others` is never shown
-and always elides. -/
+/-- A name list's visible names and whether more are elided. -/
 private def visibleNames (v : String) (max min : Nat) (ul : Option Nat) : List Name × Bool :=
   let ns := (splitNames v).toList
   let others := ns.getLast? == some "others"
@@ -711,15 +631,11 @@ private def visibleNames (v : String) (max min : Nat) (ul : Option Nat) : List N
   let shown := ns.take (shownCount ns.length max min ul)
   (shown.map parseNameBiber, others || shown.length < ns.length)
 
-/-- `\ifprefchar`: a prefix ending in one of biblatex's prefix characters
-(`'` and `-`) takes no space before the family name. -/
+/-- `\ifprefchar`: a prefix ending in `'` or `-` takes no
+space before the family name. -/
 private def prefChar (s : String) : Bool := s.endsWith "'" || s.endsWith "-"
 
-/-- One name in TeX by biblatex's `name:given-family` (`familyFirst`
-false) or `name:family-given` (true): `Yan van der Example`, `Example, Yan
-van der` — under `useprefix`, `Van der Example, Yan`, its prefix
-capitalized where the name opens a sentence (`cap`) — `Zed Smith Jr.`,
-`Smith Jr., Zed`; the given name its initials under `giveninits`. -/
+/-- One name in TeX by biblatex's `name:given-family` or `name:family-given`. -/
 private def nameTeX (o : BblOptions) (familyFirst : Bool) (n : Name) (cap : Bool := false) :
     String :=
   let given := if o.giveninits then initials n.first else n.first
@@ -736,19 +652,17 @@ private def nameTeX (o : BblOptions) (familyFirst : Bool) (n : Name) (cap : Bool
   else
     (if given.isEmpty then "" else given ++ " ") ++ pre n.von ++ n.last ++ sfx
 
-/-- How many names a list holds, an elided list counting as many. -/
+/-- How many names a list holds. -/
 private def nameCount (v : String) : Nat :=
   let ns := splitNames v
   if ns.toList.getLast? == some "others" then 2 else ns.size
 
-/-- Do two name lists hold the same names (`\ifnamesequal`)? -/
+/-- `\ifnamesequal`. -/
 private def namesEqual (a b : String) : Bool :=
   (splitNames a).map (text ·.trimAscii.toString) == (splitNames b).map (text ·.trimAscii.toString)
 
 /-- `\printnames[fmt]{field}`: each visible name by the format, joined by
-biblatex's delimiters (`multinamedelim`, `finalnamedelim` with its serial
-comma past two names) and closed by `et al.` when names are elided
-(`name:andothers`). A print command. -/
+biblatex's delimiters and closed by `et al.` when names are elided. -/
 private def printNames (field : String) (fmt : NameFmt) : BM Unit := do
   match ← fld field with
   | none => nounit
@@ -778,24 +692,18 @@ private def printNames (field : String) (fmt : NameFmt) : BM Unit := do
         runOp .space
         putPieces othersPs
 
-/-- `\printnames{field}` under the field's own format (`fmtOf`). -/
+/-- `\printnames{field}` under the field's own format. -/
 private def printNamesOf (field : String) : BM Unit := do printNames field (← fmtOf field)
 
-/-! ## Literal lists -/
-
-/-- How a literal list's items print: as written with `\isdot` (the
-`default` format, and `publisher`, `location`); a patent's `location`,
-each a country's string or as written, joined by commas alone
-(`\DeclareListFormat[patent]{location}`). -/
+/-- How a literal list's items print: as written with `\isdot`, or a patent's
+`location` as country strings. -/
 private inductive ListFmt where
   | plain
   | patentLocation
   deriving BEq
 
-/-- `\printlist{field}`: the items of a literal list, split on `and`, each
-`#1\isdot`, joined as names are and elided past `maxitems` with `et al.`
-(`list:delim`, `list:andothers`); a patent's location every item, never
-elided. A print command. -/
+/-- `\printlist{field}`: a literal list's items split on `and`, joined as names
+are and elided past `maxitems`. -/
 private def printList (field : String) (fmt : ListFmt := .plain) : BM Unit := do
   match ← fld field with
   | none => nounit
@@ -831,9 +739,8 @@ private def printList (field : String) (fmt : ListFmt := .plain) : BM Unit := do
         runOp .space
         putPieces morePs
 
-/-- The language list (`\printlist{language}`): its items as their
-strings — a key itself, or `lang` and the key — joined as names are, and
-those the document's language makes redundant cleared (`clearlang`). -/
+/-- The language list: its items as their strings, those the document's language
+makes redundant cleared. -/
 private def languageList : BM Unit := do
   match ← fld "language" with
   | none => nounit
@@ -860,16 +767,11 @@ private def languageList : BM Unit := do
         | none, some ps => putPieces ps
         | none, none => putText k
 
-/-! ## Dates -/
-
-/-- A year in a long date (`\stripzeros`), its era as `dateera=astronomical`
-writes it: a year before the common era after `\bibdateeraprefix`, the
-minus sign. -/
+/-- A year in a long date, its era as `dateera=astronomical` writes it. -/
 private def yearLong (y : Int) : String :=
   (if y < 0 then "−" else "") ++ toString y.natAbs
 
-/-- A year as `\mkyearzeros` pads it — four digits at least — after the
-era's minus sign. -/
+/-- A year as `\mkyearzeros` pads it, four digits at least. -/
 private def yearZeros (y : Int) : String :=
   let s := toString y.natAbs
   (if y < 0 then "−" else "") ++ String.ofList (List.replicate (4 - s.length) '0') ++ s
@@ -882,11 +784,8 @@ private def monthPieces (m : Nat) : BM (Array BibPiece) := do
   | some k => strPieces k
   | none => pure #[.txt (toString m)]
 
-/-- english.lbx's `\mkbibdatelong{year}{month}{day}` over one date, its
-year left out where a range prints it once (`withYear` false): `May 3,
-2021`, `May 2021`, `2021`, the month and day joined by a no-break space; a
-year division in place of the month (`\mkbibyeardivisiondatelong`: `Spr.
-2020`), its year padded. -/
+/-- english.lbx's `\mkbibdatelong` over one date:
+`May 3, 2021`, `May 2021`, `2021`. -/
 private def putDateLong (d : Date) (withYear : Bool) : BM Unit := do
   match d.division with
   | some div =>
@@ -914,12 +813,8 @@ private def circaMark (on : Bool) : BM Unit := do
 private def uncertainMark (on : Bool) : BM Unit := do
   if on && (← read).opts.dateuncertain then putText "?"
 
-/-- A date value as `\printdate` prints it under `date=comp`, english.lbx's
-`\mkdaterangecomp` (`\lbx@us@mkdaterangetrunc@long`): one date long, a
-range's shared year once (`Mar. 1–5, 2018`, `June 10–July 2, 2012`, `Mar.–
-May 2019`), its shared month once, an open end or start a dash (`1989–`,
-`–2015`); `extra` the extradate letter `\printdateextra` adds, after the
-date or its range's end. -/
+/-- A date value as `\printdate` prints it under `date=comp`: one date long, a
+range's shared year once. -/
 private def putDateValue (dv : DateValue) (extra : String := "") : BM Unit := do
   let sameYear := match dv.start, dv.stop with
     | some a, some (some b) => a.year == b.year
@@ -941,9 +836,7 @@ private def putDateValue (dv : DateValue) (extra : String := "") : BM Unit := do
     putText extra
     uncertainMark dv.endUncertain
 
-/-- A legacy year (with its month) as `\printdate` prints it: the month's
-string and the year, a year that is a string's key as that string
-(`forthcoming`), anything else as written. -/
+/-- A legacy year with its month as `\printdate` prints it. -/
 private def putLegacy (year : String) (month : Option String) (extra : String := "") : BM Unit := do
   if let some m := month then
     match m.toNat? with
@@ -959,10 +852,8 @@ private def putLegacy (year : String) (month : Option String) (extra : String :=
     if isBibstring year then putPieces (← strPieces year) else put (← conv year)
   putText extra
 
-/-- The year format of a label date (`labeldate=year`, `\mkdaterangeyear`):
-its years only, padded, the end year where it differs (`2019–2020`, `1989–`,
-`–2015`); a legacy year as a string or as written; `extra` after the start,
-or the end (`\mkdaterangeyearextra`). -/
+/-- The year format of a label date (`labeldate=year`): its years only, padded,
+the end year where it differs. -/
 private def putLabelYear (p : DateParts) (extra : String := "") : BM Unit := do
   match p with
   | .parsed dv =>
@@ -987,27 +878,23 @@ private def putLabelYear (p : DateParts) (extra : String := "") : BM Unit := do
     putText extra
   | .none => putText extra
 
-/-- `\ifnumerals`: a value of numerals alone — digits, the roman numeral
-letters, spaces, `.` — and the characters and dashes a range or a list is
-written with (`~ , ; - + /`, en and em dashes). `\ifnumeral` is the same
-without the range characters. -/
+/-- `\ifnumerals`: a value of numerals alone and the characters a range or a
+list is written with. -/
 public def isNumerals (range : Bool) (s : String) : Bool :=
   let t := s.trimAscii.toString
   !t.isEmpty && t.all fun c =>
     c.isDigit || "ivxlcdmIVXLCDM .".contains c ||
       (range && ("~,;-+/".contains c || c == '–' || c == '—'))
 
-/-- A field's date parts (`Entry.dateParts`), the fields that decide it
-recorded as read. -/
+/-- A field's date parts, the deciding fields recorded as read. -/
 private def datePartsOf (ty : String) : BM DateParts := do
   for f in (if ty.isEmpty then ["date", "year", "month"] else [ty ++ "date"]) do
     discard (fld f)
   let ctx ← read
   pure (ctx.e.dateParts ctx.months ty)
 
-/-- `\printdate` (and `\printeventdate`, `\printorigdate`): a date type's
-value as `putDateValue` prints it, a legacy year as `putLegacy`, a value
-biber cannot read as written. A print command. -/
+/-- `\printdate` and its siblings: a date type's value, a legacy year, or a
+value biber cannot read as written. -/
 private def printDateOf (ty : String) : BM Unit := do
   match ← datePartsOf ty with
   | .parsed dv => printWith (putDateValue dv)
@@ -1019,14 +906,12 @@ private def twoDigits (n : Nat) : String :=
   let s := toString n
   (if n < 10 then "0" else "") ++ s
 
-/-- One date by english.lbx's `\mkbibdateshort`: `MM/DD/YYYY`, two-digit
-month and day, four-digit year. -/
+/-- One date by english.lbx's `\mkbibdateshort`: `MM/DD/YYYY`. -/
 private def dateShort (d : Date) : String :=
   (match d.month with | some m => twoDigits m ++ "/" | none => "") ++
     (match d.day with | some day => twoDigits day ++ "/" | none => "") ++ yearZeros d.year
 
-/-- `\printurldate` under `urldate=short` (`\mkdaterangeshort`). A print
-command. -/
+/-- `\printurldate` under `urldate=short`. -/
 private def printUrldate : BM Unit := do
   match ← datePartsOf "url" with
   | .parsed dv =>
@@ -1039,11 +924,9 @@ private def printUrldate : BM Unit := do
   | .written s => printWith (put (← conv s))
   | .legacy .. | .none => nounit
 
-/-- The label date (biblatex.def `\DeclareLabeldate`, `Entry.labelDate`):
-its type and value, the fields that decide it recorded as read. -/
+/-- The label date: its type and value, the deciding fields recorded as read. -/
 private def labelDateOf : BM (Option (String × DateParts)) := do
-  -- `\DeclareLabeldate` reads its fields in turn up to the first an entry
-  -- has, and prints that one: a date field after it is never printed here.
+  -- `\DeclareLabeldate` prints the first of its fields an entry has.
   let ld := (← read).labelDate
   let upTo := match ld with
     | some ("", _) => ["date", "year", "month"]
@@ -1054,35 +937,28 @@ private def labelDateOf : BM (Option (String × DateParts)) := do
   for f in upTo do discard (fld f)
   pure ld
 
-/-- `\iflabeldateisdate`: the label date is the entry's own date (or its
-legacy year), the one authoryear's head merges with its letter. -/
+/-- `\iflabeldateisdate`: the label date is the entry's own date. -/
 private def labelIsDate : BM Bool := do
   pure (match ← labelDateOf with
     | some ("", _) => true
     | _ => false)
 
-/-- Is a label date's year numerals (`\iffieldnums{labelyear}`)? A date with
-a start and a legacy year of digits are; text is as `isNumerals` reads it;
-an open start and `nodate` are not. -/
+/-- Whether a label date's year is numerals. -/
 private def labelNumerals : Option (String × DateParts) → Bool
   | some (_, .parsed dv) => dv.start.isSome
   | some (_, .legacy y _) => isNumerals true y
   | some (_, .written s) => isNumerals true s
   | some (_, .none) | none => false
 
-/-- The extradate letter as its field format prints it (`extradate`): bare
-after a label year of numerals, else in parentheses — brackets inside a
-parenthesis, as `\mkbibparens` alternates. -/
+/-- The extradate letter: bare after a label year of
+numerals, else in parentheses. -/
 private def extraText (numerals : Bool) (letter : String) : BM String := do
   if letter.isEmpty || numerals then return letter
   let sq := (← get).parens % 2 == 1
   return (if sq then "[" else "(") ++ letter ++ (if sq then "]" else ")")
 
-/-! ## Field formats and bibliography macros (biblatex.def) -/
-
-/-- How an entry type's `title` format sets a title: quoted (`\mkbibquote`)
-for the contained works, as written for the supplementary ones, else
-emphasized. -/
+/-- How an entry type's `title` format sets a title: quoted,
+as written, or emphasized. -/
 private inductive TitleFmt where
   | quoted
   | plain
@@ -1095,7 +971,7 @@ private def titleFmtOf (kind : String) : TitleFmt :=
   else if ["suppbook", "suppcollection", "suppperiodical"].contains kind then .plain
   else .emph
 
-/-- Quotation marks around what `body` prints (`\mkbibquote`). -/
+/-- Quotation marks around what `body` prints. -/
 private def quoted (body : BM Unit) : BM Unit := do
   putText "“"
   body
@@ -1108,8 +984,8 @@ private def underFmt (fmt : TitleFmt) (body : BM Unit) : BM Unit :=
   | .plain => body
   | .emph => styled .italic body
 
-/-- A plain field: `#1` as written, `\isdot` after it where its format has
-one. A print command. -/
+/-- A plain field: as written, with `\isdot` after it where
+its format has one. -/
 private def pfield (name : String) (dot : Bool := false) : BM Unit := do
   match ← fld name with
   | some v => printWith do
@@ -1117,8 +993,7 @@ private def pfield (name : String) (dot : Bool := false) : BM Unit := do
       if dot then isdot
   | none => nounit
 
-/-- A field formatted `\ifbibstring{#1}{\bibstring{#1}}{#1}` (`type`,
-`pubstate`). -/
+/-- A field formatted `\ifbibstring{#1}{\bibstring{#1}}{#1}`. -/
 private def keyedField (name : String) : BM Unit := do
   match ← fld name with
   | some v =>
@@ -1126,11 +1001,8 @@ private def keyedField (name : String) : BM Unit := do
     if isBibstring k then bibstring k else printWith (put (← conv v))
   | none => nounit
 
-/-- The title macros' shape (biblatex.def `title`, `booktitle`, `maintitle`,
-`journal`, `periodical`, `issue`): the title and subtitle under one format,
-`\subtitlepunct` between them, then the addendum — printed as a field even
-when undefined, which resets `\setunit*`'s test, except where the macro
-tests it first (`journal`, `periodical`: `addonIfDefined`). -/
+/-- The title macros' shape: title and subtitle under one format,
+`\subtitlepunct` between them, then the addendum. -/
 private def titleMacro (title subtitle addon : String) (fmt : TitleFmt) (dotted : Bool := false)
     (addonIfDefined : Bool := false) : BM Unit := do
   if (← has title) || (← has subtitle) then
@@ -1167,8 +1039,8 @@ private def issue : BM Unit := titleMacro "issuetitle" "issuesubtitle" "issuetit
 /-- `\mkbibacro{X}`: small capitals, lowercased. -/
 private def acro (s : String) : Ir.Inline := .styled .smallcaps #[.text s.toLower]
 
-/-- A verbatim identifier's printed form, monospaced, linked where its
-format links it. -/
+/-- A verbatim identifier's printed form, monospaced, linked
+where its format links it. -/
 private def verbLink (target shown : String) : Ir.Inline :=
   .link target #[.styled .mono #[.text shown]]
 
@@ -1200,9 +1072,8 @@ private def urlField : BM Unit := do
       put #[verbLink (urlText u) (urlText u)]
   | none => nounit
 
-/-- The eprint formats biblatex.def declares, by `eprinttype` (each also
-under the spelling its alias gives): the label, and the address the
-identifier links to. -/
+/-- The eprint formats biblatex.def declares by `eprinttype`: the label, and the
+address the identifier links to. -/
 private def eprintFormats : List (String × String × String) :=
   [("hdl", "HDL", "http://hdl.handle.net/"), ("HDL", "HDL", "http://hdl.handle.net/"),
    ("jstor", "JSTOR", "http://www.jstor.org/stable/"),
@@ -1212,11 +1083,7 @@ private def eprintFormats : List (String × String × String) :=
    ("googlebooks", "Google Books", "http://books.google.com/books?id="),
    ("Google Books", "Google Books", "http://books.google.com/books?id=")]
 
-/-- The `eprint` macro: `arXiv: id [class]` linked to the abstract page
-(`eprint:arxiv`, the class inside the link), a declared type's label and
-its link (`eprintFormats`), and any other type — or none — as
-`type: id (class)`, `eprint: id`, the identifier unlinked (the declared
-departure). -/
+/-- The `eprint` macro. -/
 private def eprintMacro : BM Unit := do
   match ← fld "eprint" with
   | none => nounit
@@ -1259,8 +1126,7 @@ private def eprintMacro : BM Unit := do
           runOp .space
           putText ("(" ++ c ++ ")")
 
-/-- `url+urldate`: the URL, and the visit date after a space
-(`\mkbibparens{\bibstring{urlseen}\space#1}`). -/
+/-- `url+urldate`: the URL, and the visit date after a space. -/
 private def urlUrldate : BM Unit := do
   urlField
   if (← datePartsOf "url") != .none then
@@ -1270,8 +1136,7 @@ private def urlUrldate : BM Unit := do
       setunit [.space]
       printUrldate
 
-/-- `doi+eprint+url`, each under its option (standard.bbx: `url=true` for
-`@online` whatever the load says). -/
+/-- `doi+eprint+url`, each under its option. -/
 private def doiEprintUrl : BM Unit := do
   let o := (← read).opts
   if o.doi then doiField
@@ -1280,16 +1145,13 @@ private def doiEprintUrl : BM Unit := do
   newunit; newblock
   if o.url || (← read).e.kind == "online" then urlUrldate
 
-/-- `addendum+pubstate`. -/
 private def addendumPubstate : BM Unit := do
   pfield "addendum"
   newunit; newblock
   keyedField "pubstate"
 
-/-- `\mkpageprefix[pagination]` over a value: `p.` before a numeral, `pp.`
-before numerals (a range or a list), nothing before anything else; the
-pagination a field names — `column`, `line`, `verse`, `section`,
-`paragraph`, `none` — in place of `page`. -/
+/-- `\mkpageprefix[pagination]`: `p.` before a numeral, `pp.` before numerals,
+nothing before anything else. -/
 private def pagePrefix (pagination : Option String) (v : String) : BM (Array BibPiece) := do
   let kind := ((pagination.map fun p => (text p).trimAscii.toString).filter (!·.isEmpty)).getD "page"
   if kind == "none" then return #[]
@@ -1299,8 +1161,7 @@ private def pagePrefix (pagination : Option String) (v : String) : BM (Array Bib
     return (← strPieces (kind ++ "s")) ++ #[.nbspace]
   return #[]
 
-/-- A range's hyphens as biber writes the range (one en dash), its list
-separators `, ` (`\mknormrange`'s `\bibrangessep`). -/
+/-- A range's hyphens as one en dash, its list separators `, `. -/
 public def normRange (v : String) : String :=
   let items := ((v.replace ";" ",").splitOn ",").map (·.trimAscii.toString) |>.filter (!·.isEmpty)
   ", ".intercalate (items.map fun t =>
@@ -1309,8 +1170,7 @@ public def normRange (v : String) : String :=
       "–".intercalate (parts.filter (!·.isEmpty))
     else t)
 
-/-- The pages format (`\mkpageprefix[bookpagination]{#1}`), the range
-biber's. -/
+/-- The pages format, the range as biber writes it. -/
 private def pagesField (name : String := "pages") : BM Unit := do
   match ← fld name with
   | none => nounit
@@ -1321,8 +1181,7 @@ private def pagesField (name : String := "pages") : BM Unit := do
       putPieces pre
       put (← conv t)
 
-/-- `pagetotal` (`\mkpagetotal[bookpagination]`): `320 pp.`, `1 p.`, a
-value that is no numeral as written. -/
+/-- `pagetotal`: `320 pp.`, `1 p.`, anything else as written. -/
 private def pagetotalField : BM Unit := do
   match ← fld "pagetotal" with
   | none => nounit
@@ -1336,8 +1195,7 @@ private def pagetotalField : BM Unit := do
         runOp .nbspace
         putPieces (← strPieces (kind ++ "total" ++ (if t.toNat? == some 1 then "" else "s")))
 
-/-- The edition format: an integer as `2nd ed.`, anything else as written
-with `\isdot`. -/
+/-- The edition format: an integer as `2nd ed.`, anything else as written. -/
 private def editionField : BM Unit := do
   match ← fld "edition" with
   | none => nounit
@@ -1352,8 +1210,7 @@ private def editionField : BM Unit := do
         put (← conv v)
         isdot
 
-/-- `volume`: a book's `\bibstring{volume}~#1`, a journal's (article,
-periodical) as written. -/
+/-- `volume`: a book's `\bibstring{volume}~#1`, a journal's as written. -/
 private def volumeField : BM Unit := do
   match ← fld "volume" with
   | some v =>
@@ -1397,9 +1254,8 @@ private def versionField : BM Unit := do
       put (← conv v)
   | none => nounit
 
-/-- `series`: a journal's (article, periodical) integer as `2nd ser.`, a
-string's key as its string, anything else as written; any other type's as
-written. -/
+/-- `series`: a journal's integer as `2nd ser.`, a string's key as its string,
+anything else as written. -/
 private def seriesField : BM Unit := do
   match ← fld "series" with
   | none => nounit
@@ -1419,18 +1275,15 @@ private def inColon : BM Unit := do
   bibstring "in"
   printunit [.colon, .space]
 
-/-- authoryear's merged date (`bbx:ifmergeddate` under `mergedate=compact`,
-`\iflabeldateisdate`): the date its head prints with the letter. -/
+/-- authoryear's merged date under `mergedate=compact`. -/
 private def mergedDate : BM Bool := do
   pure ((← read).opts.style == .authoryear && (← labelIsDate))
 
-/-- The `date` macro: `\printdate`, which authoryear's merged label date
-replaces. -/
+/-- The `date` macro, which authoryear's merged label date replaces. -/
 private def dateMacro : BM Unit := do
   if ← mergedDate then nounit else printDateOf ""
 
-/-- `issue+date`: `(issue date)`; authoryear's `(issue)` alone, the date
-merged into the head, and nothing where there is no issue to print. -/
+/-- `issue+date`: `(issue date)`, or authoryear's `(issue)` alone. -/
 private def issueDate : BM Unit := do
   if (← mergedDate) && !(← has "issue") then return
   wrapped false do
@@ -1439,7 +1292,6 @@ private def issueDate : BM Unit := do
     dateMacro
   newunit
 
-/-- `volume+number+eid`. -/
 private def volumeNumberEid : BM Unit := do
   volumeField
   setunitStar [.dot]
@@ -1447,8 +1299,6 @@ private def volumeNumberEid : BM Unit := do
   setunit [.comma, .space]
   pfield "eid"
 
-/-- `journal+issuetitle`, and `title+issuetitle` (`titleMacro` is the
-journal or the periodical's own title). -/
 private def issuetitleWith (titleMacro : BM Unit) : BM Unit := do
   titleMacro
   setunitStar [.space]
@@ -1463,7 +1313,6 @@ private def issuetitleWith (titleMacro : BM Unit) : BM Unit := do
   issue
   newunit
 
-/-- `event+venue+date`. -/
 private def eventVenueDate : BM Unit := do
   pfield "eventtitle"
   newunit
@@ -1476,15 +1325,14 @@ private def eventVenueDate : BM Unit := do
       printDateOf "event"
   newunit
 
-/-- `series+number`. -/
 private def seriesNumber : BM Unit := do
   seriesField
   setunitStar [.space]
   pfield "number"
   newunit
 
-/-- `publisher+location+date`, `institution+location+date`,
-`organization+location+date`: the place, the list after a colon, the date. -/
+/-- `publisher+location+date` and its siblings: the place,
+the list after a colon, the date. -/
 private def listLocationDate (list : String) : BM Unit := do
   printList "location"
   if (← has list) then setunitStar [.colon, .space] else setunitStar [.comma, .space]
@@ -1493,14 +1341,12 @@ private def listLocationDate (list : String) : BM Unit := do
   dateMacro
   newunit
 
-/-- `location+date`. -/
 private def locationDate : BM Unit := do
   printList "location"
   setunitStar [.comma, .space]
   dateMacro
   newunit
 
-/-- `chapter+pages`. -/
 private def chapterPages : BM Unit := do
   chapterField
   setunit [.comma, .space]
@@ -1509,15 +1355,14 @@ private def chapterPages : BM Unit := do
   pagesField
   newunit
 
-/-- `note+pages`. -/
 private def notePages : BM Unit := do
   pfield "note" (dot := true)
   setunit [.comma, .space]
   pagesField
   newunit
 
-/-- `maintitle+title`: the main title — unless it is the title itself,
-which clears it — its volume and part, then the title. -/
+/-- `maintitle+title`: the main title unless it is the title, its volume and
+part, then the title. -/
 private def maintitleTitle : BM Unit := do
   let mt ← fld "maintitle"
   let t ← fld "title"
@@ -1535,7 +1380,6 @@ private def maintitleTitle : BM Unit := do
   title
   newunit
 
-/-- `maintitle+booktitle`. -/
 private def maintitleBooktitle : BM Unit := do
   if (← has "maintitle") then
     maintitle
@@ -1547,14 +1391,10 @@ private def maintitleBooktitle : BM Unit := do
   booktitle
   newunit
 
-/-! ### Names' roles -/
-
-/-- Is the name list one of more than one name, or elided (`\ifnumgreater
-{\value{editor}}{1}` or `\ifandothers{editor}`)? -/
+/-- Whether the name list holds more than one name or is elided. -/
 private def plural (field : String) : BM Bool := do
   pure (((← fld field).map nameCount).getD 0 > 1)
 
-/-- `authorstrg`. -/
 private def authorstrg : BM Unit := do
   match (← fld "authortype").map (text ·.trimAscii.toString) with
   | none => pure ()
@@ -1562,8 +1402,7 @@ private def authorstrg : BM Unit := do
     if isBibstring ty then bibstring (if ← plural "author" then ty ++ "s" else ty)
     else printWith (put (← conv ty))
 
-/-- `editorstrg` (and its `editora`… counterparts): `ed.`, `eds.`, or the
-`editortype`'s string. -/
+/-- `editorstrg`: `ed.`, `eds.`, or the `editortype`'s string. -/
 private def editorstrg : BM Unit := do
   let pl ← plural "editor"
   match (← fld "editortype").map (text ·.trimAscii.toString) with
@@ -1571,9 +1410,7 @@ private def editorstrg : BM Unit := do
   | some ty =>
     if isBibstring ty then bibstring (if pl then ty ++ "s" else ty) else printWith (put (← conv ty))
 
-/-- The roles a name list doubles (`editor+othersstrg`,
-`translator+othersstrg`): `tr` where the translators are the list, one of
-`co` and `an`, one of `in`, `fo` and `af`, each with the field it clears. -/
+/-- The roles a name list doubles, each with the field it clears. -/
 private def rolesOf (field : String) (withTranslator : Bool) : BM (String × List String) := do
   let some v ← fld field | return ("", [])
   let same (g : String) : BM Bool := do pure ((← fld g).any (namesEqual v ·))
@@ -1599,9 +1436,8 @@ private def rolesOf (field : String) (withTranslator : Bool) : BM (String × Lis
     cleared := "afterword" :: cleared
   return (suffix, cleared)
 
-/-- `editor+othersstrg`: the editor's string with the roles the editors
-also hold (`eds. and trans.`), those names cleared — where such a string
-exists; else `editorstrg`. -/
+/-- `editor+othersstrg`: the editor's string with the roles the editors also
+hold, those names cleared. -/
 private def editorOthersStrg : BM Unit := do
   let pl ← plural "editor"
   let base := match (← fld "editortype").map (text ·.trimAscii.toString) with
@@ -1613,25 +1449,21 @@ private def editorOthersStrg : BM Unit := do
     for f in cleared do clear f
   else editorstrg
 
-/-- `translatorstrg`. -/
 private def translatorstrg : BM Unit := do
   bibstring (if ← plural "translator" then "translators" else "translator")
 
-/-- `translator+othersstrg`. -/
 private def translatorOthersStrg : BM Unit := do
   let base := if ← plural "translator" then "translators" else "translator"
   let (suffix, cleared) ← rolesOf "translator" false
   for f in cleared do clear f
   bibstring (base ++ suffix)
 
-/-- `bytypestrg{field}{role}`: `by` and the field's type where its string
-exists, the type as written where not, `by` and the role with no type. -/
+/-- `bytypestrg{field}{role}`. -/
 private def bytypestrg (field role : String) : BM Unit := do
   match (← fld (field ++ "type")).map (text ·.trimAscii.toString) with
   | none => bibstring ("by" ++ role)
   | some ty => if isBibstring ("by" ++ ty) then bibstring ("by" ++ ty) else printWith (putText ty)
 
-/-- `byeditor+othersstrg`. -/
 private def byeditorOthersStrg : BM Unit := do
   let base := match (← fld "editortype").map (text ·.trimAscii.toString) with
     | none => "byeditor"
@@ -1642,27 +1474,24 @@ private def byeditorOthersStrg : BM Unit := do
     for f in cleared do clear f
   else bytypestrg "editor" "editor"
 
-/-- `bytranslator+othersstrg`. -/
 private def bytranslatorOthersStrg : BM Unit := do
   let (suffix, cleared) ← rolesOf "translator" false
   for f in cleared do clear f
   bibstring ("bytranslator" ++ suffix)
 
-/-- `with<role>` (`withcommentator`, …): the role's string and its names. -/
+/-- `with<role>`: the role's string and its names. -/
 private def withRole (field : String) : BM Unit := do
   if (← has field) then
     bibstring ("with" ++ field)
     setunit [.space]
     printNames field .givenFamily
 
-/-- `withothers`. -/
 private def withOthers : BM Unit := do
   for f in ["commentator", "annotator", "introduction", "foreword", "afterword"], i in [0:5] do
     if i > 0 then newunit
     withRole f
     clear f
 
-/-- `bytranslator+others`. -/
 private def bytranslatorOthers : BM Unit := do
   if (← has "translator") then
     bytranslatorOthersStrg
@@ -1672,8 +1501,8 @@ private def bytranslatorOthers : BM Unit := do
     newunit
   withOthers
 
-/-- `byeditorx`: the `editora`, `editorb`, `editorc` lists, each after its
-`by` string. -/
+/-- `byeditorx`: the `editora`, `editorb`, `editorc` lists,
+each after its `by` string. -/
 private def byeditorx : BM Unit := do
   for f in ["editora", "editorb", "editorc"] do
     if (← has f) then
@@ -1682,7 +1511,6 @@ private def byeditorx : BM Unit := do
       printNames f .givenFamily
       newunit
 
-/-- `byeditor+others`. -/
 private def byeditorOthers : BM Unit := do
   if (← has "editor") then
     byeditorOthersStrg
@@ -1693,7 +1521,6 @@ private def byeditorOthers : BM Unit := do
   byeditorx
   bytranslatorOthers
 
-/-- `byeditor`. -/
 private def byeditor : BM Unit := do
   if (← has "editor") then
     bytypestrg "editor" "editor"
@@ -1702,31 +1529,27 @@ private def byeditor : BM Unit := do
     newunit
   byeditorx
 
-/-- `byauthor`: the author after `by`, where `useauthor=false` keeps it out
-of the head. -/
+/-- `byauthor`: the author after `by`, where
+`useauthor=false` keeps it out of the head. -/
 private def byauthor : BM Unit := do
   if !(← read).opts.useauthor && (← has "author") then
     bytypestrg "author" "author"
     setunit [.space]
     printNames "author" .givenFamily
 
-/-- `bybookauthor`. -/
 private def bybookauthor : BM Unit := do
   let ba ← fld "bookauthor"
   let au ← fld "author"
   unless (match ba, au with | some b, some a => namesEqual a b | _, _ => false) do
     printNamesOf "bookauthor"
 
-/-! ### The head (biblatex.def, and authoryear.bbx's renewals) -/
-
-/-- authoryear's dash for a repeated name list (`\bibnamedash`, a box the
-width of the hanging indent: the dash and the space after it). -/
+/-- authoryear's dash for a repeated name list, `\bibnamedash`. -/
 private def nameDash : BM Unit := do
   printWith (putText "—")
   runOp .space
 
-/-- authoryear's `labeltitle`: the `label`, else the `shorttitle` in the
-title's format, else the title — which it clears. -/
+/-- authoryear's `labeltitle`: the `label`, else the
+`shorttitle`, else the title. -/
 private def labeltitle : BM Unit := do
   let fmt := titleFmtOf (← read).e.kind
   let inFmt (v : String) : BM Unit := printWith do
@@ -1745,10 +1568,8 @@ private def labeltitle : BM Unit := do
         clear "title"
       | none => nounit
 
-/-- authoryear's `date+extradate` (`mergedate=compact`): the label date in
-parentheses — the entry's own date whole with its letter
-(`\printdateextra`), any other label date as its years
-(`\printlabeldateextra`), `n.d.` where there is none. -/
+/-- authoryear's `date+extradate`: the label date in
+parentheses, with its letter. -/
 private def dateExtradate : BM Unit := do
   let ld ← labelDateOf
   let letter := (← read).extra
@@ -1762,11 +1583,7 @@ private def dateExtradate : BM Unit := do
         putPieces (← strPieces "nodate")
         putText extra
 
-/-- The head a list of names opens, per style: numeric prints the names
-and their role (`author`, `editor`, …); authoryear renews them to print the
-names — or the dash, or the label title where the list is not used — then
-the label date (authoryear.bbx `author`, `bbx:editor`, `bbx:translator`).
-`strg` is the role's string macro. -/
+/-- The head a list of names opens, per style. -/
 private def headNames (field : String) (use : Bool) (strg : BM Unit) : BM Unit := do
   let ctx ← read
   let present := use && (← has field)
@@ -1803,10 +1620,8 @@ private def headNames (field : String) (use : Bool) (strg : BM Unit) : BM Unit :
       strg
       clear field
 
-/-- The head macros standard.bbx's drivers open with, by the names they
-consult (`author/translator+others`, `author/editor+others/translator+others`,
-`author/editor`, `editor+others`, `editor`, `author`): the first list the
-options use and the entry has; authoryear's label title where none. -/
+/-- The head macros standard.bbx's drivers open with, by the
+names they consult. -/
 private inductive Head where
   | authorTranslator
   | authorEditorTranslator
@@ -1816,8 +1631,8 @@ private inductive Head where
   | author
   deriving BEq
 
-/-- The field a head prints, under the options: what authoryear's dash
-compares. -/
+/-- The field a head prints under the options, which
+authoryear's dash compares. -/
 private def Head.field (h : Head) (o : BblOptions) (e : Entry) : Option String :=
   let has (f : String) := (e.field? f).any fun v => !v.trimAscii.toString.isEmpty
   let au := o.useauthor && has "author"
@@ -1847,11 +1662,7 @@ private def head (h : Head) : BM Unit := do
     if ctx.opts.style == .authoryear then headNames "author" false (pure ()) else pure ()
 
 
-/-! ## What citations read of the list's formats -/
-
-/-- A string's plain text in its short form: its punctuation commands as
-the marks they add, a no-break space as one. What a citation prints of a
-string outside the tracker. -/
+/-- A string's plain text in its short form, as a citation prints it. -/
 public def bblString (key : String) : Option String :=
   (bibStringOf true key).map fun pieces =>
     String.join (pieces.toList.map fun
@@ -1864,11 +1675,7 @@ public def bblString (key : String) : Option String :=
       | .nbspace => "\u00a0"
       | .fromLang => "")
 
-/-- The label year a citation prints (`\printlabeldateextra`'s year part,
-`labeldate=year`): the label date's years as `putLabelYear` prints them —
-padded, an era's minus sign, a range's end where it differs — a legacy
-year that is a string's key as that string, `n.d.` where there is no date;
-and whether it reads as numerals, which decides how its letter is set. -/
+/-- The label year a citation prints, and whether it reads as numerals. -/
 public def bblLabelYear (months : Array String) (e : Entry) : String × Bool :=
   let ld := e.labelDate months
   let strOr (s : String) : String := if isBibstring s then (bblString s).getD s else text s
@@ -1886,10 +1693,7 @@ public def bblLabelYear (months : Array String) (e : Entry) : String × Bool :=
     | some (_, .none) | none => (bblString "nodate").getD "n.d."
   (t, labelNumerals ld)
 
-/-- A citation's postnote as biblatex's `postnote` format sets it
-(`\mkpageprefix[pagination][\mknormrange]`): `p.` before a numeral, `pp.`
-before numerals, the pagination the entry names in place of pages, the
-range's hyphens one en dash; anything else as written. -/
+/-- A citation's postnote as biblatex's `postnote` format sets it. -/
 public def bblPostnote (pagination : Option String) (post : String) : String :=
   let t := normRange post.trimAscii.toString
   let kind := ((pagination.map fun p => (text p).trimAscii.toString).filter (!·.isEmpty)).getD "page"
@@ -1899,11 +1703,8 @@ public def bblPostnote (pagination : Option String) (post : String) : String :=
     else ""
   pre ++ t
 
-/-! ## The drivers (standard.bbx) -/
-
-/-- The tail standard.bbx's drivers share after their place and date: the
-identifier under `isbn` (`isbn`, `issn`, `isrn` by driver), the links, the
-addendum and the publication state. -/
+/-- The tail standard.bbx's drivers share after their place and date:
+identifier, links, addendum, publication state. -/
 private def tail (ident : String) : BM Unit := do
   newunit; newblock
   if (← read).opts.isbn then acroField ident
@@ -1995,8 +1796,7 @@ private def booklet : BM Unit := do
   newunit; newblock
   addendumPubstate
 
-/-- `collection` and `proceedings` (and their `mv` and `reference`
-aliases). -/
+/-- `collection` and `proceedings`, and their `mv` and `reference` aliases. -/
 private def collectionDriver (isProceedings : Bool) : BM Unit := do
   head .editorOthers
   nametitle
@@ -2032,8 +1832,8 @@ private def collectionDriver (isProceedings : Bool) : BM Unit := do
   pagetotalField
   tail "isbn"
 
-/-- `inbook` and `incollection` and `inproceedings`: the contribution, then
-`In:` and the work it is in. -/
+/-- `inbook`, `incollection` and `inproceedings`: the contribution, then `In:`
+and the work it is in. -/
 private def inDriver (kind : String) : BM Unit := do
   head .authorTranslator
   nametitle
@@ -2287,9 +2087,7 @@ private def unpublished : BM Unit := do
   newunit; newblock
   addendumPubstate
 
-/-- The driver an entry type uses: standard.bbx's driver or the alias it
-declares (`\DeclareBibliographyAlias`), every other type `misc`
-(`\DeclareBibliographyAlias{*}{misc}`, `software` among them). -/
+/-- The driver an entry type uses; every undeclared type uses `misc`. -/
 private def driverFor : String → BM Unit
   | "article" | "suppperiodical" | "review" => article
   | "book" | "mvbook" => book
@@ -2331,13 +2129,8 @@ private def finentry : BM Unit := do
   modify fun t => { t with gap := none }
   runOp .period
 
-/-- **One reference-list entry as biblatex's standard styles set it**, with
-what reading its fields reported and the fields its driver read: the
-entry's driver run over a fresh tracker under the options it is set under
-(`BblOptions.forEntry`), closed by `\finentry`. `extra` is its extradate
-letter, `dash` whether its names repeat the previous entry's (authoryear's
-dash), `labelUl` its labelname's field and the names that list's
-`uniquelist` shows, `months` the document's month names. -/
+/-- One reference-list entry as biblatex's standard styles set it, with its
+field reports and the fields its driver read. -/
 public def renderBblCached (opts : BblOptions) (cv : FieldText) (e : Entry) (extra : String)
     (dash : Bool) (labelUl : Option (String × Nat)) (months : Array String)
     (cache : FieldCache) : (Array Ir.Inline × FieldReport × List String) × FieldCache :=
@@ -2356,14 +2149,8 @@ public def renderBbl (opts : BblOptions) (cv : FieldText) (e : Entry) (extra : S
     Array Ir.Inline × FieldReport × List String :=
   (renderBblCached opts cv e extra dash labelUl months {}).1
 
-/-- What a field citation prints of an entry under biblatex's standard
-styles (biblatex.def `\citetitle`, `\citeurl`, `\citedate`, `\fullcite`):
-its label title — its `shorttitle`, else its `title`; the title itself for
-`\citetitle*` (`full`) — under the `citetitle` format, its type's title
-format; its `url`, a link; its date as `\printdate` prints it; and its
-whole entry by its driver, every name given first (`\fullcite`'s
-`\DeclareNameAlias{sortname}{default}`) and no closing period. `extra` is
-its extradate letter. Beside the ink, the boundary pictures its fields set. -/
+/-- What a field citation prints of an entry under
+biblatex's standard styles. -/
 public def bblCiteField (opts : BblOptions) (cv : FieldText) (months : Array String) (e : Entry)
     (extra : String) (w : Ir.CiteField) (full : Bool) : Array Ir.Inline × Array (String × Ir.PicSrc) :=
   let run : BM Unit := match w with
@@ -2388,14 +2175,8 @@ public def bblCiteField (opts : BblOptions) (cv : FieldText) (months : Array Str
   let (_, t) := (run.run ctx).run {}
   (mergeTexts t.out, t.report.pictures)
 
-/-- What a citation prints for an entry no name list labels, in place of
-its names: authoryear.cbx's `cite:label` — the `label` field, else the
-label title — and numeric.cbx's `textcite`, the label title. The label
-title is biblatex.def's `\DeclareLabeltitle`, the `shorttitle`, else the
-`title`, else the `maintitle`, under the `citetitle` format: quoted, its
-period a dot, for an article and the six types biblatex.def lists beside
-it, emphasized for every other. Beside the ink, the boundary pictures its
-fields set. -/
+/-- What a citation prints for an entry no name list labels,
+in place of its names. -/
 public def bblCiteLabel (opts : BblOptions) (cv : FieldText) (months : Array String) (e : Entry) :
     Array Ir.Inline × Array (String × Ir.PicSrc) :=
   let run : BM Unit := do
@@ -2424,10 +2205,8 @@ public def bblCiteLabel (opts : BblOptions) (cv : FieldText) (months : Array Str
   let (_, t) := (run.run ctx).run {}
   (mergeTexts t.out, t.report.pictures)
 
-/-- The name list an authoryear head prints, as its dash compares it with
-the previous entry's: the list the driver's head macro uses under the
-entry's options (`Head.field`), its value; `none` where the head prints a
-title, which resets the comparison. -/
+/-- The name list an authoryear head prints, as its dash
+compares it with the previous entry's. -/
 public def bblHeadNames (o : BblOptions) (e : Entry) : Option String :=
   ((headOf e.kind).field (o.forEntry e) e).bind e.field?
 

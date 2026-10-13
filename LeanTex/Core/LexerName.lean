@@ -3,32 +3,23 @@ module
 public import LeanTex.Core.Highlight
 import LeanTex.Core.PygmentsLexData
 
-/-!
-The lexer names a listing's language may spell: a native lexer's
-(`Highlight.Lexer.ofName?`), or an alias Pygments' registry holds for the
-release the mirror tracks (`PygmentsLexData.registryAliases`). A name
-outside both is still asked of the installed highlighter, a later release
-perhaps; where it does not answer either, the document is told where the
-name stands, with the known name nearest its spelling.
--/
+/-! The language names a listing may spell, and the known
+name nearest a misspelt one. -/
 namespace LeanTex.Core.LexerName
 
 open Highlight
 
-/-- The registry's aliases. A function of `Unit`, so no process pays for the
-split before a listing asks. -/
+/-- The registry's aliases, split on first use. -/
 private def registry (_ : Unit) : Array String :=
   (PygmentsLexData.registryAliases.splitOn " ").toArray
 
-/-- A language a listing may name, case-insensitively, as the registry's own
-lookup is. -/
+/-- Whether a listing may name the language, compared case-insensitively. -/
 public def known (name : String) : Bool :=
   let n := name.trimAscii.toString.toLower
   (Lexer.ofName? n).isSome || (registry ()).contains n
 
-/-- The optimal-string-alignment distance: insertions, deletions,
-substitutions and adjacent transpositions, each one edit. Each row is built
-from the two before it, the index's default never read inside the bounds. -/
+/-- The optimal-string-alignment distance: insertions, deletions, substitutions
+and adjacent transpositions, each one edit. -/
 private def editDistance (a b : Array Char) : Nat := Id.run do
   let n := b.size
   let mut before : Array Nat := #[]
@@ -47,12 +38,9 @@ private def editDistance (a b : Array Char) : Nat := Id.run do
     prev := cur
   return prev.getD n 0
 
-/-- The known name a misspelt one most likely meant: one sharing its first
-letter (a slip rarely moves it), fewest edits away — one edit for a name of
-five letters or fewer, two for a longer one — a native lexer's spelling
-first among equals, then the registry's order. A name of three letters or
-fewer is too short to judge a slip in (`csv` is no misspelt `cs`), and
-`none` answers it, as when nothing stands that near. -/
+/-- The known name a misspelt one most likely meant: same first letter, at most
+one edit for five letters or fewer and two otherwise, native names first; `none`
+for three letters or fewer. -/
 public def nearest? (name : String) : Option String :=
   let cs := name.trimAscii.toString.toLower.toList.toArray
   let bound := if cs.size ≤ 5 then 1 else 2

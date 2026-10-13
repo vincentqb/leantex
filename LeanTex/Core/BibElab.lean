@@ -4,18 +4,13 @@ public import LeanTex.Core.Elab
 public import LeanTex.Core.BibStyle
 import LeanTex.Core.MathParse
 
-/-! The field reading a build gives its reference list. BibTeX and biber
-write a `.bbl` that LaTeX reads in the document's own context, so a field's
-`\url`, `\emph`, math, accents and quotes mean what they mean in the body:
-the reading is the document's inline elaborator, in the context its body
-opens with — the preamble's definitions, packages, styles and locale in
-force. -/
+/-! The field reading a build gives its reference list: each field read by the
+document's own elaborator, as LaTeX reads a `.bbl`. -/
 
 namespace LeanTex.Core.Bib
 
-/-- Text with no control word, environment or verbatim anywhere in it, a
-group or a formula down included: nothing the compatibility pass reads,
-which acts on control words and environments alone. -/
+/-- Whether text holds no control word, environment or
+verbatim anywhere in it. -/
 private def controlFree : List Parse.Raw → Bool
   | [] => true
   | .ctrl _ _ :: _ => false
@@ -32,12 +27,7 @@ decreasing_by
     (have hb : sizeOf body = 1 + sizeOf body.toList := by rfl
      omega)
 
-/-- Control words the compatibility pass leaves as they stand in a field,
-whatever arguments follow them: the text styles, URLs, accents, escapes,
-letters and symbols the elaborator sets itself. A field whose every
-control word is one of them skips the pass (`compatNeeded`), as text with
-none does; `bibFieldDoorChecks` holds the two readings equal for each name,
-in each argument shape a field gives one. -/
+/-- Control words the compatibility pass leaves as they stand in a field. -/
 public def compatInert : List String :=
   ["emph", "textit", "textbf", "textsc", "texttt", "textsf", "textrm", "textsl", "textup",
    "textmd", "textnormal", "textsuperscript", "textsubscript", "url", "href",
@@ -47,18 +37,12 @@ public def compatInert : List String :=
    "dag", "S", "P", "copyright", "ldots", "dots", "TeX", "LaTeX", "textquoteleft",
    "textquoteright", "ensuremath", "sc", "it", "bf", "em", "tt", "rm", "sf"]
 
-/-- Control words the compatibility pass leaves as they stand inside a
-formula: each symbol the math parser sets as one atom (`MathParse.ctrlAtom`),
-`\alpha` and `\leq` and the rest — a field's `$\alpha$` is no reason to run
-the pass. `bibFieldDoorChecks` holds the two readings equal for each name,
-in each formula shape a field gives one. -/
+/-- Control words the compatibility pass leaves as they
+stand inside a formula. -/
 public def compatInertMath : Thunk (Std.HashSet String) :=
   Thunk.mk fun _ => MathParse.ctrlAtom.foldl (init := {}) fun s (n, _, _) => s.insert n
 
-/-- Whether a field's text needs the compatibility pass: a control word
-outside `compatInert` (inside a formula, outside `compatInertMath` too), an
-environment or verbatim anywhere in it, a group or a formula down
-included. -/
+/-- Whether a field's text needs the compatibility pass. -/
 private def compatNeeded (inMath : Bool) : List Parse.Raw → Bool
   | [] => false
   | .ctrl n _ :: rest =>
@@ -77,20 +61,15 @@ decreasing_by
     (have hb : sizeOf body = 1 + sizeOf body.toList := by rfl
      omega)
 
-/-- The context a build reads its reference list's fields in, computed
-once per document (`FieldDoor.of`): the body's opening plan and state
-(`Elab.preparedBody`), and the preamble's definitions the compatibility
-pass leaves for the elaborator to expand. A reading closes over one door;
-a door built per field elaborated the whole preamble again for every field
-the list read. -/
+/-- The context a build reads its reference list's fields
+in, computed once per document. -/
 public structure FieldDoor.Context where
   plan : Elab.DocBodyPlan
   st0 : Elab.ESt
   inherited : List String
 
-/-- A field door: its context, computed the first time a field needs the
-elaborator and kept for every field after — a list whose every field reads
-as written (`asWritten?`) never elaborates the preamble for it. -/
+/-- A field door: its context, computed the first time a
+field needs the elaborator. -/
 public structure FieldDoor where
   context : Thunk FieldDoor.Context
 
@@ -98,29 +77,17 @@ public structure FieldDoor where
 public def FieldDoor.of (file : String) (p : Elab.Prepared) : FieldDoor :=
   { context := Thunk.mk fun _ =>
       let (plan, st0) := Elab.preparedBody file p
-      -- a field's note numbers where its list stands (`Ir.numberNotesItems`)
+      -- A field's note numbers where its list stands.
       let st0 := { st0 with ctr := { st0.ctr with fnDefer := true } }
       { plan, st0, inherited := (plan.ctx.user.extract 0 plan.ctx.limit).toList.map (·.name) } }
 
-/-- The noncharacters a field's `%`, and a URL argument's `$`, cross the
-lexer as (U+FDD0 and U+FDD1, which Unicode reserves for a process's own use
-and no text exchanges): characters the lexer reads as part of a word, set
-back to `%` and `$` in the tokens. -/
+/-- The noncharacter a field's `%` crosses the lexer as. -/
 private def percentMark : Char := '\uFDD0'
 
 private def dollarMark : Char := '\uFDD1'
 
-/-- A field's `%` read as the character it is, never as TeX's comment
-character: BibTeX and biber hand a `.bib` value to LaTeX as the text it
-spells, and LaTeX then drops the rest of the line after a `%` (BibTeX) or
-stops at it (biber) — the author wrote the character. And a `$` inside a
-`\url`, `\nolinkurl` or `\href` URL argument read as the character
-url.sty and hyperref read there, never as a math shift TeX would pair with
-a `$` outside the URL. Each `%` no backslash escapes travels the lexer as
-`percentMark` and each such `$` as `dollarMark`; the count is of the `%`s
-outside a URL argument, where url.sty reads a `%` as itself. `none` where
-there is nothing to mark, or where the text already holds a mark, which
-would not survive the return. -/
+/-- A field's `%` read as the character it is, never as
+TeX's comment character. -/
 private def markReserved (s : String) : Option (String × Nat) := Id.run do
   if (!s.contains '%' && !s.contains '$') || s.contains percentMark || s.contains dollarMark then
     return none
@@ -128,7 +95,6 @@ private def markReserved (s : String) : Option (String × Nat) := Id.run do
   let mut out := ""
   let mut n := 0
   let mut marked := false
-  -- the brace depth at which a URL argument opened, while inside one
   let mut urlDepth : Option Nat := none
   let mut depth := 0
   let mut i := 0
@@ -171,8 +137,7 @@ private def markReserved (s : String) : Option (String × Nat) := Id.run do
     else break
   return if marked then some (out, n) else none
 
-/-- `markReserved`'s marks set back to the `%` and `$` they stand for, in
-every token that can hold them. -/
+/-- `markReserved`'s marks set back to the `%` and `$` they stand for. -/
 private def unmarkReserved (toks : Array Lex.Token) : Array Lex.Token :=
   let holds (w : String) : Bool := w.contains percentMark || w.contains dollarMark
   let back (w : String) :=
@@ -182,10 +147,7 @@ private def unmarkReserved (toks : Array Lex.Token) : Array Lex.Token :=
     | .verb env w => if holds w then { t with tok := .verb env (back w) } else t
     | _ => t
 
-/-- A `$` no other `$` closes, read as the character it is: TeX pairs a
-field's math shifts in order, so where their number is odd the last opens
-a formula nothing ends — LaTeX stops there — and the author wrote a dollar
-sign. The count is 1 where that `$` was the character. -/
+/-- A `$` no other `$` closes, read as the character it is. -/
 private def literalDollar (toks : Array Lex.Token) : Array Lex.Token × Nat :=
   let shifts := toks.foldl (fun n t => if t.tok == .math then n + 1 else n) 0
   if shifts % 2 == 0 then (toks, 0)
@@ -196,10 +158,8 @@ private def literalDollar (toks : Array Lex.Token) : Array Lex.Token × Nat :=
       else (out.push t, k)
     (out, 1)
 
-/-- Whether a field's running text holds a character TeX reserves there —
-`&`, `#`, `^` or `_` outside every formula — anywhere a group or an
-environment reaches: where the elaborator, reading the field as an
-argument's tokens (`Elab.Ctx.argBody`), sets one as itself. -/
+/-- Whether a field's running text holds `&`, `#`, `^` or
+`_` outside every formula. -/
 private def textSyms : List Parse.Raw → Bool
   | [] => false
   | .sym c _ :: rest => "&#^_".contains c || textSyms rest
@@ -214,11 +174,7 @@ decreasing_by
     (have hb : sizeOf body = 1 + sizeOf body.toList := by rfl
      omega)
 
-/-- One reserved character a field sets as itself, at the entry it stands
-in: a note, since the page holds what the author wrote, named so a `.bib`
-that must also build under LaTeX can be escaped. One subject per
-character, so the run states each once with its count
-(`Diag.tallySites`). -/
+/-- The note for one reserved character a field sets as itself. -/
 private def reservedNote (span : Span) (c : Char) : Diag :=
   let reads : String × String := match c with
     | '&' => ("as an alignment tab outside a table and stops there", "\\&")
@@ -231,11 +187,7 @@ private def reservedNote (span : Span) (c : Char) : Diag :=
     (some span) (help := s!"write it '{reads.2}' if the .bib must also build with LaTeX")
     (subject := some s!"bibfield:reserved:{c}")
 
-/-- A block's own text, run into a line: its inline content, after a space
-where content stands before it. A leaf of `Ir.foldBlocks`, which reads a
-list's items, a box's body and a float's in turn: what a field whose
-markup the elaborator sets only between paragraphs sets in an entry
-(`FieldDoor.readWith`). -/
+/-- A block's own text, run into a line. -/
 private def runIn (acc : Array Ir.Inline) (b : Ir.Block) : Array Ir.Inline :=
   let put (acc xs : Array Ir.Inline) : Array Ir.Inline :=
     if xs.isEmpty then acc else if acc.isEmpty then xs else acc.push (.text " ") ++ xs
@@ -250,14 +202,8 @@ private def runIn (acc : Array Ir.Inline) (b : Ir.Block) : Array Ir.Inline :=
   | .verbatim _ s _ => put acc #[.text s]
   | _ => acc
 
-/-- What a field's reading reports, settled: the inline reading's content
-with its diagnostics, the marks and the notes, and the pictures it set
-(`pics`), where none of its diagnostics is an error; else the blocks the
-body would set (`blocks`, their pictures with them), where none of theirs
-is; else the reading with no elaborator (`plain`), which sets no picture —
-the refusal, either way, one warning (`unread`), the marks kept. Each
-reading is a thunk, so a fallback runs only where the one before it
-refused. -/
+/-- What a field's reading reports, settled: the inline reading where none of
+its diagnostics is an error, else the blocks run in. -/
 private def settle (inline : Unit → Array Ir.Inline) (ds : Array Diag)
     (pics : Unit → Array (String × Ir.PicSrc))
     (notes : Unit → Array Diag) (marks : Array Diag)
@@ -273,9 +219,6 @@ private def settle (inline : Unit → Array Ir.Inline) (ds : Array Diag)
       (p.1, { diags := (p.2.diags ++ marks).push (unread (some refusal.message)) })
     else (b.1, { diags := (b.2.1 ++ marks).push (unread none), pictures := b.2.2 })
 
-/-- A settled reading raises no error where its notes, marks, plain
-reading and warning raise none: the inline reading's diagnostics pass only
-where none is an error, and the blocks' only where none of theirs is. -/
 private theorem settle_contract (inline : Unit → Array Ir.Inline) (ds : Array Diag)
     (pics : Unit → Array (String × Ir.PicSrc))
     (notes : Unit → Array Diag) (marks : Array Diag)
@@ -304,7 +247,6 @@ private theorem settle_contract (inline : Unit → Array Ir.Inline) (ds : Array 
       simp only [hb, Bool.false_eq_true, ↓reduceIte, Array.any_push, Array.any_append, hm, hu,
         Bool.or_false]
 
-/-- Reserved characters' notes raise no error. -/
 private theorem reservedNotes_ship (span : Span) (cs : Array Char) :
     (cs.map (reservedNote span)).any (·.severity == .error) = false := by
   rw [Bool.eq_false_iff]
@@ -315,30 +257,8 @@ private theorem reservedNotes_ship (span : Span) (cs : Array Char) :
     Diag.of_severity_full .N0030 _ _ _ _ _ _ _ _, DiagCode.fieldReading_ships.2.2] at he
   exact Bool.false_ne_true he
 
-/-- The document's inline elaborator over one field's text, where the body
-begins (the door's plan and state): the text lexed and parsed as the
-`.bib`'s, translated by the compatibility pass the body's text went
-through — the fragment door a `\style` value enters by, the preamble's
-definitions left for the elaborator to expand; text with no control word
-skips it, as there is nothing in it to translate, and so, unless
-`alwaysCompat`, does text whose every control word the pass leaves as it
-stands (`compatNeeded`) — its sites the entry's
-own, elaborated as inline content with what that reported, and its source
-wrappers erased: a reference-list entry carries no source spans, as before
-it was elaborated. A character TeX reserves is the character it is, as an
-argument's are (`Elab.Ctx.argBody`, `markReserved`, `literalDollar`): the
-field always sets, and each such character is named once
-(`reservedNote`), counted for `&`, `#`, `^` and `_` by the elaborator's
-own reading — where it would have refused one. Every field starts from
-the same state, so the reading is a function of the place and the text.
-
-A field the inline reading refuses — an error, which LaTeX, reading the
-`.bbl` in a paragraph, does not raise — never fails the build: the field
-reads as the blocks the body would set, run into the entry as their text
-(`runIn`), or, where those raise an error too, through the reading with no
-elaborator (`plainField`), and one warning names it (W0429,
-`unreadDiag`) in place of the refusal: no diagnostic the reading reports
-is an error (`readWith_ships_contract`). -/
+/-- The document's inline elaborator over one field's text,
+where the body begins. -/
 public def FieldDoor.readWith (door : FieldDoor) (alwaysCompat : Bool) : FieldReading :=
     fun span src =>
   let d := door.context.get
@@ -361,8 +281,6 @@ public def FieldDoor.readWith (door : FieldDoor) (alwaysCompat : Bool) : FieldRe
     read.2.diags.extract d.st0.diags.size read.2.diags.size
   let marks := (List.replicate ((mark.map (·.2)).getD 0) '%' ++
     List.replicate literal.2 '$').toArray.map (reservedNote span)
-  -- What the field's own reading set as itself, by the strict reading over
-  -- the field's own positions: each `&`, `#`, `^` or `_` it refuses.
   let syms (_ : Unit) : Array Char := if !textSyms inline.1.toList then #[] else
     let strict := ((Elab.elabInlines { ctx with argBody := false } inline.1).run d.st0).2
     (strict.diags.extract d.st0.diags.size strict.diags.size).filterMap fun dg =>
@@ -370,45 +288,29 @@ public def FieldDoor.readWith (door : FieldDoor) (alwaysCompat : Bool) : FieldRe
       else match (dg.span.bind (·.pos.command)).map (·.toList) with
         | some [c] => if "&#^_".contains c then some c else none
         | _ => none
-  -- The blocks the body would set, run into the entry as their text.
   let blocks (_ : Unit) : Array Ir.Inline × Array Diag × Array (String × Ir.PicSrc) :=
     let (_, rebased, cds) := translated true
     let (bs, bst) := (Elab.elabBlocks ctx rebased).run d.st0
     (Ir.eraseLocationInlines (Ir.foldBlocks runIn (fun acc _ => acc) #[] bs),
       lexed.2 ++ parsed.2 ++ cds ++ bst.diags.extract d.st0.diags.size bst.diags.size,
       bst.pictures.extract d.st0.pictures.size bst.pictures.size)
-  -- The boundary pictures the field set, as the body's are recorded: what
-  -- the document's request carries for the image each one stands as.
   let pics (_ : Unit) : Array (String × Ir.PicSrc) :=
     read.2.pictures.extract d.st0.pictures.size read.2.pictures.size
   settle (fun _ => Ir.eraseLocationInlines read.1) ds pics
     (fun _ => (syms ()).map (reservedNote span))
     marks blocks (fun _ => plainField src) (unreadDiag span src)
 
-/-- **A field's reading never fails the build**: whatever its text and the
-document around it, no diagnostic the reading reports is an error. A
-refusal by the inline reading is the warning naming the field (W0429), the
-field set by the blocks the body would set or by the reading with no
-elaborator, which names only a formula's floor (W0012,
-`plainField_ships_contract`); a reserved character is a note (N0030). -/
 public theorem FieldDoor.readWith_ships_contract (door : FieldDoor) (alwaysCompat : Bool)
     (span : Span) (src : String) :
     (door.readWith alwaysCompat span src).2.diags.any (·.severity == .error) = false :=
   settle_contract _ _ _ _ _ _ _ _ (reservedNotes_ship span _) (reservedNotes_ship span _)
     (plainField_ships_contract src) (unreadDiag_ships span src)
 
-/-- The reading a build gives a field (`readWith`), the compatibility pass
-skipped where the field needs none (`compatNeeded`). -/
+/-- The reading a build gives a field, the compatibility
+pass skipped where the field needs none. -/
 public def FieldDoor.readFull (d : FieldDoor) : FieldReading := d.readWith false
 
-/-- A field text the elaborator sets exactly as written: ASCII letters and
-digits, white space, a lone hyphen, the punctuation TeX prints as itself,
-and brace groups, which only protect a title's case and set nothing — no
-control sequence, math, tie, quote or dash ligature, or reserved character
-— read with its braces dropped, its white space runs one space and its ends
-trimmed. Most fields of a large `.bib` are such text, and the build reads
-them without running the elaborator (`bibAsWrittenChecks` holds the two
-readings equal). -/
+/-- A field text the elaborator sets exactly as written. -/
 public def asWritten? (s : String) : Option String := Id.run do
   let ws (c : Char) : Bool := c == ' ' || c == '\n' || c == '\t' || c == '\r'
   let ok (c : Char) : Bool :=
@@ -419,8 +321,6 @@ public def asWritten? (s : String) : Option String := Id.run do
   let mut pendingSpace := false
   for c in s.toList do
     unless ok c do return none
-    -- a dash ligature, and white space at a group's edge, are the
-    -- elaborator's to read
     if c == '-' && prev == '-' then return none
     if (prev == '{' && ws c) || (ws prev && c == '}') then return none
     if c == '{' then depth := depth + 1
@@ -436,19 +336,13 @@ public def asWritten? (s : String) : Option String := Id.run do
   if depth != 0 then return none
   return some out
 
-/-- **The document's own inline elaborator, as a field reading**: a field's
-text, its surrounding white space trimmed as BibTeX's and biber's readers
-trim a value, as the body would set it (`FieldDoor.readFull`), its plain
-spellings read without the elaborator (`asWritten?`). -/
+/-- The document's own inline elaborator as a field reading. -/
 public def FieldDoor.read (d : FieldDoor) : FieldReading := fun span src =>
   let src := src.trimAscii.toString
   match asWritten? src with
   | some t => (if t.isEmpty then #[] else #[.text t], {})
   | none => d.readFull span src
 
-/-- **The reading a build gives a field never fails it**: a plain spelling
-reports nothing, and every other field is read by `readWith`
-(`readWith_ships_contract`). -/
 public theorem FieldDoor.read_ships_contract (door : FieldDoor) (span : Span) (src : String) :
     (door.read span src).2.diags.any (·.severity == .error) = false := by
   unfold FieldDoor.read
@@ -457,31 +351,20 @@ public theorem FieldDoor.read_ships_contract (door : FieldDoor) (span : Span) (s
   | some t => simp
   | none => exact door.readWith_ships_contract false span _
 
-/-- The bibliography resolution a build runs: `apply`, every field read by
-the document's own elaborator through its door (`FieldDoor.read`), the door
-built once. The driver and the test harness both resolve through this one
-definition. -/
+/-- The bibliography resolution a build runs, every field
+read by the document's own elaborator. -/
 public def resolve (file : String) (p : Elab.Prepared) (sources : Array (String × String))
     (doc : Ir.Doc) : Ir.Doc × Array Diag :=
   let door := FieldDoor.of file p
   apply sources doc door.read
 
-/-- W0349 over the document a build ships, as the driver judges it: the
-body's references and the lists' at once (`Ir.refDiags`, whose census reads
-a reference list's entries with the body), each key at the body's first
-site, or, for a key only a list's entries hold, at the list's command
-(`refSpanOf`). -/
+/-- W0349 over the document a build ships, as the driver judges it. -/
 public def refJudge (spans : Elab.ReqSpans) (doc : Ir.Doc) : Array Diag :=
   Ir.refDiags spans.labels
     (refSpanOf (Elab.ReqSpans.spanOf spans.refs) (spans.bib[0]?.map (·.2))
       (listRefKeys doc false)) doc
 
-/-- A build's front-end diagnostics, accounted as the driver accounts them:
-the body's, the reference list's — a loss a list repeats after the body
-named it a note (`demoteRepeated`) — the input encoding's notes, then the
-reference judge's over the resolved document (`refJudge`), every site
-tallied together (`Diag.tallySites`). The driver and the test harness both
-account through this one definition. -/
+/-- A build's front-end diagnostics, accounted as the driver accounts them. -/
 public def accountFront (body bib notes refs : Array Diag) : Array Diag :=
   Diag.tallySites (body ++ demoteRepeated body bib ++ notes ++ refs)
 

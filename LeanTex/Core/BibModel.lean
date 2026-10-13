@@ -4,36 +4,13 @@ public import LeanTex.Core.Bib
 public import Std.Data.HashMap
 public import Std.Data.HashSet
 
-/-! The bibliography's one entry model, read by both processors. A `.bib`
-entry is the record `Bib.parse` keeps; what BibTeX and biber see of it are
-two views of that one record (`Entry.bibtexView`, `Entry.biberView`):
-biber's driver map renames BibTeX's spellings to biblatex's (biber manual
-§3.1.2, its default source map for BibTeX data: `journal` is
-`journaltitle`, `address` is `location`, `@phdthesis` is a `@thesis` of
-type `phdthesis`; a legacy `year` and `month` are the date biber falls back
-to, `Entry.dateParts`), and the BibTeX
-view reads biblatex's spellings back under BibTeX's names — a declared
-departure, since BibTeX itself reads no `date`, `journaltitle` or
-`location`: an entry written for biblatex keeps its date, journal and
-place under a BibTeX style. A view's own spelling wins over the other's.
-
-Inheritance is each processor's own: BibTeX's `crossref` copies every
-field the child lacks under its own name (bibtex.web, "Add cross-reference
-information"), biber's follows biblatex's inheritance rules
-(`biblatexInheritance`, transcribed from biblatex.def), and `xdata` lends
-its fields to both. Neither keeps BibTeX's one-pass limit that a parent
-must follow its children in the file: a parent anywhere in the database is
-the parent. -/
+/-! The bibliography's one entry model: a `.bib` entry and the two views BibTeX
+and biber read of it. -/
 
 namespace LeanTex.Core.Bib
 
-/-! ## Dates -/
-
-/-- One side of a date as biber reads it (Biber::Date::Format, the ISO
-8601-2 profile biblatex documents, manual §2.3.8): an astronomical year —
-`-0044` is −44, the year before 1 BCE's successor counting zero — and, when
-written, a month and a day, or a year division in place of the month
-(`2020-21` is the spring of 2020, `2020-35` its third quarter). -/
+/-- One side of a date as biber reads it: an astronomical
+year and, when given, a month and a day. -/
 public structure Date where
   year : Int
   month : Option Nat := none
@@ -41,12 +18,8 @@ public structure Date where
   division : Option String := none
   deriving Repr, BEq, Inhabited
 
-/-- A date field's value as biber reads it: a start — `none` where the
-range opens with no start (`../2015`, `/2015`) — and, for a range, its end,
-`some none` where it is open (`2019/..`, `2019/`); each side's
-approximation marks (`~` circa, `?` uncertain, `%` both); and, where the
-field wrote digits as unspecified (`199X`, `19XX`, `1999-XX`), the
-granularity biber records for the range it reads them as. -/
+/-- A date field's value as biber reads it: a start, `none` where open, and for
+a range its end, `some none` where open. -/
 public structure DateValue where
   start : Option Date
   stop : Option (Option Date) := none
@@ -71,9 +44,7 @@ public def monthDays (y : Int) (m : Nat) : Nat :=
   if m == 2 then (if leapYear y then 29 else 28)
   else if m == 4 || m == 6 || m == 9 || m == 11 then 30 else 31
 
-/-- ISO 8601-2's year divisions as biber names them
-(Biber::Constants %YEARDIVISIONS): the seasons, by hemisphere, the
-quarters, quadrimesters and semesters. -/
+/-- ISO 8601-2's year divisions as biber names them. -/
 public def yearDivisions : List (Nat × String) :=
   [(21, "spring"), (22, "summer"), (23, "autumn"), (24, "winter"),
    (25, "springN"), (26, "summerN"), (27, "autumnN"), (28, "winterN"),
@@ -92,8 +63,7 @@ private def two? (s : String) (lo hi : Nat) : Option Nat :=
   if s.length == 2 then (digitsVal s).bind fun v => if lo ≤ v && v ≤ hi then some v else none
   else none
 
-/-- A trailing mark stripped, white space around it too (Biber::Date::Format
-`_pre`: `\s*\?\s*$`). -/
+/-- A trailing mark stripped, with the white space around it. -/
 private def stripMark (s : String) (mark : Char) : Option String :=
   let t := s.trimAsciiEnd.toString
   if t.endsWith (String.singleton mark) && t.length > 1 then
@@ -110,14 +80,8 @@ private def timeOk (t : String) : Bool :=
   | [h, m, s] => (two? h 0 23).isSome && (two? m 0 59).isSome && (two? s 0 59).isSome
   | _ => false
 
-/-- One side of a date (Biber::Utils `parse_date`, Biber::Date::Format):
-`some none` for no date — empty, or `..` — `some (some (d, circa,
-uncertain))` for a date, `none` for text biber does not read as one. The
-grammar is the profile's and DateTime's calendar: `[-]YYYY`, `[-]YYYY-MM`,
-`[-]YYYY-MM-DD`, `[-]YYYY-MM-DDThh:mm:ss[.mmm]` with a time zone, a year
-with a division (`YYYY-21` … `YYYY-41`), `Y[-]YYYYY…` for a year of five
-digits or more, and a trailing `?`, `~` or `%`; a month or a day the
-calendar does not have is no date. -/
+/-- One side of a date as biber reads it: `some none` for no date,
+`some (some _)` for a date, `none` for text biber reads as no date. -/
 private def parseSide (raw : String) : Option (Option (Date × Bool × Bool)) := do
   let s := raw.trimAscii.toString
   if s.isEmpty || s == ".." then return none
@@ -178,9 +142,8 @@ private def parseSide (raw : String) : Option (Option (Date × Bool × Bool)) :=
       | _ => none
   return some (date, circa, uncertain)
 
-/-- Unspecified digits (ISO 8601-2 §4.3; Biber::Utils
-`parse_date_unspecified`): the range a value with `X` for digits spans, and
-the granularity biber records. -/
+/-- Unspecified digits (ISO 8601-2 §4.3): the range a value with `X` digits
+spans, and its granularity. -/
 private def unspecifiedRange (s : String) : Option (String × String × String) :=
   let ps := s.splitOn "-"
   let isX (p : String) := p == "XX"
@@ -206,11 +169,8 @@ private def unspecifiedRange (s : String) : Option (String × String × String) 
     else none
   | _ => none
 
-/-- A biblatex date field (`date`, `urldate`, `origdate`, `eventdate`) as
-biber reads it (Biber::Utils `parse_date_range`): one side, or two at a
-`/`, either open; a start with unspecified digits as the range it spans.
-`none` is a value biber warns of and ignores — the caller names it and
-prints it as written. -/
+/-- A biblatex date field as biber reads it: one side, or
+two at a `/`, either open. -/
 public def DateValue.parse (v : String) : Option DateValue := do
   let v := v.trimAscii.toString
   let parts := v.splitOn "/"
@@ -233,15 +193,13 @@ public def DateValue.parse (v : String) : Option DateValue := do
            endCirca := ((stop.join).map (·.2.1)).getD false,
            endUncertain := ((stop.join).map (·.2.2)).getD false, unspecified := unspec }
 
-/-- The English months' three-letter openings, which biber reads a legacy
-`month` by (Biber::Input::file::bibtex `_hack_month`). -/
+/-- The English months' three-letter openings, by which
+biber reads a legacy `month`. -/
 private def monthOpenings : Array String :=
   #["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"]
 
-/-- A month's number from its value: the number itself, a value opening
-with an English month's first three letters (`jan`, `January`, `Jan.`, as
-biber reads a legacy month), or one of the document's month names (what
-BibTeX's month macros expand to, `Bib.parse`'s `monthMacros`). -/
+/-- A month's number from its value: the number, an English month's opening, or
+one of the document's month names. -/
 public def monthNumber (months : Array String) (v : String) : Option Nat :=
   let t := (text v).trimAscii.toString
   match digitsVal t with
@@ -252,10 +210,8 @@ public def monthNumber (months : Array String) (v : String) : Option Nat :=
       (ms.findIdx? fun m => m.toLower == low).map (· + 1)
     ((monthOpenings.findIdx? (low.startsWith ·)).map (· + 1)).orElse fun _ => pick months
 
-/-! ## The two views -/
-
-/-- biber's default type map for BibTeX data (biber manual §3.1.2): the
-type biblatex names it, and the `type` a thesis or report kind sets. -/
+/-- biber's default type map for BibTeX data: the biblatex type and the `type` a
+thesis or report kind sets. -/
 public def biberTypeMap : List (String × String × Option String) :=
   [("conference", "inproceedings", none), ("electronic", "online", none),
    ("www", "online", none), ("mastersthesis", "thesis", some "mathesis"),
@@ -271,11 +227,8 @@ public def biberFieldMap : List (String × String) :=
 private def setIfAbsent (fs : Array (String × String)) (f v : String) : Array (String × String) :=
   if fs.any (·.1 == f) then fs else fs.push (f, v)
 
-/-- An entry as biber reads it: BibTeX's type and field spellings renamed
-to biblatex's (`biberTypeMap`, `biberFieldMap`) unless biblatex's spelling
-is already there. A legacy `year` and `month` stay fields of their own —
-biber's year and month datafields — which the plain date falls back to
-(`Entry.dateParts`). -/
+/-- An entry as biber reads it: BibTeX's type and field spellings renamed to
+biblatex's unless already present. -/
 public def Entry.biberView (e : Entry) : Entry := Id.run do
   let (kind, setType) := match biberTypeMap.find? (·.1 == e.kind) with
     | some (_, k, ty) => (k, ty)
@@ -289,13 +242,7 @@ public def Entry.biberView (e : Entry) : Entry := Id.run do
   if let some ty := setType then fs := setIfAbsent fs "type" ty
   return { e with kind, fields := fs }
 
-/-- What biber reads of one of an entry's date types (`""` for `date`,
-`"event"`, `"orig"`, `"url"`; Biber::Input::file::bibtex `_datetime` and
-`_literal`): the field parsed; for the plain date, where no `date` is read,
-the legacy `year` — as written, a number or not — and `month`, its number
-where it reads as one (`monthNumber`), else as written; or the field's
-text where biber cannot read it, which the caller names and prints as
-written. -/
+/-- What biber reads of one of an entry's date types. -/
 public inductive DateParts where
   | parsed (dv : DateValue)
   | legacy (year : String) (month : Option String)
@@ -318,18 +265,16 @@ public def Entry.dateParts (months : Array String) (e : Entry) (ty : String) : D
     | none => if ty.isEmpty then legacy.getD (.written (text v)) else .written (text v)
   | none => if ty.isEmpty then legacy.getD .none else .none
 
-/-- The date an entry's label prints (biblatex.def `\DeclareLabeldate`: the
-`date`, the `year` — one datafield to biber — then `eventdate`, `origdate`,
-`urldate`), with its type, or `none` for biblatex's `nodate`. -/
+/-- The date an entry's label prints, with its type, or
+`none` for biblatex's `nodate`. -/
 public def Entry.labelDate (months : Array String) (e : Entry) : Option (String × DateParts) :=
   ["", "event", "orig", "url"].findSome? fun ty =>
     match e.dateParts months ty with
     | .none => none
     | p => some (ty, p)
 
-/-- The BibTeX type a biblatex type reads as: a thesis by its `type`, a
-report as a technical report, and every type BibTeX has no function for as
-`misc` — BibTeX's own fallback (plain.bst FUNCTION {default.type}). -/
+/-- The BibTeX type a biblatex type reads as, `misc` where
+BibTeX has no function for it. -/
 private def bibtexKind (e : Entry) : String × Bool :=
   let ty := ((e.field? "type").map fun t => (text t).trimAscii.toString).getD ""
   match e.kind with
@@ -340,13 +285,8 @@ private def bibtexKind (e : Entry) : String × Bool :=
   | "online" | "electronic" | "www" => ("misc", false)
   | k => (k, false)
 
-/-- An entry as a BibTeX style reads it: biblatex's spellings under
-BibTeX's names where the BibTeX name is absent — `journaltitle` as
-`journal`, `location` as `address`, a thesis's `institution` as `school`,
-and `date` as `year` and `month` (the month named in the document's
-language, as BibTeX's month macros are) — and biblatex's types as the
-BibTeX function that formats them. A `type` that only named the biblatex
-kind (`phdthesis`, `techreport`) is no longer text to print. -/
+/-- An entry as a BibTeX style reads it: biblatex's spellings under BibTeX's
+names where those are absent. -/
 public def Entry.bibtexView (months : Array String) (e : Entry) : Entry := Id.run do
   let (kind, dropType) := bibtexKind e
   let mut fs := if dropType then e.fields.filter (·.1 != "type") else e.fields
@@ -372,19 +312,13 @@ public def Entry.bibtexView (months : Array String) (e : Entry) : Entry := Id.ru
           fs := setIfAbsent fs "month" ((months[m - 1]?).getD (toString m))
   return { e with kind, fields := fs }
 
-/-! ## Inheritance -/
-
-/-- **BibTeX's cross-reference**: the child keeps every field it has and
-takes each field it lacks from its parent under the same name — except the
-parent's own `crossref`, which BibTeX never copies (bibtex.web, "Add
-cross-reference information"). -/
+/-- BibTeX's cross-reference: the child takes each field it lacks from its
+parent, except the parent's `crossref`. -/
 public def inheritBibtex (child parent : Entry) : Entry :=
   { child with fields := child.fields ++ parent.fields.filter fun (f, _) =>
       f != "crossref" && !child.fields.any (·.1 == f) }
 
-/-- One rule of biblatex's data inheritance (`\DeclareDataInheritance`):
-the parent and child types it governs, `*` for any, the parent fields it
-lends under another name, and the fields it withholds. -/
+/-- One rule of biblatex's data inheritance (`\DeclareDataInheritance`). -/
 public structure InheritRule where
   sources : List String
   targets : List String
@@ -392,11 +326,7 @@ public structure InheritRule where
   withheld : List String := []
   deriving Repr, BEq
 
-/-- biblatex's default inheritance setup, transcribed from biblatex.def
-(`\DefaultInheritance{all=true,override=false}` and the
-`\DeclareDataInheritance` blocks after it): every field is inherited under
-its own name, a child's own field always wins, and these rules map or
-withhold what the type pair names. -/
+/-- biblatex's default inheritance setup, transcribed from biblatex.def. -/
 public def biblatexInheritance : List InheritRule :=
   let titles (t : String) : List (String × String) :=
     [("title", t ++ "title"), ("subtitle", t ++ "subtitle"), ("titleaddon", t ++ "titleaddon")]
@@ -431,10 +361,8 @@ public def InheritRule.governs (r : InheritRule) (src tgt : String) : Bool :=
   (r.sources.contains "*" || r.sources.contains src) &&
     (r.targets.contains "*" || r.targets.contains tgt)
 
-/-- The fields a parent lends a child under biblatex's rules, in the order
-biber takes them: first each mapped field the parent has, under its new
-name, then every other field the parent has — one no governing rule maps
-away or withholds — under its own name. -/
+/-- The fields a parent lends a child under biblatex's
+rules, in the order biber takes them. -/
 public def lent (rules : List InheritRule) (child parent : Entry) : Array (String × String) :=
   let gov := rules.filter (·.governs parent.kind child.kind)
   let maps := gov.flatMap (·.maps)
@@ -443,20 +371,13 @@ public def lent (rules : List InheritRule) (child parent : Entry) : Array (Strin
   (maps.filterMap fun (s, t) => (parent.field? s).map (t, ·)).toArray ++
     parent.fields.filter fun (f, _) => !mapped.contains f && !withheld.contains f
 
-/-- **biber's cross-reference** under a rule set: the child keeps every
-field it has and takes the rest from what its parent lends (`lent`) —
-`override=false`, the first lender of a name winning. -/
+/-- biber's cross-reference under a rule set: the child takes the rest from what
+its parent lends, the first lender winning. -/
 public def inheritBiber (rules : List InheritRule) (child parent : Entry) : Entry :=
   { child with fields := child.fields ++ lent rules child parent }
 
-/-- **`xdata`**: a data entry's fields set on the entry naming it, each
-replacing the entry's own field of that name — biber's `resolve_xdata`
-sets every field the data entry holds but its aliases (`ids`), so a data
-entry named later replaces what an earlier one set, and both replace what
-the entry wrote itself; nothing is renamed. A data entry's `crossref` and
-`xref` are lent with the rest, and the entry then inherits through them,
-as biber resolves data before inheritance; its `xdata`, read already
-(`resolveXdataGo`), is withheld. -/
+/-- `xdata`: a data entry's fields set on the entry naming
+it, each replacing the entry's own. -/
 public def inheritXdata (fields lent : Array (String × String)) : Array (String × String) :=
   lent.foldl (init := fields) fun fs (f, v) =>
     if f == "xdata" || f == "ids" then fs
@@ -464,22 +385,15 @@ public def inheritXdata (fields lent : Array (String × String)) : Array (String
       | some i => fs.modify i fun _ => (f, v)
       | none => fs.push (f, v)
 
-/-! ## The database a processor reads -/
-
-/-- Which program reads the `.bib`: BibTeX for `\bibliographystyle`'s
-`.bst` styles, biber for biblatex. The entry is one record; the processor
-picks the view, the inheritance and the list rule. -/
+/-- Which program reads the `.bib`: BibTeX for `.bst`
+styles, biber for biblatex. -/
 public inductive Processor where
   | bibtex
   | biber
   deriving Repr, BEq, Inhabited
 
-/-- The fields of the two data models that carry what a reader of a
-reference list is owed: BibTeX's standard fields (btxdoc §"Fields") and
-biblatex's data-model fields (blx-dm.def) — everything but their metadata,
-sorting and linking fields (`abstract`, `keywords`, `file`, `sortkey`,
-`crossref`, `langid`, …), which no standard style prints by design. A field
-outside both models is no style's to print. -/
+/-- The fields of the two data models that carry what a
+reader of a reference list is owed. -/
 public def contentFields : List String :=
   ["author", "editor", "translator", "bookauthor", "annotator", "commentator", "introduction",
    "foreword", "afterword", "holder", "editora", "editorb", "editorc",
@@ -494,8 +408,7 @@ public def contentFields : List String :=
    "year", "month", "date", "eventdate", "origdate", "urldate",
    "doi", "eprint", "url", "isbn", "issn", "isrn", "isan", "ismn", "iswc"]
 
-/-- The name a processor reads a field under, where the two models spell
-it apart: what decides whether a style that prints one prints the other. -/
+/-- The name a processor reads a field under. -/
 public def readsAs (proc : Processor) (kind f : String) : String :=
   match proc with
   | .bibtex =>
@@ -508,29 +421,23 @@ public def readsAs (proc : Processor) (kind f : String) : String :=
   | .biber =>
     match f with
     | "year" => "date"
-    -- a month biber's view keeps is one it could not fold into the date
     | "month" => "month"
     | g => (biberFieldMap.lookup g).getD g
 
-/-- BibTeX's `min_crossrefs` and biblatex's `mincrossrefs` default: a
-parent cross-referenced by this many cited entries enters the list
-uncited (btxdoc §"Cross references"; biblatex manual §3.1.2.1). -/
+/-- The default count of citing entries that brings an
+uncited parent into the list. -/
 public def minCrossrefs : Nat := 2
 
-/-- An entry's references to other entries by one field — `crossref` and
-`xref` name one, `xdata` a comma list. -/
+/-- An entry's references to other entries by one field. -/
 public def Entry.refsBy (e : Entry) (field : String) : List String :=
   match e.field? field with
   | some v => ((text v).splitOn ",").map (·.trimAscii.toString) |>.filter (!·.isEmpty)
   | none => []
 
-/-- The database keys a walk has yet to meet: what each visit spends, read
-by the walk's termination proof alone. -/
+/-- The database keys a walk has yet to meet. -/
 private def unmet (byKey : Std.HashMap String Entry) (seen : Std.HashSet String) : Nat :=
   (byKey.keys.filter fun k => !seen.contains k).length
 
-/-- Meeting a database key the walk had not met spends one of the keys
-left. -/
 private theorem unmet_insert_lt (byKey : Std.HashMap String Entry) (seen : Std.HashSet String)
     (k : String) (p : Entry) (hk : byKey.get? k = some p) (hs : seen.contains k = false) :
     unmet byKey (seen.insert k) < unmet byKey seen := by
@@ -547,12 +454,7 @@ private theorem unmet_insert_lt (byKey : Std.HashMap String Entry) (seen : Std.H
     ← Std.HashMap.get?_eq_getElem?, hk]
   rfl
 
-/-- The walk under `ancestry`, breadth first from `frontier`: a key the walk
-has met is passed, a database key is met once and its own references join
-the frontier's end, and a key the database lacks is recorded and passed.
-It ends only on an empty frontier: a step either meets a key the database
-holds and the walk had not met, or shortens the frontier (`unmet`), so
-neither a cycle nor any number of keys naming no entry ends it early. -/
+/-- The breadth-first walk under `ancestry`. -/
 private def ancestryGo (byKey : Std.HashMap String Entry) (field : String)
     (seen : Std.HashSet String) (out : Array Entry) (missing : Array String) :
     List String → Array Entry × Array String
@@ -569,44 +471,14 @@ decreasing_by
   · exact Prod.Lex.left _ _ (unmet_insert_lt byKey seen k p _hk (by simpa using _hs))
   · exact Prod.Lex.right _ (by simp)
 
-/-- The entries an entry's references reach, nearest first, each once —
-walking one field (`crossref`, `xdata`) up through the database — and the
-keys it met that name no entry, in the order met. -/
+/-- The entries an entry's references reach by one field, nearest first, each
+once, and the keys that name no entry. -/
 private def ancestry (byKey : Std.HashMap String Entry) (field : String) (start : Entry) :
     Array Entry × Array String :=
   ancestryGo byKey field (({} : Std.HashSet String).insert start.key) #[] #[] (start.refsBy field)
 
-/-! ### `xdata`, as biber resolves it
-
-biber resolves an entry's `xdata` references in the order its fields hold
-them (Biber::Entry `resolve_xdata`): a whole-entry reference (`xdata = {a,
-b}`) sets every field of each data entry it names (`inheritXdata`), a
-granular one (`publisher = {xdata=a-publisher}`, `author = {X and
-xdata=a-editor-2}`) one field or one list item, and a data entry's own
-references resolve before it lends. A reference biber does not resolve is
-named (W0425) and lends nothing. Where biber then keeps the reference's own
-text in the field, which prints it, the engine sets the entry without it:
-the reference's spelling is never the author's text. A date field holds no
-reference: biber reads a date as a date (Biber::Input::file::bibtex
-`_datetime`, the one field reader with no `add_xdata_ref`), so
-`date = {xdata=d-date}` is a date biber cannot read (W0420). biber warns
-that its format is invalid and drops it; the engine prints it as written,
-as it prints every date biber cannot read — the declared departure, which
-keeps the author's text in sight and names it.
-
-One departure is declared: biber resolves a list's references first to
-last, each at the position the field wrote, so a reference lending a whole
-list moves the items after it and a later reference replaces an item that
-list brought, its own spelling left in the list (`author = {xdata=d-author
-and xdata=d-editor-2}` under a two-name `author` sets the first author and
-the second editor, then an empty name). The engine resolves each reference
-at the item it stands in, last to first, so every reference lends where it
-was written. -/
-
-/-- The shape biblatex's data model gives a field (blx-dm.def
-`\DeclareDatamodelFields`): whether it is a list, and of what. A granular
-reference lends one field to another only where the two shapes agree, as
-biber checks before it resolves one. -/
+/-- The shape biblatex's data model gives a field: whether
+it is a list, and of what. -/
 private def datePart (f : String) : Bool :=
   ["", "event", "orig", "url"].any fun pre =>
     ["year", "month", "day", "hour", "minute", "second", "timezone", "yeardivision"].any fun p =>
@@ -636,13 +508,8 @@ public def fieldShape (f : String) : Bool × String :=
   else if f == "execute" then (false, "code")
   else (false, "literal")
 
-/-- What a field value spelling `xdata=` holds (biber `add_xdata_ref`, the
-marker read whatever its case): `some (key, field, position)` for a
-granular reference — a key and a field holding no `-`, and an optional
-1-based position — and `some none` for a spelling biber reads no source
-field in; `none` for a value that is no reference, which biber's pattern
-(`xdata=` then one or more characters, none of them white space) does not
-match and so reads as the text it is. -/
+/-- What a field value spelling `xdata=` holds: `some (key, field, position)`
+for a granular reference. -/
 public def granularRef? (v : String) : Option (Option (String × String × Option Nat)) :=
   let v := v.trimAscii.toString
   if (v.take 6).toString.toLower != "xdata=" then none
@@ -656,20 +523,17 @@ public def granularRef? (v : String) : Option (Option (String × String × Optio
         else some (k, f, n.toNat?)
       | _ => none
 
-/-- Why biber does not resolve an inheritance reference (its warnings in
-`resolve_xdata` and `Biber.pm`), each named by W0425. -/
+/-- Why biber does not resolve an inheritance reference, each named by W0425. -/
 public inductive RefFault where
   /-- No entry holds the key. -/
   | missing
-  /-- BibTeX's: the parent stands before every cited entry naming it and no
-  citation names it, so BibTeX's one reading of the database passed it
-  before anything asked for it (bibtex.web, "A bad cross reference"). -/
+  /-- BibTeX's one reading of the database passed the parent
+  before anything asked for it. -/
   | unread
   /-- The `xdata` names an entry that is no `@xdata` entry. -/
   | notData
-  /-- Following it would read again a data entry being read (biber stops
-  the run, `Circular XDATA inheritance`); the path from the entry whose
-  data it is, in order. -/
+  /-- Following it would reread a data entry being read; the
+  path from the entry whose data it is. -/
   | cycle (path : Array String)
   /-- The granular reference's data entry holds no such field. -/
   | noField (field : String)
@@ -681,9 +545,8 @@ public inductive RefFault where
   | malformed
   deriving Repr, BEq
 
-/-- An inheritance reference left unresolved: the entry whose field holds
-it, the field, the key it names, the data entry's field a granular
-reference takes (`""` for a whole reference), and why. -/
+/-- An inheritance reference left unresolved: the entry, the field, the key, the
+data entry's field, and why. -/
 public structure RefReport where
   holder : String
   field : String
@@ -692,14 +555,10 @@ public structure RefReport where
   fault : RefFault
   deriving Repr, BEq
 
-/-- The items of a list field (names, places, publishers): split on
-` and ` at brace depth 0. -/
+/-- The items of a list field, split on ` and ` at brace depth 0. -/
 private def listItems (v : String) : Array String := splitNames v
 
-/-- What a granular reference takes from its data entry, read after the
-data entry's own references resolved: the field's value, for a field that
-is no list; for a list, every item, or the one at the 1-based position
-written — or why it takes nothing. -/
+/-- What a granular reference takes from its data entry. -/
 private def lendItems (q : Entry) (field : String) (isList : Bool) (pos : Option Nat) :
     Except RefFault (Array String) :=
   match q.field? field with
@@ -716,11 +575,8 @@ private def lendItems (q : Entry) (field : String) (isList : Bool) (pos : Option
           | some x => .ok #[x]
           | none => .error (.noPosition field n)
 
-/-- An entry with its `xdata` references resolved, as biber resolves them,
-and the references it left unresolved. `onPath` holds the data entries
-being read on the way here (`path` in order): a reference to one of them
-closes a cycle, which biber refuses and the engine skips. Each data entry
-read is met once on the way, so the reading ends (`unmet`). -/
+/-- An entry with its `xdata` references resolved as biber resolves them, and
+those left unresolved. -/
 private def resolveXdataGo (byKey : Std.HashMap String Entry) (onPath : Std.HashSet String)
     (path : Array String) (e : Entry) : Entry × Array RefReport := Id.run do
   let mut fields := e.fields
@@ -739,14 +595,11 @@ private def resolveXdataGo (byKey : Std.HashMap String Entry) (onPath : Std.Hash
             reports := reports ++ rs
             fields := inheritXdata fields q.fields
     else
-      -- a granular reference spells `xdata=`; a value without `=` holds none,
-      -- and neither does a date, which biber reads as a date
       unless v.contains '=' && (fieldShape f).2 != "date" do continue
       let isList := (fieldShape f).1
       let items := if isList then listItems v else #[v]
       unless items.any (granularRef? · |>.isSome) do continue
-      -- Each reference read in turn from the last item, so the positions
-      -- the field wrote stay the items' own however many a reference lends.
+      -- Each reference is read from the last item, so the written positions stay the items' own.
       let mut out := items
       for j in [0:items.size] do
         let i := items.size - 1 - j
@@ -771,8 +624,6 @@ private def resolveXdataGo (byKey : Std.HashMap String Entry) (onPath : Std.Hash
                 reports := reports.push ⟨e.key, f, k, xf, .cycle (path.push k)⟩
                 out := out.eraseIdxIfInBounds i
               else
-                -- biber reads the data entry's own references first, then
-                -- holds the two fields' kinds to each other
                 let (q, rs) := resolveXdataGo byKey (onPath.insert k) (path.push k) p
                 reports := reports ++ rs
                 if fieldShape xf != fieldShape f then
@@ -780,8 +631,6 @@ private def resolveXdataGo (byKey : Std.HashMap String Entry) (onPath : Std.Hash
                   out := out.eraseIdxIfInBounds i
                 else match lendItems q xf isList pos with
                   | .error fault =>
-                    -- a field the data entry writes, which its own reading
-                    -- left out, is a reference of its own already named
                     let named := match fault with
                       | .noField _ => (p.field? xf).isSome
                       | _ => false
@@ -804,10 +653,7 @@ private def resolveXdata (byKey : Std.HashMap String Entry) (e : Entry) : Entry 
   resolveXdataGo byKey (({} : Std.HashSet String).insert e.key) #[e.key] e
 
 /-- An entry with its `crossref` chain resolved under the processor's
-inheritance: the farthest ancestor lends to the next, down to the entry
-itself, so a grandparent's fields reach a child through its parent. BibTeX
-itself resolves one level; a nested reference is evident intent all the
-same, and biber resolves the chain. -/
+inheritance, farthest ancestor first. -/
 private def withCrossref (proc : Processor) (byKey : Std.HashMap String Entry) (e : Entry) :
     Entry :=
   let chain := (ancestry byKey "crossref" e).1.toList
@@ -820,30 +666,17 @@ private def withCrossref (proc : Processor) (byKey : Std.HashMap String Entry) (
     let parent := below.foldl (fun acc c => inh c acc) top
     inh e parent
 
-/-- What a processor reads off the database for one document: every entry
-resolved (its view, its `xdata`, its `crossref` chain), the keys its list
-holds in order — the cited keys, then each parent `minCrossrefs` cited
-entries cross-reference (`crossref`, and for biber `xref`), in the order
-their first referencing entry stands in the database — and, for BibTeX, a
-child whose parent stays out of the list loses its `crossref`, which is
-what makes its style format it whole (bibtex.web, "Remove missing entries
-or those cross referenced too few times"). An `@xdata` entry is never
-listed. -/
+/-- What a processor reads off the database for one document. -/
 public structure Database where
   entries : Std.HashMap String Entry
   list : Array String
-  /-- Each entry under the processor's view, before it inherits: what the
-  entry itself declares. -/
+  /-- Each entry under the processor's view, before it inherits. -/
   own : Std.HashMap String Entry := {}
-  /-- The inheritance references a listed entry's reading left
-  unresolved: a `crossref` naming no entry, and each `xdata` reference
-  biber does not resolve (`resolveXdataGo`), its own or a data entry's it
-  reads, once each. -/
+  /-- The inheritance references a listed entry's reading left unresolved. -/
   broken : Array RefReport := #[]
 
-/-- A BibTeX view's `crossref` naming its parent by the parent's own key:
-BibTeX matches a database key whatever its case (bibtex.web looks keys up
-lowercased), where biber matches keys exactly. -/
+/-- A BibTeX view's `crossref` naming its parent by the parent's own key; BibTeX
+matches keys case-insensitively. -/
 private def canonicalCrossref (lower : Std.HashMap String String)
     (byKey : Std.HashMap String Entry) (e : Entry) : Entry :=
   match e.field? "crossref" with
@@ -856,12 +689,7 @@ private def canonicalCrossref (lower : Std.HashMap String String)
       | none => e
   | none => e
 
-/-- A database under one processor before any list is read off it: each
-entry under the processor's view (`viewed`, in database order, with each
-entry's position), every entry with its `xdata` and its `crossref` chain
-resolved, and what each entry's `xdata` left unresolved — the work no
-list's citations change, done once however many lists a document reads off
-it (`settleFieldCites` reads one per round). -/
+/-- A database under one processor before any list is read off it. -/
 public structure Database.Prepared where
   proc : Processor
   viewed : Array Entry
@@ -872,14 +700,13 @@ public structure Database.Prepared where
   withData : Std.HashMap String Entry
   /-- Each entry with its `xdata` and its `crossref` chain resolved. -/
   resolved : Std.HashMap String Entry
-  /-- The keys of the entries that name a `crossref`: the only ones a
-  list can strip one from. -/
+  /-- The keys of the entries that name a `crossref`. -/
   crossrefs : Array String
   /-- What each entry's `xdata` reading left unresolved. -/
   dataReports : Std.HashMap String (Array RefReport)
 
-/-- Prepare a database for a processor: `months` are the document's month
-names. -/
+/-- Prepares a database for a processor; `months` are the
+document's month names. -/
 public def Database.prepare (proc : Processor) (months : Array String) (raw : Array Entry) :
     Database.Prepared :=
   let view (e : Entry) : Entry := match proc with
@@ -902,31 +729,21 @@ public def Database.prepare (proc : Processor) (months : Array String) (raw : Ar
       | none => m) withData
   let dataReports : Std.HashMap String (Array RefReport) :=
     read.foldl (fun m (e, rs) => if rs.isEmpty then m else m.insert e.key rs) {}
-  -- an entry's `crossref` may be its own or one a data entry lent it
   let crossrefs := (viewed.filter fun e =>
     ((withData.get? e.key).map fun x => !(x.refsBy "crossref").isEmpty).getD false).map (·.key)
   { proc, viewed, position, own, withData, resolved, crossrefs, dataReports }
 
-/-- The list a prepared database gives `cited`, the keys in first-citation
-order (`Database.read`), its work the cited entries' and the cross
-references': no step walks the whole database. -/
+/-- The list a prepared database gives the keys `cited`, in
+first-citation order. -/
 public def Database.Prepared.list (d : Database.Prepared) (cited : Array String) : Database :=
   Id.run do
   let citedSet : Std.HashSet String := cited.foldl (·.insert ·) {}
   let refFields := match d.proc with
     | .bibtex => ["crossref"]
     | .biber => ["crossref", "xref"]
-  -- each parent's count of cited children, and the order parents are met:
-  -- the cited entries walked in database order
   let inOrder := ((citedSet.toArray.filterMap fun k => (d.position.get? k).map (·, k)).qsort
     (fun a b => a.1 < b.1)).filterMap fun (_, k) => d.withData.get? k
-  -- BibTeX reads the database once, in order, keeping an entry only where
-  -- its cite list holds it when the reading reaches it, and a kept entry's
-  -- `crossref` adds its parent to that list: a parent no citation names is
-  -- kept where a cited entry naming it stands before it, and one standing
-  -- before every entry that names it is never read — bibtex.web's "bad
-  -- cross reference": they inherit nothing, lose the field, and the parent
-  -- is not listed. biber resolves a crossref wherever its parent stands.
+  -- BibTeX reads the database once: a parent is kept only after a cited child naming it.
   let firstChild : Std.HashMap String Nat := inOrder.foldl (init := {}) fun m e =>
     (e.refsBy "crossref").foldl (init := m) fun m p =>
       if m.contains p then m else match d.position.get? e.key with
@@ -957,8 +774,7 @@ public def Database.Prepared.list (d : Database.Prepared) (cited : Array String)
           if let some x := entries.get? e.key then
             entries := entries.insert e.key
               { x with fields := x.fields.filter (·.1 != "crossref") }
-  -- An `@xdata` entry lends its fields and is never itself listed
-  -- (biblatex's data model declares it `skipout`).
+  -- An `@xdata` entry lends its fields and is never listed.
   let listed := (cited ++ added).filter fun k => (d.withData.get? k).all (·.kind != "xdata")
   let broken := listed.foldl (init := #[]) fun acc k =>
     match d.withData.get? k with
@@ -971,16 +787,11 @@ public def Database.Prepared.list (d : Database.Prepared) (cited : Array String)
     | none => acc
   return { entries, list := listed, own := d.own, broken }
 
-/-- Read a database for a processor: `months` are the document's month
-names, `cited` the keys in first-citation order. -/
+/-- Reads a database for a processor: `months` are the month names, `cited` the
+keys in first-citation order. -/
 public def Database.read (proc : Processor) (months : Array String) (raw : Array Entry)
     (cited : Array String) : Database :=
   (Database.prepare proc months raw).list cited
-
-/-! ### What the inheritance theorems say
-
-Each is the exact field-level statement: what the inheriting entry answers
-for a field name, in terms of what the child and the parent answer. -/
 
 private theorem find?_filter_keep (ys : Array (String × String)) (p : String × String → Bool)
     (f : String) (hp : ∀ x : String × String, x.1 = f → p x = true) :
@@ -1010,9 +821,6 @@ private theorem any_name_false (xs : Array (String × String)) (f : String)
     obtain ⟨x, hx, hfx⟩ := Array.any_eq_true'.mp hany
     exact absurd hfx (Array.find?_eq_none.mp h x hx)
 
-/-- **BibTeX's inheritance is exact**: a crossref'd entry answers each
-field it has itself, and each field it lacks from its parent — every field
-but `crossref`, which stays the child's own. -/
 public theorem crossref_inherit_exact (child parent : Entry) (f : String) :
     (inheritBibtex child parent).field? f =
       if f = "crossref" then child.field? f
@@ -1030,8 +838,6 @@ public theorem crossref_inherit_exact (child parent : Entry) (f : String) :
       rw [find?_filter_keep _ _ _ (fun x hx => by simp [hx, hc, hany])]
       simp
 
-/-- **biber's inheritance is exact**: an entry answers each field it has
-itself, and each field it lacks from what its parent lends (`lent`). -/
 public theorem biberInherit_exact (rules : List InheritRule) (child parent : Entry)
     (f : String) :
     (inheritBiber rules child parent).field? f =
@@ -1039,9 +845,6 @@ public theorem biberInherit_exact (rules : List InheritRule) (child parent : Ent
   simp only [inheritBiber, Entry.field?, Array.find?_append]
   cases child.fields.find? (·.1 == f) <;> simp
 
-/-- **What a parent lends under biblatex's rules**: a field no governing
-rule maps — from or to — and none withholds is lent exactly as the parent
-has it. -/
 public theorem lent_plain_exact (rules : List InheritRule) (child parent : Entry) (f : String)
     (hm : ∀ r ∈ rules, r.governs parent.kind child.kind = true →
       ∀ st ∈ r.maps, st.1 ≠ f ∧ st.2 ≠ f)

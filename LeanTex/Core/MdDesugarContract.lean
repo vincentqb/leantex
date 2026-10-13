@@ -6,25 +6,7 @@ import all LeanTex.Core.Parse
 
 /-! # What markdown lowers into
 
-Markdown's meaning is its desugaring into the surface AST (`Md.desugar`).
-This module states the image of that function: a declared slice of tex's
-vocabulary, closed under the desugaring of every markdown block and inline
-node (`desugar_vocabulary_mem`). The statement ranges over the md AST, not
-over what the reader happens to produce today, so it holds of any reader
-that hands the desugaring an AST.
-
-The vocabulary is what an included markdown file can ask of a tex host.
-Its ordinary controls are ordinary: a host redefinition reaches included
-markdown as it reaches the same call written in the host. Its bridged
-names hold a space, so no source can spell, forge or redefine them
-(`vocabulary_contract`). Its environments are names the elaborator gives a
-meaning of its own; one of them, the markdown table's (`Parse.markdownTableEnv`),
-holds a space as the bridged names do, so a table included from markdown
-keeps its own fit whatever the host declares.
-
-A new desugaring arm that emits outside the vocabulary breaks the proof
-below; the commit that adds the construct extends the vocabulary, and
-with it what a host can reach. -/
+The declared vocabulary of the markdown desugaring, and its block shape. -/
 
 namespace LeanTex.Core.Md
 
@@ -32,9 +14,9 @@ open LeanTex.Core LeanTex.Core.Parse
 
 /-- A slice of the surface AST's vocabulary. -/
 public structure Vocab where
-  /-- Ordinary controls: spelled as a document spells them. -/
+  /-- Ordinary controls, spelled as a document spells them. -/
   ctrls : List String
-  /-- Names holding a space: no source can spell, forge or redefine one. -/
+  /-- Names holding a space, which no source can spell, forge or redefine. -/
   bridged : List String
   envs : List String
   verbs : List String
@@ -51,9 +33,7 @@ public structure Vocab where
 
 mutual
 
-/-- Does the vocabulary admit this raw, its children included? Text,
-spaces and paragraph ends always; math never; a control, environment,
-verbatim or symbol by name. The `List` companion carries the walk. -/
+/-- Whether the vocabulary admits a raw, its children included. -/
 @[expose] public def Vocab.admits (v : Vocab) : Raw → Bool
   | .word _ _ => true
   | .space => true
@@ -102,7 +82,6 @@ private theorem adm_push {a : Array Raw} {r : Raw} (ha : Adm a) (hr : vocabulary
   · exact ha x hx
   · exact hr
 
-/-- An array literal's members, one at a time. -/
 private theorem adm_lit {l : List Raw} (h : ∀ r ∈ l, vocabulary.admits r = true) :
     Adm l.toArray := fun r hr => h r (by simpa using hr)
 
@@ -393,25 +372,16 @@ private theorem itemsRaws_adm (file : String) : (l : List (Array Blk)) → (p : 
 
 end
 
-/-- **Markdown lowers into its declared vocabulary.** Every raw the
-desugaring produces, at every depth, is a word, a space, a paragraph end,
-or a control, environment, verbatim or symbol the vocabulary names; no
-markdown source yields math, a definition, an input request or any other
-control. The induction ranges over every md block and inline node, so it
-is independent of the reader. -/
 public theorem desugar_vocabulary_mem (file input : String) :
     ∀ r ∈ (desugar file input).1, vocabulary.admits r = true := by
   unfold desugar
   exact blkListRaws_adm file _ #[] #[] adm_empty
 
-/-- The markdown frontend is the desugaring, exactly: what the two
-theorems here state of `desugar` they state of every `.md` read. -/
 public theorem read_desugar_exact (file input : String) : read file input = desugar file input := by
   unfold read
   rfl
 
-/-- A raw that opens a block wherever it stands: a paragraph end, a bridged
-heading, a display verbatim, or one of the vocabulary's environments. -/
+/-- A raw that opens a block wherever it stands. -/
 @[expose] public def BlockStart (r : Raw) : Prop :=
   (∃ p, r = .par p) ∨ (∃ n p, r = .ctrl n p ∧ n ∈ vocabulary.bridged) ∨
     (∃ e s p, r = .verb e s p ∧ e ∈ vocabulary.verbs) ∨
@@ -477,19 +447,11 @@ private theorem blkListRaws_starts (file : String) : (l : List Blk) → (out : A
     simp only [blkListRaws]
     exact blkListRaws_starts file rest _ _ (starts_append h (blkRaws_starts file b))
 
-/-- **Markdown is block-shaped.** A markdown document that lowers to
-anything lowers to at least one raw that opens a block: its content never
-reads as a phrase continuing the text around an include. -/
 public theorem desugar_blockStart_contract (file input : String)
     (h : (desugar file input).1 ≠ #[]) : ∃ r ∈ (desugar file input).1, BlockStart r := by
   unfold desugar at h ⊢
   exact (blkListRaws_starts file _ #[] #[] (Or.inl rfl)).resolve_left h
 
-/-- The vocabulary's names, judged against the parser's reserved spellings:
-its environments are ordinary environment names — no include wrapper, no
-generated scope, no definer half — its ordinary controls hold no space, so
-a document spells them, and its bridged names are exactly the heading
-bridge's, each holding the space no source can spell. -/
 public theorem vocabulary_contract :
     (∀ n ∈ vocabulary.envs, Parse.inputEnvFile? n = none ∧ n ≠ Parse.scopeEnv ∧
       Parse.splitOpen? n = none ∧ Parse.splitClose? n = none) ∧

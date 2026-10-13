@@ -20,29 +20,11 @@ open LeanTex.Core LeanTex.Core.Parse
 
 /-! # LaTeX idioms, spelled natively
 
-A document written for lualatex spends its preamble asking packages for what
-this engine provides directly. Each idiom below is rewritten into the native
-declaration before elaboration, with a note saying what it became, so the
-document compiles as written and its author can see the shorter spelling.
+Rewrites each LaTeX idiom into the native declaration on the parsed tree, before
+elaboration, with a note naming what it became. -/
 
-The rewrite works on the parsed tree, never on text, so it cannot unbalance a
-brace it did not create; and translated content re-enters through the lexer
-and parser, so it obeys exactly the rules hand-written input does. -/
-
-/-- Package interfaces the engine handles natively. Seeing one is a note,
-not a warning: nothing was lost at the `\usepackage` line — a construct one
-of these packages provides that the engine cannot render is named where it
-is used, never at the load (`tikzpicture` renders its subset and W0334 or
-E0333 names each shape outside it; `appendix`'s mark and its environment
-are the sectioning walk's own, and its contents-page apparatus is W0301
-where it stands, as `\nicefrac` and `\multirow` are when
-a document actually uses them). `xurl` is `url` with better breaking;
-`amsfonts` is a subset of what `amssymb`/`unicode-math` already provide;
-`caption`/`subcaption` land on the caption path, their option interface
-judged at `\captionsetup` (honoured or W0354, never silent). `animate`
-lowers only whole multipage PDF requests with authored SVG companions;
-playback loss is W0110 at every use, unsupported source selection W0307,
-and package-wide defaults are named rather than silently discarded. -/
+/-- Package interfaces the engine handles natively: loading
+one draws a note, never a warning. -/
 public def nativePackages : List String :=
   ["geometry", "hyperref", "xcolor", "color", "microtype", "enumitem", "babel",
    "beamerposter", "paracol", "tabularx",
@@ -58,58 +40,13 @@ public def nativePackages : List String :=
    "algorithm2e", "algorithmicx", "algpseudocode", "algorithm", "lineno", "environ", "amsthm",
    "cancel", "animate", "markdown", "ulem", "tikz-cd"]
 
-/-- Beamer's colour elements, each mapped onto the engine's palette roles:
-the role its `fg=` declares and the role its `bg=` declares. An empty role
-is a side the engine has nowhere to put, and its value is *named* rather
-than dropped.
-
-**The element names are beamer's own, not invented here**: they are the
-element list beamer's default colour theme sets
-(beamercolorthemedefault.sty, which names every element beamer itself
-colours, documented as the colour-element list of the beamer user guide's
-"Colors" part), plus the moloch lineage's own additions
-(beamercolorthememoloch.sty: `progress bar` and its two placements,
-`standout`, `title separator`). Sourcing matters more here than in most
-tables: a key beamer never writes is a row that can never fire, and two
-rows spelled `block alerted title` — beamer writes `block title
-alerted` — sat here dropping every alerted and example block title a theme
-declared.
-
-Where several beamer elements share one engine role, the engine has one
-piece of furniture where beamer has several names for it, and the last
-declaration wins: `frametitle` and `headline` are the same title band (the
-poster lineage draws it under the second name), the three `progress bar`
-placements inherit the base bar without sharing their overrides. Only the
-section placement has a native PDF site; head/foot progress is named as
-unsupported. `footline` and `page number in head/foot` share the footer
-ink. `background canvas` has a ground and no ink: beamer's default canvas
-template reads only its `bg`, painting it as a full-page rule
-(beamerouterthemedefault.sty, `\defbeamertemplate*{background canvas}`), so
-it is the page's `bg`, and in the body the ground of the frames after it. -/
+/-- Beamer's colour elements, each mapped onto the palette roles its `fg=` and
+`bg=` declare; an empty role is a side the engine names rather than drops. -/
 private def beamerColorRoles : List (String × Option Ir.Role × Option Ir.Role) :=
   BeamerColor.roles
 
-/-- Beamer's font elements, mapped onto the engine's styleable element and
-the `\style` key that carries the font: the author line is the title page's
-`author-font`, everything else its element's `font`.
-
-**The element names are beamer's own**: beamerfontthemedefault.sty's element
-list (the font-element list of the beamer user guide's "Fonts" part), plus
-the moloch lineage's additions from beamerfontthememoloch.sty (`section
-title`, `standout`). Where beamer's name and the engine's furniture name
-differ, the furniture is the same: beamer's `section title` is the section
-page's heading, its `title` and `author` the title page's two lines.
-
-The three block titles are their block element's `font`, the title's
-(`Ir.blockTitleFont`, which also holds beamer's parent chain from the
-alerted and example titles to the plain one).
-
-Deliberately absent, and therefore named rather than guessed: `normal text`
-is the *document's* font, which is `\fonts` and not an element style;
-beamer's list elements name a marker font where the engine's list style
-names the item's, so mapping them would restyle the wrong thing; and
-`footline`, `headline`, `caption`, `date`, `institute`, `subtitle` and
-`framesubtitle` have no styleable element here at all. -/
+/-- Beamer's font elements, each mapped onto the styleable element and the
+`\style` key that carries its font. -/
 private def beamerFontElements : List (String × String × String) :=
   [("frametitle", "frametitle", "font"),
    ("standout", "standout", "font"),
@@ -121,43 +58,26 @@ private def beamerFontElements : List (String × String × String) :=
    ("block title alerted", "alertblock", "font"),
    ("block title example", "exampleblock", "font")]
 
-/-- The block-title fonts a shipped theme declares, the fields a document's
-`\setbeamerfont` merges into: beamerfontthememoloch.sty's `\setbeamerfont{block
-title}{size=\normalsize, series=\bfseries}` and the same for `block title
-alerted`; `block title example` keeps beamerfontthemedefault.sty's parent
-alone. The engine's title default is this font, so a deck that declares none
-sets as before. -/
+/-- The block-title fonts a shipped theme declares, which a document's
+`\setbeamerfont` merges into. -/
 private def themeBlockFont (theme element : String) : List (String × String) :=
   if theme == "moloch" && (element == "block title" || element == "block title alerted") then
     [("series", "\\bfseries"), ("size", "\\normalsize")]
   else []
 
-/-- Beamer's font axes in selection order (`beamerbasefont.sty`,
-`\beamer@usebeamerfont`): each declaration replaces its named fields, and
-selection runs size, shape, series, family regardless of declaration order.
-`parent` is inheritance the engine does not model and names where it stands. -/
+/-- Beamer's font axes in the order `\usebeamerfont` selects them. -/
 private def beamerFontKeys : List String := ["size", "shape", "series", "family"]
 
 /-- Classes that are an `article` with different defaults. -/
 private def articleClasses : List String :=
   ["scrartcl", "scrreprt", "scrbook", "report", "book", "memoir", "letter"]
 
-/-- Résumé classes: the same flow model with the résumé genre's contract —
-`moderncv` and `res` map onto the native `resume` class, as `beamer` maps
-onto `slides`. -/
+/-- Résumé classes, mapped onto the native `resume` class. -/
 private def resumeClasses : List String :=
   ["moderncv", "res"]
 
-/-- Font-selection packages: each package's whole documented effect is
-naming families for the generic slots — psnfss documentation ("Using
-common PostScript fonts with LaTeX", §2, tables 1 and 2: `times` and
-`palatino` set rm/sf/tt whole, `helvet` and `courier` one slot each,
-`mathptmx`/`mathpazo` set rm and the math alphabet); the carlito and
-libertine package READMEs name their families the same way. The faces
-land as their TeX Gyre successors (tex-gyre README: Termes for Times,
-Heros for Helvetica, Cursor for Courier, Pagella for Palatino) — the
-OpenType faces a TeX Live tree actually carries — and the math packages
-take the matching TeX Gyre math face. -/
+/-- Font-selection packages whose whole documented effect is
+naming families for the generic slots. -/
 private def fontPackages : List (String × String) :=
   [("times", "body = \"TeX Gyre Termes\", sans = \"TeX Gyre Heros\", mono = \"TeX Gyre Cursor\""),
    ("mathptmx", "body = \"TeX Gyre Termes\", math = \"TeX Gyre Termes Math\""),
@@ -169,37 +89,8 @@ private def fontPackages : List (String × String) :=
 mono = \"Linux Libertine Mono O\""),
    ("carlito", "sans = \"Carlito\"")]
 
-/-- Commands that configure TeX's own machinery and change nothing this
-engine models. An entry carries the reason its drop is the construct's
-full meaning here, emitted as the translation note (N0100, "→ nothing:
-why") — the accounting the silence guard reads, so an earned no-op is
-never wordless (`rewriteCtrl_accounts`). Defended entry by entry: catcode
-machinery has no counterpart here (`makeatletter`, `makeatother`,
-`relax`); the LaTeX diagnostic family addresses the author through TeX's
-own channels and contributes no document ink — `\PackageInfo` and its
-class and generic variants write the transcript, the `Warning` and `Error`
-spellings write `\@unused`, the terminal and transcript both
-(latex.ltx:8773-8947, from lterror.dtx §"Error handling and tracing"), and
-this engine has that channel in its own diagnostics; `frenchspacing`/`nonfrenchspacing`
-toggle inter-sentence space
-the engine sets uniformly either way; lineno's `linenomath`
-pair wraps displays that are numbered like every galley line already
-(the recorded divergence in testdata/compat-index/lineno.txt);
-`selectfont` commits NFSS declarations that apply where they stand here;
-`noindent` suppresses a first-line indent no paragraph here carries —
-paragraphs are set space-separated, with no indent in any class
-(`Ir.Block.quote` records the same fact for `\listparindent`), so the
-ask is met before it is made; were a first-line indent ever declared,
-this entry would become an arm emitting the paragraph's suppression.
-An entry whose drop is NOT its full meaning carries `none`: it stays
-consumed, and the dispatcher's guard names it (W0387,
-`\allow`-acceptable) instead of this table earning it silence it has
-not paid for — the `Error` spellings are exactly that case. Their groups
-must be consumed, or a style's error text ships as ink (the defect the
-warning rows fixed), but an error is a signal and not a no-op, so the
-drop is named rather than earned silence. Table rules
-(`midrule`, `toprule`, …) are NOT here: they are the table elaborator's
-vocabulary and must reach it. -/
+/-- Commands that configure TeX's own machinery and change
+nothing this engine models. -/
 public def meaningFree : List (String × Nat × Option String) :=
   [("makeatletter", 0, some "@-names are always readable here"),
    ("makeatother", 0, some "@-names are always readable here"),
@@ -241,9 +132,7 @@ public def meaningFree : List (String × Nat × Option String) :=
     some "kernel diagnostics address TeX's log, not the document"),
    ("@latex@note@no@line", 1,
     some "kernel diagnostics address TeX's log, not the document"),
-   -- The `Error` spellings: consumed so their text never ships as ink, but
-   -- an error is a signal, so the drop is named (W0387) rather than earned
-   -- as silence. Arities are LaTeX's own (latex.ltx:8799, 8845, 8871, 8913).
+   -- The `Error` spellings are consumed but named (W0387); arities are latex.ltx's.
    ("PackageError", 3, none),
    ("ClassError", 3, none),
    ("GenericError", 4, none),
@@ -253,61 +142,47 @@ public def meaningFree : List (String × Nat × Option String) :=
    ("nonfrenchspacing", 0, some "inter-sentence space is uniform here either way"),
    ("selectfont", 0, some "font declarations apply where they stand"),
    ("linenomath", 0, some "display math lines are numbered like every galley line"),
-   -- natbib's \shortcites{keys} exempts keys from longnamesfirst's full
-   -- first citations; the engine sets every citation short, which is what
-   -- it asks, and names the option itself (W0101).
    ("shortcites", 1, some "citations are set short throughout, which is what it asks"),
    ("endlinenomath", 0, some "display math lines are numbered like every galley line")]
 
-/-- Declarations whose loss is real — justification, breaking tolerance,
-hyphenation language, page furniture — skipped with a warning that names
-what changed, never silently: they used to sit in the silent list under a
-comment claiming they say nothing about the document, and they do. Each
-entry: arguments consumed, the message, the help. -/
+/-- Declarations whose loss is real, skipped with a warning
+naming what changed. -/
 public def configSkip : List (String × Nat × String × Option String) :=
-  [-- The four ragged-setting declarations are not here: the block walk gives
-   -- the rest of the scope the setting it declares, on the side it declares
-   -- (Ir.Block.ragged carries the flush side).
+  [
    ("sloppy", 0,
     "'\\sloppy' loosens TeX's line-breaking tolerance; the breaker keeps \
 its own and an overfull line warns by itself", none)]
 
-/-- Where a LaTeX length parameter's value goes, decided by what LaTeX's
-own code does with it and by which engine site reads it. -/
+/-- Where a LaTeX length parameter's value goes. -/
 public inductive ParamSite where
   /-- A page property: `\page{ key = ... }`. -/
   | page (key : String)
   /-- A token an engine site reads under this name. -/
   | token (name : String)
-  /-- `\leftmargin` at list depth `level`: the class's `\@list` for that
-  depth reads `\leftmargin<level>` into it at every list (size10.clo). -/
+  /-- `\leftmargin` at list depth `level`, which the class's
+  `\@list` reads at every list. -/
   | listIndent (level : Nat)
-  /-- `\normalsize`, which `\begin{document}` runs, sets it again (size10.clo,
-  measured under lualatex): a preamble value never reaches the body, where
-  `body` is its site. -/
+  /-- Set again by `\normalsize` at `\begin{document}`, so a preamble value
+  never reaches the body, whose site is `body`. -/
   | sizeReset (body : ParamSite)
-  /-- `\list` or the class's `\@listi` sets it again at every list
-  (ltlists.dtx, size10.clo): a value set outside a list reaches no list. -/
+  /-- Set again at every list by `\list` or the class's `\@listi`: a value from
+  outside a list reaches no list. -/
   | listReset
   /-- LaTeX reads it where `what` says; no engine site does. -/
   | unmodelled (what : String)
   deriving Repr, BEq
 
-/-- The kernel's list environments, each a `\list` whose own settings
-follow its level's parameters (ltlists.dtx). -/
 private def listEnvs : List String := ["itemize", "enumerate", "description"]
 
 /-- Environments whose bodies the elaborator reads as table cells. -/
 public def tableEnvs : List String := ["tabular", "tabular*", "tabularx"]
 
-/-- Math-mode entry environments (latex.ltx, amsmath.sty). Their bodies
-belong to the math parser, just as a `Raw.math` body does.
-`beamerTemplateChecks` quantifies over the elaborator's entry catalogues. -/
+/-- Math-mode entry environments, whose bodies belong to the math parser. -/
 private def mathEnvs : List String :=
   ["equation", "equation*", "displaymath", "align", "align*", "gather", "gather*"]
 
-/-- The kernel and booktabs length parameters, each with its site. A name
-not here is a length of the document's own: a token of its name. -/
+/-- The kernel and booktabs length parameters, each with its site; any other
+name is a length of the document's own. -/
 public def paramSites : List (String × ParamSite) :=
   [("parskip", .page "parskip"),
    ("textwidth", .page "textwidth"),
@@ -339,9 +214,6 @@ public def paramSites : List (String × ParamSite) :=
    ("leftmargin", .listReset), ("itemsep", .listReset), ("parsep", .listReset),
    ("itemindent", .listReset), ("listparindent", .listReset), ("rightmargin", .listReset),
    ("parindent", .unmodelled "indents a paragraph's first line; paragraphs here are set flush"),
-   -- The class's `\partopsep`, which only a level whose `\@list` sets its
-   -- own leaves behind (size10.clo's `\@listiii`): the one resolving site
-   -- spends a declared value (`Ir.partopsepFor`).
    ("partopsep", .token "partopsep"),
    ("labelsep", .unmodelled "separates a list label from its item; the gap here is half an em"),
    ("labelwidth", .unmodelled "boxes a list label; a label here sets at its own width"),
@@ -360,19 +232,8 @@ private def sizeReset (n : String) : Bool :=
   | some (.sizeReset _) => true
   | _ => false
 
-/-- Beamer configuration commands: how many `{...}` arguments each carries.
-The engine has no beamer templating layer, so each is skipped whole — the
-construct, its options, and its arguments — with one warning naming it (and
-its native spelling, where one exists). What must never happen is the
-arguments leaking into elaboration as stray content (that was an E0313
-cascade per construct). `\usetheme` is not here: it rewrites to `\theme`.
-Neither is `\setbeamertemplate`: `frame footer` has a native meaning
-(`\framefoot`) and its own arm; every other template skips there. And
-neither are `\usefonttheme` and `\setbeameroption`, whose own arms silence
-the one argument each that asks for what the engine already does. And
-neither are `\setbeamercolor` and `\setbeamerfont`: each element beamer
-names is a `\palette` entry or a `\style` key, and each has its own
-translating arm. -/
+/-- Beamer configuration commands with their `{...}` argument counts, each
+skipped whole with one warning. -/
 private def beamerConfig : List (String × Nat) :=
   [("usecolortheme", 1),
    ("useinnertheme", 1),
@@ -380,8 +241,8 @@ private def beamerConfig : List (String × Nat) :=
    ("metroset", 1),
    ("beamertemplatenavigationsymbolsempty", 0)]
 
-/-- The native spelling a skipped beamer construct now has, named in its
-warning's help: a warning the author can act on beats a dead end. -/
+/-- The native spelling of a skipped beamer construct, named
+in its warning's help. -/
 public def beamerNative : List (String × String) :=
   [("usecolortheme", "\\theme{name} selects a token bundle; \\palette overrides its entries"),
    ("usefonttheme", "\\fonts selects families; \\style{element}{ font = {...} } styles one element"),
@@ -394,15 +255,11 @@ styles elements; \\runningfoot sets a document footer"),
    ("addtobeamertemplate", "put \\smallskip, \\medskip or \\bigskip at a block's body start; \
 \\framefoot sets a frame footer")]
 
-/-- Classes that produce a presentation: `beamer` (which rewrites to
-`slides`) and `slides` itself. What a beamer mode specification is read
-against — beamer's article mode keeps a frame the presentation omits. -/
+/-- Classes that produce a presentation. -/
 public def presentationClasses : List String := ["beamer", "slides"]
 
-/-- Beamer's class options load the two AMS packages together unless the
-`noamsthm` key occurs. Its value is immaterial, as in Beamer's keyval handler
-(`beamer.cls` and `beamerbaseoptions.sty`, Beamer 3.77).
-The native slides class has no implicit TeX package dependencies. -/
+/-- The packages a class loads itself: beamer loads both AMS packages unless its
+options hold the `noamsthm` key. -/
 public def classPackages (cls : String) (options : List String) : List String :=
   let disabled := options.any fun option =>
     let key := ((option.splitOn "=").head!).trimAscii.toString
@@ -411,24 +268,14 @@ public def classPackages (cls : String) (options : List String) : List String :=
     String.ofList (key.toList.filter (!·.isWhitespace)) == "noamsthm"
   if cls == "beamer" && !disabled then ["amsmath", "amsthm"] else []
 
-/-- The class's AMS support is one decision, shared by package queries and
-native package admission. -/
 public theorem classPackages_ams_agree (cls : String) (options : List String) :
     ("amsmath" ∈ classPackages cls options) ↔
       ("amsthm" ∈ classPackages cls options) := by
   dsimp only [classPackages]
   split <;> simp
 
-/-- beamer's theme-loading family, and the file each member asks the input
-path for. `\usetheme{X}` **is** `\usepackage{beamerthemeX}` — beamer defines
-the whole family through the package loader (beamerbasethemes.sty), so the
-only thing that differs between the five slots is the prefix. The candidate
-scan and the splice both read this one list, so a slot named here is a slot
-both honour and neither can drift from the other
-(`themeAsking_candidates`). The package dispatch reads it too, through
-`themeSlotOfPackage?`: the identity runs in both directions, so the file
-name a theme writes to inherit another resolves to the slot it names
-(`themeSpellingChecks`). -/
+/-- beamer's theme-loading commands, each with the file
+prefix it asks the input path for. -/
 @[expose] public def themeAsking : List (String × String) :=
   [("usetheme", "beamertheme"),
    ("usecolortheme", "beamercolortheme"),
@@ -436,97 +283,46 @@ name a theme writes to inherit another resolves to the slot it names
    ("useinnertheme", "beamerinnertheme"),
    ("useoutertheme", "beameroutertheme")]
 
-/-- moloch is the maintained fork of metropolis, and `m` was that theme's
-original name (moloch README): a deck asking for any of the three gets the
-bundle the engine ships. One function because three spellings reach the
-same bundle and two surfaces ask — the `\usetheme` slot and the
-`beamertheme<name>` package name — and an alias honoured on one surface
-only is the drift this closes. -/
+/-- `moloch` for its lineage's other names, `metropolis` and
+`m`; any other name as written. -/
 private def themeAlias (nm : String) : String :=
   if nm == "metropolis" || nm == "m" then "moloch" else nm
 
-/-- beamer's file-name spelling of a theme-family member, resolved to the
-slot it names, that slot's prefix, and the theme name: `beamerthemeX` is
-`\usetheme{X}`, `beamercolorthemeX` is `\usecolortheme{X}`, and so for each
-slot. `themeAsking` read backwards — the same identity, so neither spelling
-can mean something the other does not. The prefixes are mutually exclusive
-(they differ at the character after `beamer`), so the first match is the
-only match. -/
+/-- A theme-family file name resolved to its slot, the
+slot's prefix and the theme name. -/
 public def themeSlotOfPackage? (p : String) : Option (String × String × String) :=
   themeAsking.findSome? fun (slot, pre) =>
     if p.startsWith pre && p.length > pre.length then
       some (slot, pre, (p.drop pre.length).toString)
     else none
 
-/-- The kernel's box commands, as the two numbers that tell them apart: how
-many `[...]` runs stand before the content, and how many mandatory `{...}`
-groups stand before the content group. `\\mbox{text}` declares no box;
-`\\makebox[width][pos]{text}` declares one optionally (latex.ltx,
-`\\@makebox`); `\\parbox[pos][height][inner-pos]{width}{text}` declares one
-always (latex.ltx, `\\@iiiparbox`), and its width is a *dimension in a brace
-group* — which is why the unknown-command recovery, whose rule is "keep the
-braced arguments as text", set a width as prose beside a label. A further box
-command is a row here, never an arm of its own. -/
+/-- The kernel's box commands, as the number of `[...]` runs before the content
+and of `{...}` groups before the content group. -/
 public def boxShape : List (String × Nat × Nat) :=
   [("mbox", 0, 0), ("makebox", 2, 0), ("parbox", 3, 1)]
 
-/-- Where a deferred declaration replays. A hook is a deferred declaration,
-and every hook LaTeX documents names one of these points; the engine has one
-deferral mechanism and each hook is a row in `deferredHooks`, never an arm of
-its own.
-
-`endPreamble` is the last position of the preamble, `beginDocument` the
-instant `\\begin{document}` opens — the seam, whose two sides this engine
-realizes structurally: declarations before the `document` environment,
-content inside it. -/
+/-- Where a deferred declaration replays: the end of the preamble or the opening
+of `\begin{document}`. -/
 private inductive DeferPoint where
   | endPreamble
   | beginDocument
 deriving BEq, Repr
 
-/-- The deferral table: one row per hook. `\\AtBeginDocument` (ltfiles.dtx,
-the begindocument hook) replays at `\\begin{document}`;
-`\\AtEndPreamble` (etoolbox manual §3) replays at the end of the preamble.
-A further hook costs a row here and nothing else. -/
+/-- The deferral table, one row per hook. -/
 private def deferredHooks : List (String × DeferPoint) :=
   [("AtBeginDocument", .beginDocument), ("AtEndPreamble", .endPreamble)]
 
-/-- The native declarations the *preamble* reads and the body refuses, so a
-hook body's declaration half rides to the seam's preamble side rather than
-being named misplaced. It restates `Elab.declCtrl ++ Elab.runningCtrl`,
-which sits above this module and cannot be imported here; the restatement is
-not allowed to drift — `hookSeamChecks` fails the moment the two disagree,
-in either direction. -/
+/-- The native declarations the preamble reads and the body refuses, where a
+hook body's declaration half goes. -/
 public def hookPreambleSide : List String :=
   ["page", "pdfmeta", "assert", "fonts", "palette", "tokens", "style", "output",
    "theme", "chrome", "pictures", "figures", "allow", "runninghead", "runningfoot"]
 
-/-- The native declarations a compatibility help text may name, as the
-vocabulary the translation sweep reads. `hookPreambleSide` is the preamble
-half — it already restates the elaborator's declaration set — and
-`framefoot` is the one body-level declaration a compat help names, the
-per-frame footer `\setbeamertemplate{frame footer}` translates into. The
-sweep requires every help text to name something in here
-(`translationOwedChecks`), so a help naming a declaration this list does not
-carry fails rather than being skipped. -/
+/-- The native declarations a compatibility help text may name. -/
 public def nativeDeclarations : List String := hookPreambleSide ++ ["framefoot"]
 
-/-- **Constructs whose help text names an engine declaration and which the
-engine nevertheless does not translate, each with the reason it cannot.**
-
-The invariant behind the list: *a construct whose diagnostic names its own
-translation is translated, not dropped.* A help text naming a mechanical
-translation is a translation the engine should perform — every fact needed is
-in the source, and telling the author to do it by hand is the engine
-declining work it could do. Seventeen sites in one theme of the private
-reference corpus accumulated behind two such help texts before anyone counted
-them, and both are now translated (`beamerColorRoles`, `beamerFontElements`).
-
-A row here is a *declared* exception, never a silence: it says why the named
-declaration cannot receive this construct. `translationOwedChecks` closes the
-list against `beamerNative` in both directions — a help text that names a
-declaration either translates, with a witness, or lands here with its
-reason — so the next seventeen cannot accumulate unnoticed. -/
+/-- Constructs whose help text names an engine declaration the engine does not
+translate, each with the reason it cannot. -/
 public def translationRefused : List (String × String) :=
   [("usecolortheme", "a token bundle is whole here: the engine installs a \
 palette, tokens and styles together, so it has nothing that receives a \
@@ -544,20 +340,9 @@ standard skips translate; arbitrary template injections have no native \
 receiver. Where a refused body carries content its loss is E0111's, \
 which is a dropped body and not a style key")]
 
-/-- A definition the conditional pass can read: its replacement text and the
-two prefixes its meaning carries, `\long` and e-TeX's `\protected`, which
-`\ifx` compares beside the text (TeXbook chapter 20: a `\long` macro and its
-short twin are different meanings). An optional command is an outer wrapper
-holding its default and the name of a separately scoped inner definition
-(latex.ltx, `\@argdef`): a `\let` alias retains its default while following
-redefinitions of that inner text. `live`: the use must read a copied
-meaning, select an optional argument or execute a conditional, flag setting
-or definition, itself or through a macro it uses, so the pass expands it
-where it is used.
-`serial` orders bindings, `textSerial` their replacement texts. A `\let`
-makes a new binding but copies the text's identity. Expansion descends
-these two orders: the copy can execute inside an older macro without
-hiding bindings that macro already sees. -/
+/-- A definition the conditional pass can read: its
+replacement text, its `\long` and `\protected` prefixes, and
+an optional command's default and inner definition. -/
 private structure CondVal where
   raws : Array Raw
   long : Bool
@@ -567,70 +352,57 @@ private structure CondVal where
   live : Bool := false
   serial : Nat := 0
   textSerial : Nat := 0
-  /-- The line ends at the replacement text's braces the lexer left out
-  (`Pos.openEol`, `Pos.closeEol`), which TeX reads as spaces of the text:
-  what a block template's reader sets back (`BlockTemplate.edged`). -/
+  /-- The line ends at the replacement text's braces, which
+  TeX reads as spaces of the text. -/
   edges : Bool × Bool := (false, false)
 
-/-- One change the conditional pass made to its definition state, with what
-it replaced (`none`: the name was not bound, or the flag not declared). -/
+/-- One change the conditional pass made to its definition
+state, with what it replaced. -/
 private inductive CondUndo where
   | bind (n : String) (prev : Option (Option CondVal))
   | flag (n : String) (prev : Option Bool)
 
-/-- Where the definition state stood when a group or environment opened: the
-save stack's height, the globals made so far, the picture's own names. -/
+/-- Where the definition state stood when a group or environment opened. -/
 private structure CondMark where
   undo : Nat
   globals : Nat
   picBound : Nat
   primitives : Nat
 
-/-- A preamble definition of `name` (the one stamped `serial`) whose text,
-the group at `pos` in `file`, went out without what only a use decides. The
-elaborator reads such a text itself where no use the pass sees stands — a
-built-in's redefinition and the macros it reaches, read at the preamble's
-end — so the pass settles it there, against the state in force then. -/
+/-- A preamble definition whose text went out without what
+only a use decides. -/
 private structure CondPending where
   name : String
   serial : Nat
   file : String
   pos : Pos
 
-/-- Package/class declarations read by `condList`, and separate reservations
-for bodies admitted by the loader. The first declaration's options stand;
-an input wrapper without its originating package call carries `none`.
-`passed` holds each `\PassOptionsToPackage` list in flow order. Repeated
-body admissions use `PackageImports.admit`, including the kernel's option
-clash comparison (latex.ltx, `\@onefilewithoptions`). -/
+/-- Package and class declarations read by `condList`, with
+the bodies the loader admitted. -/
 private structure LoadSet where
   pkgs : Array (String × Option (Array String)) := #[]
   passed : Array (String × Array String) := #[]
-  /-- Bodies already admitted, including local files still executing.
-  Merely recording a declaration in `pkgs` does not reserve its body. -/
+  /-- Bodies already admitted, including local files still executing. -/
   imports : PackageImports.Loads := []
-  /-- Native rewriting consumes the executed stream later. Replaying option
-  passes here keeps a late pass from altering an earlier native load. -/
+  /-- Option passes replayed at their execution point, so a late pass cannot
+  alter an earlier native load. -/
   rewritePassed : Array (String × Array String) := #[]
-  /-- Class option passes are likewise replayed at their execution point. -/
+  /-- Class option passes, replayed at their execution point. -/
   rewriteClassPassed : Array (String × Array String) := #[]
   cls : Option (String × Array String) := none
   clsPassed : Array (String × Array String) := #[]
   deriving Repr, BEq, Inhabited
 
-/-- One TeX parameter assignment, as TeX scans it (TeXbook ch. 24:
-⟨variable⟩[=]⟨value⟩, and `\advance`⟨variable⟩[by]⟨value⟩): the parameter,
-whether the value adds to it, and the raws of the value. -/
+/-- One TeX parameter assignment as TeX scans it: the parameter, whether the
+value adds to it, and the value's raws. -/
 private structure TexAssign where
   name : String
   add : Bool
   value : Array Raw
   deriving Repr
 
-/-- hyperref's link colouring as its options accumulate — the package's
-options, then each `\hypersetup` (hyperref.sty's `colorlinks`, `hidelinks`,
-`linkcolor`, `urlcolor`, `citecolor`, `allcolors`); the colours default to
-hyperref's red, magenta and green. -/
+/-- hyperref's link colouring as its options and each
+`\hypersetup` accumulate. -/
 private structure LinkSetup where
   colorlinks : Bool := false
   link : String := "red"
@@ -638,8 +410,8 @@ private structure LinkSetup where
   cite : String := "green"
   deriving Repr
 
-/-- One hyperref key read into the setup; `none` for a key that sets no link
-colour. -/
+/-- One hyperref key read into the setup; `none` for a key
+that sets no link colour. -/
 private def LinkSetup.read (l : LinkSetup) (k v : String) : Option LinkSetup :=
   match k with
   | "colorlinks" => some { l with colorlinks := v != "false" }
@@ -650,10 +422,8 @@ private def LinkSetup.read (l : LinkSetup) (k v : String) : Option LinkSetup :=
   | "allcolors" => some { l with link := v, url := v, cite := v }
   | _ => none
 
-/-- The setup as the declarations the elaborator reads: each link kind's
-`\style{…}{ color = … }` under `colorlinks`, nothing otherwise — without it
-hyperref's `\Hy@colorlink` paints nothing, and a link keeps the running
-colour. -/
+/-- The setup as native declarations: each link kind's colour style under
+`colorlinks`, nothing otherwise. -/
 private def LinkSetup.native (l : LinkSetup) : String :=
   if l.colorlinks then
     s!"\\style\{link}\{ color = {l.link} }\\style\{url}\{ color = {l.url} }" ++
@@ -661,29 +431,25 @@ private def LinkSetup.native (l : LinkSetup) : String :=
   else ""
 
 /-- Written tokens indexed before execution; generated commands inherit the
-written call's coordinates and therefore its spelling. -/
+written call's coordinates and spelling. -/
 public abbrev SourceTriggers := Std.HashMap (String × Nat × Nat) String
 
-/-- Only original source boundaries may index written tokens. A normalized
-fragment's fallback coordinates can coincide with an unrelated written token. -/
+/-- The written token at an original source coordinate; `none` where the
+coordinate is not source-mapped. -/
 @[expose] public def SourceTriggers.writtenAt (sources : SourceTriggers) (file : String)
     (pos : Pos) : Option String :=
   if pos.sourceMapped then sources[(file, pos.line, pos.col)]? else none
 
-/-- Restore a downstream diagnostic's written trigger from lexical evidence,
-retaining an explicit trigger when no construct token owns its span; a loss
-about a place takes none (`DiagCode.namesPlace`). -/
+/-- A downstream diagnostic with its written trigger restored from lexical
+evidence; a loss about a place takes none. -/
 @[expose] public def SourceTriggers.attribute (sources : SourceTriggers) (d : Diag) : Diag :=
   { d with trigger := if d.kind.namesPlace then d.trigger else
       ((d.span.bind fun s =>
         sources.writtenAt s.file s.pos).bind Diag.Spelling.ofWritten?).orElse (fun _ => d.trigger) }
 
-/-- Attribution changes presentation only, including for accepted or scoped
-records; every other diagnostic field is exactly the input field. -/
 public theorem SourceTriggers.attribute_record_exact (sources : SourceTriggers) (d : Diag) :
     { sources.attribute d with trigger := d.trigger } = d := by rfl
 
-/-- Reapplying the same lexical evidence cannot change a diagnostic again. -/
 public theorem SourceTriggers.attribute_fixed_point (sources : SourceTriggers) (d : Diag) :
     sources.attribute (sources.attribute d) = sources.attribute d := by
   unfold SourceTriggers.attribute
@@ -692,8 +458,6 @@ public theorem SourceTriggers.attribute_fixed_point (sources : SourceTriggers) (
   · cases (d.span.bind (fun s => sources.writtenAt s.file s.pos)).bind
       Diag.Spelling.ofWritten? <;> simp [hp]
 
-/-- Failed source mapping cannot borrow any token from the index, regardless
-of its contents; all diagnostic fields, including explicit evidence, survive. -/
 public theorem SourceTriggers.attribute_unmapped_id (sources : SourceTriggers) (d : Diag)
     (h : ∀ s, d.span = some s → s.pos.sourceMapped = false) :
     sources.attribute d = d := by
@@ -707,16 +471,9 @@ public theorem SourceTriggers.attribute_unmapped_id (sources : SourceTriggers) (
 
 mutual
 
-/-- Capture lexical evidence before compatibility consumes or synthesizes
-commands. Input wrappers change only their contents' filename. A desugared
-Markdown command has no lexical evidence, so its generated TeX spelling is
-never reported as authored. Environments keep the literal opening control
-word, without reconstructing braces or whitespace the parser consumed.
-Math keeps its recorded opener, never a spelling inferred from display mode.
-A special character is indexed only where it spells a construct, and a word
-of text never is: a diagnostic's header names the construct its loss is
-about (`Diag.Spelling`), and the location already points at the text. -/
--- conserves: none — an index of the parsed surface, before IR exists.
+/-- Lexical evidence captured before compatibility consumes
+or synthesizes commands. -/
+-- conserves: none — an index of the parsed surface
 private def sourceTriggers (file : String) (acc : SourceTriggers) :
     List Raw → SourceTriggers
   | [] => acc
@@ -748,22 +505,19 @@ private def sourceTrigger (file : String) (acc : SourceTriggers) : Raw → Sourc
 
 end
 
-/-- A file read reached by the bounded macro evaluator. The filename is
-already bound by the call's arguments; stored definitions and unselected
-branches produce no request. The driver supplies parsed surface tokens. -/
+/-- A file read reached by the bounded macro evaluator. -/
 public structure InputRequest where
   command : String
   file : String
   pos : Pos
   /-- The call token's position, distinct from a macro's attributed use site. -/
   callPos : Pos
-  /-- The executed operand slice. Filename, options and the style-file
-  candidate scan all read this one value. -/
+  /-- The executed operand slice that filename, options and the style-file
+  candidate scan all read. -/
   operands : Array Raw
   deriving Repr, BEq
 
-/-- An actual reader call and whether it supplied parsed input. This does
-not infer filesystem success from a diagnostic or from a source scan. -/
+/-- An actual reader call and whether it supplied parsed input. -/
 public structure InputAttempt where
   request : InputRequest
   answered : Bool
@@ -774,337 +528,240 @@ private structure St where
   diags : Array Diag := #[]
   sourceTriggers : SourceTriggers := {}
   inputAttempts : Array InputAttempt := #[]
-  /-- Running-content slots gathered across `\ihead`/`\chead`/`\ohead`,
-  landing as one declaration once the preamble ends. Slot 0 inner, 1 centre,
-  2 outer — one entry per slot: a same-slot repeat replaces, as fancyhdr
-  defines it (fancyhdr manual §2: `\lhead` *redefines* the field). -/
+  /-- Running-content slots gathered across `\ihead`/`\chead`/`\ohead`: 0 inner,
+  1 centre, 2 outer, a repeat replacing. -/
   head : Array (Nat × String) := #[]
   foot : Array (Nat × String) := #[]
   runPos : Pos := { line := 1, col := 1 }
   runFrom : Nat := 1
-  /-- article.cls resets the counter after titlepage only in oneside mode.
-  Its unstarred `\ProcessOptions` applies `twoside` after `oneside` when
-  both are present, irrespective of their order in the option list. -/
+  /-- Whether the counter resets after the title page:
+  article.cls does so only in oneside mode. -/
   titlepageReset : Bool := true
-  /-- Upcoming groups that are macro bodies, where `#k` names a parameter:
-  one for a `\define`/`\newcommand` body, two for `\newenvironment`'s begin
-  and end halves. Scoped: descending into a group consumes one and shields
-  the count from the group's own definitions. -/
+  /-- Upcoming groups that are macro bodies, where `#k` names a parameter. -/
   bodyNext : Nat := 0
-  /-- environ's environments whose code never places `\BODY`, with the
-  signature letters their arguments read: each use keeps its arguments
-  and drops the body, which environ collects and discards. -/
+  /-- environ's environments whose code never places
+  `\BODY`, with their argument signatures. -/
   discardEnvs : Array (String × String) := #[]
-  /-- The first of paracol's two column shares, in per mille. The package's
-  `\columnratio` is global and its final column receives the remainder
-  (`paracol.sty`, `\pcol@setcolwidth@r`). -/
+  /-- The first of paracol's two column shares, in per mille. -/
   paracolRatio : Nat := 500
-  /-- Switching commands belong to the enclosing paracol flow. Its close
-  splits them after the ordinary rewrite has read local length settings. -/
+  /-- Inside a paracol flow, whose close splits its switching commands. -/
   inParacol : Bool := false
-  /-- A `\usetheme` was seen: `\alert` then maps to the theme's alert colour
-  rather than the unthemed bold stand-in. -/
+  /-- A `\usetheme` was seen, so `\alert` maps to the theme's alert colour. -/
   themed : Bool := false
-  /-- The shipped theme the deck names (`\usetheme`, its lineage's name):
-  what its own font declarations are read from (`themeBlockFont`). -/
+  /-- The shipped theme the deck names, whose font
+  declarations `themeBlockFont` reads. -/
   beamerTheme : String := ""
-  /-- A theme was named, in any spelling, known or not: the slides class's
-  default bundle then steps aside (`Elab`'s `sawTheme`), and with it the
-  alert colour it would install. -/
+  /-- A theme was named, in any spelling, so the slides
+  class's default bundle steps aside. -/
   themeNamed : Bool := false
-  /-- The declared class produces a presentation. What a beamer *mode*
-  specification is read against: `<presentation:0>` suppresses a frame only
-  where the artifact is the presentation it addresses — beamer's article mode
-  keeps exactly those frames, so a class-blind reading deletes content. -/
+  /-- The declared class produces a presentation, which a beamer mode
+  specification is read against. -/
   deck : Bool := false
-  /-- The font slots (`body`, `sans`, `mono`) a fontspec or babel declaration
-  has named so far, in preamble order: whether a package that measures its
-  lengths as it loads measured them in Latin Modern or in a declared face. -/
+  /-- The font slots a fontspec or babel declaration has
+  named so far, in preamble order. -/
   facesDeclared : Array String := #[]
-  /-- The main language's BCP 47 tag, from babel's package options (last
-  language option = main, babel's rule): what `\enquote` reads its quote
-  delimiters through. A `\selectlanguage` outside the body leaves it:
-  `\begin{document}` selects the main language again. -/
+  /-- The main language's BCP 47 tag from babel's options, which `\enquote`
+  reads its quotes through. -/
   mainLang : String := "en"
-  /-- The option the first `inputenc` load names, the encoding every file
-  reads in: what an `\inputencoding` names again, or switches from. -/
+  /-- The option the first `inputenc` load names, the
+  encoding every file reads in. -/
   inputenc : Option String := none
-  /-- babel's main language as its options spell it (`ngerman`, `british`):
-  what biblatex's `language=autodetect` words its reference list in. -/
+  /-- babel's main language as its options spell it, which biblatex's
+  `language=autodetect` reads. -/
   babelMain : Option String := none
-  /-- biblatex is loaded: a babel load after it hands it the main language. -/
+  /-- biblatex is loaded, so a later babel load hands it the main language. -/
   biblatexLoaded : Bool := false
-  /-- Inside the document environment: where a preamble declaration —
-  `\usepackage` first among them — is a placement defect (W0340), never
-  a support question (W0103). -/
+  /-- Inside the document environment, where a preamble declaration is a
+  placement defect (W0340). -/
   inDoc : Bool := false
-  /-- Inside a definition body, the group a definition announced through
-  `bodyNext`: what a construct there means is decided where the command is
-  used, never where it is defined. The walk's `inBody` flag, as state, so
-  an arm can read it. -/
+  /-- Inside a definition body, where a construct's meaning
+  is decided at its use. -/
   inDef : Bool := false
-  /-- Replaying a `\begin{document}` hook body, whose content `seamSplit`
-  routes to the body side: a construct there reaches the body although
-  `inDoc` is false for the replay. -/
+  /-- Replaying a `\begin{document}` hook body, whose
+  content goes to the body side. -/
   seam : Bool := false
-  /-- Inside a brace group of the walk: an argument (a `\title`, an
-  `\author`, a running-head field, a definition body) or a scope of its
-  own. A declaration there ends with the group, and its text is set
-  wherever the group is set; only one outside every group stays in force
-  until `\begin{document}`. -/
+  /-- Inside a brace group of the walk, where a declaration
+  ends with the group. -/
   inGroup : Bool := false
-  /-- The walk is inside a list environment's body, where a list parameter
-  assigned there spaces that one list (ltlists.dtx: `\list` runs the level's
-  parameters, then the environment's own settings). -/
+  /-- Inside a list environment's body, where a list
+  parameter spaces that one list. -/
   inList : Bool := false
-  /-- The rewrite is of a whole document — its stream holds the `document`
-  environment — rather than of a value's text re-read on its own, whose top
-  level is inline content (`preambleProper`). -/
+  /-- The rewrite is of a whole document rather than of a
+  value's text read on its own. -/
   wholeDoc : Bool := false
-  /-- The file the rewrite was asked for: a site in any other stands in an
-  included file, and moves with that file's wrapper. -/
+  /-- The file the rewrite was asked for; a site in any
+  other stands in an included file. -/
   docFile : String := ""
-  /-- Counter commands the preamble's top level holds, in order, moved to
-  where the body starts: what they set holds there (ltcounts.dtx). -/
+  /-- Counter commands at the preamble's top level, moved to
+  where the body starts. -/
   preCounters : Array Raw := #[]
-  /-- The list levels whose parameter macro (`\@listi` …) the preamble
-  redefined as parameter assignments, with where each was defined. -/
+  /-- The list levels whose parameter macro the preamble redefined as
+  assignments, with each definition's site. -/
   listDefs : Array (Nat × Pos × Array TexAssign) := #[]
-  /-- The document's `\normalsize` leaves `\@listi` as the preamble set it:
-  a class's own does `\let\@listi\@listI` (size10.clo), and
-  `\begin{document}` runs it, so a preamble `\@listi` stands only when a
-  redefined `\normalsize` omits that. -/
+  /-- The document's `\normalsize` leaves `\@listi` as the preamble set it. -/
   listiKept : Bool := false
-  /-- The preamble's assignments to a parameter a list level sets again
-  (`listReset`), with the spelling, file and site each was written at: what
-  they reach is known only at the preamble's end. -/
+  /-- The preamble's assignments to a parameter a list level sets again, with
+  spelling, file and site. -/
   listResets : Array (String × String × String × Pos) := #[]
-  /-- At the top level of a `tabular` body, where the elaborator's tabular
-  arm reads every element itself: a `\multicolumn` there is its to set as a
-  span, so the walk keeps the construct whole. A group or another
-  environment inside the body hides it again. -/
+  /-- At the top level of a `tabular` body, where the elaborator sets a
+  `\multicolumn` as a span. -/
   tableTop : Bool := false
-  /-- At the top level of a definition body, the group a definition
-  announced (`bodyNext`): a `\multicolumn` opening it opens the cell a use
-  at a cell's head stands in. A group or an environment inside the body
-  hides it again. -/
+  /-- At the top level of a definition body, where a `\multicolumn` opens the
+  cell its use stands in. -/
   defTop : Bool := false
-  /-- The lengths as the preamble left them, taken where the document
-  environment opens: what the list levels' styles, declarations of the
-  preamble, are judged against. -/
+  /-- The lengths as the preamble left them, taken where the
+  document environment opens. -/
   preLens : Option (Array (String × String)) := none
-  /-- The text block's measure is one the elaborator can read in the
-  preamble: false under a flow class (the default class included) until
-  the page declares a measure (`margin`, `hmargin`, `textwidth`), since
-  that class settles its text block after the preamble. -/
+  /-- The text block's measure is one the elaborator can
+  read in the preamble. -/
   measureKnown : Bool := false
-  /-- The declared class's page model is the flow model (the default
-  class's): its text block is the engine's, never the one LaTeX's class
-  computed at load, so a preamble value naming the class's line width has
-  no reading here. -/
+  /-- The declared class's page model is the flow model,
+  whose text block is the engine's. -/
   flowPage : Bool := true
-  /-- Constructs already warned about: forty frames sharing one unsupported
-  idiom are one problem, not forty. -/
+  /-- Constructs already warned about. -/
   warned : Array String := #[]
-  /-- Every control word the conditional pass has seen bound, with the
-  parameterless value when one is readable: presence is what `\ifdefined`
-  reads, the value what `\ifnum`, `\ifodd`, `\ifcase` and `\ifx` read, at
-  the site that reads them. `none` is a name bound in a way no value can be
-  read from — a parameter text, an expanding definer over unread names, a
-  `\let` to a name with no readable value. Groups restore the meanings
-  they opened with; only global definitions outlive them. -/
+  /-- Every control word the conditional pass has seen bound, with its
+  parameterless value when readable. -/
   binds : Std.HashMap String (Option CondVal) := {}
-  /-- `\newif` flags by base name (`\newif\ifshowdetail` records
-  `showdetail`, initially false — plain TeX's `\newif` sets `\iffalse`)
-  with the value the last `\Xtrue`/`\Xfalse` gave. Scoped like a value. -/
+  /-- `\newif` flags by base name, with the value the last
+  `\Xtrue`/`\Xfalse` gave. -/
   flags : Std.HashMap String Bool := {}
-  /-- The save stack (tex.web §268): each change to `binds` and `flags`, with
-  what it replaced, so the close of the group the change was made in
-  undoes it. It holds only what changed, so a group costs what it binds. -/
+  /-- The save stack: each change to `binds` and `flags` with what it replaced,
+  undone when its group closes. -/
   undo : Array CondUndo := #[]
-  /-- Every global definition, in the order made (`\gdef`, `\xdef`,
-  `\global`): what outlives the group it was made in. -/
+  /-- Every global definition, in the order made. -/
   globals : Array (String × Option CondVal) := #[]
-  /-- Live primitive group pairs; their save marks cross macro and input
-  boundaries just as the tokens do. Brace groups restore this stack too. -/
+  /-- Live primitive group pairs, whose save marks cross
+  macro and input boundaries. -/
   primitiveScopes : Array (String × CondMark) := #[]
-  /-- The names the picture being walked binds for itself — a `\foreach`
-  variable, a `\pgfmathsetmacro` target. pgf binds them in the picture's
-  own scope, so a test that reads one is the picture's to evaluate. -/
+  /-- The names the picture being walked binds for itself,
+  which the picture evaluates. -/
   picBound : Array String := #[]
-  /-- Definitions the conditional pass has recorded, the clock `CondVal.serial`
-  reads. -/
+  /-- The count of definitions the conditional pass has recorded, the clock
+  `CondVal.serial` reads. -/
   serial : Nat := 0
   macroClock : Nat := 0
-  /-- Where the macro being expanded by the conditional pass is used: the
-  site its decisions are named at, since that is where TeX makes them. -/
+  /-- Where the macro being expanded is used, the site its
+  decisions are named at. -/
   useSite : Option Pos := none
-  /-- The conditional pass is inside a picture: a document macro there is
-  read at the picture's own site, so the pass puts the value in force there
-  into the picture rather than leave the walk a table for the whole
-  document. -/
+  /-- The conditional pass is inside a picture, which reads
+  a document macro at its own site. -/
   inPicture : Bool := false
-  /-- A prepared title becomes inline content. Execute readable definitions
-  without emitting their syntax, and expand local uses before its scope closes. -/
+  /-- A prepared title becomes inline content, so readable definitions execute
+  without emitting their syntax. -/
   materializeTitle : Bool := false
-  /-- The document body has begun: a definition made from here on is read
-  by the elaborator where it is made, not at the preamble's end. -/
+  /-- The document body has begun, so a definition is read where it is made. -/
   condInDoc : Bool := false
-  /-- Collection has ended. A hook met during replay is read in place,
-  with the existing placement diagnostic, never collected a second time. -/
+  /-- Collection has ended, so a hook met during replay is read in place. -/
   condReplaying : Bool := false
-  /-- The opening `\ignorespaces` scan (latex.ltx, `\document`): expand
-  readable commands and discard spaces until a nonexpandable token stands.
-  This stops before compatibility can remove that token. -/
+  /-- The opening `\ignorespaces` scan of `\document`: expand readable commands
+  and discard spaces until a nonexpandable token. -/
   ignoreSpaces : Bool := false
-  /-- Preamble definitions whose live texts the elaborator may read itself,
-  settled against the state at the preamble's end (`condSettle`). -/
+  /-- Preamble definitions whose live texts the elaborator reads itself, settled
+  at the preamble's end. -/
   pending : Array CondPending := #[]
-  /-- The macro whose definition is being settled, when it is: its
-  decisions are named as the definition's, not a use's. -/
+  /-- The macro whose definition is being settled, whose
+  decisions are named as the definition's. -/
   settling : Option String := none
-  /-- A preamble block template's own macros (`templateReach`): the
-  template reader runs them where the template stands, and the document's
-  text reaches them only through uses the conditional pass expands, which
-  name their own losses there, so their definitions name none. -/
+  /-- A preamble block template's own macros, which the template reader runs
+  where the template stands. -/
   templateCode : Array String := #[]
-  /-- The definitions and `\newif` flags in force where the document body
-  begins, its begin hooks run: what a block's templates run against
-  (`BlockTemplate.read`), TeX running them at each block. -/
+  /-- The definitions and flags in force where the body begins, which a block's
+  templates run against. -/
   templateBinds : Std.HashMap String (Option CondVal) := {}
   templateFlags : Std.HashMap String Bool := {}
-  /-- The control words the block templates reach (`templateClosure`). -/
+  /-- The control words the block templates reach. -/
   templateNames : Array String := #[]
-  /-- Those whose meaning, or whose flag, a block in the body meets changed
-  from where the body began (`noteTemplateDrift`). -/
+  /-- Template names whose meaning or flag changed after the body began. -/
   templateDrift : Array String := #[]
-  /-- The next definition body the walk meets is a block template's own
-  macro's (`templateCode`): translated, and naming nothing. -/
+  /-- The next definition body is a block template's own
+  macro's: translated, naming nothing. -/
   quietNext : Bool := false
-  /-- The conditional pass reads a spliced file's own top level, the list
-  where a live `\endinput` ends the file. -/
+  /-- The conditional pass reads a spliced file's own top level, where a live
+  `\endinput` ends the file. -/
   fileTop : Bool := false
-  /-- The value source each length holds as the rewrite last set it
-  (`\newlength`, `\setlength`, register arithmetic): what an `\advance` of
-  it is evaluated from. -/
+  /-- The value source each length holds as the rewrite last set it. -/
   lens : Array (String × String) := #[]
-  /-- The dimen registers the document allocates with `\newdimen`: what a
-  block template may assign and read as registers (`BlockTemplate.read`),
-  where a parameter such as `\parskip`, or a length the document reads as a
-  token, is not one. -/
+  /-- The dimen registers the document allocates with `\newdimen`. -/
   allocated : Array String := #[]
-  /-- Token sites assigned directly in this scope. Their opening values
-  are captured by the elaborator, where native declarations have resolved. -/
+  /-- Token sites assigned directly in this scope. -/
   localLengths : Array String := #[]
-  /-- Command names the rewrite walk has bound so far, in document order:
-  what `\providecommand` and `\ProvideDocumentCommand` read. Separate from
-  `binds`, which the conditional pass fills for the whole document
-  before any rewrite runs — a policy about "before this point" cannot
-  read a whole-document set. -/
+  /-- Command names the rewrite walk has bound so far, in document order. -/
   bound : Array String := #[]
-  /-- biblatex's declared resources (`\addbibresource`), preamble state the
-  `\printbibliography` arm reads: the natbib door (`\bibliography`) takes
-  its file where the list prints, biblatex names it where it is loaded. -/
+  /-- biblatex's declared resources (`\addbibresource`). -/
   bibResources : Array String := #[]
-  /-- The record name biblatex's style option mapped to, emitted as
-  `\bibliographystyle` beside the `\bibliography` the print site
-  synthesizes — the style is read anywhere before the list, and the
-  preamble elaborator does not take it. -/
+  /-- The record name biblatex's style option mapped to, emitted beside the
+  synthesized `\bibliography`. -/
   bibStyle : Option String := none
-  /-- hyperref's link colouring as its options have declared it so far. -/
+  /-- hyperref's link colouring as declared so far. -/
   links : LinkSetup := {}
-  /-- Names the caller declares the engine renders or reserves: what
-  the provision definers' keep-existing policy reads for commands this
-  document did not bind — every one of them *is* defined, in LaTeX and
-  here, so a provide of one is LaTeX's documented no-op. -/
+  /-- Names the caller declares the engine renders or reserves, which the
+  provision definers keep. -/
   provideKeeps : List String := []
-  /-- State mutations performed through `write`, counted: with `diags.size`,
-  what the dispatcher's silence guard reads (`account`, W0387) — a consumed
-  construct either produced tokens, said something, or wrote state. The
-  counter reads intent, not effect: an idempotent write (a header field set
-  to what it already held) still counts as understood, which is why no
-  `BEq St` is needed. Monotone: only `write` touches it, only upward. -/
+  /-- State mutations performed through `write`, which with `diags.size` the
+  dispatcher's silence guard reads. -/
   writes : Nat := 0
-  /-- The boundary door as this document declares it: open (the default)
-  unless a `\pictures{ tool = none }` refusal stands. Read once at
-  `rewrite`'s entry (`boundaryRefused`); the `\usepackage` dispatch is the
-  consumer — a picture package's load rides to the boundary only through
-  an open door. -/
+  /-- The boundary door is open unless a
+  `\pictures{ tool = none }` refusal stands. -/
   boundaryOpen : Bool := true
-  /-- Hook bodies collected by the one deferral pass, in declaration order
-  with the point each replays at and the file it was declared in. LaTeX runs
-  a hook's bodies in the order they were declared (ltfiles.dtx appends to the
-  hook's token list), so the order here is the order they replay in. The file
-  travels with the body because the replay happens in its own pass: what the
-  engine refuses inside a `.sty`'s hook is still named at the `.sty`. -/
+  /-- Hook bodies collected by the deferral pass, in declaration order, with
+  replay point and declaring file. -/
   deferred : Array (DeferPoint × String × Pos × Array Raw) := #[]
-  /-- The loads the shared conditional walk has read so far (`condList`). -/
+  /-- The loads the shared conditional walk has read so far. -/
   loads : LoadSet := {}
-  /-- Native spacers appended to the ordinary block-begin template in the
-  preamble. Applied after rewriting, including to blocks in definitions
-  made before the addition: beamer reads its template when a block opens. -/
+  /-- Native spacers appended to the ordinary block-begin
+  template in the preamble. -/
   beamerBlockBegin : Array Raw := #[]
-  /-- Local field definitions shared by native element styles and template
-  font selection. A nonstarred declaration replaces only supplied fields;
-  a starred declaration starts empty (`beamerbasefont.sty`). -/
+  /-- Local field definitions shared by native element
+  styles and template font selection. -/
   beamerFonts : Array (String × List (String × String)) := #[]
-  /-- A global numbered footer is read at the document seam, after its font
-  declarations. Keeping the last body also handles end-preamble hooks. -/
+  /-- A global numbered footer, read at the document seam
+  after its font declarations. -/
   beamerFootline : Option (String × Pos × Array Raw) := none
-  /-- Preamble group primitives stay flat for the declaration reader.
-  Save the same font and footer fields that brace groups restore. -/
+  /-- The font and footer fields saved at each preamble group primitive. -/
   beamerScopes : List (String × Array (String × List (String × String)) ×
     Option (String × Pos × Array Raw)) := []
-  /-- Successful captures, including local assignments whose values were
-  restored. Only these justify removing an otherwise empty preamble group. -/
+  /-- Successful captures, which alone justify removing an
+  otherwise empty preamble group. -/
   beamerCaptures : Nat := 0
-  /-- beamer's block templates the preamble installs, by element (`block
-  begin`, `block alerted end`, …), with the file and site each was written
-  at: read as pairs where the preamble ends (`flushBeamerBlocks`). -/
+  /-- beamer's block templates the preamble installs, by element, read as pairs
+  where the preamble ends. -/
   beamerTemplates : Array (String × String × Pos × Array Raw) := #[]
-  /-- Named block templates (`\defbeamertemplate{element}{name}{…}`) a
-  `\setbeamertemplate{element}[name]` installs. -/
+  /-- Named block templates a `\setbeamertemplate{element}[name]` installs. -/
   beamerTemplateDefs : Array ((String × String) × Array Raw) := #[]
-  /-- The families declared beside the three slots, in the order the
-  elaborator gives them their slots (`Ir.FontSpec.families`): fontspec's
-  `\newfontfamily` commands and native `\fonts{ family.<name> = … }`
-  keys alike, so a command's switch names its family's slot. -/
+  /-- The families declared beside the three slots, in the
+  order the elaborator assigns them. -/
   fontFamilies : Array String := #[]
 
 private abbrev M := StateM St
 
-/-- The actual call offered to the driver's existing candidate and splice
-readers. Its command is the request's command; operands stay parsed syntax. -/
+/-- The actual call offered to the driver's candidate and splice readers. -/
 @[expose] public def InputRequest.call (request : InputRequest) : Array Raw :=
   #[.ctrl request.command request.callPos] ++ request.operands
 
-/-- The execution state at a file read. Only `resumeInput` can run a
-fragment against it; the driver carries it without inspecting meanings. -/
+/-- The execution state at a file read, which only
+`resumeInput` can run a fragment against. -/
 public structure InputContext where
   private state : St
 
-/-- Completed reads, including reads made while an answer was resumed.
-An enclosing call is recorded after those nested reads return. -/
+/-- Completed reads, including reads made while an answer was resumed. -/
 public def InputContext.inputAttempts (context : InputContext) : Array InputAttempt :=
   context.state.inputAttempts
 
-/-- File effects cross the core boundary as requests and parsed answers.
-The answer runs in the requesting context, so its definitions and flag
-changes are visible to the caller's next token. `none` leaves the original
-call for ordinary compatibility dispatch, as when no local style exists. -/
+/-- A file reader whose parsed answer runs in the requesting context; `none`
+leaves the original call. -/
 public abbrev InputReader (m : Type → Type) :=
   InputRequest → InputContext → m (Option (Array Raw) × InputContext)
 
-/-- Accept the reader's answer without changing its syntax or diagnostic
-state. The receipt records the exact call, after any reads inside it. -/
+/-- The reader's answer accepted unchanged, with a receipt of the exact call. -/
 public def finishInput (request : InputRequest)
     (response : Option (Array Raw) × InputContext) :
     Option (Array Raw) × InputContext :=
   (response.1, { state := { response.2.state with
     inputAttempts := response.2.inputAttempts.push ⟨request, response.1.isSome⟩ } })
 
-/-- The evaluator's file-effect door. Every recorded receipt is made here
-from the request passed to the reader and the answer it actually returned. -/
+/-- The evaluator's file-effect door, making every receipt
+from the request and the answer returned. -/
 public def dispatchInput [Monad m] (reader : InputReader m) (request : InputRequest)
     (context : InputContext) : m (Option (Array Raw) × InputContext) := do
   return finishInput request (← reader request context)
@@ -1118,8 +775,6 @@ public theorem finishInput_attempts_exact (request : InputRequest)
     (finishInput request response).2.inputAttempts =
       response.2.inputAttempts.push ⟨request, response.1.isSome⟩ := by rfl
 
-/-- The effectful production door calls the supplied reader exactly once.
-There is no second candidate scan, replay or guessed answer in its receipt. -/
 public theorem dispatchInput_reader_exact [Monad m] (reader : InputReader m)
     (request : InputRequest) (context : InputContext) :
     dispatchInput reader request context = (do
@@ -1140,15 +795,11 @@ private theorem state_array_forIn_empty {α β : Type} (init : β)
   rw [← Array.forIn_toList]
   rfl
 
-/-- The one door for a state mutation: `f`, then the `writes` bump the
-dispatcher's silence guard reads. Every `modify`/`set` in this file outside
-`say`/`write`/`account` is rejected by the pre-commit hook, so an arm
-cannot mutate state invisibly to the guard. -/
+/-- The one door for a state mutation: `f`, then the `writes` bump. -/
 private def write (f : St → St) : M Unit :=
   modify fun st => { f st with writes := st.writes + 1 }
 
-/-- The first `inputenc` load's option is the encoding in force; a later
-load's options are not applied. -/
+/-- Records the first `inputenc` load's option as the encoding in force. -/
 private def recordInputenc (options : String) : M Unit := do
   if (← get).inputenc.isNone then
     write fun st => { st with inputenc := some ((Encoding.lastOption? options).getD "utf8") }
@@ -1156,8 +807,8 @@ private def recordInputenc (options : String) : M Unit := do
 private theorem write_eq (f : St → St) :
     write f = fun st => ((), { f st with writes := st.writes + 1 }) := by rfl
 
-/-- Beamer's font and template definitions are local TeX assignments.
-Input wrappers do not introduce a scope; groups and environments do. -/
+/-- Restores beamer's font and template definitions at a
+group or environment close. -/
 private def closeBeamerScope (saved : St) (result : α × St) : α × St :=
   (result.1, (write fun st => { st with
     beamerFonts := saved.beamerFonts
@@ -1169,8 +820,7 @@ private def closeBeamerScope (saved : St) (result : α × St) : α × St :=
 private def withBeamerScope (act : M α) : M α := fun st =>
   closeBeamerScope st (act st)
 
-/-- `\begin{document}` runs `\normalsize`, which resets the size-owned
-lengths. This is the state transition the document body really enters. -/
+/-- Enters the document body: `\normalsize` resets the size-owned lengths. -/
 private def openDocumentBody : M Unit :=
   write fun st =>
     let lens := st.lens.filter fun e => !sizeReset e.1
@@ -1180,16 +830,11 @@ private def closeDocumentBody (pos : Pos) (result : Array Raw × St) : Raw × St
   (.env "document" result.1 pos,
     (write fun st => { st with inDoc := false }) result.2 |>.2)
 
-/-- The document environment's body call and return. Keeping that boundary
-explicit lets a consumed control be followed through its actual enclosing
-environment without unfolding unrelated environment interpreters. -/
+/-- The document environment's body call and return. -/
 private def rewriteDocumentBody (body : M (Array Raw)) (pos : Pos) : M Raw := fun st =>
   closeDocumentBody pos (body (openDocumentBody st).2)
 
-/-- The TeX82 primitive control words — a closed, documented list (Knuth,
-The TeXbook, Appendix I marks each primitive in its index; canonically the
-`primitive` initialisations in tex.web). One half of the `texInternal`
-boundary; the `@`-name convention is the other. -/
+/-- The TeX82 primitive control words. -/
 public def texPrimitives : Array String := #[
   "above", "abovedisplayshortskip", "abovedisplayskip", "abovewithdelims",
   "accent", "adjdemerits", "advance", "afterassignment", "aftergroup",
@@ -1251,56 +896,32 @@ public def texPrimitives : Array String := #[
   "vfuzz", "voffset", "vrule", "vsize", "vskip", "vsplit", "vss", "vtop",
   "wd", "widowpenalty", "wlog", "xdef", "xleaders", "xspaceskip", "year"]
 
-/-- Is this control word a TeX internal — the boundary for the spliced-`.sty`
-demotion? The union of the `@`-names (LaTeX's internal-name convention:
-`\makeatletter` scopes them, ltdefns.dtx; `Lex.nameChar` already admits `@`)
-and the TeX82 primitives. A package or venue macro (`\NewEnviron`) is
-neither: the author might know it, so its refusal stays a per-line
-warning. -/
+/-- Whether a control word is a TeX internal: an `@`-name or a TeX primitive. -/
 public def texInternal (name : String) : Bool :=
   name.contains '@' || texPrimitives.contains name
 
-/-- Is this control word a LaTeX internal whose `{...}` arguments are code —
-the names whose arguments package code drops (`Elab.recoverPackageCmd`)?
-`@` is a letter only while a package or class file is read, or after
-`\makeatletter`: latex.ltx's `\@onefilewithoptions` runs `\makeatletter`
-before the load, and `\@pushfilename` saves the category code that
-`\@popfilename` restores. A control word holding one is therefore the
-kernel's or a package's own implementation, and the groups after it are its
-operands: names, option lists, definition bodies, tests. The engine does not
-run that code, and set as text it is code on the page. The one kind of
-internal that sets an operand, the kernel's `\@firstofone` and its kin, is
-the exception, and it is not read yet. The TeX82 primitives, `texInternal`'s
-other half, are not in it: `\hbox`, `\uppercase` and `\discretionary` set
-their groups. -/
+/-- Whether a control word is a LaTeX internal whose `{...}`
+arguments are code. -/
 public def codeInternal (name : String) : Bool :=
   name.contains '@'
 
-/-- Is a site in `file` package code — a style or class file the document
-loads — rather than the document's own text? The splice names every span of
-a local `.sty` by its file (the input wrapper), and a hook such a file
-registers replays inside that wrapper (`rewrite`), so the file a site stands
-in is the boundary. A class file would be `.cls`; none is read today. -/
+/-- Whether a site in `file` is package code rather than the
+document's own text. -/
 public def packageFile (file : String) : Bool :=
   file.endsWith ".sty" || file.endsWith ".cls"
 
 /-- A refusal of `name` at a site in `file` demotes exactly when the site is
-inside package code — the only door a `.sty` span enters by is the splice
-(`\input` reads `.tex`) — and the name is a TeX internal. The author can act
-on a per-line warning in their own files; in a venue's style file they
-cannot, and N0020 already names that file once. -/
+package code and the name a TeX internal. -/
 public def styInternal (file name : String) : Bool :=
   packageFile file && texInternal name
 
-/-- Attribute a diagnostic by its source site, preserving an explicit trigger;
-a loss about a place takes none (`DiagCode.namesPlace`). -/
+/-- A diagnostic attributed by its source site, keeping an explicit trigger; a
+loss about a place takes none. -/
 public def SourceTriggers.atSource (sources : SourceTriggers) (file : String)
     (pos : Pos) (d : Diag) : Diag :=
   { d with trigger := if d.kind.namesPlace then d.trigger else d.trigger.orElse fun _ =>
       (sources.writtenAt file pos).bind Diag.Spelling.ofWritten? }
 
-/-- Immediate attribution has the same failed-mapping boundary as delayed
-attribution: an unavailable original coordinate leaves the record untouched. -/
 public theorem SourceTriggers.atSource_unmapped_id (sources : SourceTriggers) (file : String)
     (pos : Pos) (d : Diag) (h : pos.sourceMapped = false) :
     sources.atSource file pos d = d := by
@@ -1309,16 +930,12 @@ public theorem SourceTriggers.atSource_unmapped_id (sources : SourceTriggers) (f
 private def atSource (st : St) (pos : Pos) (d : Diag) : Diag :=
   st.sourceTriggers.atSource st.file pos d
 
-/-- Source attribution changes only the trigger, for every diagnostic;
-the loss, acceptance policy, census and output scope retain their record. -/
 public theorem atSource_record_exact (sources : SourceTriggers) (file : String)
     (pos : Pos) (d : Diag) :
     { sources.atSource file pos d with trigger := d.trigger } = d := by rfl
 
-/-- The one door a diagnostic lands through here: a push, never a write —
-the silence guard reads `diags.size` growth on its own. `subject` is the
-census key of the loss, so "this loss is named" stays a lookup and
-`Diag.tallySites` can count its sites. -/
+/-- The one door a diagnostic lands through here: a push, keyed by `subject`,
+the loss's census key. -/
 private def say (code : DiagCode) (msg : String) (pos : Pos) (help : Option String := none)
     (demote : Bool := false) (subject : Option String := none)
     (refused : Option String := none) : M Unit :=
@@ -1327,30 +944,18 @@ private def say (code : DiagCode) (msg : String) (pos : Pos) (help : Option Stri
       let d := atSource st pos (Diag.of code msg (some ⟨st.file, pos⟩) help subject refused)
       if demote then d.demote else d) }
 
-/-- Keys are namespaced (`ctrl:`, `spec:`, `beamer:`), never bare names: the
-catch-all `beamer:` key set grows with `beamerConfig`, and a flat space would
-let a future entry claim a literal arm's key and silence it.
-
-Once per construct, counted per site: the first occurrence carries the
-message and the help, every later one rides beside it as a note with the
-same code, the same words and the same structured `subject`, and
-`Diag.tallySites` puts the total on the visible line. The suppression that
-used to happen here spent one key for every site of a construct, so a
-document losing a macro at twenty-nine places reported one. -/
+/-- A diagnostic said once per namespaced key (`ctrl:`, `spec:`, `beamer:`); a
+repeat is accounted as a write. -/
 private def sayOnce (key : String) (code : DiagCode) (msg : String) (pos : Pos)
     (help : Option String := none) (demote : Bool := false) : M Unit := do
   let first := !(← get).warned.contains key
   if first then
     write fun st => { st with warned := st.warned.push key }
   else
-    -- The repeat is accounted as a write too, so the silence guard (W0387)
-    -- does not re-name per repeat what once-per-construct says once.
     write id
   say code msg pos (if first then help else none) (demote || !first) (subject := some key)
 
-/-- The one line a `\multicolumn` that does not open a tabular cell prints,
-from either door that meets one (this walk, the tabular arm): every shape
-loses the same thing. -/
+/-- The one line a `\multicolumn` that does not open a tabular cell prints. -/
 public def multicolumnMisplaced : String :=
   "'\\multicolumn' opens no tabular cell here: its text stays in place, without its \
 span or alignment"
@@ -1358,25 +963,18 @@ span or alignment"
 public def multicolumnMisplacedHelp : String :=
   "write \\multicolumn first in a tabular cell"
 
-/-- Every translation is one note in the same shape, so `-v` reads as a list
-of things the document could say directly. -/
+/-- The translation note, one shape for every translation. -/
 private def became (what native : String) (pos : Pos)
     (subject : Option String := none) : M Unit :=
   say .N0100 s!"'{what}' → {native}" pos (subject := subject)
 
-/-- A construct that reads to nothing: the translation note, whose target is
-no effect with its reason, keyed `ctrl:nothing:<key>`. The key is what keeps
-a discard from reading as a translation onto a native construct — `became`
-carries no subject by default, so the two were one shape to every consumer
-that reads `Diag.subject`. `key` is the control word, sub-keyed by the
-argument that decided the discard where one did (`usepackage:url`,
-`providecommand:x`), or else by the argument its message names
-(`selectlanguage:french`), so every site of one key reads one message and
-`Diag.tallySites` counts the sites of one discard and never lumps two. -/
+/-- A construct that reads to nothing: the translation note keyed
+`ctrl:nothing:<key>`, naming the reason. -/
 private def discard (what why key : String) (pos : Pos) : M Unit :=
   became what s!"nothing: {why}" pos (subject := some ("ctrl:nothing:" ++ key))
 
-/-- Log controls' accounting reads their descriptor, never their arguments. -/
+/-- Log controls' accounting, read from their descriptor,
+never their arguments. -/
 private def meaningFreeReport (name : String) (pos : Pos) (note : Option String) : M Unit :=
   match note with
   | some why => discard s!"\\{name}" why name pos
@@ -1386,31 +984,19 @@ private def configSkipReport (name : String) (pos : Pos)
     (msg : String) (help : Option String) : M Unit :=
   sayOnce ("ctrl:" ++ name) .W0104 msg pos (help := help)
 
-/-- The preamble proper: the preamble's top level. That is outside the
-document environment, outside a `\begin{document}` hook's replay (routed to
-the body), and outside every brace group of the walk — a definition body,
-read where the command is used, and any argument, which is set where its
-command sets it: a `\title` at `\maketitle`, a running-head field on its
-pages. Only there does a declaration stay in force until
-`\begin{document}` with no text set under it, and `\begin{document}`
-resets the font series and babel's language (measured against lualatex),
-so an arm that would declare one there discards it instead. Inside a group
-the construct keeps its body meaning, as lualatex gives it in the title,
-the author, the date and a running head. -/
+/-- The preamble proper: outside the document environment, a `\begin{document}`
+hook's replay, and every brace group of the walk. -/
 private def preambleProper : M Bool := do
   let st ← get
   return !st.inDoc && !st.inDef && !st.seam && !st.inGroup
 
-/-- The preamble proper of a whole document. A value's text re-read on its
-own (a style's font template, a KOMA font argument) is inline content at its
-top level, never a preamble, so what LaTeX's `\begin{document}` resets —
-the size a `\large` there declares — is discarded only here. -/
+/-- The preamble proper of a whole document; a value's text
+read on its own has none. -/
 private def docPreamble : M Bool := do
   return (← get).wholeDoc && (← preambleProper)
 
-/-- The top-level brace groups of a feature value:
-`{l}{n}{*-Light}` → `#["l", "n", "*-Light"]`. Text outside any group is
-dropped; unbalanced closers saturate at depth zero. -/
+/-- The top-level brace groups of a feature value; text
+outside any group is dropped. -/
 private def braceGroups (s : String) : Array String := Id.run do
   let mut out : Array String := #[]
   let mut cur : Array Char := #[]
@@ -1434,8 +1020,8 @@ private def braceGroups (s : String) : Array String := Id.run do
 private def beamerFontAxis (key : String) : String :=
   if key == "size*" then "size" else key
 
-/-- Keep empty values: they clear one field. Split only outer commas, and
-remove a whole value's bracing without stripping `size*`'s operands. -/
+/-- The stored font fields updated by a declaration's key
+list; an empty value clears its field. -/
 private def beamerFontUpdate (old : List (String × String)) (src : String) :
     List (String × String) := Id.run do
   let mut fields := old
@@ -1453,7 +1039,7 @@ private def beamerFontUpdate (old : List (String × String)) (src : String) :
     | _ => pure ()
   return fields
 
-/-- Native font commands select the stored fields in beamer's order. -/
+/-- Native font commands selecting the stored fields in beamer's order. -/
 private def beamerFontCommands (fields : List (String × String)) : String :=
   String.join (beamerFontKeys.map fun axis =>
     match fields.find? (fun e => beamerFontAxis e.1 == axis) with
@@ -1463,18 +1049,13 @@ private def beamerFontCommands (fields : List (String × String)) : String :=
     | some (_, value) => value
     | none => "")
 
-/-- A theme's own block title fields over those declared before it loads: its
-font theme's unstarred `\setbeamerfont` replaces the fields it names and
-keeps the rest (beamerfontthememoloch.sty). -/
+/-- A theme's own block title fields over those declared before it loads. -/
 private def themeOver (stored seed : List (String × String)) : List (String × String) :=
   seed.foldl (fun fields (key, value) =>
     (key, value) :: fields.filter (fun e => beamerFontAxis e.1 != beamerFontAxis key)) stored
 
-/-- The fields the plain block title is set in: its own, the regular series
-where they name none. The engine's built-in title weight is the theme's bold
-series, which a starred declaration or an emptied field clears; with no
-series of its own the title keeps normal text's, as `\usebeamerfont*`
-leaves it. -/
+/-- The fields the plain block title is set in: its own, with the regular series
+where they name none. -/
 private def blockTitleFields (element : String) (fields : List (String × String)) :
     List (String × String) :=
   if element == "block title" &&
@@ -1482,8 +1063,8 @@ private def blockTitleFields (element : String) (fields : List (String × String
     ("series", "\\mdseries") :: fields.filter (·.1 != "series")
   else fields
 
-/-- The title-template reader carries measured size and leading separately.
-The other axes use the same selection order as native element styles. -/
+/-- The title template's font, its measured size and leading
+carried separately. -/
 private def beamerTemplateFont (element : String) (fields : List (String × String)) :
     TitleTemplate.Font := Id.run do
   let mut font : TitleTemplate.Font :=
@@ -1507,13 +1088,8 @@ private def beamerTemplateFont (element : String) (fields : List (String × Stri
       font := { font with unread := font.unread.push s!"'{key}' of '{element}'" }
   return font
 
-/-- One `FontFace = {series}{shape}{font}` entry, validated: the native
-`slot.<series>[.italic] = "face"` part it becomes, or `none` after a
-warning naming exactly what could not be honoured — a shape off the
-upright/italic model, a feature list in place of a name, a value that is
-no series. The slanted shape sets italic, the substitution NFSS itself
-makes when a face has no slanted shape; a width half is honoured for its
-weight and named for its width, as `\fontseries`'s is. -/
+/-- One `FontFace = {series}{shape}{font}` entry as the native slot part it
+becomes, or `none` after a warning naming what could not be honoured. -/
 private def fontFacePart (family slot v : String) (pos : Pos) :
     M (Option String) := do
   match (braceGroups v).toList with
@@ -1558,9 +1134,8 @@ private def synth (s : String) : M (Array Raw) := do
 
 mutual
 
-/-- Relocate token sites without changing their spelling. Group delimiters
-can retain the distinct identities that `condPatchRaw` matches; they emit
-no compatibility diagnostic. An input wrapper owns another file's sites. -/
+/-- Token sites relocated without changing their spelling; an input wrapper owns
+another file's sites. -/
 public def rebase (mapPos : Pos → Pos) (groups : Bool) : Raw → Raw
   | .word s p => .word s (mapPos p)
   | .space => .space
@@ -1596,8 +1171,6 @@ private theorem rebaseList_source (mapPos : Pos → Pos) (groups : Bool) (rs : L
     simp only [rebaseList, rawSrcList]
     rw [rebase_source, rebaseList_source]
 
-/-- Source relocation preserves every token's spelling and boundary,
-including nested groups, math and file wrappers. -/
 private theorem rebase_source (mapPos : Pos → Pos) (groups : Bool) (r : Raw) :
     rawSrcOne (rebase mapPos groups r) = rawSrcOne r := by
   cases r with
@@ -1608,8 +1181,6 @@ private theorem rebase_source (mapPos : Pos → Pos) (groups : Bool) (r : Raw) :
 
 end
 
-/-- Source relocation preserves the written token spelling, including nested
-groups and file wrappers. The relocation implementation stays opaque. -/
 public theorem rebase_source_exact (mapPos : Pos → Pos) (groups : Bool) (r : Raw) :
     rawSrcOne (rebase mapPos groups r) = rawSrcOne r :=
   rebase_source mapPos groups r
@@ -1619,11 +1190,9 @@ private def synthAt (s : String) (pos : Pos) : M (Array Raw) := do
 
 mutual
 
--- conserves: none — a surface token comparison key, not an IR rewrite.
-/-- Replacement-token identity for `\ifx` (TeXbook chapter 20). Positions
-and word chunk boundaries are parser details; spaces and groups are tokens.
-A blank line is the control sequence `\par`, also when written explicitly.
-Keep this key separate from source printing, which trims whitespace. -/
+-- conserves: none — a surface token comparison key
+/-- Replacement-token identity for `\ifx`: positions and word boundaries
+ignored, spaces and groups kept as tokens. -/
 private def macroTokens (out : Array Raw) : List Raw → Array Raw
   | [] => out
   | .word s _ :: rest =>
@@ -1644,9 +1213,8 @@ private def macroToken : Raw → Raw
 
 end
 
-/-- One optional `[...]` argument, keeping its tokens inert. Groups are
-opaque to the delimiter scan; an ungrouped `[` does not nest (latex.ltx,
-`\@ifnextchar` and `\@argdef`). -/
+/-- One optional `[...]` argument, its tokens kept inert; groups are opaque and
+an ungrouped `[` does not nest. -/
 private def takeRawOpt (raws : Array Raw) (i : Nat) : Option (Array Raw) × Nat := Id.run do
   let j := skipSpaces raws i
   match raws[j]? with
@@ -1666,17 +1234,14 @@ public def takeOpt (raws : Array Raw) (i : Nat) : Option String × Nat :=
   let (arg, stop) := takeRawOpt raws i
   (arg.map rawSrc, stop)
 
-/-- TeX removes one enclosing group from a delimited argument, exactly
-when that group is the whole argument (TeXbook chapter 20). LaTeX reads a
-default this way at definition time, then passes it intact on omission. -/
+/-- A delimited argument with the one enclosing group
+removed when that group is the whole argument. -/
 private def ungroupArg (raws : Array Raw) : Array Raw :=
   match raws.toList with
   | [.group body _] => body
   | _ => raws
 
-/-- Up to `n` optional `[...]` runs, and whether any of them was there. The
-box commands differ only in how many their signature allows, so the count is
-a number read from `boxShape` rather than a repeated call per arm. -/
+/-- Up to `n` optional `[...]` runs, and whether any of them was there. -/
 private def takeOpts (raws : Array Raw) (i n : Nat) : Bool × Nat := Id.run do
   let mut j := i
   let mut any := false
@@ -1686,10 +1251,8 @@ private def takeOpts (raws : Array Raw) (i n : Nat) : Bool × Nat := Id.run do
     j := j'
   return (any, j)
 
-/-- Consecutive arguments in the raw source, with whitespace skipped only
-before an argument. Contents are arbitrary and never inspected. This is a
-progress contract: each constructor consumes one argument, and its endpoint
-is the next raw index, not a count of loop iterations. -/
+/-- Consecutive arguments in the raw source, whitespace
+skipped only before an argument. -/
 public inductive GroupPrefix (raws : Array Raw) : Nat → List (Array Raw) → Nat → Prop
   | nil {i} : GroupPrefix raws i [] i
   | group {i body p args stop} :
@@ -1701,9 +1264,7 @@ public inductive GroupPrefix (raws : Array Raw) : Nat → List (Array Raw) → N
       GroupPrefix raws (skipSpaces raws i + 1) args stop →
       GroupPrefix raws i (#[.ctrl name p] :: args) stop
 
-/-- The argument loop's step, exposed for its progress proof. The equation
-`takeGroups_loop_exact` checks that this reads the actual loop, including its
-early exit; the implementation is not restated as a fold. -/
+/-- The argument loop's step. -/
 private def takeGroupsStep (raws : Array Raw) (s : Array (Array Raw) × Nat) :
     Id (ForInStep (Array (Array Raw) × Nat)) :=
   let k := skipSpaces raws s.2
@@ -1712,9 +1273,8 @@ private def takeGroupsStep (raws : Array Raw) (s : Array (Array Raw) × Nat) :
   | some (r@(.ctrl _ _)) => pure (.yield (s.1.push #[r], k + 1))
   | _ => pure (.done s)
 
-/-- Up to `n` brace groups or bare control words (`\newcommand\x`).
-Other raws stop the reader without consuming them or their leading spaces.
-Character-token arguments use `takeRawArgs` instead. -/
+/-- Up to `n` brace groups or bare control words; any other
+raw stops the reader unconsumed. -/
 public def takeGroups (raws : Array Raw) (i n : Nat) : Array (Array Raw) × Nat := Id.run do
   let mut out : Array (Array Raw) := #[]
   let mut j := i
@@ -1726,17 +1286,16 @@ public def takeGroups (raws : Array Raw) (i n : Nat) : Array (Array Raw) × Nat 
     | _ => break
   return (out, j)
 
-/-- Filename read from the same executed call the local-style reader sees. -/
+/-- The filename, read from the executed call the local-style reader sees. -/
 @[expose] public def InputRequest.name (request : InputRequest) : String :=
   rawSrc ((takeGroups request.call (takeOpt request.call 1).2 1).1.getD 0 #[])
 
-/-- Options read from the same executed call as the filename. -/
+/-- The options, read from the executed call the filename is read from. -/
 @[expose] public def InputRequest.options (request : InputRequest) : String :=
   ((takeOpt request.call 1).1.getD "").trimAscii.toString
 
-/-- The scalar loading calls in one executed request, in source order.
-Duplicates are retained: the admission gate, not a candidate scan, decides
-whether their bodies run. Options and positions remain parsed syntax. -/
+/-- The scalar loading calls in one executed request, in
+source order, duplicates retained. -/
 public def InputRequest.packageCalls (request : InputRequest) :
     Array (String × Array Raw) :=
   if request.command == "usepackage" || request.command == "RequirePackage" then
@@ -1764,9 +1323,6 @@ private theorem GroupPrefix.yields {raws : Array Raw} {i args stop}
     · simp [takeGroupsStep, h]
     · simpa using ih (out.push #[.ctrl name p])
 
-/-- The actual loop consumes exactly the declared number of consecutive
-arguments, for arbitrary source contents, starting index and suffix. The
-premise describes source raws, not the result of the reader under proof. -/
 public theorem takeGroups_prefix_exact {raws : Array Raw} {i args stop}
     (h : GroupPrefix raws i args stop) :
     takeGroups raws i args.length = (args.toArray, stop) := by
@@ -1774,9 +1330,6 @@ public theorem takeGroups_prefix_exact {raws : Array Raw} {i args stop}
   simpa using Loop.forIn_yields_exact (h.yields #[])
     (List.range' 0 args.length) (by simp)
 
-/-- When a non-argument follows a shorter prefix, breaking leaves the
-cursor before that boundary's whitespace and preserves every remaining raw.
-This covers arbitrary budgets, including malformed and truncated input. -/
 public theorem takeGroups_stopped_exact {raws : Array Raw} {i args stop n}
     (h : GroupPrefix raws i args stop) (hn : args.length < n)
     (hstop : ∀ body p, raws[skipSpaces raws stop]? ≠ some (.group body p))
@@ -1791,10 +1344,8 @@ public theorem takeGroups_stopped_exact {raws : Array Raw} {i args stop n}
   rw [takeGroups_loop_exact]
   exact Loop.forIn_range_stops_exact hd n (by omega)
 
-/-- Undelimited TeX arguments: a group or one token each. A lexer word
-can hold several character arguments. The index owns that whole word and
-the caller receives its unconsumed tail. Hooks and live macro calls share
-this boundary. -/
+/-- Undelimited TeX arguments, a group or one token each, with the unconsumed
+tail of a lexer word. -/
 private def takeRawArgs (raws : Array Raw) (i count : Nat) :
     Array (Array Raw) × Nat × Array Raw := Id.run do
   let mut args : Array (Array Raw) := #[]
@@ -1820,15 +1371,13 @@ private def takeRawArgs (raws : Array Raw) (i count : Nat) :
     | _ => break
   return (args, j, tail)
 
-/-- etoolbox's `\apptocmd` reads four arguments through the shared reader. -/
+/-- etoolbox's `\apptocmd`'s four arguments. -/
 private def takeHookArgs (raws : Array Raw) (i : Nat) :
     Array (Array Raw) × Nat × Array Raw :=
   takeRawArgs raws i 4
 
-/-- The canonical undelimited parameter text `#1` through `#9`
-(TeXbook chapter 20), shared by value reading and translation. Spaces
-inside this text are delimiters; the lexer already discards the space
-that merely ends a control word. -/
+/-- The arity of canonical undelimited parameter text `#1`
+through `#9`; `none` for any other. -/
 private def undelimitedArity (params : Array Raw) : Option Nat :=
   read params.toList 0
 where
@@ -1838,9 +1387,8 @@ where
       if n < 9 && w == toString (n + 1) then read rest (n + 1) else none
     | _, _ => none
 
-/-- The parameters a captured minted command writes (`\mintinline{#1}{#2}`
-in a definition's text), each the source of its argument, as TeX binds
-them before minted reads the call; `##` is one `#`. -/
+/-- A captured minted command's text with each parameter replaced by its
+argument's source; `##` is one `#`. -/
 private def bindMintedParams (args : Array (Array Raw)) (s : String) : String := Id.run do
   if !s.contains '#' then return s
   let cs := s.toList.toArray
@@ -1868,13 +1416,9 @@ private def bindMintedParams (args : Array (Array Raw)) (s : String) : String :=
 
 mutual
 
--- conserves: none — substitutes arguments for parameter tokens, preserving
--- the surrounding surface structure; this is not an IR rewrite.
-/-- Bind parameters before executing replacement text. `#10` is argument
-one followed by `0`; `##` quotes one parameter token for a nested
-definition (TeXbook chapter 20). Substituted arguments are not scanned
-again by this binding, and verbatim text is opaque — but for minted's
-commands, which read their code where TeX has bound it (`bindMintedParams`). -/
+-- conserves: none — substitutes arguments for parameter tokens
+/-- Replacement text with its parameters bound: `#10` is argument one followed
+by `0`, and `##` quotes one parameter token. -/
 private def bindRawArgsList (args : Array (Array Raw)) (out : Array Raw) :
     List Raw → Array Raw
   | [] => out
@@ -1909,11 +1453,8 @@ private def bindRawArgsRaw (args : Array (Array Raw)) : Raw → Raw
 
 end
 
-/-- `\tikz`'s one-command form from `i`: the raws up to and including the
-first `;` a top-level word carries — where TikZ's path parser ends the
-command (pgfmanual §12.2.2) — with the rest of that word handed back as
-text, and the index after it. Nothing when no `;` closes the command before
-the paragraph ends: the form is then not one this reader can bound. -/
+/-- `\tikz`'s one-command form from `i`: the raws through the first top-level
+`;`, with the rest of that word handed back. -/
 private def tikzCommand (raws : Array Raw) (i : Nat) : Option (Array Raw × Array Raw × Nat) := Id.run do
   let mut out : Array Raw := #[]
   for k in [i:raws.size] do
@@ -1930,10 +1471,8 @@ private def tikzCommand (raws : Array Raw) (i : Nat) : Option (Array Raw × Arra
     | none => return none
   return none
 
-/-- A saved native meaning carries a reserved control name through macro
-execution. Decoding happens only at native dispatch, after document-name
-lookup: TeX's \let copies the meaning, so a later definition of the source
-name cannot change it (TeXbook ch. 20). A control word cannot contain a space. -/
+/-- The reserved control name a saved native meaning carries
+through macro execution. -/
 public def overlayName (name : String) : String :=
   if name.startsWith "overlay native " then (name.drop "overlay native ".length).toString
   else name
@@ -1945,11 +1484,8 @@ private def overlayNativeName (name : String) : String :=
 private def overlayTitled (name : String) : Bool :=
   ["block", "alertblock", "exampleblock"].contains name
 
-/-- The numbered-selector surface shared by compatibility and elaboration.
-`args` counts ordinary arguments before the last selector slot. Zero means
-prefix-only. Beamer's font wrappers, colour declarations and uncover/visible
-have only that slot; only/alt and newcommand<> wrappers also have a final
-slot (beamerbaseoverlay.sty, only/alt and beamer@parseargs). -/
+/-- The numbered-selector shape of an overlay-aware command: ordinary arguments
+before the last selector slot, and whether it is prefix-only. -/
 private def overlayArity? (name : String) : Option (Nat × Bool) :=
   let name := overlayName name
   if ["alert", "emph", "titled overlay"].contains name then some (1, true)
@@ -1962,21 +1498,15 @@ private def overlayArity? (name : String) : Option (Nat × Bool) :=
     then some (0, false)
   else none
 
-/-- A closed selector consumes whole raws through `stop`; a suffix of its
-last word remains caller text in `tail`. Only whitespace is normalized here:
-Ir.overlayRange remains the sole numbered-membership parser, and unsupported
-mode, relative and action spellings still reach its W0105 caller. -/
+/-- A closed selector: the raws it consumes through `stop`, with its last word's
+suffix left in `tail`. -/
 private structure OverlaySelector where
   word : Raw
   stop : Nat
   tail : Array Raw := #[]
 
-/-- Read `<...>` across lexer and substituted-argument fragments. Beamer's
-master decoder expands fragments and removes spaces (beamerbasedecode.sty,
-beamer@masterdecode); no argument group or paragraph can be consumed here.
-Before an ordinary argument, newcommand<> accepts repeated selectors and the
-last one wins (beamer@foundspec). `many` reads that slot without consuming any
-text after its last complete selector. -/
+/-- A `<...>` overlay selector read across lexer and
+substituted-argument fragments. -/
 private def overlaySelector? (raws : Array Raw) (start : Nat)
     (many : Bool := false) : Option OverlaySelector := Id.run do
   let some (.word first pos) := raws[start]? | return none
@@ -2017,8 +1547,8 @@ private def overlaySelector? (raws : Array Raw) (start : Nat)
     | _ => return selected
   return selected
 
-/-- Read the canonical word produced by overlaySelector?, including refused
-selectors. Recognizing the boundary never certifies numbered membership. -/
+/-- The canonical selector word `overlaySelector?` produced,
+refused selectors included. -/
 public def overlayWord? : Raw → Option String
   | .word w _ => if w.startsWith "<" && w.endsWith ">" then some w else none
   | _ => none
@@ -2036,15 +1566,14 @@ private structure OverlayWindow where
 private def OverlayWindow.accepts (w : OverlayWindow) : Bool :=
   w.labelDepth == 0 && (!w.passed || w.left == 0 || w.middle)
 
-/-- Only newcommand<> continues looking after a selector, until its ordinary
-arguments end. Only/alt and prefix-only wrappers finish at their first one. -/
+/-- The window after a selector: only `\newcommand<>` keeps looking, until its
+ordinary arguments end. -/
 private def OverlayWindow.afterSelector (w : OverlayWindow) : Option OverlayWindow :=
   if w.middle && w.left > 0 then some { w with selected := true } else none
 
 
-/-- Item labels have a second selector slot after the bracketed label
-(beamer@itemreverse). Label text is opaque to this window, including nested
-brackets; selectors inside its groups still use their own native windows. -/
+/-- The window after a raw, with item labels' second
+selector slot after the bracketed label. -/
 private def overlayNext (pending : Option OverlayWindow) (r : Raw)
     (head : Nat) : Option OverlayWindow :=
   if let some w := pending then
@@ -2074,9 +1603,8 @@ private def overlayVariantName (w : OverlayWindow) (text : String) : Option Stri
     else none
   else none
 
-/-- Beamer routes onslide* to only, and onslide+ to visible. Both visible
-and the ordinary onslide retain this engine's declared dim-cover policy.
-The sign is outside the selector; <+> itself remains relative and refused. -/
+/-- Beamer's starred and plus `\onslide` variants routed to
+`\only` and `\visible`. -/
 private def overlayVariant (pending : Option OverlayWindow) (acc : Array Raw)
     (r : Raw) : Option OverlayWindow × Array Raw × Raw :=
   match pending, r with
@@ -2093,10 +1621,9 @@ private def overlayVariant (pending : Option OverlayWindow) (acc : Array Raw)
 
 mutual
 
-/-- Normalize only advertised selector slots, after macro execution. Moving
-an accepted final selector to the head lets every spelling share its native
-handler. A final selector is adjacent, as beamer@ifnextcharospec requires. -/
--- conserves: none — a surface boundary walk; no IR content has been elaborated.
+/-- Advertised selector slots normalized after macro execution, an accepted
+final selector moved to the head. -/
+-- conserves: none — a surface boundary walk
 private def overlayInputsList (raws : Array Raw) (pending : Option OverlayWindow)
     (acc : Array Raw) : List Raw → Nat → Nat → Array Raw
   | [], _, _ => acc
@@ -2133,8 +1660,8 @@ private def overlayInputsRaw : Raw → Raw
 
 end
 
-/-- The shared source boundary, before compatibility routing and the one
-elaborator. Macro execution must precede this pass. -/
+/-- The shared selector boundary, run after macro execution and before
+compatibility routing. -/
 public def overlayInputs (raws : Array Raw) : Array Raw :=
   overlayInputsList raws none #[] raws.toList 0 0
 
@@ -2172,9 +1699,7 @@ private def OverlayScan.step (scan : OverlayScan) (r : Raw) : OverlayScan := Id.
     pending := overlayNext pending r 0
   return { pending, opened }
 
-/-- The selector cursor belongs to the emitted prefix. Its invariant makes
-macro splices and ordinary tokens resume the same scan, without replaying
-all earlier output at every control. -/
+/-- The selector cursor of the emitted prefix. -/
 private structure OverlayPrefix where
   raws : Array Raw
   scan : OverlayScan
@@ -2192,115 +1717,60 @@ private def OverlayPrefix.append (out : OverlayPrefix) (rs : Array Raw) : Overla
 
 private instance : HAppend OverlayPrefix (Array Raw) OverlayPrefix := ⟨OverlayPrefix.append⟩
 
-/-- The alert style around a body, one spelling for both `\alert` forms:
-themed (`alertThemed`), the alert colour alone — beamer's `\alert` selects
-the `alerted text` colour and its font (beamerbaselocalstructure.sty:85),
-which beamer's default font theme leaves empty
-(beamerfontthemedefault.sty:15) and moloch never sets (measured under
-lualatex: an alerted word sets in the body's face and weight). A decision
-over the engine's earlier bold, which kept colour from being the run's only
-visual signal (WCAG 2.2 SC 1.4.1): the slide class's look was asked for. A
-beamer theme gives the word weight through its `alerted text` font, which the
-engine does not read (`\setbeamerfont` names it unsupported). Unthemed there
-is no alert colour, and bold stands in so the run still differs from its
-neighbours — a departure where a deck names beamer's bare default, whose
-colour theme sets the word red: the bare deck installs no palette. The bold is a declaration, as a theme's
-`alerted text` font would be: `\textbf` would also set a text command's
-italic corrections at the run's edges, which beamer's `\alert` does not. -/
+/-- The alert style around a body, one spelling for both `\alert` forms: the
+theme's alert colour, or bold when unthemed. -/
 public def alertStyled (themed : Bool) (body : Array Raw) (pos : Pos) : Array Raw :=
   if themed then
     #[.ctrl "textcolor" pos, .group #[.word "alert" pos] pos, .group body pos]
   else #[.group (#[.ctrl "bfseries" pos] ++ body) pos]
 
-/-- An unforgeable command name: a control word cannot contain a space.
-The marker asks Elab for a conditional style over one elaborated body. -/
+/-- The command name marking a conditional alert style, unforgeable because a
+control word holds no space. -/
 public def alertMark (themed : Bool) : String :=
   if themed then "alert themed" else "alert plain"
 
-/-- A conditional alert carries its body once. The compatibility walk leaves
-the body group in its original stream, so its own commands are rewritten once
-as well. Tests.overlayInputChecks observes the note numbers and label effects
-on shipped pages and the full typed HTML, rather than inferring conservation
-from two raw alternatives. -/
+/-- A conditional alert, carrying its body once. -/
 public def alertOverlay (themed : Bool) (spec : Raw) (body : Array Raw) (pos : Pos) : Array Raw :=
   #[.ctrl (alertMark themed) pos, spec, .group body pos]
 
-/-- The raw boundary carries one body group; effect conservation is checked
-at elaboration's artifacts, where footnotes and labels have meanings. -/
 public theorem alertOverlay_exact (themed : Bool) (spec : Raw) (body : Array Raw) (pos : Pos) :
     alertOverlay themed spec body pos =
       #[.ctrl (alertMark themed) pos, spec, .group body pos] := by rfl
 
-/-- The style is requested by one marker, without a second raw body. -/
 public theorem alertOverlay_styled_exact (themed : Bool) (spec : Raw) (body : Array Raw)
     (pos : Pos) :
     (alertOverlay themed spec body pos)[0]? = some (.ctrl (alertMark themed) pos) := by rfl
 
-/-- The single body stays untouched until its one elaboration. -/
 public theorem alertOverlay_plain_exact (themed : Bool) (spec : Raw) (body : Array Raw)
     (pos : Pos) :
     (alertOverlay themed spec body pos)[2]? = some (.group body pos) := by rfl
 
-/-- Numbered membership is decided by the elaborator's common reader. -/
 public theorem alertOverlay_spec_id (themed : Bool) (spec : Raw) (body : Array Raw) (pos : Pos) :
     (alertOverlay themed spec body pos)[1]? = some spec := by rfl
 
-/-- The boundary's set-line vocabulary: with the boundary open (the
-default) these preamble lines are the standalone's, collected as written
-and consumed silently — the real TikZ reads them where the engine's subset
-cannot. A declared refusal (`\pictures{ tool = none }`) makes them unknown
-commands again. Colours are not on this list: `\definecolor` folds into
-the palette, and the palette is the one resolving site — the request
-carries the roles a picture mentions with their resolved values
-(`Ir.paletteDecls`), so a `\definecolor` and its `\palette` spelling
-state one request (the conservation oracle holds them equal). -/
+/-- The boundary's set-line vocabulary, collected as written into the standalone
+while the boundary is open. -/
 public def boundaryCtrls : List String :=
   ["usetikzlibrary", "tikzset", "tikzcdset", "gtrset", "pgfplotsset", "graphicspath"]
 
-/-- The set lines the engine reads *itself*: their key lists address the
-picture machinery, and the engine has picture machinery of its own
-(`Picture.readStyleList` takes the `/.style` definitions out of a
-`\tikzset`). Such a line is therefore never the sentence's and never an
-unknown command, whichever renderer ends up drawing — it still rides to
-the boundary as well (`boundaryCtrls` keeps it), because a picture the
-subset draws nothing of is drawn there and needs the same definitions.
-A subset of `boundaryCtrls`. -/
+/-- The set lines the engine reads itself. -/
 public def nativeSetCtrls : List String := ["tikzset"]
 
-/-- The picture-family lines the engine reads itself and so never names as
-unknown, whichever renderer draws: the set lines it reads (`nativeSetCtrls`),
-`\usetikzlibrary`, whose libraries the picture reader implements or names
-where a picture uses them, and whose `arrows.meta` changes the head the `->`
-shorthand draws (`Picture.tipKindOf`), and graphicx's `\graphicspath`,
-whose directories the engine's own image lookup searches
-(`Ir.Doc.graphicsPath`) as a standalone's TeX does. -/
+/-- The picture-family lines the engine reads itself and
+never names as unknown. -/
 public def nativeReadCtrls : List String := nativeSetCtrls ++ ["usetikzlibrary", "graphicspath"]
 
-/-- Picture packages, whose whole meaning is drawing: with the boundary
-open (the default), their loads belong to the boundary standalone's
-preamble (`boundaryDecls` carries each with its options) rather than being
-W0103's named loss — the real TeX at the edge is what reads them. A closed
-list, extended when a document brings the next one; a package with body
-commands outside pictures does not belong here. -/
+/-- Picture packages, whose loads go to the boundary standalone's preamble while
+the boundary is open. -/
 public def boundaryPkgs : List String :=
   ["genealogytree", "pgfplots", "circuitikz"]
 
-/-- The native packages whose loads ride to the boundary standalone too: the
-engine sets their mathematics itself, but a picture's labels and a
-diagram's cells are TeX's to set at the boundary, and amsmath's
-`\underset`, `\text` and `\substack`, or amssymb's `\mathbb`, are
-undefined in a standalone that never loaded them — the picture would fail
-for want of a package its document did load. tikz-cd is the same case: the
-engine draws a diagram itself where its reader can, and the diagrams it
-routes are the library's to draw. -/
+/-- Native packages whose loads also go to the boundary standalone, which sets
+picture labels and diagram cells. -/
 public def boundaryMathPkgs : List String := ["amsmath", "amssymb", "amsfonts", "tikz-cd"]
 
-/-- The document refused the boundary: a `\pictures` block declaring
-`tool = none`. Read over the unrewritten preamble exactly as
-`boundaryDecls` reads its lines (order-free, `\input` wrappers spliced);
-the one consumer is the `\usepackage` dispatch, which must know whether a
-picture package's load rides to the boundary or is W0103's named loss.
-The elaborator reads the same declaration through `scanDecls`. -/
+/-- Whether the document refused the boundary with a
+`\pictures{ tool = none }` block. -/
 private def boundaryRefused (raws0 : Array Raw) : Bool := Id.run do
   let mut raws := raws0
   let mut i := 0
@@ -2326,88 +1796,46 @@ private def boundaryRefused (raws0 : Array Raw) : Bool := Id.run do
       break
   return false
 
-/-- The picture environments whose bodies ride to the boundary verbatim.
-A set line written *inside* one is already that standalone's, so the
-collector does not hoist it: hoisting would scope one picture's styling to
-every other picture in the document. -/
+/-- The picture environments whose bodies go to the boundary verbatim. -/
 public def pictureEnvs : List String := ["tikzpicture", "external"]
 
-/-- The control words the picture walk gives a meaning of its own — its
-statement heads, `\else` and `\fi` (`Picture.walkCtrls`, which a test holds
-equal to this list). The conditional pass puts no document macro of such a
-name into a picture: the walk names it where it stands. -/
+/-- The control words the picture walk gives a meaning of its own. -/
 public def picWalkCtrls : List String :=
   ["fill", "node", "draw", "path", "foreach", "pgfmathsetmacro",
    "pgfmathtruncatemacro", "pgfmathsetlengthmacro", "coordinate", "filldraw", "shade",
    "shadedraw", "clip", "else", "fi"]
 
-/-- A package that is a theme of the document's class, not a picture's:
-beamer's theme family `beamer<slot>theme<name>` (`themeAsking`, read
-backwards by `themeSlotOfPackage?`; beamer user guide §15). A theme
-presupposes the class — its first lines call `\useinnertheme` and its
-siblings, which only beamer defines — and a boundary standalone is never
-that class, so such a load can only fail there. What a picture reads of a
-theme — its colours, its fonts, its TikZ libraries and styles, its macros —
-reaches the standalone through its own carriers instead. -/
+/-- Whether a package is a theme of the document's class,
+from beamer's theme family. -/
 public def themePackage (p : String) : Bool := (themeSlotOfPackage? p).isSome
 
-/-- A package of the presentation class's own family, which presupposes the
-class: a theme (`themePackage`); one of beamer's own modules or an add-on
-named for it (`beamerbaseoverlay`, `appendixnumberbeamer`, `beamerposter`),
-each of which patches beamer's internals or calls its commands; or pdfpc's,
-whose hyperxmp needs the hyperref beamer loads first. A boundary standalone
-is neither beamer nor carries its hyperref, so such a load can only fail
-there, and the picture with it. `beamerarticle` is the beamer package made
-to load in another class (beamer user guide §21.2), so it is not one. -/
+/-- Whether a package belongs to the presentation class's own family: a theme,
+one of beamer's modules, or an add-on named for it. -/
 public def classPackage (p : String) : Bool :=
   themePackage p || ((p.splitOn "beamer").length > 1 && p != "beamerarticle") || p == "pdfpc"
 
-/-- The package loads a boundary standalone carries: every one the engine
-does not set itself, and the native ones a picture's own TeX reads
-(`boundaryMathPkgs`), except one of the class's own family
-(`classPackage`). -/
+/-- Whether a boundary standalone carries the package's load. -/
 public def boundaryRides (p : String) : Bool :=
   !p.isEmpty && (!nativePackages.contains p || boundaryMathPkgs.contains p) && !classPackage p
 
-/-- The directories a `\graphicspath` argument names: each group it holds,
-as written (grfguide §4.5: `\graphicspath{{dir1/}{dir2/}}`); anything
-between the groups names none. -/
+/-- The directories a `\graphicspath` argument names, one
+per group, as written. -/
 public def graphicsDirs (arg : Array Raw) : Array String :=
   arg.filterMap fun r => match r with
     | .group body _ => some (rawSrc body).trimAscii.toString
     | _ => none
 
-/-- What one tree walk collects for the renderers of a document's
-pictures: `pre` is the boundary standalone's preamble, as written; `sets`
-is the same collection read natively — one entry per `nativeSetCtrls`
-line, its key list beside the span of the line that wrote it: the line's
-own file, which an `\input` wrapper names, as it names the file the
-elaborator reads the line in (`tikzsetKeys_input_exact`). One accumulator,
-so the two readings cannot disagree about which definitions reached a
-picture. -/
+/-- What one tree walk collects for a document's picture renderers. -/
 public structure BoundaryScan where
   pre : String := ""
   sets : Array (Span × Array Raw) := #[]
-  /-- The last `\graphicspath` line's directories, as written: one per
-  group its argument holds (`graphicsDirs`). -/
+  /-- The last `\graphicspath` line's directories, as written. -/
   graphics : Array String := #[]
 
 mutual
 
-/-- One level of the boundary-declaration walk. The list drives the
-recursion; the array gives `takeOpt`/`takeGroups` O(1) access to the
-siblings a set line's arguments are, and `skip` counts the siblings a
-line already consumed so its argument group is never walked as content.
-The accumulator carries both readings of the same collection — the
-standalone's preamble text and the native key lists — so the two can
-never disagree about which lines a picture's renderer was handed. It
-accumulates, so the standalone's preamble is built in one pass in source
-order. -/
--- conserves: none — the walk's result is the standalone's preamble text
--- plus the key lists the engine reads, not a tree: it collects the subset
--- of lines a picture's renderer must read and drops everything else by
--- design, so no census equality can hold. What it must conserve is stated
--- where it pays: `boundaryDecls_covers` and `tikzsetKeys_covers`.
+/-- One level of the boundary-declaration walk. -/
+-- conserves: none — the result is the standalone's preamble text
 private def boundaryLevel (file : String) (raws : Array Raw) (out : BoundaryScan) :
     List Raw → Nat → Nat → BoundaryScan
   | [], _, _ => out
@@ -2439,10 +1867,8 @@ private def boundaryLevel (file : String) (raws : Array Raw) (out : BoundaryScan
     else boundaryLevel file raws out rest (i + 1) 0
   | r :: rest, i, 0 => boundaryLevel file raws (boundaryRaw file out r) rest (i + 1) 0
 
-/-- Descend into a group or an environment. Split from the list walk so
-the recursion is structural on `Raw`: the body is a field of the head, not
-a tail of the list — `rewriteList`/`rewriteRaw`'s shape. An `\input`
-wrapper's body is read in its own file. -/
+/-- One raw of the boundary-declaration walk, descending into groups,
+environments and input wrappers. -/
 private def boundaryRaw (file : String) (out : BoundaryScan) : Raw → BoundaryScan
   | .group body _ => boundaryLevel file body out body.toList 0 0
   | .env n body _ =>
@@ -2458,79 +1884,34 @@ private def boundaryRaw (file : String) (out : BoundaryScan) : Raw → BoundaryS
 
 end
 
-/-- What one walk of the tree collects for a picture's renderers: the
-preamble text the boundary standalone needs, and the key lists the engine
-reads itself, each with the position of the line it came from (a
-diagnostic about a key belongs to the line that wrote it, not to whichever
-picture first met it). -/
+/-- What one walk of the tree collects for a picture's renderers. -/
 public def boundaryScan (file : String) (raws : Array Raw) : BoundaryScan :=
   boundaryLevel file raws {} raws.toList 0 0
 
-/-- The preamble declarations a boundary standalone needs, collected from
-the *unrewritten* tree — the compat rewrite drops package loads, so
-collection precedes it. Every non-native `\usepackage` rides with its
-options (pgfplots, genealogytree, circuitikz — whatever the pictures
-need) but one of the class's own family (`boundaryRides`), and each
-closed-list set line is reconstructed as written.
-
-**Wherever they stand.** A set line is a definition the pictures read, and
-where the author wrote it says nothing about which pictures need it: a
-figure kept in its own file carries its `\usetikzlibrary` and `\tikzset`
-just above its picture, inside the document body, and a collector that
-stopped at `\begin{document}` handed pgf a picture whose arrow tips and
-shapes were never defined — `Unknown arrow tip kind`, `Unknown shape` —
-so the boundary failed and the page shipped an empty box. The walk
-therefore descends the whole tree; only a picture environment is left
-closed (`pictureEnvs`), its body being its own standalone's already. Pure
-and total; `\input` wrappers open as any other environment does. -/
+/-- The preamble declarations a boundary standalone needs,
+collected from the unrewritten tree. -/
 public def boundaryDecls (file : String) (raws : Array Raw) : String :=
   (boundaryScan file raws).pre
 
-/-- The key lists the engine reads itself, in source order, each with the
-span of the `\tikzset` that wrote it, in the file that holds it
-(`tikzsetKeys_input_exact`). Read from the *unrewritten* tree for the same
-reason `boundaryDecls` is, and from the whole tree for the same reason:
-where the author wrote a definition says nothing about which pictures need
-it. The one consumer is the elaborator, which folds the
-`/.style` entries into every picture's bundles (`Picture.readStyleList`)
-and names what it could not read at the line above. -/
+/-- The key lists the engine reads itself, in source order, each with the span
+of the `\tikzset` that wrote it. -/
 public def tikzsetKeys (file : String) (raws : Array Raw) : Array (Span × Array Raw) :=
   (boundaryScan file raws).sets
 
-/-- The directories the document's last `\graphicspath` names, read from
-the unrewritten tree by the walk that collects the boundary's set lines —
-the same line rides into every standalone, so the engine's lookup and the
-boundary's TeX search the same directories. -/
+/-- The directories the document's last `\graphicspath` names. -/
 public def graphicsPath (file : String) (raws : Array Raw) : Array String :=
   (boundaryScan file raws).graphics
 
-/-- **A set line reaches the boundary wherever it stands.** Wrapping a run
-of declarations in the document environment leaves the standalone's
-preamble exactly what it was — the invariant whose absence was the defect:
-the preamble-only walk returned nothing for this tree, so a `\tikzset`
-written beside its picture (a figure kept in its own file) never reached
-pgf, the boundary failed on an arrow tip or a shape it had no definition
-for, and the page shipped an empty box. -/
 public theorem boundaryDecls_covers (file : String) (raws : Array Raw) (p : Pos) :
     boundaryDecls file #[.env "document" raws p] = boundaryDecls file raws := by
   simp [boundaryDecls, boundaryScan, boundaryLevel, boundaryRaw, pictureEnvs,
     Parse.inputEnvFile?, String.startsWith_string_iff]
 
-/-- **And it reaches the engine's own renderer wherever it stands**, which
-is the same claim for the native reading: a style defined beside its
-picture, inside the document body, is the style that picture draws with.
-Stated over the same walk the boundary's copy comes from, so neither
-reading can gain a definition the other lost. -/
 public theorem tikzsetKeys_covers (file : String) (raws : Array Raw) (p : Pos) :
     tikzsetKeys file #[.env "document" raws p] = tikzsetKeys file raws := by
   simp [tikzsetKeys, boundaryScan, boundaryLevel, boundaryRaw, pictureEnvs,
     Parse.inputEnvFile?, String.startsWith_string_iff]
 
-/-- **A setting an included file wrote is that file's.** The scan reads an
-`\input` wrapper's body under the file the wrapper names, as the elaborator
-reads it, so a setting's span is the one the elaborator gives its line: a
-note about its keys, or a formula a style of it sets, names that file and
-never the including file's line of the same number. -/
 public theorem tikzsetKeys_input_exact (caller file name : String) (body : Array Raw)
     (pos : Pos) (h : Parse.inputEnvFile? name = some file) :
     tikzsetKeys caller #[.env name body pos] = tikzsetKeys file body := by
@@ -2540,28 +1921,13 @@ public theorem tikzsetKeys_input_exact (caller file name : String) (body : Array
     rcases hm with rfl | rfl <;> simp [Parse.inputEnvFile?, String.startsWith_string_iff] at h
   simp [tikzsetKeys, boundaryScan, boundaryLevel, boundaryRaw, hp, h]
 
-/-- The `*` of a starred LaTeX form, standing between the command and its
-arguments. In LaTeX the star on the definers (`\newcommand*` and siblings)
-makes the arguments "short" — `\par` is forbidden in them (LaTeX2e
-usrguide §"Defining commands"; `\def` vs `\long\def`) — and on `\vspace*`
-it makes the space survive a column or page break rather than being
-discarded there (LaTeX2e classes.dtx `\@vspace*`). The engine models
-neither distinction, so the star is ignorable — consumed, never content:
-left in the stream it lands where content may not stand and turns the
-construct's warning into E0313, a fifteen-diagnostic cascade from one
-character. -/
+/-- The index after the `*` of a starred LaTeX form, if one stands there. -/
 private def skipStar (raws : Array Raw) (i : Nat) : Nat :=
   match raws[i]? with
   | some (.word "*" _) => i + 1
   | _ => i
 
-/-- `\usepackage[...]{lineno}`'s options (lineno.sty, the package-options
-section). `left`, `running`, `displaymath`, and `mathlines` name the
-shipped state: continuous running numbers in the left margin, display-math
-lines numbered like every line. `modulo` is `\modulolinenumbers`' initial
-value five. The pagewise family (pagewise, switch, switch*, columnwise)
-selects per-page or margin-switched numbering — continuous numbering is
-lineno's own default and the one mode shipped, so each is named. -/
+/-- `\usepackage[...]{lineno}`'s options, natively the declared page keys. -/
 private def linenoLoad (opt : String) (pos : Pos) : M (Array Raw) := do
   let mut out : Array Raw := #[]
   for o in (opt.splitOn ",").map (·.trimAscii.toString) do
@@ -2579,9 +1945,8 @@ engine does not have; continuous numbers in the left margin stand" pos
     "usepackage:lineno" pos
   return out
 
-/-- unicode-math's option-driven legacy alphabets, carried into the typed
-font specification. Other options are named here rather than silently
-changing normal, bold, sans, or literal semantics. -/
+/-- unicode-math's option-driven legacy alphabets, carried into the typed font
+specification; other options are named. -/
 private def unicodeMathOptions (what opt : String) (pos : Pos) : M (Array Raw) := do
   let mut sources : Array String := #[]
   let mut dropped : Array String := #[]
@@ -2605,16 +1970,14 @@ private def unicodeMathOptions (what opt : String) (pos : Pos) : M (Array Raw) :
   became what native pos
   synthAt native pos
 
-/-- Carry natbib declarations to the document: the `@natbib` marker, one
-word per declaration, replayed at `\begin{document}` — where natbib reads
-the bibliography style back from the `.aux` — for the body elaborator to
-collect (`Ir.Doc.natbib`). -/
+/-- natbib declarations carried to the document as the `@natbib` marker,
+replayed at `\begin{document}`. -/
 private def natbibDefer (decls : Array String) (pos : Pos) : M Unit :=
   write fun st => { st with deferred := st.deferred.push (.beginDocument, st.file, pos,
     #[.ctrl "@natbib" pos, .group (decls.map (.word · pos)) pos]) }
 
-/-- biblatex's punctuation and format macros (biblatex manual §3.12.1–3.12.3,
-§4.10): what a document redefines to restyle the list and its citations. -/
+/-- biblatex's punctuation and format macros, which a document redefines to
+restyle the list and its citations. -/
 private def biblatexMacros : List String :=
   ["nameyeardelim", "multicitedelim", "postnotedelim", "prenotedelim", "multinamedelim",
    "finalnamedelim", "revsdnamepunct", "andothersdelim", "multilistdelim", "finallistdelim",
@@ -2626,8 +1989,8 @@ private def biblatexMacros : List String :=
    "bibinitdelim", "bibinithyphendelim", "mkbibnamefamily", "mkbibnamegiven",
    "mkbibnameprefix", "mkbibnamesuffix", "mkbibdatelong", "mkbibdateshort"]
 
-/-- A delimiter's definition as the text it prints, when it is only
-biblatex's punctuation commands and text: `\addcomma\space` is `, `. -/
+/-- A delimiter's definition as the text it prints, when it is only biblatex's
+punctuation commands and text. -/
 private def punctText (body : Array Raw) : Option String :=
   body.foldl (init := some "") fun acc r => acc.bind fun out =>
     match r with
@@ -2641,12 +2004,7 @@ private def punctText (body : Array Raw) : Option String :=
     | .sym c _ => some (out.push c)
     | _ => none
 
-/-- A redefinition of one of biblatex's macros (`biblatexMacros`). Under the
-author-year citations, whose punctuation natbib's door takes as
-declarations, the name–year, multicite and postnote delimiters read as
-natbib's `aysep`, `citesep` and `notesep` where they are punctuation and a
-space; anything else is named, the list and citations setting biblatex's
-own. -/
+/-- A redefinition of one of biblatex's macros. -/
 private def biblatexMacroDef (definer cmd : String) (body : Array Raw) (pos : Pos) : M (Array Raw) := do
   let authoryear := (← get).bibStyle == some "plainnat"
   let slot := match cmd with
@@ -2673,9 +2031,8 @@ citations keep biblatex's default in its place" pos
     (subject := some s!"biblatexmacro:{cmd}")
   return #[]
 
-/-- `\usepackage[...]{natbib}`: the load, its options as declarations in
-natbib's order. An option outside the punctuation vocabulary (`sort`,
-`compress`, `super`, `longnamesfirst`, …) is named and dropped. -/
+/-- `\usepackage[...]{natbib}`: the load, its options as
+declarations in natbib's order. -/
 private def natbibLoad (name opt : String) (pos : Pos) : M (Array Raw) := do
   let given := (opt.splitOn ",").map (·.trimAscii.toString) |>.filter (!·.isEmpty)
   let decls := Bib.natbibOptions.foldl (init := #[]) fun acc (o, ds) =>
@@ -2689,9 +2046,7 @@ private def natbibLoad (name opt : String) (pos : Pos) : M (Array Raw) := do
   natbibDefer decls pos
   return #[]
 
-/-- biblatex's options the reference list and citations read (biblatex
-manual §3.1.2), carried to the bibliography as declarations (`bbx=`,
-`sorting=`, …; `Bib.BblOptions.ofDecls`). -/
+/-- biblatex's options the reference list and citations read. -/
 private def biblatexRead : List String :=
   ["style", "bibstyle", "citestyle", "sorting", "maxnames", "minnames", "maxbibnames",
    "minbibnames", "maxcitenames", "mincitenames", "maxsortnames", "minsortnames", "maxitems",
@@ -2700,8 +2055,8 @@ private def biblatexRead : List String :=
    "useeditor", "usetranslator", "abbreviate", "datecirca", "dateuncertain", "sortlocale",
    "clearlang"]
 
-/-- The option keys a biblatex load carries to the bibliography as
-`key=value` declarations (`Bib.BblOptions.ofDecls`). -/
+/-- The option keys a biblatex load carries to the
+bibliography as `key=value` declarations. -/
 private def biblatexCarried : List String :=
   ["maxnames", "minnames", "maxbibnames", "minbibnames", "maxcitenames", "mincitenames",
    "maxsortnames", "minsortnames", "maxitems", "minitems", "giveninits", "firstinits",
@@ -2709,30 +2064,19 @@ private def biblatexCarried : List String :=
    "autolang", "babel", "useauthor", "useeditor", "usetranslator", "abbreviate", "datecirca",
    "dateuncertain", "sortlocale", "clearlang"]
 
-/-- biblatex's options that change nothing the engine sets: the backend that
-reads the data (the engine reads it), hyperref's links (the engine links
-every citation), the natbib-compatible commands (the engine's citations
-answer to both spellings), and the encodings (the engine reads UTF-8). -/
+/-- biblatex's options that change nothing the engine sets. -/
 private def biblatexInert : List String :=
   ["backend", "hyperref", "natbib", "bibencoding", "texencoding", "safeinputenc",
    "bibwarn", "bibtexcaseprotection", "noerroretextools"]
 
-/-- The style family a biblatex style name belongs to: the standard numeric
-and author-year styles and their compact and ibid variants. -/
+/-- The style family a biblatex style name belongs to. -/
 private def biblatexFamily (style : String) : Option String :=
   if style.startsWith "numeric" then some "numeric"
   else if style.startsWith "authoryear" then some "authoryear"
   else none
 
-/-- `\usepackage[...]{biblatex}`: the reference list biblatex's standard
-styles set (`Bib.renderBbl`) over the one entry model, read through biber
-(`Bib.Processor.biber`). The list's family is its `bibstyle` (or `style`),
-the citations' its `citestyle` (or `style`): numeric citations are the
-plain row through natbib's open door, author-year ones natbib's load
-values — round brackets, semicolons — with the name and year apart by a
-space alone (`\nameyeardelim`). A style outside the two families is W0353's
-meaning, its list set by the numeric drivers. Every option is read
-(`biblatexRead`), inert (`biblatexInert`), or named by W0101. -/
+/-- `\usepackage[...]{biblatex}`: the reference list of biblatex's standard
+styles, read through biber. -/
 private def biblatexLoad (name opt : String) (pos : Pos) : M Unit := do
   let opts := (opt.splitOn ",").map (·.trimAscii.toString) |>.filter (!·.isEmpty)
   let kv (o : String) : String × String :=
@@ -2750,8 +2094,6 @@ private def biblatexLoad (name opt : String) (pos : Pos) : M Unit := do
     say .W0101 s!"'biblatex' options without a native equivalent were dropped: \
 {String.intercalate ", " (dropped.map fun (k, v) => if v == "true" then k else s!"{k}={v}")}" pos
       (subject := some "usepackage:biblatex")
-  -- A family the engine does not know falls back to numeric, the list's
-  -- and the citations' each, and the fallback is named as what it sets.
   let what := match biblatexFamily bbx, biblatexFamily cbx with
     | none, none => some (if bbx == cbx then s!"style '{bbx}'" else s!"styles '{bbx}' and '{cbx}'",
         "its reference list and its citations are set as biblatex's numeric ones")
@@ -2765,9 +2107,6 @@ private def biblatexLoad (name opt : String) (pos : Pos) : M Unit := do
       (help := "styles known: numeric, authoryear and their -comp variants")
   let listFamily := (biblatexFamily bbx).getD "numeric"
   let citeFamily := (biblatexFamily cbx).getD "numeric"
-  -- A citation variant (`-comp`, `-ibid`, `-icomp`, `-verb`, `-terse`)
-  -- compacts or repeats what its family's citations print; the family's
-  -- citations stand, and the variant's difference is named.
   if (biblatexFamily cbx).isSome && cbx != citeFamily then
     say .W0101 s!"'biblatex' style '{cbx}' is read as '{citeFamily}': its citations' own \
 compaction and repetition rules are dropped" pos (subject := some "usepackage:biblatex")
@@ -2785,9 +2124,6 @@ sorts by; the list is sorted '{defaultSorting}'" pos (subject := some "usepackag
   became (if opt.isEmpty then s!"\\{name}\{biblatex}" else s!"\\{name}[{opt}]\{biblatex}")
     s!"biblatex's {listFamily} reference list and {citeFamily} citations" pos
   write fun st => { st with bibStyle := some record }
-  -- biber's uniqueness reads every name of a list or a year's lists under
-  -- the `min` variants, which the engine does not compute; their citations
-  -- are told apart as under the variant without the restriction.
   let mut carried : Array String := #[]
   for (k, v) in pairs do
     if !biblatexCarried.contains k then continue
@@ -2809,34 +2145,21 @@ are told apart whatever their year" pos (subject := some "usepackage:biblatex")
     else #["biblatex"]) ++ #[s!"bbx={listFamily}", s!"cbx={citeFamily}", s!"sorting={sorting}"] ++
     carried ++ (mainLang.map (s!"mainlang={·}")).toArray) pos
 
-/-- `\setcitestyle{…}` and `\bibpunct[notesep]{open}{close}{sep}{mode}{aysep}{yysep}`
-(natbib manual §2.5): in the preamble, natbib's declarations with its
-`\bibstyle` door closed, as `\NAT@@setcites` closes it there. `\bibpunct`
-is the same seven values by position — mode `n` numbers, `s` superscript
-numbers (set on the baseline here, named), anything else author-year. An
-item natbib does not read — natbib compares whole items, so a space after
-a comma makes a word it does not know — is named and dropped, as natbib
-drops it silently. `\citestyle{name}` applies natbib's row for the name
-(`Bib.natbibRows`; none for a name without one) with the door closed, as
-natbib.sty's `\citestyle` does. In the body natbib applies them from where
-they stand; the engine reads natbib's punctuation for the whole document,
-so a body declaration is named (W0340) and its groups consumed. -/
+/-- `\setcitestyle{…}` and `\bibpunct`: natbib's
+declarations in the preamble. -/
 private def natbibStyleArm (name : String) (pos : Pos) (raws : Array Raw) (start : Nat) :
     M (Option (Array Raw × Nat)) := do
   let punct := name == "bibpunct"
   let (opt, j) := if punct then takeOpt raws start else (none, start)
   let (args, k) := takeGroups raws j (if punct then 6 else 1)
   if args.size != (if punct then 6 else 1) then return none
-  -- premise: natbibChecks — a body declaration leaves no ink and no
-  -- punctuation, the page of the document without it
+  -- premise: natbibChecks — a body declaration leaves no ink
   if (← get).inDoc then
     sayOnce ("ctrl:" ++ name) .W0340
       s!"'\\{name}' is read in the preamble; in the body it is ignored" pos
       (help := "declare it in the preamble, before '\\begin{document}'")
     return some (#[], k)
-  -- natbib's values are token lists — `notesep={; }` keeps its space — and
-  -- `rawSrc` trims every group, so the source is read one group deep as
-  -- written.
+  -- natbib's values are token lists, so groups are read one deep as written.
   let verbatim (body : Array Raw) : String := body.foldl (init := "") fun s r =>
     let t := match r with
       | .group g _ => "{" ++ rawSrcList g.toList ++ "}"
@@ -2866,18 +2189,7 @@ private def natbibStyleArm (name : String) (pos : Pos) (raws : Array Raw) (start
   natbibDefer (#["nobibstyle"] ++ decls.filter reads) pos
   return some (#[], k)
 
-/-- lineno's switch and modulo commands (lineno.sty, the user-commands
-section), natively the declared page keys. `\linenumbers` and
-`\runninglinenumbers` turn running numbers on — the one mode shipped —
-and `\nolinenumbers` off. The starred on-forms only reset the count to 1,
-where numbering always runs from 1, so the star is consumed inert; the
-optional argument picks a first number, of which 1 is the shipped value
-and anything else is named (W0101). `\modulolinenumbers` prints only
-multiples of its argument while counting every line; without the argument
-the counter's initial five stands, and [1] turns filtering off. Its
-starred form's first-line exception (print the first number after
-`\linenumbers` whatever the modulo) is not modelled; the star is consumed
-so it cannot leak as content. -/
+/-- lineno's switch and modulo commands, natively the declared page keys. -/
 private def linenoCtrl (name : String) (pos : Pos) (raws : Array Raw)
     (start : Nat) : M (Option (Array Raw × Nat)) := do
   let k := skipStar raws start
@@ -2897,16 +2209,15 @@ line numbers here always run from 1" pos
   became s!"\\{name}" native pos
   return some (← synthAt native pos, k)
 
-/-- The kernel's point-size macros at the values size10.clo–size12.clo and
-ltplain give them, in milli-points: `\@xpt` is 10 pt, `\@xipt` 10.95 —
-what `\@setfontsize` is called with. -/
+/-- The kernel's point-size macros in milli-points, at the values the size files
+and ltplain give them. -/
 private def ptMacros : List (String × Nat) :=
   [("@vpt", 5000), ("@vipt", 6000), ("@viipt", 7000), ("@viiipt", 8000),
    ("@ixpt", 9000), ("@xpt", 10000), ("@xipt", 10950), ("@xiipt", 12000),
    ("@xivpt", 14400), ("@xviipt", 17280), ("@xxpt", 20740), ("@xxvpt", 24880)]
 
-/-- One `\@setfontsize` argument in milli-points: a kernel size macro, or
-a literal number (`{14}`, `{10.95}`). -/
+/-- One `\@setfontsize` argument in milli-points: a kernel
+size macro or a literal number. -/
 public def ptMacroArg (r : Array Raw) : Option Nat :=
   match r.toList with
   | [.ctrl n _] => ptMacros.lookup n
@@ -2914,8 +2225,7 @@ public def ptMacroArg (r : Array Raw) : Option Nat :=
     (Decl.parseDecimal (rawSrc r).trimAscii.toString).bind fun (m, s) =>
       if m ≥ 0 && s > 0 then some (m.toNat * 1000 / s) else none
 
-/-- A milli value as its shortest decimal spelling: 10000 is "10",
-10950 "10.95", 913 "0.913". -/
+/-- A milli value as its shortest decimal spelling. -/
 public def milliStr (m : Nat) : String :=
   let i := m / 1000
   let f := m % 1000
@@ -2928,39 +2238,15 @@ public def milliStr (m : Nat) : String :=
 
 /-! # Decidable TeX conditionals
 
-A TeX conditional the document's own definitions decide is resolved here,
-to its taken branch, with a keyed note naming the decision (N0114), before
-the idiom rewrite runs. `\ifdefined\name` reads whether the document bound
-the name — a name nothing in the document bound is undefined, the honest
-answer for another engine's primitives too (`\directlua`, `\pdfoutput`:
-this engine is not that engine); a `\newif` flag's test reads its flow
-state; `\ifnum`, `\ifodd` and `\ifcase` read integers, literal or held by a
-macro the document defined as one; `\ifx` compares two macros the document
-defined; `\iftrue` and `\iffalse` are their own answer.
+A TeX conditional the document's own definitions decide is resolved here. -/
 
-The state is the one in force where the conditional stands. An environment
-is a TeX group, so a definition made inside one ends with it; a macro holds
-the value its latest definition in force gave it. That is what a picture's
-test needs: the whole-document table its walk expands through cannot say
-which of a macro's several definitions is in force at the picture's site,
-and read that way three renderings of one picture under three states drew
-one branch.
-
-Every other head TeX defines (`condHeads`) is tracked too, as an opaque
-frame whose `\else`, `\or` and `\fi` pass through, so a decided conditional
-around or inside it stays matched and the refusal downstream sees the
-undecided one whole. An `\if…` name that is neither — a package's own flag
-the document never declared — cannot be matched, so an extent holding one
-is left whole. -/
-
-/-- The conditional heads TeX defines: every `\if…` primitive of TeX82's
-table (`texPrimitives`) and e-TeX's three. The one list the pass tracks and
-the accounting check ranges over. -/
+/-- The conditional heads TeX defines: TeX82's `\if…`
+primitives and e-TeX's three. -/
 private def condHeads : List String :=
   (texPrimitives.toList.filter (·.startsWith "if")) ++ ["ifdefined", "ifcsname", "iffontchar"]
 
-/-- Definers that bind the control word standing after them, directly or
-as `{\name}`. -/
+/-- Definers that bind the control word standing after them,
+directly or as `{\name}`. -/
 private def definesNext : List String :=
   ["def", "edef", "gdef", "xdef", "let", "newcommand", "renewcommand",
    "providecommand", "DeclareRobustCommand", "DeclareMathOperator",
@@ -3013,25 +2299,17 @@ private def flagMsg (n : String) (value : Bool) : String :=
   else
     s!"'\\{n}' is false here, so only the '\\else' branch is kept"
 
-/-- The value of the `\newif` flag this control word tests (`\ifX`), when
-the pass has recorded the flag. -/
+/-- The value of the `\newif` flag the control word tests, when recorded. -/
 private def flagTested (flags : Std.HashMap String Bool) (n : String) : Option Bool :=
   if n.startsWith "if" && n.length > 2 then flags[(n.drop 2).toString]? else none
 
-/-- Can the pass match a conditional headed `n`: one TeX defines, or the
-`\ifX` of a flag the document declared? -/
+/-- Whether the pass can match a conditional headed `n`: one TeX defines, or a
+declared flag's `\ifX`. -/
 private def isCondHead (flags : Std.HashMap String Bool) (n : String) : Bool :=
   condHeads.contains n || (flagTested flags n).isSome
 
-/-- Where the conditional heading `raws[i]` ends, when the pass can match
-it: the index of the `\fi` that closes it at this level, provided every
-`\if…` name inside the extent is a head the pass tracks (`isCondHead`) —
-decided or not, every one of them opens a frame, so `\else`/`\fi` matching
-stays in step. An `\if…` name the pass does not know might open a
-conditional or might not, which would desynchronise the matching, so it
-leaves the whole extent alone. The name after `\newif` is the flag being
-declared, not a conditional. `\ifstrequal` selects grouped arguments and
-does not open a primitive conditional. -/
+/-- The index of the `\fi` closing the conditional heading `raws[i]`, when every
+`\if…` inside is a tracked head. -/
 private def condExtentEnd (flags : Std.HashMap String Bool) (raws : Array Raw)
     (i : Nat) : Option Nat := Id.run do
   let mut depth := 0
@@ -3057,8 +2335,8 @@ private def condExtentEnd (flags : Std.HashMap String Bool) (raws : Array Raw)
 private def condExtent (flags : Std.HashMap String Bool) (raws : Array Raw) (i : Nat) : Bool :=
   (condExtentEnd flags raws i).isSome
 
-/-- The value a name holds where the pass stands: `none` when nothing
-bound it, `some none` when it is bound but unreadable. -/
+/-- The value a name holds: `none` when unbound, `some none`
+when bound but unreadable. -/
 private def condValueOf (binds : Std.HashMap String (Option CondVal)) (n : String) :
     Option (Option CondVal) :=
   binds[n]?
@@ -3073,9 +2351,7 @@ private def condIntLit (w : String) : Option Int :=
   else (String.ofList ds).toNat?.map fun v => if neg then -(v : Int) else (v : Int)
 
 /-- The integer a macro holds: its body is one literal, or one control word
-holding an integer in turn. Structural on `k`: the caller passes the table's
-size, and a chain of distinct names cannot be longer than the table holding
-them — a longer one revisits a name, which is a cycle and no value. -/
+holding an integer in turn. -/
 private def condIntOf (vals : Std.HashMap String (Option CondVal)) : Nat → String → Option Int
   | 0, _ => none
   | k + 1, n =>
@@ -3088,14 +2364,8 @@ private def condIntOf (vals : Std.HashMap String (Option CondVal)) : Nat → Str
         | _ => none
     | _ => none
 
-/-- Expand only textual, parameterless selector fragments in the state of
-this use. Every successful lookup is a key in this fixed, unmodified table.
-Each recursive edge spends one name on its dependency path, so a path longer
-than the table's size repeats a name. Parameterless expansion has no changing
-argument or state to end that cycle. Sibling paths get the same remaining
-bound: repeated uses of one dependency are not cycles. This is a finite-graph
-bound, not a fixed expansion cap. A command with effects, groups or arguments
-is not a fragment; it remains for the explicit unsupported-selector diagnostic. -/
+/-- The expansion of textual, parameterless selector
+fragments in this use's state. -/
 private def overlayFragment (vals : Std.HashMap String (Option CondVal)) :
     Nat → String → Option String
   | 0, _ => none
@@ -3110,8 +2380,8 @@ private def overlayFragment (vals : Std.HashMap String (Option CondVal)) :
         | _ => none
       return String.join parts
 
-/-- One element a test is read from: a character of a word (with the raw it
-stands in and its offset there), a space, or a control word. -/
+/-- One element a test is read from: a character of a word,
+a space, or a control word. -/
 private inductive CondAtom where
   | ch (c : Char) (ri : Nat) (ci : Nat)
   | sp (ri : Nat)
@@ -3127,10 +2397,8 @@ private def CondAtom.src : CondAtom → String
   | .sp _ => " "
   | .cs n _ => "\\" ++ n
 
-/-- The atoms of a test starting at `raws[j]`: at most sixteen raws, the
-widest test the decided shapes hold (two signed operands and a relation,
-spaced), and never past a group, a paragraph or math, none of which a
-number can hold. -/
+/-- The atoms of a test starting at `raws[j]`, never past a
+group, a paragraph or math. -/
 private def condAtoms (raws : Array Raw) (j : Nat) : Array CondAtom := Id.run do
   let mut out : Array CondAtom := #[]
   for k in [j:min raws.size (j + 16)] do
@@ -3146,11 +2414,8 @@ private def condAtoms (raws : Array Raw) (j : Nat) : Array CondAtom := Id.run do
     | _ => break
   return out
 
-/-- A TeX ⟨number⟩ from atom `p0` on (TeXbook chapter 24, the decimal
-case): signs and spaces, then digits or a macro holding an integer, then
-one optional space. A macro the picture being walked binds for itself is
-the picture's, and a digit straight after a macro would continue the
-number past its expansion; both read as no value here. -/
+/-- A TeX ⟨number⟩ from atom `p0` on: signs and spaces, then digits or a macro
+holding an integer, then one optional space. -/
 private def condNumAt (st : St) (atoms : Array CondAtom) (p0 : Nat) :
     Option (Int × Nat) := Id.run do
   let mut p := p0
@@ -3209,9 +2474,8 @@ private def condRelHolds (rel : Char) (a b : Int) : Bool :=
 private def condSrc (atoms : Array CondAtom) (p : Nat) : String :=
   ((atoms.extract 0 p).foldl (fun s a => s ++ a.src) "").trimAscii.toString
 
-/-- How many raws after `raws[j - 1]` a test ending at atom `p` consumed, and
-the unread end of the word it stopped inside — branch content, which the
-branch keeps or drops. -/
+/-- How many raws a test ending at atom `p` consumed, and the unread end of the
+word it stopped inside. -/
 private def condFinish (raws : Array Raw) (j : Nat) (atoms : Array CondAtom) (p : Nat) :
     Nat × Option Raw :=
   match atoms[p]? with
@@ -3227,25 +2491,22 @@ private def condFinish (raws : Array Raw) (j : Nat) (atoms : Array CondAtom) (p 
   | some (.sp k) => (k - j, none)
   | some (.cs _ k) => (k - j, none)
 
-/-- One open conditional: decided (whether the branch now read is kept), an
-`\ifcase` (the case it selects, the case now read, whether its `\else` has
-been read), or opaque — a head the pass cannot decide, whose `\else`, `\or`
-and `\fi` pass through so the refusal downstream reads it whole. -/
+/-- One open conditional: decided, an `\ifcase` with its
+selected and current case, or opaque. -/
 private inductive CondOpen where
   | decided (keep : Bool)
   | cased (sel : Int) (cur : Nat) (inElse : Bool)
   | opaque
 
-/-- Does the frame keep what is read now? An opaque frame keeps both of its
-branches: it is left for what comes after this pass. -/
+/-- Whether the frame keeps what is read now; an opaque
+frame keeps both branches. -/
 private def CondOpen.keeps : CondOpen → Bool
   | .decided k => k
   | .cased sel cur inElse => if inElse then sel < 0 || sel > (cur : Int) else sel == (cur : Int)
   | .opaque => true
 
-/-- What the pass reads a head as: the frame it opens, how many raws after
-the head its test consumed, the unread end of the word the test stopped
-inside, and the keyed note naming the decision. -/
+/-- What the pass reads a head as: the frame it opens, the raws its test
+consumed, the unread word end, and the keyed note. -/
 private structure CondRead where
   frame : CondOpen
   used : Nat := 0
@@ -3256,26 +2517,23 @@ private structure CondRead where
 private def keptWords (keep : Bool) : String :=
   if keep then "the branch before '\\else' is kept" else "only the '\\else' branch is kept"
 
-/-- The inner theme defines the option even when its package implementation
-is replaced by a native theme. Source: both inner themes' `beamerframe`
-`standout` key, inherited by the corresponding full themes. -/
+/-- Whether the inner theme defines `standout`, which it does even when a native
+theme replaces its implementation. -/
 private def nativeStandoutDefined (st : St) : Bool :=
   st.loads.pkgs.any fun (name, _) =>
     ["beamerthememoloch", "beamerthememetropolis", "beamerthemem",
      "beamerinnerthememoloch", "beamerinnerthememetropolis"].contains name
 
-/-- A theme's own setter, which the engine implements (`molochOptions`), is
-defined once the theme loads: beamerthememoloch.sty's `\molochset`. -/
+/-- Whether a theme's own setter is defined, which it is
+once the theme loads. -/
 private def nativeSetterDefined (st : St) (n : String) : Bool :=
   n == "molochset" && st.loads.pkgs.any (·.1 == "beamerthememoloch")
 
-/-- Read the head `h` at `raws[i]` against the state in force there. `neg`:
-an `\unless` stands before it, which reverses a two-way test (e-TeX) and is
-refused before `\ifcase`. -/
+/-- The head `h` at `raws[i]` read against the state in force there; `neg` marks
+a preceding `\unless`. -/
 private def readHead (st : St) (raws : Array Raw) (i : Nat) (h : String) (neg : Bool) :
     CondRead := Id.run do
   let undecided : CondRead := { frame := .opaque }
-  -- A test that opens with a number reads with a space after the head.
   let shown (src : String) : String :=
     if src.isEmpty || src.startsWith "\\" then src else " " ++ src
   let two (v : Bool) (src what key : String) (used : Nat) (tail : Option Raw) : CondRead :=
@@ -3295,10 +2553,7 @@ private def readHead (st : St) (raws : Array Raw) (i : Nat) (h : String) (neg : 
     match raws[k]? with
     | some (.ctrl n _) =>
       if st.picBound.contains n then return undecided
-      -- premise: standoutPaletteChecks — inherited, absent and later-loaded
-      -- hooks take different branches and ship the corresponding colours;
-      -- blockFillConditionalChecks holds the setter's guard to the
-      -- unguarded setter's artifact.
+      -- premise: standoutPaletteChecks — each hook branch ships its colours
       let v := st.binds.contains n ||
         (n == "KV@beamerframe@standout" && nativeStandoutDefined st) ||
         nativeSetterDefined st n
@@ -3360,14 +2615,13 @@ private def readHead (st : St) (raws : Array Raw) (i : Nat) (h : String) (neg : 
     return { frame := .decided v, note := some (s!"flag:{h}:{v}", flagMsg h v) }
   return undecided
 
-/-- Primitives that read the next token as itself rather than expanding it:
-a macro after one of them is not a use. -/
+/-- Primitives that read the next token as itself, so a
+macro after one is not a use. -/
 private def condNoExpand : List String :=
   ["noexpand", "string", "meaning", "show", "expandafter", "futurelet"]
 
-/-- The definers whose operands the pass reads as a definition rather than as
-content: `definesNext` and the environment definers. A definition's replacement
-text is expanded where the definition is used, never where it is made. -/
+/-- The definers whose operands the pass reads as a
+definition rather than as content. -/
 private def condDefiners : List String :=
   definesNext ++ ["newenvironment", "renewenvironment", "newtcolorbox", "renewtcolorbox"]
 
@@ -3378,39 +2632,18 @@ private def isFlagSetter (flags : Std.HashMap String Bool) (n : String) : Bool :
 
 /-! # Package- and class-loaded tests
 
-`\@ifpackageloaded{p}{t}{f}` asks whether package `p` is loaded, and the
-document's own loads make that decidable here. The kernel's test
-(`\@ifl@aded`, latex.ltx; ltclass.dtx) holds exactly when `\ver@p.sty` is
-defined, and `\load@onefile@withoptions` defines it as the file starts to be
-read: a package counts as loaded from its `\usepackage` or `\RequirePackage`
-on, and never before. `\@ifpackagewith{p}{opts}` reads the list
-`\@pass@ptions` accumulates for `p` — each `\PassOptionsToPackage` for it and
-the options its load passed, never the class's global options — and holds
-when every wanted option is on it. The class forms read the `\documentclass`
-line the same way.
+`\@ifpackageloaded` and its family, resolved from the loads read so far. -/
 
-What the pass reads is the loads this document and its local style files
-write. A package that another package loads, by a `\RequirePackage` inside a
-file this engine never reads, is invisible and reads as not loaded: that is
-the premise a negative answer rests on. A positive answer read where the test
-stands rests on nothing, since a load written here is a load LaTeX performs.
-
-A test is answered where it executes in the shared conditional walk. A
-macro's text and a deferred hook are held verbatim until their use or replay;
-a selected branch executes unbraced in the caller's state. No later pass
-can select a different branch after its definitions or flag changes ran. -/
-
-/-- The branches a loaded test carries after its name and option list: both,
-the true one only, or the false one only (latex.ltx defines the `T` and `F`
-forms over the `TF` one with `\@firstofone\@gobble` and `{}`). -/
+/-- The branches a loaded test carries after its name and option list: both, the
+true one only, or the false one only. -/
 private inductive LoadedBranches where
   | tf
   | t
   | f
   deriving BEq, Repr
 
-/-- One spelling of the loaded-test family: whether it reads the class or the
-packages, whether an option list follows the name, and its branches. -/
+/-- One spelling of the loaded-test family: class or packages, whether an option
+list follows, and its branches. -/
 private structure LoadedTest where
   ctrl : String
   cls : Bool
@@ -3418,8 +2651,7 @@ private structure LoadedTest where
   branches : LoadedBranches
   deriving BEq, Repr
 
-/-- The family as latex.ltx defines it: the `\@if…` internals, and the
-`\If…Loaded…` interface `\let` to them or wrapped around them. -/
+/-- The family as latex.ltx defines it. -/
 private def loadedTests : List LoadedTest :=
   [⟨"@ifpackageloaded", false, false, .tf⟩, ⟨"IfPackageLoadedTF", false, false, .tf⟩,
    ⟨"IfPackageLoadedT", false, false, .t⟩, ⟨"IfPackageLoadedF", false, false, .f⟩,
@@ -3432,24 +2664,22 @@ private def loadedTests : List LoadedTest :=
    ⟨"IfClassLoadedWithOptionsT", true, true, .t⟩,
    ⟨"IfClassLoadedWithOptionsF", true, true, .f⟩]
 
-/-- What one test asks: the class or the packages, the name, and the options
-it wants (`none` for a load test). -/
+/-- What one test asks: the class or the packages, the name,
+and the options it wants. -/
 private structure LoadQuery where
   cls : Bool
   name : String
   want : Option (Array String)
   deriving BEq, Repr
 
-/-- An option list as the kernel compares it: comma-separated, spaces zapped
-(`\zap@space`), empty items skipped. -/
+/-- An option list as the kernel compares it:
+comma-separated, spaces removed, empty items skipped. -/
 private def optionItems (s : String) : Array String :=
   ((s.splitOn ",").map fun o => String.ofList (o.toList.filter (!·.isWhitespace)))
     |>.filter (!·.isEmpty) |>.toArray
 
-/-- One execution gate for native packages and local styles. Reserving a
-fresh name precedes its body, so recursive requires see the reservation.
-A repeat keeps the first execution even on a clash, and names every new
-option at the later call. The write also accounts for a compatible skip. -/
+/-- The one execution gate for native packages and local
+styles; a repeat keeps the first execution. -/
 private def admitPackage (name : String) (options passed : List String) (pos : Pos) :
     M (Option (List String)) := do
   let (decision, imports) := PackageImports.admit (← get).loads.imports name options passed
@@ -3463,9 +2693,6 @@ private def admitPackage (name : String) (options passed : List String) (pos : P
         (subject := some s!"package-option-clash:{name}:{option}")
     return none
 
-/-- The production gate, for every compatible repeated load: no body is
-returned, no diagnostic is added, and no semantic state is changed.
-`writes` is only the dispatcher's accounting counter. -/
 private theorem admitPackage_compatible_exact (name : String)
     (options passed first : List String) (pos : Pos) (st : St)
     (loaded : st.loads.imports.lookup name = some first)
@@ -3475,10 +2702,8 @@ private theorem admitPackage_compatible_exact (name : String)
   rw [PackageImports.admit_compatible_exact _ _ _ _ _ loaded compatible]
   rfl
 
-/-- Tentatively admit a local file. The driver commits the returned
-context only when the file exists, or when this is a repeat. A missing
-file therefore remains an ordinary unresolved package request. Forwarded
-options are precisely those in force at this executed call. -/
+/-- A local file admitted tentatively; the driver commits the context only when
+the file exists or the load repeats. -/
 public def InputContext.admitLocalPackage (context : InputContext)
     (name options : String) (pos : Pos) : Option (List String) × InputContext :=
   let passed := (context.state.loads.passed.filter (·.1 == name)).toList.flatMap (·.2.toList)
@@ -3486,8 +2711,7 @@ public def InputContext.admitLocalPackage (context : InputContext)
     admitPackage name (PackageImports.literalOptions options) passed pos context.state
   (options, { state })
 
-/-- One package load: the first load of a name stands, and a later one of the
-same name passes nothing new. -/
+/-- One package load: the first load of a name stands. -/
 private def LoadSet.addPkg (s : LoadSet) (p : String) (os : Option (Array String)) : LoadSet :=
   if s.pkgs.any (·.1 == p) then s else { s with pkgs := s.pkgs.push (p, os) }
 
@@ -3505,9 +2729,8 @@ private def LoadSet.pass (s : LoadSet) (toClass : Bool) (ps : Array (String × A
   if toClass then { s with clsPassed := s.clsPassed ++ ps }
   else { s with passed := s.passed ++ ps }
 
-/-- The answer the loads read so far give a test: `some true` when it holds,
-`some false` when it fails, `none` when what it reads is not carried — a
-local style file's passed options, where only a positive answer is sound. -/
+/-- The answer the loads read so far give a test, `none`
+when what it reads is not carried. -/
 private def LoadSet.answer (s : LoadSet) (q : LoadQuery) : Option Bool :=
   let passes (ps : Array (String × Array String)) : Array String :=
     (ps.filter (·.1 == q.name)).foldl (fun acc e => acc ++ e.2) #[]
@@ -3526,9 +2749,7 @@ private def LoadSet.answer (s : LoadSet) (q : LoadQuery) : Option Bool :=
       | none => #[]
     some (want.all (passes s.clsPassed ++ own).contains)
 
-/-- Exactly `n` brace groups after `i`, each after any spaces: a grouped
-test's shape, read before anything is decided. A token that is not a group,
-or a paragraph break, leaves the test unread. -/
+/-- Exactly `n` brace groups after `i`, each after any spaces. -/
 private def argGroupsAt (raws : Array Raw) (i n : Nat) : Option (Array (Array Raw)) :=
   Id.run do
     let mut out : Array (Array Raw) := #[]
@@ -3542,16 +2763,15 @@ private def argGroupsAt (raws : Array Raw) (i n : Nat) : Option (Array (Array Ra
       | _ => return none
     return some out
 
-/-- A name argument the pass can read: letters and punctuation only. A
-control word there is expanded by the kernel before the test, and this pass
-does not expand. -/
+/-- Whether a name argument holds only letters and
+punctuation, which the pass can read unexpanded. -/
 private def plainName (body : Array Raw) : Bool :=
   body.all fun
     | .word .. | .space | .sym .. => true
     | .par .. | .ctrl .. | .group .. | .math .. | .env .. | .verb .. => false
 
-/-- The question a loaded test at `i` asks, read from the groups after it;
-`none` when its shape is not the family's. -/
+/-- The question a loaded test at `i` asks; `none` when its
+shape is not the family's. -/
 private def loadedAt (raws : Array Raw) (i : Nat) (test : LoadedTest) : Option LoadQuery :=
   let n := 1 + (if test.withOpts then 1 else 0) + (if test.branches == .tf then 2 else 1)
   (argGroupsAt raws i n).bind fun args =>
@@ -3566,22 +2786,19 @@ private def loadedAt (raws : Array Raw) (i : Nat) (test : LoadedTest) : Option L
 private def stringTestChars (s : String) : String :=
   s.toList.foldl (fun out c => (out.push c) ++ if c == '#' then "#" else "") ""
 
-/-- A detokenized control word carries a delimiter space; a control symbol
-does not (e-TeX manual, `\detokenize`). -/
+/-- A detokenized control word, with the delimiter space a control word carries
+and a control symbol does not. -/
 private def stringTestControl (n : String) : String :=
   "\\" ++ n ++ if !n.isEmpty && n.toList.all Lex.nameChar then " " else ""
 
 mutual
 
--- conserves: none — a comparison key over surface tokens, not an IR rewrite.
+-- conserves: none — a comparison key over surface tokens
 private def stringTestTokens (out : String) : List Raw → Option String
   | [] => some out
   | r :: rest => (stringTestToken r).bind fun s => stringTestTokens (out ++ s) rest
 
-/-- Literal token spelling for etoolbox's `\ifstrequal`. Source pretty-printing
-is unsuitable: it trims significant spaces and canonicalizes math delimiters.
-No name lookup or operand execution occurs. Verbatim nodes have lost their
-original delimiters, so their spelling is unread rather than guessed. -/
+/-- Literal token spelling for etoolbox's `\ifstrequal`. -/
 private def stringTestToken : Raw → Option String
   | .word s _ => some (stringTestChars s)
   | .space => some " "
@@ -3600,8 +2817,6 @@ private def stringTestToken : Raw → Option String
 
 end
 
-/-- Partitioning a token sequence does not change its literal comparison
-key, including an unread token's refusal. -/
 private theorem stringTestTokens_append_exact (out : String) (xs ys : List Raw) :
     stringTestTokens out (xs ++ ys) =
       (stringTestTokens out xs).bind (fun s => stringTestTokens s ys) := by
@@ -3613,18 +2828,16 @@ private theorem stringTestTokens_append_exact (out : String) (xs ys : List Raw) 
     | none => rfl
     | some s => simpa only [Option.bind_some] using ih (out ++ s)
 
-/-- `etoolbox.sty` compares `\detokenize` of two operands, without expanding
-them, then selects one of two branch arguments outside its comparison group.
-Read all four groups before allowing any part of the call to execute. -/
+/-- etoolbox's `\ifstrequal` answer, read from all four groups before any part
+of the call executes. -/
 private def stringTestAt (raws : Array Raw) (i : Nat) : Option Bool := do
   let args ← argGroupsAt raws i 4
   let left ← stringTestTokens "" (args.getD 0 #[]).toList
   let right ← stringTestTokens "" (args.getD 1 #[]).toList
   pure (left == right)
 
-/-- Which of the groups after a resolved test are kept, unbraced, and which go
-with it: the name and the option list go, and the branch the answer picks
-stays. -/
+/-- Which groups after a resolved test are kept: the branch
+the answer picks stays. -/
 private def loadedPlan (test : LoadedTest) (ans : Bool) : List Bool :=
   let lead := if test.withOpts then [false, false] else [false]
   let branches := match test.branches with
@@ -3653,10 +2866,8 @@ private def loadedMsg (test : LoadedTest) (q : LoadQuery) (ans : Bool) :
     | .t, false | .f, true => "its branch is dropped"
   s!"'\\{test.ctrl}': {fact} here, so {kept}"
 
-/-- A load the flow performs where it stands: a package line, the class line,
-an option pass, or a theme slot (beamer's `\usetheme{X}` is
-`\usepackage{beamerthemeX}`). A package loaded already keeps its first
-options. -/
+/-- A load the flow performs where it stands: a package line, the class line, an
+option pass, or a theme slot. -/
 private def recordLoad (raws : Array Raw) (name : String) (i : Nat) : M Unit := do
   let names (g : Array Raw) : Array String := optionItems (rawSrc g)
   if name == "usepackage" || name == "RequirePackage" ||
@@ -3686,10 +2897,8 @@ private def recordLoad (raws : Array Raw) (name : String) (i : Nat) : M Unit := 
     unless nm.isEmpty do
       write fun st => { st with loads := st.loads.addPkg (pre ++ nm) (some #[]) }
 
-/-- One collected hook: the note naming its replay point, and the body
-stored against that point. Separate from the walk so the walk's recursive
-calls stand in plain sight — a call behind a local function is a call the
-termination checker cannot see. -/
+/-- One collected hook: the note naming its replay point,
+and the body stored against that point. -/
 private def deferOne (name : String) (pt : DeferPoint) (body : Array Raw)
     (pos : Pos) : M Unit := do
   became s!"\\{name}\{...}" (match pt with
@@ -3698,14 +2907,11 @@ private def deferOne (name : String) (pt : DeferPoint) (body : Array Raw)
   let file := (← get).file
   write fun st => { st with deferred := st.deferred.push (pt, file, pos, body) }
 
-/-- The group primitives, opener to closer: `\begingroup … \endgroup`
-scopes exactly what a brace pair scopes (TeXbook ch. 24, "\begingroup"),
-and `\bgroup … \egroup` is the brace pair itself (latex.ltx `\let\bgroup={`). -/
+/-- The group primitives, opener to closer. -/
 public def groupPrimitives : List (String × String) :=
   [("begingroup", "endgroup"), ("bgroup", "egroup")]
 
-/-- A flat preamble scope closes before the document starts. Unmatched
-primitives stay in the stream for the existing diagnostic. -/
+/-- Whether a flat preamble scope closes before the document starts. -/
 private def beamerScopeClosed (raws : Array Raw) (start : Nat) (close : String) : Bool :=
   Id.run do
     let mut closers := [close]
@@ -3723,11 +2929,9 @@ private def beamerScopeClosed (raws : Array Raw) (start : Nat) (close : String) 
 
 mutual
 
--- conserves: none — a predicate over a replacement text, not a walk that
--- rewrites one.
-/-- Does a replacement text do something only its use can decide
-(`CondVal.live`): select an optional argument, hold a conditional, set a
-flag, make a definition or a picture — itself, or through a macro it uses? -/
+-- conserves: none — a predicate over a replacement text
+/-- Whether a replacement text does something only its use can decide, itself or
+through a macro it uses. -/
 private def condLiveList (flags : Std.HashMap String Bool)
     (binds : Std.HashMap String (Option CondVal)) : List Raw → Bool
   | [] => false
@@ -3744,9 +2948,7 @@ private def condLiveRaw (flags : Std.HashMap String Bool)
       ["input", "include", "markdownInput", "documentclass", "usepackage", "RequirePackage",
         "RequirePackageWithOptions", "PassOptionsToPackage", "PassOptionsToClass"].contains n ||
       (themeAsking.lookup n).isSome ||
-      -- Length declarations and mutations execute at each use. Their
-      -- operands reach the later scoped rewrite in execution order, so
-      -- repeated assignments read the value the preceding one left.
+      -- Length declarations and mutations execute at each use.
       ["newlength", "newdimen", "setlength", "addtolength", "advance", "multiply",
         "divide"].contains n ||
       groupPrimitives.any (fun p => p.1 == n || p.2 == n) ||
@@ -3766,22 +2968,16 @@ private def condLiveRaw (flags : Std.HashMap String Bool)
 
 end
 
-/-- A definition's operands as the pass reads them: where they stop, and
-which of them are replacement texts. An expanding definer's text is read
-where it stands, as TeX reads it, so it is not among the texts. -/
+/-- A definition's operands as the pass reads them: where they stop, and which
+are replacement texts. -/
 private structure DefShape where
   stop : Nat
   bodies : List Nat
 
-/-- The operands of the definer `d` at `raws[i]`, or `none` for a shape the
-pass does not read, whose operands then pass as content: `\def`'s name,
-parameter text and text; `\let`'s name and source; the `\newcommand`
-family's name, `[n]`, `[default]` and text; an environment's name, options
-and two texts; xparse's name, argument spec and text; the native definers'
-name, signature and texts. -/
+/-- The operands of the definer `d` at `raws[i]`, or `none`
+for a shape the pass does not read. -/
 private def definerShape (raws : Array Raw) (i : Nat) (d : String)
     (stored : Bool := false) : Option DefShape := Id.run do
-  -- The first group at or after `k`, the parameter text or signature before it.
   let groupFrom (k : Nat) : Option Nat := Id.run do
     let mut j := k
     for _ in [k:raws.size] do
@@ -3798,8 +2994,6 @@ private def definerShape (raws : Array Raw) (i : Nat) (d : String)
     if raws[j]? matches some (.word "*" _) then skipSpaces raws (j + 1) else j
   if d == "def" || d == "gdef" || d == "edef" || d == "xdef" || d == "define" then
     let j := skipSpaces raws (i + 1)
-    -- A stored replacement text can name its future definition through
-    -- an argument. Its extent can be read before that argument is bound.
     unless (raws[j]? matches some (.ctrl _ _)) ||
         (stored && (raws[j]? matches some (.sym '#' _))) do return none
     let some b := groupFrom (j + 1) | return none
@@ -3847,14 +3041,9 @@ private def definerShape (raws : Array Raw) (i : Nat) (d : String)
 
 mutual
 
--- conserves: none — drops each conditional extent, definition and flag setting a
--- definition's text holds, by design: they are decided at a use.
-/-- A replacement text with what only a use can decide removed, at any
-depth — every conditional extent and definition the pass can match, every
-declared flag's setter and `\newif` — and whether anything was: the text an expansion that
-has no conditionals is given in place of branches it cannot choose. The list
-drives the recursion; `raws` and `i` give a head its extent, as `condList`
-pairs them. -/
+-- conserves: none — drops what only a use can decide
+/-- A replacement text with what only a use can decide removed at any depth, and
+whether anything was. -/
 private def condStripList (flags : Std.HashMap String Bool) (raws : Array Raw)
     (acc : Array Raw) (hit : Bool) : List Raw → Nat → Nat → Array Raw × Bool
   | [], _, _ => (acc, hit)
@@ -3900,10 +3089,8 @@ private def condStripRaw (flags : Std.HashMap String Bool) : Raw → Raw × Bool
 
 end
 
-/-- Record a definition of `n` whose readable value is `v` (`none`: none
-the pass can read), globally when `global`. Each binding takes the next
-serial; a copied meaning keeps its text's serial. Whether the text is live
-is read against the state the binding is made in. -/
+/-- Records a definition of `n` whose readable value is `v`,
+globally when `global`. -/
 private def recordValue (n : String) (v : Option CondVal) (global : Bool)
     (copied : Bool := false) : M Unit := do
   let st ← get
@@ -3912,8 +3099,7 @@ private def recordValue (n : String) (v : Option CondVal) (global : Bool)
     { c with
       live := global || c.live || c.arity > 0 || c.optional.isSome || condLiveList st.flags st.binds c.raws.toList
       serial := s
-      -- premise: Tests.macroHookScopeChecks — a local let inside a
-      -- substituted group executes its copied meaning before scope closes.
+      -- premise: Tests.macroHookScopeChecks — a local let executes before scope closes
       textSerial := if copied then c.textSerial else s }
   write fun st => { st with serial := s }
   setBind n v
@@ -3938,9 +3124,7 @@ private theorem recordValue_space_exact (st : St) :
     write_eq,
     pure, StateT.pure, Nat.add_assoc]
 
-/-- The prefixes standing before the definer at `raws[i]`, nearest first: a
-run of at most three of `\long`, `\protected`, `\outer` and `\global`
-(TeXbook chapter 24's ⟨prefix⟩, with e-TeX's `\protected`). -/
+/-- The prefixes standing before the definer at `raws[i]`, nearest first. -/
 private def definerPrefixes (raws : Array Raw) (i : Nat) : List String := Id.run do
   let mut out : List String := []
   let mut k := i
@@ -3956,18 +3140,8 @@ private def definerPrefixes (raws : Array Raw) (i : Nat) : List String := Id.run
     | _ => break
   return out
 
-/-- The value the definer `d` at `raws[i]` gives the name it binds: the body,
-undelimited arity and prefixes its meaning carries. LaTeX's
-`\newcommand` family is `\long` exactly when it takes arguments and is not
-starred, so a parameterless one is never `\long` (measured against LaTeX2e
-2025-11-01: `\meaning` reads `macro:->x` for `\def` and `\newcommand` alike).
-An optional wrapper records a reserved inner name containing a space, which
-no document control word can spell. An `\outer` macro cannot stand where
-`\ifx` would read it, and a robust command's meaning names the command
-itself (`\protect \name␣`), so neither has a value two names could share.
-An expanding definer (`\edef`, `\xdef`) reads a body with no control word
-as itself and one standing for a single macro whose value holds none as
-that value; anything else it would expand to is unread here. -/
+/-- The value the definer `d` at `raws[i]` gives the name it binds: body,
+undelimited arity and prefixes. -/
 private def definedValue (st : St) (raws : Array Raw) (i : Nat) (d : String) :
     Option CondVal := Id.run do
   let pre := definerPrefixes raws i
@@ -4034,14 +3208,12 @@ private def definedValue (st : St) (raws : Array Raw) (i : Nat) (d : String) :
     | _ => return none
   return none
 
-/-- Does the definer `d` at `raws[i]` define globally: `\gdef`, `\xdef`, or
-a `\global` prefix among the definer's prefixes? -/
+/-- Whether the definer `d` at `raws[i]` defines globally. -/
 private def definesGlobally (raws : Array Raw) (i : Nat) (d : String) : Bool :=
   d == "gdef" || d == "xdef" || (definerPrefixes raws i).contains "global"
 
-/-- The documented `\newtcolorbox{name}[arity][default]{keys}` head.
-Only its shape is read here; key values and replacement text execute at
-the environment's use through the ordinary argument binder. -/
+/-- The documented `\newtcolorbox{name}[arity][default]{keys}`
+head, read for its shape only. -/
 private def tcolorboxValue (raws : Array Raw) (i : Nat) :
     Option (String × CondVal) := do
   let j := skipSpaces raws (i + 1)
@@ -4070,16 +3242,15 @@ private def condCtrlName : Raw → Option String
   | .ctrl n _ => some n
   | _ => none
 
-/-- The control words between a `\foreach` and its `in`: its variables, and
-a `count=` option's counter. -/
+/-- The control words between a `\foreach` and its `in`: its
+variables and a `count=` counter. -/
 private def condForeachVars (rs : List Raw) : Array String :=
   let head := rs.takeWhile fun r => !(r matches .word "in" _) && !(r matches .group _ _)
   (head.filterMap condCtrlName).toArray
 
 mutual
 
--- conserves: none — the scan answers a set of names, not a tree: the names a
--- picture binds for itself, whose tests the pass leaves to the picture's walk.
+-- conserves: none — answers a set of names
 private def condBoundLevel (acc : Array String) : List Raw → Array String
   | [] => acc
   | .ctrl "foreach" _ :: rest =>
@@ -4112,23 +3283,21 @@ private def condMark : M CondMark := do
     undo := st.undo.size, globals := st.globals.size, picBound := st.picBound.size
     primitives := st.primitiveScopes.size }
 
-/-- Set whether the pass reads a spliced file's top level, returning the
-value it replaces. -/
+/-- Sets whether the pass reads a spliced file's top level,
+returning the value it replaces. -/
 private def swapTop (b : Bool) : M Bool := do
   let old := (← get).fileTop
   write fun st => { st with fileTop := b }
   return old
 
-/-- Does `r` stand on source line `l`? A space rides with its neighbours; a
-paragraph break ends the line. -/
+/-- Whether `r` stands on source line `l`; a paragraph break ends the line. -/
 private def onLine (l : Nat) : Raw → Bool
   | .space => true
   | .par _ => false
   | .word _ p | .ctrl _ p | .sym _ p | .group _ p | .math _ _ p | .env _ _ p
   | .verb _ _ p => p.line == l
 
-/-- Unwind the save stack to `m`, latest change first: the definition state
-the mark was taken in, the picture's own names included. -/
+/-- Unwinds the save stack to `m`, latest change first. -/
 private def condUnwind (m : CondMark) : M Unit := do
   let st ← get
   let recs := st.undo.extract m.undo st.undo.size
@@ -4149,37 +3318,33 @@ private def condUnwind (m : CondMark) : M Unit := do
           | none => st.flags.erase x }
     | none => pure ()
 
-/-- A TeX group closes, whether braces, math or an environment. Its state is the
-one it opened with — the save stack is unwound to its mark, latest change
-first — and only the global definitions made inside it outlive it, in the
-order they were made. -/
+/-- Closes a TeX group: the save stack unwinds to its mark and only its global
+definitions outlive it. -/
 private def condClose (m : CondMark) : M Unit := do
   let made := (← get).globals.extract m.globals (← get).globals.size
   condUnwind m
   for (n, v) in made do setBind n v
 
-/-- A nonexpandable token ends the document's opening space scan. The flag
-is transient execution state, not a scoped assignment. -/
+/-- Ends the document's opening space scan at a nonexpandable token. -/
 private def condStopSpaces : M Unit := do
   if (← get).ignoreSpaces then write fun st => { st with ignoreSpaces := false }
 
-/-- A recognised box consumes its arguments even when preparation is refused. -/
+/-- A recognised box's preparation; its arguments are consumed even when
+preparation is refused. -/
 private inductive BoxPreparation where
   | ready (prepared : Tcolorbox.Prepared)
   | refused
 
-/-- An executed prefix and the next unread source index. A split word's
-remainder stays separate: it is caller text, not output of the expansion. -/
+/-- An executed prefix and the next unread source index, with a split word's
+remainder kept apart. -/
 private structure CondRun where
   raws : Array Raw
   stop : Nat
   tail : Array Raw := #[]
   box : Option BoxPreparation := none
 
-/-- beamer's block templates, per kind (beamerinnerthemedefault.sty: the
-`blocks` parent's six children): the begin and end elements, the `\style`
-element the reading lands on, and the font and colour elements the kind's
-title and body are set in. -/
+/-- beamer's block templates, per kind: the begin and end elements, the `\style`
+element, and the font and colour elements. -/
 private def blockTemplateKinds : List (Ir.TitledKind × String × String × String × String × String) :=
   [(.block, "block begin", "block end", "block", "block title", "block body"),
    (.alert, "block alerted begin", "block alerted end", "alertblock", "block title alerted",
@@ -4191,19 +3356,9 @@ private def blockTemplateKinds : List (Ir.TitledKind × String × String × Stri
 private def blockTemplateElement (el : String) : Bool :=
   blockTemplateKinds.any fun (_, b, e, _) => b == el || e == el
 
-/-! ### A block template's own macros
-
-A theme writes a block template's machinery as macros the template calls —
-the halves of the pair, a loop over the body's last nodes — which the
-template reader runs where the template stands (`BlockTemplate.read`). The
-document's text reaches such a macro only through a use the conditional
-pass expands, whose text names its losses where it stands, so the
-definition names none of its own: its settled text and its translation are
-read quietly. -/
-
 mutual
 
--- conserves: none — the control words a raw list names; no document content is rebuilt.
+-- conserves: none — the control words a raw list names
 private def namesIn (acc : Array String) : List Raw → Array String
   | [] => acc
   | r :: rest => namesIn (namesOf acc r) rest
@@ -4215,9 +3370,7 @@ private def namesOf (acc : Array String) : Raw → Array String
 
 end
 
-/-- A block template's body after its definer's name: `{element}{name}[n][default]{body}`
-for `\defbeamertemplate`, `{element}{body}` for `\setbeamertemplate`, of a block
-template the reader reads — and the index past it. -/
+/-- A block template's body after its definer's name, and the index past it. -/
 private def templateBodyAt (definer : String) (rest : Array Raw) : Option (Array Raw × Nat) :=
   let j := skipSpaces rest 0
   let j := match rest[j]? with
@@ -4233,7 +3386,7 @@ private def templateBodyAt (definer : String) (rest : Array Raw) : Option (Array
 
 mutual
 
--- conserves: none — the bodies of the block templates a raw list installs; no document content is rebuilt.
+-- conserves: none — the bodies of the block templates a raw list installs
 private def templateBodiesIn (acc : Array (Array Raw)) : List Raw → Array (Array Raw)
   | [] => acc
   | .ctrl n p :: rest =>
@@ -4250,10 +3403,8 @@ private def templateBodiesOf (acc : Array (Array Raw)) : Raw → Array (Array Ra
 
 end
 
-/-- A definition after its definer `d`: the macro it defines and how many
-raws past the definer it spans — `\newcommand`'s family's `{\X}` or `\X`,
-its optional arguments and its body; `\def`'s family's `\X`, its
-parameter text and its body. -/
+/-- A definition after its definer `d`: the macro it defines
+and how many raws it spans. -/
 private def definitionAt (d : String) (rest : Array Raw) : Option (String × Nat) :=
   let j := skipSpaces rest 0
   let j := match rest[j]? with
@@ -4282,7 +3433,7 @@ private def definitionAt (d : String) (rest : Array Raw) : Option (String × Nat
 
 mutual
 
--- conserves: none — the control words a raw list names outside block templates and some definitions; no document content is rebuilt.
+-- conserves: none — the control words named outside block templates
 private def namesOutsideIn (code acc : Array String) (skip : Nat) : List Raw → Array String
   | [] => acc
   | r :: rest =>
@@ -4308,10 +3459,8 @@ private def namesOutsideOf (code acc : Array String) : Raw → Array String
 
 end
 
-/-- The control words `seeds` name and those the definitions `binds` holds
-for them name in turn, their optional arguments' defaults included — one
-round per bound macro at most, since a round that reaches no new name ends
-it. -/
+/-- The control words `seeds` name, closed over the
+definitions `binds` holds for them. -/
 private def closeNames (binds : Std.HashMap String (Option CondVal)) (seeds : Array String) :
     Array String := Id.run do
   let mut reach := seeds
@@ -4326,18 +3475,13 @@ private def closeNames (binds : Std.HashMap String (Option CondVal)) (seeds : Ar
     reach := next
   return reach
 
-/-- The control words a preamble's block templates reach as TeX runs them:
-those their bodies name, closed over the definitions `binds` holds. -/
+/-- The control words a preamble's block templates reach as TeX runs them. -/
 private def templateClosure (binds : Std.HashMap String (Option CondVal)) (pre : Array Raw) :
     Array String :=
   closeNames binds ((templateBodiesIn #[] pre.toList).foldl (fun acc b => namesIn acc b.toList) #[])
 
-/-- **The macros a preamble's block templates reach**: those a block
-template's body names, and those their definitions name in turn
-(`templateClosure`) — less any the preamble names elsewhere: outside the
-block templates' bodies and the definitions of those macros themselves,
-where a use the conditional pass does not expand could read the
-definition. -/
+/-- The macros a preamble's block templates reach, less any
+the preamble names elsewhere. -/
 private def templateReach (binds : Std.HashMap String (Option CondVal)) (pre : Array Raw) :
     Array String := Id.run do
   let reach := templateClosure binds pre
@@ -4345,16 +3489,13 @@ private def templateReach (binds : Std.HashMap String (Option CondVal)) (pre : A
   let elsewhere := namesOutsideIn code #[] 0 pre.toList
   return code.filter (!elsewhere.contains ·)
 
-/-- The `\newif` flag a control word tests (`\ifX`), when one of the two
-states records it. -/
+/-- The `\newif` flag a control word tests, when either state records it. -/
 private def testedFlag (a b : Std.HashMap String Bool) (n : String) : Option String :=
   let x := (n.drop 2).toString
   if n.startsWith "if" && n.length > 2 && (a.contains x || b.contains x) then some x else none
 
-/-- A block stands here, its templates run as TeX runs them where it
-stands: note each control word they reach whose meaning, or the flag it
-tests, is not the one the body began with, which the reading holds
-(`templateBinds`, `templateFlags`). -/
+/-- Notes each control word a block's templates reach whose meaning or flag
+differs from where the body began. -/
 private def noteTemplateDrift : M Unit := do
   let st ← get
   let serialOf (b : Std.HashMap String (Option CondVal)) (x : String) : Option (Option Nat) :=
@@ -4367,14 +3508,8 @@ private def noteTemplateDrift : M Unit := do
 
 mutual
 
-/-- Resolve the decidable conditionals at one level. `stack` holds every open
-conditional, innermost first; an element is emitted only while every frame
-keeps what is read now (`CondOpen.keeps`), and a bare `\else`, `\or` or
-`\fi` with nothing open is not ours and passes through. `skip` counts the
-raws a decided head's test consumed. The list drives the recursion; `raws`
-and `i` give the heads their lookahead, exactly as `rewriteList` pairs
-them. `following` is available to a forwarded macro's argument reader,
-but is not otherwise executed by this replacement's walk. -/
+/-- The decidable conditionals resolved at one level; `stack` holds every open
+conditional, innermost first. -/
 private def condList [Monad m]
     (ex : String → Pos → Array Raw → Nat → EvalM m (Option CondRun))
     (plan : List Bool) (raws following : Array Raw)
@@ -4387,10 +3522,7 @@ private def condList [Monad m]
       then out.push .space else out
     condList ex plan raws following out stack rest (i + 1) 0
   | .ctrl "newif" pos :: .ctrl n np :: rest, i, 0 => do
-    -- `\newif\ifX` declares a decidable flag, initially false (plain TeX:
-    -- `\newif` ends with `\csname …false\endcsname`): `\ifX` joins this
-    -- pass, `\Xtrue`/`\Xfalse` set it. A `\newif` whose next token is not
-    -- an `\if…` name passes through for the ordinary unknown warning.
+    -- `\newif\ifX` declares a decidable flag, initially false.
     if !(stack.all CondOpen.keeps) then
       condList ex [] raws following out stack rest (i + 2) 0
     else if n.startsWith "if" && n.length > 2 then
@@ -4400,8 +3532,7 @@ private def condList [Monad m]
       recordDefined n
       recordDefined (x ++ "true")
       recordDefined (x ++ "false")
-      -- premise: settleChecks — a settled text is read, not run: what it
-      -- declares or sets is undone after, so no note may say it holds
+      -- premise: settleChecks — a settled text is read, not run
       unless (← get).settling.isSome do
         sayOnce ("cond:newif:" ++ n) .N0114
           s!"'\\newif\\{n}': '\\{n}' is resolved from here on, initially false"
@@ -4420,8 +3551,7 @@ private def condList [Monad m]
       recordDefined n
       recordDefined (x ++ "true")
       recordDefined (x ++ "false")
-      -- premise: settleChecks — a settled text is read, not run: what it
-      -- declares or sets is undone after, so no note may say it holds
+      -- premise: settleChecks — a settled text is read, not run
       unless (← get).settling.isSome do
         sayOnce ("cond:newif:" ++ n) .N0114
           s!"'\\newif\\{n}': '\\{n}' is resolved from here on, initially false"
@@ -4461,15 +3591,10 @@ private def condList [Monad m]
       condList ex [] raws following out more rest (i + 1) 0
     | _ :: more => condList ex [] raws following out more rest (i + 1) 0
   | .ctrl "endinput" pos :: rest, i, 0 => do
-    -- TeX reads the rest of the line, then no more of the file (TeXbook
-    -- ch. 20). Only a file's own top level is cut: elsewhere the name
-    -- passes through to be named where it stands. The walk ends here, so
-    -- the conditionals the line closes close with it, and what else the
-    -- line holds stands as written.
+    -- `\endinput` cuts only a file's own top level, after the rest of its line.
     if !(stack.all CondOpen.keeps) then
       condList ex [] raws following out stack rest (i + 1) 0
-    -- premise: endInputChecks — a wrapper's top level is a file's own text,
-    -- the one list TeX stops reading at a terminator
+    -- premise: endInputChecks — a wrapper's top level is a file's own text
     else if (← get).fileTop then
       let line := rest.takeWhile (onLine pos.line)
       if (rest.drop line.length).any fun r => !(r matches .space | .par _) then
@@ -4483,7 +3608,6 @@ private def condList [Monad m]
       condList ex [] raws following (out.push (.ctrl "endinput" pos)) stack rest (i + 1) 0
   | .ctrl n pos :: rest, i, 0 => do
     let st ← get
-    -- `\unless` before a head reverses the head's test (e-TeX).
     let unlessHead : Option (String × Pos) := if n == "unless" then
         match rest with
         | .ctrl h hp :: _ => if isCondHead st.flags h then some (h, hp) else none
@@ -4493,7 +3617,6 @@ private def condList [Monad m]
     let hi := if unlessHead.isSome then i + 1 else i
     if isCondHead st.flags head then
       if stack.isEmpty && !condExtent st.flags raws hi then
-        -- An extent the pass cannot match: left whole for what follows.
         condStopSpaces
         condList ex [] raws following (out.push (.ctrl n pos)) stack rest (i + 1) 0
       else
@@ -4527,11 +3650,7 @@ private def condList [Monad m]
       condList ex [] raws following out stack rest (i + 1) 0
     else if let some (_, k) := (if n == "defbeamertemplate" || n == "setbeamertemplate" then
         templateBodyAt n (raws.extract (i + 1) raws.size) else none) then
-      -- A block template's body is the template reader's, which runs it as
-      -- TeX does at each block (`BlockTemplate.read`), against the macros
-      -- and flags in force where the body begins (`templateBinds`): it
-      -- passes through unexpanded and undecided, and names the template's
-      -- own macros (`templateReach`).
+      -- A block template's body passes through unexpanded for the template reader.
       let out := (raws.extract i (i + 1 + k)).foldl (fun o r => o.push r) out
       condList ex [] raws following out stack rest (i + 1) k
     else if let some close := groupPrimitives.lookup n then
@@ -4548,8 +3667,7 @@ private def condList [Monad m]
       let j := skipSpaces raws (i + 1)
       match raws[j]? with
       | some (.group body _) =>
-        -- premise: Tests.macroHookScopeChecks — hooks execute at their seam;
-        -- hookChecks holds nested and body declarations to their named fallback.
+        -- premise: Tests.macroHookScopeChecks — hooks execute at their seam
         if !st.condInDoc && !st.condReplaying then
           deferOne n pt body pos
           condList ex [] raws following out stack rest (i + 1) (j - i)
@@ -4560,8 +3678,7 @@ private def condList [Monad m]
           condList ex [] raws following out stack rest (i + 1) 0
       | _ => condList ex [] raws following (out.push (.ctrl n pos)) stack rest (i + 1) 0
     else if let some ans := if n == "ifstrequal" then stringTestAt raws (i + 1) else none then
-      -- premise: Tests.stringConditionalChecks — operands and the unselected
-      -- branch stay inert; the selected argument executes in the caller's scope.
+      -- premise: Tests.stringConditionalChecks — the unselected branch stays inert
       let msg := if ans then
           "'\\ifstrequal': the literal strings agree, so the first branch is kept"
         else "'\\ifstrequal': the literal strings differ, so the second branch is kept"
@@ -4569,8 +3686,7 @@ private def condList [Monad m]
       condList ex [false, false, ans, !ans] raws following out stack rest (i + 1) 0
     else if let some (test, query) := (loadedTests.find? (·.ctrl == n)).bind fun test =>
         (loadedAt raws (i + 1) test).map (test, ·) then
-      -- premise: loadedTestChecks — selected branches execute where the
-      -- test stands; loads hidden inside an unread package remain unknown.
+      -- premise: loadedTestChecks — selected branches execute where the test stands
       match st.loads.answer query with
       | some ans =>
         let msg := loadedMsg test query ans
@@ -4582,7 +3698,6 @@ private def condList [Monad m]
     else if n == "apptocmd" then
       condStopSpaces
       -- Patch text and callbacks are arguments, not conditionals in force.
-      -- The finite hook arm decides the whole call after these passes.
       let (_, k, _) := takeHookArgs raws (i + 1)
       condList ex [] raws following ((out.push (.ctrl n pos)) ++ raws.extract (i + 1) k)
         stack rest (i + 1) (k - (i + 1))
@@ -4590,8 +3705,7 @@ private def condList [Monad m]
       condStopSpaces
       let x := (n.dropEnd 4).toString
       setFlag x true
-      -- premise: settleChecks — a settled text is read, not run: what it
-      -- declares or sets is undone after, so no note may say it holds
+      -- premise: settleChecks — a settled text is read, not run
       unless st.settling.isSome do
         sayOnce ("cond:set:" ++ n) .N0114 s!"'\\{n}': '\\if{x}' is true from here on"
           (st.useSite.getD pos)
@@ -4600,8 +3714,7 @@ private def condList [Monad m]
       condStopSpaces
       let x := (n.dropEnd 5).toString
       setFlag x false
-      -- premise: settleChecks — a settled text is read, not run: what it
-      -- declares or sets is undone after, so no note may say it holds
+      -- premise: settleChecks — a settled text is read, not run
       unless st.settling.isSome do
         sayOnce ("cond:set:" ++ n) .N0114 s!"'\\{n}': '\\if{x}' is false from here on"
           (st.useSite.getD pos)
@@ -4621,8 +3734,7 @@ private def condList [Monad m]
         | some (name, value) =>
           let key := Tcolorbox.bindingName name
           let known := st.binds.contains key
-          -- premise: TcolorboxChecks.tcolorboxScopeChecks — refused definitions leave
-          -- built-in environments and existing scoped definitions unchanged.
+          -- premise: TcolorboxChecks.tcolorboxScopeChecks — refused definitions change nothing
           if st.provideKeeps.contains key || (n == "newtcolorbox" && known) ||
               (n == "renewtcolorbox" && !known) then
             sayOnce ("tcolorbox:definition:" ++ name) .W0104
@@ -4648,25 +3760,20 @@ private def condList [Monad m]
         else none
       let provide := n == "providecommand" || n == "ProvideDocumentCommand"
       if let some m := bound then
-        -- premise: Tests.xparseIgnoredOperandsChecks — ignored operands
-        -- keep both artifacts unchanged and receive one discard accounting.
+        -- premise: Tests.xparseIgnoredOperandsChecks — ignored operands change no artifact
         if provide && (st.binds.contains m || st.provideKeeps.contains m) then
           if let some sh := definerShape raws i n then
             let why := if st.binds.contains m then
                 s!"'\\{m}' is already defined and the existing definition is kept"
               else s!"'\\{m}' is built in and the built-in stands"
             discard s!"\\{n}\{\\{m}}" why s!"{n}:{m}" (st.useSite.getD pos)
-            -- Consume every operand before later passes can collect a hook
-            -- from the ignored signature or replacement text.
             return ← condList ex [] raws following out stack rest (i + 1) (sh.stop - (i + 1))
         unless provide && st.binds.contains m do
-          -- Inside a frame the pass cannot decide, the branch may not run:
-          -- the name is bound (the flat reading), its value unread.
+          -- Inside an undecidable frame the name is bound but its value unread.
           let value := definedValue st raws i n
           let v := if stack.any (· matches .opaque) then none else value
           let global := definesGlobally raws i n
-          -- A let copies the wrapper, not its target. Ordinary renewals
-          -- leave the old optional target available to existing aliases.
+          -- A `\let` copies the wrapper, not its target.
           if n != "let" then
             if let some (key, _) := value.bind (·.optional) then
               recordValue key (v.map fun c => { c with optional := none }) global
@@ -4674,13 +3781,9 @@ private def condList [Monad m]
       match definerShape raws i n with
       | none => condList ex [] raws following (out.push (.ctrl n pos)) stack rest (i + 1) 0
       | some sh =>
-        -- The texts are expanded where the definition is used, never here:
-        -- nothing in them is decided, set or defined now. What the
-        -- expansion cannot decide is taken out of the definition the
-        -- elaborator expands.
+        -- The texts expand where the definition is used, never here.
         let st ← get
-        -- premise: tcolorboxTitleBindingChecks — title-local definitions
-        -- leave no inline syntax, while global effects reach later content.
+        -- premise: tcolorboxTitleBindingChecks — title-local definitions leave no inline syntax
         if st.materializeTitle &&
             (bound.bind (condValueOf st.binds ·)).any Option.isSome &&
             !(bound.any st.provideKeeps.contains) then
@@ -4689,8 +3792,6 @@ private def condList [Monad m]
               | .ctrl found _ :: rest => if found == name then rest else rs
               | _ => rs
           let out := OverlayPrefix.ofArray kept.reverse.toArray
-          -- Expanding definers have already evaluated their readable text;
-          -- consume that text too, rather than recovering it as title content.
           let stop := ((definerShape raws i n (stored := true)).getD sh).stop
           became s!"\\{n}\\{bound.getD n}" "a scoped title binding"
             (st.useSite.getD pos) (subject := bound)
@@ -4698,11 +3799,9 @@ private def condList [Monad m]
         let liveVal := match bound.bind (condValueOf st.binds ·) with
           | some (some v) => if v.live then some v else none
           | _ => none
-        -- A use of a built-in the pass never expands: the elaborator reads
-        -- the text, at the preamble's end, so there it is settled.
+        -- A built-in the pass never expands is settled at the preamble's end.
         let expands := liveVal.isSome && !(bound.any st.provideKeeps.contains)
-        -- premise: Tests.macroDefaultChecks — copied readable meanings
-        -- execute at their uses, including after the source is redefined.
+        -- premise: Tests.macroDefaultChecks — copied readable meanings execute at their uses
         if n == "let" && expands then
           became s!"\\let\\{bound.getD n}" "a copied command definition"
             (st.useSite.getD pos) (subject := some (bound.getD n))
@@ -4731,11 +3830,7 @@ private def condList [Monad m]
               write fun st => { st with
                 pending := st.pending.push { name := m, serial := v.serial, file := file, pos := gp } }
         if stripped && !(expands || settles || refused) then
-          -- premise: Tests.macroArgumentChecks — readable undelimited calls
-          -- execute after binding; an unread definition keeps no program
-          -- in a replacement text that the elaborator cannot execute.
-          -- A delimited definition is refused whole by W0357 below,
-          -- which also accounts for its replacement text.
+          -- premise: Tests.macroArgumentChecks — readable undelimited calls execute after binding
           sayOnce ("cond:body:" ++ n ++ ":" ++ (bound.getD "")) .W0104
             (s!"'\\{n}' makes a definition whose text holds a conditional, a flag \
 setting or another definition, which TeX executes where it is used; this engine cannot \
@@ -4745,20 +3840,17 @@ execute this definition there, so that part of the text is skipped whole")
         condList ex [] raws following ((out.push (.ctrl n pos)) ++ ops) stack rest (i + 1) (sh.stop - (i + 1))
     else if condNoExpand.contains n then
       condStopSpaces
-      -- The next token is read as itself here, never expanded.
       match rest with
       | r :: _ => condList ex [] raws following ((out.push (.ctrl n pos)).push r) stack rest (i + 1) 1
       | [] => condList ex [] raws following (out.push (.ctrl n pos)) stack rest (i + 1) 0
     else
       if !st.condInDoc then recordLoad raws n i
-      -- premise: Tests.overlayInputChecks — a selector reads textual macro
-      -- fragments at its use, before the shared numbered boundary is sealed.
+      -- premise: Tests.overlayInputChecks — a selector reads macro fragments at its use
       if out.scan.opened then
         let r := match overlayFragment st.binds st.binds.size n with
           | some text => .word text pos
           | none => .ctrl n pos
-        -- A refused fragment stays inside the selector; ordinary execution
-        -- here would run effects and could turn its remainder into a number.
+        -- A refused fragment stays inside the selector unexecuted.
         condList ex [] raws following (out.push r) stack rest (i + 1) 0
       else match ← ex n pos (raws ++ following) (i + 1) with
         | some run =>
@@ -4784,12 +3876,8 @@ execute this definition there, so that part of the text is skipped whole")
       else
         condList ex [] raws following out stack rest (i + 1) 0
 
-/-- Descend into a group, math or an environment body. The definition state
-is restored when its TeX group closes (`condClose`). A selected test operand
-has `groupScope = false`: its argument braces open no scope, but an explicit
-group in its text still does. A picture's own bindings are known before its
-body is read. An `\input` wrapper switches the file its notes name, as
-`rewriteRaw` does, and is no group at all. -/
+/-- Descends into a group, math or an environment body,
+restoring the definition state at its close. -/
 private def condOne [Monad m]
     (ex : String → Pos → Array Raw → Nat → EvalM m (Option CondRun))
     (groupScope : Bool) : Raw → EvalM m Raw
@@ -4825,8 +3913,7 @@ private def condOne [Monad m]
       return .env n body'.raws p
     | none =>
       if n == "document" then
-        -- premise: Tests.macroPhaseChecks — only opening spaces disappear;
-        -- a retained group or a subsequently discarded command stops the scan.
+        -- premise: Tests.macroPhaseChecks — only opening spaces disappear
         write fun st => { st with ignoreSpaces := true }
       else condStopSpaces
       if (← get).condInDoc && overlayTitled (overlayName n) then noteTemplateDrift
@@ -4837,8 +3924,6 @@ private def condOne [Monad m]
         write fun st => { st with picBound := st.picBound ++ names, inPicture := true }
       let top ← swapTop false
       let box ← ex (Tcolorbox.bindingName n) p body 0
-      -- The title argument belongs to this environment's selector window,
-      -- just as it does in overlayInputsRaw after execution.
       let head := if overlayTitled n then #[Raw.ctrl "titled overlay" p] else #[]
       let front := head ++ (box.map (·.tail)).getD #[]
       let body' ← condList ex [] body #[] (OverlayPrefix.ofArray front) [] body.toList 0
@@ -4865,10 +3950,8 @@ private def condOne [Monad m]
 
 end
 
-/-- Bind a readable command's optional first argument and remaining
-undelimited arguments. An explicit empty option is a value; an unterminated
-option is unread. Omission uses the already-read default without removing
-another group. The optional lookahead consumes spaces but expands nothing. -/
+/-- A readable command's optional first argument and
+remaining undelimited arguments, bound. -/
 private def takeCondArgs (raws : Array Raw) (start arity : Nat)
     (defaultArg : Option (Array Raw)) :
     Option (Array (Array Raw) × Nat × Array Raw) := do
@@ -4885,10 +3968,9 @@ private def takeCondArgs (raws : Array Raw) (start arity : Nat)
 
 mutual
 
--- conserves: none — a predicate over surface tokens, not an IR rewrite.
-/-- A substituted replacement that cannot request another expansion or
-execute a control. Its group and math boundaries still pass through the
-ordinary conditional walk, preserving the opening-space scan. -/
+-- conserves: none — a predicate over surface tokens
+/-- Whether a substituted replacement can neither request
+another expansion nor execute a control. -/
 private def condTerminalList : List Raw → Bool
   | [] => true
   | r :: rest => condTerminalRaw r && condTerminalList rest
@@ -4900,14 +3982,12 @@ private def condTerminalRaw : Raw → Bool
 
 end
 
-/-- Select the request of an unbound input command at its executed site.
-Settlement reads stored text and never crosses the input door. -/
+/-- The request of an unbound input command at its executed site. -/
 private def inputRequestAt (st : St) (n : String) (pos : Pos)
     (raws : Array Raw) (start : Nat) : Option (InputRequest × Nat) := do
   if st.settling.isSome then none else do
     let input := ["input", "include", "markdownInput"].contains n
-    -- premise: frontendInputRequestChecks — execution inside a live macro
-    -- can load a local style; settlement cannot.
+    -- premise: frontendInputRequestChecks — only live execution loads a local style
     let style := !st.condInDoc &&
       (n == "usepackage" || n == "RequirePackage" || (themeAsking.lookup n).isSome)
     if !(input || style) then none else do
@@ -4921,8 +4001,7 @@ private def inputRequestAt (st : St) (n : String) (pos : Pos)
         callPos := pos
         operands := raws.extract start (j + 1) }, j + 1)
 
-/-- The unbound-command arm of the production evaluator. Selection, the
-actual reader call, its receipt and acceptance of its state have one owner. -/
+/-- The unbound-command arm of the production evaluator. -/
 private def condReadAt [Monad m] (reader : Option (InputReader m))
     (n : String) (pos : Pos) (raws : Array Raw) (start : Nat) :
     EvalM m (Option CondRun) := do
@@ -4947,25 +4026,8 @@ private theorem condReadAt_refused_exact (reader : InputReader Id)
     Option.isSome_none, pure, StateT.pure]
   rfl
 
-/-- Expand the macro `n` where the conditional pass meets it in live
-content, when its optional argument or text needs the use's state
-(`CondVal.live`), during the opening space scan, or inside a picture, which reads a
-macro at its own site: the text is walked where the use stands, against the
-state in force there, so its conditionals are decided — and its flags set,
-its definitions made — at the use, as TeX does, and the decisions are named
-at the use. `bound` is the binding order the enclosing text sees. An older
-binding lowers it; a newer copy of an older text keeps it and lowers
-`textBound` instead. Direct calls to helpers below that binding order stay
-readable; a further local copy must itself lower one of the two orders.
-Every recursive macro expansion descends the lexicographic pair. A substituted
-replacement containing no controls or environments needs no recursion and
-can execute even when neither order descends.
-`prepareBox` is a separate final stage: preparing selected fields preserves
-both macro orders and disables further preparation throughout those fields.
-An optional wrapper and its inner text use the later of their serials,
-so a retained alias sees the current inner text. A live use that still
-needs recursion when the orders rule it out is refused by name; `none`
-leaves it to the elaborator. -/
+/-- Expands the macro `n` where the conditional pass meets it in live content,
+when the use's state decides it. -/
 private def condExpandAt [Monad m] (reader : Option (InputReader m))
     (bound textBound : Nat) (prepareBox : Bool) (n : String) (pos : Pos)
     (raws : Array Raw) (start : Nat) : EvalM m (Option CondRun) := do
@@ -4984,13 +4046,9 @@ private def condExpandAt [Monad m] (reader : Option (InputReader m))
         if args.size != v.arity then none else
           some (bindRawArgsList args #[] (rebaseList atUse false v.raws.toList), stop, tail)
     let some (options, stop, tail) := call | return none
-    -- A template selects fields without changing either macro order.
-    -- Its original body keeps the caller's preparation stage in condOne.
-    -- premise: tcolorboxPreparationChecks — copied helpers remain executable;
-    -- refusing a nested template keeps only its consumed boundary and body.
+    -- premise: tcolorboxPreparationChecks — copied helpers remain executable
     if _hstage : prepareBox then
-      -- Capture selected colors in the use's binding snapshot before either
-      -- font hook runs. Text fragments cannot execute assignments.
+      -- Selected colours are captured before either font hook runs.
       let prepared ← Tcolorbox.prepareM (fun _ (rs : Array Raw) => pure <|
         (rs.toList.mapM fun (r : Raw) => match r with
           | .ctrl name p =>
@@ -5024,9 +4082,7 @@ private def condExpandAt [Monad m] (reader : Option (InputReader m))
     (inPic && picWalkCtrls.contains n)
   match condValueOf st.binds n with
   | some (some v) =>
-    -- premise: Tests.macroDefaultChecks — optional selection changes both
-    -- artifacts; macroPhaseChecks holds the opening scan across expansion,
-    -- and macroUseChecks holds execution between two states.
+    -- premise: Tests.macroDefaultChecks — optional selection changes both artifacts
     if !(v.live || inPic || st.ignoreSpaces || st.materializeTitle) || own then return none
     let value := match v.optional with
       | none => some v
@@ -5039,19 +4095,13 @@ on a conditional this engine cannot decide; the call is left unexpanded"
       return none
     let serial := max v.serial body.serial
     let textSerial := max v.textSerial body.textSerial
-    -- Replacement text and omitted defaults come from the definition, but
-    -- execute in this file. Relocate them before binding written arguments
-    -- or reading includes, whose tokens keep their own source coordinates.
-    -- Retain semantic ancestry from any already-settled child expansions.
+    -- Replacement text executes in the using file, so it is relocated before binding.
     let usePos := site.getD pos
     let atUse := fun p : Pos => { p with line := usePos.line, col := usePos.col }
     let defaultArg := v.optional.map fun (_, arg) => arg.map (rebase atUse false)
     -- premise: Tests.macroHookScopeChecks — copied texts execute locally
-    -- while aliases keep direct calls to helpers renewed before the use.
     let descends := serial < bound || textSerial < textBound
-    -- premise: Tests.macroRoleChecks — a terminal substituted call executes
-    -- without recursion, including copied meanings and discarded arguments;
-    -- an out-of-order effectful call still names its lost execution.
+    -- premise: Tests.macroRoleChecks — a terminal substituted call executes without recursion
     let terminal := !descends &&
       (takeCondArgs raws start body.arity defaultArg).any
         (fun (args, _, _) => args.size == body.arity &&
@@ -5060,8 +4110,7 @@ on a conditional this engine cannot decide; the call is left unexpanded"
       let call := (takeCondArgs raws start body.arity defaultArg).filter
         fun (args, _, _) => args.size == body.arity
       let some (args, stop, tail) := call | do
-        -- premise: macroForwardArgumentsChecks — an incomplete stored forwarder
-        -- waits for its use; an incomplete actual call still names the loss.
+        -- premise: macroForwardArgumentsChecks — an incomplete stored forwarder waits for its use
         if st.settling.isSome then return none
         sayOnce ("cond:arguments:" ++ n) .W0104
           s!"'\\{n}' needs {body.arity} arguments before its replacement text can execute; \
@@ -5069,8 +4118,6 @@ the argument boundary is unread here, so its optional selection and state change
           (site.getD pos)
           (help := "close an optional argument with ']' and put each required argument in braces")
         return none
-      -- Native content scopes separate uses of a settled body; settlement
-      -- must retain the executed child's provenance within that body.
       let origin : Option MacroOrigin := if body.arity > 0 && !inPic
         then some { id := st.macroClock, name := n } else none
       let body := bindRawArgsList args #[] (rebaseList atUse false body.raws.toList)
@@ -5118,7 +4165,8 @@ decreasing_by
          apply Prod.Lex.left
          omega)
 
-/-- The expander running text uses: every definition made so far is visible. -/
+/-- The expander running text uses, with every definition
+made so far visible. -/
 private def condTopExpand [Monad m] (reader : Option (InputReader m))
     (n : String) (pos : Pos) (raws : Array Raw) (start : Nat) :
     EvalM m (Option CondRun) := do
@@ -5287,13 +4335,10 @@ private theorem condList_package_read_step
     simp only [evalLift_id, bind, StateT.bind, hload,
       he, condStopSpaces_quiet after hs]
 
-/-- One live package call with a literal comma-separated name argument.
-All names and positions are parameters; execution still uses the normal
-conditional dispatcher and the supplied input reader. -/
+/-- One live package call with a literal comma-separated name argument. -/
 public def packageCall (command names : String) (pos groupPos namePos : Pos) : Array Raw :=
   #[.ctrl command pos, .group #[.word names namePos] groupPos]
 
-/-- The literal package-call surface exchanged with the elaborator. -/
 public theorem packageCall_exact (command names : String)
     (pos groupPos namePos : Pos) :
     packageCall command names pos groupPos namePos =
@@ -5315,8 +4360,6 @@ private theorem packageCall_readers (command names : String)
   · simp [takeGroups, hs]
     simp [packageCall]
 
-/-- The actual request's filename projection reads the package operand,
-including the same outer whitespace normalization as the producer. -/
 public theorem InputRequest.package_name_exact (file command names : String)
     (pos groupPos namePos : Pos) :
     (InputRequest.mk command file pos pos
@@ -5414,9 +4457,8 @@ private theorem condList_package_failed_exact (reader : InputReader Id)
   simp [OverlayPrefix.push, OverlayPrefix.ofArray, packageFailed,
     attempted, loaded, packageLoaded, packageRequest, packageCall, Nat.add_assoc]
 
-/-- Execute a parsed file answer in the state of its request, before
-continuing the caller. The input wrapper carries its filename and opens
-no TeX group; definitions therefore obey the caller's existing scope. -/
+/-- A parsed file answer executed in its request's state before the caller
+continues; the wrapper opens no TeX group. -/
 public def resumeInput [Monad m] (reader : InputReader m) (context : InputContext)
     (raws : Array Raw) (diags : Array Diag := #[]) : m (Array Raw × InputContext) := do
   let (run, state) ←
@@ -5426,9 +4468,8 @@ public def resumeInput [Monad m] (reader : InputReader m) (context : InputContex
         sourceTriggers := sourceTriggers context.state.file context.state.sourceTriggers raws.toList }
   return (run.raws, { state := state })
 
-/-- Run `act` and put the definition state back as it was: a definition's
-text settled for the elaborator is read, not run, so nothing it binds, sets
-or defines — globally or not — outlives the reading. -/
+/-- Runs `act` and restores the definition state, so nothing a settled text
+binds outlives its reading. -/
 private def condSandbox [Monad m] (act : EvalM m CondRun) : EvalM m (Array Raw) := do
   let saved ← get
   let m ← condMark
@@ -5439,11 +4480,8 @@ private def condSandbox [Monad m] (act : EvalM m CondRun) : EvalM m (Array Raw) 
     loads := saved.loads, deferred := saved.deferred, ignoreSpaces := saved.ignoreSpaces }
   return r.raws
 
-/-- Settle the pending preamble definitions (`CondPending`) against the
-state at the preamble's end, which is where the elaborator reads a text no
-use the pass sees reaches: each one still in force is walked there, its
-decisions named as the definition's, and handed back with where it stands.
-The document body begins here. -/
+/-- The pending preamble definitions settled against the
+state at the preamble's end. -/
 private def condSettle [Monad m] (reader : Option (InputReader m)) (pre : Array Raw) :
     EvalM m (Array (String × Pos × Array Raw)) := do
   let pend := (← get).pending
@@ -5455,7 +4493,7 @@ private def condSettle [Monad m] (reader : Option (InputReader m)) (pre : Array 
     | some (some v) =>
       if v.serial == p.serial && v.arity == 0 then
         let file := (← get).file
-        -- premise: templateCodeChecks — a block template's own macro, used in the document's text, names its losses at that use
+        -- premise: templateCodeChecks — a template macro names its losses at its use
         let quiet := (← get).templateCode.contains p.name
         let (said, warned) := ((← get).diags.size, (← get).warned)
         write fun st => { st with file := p.file, settling := some p.name }
@@ -5472,11 +4510,9 @@ private def condSettle [Monad m] (reader : Option (InputReader m)) (pre : Array 
 
 mutual
 
--- conserves: none — the walk swaps each settled text in where its
--- definition stands, by design.
-/-- Put each settled text (`condSettle`) back into the definition it came out
-of, found by its file and position; an `\input` wrapper switches the file,
-as `condOne` does. -/
+-- conserves: none — swaps each settled text in where its definition stands
+/-- Each settled text put back into the definition it came
+out of, found by its file and position. -/
 private def condPatchList (texts : Array (String × Pos × Array Raw)) (file : String)
     (acc : Array Raw) : List Raw → Array Raw
   | [] => acc
@@ -5500,9 +4536,8 @@ private def condPatchRaw (texts : Array (String × Pos × Array Raw)) (file : St
 
 end
 
-/-- Execute one deferred bucket in registration order, in its declaring
-files. Its state changes remain in force for the next bucket and the body;
-the returned text is translated and placed at that bucket's seam later. -/
+/-- One deferred bucket executed in registration order, in
+its declaring files. -/
 private def condReplay [Monad m] (reader : Option (InputReader m))
     (hooks : Array (DeferPoint × String × Pos × Array Raw))
     (point : DeferPoint) : EvalM m (Array (DeferPoint × String × Pos × Array Raw)) := do
@@ -5527,10 +4562,8 @@ private theorem condReplay_empty_exact (reader : Option (InputReader Id))
     write_eq,
     pure, StateT.pure, Nat.add_assoc]
 
-/-- Execute the preamble, its end hooks, the begin-document hooks, then the
-body. Stored definitions settle after end-preamble hooks have run. Every
-phase reads the same conditional, binding and load state, so a hook reads
-and changes that state only at its replay point. -/
+/-- The preamble, its end hooks, the begin-document hooks, then the body,
+executed against one shared state. -/
 private def condDocument [Monad m] (reader : Option (InputReader m))
     (raws : Array Raw) : EvalM m (Array Raw) := do
   let seam := raws.findIdx? (· matches .env "document" _ _)
@@ -5592,22 +4625,15 @@ private theorem condDocument_package_failed_exact (reader : InputReader Id)
       hc hp hd hflags hi hsettling hv hr) hdeferred]
   simp [packageFailed, packageLoaded, Nat.add_assoc, hdeferred]
 
-/-- A word that is a glue keyword run into its dimension, as TeX reads
-`plus2pt` (the keyword's optional spaces may be none): the dimension's
-spelling past the keyword, if the word is one. -/
+/-- The dimension spelled past a glue keyword run into it,
+as TeX reads `plus2pt`. -/
 private def keyRun? (w key : String) : Option String :=
   let rest := (w.drop key.length).toString
   if w.startsWith key && rest.toList.head?.any (fun c => c.isDigit || c == '.' || c == ',' || c == '-' || c == '+')
   then some rest else none
 
-/-- A TeX length in the native spelling: `0.75\beat` is `0.75 * beat`,
-`\relax` vanishes, a glue keyword run into its dimension is its own word
-(`keyRun?`), and a word reads in lower case, as TeX reads its keywords and
-units in either case (`PLUS`, `1FILL`, `12PT`). LaTeX's `\stretch{f}` is
-the glue it defines, `0pt plus f fill` (ltspace.dtx). Each other control word
-goes through `ref`, told whether an argument group follows it; `none` from
-`ref` makes the whole value unreadable. `\dimexpr … \relax` is its
-parenthesized expression. -/
+/-- A TeX length in the native spelling: `0.75\beat` is `0.75 * beat`, `\relax`
+vanishes, a word reads in lower case. -/
 public def lengthSrcBy (ref : String → Bool → Option String) (raws : Array Raw) :
     Option String := Id.run do
   let mut s := ""
@@ -5633,9 +4659,7 @@ public def lengthSrcBy (ref : String → Bool → Option String) (raws : Array R
       depth := depth + 1
       prevNumber := false
     | .ctrl "p@" _ =>
-      -- TeX's \p@ is 1pt and \z@ 0pt (plain.tex); a `.sty` spells its
-      -- lengths in them, and its rubber in \@plus/\@minus (ltdefns.dtx:
-      -- the sanitised glue keywords "plus" and "minus").
+      -- `\p@` is 1pt and `\z@` 0pt (plain.tex); `\@plus`/`\@minus` are the glue keywords.
       s := s ++ (if prevNumber then "pt" else "1pt")
       prevNumber := false
     | .ctrl "z@" _ =>
@@ -5650,8 +4674,6 @@ public def lengthSrcBy (ref : String → Bool → Option String) (raws : Array R
     | .ctrl n _ =>
       let some v := ref n (raws[skipSpaces raws (k + 1)]? matches some (.group _ _))
         | return none
-      -- A factor against a name multiplies it; a sign before one negates
-      -- it, which the native reader spells as a factor too (`-1 * x`).
       let t := s.trimAsciiEnd.toString
       let pre := if prevNumber || t.back.isDigit || t.back == '.' then " * "
         else if t == "-" || t.endsWith "(-" then "1 * " else ""
@@ -5660,8 +4682,7 @@ public def lengthSrcBy (ref : String → Bool → Option String) (raws : Array R
     | .word w _ =>
       let w := w.toLower
       let lead := if s.isEmpty || s.endsWith " " then "" else " "
-      -- TeX's lexer drops the space after a control word, so a keyword
-      -- after a register stands against its name until it is set apart.
+      -- TeX's lexer drops the space after a control word, so a keyword may abut a register.
       let (w, num) := match keyRun? w "plus", keyRun? w "minus" with
         | some rest, _ => (lead ++ "plus " ++ rest, rest)
         | none, some rest => (lead ++ "minus " ++ rest, rest)
@@ -5670,92 +4691,61 @@ public def lengthSrcBy (ref : String → Bool → Option String) (raws : Array R
       prevNumber := num.toList.all fun c => c.isDigit || c == '.'
     | .space => s := s ++ " "
     | other => s := s ++ rawSrcOne other
-  -- `\dimexpr` ends with its argument when no `\relax` closes it (e-TeX
-  -- manual §3.5: the expression stops at the first token it cannot read).
+  -- `\dimexpr` ends with its argument when no `\relax` closes it.
   return some (s ++ String.ofList (List.replicate depth ')')).trimAscii.toString
 
 /-- A TeX length in the native spelling, every name standing as itself. -/
 private def lengthSrc (raws : Array Raw) : String :=
   (lengthSrcBy (fun n _ => some n) raws).getD ""
 
-/-- The parameter a `\setlength` target names: a control word, or TeX's
-register reference `\skip\footins` (the skip an insertion holds, TeXbook
-ch. 15), read as the name it holds. -/
+/-- The parameter a `\setlength` target names: a control word, or a register
+reference such as `\skip\footins`. -/
 private def paramName (raws : Array Raw) : Option String :=
   match raws.toList.filter (fun r => match r with | .space => false | _ => true) with
   | [.ctrl n _] => some n
   | [.ctrl "skip" _, .ctrl n _] => some n
   | _ => none
 
-/-- A parameter no engine site reads, named where it is set, once per
-parameter: the one door for that loss, whatever spelling set it. -/
+/-- A parameter no engine site reads, named once where it is set. -/
 private def nameParam (n why : String) (pos : Pos) : M Unit := do
   sayOnce ("ctrl:setlength:" ++ n) .W0104 s!"'\\{n}' is not honoured: it {why}" pos
-    -- premise: paramDemoteChecks — a setting in a style file ships the page the
-    -- same setting ships from the document, and only its severity moves
+    -- premise: paramDemoteChecks — a style file's setting ships the same page
     (demote := packageFile (← get).file)
 
-/-- Lengths a package spells as macros, which a document sets by redefining
-them, and whose redefinition no engine site reads: amsmath's `\minalignsep`
-(`\newcommand{\minalignsep}{10pt}`), which `aligned` reads at that default
-(`Math.minAlignSep`). -/
+/-- Lengths a package spells as macros whose redefinition no
+engine site reads. -/
 private def macroParams : List (String × String) :=
   [("minalignsep", "separates an aligned's column pairs, which stand amsmath's 10 pt apart here")]
 
-/-- The kernel's three vertical skip amounts, the same in every class
-(ltspace.dtx, as plain.tex sets them). -/
+/-- The kernel's three vertical skip amounts, the same in every class. -/
 public def kernelSkip : String → Option String
   | "smallskipamount" => some "3pt plus 1pt minus 1pt"
   | "medskipamount" => some "6pt plus 2pt minus 2pt"
   | "bigskipamount" => some "12pt plus 4pt minus 4pt"
   | _ => none
 
-/-- Class-independent length defaults the compatibility store can read
-before an assignment: the skip amounts and the text-column gap. -/
+/-- Class-independent length defaults readable before an assignment: the skip
+amounts and the column gap. -/
 private def kernelLength (n : String) : Option String :=
   if n == "columnsep" then some s!"{Ir.columnSep.sp.toPtString}pt" else kernelSkip n
 
-/-- A length value as the door reads it where it stands: a kernel parameter
-the document set is the value it holds (TeX copies a register's value; the
-parameter's own token may not exist, or carry an engine name), a kernel
-skip amount is the value the document last set it to, or its fixed value
-where it never did (ltspace.dtx sets each once), and any other name is a
-token of the document's, read where the declaration reads it. The text
-block's measures stand as the engine's own tokens (`\textwidth`,
-`\textheight`), read where the class fixes them — so not in a preamble
-whose page `measureKnown` denies: a flow class whose page declares no
-measure settles its text block after the preamble. `\linewidth` and
-`\columnwidth` hold the class's `\textwidth` in a preamble (measured under
-lualatex: `0.1\linewidth` is a tenth of it on a one-column page), which is
-the engine's where the class fixes its text block at load and never on a
-flow page (`flowPage`), whose block is the engine's own; in the body a
-line's width is its scope's. Neither has a reading where it is not the
-engine's. `none` for what the door
-cannot evaluate: a kernel parameter whose value it was never told (the
-class sets it), a box's dimension, and a command that computes a length
-(`\stretch`, calc's `\widthof`). In a definition's body (`deferred`) the
-assignment runs where the command is used, so a kernel parameter is read
-there, by its name. -/
+/-- A length value as the door reads it where it stands. -/
 private def lenValue (lens : Array (String × String)) (raws : Array Raw)
     (deferred : Bool := false) (preamble : Bool := false) (measureKnown : Bool := true)
     (flowPage : Bool := false) : Option String :=
-  -- premise: unreadableLengthChecks — a definition's body names nothing where
-  -- it is defined: a kernel parameter there stands by its name
+  -- premise: unreadableLengthChecks — a kernel parameter in a definition body stands by name
   let kernel (n : String) : Bool := !deferred && (paramSites.lookup n).isSome
   let set (n : String) : Option String := (lens.find? (·.1 == n)).map (·.2)
   let line (n : String) : Bool := n == "linewidth" || n == "columnwidth"
   let held (n : String) : Option String :=
-    -- premise: columnGeometryChecks — class defaults are readable register
-    -- values too; copying a gap and repeating a macro both read it at use.
+    -- premise: columnGeometryChecks — class defaults are readable register values
     if kernel n then (set n).orElse fun _ => kernelLength n
     else if (kernelSkip n).isSome then
       match set n with
       | some v => if deferred then none else some v
       | none => kernelSkip n
     else none
-  -- premise: kernelLengthChecks — under a flow class whose page declares
-  -- no measure the elaborator withholds `textwidth` (E0321 on the native
-  -- token), and a declared margin offers it
+  -- premise: kernelLengthChecks — a flow page without a measure withholds `textwidth`
   let unknown (n : String) : Bool :=
     (kernel n && n != "textwidth") || n == "ht" || n == "wd" || n == "dp" ||
       (!deferred && ((line n && (!preamble || flowPage || (set "textwidth").isSome)) ||
@@ -5767,13 +4757,10 @@ private def lenValue (lens : Array (String × String)) (raws : Array Raw)
       | none => if unknown n then none else some (if line n && !deferred then "textwidth" else n)
   match raws.filter (!· matches .space) with
   | #[.ctrl n _] =>
-    -- One name alone copies its value whole, glue included.
     (held n).orElse fun _ => lengthSrcBy ref raws
   | _ => lengthSrcBy ref raws
 
-/-- The names a native length spells, in order: the word runs that start
-with a letter or `@` (a package's internal lengths). Units stand against
-their digits (`2pt`), so none is one. -/
+/-- The names a native length spells, in order. -/
 private def lengthNames (s : String) : Array String := Id.run do
   let mut out : Array String := #[]
   let mut cur := ""
@@ -5784,51 +4771,31 @@ private def lengthNames (s : String) : Array String := Id.run do
       cur := ""
   return out
 
-/-- Does the declaration reader take `s` as a length, each name in it taken
-as declared? Whether a name resolves stays the reader's, where it reads. -/
+/-- Whether the declaration reader takes `s` as a length. -/
 private def readsAsLength (s : String) : Bool :=
   match Decl.parseValue s ((lengthNames s).map fun n => (n, {})) with
   | some (.glue _) | some (.dim _) => true
   | _ => false
 
-/-- The list parameters a level's style carries: `\leftmargin` its indent,
-`\topsep` its opening space, `\itemsep` and `\parsep` its gap between items. -/
+/-- The list parameters a level's style carries. -/
 private def listCarried : List String := ["leftmargin", "topsep", "itemsep", "parsep"]
 
-/-- What `\list` spends where a list opens (ltlists.dtx: `\@trivlist`'s
-`\@topsepadd` from `\topsep` and `\partopsep`, `\parskip\parsep`,
-`\leftmargin` and `\rightmargin` into the measure, `\listparindent` into
-`\parindent`): set in the list's body, it reaches nothing of the list, and
-its group ends it. -/
+/-- What `\list` spends where a list opens. -/
 public def listSpent : List String :=
   ["leftmargin", "rightmargin", "listparindent", "parsep", "topsep", "partopsep"]
 
-/-- What a list's items read as they set (ltlists.dtx: `\@item`'s
-`\itemsep` and label box, `\itemindent`, `\labelsep`, `\labelwidth`; and
-`\parskip` between paragraphs): set in the list's body, it spaces that one
-list. -/
+/-- What a list's items read as they set. -/
 public def listPerItem : List String := ["itemsep", "itemindent", "labelsep", "labelwidth", "parskip"]
 
-/-- Does a body assignment of `n` reach the lists after it in LaTeX? Only
-where the document's `\@listi` stands (`listiKept`) and leaves `n` be: a
-class's own sets every carried parameter again at every list (size10.clo),
-and a deeper level inherits what the outermost left. -/
+/-- Whether a body assignment of `n` reaches the lists after it in LaTeX. -/
 private def reachesLists (st : St) (n : String) : Bool :=
   listCarried.contains n && st.listiKept &&
     (st.listDefs.find? (·.1 == 1)).any fun (_, _, as) => !as.any (·.name == n)
 
-/-- One length assignment, natively, at the site `paramSites` gives it: a
-page property, a token an engine site reads, a list level's indent, or —
-where LaTeX's own code sets the value again before anything reads it —
-nothing, said so. A parameter no engine site reads is named where it stands,
-and a length of the document's own is a token of its name. Inside a
-definition nothing is judged: the assignment runs where the command is used,
-so it is not the value later arithmetic reads either; everywhere else the
-value is recorded, for as long as its group lasts (`rewriteRaw`). -/
+/-- One length assignment, natively, at the site `paramSites` gives it. -/
 private def setLength (n src what : String) (pos : Pos) : M (Array Raw) := do
   let st ← get
-  -- premise: registerScopeChecks — an assignment in a definition body or in a
-  -- group leaves the value arithmetic after it reads as it was
+  -- premise: registerScopeChecks — a scoped assignment leaves later arithmetic unchanged
   unless st.inDef do
     write fun st => { st with lens := (st.lens.filter (·.1 != n)).push (n, src) }
   let preamble ← docPreamble
@@ -5844,8 +4811,7 @@ private def setLength (n src what : String) (pos : Pos) : M (Array Raw) := do
     synthAt own pos
   let list (level : Nat) (kind : String) : String :=
     if level == 1 then kind else s!"{kind}{level}"
-  -- premise: listBodyChecks — a list parameter set in a list's body ships
-  -- the page the list ships without it, noted where LaTeX discards it too
+  -- premise: listBodyChecks — a list-body parameter ships the page without it
   if st.inList && !st.inDef && (listSpent.contains n || listPerItem.contains n) then
     if listSpent.contains n then
       return ← nothing "the list spent it where it opened, and it ends with the list"
@@ -5866,13 +4832,11 @@ moves a line" (tokens := false)
     unless st.inDef do
       write fun st => { st with localLengths :=
         if st.localLengths.contains t then st.localLengths else st.localLengths.push t }
-    -- premise: listLevelChecks — a named body setting under a kept \@listi
-    -- ships the page the document ships without it: no list reads it here
+    -- premise: listLevelChecks — a body setting under a kept `\@listi` ships the page without it
     if !st.inDef && !preamble && !st.inList && reachesLists st n then
       named "opens the lists after it, whose level macro leaves it be; a list here opens \
 with the space its level sets in the preamble, and only the trivlists after it read it"
-    -- A preamble `\topsep` stands until a list runs its `\@list⟨n⟩`, which
-    -- sets the length again: only a trivlist outside every list reads it.
+    -- A preamble `\topsep` reaches only a trivlist outside every list.
     else if !st.inDef && preamble && n == Ir.trivlistSkipName then
       became what s!"\\tokens\{ {t} = {src} }, which a trivlist outside a list reads; \
 every list sets '\\topsep' again from its class's parameters" pos
@@ -5901,8 +4865,7 @@ every list sets '\\topsep' again from its class's parameters" pos
       write fun st => { st with listResets := st.listResets.push (n, what, st.file, pos) }
       synthAt own pos
     else if reachesLists st n then
-      -- premise: listLevelChecks — a named body setting under a kept \@listi
-      -- ships the page the document ships without it: no list reads it here
+      -- premise: listLevelChecks — a body setting under a kept `\@listi` ships the page without it
       named "spaces the lists after it, whose level macro leaves it be; a list here is \
 spaced per level, in the preamble"
     else
@@ -5912,41 +4875,32 @@ spaced per level, in the preamble"
       nothing "paragraphs here are set flush, as declared"
     else named why
 
-/-- The one warning for a length assignment the door cannot read (`shown`,
-the value as written): named once per parameter, and skipped, the length
-keeping what it held, as though no assignment took place. -/
+/-- The one warning for a length assignment the door cannot read, the length
+keeping what it held. -/
 private def unreadableLength (n shown : String) (pos : Pos) : M (Array Raw) := do
   sayOnce ("ctrl:setlength:" ++ n ++ ":value") .W0104
     s!"'\\{n}' is set to '{shown}', a value this engine cannot read: skipped, and \
 the length keeps its value" pos
-    -- premise: unreadableLengthChecks — each LaTeX-valid spelling the door
-    -- cannot read builds with this one warning, and ships the page it shipped
-    -- without the setting
+    -- premise: unreadableLengthChecks — an unreadable spelling warns once
     (demote := packageFile (← get).file)
   return #[]
 
-/-- A length value as the assignment door reads it where it stands:
-`lenValue`, then the declaration reader's own test. `none` for a value the
-door cannot read. -/
+/-- A length value as the assignment door reads it; `none`
+for one it cannot read. -/
 private def doorValue? (value : Array Raw) : M (Option String) := do
   let st ← get
   return (lenValue st.lens value st.inDef (!st.inDoc && !st.seam) st.measureKnown
     st.flowPage).filter readsAsLength
 
-/-- A length assignment from its value's raws (`\setlength`, TeX's own
-`\parskip 6pt`): read at the door and landed by `setLength`, or named and
-skipped (`unreadableLength`). -/
+/-- A length assignment from its value's raws, landed by
+`setLength` or named and skipped. -/
 private def assignLength (n : String) (value : Array Raw) (what : String) (pos : Pos) :
     M (Array Raw) := do
   if let some src ← doorValue? value then return ← setLength n src what pos
   unreadableLength n (rawSrc value).trimAscii.toString pos
 
-/-- A document macro used in a list's body whose definition is length
-settings and nothing else — pandoc's `\tightlist`,
-`\setlength{\itemsep}{0pt}\setlength{\parskip}{0pt}` — as the settings it
-stands for: TeX expands it where it stands, so they are the list's own
-(`setLength`'s list arm). The definition is the one the conditional pass
-recorded; `none` for any other body, which the elaborator expands. -/
+/-- A document macro used in a list's body whose definition is only length
+settings, as those settings. -/
 private def listSettings? (st : St) (name : String) : Option (Array (String × Array Raw)) :=
   if !st.inList || st.inDef then none
   else match st.binds[name]? with
@@ -5960,8 +4914,8 @@ where
       (paramName t).bind fun n => go rest (acc.push (n, v))
     | _, _ => none
 
-/-- A length operand the rewrite evaluates: a literal (`2pt`, `-2pt`), or a
-length whose value it set, negated or not. -/
+/-- A length operand the rewrite evaluates: a literal, or a length whose value
+it set, negated or not. -/
 private def lenOperand (lens : Array (String × String)) : List Raw → Option String
   | [.word w _] => (Decl.parseLength w).map fun _ => w
   | [.sym '-' _, .word w _] => (Decl.parseLength ("-" ++ w)).map fun _ => "-" ++ w
@@ -5970,8 +4924,8 @@ private def lenOperand (lens : Array (String × String)) : List Raw → Option S
   | [.word "-" _, .ctrl y _] => (lens.find? (·.1 == y)).map fun (_, v) => s!"-({v})"
   | _ => none
 
-/-- A unit or glue keyword inside a value (plain.tex's `\p@` and `\z@`,
-ltdefns.dtx's `\@plus` and `\@minus`), never a register. -/
+/-- Whether a control word is a unit or glue keyword inside
+a value rather than a register. -/
 private def valueCtrl (n : String) : Bool :=
   n == "p@" || n == "z@" || n == "@plus" || n == "@minus"
 
@@ -5979,9 +4933,8 @@ private def isSign : Raw → Bool
   | .sym '-' _ | .sym '+' _ | .word "-" _ | .word "+" _ => true
   | _ => false
 
-/-- Where one dimension ends: an optional sign, then a factor with its unit
-(`4pt`, `2\p@`, `2 pt`), a factor of a register (`.5\leftmargin`), or a
-register alone. -/
+/-- Where one dimension ends: an optional sign, then a factor with its unit, a
+factor of a register, or a register alone. -/
 private def dimenEnd (raws : Array Raw) (i : Nat) : Nat :=
   let i := skipSpaces raws i
   let i := if (raws[i]?.map isSign).getD false then skipSpaces raws (i + 1) else i
@@ -5997,9 +4950,7 @@ private def dimenEnd (raws : Array Raw) (i : Nat) : Nat :=
       | _ => i + 1
   | _ => i
 
-/-- Past an optional glue keyword (`plus`, or its sanitised `\@plus`) and
-the dimension after it — the keyword its own word, or run into the
-dimension (`keyRun?`). -/
+/-- The index past an optional glue keyword and the dimension after it. -/
 private def afterKey (raws : Array Raw) (k : Nat) (key : String) : Nat :=
   let j := skipSpaces raws k
   match raws[j]? with
@@ -6020,8 +4971,8 @@ private def afterKey (raws : Array Raw) (k : Nat) (key : String) : Nat :=
 
 
 
-/-- Where a glue value ends: a register it copies (`\itemsep \parsep`), or
-a dimension with its optional `plus` and `minus` parts. -/
+/-- Where a glue value ends: a register it copies, or a dimension with optional
+`plus` and `minus` parts. -/
 private def glueEnd (raws : Array Raw) (i : Nat) : Nat :=
   let i := skipSpaces raws i
   let rubber (k : Nat) : Nat := afterKey raws (afterKey raws k "plus") "minus"
@@ -6031,9 +4982,8 @@ private def glueEnd (raws : Array Raw) (i : Nat) : Nat :=
     let d := dimenEnd raws i
     if d == i then i else rubber d
 
-/-- The parameter assignments `raws` spells from `i`, in order, and where
-they stop: at the end, or at the first construct that assigns no length
-parameter `paramSites` knows. -/
+/-- The parameter assignments `raws` spells from `i`, in
+order, and where they stop. -/
 private def readAssigns (raws : Array Raw) (i : Nat) : Array TexAssign × Nat := Id.run do
   let mut out : Array TexAssign := #[]
   let mut j := skipSpaces raws i
@@ -6059,19 +5009,16 @@ private def readAssigns (raws : Array Raw) (i : Nat) : Array TexAssign × Nat :=
     | _ => break
   return (out, j)
 
-/-- Past the spaces and the optional `=` before a TeX assignment's value. -/
+/-- The index past the spaces and the optional `=` before a
+TeX assignment's value. -/
 private def skipEq (raws : Array Raw) (i : Nat) : Nat :=
   let j := skipSpaces raws i
   match raws[j]? with
   | some (.sym '=' _) | some (.word "=" _) => skipSpaces raws (j + 1)
   | _ => j
 
-/-- The display skips a redefined `\normalsize` assigns from `start`, each
-read through the length door in order, as TeX runs the body: a skip copied
-from one the body set earlier is that value, one it cannot read — a copy of
-a skip the class set — is named once and skipped (`unreadableLength`).
-All four a display reads are taken, the short pair with the long
-(`Ir.displaySkipsFor`). -/
+/-- The display skips a redefined `\normalsize` assigns from `start`, each read
+through the length door in order. -/
 private def sizeSkips (body : Array Raw) (start : Nat) (pos : Pos) : M (Array String) := do
   let mut lens := (← get).lens
   let known := (← get).measureKnown
@@ -6098,10 +5045,8 @@ private def rawBefore (raws : Array Raw) (i : Nat) : Option Raw := Id.run do
     | r => return r
   return none
 
-/-- Does the raw standing before a register read it as an operand, so no
-assignment opens there (TeXbook ch. 20 and 24)? A command that reads a
-dimension or a number next (`\hskip`, `\ifdim`, `\the`), a keyword that
-does (`by`, `plus`, `to`), a factor (`2`, `.5`), a sign, or a relation. -/
+/-- Whether the raw before a register reads it as an
+operand, so no assignment opens there. -/
 private def readsOperand : Option Raw → Bool
   | some (.ctrl c _) => ["hskip", "vskip", "kern", "mskip", "mkern", "the", "showthe",
       "advance", "multiply", "divide", "ifdim", "ifnum", "ifodd", "ifcase", "dimexpr",
@@ -6112,19 +5057,14 @@ private def readsOperand : Option Raw → Bool
   | some (.sym c _) => "=<>+-*/(".toList.contains c
   | _ => false
 
-/-- TeX's own assignment to a kernel parameter, when the control word
-`name`, read up to `start`, opens one (TeXbook ch. 24:
-⟨variable⟩[=]⟨value⟩, as `\parskip 6pt plus 1pt`, `\parskip=0pt` and
-`\parindent\z@` spell it): the value's raws and where it ends. The value
-starts with `=`, a number or a register; a parameter read as an operand
-(`readsOperand`: after `\hskip` or `\ifdim`, after a factor) opens none. -/
+/-- TeX's own assignment to a kernel parameter, when the
+control word `name` opens one. -/
 private def plainAssign? (name : String) (raws : Array Raw) (start : Nat) :
     Option (Array Raw × Nat) :=
   if (paramSites.lookup name).isNone then none
   else if readsOperand (rawBefore raws (start - 1)) then none
   else
     let j := skipSpaces raws start
-    -- The lexer keeps an `=` against the word it opens (`=6pt`).
     let (eq, raws) := match raws[j]? with
       | some (.sym '=' _) | some (.word "=" _) => (true, raws)
       | some (.word w p) =>
@@ -6140,8 +5080,8 @@ private def plainAssign? (name : String) (raws : Array Raw) (start : Nat) :
     let e := glueEnd raws v0
     if opens && e > v0 then some (raws.extract v0 e, e) else none
 
-/-- The list depth a class's parameter macro sets up: `\@listi` to
-`\@listvi` (size10.clo), the one `\list` calls for its depth (ltlists.dtx). -/
+/-- The list depth a class's parameter macro sets up,
+`\@listi` to `\@listvi`. -/
 private def listLevelOf : String → Option Nat
   | "@listi" => some 1
   | "@listii" => some 2
@@ -6151,16 +5091,14 @@ private def listLevelOf : String → Option Nat
   | "@listvi" => some 6
   | _ => none
 
-/-- Does a body run `\let\@listi\@listI`, a class `\normalsize`'s reset of
-the outermost list level (size10.clo)? -/
+/-- Whether a body runs `\let\@listi\@listI`, a class `\normalsize`'s reset of
+the outermost list level. -/
 private def resetsListi (body : Array Raw) : Bool :=
   let xs := body.toList.filter (!· matches .space)
   (xs.zip xs.tail).any fun p => (p.1 matches .ctrl "let" _) && (p.2 matches .ctrl "@listi" _)
 
-/-- A redefined list-level macro whose body is parameter assignments only:
-recorded for the level, as `\list` runs it where a list of that depth opens,
-with each parameter no engine site reads named once. `false` for any other
-body, which the definer reads as it reads every definition. -/
+/-- A redefined list-level macro whose body is only parameter assignments,
+recorded for the level; `false` for any other. -/
 private def listLevelDef (level : Nat) (what : String) (body : Array Raw) (pos : Pos) :
     M Bool := do
   let (assigns, stop) := readAssigns body 0
@@ -6175,9 +5113,7 @@ private def listLevelDef (level : Nat) (what : String) (body : Array Raw) (pos :
   became what s!"the level-{level} list parameters, set where a list that deep opens" pos
   return true
 
-/-- A list-level value as one native operand: the running value of the
-parameter it copies, a length the document set (a token of its name), or a
-literal glue; `none` for anything else. -/
+/-- A list-level value as one native operand; `none` for anything else. -/
 private def listOperand (run : List (String × Option String)) (lens : Array (String × String))
     (value : Array Raw) : Option String :=
   match value.toList.filter (!· matches .space) with
@@ -6190,24 +5126,14 @@ private def listOperand (run : List (String × Option String)) (lens : Array (St
     if vs.all (fun x => match x with | .ctrl c _ => valueCtrl c | _ => true)
     then some (lengthSrc value) else none
 
-/-- Each list level a redefined macro sets, as LaTeX's `\list` computes it
-where a list of that depth opens (ltlists.dtx): the level's assignments over
-the values the enclosing level left — the preamble's, for the outermost. A
-level the class's own macro sets up leaves its values the class's, so what a
-deeper level inherits from it is not known here and not written; the
-outermost is the class's unless the document's `\normalsize` keeps the
-preamble's `\@listi` (`listiKept`). The known values become the level's
-style, for both list kinds, and each preamble assignment to a parameter a
-level sets again is said to reach the lists it reaches, or none. -/
+/-- Each list level a redefined macro sets, as LaTeX's `\list` computes it where
+a list of that depth opens. -/
 private def flushListLevels : M (Array Raw) := do
   let st ← get
-  -- premise: listLevelChecks — a class's \normalsize resets \@listi, so the
-  -- document's redefinition ships the page the document ships without it
+  -- premise: listLevelChecks — `\normalsize` resets `\@listi`, so the redefinition ships nothing
   let defOf (level : Nat) : Option (Pos × Array TexAssign) :=
     if level == 1 && !st.listiKept then none
     else (st.listDefs.find? (·.1 == level)).map fun (_, p, a) => (p, a)
-  -- What the preamble set, where the outermost list opens, is the list's
-  -- only when its level macro is the document's and leaves the parameter be.
   let outer := (defOf 1).map (·.2)
   for (n, what, file, pos) in st.listResets do
     write fun st => { st with file := file }
@@ -6249,7 +5175,8 @@ private def flushListLevels : M (Array Raw) := do
         out := out ++ (← synthAt native pos)
   return out
 
-/-- A TeX length from option text: `3\\gapunit` is `3 * gapunit`, `\\x` is `x`. -/
+/-- A TeX length from option text: `3\\gapunit` is
+`3 * gapunit`, `\\x` is `x`. -/
 private def lengthOfTeX (v : String) : String :=
   let t := v.trimAscii.toString
   match t.splitOn "\\" with
@@ -6266,14 +5193,8 @@ private def ctrlName (raws : Array Raw) : Option String :=
   | [.ctrl n _] => some n
   | _ => none
 
-/-- An xparse argument spec, or a plain count, as native parameters
-`a1 … an`. Only the argument *types* matter here: `m` is mandatory, and `o`,
-`O{..}`, `d..`, `D..{..}`, `s`, `t.` are all optional. Every parameter is
-`content` — a LaTeX macro argument may carry markup (`\light{\texttt{x}}`),
-and typing it `text` would reject exactly the calls LaTeX accepts. Payloads
-such as defaults and delimiters ride inside braces that the parser has
-already grouped, so a spec is read from its own source text and braces are
-skipped. -/
+/-- An xparse argument spec, or a plain count, as native
+parameters `a1 … an`. -/
 private def signature (spec : String) : String := Id.run do
   let mut letters : Array Char := #[]
   let mut depth := 0
@@ -6288,26 +5209,13 @@ private def signature (spec : String) : String := Id.run do
     s!"a{k + 1}{if c == 'o' then "?" else ""}: content"
   String.intercalate ", " params
 
-/-- The output drivers geometry and crop choose among (geometry manual §5.1,
-"Driver options"; crop.dtx's driver options): each says how a DVI or PDF
-backend is handed the paper size and the marks, which this engine — its
-own PDF writer — decides itself. So a driver option, under any value, asks
-for nothing the page shows, and it passes without a loss to name. -/
+/-- The output drivers geometry and crop choose among, which
+change nothing this engine sets. -/
 private def driverOptions : List String :=
   ["dvips", "dvipdfm", "dvipdfmx", "dvisvgm", "pdftex", "luatex", "xetex", "vtex", "driver"]
 
-/-- `\usepackage[opts]{geometry}`, `\geometry{...}`, `\newgeometry{...}`
-→ `\page{...}`. `textwidth`/`textheight` pass through to the `\page` keys
-of the same names (geometry manual §5.2: they size the body; the engine
-centres it — geometry's own oneside `hmarginratio` 1:1). `headsep` and
-`footskip` pass through too, carrying their LaTeX baseline semantics to
-the page model (`Layout.furnGapOfSep` for the head, `Layout.latexFootY`
-for the foot); `headheight` is satisfied
-by construction — the head's band reserves its line's whole ink
-(`Layout.bodyTop_clears_head`), which is what a declared `headheight`
-exists to guarantee. The one-sided margins `top`/`bottom` and
-`left`/`right` map when the pair agrees (the engine's page model has one
-margin per axis) and are dropped named when it does not. -/
+/-- `\usepackage[opts]{geometry}`, `\geometry{...}` and
+`\newgeometry{...}` as `\page{...}`. -/
 private def geometry (opts : String) (pos : Pos)
     (spelling : String := "\\usepackage{geometry}") : M (Array Raw) := do
   let mut keys : Array String := #[]
@@ -6323,24 +5231,15 @@ private def geometry (opts : String) (pos : Pos)
       else if f == "noheadfoot" || f == "nohead" || f == "nofoot" then
         -- Asks for no running furniture, the state the engine starts from.
         pure ()
-      -- premise: driverOptionChecks — a driver option or `verbose` ships
-      -- the page the document ships without it
+      -- premise: driverOptionChecks — a driver option ships the page without it
       else if driverOptions.contains f || f == "verbose" then pure ()
       else dropped := dropped.push f
     | k :: v =>
       let k := k.trimAscii.toString
       let v := (String.intercalate "=" v).trimAscii.toString
-      -- geometry's width/height size the text block, paperwidth/paperheight
-      -- the page (geometry manual §5.2); \page speaks in page dimensions.
+      -- geometry's width/height size the text block, paperwidth/paperheight the page.
       let k := if k == "paperwidth" then "width" else if k == "paperheight" then "height" else k
-      -- A `\dimexpr` is TeX arithmetic `lengthOfTeX` cannot carry (its
-      -- operands may be registers, `\ht\strutbox` in the wild): mapping it
-      -- would synthesize an unreadable `\page` value and turn a named drop
-      -- into an error. It stays a drop, and the warning names the spelling
-      -- — for a key the engine otherwise reads, "footskip" alone would
-      -- point the author at the wrong half of the assignment.
-      -- premise: driverOptionChecks — a driver option or `verbose` ships
-      -- the page the document ships without it
+      -- premise: driverOptionChecks — a driver option ships the page without it
       if driverOptions.contains k || k == "verbose" then pure ()
       else if v.startsWith "\\dimexpr" then
         droppedExpr := droppedExpr.push s!"{k} = {v}"
@@ -6353,10 +5252,7 @@ private def geometry (opts : String) (pos : Pos)
         sides := sides.push (k, lengthOfTeX v)
       else dropped := dropped.push k
     | [] => pure ()
-  -- geometry's per-side margins, folded pairwise: an equal pair is the
-  -- symmetric margin the engine centres with (geometry manual §5.2's
-  -- oneside hmarginratio 1:1 is the same statement), an unequal or lone
-  -- side has no native equivalent and stays named.
+  -- An equal pair of side margins is the symmetric margin; an unequal or lone side stays named.
   let side (n : String) : Option String :=
     (sides.findRev? (·.1 == n)).map (·.2)
   for (a, b, key) in [("top", "bottom", "vmargin"), ("left", "right", "hmargin")] do
@@ -6381,19 +5277,7 @@ private def geometry (opts : String) (pos : Pos)
 length as one literal")
   synthAt native pos
 
-/-- `\usepackage[opts]{crop}` and `\crop[opts]` → `\page{ marks = cut }`.
-crop's `cam` style is the one the engine draws — derived from the trim
-and bleed instead of enlarging the sheet, so a trim+bleed submission
-keeps its dimensions — and `off` is the declared way back
-(`marks = none`). Every other option is dropped named (W0101):
-`cross`/`frame` are mark styles the engine does not draw, the sheet
-sizes and `center` enlarge the medium around the page (this engine's
-medium is trim plus the declared `\page{ bleed }`), and `info`/`noinfo`,
-`axes`, and the physical transforms (`mirror`, `rotate`, `invert`,
-`notext`) configure machinery the engine does not model. `noaxes` asks
-for the state the engine is already in, and a driver name
-(`driverOptions`) for nothing the page shows; both pass silently. Option
-list: crop.dtx v1.10 (Melchior Franz). -/
+/-- `\usepackage[opts]{crop}` and `\crop[opts]` as `\page{ marks = cut }`. -/
 private def crop (opts : String) (pos : Pos)
     (spelling : String := "\\usepackage{crop}") (key : String := "usepackage:crop") :
     M (Array Raw) := do
@@ -6404,8 +5288,7 @@ private def crop (opts : String) (pos : Pos)
     if o == "cam" then mode := some true
     else if o == "off" then mode := some false
     else if o == "noaxes" then pure ()
-    -- premise: driverOptionChecks — a driver option ships the page the
-    -- document ships without it
+    -- premise: driverOptionChecks — a driver option ships the page without it
     else if driverOptions.contains o then pure ()
     else if !o.isEmpty then dropped := dropped.push o
   unless dropped.isEmpty do
@@ -6420,10 +5303,8 @@ private def crop (opts : String) (pos : Pos)
     discard spelling "crop draws no marks until an option asks for them" key pos
     return #[]
 
-/-- The beamerposter size table, read off beamerposter.sty v1.13's own
-size branch: name → board (w × h in mm, landscape as the sty spells it)
-and the fontscale normalization in hundred-millionths — (1/√2)ⁿ against
-a0, the sty's own comments beside each value. -/
+/-- The beamerposter size table from beamerposter.sty v1.13: board size in mm
+and font scale per name. -/
 private def beamerposterSizes : List (String × (Nat × Nat) × Nat) :=
   [("a0b", (1190, 880), 100000000),
    ("a0", (1189, 841), 100000000),
@@ -6432,7 +5313,7 @@ private def beamerposterSizes : List (String × (Nat × Nat) × Nat) :=
    ("a3", (420, 297), 35355339),
    ("a4", (297, 210), 25000000)]
 
-/-- Format sp-free fixed-point `v/10000` pt as a decimal `pt` value. -/
+/-- Fixed-point `v/10000` pt as a decimal `pt` value. -/
 private def ptTenThousandths (v : Int) : String :=
   let whole := v / 10000
   let frac := (v % 10000).toNat
@@ -6443,20 +5324,8 @@ private def ptTenThousandths (v : Int) : String :=
     let fs := String.ofList (padded.toList.reverse.dropWhile (· == '0')).reverse
     s!"{whole}.{fs}pt"
 
-/-- `\usepackage[size=…,orientation=…,scale=…]{beamerposter}` →
-`\documentclass{poster}` + `\page{ width, height, fontsize }`. The board
-comes from the sty's own size table (`beamerposterSizes`); the sty's
-default is `size=a0`, landscape, `scale=1.0` (`\ExecuteOptionsX`), and
-`orientation=portrait` swaps the axes. `size=custom` reads `width=` and
-`height=` as cm, fontscale 1, exactly the sty's custom branch. The body
-size is the sty's own calibration — 24.88 pt at scale 1 — times
-`scale=` times the named size's fontscale normalization, the product
-rounded to two decimals as the sty's `\FPupn{...}{... 2 round}` rounds
-it. The synthesized `\documentclass` stands after the beamer→slides
-rewrite in stream order and the last `\documentclass` wins in
-`applyDecl` (posterCompatChecks pins it), so the poster class displaces
-the slides one. An option outside the model (`debug`, printer sizing) is
-dropped by name (W0367). -/
+/-- `\usepackage[size=…,orientation=…,scale=…]{beamerposter}` as the poster
+class with its page size and font size. -/
 private def beamerposter (opts : String) (pos : Pos) : M (Array Raw) := do
   let mut size := "a0"
   let mut portrait := false
@@ -6469,8 +5338,7 @@ private def beamerposter (opts : String) (pos : Pos) : M (Array Raw) := do
     match (e.splitOn "=").map (·.trimAscii.toString) with
     | ["size", v] => size := v
     | ["orientation", v] => portrait := v == "portrait"
-    -- a bare `orientation` takes the sty's declared default value
-    -- (`\DeclareOptionX{orientation}[portrait]`).
+    -- A bare `orientation` takes the sty's declared default, portrait.
     | ["orientation"] => portrait := true
     | ["scale", v] =>
       match Decl.parseDecimal v with
@@ -6499,8 +5367,7 @@ private def beamerposter (opts : String) (pos : Pos) : M (Array Raw) := do
       keys := keys.push s!"width = {w}mm"
       keys := keys.push s!"height = {h}mm"
     | none => dropped := dropped.push s!"size={size}"
-  -- myfontscale = scale × fontscale, rounded to two decimals (the sty's
-  -- own FPupn rounding); normalsize = 24.88 pt × myfontscale.
+  -- myfontscale is scale × fontscale rounded to two decimals; normalsize is 24.88 pt × myfontscale.
   let den : Int := (scaleDen : Int) * 100000000
   let cents := (scaleNum * (fontscale : Int) * 100 + den / 2) / den
   keys := keys.push s!"fontsize = {ptTenThousandths (2488 * cents)}"
@@ -6513,11 +5380,8 @@ private def beamerposter (opts : String) (pos : Pos) : M (Array Raw) := do
 \\page{ ... } declares anything further")
   synthAt native pos
 
-/-- `\hypersetup{pdfauthor=..., pdftitle=...}` → `\pdfmeta{...}`, and its link
-colours (`colorlinks`, `linkcolor`, `urlcolor`, `citecolor`, `allcolors`,
-`hidelinks`) → the link kinds' `\style` colours (`LinkSetup.native`). The
-other rendering hints (`pdfborder`, a viewer's frame) have no meaning and go
-quietly. -/
+/-- `\hypersetup` as `\pdfmeta{...}` for its metadata keys and link-kind colour
+styles for its link colours. -/
 private def hypersetup (opts : String) (pos : Pos) : M (Array Raw) := do
   let mut keys : Array String := #[]
   let mut links := (← get).links
@@ -6541,13 +5405,8 @@ private def hypersetup (opts : String) (pos : Pos) : M (Array Raw) := do
   became "\\hypersetup" native pos
   synthAt native pos
 
-/-- `\DocumentMetadata{...}` (usrguide, "Document metadata"; ltdocinit):
-`lang` is the document's language and lands on the same `\pdfmeta{
-language }` door babel's main language uses, and `pdfversion` on
-`\pdfmeta{ version }` when it names a version the writer writes (1.7 or
-2.0). The other writer keys (`pdfstandard`, `uncompress`, `testphase`, …)
-configure a PDF writer the engine is not, so each is dropped by name, never
-silently, and never as page content. -/
+/-- `\DocumentMetadata{...}`: `lang` and `pdfversion` land
+on the native `\pdfmeta` keys. -/
 private def documentMetadata (opts : String) (pos : Pos) : M (Array Raw) := do
   let mut lang : Option String := none
   let mut version : Option String := none
@@ -6573,19 +5432,14 @@ standard and compression keys have no effect here")
   became "\\DocumentMetadata" native pos
   synthAt native pos
 
-/-- `\AddToHook{hook}[label]{code}` (usrguide, "Hooks"): code onto a kernel
-hook. The engine has no hook machinery — what a page shows is declared,
-not accumulated by hook code — so the construct skips whole: hook name,
-label, and body, never leaking the code as text. -/
+/-- `\AddToHook{hook}[label]{code}`, skipped whole: the
+engine has no hook machinery. -/
 private def addToHook (pos : Pos) : M Unit :=
   sayOnce "ctrl:AddToHook" .W0104
     "'\\AddToHook' registers code on a kernel hook; the engine has no \
 hook machinery; skipped" pos
 
-/-- Does hook code assign a page attribute (`\pdfvariable pageattr` or
-`\pdfpageattr`)? That is how a document declares its page boxes at
-shipout — values the engine cannot evaluate when an `\edef` computes them,
-but a declaration all the same (`Ir.PageSpec.trimMarked`). -/
+/-- Whether hook code assigns a page attribute. -/
 private def assignsPageAttr (code : Array Raw) : Bool :=
   let toks := code.filter fun r => !(r matches .space)
   toks.any (· matches .ctrl "pdfpageattr" _) ||
@@ -6593,9 +5447,8 @@ private def assignsPageAttr (code : Array Raw) : Bool :=
       | some (.ctrl "pdfvariable" _), some (.word "pageattr" _) => true
       | _, _ => false
 
-/-- A shipout picture flattened to TeX's own shape, a token stream with its
-group and environment brackets explicit, so reading it is one pass over a
-sequence rather than a recursion over what drawing macros expand to. -/
+/-- A shipout picture flattened to a token stream with its
+group and environment brackets explicit. -/
 private inductive PicTok where
   | ctrl (n : String)
   | chr (c : Char)
@@ -6607,8 +5460,7 @@ private inductive PicTok where
   deriving Inhabited, BEq
 
 mutual
-/-- The flat stream of a raw list; a control word goes through `onCtrl`,
-which is where a drawing macro's body may be spliced. -/
+/-- The flat stream of a raw list, each control word through `onCtrl`. -/
 private def picFlatList (onCtrl : String → Array PicTok → Array PicTok) :
     List Raw → Array PicTok → Array PicTok
   | [], acc => acc
@@ -6629,10 +5481,7 @@ private def picFlatOne (onCtrl : String → Array PicTok → Array PicTok) :
 termination_by structural r _ => r
 end
 
-/-- A picture length as a native expression: `\dimexpr` and `\relax` are
-TeX's brackets around the arithmetic, a coefficient against a name is a
-product (`0.5\x` is `0.5 * x`), and a name is a declared length or nothing
-this reading takes. -/
+/-- A picture length as a native expression. -/
 private def picExpr (lengths : Array String) (ts : Array PicTok) : Option String := Id.run do
   let mut s := ""
   let mut prevNum := false
@@ -6654,17 +5503,8 @@ private def picExpr (lengths : Array String) (ts : Array PicTok) : Option String
 private def picShift (origin e : String) : String :=
   if e.startsWith "-" then s!"({origin}) - ({(e.drop 1).toString})" else s!"({origin}) + ({e})"
 
-/-- **A shipout picture's rules** (the kernel's `shipout/background` and
-`shipout/foreground` pictures, whose reference point is the page's top-left
-corner, y up): `\put(x,y){...}` moves the reference point for its group,
-`\color{c}` inks the rest of its group, `\rule{w}{h}` stands with its
-lower-left corner on the point, a `picture` environment opens a group at
-the point, and a drawing macro — a parameterless definition whose body
-draws — is read one level deep, where shipout expands it. Each rule is
-`(x, y, w, h, colour)` in native expressions over the lengths the document
-declared (`lengths`). Anything else — text, another command, a picture
-offset, a length the document never declared — reads nothing: `none`, and
-the hook stays skipped by name. -/
+/-- A shipout picture's rules, read from its `\put` and `\rule` commands
+relative to the page's top-left corner. -/
 private def shipoutRules (look : String → Option (Array Raw)) (lengths : Array String)
     (code : Array Raw) : Option (Array (String × String × String × String × String)) := Id.run do
   let flat0 := picFlatList (fun n acc => acc.push (.ctrl n))
@@ -6673,7 +5513,6 @@ private def shipoutRules (look : String → Option (Array Raw)) (lengths : Array
   let toks := picFlatList (fun n acc => match look n with
     | some body => if draws body then flat0 body.toList acc else acc.push (.ctrl n)
     | none => acc.push (.ctrl n)) code.toList #[]
-  -- the frame stack: each open group's reference point and ink
   let mut stack : Array (String × String × String) := #[("0pt", "0pt", "black")]
   let mut mode : Nat := 0
   let mut buf : Array PicTok := #[]
@@ -6683,8 +5522,6 @@ private def shipoutRules (look : String → Option (Array Raw)) (lengths : Array
   for t in toks do
     let (ox, oy, ink) := stack.back?.getD ("0pt", "0pt", "black")
     if mode == 13 then
-      -- after a picture's size: an offset pair is a reference point this
-      -- reading does not move
       if t == .chr '(' then return none
       mode := 0
     match mode with
@@ -6768,16 +5605,12 @@ private def shipoutRules (look : String → Option (Array Raw)) (lengths : Array
       mode := 12
     | 12 => if t == .chr ')' then mode := 13
     | _ => return none
-  -- the stream ends where it began: every group closed, no command half read
   if (mode == 0 || mode == 13) && stack.size == 1 then return some rules else return none
 
-/-- Internal marker prefix for xcolor's page-ground epoch. -/
+/-- The marker prefix for xcolor's page-ground epoch. -/
 public def pageColorMarkPrefix : String := "@pagecolor:"
 
-/-- `\pagecolor[model]{colour}` sets the page background from here on
-(xcolor manual §2.6). The source rides intact to the typed resolver; keeping
-this distinct from `\palette{bg=...}` lets `\nopagecolor` restore the
-document/class ground that existed before page colour was applied. -/
+/-- `\pagecolor[model]{colour}`: the page background from here on. -/
 private def pageColor (value : String) (pos : Pos) : M (Array Raw) := do
   became "\\pagecolor" s!"the {value} page-ground epoch" pos
   return #[.ctrl (pageColorMarkPrefix ++ value) pos]
@@ -6787,31 +5620,19 @@ private def modeledColorSource (model : Option String) (value : String) : String
   | some m => s!"{m.trimAscii.toString}({value})"
   | none => value
 
-/-- Internal marker for xcolor's global page-ground reset. `@` is not a
-surface control-word character, so a document cannot forge the transition. -/
+/-- The marker for xcolor's global page-ground reset, unforgeable because `@` is
+no surface control-word character. -/
 public def pageColorResetMark : String := "@pagecolor-reset"
 
-/-- The ink source `\normalcolor` names: the colour in force when the body
-opened (color.sty keeps it as `\default@color`), which the elaborator reads
-from the document palette. A colour name holds no backslash, so no
-`\color{...}` spells it. -/
+/-- The ink source `\normalcolor` names: the colour in force
+when the body opened. -/
 public def normalInkSource : String := "\\normalcolor"
 
-/-- KOMA's `\\sectionlinesformat` is a hook for drawing after a heading. The one
-idiom worth reading is a rule in a colour, `\\textcolor{X}{\\leaders\\hrule …}`;
-any other non-empty body is a dropped loss and says so — an empty body asks
-for no decoration, which is what an unstyled section already draws. The
-rule's geometry is read with its colour: `\\hrule` has zero depth, so its
-bottom edge is the heading's baseline (`rule-position = baseline`), and
-its `height` — TeX's 0.4 pt when none is written (TeXbook p. 221) — is the
-thickness. The height reaches `\\style` as written (`\\p@` spelled `pt`), so
-an unreadable one is E0321 there, never a silent default; a `depth` or
-`width` is not the idiom. -/
+/-- KOMA's `\sectionlinesformat` read as a coloured rule after a heading; any
+other non-empty body is a named loss. -/
 private def sectionRule (src : String) (pos : Pos) : M (Array Raw) := do
   let dropped (why : String) : M (Array Raw) := do
     if src.trimAscii.toString.isEmpty then
-      -- An empty body asks for no decoration: deliberate, and said so —
-      -- the silence guard (W0387) takes wordless consumption for a drop.
       discard "\\sectionlinesformat" "an empty body asks for no decoration"
         "sectionlinesformat" pos
     else
@@ -6825,8 +5646,6 @@ rule; \\allow{E0113} accepts the loss")
     match (rest.splitOn "hrule")[1]? with
     | some afterRule =>
       if color.isEmpty then dropped "" else
-      -- The rule's own words end at the next control sequence (`\\hfill`,
-      -- `\\kern`); `\\p@` is TeX's own point, spelled for the length grammar.
       let spec := ((afterRule.replace "\\p@" "pt").replace "\\z@" "0pt").splitOn "\\"
         |>.headD "" |>.trimAscii.toString
       let height? : Option String :=
@@ -6845,8 +5664,7 @@ rule; \\allow{E0113} accepts the loss")
     | none => dropped ""
   | none => dropped ""
 
-/-- Does environ's `\BODY` stand anywhere in the tree, a group or an
-environment down included? -/
+/-- Whether environ's `\BODY` stands anywhere in the tree. -/
 private def mentionsBody : List Raw → Bool
   | [] => false
   | .ctrl "BODY" _ :: _ => true
@@ -6862,10 +5680,8 @@ decreasing_by
     (have hb : sizeOf body = 1 + sizeOf body.toList := by rfl
      omega)
 
-/-- environ's `\BODY` placed once at the top level of a definition's code:
-the code before it and the code after it, an environment's begin and end
-code with the body standing between them. `none` when `\BODY` is absent,
-stands inside a group, or stands twice. -/
+/-- The code before and after environ's `\BODY` placed once at a definition's
+top level; `none` otherwise. -/
 public def bodySlot? (code : Array Raw) : Option (Array Raw × Array Raw) :=
   (code.findIdx? (· matches .ctrl "BODY" _)).bind fun i =>
     let before := code.extract 0 i
@@ -6873,21 +5689,12 @@ public def bodySlot? (code : Array Raw) : Option (Array Raw × Array Raw) :=
     if mentionsBody before.toList || mentionsBody after.toList then none
     else some (before, after)
 
-/-- The mark the rewrite sets after the native head of an environ
-definition, and that the elaborator's split sets closing the begin half it
-builds: the elaborator builds that definition's halves from its code where
-the mark stands — the code split at a top-level `\BODY` (`bodySlot?`), or
-all of it the end half when it places none — and only there, so a `\BODY`
-in a kernel definition is the document's own macro; in a begin half it says
-the body's edge spaces are trimmed (environ.sty `\env@save`:
-`\trim@spaces`). `:` is no letter (`Lex.nameChar`), so no document spells
-the name. -/
+/-- The mark after the native head of an environ definition, where the
+elaborator splits its begin half. -/
 public def environBodyMark : String := "@environ:BODY"
 
-/-- The declarations standing in front of a float's kernel core when they
-are the whole begin body: each a `\setlength` of one of the two caption
-skips, then `\@float{kind}` (latex.ltx defines the float environments as
-exactly that core). -/
+/-- The caption-skip declarations standing in front of a float's kernel core,
+when they are the whole begin body. -/
 private def floatCoreDecls (kind : String) : List Raw → Option (List (String × Array Raw))
   | [.ctrl "@float" _, .group n _] =>
     if (rawSrc n).trimAscii.toString == kind then some [] else none
@@ -6896,12 +5703,8 @@ private def floatCoreDecls (kind : String) : List Raw → Option (List (String �
     skip.bind fun r => (floatCoreDecls kind rest).map ((r, v) :: ·)
   | _ => none
 
-/-- A caption skip's value inside the float-core idiom, read where the code
-runs: one name alone copies the skip this code assigned before (TeX's
-assignments run in sequence), then the door every `\setlength` reads
-through. `\belowcaptionskip` is no token here (the `\setlength` arm's
-N0102), so a value naming it that this code never assigned has nothing
-to read. -/
+/-- A caption skip's value inside the float-core idiom, read
+in the code's order. -/
 private def floatSkipValue? (assigned : Array (String × String)) (v : Array Raw) :
     M (Option String) := do
   if let #[.ctrl n _] := v.filter (!· matches .space) then
@@ -6909,18 +5712,8 @@ private def floatSkipValue? (assigned : Array (String × String)) (v : Array Raw
   if v.any (· matches .ctrl "belowcaptionskip" _) then return none
   doorValue? v
 
-/-- A float redefined around its own kernel core — the venue idiom
-`\renewenvironment{table}{\setlength{\abovecaptionskip}{…}…\@float{table}}
-{\end@float}`, which swaps the caption skips for tables — is a scoped
-declaration over the built-in float, not a new environment: the float
-stays the engine's, and each skip becomes the kind's own token
-(`tablecaptionsep`, `tablebelowcaptionskip`), which no other kind reads.
-Which of them faces the table is the caption's side and the position it
-is placed for (`Ir.captionSides`): the caption package's, declared where
-the document declares it; without the package, the kernel's own
-`\@makecaption` order, declared here as `position=bottom` for the kind.
-Any other shape is not the idiom and stays the elaborator's refusal
-(W0303). -/
+/-- A float redefined around its own kernel core, as a scoped caption-skip
+declaration for its kind. -/
 private def floatRedef? (envName : String) (raws : Array Raw) (j : Nat) (pos : Pos) :
     M (Option (Array Raw × Nat)) := do
   let some kind := Ir.FloatKind.ofCaptionType? envName | return none
@@ -6933,11 +5726,6 @@ private def floatRedef? (envName : String) (raws : Array Raw) (j : Nat) (pos : P
   let some (.group endB _) := raws[e]? | return none
   match items endB, floatCoreDecls envName (items beginB) with
   | [.ctrl "end@float" _], some decls =>
-    -- Each skip is read at the door every `\setlength` reads through, in
-    -- the code's order, as TeX runs the assignments: a copy of the other
-    -- caption skip reads what this code assigned it before, and a value
-    -- the door cannot read is named once and skipped, the skip keeping
-    -- its value — never handed to the declaration unread.
     let mut assigned : Array (String × String) := #[]
     for (r, v) in decls do
       match ← floatSkipValue? assigned v with
@@ -6946,9 +5734,7 @@ private def floatRedef? (envName : String) (raws : Array Raw) (j : Nat) (pos : P
     let entries := assigned.toList.map fun (r, src) =>
       let tok := if r == "abovecaptionskip" then "captionsep" else "belowcaptionskip"
       s!"{kind.captionScope}{tok} = {src}"
-    -- premise: captionScopeChecks — the kernel's order is declared only
-    -- where no caption package places the skips, which the loads read
-    -- over the whole preamble say
+    -- premise: captionScopeChecks — the kernel's order applies without a caption package
     let packaged := (← get).loads.pkgs.any fun (p, _) => p == "caption" || p == "subcaption"
     let natives := if entries.isEmpty then [] else
       s!"\\tokens\{ {String.intercalate ", " entries} }" ::
@@ -6962,18 +5748,8 @@ private def floatRedef? (envName : String) (raws : Array Raw) (j : Nat) (pos : P
     return some (out, e + 1)
   | _, _ => return none
 
-/-- LaTeX's documented sectioning idiom (ltsect.dtx; clsguide, "Defining
-new sectioning commands"): a definer whose whole body is one
-`\@startsection{name}{level}{indent}{beforeskip}{afterskip}{style}` call
-is a declarative rule over an existing heading, not a definition — read
-as the engine's `\style`, exactly as `\RedeclareSectionCommand`'s keys
-are. A negative beforeskip means only "no indent after the heading"; the
-skip used is the whole glue negated (ltsect.dtx: `\@tempskipa
--\@tempskipa`). A negative afterskip declares a run-in heading, which the
-engine does not model — named and skipped, the built-in heading stands.
-The style group keeps its declarations with TeX's two-letter plain forms
-spelled out (plain.tex: `\bf` for `\bfseries`); alignment declarations
-configure justification the heading model owns and are not font. -/
+/-- LaTeX's documented sectioning idiom: a definer whose whole body is one
+`\@startsection` call. -/
 private def startSection? (cmd : String) (body : Array Raw) (pos : Pos) :
     M (Option (Array Raw)) := do
   let some i := body.findIdx? (fun r => match r with | .space => false | _ => true)
@@ -6985,13 +5761,7 @@ private def startSection? (cmd : String) (body : Array Raw) (pos : Pos) :
       let element := (rawSrc args[0]).trimAscii.toString
       let after := lengthSrc args[4]
       if after.startsWith "-" then
-        -- A negative afterskip declares a run-in heading (ltsect.dtx).
-        -- `\paragraph` and `\subparagraph` *are* run-in here — bold at
-        -- the body size, an em quad to the text, classes.dtx's own shape
-        -- (the elaborator's paragraph arm) — so a redefinition asking for
-        -- that under the built-in's own font declares what already
-        -- renders. One asking a font the run-in title does not set, or a
-        -- run-in at a display level, stays named and skipped.
+        -- A negative afterskip declares a run-in heading.
         let runinBuiltin := cmd == "paragraph" || cmd == "subparagraph"
         let ownFont := args[5].all fun r => match r with
           | .ctrl n _ => ["bf", "bfseries", "normalsize", "raggedright"].contains n
@@ -7032,10 +5802,7 @@ redefinition is skipped") pos
     else return none
   | _ => return none
 
-/-- Commands that are one fixed token by another name: each row rewrites
-the control word to its literal replacement — no arguments, no note, since
-the spelling is native content, not a loss. `compatChecks` pins each
-spelling. -/
+/-- Commands that are one fixed token by another name. -/
 private def literalReplace : List (String × (Pos → Raw)) :=
   [("thepage", fun p => .ctrl "pagenumber" p),
    ("textbar", fun p => .word "|" p),
@@ -7045,20 +5812,12 @@ private def literalReplace : List (String × (Pos → Raw)) :=
    ("textbackslash", fun p => .word "\\" p),
    ("textasciitilde", fun p => .word "~" p)]
 
-/-- The mark the rewrite sets before `\vspace*`'s space: LaTeX's `\@vspacer`
-puts a zero rule there, which keeps the space at a page's top
-(`Ir.pageAnchorRole`, the block Elab makes of it). A space is in no control
-word, so no document spells the mark, as `frameRestartMark`'s is. -/
+/-- The mark before `\vspace*`'s space, which keeps the
+space at a page's top. -/
 public def vspaceAnchorMark : String := "vspace anchor"
 
-/-- A document skip's value as the native `before` spells it, and whether
-it carried an infinite stretch the engine cannot rank: TeX's `\vfill` glue,
-`0pt plus 1fill` (latex.ltx's `\fill`), is the native `fill`, and `\fill`
-on top of a natural width or a shrink stretches the skip as it; a stretch of
-another order or factor ranks against the page's other infinite glues, which
-the engine does not tell apart, so the skip sets at its natural width; any
-other value stands as written. The fill unit may stand a space from its
-factor, as TeX's integer reading takes one optional space after it. -/
+/-- A document skip's value as the native `before` spells it, and whether it
+carried an infinite stretch. -/
 private structure SkipSpelling where
   width : String
   fill : Bool := false
@@ -7080,25 +5839,13 @@ private def skipSrc (src : String) : SkipSpelling :=
     | none => { width := src }
   | _ => { width := src }
 
-/-- A skip's native spelling (`skipSrc`): one block, its width, and its
-infinite stretch as the block reader reads it — TeX's `\fill` stretching
-the skip (`stretch = fill`), or one the engine's one infinite order cannot
-rank (`stretch = unranked`, W0104 where the skip stands between blocks,
-nothing of its own inside inline content, where the skip is not set at
-all). `kind` is the block's `kind` option, if any. -/
+/-- A skip's native spelling: one block, its width and its infinite stretch. -/
 private def skipNative (sp : SkipSpelling) (kind : String := "") : String :=
   let opts := s!"before = {sp.width}" ++ (if kind.isEmpty then "" else s!", kind = {kind}") ++
     (if sp.unranked then ", stretch = unranked" else if sp.fill then ", stretch = fill" else "")
   s!"\\block[{opts}]\{}"
 
-/-- Commands whose whole meaning is one fixed native spelling, synthesised
-in place with a `became` note: each row is an argument-free rewrite.
-`\vfill` is `\vspace{\fill}` (ltspace.dtx): fil glue between blocks. The
-skip commands carry LaTeX's own `\bigskipamount` family values. The
-setspace named stretches sit at the values its source sets for the 10pt
-base size the engine defaults to (setspace.sty: \onehalfspacing =
-\setstretch{1.25}, \doublespacing = \setstretch{1.667} under \@ptsize 0).
-`compatChecks` pins each spelling. -/
+/-- Commands whose whole meaning is one fixed native spelling. -/
 private def simpleNative : List (String × String) :=
   [("vfill", "\\block[before = fill]{}"),
    ("bigskip", "\\block[before = 12pt plus 4pt minus 4pt]{}"),
@@ -7111,12 +5858,8 @@ private def simpleNative : List (String × String) :=
    ("onehalfspacing", "\\page{ leading = 1.25 }"),
    ("doublespacing", "\\page{ leading = 1.667 }")]
 
-/-- moloch's `block` option (beamercolorthememoloch.sty, `/moloch/color/block`):
-`fill` paints the boxes from the page's own colours and `transparent`
-clears them — the theme's own declarations, `\moloch@block@fill` and
-`\moloch@block@transparent`, spelled as it spells them and resolved like
-any `\setbeamercolor`: each keeps the `use` the theme declared at load
-(`BeamerColor.themeElement`) where it names none. -/
+/-- moloch's `block` option values as the theme's own block
+colour declarations. -/
 private def molochBlockColors : String → Option (List (String × String))
   | "fill" => some [("block title", "bg=normal text.bg!80!fg"),
       ("block body", "use=block title,bg=block title.bg!50!normal text.bg"),
@@ -7126,10 +5869,8 @@ private def molochBlockColors : String → Option (List (String × String))
       ("block title alerted", "bg="), ("block title example", "bg=")]
   | _ => none
 
-/-- moloch's options (`\molochset` keys, `\usetheme[...]{moloch}`): the
-`block` option declares the theme's block colours, as the
-`setbeamercolor` arm hands them to the elaborator; every other key is
-theme configuration the engine does not have, named once. -/
+/-- moloch's options: `block` declares the theme's block
+colours; every other key is named. -/
 private def molochOptions (cmd src : String) (pos : Pos) : M (Array Raw) := do
   let mut out := #[]
   for entry in Decl.splitEntries src do
@@ -7155,9 +5896,8 @@ private def molochOptions (cmd src : String) (pos : Pos) : M (Array Raw) := do
           s!"'{cmd}' option '{entry.trimAscii.toString}' is moloch configuration the engine does not have; skipped" pos
   return out
 
-/-- The finite block-hook grammar: whitespace and the three standard skip
-commands, each read through its existing native translation. Unknown raws
-refuse the entire addition; a nested command is never executed here. -/
+/-- The finite block-hook grammar: whitespace and the three
+standard skip commands. -/
 private def blockHookSkips (out : Array String) : List Raw → Option (Array String)
   | [] => some out
   | .space :: rest => blockHookSkips out rest
@@ -7168,10 +5908,8 @@ private def blockHookSkips (out : Array String) : List Raw → Option (Array Str
     else none
   | _ => none
 
-/-- beamerbasetemplates.sty appends the after-body to the named template;
-beamerbaseblocks.sty uses `block begin` between the title and body. Only
-top-level preamble additions are global here. All three arguments belong
-to this command even on refusal, so their content cannot reach recovery. -/
+/-- `\addtobeamertemplate` on the block templates, read
+where it is a top-level preamble addition. -/
 private def blockHookArm (pos : Pos) (raws : Array Raw) (start : Nat) :
     M (Option (Array Raw × Nat)) := do
   let (args, k) := takeGroups raws start 3
@@ -7179,7 +5917,7 @@ private def blockHookArm (pos : Pos) (raws : Array Raw) (start : Nat) :
   match blockHookSkips #[] (args.getD 1 #[]).toList,
       blockHookSkips #[] (args.getD 2 #[]).toList with
   | some before, some after =>
-    -- premise: beamerHookChecks — body, grouped and wrong-slot additions cannot set a global gap.
+    -- premise: beamerHookChecks — scoped additions cannot set a global gap
     if args.size == 3 && element == "block begin" && before.isEmpty && (← docPreamble) then
       let native := String.join after.toList
       let spacing ← synthAt native pos
@@ -7202,9 +5940,8 @@ additions with an empty before-body and standard skips after 'block begin' are s
       (subject := some ("beamer:addtobeamertemplate:" ++ element))
   return some (#[], k)
 
-/-- The footline restoration reads exactly the standout foreground and
-the current canvas background. Other keys or expressions are patch code
-the engine cannot interpret, even if one of these fields is also present. -/
+/-- Whether a footline body reads exactly the standout foreground and the
+current canvas background. -/
 private def standoutFootColors (body : Array Raw) : Bool :=
   let fields := Decl.splitEntries (rawSrc body)
   let entries := fields.filterMap Decl.splitEntry
@@ -7215,9 +5952,7 @@ private def standoutFootColors (body : Array Raw) : Bool :=
      | some (.block names) => Decl.splitEntries names == ["standout", "background canvas"]
      | _ => false)
 
-/-- The supported appended body, structurally matched without evaluating
-any package code: when the explicit note exists, restore the plain
-footline in the frame's colors and clear the unnumbered frame's number. -/
+/-- Whether an appended body is the supported standout footline restoration. -/
 private def standoutFootBody (body : Array Raw) : Bool :=
   match (body.filter (!· matches .space)).toList with
   | [.ctrl "ifbeamertemplateempty" _, .group slot _, .group empty _, .group restore _] =>
@@ -7235,8 +5970,7 @@ private def standoutFootBody (body : Array Raw) : Bool :=
        | _ => false)
   | _ => false
 
-/-- Scan only the finite appended alias grammar. Operands remain original
-groups; no patch code, callback or author text is reparsed. -/
+/-- The appended alias grammar, its operands kept as original groups. -/
 private def standoutAliasList (out : Array Raw) : List Raw → Option (Array Raw)
   | [] => some out
   | .ctrl "colorlet" pos :: .group name np :: .group source sp :: rest =>
@@ -7244,16 +5978,12 @@ private def standoutAliasList (out : Array Raw) : List Raw → Option (Array Raw
       (out ++ #[.ctrl BeamerColor.standoutMarker pos, .group name np, .group source sp]) rest
   | _ => none
 
-/-- etoolbox's append succeeds for the known beamer standout option, so
-only its empty success callback runs. The failure callback is never read
-as executable input. All four arguments are owned even on refusal.
-The native setting carries the behavior to both backends; this is not a
-general macro patch interpreter. -/
+/-- etoolbox's append onto the beamer standout option, of which only the empty
+success callback runs. -/
 private def standoutFootHookArm (pos : Pos) (raws : Array Raw) (start : Nat) :
     M (Option (Array Raw × Nat)) := do
   let (args, k, tail) := takeHookArgs raws start
-  -- premise: beamerHookChecks — altered bodies, callbacks and scopes refuse whole;
-  -- the supported shape changes the shipped standout note in both backends.
+  -- premise: beamerHookChecks — altered bodies, callbacks and scopes refuse whole
   if args.size == 4 && (← get).deck && (← docPreamble) &&
       ctrlName (args.getD 0 #[]) == some "KV@beamerframe@standout" &&
       (args.getD 2 #[]).all (· matches .space) then
@@ -7261,8 +5991,7 @@ private def standoutFootHookArm (pos : Pos) (raws : Array Raw) (start : Nat) :
       let native := "\\chrome{standout-note=true}"
       became "\\apptocmd{\\KV@beamerframe@standout}" native pos
       return some ((← synthAt native pos) ++ tail, k)
-    -- premise: standoutPaletteChecks — aliases change both artifacts only
-    -- on standout frames; unsupported patch bodies are refused whole.
+    -- premise: standoutPaletteChecks — aliases change only standout frames
     if let some aliases := standoutAliasList #[]
         ((args.getD 1 #[]).filter (!· matches .space)).toList then
       if !aliases.isEmpty && nativeStandoutDefined (← get) then
@@ -7275,12 +6004,7 @@ colour aliases or explicit-footer restoration with an empty success callback are
     (subject := some "ctrl:apptocmd")
   return some (tail, k)
 
-/-- cleveref's range form (manual v0.21.4 §2, `\crefrange{key1}{key2}`):
-desugared to the pair the resolver renders — the first key carries the
-plural name and the range conjunction (`@crefrange`), the second the
-label format alone (`labelcref`). The marker is unforgeable (`@` never
-lexes into a control word). Outside the dispatcher halves, which sit at
-their LCNF compile budgets. -/
+/-- cleveref's `\crefrange{key1}{key2}` as the pair the resolver renders. -/
 private def crefRangeArm (name : String) (pos : Pos) (raws : Array Raw)
     (start : Nat) : M (Option (Array Raw × Nat)) := do
   let (args, k) := takeGroups raws start 2
@@ -7290,19 +6014,13 @@ private def crefRangeArm (name : String) (pos : Pos) (raws : Array Raw)
       .ctrl "labelcref" pos, .group args[1] pos], k)
   else return none
 
-/-- Whether `\alert` takes the alert colour: a shipped theme stands, or a
-deck names none, so its class installs the default bundle and the bundle's
-alert colour with it (`Elab`'s slides default). -/
+/-- Whether `\alert` takes the alert colour: a shipped theme
+stands, or the deck names none. -/
 private def alertThemed : M Bool := do
   let st ← get
   return st.themed || (st.deck && !st.themeNamed)
 
-/-- `\alert{body}` without an overlay spec. In text, themed, the alert style
-the elaborator gives the body (`alertMark`): beamer's `alerted text`, the
-alert role, whatever a colour named `alert` holds, the colour alone; in a
-picture, whose standalone TeX reads it too, `alertStyled` —
-`\textcolor{alert}`; unthemed, bold. With no body group the command stays
-`\textbf`, which names the missing argument. -/
+/-- `\alert{body}` without an overlay spec. -/
 private def alertPlain (pos : Pos) (raws : Array Raw) (start : Nat) (picture : Bool := false) :
     M (Option (Array Raw × Nat)) := do
   let themed ← alertThemed
@@ -7323,23 +6041,19 @@ private def alertPlain (pos : Pos) (raws : Array Raw) (start : Nat) (picture : B
       became "\\alert" "\\textbf" pos
       return some (#[.ctrl "textbf" pos], start)
 
-/-- Unforgeable prefix for a parsed `\fontsize` declaration. The two
-source dimensions follow, separated by NUL; source names cannot contain it,
-and elaboration removes the spelling before any IR value exists. -/
+/-- The marker prefix of a parsed `\fontsize` declaration. -/
 public def fontSizeMark : String := "@fontsize:"
 public def fontSizeSep : String := "\u0000"
 
-/-- Beamer's three marker templates select the corresponding list depth
-(beamerbaseauxtemplates.sty). Their bodies remain inline templates. -/
+/-- The list depth each of beamer's three marker templates selects. -/
 private def beamerMarkerElement : String → Option String
   | "itemize item" => some "itemize"
   | "itemize subitem" => some "itemize2"
   | "itemize subsubitem" => some "itemize3"
   | _ => none
 
-/-- A colour-box footer with a left note and a right frame counter is the
-native two-slot footer. Only this structural shape is claimed; unrelated
-template code still belongs to the existing whole-body refusal. -/
+/-- A colour-box footer with a left note and a right frame counter, as the
+native two-slot footer. -/
 private def numberedFootline? (body : Array Raw) :
     Option (Array Raw × String × Option String × String) := do
   let [Raw.env "beamercolorbox" box _] := body.toList.filter (· != .space)
@@ -7363,9 +6077,7 @@ private def numberedFootline? (body : Array Raw) :
     else none
   some (content.extract 0 split, counter, font, options.getD "")
 
-/-- A template's `#1` stands for its argument; `\usebeamertemplate` gives
-none, so the declared default stands (beamerbasetemplates.sty). A template
-of more arguments is not read. -/
+/-- A template body with `#1` replaced by the declared default. -/
 private def substArg (default : Array Raw) : List Raw → Array Raw → Array Raw
   | [], acc => acc
   | .sym '#' _ :: .word w p :: rest, acc =>
@@ -7374,27 +6086,21 @@ private def substArg (default : Array Raw) : List Raw → Array Raw → Array Ra
     else substArg default rest ((acc.push (.sym '#' p)).push (.word w p))
   | r :: rest, acc => substArg default rest (acc.push r)
 
-/-- The line ends at the braces of the group at or after `j` that the lexer
-left out (`Pos.openEol`, `Pos.closeEol`): TeX's spaces of a template's text. -/
+/-- The line ends at the braces of the group at or after
+`j`, which TeX reads as spaces. -/
 private def bodyEdges (raws : Array Raw) (j : Nat) : Bool × Bool :=
   match raws[skipSpaces raws j]? with
   | some (.group _ gp) => (gp.openEol, gp.closeEol)
   | _ => (false, false)
 
-/-- Install a block template: an installed `block begin` replaces what
-`\addtobeamertemplate` appended to the one before it, as beamer's install
-replaces the template the addition modified. -/
+/-- Installs a block template, replacing what
+`\addtobeamertemplate` appended to the one before. -/
 private def installBlockTemplate (element : String) (body : Array Raw) (pos : Pos) : M Unit :=
   write fun st => { st with
     beamerTemplates := (st.beamerTemplates.filter (·.1 != element)).push (element, st.file, pos, body)
     beamerBlockBegin := if element == "block begin" then #[] else st.beamerBlockBegin }
 
-/-- The block templates the preamble installed, read in pairs where it ends
-(`BlockTemplate.read`): each pair read whole lands as its kind's
-`\style{…}{ shape = … }`, its rules' colours as palette entries — a beamer
-colour element's channel as a paint site (`BeamerColor.siteMarker`), a named
-colour as an alias; a pair the reader cannot read is named once and the
-default inner theme's pair stands. -/
+/-- The block templates the preamble installed, read in pairs where it ends. -/
 private def flushBeamerBlocks : M (Array Raw) := do
   let installed := (← get).beamerTemplates
   if installed.isEmpty then return #[]
@@ -7412,8 +6118,6 @@ private def flushBeamerBlocks : M (Array Raw) := do
     let wrap (rs : Array Raw) : Array Raw :=
       if file == savedFile then rs else #[Raw.env (Parse.inputEnv file) rs pos]
     let st ← get
-    -- The document's own macros and flags a template reads, as they stand
-    -- where the body begins: what TeX runs the template against at a block.
     let defs : String → Option BlockTemplate.Macro := fun n =>
       match st.templateBinds[n]? with
       | some (some v) =>
@@ -7423,12 +6127,10 @@ private def flushBeamerBlocks : M (Array Raw) := do
     let flags : String → Option Bool := fun x => st.templateFlags[x]?
     let unread : Array String ← match b, e with
       | some (_, _, _, bb), some (_, _, _, eb) =>
-        -- The dimen registers the document allocates, assigned where the
-        -- template runs; their values where the block stands are not held.
-        -- premise: capitalRegisterChecks — a register a template assigns is read by no document text outside the templates, which would see the value TeX's runs leave there
+        -- premise: capitalRegisterChecks — no text outside the templates reads their registers
         let lengths : String → Option (Option BlockTemplate.Dimen) := fun n =>
           if st.allocated.contains n then some none else none
-        -- premise: wholeBarReadingChecks — a template run against the state the body began in sets each block as TeX sets it there, a flag or macro the body changes before a block named
+        -- premise: wholeBarReadingChecks — templates run against the state the body began in
         let drift := (closeNames st.templateBinds (namesIn (namesIn #[] bb.toList) eb.toList)).filter
           st.templateDrift.contains
         if !drift.isEmpty then
@@ -7438,8 +6140,7 @@ which they run, before a block"]
         match BlockTemplate.read bb eb defs (st.serial + 1) lengths flags with
         | .error us => pure us
         | .ok r =>
-          -- The kind's own element binds the foreground last: beamer's title
-          -- and body elements set one through their parents.
+          -- The kind's own element binds the foreground last.
           let inks (p : Option BlockTemplate.Paint) (el : String) : Bool :=
             match p with
             | some (.beamer (latest :: _) "fg") => latest == el
@@ -7455,7 +6156,6 @@ which they run, before a block"]
               let role := kind.roleStem ++ "edge" ++ (if i == 0 then "" else toString (i + 1))
               match edge.paint with
               | some (.beamer chain ch) =>
-                -- One group per element the channel is bound through.
                 let elements ← chain.toArray.mapM fun el => do return Raw.group (← synth el) pos
                 out := out ++ wrap #[.ctrl BeamerColor.siteMarker pos, .group elements pos,
                   .group (← synth ch) pos, .group (← synth role) pos]
@@ -7465,8 +6165,6 @@ which they run, before a block"]
                 colors := colors.push role
               | none => colors := colors.push "fg"
             let native := s!"\\style\{{styleEl}}\{ shape = {BlockTemplate.native r colors} }"
-            -- The pair as installed, however each half was: named,
-            -- defined or set.
             became s!"{beginEl} / {endEl}" native pos
             out := out ++ wrap (← synthAt native pos)
             pure #[]
@@ -7480,9 +6178,8 @@ which they run, before a block"]
     write fun st => { st with file := savedFile }
   return out
 
-/-- Resolve a stored footer through the same font-size marker and native
-footer declarations as ordinary document content. Box dimensions are not
-content: the shared footer band determines those, with a named adaptation. -/
+/-- A stored footer resolved through the font-size marker
+and native footer declarations. -/
 private def flushBeamerFootline : M (Array Raw × Array Raw) := do
   let some (file, pos, body) := (← get).beamerFootline | return (#[], #[])
   let savedFile := (← get).file
@@ -7504,7 +6201,7 @@ private def flushBeamerFootline : M (Array Raw × Array Raw) := do
           font.leading.getD "") pos)
       fontPrefix := fontPrefix ++ (← synthAt font.cmds pos)
       unread := font.unread
-      -- premise: beamerTemplateChecks — the selected font reaches the footer note in both outputs
+      -- premise: beamerTemplateChecks — the selected font reaches the footer note
       write fun st => { st with diags := st.diags.filter fun d =>
         !(d.code == DiagCode.W0104.code &&
           d.subject == some ("beamer:setbeamerfont:" ++ name)) }
@@ -7522,10 +6219,8 @@ private def flushBeamerFootline : M (Array Raw × Array Raw) := do
   write fun st => { st with file := savedFile }
   return (wrap pre, wrap note)
 
-/-- Local option diagnostics travel with the spliced file until conditionals
-and `\endinput` have selected its live text. A space is in no control word:
-these requests cannot be written by a document. The load request checks for
-a live process request at its own file level, never in a nested package. -/
+/-- The marker of a spliced file's option diagnostics request, unforgeable
+because it holds a space. -/
 private def styOptionsLoadMark : String := "package options load"
 private def styOptionsProcessedMark : String := "package options processed"
 private def styOptionsUnhandledMark : String := "package options unhandled"
@@ -7535,10 +6230,8 @@ private def unhandledStyOption (pkg option why : String) (pos : Pos) : M Unit :=
     s!"option '{option}' for local package '{pkg}' {why}; ignored" pos
     (help := "remove the option or declare and process its handler in the local style")
 
-/-- Settle only diagnostic requests, through the same accounting door as
-other ignored options. No style is opened here and no TeX is evaluated.
-`packageOptionChecks` holds the loss, source span, inactive branches,
-unprocessed loads and nested file boundaries to the actual CLI splice. -/
+/-- A spliced file's option diagnostics, settled through the accounting door of
+other ignored options. -/
 private def styOptionsRequest (name : String) (pos : Pos) (raws : Array Raw)
     (start : Nat) : M (Option (Array Raw × Nat)) := do
   if name == styOptionsProcessedMark then
@@ -7551,8 +6244,7 @@ private def styOptionsRequest (name : String) (pos : Pos) (raws : Array Raw)
   if name == styOptionsUnhandledMark then
     unhandledStyOption pkg (rawSrc (args.getD 1 #[])) "has no handler" pos
   else
-    -- premise: packageOptionChecks — only a process in this live file
-    -- discharges its options; an inactive or nested process cannot do so.
+    -- premise: packageOptionChecks — only a live process discharges its options
     if raws.any (fun r => r matches .ctrl "package options processed" _) then
       discard s!"option list for local package '{pkg}'"
         "its options are checked by '\\ProcessOptions'" ("package-options:" ++ pkg) pos
@@ -7562,9 +6254,7 @@ private def styOptionsRequest (name : String) (pos : Pos) (raws : Array Raw)
           unhandledStyOption pkg option "was not processed" pos
   return some (#[], k)
 
-/-- The first share in a two-column `\\columnratio` declaration, in per
-mille. Paracol gives every listed ratio to its column and the remainder to
-the final column (`paracol.sty`, `\\pcol@setcolwidth@r`). -/
+/-- The first share in a two-column `\columnratio` declaration, in per mille. -/
 private def paracolRatio? (src : String) : Option Nat := do
   let first ← (src.splitOn ",").find? fun s => !s.trimAscii.toString.isEmpty
   let (m, scale) ← Decl.parseDecimal first.trimAscii.toString
@@ -7576,9 +6266,8 @@ private def paracolFactor (p : Nat) : String :=
   let digits := toString (p % 1000)
   "0." ++ "".pushn '0' (3 - digits.length) ++ digits
 
-/-- One citation's arguments as written after its command: a star, the
-optional notes, the keys' group — the raws to hand the natbib door, and the
-index past them. -/
+/-- One citation's arguments as written: a star, the optional notes, the keys'
+group, and the index past them. -/
 private def citeArgs (raws : Array Raw) (start : Nat) : Bool × Array Raw × Nat :=
   let j0 := skipSpaces raws start
   let star := raws[j0]? matches some (.word "*" _) || raws[j0]? matches some (.sym '*' _)
@@ -7588,26 +6277,11 @@ private def citeArgs (raws : Array Raw) (start : Nat) : Bool × Array Raw × Nat
   let (_, j4) := takeGroups raws j3 1
   (star, raws.extract j1 j4, j4)
 
-/-- biblatex's citation commands on the natbib door (biblatex manual §3.8):
-the parenthetical `\parencite` and `\autocite` (the shipped styles'
-`autocite=inline`) are `\citep`, the textual `\textcite` is `\citet`, a
-capitalized spelling the capitalized form; the starred `\parencite*` of an
-author-year style prints the year alone, natbib's `\citeyearpar`, and the
-starred textual citation is the unstarred one; the footnote citations —
-`\footcite`, and `\smartcite` in body text — are a footnote holding the bare
-citation, closed by its period (`\bibfootnotewrapper`: `\addperiod`), and
-`\footcitetext` the same footnote's text alone; `\footfullcite` is the
-footnote of `\fullcite`. `\supercite` is numeric.cbx's superscript
-citation, its notes ignored: it sets as `\cite` of its keys, named (W0428),
-the superscript not carried; a style that defines none falls back to its
-bare `\cite`, notes and all (biblatex.sty `\blx@warn@citecmd`), author-year's
-`\citealp`. -/
+/-- biblatex's citation commands on the natbib door. -/
 private def biblatexCiteArm (name : String) (pos : Pos) (raws : Array Raw) (start : Nat) :
     M (Option (Array Raw × Nat)) := do
   let authoryear := (← get).bibStyle == some "plainnat"
-  -- premise: biblatexSuperciteChecks — without biblatex this arm reads neither: `\supercite`
-  -- is then no command the document loads, which the unknown-command path names (W0301),
-  -- and `\Cite` goes on to the doors after this one
+  -- premise: biblatexSuperciteChecks — without biblatex this arm reads neither command
   if (name == "Cite" || name == "supercite") && !(← get).loads.pkgs.any (·.1 == "biblatex") then
     return none
   let (star, args, k) := citeArgs raws start
@@ -7631,13 +6305,8 @@ private def biblatexCiteArm (name : String) (pos : Pos) (raws : Array Raw) (star
       else if name == "footfullcite" then "fullcite" else "citealp"
     return some (#[.ctrl note pos, .group (#[.ctrl cmd pos] ++ args ++ #[.word "." pos]) pos], k)
 
-/-- biblatex's multicite commands (biblatex manual §3.8.3): a run of
-citations, each with its own notes, as the family prints a list of keys —
-author-year's bare and parenthetical lists joined by `\multicitedelim`'s
-semicolon, the parenthetical one in one pair of brackets; numeric's in one
-pair of brackets, joined by a comma; a textual list's last citation after
-`and`, the others after a comma; the footnote forms a footnote holding the
-bare list, closed by its period. -/
+/-- biblatex's multicite commands: a run of citations, each
+with its own notes. -/
 private def biblatexMulticiteArm (name : String) (pos : Pos) (raws : Array Raw) (start : Nat) :
     M (Option (Array Raw × Nat)) := do
   let authoryear := (← get).bibStyle == some "plainnat"
@@ -7672,32 +6341,21 @@ private def biblatexMulticiteArm (name : String) (pos : Pos) (raws : Array Raw) 
     else #[.ctrl "citetext" pos, .group body pos]
   return some (out, j)
 
-/-- Named arms of the later dispatcher. The wrapper handles local style
-option requests first; keeping that guard outside the match exposes the
-actual routing equation without unfolding unrelated command bodies. -/
+/-- Named arms of the later dispatcher. -/
 private def rewriteCtrlLaterNamed (name : String) (pos : Pos) (raws : Array Raw)
     (start : Nat) : M (Option (Array Raw × Nat)) := do
   match name with
   | "addtobeamertemplate" => blockHookArm pos raws start
   | "apptocmd" => standoutFootHookArm pos raws start
   | "linespread" | "setstretch" =>
-    -- setspace's parameterised form is \linespread by another name
-    -- (setspace.sty: both set \baselinestretch).
+    -- setspace's parameterised form is `\linespread` by another name.
     let (args, k) := takeGroups raws start 1
     if args.isEmpty then return none
     let native := s!"\\page\{ leading = {rawSrc (args.getD 0 #[])} }"
     became s!"\\{name}" native pos
     return some (← synthAt native pos, k)
   | "xspace" =>
-    -- xspace package: a space unless punctuation follows (xspace
-    -- documentation, the exception list — TeX's tokenizer has already
-    -- eaten the space the author typed after the control word, here as
-    -- there). The walk reads the next parsed element; at the end of a
-    -- group or macro body, where the following context is the use
-    -- site's and unknowable at rewrite time, the space — the package's
-    -- default action — is emitted. It is emitted as control-space, which
-    -- survives a macro body's trailing-space trim; a bare interword
-    -- space would be dropped there and glue the words after all.
+    -- xspace: a space unless punctuation follows.
     let punct (c : Char) : Bool :=
       c == '.' || c == ',' || c == '\'' || c == '/' || c == '?' ||
       c == ';' || c == ':' || c == '!' || c == '~' || c == '-' || c == ')'
@@ -7708,14 +6366,7 @@ private def rewriteCtrlLaterNamed (name : String) (pos : Pos) (raws : Array Raw)
       | _ => false
     return some (if noSpace then #[] else #[.ctrl " " pos], start)
   | "addbibresource" =>
-    -- biblatex's resource declaration (biblatex manual §3.7.1): a .bib
-    -- file, named at load time, that \printbibliography later prints with
-    -- the others declared. The names ride the walk's state to that site;
-    -- the natbib door (\bibliography) takes them, as BibTeX's list of
-    -- files, where the list prints.
-    -- A resource biblatex fetches (`location=remote`) or reads in another
-    -- format (`datatype=`) is no local .bib: it is named and skipped, and
-    -- the citations of its entries show '?' named.
+    -- biblatex's `\addbibresource`: a `.bib` file `\printbibliography` later prints.
     let (opt, j) := takeOpt raws start
     let (args, k) := takeGroups raws j 1
     if h : args.size = 1 then
@@ -7748,9 +6399,7 @@ private def rewriteCtrlLaterNamed (name : String) (pos : Pos) (raws : Array Raw)
   | "autocites" | "Autocites" | "footcites" | "smartcites" | "Smartcites" =>
     biblatexMulticiteArm name pos raws start
   | "bibliography" =>
-    -- biblatex's legacy spelling of `\addbibresource` (biblatex manual
-    -- §3.7.1: `\bibliography{refs}` in the preamble adds `refs.bib`):
-    -- each name a resource, read where `\printbibliography` prints.
+    -- Under biblatex a preamble `\bibliography{refs}` adds the resource `refs.bib`.
     if (← get).inDoc || !(← get).loads.pkgs.any (·.1 == "biblatex") then return none
     let (args, k) := takeGroups raws start 1
     match args[0]? with
@@ -7765,12 +6414,7 @@ private def rewriteCtrlLaterNamed (name : String) (pos : Pos) (raws : Array Raw)
     | none => return none
   | "setcitestyle" | "bibpunct" | "citestyle" => natbibStyleArm name pos raws start
   | "bibliographystyle" =>
-    -- LaTeX reads the style anywhere before the `.aux` is written, and
-    -- natbib reads it back at `\begin{document}`. The preamble elaborator
-    -- does not take it, so a preamble declaration replays there, where the
-    -- body arm carries it to the `\bibliography` marker.
-    -- premise: compatIndexChecks — the index's body \bibliographystyle rows
-    -- set their style through the body arm, with no unknown-command warning
+    -- premise: compatIndexChecks — body `\bibliographystyle` rows set their style
     if (← get).inDoc || (← get).seam then return none
     let (args, k) := takeGroups raws start 1
     match args[0]? with
@@ -7781,9 +6425,6 @@ private def rewriteCtrlLaterNamed (name : String) (pos : Pos) (raws : Array Raw)
       return some (#[], k)
     | none => return none
   | "printbibliography" =>
-    -- The list prints here (biblatex manual §3.7.2), from the resources
-    -- declared above; its options (heading=, title=) restyle a heading
-    -- the locale already words, dropped named when given.
     let (o, k) := takeOpt raws start
     if let some o := o then
       unless o.trimAscii.toString.isEmpty do
@@ -7802,13 +6443,9 @@ were dropped: {o}" pos
       s!"biblatex's reference list of '{"', '".intercalate srcs.toList}'" pos
     return some (← synthAt native pos, k)
   | "crefrange" | "Crefrange" =>
-    -- cleveref's range form: desugared by `crefRangeArm` (its docstring
-    -- carries the shape and the source).
     crefRangeArm name pos raws start
   | "fontsize" =>
-    -- NFSS records the two dimensions and `\selectfont` commits them. The
-    -- latter is already an earned no-op here; this marker carries both
-    -- values to the one typed style parser without reparsing document text.
+    -- NFSS records the two dimensions and `\selectfont` commits them.
     let (args, k) := takeGroups raws start 2
     if args.size < 2 then
       say .E0304 "'\\fontsize' needs {size} and {leading} groups" pos
@@ -7818,17 +6455,13 @@ were dropped: {o}" pos
     became "\\fontsize" "an affine font size and baseline skip" pos
     return some (#[.ctrl (fontSizeMark ++ size ++ fontSizeSep ++ leading) pos], k)
   | "fontseries" =>
-    -- NFSS's series declaration (fntguide §2.2): the weight half rides the
-    -- unforgeable `@series:` marker into elaboration (`declStyleOf`, the
-    -- `@lang:` door), where it styles the rest of the scope as `\bfseries`
-    -- does. The width half names an axis the engine does not have; it is
-    -- warned by name rather than silently dropped with the weight.
+    -- The series' weight half rides the `@series:` marker; its width half has no engine axis.
     let (args, k) := takeGroups raws start 1
     if args.isEmpty then return none
     let code := (rawSrc (args.getD 0 #[])).trimAscii.toString
     match Ir.Weight.parseSeries code with
     | some (w, width) =>
-      -- premise: compatMarkerChecks — a top-level discard leaves the Doc the one without it
+      -- premise: compatMarkerChecks — a top-level discard leaves the Doc without it
       if ← preambleProper then
         discard s!"\\fontseries\{{code}}" "'\\begin{document}' selects the normal series"
           s!"fontseries:{code}" pos
@@ -7848,14 +6481,10 @@ the weight in force stands" pos
   | "modulolinenumbers" =>
     linenoCtrl name pos raws start
   | "selectlanguage" =>
-    -- babel's mid-document switch: from here on, in flow order (babel
-    -- manual §1.5). The marker is unforgeable (`@` never lexes into a
-    -- control word); elaboration turns it into the language attribute,
-    -- which hyphenation and both artifacts read.
     let (args, k) := takeGroups raws start 1
     if args.isEmpty then return none
     let lname := rawSrc (args.getD 0 #[])
-    -- premise: compatMarkerChecks — a top-level discard leaves the Doc the one without it
+    -- premise: compatMarkerChecks — a top-level discard leaves the Doc without it
     if ← preambleProper then
       discard s!"\\selectlanguage\{{lname}}" "'\\begin{document}' selects the main language"
         s!"selectlanguage:{lname}" pos
@@ -7865,19 +6494,12 @@ the weight in force stands" pos
       say .W0368 s!"no locale for language '{lname}'; English captions \
 and patterns stand in" pos
         (help := "the engine ships locale records for: en, fr, de")
-    -- `\enquote` reads its quotes through `mainLang`, and only a switch in
-    -- the body moves it. Under csquotes' default lualatex keeps the main
-    -- language's quotes after every switch it was measured at: in a
-    -- `\begin{document}` hook, in a `\title` argument and in the body. The
-    -- body's move here is that open divergence.
+    -- Only a switch in the body moves the language `\enquote` reads its quotes through.
     if (← get).inDoc then
       write fun st => { st with mainLang := tag }
     became s!"\\selectlanguage\{{lname}}" s!"the '{tag}' language attribute" pos
     return some (#[.ctrl ("@lang:" ++ tag) pos], k)
   | "foreignlanguage" =>
-    -- One run in another language (babel manual §1.5): the content group
-    -- carries the attribute. babel's optional argument holds locale
-    -- modifiers the engine has no reader for; the language still lands.
     let (_, j) := takeOpt raws start
     let (args, k) := takeGroups raws j 2
     if h : args.size = 2 then
@@ -7891,12 +6513,6 @@ and patterns stand in" pos
       return some (#[.group (#[Raw.ctrl ("@lang:" ++ tag) pos] ++ args[1]) pos], k)
     else return none
   | "enquote" =>
-    -- csquotes' quoting command: typographic quotes around the content,
-    -- single for the starred form (csquotes manual §3.1). The delimiters
-    -- are locale data (babel ini `delimiters.quotes`): « » under french,
-    -- „ “ under german; the starred (inner) form takes the locale's inner
-    -- pair. Nesting-aware inner quotes are not modelled: a nested
-    -- \enquote repeats its own pair.
     let j := skipStar raws start
     let starred := j != start
     let k := skipSpaces raws j
@@ -7909,11 +6525,6 @@ and patterns stand in" pos
       return some (#[.word o pos, g, .word c pos], k + 1)
     | _ => return none
   | "color" =>
-    -- `\color[model]{spec}` colours to the end of the group (xcolor manual
-    -- §2.6.4). The marker carries the source specification intact; the
-    -- typed colour parser and resolver in the elaborator own conversion.
-    -- The command ends in `\ignorespaces` (color.sty `\@declaredcolor`),
-    -- so the space after its argument sets nothing.
     let (model, j) := takeOpt raws start
     let (args, k) := takeGroups raws j 1
     if args.isEmpty then return none
@@ -7924,8 +6535,7 @@ and patterns stand in" pos
     | none => became s!"\\color\{{value}}" s!"\\{value}" pos
     return some (#[.ctrl ("@ink:" ++ source) pos], skipSpaces raws k)
   | "vspace" =>
-    -- The star is `\@vspacer`'s zero rule before the space: its mark goes
-    -- first, so the space stays at a page's top (`vspaceAnchorMark`).
+    -- The star's zero rule goes before the space, keeping it at a page's top.
     let starred := skipStar raws start != start
     let start := skipStar raws start
     let (_, j) := takeOpt raws start
@@ -7937,14 +6547,7 @@ and patterns stand in" pos
     became "\\vspace" native pos
     return some (← synthAt native pos, k)
   | "vskip" =>
-    -- TeX's primitive reads its glue unbraced (TeXbook ch. 12) and puts it
-    -- on the vertical list where it stands, as `\vspace` does, but leaves
-    -- its own glue as the last skip where `\vspace` closes on
-    -- `\vskip\z@skip`: the native skip's `kind = vskip` says so, and an
-    -- element's `\addvspace` after it takes the larger. A glue the native
-    -- reader reads, or `\vfill`'s own spelling (`skipSrc`); a register or an
-    -- expression stays the unknown command. In a definition's body it
-    -- means what its use makes it mean.
+    -- Unlike `\vspace`, `\vskip` leaves its own glue as the last skip (`kind = vskip`).
     if (← get).inDef then return none
     let v0 := skipSpaces raws start
     let e := glueEnd raws v0
@@ -7954,36 +6557,26 @@ and patterns stand in" pos
     became "\\vskip" native pos
     return some (← synthAt native pos, e)
   | "newpage" | "clearpage" =>
-    -- One page model: with no floats to flush, \clearpage and \newpage are
-    -- the declared boundary \pagebreak names.
+    -- With no floats to flush, `\clearpage` and `\newpage` are the declared page break.
     became s!"\\{name}" "\\pagebreak" pos
     return some (#[.ctrl "pagebreak" pos], start)
   | "pagebreak" =>
-    -- LaTeX's [0-4] demand level tunes a penalty this engine's breaker
-    -- does not weigh: every \pagebreak is taken whole.
+    -- Every `\pagebreak` is taken whole; the demand level is not weighed.
     let (opt, j) := takeOpt raws start
     if opt.isSome then
       say .N0102 "'\\pagebreak' demand levels are ignored: the break is taken" pos
     return some (#[.ctrl "pagebreak" pos], j)
   | "today" =>
-    -- A date is an input, and the artifact is a function of the document
-    -- and its fonts alone: core reads no clock, or two builds of one
-    -- source would disagree. Refused deliberately, naming what the author
-    -- can write, instead of falling through as a generic unknown command.
+    -- Core reads no clock, so `\today` is refused.
     sayOnce "ctrl:today" .W0104
       "'\\today' asks for the day the document is built; the engine reads no \
 clock, so nothing is inserted" pos
       (help := "write the date as text where it should appear; \\allow{W0104} accepts the skip")
     return some (#[], start)
   | "ul" =>
-    -- soul's plain underline; the native draws it from the font's metrics
-    -- and skips descenders, which is what \varul existed to fake.
     became "\\ul" "\\underline" pos
     return some (#[.ctrl "underline" pos], start)
   | "varul" =>
-    -- \varul<depth>[raise][thickness]{text}, the xparse spelling built on
-    -- soul. The options tune a hand-drawn rule; the native reads the font's
-    -- own underline metrics, so they are dropped.
     let mut j := skipSpaces raws start
     if let some (.word w _) := raws[j]? then
       if w.startsWith "<" && w.endsWith ">" then
@@ -7994,8 +6587,7 @@ clock, so nothing is inserted" pos
     return some (#[.ctrl "underline" pos], j2)
   | "IfValueT" | "IfValueTF" => return some (#[.ctrl "ifgiven" pos], start)
   | "ExplSyntaxOn" =>
-    -- expl3 is TeX's programming layer. Nothing in it is document content,
-    -- so the block is skipped whole rather than one primitive at a time.
+    -- expl3 holds no document content, so the block is skipped whole.
     let mut k := start
     for j in [start:raws.size] do
       k := j + 1
@@ -8007,13 +6599,7 @@ clock, so nothing is inserted" pos
     if h : args.size = 2 then
       let element := rawSrc args[0]
       if element == "disposition" then
-        -- KOMA's `disposition` is the base font of every sectioning level
-        -- at once (KOMA-Script manual ch. 4, element `disposition`: used
-        -- by all the disposition levels, each level's own element applied
-        -- after it). One declaration fans out to each heading element the
-        -- engine draws; a later \setkomafont{section} then wins per key,
-        -- the engine's own replace-on-redeclare — KOMA composes the two
-        -- font lists instead, a divergence this arm accepts.
+        -- KOMA's `disposition` is the base font of every sectioning level at once.
         let native := "\\style{section}{ font = {...} }, per heading level"
         became "\\setkomafont{disposition}" native pos
         let mut out : Array Raw := #[]
@@ -8023,8 +6609,7 @@ clock, so nothing is inserted" pos
           out := out ++ (← synthAt s!"\\style\{{lvl}}" pos).push font
         return some (out, k)
       else if Ir.styleableElements.contains element then
-        -- The font spec is inline content and travels as a group, not text,
-        -- so its own idioms (\\color{x}) are still rewritten by the walk.
+        -- The font spec travels as a group, so its own idioms are still rewritten.
         let native := s!"\\style\{{element}}"
         became s!"\\setkomafont\{{element}}" (native ++ "{ font = {...} }") pos
         let font : Raw := .group #[.word "font" pos, .space, .sym '=' pos, .space,
@@ -8052,8 +6637,6 @@ ignored" pos
 the engine draws")
       return some (#[], k)
     if keys.isEmpty then
-      -- Recognized element, no mappable key: the declared entries are the
-      -- loss, named (W0101's shape); an empty option is the guard's W0387.
       let dropped := (opt.getD "").trimAscii.toString
       unless dropped.isEmpty do
         say .W0101 s!"'\\RedeclareSectionCommand\{{element}}' entries without a \
@@ -8082,8 +6665,6 @@ native equivalent were dropped: {dropped}" pos
 the engine draws")
       return some (#[], k)
     if keys.isEmpty then
-      -- Recognized list, no mappable key: the declared entries are the
-      -- loss, named (W0101's shape); an empty argument is the guard's W0387.
       let dropped := (rawSrc (args.getD 0 #[])).trimAscii.toString
       unless dropped.isEmpty do
         say .W0101 s!"'\\setlist[{element}]' entries without a native equivalent \
@@ -8097,8 +6678,6 @@ were dropped: {dropped}" pos
     let (args, k) := takeGroups raws j 1
     return some (← sectionRule (rawSrc (args.getD 0 #[])) pos, k)
   | "setmathfont" =>
-    -- fontspec's math sibling: the named face fills the math slot, and a
-    -- `Path=` rides into `dir` exactly as `\setmainfont`'s does.
     let (optBefore, j) := takeOpt raws start
     let (args, k) := takeGroups raws j 1
     let (optAfter, k) := takeOpt raws k
@@ -8125,27 +6704,18 @@ were dropped: {dropped}" pos
     return some (← unicodeMathOptions s!"\\unimathsetup\{{opts}}" opts pos, k)
   | "directlua" =>
     let (_, k) := takeGroups raws start 1
-    -- A deliberate refusal, not a gap: Lua is another engine's extension
-    -- hook, and running it is off the table by design. The help names the
-    -- intent declaration that silences the warning.
+    -- Running Lua is refused by design.
     sayOnce "ctrl:directlua" .W0104
       "'\\directlua' is Lua code for luatex; the engine does not run Lua, so it is skipped" pos
       (help := "\\allow{W0104} accepts the skip")
     return some (#[], k)
   | "def" | "edef" | "gdef" | "xdef" =>
-    -- The declarative/programmable line. A plain `\def\x{...}` — an
-    -- undelimited parameter text `#1..#n` and a body — declares exactly
-    -- what `\define` declares, and rewrites onto it (`\gdef` too: the
-    -- store here is flat). `\edef`/`\xdef` expand at definition time, and
-    -- a delimited parameter text is a scanning program: both are
-    -- expansion-time TeX, refused by name (W0357) — the termination
-    -- design's boundary, not a gap.
+    -- A plain `\def` with undelimited parameters declares exactly what `\define` declares.
     let expanding := name == "edef" || name == "xdef"
     let j := skipSpaces raws start
     let cmd? := match raws[j]? with
       | some (.ctrl c _) => some c
       | _ => none
-    -- The parameter text: everything between the name and the body group.
     let mut k := j + 1
     let mut params : Array Raw := #[]
     let mut found := false
@@ -8158,7 +6728,6 @@ were dropped: {dropped}" pos
     let arity := undelimitedArity params
     match cmd? with
     | some cmd =>
-      -- A class's list-level macro read as the parameters it assigns.
       if found && !expanding && arity == some 0 && (← docPreamble) then
         if let (some level, some (.group body _)) := (listLevelOf cmd, raws[k]?) then
           if ← listLevelDef level s!"\\{name}\{\\{cmd}}" body pos then
@@ -8177,8 +6746,6 @@ were dropped: {dropped}" pos
         write fun st => { st with bodyNext := 1, quietNext := st.templateCode.contains cmd }
         return some (← synthAt native pos, k)
       else
-        -- Consume through the body group, so the definition never leaks
-        -- into the document as stray content.
         let k2 := if found then k + 1 else k
         let demote := styInternal (← get).file name
         if expanding then
@@ -8198,17 +6765,12 @@ the definition is skipped" pos
         (demote := styInternal (← get).file name)
       return some (#[], start)
   | "newenvironment" | "renewenvironment" =>
-    -- `\newenvironment{name}[n][default]{begin}{end}` is the native
-    -- `\defineenv{name}(a1: content, ...) {begin} {end}`. The two body
-    -- groups stay in the stream and are announced as macro bodies, so `#k`
-    -- becomes `\ak` in each and idioms inside them translate as usual.
     let (args, j) := takeGroups raws (skipStar raws start) 1
     let envName := rawSrc (args.getD 0 #[])
     let (count, j) := takeOpt raws j
     let (dflt, j) := takeOpt raws j
     if name == "renewenvironment" && count.isNone && dflt.isNone then
-      -- premise: captionScopeChecks — the float-core idiom reads as its native
-      -- kind token, the page equal to that spelling's and free of W0303
+      -- premise: captionScopeChecks — the float-core idiom reads as its native kind
       if let some (out, k) ← floatRedef? envName.trimAscii.toString raws j pos then
         return some (out, k)
     let n := (count.bind String.toNat?).getD 0
@@ -8220,20 +6782,6 @@ the definition is skipped" pos
     write fun st => { st with discardEnvs := st.discardEnvs.filter (·.1 != envName.trimAscii.toString) }
     return some (← synthAt native pos, j)
   | "NewEnviron" | "RenewEnviron" =>
-    -- environ.sty's definer (`\env@new`): the begin code collects the
-    -- environment's body into `\BODY`, its edge spaces trimmed, and runs
-    -- the code; the end code runs the final code, `\ignorespacesafterend`
-    -- unless one is given (`\environfinalcode`). With `\BODY` once at the
-    -- code's top level that is the kernel's `\newenvironment` with the body
-    -- standing there; a code that never places `\BODY` runs where the
-    -- environment stands and the collected body goes nowhere, the body
-    -- discarded at each use (the `.env` arm of `rewriteRaw`, which keeps
-    -- only the arguments). Either takes the native definer's spelling, the
-    -- code group announced as a macro body and the head marked, and the
-    -- elaborator builds the halves from the code (`bodySlot?`), a
-    -- following `[final code]` joining the end. A `\BODY` inside a group
-    -- (a box around the whole body) or placed twice has no begin and end
-    -- to split into: refused where it stands, the construct consumed whole.
     let (args, j) := takeGroups raws (skipStar raws start) 1
     let envName := rawSrc (args.getD 0 #[])
     let (count, j) := takeOpt raws j
@@ -8253,9 +6801,6 @@ the definition is skipped" pos
         write fun st => { st with discardEnvs := if slot
           then st.discardEnvs.filter (·.1 != envName.trimAscii.toString)
           else st.discardEnvs.push (envName.trimAscii.toString, spec) }
-        -- The elaborator builds the halves where this mark stands beside
-        -- the head, and nowhere else; the body has no definer to read it
-        -- (E0312), so it is set only before `\begin{document}`.
         let mark := if (← get).inDoc then #[] else #[Raw.ctrl environBodyMark pos]
         return some ((← synthAt native pos) ++ mark, j)
       else
@@ -8268,9 +6813,7 @@ is skipped" pos
         return some (#[], k)
     | _ => return none
   | "ifdefined" | "ifcsname" | "ifx" =>
-    -- A TeX conditional is configuration for machinery that is not here.
-    -- Skipped whole, both branches: elaborating either would only warn
-    -- about the constructs inside it one by one.
+    -- A TeX conditional left here configures absent machinery and is skipped whole.
     let mut k := start
     for j in [start:raws.size] do
       k := j + 1
@@ -8279,10 +6822,7 @@ is skipped" pos
       s!"TeX conditional ('\\{name}' … '\\fi') is not supported; skipped whole" pos
     return some (#[], k)
   | "theme" =>
-    -- The native spelling turns the themed mappings on exactly as
-    -- `\usetheme` does. Without this the compat walk read a natively-themed
-    -- document as unthemed and rewrote `\alert` to bare `\textbf`: the
-    -- bundle declared an alert role no use could reach.
+    -- The native spelling turns the themed mappings on exactly as `\usetheme` does.
     let (args, _) := takeGroups raws start 1
     let tname := (rawSrc (args.getD 0 #[])).trimAscii.toString
     write fun st => { st with themeNamed := true }
@@ -8295,14 +6835,10 @@ is skipped" pos
     | some spec@(.word w _) =>
       if (overlayWord? spec).isNone then return ← alertPlain pos raws start
       became s!"\\alert{w}" "a conditional alert style" pos
-      -- Leave the original body for rewriteRaw: it is not expanded into
-      -- two alternative groups and no nested compatibility work is skipped.
       return some (#[.ctrl (alertMark (← alertThemed)) pos, spec], j + 1)
     | _ => alertPlain pos raws start
   | "fonts" =>
-    -- A native family declaration takes the next family slot, as the
-    -- elaborator gives it (`Ir.FontSpec.declareFamily`): counted here so a
-    -- `\newfontfamily` after it names its own. The declaration stands.
+    -- Counted so a later `\newfontfamily` takes the next slot.
     let (args, _) := takeGroups raws start 1
     for entry in Decl.splitEntries (rawSrc (args.getD 0 #[])) do
       if let some (key, _) := Decl.splitEntry entry then
@@ -8311,10 +6847,6 @@ is skipped" pos
             write fun st => { st with fontFamilies := st.fontFamilies.push n }
     return none
   | "defbeamertemplate" =>
-    -- beamerbasetemplates.sty: `\defbeamertemplate*{element}{name}[n][default]{body}`
-    -- defines a named option, the starred form installing it too. A block
-    -- template is held for the reader where the preamble ends
-    -- (`flushBeamerBlocks`); any other element is unknown, as before.
     let j := skipStar raws start
     let starred := j != skipSpaces raws start
     let (args, j) := takeGroups raws j 2
@@ -8341,8 +6873,6 @@ only preamble block templates are read" pos
     became s!"\\defbeamertemplate\{{element}}\{{name}}" "a block template, read where the preamble ends" pos
     return some (#[], k)
   | "newbox" =>
-    -- A box register's allocation: the block template reader reads the
-    -- registers a template sets, so the allocation means nothing more.
     let j := skipSpaces raws start
     match raws[j]? with
     | some (.ctrl r _) =>
@@ -8350,15 +6880,10 @@ only preamble block templates are read" pos
       return some (#[], j + 1)
     | _ => return none
   | "setbeamertemplate" =>
-    -- `frame footer` is the one template with a native meaning: its body
-    -- is the per-frame footer note. The body group STAYS in the stream —
-    -- the walk still rewrites what is inside it (a wrapper's `#1`
-    -- included) and `\framefoot` takes it at elaboration.
+    -- `frame footer` is the one template with a native meaning: the per-frame footer note.
     let (args, j) := takeGroups raws start 1
     let element := (rawSrc (args.getD 0 #[])).trimAscii.toString
     if blockTemplateElement element then
-      -- `\setbeamertemplate{element}[name]` installs a defined option,
-      -- `{body}` a template of its own (beamerbasetemplates.sty).
       let (opt, j') := takeOpt raws j
       let (bodyArgs, k) := if opt.isSome then (#[], j') else takeGroups raws j' 1
       if (← get).inDoc then
@@ -8374,9 +6899,6 @@ only preamble block templates are read" pos
           installBlockTemplate element body pos
           became s!"\\setbeamertemplate\{{element}}[{name}]" "a block template, read where the preamble ends" pos
         | none =>
-          -- The default inner theme's own option: the built-in pair stands,
-          -- installed afresh, so an earlier addition goes with the template
-          -- it modified.
           write fun st => { st with
             beamerTemplates := st.beamerTemplates.filter (·.1 != element)
             beamerBlockBegin := if element == "block begin" then #[] else st.beamerBlockBegin }
@@ -8399,8 +6921,7 @@ defines; those blocks keep beamer's default template" pos
       let source := s!"\\style\{{native}}\{marker=\{{marker}}}"
       became s!"\\setbeamertemplate\{{element}}" source pos
       return some (← synthAt source pos, k)
-    -- premise: beamerTemplateChecks — preamble and deferred declarations
-    -- carry footer content through the native frame furniture.
+    -- premise: beamerTemplateChecks — footer content reaches the frame furniture
     else if element == "footline" &&
         (← get).wholeDoc && !(← get).inDoc && !(← get).inDef then
       let (variant, k) := takeOpt raws j
@@ -8424,23 +6945,15 @@ defines; those blocks keep beamer's default template" pos
       return some (#[], k)
     else if element == "title page" then
       let (_, j) := takeOpt raws j
-      -- A template of the overlay shape — one picture on the page, a fill
-      -- over it, nodes pinned to its points — is a spelling of the engine's
-      -- own title page, and is read as one: the ground and one slot per
-      -- node (`TitleTemplate.read`, `.native`). What the reader meets and
-      -- does not model is one named loss, never a fallback.
+      -- A title-page template of the overlay shape is read as the engine's own title page.
       let (bodyArgs, k) := takeGroups raws j 1
       let fonts := (← get).beamerFonts.toList.map fun (n, fields) =>
         (n, beamerTemplateFont n fields)
       match TitleTemplate.read fonts (bodyArgs.getD 0 #[]) with
       | some rd@{ mixed := some datum, .. } =>
-        -- A datum beside literal text has no slot to stand in, and a
-        -- datum is never dropped: the template is not read, the built-in
-        -- title page sets every datum, and that is the one named loss.
+        -- A datum beside literal text has no slot, so the built-in title page sets every datum.
         let (sfx, msg, help) := TitleTemplate.mixedLoss datum rd.ground.isSome
         sayOnce ("beamer:setbeamertemplate:title page:" ++ sfx) .W0363 msg pos (help := help)
-        -- The full-page fill is independent of the unread node arrangement:
-        -- keep its ground while the built-in title layout stands.
         match rd.ground with
         | some ground =>
           let native := s!"\\palette\{ titlepagebg = {ground} }"
@@ -8448,9 +6961,7 @@ defines; those blocks keep beamer's default template" pos
         | none => return some (#[], k)
       | some rd =>
         let native := TitleTemplate.native rd
-        -- The theme's own fonts the template selects are honoured here:
-        -- each skip their declarations drew is withdrawn, by its subject.
-        -- premise: themeTitleShipChecks — a selected theme font's declared size reaches the page
+        -- premise: themeTitleShipChecks — a selected theme font's size reaches the page
         let skips := rd.fonts.map ("beamer:setbeamerfont:" ++ ·)
         write fun st => { st with diags := st.diags.filter fun d =>
           !(d.code == DiagCode.W0104.code && d.subject.any skips.contains) }
@@ -8459,8 +6970,6 @@ defines; those blocks keep beamer's default template" pos
           sayOnce "beamer:setbeamertemplate:title page" .W0110
             s!"not read from the title-page template: \
 {String.intercalate ", " rd.unread.toList}; the rest of it stands" pos
-        -- What a node the engine cannot pin sets still ships, unpinned:
-        -- the loss is the pin, named once per node by the data it sets.
         for data in rd.unplaced do
           let (sfx, msg, help) := TitleTemplate.unplacedLoss data
           sayOnce ("beamer:setbeamertemplate:title page:" ++ sfx) .W0363 msg pos (help := help)
@@ -8469,27 +6978,13 @@ defines; those blocks keep beamer's default template" pos
           sayOnce ("beamer:setbeamertemplate:title page:" ++ sfx) .W0104 msg pos
         return some (← synthAt native pos, k)
       | none =>
-      -- `\setbeamertemplate{title page}` IS beamer's spelling of
-      -- `\renewcommand{\maketitle}`: `\titlepage` expands this template
-      -- (beamerbasetitle.sty). So it routes to the native definer and lands
-      -- under rule (b) — the gate the engine already runs on every
-      -- redefinition of a rendered built-in. A body that elaborates
-      -- non-empty wins and renders; one that loses is refused (W0361), the
-      -- built-in title page stands, and the body is read once more for the
-      -- declarative styling it carries (`applyRefusedTitleStyle`). Nothing
-      -- is dropped, so E0111's `dropped` class is not the honest one here.
-      -- The synthesised head is the *native* spelling: synthesised output
-      -- is not walked again, so a synthesised `\renewcommand` would reach
-      -- elaboration as an unknown command and take the body with it.
+      -- `\setbeamertemplate{title page}` is beamer's spelling of `\renewcommand{\maketitle}`.
       became "\\setbeamertemplate{title page}" "\\define \\maketitle() {...}" pos
       write fun st => { st with bodyNext := 1 }
       return some (← synthAt "\\define \\maketitle()" pos, j)
     else
       let (_, j) := takeOpt raws j
       let (bodyArgs, k) := takeGroups raws j 1
-      -- A template body that carries content (footline, headline) is a
-      -- dropped loss, an error the document can accept; an empty or absent
-      -- body is configuration and warns.
       if (rawSrc (bodyArgs.getD 0 #[])).trimAscii.toString.isEmpty then
         sayOnce "beamer:setbeamertemplate" .W0104
           "'\\setbeamertemplate' is beamer configuration the engine does not have; skipped" pos
@@ -8501,9 +6996,7 @@ defines; those blocks keep beamer's default template" pos
             "; \\allow{E0111} accepts the loss")
       return some (#[], k)
   | "setbeamercolor" =>
-    -- Keep relationships until elaboration: a later parent declaration
-    -- changes its children, so flattening each declaration here is wrong.
-    -- Elab accounts for unsupported sites after seeing their consumers.
+    -- A later parent declaration changes its children, so nothing is flattened here.
     let j := skipStar raws start
     let (args, k) := takeGroups raws j 2
     if h : args.size = 2 then
@@ -8514,8 +7007,6 @@ defines; those blocks keep beamer's default template" pos
       return some (#[.ctrl marker pos, .group args[0] pos, .group args[1] pos], k)
     else return none
   | "ensuremath" =>
-    -- Preserve the math-mode group for the math parser, including its
-    -- containment accounting; text-mode rewrites do not own its commands.
     let (args, j) := takeGroups raws start 1
     if args.size != 1 then return none
     return some (#[.ctrl name pos] ++ raws.extract start j, j)
@@ -8528,10 +7019,7 @@ defines; those blocks keep beamer's default template" pos
       (help := "remove the box dimensions to use the surrounding line's natural spacing")
     return some (#[], j)
   | "mbox" | "makebox" =>
-    -- An hbox's geometry is not modelled — neither command breaks lines, so
-    -- neither reduces to a box of declared measure — and dropping it
-    -- silently would move ink, so the drop is named once; the content stays
-    -- in the stream.
+    -- An hbox's geometry is not modelled, so its drop is named once and its content stays.
     let (opts, widths) := match boxShape.lookup name with
       | some (o, w) => (o, w)
       | none => (0, 0)
@@ -8544,9 +7032,6 @@ defines; those blocks keep beamer's default template" pos
     became s!"\\{name}" "its content" pos
     return some (#[], k)
   | "setbeamerfont" =>
-    -- Store the fields once for mapped elements and template selection.
-    -- `beamerbasefont.sty` merges nonstarred calls and clears starred
-    -- ones, then selects the fields in `beamerFontKeys` order.
     let j := skipStar raws start
     let starred := j != start
     let (args, k) := takeGroups raws j 2
@@ -8564,9 +7049,6 @@ defines; those blocks keep beamer's default template" pos
       match beamerFontElements.lookup element with
       | none =>
         if element == "normal text" then
-          -- Not a missing element: the document's own font is `\fonts`,
-          -- and offering `\style` for something `\style` cannot reach
-          -- would be a help text that does not help.
           sayOnce ("beamer:setbeamerfont:" ++ element) .W0104
             s!"'\\setbeamerfont\{{element}}' sets the document's font, which is \
 not an element style; skipped" pos
@@ -8596,24 +7078,18 @@ no font inheritance, so only declared commands are taken") pos
 its value is skipped" pos
               (help := "write size*={font size}{baseline distance}")
           else if !beamerFontKeys.contains (beamerFontAxis key) then
-            -- An unknown field is data, never template text.
             sayOnce ("beamer:setbeamerfont:" ++ element ++ ":" ++ key) .W0104
               s!"'\\setbeamerfont\{{element}}' key '{key}' is not a beamer font key; \
 its value is skipped" pos
               (help := beamerNative.lookup "setbeamerfont")
-        -- premise: beamerTemplateChecks — an empty declared field clears
-        -- that field; unknown fields alone leave the native style intact.
+        -- premise: beamerTemplateChecks — an empty declared field clears that field
         if starred || updates.any (fun e => beamerFontKeys.contains (beamerFontAxis e.1)) then
-          -- premise: beamerTemplateChecks — a preamble group's font fields
-          -- are usable inside it, but no native style escapes its scope.
+          -- premise: beamerTemplateChecks — no native style escapes its scope
           let written := s!"\\setbeamerfont{if starred then "*" else ""}\{{element}}"
           if !(← get).inDoc && ((← get).inGroup || !(← get).beamerScopes.isEmpty) then
             became written "local font fields" pos
             return some (#[], k)
           let cmds := beamerFontCommands (blockTitleFields element fields)
-          -- The theme's own alerted title font stands over the plain
-          -- title's (`Ir.blockTitleFont`'s parent chain): it is the alerted
-          -- kind's own once the plain title's font is declared at all.
           let alerted := "block title alerted"
           let seed := themeBlockFont (← get).beamerTheme alerted
           let own := if target == "block" && !seed.isEmpty &&
@@ -8627,11 +7103,7 @@ its value is skipped" pos
         else return some (#[], k)
     else return none
   | "tikz" =>
-    -- TikZ's inline picture (pgfmanual §12.2.2): `\tikz[opts]{commands}`, or
-    -- `\tikz[opts]` and one command up to its `;`. It is the picture a
-    -- `{tikzpicture}` with that body is, so it becomes that one node, read
-    -- by the picture arm — drawn natively or at the boundary — and never
-    -- text that prints its own path code.
+    -- `\tikz` is the `tikzpicture` with that body.
     let (_, j) := takeOpts raws start 1
     let opts := raws.extract start j
     let k0 := skipSpaces raws j
@@ -8660,8 +7132,7 @@ its value is skipped" pos
     became "\\columnratio" "the widths of the next two-column flow" pos
     return some (#[], k)
   | "switchcolumn" =>
-    -- premise: columnGeometryChecks — the enclosing flow consumes the
-    -- switch as a column boundary and both artifacts retain its content.
+    -- premise: columnGeometryChecks — the flow consumes the switch as a column boundary
     if (← get).inParacol then return none
     let (_, j) := takeOpt raws start
     let js := skipSpaces raws j
@@ -8671,28 +7142,13 @@ its value is skipped" pos
       "'\\switchcolumn' stands outside a supported two-column paracol flow; ignored" pos
     return some (#[], k)
   | "parbox" =>
-    -- `\parbox{w}{t}` and `{minipage}{w}` are the same box: latex.ltx builds
-    -- both through `\@iiiparbox`, and the manual's own difference is what a
-    -- body may contain, not what the box measures. So the width is honoured
-    -- rather than dropped — the environment carries it to `Ir.BoxWidth`
-    -- through the one width reader — and the `[pos][height][inner-pos]`
-    -- options travel with it, read where the environment reads its own.
+    -- `\parbox` and `minipage` are the same box, so the width is honoured.
     let (_, j) := takeOpts raws start 3
     let (args, k) := takeGroups raws j 2
     became "\\parbox" "\\begin{minipage}{<width>}...\\end{minipage}" pos
-    -- The environment node directly, not synthesised source: the width group
-    -- and the body are already parsed raws, and a `\begin` spelled as text
-    -- would have to be re-parsed against its own `\end` to become an
-    -- environment at all.
     let widthGroup : Array Raw := #[.group (args[0]?.getD #[]) pos]
     return some (#[.env "minipage" (raws.extract start j ++ widthGroup ++ (args[1]?.getD #[])) pos], k)
   | "footercontent" =>
-    -- The gemini poster lineage's footer declaration
-    -- (beamerthemegemini.sty, footline template: one centred line of the
-    -- author's content across the page bottom): the engine's running
-    -- foot is the same furniture slot, so the body group stays in the
-    -- stream and `\runningfoot` takes it — the
-    -- `\setbeamertemplate{frame footer}` shape.
     became "\\footercontent" "\\runningfoot{...}" pos
     return some (← synthAt "\\runningfoot" pos, start)
   | "usetheme" =>
@@ -8700,9 +7156,6 @@ its value is skipped" pos
     let (args, k) := takeGroups raws j 1
     let tname := (rawSrc (args.getD 0 #[])).trimAscii.toString
     let tname := themeAlias tname
-    -- Loading the theme runs its font theme's unstarred `\setbeamerfont`s,
-    -- which merge over the block title fields declared before it: a size
-    -- declared first gives way to the theme's, a family stands.
     let mut reseated : Array String := #[]
     for (element, target, styleKey) in beamerFontElements do
       let seed := themeBlockFont tname element
@@ -8715,9 +7168,6 @@ its value is skipped" pos
         s!"\\style\{{target}}\{ {styleKey} = \{{beamerFontCommands (blockTitleFields element fields)}} }"
     let native := String.intercalate " " (s!"\\theme\{{tname}}" :: reseated.toList)
     became "\\usetheme" native pos
-    -- Only a theme the engine ships turns the themed mappings on: an
-    -- unknown name leaves the document unthemed (W0314 says so), and
-    -- \alert keeps its unthemed bold stand-in.
     write fun st => { st with themeNamed := true }
     if (Theme.find? tname).isSome then
       write fun st => { st with themed := true, beamerTheme := tname }
@@ -8730,9 +7180,6 @@ its value is skipped" pos
       return some (← molochOptions s!"\\{name}" (rawSrc args[0]) pos, k)
     else return none
   | "titlegraphic" =>
-    -- Declared visual content for the title page, not configuration: the
-    -- engine has nowhere to place it yet, so a non-empty declaration is a
-    -- dropped loss; an empty one clears what does not exist and warns.
     let (args, k) := takeGroups raws start 1
     if (rawSrc (args.getD 0 #[])).trimAscii.toString.isEmpty then
       sayOnce "beamer:titlegraphic" .W0104
@@ -8743,21 +7190,9 @@ its value is skipped" pos
         (help := "\\logo places an image on running pages; \\allow{E0112} accepts the loss")
     return some (#[], k)
   | "multicolumn" =>
-    -- `\multicolumn{n}{spec}{text}`. Where the tabular arm reads it — the
-    -- top level of a tabular body — or where the use site decides — the
-    -- head of a definition body, which a use at a cell's head expands —
-    -- the construct stays whole, for the elaborator to set as a span; the
-    -- groups after it are walked like any, so a `#1` in the text is the
-    -- definition's parameter.
-    -- premise: multicolumnSpanChecks — the tabular arm sets what this keeps,
-    -- at a cell's head or by name where it does not open one
+    -- premise: multicolumnSpanChecks — the tabular arm sets what this keeps
     if (← get).tableTop || ((← get).defTop && skipSpaces raws 0 + 1 == start) then
       return none
-    -- Anywhere else — mid-cell, inside a group, outside a tabular body —
-    -- no span is set (LaTeX refuses the first two, "Misplaced \omit"). The
-    -- count and the spec are consumed and named, one line for every shape
-    -- since every shape loses the same: its text stays where it stands,
-    -- walked like any group, without a span or an alignment.
     let (gs, k) := takeGroups raws start 2
     let j := skipSpaces raws k
     match gs, raws[j]? with
@@ -8767,11 +7202,7 @@ its value is skipped" pos
       return some (#[], j)
     | _, _ => return none
   | "usefonttheme" =>
-    -- beamer's `professionalfonts` theme turns beamer's font substitution
-    -- off and keeps the document's declared fonts — the only behaviour this
-    -- engine has, so the ask is agreement, not missing configuration.
-    -- Every other font theme would change fonts, and warns with the native
-    -- spelling.
+    -- `professionalfonts` asks for the engine's only behaviour, so it is agreement.
     let (_, j) := takeOpt raws start
     let (args, k) := takeGroups raws j 1
     if (rawSrc (args.getD 0 #[])).trimAscii.toString == "professionalfonts" then
@@ -8783,11 +7214,7 @@ its value is skipped" pos
         (help := beamerNative.lookup "usefonttheme")
     return some (#[], k)
   | "setbeameroption" =>
-    -- `hide notes` asks for notes kept out of the delivered pages, which
-    -- is what `\note` already is here: a side channel, absent from the PDF
-    -- and hidden in the HTML. Agreement, no warning. Everything else
-    -- (show notes, a second screen) asks for a rendering the engine does
-    -- not have.
+    -- `hide notes` asks for what `\note` already is here.
     let (_, j) := takeOpt raws start
     let (args, k) := takeGroups raws j 1
     if (rawSrc (args.getD 0 #[])).trimAscii.toString == "hide notes" then
@@ -8800,18 +7227,6 @@ its value is skipped" pos
 and \\tokens declare the design directly")
     return some (#[], k)
   | "setbeamercovered" =>
-    -- beamer's default covering is invisible and `transparent` makes it
-    -- show dimmed; this engine's covering is dim-not-hide always (PLAN
-    -- M5). `transparent=<n>` shows covered text at n% opaqueness (beamer
-    -- manual, \setbeamercovered: 0 transparent .. 100 opaque), and
-    -- `transparent` alone is n = 15, the key's default
-    -- (beamerbaseoverlay.sty: `\define@key{beamer@mixin}{transparent}[15]`):
-    -- exactly the engine's covered fraction, so the two spellings are one
-    -- idea — `\palette{ covered = n% }`, each covered colour kept at n% of
-    -- itself over the page, in Oklab, inside the ink bound of beamer's
-    -- sRGB mixin (`inkBoundChecks` holds a covered run to it). Everything
-    -- else (invisible, dynamic, still/again covered) asks for hiding or
-    -- per-slide opacity the engine deliberately does not do.
     let (args, k) := takeGroups raws start 1
     let src := (rawSrc (args.getD 0 #[])).trimAscii.toString
     let pct? : Option Nat :=
@@ -8839,15 +7254,11 @@ dims (dim-not-hide), it is never hidden" pos
 and 'transparent=<n>' are understood")
       return some (#[], k)
   | "inputencoding" =>
-    -- inputenc's one user command switches the encoding the rest of the
-    -- input is read in (inputenc manual §4). A file reads in one encoding
-    -- here, so a switch to the encoding in force changes nothing, any other
-    -- is named, and the argument is configuration, never ink.
+    -- A file reads in one encoding, so a switch to the encoding in force changes nothing.
     let (args, k) := takeGroups raws start 1
     let arg := (rawSrc (args.getD 0 #[])).trimAscii.toString
     if Encoding.sameEncoding arg ((← get).inputenc.getD "utf8") then
-      -- premise: inputDecodingChecks — a switch to the encoding in force
-      -- ships the page of the document without it.
+      -- premise: inputDecodingChecks — a switch to the encoding in force ships the page without it
       discard s!"\\inputencoding\{{arg}}" "the file already reads in that encoding"
         ("inputencoding:" ++ arg) pos
     else
@@ -8857,11 +7268,6 @@ and 'transparent=<n>' are understood")
 '\\inputencoding\{{arg}}'")
     return some (#[], k)
   | "KOMAoptions" =>
-    -- KOMA's runtime option setter (KOMA-Script manual, \KOMAoptions;
-    -- switches take true/on/yes and false/off/no). headsepline and
-    -- footsepline off ask for no separation rule, the only state the
-    -- engine draws — agreement; every other entry is a dropped option,
-    -- named (W0101's shape). An empty argument is the guard's W0387.
     let (args, k) := takeGroups raws start 1
     let entries := (Decl.splitEntries (rawSrc (args.getD 0 #[]))).map
       (·.trimAscii.toString) |>.filter (!·.isEmpty)
@@ -8879,11 +7285,6 @@ and 'transparent=<n>' are understood")
 dropped: {String.intercalate ", " dropped}" pos
     return some (#[], k)
   | "column" =>
-    -- beamer's command form splits a `{columns}` body where it stands
-    -- (beamer user guide §12.7); at that body's top level `splitColumns`
-    -- has already made it the environment form, so a `\column` reaching
-    -- this arm is somewhere else — outside `{columns}`, or nested in a
-    -- group inside it — where beamer itself starts no column.
     let (_, k) := takeGroups raws start 1
     sayOnce "ctrl:column" .W0104
       "'\\column' is not at the top level of a {columns} body; it starts \
@@ -8908,9 +7309,7 @@ and \\tokens declare the design directly")
       configSkipReport name pos msg help
       return some (#[], k)
     | none =>
-    -- A size command at the preamble's top level sets nothing LaTeX keeps:
-    -- `\begin{document}` runs `\normalsize` (measured under lualatex: the
-    -- preamble's `\baselineskip` and display skips are gone in the body).
+    -- `\begin{document}` runs `\normalsize`, so a preamble size command sets nothing kept.
     if (Ir.sizeScale.lookup name).isSome && (← docPreamble) then
       discard s!"\\{name}" "'\\begin{document}' runs '\\normalsize', which sets the size again"
         ("size:" ++ name) pos
@@ -8922,31 +7321,17 @@ and \\tokens declare the design directly")
       return some (#[], k)
     | none => return none
 
-/-- The later half of `rewriteCtrl`'s dispatch, with local style option
-requests preceding its named arms, exactly as in the source execution order. -/
+/-- The later half of `rewriteCtrl`'s dispatch. -/
 private def rewriteCtrlLater (name : String) (pos : Pos) (raws : Array Raw)
     (start : Nat) : M (Option (Array Raw × Nat)) := do
   if let some result ← styOptionsRequest name pos raws start then return some result
   rewriteCtrlLaterNamed name pos raws start
 
-/-- The dispatcher's silence guard: an arm answered `some` with no
-replacement tokens — the construct is consumed — so the consumption must
-have been paid for against the entry snapshot `s0`: a diagnostic
-(`diags` grew) or a state write (`writes` grew). Neither grown is the
-class W0387 names — the engine knows this command and did nothing with
-what it read (distinct from W0301, unknown, and from W0104, a known
-refusal with its reason). Warned once per name (sayOnce's policy); a
-repeat is accounted as a write. Both branches land on the snapshot's
-values: under the guard's own condition the arm grew neither counter,
-and every arm only appends, so the snapshot is the live value — spelled
-this way, `rewriteCtrl_accounts` closes by unfolding the guard alone,
-with every arm opaque. State-explicit (no do-notation) for the same
-reason: the theorem reads it with no monad lemmas. -/
+/-- The dispatcher's silence guard: a consumed construct must have been paid for
+by a diagnostic or a state write since `s0`. -/
 private def account (name : String) (pos : Pos) (s0 : St) : M Unit := fun st =>
   if st.diags.size > s0.diags.size ∨ st.writes > s0.writes then ((), st)
   else if st.warned.contains ("silent:" ++ name) then
-    -- Named at its first occurrence: the repeat is accounted against the
-    -- snapshot — sayOnce's once-per-construct policy, the guard's way.
     ((), { st with writes := s0.writes + 1 })
   else
     ((), { st with
@@ -8956,23 +7341,15 @@ private def account (name : String) (pos : Pos) (s0 : St) : M Unit := fun st =>
         (help := "\\allow{W0387} accepts the skip")
         (subject := some ("ctrl:" ++ name)))) })
 
-/-- The mark the rewrite sets before a deck's `\appendix` when appendixnumberbeamer is
-loaded: the frame count starts over there (`appendixnumberbeamer.sty`: its `\appendix`
-keeps the main part's last number as the total and sets `framenumber` to 0). A space is
-in no control word, so no document spells the mark. -/
+/-- The mark before a deck's `\appendix` under appendixnumberbeamer, where the
+frame count starts over. -/
 public def frameRestartMark : String := "appendix restart"
 
-/-- The mark a cancel package load leaves in the preamble, its option list in
-the group after it: the elaborator's preamble reads it into the context every
-formula's marks read (`Ctx.cancel`). A space is in no control word, so no
-document spells the mark. -/
+/-- The mark a cancel package load leaves in the preamble,
+its option list in the group after it. -/
 public def cancelOptionsMark : String := "cancel options"
 
-/-- Interpret one package in the loading call's declared order. The caller
-owns the option and group readers; this producer owns each package's exact
-native replacement or refusal record. Keeping the scalar transition named
-lets the request contract read its diagnostic without expanding the whole
-control dispatcher. -/
+/-- One package interpreted in the loading call's declared order. -/
 private def rewritePackageBody (name p : String) (opt : Option String) (pos : Pos) :
     M (Array Raw) := do
   let mut out : Array Raw := #[]
@@ -8983,33 +7360,22 @@ private def rewritePackageBody (name p : String) (opt : Option String) (pos : Po
   else if p == "beamerposter" then
     out := out ++ (← beamerposter (opt.getD "") pos)
   else if p == "parskip" then
-    -- The package sets `\parskip` to half a line plus 2pt and drops the
-    -- indent; the half line is what changes the page.
+    -- The package sets `\parskip` to half a line plus 2pt and drops the indent.
     let native := "\\page{ parskip = 0.6em plus 2pt }"
     became "\\usepackage{parskip}" native pos
     out := out ++ (← synthAt native pos)
   else if p == "amsthm" then
-    -- amsthm's documented default style is plain (amsthm manual §4:
-    -- `plain` is in force until a `\theoremstyle`), which is also what
-    -- tells the elaborator amsthm's heads and its `proof` are in force.
+    -- amsthm's documented default style is plain.
     let native := "\\theoremstyle{plain}"
     became "\\usepackage{amsthm}" native pos
     out := out ++ (← synthAt native pos)
   else if (p == "caption" || p == "subcaption") && opt.isSome then
-    -- The package options are `\captionsetup` keys (caption manual
-    -- §1.3): route them to the one site that judges caption keys, so
-    -- `[tableposition=top]` is honoured or named exactly as the
-    -- command form is.
+    -- The package options are `\captionsetup` keys, judged at that one site.
     let native := s!"\\captionsetup\{{opt.getD ""}}"
     became s!"\\usepackage[{opt.getD ""}]\{{p}}" native pos
     out := out ++ (← synthAt native pos)
   else if p == "babel" then
-    -- babel's package options are its language list, and "the last
-    -- language option is the main one" (babel manual §1.2). The main
-    -- language becomes document metadata (`\pdfmeta{ language }`);
-    -- the locale record then words captions, selects hyphenation
-    -- patterns, and shapes `\enquote`. Non-language options carry
-    -- `=` and are configuration, skipped as before.
+    -- babel's last language option is the main one, which becomes document metadata.
     let names := ((opt.getD "").splitOn ",").map (·.trimAscii.toString)
       |>.filter (fun o => !o.isEmpty && !o.contains '=')
     match names.reverse.head? with
@@ -9033,10 +7399,7 @@ captions and patterns stand in" pos
   else if p == "biblatex" then
     biblatexLoad name (opt.getD "") pos
   else if let some spec := fontPackages.lookup p then
-    -- carlito's `sfdefault` promotes its sans face to the body slot
-    -- (carlito README); every other option (psnfss's `scaled=`) asks
-    -- for a face adjustment the engine does not model and is dropped
-    -- by name.
+    -- carlito's `sfdefault` promotes its sans face to the body slot; every other option is named.
     let opts := ((opt.getD "").splitOn ",").map (·.trimAscii.toString)
       |>.filter (!·.isEmpty)
     let sfdefault := p == "carlito" && opts.contains "sfdefault"
@@ -9051,10 +7414,7 @@ dropped: {String.intercalate ", " dropped}" pos
   else if p == "lineno" && opt.isSome then
     out := out ++ (← linenoLoad (opt.getD "") pos)
   else if p == "cancel" then
-    -- The package's options are the marks' own settings, read where a
-    -- formula draws one: carried as data to the elaborator's preamble
-    -- (`cancelOptionsMark`), each named option read as the package's
-    -- `\ProcessOptions` reads it, an undeclared one named and dropped.
+    -- The package's options are the marks' own settings, carried to the elaborator's preamble.
     let opts := ((opt.getD "").splitOn ",").map (·.trimAscii.toString)
       |>.filter (!·.isEmpty)
     let (_, unknown) := Math.CancelSpec.ofOptions opts
@@ -9066,10 +7426,7 @@ dropped: {String.intercalate ", " unknown}" pos
     out := (out.push (.ctrl cancelOptionsMark pos)).push
       (.group (if opts.isEmpty then #[] else #[.word (String.intercalate "," opts) pos]) pos)
   else if p == "animate" then
-    -- animate manual §6 allows package-wide animation defaults. This
-    -- scoped lowering reads only each command's own options.
-    -- premise: animatedGraphicsChecks — local posters select distinct
-    -- shipped images, and package defaults keep their named warning.
+    -- premise: animatedGraphicsChecks — local posters select distinct shipped images
     let opts := (opt.getD "").trimAscii.toString
     if opts.isEmpty then
       discard s!"\\{name}\{{p}}"
@@ -9080,8 +7437,7 @@ dropped: {String.intercalate ", " unknown}" pos
         s!"'animate' package options '{opts}' are not applied" pos
         (help := "put poster and size options on each '\\animategraphics'; playback settings remain unsupported")
   else if p == "markdown" then
-    -- premise: markdownInputChecks — the driver reads native
-    -- fragments, and unsupported package options keep their warning.
+    -- premise: markdownInputChecks — the driver reads native fragments
     let opts := (opt.getD "").trimAscii.toString
     if opts.isEmpty then
       discard s!"\\{name}\{{p}}"
@@ -9096,9 +7452,7 @@ no package options are supported by the strict native Markdown dialect" pos
     out := out ++ (← unicodeMathOptions
       s!"\\{name}[{opt.getD ""}]\{unicode-math}" (opt.getD "") pos)
   else if p == "hyperref" && opt.isSome then
-    -- hyperref's package options are `\hypersetup`'s keys; the link
-    -- colours become the link kinds' `\style` colours, the rest are the
-    -- viewer's, discarded as before.
+    -- hyperref's package options are `\hypersetup`'s keys.
     let mut links := (← get).links
     let mut linked := false
     for o in (opt.getD "").splitOn "," do
@@ -9127,15 +7481,10 @@ no package options are supported by the strict native Markdown dialect" pos
       say .W0103 "package 'ulem' without only the 'normalem' option changes \\emph; skipped"
         pos (help := "use \\usepackage[normalem]{ulem} for native \\sout")
         (refused := some p)
-  -- premise: tableFaceOrderChecks — the face declared before the load and
-  -- after it ship byte-identical pages and only the warning below moves, so
-  -- nothing else measures the declared face
+  -- premise: tableFaceOrderChecks — the face before or after the load ships identical pages
   else if p == "booktabs" && (← get).facesDeclared.contains
       (if (← get).deck then "sans" else "body") then
-    -- booktabs fixes its rule weights and paddings in the font current where
-    -- it loads (`Ir.PreambleFace`): after the preamble family's face is
-    -- declared, that face, which the engine does not measure. The load is
-    -- the site of the loss, so its one accounting is this warning.
+    -- booktabs fixes its rule weights in the font current where it loads.
     let (face, cmd) := if (← get).deck then ("sans", "\\setsansfont")
       else ("main", "\\setmainfont")
     say .W0398 s!"'\\{name}\{booktabs}' follows the {face} face's declaration; \
@@ -9143,30 +7492,18 @@ its rule paddings are measured in Latin Modern" pos
       (help := some s!"load booktabs before '{cmd}', where LaTeX measures them in Latin Modern too")
       (subject := some "package:booktabs")
   else if p == "inputenc" && Encoding.declaresNonUtf8 (opt.getD "") then
-    -- premise: inputDecodingChecks — the driver's one note (N0025) at this
-    -- span names what the declaration did to each file it governed.
+    -- premise: inputDecodingChecks — the driver's one note names each governed file
     recordInputenc (opt.getD "")
   else if nativePackages.contains p then
     if p == "inputenc" then recordInputenc (opt.getD "")
     discard s!"\\{name}\{{p}}" "the engine does this itself" s!"{name}:{p}" pos
   else if boundaryPkgs.contains p && (← get).boundaryOpen then
-    -- A picture package's load is the boundary's: `boundaryDecls`
-    -- carried it, with its options, into every wrapped standalone,
-    -- where the real TeX reads it — W0103 would misname a load the
-    -- engine consumes. A declared refusal (`tool = none`) restores
-    -- the named loss.
+    -- A picture package's load belongs to the boundary standalone.
     became s!"\\{name}\{{p}}"
       "the boundary standalone's preamble; each picture outside the \
 rendered subset is drawn whole at the boundary" pos
   else if let some (slot, _, nm) := themeSlotOfPackage? p then
-    -- beamer's own identity, read backwards: `beamerthemeX` **is**
-    -- `\usetheme{X}` (beamerbasethemes.sty defines the family through
-    -- the package loader), and a theme inheriting another writes that
-    -- file name. W0103 answered it as a CTAN support question, so a
-    -- bundle the engine ships was refused under the one spelling an
-    -- inheriting theme uses. The candidate scan has already offered
-    -- `p.sty`; reaching here means no file answered, so what is left
-    -- is the slot's own meaning.
+    -- A `beamerthemeX` package is `\usetheme{X}`.
     if slot == "usetheme" then
       let nm := themeAlias nm
       let native := s!"\\theme\{{nm}}"
@@ -9176,10 +7513,7 @@ rendered subset is drawn whole at the boundary" pos
         write fun st => { st with themed := true }
       out := out ++ (← synthAt native pos)
     else
-      -- The four sub-theme slots have no bundle of their own here: a
-      -- token bundle is whole. Their file name gets the slot's named
-      -- configuration warning, which is what the slot spelling gets —
-      -- never a claim about package support.
+      -- The four sub-theme slots have no bundle of their own here.
       sayOnce ("beamer:" ++ slot) .W0104
         s!"'\\{slot}' is beamer configuration the engine does not have; skipped" pos
         (help := (beamerNative.lookup slot).getD
@@ -9190,11 +7524,7 @@ and \\tokens declare the design directly")
       (refused := some p)
   return out
 
-/-- Admit a native package before installing its defaults. Local files use
-the same gate before their input fragment executes. Missing packages still
-reach their existing refusal, without reserving a name that never loaded.
-Option passes are read in rewrite order, not from the execution phase's
-final list, so a later pass cannot change an earlier installation. -/
+/-- Admits a native package before installing its defaults. -/
 private def rewritePackage (name p : String) (opt : Option String) (pos : Pos) :
     M (Array Raw) := do
   if nativePackages.contains p then
@@ -9207,9 +7537,6 @@ private def rewritePackage (name p : String) (opt : Option String) (pos : Pos) :
   else
     rewritePackageBody name p opt pos
 
-/-- The real native producer returns no declarations on a compatible
-repeat and preserves every semantic field, even after intervening commands
-changed a default the first load installed. -/
 private theorem rewritePackage_compatible_exact (name p : String) (opt : Option String)
     (pos : Pos) (st : St) (first : List String)
     (native : nativePackages.contains p = true)
@@ -9223,9 +7550,8 @@ private theorem rewritePackage_compatible_exact (name p : String) (opt : Option 
   rw [admitPackage_compatible_exact _ _ _ _ _ _ loaded compatible]
   rfl
 
-/-- The external-package refusal's whole record, before the source index
-adds its trigger. Native package options are judged by their own producer;
-sharing W0103 does not make them failed file requests. -/
+/-- The external-package refusal's whole record, before the
+source index adds its trigger. -/
 public def packageRefusal (file : String) (pos : Pos) (p : String) : Diag :=
   Diag.of .W0103 s!"package '{p}' is not supported; skipped"
     (some ⟨file, pos⟩) (refused := some p)
@@ -9256,9 +7582,8 @@ private theorem rewritePackage_external_exact (name p : String)
   simp only [hbmem, ↓reduceIte]
   rfl
 
-/-- The package-loading arm's production loop. Each spelling in one
-comma-separated operand is judged in order against the same current
-compatibility state. -/
+/-- The package-loading arm's loop, judging each name of one
+operand in order. -/
 private def rewritePackages (name : String) (pkgs : List String)
     (opt : Option String) (pos : Pos) : M (Array Raw) := do
   let mut out : Array Raw := #[]
@@ -9317,25 +7642,15 @@ private theorem rewritePackages_external_exact (name : String)
   simp only [bind, pure] at h
   rw [h]
 
-/-- Named arms after the dispatcher's state-dependent guards. Registry
-contracts quantify over this actual match: an ordinary body control emits
-no replacement, consumes its declared argument prefix, and leaves the
-continuation at the first unconsumed token. No dispatch order changes. -/
+/-- Named arms after the dispatcher's state-dependent guards. -/
 private def rewriteCtrlNamed (name : String) (pos : Pos) (raws : Array Raw)
     (start : Nat) : M (Option (Array Raw × Nat)) := do
   match name with
   | "usepackage" | "RequirePackage" =>
-    -- One dispatch for both spellings: `\RequirePackage` is `\usepackage`
-    -- for package writers (ltclass.dtx), and a local `.sty` spliced into
-    -- the preamble spells its loads that way.
-    -- Replacement text is stored, not a load. Actual uses have already
-    -- expanded through the execution reader (`condLiveRaw`).
+    -- `\RequirePackage` is `\usepackage`; replacement text is stored, not a load.
     if (← get).inDef then return none
     if (← get).inDoc then
-      -- LaTeX's own rule: "\usepackage can be used only in preamble"
-      -- (ltclass.dtx \@onlypreamble) — in the body the placement is the
-      -- defect, whatever the package's support, so the W0103 dispatch
-      -- below never judges it.
+      -- In the body `\usepackage` is a placement defect, whatever the package's support.
       let (_, j) := takeOpt raws start
       let (_, k) := takeGroups raws j 1
       sayOnce ("ctrl:" ++ name) .W0340
@@ -9376,10 +7691,7 @@ private def rewriteCtrlNamed (name : String) (pos : Pos) (raws : Array Raw)
     if articleClasses.contains cls || resumeClasses.contains cls then
       let native0 := if resumeClasses.contains cls then "resume" else "article"
       let o := match opt with | some o => s!"[{o}]" | none => ""
-      -- A LaTeX class separates paragraphs by indent, not by a skip: its
-      -- `\parskip` is zero unless the KOMA `parskip=` option asks for half a
-      -- line or a full one. The engine's own default is a skip, so the
-      -- class declares what LaTeX would have.
+      -- A class's `\parskip` is zero unless KOMA's `parskip=` asks for a skip.
       let komaSkip := (opt.getD "").splitOn "," |>.findSome? fun kv =>
         match (kv.splitOn "=").map (·.trimAscii.toString) with
         | ["parskip", v] =>
@@ -9405,15 +7717,7 @@ private def rewriteCtrlNamed (name : String) (pos : Pos) (raws : Array Raw)
   | "babelfont" | "setmainfont" | "setsansfont" | "setmonofont"
   | "newfontfamily" | "setfontfamily" | "renewfontfamily" | "providefontfamily"
   | "newfontface" | "setfontface" | "renewfontface" | "providefontface" =>
-    -- `\babelfont[lang]{slot}{font}` binds a font per language (babel
-    -- manual §1.8). The option parses first — it stands before the slot —
-    -- and the binding is then dropped by name (W0369): one Latin body
-    -- face covers en/fr/de, and a per-language face buys nothing until a
-    -- non-Latin document exists. The unoptioned form is the main font.
-    -- fontspec's `\newfontfamily\cmd{font}` (fontspec manual, "Font
-    -- families") declares a family beside the three and the command that
-    -- selects it: the native `family.<cmd>` slot, whose command the
-    -- elaborator defines; `\newfontface` is one face for every variant.
+    -- `\babelfont` binds a font per language, which is dropped by name (W0369).
     let declared : Option String :=
       if name.endsWith "fontfamily" || name.endsWith "fontface" then
         match raws[skipSpaces raws start]? with
@@ -9435,20 +7739,14 @@ private def rewriteCtrlNamed (name : String) (pos : Pos) (raws : Array Raw)
     let (slotArgs, j) := if name == "babelfont" then takeGroups raws j0 1 else (#[], start)
     let (optBefore, j) := takeOpt raws j
     let (args, k) := takeGroups raws j 1
-    -- fontspec takes its features before the name or after it.
     let (optAfter, k) := takeOpt raws k
-    -- The provide forms define the command only where it is undefined
-    -- (`\ProvideDocumentCommand`): a command already standing keeps the
-    -- family it selects.
+    -- The provide forms define the command only where it is undefined.
     if name.startsWith "provide" && defined then
       let c := declared.getD ""
       discard s!"\\{name}\\{c}" s!"'\\{c}' is already defined, and the provide form keeps it"
         s!"{name}:{c}" pos
       return some (#[], k)
-    -- A family declared in the body: the document's families are its
-    -- preamble's, so the declaration is skipped, named as the command the
-    -- author wrote, and the family's command selects nothing.
-    -- premise: bodyFamilyChecks — a body declaration declares no family in either artifact
+    -- premise: bodyFamilyChecks — a body declaration declares no family
     if (← get).inDoc then
       if let some c := declared then
         sayOnce ("ctrl:" ++ name) .W0340
@@ -9461,10 +7759,7 @@ private def rewriteCtrlNamed (name : String) (pos : Pos) (raws : Array Raw)
         | "rm" => "body" | "sf" => "sans" | "tt" => "mono" | s => s
       | "setmainfont", _ => "body" | "setsansfont", _ => "sans" | _, _ => "mono"
     let family := rawSrc (args.getD 0 #[])
-    -- fontspec features that matter here are the ones that name fonts rather
-    -- than shape them: `Path=` says where the fonts live, and the per-variant
-    -- faces (`BoldFont=` and siblings) say exactly which file or name serves
-    -- each variant. Everything else is a shaping feature and is dropped.
+    -- Only fontspec features that name fonts are kept; shaping features are dropped.
     let feature (k : String) : Option String :=
       ([optBefore, optAfter].filterMap id).findSome? fun opts =>
         (Decl.splitEntries opts).findSome? fun kv =>
@@ -9478,25 +7773,15 @@ private def rewriteCtrlNamed (name : String) (pos : Pos) (raws : Array Raw)
       | some d => s!"dir = \"{d}\", "
       | none => ""
     let mut parts := #[s!"{slot} = \"{family}\""]
-    -- A face is every variant at once (fontspec's `\newfontface`).
     if name.endsWith "fontface" then
       for variant in ["bold", "italic", "bolditalic"] do
         parts := parts.push s!"{slot}.{variant} = \"{family}\""
     for (opt, variant) in [("UprightFont", "upright"), ("BoldFont", "bold"),
         ("ItalicFont", "italic"), ("BoldItalicFont", "bolditalic")] do
       if let some f := feature opt then
-        -- fontspec's `*` stands for the family name (fontspec manual,
-        -- "Choosing additional fonts": "may be replaced by *"):
-        -- `UprightFont = *-Semibold` under `{Ordwick}` names "Ordwick-Semibold".
+        -- fontspec's `*` stands for the family name.
         let f := if f.startsWith "*" then family ++ (f.drop 1).toString else f
         parts := parts.push s!"{slot}.{variant} = \"{f}\""
-    -- fontspec's `FontFace = {series}{shape}{font}`: one declared face per
-    -- NFSS series/shape pair (fontspec sources: the `fontspec-preparse`
-    -- FontFace key feeds `\__fontspec_add_nfssfont:nnnn` series, shape,
-    -- font, features). Each entry becomes the native
-    -- `slot.<series>[.italic]` declaration, so `\fontseries{l}` selects
-    -- exactly the face the document named. What the engine has no axis or
-    -- shape for is named, never silently dropped.
     for opts in [optBefore, optAfter].filterMap id do
       for kv in Decl.splitEntries opts do
         if let some ("FontFace", v) := Decl.splitEntry kv then
@@ -9515,9 +7800,7 @@ face serves every language, so the binding is dropped" pos
     match declared with
     | none => return some (fonts, k)
     | some c =>
-      -- The command selects its family's slot (`Style.family`), as a
-      -- declaration scoping the rest of its group: a definition whose body
-      -- is the unforgeable switch, `\sffamily`'s shape.
+      -- The command selects its family's slot as a declaration scoping the rest of its group.
       let st ← get
       let slot := Ir.familySlotBase + ((st.fontFamilies.findIdx? (· == c)).getD st.fontFamilies.size)
       unless st.fontFamilies.contains c do
@@ -9539,9 +7822,7 @@ face serves every language, so the binding is dropped" pos
   | "colorlet" =>
     let (args, k) := takeGroups raws start 2
     if h : args.size = 2 then
-      -- xcolor's `.` names the current colour (xcolor manual §2.3, the
-      -- colour expression grammar); in the preamble that is the initial
-      -- colour, black.
+      -- xcolor's `.` names the current colour, black in the preamble.
       let src := if (rawSrc args[1]).trimAscii.toString == "." then "#000000"
         else rawSrc args[1]
       let native := s!"\\palette\{ {rawSrc args[0]} = {src} }"
@@ -9560,30 +7841,19 @@ face serves every language, so the binding is dropped" pos
     became "\\nopagecolor" "the document's default page ground" pos
     return some (#[.ctrl pageColorResetMark pos], start)
   | "normalcolor" =>
-    -- color.sty's `\normalcolor`: the rest of the group takes the ink in
-    -- force at `\begin{document}`, wherever a `\color` changed it since.
     became "\\normalcolor" "the document's normal ink, to the end of the group" pos
     return some (#[.ctrl ("@ink:" ++ normalInkSource) pos], start)
   | "geometry" | "newgeometry" =>
-    -- The command forms: the same keys the package options carry
-    -- (geometry manual §5: `\newgeometry` is `\geometry` restricted to
-    -- the layout keys). One door for every spelling, so a key is honoured
-    -- or named (W0101) identically wherever it was written.
+    -- The command forms take the same keys the package options carry.
     let (args, k) := takeGroups raws start 1
     if args.isEmpty then return none
     return some (← geometry (rawSrc (args.getD 0 #[])) pos s!"\\{name}", k)
   | "crop" =>
-    -- The command form: the same options the package load carries, one
-    -- door for both spellings. A bare `\crop` is `[cam,noaxes]`, the
-    -- command's own default argument (crop.sty v1.10, `\newcommand*\crop`).
+    -- A bare `\crop` is `[cam,noaxes]`, the command's own default argument.
     let (opt, k) := takeOpt raws start
     return some (← crop (opt.getD "cam,noaxes") pos "\\crop" "crop", k)
   | "microtypesetup" =>
-    -- microtype's switchboard (manual §3.1): `protrusion` and `expansion`
-    -- reach the native gates, and `activate` — the manual's shorthand for
-    -- both — sets the pair. A key the engine does not perform is dropped
-    -- named (W0101), never silently; a bare key means `=true`, as in the
-    -- manual.
+    -- microtype's `protrusion`, `expansion` and `activate` reach the native gates.
     let (args, k) := takeGroups raws start 1
     if args.isEmpty then return none
     let mut keys : Array String := #[]
@@ -9627,8 +7897,6 @@ face serves every language, so the binding is dropped" pos
       let look (n : String) : Option (Array Raw) := match st.binds[n]? with
         | some (some v) => if v.arity == 0 then some v.raws else none
         | _ => none
-      -- the lengths this level declared before the hook: what a rule's
-      -- coordinates may name
       let lengths := (Array.range start).filterMap fun i => match raws[i]? with
         | some (Raw.ctrl "newlength" _) => (takeGroups raws (i + 1) 1).1[0]?.bind ctrlName
         | _ => none
@@ -9639,22 +7907,14 @@ face serves every language, so the binding is dropped" pos
         became s!"\\AddToHook\{{hook}}" native pos
         return some (← synthAt native pos, k)
       | none => pure ()
-    -- A page attribute assigned at shipout declares the page's boxes in
-    -- values the engine cannot evaluate: the hook stays skipped, and named
-    -- (W0104), and the trim the page's drawn cut marks cut stands for the
-    -- boxes (`Ir.PageSpec.trimMarked`, `Layout.drawnTrim`).
+    -- A page attribute assigned at shipout is not evaluated: the hook is skipped and named.
     if hook == "shipout/before" && assignsPageAttr (codeArgs.getD 0 #[]) then
       addToHook pos
       return some (← synthAt "\\page{ trim = marks }" pos, k)
     addToHook pos
     return some (#[], k)
   | "setcounter" | "addtocounter" | "stepcounter" | "refstepcounter" =>
-    -- LaTeX's counter commands are legal in the preamble, and what they
-    -- set holds where the body starts (ltcounts.dtx): at a document's
-    -- preamble top level the command moves there, to the one arm that
-    -- reads counters in flow order. Anywhere else it stands.
-    -- premise: counterChecks — a preamble counter numbers the body as the
-    -- same command at the body's start does
+    -- premise: counterChecks — a preamble counter numbers the body as at its start
     if !(← docPreamble) then return none
     let n := if name == "setcounter" || name == "addtocounter" then 2 else 1
     let (args, k) := takeGroups raws start n
@@ -9666,18 +7926,12 @@ face serves every language, so the binding is dropped" pos
     write fun st => { st with preCounters := st.preCounters ++ cmd }
     return some (#[], k)
   | "newlength" =>
-    -- `\newlength{\x}` allocates a length register at 0pt (usrguide,
-    -- "Defining lengths"); the native store is a token, so a later
-    -- `\setlength{\x}` and references to `\x` in other lengths resolve.
+    -- `\newlength{\x}` allocates a length register at 0pt.
     let (args, k) := takeGroups raws start 1
     let some n := ctrlName (args.getD 0 #[]) | return none
     return some (← setLength n "0pt" s!"\\newlength\{\\{n}}" pos, k)
   | "newdimen" =>
-    -- TeX's `\newdimen\x` allocates a dimen register (plain.tex), which a
-    -- block template may assign and read as TeX runs it, block by block
-    -- (`BlockTemplate.read`). Its value lives in those runs, so it is no
-    -- native token: a use outside the templates stays an unknown command,
-    -- refused by name, never a value the runs did not leave.
+    -- `\newdimen\x` allocates a register only block templates read, so it is no native token.
     let (args, k) := takeGroups raws start 1
     let some n := ctrlName (args.getD 0 #[]) | return none
     write fun st => { st with
@@ -9687,10 +7941,7 @@ face serves every language, so the binding is dropped" pos
   | "setlength" =>
     let (args, k) := takeGroups raws start 2
     if h : args.size = 2 then
-      -- e-TeX's `\dimexpr` division rounds to the nearest multiple (e-TeX
-      -- manual §3.5); the native language truncates toward zero as TeX's
-      -- `\divide` does. Mapping the spelling would mis-round silently, so
-      -- it is refused by name instead.
+      -- e-TeX's `\dimexpr` division rounds where the native language truncates, so it is refused.
       if (args[1].any fun r => match r with | .ctrl "dimexpr" _ => true | _ => false)
           && (lengthSrc args[1]).toList.contains '/' then
         say .E0375 "'\\dimexpr' division rounds to nearest; this engine's length \
@@ -9700,9 +7951,7 @@ arithmetic truncates toward zero as TeX's '\\divide' does" pos
       match paramName args[0] with
       | some n =>
         let target := (rawSrc args[0]).trimAscii.toString
-        -- A register the block templates assign holds no token: what the
-        -- document would read from it is the value their last run leaves.
-        -- premise: capitalRegisterChecks — the document's read of a template register set this way is refused by name, so the value dropped here reaches no page
+        -- premise: capitalRegisterChecks — a template register read is refused by name
         if (← get).allocated.contains n then
           discard s!"\\setlength\{{target}}" "a register only the block templates assign and read"
             s!"setlength:{n}" pos
@@ -9711,20 +7960,16 @@ arithmetic truncates toward zero as TeX's '\\divide' does" pos
       | none => return none
     else return none
   | "addtolength" =>
-    -- LaTeX's spelling of `\advance` (usrguide, "Changing lengths"): the
-    -- sum of the value the length holds and the operand, where both are
-    -- known; otherwise the command stands, named by the elaborator.
+    -- `\addtolength` sums the held value and the operand where both are known.
     let (args, k) := takeGroups raws start 2
     if h : args.size = 2 then
       let some n := ctrlName args[0] | return none
       let st ← get
-      -- premise: registerArithChecks — a length this rewrite set holds the
-      -- value it recorded
+      -- premise: registerArithChecks — a length this rewrite set holds its recorded value
       match (st.lens.find? (·.1 == n)).map (·.2),
           lenOperand st.lens (args[1].toList.filter (!· matches .space)) with
       | some p, some v =>
-        -- premise: composedLengthChecks — a sum the grammar reads is the
-        -- value the declaration holds; one it cannot is named, never handed on
+        -- premise: composedLengthChecks — a readable sum is the declaration's value
         let expr := s!"({p}) + {v}"
         if Decl.readsAsLengthExpr expr then
           return some (← setLength n expr s!"\\addtolength\{\\{n}}" pos, k)
@@ -9734,19 +7979,13 @@ skipped, and the length keeps its value" pos
           (demote := styInternal (← get).file name)
         return some (#[], k)
       | _, _ =>
-        -- The value the length holds is its class's, or the addend is one
-        -- the door cannot read: the sum is unknown here. In a definition's
-        -- body the command stands, for the use to read.
+        -- In a definition's body the command stands, for the use to read.
         if (← get).inDef then return none
         return some (← unreadableLength n
           s!"\\{n} + {(rawSrc args[1]).trimAscii.toString}" pos, k)
     else return none
   | "advance" | "multiply" | "divide" =>
-    -- TeX's register arithmetic (TeXbook ch. 24: ⟨advance⟩⟨numeric
-    -- variable⟩⟨by⟩⟨value⟩): the engine keeps no registers, so the whole
-    -- statement is named and skipped — the `by` and the value go with the
-    -- command, never left behind as stray content (a bare `by` in the
-    -- preamble was an E0313 cascade from one skipped name).
+    -- TeX's register arithmetic is named and skipped whole, its `by` and value included.
     let j0 := skipSpaces raws start
     match raws[j0]? with
     | some (.ctrl _ _) =>
@@ -9754,8 +7993,6 @@ skipped, and the length keeps its value" pos
       let j2 := match raws[j1]? with
         | some (.word "by" _) => skipSpaces raws (j1 + 1)
         | _ => j1
-      -- The value: one word (`2pt`), or a register chain of one or two
-      -- control words (`\ht\strutbox`).
       let k := match raws[j2]? with
         | some (.word "-" _) =>
           match raws[j2 + 1]? with
@@ -9771,8 +8008,6 @@ skipped, and the length keeps its value" pos
           | some (.ctrl _ _) | some (.word _ _) => j2 + 2
           | _ => j2 + 1
         | _ => j2
-      -- A length this rewrite set is evaluated from the value it holds,
-      -- as TeX evaluates the register; anything else is named and skipped.
       let tgt := match raws[j0]? with
         | some (.ctrl t _) => t
         | _ => ""
@@ -9782,9 +8017,7 @@ skipped, and the length keeps its value" pos
         else match opnd with
           | [.word w _] => w.toNat?.map toString
           | _ => none
-      -- premise: registerArithChecks — a length this rewrite set holds the
-      -- value it recorded; composedLengthChecks — and the sum is one the
-      -- grammar reads, or the statement is named and skipped
+      -- premise: registerArithChecks — a length this rewrite set holds its recorded value
       let expr? := match (st.lens.find? (·.1 == tgt)).map (·.2), value with
         | some p, some v => some (if name == "advance" then s!"({p}) + {v}"
             else if name == "multiply" then s!"{v} * ({p})" else s!"({p}) / {v}")
@@ -9807,25 +8040,14 @@ skipped, and the length keeps its value" pos
   | "NewDocumentCommand" | "ProvideDocumentCommand"
   | "newcommand" | "providecommand" | "renewcommand"
   | "DeclareDocumentCommand" | "RenewDocumentCommand" | "DeclareRobustCommand" =>
-    -- One arm for the whole definer family. LaTeX's documented triple
-    -- (usrguide, "Defining commands": new must not exist, renew must
-    -- exist, provide keeps an existing definition) collapses here to the
-    -- one policy that changes what a correct document *means*: a
-    -- provision of a name this document already bound keeps the first
-    -- definition, so its signature and body are consumed whole. The two error
-    -- halves are LaTeX's to check — kernel and package names are
-    -- invisible to this pass, so checking them would misfire on every
-    -- `\renewcommand` of a kernel command. The native store stays
-    -- last-wins, the layering mechanism.
+    -- One arm for the whole definer family; only `provide` keeps an existing definition.
     let xparse := name.endsWith "DocumentCommand"
     let start := skipStar raws start
     let (nameArgs, j) := takeGroups raws start 1
     let some cmd := ctrlName (nameArgs.getD 0 #[]) | return none
     let provide := name == "providecommand" || name == "ProvideDocumentCommand"
     let st ← get
-    -- premise: Tests.xparseProvideChecks — provision keeps existing user and builtin
-    -- meanings. Decide before interpreting an unused signature or body:
-    -- even a recognized heading/size idiom must remain inert.
+    -- premise: Tests.xparseProvideChecks — provision keeps existing meanings
     if provide && (st.bound.contains cmd || st.provideKeeps.contains cmd) then
       let j := if xparse then (takeGroups raws j 1).2 else
         let (_, j) := takeOpt raws j
@@ -9843,15 +8065,13 @@ skipped, and the length keeps its value" pos
         let (_, k) := takeGroups raws j 1
         nameParam cmd why pos
         return some (#[], k)
-    -- premise: biblatexPunctChecks — the delimiters read set the citations biber sets; any other redefinition is named
+    -- premise: biblatexPunctChecks — the delimiters read set the citations biber sets
     if !xparse && st.biblatexLoaded && biblatexMacros.contains cmd then
       let (_, j) := takeOpt raws j
       let (_, j) := takeOpt raws j
       let (args, k) := takeGroups raws j 1
       return some (← biblatexMacroDef name cmd (args.getD 0 #[]) pos, k)
     if !xparse && cmd == "sectionlinesformat" then
-      -- `\renewcommand\sectionlinesformat[4]{...}` is the spelling KOMA
-      -- documents: the rule idiom, not a definition.
       let (_, j) := takeOpt raws j
       let (args, k) := takeGroups raws j 1
       return some (← sectionRule (rawSrc (args.getD 0 #[])) pos, k)
@@ -9865,32 +8085,16 @@ skipped, and the length keeps its value" pos
         let spec := if dflt.isSome then "o" ++ String.ofList (List.replicate (count - 1) 'm')
           else String.ofList (List.replicate count 'm')
         pure (signature spec, j)
-    -- The sectioning idiom: a body that is one \@startsection call is a
-    -- declarative rule over an existing heading, read as \style.
+    -- A body that is one `\@startsection` call is read as `\style` over the heading.
     let js := skipSpaces raws j
     if let some (.group sbody _) := raws[js]? then
       if let some out ← startSection? cmd sbody pos then
         return some (out, js + 1)
-      -- A class's list-level macro read as the parameters it assigns.
       if let some level := listLevelOf cmd then
         if !xparse && (← docPreamble) then
           if ← listLevelDef level s!"\\{name}\{\\{cmd}}" sbody pos then
             return some (#[], js + 1)
-    -- The size idiom: a venue class's `\renewcommand\normalsize` whose
-    -- body opens with `\@setfontsize\normalsize<size><leading>` (fntguide
-    -- §"\@setfontsize"; size10.clo is where `\@xpt`/`\@xipt` get their
-    -- values) declares the document's body size and leading. Both are the
-    -- page's to carry: the leading lands as the body's `\baselineskip`
-    -- (`\page{ baselineskip = … }`), the factor over the engine's 6/5 base
-    -- (`Ir.leadingMilli`) and the skip column's `\normalsize` row, so a
-    -- spliced .sty's 10/10.95 sets baselines at 10.95pt, the rhythm unit
-    -- follows, and a step the .sty never declares keeps size10.clo's own
-    -- skip (`Ir.stepLead`). The body's
-    -- trailing display-skip internals are TeX the engine does not run;
-    -- the translation note names what was taken. The display skips it
-    -- assigns are the document's (`\begin{document}` runs `\normalsize`),
-    -- so they are its tokens, the short pair with the long
-    -- (`Ir.displaySkipsFor`).
+    -- A `\renewcommand\normalsize` opening with `\@setfontsize` declares the body size and leading.
     if !xparse && cmd == "normalsize" then
       if let some (.group sbody _) := raws[js]? then
         let b := skipSpaces sbody 0
@@ -9913,11 +8117,7 @@ baselineskip = {milliStr ld}pt }" ++
     write fun st => { st with bodyNext := 1, quietNext := st.templateCode.contains cmd }
     return some (← synthAt native pos, j)
   | "DeclareMathOperator" =>
-    -- `\DeclareMathOperator{\f}{name}` declares an operator name: upright,
-    -- with an Op atom's spacing (amsldoc §5.1). The native spelling is a
-    -- definition whose body is `\operatorname{name}`; math expansion then
-    -- renders every use. The starred form's above/below display limits are
-    -- not modelled — the operator still sets, its scripts beside it.
+    -- `\DeclareMathOperator{\f}{name}` is a definition whose body is `\operatorname{name}`.
     let start := skipStar raws start
     let (args, k) := takeGroups raws start 2
     let some cmd := ctrlName (args.getD 0 #[]) | return none
@@ -9944,13 +8144,7 @@ baselineskip = {milliStr ld}pt }" ++
         { st with foot := (st.foot.filter (·.1 != slot)).push (slot, src) }
     return some (#[], k)
   | "fancyhead" | "fancyfoot" | "fancyhf" =>
-    -- fancyhdr's primary interface (manual §2): `[places]` crosses L/C/R
-    -- with E/O (even/odd). The engine has one page sequence, so E and O
-    -- collapse onto the slot letter, said once; no `[places]` means every
-    -- field, and an empty field clears its slots — both as the manual
-    -- defines (`\fancyhf{}` is its own idiom for clearing the style).
-    -- Slots land in the same gathered fields as `\lhead`'s family, so the
-    -- same-slot replace policy is one policy.
+    -- fancyhdr's `[places]`: one page sequence, so even and odd collapse onto the slot letter.
     let (opt, j) := takeOpt raws start
     let (args, k) := takeGroups raws j 1
     let src := rawSrc (args.getD 0 #[])
@@ -9979,9 +8173,7 @@ baselineskip = {milliStr ld}pt }" ++
         foot := if toFoot then put st.foot else st.foot }
     return some (#[], k)
   | "clearpairofpagestyles" =>
-    -- scrlayer-scrpage's field reset (KOMA-Script manual ch. 5): every
-    -- gathered head and foot field is cleared; fields declared after it
-    -- apply from scratch — the same store `\pagestyle{empty}` clears.
+    -- scrlayer-scrpage's field reset clears every gathered head and foot field.
     write fun st => { st with head := #[], foot := #[] }
     became "\\clearpairofpagestyles" "no running fields; fields declared after apply" pos
     return some (#[], start)
@@ -9990,19 +8182,11 @@ baselineskip = {milliStr ld}pt }" ++
     let v := (rawSrc (args.getD 0 #[])).trimAscii.toString
     match v with
     | "fancy" | "scrheadings" =>
-      -- The styles that mean "the declared running fields apply" — which
-      -- they already do here: gathered fields land as `\runninghead` /
-      -- `\runningfoot` by themselves. Agreement, not a missing model (the
-      -- old warning said "not modelled" about exactly what is modelled).
       discard s!"\\pagestyle\{{v}}" "declared running fields apply by themselves"
         s!"pagestyle:{v}" pos
       return some (#[], k)
     | "plain" =>
-      -- article's own initial style (classes.dtx: article.cls sets
-      -- \pagestyle{plain}): the centred page number in the foot, which
-      -- \page{ numbers = on } spells natively — already the flow
-      -- default, and the explicit form takes control under a class
-      -- whose record declines it.
+      -- article's initial style is the centred page number in the foot.
       became "\\pagestyle{plain}" "\\page{ numbers = on }" pos
       return some (← synthAt "\\page{ numbers = on }" pos, k)
     | "empty" =>
@@ -10016,8 +8200,7 @@ baselineskip = {milliStr ld}pt }" ++
 declare the furniture directly")
       return some (#[], k)
   | "thispagestyle" =>
-    -- Only the opening page can be meant from the preamble or the document's
-    -- first line; anywhere else it would need a page model we do not have.
+    -- Only the opening page can be meant from the preamble or the document's first line.
     let (args, k) := takeGroups raws start 1
     if rawSrc (args.getD 0 #[]) == "empty" then
       write fun st => { st with runFrom := 2 }
@@ -10025,12 +8208,8 @@ declare the furniture directly")
     return some (#[], k)
   | _ => rewriteCtrlLater name pos raws start
 
-/-- Rewrite the control sequence `name` given what follows it. Returns the
-replacement and how many following elements it consumed, or `none` to leave
-the command alone. An empty replacement passes the silence guard
-(`account`): the arms need not hand-account their no-ops, and a silent
-drop is unrepresentable (`rewriteCtrl_accounts`). State-explicit so its
-theorem unfolds it directly. -/
+/-- The rewrite of the control sequence `name` given what follows it: the
+replacement and how many elements it consumed, or `none`. -/
 private def rewriteCtrl (name : String) (pos : Pos) (raws : Array Raw) (start : Nat) :
     M (Option (Array Raw × Nat)) := fun s0 =>
   match rewriteCtrlAt name pos raws start s0 with
@@ -10040,8 +8219,7 @@ private def rewriteCtrl (name : String) (pos : Pos) (raws : Array Raw) (start : 
 where
   rewriteCtrlAt (name : String) (pos : Pos) (raws : Array Raw) (start : Nat) :
       M (Option (Array Raw × Nat)) := do
-  -- premise: beamerTemplateChecks — flat preamble group pairs restore
-  -- font and footer capture just as the brace-group walk does.
+  -- premise: beamerTemplateChecks — flat preamble group pairs restore captures
   if (← get).wholeDoc && (← get).deck && !(← get).inDoc && !(← get).inDef then
     if let some close := groupPrimitives.lookup name then
       if beamerScopeClosed raws start close then
@@ -10057,17 +8235,13 @@ where
         return some (#[], start)
   if let some tok := literalReplace.lookup name then
     return some (#[tok pos], start)
-  -- premise: biblatexChecks — `\cite` under biblatex's authoryear sets bare
-  -- (`Doe 2024`, `see Doe 2024, p. 5`), the line lualatex+biber sets, where
-  -- natbib's own `\cite` is textual
+  -- premise: biblatexChecks — authoryear `\cite` sets bare as lualatex and biber do
   if name == "cite" && (← get).bibStyle == some "plainnat" then
     return some (#[.ctrl "citealp" pos], start)
-  -- premise: numberingChecks — two decks differing by the package alone: the
-  -- appendix numbers from 1 with it and numbers on without it
+  -- premise: numberingChecks — the appendix numbers from 1 only with the package
   if name == "appendix" && (← get).loads.pkgs.any (·.1 == "appendixnumberbeamer") then
     return some (#[.ctrl frameRestartMark pos, .ctrl name pos], start)
-  -- premise: kernelLengthChecks — a skip amount the document set ships, at
-  -- its command, the page a skip of that value ships
+  -- premise: kernelLengthChecks — a declared skip amount ships at its command
   if let some (_, v) := (← get).lens.find? (·.1 == name ++ "amount") then
     if (kernelSkip (name ++ "amount")).isSome then
       let native := s!"\\block[before = {v}]\{}"
@@ -10077,11 +8251,7 @@ where
     became s!"\\{name}" native pos
     return some (← synthAt native pos, start)
   if (deferredHooks.lookup name).isSome then
-    -- The replay point, reached: every hook the preamble declared was
-    -- collected before this pass began, so a hook standing here is at its
-    -- own moment already — in the body, or inside a body a hook is
-    -- replaying. Deferring again is what would not terminate; the group
-    -- stays in the stream and is read where it stands.
+    -- Every hook was collected before this pass, so a hook here is already at its moment.
     sayOnce ("ctrl:" ++ name) .W0340
       s!"'\\{name}' cannot defer from here; its group is read where it stands" pos
       (help := "declare the hook before '\\begin{document}'")
@@ -10095,14 +8265,8 @@ where
     return some (out, start)
   rewriteCtrlNamed name pos raws start
 
-/-- Silence is fidelity, the surface layer: a control word the dispatcher
-consumed with an empty replacement is paid for — the diagnostics grew or a
-state write happened — for *every* name, position, and state. Proved by
-unfolding the dispatcher's tail and the guard (`account`) alone; the arms
-(`rewriteCtrlAt` and everything under it) stay opaque, so no future arm
-can break the statement. `_accounts` is the registered shape
-(THEOREMS.md § Naming): an empty result is paid for by a diagnostic or a
-write. -/
+/-- A control word consumed with an empty replacement is paid for: the
+diagnostics grew or a state write happened. -/
 private theorem rewriteCtrl_accounts (name : String) (pos : Pos) (raws : Array Raw)
     (start : Nat) (s s' : St) (k : Nat)
     (h : (rewriteCtrl name pos raws start).run s = (some (#[], k), s')) :
@@ -10132,10 +8296,7 @@ private theorem rewriteCtrl_accounts (name : String) (pos : Pos) (raws : Array R
     · rename_i hne
       exact absurd rfl hne
 
-/-- Split a two-column paracol body by its top-level switching commands.
-Bare switches toggle, `[n]` selects n, and repeated visits append to the
-same independent flow. The synchronized star form has no `.columns`
-semantics; it is consumed and refused at its own site. -/
+/-- A two-column paracol body split by its top-level switching commands. -/
 private def splitParacol (body : Array Raw) (start : Nat) :
     M (Array Raw × Array Raw) := do
   let mut left : Array Raw := #[]
@@ -10179,9 +8340,8 @@ private def splitParacol (body : Array Raw) (start : Nat) :
       i := i + 1
   return (left, right)
 
-/-- Turn one paracol environment into the existing columns model, or keep
-its content in source order under one truthful refusal when it asks for a
-column family beyond the two-flow subset. -/
+/-- One paracol environment as the columns model, or its
+content in order under one refusal. -/
 private def paracolEnv (ratio : Nat) (body : Array Raw) (pos : Pos)
     (restores : Array Raw := #[]) : M Raw := do
   let (leftCount, j) := takeOpt body 0
@@ -10196,9 +8356,6 @@ private def paracolEnv (ratio : Nat) (body : Array Raw) (pos : Pos)
       (help := "write \\begin{paracol}{2} for two independent columns")
     return .group (body.extract k body.size ++ restores) pos
   let (left, right) ← splitParacol body k
-  -- paracol.sty's `\pcol@setcolwidth@r` reserves the gap before applying
-  -- ratios. Both the enclosing measure and its gap are read by the one
-  -- length resolver where the columns open, including native declarations.
   let width (p : Nat) : Raw :=
     .group #[.word s!"{paracolFactor p} * (linewidth - columnsep)" pos] pos
   became "\\begin{paracol}{2}...\\switchcolumn..."
@@ -10207,17 +8364,9 @@ private def paracolEnv (ratio : Nat) (body : Array Raw) (pos : Pos)
     (#[.env "column" (#[width ratio] ++ left) pos,
       .env "column" (#[width (1000 - ratio)] ++ right) pos] ++ restores) pos
 
-/-- beamer's command form of a column: at the top level of a `{columns}`
-body, `\column{width}` starts a column where it stands, running to the
-next `\column` or the body's end (beamer user guide §12.7, `\column`) —
-the environment form `\begin{column}{width} … \end{column}` with its
-close implicit. One pass makes the boundaries explicit, so the
-elaborator's one columns walk (`columnsGo`) reads both spellings and the
-width group lands where the environment form carries it: first in the
-column's body. Content before the first `\column` stays where it stands,
-as content between environment-form columns does (kept as ordinary
-blocks, never dropped) — the two spellings are one construct, so the
-stray-content rule is one too. -/
+/-- beamer's command form of a column: at the top level of a
+`{columns}` body, `\column{width}` starts a column running
+to the next `\column` or the body's end. -/
 private def splitColumns (body : Array Raw) : Array Raw := Id.run do
   let flush (out : Array Raw) : Option (Array Raw × Pos) → Array Raw
     | some (col, cpos) => out.push (.env "column" col cpos)
@@ -10233,8 +8382,7 @@ private def splitColumns (body : Array Raw) : Array Raw := Id.run do
       col := some (args.map (Raw.group · cpos), cpos)
       i := k
     | some (r@(.env "column" _ _)) =>
-      -- The environment form closes an open command-form column too
-      -- (beamerbaseframecomponents.sty: both openers run `\beamer@colclose`).
+      -- The environment form closes an open command-form column too.
       out := (flush out col).push r
       col := none
       i := i + 1
@@ -10248,12 +8396,8 @@ private def splitColumns (body : Array Raw) : Array Raw := Id.run do
 
 mutual
 
-/-- The pass that makes every `{columns}` body's implicit column boundaries
-explicit, whole tree, before the rewrite walk: the walk is structural on
-`Raw`, so a body it descends into cannot be reshaped where it stands, and
-`\column` must have become `{column}` by the time the walk's ctrl arm
-could see it. Its own pass, like the conditional and hook passes before
-it. -/
+/-- Every `{columns}` body's implicit column boundaries made explicit, whole
+tree, before the rewrite walk. -/
 private def splitColumnsRaw : Raw → Raw
   | .group body p => .group (splitColumnsList body.toList).toArray p
   | .env n body p =>
@@ -10273,10 +8417,8 @@ private def splitColumnsList : List Raw → List Raw
 
 end
 
-/-- One level's group primitives paired into the brace group each pair is:
-an opener collects what follows it until the closer of its own kind, and an
-opener or closer with no partner at this level stands as written, for the
-elaborator to name. -/
+/-- One level's group primitives paired into the brace groups they delimit; an
+unpartnered one stands as written. -/
 private def pairGroupLevel (xs : Array Raw) : Array Raw := Id.run do
   let mut frames : Array (String × Pos × Array Raw) := #[]
   let mut out : Array Raw := #[]
@@ -10300,7 +8442,6 @@ private def pairGroupLevel (xs : Array Raw) : Array Raw := Id.run do
       match frames.back? with
       | some (c, p, items) => frames := frames.pop.push (c, p, items.push x)
       | none => out := out.push x
-  -- An opener left unclosed at the level's end stands as written.
   for _ in [0:frames.size] do
     match frames.back? with
     | some (c, p, items) =>
@@ -10315,13 +8456,9 @@ private def pairGroupLevel (xs : Array Raw) : Array Raw := Id.run do
 
 mutual
 
-/-- The pass that makes every matched group primitive the brace group it
-is, whole tree, before the rewrite walk: the walk reads a group where a
-document spelled braces, so a declaration inside the pair stays inside it.
-The preamble's own top level (`top`: the tree's, and a spliced file's at
-that level) keeps its pairs as written: the preamble is a flat list of
-declarations, where a group would be content. -/
--- conserves: none — a pair's two words become the group they delimit.
+/-- Every matched group primitive made the brace group it is, whole tree, except
+at the preamble's top level. -/
+-- conserves: none — a pair's two words become the group they delimit
 private def pairGroupsRaw (top : Bool) : Raw → Raw
   | .group body p => .group (pairGroupsList false #[] body.toList) p
   | .env n body p =>
@@ -10340,8 +8477,8 @@ private def pairGroupsList (top : Bool) (acc : Array Raw) : List Raw → Array R
 
 end
 
-/-- One token of a delimited parameter text or of a use's input, as TeX
-matches them: a character, a control word, a space, or a whole group. -/
+/-- One token of a delimited parameter text or of a use's
+input, as TeX matches them. -/
 private inductive DelimAtom where
   | ch (c : Char)
   | cs (name : String)
@@ -10349,9 +8486,7 @@ private inductive DelimAtom where
   | other
   deriving BEq
 
-/-- A use's input flattened to atoms, each with the raw it stands in and,
-for a word's character, its offset: up to the paragraph's end, where a
-delimited argument cannot reach. -/
+/-- A use's input flattened to atoms, up to the paragraph's end. -/
 private def delimAtoms (xs : Array Raw) (start : Nat) : Array (DelimAtom × Nat × Nat) := Id.run do
   let mut out := #[]
   for h : i in [start:xs.size] do
@@ -10368,9 +8503,8 @@ private def delimAtoms (xs : Array Raw) (start : Nat) : Array (DelimAtom × Nat 
     | _ => out := out.push (.other, i, 0)
   return out
 
-/-- A refused delimited definition's parameter text: its literal run before
-the first parameter, then each parameter's delimiter. `none` when a
-parameter is undelimited or the text is not `#1…#n` in order. -/
+/-- A refused delimited definition's parameter text: its literal run, then each
+parameter's delimiter; `none` otherwise. -/
 private def delimShape (params : Array Raw) : Option (Array DelimAtom × Array (Array DelimAtom)) :=
   Id.run do
   let mut lead : Array DelimAtom := #[]
@@ -10403,8 +8537,8 @@ private def atomsAt (atoms : Array (DelimAtom × Nat × Nat)) (k : Nat) (pat : A
     Bool :=
   (List.range pat.size).all fun j => (atoms[k + j]?.map (·.1)) == pat[j]?
 
-/-- The raws of `xs` from atom `a` up to atom `b` (exclusive), a word split
-where an atom boundary falls inside it. -/
+/-- The raws of `xs` from atom `a` up to atom `b`, a word split where an atom
+boundary falls inside it. -/
 private def atomRaws (xs : Array Raw) (atoms : Array (DelimAtom × Nat × Nat)) (a b : Nat) :
     Array Raw := Id.run do
   let mut out : Array Raw := #[]
@@ -10416,7 +8550,6 @@ private def atomRaws (xs : Array Raw) (atoms : Array (DelimAtom × Nat × Nat)) 
     | some (_, ri, o) =>
       match xs[ri]? with
       | some (.word w p) =>
-        -- the run of this word's characters inside [k, b)
         let mut n := 0
         for _ in [k:b] do
           if atoms[k + n]?.any (fun t => t.2.1 == ri) && k + n < b then n := n + 1 else break
@@ -10429,10 +8562,7 @@ private def atomRaws (xs : Array Raw) (atoms : Array (DelimAtom × Nat × Nat)) 
   return out
 
 /-- A use of a refused delimited definition, spelled as the braced call its
-parameter text reads: the arguments TeX would bind, each a group, with the
-delimiters consumed as TeX consumes them. `none` when the input does not
-match (a delimiter missing before the paragraph's end), leaving the use as
-written. Returns the call and the index past what it consumed. -/
+parameter text reads; `none` when the input does not match. -/
 private def delimCall (xs : Array Raw) (i : Nat) (name : String) (pos : Pos)
     (shape : Array DelimAtom × Array (Array DelimAtom)) : Option (Array Raw × Nat) := Id.run do
   let atoms := delimAtoms xs (i + 1)
@@ -10449,7 +8579,6 @@ private def delimCall (xs : Array Raw) (i : Nat) (name : String) (pos : Pos)
     unless found do return none
     args := args.push (.group (atomRaws xs atoms k e) pos)
     k := e + d.size
-  -- What the last delimiter leaves of a word stays as that word's tail.
   let (stop, tail) := match atoms[k]?, atoms[k - 1]? with
     | some (_, ri, o), some (_, rj, _) =>
       if ri == rj && o > 0 then
@@ -10461,16 +8590,14 @@ private def delimCall (xs : Array Raw) (i : Nat) (name : String) (pos : Pos)
     | _, _ => (i + 1, #[])
   return some (#[Raw.ctrl name pos] ++ args ++ tail, stop)
 
-/-- The definers after which a name means something new: every one that
-replaces a definition, so a delimited signature ends there. `\providecommand`
-keeps a definition that stands, so it is not one. -/
+/-- The definers after which a name means something new;
+`\providecommand` is not one. -/
 private def redefiners : List String :=
   ["def", "gdef", "edef", "xdef", "let", "define", "newcommand", "renewcommand",
    "DeclareRobustCommand", "NewDocumentCommand", "RenewDocumentCommand",
    "DeclareDocumentCommand"]
 
-/-- The command a definer standing at `i` names: the control word after it,
-past spaces and a `*`, bare or as a one-word group. -/
+/-- The command a definer standing at `i` names. -/
 private def definedCmd (xs : Array Raw) (i : Nat) : Option String :=
   let j := skipSpaces xs (i + 1)
   let j := if xs[j]? matches some (.sym '*' _) then skipSpaces xs (j + 1) else j
@@ -10484,8 +8611,8 @@ private def definedCmd (xs : Array Raw) (i : Nat) : Option String :=
 
 private abbrev DelimShape := Array DelimAtom × Array (Array DelimAtom)
 
-/-- Global writes outlive a scope, including signature removals and writes
-shadowed by a later local definition. -/
+/-- The delimited signatures in force, with the global
+writes that outlive a scope. -/
 private structure DelimState where
   sigs : Array (String × DelimShape) := #[]
   globals : Array (String × Option DelimShape) := #[]
@@ -10497,8 +8624,7 @@ private def setDelimSig (sigs : Array (String × DelimShape))
   | some sh => kept.push (n, sh)
   | none => kept
 
-/-- The signatures in force after the definer at `i`: its name's delimited
-parameter text when it is a delimited `\def` or `\gdef`, and none otherwise. -/
+/-- The signatures in force after the definer at `i`. -/
 private def sigsAfter (st : DelimState) (xs : Array Raw) (i : Nat) (d n : String) :
     DelimState :=
   let shape := if d == "def" || d == "gdef" then
@@ -10509,8 +8635,8 @@ private def sigsAfter (st : DelimState) (xs : Array Raw) (i : Nat) (d n : String
   { sigs := setDelimSig st.sigs n shape
     globals := if definesGlobally xs i d then st.globals.push (n, shape) else st.globals }
 
-/-- Restore the outer locals, replaying only global writes made since this
-scope opened. An earlier global must not overwrite a saved local shadow. -/
+/-- The outer locals restored, replaying only the global
+writes made since the scope opened. -/
 private def delimClose (saved current : DelimState) : DelimState :=
   let writes := current.globals.extract saved.globals.size current.globals.size
   { current with
@@ -10518,13 +8644,9 @@ private def delimClose (saved current : DelimState) : DelimState :=
 
 mutual
 
-/-- Every use of a refused delimited definition spelled as its braced call
-(`delimCall`), whole tree, in document order, before the rewrite walk: the
-delimiter is the call's syntax, consumed as TeX consumes it, never ink. A
-use reads the signature in force where it stands. Real scopes restore locals
-and retain explicit global writes; input wrappers open no scope. The
-definition's own head is not a use. -/
--- conserves: none — a use's delimiters are syntax, not text.
+/-- Every use of a refused delimited definition spelled as its braced call,
+whole tree, in document order. -/
+-- conserves: none — a use's delimiters are syntax, not text
 private def delimCallsRaw (sigs : DelimState) : Raw → Raw × DelimState
   | .group body p =>
     let (b, next) := delimCallsList sigs body #[] body.toList 0 0
@@ -10545,7 +8667,6 @@ private def delimCallsList (sigs : DelimState)
   | [], _, _ => (out, sigs)
   | _ :: rest, i, skip + 1 => delimCallsList sigs xs out rest (i + 1) skip
   | .ctrl "apptocmd" pos :: rest, i, 0 =>
-    -- Definitions inside a patch or either callback are not in force.
     let (_, k, _) := takeHookArgs xs (i + 1)
     delimCallsList sigs xs ((out.push (.ctrl "apptocmd" pos)) ++ xs.extract (i + 1) k)
       rest (i + 1) (k - (i + 1))
@@ -10567,10 +8688,8 @@ private def delimCallsList (sigs : DelimState)
 
 end
 
-/-- Recover delimited calls in execution order: preamble, replayed hooks,
-then body. A hook sees the last preamble signature and earlier hooks, never
-a redefinition written later in the body. The same walk gathers signatures
-and consumes their calls; no whole-tree pre-scan is needed. -/
+/-- Delimited calls recovered in execution order: preamble,
+replayed hooks, then body. -/
 private def delimDocument (raws : Array Raw) : M (Array Raw) := do
   let d := (raws.findIdx? (· matches .env "document" _ _)).getD raws.size
   let pre := raws.extract 0 d
@@ -10586,19 +8705,16 @@ private def delimDocument (raws : Array Raw) : M (Array Raw) := do
   write fun st => { st with deferred := hooks }
   return pre ++ (delimCallsList sigs post #[] post.toList 0 0).1
 
-/-- Glue a row of boxes can hold between two boxes: a space, or the fill
-that takes what the boxes leave of the measure (`\hfill`, `\hfil`). A
-paragraph break is not among them — it ends the line the boxes stand on. -/
+/-- Whether a raw is glue a row of boxes can hold between
+two boxes: a space or a fill. -/
 private def rowGlue : Raw → Bool
   | .space => true
   | .ctrl "hfill" _ => true
   | .ctrl "hfil" _ => true
   | _ => false
 
-/-- A minipage's width group and its content past it, its `[pos]` bracket as
-written (classes.dtx §minipage: `[pos][height][inner-pos]{width}`), and
-whether a `[height]` or `[inner-pos]` stood after it. `none` without a width
-group. -/
+/-- A minipage's width group, its content, its `[pos]` bracket, and whether a
+`[height]` or `[inner-pos]` follows; `none` without a width. -/
 private def boxParts (body : Array Raw) : Option (Raw × Array Raw × Array Raw × Bool) :=
   let (_, k1) := takeOpts body 0 1
   let (more, k) := takeOpts body k1 2
@@ -10607,15 +8723,13 @@ private def boxParts (body : Array Raw) : Option (Raw × Array Raw × Array Raw 
   | some (.group g gp) => some (.group g gp, body.extract (k + 1) body.size, body.extract 0 k1, more)
   | _ => none
 
-/-- Does a paragraph end at `i` — a break, or the end of the level — once
-the spaces before it are passed? -/
+/-- Whether a paragraph ends at `i`, past spaces. -/
 private def endsPara (rs : Array Raw) (i : Nat) : Bool :=
   match rs[skipSpaces rs i]? with
   | none | some (.par _) => true
   | _ => false
 
-/-- Does a paragraph open at `i`: the level's start, or a break before it
-with only spaces between? -/
+/-- Whether a paragraph opens at `i`. -/
 private def opensPara (rs : Array Raw) (i : Nat) : Bool := Id.run do
   let mut k := i
   for _ in [0:i] do
@@ -10628,10 +8742,8 @@ private def opensPara (rs : Array Raw) (i : Nat) : Bool := Id.run do
       | _ => return false
   return k == 0
 
-/-- The minipage body a group holds, when the group is one minipage box
-alone (bar surrounding spaces). This is the one minipage a flow-transparent
-link wrapper may stand on, read through for the row the boxes form while the
-wrapper stays around the box's content. -/
+/-- The minipage body a group holds, when the group is one
+minipage box alone. -/
 private def soleMinipage (g : Array Raw) : Option (Array Raw) :=
   let a := skipSpaces g 0
   match g[a]? with
@@ -10639,13 +8751,8 @@ private def soleMinipage (g : Array Raw) : Option (Array Raw) :=
     if skipSpaces g (a + 1) == g.size then some mb else none
   | _ => none
 
-/-- A box at `i` that a row can hold: a bare `\begin{minipage}` box, or one
-inside a flow-transparent link wrapper (`\hyperlink`/`\href`, whose second
-group is one minipage). Returns the box's width group, the content the
-column carries (the wrapper kept around the minipage's own content for a
-linked box, so the column keeps one link identity), its `[pos]` bracket,
-whether a `[height]`/`[inner-pos]` option stood, the box's position, and the
-index past the whole box. `none` when `i` is not a box. -/
+/-- A box at `i` that a row can hold: a bare
+`\begin{minipage}`, or one inside a link wrapper. -/
 private def boxAt (rs : Array Raw) (i : Nat) :
     Option (Raw × Array Raw × Array Raw × Bool × Pos × Nat) :=
   match rs[i]? with
@@ -10664,26 +8771,12 @@ private def boxAt (rs : Array Raw) (i : Nat) :
     else none
   | _ => none
 
-/-- A linked row is only a candidate until elaboration resolves the link
-names. Keep the original calls beside the proposed row: an overriding
-macro owns its arguments, including boxes it discards. The space makes
-this internal environment unspellable as a document environment name. -/
+/-- The mark of a linked row candidate, kept beside the original calls until
+elaboration resolves the link names. -/
 public def linkedBoxRowMark : String := " linked box row"
 
-/-- Each run of minipages at one level whose separators are row glue holding
-a fill becomes one `{columns}` row of `{column}`s of the widths the boxes
-declare: LaTeX sets such boxes on one line with the fill between them
-(`\hfill` is `\hskip 0pt plus 1fill`, TeXbook chapter 12), which is the
-columns model's own leftover rule — the measure the declared widths leave
-goes into equal gutters between the boxes. A paragraph that is one box with
-a declared `[pos]` and then a picture is that line too: LaTeX sets the two
-side by side, each on the baseline by its own point, and as a row the
-picture's column takes what the box leaves, so it starts where the box
-ends. Each box keeps its `[pos]`. A box standing alone, a pair a paragraph
-break or other content separates, and a pair of boxes only a space
-separates are left as they stand. Returns the level and, for each row,
-where it opened, whether a box carried `[height]`/`[inner-pos]`, and
-whether it is the box-and-picture line. -/
+/-- Each run of minipages at one level separated by glue
+holding a fill, as one `{columns}` row. -/
 private def boxRows (rs : Array Raw) : Array Raw × Array (Pos × Bool × Bool) := Id.run do
   let mut out : Array Raw := #[]
   let mut rows : Array (Pos × Bool × Bool) := #[]
@@ -10697,8 +8790,6 @@ private def boxRows (rs : Array Raw) : Array Raw × Array (Pos × Bool × Bool) 
         out := out.push r
         i := i + 1
     | some (w0, c0, pos0, o0, cp0, next0) =>
-      -- The box-and-picture line is a bare minipage followed by a picture;
-      -- a wrapped box does not take that shape here.
       let bare := match rs[i]? with | some (.env "minipage" _ _) => true | _ => false
       let pk := skipSpaces rs next0
       let picLine := bare && (match rs[pk]? with
@@ -10751,9 +8842,6 @@ private def boxRows (rs : Array Raw) : Array Raw × Array (Pos × Bool × Bool) 
             rows := rows.push (cp0, opts, false)
           i := j
         else
-          -- A lone box is left as it stands: push its first token and
-          -- advance one, so any following groups (a wrapper's arguments)
-          -- flow back through the walk unchanged.
           match (rs[i]? : Option Raw) with
           | none => break
           | some r =>
@@ -10761,9 +8849,8 @@ private def boxRows (rs : Array Raw) : Array Raw × Array (Pos × Bool × Bool) 
             i := i + 1
   return (out, rows)
 
-/-- One level of rows, formed and named: each row is a translation onto the
-columns model (N0100), and a `[height]` or `[inner-pos]` option inside one
-is noted where the row opens, since a box takes its content's height. -/
+/-- One level of rows, formed and noted as translations onto
+the columns model. -/
 private def boxRowEmit (rs : Array Raw) : M (Array Raw) := do
   let (out, rows) := boxRows rs
   for (p, opts, withPic) in rows do
@@ -10780,10 +8867,8 @@ private def boxRowEmit (rs : Array Raw) : M (Array Raw) := do
 box is as tall as its content" p
   return out
 
-/-- beamer's `\begin{columns}[t]` (and `c`, `b`, `T`) is the point each
-column stands on the row's baseline by, unless a `{column}` declares its
-own: carried onto every column that declares none, so the column's reader
-is the one reader of a position. -/
+/-- beamer's `\begin{columns}[t]` alignment carried onto
+every column that declares none. -/
 private def columnsRowPos (body : Array Raw) : Array Raw := Id.run do
   let (o, _) := takeOpt body 0
   let some opts := o | return body
@@ -10798,9 +8883,8 @@ private def columnsRowPos (body : Array Raw) : Array Raw := Id.run do
 
 mutual
 
-/-- The pass that sets side-by-side boxes in one row, whole tree, after the
-idiom rewrite (so a `\parbox` is the box it became). Structural on `Raw`,
-the list walk carrying its accumulator. -/
+/-- The pass setting side-by-side boxes in one row, whole
+tree, after the idiom rewrite. -/
 private def boxRowList (acc : Array Raw) : List Raw → M (Array Raw)
   | [] => pure acc
   | r :: rest => do
@@ -10814,8 +8898,6 @@ private def boxRowRaw : Raw → M Raw
   | .env n body p => do
     match Parse.inputEnvFile? n with
     | some file =>
-      -- This late pass emits its own row notes after rewriteRaw has
-      -- restored the caller's file. Follow the input wrapper again.
       let saved := (← get).file
       write fun st => { st with file := file }
       let kids ← boxRowList #[] body.toList
@@ -10835,8 +8917,7 @@ private def boxRowRaw : Raw → M Raw
 
 end
 
-/-- A completion with no pending declaration or hook interpreter. The box
-pass may still translate any number of nested rows and report their losses. -/
+/-- A completion with no pending declaration or hook interpreter. -/
 private def QuietTail (st : St) : Prop :=
   st.head = #[] ∧ st.foot = #[] ∧ st.runFrom ≤ 1 ∧
     st.listResets = #[] ∧ st.listDefs = #[] ∧
@@ -10971,55 +9052,24 @@ private theorem boxRowRaw_tailDiag (r : Raw) (d : Diag) (st : St)
 
 end
 
-/-- Is this raw an overlay spec token? Shape alone, because an item's
-boundary is a lexical question: `\onslide<...>` starts an item whatever its
-spec says. Whether that spec names a step — and so whether the item can be
-an alternative — is the one range definition's answer (`specNumbered`, over
-`Ir.overlayRange`), never a second reading of a range spelled here. -/
+/-- The raw itself when it is an overlay spec token, by shape alone. -/
 private def specRaw? : Raw → Option Raw
   | r@(.word w _) =>
     if w.startsWith "<" && w.endsWith ">" && w.length ≥ 3 then some r else none
   | _ => none
 
-/-- The specification word standing at `i`, if one does: `specRaw?`'s shape
-test asked of a position rather than a raw, so the lexical question "is this
-a spec" has one answer in this module. -/
+/-- The specification word standing at `i`, if one does. -/
 private def specWordAt (raws : Array Raw) (i : Nat) : Option String :=
   (raws[i]?.bind specRaw?).bind fun r =>
     match r with
     | .word w _ => some w
     | _ => none
 
-/-- The beamer modes whose overlay count decides what a *presentation*
-artifact shows. `presentation` is beamer's collective name for the
-non-article modes, `beamer` the slide presentation itself, and `all` every
-mode (beamer manual §21.1, "Overview of Modes"); `handout`, `trans`,
-`second` and `article` each address an artifact this engine is not
-producing, so a count declared for one of those decides nothing here. -/
+/-- The beamer modes whose overlay count decides what a presentation shows. -/
 private def presentationModes : List String := ["presentation", "beamer", "all"]
 
-/-- Does this specification declare that the presentation has *no* slides
-here? Beamer's mode specification pairs a mode with an overlay
-specification — `<presentation:0>` says the presentation modes get zero
-overlays, so beamer's own output omits the construct and keeps it for
-handout or article mode only (beamer manual §21.2, "Mode Specifications").
-The engine ships one presentation, so such a frame is the author saying
-*not in this artifact*, and honouring it is not a loss.
-
-Read the way beamer's own decoder reads it (`beamerbasedecode.sty`): the
-`|`-separated entries are scanned left to right and each entry naming the
-current mode *overwrites* the answer, so the **last** entry naming this
-artifact decides — `<all:0|beamer:1->` shows, because `beamer:1-` is read
-after `all:0`. An entry with no colon is an overlay specification for the
-presentation itself, which is beamer's inserted `beamer:` prefix.
-
-The decision is then a number: the entry silences exactly when its overlay
-specification *is* zero, so `<beamer:0,2>` and `<presentation:0-3>` show —
-they name a step as well as the zero. A comma separates intervals inside one
-entry's specification and never separates entries, which is why it is not
-split on: reading `0` out of `0,2` silenced a frame beamer shows. Any range
-other than zero is a restriction the step model does not carry, and that
-loss is named where the specification is stripped rather than guessed at. -/
+/-- Whether a specification declares that the presentation
+has no slides here. -/
 public def modeSilencesPresentation (w : String) : Bool :=
   if w.startsWith "<" && w.endsWith ">" && w.length ≥ 3 then
     let inner := ((w.drop 1).dropEnd 1).toString
@@ -11031,17 +9081,8 @@ public def modeSilencesPresentation (w : String) : Bool :=
     (decided.bind (·.trimAscii.toString.toNat?)) == some 0
   else false
 
-/-- Split an `{overprint}` body into the content before its first item and
-the items themselves, each an `\onslide` spec with the content that runs to
-the next `\onslide` (beamer manual §9.5, "Dynamically Changing Text or
-Images": the items are alternatives, and one of them stands on a given
-overlay). The `Bool` reports a body this
-rewrite refuses to read as an alternation — an `\onslide` with no spec
-token, where beamer's own reading is "on every overlay" and alternation has
-no meaning; the caller degrades rather than guessing.
-
-Accumulators rather than a rebuilt tail: the result is one pass, and the
-content of an item grows by `push`. -/
+/-- An `{overprint}` body split into its content before the first item and the
+items, each an `\onslide` spec with its content. -/
 private def overprintScan : List Raw → Array Raw → Option (Raw × Array Raw) →
     Array (Raw × Array Raw) → Array Raw × Array (Raw × Array Raw) × Bool
   | [], lead, cur, items =>
@@ -11058,72 +9099,36 @@ private def overprintScan : List Raw → Array Raw → Option (Raw × Array Raw)
     | some (sp, content) => overprintScan rest lead (some (sp, content.push r)) items
     | none => overprintScan rest (lead.push r) none items
 
-/-- Can the step model number this item's specification? Asked of the one
-range definition (`Ir.overlayRange`), never of a second parse of a spec: an
-item whose spec names steps is an alternative, and one whose spec names none
-that arithmetic can place cannot be — which of the two it is has to be the
-same question the elaborator's `\alt` arm asks, or the two passes could
-disagree about an item and no theorem would notice. -/
+/-- Whether the step model can number an item's specification. -/
 private def specNumbered : Raw → Bool
   | .word w _ => (Ir.overlayRange w).isSome
   | _ => false
 
-/-- n-way alternation is nested binary alternation: item one against all the
-rest, recursively —
-`\alt<s1>{one}{\alt<s2>{two}{\alt<s3>{three}{tail}}}`.
-
-Nesting rather than a new n-ary IR constructor because the selection beamer
-specifies is already a total order (the first item whose spec names the
-overlay stands), and because every consumer of alternation then needs no
-change whatever: each node is an ordinary alternation, so exactly one item
-inks per step page by the same fact that holds for two
-(`Ir.altShowsFirst`, `alt_backend_agree`), the handout's page count is the
-maximum over every item's spec because `Ir.maxStepBlock`'s `.alt` arm
-recurses into both groups, and the structure tree keeps declaring each
-group exactly once in page order.
-
-`tail` is what stands on an overlay no item's spec names: empty is beamer's
-own answer (nothing stands there), and nothing is the one thing that is
-never *several items stacked*, which is what keeping the body whole did. An
-item whose spec the step model cannot number goes here instead of nowhere —
-the steps nothing claims are the honest home for an item whose steps cannot
-be enumerated.
-
-The spec travels verbatim at the index the elaborator's `\alt` arm reads,
-as `alertOverlay`'s does, so numbering and range membership stay in the one
-place that owns them. -/
+/-- n-way alternation as nested binary alternation: item one
+against all the rest. -/
 private def overprintAlt (p : Pos) (tail : Array Raw) : List (Raw × Array Raw) → Array Raw
   | [] => tail
   | (sp, content) :: rest =>
     #[.ctrl "alt" p, sp, .group content p, .group (overprintAlt p tail rest) p]
 
-/-- The head of a nesting is one alternation node and no fifth raw. -/
 private theorem overprintAlt_exact (p : Pos) (tail : Array Raw) (sp : Raw) (content : Array Raw)
     (rest : List (Raw × Array Raw)) :
     overprintAlt p tail ((sp, content) :: rest) =
       #[.ctrl "alt" p, sp, .group content p, .group (overprintAlt p tail rest) p] := by rfl
 
-/-- The item is carried whole as the alternation's first alternative: what
-the steps its own spec names show, and the only copy of it. -/
 private theorem overprintAlt_item_exact (p : Pos) (tail : Array Raw) (sp : Raw) (content : Array Raw)
     (rest : List (Raw × Array Raw)) :
     (overprintAlt p tail ((sp, content) :: rest))[2]? = some (.group content p) := by rfl
 
-/-- The spec reaches the elaborator as written, at the index its `\alt` arm
-reads: a spec the step model cannot number is judged there, never here. -/
 private theorem overprintAlt_spec_id (p : Pos) (tail : Array Raw) (sp : Raw) (content : Array Raw)
     (rest : List (Raw × Array Raw)) :
     (overprintAlt p tail ((sp, content) :: rest))[1]? = some sp := by rfl
 
-/-- The last item's other alternative is the tail and nothing else: the
-overlay no item names shows what stands last, never a second item beside the
-first. With no tail — `#[]`, the shape a body of numbered items alone
-plans — it shows nothing. -/
 private theorem overprintAlt_last_exact (p : Pos) (tail : Array Raw) (sp : Raw)
     (content : Array Raw) :
     (overprintAlt p tail [(sp, content)])[3]? = some (.group tail p) := by rfl
 
-/-- The items that can be alternatives, in the order the body wrote them. -/
+/-- The items that can be alternatives, in body order. -/
 private def overprintNumbered (items : Array (Raw × Array Raw)) :
     Array (Raw × Array Raw) :=
   items.filter fun it => specNumbered it.1
@@ -11133,39 +9138,16 @@ private def overprintLoose (items : Array (Raw × Array Raw)) :
     Array (Raw × Array Raw) :=
   items.filter fun it => !specNumbered it.1
 
-/-- `_mem`: an alternative of the plan is an item the body wrote. Refusing a
-spec drops items from the nesting; it never invents, reorders or merges one,
-so the reading on a page is always some item's, whole. -/
 private theorem overprintNumbered_mem (items : Array (Raw × Array Raw))
     (it : Raw × Array Raw) (h : it ∈ overprintNumbered items) : it ∈ items :=
   (Array.mem_filter.mp h).1
 
-/-- `_mem`: the last-resort item is one the body wrote too. -/
 private theorem overprintLoose_mem (items : Array (Raw × Array Raw))
     (it : Raw × Array Raw) (h : it ∈ overprintLoose items) : it ∈ items :=
   (Array.mem_filter.mp h).1
 
-/-- An `{overprint}` as alternation with the count of items whose spec the
-step model could not number, or `none` for a body this rewrite refuses to
-read as an alternation at all — which leaves the environment standing, so
-the unknown-environment warning names the loss at elaboration and the body
-is kept as ONE reading rather than guessed at.
-
-Content before the first item stays where it was written and shows on every
-overlay, which is what an `\onslide`-less run means in beamer.
-
-Every item whose spec names steps stays an alternative, in body order:
-refusing one item never removes another, so a deck that spells one
-incremental spec keeps every numbered item it wrote. The first item whose
-spec cannot be numbered becomes the nesting's last resort — it inks exactly
-the steps no numbered item claims, which for a deck that numbers the rest is
-the reading beamer gives it — and a second such item cannot, there being one
-last resort; the count travels so the caller names both losses.
-
-The paragraph ends on both sides of the alternation because an overprint is
-a block environment: the fence is what lets the nesting reach the block
-level, where an item holding a list or two paragraphs steps whole instead of
-being squeezed through one paragraph. -/
+/-- An `{overprint}` as alternation with the count of unnumberable items, or
+`none` for a body read as no alternation. -/
 private def overprintPlan (body : Array Raw) (p : Pos) : Option (Array Raw × Nat) :=
   let (lead, items, bad) := overprintScan body.toList #[] none #[]
   if bad || items.isEmpty then none
@@ -11177,23 +9159,11 @@ private def overprintPlan (body : Array Raw) (p : Pos) : Option (Array Raw × Na
       let mut out : Array Raw := #[.par p]
       for r in lead do
         out := out.push r
-      -- Last item outermost: the nesting is a priority chain, and beamer's
-      -- overprint gives priority to the item written last (its items stack in
-      -- one overlay area, so a later one covers an earlier). Head-first the
-      -- chain is dead code from the first item whose range covers the whole
-      -- window: `\onslide<1->` then `\onslide<2->` made item 1 win on every
-      -- step, item 2 reachable from none, and the frame shipped two
-      -- byte-identical pages with no diagnostic. Point specs are unaffected —
-      -- their partitions are singletons either way.
+      -- Last item outermost: beamer's overprint gives priority to the item written last.
       for r in overprintAlt p tail numbered.toList.reverse do
         out := out.push r
       return out.push (.par p), loose.size)
 
-/-- `_accounts`: a plan that reports no unnumberable item made no refusal —
-every item the body wrote is an alternative of the nesting. So an item this
-pass could not number is never absent from the caller's count, and the one
-caller says W0105 for it (`overprintRaw`): a refused item cannot reach the
-artifact wordlessly. -/
 private theorem overprintPlan_accounts (body : Array Raw) (p : Pos) (repl : Array Raw)
     (h : overprintPlan body p = some (repl, 0)) :
     overprintNumbered (overprintScan body.toList #[] none #[]).2.1
@@ -11217,18 +9187,11 @@ private theorem overprintPlan_accounts (body : Array Raw) (p : Pos) (repl : Arra
 
 mutual
 
-/-- Splice every `{overprint}` in a raw sequence into its alternation. A
-pass of its own, ahead of the idiom rewrite, for two reasons: the
-replacement is a SEQUENCE where the environment was one node — wrapping it
-in a group instead would offer the group to a frame as its title, which is
-what `\begin{frame}{...}` reads — and running first leaves the items'
-content to the main pass, so an idiom inside an alternative is rewritten
-exactly as it would be anywhere else. -/
+/-- Every `{overprint}` in a raw sequence spliced into its alternation. -/
 private def overprintList : List Raw → Array Raw → Nat → M (Array Raw)
   | [], out, _ => pure out
   | _ :: rest, out, skip + 1 => overprintList rest out skip
   | .ctrl "apptocmd" pos :: rest, out, 0 => do
-    -- Overlay bodies inside a patch or callback are not live material.
     let args := rest.toArray
     let (_, k, _) := takeHookArgs args 0
     overprintList rest ((out.push (.ctrl "apptocmd" pos)) ++ args.extract 0 k) k
@@ -11237,9 +9200,8 @@ private def overprintList : List Raw → Array Raw → Nat → M (Array Raw)
     overprintList rest (out ++ rs) 0
 termination_by structural l _ _ => l
 
-/-- Descend into a group or environment, so an overprint nested anywhere is
-found. Split from the list walk so the recursion is structural on `Raw`, as
-the idiom rewrite's own pair is. -/
+/-- Descends into a group or environment, so an overprint
+nested anywhere is found. -/
 private def overprintRaw : Raw → M (Array Raw)
   | .group body p => do return #[.group (← overprintList body.toList #[] 0) p]
   | .env "overprint" body p => do
@@ -11247,11 +9209,7 @@ private def overprintRaw : Raw → M (Array Raw)
     match overprintPlan body' p with
     | some (repl, loose) =>
       became "\\begin{overprint}" "\\alt alternation, one item per overlay" p
-      -- A spec this pass could not number is named, once for the document:
-      -- its item is placed where no numbered item claims an overlay, which
-      -- is not where it was declared to stand, and a second such item has
-      -- no place left at all. W0105 is the code for a spec that names no
-      -- step, and the overlay arms already fire it on this key.
+      -- An unnumberable spec is named once for the document (W0105).
       if loose > 0 then
         let msg :=
           if loose == 1 then
@@ -11270,32 +9228,22 @@ specs are not modelled")
 
 end
 
-/-- A scope's trailing length metadata. A space cannot occur in a control
-word, so a document cannot spell this internal handoff. The keys identify
-token sites; only the elaborator knows their resolved opening values. -/
+/-- A scope's trailing length metadata, unforgeable because it holds a space. -/
 public def lengthRestoreKeys? (name : String) : Option (Array String) :=
   let mark := "length restore "
   if name.startsWith mark then
     some ((name.drop mark.length).toString.splitOn ",").toArray
   else none
 
-/-- TeX restores local assignments at the group's close (TeXbook ch. 24).
-Carry names, never saved expressions: a referenced register may have
-changed, and native token declarations are not in the rewrite's `lens`. -/
+/-- The assignments to restore at a group's close, carried as names. -/
 private def restoreLengths (keys : Array String) (p : Pos) : Array Raw :=
   if keys.isEmpty then #[]
   else #[.ctrl ("length restore " ++ String.intercalate "," keys.toList) p]
 
 mutual
 
-/-- Push one raw's rewrite. An environment rewritten to a group stands where
-`\begin` stood, and `\begin` is a command, so no argument scan of the command
-before it reaches the body: where the output so far would read the group as
-one more argument of the command it ends with (`Parse.endsInArgument`), the
-empty generated scope keeps `\begin`'s place between them. It elaborates to
-nothing, a scan of the paragraph's text reads through it
-(`Parse.isPlaceKeeper`), and the group keeps the reading it has after plain
-words. -/
+/-- Pushes one raw's rewrite, keeping a rewritten environment's group apart from
+the output before it. -/
 private def pushRewritten (out : Array Raw) (r r' : Raw) : Array Raw :=
   match r, r' with
   | .env _ _ p, .group _ _ =>
@@ -11303,18 +9251,9 @@ private def pushRewritten (out : Array Raw) (r r' : Raw) : Array Raw :=
     else out.push r'
   | _, _ => out.push r'
 
-/-- Walk `raws`. The list is `raws` from index `i` on and only drives the
-recursion; the array gives a rewrite O(1) access to its arguments, and `out`
-accumulates so the result is built in one pass -- prepending to the recursive
-result would copy it at every step. `skip` counts elements a rewrite already
-consumed; they fall away one per step, which keeps this total without fuel. -/
--- conserves: none — the rewrite walk's whole job is replacement: arms
--- consume configuration and synthesize the native spelling their N0100
--- note names, so a census equality over the tree is false by design. The
--- conservation contract lives per arm — the replacement elaborates to the
--- document its note names — held by `compatConservationChecks` (an
--- executable oracle; the theorem over the monadic walk waits on the
--- applyDecl fold extraction PLAN names for T1).
+/-- The rewrite walk over `raws` from index `i`; `skip` counts elements a
+rewrite already consumed. -/
+-- conserves: none — the rewrite walk's job is replacement
 private def rewriteList (inBody : Bool) (raws : Array Raw) (out : Array Raw) :
     List Raw → Nat → Nat → M (Array Raw)
   | [], _, _ => pure out
@@ -11325,10 +9264,7 @@ private def rewriteList (inBody : Bool) (raws : Array Raw) (out : Array Raw) :
     rewriteList inBody raws (out.push (.ctrl "define" pos)) rest (i + 1) 0
   | .ctrl name pos :: rest, i, 0 => do
     let inPicture := (← get).inPicture
-    -- Pictures may leave through the TeX boundary. Native block, length
-    -- and font markers have no TeX meaning; preserve their source here.
-    -- Plain alert is the shared exception: its textcolor/bfseries bridge
-    -- is understood by both the native label reader and standalone TeX.
+    -- Pictures may leave through the TeX boundary, so native markers keep their source here.
     let rewritten : Option (Array Raw × Nat) ← if inPicture then do
         if overlayName name == "alert" &&
             (raws[skipSpaces raws (i + 1)]?.bind overlayWord?).isNone then
@@ -11339,12 +9275,9 @@ private def rewriteList (inBody : Bool) (raws : Array Raw) (out : Array Raw) :
     match rewritten with
     | some (repl, consumed) => rewriteList inBody raws (out ++ repl) rest (i + 1) consumed
     | none =>
-      -- Item is a structural delimiter and cannot be redefined by a
-      -- document (Elab.builtinNames); its saved meaning is the same token.
       let name := if inPicture || overlayName name == "item" then overlayName name else name
       rewriteList inBody raws (out.push (.ctrl name pos)) rest (i + 1) 0
-  -- `#k` is the native parameter `\ak`. The digits may be glued to text
-  -- (`#1,`), so the word is split. Outside a body `#` is literal: a colour.
+  -- `#k` is the native parameter `\ak`; outside a body `#` is literal.
   | .sym '#' p :: .word w wp :: rest, i, 0 => do
     let digits := w.toList.takeWhile Char.isDigit
     let tail := String.ofList (w.toList.drop digits.length)
@@ -11357,17 +9290,12 @@ private def rewriteList (inBody : Bool) (raws : Array Raw) (out : Array Raw) :
   | r :: rest, i, 0 => do
     rewriteList inBody raws (pushRewritten out r (← rewriteRaw inBody r)) rest (i + 1) 0
 
-/-- Descend into a group or environment. Split from the list walk so the
-recursion is structural on `Raw`: the body is a field of the head, not a tail
-of the list. -/
+/-- Descends into a group or environment. -/
 private def rewriteRaw (inBody : Bool) : Raw → M Raw
   | .group body p => withBeamerScope do
     if (← get).inPicture then
       return .group (← rewriteList inBody body #[] body.toList 0 0) p
-    -- A group is a macro body when a definition announced one. The count is
-    -- zeroed for the descent and restored one lower on the way out, so a
-    -- definition inside the body manages its own following group without
-    -- stealing `\newenvironment`'s second half.
+    -- A group is a macro body when a definition announced one.
     let saved := (← get).bodyNext
     let savedDef := (← get).inDef
     let savedGroup := (← get).inGroup
@@ -11377,9 +9305,7 @@ private def rewriteRaw (inBody : Bool) : Raw → M Raw
     let savedDefTop := (← get).defTop
     let savedBound := (← get).bound
     let savedCaptures := (← get).beamerCaptures
-    -- A block template's own macro's body is translated quietly
-    -- (`templateCode`).
-    -- premise: templateCodeChecks — a block template's own macro, used in the document's text, names its losses at that use
+    -- premise: templateCodeChecks — a template macro names its losses at its use
     let quiet := saved > 0 && (← get).quietNext
     let (said, warned) := ((← get).diags.size, (← get).warned)
     write fun st => { st with bodyNext := 0, inDef := st.inDef || saved > 0, inGroup := true,
@@ -11389,22 +9315,18 @@ private def rewriteRaw (inBody : Bool) : Raw → M Raw
     if quiet then
       write fun st => { st with diags := st.diags.extract 0 said, warned := warned }
     let restores := restoreLengths (← get).localLengths p
-    -- A group's assignments end with it (TeXbook ch. 24: an assignment is
-    -- local to the group it stands in). Translating stored replacement
-    -- text likewise installs none of the definitions it contains.
+    -- A group's assignments end with it.
     write fun st => { st with bodyNext := saved - 1, inDef := savedDef, inGroup := savedGroup,
                               lens := savedLens, localLengths := savedLengths,
                               tableTop := savedTop, defTop := savedDefTop,
                               bound := if saved > 0 then savedBound else st.bound }
-    -- premise: beamerTemplateChecks — a consumed local font declaration
-    -- leaves no preamble content; nonempty groups still reach its checker.
+    -- premise: beamerTemplateChecks — a consumed local font declaration leaves no preamble content
     if (← get).wholeDoc && !(← get).inDoc && !savedDef && saved == 0 &&
         (← get).beamerCaptures > savedCaptures && !body.all (· == .space) &&
         restores.isEmpty && body'.all (· == .space) then
       return .space
     return .group (body' ++ restores) p
   | .env n body p => do
-    -- An `\input` wrapper switches the file its diagnostics name.
     match Parse.inputEnvFile? n with
     | some f =>
       let saved := (← get).file
@@ -11415,20 +9337,14 @@ private def rewriteRaw (inBody : Bool) : Raw → M Raw
     | none => withBeamerScope do
       if mathEnvs.contains n then
         return .env n body p
-      -- premise: pictureBoundaryChecks — requests retain TeX
-      -- commands while native styled labels still ship.
+      -- premise: pictureBoundaryChecks — requests retain TeX commands
       else if (← get).inPicture || pictureEnvs.contains n then
-        -- Every nested group/environment remains in the same source
-        -- language; no native scope-restoration metadata enters a request.
         let saved := (← get).inPicture
         write fun st => { st with inPicture := true }
         let body' ← rewriteList inBody body #[] body.toList 0 0
         write fun st => { st with inPicture := saved }
         return .env n body' p
       else if n == "otherlanguage" || n == "otherlanguage*" then
-        -- The environment form of the switch: the body takes the language
-        -- attribute; the starred form differs only in date handling the
-        -- engine does not model. The first group is the language.
         let savedTop := (← get).tableTop
         let savedDefTop := (← get).defTop
         write fun st => { st with tableTop := false, defTop := false }
@@ -11444,18 +9360,9 @@ and patterns stand in" p
         became s!"\\begin\{{n}}\{{lname}}" s!"the '{tag}' language attribute" p
         return .group (#[Raw.ctrl ("@lang:" ++ tag) p] ++ body'.extract j body'.size) p
       else if n == "document" then
-        -- Inside the document environment a preamble declaration is a
-        -- placement defect; the flag is what the `\usepackage` arm reads.
         rewriteDocumentBody (rewriteList inBody body #[] body.toList 0 0) p
       else if n == "frame" then
-        -- `Raw.env` carries no argument field, so a frame's `<spec>`, `[opts]`
-        -- and `{title}` all arrive at the head of its body, and beamer writes
-        -- the spec first (beamer manual §8.1). A reader knowing only
-        -- `[opts]{title}` stops at the spec and the whole run, title
-        -- included, sets as a paragraph. The spec is a parameter, so it is
-        -- resolved here and the elaborator's reader sees what it expects.
-        -- Decided before descending: a silenced frame's body must not spend
-        -- the once-per-document diagnostics of content that never ships.
+        -- A frame's `<spec>`, `[opts]` and `{title}` arrive at the head of its body, spec first.
         match specWordAt body (skipSpaces body 0) with
         | some w =>
           if (← get).deck && modeSilencesPresentation w then
@@ -11474,21 +9381,7 @@ steps come from its body" p
             | none => return .env n body' p
         | none => return .env n (← rewriteList inBody body #[] body.toList 0 0) p
       else if n == "titlepage" then
-        -- article.cls's `titlepage` opens a fresh page, applies the empty
-        -- page style, and resets page to one. Its closing newpage resets
-        -- again only in oneside mode (classes.dtx, `\titlepage`). Both
-        -- declarations are shared IR page-opening marks: an empty style
-        -- lasts until a page ships, even when this body is empty.
-        -- The body is an ordinary block sequence scoped by
-        -- the group that carries it — an environment is a group (ltmiscen.dtx:
-        -- `\begin` opens one; TeXbook ch. 5), so a declaration inside ends at
-        -- the close and the body elaborates through the top-level block
-        -- paths. The isolation is `\pagebreak`'s,
-        -- whose vertical distribution and ground stand (`Layout.collectBlocks`,
-        -- `.pagebreak`), and adjacent or boundary breaks close only a page
-        -- holding content, so an empty or leading title page leaves no blank
-        -- page behind. HTML drops the boundaries and their declarations, so
-        -- the body stays one continuous semantic flow with no paged artifact.
+        -- article.cls's `titlepage` opens a fresh unstyled page and resets the page to one.
         let st0 ← get
         write fun st => { st with tableTop := false, defTop := false, localLengths := #[] }
         let body' ← rewriteList inBody body #[] body.toList 0 0
@@ -11503,16 +9396,12 @@ steps come from its body" p
         return .group (#[Raw.ctrl "pagebreak" p, Raw.ctrl Ir.titlePageBeginRole p] ++
           body' ++ close ++ restores) p
       else if let some spec := ((← get).discardEnvs.find? (·.1 == n)).map (·.2) then
-        -- environ's discarding environment: only the arguments its
-        -- signature reads reach the definition, as written; the body is
-        -- dropped unread, so nothing of it is judged or ships.
+        -- environ's discarding environment keeps only the arguments its signature reads.
         let k := spec.foldl (fun k c =>
           if c == 'o' then (takeOpt body k).2 else (takeGroups body k 1).2) 0
         return .env n (body.extract 0 k) p
       else
-        -- An environment is a group (ltmiscen.dtx: `\begin` opens one), so
-        -- a length set inside it ends with it; inside a list, a list
-        -- parameter set there is that list's own.
+        -- An environment is a group, so a length set inside it ends with it.
         let st0 ← get
         write fun st => { st with inList := st.inList || listEnvs.contains n,
                                   tableTop := tableEnvs.contains n, defTop := false,
@@ -11695,8 +9584,7 @@ private theorem rewriteCtrl_meaningFree_exact (s : St) (pos : Pos)
   rw [hLater]
   cases note <;> rfl
 
-/-- The descriptor's only state effect, including the dispatcher's guard.
-There is deliberately no source-array or operand parameter. -/
+/-- The descriptor's only state effect, including the dispatcher's guard. -/
 private def meaningFreeState (s : St) (name : String) (pos : Pos)
     (note : Option String) : St :=
   (account name pos s (meaningFreeReport name pos note s).2).2
@@ -11789,10 +9677,7 @@ private theorem rewriteList_skip_exact (inBody : Bool) (raws out : Array Raw)
     rw [rewriteList, ih]
     congr 1 <;> omega
 
-/-- Literal material surrounding an ordinary body control. Its text is
-arbitrary; there is no command reader whose operands could cross the hole.
-The raw syntax, rather than a test of the rewritten result, states this
-boundary. -/
+/-- Literal material surrounding an ordinary body control. -/
 public inductive LiteralRaws : List Raw → Prop where
   | nil : LiteralRaws []
   | word (text : String) (pos : Pos) : LiteralRaws rest →
@@ -11958,14 +9843,7 @@ private theorem rewriteList_configSkip_body_exact (inBody : Bool)
     rewriteCtrl_configSkip_state _ _ _ _ _ _ _ _ hm hd hl,
     rewriteList_literal_exact _ _ _ _ _ _ hpost]
 
-/-- An ordinary body control consumes exactly its declared argument prefix.
-The source cursor agrees with the array the actual dispatcher reads.
-Arguments and continuation are arbitrary; `GroupPrefix` includes intervening
-spaces. The complete walk equals its continuation with the dispatcher's
-post-state, and that dispatch adds a diagnostic or records a write.
-
-This is a contract of the compatibility stream, before elaboration. The body
-state excludes list-parameter dispatch and picture pass-through. -/
+/-- An ordinary body control consumes exactly its declared argument prefix. -/
 public def ControlGroupsConsumed (name : String) (arity : Nat) : Prop :=
   ∀ (inBody : Bool) (raws out : Array Raw) (pos : Pos)
     (args : List (Array Raw)) (taken rest : List Raw) (i : Nat) (s : St),
@@ -11980,8 +9858,7 @@ public def ControlGroupsConsumed (name : String) (arity : Nat) : Prop :=
     ((St.diags dispatched.2).size > (St.diags s).size ∨
       St.writes dispatched.2 > St.writes s)
 
-/-- The actual dispatcher leaves a command and every following raw available
-to elaboration. This does not assert what elaboration's recovery emits. -/
+/-- The dispatcher leaves a command and every following raw to elaboration. -/
 public def UnknownControlPreserved (name : String) : Prop :=
   ∀ (inBody : Bool) (raws out : Array Raw) (pos : Pos)
     (rest : List Raw) (i : Nat) (s : St),
@@ -12031,10 +9908,8 @@ public theorem unknown_control_contract : UnknownControlPreserved "zzNotAControl
   rw [hsource]
   exact rewriteList_unknown_exact inBody raws out pos rest i s hd hl hp
 
-/-- A checkpoint of the production compatibility walk. The source array is
-kept intact because command readers address it by index. `out` is the
-already rewritten prefix; the remaining input is exactly `raws.drop index`.
-The execution state is opaque outside its owner module. -/
+/-- A checkpoint of the compatibility walk: the source array, the rewritten
+prefix `out`, and the remaining input `raws.drop index`. -/
 public structure RewriteCursor where
   inBody : Bool
   raws : Array Raw
@@ -12044,7 +9919,7 @@ public structure RewriteCursor where
   private complete : (Array Raw × St) → (Array Raw × St) := id
 
 /-- The ordinary document-body dispatch, excluding the list-parameter and
-picture interpreters which give the same token a different meaning. -/
+picture interpreters. -/
 public def RewriteCursor.inDocument (cursor : RewriteCursor) : Prop :=
   cursor.state.inDoc = true ∧ cursor.state.inList = false ∧
     cursor.state.inPicture = false
@@ -12057,33 +9932,26 @@ public def RewriteCursor.outsidePicture (cursor : RewriteCursor) : Prop :=
 public def RewriteCursor.outsideList (cursor : RewriteCursor) : Prop :=
   cursor.state.inList = false
 
-/-- Replace the unread final document at a checkpoint while retaining its
-already executed state, output prefix and enclosing continuation. This
-boundary is after macro/input execution: operands may themselves have had
-effects before reaching it. -/
+/-- The checkpoint with its unread final document replaced, its executed state,
+output prefix and continuation kept. -/
 public def RewriteCursor.withDocument (cursor : RewriteCursor) (body : Array Raw)
     (pos : Pos) : RewriteCursor :=
   { cursor with raws := #[.env "document" body pos], index := 0 }
 
-/-- Resume the actual walk at a checkpoint. This is also the operation used
-by whole-document compatibility completion. -/
+/-- Resumes the walk at a checkpoint. -/
 private def rewriteCursor (cursor : RewriteCursor) : Array Raw × St :=
   cursor.complete (rewriteList cursor.inBody cursor.raws cursor.out
     (cursor.raws.toList.drop cursor.index) cursor.index 0 cursor.state)
 
-/-- The continuation after an accounted control has consumed its groups.
-Only the command dispatch runs: no raw from the consumed prefix is rewritten
-or appended to the output. -/
+/-- The continuation after an accounted control has consumed its groups. -/
 public def RewriteCursor.afterControl (cursor : RewriteCursor) (name : String)
     (pos : Pos) (consumed : Nat) : RewriteCursor :=
   { cursor with
     index := cursor.index + 1 + consumed
     state := (rewriteCtrl name pos cursor.raws (cursor.index + 1) cursor.state).2 }
 
-/-- Descend into the document environment at this checkpoint. Its return
-continuation restores the real enclosing scope and resumes the containing
-walk. In particular the document's consumed groups do not become a separate
-top-level compatibility run. -/
+/-- Descends into the document environment at this checkpoint, its continuation
+restoring the enclosing scope. -/
 public def RewriteCursor.enterDocument (cursor : RewriteCursor)
     (body : Array Raw) (pos : Pos) : RewriteCursor :=
   { inBody := cursor.inBody
@@ -12148,9 +10016,6 @@ private theorem drop_control_rest (raws : Array Raw) (i : Nat)
   rw [Nat.add_assoc, ← List.drop_drop, h, Nat.add_comm 1,
     List.drop_succ_cons, List.drop_left]
 
-/-- Registered controls erase their operands at the production checkpoint,
-including arbitrary nested raws in those operands. The result is the entire
-remaining walk and its state, not just the control's replacement array. -/
 private theorem rewriteCursor_control_exact (cursor : RewriteCursor)
     (name : String) (arity : Nat) (hc : ControlGroupsConsumed name arity)
     (pos : Pos) (args : List (Array Raw)) (taken rest : List Raw)
@@ -12167,7 +10032,7 @@ private theorem rewriteCursor_control_exact (cursor : RewriteCursor)
   simpa only [rewriteCursor, RewriteCursor.afterControl,
     drop_control_rest _ _ _ _ _ _ hs] using congrArg cursor.complete h
 
-/-- Emit the gathered running content as one declaration each. -/
+/-- The gathered running content, one declaration each. -/
 private def flushRunning : M (Array Raw) := do
   let st ← get
   let line (parts : Array (Nat × String)) : String :=
@@ -12183,11 +10048,7 @@ private def flushRunning : M (Array Raw) := do
     let native := s!"\\runningfoot{opt}\{{line st.foot}}"
     became "\\ifoot / \\cfoot / \\ofoot" native st.runPos
     out := out ++ (← synthAt native st.runPos)
-  -- `\thispagestyle{empty}` with no gathered field of its own still owes
-  -- its gate: the opening page carries no furniture — the class-default
-  -- page number included — and the run starts at `runFrom`. The
-  -- empty-content spelling moves only the gate (`Elab`'s gate-only rule),
-  -- so it cannot clear a declared line or suppress the default elsewhere.
+  -- `\thispagestyle{empty}` with no field of its own still gates the opening page's furniture.
   if st.runFrom > 1 && st.head.isEmpty then
     out := out ++ (← synthAt s!"\\runninghead[from = {st.runFrom}]\{}" st.runPos)
   if st.runFrom > 1 && st.foot.isEmpty then
@@ -12224,18 +10085,8 @@ private theorem flushBeamerFootline_quiet (st : St) (h : QuietTail st) :
     MonadStateOf.get, StateT.get, pure, h.2.2.2.2.2.2.1]
   rfl
 
-/-- Split the raws of a replayed hook body across the seam
-`\begin{document}` is: the native declarations the preamble reads
-(`hookPreambleSide`, with their optional argument and complete groups) to the
-preamble side, everything else to the body side. Both halves keep their
-order.
-
-The seam has two sides because LaTeX's own `\begin{document}` does: at that
-instant a layout assignment and typeset text are both legal, and this engine
-realizes the instant structurally — declarations before the `document`
-environment, content inside it. Routing per raw is what lets one mechanism
-serve a hook carrying configuration and a hook carrying content, which is
-what real documents put in them. -/
+/-- A replayed hook body split across the `\begin{document}` seam: preamble
+declarations to one side, everything else to the body. -/
 private def seamSplit (raws : Array Raw) : List Raw → Nat → Nat →
     Array Raw × Array Raw → Array Raw × Array Raw
   | [], _, _, acc => acc
@@ -12253,11 +10104,9 @@ private def seamSplit (raws : Array Raw) : List Raw → Nat → Nat →
 
 mutual
 
-/-- Apply the preamble's completed block hook to parsed block environments,
-including those inside macro definitions. The existing native spacer is
-inserted after the mandatory title; missing titles retain their own error.
-This pass runs only when a supported, nonempty hook was declared. -/
--- conserves: none — adds native spacing commands, without changing authored text.
+/-- The preamble's completed block hook applied to parsed block environments,
+inside definitions too. -/
+-- conserves: none — adds native spacing commands only
 private def blockHookRaw (spacing : Array Raw) : Raw → Raw
   | .group body p => .group (blockHookList spacing #[] body.toList) p
   | .env n body p =>
@@ -12284,28 +10133,26 @@ private def blockHookList (spacing : Array Raw) (out : Array Raw) : List Raw →
 
 end
 
-/-- The executed surface and the state its compatibility rewrite must
-continue from. Keeping them together prevents a second execution of flags,
-hooks or file effects while the driver resolves other document requests. -/
+/-- The executed surface and the state its compatibility
+rewrite continues from. -/
 public structure Executed where
   raws : Array Raw
   private state : St
 
-/-- Replace the already-executed surface after resolving data requests while
-retaining its compatibility state and input receipts. -/
+/-- The executed surface replaced after resolving data requests, its
+compatibility state and receipts kept. -/
 public def Executed.withRaws (executed : Executed) (raws : Array Raw) : Executed :=
   { executed with raws := raws }
 
-/-- The original source index survives execution and included-file fulfilment. -/
+/-- The original source index, which survives execution and
+included-file fulfilment. -/
 public def Executed.sourceTriggers (executed : Executed) : SourceTriggers :=
   executed.state.sourceTriggers
 
-/-- Exact reader receipts retained by the production evaluator. -/
+/-- The reader receipts the evaluator retained. -/
 public def Executed.inputAttempts (executed : Executed) : Array InputAttempt :=
   executed.state.inputAttempts
 
-/-- Resolving other requests changes the surface alone. The original source
-index and actual input-reader receipts remain available to the continuation. -/
 public theorem Executed.withRaws_contract (executed : Executed) (raws : Array Raw) :
     (executed.withRaws raws).raws = raws ∧
       (executed.withRaws raws).sourceTriggers = executed.sourceTriggers ∧
@@ -12324,28 +10171,24 @@ private def executeBy [Monad m] (reader : Option (InputReader m))
     (warned : Array String) (inherited : List String) (diags : Array Diag) :
     m Executed := do
   let go : EvalM m (Array Raw) := do
-    -- latex.ltx's \def\space{ }: expansion, copying and local redefinition
-    -- share the ordinary meaning table, including the opening space scan.
+    -- latex.ltx's `\def\space{ }`.
     recordValue "space"
       (some { raws := #[.space], long := false, prot := false, live := true }) false
-    -- A fragment's caller owns these meanings. Their text is unread here;
-    -- local definitions can still replace them and scope restores them.
+    -- A fragment's caller owns these meanings; their text is unread here.
     for n in inherited do setBind n none
     condDocument reader raws
   let (raws, state) ← go.run
     (executionState reader.isSome file raws provideKeeps warned diags)
   return { raws := raws, state := state }
 
-/-- Execute a file-free surface once, retaining the same source evidence as
-the input-fulfilling path. Compatibility and elaboration can share it. -/
+/-- Executes a file-free surface once, retaining the same source evidence as the
+input-fulfilling path. -/
 public def execute (file : String) (raws : Array Raw) (provideKeeps : List String := [])
     (warned : Array String := #[]) (inherited : List String := []) : Executed :=
   executeBy (m := Id) none file raws provideKeeps warned inherited #[]
 
-/-- Execute the document with a driver that fulfils file requests at their
-uses. All macro recursion retains its existing binding-order bound; the
-driver owns the input stack and returns parsed fragments through
-`resumeInput`. -/
+/-- Executes the document with a reader that fulfils file
+requests at their uses. -/
 public def executeInputs [Monad m] (reader : InputReader m) (file : String)
     (raws : Array Raw) (provideKeeps : List String := []) (diags : Array Diag := #[]) :
     m Executed :=
@@ -12440,13 +10283,12 @@ private theorem overprint_package_exact (command names : String) (pos gp np : Po
   simp [packageCall, overprintList, overprintRaw, hn, bind, StateT.bind,
     pure, StateT.pure]
 
-/-- The production passes before the compatibility walk: overlay inputs,
-live groups, delimiters, columns and overprints. Execution and file effects
-have already happened and are not replayed when this cursor resumes. -/
+/-- The passes before the compatibility walk: overlay inputs, live groups,
+delimiters, columns and overprints. -/
 public def beginRewrite (executed : Executed) : RewriteCursor :=
   let raws := overlayInputs executed.raws
   let go : M (Array Raw) := do
-    -- After the conditionals: only a live pair is a group.
+    -- After the conditionals only a live pair is a group.
     let raws := pairGroupsList true #[] raws.toList
     let raws ← delimDocument raws
     let raws := (splitColumnsList raws.toList).toArray
@@ -12484,17 +10326,13 @@ private theorem beginRewrite_package_exact (command names : String) (pos gp np :
     hcols, overprint_package_exact _ _ _ _ _ hc,
     packageRewriteState]
 
-/-- Interpret the gathered declarations and deferred bodies after row
-lowering. This is the same final continuation for a whole document and a
-resumed rewrite checkpoint. -/
+/-- The gathered declarations and deferred bodies
+interpreted after row lowering. -/
 private def finishDeclarations (out : Array Raw) : M (Array Raw) := do
   let running ← flushRunning
   let running := running ++ (← flushListLevels)
   let running ← rewriteList false running #[] running.toList 0 0
-  -- Replay. Each body is rewritten as the preamble material it was
-  -- declared as (`inDoc` restored to false for the pass), then routed
-  -- across the seam by `seamSplit`. `endPreamble` bodies are all
-  -- preamble side by their point's definition.
+  -- Each deferred body is rewritten as preamble material, then routed across the seam.
   let saved := (← get).inDoc
   let savedFile := (← get).file
   write fun st => { st with inDoc := false }
@@ -12504,10 +10342,7 @@ private def finishDeclarations (out : Array Raw) : M (Array Raw) := do
     write fun st => { st with file := file, seam := pt == .beginDocument }
     let body := overlayInputs body
     let body ← rewriteList false body #[] body.toList 0 0
-    -- A hook declared inside an `\input`'ed file replays inside that
-    -- file's wrapper, so what the engine refuses in it is still named at
-    -- the file that wrote it — the wrapper is how a position names its
-    -- file (a `Raw` carries only a line and a column).
+    -- A hook from an `\input` file replays inside that file's wrapper.
     let wrap (rs : Array Raw) : Array Raw :=
       if rs.isEmpty || file == savedFile then rs
       else #[Raw.env (Parse.inputEnv file) rs pos]
@@ -12551,9 +10386,7 @@ private theorem finishDeclarations_diags (out : Array Raw) (st : St)
   simp only [h.2.2.2.2.2.2, Array.empty_append]
   rfl
 
-/-- State returned by the production tail. Keeping the record before its
-output projection makes diagnostic preservation independent of the final
-raw array's shape. -/
+/-- The state returned by the production tail. -/
 private def finishRewrittenState (result : Array Raw × St) : Array Raw × St :=
   let go : M (Array Raw) := do
     -- After the idiom rewrite, so a `\parbox` is the box it became.
@@ -12562,8 +10395,7 @@ private def finishRewrittenState (result : Array Raw × St) : Array Raw × St :=
     finishDeclarations out
   go.run result.2
 
-/-- The production tail after the compatibility walk, shared by whole
-documents and checkpoint completion. -/
+/-- The production tail after the compatibility walk. -/
 private def finishRewritten (result : Array Raw × St) :
     Array Raw × Array Diag × Array String :=
   let (out, st) := finishRewrittenState result
@@ -12592,21 +10424,17 @@ private theorem finishRewritten_named (result : Array Raw × St) (d : Diag)
   rw [he, hfinish]
   exact hemit.2
 
-/-- Complete a production rewrite checkpoint, including boxes, running
-content, deferred hooks, counters and block hooks. -/
+/-- Completes a rewrite checkpoint: boxes, running content, deferred hooks,
+counters and block hooks. -/
 public def finishRewrite (cursor : RewriteCursor) : Array Raw × Array Diag × Array String :=
   finishRewritten (rewriteCursor cursor)
 
-/-- Finish the compatibility rewrite after execution and file fulfilment.
-The gathered running content lands just before the document, and deferred
-text is translated at its recorded seam without executing it again. -/
+/-- The compatibility rewrite finished after execution and file fulfilment. -/
 @[expose] public def rewriteExecuted (executed : Executed) : Array Raw × Array Diag × Array String :=
   finishRewrite (beginRewrite executed)
 
-/-- Names for which the package dispatcher has no native, external-picture
-or installed-theme interpretation. The condition is on the loading call's
-operands, before execution or diagnostics. Empty comma fields do not name
-files and are deliberately excluded. -/
+/-- Names for which the package dispatcher has no native, external-picture or
+installed-theme interpretation. -/
 @[expose] public def ExternalPackageNames (names : String) : Prop :=
   ∀ part ∈ names.trimAscii.toString.splitOn ",",
     part.trimAscii.toString.isEmpty = false ∧
@@ -12615,14 +10443,8 @@ files and are deliberately excluded. -/
     themeSlotOfPackage? part.trimAscii.toString = none
 
 attribute [local irreducible] finishRewritten in
-/-- A failed reader answer to a live package declaration is both recorded
-and named by the actual compatibility producer. This crosses execution,
-the compatibility prepasses, command dispatch and declaration completion;
-diagnostic membership is a conclusion, never a premise.
-
-The domain is a live literal loading call, with arbitrary comma-separated
-external names and source positions. Dormant definitions and calls inside
-consumed control operands do not satisfy this execution domain. -/
+/-- A failed reader answer to a live package declaration is both recorded and
+named by the compatibility producer. -/
 public theorem executeInputs_package_refusal_contract (reader : InputReader Id)
     (file command names : String) (pos groupPos namePos : Pos)
     (keeps : List String) (ds : Array Diag)
@@ -12682,12 +10504,9 @@ public theorem executeInputs_package_refusal_contract (reader : InputReader Id)
     rw [← atSource_package_exact st pos part.trimAscii.toString]
     exact hfinish
 
-/-- The checkpoint and completion are the actual whole-document path. -/
 public theorem rewriteExecuted_cursor_exact (executed : Executed) :
     rewriteExecuted executed = finishRewrite (beginRewrite executed) := by rfl
 
-/-- Entering the actual document body preserves the whole compatibility
-result, including its enclosing continuation and final diagnostics. -/
 public theorem finishRewrite_document_exact (cursor : RewriteCursor)
     (body : Array Raw) (pos : Pos) (rest : List Raw)
     (hp : cursor.outsidePicture)
@@ -12695,9 +10514,6 @@ public theorem finishRewrite_document_exact (cursor : RewriteCursor)
     finishRewrite cursor = finishRewrite (cursor.enterDocument body pos) :=
   congrArg finishRewritten (rewriteCursor_document_exact cursor body pos rest hp hs)
 
-/-- Consumed groups cannot reach any later compatibility pass. The entire
-completed result agrees with the continuation after the accounted dispatch,
-including deferred material and the returned diagnostics. -/
 public theorem finishRewrite_control_exact (cursor : RewriteCursor)
     (name : String) (arity : Nat) (hc : ControlGroupsConsumed name arity)
     (pos : Pos) (args : List (Array Raw)) (taken rest : List Raw)
@@ -12710,9 +10526,8 @@ public theorem finishRewrite_control_exact (cursor : RewriteCursor)
   congrArg finishRewritten
     (rewriteCursor_control_exact cursor name arity hc pos args taken rest hd hs hn hg)
 
-/-- Complete a consumed control's document using only the retained body
-and its registered reporting effect. No operand or operand position is
-read by this completion. The enclosing scope and deferred hooks still run. -/
+/-- A consumed control's document completed from the retained body and its
+registered reporting effect alone. -/
 public def finishMeaningFreeDocument (cursor : RewriteCursor) (name : String)
     (note : Option String) (pos docPos : Pos) (kept : Array Raw) :
     Array Raw × Array Diag × Array String :=
@@ -12725,9 +10540,6 @@ public def finishConfigSkipDocument (cursor : RewriteCursor) (name msg : String)
   finishRewritten (closeLastDocument cursor docPos
     (kept, configSkipState (openDocumentBody cursor.state).2 name pos msg help))
 
-/-- The consumed operands cannot be read indirectly through the cursor's
-source field either. The final-document completion reads only the saved
-state, retained output prefix and enclosing continuation. -/
 public theorem finishMeaningFreeDocument_source_exact (cursor : RewriteCursor)
     (body kept : Array Raw) (name : String) (note : Option String) (pos docPos : Pos) :
     finishMeaningFreeDocument (cursor.withDocument body docPos) name note pos docPos kept =
@@ -12738,11 +10550,6 @@ public theorem finishConfigSkipDocument_source_exact (cursor : RewriteCursor)
     finishConfigSkipDocument (cursor.withDocument body docPos) name msg help pos docPos kept =
       finishConfigSkipDocument cursor name msg help pos docPos kept := by rfl
 
-/-- Exact completed document for every consuming row. The surrounding
-literal material is arbitrary, as are the consumed groups and their nested
-syntax. Execution has already run; this is the compatibility-to-elaboration
-boundary. The complete result depends only on `pre ++ post` and the
-descriptor's report, including every later hook and diagnostic. -/
 public theorem finishRewrite_meaningFree_document_exact (cursor : RewriteCursor)
     (body : Array Raw) (name : String) (n : Nat) (note : Option String)
     (pos docPos : Pos) (pre taken post : List Raw) (args : List (Array Raw))
@@ -12782,53 +10589,22 @@ public theorem finishRewrite_configSkip_document_exact (cursor : RewriteCursor)
   rw [hbody]
   simp only [Array.empty_append, finishConfigSkipDocument]
 
-/-- Rewrite a whole parsed document. The gathered running content lands just
-before `\begin{document}`, where a declaration belongs.
-
-`warned` in and out is the warn-once key set as data: a once-per-document
-diagnostic is a promise about the DOCUMENT, not about whichever pass first
-met a cause, and this pass and the elaborator both fire on some of the same
-keys (`spec:overlay` is the one two arms share today — an unnumberable
-overprint item here, an unnumberable `\alt` there). A set per pass makes the
-promise per pass, which is how a deck spelling both got W0105 twice. The set
-therefore travels with the document, out of here and into the state the
-elaborator starts from, the way `Ir.overlayRange` became the one
-numberability reader both passes ask: one notion of "already said", one
-place it lives. It travels as a value the caller chains
-(`Elab.runRawsSpanned`), never as ambient state.
-
-`inherited` names are already defined by a fragment's caller. Their
-replacement texts are unread here and remain for that caller to expand;
-definitions inside the fragment still replace and restore them normally. -/
+/-- Rewrites a whole parsed document. -/
 public def rewrite (file : String) (raws : Array Raw) (provideKeeps : List String := [])
     (warned : Array String := #[]) (inherited : List String := []) :
     Array Raw × Array Diag × Array String :=
   rewriteExecuted (execute file raws provideKeeps warned inherited)
 
-/-! `\\usepackage{p}` where `p.sty` exists beside the document is LaTeX's
-own rule made literal (ltfiles.dtx `\\@onefilewithoptions`: find `p.sty` on
-the input path and read it): the file splices into the preamble as an
-`\\input` fragment, and every construct inside gets exactly the treatment
-it would get written in the document — honoured through an existing arm,
-or named where it stands with the `.sty`'s own positions (the input
-wrapper carries the file name). Reading the file is the driver's effect
-(the input requests `Cli.Input` answers); the splice and the option machinery are here,
-pure. Where the file does not exist, the CTAN dispatch (W0103) applies
-unchanged. -/
+/-! `\usepackage{p}` with `p.sty` beside the document splices the file into the
+preamble, as LaTeX reads it from the input path. -/
 
-/-- Diagnostic codes that carry a refused name, checked in both directions
-by `nameRefusalRegistryChecks`. A code alone does not identify a file-loading
-door: native `\theme` also emits W0319, and `ulem` options emit W0103.
-The loading-call contract is `CompatContract.nameRefusals_asked`, over the
-expanded call inspected by the input reader. -/
+/-- Diagnostic codes that carry a refused name. -/
 public def nameRefusalAsk : List (DiagCode × String) :=
   [(.W0103, ""), (.W0319, "beamertheme")]
 
 mutual
 
-/-- One level of the candidate scan: the list drives the recursion, the
-array gives argument access, `skip` counts elements a match already
-consumed (`rewriteList`'s shape). -/
+/-- One level of the style-file candidate scan. -/
 private def styCandList (raws : Array Raw) (out : Array String) :
     List Raw → Nat → Nat → Array String
   | [], _, _ => out
@@ -12843,11 +10619,7 @@ private def styCandList (raws : Array Raw) (out : Array String) :
       else out.push p
     styCandList raws out rest (i + 1) (k - (i + 1))
   | .ctrl cn _ :: rest, i, 0 =>
-    -- beamer's own file rule for the theme family (beamerbasethemes.sty:
-    -- `\usetheme{n}` reads `beamerthemen.sty` from the input path, and so
-    -- for each sub-theme slot): the prefixed name is the candidate a theme
-    -- beside the document answers. A shipped bundle of the same name does
-    -- not suppress the candidate — the two compose (`spliceTheme`).
+    -- A theme-family command asks for its prefixed file name.
     match themeAsking.lookup cn with
     | some pre =>
       let (_, j) := takeOpt raws (i + 1)
@@ -12860,11 +10632,8 @@ private def styCandList (raws : Array Raw) (out : Array String) :
     | none => styCandList raws out rest (i + 1) 0
   | r :: rest, i, 0 => styCandList raws (styCandRaw out r) rest (i + 1) 0
 
-/-- Descend into an `\\input` wrapper — a `\\usepackage` in an `\\input`'ed
-preamble file, or a `\\RequirePackage` in an already spliced `.sty`, asks
-exactly as a top-level one does. The document environment is not a
-wrapper, so a body-position `\\usepackage` is never a candidate: its
-placement refusal is `rewriteCtrl`'s. -/
+/-- Descends into an `\input` wrapper, which asks exactly as
+the top level does. -/
 private def styCandRaw (out : Array String) : Raw → Array String
   | .env n body _ =>
     if (Parse.inputEnvFile? n).isSome then styCandList body out body.toList 0 0
@@ -12873,11 +10642,8 @@ private def styCandRaw (out : Array String) : Raw → Array String
 
 end
 
-/-- Style-file candidates from a source stream. The input reader calls this
-on each expanded loading request's `call`; the original, unexpanded document
-need not contain a macro-produced name. Native packages do not ask for files.
-`CompatContract.nameRefusals_asked` states the loading-call contract, including
-options, comma-separated package names, and every theme-family prefix. -/
+/-- Style-file candidates from a source stream; native
+packages ask for no file. -/
 public def localStyCandidates (raws : Array Raw) : Array String :=
   styCandList raws #[] raws.toList 0 0
 
@@ -12989,8 +10755,6 @@ private theorem styCandRaw_monotone (out : Array String) (r : Raw) (nm : String)
 termination_by sizeOf r
 end
 
-/-- Every nonempty, non-native package name read at this expanded loading
-call remains a candidate after scanning arbitrary trailing input. -/
 public theorem localStyCandidates_package_covers (cn : String) (pos : Pos)
     (tail : Array Raw) (nm : String)
     (hcn : cn = "usepackage" ∨ cn = "RequirePackage")
@@ -13008,8 +10772,6 @@ public theorem localStyCandidates_package_covers (cn : String) (pos : Pos)
     obtain ⟨p, hp, hpn⟩ := hname
     exact Or.inr ⟨p, hp, hpn, hne, hnative⟩
 
-/-- Every nonempty theme name read at this expanded loading call remains
-its registry-prefixed candidate after scanning arbitrary trailing input. -/
 public theorem localStyCandidates_theme_covers (cn pre : String) (pos : Pos)
     (tail : Array Raw) (nm : String)
     (hup : cn ≠ "usepackage") (hrp : cn ≠ "RequirePackage")
@@ -13027,11 +10789,6 @@ public theorem localStyCandidates_theme_covers (cn pre : String) (pos : Pos)
   apply styCandList_monotone
   simp
 
-/-- One slot of the theme-loading family, read through the argument layer:
-the scan's answer for a preamble holding only that command. The two
-inequalities are the arms `styCandList` tries first (`\\usepackage` and
-`\\RequirePackage` share an arm and read a comma list, not a prefixed
-name), and they are what makes the registry arm the one that fires. -/
 private theorem localSty_theme (cn pre nm : String) (pos : Pos)
     (hlk : themeAsking.lookup cn = some pre)
     (hne : nm.trimAscii.toString = nm) (hnz : nm ≠ "")
@@ -13059,17 +10816,8 @@ private theorem localSty_theme (cn pre nm : String) (pos : Pos)
   rw [styCandList]
   rfl
 
-/-- **Every slot of beamer's theme-loading family asks the input path for
-exactly its prefixed file.** A preamble holding only that command yields
-exactly that one candidate, so a theme file beside the document is opened
-before the name can be refused — the invariant whose absence let
-`\\usetheme{X}` be declared unknown with `beamerthemeX.sty` sitting
-unopened next to the document, costing it its whole palette.
-
-Quantified over the registry the candidate scan and the splice both read
-(`themeAsking`), so adding a slot is entering the contract rather than
-adding a case. `themeAskingChecks` keeps the rows as an executable floor
-over the fixtures. -/
+/-- Every slot of beamer's theme-loading family asks the
+input path for exactly its prefixed file. -/
 public theorem themeAsking_candidates (nm : String) (pos : Pos) (hne : nm.trimAscii.toString = nm)
     (hnz : nm ≠ "") :
     ∀ p ∈ themeAsking,
@@ -13081,20 +10829,15 @@ public theorem themeAsking_candidates (nm : String) (pos : Pos) (hne : nm.trimAs
   all_goals exact localSty_theme _ _ nm pos rfl hne hnz (by decide) (by decide)
 
 
-/-- The option scheduler emits content and diagnostic requests in source
-order. Requests must cross conditional selection with that content: reporting
-while reading the file would warn about an unselected load.
-`processed` also distinguishes a live, empty process from no process at all. -/
+/-- One step of the option scheduler, emitted in source order. -/
 private inductive StyOptionStep where
   | raw (value : Raw)
   | processed (pos : Pos)
   | unhandled (option : String) (pos : Pos)
   deriving Repr, BEq
 
-/-- One slot per declared name, in first-declaration order. Redeclaring a
-name replaces its body without moving the slot (ltclass.dtx). `none` is a
-spent handler; `some #[]` is a defined, empty handler and suppresses the
-catch-all. `packageOptionChecks` observes both through repeated processing. -/
+/-- A declared option recorded in its first-declaration slot; redeclaring
+replaces the body in place. -/
 private def declareStyOption (declared : Array (String × Option (Array Raw)))
     (name : String) (body : Array Raw) : Array (String × Option (Array Raw)) :=
   if declared.any (·.1 == name) then
@@ -13105,21 +10848,7 @@ private def styOptionBody (declared : Array (String × Option (Array Raw)))
     (name : String) : Option (Array Raw) :=
   (declared.find? (·.1 == name)).bind (·.2)
 
-/-- Literal package option scheduling (ltclass.dtx):
-`\\DeclareOption{name}{body}` binds a body; `\\DeclareOption*{body}` binds
-the catch-all. `\\ExecuteOptions{list}` runs known bodies in list order,
-without consuming them or invoking the catch-all. `\\ProcessOptions` runs
-known names once in declaration order, then unknowns in caller order;
-`\\ProcessOptions*` follows caller order, including duplicates. Processing
-spends the named handlers. LuaLaTeX probes in `scripts/package-options.lean`
-hold ordering, whitespace, empty items and handler lifetime to its kernel.
-
-Bodies enter the existing compatibility passes unchanged: this is not a
-TeX expansion runtime. The driver supplies direct and forwarded package
-options; global class options are not available here. An unknown caller option
-without a catch-all emits an explicit request, settled as W0110 only when
-its site is live. `\\ProvidesPackage` and `\\NeedsTeXFormat` identify the
-file and produce nothing. -/
+/-- Literal package option scheduling as ltclass.dtx defines it. -/
 private def resolveStyOptions (passed : List String) (raws : Array Raw) : Array StyOptionStep := Id.run do
   let mut out : Array StyOptionStep := #[]
   let mut declared : Array (String × Option (Array Raw)) := #[]
@@ -13142,8 +10871,7 @@ private def resolveStyOptions (passed : List String) (raws : Array Raw) : Array 
       | .ctrl "ExecuteOptions" _ =>
         let (args, k) := takeGroups raws (i + 1) 1
         let opts := (rawSrc (args.getD 0 #[])).replace " " ""
-        -- TeX's @for skips an empty list, but retains empty items in a
-        -- nonempty list; an explicitly declared empty name can run here.
+        -- TeX's `\@for` skips an empty list but keeps empty items in a nonempty one.
         unless opts.isEmpty do
           for nm in opts.splitOn "," do
             if let some body := styOptionBody declared nm then
@@ -13159,8 +10887,7 @@ private def resolveStyOptions (passed : List String) (raws : Array Raw) : Array 
               if passed.contains nm then
                 out := out ++ (body.getD #[]).map StyOptionStep.raw
                 declared := declareStyOption declared nm #[]
-        -- ProcessOptions makes the empty-name handler empty before either
-        -- pass. Known names consumed above stay defined and bypass fallback.
+        -- `\ProcessOptions` empties the empty-name handler before either pass.
         for nm in passed do
           unless nm.isEmpty do
             match (styOptionBody declared nm).orElse (fun _ => fallback) with
@@ -13180,10 +10907,8 @@ private def resolveStyOptions (passed : List String) (raws : Array Raw) : Array 
         i := i + 1
   return out
 
-/-- Encode the scheduler's requests in the existing raw stream, without
-re-parsing option text. The enclosing input wrapper supplies the style-file
-span. Its first line names options left unprocessed at the end of the load,
-even when `\endinput` or a false branch removes every process request. -/
+/-- The scheduler's requests encoded in the raw stream,
+without re-parsing option text. -/
 private def spliceStyOptions (pkg : String) (passed : List String) (raws : Array Raw) :
     Array Raw := Id.run do
   let p : Pos := { line := 1, col := 1 }
@@ -13201,25 +10926,15 @@ private def spliceStyOptions (pkg : String) (passed : List String) (raws : Array
         .group #[.word pkg pos] pos, .group #[.word nm pos] pos]
   return out
 
-/-- The shipped bundle a theme file stands on, as the raws that install it
-before the file's own content. **Precedence is composition, not a contest**
-(PLAN 2026-09-24): the bundle installs first and the file's declarations
-land on top, so a role the file declares is the file's and a role it leaves
-alone keeps the bundle's. One function because both splice paths owe the
-same floor — a theme read under `\usetheme{X}` and the same theme read
-under `\usepackage{beamerthemeX}` are one ask, and only the slot path had
-it. Only the full-theme prefix carries a bundle: a token bundle is whole,
-so no sub-theme slot installs one. -/
+/-- The shipped bundle a theme file stands on, installed
+before the file's own content. -/
 private def bundleFloor (pre nm : String) (pos : Pos) : Array Raw :=
   let nm := themeAlias nm
   if pre == "beamertheme" && (Theme.find? nm).isSome then
     #[.ctrl "theme" pos, .group #[.word nm pos] pos]
   else #[]
 
-/-- Splice one admitted file. The driver reserves the package before
-resuming this fragment, so a recursive require cannot splice it again.
-Both package and theme spellings share the same option scheduler and
-bundle floor; every declaration keeps its original execution order. -/
+/-- Splices one admitted file. -/
 public def spliceLocalPackage (name : String) (passed : List String)
     (raws : Array Raw) (pos : Pos) : Array Raw :=
   let floor := match themeSlotOfPackage? name with
@@ -13227,10 +10942,8 @@ public def spliceLocalPackage (name : String) (passed : List String)
     | none => #[]
   floor.push (.env (Parse.inputEnv (name ++ ".sty")) (spliceStyOptions name passed raws) pos)
 
-/-- The replacement for one `\\usepackage`/`\\RequirePackage` at `i`, given
-the style files read: the raws standing in its place, the splice records,
-and the index past its arguments — `none` when nothing it names is a local
-style file, leaving the command to the CTAN dispatch. -/
+/-- The replacement for one `\usepackage`/`\RequirePackage` at `i` given the
+style files read; `none` when it names no local file. -/
 private def spliceUse (stys : Array (String × Array Raw)) (raws : Array Raw)
     (cn : String) (pos : Pos) (i : Nat) :
     Option (Array Raw × Array (String × Option String × Pos) × Nat) := Id.run do
@@ -13258,26 +10971,8 @@ private def spliceUse (stys : Array (String × Array Raw)) (raws : Array Raw)
     out := out.push (.group #[.word (String.intercalate "," keep.toList) pos] pos)
   return some (out ++ splice, recs, k)
 
-/-- The replacement for one member of the theme family at `i`: the theme
-file's input fragment when the prefixed file was read (beamer's own file
-rule — `\\usetheme{X}` reads `beamerthemeX.sty`), `none` otherwise, leaving
-the command to its existing arm. Options ride into the file's own option
-machinery, as `\\usepackage[opts]{}` does, because that is what beamer's
-family expands to.
-
-**Where the engine also ships a bundle of that name, the two compose**: the
-bundle installs first and the file's declarations land on top, so a role the
-file declares is the file's and a role it leaves alone keeps the bundle's.
-Neither extreme is right on its own. Reading only the bundle would drop the
-author's deliberate edit to a theme sitting in their own directory. Reading
-only the file would trade a complete, contrast-proved design
-(`Contrast.builtin_palettes_contract` ranges over `Theme.builtin` and over
-nothing a `.sty` can add) for the fragments of it this engine can absorb —
-and since dropping the native `\\theme` also drops `sawTheme`, a deck would
-then fall to the *default* bundle plus fragments, which is further from the
-author's ask than the bundle they named. Composition is the engine's own
-rule for a `\\theme` followed by `\\palette`, so nothing new is invented and
-nothing is silently ignored: `styRead` names both sides. -/
+/-- The replacement for one member of the theme family at `i`: the theme file's
+fragment when it was read, `none` otherwise. -/
 private def spliceTheme (stys : Array (String × Array Raw)) (raws : Array Raw)
     (pre : String) (pos : Pos) (i : Nat) :
     Option (Array Raw × Array (String × Option String × Pos) × Nat) := Id.run do
@@ -13296,11 +10991,8 @@ private def spliceTheme (stys : Array (String × Array Raw)) (raws : Array Raw)
 
 mutual
 
-/-- One level of the splice: the list drives the recursion, the array gives
-argument access, `skip` counts elements a replacement already consumed
-(`rewriteList`'s shape). -/
--- conserves: none — replacement is the walk's job: a `\usepackage` of a
--- local file becomes that file's content.
+/-- One level of the splice. -/
+-- conserves: none — a local file's `\usepackage` becomes its content
 private def applyStyList (stys : Array (String × Array Raw)) (raws : Array Raw)
     (out : Array Raw) (recs : Array (String × Option String × Pos)) :
     List Raw → Nat → Nat → Array Raw × Array (String × Option String × Pos)
@@ -13325,12 +11017,8 @@ private def applyStyList (stys : Array (String × Array Raw)) (raws : Array Raw)
     let (r', rs) := applyStyRaw stys r
     applyStyList stys raws (out.push r') (recs ++ rs) rest (i + 1) 0
 
-/-- Descend into an `\\input` wrapper, splicing inside it as at the top
-level — `\\input` parity. A record from inside a wrapper carries the
-wrapper's file, so its N0020 names the `\\RequirePackage`'s own file; the
-innermost wrapper fills it first and deeper nesting keeps it. The
-document environment is not a wrapper: a body-position `\\usepackage` is
-never spliced (its placement refusal is `rewriteCtrl`'s). -/
+/-- Descends into an `\input` wrapper, splicing inside it as
+at the top level. -/
 private def applyStyRaw (stys : Array (String × Array Raw)) :
     Raw → Raw × Array (String × Option String × Pos)
   | .env n body p =>
@@ -13343,15 +11031,8 @@ private def applyStyRaw (stys : Array (String × Array Raw)) :
 
 end
 
-/-- Splice the local style files the driver found: each `\\usepackage` of
-one — at any `\\input` depth — becomes the file's own content, options
-resolved (`resolveStyOptions`), wrapped as that file's input fragment so
-every downstream diagnostic names the `.sty` and its line. The file's
-constructs are then honoured or named individually by the same passes a
-document goes through — no second rule set. Returns the splice records
-(file, enclosing file when not the document itself, position); the read
-is named once per record (N0020), built after elaboration (`styRead`),
-when the honoured/named counts exist. -/
+/-- Splices the local style files the driver found, each
+wrapped as that file's input fragment. -/
 public def applyLocalSty (raws : Array Raw) (stys : Array (String × Array Raw)) :
     Array Raw × Array (String × Option String × Pos) :=
   applyStyList stys raws #[] #[] raws.toList 0 0
@@ -13404,24 +11085,12 @@ private theorem applyStyRaw_empty : ∀ (r : Raw), applyStyRaw #[] r = (r, #[])
 
 end
 
-/-- The splice with nothing to splice is the identity — no change to the
-tree, no record: the substitution statement's degenerate half, stated so
-the descending walk itself can never perturb a document, and the shape
-suffix registry's `_id`. The full substitution — each preamble-position
-`\\usepackage` of a read file replaced by that file's input wrapper — is
-`applyLocalSty`'s own definition; downstream, elaboration equality with a
-hand-spliced document is definitional because the preamble fold treats
-every input wrapper uniformly (`Elab.elabDoc`'s `@file:` markers). -/
 public theorem applyLocalSty_id (raws : Array Raw) : applyLocalSty raws #[] = (raws, #[]) := by
   rw [applyLocalSty, applyStyList_empty]
   simp
 
-/-- What a spliced `.sty` yielded, counted after elaboration: a construct
-was honoured when its translation note (N0100) carries the file, named
-when a warning does, and a TeX internal refused when a demoted refusal
-does — a note that kept its W0301/W0357/W0391 code is the demotion's
-signature, and at this point in the run nothing else makes one (`\allow`
-acceptance resolves later, in the driver). -/
+/-- What a spliced `.sty` yielded after elaboration: constructs honoured, named,
+and TeX internals refused. -/
 public def styCounts (sty : String) (diags : Array Diag) : Nat × Nat × Nat :=
   let mine := diags.filter fun d => d.span.any (·.file == sty)
   ((mine.filter (·.code == "N0100")).size,
@@ -13430,15 +11099,7 @@ public def styCounts (sty : String) (diags : Array Diag) : Nat × Nat × Nat :=
      d.severity == .note &&
        (d.code == "W0301" || d.code == "W0357" || d.code == "W0391")).size)
 
-/-- The one N0020 construction — the note that says the file was looked
-at, and how much of it took. Built after elaboration, from the splice
-records `applyLocalSty` returns: the counts do not exist before it. The
-spelling is compact — three counts and a long file name must fit the
-message-length lint.
-
-A theme file that shadows a shipped bundle says so instead: the two compose
-(`spliceTheme`), and a note that named only one of them would leave the
-other silent. -/
+/-- The one N0020 note: that the file was read, and how much of it took. -/
 public def styRead (docFile sty : String) (pos : Pos) (diags : Array Diag) : Diag :=
   let (honoured, named, refused) := styCounts sty diags
   let counts := s!"honoured: {honoured}, named: {named}, TeX internals refused: {refused}"
@@ -13451,32 +11112,12 @@ public def styRead (docFile sty : String) (pos : Pos) (diags : Array Diag) : Dia
     | none => s!"'{sty}' beside the document is read into the preamble"
   Diag.of .N0020 (lead ++ " — " ++ counts) (some ⟨docFile, pos⟩)
 
-/-! # listings and siunitx (pkg-text's section)
+/-! # listings and siunitx
 
-A second rewrite pass, run by `Elab.runRaws` right after `rewrite`: it
-lives at the file's end, in its own section, so the arms elsewhere in
-this file rebase clean around it.
+A second rewrite pass after `rewrite`, folding listing defaults into what
+follows and spelling siunitx commands as text. -/
 
-`\lstset{keys}` is listings' stateful configuration: the accepted entries
-travel into the option head of every following `{lstlisting}` capture,
-where the elaborator judges each key once (`Elab.listingBlock`) — one
-validation site, the environment's own keys overriding `\lstset`'s
-(listings' precedence; later entries win at elaboration, so the
-environment's stand last).
-
-The siunitx commands (`\num`, `\SI`/`\qty`, `\si`/`\unit`, `\ang`,
-`\numrange`/`\qtyrange`) spell their text natively: digit grouping and
-the decimal marker from the locale record, `e` exponents as ×10ⁿ with
-real superscript glyphs, unit symbols from the table below. A name a
-document `\define`s itself is left alone — the definition wins, as it
-does at elaboration. -/
-
-/-- The unit symbols, transcribed from siunitx's own declarations
-(`\siunitx_declare_unit:Nn`, siunitx.sty v3 — the implementation of the
-manual's unit tables: SI base and derived units, and the accepted
-non-SI units). Ω is spelled U+03A9: the input path NFC-normalizes, so
-one spelling reaches the fonts. `\kilogram` and `\decibel` carry their
-composed symbols. -/
+/-- The unit symbols, transcribed from siunitx's own declarations. -/
 private def siUnits : List (String × String) :=
   [("kilogram", "kg"), ("metre", "m"), ("meter", "m"), ("mole", "mol"),
    ("second", "s"), ("ampere", "A"), ("kelvin", "K"), ("candela", "cd"),
@@ -13494,9 +11135,7 @@ private def siUnits : List (String × String) :=
    ("arcminute", "\u02B9"), ("arcsecond", "\u02BA"), ("degree", "°"),
    ("percent", "%")]
 
-/-- The SI prefixes, from the same declarations
-(`\siunitx_declare_prefix:Nnn`, siunitx.sty v3): quecto through quetta.
-µ is U+03BC, siunitx's own scalar for `\micro`. -/
+/-- The SI prefixes, from siunitx's own declarations. -/
 private def siPrefixes : List (String × String) :=
   [("quecto", "q"), ("ronto", "r"), ("yocto", "y"), ("zepto", "z"),
    ("atto", "a"), ("femto", "f"), ("pico", "p"), ("nano", "n"),
@@ -13506,9 +11145,7 @@ private def siPrefixes : List (String × String) :=
    ("exa", "E"), ("zetta", "Z"), ("yotta", "Y"), ("ronna", "R"),
    ("quetta", "Q")]
 
-/-- A real superscript glyph per digit (U+2070–U+2079, with ¹²³ at their
-Latin-1 points) and the superscript minus U+207B: what exponents and
-unit powers render with. -/
+/-- The superscript glyph per digit, and the superscript minus. -/
 private def supChar : Char → Char
   | '0' => '⁰' | '1' => '¹' | '2' => '²' | '3' => '³' | '4' => '⁴'
   | '5' => '⁵' | '6' => '⁶' | '7' => '⁷' | '8' => '⁸' | '9' => '⁹'
@@ -13517,10 +11154,8 @@ private def supChar : Char → Char
 private def toSup (s : String) : String :=
   String.ofList (s.toList.map supChar)
 
-/-- Group a digit run in threes with the locale's separator, only when it
-carries five or more digits — siunitx's own thresholds
-(`group-minimum-digits = 5`, `group-digits = all`). `fromRight` is the
-integer part's direction; a fraction part groups from the left. -/
+/-- A digit run grouped in threes with the locale's
+separator, only when it has five or more digits. -/
 private def groupDigits (loc : Locale) (ds : String) (fromRight : Bool) : String :=
   if ds.length < 5 then ds else Id.run do
     let cs := if fromRight then ds.toList.reverse else ds.toList
@@ -13533,13 +11168,8 @@ private def groupDigits (loc : Locale) (ds : String) (fromRight : Bool) : String
       n := n + 1
     return String.ofList (if fromRight then out else out.reverse)
 
-/-- `\num`'s output for one plain number
-`[+-]digits[.digits][e[+-]digits]` (a `,` reads as the input decimal
-marker, as siunitx accepts): grouped digits, the locale's decimal marker,
-and the exponent as ×10ⁿ — `exponent-product`'s × between real
-superscript digits, `10ⁿ` alone when no significand stands before the
-`e`. Input outside that shape is kept exactly as written: a form the
-formatter cannot read must never be silently reshaped. -/
+/-- `\num`'s output for one plain number: grouped digits, the locale's decimal
+marker, and a superscript exponent. -/
 private def fmtNum (loc : Locale) (src0 : String) : String := Id.run do
   let src := String.ofList (src0.toList.filter (· != ' '))
   let (mant, expPart) := match src.splitOn "e" with
@@ -13550,7 +11180,6 @@ private def fmtNum (loc : Locale) (src0 : String) : String := Id.run do
         | _ => ("", none))
     | [m, e] => (m, some e)
     | _ => ("", none)
-  -- validate and split the significand
   let (sign, rest) :=
     if mant.startsWith "-" then ("\u2212", (mant.drop 1).toString)
     else if mant.startsWith "+" then ("", (mant.drop 1).toString)
@@ -13583,9 +11212,9 @@ private def fmtNum (loc : Locale) (src0 : String) : String := Id.run do
 
 mutual
 
-/-- The group-flatten a unit argument needs: `{\kilo\metre}` and bare
+/-- A unit argument flattened, so `{\kilo\metre}` and bare
 `\kilo\metre` read the same. -/
--- conserves: none — a projection to the atoms a unit expression reads.
+-- conserves: none — a projection to a unit's atoms
 private def unitAtoms (out : Array Raw) : List Raw → Array Raw
   | [] => out
   | r :: rest => unitAtoms (unitAtomOne out r) rest
@@ -13596,12 +11225,7 @@ private def unitAtomOne (out : Array Raw) : Raw → Array Raw
 
 end
 
-/-- One unit group's symbols. Prefixes glue to the unit they precede;
-`\per` negates the next unit's power, `\square`/`\cubic` set it and
-`\squared`/`\cubed` multiply the one before (siunitx's power syntax,
-default `per-mode = power`: m s⁻¹, never a slash); factors join by thin
-space. Literal text in the group is kept as written. A name outside the
-table is W0381, set as its ASCII spelling — degraded, never silent. -/
+/-- One unit group's symbols, with siunitx's prefix and power syntax. -/
 private def fmtUnit (body : Array Raw) (pos : Pos) : M String := do
   let atoms := unitAtoms #[] body.toList
   let mut factors : Array (String × Int) := #[]
@@ -13643,9 +11267,8 @@ private def fmtUnit (body : Array Raw) (pos : Pos) : M String := do
     ((factors.map fun (g, p) =>
       g ++ (if p == 1 then "" else toSup (toString p))).toList)
 
-/-- `\ang`'s degrees, arcminutes, arcseconds: the `;`-separated parts each
-take the angle symbols siunitx sets (`\degree`, `\arcminute`,
-`\arcsecond` — °, U+02B9, U+02BA). -/
+/-- `\ang`'s degrees, arcminutes and arcseconds with the
+symbols siunitx sets. -/
 private def fmtAng (loc : Locale) (src : String) : String := Id.run do
   let parts := src.splitOn ";"
   let marks := ["°", "\u02B9", "\u02BA"]
@@ -13660,27 +11283,24 @@ private def fmtAng (loc : Locale) (src : String) : String := Id.run do
 
 /-- The state the text pass threads in flow order. -/
 private structure TextSt where
-  /-- `\lstset` entries standing, injected ahead of every following
-  listing's own option head. -/
+  /-- `\lstset` entries standing, injected ahead of every
+  following listing's own options. -/
   lstOpts : Array String := #[]
-  /-- Minted's global and exact-lexer defaults are separate layers:
-  language defaults override even a later global declaration. -/
+  /-- Minted's global and lexer defaults, separate layers. -/
   mintedOpts : Array String := #[]
   mintedLangOpts : Array (String × Array String) := #[]
-  /-- `\setmintedinline`'s layers, read by inline code alone, after both
-  of `\setminted`'s (minted.sty: `\minted@optscopes`, global, lexer,
-  globalinline, lexerinline, then the command's own). -/
+  /-- `\setmintedinline`'s layers, read by inline code
+  alone, after both of `\setminted`'s. -/
   inlineOpts : Array String := #[]
   inlineLangOpts : Array (String × Array String) := #[]
   /-- Names the document defines; a defined `\num` is the document's. -/
   defined : Array String := #[]
-  /-- The document's argument-free commands that stand for a minted call
-  short of its code (`\newcommand{\py}{\mintinline{python}}`), each with
-  that call's head: a use is the call the head and the raws after it make. -/
+  /-- The document's argument-free commands standing for a minted call short of
+  its code, each with that call's head. -/
   shortcuts : Array (String × Array Raw) := #[]
 
-/-- Standing entries precede the environment's own options, which win.
-Appending declarations within a layer updates keys individually. -/
+/-- The standing entries injected ahead of an environment's
+own options, which win. -/
 private def injectListingOpts (opts : Array String) (s : String) : String :=
   if opts.isEmpty then s else
   let joined := String.intercalate "," opts.toList
@@ -13688,13 +11308,7 @@ private def injectListingOpts (opts : Array String) (s : String) : String :=
   | some (o, past) => "[" ++ joined ++ "," ++ o ++ "]" ++ (s.drop past).toString
   | none => "[" ++ joined ++ "]" ++ s
 
-/-- One siunitx command's replacement: the text raws standing in its
-place and the index past its arguments. Number and unit join by
-U+202F, a no-break thin space — siunitx's `quantity-product = \,` —
-inside one word, so a quantity never breaks across lines. A range takes
-siunitx's own default phrase (`range-phrase`, " to "), units repeated on
-both ends (`range-units = repeat`). Options on a command are named
-W0110, never silently dropped. -/
+/-- One siunitx command's replacement and the index past its arguments. -/
 private def siCtrl (loc : Locale) (n : String) (pos : Pos) (raws : Array Raw)
     (start : Nat) : M (Array Raw × Nat) := do
   sayOnce ("si:" ++ n) .N0100
@@ -13734,10 +11348,8 @@ private def siCtrl (loc : Locale) (n : String) (pos : Pos) (raws : Array Raw)
 private def siCtrls : List String :=
   ["num", "ang", "si", "unit", "SI", "qty", "numrange", "qtyrange", "SIrange"]
 
-/-- A minted listing's or command's call with the defaults standing over it
-injected ahead of its own options: `\setminted`'s global layer, then its
-lexer's, and for inline code `\setmintedinline`'s two after them
-(minted.sty: `\minted@optscopes`). -/
+/-- A minted call with the standing defaults injected ahead
+of its own options. -/
 private def injectMinted (st : TextSt) (env s : String) : String :=
   let afterOpt := ((Parse.listingOptHead s).map (·.2)).getD 0
   let lang := ((Parse.mintedLangHead s afterOpt).map (·.1.trimAscii.toString)).getD ""
@@ -13746,10 +11358,7 @@ private def injectMinted (st : TextSt) (env s : String) : String :=
   injectListingOpts (if env == "mintinline" then
     block ++ st.inlineOpts ++ layer st.inlineLangOpts else block) s
 
-/-- The head of a minted call a definition's text is, alone — its command,
-an option head and a `{language}` group, the code left to the use — or
-`none`. The definition reads `\define \name() {…}`, as the rewrite spells an
-argument-free `\newcommand`. -/
+/-- The head of a minted call a definition's text is, alone, or `none`. -/
 private def shortcutHead (raws : Array Raw) (j : Nat) : Option (Array Raw) := do
   let k := skipSpaces raws (j + 1)
   guard (raws[k]? matches some (.word "()" _))
@@ -13764,13 +11373,8 @@ private def shortcutHead (raws : Array Raw) (j : Nat) : Option (Array Raw) := do
     | _ => true)
   return body
 
-/-- minted's command met as a control word, its call assembled by a
-definition's text (`\newcommand{\py}{\mintinline{python}}`, then `\py{x}`),
-read from the raws after it as minted reads its arguments when it runs:
-`[options]`, `{language}`, then a group's text or the text up to the next
-copy of its first character — the call as the lexer captures one written
-whole (`Lex.mintedCall`), the index past it, and what a word holds past the
-closing delimiter. `none` when the call is not there. -/
+/-- minted's command met as a control word, its call
+assembled by a definition's text. -/
 private def mintedRaws (raws : Array Raw) (start : Nat) : Option (String × Nat × Option Raw) := Id.run do
   let mut k := skipSpaces raws start
   let mut head := ""
@@ -13815,11 +11419,8 @@ private def mintedRaws (raws : Array Raw) (start : Nat) : Option (String × Nat 
 
 mutual
 
-/-- The listings/siunitx pass, `rewriteList`'s shape with the flow state
-threaded: the list drives the recursion, the array gives argument access,
-`skip` counts elements a replacement consumed. -/
--- conserves: none — the rewrite spells siunitx constructs as their output
--- text and consumes listing defaults into following option heads.
+/-- The listings and siunitx pass over one level. -/
+-- conserves: none — spells siunitx constructs as their output text
 private def textList (loc : Locale) (st : TextSt) (raws : Array Raw)
     (out : Array Raw) : List Raw → Nat → Nat → M (Array Raw × TextSt)
   | [], _, _ => return (out, st)
@@ -13836,11 +11437,9 @@ private def textList (loc : Locale) (st : TextSt) (raws : Array Raw)
                       | some head => shortcuts.push (b, head)
                       | none => shortcuts }
         | none => st
-      -- The name it binds is no use of it.
       textList loc st raws ((out.push (.ctrl n pos)) ++ raws.extract (i + 1) (j + 1)) rest (i + 1)
         (j - i)
     else if let some (_, head) := st.shortcuts.find? (·.1 == n) then
-      -- A shortcut's use is the minted call its head and the raws after it make.
       let joined := head ++ raws.extract (i + 1) raws.size
       match head[0]?, mintedRaws joined 1 with
       | some (Raw.ctrl c _), some (call, k, tail) =>
@@ -13880,8 +11479,7 @@ private def textList (loc : Locale) (st : TextSt) (raws : Array Raw)
     else
       textList loc st raws (out.push (.ctrl n pos)) rest (i + 1) 0
   | .verb env s vpos :: rest, i, 0 => do
-    -- The definition wins here too: a document's own `\mintinline` is the
-    -- command its calls run, their captured text read again as tokens.
+    -- A document's own `\mintinline` is the command its calls run.
     if (env == "mintinline" || env == "mint") && st.defined.contains env then
       let args := (← synth s).map (rebase (fun _ => vpos) true)
       return ← textList loc st raws ((out.push (.ctrl env vpos)) ++ args) rest (i + 1) 0
@@ -13893,9 +11491,8 @@ private def textList (loc : Locale) (st : TextSt) (raws : Array Raw)
     let (r, st) ← textRaw loc st r
     textList loc st raws (out.push r) rest (i + 1) 0
 
-/-- Listing defaults are TeX-local to groups and environments. An input
-wrapper is transparent: input does not open a TeX group. This matches
-LuaLaTeX's synthetic minted/listings probe (`mintedSettingsChecks`). -/
+/-- Descends into a group or environment; listing defaults are local to it, and
+an input wrapper opens no group. -/
 private def textRaw (loc : Locale) (st : TextSt) : Raw → M (Raw × TextSt)
   | .group body p => do
     let (body, inner) ← textList loc st body #[] body.toList 0 0
@@ -13915,9 +11512,7 @@ end
 
 mutual
 
-/-- The document's declared language tag, for the number spellings: the
-`\pdfmeta{ language = "…" }` the babel arm rewrites to (or a document
-declares itself), found wherever it stands. -/
+/-- The document's declared language tag, wherever it stands. -/
 private def declaredTagList : List Raw → Option String
   | [] => none
   | .ctrl "pdfmeta" _ :: rest =>
@@ -13944,9 +11539,8 @@ end
 
 mutual
 
-/-- Whether the pass has anything to do: listing defaults or a siunitx command
-anywhere. A read-only scan, so the common document — which has neither —
-never pays for the rebuilding walk (`scripts/bench.lean` is the check). -/
+/-- Whether the pass has anything to do: listing defaults or
+a siunitx command anywhere. -/
 private def textNeededList : List Raw → Bool
   | [] => false
   | .ctrl n _ :: rest =>
@@ -13964,13 +11558,7 @@ private def textNeededOne : Raw → Bool
 
 end
 
-/-- The listings/siunitx pass, run right after `rewrite`: `\lstset`,
-`\setminted` and `\setmintedinline` fold into the listings and inline code
-that follow, and siunitx commands become their
-spelled text under the document's own locale. Third in the document's
-warn-once chain (`rewrite`'s docstring carries why the set travels): the
-keys it receives are the ones `rewrite` fired, the keys it returns go on to
-the elaborator. -/
+/-- The listings and siunitx pass, run right after `rewrite`. -/
 public def rewriteText (file : String) (raws : Array Raw) (warned : Array String := #[]) :
     Array Raw × Array Diag × Array String :=
   if !textNeededList raws.toList then (raws, #[], warned) else

@@ -6,17 +6,9 @@ namespace LeanTex.Core.CompatContract
 
 open LeanTex.Core.Parse
 
-/-- The compatibility-stage control contract, over every registered row.
-At an ordinary body cursor (`inDoc`, outside list-parameter and picture
-dispatch), an exact declared argument prefix contributes no replacement
-tokens. The actual rewrite walk resumes at that prefix's end, preserving
-the accumulator and using the dispatcher's accounted post-state.
-
-Arguments, intervening spaces, source positions, continuation, accumulator,
-and the remaining state are quantified by `ControlGroupsConsumed`. The
-unknown probe from the original obligation instead leaves its entire tail
-for elaboration. No fact about Elab recovery, its diagnostics, or shipped ink
-is assumed or concluded here. -/
+/-- At an ordinary body cursor, an exact declared argument
+prefix of every registered row contributes no replacement
+tokens and the walk resumes at its end. -/
 public theorem ctrl_groups_consumed_contract :
     (∀ row ∈ Compat.meaningFree,
       Compat.ControlGroupsConsumed row.1 row.2.1) ∧
@@ -26,21 +18,14 @@ public theorem ctrl_groups_consumed_contract :
   exact ⟨Compat.meaningFree_control_contract,
     Compat.configSkip_control_contract, Compat.unknown_control_contract⟩
 
-/-- The operand the style-file scanner reads from an expanded loading call.
-Options and missing arguments follow the production readers exactly. -/
+/-- The operand the style-file scanner reads from an expanded loading call. -/
 @[expose] public def loadArgument (command : String) (pos : Pos) (tail : Array Raw) : String :=
   let call := #[Raw.ctrl command pos] ++ tail
   rawSrc ((Compat.takeGroups call (Compat.takeOpt call 1).2 1).1.getD 0 #[])
 
-/-- The source-stage replacement for the old per-diagnostic-code claim.
-Every nonempty, non-native name in an expanded package-loading operand is
-asked for, and every nonempty theme-loading operand asks for its registered
-prefix. This covers arbitrary operands, options, and trailing input.
-
-A W0319 from native `\theme` does not identify a style-file request; W0103
-can instead refuse a native package's options. Neither a diagnostic code nor
-the unexpanded document determines this contract's loading call. The driver
-applies `localStyCandidates` to `InputRequest.call` at the expanded stage. -/
+/-- Every nonempty non-native name in an expanded
+package-loading operand is asked for, and every nonempty
+theme-loading operand asks for its registered prefix. -/
 public theorem nameRefusals_asked (pos : Pos) (tail : Array Raw) :
     (∀ command, command = "usepackage" ∨ command = "RequirePackage" →
       ∀ part ∈ (loadArgument command pos tail).splitOn ",",

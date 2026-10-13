@@ -3,15 +3,12 @@ module
 public import LeanTex.Core.Ir
 import all LeanTex.Core.Ir
 
-/-! The reference list's shipped values, checked by the kernel in a leaf
-module: nothing on the import chain to the elaborator waits for these
-checks. -/
+/-! Kernel checks of the reference list's shipped values, in a leaf module off
+the elaborator's import chain. -/
 
 namespace LeanTex.Core.Ir
 
-/-- **An undeclared reference list reads natbib's own values** at the three
-standard bases — the sourced rows `bibSepDefault` holds, exactly, and a
-one-em hang. -/
+/-- An undeclared reference list reads natbib's own values. -/
 public theorem bibList_default_exact :
     bibHang {} = { width := { em := 1000 } } ∧
     (bibSep {} (Dim.pt 10)).width.sp = Dim.pt 8 ∧

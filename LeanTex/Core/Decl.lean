@@ -8,8 +8,8 @@ namespace LeanTex.Core.Decl
 
 open LeanTex.Core LeanTex.Core.Dim
 
-/-- A parsed declaration value. Absolute dimensions resolve immediately;
-font-relative dimensions and glue retain their symbolic components. -/
+/-- A parsed declaration value; absolute dimensions resolve immediately,
+font-relative ones and glue keep their symbolic components. -/
 public inductive Value where
   | str (s : String)
   | dim (sp : Sp)
@@ -17,8 +17,7 @@ public inductive Value where
   | ident (s : String)
   | block (src : String)
   | color (r g b : UInt8)
-  /-- A colour declared in CMYK, components in thousandths: the declared
-  model matters to print, so it survives parsing intact. -/
+  /-- A colour declared in CMYK, components in thousandths. -/
   | cmyk (c m y k : Nat)
   /-- A glue expression, possibly font-relative or scaled from a token. -/
   | glue (g : SymGlue)
@@ -39,9 +38,8 @@ public structure Entry where
   value : Value
   deriving Repr, BEq
 
-/-- One non-negative decimal component, kept as the exact rational the
-source wrote. `scale` is a power of ten and nonzero for every value made by
-`parseColorSpec`; consumers use the numeric fields, never reparsing text. -/
+/-- One non-negative decimal component, kept as the exact
+rational the source wrote. -/
 public structure ColorComponent where
   num : Nat
   scale : Nat
@@ -60,18 +58,16 @@ private def decimalFraction (num scale : Nat) : String :=
     let digits := (digits.dropEndWhile (· == '0')).toString
     "0." ++ digits
 
-/-- A unit component as a canonical PDF decimal, without losing source
-precision. -/
+/-- A unit component as a canonical PDF decimal. -/
 public def ColorComponent.pdfUnit (c : ColorComponent) : String :=
   decimalFraction c.num c.scale
 
-/-- The value xcolor stores for a `\definecolor` unit component. Its
-`XC@calcR` keeps five fractional digits (truncating, not rounding) before the
-driver sees the colour; direct modeled uses retain their source values. -/
+/-- The value xcolor stores for a `\definecolor` unit
+component: five fractional digits, truncated. -/
 public def ColorComponent.xcolorDefined (c : ColorComponent) : ColorComponent :=
   { num := c.num * 100000 / c.scale, scale := 100000 }
 
-/-- TeX's printer of scaled points (tex.web §103): the whole part and the
+/-- TeX's printer of scaled points: the whole part and the
 fraction's decimal digits it prints. -/
 private def texScaledParts (sp : Nat) : Nat × List Nat := Id.run do
   let mut digits : Array Nat := #[]
@@ -85,30 +81,23 @@ private def texScaledParts (sp : Nat) : Nat × List Nat := Id.run do
     if rem ≤ delta then break
   return (sp / 65536, digits.toList)
 
-/-- The printed scaled points as `\strip@pt` leaves them: a whole number
-loses its `.0`. -/
+/-- The printed scaled points as `\strip@pt` leaves them. -/
 private def texScaledDecimal (sp : Nat) : String :=
   let (whole, digits) := texScaledParts sp
   if digits == [0] then toString whole
   else toString whole ++ "." ++ String.join (digits.map toString)
 
-/-- The printed scaled points as a component: what a TeX macro storing the
-printed decimal holds. -/
+/-- The printed scaled points as a component. -/
 private def texScaledComponent (sp : Nat) : ColorComponent :=
   let (whole, digits) := texScaledParts sp
   if digits == [0] then { num := whole, scale := 1 }
   else { num := digits.foldl (fun n d => n * 10 + d) whole, scale := 10 ^ digits.length }
 
-/-- TeX's rounding of a decimal fraction to scaled points (tex.web §102): the
-scaled points `.d₁d₂…` denotes, its digits most significant first. -/
+/-- TeX's rounding of a decimal fraction to scaled points. -/
 private def roundDecimals (digits : List Nat) : Nat :=
   (digits.foldr (fun d a => (a + d * 131072) / 10) 0 + 1) / 2
 
-/-- xcolor's `\rdivide` (xcolor.sty) of two scaled-point values: the
-quotient's integer part and five decimals by long division, read back as a
-TeX length, and one scaled point more when the sixth decimal is five or
-more. Exact for a quotient under one, the RGB models' only use (a 0–255
-value over 255). -/
+/-- xcolor's `\rdivide` of two scaled-point values. -/
 private def xcolorDivide (a b : Nat) : Nat := Id.run do
   let q := a / b
   let mut rem := a - q * b
@@ -120,34 +109,26 @@ private def xcolorDivide (a b : Nat) : Nat := Id.run do
   let sixth := rem * 10 / b
   return q * 65536 + roundDecimals digits.toList + (if sixth > 4 then 1 else 0)
 
-/-- The graphics driver's conversion of an RGB-range component used directly
-(`\textcolor[RGB]{…}`, `\pagecolor[RGB]{…}`): read the source number at TeX's
-scaled-point precision, divide its scaled points by 255, then print the
-result with TeX's own scaled-decimal printer. -/
+/-- The graphics driver's conversion of an RGB-range component used directly. -/
 public def ColorComponent.pdfRgb (c : ColorComponent) : String :=
   let sourceSp := (c.num * 65536 + c.scale / 2) / c.scale
   texScaledDecimal (sourceSp / 255)
 
-/-- The scaled points xcolor's own conversion of an RGB-range component
-(xcolor.sty's `XC@calcD`) arrives at: the source read at TeX's scaled-point
-precision, divided by 255 by `\rdivide`. -/
+/-- The scaled points xcolor's own conversion of an
+RGB-range component arrives at. -/
 private def ColorComponent.xcolorRgbSp (c : ColorComponent) : Nat :=
   xcolorDivide ((c.num * 65536 + c.scale / 2) / c.scale) (255 * 65536)
 
-/-- xcolor's own conversion of an RGB-range component, which an HTML colour
-and an RGB colour a `\definecolor` stores go through, as TeX prints it: every
-HTML byte lands on the decimal lualatex writes (`Tests.ColorNames.htmlDecimalChecks`
-holds the table). -/
+/-- xcolor's own conversion of an RGB-range component, as TeX prints it. -/
 public def ColorComponent.xcolorRgb (c : ColorComponent) : String :=
   texScaledDecimal c.xcolorRgbSp
 
-/-- The unit value xcolor stores for an RGB-range component it converts: the
-decimal `xcolorRgb` prints, as the component a macro holding it reads. -/
+/-- The unit value xcolor stores for an RGB-range component it converts. -/
 public def ColorComponent.xcolorRgbUnit (c : ColorComponent) : ColorComponent :=
   texScaledComponent c.xcolorRgbSp
 
-/-- xcolor's HTML projection of a unit component. Parsing to TeX's 16-bit
-fixed point before scaling reproduces the package's half-boundary behavior. -/
+/-- xcolor's HTML projection of a unit component, through
+TeX's 16-bit fixed point. -/
 public def ColorComponent.unitByte (c : ColorComponent) : UInt8 :=
   let sp := (c.num * 65536 + c.scale / 2) / c.scale
   UInt8.ofNat ((sp * 255 + 32768) / 65536)
@@ -156,15 +137,12 @@ public def ColorComponent.unitByte (c : ColorComponent) : UInt8 :=
 public def ColorComponent.rgbByte (c : ColorComponent) : UInt8 :=
   UInt8.ofNat ((c.num + c.scale / 2) / c.scale)
 
-/-- The existing internal CMYK arithmetic uses thousandths; this is its one
-projection from an exact source component. -/
+/-- The component in thousandths. -/
 public def ColorComponent.milli (c : ColorComponent) : Nat :=
   (c.num * 1000 + c.scale / 2) / c.scale
 
-/-- The source model of one xcolor specification. The constructors are the
-models the engine can project without guessing: HTML is an exact byte triple;
-RGB keeps its 0–255 decimals; rgb, gray, and cmyk keep their exact unit
-components until each backend chooses its own projection. -/
+/-- The source model of one xcolor specification, each model one the engine
+projects without guessing. -/
 public inductive ColorSpec where
   | named (expr : String)
   | html (r g b : UInt8)
@@ -172,17 +150,15 @@ public inductive ColorSpec where
   | rgbUnit (r g b : ColorComponent)
   | gray (v : ColorComponent)
   | cmyk (c m y k : ColorComponent)
-  /-- CSS Color 4's `oklab(L a b)` (§9.2): lightness as a fraction of 1, `a`
-  and `b` in Oklab units, each a signed decimal (mantissa, scale). -/
+  /-- CSS Color 4's `oklab(L a b)`: lightness as a fraction
+  of 1, `a` and `b` in Oklab units. -/
   | oklab (L a b : Int × Nat)
-  /-- CSS Color 4's `oklch(L C H)` (§9.3): lightness as a fraction of 1,
-  chroma in Oklab units, hue in degrees. -/
+  /-- CSS Color 4's `oklch(L C H)`: lightness as a fraction of 1, chroma in
+  Oklab units, hue in degrees. -/
   | oklch (L C H : Int × Nat)
   deriving Repr, BEq
 
-/-- xcolor definitions normalize unit models through `XC@calcR` and store an
-RGB-range colour as the unit values `XC@calcD` converts it to; direct
-modelled uses retain their source values. -/
+/-- A specification as xcolor's definitions store it. -/
 public def ColorSpec.xcolorDefined : ColorSpec → ColorSpec
   | .named expr => .named expr
   | .html r g b => .html r g b
@@ -197,15 +173,14 @@ public def ColorSpec.xcolorDefined : ColorSpec → ColorSpec
 /-- A signed decimal (mantissa, scale) at `Oklab.labOf`'s 10¹⁸ scale. -/
 private def okScaled (d : Int × Nat) : Int := d.1 * 10 ^ 18 / (d.2 : Int)
 
-/-- The Oklab value an `oklab()` or `oklch()` source states, at `labOf`'s
-scale; the hue read in millidegrees. -/
+/-- The Oklab value an `oklab()` or `oklch()` source states. -/
 public def ColorSpec.okLab? : ColorSpec → Option Oklab.Lab
   | .oklab L a b => some { L := okScaled L, a := okScaled a, b := okScaled b }
   | .oklch L C H => some (Oklab.ofLch (okScaled L) (okScaled C) (H.1 * 1000 / (H.2 : Int)))
   | .named _ | .html .. | .rgbByte .. | .rgbUnit .. | .gray _ | .cmyk .. => none
 
-/-- Compatibility-only carrier marking a modeled value that passed through
-xcolor's `\definecolor` storage semantics before entering the palette. -/
+/-- The marker of a modelled value that passed through
+xcolor's `\definecolor` storage. -/
 public def xcolorDefinitionPrefix : String := "@xcolor-definition:"
 
 public inductive ColorSpecError where
@@ -213,7 +188,7 @@ public inductive ColorSpecError where
   | malformed (model detail : String)
   deriving Repr, BEq
 
-/-- The public model names accepted by `parseColorSpec`, with xcolor's
+/-- The model names `parseColorSpec` accepts, with xcolor's
 case-sensitive spellings. -/
 public def colorModelNames : List String := ["HTML", "RGB", "rgb", "gray", "cmyk"]
 
@@ -226,9 +201,7 @@ private def hexDigit? (c : Char) : Option Nat :=
 public def isIdentChar (c : Char) : Bool :=
   c.isAlphanum || c == '_' || c == '.'
 
-/-- Split on commas that are not inside braces, brackets, parentheses, or
-quotes. Public because a declaration whose entries may refer to earlier
-entries has to walk them one at a time. -/
+/-- Splits on commas outside braces, brackets, parentheses and quotes. -/
 public def splitEntries (s : String) : List String := Id.run do
   let mut out : List String := []
   let mut cur := ""
@@ -284,9 +257,8 @@ public def parseDecimal (s : String) : Option (Int × Nat) := Id.run do
     return none
   return some (if neg then -(mantissa : Int) else mantissa, scale)
 
-/-- xcolor's `XC@clean` accepts commas and runs of ASCII whitespace as
-component separators, including a mixture of the two; an empty comma field
-is not a component. -/
+/-- Color components separated by commas or runs of ASCII whitespace, as
+xcolor's `XC@clean` reads them. -/
 private def colorParts (s : String) : Option (List String) :=
   let commaParts := s.splitOn ","
   if commaParts.any (fun p => p.trimAscii.isEmpty) then none
@@ -373,8 +345,7 @@ private def parseModeledColor (model value : String) : Except ColorSpecError Col
     | _ => malformedColor model "expected four components"
   | _ => .error (.unsupported model)
 
-/-- One `oklab()`/`oklch()` component (CSS Color 4 §9): a decimal, or a
-percentage of `full` (a lightness's 1, a chroma's 0.4). -/
+/-- One `oklab()`/`oklch()` component: a decimal, or a percentage of `full`. -/
 private def okComponent (model src : String) (full : Int × Nat) (signed : Bool) :
     Except ColorSpecError (Int × Nat) := do
   let (pct, body) := if src.endsWith "%" then (true, (src.dropEnd 1).toString) else (false, src)
@@ -383,8 +354,7 @@ private def okComponent (model src : String) (full : Int × Nat) (signed : Bool)
   if !signed && m < 0 then return ← malformedColor model s!"'{src}' is negative"
   if pct then return (m * full.1, scale * 100 * full.2) else return (m, scale)
 
-/-- `oklab(L a b)` and `oklch(L C H)`, space-separated as CSS spells them; an
-alpha (`/ A`) has no meaning for a printed colour and is refused. -/
+/-- `oklab(L a b)` and `oklch(L C H)`, space-separated; an alpha is refused. -/
 private def parseOkColor (model value : String) : Except ColorSpecError ColorSpec := do
   if value.contains '/' then
     return ← malformedColor model "an alpha has no meaning for a page colour"
@@ -402,8 +372,8 @@ private def parseOkColor (model value : String) : Except ColorSpecError ColorSpe
     let some H := parseDecimal h | return ← malformedColor model s!"'{y}' is not a hue in degrees"
     return .oklch L (← okComponent model x (4, 10) false) H
 
-/-- A no-model source: native `#RGB`/`#RRGGBB`, CSS's `oklab()` and
-`oklch()`, the modelled `MODEL(...)` carrier, or a named xcolor expression. -/
+/-- A no-model source: `#RGB`/`#RRGGBB`, `oklab()`, `oklch()`, the modelled
+`MODEL(...)` carrier, or a named xcolor expression. -/
 private def parsePlainColor (value : String) : Except ColorSpecError ColorSpec :=
   if value.startsWith "#" then
     let hex := (value.drop 1).toString
@@ -425,13 +395,8 @@ private def parsePlainColor (value : String) : Except ColorSpecError ColorSpec :
     | some (m, v) => parseModeledColor m v
     | none => .ok (.named value)
 
-/-- Parse one colour source. An explicit model follows xcolor's
-case-sensitive model grammar. With no model, native `#RGB`/`#RRGGBB` and the
-modelled `MODEL(...)` carrier are read; every other value remains a named
-xcolor expression for `Palette.resolveSpec` to resolve. A value carrying
-`xcolorDefinitionPrefix` passed through xcolor's definition storage: a
-modelled value normalizes as xcolor stores it, any other value (`\colorlet`'s
-expression) reads as itself. -/
+/-- Parses one colour source; an explicit model follows
+xcolor's case-sensitive model grammar. -/
 public def parseColorSpec (model : Option String) (raw : String) :
     Except ColorSpecError ColorSpec :=
   let value := raw.trimAscii.toString
@@ -445,7 +410,7 @@ public def parseColorSpec (model : Option String) (raw : String) :
       | none => parsePlainColor source
     else parsePlainColor value
 
-/-- sp per unit, expressed as a fraction so conversions stay exact. -/
+/-- Scaled points per unit, as an exact fraction. -/
 private def unitScaleBase : String → Option (Int × Nat)
   | "sp" => some (1, 1)
   | "pt" => some (spPerPt, 1)
@@ -454,26 +419,14 @@ private def unitScaleBase : String → Option (Int × Nat)
   | "cm" => some (7200 * spPerPt, 254)
   | "mm" => some (7200 * spPerPt, 2540)
   | "pc" => some (12 * spPerPt, 1)
-  -- the CSS pixel: 1px = 1/96 in exactly (CSS Values and Units 4 §6.2),
-  -- so 96 px = 72 pt — the unit a web-facing length (a scroll distance)
-  -- is naturally written in
+  -- The CSS pixel: 1px = 1/96 in (CSS Values and Units 4 §6.2).
   | "px" => some (72 * spPerPt, 96)
-  -- The didot point, TeX's continental unit: 1157 dd = 1238 TeX pt
-  -- (TeXbook ch. 10), and 7227 TeX pt = 100 in, so
-  -- dd = 1238·7200⁄(1157·7227) of this engine's 1⁄72-inch point —
-  -- unreduced, so the relation to `in` is literal in the theorem below.
+  -- The didot point: 1157 dd = 1238 TeX pt (TeXbook ch. 10).
   | "dd" => some (8913600 * spPerPt, 8361639)
   | "cc" => some (12 * 8913600 * spPerPt, 8361639)
   | _ => none
 
-/-- A `true` unit is its plain counterpart, exactly. TeX's `truept`,
-`truein`, … mean "unscaled by magnification": "if you want an unmagnified
-unit, you can say `true`" and true dimensions stay constant whatever `\mag`
-is (TeXbook ch. 10). This engine has no magnification — every dimension is
-already true — so the prefix denotes the identity. Reading it as part of a
-unit *name* was the defect: `2.25truein` parsed as a name and E0323 said
-"expects a length … got a name". A unit added to the base table gets its
-`true` twin here, or `unitScale_true` below fails to extend. -/
+/-- Scaled points per unit, a `true` unit its plain counterpart exactly. -/
 private def unitScale : String → Option (Int × Nat)
   | "truesp" => unitScaleBase "sp"
   | "truept" => unitScaleBase "pt"
@@ -487,13 +440,6 @@ private def unitScale : String → Option (Int × Nat)
   | "truecc" => unitScaleBase "cc"
   | u => unitScaleBase u
 
-/-- The unit table is one system, not ten constants: bp is the PDF point
-(leantex's pt), an inch is 72 of them, a pica 12, cm and mm follow from
-1 in = 2.54 cm exactly, sp is the fixed point itself, the CSS pixel is
-1⁄96 inch, a cicero is 12 didots, and the didot keeps TeX's own ratio to
-the inch (1157 dd = 1238 TeX pt and 7227 TeX pt = 100 in, TeXbook ch. 10;
-the dd fraction is stored unreduced so its relation below is literal). A
-typo in any one entry breaks a relation here. -/
 private theorem unitScale_consistent :
     unitScale "bp" = unitScale "pt" ∧
     unitScale "pt" = (unitScale "sp").map (fun u => (spPerPt * u.1, u.2)) ∧
@@ -506,9 +452,6 @@ private theorem unitScale_consistent :
     unitScale "cc" = (unitScale "dd").map (fun u => (12 * u.1, u.2)) := by
   refine ⟨rfl, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_⟩ <;> simp [unitScale, unitScaleBase, spPerPt]
 
-/-- Every `true` unit denotes exactly its plain counterpart — stated over
-the whole table, so a unit added without this identity breaks the build,
-not a document. -/
 private theorem unitScale_true :
     unitScale "truesp" = unitScale "sp" ∧ unitScale "truept" = unitScale "pt" ∧
     unitScale "truebp" = unitScale "bp" ∧ unitScale "truein" = unitScale "in" ∧
@@ -517,8 +460,7 @@ private theorem unitScale_true :
     unitScale "truedd" = unitScale "dd" ∧ unitScale "truecc" = unitScale "cc" := by
   decide
 
-/-- One term's length from its mantissa, scale, and unit name: the shared
-arithmetic under `parseLength` and the expression parser. -/
+/-- One term's length from its mantissa, scale and unit name. -/
 private def lengthOfUnit (mantissa : Int) (scale : Nat) (unit : String) :
     Option Length :=
   if unit == "em" then
@@ -538,7 +480,7 @@ public def parseLength (s : String) : Option Length :=
   | none => none
   | some (mantissa, scale) => lengthOfUnit mantissa scale unit
 
-/-- A stretch in one of TeX's infinite units and its order. -/
+/-- A stretch in one of TeX's infinite units, and its order. -/
 public def filFactor? (s : String) : Option ((Int × Nat) × Nat) :=
   let t := s.trimAscii.toString
   let digits := t.toList.takeWhile fun c => c.isDigit || c == '.' || c == '+'
@@ -581,46 +523,22 @@ private def parseScaled (tokens : Array (String × SymGlue)) (s : String) : Opti
 
 /-! # Length expressions
 
-`\dimexpr`'s shape over declared tokens and literals: terms added and
-subtracted, a term scaled by a numeric factor, parentheses for grouping
-(e-TeX manual, the `⟨expr⟩` grammar: "an expression consists of one or
-more terms … to be added or subtracted; a term … consists of a factor …
-optionally multiplied and/or divided by numeric factors; a factor … is
-either a parenthesized subexpression or a quantity"). TeX's coefficient
-form rides along: `2\gutter` is a ⟨factor⟩ before an internal dimen
-(TeXbook ch. 24, ⟨dimen⟩ syntax), so `boxheight + 2 gutter` reads as
-`boxheight + 2 * gutter`. Division by a numeric factor folds into the
-same scaling (`a / n` is `.scale 1 n a`), and a parenthesized numeric
-subexpression such as `(3+1)` evaluates as a scalar before it scales or
-divides. One rounding rule for the whole language, TeX's: `\divide`
-truncates toward zero (TeXbook ch. 24) and so does coefficient scaling
-(`xn_over_d`, TeX §107); e-TeX's `\dimexpr` division rounds to nearest
-instead (e-TeX manual §3.5) and is therefore refused by name, never
-mapped onto arithmetic that would disagree with its source. Scaling by a
-decimal keeps `Length.scale`'s semantics, now truncation throughout.
-
-Token references resolve eagerly, against the values declared so far —
-the same rule `\tokens` and TeX's `\setlength{\x}{2\x}` follow — so a
-reference is one lookup into ground values, never a recursive walk: a
-cycle is unrepresentable, and a forward or unknown name is diagnosed by
-name (`eval_absent_named`), never defaulted to zero. -/
+`\dimexpr`'s shape over declared tokens and literals. -/
 
 /-- A parsed length expression whose references are still source names. -/
 public abbrev LenExpr := Affine String
 
 namespace LenExpr
 
-/-- Whether an expression reads a token name: what its value may depend on. -/
+/-- Whether an expression reads a token name. -/
 public def reads : LenExpr → String → Bool
   | .lit _, _ => false
   | .ref m, n => m == n
   | .scale _ _ e, n => reads e n
   | .add a b, n | .sub a b, n => reads a n || reads b n
 
-/-- Evaluate against a lookup of declared tokens. Structural recursion:
-the checker's acceptance is the termination proof, and an unknown name is
-an error carrying that name. The matches are explicit so the exactness
-proof below can follow them case by case. -/
+/-- Evaluates against a lookup of declared tokens; an
+unknown name is an error carrying that name. -/
 public def eval (look : String → Option SymGlue) : LenExpr → Except String SymGlue
   | .lit g => .ok g
   | .ref n =>
@@ -642,8 +560,6 @@ public def eval (look : String → Option SymGlue) : LenExpr → Except String S
     | .error m, _ => .error m
     | _, .error m => .error m
 
-/-- Resolution is deterministic: one expression and one lookup answer
-produce one value, independently of ambient state. -/
 public theorem eval_names_agree (l₁ l₂ : String → Option SymGlue) (e : LenExpr)
     (h : ∀ n, l₁ n = l₂ n) : eval l₁ e = eval l₂ e := by
   induction e with
@@ -653,13 +569,7 @@ public theorem eval_names_agree (l₁ l₂ : String → Option SymGlue) (e : Len
   | add a b iha ihb => simp only [eval, iha, ihb]
   | sub a b iha ihb => simp only [eval, iha, ihb]
 
-/-- The same expression evaluated in ℤ, over any one fixed-point component
-(the sp part, the em part, …): the arithmetic the engine owes exactness
-to. Sums and differences are integer sums and differences; scaling is
-`(· * num).tdiv den` with the truncation `Length.scale` uses — the one
-stated rounding, TeX's own (`\divide` and `xn_over_d` both truncate
-toward zero; only e-TeX's `\dimexpr` division rounds to nearest, which is
-why that spelling is refused rather than mapped). -/
+/-- The expression evaluated in ℤ over one fixed-point component. -/
 public def evalInt (look : String → Option Int) : LenExpr → (Length → Int) → Except String Int
   | .lit g, part => .ok (part g.width)
   | .ref n, _ =>
@@ -681,12 +591,6 @@ public def evalInt (look : String → Option Int) : LenExpr → (Length → Int)
     | .error m, _ => .error m
     | _, .error m => .error m
 
-/-- Arithmetic is exact in sp: the width's sp component of an evaluated
-expression is the same expression evaluated in ℤ over the sp components —
-no drift is introduced anywhere, and the only rounding is the stated
-truncation in `scale`. (The same proof shape holds for every component;
-sp is the one
-print geometry rides on.) -/
 public theorem eval_exact_sp (look : String → Option SymGlue) (e : LenExpr) :
     (eval look e).map (fun g => g.width.sp)
       = evalInt (fun n => (look n).map (fun g => g.width.sp)) e (fun l => l.sp) := by
@@ -721,8 +625,6 @@ public theorem eval_exact_sp (look : String → Option SymGlue) (e : LenExpr) :
         rw [hb] at ihb
         simp [← iha, ← ihb, Except.map, SymGlue.sub, Length.sub]
 
-/-- Absent is diagnosed, never defaulted: an unknown token name in an
-expression errors *as that name* — it never resolves to zero. -/
 public theorem eval_absent_named (look : String → Option SymGlue) (n : String)
     (h : look n = none) : eval look (.ref n) = .error n := by
   simp [eval, h]
@@ -736,9 +638,8 @@ private inductive ETok where
   | plus | minus | times | divide | lparen | rparen | dimexpr | relax
   deriving Repr, BEq
 
-/-- Scan a length expression into tokens. Numbers are unsigned here — a
-sign is an operator, resolved by position. `none` when a character fits no
-token: the caller falls back to its own diagnostic. -/
+/-- Scans a length expression into tokens; `none` when a
+character fits no token. -/
 private def exprToks (s : String) : Option (Array ETok) := Id.run do
   let cs : Array Char := s.toList.toArray
   let mut out : Array ETok := #[]
@@ -787,8 +688,7 @@ private def exprToks (s : String) : Option (Array ETok) := Id.run do
       else return none
   return some out
 
-/-- An operand mid-parse: a bare number, or a length expression. A number
-becomes a length only through a unit or a token it scales. -/
+/-- An operand mid-parse: a bare number, or a length expression. -/
 private inductive EVal where
   | scalar (mantissa : Int) (scale : Nat)
   | len (e : LenExpr)
@@ -826,10 +726,8 @@ private def popOne (vals : Array EVal) (op : Char) : Except String (Array EVal) 
     | some b, some a => return (vals.pop.pop).push (← applyBinOp op a b)
     | _, _ => throw "malformed expression"
 
-/-- Stack `c`, first draining every operator already on the stack that
-binds at least as tightly (never past a `(`): shunting-yard's precedence
-rule at one site, so the additive and multiplicative arms cannot drain by
-two rules that drift apart. -/
+/-- Stacks `c`, first draining every operator on the stack
+that binds at least as tightly. -/
 private def pushOp (vals : Array EVal) (ops : Array Char) (c : Char) :
     Except String (Array EVal × Array Char) := do
   let mut vals := vals
@@ -844,10 +742,8 @@ private def pushOp (vals : Array EVal) (ops : Array Char) (c : Char) :
     | none => break
   return (vals, ops.push c)
 
-/-- Parse a token stream into an expression: shunting-yard with unary
-minus, the implicit coefficient (`2 gutter`), and units bound where
-their number stands (`1.5ex`, spaces allowed as in TeX's `2.5 \x`). Loops
-are bounded by the token count — termination by construction. -/
+/-- Parses a token stream into an expression: shunting-yard with unary minus,
+implicit coefficients and units. -/
 private def exprParse (toks : Array ETok) : Except String LenExpr := do
   let mut vals : Array EVal := #[]
   let mut ops : Array Char := #[]
@@ -861,8 +757,7 @@ private def exprParse (toks : Array ETok) : Except String LenExpr := do
     | .ident n =>
       match vals.back?, prevOperand with
       | some (.scalar m s), true =>
-        -- The number before it binds: a unit makes a literal, a token
-        -- name a coefficient (TeXbook ch. 24's ⟨factor⟩⟨internal dimen⟩).
+        -- The number before it binds: a unit makes a literal, a token name a coefficient.
         match lengthOfUnit m s n with
         | some l => vals := vals.pop.push (.len (.lit { width := l }))
         | none => vals := vals.pop.push (.len (Affine.scaleQ m s (.ref n)))
@@ -955,16 +850,13 @@ private def exprParse (toks : Array ETok) : Except String LenExpr := do
   | some (.scalar _ _), 1 => throw "a bare number in a length expression needs a unit"
   | _, _ => throw "malformed expression"
 
-/-- Parse one length expression without resolving its references. The raw
-TeX controls and the normalized declaration spelling share this one grammar;
-`\\dimexpr ... \\relax` contributes grouping only. -/
+/-- Parses one length expression without resolving its references. -/
 public def parseLengthSyntax (s : String) : Except String LenExpr := do
   let some toks := exprToks s.trimAscii.toString
     | throw "malformed expression"
   exprParse toks
 
-/-- Read a length expression against declared tokens. Local measure names
-are intentionally absent here: declaration values are resolved eagerly. -/
+/-- Reads a length expression against declared tokens. -/
 public def parseLengthExpr (tokens : Array (String × SymGlue)) (s : String) :
     Except String SymGlue := do
   let e ← parseLengthSyntax s
@@ -972,10 +864,8 @@ public def parseLengthExpr (tokens : Array (String × SymGlue)) (s : String) :
   | .ok g => return g
   | .error n => throw s!"'{n}' is not a declared token"
 
-/-- Parse a context-resolved length. Declared tokens become literals now;
-local measures become typed references that resolve only where geometry is
-known. A measure the context cannot represent is returned by its typed name;
-no source spelling can cross into the IR. -/
+/-- Parses a context-resolved length: declared tokens become literals, local
+measures typed references. -/
 public def parseAffineLengthExprFor (tokens : Array (String × SymGlue))
     (admits : Measure → Bool) (s : String) : Except String (Affine Measure) := do
   let e ← parseLengthSyntax s
@@ -994,18 +884,14 @@ public def parseAffineLengthExpr (tokens : Array (String × SymGlue)) (s : Strin
     Except String (Affine Measure) :=
   parseAffineLengthExprFor tokens (fun _ => true) s
 
-/-- Does the length-expression grammar read `s`? Its syntax alone, names
-unresolved: what a rewrite that composes an expression checks before it
-emits one, so it never hands the declaration a value the grammar refuses. -/
+/-- Whether the length-expression grammar reads `s`, names unresolved. -/
 public def readsAsLengthExpr (s : String) : Bool :=
   match exprToks s.trimAscii.toString with
   | some toks => (exprParse toks).isOk
   | none => false
 
-/-- Whether a string looks like a length expression rather than a single
-value: an operator or a parenthesis somewhere, or a coefficient directly
-against a name (`2gutter`). Routing, not validation — the parser has
-the final say. -/
+/-- Whether a string looks like a length expression rather
+than a single value. -/
 public def looksLikeExpr (s : String) : Bool := Id.run do
   let cs := s.toList
   let mut prevDigit := false
@@ -1014,8 +900,6 @@ public def looksLikeExpr (s : String) : Bool := Id.run do
     if c == '(' || c == ')' || c == '*' || c == '/' then return true
     if (c == '+' || c == '-') && i > 0 then return true
     if prevDigit && (c.isAlpha || c == '_') then
-      -- a digit running into letters is a unit or a coefficient; only the
-      -- coefficient names an expression
       let rest := String.ofList (cs.drop i)
       let unit := String.ofList (rest.toList.takeWhile fun c => c.isAlphanum || c == '_')
       if (lengthOfUnit 1 1 unit).isNone then return true
@@ -1023,9 +907,7 @@ public def looksLikeExpr (s : String) : Bool := Id.run do
     i := i + 1
   return false
 
-/-- A modelled colour carried inside the native declaration grammar. The
-xcolor compatibility layer writes the same `MODEL(...)` form, so every model
-and every malformed component passes through `parseColorSpec` once. -/
+/-- A modelled colour carried inside the native declaration grammar. -/
 private def parseModeledValue (s : String) : Option Value :=
   match parseColorSpec none s with
   | .ok (.html r g b) => some (.color r g b)
@@ -1039,10 +921,7 @@ private def parseModeledValue (s : String) : Option Value :=
     (ColorSpec.oklch L C H).okLab?.map fun l => let c := Oklab.ofLab l; .color c.r c.g c.b
   | .ok (.named _) | .error _ => none
 
-/-- `digits:digits` is a name, not a malformed dimension: the slides stage
-spellings (`\page{ size = 16:9 }`) parse as idents and the consuming
-declaration decides what the name means — an unknown one keeps its own
-refusal (E0324 for `size`) instead of a parse error here. -/
+/-- Whether `digits:digits` is a name, such as a slide stage `16:9`. -/
 private def isRatioName (s : String) : Bool :=
   match s.splitOn ":" with
   | [a, b] =>
@@ -1060,25 +939,19 @@ public def parseValue (raw : String) (tokens : Array (String × SymGlue) := #[])
     -- Nested blocks stay opaque; the declaration decides whether it takes one.
     some (.block (String.ofList (s.toList.drop 1).dropLast |>.trimAscii.toString))
   else if (s.splitOn "*").length == 2 then
-    -- The factor may scale one name, or a whole subexpression.
     parseScaled tokens s <|>
       (if looksLikeExpr s then (parseLengthExpr tokens s).toOption.map .glue else none)
   else if (s.splitOn " plus ").length > 1 || (s.splitOn " minus ").length > 1 then
     (parseGlue s).map Value.glue
   else if s.endsWith "em" || s.endsWith "ex" then
-    -- A literal (`1.5em`), or an expression whose last term is one
-    -- (`(10pt) + 1em`): the expression reader has the final say.
     ((parseLength s).map fun l => Value.glue { width := l }) <|>
       (if looksLikeExpr s then (parseLengthExpr tokens s).toOption.map .glue else none)
   else if let some (_, g) := tokens.find? (·.1 == s) then
     some (.glue g)
   else if s == "fill" || s == "fil" then
-    -- LaTeX's \fill: zero width, first-order infinite stretch
-    -- (`0pt plus 1fill`, ltspace.dtx). A declared token of the same name
-    -- wins above, as any redeclaration does.
+    -- LaTeX's `\fill`: zero width, first-order infinite stretch.
     some (.glue { fil := true })
   else
-    -- dimension: digits then a unit suffix
     let digits := s.toList.takeWhile fun c => c.isDigit || c == '.' || c == '-' || c == '+'
     let unit := String.ofList (s.toList.drop digits.length) |>.trimAscii.toString
     match parseDecimal (String.ofList digits), unitScale unit with
@@ -1093,8 +966,7 @@ public def parseValue (raw : String) (tokens : Array (String × SymGlue) := #[])
       if looksLikeExpr s then (parseLengthExpr tokens s).toOption.map .glue
       else if !s.isEmpty && s.toList.all isIdentChar then some (.ident s) else none
 
-/-- Parse a `key = value, ...` block. Reports malformed entries; the caller
-validates keys, so an unknown key is not an error here. -/
+/-- Parses a `key = value, ...` block, reporting malformed entries. -/
 public def parseBlock (file : String) (src : String) (pos : Pos) (what : String)
     (tokens : Array (String × SymGlue) := #[]) : Array Entry × Array Diag := Id.run do
   let mut entries : Array Entry := #[]
@@ -1104,8 +976,7 @@ public def parseBlock (file : String) (src : String) (pos : Pos) (what : String)
     | key :: rest =>
       let key := key.trimAscii.toString
       let valueSrc := String.intercalate "=" rest |>.trimAscii.toString
-      -- Keys admit '-' beyond the ident alphabet (`mark-gap`); values do
-      -- not — there '-' is subtraction, and the expression parser owns it.
+      -- Keys admit `-`; in values it is subtraction.
       if key.isEmpty || !key.toList.all (fun c => isIdentChar c || c == '-') then
         diags := diags.push (Diag.of .E0320
           s!"invalid key in '\\{what}': {entry.quote}" (some ⟨file, pos⟩)
@@ -1140,7 +1011,7 @@ public def splitEntry (entry : String) : Option (String × String) :=
     if k.isEmpty || v.isEmpty then none else some (k, v)
   | [] => none
 
-/-- Reject keys the declaration does not define, naming the ones it does. -/
+/-- Rejects keys the declaration does not define, naming the ones it does. -/
 public def unknownKey (file : String) (what key : String) (known : List String)
     (pos : Pos) : Diag :=
   Diag.of .E0322 s!"'\\{what}' has no key '{key}'" (some ⟨file, pos⟩)
