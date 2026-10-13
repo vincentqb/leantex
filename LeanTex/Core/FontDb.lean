@@ -1143,10 +1143,12 @@ private def listedPick (faces : Array Face) (text : Option String) : Option Mono
   (monoFor faces text).map fun family => { family }
 
 /-- The family the pool reports for a text face as a document names it — a
-family, a file of it, or a family and its weight (`resolve`) — so a
-companion row is found however the face was spelled. -/
+family, a file of it, or a family and a weight it holds or lacks — read by
+the call the text slot's regular corner makes (`resolveWeight`), so a
+companion row is found however the face was spelled and for the face the
+text sets in. -/
 public def textFamilyOf (faces : Array Face) (text : String) : String :=
-  match resolve faces text {} with
+  match resolveWeight faces text none 400 false with
   | some (f, _) => f.family
   | none => text
 

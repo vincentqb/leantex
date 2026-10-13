@@ -72,6 +72,9 @@ in ({codeSpec.mono})"
           hasStr (reqOf codeDoc codeSpec) "\\setmonofont{DejaVu Sans Mono}")
       t "boundary faces: a document setting no code sends no typewriter face"
         (spec.mono.isNone && !hasStr req "\\setmonofont")
+      t "boundary faces: a typewriter face the document ships, or only the engine was told of, stays home"
+        ((boundaryFonts codeDoc codeFs { monoScan with docDirs := [testFonts] }).mono.isNone &&
+          (boundaryFonts codeDoc codeFs { monoScan with privateDirs := [testFonts] }).mono.isNone)
     | .error _ => t "boundary faces: the typewriter scan assembles" false
     t "boundary faces: a document's own request names no face it did not declare"
       (let plain := reqOf doc doc.fonts

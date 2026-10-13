@@ -458,9 +458,12 @@ Latin Modern Mono shapes ({f 400 false}, {f 700 false}, {f 400 true}, {f 700 tru
           .settled,
         ← buildFontSet (declaredIn "Source Serif Pro Regular")
           (scanOf (serif ++ family4 "Source Code Pro" code true ++ lmFaces)) (← FontEnv.Cache.mk')
+          .settled,
+        ← buildFontSet (declaredIn "Source Serif Pro Light")
+          (scanOf (serif ++ family4 "Source Code Pro" code true ++ lmFaces)) (← FontEnv.Cache.mk')
           .settled with
     | .ok (_, _, _, pathsC), .ok (_, _, _, pathsN), .ok (_, _, _, pathsD), .ok (_, _, _, pathsL),
-        .ok (_, _, _, pathsP), .ok (_, _, _, pathsF), .ok (_, _, _, pathsW) =>
+        .ok (_, _, _, pathsP), .ok (_, _, _, pathsF), .ok (_, _, _, pathsW), .ok (_, _, _, pathsA) =>
       t "tex: beside a declared text face whose companion leads on x-height, the companion \
 before lualatex's shapes"
         (pathsC.contains code && !lmIn pathsC)
@@ -474,7 +477,28 @@ before lualatex's shapes"
         (pathsP.contains menloAt && !lmIn pathsP)
       t "tex: the companion leads however the text face is spelled, by a file or with its weight"
         (pathsF.contains code && !lmIn pathsF && pathsW.contains code && !lmIn pathsW)
-    | _, _, _, _, _, _, _ => t "the companion-first assemblies succeed" false
+      t "tex: and with a weight the family lacks, as the text slot reads it"
+        (pathsA.contains code && !lmIn pathsA)
+    | _, _, _, _, _, _, _, _ => t "the companion-first assemblies succeed" false
+    -- A leading companion with no italic face leads still, lualatex's
+    -- italic shapes in the scan: its italic code sets upright in it, named
+    -- once, and the note offers a declaration where the family ships no
+    -- italic to install.
+    let notoMonoAt := (tree / "NotoSansMono-Regular.ttf").toString
+    IO.FS.writeBinFile notoMonoAt (← IO.FS.readBinFile code)
+    let notoMono : Array FontDb.Face :=
+      #[face "Noto Sans Mono" true (path := notoMonoAt),
+        face "Noto Sans Mono" true (bold := true) (path := notoMonoAt)]
+    match ← buildFontSet (declaredIn "Noto Sans") (scanOf (relabel "Noto Sans" ++ notoMono ++ lmFaces))
+        (← FontEnv.Cache.mk') .settled with
+    | .ok (fsU, docU, diagsU, pathsU) =>
+      let notes := diagsU.filter (·.kind == .N0031)
+      t s!"tex: an upright companion leads lualatex's italic shapes, its italic code upright, named \
+once with a declaration alone ({notes.size})"
+        (pathsU.contains notoMonoAt && !lmIn pathsU && notes.size == 1
+          && notes.all (fun d => d.help.any fun h => !hasStr h "install")
+          && runFace (layoutOf fsU docU) "slanted" == some (fsU.lookup 2 400 false))
+    | .error d => t s!"the upright companion assembly succeeds ({d.message})" false
   -- The census reaches every typewriter run a document sets, among them a
   -- picture's label and a formula's typewriter alphabet: each alone moves
   -- the slot to the platform monospace, and without the run nothing loads.

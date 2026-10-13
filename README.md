@@ -115,7 +115,8 @@ declares its text face takes Latin Modern Mono first, as lualatex does,
 unless that face's own monospace is installed and matches its x-height more
 closely, within 6% — Fira Mono beside Fira Sans, Source Code Pro beside
 Source Sans Pro or Source Serif Pro, IBM Plex Mono beside IBM Plex, Noto Sans
-Mono beside Noto Sans or Noto Serif, DejaVu Sans Mono beside DejaVu Serif —
+Mono beside Noto Sans or Noto Serif, DejaVu Sans Mono beside DejaVu Sans or
+Serif —
 which then comes first. A
 family installed without italics still serves: italic code sets upright in
 it, and a note says so. A document that bundles its fonts takes these from its own font

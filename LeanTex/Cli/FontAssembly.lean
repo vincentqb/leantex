@@ -390,7 +390,10 @@ for a document naming none, a deck's sans), the math face the companion
 rule chose (`FontEnv.resolveMath`), and the typewriter family its default
 chose (`monoDefaultOf`), the one decision the page's assembly reads, where
 that is a family rather than lualatex's own Latin Modern Mono shapes, which
-the tool sets unasked. Without them lualatex sets a picture's
+the tool sets unasked. The default answers a slot the page sets runs in, so
+a document whose only code stands inside a picture sends none, and its
+picture sets that code in lualatex's Latin Modern Mono: pending work.
+Without them lualatex sets a picture's
 text and formulas in its Computer Modern defaults — another face than the
 page's, and Type 1 programs a vector import cannot read. Only a family the
 scan found in a root the tool searches too travels — the system's and TeX's
