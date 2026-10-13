@@ -74,8 +74,8 @@ light text on a dark ground reads; the values are calibrated to the screen `Test
   { body := 1190, band := 1400, rule := 1700, wash := 1120, soft := 1300, pair := 1100,
     text := 6500, edge := aaNonText + margin }
 
-/-- The same polarity where the reader asks more contrast: text at SC 1.4.6's 7:1, edges at
-4.5:1, rules at 3:1. -/
+/-- The same polarity where the reader asks more contrast: text at SC 1.4.6's 7:1 and edges at
+4.5:1, each plus `margin`, rules at 3:1. -/
 @[expose] public def Targets.more (t : Targets) : Targets :=
   { t with rule := 3000, text := aaaText + margin, edge := moreNonText + margin }
 

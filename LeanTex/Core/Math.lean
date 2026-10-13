@@ -784,7 +784,8 @@ public inductive GridKind where
   `trailing`. -/
   | aligned (trailing : Bool)
   | gather
-  /-- The document's column spec, rows `\arraystretch` apart in permille. -/
+  /-- A column spec, the document's or an amsmath environment's, rows `\arraystretch` apart in
+  permille. -/
   | array (cols : Array ColAlign) (stretch : Nat)
   /-- amsmath's `smallmatrix`: rows `6\ex@` apart, `\lineskip` `1.5\ex@`, `\ex@` 1 pt at 10 pt. -/
   | small
@@ -2051,9 +2052,9 @@ private theorem Resolved.inAlphabet_sym_covers (r : Resolved) (a : MathAlphabet)
   | sym c => exact ⟨c, rfl⟩
   | styled sty c => exact ⟨c, by simp [Resolved.inAlphabet, ha]⟩
 
-/-- Resolve one scalar under a stack of active alphabets, innermost first: a text-served range
-styles it, a covered range remaps it, and anything else falls through to the enclosing stack under
-`Resolved.inAlphabet`'s family reset. -/
+/-- Resolve one scalar under a stack of active alphabets, innermost first: a text-sourced alphabet
+with a text style styles a range it serves, a covered range remaps, and anything else falls through
+to the enclosing stack under `Resolved.inAlphabet`'s family reset. -/
 public def resolveCharStack (coverage : MathAlphabetCoverage) :
     List (MathAlphabet × MathAlphabetSource) → Char → Resolved
   | [], c => .sym c

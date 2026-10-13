@@ -552,7 +552,8 @@ public def codeClass (c : Char) : CodeClass :=
   else .single
 
 /-- How listings.sty's standard character table reads a character; a scalar past ASCII, which
-the table does not name, reads as a letter, the engine's departure. -/
+the table does not name, reads as a letter (the engine's departure) unless its script wraps
+between characters. -/
 public inductive LstClass where
   | letter | digit | space | other | apart
   deriving BEq

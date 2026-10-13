@@ -97,8 +97,8 @@ Tailwind slate-300's 1.49:1, the band 1.07:1 from the body. -/
 @[expose] public def GroundDepth.documents : GroundDepth :=
   { body := 1060, band := 1150, rule := 1490, pair := 1070 }
 
-/-- A deck's and a poster's: Radix slate steps 3 and 5 on white (1.14:1, 1.31:1), the band
-1.10:1 from the body. -/
+/-- A deck's and a poster's: grounds near Radix slate steps 3 and 5 on white (1.14:1, 1.31:1),
+the band 1.10:1 from the body. -/
 @[expose] public def GroundDepth.decks : GroundDepth :=
   { body := 1120, band := 1300, rule := 1490, pair := 1100 }
 

@@ -87,8 +87,9 @@ private def realizeFrom (req : Nat) (ground : Color) (lab : Oklab.Lab) (f : Nat)
 private def realizeAt (req : Nat) (ground : Color) (lab : Oklab.Lab) (f : Nat) : Option Color :=
   realizeFrom req ground lab f lab.L
 
-/-- The nearest legible colour on a ground at the colour's hue, its chroma reduced where needed;
-`none` when nothing passes or the colour is DeviceCMYK. -/
+/-- The nearest legible colour on a ground: the colour itself when it passes, else the nearest
+passing one at its hue, chroma reduced where needed; `none` when nothing passes or a failing
+colour is DeviceCMYK. -/
 public def realizeNearest (req : Nat) (ground c : Color) : Option Color :=
   if req ≤ contrastMilli c ground then some c
   else if c.cmyk.isSome then none

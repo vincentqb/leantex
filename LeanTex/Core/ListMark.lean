@@ -67,7 +67,8 @@ public theorem arabicN_inj {m n : Nat} (h : arabicN m = arabicN n) : m = n := by
     _ = undigitsRev (digitsRev n) := by rw [this]
     _ = n := undigitsRev_digitsRev n
 
-/-- `\@alph` / `\@Alph`: a–z (A–Z) for 1–26, else arabic; `base` is `'a'.toNat` or `'A'.toNat`. -/
+/-- `\@alph` / `\@Alph`: a–z (A–Z) for 1–26, else arabic where LaTeX stops with "Counter too
+large"; `base` is `'a'.toNat` or `'A'.toNat`. -/
 public def letterN (base : Nat) (n : Nat) : String :=
   if 1 ≤ n ∧ n ≤ 26 then String.ofList [Char.ofNat (base + (n - 1))]
   else arabicN n

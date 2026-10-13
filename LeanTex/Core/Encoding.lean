@@ -6,7 +6,7 @@ public import LeanTex.Core.EncodingOption
 import LeanTex.Core.EncodingData
 
 /-! The decoding door: a file's bytes as text, by its byte-order mark, UTF-8, or the encoding a
-`\usepackage[...]{inputenc}` declares (read as pdfLaTeX reads it, where lualatex ignores it),
+`\usepackage[...]{inputenc}` declares (honoured as pdfLaTeX honours it, where lualatex ignores it),
 lines ended at LF and losses named. -/
 
 namespace LeanTex.Core.Encoding

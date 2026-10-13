@@ -807,8 +807,9 @@ public theorem latinModernMono_contract (faces : Array Face)
 /-- Latin Modern Mono's x-height in thousandths of an em, measured from lmmono10-regular.otf. -/
 public def latinModernMonoXHeight : Nat := 431
 
-/-- How far, in percent of the text's x-height, a companion's may stand and still lead: the
-measured companions stand within 5.4%, Latin Modern Mono 9 to 21% below. -/
+/-- How far, in percent of the text's x-height, a companion's may stand and still lead: every
+measured companion nearer than Latin Modern Mono stands within 5.4%, Latin Modern Mono 9 to 21%
+below. -/
 public def companionXHeightBound : Nat := 6
 
 private def gapOf (a b : Nat) : Nat := if a ≥ b then a - b else b - a

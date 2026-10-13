@@ -427,7 +427,7 @@ public def nucNode (mk : Marks) (disp : Bool) (cls : MathClass) : MNucleus → H
       | .array _ _ => if mk.style.rank == 3 then .text mk.style.cramped else mk.style
       | .small => .script false
       | .align | .aligned _ | .gather => .display false
-    -- `smallmatrix`: script-style cells, each side a 3 mu thin space in a 70% script em.
+    -- `smallmatrix`: script-style cells, a thin space a side: the text's 3 mu in a 70% script em.
     let attrs := relativeStyle mk st
     let attrs := if kind == .small then attrs.map fun (k, v) =>
       (k, if k == "style" then v ++ "; padding-inline: 0.238em" else v)
@@ -932,7 +932,7 @@ theorem rowsNodes_chars (mk : Marks) (disp : Bool) (kind : GridKind) :
 end
 
 /-- The MathML projection drops no glyph and invents none: its leaf text is the glyph-text fold of
-the math list, which `mathmlChecks` holds to the PDF census. -/
+the math list, which `mathmlChecks` holds to the PDF census, overline excepted. -/
 public theorem mathml_glyphs_agree (display : Bool) (extra : Array (String × String))
     (body : MList) (mk : Marks) :
     nodeChars #[] (formula display extra body mk) = listChars #[] body := by
