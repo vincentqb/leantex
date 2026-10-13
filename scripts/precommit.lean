@@ -1101,27 +1101,57 @@ marker with no reason. -/
 def premisePin (l : String) : Option (Option String × String) :=
   if !containsSub l premiseMark then none
   else
-    match tokens ((l.splitOn premiseMark).getLastD "") with
+    match tokens (premiseMark.intercalate ((l.splitOn premiseMark).drop 1)) with
     | [] => none
     | pin :: rest =>
       let why := String.intercalate " " (rest.filter (fun w => w != "—" && w != "-"))
       if (why.trimAscii.toString).isEmpty then none
       else some (if pin == "none" then (none, why) else (some pin, why))
 
-/-- Does `pin` name a theorem the build checks, or a check block the suite defines, under any
-qualification `testDefs` lists, and invokes? -/
-def pinResolves (treeText testText : String) (testDefs : List String)
-    (pin : String) : Bool :=
-  hasCall treeText s!"theorem {pin}" ||
-    (testDefs.contains pin && ((testText.splitOn ((pin.splitOn ".").getLastD pin)).length ≥ 3))
+/-- The names that follow `theorem ` in a text. -/
+def theoremNames (text : String) : Std.HashSet String :=
+  ((text.splitOn "theorem ").drop 1).foldl (init := {}) fun acc rest =>
+    let n := (rest.takeWhile fun c => isWordChar c || c == '.' || c == '\'' || c == '?' ||
+      c == '!').toString
+    if n.isEmpty then acc else acc.insert n
 
-/-- Does the line carry a marker: a comment, or a docstring line, opening with `mark`? -/
+/-- How often each identifier occurs in a text, a dotted name counted by its parts. -/
+def identCounts (text : String) : Std.HashMap String Nat :=
+  let bump (m : Std.HashMap String Nat) (w : String) := m.insert w (m.getD w 0 + 1)
+  let (counts, last) := text.foldl (init := (({} : Std.HashMap String Nat), "")) fun (m, cur) c =>
+    if isWordChar c || c == '\'' then (m, cur.push c)
+    else if cur.isEmpty then (m, cur)
+    else (bump m cur, "")
+  if last.isEmpty then counts else bump counts last
+
+/-- Does `pin` name a theorem, or a check block the suite defines, under any qualification
+`testDefs` holds, and invokes? -/
+def pinResolves (theorems : Std.HashSet String) (counts : Std.HashMap String Nat)
+    (testDefs : Std.HashSet String) (pin : String) : Bool :=
+  theorems.contains pin ||
+    (testDefs.contains pin && counts.getD ((pin.splitOn ".").getLastD pin) 0 ≥ 2)
+
+/-- Does the line carry a marker: a comment, or a line of one, opening with `mark`? -/
 def markerLine (mark l : String) : Bool :=
   let s := stripStrings l
-  s.trimAscii.toString.startsWith mark ||
-    ((s.splitOn "--").drop 1).any (·.trimAscii.toString.startsWith mark)
+  let opens (t : String) : Bool :=
+    (t.dropWhile (fun c => c == '-' || c == '!' || c.isWhitespace)).toString.startsWith mark
+  s.trimAscii.toString.startsWith mark || ((s.splitOn "--").drop 1).any opens ||
+    ((s.splitOn "/-").drop 1).any opens
 
-/-- The premise markers of a source naming no reason, `none`, or a pin `resolves` refuses, by line. -/
+/-- Does a premise marker stand on line `i` or one of the twelve above it? -/
+def premiseMarkedAt (lines : Array String) (i : Nat) : Bool :=
+  (List.range 13).any fun d => i ≥ d &&
+    let m := lines[i - d]?.getD ""
+    markerLine premiseMark m && (premisePin m).isSome
+
+/-- Does a `conserves: none` marker stand on line `i` or one of the twelve above it? -/
+def conservedAt (lines : Array String) (i : Nat) : Bool :=
+  (List.range 13).any fun d => i ≥ d &&
+    let m := lines[i - d]?.getD ""
+    markerLine "conserves:" m && conservesNone m
+
+/-- The premise markers of a source with no reason (`none`) or a pin `resolves` refuses, by line. -/
 def premiseFaults (resolves : String → Bool) (lines : Array String) :
     Array (Nat × Option String) := Id.run do
   let mut out := #[]
@@ -1133,7 +1163,7 @@ def premiseFaults (resolves : String → Bool) (lines : Array String) :
       | some (none, _) => pure ()
   return out
 
-/-- The conserves markers of a source that are no `conserves: none — <why>`, by line. -/
+/-- The conserves markers of a source that are not `conserves: none — <why>`, by line. -/
 def conservesFaults (lines : Array String) : Array Nat :=
   (lines.zipIdx.filter fun (l, _) => markerLine "conserves:" l &&
     match tokens ((l.splitOn "conserves:").getLastD "") with
@@ -1408,27 +1438,6 @@ def topLevelDefName (l : String) : Option String :=
     let n := (rest.takeWhile (fun c => isWordChar c || c == '.' || c == '\'')).toString
     if n.isEmpty then none else some n
   else none
-
-/-- The definition names of a source, qualified through its namespace and section scopes. -/
-def scopedDefNames (lines : Array String) : Array String := Id.run do
-  let qualify (space name : String) :=
-    if name.startsWith "_root_." then (name.drop 7).toString
-    else if space.isEmpty then name else space ++ "." ++ name
-  let mut scopes : List String := []
-  let mut out := #[]
-  for line in lines do
-    let head := (declarationHead line).2
-    let space := scopes.headD ""
-    if head.startsWith "namespace " then
-      for part in (((head.drop 10).toString.splitOn " ").headD "").splitOn "." do
-        scopes := qualify (scopes.headD "") part :: scopes
-    else if head == "section" || head.startsWith "section " || head == "mutual" then
-      scopes := space :: scopes
-    else if head == "end" || head.startsWith "end " then
-      scopes := scopes.drop ((head.drop 3).toString.trimAscii.toString.splitOn ".").length
-    else if let some name := topLevelDefName line then
-      out := out.push (qualify space name)
-  return out
 
 /-- Each line's code, string literals and comments blanked across lines. -/
 def codeOnly (lines : Array String) : Array String := Id.run do
@@ -1760,6 +1769,32 @@ def rangeTip (r : String) : Option String :=
 
 /-- A maintained Lean source, which the documentation rule reads. -/
 def docRuleFile (f : String) : Bool := f.endsWith ".lean" && !f.startsWith "testdata/"
+
+/-- The definition names of a source's code, qualified through its namespace, section and mutual
+scopes. -/
+def scopedDefNames (lines : Array String) : Array String := Id.run do
+  let qualify (space name : String) :=
+    if name.startsWith "_root_." then (name.drop 7).toString
+    else if space.isEmpty then name else space ++ "." ++ name
+  let mut scopes : List String := []
+  let mut out := #[]
+  for line in codeOnly lines do
+    let head := (declarationHead line).2
+    let space := scopes.headD ""
+    let named (n : Nat) := (((head.drop n).toString.splitOn " ").headD "").splitOn "."
+    if head.startsWith "namespace " then
+      for part in named 10 do
+        scopes := qualify (scopes.headD "") part :: scopes
+    else if head == "section" || head.startsWith "section " then
+      for _ in named 8 do
+        scopes := space :: scopes
+    else if head == "mutual" then
+      scopes := space :: scopes
+    else if head == "end" || head.startsWith "end " then
+      scopes := scopes.drop (named 4).length
+    else if let some name := topLevelDefName line then
+      out := out.push (qualify space name)
+  return out
 
 /-- The surface reads the CLI spells only through a surface's door. -/
 def surfaceDoorCalls : List String :=
@@ -2109,8 +2144,10 @@ def selftest : IO UInt32 := do
     ("Tests.liveChecks", true),
     ("deadChecks", false),
     ("neverWrittenChecks", false)]
+  let testSet : Std.HashSet String := {"liveChecks", "Tests.liveChecks", "deadChecks"}
+  let resolves := pinResolves (theoremNames treeSrc) (identCounts testSrc) testSet
   for (pin, want) in pinCases do
-    if pinResolves treeSrc testSrc ["liveChecks", "Tests.liveChecks", "deadChecks"] pin != want then
+    if resolves pin != want then
       fails.modify (s!"pinResolves {pin}: want {want}" :: ·)
   let markerSrc := #["  if ctx.slides then -- premise: noSuchChecks — a reason",
     "  -- premise: liveChecks — the suite runs it",
@@ -2122,13 +2159,26 @@ def selftest : IO UInt32 := do
     "  say \"-- premise: noSuchChecks — a string is no marker\" pos",
     "  -- conserves: none — fills a hole",
     "  -- conserves: none",
-    "-- conserves: everything"]
-  let premiseGot := premiseFaults (pinResolves treeSrc testSrc ["liveChecks"]) markerSrc
+    "-- conserves: everything",
+    "  /- premise: noSuchChecks — a block comment carries a marker too -/",
+    "  -- premise: noSuchChecks — as the premise: liveChecks reads",
+    "  -- (premise: noSuchChecks — a parenthesis is prose)"]
+  let premiseGot := premiseFaults resolves markerSrc
   unless premiseGot == #[(1, some "noSuchChecks"), (3, some "noSuchChecks"), (5, none),
-      (6, some "noSuchChecks")] do
+      (6, some "noSuchChecks"), (12, some "noSuchChecks"), (13, some "noSuchChecks")] do
     fails.modify (s!"premiseFaults: {premiseGot}" :: ·)
   unless conservesFaults markerSrc == #[10, 11] do
     fails.modify (s!"conservesFaults: {conservesFaults markerSrc}" :: ·)
+  let site := "  if ctx.picTool.isSome && pic.shapes.isEmpty then"
+  unless premiseMarkedAt #["  -- premise: liveChecks — the suite runs it", site] 1 &&
+      premiseMarkedAt #["  /- premise: liveChecks — the suite runs it -/", site] 1 &&
+      !premiseMarkedAt #["  -- (premise: liveChecks — a parenthesis is prose)", site] 1 &&
+      !premiseMarkedAt #["  -- premise: liveChecks", site] 1 do
+    fails.modify ("premiseMarkedAt read a marker it should not, or missed one" :: ·)
+  let walk := "def keepFor (t : String) (xs : Array Block) : Array Block :="
+  unless conservedAt #["-- conserves: none — fills a hole", walk] 1 &&
+      !conservedAt #["-- (conserves: none)", walk] 1 do
+    fails.modify ("conservedAt read a marker it should not, or missed one" :: ·)
 
   let twoLine : Array String :=
     #["    if Compat.nativeSetCtrls.contains name ||",
@@ -2269,6 +2319,10 @@ def selftest : IO UInt32 := do
   unless scopedDefNames #["namespace Tests.Inner", "def inner := 1", "end Inner", "def outer := 2",
       "end Tests", "def top := 3"] == #["Tests.Inner.inner", "Tests.outer", "top"] do
     fails.modify ("scopedDefNames: a dotted namespace did not close one component at a time" :: ·)
+  unless scopedDefNames #["namespace Tests", "section A.B", "def inside := 1", "end A.B",
+      "/-- end of a sentence", "section page after page -/", "def after := 2", "end Tests"] ==
+      #["Tests.inside", "Tests.after"] do
+    fails.modify ("scopedDefNames: a dotted section, or prose, moved a scope" :: ·)
 
   expect "quadraticPrepend" quadraticPrepend [
     ("  | x :: rest => inlineNode cfg x ++ inlineNodes cfg rest", true),
@@ -3391,9 +3445,7 @@ the privacy check is skipped."
   for (f, i, name, lines) in walkSites do
     let hasThm := conservesSuffixes.any fun suf =>
       containsSub allCore s!"theorem {name}{suf}"
-    let escaped := (List.range 13).any fun d =>
-      i ≥ d && conservesNone (lines[i - d]?.getD "")
-    unless hasThm || escaped do
+    unless hasThm || conservedAt lines i do
       say s!"pre-commit: the IR walk `{name}` ({f}:{i + 1}) has no conservation statement.
   A public Block/Inline walk owes its census fact (AGENTS.md § When you add;
   THEOREMS.md § Naming): a theorem named `{name}_text` (census equality — state it as a
@@ -3419,20 +3471,21 @@ the privacy check is skipped."
   a second spelling of either is where two readings of one file drift apart.
   Fix: read through Surface.read or Surface.fragment — or, for tex text the
   core itself holds, name the reader in coreTexReaders with its reason."
-  let mut testDefs : List String := []
+  let mut testDefs : Std.HashSet String := {}
   let mut testText := ""
   for f in (#["Tests.lean"] : Array String) ++ (← System.FilePath.walkDir "Tests").filterMap
       (fun p => if p.toString.endsWith ".lean" then some p.toString else none) do
     if (← System.FilePath.pathExists f) then
       let txt ← IO.FS.readFile f
       testText := testText ++ txt
-      for l in txt.splitOn "\n" do
-        if let some n := topLevelDefName l then testDefs := n :: testDefs
-      testDefs := testDefs ++ (scopedDefNames (txt.splitOn "\n").toArray).toList
-  let treeText := allCore
+      let lines := (txt.splitOn "\n").toArray
+      for l in lines do
+        if let some n := topLevelDefName l then testDefs := testDefs.insert n
+      testDefs := (scopedDefNames lines).foldl (·.insert ·) testDefs
+  let resolves := pinResolves (theoremNames allCore) (identCounts testText) testDefs
   -- Every marker resolves wherever it stands, sites the detector misses included.
   for (f, lines) in premiseTexts do
-    for (n, pin?) in premiseFaults (pinResolves treeText testText testDefs) lines do
+    for (n, pin?) in premiseFaults resolves lines do
       match pin? with
       | none =>
         say s!"pre-commit: a premise marker with no reason, in {f}:{n}:
@@ -3446,7 +3499,7 @@ the privacy check is skipped."
   (AGENTS.md § When you add).
   Fix: name the real check, or write `{premiseMark} none — <why>` and say what is missing."
     for n in conservesFaults lines do
-      say s!"pre-commit: a conserves marker with no reason, in {f}:{n}:
+      say s!"pre-commit: a malformed conserves marker, in {f}:{n}:
   {(lines[n - 1]?.getD "").trimAscii}
   A walk that conserves nothing says why beside its def (AGENTS.md § When you add).
   Fix: write `-- conserves: none — <why>`."
@@ -3462,7 +3515,7 @@ the privacy check is skipped."
   Fix: update the row, or move the marker beside the site and delete the row."
     match row.pin with
     | some pin =>
-      unless pinResolves treeText testText testDefs pin do
+      unless resolves pin do
         say s!"pre-commit: the premise row for {row.file} ({row.site}) names `{pin}`, which resolves to nothing.
   A premise names the check that falsifies it (AGENTS.md § When you add).
   Fix: name that check, or record the row with no pin and say what is missing."
@@ -3471,8 +3524,7 @@ the privacy check is skipped."
     for i in [0:lines.size] do
       if let some kind := premiseSite lines i then
         let (cond, _) := (condSpan lines i).getD ((lines[i]?.getD ""), i)
-        let marked := (List.range 13).any fun d =>
-          i ≥ d && (premisePin (lines[i - d]?.getD "")).isSome
+        let marked := premiseMarkedAt lines i
         let registered := premiseRegistry.any fun row =>
           row.file == f && (containsSub cond row.site
             || containsSub (lines[i]?.getD "") row.site)
