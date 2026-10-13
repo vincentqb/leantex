@@ -30,11 +30,10 @@ export LIBRARY_PATH="$(lean --print-prefix)/lib:$(lean --print-prefix)/lib/lean"
 - A unit is done when `lake build`, `lake test` and `lake lint` pass (`scripts/lint.lean`); the hook
   is `git config core.hooksPath scripts/hooks` (`scripts/precommit.lean`), `land check` runs the
   landing gates (`scripts/land.lean`); one gate table is owed (U29): `scripts/Gates.lean`.
-- The harness is Lean (`scripts/*.lean`; lake env lean --run rebuilds nothing, so build a script's
-  imports first) but for the hook's few-line sh trampoline into `scripts/precommit.lean`. Lake runs
-  the extra linters, missingDocs off (`lakefile.toml`); the hook and land build --wfail
-  (`defaultGates`); goldens move only with a source, through lake exe Tests --update
-  (`goldenSource`).
+- The harness is Lean (`scripts/*.lean`; lake env lean --run rebuilds nothing: build a script's
+  imports first) but for the hook's trampoline. Lake runs the extra linters, missingDocs off
+  (`lakefile.toml`); the hook and land build --wfail (`defaultGates`); goldens move only with a
+  source, via lake exe Tests --update (`goldenSource`).
 - Run an area's oracle on touching it, evidence, not a gate (review):
   - line breaking: `scripts/kp-fuzz.lean`; hyphenation: `scripts/hyphen-diff.lean`
   - Elab's preamble apply sites: `scripts/compose-fuzz.lean`; Oklab: `scripts/oklab-roundtrip.lean`
@@ -45,9 +44,9 @@ export LIBRARY_PATH="$(lean --print-prefix)/lib:$(lean --print-prefix)/lib/lean"
   - a deck stage's type, leading, gaps, tables: `scripts/html-oracle.lean`, stage-fit
   - the picture reader or vector emission: `scripts/tikz-diff.lean`
 - Performance claims come only from `scripts/bench.lean`, run on touching a whole-document pass: a
-  report, never a gate (`defaultGates`), recording --doc-cost history only from main (`onMain`);
-  document cost gates only as the hermetic doccost tier (`scripts/doccost.lean`); build cost owed
-  (U30): `scripts/buildcost.lean`.
+  report, never a gate (`defaultGates`), its --doc-cost history only from main (`onMain`); document
+  cost gates only as the hermetic tier (`scripts/doccost.lean`); build cost owed (U30):
+  `scripts/buildcost.lean`. Equivalence is no visual difference (`scripts/visualdiff.lean`).
 
 ## Layout and design
 
@@ -70,7 +69,6 @@ export LIBRARY_PATH="$(lean --print-prefix)/lib:$(lean --print-prefix)/lib/lean"
   (`DocClass.record`), one needing layout code a kernel question; a theme is only visual (review).
 - A claim about what a page shows comes only from a rendered page or the shipped census, never an IR
   dump or a golden (`irDumpUnmarked`, `censusChecks`).
-- Equivalence is no visual difference at the viewing `scripts/visualdiff.lean` sets, or equal bytes.
 - A run leads at its paragraph's leading scaled to its size, never a leading of its own, and a size
   span states no line height (`runLead_between`, `inlineRunChecks`).
 

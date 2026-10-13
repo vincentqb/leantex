@@ -10,6 +10,13 @@ open LeanTex.Core
 
 namespace VisualDiff
 
+/-- `x` with `d` decimals. -/
+def fixed (x : Float) (d : Nat) : String :=
+  let n := (x * (10 ^ d).toFloat).round.toUInt64.toNat
+  let frac := toString (n % 10 ^ d)
+  if d == 0 then toString n
+  else s!"{n / 10 ^ d}." ++ String.ofList (List.replicate (d - frac.length) '0') ++ frac
+
 /-! ## The viewing model -/
 
 def pi : Float := 3.141592653589793
@@ -20,20 +27,21 @@ def arcmin : Float := pi / 10800
 /-- The detail normal (20/20) vision resolves: one arcminute. -/
 def acuity : Float := arcmin
 
-/-- Raster samples across the acuity: two, the Nyquist rate for detail at the acuity. -/
+/-- Raster samples across the acuity: two, twice the Nyquist rate of the grating it resolves. -/
 def samplesPerAcuity : Float := 2
 
 /-- One just-noticeable difference in OKLab, `Oklab.okJnd` at unit scale. -/
 def jnd : Float := Oklab.okJnd.toFloat / 1e18
 
 /-- A medium as the eye meets it: its viewing distance, one raster sample's width on it, the
-smallest step it moves anything by, and its black as a fraction of its white's luminance. -/
+smallest step it moves anything by, its black as a fraction of its white, and its header fields. -/
 structure Medium where
   name : String
   distanceMm : Float
   sampleMm : Float
   stepMm : Float
   black : Float
+  detail : String
 
 def Medium.acuityMm (m : Medium) : Float := m.distanceMm * Float.tan acuity
 
@@ -42,8 +50,11 @@ def Medium.acuitySamples (m : Medium) : Float := m.acuityMm / m.sampleMm
 /-- The eye's point spread, a Gaussian whose full width at half maximum is the acuity, in samples. -/
 def Medium.sigma (m : Medium) : Float := m.acuitySamples / (2 * Float.sqrt (2 * Float.log 2))
 
-/-- The acuity spot, a disc as wide as the acuity, in samples. -/
+/-- The acuity spot's area, a disc as wide as the acuity, in samples. -/
 def Medium.spotSamples (m : Medium) : Float := pi / 4 * m.acuitySamples * m.acuitySamples
+
+/-- The side, in samples, of the square that holds the acuity spot. -/
+def Medium.spotSide (m : Medium) : Nat := m.acuitySamples.round.toUInt64.toNat
 
 /-- How far a sample may move and still match, in samples: the acuity, or the medium's step where
 that is coarser. -/
@@ -59,38 +70,37 @@ def printBlack : Float := 0.02
 def printDpi : Nat :=
   (25.4 * samplesPerAcuity / (printDistanceMm * Float.tan acuity)).round.toUInt64.toNat
 
-/-- Each judged print sample is `printSupersample²` pdftoppm pixels averaged in linear light,
-diluting the gamma-space antialiasing pdftoppm composites. -/
+/-- Each judged print sample is `printSupersample²` pixels averaged in linear light, diluting the
+gamma-space antialiasing the rasterizer composites. -/
 def printSupersample : Nat := 2
 
 def print : Medium :=
   { name := "print", distanceMm := printDistanceMm, sampleMm := 25.4 / printDpi.toFloat,
-    stepMm := 0, black := printBlack }
+    stepMm := 0, black := printBlack, detail := s!"dpi={printDpi} supersample={printSupersample}" }
 
 /-- A laptop screen is read at arm's length, 60 cm. -/
 def screenDistanceMm : Float := 600
 
-/-- The panel: 15.6 inches across, 1920 × 1080 CSS pixels at device pixel ratio 1. -/
+/-- The panel: 15.6 inches across, 1920 × 1080 CSS pixels drawn at device pixel ratio 2, whose
+device pixels lie below the acuity as a HiDPI laptop's do. -/
 def panelDiagonalIn : Float := 15.6
 def viewportW : Nat := 1920
 def viewportH : Nat := 1080
+def panelDpr : Nat := 2
 
-/-- One CSS pixel on the panel: 0.180 mm, 1.03 arcminutes at 60 cm, about the acuity. -/
+/-- One CSS pixel's width on the panel, in millimetres. -/
 def cssPixelMm : Float :=
   panelDiagonalIn * 25.4 /
     Float.sqrt (viewportW.toFloat * viewportW.toFloat + viewportH.toFloat * viewportH.toFloat)
-
-/-- The capture's device pixel ratio: the integer nearest `samplesPerAcuity` samples across the
-acuity on the panel. -/
-def captureScale : Nat :=
-  (samplesPerAcuity * cssPixelMm / (screenDistanceMm * Float.tan acuity)).round.toUInt64.toNat
 
 /-- A screen's black under sRGB's reference viewing flare, 1% of white (IEC 61966-2-1). -/
 def screenBlack : Float := 0.01
 
 def screen : Medium :=
-  { name := "screen", distanceMm := screenDistanceMm, sampleMm := cssPixelMm / captureScale.toFloat,
-    stepMm := cssPixelMm, black := screenBlack }
+  { name := "screen", distanceMm := screenDistanceMm, sampleMm := cssPixelMm / panelDpr.toFloat,
+    stepMm := cssPixelMm, black := screenBlack
+    detail := s!"viewport={viewportW}x{viewportH} dpr={panelDpr} css_px_mm={fixed cssPixelMm 4} \
+css_px_arcmin={fixed (cssPixelMm / screenDistanceMm / Float.tan arcmin) 3}" }
 
 /-! ## Rasters -/
 
@@ -112,36 +122,44 @@ def zeros (n : Nat) : FloatArray := Id.run do
   for _ in [0:n] do a := a.push 0
   return a
 
-/-- A binary portable pixmap (P6, 8-bit), as pdftoppm writes one. -/
-def readPpm (b : ByteArray) : Except String Raster := Id.run do
-  if byteAt b 0 != 80 || byteAt b 1 != 54 then return .error "not a P6 pixmap"
-  let mut i := 2
-  let mut fields : Array Nat := #[]
-  for _ in [0:b.size] do
-    if fields.size == 3 || i ≥ b.size then break
-    let c := byteAt b i
-    if c == 35 then
-      for _ in [0:b.size] do
-        if i ≥ b.size || byteAt b i == 10 then break
-        i := i + 1
-    else if c == 32 || c == 9 || c == 10 || c == 13 then i := i + 1
-    else if 48 ≤ c && c ≤ 57 then
-      let mut n := 0
-      for _ in [0:b.size] do
-        let d := byteAt b i
-        if i ≥ b.size || d < 48 || d > 57 then break
-        n := n * 10 + (d - 48)
-        i := i + 1
-      fields := fields.push n
-    else return .error "a malformed pixmap header"
-  let #[w, h, maxval] := fields | return .error "a truncated pixmap header"
-  if maxval != 255 then return .error "a pixmap deeper than 8 bits"
-  let start := i + 1
-  if b.size < start + w * h * 3 then return .error "a truncated pixmap"
-  return .ok { w, h, rgb := b.extract start (start + w * h * 3) }
-
 def be32At (b : ByteArray) (i : Nat) : Nat :=
   ((byteAt b i * 256 + byteAt b (i + 1)) * 256 + byteAt b (i + 2)) * 256 + byteAt b (i + 3)
+
+/-- Interleaved 8-bit samples, `chs` a pixel, as RGB. -/
+def toRgb (w h chs : Nat) (px : ByteArray) : Raster := Id.run do
+  if chs == 3 then return { w, h, rgb := px }
+  let mut rgb := ByteArray.emptyWithCapacity (w * h * 3)
+  for k in [0:w * h] do
+    rgb := rgb.push (byteAt px (chs * k)).toUInt8
+    rgb := rgb.push (byteAt px (chs * k + 1)).toUInt8
+    rgb := rgb.push (byteAt px (chs * k + 2)).toUInt8
+  return { w, h, rgb }
+
+/-- An uncompressed 8-bit RGB or RGBA TIFF in chunky order, as pdftocairo writes one; alpha is
+dropped. -/
+def readTiff (b : ByteArray) : Except String Raster := Id.run do
+  let le := byteAt b 0 == 73 && byteAt b 1 == 73
+  unless le || (byteAt b 0 == 77 && byteAt b 1 == 77) do return .error "not a TIFF"
+  let u16 (i : Nat) := if le then byteAt b i + 256 * byteAt b (i + 1) else 256 * byteAt b i + byteAt b (i + 1)
+  let u32 (i : Nat) := if le then u16 i + 65536 * u16 (i + 2) else 65536 * u16 i + u16 (i + 2)
+  let ifd := u32 4
+  let mut tags : Std.HashMap Nat (Nat × Nat × Nat) := {}
+  for k in [0:u16 ifd] do
+    let e := ifd + 2 + 12 * k
+    tags := tags.insert (u16 e) (u16 (e + 2), u32 (e + 4), e + 8)
+  let values (tag : Nat) : Array Nat := Id.run do
+    let some (ty, n, at_) := tags.get? tag | return #[]
+    let size := if ty == 3 then 2 else 4
+    let base := if n * size ≤ 4 then at_ else u32 at_
+    return (Array.range n).map fun i => if ty == 3 then u16 (base + 2 * i) else u32 (base + 4 * i)
+  let one (tag : Nat) (d : Nat) := (values tag)[0]?.getD d
+  let (w, h, chs) := (one 256 0, one 257 0, one 277 1)
+  if one 259 1 != 1 || one 284 1 != 1 || (values 258).any (· != 8) || (chs != 3 && chs != 4) then
+    return .error "a TIFF not uncompressed 8-bit RGB in chunky order"
+  let mut px := ByteArray.emptyWithCapacity (w * h * chs)
+  for (o, n) in (values 273).zip (values 279) do px := px ++ b.extract o (o + n)
+  if px.size < w * h * chs then return .error "a truncated TIFF"
+  return .ok (toRgb w h chs px)
 
 /-- An 8-bit truecolour PNG, with or without alpha and not interlaced, as Chromium writes a
 screenshot; alpha is dropped. -/
@@ -166,21 +184,19 @@ def readPng (b : ByteArray) : Except String Raster := Id.run do
   let some (w, h, chs) := head | return .error "a PNG with no header"
   match Flate.inflate idat (h * (1 + w * chs)) >>= (Flate.pngUnfilter · h (w * chs) chs) with
   | .error e => return .error e
-  | .ok px =>
-    if chs == 3 then return .ok { w, h, rgb := px }
-    let mut rgb := ByteArray.emptyWithCapacity (w * h * 3)
-    for k in [0:w * h] do
-      rgb := rgb.push (byteAt px (4 * k)).toUInt8
-      rgb := rgb.push (byteAt px (4 * k + 1)).toUInt8
-      rgb := rgb.push (byteAt px (4 * k + 2)).toUInt8
-    return .ok { w, h, rgb }
+  | .ok px => return .ok (toRgb w h chs px)
 
-/-- `r` grown to `h` rows by repeating its last row. -/
-def extend (r : Raster) (h : Nat) : Raster :=
-  if h ≤ r.h || r.h == 0 then r
-  else
-    let last := r.rgb.extract (3 * r.w * (r.h - 1)) (3 * r.w * r.h)
-    { r with h, rgb := (List.replicate (h - r.h) last).foldl (· ++ ·) r.rgb }
+/-- `r` grown to `w × h` by repeating its last column and last row. -/
+def extendTo (r : Raster) (w h : Nat) : Raster := Id.run do
+  if (w ≤ r.w && h ≤ r.h) || r.w == 0 || r.h == 0 then return r
+  let (w, h) := (max w r.w, max h r.h)
+  let mut rgb := ByteArray.emptyWithCapacity (3 * w * h)
+  for y in [0:h] do
+    let src := 3 * (min y (r.h - 1) * r.w)
+    rgb := rgb ++ r.rgb.extract src (src + 3 * r.w)
+    for _ in [0:w - r.w] do
+      for c in [0:3] do rgb := rgb.push (byteAt r.rgb (src + 3 * (r.w - 1) + c)).toUInt8
+  return { w, h, rgb }
 
 /-- The `w × h` window of `r` at `(x0, y0)`. -/
 def crop (r : Raster) (x0 y0 w h : Nat) : Raster := Id.run do
@@ -356,8 +372,8 @@ def gap (dxs dys : Array Int) (f : FloatArray) (x y : Int) (w h : Nat) (v0 v1 v2
     gap dxs dys f x y w h v0 v1 v2 n (min l0 q0) (min l1 q1) (min l2 q2) (max h0 q0) (max h1 q1)
       (max h2 q2)
 
-/-- Each sample's OKLab distance from what the other side shows within the acuity, the larger of
-the two directions: a shift within the acuity is no difference. -/
+/-- Each sample's OKLab distance from what the other side shows within reach, the larger of the
+two directions. -/
 def distanceField (dxs dys : Array Int) (w h : Nat) (la lb : FloatArray) : FloatArray := Id.run do
   let mut d := FloatArray.emptyWithCapacity (w * h)
   for y in [0:h] do
@@ -402,33 +418,62 @@ def regions (w h : Nat) (d : FloatArray) (t : Float) : Array Nat × Array Nat :=
       areas := areas.push area
   return (label, areas)
 
-/-- One page's, slide's or screen's judgement: `same` (equal samples), `invisible` or `visible`;
-why, when no sample was compared; the largest OKLab difference left after filtering; the area
-above one JND and its largest connected region, both in acuity spots; and its heat map. -/
+/-- How many `k × k` blocks of samples all exceed `t`, and the regions holding one. -/
+def cores (w h k : Nat) (d : FloatArray) (t : Float) (label : Array Nat) : Nat × Std.HashSet Nat :=
+  Id.run do
+    let mut count := 0
+    let mut held : Std.HashSet Nat := {}
+    for y in [0:h + 1 - k] do
+      for x in [0:w + 1 - k] do
+        let mut all := true
+        for j in [0:k] do
+          for i in [0:k] do
+            if !(floatAt d ((y + j) * w + x + i) > t) then all := false
+        if all then
+          count := count + 1
+          held := held.insert (label.getD (y * w + x) 0)
+    return (count, held)
+
+inductive Verdict where
+  | same
+  | invisible
+  | visible
+  deriving BEq
+
+def Verdict.name : Verdict → String
+  | .same => "same"
+  | .invisible => "invisible"
+  | .visible => "visible"
+
+/-- One page's, slide's or screen's judgement; `reason` when no sample was compared; the largest
+OKLab difference after filtering; the areas above one JND and its largest region, in acuity spots;
+the acuity-spot blocks inside them; and the heat map. -/
 structure Judgement where
-  verdict : String
+  verdict : Verdict
   reason : String := ""
   maxDe : Float := 0
   area : Float := 0
   largest : Float := 0
+  cores : Nat := 0
   heat : Option ByteArray := none
 
-/-- The window, in samples of `m`, around every difference of two equal-sized rasters drawn at `k`
-times its resolution, widened by the reach of the point spread and of `Medium.reach`; `none`
-where they are equal. -/
-def window (m : Medium) (k : Nat) (a b : Raster) : Option (Nat × Nat × Nat × Nat) := do
+/-- The margin, in samples, that the point spread and the reach carry a difference across. -/
+def Medium.margin (m : Medium) : Nat :=
+  2 * ((kernel m.sigma).size / 2) + m.reach.ceil.toUInt64.toNat + 1
+
+/-- The window around every difference of two equal-sized rasters, widened by `Medium.margin`;
+`none` where they are equal. -/
+def window (m : Medium) (a b : Raster) : Option (Nat × Nat × Nat × Nat) := do
   let (bx0, by0, bx1, by1) ← diffBox a b
-  let margin := 2 * ((kernel m.sigma).size / 2) + m.reach.ceil.toUInt64.toNat + 1
-  let (x0, y0) := (bx0 / k - min (bx0 / k) margin, by0 / k - min (by0 / k) margin)
-  return (x0, y0, min (a.w / k - 1) (bx1 / k + margin) + 1 - x0,
-    min (a.h / k - 1) (by1 / k + margin) + 1 - y0)
+  let (x0, y0) := (bx0 - min bx0 m.margin, by0 - min by0 m.margin)
+  return (x0, y0, min (a.w - 1) (bx1 + m.margin) + 1 - x0, min (a.h - 1) (by1 + m.margin) + 1 - y0)
 
 def faint (v : Nat) : UInt8 := (255 - (255 - v) / 4).toUInt8
 
-/-- `page` as a faint grey, with the window at `(x0, y0)` marked: samples above one JND in
-orange, those in a region of at least the acuity spot in red. -/
-def heatPng (page : Raster) (x0 y0 w h : Nat) (d : FloatArray) (label areas : Array Nat)
-    (spot : Float) : ByteArray := Id.run do
+/-- `page` as a faint grey with the window at `(x0, y0)` marked: samples above one JND in orange,
+those in a region holding an acuity-spot block in red. -/
+def heatPng (page : Raster) (x0 y0 w h : Nat) (d : FloatArray) (label : Array Nat)
+    (held : Std.HashSet Nat) : ByteArray := Id.run do
   let mut rows := ByteArray.emptyWithCapacity (3 * page.w * page.h)
   for y in [0:page.h] do
     for x in [0:page.w] do
@@ -440,46 +485,64 @@ def heatPng (page : Raster) (x0 y0 w h : Nat) (d : FloatArray) (label areas : Ar
       let k := if inside then label.getD p 0 else 0
       let (r, g, b) :=
         if k != 0 then
-          if (areas.getD (k - 1) 0).toFloat ≥ spot then ((220 : UInt8), (30 : UInt8), (30 : UInt8))
-          else (240, 150, 20)
+          if held.contains k then ((220 : UInt8), (30 : UInt8), (30 : UInt8)) else (240, 150, 20)
         else if inside && floatAt d p > jnd / 4 then (250, 225, 120)
         else (faint grey, faint grey, faint grey)
       rows := rows.push r |>.push g |>.push b
   return PngEncode.encode { width := page.w, height := page.h, bitDepth := 8, colorType := 2 } rows
 
-/-- Two equal-sized windows judged at `m`; with `heat`, the page they were cut from and where. -/
+/-- Two equal-sized windows judged at `m`: visible where a region above one JND holds the acuity
+spot; with `heat`, the page they were cut from and where. -/
 def assess (m : Medium) (heat : Option (Raster × Nat × Nat)) (a b : Raster) : Judgement := Id.run do
   let (la, memo) := labField (seen m a) {}
   let (lb, _) := labField (seen m b) memo
   let (dxs, dys) := disc m.reach
   let d := distanceField dxs dys a.w a.h la lb
   let (label, areas) := regions a.w a.h d jnd
+  let (count, held) := cores a.w a.h m.spotSide d jnd label
   let spot := m.spotSamples
-  let largest := areas.foldl max 0
-  { verdict := if largest.toFloat ≥ spot then "visible" else "invisible"
+  { verdict := if count > 0 then .visible else .invisible
     maxDe := d.foldl max 0
     area := (areas.foldl (· + ·) 0).toFloat / spot
-    largest := largest.toFloat / spot
-    heat := heat.map fun (page, x0, y0) => heatPng page x0 y0 a.w a.h d label areas spot }
+    largest := (areas.foldl max 0).toFloat / spot
+    cores := count
+    heat := heat.map fun (page, x0, y0) => heatPng page x0 y0 a.w a.h d label held }
+
+/-- Rasters whose sizes differ by at most the reach, grown to one size; `none` where they differ
+by more. -/
+def sized (m : Medium) (a b : Raster) : Option (Raster × Raster) :=
+  let r := m.reach.ceil.toUInt64.toNat
+  if a.w + r < b.w || b.w + r < a.w || a.h + r < b.h || b.h + r < a.h then none
+  else
+    let (w, h) := (max a.w b.w, max a.h b.h)
+    some (extendTo a w h, extendTo b w h)
 
 /-- Two rasters judged at `m` over the window around their differences. -/
 def judge (m : Medium) (heat : Bool) (a b : Raster) : Judgement :=
-  if a.w != b.w || a.h != b.h then { verdict := "visible", reason := "size" }
-  else match window m 1 a b with
-    | none => { verdict := "same" }
+  match sized m a b with
+  | none => { verdict := .visible, reason := "size" }
+  | some (a, b) =>
+    match window m a b with
+    | none => { verdict := .same }
     | some (x0, y0, w, h) =>
       assess m (if heat then some (a, x0, y0) else none) (crop a x0 y0 w h) (crop b x0 y0 w h)
 
 /-! ## Rasterizing the artifacts -/
 
+/-- A tool's exit code and its two output streams, or why it could not start. -/
+def runOut (cmd : String) (args : Array String) (env : Array (String × Option String) := #[]) :
+    ExceptT String IO (UInt32 × String × String) := do
+  let out ← try IO.Process.output { cmd, args, env } catch e => throw s!"cannot run {cmd}: {e}"
+  return (out.exitCode, out.stdout, out.stderr)
+
 /-- A tool's standard output; a failure to start or a nonzero exit is the error. -/
 def run (cmd : String) (args : Array String) (env : Array (String × Option String) := #[]) :
     ExceptT String IO String := do
-  let out ← try IO.Process.output { cmd, args, env } catch e => throw s!"cannot run {cmd}: {e}"
-  if out.exitCode != 0 then
-    let why := ((out.stderr.splitOn "\n").find? (!·.trimAscii.isEmpty)).getD ""
-    throw s!"{cmd} exited {out.exitCode}: {why.trimAscii}"
-  return out.stdout
+  let (code, out, err) ← runOut cmd args env
+  if code != 0 then
+    let why := ((err.splitOn "\n").find? (!·.trimAscii.isEmpty)).getD ""
+    throw s!"{cmd} exited {code}: {why.trimAscii}"
+  return out
 
 def pdfPages (pdf : String) : ExceptT String IO Nat := do
   let out ← run "pdfinfo" #[pdf]
@@ -489,37 +552,72 @@ def pdfPages (pdf : String) : ExceptT String IO Nat := do
   | some n => return n
   | none => throw s!"pdfinfo printed no page count for {pdf}"
 
-/-- Page `page` of `pdf` at `dpi`, or its window `(x, y, w, h)` in that resolution's pixels,
-through a pixmap written beside `stem`. -/
+/-- `f` over `jobs`, `width` at a time, every job finished before the first error is raised. -/
+def parMap {α β : Type} (width : Nat) (jobs : Array α) (f : α → ExceptT String IO β) :
+    ExceptT String IO (Array β) := do
+  let mut done : Array (Except String β) := #[]
+  for k in [0:(jobs.size + width - 1) / width] do
+    let tasks ← (jobs.extract (k * width) (k * width + width)).mapM fun j =>
+      (IO.asTask (f j).run .dedicated : IO _)
+    for t in tasks do
+      done := done.push <| match t.get with
+        | .ok r => r
+        | .error e => .error (toString e)
+  done.mapM fun r => match r with
+    | .ok v => pure v
+    | .error e => throw e
+
+/-- How many pages are judged at once. -/
+def workers : Nat := 4
+
+/-- Page `page` of `pdf`'s crop box at `dpi`, or its window `(x, y, w, h)` in that resolution's
+pixels, drawn by pdftocairo through a file beside `stem`. -/
 def pdfPage (pdf : String) (page : Nat) (stem : System.FilePath) (dpi : Nat)
     (window : Option (Nat × Nat × Nat × Nat) := none) : ExceptT String IO Raster := do
   let cut := match window with
     | some (x, y, w, h) => #["-x", toString x, "-y", toString y, "-W", toString w, "-H", toString h]
     | none => #[]
-  discard <| run "pdftoppm" (#["-r", toString dpi, "-f", toString page, "-l", toString page] ++ cut ++
-    #["-singlefile", pdf, stem.toString])
-  let file := stem.toString ++ ".ppm"
+  discard <| run "pdftocairo" (#["-tiff", "-tiffcompression", "none", "-cropbox", "-r", toString dpi,
+    "-f", toString page, "-l", toString page] ++ cut ++ #["-singlefile", pdf, stem.toString])
+  let file := stem.toString ++ ".tif"
   let bytes ← IO.FS.readBinFile file
   IO.FS.removeFile file
-  match readPpm bytes with
+  match readTiff bytes with
   | .ok r => return r
   | .error e => throw s!"{pdf} page {page}: {e}"
 
-/-- Page `n` of two PDFs judged at the print medium from rasters drawn at `printSupersample`
-times `printDpi`, over the window around their differences. -/
+/-- Page `n` of two PDFs judged at the print medium: drawn at `printDpi` to find the window around
+their differences, which is judged drawn at `printSupersample` times that resolution and grows
+until no difference reaches an edge it can widen. -/
 def judgePdfPage (a b : String) (n : Nat) (heat : Bool) (dir : System.FilePath) :
     ExceptT String IO Judgement := do
   let k := printSupersample
-  let ra ← pdfPage a n (dir / s!"a-{n}") (k * printDpi)
-  let rb ← pdfPage b n (dir / s!"b-{n}") (k * printDpi)
-  if ra.w != rb.w || ra.h != rb.h then return { verdict := "visible", reason := "size" }
-  let some (x0, y0, w, h) := window print k ra rb | return { verdict := "same" }
-  let cut (r : Raster) := shrink k (crop r (k * x0) (k * y0) (k * w) (k * h))
-  return assess print (if heat then some (shrink k ra, x0, y0) else none) (cut ra) (cut rb)
+  let some (ra, rb) := sized print (← pdfPage a n (dir / s!"a-{n}") printDpi)
+      (← pdfPage b n (dir / s!"b-{n}") printDpi)
+    | return { verdict := .visible, reason := "size" }
+  let some first := window print ra rb | return { verdict := .same }
+  let mut win := first
+  for _ in [0:8] do
+    let (x0, y0, w, h) := win
+    let cut := some (k * x0, k * y0, k * w, k * h)
+    let ca := extendTo (shrink k (← pdfPage a n (dir / s!"a-{n}") (k * printDpi) cut)) w h
+    let cb := extendTo (shrink k (← pdfPage b n (dir / s!"b-{n}") (k * printDpi) cut)) w h
+    let grown := match diffBox ca cb with
+      | none => win
+      | some (bx0, by0, bx1, by1) =>
+        let m := print.margin
+        let gx0 := if bx0 < m && x0 > 0 then x0 - min x0 m else x0
+        let gy0 := if by0 < m && y0 > 0 then y0 - min y0 m else y0
+        let gx1 := if bx1 + m ≥ w && x0 + w < ra.w then min ra.w (x0 + w + m) else x0 + w
+        let gy1 := if by1 + m ≥ h && y0 + h < ra.h then min ra.h (y0 + h + m) else y0 + h
+        (gx0, gy0, gx1 - gx0, gy1 - gy0)
+    if grown == win then return assess print (if heat then some (ra, x0, y0) else none) ca cb
+    win := grown
+  throw s!"page {n}: the window around its differences kept growing"
 
 /-- The browser side of a capture: every slide of a deck, or every viewport-high screen of a page,
-as a PNG in the output directory and a `shot` line, on a virtual clock advanced by the same steps
-for every page, so an animation stands at the same instant in both captures. -/
+as a PNG in the output directory and a `shot` line, on a virtual clock advanced by fixed steps and
+with every clock-driven animation stopped at its end or start. -/
 def captureJs : String := r#"
 const pw = require(process.env.PW_MODULE);
 const [html, out, vw, vh, dpr] = process.argv.slice(2);
@@ -535,20 +633,32 @@ const watchdog = setTimeout(() => { console.log('error\thard timeout'); process.
     cdp.send('Emulation.setVirtualTimePolicy',
       { policy: 'pauseIfNetworkFetchesPending', budget: ms }).catch(reject);
   });
+  const settle = async () => {
+    await advance(1000);
+    await page.evaluate(() => {
+      for (const a of document.getAnimations()) {
+        if (a.timeline !== document.timeline) continue;
+        const end = a.effect ? a.effect.getComputedTiming().endTime : 0;
+        a.pause();
+        a.currentTime = isFinite(end) ? end : 0;
+      }
+      for (const s of document.querySelectorAll('svg'))
+        if (s.pauseAnimations) { s.pauseAnimations(); s.setCurrentTime(0); }
+    });
+  };
   await cdp.send('Emulation.setVirtualTimePolicy', { policy: 'pause' });
   let loaded = false;
   const nav = page.goto(require('url').pathToFileURL(html).href, { waitUntil: 'load' })
     .then(() => { loaded = true; });
-  for (let k = 0; k < 120 && !loaded; k++) await advance(1000);
+  for (let k = 0; k < 60 && !loaded; k++) await advance(10000);
   await nav;
-  for (let k = 0; k < 120 && await page.evaluate(() => document.fonts.status) !== 'loaded'; k++)
+  for (let k = 0; k < 60 && await page.evaluate(() => document.fonts.status) !== 'loaded'; k++)
     await advance(1000);
-  await advance(1000);
   let n = 0;
   const shoot = async (label, opts) => {
     n += 1;
     await page.screenshot({ path: `${out}/shot-${n}.png`, ...opts });
-    console.log(['shot', n, label].join('\t'));
+    console.log(['shot', n, String(label).replace(/\s+/g, '_')].join('\t'));
   };
   const snaps = await page.$$eval('[data-snap]',
     els => els.map((e, i) => e.dataset.slideLabel || e.id || String(i + 1)));
@@ -560,15 +670,18 @@ const watchdog = setTimeout(() => { console.log('error\thard timeout'); process.
         const t = e.getBoundingClientRect().width > 0 ? e : (e.closest('.slide-track') || e);
         t.scrollIntoView({ behavior: 'instant', inline: 'start', block: 'nearest' });
       }, i);
-      await advance(1000);
+      await settle();
       await shoot(snaps[i], {});
     }
   } else {
     console.log('unit\tscreen');
+    await settle();
     const height = Math.max(1, await page.evaluate(() => document.documentElement.scrollHeight));
-    for (let y = 0; y < height; y += +vh)
+    for (let y = 0; y < height; y += +vh) {
+      await settle();
       await shoot('', { fullPage: true,
         clip: { x: 0, y, width: +vw, height: Math.min(+vh, height - y) } });
+    }
   }
   await browser.close();
   clearTimeout(watchdog);
@@ -583,30 +696,59 @@ def htmlShots (module : String) (html : String) (dir : System.FilePath) :
   let js := dir / "capture.cjs"
   IO.FS.writeFile js captureJs
   let abs ← IO.FS.realPath html
-  let out ← run "node" #[js.toString, abs.toString, dir.toString, toString viewportW,
-    toString viewportH, toString captureScale] #[("PW_MODULE", some module)]
+  let (code, out, err) ← runOut "node" #[js.toString, abs.toString, dir.toString,
+    toString viewportW, toString viewportH, toString panelDpr] #[("PW_MODULE", some module)]
   let mut shots := #[]
   let mut unit := "screen"
   for l in out.splitOn "\n" do
     match l.splitOn "\t" with
     | ["shot", n, label] => shots := shots.push (label, dir / s!"shot-{n}.png")
     | ["unit", u] => unit := u
-    | "error" :: why => throw s!"the capture failed: {"\t".intercalate why}"
+    | "error" :: why => throw s!"the capture of {html} failed: {" ".intercalate why}"
     | _ => pure ()
+  if code != 0 then
+    throw s!"the capture of {html} exited {code}: {((err.splitOn "\n").headD "").trimAscii}"
   return (shots, unit)
 
-def pngRaster (file : System.FilePath) : ExceptT String IO Raster := do
-  match readPng (← IO.FS.readBinFile file) with
+def shotRaster (bytes : ByteArray) (file : System.FilePath) : ExceptT String IO Raster :=
+  match readPng bytes with
   | .ok r => return r
   | .error e => throw s!"{file}: {e}"
 
-/-- Two shots judged at the screen medium, the shorter screen grown by its last row. -/
-def judgeShots (fa fb : System.FilePath) (heat : Bool) : ExceptT String IO Judgement := do
-  if (← IO.FS.readBinFile fa) == (← IO.FS.readBinFile fb) then return { verdict := "same" }
-  let ra ← pngRaster fa
-  let rb ← pngRaster fb
-  if ra.w != rb.w then return { verdict := "visible", reason := "size" }
-  return judge screen heat (extend ra rb.h) (extend rb ra.h)
+/-- A screen of the page beyond its foot: its last row, `h` rows high. -/
+def beyond (last : Raster) (h : Nat) : Raster :=
+  extendTo (crop last 0 (last.h - 1) last.w 1) last.w h
+
+/-- The judgement of each slide or screen of two captures; a screen one page lacks is that page
+grown by its last row. -/
+def judgeShots (unit : String) (sa sb : Array (String × System.FilePath)) (heat : Bool) :
+    ExceptT String IO (Array (String × Judgement)) := do
+  let label (i : Nat) (l : String) := if l.isEmpty then toString (i + 1) else s!"{i + 1} {l}"
+  let lastOf (s : Array (String × System.FilePath)) : ExceptT String IO (Option Raster) := do
+    match s.back? with
+    | some (_, f) => return some (← shotRaster (← IO.FS.readBinFile f) f)
+    | none => return none
+  let (lastA, lastB) ← if unit == "screen" && sa.size != sb.size then
+      pure (← lastOf sa, ← lastOf sb) else pure (none, none)
+  parMap workers (List.range (max sa.size sb.size)).toArray fun i => do
+    match sa[i]?, sb[i]? with
+    | some (la, fa), some (_, fb) =>
+      let (pa, pb) := (← IO.FS.readBinFile fa, ← IO.FS.readBinFile fb)
+      if pa == pb then return (label i la, { verdict := .same })
+      return (label i la, judge screen heat (← shotRaster pa fa) (← shotRaster pb fb))
+    | some (la, fa), none =>
+      match lastB with
+      | some last =>
+        let ra ← shotRaster (← IO.FS.readBinFile fa) fa
+        return (label i la, judge screen heat ra (beyond last ra.h))
+      | none => return (label i la, { verdict := .visible, reason := "only-in-a" })
+    | none, some (lb, fb) =>
+      match lastA with
+      | some last =>
+        let rb ← shotRaster (← IO.FS.readBinFile fb) fb
+        return (label i lb, judge screen heat (beyond last rb.h) rb)
+      | none => return (label i lb, { verdict := .visible, reason := "only-in-b" })
+    | none, none => return ("", { verdict := .same })
 
 /-! ## Comparing artifacts -/
 
@@ -618,55 +760,34 @@ structure Outcome where
   units : Array (String × Judgement)
   bytes : Bool := false
 
-def Outcome.visible (o : Outcome) : Bool := o.units.any (·.2.verdict == "visible")
+def Outcome.visible (o : Outcome) : Bool := o.units.any (·.2.verdict == .visible)
 
-def Outcome.result (o : Outcome) : String :=
-  if o.visible then "visible" else if o.units.all (·.2.verdict == "same") then "same" else "invisible"
+def Outcome.result (o : Outcome) : Verdict :=
+  if o.visible then .visible else if o.units.all (·.2.verdict == .same) then .same else .invisible
 
-/-- The local files an HTML page names by a relative `src`, `href` or `url(…)`. -/
-def htmlRefs (text : String) : Array String := Id.run do
-  let mut out := #[]
-  for (opener, close) in [("src=\"", "\""), ("href=\"", "\""), ("url(\"", "\""), ("url('", "'"),
-      ("url(", ")")] do
-    for part in (text.splitOn opener).drop 1 do
-      let ref := ((((part.splitOn close).headD "").splitOn "#").headD "").splitOn "?" |>.headD ""
-      let ref := ref.trimAscii.toString
-      let scheme := ((ref.splitOn "/").headD "").contains ':'
-      if !ref.isEmpty && !scheme && !ref.startsWith "/" && !ref.startsWith "\"" && !ref.startsWith "'" then
-        out := out.push ref
-  return out
+/-- Whether an HTML page may load anything it does not hold: a `src`, `srcset`, `poster`,
+`xlink:href` or CSS `url(…)` that is no `data:` URI, a `<link>` with such an `href`, or an
+`@import`, `<object>`, `<embed>` or `<iframe>`. -/
+def loadsBeyond (text : String) : Bool := Id.run do
+  let t := text.toLower
+  if ["@import", "<object", "<embed", "<iframe"].any (fun w => (t.splitOn w).length > 1) then
+    return true
+  let opened (rest : String) : Bool :=
+    let r := rest.trimAsciiStart.toString
+    let v := if r.startsWith "\"" || r.startsWith "'" then (r.drop 1).toString else r
+    !(v.trimAsciiStart.toString.startsWith "data:")
+  for opener in ["src=", "srcset=", "poster=", "xlink:href=", "url("] do
+    if ((t.splitOn opener).drop 1).any opened then return true
+  for tag in (t.splitOn "<link").drop 1 do
+    let attrs := (tag.splitOn ">").headD ""
+    if ((attrs.splitOn "href=").drop 1).any opened then return true
+  return false
 
-/-- Whether two artifacts are equal bytes, an HTML page together with the local files it names. -/
+/-- Whether two artifacts are equal bytes, an HTML page only where it loads nothing beyond itself. -/
 def sameBytes (a b : String) (html : Bool) : IO Bool := do
   let ba ← IO.FS.readBinFile a
   if ba != (← IO.FS.readBinFile b) then return false
-  if !html then return true
-  let dirA := (System.FilePath.mk a).parent.getD "."
-  let dirB := (System.FilePath.mk b).parent.getD "."
-  for ref in htmlRefs (String.fromUTF8! ba) do
-    let fa := dirA / ref
-    let fb := dirB / ref
-    let ea ← fa.pathExists
-    if ea != (← fb.pathExists) then return false
-    if ea && !(← fa.isDir) && (← IO.FS.readBinFile fa) != (← IO.FS.readBinFile fb) then return false
-  return true
-
-/-- `f` over `jobs`, `width` at a time. -/
-def parMap {α β : Type} (width : Nat) (jobs : Array α) (f : α → ExceptT String IO β) :
-    ExceptT String IO (Array β) := do
-  let mut out := #[]
-  for k in [0:(jobs.size + width - 1) / width] do
-    let tasks ← (jobs.extract (k * width) (k * width + width)).mapM fun j =>
-      (IO.asTask (f j).run .dedicated : IO _)
-    for t in tasks do
-      match t.get with
-      | .ok (.ok v) => out := out.push v
-      | .ok (.error e) => throw e
-      | .error e => throw (toString e)
-  return out
-
-/-- How many pages are judged at once. -/
-def workers : Nat := 4
+  return !html || !loadsBeyond (String.fromUTF8! ba)
 
 def comparePdf (a b : String) (heat : Bool) (dir : System.FilePath) : ExceptT String IO Outcome := do
   if ← sameBytes a b false then return { medium := print, unit := "page", units := #[], bytes := true }
@@ -674,14 +795,15 @@ def comparePdf (a b : String) (heat : Bool) (dir : System.FilePath) : ExceptT St
   let na ← pdfPages a
   let nb ← pdfPages b
   let units ← parMap workers ((List.range (max na nb)).toArray.map (· + 1)) fun n => do
-    if n > na then return (toString n, { verdict := "visible", reason := "only-in-b" })
-    if n > nb then return (toString n, { verdict := "visible", reason := "only-in-a" })
+    if n > na then return (toString n, { verdict := .visible, reason := "only-in-b" })
+    if n > nb then return (toString n, { verdict := .visible, reason := "only-in-a" })
     return (toString n, ← judgePdfPage a b n heat dir)
   return { medium := print, unit := "page", units }
 
 /-- The Playwright module whose Chromium launches, found once a run. -/
 def chromium (cache : IO.Ref (Option String)) : ExceptT String IO String := do
   if let some m ← cache.get then return m
+  discard <| run "node" #["--version"]
   let some (m, _) ← findChromium "node"
     | throw "no cached Playwright module launches Chromium (LEANTEX_PLAYWRIGHT names one)"
   cache.set (some m)
@@ -693,14 +815,7 @@ def compareHtml (a b : String) (heat : Bool) (dir : System.FilePath) (cache : IO
   let module ← chromium cache
   let captures ← parMap 2 #[(a, dir / "a"), (b, dir / "b")] fun (f, d) => htmlShots module f d
   let ((sa, unit), (sb, _)) := (captures[0]?.getD (#[], ""), captures[1]?.getD (#[], ""))
-  let units ← parMap workers (List.range (max sa.size sb.size)).toArray fun i => do
-    let label (l : String) := if l.isEmpty then toString (i + 1) else s!"{i + 1} {l}"
-    match sa[i]?, sb[i]? with
-    | some (la, fa), some (_, fb) => return (label la, ← judgeShots fa fb heat)
-    | some (la, _), none => return (label la, { verdict := "visible", reason := "only-in-a" })
-    | none, some (lb, _) => return (label lb, { verdict := "visible", reason := "only-in-b" })
-    | none, none => return ("", { verdict := "same" })
-  return { medium := screen, unit, units }
+  return { medium := screen, unit, units := ← judgeShots unit sa sb heat }
 
 def compare (a b : String) (heat : Bool) (dir : System.FilePath) (cache : IO.Ref (Option String)) :
     ExceptT String IO Outcome :=
@@ -710,20 +825,10 @@ def compare (a b : String) (heat : Bool) (dir : System.FilePath) (cache : IO.Ref
 
 /-! ## The report -/
 
-/-- `x` with `d` decimals. -/
-def fixed (x : Float) (d : Nat) : String :=
-  let n := (x * (10 ^ d).toFloat).round.toUInt64.toNat
-  let frac := toString (n % 10 ^ d)
-  if d == 0 then toString n
-  else s!"{n / 10 ^ d}." ++ String.ofList (List.replicate (d - frac.length) '0') ++ frac
-
 def header (m : Medium) : String :=
-  let common := s!"medium={m.name} distance_mm={fixed m.distanceMm 0} \
-acuity_mm={fixed m.acuityMm 4} sample_mm={fixed m.sampleMm 4} black={fixed m.black 2} \
-jnd={fixed jnd 3} spot_samples={fixed m.spotSamples 2} reach_samples={fixed m.reach 2}"
-  if m.name == "print" then s!"visualdiff: {common} dpi={printDpi} supersample={printSupersample}"
-  else s!"visualdiff: {common} viewport={viewportW}x{viewportH} css_px_mm={fixed cssPixelMm 4} \
-css_px_arcmin={fixed (cssPixelMm / m.acuityMm) 3} dpr={captureScale}"
+  s!"visualdiff: medium={m.name} distance_mm={fixed m.distanceMm 0} acuity_mm={fixed m.acuityMm 4} \
+sample_mm={fixed m.sampleMm 4} black={fixed m.black 2} jnd={fixed jnd 3} \
+spot_samples={fixed m.spotSamples 2} reach_samples={fixed m.reach 2} {m.detail}"
 
 def unitLine (unit label : String) (j : Judgement) (heat : Option String) : String :=
   let (n, rest) := match label.splitOn " " with
@@ -731,15 +836,16 @@ def unitLine (unit label : String) (j : Judgement) (heat : Option String) : Stri
     | [] => (label, "")
   let named := if rest.isEmpty then "" else s!" label={rest}"
   let why := if j.reason.isEmpty then "" else s!" reason={j.reason}"
-  let measured := if j.verdict == "same" || !j.reason.isEmpty then ""
-    else s!" max_de={fixed j.maxDe 4} area_spots={fixed j.area 2} largest_spots={fixed j.largest 2}"
+  let measured := if j.verdict == .same || !j.reason.isEmpty then ""
+    else s!" max_de={fixed j.maxDe 4} area_spots={fixed j.area 2} largest_spots={fixed j.largest 2} \
+cores={j.cores}"
   let map := (heat.map (s!" heatmap={·}")).getD ""
-  s!"visualdiff: {unit}={n}{named} verdict={j.verdict}{why}{measured}{map}"
+  s!"visualdiff: {unit}={n}{named} verdict={j.verdict.name}{why}{measured}{map}"
 
 def summaryLine (o : Outcome) : String :=
-  let count (v : String) := (o.units.filter (·.2.verdict == v)).size
-  s!"visualdiff: result={o.result} units={o.units.size} same={count "same"} \
-invisible={count "invisible"} visible={count "visible"}" ++ (if o.bytes then " shortcut=bytes" else "")
+  let count (v : Verdict) := (o.units.filter (·.2.verdict == v)).size
+  s!"visualdiff: result={o.result.name} units={o.units.size} same={count .same} \
+invisible={count .invisible} visible={count .visible}" ++ (if o.bytes then " shortcut=bytes" else "")
 
 /-- Print an outcome, writing heat maps under `heatDir`. -/
 def report (o : Outcome) (heatDir : Option System.FilePath) : IO Unit := do
@@ -756,12 +862,31 @@ def report (o : Outcome) (heatDir : Option System.FilePath) : IO Unit := do
 
 /-! ## The selftest -/
 
-/-- An invented article: `words`, a line of words set `shift` from the margin, a swatch of
-colour `swatch`, and `tail`. -/
-def fixture (words shift swatch : String) (tail : String := "") : String :=
-  "\\documentclass{article}\n\\definecolor{swatch}{HTML}{" ++ swatch ++ "}\n\\begin{document}\n" ++
-    words ++ "\n\n\\noindent\\hspace*{" ++ shift ++ "}Shifted, \\textit{slanted} and minimal\n\n" ++
-    "\\noindent\\textcolor{swatch}{\\rule{3cm}{1cm}}\n" ++ tail ++ "\\end{document}\n"
+/-- The faces the selftest's documents are set in, shipped with the corpus. -/
+def selftestFonts : String :=
+  "\\fonts{ dir = \"fonts\", body = \"Source Serif Pro\", sans = \"Open Sans\", mono = \"Source Code Pro\" }\n"
+
+/-- An invented article: `words`, a line of words set `shift` from the margin and `drop` below
+it, a rule, a swatch of colour `swatch`, and `tail`. -/
+def fixture (words shift swatch : String) (drop : String := "0pt") (tail : String := "") : String :=
+  "\\documentclass{article}\n" ++ selftestFonts ++ "\\definecolor{swatch}{HTML}{" ++ swatch ++
+    "}\n\\begin{document}\n" ++ words ++ "\n\n\\vspace*{" ++ drop ++ "}\\noindent\\hspace*{" ++
+    shift ++ "}Shifted, \\textit{slanted} and minimal\n\n\\noindent\\hspace*{" ++ shift ++
+    "}\\rule{5cm}{0.4pt}\n\n\\noindent\\textcolor{swatch}{\\rule{3cm}{1cm}}\n" ++ tail ++
+    "\\end{document}\n"
+
+/-- An invented deck of two frames, the first in two steps whose second item reads `item`. -/
+def deck (item : String) : String :=
+  "\\documentclass[aspectratio=169]{beamer}\n" ++ selftestFonts ++ "\\begin{document}\n" ++
+    "\\begin{frame}{First frame}\n\\begin{itemize}\n\\item<1-> Plain words on the first step.\n" ++
+    "\\item<2-> " ++ item ++ "\n\\end{itemize}\n\\end{frame}\n" ++
+    "\\begin{frame}{Second frame}\nQuiet words on a plain slide.\n\\end{frame}\n\\end{document}\n"
+
+/-- An invented article some screens long whose last paragraph reads `last`. -/
+def longPage (last : String) : String :=
+  "\\documentclass{article}\n" ++ selftestFonts ++ "\\begin{document}\n" ++
+    String.join ((List.range 90).map fun i => s!"Plain words of line {i + 1}, set to fill a page.\n\n") ++
+    last ++ "\n\\end{document}\n"
 
 def baseWords : String := "Plain words set on an invented page."
 def baseSwatch : String := "8AA0C8"
@@ -770,19 +895,29 @@ def baseSwatch : String := "8AA0C8"
 def nearSwatch : String := "8AA3C8"
 def farSwatch : String := "6E8CC8"
 
-/-- Each case: its name, its two sources, and whether a reader sees a difference on paper and on
-screen, `none` asserting nothing. -/
-def cases : List (String × String × String × Option Bool × Option Bool) :=
+/-- Each case: its name, its two sources, whether the second is the first's artifact with bytes
+appended, and whether a reader sees a difference on paper and on screen, `none` asserting nothing. -/
+def cases : List (String × String × String × Bool × Option Bool × Option Bool) :=
   let base := fixture baseWords "0pt" baseSwatch
-  [("identical", base, base, some false, some false),
-   ("shift-0.05pt", base, fixture baseWords "0.05pt" baseSwatch, some false, some false),
-   ("shift-1pt", base, fixture baseWords "1pt" baseSwatch, some true, none),
-   ("shift-2pt", base, fixture baseWords "2pt" baseSwatch, some true, some true),
-   ("tint-below", base, fixture baseWords "0pt" nearSwatch, some false, some false),
-   ("tint-above", base, fixture baseWords "0pt" farSwatch, some true, some true),
-   ("missing-word", base, fixture "Plain words set on an page." "0pt" baseSwatch, some true, some true),
-   ("extra-page", base, fixture baseWords "0pt" baseSwatch "\\newpage\nAnother page.\n", some true,
-    some true)]
+  [("identical", base, base, false, some false, some false),
+   ("appended-bytes", base, base, true, some false, some false),
+   ("shift-0.05pt", base, fixture baseWords "0.05pt" baseSwatch, false, some false, some false),
+   ("drop-0.05pt", base, fixture baseWords "0pt" baseSwatch "0.05pt", false, some false, some false),
+   ("shift-0.1pt", base, fixture baseWords "0.1pt" baseSwatch, false, some false, some false),
+   ("shift-1pt", base, fixture baseWords "1pt" baseSwatch, false, some true, none),
+   ("shift-2pt", base, fixture baseWords "2pt" baseSwatch, false, some true, some true),
+   ("tint-below", base, fixture baseWords "0pt" nearSwatch, false, some false, some false),
+   ("tint-above", base, fixture baseWords "0pt" farSwatch, false, some true, some true),
+   ("missing-word", base, fixture "Plain words set on an page." "0pt" baseSwatch, false, some true,
+    some true),
+   ("extra-page", base, fixture baseWords "0pt" baseSwatch "0pt" "\\newpage\nAnother page.\n", false,
+    some true, some true),
+   ("deck-copy", deck "More words on the second step.", deck "More words on the second step.", true,
+    some false, some false),
+   ("deck-step", deck "More words on the second step.", deck "Other words on the second step.", false,
+    some true, some true),
+   ("long-copy", longPage "The last words.", longPage "The last words.", true, some false, some false),
+   ("long-last", longPage "The last words.", longPage "The final words.", false, some true, some true)]
 
 def hexColor (s : String) : Nat × Nat × Nat :=
   let v := s.foldl (fun n c => n * 16 + (if c.isDigit then c.toNat - 48 else c.toNat - 55)) 0
@@ -793,47 +928,74 @@ def deltaE (s t : String) : Float :=
   let ((l0, l1, l2), (m0, m1, m2)) := (labUnit r g b, labUnit r' g' b')
   Float.sqrt ((l0 - m0) * (l0 - m0) + (l1 - m1) * (l1 - m1) + (l2 - m2) * (l2 - m2))
 
-/-- A raster `w` samples square: white, a black bar `bw` samples wide from `left` antialiased as
-coverage in linear light, and a band of the flat colour `tint`. -/
-def bar (w : Nat) (left bw : Float) (tint : Nat × Nat × Nat) : Raster := Id.run do
-  let mut rgb := ByteArray.emptyWithCapacity (3 * w * w)
-  for y in [0:w] do
+/-- A raster `w` samples wide and `h` high: white, a black bar `bw` samples wide from `left`
+antialiased as coverage in linear light, and a band of the flat colour `tint`. -/
+def bar (w : Nat) (left bw : Float) (tint : Nat × Nat × Nat) (h : Nat := w) : Raster := Id.run do
+  let mut rgb := ByteArray.emptyWithCapacity (3 * w * h)
+  for y in [0:h] do
     for x in [0:w] do
       let lo := max left x.toFloat
       let hi := min (left + bw) (x.toFloat + 1)
-      let cover := if y < w / 2 then max 0 (hi - lo) else 0
-      let (r, g, b) := if y ≥ 3 * w / 4 then tint else (255, 255, 255)
+      let cover := if y < h / 2 then max 0 (hi - lo) else 0
+      let (r, g, b) := if y ≥ 3 * h / 4 then tint else (255, 255, 255)
       let ink (v : Nat) : UInt8 := (encode (floatAt linear v * (1 - cover))).toUInt8
       rgb := rgb.push (ink r) |>.push (ink g) |>.push (ink b)
-  return { w, h := w, rgb }
+  return { w, h, rgb }
 
-/-- The judge alone, on drawn rasters at the print medium: bars moved within and beyond the acuity,
-and a flat tint moved below and above one JND. -/
+/-- `r` with the samples of the `s × s` square at `(x, y)` black. -/
+def speck (r : Raster) (x y s : Nat) : Raster := Id.run do
+  let mut rgb := r.rgb
+  for j in [0:s] do
+    for i in [0:s] do
+      for c in [0:3] do
+        let k := 3 * ((y + j) * r.w + x + i) + c
+        rgb := if h : k < rgb.size then rgb.set k 0 h else rgb
+  return { r with rgb }
+
+/-- The judge alone, on drawn rasters at the print medium: bars and hairlines moved within and
+beyond the acuity, a speck below and at the acuity spot, a raster one sample taller, and a flat
+tint below and above one JND. -/
 def judgeCases : List (String × Raster × Raster × Bool) :=
   let a := print.acuitySamples
   let grey := (200, 200, 200)
   let base := bar 64 20 (3 * a) grey
-  let thin := bar 64 20 a grey
+  let thin := bar 64 20 (a / 2) grey
   [("bar-0.4-acuity", base, bar 64 (20 + 0.4 * a) (3 * a) grey, false),
    ("bar-0.9-acuity", base, bar 64 (20 + 0.9 * a) (3 * a) grey, false),
    ("bar-1.2-acuity", base, bar 64 (20 + 1.2 * a) (3 * a) grey, true),
-   ("hairline-0.3-acuity", thin, bar 64 (20 + 0.3 * a) a grey, false),
-   ("hairline-1.2-acuity", thin, bar 64 (20 + 1.2 * a) a grey, true),
+   ("hairline-half-sample", thin, bar 64 20.5 (a / 2) grey, false),
+   ("hairline-1.5-acuity", thin, bar 64 (20 + 1.5 * a) (a / 2) grey, true),
+   ("speck-one-sample", base, speck base 44 8 1, false),
+   ("speck-acuity-spot", base, speck base 44 8 a.round.toUInt64.toNat, true),
+   ("one-sample-taller", base, bar 64 20 (3 * a) grey 65, false),
    ("flat-tint-below", base, bar 64 20 (3 * a) (206, 200, 200), false),
    ("flat-tint-above", base, bar 64 20 (3 * a) (200, 200, 236), true)]
 
 def leantexBin : String := ".lake/build/bin/leantex"
+
+/-- The two artifacts of a case in `ext`, built in `dir` beside a copy of the shipped fonts. -/
+def buildCase (dir : System.FilePath) (srcA srcB ext : String) (appended : Bool) :
+    ExceptT String IO (String × String) := do
+  IO.FS.writeFile (dir / "a.tex") srcA
+  IO.FS.writeFile (dir / "b.tex") srcB
+  for side in ["a", "b"] do
+    discard <| run leantexBin #["-q", (dir / s!"{side}.tex").toString, "-o", (dir / s!"{side}.{ext}").toString]
+  let (a, b) := ((dir / s!"a.{ext}").toString, (dir / s!"b.{ext}").toString)
+  if appended then
+    let tail := if ext == "pdf" then "\n%%\n" else "\n<!-- -->\n"
+    IO.FS.writeBinFile b ((← IO.FS.readBinFile a) ++ tail.toUTF8)
+  return (a, b)
 
 def selftest : IO UInt32 := do
   let cache ← IO.mkRef none
   let mut bad := 0
   for (name, a, b, expect) in judgeCases do
     let j := judge print false a b
-    let ok := (j.verdict == "visible") == expect
+    let ok := (j.verdict == .visible) == expect
     unless ok do bad := bad + 1
     IO.println s!"visualdiff: selftest case={name} medium=judge \
-expect={if expect then "visible" else "unseen"} got={j.verdict} max_de={fixed j.maxDe 4} \
-largest_spots={fixed j.largest 2} ok={ok}"
+expect={if expect then "visible" else "unseen"} got={j.verdict.name} max_de={fixed j.maxDe 4} \
+cores={j.cores} ok={ok}"
   let near := deltaE baseSwatch nearSwatch / jnd
   let far := deltaE baseSwatch farSwatch / jnd
   unless near < 0.5 && far > 3 do
@@ -844,18 +1006,18 @@ not below 0.5 and above 3"
     IO.eprintln s!"visualdiff: {leantexBin} not found; run lake build first"
     return 2
   let mut unjudged := 0
-  for (name, srcA, srcB, onPaper, onScreen) in cases do
+  for (name, srcA, srcB, appended, onPaper, onScreen) in cases do
     let outcome ← LeanTex.Cli.Host.withScratch fun dir => do
-      IO.FS.writeFile (dir / "a.tex") srcA
-      IO.FS.writeFile (dir / "b.tex") srcB
+      let fonts := dir / "fonts"
+      IO.FS.createDirAll fonts
+      for e in ← System.FilePath.readDir "testdata/corpus/fonts" do
+        IO.FS.writeBinFile (fonts / e.fileName) (← IO.FS.readBinFile e.path)
       let mut results := #[]
-      for ext in ["pdf", "html"] do
-        for side in ["a", "b"] do
-          discard <| (run leantexBin #["-q", (dir / s!"{side}.tex").toString, "-o",
-            (dir / s!"{side}.{ext}").toString]).run
-        results := results.push (if ext == "pdf" then "print" else "screen",
-          ← (compare (dir / s!"a.{ext}").toString (dir / s!"b.{ext}").toString false (dir / ext)
-            cache).run)
+      for (ext, medium) in [("pdf", "print"), ("html", "screen")] do
+        let r ← (do
+          let (a, b) ← buildCase dir srcA srcB ext appended
+          compare a b false (dir / ext) cache : ExceptT String IO Outcome).run
+        results := results.push (medium, r)
       return results
     for (medium, r) in outcome do
       match r with
@@ -864,13 +1026,13 @@ not below 0.5 and above 3"
         IO.println s!"visualdiff: selftest case={name} medium={medium} unjudged={e}"
       | .ok o =>
         let expect := if medium == "print" then onPaper else onScreen
-        let ok := (expect.all (· == o.visible)) && (name != "identical" || o.bytes)
+        let ok := expect.all (· == o.visible) && (name != "identical" || o.bytes)
         unless ok do bad := bad + 1
         let worst := o.units.foldl (fun m u => max m u.2.maxDe) 0
-        let largest := o.units.foldl (fun m u => max m u.2.largest) 0
+        let cores := o.units.foldl (fun m u => m + u.2.cores) 0
         let shown := match expect with | some true => "visible" | some false => "unseen" | none => "either"
-        IO.println s!"visualdiff: selftest case={name} medium={medium} expect={shown} got={o.result} \
-max_de={fixed worst 4} largest_spots={fixed largest 2} ok={ok}"
+        IO.println s!"visualdiff: selftest case={name} medium={medium} expect={shown} \
+got={o.result.name} units={o.units.size} max_de={fixed worst 4} cores={cores} ok={ok}"
   IO.println s!"visualdiff: selftest failed={bad} unjudged={unjudged}"
   return if bad > 0 then 1 else if unjudged > 0 then 2 else 0
 
@@ -887,15 +1049,17 @@ def main (args : List String) : IO UInt32 := do
     let [a, b] := rest
       | IO.eprintln "usage: visualdiff [--heatmap <dir>] <a> <b>   (two .pdf or two .html)\n       visualdiff --selftest"
         return 2
-    for f in [a, b] do
-      unless ← System.FilePath.pathExists f do
-        IO.eprintln s!"visualdiff: {f} does not exist"
+    try
+      for f in [a, b] do
+        unless ← System.FilePath.pathExists f do throw (IO.userError s!"{f} does not exist")
+      let cache ← IO.mkRef none
+      match ← LeanTex.Cli.Host.withScratch fun dir => (compare a b heatDir.isSome dir cache).run with
+      | .error e =>
+        IO.eprintln s!"visualdiff: {e}"
         return 2
-    let cache ← IO.mkRef none
-    match ← LeanTex.Cli.Host.withScratch fun dir => (compare a b heatDir.isSome dir cache).run with
-    | .error e =>
+      | .ok o =>
+        report o heatDir
+        return if o.visible then 1 else 0
+    catch e =>
       IO.eprintln s!"visualdiff: {e}"
       return 2
-    | .ok o =>
-      report o heatDir
-      return if o.visible then 1 else 0

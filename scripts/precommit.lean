@@ -731,7 +731,7 @@ structure DocCap where
   bytes : Nat
 
 def ruleDocCaps : List DocCap := [
-  { doc := "AGENTS.md", lines := 181, width := 100, bytes := 14100 },
+  { doc := "AGENTS.md", lines := 180, width := 100, bytes := 14000 },
   { doc := "PRINCIPLES.md", lines := 130, width := 100, bytes := 9000 }]
 
 /-- Does the line date a rule: an ISO date, or the retired plan file named as a word? -/

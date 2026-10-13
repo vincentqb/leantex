@@ -5,6 +5,7 @@ Usage: lake env lean --run scripts/rhythm.lean [--check | --selftest | --table |
 -/
 import Tests.Artifact
 import scripts.Board
+import scripts.Playwright
 
 open LeanTex.Core LeanTex.Cli Scoreboard
 
@@ -740,25 +741,6 @@ def inQuanta (v q : Int) : String :=
   let f := toString (a % 100)
   (if h < 0 then "-" else "") ++ s!"{a / 100}.{"".pushn '0' (2 - f.length)}{f}"
 
-/-- The Playwright modules whose Chromium launches here: `LEANTEX_PLAYWRIGHT`, then every
-module under `~/.npm/_npx`. -/
-def playwrightModules : IO (Array String) := do
-  let mut cands : Array String := #[]
-  if let some p ← IO.getEnv "LEANTEX_PLAYWRIGHT" then cands := cands.push p
-  if let some home ← IO.getEnv "HOME" then
-    let npx : System.FilePath := home / ".npm" / "_npx"
-    if ← npx.isDir then
-      for e in (← npx.readDir).qsort (·.fileName < ·.fileName) do
-        let m := e.path / "node_modules" / "playwright"
-        if ← (m / "package.json").pathExists then cands := cands.push m.toString
-  let mut ok : Array String := #[]
-  for m in cands do
-    let launch := "require(process.env.PW_MODULE).chromium.launch({headless:true,args:['--no-sandbox','--disable-gpu']})" ++
-      ".then(b=>b.close()).catch(()=>process.exit(1))"
-    let r ← IO.Process.output { cmd := "node", args := #["-e", launch], env := #[("PW_MODULE", some m)] }
-    if r.exitCode == 0 then ok := ok.push m
-  return ok
-
 def htmlReport (outDir : String) : IO UInt32 := do
   let out : System.FilePath := outDir
   IO.FS.createDirAll out
@@ -773,10 +755,8 @@ def htmlReport (outDir : String) : IO UInt32 := do
       let p := out / s!"{n}.assets" / cand
       if let some d := p.parent then IO.FS.createDirAll d
       IO.FS.writeBinFile p bytes
-  let module ← match (← playwrightModules).toList with
-    | m :: _ => pure m
-    | [] =>
-      IO.eprintln "rhythm: no Playwright module found (LEANTEX_PLAYWRIGHT names one); the HTML is \
+  let some (module, _) ← findChromium "node"
+    | IO.eprintln "rhythm: no Playwright module found (LEANTEX_PLAYWRIGHT names one); the HTML is \
 written but not measured"
       return 2
   IO.FS.writeFile (out / "probe.cjs") probeJs
@@ -960,7 +940,7 @@ def probePage (htmlDir page outDir : String) : IO UInt32 := do
   if ← insideTree outDir then
     IO.eprintln "rhythm: refusing: a private page's probe writes only outside the working tree"
     return 2
-  let some module := (← playwrightModules)[0]?
+  let some (module, _) ← findChromium "node"
     | IO.eprintln "rhythm: no Playwright module launches a Chromium here"; return 2
   let js : System.FilePath := (outDir : System.FilePath) / "probe.cjs"
   IO.FS.writeFile js probeJs
