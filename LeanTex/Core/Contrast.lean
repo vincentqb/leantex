@@ -831,16 +831,17 @@ private def schemeLosses (s : Scheme) (f : SchemeFrame) (stage : Bool)
   return out.toList
 
 /-- One dropped scheme's diagnostic for one colour it could not carry,
-named by `scheme:name@ground`. -/
+named by `scheme:name@ground`, what it reads there and what that ground
+owes in the record's detail. -/
 public def schemeLossDiag (s : Scheme) (l : SchemeLoss) : Diag :=
   let key := l.name.key
   let ground := (ColorRef.role l.on).key
   Diag.of .W0308
-    s!"the {s.name} scheme cannot carry '{key}' legibly on '{ground}' \
-({ratioString l.ratio}, {ratioString l.gate} owed); the page ships without it"
-    (help := some s!"declare a colour that reaches {ratioString l.gate} on its ground in that \
-scheme, or name the schemes the page offers: \\output\{ schemes = print, light }")
+    s!"the {s.name} scheme cannot carry '{key}' legibly on '{ground}'; the page ships without it"
+    (help := some "declare a colour that reaches the gate on its ground in that scheme, or name \
+the schemes the page offers: \\output{ schemes = print, light }")
     (subject := some s!"{s.name}:{key}@{ground}")
+    (detail := some s!"{ratioString l.ratio}, below {ratioString l.gate}")
 
 /-- **The colour schemes a web page ships**, of those its document asks
 (`Doc.requestedSchemes`): a scheme the document's colours were declared for
@@ -922,7 +923,7 @@ public theorem sites_named (doc : Doc) :
     ∀ d ∈ (schemeJudge doc).dropped, ∀ l ∈ d.2,
       ∃ g ∈ (schemeJudge doc).diags, g.subject = some (SchemeLoss.key d.1 l) :=
   fun d hd l hl => ⟨schemeLossDiag d.1 l, (scheme_drop_accounts doc d hd).2 l hl,
-    by simp only [schemeLossDiag, SchemeLoss.key, Diag.of_subject]⟩
+    by simp only [schemeLossDiag, SchemeLoss.key, Diag.of_record_exact]⟩
 
 /-- The covering judged, per epoch that ships pending content: SC 1.4.11's
 3:1 between an active and an inactive state, and quieter-than-active —
@@ -1415,14 +1416,25 @@ public structure PaletteSummary where
   seeded : Bool
   deriving Repr, BEq
 
-public def paletteSummary (pal : Palette) (schemes : List Scheme) : PaletteSummary :=
-  let sites := schemes.flatMap (Design.sites pal)
+/-- A palette's summary over the schemes it is judged in, each beside the
+palette as that scheme carries it. -/
+public def paletteSummaryIn (views : List (Scheme × Palette)) (seeded : Bool) : PaletteSummary :=
+  let sites := views.flatMap fun (s, v) => Design.sites v s
   let margins := sites.map fun st => (contrastMilli st.ink st.ground : Int) - requiredIn st.scheme st.need
-  { roles := (Role.all.filter fun r => schemes.any fun s => (Design.at pal s r).isSome).length
-    schemes := schemes.length
+  { roles := (Role.all.filter fun r => views.any fun (s, v) => (Design.at v s r).isSome).length
+    schemes := views.length
     sites := sites.length
     margin := margins.min?
-    seeded := pal.seeded.isSome }
+    seeded := seeded }
+
+public def paletteSummary (pal : Palette) (schemes : List Scheme) : PaletteSummary :=
+  paletteSummaryIn (schemes.map (·, pal)) pal.seeded.isSome
+
+/-- The palette phase's summary for a web page: the document's palette as
+each scheme the page ships carries it (`schemeJudge`). -/
+public def pageSummary (doc : Doc) : PaletteSummary :=
+  let j := schemeJudge doc
+  paletteSummaryIn (j.shipped.zip ((j.views.head?.map (·.2)).getD [])) doc.palette.seeded.isSome
 
 /-- The phase line's words: roles, schemes, sites, the least margin — or,
 where a site falls short of its need, by how much. -/

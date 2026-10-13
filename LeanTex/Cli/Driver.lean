@@ -553,13 +553,13 @@ def elaborate (ui : Ui) (file : String) (prepared : Elab.Prepared)
     if phases then ui.phase "elab" s!"{doc.body.size} blocks" (← since t)
     if phases then
       -- The palette phase: the pairs the schemes this build ships judge —
-      -- the print column, and the screen's light column where a page is
+      -- the print column, and every scheme the page ships where a page is
       -- built. Generation itself is the elaborator's, timed with it.
       let t := ← IO.monoMsNow
-      let schemes : List Ir.Scheme :=
-        if (ui.cfg.effectiveEmit doc.output.formats).contains .html then [.print, .light]
-        else [.print]
-      ui.phase "palette" (Contrast.paletteSummary doc.palette schemes).detail (← since t)
+      let summary := if (ui.cfg.effectiveEmit doc.output.formats).contains .html then
+          Contrast.pageSummary doc
+        else Contrast.paletteSummary doc.palette [.print]
+      ui.phase "palette" summary.detail (← since t)
     let t ← IO.monoMsNow
     let reqSpans := { reqSpans with frames := Bib.remapSources doc reqSpans.frames }
     let (doc, bibDiags, ledger) ← Input.resolveBibliography file doc

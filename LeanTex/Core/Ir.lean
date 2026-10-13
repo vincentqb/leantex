@@ -14247,6 +14247,13 @@ public def Palette.view (pal : Palette) (f : SchemeFrame)
       let isGenerated := match k with
         | .role r => generated r c
         | .color _ => false
+      -- A generated ink whose own colour already reads at the gate on every
+      -- ground the scheme gives it, and no lower than the tone generated
+      -- there, stays: more contrast never lowers what already meets it.
+      let gs := if isGenerated && inkLike k && !f.flip then groundsOf staged k else []
+      if !gs.isEmpty && gs.all (fun (g, _, req) =>
+          req ≤ Contrast.contrastMilli c g && Contrast.contrastMilli c0 g ≤ Contrast.contrastMilli c g)
+      then (acc.1.push (k, c), acc.2) else
       if !inkLike k || (isGenerated && (uses k).isEmpty) then (acc.1.push (k, c0), acc.2) else
       -- A generated colour another ground's use reads is held there too, from
       -- the colour the scheme generated.
@@ -14256,32 +14263,37 @@ public def Palette.view (pal : Palette) (f : SchemeFrame)
       | .error (on, measured) => (acc.1.push (k, c0), acc.2.push { name := k, on, measured }))
       (#[], grounds.2)
   -- A role the palette leaves undeclared that a use reads on another ground
-  -- than its row's: held there too, from the colour the scheme gives it, and
-  -- declared in the view where it moves.
-  let undeclared : Array (ColorRef × Color) × Array Unrealized :=
+  -- than its row's: held there too, from the colour the scheme gives it
+  -- over `base`, and declared in the view where it moves.
+  let undeclaredOn (base : Palette) (start : Array (ColorRef × Color) × Array Unrealized) :
+      Array (ColorRef × Color) × Array Unrealized :=
     used.foldl (fun (acc : Array (ColorRef × Color) × Array Unrealized) (k, _) =>
       match k with
       | .color _ => acc
       | .role r =>
         if pal.entries.any (·.1 == k) || !r.row.need.paired then acc else
-        match Design.at staged s r with
+        match Design.at base s r with
         | none => acc
         | some c =>
-          match carryOn staged k c true with
+          match carryOn base k c true with
           | .ok (some c') => if c' == c then acc else (acc.1.push (k, c'), acc.2)
           | .ok none => acc
-          | .error (on, measured) => (acc.1, acc.2.push { name := k, on, measured })) inks
-  let inks := undeclared
+          | .error (on, measured) => (acc.1, acc.2.push { name := k, on, measured })) start
+  let inks := undeclaredOn staged inks
   let out : Palette := { staged with entries := inks.1 }
   if !s.more || inks.2.isEmpty then (out, inks.2) else
   -- Where the reader asks more contrast and no tone of an ink's hue reaches
-  -- the gate on a declared ground, the ground moves instead, as far as the
-  -- gate asks at its own hue; each ink of the palette is judged again.
+  -- the gate on its declared ground alone, the ground moves instead, as far
+  -- as the gate asks at its own hue; each ink is judged again. An ink each
+  -- of whose grounds one tone serves, but no one tone all of them, moves
+  -- nothing: the scheme cannot carry it.
   let moves : Array (Role × Color) := inks.2.foldl (fun acc u =>
     if acc.any (·.1 == u.on) then acc else
     match Design.declared? out u.on, out.lookup u.name with
     | some g, some c =>
-      match ContrastSolve.realizeNearest (reqOf u.name) c g with
+      let req := (u.measured.map (·.2)).getD (reqOf u.name)
+      if (Design.carryInk f.flip req f.homePage f.page g c).isSome then acc else
+      match ContrastSolve.realizeNearest req c g with
       | some g' => acc.push (u.on, g')
       | none => acc
     | _, _ => acc) #[]
@@ -14304,9 +14316,10 @@ public def Palette.view (pal : Palette) (f : SchemeFrame)
         | .ok none => (acc.1.push (k, c1), acc.2)
         | .error (on, measured) => (acc.1.push (k, c1), acc.2.push { name := k, on, measured }))
         (#[], grounds.2)
-  -- The roles the use pass declared ride after the palette's own entries.
-  let extra := moved.entries.extract pal.entries.size moved.entries.size
-  ({ moved with entries := extra.foldl Array.push rejudged.1 }, rejudged.2)
+  -- The roles the use pass declares are carried again, from the colours the
+  -- moved grounds and the inks judged again there give them.
+  let again := undeclaredOn { moved with entries := rejudged.1 } rejudged
+  ({ moved with entries := again.1 }, again.2)
 
 /-- **A frame that ships palettes as declared ships each as it is**: in
 print and on the document's own screen the view is the palette, and nothing

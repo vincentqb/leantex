@@ -158,6 +158,11 @@ def cssDecls (decls : String) : List (String × String) :=
     | k :: rest@(_ :: _) => some (k.trimAscii.toString, (":".intercalate rest).trimAscii.toString)
     | _ => none
 
+/-- A property's value as CSS applies it from one block of declarations (a
+style attribute, a rule's body): the last that states it. -/
+def lastDecl (decls : List (String × String)) (prop : String) : Option String :=
+  decls.foldl (fun acc (k, v) => if k == prop then some v else acc) none
+
 /-- The `:root` declarations a scheme's cascade applies, in order. -/
 def rootDeclsIn (s : Ir.Scheme) (rules : Array (List String × String × String))
     (more : Bool := s.more) : List (String × String) :=

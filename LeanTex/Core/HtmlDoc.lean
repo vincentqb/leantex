@@ -2729,10 +2729,13 @@ public def Config.paint (cfg : Config) (name : Option Ir.ColorRef) (c : Ir.Color
   | .alias r => roleRef r
 
 /-- The screen scheme a page's `:root` holds as its floor: the page's own
-plain screen where it ships, else the first screen scheme it ships, else the
-light one. -/
+plain screen where it ships, else that screen's more contrast, else the
+first screen scheme it ships, else the light one — whatever order a declared
+list names them in. -/
 public def floorScheme (frames : List Ir.SchemeFrame) (home : Ir.Scheme) : Ir.Scheme :=
+  let homeMore := if home.onDark then Ir.Scheme.darkMore else .lightMore
   if frames.any (·.scheme == home) then home
+  else if frames.any (·.scheme == homeMore) then homeMore
   else ((frames.find? (·.scheme != .print)).map (·.scheme)).getD .light
 
 /-- The palette in force as each shipped scheme ships it, beside the scheme;
@@ -2814,7 +2817,13 @@ public def schemeBlocksOf (props : Ir.Scheme → Option (List (String × Option 
       let x := textIn t p
       if x == textIn floorT p && !forced.contains p then none else some (p, decl ind p x)
     (rows.map (·.1), String.join (rows.map (·.2)))
-  let (ldNames, lightDark) := match props .light, props .dark with
+  -- A polarity's plain screen; where the page offers none but the floor is
+  -- of that polarity (a list naming a more scheme and not its screen), the
+  -- floor stands for it, so the other polarity's screen still reaches its
+  -- readers.
+  let lightT := (props .light).orElse fun _ => if floor.onDark then none else some floorT
+  let darkT := (props .dark).orElse fun _ => if floor.onDark then some floorT else none
+  let (ldNames, lightDark) := match lightT, darkT with
     | some l, some d =>
       let (ns, body) := pairs "    " l d floorT floorT []
       (ns, if !scheme && body.isEmpty then "" else
@@ -2831,9 +2840,9 @@ public def schemeBlocksOf (props : Ir.Scheme → Option (List (String × Option 
   let (plainNames, morePlain) := ((props floorMore).map (plain "    " · [])).getD ([], "")
   -- What each polarity reads before the block: its screen where both
   -- screens ship, else the floor, which every reader then sees.
-  let screens := (props .light).isSome && (props .dark).isSome
-  let baseL := if screens then (props .light).getD floorT else floorT
-  let baseD := if screens then (props .dark).getD floorT else floorT
+  let screens := lightT.isSome && darkT.isSome
+  let baseL := if screens then lightT.getD floorT else floorT
+  let baseD := if screens then darkT.getD floorT else floorT
   -- The other polarity reaches the page under more contrast where its more
   -- scheme ships, even without its plain screen, which the block then
   -- opens (`color-scheme: light dark`).
@@ -6908,7 +6917,10 @@ public def baseRules (doc : Doc) (pairs : List (Nat × Nat) := []) (figureWords 
   "@media print {\n" ++
   -- The sheet's paper and ink are the page's roles, whose print values the
   -- print block states (`schemeBlocksOf`): the PDF's page and ink, a
-  -- declared one included, on the page's own box.
+  -- declared one included, on the page's own box. Its grounds are the
+  -- author's, not decoration a reader's toner setting may drop
+  -- (`print-color-adjust: exact`, as a printed deck's are).
+  s!"  html, body \{ print-color-adjust: exact; }\n" ++
   s!"  body \{ background: {roleRef .page}; color: {roleRef .ink}; padding: 0; }\n" ++
   -- Paper has no scroll, and a scroll box is monolithic there, so it
   -- clips what runs past it: on paper a code block wraps a line wider than
@@ -9864,7 +9876,9 @@ scheme's own, and each colour the document or the listing's style states is
 carried at the scheme's gate on that ground as a declared ink is
 (`Ir.Design.carryInk`) — the rule's fit at that gate (`Listing.fitInk`) where
 no tone of its hue reaches it — while what the rule derives is derived there
-again and fitted at that gate. -/
+again and fitted at that gate, or, where the scheme keeps the page's
+polarity, stays as the declared palette derives it where that reads higher
+and already meets the gate. -/
 private def listingPaintIn (cfg : Config) (spec : Ir.ListingSpec) (f : Ir.SchemeFrame)
     (v : Ir.Palette)
     (known : Option (Ir.Color × List (Ir.Role × Option (Ir.Color × Option Ir.Role))) := none) :
@@ -9886,9 +9900,23 @@ private def listingPaintIn (cfg : Config) (spec : Ir.ListingSpec) (f : Ir.Scheme
     | some rs => rs
     | none =>
     let paints := CodeColor.resolve v ground spec.style
+    -- Where the scheme keeps the page's polarity, a derived colour the
+    -- palette as declared derives on this ground stays where it already
+    -- reads at the gate and no lower than the one derived again: more
+    -- contrast never lowers what already meets it.
+    let homePaints := if f.flip || f.home then none
+      else some (CodeColor.resolve cfg.pal ground spec.style)
+    let derived (r : ListingHighlight.Role) (c : Ir.Color) : Ir.Color :=
+      let again := fit c
+      match homePaints.bind (·.get r) with
+      | some hp =>
+        let h := Listing.defaultInk ground hp.color
+        if req ≤ Contrast.contrastMilli h ground &&
+            Contrast.contrastMilli again ground ≤ Contrast.contrastMilli h ground then h else again
+      | none => again
     ListingHighlight.Role.all.map fun r =>
       (Ir.Role.ofCode r, (paints.get r).map fun p =>
-        let c := if !(p.declared || p.styled) then fit p.color
+        let c := if !(p.declared || p.styled) then derived r p.color
           else if f.home then p.color
           else if p.styled then carry p.color
           else carry ((p.role.bind (Ir.Design.declared? cfg.pal ·)).getD p.color)
@@ -9947,10 +9975,11 @@ private def tokenRuns (classes : Array (ListingHighlight.Kind × Option String))
 /-- **The colours a listing's box states in every scheme the page ships**
 (`Config.listingPaints`): its ground and its plain text's colour — through
 the page's role where the listing's is that role's in every scheme, else as
-`schemeValue` spells them — and each code role whose colour differs from the
-one the page's `:root` states for a listing on its own code ground
-(`codeRoot`), of the roles its tokens paint in. A plain listing with no
-ground of its own states its ground
+`schemeValue` spells them — and each code role its tokens paint in, where
+it stands in an epoch or a painted body, whose restatements are the roles
+in force there, and otherwise where its colour differs from the one the
+page's `:root` states for a listing on its own code ground (`codeRoot`). A
+plain listing with no ground of its own states its ground
 only where an epoch paints a code ground its class paints none of, and its
 colour only where the document declares a code ink: it stands on what
 surrounds it, as the page's code ground rule paints it. -/
@@ -9980,13 +10009,16 @@ private def Config.listingStyle (cfg : Config) (spec : Ir.ListingSpec)
         else [s!"background: {value ground [.page, .codeSurface]};"]
       let used := (spec.highlight.foldl (fun acc line => line.foldl (fun acc t =>
         if acc.contains t.kind then acc else acc.push t.kind) acc) #[]).map (·.role)
+      -- The code roles in force are `:root`'s only outside an epoch and a
+      -- painted body: an epoch restates them for its own code ground.
+      let atRoot := cfg.bodyGround.isNone && cfg.pal.sameAs cfg.docPal
       let roles := ListingHighlight.Role.all.filterMap fun r =>
         let key := Ir.Role.ofCode r
         if r == .ink || !used.contains r then none else
         let t := paints.map fun (sc, _, _, rs) => (sc, ((rs.lookup key).join).map (cssColor ·.1))
         let root := paints.map fun (sc, _) =>
           (sc, ((((cfg.codeRoot.lookup sc).getD []).lookup key).join).map (cssColor ·.1))
-        if t == root then none else some s!"{roleVar key}: {schemeValue t t cfg.floor};"
+        if atRoot && t == root then none else some s!"{roleVar key}: {schemeValue t t cfg.floor};"
       bg ++ [s!"color: {value ink [.ink]};"] ++ roles
   " ".intercalate decls
 
